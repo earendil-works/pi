@@ -262,6 +262,186 @@ function getPiInvocation(args: string[]): { command: string; args: string[] } {
 	return { command: "pi", args };
 }
 
+// --- Muse/Meta routing: catalog-driven + explicit provider, not hardcoded model names ---
+
+let metaCatalogCache: { ids: Set<string>; defaultId: string; mtimeMs: number } | null = null;
+let metaCatalogError: string | null = null;
+
+function getMetaCatalog(): { ids: Set<string>; defaultId: string } {
+	const catalogDir = path.join(os.homedir(), ".local/share/muse/model-catalog");
+	// Invalidate cache if any catalog file mtime changed (handles `muse update` during long pi session)
+	if (metaCatalogCache) {
+		try {
+			const files = fs.readdirSync(catalogDir).filter((f) => f.endsWith(".json"));
+			let maxMtime = 0;
+			for (const f of files) {
+				try {
+					maxMtime = Math.max(maxMtime, fs.statSync(path.join(catalogDir, f)).mtimeMs);
+				} catch {}
+			}
+			if (maxMtime === metaCatalogCache.mtimeMs) return { ids: metaCatalogCache.ids, defaultId: metaCatalogCache.defaultId };
+			// mtime changed — fall through to reload
+			metaCatalogCache = null;
+			metaCatalogError = null;
+		} catch {}
+		if (metaCatalogCache) return { ids: metaCatalogCache.ids, defaultId: metaCatalogCache.defaultId };
+	}
+	if (metaCatalogError) throw new Error(metaCatalogError);
+	if (!fs.existsSync(catalogDir)) {
+		metaCatalogError = `Meta catalog unavailable at ${catalogDir} — is Muse Code installed? Run: muse login`;
+		throw new Error(metaCatalogError);
+	}
+	const files = fs.readdirSync(catalogDir).filter((f) => f.endsWith(".json"));
+	if (files.length === 0) {
+		metaCatalogError = `Meta catalog empty at ${catalogDir} — no model JSON found. Reinstall Muse Code.`;
+		throw new Error(metaCatalogError);
+	}
+	const ids = new Set<string>();
+	let defaultId: string | null = null;
+	let hasCurrentDefault = false;
+	let maxMtime = 0;
+	for (const f of files) {
+		let statMtime = 0;
+		try {
+			statMtime = fs.statSync(path.join(catalogDir, f)).mtimeMs;
+			maxMtime = Math.max(maxMtime, statMtime);
+		} catch {}
+		let raw: string;
+		try {
+			raw = fs.readFileSync(path.join(catalogDir, f), "utf-8");
+		} catch (e: any) {
+			metaCatalogError = `Failed to read ${f}: ${e.message}`;
+			throw new Error(metaCatalogError);
+		}
+		let data: { rows?: Array<{ model_id: string; is_default?: boolean; is_current?: boolean }> };
+		try {
+			data = JSON.parse(raw);
+		} catch (e: any) {
+			metaCatalogError = `Invalid JSON in ${f}: ${e.message}`;
+			throw new Error(metaCatalogError);
+		}
+		for (const row of data.rows ?? []) {
+			if (row.model_id) ids.add(row.model_id);
+			if (row.is_default && (!hasCurrentDefault || row.is_current)) {
+				defaultId = row.model_id;
+				hasCurrentDefault = !!row.is_current;
+			}
+		}
+	}
+	if (ids.size === 0) {
+		metaCatalogError = `Meta catalog at ${catalogDir} contains no models`;
+		throw new Error(metaCatalogError);
+	}
+	if (!defaultId || !ids.has(defaultId)) {
+		metaCatalogError = `Meta catalog at ${catalogDir} has no is_default model (found ${[...ids].join(", ")})`;
+		throw new Error(metaCatalogError);
+	}
+	metaCatalogCache = { ids, defaultId, mtimeMs: maxMtime };
+	return { ids, defaultId };
+}
+
+function stripProviderPrefix(raw: string): string {
+	const trimmed = raw.trim();
+	const lower = trimmed.toLowerCase();
+	if (lower.startsWith("muse/")) return trimmed.slice(5).trim();
+	if (lower.startsWith("meta/")) return trimmed.slice(5).trim();
+	if (lower.startsWith("muse:")) return trimmed.slice(5).trim();
+	return trimmed;
+}
+
+function isKnownMetaModel(bareLower: string): boolean {
+	const catalog = getMetaCatalog();
+	for (const id of catalog.ids) if (id.toLowerCase() === bareLower) return true;
+	return false;
+}
+
+function shouldRouteToMeta(agent: AgentConfig): boolean {
+	const provider = (agent.provider ?? "").toLowerCase();
+	const runtime = (agent.runtime ?? "").toLowerCase();
+	if (provider === "meta" || provider === "muse" || runtime === "muse" || runtime === "meta") return true;
+	if (agent.model) {
+		const bareLower = stripProviderPrefix(agent.model).toLowerCase();
+		if (!bareLower) return true;
+		try {
+			if (isKnownMetaModel(bareLower)) return true;
+		} catch {
+			// catalog error — fall through to prefix fallback so error surfaces in model resolution
+		}
+	}
+	const modelLower = (agent.model ?? "").toLowerCase();
+	return modelLower.startsWith("muse/") || modelLower.startsWith("muse:") || modelLower.startsWith("meta/");
+}
+
+function resolveMetaModelId(agent: AgentConfig): string {
+	const catalog = getMetaCatalog();
+	const raw = agent.model?.trim() ?? "";
+	if (!raw) return catalog.defaultId;
+	const bare = stripProviderPrefix(raw);
+	const lowerBare = bare.toLowerCase();
+	if (lowerBare === "muse-spark" || lowerBare === "spark" || lowerBare === "") return catalog.defaultId;
+	// Validate against catalog — fail loud instead of letting `muse exec` surface a cryptic error
+	if (!isKnownMetaModel(lowerBare)) {
+		throw new Error(`Unknown Meta model "${bare}" — available: ${[...catalog.ids].join(", ")}. Check ~/.local/share/muse/model-catalog or use provider: meta with a known model.`);
+	}
+	return bare;
+}
+
+// Back-compat shims — old names delegate to meta-named impls
+function getMuseCatalog(): { ids: Set<string>; defaultId: string } {
+	return getMetaCatalog();
+}
+function unwrapMusePrefix(raw: string): string {
+	return stripProviderPrefix(raw);
+}
+function isKnownMuseModelId(bareLower: string): boolean {
+	return isKnownMetaModel(bareLower);
+}
+function shouldRouteToMuse(agent: AgentConfig): boolean {
+	return shouldRouteToMeta(agent);
+}
+function isMuseAgent(agent: AgentConfig): boolean {
+	return shouldRouteToMeta(agent);
+}
+function resolveMuseModelId(agent: AgentConfig): string {
+	return resolveMetaModelId(agent);
+}
+function isMuseModel(model?: string): boolean {
+	if (!model) return false;
+	const bareLower = stripProviderPrefix(model).toLowerCase();
+	if (!bareLower) return true;
+	try {
+		if (isKnownMetaModel(bareLower)) return true;
+	} catch {}
+	const lower = model.toLowerCase();
+	return lower.startsWith("muse/") || lower.startsWith("muse:") || lower.startsWith("meta/");
+}
+function getMuseModelId(agent: AgentConfig): string {
+	return resolveMetaModelId(agent);
+}
+
+async function writeCombinedPromptForMeta(
+	agentName: string,
+	systemPrompt: string,
+	task: string,
+): Promise<{ dir: string; filePath: string }> {
+	const tmpDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "pi-meta-"));
+	const safeName = agentName.replace(/[^\w.-]+/g, "_");
+	const filePath = path.join(tmpDir, `meta-prompt-${safeName}.md`);
+	const combined = systemPrompt.trim() ? `${systemPrompt.trim()}\n\n---\n\nTask: ${task}` : `Task: ${task}`;
+	await withFileMutationQueue(filePath, async () => {
+		await fs.promises.writeFile(filePath, combined, { encoding: "utf-8", mode: 0o600 });
+	});
+	return { dir: tmpDir, filePath };
+}
+
+async function writeCombinedPromptForMuse(
+	agentName: string,
+	systemPrompt: string,
+	task: string,
+): Promise<{ dir: string; filePath: string }> {
+	return writeCombinedPromptForMeta(agentName, systemPrompt, task);
+}
+
 type OnUpdateCallback = (partial: AgentToolResult<SubagentDetails>) => void;
 
 async function runSingleAgent(
@@ -318,6 +498,157 @@ async function runSingleAgent(
 			});
 		}
 	};
+
+	if (shouldRouteToMeta(agent)) {
+		let metaPromptDir: string | null = null;
+		let metaPromptPath: string | null = null;
+		let metaModelId: string;
+		try {
+			metaModelId = resolveMetaModelId(agent);
+		} catch (e: any) {
+			currentResult.stderr = e.message ?? String(e);
+			currentResult.exitCode = 1;
+			(currentResult as any).stopReason = "error";
+			currentResult.messages.push({
+				role: "assistant",
+				content: [{ type: "text", text: `Meta routing failed: ${currentResult.stderr}` }],
+			} as any);
+			return currentResult;
+		}
+		try {
+			const combined = await writeCombinedPromptForMeta(agent.name, agent.systemPrompt, task);
+			metaPromptDir = combined.dir;
+			metaPromptPath = combined.filePath;
+
+			const museArgs: string[] = ["exec", "--json", "--prompt-file", metaPromptPath, "--workspace", cwd ?? defaultCwd, "--trust-workspace", "--disable-approval", "--model", metaModelId];
+
+			let wasAborted = false;
+			const accumulatedDeltas: string[] = [];
+			let terminalText: string | null = null;
+			let terminalFailed = false;
+			let terminalReason: string | null = null;
+
+			const exitCode = await new Promise<number>((resolve) => {
+				const proc = spawn("muse", museArgs, {
+					cwd: cwd ?? defaultCwd,
+					shell: false,
+					stdio: ["ignore", "pipe", "pipe"],
+				});
+				let buffer = "";
+
+				const processMuseLine = (line: string) => {
+					if (!line.trim()) return;
+					// muse prints non-JSON banner lines (e.g. "muse: workspace root...") - skip
+					if (line.startsWith("muse:")) return;
+					let event: any;
+					try {
+						event = JSON.parse(line);
+					} catch {
+						return;
+					}
+					const payloadType: string | undefined = event.payload_type;
+					const payload: any = event.payload;
+
+					if (payloadType === "run.output.delta" && payload?.text) {
+						accumulatedDeltas.push(payload.text);
+						// emit incremental update
+						const partial = accumulatedDeltas.join("");
+						// synthesize a transient message for UI streaming
+						const transient: Message = {
+							role: "assistant",
+							content: [{ type: "text", text: partial }],
+						} as any;
+						// keep one transient message at end for display, replace last
+						if (currentResult.messages.length > 0 && (currentResult.messages[currentResult.messages.length - 1] as any)._transient) {
+							currentResult.messages[currentResult.messages.length - 1] = { ...transient, _transient: true } as any;
+						} else {
+							currentResult.messages.push({ ...transient, _transient: true } as any);
+						}
+						emitUpdate();
+					} else if (payloadType === "run.terminal.completed" && payload) {
+						terminalText = payload.text ?? accumulatedDeltas.join("");
+						terminalFailed = false;
+						terminalReason = payload.reason ?? null;
+					} else if (payloadType === "run.terminal.failed" && payload) {
+						terminalText = payload.text ?? null;
+						terminalFailed = true;
+						terminalReason = payload.reason ?? payload.error ?? null;
+						currentResult.stderr += terminalReason ? `\n${terminalReason}` : "";
+					} else if (payloadType === "run.model.configured" && payload?.model_id) {
+						currentResult.model = payload.model_id;
+					}
+				};
+
+				proc.stdout.on("data", (data) => {
+					buffer += data.toString();
+					const lines = buffer.split("\n");
+					buffer = lines.pop() || "";
+					for (const line of lines) processMuseLine(line);
+				});
+
+				proc.stderr.on("data", (data) => {
+					currentResult.stderr += data.toString();
+				});
+
+				proc.on("close", (code) => {
+					if (buffer.trim()) processMuseLine(buffer);
+					resolve(code ?? 0);
+				});
+
+				proc.on("error", () => {
+					resolve(1);
+				});
+
+				if (signal) {
+					const killProc = () => {
+						wasAborted = true;
+						proc.kill("SIGTERM");
+						setTimeout(() => {
+							if (!proc.killed) proc.kill("SIGKILL");
+						}, 5000);
+					};
+					if (signal.aborted) killProc();
+					else signal.addEventListener("abort", killProc, { once: true });
+				}
+			});
+
+			// remove transient marker and install final message
+			currentResult.messages = currentResult.messages.filter((m: any) => !m._transient);
+			const finalText = terminalText ?? accumulatedDeltas.join("") ?? "";
+			if (finalText || terminalFailed) {
+				const finalMsg: Message = {
+					role: "assistant",
+					content: [{ type: "text", text: finalText || (terminalFailed ? `(muse failed: ${terminalReason ?? "unknown"})` : "(no output)") }],
+				} as any;
+				(currentResult as any).stopReason = terminalFailed ? "error" : "end";
+				if (terminalFailed && terminalReason) (finalMsg as any).errorMessage = terminalReason;
+				currentResult.messages.push(finalMsg);
+			} else if (currentResult.messages.length === 0) {
+				currentResult.messages.push({
+					role: "assistant",
+					content: [{ type: "text", text: "(no output from muse)" }],
+				} as any);
+				(currentResult as any).stopReason = "error";
+			}
+			currentResult.exitCode = terminalFailed ? 1 : exitCode;
+			if (wasAborted) throw new Error("Subagent was aborted");
+			emitUpdate();
+			return currentResult;
+		} finally {
+			if (metaPromptPath)
+				try {
+					fs.unlinkSync(metaPromptPath);
+				} catch {
+					/* ignore */
+				}
+			if (metaPromptDir)
+				try {
+					fs.rmdirSync(metaPromptDir);
+				} catch {
+					/* ignore */
+				}
+		}
+	}
 
 	try {
 		if (agent.systemPrompt.trim()) {
