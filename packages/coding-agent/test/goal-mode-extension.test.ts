@@ -7,6 +7,11 @@ import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "../src/core
 
 type CommandHandler = (args: string, ctx: ExtensionContext) => Promise<void> | void;
 type EventHandler = (event: unknown, ctx: ExtensionContext) => Promise<unknown> | unknown;
+type CommandRegistration = {
+	handler: CommandHandler;
+	argumentHint?: string;
+	getArgumentCompletions?: (prefix: string) => unknown;
+};
 
 function createAssistantMessage(text: string): AssistantMessage {
 	return {
@@ -42,6 +47,7 @@ function customData(entry: SessionEntry | undefined): unknown {
 
 function setup(options: { idle?: boolean; pending?: boolean; flagGoal?: string } = {}) {
 	const commands = new Map<string, CommandHandler>();
+	const commandOptions = new Map<string, CommandRegistration>();
 	const handlers = new Map<string, EventHandler>();
 	const tools = new Map<string, ToolDefinition>();
 	const entries: SessionEntry[] = [];
@@ -64,7 +70,8 @@ function setup(options: { idle?: boolean; pending?: boolean; flagGoal?: string }
 
 	const api = {
 		registerFlag: vi.fn(),
-		registerCommand(name: string, command: { handler: CommandHandler }) {
+		registerCommand(name: string, command: CommandRegistration) {
+			commandOptions.set(name, command);
 			commands.set(name, command.handler);
 		},
 		registerTool(tool: ToolDefinition) {
@@ -107,6 +114,7 @@ function setup(options: { idle?: boolean; pending?: boolean; flagGoal?: string }
 
 	return {
 		appendEntry,
+		commandOptions,
 		commands,
 		ctx,
 		emit,
@@ -123,6 +131,22 @@ function setup(options: { idle?: boolean; pending?: boolean; flagGoal?: string }
 }
 
 describe("goal-mode example extension", () => {
+	it("registers /goal with a usage hint and subcommand completions", () => {
+		const { commandOptions } = setup();
+		const goalCommand = commandOptions.get("goal");
+
+		expect(goalCommand?.argumentHint).toBe("<objective> [--tokens N] [--cost N] | pause | resume | clear");
+		expect(goalCommand?.getArgumentCompletions?.("")).toEqual([
+			{ value: "pause", label: "pause", description: "Pause the active goal" },
+			{ value: "resume", label: "resume", description: "Resume a paused goal" },
+			{ value: "clear", label: "clear", description: "Clear the goal" },
+		]);
+		expect(goalCommand?.getArgumentCompletions?.("re")).toEqual([
+			{ value: "resume", label: "resume", description: "Resume a paused goal" },
+		]);
+		expect(goalCommand?.getArgumentCompletions?.("Fix tests")).toBeNull();
+	});
+
 	it("sets a goal, persists it, and starts work", async () => {
 		const { entries, runCommand, sendUserMessage, setStatus, setTitle, setWidget } = setup();
 

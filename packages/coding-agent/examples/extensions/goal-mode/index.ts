@@ -212,6 +212,36 @@ export default function goalModeExtension(pi: ExtensionAPI): void {
 
 	pi.registerCommand("goal", {
 		description: "Set, view, pause, resume, or clear the current goal",
+		argumentHint: "<objective> [--tokens N] [--cost N] | pause | resume | clear",
+		getArgumentCompletions: (prefix) => {
+			const subcommands = ["pause", "resume", "clear"];
+			const trimmed = prefix.trimStart();
+			if (trimmed === "") {
+				return subcommands.map((value) => ({
+					value,
+					label: value,
+					description:
+						value === "pause"
+							? "Pause the active goal"
+							: value === "resume"
+								? "Resume a paused goal"
+								: "Clear the goal",
+				}));
+			}
+			const filtered = subcommands.filter((value) => value.startsWith(trimmed));
+			return filtered.length > 0
+				? filtered.map((value) => ({
+						value,
+						label: value,
+						description:
+							value === "pause"
+								? "Pause the active goal"
+								: value === "resume"
+									? "Resume a paused goal"
+									: "Clear the goal",
+					}))
+				: null;
+		},
 		handler: async (args, ctx) => {
 			const command = parseGoalCommand(args);
 			switch (command.action) {
