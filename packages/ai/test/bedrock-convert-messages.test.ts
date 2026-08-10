@@ -125,7 +125,7 @@ describe("Bedrock constrained sampling", () => {
 });
 
 describe("Bedrock tool arguments", () => {
-	it("removes empty property names from streamed tool arguments", async () => {
+	it("preserves empty property names in streamed tool arguments", async () => {
 		bedrockMock.streamEvents = [
 			{ messageStart: { role: "assistant" } },
 			{
@@ -163,7 +163,7 @@ describe("Bedrock tool arguments", () => {
 					path: "/workspace/foobar/file.js",
 					edits: [
 						{ oldText: "first", newText: "updated first" },
-						{ oldText: "second", newText: "updated second" },
+						{ oldText: "second", newText: "updated second", "": "" },
 					],
 				},
 			});
@@ -350,7 +350,14 @@ describe("bedrock convertMessages skips unknown content types", () => {
 		expect(p.messages).toHaveLength(0);
 	});
 
-	it("removes empty property names from replayed tool arguments", async () => {
+	it("removes empty property names only from replayed Bedrock input", async () => {
+		const toolArguments = {
+			path: "/workspace/foobar/file.js",
+			edits: [
+				{ oldText: "first", newText: "updated first" },
+				{ oldText: "second", newText: "updated second", "": "" },
+			],
+		};
 		const messages: Message[] = [
 			{
 				role: "assistant",
@@ -359,13 +366,7 @@ describe("bedrock convertMessages skips unknown content types", () => {
 						type: "toolCall",
 						id: "tool-1",
 						name: "edit",
-						arguments: {
-							path: "/workspace/foobar/file.js",
-							edits: [
-								{ oldText: "first", newText: "updated first" },
-								{ oldText: "second", newText: "updated second", "": "" },
-							],
-						},
+						arguments: toolArguments,
 					},
 				],
 				api: "bedrock-converse-stream",
@@ -404,5 +405,6 @@ describe("bedrock convertMessages skips unknown content types", () => {
 				{ oldText: "second", newText: "updated second" },
 			],
 		});
+		expect(toolArguments.edits[1]).toEqual({ oldText: "second", newText: "updated second", "": "" });
 	});
 });

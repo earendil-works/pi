@@ -554,9 +554,7 @@ function handleContentBlockDelta(
 		}
 	} else if (delta?.toolUse && block?.type === "toolCall") {
 		block.partialJson = (block.partialJson || "") + (delta.toolUse.input || "");
-		block.arguments = sanitizeBedrockDocument(
-			parseStreamingJson<DocumentType>(block.partialJson),
-		) as ToolCall["arguments"];
+		block.arguments = parseStreamingJson(block.partialJson);
 		stream.push({ type: "toolcall_delta", contentIndex: index, delta: delta.toolUse.input || "", partial: output });
 	} else if (delta?.reasoningContent) {
 		let thinkingBlock = block;
@@ -622,9 +620,7 @@ function handleContentBlockStop(
 			stream.push({ type: "thinking_end", contentIndex: index, content: block.thinking, partial: output });
 			break;
 		case "toolCall":
-			block.arguments = sanitizeBedrockDocument(
-				parseStreamingJson<DocumentType>(block.partialJson),
-			) as ToolCall["arguments"];
+			block.arguments = parseStreamingJson(block.partialJson);
 			// Finalize in-place and strip the scratch buffer so replay only
 			// carries parsed arguments.
 			delete (block as Block).partialJson;
