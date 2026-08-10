@@ -114,7 +114,11 @@ describe("AuthStorage", () => {
 	});
 
 	test("keeps a coalesced reload alive while another credential reader is waiting", async () => {
-		writeAuthJson({ anthropic: { type: "api_key", key: "old" } });
+		// Same-length key rewrites can leave getFileRevision unchanged on certain
+		// file systems (revision is based on file size and mtime, so same-size
+		// rewrites can go unnoticed), which made the auth-storage coalesced reload
+		// test skip the reload path and flake; the test now uses unequal key lengths.
+		writeAuthJson({ anthropic: { type: "api_key", key: "old-key" } });
 		const storage = AuthStorage.create(authJsonPath);
 		writeAuthJson({ anthropic: { type: "api_key", key: "new" } });
 		let grantLock: (() => void) | undefined;
