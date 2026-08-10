@@ -6,7 +6,7 @@ To enable your shell aliases, add to `~/.pi/agent/settings.json`:
 
 ```json
 {
-  "shellCommandPrefix": "shopt -s expand_aliases\neval \"$(grep '^alias ' ~/.zshrc)\""
+  "shellCommandPrefix": "shopt -s expand_aliases\neval \"$(grep '^alias -- ' ~/.zshrc)\""
 }
 ```
 
