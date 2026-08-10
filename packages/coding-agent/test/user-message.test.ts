@@ -83,7 +83,7 @@ describe("UserMessageComponent", () => {
 		});
 	});
 
-	test("live user message keeps messageId undefined until persisted; setMessageMeta attaches it", () => {
+	test("live user message keeps messageId undefined until persisted; transientId stays stable", () => {
 		initTheme("dark");
 		const capturedContexts: MarkdownTransformContext[] = [];
 		const component = new UserMessageComponent("hello", undefined, 1, [
@@ -95,6 +95,8 @@ describe("UserMessageComponent", () => {
 
 		component.render(80);
 		expect(capturedContexts[0].messageId).toBeUndefined();
+		const transientId = capturedContexts[0].transientId;
+		expect(transientId).toBeDefined();
 
 		component.setMessageMeta({ messageId: "entry-live2", timestamp: "2025-01-15T10:30:00.000Z" });
 		component.render(80);
@@ -102,6 +104,7 @@ describe("UserMessageComponent", () => {
 		expect(capturedContexts.at(-1)).toMatchObject({
 			messageId: "entry-live2",
 			timestamp: "2025-01-15T10:30:00.000Z",
+			transientId,
 		});
 	});
 });

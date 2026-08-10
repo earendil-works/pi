@@ -1,4 +1,5 @@
 import { Box, Container, Markdown, type MarkdownTheme } from "@earendil-works/pi-tui";
+import { randomUUID } from "crypto";
 import type { MarkdownMessageMeta, MarkdownTransformer } from "../../../core/extensions/types.ts";
 import { getMarkdownTheme, theme } from "../theme/theme.ts";
 import { createMarkdownTransform } from "./markdown-transform.ts";
@@ -16,6 +17,8 @@ export class UserMessageComponent extends Container {
 	private outputPad: number;
 	private markdownTransformers: readonly MarkdownTransformer[];
 	private messageMeta: MarkdownMessageMeta = {};
+	/** Per-render-session identity for pre-persistence frames; NOT the session entry id. */
+	private transientId = randomUUID();
 
 	constructor(
 		text: string,
@@ -62,7 +65,10 @@ export class UserMessageComponent extends Container {
 				{
 					preserveOrderedListMarkers: true,
 					preserveBackslashEscapes: true,
-					transform: createMarkdownTransform("user", false, this.markdownTransformers, this.messageMeta),
+					transform: createMarkdownTransform("user", false, this.markdownTransformers, {
+						...this.messageMeta,
+						transientId: this.transientId,
+					}),
 				},
 			),
 		);

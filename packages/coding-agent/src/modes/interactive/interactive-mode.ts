@@ -93,7 +93,6 @@ import { DefaultPackageManager } from "../../core/package-manager.ts";
 import type { ResourceDiagnostic } from "../../core/resource-loader.ts";
 import { formatMissingSessionCwdPrompt, MissingSessionCwdError } from "../../core/session-cwd.ts";
 import {
-	type CustomMessageEntry,
 	type SessionEntry,
 	SessionManager,
 	type SessionMessageEntry,
@@ -232,45 +231,11 @@ export function sessionEntriesToRenderItems(entries: SessionEntry[]): RenderSess
 	});
 }
 
-/**
- * Live component-association state: the user/assistant component rendered for
- * the message currently awaiting persistence. message_start registers the
- * component (or explicitly clears it when a message renders no markdown
- * component, e.g. skill-only user messages); message_persisted attaches the
- * canonical entry identity to the matching component and clears the state.
- */
-export class PendingMessageIdentity {
-	private userComponent: UserMessageComponent | undefined;
-	private assistantComponent: AssistantMessageComponent | undefined;
-
-	setUserComponent(component: UserMessageComponent | undefined): void {
-		this.userComponent = component;
-	}
-
-	setAssistantComponent(component: AssistantMessageComponent | undefined): void {
-		this.assistantComponent = component;
-	}
-
-	/** Reset association state (e.g. before a full chat rebuild). */
-	clear(): void {
-		this.userComponent = undefined;
-		this.assistantComponent = undefined;
-	}
-
-	/** Attach the persisted entry identity to the waiting live component, then clear. */
-	attachPersistedEntry(entry: SessionMessageEntry | CustomMessageEntry): void {
-		if (entry.type !== "message") {
-			return;
-		}
-		const entryMeta: MarkdownMessageMeta = { messageId: entry.id, timestamp: entry.timestamp };
-		if (entry.message.role === "assistant") {
-			this.assistantComponent?.setMessageMeta(entryMeta);
-		} else if (entry.message.role === "user") {
-			this.userComponent?.setMessageMeta(entryMeta);
-		}
-		this.userComponent = undefined;
-		this.assistantComponent = undefined;
-	}
+/** True when an appended session entry owns built-in Markdown transformer identity. */
+export function isMarkdownIdentityEntry(
+	entry: SessionEntry,
+): entry is SessionMessageEntry & { message: { role: "user" | "assistant" } } {
+	return entry.type === "message" && (entry.message.role === "user" || entry.message.role === "assistant");
 }
 
 const DEAD_TERMINAL_ERROR_CODES = new Set(["EIO", "EPIPE", "ENOTCONN"]);
@@ -498,8 +463,10 @@ export class InteractiveMode {
 	// Streaming message tracking
 	private streamingComponent: AssistantMessageComponent | undefined = undefined;
 	private streamingMessage: AssistantMessage | undefined = undefined;
-	// Live components waiting for their persisted entry identity (message_persisted)
-	private pendingMessageIdentity = new PendingMessageIdentity();
+	// Live Markdown component awaiting persisted entry identity via entry_appended.
+	// Agent loop serializes message_start → message_end → entry_appended before the next
+	// message, so at most one user or assistant component can be pending.
+	private pendingMarkdownComponent: UserMessageComponent | AssistantMessageComponent | undefined;
 
 	// Tool execution tracking: toolCallId -> component
 	private pendingTools = new Map<string, ToolExecutionComponent>();
@@ -3122,15 +3089,60 @@ export class InteractiveMode {
 		};
 	}
 
+	/**
+	 * Register/attach Markdown message identity without awaiting.
+	 * Must stay ordered with AgentSession._emit (sync, non-awaited listeners).
+	 */
+	private applyMarkdownIdentityEvent(event: AgentSessionEvent): void {
+		if (event.type === "message_start") {
+			if (event.message.role === "user") {
+				// undefined clears pending when the message renders no Markdown component
+				// (e.g. skill-only user messages).
+				this.pendingMarkdownComponent = this.addMessageToChat(event.message);
+			} else if (event.message.role === "assistant") {
+				this.streamingComponent = new AssistantMessageComponent(
+					undefined,
+					this.hideThinkingBlock,
+					this.getMarkdownThemeWithSettings(),
+					this.hiddenThinkingLabel,
+					this.outputPad,
+					this.getMarkdownTransformers(),
+				);
+				this.pendingMarkdownComponent = this.streamingComponent;
+				this.streamingMessage = event.message;
+				this.chatContainer.addChild(this.streamingComponent);
+				this.streamingComponent.updateContent(this.streamingMessage, true);
+			}
+			return;
+		}
+
+		if (event.type === "entry_appended" && isMarkdownIdentityEntry(event.entry)) {
+			const component = this.pendingMarkdownComponent;
+			this.pendingMarkdownComponent = undefined;
+			component?.setMessageMeta({ messageId: event.entry.id, timestamp: event.entry.timestamp });
+		}
+	}
+
 	private subscribeToAgent(): void {
-		this.unsubscribe = this.session.subscribe(async (event) => {
-			await this.handleEvent(event);
+		// Listener is typed sync; keep identity handoff synchronous with AgentSession._emit
+		// (which does not await listeners). handleEvent may be async for init/other work,
+		// but message_start / entry_appended identity runs before any await once initialized.
+		this.unsubscribe = this.session.subscribe((event) => {
+			void this.handleEvent(event);
 		});
 	}
 
 	private async handleEvent(event: AgentSessionEvent): Promise<void> {
+		// Identity registration/attach must not race across events: AgentSession emits
+		// message_start then later entry_appended via non-awaited _emit. Apply identity
+		// side effects before any await when already initialized.
+		if (this.isInitialized) {
+			this.applyMarkdownIdentityEvent(event);
+		}
+
 		if (!this.isInitialized) {
 			await this.init();
+			this.applyMarkdownIdentityEvent(event);
 		}
 
 		this.footer.invalidate();
@@ -3170,15 +3182,10 @@ export class InteractiveMode {
 				if (event.entry.type === "custom") {
 					this.addCustomEntryToChat(event.entry);
 					this.ui.requestRender();
+				} else if (isMarkdownIdentityEntry(event.entry)) {
+					// Identity already applied in applyMarkdownIdentityEvent.
+					this.ui.requestRender();
 				}
-				break;
-
-			case "message_persisted":
-				// Attach the persisted entry identity to the live component rendered for
-				// this message (registered at message_start), so live and rebuilt
-				// rendering agree once the entry exists.
-				this.pendingMessageIdentity.attachPersistedEntry(event.entry);
-				this.ui.requestRender();
 				break;
 
 			case "session_info_changed":
@@ -3197,22 +3204,11 @@ export class InteractiveMode {
 					this.addMessageToChat(event.message);
 					this.ui.requestRender();
 				} else if (event.message.role === "user") {
-					this.pendingMessageIdentity.setUserComponent(this.addMessageToChat(event.message));
+					// pendingMarkdownComponent set in applyMarkdownIdentityEvent.
 					this.updatePendingMessagesDisplay();
 					this.ui.requestRender();
 				} else if (event.message.role === "assistant") {
-					this.streamingComponent = new AssistantMessageComponent(
-						undefined,
-						this.hideThinkingBlock,
-						this.getMarkdownThemeWithSettings(),
-						this.hiddenThinkingLabel,
-						this.outputPad,
-						this.getMarkdownTransformers(),
-					);
-					this.pendingMessageIdentity.setAssistantComponent(this.streamingComponent);
-					this.streamingMessage = event.message;
-					this.chatContainer.addChild(this.streamingComponent);
-					this.streamingComponent.updateContent(this.streamingMessage, true);
+					// streamingComponent / pendingMarkdownComponent set in applyMarkdownIdentityEvent.
 					this.ui.requestRender();
 				}
 				break;
@@ -3737,7 +3733,7 @@ export class InteractiveMode {
 	): void {
 		// A full re-render resets any live association state; restored components
 		// already carry their entry identity from the projection.
-		this.pendingMessageIdentity.clear();
+		this.pendingMarkdownComponent = undefined;
 		this.renderSessionItems(sessionEntriesToRenderItems(entries), options);
 	}
 

@@ -5,7 +5,7 @@ import { beforeAll, describe, expect, test, vi } from "vitest";
 import type { AgentSessionEvent } from "../../../src/core/agent-session.ts";
 import type { SessionEntry } from "../../../src/core/session-manager.ts";
 import type { ToolExecutionComponent } from "../../../src/modes/interactive/components/tool-execution.ts";
-import { InteractiveMode, PendingMessageIdentity } from "../../../src/modes/interactive/interactive-mode.ts";
+import { InteractiveMode } from "../../../src/modes/interactive/interactive-mode.ts";
 import { initTheme } from "../../../src/modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../../../src/utils/ansi.ts";
 
@@ -47,11 +47,12 @@ type RenderSessionContextThis = {
 	session: { retryAttempt: number; modelRegistry: { find(provider: string, modelId: string): undefined } };
 	toolOutputExpanded: boolean;
 	isInitialized: boolean;
-	pendingMessageIdentity: PendingMessageIdentity;
+	pendingMarkdownComponent: undefined;
 	updateEditorBorderColor(): void;
 	getRegisteredToolDefinition(toolName: string): undefined;
 	addMessageToChat(message: AgentMessage, options?: { populateHistory?: boolean }): void;
 	renderSessionItems: RenderSessionItems;
+	applyMarkdownIdentityEvent(event: AgentSessionEvent): void;
 };
 
 type RenderSessionEntries = (
@@ -60,11 +61,13 @@ type RenderSessionEntries = (
 	options?: { updateFooter?: boolean; populateHistory?: boolean },
 ) => void;
 
+type ApplyMarkdownIdentityEvent = (this: RenderSessionContextThis, event: AgentSessionEvent) => void;
+
 type HandleEvent = (this: RenderSessionContextThis, event: AgentSessionEvent) => Promise<void>;
 
 function createFakeInteractiveModeThis(): RenderSessionContextThis {
 	const chatContainer = new Container();
-	return {
+	const fakeThis: RenderSessionContextThis = {
 		pendingTools: new Map<string, ToolExecutionComponent>(),
 		chatContainer,
 		footer: { invalidate: vi.fn() },
@@ -78,15 +81,19 @@ function createFakeInteractiveModeThis(): RenderSessionContextThis {
 		session: { retryAttempt: 0, modelRegistry: { find: () => undefined } },
 		toolOutputExpanded: false,
 		isInitialized: true,
-		pendingMessageIdentity: new PendingMessageIdentity(),
+		pendingMarkdownComponent: undefined,
 		updateEditorBorderColor: vi.fn(),
 		getRegisteredToolDefinition: (_toolName: string) => undefined,
 		renderSessionItems: (InteractiveMode.prototype as unknown as { renderSessionItems: RenderSessionItems })
 			.renderSessionItems,
+		applyMarkdownIdentityEvent: (
+			InteractiveMode.prototype as unknown as { applyMarkdownIdentityEvent: ApplyMarkdownIdentityEvent }
+		).applyMarkdownIdentityEvent,
 		addMessageToChat(message: AgentMessage) {
 			chatContainer.addChild(new Text(message.role, 0, 0));
 		},
 	};
+	return fakeThis;
 }
 
 function createAssistantToolCallMessage(): AssistantMessage {

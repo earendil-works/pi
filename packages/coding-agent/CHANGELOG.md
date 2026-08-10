@@ -5,6 +5,7 @@
 ### Added
 
 - Added a fullscreen exit output setting to choose between printing the final transcript and only a session resume hint.
+- Added `messageId`, `timestamp`, and `transientId` to `MarkdownTransformContext` so `registerMarkdownTransformer` extensions can key per-message display state. Live components receive canonical entry identity via `entry_appended` after user/assistant persistence. See [Extensions](docs/extensions.md#piregistermarkdowntransformertransformer) ([#7828](https://github.com/earendil-works/pi/issues/7828)).
 
 ### Changed
 

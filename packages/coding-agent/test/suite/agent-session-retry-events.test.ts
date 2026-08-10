@@ -12,7 +12,9 @@ function normalizeEventOrder(events: Harness["events"]): string[] {
 				? `${event.type}:${event.message.role}`
 				: event.type === "tool_execution_start" || event.type === "tool_execution_end"
 					? `${event.type}:${event.toolName}`
-					: event.type;
+					: event.type === "entry_appended" && event.entry.type === "message"
+						? `entry_appended:${event.entry.message.role}`
+						: event.type;
 		if (label === "message_update" && normalized[normalized.length - 1] === "message_update") {
 			continue;
 		}
@@ -248,11 +250,11 @@ describe("AgentSession retry and event characterization", () => {
 			"turn_start",
 			"message_start:user",
 			"message_end:user",
-			"message_persisted",
+			"entry_appended:user",
 			"message_start:assistant",
 			"message_update",
 			"message_end:assistant",
-			"message_persisted",
+			"entry_appended:assistant",
 			"turn_end",
 			"agent_end",
 			"agent_settled",
@@ -287,22 +289,21 @@ describe("AgentSession retry and event characterization", () => {
 			"turn_start",
 			"message_start:user",
 			"message_end:user",
-			"message_persisted",
+			"entry_appended:user",
 			"message_start:assistant",
 			"message_update",
 			"message_end:assistant",
-			"message_persisted",
+			"entry_appended:assistant",
 			"tool_execution_start:echo",
 			"tool_execution_end:echo",
 			"message_start:toolResult",
 			"message_end:toolResult",
-			"message_persisted",
 			"turn_end",
 			"turn_start",
 			"message_start:assistant",
 			"message_update",
 			"message_end:assistant",
-			"message_persisted",
+			"entry_appended:assistant",
 			"turn_end",
 			"agent_end",
 			"agent_settled",

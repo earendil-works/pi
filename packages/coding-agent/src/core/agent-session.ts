@@ -99,14 +99,7 @@ import { ModelRegistry } from "./model-registry.ts";
 import type { ModelRuntime } from "./model-runtime.ts";
 import { expandPromptTemplate, type PromptTemplate } from "./prompt-templates.ts";
 import type { ResourceExtensionPaths, ResourceLoader } from "./resource-loader.ts";
-import type {
-	BranchSummaryEntry,
-	CompactionEntry,
-	CustomMessageEntry,
-	SessionEntry,
-	SessionManager,
-	SessionMessageEntry,
-} from "./session-manager.ts";
+import type { BranchSummaryEntry, CompactionEntry, SessionEntry, SessionManager } from "./session-manager.ts";
 import { CURRENT_SESSION_VERSION, getLatestCompactionEntry, type SessionHeader } from "./session-manager.ts";
 import type { SettingsManager } from "./settings-manager.ts";
 import type { SlashCommandInfo } from "./slash-commands.ts";
@@ -160,7 +153,6 @@ export type AgentSessionEvent =
 	  }
 	| { type: "compaction_start"; reason: "manual" | "threshold" | "overflow" }
 	| { type: "entry_appended"; entry: SessionEntry }
-	| { type: "message_persisted"; entry: SessionMessageEntry | CustomMessageEntry }
 	| { type: "session_info_changed"; name: string | undefined }
 	| { type: "thinking_level_changed"; level: ThinkingLevel }
 	| {
@@ -646,34 +638,30 @@ export class AgentSession {
 
 		// Handle session persistence
 		if (event.type === "message_end") {
-			let entryId: string | undefined;
 			// Check if this is a custom message from extensions
 			if (event.message.role === "custom") {
-				// Persist as CustomMessageEntry
-				entryId = this.sessionManager.appendCustomMessageEntry(
+				// Persist as CustomMessageEntry. No entry_appended: custom messages do not
+				// own the built-in Markdown transformer identity handoff.
+				this.sessionManager.appendCustomMessageEntry(
 					event.message.customType,
 					event.message.content,
 					event.message.display,
 					event.message.details,
 				);
-			} else if (
-				event.message.role === "user" ||
-				event.message.role === "assistant" ||
-				event.message.role === "toolResult"
-			) {
-				// Regular LLM message - persist as SessionMessageEntry
-				entryId = this.sessionManager.appendMessage(event.message);
+			} else if (event.message.role === "user" || event.message.role === "assistant") {
+				// Persist and notify so InteractiveMode can attach canonical entry identity
+				// to the live Markdown component registered at message_start.
+				const entryId = this.sessionManager.appendMessage(event.message);
+				const entry = this.sessionManager.getEntry(entryId);
+				if (entry) {
+					this._emit({ type: "entry_appended", entry });
+				}
+			} else if (event.message.role === "toolResult") {
+				// Persist only. toolResult has no Markdown transformer component; do not
+				// emit entry_appended (avoids clobbering a pending user/assistant handoff).
+				this.sessionManager.appendMessage(event.message);
 			}
 			// Other message types (bashExecution, compactionSummary, branchSummary) are persisted elsewhere
-
-			// Emit the persisted entry so live-rendered components can attach the
-			// canonical entry identity (messageId/timestamp) after the fact.
-			if (entryId) {
-				const entry = this.sessionManager.getEntry(entryId);
-				if (entry && (entry.type === "message" || entry.type === "custom_message")) {
-					this._emit({ type: "message_persisted", entry });
-				}
-			}
 
 			// Track assistant message for auto-compaction (checked on agent_end)
 			if (event.message.role === "assistant") {

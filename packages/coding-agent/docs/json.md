@@ -23,7 +23,7 @@ type JsonAgentSessionEvent =
     };
 ```
 
-`queue_update` emits the full pending steering and follow-up queues whenever they change. `compaction_start` and `compaction_end` cover both manual and automatic compaction.
+`queue_update` emits the full pending steering and follow-up queues whenever they change. `compaction_start` and `compaction_end` cover both manual and automatic compaction. `entry_appended` fires when a custom entry is appended and when a user or assistant message entry is persisted (so UIs can attach canonical message identity to live Markdown). It is not emitted for `toolResult` or `custom_message` appends.
 
 Other base events come from
 [`AgentEvent`](https://github.com/earendil-works/pi-mono/blob/main/packages/agent/src/types.ts):
