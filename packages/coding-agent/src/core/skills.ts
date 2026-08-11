@@ -301,7 +301,9 @@ function loadSkillFromFile(
 		return { skill: null, diagnostics };
 	}
 
-	if (!isDeclaredSkill && (typeof frontmatter.description !== "string" || frontmatter.description.trim() === "")) {
+	const description = frontmatter.description;
+	const hasDescription = typeof description === "string" && description.trim() !== "";
+	if (!isDeclaredSkill && !hasDescription) {
 		return { skill: null, diagnostics };
 	}
 
@@ -310,7 +312,7 @@ function loadSkillFromFile(
 		const parentDirName = basename(skillDir);
 
 		// Validate description
-		const descErrors = validateDescription(frontmatter.description);
+		const descErrors = validateDescription(description);
 		for (const error of descErrors) {
 			diagnostics.push({ type: "warning", message: error, path: filePath });
 		}
@@ -324,14 +326,14 @@ function loadSkillFromFile(
 			diagnostics.push({ type: "warning", message: error, path: filePath });
 		}
 
-		if (typeof frontmatter.description !== "string" || frontmatter.description.trim() === "") {
+		if (!hasDescription) {
 			return { skill: null, diagnostics };
 		}
 
 		return {
 			skill: {
 				name,
-				description: frontmatter.description,
+				description,
 				filePath,
 				baseDir: skillDir,
 				sourceInfo: createSkillSourceInfo(filePath, skillDir, source),
