@@ -30,8 +30,10 @@ describe("SQLite FTS5 session search", () => {
 		await expect(search.search({ text: "auth", cwd: root })).resolves.toEqual([
 			expect.objectContaining({
 				entryId,
+				timestamp: expect.any(Number),
 				metadata: expect.objectContaining({
 					id: "included",
+					createdAt: expect.any(Number),
 					name: "Canonical name",
 					metadata: { name: "application-owned" },
 				}),

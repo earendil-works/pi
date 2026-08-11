@@ -133,6 +133,19 @@ describe("StdinBuffer", () => {
 
 			assert.deepStrictEqual(emittedSequences, ["\x1b[<35"]);
 		});
+
+		it("keeps fragmented mouse sequences buffered across delayed chunks by default", async () => {
+			const delayedBuffer = new StdinBuffer();
+			const delayedSequences: string[] = [];
+			delayedBuffer.on("data", (sequence) => delayedSequences.push(sequence));
+
+			delayedBuffer.process("\x1b[");
+			await wait(20);
+			assert.deepStrictEqual(delayedSequences, []);
+			delayedBuffer.process("<65;48;39M");
+			assert.deepStrictEqual(delayedSequences, ["\x1b[<65;48;39M"]);
+			delayedBuffer.destroy();
+		});
 	});
 
 	describe("Mixed Content", () => {
@@ -312,6 +325,17 @@ describe("StdinBuffer", () => {
 			// After timeout, should emit
 			await wait(15);
 			assert.deepStrictEqual(emittedSequences, ["\x1b"]);
+		});
+
+		it("flushes a lone escape promptly with the longer default sequence timeout", async () => {
+			const defaultBuffer = new StdinBuffer();
+			const defaultSequences: string[] = [];
+			defaultBuffer.on("data", (sequence) => defaultSequences.push(sequence));
+
+			defaultBuffer.process("\x1b");
+			await wait(20);
+			assert.deepStrictEqual(defaultSequences, ["\x1b"]);
+			defaultBuffer.destroy();
 		});
 
 		it("should handle lone escape character with explicit flush", () => {

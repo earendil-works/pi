@@ -14,7 +14,7 @@ export interface CachedBranchEntryRow {
 	entry_seq: number;
 	parent_id: string | null;
 	type: Entry["type"];
-	timestamp: string;
+	timestamp: number;
 	payload: string;
 }
 

@@ -10,7 +10,7 @@ export interface SessionSearchOptions {
 export interface SessionSearchHit<TMetadata extends SessionMetadata = SessionMetadata> {
 	metadata: TMetadata;
 	entryId: string;
-	timestamp: string;
+	timestamp: number;
 	snippet?: string;
 	score?: number;
 }
@@ -53,7 +53,7 @@ class ScanningSessionSearch<TMetadata extends SessionMetadata = SessionMetadata>
 				hits.push({
 					metadata,
 					entryId: entry.id,
-					timestamp: new Date(entry.timestamp).toISOString(),
+					timestamp: entry.timestamp,
 					snippet: payload,
 				});
 			}

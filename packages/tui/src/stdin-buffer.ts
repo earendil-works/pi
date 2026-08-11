@@ -20,6 +20,7 @@
 import { EventEmitter } from "events";
 
 const ESC = "\x1b";
+const LONE_ESCAPE_TIMEOUT_MS = 10;
 const BRACKETED_PASTE_START = "\x1b[200~";
 const BRACKETED_PASTE_END = "\x1b[201~";
 
@@ -256,8 +257,8 @@ function extractCompleteSequences(buffer: string): { sequences: string[]; remain
 
 export type StdinBufferOptions = {
 	/**
-	 * Maximum time to wait for sequence completion (default: 10ms)
-	 * After this time, the buffer is flushed even if incomplete
+	 * Maximum time to wait for sequence completion (default: 50ms).
+	 * A lone Escape uses at most 10ms to preserve keyboard responsiveness.
 	 */
 	timeout?: number;
 };
@@ -281,7 +282,7 @@ export class StdinBuffer extends EventEmitter<StdinBufferEventMap> {
 
 	constructor(options: StdinBufferOptions = {}) {
 		super();
-		this.timeoutMs = options.timeout ?? 10;
+		this.timeoutMs = options.timeout ?? 50;
 	}
 
 	public process(data: string | Buffer): void {
@@ -376,13 +377,14 @@ export class StdinBuffer extends EventEmitter<StdinBufferEventMap> {
 		}
 
 		if (this.buffer.length > 0) {
+			const timeoutMs = this.buffer === ESC ? Math.min(this.timeoutMs, LONE_ESCAPE_TIMEOUT_MS) : this.timeoutMs;
 			this.timeout = setTimeout(() => {
 				const flushed = this.flush();
 
 				for (const sequence of flushed) {
 					this.emitDataSequence(sequence);
 				}
-			}, this.timeoutMs);
+			}, timeoutMs);
 		}
 	}
 
