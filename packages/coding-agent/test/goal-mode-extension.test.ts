@@ -188,6 +188,7 @@ describe("goal-mode example extension", () => {
 		await runCommand("goal", "First goal");
 		expect(abort).toHaveBeenCalledTimes(1);
 		expect(sendUserMessage).not.toHaveBeenCalled();
+		await emit("agent_start", { type: "agent_start" });
 
 		await runCommand("goal", "Second goal");
 		expect(abort).toHaveBeenCalledTimes(2);
@@ -200,10 +201,38 @@ describe("goal-mode example extension", () => {
 		expect(sendUserMessage.mock.calls[0]?.[0]).toContain("Second goal");
 	});
 
+	it("ignores turn_end events from a goal that was replaced mid-run", async () => {
+		const { abort, emit, entries, runCommand, sendUserMessage, setIdle } = setup({ idle: false });
+
+		await runCommand("goal", "First goal");
+		expect(abort).toHaveBeenCalledTimes(1);
+		await emit("agent_start", { type: "agent_start" });
+
+		await runCommand("goal", "Second goal");
+		expect(abort).toHaveBeenCalledTimes(2);
+
+		await emit("turn_end", {
+			type: "turn_end",
+			turnIndex: 1,
+			message: createAssistantMessage("First goal progress"),
+			toolResults: [],
+		});
+
+		const latest = customData(entries.at(-1)) as { objective?: string; progress?: string[] };
+		expect(latest.objective).toBe("Second goal");
+		expect(latest.progress ?? []).not.toContain(expect.stringContaining("First goal progress"));
+
+		setIdle(true);
+		await emit("agent_settled", { type: "agent_settled" });
+		expect(sendUserMessage).toHaveBeenCalledTimes(1);
+		expect(sendUserMessage.mock.calls[0]?.[0]).toContain("Second goal");
+	});
+
 	it("does not restart a cleared goal after an in-flight set was aborted", async () => {
 		const { abort, emit, runCommand, sendUserMessage, setIdle } = setup({ idle: false });
 
 		await runCommand("goal", "First goal");
+		await emit("agent_start", { type: "agent_start" });
 		await runCommand("goal", "clear");
 		expect(abort).toHaveBeenCalledTimes(2);
 
@@ -289,6 +318,7 @@ describe("goal-mode example extension", () => {
 		const { emit, runCommand, entries } = setup();
 
 		await runCommand("goal", "Fix tests");
+		await emit("agent_start", { type: "agent_start" });
 		const assistant = createAssistantMessage("Ran the suite and fixed one failure");
 		await emit("turn_end", {
 			type: "turn_end",
@@ -354,6 +384,7 @@ describe("goal-mode example extension", () => {
 		const { emit, runCommand, entries } = setup();
 
 		await runCommand("goal", "Fix tests --tokens 10");
+		await emit("agent_start", { type: "agent_start" });
 		entries.push({
 			type: "message",
 			message: {
@@ -427,6 +458,7 @@ describe("goal-mode example extension", () => {
 		const { emit, entries, notify, runCommand } = setup();
 
 		await runCommand("goal", "Fix tests --tokens 10");
+		await emit("agent_start", { type: "agent_start" });
 		entries.push({
 			type: "message",
 			message: {
@@ -522,6 +554,7 @@ describe("goal-mode example extension", () => {
 		} as SessionEntry);
 		await emit("session_tree", { type: "session_tree", newLeafId: "goal-again", oldLeafId: "cleared" });
 		expect(setStatus).toHaveBeenLastCalledWith("goal-mode", "mode: goal");
+		await emit("agent_settled", { type: "agent_settled" });
 		expect(sendUserMessage).toHaveBeenCalledTimes(1);
 	});
 

@@ -144,6 +144,7 @@ function setGoal(
 	next: GoalState | undefined,
 	options: { notify?: string } = {},
 ): void {
+	bumpGoalVersion();
 	goal = next;
 	persistGoal(pi, goal);
 	updateStatus(pi, ctx);
@@ -237,6 +238,7 @@ function reportWaitingForUser(ctx: ExtensionContext): void {
 
 function transitionBudgetLimited(pi: ExtensionAPI, ctx: ExtensionContext): void {
 	if (!goal) return;
+	bumpGoalVersion();
 	pendingRestart = false;
 	const limited = { ...goal, status: "budget_limited" as const, updatedAt: Date.now() };
 	goal = limited;
@@ -251,6 +253,12 @@ function transitionBudgetLimited(pi: ExtensionAPI, ctx: ExtensionContext): void 
 let goal: GoalState | undefined;
 let pendingRestart = false;
 let continuationQueued = false;
+let goalVersion = 0;
+let activeRunGoalVersion = -1;
+
+function bumpGoalVersion(): void {
+	goalVersion++;
+}
 
 export default function goalModeExtension(pi: ExtensionAPI): void {
 	pi.registerFlag("goal", {
@@ -370,6 +378,7 @@ export default function goalModeExtension(pi: ExtensionAPI): void {
 						`Completed: ${params.evidence.replace(/\s+/g, " ").trim().slice(0, 200)}`,
 					].slice(-20),
 				};
+				bumpGoalVersion();
 				goal = completed;
 				pendingRestart = false;
 				continuationQueued = false;
@@ -390,6 +399,8 @@ export default function goalModeExtension(pi: ExtensionAPI): void {
 	pi.on("session_start", async (event, ctx) => {
 		pendingRestart = false;
 		continuationQueued = false;
+		activeRunGoalVersion = -1;
+		bumpGoalVersion();
 		goal = getLatestGoalState(ctx.sessionManager.getBranch());
 
 		if (event.reason === "startup") {
@@ -413,11 +424,14 @@ export default function goalModeExtension(pi: ExtensionAPI): void {
 	pi.on("session_tree", async (_event, ctx) => {
 		pendingRestart = false;
 		continuationQueued = false;
+		activeRunGoalVersion = -1;
+		bumpGoalVersion();
 		goal = getLatestGoalState(ctx.sessionManager.getBranch());
 		updateStatus(pi, ctx);
 	});
 
 	pi.on("turn_end", async (event, ctx) => {
+		if (activeRunGoalVersion !== goalVersion) return;
 		if (!goal || goal.status !== "active") return;
 
 		const text = getAssistantText(event.message);
@@ -433,9 +447,11 @@ export default function goalModeExtension(pi: ExtensionAPI): void {
 
 	pi.on("agent_start", async () => {
 		continuationQueued = false;
+		activeRunGoalVersion = goalVersion;
 	});
 
 	pi.on("agent_settled", async (_event, ctx) => {
+		if (activeRunGoalVersion === -1) return;
 		if (!goal || goal.status !== "active") return;
 		if (ctx.hasPendingMessages()) return;
 		if (pendingRestart) {
