@@ -25,7 +25,9 @@ describe("regression #7925: tool-call metadata is available when streaming start
 		const update = harness
 			.eventsOfType("message_update")
 			.find((event) => event.assistantMessageEvent.type === "toolcall_start");
-		if (!update) throw new Error("Expected toolcall_start update");
+		if (!update || update.message.role !== "assistant") {
+			throw new Error("Expected toolcall_start assistant update");
+		}
 
 		expect(toJsonEvent(update)).toEqual({
 			type: "message_update",
