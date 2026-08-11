@@ -10,10 +10,6 @@
 
 - Replaced the inherited Mistral SDK transport with a native Chat Completions HTTP stream, eliminating its generated client and schema runtime overhead.
 
-### Fixed
-
-- Fixed Markdown documentation files being loaded as skills from configured skill directories ([#7924](https://github.com/earendil-works/pi/pull/7924) by [@muyiyr](https://github.com/muyiyr)).
-
 ## [0.84.1] - 2026-08-07
 
 ### New Features
