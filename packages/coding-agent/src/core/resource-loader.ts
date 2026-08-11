@@ -162,6 +162,7 @@ export interface DefaultResourceLoaderOptions {
 	eventBus?: EventBus;
 	additionalExtensionPaths?: string[];
 	additionalSkillPaths?: string[];
+	candidateSkillDirectories?: string[];
 	additionalPromptTemplatePaths?: string[];
 	additionalThemePaths?: string[];
 	extensionFactories?: InlineExtension[];
@@ -200,6 +201,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 	private packageManager: DefaultPackageManager;
 	private additionalExtensionPaths: string[];
 	private additionalSkillPaths: string[];
+	private candidateSkillDirectories: string[];
 	private additionalPromptTemplatePaths: string[];
 	private additionalThemePaths: string[];
 	private extensionFactories: InlineExtension[];
@@ -262,6 +264,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 		});
 		this.additionalExtensionPaths = options.additionalExtensionPaths ?? [];
 		this.additionalSkillPaths = options.additionalSkillPaths ?? [];
+		this.candidateSkillDirectories = options.candidateSkillDirectories ?? [];
 		this.additionalPromptTemplatePaths = options.additionalPromptTemplatePaths ?? [];
 		this.additionalThemePaths = options.additionalThemePaths ?? [];
 		this.extensionFactories = options.extensionFactories ?? [];
@@ -677,6 +680,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 				cwd: this.cwd,
 				agentDir: this.agentDir,
 				skillPaths,
+				candidateSkillDirectories: this.candidateSkillDirectories,
 				includeDefaults: false,
 			});
 		}

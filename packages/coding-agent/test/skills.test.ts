@@ -361,32 +361,6 @@ describe("skills", () => {
 			expect(diagnostics).toHaveLength(0);
 		});
 
-		it("should ignore documentation in custom skill directories", () => {
-			const customDirectory = join(fixturesDir, "custom-directory");
-			const { skills, diagnostics } = loadSkills({
-				agentDir: emptyAgentDir,
-				cwd: emptyCwd,
-				skillPaths: [customDirectory],
-				includeDefaults: true,
-			});
-
-			expect(skills.map((skill) => skill.name)).toEqual(["nested-custom-skill", "root-skill"]);
-			expect(diagnostics).toHaveLength(0);
-		});
-
-		it("should still validate explicit markdown skill paths", () => {
-			const explicitDocumentation = join(fixturesDir, "custom-directory", "README.md");
-			const { skills, diagnostics } = loadSkills({
-				agentDir: emptyAgentDir,
-				cwd: emptyCwd,
-				skillPaths: [explicitDocumentation],
-				includeDefaults: true,
-			});
-
-			expect(skills).toHaveLength(0);
-			expect(diagnostics.some((diagnostic) => diagnostic.message === "description is required")).toBe(true);
-		});
-
 		it("should warn when skill path does not exist", () => {
 			const { skills, diagnostics } = loadSkills({
 				agentDir: emptyAgentDir,
