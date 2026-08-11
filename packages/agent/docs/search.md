@@ -95,7 +95,7 @@ JSONL only adds discovery/loading before using the same scanner:
 const jsonlSearch = createJsonlScanningSessionSearch({ fs, sessionsRoot });
 ```
 
-A scanning source must not call `SessionRepo.open()` on a harness-owned session if that operation may claim a writer lease. JSONL uses read-only loading helpers; memory wraps already-owned sessions/storages.
+A scanning source must not call `SessionRepo.open()` on a harness-owned session if that operation may claim a writer lease. JSONL uses read-only loading helpers; already-open sessions/storages can be scanned directly.
 
 ### SQLite FTS
 

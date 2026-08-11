@@ -24,7 +24,7 @@ function validateSessionId(id: string): void {
 	}
 }
 
-export function jsonlSessionDirectoryName(cwd: string): string {
+function jsonlSessionDirectoryName(cwd: string): string {
 	return `--${cwd.replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`;
 }
 
