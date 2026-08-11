@@ -13,6 +13,7 @@
  * Modes use this class and add their own I/O layer on top.
  */
 
+import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname } from "node:path";
 import type {
@@ -21,10 +22,12 @@ import type {
 	AgentMessage,
 	AgentState,
 	AgentTool,
+	AgentToolResult,
+	AgentToolUpdateCallback,
 	PrepareNextTurnContext,
 	ThinkingLevel,
 } from "@earendil-works/pi-agent-core";
-import { contentText } from "@earendil-works/pi-ai";
+import { contentText, validateToolArguments } from "@earendil-works/pi-ai";
 import type {
 	AssistantMessage,
 	AuthResult,
@@ -52,6 +55,14 @@ import { resolvePath } from "../utils/paths.ts";
 import { sleep } from "../utils/sleep.ts";
 import { normalizeToolResultImages } from "../utils/tool-result-images.ts";
 import { formatNoApiKeyFoundMessage, formatNoModelSelectedMessage } from "./auth-guidance.ts";
+import {
+	type AuthorizationActionSnapshot,
+	type AuthorizationDecision,
+	type AuthorizationGrant,
+	classifyToolAuthorization,
+	createAuthorizationAction,
+	fingerprintAuthorizationAction,
+} from "./authorization.ts";
 import { type BashResult, executeBashWithOperations } from "./bash-executor.ts";
 import {
 	type CompactionResult,
@@ -479,17 +490,25 @@ export class AgentSession {
 	private _installAgentToolHooks(): void {
 		this.agent.beforeToolCall = async ({ toolCall, args }) => {
 			const runner = this._extensionRunner;
-			if (!runner.hasHandlers("tool_call")) {
-				return undefined;
-			}
-
 			try {
-				return await runner.emitToolCall({
-					type: "tool_call",
-					toolName: toolCall.name,
-					toolCallId: toolCall.id,
-					input: args as Record<string, unknown>,
-				});
+				const hookResult = runner.hasHandlers("tool_call")
+					? await runner.emitToolCall({
+							type: "tool_call",
+							toolName: toolCall.name,
+							toolCallId: toolCall.id,
+							input: args as Record<string, unknown>,
+						})
+					: undefined;
+				if (hookResult?.block) return hookResult;
+				const authorizer = runner.getRegisteredAuthorizer();
+				if (!authorizer) return hookResult;
+				const action = await this.captureToolAction(toolCall.name, args as Record<string, unknown>, toolCall.id);
+				const decision = await authorizer.authorize(action, { grants: [] });
+				if (decision.kind === "permit") return hookResult;
+				return {
+					block: true,
+					reason: this._authorizationBlockReason(decision, action),
+				};
 			} catch (err) {
 				if (err instanceof Error) {
 					throw err;
@@ -911,8 +930,137 @@ export class AgentSession {
 			description: definition.description,
 			parameters: definition.parameters,
 			promptGuidelines: definition.promptGuidelines,
+			authorization: definition.authorization,
 			sourceInfo,
 		}));
+	}
+
+	private _validatedToolInput(
+		definition: ToolDefinition,
+		toolCallId: string,
+		input: Record<string, unknown>,
+	): Record<string, unknown> {
+		const prepared = definition.prepareArguments?.(input) ?? input;
+		return validateToolArguments(definition, {
+			type: "toolCall",
+			id: toolCallId,
+			name: definition.name,
+			arguments: prepared as Record<string, unknown>,
+		});
+	}
+
+	async captureToolAction(
+		toolName: string,
+		input: Record<string, unknown>,
+		toolCallId: string = randomUUID(),
+	): Promise<AuthorizationActionSnapshot> {
+		const definition = this.getToolDefinition(toolName);
+		if (!definition) throw new Error(`Tool ${toolName} is not registered`);
+		const authorizer = this._extensionRunner.getRegisteredAuthorizer();
+		if (!authorizer) throw new Error("No tool authorizer is registered");
+		const policyRevision = authorizer.getPolicyRevision();
+		const validatedInput = this._validatedToolInput(definition, toolCallId, input);
+		const authorization = definition.authorization ?? {
+			operation: "tool.invoke",
+			effect: "execute" as const,
+			capabilities: [`tool.${toolName}`],
+			resources: [{ kind: "tool", value: toolName }],
+		};
+		const descriptor = classifyToolAuthorization(authorization, validatedInput, {
+			cwd: this._cwd,
+			sessionId: this.sessionId,
+			policyRevision,
+			toolCallId,
+		});
+		return createAuthorizationAction({
+			toolCallId,
+			toolName,
+			input: validatedInput,
+			cwd: this._cwd,
+			sessionId: this.sessionId,
+			policyRevision,
+			descriptor,
+		});
+	}
+
+	private _authorizationBlockReason(
+		decision: Exclude<AuthorizationDecision, { kind: "permit" }>,
+		action: AuthorizationActionSnapshot,
+	): string {
+		const reasons = decision.reasons.map((reason) => `${reason.code}: ${reason.message}`).join("\n");
+		if (decision.kind === "reject") return reasons;
+		return `${reasons}\n\nAuthorization requires consent for action ${action.fingerprint}. Use may_request with the exact target tool and input.`;
+	}
+
+	async executeAuthorized(
+		action: AuthorizationActionSnapshot,
+		grant: AuthorizationGrant,
+		options?: { signal?: AbortSignal; onUpdate?: AgentToolUpdateCallback },
+	): Promise<AgentToolResult<unknown>> {
+		if (action.sessionId !== this.sessionId || grant.scope.sessionId !== this.sessionId) {
+			throw new Error("Authorized action does not belong to the active session");
+		}
+		if (grant.expiresAt !== undefined && grant.expiresAt <= Date.now()) {
+			throw new Error("Authorization grant has expired");
+		}
+		if (
+			grant.constraints.actionFingerprint !== undefined &&
+			grant.constraints.actionFingerprint !== action.fingerprint
+		) {
+			throw new Error("Authorization grant does not match the captured action");
+		}
+		const { fingerprint: _fingerprint, ...unsignedAction } = action;
+		if (fingerprintAuthorizationAction(unsignedAction) !== action.fingerprint) {
+			throw new Error("Authorized action fingerprint is invalid");
+		}
+		const definition = this.getToolDefinition(action.toolName);
+		const tool = this._toolRegistry.get(action.toolName);
+		if (!definition || !tool) throw new Error(`Tool ${action.toolName} is not registered`);
+		const finalInput = structuredClone(action.input) as Record<string, unknown>;
+		const hookResult = this._extensionRunner.hasHandlers("tool_call")
+			? await this._extensionRunner.emitToolCall({
+					type: "tool_call",
+					toolName: action.toolName,
+					toolCallId: action.toolCallId,
+					input: finalInput,
+				})
+			: undefined;
+		if (hookResult?.block) throw new Error(hookResult.reason || "Tool execution was blocked");
+		const currentAction = await this.captureToolAction(action.toolName, finalInput, action.toolCallId);
+		if (currentAction.fingerprint !== action.fingerprint) {
+			throw new Error("Authorized action changed before execution");
+		}
+		const authorizer = this._extensionRunner.getRegisteredAuthorizer();
+		if (!authorizer) throw new Error("No tool authorizer is registered");
+		const decision = await authorizer.authorize(currentAction, { grants: [grant] });
+		if (decision.kind !== "permit") throw new Error(this._authorizationBlockReason(decision, currentAction));
+		const result = await tool.execute(
+			action.toolCallId,
+			currentAction.input as Record<string, unknown>,
+			options?.signal,
+			options?.onUpdate,
+		);
+		const resultHook = this._extensionRunner.hasHandlers("tool_result")
+			? await this._extensionRunner.emitToolResult({
+					type: "tool_result",
+					toolName: action.toolName,
+					toolCallId: action.toolCallId,
+					input: currentAction.input as Record<string, unknown>,
+					content: result.content,
+					details: result.details,
+					isError: false,
+					usage: result.usage,
+				})
+			: undefined;
+		const content = await normalizeToolResultImages(resultHook?.content ?? result.content ?? [], {
+			autoResizeImages: this.settingsManager.getImageAutoResize(),
+		});
+		return {
+			...result,
+			content,
+			details: resultHook?.details ?? result.details,
+			usage: resultHook?.usage ?? result.usage,
+		};
 	}
 
 	getToolDefinition(name: string): ToolDefinition | undefined {
@@ -2401,6 +2549,8 @@ export class AgentSession {
 				getActiveTools: () => this.getActiveToolNames(),
 				getAllTools: () => this.getAllTools(),
 				setActiveTools: (toolNames) => this.setActiveToolsByName(toolNames),
+				captureToolAction: (toolName, input, toolCallId) => this.captureToolAction(toolName, input, toolCallId),
+				executeAuthorized: (action, grant, options) => this.executeAuthorized(action, grant, options),
 				refreshTools: () => this._refreshToolRegistry(),
 				getCommands,
 				setModel: async (model) => {

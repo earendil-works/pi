@@ -4,6 +4,7 @@
 
 ### Added
 
+- Added a single final tool-authorizer registration, semantic tool metadata, immutable action fingerprints, and trusted execution of approved captured actions.
 - Added a fullscreen exit output setting to choose between printing the final transcript and only a session resume hint.
 
 ### Changed

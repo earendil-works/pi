@@ -26,6 +26,7 @@ import { CONFIG_DIR_NAME, getAgentDir, isBunBinary } from "../../config.ts";
 // avoiding a circular dependency. Extensions can import from @earendil-works/pi-coding-agent.
 import * as _bundledPiCodingAgent from "../../index.ts";
 import { resolvePath } from "../../utils/paths.ts";
+import type { ToolAuthorizer } from "../authorization.ts";
 import { createEventBus, type EventBus } from "../event-bus.ts";
 import type { ExecOptions } from "../exec.ts";
 import { execCommand } from "../exec.ts";
@@ -193,6 +194,8 @@ export function createExtensionRuntime(): ExtensionRuntime {
 		getActiveTools: notInitialized,
 		getAllTools: notInitialized,
 		setActiveTools: notInitialized,
+		captureToolAction: () => Promise.reject(new Error("Extension runtime not initialized")),
+		executeAuthorized: () => Promise.reject(new Error("Extension runtime not initialized")),
 		// registerTool() is valid during extension load; refresh is only needed post-bind.
 		refreshTools: () => {},
 		getCommands: notInitialized,
@@ -268,6 +271,12 @@ function createExtensionAPI(
 				sourceInfo: extension.sourceInfo,
 			});
 			runtime.refreshTools();
+		},
+
+		registerAuthorizer(authorizer: ToolAuthorizer): void {
+			runtime.assertActive();
+			if (extension.authorizer) throw new Error(`Extension ${extension.path} registered more than one authorizer`);
+			extension.authorizer = authorizer;
 		},
 
 		registerCommand(name: string, options: Omit<RegisteredCommand, "name" | "sourceInfo">): void {
@@ -373,6 +382,16 @@ function createExtensionAPI(
 		setActiveTools(toolNames: string[]): void {
 			runtime.assertActive();
 			runtime.setActiveTools(toolNames);
+		},
+
+		captureToolAction(toolName, input, toolCallId) {
+			runtime.assertActive();
+			return runtime.captureToolAction(toolName, input, toolCallId);
+		},
+
+		executeAuthorized(action, grant, options) {
+			runtime.assertActive();
+			return runtime.executeAuthorized(action, grant, options);
 		},
 
 		getCommands() {

@@ -24,6 +24,30 @@ export {
 	type SessionStats,
 } from "./core/agent-session.ts";
 export { readStoredCredential } from "./core/auth-storage.ts";
+export {
+	AUTHORIZATION_SCHEMA_VERSION,
+	type AuthorizationActionSnapshot,
+	type AuthorizationClassificationContext,
+	type AuthorizationClassifier,
+	type AuthorizationDecision,
+	type AuthorizationDescriptor,
+	type AuthorizationEffect,
+	type AuthorizationEvaluationContext,
+	type AuthorizationGrant,
+	type AuthorizationReason,
+	type AuthorizationResource,
+	type Capability,
+	type CreateAuthorizationActionInput,
+	classifyToolAuthorization,
+	createAuthorizationAction,
+	fingerprintAuthorizationAction,
+	type GrantConstraints,
+	type GrantScope,
+	type GrantScopeKind,
+	type ModeProfile,
+	type ToolAuthorization,
+	type ToolAuthorizer,
+} from "./core/authorization.ts";
 // Compaction
 export {
 	type BranchPreparation,

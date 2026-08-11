@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Revalidate tool arguments after pre-execution hooks so hook mutations cannot bypass the registered schema.
+
 ### Fixed
 
 - Fixed `streamProxy()` dropping finalized tool-call metadata such as OpenAI Responses namespaces ([#7709](https://github.com/earendil-works/pi/issues/7709)).

@@ -46,6 +46,12 @@ import type {
 } from "@earendil-works/pi-tui";
 import type { Static, TSchema } from "typebox";
 import type { Theme } from "../../modes/interactive/theme/theme.ts";
+import type {
+	AuthorizationActionSnapshot,
+	AuthorizationGrant,
+	ToolAuthorization,
+	ToolAuthorizer,
+} from "../authorization.ts";
 import type { BashResult } from "../bash-executor.ts";
 import type { CompactionPreparation, CompactionResult } from "../compaction/index.ts";
 import type { EventBus } from "../event-bus.ts";
@@ -459,6 +465,7 @@ export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = un
 	promptGuidelines?: string[];
 	/** Parameter schema (TypeBox) */
 	parameters: TParams;
+	authorization?: ToolAuthorization<Static<TParams>>;
 	/** Optional provider-side constrained sampling request for this tool. Set false to explicitly disable it, equivalent to leaving it undefined. */
 	constrainedSampling?: false | ConstrainedSamplingConfig;
 	/** Controls whether ToolExecutionComponent renders the standard colored shell or the tool renders its own framing. */
@@ -1252,6 +1259,8 @@ export interface ExtensionAPI {
 		tool: ToolDefinition<TParams, TDetails, TState>,
 	): void;
 
+	registerAuthorizer(authorizer: ToolAuthorizer): void;
+
 	// =========================================================================
 	// Command, Shortcut, Flag Registration
 	// =========================================================================
@@ -1340,6 +1349,18 @@ export interface ExtensionAPI {
 
 	/** Set the active tools by name. */
 	setActiveTools(toolNames: string[]): void;
+
+	captureToolAction(
+		toolName: string,
+		input: Record<string, unknown>,
+		toolCallId?: string,
+	): Promise<AuthorizationActionSnapshot>;
+
+	executeAuthorized(
+		action: AuthorizationActionSnapshot,
+		grant: AuthorizationGrant,
+		options?: { signal?: AbortSignal; onUpdate?: AgentToolUpdateCallback },
+	): Promise<AgentToolResult<unknown>>;
 
 	/** Get available slash commands in the current session. */
 	getCommands(): SlashCommandInfo[];
@@ -1571,8 +1592,11 @@ export type GetSessionNameHandler = () => string | undefined;
 
 export type GetActiveToolsHandler = () => string[];
 
-/** Tool info with name, description, parameter schema, prompt guidelines, and source metadata. */
-export type ToolInfo = Pick<ToolDefinition, "name" | "description" | "parameters" | "promptGuidelines"> & {
+/** Tool info with name, description, parameter schema, prompt guidelines, authorization metadata, and source metadata. */
+export type ToolInfo = Pick<
+	ToolDefinition,
+	"name" | "description" | "parameters" | "promptGuidelines" | "authorization"
+> & {
 	sourceInfo: SourceInfo;
 };
 
@@ -1581,6 +1605,18 @@ export type GetAllToolsHandler = () => ToolInfo[];
 export type GetCommandsHandler = () => SlashCommandInfo[];
 
 export type SetActiveToolsHandler = (toolNames: string[]) => void;
+
+export type CaptureToolActionHandler = (
+	toolName: string,
+	input: Record<string, unknown>,
+	toolCallId?: string,
+) => Promise<AuthorizationActionSnapshot>;
+
+export type ExecuteAuthorizedHandler = (
+	action: AuthorizationActionSnapshot,
+	grant: AuthorizationGrant,
+	options?: { signal?: AbortSignal; onUpdate?: AgentToolUpdateCallback },
+) => Promise<AgentToolResult<unknown>>;
 
 export type RefreshToolsHandler = () => void;
 
@@ -1633,6 +1669,8 @@ export interface ExtensionActions {
 	getActiveTools: GetActiveToolsHandler;
 	getAllTools: GetAllToolsHandler;
 	setActiveTools: SetActiveToolsHandler;
+	captureToolAction?: CaptureToolActionHandler;
+	executeAuthorized?: ExecuteAuthorizedHandler;
 	refreshTools: RefreshToolsHandler;
 	getCommands: GetCommandsHandler;
 	setModel: SetModelHandler;
@@ -1689,7 +1727,10 @@ export interface ExtensionCommandContextActions {
  * Full runtime = state + actions.
  * Created by loader with throwing action stubs, completed by runner.initialize().
  */
-export interface ExtensionRuntime extends ExtensionRuntimeState, ExtensionActions {}
+export interface ExtensionRuntime extends ExtensionRuntimeState, ExtensionActions {
+	captureToolAction: CaptureToolActionHandler;
+	executeAuthorized: ExecuteAuthorizedHandler;
+}
 
 /** Loaded extension with all registered items. */
 export interface Extension {
@@ -1699,6 +1740,7 @@ export interface Extension {
 	sourceInfo: SourceInfo;
 	handlers: Map<string, HandlerFn[]>;
 	tools: Map<string, RegisteredTool>;
+	authorizer?: ToolAuthorizer;
 	messageRenderers: Map<string, MessageRenderer>;
 	markdownTransformer?: MarkdownTransformer;
 	entryRenderers?: Map<string, EntryRenderer>;

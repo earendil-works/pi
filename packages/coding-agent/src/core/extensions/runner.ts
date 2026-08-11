@@ -6,6 +6,7 @@ import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { ImageContent, Model, Provider, ProviderHeaders } from "@earendil-works/pi-ai";
 import type { KeyId } from "@earendil-works/pi-tui";
 import { type Theme, theme } from "../../modes/interactive/theme/theme.ts";
+import type { ToolAuthorizer } from "../authorization.ts";
 import type { ResourceDiagnostic } from "../diagnostics.ts";
 import type { KeybindingsConfig } from "../keybindings.ts";
 import type { ModelRegistry } from "../model-registry.ts";
@@ -330,6 +331,8 @@ export class ExtensionRunner {
 		this.runtime.getActiveTools = actions.getActiveTools;
 		this.runtime.getAllTools = actions.getAllTools;
 		this.runtime.setActiveTools = actions.setActiveTools;
+		if (actions.captureToolAction) this.runtime.captureToolAction = actions.captureToolAction;
+		if (actions.executeAuthorized) this.runtime.executeAuthorized = actions.executeAuthorized;
 		this.runtime.refreshTools = actions.refreshTools;
 		this.runtime.getCommands = actions.getCommands;
 		this.runtime.setModel = actions.setModel;
@@ -458,6 +461,18 @@ export class ExtensionRunner {
 			}
 		}
 		return Array.from(toolsByName.values());
+	}
+
+	getRegisteredAuthorizer(): ToolAuthorizer | undefined {
+		const registrations = this.extensions.flatMap((extension) =>
+			extension.authorizer ? [{ authorizer: extension.authorizer, path: extension.path }] : [],
+		);
+		if (registrations.length > 1) {
+			throw new Error(
+				`Multiple tool authorizers registered: ${registrations.map((registration) => registration.path).join(", ")}`,
+			);
+		}
+		return registrations[0]?.authorizer;
 	}
 
 	/** Get a tool definition by name. Returns undefined if not found. */

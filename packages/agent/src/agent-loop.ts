@@ -652,11 +652,15 @@ async function prepareToolCall(
 				isError: true,
 			};
 		}
+		const finalArgs = validateToolArguments(tool, {
+			...preparedToolCall,
+			arguments: validatedArgs as AgentToolCall["arguments"],
+		});
 		return {
 			kind: "prepared",
 			toolCall,
 			tool,
-			args: validatedArgs,
+			args: finalArgs,
 		};
 	} catch (error) {
 		return {
