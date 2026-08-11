@@ -391,10 +391,15 @@ function streamCustomAnthropic(
 			const client = new Anthropic(clientOptions);
 
 			// Build request params
+			const maxTokens =
+				options?.maxTokens ?? (model.maxTokens === undefined ? undefined : Math.floor(model.maxTokens / 3));
+			if (maxTokens === undefined) {
+				throw new Error(`Anthropic Messages requires maxTokens for ${model.provider}/${model.id}`);
+			}
 			const params: MessageCreateParamsStreaming = {
 				model: model.id,
 				messages: convertMessages(context.messages, isOAuth, context.tools),
-				max_tokens: options?.maxTokens || Math.floor(model.maxTokens / 3),
+				max_tokens: maxTokens,
 				stream: true,
 			};
 

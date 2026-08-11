@@ -164,4 +164,21 @@ describe("generateSummary reasoning options", () => {
 		});
 		expect(completeSimpleMock.mock.calls.map((call) => call[2]?.maxTokens)).toEqual([128000, 128000]);
 	});
+
+	it("uses the compaction budgets when the model omits maxTokens", async () => {
+		const preparation: CompactionPreparation = {
+			firstKeptEntryId: "entry-keep",
+			messagesToSummarize: messages,
+			turnPrefixMessages: messages,
+			isSplitTurn: true,
+			tokensBefore: 3000,
+			fileOps: { read: new Set(), written: new Set(), edited: new Set() },
+			settings: { enabled: true, reserveTokens: 2000, keepRecentTokens: 200 },
+		};
+		const { maxTokens: _maxTokens, ...model } = createModel(false);
+
+		await compact(preparation, model, "test-key");
+
+		expect(completeSimpleMock.mock.calls.map((call) => call[2]?.maxTokens)).toEqual([1600, 1000]);
+	});
 });

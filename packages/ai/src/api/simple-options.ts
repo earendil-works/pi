@@ -24,6 +24,7 @@ export function buildBaseOptions(
 	options?: SimpleStreamOptions,
 	apiKey?: string,
 ): StreamOptions {
+	const maxTokens = options?.maxTokens ?? model.maxTokens;
 	const samplingParams =
 		model.samplingParams || options?.samplingParams
 			? { ...model.samplingParams, ...options?.samplingParams }
@@ -31,7 +32,7 @@ export function buildBaseOptions(
 	return {
 		temperature: options?.temperature,
 		samplingParams,
-		maxTokens: clampMaxTokensToContext(model, context, options?.maxTokens ?? model.maxTokens),
+		maxTokens: maxTokens === undefined ? undefined : clampMaxTokensToContext(model, context, maxTokens),
 		signal: options?.signal,
 		telemetryContext: options?.telemetryContext,
 		apiKey: apiKey || options?.apiKey,

@@ -259,6 +259,7 @@ describe("ModelRegistry", () => {
 			expect(model).toBeDefined();
 			expect(model?.api).toBe("openai-completions");
 			expect(model?.baseUrl).toBe("https://openrouter.ai/api/v1");
+			expect(model?.maxTokens).toBeUndefined();
 		});
 
 		test("non-built-in provider custom models still require baseUrl", async () => {

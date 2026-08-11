@@ -730,8 +730,8 @@ interface ProviderModelConfig {
   /** Maximum context window size in tokens. */
   contextWindow: number;
 
-  /** Maximum output tokens. */
-  maxTokens: number;
+  /** Maximum output tokens and the default request limit when set. */
+  maxTokens?: number;
 
   /** Custom headers for this specific model. */
   headers?: Record<string, string>;

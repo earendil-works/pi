@@ -636,7 +636,7 @@ export async function generateSummaryWithUsage(
 ): Promise<{ text: string; usage: Usage }> {
 	const maxTokens = Math.min(
 		Math.floor(0.8 * reserveTokens),
-		model.maxTokens > 0 ? model.maxTokens : Number.POSITIVE_INFINITY,
+		model.maxTokens !== undefined && model.maxTokens > 0 ? model.maxTokens : Number.POSITIVE_INFINITY,
 	);
 
 	// Use update prompt if we have a previous summary, otherwise initial prompt
@@ -936,7 +936,7 @@ async function generateTurnPrefixSummary(
 ): Promise<{ text: string; usage: Usage }> {
 	const maxTokens = Math.min(
 		Math.floor(0.5 * reserveTokens),
-		model.maxTokens > 0 ? model.maxTokens : Number.POSITIVE_INFINITY,
+		model.maxTokens !== undefined && model.maxTokens > 0 ? model.maxTokens : Number.POSITIVE_INFINITY,
 	); // Smaller budget for turn prefix
 	const llmMessages = convertToLlm(messages);
 	const conversationText = serializeConversation(llmMessages);

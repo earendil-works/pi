@@ -65,7 +65,7 @@ export const ModelMetadataSchema = StrictObject({
 	reasoning: Type.Boolean(),
 	input: Type.Array(Type.Union([Type.Literal("text"), Type.Literal("image")])),
 	contextWindow: Type.Integer({ minimum: 1 }),
-	maxTokens: Type.Integer({ minimum: 1 }),
+	maxTokens: Type.Optional(Type.Integer({ minimum: 1 })),
 	cost: ModelCostSchema,
 	supportedThinkingLevels: Type.Array(ThinkingLevelSchema, { minItems: 1 }),
 	authenticated: Type.Boolean(),

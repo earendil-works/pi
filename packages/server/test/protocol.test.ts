@@ -91,6 +91,13 @@ describe("pi-ai protocol bridge", () => {
 		expect(result.supportedThinkingLevels).toContain("off");
 	});
 
+	test("omits unknown model maxTokens from protocol metadata", () => {
+		const { maxTokens: _maxTokens, ...modelWithoutMaxTokens } = model;
+		const result = toProtocolModelMetadata(modelWithoutMaxTokens, true);
+
+		expect(result).not.toHaveProperty("maxTokens");
+	});
+
 	test("exhaustively maps assistant content and stop reasons", () => {
 		const message = {
 			role: "assistant",

@@ -215,7 +215,7 @@ export function toProtocolModelMetadata(model: Model<Api>, authenticated: boolea
 		reasoning: model.reasoning,
 		input: [...model.input],
 		contextWindow: Math.max(1, Math.floor(model.contextWindow)),
-		maxTokens: Math.max(1, Math.floor(model.maxTokens)),
+		...(model.maxTokens === undefined ? {} : { maxTokens: Math.max(1, Math.floor(model.maxTokens)) }),
 		cost: {
 			input: nonNegativeNumber(model.cost.input),
 			output: nonNegativeNumber(model.cost.output),

@@ -92,7 +92,25 @@ describe("openai-completions empty tools handling", () => {
 		expect("tools" in (params as object)).toBe(false);
 	});
 
-	it("sends default maxTokens", async () => {
+	it("does not send a max token field when the model and request omit it", async () => {
+		const { compat: _compat, ...baseModel } = getModel("openai", "gpt-4o-mini")!;
+		const { maxTokens: _maxTokens, ...modelWithoutMaxTokens } = baseModel;
+		const model = { ...modelWithoutMaxTokens, api: "openai-completions" } as const;
+
+		await streamSimple(
+			model,
+			{
+				messages: [{ role: "user", content: "hi", timestamp: Date.now() }],
+			},
+			{ apiKey: "test" },
+		).result();
+
+		const params = mockState.lastParams as { max_tokens?: number; max_completion_tokens?: number };
+		expect(params.max_tokens).toBeUndefined();
+		expect(params.max_completion_tokens).toBeUndefined();
+	});
+
+	it("uses model maxTokens as the default request limit", async () => {
 		const { compat: _compat, ...baseModel } = getModel("openai", "gpt-4o-mini")!;
 		const model = { ...baseModel, api: "openai-completions" } as const;
 
@@ -107,6 +125,23 @@ describe("openai-completions empty tools handling", () => {
 		const params = mockState.lastParams as { max_tokens?: number; max_completion_tokens?: number };
 		expect(params.max_tokens).toBeUndefined();
 		expect(params.max_completion_tokens).toBe(model.maxTokens);
+	});
+
+	it("clamps model maxTokens to remaining context", async () => {
+		const { compat: _compat, ...baseModel } = getModel("openai", "gpt-4o-mini")!;
+		const model = { ...baseModel, api: "openai-completions", contextWindow: 10000, maxTokens: 8000 } as const;
+
+		await streamSimple(
+			model,
+			{
+				messages: [{ role: "user", content: "x".repeat(8000), timestamp: Date.now() }],
+			},
+			{ apiKey: "test" },
+		).result();
+
+		const params = mockState.lastParams as { max_tokens?: number; max_completion_tokens?: number };
+		expect(params.max_tokens).toBeUndefined();
+		expect(params.max_completion_tokens).toBe(3904);
 	});
 
 	it("sends explicit maxTokens", async () => {
@@ -124,23 +159,6 @@ describe("openai-completions empty tools handling", () => {
 		const params = mockState.lastParams as { max_tokens?: number; max_completion_tokens?: number };
 		expect(params.max_tokens).toBeUndefined();
 		expect(params.max_completion_tokens).toBe(1234);
-	});
-
-	it("clamps default maxTokens to remaining context", async () => {
-		const { compat: _compat, ...baseModel } = getModel("openai", "gpt-4o-mini")!;
-		const model = { ...baseModel, api: "openai-completions", contextWindow: 10000, maxTokens: 8000 } as const;
-
-		await streamSimple(
-			model,
-			{
-				messages: [{ role: "user", content: "x".repeat(8000), timestamp: Date.now() }],
-			},
-			{ apiKey: "test" },
-		).result();
-
-		const params = mockState.lastParams as { max_tokens?: number; max_completion_tokens?: number };
-		expect(params.max_tokens).toBeUndefined();
-		expect(params.max_completion_tokens).toBe(3904);
 	});
 
 	it("clamps explicit maxTokens to remaining context", async () => {

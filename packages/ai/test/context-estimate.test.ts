@@ -57,7 +57,9 @@ describe("context token estimation", () => {
 			trailingTokens: 1_005,
 			lastUsageIndex: null,
 		});
+		expect(buildBaseOptions({ ...model, maxTokens: undefined }, context).maxTokens).toBeUndefined();
 		expect(buildBaseOptions(model, context).maxTokens).toBe(4_899);
+		expect(buildBaseOptions(model, context, { maxTokens: 8_000 }).maxTokens).toBe(4_899);
 	});
 
 	it("uses assistant usage again after a response to the inserted context", () => {

@@ -798,6 +798,16 @@ function mapThinkingLevelToEffort(
 	}
 }
 
+function requireMaxTokens(model: Model<"anthropic-messages">, requestMaxTokens: number | undefined): number {
+	const maxTokens = requestMaxTokens ?? model.maxTokens;
+	if (maxTokens === undefined) {
+		throw new Error(
+			`Anthropic Messages requires maxTokens for ${model.provider}/${model.id}; set it on the model or request`,
+		);
+	}
+	return maxTokens;
+}
+
 export const streamSimple: StreamFunction<"anthropic-messages", SimpleStreamOptions> = (
 	model: Model<"anthropic-messages">,
 	context: Context,
@@ -821,11 +831,10 @@ export const streamSimple: StreamFunction<"anthropic-messages", SimpleStreamOpti
 		} satisfies AnthropicOptions);
 	}
 
-	// Undefined means the caller did not request an output cap; let the helper use the model cap.
-	// Do not coerce to 0 here, or the thinking budget would become the entire max_tokens value.
+	const maxTokensCeiling = requireMaxTokens(model, base.maxTokens);
 	const adjusted = adjustMaxTokensForThinking(
 		base.maxTokens,
-		model.maxTokens,
+		maxTokensCeiling,
 		options.reasoning,
 		options.thinkingBudgets,
 	);
@@ -958,6 +967,7 @@ function buildParams(
 		deferredTools = [];
 	}
 	const deferredToolNames = new Set(deferredTools.map((tool) => normalizeToolName(tool.name)));
+	const maxTokens = requireMaxTokens(model, options?.maxTokens);
 	const params: MessageCreateParamsStreaming = {
 		model: model.id,
 		messages: convertMessages(
@@ -968,7 +978,7 @@ function buildParams(
 			deferredToolNames,
 			normalizeToolName,
 		),
-		max_tokens: options?.maxTokens ?? model.maxTokens,
+		max_tokens: maxTokens,
 		stream: true,
 	};
 

@@ -187,6 +187,10 @@ export interface StreamOptions extends ProviderRequestOptions<Model<Api>> {
 	 * OpenAI-compatible adapters (completions, responses, Azure responses); other APIs ignore it.
 	 */
 	samplingParams?: Record<string, unknown>;
+	/**
+	 * Maximum output tokens to request. Overrides {@link Model.maxTokens}. When both are omitted,
+	 * the API adapter uses the provider default unless that protocol requires an explicit value.
+	 */
 	maxTokens?: number;
 	/**
 	 * Preferred transport for providers that support multiple transports.
@@ -806,7 +810,8 @@ export interface Model<TApi extends Api> {
 	input: ("text" | "image")[];
 	cost: ModelCost;
 	contextWindow: number;
-	maxTokens: number;
+	/** Maximum output tokens supported by the model and the default request limit when set. */
+	maxTokens?: number;
 	/** Default sampling parameters for this model. See {@link StreamOptions.samplingParams}; per-request keys override these. */
 	samplingParams?: Record<string, unknown>;
 	headers?: Record<string, string>;

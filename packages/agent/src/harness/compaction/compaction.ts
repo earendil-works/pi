@@ -540,7 +540,7 @@ export async function generateSummaryWithUsage(
 ): Promise<Result<{ text: string; usage: Usage }, CompactionError>> {
 	const maxTokens = Math.min(
 		Math.floor(0.8 * reserveTokens),
-		model.maxTokens > 0 ? model.maxTokens : Number.POSITIVE_INFINITY,
+		model.maxTokens !== undefined && model.maxTokens > 0 ? model.maxTokens : Number.POSITIVE_INFINITY,
 	);
 	let basePrompt = previousSummary ? UPDATE_SUMMARIZATION_PROMPT : SUMMARIZATION_PROMPT;
 	if (customInstructions) {
@@ -804,7 +804,7 @@ async function generateTurnPrefixSummary(
 ): Promise<Result<{ text: string; usage: Usage }, CompactionError>> {
 	const maxTokens = Math.min(
 		Math.floor(0.5 * reserveTokens),
-		model.maxTokens > 0 ? model.maxTokens : Number.POSITIVE_INFINITY,
+		model.maxTokens !== undefined && model.maxTokens > 0 ? model.maxTokens : Number.POSITIVE_INFINITY,
 	);
 	const llmMessages = convertToLlm(messages);
 	const conversationText = serializeConversation(llmMessages);

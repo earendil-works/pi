@@ -205,7 +205,7 @@ If your command is slow, expensive, rate-limited, or should keep using a previou
 | `thinkingLevelMap` | No | omitted | Maps pi thinking levels to provider values and marks unsupported levels (see below) |
 | `input` | No | `["text"]` | Input types: `["text"]` or `["text", "image"]` |
 | `contextWindow` | No | `128000` | Context window size in tokens |
-| `maxTokens` | No | `16384` | Maximum output tokens |
+| `maxTokens` | No | API-specific | Maximum output tokens and default request limit. When omitted, APIs that support an implicit limit do not receive one; APIs that require a limit report a configuration error. |
 | `samplingParams` | No | omitted | Sampling parameters merged verbatim into every request body (see below) |
 | `cost` | No | all zeros | Per-million-token rates with optional request-wide input pricing tiers |
 | `compat` | No | provider `compat` | Provider compatibility overrides. Merged with provider-level `compat` when both are set. |

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { stream as streamAnthropic } from "../src/api/anthropic-messages.ts";
 import { getModel } from "../src/compat.ts";
 import { getSupportedThinkingLevels } from "../src/models.ts";
@@ -54,6 +54,11 @@ describe("Copilot Claude via Anthropic Messages", () => {
 		systemPrompt: "You are a helpful assistant.",
 		messages: [{ role: "user", content: "Hello", timestamp: Date.now() }],
 	};
+
+	beforeEach(() => {
+		mockState.constructorOpts = undefined;
+		mockState.createParams = undefined;
+	});
 
 	it("applies Copilot-specific adaptive thinking effort overrides", () => {
 		const opus47 = getModel("github-copilot", "claude-opus-4.7");
@@ -123,5 +128,26 @@ describe("Copilot Claude via Anthropic Messages", () => {
 
 		const headers = mockState.constructorOpts!.defaultHeaders as Record<string, string>;
 		expect(headers["anthropic-beta"] ?? "").not.toContain("interleaved-thinking-2025-05-14");
+	});
+
+	it("accepts a request maxTokens when the model omits it", async () => {
+		const { maxTokens: _maxTokens, ...model } = getModel("github-copilot", "claude-sonnet-4.6");
+		await streamAnthropic(model, context, {
+			apiKey: "tid_copilot_session_test_token",
+			maxTokens: 2048,
+		}).result();
+
+		expect(mockState.createParams?.max_tokens).toBe(2048);
+	});
+
+	it("reports a configuration error when Anthropic has no maxTokens", async () => {
+		const { maxTokens: _maxTokens, ...model } = getModel("github-copilot", "claude-sonnet-4.6");
+		const result = await streamAnthropic(model, context, {
+			apiKey: "tid_copilot_session_test_token",
+		}).result();
+
+		expect(result.stopReason).toBe("error");
+		expect(result.errorMessage).toContain("Anthropic Messages requires maxTokens");
+		expect(mockState.createParams).toBeUndefined();
 	});
 });

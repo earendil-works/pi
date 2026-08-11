@@ -476,11 +476,15 @@ export const streamSimple: StreamFunction<"bedrock-converse-stream", SimpleStrea
 			} satisfies BedrockOptions);
 		}
 
-		// Undefined means the caller did not request an output cap; let the helper use the model cap.
-		// Do not coerce to 0 here, or the thinking budget would become the entire maxTokens value.
+		const maxTokensCeiling = base.maxTokens ?? model.maxTokens;
+		if (maxTokensCeiling === undefined) {
+			throw new Error(
+				`Budget-based Bedrock reasoning requires maxTokens for ${model.provider}/${model.id}; set it on the model or request`,
+			);
+		}
 		const adjusted = adjustMaxTokensForThinking(
 			base.maxTokens,
-			model.maxTokens,
+			maxTokensCeiling,
 			options.reasoning,
 			options.thinkingBudgets,
 		);

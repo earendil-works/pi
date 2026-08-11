@@ -858,10 +858,12 @@ function buildParams(
 			...options.thinkingBudgets,
 		};
 		const ceiling = (params as { max_tokens?: number }).max_tokens ?? params.max_completion_tokens ?? model.maxTokens;
-		// Always leave room for the answer, otherwise the budget recreates the bug it prevents.
-		const budget = Math.min(budgets[level]!, Math.max(0, ceiling - MIN_ANSWER_TOKENS));
-		if (budget > 0) {
-			(params as { thinking_token_budget?: number }).thinking_token_budget = budget;
+		if (ceiling !== undefined) {
+			// Always leave room for the answer, otherwise the budget recreates the bug it prevents.
+			const budget = Math.min(budgets[level]!, Math.max(0, ceiling - MIN_ANSWER_TOKENS));
+			if (budget > 0) {
+				(params as { thinking_token_budget?: number }).thinking_token_budget = budget;
+			}
 		}
 	}
 

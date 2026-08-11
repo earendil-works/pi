@@ -62,7 +62,7 @@ export interface ProviderConfigInput {
 		input: ("text" | "image")[];
 		cost: Model<Api>["cost"];
 		contextWindow: number;
-		maxTokens: number;
+		maxTokens?: number;
 		samplingParams?: Record<string, unknown>;
 		headers?: Record<string, string>;
 		compat?: Model<Api>["compat"];
@@ -147,6 +147,7 @@ function modelFromJson(
 	if (definition.maxTokens !== undefined && definition.maxTokens <= 0) {
 		throw new Error(`Provider ${providerId}, model ${definition.id}: invalid maxTokens`);
 	}
+	const maxTokens = definition.maxTokens ?? (defaults?.id === definition.id ? defaults.maxTokens : undefined);
 	return {
 		id: definition.id,
 		name: definition.name ?? definition.id,
@@ -158,7 +159,7 @@ function modelFromJson(
 		input: (definition.input ?? ["text"]) as ("text" | "image")[],
 		cost: definition.cost ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 		contextWindow: definition.contextWindow ?? 128000,
-		maxTokens: definition.maxTokens ?? 16384,
+		...(maxTokens === undefined ? {} : { maxTokens }),
 		samplingParams: definition.samplingParams,
 		headers: undefined,
 		compat: mergeCompat(providerConfig.compat, definition.compat),

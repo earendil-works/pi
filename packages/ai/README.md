@@ -824,6 +824,8 @@ for (const block of response.content) {
 
 `models.stream()`/`complete()` accept the owning API's full option set. Use `hasApi()` to narrow a dynamically looked-up model to its API for full option typing:
 
+Pass `maxTokens` when a request needs an explicit output limit. Otherwise, pi uses `model.maxTokens` when it is set. If both are omitted, pi leaves the limit to the provider unless the wire protocol requires one.
+
 ```typescript
 import { hasApi } from '@earendil-works/pi-ai';
 

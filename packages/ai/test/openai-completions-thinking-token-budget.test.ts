@@ -63,7 +63,12 @@ async function capture(
 		thinkingBudgets?: ThinkingBudgets;
 		maxTokens?: number;
 	},
-): Promise<{ thinking_token_budget?: number; thinking?: unknown }> {
+): Promise<{
+	max_tokens?: number;
+	max_completion_tokens?: number;
+	thinking_token_budget?: number;
+	thinking?: unknown;
+}> {
 	let payload: unknown;
 
 	await streamSimple(
@@ -80,7 +85,12 @@ async function capture(
 		},
 	).result();
 
-	return (payload ?? mockState.lastParams) as { thinking_token_budget?: number; thinking?: unknown };
+	return (payload ?? mockState.lastParams) as {
+		max_tokens?: number;
+		max_completion_tokens?: number;
+		thinking_token_budget?: number;
+		thinking?: unknown;
+	};
 }
 
 describe("openai-completions thinking_token_budget", () => {
@@ -91,6 +101,20 @@ describe("openai-completions thinking_token_budget", () => {
 	it("sends the configured budget for the requested level", async () => {
 		const params = await capture(vllmModel, { reasoning: "medium", thinkingBudgets: { medium: 4096 } });
 		expect(params.thinking_token_budget).toBe(4096);
+	});
+
+	it("uses the model output capacity as the default request limit", async () => {
+		const params = await capture(vllmModel, { reasoning: "high" });
+		expect(params.max_tokens).toBeUndefined();
+		expect(params.max_completion_tokens).toBe(16384);
+	});
+
+	it("omits token limits and the dependent thinking budget when neither limit is set", async () => {
+		const { maxTokens: _maxTokens, ...model } = vllmModel;
+		const params = await capture(model, { reasoning: "high" });
+		expect(params.max_tokens).toBeUndefined();
+		expect(params.max_completion_tokens).toBeUndefined();
+		expect(params.thinking_token_budget).toBeUndefined();
 	});
 
 	it("omits the budget when the compat flag is not set", async () => {
