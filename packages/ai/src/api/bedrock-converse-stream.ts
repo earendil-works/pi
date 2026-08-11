@@ -800,6 +800,20 @@ function createRequiredTextBlock(text: string): ContentBlock.TextMember {
 	return createNonBlankTextBlock(text) ?? { text: EMPTY_TEXT_PLACEHOLDER };
 }
 
+function sanitizeBedrockDocument(value: DocumentType): DocumentType {
+	if (Array.isArray(value)) {
+		return value.map(sanitizeBedrockDocument);
+	}
+	if (value !== null && typeof value === "object") {
+		return Object.fromEntries(
+			Object.entries(value)
+				.filter(([key]) => key.length > 0)
+				.map(([key, nestedValue]) => [key, sanitizeBedrockDocument(nestedValue)]),
+		);
+	}
+	return value;
+}
+
 function convertToolResultContent(content: (TextContent | ImageContent)[]): ToolResultContentBlock[] {
 	const result: ToolResultContentBlock[] = [];
 	for (const c of content) {
@@ -872,7 +886,7 @@ function convertMessages(
 						}
 						case "toolCall":
 							contentBlocks.push({
-								toolUse: { toolUseId: c.id, name: c.name, input: c.arguments },
+								toolUse: { toolUseId: c.id, name: c.name, input: sanitizeBedrockDocument(c.arguments) },
 							});
 							break;
 						case "thinking": {

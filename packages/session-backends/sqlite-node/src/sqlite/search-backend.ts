@@ -121,7 +121,7 @@ class SqliteSessionSearch implements SessionSearch<SqliteSessionMetadata> {
 					WHERE f.session_id = s.id AND f.kind = 'name' AND f.key IS NULL
 				)
 			WHERE session_search_fts MATCH ${query} AND (${cwd} IS NULL OR s.cwd = ${cwd})
-			ORDER BY score`.all<SessionRow & { entry_id: string; timestamp: string; score: number }>(db);
+			ORDER BY score`.all<SessionRow & { entry_id: string; timestamp: number; score: number }>(db);
 			const path = await this.getDatabasePath();
 			return rows.map((row) => ({
 				metadata: decodeSessionMetadata(row, path),
