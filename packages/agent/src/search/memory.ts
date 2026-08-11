@@ -67,10 +67,10 @@ async function* memorySearchCandidates<TMetadata extends SessionMetadata>(
 	}
 }
 
-export function* memoryScanningSessions<TMetadata extends SessionMetadata>(
+export async function* memoryScanningSessions<TMetadata extends SessionMetadata>(
 	readables: readonly MemoryScanningReadable<TMetadata>[],
 	options: MemoryScanningSessionSourceOptions<TMetadata> = {},
-): Iterable<ScanningSession<TMetadata>> {
+): AsyncIterable<ScanningSession<TMetadata>> {
 	for (const readable of readables) {
 		yield {
 			metadata: () => readable.getMetadata(),

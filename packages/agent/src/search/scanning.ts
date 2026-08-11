@@ -1,8 +1,6 @@
 import type { Entry, SessionMetadata } from "../harness/session/types.ts";
 import type { SessionSearch, SessionSearchHit, SessionSearchOptions } from "./index.ts";
 
-type MaybeAsyncIterable<T> = Iterable<T> | AsyncIterable<T>;
-
 export interface SessionSearchCandidate {
 	readonly entryId: string;
 	readonly seq: number;
@@ -18,11 +16,11 @@ export interface ScanningSession<TMetadata extends SessionMetadata = SessionMeta
 		afterSeq?: number;
 		limit?: number;
 		entryTypes?: readonly Entry["type"][];
-	}): MaybeAsyncIterable<SessionSearchCandidate>;
+	}): AsyncIterable<SessionSearchCandidate>;
 }
 
 export interface ScanningSessionSource<TMetadata extends SessionMetadata = SessionMetadata, TOptions = unknown> {
-	sessions(options?: TOptions): MaybeAsyncIterable<ScanningSession<TMetadata>>;
+	sessions(options?: TOptions): AsyncIterable<ScanningSession<TMetadata>>;
 }
 
 export interface ScanningSessionSearchHit extends SessionSearchHit {
