@@ -74,14 +74,14 @@ describe("skills", () => {
 			expect(diagnostics.some((d: ResourceDiagnostic) => d.message.includes("exceeds 64 characters"))).toBe(true);
 		});
 
-		it("should ignore files when description is missing", () => {
+		it("should warn and skip SKILL.md when description is missing", () => {
 			const { skills, diagnostics } = loadSkillsFromDir({
 				dir: join(fixturesDir, "missing-description"),
 				source: "test",
 			});
 
 			expect(skills).toHaveLength(0);
-			expect(diagnostics).toHaveLength(0);
+			expect(diagnostics.some((d: ResourceDiagnostic) => d.message.includes("description is required"))).toBe(true);
 		});
 
 		it("should ignore unknown frontmatter fields", () => {
@@ -117,24 +117,24 @@ describe("skills", () => {
 			expect(diagnostics).toHaveLength(0);
 		});
 
-		it("should skip files without frontmatter", () => {
+		it("should warn and skip SKILL.md without frontmatter", () => {
 			const { skills, diagnostics } = loadSkillsFromDir({
 				dir: join(fixturesDir, "no-frontmatter"),
 				source: "test",
 			});
 
 			expect(skills).toHaveLength(0);
-			expect(diagnostics).toHaveLength(0);
+			expect(diagnostics.some((d: ResourceDiagnostic) => d.message.includes("description is required"))).toBe(true);
 		});
 
-		it("should ignore files when YAML frontmatter is invalid", () => {
+		it("should warn and skip SKILL.md when YAML frontmatter is invalid", () => {
 			const { skills, diagnostics } = loadSkillsFromDir({
 				dir: join(fixturesDir, "invalid-yaml"),
 				source: "test",
 			});
 
 			expect(skills).toHaveLength(0);
-			expect(diagnostics).toHaveLength(0);
+			expect(diagnostics.some((d: ResourceDiagnostic) => d.message.includes("at line"))).toBe(true);
 		});
 
 		it("should preserve multiline descriptions from YAML", () => {

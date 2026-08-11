@@ -56,24 +56,27 @@ describe("regression #7805: custom skill directories ignore root documentation",
 		expect(diagnostics).toEqual([]);
 	}
 
-	it("ignores root documentation in settings directories", async () => {
-		const loader = new DefaultResourceLoader({
-			cwd,
-			agentDir,
-			settingsManager: SettingsManager.inMemory({ skills: [customDirectory] }),
-		});
-
-		expectCustomDirectoryLoaded(await loadWithHarness(loader));
-	});
-
-	it("ignores root documentation in CLI directories", async () => {
-		const loader = new DefaultResourceLoader({
-			cwd,
-			agentDir,
-			additionalSkillPaths: [customDirectory],
-		});
-
-		expectCustomDirectoryLoaded(await loadWithHarness(loader));
+	it.each([
+		[
+			"settings",
+			() =>
+				new DefaultResourceLoader({
+					cwd,
+					agentDir,
+					settingsManager: SettingsManager.inMemory({ skills: [customDirectory] }),
+				}),
+		],
+		[
+			"CLI",
+			() =>
+				new DefaultResourceLoader({
+					cwd,
+					agentDir,
+					additionalSkillPaths: [customDirectory],
+				}),
+		],
+	])("ignores root documentation in %s directories", async (_source, createLoader) => {
+		expectCustomDirectoryLoaded(await loadWithHarness(createLoader()));
 	});
 
 	it.each([readmePath, brokenFrontmatterPath])(

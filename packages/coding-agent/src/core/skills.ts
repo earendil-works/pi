@@ -114,10 +114,12 @@ function validateName(name: string): string[] {
 /**
  * Validate description per Agent Skills spec.
  */
-function validateDescription(description: string): string[] {
+function validateDescription(description: unknown): string[] {
 	const errors: string[] = [];
 
-	if (description.length > MAX_DESCRIPTION_LENGTH) {
+	if (typeof description !== "string" || description.trim() === "") {
+		errors.push("description is required");
+	} else if (description.length > MAX_DESCRIPTION_LENGTH) {
 		errors.push(`description exceeds ${MAX_DESCRIPTION_LENGTH} characters (${description.length})`);
 	}
 
@@ -277,6 +279,7 @@ function loadSkillFromFile(
 	source: string,
 ): { skill: Skill | null; diagnostics: ResourceDiagnostic[] } {
 	const diagnostics: ResourceDiagnostic[] = [];
+	const isDeclaredSkill = basename(filePath) === "SKILL.md";
 
 	let rawContent: string;
 	try {
@@ -290,11 +293,15 @@ function loadSkillFromFile(
 	let frontmatter: SkillFrontmatter;
 	try {
 		({ frontmatter } = parseFrontmatter<SkillFrontmatter>(rawContent));
-	} catch {
+	} catch (error) {
+		if (isDeclaredSkill) {
+			const message = error instanceof Error ? error.message : "failed to parse skill file";
+			diagnostics.push({ type: "warning", message, path: filePath });
+		}
 		return { skill: null, diagnostics };
 	}
 
-	if (typeof frontmatter.description !== "string" || frontmatter.description.trim() === "") {
+	if (!isDeclaredSkill && (typeof frontmatter.description !== "string" || frontmatter.description.trim() === "")) {
 		return { skill: null, diagnostics };
 	}
 
@@ -315,6 +322,10 @@ function loadSkillFromFile(
 		const nameErrors = validateName(name);
 		for (const error of nameErrors) {
 			diagnostics.push({ type: "warning", message: error, path: filePath });
+		}
+
+		if (typeof frontmatter.description !== "string" || frontmatter.description.trim() === "") {
+			return { skill: null, diagnostics };
 		}
 
 		return {
