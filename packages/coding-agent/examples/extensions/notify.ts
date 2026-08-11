@@ -4,7 +4,7 @@
  * Sends a native terminal notification when Pi agent is done and waiting for input.
  * Supports multiple terminal protocols:
  * - OSC 777: Ghostty, iTerm2, WezTerm, rxvt-unicode
- * - OSC 99: Kitty
+ * - OSC 99: Kitty, VSCode
  * - Windows toast: Windows Terminal (WSL)
  */
 
@@ -41,7 +41,7 @@ function notifyWindows(title: string, body: string): void {
 function notify(title: string, body: string): void {
 	if (process.env.WT_SESSION) {
 		notifyWindows(title, body);
-	} else if (process.env.KITTY_WINDOW_ID) {
+	} else if (process.env.KITTY_WINDOW_ID || process.env.TERM_PROGRAM === "vscode") {
 		notifyOSC99(title, body);
 	} else {
 		notifyOSC777(title, body);
