@@ -322,7 +322,7 @@ export function convertResponsesMessages<TApi extends Api>(
 					type: "additional_tools",
 					role: "developer",
 					tools: convertResponsesTools(deferredTools, options.toolOptions),
-				} satisfies ResponseInputItem);
+				} as unknown as ResponseInputItem);
 			} else if (deferredTools.length > 0 && options?.deferredToolsMode === "tool-search") {
 				const names = deferredTools.map((tool) => tool.name);
 				const searchCallId = `pi_tool_load_${shortHash(`${msg.toolCallId}:${names.join(",")}`)}`;
