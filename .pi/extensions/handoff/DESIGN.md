@@ -103,6 +103,7 @@ the project-local copy never double-load.
   digest.ts       # session entries → mechanical digest fields (pure functions)
   compose.ts      # /handoff LLM composition (prompt + ctx.modelRegistry.complete)
   reader.ts       # pending-note detection, memo injection, archive-on-delivery
+  ghost.ts        # ask_predecessor: answer questions from the predecessor's transcript
   DESIGN.md       # this document
 ```
 
@@ -278,6 +279,28 @@ tested modules — and cover it by manual smoke run (`pi-test.sh -e .pi/extensio
 Gemini free tier). The exposure is real and worth naming: the editor round-trip, the
 successor-spawn confirm, and the `mode`-vs-`hasUI` gate are verified by hand or not at all.
 Anything that grows past wiring should move out of `index.ts` rather than being tested in place.
+
+## Ghost responder — `ask_predecessor` (added 2026-08-11)
+
+The successor's escape hatch when the briefing isn't enough: a tool that answers
+clarifying questions **as the previous session**, from that session's saved
+transcript (`session_file` in the note frontmatter). One isolated LLM call
+(`cacheRetention: "none"`, own session id — same isolation as `/handoff`'s
+composer) over transcript + question; no coordination with the predecessor, which
+may be days gone. When both sessions are alive simultaneously, the live channel is
+the sibling `intercom` extension — the two compose rather than compete.
+
+- **Hook:** `pi.registerTool("ask_predecessor", …)`; errors are thrown (pi's
+  tool-error contract), never returned as text.
+- **Predecessor selection** (`findPredecessor`, disk-scan so it survives
+  `/reload`): the archived note stamped `consumed_by` = this session, else the
+  newest pending note, else the newest archived note; notes without
+  `session_file` are skipped everywhere.
+- **Transcript rendering** (`renderTranscript`): active branch only (walk
+  `parentId` up from the last entry — same rewind reasoning as the digest's
+  `getBranch()`), user/assistant text plus `[ran <tool> on <path>]` markers,
+  tail-capped at 150k chars.
+- `notes.ts` gained `listArchivedNotePaths`; everything else is additive.
 
 ## Explicitly out of scope for v1 (v2 hooks noted)
 

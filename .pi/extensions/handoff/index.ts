@@ -9,6 +9,7 @@
  * - `session_shutdown` on quit — mechanical digest, no LLM. The seatbelt.
  */
 
+import { readFileSync } from "node:fs";
 import type { Model } from "@earendil-works/pi-ai";
 import { uuidv7 } from "@earendil-works/pi-ai";
 import type {
@@ -24,8 +25,10 @@ import {
 	sessionEntryToContextMessages,
 } from "@earendil-works/pi-coding-agent";
 import { Box, Text } from "@earendil-works/pi-tui";
+import { Type } from "typebox";
 import { type ComposeResult, composeNoteBody, joinKickoff, splitKickoff } from "./compose.ts";
 import { buildDigestNote } from "./digest.ts";
+import { answerAsPredecessor, findPredecessor, renderTranscript } from "./ghost.ts";
 import { HANDOFF_SCHEMA, type HandoffNote, writeNote } from "./notes.ts";
 import { registerReader } from "./reader.ts";
 
@@ -231,6 +234,69 @@ function registerHandoffCommand(pi: ExtensionAPI, state: HandoffState): void {
 	});
 }
 
+const ASK_PARAMS = Type.Object({
+	question: Type.String({ description: "The clarifying question for the previous session" }),
+});
+
+/**
+ * `ask_predecessor`: a one-shot LLM call over the predecessor's transcript. Errors are
+ * thrown, not returned — throwing is pi's tool-error contract (sets `isError`).
+ */
+function registerGhostTool(pi: ExtensionAPI): void {
+	pi.registerTool({
+		name: "ask_predecessor",
+		label: "Ask Predecessor",
+		description:
+			"Ask the previous session a clarifying question. It answers from its saved transcript, " +
+			"so this works even though that session has ended.",
+		promptSnippet: "Ask the previous session a clarifying question",
+		promptGuidelines: [
+			"Use ask_predecessor when a handoff briefing leaves a question only the previous session could answer (why a decision was made, what was already tried, where something lives). Prefer it over guessing.",
+		],
+		parameters: ASK_PARAMS,
+		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+			const model = ctx.model;
+			if (!model) throw new Error("No model selected");
+
+			const predecessor = findPredecessor(ctx.cwd, ctx.sessionManager.getSessionId());
+			if (!predecessor) {
+				throw new Error("No handoff note with a session transcript was found in .pi/handoffs/ — there is no predecessor to ask.");
+			}
+
+			// Non-null: findPredecessor only returns notes that carry a session_file.
+			const transcriptPath = predecessor.note.frontmatter.session_file as string;
+			let transcript: string;
+			try {
+				transcript = renderTranscript(readFileSync(transcriptPath, "utf8"));
+			} catch (err) {
+				throw new Error(
+					`Predecessor transcript could not be read (${transcriptPath}): ${err instanceof Error ? err.message : String(err)}`,
+				);
+			}
+			if (!transcript) throw new Error(`Predecessor transcript contained no messages (${transcriptPath}).`);
+
+			const result = await answerAsPredecessor({
+				modelRegistry: ctx.modelRegistry,
+				model,
+				transcriptText: transcript,
+				question: params.question,
+				signal,
+				sessionId: uuidv7(),
+			});
+			if (result.status === "aborted") throw new Error("ask_predecessor was cancelled.");
+			if (result.status === "failed") throw new Error(`ask_predecessor failed: ${result.message}`);
+
+			return {
+				content: [{ type: "text", text: result.answer }],
+				details: {
+					predecessor_session: predecessor.note.frontmatter.session_id,
+					note: predecessor.path,
+				},
+			};
+		},
+	});
+}
+
 /** Sets the injected briefing apart from the user's own first prompt in the transcript. */
 function registerMemoRenderer(pi: ExtensionAPI): void {
 	pi.registerMessageRenderer("handoff", (message, { outputPad }, theme) => {
@@ -247,5 +313,6 @@ export default function (pi: ExtensionAPI) {
 	registerReader(pi);
 	registerMemoRenderer(pi);
 	registerHandoffCommand(pi, state);
+	registerGhostTool(pi);
 	registerShutdownDigest(pi, state);
 }

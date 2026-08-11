@@ -273,9 +273,7 @@ export function writeNote(cwd: string, note: HandoffNote): string {
 	return filePath;
 }
 
-/** Pending note paths, oldest first. Archived notes and `.tmp` scratch files are excluded. */
-export function listPendingNotePaths(cwd: string): string[] {
-	const dir = handoffsDir(cwd);
+function listNotePaths(dir: string): string[] {
 	if (!existsSync(dir)) return [];
 	let names: string[];
 	try {
@@ -287,6 +285,16 @@ export function listPendingNotePaths(cwd: string): string[] {
 	}
 	names.sort();
 	return names.map((name) => join(dir, name));
+}
+
+/** Pending note paths, oldest first. Archived notes and `.tmp` scratch files are excluded. */
+export function listPendingNotePaths(cwd: string): string[] {
+	return listNotePaths(handoffsDir(cwd));
+}
+
+/** Archived note paths, oldest first. Used by the ghost responder to find its predecessor. */
+export function listArchivedNotePaths(cwd: string): string[] {
+	return listNotePaths(archiveDir(cwd));
 }
 
 export function readNote(filePath: string): HandoffNote | undefined {
