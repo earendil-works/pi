@@ -218,6 +218,17 @@ export function createReadToolDefinition(
 		promptSnippet: readToolSystemPromptContribution.snippet,
 		promptGuidelines: [...readToolSystemPromptContribution.guidelines],
 		parameters: readSchema,
+		authorization: {
+			operation: "filesystem.read",
+			effect: "inspect",
+			capabilities: ["filesystem.read"],
+			classify: ({ path }) => ({
+				operation: "filesystem.read",
+				effect: "inspect",
+				capabilities: ["filesystem.read"],
+				resources: [{ kind: "path", value: resolveToCwd(path, cwd) }],
+			}),
+		},
 		async execute(
 			_toolCallId,
 			{ path, offset, limit }: { path: string; offset?: number; limit?: number },

@@ -333,6 +333,17 @@ export function createBashToolDefinition(
 		promptSnippet: bashToolSystemPromptContribution.snippet,
 		promptGuidelines: exposeSessionEnvironment ? [...bashToolSystemPromptContribution.guidelines] : undefined,
 		parameters: bashSchema,
+		authorization: {
+			operation: "shell.execute",
+			effect: "execute",
+			capabilities: ["shell.execute"],
+			classify: ({ command }) => ({
+				operation: "shell.execute",
+				effect: "execute",
+				capabilities: ["shell.execute"],
+				resources: [{ kind: "command", value: command }],
+			}),
+		},
 		async execute(
 			_toolCallId,
 			{ command, timeout }: { command: string; timeout?: number },

@@ -307,6 +307,17 @@ export function createEditToolDefinition(
 		promptSnippet: editToolSystemPromptContribution.snippet,
 		promptGuidelines: [...editToolSystemPromptContribution.guidelines],
 		parameters: editSchema,
+		authorization: {
+			operation: "filesystem.edit",
+			effect: "modify",
+			capabilities: ["filesystem.write"],
+			classify: ({ path }) => ({
+				operation: "filesystem.edit",
+				effect: "modify",
+				capabilities: ["filesystem.write"],
+				resources: [{ kind: "path", value: resolveToCwd(path, cwd) }],
+			}),
+		},
 		renderShell: "self",
 		prepareArguments: prepareEditArguments,
 		async execute(_toolCallId, input: EditToolInput, signal?: AbortSignal, _onUpdate?, _ctx?) {

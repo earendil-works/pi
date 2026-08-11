@@ -1017,50 +1017,96 @@ export class AgentSession {
 		const tool = this._toolRegistry.get(action.toolName);
 		if (!definition || !tool) throw new Error(`Tool ${action.toolName} is not registered`);
 		const finalInput = structuredClone(action.input) as Record<string, unknown>;
-		const hookResult = this._extensionRunner.hasHandlers("tool_call")
-			? await this._extensionRunner.emitToolCall({
-					type: "tool_call",
-					toolName: action.toolName,
-					toolCallId: action.toolCallId,
-					input: finalInput,
-				})
-			: undefined;
-		if (hookResult?.block) throw new Error(hookResult.reason || "Tool execution was blocked");
-		const currentAction = await this.captureToolAction(action.toolName, finalInput, action.toolCallId);
-		if (currentAction.fingerprint !== action.fingerprint) {
-			throw new Error("Authorized action changed before execution");
-		}
-		const authorizer = this._extensionRunner.getRegisteredAuthorizer();
-		if (!authorizer) throw new Error("No tool authorizer is registered");
-		const decision = await authorizer.authorize(currentAction, { grants: [grant] });
-		if (decision.kind !== "permit") throw new Error(this._authorizationBlockReason(decision, currentAction));
-		const result = await tool.execute(
-			action.toolCallId,
-			currentAction.input as Record<string, unknown>,
-			options?.signal,
-			options?.onUpdate,
-		);
-		const resultHook = this._extensionRunner.hasHandlers("tool_result")
-			? await this._extensionRunner.emitToolResult({
-					type: "tool_result",
-					toolName: action.toolName,
-					toolCallId: action.toolCallId,
-					input: currentAction.input as Record<string, unknown>,
-					content: result.content,
-					details: result.details,
-					isError: false,
-					usage: result.usage,
-				})
-			: undefined;
-		const content = await normalizeToolResultImages(resultHook?.content ?? result.content ?? [], {
-			autoResizeImages: this.settingsManager.getImageAutoResize(),
-		});
-		return {
-			...result,
-			content,
-			details: resultHook?.details ?? result.details,
-			usage: resultHook?.usage ?? result.usage,
+		const startEvent = {
+			type: "tool_execution_start" as const,
+			toolCallId: action.toolCallId,
+			toolName: action.toolName,
+			args: finalInput,
 		};
+		await this._emitExtensionEvent(startEvent);
+		this._emit(startEvent);
+		let completedResult: AgentToolResult<unknown> | undefined;
+		let executionError: Error | undefined;
+		try {
+			const hookResult = this._extensionRunner.hasHandlers("tool_call")
+				? await this._extensionRunner.emitToolCall({
+						type: "tool_call",
+						toolName: action.toolName,
+						toolCallId: action.toolCallId,
+						input: finalInput,
+					})
+				: undefined;
+			if (hookResult?.block) throw new Error(hookResult.reason || "Tool execution was blocked");
+			const currentAction = await this.captureToolAction(action.toolName, finalInput, action.toolCallId);
+			if (currentAction.fingerprint !== action.fingerprint) {
+				throw new Error("Authorized action changed before execution");
+			}
+			const authorizer = this._extensionRunner.getRegisteredAuthorizer();
+			if (!authorizer) throw new Error("No tool authorizer is registered");
+			const decision = await authorizer.authorize(currentAction, { grants: [grant] });
+			if (decision.kind !== "permit") throw new Error(this._authorizationBlockReason(decision, currentAction));
+			const updateEvents: Promise<void>[] = [];
+			const result = await tool.execute(
+				action.toolCallId,
+				currentAction.input as Record<string, unknown>,
+				options?.signal,
+				(partialResult) => {
+					const updateEvent = {
+						type: "tool_execution_update" as const,
+						toolCallId: action.toolCallId,
+						toolName: action.toolName,
+						args: currentAction.input,
+						partialResult,
+					};
+					updateEvents.push(
+						this._emitExtensionEvent(updateEvent).then(() => {
+							this._emit(updateEvent);
+							options?.onUpdate?.(partialResult);
+						}),
+					);
+				},
+			);
+			await Promise.all(updateEvents);
+			const resultHook = this._extensionRunner.hasHandlers("tool_result")
+				? await this._extensionRunner.emitToolResult({
+						type: "tool_result",
+						toolName: action.toolName,
+						toolCallId: action.toolCallId,
+						input: currentAction.input as Record<string, unknown>,
+						content: result.content,
+						details: result.details,
+						isError: false,
+						usage: result.usage,
+					})
+				: undefined;
+			const content = await normalizeToolResultImages(resultHook?.content ?? result.content ?? [], {
+				autoResizeImages: this.settingsManager.getImageAutoResize(),
+			});
+			completedResult = {
+				...result,
+				content,
+				details: resultHook?.details ?? result.details,
+				usage: resultHook?.usage ?? result.usage,
+			};
+			return completedResult;
+		} catch (error) {
+			executionError = error instanceof Error ? error : new Error(String(error));
+			throw executionError;
+		} finally {
+			const endResult = completedResult ?? {
+				content: [{ type: "text" as const, text: executionError?.message ?? "Authorized execution failed" }],
+				details: {},
+			};
+			const endEvent = {
+				type: "tool_execution_end" as const,
+				toolCallId: action.toolCallId,
+				toolName: action.toolName,
+				result: endResult,
+				isError: executionError !== undefined,
+			};
+			await this._emitExtensionEvent(endEvent);
+			this._emit(endEvent);
+		}
 	}
 
 	getToolDefinition(name: string): ToolDefinition | undefined {

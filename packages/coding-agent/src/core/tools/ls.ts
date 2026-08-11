@@ -108,6 +108,17 @@ export function createLsToolDefinition(
 		description: `List directory contents. Returns entries sorted alphabetically, with '/' suffix for directories. Includes dotfiles. Output is truncated to ${DEFAULT_LIMIT} entries or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first).`,
 		promptSnippet: lsToolSystemPromptContribution.snippet,
 		parameters: lsSchema,
+		authorization: {
+			operation: "filesystem.list",
+			effect: "inspect",
+			capabilities: ["filesystem.read"],
+			classify: ({ path }) => ({
+				operation: "filesystem.list",
+				effect: "inspect",
+				capabilities: ["filesystem.read"],
+				resources: [{ kind: "path", value: resolveToCwd(path ?? ".", cwd) }],
+			}),
+		},
 		async execute(
 			_toolCallId,
 			{ path, limit }: { path?: string; limit?: number },

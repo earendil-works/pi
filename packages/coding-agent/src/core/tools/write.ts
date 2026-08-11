@@ -196,6 +196,17 @@ export function createWriteToolDefinition(
 		promptSnippet: writeToolSystemPromptContribution.snippet,
 		promptGuidelines: [...writeToolSystemPromptContribution.guidelines],
 		parameters: writeSchema,
+		authorization: {
+			operation: "filesystem.write",
+			effect: "modify",
+			capabilities: ["filesystem.write"],
+			classify: ({ path }) => ({
+				operation: "filesystem.write",
+				effect: "modify",
+				capabilities: ["filesystem.write"],
+				resources: [{ kind: "path", value: resolveToCwd(path, cwd) }],
+			}),
+		},
 		async execute(
 			_toolCallId,
 			{ path, content }: { path: string; content: string },
