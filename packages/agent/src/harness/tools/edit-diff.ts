@@ -47,6 +47,8 @@ export function normalizeForFuzzyMatch(text: string): string {
 			// U+00A0 NBSP, U+2002-U+200A various spaces, U+202F narrow NBSP,
 			// U+205F medium math space, U+3000 ideographic space
 			.replace(/[\u00A0\u2002-\u200A\u202F\u205F\u3000]/g, " ")
+			// Collapse interior whitespace runs (tabs, multiple spaces → single space)
+			.replace(/[^\S\n]+/g, " ")
 	);
 }
 
