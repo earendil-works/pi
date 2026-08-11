@@ -171,6 +171,47 @@ export interface SessionContext {
 	model: { provider: string; modelId: string } | null;
 }
 
+export const MAX_SESSION_TRANSCRIPT_PAGE_SIZE = 200;
+
+export interface SessionTranscriptItem {
+	id: string;
+	entryTimestamp: string;
+	message: AgentMessage;
+}
+
+export interface SessionTranscriptPage {
+	items: SessionTranscriptItem[];
+	cursors: {
+		before: string | null;
+		after: string | null;
+	};
+	hasMoreBefore: boolean;
+	hasMoreAfter: boolean;
+	totalItems: number;
+	itemsAfterLatestCompaction: number;
+}
+
+export interface SessionTranscriptPageOptions {
+	limit: number;
+	before?: string;
+	after?: string;
+}
+
+export type SessionTranscriptChange =
+	| {
+			type: "append";
+			items: SessionTranscriptItem[];
+			after: string;
+			totalItems: number;
+			itemsAfterLatestCompaction: number;
+	  }
+	| {
+			type: "reset";
+			page: SessionTranscriptPage;
+	  };
+
+export type SessionTranscriptChangeListener = (change: SessionTranscriptChange) => void;
+
 export interface SessionInfo {
 	path: string;
 	id: string;
@@ -203,6 +244,8 @@ export type ReadonlySessionManager = Pick<
 	| "getEntries"
 	| "getTree"
 	| "getSessionName"
+	| "readTranscriptPage"
+	| "subscribeTranscript"
 >;
 
 function createSessionId(): string {
@@ -405,6 +448,37 @@ export function sessionEntryToContextMessages(entry: SessionEntry): AgentMessage
 		return [createCompactionSummaryMessage(entry.summary, entry.tokensBefore, entry.timestamp)];
 	}
 	return [];
+}
+
+function sessionEntryToTranscriptItems(entry: SessionEntry): SessionTranscriptItem[] {
+	return sessionEntryToContextMessages(entry).map((message) => ({
+		id: entry.id,
+		entryTimestamp: entry.timestamp,
+		message,
+	}));
+}
+
+const SESSION_TRANSCRIPT_CURSOR_PREFIX = "pi-transcript-v1.";
+
+function encodeSessionTranscriptCursor(sessionId: string, entryId: string): string {
+	return `${SESSION_TRANSCRIPT_CURSOR_PREFIX}${Buffer.from(JSON.stringify({ sessionId, entryId })).toString("base64url")}`;
+}
+
+function decodeSessionTranscriptCursor(cursor: string): { sessionId: string; entryId: string } {
+	if (!cursor.startsWith(SESSION_TRANSCRIPT_CURSOR_PREFIX)) {
+		throw new Error("Invalid session transcript cursor");
+	}
+	try {
+		const decoded = JSON.parse(
+			Buffer.from(cursor.slice(SESSION_TRANSCRIPT_CURSOR_PREFIX.length), "base64url").toString("utf8"),
+		) as { sessionId?: unknown; entryId?: unknown };
+		if (typeof decoded.sessionId !== "string" || typeof decoded.entryId !== "string") {
+			throw new Error("Invalid cursor payload");
+		}
+		return { sessionId: decoded.sessionId, entryId: decoded.entryId };
+	} catch {
+		throw new Error("Invalid session transcript cursor");
+	}
 }
 
 /**
@@ -864,6 +938,7 @@ export class SessionManager {
 	private labelsById: Map<string, string> = new Map();
 	private labelTimestampsById: Map<string, string> = new Map();
 	private leafId: string | null = null;
+	private transcriptListeners = new Map<SessionTranscriptChangeListener, number>();
 
 	private constructor(
 		cwd: string,
@@ -920,6 +995,7 @@ export class SessionManager {
 
 			this._buildIndex();
 			this.flushed = true;
+			this._emitTranscriptReset();
 		} else {
 			const explicitPath = this.sessionFile;
 			this.newSession();
@@ -952,6 +1028,7 @@ export class SessionManager {
 			const fileTimestamp = timestamp.replace(/[:.]/g, "-");
 			this.sessionFile = join(this.getSessionDir(), `${fileTimestamp}_${this.sessionId}.jsonl`);
 		}
+		this._emitTranscriptReset();
 		return this.sessionFile;
 	}
 
@@ -1046,6 +1123,7 @@ export class SessionManager {
 		this.byId.set(entry.id, entry);
 		this.leafId = entry.id;
 		this._persist(entry);
+		this._emitTranscriptAppend(entry);
 	}
 
 	/** Append a message as child of current leaf, then advance leaf. Returns entry id.
@@ -1286,6 +1364,110 @@ export class SessionManager {
 	}
 
 	/**
+	 * Read a bounded page from the canonical projection of the active persisted branch.
+	 * Cursors are opaque branch positions and may only be used with this session.
+	 */
+	readTranscriptPage(options: SessionTranscriptPageOptions): SessionTranscriptPage {
+		if (!Number.isInteger(options.limit) || options.limit < 1 || options.limit > MAX_SESSION_TRANSCRIPT_PAGE_SIZE) {
+			throw new Error(`Session transcript limit must be an integer from 1 to ${MAX_SESSION_TRANSCRIPT_PAGE_SIZE}`);
+		}
+		if (options.before !== undefined && options.after !== undefined) {
+			throw new Error("Use either before or after, not both");
+		}
+
+		const branch = this.getBranch();
+		let boundaryIndex: number | undefined;
+		const cursor = options.before ?? options.after;
+		if (cursor !== undefined) {
+			const decoded = decodeSessionTranscriptCursor(cursor);
+			if (decoded.sessionId !== this.sessionId) {
+				throw new Error("Session transcript cursor belongs to a different session");
+			}
+			boundaryIndex = branch.findIndex((entry) => entry.id === decoded.entryId);
+			if (boundaryIndex === -1) {
+				throw new Error("Session transcript cursor is not on the active branch");
+			}
+		}
+
+		const projected = branch.flatMap((entry, branchIndex) =>
+			sessionEntryToTranscriptItems(entry).map((item) => ({ branchIndex, item })),
+		);
+		const eligible = projected.filter(({ branchIndex }) => {
+			if (options.before !== undefined) return branchIndex < boundaryIndex!;
+			if (options.after !== undefined) return branchIndex > boundaryIndex!;
+			return true;
+		});
+		const selected =
+			options.after !== undefined
+				? eligible.slice(0, options.limit)
+				: eligible.slice(Math.max(0, eligible.length - options.limit));
+
+		const firstIndex = selected[0]?.branchIndex;
+		const lastIndex = selected.at(-1)?.branchIndex;
+		const hasMoreBefore = firstIndex !== undefined && projected.some(({ branchIndex }) => branchIndex < firstIndex);
+		const hasMoreAfter = lastIndex !== undefined && projected.some(({ branchIndex }) => branchIndex > lastIndex);
+		const firstItem = selected[0]?.item;
+		const lastScannedEntry = hasMoreAfter ? selected.at(-1)?.item.id : branch.at(-1)?.id;
+
+		let latestCompactionIndex = -1;
+		for (let index = branch.length - 1; index >= 0; index--) {
+			if (branch[index]?.type === "compaction") {
+				latestCompactionIndex = index;
+				break;
+			}
+		}
+
+		return {
+			items: selected.map(({ item }) => item),
+			cursors: {
+				before: firstItem ? encodeSessionTranscriptCursor(this.sessionId, firstItem.id) : null,
+				after: lastScannedEntry ? encodeSessionTranscriptCursor(this.sessionId, lastScannedEntry) : null,
+			},
+			hasMoreBefore,
+			hasMoreAfter,
+			totalItems: projected.length,
+			itemsAfterLatestCompaction: projected.filter(({ branchIndex }) => branchIndex > latestCompactionIndex).length,
+		};
+	}
+
+	/** Subscribe to committed transcript appends and authoritative branch resets. */
+	subscribeTranscript(listener: SessionTranscriptChangeListener, options: { resetPageSize: number }): () => void {
+		if (
+			!Number.isInteger(options.resetPageSize) ||
+			options.resetPageSize < 1 ||
+			options.resetPageSize > MAX_SESSION_TRANSCRIPT_PAGE_SIZE
+		) {
+			throw new Error(
+				`Session transcript reset page size must be an integer from 1 to ${MAX_SESSION_TRANSCRIPT_PAGE_SIZE}`,
+			);
+		}
+		this.transcriptListeners.set(listener, options.resetPageSize);
+		return () => {
+			this.transcriptListeners.delete(listener);
+		};
+	}
+
+	private _emitTranscriptAppend(entry: SessionEntry): void {
+		const items = sessionEntryToTranscriptItems(entry);
+		if (items.length === 0 || this.transcriptListeners.size === 0) return;
+		const metrics = this.readTranscriptPage({ limit: 1 });
+		const change: SessionTranscriptChange = {
+			type: "append",
+			items,
+			after: encodeSessionTranscriptCursor(this.sessionId, entry.id),
+			totalItems: metrics.totalItems,
+			itemsAfterLatestCompaction: metrics.itemsAfterLatestCompaction,
+		};
+		for (const listener of this.transcriptListeners.keys()) listener(change);
+	}
+
+	private _emitTranscriptReset(): void {
+		for (const [listener, resetPageSize] of this.transcriptListeners) {
+			listener({ type: "reset", page: this.readTranscriptPage({ limit: resetPageSize }) });
+		}
+	}
+
+	/**
 	 * Get session header.
 	 */
 	getHeader(): SessionHeader | null {
@@ -1362,6 +1544,7 @@ export class SessionManager {
 			throw new Error(`Entry ${branchFromId} not found`);
 		}
 		this.leafId = branchFromId;
+		this._emitTranscriptReset();
 	}
 
 	/**
@@ -1371,6 +1554,7 @@ export class SessionManager {
 	 */
 	resetLeaf(): void {
 		this.leafId = null;
+		this._emitTranscriptReset();
 	}
 
 	/**
@@ -1389,6 +1573,7 @@ export class SessionManager {
 			throw new Error(`Entry ${branchFromId} not found`);
 		}
 		this.leafId = branchFromId;
+		this._emitTranscriptReset();
 		const entry: BranchSummaryEntry = {
 			type: "branch_summary",
 			id: generateId(this.byId),
@@ -1487,6 +1672,7 @@ export class SessionManager {
 				this.flushed = false;
 			}
 
+			this._emitTranscriptReset();
 			return newSessionFile;
 		}
 
@@ -1508,6 +1694,7 @@ export class SessionManager {
 		this.fileEntries = [header, ...pathWithoutLabels, ...labelEntries];
 		this.sessionId = newSessionId;
 		this._buildIndex();
+		this._emitTranscriptReset();
 		return undefined;
 	}
 

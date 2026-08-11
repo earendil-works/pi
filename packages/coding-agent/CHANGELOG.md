@@ -5,6 +5,7 @@
 ### Added
 
 - Added a fullscreen exit output setting to choose between printing the final transcript and only a session resume hint.
+- Added a canonical, cursor-paged session transcript read model with post-commit append and branch-reset subscriptions.
 
 ### Changed
 
