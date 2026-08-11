@@ -186,9 +186,47 @@ describe("goal-mode example extension", () => {
 		expect(setWidget).toHaveBeenLastCalledWith("goal-mode", [
 			"[GOAL MODE]",
 			"Objective: Fix the flaky suite",
-			"Budget: tokens 100",
+			"Budget: tokens 0/100",
 		]);
 		expect(setTitle).toHaveBeenLastCalledWith("[GOAL MODE] Fix the flaky suite");
+	});
+
+	it("shows budget usage in the widget", async () => {
+		const { emit, entries, runCommand, setWidget } = setup();
+
+		await runCommand("goal", "Fix tests --tokens 100");
+		await emit("agent_start", { type: "agent_start" });
+		entries.push({
+			type: "message",
+			message: {
+				role: "assistant",
+				content: [],
+				api: "anthropic-messages",
+				provider: "anthropic",
+				model: "mock",
+				usage: {
+					input: 10,
+					output: 10,
+					cacheRead: 0,
+					cacheWrite: 0,
+					totalTokens: 20,
+					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+				},
+				stopReason: "stop",
+				timestamp: Date.now(),
+			},
+			id: "usage",
+			parentId: null,
+			timestamp: new Date().toISOString(),
+		} as SessionEntry);
+		await emit("turn_end", {
+			type: "turn_end",
+			turnIndex: 1,
+			message: createAssistantMessage("checked"),
+			toolResults: [],
+		});
+
+		expect(setWidget).toHaveBeenLastCalledWith("goal-mode", expect.arrayContaining(["Budget: tokens 20/100"]));
 	});
 
 	it("replaces an active goal while streaming by aborting and restarting after settle", async () => {
@@ -420,6 +458,40 @@ describe("goal-mode example extension", () => {
 		await emit("agent_settled", { type: "agent_settled" });
 
 		expect(customData(entries.at(-1))).toMatchObject({ status: "budget_limited" });
+	});
+
+	it("does not continue an over-budget goal on session resume", async () => {
+		const { emit, entries, runCommand, sendUserMessage } = setup();
+
+		await runCommand("goal", "Fix tests --tokens 10");
+		entries.push({
+			type: "message",
+			message: {
+				role: "assistant",
+				content: [],
+				api: "anthropic-messages",
+				provider: "anthropic",
+				model: "mock",
+				usage: {
+					input: 10,
+					output: 10,
+					cacheRead: 0,
+					cacheWrite: 0,
+					totalTokens: 20,
+					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+				},
+				stopReason: "stop",
+				timestamp: Date.now(),
+			},
+			id: "usage",
+			parentId: null,
+			timestamp: new Date().toISOString(),
+		} as SessionEntry);
+
+		await emit("session_start", { type: "session_start", reason: "resume" });
+
+		expect(customData(entries.at(-1))).toMatchObject({ status: "budget_limited" });
+		expect(sendUserMessage).toHaveBeenCalledTimes(1);
 	});
 
 	it("resumes a budget-limited goal with a fresh baseline", async () => {

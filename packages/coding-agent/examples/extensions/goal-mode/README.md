@@ -41,7 +41,8 @@ pi --extension examples/extensions/goal-mode/index.ts \
   The status bar shows `mode: build` with no goal and `mode: goal` while a
   goal exists, so normal and goal modes are visually distinct. When an active
   goal stops because the last turn made no tool calls, the label becomes
-  `GOAL MODE (WAITING)`.
+  `GOAL MODE (WAITING)`. When a budget is set, the widget shows usage consumed
+  so far (for example `Budget: tokens 50/100`).
 - Typing `/goal` in the interactive editor shows the command usage hint and
   completes the `pause`, `resume`, and `clear` subcommands.
 - The active goal is injected into every model request, including current

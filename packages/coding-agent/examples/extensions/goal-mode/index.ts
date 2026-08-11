@@ -38,6 +38,7 @@ import {
 	isGoalContextMessage,
 	isValidCompletionEvidence,
 	parseGoalCommand,
+	type UsageTotals,
 } from "./utils.ts";
 
 const ENTRY_TYPE = "goal-mode";
@@ -77,20 +78,30 @@ function updateStatus(pi: ExtensionAPI, ctx: ExtensionContext): void {
 
 	const label = getGoalStatusLabel(goal.status);
 	ctx.ui.setStatus("goal-mode", "mode: goal");
-	ctx.ui.setWidget("goal-mode", getGoalWidgetLines(label));
+	ctx.ui.setWidget("goal-mode", getGoalWidgetLines(label, getGoalWidgetUsage(goal, ctx)));
 
 	const titleObjective = goal.objective.length > 48 ? `${goal.objective.slice(0, 45)}...` : goal.objective;
 	ctx.ui.setTitle(`[${label}] ${titleObjective}`);
 }
 
-function getGoalWidgetLines(label: string): string[] {
+function getGoalWidgetUsage(goal: GoalState, ctx: ExtensionContext): UsageTotals | undefined {
+	return goal.budget?.tokens !== undefined || goal.budget?.cost !== undefined
+		? getGoalUsage(goal, ctx.sessionManager.getBranch())
+		: undefined;
+}
+
+function getGoalWidgetLines(label: string, usage?: UsageTotals): string[] {
 	if (!goal) return [];
 	const lines = [`[${label}]`, `Objective: ${goal.objective}`];
 	if (goal.budget?.tokens !== undefined || goal.budget?.cost !== undefined) {
 		const budget = goal.budget;
 		const parts: string[] = [];
-		if (budget.tokens !== undefined) parts.push(`tokens ${budget.tokens}`);
-		if (budget.cost !== undefined) parts.push(`cost ${budget.cost}`);
+		if (budget.tokens !== undefined) {
+			parts.push(usage ? `tokens ${usage.tokens}/${budget.tokens}` : `tokens ${budget.tokens}`);
+		}
+		if (budget.cost !== undefined) {
+			parts.push(usage ? `cost ${usage.cost.toFixed(4)}/${budget.cost}` : `cost ${budget.cost}`);
+		}
 		lines.push(`Budget: ${parts.join(", ")}`);
 	}
 	if (goal.progress.length > 0) {
@@ -124,6 +135,13 @@ function parseBudgetFlags(pi: ExtensionAPI, ctx: ExtensionContext): GoalBudget {
 
 function startGoal(pi: ExtensionAPI, ctx: ExtensionContext): void {
 	if (!goal || goal.status !== "active") return;
+	if (isBudgetExceeded(goal, getGoalUsage(goal, ctx.sessionManager.getBranch()))) {
+		// A resumed goal may already have consumed its budget before the last
+		// session ended. Stop before sending another continuation instead of
+		// burning an extra turn and then transitioning at settle.
+		transitionBudgetLimited(pi, ctx);
+		return;
+	}
 	if (!ctx.isIdle()) {
 		// A user command changed the goal while a run is in flight. Stop the
 		// current work and let agent_settled start the new goal instead of
@@ -231,7 +249,7 @@ function clearGoal(pi: ExtensionAPI, ctx: ExtensionContext): void {
 function reportWaitingForUser(ctx: ExtensionContext): void {
 	if (!goal) return;
 	ctx.ui.setStatus("goal-mode", "mode: goal (waiting)");
-	ctx.ui.setWidget("goal-mode", getGoalWidgetLines("GOAL MODE (WAITING)"));
+	ctx.ui.setWidget("goal-mode", getGoalWidgetLines("GOAL MODE (WAITING)", getGoalWidgetUsage(goal, ctx)));
 	const titleObjective = goal.objective.length > 48 ? `${goal.objective.slice(0, 45)}...` : goal.objective;
 	ctx.ui.setTitle(`[GOAL MODE (WAITING)] ${titleObjective}`);
 	ctx.ui.notify(
