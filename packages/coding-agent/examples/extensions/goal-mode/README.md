@@ -36,8 +36,8 @@ pi --extension examples/extensions/goal-mode/index.ts \
   and compaction. The active branch's most recent goal entry wins.
 - When a goal exists, the footer/status bar, editor widget, and terminal title
   show `GOAL MODE`, `GOAL PAUSED`, `GOAL COMPLETE`, or `GOAL BUDGET LIMITED`.
-  With no goal, the status bar shows `goal: off` so normal mode is visually
-  distinct from active goal mode.
+  The status bar shows `mode: build` with no goal and `mode: goal` while a
+  goal exists, so normal and goal modes are visually distinct.
 - Typing `/goal` in the interactive editor shows the command usage hint and
   completes the `pause`, `resume`, and `clear` subcommands.
 - The active goal is injected into every model request. The model is told to

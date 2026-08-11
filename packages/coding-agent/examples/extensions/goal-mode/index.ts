@@ -68,14 +68,14 @@ function getGoalStatusLabel(status: GoalState["status"]): string {
 
 function updateStatus(pi: ExtensionAPI, ctx: ExtensionContext): void {
 	if (!goal) {
-		ctx.ui.setStatus("goal-mode", "goal: off");
+		ctx.ui.setStatus("goal-mode", "mode: build");
 		ctx.ui.setWidget("goal-mode", undefined);
 		ctx.ui.setTitle(getBaseTitle(pi));
 		return;
 	}
 
 	const label = getGoalStatusLabel(goal.status);
-	ctx.ui.setStatus("goal-mode", `goal: ${goal.status}`);
+	ctx.ui.setStatus("goal-mode", "mode: goal");
 
 	const lines = [`[${label}]`, `Objective: ${goal.objective}`];
 	if (goal.budget?.tokens !== undefined || goal.budget?.cost !== undefined) {

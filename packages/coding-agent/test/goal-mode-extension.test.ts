@@ -164,7 +164,7 @@ describe("goal-mode example extension", () => {
 		});
 		expect(sendUserMessage).toHaveBeenCalledTimes(1);
 		expect(sendUserMessage.mock.calls[0]?.[0]).toContain("Fix the flaky suite");
-		expect(setStatus).toHaveBeenLastCalledWith("goal-mode", "goal: active");
+		expect(setStatus).toHaveBeenLastCalledWith("goal-mode", "mode: goal");
 		expect(setWidget).toHaveBeenLastCalledWith("goal-mode", [
 			"[GOAL MODE]",
 			"Objective: Fix the flaky suite",
@@ -179,17 +179,17 @@ describe("goal-mode example extension", () => {
 		await runCommand("goal", "Fix tests");
 		await runCommand("goal", "pause");
 		expect(customData(entries.at(-1))).toMatchObject({ status: "paused" });
-		expect(setStatus).toHaveBeenLastCalledWith("goal-mode", "goal: paused");
+		expect(setStatus).toHaveBeenLastCalledWith("goal-mode", "mode: goal");
 		expect(setWidget).toHaveBeenLastCalledWith("goal-mode", ["[GOAL PAUSED]", "Objective: Fix tests"]);
 		expect(abort).toHaveBeenCalledTimes(1);
 
 		await runCommand("goal", "resume");
 		expect(customData(entries.at(-1))).toMatchObject({ status: "active" });
-		expect(setStatus).toHaveBeenLastCalledWith("goal-mode", "goal: active");
+		expect(setStatus).toHaveBeenLastCalledWith("goal-mode", "mode: goal");
 
 		await runCommand("goal", "clear");
 		expect(customData(entries.at(-1))).toBeNull();
-		expect(setStatus).toHaveBeenLastCalledWith("goal-mode", "goal: off");
+		expect(setStatus).toHaveBeenLastCalledWith("goal-mode", "mode: build");
 		expect(setWidget).toHaveBeenLastCalledWith("goal-mode", undefined);
 		expect(setTitle).toHaveBeenLastCalledWith(expect.stringContaining("pi - "));
 		expect(abort).toHaveBeenCalledTimes(2);
