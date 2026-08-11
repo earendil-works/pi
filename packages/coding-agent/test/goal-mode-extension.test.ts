@@ -159,11 +159,11 @@ describe("goal-mode example extension", () => {
 		expect(goalCommand?.argumentHint).toBe("<objective> [--tokens N] [--cost N] | pause | resume | clear");
 		expect(goalCommand?.getArgumentCompletions?.("")).toEqual([
 			{ value: "pause", label: "pause", description: "Pause the active goal" },
-			{ value: "resume", label: "resume", description: "Resume a paused goal" },
+			{ value: "resume", label: "resume", description: "Resume a paused, waiting, or budget-limited goal" },
 			{ value: "clear", label: "clear", description: "Clear the goal" },
 		]);
 		expect(goalCommand?.getArgumentCompletions?.("re")).toEqual([
-			{ value: "resume", label: "resume", description: "Resume a paused goal" },
+			{ value: "resume", label: "resume", description: "Resume a paused, waiting, or budget-limited goal" },
 		]);
 		expect(goalCommand?.getArgumentCompletions?.("Fix tests")).toBeNull();
 	});

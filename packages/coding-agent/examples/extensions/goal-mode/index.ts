@@ -292,7 +292,7 @@ export default function goalModeExtension(pi: ExtensionAPI): void {
 						value === "pause"
 							? "Pause the active goal"
 							: value === "resume"
-								? "Resume a paused goal"
+								? "Resume a paused, waiting, or budget-limited goal"
 								: "Clear the goal",
 				}));
 			}
@@ -305,7 +305,7 @@ export default function goalModeExtension(pi: ExtensionAPI): void {
 							value === "pause"
 								? "Pause the active goal"
 								: value === "resume"
-									? "Resume a paused goal"
+									? "Resume a paused, waiting, or budget-limited goal"
 									: "Clear the goal",
 					}))
 				: null;
