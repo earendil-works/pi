@@ -7,6 +7,7 @@ import { normalizePath, resolvePath } from "../../utils/paths.ts";
 import type { ToolDefinition } from "../extensions/types.ts";
 import type { SessionEntry } from "../session-manager.ts";
 import { SessionManager } from "../session-manager.ts";
+import { buildMermaidDiagramMap } from "./mermaid-html.ts";
 
 /**
  * Interface for rendering custom tools to HTML.
@@ -135,6 +136,8 @@ interface SessionData {
 	tools?: Array<Pick<ToolDefinition, "name" | "description" | "parameters">>;
 	/** Pre-rendered HTML for custom tool calls/results, keyed by tool call ID */
 	renderedTools?: Record<string, RenderedToolHtml>;
+	/** Pre-rendered Mermaid diagram HTML, keyed by trimmed diagram source */
+	mermaidDiagrams?: Record<string, string>;
 }
 
 /**
@@ -259,6 +262,7 @@ export async function exportSessionToHtml(
 			renderedTools = undefined;
 		}
 	}
+	const mermaidDiagrams = buildMermaidDiagramMap(entries);
 
 	const sessionData: SessionData = {
 		header: sm.getHeader(),
@@ -267,6 +271,7 @@ export async function exportSessionToHtml(
 		systemPrompt: state?.systemPrompt,
 		tools: state?.tools?.map((t) => ({ name: t.name, description: t.description, parameters: t.parameters })),
 		renderedTools,
+		mermaidDiagrams,
 	};
 
 	const html = generateHtml(sessionData, opts.themeName);
@@ -294,13 +299,16 @@ export async function exportFromFile(inputPath: string, options?: ExportOptions 
 	}
 
 	const sm = SessionManager.open(resolvedInputPath);
+	const entries = sm.getEntries();
+	const mermaidDiagrams = buildMermaidDiagramMap(entries);
 
 	const sessionData: SessionData = {
 		header: sm.getHeader(),
-		entries: sm.getEntries(),
+		entries,
 		leafId: sm.getLeafId(),
 		systemPrompt: undefined,
 		tools: undefined,
+		mermaidDiagrams,
 	};
 
 	const html = generateHtml(sessionData, opts.themeName);

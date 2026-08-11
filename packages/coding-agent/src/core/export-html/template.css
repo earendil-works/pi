@@ -909,6 +909,53 @@
       color: var(--text);
     }
 
+    .mermaid-render {
+      position: relative;
+      max-width: 100%;
+    }
+
+    .mermaid-render [hidden] {
+      display: none !important;
+    }
+
+    .markdown-content pre.mermaid-diagram {
+      display: block;
+      width: max-content;
+      margin: var(--line-height) auto;
+      max-width: 100%;
+      max-height: 60vh;
+      overflow-x: auto;
+      overflow-y: auto;
+      font-family: inherit;
+      background: transparent;
+    }
+
+    .markdown-content pre.mermaid-source {
+      display: block;
+      width: 100%;
+      margin: var(--line-height) 0;
+      max-height: 60vh;
+      overflow: auto;
+      font-family: inherit;
+      background: transparent;
+    }
+
+    .markdown-content pre.mermaid-source code {
+      display: block;
+      background: none;
+      color: var(--text);
+    }
+
+    .mermaid-diagram > div {
+      white-space: pre;
+      line-height: var(--line-height);
+    }
+
+    .mermaid-warning {
+      color: var(--warning);
+      margin-top: 2px;
+    }
+
     .markdown-content blockquote {
       border-left: 3px solid var(--mdQuoteBorder);
       padding-left: var(--line-height);
