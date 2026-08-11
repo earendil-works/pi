@@ -7,6 +7,7 @@
 
 import assert from "node:assert";
 import { beforeEach, describe, it } from "node:test";
+import { matchesKey } from "../src/keys.ts";
 import { StdinBuffer } from "../src/stdin-buffer.ts";
 
 describe("StdinBuffer", () => {
@@ -132,6 +133,62 @@ describe("StdinBuffer", () => {
 			await wait(15);
 
 			assert.deepStrictEqual(emittedSequences, ["\x1b[<35"]);
+		});
+
+		it("should flush a lone ESC as Escape when CR arrives after the timeout", async () => {
+			// Legacy-mode Alt+Enter is ESC + CR; when the terminal/transport splits
+			// the bytes further apart than the timeout, ESC is flushed alone and the
+			// host sees Escape (interrupt) instead of Alt+Enter. This locks in the
+			// behavior so the configurable timeout in ProcessTerminal stays honest.
+			processInput("\x1b");
+			await wait(20); // buffer timeout is 10ms in beforeEach
+			processInput("\r");
+
+			assert.deepStrictEqual(emittedSequences, ["\x1b", "\r"]);
+			assert.equal(matchesKey(emittedSequences[0] ?? "", "escape"), true);
+		});
+
+		it("should merge ESC + CR split across chunks within a larger timeout", async () => {
+			buffer = new StdinBuffer({ escapeTimeout: 100 });
+			emittedSequences = [];
+			buffer.on("data", (sequence) => {
+				emittedSequences.push(sequence);
+			});
+
+			processInput("\x1b");
+			await wait(20); // > 10ms default escapeTimeout, < 100ms configured escapeTimeout
+			processInput("\r");
+
+			assert.deepStrictEqual(emittedSequences, ["\x1b\r"]);
+			assert.equal(matchesKey(emittedSequences[0] ?? "", "alt+enter"), true);
+		});
+
+		it("does not apply the sequence timeout to a lone ESC", async () => {
+			buffer = new StdinBuffer({ timeout: 100 });
+			emittedSequences = [];
+			buffer.on("data", (sequence) => {
+				emittedSequences.push(sequence);
+			});
+
+			processInput("\x1b");
+			await wait(20);
+			processInput("\r");
+
+			assert.deepStrictEqual(emittedSequences, ["\x1b", "\r"]);
+			assert.equal(matchesKey(emittedSequences[0] ?? "", "escape"), true);
+		});
+
+		it("keeps fragmented mouse sequences buffered across delayed chunks by default", async () => {
+			const delayedBuffer = new StdinBuffer();
+			const delayedSequences: string[] = [];
+			delayedBuffer.on("data", (sequence) => delayedSequences.push(sequence));
+
+			delayedBuffer.process("\x1b[");
+			await wait(20);
+			assert.deepStrictEqual(delayedSequences, []);
+			delayedBuffer.process("<65;48;39M");
+			assert.deepStrictEqual(delayedSequences, ["\x1b[<65;48;39M"]);
+			delayedBuffer.destroy();
 		});
 	});
 
@@ -312,6 +369,17 @@ describe("StdinBuffer", () => {
 			// After timeout, should emit
 			await wait(15);
 			assert.deepStrictEqual(emittedSequences, ["\x1b"]);
+		});
+
+		it("flushes a lone escape promptly with the longer default sequence timeout", async () => {
+			const defaultBuffer = new StdinBuffer();
+			const defaultSequences: string[] = [];
+			defaultBuffer.on("data", (sequence) => defaultSequences.push(sequence));
+
+			defaultBuffer.process("\x1b");
+			await wait(20);
+			assert.deepStrictEqual(defaultSequences, ["\x1b"]);
+			defaultBuffer.destroy();
 		});
 
 		it("should handle lone escape character with explicit flush", () => {

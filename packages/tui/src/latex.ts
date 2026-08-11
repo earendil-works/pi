@@ -1145,7 +1145,7 @@ class LatexParser {
 	}
 
 	private parseRequiredArgumentValue(): string {
-		while (this.position < this.source.length && /[ \t]/.test(this.source[this.position] ?? "")) {
+		while (this.position < this.source.length && /\s/.test(this.source[this.position] ?? "")) {
 			this.position++;
 		}
 		if (this.position >= this.source.length) {

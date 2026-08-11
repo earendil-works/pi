@@ -18,7 +18,7 @@ import { shortHash } from "../utils/hash.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { parseStreamingJson } from "../utils/json-parse.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
-import { resolveJsonSchemaStrictSampling } from "./constrained-sampling.ts";
+import { getJsonSchemaToolParameters, resolveJsonSchemaStrictSampling } from "./constrained-sampling.ts";
 import { buildBaseOptions } from "./simple-options.ts";
 import { transformMessages } from "./transform-messages.ts";
 
@@ -753,7 +753,7 @@ function toFunctionTools(tools: Tool[]): MistralFunctionTool[] {
 			function: {
 				name: tool.name,
 				description: tool.description,
-				parameters: stripSymbolKeys(tool.parameters) as Record<string, unknown>,
+				parameters: stripSymbolKeys(getJsonSchemaToolParameters(tool, strict)) as Record<string, unknown>,
 				strict: strict ?? false,
 			},
 		};

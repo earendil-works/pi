@@ -9,6 +9,7 @@ const TYPEBOX_KIND = Symbol.for("TypeBox.Kind");
 interface JsonSchemaObject {
 	type?: string | string[];
 	properties?: Record<string, JsonSchemaObject>;
+	required?: string[];
 	items?: JsonSchemaObject | JsonSchemaObject[];
 	additionalProperties?: boolean | JsonSchemaObject;
 	allOf?: JsonSchemaObject[];
@@ -236,6 +237,37 @@ function coerceWithJsonSchema(value: unknown, schema: JsonSchemaObject): unknown
 	return nextValue;
 }
 
+function normalizeOptionalNulls(value: unknown, schema: JsonSchemaObject): void {
+	if (Array.isArray(value)) {
+		if (Array.isArray(schema.items)) {
+			for (let index = 0; index < value.length; index++) {
+				const itemSchema = schema.items[index];
+				if (itemSchema) normalizeOptionalNulls(value[index], itemSchema);
+			}
+		} else if (schema.items) {
+			for (const item of value) normalizeOptionalNulls(item, schema.items);
+		}
+		return;
+	}
+	if (typeof value !== "object" || value === null || !schema.properties) return;
+
+	const object = value as Record<string, unknown>;
+	const required = new Set(schema.required ?? []);
+	for (const [key, propertySchema] of Object.entries(schema.properties)) {
+		if (!(key in object)) continue;
+		if (
+			object[key] === null &&
+			!required.has(key) &&
+			typeof (propertySchema as { $ref?: unknown }).$ref !== "string" &&
+			getSubSchemaValidator(propertySchema)?.Check(null) === false
+		) {
+			delete object[key];
+		} else {
+			normalizeOptionalNulls(object[key], propertySchema);
+		}
+	}
+}
+
 function getValidator(schema: Tool["parameters"]): ReturnType<typeof Compile> {
 	const key = schema as object;
 	const cached = validatorCache.get(key);
@@ -284,6 +316,7 @@ export function validateToolCall(tools: Tool[], toolCall: ToolCall): any {
  */
 export function validateToolArguments(tool: Tool, toolCall: ToolCall): any {
 	const args = structuredClone(toolCall.arguments);
+	normalizeOptionalNulls(args, tool.parameters as JsonSchemaObject);
 	Value.Convert(tool.parameters, args);
 
 	const validator = getValidator(tool.parameters);

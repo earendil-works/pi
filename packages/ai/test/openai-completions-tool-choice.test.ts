@@ -1437,11 +1437,17 @@ describe("openai-completions tool_choice", () => {
 			provider: "custom-deepseek",
 			baseUrl: "https://api.deepseek.com",
 		} satisfies Model<"openai-completions">;
+		const customUppercaseModel = {
+			...customModel,
+			id: "custom-uppercase-deepseek-model",
+			name: "Custom Uppercase DeepSeek Model",
+			baseUrl: "https://API.DeepSeek.COM",
+		} satisfies Model<"openai-completions">;
 		const nativeModels = [
 			getModel("deepseek", "deepseek-v4-flash")!,
 			getModel("deepseek", "deepseek-v4-pro")!,
 		] as const;
-		const cases = [...nativeModels, customModel] as const;
+		const cases = [...nativeModels, customModel, customUppercaseModel] as const;
 
 		for (const model of nativeModels) {
 			expect(model.compat?.maxTokensField).toBe("max_tokens");

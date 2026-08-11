@@ -443,6 +443,7 @@ R\left(\frac{\pi}{4}\right)
 			"    -b±√(b²-4ac)\nx = ────────────\n         2a",
 		);
 		assert.strictEqual(renderLatex(String.raw`\frac{x^2+1}{x-1}`, { display: true }), "x²+1\n────\nx-1");
+		assert.strictEqual(renderLatex("\\frac{1}\n{2}", { display: true }), "1\n─\n2");
 	});
 
 	it("keeps nested display fractions linear", () => {
