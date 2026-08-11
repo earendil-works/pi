@@ -23,9 +23,7 @@ export type JsonlSearchTextProjector = (
 	label: string | undefined,
 ) => string;
 
-export interface JsonlSessionSearchHit extends ScanningSessionSearchHit {
-	readonly metadata: JsonlSessionMetadata;
-}
+export type JsonlSessionSearchHit = ScanningSessionSearchHit;
 
 export interface JsonlScanningSessionSourceOptions {
 	projectText?: JsonlSearchTextProjector;
@@ -106,16 +104,7 @@ export function createJsonlScanningSessionSearch(
 	options: JsonlSessionRepoOptions,
 	sourceOptions?: JsonlScanningSessionSourceOptions,
 ): SessionSearch<JsonlSessionSearchHit> {
-	return createScanningSessionSearch<JsonlSessionMetadata, JsonlSessionListOptions, JsonlSessionSearchHit>(
+	return createScanningSessionSearch<JsonlSessionMetadata, JsonlSessionListOptions>(
 		createJsonlScanningSessionSource(options, sourceOptions),
-		{
-			createHit: (metadata, candidate) => ({
-				sessionId: metadata.id,
-				entryId: candidate.entryId,
-				timestamp: candidate.timestamp,
-				snippet: candidate.text,
-				metadata,
-			}),
-		},
 	);
 }

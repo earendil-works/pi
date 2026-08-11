@@ -112,18 +112,14 @@ describe("session search", () => {
 			expect.arrayContaining([
 				expect.objectContaining({
 					sessionId: "jsonl",
-					metadata: expect.objectContaining({ id: "jsonl", cwd }),
 					entryId,
 				}),
 				expect.objectContaining({
 					sessionId: "other",
-					metadata: expect.objectContaining({ id: "other", cwd: otherCwd }),
 					entryId: otherEntryId,
 				}),
 			]),
 		);
-		expect(await collect(search.search("disk"))).toMatchObject([
-			{ sessionId: "jsonl", metadata: { id: "jsonl", cwd }, entryId },
-		]);
+		expect(await collect(search.search("disk"))).toMatchObject([{ sessionId: "jsonl", entryId }]);
 	});
 });

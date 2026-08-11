@@ -87,13 +87,9 @@ for await (const hit of search.search("authentication", { limit: 10 })) {
 }
 ```
 
-Memory scanning returns `SessionSearch<ScanningSessionSearchHit>`. JSONL scanning extends that hit with metadata it already reads while scanning:
+Memory and JSONL scanning return `SessionSearch<ScanningSessionSearchHit>`:
 
 ```ts
-export interface JsonlSessionSearchHit extends ScanningSessionSearchHit {
-  readonly metadata: JsonlSessionMetadata;
-}
-
 const jsonlSearch = createJsonlScanningSessionSearch({ fs, sessionsRoot });
 ```
 
