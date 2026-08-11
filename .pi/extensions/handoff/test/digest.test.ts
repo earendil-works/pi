@@ -7,6 +7,7 @@ import {
 	hasAssistantMessage,
 	lastAssistantText,
 	lastUserText,
+	renderFileList,
 	truncateChars,
 } from "../digest.ts";
 import { HANDOFF_SCHEMA } from "../notes.ts";
@@ -241,5 +242,67 @@ describe("buildDigestNote", () => {
 		const entries = [user("hi"), assistant([{ type: "text", text: "hello" }])];
 		const note = buildDigestNote({ ...DIGEST_BASE, model: undefined, entries });
 		expect(note?.frontmatter.model).toBeUndefined();
+	});
+});
+
+describe("renderFileList", () => {
+	// The entry walk feeding this is deliberately un-folded (pre-compaction history included),
+	// so it is the section most able to flood the body the successor reads.
+	it("renders a short list whole, with no count suffix", () => {
+		expect(renderFileList("read", ["a.ts", "b.ts"])).toBe("- read: a.ts, b.ts");
+	});
+
+	// Which end survives is the whole point: the successor needs what was in flight at exit,
+	// not what the session opened while getting oriented.
+	it("drops the oldest paths and keeps the ones touched last", () => {
+		const paths = Array.from({ length: 50 }, (_, i) => `f${i}.ts`);
+		const line = renderFileList("modified", paths);
+
+		expect(line).toContain("f49.ts");
+		expect(line).toContain("f30.ts");
+		expect(line).not.toContain("f29.ts");
+		expect(line).toContain("(and 30 earlier omitted)");
+	});
+
+	it("keeps the surviving paths in first-touch order", () => {
+		const line = renderFileList("read", ["a.ts", "b.ts", "c.ts"]);
+		expect(line).toBe("- read: a.ts, b.ts, c.ts");
+	});
+
+	it("caps on characters too, so few-but-enormous paths cannot flood the body", () => {
+		const paths = Array.from({ length: 10 }, (_, i) => `${"deep/".repeat(40)}f${i}.ts`);
+		const line = renderFileList("read", paths);
+
+		expect(line.length).toBeLessThan(900);
+		expect(line).toContain("f9.ts");
+		expect(line).toMatch(/\(and \d+ earlier omitted\)$/);
+	});
+
+	// The walk stops at the first path that will not fit, so everything older goes with it —
+	// which keeps "earlier omitted" honest rather than reporting a gappy list as contiguous.
+	it("omits a path it cannot show whole rather than emitting a truncated one", () => {
+		const line = renderFileList("read", ["a.ts", "x".repeat(5000)]);
+
+		expect(line).not.toContain("xxx");
+		expect(line).toBe("- read: 2 paths omitted");
+	});
+
+	it("bounds the section inside a real digest note, keeping the in-flight edits", () => {
+		const reads = Array.from({ length: 400 }, (_, i) => toolCall("read", { path: `src/module-${i}.ts` }));
+		const body =
+			buildDigestNote({
+				...DIGEST_BASE,
+				entries: [
+					user("Audit the tree"),
+					assistant(reads),
+					assistant([toolCall("edit", { path: "src/INFLIGHT.ts" })]),
+					assistant([{ type: "text", text: "Done." }]),
+				],
+			})?.body ?? "";
+
+		expect(body).toContain("src/INFLIGHT.ts");
+		expect(body).toContain("src/module-399.ts");
+		expect(body).not.toContain("src/module-0.ts");
+		expect(body.length).toBeLessThan(2000);
 	});
 });

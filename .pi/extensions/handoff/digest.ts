@@ -19,6 +19,14 @@ const USER_EXCERPT_LINES = 15;
 const EXCERPT_CHARS = 2000;
 /** A frontmatter scalar, so held much tighter than the body excerpts. */
 const KICKOFF_CHARS = 200;
+/**
+ * `## Files touched` bounds, for the same reason and on the same two axes. The walk that
+ * feeds this section is unbounded by design (`getBranch()` deliberately does not fold away
+ * pre-compaction history), so a session long enough to have compacted can hand it hundreds
+ * of paths — which would render as one unbroken line in the body the successor reads.
+ */
+const FILES_PER_LIST = 20;
+const FILES_CHARS = 600;
 
 interface TextBlock {
 	type: "text";
@@ -158,10 +166,42 @@ export interface DigestInput {
 	created: string;
 }
 
+/**
+ * One `- <label>: a, b, c` line, capped on count and characters.
+ *
+ * The cap keeps the **most recently touched** paths and drops older ones. `collectFilesTouched`
+ * returns first-touch order, so keeping the head would report what the session opened while
+ * getting oriented and drop what it was editing when it quit — the opposite of what a note whose
+ * job is "where do I resume" should say. Kept paths still render oldest-first; only the dropped
+ * end differs, which is what the suffix names.
+ *
+ * Paths are never truncated: a chopped path still reads as a path, so it is worse than an honest
+ * omission. One that cannot fit whole is dropped and counted instead. Counts are exact — derived
+ * from what was kept, not estimated.
+ */
+export function renderFileList(label: string, paths: string[]): string {
+	const kept: string[] = [];
+	let chars = 0;
+	for (let i = paths.length - 1; i >= 0; i--) {
+		const path = paths[i];
+		if (kept.length >= FILES_PER_LIST) break;
+		const cost = path.length + (kept.length > 0 ? ", ".length : 0);
+		if (chars + cost > FILES_CHARS) break;
+		chars += cost;
+		kept.unshift(path);
+	}
+
+	const omitted = paths.length - kept.length;
+	if (kept.length === 0) return `- ${label}: ${omitted} path${omitted === 1 ? "" : "s"} omitted`;
+	return omitted > 0
+		? `- ${label}: ${kept.join(", ")} (and ${omitted} earlier omitted)`
+		: `- ${label}: ${kept.join(", ")}`;
+}
+
 function renderFilesSection(files: FilesTouched): string {
 	const lines: string[] = [];
-	if (files.read.length > 0) lines.push(`- read: ${files.read.join(", ")}`);
-	if (files.modified.length > 0) lines.push(`- modified: ${files.modified.join(", ")}`);
+	if (files.read.length > 0) lines.push(renderFileList("read", files.read));
+	if (files.modified.length > 0) lines.push(renderFileList("modified", files.modified));
 	return lines.length > 0 ? lines.join("\n") : "- none recorded";
 }
 

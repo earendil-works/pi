@@ -13,8 +13,13 @@
 import type { Message, Model } from "@earendil-works/pi-ai";
 import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
 
-/** Trailing marker the model uses to hand back the successor's opening prompt. */
-const KICKOFF_MARKER = /^KICKOFF:[ \t]*(.+)$/;
+/**
+ * Trailing marker the model uses to hand back the successor's opening prompt. The capture is
+ * `*`, not `+`, so a marker whose text the user deleted in the editor still matches and is
+ * consumed; leaving it unmatched would paste a bare `KICKOFF:` into the note body, which the
+ * reader re-injects verbatim into the successor's first turn.
+ */
+const KICKOFF_MARKER = /^KICKOFF:[ \t]*(.*)$/;
 
 export const COMPOSE_SYSTEM_PROMPT = `You are writing a handoff note for the next coding session. The next session starts with no memory of this conversation and will read only your note.
 
@@ -46,8 +51,10 @@ export function buildComposeUserMessage(conversationText: string, goal: string):
 }
 
 /**
- * Split the trailing `KICKOFF:` line off the note body. Returns kickoff undefined when
- * the model omitted it; callers supply their own fallback rather than failing.
+ * Split the trailing `KICKOFF:` line off the note body. Returns kickoff undefined when the
+ * model omitted the line entirely *and* when the line is present but empty (the editor's
+ * natural way to say "no kickoff") — either way the line is consumed and callers supply
+ * their own fallback rather than failing.
  */
 export function splitKickoff(text: string): { body: string; kickoff?: string } {
 	const lines = text.trimEnd().split("\n");
@@ -56,7 +63,9 @@ export function splitKickoff(text: string): { body: string; kickoff?: string } {
 		if (line === "" || line === "---") continue;
 		const match = KICKOFF_MARKER.exec(line);
 		if (!match) break;
-		return { body: lines.slice(0, i).join("\n").trimEnd(), kickoff: match[1].trim() };
+		const body = lines.slice(0, i).join("\n").trimEnd();
+		const kickoff = match[1].trim();
+		return kickoff ? { body, kickoff } : { body };
 	}
 	return { body: text.trim() };
 }

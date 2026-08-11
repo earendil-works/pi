@@ -27,8 +27,15 @@ describe("splitKickoff", () => {
 		expect(splitKickoff(text)).toEqual({ body: text });
 	});
 
-	it("ignores a marker with no content after it", () => {
-		expect(splitKickoff("## Context\nBody.\n\nKICKOFF:").kickoff).toBeUndefined();
+	// Deleting the text after the marker is the editor's natural way to say "no kickoff".
+	// The line has to be consumed, not just unmatched: whatever stays in the body is what
+	// the reader re-injects into the successor's first turn.
+	it("consumes a marker with no content after it", () => {
+		expect(splitKickoff("## Context\nBody.\n\nKICKOFF:")).toEqual({ body: "## Context\nBody." });
+	});
+
+	it("consumes a marker the user blanked to whitespace", () => {
+		expect(splitKickoff("## Context\nBody.\n\nKICKOFF:   ")).toEqual({ body: "## Context\nBody." });
 	});
 });
 
@@ -46,6 +53,12 @@ describe("joinKickoff", () => {
 	it("round-trips a note the model gave no kickoff for", () => {
 		const body = "## Context\nBody.";
 		expect(splitKickoff(joinKickoff(body, undefined))).toEqual({ body });
+	});
+
+	it("round-trips a kickoff the user emptied in the editor", () => {
+		const body = "## Context\nBody.";
+		const emptied = joinKickoff(body, "Model's original.").replace("Model's original.", "");
+		expect(splitKickoff(emptied)).toEqual({ body });
 	});
 
 	it("picks up a kickoff the user typed into a note that had none", () => {

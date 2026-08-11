@@ -164,6 +164,13 @@ imports only. Keeps installation = "copy or symlink the folder."
   (walk assistant `toolCall` content blocks for `read`/`write`/`edit` path
   arguments, deduped into read vs modified); current model; session file path +
   id; mechanical `kickoff` = `"Continue: <first line of last user message>"`.
+- **Files-touched bounds:** each list is capped at 20 paths and 600 characters,
+  with an `(and N earlier omitted)` suffix. The cap keeps the **most recently
+  touched** paths, not the first: the walk above is deliberately un-folded, so on
+  a compacted session the list is long, and the successor needs the files that
+  were in flight at exit rather than the ones opened while getting oriented.
+  Paths are never truncated mid-string — one that cannot be shown whole is
+  omitted and counted, since a chopped path still reads as a real one.
 - Works identically in all modes (`notify` only when `ctx.hasUI`).
 - Known limits, accepted: shutdown is best-effort in pi (fatal-error exits and
   SIGKILL skip it). `/handoff` is the reliable path; this is the seatbelt.
@@ -246,6 +253,29 @@ Formatting is the remaining gap: `biome check` ignores the path by config, and c
 would mean editing `biome.json` — a shared upstream file. Format by hand when needed with
 `--config-path` pointing at a copy of `biome.json` whose `files.includes` is
 `["**/*.ts", "!**/node_modules/**/*"]`.
+
+### What the unit tests do *not* cover: `index.ts`
+
+`index.ts` is the one module with no test file, and that is a standing decision rather than an
+oversight. It has runtime (non-type) imports from `@earendil-works/pi-ai`, `pi-coding-agent`, and
+`pi-tui`; importing it from a test under this vitest config fails with `Cannot find module
+'…/handoff/string_decoder'`. Every other module keeps its pi imports type-only, which is why they
+are importable — `reader-wiring.test.ts` works only because `reader.ts` obeys that rule.
+
+**The blocker is a vitest resolution setting, not an architectural one, and the difference matters
+— an earlier draft of this section claimed the latter and was wrong.** Adding
+`test.server.deps.external: [/.*/]` to `vitest.config.ts` makes `index.ts` importable with no
+source change at all (measured: 104 tests pass, and the same probe fails without the key). No
+extraction is required. What that key costs is the reason it is not taken: it hands every `.ts` in
+this suite to Node's type-stripping instead of vite's transform, changing how all five existing
+test files are loaded to buy coverage of one. That tradeoff deserves its own change, evaluated on
+its own, rather than riding along with a bug fix.
+
+So for v1: keep `index.ts` thin — registration and wiring, with the logic it wires living in the
+tested modules — and cover it by manual smoke run (`pi-test.sh -e .pi/extensions/handoff/index.ts`,
+Gemini free tier). The exposure is real and worth naming: the editor round-trip, the
+successor-spawn confirm, and the `mode`-vs-`hasUI` gate are verified by hand or not at all.
+Anything that grows past wiring should move out of `index.ts` rather than being tested in place.
 
 ## Explicitly out of scope for v1 (v2 hooks noted)
 

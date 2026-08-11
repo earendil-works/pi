@@ -165,12 +165,16 @@ describe("writeNote / listPendingNotePaths", () => {
 describe("ensureGitExclude", () => {
 	const excludeOf = (repo: string) => join(repo, ".git", "info", "exclude");
 	/**
-	 * A git environment isolated from the developer's machine, so these assertions test
-	 * `ensureGitExclude` and nothing else. `GIT_CONFIG_NOSYSTEM` suppresses only
-	 * /etc/gitconfig: `core.excludesFile` from ~/.gitconfig still reaches `git check-ignore`,
-	 * where a global `.pi/` entry fails the negative assertion on correct code and a global
-	 * `*.md` makes the positive ones pass no matter what was written. The GIT_DIR family is
-	 * cleared so a run under a git hook or `git rebase --exec` cannot aim git at the outer repo.
+	 * A git environment isolated from the developer's ignore rules, so these assertions test
+	 * `ensureGitExclude` and nothing else. Each of the three pieces closes a different door,
+	 * and all three are needed: `GIT_CONFIG_NOSYSTEM` suppresses /etc/gitconfig,
+	 * `GIT_CONFIG_GLOBAL=/dev/null` suppresses ~/.gitconfig, and `-c core.excludesFile=/dev/null`
+	 * suppresses the excludes file itself — which the first two do *not* reach, because unsetting
+	 * `core.excludesFile` is exactly the condition under which git falls back to its default,
+	 * `$XDG_CONFIG_HOME/git/ignore` (`~/.config/git/ignore`). Left open, a `*.md` rule there makes
+	 * the positive assertions pass no matter what was written and a `.pi/` rule fails the negative
+	 * one on correct code. The GIT_DIR family is cleared so a run under a git hook or
+	 * `git rebase --exec` cannot aim git at the outer repo.
 	 */
 	const gitEnv = (): NodeJS.ProcessEnv => {
 		const env: NodeJS.ProcessEnv = { ...process.env, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null" };
@@ -180,9 +184,40 @@ describe("ensureGitExclude", () => {
 		return env;
 	};
 	const git = (repo: string, ...args: string[]) =>
-		spawnSync("git", args, { cwd: repo, env: gitEnv(), encoding: "utf8" });
+		spawnSync("git", ["-c", "core.excludesFile=/dev/null", ...args], { cwd: repo, env: gitEnv(), encoding: "utf8" });
 	/** `git check-ignore` exits 1 for a path that is not ignored. */
 	const isIgnored = (repo: string, relativePath: string) => git(repo, "check-ignore", relativePath).status === 0;
+
+	/**
+	 * Guards the isolation the docblock above claims, by running the real helper against a
+	 * hostile `~/.config/git/ignore`. Drop any one of the three pieces and this fails, instead
+	 * of every positive assertion below quietly passing on whatever was written.
+	 */
+	it("is isolated from the developer's global excludes file", () => {
+		const home = join(dir, "fake-home");
+		mkdirSync(join(home, ".config", "git"), { recursive: true });
+		writeFileSync(join(home, ".config", "git", "ignore"), "*.md\n");
+
+		const repo = join(dir, "repo");
+		mkdirSync(join(repo, ".pi", "handoffs"), { recursive: true });
+		writeFileSync(join(repo, ".pi", "handoffs", "note.md"), "x");
+
+		// gitEnv() spreads process.env, so pointing HOME here is what reaches the helper.
+		const saved = { home: process.env.HOME, xdg: process.env.XDG_CONFIG_HOME };
+		process.env.HOME = home;
+		process.env.XDG_CONFIG_HOME = join(home, ".config");
+		try {
+			expect(git(repo, "init", "-q").status).toBe(0);
+			// No ensureGitExclude call: nothing has written an entry, so the only thing that
+			// could report this path as ignored is a rule leaking in from outside the test.
+			expect(isIgnored(repo, ".pi/handoffs/note.md")).toBe(false);
+		} finally {
+			if (saved.home === undefined) delete process.env.HOME;
+			else process.env.HOME = saved.home;
+			if (saved.xdg === undefined) delete process.env.XDG_CONFIG_HOME;
+			else process.env.XDG_CONFIG_HOME = saved.xdg;
+		}
+	});
 
 	it("does nothing outside a git repo", () => {
 		ensureGitExclude(dir);
