@@ -1,6 +1,5 @@
 import type { Entry } from "../harness/session/types.ts";
 
-export type { IndexedSessionSearch, SearchIndexWriter } from "./indexable.ts";
 export {
 	createJsonlScanningSessionSearch,
 	createJsonlScanningSessionSource,

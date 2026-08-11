@@ -8,17 +8,15 @@ migrations, materialized views, and optional FTS search.
 await using repository = new SqliteSessionRepository(options);
 const search = createSqliteSessionSearch(options);
 const session = await repository.create({ cwd });
-const metadata = await session.getMetadata();
-const entryId = await session.appendMessage(message);
-await search.apply([{ type: "index_entry", sessionId: metadata.id, entryId }]);
-// Or rebuild/catch up everything: await search.apply([{ type: "rebuild" }]);
+await session.appendMessage(message);
+
 const hits = [];
 for await (const hit of search.search("needle")) hits.push(hit);
 ```
 
 The repository lazily owns one shared database connection. Search is an independent
-service over the same canonical database: repositories do not expose `search()`,
-and FTS indexing is driven explicitly by the search adapter/application rather than
-canonical write triggers. The FTS table is created lazily; when it is first created,
-search performs a one-time rebuild from canonical entries. Later incremental updates
-should use `index_entry` or `index_session` feed items.
+service over the same canonical database: repositories do not expose `search()`.
+The FTS table and triggers are created lazily on the first non-blank search; when
+FTS is first created, search performs a one-time rebuild from canonical entries.
+After that, SQLite triggers keep FTS in sync with canonical entry inserts, deletes,
+and payload updates.

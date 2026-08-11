@@ -32,7 +32,6 @@ describe("SQLite FTS5 session search", () => {
 		const entryId = await included.appendMessage(createUserMessage("Find the auth defect"));
 		await included.setName("Canonical name");
 		const excludedEntryId = await excluded.appendMessage(createUserMessage("Find the auth defect"));
-		await search.apply([{ type: "rebuild" }]);
 
 		const authHits = await collect(search.search("auth"));
 		expect(authHits).toHaveLength(2);
@@ -75,7 +74,6 @@ describe("SQLite FTS5 session search", () => {
 		const entryId = await session.appendMessage(createUserMessage("Find the auth defect"));
 		await session.setName("Temporary");
 		await session.setName(undefined);
-		await search.apply([{ type: "index_session", sessionId: "session-1" }]);
 
 		const [result] = await collect(search.search("auth"));
 		expect(result).toMatchObject({ sessionId: "session-1", entryId, metadata: { id: "session-1" } });
@@ -125,7 +123,6 @@ describe("SQLite FTS5 session search", () => {
 		const session = await repository.create({ cwd: root, id: "session-1" });
 		const messageEntryId = await session.appendMessage(createUserMessage("Find the auth defect"));
 		await session.appendCustomEntry("note", { text: "Find the auth custom entry" });
-		await search.apply([{ type: "rebuild" }]);
 
 		expect(await collect(search.search("auth", { entryTypes: ["message"] }))).toEqual([
 			expect.objectContaining({ sessionId: "session-1", entryId: messageEntryId }),
@@ -146,7 +143,6 @@ describe("SQLite FTS5 session search", () => {
 		const second = await repository.create({ cwd: root, id: "session-2" });
 		await first.appendMessage(createUserMessage("Find the auth defect"));
 		await second.appendMessage(createUserMessage("Find the auth defect too"));
-		await search.apply([{ type: "rebuild" }]);
 
 		expect(await collect(search.search("auth", { limit: 1 }))).toHaveLength(1);
 		expect(await collect(search.search("auth", { limit: 0 }))).toEqual([]);
@@ -164,17 +160,14 @@ describe("SQLite FTS5 session search", () => {
 		const { repository, search } = fixture;
 		const session = await repository.create({ cwd: root, id: "session-1" });
 		await session.appendMessage(createUserMessage("Find the auth defect"));
-		await search.apply([{ type: "index_session", sessionId: "session-1" }]);
 		expect(await collect(search.search("auth"))).toHaveLength(1);
 
 		await repository.delete(await session.getMetadata());
 
 		expect(await collect(search.search("auth"))).toEqual([]);
-		await expect(search.apply([{ type: "delete_session", sessionId: "session-1" }])).resolves.toBeUndefined();
-		expect(await collect(search.search("auth"))).toEqual([]);
 	});
 
-	it("removes existing entries from FTS for session delete feed items", async () => {
+	it("indexes and removes session entries through triggers after FTS initialization", async () => {
 		const root = createTempDir();
 		const env = new NodeExecutionEnv({ cwd: root });
 		const databasePath = join(root, "sessions.sqlite");
@@ -184,37 +177,17 @@ describe("SQLite FTS5 session search", () => {
 			databasePath,
 		});
 		const { repository, search } = fixture;
+		expect(await collect(search.search("auth"))).toEqual([]);
 		const session = await repository.create({ cwd: root, id: "session-1" });
 		await session.appendMessage(createUserMessage("Find the auth defect"));
-		await search.apply([{ type: "index_session", sessionId: "session-1" }]);
 		expect(await collect(search.search("auth"))).toHaveLength(1);
 
-		await search.apply([{ type: "delete_session", sessionId: "session-1" }]);
+		await repository.delete(await session.getMetadata());
 
 		expect(await collect(search.search("auth"))).toEqual([]);
 	});
 
-	it("removes existing entries from FTS for entry delete feed items", async () => {
-		const root = createTempDir();
-		const env = new NodeExecutionEnv({ cwd: root });
-		const databasePath = join(root, "sessions.sqlite");
-		await using fixture = createSqliteFixture({
-			env,
-			sqlite: createNodeSqliteFactory(),
-			databasePath,
-		});
-		const { repository, search } = fixture;
-		const session = await repository.create({ cwd: root, id: "session-1" });
-		const entryId = await session.appendMessage(createUserMessage("Find the auth defect"));
-		await search.apply([{ type: "index_entry", sessionId: "session-1", entryId }]);
-		expect(await collect(search.search("auth"))).toHaveLength(1);
-
-		await search.apply([{ type: "delete_entry", sessionId: "session-1", entryId }]);
-
-		expect(await collect(search.search("auth"))).toEqual([]);
-	});
-
-	it("applies entry delete feed items after canonical entry cleanup", async () => {
+	it("removes deleted entries from FTS through triggers", async () => {
 		const root = createTempDir();
 		const env = new NodeExecutionEnv({ cwd: root });
 		const sqlite = createNodeSqliteFactory();
@@ -223,7 +196,6 @@ describe("SQLite FTS5 session search", () => {
 		const { repository, search } = fixture;
 		const session = await repository.create({ cwd: root, id: "session-1" });
 		const entryId = await session.appendMessage(createUserMessage("Find the auth defect"));
-		await search.apply([{ type: "index_entry", sessionId: "session-1", entryId }]);
 		expect(await collect(search.search("auth"))).toHaveLength(1);
 
 		const db = await sqlite.open(databasePath);
@@ -233,7 +205,6 @@ describe("SQLite FTS5 session search", () => {
 			await db.close();
 		}
 
-		await expect(search.apply([{ type: "delete_entry", sessionId: "session-1", entryId }])).resolves.toBeUndefined();
 		expect(await collect(search.search("auth"))).toEqual([]);
 	});
 
@@ -259,7 +230,7 @@ describe("SQLite FTS5 session search", () => {
 		await expect(session.appendMessage(createUserMessage("still writable"))).resolves.toBeTypeOf("string");
 	});
 
-	it("keeps canonical appends independent from search index failures", async () => {
+	it("rolls back canonical appends when co-located FTS trigger writes fail", async () => {
 		const root = createTempDir();
 		const env = new NodeExecutionEnv({ cwd: root });
 		const sqlite = createNodeSqliteFactory();
@@ -276,11 +247,11 @@ describe("SQLite FTS5 session search", () => {
 			await db.close();
 		}
 
-		await expect(session.appendMessage(createUserMessage("still writes"))).resolves.toBeTypeOf("string");
-		await expect(getSqliteEntries(session)).resolves.toHaveLength(1);
+		await expect(session.appendMessage(createUserMessage("must roll back"))).rejects.toThrow();
+		await expect(getSqliteEntries(session)).resolves.toEqual([]);
 	});
 
-	it("keeps canonical deletion independent from search index failures", async () => {
+	it("rolls back canonical deletion when co-located FTS cleanup fails", async () => {
 		const root = createTempDir();
 		const env = new NodeExecutionEnv({ cwd: root });
 		const sqlite = createNodeSqliteFactory();
@@ -299,8 +270,9 @@ describe("SQLite FTS5 session search", () => {
 			await db.close();
 		}
 
-		await expect(repo.delete(metadata)).resolves.toBeUndefined();
-		await expect(repo.open(metadata)).rejects.toMatchObject({ code: "not_found" });
+		await expect(repo.delete(metadata)).rejects.toThrow();
+		const reopened = await repo.open(metadata);
+		await expect(getSqliteEntries(reopened)).resolves.toHaveLength(1);
 	});
 
 	it("closes the database when search setup fails", async () => {
@@ -330,8 +302,6 @@ describe("SQLite FTS5 session search", () => {
 		const session = await repo.create({ cwd: root, id: "session-1" });
 		const entryId = await session.appendMessage(createUserMessage("Find the auth defect"));
 
-		expect(await collect(search.search("auth"))).toEqual([]);
-		await search.apply([{ type: "index_entry", sessionId: "session-1", entryId }]);
 		expect(await collect(search.search("auth"))).toEqual([
 			expect.objectContaining({
 				sessionId: "session-1",

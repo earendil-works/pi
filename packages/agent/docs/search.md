@@ -122,40 +122,34 @@ for await (const hit of search.search("auth", {
 }
 ```
 
-The FTS table is created lazily on first non-blank search or `apply(...)`. When it is first created, SQLite performs a one-time rebuild from canonical `entries`; after that, `index_entry` and `index_session` incrementally add rows. Delete feed items issue FTS delete commands when the canonical row still exists; stale FTS rows are also filtered by joining back to canonical `entries`/`sessions`.
+The FTS table and triggers are created lazily on first non-blank search. When FTS is first created, SQLite performs a one-time rebuild from canonical `entries`; after that, SQLite triggers keep FTS in sync with canonical entry inserts, deletes, and payload updates. This makes SQLite search fresh after commit, but it also means FTS trigger failures can roll back canonical SQLite writes while search is enabled for that database.
 
 ## Indexed backends
 
-Search indexing is backend-owned derived state. Indexed implementations may expose a writer with backend-specific feed items:
-
-```ts
-export interface SearchIndexWriter<TItem = unknown> {
-  apply(items: TItem[]): Promise<void>;
-  flush?(): Promise<void>;
-}
-
-export interface IndexedSessionSearch<
-  T extends SessionSearchHit = SessionSearchHit,
-  TItem = unknown,
-> extends SessionSearch<T>, SearchIndexWriter<TItem> {}
-```
-
-`flush()` is optional for backends that buffer or need refresh semantics, such as Elasticsearch. SQLite does not need `flush()` because `apply(...)` is synchronous/transactional.
+Search indexing is backend-owned derived state. The shared package only exports the query API; applications or backend packages may define their own writer/feed contracts when they need explicit index maintenance.
 
 ### JSONL sessions with Elasticsearch
 
-This is application-owned glue. Core only provides the query/writer contracts and JSONL scanning source.
+This is application-owned glue. Core provides the query contract and JSONL scanning source; the Elastic writer contract is local to this adapter.
 
 ```ts
 import { Client } from "@elastic/elasticsearch";
 import {
   createJsonlScanningSessionSource,
-  type IndexedSessionSearch,
   type JsonlSessionMetadata,
   type JsonlSessionRepoOptions,
+  type SessionSearch,
   type SessionSearchHit,
   type SessionSearchOptions,
 } from "@earendil-works/pi-agent-core";
+
+interface SearchIndexWriter<TItem> {
+  apply(items: TItem[]): Promise<void>;
+  flush?(): Promise<void>;
+}
+
+interface IndexedSessionSearch<T extends SessionSearchHit, TItem>
+  extends SessionSearch<T>, SearchIndexWriter<TItem> {}
 
 type ElasticSessionFeedItem =
   | { type: "upsert"; id: string; body: ElasticSessionDoc }
@@ -266,7 +260,7 @@ async function indexJsonlSessionsIntoElastic(
 
 ## Correctness and failure boundaries
 
-Search indexes are derived state. Canonical session writes must remain valid if indexing fails; applications can retry, rebuild, or mark search stale.
+Search indexes are derived state for the shared API: applications can retry, rebuild, or mark search stale. Backend-specific choices may make different tradeoffs; SQLite FTS uses co-located triggers, so FTS failures can roll back canonical SQLite writes after search has initialized the triggers.
 
 Scanning sources should fail fast if they yield duplicate `sessionId` values, because base hit identity is `(sessionId, entryId)`. Indexed backends usually enforce uniqueness in their storage/index layer.
 

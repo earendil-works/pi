@@ -1,7 +1,7 @@
 import type {
 	FileError,
-	IndexedSessionSearch,
 	Result,
+	SessionSearch,
 	SessionSearchHit,
 	SessionSearchOptions,
 } from "@earendil-works/pi-agent-core";
@@ -58,6 +58,10 @@ function tableExists(db: SqliteDatabase, name: string): boolean {
 	}>(db);
 }
 
+function rebuildSearchIndex(db: SqliteDatabase): void {
+	sql`INSERT INTO session_search_fts(session_search_fts) VALUES('rebuild')`.run(db);
+}
+
 function ensureSearchSchema(db: SqliteDatabase): void {
 	const ftsExists = tableExists(db, "session_search_fts");
 	const entriesExist = tableExists(db, "entries");
@@ -69,40 +73,19 @@ CREATE VIRTUAL TABLE IF NOT EXISTS session_search_fts USING fts5(
   content_rowid = 'rowid',
   tokenize = 'trigram remove_diacritics 1'
 );
+CREATE TRIGGER IF NOT EXISTS session_search_fts_ai AFTER INSERT ON entries BEGIN
+  INSERT INTO session_search_fts(rowid, payload) VALUES (new.rowid, new.payload);
+END;
+CREATE TRIGGER IF NOT EXISTS session_search_fts_ad AFTER DELETE ON entries BEGIN
+  INSERT INTO session_search_fts(session_search_fts, rowid, payload) VALUES('delete', old.rowid, old.payload);
+END;
+CREATE TRIGGER IF NOT EXISTS session_search_fts_au AFTER UPDATE OF payload ON entries BEGIN
+  INSERT INTO session_search_fts(session_search_fts, rowid, payload) VALUES('delete', old.rowid, old.payload);
+  INSERT INTO session_search_fts(rowid, payload) VALUES (new.rowid, new.payload);
+END;
 `.exec(db);
 		if (!ftsExists && entriesExist) rebuildSearchIndex(db);
 	});
-}
-
-export type SqliteSessionSearchFeedItem =
-	| { type: "rebuild" }
-	| { type: "index_session"; sessionId: string }
-	| { type: "index_entry"; sessionId: string; entryId: string }
-	| { type: "delete_session"; sessionId: string }
-	| { type: "delete_entry"; sessionId: string; entryId: string };
-
-function rebuildSearchIndex(db: SqliteDatabase): void {
-	sql`INSERT INTO session_search_fts(session_search_fts) VALUES('rebuild')`.run(db);
-}
-
-function indexSessionInSearchIndex(db: SqliteDatabase, sessionId: string): void {
-	sql`INSERT INTO session_search_fts(rowid, payload)
-		SELECT rowid, payload FROM entries WHERE session_id = ${sessionId}`.run(db);
-}
-
-function indexEntryInSearchIndex(db: SqliteDatabase, sessionId: string, entryId: string): void {
-	sql`INSERT INTO session_search_fts(rowid, payload)
-		SELECT rowid, payload FROM entries WHERE session_id = ${sessionId} AND id = ${entryId}`.run(db);
-}
-
-function deleteSessionFromSearchIndex(db: SqliteDatabase, sessionId: string): void {
-	sql`INSERT INTO session_search_fts(session_search_fts, rowid, payload)
-		SELECT 'delete', rowid, payload FROM entries WHERE session_id = ${sessionId}`.run(db);
-}
-
-function deleteEntryFromSearchIndex(db: SqliteDatabase, sessionId: string, entryId: string): void {
-	sql`INSERT INTO session_search_fts(session_search_fts, rowid, payload)
-		SELECT 'delete', rowid, payload FROM entries WHERE session_id = ${sessionId} AND id = ${entryId}`.run(db);
 }
 
 export interface SqliteSessionSearchHit extends SessionSearchHit {
@@ -112,7 +95,7 @@ export interface SqliteSessionSearchHit extends SessionSearchHit {
 }
 
 /** SQLite FTS search over a co-located canonical session database. */
-class SqliteSessionSearch implements IndexedSessionSearch<SqliteSessionSearchHit, SqliteSessionSearchFeedItem> {
+class SqliteSessionSearch implements SessionSearch<SqliteSessionSearchHit> {
 	private readonly options: SqliteSessionSearchOptions;
 	private databasePath: string | undefined;
 
@@ -146,36 +129,6 @@ class SqliteSessionSearch implements IndexedSessionSearch<SqliteSessionSearchHit
 		} catch (error) {
 			db.close();
 			throw error;
-		}
-	}
-
-	async apply(items: SqliteSessionSearchFeedItem[]): Promise<void> {
-		if (items.length === 0) return;
-		const db = await this.openDatabase();
-		try {
-			db.transaction(() => {
-				for (const item of items) {
-					switch (item.type) {
-						case "rebuild":
-							rebuildSearchIndex(db);
-							break;
-						case "index_session":
-							indexSessionInSearchIndex(db, item.sessionId);
-							break;
-						case "index_entry":
-							indexEntryInSearchIndex(db, item.sessionId, item.entryId);
-							break;
-						case "delete_session":
-							deleteSessionFromSearchIndex(db, item.sessionId);
-							break;
-						case "delete_entry":
-							deleteEntryFromSearchIndex(db, item.sessionId, item.entryId);
-							break;
-					}
-				}
-			});
-		} finally {
-			db.close();
 		}
 	}
 
@@ -236,8 +189,6 @@ class SqliteSessionSearch implements IndexedSessionSearch<SqliteSessionSearchHit
 	}
 }
 
-export function createSqliteSessionSearch(
-	options: SqliteSessionSearchOptions,
-): IndexedSessionSearch<SqliteSessionSearchHit, SqliteSessionSearchFeedItem> {
+export function createSqliteSessionSearch(options: SqliteSessionSearchOptions): SessionSearch<SqliteSessionSearchHit> {
 	return new SqliteSessionSearch(options);
 }
