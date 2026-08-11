@@ -8,6 +8,7 @@ import { createHarness, type Harness } from "../harness.ts";
 
 const customDirectory = resolve(__dirname, "../../fixtures/skills/custom-directory");
 const readmePath = join(customDirectory, "README.md");
+const brokenFrontmatterPath = join(customDirectory, "broken-frontmatter.md");
 
 describe("regression #7805: custom skill directories ignore root documentation", () => {
 	let tempDir: string;
@@ -70,44 +71,28 @@ describe("regression #7805: custom skill directories ignore root documentation",
 			cwd,
 			agentDir,
 			additionalSkillPaths: [customDirectory],
-			candidateSkillDirectories: [customDirectory],
 		});
 
 		expectCustomDirectoryLoaded(await loadWithHarness(loader));
 	});
 
-	it("strictly validates explicitly configured Markdown files", async () => {
-		const loader = new DefaultResourceLoader({
-			cwd,
-			agentDir,
-			settingsManager: SettingsManager.inMemory({ skills: [readmePath] }),
-		});
+	it.each([readmePath, brokenFrontmatterPath])(
+		"ignores explicitly configured non-skill Markdown files",
+		async (filePath) => {
+			const loader = new DefaultResourceLoader({
+				cwd,
+				agentDir,
+				settingsManager: SettingsManager.inMemory({ skills: [filePath] }),
+			});
 
-		const result = await loadWithHarness(loader);
+			const result = await loadWithHarness(loader);
 
-		expect(result.skills.some((skill) => skill.filePath === readmePath)).toBe(false);
-		expect(result.diagnostics).toContainEqual({
-			type: "warning",
-			message: "description is required",
-			path: readmePath,
-		});
-	});
+			expect(result.skills.some((skill) => skill.filePath === filePath)).toBe(false);
+			expect(result.diagnostics.filter((diagnostic) => diagnostic.path === filePath)).toEqual([]);
+		},
+	);
 
-	it("keeps programmatic skill directories strict by default", async () => {
-		const loader = new DefaultResourceLoader({
-			cwd,
-			agentDir,
-			additionalSkillPaths: [customDirectory],
-		});
-
-		const result = await loadWithHarness(loader);
-		const diagnostics = result.diagnostics.filter((diagnostic) => diagnostic.path?.startsWith(customDirectory));
-
-		expect(diagnostics.some((diagnostic) => diagnostic.path === readmePath)).toBe(true);
-		expect(diagnostics.some((diagnostic) => diagnostic.path?.endsWith("broken-frontmatter.md"))).toBe(true);
-	});
-
-	it.skipIf(process.platform === "win32")("reports unreadable files in candidate directories", async () => {
+	it.skipIf(process.platform === "win32")("reports unreadable skill files", async () => {
 		const candidateDirectory = join(tempDir, "candidate-skills");
 		const unreadablePath = join(candidateDirectory, "unreadable.md");
 		mkdirSync(candidateDirectory);

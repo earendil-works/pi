@@ -35,11 +35,11 @@ Pi loads skills from:
 
 Discovery rules:
 - In `~/.pi/agent/skills/` and `.pi/skills/`, direct root `.md` files are discovered as individual skills
-- In directories supplied through Settings or `--skill`, direct root `.md` files are discovered only when their frontmatter has a non-empty `description`; other root Markdown files are ignored
 - In all skill locations, directories containing `SKILL.md` are discovered recursively
 - In `~/.agents/skills/` and project `.agents/skills/`, root `.md` files are ignored
+- Discovered Markdown files are loaded only when their frontmatter parses and has a non-empty string `description`; other Markdown files are ignored
 
-Disable discovery with `--no-skills` (explicit `--skill` paths still load). A `--skill` path to an individual Markdown file is always treated as a skill and validated.
+Disable discovery with `--no-skills` (explicit `--skill` paths still load).
 
 ### Using Skills from Other Harnesses
 
@@ -184,7 +184,7 @@ Pi validates skills against the Agent Skills standard. Most issues produce warni
 
 Unknown frontmatter fields are ignored.
 
-**Exception:** Skills with missing description are not loaded.
+Markdown files with malformed frontmatter or without a non-empty string `description` are ignored rather than treated as invalid skills.
 
 Name collisions (same name from different locations) warn and keep the first skill found.
 

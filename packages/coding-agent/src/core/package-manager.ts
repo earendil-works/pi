@@ -30,13 +30,11 @@ import { minimatch } from "minimatch";
 import { maxSatisfying, rcompare, satisfies, valid, validRange } from "semver";
 import { CONFIG_DIR_NAME } from "../config.ts";
 import { spawnProcess, spawnProcessSync } from "../utils/child-process.ts";
-import { parseFrontmatter } from "../utils/frontmatter.ts";
 import { type GitSource, parseGitUrl } from "../utils/git.ts";
 import { canonicalizePath, isLocalPath, markPathIgnoredByCloudSync, resolvePath } from "../utils/paths.ts";
 import { isStdoutTakenOver } from "./output-guard.ts";
 import { type PiManifest, readPiManifest } from "./pi-manifest.ts";
 import type { PackageSource, SettingsManager } from "./settings-manager.ts";
-import { isSkillCandidate, type SkillFrontmatter } from "./skills.ts";
 
 const NETWORK_TIMEOUT_MS = 10000;
 const UPDATE_CHECK_CONCURRENCY = 4;
@@ -340,24 +338,7 @@ function collectFiles(
 	return files;
 }
 
-type SkillDiscoveryMode = "pi" | "agents" | "candidate";
-
-function isRootSkillCandidate(filePath: string): boolean {
-	let content: string;
-	try {
-		content = readFileSync(filePath, "utf-8");
-	} catch {
-		// Keep unreadable files so the loader can report the I/O error.
-		return true;
-	}
-
-	try {
-		const { frontmatter } = parseFrontmatter<SkillFrontmatter>(content);
-		return isSkillCandidate(frontmatter);
-	} catch {
-		return false;
-	}
-}
+type SkillDiscoveryMode = "pi" | "agents";
 
 function collectSkillEntries(
 	dir: string,
@@ -416,10 +397,8 @@ function collectSkillEntries(
 			}
 
 			const relPath = toPosixPath(relative(root, fullPath));
-			if (dir === root && isFile && entry.name.endsWith(".md") && !ig.ignores(relPath)) {
-				if (mode === "pi" || (mode === "candidate" && isRootSkillCandidate(fullPath))) {
-					entries.push(fullPath);
-				}
+			if (mode === "pi" && dir === root && isFile && entry.name.endsWith(".md") && !ig.ignores(relPath)) {
+				entries.push(fullPath);
 				continue;
 			}
 
@@ -2337,11 +2316,7 @@ export class DefaultPackageManager implements PackageManager {
 		// Collect all files from plain entries (non-pattern entries)
 		const { plain, patterns } = splitPatterns(entries);
 		const resolvedPlain = plain.map((p) => this.resolvePathFromBase(p, baseDir));
-		const allFiles = this.collectFilesFromPaths(
-			resolvedPlain,
-			resourceType,
-			resourceType === "skills" ? "candidate" : "pi",
-		);
+		const allFiles = this.collectFilesFromPaths(resolvedPlain, resourceType);
 
 		// Determine which files are enabled based on patterns
 		const enabledPaths = applyPatterns(allFiles, patterns, baseDir);
@@ -2518,11 +2493,7 @@ export class DefaultPackageManager implements PackageManager {
 		);
 	}
 
-	private collectFilesFromPaths(
-		paths: string[],
-		resourceType: ResourceType,
-		skillDiscoveryMode: SkillDiscoveryMode = "pi",
-	): string[] {
+	private collectFilesFromPaths(paths: string[], resourceType: ResourceType): string[] {
 		const files: string[] = [];
 		for (const p of paths) {
 			if (!existsSync(p)) continue;
@@ -2532,11 +2503,7 @@ export class DefaultPackageManager implements PackageManager {
 				if (stats.isFile()) {
 					files.push(p);
 				} else if (stats.isDirectory()) {
-					files.push(
-						...(resourceType === "skills"
-							? collectSkillEntries(p, skillDiscoveryMode)
-							: collectResourceFiles(p, resourceType)),
-					);
+					files.push(...collectResourceFiles(p, resourceType));
 				}
 			} catch {
 				// Ignore errors

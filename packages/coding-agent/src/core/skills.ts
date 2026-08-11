@@ -16,8 +16,6 @@ const MAX_DESCRIPTION_LENGTH = 1024;
 const IGNORE_FILE_NAMES = [".gitignore", ".ignore", ".fdignore"];
 
 type IgnoreMatcher = ReturnType<typeof ignore>;
-type SkillFileMode = "strict" | "candidate";
-type RootFileMode = SkillFileMode | "none";
 
 function toPosixPath(p: string): string {
 	return p.split(sep).join("/");
@@ -73,12 +71,6 @@ export interface SkillFrontmatter {
 	[key: string]: unknown;
 }
 
-export function isSkillCandidate(frontmatter: SkillFrontmatter): frontmatter is SkillFrontmatter & {
-	description: string;
-} {
-	return typeof frontmatter.description === "string" && frontmatter.description.trim() !== "";
-}
-
 export interface Skill {
 	name: string;
 	description: string;
@@ -122,12 +114,10 @@ function validateName(name: string): string[] {
 /**
  * Validate description per Agent Skills spec.
  */
-function validateDescription(description: string | undefined): string[] {
+function validateDescription(description: string): string[] {
 	const errors: string[] = [];
 
-	if (!description || description.trim() === "") {
-		errors.push("description is required");
-	} else if (description.length > MAX_DESCRIPTION_LENGTH) {
+	if (description.length > MAX_DESCRIPTION_LENGTH) {
 		errors.push(`description exceeds ${MAX_DESCRIPTION_LENGTH} characters (${description.length})`);
 	}
 
@@ -175,13 +165,13 @@ function createSkillSourceInfo(filePath: string, baseDir: string, source: string
  */
 export function loadSkillsFromDir(options: LoadSkillsFromDirOptions): LoadSkillsResult {
 	const { dir, source } = options;
-	return loadSkillsFromDirInternal(dir, source, "strict");
+	return loadSkillsFromDirInternal(dir, source, true);
 }
 
 function loadSkillsFromDirInternal(
 	dir: string,
 	source: string,
-	rootFileMode: RootFileMode,
+	includeRootFiles: boolean,
 	ignoreMatcher?: IgnoreMatcher,
 	rootDir?: string,
 ): LoadSkillsResult {
@@ -261,17 +251,17 @@ function loadSkillsFromDirInternal(
 			}
 
 			if (isDirectory) {
-				const subResult = loadSkillsFromDirInternal(fullPath, source, "none", ig, root);
+				const subResult = loadSkillsFromDirInternal(fullPath, source, false, ig, root);
 				skills.push(...subResult.skills);
 				diagnostics.push(...subResult.diagnostics);
 				continue;
 			}
 
-			if (!isFile || rootFileMode === "none" || !entry.name.endsWith(".md")) {
+			if (!isFile || !includeRootFiles || !entry.name.endsWith(".md")) {
 				continue;
 			}
 
-			const result = loadSkillFromFile(fullPath, source, rootFileMode);
+			const result = loadSkillFromFile(fullPath, source);
 			if (result.skill) {
 				skills.push(result.skill);
 			}
@@ -285,7 +275,6 @@ function loadSkillsFromDirInternal(
 function loadSkillFromFile(
 	filePath: string,
 	source: string,
-	mode: SkillFileMode = "strict",
 ): { skill: Skill | null; diagnostics: ResourceDiagnostic[] } {
 	const diagnostics: ResourceDiagnostic[] = [];
 
@@ -301,16 +290,11 @@ function loadSkillFromFile(
 	let frontmatter: SkillFrontmatter;
 	try {
 		({ frontmatter } = parseFrontmatter<SkillFrontmatter>(rawContent));
-	} catch (error) {
-		if (mode === "candidate") {
-			return { skill: null, diagnostics };
-		}
-		const message = error instanceof Error ? error.message : "failed to parse skill file";
-		diagnostics.push({ type: "warning", message, path: filePath });
+	} catch {
 		return { skill: null, diagnostics };
 	}
 
-	if (mode === "candidate" && !isSkillCandidate(frontmatter)) {
+	if (typeof frontmatter.description !== "string" || frontmatter.description.trim() === "") {
 		return { skill: null, diagnostics };
 	}
 
@@ -331,11 +315,6 @@ function loadSkillFromFile(
 		const nameErrors = validateName(name);
 		for (const error of nameErrors) {
 			diagnostics.push({ type: "warning", message: error, path: filePath });
-		}
-
-		// Still load the skill even with warnings (unless description is completely missing)
-		if (!frontmatter.description || frontmatter.description.trim() === "") {
-			return { skill: null, diagnostics };
 		}
 
 		return {
@@ -408,8 +387,6 @@ export interface LoadSkillsOptions {
 	agentDir: string;
 	/** Explicit skill paths (files or directories) */
 	skillPaths: string[];
-	/** Directories whose root Markdown files must declare a description to be skill candidates. */
-	candidateSkillDirectories?: string[];
 	/** Include default skills directories. */
 	includeDefaults: boolean;
 }
@@ -424,9 +401,6 @@ export function loadSkills(options: LoadSkillsOptions): LoadSkillsResult {
 	// Resolve agentDir - if not provided, use default from config
 	const resolvedCwd = resolvePath(options.cwd);
 	const resolvedAgentDir = resolvePath(agentDir ?? getAgentDir());
-	const candidateSkillDirectories = new Set(
-		(options.candidateSkillDirectories ?? []).map((path) => resolvePath(path, resolvedCwd, { trim: true })),
-	);
 
 	const skillMap = new Map<string, Skill>();
 	const realPathSet = new Set<string>();
@@ -465,8 +439,8 @@ export function loadSkills(options: LoadSkillsOptions): LoadSkillsResult {
 	}
 
 	if (includeDefaults) {
-		addSkills(loadSkillsFromDirInternal(join(resolvedAgentDir, "skills"), "user", "strict"));
-		addSkills(loadSkillsFromDirInternal(resolve(resolvedCwd, CONFIG_DIR_NAME, "skills"), "project", "strict"));
+		addSkills(loadSkillsFromDirInternal(join(resolvedAgentDir, "skills"), "user", true));
+		addSkills(loadSkillsFromDirInternal(resolve(resolvedCwd, CONFIG_DIR_NAME, "skills"), "project", true));
 	}
 
 	const userSkillsDir = join(resolvedAgentDir, "skills");
@@ -500,8 +474,7 @@ export function loadSkills(options: LoadSkillsOptions): LoadSkillsResult {
 			const stats = statSync(resolvedPath);
 			const source = getSource(resolvedPath);
 			if (stats.isDirectory()) {
-				const mode = candidateSkillDirectories.has(resolvedPath) ? "candidate" : "strict";
-				addSkills(loadSkillsFromDirInternal(resolvedPath, source, mode));
+				addSkills(loadSkillsFromDirInternal(resolvedPath, source, true));
 			} else if (stats.isFile() && resolvedPath.endsWith(".md")) {
 				const result = loadSkillFromFile(resolvedPath, source);
 				if (result.skill) {
