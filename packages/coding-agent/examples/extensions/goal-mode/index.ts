@@ -36,6 +36,7 @@ import {
 	getLatestGoalState,
 	isBudgetExceeded,
 	isGoalContextMessage,
+	isValidCompletionEvidence,
 	parseGoalCommand,
 } from "./utils.ts";
 
@@ -76,7 +77,14 @@ function updateStatus(pi: ExtensionAPI, ctx: ExtensionContext): void {
 
 	const label = getGoalStatusLabel(goal.status);
 	ctx.ui.setStatus("goal-mode", "mode: goal");
+	ctx.ui.setWidget("goal-mode", getGoalWidgetLines(label));
 
+	const titleObjective = goal.objective.length > 48 ? `${goal.objective.slice(0, 45)}...` : goal.objective;
+	ctx.ui.setTitle(`[${label}] ${titleObjective}`);
+}
+
+function getGoalWidgetLines(label: string): string[] {
+	if (!goal) return [];
 	const lines = [`[${label}]`, `Objective: ${goal.objective}`];
 	if (goal.budget?.tokens !== undefined || goal.budget?.cost !== undefined) {
 		const budget = goal.budget;
@@ -88,23 +96,28 @@ function updateStatus(pi: ExtensionAPI, ctx: ExtensionContext): void {
 	if (goal.progress.length > 0) {
 		lines.push("Progress:", ...goal.progress.slice(-3).map((line) => `  ${line}`));
 	}
-	ctx.ui.setWidget("goal-mode", lines);
-
-	const titleObjective = goal.objective.length > 48 ? `${goal.objective.slice(0, 45)}...` : goal.objective;
-	ctx.ui.setTitle(`[${label}] ${titleObjective}`);
+	return lines;
 }
 
-function parseBudgetFlags(pi: ExtensionAPI): GoalBudget {
+function parseBudgetFlags(pi: ExtensionAPI, ctx: ExtensionContext): GoalBudget {
 	const budget: GoalBudget = {};
 	const tokensValue = pi.getFlag(BUDGET_TOKENS_FLAG);
 	if (typeof tokensValue === "string" && tokensValue.trim()) {
 		const tokens = Number(tokensValue);
-		if (Number.isFinite(tokens) && tokens >= 0) budget.tokens = tokens;
+		if (Number.isInteger(tokens) && tokens >= 0) {
+			budget.tokens = tokens;
+		} else {
+			ctx.ui.notify(`Ignoring invalid --goal-budget-tokens value: ${tokensValue}`, "warning");
+		}
 	}
 	const costValue = pi.getFlag(BUDGET_COST_FLAG);
 	if (typeof costValue === "string" && costValue.trim()) {
 		const cost = Number(costValue);
-		if (Number.isFinite(cost) && cost >= 0) budget.cost = cost;
+		if (Number.isFinite(cost) && cost >= 0) {
+			budget.cost = cost;
+		} else {
+			ctx.ui.notify(`Ignoring invalid --goal-budget-cost value: ${costValue}`, "warning");
+		}
 	}
 	return budget;
 }
@@ -149,7 +162,10 @@ function showGoal(_pi: ExtensionAPI, ctx: ExtensionContext): void {
 		ctx.ui.notify("No goal set. Use /goal <objective> to start one.", "info");
 		return;
 	}
-	const usage = goal.status === "active" ? getGoalUsage(goal, ctx.sessionManager.getBranch()) : undefined;
+	const usage =
+		goal.budget?.tokens !== undefined || goal.budget?.cost !== undefined
+			? getGoalUsage(goal, ctx.sessionManager.getBranch())
+			: undefined;
 	ctx.ui.notify(formatGoalState(goal, usage), "info");
 }
 
@@ -177,10 +193,19 @@ function resumeGoal(pi: ExtensionAPI, ctx: ExtensionContext): void {
 		ctx.ui.notify("Goal is already active.", "info");
 		return;
 	}
-	if (goal.status === "active") {
-		// The goal stopped because the last turn made no tool calls. Resume
-		// sends a fresh continuation instead of leaving the user stuck.
-		setGoal(pi, ctx, { ...goal, updatedAt: Date.now() }, { notify: "Goal resumed." });
+	if (goal.status === "active" || goal.status === "budget_limited") {
+		const resumed =
+			goal.status === "budget_limited"
+				? {
+						...goal,
+						status: "active" as const,
+						// Resuming after budget exhaustion starts the budget over
+						// from current usage, so the same objective can continue.
+						baseline: computeUsageTotals(ctx.sessionManager.getBranch()),
+						updatedAt: Date.now(),
+					}
+				: { ...goal, updatedAt: Date.now() };
+		setGoal(pi, ctx, resumed, { notify: "Goal resumed." });
 		return;
 	}
 	if (goal.status !== "paused") {
@@ -199,7 +224,11 @@ function clearGoal(pi: ExtensionAPI, ctx: ExtensionContext): void {
 }
 
 function reportWaitingForUser(ctx: ExtensionContext): void {
+	if (!goal) return;
 	ctx.ui.setStatus("goal-mode", "mode: goal (waiting)");
+	ctx.ui.setWidget("goal-mode", getGoalWidgetLines("GOAL MODE (WAITING)"));
+	const titleObjective = goal.objective.length > 48 ? `${goal.objective.slice(0, 45)}...` : goal.objective;
+	ctx.ui.setTitle(`[GOAL MODE (WAITING)] ${titleObjective}`);
 	ctx.ui.notify(
 		"Goal is active but the last turn made no tool calls. Stopped to avoid spinning. Use /goal resume or send a message to continue.",
 		"info",
@@ -214,7 +243,7 @@ function transitionBudgetLimited(pi: ExtensionAPI, ctx: ExtensionContext): void 
 	persistGoal(pi, goal);
 	updateStatus(pi, ctx);
 	ctx.ui.notify(
-		"Goal budget exhausted. Work stopped; review progress and set a new goal or adjust the budget.",
+		"Goal budget exhausted. Work stopped. Use /goal resume to continue with a fresh budget, or set a new goal.",
 		"warning",
 	);
 }
@@ -310,12 +339,13 @@ export default function goalModeExtension(pi: ExtensionAPI): void {
 				"Mark the active goal complete. Use only after verifying the objective against concrete evidence in the conversation or working tree.",
 			promptSnippet: "Mark the active goal complete with concrete evidence",
 			promptGuidelines: [
-				"Call complete_goal only when the active goal is verified against concrete evidence such as command output, tests, file changes, or generated artifacts.",
+				"Call complete_goal only when the active goal is verified against concrete evidence such as command output, tests, file changes, or generated artifacts, described in at least 20 characters.",
 				"Do not call complete_goal to ask for permission, to report a blocker, or when the goal is paused.",
 			],
 			parameters: Type.Object({
 				evidence: Type.String({
-					description: "Concrete evidence that the goal objective is satisfied",
+					description:
+						"Concrete evidence that the goal objective is satisfied, at least 20 characters (for example command output, test results, or file changes)",
 				}),
 			}),
 			async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
@@ -324,6 +354,11 @@ export default function goalModeExtension(pi: ExtensionAPI): void {
 				}
 				if (goal.status !== "active") {
 					throw new Error(`Goal cannot be completed from status ${goal.status}.`);
+				}
+				if (!isValidCompletionEvidence(params.evidence)) {
+					throw new Error(
+						"Evidence must be at least 20 characters describing concrete verification, such as command output, test results, or file changes.",
+					);
 				}
 				const completed: GoalState = {
 					...goal,
@@ -361,7 +396,7 @@ export default function goalModeExtension(pi: ExtensionAPI): void {
 			const flagGoal = pi.getFlag("goal");
 			if (typeof flagGoal === "string" && flagGoal.trim()) {
 				goal = createGoalState(flagGoal, {
-					budget: parseBudgetFlags(pi),
+					budget: parseBudgetFlags(pi, ctx),
 					baseline: computeUsageTotals(ctx.sessionManager.getBranch()),
 				});
 				persistGoal(pi, goal);
@@ -419,10 +454,14 @@ export default function goalModeExtension(pi: ExtensionAPI): void {
 		startGoal(pi, ctx);
 	});
 
-	pi.on("context", async (event) => {
+	pi.on("context", async (event, ctx) => {
 		const messages = event.messages.filter((message) => !isGoalContextMessage(message));
 		if (goal?.status === "active") {
-			messages.push(buildGoalContextMessage(goal));
+			const usage =
+				goal.budget?.tokens !== undefined || goal.budget?.cost !== undefined
+					? getGoalUsage(goal, ctx.sessionManager.getBranch())
+					: undefined;
+			messages.push(buildGoalContextMessage(goal, usage));
 		}
 		return { messages };
 	});

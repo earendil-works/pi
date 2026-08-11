@@ -14,10 +14,10 @@ pi --extension examples/extensions/goal-mode/index.ts
 Commands:
 
 ```text
-/goal <objective> [--tokens N] [--cost N]   Set or replace the goal
+/goal <objective> [--tokens N] [--cost N]   Set or replace the goal (flags may appear anywhere)
 /goal                                       View the current goal and status
 /goal pause                                 Pause work on the goal
-/goal resume                                Resume a paused goal
+/goal resume                                Resume a paused, waiting, or budget-limited goal
 /goal clear                                 Clear the goal
 ```
 
@@ -34,18 +34,26 @@ pi --extension examples/extensions/goal-mode/index.ts \
 
 - The goal is stored as a custom session entry, so it survives resume, fork,
   and compaction. The active branch's most recent goal entry wins.
-- Navigating the session tree reloads the goal state for the selected branch.
+- Navigating the session tree reloads the goal state for the selected branch
+  without auto-continuing, so switching branches is always an inspection action.
 - When a goal exists, the footer/status bar, editor widget, and terminal title
   show `GOAL MODE`, `GOAL PAUSED`, `GOAL COMPLETE`, or `GOAL BUDGET LIMITED`.
   The status bar shows `mode: build` with no goal and `mode: goal` while a
-  goal exists, so normal and goal modes are visually distinct.
+  goal exists, so normal and goal modes are visually distinct. When an active
+  goal stops because the last turn made no tool calls, the label becomes
+  `GOAL MODE (WAITING)`.
 - Typing `/goal` in the interactive editor shows the command usage hint and
   completes the `pause`, `resume`, and `clear` subcommands.
-- The active goal is injected into every model request. The model is told to
-  verify progress against concrete evidence and to call `complete_goal` only
-  after the objective is satisfied.
+- The active goal is injected into every model request, including current
+  budget usage when a budget is set. The model is told to verify progress
+  against concrete evidence and to call `complete_goal` only after the
+  objective is satisfied.
 - The model can only request completion through `complete_goal`. Pause, resume,
-  and clear are user-only commands.
+  and clear are user-only commands. Completion evidence must be at least 20
+  characters describing concrete verification (command output, test results,
+  or file changes), so the model cannot close a goal with a bare status word.
+- `/goal view` shows budget usage in any status, so you can see what was
+  consumed after a pause or budget stop.
 - `/goal pause` and `/goal clear` abort any in-flight autonomous work before
   switching state, so the UI returns to the paused or normal mode immediately.
 - Setting a new goal while the agent is streaming also aborts the current run
@@ -57,7 +65,8 @@ pi --extension examples/extensions/goal-mode/index.ts \
   turn actually used a tool. A turn with no tool calls stops the loop instead
   of spinning.
 - Budget exhaustion transitions the goal to `budget_limited` and stops work. It
-  is not treated as completion.
+  is not treated as completion. `/goal resume` starts the budget over from the
+  current usage and continues the same objective.
 
 ## Notes
 

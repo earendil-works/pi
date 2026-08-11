@@ -10,6 +10,7 @@ import {
 	getLatestGoalState,
 	isBudgetExceeded,
 	isGoalContextMessage,
+	isValidCompletionEvidence,
 	normalizeGoalState,
 	parseGoalCommand,
 } from "../examples/extensions/goal-mode/utils.ts";
@@ -39,6 +40,16 @@ describe("parseGoalCommand", () => {
 			objective: "Fix tests",
 			budget: { tokens: 5, cost: 1 },
 		});
+		expect(parseGoalCommand("--tokens 100 Fix tests")).toEqual({
+			action: "set",
+			objective: "Fix tests",
+			budget: { tokens: 100 },
+		});
+		expect(parseGoalCommand("Fix --cost 2.5 tests --tokens 10")).toEqual({
+			action: "set",
+			objective: "Fix tests",
+			budget: { tokens: 10, cost: 2.5 },
+		});
 	});
 
 	it("rejects empty objectives and invalid budgets", () => {
@@ -53,6 +64,30 @@ describe("parseGoalCommand", () => {
 		expect(parseGoalCommand("Fix tests --cost nope")).toEqual({
 			action: "invalid",
 			message: "--cost must be a non-negative number",
+		});
+		expect(parseGoalCommand("Fix --tokens nope tests")).toEqual({
+			action: "invalid",
+			message: "--tokens must be a non-negative integer",
+		});
+		expect(parseGoalCommand("Fix tests --cost -1")).toEqual({
+			action: "invalid",
+			message: "--cost must be a non-negative number",
+		});
+		expect(parseGoalCommand("Fix tests --tokens 1.")).toEqual({
+			action: "invalid",
+			message: "--tokens must be a non-negative integer",
+		});
+		expect(parseGoalCommand("Fix tests --tokens")).toEqual({
+			action: "invalid",
+			message: "--tokens must be a non-negative integer",
+		});
+		expect(parseGoalCommand("Fix tests --tokens 1 --tokens 2")).toEqual({
+			action: "invalid",
+			message: "Duplicate --tokens flag",
+		});
+		expect(parseGoalCommand("pause --tokens 5")).toEqual({
+			action: "invalid",
+			message: "The pause subcommand does not accept budget flags",
 		});
 	});
 });
@@ -80,6 +115,10 @@ describe("goal state helpers", () => {
 		expect(normalizeGoalState({ objective: "", status: "active" })).toBeUndefined();
 		const state = createGoalState("Fix tests", { now: 1 });
 		expect(normalizeGoalState(state)).toEqual(state);
+		expect(normalizeGoalState({ ...state, baseline: { tokens: -5, cost: -1 } })?.baseline).toEqual({
+			tokens: 0,
+			cost: 0,
+		});
 	});
 
 	it("appends capped progress entries", () => {
@@ -92,6 +131,27 @@ describe("goal state helpers", () => {
 		}
 		expect(state.progress).toHaveLength(20);
 		expect(state.progress[19]).toContain("entry 24");
+	});
+
+	it("skips empty and duplicate progress lines", () => {
+		let state = createGoalState("Fix tests", { now: 0 });
+		state = appendProgress(state, "   ", 1_000);
+		expect(state.progress).toHaveLength(0);
+		expect(state.updatedAt).toBe(1_000);
+
+		state = appendProgress(state, "Ran the suite", 2_000);
+		state = appendProgress(state, "Ran the suite", 3_000);
+		expect(state.progress).toHaveLength(1);
+		expect(state.updatedAt).toBe(3_000);
+	});
+});
+
+describe("completion evidence", () => {
+	it("requires concrete evidence of a minimum length", () => {
+		expect(isValidCompletionEvidence("done")).toBe(false);
+		expect(isValidCompletionEvidence("   ")).toBe(false);
+		expect(isValidCompletionEvidence("suite passes with 0 failures")).toBe(true);
+		expect(isValidCompletionEvidence("a".repeat(20))).toBe(true);
 	});
 });
 
@@ -223,6 +283,14 @@ describe("prompt formatting", () => {
 		const content =
 			typeof (message as { content?: unknown }).content === "string" ? (message as { content: string }).content : "";
 		expect(content).toContain("Active goal: Fix tests");
+	});
+
+	it("includes budget usage in the context message when provided", () => {
+		const state = createGoalState("Fix tests", { budget: { tokens: 100, cost: 2 }, now: 1 });
+		const message = buildGoalContextMessage(state, { tokens: 50, cost: 0.5 });
+		const content =
+			typeof (message as { content?: unknown }).content === "string" ? (message as { content: string }).content : "";
+		expect(content).toContain("Budget: tokens 50/100, cost 0.5000/2");
 	});
 
 	it("builds a continuation prompt that references the objective", () => {

@@ -79,7 +79,13 @@ export function normalizeGoalState(value: unknown): GoalState | undefined {
 	if (typeof value.createdAt !== "number" || typeof value.updatedAt !== "number") return undefined;
 
 	const baseline =
-		isRecord(value.baseline) && typeof value.baseline.tokens === "number" && typeof value.baseline.cost === "number"
+		isRecord(value.baseline) &&
+		typeof value.baseline.tokens === "number" &&
+		Number.isFinite(value.baseline.tokens) &&
+		value.baseline.tokens >= 0 &&
+		typeof value.baseline.cost === "number" &&
+		Number.isFinite(value.baseline.cost) &&
+		value.baseline.cost >= 0
 			? { tokens: value.baseline.tokens, cost: value.baseline.cost }
 			: { tokens: 0, cost: 0 };
 
@@ -131,36 +137,41 @@ export function parseGoalCommand(rawArgs: string): GoalCommandResult {
 	if (args === "resume") return { action: "resume" };
 	if (args === "clear") return { action: "clear" };
 
-	let objective = args;
 	const budget: GoalBudget = {};
+	const seen = new Set<string>();
+	let objective = args;
+	const flagPattern = /--(tokens|cost)\s+([^\s]+)/gi;
+	const numberPattern = /^[0-9]+(?:\.[0-9]+)?$/;
 
-	const flagPattern = /(?:^|\s+)--(tokens|cost)\s+([0-9]+(?:\.[0-9]+)?)\s*$/i;
-	for (let i = 0; i < 2; i++) {
-		const match = objective.match(flagPattern);
-		if (!match) break;
-		const name = match[1].toLowerCase();
-		const value = Number(match[2]);
+	let match: RegExpExecArray | null;
+	while (true) {
+		match = flagPattern.exec(objective);
+		if (match === null) break;
+		const name = match[1]!.toLowerCase();
+		if (seen.has(name)) {
+			return { action: "invalid", message: `Duplicate --${name} flag` };
+		}
+		seen.add(name);
+		const rawValue = match[2]!;
+		const value = Number(rawValue);
 		if (name === "tokens") {
-			if (match[2].includes(".")) {
-				return { action: "invalid", message: "--tokens must be a non-negative integer" };
-			}
-			if (!Number.isFinite(value) || value < 0) {
+			if (!numberPattern.test(rawValue) || !Number.isInteger(value) || value < 0) {
 				return { action: "invalid", message: "--tokens must be a non-negative integer" };
 			}
 			budget.tokens = value;
 		} else {
-			if (!Number.isFinite(value) || value < 0) {
+			if (!numberPattern.test(rawValue) || !Number.isFinite(value) || value < 0) {
 				return { action: "invalid", message: "--cost must be a non-negative number" };
 			}
 			budget.cost = value;
 		}
-		objective = objective.slice(0, match.index).trimEnd();
+		objective = objective.slice(0, match.index) + " " + objective.slice(match.index + match[0].length);
+		flagPattern.lastIndex = match.index;
 	}
 
-	const invalidFlagPattern = /(?:^|\s+)--(tokens|cost)(?:\s+([^\s]+))?\s*$/i;
-	const invalidMatch = objective.match(invalidFlagPattern);
-	if (invalidMatch) {
-		const name = invalidMatch[1].toLowerCase();
+	const leftoverFlag = /--(tokens|cost)\b/i.exec(objective);
+	if (leftoverFlag) {
+		const name = leftoverFlag[1]!.toLowerCase();
 		return {
 			action: "invalid",
 			message:
@@ -168,8 +179,15 @@ export function parseGoalCommand(rawArgs: string): GoalCommandResult {
 		};
 	}
 
+	objective = objective.replace(/\s+/g, " ").trim();
 	if (!objective) {
 		return { action: "invalid", message: "A goal objective is required" };
+	}
+	if (objective === "pause" || objective === "resume" || objective === "clear") {
+		return {
+			action: "invalid",
+			message: `The ${objective} subcommand does not accept budget flags`,
+		};
 	}
 	return { action: "set", objective, budget };
 }
@@ -224,14 +242,28 @@ function truncate(text: string, maxLength: number): string {
 
 /** Append a compact progress line, keeping only the most recent entries. */
 export function appendProgress(state: GoalState, text: string, now = Date.now(), maxEntries = 20): GoalState {
-	const time = new Date(now).toISOString().slice(11, 19);
-	const line = `[${time}] ${truncate(text.replace(/\s+/g, " ").trim(), 200)}`;
+	const normalized = text.replace(/\s+/g, " ").trim();
+	const content = normalized ? truncate(normalized, 200) : "";
+	const line = content ? `[${new Date(now).toISOString().slice(11, 19)}] ${content}` : "";
+	const last = state.progress[state.progress.length - 1];
+	const lastContent = last ? last.slice(last.indexOf("] ") + 2) : undefined;
+	if (!line || lastContent === content) {
+		return { ...state, updatedAt: now };
+	}
 	const progress = [...state.progress, line];
 	return {
 		...state,
 		progress: progress.slice(-maxEntries),
 		updatedAt: now,
 	};
+}
+
+const MIN_COMPLETION_EVIDENCE_LENGTH = 20;
+
+/** Reject completion evidence that is too short to describe concrete verification. */
+export function isValidCompletionEvidence(evidence: string): boolean {
+	const normalized = evidence.replace(/\s+/g, " ").trim();
+	return normalized.length >= MIN_COMPLETION_EVIDENCE_LENGTH;
 }
 
 export function formatGoalState(state: GoalState, usage?: UsageTotals): string {
@@ -260,11 +292,15 @@ export function isGoalContextMessage(message: AgentMessage): boolean {
 	return (message as { customType?: unknown }).customType === GOAL_CONTEXT_TYPE;
 }
 
-export function buildGoalContextMessage(state: GoalState): AgentMessage {
-	const budget =
-		state.budget?.tokens !== undefined || state.budget?.cost !== undefined
-			? `\nBudget: ${state.budget.tokens !== undefined ? `tokens ${state.budget.tokens}` : ""}${state.budget.tokens !== undefined && state.budget.cost !== undefined ? ", " : ""}${state.budget.cost !== undefined ? `cost ${state.budget.cost}` : ""}`
-			: "";
+export function buildGoalContextMessage(state: GoalState, usage?: UsageTotals): AgentMessage {
+	const budgetParts: string[] = [];
+	if (state.budget?.tokens !== undefined) {
+		budgetParts.push(usage ? `tokens ${usage.tokens}/${state.budget.tokens}` : `tokens ${state.budget.tokens}`);
+	}
+	if (state.budget?.cost !== undefined) {
+		budgetParts.push(usage ? `cost ${usage.cost.toFixed(4)}/${state.budget.cost}` : `cost ${state.budget.cost}`);
+	}
+	const budget = budgetParts.length > 0 ? `\nBudget: ${budgetParts.join(", ")}` : "";
 	return {
 		role: "custom",
 		customType: GOAL_CONTEXT_TYPE,
@@ -272,7 +308,7 @@ export function buildGoalContextMessage(state: GoalState): AgentMessage {
 
 Active goal: ${state.objective}${budget}
 
-Work autonomously toward this goal. Before each next step, inspect the current evidence in the conversation and the working tree. Call complete_goal only after the objective is verified against concrete evidence such as command output, test results, file changes, or generated artifacts. Do not call complete_goal based only on intent or a plausible summary.
+Work autonomously toward this goal. Before each next step, inspect the current evidence in the conversation and the working tree. Call complete_goal only after the objective is verified against concrete evidence such as command output, test results, file changes, or generated artifacts, described in at least 20 characters. Do not call complete_goal based only on intent or a plausible summary.
 
 If you are blocked or no defensible path remains, stop and explain the blocker in your response instead of calling complete_goal.`,
 		display: false,
@@ -283,7 +319,7 @@ If you are blocked or no defensible path remains, stop and explain the blocker i
 export function buildContinuationPrompt(state: GoalState): string {
 	return `Continue the active goal: ${state.objective}
 
-Inspect the current state, verify progress against concrete evidence, and take the next useful step. If the goal is now satisfied, call complete_goal with the evidence. If you are blocked, stop and report the blocker. Do not ask the user for permission for ordinary in-scope steps.`;
+Inspect the current state, verify progress against concrete evidence, and take the next useful step. If the goal is now satisfied, call complete_goal with at least 20 characters of evidence (for example command output, test results, or file changes). If you are blocked, stop and report the blocker. Do not ask the user for permission for ordinary in-scope steps.`;
 }
 
 export function assistantHasToolCalls(message: AgentMessage | undefined): boolean {

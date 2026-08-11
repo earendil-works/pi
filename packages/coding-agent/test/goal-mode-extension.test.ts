@@ -45,7 +45,7 @@ function customData(entry: SessionEntry | undefined): unknown {
 	return entry && entry.type === "custom" ? entry.data : undefined;
 }
 
-function setup(options: { idle?: boolean; pending?: boolean; flagGoal?: string } = {}) {
+function setup(options: { idle?: boolean; pending?: boolean; flagGoal?: string; flagBudgetTokens?: string } = {}) {
 	const commands = new Map<string, CommandHandler>();
 	const commandOptions = new Map<string, CommandRegistration>();
 	const handlers = new Map<string, EventHandler>();
@@ -84,6 +84,7 @@ function setup(options: { idle?: boolean; pending?: boolean; flagGoal?: string }
 		},
 		getFlag: vi.fn((name: string) => {
 			if (name === "goal") return options.flagGoal;
+			if (name === "goal-budget-tokens") return options.flagBudgetTokens;
 			return undefined;
 		}),
 		getSessionName: vi.fn(() => undefined),
@@ -322,7 +323,7 @@ describe("goal-mode example extension", () => {
 	});
 
 	it("does not spin after a turn with no tool calls", async () => {
-		const { emit, notify, runCommand, sendUserMessage } = setup();
+		const { emit, notify, runCommand, sendUserMessage, setWidget } = setup();
 
 		await runCommand("goal", "Fix tests");
 		await emit("agent_start", { type: "agent_start" });
@@ -336,6 +337,7 @@ describe("goal-mode example extension", () => {
 
 		expect(sendUserMessage).toHaveBeenCalledTimes(1);
 		expect(notify).toHaveBeenCalledWith(expect.stringContaining("no tool calls"), "info");
+		expect(setWidget).toHaveBeenLastCalledWith("goal-mode", expect.arrayContaining(["[GOAL MODE (WAITING)]"]));
 	});
 
 	it("respects queued user input before auto-continuing", async () => {
@@ -380,6 +382,149 @@ describe("goal-mode example extension", () => {
 		expect(customData(entries.at(-1))).toMatchObject({ status: "budget_limited" });
 	});
 
+	it("resumes a budget-limited goal with a fresh baseline", async () => {
+		const { emit, entries, notify, runCommand, sendUserMessage } = setup();
+
+		await runCommand("goal", "Fix tests --tokens 10");
+		await emit("agent_start", { type: "agent_start" });
+		entries.push({
+			type: "message",
+			message: {
+				role: "assistant",
+				content: [],
+				api: "anthropic-messages",
+				provider: "anthropic",
+				model: "mock",
+				usage: {
+					input: 10,
+					output: 10,
+					cacheRead: 0,
+					cacheWrite: 0,
+					totalTokens: 20,
+					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+				},
+				stopReason: "stop",
+				timestamp: Date.now(),
+			},
+			id: "usage",
+			parentId: null,
+			timestamp: new Date().toISOString(),
+		} as SessionEntry);
+		await emit("agent_settled", { type: "agent_settled" });
+		expect(customData(entries.at(-1))).toMatchObject({ status: "budget_limited" });
+
+		await runCommand("goal", "resume");
+
+		expect(customData(entries.at(-1))).toMatchObject({
+			status: "active",
+			baseline: { tokens: 20, cost: 0 },
+		});
+		expect(sendUserMessage).toHaveBeenCalledTimes(2);
+		expect(notify).toHaveBeenCalledWith("Goal resumed.", "info");
+	});
+
+	it("shows usage in /goal view for non-active budgets", async () => {
+		const { emit, entries, notify, runCommand } = setup();
+
+		await runCommand("goal", "Fix tests --tokens 10");
+		entries.push({
+			type: "message",
+			message: {
+				role: "assistant",
+				content: [],
+				api: "anthropic-messages",
+				provider: "anthropic",
+				model: "mock",
+				usage: {
+					input: 10,
+					output: 10,
+					cacheRead: 0,
+					cacheWrite: 0,
+					totalTokens: 20,
+					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+				},
+				stopReason: "stop",
+				timestamp: Date.now(),
+			},
+			id: "usage",
+			parentId: null,
+			timestamp: new Date().toISOString(),
+		} as SessionEntry);
+		await emit("agent_settled", { type: "agent_settled" });
+
+		await runCommand("goal");
+
+		expect(notify).toHaveBeenLastCalledWith(expect.stringContaining("tokens 20/10"), "info");
+	});
+
+	it("injects budget usage into the active goal context", async () => {
+		const { emit, entries, runCommand } = setup();
+
+		await runCommand("goal", "Fix tests --tokens 100");
+		entries.push({
+			type: "message",
+			message: {
+				role: "assistant",
+				content: [],
+				api: "anthropic-messages",
+				provider: "anthropic",
+				model: "mock",
+				usage: {
+					input: 50,
+					output: 0,
+					cacheRead: 0,
+					cacheWrite: 0,
+					totalTokens: 50,
+					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+				},
+				stopReason: "stop",
+				timestamp: Date.now(),
+			},
+			id: "usage",
+			parentId: null,
+			timestamp: new Date().toISOString(),
+		} as SessionEntry);
+
+		const result = (await emit("context", {
+			type: "context",
+			messages: [createTextMessage("hello")],
+		})) as { messages: AgentMessage[] };
+		const context = result.messages.at(-1) as { content?: string };
+		expect(context.content).toContain("Budget: tokens 50/100");
+	});
+
+	it("does not auto-continue after session tree navigation", async () => {
+		const { emit, entries, runCommand, sendUserMessage, setStatus } = setup();
+
+		await runCommand("goal", "Fix tests");
+		expect(sendUserMessage).toHaveBeenCalledTimes(1);
+		const goalEntry = entries.find((entry) => entry.type === "custom" && entry.customType === "goal-mode");
+		const goalData = customData(goalEntry);
+
+		entries.push({
+			type: "custom",
+			customType: "goal-mode",
+			data: null,
+			id: "cleared",
+			parentId: goalEntry?.id ?? null,
+			timestamp: new Date().toISOString(),
+		} as SessionEntry);
+		await emit("session_tree", { type: "session_tree", newLeafId: "cleared", oldLeafId: "goal-entry" });
+		expect(setStatus).toHaveBeenLastCalledWith("goal-mode", "mode: build");
+
+		entries.push({
+			type: "custom",
+			customType: "goal-mode",
+			data: goalData,
+			id: "goal-again",
+			parentId: "cleared",
+			timestamp: new Date().toISOString(),
+		} as SessionEntry);
+		await emit("session_tree", { type: "session_tree", newLeafId: "goal-again", oldLeafId: "cleared" });
+		expect(setStatus).toHaveBeenLastCalledWith("goal-mode", "mode: goal");
+		expect(sendUserMessage).toHaveBeenCalledTimes(1);
+	});
+
 	it("injects active goal context and removes stale context", async () => {
 		const { emit, runCommand } = setup();
 		const stale = {
@@ -413,13 +558,29 @@ describe("goal-mode example extension", () => {
 
 		const tool = tools.get("complete_goal");
 		expect(tool).toBeDefined();
-		const result = await tool!.execute("call-1", { evidence: "suite passes" }, undefined, undefined, ctx);
+		const result = await tool!.execute(
+			"call-1",
+			{ evidence: "suite passes with 0 failures" },
+			undefined,
+			undefined,
+			ctx,
+		);
 
 		expect(result.terminate).toBe(true);
 		expect(customData(entries.at(-1))).toMatchObject({
 			status: "complete",
-			lastCompletionEvidence: "suite passes",
+			lastCompletionEvidence: "suite passes with 0 failures",
 		});
+	});
+
+	it("rejects completion evidence that is too short", async () => {
+		const { ctx, runCommand, tools } = setup();
+		await runCommand("goal", "Fix tests");
+
+		const tool = tools.get("complete_goal");
+		await expect(tool!.execute("call-1", { evidence: "done" }, undefined, undefined, ctx)).rejects.toThrow(
+			"at least 20 characters",
+		);
 	});
 
 	it("starts a goal from the --goal startup flag", async () => {
@@ -430,5 +591,13 @@ describe("goal-mode example extension", () => {
 		expect(customData(entries.at(-1))).toMatchObject({ objective: "Startup goal", status: "active" });
 		expect(sendUserMessage).toHaveBeenCalledTimes(1);
 		expect(sendUserMessage.mock.calls[0]?.[0]).toContain("Startup goal");
+	});
+
+	it("warns instead of silently ignoring an invalid budget startup flag", async () => {
+		const { emit, notify } = setup({ flagGoal: "Startup goal", flagBudgetTokens: "abc" });
+
+		await emit("session_start", { type: "session_start", reason: "startup" });
+
+		expect(notify).toHaveBeenCalledWith("Ignoring invalid --goal-budget-tokens value: abc", "warning");
 	});
 });

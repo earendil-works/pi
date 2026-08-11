@@ -82,7 +82,7 @@ describe("goal-mode extension integration", () => {
 		const harness = await createHarness({ extensionFactories: [goalModeExtension] });
 		harnesses.push(harness);
 		harness.setResponses([
-			fauxAssistantMessage(fauxToolCall("complete_goal", { evidence: "suite passes" }), {
+			fauxAssistantMessage(fauxToolCall("complete_goal", { evidence: "suite passes with 0 failures" }), {
 				stopReason: "toolUse",
 			}),
 		]);
@@ -93,7 +93,7 @@ describe("goal-mode extension integration", () => {
 		expect(harness.getPendingResponseCount()).toBe(0);
 		expect(latestGoalEntry(harness)).toMatchObject({
 			status: "complete",
-			lastCompletionEvidence: "suite passes",
+			lastCompletionEvidence: "suite passes with 0 failures",
 		});
 		expect(harness.session.messages.map((message) => message.role)).toEqual(["user", "assistant", "toolResult"]);
 	});
