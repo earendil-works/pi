@@ -102,6 +102,16 @@ export interface EditToolOptions {
 	operations?: EditOperations;
 }
 
+function isSingleEditObject(value: unknown): value is Record<string, unknown> {
+	return (
+		value !== null &&
+		typeof value === "object" &&
+		!Array.isArray(value) &&
+		"oldText" in value &&
+		"newText" in value
+	);
+}
+
 function prepareEditArguments(input: unknown): EditToolInput {
 	if (!input || typeof input !== "object") {
 		return input as EditToolInput;
@@ -112,9 +122,18 @@ function prepareEditArguments(input: unknown): EditToolInput {
 	// Some models (Opus 4.6, GLM-5.1) send edits as a JSON string instead of an array
 	if (typeof args.edits === "string") {
 		try {
-			const parsed = JSON.parse(args.edits);
-			if (Array.isArray(parsed)) args.edits = parsed;
+			const parsed: unknown = JSON.parse(args.edits);
+			if (Array.isArray(parsed)) {
+				args.edits = parsed;
+			} else if (isSingleEditObject(parsed)) {
+				args.edits = [parsed];
+			}
 		} catch {}
+	}
+
+	// Some models send a bare single edit object instead of an array
+	if (isSingleEditObject(args.edits)) {
+		args.edits = [args.edits];
 	}
 
 	const legacy = args as LegacyEditToolInput;
