@@ -263,7 +263,7 @@ const MIN_COMPLETION_EVIDENCE_LENGTH = 20;
 /** Reject completion evidence that is too short to describe concrete verification. */
 export function isValidCompletionEvidence(evidence: string): boolean {
 	const normalized = evidence.replace(/\s+/g, " ").trim();
-	return normalized.length >= MIN_COMPLETION_EVIDENCE_LENGTH;
+	return normalized.length >= MIN_COMPLETION_EVIDENCE_LENGTH && /[\p{L}\p{N}]/u.test(normalized);
 }
 
 export function formatGoalState(state: GoalState, usage?: UsageTotals): string {

@@ -593,7 +593,7 @@ describe("goal-mode example extension", () => {
 		expect(tool).toBeDefined();
 		const result = await tool!.execute(
 			"call-1",
-			{ evidence: "suite passes with 0 failures" },
+			{ evidence: "  suite   passes with 0 failures  " },
 			undefined,
 			undefined,
 			ctx,
@@ -603,6 +603,10 @@ describe("goal-mode example extension", () => {
 		expect(customData(entries.at(-1))).toMatchObject({
 			status: "complete",
 			lastCompletionEvidence: "suite passes with 0 failures",
+		});
+		expect(result.details).toEqual({
+			objective: "Fix tests",
+			evidence: "suite passes with 0 failures",
 		});
 	});
 

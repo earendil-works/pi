@@ -150,8 +150,10 @@ describe("completion evidence", () => {
 	it("requires concrete evidence of a minimum length", () => {
 		expect(isValidCompletionEvidence("done")).toBe(false);
 		expect(isValidCompletionEvidence("   ")).toBe(false);
+		expect(isValidCompletionEvidence(".".repeat(20))).toBe(false);
 		expect(isValidCompletionEvidence("suite passes with 0 failures")).toBe(true);
 		expect(isValidCompletionEvidence("a".repeat(20))).toBe(true);
+		expect(isValidCompletionEvidence("修复测试通过且无回归".repeat(2))).toBe(true);
 	});
 });
 

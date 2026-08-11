@@ -363,7 +363,8 @@ export default function goalModeExtension(pi: ExtensionAPI): void {
 				if (goal.status !== "active") {
 					throw new Error(`Goal cannot be completed from status ${goal.status}.`);
 				}
-				if (!isValidCompletionEvidence(params.evidence)) {
+				const evidence = params.evidence.replace(/\s+/g, " ").trim();
+				if (!isValidCompletionEvidence(evidence)) {
 					throw new Error(
 						"Evidence must be at least 20 characters describing concrete verification, such as command output, test results, or file changes.",
 					);
@@ -372,11 +373,8 @@ export default function goalModeExtension(pi: ExtensionAPI): void {
 					...goal,
 					status: "complete",
 					updatedAt: Date.now(),
-					lastCompletionEvidence: params.evidence,
-					progress: [
-						...goal.progress,
-						`Completed: ${params.evidence.replace(/\s+/g, " ").trim().slice(0, 200)}`,
-					].slice(-20),
+					lastCompletionEvidence: evidence,
+					progress: [...goal.progress, `Completed: ${evidence.slice(0, 200)}`].slice(-20),
 				};
 				bumpGoalVersion();
 				goal = completed;
@@ -388,7 +386,7 @@ export default function goalModeExtension(pi: ExtensionAPI): void {
 					content: [{ type: "text", text: `Goal completed: ${completed.objective}` }],
 					details: {
 						objective: completed.objective,
-						evidence: params.evidence,
+						evidence,
 					},
 					terminate: true,
 				};
