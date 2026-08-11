@@ -218,6 +218,10 @@ function resumeGoal(pi: ExtensionAPI, ctx: ExtensionContext): void {
 }
 
 function clearGoal(pi: ExtensionAPI, ctx: ExtensionContext): void {
+	if (!goal) {
+		ctx.ui.notify("No goal set.", "info");
+		return;
+	}
 	// Stop any in-flight autonomous work before clearing the goal, so the UI
 	// returns to normal mode immediately instead of continuing the current run.
 	ctx.abort();

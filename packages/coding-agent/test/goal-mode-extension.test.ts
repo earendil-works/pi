@@ -45,7 +45,15 @@ function customData(entry: SessionEntry | undefined): unknown {
 	return entry && entry.type === "custom" ? entry.data : undefined;
 }
 
-function setup(options: { idle?: boolean; pending?: boolean; flagGoal?: string; flagBudgetTokens?: string } = {}) {
+function setup(
+	options: {
+		idle?: boolean;
+		pending?: boolean;
+		flagGoal?: string;
+		flagBudgetTokens?: string;
+		flagBudgetCost?: string;
+	} = {},
+) {
 	const commands = new Map<string, CommandHandler>();
 	const commandOptions = new Map<string, CommandRegistration>();
 	const handlers = new Map<string, EventHandler>();
@@ -85,6 +93,7 @@ function setup(options: { idle?: boolean; pending?: boolean; flagGoal?: string; 
 		getFlag: vi.fn((name: string) => {
 			if (name === "goal") return options.flagGoal;
 			if (name === "goal-budget-tokens") return options.flagBudgetTokens;
+			if (name === "goal-budget-cost") return options.flagBudgetCost;
 			return undefined;
 		}),
 		getSessionName: vi.fn(() => undefined),
@@ -620,6 +629,51 @@ describe("goal-mode example extension", () => {
 		);
 	});
 
+	it("reports no goal for lifecycle commands without a goal", async () => {
+		const { abort, notify, runCommand, setStatus } = setup();
+
+		await runCommand("goal", "pause");
+		expect(notify).toHaveBeenLastCalledWith("No goal set.", "info");
+		await runCommand("goal", "resume");
+		expect(notify).toHaveBeenLastCalledWith("No goal set.", "info");
+		await runCommand("goal", "clear");
+		expect(notify).toHaveBeenLastCalledWith("No goal set.", "info");
+		expect(abort).not.toHaveBeenCalled();
+		expect(setStatus).toHaveBeenLastCalledWith("goal-mode", "mode: build");
+	});
+
+	it("does not resume a completed goal", async () => {
+		const { ctx, entries, notify, runCommand, tools } = setup();
+		await runCommand("goal", "Fix tests");
+
+		const tool = tools.get("complete_goal");
+		await tool!.execute("call-1", { evidence: "suite passes with 0 failures" }, undefined, undefined, ctx);
+		expect(customData(entries.at(-1))).toMatchObject({ status: "complete" });
+
+		await runCommand("goal", "resume");
+		expect(notify).toHaveBeenLastCalledWith("Goal cannot be resumed from status complete.", "info");
+	});
+
+	it("rejects complete_goal without an active goal", async () => {
+		const { ctx, tools } = setup();
+
+		const tool = tools.get("complete_goal");
+		await expect(
+			tool!.execute("call-1", { evidence: "suite passes with 0 failures" }, undefined, undefined, ctx),
+		).rejects.toThrow("No active goal to complete.");
+	});
+
+	it("rejects complete_goal while the goal is paused", async () => {
+		const { ctx, runCommand, tools } = setup();
+		await runCommand("goal", "Fix tests");
+		await runCommand("goal", "pause");
+
+		const tool = tools.get("complete_goal");
+		await expect(
+			tool!.execute("call-1", { evidence: "suite passes with 0 failures" }, undefined, undefined, ctx),
+		).rejects.toThrow("Goal cannot be completed from status paused.");
+	});
+
 	it("starts a goal from the --goal startup flag", async () => {
 		const { emit, sendUserMessage, entries } = setup({ flagGoal: "Startup goal" });
 
@@ -628,6 +682,17 @@ describe("goal-mode example extension", () => {
 		expect(customData(entries.at(-1))).toMatchObject({ objective: "Startup goal", status: "active" });
 		expect(sendUserMessage).toHaveBeenCalledTimes(1);
 		expect(sendUserMessage.mock.calls[0]?.[0]).toContain("Startup goal");
+	});
+
+	it("starts a goal with budget flags", async () => {
+		const { emit, entries } = setup({ flagGoal: "Startup goal", flagBudgetTokens: "100", flagBudgetCost: "2.5" });
+
+		await emit("session_start", { type: "session_start", reason: "startup" });
+
+		expect(customData(entries.at(-1))).toMatchObject({
+			objective: "Startup goal",
+			budget: { tokens: 100, cost: 2.5 },
+		});
 	});
 
 	it("warns instead of silently ignoring an invalid budget startup flag", async () => {
