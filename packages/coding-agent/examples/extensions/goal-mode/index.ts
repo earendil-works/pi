@@ -68,7 +68,7 @@ function getGoalStatusLabel(status: GoalState["status"]): string {
 
 function updateStatus(pi: ExtensionAPI, ctx: ExtensionContext): void {
 	if (!goal) {
-		ctx.ui.setStatus("goal-mode", undefined);
+		ctx.ui.setStatus("goal-mode", "goal: off");
 		ctx.ui.setWidget("goal-mode", undefined);
 		ctx.ui.setTitle(getBaseTitle(pi));
 		return;

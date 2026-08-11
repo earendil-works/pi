@@ -189,7 +189,7 @@ describe("goal-mode example extension", () => {
 
 		await runCommand("goal", "clear");
 		expect(customData(entries.at(-1))).toBeNull();
-		expect(setStatus).toHaveBeenLastCalledWith("goal-mode", undefined);
+		expect(setStatus).toHaveBeenLastCalledWith("goal-mode", "goal: off");
 		expect(setWidget).toHaveBeenLastCalledWith("goal-mode", undefined);
 		expect(setTitle).toHaveBeenLastCalledWith(expect.stringContaining("pi - "));
 		expect(abort).toHaveBeenCalledTimes(2);
