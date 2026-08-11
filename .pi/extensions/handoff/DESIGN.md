@@ -118,7 +118,9 @@ imports only. Keeps installation = "copy or symlink the folder."
 - **Gather:** `ctx.sessionManager.buildContextEntries()` — *not* the hand-rolled
   branch walk upstream's example uses (it duplicates compaction logic and has
   drifted before). Serialize with the exported `convertToLlm` +
-  `serializeConversation` helpers.
+  `serializeConversation` helpers. Compaction-aware is right *here* because the
+  serializer turns a compaction entry into a summary message, so elided history
+  still reaches the composer; Writer B needs the opposite (see below).
 - **Compose:** one-shot `ctx.modelRegistry.complete(ctx.model, …)` with
   `cacheRetention: "none"` and a fresh `sessionId` (uuidv7) so the call never
   pollutes the user's session. System prompt requests the note body sections plus
@@ -146,10 +148,16 @@ imports only. Keeps installation = "copy or symlink the folder."
 - **Skip when:** `wroteNoteThisSession` is set (the `/handoff` note is richer; a
   later digest would supersede it as "newest" with worse content — accepted v1
   simplification: work done *after* `/handoff` but before quit isn't re-captured);
-  no assistant message exists in `getEntries()` (nothing happened — also covers
+  no assistant message exists on the active branch (nothing happened — also covers
   the fact that pi's session file isn't even flushed to disk until the first
   assistant reply); or `getSessionFile()` is undefined (`--no-session` ephemeral
   runs — the user asked not to be recorded; honor it).
+- **Entry source:** `ctx.sessionManager.getBranch()` — the active leaf-to-root
+  path, every entry type, no compaction fold. Not `getEntries()` (flat
+  append-order across *all* branches, so a `/tree` rewind leaks abandoned work
+  into the digest) and not `buildContextEntries()` (drops everything before
+  `firstKeptEntryId`; since this walk reads only `message` entries, that would
+  silently shrink "files touched" to the post-compaction tail).
 - **Digest fields** (pure in-memory walk of `ctx.sessionManager` — no LLM, no
   network, bounded, idempotent; a hung shutdown handler hangs pi's exit):
   last user message; first ~15 lines of last assistant reply; files touched
@@ -218,6 +226,26 @@ specimen at `~/.pi/agent/sessions/--Users-kyledisch-Projects-pi--/` is a good
 fixture source), plus a manual smoke via `pi -e .pi/extensions/handoff/index.ts`
 in a scratch project. LLM smoke tests use Google Gemini free tier only — never
 Anthropic subscription auth (bills per-token).
+
+## Verification gates
+
+This extension lives outside `packages/`, so none of the repo's own gates reach it:
+`.pi/**` is absent from `tsconfig.json`'s `include` and `biome.json`'s `files.includes`,
+and it is not an npm workspace, so `npm run check` and `npm test` skip it silently.
+
+Tests and typecheck are gated by their own workflow, `.github/workflows/handoff-ext.yml`,
+kept as a separate file so rebasing this fork onto upstream pi never conflicts there. Run
+the same two commands locally from the repo root:
+
+```
+node node_modules/vitest/dist/cli.js --run --config .pi/extensions/handoff/vitest.config.ts
+npx tsgo --noEmit -p .pi/extensions/handoff/tsconfig.json
+```
+
+Formatting is the remaining gap: `biome check` ignores the path by config, and covering it
+would mean editing `biome.json` — a shared upstream file. Format by hand when needed with
+`--config-path` pointing at a copy of `biome.json` whose `files.includes` is
+`["**/*.ts", "!**/node_modules/**/*"]`.
 
 ## Explicitly out of scope for v1 (v2 hooks noted)
 

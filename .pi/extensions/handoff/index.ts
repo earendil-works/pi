@@ -24,7 +24,7 @@ import {
 	sessionEntryToContextMessages,
 } from "@earendil-works/pi-coding-agent";
 import { Box, Text } from "@earendil-works/pi-tui";
-import { type ComposeResult, composeNoteBody } from "./compose.ts";
+import { type ComposeResult, composeNoteBody, joinKickoff, splitKickoff } from "./compose.ts";
 import { buildDigestNote } from "./digest.ts";
 import { HANDOFF_SCHEMA, type HandoffNote, writeNote } from "./notes.ts";
 import { registerReader } from "./reader.ts";
@@ -42,8 +42,15 @@ function modelLabel(ctx: ExtensionContext): string | undefined {
  * Report from the shutdown path, where `ctx.ui.notify` is not enough on its own.
  * Interactive quit stops the TUI *before* emitting `session_shutdown` — deliberately, so
  * extension teardown cannot repaint the final frame — so a notify there paints nothing.
- * A seatbelt that can fail silently is not a seatbelt, so failures also go to stderr,
- * which pi itself proves still works at that point (it writes the resume hint right after).
+ * A seatbelt that can fail silently is not a seatbelt, so failures also go to stderr.
+ *
+ * That stderr write is clean on the interactive-quit path only, and the event cannot tell
+ * the paths apart: `reason` is `"quit"` for both. On the signal path (SIGTERM/SIGHUP)
+ * `dispose()` runs *before* `stop()`, so the write can interleave with a live renderer, be
+ * dropped on exit from the alt screen, or — on a dead terminal — raise EIO, which pi turns
+ * into an immediate `process.exit(129)` that skips the rest of teardown. Accepted rather
+ * than fixed: the trigger is compound (signal shutdown *and* a failed note write), and the
+ * alternative is the silent seatbelt this exists to prevent.
  */
 function reportFromShutdown(ctx: ExtensionContext, message: string, level: "info" | "warning"): void {
 	if (ctx.hasUI) ctx.ui.notify(message, level);
@@ -62,7 +69,19 @@ function registerShutdownDigest(pi: ExtensionAPI, state: HandoffState): void {
 
 		try {
 			const note = buildDigestNote({
-				entries: ctx.sessionManager.getEntries(),
+				// The active branch, not every branch in the file: `getEntries()` is a flat
+				// append-order read, so after a `/tree` rewind it still holds the abandoned
+				// branch, and the backward scans below would hand the successor work the
+				// user explicitly rewound away from.
+				//
+				// `getBranch()` rather than `/handoff`'s `buildContextEntries()`, which also
+				// folds away compaction — it keeps the compaction entry and drops everything
+				// before `firstKeptEntryId`. `/handoff` can afford that (its serializer turns
+				// the compaction entry into a summary message, so the elided history survives),
+				// but this digest reads only `type === "message"`, so the fold would silently
+				// cut `Files touched` down to the post-compaction tail on exactly the long
+				// sessions the seatbelt exists for.
+				entries: ctx.sessionManager.getBranch(),
 				sessionId: ctx.sessionManager.getSessionId(),
 				sessionFile,
 				cwd: ctx.cwd,
@@ -150,15 +169,23 @@ function registerHandoffCommand(pi: ExtensionAPI, state: HandoffState): void {
 			}
 
 			// Review is skipped where there is no dialog surface, rather than failing:
-			// automation is the point of this extension.
+			// automation is the point of this extension. Gated on `mode` rather than
+			// `hasUI`, which is also true in RPC — and pi's RPC `editor` is the one dialog
+			// with neither a timeout nor a default value, so a host that never answers
+			// would hang `/handoff` forever in the mode built to run unattended.
 			let body = composed.body;
-			if (ctx.hasUI) {
-				const edited = await ctx.ui.editor("Edit handoff note", body);
+			let kickoff = composed.kickoff;
+			if (ctx.mode === "tui") {
+				// The KICKOFF line is edited with the body, not stripped before it. It is the
+				// successor's opening prompt, so a user who rewrites "Next steps" has to be
+				// able to see and change it — otherwise the note ships a kickoff that
+				// contradicts the very section the user just corrected.
+				const edited = await ctx.ui.editor("Edit handoff note", joinKickoff(body, kickoff));
 				if (edited === undefined) {
 					ctx.ui.notify("Handoff cancelled", "info");
 					return;
 				}
-				body = edited;
+				({ body, kickoff } = splitKickoff(edited));
 			}
 
 			const sessionFile = ctx.sessionManager.getSessionFile();
@@ -171,7 +198,7 @@ function registerHandoffCommand(pi: ExtensionAPI, state: HandoffState): void {
 					created: new Date().toISOString(),
 					source: "command",
 					model: modelLabel(ctx),
-					kickoff: composed.kickoff || goal || "Continue the previous session's work.",
+					kickoff: kickoff || goal || "Continue the previous session's work.",
 				},
 				body,
 			};

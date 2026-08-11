@@ -1,7 +1,7 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it } from "vitest";
-import { buildComposeUserMessage, composeNoteBody, splitKickoff } from "../compose.ts";
+import { buildComposeUserMessage, composeNoteBody, joinKickoff, splitKickoff } from "../compose.ts";
 
 describe("splitKickoff", () => {
 	it("splits the trailing KICKOFF line off the body", () => {
@@ -29,6 +29,35 @@ describe("splitKickoff", () => {
 
 	it("ignores a marker with no content after it", () => {
 		expect(splitKickoff("## Context\nBody.\n\nKICKOFF:").kickoff).toBeUndefined();
+	});
+});
+
+describe("joinKickoff", () => {
+	// `/handoff` shows the joined document in the editor and re-splits what comes back,
+	// so the successor's opening prompt survives review only if these two are inverses.
+	it("round-trips through splitKickoff", () => {
+		const body = "## Context\nWe wired the reader.\n\n## Next steps\nDo the thing.";
+		expect(splitKickoff(joinKickoff(body, "Wire archive-on-delivery next."))).toEqual({
+			body,
+			kickoff: "Wire archive-on-delivery next.",
+		});
+	});
+
+	it("round-trips a note the model gave no kickoff for", () => {
+		const body = "## Context\nBody.";
+		expect(splitKickoff(joinKickoff(body, undefined))).toEqual({ body });
+	});
+
+	it("picks up a kickoff the user typed into a note that had none", () => {
+		const edited = `${joinKickoff("## Context\nBody.", undefined)}\n\nKICKOFF: Mine, not the model's.`;
+		expect(splitKickoff(edited).kickoff).toBe("Mine, not the model's.");
+	});
+
+	it("takes the user's rewritten kickoff, not the composed one", () => {
+		const draft = joinKickoff("## Context\nBody.", "Model's original.");
+		expect(splitKickoff(draft.replace("Model's original.", "Kyle's replacement.")).kickoff).toBe(
+			"Kyle's replacement.",
+		);
 	});
 });
 
