@@ -146,6 +146,7 @@ import {
 	type StatusIndicator,
 	WorkingStatusIndicator,
 } from "./components/status-indicator.ts";
+import { StatusRegionComponent, TranscriptStatusIndicator } from "./components/status-region.ts";
 import { ToolExecutionComponent } from "./components/tool-execution.ts";
 import { TreeSelectorComponent } from "./components/tree-selector.ts";
 import { TrustSelectorComponent } from "./components/trust-selector.ts";
@@ -868,30 +869,37 @@ export class InteractiveMode {
 		}
 
 		// Keep one component tree and remount it when changing renderers.
-		this.renderWidgets(); // Initialize with default spacer
-		this.transcriptScrollView = new TuiLayouts.ScrollView(this.documentContainer, {
+		this.renderWidgets();
+		const transcriptScrollView = new TuiLayouts.ScrollView(this.documentContainer, {
 			follow: "end",
 			primary: true,
 			overscroll: "chain",
 			scrollbar: this.settingsManager.getFullscreenScrollbar(),
 			scrollbarStyle: (text) => theme.bg("scrollbarThumb", text),
 		});
+		this.transcriptScrollView = transcriptScrollView;
+		const transcriptStatus = new TranscriptStatusIndicator(
+			transcriptScrollView,
+			() => this.ui.mode === "fullscreen",
+			(text) => theme.fg("accent", text),
+		);
+		const statusRegion = new StatusRegionComponent(this.statusContainer, transcriptStatus);
 		const dock = new TuiLayouts.VStack([
 			{ component: this.pendingMessagesContainer, shrink: 1, minSize: 0 },
-			{ component: this.statusContainer, shrink: 1, minSize: 0 },
+			{ component: statusRegion, shrink: 1, minSize: 0 },
 			{ component: this.widgetContainerAbove, shrink: 1, minSize: 0 },
 			{ component: this.editorContainer, shrink: 1, minSize: 3 },
 			{ component: this.widgetContainerBelow, shrink: 1, minSize: 0 },
 			{ component: this.footerContainer, shrink: 1, minSize: 1 },
 		]);
 		this.fullscreenLayoutRoot = new TuiLayouts.VStack([
-			{ component: this.transcriptScrollView, basis: 0, grow: 1, shrink: 1, minSize: 1 },
+			{ component: transcriptScrollView, basis: 0, grow: 1, shrink: 1, minSize: 1 },
 			{ component: dock, basis: "auto", grow: 0, shrink: 1, minSize: 1 },
 		]);
 		this.mountInteractiveTui(this.renderer, [
 			this.documentContainer,
 			this.pendingMessagesContainer,
-			this.statusContainer,
+			statusRegion,
 			this.widgetContainerAbove,
 			this.editorContainer,
 			this.widgetContainerBelow,
@@ -2204,29 +2212,13 @@ export class InteractiveMode {
 	 */
 	private renderWidgets(): void {
 		if (!this.widgetContainerAbove || !this.widgetContainerBelow) return;
-		this.renderWidgetContainer(this.widgetContainerAbove, this.extensionWidgetsAbove, true, true);
-		this.renderWidgetContainer(this.widgetContainerBelow, this.extensionWidgetsBelow, false, false);
+		this.renderWidgetContainer(this.widgetContainerAbove, this.extensionWidgetsAbove);
+		this.renderWidgetContainer(this.widgetContainerBelow, this.extensionWidgetsBelow);
 		this.ui.requestRender();
 	}
 
-	private renderWidgetContainer(
-		container: Container,
-		widgets: Map<string, Component & { dispose?(): void }>,
-		spacerWhenEmpty: boolean,
-		leadingSpacer: boolean,
-	): void {
+	private renderWidgetContainer(container: Container, widgets: Map<string, Component & { dispose?(): void }>): void {
 		container.clear();
-
-		if (widgets.size === 0) {
-			if (spacerWhenEmpty) {
-				container.addChild(new Spacer(1));
-			}
-			return;
-		}
-
-		if (leadingSpacer) {
-			container.addChild(new Spacer(1));
-		}
 		for (const component of widgets.values()) {
 			container.addChild(component);
 		}

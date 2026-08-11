@@ -1,8 +1,9 @@
 import type { Component, Terminal, TUI } from "@earendil-works/pi-tui";
-import { Container, isViewportTUI, Text } from "@earendil-works/pi-tui";
+import { Container, isViewportTUI, ScrollView, stripTerminalSequences, Text, VStack } from "@earendil-works/pi-tui";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { VirtualTerminal } from "../../tui/test/virtual-terminal.ts";
 import type { FullscreenExitOutput, TuiMode } from "../src/core/settings-manager.ts";
+import { StatusRegionComponent, TranscriptStatusIndicator } from "../src/modes/interactive/components/status-region.ts";
 import {
 	createInteractiveTui,
 	createInteractiveTuiReference,
@@ -125,6 +126,94 @@ describe("createInteractiveTui", () => {
 
 		expect(stableUi.mode).toBe("fullscreen");
 		expect([terminal.startCount, terminal.stopCount]).toEqual([2, 2]);
+	});
+});
+
+describe("fullscreen transcript scroll indicator", () => {
+	it("shares the existing status region without changing its idle height", async () => {
+		const terminal = new RecordingTerminal(30, 7);
+		const tui = createInteractiveTui({
+			tuiMode: "fullscreen",
+			showHardwareCursor: false,
+			logDirectory: "/tmp",
+			terminal,
+		});
+		const transcriptText = new Text(Array.from({ length: 8 }, (_, index) => `line ${index + 1}`).join("\n"), 0, 0);
+		const transcript = new ScrollView(transcriptText, { follow: "end", primary: true });
+		const activityStatus = new Container();
+		const transcriptStatus = new TranscriptStatusIndicator(
+			transcript,
+			() => true,
+			(text) => text,
+		);
+		const statusRegion = new StatusRegionComponent(activityStatus, transcriptStatus);
+		const dock = new VStack([statusRegion, new Text("editor", 0, 0), new Text("footer", 0, 0)]);
+		if (!isViewportTUI(tui)) throw new Error("Expected fullscreen TUI");
+		tui.setLayoutRoot(
+			new VStack([
+				{ component: transcript, basis: 0, grow: 1, minSize: 1 },
+				{ component: dock, basis: "auto", minSize: 1 },
+			]),
+		);
+
+		tui.start();
+		try {
+			await terminal.waitForRender();
+			const visibleText = () => terminal.getViewport().map(stripTerminalSequences);
+			const idleViewportHeight = transcript.viewportHeight;
+			expect(idleViewportHeight).toBe(4);
+			expect(visibleText().some((line) => line.includes("↓"))).toBe(false);
+
+			transcript.scrollBy(-1);
+			await terminal.waitForRender();
+			expect(transcript.viewportHeight).toBe(idleViewportHeight);
+			expect(visibleText().some((line) => line.trimEnd() === "↓")).toBe(true);
+
+			transcript.scrollBy(1);
+			await terminal.waitForRender();
+			expect(transcript.isFollowingEnd).toBe(true);
+			expect(visibleText().some((line) => line.includes("↓"))).toBe(false);
+
+			transcript.scrollBy(-1);
+			await terminal.waitForRender();
+			activityStatus.addChild({
+				render: () => ["", " Working..."],
+				invalidate: () => {},
+			});
+			tui.requestRender();
+			await terminal.waitForRender();
+			expect(transcript.viewportHeight).toBe(idleViewportHeight - 2);
+			expect(visibleText().some((line) => line.trimEnd() === "↓ Working...")).toBe(true);
+
+			transcriptText.setText(Array.from({ length: 10 }, (_, index) => `line ${index + 1}`).join("\n"));
+			tui.requestRender();
+			await terminal.waitForRender();
+			expect(visibleText().some((line) => line.trimEnd() === "↓ Working...")).toBe(true);
+
+			transcript.scrollToEnd();
+			await terminal.waitForRender();
+			expect(visibleText().some((line) => line.includes("↓"))).toBe(false);
+			expect(visibleText().some((line) => line.trimEnd() === " Working...")).toBe(true);
+
+			transcript.scrollBy(-4);
+			await terminal.waitForRender();
+			expect(visibleText().some((line) => line.trimEnd() === "↓ Working...")).toBe(true);
+
+			activityStatus.clear();
+			tui.requestRender();
+			await terminal.waitForRender();
+			expect(transcript.viewportHeight).toBe(idleViewportHeight);
+			expect(visibleText().some((line) => line.trimEnd() === "↓")).toBe(true);
+			expect(visibleText().some((line) => line.includes("Working..."))).toBe(false);
+
+			transcriptText.setText("line 1");
+			tui.requestRender();
+			await terminal.waitForRender();
+			expect(transcript.isFollowingEnd).toBe(true);
+			expect(visibleText().some((line) => line.includes("↓"))).toBe(false);
+		} finally {
+			tui.stop();
+		}
 	});
 });
 

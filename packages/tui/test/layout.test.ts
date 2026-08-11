@@ -190,6 +190,26 @@ describe("viewport layout", () => {
 		assert.strictEqual(scrollView.isFollowingEnd, true);
 	});
 
+	it("requests one follow-up render when layout restores follow-end state", () => {
+		const content = new Text("1\n2\n3\n4\n5\n6", 0, 0);
+		const scrollView = new ScrollView(content, { follow: "end" });
+		let renderRequests = 0;
+		const requestRender = () => {
+			renderRequests += 1;
+		};
+		renderLayoutFrame(scrollView, 10, 3, requestRender);
+		scrollView.scrollBy(-1);
+		renderRequests = 0;
+
+		content.setText("1\n2");
+		renderLayoutFrame(scrollView, 10, 3, requestRender);
+		assert.strictEqual(scrollView.isFollowingEnd, true);
+		assert.strictEqual(renderRequests, 1);
+
+		renderLayoutFrame(scrollView, 10, 3, requestRender);
+		assert.strictEqual(renderRequests, 1);
+	});
+
 	it("renders a transient proportional scrollbar without replacing cell content", async () => {
 		const sourceLines = ["abcd界", "abcde2", "abcde3", "abcde4", "abcde5", "abcde6", "abcde7", "abcde8"];
 		const contentBackground = "\x1b[42m";
