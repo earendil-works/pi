@@ -10,12 +10,7 @@ import {
 	type SessionMetadata,
 	type SessionStorage,
 } from "../../../src/harness/session/index.ts";
-import {
-	createJsonlScanningSessionSearch,
-	createScanningSessionSearch,
-	createScanningSessionSourceFromReadables,
-	type ScanningSessionSource,
-} from "../../../src/search/index.ts";
+import { createJsonlScanningSessionSearch, createScanningSessionSearch } from "../../../src/search/index.ts";
 import type { AgentMessage } from "../../../src/types.ts";
 
 interface WorkspaceMetadata extends SessionMetadata {
@@ -44,10 +39,6 @@ function createMemorySession(metadata: WorkspaceMetadata): Session<WorkspaceMeta
 	);
 }
 
-function createSource(sessions: Session<WorkspaceMetadata>[]): ScanningSessionSource<WorkspaceMetadata> {
-	return createScanningSessionSourceFromReadables(sessions);
-}
-
 async function collect<T>(iterable: AsyncIterable<T>): Promise<T[]> {
 	const items: T[] = [];
 	for await (const item of iterable) items.push(item);
@@ -60,7 +51,7 @@ describe("session search", () => {
 		await root.appendMessage(message("fix auth flow"));
 		const other = createMemorySession({ id: "other", createdAt: 2, cwd: "/other" });
 		await other.appendMessage(message("auth in another workspace"));
-		const search = createScanningSessionSearch(createSource([root, other]));
+		const search = createScanningSessionSearch([root, other]);
 
 		expect("apply" in search).toBe(false);
 		expect(await collect(search.search("auth"))).toMatchObject([{ sessionId: "root" }, { sessionId: "other" }]);
@@ -71,7 +62,7 @@ describe("session search", () => {
 		const session = createMemorySession({ id: "session", createdAt: 1, cwd: "/repo" });
 		const entryId = await session.appendMessage(message("plain body"));
 		await session.setLabel(entryId, "important label");
-		const search = createScanningSessionSearch(createSource([session]));
+		const search = createScanningSessionSearch([session]);
 
 		expect(await collect(search.search("important"))).toMatchObject([{ sessionId: "session", entryId }]);
 	});
@@ -80,7 +71,7 @@ describe("session search", () => {
 		const session = createMemorySession({ id: "session", createdAt: 1, cwd: "/repo" });
 		const messageEntryId = await session.appendMessage(message("auth message"));
 		await session.appendCustomEntry("note", { text: "auth custom" });
-		const search = createScanningSessionSearch(createSource([session]));
+		const search = createScanningSessionSearch([session]);
 
 		expect(await collect(search.search("auth", { entryTypes: ["message"] }))).toMatchObject([
 			{ sessionId: "session", entryId: messageEntryId },

@@ -10,23 +10,18 @@ export interface SessionSearchCandidate {
 	readonly fields?: Record<string, unknown>;
 }
 
-export interface ScanningSession<TMetadata extends SessionMetadata = SessionMetadata> {
-	metadata(): Promise<TMetadata>;
-	entries(options?: {
-		afterSeq?: number;
-		limit?: number;
-		entryTypes?: readonly Entry["type"][];
-	}): AsyncIterable<SessionSearchCandidate>;
-}
-
-export interface ScanningSessionSource<TMetadata extends SessionMetadata = SessionMetadata, TOptions = unknown> {
-	sessions(options?: TOptions): AsyncIterable<ScanningSession<TMetadata>>;
-}
-
 export type ScanningReadable<TMetadata extends SessionMetadata = SessionMetadata> = Pick<
 	SessionStorage<TMetadata>,
 	"getMetadata" | "findEntries" | "getLabel"
 >;
+
+export type ScanningSessionSource<TMetadata extends SessionMetadata = SessionMetadata, TOptions = unknown> = (
+	options?: TOptions,
+) => AsyncIterable<ScanningReadable<TMetadata>>;
+
+export type ScanningSessionSearchSource<TMetadata extends SessionMetadata = SessionMetadata, TOptions = unknown> =
+	| readonly ScanningReadable<TMetadata>[]
+	| ScanningSessionSource<TMetadata, TOptions>;
 
 export type ScanningSearchTextProjector<TMetadata extends SessionMetadata = SessionMetadata> = (
 	metadata: TMetadata,
@@ -46,10 +41,10 @@ export interface ScanningSessionSearchHit extends SessionSearchHit {
 
 export interface ScanningSessionSearchOptions<
 	TMetadata extends SessionMetadata = SessionMetadata,
-	TListOptions = unknown,
+	TSourceOptions = unknown,
 	THit extends SessionSearchHit = ScanningSessionSearchHit,
-> {
-	sourceOptions?: (text: string, options: SessionSearchOptions) => TListOptions | undefined;
+> extends ScanningReadableOptions<TMetadata> {
+	sourceOptions?: (text: string, options: SessionSearchOptions) => TSourceOptions | undefined;
 	match?: (queryText: string, candidate: SessionSearchCandidate, metadata: TMetadata) => boolean;
 	createHit?: (metadata: TMetadata, candidate: SessionSearchCandidate) => THit;
 }
@@ -62,12 +57,12 @@ function defaultSearchText<TMetadata extends SessionMetadata>(
 	return label === undefined ? JSON.stringify(entry) : `${JSON.stringify(entry)} ${label}`;
 }
 
-async function* searchCandidatesFromReadable<TMetadata extends SessionMetadata>(
+async function* scanReadableEntries<TMetadata extends SessionMetadata>(
 	readable: ScanningReadable<TMetadata>,
+	metadata: TMetadata,
 	options: ScanningReadableOptions<TMetadata>,
 	query: { afterSeq?: number; limit?: number; entryTypes?: readonly Entry["type"][] } = {},
 ): AsyncIterable<SessionSearchCandidate> {
-	const metadata = await readable.getMetadata();
 	const projectText = options.projectText ?? defaultSearchText;
 	const pageSize = query.limit ?? options.pageSize ?? 100;
 	let afterSeq = query.afterSeq ?? 0;
@@ -97,92 +92,28 @@ async function* searchCandidatesFromReadable<TMetadata extends SessionMetadata>(
 	}
 }
 
-export function createScanningSessionFromReadable<TMetadata extends SessionMetadata>(
+export async function* scanningEntries<TMetadata extends SessionMetadata>(
 	readable: ScanningReadable<TMetadata>,
 	options: ScanningReadableOptions<TMetadata> = {},
-): ScanningSession<TMetadata> {
-	return {
-		metadata: () => readable.getMetadata(),
-		entries: (entryQuery) => searchCandidatesFromReadable(readable, options, entryQuery),
-	};
+): AsyncIterable<SessionSearchCandidate> {
+	yield* scanReadableEntries(readable, await readable.getMetadata(), options);
 }
 
-export async function* scanningSessionsFromReadables<TMetadata extends SessionMetadata>(
+async function* arraySource<TMetadata extends SessionMetadata>(
 	readables: readonly ScanningReadable<TMetadata>[],
-	options: ScanningReadableOptions<TMetadata> = {},
-): AsyncIterable<ScanningSession<TMetadata>> {
-	for (const readable of readables) yield createScanningSessionFromReadable(readable, options);
+): AsyncIterable<ScanningReadable<TMetadata>> {
+	yield* readables;
 }
 
-export function createScanningSessionSourceFromReadables<TMetadata extends SessionMetadata>(
-	readables: readonly ScanningReadable<TMetadata>[],
-	options: ScanningReadableOptions<TMetadata> = {},
-): ScanningSessionSource<TMetadata, void> {
-	return {
-		sessions: () => scanningSessionsFromReadables(readables, options),
-	};
-}
-
-export function createScanningSessionSearchFromReadables<TMetadata extends SessionMetadata>(
-	readables: readonly ScanningReadable<TMetadata>[],
-	options?: ScanningReadableOptions<TMetadata>,
-): SessionSearch<ScanningSessionSearchHit> {
-	return createScanningSessionSearch(createScanningSessionSourceFromReadables(readables, options));
+function readablesFor<TMetadata extends SessionMetadata, TSourceOptions>(
+	source: ScanningSessionSearchSource<TMetadata, TSourceOptions>,
+	options: TSourceOptions | undefined,
+): AsyncIterable<ScanningReadable<TMetadata>> {
+	return typeof source === "function" ? source(options) : arraySource(source);
 }
 
 function defaultMatch(queryText: string, candidate: SessionSearchCandidate): boolean {
 	return candidate.text.toLowerCase().includes(queryText);
-}
-
-interface ScanningSessionSearchRuntimeOptions<TMetadata extends SessionMetadata, TListOptions> {
-	sourceOptions?: (text: string, options: SessionSearchOptions) => TListOptions | undefined;
-	match?: (queryText: string, candidate: SessionSearchCandidate, metadata: TMetadata) => boolean;
-}
-
-class ScanningSessionSearch<
-	TMetadata extends SessionMetadata = SessionMetadata,
-	TListOptions = unknown,
-	THit extends SessionSearchHit = ScanningSessionSearchHit,
-> implements SessionSearch<THit>
-{
-	private readonly source: ScanningSessionSource<TMetadata, TListOptions>;
-	private readonly options: ScanningSessionSearchRuntimeOptions<TMetadata, TListOptions>;
-	private readonly createHit: (metadata: TMetadata, candidate: SessionSearchCandidate) => THit;
-
-	constructor(
-		source: ScanningSessionSource<TMetadata, TListOptions>,
-		options: ScanningSessionSearchRuntimeOptions<TMetadata, TListOptions>,
-		createHit: (metadata: TMetadata, candidate: SessionSearchCandidate) => THit,
-	) {
-		this.source = source;
-		this.options = options;
-		this.createHit = createHit;
-	}
-
-	async *search(text: string, options: SessionSearchOptions = {}): AsyncIterable<THit> {
-		const normalizedText = text.trim().toLowerCase();
-		if (!normalizedText || (options.limit !== undefined && options.limit <= 0)) return;
-		if (options.entryTypes?.length === 0) return;
-		let hitCount = 0;
-		const seenSessionIds = new Set<string>();
-		const entryTypes = options.entryTypes === undefined ? undefined : new Set(options.entryTypes);
-		for await (const session of this.source.sessions(this.options.sourceOptions?.(normalizedText, options))) {
-			throwIfAborted(options.signal);
-			const metadata = await session.metadata();
-			if (seenSessionIds.has(metadata.id)) throw new Error(`Duplicate sessionId: ${metadata.id}`);
-			seenSessionIds.add(metadata.id);
-			for await (const candidate of session.entries({ entryTypes: options.entryTypes })) {
-				throwIfAborted(options.signal);
-				if (entryTypes !== undefined && !entryTypes.has(candidate.type)) continue;
-				const matches =
-					this.options.match?.(normalizedText, candidate, metadata) ?? defaultMatch(normalizedText, candidate);
-				if (!matches) continue;
-				yield this.createHit(metadata, candidate);
-				hitCount += 1;
-				if (options.limit !== undefined && hitCount >= options.limit) return;
-			}
-		}
-	}
 }
 
 function throwIfAborted(signal: AbortSignal | undefined): void {
@@ -205,34 +136,45 @@ function createDefaultScanningHit<TMetadata extends SessionMetadata>(
 	};
 }
 
-export function createScanningSessionSearch<TMetadata extends SessionMetadata, TListOptions = unknown>(
-	source: ScanningSessionSource<TMetadata, TListOptions>,
-	options?: Omit<ScanningSessionSearchOptions<TMetadata, TListOptions, ScanningSessionSearchHit>, "createHit">,
-): SessionSearch<ScanningSessionSearchHit>;
 export function createScanningSessionSearch<
 	TMetadata extends SessionMetadata,
-	TListOptions = unknown,
+	TSourceOptions = unknown,
 	THit extends SessionSearchHit = ScanningSessionSearchHit,
 >(
-	source: ScanningSessionSource<TMetadata, TListOptions>,
-	options: ScanningSessionSearchOptions<TMetadata, TListOptions, THit> & {
-		createHit: (metadata: TMetadata, candidate: SessionSearchCandidate) => THit;
-	},
-): SessionSearch<THit>;
-export function createScanningSessionSearch<
-	TMetadata extends SessionMetadata,
-	TListOptions = unknown,
-	THit extends SessionSearchHit = ScanningSessionSearchHit,
->(
-	source: ScanningSessionSource<TMetadata, TListOptions>,
-	options: ScanningSessionSearchOptions<TMetadata, TListOptions, THit> = {},
-): SessionSearch<THit> | SessionSearch<ScanningSessionSearchHit> {
-	if (options.createHit !== undefined) {
-		return new ScanningSessionSearch<TMetadata, TListOptions, THit>(source, options, options.createHit);
-	}
-	return new ScanningSessionSearch<TMetadata, TListOptions, ScanningSessionSearchHit>(
-		source,
-		options,
-		createDefaultScanningHit,
-	);
+	source: ScanningSessionSearchSource<TMetadata, TSourceOptions>,
+	options: ScanningSessionSearchOptions<TMetadata, TSourceOptions, THit> = {},
+): SessionSearch<THit> {
+	const createHit =
+		options.createHit ??
+		((metadata: TMetadata, candidate: SessionSearchCandidate) =>
+			createDefaultScanningHit(metadata, candidate) as unknown as THit);
+	return {
+		async *search(text: string, searchOptions: SessionSearchOptions = {}): AsyncIterable<THit> {
+			const normalizedText = text.trim().toLowerCase();
+			if (!normalizedText || (searchOptions.limit !== undefined && searchOptions.limit <= 0)) return;
+			if (searchOptions.entryTypes?.length === 0) return;
+			let hitCount = 0;
+			const seenSessionIds = new Set<string>();
+			const entryTypes = searchOptions.entryTypes === undefined ? undefined : new Set(searchOptions.entryTypes);
+			const sourceOptions = options.sourceOptions?.(normalizedText, searchOptions);
+			for await (const readable of readablesFor(source, sourceOptions)) {
+				throwIfAborted(searchOptions.signal);
+				const metadata = await readable.getMetadata();
+				if (seenSessionIds.has(metadata.id)) throw new Error(`Duplicate sessionId: ${metadata.id}`);
+				seenSessionIds.add(metadata.id);
+				for await (const candidate of scanReadableEntries(readable, metadata, options, {
+					entryTypes: searchOptions.entryTypes,
+				})) {
+					throwIfAborted(searchOptions.signal);
+					if (entryTypes !== undefined && !entryTypes.has(candidate.type)) continue;
+					const matches =
+						options.match?.(normalizedText, candidate, metadata) ?? defaultMatch(normalizedText, candidate);
+					if (!matches) continue;
+					yield createHit(metadata, candidate);
+					hitCount += 1;
+					if (searchOptions.limit !== undefined && hitCount >= searchOptions.limit) return;
+				}
+			}
+		},
+	};
 }

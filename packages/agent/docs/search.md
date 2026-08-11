@@ -80,7 +80,7 @@ export interface ScanningSessionSearchHit extends SessionSearchHit {
 Already-open sessions or storages can be scanned directly:
 
 ```ts
-const search = createScanningSessionSearchFromReadables(sessions);
+const search = createScanningSessionSearch(sessions);
 
 for await (const hit of search.search("authentication", { limit: 10 })) {
   const session = sessionsById.get(hit.sessionId)!;
@@ -128,12 +128,13 @@ Search indexing is backend-owned derived state. The shared package only exports 
 
 ### JSONL sessions with Elasticsearch
 
-This is application-owned glue. Core provides the query contract and JSONL scanning source; the Elastic writer contract is local to this adapter.
+This is application-owned glue. Core provides the query contract and JSONL session discovery; the Elastic writer contract is local to this adapter.
 
 ```ts
 import { Client } from "@elastic/elasticsearch";
 import {
-  createJsonlScanningSessionSource,
+  jsonlSessionReadables,
+  scanningEntries,
   type JsonlSessionMetadata,
   type JsonlSessionRepoOptions,
   type SessionSearch,
@@ -230,11 +231,9 @@ async function indexJsonlSessionsIntoElastic(
   elastic: ElasticSessionSearch,
   options: { cwd?: string } = {},
 ): Promise<void> {
-  const source = createJsonlScanningSessionSource(jsonl);
-
-  for await (const session of source.sessions({ cwd: options.cwd })) {
-    const metadata = await session.metadata();
-    for await (const candidate of session.entries()) {
+  for await (const session of jsonlSessionReadables(jsonl, { cwd: options.cwd })) {
+    const metadata = await session.getMetadata();
+    for await (const candidate of scanningEntries(session)) {
       await elastic.apply([{
         type: "upsert",
         id: `${metadata.id}:${candidate.entryId}`,
