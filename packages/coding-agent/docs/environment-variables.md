@@ -82,7 +82,7 @@ These variables are read by Pi itself:
 | `PI_CACHE_RETENTION` | Set to `long` for extended provider prompt caching where supported |
 | `PI_SHARE_VIEWER_URL` | Override the base URL used by `/share` |
 | `PI_HARDWARE_CURSOR` | Set to `1` to show the hardware cursor; see [Terminal setup](terminal-setup.md) |
-| `PI_TUI_ESC_TIMEOUT` | Milliseconds to wait for the rest of an escape sequence before treating a lone `ESC` as the Escape key. In terminals without the Kitty keyboard protocol, Alt+key combos arrive as `ESC` plus another byte; raise this (e.g. to `100`) if Alt+Enter or other Alt combos are misread as Escape on high-latency links. Defaults to `100` over SSH (`SSH_CONNECTION`/`SSH_TTY` set) and `10` otherwise |
+| `PI_TUI_ESC_TIMEOUT` | Escape-sequence timeout in milliseconds; defaults to `100` over SSH and `10` otherwise. Increase if Alt-key input is misread as Escape |
 | `VISUAL`, `EDITOR` | External editor fallback when `externalEditor` is unset |
 | `HTTP_PROXY`, `HTTPS_PROXY` | Proxy outbound HTTP requests |
 
