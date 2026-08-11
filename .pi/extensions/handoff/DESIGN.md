@@ -265,7 +265,9 @@ are importable — `reader-wiring.test.ts` works only because `reader.ts` obeys 
 **The blocker is a vitest resolution setting, not an architectural one, and the difference matters
 — an earlier draft of this section claimed the latter and was wrong.** Adding
 `test.server.deps.external: [/.*/]` to `vitest.config.ts` makes `index.ts` importable with no
-source change at all (measured: 104 tests pass, and the same probe fails without the key). No
+source change at all (measured: the full suite plus one added `index.ts` import probe passes with
+the key, and the same probe fails without it — stated relatively because the suite's own count has
+since grown past the 104 recorded at the time). No
 extraction is required. What that key costs is the reason it is not taken: it hands every `.ts` in
 this suite to Node's type-stripping instead of vite's transform, changing how all five existing
 test files are loaded to buy coverage of one. That tradeoff deserves its own change, evaluated on

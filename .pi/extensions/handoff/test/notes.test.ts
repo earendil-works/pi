@@ -189,9 +189,13 @@ describe("ensureGitExclude", () => {
 	const isIgnored = (repo: string, relativePath: string) => git(repo, "check-ignore", relativePath).status === 0;
 
 	/**
-	 * Guards the isolation the docblock above claims, by running the real helper against a
-	 * hostile `~/.config/git/ignore`. Drop any one of the three pieces and this fails, instead
-	 * of every positive assertion below quietly passing on whatever was written.
+	 * Guards the isolation the docblock above claims, by running `git check-ignore` through the
+	 * same wrapper against a hostile `~/.config/git/ignore`. Of the three pieces, only
+	 * `-c core.excludesFile=/dev/null` is load-bearing here: drop it and this fails, instead of
+	 * every positive assertion below quietly passing on whatever was written. The fake `HOME`
+	 * has no `.gitconfig` for `GIT_CONFIG_GLOBAL` to suppress, and even a hostile one could only
+	 * attack via `core.excludesFile`, which command-line `-c` outranks — those two pieces (and
+	 * `GIT_CONFIG_NOSYSTEM`) are defense in depth this test cannot make observable.
 	 */
 	it("is isolated from the developer's global excludes file", () => {
 		const home = join(dir, "fake-home");
