@@ -19,7 +19,7 @@
 				"cross-spawn": "7.0.6",
 				"diff": "8.0.4",
 				"glob": "13.0.6",
-				"grok-mermaid": "0.2.2",
+				"grok-mermaid": "0.2.3",
 				"highlight.js": "10.7.3",
 				"hosted-git-info": "9.0.3",
 				"ignore": "7.0.5",
@@ -1283,9 +1283,9 @@
 			"license": "ISC"
 		},
 		"node_modules/grok-mermaid": {
-			"version": "0.2.2",
-			"resolved": "https://registry.npmjs.org/grok-mermaid/-/grok-mermaid-0.2.2.tgz",
-			"integrity": "sha512-XcJEP5dDC8liHBh52mlLjU18fNvu1ckFsu0QpIG3+APZ270fsj9wxpiA6cOURmbUEuoMVgjbC2+UYgTdCqqgzA==",
+			"version": "0.2.3",
+			"resolved": "https://registry.npmjs.org/grok-mermaid/-/grok-mermaid-0.2.3.tgz",
+			"integrity": "sha512-/4KopAbsjvuRP9MdPtlDjOHUmUVEohOX73JNcsWpzAtFxh+bq5+Dhb6gzvRieLDwIPQIR3/vy8V1NNTuz4Zsmg==",
 			"license": "Apache-2.0",
 			"engines": {
 				"node": ">=18"
