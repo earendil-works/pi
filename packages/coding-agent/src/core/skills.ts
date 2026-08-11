@@ -16,6 +16,7 @@ const MAX_DESCRIPTION_LENGTH = 1024;
 const IGNORE_FILE_NAMES = [".gitignore", ".ignore", ".fdignore"];
 
 type IgnoreMatcher = ReturnType<typeof ignore>;
+type RootFileMode = "all" | "described" | "none";
 
 function toPosixPath(p: string): string {
 	return p.split(sep).join("/");
@@ -167,13 +168,13 @@ function createSkillSourceInfo(filePath: string, baseDir: string, source: string
  */
 export function loadSkillsFromDir(options: LoadSkillsFromDirOptions): LoadSkillsResult {
 	const { dir, source } = options;
-	return loadSkillsFromDirInternal(dir, source, true);
+	return loadSkillsFromDirInternal(dir, source, "all");
 }
 
 function loadSkillsFromDirInternal(
 	dir: string,
 	source: string,
-	includeRootFiles: boolean,
+	rootFileMode: RootFileMode,
 	ignoreMatcher?: IgnoreMatcher,
 	rootDir?: string,
 ): LoadSkillsResult {
@@ -253,17 +254,17 @@ function loadSkillsFromDirInternal(
 			}
 
 			if (isDirectory) {
-				const subResult = loadSkillsFromDirInternal(fullPath, source, false, ig, root);
+				const subResult = loadSkillsFromDirInternal(fullPath, source, "none", ig, root);
 				skills.push(...subResult.skills);
 				diagnostics.push(...subResult.diagnostics);
 				continue;
 			}
 
-			if (!isFile || !includeRootFiles || !entry.name.endsWith(".md")) {
+			if (!isFile || rootFileMode === "none" || !entry.name.endsWith(".md")) {
 				continue;
 			}
 
-			const result = loadSkillFromFile(fullPath, source);
+			const result = loadSkillFromFile(fullPath, source, rootFileMode === "described");
 			if (result.skill) {
 				skills.push(result.skill);
 			}
@@ -277,12 +278,19 @@ function loadSkillsFromDirInternal(
 function loadSkillFromFile(
 	filePath: string,
 	source: string,
+	requireDescriptionForCandidate = false,
 ): { skill: Skill | null; diagnostics: ResourceDiagnostic[] } {
 	const diagnostics: ResourceDiagnostic[] = [];
 
 	try {
 		const rawContent = readFileSync(filePath, "utf-8");
 		const { frontmatter } = parseFrontmatter<SkillFrontmatter>(rawContent);
+		if (
+			requireDescriptionForCandidate &&
+			(typeof frontmatter.description !== "string" || frontmatter.description.trim() === "")
+		) {
+			return { skill: null, diagnostics };
+		}
 		const skillDir = dirname(filePath);
 		const parentDirName = basename(skillDir);
 
@@ -318,6 +326,9 @@ function loadSkillFromFile(
 			diagnostics,
 		};
 	} catch (error) {
+		if (requireDescriptionForCandidate) {
+			return { skill: null, diagnostics };
+		}
 		const message = error instanceof Error ? error.message : "failed to parse skill file";
 		diagnostics.push({ type: "warning", message, path: filePath });
 		return { skill: null, diagnostics };
@@ -428,8 +439,8 @@ export function loadSkills(options: LoadSkillsOptions): LoadSkillsResult {
 	}
 
 	if (includeDefaults) {
-		addSkills(loadSkillsFromDirInternal(join(resolvedAgentDir, "skills"), "user", true));
-		addSkills(loadSkillsFromDirInternal(resolve(resolvedCwd, CONFIG_DIR_NAME, "skills"), "project", true));
+		addSkills(loadSkillsFromDirInternal(join(resolvedAgentDir, "skills"), "user", "all"));
+		addSkills(loadSkillsFromDirInternal(resolve(resolvedCwd, CONFIG_DIR_NAME, "skills"), "project", "all"));
 	}
 
 	const userSkillsDir = join(resolvedAgentDir, "skills");
@@ -463,7 +474,7 @@ export function loadSkills(options: LoadSkillsOptions): LoadSkillsResult {
 			const stats = statSync(resolvedPath);
 			const source = getSource(resolvedPath);
 			if (stats.isDirectory()) {
-				addSkills(loadSkillsFromDirInternal(resolvedPath, source, true));
+				addSkills(loadSkillsFromDirInternal(resolvedPath, source, "described"));
 			} else if (stats.isFile() && resolvedPath.endsWith(".md")) {
 				const result = loadSkillFromFile(resolvedPath, source);
 				if (result.skill) {
