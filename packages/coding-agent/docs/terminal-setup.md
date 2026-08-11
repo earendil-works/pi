@@ -2,9 +2,26 @@
 
 Pi uses the [Kitty keyboard protocol](https://sw.kovidgoyal.net/kitty/keyboard-protocol/) for reliable modifier key detection. Most modern terminals support this protocol, but some require configuration.
 
-## Kitty, iTerm2
+## Kitty
 
-Work out of the box.
+Works out of the box.
+
+## iTerm2
+
+### Regular TUI mode
+
+Works out of the box.
+
+### Fullscreen TUI mode
+
+Pi owns the viewport, so iTerm2 sends mouse-wheel reports instead of scrolling its native scrollback. With iTerm2's default fast-trackpad behavior, those reports can lose most of an accelerated wheel delta, making fullscreen scrolling much slower than regular scrolling.
+
+If fast mouse-wheel gestures move only about one line at a time in fullscreen mode:
+
+1. Open **iTerm2 → Settings → Advanced**.
+2. Search for **Trackpad scrolls fast?** and set it to **No**.
+
+This is an iTerm2-wide workaround and may also change native trackpad scrolling. The underlying behavior is tracked in [iTerm2 issue 9619](https://gitlab.com/gnachman/iterm2/-/work_items/9619).
 
 ## Apple Terminal
 
