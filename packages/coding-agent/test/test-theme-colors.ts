@@ -222,6 +222,9 @@ function cmdTheme(themeName: string): void {
 
 	console.log("\n--- Backgrounds ---");
 	console.log("userMessageBg:", theme.bg("userMessageBg", " Sample "));
+	const searchMatch = theme.bg("searchMatchBg", theme.fg("searchMatchText", " Sample "));
+	console.log("searchMatch:", theme.underline(searchMatch));
+	console.log("searchCurrentMatch:", theme.bold(theme.inverse(searchMatch)));
 	console.log("toolPendingBg:", theme.bg("toolPendingBg", " Sample "));
 	console.log("toolSuccessBg:", theme.bg("toolSuccessBg", " Sample "));
 	console.log("toolErrorBg:", theme.bg("toolErrorBg", " Sample "));

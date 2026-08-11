@@ -37,7 +37,7 @@ import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 
-import { resolveJsonSchemaStrictSampling } from "./constrained-sampling.ts";
+import { getJsonSchemaToolParameters, resolveJsonSchemaStrictSampling } from "./constrained-sampling.ts";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.ts";
 import { adjustMaxTokensForThinking, buildBaseOptions, clampMaxTokensToContext } from "./simple-options.ts";
 import { transformMessages } from "./transform-messages.ts";
@@ -1296,7 +1296,8 @@ function convertTools(
 
 	return tools.map((tool, index) => {
 		const strict = resolveJsonSchemaStrictSampling(tool, supportsStrictTools);
-		const schema = tool.parameters as { properties?: unknown; required?: string[] };
+		const parameters = getJsonSchemaToolParameters(tool, strict);
+		const schema = parameters as { properties?: unknown; required?: string[] };
 		const legacyInputSchema = {
 			type: "object" as const,
 			properties: schema.properties ?? {},
@@ -1305,7 +1306,7 @@ function convertTools(
 		const inputSchema =
 			strict === true
 				? {
-						...(tool.parameters as Record<string, unknown>),
+						...(parameters as Record<string, unknown>),
 						...legacyInputSchema,
 					}
 				: legacyInputSchema;
