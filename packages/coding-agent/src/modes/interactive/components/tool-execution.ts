@@ -118,7 +118,8 @@ export class ToolExecutionComponent extends Container {
 			toolCallId: this.toolCallId,
 			invalidate: () => {
 				this.invalidate();
-				this.ui.requestRender();
+				if (this.isPartial && this.ui.requestActiveRender) this.ui.requestActiveRender();
+				else this.ui.requestRender();
 			},
 			lastComponent,
 			state: this.rendererState,
@@ -152,13 +153,15 @@ export class ToolExecutionComponent extends Container {
 	markExecutionStarted(): void {
 		this.executionStarted = true;
 		this.updateDisplay();
-		this.ui.requestRender();
+		if (this.ui.requestActiveRender) this.ui.requestActiveRender();
+		else this.ui.requestRender();
 	}
 
 	setArgsComplete(): void {
 		this.argsComplete = true;
 		this.updateDisplay();
-		this.ui.requestRender();
+		if (this.ui.requestActiveRender) this.ui.requestActiveRender();
+		else this.ui.requestRender();
 	}
 
 	updateResult(
@@ -192,7 +195,8 @@ export class ToolExecutionComponent extends Container {
 				if (converted) {
 					this.convertedImages.set(index, converted);
 					this.updateDisplay();
-					this.ui.requestRender();
+					if (this.isPartial && this.ui.requestActiveRender) this.ui.requestActiveRender();
+					else this.ui.requestRender();
 				}
 			});
 		}

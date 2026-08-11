@@ -68,6 +68,21 @@ describe("viewport layout", () => {
 		assert.deepStrictEqual(visibleLines(frame.lines), ["visible 1", "visible 2", "visible 3"]);
 	});
 
+	it("does not flatten nested layout content after measuring a scroll view", () => {
+		let documentRenderCount = 0;
+		class CountingVStack extends VStack {
+			override render(width: number): string[] {
+				documentRenderCount += 1;
+				return super.render(width);
+			}
+		}
+		const document = new CountingVStack([new Text("one\ntwo\nthree", 0, 0), new Text("four\nfive\nsix", 0, 0)]);
+
+		renderLayoutFrame(new ScrollView(document, { follow: "end" }), 10, 3, () => {});
+
+		assert.strictEqual(documentRenderCount, 0);
+	});
+
 	it("shrinks entries to their minimum sizes", () => {
 		const frame = renderLayoutFrame(
 			new VStack([
@@ -143,6 +158,22 @@ describe("viewport layout", () => {
 		);
 
 		assert.ok(frame.lines[2]?.includes("y=0,h=34,r=1"));
+	});
+
+	it("crops a nested Kitty image whose first line is above the viewport", () => {
+		const imageId = 125;
+		const imageLine = encodeKitty("AAAA", { columns: 2, rows: 3, imageId, moveCursor: false });
+		registerKittyImageMetadata({ imageId, columns: 2, rows: 3, widthPx: 100, heightPx: 100 });
+		const image = {
+			render: () => [imageLine, "", ""],
+			invalidate: () => {},
+		};
+		const document = new VStack([new Text("one\ntwo", 0, 0), image, new Text("after\nend", 0, 0)]);
+
+		const frame = renderLayoutFrame(new ScrollView(document, { follow: "end" }), 20, 3, () => {});
+
+		assert.ok(frame.lines[0]?.includes("i=125"));
+		assert.ok(frame.lines[0]?.includes("y=66,h=34,r=1"));
 	});
 
 	it("composes horizontal children at allocated widths", () => {

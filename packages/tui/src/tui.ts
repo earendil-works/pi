@@ -210,29 +210,71 @@ type OverlayFocusRestorePolicy = "clear" | "preserve";
  */
 export class Container implements Component {
 	children: Component[] = [];
+	private regionKind: RenderRegionKind | undefined;
+	private cachedWidth: number | undefined;
+	private cachedLines: string[] | undefined;
+	private currentRevision = 0;
+
+	get renderRegionKind(): RenderRegionKind | undefined {
+		return this.regionKind;
+	}
+
+	get renderRegionRevision(): number {
+		return this.currentRevision;
+	}
+
+	setRenderRegion(kind: RenderRegionKind): this {
+		if (this.regionKind === kind) return this;
+		this.regionKind = kind;
+		this.clearRenderRegionCache();
+		return this;
+	}
+
+	getCachedLineCount(width: number): number | undefined {
+		return this.regionKind === "stable" && this.cachedWidth === width ? this.cachedLines?.length : undefined;
+	}
+
+	expireRenderRegion(): void {
+		if (this.regionKind !== "stable") return;
+		this.clearRenderRegionCache();
+	}
+
+	private clearRenderRegionCache(): void {
+		this.cachedWidth = undefined;
+		this.cachedLines = undefined;
+		this.currentRevision += 1;
+	}
 
 	addChild(component: Component): void {
 		this.children.push(component);
+		this.expireRenderRegion();
 	}
 
 	removeChild(component: Component): void {
 		const index = this.children.indexOf(component);
 		if (index !== -1) {
 			this.children.splice(index, 1);
+			this.expireRenderRegion();
 		}
 	}
 
 	clear(): void {
+		const hadChildren = this.children.length > 0;
 		this.children = [];
+		if (hadChildren) this.expireRenderRegion();
 	}
 
 	invalidate(): void {
 		for (const child of this.children) {
 			child.invalidate?.();
 		}
+		this.expireRenderRegion();
 	}
 
 	render(width: number): string[] {
+		if (this.regionKind === "stable" && this.cachedWidth === width && this.cachedLines) {
+			return this.cachedLines;
+		}
 		const lines: string[] = [];
 		for (const child of this.children) {
 			const childLines = child.render(width);
@@ -240,9 +282,15 @@ export class Container implements Component {
 				lines.push(line);
 			}
 		}
+		if (this.regionKind === "stable") {
+			this.cachedWidth = width;
+			this.cachedLines = lines;
+		}
 		return lines;
 	}
 }
+
+export type RenderRegionKind = "stable" | "dynamic";
 
 /**
  * TUI - Main class for managing terminal UI with differential rendering
@@ -309,6 +357,7 @@ export interface TUI extends Component {
 	stop(options?: TuiStopOptions): void;
 	renderNow(force?: boolean): void;
 	requestRender(force?: boolean): void;
+	requestActiveRender?(): void;
 	addInputListener(listener: TuiInputListener): () => void;
 	removeInputListener(listener: TuiInputListener): void;
 	onTerminalColorSchemeChange(listener: (scheme: TerminalColorScheme) => void): () => void;
@@ -337,6 +386,7 @@ export abstract class TuiBase extends Container implements TUI {
 	/** Global callback for debug key (Shift+Ctrl+D). Called before input is forwarded to focused component. */
 	public onDebug?: () => void;
 	private renderRequested = false;
+	private renderScope: "active" | "full" = "active";
 	private immediateRenderScheduled = false;
 	private renderTimer: NodeJS.Timeout | undefined;
 	private lastRenderAt = 0;
@@ -369,7 +419,7 @@ export abstract class TuiBase extends Container implements TUI {
 		}
 	}
 
-	protected abstract doRender(): void;
+	protected abstract doRender(scope: "active" | "full"): void;
 
 	protected resetRenderState(): void {}
 
@@ -688,6 +738,22 @@ export abstract class TuiBase extends Container implements TUI {
 		for (const overlay of this.overlayStack) overlay.component.invalidate();
 	}
 
+	private expireStableRegions(): void {
+		const visit = (component: Component): void => {
+			if (component instanceof Container) {
+				component.expireRenderRegion();
+				for (const child of component.children) visit(child);
+			}
+		};
+		for (const root of this.getMountedRoots()) visit(root);
+	}
+
+	private consumeRenderScope(): "active" | "full" {
+		const scope = this.renderScope;
+		this.renderScope = "active";
+		return scope;
+	}
+
 	start(): void {
 		this.stopped = false;
 		this.beforeTerminalStart();
@@ -755,19 +821,29 @@ export abstract class TuiBase extends Container implements TUI {
 	}
 
 	renderNow(force = false): void {
+		this.expireStableRegions();
 		if (force) this.resetRenderState();
 		this.renderRequested = false;
+		this.renderScope = "active";
 		this.cancelRenderTimer();
 		this.lastRenderAt = performance.now();
-		this.doRender();
+		this.doRender("full");
 	}
 
 	requestRender(force = false): void {
+		this.expireStableRegions();
+		this.renderScope = "full";
 		if (force) {
 			this.resetRenderState();
 			this.requestImmediateRender();
 			return;
 		}
+		if (this.renderRequested) return;
+		this.renderRequested = true;
+		process.nextTick(() => this.scheduleRender());
+	}
+
+	requestActiveRender(): void {
 		if (this.renderRequested) return;
 		this.renderRequested = true;
 		process.nextTick(() => this.scheduleRender());
@@ -786,7 +862,7 @@ export abstract class TuiBase extends Container implements TUI {
 			this.cancelRenderTimer();
 			this.renderRequested = false;
 			this.lastRenderAt = performance.now();
-			this.doRender();
+			this.doRender(this.consumeRenderScope());
 		});
 	}
 
@@ -809,7 +885,7 @@ export abstract class TuiBase extends Container implements TUI {
 			}
 			this.renderRequested = false;
 			this.lastRenderAt = performance.now();
-			this.doRender();
+			this.doRender(this.consumeRenderScope());
 			if (this.renderRequested) {
 				this.scheduleRender();
 			}

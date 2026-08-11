@@ -153,7 +153,9 @@ function layoutComponent(
 			clip: childClip,
 			children: [childBox],
 			scrollView,
-			scrollContentLines: renderCached(context, node.component, contentWidth),
+			...(getLayoutNode(node.component)
+				? {}
+				: { scrollContentLines: renderCached(context, node.component, contentWidth) }),
 			layer: 0,
 		};
 		childBox.parent = box;
@@ -301,6 +303,16 @@ function paintScrollbar(box: LayoutBox, screen: string[], totalWidth: number): v
 	}
 }
 
+function getLineAtRow(box: LayoutBox, row: number): string | undefined {
+	if (row < box.rect.y || row >= box.rect.y + box.rect.height) return undefined;
+	if (box.lines) return box.lines[(box.lineOffset ?? 0) + row - box.rect.y];
+	for (const child of box.children) {
+		const line = getLineAtRow(child, row);
+		if (line !== undefined) return line;
+	}
+	return undefined;
+}
+
 function paintBox(box: LayoutBox, screen: string[], totalWidth: number): void {
 	if (box.lines) {
 		const offset = box.lineOffset ?? 0;
@@ -330,9 +342,13 @@ function paintBox(box: LayoutBox, screen: string[], totalWidth: number): void {
 	}
 	for (const child of box.children) paintBox(child, screen, totalWidth);
 
-	if (box.scrollView && box.scrollContentLines && box.scrollView.scrollTop > 0 && box.rect.height > 0) {
+	if (box.scrollView && box.scrollView.scrollTop > 0 && box.rect.height > 0) {
+		const scrollRoot = box.children[0];
 		for (let imageRow = box.scrollView.scrollTop - 1; imageRow >= 0; imageRow--) {
-			const imageLine = box.scrollContentLines[imageRow] ?? "";
+			const imageLine =
+				box.scrollContentLines?.[imageRow] ??
+				(scrollRoot ? getLineAtRow(scrollRoot, scrollRoot.rect.y + imageRow) : undefined) ??
+				"";
 			const metadata = getKittyImageMetadata(imageLine);
 			if (metadata) {
 				const hiddenRows = box.scrollView.scrollTop - imageRow;

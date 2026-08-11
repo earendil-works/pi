@@ -108,7 +108,6 @@ import { type BuildSystemPromptOptions, buildSystemPrompt } from "./system-promp
 import { type BashOperations, createLocalBashOperations } from "./tools/bash.ts";
 import { createAllToolDefinitions } from "./tools/index.ts";
 import { createToolDefinitionFromAgentTool } from "./tools/tool-definition-wrapper.ts";
-import { addUsageToTotals, createUsageTotals } from "./usage-totals.ts";
 
 // ============================================================================
 // Skill Block Parsing
@@ -605,6 +604,20 @@ export class AgentSession {
 
 	// Track last assistant message for auto-compaction check
 	private _lastAssistantMessage: AssistantMessage | undefined = undefined;
+	private _contextUsageRevision = 0;
+	private _contextUsageCache:
+		| {
+				revision: number;
+				model: Model<any>;
+				contextWindow: number;
+				value: ContextUsage;
+		  }
+		| undefined;
+
+	private _invalidateContextUsage(): void {
+		this._contextUsageRevision += 1;
+		this._contextUsageCache = undefined;
+	}
 
 	/** Internal handler for agent events - shared by subscribe and reconnect */
 	private _handleAgentEvent = async (event: AgentEvent): Promise<void> => {
@@ -629,6 +642,7 @@ export class AgentSession {
 				}
 			}
 		}
+		if (event.type === "message_end") this._invalidateContextUsage();
 
 		// Emit to extensions first
 		await this._emitExtensionEvent(event);
@@ -655,6 +669,7 @@ export class AgentSession {
 				// Regular LLM message - persist as SessionMessageEntry
 				this.sessionManager.appendMessage(event.message);
 			}
+			this._invalidateContextUsage();
 			// Other message types (bashExecution, compactionSummary, branchSummary) are persisted elsewhere
 
 			// Track assistant message for auto-compaction (checked on agent_end)
@@ -1459,6 +1474,7 @@ export class AgentSession {
 			await this._runAgentPrompt(appMessage);
 		} else {
 			this.agent.state.messages.push(appMessage);
+			this._invalidateContextUsage();
 			this.sessionManager.appendCustomMessageEntry(
 				message.customType,
 				message.content,
@@ -1879,6 +1895,7 @@ export class AgentSession {
 			const newEntries = this.sessionManager.getEntries();
 			const sessionContext = this.sessionManager.buildSessionContext();
 			this.agent.state.messages = sessionContext.messages;
+			this._invalidateContextUsage();
 			const estimatedTokensAfter = estimateMessagesTokens(sessionContext.messages);
 
 			// Get the saved compaction entry for the extension event
@@ -2017,6 +2034,7 @@ export class AgentSession {
 			const messages = this.agent.state.messages;
 			if (messages.length > 0 && messages[messages.length - 1].role === "assistant") {
 				this.agent.state.messages = messages.slice(0, -1);
+				this._invalidateContextUsage();
 			}
 			return await this._runAutoCompaction("overflow", willRetry);
 		}
@@ -2158,6 +2176,7 @@ export class AgentSession {
 			const newEntries = this.sessionManager.getEntries();
 			const sessionContext = this.sessionManager.buildSessionContext();
 			this.agent.state.messages = sessionContext.messages;
+			this._invalidateContextUsage();
 			const estimatedTokensAfter = estimateMessagesTokens(sessionContext.messages);
 
 			// Get the saved compaction entry for the extension event
@@ -2194,6 +2213,7 @@ export class AgentSession {
 				// the retriable error or truncated-length response again before continuing the interrupted turn.
 				if (lastMsg?.role === "assistant" && (lastMsg.stopReason === "error" || lastMsg.stopReason === "length")) {
 					this.agent.state.messages = messages.slice(0, -1);
+					this._invalidateContextUsage();
 				}
 				return true;
 			}
@@ -2711,6 +2731,7 @@ export class AgentSession {
 		const messages = this.agent.state.messages;
 		if (messages.length > 0 && messages[messages.length - 1].role === "assistant") {
 			this.agent.state.messages = messages.slice(0, -1);
+			this._invalidateContextUsage();
 		}
 
 		// Wait with exponential backoff (abortable)
@@ -2830,6 +2851,7 @@ export class AgentSession {
 		} else {
 			// Add to agent state immediately
 			this.agent.state.messages.push(bashMessage);
+			this._invalidateContextUsage();
 
 			// Save to session
 			this.sessionManager.appendMessage(bashMessage);
@@ -2865,6 +2887,7 @@ export class AgentSession {
 		for (const bashMessage of this._pendingBashMessages) {
 			// Add to agent state
 			this.agent.state.messages.push(bashMessage);
+			this._invalidateContextUsage();
 
 			// Save to session
 			this.sessionManager.appendMessage(bashMessage);
@@ -3076,6 +3099,7 @@ export class AgentSession {
 			// Update agent state
 			const sessionContext = this.sessionManager.buildSessionContext();
 			this.agent.state.messages = sessionContext.messages;
+			this._invalidateContextUsage();
 
 			// Emit session_tree event
 			await this._extensionRunner.emit({
@@ -3125,12 +3149,9 @@ export class AgentSession {
 		let toolResults = 0;
 		let totalMessages = 0;
 		let toolCalls = 0;
-		const usageTotals = createUsageTotals();
+		const usageTotals = this.sessionManager.getUsageSnapshot().totals;
 
 		for (const entry of this.sessionManager.getEntries()) {
-			if ((entry.type === "branch_summary" || entry.type === "compaction") && entry.usage) {
-				addUsageToTotals(usageTotals, entry.usage);
-			}
 			if (entry.type !== "message") continue;
 			totalMessages++;
 			const message = entry.message;
@@ -3138,16 +3159,12 @@ export class AgentSession {
 				userMessages++;
 			} else if (message.role === "toolResult") {
 				toolResults++;
-				if (message.usage) {
-					addUsageToTotals(usageTotals, message.usage);
-				}
 			} else if (message.role === "assistant") {
 				assistantMessages++;
 				const assistantMsg = message as AssistantMessage;
 				if (Array.isArray(assistantMsg.content)) {
 					toolCalls += assistantMsg.content.filter((c) => c.type === "toolCall").length;
 				}
-				addUsageToTotals(usageTotals, assistantMsg.usage);
 			}
 		}
 
@@ -3177,6 +3194,22 @@ export class AgentSession {
 
 		const contextWindow = model.contextWindow ?? 0;
 		if (contextWindow <= 0) return undefined;
+		if (
+			this._contextUsageCache?.revision === this._contextUsageRevision &&
+			this._contextUsageCache.model === model &&
+			this._contextUsageCache.contextWindow === contextWindow
+		) {
+			return { ...this._contextUsageCache.value };
+		}
+		const cache = (value: ContextUsage): ContextUsage => {
+			this._contextUsageCache = {
+				revision: this._contextUsageRevision,
+				model,
+				contextWindow,
+				value,
+			};
+			return { ...value };
+		};
 
 		// After compaction, the last assistant usage reflects pre-compaction context size.
 		// We can only trust usage from an assistant that responded after the latest compaction.
@@ -3203,18 +3236,18 @@ export class AgentSession {
 			}
 
 			if (!hasPostCompactionUsage) {
-				return { tokens: null, contextWindow, percent: null };
+				return cache({ tokens: null, contextWindow, percent: null });
 			}
 		}
 
 		const estimate = estimateContextTokens(this.messages);
 		const percent = (estimate.tokens / contextWindow) * 100;
 
-		return {
+		return cache({
 			tokens: estimate.tokens,
 			contextWindow,
 			percent,
-		};
+		});
 	}
 
 	/**

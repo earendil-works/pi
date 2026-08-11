@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Agent } from "@earendil-works/pi-agent-core";
 import {
 	type AssistantMessage,
@@ -6,7 +9,7 @@ import {
 	type ToolResultMessage,
 	type Usage,
 } from "@earendil-works/pi-ai/compat";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { AgentSession } from "../src/core/agent-session.ts";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
@@ -98,6 +101,28 @@ function syncAgentMessages(session: AgentSession, sessionManager: SessionManager
 }
 
 describe("AgentSession.getSessionStats", () => {
+	it("rebuilds usage snapshots when reopening a session", () => {
+		const tempDir = mkdtempSync(join(tmpdir(), "pi-usage-snapshot-"));
+		try {
+			const manager = SessionManager.create(tempDir, tempDir);
+			manager.appendMessage(createUserMessage("hello", 1));
+			manager.appendMessage({
+				...createAssistantMessage("hi", 200, 2),
+				usage: {
+					...createUsage(200),
+					cacheRead: 50,
+					cacheWrite: 50,
+					cost: { ...createUsage(200).cost, total: 1.25 },
+				},
+			});
+
+			const reopened = SessionManager.open(manager.getSessionFile()!);
+			expect(reopened.getUsageSnapshot()).toEqual(manager.getUsageSnapshot());
+		} finally {
+			rmSync(tempDir, { recursive: true, force: true });
+		}
+	});
+
 	it("exposes the current context usage alongside token totals", async () => {
 		const { session, sessionManager } = await createSession();
 
@@ -111,6 +136,36 @@ describe("AgentSession.getSessionStats", () => {
 			expect(stats.contextUsage?.tokens).toBe(200);
 			expect(stats.contextUsage?.contextWindow).toBe(model.contextWindow);
 			expect(stats.contextUsage?.percent).toBe((200 / model.contextWindow) * 100);
+		} finally {
+			session.dispose();
+		}
+	});
+
+	it("reuses context usage until session state changes and returns defensive copies", async () => {
+		const { session, sessionManager } = await createSession();
+
+		try {
+			sessionManager.appendMessage(createUserMessage("hello", 1));
+			sessionManager.appendMessage(createAssistantMessage("hi", 200, 2));
+			syncAgentMessages(session, sessionManager);
+			const getBranch = vi.spyOn(sessionManager, "getBranch");
+
+			const first = session.getContextUsage();
+			expect(first?.tokens).toBe(200);
+			expect(session.getContextUsage()?.tokens).toBe(200);
+			expect(getBranch).toHaveBeenCalledTimes(1);
+			if (!first) throw new Error("expected context usage");
+			first.tokens = 999;
+			expect(session.getContextUsage()?.tokens).toBe(200);
+
+			await session.sendCustomMessage({
+				customType: "test",
+				content: [{ type: "text", text: "12345678" }],
+				display: false,
+			});
+
+			expect(session.getContextUsage()?.tokens).toBe(202);
+			expect(getBranch).toHaveBeenCalledTimes(2);
 		} finally {
 			session.dispose();
 		}

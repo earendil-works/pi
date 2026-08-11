@@ -26,6 +26,7 @@ import {
 	createCompactionSummaryMessage,
 	createCustomMessage,
 } from "./messages.ts";
+import { addUsageToTotals, createUsageTotals, type UsageTotals } from "./usage-totals.ts";
 
 export const CURRENT_SESSION_VERSION = 3;
 
@@ -187,6 +188,11 @@ export interface SessionInfo {
 	allMessagesText: string;
 }
 
+export interface SessionUsageSnapshot {
+	totals: UsageTotals;
+	latestCacheHitRate: number | undefined;
+}
+
 export type ReadonlySessionManager = Pick<
 	SessionManager,
 	| "getCwd"
@@ -207,6 +213,33 @@ export type ReadonlySessionManager = Pick<
 
 function createSessionId(): string {
 	return uuidv7();
+}
+
+function createSessionUsageSnapshot(): SessionUsageSnapshot {
+	return {
+		totals: createUsageTotals(),
+		latestCacheHitRate: undefined,
+	};
+}
+
+function getEntryUsage(entry: SessionEntry): Usage | undefined {
+	if (entry.type === "message") {
+		const message = entry.message as AgentMessage & { usage?: Usage };
+		if (message.role === "assistant" || message.role === "toolResult") return message.usage;
+	}
+	if ((entry.type === "branch_summary" || entry.type === "compaction") && entry.usage) return entry.usage;
+	return undefined;
+}
+
+function addEntryUsage(snapshot: SessionUsageSnapshot, entry: SessionEntry): void {
+	const usage = getEntryUsage(entry);
+	if (!usage) return;
+	addUsageToTotals(snapshot.totals, usage);
+
+	if (entry.type === "message" && entry.message.role === "assistant") {
+		const promptTokens = usage.input + usage.cacheRead + usage.cacheWrite;
+		snapshot.latestCacheHitRate = promptTokens > 0 ? (usage.cacheRead / promptTokens) * 100 : undefined;
+	}
 }
 
 export function assertValidSessionId(id: string): void {
@@ -864,6 +897,7 @@ export class SessionManager {
 	private labelsById: Map<string, string> = new Map();
 	private labelTimestampsById: Map<string, string> = new Map();
 	private leafId: string | null = null;
+	private usageSnapshot = createSessionUsageSnapshot();
 
 	private constructor(
 		cwd: string,
@@ -946,6 +980,7 @@ export class SessionManager {
 		this.labelsById.clear();
 		this.labelTimestampsById.clear();
 		this.leafId = null;
+		this.usageSnapshot = createSessionUsageSnapshot();
 		this.flushed = false;
 
 		if (this.persist) {
@@ -960,10 +995,12 @@ export class SessionManager {
 		this.labelsById.clear();
 		this.labelTimestampsById.clear();
 		this.leafId = null;
+		this.usageSnapshot = createSessionUsageSnapshot();
 		for (const entry of this.fileEntries) {
 			if (entry.type === "session") continue;
 			this.byId.set(entry.id, entry);
 			this.leafId = entry.id;
+			addEntryUsage(this.usageSnapshot, entry);
 			if (entry.type === "label") {
 				if (entry.label) {
 					this.labelsById.set(entry.targetId, entry.label);
@@ -1045,6 +1082,7 @@ export class SessionManager {
 		this.fileEntries.push(entry);
 		this.byId.set(entry.id, entry);
 		this.leafId = entry.id;
+		addEntryUsage(this.usageSnapshot, entry);
 		this._persist(entry);
 	}
 
@@ -1300,6 +1338,13 @@ export class SessionManager {
 	 */
 	getEntries(): SessionEntry[] {
 		return this.fileEntries.filter((e): e is SessionEntry => e.type !== "session");
+	}
+
+	getUsageSnapshot(): SessionUsageSnapshot {
+		return {
+			totals: { ...this.usageSnapshot.totals },
+			latestCacheHitRate: this.usageSnapshot.latestCacheHitRate,
+		};
 	}
 
 	/**

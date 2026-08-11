@@ -230,6 +230,43 @@ function isUnknownModel(model: Model<any> | undefined): boolean {
 	return !!model && model.provider === "unknown" && model.id === "unknown" && model.api === "unknown";
 }
 
+function createRenderRegion(kind: "stable" | "dynamic", children: readonly Component[]): Container {
+	const container = new Container();
+	for (const child of children) container.addChild(child);
+	container.setRenderRegion?.(kind);
+	return container;
+}
+
+function getTranscriptContainers(stable: Container | undefined, dynamic: Container): readonly Container[] {
+	return stable ? [stable, dynamic] : [dynamic];
+}
+
+function hasTranscriptContent(stable: Container | undefined, dynamic: Container): boolean {
+	return (stable?.children.length ?? 0) > 0 || dynamic.children.length > 0;
+}
+
+function promoteDynamicTranscript(
+	stable: Container | undefined,
+	dynamic: Container,
+	stableRegion: Container | undefined,
+): void {
+	if (!stable || dynamic.children.length === 0) return;
+	stable.children.push(...dynamic.children);
+	dynamic.children = [];
+	stableRegion?.expireRenderRegion?.();
+}
+
+function clearTranscript(stable: Container | undefined, dynamic: Container, stableRegion: Container | undefined): void {
+	stable?.clear();
+	dynamic.clear();
+	stableRegion?.expireRenderRegion?.();
+}
+
+function requestActiveRender(tui: TUI): void {
+	if (tui.requestActiveRender) tui.requestActiveRender();
+	else tui.requestRender();
+}
+
 function quoteIfNeeded(value: string): string {
 	if (value.length > 0 && !/[^a-zA-Z0-9_\-./~:@]/.test(value)) {
 		return value;
@@ -388,8 +425,11 @@ export class InteractiveMode {
 	private ui: TUI;
 	private mainScreenRenderState: TuiMainScreenRenderState | undefined;
 	private loadedResourcesContainer: Container;
+	private stableChatContainer: Container;
 	private chatContainer: Container;
-	private documentContainer: Container;
+	private stableTranscriptRegion: Container;
+	private dynamicTranscriptRegion: Container;
+	private documentContainer: Component;
 	private transcriptScrollView: TuiLayouts.ScrollView | undefined;
 	private fullscreenLayoutRoot: Component | undefined;
 	private pendingMessagesContainer: Container;
@@ -547,11 +587,15 @@ export class InteractiveMode {
 		this.ui.setClearOnShrink(this.settingsManager.getClearOnShrink());
 		this.headerContainer = new Container();
 		this.loadedResourcesContainer = new Container();
+		this.stableChatContainer = new Container();
 		this.chatContainer = new Container();
-		this.documentContainer = new Container();
-		this.documentContainer.addChild(this.headerContainer);
-		this.documentContainer.addChild(this.loadedResourcesContainer);
-		this.documentContainer.addChild(this.chatContainer);
+		this.stableTranscriptRegion = createRenderRegion("stable", [
+			this.headerContainer,
+			this.loadedResourcesContainer,
+			this.stableChatContainer,
+		]);
+		this.dynamicTranscriptRegion = createRenderRegion("dynamic", [this.chatContainer]);
+		this.documentContainer = new TuiLayouts.VStack([this.stableTranscriptRegion, this.dynamicTranscriptRegion]);
 		this.pendingMessagesContainer = new Container();
 		this.statusContainer = new Container();
 		this.widgetContainerAbove = new Container();
@@ -748,7 +792,7 @@ export class InteractiveMode {
 			return;
 		}
 
-		if (this.chatContainer.children.length > 0) {
+		if (hasTranscriptContent(this.stableChatContainer, this.chatContainer)) {
 			this.chatContainer.addChild(new Spacer(1));
 		}
 		this.chatContainer.addChild(new DynamicBorder());
@@ -886,7 +930,8 @@ export class InteractiveMode {
 			{ component: dock, basis: "auto", grow: 0, shrink: 1, minSize: 1 },
 		]);
 		this.mountInteractiveTui(this.renderer, [
-			this.documentContainer,
+			this.stableTranscriptRegion,
+			this.dynamicTranscriptRegion,
 			this.pendingMessagesContainer,
 			this.statusContainer,
 			this.widgetContainerAbove,
@@ -1855,7 +1900,7 @@ export class InteractiveMode {
 						return { cancelled: true };
 					}
 
-					this.chatContainer.clear();
+					clearTranscript(this.stableChatContainer, this.chatContainer, this.stableTranscriptRegion);
 					this.renderInitialMessages();
 					if (result.editorText && !this.editor.getText().trim()) {
 						this.editor.setText(result.editorText);
@@ -1956,7 +2001,7 @@ export class InteractiveMode {
 
 	private renderCurrentSessionState(): void {
 		this.loadedResourcesContainer.clear();
-		this.chatContainer.clear();
+		clearTranscript(this.stableChatContainer, this.chatContainer, this.stableTranscriptRegion);
 		this.pendingMessagesContainer.clear();
 		this.compactionQueuedMessages = [];
 		this.streamingComponent = undefined;
@@ -2092,9 +2137,11 @@ export class InteractiveMode {
 
 	private setHiddenThinkingLabel(label?: string): void {
 		this.hiddenThinkingLabel = label ?? this.defaultHiddenThinkingLabel;
-		for (const child of this.chatContainer.children) {
-			if (child instanceof AssistantMessageComponent) {
-				child.setHiddenThinkingLabel(this.hiddenThinkingLabel);
+		for (const container of getTranscriptContainers(this.stableChatContainer, this.chatContainer)) {
+			for (const child of container.children) {
+				if (child instanceof AssistantMessageComponent) {
+					child.setHiddenThinkingLabel(this.hiddenThinkingLabel);
+				}
 			}
 		}
 		if (this.streamingComponent) {
@@ -3071,6 +3118,7 @@ export class InteractiveMode {
 
 		switch (event.type) {
 			case "agent_start":
+				promoteDynamicTranscript(this.stableChatContainer, this.chatContainer, this.stableTranscriptRegion);
 				this.pendingTools.clear();
 				if (this.settingsManager.getShowTerminalProgress()) {
 					this.ui.terminal.setProgress(true);
@@ -3092,18 +3140,18 @@ export class InteractiveMode {
 				} else {
 					this.clearStatusIndicator();
 				}
-				this.ui.requestRender();
+				requestActiveRender(this.ui);
 				break;
 
 			case "queue_update":
 				this.updatePendingMessagesDisplay();
-				this.ui.requestRender();
+				requestActiveRender(this.ui);
 				break;
 
 			case "entry_appended":
 				if (event.entry.type === "custom") {
 					this.addCustomEntryToChat(event.entry);
-					this.ui.requestRender();
+					requestActiveRender(this.ui);
 				}
 				break;
 
@@ -3121,11 +3169,11 @@ export class InteractiveMode {
 			case "message_start":
 				if (event.message.role === "custom") {
 					this.addMessageToChat(event.message);
-					this.ui.requestRender();
+					requestActiveRender(this.ui);
 				} else if (event.message.role === "user") {
 					this.addMessageToChat(event.message);
 					this.updatePendingMessagesDisplay();
-					this.ui.requestRender();
+					requestActiveRender(this.ui);
 				} else if (event.message.role === "assistant") {
 					this.streamingComponent = new AssistantMessageComponent(
 						undefined,
@@ -3138,7 +3186,7 @@ export class InteractiveMode {
 					this.streamingMessage = event.message;
 					this.chatContainer.addChild(this.streamingComponent);
 					this.streamingComponent.updateContent(this.streamingMessage, true);
-					this.ui.requestRender();
+					requestActiveRender(this.ui);
 				}
 				break;
 
@@ -3173,7 +3221,7 @@ export class InteractiveMode {
 							}
 						}
 					}
-					this.ui.requestRender();
+					requestActiveRender(this.ui);
 				}
 				break;
 
@@ -3214,7 +3262,7 @@ export class InteractiveMode {
 					this.streamingMessage = undefined;
 					this.footer.invalidate();
 				}
-				this.ui.requestRender();
+				requestActiveRender(this.ui);
 				break;
 
 			case "bash_execution_update":
@@ -3241,7 +3289,7 @@ export class InteractiveMode {
 					this.pendingTools.set(event.toolCallId, component);
 				}
 				component.markExecutionStarted();
-				this.ui.requestRender();
+				requestActiveRender(this.ui);
 				break;
 			}
 
@@ -3249,7 +3297,7 @@ export class InteractiveMode {
 				const component = this.pendingTools.get(event.toolCallId);
 				if (component) {
 					component.updateResult({ ...event.partialResult, isError: false }, true);
-					this.ui.requestRender();
+					requestActiveRender(this.ui);
 				}
 				break;
 			}
@@ -3259,7 +3307,7 @@ export class InteractiveMode {
 				if (component) {
 					component.updateResult({ ...event.result, isError: event.isError });
 					this.pendingTools.delete(event.toolCallId);
-					this.ui.requestRender();
+					requestActiveRender(this.ui);
 				}
 				break;
 			}
@@ -3275,7 +3323,7 @@ export class InteractiveMode {
 					this.streamingMessage = undefined;
 				}
 				this.pendingTools.clear();
-
+				promoteDynamicTranscript(this.stableChatContainer, this.chatContainer, this.stableTranscriptRegion);
 				this.ui.requestRender();
 				break;
 
@@ -3293,7 +3341,7 @@ export class InteractiveMode {
 					this.session.abortCompaction();
 				};
 				this.showStatusIndicator(new CompactionStatusIndicator(this.ui, event.reason));
-				this.ui.requestRender();
+				requestActiveRender(this.ui);
 				break;
 			}
 
@@ -3313,7 +3361,7 @@ export class InteractiveMode {
 						this.showStatus("Auto-compaction cancelled");
 					}
 				} else if (event.result) {
-					this.chatContainer.clear();
+					clearTranscript(this.stableChatContainer, this.chatContainer, this.stableTranscriptRegion);
 					this.rebuildChatFromMessages();
 					this.addMessageToChat(
 						createCompactionSummaryMessage(
@@ -3345,7 +3393,7 @@ export class InteractiveMode {
 				this.showStatusIndicator(
 					new RetryStatusIndicator(this.ui, event.attempt, event.maxAttempts, event.delayMs),
 				);
-				this.ui.requestRender();
+				requestActiveRender(this.ui);
 				break;
 			}
 
@@ -3360,7 +3408,7 @@ export class InteractiveMode {
 				if (!event.success) {
 					this.showError(`Retry failed after ${event.attempt} attempts: ${event.finalError || "Unknown error"}`);
 				}
-				this.ui.requestRender();
+				requestActiveRender(this.ui);
 				break;
 			}
 
@@ -3369,7 +3417,7 @@ export class InteractiveMode {
 				this.showStatusIndicator(
 					new RetryStatusIndicator(this.ui, event.attempt, event.maxAttempts, event.delayMs),
 				);
-				this.ui.requestRender();
+				requestActiveRender(this.ui);
 				break;
 			}
 
@@ -3380,13 +3428,13 @@ export class InteractiveMode {
 				} else {
 					this.showStatusIndicator(new CompactionStatusIndicator(this.ui, event.reason));
 				}
-				this.ui.requestRender();
+				requestActiveRender(this.ui);
 				break;
 			}
 
 			case "summarization_retry_finished": {
 				this.clearStatusIndicator("retry");
-				this.ui.requestRender();
+				requestActiveRender(this.ui);
 				break;
 			}
 		}
@@ -3497,7 +3545,7 @@ export class InteractiveMode {
 			case "user": {
 				const textContent = this.getUserMessageText(message);
 				if (textContent) {
-					if (this.chatContainer.children.length > 0) {
+					if (hasTranscriptContent(this.stableChatContainer, this.chatContainer)) {
 						this.chatContainer.addChild(new Spacer(1));
 					}
 					const skillBlock = parseSkillBlock(textContent);
@@ -3705,6 +3753,7 @@ export class InteractiveMode {
 			const times = compactionCount === 1 ? "1 time" : `${compactionCount} times`;
 			this.showStatus(`Session compacted ${times}`);
 		}
+		promoteDynamicTranscript(this.stableChatContainer, this.chatContainer, this.stableTranscriptRegion);
 	}
 
 	private renderProjectTrustWarningIfNeeded(): void {
@@ -3712,7 +3761,7 @@ export class InteractiveMode {
 			return;
 		}
 
-		if (this.chatContainer.children.length > 0) {
+		if (hasTranscriptContent(this.stableChatContainer, this.chatContainer)) {
 			this.chatContainer.addChild(new Spacer(1));
 		}
 		this.chatContainer.addChild(
@@ -3742,8 +3791,9 @@ export class InteractiveMode {
 	}
 
 	private rebuildChatFromMessages(): void {
-		this.chatContainer.clear();
+		clearTranscript(this.stableChatContainer, this.chatContainer, this.stableTranscriptRegion);
 		this.renderSessionEntries(this.sessionManager.buildContextEntries());
+		promoteDynamicTranscript(this.stableChatContainer, this.chatContainer, this.stableTranscriptRegion);
 	}
 
 	// =========================================================================
@@ -4037,7 +4087,10 @@ export class InteractiveMode {
 		if (isExpandable(activeHeader)) {
 			activeHeader.setExpanded(expanded);
 		}
-		for (const container of [this.loadedResourcesContainer, this.chatContainer]) {
+		for (const container of [
+			this.loadedResourcesContainer,
+			...getTranscriptContainers(this.stableChatContainer, this.chatContainer),
+		]) {
 			for (const child of container.children) {
 				if (isExpandable(child)) {
 					child.setExpanded(expanded);
@@ -4052,7 +4105,6 @@ export class InteractiveMode {
 		this.settingsManager.setHideThinkingBlock(this.hideThinkingBlock);
 
 		// Rebuild chat from session messages
-		this.chatContainer.clear();
 		this.rebuildChatFromMessages();
 
 		// If streaming, re-add the streaming component with updated visibility and re-render
@@ -4420,17 +4472,21 @@ export class InteractiveMode {
 					},
 					onShowImagesChange: (enabled) => {
 						this.settingsManager.setShowImages(enabled);
-						for (const child of this.chatContainer.children) {
-							if (child instanceof ToolExecutionComponent) {
-								child.setShowImages(enabled);
+						for (const container of getTranscriptContainers(this.stableChatContainer, this.chatContainer)) {
+							for (const child of container.children) {
+								if (child instanceof ToolExecutionComponent) {
+									child.setShowImages(enabled);
+								}
 							}
 						}
 					},
 					onImageWidthCellsChange: (width) => {
 						this.settingsManager.setImageWidthCells(width);
-						for (const child of this.chatContainer.children) {
-							if (child instanceof ToolExecutionComponent) {
-								child.setImageWidthCells(width);
+						for (const container of getTranscriptContainers(this.stableChatContainer, this.chatContainer)) {
+							for (const child of container.children) {
+								if (child instanceof ToolExecutionComponent) {
+									child.setImageWidthCells(width);
+								}
 							}
 						}
 					},
@@ -4472,17 +4528,20 @@ export class InteractiveMode {
 					onHideThinkingBlockChange: (hidden) => {
 						this.hideThinkingBlock = hidden;
 						this.settingsManager.setHideThinkingBlock(hidden);
-						for (const child of this.chatContainer.children) {
-							if (child instanceof AssistantMessageComponent) {
-								child.setHideThinkingBlock(hidden);
+						for (const container of getTranscriptContainers(this.stableChatContainer, this.chatContainer)) {
+							for (const child of container.children) {
+								if (child instanceof AssistantMessageComponent) {
+									child.setHideThinkingBlock(hidden);
+								}
 							}
 						}
-						this.chatContainer.clear();
 						this.rebuildChatFromMessages();
 					},
 					onMermaidRenderingModeChange: (mode) => {
 						this.settingsManager.setMermaidRenderingMode(mode);
-						this.chatContainer.invalidate();
+						for (const container of getTranscriptContainers(this.stableChatContainer, this.chatContainer)) {
+							container.invalidate();
+						}
 						this.ui.requestRender();
 					},
 					onShowCacheMissNoticesChange: (shown) => {
@@ -4522,13 +4581,15 @@ export class InteractiveMode {
 						this.settingsManager.setOutputPad(padding);
 						this.outputPad = padding;
 						if (this.streamingComponent || this.session.isStreaming) {
-							for (const child of this.chatContainer.children) {
-								if (
-									child instanceof AssistantMessageComponent ||
-									child instanceof CustomMessageComponent ||
-									child instanceof UserMessageComponent
-								) {
-									child.setOutputPad(padding);
+							for (const container of getTranscriptContainers(this.stableChatContainer, this.chatContainer)) {
+								for (const child of container.children) {
+									if (
+										child instanceof AssistantMessageComponent ||
+										child instanceof CustomMessageComponent ||
+										child instanceof UserMessageComponent
+									) {
+										child.setOutputPad(padding);
+									}
 								}
 							}
 							if (this.streamingComponent) {
@@ -5047,7 +5108,7 @@ export class InteractiveMode {
 						}
 
 						// Update UI
-						this.chatContainer.clear();
+						clearTranscript(this.stableChatContainer, this.chatContainer, this.stableTranscriptRegion);
 						this.renderInitialMessages();
 						if (result.editorText && !this.editor.getText().trim()) {
 							this.editor.setText(result.editorText);

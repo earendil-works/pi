@@ -121,6 +121,7 @@ export {
 	type OverlayMargin,
 	type OverlayOptions,
 	type OverlayUnfocusOptions,
+	type RenderRegionKind,
 	type SizeValue,
 	type TUI,
 	type TuiInputListener,

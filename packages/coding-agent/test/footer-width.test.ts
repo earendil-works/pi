@@ -63,6 +63,25 @@ function createSession(options: {
 		});
 	}
 
+	const usageTotals = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 };
+	let latestCacheHitRate: number | undefined;
+	for (const entry of entries) {
+		const entryUsage =
+			entry.type === "message"
+				? (entry.message as { usage?: AssistantUsage }).usage
+				: (entry.usage as AssistantUsage | undefined);
+		if (!entryUsage) continue;
+		usageTotals.input += entryUsage.input;
+		usageTotals.output += entryUsage.output;
+		usageTotals.cacheRead += entryUsage.cacheRead;
+		usageTotals.cacheWrite += entryUsage.cacheWrite;
+		usageTotals.cost += entryUsage.cost.total;
+		if (entry.type === "message" && (entry.message as { role?: string }).role === "assistant") {
+			const promptTokens = entryUsage.input + entryUsage.cacheRead + entryUsage.cacheWrite;
+			latestCacheHitRate = promptTokens > 0 ? (entryUsage.cacheRead / promptTokens) * 100 : undefined;
+		}
+	}
+
 	const session = {
 		state: {
 			model: {
@@ -75,6 +94,7 @@ function createSession(options: {
 		},
 		sessionManager: {
 			getEntries: () => entries,
+			getUsageSnapshot: () => ({ totals: usageTotals, latestCacheHitRate }),
 			getSessionName: () => options.sessionName,
 			getCwd: () => "/tmp/project",
 		},
@@ -205,6 +225,25 @@ describe("FooterComponent width handling", () => {
 
 		const statsLine = stripAnsi(footer.render(120)[1]);
 		expect(statsLine).toContain("CH25.0%");
+	});
+
+	it("does not scan session entries while rendering", () => {
+		const session = createSession({
+			sessionName: "",
+			usage: {
+				input: 100,
+				output: 10,
+				cacheRead: 50,
+				cacheWrite: 50,
+				cost: { total: 0.001 },
+			},
+		});
+		session.sessionManager.getEntries = () => {
+			throw new Error("footer render must not scan session entries");
+		};
+		const footer = new FooterComponent(session, createFooterData(1));
+
+		expect(() => footer.render(120)).not.toThrow();
 	});
 
 	it("marks Kimi Coding costs as subscription estimates", () => {

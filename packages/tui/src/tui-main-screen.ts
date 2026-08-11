@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { deleteKittyImage, isImageLine } from "./terminal-image.ts";
-import { type TUI, TuiBase, type TuiStopOptions } from "./tui.ts";
+import { Container, type TUI, TuiBase, type TuiStopOptions } from "./tui.ts";
 import { visibleWidth } from "./utils.ts";
 
 const KITTY_SEQUENCE_PREFIX = "\x1b_G";
@@ -64,6 +64,8 @@ export class TuiMainScreen extends TuiBase implements TUI {
 	private hardwareCursorRow = 0;
 	private maxLinesRendered = 0;
 	private previousViewportTop = 0;
+	private stableRegion: { component: Container; revision: number; width: number; lineCount: number } | undefined;
+	private previousDynamicLines: string[] = [];
 
 	captureRenderState(): TuiMainScreenRenderState {
 		return {
@@ -79,6 +81,8 @@ export class TuiMainScreen extends TuiBase implements TUI {
 
 	restoreRenderState(state: TuiMainScreenRenderState): void {
 		this.previousLines = state.previousLines.map((line) => (isImageLine(line) ? "" : line));
+		this.stableRegion = undefined;
+		this.previousDynamicLines = [];
 		this.previousKittyImageIds = new Set();
 		this.previousWidth = state.previousWidth;
 		this.previousHeight = state.previousHeight;
@@ -90,6 +94,8 @@ export class TuiMainScreen extends TuiBase implements TUI {
 
 	protected override resetRenderState(): void {
 		this.previousLines = [];
+		this.stableRegion = undefined;
+		this.previousDynamicLines = [];
 		this.previousWidth = -1;
 		this.previousHeight = -1;
 		this.cursorRow = 0;
@@ -177,10 +183,142 @@ export class TuiMainScreen extends TuiBase implements TUI {
 		return this.deleteKittyImages(ids);
 	}
 
-	protected doRender(): void {
+	private getStablePrefix(width: number): { component: Container; lineCount: number } | undefined {
+		const component = this.children[0];
+		if (!(component instanceof Container) || component.renderRegionKind !== "stable") return undefined;
+		const lineCount = component.getCachedLineCount(width);
+		return lineCount === undefined ? undefined : { component, lineCount };
+	}
+
+	private captureRegionState(width: number, lines: string[]): void {
+		const stablePrefix = this.getStablePrefix(width);
+		if (!stablePrefix) {
+			this.stableRegion = undefined;
+			this.previousDynamicLines = [];
+			return;
+		}
+		this.stableRegion = {
+			component: stablePrefix.component,
+			revision: stablePrefix.component.renderRegionRevision,
+			width,
+			lineCount: stablePrefix.lineCount,
+		};
+		this.previousDynamicLines = lines.slice(stablePrefix.lineCount);
+	}
+
+	private renderDynamicLines(width: number): string[] {
+		const lines: string[] = [];
+		for (let index = 1; index < this.children.length; index++) {
+			for (const line of this.children[index]!.render(width)) lines.push(line);
+		}
+		return lines;
+	}
+
+	private tryActiveRender(width: number, height: number): boolean {
+		const stable = this.stableRegion;
+		if (
+			!stable ||
+			this.hasOverlayEntries ||
+			this.previousWidth !== width ||
+			this.previousHeight !== height ||
+			this.children[0] !== stable.component ||
+			stable.component.renderRegionRevision !== stable.revision ||
+			stable.component.getCachedLineCount(width) !== stable.lineCount
+		) {
+			return false;
+		}
+
+		let newDynamicLines = this.renderDynamicLines(width);
+		const cursorPos = this.extractCursorPosition(newDynamicLines, height);
+		newDynamicLines = this.applyLineResets(newDynamicLines);
+		if (
+			newDynamicLines.some(isImageLine) ||
+			this.previousDynamicLines.some(isImageLine) ||
+			newDynamicLines.length < this.previousDynamicLines.length
+		) {
+			return false;
+		}
+
+		let firstChanged = -1;
+		let lastChanged = -1;
+		const maxLines = Math.max(newDynamicLines.length, this.previousDynamicLines.length);
+		for (let index = 0; index < maxLines; index++) {
+			if ((this.previousDynamicLines[index] ?? "") === (newDynamicLines[index] ?? "")) continue;
+			if (firstChanged === -1) firstChanged = index;
+			lastChanged = index;
+		}
+
+		const totalLines = stable.lineCount + newDynamicLines.length;
+		const globalCursorPos = cursorPos ? { row: stable.lineCount + cursorPos.row, col: cursorPos.col } : null;
+		if (firstChanged === -1) {
+			this.positionHardwareCursor(globalCursorPos, totalLines);
+			return true;
+		}
+
+		const firstChangedRow = stable.lineCount + firstChanged;
+		const lastChangedRow = stable.lineCount + lastChanged;
+		if (
+			firstChangedRow < this.previousViewportTop ||
+			(this.getClearOnShrink() && totalLines < this.maxLinesRendered)
+		) {
+			return false;
+		}
+		for (let index = firstChanged; index <= lastChanged; index++) {
+			if (visibleWidth(newDynamicLines[index] ?? "") > width) return false;
+		}
+
+		let previousViewportTop = this.previousViewportTop;
+		let viewportTop = previousViewportTop;
+		let hardwareCursorRow = this.hardwareCursorRow;
+		const previousViewportBottom = previousViewportTop + height - 1;
+		const appended =
+			newDynamicLines.length > this.previousDynamicLines.length &&
+			firstChanged === this.previousDynamicLines.length &&
+			firstChanged > 0;
+		const moveTargetRow = appended ? firstChangedRow - 1 : firstChangedRow;
+		let buffer = "\x1b[?2026h";
+		if (moveTargetRow > previousViewportBottom) {
+			const currentScreenRow = Math.max(0, Math.min(height - 1, hardwareCursorRow - viewportTop));
+			const moveToBottom = height - 1 - currentScreenRow;
+			if (moveToBottom > 0) buffer += `\x1b[${moveToBottom}B`;
+			const scroll = moveTargetRow - previousViewportBottom;
+			buffer += "\r\n".repeat(scroll);
+			previousViewportTop += scroll;
+			viewportTop += scroll;
+			hardwareCursorRow = moveTargetRow;
+		}
+
+		const lineDiff = moveTargetRow - viewportTop - (hardwareCursorRow - previousViewportTop);
+		if (lineDiff > 0) buffer += `\x1b[${lineDiff}B`;
+		else if (lineDiff < 0) buffer += `\x1b[${-lineDiff}A`;
+		buffer += appended ? "\r\n" : "\r";
+
+		for (let index = firstChanged; index <= lastChanged; index++) {
+			if (index > firstChanged) buffer += "\r\n";
+			buffer += `\x1b[2K${newDynamicLines[index] ?? ""}`;
+		}
+		buffer += "\x1b[?2026l";
+		this.terminal.write(buffer);
+
+		const finalCursorRow = lastChangedRow;
+		this.cursorRow = Math.max(0, totalLines - 1);
+		this.hardwareCursorRow = finalCursorRow;
+		this.maxLinesRendered = Math.max(this.maxLinesRendered, totalLines);
+		this.previousViewportTop = Math.max(previousViewportTop, finalCursorRow - height + 1);
+		this.positionHardwareCursor(globalCursorPos, totalLines);
+
+		this.previousLines.length = stable.lineCount;
+		this.previousLines.push(...newDynamicLines);
+		this.previousDynamicLines = newDynamicLines;
+		this.previousHeight = height;
+		return true;
+	}
+
+	protected doRender(scope: "active" | "full"): void {
 		if (this.stopped) return;
 		const width = this.terminal.columns;
 		const height = this.terminal.rows;
+		if (scope === "active" && this.tryActiveRender(width, height)) return;
 		const widthChanged = this.previousWidth !== 0 && this.previousWidth !== width;
 		const heightChanged = this.previousHeight !== 0 && this.previousHeight !== height;
 		const previousBufferLength = this.previousHeight > 0 ? this.previousViewportTop + this.previousHeight : height;
@@ -245,6 +383,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
 			this.previousViewportTop = Math.max(0, bufferLength - height);
 			this.positionHardwareCursor(cursorPos, newLines.length);
 			this.previousLines = newLines;
+			this.captureRegionState(width, newLines);
 			this.previousKittyImageIds = this.collectKittyImageIds(newLines);
 			this.previousWidth = width;
 			this.previousHeight = height;
@@ -323,6 +462,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
 		// No changes - but still need to update hardware cursor position if it moved
 		if (firstChanged === -1) {
 			this.positionHardwareCursor(cursorPos, newLines.length);
+			this.captureRegionState(width, newLines);
 			this.previousViewportTop = prevViewportTop;
 			this.previousHeight = height;
 			return;
@@ -370,6 +510,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
 			}
 			this.positionHardwareCursor(cursorPos, newLines.length);
 			this.previousLines = newLines;
+			this.captureRegionState(width, newLines);
 			this.previousKittyImageIds = this.collectKittyImageIds(newLines);
 			this.previousWidth = width;
 			this.previousHeight = height;
@@ -541,6 +682,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
 		this.positionHardwareCursor(cursorPos, newLines.length);
 
 		this.previousLines = newLines;
+		this.captureRegionState(width, newLines);
 		this.previousKittyImageIds = this.collectKittyImageIds(newLines);
 		this.previousWidth = width;
 		this.previousHeight = height;

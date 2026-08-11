@@ -86,7 +86,8 @@ export class Loader extends Text {
 		const indicator = frame.length > 0 ? `${renderedFrame} ` : "";
 		this.setText(`${indicator}${this.messageColorFn(this.message)}`);
 		if (this.ui) {
-			this.ui.requestRender();
+			if (this.ui.requestActiveRender) this.ui.requestActiveRender();
+			else this.ui.requestRender();
 		}
 	}
 }
