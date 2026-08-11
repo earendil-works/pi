@@ -535,6 +535,45 @@ describe("goal-mode example extension", () => {
 		expect(notify).toHaveBeenCalledWith("Goal resumed.", "info");
 	});
 
+	it("does not resume a paused goal that already exceeded its budget", async () => {
+		const { emit, entries, notify, runCommand, sendUserMessage } = setup();
+
+		await runCommand("goal", "Fix tests --tokens 10");
+		await emit("agent_start", { type: "agent_start" });
+		entries.push({
+			type: "message",
+			message: {
+				role: "assistant",
+				content: [],
+				api: "anthropic-messages",
+				provider: "anthropic",
+				model: "mock",
+				usage: {
+					input: 10,
+					output: 10,
+					cacheRead: 0,
+					cacheWrite: 0,
+					totalTokens: 20,
+					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+				},
+				stopReason: "stop",
+				timestamp: Date.now(),
+			},
+			id: "usage",
+			parentId: null,
+			timestamp: new Date().toISOString(),
+		} as SessionEntry);
+		await runCommand("goal", "pause");
+		expect(customData(entries.at(-1))).toMatchObject({ status: "paused" });
+
+		const callsBefore = sendUserMessage.mock.calls.length;
+		await runCommand("goal", "resume");
+
+		expect(customData(entries.at(-1))).toMatchObject({ status: "budget_limited" });
+		expect(sendUserMessage.mock.calls.length).toBe(callsBefore);
+		expect(notify).toHaveBeenLastCalledWith(expect.stringContaining("budget exhausted"), "warning");
+	});
+
 	it("shows usage in /goal view for non-active budgets", async () => {
 		const { emit, entries, notify, runCommand } = setup();
 
