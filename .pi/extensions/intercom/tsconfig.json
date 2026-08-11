@@ -1,0 +1,10 @@
+{
+	"extends": "../../../tsconfig.json",
+	"compilerOptions": {
+		"noEmit": true,
+		"types": ["node", "vitest/globals"]
+	},
+	// The ambient declaration is not reachable by import, only by inclusion; without it
+	// pi's own syntax-highlight.ts fails to typecheck when pulled in transitively.
+	"include": ["**/*.ts", "../../../packages/coding-agent/src/utils/highlight-js-lib-index.d.ts"]
+}
