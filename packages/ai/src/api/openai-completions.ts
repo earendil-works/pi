@@ -145,7 +145,18 @@ export interface OpenAICompletionsOptions extends StreamOptions {
 	reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 	/** Token budgets per thinking level. Only used when `compat.supportsThinkingTokenBudget` is set. */
 	thinkingBudgets?: ThinkingBudgets;
+	/**
+	 * Inactivity timeout in milliseconds for the stream body read, applied after the
+	 * first chunk has arrived. The SDK's `timeout` only covers time-to-first-byte, so
+	 * a provider that stalls mid-stream (content delivered, connection never closed)
+	 * would otherwise block the stream forever. The timer resets on every chunk and
+	 * aborts the request when no chunk arrives for this long, surfacing a retryable
+	 * "timeout" error. Default: 60000.
+	 */
+	streamIdleTimeoutMs?: number;
 }
+
+const DEFAULT_STREAM_IDLE_TIMEOUT_MS = 60_000;
 
 export interface ConvertCompletionsMessagesOptions {
 	grammarToolInputProperties?: ReadonlyMap<string, string>;
@@ -224,6 +235,19 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 			timestamp: Date.now(),
 		};
 
+		const streamIdleTimeoutMs = options?.streamIdleTimeoutMs ?? DEFAULT_STREAM_IDLE_TIMEOUT_MS;
+		const idleController = new AbortController();
+		const requestSignal = options?.signal
+			? AbortSignal.any([options.signal, idleController.signal])
+			: idleController.signal;
+		let idleTimer: ReturnType<typeof setTimeout> | undefined;
+		const resetIdleTimer = () => {
+			clearTimeout(idleTimer);
+			idleTimer = setTimeout(() => {
+				idleController.abort(new Error(`stream idle timeout after ${streamIdleTimeoutMs}ms without a new chunk`));
+			}, streamIdleTimeoutMs);
+		};
+
 		try {
 			const apiKey = getClientApiKey(model.provider, options?.apiKey, options?.headers);
 			const compat = getCompat(model);
@@ -240,7 +264,7 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 				params = nextParams as OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming;
 			}
 			const requestOptions = {
-				...(options?.signal ? { signal: options.signal } : {}),
+				signal: requestSignal,
 				...(options?.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),
 				maxRetries: 0,
 			};
@@ -439,6 +463,7 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 			};
 
 			for await (const chunk of openaiStream) {
+				resetIdleTimer();
 				if (!chunk || typeof chunk !== "object") continue;
 
 				// OpenAI documents ChatCompletionChunk.id as the unique chat completion identifier,
@@ -565,6 +590,7 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 					}
 				}
 			}
+			clearTimeout(idleTimer);
 
 			for (const block of blocks) {
 				finishBlock(block);
@@ -596,8 +622,15 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 				delete (block as { customInput?: unknown }).customInput;
 				delete (block as { streamIndex?: number }).streamIndex;
 			}
+			clearTimeout(idleTimer);
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
-			output.errorMessage = formatProviderError(normalizeProviderError(error));
+			if (idleController.signal.aborted) {
+				output.errorMessage = formatProviderError(
+					normalizeProviderError(new Error(`stream idle timeout after ${streamIdleTimeoutMs}ms without a new chunk`)),
+				);
+			} else {
+				output.errorMessage = formatProviderError(normalizeProviderError(error));
+			}
 			// Some providers via OpenRouter give additional information in this field.
 			// normalizeProviderError already stringifies the parsed body (error.error)
 			// into errorMessage, so only append the raw metadata when it is not already
