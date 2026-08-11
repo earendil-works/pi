@@ -68,6 +68,7 @@ function setup(options: { idle?: boolean; pending?: boolean; flagGoal?: string }
 	const setWidget = vi.fn();
 	const setTitle = vi.fn();
 	const abort = vi.fn();
+	let idle = options.idle ?? true;
 
 	const api = {
 		registerFlag: vi.fn(),
@@ -96,11 +97,15 @@ function setup(options: { idle?: boolean; pending?: boolean; flagGoal?: string }
 		hasUI: true,
 		ui: { notify, setStatus, setWidget, setTitle },
 		sessionManager: { getBranch: () => entries },
-		isIdle: () => options.idle ?? true,
+		isIdle: () => idle,
 		hasPendingMessages: () => options.pending ?? false,
 		abort,
 		mode: "tui",
 	} as unknown as ExtensionContext;
+
+	// Reset module-level extension state between setup instances, simulating a
+	// fresh session without triggering a new goal.
+	handlers.get("session_start")?.({ type: "session_start", reason: "reload" }, ctx);
 
 	async function runCommand(name: string, args = ""): Promise<void> {
 		const command = commands.get(name);
@@ -126,6 +131,9 @@ function setup(options: { idle?: boolean; pending?: boolean; flagGoal?: string }
 		notify,
 		runCommand,
 		sendUserMessage,
+		setIdle: (value: boolean) => {
+			idle = value;
+		},
 		setStatus,
 		setTitle,
 		setWidget,
@@ -171,6 +179,51 @@ describe("goal-mode example extension", () => {
 			"Budget: tokens 100",
 		]);
 		expect(setTitle).toHaveBeenLastCalledWith("[GOAL MODE] Fix the flaky suite");
+	});
+
+	it("replaces an active goal while streaming by aborting and restarting after settle", async () => {
+		const { abort, emit, runCommand, sendUserMessage, setIdle } = setup({ idle: false });
+
+		await runCommand("goal", "First goal");
+		expect(abort).toHaveBeenCalledTimes(1);
+		expect(sendUserMessage).not.toHaveBeenCalled();
+
+		await runCommand("goal", "Second goal");
+		expect(abort).toHaveBeenCalledTimes(2);
+		expect(sendUserMessage).not.toHaveBeenCalled();
+
+		setIdle(true);
+		await emit("agent_settled", { type: "agent_settled" });
+
+		expect(sendUserMessage).toHaveBeenCalledTimes(1);
+		expect(sendUserMessage.mock.calls[0]?.[0]).toContain("Second goal");
+	});
+
+	it("does not restart a cleared goal after an in-flight set was aborted", async () => {
+		const { abort, emit, runCommand, sendUserMessage, setIdle } = setup({ idle: false });
+
+		await runCommand("goal", "First goal");
+		await runCommand("goal", "clear");
+		expect(abort).toHaveBeenCalledTimes(2);
+
+		setIdle(true);
+		await emit("agent_settled", { type: "agent_settled" });
+
+		expect(sendUserMessage).not.toHaveBeenCalled();
+	});
+
+	it("does not queue a second continuation while one is already queued", async () => {
+		const { emit, runCommand, sendUserMessage } = setup();
+
+		await runCommand("goal", "First goal");
+		expect(sendUserMessage).toHaveBeenCalledTimes(1);
+
+		await runCommand("goal", "First goal");
+		expect(sendUserMessage).toHaveBeenCalledTimes(1);
+
+		await emit("agent_start", { type: "agent_start" });
+		await runCommand("goal", "First goal");
+		expect(sendUserMessage).toHaveBeenCalledTimes(2);
 	});
 
 	it("pauses, resumes, and clears a goal", async () => {
@@ -219,6 +272,7 @@ describe("goal-mode example extension", () => {
 		const { emit, runCommand, sendUserMessage } = setup();
 
 		await runCommand("goal", "Fix tests");
+		await emit("agent_start", { type: "agent_start" });
 		const assistant = createAssistantMessage("checked the suite");
 		await emit("turn_end", {
 			type: "turn_end",
@@ -235,6 +289,7 @@ describe("goal-mode example extension", () => {
 		const { emit, notify, runCommand, sendUserMessage } = setup();
 
 		await runCommand("goal", "Fix tests");
+		await emit("agent_start", { type: "agent_start" });
 		await emit("turn_end", {
 			type: "turn_end",
 			turnIndex: 1,
@@ -251,6 +306,7 @@ describe("goal-mode example extension", () => {
 		const { emit, runCommand, sendUserMessage } = setup({ pending: true });
 
 		await runCommand("goal", "Fix tests");
+		await emit("agent_start", { type: "agent_start" });
 		await emit("agent_settled", { type: "agent_settled" });
 
 		expect(sendUserMessage).toHaveBeenCalledTimes(1);

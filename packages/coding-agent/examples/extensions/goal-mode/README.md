@@ -47,6 +47,10 @@ pi --extension examples/extensions/goal-mode/index.ts \
   and clear are user-only commands.
 - `/goal pause` and `/goal clear` abort any in-flight autonomous work before
   switching state, so the UI returns to the paused or normal mode immediately.
+- Setting a new goal while the agent is streaming also aborts the current run
+  and starts the new goal after the run settles.
+- Automatic continuation is deduplicated: only one continuation is queued at a
+  time, and it is reset when the next run starts.
 - Automatic continuation happens only when the goal is active, the agent is
   idle, no user input is queued, the budget is not exhausted, and the previous
   turn actually used a tool. A turn with no tool calls stops the loop instead

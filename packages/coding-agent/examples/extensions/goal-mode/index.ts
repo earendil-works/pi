@@ -111,12 +111,18 @@ function parseBudgetFlags(pi: ExtensionAPI): GoalBudget {
 
 function startGoal(pi: ExtensionAPI, ctx: ExtensionContext): void {
 	if (!goal || goal.status !== "active") return;
-	const prompt = buildContinuationPrompt(goal);
-	if (ctx.isIdle()) {
-		pi.sendUserMessage(prompt);
-	} else {
-		pi.sendUserMessage(prompt, { deliverAs: "followUp" });
+	if (!ctx.isIdle()) {
+		// A user command changed the goal while a run is in flight. Stop the
+		// current work and let agent_settled start the new goal instead of
+		// queueing a duplicate continuation.
+		pendingRestart = true;
+		ctx.abort();
+		return;
 	}
+	if (continuationQueued) return;
+	continuationQueued = true;
+	const prompt = buildContinuationPrompt(goal);
+	pi.sendUserMessage(prompt);
 }
 
 function setGoal(
@@ -133,6 +139,8 @@ function setGoal(
 	}
 	if (goal?.status === "active") {
 		startGoal(pi, ctx);
+	} else {
+		pendingRestart = false;
 	}
 }
 
@@ -181,7 +189,7 @@ function clearGoal(pi: ExtensionAPI, ctx: ExtensionContext): void {
 }
 
 function reportWaitingForUser(ctx: ExtensionContext): void {
-	ctx.ui.setStatus("goal-mode", "goal: waiting");
+	ctx.ui.setStatus("goal-mode", "mode: goal (waiting)");
 	ctx.ui.notify(
 		"Goal is active but the last turn made no tool calls. Stopped to avoid spinning. Use /goal resume or send a message to continue.",
 		"info",
@@ -190,6 +198,7 @@ function reportWaitingForUser(ctx: ExtensionContext): void {
 
 function transitionBudgetLimited(pi: ExtensionAPI, ctx: ExtensionContext): void {
 	if (!goal) return;
+	pendingRestart = false;
 	const limited = { ...goal, status: "budget_limited" as const, updatedAt: Date.now() };
 	goal = limited;
 	persistGoal(pi, goal);
@@ -201,6 +210,8 @@ function transitionBudgetLimited(pi: ExtensionAPI, ctx: ExtensionContext): void 
 }
 
 let goal: GoalState | undefined;
+let pendingRestart = false;
+let continuationQueued = false;
 
 export default function goalModeExtension(pi: ExtensionAPI): void {
 	pi.registerFlag("goal", {
@@ -315,6 +326,8 @@ export default function goalModeExtension(pi: ExtensionAPI): void {
 					].slice(-20),
 				};
 				goal = completed;
+				pendingRestart = false;
+				continuationQueued = false;
 				persistGoal(pi, goal);
 				updateStatus(pi, ctx);
 				return {
@@ -330,6 +343,8 @@ export default function goalModeExtension(pi: ExtensionAPI): void {
 	);
 
 	pi.on("session_start", async (event, ctx) => {
+		pendingRestart = false;
+		continuationQueued = false;
 		goal = getLatestGoalState(ctx.sessionManager.getBranch());
 
 		if (event.reason === "startup") {
@@ -364,9 +379,18 @@ export default function goalModeExtension(pi: ExtensionAPI): void {
 		updateStatus(pi, ctx);
 	});
 
+	pi.on("agent_start", async () => {
+		continuationQueued = false;
+	});
+
 	pi.on("agent_settled", async (_event, ctx) => {
 		if (!goal || goal.status !== "active") return;
 		if (ctx.hasPendingMessages()) return;
+		if (pendingRestart) {
+			pendingRestart = false;
+			startGoal(pi, ctx);
+			return;
+		}
 		if (goal.lastTurnHadToolCall === false) {
 			reportWaitingForUser(ctx);
 			return;

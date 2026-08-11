@@ -119,6 +119,29 @@ describe("goal persistence", () => {
 		] as const;
 		expect(getLatestGoalState(entries)?.objective).toBe("second");
 	});
+
+	it("treats a cleared goal entry as no goal", () => {
+		const state = createGoalState("first", { now: 1 });
+		const entries = [
+			{
+				type: "custom",
+				customType: "goal-mode",
+				data: state,
+				id: "a",
+				parentId: null,
+				timestamp: "t1",
+			},
+			{
+				type: "custom",
+				customType: "goal-mode",
+				data: null,
+				id: "b",
+				parentId: "a",
+				timestamp: "t2",
+			},
+		] as const;
+		expect(getLatestGoalState(entries)).toBeUndefined();
+	});
 });
 
 describe("usage accounting", () => {
