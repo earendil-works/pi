@@ -108,6 +108,7 @@ describe("goal state helpers", () => {
 			updatedAt: 42,
 			progress: [],
 		});
+		expect(createGoalState("  Fix\ntests   here ", { now: 1 }).objective).toBe("Fix tests here");
 	});
 
 	it("normalizes persisted state and rejects malformed data", () => {

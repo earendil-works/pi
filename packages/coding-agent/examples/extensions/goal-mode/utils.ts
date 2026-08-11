@@ -119,7 +119,7 @@ export function createGoalState(
 ): GoalState {
 	const now = options.now ?? Date.now();
 	return {
-		objective: objective.trim(),
+		objective: objective.replace(/\s+/g, " ").trim(),
 		status: "active",
 		budget: options.budget,
 		createdAt: now,
