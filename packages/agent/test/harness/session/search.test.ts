@@ -5,12 +5,15 @@ import { afterEach, describe, expect, it } from "vitest";
 import { NodeExecutionEnv } from "../../../src/harness/env/nodejs.ts";
 import {
 	InMemorySessionStorage,
+	type JsonlSessionListOptions,
 	JsonlSessionRepo,
+	type JsonlSessionRepoOptions,
 	Session,
 	type SessionMetadata,
 	type SessionStorage,
 } from "../../../src/harness/session/index.ts";
-import { createJsonlScanningSessionSearch, createScanningSessionSearch } from "../../../src/search/index.ts";
+import { listJsonlSessionMetadata, loadJsonlSessionStorage } from "../../../src/harness/session/jsonl/repo.ts";
+import { createScanningSessionSearch } from "../../../src/search/index.ts";
 import type { AgentMessage } from "../../../src/types.ts";
 
 interface WorkspaceMetadata extends SessionMetadata {
@@ -43,6 +46,12 @@ async function collect<T>(iterable: AsyncIterable<T>): Promise<T[]> {
 	const items: T[] = [];
 	for await (const item of iterable) items.push(item);
 	return items;
+}
+
+async function* jsonlReadables(options: JsonlSessionRepoOptions, query: JsonlSessionListOptions = {}) {
+	for (const metadata of await listJsonlSessionMetadata(options, query)) {
+		yield loadJsonlSessionStorage(options, metadata);
+	}
 }
 
 describe("session search", () => {
@@ -95,7 +104,7 @@ describe("session search", () => {
 		await session.setLabel(entryId, "disk label");
 		const other = await repository.create({ id: "other", cwd: otherCwd });
 		const otherEntryId = await other.appendMessage(message("jsonl backed auth entry in another cwd"));
-		const search = createJsonlScanningSessionSearch(options);
+		const search = createScanningSessionSearch((query?: JsonlSessionListOptions) => jsonlReadables(options, query));
 
 		const authHits = await collect(search.search("auth"));
 		expect(authHits).toHaveLength(2);

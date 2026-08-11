@@ -1,14 +1,12 @@
 import type { Entry } from "../harness/session/types.ts";
 
-export { createJsonlScanningSessionSearch } from "./jsonl.ts";
 export type {
 	ScanningReadable,
 	ScanningReadableOptions,
+	ScanningReadableSource,
 	ScanningSearchTextProjector,
 	ScanningSessionSearchHit,
 	ScanningSessionSearchOptions,
-	ScanningSessionSearchSource,
-	ScanningSessionSource,
 	SessionSearchCandidate,
 } from "./scanning.ts";
 export { createScanningSessionSearch, scanningEntries } from "./scanning.ts";

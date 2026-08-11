@@ -89,13 +89,19 @@ for await (const hit of search.search("authentication", { limit: 10 })) {
 }
 ```
 
-JSONL only adds discovery/loading before using the same scanner:
+JSONL does not need a separate public search adapter. JSONL-backed code can keep discovery/loading local, then pass the loaded storages to the same scanner:
 
 ```ts
-const jsonlSearch = createJsonlScanningSessionSearch({ fs, sessionsRoot });
+async function* jsonlReadables(jsonl: JsonlSessionRepoOptions, query: JsonlSessionListOptions = {}) {
+  for (const metadata of await listJsonlSessionMetadata(jsonl, query)) {
+    yield loadJsonlSessionStorage(jsonl, metadata);
+  }
+}
+
+const search = createScanningSessionSearch((query) => jsonlReadables(jsonl, query));
 ```
 
-A scanning source must not call `SessionRepo.open()` on a harness-owned session if that operation may claim a writer lease. JSONL uses read-only loading helpers; already-open sessions/storages can be scanned directly.
+A scanning source must not call `SessionRepo.open()` on a harness-owned session if that operation may claim a writer lease. JSONL should use read-only loading helpers; already-open sessions/storages can be scanned directly.
 
 ### SQLite FTS
 
@@ -133,7 +139,6 @@ This is application-owned glue. Core provides the query contract and JSONL sessi
 ```ts
 import { Client } from "@elastic/elasticsearch";
 import {
-  jsonlSessionReadables,
   scanningEntries,
   type JsonlSessionMetadata,
   type JsonlSessionRepoOptions,
@@ -141,6 +146,13 @@ import {
   type SessionSearchHit,
   type SessionSearchOptions,
 } from "@earendil-works/pi-agent-core";
+
+// JSONL-backed code can provide this locally from existing JSONL list/load helpers.
+async function* jsonlReadables(jsonl: JsonlSessionRepoOptions, options: { cwd?: string } = {}) {
+  for (const metadata of await listJsonlSessionMetadata(jsonl, options)) {
+    yield loadJsonlSessionStorage(jsonl, metadata);
+  }
+}
 
 interface SearchIndexWriter<TItem> {
   apply(items: TItem[]): Promise<void>;
@@ -231,7 +243,7 @@ async function indexJsonlSessionsIntoElastic(
   elastic: ElasticSessionSearch,
   options: { cwd?: string } = {},
 ): Promise<void> {
-  for await (const session of jsonlSessionReadables(jsonl, { cwd: options.cwd })) {
+  for await (const session of jsonlReadables(jsonl, { cwd: options.cwd })) {
     const metadata = await session.getMetadata();
     for await (const candidate of scanningEntries(session)) {
       await elastic.apply([{

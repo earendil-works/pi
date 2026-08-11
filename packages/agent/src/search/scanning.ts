@@ -15,13 +15,9 @@ export type ScanningReadable<TMetadata extends SessionMetadata = SessionMetadata
 	"getMetadata" | "findEntries" | "getLabel"
 >;
 
-export type ScanningSessionSource<TMetadata extends SessionMetadata = SessionMetadata, TOptions = unknown> = (
+export type ScanningReadableSource<TMetadata extends SessionMetadata = SessionMetadata, TOptions = unknown> = (
 	options?: TOptions,
 ) => AsyncIterable<ScanningReadable<TMetadata>>;
-
-export type ScanningSessionSearchSource<TMetadata extends SessionMetadata = SessionMetadata, TOptions = unknown> =
-	| readonly ScanningReadable<TMetadata>[]
-	| ScanningSessionSource<TMetadata, TOptions>;
 
 export type ScanningSearchTextProjector<TMetadata extends SessionMetadata = SessionMetadata> = (
 	metadata: TMetadata,
@@ -106,7 +102,7 @@ async function* arraySource<TMetadata extends SessionMetadata>(
 }
 
 function readablesFor<TMetadata extends SessionMetadata, TSourceOptions>(
-	source: ScanningSessionSearchSource<TMetadata, TSourceOptions>,
+	source: readonly ScanningReadable<TMetadata>[] | ScanningReadableSource<TMetadata, TSourceOptions>,
 	options: TSourceOptions | undefined,
 ): AsyncIterable<ScanningReadable<TMetadata>> {
 	return typeof source === "function" ? source(options) : arraySource(source);
@@ -141,7 +137,7 @@ export function createScanningSessionSearch<
 	TSourceOptions = unknown,
 	THit extends SessionSearchHit = ScanningSessionSearchHit,
 >(
-	source: ScanningSessionSearchSource<TMetadata, TSourceOptions>,
+	source: readonly ScanningReadable<TMetadata>[] | ScanningReadableSource<TMetadata, TSourceOptions>,
 	options: ScanningSessionSearchOptions<TMetadata, TSourceOptions, THit> = {},
 ): SessionSearch<THit> {
 	const createHit =
