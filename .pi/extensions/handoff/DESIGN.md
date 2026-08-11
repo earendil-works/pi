@@ -219,6 +219,26 @@ fixture source), plus a manual smoke via `pi -e .pi/extensions/handoff/index.ts`
 in a scratch project. LLM smoke tests use Google Gemini free tier only — never
 Anthropic subscription auth (bills per-token).
 
+## Verification gates
+
+This extension lives outside `packages/`, so none of the repo's own gates reach it:
+`.pi/**` is absent from `tsconfig.json`'s `include` and `biome.json`'s `files.includes`,
+and it is not an npm workspace, so `npm run check` and `npm test` skip it silently.
+
+Tests and typecheck are gated by their own workflow, `.github/workflows/handoff-ext.yml`,
+kept as a separate file so rebasing this fork onto upstream pi never conflicts there. Run
+the same two commands locally from the repo root:
+
+```
+node node_modules/vitest/dist/cli.js --run --config .pi/extensions/handoff/vitest.config.ts
+npx tsgo --noEmit -p .pi/extensions/handoff/tsconfig.json
+```
+
+Formatting is the remaining gap: `biome check` ignores the path by config, and covering it
+would mean editing `biome.json` — a shared upstream file. Format by hand when needed with
+`--config-path` pointing at a copy of `biome.json` whose `files.includes` is
+`["**/*.ts", "!**/node_modules/**/*"]`.
+
 ## Explicitly out of scope for v1 (v2 hooks noted)
 
 - Context-fullness watcher (`ctx.getContextUsage()` checked on `agent_settled`)

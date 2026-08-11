@@ -61,6 +61,16 @@ export function splitKickoff(text: string): { body: string; kickoff?: string } {
 	return { body: text.trim() };
 }
 
+/**
+ * Inverse of `splitKickoff`: fold the note back into one editable document. `/handoff`
+ * hands this to the editor so the kickoff is reviewed alongside the body it belongs to,
+ * then re-splits the result. Kept beside `splitKickoff` so the two halves of the format
+ * cannot drift apart.
+ */
+export function joinKickoff(body: string, kickoff: string | undefined): string {
+	return kickoff ? `${body}\n\nKICKOFF: ${kickoff}` : body;
+}
+
 export interface ComposeOptions {
 	modelRegistry: ModelRegistry;
 	model: Model<any>;

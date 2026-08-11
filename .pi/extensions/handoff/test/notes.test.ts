@@ -164,8 +164,23 @@ describe("writeNote / listPendingNotePaths", () => {
 
 describe("ensureGitExclude", () => {
 	const excludeOf = (repo: string) => join(repo, ".git", "info", "exclude");
+	/**
+	 * A git environment isolated from the developer's machine, so these assertions test
+	 * `ensureGitExclude` and nothing else. `GIT_CONFIG_NOSYSTEM` suppresses only
+	 * /etc/gitconfig: `core.excludesFile` from ~/.gitconfig still reaches `git check-ignore`,
+	 * where a global `.pi/` entry fails the negative assertion on correct code and a global
+	 * `*.md` makes the positive ones pass no matter what was written. The GIT_DIR family is
+	 * cleared so a run under a git hook or `git rebase --exec` cannot aim git at the outer repo.
+	 */
+	const gitEnv = (): NodeJS.ProcessEnv => {
+		const env: NodeJS.ProcessEnv = { ...process.env, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null" };
+		delete env.GIT_DIR;
+		delete env.GIT_WORK_TREE;
+		delete env.GIT_INDEX_FILE;
+		return env;
+	};
 	const git = (repo: string, ...args: string[]) =>
-		spawnSync("git", args, { cwd: repo, env: { ...process.env, GIT_CONFIG_NOSYSTEM: "1" }, encoding: "utf8" });
+		spawnSync("git", args, { cwd: repo, env: gitEnv(), encoding: "utf8" });
 	/** `git check-ignore` exits 1 for a path that is not ignored. */
 	const isIgnored = (repo: string, relativePath: string) => git(repo, "check-ignore", relativePath).status === 0;
 
