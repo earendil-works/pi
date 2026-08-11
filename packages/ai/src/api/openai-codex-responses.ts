@@ -69,6 +69,7 @@ const CODEX_TOOL_CALL_PROVIDERS = new Set(["openai", "openai-codex", "opencode"]
 const WEBSOCKET_MESSAGE_TOO_BIG_CLOSE_CODE = 1009;
 const WEBSOCKET_CONNECTION_LIMIT_REACHED_CODE = "websocket_connection_limit_reached";
 const PREVIOUS_RESPONSE_NOT_FOUND_CODE = "previous_response_not_found";
+const RATE_LIMIT_EXCEEDED_CODE = "rate_limit_exceeded";
 
 const CODEX_RESPONSE_STATUSES = new Set<CodexResponseStatus>([
 	"completed",
@@ -141,6 +142,16 @@ function isRetryableError(status: number, errorText: string): boolean {
 		return true;
 	}
 	return /rate.?limit|overloaded|service.?unavailable|upstream.?connect|connection.?refused/i.test(errorText);
+}
+
+/** Extracts the retry delay embedded in a Codex `rate_limit_exceeded` error message. */
+function getCodexRateLimitRetryDelayMs(errorMessage: string): number | undefined {
+	const match = /try again in\s*(\d+(?:\.\d+)?)\s*(ms|s|seconds?)/i.exec(errorMessage);
+	if (!match) return undefined;
+
+	const value = Number(match[1]);
+	if (!Number.isFinite(value) || value < 0) return undefined;
+	return match[2].toLowerCase() === "ms" ? value : value * 1000;
 }
 
 function getRetryAfterDelayMs(headers: Headers): number | undefined {
@@ -308,6 +319,7 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 				let websocketStarted = false;
 				let retriedWebSocketConnectionLimit = false;
 				let retriedMissingWebSocketContinuation = false;
+				let retriedWebSocketRateLimit = false;
 				while (true) {
 					websocketStarted = false;
 					try {
@@ -348,12 +360,28 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 						const aborted = options?.signal?.aborted;
 						const connectionLimitBeforeStart = !websocketStarted && isWebSocketConnectionLimitReachedError(error);
 						const previousResponseNotFound = isPreviousResponseNotFoundError(error);
+						// Replaying after an output item risks duplicating visible content or tool calls.
+						const rateLimitBeforeOutput = output.content.length === 0 && isCodexRateLimitError(error);
+						// Missing continuations get one full-request retry on a fresh connection.
 						if (!aborted && previousResponseNotFound && !retriedMissingWebSocketContinuation) {
 							retriedMissingWebSocketContinuation = true;
 							continue;
 						}
+						// Connection limits before stream start get one fresh-connection retry.
 						if (!aborted && connectionLimitBeforeStart && !retriedWebSocketConnectionLimit) {
 							retriedWebSocketConnectionLimit = true;
+							continue;
+						}
+						// Rate limits get one delayed retry; persistent limits are surfaced to the caller.
+						if (!aborted && rateLimitBeforeOutput && !retriedWebSocketRateLimit) {
+							retriedWebSocketRateLimit = true;
+							// response.created may have populated this before the failed attempt.
+							delete output.responseId;
+							const delayMs =
+								error instanceof CodexApiError
+									? (getCodexRateLimitRetryDelayMs(error.message) ?? BASE_DELAY_MS)
+									: BASE_DELAY_MS;
+							await sleep(validateRetryDelayMs(delayMs, options), options?.signal);
 							continue;
 						}
 						if (aborted || (isCodexNonTransportError(error) && !connectionLimitBeforeStart)) {
@@ -710,6 +738,10 @@ function isWebSocketConnectionLimitReachedError(error: unknown): boolean {
 
 function isPreviousResponseNotFoundError(error: unknown): boolean {
 	return error instanceof CodexApiError && error.code === PREVIOUS_RESPONSE_NOT_FOUND_CODE;
+}
+
+function isCodexRateLimitError(error: unknown): boolean {
+	return error instanceof CodexApiError && error.code === RATE_LIMIT_EXCEEDED_CODE;
 }
 
 function extractCodexEventError(event: Record<string, unknown>): { code?: string; message?: string } {

@@ -1674,6 +1674,80 @@ describe("openai-codex streaming", () => {
 		expect(fetchMock).not.toHaveBeenCalled();
 	});
 
+	it("reconnects once after the websocket rate limit delay before output starts", async () => {
+		vi.useFakeTimers();
+		const token = mockToken();
+		let connections = 0;
+		const fetchMock = vi.fn();
+		vi.stubGlobal("fetch", fetchMock);
+
+		class MockWebSocket extends EventTarget {
+			private readonly rateLimited = connections++ === 0;
+
+			constructor() {
+				super();
+				queueMicrotask(() => this.dispatchEvent(new Event("open")));
+			}
+
+			send(): void {
+				const event = this.rateLimited
+					? {
+							type: "response.failed",
+							response: {
+								id: "resp_rate_limited",
+								status: "failed",
+								error: { code: "rate_limit_exceeded", message: "Rate limit reached. Try again in 50ms." },
+							},
+						}
+					: {
+							type: "response.completed",
+							response: {
+								id: "resp_1",
+								status: "completed",
+								usage: { input_tokens: 5, output_tokens: 3, total_tokens: 8 },
+							},
+						};
+				queueMicrotask(() => {
+					this.dispatchEvent(Object.assign(new Event("message"), { data: JSON.stringify(event) }));
+				});
+			}
+
+			close(): void {}
+		}
+
+		vi.stubGlobal("WebSocket", MockWebSocket);
+
+		const model: Model<"openai-codex-responses"> = {
+			id: "gpt-5.1-codex",
+			name: "GPT-5.1 Codex",
+			api: "openai-codex-responses",
+			provider: "openai-codex",
+			baseUrl: "https://chatgpt.com/backend-api",
+			reasoning: true,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 400000,
+			maxTokens: 128000,
+		};
+
+		const resultPromise = streamOpenAICodexResponses(
+			model,
+			{ systemPrompt: "", messages: [] },
+			{ apiKey: token },
+		).result();
+		await vi.advanceTimersByTimeAsync(0);
+		expect(connections).toBe(1);
+		await vi.advanceTimersByTimeAsync(49);
+		expect(connections).toBe(1);
+		await vi.advanceTimersByTimeAsync(1);
+		const result = await resultPromise;
+
+		expect(result.stopReason).toBe("stop");
+		expect(result.responseId).toBe("resp_1");
+		expect(connections).toBe(2);
+		expect(fetchMock).not.toHaveBeenCalled();
+	});
+
 	it("falls back to SSE when a websocket is idle before the first event", async () => {
 		vi.useFakeTimers();
 		const token = mockToken();
