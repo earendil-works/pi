@@ -12,8 +12,8 @@ import {
 } from "../../../src/harness/session/index.ts";
 import {
 	createJsonlScanningSessionSearch,
-	createMemoryScanningSessionSource,
 	createScanningSessionSearch,
+	createScanningSessionSourceFromReadables,
 	type ScanningSessionSource,
 } from "../../../src/search/index.ts";
 import type { AgentMessage } from "../../../src/types.ts";
@@ -45,7 +45,7 @@ function createMemorySession(metadata: WorkspaceMetadata): Session<WorkspaceMeta
 }
 
 function createSource(sessions: Session<WorkspaceMetadata>[]): ScanningSessionSource<WorkspaceMetadata> {
-	return createMemoryScanningSessionSource(sessions);
+	return createScanningSessionSourceFromReadables(sessions);
 }
 
 async function collect<T>(iterable: AsyncIterable<T>): Promise<T[]> {

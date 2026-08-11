@@ -1,4 +1,4 @@
-import type { Entry, SessionMetadata } from "../harness/session/types.ts";
+import type { Entry, SessionMetadata, SessionStorage } from "../harness/session/types.ts";
 import type { SessionSearch, SessionSearchHit, SessionSearchOptions } from "./index.ts";
 
 export interface SessionSearchCandidate {
@@ -23,6 +23,22 @@ export interface ScanningSessionSource<TMetadata extends SessionMetadata = Sessi
 	sessions(options?: TOptions): AsyncIterable<ScanningSession<TMetadata>>;
 }
 
+export type ScanningReadable<TMetadata extends SessionMetadata = SessionMetadata> = Pick<
+	SessionStorage<TMetadata>,
+	"getMetadata" | "findEntries" | "getLabel"
+>;
+
+export type ScanningSearchTextProjector<TMetadata extends SessionMetadata = SessionMetadata> = (
+	metadata: TMetadata,
+	entry: Entry,
+	label: string | undefined,
+) => string;
+
+export interface ScanningReadableOptions<TMetadata extends SessionMetadata = SessionMetadata> {
+	projectText?: ScanningSearchTextProjector<TMetadata>;
+	pageSize?: number;
+}
+
 export interface ScanningSessionSearchHit extends SessionSearchHit {
 	readonly timestamp: number;
 	readonly snippet: string;
@@ -36,6 +52,82 @@ export interface ScanningSessionSearchOptions<
 	sourceOptions?: (text: string, options: SessionSearchOptions) => TListOptions | undefined;
 	match?: (queryText: string, candidate: SessionSearchCandidate, metadata: TMetadata) => boolean;
 	createHit?: (metadata: TMetadata, candidate: SessionSearchCandidate) => THit;
+}
+
+function defaultSearchText<TMetadata extends SessionMetadata>(
+	_metadata: TMetadata,
+	entry: Entry,
+	label: string | undefined,
+): string {
+	return label === undefined ? JSON.stringify(entry) : `${JSON.stringify(entry)} ${label}`;
+}
+
+async function* searchCandidatesFromReadable<TMetadata extends SessionMetadata>(
+	readable: ScanningReadable<TMetadata>,
+	options: ScanningReadableOptions<TMetadata>,
+	query: { afterSeq?: number; limit?: number; entryTypes?: readonly Entry["type"][] } = {},
+): AsyncIterable<SessionSearchCandidate> {
+	const metadata = await readable.getMetadata();
+	const projectText = options.projectText ?? defaultSearchText;
+	const pageSize = query.limit ?? options.pageSize ?? 100;
+	let afterSeq = query.afterSeq ?? 0;
+	const entryTypes = query.entryTypes === undefined ? undefined : new Set(query.entryTypes);
+	while (true) {
+		const entries = await readable.findEntries({
+			order: "oldestFirst",
+			limit: pageSize,
+			cursor: { afterSeq },
+			type: query.entryTypes?.length === 1 ? query.entryTypes[0] : undefined,
+		});
+		if (entries.length === 0) break;
+		for (const entry of entries) {
+			if (entryTypes !== undefined && !entryTypes.has(entry.type)) continue;
+			const label = await readable.getLabel(entry.id);
+			yield {
+				entryId: entry.id,
+				seq: entry.seq,
+				type: entry.type,
+				timestamp: entry.timestamp,
+				text: projectText(metadata, entry, label),
+				fields: label === undefined ? undefined : { label },
+			};
+		}
+		afterSeq = entries[entries.length - 1]?.seq ?? afterSeq;
+		if (entries.length < pageSize) break;
+	}
+}
+
+export function createScanningSessionFromReadable<TMetadata extends SessionMetadata>(
+	readable: ScanningReadable<TMetadata>,
+	options: ScanningReadableOptions<TMetadata> = {},
+): ScanningSession<TMetadata> {
+	return {
+		metadata: () => readable.getMetadata(),
+		entries: (entryQuery) => searchCandidatesFromReadable(readable, options, entryQuery),
+	};
+}
+
+export async function* scanningSessionsFromReadables<TMetadata extends SessionMetadata>(
+	readables: readonly ScanningReadable<TMetadata>[],
+	options: ScanningReadableOptions<TMetadata> = {},
+): AsyncIterable<ScanningSession<TMetadata>> {
+	for (const readable of readables) yield createScanningSessionFromReadable(readable, options);
+}
+
+export function createScanningSessionSourceFromReadables<TMetadata extends SessionMetadata>(
+	readables: readonly ScanningReadable<TMetadata>[],
+	options: ScanningReadableOptions<TMetadata> = {},
+): ScanningSessionSource<TMetadata, void> {
+	return {
+		sessions: () => scanningSessionsFromReadables(readables, options),
+	};
+}
+
+export function createScanningSessionSearchFromReadables<TMetadata extends SessionMetadata>(
+	readables: readonly ScanningReadable<TMetadata>[],
+	options?: ScanningReadableOptions<TMetadata>,
+): SessionSearch<ScanningSessionSearchHit> {
+	return createScanningSessionSearch(createScanningSessionSourceFromReadables(readables, options));
 }
 
 function defaultMatch(queryText: string, candidate: SessionSearchCandidate): boolean {

@@ -57,7 +57,7 @@ async function updateResults(query: string) {
 
 ### Scanning search
 
-The reusable scanner consumes projected entries rather than storage APIs directly:
+The reusable scanner adapts session-like readables (`getMetadata`, `findEntries`, and `getLabel`) into projected entries:
 
 ```ts
 export interface SessionSearchCandidate {
@@ -77,8 +77,10 @@ export interface ScanningSessionSearchHit extends SessionSearchHit {
 
 `SessionSearchCandidate` is pre-match scanner input: it contains searchable text, type, sequence, and optional projected fields. The scanner turns matching candidates into public hits.
 
+Already-open sessions or storages can be scanned directly:
+
 ```ts
-const search = createMemoryScanningSessionSearch(sessions);
+const search = createScanningSessionSearchFromReadables(sessions);
 
 for await (const hit of search.search("authentication", { limit: 10 })) {
   const session = sessionsById.get(hit.sessionId)!;
@@ -87,7 +89,7 @@ for await (const hit of search.search("authentication", { limit: 10 })) {
 }
 ```
 
-Memory and JSONL scanning return `SessionSearch<ScanningSessionSearchHit>`:
+JSONL only adds discovery/loading before using the same scanner:
 
 ```ts
 const jsonlSearch = createJsonlScanningSessionSearch({ fs, sessionsRoot });

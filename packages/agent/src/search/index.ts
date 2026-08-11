@@ -3,23 +3,29 @@ import type { Entry } from "../harness/session/types.ts";
 export {
 	createJsonlScanningSessionSearch,
 	createJsonlScanningSessionSource,
+	type JsonlScanningSessionSourceOptions,
+	type JsonlSearchTextProjector,
 	type JsonlSessionSearchHit,
 	jsonlScanningSessions,
 	jsonlSearchSessions,
 } from "./jsonl.ts";
-export {
-	createMemoryScanningSessionSearch,
-	createMemoryScanningSessionSource,
-	memoryScanningSessions,
-} from "./memory.ts";
 export type {
+	ScanningReadable,
+	ScanningReadableOptions,
+	ScanningSearchTextProjector,
 	ScanningSession,
 	ScanningSessionSearchHit,
 	ScanningSessionSearchOptions,
 	ScanningSessionSource,
 	SessionSearchCandidate,
 } from "./scanning.ts";
-export { createScanningSessionSearch } from "./scanning.ts";
+export {
+	createScanningSessionFromReadable,
+	createScanningSessionSearch,
+	createScanningSessionSearchFromReadables,
+	createScanningSessionSourceFromReadables,
+	scanningSessionsFromReadables,
+} from "./scanning.ts";
 
 export interface SessionSearchOptions {
 	/** Restrict results to specific canonical entry types. */
