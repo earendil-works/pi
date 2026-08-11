@@ -94,6 +94,26 @@ function isToolCallBlock(block: unknown): block is ToolCallBlock {
 	);
 }
 
+/**
+ * Cap on the argument preview inside a tool-call marker. Long enough that "what did
+ * you send / run / write?" is answerable, short enough that a giant `write` body
+ * cannot dominate the transcript.
+ */
+const TOOL_ARGS_CHARS = 200;
+
+function toolCallMarker(block: ToolCallBlock): string {
+	let args = "";
+	if (block.arguments && Object.keys(block.arguments).length > 0) {
+		try {
+			args = JSON.stringify(block.arguments);
+		} catch {
+			args = "(unserializable arguments)";
+		}
+		if (args.length > TOOL_ARGS_CHARS) args = `${args.slice(0, TOOL_ARGS_CHARS)}…`;
+	}
+	return `[ran ${block.name}${args ? ` ${args}` : ""}]`;
+}
+
 /** Text plus one-line markers for tool calls, so the narrative keeps what the session *did*. */
 function contentToText(content: unknown): string {
 	if (typeof content === "string") return content;
@@ -104,18 +124,24 @@ function contentToText(content: unknown): string {
 			const text = block.text.trim();
 			if (text) parts.push(text);
 		} else if (isToolCallBlock(block)) {
-			const path = block.arguments?.path ?? block.arguments?.file_path;
-			parts.push(`[ran ${block.name}${typeof path === "string" && path ? ` on ${path}` : ""}]`);
+			parts.push(toolCallMarker(block));
 		}
 	}
 	return parts.join("\n");
 }
 
+/**
+ * Cap on a tool result's preview line. Results carry what the session *saw* — command
+ * output, incoming messages — which questions often target; but a single `read` result
+ * can be a whole file, so only the head survives.
+ */
+const TOOL_RESULT_CHARS = 300;
+
 interface RawEntry {
 	type?: unknown;
 	id?: unknown;
 	parentId?: unknown;
-	message?: { role?: unknown; content?: unknown };
+	message?: { role?: unknown; content?: unknown; toolName?: unknown };
 }
 
 /**
@@ -124,8 +150,9 @@ interface RawEntry {
  * Follows the **active branch only**: the file is append-ordered and entries carry
  * `parentId`, so walking parents up from the last entry excludes anything the user
  * rewound away from via `/tree` — the same reasoning as the digest's `getBranch()`
- * (see index.ts). Tool results and custom messages (injected briefings) are dropped;
- * user text, assistant text, and tool-call markers carry the story.
+ * (see index.ts). Custom messages (injected briefings) are dropped; user text,
+ * assistant text, tool-call markers, and head-capped tool-result previews carry the
+ * story — the previews are what let the ghost answer "what did you see?" questions.
  *
  * Returns "" when the file contains no usable messages.
  */
@@ -159,6 +186,14 @@ export function renderTranscript(content: string): string {
 	for (const entry of branch) {
 		if (entry.type !== "message") continue;
 		const role = entry.message?.role;
+		if (role === "toolResult") {
+			const text = contentToText(entry.message?.content);
+			if (!text) continue;
+			const name = typeof entry.message?.toolName === "string" ? entry.message.toolName : "tool";
+			const preview = text.length > TOOL_RESULT_CHARS ? `${text.slice(0, TOOL_RESULT_CHARS)}…` : text;
+			lines.push(`[${name} result] ${preview}`);
+			continue;
+		}
 		if (role !== "user" && role !== "assistant") continue;
 		const text = contentToText(entry.message?.content);
 		if (!text) continue;

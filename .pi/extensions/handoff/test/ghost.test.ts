@@ -76,7 +76,7 @@ function jsonl(entries: unknown[]): string {
 }
 
 describe("renderTranscript", () => {
-	it("renders user and assistant text with tool-call markers, skipping other roles", () => {
+	it("renders user/assistant text, tool-call markers, and result previews, skipping custom messages", () => {
 		const text = renderTranscript(
 			jsonl([
 				{ type: "session", id: "s", version: 3 },
@@ -93,13 +93,23 @@ describe("renderTranscript", () => {
 						],
 					},
 				},
-				{ type: "message", id: "3", parentId: "2", message: { role: "toolResult", content: "file contents" } },
+				{
+					type: "message",
+					id: "3",
+					parentId: "2",
+					message: { role: "toolResult", toolName: "read", content: "file contents" },
+				},
 				{ type: "message", id: "4", parentId: "3", message: { role: "custom", content: "injected memo" } },
 				{ type: "message", id: "5", parentId: "4", message: { role: "assistant", content: "Fixed it." } },
 			]),
 		);
 		expect(text).toBe(
-			["User: fix the bug", "Assistant: Looking now.\n[ran read on src/a.ts]", "Assistant: Fixed it."].join("\n\n"),
+			[
+				"User: fix the bug",
+				'Assistant: Looking now.\n[ran read {"path":"src/a.ts"}]',
+				"[read result] file contents",
+				"Assistant: Fixed it.",
+			].join("\n\n"),
 		);
 	});
 
@@ -115,6 +125,43 @@ describe("renderTranscript", () => {
 		);
 		expect(text).toContain("kept path");
 		expect(text).not.toContain("abandoned path");
+	});
+
+	it("caps giant tool-result previews at their head", () => {
+		const text = renderTranscript(
+			jsonl([
+				{ type: "session", id: "s", version: 3 },
+				{
+					type: "message",
+					id: "1",
+					parentId: null,
+					message: { role: "toolResult", toolName: "bash", content: [{ type: "text", text: "z".repeat(5000) }] },
+				},
+			]),
+		);
+		expect(text.startsWith("[bash result] zzz")).toBe(true);
+		expect(text.endsWith("…")).toBe(true);
+		expect(text.length).toBeLessThan(400);
+	});
+
+	it("caps giant tool-call arguments in the marker", () => {
+		const text = renderTranscript(
+			jsonl([
+				{ type: "session", id: "s", version: 3 },
+				{
+					type: "message",
+					id: "1",
+					parentId: null,
+					message: {
+						role: "assistant",
+						content: [{ type: "toolCall", name: "write", arguments: { path: "big.txt", content: "y".repeat(5000) } }],
+					},
+				},
+			]),
+		);
+		expect(text).toContain("[ran write ");
+		expect(text).toContain("…]");
+		expect(text.length).toBeLessThan(300);
 	});
 
 	it("skips malformed lines and returns empty for a message-free file", () => {
