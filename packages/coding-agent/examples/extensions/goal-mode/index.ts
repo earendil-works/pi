@@ -173,6 +173,16 @@ function resumeGoal(pi: ExtensionAPI, ctx: ExtensionContext): void {
 		ctx.ui.notify("No goal set.", "info");
 		return;
 	}
+	if (goal.status === "active" && goal.lastTurnHadToolCall !== false) {
+		ctx.ui.notify("Goal is already active.", "info");
+		return;
+	}
+	if (goal.status === "active") {
+		// The goal stopped because the last turn made no tool calls. Resume
+		// sends a fresh continuation instead of leaving the user stuck.
+		setGoal(pi, ctx, { ...goal, updatedAt: Date.now() }, { notify: "Goal resumed." });
+		return;
+	}
 	if (goal.status !== "paused") {
 		ctx.ui.notify(`Goal cannot be resumed from status ${goal.status}.`, "info");
 		return;
@@ -363,6 +373,13 @@ export default function goalModeExtension(pi: ExtensionAPI): void {
 		if (goal?.status === "active" && event.reason !== "reload") {
 			startGoal(pi, ctx);
 		}
+	});
+
+	pi.on("session_tree", async (_event, ctx) => {
+		pendingRestart = false;
+		continuationQueued = false;
+		goal = getLatestGoalState(ctx.sessionManager.getBranch());
+		updateStatus(pi, ctx);
 	});
 
 	pi.on("turn_end", async (event, ctx) => {

@@ -34,6 +34,7 @@ pi --extension examples/extensions/goal-mode/index.ts \
 
 - The goal is stored as a custom session entry, so it survives resume, fork,
   and compaction. The active branch's most recent goal entry wins.
+- Navigating the session tree reloads the goal state for the selected branch.
 - When a goal exists, the footer/status bar, editor widget, and terminal title
   show `GOAL MODE`, `GOAL PAUSED`, `GOAL COMPLETE`, or `GOAL BUDGET LIMITED`.
   The status bar shows `mode: build` with no goal and `mode: goal` while a

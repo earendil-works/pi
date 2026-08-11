@@ -226,6 +226,42 @@ describe("goal-mode example extension", () => {
 		expect(sendUserMessage).toHaveBeenCalledTimes(2);
 	});
 
+	it("resumes an active goal that stopped after a no-tool-call turn", async () => {
+		const { emit, runCommand, sendUserMessage } = setup();
+
+		await runCommand("goal", "Fix tests");
+		await emit("agent_start", { type: "agent_start" });
+		await emit("turn_end", {
+			type: "turn_end",
+			turnIndex: 1,
+			message: createAssistantMessage("I checked, nothing to change"),
+			toolResults: [],
+		});
+
+		await runCommand("goal", "resume");
+
+		expect(sendUserMessage).toHaveBeenCalledTimes(2);
+		expect(sendUserMessage.mock.calls[1]?.[0]).toContain("Fix tests");
+	});
+
+	it("reloads goal state after session tree navigation", async () => {
+		const { emit, entries, runCommand, setStatus } = setup();
+
+		await runCommand("goal", "Fix tests");
+		entries.push({
+			type: "custom",
+			customType: "goal-mode",
+			data: null,
+			id: "cleared",
+			parentId: "goal-entry",
+			timestamp: new Date().toISOString(),
+		} as SessionEntry);
+
+		await emit("session_tree", { type: "session_tree", newLeafId: "cleared", oldLeafId: "goal-entry" });
+
+		expect(setStatus).toHaveBeenLastCalledWith("goal-mode", "mode: build");
+	});
+
 	it("pauses, resumes, and clears a goal", async () => {
 		const { abort, entries, runCommand, setStatus, setTitle, setWidget } = setup();
 
