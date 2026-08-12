@@ -3164,7 +3164,10 @@ export class AgentSession {
 				output: usageTotals.output,
 				cacheRead: usageTotals.cacheRead,
 				cacheWrite: usageTotals.cacheWrite,
-				total: usageTotals.input + usageTotals.output + usageTotals.cacheRead + usageTotals.cacheWrite,
+				// BILLABLE only (2026-08-13, mirrors miss-minutes fix e1f243e5):
+				// cache is billed at 1/120th the input rate; tokens.db convention
+				// excludes it from totals. Inflated totals skewed budgets + stats.
+				total: usageTotals.input + usageTotals.output,
 			},
 			cost: usageTotals.cost,
 			contextUsage: this.getContextUsage(),
