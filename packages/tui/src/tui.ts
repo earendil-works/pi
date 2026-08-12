@@ -17,6 +17,33 @@ import {
 import { getCapabilities, isImageLine, setCellDimensions } from "./terminal-image.ts";
 import { extractSegments, normalizeTerminalOutput, sliceByColumn, sliceWithWidth, visibleWidth } from "./utils.ts";
 
+/** Kind of pointer event delivered to {@link Component.onMouse}. */
+export type TuiMouseEventType = "press" | "release" | "drag" | "wheel";
+
+/**
+ * Pointer event delivered to a component that occupies the pointed-at cell.
+ * `row`/`col` are relative to the component's own layout box, so a component
+ * can hit-test its own rendered output without knowing where it was placed.
+ */
+export interface TuiMouseEvent {
+	type: TuiMouseEventType;
+	/** Row within the component's layout box (0 = its first rendered row). */
+	row: number;
+	/** Column within the component's layout box (0 = its first column). */
+	col: number;
+	/** Terminal row of the event (0-based). */
+	screenRow: number;
+	/** Terminal column of the event (0-based). */
+	screenCol: number;
+	/** 0 = primary, 1 = middle, 2 = secondary. Undefined for wheel events. */
+	button: 0 | 1 | 2 | undefined;
+	/** -1 = wheel up, 1 = wheel down. Undefined for button events. */
+	wheel: -1 | 1 | undefined;
+	shift: boolean;
+	alt: boolean;
+	ctrl: boolean;
+}
+
 /**
  * Component interface - all components must implement this
  */
@@ -38,6 +65,14 @@ export interface Component {
 	 * Default is false - release events are filtered out.
 	 */
 	wantsKeyRelease?: boolean;
+
+	/**
+	 * Optional handler for mouse events landing on the component's own rows.
+	 * Called by the alternate-screen viewport before its scrollbar, selection,
+	 * and wheel handling, innermost component first. Return true to consume the
+	 * event and keep the viewport's own handling out of it.
+	 */
+	onMouse?(event: TuiMouseEvent): boolean;
 
 	/**
 	 * Invalidate any cached rendering state.

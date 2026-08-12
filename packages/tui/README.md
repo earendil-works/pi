@@ -211,6 +211,7 @@ All components implement:
 interface Component {
   render(width: number): string[];
   handleInput?(data: string): void;
+  onMouse?(event: TuiMouseEvent): boolean;
   invalidate?(): void;
 }
 ```
@@ -219,9 +220,46 @@ interface Component {
 |--------|-------------|
 | `render(width)` | Returns an array of strings, one per line. Each line **must not exceed `width`** or the TUI will error. Use `truncateToWidth()` or manual wrapping to ensure this. |
 | `handleInput?(data)` | Called when the component has focus and receives keyboard input. The `data` string contains raw terminal input (may include ANSI escape sequences). |
+| `onMouse?(event)` | Called for mouse events on the component's own rows. See [Mouse Events](#mouse-events). |
 | `invalidate?()` | Called to clear any cached render state. Components should re-render from scratch on the next `render()` call. |
 
 The TUI appends a full SGR reset and OSC 8 reset at the end of each rendered line. Styles do not carry across lines. If you emit multi-line text with styling, reapply styles per line or use `wrapTextWithAnsi()` so styles are preserved for each wrapped line.
+
+### Mouse Events
+
+`TuiAltScreen` owns the mouse in fullscreen mode. A component can opt into the events landing on its own rows by implementing `onMouse`:
+
+```typescript
+import type { Component, TuiMouseEvent } from "@earendil-works/pi-tui";
+
+class ResourcePanel implements Component {
+  private expanded = new Set<number>();
+
+  render(width: number): string[] {
+    return this.rows.map((row, index) => `${this.expanded.has(index) ? "▾" : "▸"} ${row.title}`);
+  }
+
+  onMouse(event: TuiMouseEvent): boolean {
+    // event.row / event.col are relative to this component's own rows
+    if (event.type !== "press" || event.button !== 0 || event.col > 0) return false;
+    this.toggle(event.row);
+    return true;  // consumed: no text selection, no viewport scroll
+  }
+
+  invalidate(): void {}
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `type` | `"press"`, `"release"`, `"drag"`, or `"wheel"`. Pointer motion with no button held is not reported. |
+| `row`, `col` | 0-based position within the component's own layout box. |
+| `screenRow`, `screenCol` | 0-based position in the terminal. |
+| `button` | `0` primary, `1` middle, `2` secondary; `undefined` for wheel events. |
+| `wheel` | `-1` up, `1` down; `undefined` for button events. |
+| `shift`, `alt`, `ctrl` | Modifier state reported by the terminal. |
+
+Events are offered to the innermost component under the pointer first, then outward. Returning `true` consumes the event, so the viewport's own wheel scrolling, scrollbar dragging, and text selection do not also act on it; returning `false` falls through to them unchanged. A component whose rows are scrolled out of its `ScrollView` viewport receives nothing, and events are not dispatched while a focused overlay owns input, while a scrollbar drag is in progress, or while a text selection drag is active.
 
 ### Focusable Interface (IME Support)
 

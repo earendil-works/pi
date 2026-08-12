@@ -4,6 +4,7 @@
 
 ### Added
 
+- Added optional `Component.onMouse(event)` so components receive press, release, drag, and wheel events on their own rows with box-relative coordinates, dispatched innermost first before fullscreen wheel, scrollbar, and selection handling ([#7683](https://github.com/earendil-works/pi/issues/7683)).
 - Added unbound single-line transcript scrolling actions, `tui.altScreen.lineUp` and `tui.altScreen.lineDown`, for fullscreen TUI keybindings ([#7830](https://github.com/earendil-works/pi/issues/7830)).
 - Added incremental primary-scroll-view search to the fullscreen TUI with configurable match styles, `Ctrl+Shift+F`, and next/previous navigation with `Enter`/`Ctrl+G` and `Shift+Enter`/`Ctrl+Shift+G`.
 

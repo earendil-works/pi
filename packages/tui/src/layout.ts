@@ -397,6 +397,23 @@ export function getScrollViewBox(frame: LayoutFrame, scrollView: ScrollView): La
 	return visit(frame.root);
 }
 
+/**
+ * Boxes whose component opted into mouse events and whose visible area covers
+ * (x, y), innermost first. `clip` gates on visibility so a component scrolled
+ * out of its scroll view's viewport never receives events.
+ */
+export function getMouseTargetsAt(frame: LayoutFrame, x: number, y: number): LayoutBox[] {
+	const result: Array<{ box: LayoutBox; depth: number }> = [];
+	const visit = (box: LayoutBox, depth: number): void => {
+		if (!containsPoint(box.clip, x, y)) return;
+		if (box.component.onMouse && containsPoint(box.rect, x, y)) result.push({ box, depth });
+		for (const child of box.children) visit(child, depth + 1);
+	};
+	visit(frame.root, 0);
+	result.sort((a, b) => b.depth - a.depth);
+	return result.map((entry) => entry.box);
+}
+
 export function getScrollViewsAt(frame: LayoutFrame, x: number, y: number): ScrollView[] {
 	const result: Array<{ scrollView: ScrollView; depth: number }> = [];
 	const visit = (box: LayoutBox, depth: number): void => {

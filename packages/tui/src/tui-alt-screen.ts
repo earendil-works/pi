@@ -9,6 +9,7 @@ import { ScrollView } from "./components/scroll-view.ts";
 import { getKeybindings } from "./keybindings.ts";
 import { isKeyRelease } from "./keys.ts";
 import {
+	getMouseTargetsAt,
 	getScrollbarGeometry,
 	getScrollViewBox,
 	getScrollViewsAt,
@@ -34,6 +35,8 @@ import {
 	compositeTuiLine,
 	type OverlayHandle,
 	TuiBase,
+	type TuiMouseEvent,
+	type TuiMouseEventType,
 	type TuiStopOptions,
 	VIEWPORT_TUI,
 	type ViewportTUI,
@@ -107,6 +110,8 @@ interface SgrMouseEvent {
 
 interface WheelEvent {
 	direction: -1 | 1;
+	/** Raw mouse button byte, kept for modifier bits. */
+	button: number;
 	x: number;
 	y: number;
 }
@@ -554,11 +559,30 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		const wheelEvent = this.parseWheelEvent(data);
 		if (wheelEvent) {
 			if (this.shouldDeferViewportInputToOverlay()) return undefined;
+			if (
+				this.dispatchComponentMouse("wheel", wheelEvent.button, wheelEvent.x, wheelEvent.y, wheelEvent.direction)
+			) {
+				return { consume: true };
+			}
 			this.routeWheel(wheelEvent);
 			return { consume: true };
 		}
 		const mouseEvent = this.parseSgrMouseEvent(data);
 		if (mouseEvent) {
+			// Pointer motion with no button held reports button bits 3. All-motion
+			// tracking makes those arrive for every cell the pointer crosses, so they
+			// are dropped instead of being reported as drags.
+			const isMotionWithoutButton = (mouseEvent.button & 32) !== 0 && (mouseEvent.button & 3) === 3;
+			const type: TuiMouseEventType | undefined = mouseEvent.release
+				? "release"
+				: isMotionWithoutButton
+					? undefined
+					: (mouseEvent.button & 32) !== 0
+						? "drag"
+						: "press";
+			if (type && this.dispatchComponentMouse(type, mouseEvent.button, mouseEvent.x, mouseEvent.y, undefined)) {
+				return { consume: true };
+			}
 			if (this.handleRightClickPaste(mouseEvent)) return { consume: true };
 			const handled = this.handleScrollbarMouseEvent(mouseEvent);
 			if (!this.scrollbarDrag) this.updateScrollbarHover(mouseEvent.x, mouseEvent.y);
@@ -635,6 +659,42 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		return undefined;
 	}
 
+	/**
+	 * Offer a mouse event to the components under the pointer, innermost first.
+	 * Returns true when one consumed it, which keeps the viewport's own wheel,
+	 * scrollbar, and selection handling from also acting on the event.
+	 */
+	private dispatchComponentMouse(
+		type: TuiMouseEventType,
+		rawButton: number,
+		x: number,
+		y: number,
+		wheel: -1 | 1 | undefined,
+	): boolean {
+		if (!this.currentLayout || this.scrollbarDrag || this.selectionPressActive) return false;
+		if (this.shouldDeferViewportInputToOverlay()) return false;
+		const targets = getMouseTargetsAt(this.currentLayout, x, y);
+		if (targets.length === 0) return false;
+		const buttonBits = (rawButton & 3) as 0 | 1 | 2 | 3;
+		const event = {
+			type,
+			screenRow: y,
+			screenCol: x,
+			button: wheel === undefined && buttonBits !== 3 ? buttonBits : undefined,
+			wheel,
+			shift: (rawButton & 4) !== 0,
+			alt: (rawButton & 8) !== 0,
+			ctrl: (rawButton & 16) !== 0,
+		} satisfies Omit<TuiMouseEvent, "row" | "col">;
+		for (const box of targets) {
+			if (box.component.onMouse?.({ ...event, row: y - box.rect.y, col: x - box.rect.x })) {
+				this.requestRender();
+				return true;
+			}
+		}
+		return false;
+	}
+
 	private parseWheelEvent(data: string): WheelEvent | undefined {
 		const sgr = /^\x1b\[<(\d+);(\d+);(\d+)[Mm]$/.exec(data);
 		if (sgr) {
@@ -644,6 +704,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 			if (direction !== 0 && direction !== 1) return undefined;
 			return {
 				direction: direction === 0 ? -1 : 1,
+				button,
 				x: Number.parseInt(sgr[2], 10) - 1,
 				y: Number.parseInt(sgr[3], 10) - 1,
 			};
@@ -655,6 +716,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 			if (direction !== 0 && direction !== 1) return undefined;
 			return {
 				direction: direction === 0 ? -1 : 1,
+				button,
 				x: data.charCodeAt(4) - 33,
 				y: data.charCodeAt(5) - 33,
 			};
