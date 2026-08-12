@@ -86,7 +86,11 @@ const QWEN_THINKING_MODELS = [
 	"qwen3.8-max",
 ] as const;
 
-type QwenTokenPlanProvider = "qwen-token-plan" | "qwen-token-plan-cn" | "qwen-token-plan-individual";
+type QwenTokenPlanProvider =
+	| "qwen-token-plan"
+	| "qwen-token-plan-cn"
+	| "qwen-token-plan-individual"
+	| "qwen-token-plan-individual-cn";
 type QwenTokenPlanModelCase = { provider: QwenTokenPlanProvider; modelId: string };
 
 const QWEN_THINKING_MODEL_CASES: QwenTokenPlanModelCase[] = [
@@ -94,6 +98,7 @@ const QWEN_THINKING_MODEL_CASES: QwenTokenPlanModelCase[] = [
 		QWEN_THINKING_MODELS.map((modelId) => ({ provider, modelId })),
 	),
 	...INDIVIDUAL_TEXT_MODELS.map((modelId) => ({ provider: "qwen-token-plan-individual" as const, modelId })),
+	...INDIVIDUAL_TEXT_MODELS.map((modelId) => ({ provider: "qwen-token-plan-individual-cn" as const, modelId })),
 ];
 
 const QWEN_REASONING_EFFORT_MODELS = ["deepseek-v4-flash", "deepseek-v4-pro", "glm-5", "glm-5.1", "glm-5.2"] as const;
@@ -104,6 +109,10 @@ const QWEN_REASONING_EFFORT_MODEL_CASES: QwenTokenPlanModelCase[] = [
 	),
 	...["deepseek-v4-flash-0731", "deepseek-v4-pro", "glm-5.2"].map((modelId) => ({
 		provider: "qwen-token-plan-individual" as const,
+		modelId,
+	})),
+	...["deepseek-v4-flash-0731", "deepseek-v4-pro", "glm-5.2"].map((modelId) => ({
+		provider: "qwen-token-plan-individual-cn" as const,
 		modelId,
 	})),
 ];
@@ -120,6 +129,20 @@ describe("Qwen Token Plan models", () => {
 	it("reuses the international Token Plan environment variable", () => {
 		expect(findEnvKeys("qwen-token-plan-individual", { QWEN_TOKEN_PLAN_API_KEY: "test" })).toEqual([
 			"QWEN_TOKEN_PLAN_API_KEY",
+		]);
+	});
+
+	it("exposes exactly the documented Individual text models on the China endpoint", () => {
+		const modelIds = getModels("qwen-token-plan-individual-cn")
+			.map((model) => model.id)
+			.sort();
+
+		expect(modelIds).toEqual([...INDIVIDUAL_TEXT_MODELS].sort());
+	});
+
+	it("uses the China Token Plan environment variable", () => {
+		expect(findEnvKeys("qwen-token-plan-individual-cn", { QWEN_TOKEN_PLAN_CN_API_KEY: "test" })).toEqual([
+			"QWEN_TOKEN_PLAN_CN_API_KEY",
 		]);
 	});
 
@@ -189,31 +212,35 @@ describe("Qwen Token Plan models", () => {
 		},
 	);
 
-	it.each(["qwen-token-plan", "qwen-token-plan-cn", "qwen-token-plan-individual"] as const)(
-		"exposes qwen3.8 reasoning_effort levels on %s",
-		(provider) => {
-			const model = getModels(provider).find((candidate) => candidate.id === "qwen3.8-max");
-			expect(model).toBeDefined();
-			if (!model) throw new Error(`Missing model: ${provider}/qwen3.8-max`);
+	it.each([
+		"qwen-token-plan",
+		"qwen-token-plan-cn",
+		"qwen-token-plan-individual",
+		"qwen-token-plan-individual-cn",
+	] as const)("exposes qwen3.8 reasoning_effort levels on %s", (provider) => {
+		const model = getModels(provider).find((candidate) => candidate.id === "qwen3.8-max");
+		expect(model).toBeDefined();
+		if (!model) throw new Error(`Missing model: ${provider}/qwen3.8-max`);
 
-			expect(model.thinkingLevelMap).toMatchObject({
-				minimal: null,
-				low: "low",
-				medium: "medium",
-				high: null,
-				xhigh: "xhigh",
-				max: null,
-			});
-		},
-	);
+		expect(model.thinkingLevelMap).toMatchObject({
+			minimal: null,
+			low: "low",
+			medium: "medium",
+			high: null,
+			xhigh: "xhigh",
+			max: null,
+		});
+	});
 
-	it.each(["qwen-token-plan", "qwen-token-plan-cn", "qwen-token-plan-individual"] as const)(
-		"omits retired qwen3.8-max-preview on %s",
-		(provider) => {
-			const modelIds = getModels(provider).map((model) => model.id);
-			expect(modelIds).not.toContain("qwen3.8-max-preview");
-		},
-	);
+	it.each([
+		"qwen-token-plan",
+		"qwen-token-plan-cn",
+		"qwen-token-plan-individual",
+		"qwen-token-plan-individual-cn",
+	] as const)("omits retired qwen3.8-max-preview on %s", (provider) => {
+		const modelIds = getModels(provider).map((model) => model.id);
+		expect(modelIds).not.toContain("qwen3.8-max-preview");
+	});
 
 	it.each(QWEN_REASONING_EFFORT_MODEL_CASES)(
 		"sends Qwen reasoning_effort for $provider/$modelId",
@@ -247,37 +274,39 @@ describe("Qwen Token Plan models", () => {
 		},
 	);
 
-	it.each(["qwen-token-plan", "qwen-token-plan-cn", "qwen-token-plan-individual"] as const)(
-		"sends qwen3.8 max reasoning_effort on %s",
-		async (provider) => {
-			const model = getModels(provider).find((candidate) => candidate.id === "qwen3.8-max");
-			expect(model).toBeDefined();
-			if (!model) throw new Error(`Missing model: ${provider}/qwen3.8-max`);
+	it.each([
+		"qwen-token-plan",
+		"qwen-token-plan-cn",
+		"qwen-token-plan-individual",
+		"qwen-token-plan-individual-cn",
+	] as const)("sends qwen3.8 max reasoning_effort on %s", async (provider) => {
+		const model = getModels(provider).find((candidate) => candidate.id === "qwen3.8-max");
+		expect(model).toBeDefined();
+		if (!model) throw new Error(`Missing model: ${provider}/qwen3.8-max`);
 
-			let payload: unknown;
-			await streamSimple(
-				model,
-				{
-					messages: [
-						{
-							role: "user",
-							content: "Hi",
-							timestamp: Date.now(),
-						},
-					],
-				},
-				{
-					apiKey: "test",
-					reasoning: "xhigh",
-					onPayload: (params) => {
-						payload = params;
+		let payload: unknown;
+		await streamSimple(
+			model,
+			{
+				messages: [
+					{
+						role: "user",
+						content: "Hi",
+						timestamp: Date.now(),
 					},
+				],
+			},
+			{
+				apiKey: "test",
+				reasoning: "xhigh",
+				onPayload: (params) => {
+					payload = params;
 				},
-			).result();
+			},
+		).result();
 
-			expect(payload).toHaveProperty("enable_thinking", true);
-			expect(payload).toHaveProperty("reasoning_effort", "xhigh");
-			expect(payload).not.toHaveProperty("thinking");
-		},
-	);
+		expect(payload).toHaveProperty("enable_thinking", true);
+		expect(payload).toHaveProperty("reasoning_effort", "xhigh");
+		expect(payload).not.toHaveProperty("thinking");
+	});
 });

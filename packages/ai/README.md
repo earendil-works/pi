@@ -442,6 +442,7 @@ Built-in providers resolve these env vars (Node.js; in browsers pass `apiKey` ex
 | Qwen Token Plan (existing catalog) | `QWEN_TOKEN_PLAN_API_KEY` |
 | Qwen Token Plan (Individual) | `QWEN_TOKEN_PLAN_API_KEY` |
 | Qwen Token Plan (China) | `QWEN_TOKEN_PLAN_CN_API_KEY` |
+| Qwen Token Plan (Individual, China) | `QWEN_TOKEN_PLAN_CN_API_KEY` |
 | Xiaomi MiMo (API billing) | `XIAOMI_API_KEY` |
 | Xiaomi MiMo Token Plan (China) | `XIAOMI_TOKEN_PLAN_CN_API_KEY` |
 | Xiaomi MiMo Token Plan (Amsterdam) | `XIAOMI_TOKEN_PLAN_AMS_API_KEY` |
@@ -451,6 +452,8 @@ Built-in providers resolve these env vars (Node.js; in browsers pass `apiKey` ex
 `qwen-token-plan-individual` and `qwen-token-plan` share the international endpoint and
 `QWEN_TOKEN_PLAN_API_KEY`. The Individual provider exposes only the models documented for Individual
 subscriptions, while the existing provider retains its broader catalog for backward compatibility.
+`qwen-token-plan-individual-cn` applies the same Individual catalog to the China endpoint and
+`QWEN_TOKEN_PLAN_CN_API_KEY`.
 Stored credentials remain provider-scoped, so save the key under the provider ID you register.
 
 Amazon Bedrock resolves ambient AWS credentials (`AWS_PROFILE`, access key pairs, `AWS_BEARER_TOKEN_BEDROCK`, ECS task roles, web identity tokens); its provider-owned login flow supports bearer tokens, AWS profiles, and the existing credential chain. Vertex AI resolves either an explicit key or gcloud Application Default Credentials plus project/location, with a provider-owned login flow for API keys, ADC, and service-account files.

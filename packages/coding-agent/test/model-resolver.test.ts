@@ -713,6 +713,7 @@ describe("default model selection", () => {
 
 	test("qwen token plan individual default tracks current model", () => {
 		expect(defaultModelPerProvider["qwen-token-plan-individual"]).toBe("qwen3.8-max");
+		expect(defaultModelPerProvider["qwen-token-plan-individual-cn"]).toBe("qwen3.8-max");
 	});
 
 	test("findInitialModel accepts explicit provider custom model ids", async () => {

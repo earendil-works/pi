@@ -1127,7 +1127,12 @@ describe("openai-completions tool_choice", () => {
 	});
 
 	it("stores Qwen Token Plan reasoning replay compat in built-in metadata", () => {
-		const providers = ["qwen-token-plan", "qwen-token-plan-cn", "qwen-token-plan-individual"] as const;
+		const providers = [
+			"qwen-token-plan",
+			"qwen-token-plan-cn",
+			"qwen-token-plan-individual",
+			"qwen-token-plan-individual-cn",
+		] as const;
 
 		for (const provider of providers) {
 			const model = getModel(provider, "qwen3.7-max")!;

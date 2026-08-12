@@ -69,6 +69,7 @@ export type KnownProvider =
 	| "qwen-token-plan"
 	| "qwen-token-plan-cn"
 	| "qwen-token-plan-individual"
+	| "qwen-token-plan-individual-cn"
 	| "xiaomi"
 	| "xiaomi-token-plan-cn"
 	| "xiaomi-token-plan-ams"
