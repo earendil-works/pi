@@ -1,3 +1,4 @@
+import { generateImages as generateImagesMiniMax } from "../../api/minimax-images.ts";
 import type { generateImages as generateImagesOpenRouterFunction } from "../../api/openrouter-images.ts";
 import { registerImagesApiProvider } from "../../images-api-registry.ts";
 import type { AssistantImages, ImagesContext, ImagesFunction, ImagesModel, ImagesOptions } from "../../types.ts";
@@ -44,6 +45,10 @@ export function registerBuiltInImagesApiProviders(): void {
 	registerImagesApiProvider({
 		api: "openrouter-images",
 		generateImages: generateImagesOpenRouter,
+	});
+	registerImagesApiProvider({
+		api: "minimax-images",
+		generateImages: generateImagesMiniMax,
 	});
 }
 

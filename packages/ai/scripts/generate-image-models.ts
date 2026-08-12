@@ -3,7 +3,8 @@
 import { writeFileSync } from "fs";
 import { dirname, join, resolve } from "path";
 import { fileURLToPath } from "url";
-import type { ImagesModel } from "../src/types.ts";
+import { MINIMAX_IMAGE_BASE_URLS, MINIMAX_IMAGE_MODEL_IDS } from "../src/api/minimax-images.ts";
+import type { ImagesApi, ImagesModel, KnownImagesProvider } from "../src/types.ts";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -104,14 +105,33 @@ async function fetchOpenRouterImageModels(strict: boolean): Promise<ImagesModel<
 	}
 }
 
-function generateImageModelsFile(models: ImagesModel<"openrouter-images">[]): string {
-	const imageModelsByProvider = {
-		openrouter: Object.fromEntries(
-			models
-				.sort((a, b) => a.id.localeCompare(b.id))
-				.map((model) => [
-					model.id,
-					`{
+function createMiniMaxProviderModels(
+	provider: keyof typeof MINIMAX_IMAGE_BASE_URLS,
+): ImagesModel<"minimax-images">[] {
+	return MINIMAX_IMAGE_MODEL_IDS.map((id) => ({
+		id,
+		name: id,
+		api: "minimax-images",
+		provider,
+		baseUrl: MINIMAX_IMAGE_BASE_URLS[provider],
+		input: ["text", "image"],
+		output: ["image"],
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+	}));
+}
+
+export function createMiniMaxImageModels(): Record<
+	keyof typeof MINIMAX_IMAGE_BASE_URLS,
+	ImagesModel<"minimax-images">[]
+> {
+	return {
+		minimax: createMiniMaxProviderModels("minimax"),
+		"minimax-cn": createMiniMaxProviderModels("minimax-cn"),
+	};
+}
+
+function serializeImageModel(model: ImagesModel<ImagesApi>): string {
+	return `{
 			id: ${JSON.stringify(model.id)},
 			name: ${JSON.stringify(model.name)},
 			api: ${JSON.stringify(model.api)},
@@ -120,15 +140,17 @@ function generateImageModelsFile(models: ImagesModel<"openrouter-images">[]): st
 			input: ${JSON.stringify(model.input)},
 			output: ${JSON.stringify(model.output)},
 			cost: ${JSON.stringify(model.cost, null, 2).replace(/^/gm, "\t")}
-		} satisfies ImagesModel<${JSON.stringify(model.api)}>`,
-				]),
-		),
-	};
+		} satisfies ImagesModel<${JSON.stringify(model.api)}>`;
+}
 
-	const providerEntries = Object.entries(imageModelsByProvider)
-		.map(([provider, providerModels]) => {
-			const modelEntries = Object.entries(providerModels)
-				.map(([id, serialized]) => `\t\t${JSON.stringify(id)}: ${serialized},`)
+function generateImageModelsFile(
+	modelsByProvider: Record<KnownImagesProvider, ImagesModel<ImagesApi>[]>,
+): string {
+	const providerEntries = Object.entries(modelsByProvider)
+		.map(([provider, models]) => {
+			const modelEntries = models
+				.sort((a, b) => a.id.localeCompare(b.id))
+				.map((model) => `\t\t${JSON.stringify(model.id)}: ${serializeImageModel(model)},`)
 				.join("\n");
 			return `\t${JSON.stringify(provider)}: {\n${modelEntries}\n\t},`;
 		})
@@ -147,8 +169,8 @@ ${providerEntries}
 
 async function main(): Promise<void> {
 	const strict = readStrictOption(process.argv.slice(2));
-	const models = await fetchOpenRouterImageModels(strict);
-	const output = generateImageModelsFile(models);
+	const openrouter = await fetchOpenRouterImageModels(strict);
+	const output = generateImageModelsFile({ openrouter, ...createMiniMaxImageModels() });
 	const outputPath = join(packageRoot, "src", "image-models.generated.ts");
 	writeFileSync(outputPath, output, "utf-8");
 	console.log(`Generated ${outputPath}`);

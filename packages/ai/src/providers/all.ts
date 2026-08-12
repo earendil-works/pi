@@ -21,6 +21,7 @@ import { huggingfaceProvider } from "./huggingface.ts";
 import { kimiCodingProvider } from "./kimi-coding.ts";
 import { minimaxProvider } from "./minimax.ts";
 import { minimaxCnProvider } from "./minimax-cn.ts";
+import { minimaxCnImagesProvider, minimaxImagesProvider } from "./minimax-images.ts";
 import { mistralProvider } from "./mistral.ts";
 import { moonshotaiProvider } from "./moonshotai.ts";
 import { moonshotaiCnProvider } from "./moonshotai-cn.ts";
@@ -142,7 +143,7 @@ export function builtinModels(options?: CreateModelsOptions): MutableModels {
 
 /** All built-in image-generation providers, freshly constructed. */
 export function builtinImagesProviders(): ImagesProvider[] {
-	return [openrouterImagesProvider()];
+	return [openrouterImagesProvider(), minimaxImagesProvider(), minimaxCnImagesProvider()];
 }
 
 /** An `ImagesModels` collection with every built-in image-generation provider registered. */
