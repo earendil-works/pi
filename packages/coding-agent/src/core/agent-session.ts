@@ -541,11 +541,30 @@ export class AgentSession {
 		this.agent.prepareNextTurnWithContext = async (turn, signal) => {
 			const previousSnapshot = await previousPrepareNextTurnWithContext?.(turn, signal);
 			const previousContext = previousSnapshot?.context ?? turn.context;
+			let messages = previousContext.messages;
+
+			// Tool results can push a running turn over the threshold after the response usage was
+			// measured. Compact before the agent loop sends those results back to the model.
+			if (turn.toolResults.length > 0 && !signal?.aborted) {
+				const leafBefore = this.sessionManager.getLeafId();
+				const abortCompaction = () => this.abortCompaction();
+				signal?.addEventListener("abort", abortCompaction, { once: true });
+				try {
+					await this._checkCompaction(turn.message, true, true);
+				} finally {
+					signal?.removeEventListener("abort", abortCompaction);
+				}
+				const leafAfter = this.sessionManager.getLeafEntry();
+				if (leafAfter?.type === "compaction" && leafAfter.id !== leafBefore) {
+					messages = this.agent.state.messages.slice();
+				}
+			}
 
 			return {
 				...previousSnapshot,
 				context: {
 					...previousContext,
+					messages,
 					systemPrompt: this._systemPromptOverride ?? this._baseSystemPrompt,
 					tools: this.agent.state.tools.slice(),
 				},
@@ -1958,8 +1977,13 @@ export class AgentSession {
 	 *
 	 * @param assistantMessage The assistant message to check
 	 * @param skipAbortedCheck If false, include aborted messages (for pre-prompt check). Default: true
+	 * @param includeTrailingMessages Include messages added after the assistant usage was measured.
 	 */
-	private async _checkCompaction(assistantMessage: AssistantMessage, skipAbortedCheck = true): Promise<boolean> {
+	private async _checkCompaction(
+		assistantMessage: AssistantMessage,
+		skipAbortedCheck = true,
+		includeTrailingMessages = false,
+	): Promise<boolean> {
 		const settings = this.settingsManager.getCompactionSettings();
 		if (!settings.enabled) return false;
 
@@ -2027,20 +2051,25 @@ export class AgentSession {
 		// responses can still compact and do not reset context accounting.
 		let contextTokens: number;
 		const directContextTokens = assistantMessage.usage ? calculateContextTokens(assistantMessage.usage) : 0;
-		if (assistantMessage.stopReason === "error" || directContextTokens === 0) {
-			const messages = this.agent.state.messages;
+		if (includeTrailingMessages || assistantMessage.stopReason === "error" || directContextTokens === 0) {
+			const messages = includeTrailingMessages
+				? this.sessionManager.buildSessionContext().messages
+				: this.agent.state.messages;
 			const estimate = estimateContextTokens(messages);
-			if (estimate.lastUsageIndex === null) return false; // No usage data at all
-			// Verify the usage source is post-compaction. Kept pre-compaction messages
-			// have stale usage reflecting the old (larger) context and would falsely
-			// trigger compaction right after one just finished.
-			const usageMsg = messages[estimate.lastUsageIndex];
-			if (
-				compactionEntry &&
-				usageMsg.role === "assistant" &&
-				(usageMsg as AssistantMessage).timestamp <= new Date(compactionEntry.timestamp).getTime()
-			) {
-				return false;
+			if (estimate.lastUsageIndex === null) {
+				if (!includeTrailingMessages) return false; // No usage data at all
+			} else {
+				// Verify the usage source is post-compaction. Kept pre-compaction messages
+				// have stale usage reflecting the old (larger) context and would falsely
+				// trigger compaction right after one just finished.
+				const usageMsg = messages[estimate.lastUsageIndex];
+				if (
+					compactionEntry &&
+					usageMsg.role === "assistant" &&
+					(usageMsg as AssistantMessage).timestamp <= new Date(compactionEntry.timestamp).getTime()
+				) {
+					return false;
+				}
 			}
 			contextTokens = estimate.tokens;
 		} else {

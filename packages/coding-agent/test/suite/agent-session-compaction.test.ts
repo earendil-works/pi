@@ -1,9 +1,12 @@
+import type { AgentTool } from "@earendil-works/pi-agent-core";
 import {
 	type AssistantMessage,
 	createAssistantMessageEventStream,
 	fauxAssistantMessage,
+	fauxToolCall,
 	type Model,
 } from "@earendil-works/pi-ai";
+import { Type } from "typebox";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { estimateTokens } from "../../src/core/compaction/index.ts";
 import { createHarness, getUserTexts, type Harness } from "./harness.ts";
@@ -276,6 +279,75 @@ describe("AgentSession compaction characterization", () => {
 		expect(compactionEntries).toHaveLength(1);
 		expect(compactionEnd?.result?.estimatedTokensAfter).toBeGreaterThan(0);
 		expect(getStreamCallCount()).toBe(1);
+	});
+
+	it("compacts within a turn before sending large tool results to the model", async () => {
+		let toolRun = 0;
+		const largeResultTool: AgentTool = {
+			name: "large_result",
+			label: "Large result",
+			description: "Returns enough text to cross the compaction threshold",
+			parameters: Type.Object({}),
+			execute: async () => ({
+				content: [{ type: "text", text: ++toolRun === 1 ? "old result" : "x".repeat(8200) }],
+				details: {},
+			}),
+		};
+		const harness = await createHarness({
+			tools: [largeResultTool],
+			models: [{ id: "faux-1", contextWindow: 2500, maxTokens: 100 }],
+			settings: { compaction: { keepRecentTokens: 2060, reserveTokens: 100 } },
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_before_compact", async (event) => ({
+						compaction: {
+							summary: "mid-turn compacted",
+							firstKeptEntryId: event.preparation.firstKeptEntryId,
+							tokensBefore: event.preparation.tokensBefore,
+							details: {},
+						},
+					}));
+				},
+			],
+		});
+		harnesses.push(harness);
+		const toolCallResponse = fauxAssistantMessage(fauxToolCall("large_result", {}), {
+			stopReason: "toolUse",
+		});
+		toolCallResponse.usage = createUsage(800);
+		const oldToolCallResponse = fauxAssistantMessage(fauxToolCall("large_result", {}), {
+			stopReason: "toolUse",
+		});
+		let thirdCallRoles: string[] = [];
+		let fourthCallRoles: string[] = [];
+		let fourthCallTokenUsage = 0;
+		harness.setResponses([
+			oldToolCallResponse,
+			fauxAssistantMessage("old turn done"),
+			(context) => {
+				thirdCallRoles = context.messages.map((message) => message.role);
+				return toolCallResponse;
+			},
+			(context) => {
+				fourthCallRoles = context.messages.map((message) => message.role);
+				fourthCallTokenUsage = context.messages.reduce((sum, message) => sum + estimateTokens(message), 0);
+				return fauxAssistantMessage("done");
+			},
+		]);
+
+		await harness.session.prompt("old turn");
+		await harness.session.prompt("start");
+
+		expect(harness.faux.state.callCount).toBe(4);
+		expect(harness.eventsOfType("compaction_start").length).toBeGreaterThan(0);
+		expect(harness.eventsOfType("compaction_end").at(-1)).toMatchObject({
+			aborted: false,
+			willRetry: false,
+		});
+		expect(thirdCallRoles).not.toContain("compactionSummary");
+		expect(fourthCallRoles).not.toEqual(thirdCallRoles);
+		expect(fourthCallTokenUsage).toBeLessThan(2500);
+		expect(harness.session.getLastAssistantText()).toBe("done");
 	});
 
 	it("compacts and resumes after a length stop below the desired output limit", async () => {
