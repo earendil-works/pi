@@ -15,6 +15,7 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname } from "node:path";
+import { Type } from "typebox";
 import type {
 	Agent,
 	AgentEvent,
@@ -283,6 +284,33 @@ interface ToolDefinitionEntry {
 	sourceInfo: SourceInfo;
 }
 
+/**
+ * Prompt Economy: minimal directory stub for a tier:"lazy" tool.
+ *
+ * Name + label + description are preserved so the model can see the tool exists
+ * without paying for the full schema. Calling the stub returns an expansion hint
+ * instead of executing with partial arguments; the full schema is sent on the next
+ * turn (see `_buildTurnTools`).
+ */
+function createDirectoryStub(tool: AgentTool): AgentTool {
+	return {
+		name: tool.name,
+		label: tool.label,
+		description: tool.description,
+		parameters: Type.Object({}),
+		execute: async () => ({
+			content: [
+				{
+					type: "text",
+					text: `[lazy-tool] "${tool.name}" was called before its full schema was loaded. It is now expanded for the next turn — re-issue this call with complete arguments.`,
+				},
+			],
+			details: { lazyExpanded: tool.name },
+			isError: false,
+		}),
+	};
+}
+
 function estimateMessagesTokens(messages: AgentMessage[]): number {
 	let tokens = 0;
 	for (const message of messages) {
@@ -368,6 +396,11 @@ export class AgentSession {
 	private _toolDefinitions: Map<string, ToolDefinitionEntry> = new Map();
 	private _toolPromptSnippets: Map<string, string> = new Map();
 	private _toolPromptGuidelines: Map<string, string[]> = new Map();
+
+	// Prompt Economy: per-turn full-schema expansion state for tier:"lazy" tools.
+	private _expandedToolNames: Set<string> = new Set();
+	private _lazyToolNames: Set<string> = new Set();
+	private _toolDirectoryStubs: Map<string, AgentTool> = new Map();
 
 	// Base system prompt (without extension appends) - used to apply fresh appends each turn
 	private _baseSystemPrompt = "";
@@ -542,12 +575,18 @@ export class AgentSession {
 			const previousSnapshot = await previousPrepareNextTurnWithContext?.(turn, signal);
 			const previousContext = previousSnapshot?.context ?? turn.context;
 
+			const previousToolCallNames =
+				this._lazyToolNames.size === 0
+					? []
+					: turn.message.content
+							.filter((block) => block.type === "toolCall")
+							.map((block) => block.name);
 			return {
 				...previousSnapshot,
 				context: {
 					...previousContext,
 					systemPrompt: this._systemPromptOverride ?? this._baseSystemPrompt,
-					tools: this.agent.state.tools.slice(),
+					tools: this._buildTurnTools(previousToolCallNames),
 				},
 				model: this.agent.state.model,
 				thinkingLevel: this.agent.state.thinkingLevel,
@@ -935,7 +974,9 @@ export class AgentSession {
 				validToolNames.push(name);
 			}
 		}
-		this.agent.state.tools = tools;
+		// Build the per-turn tool view (Prompt Economy: lazy tools become directory
+		// stubs unless expanded). Default path (no lazy tools) returns full tools.
+		this.agent.state.tools = this._buildTurnTools(undefined, tools);
 
 		// Rebuild base system prompt with new tool set
 		this._baseSystemPrompt = this._rebuildSystemPrompt(validToolNames);
@@ -1036,6 +1077,13 @@ export class AgentSession {
 			}
 		}
 
+		// Prompt Economy: teach the model the lazy-tool protocol when any active tool is lazy.
+		if (validToolNames.some((name) => this._lazyToolNames.has(name))) {
+			promptGuidelines.push(
+				"Some tools are lazy: their full parameter schemas load only when you start using them. If a lazy tool responds that it needs expansion, re-issue the call with complete arguments on the next turn.",
+			);
+		}
+
 		const loaderSystemPrompt = this._resourceLoader.getSystemPrompt();
 		const loaderAppendSystemPrompt = this._resourceLoader.getAppendSystemPrompt();
 		const appendSystemPrompt =
@@ -1054,6 +1102,45 @@ export class AgentSession {
 			promptGuidelines,
 		};
 		return buildSystemPrompt(this._baseSystemPromptOptions);
+	}
+
+	/**
+	 * Prompt Economy: assemble the per-turn tool list.
+	 *
+	 * - tier "full"/unset tools: full definition (unchanged behavior).
+	 * - tier "lazy" tools: directory stub unless expanded for this turn.
+	 * - Expanded lazy tools are appended last, so the stable directory prefix stays
+	 *   byte-identical across turns and provider prompt caches keep hitting.
+	 *
+	 * When no lazy tools are registered this returns `agent.state.tools` verbatim
+	 * (zero overhead on the default path).
+	 */
+	private _buildTurnTools(previousToolCallNames?: Iterable<string>, baseTools?: Iterable<AgentTool>): AgentTool[] {
+		if (this._lazyToolNames.size === 0) {
+			return Array.from(baseTools ?? this.agent.state.tools);
+		}
+
+		const expanded = new Set<string>(this._expandedToolNames);
+		for (const name of previousToolCallNames ?? []) {
+			if (this._lazyToolNames.has(name)) {
+				expanded.add(name);
+			}
+		}
+
+		const stable: AgentTool[] = [];
+		const tail: AgentTool[] = [];
+		for (const tool of baseTools ?? this.agent.state.tools) {
+			if (!this._lazyToolNames.has(tool.name)) {
+				stable.push(tool);
+				continue;
+			}
+			if (expanded.has(tool.name)) {
+				tail.push(this._toolRegistry.get(tool.name) ?? tool);
+			} else {
+				stable.push(this._toolDirectoryStubs.get(tool.name) ?? tool);
+			}
+		}
+		return [...stable, ...tail];
 	}
 
 	// =========================================================================
@@ -2402,6 +2489,11 @@ export class AgentSession {
 				getAllTools: () => this.getAllTools(),
 				setActiveTools: (toolNames) => this.setActiveToolsByName(toolNames),
 				refreshTools: () => this._refreshToolRegistry(),
+				expandTool: (name) => {
+					if (this._lazyToolNames.has(name)) {
+						this._expandedToolNames.add(name);
+					}
+				},
 				getCommands,
 				setModel: async (model) => {
 					if (!this._modelRuntime.hasConfiguredAuth(model.provider)) return false;
@@ -2527,6 +2619,25 @@ export class AgentSession {
 			toolRegistry.set(tool.name, tool);
 		}
 		this._toolRegistry = toolRegistry;
+
+		// Prompt Economy: precompute lazy-tool directory stubs (stable across turns).
+		this._lazyToolNames = new Set(
+			Array.from(definitionRegistry.values())
+				.filter(({ definition }) => definition.tier === "lazy")
+				.map(({ definition }) => definition.name),
+		);
+		this._toolDirectoryStubs = new Map(
+			Array.from(this._lazyToolNames)
+				.map((name) => {
+					const tool = toolRegistry.get(name);
+					return tool ? ([name, createDirectoryStub(tool)] as const) : undefined;
+				})
+				.filter((entry): entry is readonly [string, AgentTool] => entry !== undefined),
+		);
+		// Explicit expansions are scoped to the current tool set.
+		this._expandedToolNames = new Set(
+			Array.from(this._expandedToolNames).filter((name) => this._lazyToolNames.has(name)),
+		);
 
 		const nextActiveToolNames = (
 			options?.activeToolNames ? [...options.activeToolNames] : [...previousActiveToolNames]

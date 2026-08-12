@@ -457,6 +457,15 @@ export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = un
 	promptSnippet?: string;
 	/** Optional guideline bullets appended to the default system prompt Guidelines section when this tool is active. */
 	promptGuidelines?: string[];
+	/**
+	 * Tool disclosure tier (Prompt Economy feature, opt-in).
+	 * - `"full"` (default, identical to omitting this field): the full parameter schema
+	 *   is sent to the provider on every turn.
+	 * - `"lazy"`: only a directory entry (name + description + promptSnippet) is always
+	 *   present. The full schema is omitted from the provider payload until the tool is
+	 *   expanded for a turn (automatically after the model calls it, or via `pi.expandTool`).
+	 */
+	tier?: "full" | "lazy";
 	/** Parameter schema (TypeBox) */
 	parameters: TParams;
 	/** Optional provider-side constrained sampling request for this tool. Set false to explicitly disable it, equivalent to leaving it undefined. */
@@ -1341,6 +1350,14 @@ export interface ExtensionAPI {
 
 	/** Set the active tools by name. */
 	setActiveTools(toolNames: string[]): void;
+
+	/**
+	 * Prompt Economy: force the full schema of a `tier: "lazy"` tool into the provider
+	 * payload for the current tool set (until the tool set changes). No-op for tools
+	 * with `tier` unset or `"full"`. Useful for intent-based routers that pre-expand
+	 * the tools the model is likely to need next turn.
+	 */
+	expandTool(name: string): void;
 
 	/** Get available slash commands in the current session. */
 	getCommands(): SlashCommandInfo[];
