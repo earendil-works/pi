@@ -655,6 +655,27 @@ describe("totalTokens field", () => {
 		);
 	});
 
+	describe.skipIf(!process.env.QWEN_TOKEN_PLAN_CN_API_KEY)("Qwen Token Plan Individual (CN)", () => {
+		it(
+			"qwen3.8-max - should return totalTokens equal to sum of components",
+			{ retry: 3, timeout: 60000 },
+			async () => {
+				const llm = getModel("qwen-token-plan-individual-cn", "qwen3.8-max");
+
+				console.log(`\nQwen Token Plan Individual CN / ${llm.id}:`);
+				const { first, second } = await testTotalTokensWithCache(llm, {
+					apiKey: process.env.QWEN_TOKEN_PLAN_CN_API_KEY,
+				});
+
+				logUsage("First request", first);
+				logUsage("Second request", second);
+
+				assertTotalTokensEqualsComponents(first);
+				assertTotalTokensEqualsComponents(second);
+			},
+		);
+	});
+
 	// =========================================================================
 	// Kimi For Coding
 	// =========================================================================

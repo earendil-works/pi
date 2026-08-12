@@ -150,6 +150,21 @@ const PROVIDER_MODEL_PAIRS: ProviderModelPair[] = [
 		model: "glm-5.2",
 		label: "qwen-token-plan-individual-glm-5.2",
 	},
+	{
+		provider: "qwen-token-plan-individual-cn",
+		model: "qwen3.8-max",
+		label: "qwen-token-plan-individual-cn-qwen3.8-max",
+	},
+	{
+		provider: "qwen-token-plan-individual-cn",
+		model: "deepseek-v4-flash-0731",
+		label: "qwen-token-plan-individual-cn-deepseek-v4-flash-0731",
+	},
+	{
+		provider: "qwen-token-plan-individual-cn",
+		model: "glm-5.2",
+		label: "qwen-token-plan-individual-cn-glm-5.2",
+	},
 ];
 
 // Cached context structure

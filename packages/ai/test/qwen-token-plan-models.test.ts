@@ -62,7 +62,9 @@ const INDIVIDUAL_TEXT_MODELS = [
 	"deepseek-v4-flash-0731",
 	"deepseek-v4-pro",
 	"deepseek-v4-pro-0813",
+	"deepseek-v4.1-flash",
 	"glm-5.2",
+	"glm-5.3",
 	"qwen3.6-flash",
 	"qwen3.7-max",
 	"qwen3.7-plus",
@@ -90,7 +92,11 @@ const QWEN_THINKING_MODELS = [
 	"qwen3.8-max",
 ] as const;
 
-type QwenTokenPlanProvider = "qwen-token-plan" | "qwen-token-plan-cn" | "qwen-token-plan-individual";
+type QwenTokenPlanProvider =
+	| "qwen-token-plan"
+	| "qwen-token-plan-cn"
+	| "qwen-token-plan-individual"
+	| "qwen-token-plan-individual-cn";
 type QwenTokenPlanModelCase = { provider: QwenTokenPlanProvider; modelId: string };
 
 const QWEN_THINKING_MODEL_CASES: QwenTokenPlanModelCase[] = [
@@ -98,6 +104,7 @@ const QWEN_THINKING_MODEL_CASES: QwenTokenPlanModelCase[] = [
 		QWEN_THINKING_MODELS.map((modelId) => ({ provider, modelId })),
 	),
 	...INDIVIDUAL_TEXT_MODELS.map((modelId) => ({ provider: "qwen-token-plan-individual" as const, modelId })),
+	...INDIVIDUAL_TEXT_MODELS.map((modelId) => ({ provider: "qwen-token-plan-individual-cn" as const, modelId })),
 ];
 
 const QWEN_REASONING_EFFORT_MODELS = ["deepseek-v4-flash", "deepseek-v4-pro", "glm-5", "glm-5.1", "glm-5.2"] as const;
@@ -107,14 +114,32 @@ const QWEN_REASONING_EFFORT_MODEL_CASES: QwenTokenPlanModelCase[] = [
 	...(["qwen-token-plan", "qwen-token-plan-cn"] as const).flatMap((provider) =>
 		QWEN_REASONING_EFFORT_MODELS.map((modelId) => ({ provider, modelId })),
 	),
-	...["deepseek-v4-flash-0731", "deepseek-v4-pro", "deepseek-v4-pro-0813", "glm-5.2"].map((modelId) => ({
+	...[
+		"deepseek-v4-flash-0731",
+		"deepseek-v4-pro",
+		"deepseek-v4-pro-0813",
+		"deepseek-v4.1-flash",
+		"glm-5.2",
+		"glm-5.3",
+	].map((modelId) => ({
 		provider: "qwen-token-plan-individual" as const,
+		modelId,
+	})),
+	...[
+		"deepseek-v4-flash-0731",
+		"deepseek-v4-pro",
+		"deepseek-v4-pro-0813",
+		"deepseek-v4.1-flash",
+		"glm-5.2",
+		"glm-5.3",
+	].map((modelId) => ({
+		provider: "qwen-token-plan-individual-cn" as const,
 		modelId,
 	})),
 ];
 
 const QWEN38_MODEL_CASES: QwenTokenPlanModelCase[] = (
-	["qwen-token-plan", "qwen-token-plan-cn", "qwen-token-plan-individual"] as const
+	["qwen-token-plan", "qwen-token-plan-cn", "qwen-token-plan-individual", "qwen-token-plan-individual-cn"] as const
 ).flatMap((provider) => QWEN38_MODELS.map((modelId) => ({ provider, modelId })));
 
 describe("Qwen Token Plan models", () => {
@@ -130,6 +155,20 @@ describe("Qwen Token Plan models", () => {
 	it("reuses the international Token Plan environment variable", () => {
 		expect(findEnvKeys("qwen-token-plan-individual", { QWEN_TOKEN_PLAN_API_KEY: "test" })).toEqual([
 			"QWEN_TOKEN_PLAN_API_KEY",
+		]);
+	});
+
+	it("exposes exactly the documented Individual text models on the China endpoint", () => {
+		const modelIds = getModels("qwen-token-plan-individual-cn")
+			.map((model) => model.id)
+			.sort();
+
+		expect(modelIds).toEqual([...INDIVIDUAL_TEXT_MODELS].sort());
+	});
+
+	it("uses the China Token Plan environment variable", () => {
+		expect(findEnvKeys("qwen-token-plan-individual-cn", { QWEN_TOKEN_PLAN_CN_API_KEY: "test" })).toEqual([
+			"QWEN_TOKEN_PLAN_CN_API_KEY",
 		]);
 	});
 
@@ -190,7 +229,7 @@ describe("Qwen Token Plan models", () => {
 
 			expect(model.thinkingLevelMap).toMatchObject({
 				minimal: null,
-				low: null,
+				low: modelId === "glm-5.3" ? "low" : null,
 				medium: null,
 				high: "high",
 				xhigh: null,
@@ -217,13 +256,15 @@ describe("Qwen Token Plan models", () => {
 		},
 	);
 
-	it.each(["qwen-token-plan", "qwen-token-plan-cn", "qwen-token-plan-individual"] as const)(
-		"omits retired qwen3.8-max-preview on %s",
-		(provider) => {
-			const modelIds = getModels(provider).map((model) => model.id);
-			expect(modelIds).not.toContain("qwen3.8-max-preview");
-		},
-	);
+	it.each([
+		"qwen-token-plan",
+		"qwen-token-plan-cn",
+		"qwen-token-plan-individual",
+		"qwen-token-plan-individual-cn",
+	] as const)("omits retired qwen3.8-max-preview on %s", (provider) => {
+		const modelIds = getModels(provider).map((model) => model.id);
+		expect(modelIds).not.toContain("qwen3.8-max-preview");
+	});
 
 	it.each(QWEN_REASONING_EFFORT_MODEL_CASES)(
 		"sends Qwen reasoning_effort for $provider/$modelId",
