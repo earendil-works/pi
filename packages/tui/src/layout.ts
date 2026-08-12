@@ -408,3 +408,29 @@ export function getScrollViewsAt(frame: LayoutFrame, x: number, y: number): Scro
 	result.sort((a, b) => b.depth - a.depth);
 	return result.map((entry) => entry.scrollView);
 }
+
+export interface ComponentMouseTarget {
+	component: Component;
+	/** Row relative to the component's box (0 = first rendered line). */
+	row: number;
+	/** Column relative to the component's box. */
+	col: number;
+}
+
+/**
+ * Find the deepest layout box containing the point whose component opts into
+ * `onMouse`. Children are hit-tested before their parents, so the most
+ * specific component wins. Relative row/col are offsets from that box's rect.
+ */
+export function getComponentMouseTarget(frame: LayoutFrame, x: number, y: number): ComponentMouseTarget | undefined {
+	let best: ComponentMouseTarget | undefined;
+	const visit = (box: LayoutBox): void => {
+		if (!containsPoint(box.rect, x, y) || !containsPoint(box.clip, x, y)) return;
+		if (typeof box.component.onMouse === "function") {
+			best = { component: box.component, row: y - box.rect.y, col: x - box.rect.x };
+		}
+		for (const child of box.children) visit(child);
+	};
+	visit(frame.root);
+	return best;
+}

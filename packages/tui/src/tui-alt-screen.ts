@@ -9,6 +9,7 @@ import { ScrollView } from "./components/scroll-view.ts";
 import { getKeybindings } from "./keybindings.ts";
 import { isKeyRelease } from "./keys.ts";
 import {
+	getComponentMouseTarget,
 	getScrollbarGeometry,
 	getScrollViewBox,
 	getScrollViewsAt,
@@ -30,6 +31,8 @@ import {
 } from "./terminal-image.ts";
 import {
 	type Component,
+	type ComponentMouseEvent,
+	type ComponentMouseEventResult,
 	CURSOR_MARKER,
 	compositeTuiLine,
 	type OverlayHandle,
@@ -529,6 +532,44 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		return this.isOverlayFocused() && this.activeSearch?.overlay?.isFocused() !== true;
 	}
 
+	/**
+	 * Dispatch a mouse event to components that opted into `onMouse`.
+	 *
+	 * Hit-testing order: visible overlays (frontmost first, using the geometry
+	 * recorded by compositeOverlays), then the layout tree (deepest box
+	 * containing the pointer). Returns true when a component handled the event
+	 * — the caller then skips the built-in scrollbar/selection/viewport handling.
+	 */
+	private dispatchMouseEvent(event: Omit<ComponentMouseEvent, "row" | "col">): boolean {
+		for (const entry of [...this.overlayStack].reverse()) {
+			if (!this.isOverlayVisible(entry) || typeof entry.component.onMouse !== "function") continue;
+			const geometry = entry.geometry;
+			if (!geometry) continue;
+			const { row, col, width, height } = geometry;
+			if (event.x < col || event.x >= col + width || event.y < row || event.y >= row + height) {
+				continue;
+			}
+			const result: ComponentMouseEventResult | undefined = entry.component.onMouse({
+				...event,
+				row: event.y - row,
+				col: event.x - col,
+			});
+			if (result?.handled) return true;
+		}
+		if (this.currentLayout) {
+			const target = getComponentMouseTarget(this.currentLayout, event.x, event.y);
+			if (target) {
+				const result: ComponentMouseEventResult | undefined = target.component.onMouse?.({
+					...event,
+					row: target.row,
+					col: target.col,
+				});
+				if (result?.handled) return true;
+			}
+		}
+		return false;
+	}
+
 	private handleViewportInput(data: string): { consume?: boolean } | undefined {
 		if (data === FOCUS_OUT) {
 			const hadActiveSelection = this.selectionPressActive;
@@ -553,12 +594,33 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 
 		const wheelEvent = this.parseWheelEvent(data);
 		if (wheelEvent) {
+			if (
+				this.dispatchMouseEvent({
+					button: wheelEvent.direction === -1 ? 64 : 65,
+					x: wheelEvent.x,
+					y: wheelEvent.y,
+					release: false,
+					wheel: wheelEvent.direction,
+				})
+			) {
+				return { consume: true };
+			}
 			if (this.shouldDeferViewportInputToOverlay()) return undefined;
 			this.routeWheel(wheelEvent);
 			return { consume: true };
 		}
 		const mouseEvent = this.parseSgrMouseEvent(data);
 		if (mouseEvent) {
+			if (
+				this.dispatchMouseEvent({
+					button: mouseEvent.button,
+					x: mouseEvent.x,
+					y: mouseEvent.y,
+					release: mouseEvent.release,
+				})
+			) {
+				return { consume: true };
+			}
 			if (this.handleRightClickPaste(mouseEvent)) return { consume: true };
 			const handled = this.handleScrollbarMouseEvent(mouseEvent);
 			if (!this.scrollbarDrag) this.updateScrollbarHover(mouseEvent.x, mouseEvent.y);

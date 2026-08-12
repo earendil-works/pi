@@ -18,6 +18,38 @@ import { getCapabilities, isImageLine, setCellDimensions } from "./terminal-imag
 import { extractSegments, normalizeTerminalOutput, sliceByColumn, sliceWithWidth, visibleWidth } from "./utils.ts";
 
 /**
+ * Mouse event delivered to a component's `onMouse` handler (fullscreen TUI only).
+ *
+ * Coordinates are 0-based: `x`/`y` are terminal screen coordinates, `row`/`col`
+ * are relative to the component's own box (row 0 = the component's first
+ * rendered line).
+ */
+export interface ComponentMouseEvent {
+	/** Raw SGR button code (bits: 0-1 button, 4 shift, 5 meta, 6 wheel). */
+	button: number;
+	/** Terminal column (0-based). */
+	x: number;
+	/** Terminal row (0-based). */
+	y: number;
+	/** Row relative to the component's box (0 = first rendered line). */
+	row: number;
+	/** Column relative to the component's box. */
+	col: number;
+	/** True for a button release (SGR "m"). */
+	release: boolean;
+	/** Wheel direction (-1 up, 1 down) when this is a wheel event. */
+	wheel?: -1 | 1;
+}
+
+export interface ComponentMouseEventResult {
+	/**
+	 * True if the component handled the event. Handled events skip the built-in
+	 * scrollbar, selection, and viewport-scroll handling for that event.
+	 */
+	handled: boolean;
+}
+
+/**
  * Component interface - all components must implement this
  */
 export interface Component {
@@ -38,6 +70,14 @@ export interface Component {
 	 * Default is false - release events are filtered out.
 	 */
 	wantsKeyRelease?: boolean;
+
+	/**
+	 * Optional handler for mouse events on the component's own rows.
+	 * Dispatched in fullscreen mode (TuiAltScreen) before the built-in
+	 * scrollbar and selection handling. Return `{ handled: true }` to keep
+	 * selection and scrolling out of it.
+	 */
+	onMouse?(event: ComponentMouseEvent): ComponentMouseEventResult | undefined;
 
 	/**
 	 * Invalidate any cached rendering state.
@@ -191,6 +231,8 @@ type OverlayStackEntry = {
 	preFocus: Component | null;
 	hidden: boolean;
 	focusOrder: number;
+	/** Screen-space geometry of the last rendered frame (set by compositeOverlays). */
+	geometry?: { row: number; col: number; width: number; height: number };
 };
 
 type OverlayBlockedFocusResume = { status: "restore-overlay" } | { status: "focus-target"; target: Component | null };
@@ -353,7 +395,7 @@ export abstract class TuiBase extends Container implements TUI {
 
 	// Overlay stack for modal components rendered on top of base content
 	private focusOrderCounter = 0;
-	private overlayStack: OverlayStackEntry[] = [];
+	protected overlayStack: OverlayStackEntry[] = [];
 
 	get hasOverlayEntries(): boolean {
 		return this.overlayStack.length > 0;
@@ -670,7 +712,7 @@ export abstract class TuiBase extends Container implements TUI {
 	}
 
 	/** Check if an overlay entry is currently visible */
-	private isOverlayVisible(entry: OverlayStackEntry): boolean {
+	protected isOverlayVisible(entry: OverlayStackEntry): boolean {
 		if (entry.hidden) return false;
 		if (entry.options?.visible) {
 			return entry.options.visible(this.terminal.columns, this.terminal.rows);
@@ -1101,7 +1143,7 @@ export abstract class TuiBase extends Container implements TUI {
 		const result = [...lines];
 
 		// Pre-render all visible overlays and calculate positions
-		const rendered: { overlayLines: string[]; row: number; col: number; w: number }[] = [];
+		const rendered: { entry: OverlayStackEntry; overlayLines: string[]; row: number; col: number; w: number }[] = [];
 		let minLinesNeeded = result.length;
 
 		const visibleEntries = this.overlayStack.filter((e) => this.isOverlayVisible(e));
@@ -1124,7 +1166,7 @@ export abstract class TuiBase extends Container implements TUI {
 			// Get final row/col with actual overlay height
 			const { row, col } = this.resolveOverlayLayout(options, overlayLines.length, termWidth, termHeight);
 
-			rendered.push({ overlayLines, row, col, w: width });
+			rendered.push({ entry, overlayLines, row, col, w: width });
 			minLinesNeeded = Math.max(minLinesNeeded, row + overlayLines.length);
 		}
 
@@ -1139,6 +1181,11 @@ export abstract class TuiBase extends Container implements TUI {
 		}
 
 		const viewportStart = Math.max(0, workingHeight - termHeight);
+
+		// Record screen-space geometry for mouse hit-testing (dispatchMouseEvent).
+		for (const { entry, overlayLines, row, col, w } of rendered) {
+			entry.geometry = { row: viewportStart + row, col, width: w, height: overlayLines.length };
+		}
 
 		// Composite each overlay
 		for (const { overlayLines, row, col, w } of rendered) {
