@@ -72,9 +72,11 @@ describe("xAI Responses provider", () => {
 		}
 	});
 
-	it("uses Responses with low/medium/high efforts only for Grok 4.5", () => {
+	it("uses Responses for Grok 4.5 and 4.6", () => {
 		expect(XAI_MODELS["grok-4.5"].api).toBe("openai-responses");
 		expect(getSupportedThinkingLevels(XAI_MODELS["grok-4.5"])).toEqual(["low", "medium", "high"]);
+		expect(XAI_MODELS["grok-4.6"].api).toBe("openai-responses");
+		expect(getSupportedThinkingLevels(XAI_MODELS["grok-4.6"])).toEqual(["low", "medium", "high", "xhigh"]);
 		expect(XAI_MODELS["grok-4.3"].api).toBe("openai-completions");
 	});
 
