@@ -32,6 +32,10 @@ export type KnownImagesApi = "openrouter-images";
 
 export type ImagesApi = KnownImagesApi | (string & {});
 
+export type KnownSpeechApi = "minimax-speech";
+
+export type SpeechApi = KnownSpeechApi | (string & {});
+
 export type KnownProvider =
 	| "amazon-bedrock"
 	| "ant-ling"
@@ -78,6 +82,10 @@ export type ProviderId = KnownProvider | string;
 export type KnownImagesProvider = "openrouter";
 
 export type ImagesProviderId = KnownImagesProvider | string;
+
+export type KnownSpeechProvider = "minimax" | "minimax-cn";
+
+export type SpeechProviderId = KnownSpeechProvider | string;
 
 export type ThinkingLevel = "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 export type ModelThinkingLevel = "off" | ThinkingLevel;
@@ -300,6 +308,58 @@ export interface ImagesOptions extends ProviderRequestOptions<ImagesModel<Images
 
 export type ProviderImagesOptions = ImagesOptions & Record<string, unknown>;
 
+/** The uniform contract implemented by speech-generation API modules. */
+export interface ProviderSpeech {
+	generateSpeech(
+		model: SpeechModel<SpeechApi>,
+		context: SpeechContext,
+		options?: SpeechOptions,
+	): Promise<AssistantSpeech>;
+}
+
+export type SpeechAudioFormat = "mp3" | "wav" | "flac" | "pcm";
+export type SpeechOutputFormat = "hex" | "url";
+
+export interface SpeechVoiceSetting {
+	voiceId: string;
+	speed?: number;
+	volume?: number;
+	pitch?: number;
+	emotion?: string;
+}
+
+export interface SpeechAudioSetting {
+	sampleRate?: number;
+	bitrate?: number;
+	format?: SpeechAudioFormat;
+	channel?: number;
+}
+
+export interface SpeechPronunciationDictionary {
+	tone?: string[];
+}
+
+export interface SpeechVoiceModification {
+	pitch?: number;
+	intensity?: number;
+	timbre?: number;
+	soundEffects?: string;
+}
+
+export interface SpeechOptions extends ProviderRequestOptions<SpeechModel<SpeechApi>> {
+	/** Synchronous HTTP speech generation only. */
+	stream?: false;
+	languageBoost?: string;
+	outputFormat?: SpeechOutputFormat;
+	voiceSetting?: SpeechVoiceSetting;
+	pronunciationDictionary?: SpeechPronunciationDictionary;
+	audioSetting?: SpeechAudioSetting;
+	voiceModification?: SpeechVoiceModification;
+	subtitleEnabled?: boolean;
+}
+
+export type ProviderSpeechOptions = SpeechOptions & Record<string, unknown>;
+
 // Unified options with reasoning passed to streamSimple() and completeSimple()
 export interface SimpleStreamOptions extends StreamOptions {
 	reasoning?: ThinkingLevel;
@@ -328,6 +388,12 @@ export type ImagesFunction<TApi extends ImagesApi = ImagesApi, TOptions extends 
 	context: ImagesContext,
 	options?: TOptions,
 ) => Promise<AssistantImages>;
+
+export type SpeechFunction<TApi extends SpeechApi = SpeechApi, TOptions extends SpeechOptions = SpeechOptions> = (
+	model: SpeechModel<TApi>,
+	context: SpeechContext,
+	options?: TOptions,
+) => Promise<AssistantSpeech>;
 
 export interface TextSignatureV1 {
 	v: 1;
@@ -471,6 +537,27 @@ export interface AssistantImages {
 	responseId?: string;
 	usage?: Usage;
 	stopReason: ImagesStopReason;
+	errorMessage?: string;
+	timestamp: number; // Unix timestamp in milliseconds
+}
+
+export interface SpeechContext {
+	text: string;
+}
+
+export type SpeechAudioContent =
+	| { type: "audio"; data: string; mimeType: string }
+	| { type: "audio"; url: string; mimeType: string };
+
+export type SpeechStopReason = "stop" | "error" | "aborted";
+
+export interface AssistantSpeech {
+	api: SpeechApi;
+	provider: SpeechProviderId;
+	model: string;
+	output: SpeechAudioContent[];
+	responseId?: string;
+	stopReason: SpeechStopReason;
 	errorMessage?: string;
 	timestamp: number; // Unix timestamp in milliseconds
 }
@@ -827,4 +914,14 @@ export interface ImagesModel<TApi extends ImagesApi>
 	api: TApi;
 	provider: ImagesProviderId;
 	output: ("text" | "image")[];
+}
+
+export interface SpeechModel<TApi extends SpeechApi> {
+	id: string;
+	name: string;
+	api: TApi;
+	provider: SpeechProviderId;
+	baseUrl: string;
+	audioFormats: readonly SpeechAudioFormat[];
+	headers?: Record<string, string>;
 }
