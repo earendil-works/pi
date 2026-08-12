@@ -10,7 +10,10 @@ import {
 	openSync,
 	readdirSync,
 	readSync,
+	renameSync,
 	statSync,
+	truncateSync,
+	unlinkSync,
 	writeFileSync,
 } from "fs";
 import { readdir, stat } from "fs/promises";
@@ -28,6 +31,20 @@ import {
 } from "./messages.ts";
 
 export const CURRENT_SESSION_VERSION = 3;
+
+function writeFileAtomically(filePath: string, content: string): void {
+	const tempPath = `${filePath}.tmp-${randomUUID()}`;
+	try {
+		writeFileSync(tempPath, content, { flag: "wx" });
+		renameSync(tempPath, filePath);
+	} finally {
+		try {
+			if (existsSync(tempPath)) unlinkSync(tempPath);
+		} catch {
+			// Preserve the original write or rename error.
+		}
+	}
+}
 
 export interface SessionHeader {
 	type: "session";
@@ -978,14 +995,7 @@ export class SessionManager {
 
 	private _rewriteFile(): void {
 		if (!this.persist || !this.sessionFile) return;
-		const fd = openSync(this.sessionFile, "w");
-		try {
-			for (const entry of this.fileEntries) {
-				writeFileSync(fd, `${JSON.stringify(entry)}\n`);
-			}
-		} finally {
-			closeSync(fd);
-		}
+		writeFileAtomically(this.sessionFile, this.fileEntries.map((entry) => `${JSON.stringify(entry)}\n`).join(""));
 	}
 
 	isPersisted(): boolean {
@@ -1042,10 +1052,33 @@ export class SessionManager {
 	}
 
 	private _appendEntry(entry: SessionEntry): void {
+		const previousLeafId = this.leafId;
+		const previousFlushed = this.flushed;
+		const previousFileSize = this.sessionFile && existsSync(this.sessionFile) ? statSync(this.sessionFile).size : undefined;
+
 		this.fileEntries.push(entry);
 		this.byId.set(entry.id, entry);
 		this.leafId = entry.id;
-		this._persist(entry);
+		try {
+			this._persist(entry);
+		} catch (error) {
+			this.fileEntries.pop();
+			this.byId.delete(entry.id);
+			this.leafId = previousLeafId;
+			this.flushed = previousFlushed;
+			if (this.sessionFile) {
+				try {
+					if (previousFileSize === undefined) {
+						if (existsSync(this.sessionFile)) unlinkSync(this.sessionFile);
+					} else {
+						truncateSync(this.sessionFile, previousFileSize);
+					}
+				} catch {
+					// Preserve the original persistence error.
+				}
+			}
+			throw error;
+		}
 	}
 
 	/** Append a message as child of current leaf, then advance leaf. Returns entry id.
@@ -1608,7 +1641,8 @@ export class SessionManager {
 		const fileTimestamp = timestamp.replace(/[:.]/g, "-");
 		const newSessionFile = join(dir, `${fileTimestamp}_${newSessionId}.jsonl`);
 
-		// Write new header pointing to source as parent, with updated cwd
+		// Write the new header and copied entries atomically so a failed fork does not leave
+		// a partially written session that can be discovered on the next startup.
 		const newHeader: SessionHeader = {
 			type: "session",
 			version: CURRENT_SESSION_VERSION,
@@ -1617,14 +1651,10 @@ export class SessionManager {
 			cwd: resolvedTargetCwd,
 			parentSession: resolvedSourcePath,
 		};
-		writeFileSync(newSessionFile, `${JSON.stringify(newHeader)}\n`, { flag: "wx" });
-
-		// Copy all non-header entries from source
-		for (const entry of sourceEntries) {
-			if (entry.type !== "session") {
-				appendFileSync(newSessionFile, `${JSON.stringify(entry)}\n`);
-			}
-		}
+		const forkedContent = [newHeader, ...sourceEntries.filter((entry) => entry.type !== "session")]
+			.map((entry) => `${JSON.stringify(entry)}\n`)
+			.join("");
+		writeFileAtomically(newSessionFile, forkedContent);
 
 		return new SessionManager(resolvedTargetCwd, dir, newSessionFile, true);
 	}
