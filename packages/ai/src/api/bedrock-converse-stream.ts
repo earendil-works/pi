@@ -66,6 +66,34 @@ import { transformMessages } from "./transform-messages.ts";
 
 export type BedrockThinkingDisplay = "summarized" | "omitted";
 
+export type BedrockFailurePhase = "send" | "stream_event" | "stream_completion";
+
+export type BedrockFailureClass =
+	| "AccessDeniedException"
+	| "InternalServerException"
+	| "ModelErrorException"
+	| "ModelNotReadyException"
+	| "ModelStreamErrorException"
+	| "ModelTimeoutException"
+	| "ResourceNotFoundException"
+	| "ServiceQuotaExceededException"
+	| "ServiceUnavailableException"
+	| "ThrottlingException"
+	| "ValidationException"
+	| "transient_transport_failure"
+	| "missing_terminal_response"
+	| "unknown";
+
+export interface BedrockFailureDiagnosticDetails {
+	phase: BedrockFailurePhase;
+	failureClass: BedrockFailureClass;
+	status?: number;
+	errorCode?: string;
+	requestId?: string;
+	sdkAttempts?: number;
+	sdkTotalRetryDelayMs?: number;
+}
+
 export interface BedrockOptions extends StreamOptions {
 	region?: string;
 	profile?: string;
@@ -222,7 +250,10 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 
 		// Kept outside the try so the catch can still correlate a mid-stream failure:
 		// exceptions delivered as stream events carry no HTTP metadata of their own.
-		let responseRequestId: string | undefined;
+		let failurePhase: BedrockFailurePhase = "send";
+		let responseMetadata: SdkResponseMetadata | undefined;
+		let streamEventFailure: StreamEventFailure | undefined;
+		let completionFailureClass: BedrockFailureClass | undefined;
 
 		try {
 			const supportsStrictMode = model.compat?.supportsStrictMode ?? false;
@@ -252,7 +283,8 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 			const command = new ConverseStreamCommand(commandInput);
 
 			const response = await client.send(command, { abortSignal: options.signal });
-			responseRequestId = normalizeDiagnosticValue(response.$metadata.requestId);
+			responseMetadata = normalizeSdkResponseMetadata(response.$metadata);
+			failurePhase = "stream_event";
 			if (response.$metadata.httpStatusCode !== undefined) {
 				const responseHeaders: Record<string, string> = {};
 				if (response.$metadata.requestId) {
@@ -283,23 +315,33 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 				} else if (item.metadata) {
 					handleMetadata(item.metadata, model, output);
 				} else if (item.internalServerException) {
+					streamEventFailure = createStreamEventFailure("InternalServerException", 500);
 					throw item.internalServerException;
 				} else if (item.modelStreamErrorException) {
+					streamEventFailure = createStreamEventFailure(
+						"ModelStreamErrorException",
+						item.modelStreamErrorException.originalStatusCode,
+					);
 					throw item.modelStreamErrorException;
 				} else if (item.validationException) {
+					streamEventFailure = createStreamEventFailure("ValidationException", 400);
 					throw item.validationException;
 				} else if (item.throttlingException) {
+					streamEventFailure = createStreamEventFailure("ThrottlingException", 429);
 					throw item.throttlingException;
 				} else if (item.serviceUnavailableException) {
+					streamEventFailure = createStreamEventFailure("ServiceUnavailableException", 503);
 					throw item.serviceUnavailableException;
 				}
 			}
+			failurePhase = "stream_completion";
 
 			if (options.signal?.aborted) {
 				throw new Error("Request was aborted");
 			}
 
 			if (output.stopReason === "pending") {
+				completionFailureClass = "missing_terminal_response";
 				throw new Error("Bedrock stream ended without a stop reason");
 			}
 			if (output.stopReason === "error" || output.stopReason === "aborted") {
@@ -317,7 +359,14 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 			output.stopReason = options.signal?.aborted ? "aborted" : "error";
 			output.errorMessage = formatBedrockError(error);
 			if (output.stopReason === "error") {
-				appendBedrockFailureDiagnostic(output, error, responseRequestId);
+				appendBedrockFailureDiagnostic(
+					output,
+					error,
+					failurePhase,
+					responseMetadata,
+					streamEventFailure,
+					completionFailureClass,
+				);
 			}
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();
@@ -374,7 +423,26 @@ function formatBedrockError(error: unknown): string {
 	return `${core}${dataRetentionHint}`;
 }
 
-type SdkErrorMetadata = { $metadata?: { httpStatusCode?: unknown; requestId?: unknown } };
+type SdkMetadata = {
+	httpStatusCode?: unknown;
+	requestId?: unknown;
+	attempts?: unknown;
+	totalRetryDelay?: unknown;
+};
+
+type SdkErrorMetadata = { $metadata?: SdkMetadata };
+
+interface SdkResponseMetadata {
+	requestId?: string;
+	sdkAttempts?: number;
+	sdkTotalRetryDelayMs?: number;
+}
+
+interface StreamEventFailure {
+	failureClass: BedrockFailureClass;
+	status?: number;
+	errorCode: string;
+}
 
 /** Over-long header values are dropped rather than truncated: a truncated request id is not a request id. */
 const MAX_BEDROCK_DIAGNOSTIC_VALUE_CHARS = 200;
@@ -384,6 +452,31 @@ function normalizeDiagnosticValue(value: unknown): string | undefined {
 	const trimmed = value.trim();
 	if (trimmed.length === 0 || trimmed.length > MAX_BEDROCK_DIAGNOSTIC_VALUE_CHARS) return undefined;
 	return trimmed;
+}
+
+function normalizeNonNegativeNumber(value: unknown): number | undefined {
+	return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
+}
+
+function normalizeSdkAttempts(value: unknown): number | undefined {
+	const normalized = normalizeNonNegativeNumber(value);
+	return normalized !== undefined && Number.isInteger(normalized) && normalized >= 1 ? normalized : undefined;
+}
+
+function normalizeSdkResponseMetadata(metadata: SdkMetadata): SdkResponseMetadata {
+	return {
+		requestId: normalizeDiagnosticValue(metadata.requestId),
+		sdkAttempts: normalizeSdkAttempts(metadata.attempts),
+		sdkTotalRetryDelayMs: normalizeNonNegativeNumber(metadata.totalRetryDelay),
+	};
+}
+
+function createStreamEventFailure(failureClass: BedrockFailureClass, status: unknown): StreamEventFailure {
+	return {
+		failureClass,
+		status: normalizeNonNegativeNumber(status),
+		errorCode: failureClass,
+	};
 }
 
 /**
@@ -396,30 +489,87 @@ function extractBedrockErrorCode(error: unknown): string | undefined {
 	return normalizeDiagnosticValue(error.name);
 }
 
+const BEDROCK_FAILURE_CLASSES = new Set<BedrockFailureClass>([
+	"AccessDeniedException",
+	"InternalServerException",
+	"ModelErrorException",
+	"ModelNotReadyException",
+	"ModelStreamErrorException",
+	"ModelTimeoutException",
+	"ResourceNotFoundException",
+	"ServiceQuotaExceededException",
+	"ServiceUnavailableException",
+	"ThrottlingException",
+	"ValidationException",
+]);
+
+const TRANSIENT_TRANSPORT_ERROR_NAMES = new Set(["TimeoutError"]);
+const TRANSIENT_TRANSPORT_ERROR_CODES = new Set([
+	"EAI_AGAIN",
+	"ECONNREFUSED",
+	"ECONNRESET",
+	"EHOSTUNREACH",
+	"ENETDOWN",
+	"ENETUNREACH",
+	"ETIMEDOUT",
+	"UND_ERR_CONNECT_TIMEOUT",
+	"UND_ERR_SOCKET",
+]);
+
+function classifyBedrockFailure(error: unknown, errorCode: string | undefined): BedrockFailureClass {
+	if (errorCode !== undefined && BEDROCK_FAILURE_CLASSES.has(errorCode as BedrockFailureClass)) {
+		return errorCode as BedrockFailureClass;
+	}
+	if (error instanceof Error && TRANSIENT_TRANSPORT_ERROR_NAMES.has(error.name)) {
+		return "transient_transport_failure";
+	}
+	const transportCode = (error as { code?: unknown })?.code;
+	if (typeof transportCode === "string" && TRANSIENT_TRANSPORT_ERROR_CODES.has(transportCode)) {
+		return "transient_transport_failure";
+	}
+	return "unknown";
+}
+
 /**
  * Structured metadata alongside `errorMessage`, which stays byte-identical because `isRetryableAssistantError`
- * matches against it. Unknown fields are omitted, never guessed: a modeled mid-stream exception reaches us as
- * a bare object literal, leaving only `fallbackRequestId`. `details` only, as the throw is not always `Error`.
+ * matches against it. Phase and a closed failure class are always present; unavailable provider metadata is
+ * omitted rather than inferred. The diagnostic intentionally excludes the raw thrown value and response body.
  */
 function appendBedrockFailureDiagnostic(
 	output: AssistantMessage,
 	error: unknown,
-	fallbackRequestId: string | undefined,
+	phase: BedrockFailurePhase,
+	responseMetadata: SdkResponseMetadata | undefined,
+	streamEventFailure: StreamEventFailure | undefined,
+	completionFailureClass: BedrockFailureClass | undefined,
 ): void {
 	const metadata = (error as SdkErrorMetadata)?.$metadata;
-	const details: Record<string, unknown> = {};
+	const errorCode = streamEventFailure?.errorCode ?? extractBedrockErrorCode(error);
+	const sdkMetadata = phase === "send" ? normalizeSdkResponseMetadata(metadata ?? {}) : responseMetadata;
+	const details: BedrockFailureDiagnosticDetails = {
+		phase,
+		failureClass:
+			streamEventFailure?.failureClass ?? completionFailureClass ?? classifyBedrockFailure(error, errorCode),
+	};
 
-	if (typeof metadata?.httpStatusCode === "number") details.status = metadata.httpStatusCode;
+	const status = streamEventFailure?.status ?? normalizeNonNegativeNumber(metadata?.httpStatusCode);
+	if (status !== undefined) details.status = status;
 
-	const errorCode = extractBedrockErrorCode(error);
 	if (errorCode !== undefined) details.errorCode = errorCode;
 
-	const requestId = normalizeDiagnosticValue(metadata?.requestId) ?? fallbackRequestId;
+	const requestId = normalizeDiagnosticValue(metadata?.requestId) ?? sdkMetadata?.requestId;
 	if (requestId !== undefined) details.requestId = requestId;
 
-	if (Object.keys(details).length === 0) return;
+	if (sdkMetadata?.sdkAttempts !== undefined) details.sdkAttempts = sdkMetadata.sdkAttempts;
+	if (sdkMetadata?.sdkTotalRetryDelayMs !== undefined) {
+		details.sdkTotalRetryDelayMs = sdkMetadata.sdkTotalRetryDelayMs;
+	}
 
-	appendAssistantMessageDiagnostic(output, { type: "bedrock_response_failure", timestamp: Date.now(), details });
+	appendAssistantMessageDiagnostic(output, {
+		type: "bedrock_response_failure",
+		timestamp: Date.now(),
+		details: { ...details },
+	});
 }
 
 /**

@@ -49,7 +49,6 @@ vi.mock("@aws-sdk/client-bedrock-runtime", () => {
 });
 
 import { stream as streamBedrock } from "../src/api/bedrock-converse-stream.ts";
-import { getModel } from "../src/compat.ts";
 import type { AssistantMessage, Context, Model } from "../src/types.ts";
 import type { AssistantMessageDiagnostic } from "../src/utils/diagnostics.ts";
 
@@ -62,7 +61,18 @@ const context: Context = {
 };
 
 function getModelFixture(): Model<"bedrock-converse-stream"> {
-	return getModel("amazon-bedrock", "us.anthropic.claude-opus-4-8");
+	return {
+		id: "us.anthropic.claude-opus-4-8",
+		name: "Claude Opus 4.8",
+		api: "bedrock-converse-stream",
+		provider: "amazon-bedrock",
+		baseUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
+		reasoning: true,
+		input: ["text", "image"],
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		contextWindow: 200000,
+		maxTokens: 32000,
+	};
 }
 
 /** What the SDK's `handleError` path throws for a non-2xx response; `name` is the modeled AWS error code. */
@@ -104,7 +114,12 @@ describe("bedrock failure diagnostics", () => {
 		bedrockMock.send = {
 			kind: "reject",
 			error: makeServiceException("ValidationException", {
-				$metadata: { httpStatusCode: 400, requestId: REQUEST_ID },
+				$metadata: {
+					httpStatusCode: 400,
+					requestId: REQUEST_ID,
+					attempts: 3,
+					totalRetryDelay: 750,
+				},
 			}),
 		};
 
@@ -112,7 +127,15 @@ describe("bedrock failure diagnostics", () => {
 		const diagnostic = findDiagnostic(message);
 
 		expect(message.stopReason).toBe("error");
-		expect(diagnostic?.details).toEqual({ status: 400, errorCode: "ValidationException", requestId: REQUEST_ID });
+		expect(diagnostic?.details).toEqual({
+			phase: "send",
+			failureClass: "ValidationException",
+			status: 400,
+			errorCode: "ValidationException",
+			requestId: REQUEST_ID,
+			sdkAttempts: 3,
+			sdkTotalRetryDelayMs: 750,
+		});
 		expect(diagnostic?.error).toBeUndefined();
 		expect(Object.keys(diagnostic ?? {}).sort()).toEqual(["details", "timestamp", "type"]);
 	});
@@ -129,14 +152,61 @@ describe("bedrock failure diagnostics", () => {
 		expect((await runBedrock()).errorMessage).toBe(`Validation error: ${VALIDATION_MESSAGE}`);
 	});
 
-	it("reports only the request id for a modeled mid-stream exception", async () => {
-		// The SDK throws a bare object literal here, so the code is genuinely unavailable.
-		bedrockMock.send = respondWithFailingStream({ message: "Too many requests, please wait." });
+	it("classifies a modeled mid-stream exception and retains successful send metadata", async () => {
+		bedrockMock.send = {
+			kind: "resolve",
+			response: {
+				$metadata: {
+					httpStatusCode: 200,
+					requestId: REQUEST_ID,
+					attempts: 2,
+					totalRetryDelay: 125,
+				},
+				stream: (async function* () {
+					yield { messageStart: { role: "assistant" } };
+					yield { throttlingException: { message: "Too many requests, please wait." } };
+				})(),
+			},
+		};
 
 		const message = await runBedrock();
 
 		expect(message.stopReason).toBe("error");
-		expect(findDiagnostic(message)?.details).toEqual({ requestId: REQUEST_ID });
+		expect(findDiagnostic(message)?.details).toEqual({
+			phase: "stream_event",
+			failureClass: "ThrottlingException",
+			status: 429,
+			errorCode: "ThrottlingException",
+			requestId: REQUEST_ID,
+			sdkAttempts: 2,
+			sdkTotalRetryDelayMs: 125,
+		});
+	});
+
+	it("uses the modeled original status for a model stream error", async () => {
+		bedrockMock.send = {
+			kind: "resolve",
+			response: {
+				$metadata: { httpStatusCode: 200, requestId: REQUEST_ID },
+				stream: (async function* () {
+					yield { messageStart: { role: "assistant" } };
+					yield {
+						modelStreamErrorException: {
+							message: "The provider stream failed",
+							originalStatusCode: 529,
+						},
+					};
+				})(),
+			},
+		};
+
+		expect(findDiagnostic(await runBedrock())?.details).toEqual({
+			phase: "stream_event",
+			failureClass: "ModelStreamErrorException",
+			status: 529,
+			errorCode: "ModelStreamErrorException",
+			requestId: REQUEST_ID,
+		});
 	});
 
 	it("captures the error code for an unmodeled mid-stream error", async () => {
@@ -146,6 +216,8 @@ describe("bedrock failure diagnostics", () => {
 		bedrockMock.send = respondWithFailingStream(unmodeled);
 
 		expect(findDiagnostic(await runBedrock())?.details).toEqual({
+			phase: "stream_event",
+			failureClass: "ModelStreamErrorException",
 			errorCode: "ModelStreamErrorException",
 			requestId: REQUEST_ID,
 		});
@@ -157,17 +229,63 @@ describe("bedrock failure diagnostics", () => {
 		timeout.name = "TimeoutError";
 		bedrockMock.send = respondWithFailingStream(timeout);
 
-		expect(findDiagnostic(await runBedrock())?.details).toEqual({ requestId: REQUEST_ID });
+		expect(findDiagnostic(await runBedrock())?.details).toEqual({
+			phase: "stream_event",
+			failureClass: "transient_transport_failure",
+			requestId: REQUEST_ID,
+		});
 	});
 
-	it("emits no diagnostic when the failure carries no provider metadata", async () => {
+	it("classifies a stream that ends without a terminal stop reason", async () => {
+		bedrockMock.send = {
+			kind: "resolve",
+			response: {
+				$metadata: { httpStatusCode: 200, requestId: REQUEST_ID, attempts: 1, totalRetryDelay: 0 },
+				stream: (async function* () {
+					yield { messageStart: { role: "assistant" } };
+				})(),
+			},
+		};
+
+		const message = await runBedrock();
+
+		expect(message.errorMessage).toBe("Bedrock stream ended without a stop reason");
+		expect(findDiagnostic(message)?.details).toEqual({
+			phase: "stream_completion",
+			failureClass: "missing_terminal_response",
+			requestId: REQUEST_ID,
+			sdkAttempts: 1,
+			sdkTotalRetryDelayMs: 0,
+		});
+	});
+
+	it("does not misclassify an explicit provider error stop as a missing terminal response", async () => {
+		bedrockMock.send = {
+			kind: "resolve",
+			response: {
+				$metadata: { httpStatusCode: 200, requestId: REQUEST_ID },
+				stream: (async function* () {
+					yield { messageStart: { role: "assistant" } };
+					yield { messageStop: { stopReason: "guardrail_intervened" } };
+				})(),
+			},
+		};
+
+		expect(findDiagnostic(await runBedrock())?.details).toEqual({
+			phase: "stream_completion",
+			failureClass: "unknown",
+			requestId: REQUEST_ID,
+		});
+	});
+
+	it("classifies a failure without provider metadata as unknown", async () => {
 		bedrockMock.send = { kind: "reject", error: new Error("socket hang up") };
 
 		const message = await runBedrock();
 
 		expect(message.stopReason).toBe("error");
 		expect(message.errorMessage).toBe("socket hang up");
-		expect(findDiagnostic(message)).toBeUndefined();
+		expect(findDiagnostic(message)?.details).toEqual({ phase: "send", failureClass: "unknown" });
 	});
 
 	it("emits no diagnostic for an aborted turn", async () => {
@@ -194,7 +312,11 @@ describe("bedrock failure diagnostics", () => {
 			}),
 		};
 
-		expect(findDiagnostic(await runBedrock())?.details).toEqual({ status: 400 });
+		expect(findDiagnostic(await runBedrock())?.details).toEqual({
+			phase: "send",
+			failureClass: "unknown",
+			status: 400,
+		});
 	});
 
 	it("omits the SDK's Unknown placeholder instead of reporting it as a code", async () => {
@@ -205,6 +327,8 @@ describe("bedrock failure diagnostics", () => {
 		};
 
 		expect(findDiagnostic(await runBedrock())?.details).toEqual({
+			phase: "send",
+			failureClass: "unknown",
 			status: 403,
 			requestId: REQUEST_ID,
 		});

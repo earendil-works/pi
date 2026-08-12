@@ -48,12 +48,14 @@ export type ProxyAssistantMessageEvent =
 			type: "done";
 			reason: Extract<StopReason, "stop" | "length" | "toolUse">;
 			usage: AssistantMessage["usage"];
+			diagnostics?: AssistantMessage["diagnostics"];
 	  }
 	| {
 			type: "error";
 			reason: Extract<StopReason, "aborted" | "error">;
 			errorMessage?: string;
 			usage: AssistantMessage["usage"];
+			diagnostics?: AssistantMessage["diagnostics"];
 	  };
 
 type ProxySerializableStreamOptions = Pick<
@@ -181,6 +183,7 @@ export function streamProxy(model: Model<any>, context: Context, options: ProxyS
 			reader = response.body!.getReader();
 			const decoder = new TextDecoder();
 			let buffer = "";
+			let terminalEventReceived = false;
 
 			while (true) {
 				const { done, value } = await reader.read();
@@ -201,6 +204,9 @@ export function streamProxy(model: Model<any>, context: Context, options: ProxyS
 							const proxyEvent = JSON.parse(data) as ProxyAssistantMessageEvent;
 							const event = processProxyEvent(proxyEvent, partial);
 							if (event) {
+								if (event.type === "done" || event.type === "error") {
+									terminalEventReceived = true;
+								}
 								stream.push(event);
 							}
 						}
@@ -210,6 +216,22 @@ export function streamProxy(model: Model<any>, context: Context, options: ProxyS
 
 			if (options.signal?.aborted) {
 				throw new Error("Request aborted by user");
+			}
+			if (!terminalEventReceived) {
+				partial.stopReason = "error";
+				partial.errorMessage = "Proxy stream ended without a terminal event";
+				partial.diagnostics = [
+					...(partial.diagnostics ?? []),
+					{
+						type: "bedrock_response_failure",
+						timestamp: Date.now(),
+						details: {
+							phase: "stream_completion",
+							failureClass: "transient_transport_failure",
+						},
+					},
+				];
+				stream.push({ type: "error", reason: "error", error: partial });
 			}
 
 			stream.end();
@@ -353,12 +375,14 @@ function processProxyEvent(
 		case "done":
 			partial.stopReason = proxyEvent.reason;
 			partial.usage = proxyEvent.usage;
+			partial.diagnostics = proxyEvent.diagnostics;
 			return { type: "done", reason: proxyEvent.reason, message: partial };
 
 		case "error":
 			partial.stopReason = proxyEvent.reason;
 			partial.errorMessage = proxyEvent.errorMessage;
 			partial.usage = proxyEvent.usage;
+			partial.diagnostics = proxyEvent.diagnostics;
 			return { type: "error", reason: proxyEvent.reason, error: partial };
 
 		default: {

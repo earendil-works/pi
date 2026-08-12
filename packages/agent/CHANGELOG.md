@@ -2,8 +2,14 @@
 
 ## [Unreleased]
 
+### Added
+
+- Re-exported the generic assistant message event-stream factory for low-level `Agent` stream wrappers.
+
 ### Fixed
 
+- Fixed `streamProxy()` dropping terminal assistant diagnostics.
+- Fixed `streamProxy()` leaving consumers unresolved when a proxy response ended without a terminal event.
 - Fixed `streamProxy()` dropping finalized tool-call metadata such as OpenAI Responses namespaces ([#7709](https://github.com/earendil-works/pi/issues/7709)).
 
 ## [0.84.1] - 2026-08-07

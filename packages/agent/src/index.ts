@@ -1,6 +1,6 @@
 // Core Agent
 
-export { uuidv7 } from "@earendil-works/pi-ai";
+export { createAssistantMessageEventStream, uuidv7 } from "@earendil-works/pi-ai";
 export type {
 	AttributeValue,
 	ExactTelemetryAttributes,

@@ -4,12 +4,14 @@
 
 ### Changed
 
+- Enriched Amazon Bedrock failure diagnostics with bounded phase and failure classification plus AWS SDK attempt and retry-delay metadata.
 - Automatically converted supported strict tool schemas to provider-compatible closed objects with required nullable optional fields while preserving original tool definitions, and treated `null` values for optional non-nullable tool arguments as omitted.
 - Changed OpenAI Responses deferred tool loading to prefer message-anchored `additional_tools` where supported while retaining tool-search and top-level fallbacks ([#7709](https://github.com/earendil-works/pi/issues/7709)).
 - Replaced the Mistral SDK transport with a native Chat Completions HTTP stream, eliminating its generated client and schema runtime overhead.
 
 ### Fixed
 
+- Fixed terminal-less Amazon Bedrock streams being indistinguishable from other provider failures.
 - Fixed GitHub Copilot login triggering API rate limits while enabling model policies by limiting concurrent policy updates ([#6187](https://github.com/earendil-works/pi/issues/6187)).
 - Fixed upstream request buffer limit failures to trigger automatic assistant retries.
 - Fixed OpenAI Responses function and custom tool calls to preserve namespaces during streaming, proxying, and replay ([#7709](https://github.com/earendil-works/pi/issues/7709)).
