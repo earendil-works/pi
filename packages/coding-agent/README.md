@@ -107,6 +107,7 @@ For each built-in provider, pi maintains a list of tool-capable models. Configur
 - Anthropic
 - Ant Ling
 - OpenAI
+- Ollama Cloud
 - Azure OpenAI
 - DeepSeek
 - NVIDIA NIM

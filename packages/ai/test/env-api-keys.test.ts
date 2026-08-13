@@ -79,6 +79,13 @@ describe("environment API keys", () => {
 		expect(getEnvApiKey("zai-coding-cn")).toBe("zai-coding-cn-token");
 	});
 
+	it("resolves Ollama Cloud credentials from OLLAMA_API_KEY", () => {
+		const env = { OLLAMA_API_KEY: "ollama-cloud-token" };
+
+		expect(findEnvKeys("ollama-cloud", env)).toEqual(["OLLAMA_API_KEY"]);
+		expect(getEnvApiKey("ollama-cloud", env)).toBe("ollama-cloud-token");
+	});
+
 	it("reports ANTHROPIC_AUTH_TOKEN but preserves OAuth token API key lookup", () => {
 		process.env.ANTHROPIC_AUTH_TOKEN = "auth-token";
 		process.env.ANTHROPIC_OAUTH_TOKEN = "oauth-token";

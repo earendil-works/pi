@@ -72,6 +72,7 @@ pi
 | Ant Ling | `ANT_LING_API_KEY` | `ant-ling` |
 | Azure OpenAI Responses | `AZURE_OPENAI_API_KEY` | `azure-openai-responses` |
 | OpenAI | `OPENAI_API_KEY` | `openai` |
+| Ollama Cloud | `OLLAMA_API_KEY` | `ollama-cloud` |
 | DeepSeek | `DEEPSEEK_API_KEY` | `deepseek` |
 | NVIDIA NIM | `NVIDIA_API_KEY` | `nvidia` |
 | Google Gemini | `GEMINI_API_KEY` | `google` |
@@ -294,6 +295,16 @@ export GOOGLE_CLOUD_LOCATION=us-central1
 ```
 
 Or set `GOOGLE_APPLICATION_CREDENTIALS` to a service account key file.
+
+### Ollama Cloud
+
+Run `/login ollama-cloud` or set `OLLAMA_API_KEY`, then select an Ollama Cloud model:
+
+```bash
+pi --provider ollama-cloud --model glm-5.2
+```
+
+Ollama Cloud is separate from local Ollama providers configured in `models.json`.
 
 ## llama.cpp
 
