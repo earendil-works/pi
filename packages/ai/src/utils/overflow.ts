@@ -24,12 +24,14 @@ import type { AssistantMessage } from "../types.ts";
  * - GitHub Copilot: "prompt token count of X exceeds the limit of Y"
  * - MiniMax: "invalid params, context window exceeds limit"
  * - Kimi For Coding: "Your request exceeded model token limit: X (requested: Y)"
+ * - DS4: "Prompt has X tokens, but the configured context size is Y tokens"
  * - Cerebras: "400/413 status code (no body)"
  * - Mistral: "Prompt contains X tokens ... too large for model with Y maximum context length"
  * - z.ai: Does NOT error, accepts overflow silently - handled via usage.input > contextWindow
  * - Xiaomi MiMo: Truncates input to fill contextWindow exactly, then returns finish_reason "length"
  *   with output=0 (no room left to generate). Detected via stopReason "length" + zero output +
  *   input filling the context window.
+ * - DashScope/Qwen: "Range of input length should be [1, X]" (HTTP 400 invalid_parameter_error)
  * - Ollama: Some deployments truncate silently, others return errors like "prompt too long; exceeded max context length by X tokens"
  */
 const OVERFLOW_PATTERNS = [
@@ -50,8 +52,10 @@ const OVERFLOW_PATTERNS = [
 	/context window exceeds limit/i, // MiniMax
 	/exceeded model token limit/i, // Kimi For Coding
 	/too large for model with \d+ maximum context length/i, // Mistral
+	/prompt has [\d,]+ tokens?, but the configured context size is [\d,]+ tokens?/i, // DS4 server
 	/model_context_window_exceeded/i, // z.ai non-standard finish_reason surfaced as error text
 	/prompt too long; exceeded (?:max )?context length/i, // Ollama explicit overflow error
+	/range of input length should be/i, // DashScope / Qwen Token Plan
 	/context[_ ]length[_ ]exceeded/i, // Generic fallback
 	/too many tokens/i, // Generic fallback
 	/token limit exceeded/i, // Generic fallback
@@ -76,11 +80,13 @@ const NON_OVERFLOW_PATTERNS = [
 /**
  * Check if an assistant message represents a context overflow error.
  *
- * This handles two cases:
+ * This handles three cases:
  * 1. Error-based overflow: Most providers return stopReason "error" with a
  *    specific error message pattern.
  * 2. Silent overflow: Some providers accept overflow requests and return
  *    successfully. For these, we check if usage.input exceeds the context window.
+ * 3. Length-stop overflow: Xiaomi MiMo can return "length" with zero output when
+ *    the input fills the context window.
  *
  * ## Reliability by Provider
  *
@@ -98,6 +104,8 @@ const NON_OVERFLOW_PATTERNS = [
  * - llama.cpp: "exceeds the available context size"
  * - LM Studio: "greater than the context length"
  * - Kimi For Coding: "exceeded model token limit: X (requested: Y)"
+ * - DS4: "Prompt has X tokens, but the configured context size is Y tokens"
+ * - DashScope/Qwen: "Range of input length should be [1, X]"
  *
  * **Unreliable detection:**
  * - z.ai: Sometimes accepts overflow silently (detectable via usage.input > contextWindow),
@@ -152,6 +160,16 @@ export function isContextOverflow(message: AssistantMessage, contextWindow?: num
 	}
 
 	return false;
+}
+
+/**
+ * Check whether a length stop ended below the caller or model's intended output limit.
+ * Such responses may be caused by context pressure or provider-side truncation, so callers
+ * can make one bounded compact-and-retry attempt. `desiredMaxOutput` must be the original
+ * limit before any context-based clamping.
+ */
+export function isRecoverableLength(message: AssistantMessage, desiredMaxOutput: number): boolean {
+	return message.stopReason === "length" && desiredMaxOutput > 0 && message.usage.output < desiredMaxOutput;
 }
 
 /**

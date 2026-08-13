@@ -108,11 +108,58 @@ describe("--session-id read-only commands", () => {
 		expect(hasSessionWithId(join(result.agentDir, "sessions"), "read-only-help")).toBe(false);
 	});
 
+	it("allows --no-session with --session-id", async () => {
+		const result = await runCli(["--no-session", "--session-id", "ephemeral-id", "--help"]);
+
+		expect(result.code).toBe(0);
+		expect(hasSessionWithId(join(result.agentDir, "sessions"), "ephemeral-id")).toBe(false);
+	});
+
 	it("does not reserve a session for --list-models", async () => {
 		const result = await runCli(["--session-id", "read-only-models", "--list-models"]);
 
 		expect(result.code).toBe(0);
 		expect(hasSessionWithId(join(result.agentDir, "sessions"), "read-only-models")).toBe(false);
+	});
+
+	it("warns when a missing --session-id creates a new session", async () => {
+		const result = await runCli((dirs) => [
+			"--session-dir",
+			dirs.sessionDir,
+			"--session-id",
+			"missing-session-id",
+			"--model",
+			"missing-model",
+			"-p",
+			"hi",
+		]);
+
+		expect(result.code).toBe(1);
+		expect(result.stderr).toContain(
+			"Warning: No project session found with id 'missing-session-id'; creating a new session with that id.",
+		);
+	});
+
+	it("does not warn when --session-id opens an existing session", async () => {
+		const result = await runCli(
+			(dirs) => [
+				"--session-dir",
+				dirs.sessionDir,
+				"--session-id",
+				"existing-session-id",
+				"--model",
+				"missing-model",
+				"-p",
+				"hi",
+			],
+			(dirs) => {
+				mkdirSync(dirs.sessionDir, { recursive: true });
+				writeSession(dirs.sessionDir, dirs.projectDir, "existing-session-id");
+			},
+		);
+
+		expect(result.code).toBe(1);
+		expect(result.stderr).not.toContain("No project session found with id 'existing-session-id'");
 	});
 
 	it("rejects an existing fork target session id", async () => {

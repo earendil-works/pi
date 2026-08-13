@@ -33,7 +33,7 @@ export class CustomEditor extends Editor {
 			return;
 		}
 
-		// Check for paste image keybinding
+		// Check for clipboard paste keybinding
 		if (this.keybindings.matches(data, "app.clipboard.pasteImage")) {
 			this.onPasteImage?.();
 			return;
@@ -64,6 +64,16 @@ export class CustomEditor extends Editor {
 				return;
 			}
 			// Fall through to editor handling for delete-char-forward when not empty
+		}
+
+		// Explicit history bindings take precedence over app actions while the editor is focused.
+		// This lets users bind Ctrl+P even though it cycles models by default.
+		if (
+			this.keybindings.matches(data, "tui.editor.historyPrevious") ||
+			this.keybindings.matches(data, "tui.editor.historyNext")
+		) {
+			super.handleInput(data);
+			return;
 		}
 
 		// Check all other app actions

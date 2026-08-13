@@ -100,6 +100,8 @@ Pi loads:
 - `~/.pi/agent/AGENTS.md` for global instructions
 - `AGENTS.md` or `CLAUDE.md` from parent directories and the current directory
 
+If a directory contains `AGENTS.override.md`, Pi loads it instead of `AGENTS.md` or `CLAUDE.md` from that directory.
+
 Restart pi, or run `/reload`, after changing context files.
 
 ## Common things to try
@@ -113,7 +115,7 @@ pi @README.md "Summarize this"
 pi @src/app.ts @src/app.test.ts "Review these together"
 ```
 
-Images can be pasted with Ctrl+V (Alt+V on Windows) or dragged into supported terminals.
+Images or text can be pasted with Ctrl+V (Alt+V on Windows); images can also be dragged into supported terminals.
 
 ### Run shell commands
 

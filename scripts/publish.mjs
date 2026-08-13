@@ -1,15 +1,11 @@
 #!/usr/bin/env node
 
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { getPublicWorkspacePackages } from "./release-packages.mjs";
 
-const packages = [
-	{ directory: "packages/ai", name: "@earendil-works/pi-ai" },
-	{ directory: "packages/agent", name: "@earendil-works/pi-agent-core" },
-	{ directory: "packages/tui", name: "@earendil-works/pi-tui" },
-	{ directory: "packages/coding-agent", name: "@earendil-works/pi-coding-agent" },
-];
+const packages = getPublicWorkspacePackages();
 
 const dryRun = process.argv.includes("--dry-run");
 const unknownArgs = process.argv.slice(2).filter((arg) => arg !== "--dry-run");
@@ -37,10 +33,6 @@ function run(command, args, options = {}) {
 	}
 
 	return result;
-}
-
-function readPackageJson(directory) {
-	return JSON.parse(readFileSync(join(directory, "package.json"), "utf8"));
 }
 
 function assertBuildOutputExists(directory) {
@@ -73,14 +65,7 @@ function isPublished(name, version) {
 	throw new Error(output ? `Failed to query ${name}@${version}\n${output}` : `Failed to query ${name}@${version}`);
 }
 
-const packageVersions = new Map();
-for (const pkg of packages) {
-	const packageJson = readPackageJson(pkg.directory);
-	if (packageJson.name !== pkg.name) {
-		throw new Error(`${pkg.directory}/package.json has name ${packageJson.name}, expected ${pkg.name}`);
-	}
-	packageVersions.set(pkg.name, packageJson.version);
-}
+const packageVersions = new Map(packages.map((pkg) => [pkg.name, pkg.version]));
 
 const versions = [...new Set(packageVersions.values())];
 if (versions.length !== 1) {

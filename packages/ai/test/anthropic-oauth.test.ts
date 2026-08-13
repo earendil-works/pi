@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { anthropicOAuth } from "../src/auth/oauth/anthropic.ts";
 import type { AuthEvent, AuthPrompt } from "../src/auth/types.ts";
-import { anthropicOAuth, loginAnthropic, refreshAnthropicToken } from "../src/utils/oauth/anthropic.ts";
+
+const neverAbortedSignal = new AbortController().signal;
 
 function jsonResponse(body: unknown, status: number = 200): Response {
 	return new Response(JSON.stringify(body), {
@@ -53,18 +55,17 @@ describe.sequential("Anthropic OAuth", () => {
 		});
 		vi.stubGlobal("fetch", fetchMock);
 
-		const credentials = await loginAnthropic({
-			onAuth: (info) => {
-				authUrl = info.url;
+		const credentials = await anthropicOAuth.login({
+			signal: neverAbortedSignal,
+			notify: (event) => {
+				if (event.type === "auth_url") authUrl = event.url;
 			},
-			onPrompt: async () => "",
-			onManualCodeInput: async () => {
+			prompt: async (prompt) => {
+				if (prompt.type !== "manual_code") throw new Error(`Unexpected prompt: ${prompt.type}`);
 				const url = new URL(authUrl);
 				const state = url.searchParams.get("state");
 				const redirectUri = url.searchParams.get("redirect_uri");
-				if (!state || !redirectUri) {
-					throw new Error("Missing OAuth state or redirect_uri in auth URL");
-				}
+				if (!state || !redirectUri) throw new Error("Missing OAuth state or redirect_uri in auth URL");
 				return `${redirectUri}?code=manual-code&state=${state}`;
 			},
 		});
@@ -91,7 +92,15 @@ describe.sequential("Anthropic OAuth", () => {
 		});
 		vi.stubGlobal("fetch", fetchMock);
 
-		const credentials = await refreshAnthropicToken("refresh-token");
+		const credentials = await anthropicOAuth.refresh(
+			{
+				type: "oauth",
+				access: "old-access-token",
+				refresh: "refresh-token",
+				expires: 0,
+			},
+			neverAbortedSignal,
+		);
 
 		expect(credentials.access).toBe("new-access-token");
 		expect(credentials.refresh).toBe("new-refresh-token");
@@ -113,6 +122,7 @@ describe.sequential("Anthropic OAuth", () => {
 		let manualSignal: AbortSignal | undefined;
 
 		const credential = await anthropicOAuth.login({
+			signal: neverAbortedSignal,
 			notify: (event) => events.push(event),
 			prompt: async (prompt) => {
 				prompts.push(prompt);

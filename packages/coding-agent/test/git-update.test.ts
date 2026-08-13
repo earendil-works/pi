@@ -13,6 +13,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DefaultPackageManager } from "../src/core/package-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
+import { allowNetwork } from "./test-network-env.ts";
 
 // Helper to run git commands in a directory
 function git(args: string[], cwd: string): string {
@@ -78,6 +79,7 @@ describe("DefaultPackageManager git update", () => {
 	const gitSource = "git:github.com/test/extension";
 
 	beforeEach(() => {
+		allowNetwork();
 		tempDir = join(tmpdir(), `git-update-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 		mkdirSync(tempDir, { recursive: true });
 		remoteDir = join(tempDir, "remote");

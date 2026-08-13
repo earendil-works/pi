@@ -5,6 +5,8 @@ import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { findMostRecentSession, loadEntriesFromFile, SessionManager } from "../../src/core/session-manager.ts";
 
+const HEADER_SCAN_LIMIT_BYTES = 1024 * 1024;
+
 describe("loadEntriesFromFile", () => {
 	let tempDir: string;
 
@@ -16,6 +18,19 @@ describe("loadEntriesFromFile", () => {
 	afterEach(() => {
 		rmSync(tempDir, { recursive: true, force: true });
 	});
+
+	function writeSessionHeader(file: string, cwd: string, id: string, prefix = ""): void {
+		writeFileSync(
+			file,
+			`${prefix}${JSON.stringify({
+				type: "session",
+				version: 3,
+				id,
+				timestamp: "2025-01-01T00:00:00Z",
+				cwd,
+			})}\n`,
+		);
+	}
 
 	it("returns empty array for non-existent file", () => {
 		const entries = loadEntriesFromFile(join(tempDir, "nonexistent.jsonl"));
@@ -63,6 +78,43 @@ describe("loadEntriesFromFile", () => {
 		);
 		const entries = loadEntriesFromFile(file);
 		expect(entries).toHaveLength(2);
+	});
+
+	it.each([
+		["leading blank lines", "\n  \n", "leading-blank"],
+		["leading malformed lines", "not json\n{broken json\n", "leading-malformed"],
+		["a multi-buffer header", "", "a".repeat(8192)],
+	])("reads cwd from a session with %s", (_description, prefix, sessionId) => {
+		const file = join(tempDir, "header.jsonl");
+		const storedCwd = join(tempDir, "stored-project");
+		writeSessionHeader(file, storedCwd, sessionId, prefix);
+
+		const sessionManager = SessionManager.open(file, tempDir);
+		expect(sessionManager.getSessionId()).toBe(sessionId);
+		expect(sessionManager.getCwd()).toBe(storedCwd);
+	});
+
+	it("opens compatible sessions beyond the discovery scan limit", () => {
+		const storedCwd = join(tempDir, "stored-project");
+		const overrideCwd = join(tempDir, "override-project");
+		const cases = [
+			{ name: "large-header", id: "a".repeat(HEADER_SCAN_LIMIT_BYTES + 1), prefix: "" },
+			{
+				name: "large-prefix",
+				id: "large-prefix",
+				prefix: `${"x".repeat(HEADER_SCAN_LIMIT_BYTES + 1)}\n`,
+			},
+		];
+
+		for (const { name, id, prefix } of cases) {
+			const file = join(tempDir, `${name}.jsonl`);
+			writeSessionHeader(file, storedCwd, id, prefix);
+			for (const cwdOverride of [undefined, overrideCwd]) {
+				const sessionManager = SessionManager.open(file, tempDir, cwdOverride);
+				expect(sessionManager.getSessionId()).toBe(id);
+				expect(sessionManager.getCwd()).toBe(cwdOverride ?? storedCwd);
+			}
+		}
 	});
 
 	it("opens session files larger than Node's max string length", () => {
@@ -150,6 +202,15 @@ describe("findMostRecentSession", () => {
 
 		writeFileSync(invalid, '{"type":"not-session"}\n');
 		await new Promise((r) => setTimeout(r, 10));
+		writeFileSync(valid, '{"type":"session","id":"abc","timestamp":"2025-01-01T00:00:00Z","cwd":"/tmp"}\n');
+
+		expect(findMostRecentSession(tempDir)).toBe(valid);
+	});
+
+	it("skips oversized corrupt files and returns a valid session", () => {
+		const invalid = join(tempDir, "oversized.jsonl");
+		const valid = join(tempDir, "valid.jsonl");
+		writeFileSync(invalid, "x".repeat(HEADER_SCAN_LIMIT_BYTES + 1));
 		writeFileSync(valid, '{"type":"session","id":"abc","timestamp":"2025-01-01T00:00:00Z","cwd":"/tmp"}\n');
 
 		expect(findMostRecentSession(tempDir)).toBe(valid);
@@ -268,28 +329,27 @@ describe("SessionManager.setSessionFile with corrupted files", () => {
 		expect(header.id).toBe(sm.getSessionId());
 	});
 
-	it("truncates and rewrites file without valid header", () => {
+	it("throws and preserves non-empty file without valid header", () => {
 		const noHeaderFile = join(tempDir, "no-header.jsonl");
-		// File with messages but no session header (corrupted state)
-		writeFileSync(
-			noHeaderFile,
-			'{"type":"message","id":"abc","parentId":"orphaned","timestamp":"2025-01-01T00:00:00Z","message":{"role":"assistant","content":"test"}}\n',
+		const originalContent =
+			'{"type":"message","id":"abc","parentId":"orphaned","timestamp":"2025-01-01T00:00:00Z","message":{"role":"assistant","content":"test"}}\n';
+		writeFileSync(noHeaderFile, originalContent);
+
+		expect(() => SessionManager.open(noHeaderFile, tempDir)).toThrow(
+			`Session file is not a valid pi session: ${noHeaderFile}`,
 		);
+		expect(readFileSync(noHeaderFile, "utf-8")).toBe(originalContent);
+	});
 
-		const sm = SessionManager.open(noHeaderFile, tempDir);
+	it("throws and preserves non-session JSONL files", () => {
+		const nonSessionFile = join(tempDir, "not-a-session.log");
+		const originalContent = '{"type":"event","data":"not a session"}\n';
+		writeFileSync(nonSessionFile, originalContent);
 
-		// Should have created a new session with valid header
-		expect(sm.getSessionId()).toBeTruthy();
-		expect(sm.getHeader()).toBeTruthy();
-		expect(sm.getHeader()?.type).toBe("session");
-
-		// File should now contain only a valid header (old content truncated)
-		const content = readFileSync(noHeaderFile, "utf-8");
-		const lines = content.trim().split("\n").filter(Boolean);
-		expect(lines.length).toBe(1);
-		const header = JSON.parse(lines[0]);
-		expect(header.type).toBe("session");
-		expect(header.id).toBe(sm.getSessionId());
+		expect(() => SessionManager.open(nonSessionFile, tempDir)).toThrow(
+			`Session file is not a valid pi session: ${nonSessionFile}`,
+		);
+		expect(readFileSync(nonSessionFile, "utf-8")).toBe(originalContent);
 	});
 
 	it("preserves explicit session file path when recovering from corrupted file", () => {
@@ -302,16 +362,14 @@ describe("SessionManager.setSessionFile with corrupted files", () => {
 		expect(sm.getSessionFile()).toBe(explicitPath);
 	});
 
-	it("subsequent loads of recovered file work correctly", () => {
-		const corruptedFile = join(tempDir, "corrupted.jsonl");
-		writeFileSync(corruptedFile, "garbage content\n");
+	it("subsequent loads of initialized empty file work correctly", () => {
+		const emptyFile = join(tempDir, "empty.jsonl");
+		writeFileSync(emptyFile, "");
 
-		// First open recovers the file
-		const sm1 = SessionManager.open(corruptedFile, tempDir);
+		const sm1 = SessionManager.open(emptyFile, tempDir);
 		const sessionId = sm1.getSessionId();
 
-		// Second open should load the recovered file successfully
-		const sm2 = SessionManager.open(corruptedFile, tempDir);
+		const sm2 = SessionManager.open(emptyFile, tempDir);
 		expect(sm2.getSessionId()).toBe(sessionId);
 		expect(sm2.getHeader()?.type).toBe("session");
 	});

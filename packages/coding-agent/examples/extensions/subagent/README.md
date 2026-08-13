@@ -137,6 +137,8 @@ model: claude-haiku-4-5
 System prompt for the agent goes here.
 ```
 
+When `model` is omitted, the subagent inherits the dispatching session's active model and thinking level.
+
 **Locations:**
 - `~/.pi/agent/agents/*.md` - User-level (always loaded)
 - `.pi/agents/*.md` - Project-level (only with `agentScope: "project"` or `"both"`)

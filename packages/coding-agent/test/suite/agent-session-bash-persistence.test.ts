@@ -10,6 +10,24 @@ function getEntryTypes(harness: Harness): string[] {
 	return harness.sessionManager.getEntries().map((entry) => entry.type);
 }
 
+interface ControlledBashInvocation {
+	signal: AbortSignal | undefined;
+	finish: () => void;
+}
+
+function createControlledBashOperations(invocations: ControlledBashInvocation[]): BashOperations {
+	return {
+		exec: async (_command, _cwd, options) => {
+			return await new Promise<{ exitCode: number | null }>((resolve) => {
+				invocations.push({
+					signal: options.signal,
+					finish: () => resolve({ exitCode: 0 }),
+				});
+			});
+		},
+	};
+}
+
 describe("AgentSession bash and persistence characterization", () => {
 	const harnesses: Harness[] = [];
 
@@ -132,6 +150,52 @@ describe("AgentSession bash and persistence characterization", () => {
 		expect(harness.session.isBashRunning).toBe(false);
 	});
 
+	it("keeps newer bash execution tracked when an older execution finishes", async () => {
+		const harness = await createHarness();
+		harnesses.push(harness);
+		const invocations: ControlledBashInvocation[] = [];
+		const operations = createControlledBashOperations(invocations);
+
+		const firstBash = harness.session.executeBash("first", undefined, { operations });
+		const secondBash = harness.session.executeBash("second", undefined, { operations });
+
+		invocations[0].finish();
+		const firstResult = await firstBash;
+		const runningAfterFirstSettles = harness.session.isBashRunning;
+
+		harness.session.abortBash();
+		const secondWasAborted = invocations[1].signal?.aborted;
+		invocations[1].finish();
+		const secondResult = await secondBash;
+
+		expect(firstResult.cancelled).toBe(false);
+		expect(runningAfterFirstSettles).toBe(true);
+		expect(secondWasAborted).toBe(true);
+		expect(secondResult.cancelled).toBe(true);
+		expect(harness.session.isBashRunning).toBe(false);
+	});
+
+	it("aborts all active bash executions", async () => {
+		const harness = await createHarness();
+		harnesses.push(harness);
+		const invocations: ControlledBashInvocation[] = [];
+		const operations = createControlledBashOperations(invocations);
+
+		const firstBash = harness.session.executeBash("first", undefined, { operations });
+		const secondBash = harness.session.executeBash("second", undefined, { operations });
+
+		harness.session.abortBash();
+		const abortedSignals = invocations.map((invocation) => invocation.signal?.aborted);
+		for (const invocation of invocations) {
+			invocation.finish();
+		}
+		const results = await Promise.all([firstBash, secondBash]);
+
+		expect(abortedSignals).toEqual([true, true]);
+		expect(results.map((result) => result.cancelled)).toEqual([true, true]);
+		expect(harness.session.isBashRunning).toBe(false);
+	});
+
 	it("persists user, assistant, toolResult, and custom messages in order", async () => {
 		const echoTool: AgentTool = {
 			name: "echo",
@@ -238,5 +302,36 @@ describe("AgentSession bash and persistence characterization", () => {
 
 		expect(result.output).toContain("hello from custom ops");
 		expect(harness.session.messages[harness.session.messages.length - 1]?.role).toBe("bashExecution");
+	});
+
+	it("streams bash output to the callback and session events", async () => {
+		const harness = await createHarness();
+		harnesses.push(harness);
+		const callbackDeltas: string[] = [];
+		const eventUpdates: Array<{ id: string | undefined; delta: string }> = [];
+		const unsubscribe = harness.session.subscribe((event) => {
+			if (event.type === "bash_execution_update") {
+				eventUpdates.push({ id: event.id, delta: event.delta });
+			}
+		});
+		const operations: BashOperations = {
+			exec: async (_command, _cwd, options) => {
+				options.onData(Buffer.from("hello "));
+				options.onData(Buffer.from("world"));
+				return { exitCode: 0 };
+			},
+		};
+
+		await harness.session.executeBash("custom", (delta) => callbackDeltas.push(delta), {
+			id: "bash-1",
+			operations,
+		});
+		unsubscribe();
+
+		expect(callbackDeltas).toEqual(["hello ", "world"]);
+		expect(eventUpdates).toEqual([
+			{ id: "bash-1", delta: "hello " },
+			{ id: "bash-1", delta: "world" },
+		]);
 	});
 });

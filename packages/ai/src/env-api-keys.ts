@@ -26,6 +26,10 @@ if (typeof process !== "undefined" && (process.versions?.node || process.version
 import type { KnownProvider, ProviderEnv } from "./types.ts";
 import { getProviderEnvValue } from "./utils/provider-env.ts";
 
+export const ANTHROPIC_AUTH_TOKEN_ENV = "ANTHROPIC_AUTH_TOKEN";
+export const ANTHROPIC_OAUTH_TOKEN_ENV = "ANTHROPIC_OAUTH_TOKEN";
+export const ANTHROPIC_API_KEY_ENV = "ANTHROPIC_API_KEY";
+
 let cachedVertexAdcCredentialsExists: boolean | null = null;
 
 function hasVertexAdcCredentials(env?: ProviderEnv): boolean {
@@ -66,13 +70,17 @@ function getApiKeyEnvVars(provider: string): readonly string[] | undefined {
 		return ["COPILOT_GITHUB_TOKEN"];
 	}
 
-	// ANTHROPIC_OAUTH_TOKEN takes precedence over ANTHROPIC_API_KEY
+	// ANTHROPIC_AUTH_TOKEN participates in env discovery/status, but
+	// getEnvApiKey() skips it because requests must pass it as Authorization: Bearer.
 	if (provider === "anthropic") {
-		return ["ANTHROPIC_OAUTH_TOKEN", "ANTHROPIC_API_KEY"];
+		return [ANTHROPIC_AUTH_TOKEN_ENV, ANTHROPIC_OAUTH_TOKEN_ENV, ANTHROPIC_API_KEY_ENV];
 	}
 
 	const envMap: Record<string, string> = {
 		"ant-ling": "ANT_LING_API_KEY",
+		"qwen-token-plan": "QWEN_TOKEN_PLAN_API_KEY",
+		"qwen-token-plan-cn": "QWEN_TOKEN_PLAN_CN_API_KEY",
+		"qwen-token-plan-individual": "QWEN_TOKEN_PLAN_API_KEY",
 		openai: "OPENAI_API_KEY",
 		"azure-openai-responses": "AZURE_OPENAI_API_KEY",
 		nvidia: "NVIDIA_API_KEY",
@@ -82,6 +90,7 @@ function getApiKeyEnvVars(provider: string): readonly string[] | undefined {
 		groq: "GROQ_API_KEY",
 		cerebras: "CEREBRAS_API_KEY",
 		xai: "XAI_API_KEY",
+		radius: "RADIUS_API_KEY",
 		openrouter: "OPENROUTER_API_KEY",
 		"vercel-ai-gateway": "AI_GATEWAY_API_KEY",
 		zai: "ZAI_API_KEY",
@@ -94,6 +103,7 @@ function getApiKeyEnvVars(provider: string): readonly string[] | undefined {
 		huggingface: "HF_TOKEN",
 		fireworks: "FIREWORKS_API_KEY",
 		together: "TOGETHER_API_KEY",
+		baseten: "BASETEN_API_KEY",
 		opencode: "OPENCODE_API_KEY",
 		"opencode-go": "OPENCODE_API_KEY",
 		"kimi-coding": "KIMI_API_KEY",
@@ -136,7 +146,8 @@ export function getEnvApiKey(provider: string, env?: ProviderEnv): string | unde
 export function getEnvApiKey(provider: string, env?: ProviderEnv): string | undefined {
 	const envKeys = findEnvKeys(provider, env);
 	if (envKeys?.[0]) {
-		return getProviderEnvValue(envKeys[0], env);
+		const apiKeyEnv = provider === "anthropic" ? envKeys.find((key) => key !== ANTHROPIC_AUTH_TOKEN_ENV) : envKeys[0];
+		if (apiKeyEnv) return getProviderEnvValue(apiKeyEnv, env);
 	}
 
 	// Vertex AI supports either an explicit API key or Application Default Credentials.

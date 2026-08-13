@@ -1,11 +1,41 @@
-import type { Api, Model, SimpleStreamOptions, StreamOptions, ThinkingBudgets, ThinkingLevel } from "../types.ts";
+import type {
+	Api,
+	Context,
+	Model,
+	SimpleStreamOptions,
+	StreamOptions,
+	ThinkingBudgets,
+	ThinkingLevel,
+} from "../types.ts";
+import { estimateContextTokens } from "../utils/estimate.ts";
 
-export function buildBaseOptions(_model: Model<Api>, options?: SimpleStreamOptions, apiKey?: string): StreamOptions {
+const CONTEXT_SAFETY_TOKENS = 4096;
+const MIN_MAX_TOKENS = 1;
+
+export function clampMaxTokensToContext(model: Model<Api>, context: Context, maxTokens: number): number {
+	if (model.contextWindow <= 0) return Math.max(MIN_MAX_TOKENS, maxTokens);
+	const available = model.contextWindow - estimateContextTokens(context).tokens - CONTEXT_SAFETY_TOKENS;
+	return Math.min(maxTokens, Math.max(MIN_MAX_TOKENS, available));
+}
+
+export function buildBaseOptions(
+	model: Model<Api>,
+	context: Context,
+	options?: SimpleStreamOptions,
+	apiKey?: string,
+): StreamOptions {
+	const samplingParams =
+		model.samplingParams || options?.samplingParams
+			? { ...model.samplingParams, ...options?.samplingParams }
+			: undefined;
 	return {
 		temperature: options?.temperature,
-		maxTokens: options?.maxTokens,
+		samplingParams,
+		maxTokens: clampMaxTokensToContext(model, context, options?.maxTokens ?? model.maxTokens),
 		signal: options?.signal,
+		telemetryContext: options?.telemetryContext,
 		apiKey: apiKey || options?.apiKey,
+		fetch: options?.fetch,
 		transport: options?.transport,
 		cacheRetention: options?.cacheRetention,
 		sessionId: options?.sessionId,
@@ -21,8 +51,11 @@ export function buildBaseOptions(_model: Model<Api>, options?: SimpleStreamOptio
 	};
 }
 
-export function clampReasoning(effort: ThinkingLevel | undefined): Exclude<ThinkingLevel, "xhigh"> | undefined {
-	return effort === "xhigh" ? "high" : effort;
+/** Tokens always left for the answer when a thinking budget shares the response ceiling. */
+export const MIN_ANSWER_TOKENS = 1024;
+
+export function clampReasoning(effort: ThinkingLevel | undefined): Exclude<ThinkingLevel, "xhigh" | "max"> | undefined {
+	return effort === "xhigh" || effort === "max" ? "high" : effort;
 }
 
 export function adjustMaxTokensForThinking(
@@ -40,14 +73,13 @@ export function adjustMaxTokensForThinking(
 	};
 	const budgets = { ...defaultBudgets, ...customBudgets };
 
-	const minOutputTokens = 1024;
 	const level = clampReasoning(reasoningLevel)!;
 	let thinkingBudget = budgets[level]!;
 	const maxTokens =
 		baseMaxTokens === undefined ? modelMaxTokens : Math.min(baseMaxTokens + thinkingBudget, modelMaxTokens);
 
 	if (maxTokens <= thinkingBudget) {
-		thinkingBudget = Math.max(0, maxTokens - minOutputTokens);
+		thinkingBudget = Math.max(0, maxTokens - MIN_ANSWER_TOKENS);
 	}
 
 	return { maxTokens, thinkingBudget };

@@ -1,6 +1,6 @@
-import type { ImageContent, Model, Models, SimpleStreamOptions, TextContent, Transport } from "@earendil-works/pi-ai";
-import type { AgentEvent, AgentMessage, AgentTool, QueueMode, ThinkingLevel } from "../index.ts";
-import type { Session } from "./session/session.ts";
+import type { SimpleStreamOptions, Transport } from "@earendil-works/pi-ai";
+import type { Static, TSchema } from "typebox";
+import type { AgentTool, AgentToolResult, AgentToolUpdateCallback } from "../types.ts";
 
 /** Result of a fallible operation. Expected failures are returned as `ok: false` instead of thrown. */
 export type Result<TValue, TError> = { ok: true; value: TValue } | { ok: false; error: TError };
@@ -76,6 +76,27 @@ export interface AgentHarnessResources<
 	/** Skills available to the model and explicit skill invocation. */
 	skills?: TSkill[];
 }
+
+/** Tool definition executed by an {@link AgentHarness} with an application-defined context. */
+export type AgentHarnessTool<
+	TContext extends object | undefined,
+	TParameters extends TSchema = TSchema,
+	TDetails = unknown,
+> = Omit<AgentTool<TParameters, TDetails>, "execute"> & {
+	/** Execute the tool call with the context resolved for the current turn snapshot. */
+	execute(
+		toolCallId: string,
+		params: Static<TParameters>,
+		signal: AbortSignal | undefined,
+		onUpdate: AgentToolUpdateCallback<TDetails> | undefined,
+		context: TContext,
+	): Promise<AgentToolResult<TDetails>>;
+};
+
+/** Static tool context or zero-argument provider resolved for each turn snapshot. */
+export type AgentHarnessToolContextSource<TContext extends object | undefined> =
+	| TContext
+	| (() => TContext | Promise<TContext>);
 
 /** Curated provider request options owned by the harness and snapshotted per turn. */
 export interface AgentHarnessStreamOptions {
@@ -155,7 +176,7 @@ export class ExecutionError extends Error {
 }
 
 /** Stable compaction error codes returned by compaction helpers. */
-export type CompactionErrorCode = "aborted" | "summarization_failed" | "invalid_session" | "unknown";
+export type CompactionErrorCode = "aborted" | "summarization_failed";
 
 /** Error returned by compaction helpers. */
 export class CompactionError extends Error {
@@ -170,7 +191,7 @@ export class CompactionError extends Error {
 }
 
 /** Stable branch-summary error codes returned by branch summarization helpers. */
-export type BranchSummaryErrorCode = "aborted" | "summarization_failed" | "invalid_session";
+export type BranchSummaryErrorCode = "aborted" | "summarization_failed";
 
 /** Error returned by branch summarization helpers. */
 export class BranchSummaryError extends Error {
@@ -180,48 +201,6 @@ export class BranchSummaryError extends Error {
 	constructor(code: BranchSummaryErrorCode, message: string, cause?: Error) {
 		super(message, cause === undefined ? undefined : { cause });
 		this.name = "BranchSummaryError";
-		this.code = code;
-	}
-}
-
-export type SessionErrorCode =
-	| "not_found"
-	| "invalid_session"
-	| "invalid_entry"
-	| "invalid_fork_target"
-	| "storage"
-	| "unknown";
-
-/** Error thrown by session storage, repositories, and session tree operations. */
-export class SessionError extends Error {
-	/** Session subsystem error code. */
-	public code: SessionErrorCode;
-
-	constructor(code: SessionErrorCode, message: string, cause?: Error) {
-		super(message, cause === undefined ? undefined : { cause });
-		this.name = "SessionError";
-		this.code = code;
-	}
-}
-
-export type AgentHarnessErrorCode =
-	| "busy"
-	| "invalid_state"
-	| "invalid_argument"
-	| "session"
-	| "hook"
-	| "auth"
-	| "compaction"
-	| "branch_summary"
-	| "unknown";
-
-/** Public AgentHarness failure with a stable top-level classification. */
-export class AgentHarnessError extends Error {
-	public code: AgentHarnessErrorCode;
-
-	constructor(code: AgentHarnessErrorCode, message: string, cause?: Error) {
-		super(message, cause === undefined ? undefined : { cause });
-		this.name = "AgentHarnessError";
 		this.code = code;
 	}
 }
@@ -270,6 +249,8 @@ export interface FileSystem {
 	writeFile(path: string, content: string | Uint8Array, abortSignal?: AbortSignal): Promise<Result<void, FileError>>;
 	/** Create or append to a file, creating parent directories when supported. */
 	appendFile(path: string, content: string | Uint8Array, abortSignal?: AbortSignal): Promise<Result<void, FileError>>;
+	/** Atomically rename a file, replacing the destination when it exists. Does not copy across filesystems. */
+	renameFile(sourcePath: string, destinationPath: string, abortSignal?: AbortSignal): Promise<Result<void, FileError>>;
 	/** Return metadata for the addressed path without following symlinks. */
 	fileInfo(path: string, abortSignal?: AbortSignal): Promise<Result<FileInfo, FileError>>;
 	/** List direct children of a directory without following symlinks. */
@@ -305,8 +286,10 @@ export interface FileSystem {
 export interface ShellExecOptions {
 	/** Working directory for the command. Relative paths are resolved against {@link ExecutionEnv.cwd}. Defaults to {@link ExecutionEnv.cwd}. */
 	cwd?: string;
-	/** Additional environment variables for the command. Values override the environment defaults. Defaults to no overrides. */
+	/** Environment variables for the command. Values override inherited defaults when `inheritEnv` is true. */
 	env?: Record<string, string>;
+	/** Whether to inherit the execution environment's default variables. Defaults to true. */
+	inheritEnv?: boolean;
 	/** Timeout in seconds. Implementations should return a timeout error when the command exceeds this duration. Defaults to no timeout. */
 	timeout?: number;
 	/** Abort signal used to terminate the command. Defaults to no abort signal. */
@@ -330,507 +313,3 @@ export interface Shell {
 
 /** Filesystem and process execution environment used by the harness. */
 export interface ExecutionEnv extends FileSystem, Shell {}
-
-export interface SessionTreeEntryBase {
-	type: string;
-	id: string;
-	parentId: string | null;
-	timestamp: string;
-}
-
-export interface MessageEntry extends SessionTreeEntryBase {
-	type: "message";
-	message: AgentMessage;
-}
-
-export interface ThinkingLevelChangeEntry extends SessionTreeEntryBase {
-	type: "thinking_level_change";
-	thinkingLevel: string;
-}
-
-export interface ModelChangeEntry extends SessionTreeEntryBase {
-	type: "model_change";
-	provider: string;
-	modelId: string;
-}
-
-export interface ActiveToolsChangeEntry extends SessionTreeEntryBase {
-	type: "active_tools_change";
-	activeToolNames: string[];
-}
-
-export interface CompactionEntry<T = unknown> extends SessionTreeEntryBase {
-	type: "compaction";
-	summary: string;
-	firstKeptEntryId: string;
-	tokensBefore: number;
-	details?: T;
-	fromHook?: boolean;
-}
-
-export interface BranchSummaryEntry<T = unknown> extends SessionTreeEntryBase {
-	type: "branch_summary";
-	fromId: string;
-	summary: string;
-	details?: T;
-	fromHook?: boolean;
-}
-
-export interface CustomEntry<T = unknown> extends SessionTreeEntryBase {
-	type: "custom";
-	customType: string;
-	data?: T;
-}
-
-export interface CustomMessageEntry<T = unknown> extends SessionTreeEntryBase {
-	type: "custom_message";
-	customType: string;
-	content: string | (TextContent | ImageContent)[];
-	details?: T;
-	display: boolean;
-}
-
-export interface LabelEntry extends SessionTreeEntryBase {
-	type: "label";
-	targetId: string;
-	label: string | undefined;
-}
-
-export interface SessionInfoEntry extends SessionTreeEntryBase {
-	type: "session_info"; // legacy name, kept for backwards compatibility
-	name?: string;
-}
-
-export interface LeafEntry extends SessionTreeEntryBase {
-	type: "leaf";
-	targetId: string | null;
-}
-
-export type SessionTreeEntry =
-	| MessageEntry
-	| ThinkingLevelChangeEntry
-	| ModelChangeEntry
-	| ActiveToolsChangeEntry
-	| CompactionEntry
-	| BranchSummaryEntry
-	| CustomEntry
-	| CustomMessageEntry
-	| LabelEntry
-	| SessionInfoEntry
-	| LeafEntry;
-
-export interface SessionContext {
-	messages: AgentMessage[];
-	thinkingLevel: string;
-	model: { provider: string; modelId: string } | null;
-	activeToolNames: string[] | null;
-}
-
-export interface SessionMetadata {
-	id: string;
-	createdAt: string;
-}
-
-export interface JsonlSessionMetadata extends SessionMetadata {
-	cwd: string;
-	path: string;
-	parentSessionPath?: string;
-}
-
-export interface SessionStorage<TMetadata extends SessionMetadata = SessionMetadata> {
-	getMetadata(): Promise<TMetadata>;
-	getLeafId(): Promise<string | null>;
-	/** Persist a leaf entry that records the active session-tree leaf. */
-	setLeafId(leafId: string | null): Promise<void>;
-	createEntryId(): Promise<string>;
-	appendEntry(entry: SessionTreeEntry): Promise<void>;
-	getEntry(id: string): Promise<SessionTreeEntry | undefined>;
-	findEntries<TType extends SessionTreeEntry["type"]>(
-		type: TType,
-	): Promise<Array<Extract<SessionTreeEntry, { type: TType }>>>;
-	getLabel(id: string): Promise<string | undefined>;
-	getPathToRoot(leafId: string | null): Promise<SessionTreeEntry[]>;
-	getEntries(): Promise<SessionTreeEntry[]>;
-}
-
-export type { Session } from "./session/session.ts";
-
-export interface SessionCreateOptions {
-	id?: string;
-}
-
-export interface SessionForkOptions {
-	entryId?: string;
-	position?: "before" | "at";
-	id?: string;
-}
-
-export interface SessionRepo<
-	TMetadata extends SessionMetadata = SessionMetadata,
-	TCreateOptions extends SessionCreateOptions = SessionCreateOptions,
-	TListOptions = void,
-> {
-	create(options: TCreateOptions): Promise<Session<TMetadata>>;
-	open(metadata: TMetadata): Promise<Session<TMetadata>>;
-	list(options?: TListOptions): Promise<TMetadata[]>;
-	delete(metadata: TMetadata): Promise<void>;
-	fork(source: TMetadata, options: SessionForkOptions & TCreateOptions): Promise<Session<TMetadata>>;
-}
-
-export interface JsonlSessionCreateOptions extends SessionCreateOptions {
-	cwd: string;
-	parentSessionPath?: string;
-}
-
-export interface JsonlSessionListOptions {
-	cwd?: string;
-}
-
-export interface JsonlSessionRepoApi
-	extends SessionRepo<JsonlSessionMetadata, JsonlSessionCreateOptions, JsonlSessionListOptions> {}
-
-export type AgentHarnessPhase = "idle" | "turn" | "compaction" | "branch_summary" | "retry";
-
-export type PendingSessionWrite = SessionTreeEntry extends infer TEntry
-	? TEntry extends SessionTreeEntry
-		? Omit<TEntry, "id" | "parentId" | "timestamp">
-		: never
-	: never;
-
-export interface QueueUpdateEvent {
-	type: "queue_update";
-	steer: AgentMessage[];
-	followUp: AgentMessage[];
-	nextTurn: AgentMessage[];
-}
-
-export interface SavePointEvent {
-	type: "save_point";
-	hadPendingMutations: boolean;
-}
-
-export interface AbortEvent {
-	type: "abort";
-	clearedSteer: AgentMessage[];
-	clearedFollowUp: AgentMessage[];
-}
-
-export interface SettledEvent {
-	type: "settled";
-	nextTurnCount: number;
-}
-
-export interface BeforeAgentStartEvent<
-	TSkill extends Skill = Skill,
-	TPromptTemplate extends PromptTemplate = PromptTemplate,
-> {
-	type: "before_agent_start";
-	prompt: string;
-	images?: ImageContent[];
-	systemPrompt: string;
-	resources: AgentHarnessResources<TSkill, TPromptTemplate>;
-}
-
-export interface ContextEvent {
-	type: "context";
-	messages: AgentMessage[];
-}
-
-export interface BeforeProviderRequestEvent {
-	type: "before_provider_request";
-	model: Model<any>;
-	sessionId: string;
-	streamOptions: AgentHarnessStreamOptions;
-}
-
-export interface BeforeProviderPayloadEvent {
-	type: "before_provider_payload";
-	model: Model<any>;
-	payload: unknown;
-}
-
-export interface AfterProviderResponseEvent {
-	type: "after_provider_response";
-	status: number;
-	headers: Record<string, string>;
-}
-
-export interface ToolCallEvent {
-	type: "tool_call";
-	toolCallId: string;
-	toolName: string;
-	input: Record<string, unknown>;
-}
-
-export interface ToolResultEvent {
-	type: "tool_result";
-	toolCallId: string;
-	toolName: string;
-	input: Record<string, unknown>;
-	content: Array<TextContent | ImageContent>;
-	details: unknown;
-	isError: boolean;
-}
-
-export interface SessionBeforeCompactEvent {
-	type: "session_before_compact";
-	preparation: CompactionPreparation;
-	branchEntries: SessionTreeEntry[];
-	customInstructions?: string;
-	signal: AbortSignal;
-}
-
-export interface SessionCompactEvent {
-	type: "session_compact";
-	compactionEntry: CompactionEntry;
-	fromHook: boolean;
-}
-
-export interface SessionBeforeTreeEvent {
-	type: "session_before_tree";
-	preparation: TreePreparation;
-	signal: AbortSignal;
-}
-
-export interface SessionTreeEvent {
-	type: "session_tree";
-	newLeafId: string | null;
-	oldLeafId: string | null;
-	summaryEntry?: BranchSummaryEntry;
-	fromHook?: boolean;
-}
-
-export interface ModelUpdateEvent {
-	type: "model_update";
-	model: Model<any>;
-	previousModel: Model<any> | undefined;
-	source: "set" | "restore";
-}
-
-export interface ThinkingLevelUpdateEvent {
-	type: "thinking_level_update";
-	level: ThinkingLevel;
-	previousLevel: ThinkingLevel;
-}
-
-export interface ToolsUpdateEvent {
-	type: "tools_update";
-	toolNames: string[];
-	previousToolNames: string[];
-	activeToolNames: string[];
-	previousActiveToolNames: string[];
-	source: "set" | "restore";
-}
-
-export interface ResourcesUpdateEvent<
-	TSkill extends Skill = Skill,
-	TPromptTemplate extends PromptTemplate = PromptTemplate,
-> {
-	type: "resources_update";
-	resources: AgentHarnessResources<TSkill, TPromptTemplate>;
-	previousResources: AgentHarnessResources<TSkill, TPromptTemplate>;
-}
-
-export type AgentHarnessOwnEvent<
-	TSkill extends Skill = Skill,
-	TPromptTemplate extends PromptTemplate = PromptTemplate,
-> =
-	| QueueUpdateEvent
-	| SavePointEvent
-	| AbortEvent
-	| SettledEvent
-	| BeforeAgentStartEvent<TSkill, TPromptTemplate>
-	| ContextEvent
-	| BeforeProviderRequestEvent
-	| BeforeProviderPayloadEvent
-	| AfterProviderResponseEvent
-	| ToolCallEvent
-	| ToolResultEvent
-	| SessionBeforeCompactEvent
-	| SessionCompactEvent
-	| SessionBeforeTreeEvent
-	| SessionTreeEvent
-	| ModelUpdateEvent
-	| ThinkingLevelUpdateEvent
-	| ResourcesUpdateEvent<TSkill, TPromptTemplate>
-	| ToolsUpdateEvent;
-
-export type AgentHarnessEvent<TSkill extends Skill = Skill, TPromptTemplate extends PromptTemplate = PromptTemplate> =
-	| AgentEvent
-	| AgentHarnessOwnEvent<TSkill, TPromptTemplate>;
-
-export interface BeforeAgentStartResult {
-	messages?: AgentMessage[];
-	systemPrompt?: string;
-}
-
-export interface ContextResult {
-	messages: AgentMessage[];
-}
-
-export interface BeforeProviderRequestResult {
-	streamOptions?: AgentHarnessStreamOptionsPatch;
-}
-
-export interface BeforeProviderPayloadResult {
-	payload: unknown;
-}
-
-export interface ToolCallResult {
-	block?: boolean;
-	reason?: string;
-}
-
-export interface ToolResultPatch {
-	content?: Array<TextContent | ImageContent>;
-	details?: unknown;
-	isError?: boolean;
-	terminate?: boolean;
-}
-
-export interface SessionBeforeCompactResult {
-	cancel?: boolean;
-	compaction?: CompactResult;
-}
-
-export interface SessionBeforeTreeResult {
-	cancel?: boolean;
-	summary?: { summary: string; details?: unknown };
-	customInstructions?: string;
-	replaceInstructions?: boolean;
-	label?: string;
-}
-
-export type AgentHarnessEventResultMap = {
-	before_agent_start: BeforeAgentStartResult | undefined;
-	context: ContextResult | undefined;
-	before_provider_request: BeforeProviderRequestResult | undefined;
-	before_provider_payload: BeforeProviderPayloadResult | undefined;
-	after_provider_response: undefined;
-	tool_call: ToolCallResult | undefined;
-	tool_result: ToolResultPatch | undefined;
-	session_before_compact: SessionBeforeCompactResult | undefined;
-	session_compact: undefined;
-	session_before_tree: SessionBeforeTreeResult | undefined;
-	session_tree: undefined;
-	model_update: undefined;
-	thinking_level_update: undefined;
-	resources_update: undefined;
-	tools_update: undefined;
-	queue_update: undefined;
-	save_point: undefined;
-	abort: undefined;
-	settled: undefined;
-};
-
-export interface AgentHarnessPromptOptions {
-	images?: ImageContent[];
-}
-
-export interface AbortResult {
-	clearedSteer: AgentMessage[];
-	clearedFollowUp: AgentMessage[];
-}
-
-export interface CompactResult {
-	summary: string;
-	firstKeptEntryId: string;
-	tokensBefore: number;
-	details?: unknown;
-}
-
-export interface NavigateTreeResult {
-	cancelled: boolean;
-	editorText?: string;
-	summaryEntry?: BranchSummaryEntry;
-}
-
-export interface CompactionSettings {
-	enabled: boolean;
-	reserveTokens: number;
-	keepRecentTokens: number;
-}
-
-export interface CompactionPreparation {
-	firstKeptEntryId: string;
-	messagesToSummarize: AgentMessage[];
-	turnPrefixMessages: AgentMessage[];
-	isSplitTurn: boolean;
-	tokensBefore: number;
-	previousSummary?: string;
-	fileOps: FileOperations;
-	settings: CompactionSettings;
-}
-
-export interface FileOperations {
-	read: Set<string>;
-	written: Set<string>;
-	edited: Set<string>;
-}
-
-export interface TreePreparation {
-	targetId: string;
-	oldLeafId: string | null;
-	commonAncestorId: string | null;
-	entriesToSummarize: SessionTreeEntry[];
-	userWantsSummary: boolean;
-	customInstructions?: string;
-	replaceInstructions?: boolean;
-	label?: string;
-}
-
-export interface GenerateBranchSummaryOptions {
-	model: Model<any>;
-	apiKey: string;
-	headers?: Record<string, string>;
-	signal: AbortSignal;
-	customInstructions?: string;
-	replaceInstructions?: boolean;
-	reserveTokens?: number;
-}
-
-export interface BranchSummaryResult {
-	summary: string;
-	readFiles: string[];
-	modifiedFiles: string[];
-}
-
-export interface AgentHarnessOptions<
-	TSkill extends Skill = Skill,
-	TPromptTemplate extends PromptTemplate = PromptTemplate,
-	TTool extends AgentTool = AgentTool,
-> {
-	env: ExecutionEnv;
-	session: Session;
-	/**
-	 * Provider collection used for all model requests (turn streaming,
-	 * compaction, branch summarization). Auth resolves through the providers'
-	 * auth.
-	 */
-	models: Models;
-	tools?: TTool[];
-	/**
-	 * Concrete resources available to explicit invocation methods and system-prompt callbacks.
-	 * Applications own loading/reloading resources and should call `setResources()` with new values.
-	 */
-	resources?: AgentHarnessResources<TSkill, TPromptTemplate>;
-	systemPrompt?:
-		| string
-		| ((context: {
-				env: ExecutionEnv;
-				session: Session;
-				model: Model<any>;
-				thinkingLevel: ThinkingLevel;
-				activeTools: TTool[];
-				resources: AgentHarnessResources<TSkill, TPromptTemplate>;
-		  }) => string | Promise<string>);
-	/** Curated stream/provider request options. Snapshotted at turn start. */
-	streamOptions?: AgentHarnessStreamOptions;
-	model: Model<any>;
-	thinkingLevel?: ThinkingLevel;
-	activeToolNames?: string[];
-	steeringMode?: QueueMode;
-	followUpMode?: QueueMode;
-}
-
-export type { AgentHarness } from "./agent-harness.ts";

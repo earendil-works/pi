@@ -11,6 +11,7 @@ import {
 	createAgentSessionServices,
 } from "../../../src/core/agent-session-runtime.ts";
 import { AuthStorage } from "../../../src/core/auth-storage.ts";
+import { ModelRuntime } from "../../../src/core/model-runtime.ts";
 import { SessionManager } from "../../../src/core/session-manager.ts";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionFactory } from "../../../src/index.ts";
 
@@ -45,13 +46,17 @@ describe("regression #2860: replaced session callbacks", () => {
 		faux.setResponses(responses.map((response) => fauxAssistantMessage(response)));
 
 		const authStorage = AuthStorage.inMemory();
-		authStorage.setRuntimeApiKey(faux.getModel().provider, "faux-key");
+		await authStorage.modify(faux.getModel().provider, async () => ({ type: "api_key", key: "faux-key" }));
+		const modelRuntime = await ModelRuntime.create({
+			credentials: authStorage,
+			modelsPath: join(tempDir, "models.json"),
+		});
 
 		const createRuntime: CreateAgentSessionRuntimeFactory = async ({ cwd, sessionManager, sessionStartEvent }) => {
 			const services = await createAgentSessionServices({
 				cwd,
 				agentDir: tempDir,
-				authStorage,
+				modelRuntime,
 				resourceLoaderOptions: {
 					extensionFactories: [
 						(pi: ExtensionAPI) => {

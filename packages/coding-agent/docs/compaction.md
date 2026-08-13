@@ -1,6 +1,6 @@
 # Compaction & Branch Summarization
 
-LLMs have limited context windows. When conversations grow too long, pi uses compaction to summarize older content while preserving recent work. This page covers both auto-compaction and branch summarization.
+LLMs have limited context windows. When conversations grow too long, Pi uses compaction to summarize older content while preserving recent work. This page covers both auto-compaction and branch summarization.
 
 **Source files** ([pi-mono](https://github.com/earendil-works/pi-mono)):
 - [`packages/coding-agent/src/core/compaction/compaction.ts`](https://github.com/earendil-works/pi-mono/blob/main/packages/coding-agent/src/core/compaction/compaction.ts) - Auto-compaction logic
@@ -20,7 +20,7 @@ Pi has two summarization mechanisms:
 | Compaction | Context exceeds threshold, or `/compact` | Summarize old messages to free up context |
 | Branch summarization | `/tree` navigation | Preserve context when switching branches |
 
-Both use the same structured summary format and track file operations cumulatively.
+Both use the same structured summary format and track file operations cumulatively. Compaction and branch-summary requests use fresh routing session IDs and, where supported by the provider, disable prompt-cache writes because these one-off prompts are unlikely to be reused.
 
 ## Compaction
 
@@ -42,13 +42,13 @@ You can also trigger manually with `/compact [instructions]`, where optional ins
 2. **Extract messages**: Collect messages from the previous kept boundary (or session start) up to the cut point
 3. **Generate summary**: Call LLM to summarize with structured format, passing the previous summary as iterative context when present
 4. **Append entry**: Save `CompactionEntry` with summary and `firstKeptEntryId`
-5. **Reload**: Session reloads, using summary + messages from `firstKeptEntryId` onwards
+5. **Rebuilds context**: Session rebuilds the context for the next request, using summary + messages from `firstKeptEntryId` onwards
 
 ```
 Before compaction:
 
   entry:  0     1     2     3      4     5     6      7      8     9
-        ┌─────┬─────┬─────┬─────┬──────┬─────┬─────┬──────┬──────┬─────┐
+        ┌─────┬─────┬─────┬──────┬─────┬─────┬──────┬──────┬─────┬─────┐
         │ hdr │ usr │ ass │ tool │ usr │ ass │ tool │ tool │ ass │ tool│
         └─────┴─────┴─────┴──────┴─────┴─────┴──────┴──────┴─────┴─────┘
                 └────────┬───────┘ └──────────────┬──────────────┘
@@ -59,7 +59,7 @@ Before compaction:
 After compaction (new entry appended):
 
   entry:  0     1     2     3      4     5     6      7      8     9     10
-        ┌─────┬─────┬─────┬─────┬──────┬─────┬─────┬──────┬──────┬─────┬─────┐
+        ┌─────┬─────┬─────┬──────┬─────┬─────┬──────┬──────┬─────┬─────┬─────┐
         │ hdr │ usr │ ass │ tool │ usr │ ass │ tool │ tool │ ass │ tool│ cmp │
         └─────┴─────┴─────┴──────┴─────┴─────┴──────┴──────┴─────┴─────┴─────┘
                └──────────┬──────┘ └──────────────────────┬───────────────────┘
@@ -102,7 +102,7 @@ Split turn (one huge turn exceeds budget):
   turnPrefixMessages = [usr, ass, tool, ass, tool, tool]
 ```
 
-For split turns, pi generates two summaries and merges them:
+For split turns, Pi generates two summaries and merges them:
 1. **History summary**: Previous context (if any)
 2. **Turn prefix summary**: The early part of the split turn
 
@@ -129,6 +129,7 @@ interface CompactionEntry<T = unknown> {
   summary: string;
   firstKeptEntryId: string;
   tokensBefore: number;
+  usage?: Usage;       // LLM usage that generated the summary
   fromHook?: boolean;  // true if provided by extension (legacy field name)
   details?: T;         // implementation-specific data
 }
@@ -140,15 +141,15 @@ interface CompactionDetails {
 }
 ```
 
-Extensions can store any JSON-serializable data in `details`. The default compaction tracks file operations, but custom extension implementations can use their own structure.
+Extensions can store any JSON-serializable data in `details`. The default compaction tracks file operations, but custom extension implementations can use their own structure. Generated and extension-provided summaries store their LLM `usage` when available so session totals include summarization work.
 
-See [`prepareCompaction()`](https://github.com/earendil-works/pi-mono/blob/main/packages/coding-agent/src/core/compaction/compaction.ts) and [`compact()`](https://github.com/earendil-works/pi-mono/blob/main/packages/coding-agent/src/core/compaction/compaction.ts) for the implementation.
+See [`prepareCompaction()`](https://github.com/earendil-works/pi-mono/blob/main/packages/coding-agent/src/core/compaction/compaction.ts) and [`compact()`](https://github.com/earendil-works/pi-mono/blob/main/packages/coding-agent/src/core/compaction/compaction.ts) for the implementation. For direct programmatic summarization, `generateSummary()` returns the summary text and `generateSummaryWithUsage()` returns `{ text, usage }`.
 
 ## Branch Summarization
 
 ### When It Triggers
 
-When you use `/tree` to navigate to a different branch, pi offers to summarize the work you're leaving. This injects context from the left branch into the new branch.
+When you use `/tree` to navigate to a different branch, Pi offers to summarize the work you're leaving. This injects context from the left branch into the new branch.
 
 ### How It Works
 
@@ -170,9 +171,9 @@ Entries to summarize: B, C, D
 
 After navigation with summary:
 
-         ┌─ B ─ C ─ D ─ [summary of B,C,D]
+         ┌─ B ─ C ─ D
     A ───┤
-         └─ E ─ F (new leaf)
+         └─ E ─ F ─ [summary of B,C,D] (new leaf)
 ```
 
 ### Cumulative File Tracking
@@ -195,6 +196,7 @@ interface BranchSummaryEntry<T = unknown> {
   timestamp: number;
   summary: string;
   fromId: string;      // Entry we navigated from
+  usage?: Usage;       // LLM usage that generated the summary
   fromHook?: boolean;  // true if provided by extension (legacy field name)
   details?: T;         // implementation-specific data
 }
@@ -300,6 +302,7 @@ pi.on("session_before_compact", async (event, ctx) => {
       summary: "Your summary...",
       firstKeptEntryId: preparation.firstKeptEntryId,
       tokensBefore: preparation.tokensBefore,
+      // usage: summaryResponse.usage, // Optional; included in session totals
       details: { /* custom data */ },
     }
   };
@@ -328,13 +331,14 @@ pi.on("session_before_compact", async (event, ctx) => {
   // [Tool result]: output text
 
   // Now send to your model for summarization
-  const summary = await myModel.summarize(conversationText);
+  const { summary, usage } = await myModel.summarize(conversationText);
   
   return {
     compaction: {
       summary,
       firstKeptEntryId: preparation.firstKeptEntryId,
       tokensBefore: preparation.tokensBefore,
+      usage,
     }
   };
 });
@@ -364,6 +368,7 @@ pi.on("session_before_tree", async (event, ctx) => {
     return {
       summary: {
         summary: "Your summary...",
+        // usage: summaryResponse.usage, // Optional; included in session totals
         details: { /* custom data */ },
       }
     };

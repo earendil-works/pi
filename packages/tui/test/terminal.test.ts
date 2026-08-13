@@ -1,7 +1,54 @@
 import assert from "node:assert";
 import { describe, it, mock } from "node:test";
 import { setKittyProtocolActive } from "../src/keys.ts";
-import { normalizeAppleTerminalInput, ProcessTerminal } from "../src/terminal.ts";
+import {
+	normalizeAppleTerminalInput,
+	normalizeNativeShiftEnterInput,
+	ProcessTerminal,
+	resolveEscapeTimeoutMs,
+} from "../src/terminal.ts";
+
+describe("resolveEscapeTimeoutMs", () => {
+	it("uses PI_TUI_ESC_TIMEOUT when configured", () => {
+		assert.equal(resolveEscapeTimeoutMs({ PI_TUI_ESC_TIMEOUT: "80" }), 80);
+		assert.equal(resolveEscapeTimeoutMs({ PI_TUI_ESC_TIMEOUT: "80", SSH_TTY: "/dev/pts/1" }), 80);
+	});
+
+	it("ignores invalid PI_TUI_ESC_TIMEOUT values", () => {
+		assert.equal(resolveEscapeTimeoutMs({ PI_TUI_ESC_TIMEOUT: "abc" }), 10);
+		assert.equal(resolveEscapeTimeoutMs({ PI_TUI_ESC_TIMEOUT: "0" }), 10);
+		assert.equal(resolveEscapeTimeoutMs({ PI_TUI_ESC_TIMEOUT: "-5" }), 10);
+		assert.equal(resolveEscapeTimeoutMs({ PI_TUI_ESC_TIMEOUT: "" }), 10);
+	});
+
+	it("defaults to 100ms over SSH", () => {
+		assert.equal(resolveEscapeTimeoutMs({ SSH_CONNECTION: "10.0.0.1 22" }), 100);
+		assert.equal(resolveEscapeTimeoutMs({ SSH_TTY: "/dev/pts/1" }), 100);
+	});
+
+	it("defaults to 10ms otherwise", () => {
+		assert.equal(resolveEscapeTimeoutMs({}), 10);
+	});
+});
+
+describe("normalizeNativeShiftEnterInput", () => {
+	it("rewrites Return to CSI-u Shift+Enter when native Shift detection is enabled and Shift is pressed", () => {
+		assert.equal(normalizeNativeShiftEnterInput("\r", true, true), "\x1b[13;2u");
+	});
+
+	it("leaves Return unchanged when native Shift detection is disabled", () => {
+		assert.equal(normalizeNativeShiftEnterInput("\r", false, true), "\r");
+	});
+
+	it("leaves Return unchanged when Shift is not pressed", () => {
+		assert.equal(normalizeNativeShiftEnterInput("\r", true, false), "\r");
+	});
+
+	it("leaves non-Return input unchanged", () => {
+		assert.equal(normalizeNativeShiftEnterInput("\x1b[13;2u", true, true), "\x1b[13;2u");
+		assert.equal(normalizeNativeShiftEnterInput("a", true, true), "a");
+	});
+});
 
 describe("normalizeAppleTerminalInput", () => {
 	it("rewrites Apple Terminal Return to CSI-u Shift+Enter when Shift is pressed", () => {
@@ -176,7 +223,7 @@ describe("ProcessTerminal Kitty keyboard protocol negotiation", () => {
 		const harness = setupNegotiation();
 		try {
 			harness.send("\x1b[");
-			mock.timers.tick(10);
+			mock.timers.tick(50); // StdinBuffer sequence timeout, not the lone-ESC timeout
 
 			assert.equal(harness.getInput(), undefined);
 
@@ -186,6 +233,26 @@ describe("ProcessTerminal Kitty keyboard protocol negotiation", () => {
 		} finally {
 			harness.cleanup();
 			mock.timers.reset();
+		}
+	});
+});
+
+describe("ProcessTerminal progress", () => {
+	it("writes a valid OSC 9;4 clear sequence", () => {
+		const terminal = new ProcessTerminal();
+		const writes: string[] = [];
+		const previousWrite = process.stdout.write;
+
+		process.stdout.write = ((chunk: string | Uint8Array) => {
+			writes.push(String(chunk));
+			return true;
+		}) as typeof process.stdout.write;
+
+		try {
+			terminal.setProgress(false);
+			assert.deepEqual(writes, ["\x1b]9;4;0\x07"]);
+		} finally {
+			process.stdout.write = previousWrite;
 		}
 	});
 });

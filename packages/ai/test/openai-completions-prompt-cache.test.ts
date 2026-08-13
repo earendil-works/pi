@@ -13,6 +13,7 @@ interface FakeOpenAIClientOptions {
 interface CapturedCompletionsPayload {
 	prompt_cache_key?: string;
 	prompt_cache_retention?: "24h" | "in-memory" | null;
+	session_id?: string;
 }
 
 const mockState = vi.hoisted(() => ({
@@ -168,6 +169,73 @@ describe("openai-completions prompt caching", () => {
 		expect(headers.session_id).toBe("session-affinity");
 		expect(headers["x-client-request-id"]).toBe("session-affinity");
 		expect(headers["x-session-affinity"]).toBe("session-affinity");
+	});
+
+	it.each(["accounts/fireworks/models/glm-5p2", "accounts/fireworks/routers/glm-5p2-fast"] as const)(
+		"sends Fireworks session affinity for %s",
+		async (modelId) => {
+			const model = getModel("fireworks", modelId);
+			const { headers } = await captureRequest({ sessionId: "fireworks-session" }, model);
+
+			expect(headers["x-session-affinity"]).toBe("fireworks-session");
+		},
+	);
+
+	it("uses OpenAI no-session format when configured", async () => {
+		const model = createModel({
+			compat: { sendSessionAffinityHeaders: true, sessionAffinityFormat: "openai-nosession" },
+		});
+		const { payload, headers } = await captureRequest({ sessionId: "session-nosession" }, model);
+
+		expect(payload?.session_id).toBeUndefined();
+		expect(payload?.prompt_cache_key).toBe("session-nosession");
+		expect(headers.session_id).toBeUndefined();
+		expect(headers["x-client-request-id"]).toBe("session-nosession");
+		expect(headers["x-session-affinity"]).toBe("session-nosession");
+		expect(headers["x-session-id"]).toBeUndefined();
+	});
+
+	it("uses OpenRouter session-affinity header when configured", async () => {
+		const model = createModel({
+			baseUrl: "https://proxy.example.com/v1",
+			compat: { sendSessionAffinityHeaders: true, sessionAffinityFormat: "openrouter" },
+		});
+		const { payload, headers } = await captureRequest({ sessionId: "session-proxy" }, model);
+
+		expect(payload?.session_id).toBeUndefined();
+		expect(payload?.prompt_cache_key).toBeUndefined();
+		expect(headers["x-session-id"]).toBe("session-proxy");
+		expect(headers.session_id).toBeUndefined();
+		expect(headers["x-client-request-id"]).toBeUndefined();
+		expect(headers["x-session-affinity"]).toBeUndefined();
+	});
+
+	it("auto-detects OpenRouter session-affinity header for OpenRouter endpoints", async () => {
+		const model = createModel({
+			provider: "openrouter",
+			baseUrl: "https://openrouter.ai/api/v1",
+			compat: { sendSessionAffinityHeaders: true },
+		});
+		const { payload, headers } = await captureRequest({ sessionId: "session-openrouter" }, model);
+
+		expect(payload?.session_id).toBeUndefined();
+		expect(payload?.prompt_cache_key).toBeUndefined();
+		expect(headers["x-session-id"]).toBe("session-openrouter");
+		expect(headers.session_id).toBeUndefined();
+		expect(headers["x-client-request-id"]).toBeUndefined();
+		expect(headers["x-session-affinity"]).toBeUndefined();
+	});
+
+	it("omits OpenRouter session-affinity data when disabled", async () => {
+		const model = createModel({
+			provider: "openrouter",
+			baseUrl: "https://openrouter.ai/api/v1",
+		});
+		const { payload, headers } = await captureRequest({ sessionId: "session-openrouter" }, model);
+
+		expect(payload?.session_id).toBeUndefined();
+		expect(payload?.prompt_cache_key).toBeUndefined();
+		expect(headers["x-session-id"]).toBeUndefined();
 	});
 
 	it("omits session-affinity headers when cacheRetention is none", async () => {

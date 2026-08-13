@@ -6,9 +6,14 @@ import { isAbsolute, join, relative, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 
 const packages = [
+	{ directory: "packages/telemetry", name: "@earendil-works/pi-telemetry" },
 	{ directory: "packages/ai", name: "@earendil-works/pi-ai" },
 	{ directory: "packages/tui", name: "@earendil-works/pi-tui" },
 	{ directory: "packages/agent", name: "@earendil-works/pi-agent-core" },
+	{ directory: "packages/protocol", name: "@earendil-works/pi-protocol" },
+	{ directory: "packages/client", name: "@earendil-works/pi-client" },
+	{ directory: "packages/session-backends/sqlite-node", name: "@earendil-works/pi-session-backend-sqlite-node" },
+	{ directory: "packages/server", name: "@earendil-works/pi-server" },
 	{ directory: "packages/coding-agent", name: "@earendil-works/pi-coding-agent" },
 ];
 
@@ -22,6 +27,7 @@ Options:
   --out <dir>          Output directory. Defaults to a new directory under ${tmpdir()}
   --force              Remove --out first if it already exists
   --skip-check         Do not run npm run check before building
+  --skip-test          Do not run ./test.sh before building
   --skip-install       Only create tarballs; do not create isolated installs
   --skip-bun-install   Do not create the isolated Bun install
   --help               Show this help
@@ -29,7 +35,14 @@ Options:
 }
 
 function parseArgs() {
-	const options = { force: false, outDir: undefined, skipBunInstall: false, skipCheck: false, skipInstall: false };
+	const options = {
+		force: false,
+		outDir: undefined,
+		skipBunInstall: false,
+		skipCheck: false,
+		skipInstall: false,
+		skipTest: false,
+	};
 	const args = process.argv.slice(2);
 
 	for (let i = 0; i < args.length; i++) {
@@ -44,6 +57,10 @@ function parseArgs() {
 		}
 		if (arg === "--skip-check") {
 			options.skipCheck = true;
+			continue;
+		}
+		if (arg === "--skip-test") {
+			options.skipTest = true;
 			continue;
 		}
 		if (arg === "--skip-install") {
@@ -178,7 +195,9 @@ function packPackage(pkg, tarballDirectory) {
 		capture: true,
 		cwd: pkg.directory,
 	});
-	const packed = JSON.parse(output)[0];
+	// npm <11.6 returns an array; newer npm returns an object keyed by package name.
+	const parsed = JSON.parse(output);
+	const packed = Array.isArray(parsed) ? parsed[0] : Object.values(parsed)[0];
 	return join(tarballDirectory, packed.filename);
 }
 
@@ -197,13 +216,21 @@ const bunInstallDirectory = join(outDir, "bun-install");
 const binaryDirectory = join(outDir, "bun");
 mkdirSync(tarballDirectory, { recursive: true });
 
+// Release artifacts always use a freshly generated, strictly validated catalog,
+// including when checks or tests are explicitly skipped.
+run("npm", ["run", "generate:models"], { cwd: repoRoot });
+
 if (!options.skipCheck) {
 	run("npm", ["run", "check"], { cwd: repoRoot });
 }
 
 for (const pkg of packages) {
 	run("npm", ["run", "clean"], { cwd: pkg.directory });
-	run("npm", ["run", "build"], { cwd: pkg.directory });
+	run("npm", ["run", pkg.directory === "packages/ai" ? "build:offline" : "build"], { cwd: pkg.directory });
+}
+
+if (!options.skipTest) {
+	run("./test.sh", [], { cwd: repoRoot });
 }
 
 const tarballs = new Map();

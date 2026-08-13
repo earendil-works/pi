@@ -1,5 +1,9 @@
+import { execFileSync } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
 import { access, chmod, realpath, symlink } from "node:fs/promises";
+import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { NodeExecutionEnv } from "../../src/harness/env/nodejs.ts";
 import { FileError, getOrThrow } from "../../src/harness/types.ts";
@@ -7,6 +11,52 @@ import { executeShellWithCapture } from "../../src/harness/utils/shell-output.ts
 import { createTempDir } from "./session-test-utils.ts";
 
 const chmodRestorePaths: string[] = [];
+
+function withTimeout<T>(promise: Promise<T>, ms: number, onTimeout?: () => void): Promise<T> {
+	return new Promise<T>((resolve, reject) => {
+		const timeoutId = setTimeout(() => {
+			onTimeout?.();
+			reject(new Error(`Timed out after ${ms}ms`));
+		}, ms);
+		promise.then(
+			(value) => {
+				clearTimeout(timeoutId);
+				resolve(value);
+			},
+			(error: unknown) => {
+				clearTimeout(timeoutId);
+				reject(error);
+			},
+		);
+	});
+}
+
+function toBashSingleQuotedArg(value: string): string {
+	return `'${value.replace(/\\/g, "/").replace(/'/g, `'"'"'`)}'`;
+}
+
+function createInheritedStdioCommand(pidFile: string): string {
+	return (
+		'node -e "' +
+		"const fs=require('fs');" +
+		"const {spawn}=require('child_process');" +
+		"const child=spawn(process.execPath,['-e','setTimeout(()=>{},60000)'],{stdio:'inherit',detached:true});" +
+		"fs.writeFileSync(process.argv[1], String(child.pid));" +
+		"child.unref();" +
+		"console.log('child-exiting');" +
+		'" ' +
+		toBashSingleQuotedArg(pidFile)
+	);
+}
+
+function cleanupDetachedChild(pidFile: string): void {
+	if (!existsSync(pidFile)) return;
+	const pid = Number.parseInt(readFileSync(pidFile, "utf8").trim(), 10);
+	if (!Number.isFinite(pid) || pid <= 0) return;
+	try {
+		execFileSync("taskkill", ["/F", "/T", "/PID", String(pid)], { stdio: "ignore" });
+	} catch {}
+}
 
 afterEach(async () => {
 	for (const path of chmodRestorePaths.splice(0)) {
@@ -43,6 +93,14 @@ describe("NodeExecutionEnv", () => {
 		expect(getOrThrow(await env.exists("nested/child/file.txt"))).toBe(true);
 		getOrThrow(await env.remove("nested/child/file.txt"));
 		expect(getOrThrow(await env.exists("nested/child/file.txt"))).toBe(false);
+	});
+
+	it("expands home-relative paths and file URLs", async () => {
+		const root = createTempDir();
+		const env = new NodeExecutionEnv({ cwd: root });
+		expect(getOrThrow(await env.absolutePath("~/pi-node-env-test"))).toBe(join(homedir(), "pi-node-env-test"));
+		const filePath = join(root, "file with spaces.txt");
+		expect(getOrThrow(await env.absolutePath(pathToFileURL(filePath).href))).toBe(filePath);
 	});
 
 	it("returns fileInfo for files, directories, and symlinks without following symlinks", async () => {
@@ -135,6 +193,35 @@ describe("NodeExecutionEnv", () => {
 		expect(getOrThrow(await env.readTextFile("new/nested/file.txt"))).toBe("ab");
 	});
 
+	it("atomically renames a file and replaces the destination", async () => {
+		const root = createTempDir();
+		const env = new NodeExecutionEnv({ cwd: root });
+		getOrThrow(await env.writeFile("source.txt", "new"));
+		getOrThrow(await env.writeFile("destination.txt", "old"));
+
+		getOrThrow(await env.renameFile("source.txt", "destination.txt"));
+
+		expect(getOrThrow(await env.exists("source.txt"))).toBe(false);
+		expect(getOrThrow(await env.readTextFile("destination.txt"))).toBe("new");
+	});
+
+	it("reports the source path when rename fails because the source is missing", async () => {
+		const root = createTempDir();
+		const env = new NodeExecutionEnv({ cwd: root });
+		getOrThrow(await env.writeFile("destination.txt", "unchanged"));
+
+		const result = await env.renameFile("missing-source.txt", "destination.txt");
+
+		expect(result).toMatchObject({
+			ok: false,
+			error: {
+				code: "not_found",
+				path: join(root, "missing-source.txt"),
+			},
+		});
+		expect(getOrThrow(await env.readTextFile("destination.txt"))).toBe("unchanged");
+	});
+
 	it("creates temporary directories and files", async () => {
 		const root = createTempDir();
 		const env = new NodeExecutionEnv({ cwd: root });
@@ -176,6 +263,7 @@ describe("NodeExecutionEnv", () => {
 			env.readTextLines("file.txt", { abortSignal: signal }),
 			env.readBinaryFile("file.txt", signal),
 			env.writeFile("other.txt", "hello", signal),
+			env.renameFile("file.txt", "renamed.txt", signal),
 			env.listDir(".", signal),
 		]);
 		for (const result of results) {
@@ -199,6 +287,60 @@ describe("NodeExecutionEnv", () => {
 			}),
 		);
 		expect(result).toEqual({ stdout: `${await realpath(root)}:ok`, stderr: "", exitCode: 0 });
+	});
+
+	it.each([
+		["a missing override preserves the base value", undefined, "x:/stale/parent.jsonl"],
+		["an empty override shadows the base value", { PI_SESSION_FILE: "" }, "x:"],
+		[
+			"a string override replaces the base value",
+			{ PI_SESSION_FILE: "/sessions/current.jsonl" },
+			"x:/sessions/current.jsonl",
+		],
+	] as const)(
+		"applies string shell environment overrides when %s",
+		async (_description, overrides, expectedSessionFile) => {
+			const root = createTempDir();
+			const env = new NodeExecutionEnv({
+				cwd: root,
+				shellEnv: {
+					PI_SESSION_FILE: "/stale/parent.jsonl",
+					PI_CODING_AGENT: "true",
+					PI_NODE_ENV_PRESERVED_TEST: "preserved",
+				},
+			});
+			const result = getOrThrow(
+				await env.exec(
+					`printf '%s:%s|%s|%s' "\${PI_SESSION_FILE+x}" "\${PI_SESSION_FILE-}" "$PI_CODING_AGENT" "$PI_NODE_ENV_PRESERVED_TEST"`,
+					{ env: overrides },
+				),
+			);
+
+			expect(result.stdout).toBe(`${expectedSessionFile}|true|preserved`);
+		},
+	);
+
+	it("can replace rather than inherit the default shell environment", async () => {
+		const root = createTempDir();
+		const inheritedKey = "PI_NODE_ENV_INHERITED_TEST";
+		const configuredKey = "PI_NODE_ENV_CONFIGURED_TEST";
+		const explicitKey = "PI_NODE_ENV_EXPLICIT_TEST";
+		const previousInherited = process.env[inheritedKey];
+		process.env[inheritedKey] = "host";
+		try {
+			const env = new NodeExecutionEnv({ cwd: root, shellEnv: { [configuredKey]: "configured" } });
+			const result = getOrThrow(
+				await env.exec(`printf '%s:%s:%s' "\${${inheritedKey}-}" "\${${configuredKey}-}" "\${${explicitKey}-}"`, {
+					inheritEnv: false,
+					env: { [explicitKey]: "explicit" },
+				}),
+			);
+
+			expect(result.stdout).toBe("::explicit");
+		} finally {
+			if (previousInherited === undefined) delete process.env[inheritedKey];
+			else process.env[inheritedKey] = previousInherited;
+		}
 	});
 
 	it("uses stdin command transport for legacy WSL bash paths", async () => {
@@ -234,6 +376,41 @@ describe("NodeExecutionEnv", () => {
 		}
 	});
 
+	it.skipIf(process.platform !== "win32")(
+		"settles after the shell exits when a detached descendant retains inherited stdio",
+		async () => {
+			const root = createTempDir();
+			const pidFile = join(root, "grandchild.pid");
+			const env = new NodeExecutionEnv({ cwd: root });
+			const controller = new AbortController();
+			try {
+				const result = getOrThrow(
+					await withTimeout(
+						env.exec(createInheritedStdioCommand(pidFile), { abortSignal: controller.signal }),
+						3000,
+						() => controller.abort(),
+					),
+				);
+				expect(result.stdout).toContain("child-exiting");
+			} finally {
+				controller.abort();
+				cleanupDetachedChild(pidFile);
+			}
+		},
+	);
+
+	it("cleanup terminates active shell processes", async () => {
+		const root = createTempDir();
+		const env = new NodeExecutionEnv({ cwd: root });
+		const execution = env.exec("touch started; sleep 60");
+		for (let attempt = 0; attempt < 100 && !getOrThrow(await env.exists("started")); attempt++) {
+			await new Promise((resolve) => setTimeout(resolve, 10));
+		}
+		expect(getOrThrow(await env.exists("started"))).toBe(true);
+		await env.cleanup();
+		await expect(withTimeout(execution, 3000)).resolves.toMatchObject({ ok: true });
+	});
+
 	it("streams stdout and stderr chunks", async () => {
 		const root = createTempDir();
 		const env = new NodeExecutionEnv({ cwd: root });
@@ -252,6 +429,17 @@ describe("NodeExecutionEnv", () => {
 		expect(result).toEqual({ stdout: "out", stderr: "err", exitCode: 0 });
 		expect(stdout).toBe("out");
 		expect(stderr).toBe("err");
+	});
+
+	it("reports a missing working directory before spawning", async () => {
+		const root = createTempDir();
+		const env = new NodeExecutionEnv({ cwd: join(root, "missing") });
+		const result = await env.exec("printf ok");
+
+		expect(result).toMatchObject({
+			ok: false,
+			error: { code: "spawn_error", message: expect.stringContaining("Working directory does not exist") },
+		});
 	});
 
 	it("returns non-zero command exit codes as successful execution results", async () => {

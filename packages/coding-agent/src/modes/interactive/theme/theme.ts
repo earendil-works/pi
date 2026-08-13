@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import {
 	type EditorTheme,
 	getCapabilities,
@@ -44,8 +45,11 @@ const ThemeJsonSchema = Type.Object({
 		dim: ColorValueSchema,
 		text: ColorValueSchema,
 		thinkingText: ColorValueSchema,
-		// Backgrounds & Content Text (11 colors)
+		// Backgrounds & Content Text (11 required, 3 optional)
 		selectedBg: ColorValueSchema,
+		scrollbarThumb: Type.Optional(ColorValueSchema),
+		searchMatchBg: Type.Optional(ColorValueSchema),
+		searchMatchText: Type.Optional(ColorValueSchema),
 		userMessageBg: ColorValueSchema,
 		userMessageText: ColorValueSchema,
 		customMessageBg: ColorValueSchema,
@@ -88,6 +92,7 @@ const ThemeJsonSchema = Type.Object({
 		thinkingMedium: ColorValueSchema,
 		thinkingHigh: ColorValueSchema,
 		thinkingXhigh: ColorValueSchema,
+		thinkingMax: Type.Optional(ColorValueSchema),
 		// Bash Mode (1 color)
 		bashMode: ColorValueSchema,
 	}),
@@ -116,6 +121,7 @@ export type ThemeColor =
 	| "dim"
 	| "text"
 	| "thinkingText"
+	| "searchMatchText"
 	| "userMessageText"
 	| "customMessageText"
 	| "customMessageLabel"
@@ -149,15 +155,21 @@ export type ThemeColor =
 	| "thinkingMedium"
 	| "thinkingHigh"
 	| "thinkingXhigh"
+	| "thinkingMax"
 	| "bashMode";
 
 export type ThemeBg =
 	| "selectedBg"
+	| "scrollbarThumb"
+	| "searchMatchBg"
 	| "userMessageBg"
 	| "customMessageBg"
 	| "toolPendingBg"
 	| "toolSuccessBg"
 	| "toolErrorBg";
+
+type OptionalThemeColor = "thinkingMax" | "searchMatchText";
+type OptionalThemeBg = "scrollbarThumb" | "searchMatchBg";
 
 type ColorMode = "truecolor" | "256color";
 
@@ -316,6 +328,21 @@ function resolveThemeColors<T extends Record<string, ColorValue>>(
 	return resolved as Record<keyof T, string | number>;
 }
 
+function withThemeColorFallbacks(colors: ThemeJson["colors"]): ThemeJson["colors"] & {
+	thinkingMax: ColorValue;
+	scrollbarThumb: ColorValue;
+	searchMatchBg: ColorValue;
+	searchMatchText: ColorValue;
+} {
+	return {
+		...colors,
+		thinkingMax: colors.thinkingMax ?? colors.thinkingXhigh,
+		scrollbarThumb: colors.scrollbarThumb ?? colors.selectedBg,
+		searchMatchBg: colors.searchMatchBg ?? colors.selectedBg,
+		searchMatchText: colors.searchMatchText ?? colors.text,
+	};
+}
+
 // ============================================================================
 // Theme Class
 // ============================================================================
@@ -329,8 +356,10 @@ export class Theme {
 	private mode: ColorMode;
 
 	constructor(
-		fgColors: Record<ThemeColor, string | number>,
-		bgColors: Record<ThemeBg, string | number>,
+		fgColors: Record<Exclude<ThemeColor, OptionalThemeColor>, string | number> &
+			Partial<Record<OptionalThemeColor, string | number>>,
+		bgColors: Record<Exclude<ThemeBg, OptionalThemeBg>, string | number> &
+			Partial<Record<OptionalThemeBg, string | number>>,
 		mode: ColorMode,
 		options: { name?: string; sourcePath?: string; sourceInfo?: SourceInfo } = {},
 	) {
@@ -339,11 +368,21 @@ export class Theme {
 		this.sourceInfo = options.sourceInfo;
 		this.mode = mode;
 		this.fgColors = new Map();
-		for (const [key, value] of Object.entries(fgColors) as [ThemeColor, string | number][]) {
+		const colors = {
+			...fgColors,
+			thinkingMax: fgColors.thinkingMax ?? fgColors.thinkingXhigh,
+			searchMatchText: fgColors.searchMatchText ?? fgColors.text,
+		};
+		for (const [key, value] of Object.entries(colors) as [ThemeColor, string | number][]) {
 			this.fgColors.set(key, fgAnsi(value, mode));
 		}
 		this.bgColors = new Map();
-		for (const [key, value] of Object.entries(bgColors) as [ThemeBg, string | number][]) {
+		const backgrounds = {
+			...bgColors,
+			scrollbarThumb: bgColors.scrollbarThumb ?? bgColors.selectedBg,
+			searchMatchBg: bgColors.searchMatchBg ?? bgColors.selectedBg,
+		};
+		for (const [key, value] of Object.entries(backgrounds) as [ThemeBg, string | number][]) {
 			this.bgColors.set(key, bgAnsi(value, mode));
 		}
 	}
@@ -396,7 +435,7 @@ export class Theme {
 		return this.mode;
 	}
 
-	getThinkingBorderColor(level: "off" | "minimal" | "low" | "medium" | "high" | "xhigh"): (str: string) => string {
+	getThinkingBorderColor(level: ThinkingLevel): (str: string) => string {
 		// Map thinking levels to dedicated theme colors
 		switch (level) {
 			case "off":
@@ -411,6 +450,8 @@ export class Theme {
 				return (str: string) => this.fg("thinkingHigh", str);
 			case "xhigh":
 				return (str: string) => this.fg("thinkingXhigh", str);
+			case "max":
+				return (str: string) => this.fg("thinkingMax", str);
 			default:
 				return (str: string) => this.fg("thinkingOff", str);
 		}
@@ -586,11 +627,13 @@ function loadThemeJson(name: string): ThemeJson {
 
 function createTheme(themeJson: ThemeJson, mode?: ColorMode, sourcePath?: string): Theme {
 	const colorMode = mode ?? (getCapabilities().trueColor ? "truecolor" : "256color");
-	const resolvedColors = resolveThemeColors(themeJson.colors, themeJson.vars);
+	const resolvedColors = resolveThemeColors(withThemeColorFallbacks(themeJson.colors), themeJson.vars);
 	const fgColors: Record<ThemeColor, string | number> = {} as Record<ThemeColor, string | number>;
 	const bgColors: Record<ThemeBg, string | number> = {} as Record<ThemeBg, string | number>;
 	const bgColorKeys: Set<string> = new Set([
 		"selectedBg",
+		"scrollbarThumb",
+		"searchMatchBg",
 		"userMessageBg",
 		"customMessageBg",
 		"toolPendingBg",
@@ -769,13 +812,21 @@ export async function detectTerminalThemeForAuto({
 	timeoutMs,
 	env,
 }: TerminalAutoThemeDetectionOptions): Promise<TerminalTheme> {
+	let colorSchemePromise: Promise<TerminalTheme | undefined> | undefined;
 	try {
-		const colorScheme = await ui.queryTerminalColorScheme?.({ timeoutMs });
+		colorSchemePromise = ui.queryTerminalColorScheme?.({ timeoutMs });
+	} catch {
+		// Fall back to OSC 11 / COLORFGBG detection when starting the color-scheme query fails.
+	}
+	const backgroundThemePromise = detectTerminalBackgroundTheme({ ui, timeoutMs, env });
+
+	try {
+		const colorScheme = await colorSchemePromise;
 		if (colorScheme) return colorScheme;
 	} catch {
-		// Fall back to OSC 11 / COLORFGBG detection when color-scheme DSR is unsupported.
+		// Fall back to the concurrently queried OSC 11 / COLORFGBG detection.
 	}
-	return (await detectTerminalBackgroundTheme({ ui, timeoutMs, env })).theme;
+	return (await backgroundThemePromise).theme;
 }
 
 export function getDefaultTheme(): string {
@@ -1013,7 +1064,7 @@ export function getResolvedThemeColors(themeName?: string): Record<string, strin
 	const name = themeName ?? currentThemeName ?? getDefaultTheme();
 	const isLight = name === "light";
 	const themeJson = loadThemeJson(name);
-	const resolved = resolveThemeColors(themeJson.colors, themeJson.vars);
+	const resolved = resolveThemeColors(withThemeColorFallbacks(themeJson.colors), themeJson.vars);
 
 	// Default text color for empty values (terminal uses default fg color)
 	const defaultText = isLight ? "#000000" : "#e5e5e7";

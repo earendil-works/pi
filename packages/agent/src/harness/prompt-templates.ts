@@ -53,7 +53,7 @@ export async function loadPromptTemplates(
 			promptTemplates.push(...result.promptTemplates);
 			diagnostics.push(...result.diagnostics);
 		} else if (kind === "file" && info.name.endsWith(".md")) {
-			const result = await loadTemplateFromFile(env, info.path);
+			const result = await loadTemplateFromFile(env, info.path, info.name);
 			if (result.promptTemplate) promptTemplates.push(result.promptTemplate);
 			diagnostics.push(...result.diagnostics);
 		}
@@ -113,7 +113,7 @@ async function loadTemplatesFromDir(
 	for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
 		const kind = await resolveKind(env, entry, diagnostics);
 		if (kind !== "file" || !entry.name.endsWith(".md")) continue;
-		const result = await loadTemplateFromFile(env, entry.path);
+		const result = await loadTemplateFromFile(env, entry.path, entry.name);
 		if (result.promptTemplate) promptTemplates.push(result.promptTemplate);
 		diagnostics.push(...result.diagnostics);
 	}
@@ -123,6 +123,7 @@ async function loadTemplatesFromDir(
 async function loadTemplateFromFile(
 	env: ExecutionEnv,
 	filePath: string,
+	fileName: string,
 ): Promise<{ promptTemplate: PromptTemplate | null; diagnostics: PromptTemplateDiagnostic[] }> {
 	const diagnostics: PromptTemplateDiagnostic[] = [];
 	const rawContent = await env.readTextFile(filePath);
@@ -156,7 +157,7 @@ async function loadTemplateFromFile(
 	}
 	return {
 		promptTemplate: {
-			name: basenameEnvPath(filePath).replace(/\.md$/i, ""),
+			name: fileName.replace(/\.md$/i, ""),
 			description,
 			content: body,
 		},
@@ -211,12 +212,6 @@ function parseFrontmatter<T extends Record<string, unknown>>(
 	} catch (error) {
 		return { ok: false, error: toError(error) };
 	}
-}
-
-function basenameEnvPath(path: string): string {
-	const normalized = path.replace(/\/+$/, "");
-	const slashIndex = normalized.lastIndexOf("/");
-	return slashIndex === -1 ? normalized : normalized.slice(slashIndex + 1);
 }
 
 /** Parse an argument string using simple shell-style single and double quotes. */

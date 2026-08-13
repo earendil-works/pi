@@ -7,6 +7,7 @@ import type {
 	ChatCompletionContentPartText,
 	ChatCompletionDeveloperMessageParam,
 	ChatCompletionMessageParam,
+	ChatCompletionMessageToolCall,
 	ChatCompletionSystemMessageParam,
 	ChatCompletionToolMessageParam,
 } from "openai/resources/chat/completions.js";
@@ -27,19 +28,32 @@ import type {
 	StreamFunction,
 	StreamOptions,
 	TextContent,
+	ThinkingBudgets,
 	ThinkingContent,
 	Tool,
 	ToolCall,
 	ToolResultMessage,
 } from "../types.ts";
+import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
+import { shortHash } from "../utils/hash.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { parseStreamingJson } from "../utils/json-parse.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
+import { retryProviderRequest } from "../utils/provider-retry.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
+import {
+	appendGrammarToolInputJsonDelta,
+	createGrammarToolInputProperties,
+	type GrammarToolInputJsonBuffer,
+	getGrammarToolInput,
+	getJsonSchemaToolParameters,
+	resolveGrammarConstrainedSampling,
+	resolveJsonSchemaStrictSampling,
+} from "./constrained-sampling.ts";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
-import { buildBaseOptions } from "./simple-options.ts";
+import { buildBaseOptions, clampReasoning, MIN_ANSWER_TOKENS } from "./simple-options.ts";
 import { transformMessages } from "./transform-messages.ts";
 
 /**
@@ -76,6 +90,26 @@ function hasToolHistory(messages: Message[]): boolean {
 	return false;
 }
 
+function getDeferredToolNames(messages: Message[]): Set<string> {
+	const names = new Set<string>();
+	for (const message of messages) {
+		if (message.role === "toolResult") {
+			for (const name of message.addedToolNames ?? []) {
+				names.add(name);
+			}
+		}
+	}
+	return names;
+}
+
+function getToolsByName(tools: Tool[] | undefined, names: Iterable<string>): Tool[] {
+	if (!tools) return [];
+	const toolsByName = new Map(tools.map((tool) => [tool.name, tool]));
+	return Array.from(names)
+		.map((name) => toolsByName.get(name))
+		.filter((tool): tool is Tool => tool !== undefined);
+}
+
 function isTextContentBlock(block: { type: string }): block is TextContent {
 	return block.type === "text";
 }
@@ -107,8 +141,14 @@ function isEncryptedReasoningDetail(detail: unknown): detail is OpenAIEncryptedR
 }
 
 export interface OpenAICompletionsOptions extends StreamOptions {
-	toolChoice?: "auto" | "none" | "required" | { type: "function"; function: { name: string } };
-	reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh";
+	toolChoice?: OpenAI.Chat.Completions.ChatCompletionToolChoiceOption;
+	reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+	/** Token budgets per thinking level. Only used when `compat.supportsThinkingTokenBudget` is set. */
+	thinkingBudgets?: ThinkingBudgets;
+}
+
+export interface ConvertCompletionsMessagesOptions {
+	grammarToolInputProperties?: ReadonlyMap<string, string>;
 }
 
 interface OpenAICompatCacheControl {
@@ -116,13 +156,23 @@ interface OpenAICompatCacheControl {
 	ttl?: string;
 }
 
-type ResolvedOpenAICompletionsCompat = Omit<Required<OpenAICompletionsCompat>, "cacheControlFormat"> & {
+type ResolvedOpenAICompletionsCompat = Omit<
+	Required<OpenAICompletionsCompat>,
+	"cacheControlFormat" | "deferredToolsMode" | "supportsThinkingTokenBudget"
+> & {
 	cacheControlFormat?: OpenAICompletionsCompat["cacheControlFormat"];
+	deferredToolsMode?: OpenAICompletionsCompat["deferredToolsMode"];
+	supportsThinkingTokenBudget?: OpenAICompletionsCompat["supportsThinkingTokenBudget"];
 };
 
 type ResolvedChatTemplateKwargValue = string | number | boolean | null;
 
 type ChatCompletionInstructionMessageParam = ChatCompletionDeveloperMessageParam | ChatCompletionSystemMessageParam;
+
+type KimiToolSystemMessageParam = {
+	role: "system";
+	tools: OpenAI.Chat.Completions.ChatCompletionTool[];
+};
 
 type OpenAIEncryptedReasoningDetail = {
 	type: "reasoning.encrypted";
@@ -170,17 +220,21 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 				totalTokens: 0,
 				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 			},
-			stopReason: "stop",
+			stopReason: "pending",
 			timestamp: Date.now(),
 		};
 
 		try {
 			const apiKey = getClientApiKey(model.provider, options?.apiKey, options?.headers);
 			const compat = getCompat(model);
+			const grammarToolInputProperties = createGrammarToolInputProperties(
+				context.tools,
+				compat.supportsOpenAIGrammarTools,
+			);
 			const cacheRetention = resolveCacheRetention(options?.cacheRetention, options?.env);
 			const cacheSessionId = cacheRetention === "none" ? undefined : options?.sessionId;
-			const client = createClient(model, context, apiKey, options?.headers, cacheSessionId, compat);
-			let params = buildParams(model, context, options, compat, cacheRetention);
+			const client = createClient(model, context, apiKey, options?.headers, options?.fetch, cacheSessionId, compat);
+			let params = buildParams(model, context, options, compat, cacheRetention, grammarToolInputProperties);
 			const nextParams = await options?.onPayload?.(params, model);
 			if (nextParams !== undefined) {
 				params = nextParams as OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming;
@@ -188,20 +242,35 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 			const requestOptions = {
 				...(options?.signal ? { signal: options.signal } : {}),
 				...(options?.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),
-				maxRetries: options?.maxRetries ?? 0,
+				maxRetries: 0,
 			};
-			const { data: openaiStream, response } = await client.chat.completions
-				.create(params, requestOptions)
-				.withResponse();
+			const { data: openaiStream, response } = await retryProviderRequest(
+				() => client.chat.completions.create(params, requestOptions).withResponse(),
+				{
+					maxRetries: options?.maxRetries,
+					maxRetryDelayMs: options?.maxRetryDelayMs,
+					signal: options?.signal,
+				},
+			);
 			await options?.onResponse?.({ status: response.status, headers: headersToRecord(response.headers) }, model);
 			stream.push({ type: "start", partial: output });
 
 			interface StreamingToolCallBlock extends ToolCall {
 				partialArgs?: string;
+				customInput?: {
+					property: string;
+					jsonBuffer: GrammarToolInputJsonBuffer;
+				};
 				streamIndex?: number;
 			}
 			type StreamingBlock = TextContent | ThinkingContent | StreamingToolCallBlock;
-			type StreamingToolCallDelta = NonNullable<ChatCompletionChunk.Choice.Delta["tool_calls"]>[number];
+			type StreamingToolCallDelta = {
+				index?: number;
+				id?: string;
+				type?: string;
+				function?: { name?: string; arguments?: string };
+				custom?: { name?: string; input?: string };
+			};
 
 			let textBlock: TextContent | null = null;
 			let thinkingBlock: ThinkingContent | null = null;
@@ -211,6 +280,28 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 			const pendingReasoningDetailsByToolCallId = new Map<string, string>();
 			const blocks = output.content as StreamingBlock[];
 			const getContentIndex = (block: StreamingBlock) => blocks.indexOf(block);
+			const getCustomToolCallInput = (block: StreamingToolCallBlock): string => {
+				const property = block.customInput?.property;
+				if (property === undefined) return "";
+				const value = block.arguments[property];
+				return typeof value === "string" ? value : "";
+			};
+			const appendCustomToolCallInput = (
+				block: StreamingToolCallBlock,
+				nextInput: string,
+				close: boolean,
+			): string | undefined => {
+				const customInput = block.customInput;
+				if (!customInput) return undefined;
+				const delta = appendGrammarToolInputJsonDelta(
+					customInput.jsonBuffer,
+					customInput.property,
+					nextInput,
+					close,
+				);
+				block.arguments = { [customInput.property]: nextInput };
+				return delta;
+			};
 			const finishBlock = (block: StreamingBlock) => {
 				const contentIndex = getContentIndex(block);
 				if (contentIndex === -1) {
@@ -231,10 +322,23 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 						partial: output,
 					});
 				} else if (block.type === "toolCall") {
-					block.arguments = parseStreamingJson(block.partialArgs);
+					if (block.customInput) {
+						const delta = appendCustomToolCallInput(block, getCustomToolCallInput(block), true);
+						if (delta !== undefined) {
+							stream.push({
+								type: "toolcall_delta",
+								contentIndex,
+								delta,
+								partial: output,
+							});
+						}
+					} else {
+						block.arguments = parseStreamingJson(block.partialArgs);
+					}
 					// Finalize in-place and strip the scratch buffers so replay only
 					// carries parsed arguments.
 					delete block.partialArgs;
+					delete block.customInput;
 					delete block.streamIndex;
 					stream.push({
 						type: "toolcall_end",
@@ -276,17 +380,26 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 			};
 			const ensureToolCallBlock = (toolCall: StreamingToolCallDelta) => {
 				const streamIndex = typeof toolCall.index === "number" ? toolCall.index : undefined;
+				const name = toolCall.function?.name ?? toolCall.custom?.name ?? "";
 				let block = streamIndex !== undefined ? toolCallBlocksByIndex.get(streamIndex) : undefined;
 				if (!block && toolCall.id) {
 					block = toolCallBlocksById.get(toolCall.id);
 				}
 				if (!block) {
+					// Note: the "input" fallback here should/must not be taken.  in case the LLM makes up
+					// a tool we don't knwo about, we at least have a place to stash our stuff.
+					const customInputProperty =
+						toolCall.custom && !toolCall.function ? (grammarToolInputProperties.get(name) ?? "input") : undefined;
+					const hasCustomInput = customInputProperty !== undefined;
 					block = {
 						type: "toolCall",
 						id: toolCall.id || "",
-						name: toolCall.function?.name || "",
-						arguments: {},
-						partialArgs: "",
+						name,
+						arguments: hasCustomInput ? { [customInputProperty]: "" } : {},
+						partialArgs: hasCustomInput ? undefined : "",
+						customInput: hasCustomInput
+							? { property: customInputProperty, jsonBuffer: { input: "", started: false, closed: false } }
+							: undefined,
 						streamIndex,
 					};
 					if (streamIndex !== undefined) {
@@ -308,6 +421,18 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 				}
 				if (toolCall.id) {
 					toolCallBlocksById.set(toolCall.id, block);
+				}
+				if (!block.name && name) {
+					block.name = name;
+				}
+				if (toolCall.custom && !toolCall.function && !block.customInput) {
+					const customInputProperty = grammarToolInputProperties.get(block.name) ?? "input";
+					block.arguments = { [customInputProperty]: "" };
+					block.customInput = {
+						property: customInputProperty,
+						jsonBuffer: { input: "", started: false, closed: false },
+					};
+					delete block.partialArgs;
 				}
 				applyPendingReasoningDetail(block);
 				return block;
@@ -336,6 +461,7 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 				}
 
 				if (choice.finish_reason) {
+					output.rawStopReason = choice.finish_reason;
 					const finishReasonResult = mapStopReason(choice.finish_reason);
 					output.stopReason = finishReasonResult.stopReason;
 					if (finishReasonResult.errorMessage) {
@@ -394,14 +520,15 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 					}
 
 					if (choice?.delta?.tool_calls) {
-						for (const toolCall of choice.delta.tool_calls) {
+						for (const toolCall of choice.delta.tool_calls as StreamingToolCallDelta[]) {
 							const block = ensureToolCallBlock(toolCall);
 							if (!block.id && toolCall.id) {
 								block.id = toolCall.id;
 								toolCallBlocksById.set(toolCall.id, block);
 							}
-							if (!block.name && toolCall.function?.name) {
-								block.name = toolCall.function.name;
+							const name = toolCall.function?.name ?? toolCall.custom?.name;
+							if (!block.name && name) {
+								block.name = name;
 							}
 
 							let delta = "";
@@ -409,6 +536,9 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 								delta = toolCall.function.arguments;
 								block.partialArgs = (block.partialArgs ?? "") + toolCall.function.arguments;
 								block.arguments = parseStreamingJson(block.partialArgs);
+							} else if (toolCall.custom?.input) {
+								const nextInput = getCustomToolCallInput(block) + toolCall.custom.input;
+								delta = appendCustomToolCallInput(block, nextInput, false) ?? "";
 							}
 							stream.push({
 								type: "toolcall_delta",
@@ -446,10 +576,13 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 			if (output.stopReason === "aborted") {
 				throw new Error("Request was aborted");
 			}
+			if (!hasFinishReason && !compat.supportsFinishReason) {
+				output.stopReason = output.content.some((block) => block.type === "toolCall") ? "toolUse" : "stop";
+			}
 			if (output.stopReason === "error") {
 				throw new Error(output.errorMessage || "Provider returned an error stop reason");
 			}
-			if (!hasFinishReason) {
+			if ((compat.supportsFinishReason && !hasFinishReason) || output.stopReason === "pending") {
 				throw new Error("Stream ended without finish_reason");
 			}
 
@@ -460,13 +593,19 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 				delete (block as { index?: number }).index;
 				// Streaming scratch buffers are only used during parsing; never persist them.
 				delete (block as { partialArgs?: string }).partialArgs;
+				delete (block as { customInput?: unknown }).customInput;
 				delete (block as { streamIndex?: number }).streamIndex;
 			}
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
-			output.errorMessage = error instanceof Error ? error.message : JSON.stringify(error);
+			output.errorMessage = formatProviderError(normalizeProviderError(error));
 			// Some providers via OpenRouter give additional information in this field.
+			// normalizeProviderError already stringifies the parsed body (error.error)
+			// into errorMessage, so only append the raw metadata when it is not already
+			// present to avoid double-printing it.
 			const rawMetadata = (error as any)?.error?.metadata?.raw;
-			if (rawMetadata) output.errorMessage += `\n${rawMetadata}`;
+			if (rawMetadata && !output.errorMessage.includes(String(rawMetadata))) {
+				output.errorMessage += `\n${rawMetadata}`;
+			}
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();
 		}
@@ -482,7 +621,7 @@ export const streamSimple: StreamFunction<"openai-completions", SimpleStreamOpti
 ): AssistantMessageEventStream => {
 	getClientApiKey(model.provider, options?.apiKey, options?.headers);
 
-	const base = buildBaseOptions(model, options, options?.apiKey);
+	const base = buildBaseOptions(model, context, options, options?.apiKey);
 	const clampedReasoning = options?.reasoning ? clampThinkingLevel(model, options.reasoning) : undefined;
 	const reasoningEffort = clampedReasoning === "off" ? undefined : clampedReasoning;
 	const toolChoice = (options as OpenAICompletionsOptions | undefined)?.toolChoice;
@@ -491,6 +630,7 @@ export const streamSimple: StreamFunction<"openai-completions", SimpleStreamOpti
 		...base,
 		reasoningEffort,
 		toolChoice,
+		thinkingBudgets: options?.thinkingBudgets,
 	} satisfies OpenAICompletionsOptions);
 };
 
@@ -499,6 +639,7 @@ function createClient(
 	context: Context,
 	apiKey: string,
 	optionsHeaders?: ProviderHeaders,
+	fetch?: typeof globalThis.fetch,
 	sessionId?: string,
 	compat: ResolvedOpenAICompletionsCompat = getCompat(model),
 ) {
@@ -513,9 +654,15 @@ function createClient(
 	}
 
 	if (sessionId && compat.sendSessionAffinityHeaders) {
-		headers.session_id = sessionId;
-		headers["x-client-request-id"] = sessionId;
-		headers["x-session-affinity"] = sessionId;
+		if (compat.sessionAffinityFormat === "openrouter") {
+			headers["x-session-id"] = sessionId;
+		} else {
+			if (compat.sessionAffinityFormat === "openai") {
+				headers.session_id = sessionId;
+			}
+			headers["x-client-request-id"] = sessionId;
+			headers["x-session-affinity"] = sessionId;
+		}
 	}
 
 	// Merge options headers last so they can override defaults
@@ -527,6 +674,7 @@ function createClient(
 		apiKey,
 		baseURL: model.baseUrl,
 		dangerouslyAllowBrowser: true,
+		fetch,
 		defaultHeaders: headers,
 	});
 }
@@ -537,8 +685,12 @@ function buildParams(
 	options?: OpenAICompletionsOptions,
 	compat: ResolvedOpenAICompletionsCompat = getCompat(model),
 	cacheRetention: CacheRetention = resolveCacheRetention(options?.cacheRetention, options?.env),
+	grammarToolInputProperties: ReadonlyMap<string, string> = createGrammarToolInputProperties(
+		context.tools,
+		compat.supportsOpenAIGrammarTools,
+	),
 ) {
-	const messages = convertMessages(model, context, compat);
+	const messages = convertMessages(model, context, compat, { grammarToolInputProperties });
 	const cacheControl = getCompatCacheControl(compat, cacheRetention);
 
 	const params: OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming = {
@@ -573,8 +725,11 @@ function buildParams(
 		params.temperature = options.temperature;
 	}
 
-	if (context.tools && context.tools.length > 0) {
-		params.tools = convertTools(context.tools, compat);
+	const deferredToolNames =
+		compat.deferredToolsMode === "kimi" ? getDeferredToolNames(context.messages) : new Set<string>();
+	const activeTools = context.tools?.filter((tool) => !deferredToolNames.has(tool.name));
+	if (activeTools && activeTools.length > 0) {
+		params.tools = convertTools(activeTools, compat);
 		if (compat.zaiToolStream) {
 			(params as any).tool_stream = true;
 		}
@@ -593,10 +748,10 @@ function buildParams(
 
 	if (compat.thinkingFormat === "zai" && model.reasoning) {
 		const zaiParams = params as Omit<typeof params, "reasoning_effort"> & {
-			thinking?: { type: "enabled" | "disabled" };
+			thinking?: { type: "enabled" | "disabled"; clear_thinking?: boolean };
 			reasoning_effort?: string;
 		};
-		zaiParams.thinking = { type: options?.reasoningEffort ? "enabled" : "disabled" };
+		zaiParams.thinking = options?.reasoningEffort ? { type: "enabled", clear_thinking: false } : { type: "disabled" };
 		if (options?.reasoningEffort && compat.supportsReasoningEffort) {
 			const mappedEffort = model.thinkingLevelMap?.[options.reasoningEffort];
 			const effort = mappedEffort === undefined ? options.reasoningEffort : mappedEffort;
@@ -606,15 +761,38 @@ function buildParams(
 		}
 	} else if (compat.thinkingFormat === "qwen" && model.reasoning) {
 		(params as any).enable_thinking = !!options?.reasoningEffort;
+		if (options?.reasoningEffort && compat.supportsReasoningEffort) {
+			const effort = model.thinkingLevelMap?.[options.reasoningEffort] ?? options.reasoningEffort;
+			if (typeof effort === "string") {
+				(params as any).reasoning_effort = effort;
+			}
+		}
 	} else if (compat.thinkingFormat === "qwen-chat-template" && model.reasoning) {
 		(params as any).chat_template_kwargs = {
 			enable_thinking: !!options?.reasoningEffort,
 			preserve_thinking: true,
 		};
 	} else if (compat.thinkingFormat === "chat-template" && model.reasoning) {
-		const chatTemplateKwargs = buildChatTemplateKwargs(model, options, compat);
+		const chatTemplateKwargs = buildChatTemplateValues(model, options, compat.chatTemplateKwargs);
 		if (chatTemplateKwargs) {
 			(params as any).chat_template_kwargs = chatTemplateKwargs;
+		}
+	} else if (compat.thinkingFormat === "baseten" && model.reasoning) {
+		const basetenParams = params as Omit<typeof params, "reasoning_effort"> & {
+			chat_template_args?: Record<string, ResolvedChatTemplateKwargValue>;
+			reasoning_effort?: string;
+		};
+		const chatTemplateArgs = buildChatTemplateValues(model, options, compat.chatTemplateArgs);
+		if (chatTemplateArgs) {
+			basetenParams.chat_template_args = chatTemplateArgs;
+		}
+		if (compat.supportsReasoningEffort) {
+			const requestedEffort = options?.reasoningEffort;
+			const mappedEffort = requestedEffort ? model.thinkingLevelMap?.[requestedEffort] : model.thinkingLevelMap?.off;
+			const effort = mappedEffort === undefined ? requestedEffort : mappedEffort;
+			if (typeof effort === "string") {
+				basetenParams.reasoning_effort = effort;
+			}
 		}
 	} else if (compat.thinkingFormat === "deepseek" && model.reasoning) {
 		if (options?.reasoningEffort) {
@@ -667,6 +845,27 @@ function buildParams(
 		}
 	}
 
+	// vLLM caps reasoning with a top-level thinking_token_budget. Independent of
+	// thinkingFormat: the same server can serve zai, qwen or chat-template models.
+	// Reasoning and the answer share max_tokens here, so an uncapped reasoning
+	// phase can consume the whole response and leave no answer and no tool call.
+	if (compat.supportsThinkingTokenBudget && options?.reasoningEffort && model.reasoning) {
+		const level = clampReasoning(options.reasoningEffort)!;
+		const budgets: ThinkingBudgets = {
+			minimal: 1024,
+			low: 2048,
+			medium: 8192,
+			high: 16384,
+			...options.thinkingBudgets,
+		};
+		const ceiling = (params as { max_tokens?: number }).max_tokens ?? params.max_completion_tokens ?? model.maxTokens;
+		// Always leave room for the answer, otherwise the budget recreates the bug it prevents.
+		const budget = Math.min(budgets[level]!, Math.max(0, ceiling - MIN_ANSWER_TOKENS));
+		if (budget > 0) {
+			(params as { thinking_token_budget?: number }).thinking_token_budget = budget;
+		}
+	}
+
 	// OpenRouter provider routing preferences
 	if (model.compat?.openRouterRouting) {
 		(params as any).provider = model.compat.openRouterRouting;
@@ -683,24 +882,29 @@ function buildParams(
 		}
 	}
 
+	// Last so custom keys override the named request fields.
+	if (options?.samplingParams) {
+		Object.assign(params, options.samplingParams);
+	}
+
 	return params;
 }
 
-function buildChatTemplateKwargs(
+function buildChatTemplateValues(
 	model: Model<"openai-completions">,
 	options: OpenAICompletionsOptions | undefined,
-	compat: ResolvedOpenAICompletionsCompat,
+	values: Record<string, ChatTemplateKwargValue>,
 ): Record<string, ResolvedChatTemplateKwargValue> | undefined {
-	const kwargs: Record<string, ResolvedChatTemplateKwargValue> = {};
+	const resolvedValues: Record<string, ResolvedChatTemplateKwargValue> = {};
 
-	for (const [key, value] of Object.entries(compat.chatTemplateKwargs)) {
+	for (const [key, value] of Object.entries(values)) {
 		const resolved = resolveChatTemplateKwargValue(model, options, value);
 		if (resolved !== undefined) {
-			kwargs[key] = resolved;
+			resolvedValues[key] = resolved;
 		}
 	}
 
-	return Object.keys(kwargs).length > 0 ? kwargs : undefined;
+	return Object.keys(resolvedValues).length > 0 ? resolvedValues : undefined;
 }
 
 function resolveChatTemplateKwargValue(
@@ -764,7 +968,7 @@ function addCacheControlToLastConversationMessage(
 ): void {
 	for (let i = messages.length - 1; i >= 0; i--) {
 		const message = messages[i];
-		if (message.role === "user" || message.role === "assistant") {
+		if (message.role === "user" || message.role === "assistant" || message.role === "tool") {
 			if (addCacheControlToMessage(message, cacheControl)) {
 				return;
 			}
@@ -795,7 +999,7 @@ function addCacheControlToMessage(
 	message: ChatCompletionMessageParam,
 	cacheControl: OpenAICompatCacheControl,
 ): boolean {
-	if (message.role === "user" || message.role === "assistant") {
+	if (message.role === "user" || message.role === "assistant" || message.role === "tool") {
 		return addCacheControlToTextContent(message, cacheControl);
 	}
 	return false;
@@ -805,6 +1009,7 @@ function addCacheControlToTextContent(
 	message:
 		| ChatCompletionInstructionMessageParam
 		| ChatCompletionAssistantMessageParam
+		| ChatCompletionToolMessageParam
 		| Extract<ChatCompletionMessageParam, { role: "user" }>,
 	cacheControl: OpenAICompatCacheControl,
 ): boolean {
@@ -843,6 +1048,7 @@ export function convertMessages(
 	model: Model<"openai-completions">,
 	context: Context,
 	compat: ResolvedOpenAICompletionsCompat,
+	options?: ConvertCompletionsMessagesOptions,
 ): ChatCompletionMessageParam[] {
 	const params: ChatCompletionMessageParam[] = [];
 
@@ -851,10 +1057,21 @@ export function convertMessages(
 		// Format: {call_id}|{id} where {id} can be 400+ chars with special chars (+, /, =)
 		// These come from providers like github-copilot, openai-codex, opencode
 		// Extract just the call_id part and normalize it
+		// Multiple tool calls in the same turn can share call_id but differ by item_id.
+		// Preserve item-level uniqueness when replaying into Chat Completions, which
+		// requires distinct tool call ids.
 		if (id.includes("|")) {
-			const [callId] = id.split("|");
 			// Sanitize to allowed chars and truncate to 40 chars (OpenAI limit)
-			return callId.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 40);
+			const separatorIndex = id.indexOf("|");
+			const callId = id.slice(0, separatorIndex).replace(/[^a-zA-Z0-9_-]/g, "_");
+			const itemId = id.slice(separatorIndex + 1).replace(/[^a-zA-Z0-9_-]/g, "_");
+			const combinedId = itemId.length > 0 ? `${callId}_${itemId}` : callId;
+			if (combinedId.length <= 40) {
+				return combinedId;
+			}
+			const hash = shortHash(id).slice(0, 8);
+			const prefix = callId.slice(0, Math.max(1, 40 - hash.length - 1));
+			return `${prefix}_${hash}`;
 		}
 
 		if (model.provider === "openai") return id.length > 40 ? id.slice(0, 40) : id;
@@ -969,14 +1186,27 @@ export function convertMessages(
 
 			const toolCalls = msg.content.filter(isToolCallBlock);
 			if (toolCalls.length > 0) {
-				assistantMsg.tool_calls = toolCalls.map((tc) => ({
-					id: tc.id,
-					type: "function" as const,
-					function: {
-						name: tc.name,
-						arguments: JSON.stringify(tc.arguments),
-					},
-				}));
+				assistantMsg.tool_calls = toolCalls.map((tc): ChatCompletionMessageToolCall => {
+					const customInputProperty = options?.grammarToolInputProperties?.get(tc.name);
+					if (customInputProperty !== undefined) {
+						return {
+							id: tc.id,
+							type: "custom",
+							custom: {
+								name: tc.name,
+								input: sanitizeSurrogates(getGrammarToolInput(tc.name, tc.arguments, customInputProperty)),
+							},
+						};
+					}
+					return {
+						id: tc.id,
+						type: "function",
+						function: {
+							name: tc.name,
+							arguments: JSON.stringify(tc.arguments),
+						},
+					};
+				});
 				const reasoningDetails = toolCalls
 					.filter((tc) => tc.thoughtSignature)
 					.map((tc) => {
@@ -1013,6 +1243,7 @@ export function convertMessages(
 			params.push(assistantMsg);
 		} else if (msg.role === "toolResult") {
 			const imageBlocks: Array<{ type: "image_url"; image_url: { url: string } }> = [];
+			const deferredToolNames = new Set<string>();
 			let j = i;
 
 			for (; j < transformedMessages.length && transformedMessages[j].role === "toolResult"; j++) {
@@ -1027,16 +1258,23 @@ export function convertMessages(
 
 				// Always send tool result with text (or placeholder if only images)
 				const hasText = textResult.length > 0;
+				const toolResultText = hasText ? textResult : hasImages ? "(see attached image)" : "(no tool output)";
 				// Some providers require the 'name' field in tool results
 				const toolResultMsg: ChatCompletionToolMessageParam = {
 					role: "tool",
-					content: sanitizeSurrogates(hasText ? textResult : "(see attached image)"),
+					content: sanitizeSurrogates(toolResultText),
 					tool_call_id: toolMsg.toolCallId,
 				};
 				if (compat.requiresToolResultName && toolMsg.toolName) {
 					(toolResultMsg as any).name = toolMsg.toolName;
 				}
 				params.push(toolResultMsg);
+
+				if (compat.deferredToolsMode === "kimi") {
+					for (const name of toolMsg.addedToolNames ?? []) {
+						deferredToolNames.add(name);
+					}
+				}
 
 				if (hasImages && model.input.includes("image")) {
 					for (const block of toolMsg.content) {
@@ -1076,6 +1314,18 @@ export function convertMessages(
 			} else {
 				lastRole = "toolResult";
 			}
+
+			if (deferredToolNames.size > 0) {
+				const deferredTools = getToolsByName(context.tools, deferredToolNames);
+				if (deferredTools.length > 0) {
+					const kimiToolMessage: KimiToolSystemMessageParam = {
+						role: "system",
+						tools: convertTools(deferredTools, compat),
+					};
+					// Kimi accepts a system message with tools but omits the standard content field.
+					params.push(kimiToolMessage as unknown as ChatCompletionMessageParam);
+				}
+			}
 			continue;
 		}
 
@@ -1089,16 +1339,37 @@ function convertTools(
 	tools: Tool[],
 	compat: ResolvedOpenAICompletionsCompat,
 ): OpenAI.Chat.Completions.ChatCompletionTool[] {
-	return tools.map((tool) => ({
-		type: "function",
-		function: {
-			name: tool.name,
-			description: tool.description,
-			parameters: tool.parameters as any, // TypeBox already generates JSON Schema
-			// Only include strict if provider supports it. Some reject unknown fields.
-			...(compat.supportsStrictMode !== false && { strict: false }),
-		},
-	}));
+	return tools.map((tool) => {
+		const grammar = resolveGrammarConstrainedSampling(tool, compat.supportsOpenAIGrammarTools);
+		if (grammar) {
+			return {
+				type: "custom",
+				custom: {
+					name: tool.name,
+					description: tool.description,
+					format: {
+						type: "grammar",
+						grammar: {
+							syntax: grammar.format,
+							definition: grammar.definition,
+						},
+					},
+				},
+			};
+		}
+
+		const strict = resolveJsonSchemaStrictSampling(tool, compat.supportsStrictMode !== false);
+		return {
+			type: "function",
+			function: {
+				name: tool.name,
+				description: tool.description,
+				parameters: getJsonSchemaToolParameters(tool, strict) as Record<string, unknown>,
+				// Only include strict if provider supports it. Some reject unknown fields.
+				...(compat.supportsStrictMode !== false && { strict: strict ?? false }),
+			},
+		};
+	});
 }
 
 function parseChunkUsage(
@@ -1107,6 +1378,7 @@ function parseChunkUsage(
 		completion_tokens?: number;
 		prompt_cache_hit_tokens?: number;
 		prompt_tokens_details?: { cached_tokens?: number; cache_write_tokens?: number };
+		completion_tokens_details?: { reasoning_tokens?: number };
 	},
 	model: Model<"openai-completions">,
 ): AssistantMessage["usage"] {
@@ -1130,6 +1402,7 @@ function parseChunkUsage(
 		output: outputTokens,
 		cacheRead: cacheReadTokens,
 		cacheWrite: cacheWriteTokens,
+		reasoning: rawUsage.completion_tokens_details?.reasoning_tokens || 0,
 		totalTokens: input + outputTokens + cacheReadTokens + cacheWriteTokens,
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 	};
@@ -1185,6 +1458,7 @@ function detectCompat(model: Model<"openai-completions">): ResolvedOpenAIComplet
 	const isCloudflareAiGateway = provider === "cloudflare-ai-gateway" || baseUrl.includes("gateway.ai.cloudflare.com");
 	const isNvidia = provider === "nvidia" || baseUrl.includes("integrate.api.nvidia.com");
 	const isAntLing = provider === "ant-ling" || baseUrl.includes("api.ant-ling.com");
+	const isDeepSeek = provider === "deepseek" || baseUrl.toLowerCase().includes("deepseek.com");
 
 	const isNonStandard =
 		isNvidia ||
@@ -1194,7 +1468,7 @@ function detectCompat(model: Model<"openai-completions">): ResolvedOpenAIComplet
 		baseUrl.includes("api.x.ai") ||
 		isTogether ||
 		baseUrl.includes("chutes.ai") ||
-		baseUrl.includes("deepseek.com") ||
+		isDeepSeek ||
 		isZai ||
 		isMoonshot ||
 		provider === "opencode" ||
@@ -1204,10 +1478,16 @@ function detectCompat(model: Model<"openai-completions">): ResolvedOpenAIComplet
 		isAntLing;
 
 	const useMaxTokens =
-		baseUrl.includes("chutes.ai") || isMoonshot || isCloudflareAiGateway || isTogether || isNvidia || isAntLing;
+		baseUrl.includes("chutes.ai") ||
+		isDeepSeek ||
+		isMoonshot ||
+		isCloudflareAiGateway ||
+		isTogether ||
+		isNvidia ||
+		isAntLing ||
+		isZai;
 
 	const isGrok = provider === "xai" || baseUrl.includes("api.x.ai");
-	const isDeepSeek = provider === "deepseek" || baseUrl.includes("deepseek.com");
 	const isOpenRouterDeveloperRoleModel =
 		isOpenRouter && (model.id.startsWith("anthropic/") || model.id.startsWith("openai/"));
 	const cacheControlFormat = provider === "openrouter" && model.id.startsWith("anthropic/") ? "anthropic" : undefined;
@@ -1218,6 +1498,7 @@ function detectCompat(model: Model<"openai-completions">): ResolvedOpenAIComplet
 		supportsReasoningEffort:
 			!isGrok && !isZai && !isMoonshot && !isTogether && !isCloudflareAiGateway && !isNvidia && !isAntLing,
 		supportsUsageInStreaming: true,
+		supportsFinishReason: true,
 		maxTokensField: useMaxTokens ? "max_tokens" : "max_completion_tokens",
 		requiresToolResultName: false,
 		requiresAssistantAfterToolResult: false,
@@ -1237,10 +1518,15 @@ function detectCompat(model: Model<"openai-completions">): ResolvedOpenAIComplet
 		openRouterRouting: {},
 		vercelGatewayRouting: {},
 		chatTemplateKwargs: {},
+		chatTemplateArgs: {},
 		zaiToolStream: false,
+		supportsThinkingTokenBudget: false,
 		supportsStrictMode: !isMoonshot && !isTogether && !isCloudflareAiGateway && !isNvidia,
+		supportsOpenAIGrammarTools: false,
 		cacheControlFormat,
 		sendSessionAffinityHeaders: false,
+		deferredToolsMode: undefined,
+		sessionAffinityFormat: isOpenRouter ? "openrouter" : "openai",
 		supportsLongCacheRetention: !(
 			isTogether ||
 			isCloudflareWorkersAI ||
@@ -1264,6 +1550,7 @@ function getCompat(model: Model<"openai-completions">): ResolvedOpenAICompletion
 		supportsDeveloperRole: model.compat.supportsDeveloperRole ?? detected.supportsDeveloperRole,
 		supportsReasoningEffort: model.compat.supportsReasoningEffort ?? detected.supportsReasoningEffort,
 		supportsUsageInStreaming: model.compat.supportsUsageInStreaming ?? detected.supportsUsageInStreaming,
+		supportsFinishReason: model.compat.supportsFinishReason ?? detected.supportsFinishReason,
 		maxTokensField: model.compat.maxTokensField ?? detected.maxTokensField,
 		requiresToolResultName: model.compat.requiresToolResultName ?? detected.requiresToolResultName,
 		requiresAssistantAfterToolResult:
@@ -1276,10 +1563,15 @@ function getCompat(model: Model<"openai-completions">): ResolvedOpenAICompletion
 		openRouterRouting: model.compat.openRouterRouting ?? {},
 		vercelGatewayRouting: model.compat.vercelGatewayRouting ?? detected.vercelGatewayRouting,
 		chatTemplateKwargs: model.compat.chatTemplateKwargs ?? detected.chatTemplateKwargs,
+		chatTemplateArgs: model.compat.chatTemplateArgs ?? detected.chatTemplateArgs,
 		zaiToolStream: model.compat.zaiToolStream ?? detected.zaiToolStream,
+		supportsThinkingTokenBudget: model.compat.supportsThinkingTokenBudget ?? detected.supportsThinkingTokenBudget,
 		supportsStrictMode: model.compat.supportsStrictMode ?? detected.supportsStrictMode,
+		supportsOpenAIGrammarTools: model.compat.supportsOpenAIGrammarTools ?? detected.supportsOpenAIGrammarTools,
 		cacheControlFormat: model.compat.cacheControlFormat ?? detected.cacheControlFormat,
 		sendSessionAffinityHeaders: model.compat.sendSessionAffinityHeaders ?? detected.sendSessionAffinityHeaders,
+		deferredToolsMode: model.compat.deferredToolsMode ?? detected.deferredToolsMode,
+		sessionAffinityFormat: model.compat.sessionAffinityFormat ?? detected.sessionAffinityFormat,
 		supportsLongCacheRetention: model.compat.supportsLongCacheRetention ?? detected.supportsLongCacheRetention,
 	};
 }

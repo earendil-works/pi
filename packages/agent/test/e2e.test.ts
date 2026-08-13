@@ -7,6 +7,7 @@ import {
 	fauxToolCall,
 	type Model,
 	registerFauxProvider,
+	streamSimple,
 	type ToolResultMessage,
 	type UserMessage,
 } from "@earendil-works/pi-ai/compat";
@@ -37,6 +38,7 @@ afterEach(() => {
 
 async function basicPrompt(model: Model<string>) {
 	const agent = new Agent({
+		streamFn: streamSimple,
 		initialState: {
 			systemPrompt: "You are a helpful assistant. Keep your responses concise.",
 			model,
@@ -59,6 +61,7 @@ async function basicPrompt(model: Model<string>) {
 
 async function toolExecution(model: Model<string>) {
 	const agent = new Agent({
+		streamFn: streamSimple,
 		initialState: {
 			systemPrompt: "You are a helpful assistant. Always use the calculator tool for math.",
 			model,
@@ -98,6 +101,7 @@ async function toolExecution(model: Model<string>) {
 
 async function abortExecution(model: Model<string>) {
 	const agent = new Agent({
+		streamFn: streamSimple,
 		initialState: {
 			systemPrompt: "You are a helpful assistant.",
 			model,
@@ -125,6 +129,7 @@ async function abortExecution(model: Model<string>) {
 
 async function stateUpdates(model: Model<string>) {
 	const agent = new Agent({
+		streamFn: streamSimple,
 		initialState: {
 			systemPrompt: "You are a helpful assistant.",
 			model,
@@ -157,6 +162,7 @@ async function stateUpdates(model: Model<string>) {
 
 async function multiTurnConversation(model: Model<string>) {
 	const agent = new Agent({
+		streamFn: streamSimple,
 		initialState: {
 			systemPrompt: "You are a helpful assistant.",
 			model,
@@ -238,6 +244,7 @@ describe("Agent integration with faux provider", () => {
 		faux.setResponses([fauxAssistantMessage([fauxThinking("step by step"), fauxText("4")])]);
 
 		const agent = new Agent({
+			streamFn: streamSimple,
 			initialState: {
 				systemPrompt: "You are a helpful assistant.",
 				model: faux.getModel(),
@@ -262,6 +269,7 @@ describe("Agent.continue() with faux provider", () => {
 		it("throws when no messages in context", async () => {
 			const faux = createFauxRegistration();
 			const agent = new Agent({
+				streamFn: streamSimple,
 				initialState: {
 					systemPrompt: "Test",
 					model: faux.getModel(),
@@ -275,6 +283,7 @@ describe("Agent.continue() with faux provider", () => {
 			const faux = createFauxRegistration();
 			const model = faux.getModel();
 			const agent = new Agent({
+				streamFn: streamSimple,
 				initialState: {
 					systemPrompt: "Test",
 					model,
@@ -309,6 +318,7 @@ describe("Agent.continue() with faux provider", () => {
 			const faux = createFauxRegistration();
 			faux.setResponses([fauxAssistantMessage("HELLO WORLD")]);
 			const agent = new Agent({
+				streamFn: streamSimple,
 				initialState: {
 					systemPrompt: "You are a helpful assistant. Follow instructions exactly.",
 					model: faux.getModel(),
@@ -343,6 +353,7 @@ describe("Agent.continue() with faux provider", () => {
 			const model = faux.getModel();
 			faux.setResponses([fauxAssistantMessage("The answer is 8.")]);
 			const agent = new Agent({
+				streamFn: streamSimple,
 				initialState: {
 					systemPrompt:
 						"You are a helpful assistant. After getting a calculation result, state the answer clearly.",

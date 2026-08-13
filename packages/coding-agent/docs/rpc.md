@@ -23,7 +23,7 @@ Common options:
 - **Responses**: JSON objects with `type: "response"` indicating command success/failure
 - **Events**: Agent events streamed to stdout as JSON lines
 
-All commands support an optional `id` field for request/response correlation. If provided, the corresponding response will include the same `id`.
+All commands support an optional `id` field for request/response correlation. If provided, the corresponding response will include the same `id`. `bash_execution_update` events also include the `id` of their originating `bash` command.
 
 ### Framing
 
@@ -286,9 +286,9 @@ Set the reasoning/thinking level for models that support it.
 {"type": "set_thinking_level", "level": "high"}
 ```
 
-Levels: `"off"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`
+Levels: `"off"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"`
 
-Note: `"xhigh"` is only supported by OpenAI codex-max models.
+`"xhigh"` and `"max"` are exposed only when supported by the selected model. Some models, including GPT-5.6, expose both.
 
 Response:
 ```json
@@ -310,6 +310,26 @@ Response:
   "command": "cycle_thinking_level",
   "success": true,
   "data": {"level": "high"}
+}
+```
+
+#### get_available_thinking_levels
+
+List the thinking levels supported by the current model. Returns `["off"]` for a model without reasoning support.
+
+```json
+{"type": "get_available_thinking_levels"}
+```
+
+Response:
+```json
+{
+  "type": "response",
+  "command": "get_available_thinking_levels",
+  "success": true,
+  "data": {
+    "levels": ["off", "minimal", "low", "medium", "high"]
+  }
 }
 ```
 
@@ -375,12 +395,20 @@ Response:
     "firstKeptEntryId": "abc123",
     "tokensBefore": 150000,
     "estimatedTokensAfter": 32000,
+    "usage": {
+      "input": 32000,
+      "output": 1200,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "totalTokens": 33200,
+      "cost": {"input": 0.01, "output": 0.02, "cacheRead": 0, "cacheWrite": 0, "total": 0.03}
+    },
     "details": {}
   }
 }
 ```
 
-`estimatedTokensAfter` is a heuristic estimate over the rebuilt message context immediately after compaction, not a provider-exact token count.
+`estimatedTokensAfter` is a heuristic estimate over the rebuilt message context immediately after compaction, not a provider-exact token count. `usage` reports the LLM call or calls that generated the summary and may be omitted by custom compaction handlers.
 
 #### set_auto_compaction
 
@@ -427,15 +455,18 @@ Response:
 
 #### bash
 
-Execute a shell command and add output to conversation context.
+Execute a shell command and add output to conversation context. Output streams as `bash_execution_update` events while the command runs; the response contains the final result.
 
 ```json
-{"type": "bash", "command": "ls -la"}
+{"id": "req-1", "type": "bash", "command": "ls -la"}
 ```
+
+Include an `id` to associate streamed `bash_execution_update` events with this command.
 
 Response:
 ```json
 {
+  "id": "req-1",
   "type": "response",
   "command": "bash",
   "success": true,
@@ -466,7 +497,7 @@ If output was truncated, includes `fullOutputPath`:
 
 **How bash results reach the LLM:**
 
-The `bash` command executes immediately and returns a `BashResult`. Internally, a `BashExecutionMessage` is created and stored in the agent's message state. This message does NOT emit an event.
+The `bash` command executes immediately and returns a `BashResult`. Internally, a `BashExecutionMessage` is created and stored in the agent's message state.
 
 When the next `prompt` command is sent, all messages (including `BashExecutionMessage`) are transformed before being sent to the LLM. The `BashExecutionMessage` is converted to a `UserMessage` with this format:
 
@@ -481,7 +512,6 @@ drwxr-xr-x ...
 This means:
 1. Bash output is included in the LLM context on the **next prompt**, not immediately
 2. Multiple bash commands can be executed before a prompt; all outputs will be included
-3. No event is emitted for the `BashExecutionMessage` itself
 
 #### abort_bash
 
@@ -537,7 +567,7 @@ Response:
 }
 ```
 
-`tokens` contains assistant usage totals for the current session state. `contextUsage` contains the actual current context-window estimate used for compaction and footer display.
+`tokens` and `cost` include assistant messages, usage reported by tools, and compaction/branch-summary generation across the full session. `contextUsage` contains the actual current context-window estimate used for compaction and footer display.
 
 `contextUsage` is omitted when no model or context window is available. `contextUsage.tokens` and `contextUsage.percent` are `null` immediately after compaction until a fresh post-compaction assistant response provides valid usage data.
 
@@ -661,6 +691,64 @@ Response:
 }
 ```
 
+#### get_entries
+
+Get all session entries in append order (excluding the session header). The session is an append-only tree of entries with stable ids, so an entry id works as a durable cursor: pass the last entry id you have seen as `since` to get only entries strictly after it, even across client restarts. Unlike `get_messages`, this includes pre-compaction history and abandoned branches.
+
+```json
+{"type": "get_entries"}
+```
+
+With a cursor:
+```json
+{"type": "get_entries", "since": "abc123"}
+```
+
+Response:
+```json
+{
+  "type": "response",
+  "command": "get_entries",
+  "success": true,
+  "data": {
+    "entries": [
+      {"type": "message", "id": "def456", "parentId": "abc123", "timestamp": "...", "message": {"role": "user", "...": "..."}}
+    ],
+    "leafId": "def456"
+  }
+}
+```
+
+`leafId` is the id of the current leaf entry (`null` for an empty session), so a client can tell in one round trip whether the active branch moved. If `since` does not match any entry id, the response is `success: false`.
+
+#### get_tree
+
+Get the session as a tree of entries. Each node is `{entry, children, label?, labelTimestamp?}`. A well-formed session has a single root; orphaned entries (broken parent chain) also appear as roots.
+
+```json
+{"type": "get_tree"}
+```
+
+Response:
+```json
+{
+  "type": "response",
+  "command": "get_tree",
+  "success": true,
+  "data": {
+    "tree": [
+      {
+        "entry": {"type": "message", "id": "abc123", "parentId": null, "...": "..."},
+        "children": [
+          {"entry": {"type": "message", "id": "def456", "parentId": "abc123", "...": "..."}, "children": []}
+        ]
+      }
+    ],
+    "leafId": "def456"
+  }
+}
+```
+
 #### get_last_assistant_text
 
 Get the text content of the last assistant message.
@@ -743,19 +831,21 @@ Each command has:
 
 ## Events
 
-Events are streamed to stdout as JSON lines during agent operation. Events do NOT include an `id` field (only responses do).
+Events are streamed to stdout as JSON lines during agent operation. Events do not generally include an `id` field; `bash_execution_update` includes the `id` of its originating `bash` command when one was provided.
 
 ### Event Types
 
 | Event | Description |
 |-------|-------------|
 | `agent_start` | Agent begins processing |
-| `agent_end` | Agent completes (includes all generated messages) |
+| `agent_end` | One low-level agent run completes (may still be followed by retry, compaction, or queued continuations) |
+| `agent_settled` | Agent run is fully settled; no automatic retry, compaction retry, or queued continuation remains |
 | `turn_start` | New turn begins |
 | `turn_end` | Turn completes (includes assistant message and tool results) |
 | `message_start` | Message begins |
 | `message_update` | Streaming update (text/thinking/toolcall deltas) |
 | `message_end` | Message completes |
+| `bash_execution_update` | Direct RPC bash command output chunk |
 | `tool_execution_start` | Tool begins execution |
 | `tool_execution_update` | Tool execution progress (streaming output) |
 | `tool_execution_end` | Tool completes |
@@ -764,6 +854,9 @@ Events are streamed to stdout as JSON lines during agent operation. Events do NO
 | `compaction_end` | Compaction completes |
 | `auto_retry_start` | Auto-retry begins (after transient error) |
 | `auto_retry_end` | Auto-retry completes (success or final failure) |
+| `summarization_retry_scheduled` | Retry scheduled for a transient compaction or branch-summary summarization error |
+| `summarization_retry_attempt_start` | Retried summarization request starts |
+| `summarization_retry_finished` | Summarization retry loop completes |
 | `extension_error` | Extension threw an error |
 
 ### agent_start
@@ -776,13 +869,22 @@ Emitted when the agent begins processing a prompt.
 
 ### agent_end
 
-Emitted when the agent completes. Contains all messages generated during this run.
+Emitted when one low-level agent run completes. Contains all messages generated during this run. If `willRetry` is true, an automatic retry will follow.
 
 ```json
 {
   "type": "agent_end",
-  "messages": [...]
+  "messages": [...],
+  "willRetry": false
 }
+```
+
+### agent_settled
+
+Emitted after the full session-level run settles. At this point Pi will not continue automatically through retry, compaction retry, or queued follow-up messages.
+
+```json
+{"type": "agent_settled"}
 ```
 
 ### turn_start / turn_end
@@ -812,17 +914,23 @@ Emitted when a message begins and completes. The `message` field contains an `Ag
 
 ### message_update (Streaming)
 
-Emitted during streaming of assistant messages. Contains both the partial message and a streaming delta event.
+Emitted during streaming of assistant messages. Contains a delta event without a cumulative message snapshot.
 
 ```json
 {
   "type": "message_update",
-  "message": {...},
+  "usage": {
+    "input": 100,
+    "output": 1,
+    "cacheRead": 0,
+    "cacheWrite": 0,
+    "totalTokens": 101,
+    "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "total": 0}
+  },
   "assistantMessageEvent": {
     "type": "text_delta",
     "contentIndex": 0,
-    "delta": "Hello ",
-    "partial": {...}
+    "delta": "Hello "
   }
 }
 ```
@@ -831,7 +939,6 @@ The `assistantMessageEvent` field contains one of these delta types:
 
 | Type | Description |
 |------|-------------|
-| `start` | Message generation started |
 | `text_start` | Text content block started |
 | `text_delta` | Text content chunk |
 | `text_end` | Text content block ended |
@@ -841,15 +948,36 @@ The `assistantMessageEvent` field contains one of these delta types:
 | `toolcall_start` | Tool call started |
 | `toolcall_delta` | Tool call arguments chunk |
 | `toolcall_end` | Tool call ended (includes full `toolCall` object) |
-| `done` | Message complete (reason: `"stop"`, `"length"`, `"toolUse"`) |
-| `error` | Error occurred (reason: `"aborted"`, `"error"`) |
 
 Example streaming a text response:
 ```json
-{"type":"message_update","message":{...},"assistantMessageEvent":{"type":"text_start","contentIndex":0,"partial":{...}}}
-{"type":"message_update","message":{...},"assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"Hello","partial":{...}}}
-{"type":"message_update","message":{...},"assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":" world","partial":{...}}}
-{"type":"message_update","message":{...},"assistantMessageEvent":{"type":"text_end","contentIndex":0,"content":"Hello world","partial":{...}}}
+{"type":"message_update","usage":{...},"assistantMessageEvent":{"type":"text_start","contentIndex":0}}
+{"type":"message_update","usage":{...},"assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"Hello"}}
+{"type":"message_update","usage":{...},"assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":" world"}}
+{"type":"message_update","usage":{...},"assistantMessageEvent":{"type":"text_end","contentIndex":0,"content":"Hello world"}}
+```
+
+The top-level `usage` field contains the latest cumulative provider-reported usage. It may remain
+zero until completion when a provider does not report usage during streaming.
+
+`message_update` intentionally omits the former cumulative `message` field and
+`assistantMessageEvent.partial`. Clients that need a live partial message must assemble it
+from `message_start` and subsequent events using `contentIndex`. Treat `message_end.message`
+as authoritative. For tool calls, buffer `toolcall_delta.delta`; `toolcall_end.toolCall`
+contains the completed call.
+
+### bash_execution_update
+
+Emitted once for each output chunk from a direct `bash` command. `id` matches the command's `id`, allowing clients to associate output with the correct command.
+
+Events stream all output while the command runs, even if the final `bash` response's `output` is truncated.
+
+```json
+{
+  "type": "bash_execution_update",
+  "id": "req-1",
+  "delta": "total 48\n"
+}
 ```
 
 ### tool_execution_start / tool_execution_update / tool_execution_end
@@ -928,6 +1056,14 @@ The `reason` field is `"manual"`, `"threshold"`, or `"overflow"`.
     "firstKeptEntryId": "abc123",
     "tokensBefore": 150000,
     "estimatedTokensAfter": 32000,
+    "usage": {
+      "input": 32000,
+      "output": 1200,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "totalTokens": 33200,
+      "cost": {"input": 0.01, "output": 0.02, "cacheRead": 0, "cacheWrite": 0, "total": 0.03}
+    },
     "details": {}
   },
   "aborted": false,
@@ -970,6 +1106,36 @@ On final failure (max retries exceeded):
   "success": false,
   "attempt": 3,
   "finalError": "529 overloaded_error: Overloaded"
+}
+```
+
+### summarization_retry_scheduled / summarization_retry_attempt_start / summarization_retry_finished
+
+Emitted when compaction or branch-summary summarization retries after a transient provider error. These events use the same retry settings as automatic assistant-turn retries.
+
+```json
+{
+  "type": "summarization_retry_scheduled",
+  "attempt": 1,
+  "maxAttempts": 3,
+  "delayMs": 2000,
+  "errorMessage": "terminated"
+}
+```
+
+```json
+{
+  "type": "summarization_retry_attempt_start",
+  "source": "compaction",
+  "reason": "threshold"
+}
+```
+
+For branch summaries, `source` is `"branchSummary"` and no `reason` is present.
+
+```json
+{
+  "type": "summarization_retry_finished"
 }
 ```
 
@@ -1208,6 +1374,7 @@ Source files:
 - [`packages/ai/src/types.ts`](../../ai/src/types.ts) - `Model`, `UserMessage`, `AssistantMessage`, `ToolResultMessage`
 - [`packages/agent/src/types.ts`](../../agent/src/types.ts) - `AgentMessage`, `AgentEvent`
 - [`src/core/messages.ts`](../src/core/messages.ts) - `BashExecutionMessage`
+- [`src/modes/json-event.ts`](../src/modes/json-event.ts) - `JsonAgentSessionEvent`
 - [`src/modes/rpc/rpc-types.ts`](../src/modes/rpc/rpc-types.ts) - RPC command/response types, extension UI request/response types
 
 ### Model
@@ -1280,10 +1447,20 @@ Stop reasons: `"stop"`, `"length"`, `"toolUse"`, `"error"`, `"aborted"`
   "toolCallId": "call_123",
   "toolName": "bash",
   "content": [{"type": "text", "text": "total 48\ndrwxr-xr-x ..."}],
+  "usage": {
+    "input": 100,
+    "output": 50,
+    "cacheRead": 0,
+    "cacheWrite": 0,
+    "totalTokens": 150,
+    "cost": {"input": 0.0003, "output": 0.00075, "cacheRead": 0, "cacheWrite": 0, "total": 0.00105}
+  },
   "isError": false,
   "timestamp": 1733234567890
 }
 ```
+
+`usage` is optional and reports nested LLM work performed by the tool. When present, it contributes to session token and cost totals.
 
 ### BashExecutionMessage
 

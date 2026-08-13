@@ -4,7 +4,8 @@ import { Spacer } from "../src/components/spacer.ts";
 import { Text } from "../src/components/text.ts";
 import { ProcessTerminal } from "../src/terminal.ts";
 import { getCapabilities, getImageDimensions } from "../src/terminal-image.ts";
-import { TUI } from "../src/tui.ts";
+import type { TUI } from "../src/tui.ts";
+import { TuiMainScreen } from "../src/tui-main-screen.ts";
 
 const testImagePath = process.argv[2] || "/tmp/test-image.png";
 
@@ -27,7 +28,7 @@ console.log("Image dimensions:", dims);
 console.log("");
 
 const terminal = new ProcessTerminal();
-const tui = new TUI(terminal);
+const tui: TUI = new TuiMainScreen(terminal);
 
 tui.addChild(new Text("Image Rendering Test", 1, 1));
 tui.addChild(new Spacer(1));

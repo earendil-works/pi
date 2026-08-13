@@ -79,6 +79,13 @@ function utf8ByteLength(content: string): number {
 	return bytes;
 }
 
+function splitLinesForCounting(content: string): string[] {
+	if (content.length === 0) return [];
+	const lines = content.split("\n");
+	if (content.endsWith("\n")) lines.pop();
+	return lines;
+}
+
 function replaceUnpairedSurrogates(content: string): string {
 	let output = "";
 	for (let i = 0; i < content.length; i++) {
@@ -127,7 +134,7 @@ export function truncateHead(content: string, options: TruncationOptions = {}): 
 	const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
 
 	const totalBytes = utf8ByteLength(content);
-	const lines = content.split("\n");
+	const lines = splitLinesForCounting(content);
 	const totalLines = lines.length;
 
 	// Check if no truncation needed
@@ -217,8 +224,7 @@ export function truncateTail(content: string, options: TruncationOptions = {}): 
 	const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
 
 	const totalBytes = utf8ByteLength(content);
-	const lines = content.split("\n");
-	if (lines.length > 1 && lines[lines.length - 1] === "") lines.pop();
+	const lines = splitLinesForCounting(content);
 	const totalLines = lines.length;
 
 	// Check if no truncation needed

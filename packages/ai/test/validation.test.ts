@@ -1,4 +1,5 @@
 import { Type } from "typebox";
+import { Compile } from "typebox/compile";
 import { describe, expect, it } from "vitest";
 import type { Tool, ToolCall } from "../src/types.ts";
 import { validateToolArguments } from "../src/utils/validation.ts";
@@ -95,6 +96,99 @@ describe("validateToolArguments", () => {
 			const { tool, toolCall } = createToolCallWithPlainSchema(testCase.schema, testCase.input);
 			expect(validateToolArguments(tool, toolCall)).toEqual({ value: testCase.expected });
 		}
+	});
+
+	it("treats null as omission for optional non-nullable properties", () => {
+		const tool: Tool = {
+			name: "echo",
+			description: "Echo tool",
+			parameters: Type.Object({
+				path: Type.String(),
+				offset: Type.Optional(Type.Number()),
+				nullable: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+				metadata: Type.Object({ enabled: Type.Optional(Type.Boolean()) }),
+			}),
+		};
+		const toolCall: ToolCall = {
+			type: "toolCall",
+			id: "tool-1",
+			name: "echo",
+			arguments: { path: "file.txt", offset: null, nullable: null, metadata: { enabled: null } },
+		};
+
+		expect(validateToolArguments(tool, toolCall)).toEqual({
+			path: "file.txt",
+			nullable: null,
+			metadata: {},
+		});
+	});
+
+	it("preserves optional nulls whose referenced schema is nullable", () => {
+		const tool: Tool = {
+			name: "echo",
+			description: "Echo tool",
+			parameters: {
+				type: "object",
+				properties: { value: { $ref: "#/$defs/value" } },
+				$defs: { value: { anyOf: [{ type: "number" }, { type: "null" }] } },
+			} as Tool["parameters"],
+		};
+		const toolCall: ToolCall = {
+			type: "toolCall",
+			id: "tool-1",
+			name: "echo",
+			arguments: { value: null },
+		};
+
+		expect(validateToolArguments(tool, toolCall)).toEqual({ value: null });
+	});
+
+	it("preserves a value that already matches a nullable union arm", () => {
+		const tool: Tool = {
+			name: "echo",
+			description: "Echo tool",
+			parameters: Type.Object({
+				value: Type.Union([Type.Number(), Type.Null()]),
+			}),
+		};
+		const toolCall: ToolCall = {
+			type: "toolCall",
+			id: "tool-1",
+			name: "echo",
+			arguments: { value: null },
+		};
+
+		expect(validateToolArguments(tool, toolCall)).toEqual({ value: null });
+	});
+
+	it("preserves a value that already matches a oneOf nullable union arm", () => {
+		const { tool, toolCall } = createToolCallWithPlainSchema(
+			{ oneOf: [{ type: "number" }, { type: "null" }] } as Tool["parameters"],
+			null,
+		);
+
+		expect(validateToolArguments(tool, toolCall)).toEqual({ value: null });
+	});
+
+	it("still coerces nullable unions when the original value does not match any arm", () => {
+		const { tool, toolCall } = createToolCallWithPlainSchema(
+			{ anyOf: [{ type: "number" }, { type: "null" }] } as Tool["parameters"],
+			"42",
+		);
+
+		expect(validateToolArguments(tool, toolCall)).toEqual({ value: 42 });
+	});
+
+	it("accepts null for nullable array schemas with items", () => {
+		const { tool, toolCall } = createToolCallWithPlainSchema(
+			{ type: ["array", "null"], items: { type: "string" } } as Tool["parameters"],
+			null,
+		);
+		// The CSP test above selects TypeBox's process-wide interpreted fallback, so exercise the generated validator explicitly.
+		const generatedCheck = new Function(Compile(tool.parameters).Code())() as (value: unknown) => boolean;
+
+		expect(generatedCheck(toolCall.arguments)).toBe(true);
+		expect(validateToolArguments(tool, toolCall)).toEqual({ value: null });
 	});
 
 	it("rejects invalid coercions for serialized plain JSON schemas", () => {

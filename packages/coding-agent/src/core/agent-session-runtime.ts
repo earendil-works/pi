@@ -165,6 +165,9 @@ export class AgentSessionRuntime {
 	}
 
 	private async teardownCurrent(reason: SessionShutdownEvent["reason"], targetSessionFile?: string): Promise<void> {
+		// Settle any active response first so the aborted turn (including tool
+		// results) is persisted to the outgoing session before it is replaced.
+		await this.session.abort();
 		await emitSessionShutdownEvent(this.session.extensionRunner, {
 			type: "session_shutdown",
 			reason,
@@ -306,6 +309,11 @@ export class AgentSessionRuntime {
 				return { cancelled: false, selectedText };
 			}
 
+			if (!existsSync(currentSessionFile)) {
+				throw new Error(
+					"This session has not been saved yet. Wait for the first assistant response before cloning or forking it.",
+				);
+			}
 			const sessionManager = SessionManager.open(currentSessionFile, sessionDir);
 			const forkedSessionPath = sessionManager.createBranchedSession(targetLeafId);
 			if (!forkedSessionPath) {

@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { convertTools } from "../src/api/google-shared.ts";
+import {
+	convertTools,
+	resolveGoogleFunctionCallingMode,
+	supportsGoogleStrictToolSampling,
+} from "../src/api/google-shared.ts";
 import type { Tool } from "../src/types.ts";
 
 function makeTool(parameters: Record<string, unknown>): Tool {
@@ -178,6 +182,18 @@ describe("google-shared convertTools", () => {
 			},
 			required: ["path"],
 		});
+	});
+
+	it("uses validated function calling for strict tools on Gemini 3", () => {
+		const tool = makeTool({ type: "object", properties: {} });
+		tool.constrainedSampling = { type: "json_schema", strict: "require" };
+
+		expect(supportsGoogleStrictToolSampling("gemini-3.1-pro-preview")).toBe(true);
+		expect(supportsGoogleStrictToolSampling("gemini-2.5-pro")).toBe(false);
+		expect(resolveGoogleFunctionCallingMode([tool], undefined, true)).toBe("VALIDATED");
+		expect(() => resolveGoogleFunctionCallingMode([tool], undefined, false)).toThrow(
+			'Tool "test_tool" requires JSON-schema constrained sampling',
+		);
 	});
 
 	it("returns undefined for empty tool list", () => {

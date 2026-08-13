@@ -1,267 +1,299 @@
-import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
+import { uuidv7 } from "@earendil-works/pi-ai";
 import type { AgentMessage } from "../../types.ts";
-import { createBranchSummaryMessage, createCompactionSummaryMessage, createCustomMessage } from "../messages.ts";
 import type {
-	ActiveToolsChangeEntry,
-	BranchSummaryEntry,
-	CompactionEntry,
-	CustomEntry,
-	CustomMessageEntry,
-	LabelEntry,
-	MessageEntry,
-	ModelChangeEntry,
-	SessionContext,
-	SessionInfoEntry,
+	BranchBounds,
+	Entry,
+	EntryQuery,
+	IdGenerator,
+	LanePointer,
+	LaneRecord,
+	LogItem,
+	LogOptions,
+	NewRecord,
+	OperationStartedRecord,
+	ProvisionedEntry,
+	RecordBase,
+	RecordQuery,
 	SessionMetadata,
+	SessionStats,
 	SessionStorage,
-	SessionTreeEntry,
-	ThinkingLevelChangeEntry,
-} from "../types.ts";
-import { SessionError } from "../types.ts";
+	SessionTree,
+} from "./types.ts";
+import { SessionError } from "./types.ts";
 
-export function buildSessionContext(pathEntries: SessionTreeEntry[]): SessionContext {
-	let thinkingLevel = "off";
-	let model: { provider: string; modelId: string } | null = null;
-	let activeToolNames: string[] | null = null;
-	let compaction: CompactionEntry | null = null;
+type JsonValidationFrame = { value: unknown } | { exit: object };
 
-	for (const entry of pathEntries) {
-		if (entry.type === "thinking_level_change") {
-			thinkingLevel = entry.thinkingLevel;
-		} else if (entry.type === "model_change") {
-			model = { provider: entry.provider, modelId: entry.modelId };
-		} else if (entry.type === "message" && entry.message.role === "assistant") {
-			model = { provider: entry.message.provider, modelId: entry.message.model };
-		} else if (entry.type === "active_tools_change") {
-			activeToolNames = [...entry.activeToolNames];
-		} else if (entry.type === "compaction") {
-			compaction = entry;
-		}
-	}
-
-	const messages: AgentMessage[] = [];
-	const appendMessage = (entry: SessionTreeEntry) => {
-		if (entry.type === "message") {
-			messages.push(entry.message as AgentMessage);
-		} else if (entry.type === "custom_message") {
-			messages.push(
-				createCustomMessage(
-					entry.customType,
-					entry.content as string | (TextContent | ImageContent)[],
-					entry.display,
-					entry.details,
-					entry.timestamp,
-				),
-			);
-		} else if (entry.type === "branch_summary" && entry.summary) {
-			messages.push(createBranchSummaryMessage(entry.summary, entry.fromId, entry.timestamp));
-		}
-	};
-
-	if (compaction) {
-		messages.push(createCompactionSummaryMessage(compaction.summary, compaction.tokensBefore, compaction.timestamp));
-		const compactionIdx = pathEntries.findIndex((e) => e.type === "compaction" && e.id === compaction.id);
-		let foundFirstKept = false;
-		for (let i = 0; i < compactionIdx; i++) {
-			const entry = pathEntries[i]!;
-			if (entry.id === compaction.firstKeptEntryId) foundFirstKept = true;
-			if (foundFirstKept) appendMessage(entry);
-		}
-		for (let i = compactionIdx + 1; i < pathEntries.length; i++) {
-			appendMessage(pathEntries[i]!);
-		}
-	} else {
-		for (const entry of pathEntries) {
-			appendMessage(entry);
-		}
-	}
-
-	return { messages, thinkingLevel, model, activeToolNames };
+function invalidPayload(reason: string): never {
+	throw new SessionError("invalid_payload", `Durable payload ${reason}`);
 }
 
-export class Session<TMetadata extends SessionMetadata = SessionMetadata> {
-	private storage: SessionStorage<TMetadata>;
+function assertValidLimit(limit: number | undefined): void {
+	if (limit !== undefined && (!Number.isInteger(limit) || limit <= 0)) {
+		throw new SessionError("invalid_query", "limit must be a positive integer");
+	}
+}
 
-	constructor(storage: SessionStorage<TMetadata>) {
+function assertValidCursor(afterSeq: number | undefined): void {
+	if (afterSeq !== undefined && (!Number.isInteger(afterSeq) || afterSeq < 0)) {
+		throw new SessionError("invalid_query", "cursor sequence must be a non-negative integer");
+	}
+}
+
+export function assertJsonSerializable(value: unknown): void {
+	const active = new WeakSet<object>();
+	const stack: JsonValidationFrame[] = [{ value }];
+	while (stack.length > 0) {
+		const frame = stack.pop()!;
+		if ("exit" in frame) {
+			active.delete(frame.exit);
+			continue;
+		}
+		const candidate = frame.value;
+		if (candidate === null || typeof candidate === "string" || typeof candidate === "boolean") {
+			continue;
+		}
+		if (typeof candidate === "number") {
+			if (!Number.isFinite(candidate)) invalidPayload("contains a non-finite number");
+			continue;
+		}
+		if (typeof candidate !== "object") invalidPayload(`contains ${typeof candidate}`);
+		if (active.has(candidate)) invalidPayload("contains a cycle");
+		active.add(candidate);
+		stack.push({ exit: candidate });
+
+		if (Array.isArray(candidate)) {
+			if (Object.getPrototypeOf(candidate) !== Array.prototype) {
+				invalidPayload("contains a non-standard array");
+			}
+			if (
+				Object.getOwnPropertySymbols(candidate).length > 0 ||
+				Object.getOwnPropertyNames(candidate).length !== candidate.length + 1
+			) {
+				invalidPayload("contains an array with unsupported properties");
+			}
+			for (let index = candidate.length - 1; index >= 0; index--) {
+				if (!Object.hasOwn(candidate, index)) invalidPayload("contains a sparse array");
+				const descriptor = Object.getOwnPropertyDescriptor(candidate, index)!;
+				if (!("value" in descriptor)) invalidPayload("contains an array accessor");
+				stack.push({ value: descriptor.value });
+			}
+			continue;
+		}
+
+		const prototype = Object.getPrototypeOf(candidate);
+		if (prototype !== Object.prototype && prototype !== null) {
+			invalidPayload("contains a non-plain object");
+		}
+		if (Object.getOwnPropertySymbols(candidate).length > 0) {
+			invalidPayload("contains a symbol-keyed property");
+		}
+		const keys = Object.keys(candidate);
+		if (Object.getOwnPropertyNames(candidate).length !== keys.length) {
+			invalidPayload("contains a non-enumerable property");
+		}
+		for (let index = keys.length - 1; index >= 0; index--) {
+			const descriptor = Object.getOwnPropertyDescriptor(candidate, keys[index]!)!;
+			if (!("value" in descriptor)) invalidPayload("contains an accessor");
+			stack.push({ value: descriptor.value });
+		}
+	}
+}
+
+export class Session<TMetadata extends SessionMetadata = SessionMetadata> implements SessionTree {
+	private readonly storage: SessionStorage<TMetadata>;
+	readonly idGenerator: IdGenerator;
+
+	constructor(storage: SessionStorage<TMetadata>, options: { idGenerator?: IdGenerator } = {}) {
 		this.storage = storage;
+		this.idGenerator = options.idGenerator ?? { next: () => uuidv7() };
 	}
 
-	getMetadata(): Promise<TMetadata> {
+	async getMetadata(): Promise<TMetadata> {
 		return this.storage.getMetadata();
 	}
 
-	getStorage(): SessionStorage<TMetadata> {
-		return this.storage;
+	view(lane: string): SessionTree {
+		if (lane === "main") return this;
+		return {
+			getLeafId: () => this.getLeafIdForLane(lane),
+			getEntry: (id) => this.getEntry(id),
+			getStats: () => this.getStats(),
+			getName: () => this.getName(),
+			setName: (name) => this.setName(name),
+			getLabel: (targetId) => this.getLabel(targetId),
+			setLabel: (targetId, label) => this.setLabel(targetId, label),
+			findEntries: (query) => this.queryEntries(query),
+			findEntry: async (query = {}) => (await this.queryEntries(query, 1))[0],
+			findEntriesOnBranch: (query) => this.queryBranchEntries(lane, query),
+			findEntryOnBranch: async (query = {}) => (await this.queryBranchEntries(lane, query, 1))[0],
+			appendMessage: (message) => this.appendMessageToLane(lane, message),
+			appendCustomEntry: (customType, data) => this.appendCustomEntryToLane(lane, customType, data),
+		};
 	}
 
-	getLeafId(): Promise<string | null> {
-		return this.storage.getLeafId();
+	async getLeafId(): Promise<string | null> {
+		return this.getLeafIdForLane("main");
 	}
 
-	getEntry(id: string): Promise<SessionTreeEntry | undefined> {
+	async getEntry(id: string): Promise<Entry | undefined> {
 		return this.storage.getEntry(id);
 	}
 
-	getEntries(): Promise<SessionTreeEntry[]> {
-		return this.storage.getEntries();
+	async getStats(): Promise<SessionStats> {
+		return this.storage.getStats();
 	}
 
-	async getBranch(fromId?: string): Promise<SessionTreeEntry[]> {
-		const leafId = fromId ?? (await this.storage.getLeafId());
-		return this.storage.getPathToRoot(leafId);
+	async getName(): Promise<string | undefined> {
+		return this.storage.getName();
 	}
 
-	async buildContext(): Promise<SessionContext> {
-		return buildSessionContext(await this.getBranch());
+	async setName(name: string | undefined): Promise<void> {
+		await this.storage.setName(name);
 	}
 
-	getLabel(id: string): Promise<string | undefined> {
-		return this.storage.getLabel(id);
+	async getLabel(targetId: string): Promise<string | undefined> {
+		return this.storage.getLabel(targetId);
 	}
 
-	async getSessionName(): Promise<string | undefined> {
-		const entries = await this.storage.findEntries("session_info");
-		return entries[entries.length - 1]?.name?.trim() || undefined;
+	async setLabel(targetId: string, label: string | undefined): Promise<void> {
+		await this.storage.setLabel(targetId, label);
 	}
 
-	private async appendTypedEntry<TEntry extends SessionTreeEntry>(entry: TEntry): Promise<string> {
-		await this.storage.appendEntry(entry);
-		return entry.id;
+	async findEntries(query?: EntryQuery): Promise<Entry[]> {
+		return this.queryEntries(query);
+	}
+
+	async findEntry(query: EntryQuery = {}): Promise<Entry | undefined> {
+		return (await this.queryEntries(query, 1))[0];
+	}
+
+	async findEntriesOnBranch(query?: EntryQuery & BranchBounds): Promise<Entry[]> {
+		return this.queryBranchEntries("main", query);
+	}
+
+	async findEntryOnBranch(query: EntryQuery & BranchBounds = {}): Promise<Entry | undefined> {
+		return (await this.queryBranchEntries("main", query, 1))[0];
 	}
 
 	async appendMessage(message: AgentMessage): Promise<string> {
-		return this.appendTypedEntry({
-			type: "message",
-			id: await this.storage.createEntryId(),
-			parentId: await this.storage.getLeafId(),
-			timestamp: new Date().toISOString(),
-			message,
-		} satisfies MessageEntry);
-	}
-
-	async appendThinkingLevelChange(thinkingLevel: string): Promise<string> {
-		return this.appendTypedEntry({
-			type: "thinking_level_change",
-			id: await this.storage.createEntryId(),
-			parentId: await this.storage.getLeafId(),
-			timestamp: new Date().toISOString(),
-			thinkingLevel,
-		} satisfies ThinkingLevelChangeEntry);
-	}
-
-	async appendModelChange(provider: string, modelId: string): Promise<string> {
-		return this.appendTypedEntry({
-			type: "model_change",
-			id: await this.storage.createEntryId(),
-			parentId: await this.storage.getLeafId(),
-			timestamp: new Date().toISOString(),
-			provider,
-			modelId,
-		} satisfies ModelChangeEntry);
-	}
-
-	async appendActiveToolsChange(activeToolNames: string[]): Promise<string> {
-		return this.appendTypedEntry({
-			type: "active_tools_change",
-			id: await this.storage.createEntryId(),
-			parentId: await this.storage.getLeafId(),
-			timestamp: new Date().toISOString(),
-			activeToolNames: [...activeToolNames],
-		} satisfies ActiveToolsChangeEntry);
-	}
-
-	async appendCompaction<T = unknown>(
-		summary: string,
-		firstKeptEntryId: string,
-		tokensBefore: number,
-		details?: T,
-		fromHook?: boolean,
-	): Promise<string> {
-		return this.appendTypedEntry({
-			type: "compaction",
-			id: await this.storage.createEntryId(),
-			parentId: await this.storage.getLeafId(),
-			timestamp: new Date().toISOString(),
-			summary,
-			firstKeptEntryId,
-			tokensBefore,
-			details,
-			fromHook,
-		} satisfies CompactionEntry<T>);
+		return this.appendMessageToLane("main", message);
 	}
 
 	async appendCustomEntry(customType: string, data?: unknown): Promise<string> {
-		return this.appendTypedEntry({
-			type: "custom",
-			id: await this.storage.createEntryId(),
-			parentId: await this.storage.getLeafId(),
-			timestamp: new Date().toISOString(),
-			customType,
-			data,
-		} satisfies CustomEntry);
+		return this.appendCustomEntryToLane("main", customType, data);
 	}
 
-	async appendCustomMessageEntry<T = unknown>(
-		customType: string,
-		content: string | (TextContent | ImageContent)[],
-		display: boolean,
-		details?: T,
-	): Promise<string> {
-		return this.appendTypedEntry({
-			type: "custom_message",
-			id: await this.storage.createEntryId(),
-			parentId: await this.storage.getLeafId(),
-			timestamp: new Date().toISOString(),
-			customType,
-			content,
-			display,
-			details,
-		} satisfies CustomMessageEntry<T>);
+	async getLanes(): Promise<LanePointer[]> {
+		return this.storage.getLanes();
 	}
 
-	async appendLabel(targetId: string, label: string | undefined): Promise<string> {
-		if (!(await this.storage.getEntry(targetId))) {
-			throw new SessionError("not_found", `Entry ${targetId} not found`);
+	async createLane(lane: string, at: string | null): Promise<void> {
+		await this.storage.createLane(lane, at);
+	}
+
+	async moveLane(lane: string, to: string | null): Promise<void> {
+		await this.storage.moveLane(lane, to);
+	}
+
+	async appendEntry<TEntry extends Entry>(entry: ProvisionedEntry<TEntry>, lane: string): Promise<TEntry> {
+		return this.commitEntry(entry, lane);
+	}
+
+	async appendRecord<TNewRecord extends NewRecord>(
+		record: TNewRecord,
+	): Promise<TNewRecord & Pick<RecordBase, "seq" | "timestamp">>;
+	async appendRecord(record: NewRecord): Promise<LaneRecord> {
+		return this.commitRecord(record);
+	}
+
+	async findRecords<K extends LaneRecord["type"]>(
+		query: RecordQuery & { type: K },
+	): Promise<Extract<LaneRecord, { type: K }>[]>;
+	async findRecords(query?: RecordQuery): Promise<LaneRecord[]>;
+	async findRecords(query?: RecordQuery): Promise<LaneRecord[]> {
+		return this.queryRecords(query);
+	}
+
+	async findOpenOperations(lane: string, options?: { limit?: number }): Promise<OperationStartedRecord[]> {
+		assertValidLimit(options?.limit);
+		return this.storage.findOpenOperations(lane, options);
+	}
+
+	async getLog(options?: LogOptions): Promise<LogItem[]> {
+		return this.queryLog(options);
+	}
+
+	/** Returns the lane's current leaf, or null when empty. Throws when the lane does not exist. */
+	private async getLeafIdForLane(lane: string): Promise<string | null> {
+		const pointer = (await this.getLanes()).find((candidate) => candidate.lane === lane);
+		if (!pointer) throw new SessionError("invalid_lane", `Lane not found: ${lane}`);
+		return pointer.leafId;
+	}
+
+	private async queryEntries(query: EntryQuery = {}, resultLimit = query.limit): Promise<Entry[]> {
+		assertValidLimit(query.limit);
+		assertValidCursor(query.cursor?.afterSeq);
+		return this.storage.findEntries(resultLimit === query.limit ? query : { ...query, limit: resultLimit });
+	}
+
+	/**
+	 * Queries from `query.start` toward the root, defaulting to the lane's current leaf.
+	 * `resultLimit` lets single-entry queries cap results without changing the caller's query.
+	 */
+	private async queryBranchEntries(
+		defaultLane: string,
+		query: EntryQuery & BranchBounds = {},
+		resultLimit = query.limit,
+	): Promise<Entry[]> {
+		assertValidLimit(query.limit);
+		assertValidCursor(query.cursor?.afterSeq);
+		const start = query.start ?? (await this.getLeafIdForLane(defaultLane));
+		if (start === null) return [];
+		const storageQuery = resultLimit === query.limit ? query : { ...query, limit: resultLimit };
+		return this.storage.findEntriesOnBranch({ ...storageQuery, start });
+	}
+
+	private async queryRecords(query: RecordQuery = {}): Promise<LaneRecord[]> {
+		assertValidLimit(query.limit);
+		assertValidCursor(query.afterSeq);
+		if (query.operationKind !== undefined && query.type !== "operation_started") {
+			throw new SessionError("invalid_query", 'operationKind requires type "operation_started"');
 		}
-		return this.appendTypedEntry({
-			type: "label",
-			id: await this.storage.createEntryId(),
-			parentId: await this.storage.getLeafId(),
-			timestamp: new Date().toISOString(),
-			targetId,
-			label,
-		} satisfies LabelEntry);
+		return this.storage.findRecords(query);
 	}
 
-	async appendSessionName(name: string): Promise<string> {
-		const sanitizedName = name.replace(/[\r\n]+/g, " ").trim();
-		return this.appendTypedEntry({
-			type: "session_info",
-			id: await this.storage.createEntryId(),
-			parentId: await this.storage.getLeafId(),
-			timestamp: new Date().toISOString(),
-			name: sanitizedName,
-		} satisfies SessionInfoEntry);
+	private async queryLog(options: LogOptions = {}): Promise<LogItem[]> {
+		assertValidLimit(options.limit);
+		assertValidCursor(options.afterSeq);
+		return this.storage.getLog(options);
 	}
 
-	async moveTo(
-		entryId: string | null,
-		summary?: { summary: string; details?: unknown; fromHook?: boolean },
-	): Promise<string | undefined> {
-		if (entryId !== null && !(await this.storage.getEntry(entryId))) {
-			throw new SessionError("not_found", `Entry ${entryId} not found`);
-		}
-		await this.storage.setLeafId(entryId);
-		if (!summary) return undefined;
-		return this.appendTypedEntry({
-			type: "branch_summary",
-			id: await this.storage.createEntryId(),
-			parentId: entryId,
-			timestamp: new Date().toISOString(),
-			fromId: entryId ?? "root",
-			summary: summary.summary,
-			details: summary.details,
-			fromHook: summary.fromHook,
-		} satisfies BranchSummaryEntry);
+	private async appendMessageToLane(lane: string, message: AgentMessage): Promise<string> {
+		const entry = await this.commitEntry({ type: "message", id: this.idGenerator.next(), message }, lane);
+		return entry.id;
+	}
+
+	private async appendCustomEntryToLane(lane: string, customType: string, data?: unknown): Promise<string> {
+		const entry = await this.commitEntry(
+			data === undefined
+				? { type: "custom", id: this.idGenerator.next(), customType }
+				: { type: "custom", id: this.idGenerator.next(), customType, data },
+			lane,
+		);
+		return entry.id;
+	}
+
+	private async commitEntry<TEntry extends Entry>(entry: ProvisionedEntry<TEntry>, lane: string): Promise<TEntry> {
+		assertJsonSerializable(entry);
+		return this.storage.appendEntry(entry, lane);
+	}
+
+	private async commitRecord<TNewRecord extends NewRecord>(
+		record: TNewRecord,
+	): Promise<TNewRecord & Pick<RecordBase, "seq" | "timestamp">> {
+		assertJsonSerializable(record);
+		return this.storage.appendRecord<LaneRecord>(record) as unknown as Promise<
+			TNewRecord & Pick<RecordBase, "seq" | "timestamp">
+		>;
 	}
 }

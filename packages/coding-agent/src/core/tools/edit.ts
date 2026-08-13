@@ -5,6 +5,7 @@ import { access as fsAccess, readFile as fsReadFile, writeFile as fsWriteFile } 
 import { type Static, Type } from "typebox";
 import { renderDiff } from "../../modes/interactive/components/diff.ts";
 import type { Theme } from "../../modes/interactive/theme/theme.ts";
+import { getExperimentalToolSampling } from "../experimental.ts";
 import type { ToolDefinition } from "../extensions/types.ts";
 import {
 	applyEditsToNormalizedContent,
@@ -38,7 +39,7 @@ const replaceEditSchema = Type.Object(
 		}),
 		newText: Type.String({ description: "Replacement text for this targeted edit." }),
 	},
-	{ additionalProperties: false },
+	{},
 );
 
 const editSchema = Type.Object(
@@ -49,8 +50,18 @@ const editSchema = Type.Object(
 				"One or more targeted replacements. Each edit is matched against the original file, not incrementally. Do not include overlapping or nested edits. If two changes touch the same block or nearby lines, merge them into one edit instead.",
 		}),
 	},
-	{ additionalProperties: false },
+	{},
 );
+
+export const editToolSystemPromptContribution = {
+	snippet: "Make precise file edits with exact text replacement, including multiple disjoint edits in one call",
+	guidelines: [
+		"Use edit for precise changes (edits[].oldText must match exactly)",
+		"When changing multiple separate locations in one file, use one edit call with multiple entries in edits[] instead of multiple edit calls",
+		"Each edits[].oldText is matched against the original file, not after earlier edits are applied. Do not emit overlapping or nested edits. Merge nearby changes into one edit.",
+		"Keep edits[].oldText as small as possible while still being unique in the file. Do not pad with large unchanged regions.",
+	],
+} as const;
 
 export type EditToolInput = Static<typeof editSchema>;
 type LegacyEditToolInput = EditToolInput & {
@@ -294,15 +305,10 @@ export function createEditToolDefinition(
 		label: "edit",
 		description:
 			"Edit a single file using exact text replacement. Every edits[].oldText must match a unique, non-overlapping region of the original file. If two changes affect the same block or nearby lines, merge them into one edit instead of emitting overlapping edits. Do not include large unchanged regions just to connect distant changes.",
-		promptSnippet:
-			"Make precise file edits with exact text replacement, including multiple disjoint edits in one call",
-		promptGuidelines: [
-			"Use edit for precise changes (edits[].oldText must match exactly)",
-			"When changing multiple separate locations in one file, use one edit call with multiple entries in edits[] instead of multiple edit calls",
-			"Each edits[].oldText is matched against the original file, not after earlier edits are applied. Do not emit overlapping or nested edits. Merge nearby changes into one edit.",
-			"Keep edits[].oldText as small as possible while still being unique in the file. Do not pad with large unchanged regions.",
-		],
+		promptSnippet: editToolSystemPromptContribution.snippet,
+		promptGuidelines: [...editToolSystemPromptContribution.guidelines],
 		parameters: editSchema,
+		constrainedSampling: getExperimentalToolSampling(),
 		renderShell: "self",
 		prepareArguments: prepareEditArguments,
 		async execute(_toolCallId, input: EditToolInput, signal?: AbortSignal, _onUpdate?, _ctx?) {

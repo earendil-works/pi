@@ -1,4 +1,6 @@
+import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { Transport } from "@earendil-works/pi-ai";
+import type { TuiMode as RendererTuiMode, ScrollViewScrollbar } from "@earendil-works/pi-tui";
 import { randomUUID } from "crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
@@ -31,6 +33,9 @@ export interface RetrySettings {
 	provider?: ProviderRetrySettings;
 }
 
+export type TuiMode = RendererTuiMode;
+export type FullscreenExitOutput = "transcript" | "resume-hint";
+
 export interface TerminalSettings {
 	showImages?: boolean; // default: true (only relevant if terminal supports images)
 	imageWidthCells?: number; // default: 60 (preferred inline image width in terminal cells)
@@ -50,8 +55,11 @@ export interface ThinkingBudgetsSettings {
 	high?: number;
 }
 
+export type MermaidRenderingMode = "off" | "final" | "streaming";
+
 export interface MarkdownSettings {
 	codeBlockIndent?: string; // default: "  "
+	mermaid?: MermaidRenderingMode; // default: "streaming"
 }
 
 export interface WarningSettings {
@@ -66,11 +74,13 @@ export type TransportSetting = Transport;
  * Package source for npm/git packages.
  * - String form: load all resources from the package
  * - Object form: filter which resources to load
+ * - autoload=false: start empty and only apply explicit resource patterns
  */
 export type PackageSource =
 	| string
 	| {
 			source: string;
+			autoload?: boolean;
 			extensions?: string[];
 			skills?: string[];
 			prompts?: string[];
@@ -81,7 +91,7 @@ export interface Settings {
 	lastChangelogVersion?: string;
 	defaultProvider?: string;
 	defaultModel?: string;
-	defaultThinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+	defaultThinkingLevel?: ThinkingLevel;
 	transport?: TransportSetting; // default: "auto"
 	steeringMode?: "all" | "one-at-a-time";
 	followUpMode?: "all" | "one-at-a-time";
@@ -90,7 +100,9 @@ export interface Settings {
 	branchSummary?: BranchSummarySettings;
 	retry?: RetrySettings;
 	hideThinkingBlock?: boolean;
-	shellPath?: string; // Custom shell path (e.g., for Cygwin users on Windows)
+	showCacheMissNotices?: boolean; // default: false - show transcript notices for significant prompt-cache misses
+	externalEditor?: string; // Command for Ctrl+G external editor; takes precedence over VISUAL/EDITOR
+	shellPath?: string; // Custom shell path (e.g., for Cygwin users on Windows); supports leading ~ expansion
 	quietStartup?: boolean;
 	defaultProjectTrust?: DefaultProjectTrust; // default: "ask"; global setting only
 	shellCommandPrefix?: string; // Prefix prepended to every bash command (e.g., "shopt -s expand_aliases" for alias support)
@@ -108,10 +120,12 @@ export interface Settings {
 	terminal?: TerminalSettings;
 	images?: ImageSettings;
 	enabledModels?: string[]; // Model patterns for cycling (same format as --models CLI flag)
+	defaultTools?: string[]; // Initial built-in tool selection
 	doubleEscapeAction?: "fork" | "tree" | "none"; // Action for double-escape with empty editor (default: "tree")
 	treeFilterMode?: "default" | "no-tools" | "user-only" | "labeled-only" | "all"; // Default filter when opening /tree
 	thinkingBudgets?: ThinkingBudgetsSettings; // Custom token budgets for thinking levels
 	editorPaddingX?: number; // Horizontal padding for input editor (default: 0)
+	outputPad?: 0 | 1; // Horizontal padding for chat message output (default: 1)
 	autocompleteMaxVisible?: number; // Max visible items in autocomplete dropdown (default: 5)
 	showHardwareCursor?: boolean; // Show terminal cursor while still positioning it for IME
 	markdown?: MarkdownSettings;
@@ -120,37 +134,37 @@ export interface Settings {
 	httpProxy?: string; // Proxy URL applied as HTTP_PROXY and HTTPS_PROXY for Pi-managed HTTP clients
 	httpIdleTimeoutMs?: number; // HTTP header/body idle timeout in milliseconds; 0 disables it
 	websocketConnectTimeoutMs?: number; // WebSocket connect/open handshake timeout in milliseconds; 0 disables it
+	tuiMode?: TuiMode; // default: "regular"
+	fullscreenExitOutput?: FullscreenExitOutput; // default: "transcript"; no effect in regular TUI mode
+	fullscreenScrollbar?: ScrollViewScrollbar; // default: "auto"; no effect in regular TUI mode
 }
 
-/** Deep merge settings: project/overrides take precedence, nested objects merge recursively */
-function deepMergeSettings(base: Settings, overrides: Settings): Settings {
-	const result: Settings = { ...base };
+function isMergeableObject(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
 
-	for (const key of Object.keys(overrides) as (keyof Settings)[]) {
+function deepMergeObjects(base: Record<string, unknown>, overrides: Record<string, unknown>): Record<string, unknown> {
+	const result = { ...base };
+
+	for (const key of Object.keys(overrides)) {
 		const overrideValue = overrides[key];
-		const baseValue = base[key];
-
 		if (overrideValue === undefined) {
 			continue;
 		}
 
-		// For nested objects, merge recursively
-		if (
-			typeof overrideValue === "object" &&
-			overrideValue !== null &&
-			!Array.isArray(overrideValue) &&
-			typeof baseValue === "object" &&
-			baseValue !== null &&
-			!Array.isArray(baseValue)
-		) {
-			(result as Record<string, unknown>)[key] = { ...baseValue, ...overrideValue };
-		} else {
-			// For primitives and arrays, override value wins
-			(result as Record<string, unknown>)[key] = overrideValue;
-		}
+		const baseValue = base[key];
+		result[key] =
+			isMergeableObject(baseValue) && isMergeableObject(overrideValue)
+				? deepMergeObjects(baseValue, overrideValue)
+				: overrideValue;
 	}
 
 	return result;
+}
+
+/** Deep merge settings: project/overrides take precedence, nested objects merge recursively */
+function deepMergeSettings(base: Settings, overrides: Settings): Settings {
+	return deepMergeObjects(base as Record<string, unknown>, overrides as Record<string, unknown>) as Settings;
 }
 
 function parseTimeoutSetting(value: unknown, settingName: string): number | undefined {
@@ -731,11 +745,11 @@ export class SettingsManager {
 		this.save();
 	}
 
-	getDefaultThinkingLevel(): "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | undefined {
+	getDefaultThinkingLevel(): ThinkingLevel | undefined {
 		return this.settings.defaultThinkingLevel;
 	}
 
-	setDefaultThinkingLevel(level: "off" | "minimal" | "low" | "medium" | "high" | "xhigh"): void {
+	setDefaultThinkingLevel(level: ThinkingLevel): void {
 		this.globalSettings.defaultThinkingLevel = level;
 		this.markModified("defaultThinkingLevel");
 		this.save();
@@ -841,14 +855,37 @@ export class SettingsManager {
 		return this.settings.hideThinkingBlock ?? false;
 	}
 
+	getShowCacheMissNotices(): boolean {
+		return this.settings.showCacheMissNotices ?? false;
+	}
+
+	getExternalEditorCommand(): string {
+		const configuredEditor = this.settings.externalEditor;
+		if (typeof configuredEditor === "string" && configuredEditor.trim() !== "") {
+			return configuredEditor;
+		}
+		const environmentEditor = process.env.VISUAL || process.env.EDITOR;
+		if (environmentEditor) {
+			return environmentEditor;
+		}
+		return process.platform === "win32" ? "notepad" : "nano";
+	}
+
 	setHideThinkingBlock(hide: boolean): void {
 		this.globalSettings.hideThinkingBlock = hide;
 		this.markModified("hideThinkingBlock");
 		this.save();
 	}
 
+	setShowCacheMissNotices(show: boolean): void {
+		this.globalSettings.showCacheMissNotices = show;
+		this.markModified("showCacheMissNotices");
+		this.save();
+	}
+
 	getShellPath(): string | undefined {
-		return this.settings.shellPath;
+		const shellPath = this.settings.shellPath;
+		return shellPath ? normalizePath(shellPath) : shellPath;
 	}
 
 	setShellPath(path: string | undefined): void {
@@ -1091,6 +1128,37 @@ export class SettingsManager {
 		this.save();
 	}
 
+	getTuiMode(): TuiMode {
+		return this.settings.tuiMode === "fullscreen" ? "fullscreen" : "regular";
+	}
+
+	setTuiMode(mode: TuiMode): void {
+		this.globalSettings.tuiMode = mode;
+		this.markModified("tuiMode");
+		this.save();
+	}
+
+	getFullscreenExitOutput(): FullscreenExitOutput {
+		return this.settings.fullscreenExitOutput === "resume-hint" ? "resume-hint" : "transcript";
+	}
+
+	setFullscreenExitOutput(output: FullscreenExitOutput): void {
+		this.globalSettings.fullscreenExitOutput = output;
+		this.markModified("fullscreenExitOutput");
+		this.save();
+	}
+
+	getFullscreenScrollbar(): ScrollViewScrollbar {
+		const mode = this.settings.fullscreenScrollbar;
+		return mode === "always" || mode === "hidden" ? mode : "auto";
+	}
+
+	setFullscreenScrollbar(mode: ScrollViewScrollbar): void {
+		this.globalSettings.fullscreenScrollbar = mode;
+		this.markModified("fullscreenScrollbar");
+		this.save();
+	}
+
 	getImageAutoResize(): boolean {
 		return this.settings.images?.autoResize ?? true;
 	}
@@ -1119,6 +1187,11 @@ export class SettingsManager {
 
 	getEnabledModels(): string[] | undefined {
 		return this.settings.enabledModels;
+	}
+
+	getDefaultTools(): string[] | undefined {
+		const tools = this.settings.defaultTools;
+		return tools ? [...tools] : undefined;
 	}
 
 	setEnabledModels(patterns: string[] | undefined): void {
@@ -1169,6 +1242,16 @@ export class SettingsManager {
 		this.save();
 	}
 
+	getOutputPad(): 0 | 1 {
+		return this.settings.outputPad === 0 ? 0 : 1;
+	}
+
+	setOutputPad(padding: 0 | 1): void {
+		this.globalSettings.outputPad = padding;
+		this.markModified("outputPad");
+		this.save();
+	}
+
 	getAutocompleteMaxVisible(): number {
 		return this.settings.autocompleteMaxVisible ?? 5;
 	}
@@ -1181,6 +1264,18 @@ export class SettingsManager {
 
 	getCodeBlockIndent(): string {
 		return this.settings.markdown?.codeBlockIndent ?? "  ";
+	}
+
+	getMermaidRenderingMode(): MermaidRenderingMode {
+		const mode = this.settings.markdown?.mermaid;
+		return mode === "off" || mode === "final" ? mode : "streaming";
+	}
+
+	setMermaidRenderingMode(mode: MermaidRenderingMode): void {
+		this.globalSettings.markdown ??= {};
+		this.globalSettings.markdown.mermaid = mode;
+		this.markModified("markdown", "mermaid");
+		this.save();
 	}
 
 	getWarnings(): WarningSettings {

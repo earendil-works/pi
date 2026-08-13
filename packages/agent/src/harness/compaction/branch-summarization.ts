@@ -1,15 +1,18 @@
-import type { Model, Models } from "@earendil-works/pi-ai";
+import {
+	type Api,
+	contentText,
+	type Model,
+	type Models,
+	type RetryCallbacks,
+	type RetryPolicy,
+	type Usage,
+} from "@earendil-works/pi-ai";
 
 import type { AgentMessage } from "../../types.ts";
-import {
-	convertToLlm,
-	createBranchSummaryMessage,
-	createCompactionSummaryMessage,
-	createCustomMessage,
-} from "../messages.ts";
-import type { BranchSummaryResult, Session, SessionTreeEntry } from "../types.ts";
-import { BranchSummaryError, err, ok, type Result, SessionError } from "../types.ts";
-import { estimateTokens, SUMMARIZATION_SYSTEM_PROMPT } from "./compaction.ts";
+import { convertToLlm, createBranchSummaryMessage, createCompactionSummaryMessage } from "../messages.ts";
+import { type Entry, type Session, SessionError } from "../session/index.ts";
+import { BranchSummaryError, err, ok, type Result } from "../types.ts";
+import { completeSimpleWithRetries, estimateTokens, SUMMARIZATION_SYSTEM_PROMPT } from "./compaction.ts";
 import {
 	computeFileLists,
 	createFileOps,
@@ -18,6 +21,14 @@ import {
 	formatFileOperations,
 	serializeConversation,
 } from "./utils.ts";
+
+/** Generated branch summary data ready to be persisted as a branch-summary entry. */
+export interface BranchSummaryResult {
+	summary: string;
+	usage?: Usage;
+	readFiles: string[];
+	modifiedFiles: string[];
+}
 
 /** File-operation details stored on generated branch summary entries. */
 export interface BranchSummaryDetails {
@@ -42,7 +53,7 @@ export interface BranchPreparation {
 /** Entries selected for branch summarization. */
 export interface CollectEntriesResult {
 	/** Entries to summarize in chronological order. */
-	entries: SessionTreeEntry[];
+	entries: Entry[];
 	/** Deepest common ancestor between the previous leaf and target entry. */
 	commonAncestorId: string | null;
 }
@@ -52,7 +63,7 @@ export interface GenerateBranchSummaryOptions {
 	/** Provider collection the summarization request goes through; owns auth resolution. */
 	models: Models;
 	/** Model used for summarization. */
-	model: Model<any>;
+	model: Model<Api>;
 	/** Abort signal for the summarization request. */
 	signal: AbortSignal;
 	/** Optional instructions appended to or replacing the default prompt. */
@@ -61,6 +72,10 @@ export interface GenerateBranchSummaryOptions {
 	replaceInstructions?: boolean;
 	/** Tokens reserved for prompt and model output. Defaults to 16384. */
 	reserveTokens?: number;
+	/** Optional retry policy for transient summarization errors. */
+	retry?: RetryPolicy;
+	/** Optional callbacks for retry reporting. */
+	callbacks?: RetryCallbacks;
 }
 
 /** Collect entries that should be summarized before navigating to a different session tree entry. */
@@ -72,36 +87,33 @@ export async function collectEntriesForBranchSummary(
 	if (!oldLeafId) {
 		return { entries: [], commonAncestorId: null };
 	}
-	const oldPath = new Set((await session.getBranch(oldLeafId)).map((e) => e.id));
-	const targetPath = await session.getBranch(targetId);
+	const oldPath = new Set((await session.findEntriesOnBranch({ start: oldLeafId })).map((entry) => entry.id));
+	const targetPath = await session.findEntriesOnBranch({ start: targetId });
 	let commonAncestorId: string | null = null;
-	for (let i = targetPath.length - 1; i >= 0; i--) {
-		if (oldPath.has(targetPath[i].id)) {
-			commonAncestorId = targetPath[i].id;
+	for (const entry of targetPath) {
+		if (oldPath.has(entry.id)) {
+			commonAncestorId = entry.id;
 			break;
 		}
 	}
-	const entries: SessionTreeEntry[] = [];
+	const entries: Entry[] = [];
 	let current: string | null = oldLeafId;
 
 	while (current && current !== commonAncestorId) {
 		const entry = await session.getEntry(current);
-		if (!entry) throw new SessionError("invalid_session", `Entry ${current} not found`);
-		entries.push(entry as SessionTreeEntry);
+		if (!entry) throw new SessionError("invalid_entry", `Entry ${current} not found`);
+		entries.push(entry);
 		current = entry.parentId;
 	}
 	entries.reverse();
 
 	return { entries, commonAncestorId };
 }
-function getMessageFromEntry(entry: SessionTreeEntry): AgentMessage | undefined {
+function getMessageFromEntry(entry: Entry): AgentMessage | undefined {
 	switch (entry.type) {
 		case "message":
 			if (entry.message.role === "toolResult") return undefined;
 			return entry.message;
-
-		case "custom_message":
-			return createCustomMessage(entry.customType, entry.content, entry.display, entry.details, entry.timestamp);
 
 		case "branch_summary":
 			return createBranchSummaryMessage(entry.summary, entry.fromId, entry.timestamp);
@@ -112,20 +124,17 @@ function getMessageFromEntry(entry: SessionTreeEntry): AgentMessage | undefined 
 		case "model_change":
 		case "active_tools_change":
 		case "custom":
-		case "label":
-		case "session_info":
-		case "leaf":
 			return undefined;
 	}
 }
 
 /** Prepare branch entries for summarization within an optional token budget. */
-export function prepareBranchEntries(entries: SessionTreeEntry[], tokenBudget: number = 0): BranchPreparation {
+export function prepareBranchEntries(entries: Entry[], tokenBudget: number = 0): BranchPreparation {
 	const messages: AgentMessage[] = [];
 	const fileOps = createFileOps();
 	let totalTokens = 0;
 	for (const entry of entries) {
-		if (entry.type === "branch_summary" && !entry.fromHook && entry.details) {
+		if (entry.type === "branch_summary" && entry.details) {
 			const details = entry.details as BranchSummaryDetails;
 			if (Array.isArray(details.readFiles)) {
 				for (const f of details.readFiles) fileOps.read.add(f);
@@ -197,10 +206,19 @@ Keep each section concise. Preserve exact file paths, function names, and error 
 
 /** Generate a summary for abandoned branch entries. */
 export async function generateBranchSummary(
-	entries: SessionTreeEntry[],
+	entries: Entry[],
 	options: GenerateBranchSummaryOptions,
 ): Promise<Result<BranchSummaryResult, BranchSummaryError>> {
-	const { models, model, signal, customInstructions, replaceInstructions, reserveTokens = 16384 } = options;
+	const {
+		models,
+		model,
+		signal,
+		customInstructions,
+		replaceInstructions,
+		reserveTokens = 16384,
+		retry,
+		callbacks,
+	} = options;
 	const contextWindow = model.contextWindow || 128000;
 	const tokenBudget = contextWindow - reserveTokens;
 
@@ -228,10 +246,13 @@ export async function generateBranchSummary(
 			timestamp: Date.now(),
 		},
 	];
-	const response = await models.completeSimple(
+	const response = await completeSimpleWithRetries(
+		models,
 		model,
 		{ systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, messages: summarizationMessages },
 		{ signal, maxTokens: 2048 },
+		retry,
+		callbacks,
 	);
 	if (response.stopReason === "aborted") {
 		return err(new BranchSummaryError("aborted", response.errorMessage || "Branch summary aborted"));
@@ -245,16 +266,14 @@ export async function generateBranchSummary(
 		);
 	}
 
-	let summary = response.content
-		.filter((c): c is { type: "text"; text: string } => c.type === "text")
-		.map((c) => c.text)
-		.join("\n");
+	let summary = contentText(response.content);
 	summary = BRANCH_SUMMARY_PREAMBLE + summary;
 	const { readFiles, modifiedFiles } = computeFileLists(fileOps);
 	summary += formatFileOperations(readFiles, modifiedFiles);
 
 	return ok({
 		summary: summary || "No summary generated",
+		usage: response.usage,
 		readFiles,
 		modifiedFiles,
 	});

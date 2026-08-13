@@ -23,17 +23,7 @@ export {
 	parseSkillBlock,
 	type SessionStats,
 } from "./core/agent-session.ts";
-// Auth and model registry
-export {
-	type ApiKeyCredential,
-	type AuthCredential,
-	type AuthStatus,
-	AuthStorage,
-	type AuthStorageBackend,
-	FileAuthStorageBackend,
-	InMemoryAuthStorageBackend,
-	type OAuthCredential,
-} from "./core/auth-storage.ts";
+export { readStoredCredential } from "./core/auth-storage.ts";
 // Compaction
 export {
 	type BranchPreparation,
@@ -52,6 +42,7 @@ export {
 	type GenerateBranchSummaryOptions,
 	generateBranchSummary,
 	generateSummary,
+	generateSummaryWithUsage,
 	getLastAssistantUsage,
 	prepareBranchEntries,
 	serializeConversation,
@@ -61,6 +52,7 @@ export { createEventBus, type EventBus, type EventBusController } from "./core/e
 // Extension system
 export type {
 	AgentEndEvent,
+	AgentSettledEvent,
 	AgentStartEvent,
 	AgentToolResult,
 	AgentToolUpdateCallback,
@@ -69,6 +61,7 @@ export type {
 	BashToolCallEvent,
 	BeforeAgentStartEvent,
 	BeforeAgentStartEventResult,
+	BeforeProviderHeadersEvent,
 	BeforeProviderRequestEvent,
 	BeforeProviderRequestEventResult,
 	BuildSystemPromptOptions,
@@ -77,6 +70,8 @@ export type {
 	ContextUsage,
 	CustomToolCallEvent,
 	EditToolCallEvent,
+	EntryRenderer,
+	EntryRenderOptions,
 	ExecOptions,
 	ExecResult,
 	Extension,
@@ -98,14 +93,20 @@ export type {
 	ExtensionWidgetOptions,
 	FindToolCallEvent,
 	GrepToolCallEvent,
+	InlineExtension,
 	InputEvent,
 	InputEventResult,
 	InputSource,
 	KeybindingsManager,
 	LoadExtensionsResult,
 	LsToolCallEvent,
+	MarkdownTransformContext,
+	MarkdownTransformer,
+	MessageEndEvent,
 	MessageRenderer,
 	MessageRenderOptions,
+	MessageStartEvent,
+	MessageUpdateEvent,
 	ProjectTrustContext,
 	ProjectTrustEvent,
 	ProjectTrustEventDecision,
@@ -122,6 +123,7 @@ export type {
 	SessionBeforeSwitchEvent,
 	SessionBeforeTreeEvent,
 	SessionCompactEvent,
+	SessionInfoChangedEvent,
 	SessionShutdownEvent,
 	SessionStartEvent,
 	SessionTreeEvent,
@@ -132,7 +134,10 @@ export type {
 	ToolCallEvent,
 	ToolCallEventResult,
 	ToolDefinition,
+	ToolExecutionEndEvent,
 	ToolExecutionMode,
+	ToolExecutionStartEvent,
+	ToolExecutionUpdateEvent,
 	ToolInfo,
 	ToolRenderResultOptions,
 	ToolResultEvent,
@@ -164,6 +169,21 @@ export {
 export type { ReadonlyFooterDataProvider } from "./core/footer-data-provider.ts";
 export { convertToLlm } from "./core/messages.ts";
 export { ModelRegistry } from "./core/model-registry.ts";
+export {
+	type ModelScopeDiagnostic,
+	type ResolveCliModelResult,
+	type ResolveModelScopeResult,
+	resolveCliModel,
+	resolveModelScopeWithDiagnostics,
+	type ScopedModel,
+} from "./core/model-resolver.ts";
+export {
+	type CreateModelRuntimeOptions,
+	CredentialSynchronizationError,
+	type CredentialSynchronizationOperation,
+	ModelRuntime,
+	type ModelRuntimeAuthOverrides,
+} from "./core/model-runtime.ts";
 export type {
 	PackageManager,
 	PathMetadata,
@@ -205,6 +225,7 @@ export {
 } from "./core/sdk.ts";
 export {
 	type BranchSummaryEntry,
+	buildContextEntries,
 	buildSessionContext,
 	type CompactionEntry,
 	CURRENT_SESSION_VERSION,
@@ -224,16 +245,20 @@ export {
 	type SessionInfoEntry,
 	SessionManager,
 	type SessionMessageEntry,
+	type SessionTreeNode,
+	sessionEntryToContextMessages,
 	type ThinkingLevelChangeEntry,
 } from "./core/session-manager.ts";
 export {
 	type CompactionSettings,
 	type DefaultProjectTrust,
+	type FullscreenExitOutput,
 	type ImageSettings,
 	type PackageSource,
 	type RetrySettings,
 	SettingsManager,
 	type SettingsManagerCreateOptions,
+	type TuiMode,
 } from "./core/settings-manager.ts";
 // Skills
 export {
@@ -310,6 +335,7 @@ export { type MainOptions, main } from "./main.ts";
 export {
 	InteractiveMode,
 	type InteractiveModeOptions,
+	type JsonAgentSessionEvent,
 	type ModelInfo,
 	type PrintModeOptions,
 	RpcClient,

@@ -1,19 +1,27 @@
 {
 	"name": "@earendil-works/pi-tui",
-	"version": "0.80.2",
+	"version": "0.84.1",
 	"description": "Terminal User Interface library with differential rendering for efficient text-based applications",
 	"type": "module",
 	"main": "dist/index.js",
 	"scripts": {
 		"clean": "shx rm -rf dist",
 		"build": "tsgo -p tsconfig.build.json",
-		"test": "node --test test/*.test.ts",
+		"build:native:darwin": "native/darwin/build.sh",
+		"build:native:win32": "node native/win32/build.mjs",
+		"test": "node --test --test-reporter=dot --test-reporter-destination=stdout test/*.test.ts",
 		"prepublishOnly": "npm run clean && npm run build"
 	},
 	"files": [
 		"dist/**/*",
 		"native/win32/prebuilds/**/*.node",
+		"native/win32/src/**/*.c",
+		"native/win32/build.mjs",
+		"native/win32/README.md",
 		"native/darwin/prebuilds/**/*.node",
+		"native/darwin/src/**/*.c",
+		"native/darwin/build.sh",
+		"native/darwin/README.md",
 		"README.md"
 	],
 	"keywords": [

@@ -1,7 +1,8 @@
+import { Type } from "typebox";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { stream as streamAzureOpenAIResponses } from "../src/api/azure-openai-responses.ts";
 import { getModel } from "../src/compat.ts";
-import type { Context } from "../src/types.ts";
+import type { Context, Model } from "../src/types.ts";
 
 interface CapturedAzureClientOptions {
 	apiKey: string;
@@ -14,6 +15,7 @@ interface CapturedAzureClientOptions {
 interface CapturedAzureResponsesPayload {
 	prompt_cache_key?: string;
 	store?: boolean;
+	tools?: Array<{ strict?: boolean }>;
 }
 
 const azureMock = vi.hoisted(() => ({
@@ -96,6 +98,11 @@ describe("azure-openai-responses base URL normalization", () => {
 		expect(baseURL).toBe("https://marc-quicktests-resource.cognitiveservices.azure.com/openai/v1");
 	});
 
+	it("normalizes Microsoft Foundry root endpoints to /openai/v1", async () => {
+		const baseURL = await captureClientBaseUrl("https://marc-quicktests-resource.ai.azure.com");
+		expect(baseURL).toBe("https://marc-quicktests-resource.ai.azure.com/openai/v1");
+	});
+
 	it("normalizes Azure OpenAI root endpoints to /openai/v1", async () => {
 		const baseURL = await captureClientBaseUrl("https://my-resource.openai.azure.com");
 		expect(baseURL).toBe("https://my-resource.openai.azure.com/openai/v1");
@@ -109,6 +116,11 @@ describe("azure-openai-responses base URL normalization", () => {
 	it("preserves /openai/v1 endpoints", async () => {
 		const baseURL = await captureClientBaseUrl("https://my-resource.cognitiveservices.azure.com/openai/v1");
 		expect(baseURL).toBe("https://my-resource.cognitiveservices.azure.com/openai/v1");
+	});
+
+	it("normalizes /openai/v1/responses to /openai/v1", async () => {
+		const baseURL = await captureClientBaseUrl("https://my-resource.services.ai.azure.com/openai/v1/responses");
+		expect(baseURL).toBe("https://my-resource.services.ai.azure.com/openai/v1");
 	});
 
 	it("preserves explicit non-Azure proxy paths", async () => {
@@ -153,6 +165,32 @@ describe("azure-openai-responses base URL normalization", () => {
 		}).result();
 
 		expect(azureMock.lastParams?.store).toBe(false);
+	});
+
+	it("honors supportsStrictMode: false", async () => {
+		const baseModel = getModel("azure-openai-responses", "gpt-4o-mini");
+		const model: Model<"azure-openai-responses"> = {
+			...baseModel,
+			compat: { ...baseModel.compat, supportsStrictMode: false },
+		};
+
+		await streamAzureOpenAIResponses(
+			model,
+			{
+				...context,
+				tools: [
+					{
+						name: "preferred",
+						description: "Preferred constrained tool",
+						parameters: Type.Object({ value: Type.String() }),
+						constrainedSampling: { type: "json_schema", strict: "prefer" },
+					},
+				],
+			},
+			{ apiKey: "test-api-key", azureBaseUrl: "https://my-resource.openai.azure.com" },
+		).result();
+
+		expect(azureMock.lastParams?.tools?.[0]).not.toHaveProperty("strict");
 	});
 
 	it("builds correct default URL from AZURE_OPENAI_RESOURCE_NAME", async () => {

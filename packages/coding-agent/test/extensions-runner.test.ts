@@ -1,3 +1,4 @@
+import { createInMemoryModelRegistry } from "./model-runtime-test-utils.ts";
 /**
  * Tests for ExtensionRunner - conflict detection, error handling, tool wrapping.
  */
@@ -16,7 +17,8 @@ import type {
 	ProviderConfig,
 } from "../src/core/extensions/types.ts";
 import { KeybindingsManager, type KeyId } from "../src/core/keybindings.ts";
-import { ModelRegistry } from "../src/core/model-registry.ts";
+import type { ModelRegistry } from "../src/core/model-registry.ts";
+import type { ScopedModel } from "../src/core/model-resolver.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 
 describe("ExtensionRunner", () => {
@@ -26,13 +28,12 @@ describe("ExtensionRunner", () => {
 	let modelRegistry: ModelRegistry;
 	const defaultKeybindings = new KeybindingsManager().getEffectiveConfig();
 
-	beforeEach(() => {
+	beforeEach(async () => {
 		tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-runner-test-"));
 		extensionsDir = path.join(tempDir, "extensions");
 		fs.mkdirSync(extensionsDir);
 		sessionManager = SessionManager.inMemory();
-		const authStorage = AuthStorage.create(path.join(tempDir, "auth.json"));
-		modelRegistry = ModelRegistry.create(authStorage);
+		modelRegistry = await createInMemoryModelRegistry(AuthStorage.inMemory());
 	});
 
 	afterEach(() => {
@@ -49,7 +50,21 @@ describe("ExtensionRunner", () => {
 				name: "Instant Model",
 				reasoning: false,
 				input: ["text"],
-				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+				cost: {
+					input: 1,
+					output: 2,
+					cacheRead: 0.1,
+					cacheWrite: 1.25,
+					tiers: [
+						{
+							inputTokensAbove: 272000,
+							input: 2,
+							output: 3,
+							cacheRead: 0.2,
+							cacheWrite: 2.5,
+						},
+					],
+				},
 				contextWindow: 128000,
 				maxTokens: 4096,
 			},
@@ -84,7 +99,24 @@ describe("ExtensionRunner", () => {
 		getContextUsage: () => undefined,
 		compact: () => {},
 		getSystemPrompt: () => "",
+		getScopedModels: () => [],
 	};
+
+	describe("scopedModels", () => {
+		it("reflects the getScopedModels context action on ctx.scopedModels", async () => {
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+
+			// Before bindCore the default is an empty list (never undefined).
+			expect(runner.createContext().scopedModels).toEqual([]);
+
+			// After bindCore wires a getScopedModels action, ctx.scopedModels
+			// returns it live (same reference, lazy getter).
+			const scoped = [{ model: { id: "scoped-test" }, thinkingLevel: "high" }] as unknown as ScopedModel[];
+			runner.bindCore(extensionActions, { ...extensionContextActions, getScopedModels: () => scoped });
+			expect(runner.createContext().scopedModels).toBe(scoped);
+		});
+	});
 
 	describe("project_trust", () => {
 		it("continues past undecided handlers and returns the first yes/no decision", async () => {
@@ -560,7 +592,22 @@ describe("ExtensionRunner", () => {
 		});
 	});
 
-	describe("message renderers", () => {
+	describe("message and entry renderers", () => {
+		it("gets Markdown transformers in extension load order", async () => {
+			const extCode = `
+				export default function(pi) {
+					pi.registerMarkdownTransformer((markdown) => markdown);
+				}
+			`;
+			fs.writeFileSync(path.join(extensionsDir, "markdown-renderer-a.ts"), extCode);
+			fs.writeFileSync(path.join(extensionsDir, "markdown-renderer-b.ts"), extCode);
+
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+
+			expect(runner.getMarkdownTransformers()).toHaveLength(2);
+		});
+
 		it("gets message renderer by type", async () => {
 			const extCode = `
 				export default function(pi) {
@@ -577,6 +624,21 @@ describe("ExtensionRunner", () => {
 
 			const missing = runner.getMessageRenderer("not-exists");
 			expect(missing).toBeUndefined();
+		});
+
+		it("gets entry renderer by type", async () => {
+			const extCode = `
+				export default function(pi) {
+					pi.registerEntryRenderer("my-entry", (entry, options, theme) => null);
+				}
+			`;
+			fs.writeFileSync(path.join(extensionsDir, "entry-renderer.ts"), extCode);
+
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+
+			expect(runner.getEntryRenderer("my-entry")).toBeDefined();
+			expect(runner.getEntryRenderer("not-exists")).toBeUndefined();
 		});
 	});
 
@@ -788,7 +850,7 @@ describe("ExtensionRunner", () => {
 	});
 
 	describe("provider registration", () => {
-		it("bindCore ignores invalid queued registrations and reports extension error", () => {
+		it("bindCore ignores invalid queued registrations and reports extension error", async () => {
 			const runtime = createExtensionRuntime();
 			runtime.registerProvider(
 				"broken-provider",
@@ -808,7 +870,7 @@ describe("ExtensionRunner", () => {
 			expect(errors).toEqual([
 				'/tmp/broken-extension.ts: Provider broken-provider: "api" is required when registering streamSimple.',
 			]);
-			expect(() => modelRegistry.refresh()).not.toThrow();
+			await expect(modelRegistry.refresh()).resolves.toMatchObject({ aborted: false });
 		});
 
 		it("pre-bind unregister removes all queued registrations for a provider", () => {
@@ -844,7 +906,15 @@ describe("ExtensionRunner", () => {
 
 			runtime.registerProvider("instant-provider", providerModelConfig);
 			expect(runtime.pendingProviderRegistrations).toHaveLength(0);
-			expect(modelRegistry.find("instant-provider", "instant-model")).toBeDefined();
+			expect(modelRegistry.find("instant-provider", "instant-model")?.cost.tiers).toEqual([
+				{
+					inputTokensAbove: 272000,
+					input: 2,
+					output: 3,
+					cacheRead: 0.2,
+					cacheWrite: 2.5,
+				},
+			]);
 
 			runtime.unregisterProvider("instant-provider");
 			expect(modelRegistry.find("instant-provider", "instant-model")).toBeUndefined();
@@ -889,6 +959,60 @@ describe("ExtensionRunner", () => {
 
 			expect(runner.hasHandlers("tool_call")).toBe(true);
 			expect(runner.hasHandlers("agent_end")).toBe(false);
+		});
+	});
+
+	describe("before_provider_headers", () => {
+		it("lets a handler mutate headers in place and preserves existing headers", async () => {
+			const extCode = `
+				export default function(pi) {
+					pi.on("before_provider_headers", (event) => {
+						event.headers["X-Turn-Index"] = "3";
+					});
+				}
+			`;
+			fs.writeFileSync(path.join(extensionsDir, "headers.ts"), extCode);
+
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+
+			expect(runner.hasHandlers("before_provider_headers")).toBe(true);
+
+			const headers = await runner.emitBeforeProviderHeaders({ "User-Agent": "kimchi/1.0" });
+			expect(headers["X-Turn-Index"]).toBe("3");
+			expect(headers["User-Agent"]).toBe("kimchi/1.0");
+		});
+
+		it("isolates a throwing handler and still applies the others", async () => {
+			const throwing = `
+				export default function(pi) {
+					pi.on("before_provider_headers", () => {
+						throw new Error("header handler boom");
+					});
+				}
+			`;
+			const good = `
+				export default function(pi) {
+					pi.on("before_provider_headers", (event) => {
+						event.headers["X-Good"] = "yes";
+					});
+				}
+			`;
+			fs.writeFileSync(path.join(extensionsDir, "a-throwing.ts"), throwing);
+			fs.writeFileSync(path.join(extensionsDir, "b-good.ts"), good);
+
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			const errors: Array<{ event: string; error: string }> = [];
+			runner.onError((err) => errors.push(err));
+
+			const headers = await runner.emitBeforeProviderHeaders({ "User-Agent": "x" });
+
+			expect(headers["X-Good"]).toBe("yes");
+			expect(headers["User-Agent"]).toBe("x");
+			expect(errors).toHaveLength(1);
+			expect(errors[0].event).toBe("before_provider_headers");
+			expect(errors[0].error).toContain("header handler boom");
 		});
 	});
 });

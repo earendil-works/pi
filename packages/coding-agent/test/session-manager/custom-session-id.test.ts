@@ -13,6 +13,13 @@ describe("SessionManager.newSession with custom id", () => {
 		expect(session.getSessionId()).toBe("my-custom-id");
 	});
 
+	it("uses the provided id when creating an in-memory session", () => {
+		const session = SessionManager.inMemory(process.cwd(), { id: "memory-session-id" });
+		expect(session.getSessionId()).toBe("memory-session-id");
+		expect(session.getHeader()!.id).toBe("memory-session-id");
+		expect(session.getSessionFile()).toBeUndefined();
+	});
+
 	it("allows alphanumeric session ids with interior punctuation", () => {
 		const session = SessionManager.inMemory();
 		session.newSession({ id: "abc-123_def.456" });

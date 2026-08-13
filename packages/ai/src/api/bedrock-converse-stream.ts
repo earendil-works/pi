@@ -47,13 +47,21 @@ import type {
 	ToolCall,
 	ToolResultMessage,
 } from "../types.ts";
+import { appendAssistantMessageDiagnostic } from "../utils/diagnostics.ts";
+import { normalizeProviderError } from "../utils/error-body.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { providerHeadersToRecord } from "../utils/headers.ts";
 import { parseStreamingJson } from "../utils/json-parse.ts";
 import { resolveHttpProxyUrlForTarget } from "../utils/node-http-proxy.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
-import { adjustMaxTokensForThinking, buildBaseOptions, clampReasoning } from "./simple-options.ts";
+import { getJsonSchemaToolParameters, resolveJsonSchemaStrictSampling } from "./constrained-sampling.ts";
+import {
+	adjustMaxTokensForThinking,
+	buildBaseOptions,
+	clampMaxTokensToContext,
+	clampReasoning,
+} from "./simple-options.ts";
 import { transformMessages } from "./transform-messages.ts";
 
 export type BedrockThinkingDisplay = "summarized" | "omitted";
@@ -118,14 +126,20 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 				totalTokens: 0,
 				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 			},
-			stopReason: "stop",
+			stopReason: "pending",
 			timestamp: Date.now(),
 		};
 
 		const blocks = output.content as Block[];
 
+		// A profile explicitly configured through pi's auth flow (the `profile`
+		// option or scoped `AWS_PROFILE` on the stored credential's env) must win
+		// over ambient AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY. The SDK default
+		// chain already prefers a configured profile over env keys, but only when
+		// `credentials` is not set on the client config. See #6957.
+		const optionsProfile = options.profile || options.env?.AWS_PROFILE;
 		const config: BedrockRuntimeClientConfig = {
-			profile: options.profile || getProviderEnvValue("AWS_PROFILE", options.env),
+			profile: optionsProfile || getProviderEnvValue("AWS_PROFILE", options.env),
 		};
 		const configuredRegion = getConfiguredBedrockRegion(options);
 		const hasAmbientConfiguredProfile = Boolean(getProviderEnvValue("AWS_PROFILE"));
@@ -146,7 +160,10 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 		// Resolve bearer token for Bedrock API key auth.
 		const skipAuth = getProviderEnvValue("AWS_BEDROCK_SKIP_AUTH", options.env) === "1";
 		const bearerToken =
-			options.bearerToken || getProviderEnvValue("AWS_BEARER_TOKEN_BEDROCK", options.env) || undefined;
+			options.bearerToken ||
+			options.apiKey ||
+			getProviderEnvValue("AWS_BEARER_TOKEN_BEDROCK", options.env) ||
+			undefined;
 		const useBearerToken = bearerToken !== undefined && !skipAuth;
 
 		// in Node.js/Bun environment only
@@ -174,7 +191,7 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 			}
 
 			const credentials = getConfiguredBedrockCredentials(options.env);
-			if (!skipAuth && credentials) {
+			if (!skipAuth && credentials && !optionsProfile) {
 				config.credentials = credentials;
 			}
 
@@ -203,7 +220,12 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 			config.authSchemePreference = ["httpBearerAuth"];
 		}
 
+		// Kept outside the try so the catch can still correlate a mid-stream failure:
+		// exceptions delivered as stream events carry no HTTP metadata of their own.
+		let responseRequestId: string | undefined;
+
 		try {
+			const supportsStrictMode = model.compat?.supportsStrictMode ?? false;
 			const client = new BedrockRuntimeClient(config);
 			const customHeaders = providerHeadersToRecord(options.headers);
 			if (customHeaders) {
@@ -219,7 +241,7 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 					...(inferenceMaxTokens !== undefined && { maxTokens: inferenceMaxTokens }),
 					...(options.temperature !== undefined && { temperature: options.temperature }),
 				},
-				toolConfig: convertToolConfig(context.tools, options.toolChoice),
+				toolConfig: convertToolConfig(context.tools, options.toolChoice, supportsStrictMode),
 				additionalModelRequestFields: buildAdditionalModelRequestFields(model, options),
 				...(options.requestMetadata !== undefined && { requestMetadata: options.requestMetadata }),
 			};
@@ -230,6 +252,7 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 			const command = new ConverseStreamCommand(commandInput);
 
 			const response = await client.send(command, { abortSignal: options.signal });
+			responseRequestId = normalizeDiagnosticValue(response.$metadata.requestId);
 			if (response.$metadata.httpStatusCode !== undefined) {
 				const responseHeaders: Record<string, string> = {};
 				if (response.$metadata.requestId) {
@@ -251,7 +274,12 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 				} else if (item.contentBlockStop) {
 					handleContentBlockStop(item.contentBlockStop, blocks, output, stream);
 				} else if (item.messageStop) {
-					output.stopReason = mapStopReason(item.messageStop.stopReason);
+					output.rawStopReason = item.messageStop.stopReason;
+					const { stopReason, errorMessage } = mapStopReason(item.messageStop.stopReason);
+					output.stopReason = stopReason;
+					if (errorMessage) {
+						output.errorMessage = errorMessage;
+					}
 				} else if (item.metadata) {
 					handleMetadata(item.metadata, model, output);
 				} else if (item.internalServerException) {
@@ -271,8 +299,11 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 				throw new Error("Request was aborted");
 			}
 
+			if (output.stopReason === "pending") {
+				throw new Error("Bedrock stream ended without a stop reason");
+			}
 			if (output.stopReason === "error" || output.stopReason === "aborted") {
-				throw new Error("An unknown error occurred");
+				throw new Error(output.errorMessage || "An unknown error occurred");
 			}
 
 			stream.push({ type: "done", reason: output.stopReason, message: output });
@@ -285,6 +316,9 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 			}
 			output.stopReason = options.signal?.aborted ? "aborted" : "error";
 			output.errorMessage = formatBedrockError(error);
+			if (output.stopReason === "error") {
+				appendBedrockFailureDiagnostic(output, error, responseRequestId);
+			}
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();
 		}
@@ -322,15 +356,70 @@ const BEDROCK_DATA_RETENTION_DOCS_URL = "https://docs.aws.amazon.com/bedrock/lat
  * detection) can distinguish error categories via simple string matching.
  */
 function formatBedrockError(error: unknown): string {
-	const message = error instanceof Error ? error.message : JSON.stringify(error);
-	const dataRetentionHint = /data retention mode/i.test(message)
+	const norm = normalizeProviderError(error);
+	// Surface the raw HTTP body (with status) when the SDK did not fold it into
+	// the message; otherwise fall back to the message. This is what stops a
+	// gateway 403 from collapsing to `Unknown: UnknownError`.
+	const core =
+		!norm.messageCarriesBody && norm.status !== undefined && norm.body !== undefined
+			? `${norm.status}: ${norm.body}`
+			: norm.message;
+	const dataRetentionHint = /data retention mode/i.test(core)
 		? ` See ${BEDROCK_DATA_RETENTION_DOCS_URL} for supported data retention modes.`
 		: "";
 	if (error instanceof BedrockRuntimeServiceException) {
 		const prefix = BEDROCK_ERROR_PREFIXES[error.name] ?? error.name;
-		return `${prefix}: ${message}${dataRetentionHint}`;
+		return `${prefix}: ${core}${dataRetentionHint}`;
 	}
-	return `${message}${dataRetentionHint}`;
+	return `${core}${dataRetentionHint}`;
+}
+
+type SdkErrorMetadata = { $metadata?: { httpStatusCode?: unknown; requestId?: unknown } };
+
+/** Over-long header values are dropped rather than truncated: a truncated request id is not a request id. */
+const MAX_BEDROCK_DIAGNOSTIC_VALUE_CHARS = 200;
+
+function normalizeDiagnosticValue(value: unknown): string | undefined {
+	if (typeof value !== "string") return undefined;
+	const trimmed = value.trim();
+	if (trimmed.length === 0 || trimmed.length > MAX_BEDROCK_DIAGNOSTIC_VALUE_CHARS) return undefined;
+	return trimmed;
+}
+
+/**
+ * The SDK puts the modeled code on `error.name` for service exceptions and unmodeled stream errors alike, so
+ * do not narrow to `BedrockRuntimeServiceException`. Modeled Bedrock errors all end in `Exception`, unlike
+ * transport names such as `TimeoutError`.
+ */
+function extractBedrockErrorCode(error: unknown): string | undefined {
+	if (!(error instanceof Error) || !error.name.endsWith("Exception")) return undefined;
+	return normalizeDiagnosticValue(error.name);
+}
+
+/**
+ * Structured metadata alongside `errorMessage`, which stays byte-identical because `isRetryableAssistantError`
+ * matches against it. Unknown fields are omitted, never guessed: a modeled mid-stream exception reaches us as
+ * a bare object literal, leaving only `fallbackRequestId`. `details` only, as the throw is not always `Error`.
+ */
+function appendBedrockFailureDiagnostic(
+	output: AssistantMessage,
+	error: unknown,
+	fallbackRequestId: string | undefined,
+): void {
+	const metadata = (error as SdkErrorMetadata)?.$metadata;
+	const details: Record<string, unknown> = {};
+
+	if (typeof metadata?.httpStatusCode === "number") details.status = metadata.httpStatusCode;
+
+	const errorCode = extractBedrockErrorCode(error);
+	if (errorCode !== undefined) details.errorCode = errorCode;
+
+	const requestId = normalizeDiagnosticValue(metadata?.requestId) ?? fallbackRequestId;
+	if (requestId !== undefined) details.requestId = requestId;
+
+	if (Object.keys(details).length === 0) return;
+
+	appendAssistantMessageDiagnostic(output, { type: "bedrock_response_failure", timestamp: Date.now(), details });
 }
 
 /**
@@ -374,7 +463,7 @@ export const streamSimple: StreamFunction<"bedrock-converse-stream", SimpleStrea
 	context: Context,
 	options?: SimpleStreamOptions,
 ): AssistantMessageEventStream => {
-	const base = buildBaseOptions(model, options, undefined);
+	const base = buildBaseOptions(model, context, options, undefined);
 	if (!options?.reasoning) {
 		return stream(model, context, { ...base, reasoning: undefined } satisfies BedrockOptions);
 	}
@@ -397,13 +486,15 @@ export const streamSimple: StreamFunction<"bedrock-converse-stream", SimpleStrea
 			options.thinkingBudgets,
 		);
 
+		const maxTokens = clampMaxTokensToContext(model, context, adjusted.maxTokens);
+
 		return stream(model, context, {
 			...base,
-			maxTokens: adjusted.maxTokens,
+			maxTokens,
 			reasoning: options.reasoning,
 			thinkingBudgets: {
 				...(options.thinkingBudgets || {}),
-				[clampReasoning(options.reasoning)!]: adjusted.thinkingBudget,
+				[clampReasoning(options.reasoning)!]: Math.min(adjusted.thinkingBudget, Math.max(0, maxTokens - 1024)),
 			},
 		} satisfies BedrockOptions);
 	}
@@ -559,14 +650,23 @@ function supportsAdaptiveThinking(modelId: string, modelName?: string): boolean 
 			s.includes("opus-4-6") ||
 			s.includes("opus-4-7") ||
 			s.includes("opus-4-8") ||
+			s.includes("opus-5") ||
 			s.includes("sonnet-4-6") ||
+			s.includes("sonnet-5") ||
 			s.includes("fable-5"),
 	);
 }
 
 function supportsNativeXhighEffort(model: Model<"bedrock-converse-stream">): boolean {
 	const candidates = getModelMatchCandidates(model.id, model.name);
-	return candidates.some((s) => s.includes("opus-4-7") || s.includes("opus-4-8") || s.includes("fable-5"));
+	return candidates.some(
+		(s) =>
+			s.includes("opus-4-7") ||
+			s.includes("opus-4-8") ||
+			s.includes("opus-5") ||
+			s.includes("sonnet-5") ||
+			s.includes("fable-5"),
+	);
 }
 
 function mapThinkingLevelToEffort(
@@ -624,7 +724,7 @@ function isAnthropicClaudeModel(model: Model<"bedrock-converse-stream">): boolea
 
 /**
  * Check if the model supports prompt caching.
- * Supported: Claude 3.5 Haiku, Claude 3.7 Sonnet, Claude 4.x models
+ * Supported: Claude 3.5 Haiku, Claude 3.7 Sonnet, Claude 4.x models, Claude 5 models
  *
  * For base models and system-defined inference profiles the model ID / ARN
  * contains the model name, so we can decide locally.
@@ -644,6 +744,8 @@ function supportsPromptCaching(model: Model<"bedrock-converse-stream">, env?: Pr
 		if (getProviderEnvValue("AWS_BEDROCK_FORCE_CACHE", env) === "1") return true;
 		return false;
 	}
+	// Claude 5 models (fable-5, opus-5, sonnet-5)
+	if (candidates.some((s) => s.includes("fable-5") || s.includes("opus-5") || s.includes("sonnet-5"))) return true;
 	// Claude 4.x models (opus-4, sonnet-4, haiku-4)
 	if (candidates.some((s) => s.includes("-4-"))) return true;
 	// Claude 3.7 Sonnet
@@ -697,6 +799,20 @@ function createNonBlankTextBlock(text: string): ContentBlock.TextMember | undefi
 
 function createRequiredTextBlock(text: string): ContentBlock.TextMember {
 	return createNonBlankTextBlock(text) ?? { text: EMPTY_TEXT_PLACEHOLDER };
+}
+
+function sanitizeBedrockDocument(value: DocumentType): DocumentType {
+	if (Array.isArray(value)) {
+		return value.map(sanitizeBedrockDocument);
+	}
+	if (value !== null && typeof value === "object") {
+		return Object.fromEntries(
+			Object.entries(value)
+				.filter(([key]) => key.length > 0)
+				.map(([key, nestedValue]) => [key, sanitizeBedrockDocument(nestedValue)]),
+		);
+	}
+	return value;
 }
 
 function convertToolResultContent(content: (TextContent | ImageContent)[]): ToolResultContentBlock[] {
@@ -771,7 +887,7 @@ function convertMessages(
 						}
 						case "toolCall":
 							contentBlocks.push({
-								toolUse: { toolUseId: c.id, name: c.name, input: c.arguments },
+								toolUse: { toolUseId: c.id, name: c.name, input: sanitizeBedrockDocument(c.arguments) },
 							});
 							break;
 						case "thinking": {
@@ -881,16 +997,22 @@ function convertMessages(
 function convertToolConfig(
 	tools: Tool[] | undefined,
 	toolChoice: BedrockOptions["toolChoice"],
+	supportsStrictMode: boolean,
 ): ToolConfiguration | undefined {
-	if (!tools?.length || toolChoice === "none") return undefined;
+	if (!tools?.length) return undefined;
+	if (toolChoice === "none") return undefined;
 
-	const bedrockTools: BedrockTool[] = tools.map((tool) => ({
-		toolSpec: {
-			name: tool.name,
-			description: tool.description,
-			inputSchema: { json: tool.parameters as unknown as DocumentType },
-		},
-	}));
+	const bedrockTools: BedrockTool[] = tools.map((tool) => {
+		const strict = resolveJsonSchemaStrictSampling(tool, supportsStrictMode);
+		return {
+			toolSpec: {
+				name: tool.name,
+				description: tool.description,
+				inputSchema: { json: getJsonSchemaToolParameters(tool, strict) as unknown as DocumentType },
+				...(strict === true ? { strict: true } : {}),
+			},
+		};
+	});
 
 	let bedrockToolChoice: ToolChoice | undefined;
 	switch (toolChoice) {
@@ -909,18 +1031,20 @@ function convertToolConfig(
 	return { tools: bedrockTools, toolChoice: bedrockToolChoice };
 }
 
-function mapStopReason(reason: string | undefined): StopReason {
+function mapStopReason(reason: string | undefined): { stopReason: StopReason; errorMessage?: string } {
 	switch (reason) {
 		case BedrockStopReason.END_TURN:
 		case BedrockStopReason.STOP_SEQUENCE:
-			return "stop";
+			return { stopReason: "stop" };
 		case BedrockStopReason.MAX_TOKENS:
 		case BedrockStopReason.MODEL_CONTEXT_WINDOW_EXCEEDED:
-			return "length";
+			return { stopReason: "length" };
 		case BedrockStopReason.TOOL_USE:
-			return "toolUse";
+			return { stopReason: "toolUse" };
 		default:
-			return "error";
+			return reason
+				? { stopReason: "error", errorMessage: `Provider stopped with: ${reason}` }
+				: { stopReason: "error" };
 	}
 }
 
@@ -1007,11 +1131,12 @@ function buildAdditionalModelRequestFields(
 						low: 2048,
 						medium: 8192,
 						high: 16384,
-						xhigh: 16384, // Claude doesn't support xhigh, clamp to high
+						xhigh: 16384, // Budget-based Claude clamps extended levels to high
+						max: 16384,
 					};
 
-					// Custom budgets override defaults (xhigh not in ThinkingBudgets, use high)
-					const level = options.reasoning === "xhigh" ? "high" : options.reasoning;
+					// Custom budgets only cover token-based levels through high.
+					const level = options.reasoning === "xhigh" || options.reasoning === "max" ? "high" : options.reasoning;
 					const budget = options.thinkingBudgets?.[level] ?? defaultBudgets[options.reasoning];
 
 					return {

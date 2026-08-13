@@ -1,4 +1,4 @@
-import { execSync, spawn } from "child_process";
+import { type ExecFileSyncOptionsWithStringEncoding, execFileSync, execSync, spawn } from "child_process";
 import { platform } from "os";
 import { isWaylandSession } from "./clipboard-image.ts";
 import { clipboard } from "./clipboard-native.ts";
@@ -30,6 +30,44 @@ function emitOsc52(text: string): boolean {
 	}
 	process.stdout.write(`\x1b]52;c;${encoded}\x07`);
 	return true;
+}
+
+type ClipboardReadResult = { ok: true; text: string | null } | { ok: false };
+
+const READ_CLIPBOARD_OPTIONS: ExecFileSyncOptionsWithStringEncoding = {
+	encoding: "utf8",
+	maxBuffer: 50 * 1024 * 1024,
+	timeout: 5000,
+};
+
+function readWaylandClipboardText(): ClipboardReadResult {
+	try {
+		const text = execFileSync("wl-paste", ["--no-newline", "--type", "text"], READ_CLIPBOARD_OPTIONS);
+		return { ok: true, text: text || null };
+	} catch {
+		return { ok: false };
+	}
+}
+
+/** Read plain text from the system clipboard. */
+export async function readClipboardText(): Promise<string | null> {
+	if (platform() === "linux" && isWaylandSession() && process.env.WAYLAND_DISPLAY) {
+		const result = readWaylandClipboardText();
+		if (result.ok) {
+			return result.text;
+		}
+	}
+
+	if (!clipboard) {
+		return null;
+	}
+
+	try {
+		const text = await clipboard.getText();
+		return text || null;
+	} catch {
+		return null;
+	}
 }
 
 export async function copyToClipboard(text: string): Promise<void> {
@@ -90,15 +128,25 @@ export async function copyToClipboard(text: string): Promise<void> {
 						try {
 							// Verify wl-copy exists (spawn errors are async and won't be caught)
 							execSync("which wl-copy", { stdio: "ignore" });
-							// wl-copy with execSync hangs due to fork behavior; use spawn instead
-							const proc = spawn("wl-copy", [], { stdio: ["pipe", "ignore", "ignore"] });
-							proc.stdin.on("error", () => {
-								// Ignore EPIPE errors if wl-copy exits early
+							// wl-copy with execSync hangs due to fork behavior; use spawn instead.
+							// Await the exit code and only claim success on a clean exit, so a
+							// failed wl-copy falls through to the xclip/OSC 52 fallbacks.
+							const wlCopyExit = await new Promise<number>((resolve) => {
+								const proc = spawn("wl-copy", [], { stdio: ["pipe", "ignore", "ignore"] });
+								proc.on("error", () => resolve(1));
+								proc.on("close", (code) => resolve(code ?? 1));
+								proc.stdin.on("error", () => {
+									// Ignore EPIPE errors if wl-copy exits early
+								});
+								proc.stdin.write(text);
+								proc.stdin.end();
 							});
-							proc.stdin.write(text);
-							proc.stdin.end();
-							proc.unref();
-							copied = true;
+							if (wlCopyExit === 0) {
+								copied = true;
+							} else if (hasX11Display) {
+								copyToX11Clipboard(options);
+								copied = true;
+							}
 						} catch {
 							if (hasX11Display) {
 								copyToX11Clipboard(options);

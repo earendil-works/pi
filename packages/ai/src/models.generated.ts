@@ -5,6 +5,7 @@ import { AMAZON_BEDROCK_MODELS } from "./providers/amazon-bedrock.models.ts";
 import { ANT_LING_MODELS } from "./providers/ant-ling.models.ts";
 import { ANTHROPIC_MODELS } from "./providers/anthropic.models.ts";
 import { AZURE_OPENAI_RESPONSES_MODELS } from "./providers/azure-openai-responses.models.ts";
+import { BASETEN_MODELS } from "./providers/baseten.models.ts";
 import { CEREBRAS_MODELS } from "./providers/cerebras.models.ts";
 import { CLOUDFLARE_AI_GATEWAY_MODELS } from "./providers/cloudflare-ai-gateway.models.ts";
 import { CLOUDFLARE_WORKERS_AI_MODELS } from "./providers/cloudflare-workers-ai.models.ts";
@@ -27,6 +28,9 @@ import { OPENAI_CODEX_MODELS } from "./providers/openai-codex.models.ts";
 import { OPENCODE_MODELS } from "./providers/opencode.models.ts";
 import { OPENCODE_GO_MODELS } from "./providers/opencode-go.models.ts";
 import { OPENROUTER_MODELS } from "./providers/openrouter.models.ts";
+import { QWEN_TOKEN_PLAN_MODELS } from "./providers/qwen-token-plan.models.ts";
+import { QWEN_TOKEN_PLAN_CN_MODELS } from "./providers/qwen-token-plan-cn.models.ts";
+import { QWEN_TOKEN_PLAN_INDIVIDUAL_MODELS } from "./providers/qwen-token-plan-individual.models.ts";
 import { TOGETHER_MODELS } from "./providers/together.models.ts";
 import { VERCEL_AI_GATEWAY_MODELS } from "./providers/vercel-ai-gateway.models.ts";
 import { XAI_MODELS } from "./providers/xai.models.ts";
@@ -37,11 +41,52 @@ import { XIAOMI_TOKEN_PLAN_SGP_MODELS } from "./providers/xiaomi-token-plan-sgp.
 import { ZAI_MODELS } from "./providers/zai.models.ts";
 import { ZAI_CODING_CN_MODELS } from "./providers/zai-coding-cn.models.ts";
 
-export const MODELS = {
+export const MODELS: {
+	readonly "amazon-bedrock": typeof AMAZON_BEDROCK_MODELS;
+	readonly "ant-ling": typeof ANT_LING_MODELS;
+	readonly "anthropic": typeof ANTHROPIC_MODELS;
+	readonly "azure-openai-responses": typeof AZURE_OPENAI_RESPONSES_MODELS;
+	readonly "baseten": typeof BASETEN_MODELS;
+	readonly "cerebras": typeof CEREBRAS_MODELS;
+	readonly "cloudflare-ai-gateway": typeof CLOUDFLARE_AI_GATEWAY_MODELS;
+	readonly "cloudflare-workers-ai": typeof CLOUDFLARE_WORKERS_AI_MODELS;
+	readonly "deepseek": typeof DEEPSEEK_MODELS;
+	readonly "fireworks": typeof FIREWORKS_MODELS;
+	readonly "github-copilot": typeof GITHUB_COPILOT_MODELS;
+	readonly "google": typeof GOOGLE_MODELS;
+	readonly "google-vertex": typeof GOOGLE_VERTEX_MODELS;
+	readonly "groq": typeof GROQ_MODELS;
+	readonly "huggingface": typeof HUGGINGFACE_MODELS;
+	readonly "kimi-coding": typeof KIMI_CODING_MODELS;
+	readonly "minimax": typeof MINIMAX_MODELS;
+	readonly "minimax-cn": typeof MINIMAX_CN_MODELS;
+	readonly "mistral": typeof MISTRAL_MODELS;
+	readonly "moonshotai": typeof MOONSHOTAI_MODELS;
+	readonly "moonshotai-cn": typeof MOONSHOTAI_CN_MODELS;
+	readonly "nvidia": typeof NVIDIA_MODELS;
+	readonly "openai": typeof OPENAI_MODELS;
+	readonly "openai-codex": typeof OPENAI_CODEX_MODELS;
+	readonly "opencode": typeof OPENCODE_MODELS;
+	readonly "opencode-go": typeof OPENCODE_GO_MODELS;
+	readonly "openrouter": typeof OPENROUTER_MODELS;
+	readonly "qwen-token-plan": typeof QWEN_TOKEN_PLAN_MODELS;
+	readonly "qwen-token-plan-cn": typeof QWEN_TOKEN_PLAN_CN_MODELS;
+	readonly "qwen-token-plan-individual": typeof QWEN_TOKEN_PLAN_INDIVIDUAL_MODELS;
+	readonly "together": typeof TOGETHER_MODELS;
+	readonly "vercel-ai-gateway": typeof VERCEL_AI_GATEWAY_MODELS;
+	readonly "xai": typeof XAI_MODELS;
+	readonly "xiaomi": typeof XIAOMI_MODELS;
+	readonly "xiaomi-token-plan-ams": typeof XIAOMI_TOKEN_PLAN_AMS_MODELS;
+	readonly "xiaomi-token-plan-cn": typeof XIAOMI_TOKEN_PLAN_CN_MODELS;
+	readonly "xiaomi-token-plan-sgp": typeof XIAOMI_TOKEN_PLAN_SGP_MODELS;
+	readonly "zai": typeof ZAI_MODELS;
+	readonly "zai-coding-cn": typeof ZAI_CODING_CN_MODELS;
+} = {
 	"amazon-bedrock": AMAZON_BEDROCK_MODELS,
 	"ant-ling": ANT_LING_MODELS,
 	"anthropic": ANTHROPIC_MODELS,
 	"azure-openai-responses": AZURE_OPENAI_RESPONSES_MODELS,
+	"baseten": BASETEN_MODELS,
 	"cerebras": CEREBRAS_MODELS,
 	"cloudflare-ai-gateway": CLOUDFLARE_AI_GATEWAY_MODELS,
 	"cloudflare-workers-ai": CLOUDFLARE_WORKERS_AI_MODELS,
@@ -64,6 +109,9 @@ export const MODELS = {
 	"opencode": OPENCODE_MODELS,
 	"opencode-go": OPENCODE_GO_MODELS,
 	"openrouter": OPENROUTER_MODELS,
+	"qwen-token-plan": QWEN_TOKEN_PLAN_MODELS,
+	"qwen-token-plan-cn": QWEN_TOKEN_PLAN_CN_MODELS,
+	"qwen-token-plan-individual": QWEN_TOKEN_PLAN_INDIVIDUAL_MODELS,
 	"together": TOGETHER_MODELS,
 	"vercel-ai-gateway": VERCEL_AI_GATEWAY_MODELS,
 	"xai": XAI_MODELS,
@@ -73,4 +121,4 @@ export const MODELS = {
 	"xiaomi-token-plan-sgp": XIAOMI_TOKEN_PLAN_SGP_MODELS,
 	"zai": ZAI_MODELS,
 	"zai-coding-cn": ZAI_CODING_CN_MODELS,
-} as const;
+};

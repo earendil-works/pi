@@ -311,6 +311,19 @@ describe("Tool Results with Images", () => {
 		});
 	});
 
+	describe.skipIf(!process.env.BASETEN_API_KEY)("Baseten Provider (Kimi-K2.6)", () => {
+		const llm = getModel("baseten", "moonshotai/Kimi-K2.6");
+		const options = { reasoningEffort: "high" } satisfies StreamOptionsWithExtras;
+
+		it("should handle tool result with only image", { retry: 3, timeout: 30000 }, async () => {
+			await handleToolWithImageResult(llm, options);
+		});
+
+		it("should handle tool result with text and image", { retry: 3, timeout: 30000 }, async () => {
+			await handleToolWithTextAndImageResult(llm, options);
+		});
+	});
+
 	describe.skipIf(!process.env.XIAOMI_API_KEY)("Xiaomi MiMo (API billing) Provider (mimo-v2.5-pro)", () => {
 		const llm = getModel("xiaomi", "mimo-v2.5-pro");
 
@@ -380,6 +393,42 @@ describe("Tool Results with Images", () => {
 			});
 		},
 	);
+
+	describe.skipIf(!process.env.QWEN_TOKEN_PLAN_API_KEY)("Qwen Token Plan Provider (qwen3.7-max)", () => {
+		const llm = getModel("qwen-token-plan", "qwen3.7-max");
+
+		it("should handle tool result with only image", { retry: 3, timeout: 30000 }, async () => {
+			await handleToolWithImageResult(llm);
+		});
+
+		it("should handle tool result with text and image", { retry: 3, timeout: 30000 }, async () => {
+			await handleToolWithTextAndImageResult(llm);
+		});
+	});
+
+	describe.skipIf(!process.env.QWEN_TOKEN_PLAN_API_KEY)("Qwen Token Plan Individual Provider (qwen3.8-max)", () => {
+		const llm = getModel("qwen-token-plan-individual", "qwen3.8-max");
+
+		it("should handle tool result with only image", { retry: 3, timeout: 30000 }, async () => {
+			await handleToolWithImageResult(llm);
+		});
+
+		it("should handle tool result with text and image", { retry: 3, timeout: 30000 }, async () => {
+			await handleToolWithTextAndImageResult(llm);
+		});
+	});
+
+	describe.skipIf(!process.env.QWEN_TOKEN_PLAN_CN_API_KEY)("Qwen Token Plan (CN) Provider (qwen3.7-max)", () => {
+		const llm = getModel("qwen-token-plan-cn", "qwen3.7-max");
+
+		it("should handle tool result with only image", { retry: 3, timeout: 30000 }, async () => {
+			await handleToolWithImageResult(llm);
+		});
+
+		it("should handle tool result with text and image", { retry: 3, timeout: 30000 }, async () => {
+			await handleToolWithTextAndImageResult(llm);
+		});
+	});
 
 	describe.skipIf(!process.env.KIMI_API_KEY)("Kimi For Coding Provider (kimi-for-coding)", () => {
 		const llm = getModel("kimi-coding", "kimi-for-coding");

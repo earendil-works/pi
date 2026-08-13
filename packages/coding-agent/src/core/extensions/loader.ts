@@ -8,8 +8,10 @@ import { createRequire } from "node:module";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import * as _bundledPiAgentCore from "@earendil-works/pi-agent-core";
+import type { Provider } from "@earendil-works/pi-ai";
 import * as _bundledPiAiCompat from "@earendil-works/pi-ai/compat";
 import * as _bundledPiAiOauth from "@earendil-works/pi-ai/oauth";
+import * as _bundledPiAiProviders from "@earendil-works/pi-ai/providers/all";
 import type { KeyId } from "@earendil-works/pi-tui";
 import * as _bundledPiTui from "@earendil-works/pi-tui";
 import { createJiti } from "jiti/static";
@@ -27,13 +29,17 @@ import { resolvePath } from "../../utils/paths.ts";
 import { createEventBus, type EventBus } from "../event-bus.ts";
 import type { ExecOptions } from "../exec.ts";
 import { execCommand } from "../exec.ts";
+import { readPiManifest } from "../pi-manifest.ts";
 import { createSyntheticSourceInfo } from "../source-info.ts";
+import { time } from "../timings.ts";
 import type {
+	EntryRenderer,
 	Extension,
 	ExtensionAPI,
 	ExtensionFactory,
 	ExtensionRuntime,
 	LoadExtensionsResult,
+	MarkdownTransformer,
 	MessageRenderer,
 	ProviderConfig,
 	RegisteredCommand,
@@ -56,19 +62,23 @@ const VIRTUAL_MODULES: Record<string, unknown> = {
 	"@earendil-works/pi-ai": _bundledPiAiCompat,
 	"@earendil-works/pi-ai/compat": _bundledPiAiCompat,
 	"@earendil-works/pi-ai/oauth": _bundledPiAiOauth,
+	"@earendil-works/pi-ai/providers/all": _bundledPiAiProviders,
 	"@earendil-works/pi-coding-agent": _bundledPiCodingAgent,
 	"@mariozechner/pi-agent-core": _bundledPiAgentCore,
 	"@mariozechner/pi-tui": _bundledPiTui,
 	"@mariozechner/pi-ai": _bundledPiAiCompat,
 	"@mariozechner/pi-ai/compat": _bundledPiAiCompat,
 	"@mariozechner/pi-ai/oauth": _bundledPiAiOauth,
+	"@mariozechner/pi-ai/providers/all": _bundledPiAiProviders,
 	"@mariozechner/pi-coding-agent": _bundledPiCodingAgent,
 };
 
 const require = createRequire(import.meta.url);
 
+const isTypeScriptSourceRuntime = !isBunBinary && path.extname(fileURLToPath(import.meta.url)) === ".ts";
+
 /**
- * Get aliases for jiti (used in Node.js/development mode).
+ * Get aliases for jiti (used in built Node.js mode).
  * In Bun binary mode, virtualModules is used instead.
  */
 let _aliases: Record<string, string> | null = null;
@@ -100,20 +110,26 @@ function getAliases(): Record<string, string> {
 	// global API keep working at runtime until compat is removed.
 	const piAiCompatEntry = resolveWorkspaceOrImport("ai/dist/compat.js", "@earendil-works/pi-ai/compat");
 	const piAiOauthEntry = resolveWorkspaceOrImport("ai/dist/oauth.js", "@earendil-works/pi-ai/oauth");
+	const piAiProvidersEntry = resolveWorkspaceOrImport(
+		"ai/dist/providers/all.js",
+		"@earendil-works/pi-ai/providers/all",
+	);
 
 	_aliases = {
 		"@earendil-works/pi-coding-agent": piCodingAgentEntry,
 		"@earendil-works/pi-agent-core": piAgentCoreEntry,
 		"@earendil-works/pi-tui": piTuiEntry,
-		"@earendil-works/pi-ai": piAiCompatEntry,
+		"@earendil-works/pi-ai/providers/all": piAiProvidersEntry,
 		"@earendil-works/pi-ai/compat": piAiCompatEntry,
 		"@earendil-works/pi-ai/oauth": piAiOauthEntry,
+		"@earendil-works/pi-ai": piAiCompatEntry,
 		"@mariozechner/pi-coding-agent": piCodingAgentEntry,
 		"@mariozechner/pi-agent-core": piAgentCoreEntry,
 		"@mariozechner/pi-tui": piTuiEntry,
-		"@mariozechner/pi-ai": piAiCompatEntry,
+		"@mariozechner/pi-ai/providers/all": piAiProvidersEntry,
 		"@mariozechner/pi-ai/compat": piAiCompatEntry,
 		"@mariozechner/pi-ai/oauth": piAiOauthEntry,
+		"@mariozechner/pi-ai": piAiCompatEntry,
 		typebox: typeboxEntry,
 		"typebox/compile": typeboxCompileEntry,
 		"typebox/value": typeboxValueEntry,
@@ -160,6 +176,7 @@ export function createExtensionRuntime(): ExtensionRuntime {
 		throw new Error("Extension runtime not initialized. Action methods cannot be called during extension loading.");
 	};
 	const state: { staleMessage?: string } = {};
+	const eventBusUnsubscribers = new Set<() => void>();
 	const assertActive = () => {
 		if (state.staleMessage) {
 			throw new Error(state.staleMessage);
@@ -184,19 +201,40 @@ export function createExtensionRuntime(): ExtensionRuntime {
 		setThinkingLevel: notInitialized,
 		flagValues: new Map(),
 		pendingProviderRegistrations: [],
+		pendingNativeProviderRegistrations: [],
 		assertActive,
 		invalidate: (message) => {
-			state.staleMessage ??=
+			if (state.staleMessage) return;
+			state.staleMessage =
 				message ??
 				"This extension ctx is stale after session replacement or reload. Do not use a captured pi or command ctx after ctx.newSession(), ctx.fork(), ctx.switchSession(), or ctx.reload(). For newSession, fork, and switchSession, move post-replacement work into withSession and use the ctx passed to withSession. For reload, do not use the old ctx after await ctx.reload().";
+			for (const unsubscribe of eventBusUnsubscribers) unsubscribe();
+			eventBusUnsubscribers.clear();
+		},
+		trackEventBusSubscription: (unsubscribe) => {
+			let active = true;
+			const trackedUnsubscribe = () => {
+				if (!active) return;
+				active = false;
+				eventBusUnsubscribers.delete(trackedUnsubscribe);
+				unsubscribe();
+			};
+			eventBusUnsubscribers.add(trackedUnsubscribe);
+			return trackedUnsubscribe;
 		},
 		// Pre-bind: queue registrations so bindCore() can flush them once the
 		// model registry is available. bindCore() replaces both with direct calls.
 		registerProvider: (name, config, extensionPath = "<unknown>") => {
 			runtime.pendingProviderRegistrations.push({ name, config, extensionPath });
 		},
+		registerNativeProvider: (provider, extensionPath = "<unknown>") => {
+			runtime.pendingNativeProviderRegistrations.push({ provider, extensionPath });
+		},
 		unregisterProvider: (name) => {
 			runtime.pendingProviderRegistrations = runtime.pendingProviderRegistrations.filter((r) => r.name !== name);
+			runtime.pendingNativeProviderRegistrations = runtime.pendingNativeProviderRegistrations.filter(
+				(r) => r.provider.id !== name,
+			);
 		},
 	};
 
@@ -266,6 +304,17 @@ function createExtensionAPI(
 		registerMessageRenderer<T>(customType: string, renderer: MessageRenderer<T>): void {
 			runtime.assertActive();
 			extension.messageRenderers.set(customType, renderer as MessageRenderer);
+		},
+
+		registerMarkdownTransformer(transformer: MarkdownTransformer): void {
+			runtime.assertActive();
+			extension.markdownTransformer = transformer;
+		},
+
+		registerEntryRenderer<T>(customType: string, renderer: EntryRenderer<T>): void {
+			runtime.assertActive();
+			extension.entryRenderers ??= new Map();
+			extension.entryRenderers.set(customType, renderer as EntryRenderer);
 		},
 
 		// Flag access - checks extension registered it, reads from runtime
@@ -346,9 +395,14 @@ function createExtensionAPI(
 			runtime.setThinkingLevel(level);
 		},
 
-		registerProvider(name: string, config: ProviderConfig) {
+		registerProvider(providerOrName: Provider | string, config?: ProviderConfig) {
 			runtime.assertActive();
-			runtime.registerProvider(name, config, extension.path);
+			if (typeof providerOrName === "string") {
+				if (!config) throw new Error("Provider config is required when registering by name");
+				runtime.registerProvider(providerOrName, config, extension.path);
+				return;
+			}
+			runtime.registerNativeProvider(providerOrName, extension.path);
 		},
 
 		unregisterProvider(name: string) {
@@ -356,7 +410,16 @@ function createExtensionAPI(
 			runtime.unregisterProvider(name, extension.path);
 		},
 
-		events: eventBus,
+		events: {
+			emit(channel, data) {
+				runtime.assertActive();
+				eventBus.emit(channel, data);
+			},
+			on(channel, handler) {
+				runtime.assertActive();
+				return runtime.trackEventBusSubscription(eventBus.on(channel, handler));
+			},
+		},
 	} as ExtensionAPI;
 
 	return api;
@@ -380,10 +443,13 @@ async function loadExtensionModule(extensionPath: string, cacheToken?: Extension
 
 	const jiti = createJiti(import.meta.url, {
 		moduleCache: false,
-		// In Bun binary: use virtualModules for bundled packages (no filesystem resolution)
-		// Also disable tryNative so jiti handles ALL imports (not just the entry point)
-		// In Node.js/dev: use aliases to resolve to node_modules paths
-		...(isBunBinary ? { virtualModules: VIRTUAL_MODULES, tryNative: false } : { alias: getAliases() }),
+		// Bun uses modules embedded in the executable. Source TypeScript reuses the
+		// host-resolved modules and root tsconfig paths. Built Node uses dist aliases.
+		...(isBunBinary
+			? { virtualModules: VIRTUAL_MODULES, tryNative: false }
+			: isTypeScriptSourceRuntime
+				? { virtualModules: VIRTUAL_MODULES, tsconfigPaths: true }
+				: { alias: getAliases() }),
 	});
 
 	const module = await jiti.import(extensionPath, { default: true });
@@ -414,6 +480,7 @@ function createExtension(extensionPath: string, resolvedPath: string): Extension
 		handlers: new Map(),
 		tools: new Map(),
 		messageRenderers: new Map(),
+		entryRenderers: new Map(),
 		commands: new Map(),
 		flags: new Map(),
 		shortcuts: new Map(),
@@ -431,6 +498,7 @@ async function loadExtension(
 
 	try {
 		const factory = await loadExtensionModule(resolvedPath, cacheToken);
+		time(`${extensionPath} module import`, "extensions");
 		if (!factory) {
 			return { extension: null, error: `Extension does not export a valid factory function: ${extensionPath}` };
 		}
@@ -438,6 +506,7 @@ async function loadExtension(
 		const extension = createExtension(extensionPath, resolvedPath);
 		const api = createExtensionAPI(extension, runtime, cwd, eventBus);
 		await factory(api);
+		time(`${extensionPath} factory`, "extensions");
 
 		return { extension, error: null };
 	} catch (err) {
@@ -460,6 +529,7 @@ export async function loadExtensionFromFactory(
 	const resolvedCwd = resolvePath(cwd);
 	const api = createExtensionAPI(extension, runtime, resolvedCwd, eventBus);
 	await factory(api);
+	time(`${extensionPath} factory`, "extensions");
 	return extension;
 }
 
@@ -522,26 +592,6 @@ export async function loadExtensionsCached(
 	runtime?: ExtensionRuntime,
 ): Promise<LoadExtensionsResult> {
 	return loadExtensionsInternal(paths, cwd, eventBus, runtime, true);
-}
-
-interface PiManifest {
-	extensions?: string[];
-	themes?: string[];
-	skills?: string[];
-	prompts?: string[];
-}
-
-function readPiManifest(packageJsonPath: string): PiManifest | null {
-	try {
-		const content = fs.readFileSync(packageJsonPath, "utf-8");
-		const pkg = JSON.parse(content);
-		if (pkg.pi && typeof pkg.pi === "object") {
-			return pkg.pi as PiManifest;
-		}
-		return null;
-	} catch {
-		return null;
-	}
 }
 
 function isExtensionFile(name: string): boolean {

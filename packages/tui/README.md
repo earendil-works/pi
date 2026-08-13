@@ -4,25 +4,27 @@ Minimal terminal UI framework with differential rendering and synchronized outpu
 
 ## Features
 
-- **Differential Rendering**: Three-strategy rendering system that only updates what changed
+- **Interchangeable Renderers**: Shared `TUI` interface with main-screen and alternate-screen implementations
+- **Differential Rendering**: Updates only changed lines or viewport rows
+- **Application-owned Scrolling**: Alternate-screen viewport supports mouse, trackpad, and keyboard navigation
 - **Synchronized Output**: Uses CSI 2026 for atomic screen updates (no flicker)
 - **Bracketed Paste Mode**: Handles large pastes correctly with markers for >10 line pastes
 - **Component-based**: Simple Component interface with render() method
 - **Theme Support**: Components accept theme interfaces for customizable styling
-- **Built-in Components**: Text, TruncatedText, Input, Editor, Markdown, Loader, SelectList, SettingsList, Spacer, Image, Box, Container
+- **Built-in Components**: Text, TruncatedText, Input, Editor, Markdown, Loader, SelectList, SettingsList, Spacer, Image, Box, Container, VStack, HStack, ScrollView
 - **Inline Images**: Renders images in terminals that support Kitty or iTerm2 graphics protocols
 - **Autocomplete Support**: File paths and slash commands
 
 ## Quick Start
 
 ```typescript
-import { TUI, Text, Editor, ProcessTerminal, matchesKey } from "@earendil-works/pi-tui";
+import { type TUI, Text, Editor, ProcessTerminal, TuiMainScreen, matchesKey } from "@earendil-works/pi-tui";
 
 // Create terminal
 const terminal = new ProcessTerminal();
 
-// Create TUI
-const tui = new TUI(terminal);
+// Create the default main-screen renderer through the shared TUI interface
+const tui: TUI = new TuiMainScreen(terminal);
 
 // Add components
 tui.addChild(new Text("Welcome to my app!"));
@@ -52,12 +54,20 @@ tui.start();
 
 ## Core API
 
-### TUI
+### TUI interface and renderers
 
-Main container that manages components and rendering.
+`TUI` is the shared interface for component management, focus, overlays, input, lifecycle, terminal queries, and rendering. Choose a concrete renderer only when constructing the application:
+
+- `TuiMainScreen` renders into the main terminal buffer and preserves terminal scrollback.
+- `TuiAltScreen` renders a fixed-height viewport in the alternate terminal buffer with application-owned scrolling. When stopped, it restores the main buffer and prints the complete final document.
 
 ```typescript
-const tui = new TUI(terminal);
+import { type TUI, TuiAltScreen, TuiMainScreen } from "@earendil-works/pi-tui";
+
+const tui: TUI = new TuiMainScreen(terminal);
+// To use an application-owned viewport in the alternate terminal buffer instead:
+// const tui: TUI = new TuiAltScreen(terminal);
+
 tui.addChild(component);
 tui.removeChild(component);
 tui.start();
@@ -67,6 +77,53 @@ tui.requestRender(); // Request a re-render
 // Global debug key handler (Shift+Ctrl+D)
 tui.onDebug = () => console.log("Debug triggered");
 ```
+
+### Alternate-screen viewport layouts
+
+`TuiAltScreen` can render an explicit terminal-height layout. `VStack` and `HStack` allocate constrained regions, while `ScrollView` owns scrolling for one region. These semantics are intentionally unavailable on `TuiMainScreen`, where the terminal owns scrollback.
+
+```typescript
+import {
+  Container,
+  isViewportTUI,
+  ScrollView,
+  Text,
+  VStack,
+} from "@earendil-works/pi-tui";
+
+const transcript = new Container();
+transcript.addChild(new Text("History"));
+
+const editorAndFooter = new VStack([
+  editor,
+  new Text("status"),
+]);
+
+if (isViewportTUI(tui)) {
+  tui.setLayoutRoot(new VStack([
+    {
+      component: new ScrollView(transcript, {
+        follow: "end",
+        primary: true,
+        overscroll: "chain",
+      }),
+      basis: 0,
+      grow: 1,
+      minSize: 1,
+    },
+    {
+      component: editorAndFooter,
+      basis: "auto",
+      shrink: 1,
+      minSize: 1,
+    },
+  ]));
+}
+```
+
+Stack entries support `basis`, `grow`, `shrink`, `minSize`, `maxSize`, and responsive `visible` callbacks. Mouse-wheel input targets the scroll view under the pointer and unused delta chains to outer scroll views by default. The primary scroll view receives the alternate-screen keyboard navigation actions and wheel input over non-scrollable regions. It can also jump between OSC 133 semantic prompt markers, matching common terminal prompt-navigation shortcuts. Press `Ctrl+Shift+F` to search its rendered content, `Enter`/`Ctrl+G` and `Shift+Enter`/`Ctrl+Shift+G` to move between matches, and `Escape` to close search. `TuiAltScreenOptions.searchMatchStyle` and `searchCurrentMatchStyle` customize match highlighting.
+
+Layout geometry is rebuilt for each requested frame. Stateful components are retained, and their existing rendered-line caches remain effective. Calling `render(width)` directly on these layout components produces an unbounded document, which is also used when alt mode restores the main screen.
 
 ### Overlays
 
@@ -190,7 +247,7 @@ When a `Focusable` component has focus, TUI:
 3. Positions the hardware terminal cursor at that location
 4. Shows the hardware cursor only when `showHardwareCursor` is enabled
 
-The cursor remains hidden by default. This keeps the fake cursor rendering, while still positioning the hardware cursor for terminals that track IME candidate windows with hidden cursors. Some terminals require a visible hardware cursor for IME positioning; enable it with the `TUI` constructor option, `setShowHardwareCursor(true)`, or `PI_HARDWARE_CURSOR=1`. The `Editor` and `Input` built-in components already implement this interface.
+The cursor remains hidden by default. This keeps the fake cursor rendering, while still positioning the hardware cursor for terminals that track IME candidate windows with hidden cursors. Some terminals require a visible hardware cursor for IME positioning; enable it with the renderer constructor's `showHardwareCursor` argument, `setShowHardwareCursor(true)`, or `PI_HARDWARE_CURSOR=1`. The `Editor` and `Input` built-in components already implement this interface.
 
 **Container components with embedded inputs:** When a container component (dialog, selector, etc.) contains an `Input` or `Editor` child, the container must implement `Focusable` and propagate the focus state to the child:
 
@@ -535,6 +592,10 @@ tui.addChild(image);
 
 Supported formats: PNG, JPEG, GIF, WebP. Dimensions are parsed from the image headers automatically.
 
+#### Alternate-screen image compatibility
+
+`TuiAltScreen` supports inline images and partial viewport cropping in terminals that implement the Kitty graphics protocol, including Kitty and Ghostty. iTerm2's inline-image protocol does not provide operations to delete an existing placement or crop its source while scrolling. To prevent stale images from remaining over repainted content, `TuiAltScreen` renders image components as text placeholders in iTerm2. `TuiMainScreen` continues to render iTerm2 inline images normally.
+
 ## Autocomplete
 
 ### CombinedAutocompleteProvider
@@ -588,15 +649,17 @@ if (matchesKey(data, Key.enter)) {
 - With modifiers: `Key.ctrl("c")`, `Key.shift("tab")`, `Key.alt("left")`, `Key.ctrlShift("p")`
 - String format also works: `"enter"`, `"ctrl+c"`, `"shift+tab"`, `"ctrl+shift+p"`
 
-## Differential Rendering
+## Rendering modes
 
-The TUI uses three rendering strategies:
+`TuiMainScreen` uses three rendering strategies:
 
 1. **First Render**: Output all lines without clearing scrollback
-2. **Width Changed or Change Above Viewport**: Clear screen and full re-render
-3. **Normal Update**: Move cursor to first changed line, clear to end, render changed lines
+2. **Width Changed or Change Above Viewport**: Clear screen and fully re-render
+3. **Normal Update**: Move the cursor to the first changed line, clear to the end, and render changed lines
 
-All updates are wrapped in **synchronized output** (`\x1b[?2026h` ... `\x1b[?2026l`) for atomic, flicker-free rendering.
+`TuiAltScreen` owns a terminal-height viewport. Without an explicit layout root it preserves the legacy single-document scrolling behavior. With `setLayoutRoot()`, `VStack`, `HStack`, and nested `ScrollView` components can reserve fixed regions and independently scroll constrained regions. It updates changed viewport rows in place, follows streaming output while at the bottom, and preserves a manually selected scroll position while content grows. Mouse-wheel and configurable keyboard navigation scroll without modifying terminal scrollback, including jumps between OSC 133 semantic prompt markers. Clicking an OSC 8 hyperlink opens it with the configured URL handler. Dragging with the primary mouse button selects text and copies it to the clipboard with OSC 52; holding the drag at a scroll view's top or bottom edge auto-scrolls and extends the selection into off-screen content. Kitty images support vertical viewport cropping; iTerm2 inline images fall back to text because the iTerm2 protocol cannot delete or crop placements during viewport repainting.
+
+Both renderers wrap updates in **synchronized output** (`\x1b[?2026h` ... `\x1b[?2026l`) for atomic, flicker-free rendering.
 
 ## Terminal Interface
 

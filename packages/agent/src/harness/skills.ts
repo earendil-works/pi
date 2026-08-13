@@ -142,7 +142,7 @@ async function loadSkillsFromDirInternal(
 		const relPath = relativeEnvPath(rootDir, fullPath);
 		if (ignoreMatcher.ignores(relPath)) continue;
 
-		const result = await loadSkillFromFile(env, fullPath);
+		const result = await loadSkillFromFile(env, fullPath, dirInfo.name);
 		if (result.skill) skills.push(result.skill);
 		diagnostics.push(...result.diagnostics);
 		return { skills, diagnostics };
@@ -166,7 +166,7 @@ async function loadSkillsFromDirInternal(
 		}
 
 		if (kind !== "file" || !includeRootFiles || !entry.name.endsWith(".md")) continue;
-		const result = await loadSkillFromFile(env, fullPath);
+		const result = await loadSkillFromFile(env, fullPath, dirInfo.name);
 		if (result.skill) skills.push(result.skill);
 		diagnostics.push(...result.diagnostics);
 	}
@@ -185,7 +185,17 @@ async function addIgnoreRules(
 	const prefix = relativeDir ? `${relativeDir}/` : "";
 
 	for (const filename of IGNORE_FILE_NAMES) {
-		const ignorePath = joinEnvPath(dir, filename);
+		const ignorePathResult = await env.joinPath([dir, filename]);
+		if (!ignorePathResult.ok) {
+			diagnostics.push({
+				type: "warning",
+				code: "file_info_failed",
+				message: ignorePathResult.error.message,
+				path: dir,
+			});
+			continue;
+		}
+		const ignorePath = ignorePathResult.value;
 		const info = await env.fileInfo(ignorePath);
 		if (!info.ok) {
 			if (info.error.code !== "not_found") {
@@ -233,6 +243,7 @@ function prefixIgnorePattern(line: string, prefix: string): string | null {
 async function loadSkillFromFile(
 	env: ExecutionEnv,
 	filePath: string,
+	parentDirName: string,
 ): Promise<{ skill: Skill | null; diagnostics: SkillDiagnostic[] }> {
 	const diagnostics: SkillDiagnostic[] = [];
 	const rawContent = await env.readTextFile(filePath);
@@ -248,8 +259,6 @@ async function loadSkillFromFile(
 	}
 
 	const { frontmatter, body } = parsed.value;
-	const skillDir = dirnameEnvPath(filePath);
-	const parentDirName = basenameEnvPath(skillDir);
 	const description = typeof frontmatter.description === "string" ? frontmatter.description : undefined;
 
 	for (const error of validateDescription(description)) {
@@ -349,25 +358,16 @@ async function resolveKind(
 	return target.value.kind === "file" || target.value.kind === "directory" ? target.value.kind : undefined;
 }
 
-function joinEnvPath(base: string, child: string): string {
-	return `${base.replace(/\/+$/, "")}/${child.replace(/^\/+/, "")}`;
-}
-
 function dirnameEnvPath(path: string): string {
-	const normalized = path.replace(/\/+$/, "");
-	const slashIndex = normalized.lastIndexOf("/");
-	return slashIndex <= 0 ? "/" : normalized.slice(0, slashIndex);
-}
-
-function basenameEnvPath(path: string): string {
-	const normalized = path.replace(/\/+$/, "");
-	const slashIndex = normalized.lastIndexOf("/");
-	return slashIndex === -1 ? normalized : normalized.slice(slashIndex + 1);
+	const normalized = path.replace(/[\\/]+$/, "");
+	const separatorIndex = Math.max(normalized.lastIndexOf("/"), normalized.lastIndexOf("\\"));
+	if (separatorIndex === 2 && normalized[1] === ":") return normalized.slice(0, 3);
+	return separatorIndex <= 0 ? "/" : normalized.slice(0, separatorIndex);
 }
 
 function relativeEnvPath(root: string, path: string): string {
-	const normalizedRoot = root.replace(/\/+$/, "");
-	const normalizedPath = path.replace(/\/+$/, "");
+	const normalizedRoot = root.replace(/\\/g, "/").replace(/\/+$/, "");
+	const normalizedPath = path.replace(/\\/g, "/").replace(/\/+$/, "");
 	if (normalizedPath === normalizedRoot) return "";
 	return normalizedPath.startsWith(`${normalizedRoot}/`)
 		? normalizedPath.slice(normalizedRoot.length + 1)

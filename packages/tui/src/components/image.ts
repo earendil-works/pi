@@ -8,6 +8,7 @@ import {
 	renderImage,
 } from "../terminal-image.ts";
 import type { Component } from "../tui.ts";
+import { truncateToWidth } from "../utils.ts";
 
 export interface ImageTheme {
 	fallbackColor: (str: string) => string;
@@ -111,11 +112,11 @@ export class Image implements Component {
 				}
 			} else {
 				const fallback = imageFallback(this.mimeType, this.dimensions, this.options.filename);
-				lines = [this.theme.fallbackColor(fallback)];
+				lines = [truncateToWidth(this.theme.fallbackColor(fallback), width)];
 			}
 		} else {
 			const fallback = imageFallback(this.mimeType, this.dimensions, this.options.filename);
-			lines = [this.theme.fallbackColor(fallback)];
+			lines = [truncateToWidth(this.theme.fallbackColor(fallback), width)];
 		}
 
 		this.cachedLines = lines;

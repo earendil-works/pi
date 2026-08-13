@@ -2,9 +2,26 @@
 
 Pi uses the [Kitty keyboard protocol](https://sw.kovidgoyal.net/kitty/keyboard-protocol/) for reliable modifier key detection. Most modern terminals support this protocol, but some require configuration.
 
-## Kitty, iTerm2
+## Kitty
 
-Work out of the box.
+Works out of the box.
+
+## iTerm2
+
+### Regular TUI mode
+
+Works out of the box.
+
+### Fullscreen TUI mode
+
+Pi owns the viewport, so iTerm2 sends mouse-wheel reports instead of scrolling its native scrollback. With iTerm2's default fast-trackpad behavior, those reports can lose most of an accelerated wheel delta, making fullscreen scrolling much slower than regular scrolling.
+
+If fast mouse-wheel gestures move only about one line at a time in fullscreen mode:
+
+1. Open **iTerm2 → Settings → Advanced**.
+2. Search for **Trackpad scrolls fast?** and set it to **No**.
+
+This is an iTerm2-wide workaround and may also change native trackpad scrolling. The underlying behavior is tracked in [iTerm2 issue 9619](https://gitlab.com/gnachman/iterm2/-/work_items/9619).
 
 ## Apple Terminal
 
@@ -31,6 +48,10 @@ That mapping sends a raw linefeed byte. Inside pi, that is indistinguishable fro
 If Claude Code 2.x or newer is the only reason you added that mapping, you can remove it, unless you want to use Claude Code in tmux, where it still requires that Ghostty mapping.
 
 Pi binds `Ctrl+J` as a default newline alias, so `Shift+Enter` keeps working in tmux via that remap without extra pi configuration.
+
+### Fullscreen TUI mode
+
+In fullscreen mode, links remain clickable, but Ghostty does not show its hover underline or lower-left URL preview while pi captures mouse input. Hold `Shift+Command` on macOS or `Shift+Ctrl` on Linux to use Ghostty's native link handling.
 
 ## WezTerm
 

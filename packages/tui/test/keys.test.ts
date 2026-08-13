@@ -431,6 +431,10 @@ describe("matchesKey", () => {
 			assert.strictEqual(parseKey("\x1ba"), "alt+a");
 			assert.strictEqual(matchesKey("\x1b1", "alt+1"), true);
 			assert.strictEqual(parseKey("\x1b1"), "alt+1");
+			assert.strictEqual(matchesKey("\x1b,", "alt+,"), true);
+			assert.strictEqual(parseKey("\x1b,"), "alt+,");
+			assert.strictEqual(matchesKey("\x1b.", "alt+."), true);
+			assert.strictEqual(parseKey("\x1b."), "alt+.");
 			assert.strictEqual(matchesKey("\x1by", "alt+y"), true);
 			assert.strictEqual(parseKey("\x1by"), "alt+y");
 			assert.strictEqual(matchesKey("\x1bz", "alt+z"), true);
@@ -451,6 +455,10 @@ describe("matchesKey", () => {
 			assert.strictEqual(parseKey("\x1ba"), undefined);
 			assert.strictEqual(matchesKey("\x1b1", "alt+1"), false);
 			assert.strictEqual(parseKey("\x1b1"), undefined);
+			assert.strictEqual(matchesKey("\x1b,", "alt+,"), false);
+			assert.strictEqual(parseKey("\x1b,"), undefined);
+			assert.strictEqual(matchesKey("\x1b.", "alt+."), false);
+			assert.strictEqual(parseKey("\x1b."), undefined);
 			assert.strictEqual(matchesKey("\x1by", "alt+y"), false);
 			assert.strictEqual(parseKey("\x1by"), undefined);
 			setKittyProtocolActive(false);
@@ -470,6 +478,17 @@ describe("matchesKey", () => {
 			assert.strictEqual(matchesKey("\x1bOD", "left"), true);
 			assert.strictEqual(matchesKey("\x1bOH", "home"), true);
 			assert.strictEqual(matchesKey("\x1bOF", "end"), true);
+		});
+
+		it("should match xterm Ctrl-modified viewport navigation", () => {
+			assert.strictEqual(matchesKey("\x1b[1;5H", "ctrl+home"), true);
+			assert.strictEqual(matchesKey("\x1b[1;5F", "ctrl+end"), true);
+			assert.strictEqual(matchesKey("\x1b[5;5~", "ctrl+pageUp"), true);
+			assert.strictEqual(matchesKey("\x1b[6;5~", "ctrl+pageDown"), true);
+			assert.strictEqual(parseKey("\x1b[1;5H"), "ctrl+home");
+			assert.strictEqual(parseKey("\x1b[1;5F"), "ctrl+end");
+			assert.strictEqual(parseKey("\x1b[5;5~"), "ctrl+pageUp");
+			assert.strictEqual(parseKey("\x1b[6;5~"), "ctrl+pageDown");
 		});
 
 		it("should match legacy function keys and clear", () => {

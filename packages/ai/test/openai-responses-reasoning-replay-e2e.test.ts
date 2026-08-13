@@ -90,7 +90,7 @@ describe.skipIf(!process.env.OPENAI_API_KEY || !process.env.ANTHROPIC_API_KEY)(
 			// 6. With fix: tool calls/results converted to text, conversation continues
 
 			const modelA = getModel("openai", "gpt-5-mini");
-			const modelB = getModel("openai", "gpt-5.2-codex");
+			const modelB = getModel("openai", "gpt-5.5");
 
 			const apiKey = getEnvApiKey("openai");
 			if (!apiKey) {
@@ -189,7 +189,7 @@ describe.skipIf(!process.env.OPENAI_API_KEY || !process.env.ANTHROPIC_API_KEY)(
 			// 5. Should work because foreign IDs have no pairing expectation
 
 			const anthropicModel = getModel("anthropic", "claude-sonnet-4-5");
-			const codexModel = getModel("openai", "gpt-5.2-codex");
+			const codexModel = getModel("openai", "gpt-5.5");
 
 			const anthropicApiKey = getEnvApiKey("anthropic");
 			const openaiApiKey = getEnvApiKey("openai");

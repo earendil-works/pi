@@ -1,5 +1,4 @@
-import type { Api, ImagesApi, ImagesModel, Model, ProviderEnv, ProviderHeaders } from "../types.ts";
-import type { OAuthCredentials } from "../utils/oauth/types.ts";
+import type { ProviderEnv, ProviderHeaders } from "../types.ts";
 
 /**
  * Request auth for a single model request. If a value cannot be expressed as
@@ -21,13 +20,32 @@ export interface ApiKeyCredential {
 	env?: ProviderEnv;
 }
 
-/** Stored OAuth credential (`access`, `refresh`, `expires` from OAuthCredentials). */
+/** OAuth token data returned by extension compatibility flows. */
+export interface OAuthCredentials {
+	refresh: string;
+	access: string;
+	expires: number;
+	[key: string]: unknown;
+}
+
+/** Stored canonical OAuth credential. */
 export interface OAuthCredential extends OAuthCredentials {
 	type: "oauth";
 }
 
 /** One type-tagged credential per provider — the shape of today's auth.json. */
 export type Credential = ApiKeyCredential | OAuthCredential;
+
+/** Non-secret credential metadata for account/status enumeration. */
+export interface CredentialInfo {
+	providerId: string;
+	type: Credential["type"];
+}
+
+/** Optional cancellation for public auth and credential operations. */
+export interface AuthOperationOptions {
+	signal?: AbortSignal;
+}
 
 /**
  * App-owned credential storage, keyed by `Provider.id`, one credential per
@@ -49,7 +67,13 @@ export interface CredentialStore {
 	 * Read the stored credential, possibly expired. Display/status use;
 	 * resolved request auth comes from `Models.getAuth()`.
 	 */
-	read(providerId: string): Promise<Credential | undefined>;
+	read(providerId: string, options?: AuthOperationOptions): Promise<Credential | undefined>;
+
+	/**
+	 * List stored credential metadata without resolving or exposing secrets.
+	 * Implementations must not execute configured API-key commands while listing.
+	 */
+	list(options?: AuthOperationOptions): Promise<readonly CredentialInfo[]>;
 
 	/**
 	 * Serialized write — the only write path. `fn` sees the current credential
@@ -62,10 +86,11 @@ export interface CredentialStore {
 	modify(
 		providerId: string,
 		fn: (current: Credential | undefined) => Promise<Credential | undefined>,
+		options?: AuthOperationOptions,
 	): Promise<Credential | undefined>;
 
 	/** Remove a credential (logout). Implementations serialize this against `modify`. */
-	delete(providerId: string): Promise<void>;
+	delete(providerId: string, options?: AuthOperationOptions): Promise<void>;
 }
 
 /** Environment access for auth resolution. Injectable for tests and browsers. */
@@ -84,6 +109,13 @@ export interface AuthResult {
 	source?: string;
 }
 
+export interface AuthCheck {
+	source?: string;
+	type: "api_key" | "oauth";
+}
+
+export type AuthType = "api_key" | "oauth";
+
 /**
  * Prompt shown to the user during login. `signal` lets the flow cancel a
  * pending prompt when an out-of-band event resolves the step, e.g. a
@@ -97,7 +129,13 @@ export type AuthPrompt = { signal?: AbortSignal } & (
 	| { type: "manual_code"; message: string; placeholder?: string }
 );
 
+export interface AuthInfoLink {
+	url: string;
+	label?: string;
+}
+
 export type AuthEvent =
+	| { type: "info"; message: string; links?: readonly AuthInfoLink[] }
 	| { type: "auth_url"; url: string; instructions?: string }
 	| {
 			type: "device_code";
@@ -115,12 +153,15 @@ export type AuthEvent =
  * id). Rejects on cancel/abort. `signal` aborts the whole login flow;
  * per-prompt cancellation uses `AuthPrompt.signal`.
  */
-export interface AuthLoginCallbacks {
+export interface AuthInteraction {
 	signal?: AbortSignal;
 
 	prompt(prompt: AuthPrompt): Promise<string>;
 	notify(event: AuthEvent): void;
 }
+
+/** Normalized interaction passed to provider login implementations. */
+export type ProviderAuthInteraction = AuthInteraction & { signal: AbortSignal };
 
 /**
  * Api-key auth: stored key/provider env plus ambient sources (env vars, AWS
@@ -131,18 +172,29 @@ export interface ApiKeyAuth {
 	name: string;
 
 	/** Interactive setup (prompt for key/provider env). Absent = ambient-only. */
-	login?(callbacks: AuthLoginCallbacks): Promise<ApiKeyCredential>;
+	login?(interaction: ProviderAuthInteraction): Promise<ApiKeyCredential>;
+
+	/**
+	 * Optional side-effect-free availability check. Use this when `resolve()` may
+	 * execute commands or perform other request-time work. Missing means Models
+	 * checks availability by resolving auth.
+	 */
+	check?(input: {
+		ctx: AuthContext;
+		credential?: ApiKeyCredential;
+		signal: AbortSignal;
+	}): Promise<AuthCheck | undefined>;
 
 	/**
 	 * Resolve auth from the stored credential and/or ambient sources, merging
 	 * per field (`credential.key ?? env("...")`, `credential.env?.NAME ?? env("...")`).
-	 * undefined = not configured. Receives the chat or image-generation model
-	 * the request is for (both carry `provider` and `baseUrl`).
+	 * undefined = not configured. Resolution is provider-scoped; model-specific
+	 * endpoint preparation happens after auth has been resolved.
 	 */
 	resolve(input: {
-		model: Model<Api> | ImagesModel<ImagesApi>;
 		ctx: AuthContext;
 		credential?: ApiKeyCredential;
+		signal: AbortSignal;
 	}): Promise<AuthResult | undefined>;
 }
 
@@ -155,13 +207,19 @@ export interface OAuthAuth {
 	/** Display name, e.g. "Anthropic (Claude Pro/Max)". */
 	name: string;
 
-	login(callbacks: AuthLoginCallbacks): Promise<OAuthCredential>;
+	/** Whether access through this auth method is backed by a provider subscription. */
+	isSubscription?: boolean;
+
+	/** Selector label for the OAuth login option, e.g. "Sign in with SuperGrok or X Premium". */
+	loginLabel?: string;
+
+	login(interaction: ProviderAuthInteraction): Promise<OAuthCredential>;
 
 	/**
 	 * Exchange the refresh token. Network call; throws on failure
 	 * (invalid_grant etc.). `Models` runs this under the store lock.
 	 */
-	refresh(credential: OAuthCredential): Promise<OAuthCredential>;
+	refresh(credential: OAuthCredential, signal: AbortSignal): Promise<OAuthCredential>;
 
 	/**
 	 * Side-effect-free derivation of request auth from a valid credential.

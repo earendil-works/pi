@@ -29,8 +29,9 @@ Use `/trust` in interactive mode to save a project trust decision for future ses
 |---------|------|---------|-------------|
 | `defaultProvider` | string | - | Default provider (e.g., `"anthropic"`, `"openai"`) |
 | `defaultModel` | string | - | Default model ID |
-| `defaultThinkingLevel` | string | - | `"off"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"` |
+| `defaultThinkingLevel` | string | - | `"off"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"` |
 | `hideThinkingBlock` | boolean | `false` | Hide thinking blocks in output |
+| `showCacheMissNotices` | boolean | `false` | Show transcript notices for significant prompt-cache misses |
 | `thinkingBudgets` | object | - | Custom token budgets per thinking level |
 
 #### thinkingBudgets
@@ -51,6 +52,7 @@ Use `/trust` in interactive mode to save a project trust decision for future ses
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
 | `theme` | string | `"dark"` | Theme name (`"dark"`, `"light"`, or custom) |
+| `externalEditor` | string | `$VISUAL`, then `$EDITOR`, then Notepad on Windows or `nano` elsewhere | Command for Ctrl+G external editor; takes precedence over environment variables |
 | `quietStartup` | boolean | `false` | Hide startup header |
 | `defaultProjectTrust` | string | `"ask"` | Fallback project trust behavior: `"ask"`, `"always"`, or `"never"`. Global setting only |
 | `collapseChangelog` | boolean | `false` | Show condensed changelog after updates |
@@ -60,8 +62,20 @@ Use `/trust` in interactive mode to save a project trust decision for future ses
 | `doubleEscapeAction` | string | `"tree"` | Action for double-escape: `"tree"`, `"fork"`, or `"none"` |
 | `treeFilterMode` | string | `"default"` | Default filter for `/tree`: `"default"`, `"no-tools"`, `"user-only"`, `"labeled-only"`, `"all"` |
 | `editorPaddingX` | number | `0` | Horizontal padding for input editor (0-3) |
+| `outputPad` | number | `1` | Horizontal padding for user messages, assistant messages, and thinking (0 or 1) |
 | `autocompleteMaxVisible` | number | `5` | Max visible items in autocomplete dropdown (3-20) |
 | `showHardwareCursor` | boolean | `false` | Show the terminal cursor while TUI positions it for IME support |
+| `tuiMode` | string | `"regular"` | Interactive TUI mode: `"regular"` or experimental `"fullscreen"`. Changes from `/settings` apply immediately; `--tui-mode` overrides this setting at startup |
+| `fullscreenExitOutput` | string | `"transcript"` | Fullscreen exit output: `"transcript"` prints the final transcript and resume hint, while `"resume-hint"` restores the previous screen and prints only the resume hint. Has no effect in regular TUI mode |
+| `fullscreenScrollbar` | string | `"auto"` | Fullscreen transcript scrollbar: `"auto"` shows it temporarily while scrolling, `"always"` reserves the rightmost column and keeps it visible, and `"hidden"` hides it. Has no effect in regular TUI mode |
+
+For VS Code, include `--wait` so pi resumes after the editor exits:
+
+```json
+{
+  "externalEditor": "code --wait"
+}
+```
 
 ### Telemetry and update checks
 
@@ -131,7 +145,7 @@ Set `PI_SKIP_VERSION_CHECK=1` to disable the Pi version update check. Use `--off
 | `retry.provider.maxRetries` | number | `0` | Provider/SDK retry attempts |
 | `retry.provider.maxRetryDelayMs` | number | `60000` | Max server-requested delay before failing (60s) |
 
-When a provider requests a retry delay longer than `retry.provider.maxRetryDelayMs` (e.g., Google's "quota will reset after 5h"), the request fails immediately with an informative error instead of waiting silently. Set to `0` to disable the cap.
+When a provider requests a retry delay longer than `retry.provider.maxRetryDelayMs`, the request fails immediately with an informative error instead of waiting silently. Set it to `0` to disable the limit.
 
 Keep `retry.provider.maxRetries` at `0` unless provider-level retries are explicitly needed. Setting it above `0` can make SDK/provider retries handle out-of-usage-limit errors before Pi sees them, which may block the agent until the provider quota resets in some circumstances.
 
@@ -167,16 +181,30 @@ Keep `retry.provider.maxRetries` at `0` unless provider-level retries are explic
 | `terminal.showImages` | boolean | `true` | Show images in terminal (if supported) |
 | `terminal.imageWidthCells` | number | `60` | Preferred inline image width in terminal cells |
 | `terminal.clearOnShrink` | boolean | `false` | Clear empty rows when content shrinks (can cause flicker) |
-| `images.autoResize` | boolean | `true` | Resize images to 2000x2000 max |
+| `images.autoResize` | boolean | `true` | Resize images to 2000x2000 max. Applies to `@file` attachments, `read`, and images returned by tools |
 | `images.blockImages` | boolean | `false` | Block all images from being sent to LLM |
 
 ### Shell
 
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
-| `shellPath` | string | - | Custom shell path (e.g., for Cygwin on Windows) |
+| `shellPath` | string | - | Custom shell path (e.g., for Cygwin on Windows); supports a leading `~` for the home directory |
 | `shellCommandPrefix` | string | - | Prefix for every bash command (e.g., `"shopt -s expand_aliases"`) |
 | `npmCommand` | string[] | - | Command argv used for npm package lookup/install operations (e.g., `["mise", "exec", "node@20", "--", "npm"]`) |
+
+Windows paths in JSON must use forward slashes or escaped backslashes:
+
+```json
+{
+  "shellPath": "C:/Program Files/Git/bin/bash.exe"
+}
+```
+
+```json
+{
+  "shellPath": "C:\\Program Files\\Git\\bin\\bash.exe"
+}
+```
 
 ```json
 {
@@ -185,6 +213,22 @@ Keep `retry.provider.maxRetries` at `0` unless provider-level retries are explic
 ```
 
 `npmCommand` is used for all npm package-manager operations, including installs, uninstalls, and dependency installs inside git packages. User-scoped npm packages install under `~/.pi/agent/npm/`; project-scoped npm packages install under `.pi/npm/`. Use argv-style entries exactly as the process should be launched. When `npmCommand` is configured, git package dependency installs use plain `install` to avoid npm-specific flags in wrappers or alternate package managers.
+
+### Tools
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `defaultTools` | string[] | - | Built-in tools enabled initially. When omitted, Pi uses its standard defaults |
+
+`defaultTools` selects the built-in tools enabled at startup. Extension and SDK custom tools remain enabled:
+
+```json
+{
+  "defaultTools": ["bash", "edit", "write"]
+}
+```
+
+An empty array starts with no built-in tools while preserving extension and SDK custom tools. `--tools` replaces this behavior with a strict allowlist for all tools, `--no-tools` disables all tools, and `--no-builtin-tools` disables the built-in defaults. `--exclude-tools` filters the resulting list. A project `defaultTools` array replaces the global array.
 
 ### Sessions
 
@@ -215,6 +259,7 @@ When multiple sources specify a session directory, precedence is `--session-dir`
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
 | `markdown.codeBlockIndent` | string | `"  "` | Indentation for code blocks |
+| `markdown.mermaid` | string | `"streaming"` | Mermaid rendering mode: `"off"`, `"final"`, or `"streaming"` |
 
 ### Resources
 

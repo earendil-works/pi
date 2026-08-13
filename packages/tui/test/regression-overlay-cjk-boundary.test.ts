@@ -1,29 +1,7 @@
 import assert from "node:assert";
 import { describe, it } from "node:test";
-import { TUI } from "../src/tui.ts";
+import { compositeTuiLine } from "../src/tui.ts";
 import { extractSegments, sliceByColumn, visibleWidth } from "../src/utils.ts";
-import { VirtualTerminal } from "./virtual-terminal.ts";
-
-type TuiComposite = {
-	compositeLineAt(
-		baseLine: string,
-		overlayLine: string,
-		startCol: number,
-		overlayWidth: number,
-		totalWidth: number,
-	): string;
-};
-
-function compositeLineAt(
-	baseLine: string,
-	overlayLine: string,
-	startCol: number,
-	overlayWidth: number,
-	totalWidth: number,
-): string {
-	const tui = new TUI(new VirtualTerminal(totalWidth, 10)) as unknown as TuiComposite;
-	return tui.compositeLineAt(baseLine, overlayLine, startCol, overlayWidth, totalWidth);
-}
 
 describe("overlay CJK boundary regression", () => {
 	it("excludes a wide grapheme from before when overlay starts inside it", () => {
@@ -45,7 +23,7 @@ describe("overlay CJK boundary regression", () => {
 	});
 
 	it("composites an overlay at the requested column when it starts inside a wide grapheme", () => {
-		const out = compositeLineAt("abcd让EFGH", "│XX│", 5, 4, 20);
+		const out = compositeTuiLine("abcd让EFGH", "│XX│", 5, 4, 20);
 		const prefix = sliceByColumn(out, 0, 5, true);
 		const overlay = sliceByColumn(out, 5, 4, true);
 
@@ -57,7 +35,7 @@ describe("overlay CJK boundary regression", () => {
 	});
 
 	it("composites an overlay when it starts at a wide grapheme boundary", () => {
-		const out = compositeLineAt("abcd让EFGH", "│XX│", 4, 4, 20);
+		const out = compositeTuiLine("abcd让EFGH", "│XX│", 4, 4, 20);
 		const overlay = sliceByColumn(out, 4, 4, true);
 
 		assert.strictEqual(out.includes("让"), false);
