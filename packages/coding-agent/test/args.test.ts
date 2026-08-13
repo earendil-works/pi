@@ -443,6 +443,37 @@ describe("parseArgs", () => {
 			const result = parseArgs(["--unknown-flag", "message"]);
 			expect(result.messages).toEqual([]);
 			expect(result.unknownFlags.get("unknown-flag")).toBe("message");
+			// The candidate token is consumed into the flag; its message-stream position
+			// is recorded so boolean flag resolution can restore it.
+			expect(result.unknownFlagValueIndices.get("unknown-flag")).toBe(0);
+		});
+
+		test("records the candidate position without disturbing messages", () => {
+			const result = parseArgs(["--plan", "first", "second"]);
+			expect(result.messages).toEqual(["second"]);
+			expect(result.unknownFlags.get("plan")).toBe("first");
+			expect(result.unknownFlagValueIndices.get("plan")).toBe(0);
+		});
+
+		test("records the candidate position after existing messages", () => {
+			const result = parseArgs(["-p", "before", "--plan", "after"]);
+			expect(result.messages).toEqual(["before"]);
+			expect(result.unknownFlags.get("plan")).toBe("after");
+			expect(result.unknownFlagValueIndices.get("plan")).toBe(1);
+		});
+
+		test("does not record a candidate index for equals syntax", () => {
+			const result = parseArgs(["--unknown-flag=value", "prompt"]);
+			expect(result.messages).toEqual(["prompt"]);
+			expect(result.unknownFlags.get("unknown-flag")).toBe("value");
+			expect(result.unknownFlagValueIndices.has("unknown-flag")).toBe(false);
+		});
+
+		test("does not record a candidate index when the next token is a flag", () => {
+			const result = parseArgs(["--plan", "--verbose", "prompt"]);
+			expect(result.messages).toEqual(["prompt"]);
+			expect(result.unknownFlags.get("plan")).toBe(true);
+			expect(result.unknownFlagValueIndices.has("plan")).toBe(false);
 		});
 
 		test("captures unknown boolean long flags", () => {

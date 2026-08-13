@@ -741,6 +741,8 @@ export async function main(args: string[], options?: MainOptions) {
 			settingsManager: runtimeSettingsManager,
 			modelRuntimeSignal: AbortSignal.timeout(15_000),
 			extensionFlagValues: parsed.unknownFlags,
+			extensionFlagValueMessageIndices: parsed.unknownFlagValueIndices,
+			extensionFlagMessages: parsed.messages,
 			resourceLoaderReloadOptions: shouldResolveProjectTrust
 				? {
 						resolveProjectTrust: async ({ extensionsResult }) => {

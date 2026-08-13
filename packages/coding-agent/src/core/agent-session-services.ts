@@ -41,6 +41,13 @@ export interface CreateAgentSessionServicesOptions {
 	modelRuntime?: ModelRuntime;
 	modelRuntimeSignal?: AbortSignal;
 	extensionFlagValues?: Map<string, boolean | string>;
+	/** Indexes into `extensionFlagMessages` of tokens consumed as candidate values by
+	 * `parseArgs` (see `Args.unknownFlagValueIndices`). Boolean flags restore their
+	 * candidate token into the message stream; string flags keep the consumed value. */
+	extensionFlagValueMessageIndices?: Map<string, number>;
+	/** `Args.messages` from the parsed CLI args. Mutated in place when boolean flags
+	 * restore their candidate token (idempotent: resolution re-runs on resume/fork). */
+	extensionFlagMessages?: string[];
 	resourceLoaderOptions?: Omit<DefaultResourceLoaderOptions, "cwd" | "agentDir" | "settingsManager">;
 	resourceLoaderReloadOptions?: ResourceLoaderReloadOptions;
 }
@@ -82,6 +89,8 @@ export interface AgentSessionServices {
 function applyExtensionFlagValues(
 	resourceLoader: ResourceLoader,
 	extensionFlagValues: Map<string, boolean | string> | undefined,
+	extensionFlagValueMessageIndices?: Map<string, number>,
+	extensionFlagMessages?: string[],
 ): AgentSessionRuntimeDiagnostic[] {
 	if (!extensionFlagValues) {
 		return [];
@@ -96,6 +105,9 @@ function applyExtensionFlagValues(
 		}
 	}
 
+	// Candidate tokens consumed by boolean flags, restored to the message stream in
+	// reverse order of appearance so earlier insertions do not shift later indices.
+	const messageInsertions: Array<{ index: number; value: string }> = [];
 	const unknownFlags: string[] = [];
 	for (const [name, value] of extensionFlagValues) {
 		const flag = registeredFlags.get(name);
@@ -105,6 +117,15 @@ function applyExtensionFlagValues(
 		}
 		if (flag.type === "boolean") {
 			extensionsResult.runtime.flagValues.set(name, true);
+			const index = extensionFlagValueMessageIndices?.get(name);
+			if (
+				typeof value === "string" &&
+				extensionFlagMessages &&
+				index !== undefined &&
+				extensionFlagMessages[index] !== value
+			) {
+				messageInsertions.push({ index, value });
+			}
 			continue;
 		}
 		if (typeof value === "string") {
@@ -115,6 +136,13 @@ function applyExtensionFlagValues(
 			type: "error",
 			message: `Extension flag "--${name}" requires a value`,
 		});
+	}
+
+	// Idempotent: the `extensionFlagMessages[index] !== value` guard above fails on
+	// re-runs (runtime replacement on resume/fork re-invokes this function), so a
+	// restored token is never inserted twice.
+	for (const { index, value } of messageInsertions.reverse()) {
+		extensionFlagMessages!.splice(index, 0, value);
 	}
 
 	if (unknownFlags.length > 0) {
@@ -180,7 +208,14 @@ export async function createAgentSessionServices(
 	}
 	extensionsResult.runtime.pendingNativeProviderRegistrations = [];
 	await modelRuntime.refresh({ allowNetwork: false });
-	diagnostics.push(...applyExtensionFlagValues(resourceLoader, options.extensionFlagValues));
+	diagnostics.push(
+		...applyExtensionFlagValues(
+			resourceLoader,
+			options.extensionFlagValues,
+			options.extensionFlagValueMessageIndices,
+			options.extensionFlagMessages,
+		),
+	);
 
 	return {
 		cwd,

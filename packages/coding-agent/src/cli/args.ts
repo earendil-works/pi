@@ -54,6 +54,11 @@ export interface Args {
 	fileArgs: string[];
 	/** Unknown flags (potentially extension flags) - map of flag name to value */
 	unknownFlags: Map<string, boolean | string>;
+	/** For unknown flags that consumed a following token: index into `messages` where
+	 * that token would sit. Extension flag resolution restores the token for boolean
+	 * flags (it was consumed here because flag types are only known after extensions
+	 * load); string flags keep it as the flag value. */
+	unknownFlagValueIndices: Map<string, number>;
 	diagnostics: Array<{ type: "warning" | "error"; message: string }>;
 }
 
@@ -68,6 +73,7 @@ export function parseArgs(args: string[]): Args {
 		messages: [],
 		fileArgs: [],
 		unknownFlags: new Map(),
+		unknownFlagValueIndices: new Map(),
 		diagnostics: [],
 	};
 
@@ -219,6 +225,10 @@ export function parseArgs(args: string[]): Args {
 				const next = args[i + 1];
 				if (next !== undefined && !next.startsWith("-") && !next.startsWith("@")) {
 					result.unknownFlags.set(flagName, next);
+					// Flag types are only known after extensions load, so the consumed
+					// token is recorded by position and restored to the message stream
+					// during extension flag resolution if the flag is boolean.
+					result.unknownFlagValueIndices.set(flagName, result.messages.length);
 					i++;
 				} else {
 					result.unknownFlags.set(flagName, true);
