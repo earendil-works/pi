@@ -3778,6 +3778,9 @@ export class InteractiveMode {
 	 */
 	private isShuttingDown = false;
 
+	/** True while the process is suspended with Ctrl+Z (SIGTSTP). */
+	private isSuspended = false;
+
 	private async shutdown(options?: { fromSignal?: boolean }): Promise<void> {
 		if (this.isShuttingDown) return;
 		this.isShuttingDown = true;
@@ -3869,13 +3872,18 @@ export class InteractiveMode {
 	private registerSignalHandlers(): void {
 		this.unregisterSignalHandlers();
 
-		const signals: NodeJS.Signals[] = ["SIGTERM"];
+		const signals: NodeJS.Signals[] = ["SIGTERM", "SIGINT"];
 		if (process.platform !== "win32") {
 			signals.push("SIGHUP");
 		}
 
 		for (const signal of signals) {
 			const handler = () => {
+				// While the process is suspended (Ctrl+Z), Ctrl+C must not kill the
+				// backgrounded job; the suspend path registers its own SIGINT
+				// no-op listener and expects it to be the only effect. Skip the
+				// graceful shutdown for SIGINT in that window.
+				if (signal === "SIGINT" && this.isSuspended) return;
 				// SIGHUP no longer hard-exits: graceful shutdown emits session_shutdown
 				// first, then attempts terminal restore. A genuinely dead terminal
 				// surfaces as an EIO on the restore writes, which the stdout/stderr
@@ -3928,11 +3936,13 @@ export class InteractiveMode {
 		// kill the backgrounded process. The handler is removed on resume.
 		const ignoreSigint = () => {};
 		process.on("SIGINT", ignoreSigint);
+		this.isSuspended = true;
 
 		// Set up handler to restore TUI when resumed
 		process.once("SIGCONT", () => {
 			clearInterval(suspendKeepAlive);
 			process.removeListener("SIGINT", ignoreSigint);
+			this.isSuspended = false;
 			this.ui.start();
 			this.ui.requestRender(true);
 		});
@@ -6402,5 +6412,8 @@ export class InteractiveMode {
 			this.isInitialized = false;
 		}
 		this.unregisterSignalHandlers();
+		// updateTerminalTitle() sets the window title to "π - <dir>" on start; clear
+		// it on exit so the shell does not inherit a stale Pi title (see #7469).
+		this.ui.terminal.setTitle("");
 	}
 }
