@@ -26,6 +26,7 @@ export const defaultModelPerProvider: Record<KnownProvider, string> = {
 	"openai-codex": "gpt-5.5",
 	radius: "auto",
 	nvidia: "nvidia/nemotron-3-super-120b-a12b",
+	"nvidia-inference-hub": "azure/anthropic/claude-sonnet-5",
 	deepseek: "deepseek-v4-pro",
 	google: "gemini-3.1-pro-preview",
 	"google-vertex": "gemini-3.1-pro-preview",

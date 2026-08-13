@@ -36,6 +36,10 @@ export async function listModels(
 		console.error(chalk.yellow(`Warning: errors loading models.json:\n${loadError}`));
 	}
 
+	// Refresh dynamic provider catalogs (e.g. those that fetch on demand)
+	// before listing so `--list-models` reflects the latest available set.
+	await modelRuntime.refresh({ allowNetwork: true, signal }).catch(() => {});
+
 	const models = [...(await modelRuntime.getAvailable(undefined, { signal }))];
 
 	if (models.length === 0) {
