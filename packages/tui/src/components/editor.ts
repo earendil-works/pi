@@ -212,6 +212,13 @@ interface EditorState {
 	cursorCol: number;
 }
 
+/** A visual line: a text wrapped segment (based on terminal width) of logical lines in state.lines. */
+interface VisualLine {
+	logicalLine: number;
+	startCol: number;
+	length: number;
+}
+
 /** Undo snapshot: editor text state plus the paste registry. */
 interface EditorSnapshot {
 	state: EditorState;
@@ -283,6 +290,10 @@ export class Editor implements Component, Focusable {
 
 	// Store last render width for cursor navigation
 	private lastWidth: number = 80;
+
+	// Stored visual line map. This gets rebuilt lazily when the buffer text changes or width changes (see getVisualLines).
+	private visualLines: VisualLine[] | null = null;
+	private visualLineWidth: number = -1;
 
 	// Vertical scrolling support
 	private scrollOffset: number = 0;
@@ -413,13 +424,13 @@ export class Editor implements Component, Focusable {
 	}
 
 	private isOnFirstVisualLine(): boolean {
-		const visualLines = this.buildVisualLineMap(this.lastWidth);
+		const visualLines = this.getVisualLines();
 		const currentVisualLine = this.findCurrentVisualLine(visualLines);
 		return currentVisualLine === 0;
 	}
 
 	private isOnLastVisualLine(): boolean {
-		const visualLines = this.buildVisualLineMap(this.lastWidth);
+		const visualLines = this.getVisualLines();
 		const currentVisualLine = this.findCurrentVisualLine(visualLines);
 		return currentVisualLine === visualLines.length - 1;
 	}
@@ -444,6 +455,7 @@ export class Editor implements Component, Focusable {
 			this.historyDraft = null;
 			if (draft) {
 				this.state = draft;
+				this.invalidateVisualLines();
 				this.preferredVisualCol = null;
 				this.snappedFromCursorCol = null;
 				this.scrollOffset = 0;
@@ -465,6 +477,7 @@ export class Editor implements Component, Focusable {
 	private setTextInternal(text: string, cursorPlacement: "start" | "end" = "end"): void {
 		const lines = text.split("\n");
 		this.state.lines = lines.length === 0 ? [""] : lines;
+		this.invalidateVisualLines();
 		this.state.cursorLine = cursorPlacement === "start" ? 0 : this.state.lines.length - 1;
 		this.setCursorCol(cursorPlacement === "start" ? 0 : this.state.lines[this.state.cursorLine]?.length || 0);
 		// Reset scroll - render() will adjust to show cursor
@@ -686,6 +699,7 @@ export class Editor implements Component, Focusable {
 						this.autocompletePrefix,
 					);
 					this.state.lines = result.lines;
+					this.invalidateVisualLines();
 					this.state.cursorLine = result.cursorLine;
 					this.setCursorCol(result.cursorCol);
 					this.cancelAutocomplete();
@@ -707,6 +721,7 @@ export class Editor implements Component, Focusable {
 						this.autocompletePrefix,
 					);
 					this.state.lines = result.lines;
+					this.invalidateVisualLines();
 					this.state.cursorLine = result.cursorLine;
 					this.setCursorCol(result.cursorCol);
 
@@ -1075,6 +1090,7 @@ export class Editor implements Component, Focusable {
 		if (insertedLines.length === 1) {
 			// Single line - insert at cursor position
 			this.state.lines[this.state.cursorLine] = beforeCursor + normalized + afterCursor;
+			this.invalidateVisualLines();
 			this.setCursorCol(this.state.cursorCol + normalized.length);
 		} else {
 			// Multi-line insertion
@@ -1094,7 +1110,7 @@ export class Editor implements Component, Focusable {
 				// All lines after current line
 				...this.state.lines.slice(this.state.cursorLine + 1),
 			];
-
+			this.invalidateVisualLines();
 			this.state.cursorLine += insertedLines.length - 1;
 			this.setCursorCol((insertedLines[insertedLines.length - 1] || "").length);
 		}
@@ -1126,6 +1142,7 @@ export class Editor implements Component, Focusable {
 		const after = line.slice(this.state.cursorCol);
 
 		this.state.lines[this.state.cursorLine] = before + char + after;
+		this.invalidateVisualLines();
 		this.setCursorCol(this.state.cursorCol + char.length);
 
 		if (this.onChange) {
@@ -1213,6 +1230,7 @@ export class Editor implements Component, Focusable {
 			this.pasteCounter++;
 			const pasteId = this.pasteCounter;
 			this.pastes.set(pasteId, filteredText);
+			this.invalidateVisualLines();
 
 			// Insert marker like "[paste #1 +123 lines]" or "[paste #1 1234 chars]"
 			const marker =
@@ -1248,6 +1266,7 @@ export class Editor implements Component, Focusable {
 		// Split current line
 		this.state.lines[this.state.cursorLine] = before;
 		this.state.lines.splice(this.state.cursorLine + 1, 0, after);
+		this.invalidateVisualLines();
 
 		// Move cursor to start of new line
 		this.state.cursorLine++;
@@ -1274,6 +1293,7 @@ export class Editor implements Component, Focusable {
 		const result = this.expandPasteMarkers(this.state.lines.join("\n")).trim();
 
 		this.state = { lines: [""], cursorLine: 0, cursorCol: 0 };
+		this.invalidateVisualLines();
 		this.pastes.clear();
 		this.pasteCounter = 0;
 		this.exitHistoryBrowsing();
@@ -1325,6 +1345,7 @@ export class Editor implements Component, Focusable {
 						return `[paste #${x - 1}${suffixGroup}]`;
 					}),
 				);
+				this.invalidateVisualLines();
 			}
 
 			line = this.state.lines[this.state.cursorLine] || "";
@@ -1333,6 +1354,7 @@ export class Editor implements Component, Focusable {
 			const after = line.slice(this.state.cursorCol);
 
 			this.state.lines[this.state.cursorLine] = before + after;
+			this.invalidateVisualLines();
 			this.setCursorCol(this.state.cursorCol - graphemeLength);
 		} else if (this.state.cursorLine > 0) {
 			this.pushUndoSnapshot();
@@ -1343,6 +1365,7 @@ export class Editor implements Component, Focusable {
 
 			this.state.lines[this.state.cursorLine - 1] = previousLine + currentLine;
 			this.state.lines.splice(this.state.cursorLine, 1);
+			this.invalidateVisualLines();
 
 			this.state.cursorLine--;
 			this.setCursorCol(previousLine.length);
@@ -1384,11 +1407,7 @@ export class Editor implements Component, Focusable {
 	 * Move cursor to a target visual line, applying sticky column logic.
 	 * Shared by moveCursor() and pageScroll().
 	 */
-	private moveToVisualLine(
-		visualLines: Array<{ logicalLine: number; startCol: number; length: number }>,
-		currentVisualLine: number,
-		targetVisualLine: number,
-	): void {
+	private moveToVisualLine(visualLines: VisualLine[], currentVisualLine: number, targetVisualLine: number): void {
 		const currentVL = visualLines[currentVisualLine];
 		const targetVL = visualLines[targetVisualLine];
 		if (!(currentVL && targetVL)) return;
@@ -1545,6 +1564,7 @@ export class Editor implements Component, Focusable {
 
 			// Delete from start of line up to cursor
 			this.state.lines[this.state.cursorLine] = currentLine.slice(this.state.cursorCol);
+			this.invalidateVisualLines();
 			this.setCursorCol(0);
 		} else if (this.state.cursorLine > 0) {
 			this.pushUndoSnapshot();
@@ -1556,6 +1576,7 @@ export class Editor implements Component, Focusable {
 			const previousLine = this.state.lines[this.state.cursorLine - 1] || "";
 			this.state.lines[this.state.cursorLine - 1] = previousLine + currentLine;
 			this.state.lines.splice(this.state.cursorLine, 1);
+			this.invalidateVisualLines();
 			this.state.cursorLine--;
 			this.setCursorCol(previousLine.length);
 		}
@@ -1580,6 +1601,7 @@ export class Editor implements Component, Focusable {
 
 			// Delete from cursor to end of line
 			this.state.lines[this.state.cursorLine] = currentLine.slice(0, this.state.cursorCol);
+			this.invalidateVisualLines();
 		} else if (this.state.cursorLine < this.state.lines.length - 1) {
 			this.pushUndoSnapshot();
 
@@ -1590,6 +1612,7 @@ export class Editor implements Component, Focusable {
 			const nextLine = this.state.lines[this.state.cursorLine + 1] || "";
 			this.state.lines[this.state.cursorLine] = currentLine + nextLine;
 			this.state.lines.splice(this.state.cursorLine + 1, 1);
+			this.invalidateVisualLines();
 		}
 
 		if (this.onChange) {
@@ -1614,6 +1637,7 @@ export class Editor implements Component, Focusable {
 				const previousLine = this.state.lines[this.state.cursorLine - 1] || "";
 				this.state.lines[this.state.cursorLine - 1] = previousLine + currentLine;
 				this.state.lines.splice(this.state.cursorLine, 1);
+				this.invalidateVisualLines();
 				this.state.cursorLine--;
 				this.setCursorCol(previousLine.length);
 			}
@@ -1634,6 +1658,7 @@ export class Editor implements Component, Focusable {
 
 			this.state.lines[this.state.cursorLine] =
 				currentLine.slice(0, deleteFrom) + currentLine.slice(this.state.cursorCol);
+			this.invalidateVisualLines();
 			this.setCursorCol(deleteFrom);
 		}
 
@@ -1659,6 +1684,7 @@ export class Editor implements Component, Focusable {
 				const nextLine = this.state.lines[this.state.cursorLine + 1] || "";
 				this.state.lines[this.state.cursorLine] = currentLine + nextLine;
 				this.state.lines.splice(this.state.cursorLine + 1, 1);
+				this.invalidateVisualLines();
 			}
 		} else {
 			this.pushUndoSnapshot();
@@ -1677,6 +1703,7 @@ export class Editor implements Component, Focusable {
 
 			this.state.lines[this.state.cursorLine] =
 				currentLine.slice(0, this.state.cursorCol) + currentLine.slice(deleteTo);
+			this.invalidateVisualLines();
 		}
 
 		if (this.onChange) {
@@ -1704,6 +1731,7 @@ export class Editor implements Component, Focusable {
 			const before = currentLine.slice(0, this.state.cursorCol);
 			const after = currentLine.slice(this.state.cursorCol + graphemeLength);
 			this.state.lines[this.state.cursorLine] = before + after;
+			this.invalidateVisualLines();
 		} else if (this.state.cursorLine < this.state.lines.length - 1) {
 			this.pushUndoSnapshot();
 
@@ -1711,6 +1739,7 @@ export class Editor implements Component, Focusable {
 			const nextLine = this.state.lines[this.state.cursorLine + 1] || "";
 			this.state.lines[this.state.cursorLine] = currentLine + nextLine;
 			this.state.lines.splice(this.state.cursorLine + 1, 1);
+			this.invalidateVisualLines();
 		}
 
 		if (this.onChange) {
@@ -1741,8 +1770,8 @@ export class Editor implements Component, Focusable {
 	 * - startCol: starting column in the logical line
 	 * - length: length of this visual line segment
 	 */
-	private buildVisualLineMap(width: number): Array<{ logicalLine: number; startCol: number; length: number }> {
-		const visualLines: Array<{ logicalLine: number; startCol: number; length: number }> = [];
+	private buildVisualLineMap(width: number): VisualLine[] {
+		const visualLines: VisualLine[] = [];
 
 		for (let i = 0; i < this.state.lines.length; i++) {
 			const line = this.state.lines[i] || "";
@@ -1769,13 +1798,28 @@ export class Editor implements Component, Focusable {
 	}
 
 	/**
+	 * This gets the visual line map for the current width, computed once and
+	 * stored. This is discarded whenever the buffer text changes and whenever the width it
+	 * was computed with no longer matches this.lastWidth.
+	 */
+	private getVisualLines(): VisualLine[] {
+		if (this.visualLines !== null && this.visualLineWidth === this.lastWidth) {
+			return this.visualLines;
+		}
+		this.visualLines = this.buildVisualLineMap(this.lastWidth);
+		this.visualLineWidth = this.lastWidth;
+		return this.visualLines;
+	}
+
+	/** Drop the cached visual line map after buffer text changes. */
+	private invalidateVisualLines(): void {
+		this.visualLines = null;
+	}
+
+	/**
 	 * Find the visual line index that contains the given logical position.
 	 */
-	private findVisualLineAt(
-		visualLines: Array<{ logicalLine: number; startCol: number; length: number }>,
-		line: number,
-		col: number,
-	): number {
+	private findVisualLineAt(visualLines: VisualLine[], line: number, col: number): number {
 		for (let i = 0; i < visualLines.length; i++) {
 			const vl = visualLines[i];
 			if (!vl || vl.logicalLine !== line) continue;
@@ -1793,15 +1837,13 @@ export class Editor implements Component, Focusable {
 	/**
 	 * Find the visual line index for the current cursor position.
 	 */
-	private findCurrentVisualLine(
-		visualLines: Array<{ logicalLine: number; startCol: number; length: number }>,
-	): number {
+	private findCurrentVisualLine(visualLines: VisualLine[]): number {
 		return this.findVisualLineAt(visualLines, this.state.cursorLine, this.state.cursorCol);
 	}
 
 	private moveCursor(deltaLine: number, deltaCol: number): void {
 		this.lastAction = null;
-		const visualLines = this.buildVisualLineMap(this.lastWidth);
+		const visualLines = this.getVisualLines();
 		const currentVisualLine = this.findCurrentVisualLine(visualLines);
 
 		if (deltaLine !== 0) {
@@ -1871,7 +1913,7 @@ export class Editor implements Component, Focusable {
 		const terminalRows = this.tui.terminal.rows;
 		const pageSize = Math.max(5, Math.floor(terminalRows * 0.3));
 
-		const visualLines = this.buildVisualLineMap(this.lastWidth);
+		const visualLines = this.getVisualLines();
 		const currentVisualLine = this.findCurrentVisualLine(visualLines);
 		const targetVisualLine = Math.max(0, Math.min(visualLines.length - 1, currentVisualLine + direction * pageSize));
 
@@ -1950,6 +1992,7 @@ export class Editor implements Component, Focusable {
 			const before = currentLine.slice(0, this.state.cursorCol);
 			const after = currentLine.slice(this.state.cursorCol);
 			this.state.lines[this.state.cursorLine] = before + text + after;
+			this.invalidateVisualLines();
 			this.setCursorCol(this.state.cursorCol + text.length);
 		} else {
 			// Multi-line insert
@@ -1968,6 +2011,7 @@ export class Editor implements Component, Focusable {
 			// Last line merges with text after cursor
 			const lastLineIndex = this.state.cursorLine + lines.length - 1;
 			this.state.lines.splice(lastLineIndex, 0, (lines[lines.length - 1] || "") + after);
+			this.invalidateVisualLines();
 
 			// Update cursor position
 			this.state.cursorLine = lastLineIndex;
@@ -1996,6 +2040,7 @@ export class Editor implements Component, Focusable {
 			const before = currentLine.slice(0, this.state.cursorCol - deleteLen);
 			const after = currentLine.slice(this.state.cursorCol);
 			this.state.lines[this.state.cursorLine] = before + after;
+			this.invalidateVisualLines();
 			this.setCursorCol(this.state.cursorCol - deleteLen);
 		} else {
 			// Multi-line delete - cursor is at end of last yanked line
@@ -2010,6 +2055,7 @@ export class Editor implements Component, Focusable {
 
 			// Remove all lines from startLine to cursorLine and replace with merged line
 			this.state.lines.splice(startLine, yankLines.length, beforeYank + afterCursor);
+			this.invalidateVisualLines();
 
 			// Update cursor
 			this.state.cursorLine = startLine;
@@ -2032,6 +2078,7 @@ export class Editor implements Component, Focusable {
 		Object.assign(this.state, snapshot.state);
 		this.pastes = snapshot.pastes;
 		this.pasteCounter = snapshot.pasteCounter;
+		this.invalidateVisualLines();
 		this.lastAction = null;
 		this.preferredVisualCol = null;
 		if (this.onChange) {
@@ -2292,6 +2339,7 @@ export class Editor implements Component, Focusable {
 				suggestions.prefix,
 			);
 			this.state.lines = result.lines;
+			this.invalidateVisualLines();
 			this.state.cursorLine = result.cursorLine;
 			this.setCursorCol(result.cursorCol);
 			if (this.onChange) this.onChange(this.getText());
