@@ -206,16 +206,31 @@ export class TuiMainScreen extends TuiBase implements TUI {
 
 		newLines = this.applyLineResets(newLines);
 
-		// Helper to clear scrollback and viewport and render all new lines
+		// Helper to clear scrollback and viewport and render the visible viewport.
+		// Only the last `height` lines (the viewport) are ever written to the
+		// terminal. Writing the full buffer replays the entire session history
+		// into the scrollback on resume (or on width/height-change repaints),
+		// flooding the terminal for large sessions (e.g. a 64K-context session
+		// resumes as thousands of lines).
 		const fullRender = (clear: boolean): void => {
 			this.fullRedrawCount += 1;
+			let viewportStart = Math.max(0, newLines.length - height);
+			// If the viewport starts inside a Kitty image block, back up to the
+			// image's placement row so its transmission is still emitted; the
+			// terminal draws the full image from there (see #4461).
+			for (let i = viewportStart - 1; i >= 0; i--) {
+				if (isImageLine(newLines[i] ?? "") && i + this.getKittyImageReservedRows(newLines, i) > viewportStart) {
+					viewportStart = i;
+					break;
+				}
+			}
 			let buffer = "\x1b[?2026h"; // Begin synchronized output
 			if (clear) {
 				buffer += this.deleteKittyImages(this.previousKittyImageIds);
 				buffer += "\x1b[2J\x1b[H\x1b[3J"; // Clear screen, home, then clear scrollback
 			}
-			for (let i = 0; i < newLines.length; i++) {
-				if (i > 0) buffer += "\r\n";
+			for (let i = viewportStart; i < newLines.length; i++) {
+				if (i > viewportStart) buffer += "\r\n";
 				const line = newLines[i];
 				const isImage = isImageLine(line);
 				const imageReservedRows = isImage ? this.getKittyImageReservedRows(newLines, i) : 1;
