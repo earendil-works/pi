@@ -201,3 +201,74 @@ describe("google-shared convertTools", () => {
 		expect(convertTools([], true)).toBeUndefined();
 	});
 });
+
+describe("google-shared legacy parameters subset", () => {
+	it("folds const into enum, including inside anyOf arrays", () => {
+		const tools = [
+			makeTool({
+				type: "object",
+				properties: {
+					mode: { anyOf: [{ const: "auto" }, { const: "json" }] },
+				},
+			}),
+		];
+		const decl = convertTools(tools, true)?.[0]?.functionDeclarations?.[0];
+		expect(decl?.parameters).toEqual({
+			type: "object",
+			properties: { mode: { anyOf: [{ enum: ["auto"] }, { enum: ["json"] }] } },
+		});
+	});
+
+	it("drops keywords the legacy Schema message does not define", () => {
+		const tools = [
+			makeTool({
+				type: "object",
+				properties: {
+					map: {
+						type: "object",
+						patternProperties: { "^.*$": { type: "string" } },
+						additionalProperties: false,
+					},
+					pick: { oneOf: [{ type: "string" }, { type: "number" }] },
+					n: { type: "number", exclusiveMinimum: 0 },
+				},
+			}),
+		];
+		const decl = convertTools(tools, true)?.[0]?.functionDeclarations?.[0];
+		expect(decl?.parameters).toEqual({
+			type: "object",
+			properties: {
+				map: { type: "object" },
+				pick: {},
+				n: { type: "number" },
+			},
+		});
+	});
+
+	it("keeps legacy Schema fields such as propertyOrdering", () => {
+		const tools = [
+			makeTool({
+				type: "object",
+				properties: { command: { type: "string" } },
+				required: ["command"],
+				propertyOrdering: ["command"],
+			}),
+		];
+		const decl = convertTools(tools, true)?.[0]?.functionDeclarations?.[0];
+		expect(decl?.parameters).toEqual({
+			type: "object",
+			properties: { command: { type: "string" } },
+			required: ["command"],
+			propertyOrdering: ["command"],
+		});
+	});
+
+	it("emits parametersJsonSchema untouched when useParameters=false", () => {
+		const schema = {
+			type: "object",
+			properties: { mode: { anyOf: [{ const: "auto" }] } },
+		};
+		const decl = convertTools([makeTool(schema)], false)?.[0]?.functionDeclarations?.[0];
+		expect(decl?.parametersJsonSchema).toEqual(schema);
+	});
+});

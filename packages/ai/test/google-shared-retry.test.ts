@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { retryGoogleRequest } from "../src/api/google-shared.ts";
+import { isUnknownSchemaFieldError, retryGoogleRequest } from "../src/api/google-shared.ts";
 
 /** Shaped like @google/genai's ApiError: has `status`, but no `headers`. */
 function googleApiError(status: number): Error {
@@ -36,5 +36,27 @@ describe("google request retries", () => {
 
 		await expect(retryGoogleRequest(request, { maxRetries: 2 })).rejects.toBe(error);
 		expect(request).toHaveBeenCalledTimes(1);
+	});
+});
+
+describe("isUnknownSchemaFieldError", () => {
+	it("matches the gemini invalid-argument unknown-schema-field payload", () => {
+		const error = Object.assign(
+			new Error(
+				"Invalid JSON payload received. Unknown name \"parametersJsonSchema\" at 'tools[0].function_declarations[0]': Cannot find field.",
+			),
+			{ status: 400 },
+		);
+		expect(isUnknownSchemaFieldError(error)).toBe(true);
+	});
+
+	it("rejects non-400 errors even when the message matches", () => {
+		const error = Object.assign(new Error('Unknown name "parametersJsonSchema"'), { status: 429 });
+		expect(isUnknownSchemaFieldError(error)).toBe(false);
+	});
+
+	it("rejects unrelated 400s", () => {
+		const error = Object.assign(new Error("Invalid argument: temperature out of range"), { status: 400 });
+		expect(isUnknownSchemaFieldError(error)).toBe(false);
 	});
 });

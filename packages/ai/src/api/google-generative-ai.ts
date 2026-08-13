@@ -29,6 +29,7 @@ import {
 	convertMessages,
 	convertTools,
 	isThinkingPart,
+	isUnknownSchemaFieldError,
 	mapStopReason,
 	resolveGoogleFunctionCallingMode,
 	retainThoughtSignature,
@@ -89,7 +90,18 @@ export const stream: StreamFunction<"google-generative-ai", GoogleOptions> = (
 			if (nextParams !== undefined) {
 				params = nextParams as GenerateContentParameters;
 			}
-			const googleStream = await retryGoogleRequest(() => client.models.generateContentStream(params), options);
+			const googleStream = await retryGoogleRequest(
+				() => client.models.generateContentStream(params),
+				options,
+			).catch((error) => {
+				// Endpoints on older serving stacks reject tool schemas that use fields
+				// they do not know; rebuild once with the legacy `parameters` subset.
+				if (!context.tools?.length || !isUnknownSchemaFieldError(error)) throw error;
+				return retryGoogleRequest(
+					() => client.models.generateContentStream(buildParams(model, context, options, true)),
+					options,
+				);
+			});
 
 			stream.push({ type: "start", partial: output });
 			let currentBlock: TextContent | ThinkingContent | null = null;
@@ -356,6 +368,7 @@ function buildParams(
 	model: Model<"google-generative-ai">,
 	context: Context,
 	options: GoogleOptions = {},
+	useLegacyParameters = false,
 ): GenerateContentParameters {
 	const contents = convertMessages(model, context);
 
@@ -376,7 +389,7 @@ function buildParams(
 		...(context.systemPrompt && { systemInstruction: sanitizeSurrogates(context.systemPrompt) }),
 		...(context.tools &&
 			context.tools.length > 0 && {
-				tools: convertTools(context.tools, false, supportsStrictMode),
+				tools: convertTools(context.tools, useLegacyParameters, supportsStrictMode),
 			}),
 		...(functionCallingMode !== undefined && {
 			toolConfig: { functionCallingConfig: { mode: functionCallingMode } },

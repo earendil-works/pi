@@ -247,28 +247,72 @@ export function convertMessages<T extends GoogleApiType>(model: Model<T>, contex
 	return contents;
 }
 
-const JSON_SCHEMA_META_DECLARATIONS = new Set([
-	"$schema",
-	"$id",
-	"$anchor",
-	"$dynamicAnchor",
-	"$vocabulary",
-	"$comment",
-	"$defs",
-	"definitions", // pre-draft-2019-09 equivalent of $defs
+/**
+ * Fields of the Gemini legacy Schema message (mirrors the Schema interface in
+ * @google/genai). Endpoints that only accept the legacy subset reject any field
+ * outside this list, so emit exactly these and nothing else.
+ */
+const GEMINI_LEGACY_SCHEMA_KEYS = new Set([
+	"anyOf",
+	"default",
+	"description",
+	"enum",
+	"example",
+	"format",
+	"items",
+	"maximum",
+	"maxItems",
+	"maxLength",
+	"maxProperties",
+	"minimum",
+	"minItems",
+	"minLength",
+	"minProperties",
+	"nullable",
+	"pattern",
+	"properties",
+	"propertyOrdering",
+	"required",
+	"title",
+	"type",
 ]);
 
 /**
- * Strip meta-declarations from a schema obj
+ * Downgrade a JSON Schema to the Gemini legacy Schema subset: keep only fields
+ * the legacy Schema message defines, fold `const` into `enum`, and recurse into
+ * arrays (e.g. anyOf entries).
  */
 function sanitizeForOpenApi(schema: unknown): unknown {
-	if (typeof schema !== "object" || schema === null || Array.isArray(schema)) {
+	if (typeof schema !== "object" || schema === null) {
 		return schema;
+	}
+	if (Array.isArray(schema)) {
+		return schema.map(sanitizeForOpenApi);
 	}
 
 	const result: Record<string, unknown> = {};
 	for (const [key, value] of Object.entries(schema)) {
-		if (JSON_SCHEMA_META_DECLARATIONS.has(key)) continue;
+		if (key === "const") {
+			result.enum = [value];
+			continue;
+		}
+		if (key === "$ref") {
+			// Deliberately preserved: dropping a $ref silently breaks the schema
+			// worse than passing it through.
+			result.$ref = value;
+			continue;
+		}
+		if (key === "properties" && typeof value === "object" && value !== null && !Array.isArray(value)) {
+			// `properties` is keyed by arbitrary property names, not schema keywords;
+			// keep every entry and sanitize each property schema.
+			const props: Record<string, unknown> = {};
+			for (const [propName, propSchema] of Object.entries(value)) {
+				props[propName] = sanitizeForOpenApi(propSchema);
+			}
+			result.properties = props;
+			continue;
+		}
+		if (!GEMINI_LEGACY_SCHEMA_KEYS.has(key)) continue;
 		result[key] = sanitizeForOpenApi(value);
 	}
 	return result;
@@ -395,6 +439,18 @@ export function mapStopReasonString(reason: string): StopReason {
  * both, so normalize the error by adding the missing `headers` before
  * rethrowing.
  */
+/**
+ * True when a Gemini endpoint rejected the request because the tool schema used
+ * JSON Schema fields the endpoint does not know (e.g. `parametersJsonSchema`,
+ * `patternProperties`, `const`). These 400s are fixed by retrying with legacy
+ * `parameters`, so callers should not surface them as model errors.
+ */
+export function isUnknownSchemaFieldError(error: unknown): boolean {
+	if ((error as { status?: unknown })?.status !== 400) return false;
+	const message = String((error as { message?: unknown })?.message ?? error);
+	return /Unknown name|Cannot find field/i.test(message);
+}
+
 export function retryGoogleRequest<T>(
 	request: () => Promise<T>,
 	options?: Pick<StreamOptions, "maxRetries" | "maxRetryDelayMs" | "signal">,
