@@ -2505,6 +2505,9 @@ const ok = await ctx.ui.confirm("Delete?", "This cannot be undone");
 // Text input
 const name = await ctx.ui.input("Name:", "placeholder");
 
+// Masked secret input (RPC clients receive secret: true)
+const password = await ctx.ui.input("Password:", "password", { secret: true });
+
 // Multi-line editor
 const text = await ctx.ui.editor("Edit:", "prefilled text");
 

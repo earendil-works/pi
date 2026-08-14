@@ -76,6 +76,7 @@ export interface BashOperations {
 			signal?: AbortSignal;
 			timeout?: number;
 			env?: NodeJS.ProcessEnv;
+			stdin?: string;
 		},
 	) => Promise<{ exitCode: number | null }>;
 }
@@ -83,7 +84,7 @@ export interface BashOperations {
 /** Shared process execution used by the built-in shell tools. */
 export function createLocalShellOperations(shellName: string, resolveShellConfig: () => ShellConfig): BashOperations {
 	return {
-		exec: async (command, cwd, { onData, signal, timeout, env }) => {
+		exec: async (command, cwd, { onData, signal, timeout, env, stdin }) => {
 			const timeoutMs = resolveTimeoutMs(timeout);
 			if (signal?.aborted) {
 				throw new Error("aborted");
@@ -96,16 +97,20 @@ export function createLocalShellOperations(shellName: string, resolveShellConfig
 			}
 
 			const commandFromStdin = shellConfig.commandTransport === "stdin";
+			if (commandFromStdin && stdin !== undefined) {
+				throw new Error("Cannot provide command input when the configured shell reads commands from stdin");
+			}
+			const pipeStdin = commandFromStdin || stdin !== undefined;
 			const child = spawn(shellConfig.shell, commandFromStdin ? shellConfig.args : [...shellConfig.args, command], {
 				cwd,
 				detached: process.platform !== "win32",
 				env: env ?? getShellEnv(),
-				stdio: [commandFromStdin ? "pipe" : "ignore", "pipe", "pipe"],
+				stdio: [pipeStdin ? "pipe" : "ignore", "pipe", "pipe"],
 				windowsHide: true,
 			});
-			if (commandFromStdin) {
+			if (pipeStdin) {
 				child.stdin?.on("error", () => {});
-				child.stdin?.end(command);
+				child.stdin?.end(commandFromStdin ? command : stdin);
 			}
 			if (child.pid) trackDetachedChildPid(child.pid);
 			let timedOut = false;
@@ -206,6 +211,8 @@ export interface BashToolOptions {
 	exposeSessionEnvironment?: boolean;
 	/** Hook to adjust command, cwd, or env before execution */
 	spawnHook?: BashSpawnHook;
+	/** Optional private standard input supplied to the command without including it in command arguments. */
+	stdin?: string;
 }
 
 const BASH_PREVIEW_LINES = 5;
@@ -344,6 +351,7 @@ export function createShellToolDefinition(
 	const commandPrefix = options?.commandPrefix;
 	const exposeSessionEnvironment = options?.exposeSessionEnvironment ?? true;
 	const spawnHook = options?.spawnHook;
+	const stdin = options?.stdin;
 	return {
 		name: config.name,
 		label: config.label,
@@ -453,6 +461,7 @@ export function createShellToolDefinition(
 						signal,
 						timeout,
 						env: spawnContext.env,
+						stdin,
 					});
 					exitCode = result.exitCode;
 				} catch (err) {

@@ -2590,7 +2590,7 @@ export class InteractiveMode {
 					this.hideExtensionInput();
 					resolve(undefined);
 				},
-				{ tui: this.ui, timeout: opts?.timeout },
+				{ tui: this.ui, timeout: opts?.timeout, secret: opts?.secret },
 			);
 
 			this.disposeActiveSelector();
