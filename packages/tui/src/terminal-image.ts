@@ -306,7 +306,9 @@ export function registerKittyImageMetadata(metadata: KittyImageMetadata): void {
 }
 
 function getRegisteredKittyImageMetadata(line: string): RegisteredKittyImageMetadata | undefined {
-	const controls = /\x1b_G([^;]*);/.exec(line)?.[1];
+	// Image controls are at the start (or behind a short cursor-position prefix).
+	// Never scan a multi-megabyte iTerm payload merely to establish it is not Kitty.
+	const controls = /\x1b_G([^;]*);/.exec(line.slice(0, 1024))?.[1];
 	if (!controls) return undefined;
 	const imageId = /(?:^|,)i=(\d+)(?:,|$)/.exec(controls)?.[1];
 	return imageId === undefined ? undefined : kittyImageMetadata.get(Number.parseInt(imageId, 10));

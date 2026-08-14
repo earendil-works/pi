@@ -162,3 +162,22 @@ export function detectCacheMiss(
 ): CacheMiss | undefined {
 	return detectMiss(scan(entries, models).prev, message, models);
 }
+
+/** Incremental cache-miss state for append-only interactive turns. */
+export class CacheMissDetector {
+	private previous: PreviousRequest | undefined;
+
+	reset(entries: SessionEntry[], models: ModelPriceSource): void {
+		this.previous = scan(entries, models).prev;
+	}
+
+	clear(): void {
+		this.previous = undefined;
+	}
+
+	detectAndAdvance(message: AssistantMessage, models: ModelPriceSource): CacheMiss | undefined {
+		const miss = detectMiss(this.previous, message, models);
+		this.previous = asPreviousRequest(message, this.previous?.reportedCache ?? false) ?? this.previous;
+		return miss;
+	}
+}

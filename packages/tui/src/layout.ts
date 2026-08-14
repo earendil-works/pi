@@ -1,6 +1,12 @@
 import type { ScrollView } from "./components/scroll-view.ts";
 import { allocateStackSizes, visibleStackEntries } from "./components/stack.ts";
-import { getLayoutNode } from "./layout-node.ts";
+import {
+	getLayoutNode,
+	getWindowedScrollContent,
+	type PreparedWindowedScrollContent,
+	WINDOWED_SCROLL_CONTENT,
+	type WindowedScrollWindow,
+} from "./layout-node.ts";
 import { cropKittyImageLine, getKittyImageMetadata, isImageLine } from "./terminal-image.ts";
 import { type Component, CURSOR_MARKER, compositeTuiLine } from "./tui.ts";
 import { extractAnsiCode, getGraphemeCellRange, sliceByColumn, visibleWidth } from "./utils.ts";
@@ -14,6 +20,14 @@ export interface LayoutRect {
 	height: number;
 }
 
+export interface ScrollContentAccessor {
+	height: number;
+	revision?: number;
+	windowStart: number;
+	lineAt(row: number): string | undefined;
+	lines(startRow: number, rowCount: number): readonly string[];
+}
+
 export interface LayoutBox {
 	component: Component;
 	rect: LayoutRect;
@@ -21,9 +35,13 @@ export interface LayoutBox {
 	children: LayoutBox[];
 	parent?: LayoutBox;
 	lines?: readonly string[];
+	/** Absolute document row represented by lines[0]. */
+	lineStart?: number;
 	lineOffset?: number;
 	scrollView?: ScrollView;
+	/** Eager content retained for compatibility; windowed content uses scrollContent. */
 	scrollContentLines?: readonly string[];
+	scrollContent?: ScrollContentAccessor;
 	layer: number;
 }
 
@@ -75,10 +93,22 @@ function renderCached(context: LayoutContext, component: Component, width: numbe
 }
 
 function measureHeight(context: LayoutContext, component: Component, width: number): number {
+	const node = getLayoutNode(component);
+	const windowed = node?.type === "scroll" ? getWindowedScrollContent(node.component) : undefined;
+	if (node?.type === "scroll" && windowed) {
+		return windowed[WINDOWED_SCROLL_CONTENT]({
+			width: node.state.getContentWidth(Math.max(1, Math.floor(width))),
+			scrollTop: node.state.scrollTop,
+			viewportHeight: node.state.viewportHeight,
+			followingEnd: node.state.isFollowingEnd,
+		}).contentHeight;
+	}
 	return renderCached(context, component, width).length;
 }
 
 function measureWidth(context: LayoutContext, component: Component, width: number): number {
+	const node = getLayoutNode(component);
+	if (node?.type === "scroll" && getWindowedScrollContent(node.component)) return Math.max(1, Math.floor(width));
 	return renderCached(context, component, width).reduce((max, line) => Math.max(max, visibleWidth(line)), 0);
 }
 
@@ -95,6 +125,41 @@ function translateBox(box: LayoutBox, deltaY: number): void {
 function updateClips(box: LayoutBox, parentClip: LayoutRect): void {
 	box.clip = intersect(parentClip, box.rect);
 	for (const child of box.children) updateClips(child, box.clip);
+}
+
+function assertSafeRowCount(value: number, label: string): number {
+	if (!Number.isSafeInteger(value) || value < 0) {
+		throw new RangeError(`${label} must be a non-negative safe integer`);
+	}
+	return value;
+}
+
+function validateWindow(window: WindowedScrollWindow, contentHeight: number, startRow: number, rowCount: number): void {
+	const windowStart = assertSafeRowCount(window.startRow, "Window start row");
+	if (windowStart > startRow || windowStart + window.lines.length > contentHeight) {
+		throw new RangeError("Windowed scroll content returned rows outside its document bounds");
+	}
+	const requiredEnd = Math.min(contentHeight, startRow + rowCount);
+	if (windowStart + window.lines.length < requiredEnd) {
+		throw new RangeError("Windowed scroll content did not cover the requested viewport");
+	}
+	for (const line of window.lines) {
+		if (typeof line !== "string") throw new TypeError("Windowed scroll content lines must be strings");
+	}
+}
+
+function slicePreparedWindow(
+	prepared: PreparedWindowedScrollContent,
+	startRow: number,
+	rowCount: number,
+): readonly string[] {
+	const safeStart = Math.max(0, Math.min(prepared.contentHeight, Math.trunc(startRow)));
+	const safeCount = Math.max(0, Math.min(prepared.contentHeight - safeStart, Math.trunc(rowCount)));
+	if (safeCount === 0) return [];
+	const window = prepared.renderWindow(safeStart, safeCount);
+	validateWindow(window, prepared.contentHeight, safeStart, safeCount);
+	const offset = safeStart - window.startRow;
+	return window.lines.slice(offset, offset + safeCount);
 }
 
 function layoutComponent(
@@ -130,22 +195,60 @@ function layoutComponent(
 	if (node.type === "scroll") {
 		const previousScrollTop = node.state.scrollTop;
 		const contentWidth = node.state.getContentWidth(safeWidth);
-		const childBox = layoutComponent(
-			context,
-			node.component,
-			x,
-			y - previousScrollTop,
-			contentWidth,
-			undefined,
-			clip,
-		);
-		const contentHeight = childBox.rect.height;
-		const viewportHeight = height === undefined ? contentHeight : Math.max(0, Math.floor(height));
-		node.state.updateLayout(contentHeight, viewportHeight, context.requestRender);
-		translateBox(childBox, previousScrollTop - node.state.scrollTop);
+		const viewportHeight = height === undefined ? 0 : Math.max(0, Math.floor(height));
+		const windowed = getWindowedScrollContent(node.component);
+		let childBox: LayoutBox;
+		let contentHeight: number;
+		let scrollContentLines: readonly string[] | undefined;
+		let scrollContent: ScrollContentAccessor | undefined;
+
+		if (windowed && height !== undefined) {
+			const prepared = windowed[WINDOWED_SCROLL_CONTENT]({
+				width: contentWidth,
+				scrollTop: previousScrollTop,
+				viewportHeight,
+				followingEnd: node.state.isFollowingEnd,
+			});
+			contentHeight = assertSafeRowCount(prepared.contentHeight, "Windowed scroll content height");
+			node.state.updateLayout(contentHeight, viewportHeight, context.requestRender, prepared.anchorScrollTop);
+			const startRow = node.state.scrollTop;
+			const window = prepared.renderWindow(startRow, viewportHeight);
+			validateWindow(window, contentHeight, startRow, viewportHeight);
+			childBox = {
+				component: node.component,
+				rect: { x, y: y - startRow, width: contentWidth, height: contentHeight },
+				clip,
+				children: [],
+				lines: window.lines,
+				lineStart: window.startRow,
+				layer: 0,
+			};
+			scrollContent = {
+				height: contentHeight,
+				...(prepared.revision === undefined ? {} : { revision: prepared.revision }),
+				windowStart: window.startRow,
+				lineAt: (row) => prepared.lineAt(row),
+				lines: (row, count) => slicePreparedWindow(prepared, row, count),
+			};
+		} else {
+			childBox = layoutComponent(context, node.component, x, y - previousScrollTop, contentWidth, undefined, clip);
+			contentHeight = childBox.rect.height;
+			const eagerViewportHeight = height === undefined ? contentHeight : viewportHeight;
+			node.state.updateLayout(contentHeight, eagerViewportHeight, context.requestRender);
+			translateBox(childBox, previousScrollTop - node.state.scrollTop);
+			scrollContentLines = renderCached(context, node.component, contentWidth);
+			scrollContent = {
+				height: contentHeight,
+				windowStart: 0,
+				lineAt: (row) => scrollContentLines?.[row],
+				lines: (row, count) => scrollContentLines?.slice(row, row + count) ?? [],
+			};
+		}
+
+		const actualViewportHeight = height === undefined ? contentHeight : viewportHeight;
 		const scrollView = node.state as ScrollView;
 		if (node.state.primary || !context.primaryScrollView) context.primaryScrollView = scrollView;
-		const rect = { x, y, width: safeWidth, height: viewportHeight };
+		const rect = { x, y, width: safeWidth, height: actualViewportHeight };
 		const childClip = intersect(clip, rect);
 		const box: LayoutBox = {
 			component,
@@ -153,7 +256,8 @@ function layoutComponent(
 			clip: childClip,
 			children: [childBox],
 			scrollView,
-			scrollContentLines: renderCached(context, node.component, contentWidth),
+			...(scrollContentLines === undefined ? {} : { scrollContentLines }),
+			...(scrollContent === undefined ? {} : { scrollContent }),
 			layer: 0,
 		};
 		childBox.parent = box;
@@ -195,9 +299,10 @@ function layoutComponent(
 		typeof entry.basis === "number" ? entry.basis : measureWidth(context, entry.component, safeWidth),
 	);
 	const widths = allocateStackSizes(entries, intrinsicWidths, safeWidth, node.gap);
-	const intrinsicHeights = entries.map((entry, index) =>
-		measureHeight(context, entry.component, Math.max(1, widths[index]!)),
-	);
+	const intrinsicHeights =
+		height !== undefined && node.align === "stretch"
+			? entries.map(() => Math.max(0, Math.floor(height)))
+			: entries.map((entry, index) => measureHeight(context, entry.component, Math.max(1, widths[index]!)));
 	const allocatedHeight =
 		height === undefined
 			? intrinsicHeights.reduce((max, childHeight) => Math.max(max, childHeight), 0)
@@ -266,7 +371,8 @@ function styleScrollbarCell(line: string, column: number, totalWidth: number, st
 export function getScrollbarGeometry(box: LayoutBox): ScrollbarGeometry | undefined {
 	if (!box.scrollView?.isScrollbarVisible || box.rect.width <= 0 || box.rect.height <= 0) return undefined;
 
-	const contentHeight = box.children[0]?.rect.height ?? box.scrollContentLines?.length ?? 0;
+	const contentHeight =
+		box.scrollContent?.height ?? box.children[0]?.rect.height ?? box.scrollContentLines?.length ?? 0;
 	const trackHeight = box.rect.height;
 
 	const minThumbHeight = Math.min(2, trackHeight);
@@ -304,10 +410,11 @@ function paintScrollbar(box: LayoutBox, screen: string[], totalWidth: number): v
 function paintBox(box: LayoutBox, screen: string[], totalWidth: number): void {
 	if (box.lines) {
 		const offset = box.lineOffset ?? 0;
+		const lineStart = box.lineStart ?? 0;
 		const firstRow = Math.max(box.rect.y, box.clip.y, 0);
 		const lastRow = Math.min(box.rect.y + box.rect.height, box.clip.y + box.clip.height, screen.length);
 		for (let row = firstRow; row < lastRow; row++) {
-			const sourceLine = box.lines[offset + row - box.rect.y];
+			const sourceLine = box.lines[offset + row - box.rect.y - lineStart];
 			if (sourceLine === undefined) continue;
 			let line = sourceLine.replace(OSC133_ZONE_PREFIX, "");
 			const imageMetadata = getKittyImageMetadata(line);
@@ -330,9 +437,9 @@ function paintBox(box: LayoutBox, screen: string[], totalWidth: number): void {
 	}
 	for (const child of box.children) paintBox(child, screen, totalWidth);
 
-	if (box.scrollView && box.scrollContentLines && box.scrollView.scrollTop > 0 && box.rect.height > 0) {
-		for (let imageRow = box.scrollView.scrollTop - 1; imageRow >= 0; imageRow--) {
-			const imageLine = box.scrollContentLines[imageRow] ?? "";
+	if (box.scrollView && box.scrollContent && box.scrollView.scrollTop > 0 && box.rect.height > 0) {
+		for (let imageRow = box.scrollView.scrollTop - 1; imageRow >= box.scrollContent.windowStart; imageRow--) {
+			const imageLine = box.scrollContent.lineAt(imageRow) ?? "";
 			const metadata = getKittyImageMetadata(imageLine);
 			if (metadata) {
 				const hiddenRows = box.scrollView.scrollTop - imageRow;

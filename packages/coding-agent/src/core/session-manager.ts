@@ -201,6 +201,8 @@ export type ReadonlySessionManager = Pick<
 	| "buildContextEntries"
 	| "getHeader"
 	| "getEntries"
+	| "getEntryCount"
+	| "getEntriesSince"
 	| "getTree"
 	| "getSessionName"
 >;
@@ -1300,6 +1302,25 @@ export class SessionManager {
 	 */
 	getEntries(): SessionEntry[] {
 		return this.fileEntries.filter((e): e is SessionEntry => e.type !== "session");
+	}
+
+	/** Number of append-only entries, excluding the session header. */
+	getEntryCount(): number {
+		return this.byId.size;
+	}
+
+	/** Return a shallow copy of the append-only suffix without scanning prior entries. */
+	getEntriesSince(startIndex: number): SessionEntry[] {
+		if (!Number.isInteger(startIndex) || startIndex < 0 || startIndex > this.byId.size) {
+			throw new RangeError(`Session entry start index out of bounds: ${startIndex}`);
+		}
+		const suffixLength = this.byId.size - startIndex;
+		if (suffixLength === 0) return [];
+		const suffix = this.fileEntries.slice(-suffixLength);
+		if (suffix.every((entry): entry is SessionEntry => entry.type !== "session")) return suffix;
+		// A malformed/migrated header position must preserve correctness even though
+		// normal session files always keep their sole header first.
+		return this.getEntries().slice(startIndex);
 	}
 
 	/**

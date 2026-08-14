@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added bounded primary-transcript viewport, line, semantic block, selection snapshot, and target-navigation APIs to `TuiAltScreen`.
+
+### Changed
+
+- Alternate-screen scroll views can use exact source-backed windows, so ordinary frames paint only visible transcript rows while preserving anchors, search, selection, images, split layouts, and full-document exit output.
+
+### Fixed
+
+- Fixed large inline image payloads being scanned for cursor markers on every repaint.
+- Fixed auto-sized horizontal splits bypassing bounded scroll rendering and geometry-only selection reads materializing the full selection.
+
 ## [0.84.2] - 2026-08-14
 
 ### Added

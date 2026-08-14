@@ -1191,7 +1191,20 @@ export abstract class TuiBase extends Container implements TUI {
 		const viewportTop = Math.max(0, lines.length - height);
 		for (let row = lines.length - 1; row >= viewportTop; row--) {
 			const line = lines[row];
-			const markerIndex = line.indexOf(CURSOR_MARKER);
+			let markerIndex: number;
+			if (isImageLine(line)) {
+				// Inline image payloads can be megabytes. Cursor overlays, when present,
+				// are outside the transmission near one edge, so inspect bounded edges only.
+				const scanSize = 4096;
+				markerIndex = line.slice(0, scanSize).indexOf(CURSOR_MARKER);
+				if (markerIndex === -1 && line.length > scanSize) {
+					const suffixStart = Math.max(scanSize, line.length - scanSize);
+					const suffixIndex = line.slice(suffixStart).indexOf(CURSOR_MARKER);
+					if (suffixIndex !== -1) markerIndex = suffixStart + suffixIndex;
+				}
+			} else {
+				markerIndex = line.indexOf(CURSOR_MARKER);
+			}
 			if (markerIndex !== -1) {
 				// Calculate visual column (width of text before marker)
 				const beforeMarker = line.slice(0, markerIndex);

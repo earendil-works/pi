@@ -26,6 +26,10 @@ describe("SessionManager append and tree traversal", () => {
 
 			expect(entries[2].id).toBe(id3);
 			expect(entries[2].parentId).toBe(id2);
+			expect(session.getEntryCount()).toBe(3);
+			expect(session.getEntriesSince(1).map((entry) => entry.id)).toEqual([id2, id3]);
+			expect(session.getEntriesSince(3)).toEqual([]);
+			expect(() => session.getEntriesSince(4)).toThrow(RangeError);
 		});
 
 		it("appendThinkingLevelChange integrates into tree", () => {

@@ -92,6 +92,7 @@ describe("createInteractiveTui", () => {
 			fullscreenLayoutRoot: Component;
 			options: { tuiMode?: TuiMode };
 			themeController: { rebindTui: () => void };
+			transcriptDocument: { setEagerMode: (enabled: boolean) => void };
 			extensionTerminalInputSubscriptions: Set<never>;
 		};
 		const context = Object.assign(Object.create(InteractiveMode.prototype), {
@@ -100,6 +101,7 @@ describe("createInteractiveTui", () => {
 			fullscreenLayoutRoot: component,
 			options: { tuiMode: "regular" as TuiMode },
 			themeController: { rebindTui: () => {} },
+			transcriptDocument: { setEagerMode: vi.fn() },
 			extensionTerminalInputSubscriptions: new Set<never>(),
 		}) as SwitchContext;
 		stableUi = createInteractiveTuiReference(() => context.renderer);
@@ -119,6 +121,7 @@ describe("createInteractiveTui", () => {
 		expect(context.renderer.getFocusedComponent()).toBe(component);
 		expect(component.focused).toBe(true);
 		expect(invalidatedModes).toEqual(["fullscreen"]);
+		expect(context.transcriptDocument.setEagerMode).toHaveBeenCalledWith(false);
 		expect([terminal.startCount, terminal.stopCount]).toEqual([2, 1]);
 
 		stopInteractiveTui.call(context, "resume-hint");

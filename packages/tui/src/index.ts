@@ -74,6 +74,13 @@ export {
 } from "./keys.ts";
 // LaTeX rendering
 export { type RenderLatexOptions, renderLatex } from "./latex.ts";
+export {
+	type PreparedWindowedScrollContent,
+	WINDOWED_SCROLL_CONTENT,
+	type WindowedScrollContent,
+	type WindowedScrollContentRequest,
+	type WindowedScrollWindow,
+} from "./layout-node.ts";
 // Input buffering for batch splitting
 export { StdinBuffer, type StdinBufferEventMap, type StdinBufferOptions } from "./stdin-buffer.ts";
 // Terminal interface and implementations
@@ -114,6 +121,18 @@ export {
 	type TerminalCapabilities,
 } from "./terminal-image.ts";
 export {
+	getTranscriptSemantics,
+	getTranscriptTarget,
+	TRANSCRIPT_BLOCK,
+	TRANSCRIPT_SEMANTICS,
+	type TranscriptBlockComponent,
+	type TranscriptBlockKind,
+	type TranscriptSemanticBlock,
+	type TranscriptSemantics,
+	type TranscriptSemanticsComponent,
+	type TranscriptTarget,
+} from "./transcript.ts";
+export {
 	type Component,
 	Container,
 	CURSOR_MARKER,
@@ -134,7 +153,18 @@ export {
 	type TuiStopOptions,
 	type ViewportTUI,
 } from "./tui.ts";
-export { TuiAltScreen, type TuiAltScreenOptions } from "./tui-alt-screen.ts";
+export {
+	type AltScreenSelectionSnapshot,
+	type AltScreenSelectionSnapshotOptions,
+	type AltScreenTranscriptBlock,
+	type AltScreenTranscriptLines,
+	type AltScreenTranscriptPoint,
+	type AltScreenTranscriptRange,
+	type AltScreenTranscriptRect,
+	type AltScreenTranscriptViewport,
+	TuiAltScreen,
+	type TuiAltScreenOptions,
+} from "./tui-alt-screen.ts";
 export { TuiMainScreen, type TuiMainScreenRenderState } from "./tui-main-screen.ts";
 // Utilities
 export {

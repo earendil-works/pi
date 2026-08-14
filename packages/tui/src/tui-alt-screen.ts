@@ -1,7 +1,7 @@
 import {
 	AltScreenSearchComponent,
 	type AltScreenSearchMatch,
-	findAltScreenSearchMatches,
+	findAltScreenSearchMatchesInRows,
 	getAltScreenSearchMatchKey,
 } from "./alt-screen-search.ts";
 import { AltScreenFlashContainer } from "./components/alt-screen-flash.ts";
@@ -12,6 +12,7 @@ import {
 	getScrollbarGeometry,
 	getScrollViewBox,
 	getScrollViewsAt,
+	type LayoutBox,
 	type LayoutFrame,
 	renderLayoutFrame,
 	type ScrollbarGeometry,
@@ -28,8 +29,10 @@ import {
 	setCapabilities,
 	type TerminalCapabilities,
 } from "./terminal-image.ts";
+import { getTranscriptSemantics, getTranscriptTarget, type TranscriptTarget } from "./transcript.ts";
 import {
 	type Component,
+	Container,
 	CURSOR_MARKER,
 	compositeTuiLine,
 	type OverlayHandle,
@@ -127,6 +130,7 @@ interface ActiveSearch {
 	component: AltScreenSearchComponent;
 	overlay?: OverlayHandle;
 	query: string;
+	computedQuery?: string;
 	matches: AltScreenSearchMatch[];
 	selectedIndex: number;
 	selectedKey?: string;
@@ -138,6 +142,76 @@ interface SearchHighlightRange {
 	startCol: number;
 	endCol: number;
 	current: boolean;
+}
+
+export interface AltScreenTranscriptPoint {
+	row: number;
+	col: number;
+}
+
+/** Half-open row range in primary transcript content coordinates. */
+export interface AltScreenTranscriptRange {
+	startRow: number;
+	endRow: number;
+}
+
+export interface AltScreenTranscriptLines extends AltScreenTranscriptRange {
+	readonly lines: readonly string[];
+}
+
+export interface AltScreenTranscriptRect {
+	x: number;
+	y: number;
+	width: number;
+	height: number;
+}
+
+/** Current exact geometry of the primary transcript viewport. */
+export interface AltScreenTranscriptViewport {
+	readonly contentWidth: number;
+	readonly contentHeight: number;
+	readonly scrollTop: number;
+	readonly viewportHeight: number;
+	readonly screenRect: AltScreenTranscriptRect;
+	readonly visibleRange: AltScreenTranscriptRange;
+	readonly isFollowingOutput: boolean;
+}
+
+/** Exact rendered extent of one semantic transcript component. */
+export interface AltScreenTranscriptBlock {
+	readonly target: TranscriptTarget;
+	readonly startRow: number;
+	readonly endRow: number;
+}
+
+export interface AltScreenSelectionSnapshotOptions {
+	/** Skip selected-text materialization when only bounds and semantic focus are needed. */
+	readonly includeText?: boolean;
+}
+
+export interface AltScreenSelectionSnapshot {
+	readonly text: string;
+	/** Selection endpoints projected into terminal screen coordinates. */
+	readonly bounds: {
+		readonly start: AltScreenTranscriptPoint;
+		readonly end: AltScreenTranscriptPoint;
+	};
+	/** Content-coordinate endpoints when the selection belongs to the primary transcript. */
+	readonly transcriptRange?: {
+		readonly start: AltScreenTranscriptPoint;
+		readonly end: AltScreenTranscriptPoint;
+	};
+	/** Semantic block containing the selection focus. */
+	readonly transcriptBlock?: AltScreenTranscriptBlock;
+}
+
+interface PrimaryTranscriptState {
+	box: LayoutBox;
+	contentBox: LayoutBox;
+	contentHeight: number;
+	readLine(row: number): string | undefined;
+	readLines(range: AltScreenTranscriptRange): readonly string[];
+	width: number;
 }
 
 export interface TuiAltScreenOptions {
@@ -189,6 +263,8 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 	private scrollbarDrag?: ScrollbarDrag;
 	private scrollbarHover?: ScrollView;
 	private activeSearch?: ActiveSearch;
+	private transcriptBlockCache?: { layout: LayoutFrame; blocks: readonly AltScreenTranscriptBlock[] };
+	private renderErrorMessage?: string;
 	private pressedUrl?: string;
 	private selectionDragged = false;
 	private readonly wheelScrollLines: number;
@@ -236,6 +312,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		if (this.layoutRoot === component) return;
 		this.layoutRoot = component;
 		this.currentLayout = undefined;
+		this.transcriptBlockCache = undefined;
 		this.requestRender();
 	}
 
@@ -249,6 +326,188 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 
 	private getPrimaryScrollView(): ScrollView {
 		return this.currentLayout?.primaryScrollView ?? this.implicitScrollView;
+	}
+
+	private getPrimaryTranscriptState(): PrimaryTranscriptState | undefined {
+		if (!this.currentLayout) return undefined;
+		const scrollView = this.currentLayout.primaryScrollView ?? this.implicitScrollView;
+		const box = getScrollViewBox(this.currentLayout, scrollView);
+		const contentBox = box?.children[0];
+		const content = box?.scrollContent;
+		if (!box || !contentBox || !content) return undefined;
+		return {
+			box,
+			contentBox,
+			contentHeight: content.height,
+			readLine: (row) => content.lineAt(row),
+			readLines: (range) => content.lines(range.startRow, range.endRow - range.startRow),
+			width: Math.max(1, contentBox.rect.width),
+		};
+	}
+
+	/** Return exact metadata for the primary transcript viewport from the last completed frame. */
+	getPrimaryTranscriptViewport(): AltScreenTranscriptViewport | undefined {
+		const state = this.getPrimaryTranscriptState();
+		if (!state) return undefined;
+		const scrollView = state.box.scrollView;
+		if (!scrollView) return undefined;
+		const { rect, clip } = state.box;
+		const screenX = Math.max(0, rect.x, clip.x);
+		const screenY = Math.max(0, rect.y, clip.y);
+		const screenRight = Math.min(this.terminal.columns, rect.x + rect.width, clip.x + clip.width);
+		const screenBottom = Math.min(this.terminal.rows, rect.y + rect.height, clip.y + clip.height);
+		const startRow = Math.min(state.contentHeight, scrollView.scrollTop);
+		const endRow = Math.min(state.contentHeight, startRow + scrollView.viewportHeight);
+		return {
+			contentWidth: state.width,
+			contentHeight: state.contentHeight,
+			scrollTop: scrollView.scrollTop,
+			viewportHeight: scrollView.viewportHeight,
+			screenRect: {
+				x: screenX,
+				y: screenY,
+				width: Math.max(0, screenRight - screenX),
+				height: Math.max(0, screenBottom - screenY),
+			},
+			visibleRange: { startRow, endRow },
+			isFollowingOutput: scrollView.isFollowingEnd,
+		};
+	}
+
+	/** Read one rendered primary-transcript line without exposing the backing document. */
+	readPrimaryTranscriptLine(row: number): string | undefined {
+		const state = this.getPrimaryTranscriptState();
+		if (!state || !Number.isFinite(row)) return undefined;
+		const index = Math.trunc(row);
+		return index >= 0 ? state.readLine(index) : undefined;
+	}
+
+	/** Read a caller-bounded, half-open range of rendered primary-transcript lines. */
+	readPrimaryTranscriptLines(range: AltScreenTranscriptRange): AltScreenTranscriptLines | undefined {
+		const state = this.getPrimaryTranscriptState();
+		const normalized = state ? this.normalizeTranscriptRange(range, state.contentHeight) : undefined;
+		if (!state || !normalized) return undefined;
+		return {
+			...normalized,
+			lines: state.readLines(normalized),
+		};
+	}
+
+	private normalizeTranscriptRange(
+		range: AltScreenTranscriptRange,
+		contentHeight: number,
+	): AltScreenTranscriptRange | undefined {
+		if (!Number.isFinite(range.startRow) || !Number.isFinite(range.endRow)) return undefined;
+		const startRow = Math.max(0, Math.min(contentHeight, Math.trunc(range.startRow)));
+		const endRow = Math.max(startRow, Math.min(contentHeight, Math.trunc(range.endRow)));
+		return { startRow, endRow };
+	}
+
+	private getTranscriptBlocks(): readonly AltScreenTranscriptBlock[] {
+		const state = this.getPrimaryTranscriptState();
+		if (!state || !this.currentLayout) return [];
+		if (this.transcriptBlockCache?.layout === this.currentLayout) return this.transcriptBlockCache.blocks;
+
+		const blocks: AltScreenTranscriptBlock[] = [];
+		const collectComponent = (component: Component, startRow: number, height: number): void => {
+			const target = getTranscriptTarget(component);
+			if (target) {
+				blocks.push({ target, startRow, endRow: startRow + height });
+				return;
+			}
+			if (!(component instanceof Container)) return;
+			let childRow = startRow;
+			for (const child of component.children) {
+				const childHeight = child.render(state.width).length;
+				collectComponent(child, childRow, childHeight);
+				childRow += childHeight;
+			}
+		};
+		const collectBox = (box: LayoutBox, originY: number): void => {
+			const startRow = box.rect.y - originY;
+			const target = getTranscriptTarget(box.component);
+			if (target) {
+				blocks.push({ target, startRow, endRow: startRow + box.rect.height });
+				return;
+			}
+			if (box.children.length > 0) {
+				for (const child of box.children) collectBox(child, originY);
+				return;
+			}
+			collectComponent(box.component, startRow, box.rect.height);
+		};
+		collectBox(state.contentBox, state.contentBox.rect.y);
+		blocks.sort((a, b) => a.startRow - b.startRow || a.endRow - b.endRow);
+		this.transcriptBlockCache = { layout: this.currentLayout, blocks };
+		return blocks;
+	}
+
+	/** Return semantic blocks intersecting a caller-bounded transcript row range. */
+	getPrimaryTranscriptBlocks(range: AltScreenTranscriptRange): readonly AltScreenTranscriptBlock[] {
+		const state = this.getPrimaryTranscriptState();
+		const normalized = state ? this.normalizeTranscriptRange(range, state.contentHeight) : undefined;
+		if (!state || !normalized) return [];
+		const semantics = getTranscriptSemantics(state.contentBox.component);
+		const blocks = semantics
+			? semantics.blocks(normalized.startRow, normalized.endRow)
+			: this.getTranscriptBlocks().filter(
+					(block) => block.endRow > normalized.startRow && block.startRow < normalized.endRow,
+				);
+		return blocks.map((block) => ({ ...block }));
+	}
+
+	/** Return the semantic block containing one primary-transcript content row. */
+	getPrimaryTranscriptBlockAt(row: number): AltScreenTranscriptBlock | undefined {
+		const state = this.getPrimaryTranscriptState();
+		if (!state || !Number.isFinite(row)) return undefined;
+		const contentRow = Math.trunc(row);
+		const semantics = getTranscriptSemantics(state.contentBox.component);
+		const block =
+			semantics?.blockAt(contentRow) ??
+			this.getTranscriptBlocks().find(
+				(candidate) => contentRow >= candidate.startRow && contentRow < candidate.endRow,
+			);
+		return block ? { ...block } : undefined;
+	}
+
+	/** Return the first assistant block after the transcript's latest user block. */
+	getLatestResponseBlock(): AltScreenTranscriptBlock | undefined {
+		const state = this.getPrimaryTranscriptState();
+		if (!state) return undefined;
+		const semanticResponse = getTranscriptSemantics(state.contentBox.component)?.latestResponse();
+		if (semanticResponse) return { ...semanticResponse };
+		const blocks = this.getTranscriptBlocks();
+		let latestUserIndex = -1;
+		for (let index = blocks.length - 1; index >= 0; index--) {
+			if (blocks[index]?.target.kind === "user") {
+				latestUserIndex = index;
+				break;
+			}
+		}
+		const response = blocks.find((block, index) => index > latestUserIndex && block.target.kind === "assistant");
+		return response ? { ...response } : undefined;
+	}
+
+	/** Scroll the primary transcript to the current position of a stable semantic target. */
+	scrollToTranscriptTarget(target: TranscriptTarget): boolean {
+		const state = this.getPrimaryTranscriptState();
+		if (!state) return false;
+		const block =
+			getTranscriptSemantics(state.contentBox.component)?.find(target) ??
+			this.getTranscriptBlocks().find(
+				(candidate) => candidate.target.kind === target.kind && candidate.target.id === target.id,
+			);
+		const scrollView = state.box.scrollView;
+		if (!block || !scrollView) return false;
+		scrollView.scrollTo(block.startRow, { disableFollow: true });
+		this.requestRender();
+		return true;
+	}
+
+	/** Scroll to the beginning of the latest assistant response. */
+	scrollToLatestResponse(): boolean {
+		const response = this.getLatestResponseBlock();
+		return response ? this.scrollToTranscriptTarget(response.target) : false;
 	}
 
 	protected override beforeTerminalStart(): void {
@@ -389,6 +648,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		this.previousScreenWidth = 0;
 		this.previousScreenHeight = 0;
 		this.currentLayout = undefined;
+		this.transcriptBlockCache = undefined;
 	}
 
 	scrollBy(lines: number): void {
@@ -409,11 +669,11 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 	private scrollToPrompt(direction: -1 | 1): void {
 		if (!this.currentLayout) return;
 		const scrollView = this.getPrimaryScrollView();
-		const lines = getScrollViewBox(this.currentLayout, scrollView)?.scrollContentLines;
-		if (!lines) return;
+		const content = getScrollViewBox(this.currentLayout, scrollView)?.scrollContent;
+		if (!content) return;
 
-		for (let row = scrollView.scrollTop + direction; row >= 0 && row < lines.length; row += direction) {
-			if (!OSC133_PROMPT_START.test(lines[row] ?? "")) continue;
+		for (let row = scrollView.scrollTop + direction; row >= 0 && row < content.height; row += direction) {
+			if (!OSC133_PROMPT_START.test(content.lineAt(row) ?? "")) continue;
 			scrollView.scrollTo(row);
 			this.requestRender();
 			return;
@@ -474,8 +734,9 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		if (!search) return false;
 		const scrollView = layout.primaryScrollView ?? this.implicitScrollView;
 		const box = getScrollViewBox(layout, scrollView);
-		const lines = box?.scrollContentLines;
-		if (!lines || !search.query.trim()) {
+		const content = box?.scrollContent;
+		if (!content || !search.query.trim()) {
+			search.computedQuery = undefined;
 			search.matches = [];
 			search.selectedIndex = -1;
 			search.selectedKey = undefined;
@@ -485,7 +746,11 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		}
 
 		const shouldRevealSelection = search.selectionMode !== "retain";
-		const matches = findAltScreenSearchMatches(lines, search.query);
+		const canReuseMatches = search.computedQuery === search.query;
+		const matches = canReuseMatches
+			? search.matches
+			: findAltScreenSearchMatchesInRows(content.height, content.lineAt, search.query);
+		search.computedQuery = search.query;
 		const exactIndex = search.selectedKey
 			? matches.findIndex((match) => getAltScreenSearchMatchKey(match) === search.selectedKey)
 			: -1;
@@ -797,7 +1062,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		);
 		if (visibleBottom < visibleTop) return undefined;
 		const pointerRow = Math.max(visibleTop, Math.min(visibleBottom, y));
-		const maxContentRow = Math.max(0, (box.scrollContentLines?.length ?? 1) - 1);
+		const maxContentRow = Math.max(0, (box.scrollContent?.height ?? 1) - 1);
 		return {
 			row: Math.max(0, Math.min(maxContentRow, scrollView.scrollTop + pointerRow - box.rect.y)),
 			col: Math.max(0, Math.min(box.rect.width - 1, x - box.rect.x)),
@@ -818,8 +1083,8 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 
 	private getSelectionSourceLine(point: SelectionPoint): string {
 		if (point.scrollView && this.currentLayout) {
-			const lines = getScrollViewBox(this.currentLayout, point.scrollView)?.scrollContentLines;
-			if (lines) return lines[point.row] ?? "";
+			const content = getScrollViewBox(this.currentLayout, point.scrollView)?.scrollContent;
+			if (content) return content.lineAt(point.row) ?? "";
 		}
 		return this.previousScreen[point.row] ?? "";
 	}
@@ -1033,6 +1298,73 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 			: { start: this.selectionFocus, end: this.selectionAnchor };
 	}
 
+	/** Snapshot the current non-empty selection without exposing selection or layout internals. */
+	getSelectionSnapshot(options: AltScreenSelectionSnapshotOptions = {}): AltScreenSelectionSnapshot | undefined {
+		const selection = this.getSelectionBounds();
+		if (!selection) return undefined;
+		let readSourceLine = (row: number): string | undefined => this.previousScreen[row];
+		let transcriptRange: AltScreenSelectionSnapshot["transcriptRange"];
+		let transcriptBlock: AltScreenTranscriptBlock | undefined;
+		let start = { row: selection.start.row, col: selection.start.col };
+		let end = { row: selection.end.row, col: selection.end.col };
+		const state = this.getPrimaryTranscriptState();
+		const primaryScrollView = state?.box.scrollView;
+		if (state && primaryScrollView && selection.start.scrollView === primaryScrollView) {
+			readSourceLine = state.readLine;
+			transcriptRange = {
+				start: { row: selection.start.row, col: selection.start.col },
+				end: { row: selection.end.row, col: selection.end.col },
+			};
+			transcriptBlock = this.getPrimaryTranscriptBlockAt(this.selectionFocus?.row ?? selection.end.row);
+			start = {
+				row: state.box.rect.y + selection.start.row - primaryScrollView.scrollTop,
+				col: state.box.rect.x + selection.start.col,
+			};
+			end = {
+				row: state.box.rect.y + selection.end.row - primaryScrollView.scrollTop,
+				col: state.box.rect.x + selection.end.col,
+			};
+		}
+		const lines: string[] = [];
+		if (options.includeText !== false) {
+			for (let row = selection.start.row; row <= selection.end.row; row++) {
+				const line = readSourceLine(row) ?? "";
+				const columns = this.getSelectionColumns(line, row, selection);
+				lines.push(
+					stripTerminalSequences(
+						sliceByColumn(line, columns.start, Math.max(0, columns.end - columns.start), true),
+					).trimEnd(),
+				);
+			}
+		}
+		const text = lines.join("\n");
+		if (options.includeText !== false && text.length === 0) return undefined;
+		return {
+			text,
+			bounds: { start, end },
+			...(transcriptRange ? { transcriptRange } : {}),
+			...(transcriptBlock ? { transcriptBlock } : {}),
+		};
+	}
+
+	/** Clear current selection state and repaint if a visible selection was removed. */
+	clearSelection(): boolean {
+		const hadSelectionState = this.selectionAnchor !== undefined || this.selectionFocus !== undefined;
+		if (!hadSelectionState) return false;
+		const hadVisibleSelection = this.getSelectionBounds() !== undefined;
+		this.stopSelectionAutoScroll();
+		this.selectionPressActive = false;
+		this.selectionDragged = false;
+		this.selectionAnchor = undefined;
+		this.selectionFocus = undefined;
+		this.selectionGranularity = "character";
+		this.selectionInitialRange = undefined;
+		this.pressedUrl = undefined;
+		this.lastClick = undefined;
+		if (hadVisibleSelection) this.requestRender();
+		return true;
+	}
+
 	private getSelectionColumns(
 		line: string,
 		row: number,
@@ -1057,16 +1389,16 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 	private async copySelectionToClipboard(): Promise<void> {
 		const selection = this.getSelectionBounds();
 		if (!selection) return;
-		let sourceLines: readonly string[] = this.previousScreen;
+		let readSourceLine = (row: number): string | undefined => this.previousScreen[row];
 		if (selection.start.scrollView) {
 			if (!this.currentLayout) return;
-			const box = getScrollViewBox(this.currentLayout, selection.start.scrollView);
-			if (!box?.scrollContentLines) return;
-			sourceLines = box.scrollContentLines;
+			const content = getScrollViewBox(this.currentLayout, selection.start.scrollView)?.scrollContent;
+			if (!content) return;
+			readSourceLine = (row) => content.lineAt(row);
 		}
 		const lines: string[] = [];
 		for (let row = selection.start.row; row <= selection.end.row; row++) {
-			const line = sourceLines[row] ?? "";
+			const line = readSourceLine(row) ?? "";
 			const columns = this.getSelectionColumns(line, row, selection);
 			lines.push(
 				stripTerminalSequences(
@@ -1243,15 +1575,53 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		return result;
 	}
 
+	private preserveLastFrameAfterRenderError(error: unknown, width: number, height: number): void {
+		const detail = error instanceof Error ? error.message : String(error);
+		const message = `Render failed: ${detail}`;
+		if (
+			this.renderErrorMessage === message &&
+			this.previousScreenWidth === width &&
+			this.previousScreenHeight === height
+		) {
+			return;
+		}
+		const sameDimensions = this.previousScreenWidth === width && this.previousScreenHeight === height;
+		const screen = sameDimensions ? [...this.previousScreen] : Array.from({ length: height }, () => "");
+		while (screen.length < height) screen.push("");
+		screen.length = height;
+		const visibleMessage = sliceByColumn(message, 0, width, true);
+		const errorLine = `\x1b[7m${visibleMessage}\x1b[27m`;
+		screen[0] = errorLine;
+
+		let buffer = BEGIN_SYNCHRONIZED_OUTPUT;
+		if (!sameDimensions) {
+			this.fullRedrawCount += 1;
+			buffer += `${this.deleteKittyImages()}\x1b[2J`;
+		}
+		buffer += `\x1b[1;1H\x1b[2K${errorLine}\x1b[?25l${END_SYNCHRONIZED_OUTPUT}`;
+		this.terminal.write(buffer);
+		this.previousScreen = screen;
+		this.previousScreenWidth = width;
+		this.previousScreenHeight = height;
+		this.renderErrorMessage = message;
+	}
+
 	protected override doRender(): void {
 		if (this.stopped || !this.altScreenActive) return;
 		const width = Math.max(1, this.terminal.columns);
 		const height = Math.max(1, this.terminal.rows);
 		const root = this.layoutRoot ?? this.implicitScrollView;
-		let nextLayout = renderLayoutFrame(root, width, height, () => this.requestRender());
-		if (this.refreshSearch(nextLayout)) {
+		let nextLayout: LayoutFrame;
+		try {
 			nextLayout = renderLayoutFrame(root, width, height, () => this.requestRender());
+			if (this.refreshSearch(nextLayout)) {
+				nextLayout = renderLayoutFrame(root, width, height, () => this.requestRender());
+			}
+		} catch (error) {
+			this.preserveLastFrameAfterRenderError(error, width, height);
+			return;
 		}
+		this.renderErrorMessage = undefined;
 		let screen = nextLayout.lines.map((line) => line.replace(OSC133_ZONE_PREFIX, ""));
 		screen = this.applySearchHighlights(screen, nextLayout);
 		screen = this.compositeOverlays(screen, width, height);
@@ -1310,5 +1680,6 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		this.previousScreenWidth = width;
 		this.previousScreenHeight = height;
 		this.currentLayout = nextLayout;
+		this.transcriptBlockCache = undefined;
 	}
 }

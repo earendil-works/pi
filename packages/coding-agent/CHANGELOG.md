@@ -2,8 +2,13 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Fullscreen mode now retains the complete active human transcript across compaction while keeping the model context compacted, and renders only the exact visible transcript window after initial layout.
+
 ### Fixed
 
+- Fixed keypress latency in large and image-heavy fullscreen sessions by removing whole-transcript frame work and repeated inline-image payload scans.
 - Fixed Z.AI Coding Plan defaults referencing the removed GLM-5.1 model ([#8096](https://github.com/earendil-works/pi/issues/8096)).
 
 ## [0.84.2] - 2026-08-14

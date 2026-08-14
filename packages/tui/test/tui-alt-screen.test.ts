@@ -8,12 +8,20 @@ import { Text } from "../src/components/text.ts";
 import { VStack } from "../src/components/v-stack.ts";
 import { getKeybindings, KeybindingsManager, setKeybindings, TUI_KEYBINDINGS } from "../src/keybindings.ts";
 import {
+	type PreparedWindowedScrollContent,
+	WINDOWED_SCROLL_CONTENT,
+	type WindowedScrollContent,
+	type WindowedScrollContentRequest,
+} from "../src/layout-node.ts";
+import {
 	encodeKitty,
 	hyperlink,
 	registerKittyImageMetadata,
 	resetCapabilitiesCache,
 	setCapabilities,
 } from "../src/terminal-image.ts";
+import { TRANSCRIPT_BLOCK, type TranscriptBlockComponent, type TranscriptTarget } from "../src/transcript.ts";
+import { Container, CURSOR_MARKER } from "../src/tui.ts";
 import { TuiAltScreen } from "../src/tui-alt-screen.ts";
 import { VirtualTerminal } from "./virtual-terminal.ts";
 
@@ -32,6 +40,56 @@ class InputOverlay {
 	}
 
 	invalidate(): void {}
+}
+
+class WindowedText implements WindowedScrollContent {
+	readonly requestedRanges: Array<{ startRow: number; rowCount: number }> = [];
+	eagerRenderCount = 0;
+	private readonly sourceLines: readonly string[];
+
+	constructor(lines: readonly string[]) {
+		this.sourceLines = lines;
+	}
+
+	render(): string[] {
+		this.eagerRenderCount += 1;
+		return [...this.sourceLines];
+	}
+
+	invalidate(): void {}
+
+	[WINDOWED_SCROLL_CONTENT](_request: WindowedScrollContentRequest): PreparedWindowedScrollContent {
+		return {
+			contentHeight: this.sourceLines.length,
+			renderWindow: (startRow, rowCount) => {
+				this.requestedRanges.push({ startRow, rowCount });
+				return {
+					startRow,
+					lines: this.sourceLines.slice(startRow, startRow + rowCount),
+				};
+			},
+			lineAt: (row) => this.sourceLines[row],
+		};
+	}
+}
+
+class SemanticText extends Text implements TranscriptBlockComponent {
+	private readonly target: TranscriptTarget;
+
+	constructor(text: string, target: TranscriptTarget) {
+		super(text, 0, 0);
+		this.target = target;
+	}
+
+	[TRANSCRIPT_BLOCK](): TranscriptTarget {
+		return this.target;
+	}
+}
+
+class CursorProbeTui extends TuiAltScreen {
+	probe(lines: string[], height: number): { row: number; col: number } | null {
+		return this.extractCursorPosition(lines, height);
+	}
 }
 
 class RecordingTerminal extends VirtualTerminal {
@@ -54,6 +112,14 @@ class RecordingTerminal extends VirtualTerminal {
 }
 
 describe("TuiAltScreen", () => {
+	it("does not scan inline image payloads as cursor-bearing text", () => {
+		const tui = new CursorProbeTui(new VirtualTerminal(20, 4));
+		const image = `\x1b]1337;File=inline=1:${"A".repeat(10_000)}${CURSOR_MARKER}${"B".repeat(10_000)}\x07`;
+		const lines = [image];
+		assert.strictEqual(tui.probe(lines, 1), null);
+		assert.strictEqual(lines[0], image);
+	});
+
 	it("renders a terminal-height viewport and preserves manual scroll position", async () => {
 		const terminal = new VirtualTerminal(20, 4);
 		const tui = new TuiAltScreen(terminal);
@@ -132,6 +198,156 @@ describe("TuiAltScreen", () => {
 			["line 7", "line 8", "line 9", "line 10", "editor", "footer"],
 		);
 		tui.stop();
+	});
+
+	it("exposes bounded semantic transcript state without exposing layout internals", async () => {
+		const terminal = new RecordingTerminal(20, 4);
+		const tui = new TuiAltScreen(terminal);
+		const metadata = { role: "latest assistant" };
+		const targets = {
+			firstUser: { id: "user-1", kind: "user" },
+			firstAssistant: { id: "assistant-1", kind: "assistant" },
+			tool: { id: "tool-1", kind: "tool" },
+			latestUser: { id: "user-2", kind: "user" },
+			latestAssistant: { id: "assistant-2", kind: "assistant", metadata },
+		} satisfies Record<string, TranscriptTarget>;
+		const document = new Container();
+		document.addChild(new SemanticText("prompt 1", targets.firstUser));
+		document.addChild(new SemanticText("answer 1a\nanswer 1b", targets.firstAssistant));
+		document.addChild(new SemanticText("tool", targets.tool));
+		document.addChild(new SemanticText("prompt 2", targets.latestUser));
+		document.addChild(new SemanticText("answer 2a\nanswer 2b\nanswer 2c", targets.latestAssistant));
+		const transcript = new ScrollView(document, { follow: "end", primary: true });
+		tui.setLayoutRoot(transcript);
+		tui.start();
+		await terminal.waitForRender();
+
+		assert.deepStrictEqual(tui.getPrimaryTranscriptViewport(), {
+			contentWidth: 20,
+			contentHeight: 8,
+			scrollTop: 4,
+			viewportHeight: 4,
+			screenRect: { x: 0, y: 0, width: 20, height: 4 },
+			visibleRange: { startRow: 4, endRow: 8 },
+			isFollowingOutput: true,
+		});
+		assert.strictEqual(tui.readPrimaryTranscriptLine(3)?.trimEnd(), "tool");
+		assert.strictEqual(tui.readPrimaryTranscriptLine(-1), undefined);
+		const range = tui.readPrimaryTranscriptLines({ startRow: 2, endRow: 5 });
+		assert.deepStrictEqual(
+			range?.lines.map((line) => line.trimEnd()),
+			["answer 1b", "tool", "prompt 2"],
+		);
+		assert.deepStrictEqual(
+			tui.getPrimaryTranscriptBlocks({ startRow: 3, endRow: 6 }).map((block) => ({
+				id: block.target.id,
+				startRow: block.startRow,
+				endRow: block.endRow,
+			})),
+			[
+				{ id: "tool-1", startRow: 3, endRow: 4 },
+				{ id: "user-2", startRow: 4, endRow: 5 },
+				{ id: "assistant-2", startRow: 5, endRow: 8 },
+			],
+		);
+		assert.deepStrictEqual(tui.getLatestResponseBlock(), {
+			target: targets.latestAssistant,
+			startRow: 5,
+			endRow: 8,
+		});
+
+		assert.strictEqual(tui.scrollToTranscriptTarget({ id: "assistant-1", kind: "assistant" }), true);
+		await terminal.waitForRender();
+		assert.strictEqual(tui.viewportTop, 1);
+		assert.strictEqual(tui.isFollowingOutput, false);
+		assert.strictEqual(tui.scrollToLatestResponse(), true);
+		await terminal.waitForRender();
+		assert.strictEqual(tui.viewportTop, 4);
+
+		terminal.sendInput("\x1b[<0;1;2M");
+		terminal.sendInput("\x1b[<32;8;2M");
+		terminal.sendInput("\x1b[<0;8;2m");
+		await terminal.waitForRender();
+		assert.deepStrictEqual(tui.getSelectionSnapshot(), {
+			text: "answer 2",
+			bounds: { start: { row: 1, col: 0 }, end: { row: 1, col: 7 } },
+			transcriptRange: { start: { row: 5, col: 0 }, end: { row: 5, col: 7 } },
+			transcriptBlock: {
+				target: targets.latestAssistant,
+				startRow: 5,
+				endRow: 8,
+			},
+		});
+		assert.strictEqual(tui.clearSelection(), true);
+		terminal.sendInput("\x1b[<0;1;2M");
+		terminal.sendInput("\x1b[<32;2;1M");
+		terminal.sendInput("\x1b[<0;2;1m");
+		await terminal.waitForRender();
+		assert.deepStrictEqual(tui.getSelectionSnapshot({ includeText: false })?.transcriptBlock, {
+			target: targets.latestUser,
+			startRow: 4,
+			endRow: 5,
+		});
+		assert.strictEqual(tui.clearSelection(), true);
+		assert.strictEqual(tui.getSelectionSnapshot(), undefined);
+		assert.strictEqual(tui.clearSelection(), false);
+		tui.stop();
+	});
+
+	it("uses bounded scroll content for prompt navigation, search, selection, and copy", async () => {
+		const terminal = new RecordingTerminal(30, 3);
+		const copied: string[] = [];
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			copySelection: async (text) => {
+				copied.push(text);
+				return true;
+			},
+		});
+		const content = new WindowedText([
+			`${OSC133_ZONE_START}prompt 1`,
+			"needle old",
+			"detail 1",
+			`${OSC133_ZONE_START}prompt 2`,
+			"answer 2",
+			"detail 2",
+			`${OSC133_ZONE_START}prompt 3`,
+			"needle latest",
+			"detail 3",
+		]);
+		tui.setLayoutRoot(new ScrollView(content, { follow: "end", primary: true }));
+		tui.start();
+		await terminal.waitForRender();
+
+		assert.strictEqual(content.eagerRenderCount, 0);
+		assert.strictEqual(tui.readPrimaryTranscriptLine(7), "needle latest");
+		assert.deepStrictEqual(tui.readPrimaryTranscriptLines({ startRow: 6, endRow: 9 })?.lines, [
+			`${OSC133_ZONE_START}prompt 3`,
+			"needle latest",
+			"detail 3",
+		]);
+
+		terminal.sendInput("\x1b[102;6u");
+		terminal.sendInput("needle");
+		await terminal.waitForRender();
+		assert.ok(terminal.getViewport().some((line) => line.includes("2/2")));
+		assert.strictEqual(tui.viewportTop, 6);
+		terminal.sendInput("\x1b");
+		await terminal.waitForRender();
+
+		terminal.sendInput("\x1b[<0;1;2M");
+		terminal.sendInput("\x1b[<32;6;2M");
+		terminal.sendInput("\x1b[<0;6;2m");
+		await terminal.waitForRender();
+		assert.deepStrictEqual(copied, ["needle"]);
+		assert.strictEqual(tui.getSelectionSnapshot()?.text, "needle");
+		tui.clearSelection();
+
+		terminal.sendInput("\x1b[57419;6u");
+		await terminal.waitForRender();
+		assert.strictEqual(tui.viewportTop, 3);
+		assert.ok(terminal.getViewport()[0]?.startsWith("prompt 2"));
+		assert.strictEqual(content.eagerRenderCount, 0);
+		tui.stop({ preserveScreen: true });
 	});
 
 	it("invalidates overlays with an explicit layout root", () => {

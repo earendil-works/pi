@@ -1,6 +1,7 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 import {
+	CacheMissDetector,
 	collectCacheMisses,
 	computeCacheWaste,
 	detectCacheMiss,
@@ -139,5 +140,15 @@ describe("detectCacheMiss", () => {
 
 	it("returns undefined for the first turn of a session", () => {
 		expect(detectCacheMiss([], turn1, models)).toBeUndefined();
+	});
+
+	it("tracks appended turns without rescanning prior entries", () => {
+		const detector = new CacheMissDetector();
+		detector.reset([entry(turn1)], models);
+		expect(detector.detectAndAdvance(turn2, models)).toBeUndefined();
+		const missTurn = assistant({ cacheWrite: 110_000, cost: { cacheWrite: 0.4125 }, timestamp: 120_000 });
+		expect(detector.detectAndAdvance(missTurn, models)?.missedTokens).toBe(105_000);
+		detector.clear();
+		expect(detector.detectAndAdvance(missTurn, models)).toBeUndefined();
 	});
 });

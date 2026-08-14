@@ -83,6 +83,7 @@ describe("InteractiveMode.showStatus", () => {
 			ui: { requestRender: vi.fn() },
 			lastStatusSpacer: undefined,
 			lastStatusText: undefined,
+			markLiveTranscriptDirty: vi.fn(),
 		};
 
 		(InteractiveMode as any).prototype.showStatus.call(fakeThis, "STATUS_ONE");
@@ -151,10 +152,15 @@ describe("InteractiveMode.setToolsExpanded", () => {
 			toolOutputExpanded: false,
 			customHeader: undefined,
 			builtInHeader: header,
-			loadedResourcesContainer: { children: [loadedResourcesChild] },
+			headerContainer: { markDirty: vi.fn() },
+			loadedResourcesContainer: { children: [loadedResourcesChild], markDirty: vi.fn() },
 			chatContainer: { children: [chatChild] },
 			ui: { requestRender: vi.fn() },
 			showStatus: vi.fn(),
+			forEachComponent: (container: { children: unknown[] }, visit: (component: unknown) => void) =>
+				container.children.forEach(visit),
+			markAllLiveTranscriptDirty: vi.fn(),
+			refreshTranscriptHistory: vi.fn(),
 		};
 
 		(InteractiveMode as any).prototype.setToolsExpanded.call(fakeThis, true);

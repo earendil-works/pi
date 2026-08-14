@@ -5,6 +5,11 @@ import { ScrollView } from "../src/components/scroll-view.ts";
 import { Text } from "../src/components/text.ts";
 import { VStack } from "../src/components/v-stack.ts";
 import { renderLayoutFrame } from "../src/layout.ts";
+import {
+	type PreparedWindowedScrollContent,
+	WINDOWED_SCROLL_CONTENT,
+	type WindowedScrollContentRequest,
+} from "../src/layout-node.ts";
 import { encodeKitty, registerKittyImageMetadata } from "../src/terminal-image.ts";
 import { stripTerminalSequences } from "../src/utils.ts";
 
@@ -66,6 +71,102 @@ describe("viewport layout", () => {
 
 		const frame = renderLayoutFrame(transcript, 10, 3, () => {});
 		assert.deepStrictEqual(visibleLines(frame.lines), ["visible 1", "visible 2", "visible 3"]);
+	});
+
+	it("renders only the exact viewport for capable scroll content", () => {
+		const contentHeight = 1_000_000_000;
+		let fullRenderCount = 0;
+		const requests: Array<{ startRow: number; rowCount: number }> = [];
+		const source = {
+			render: () => {
+				fullRenderCount += 1;
+				return [];
+			},
+			invalidate: () => {},
+			[WINDOWED_SCROLL_CONTENT]: (_request: WindowedScrollContentRequest): PreparedWindowedScrollContent => ({
+				contentHeight,
+				renderWindow: (startRow, rowCount) => {
+					requests.push({ startRow, rowCount });
+					return {
+						startRow,
+						lines: Array.from({ length: rowCount }, (_, index) => `row ${startRow + index}`),
+					};
+				},
+				lineAt: (row) => (row >= 0 && row < contentHeight ? `row ${row}` : undefined),
+			}),
+		};
+		const transcript = new ScrollView(source, { follow: "end" });
+
+		const frame = renderLayoutFrame(transcript, 24, 3, () => {});
+		assert.deepStrictEqual(visibleLines(frame.lines), ["row 999999997", "row 999999998", "row 999999999"]);
+		assert.strictEqual(fullRenderCount, 0);
+		assert.deepStrictEqual(requests, [{ startRow: contentHeight - 3, rowCount: 3 }]);
+		assert.strictEqual(frame.root.children[0]?.lines?.length, 3);
+		assert.strictEqual(frame.root.scrollContent?.height, contentHeight);
+	});
+
+	it("keeps auto-sized horizontal splits on the bounded provider path", () => {
+		let fullRenderCount = 0;
+		const requests: Array<{ startRow: number; rowCount: number }> = [];
+		const source = {
+			render: () => {
+				fullRenderCount += 1;
+				return [];
+			},
+			invalidate: () => {},
+			[WINDOWED_SCROLL_CONTENT]: (): PreparedWindowedScrollContent => ({
+				contentHeight: 10_000,
+				renderWindow: (startRow, rowCount) => {
+					requests.push({ startRow, rowCount });
+					return { startRow, lines: Array.from({ length: rowCount }, () => "transcript") };
+				},
+				lineAt: () => "transcript",
+			}),
+		};
+		const frame = renderLayoutFrame(new HStack([new ScrollView(source), new Text("panel", 0, 0)]), 20, 3, () => {});
+		assert.strictEqual(fullRenderCount, 0);
+		assert.deepStrictEqual(requests, [{ startRow: 0, rowCount: 3 }]);
+		assert.deepStrictEqual(visibleLines(frame.lines), ["transcrpanel", "transcr", "transcr"]);
+	});
+
+	it("preserves a corrected semantic anchor without resuming follow-end", () => {
+		let correctedAnchor: number | undefined;
+		const source = {
+			render: () => [],
+			invalidate: () => {},
+			[WINDOWED_SCROLL_CONTENT]: (_request: WindowedScrollContentRequest): PreparedWindowedScrollContent => ({
+				contentHeight: 10,
+				...(correctedAnchor === undefined ? {} : { anchorScrollTop: correctedAnchor }),
+				renderWindow: (startRow, rowCount) => ({
+					startRow,
+					lines: Array.from({ length: rowCount }, (_, index) => `${startRow + index}`),
+				}),
+				lineAt: (row) => `${row}`,
+			}),
+		};
+		const transcript = new ScrollView(source, { follow: "end" });
+		renderLayoutFrame(transcript, 10, 3, () => {});
+		transcript.scrollBy(-2);
+		assert.strictEqual(transcript.isFollowingEnd, false);
+
+		correctedAnchor = 7;
+		const frame = renderLayoutFrame(transcript, 10, 3, () => {});
+		assert.strictEqual(transcript.scrollTop, 7);
+		assert.strictEqual(transcript.isFollowingEnd, false);
+		assert.deepStrictEqual(visibleLines(frame.lines), ["7", "8", "9"]);
+	});
+
+	it("rejects an incomplete window before painting a partial frame", () => {
+		const source = {
+			render: () => [],
+			invalidate: () => {},
+			[WINDOWED_SCROLL_CONTENT]: (_request: WindowedScrollContentRequest): PreparedWindowedScrollContent => ({
+				contentHeight: 10,
+				renderWindow: (startRow) => ({ startRow, lines: ["only one"] }),
+				lineAt: () => undefined,
+			}),
+		};
+		assert.throws(() => renderLayoutFrame(new ScrollView(source), 10, 3, () => {}), /cover the requested viewport/);
 	});
 
 	it("shrinks entries to their minimum sizes", () => {

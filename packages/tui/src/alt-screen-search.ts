@@ -10,6 +10,8 @@ interface SearchSourceSpan {
 	endCol: number;
 }
 
+const MAX_SEARCH_MATCHES = 20_000;
+
 export interface AltScreenSearchSegment {
 	row: number;
 	startCol: number;
@@ -20,80 +22,88 @@ export interface AltScreenSearchMatch {
 	segments: AltScreenSearchSegment[];
 }
 
-function appendMappedText(
-	text: string,
-	span: SearchSourceSpan | undefined,
-	corpus: { text: string; source: Array<SearchSourceSpan | undefined> },
-): void {
-	corpus.text += text;
-	for (let index = 0; index < text.length; index++) corpus.source.push(span);
+function normalizeQuery(query: string): string {
+	return query.replace(/\s+/gu, " ").trim().toLocaleLowerCase();
 }
 
-function buildSearchCorpus(lines: readonly string[]): {
-	text: string;
-	source: Array<SearchSourceSpan | undefined>;
-} {
-	const corpus: { text: string; source: Array<SearchSourceSpan | undefined> } = { text: "", source: [] };
+function prefixTable(pattern: string): number[] {
+	const table = new Array<number>(pattern.length).fill(0);
+	for (let index = 1, prefix = 0; index < pattern.length; index++) {
+		while (prefix > 0 && pattern[index] !== pattern[prefix]) prefix = table[prefix - 1] ?? 0;
+		if (pattern[index] === pattern[prefix]) prefix += 1;
+		table[index] = prefix;
+	}
+	return table;
+}
+
+/** Search normalized transcript rows with memory bounded by query size and retained matches. */
+export function findAltScreenSearchMatchesInRows(
+	rowCount: number,
+	lineAt: (row: number) => string | undefined,
+	query: string,
+): AltScreenSearchMatch[] {
+	const pattern = normalizeQuery(query);
+	if (!pattern) return [];
+	const table = prefixTable(pattern);
+	const sourceRing = new Array<SearchSourceSpan | undefined>(pattern.length);
+	const matches: AltScreenSearchMatch[] = [];
+	let matched = 0;
+	let position = -1;
+	let emittedText = false;
 	let pendingSeparator = false;
 
-	for (let row = 0; row < lines.length; row++) {
-		const line = stripTerminalSequences(lines[row] ?? "");
+	const emit = (text: string, span: SearchSourceSpan | undefined): boolean => {
+		for (let index = 0; index < text.length; index++) {
+			position += 1;
+			const character = text[index]!;
+			sourceRing[position % pattern.length] = span;
+			while (matched > 0 && character !== pattern[matched]) matched = table[matched - 1] ?? 0;
+			if (character === pattern[matched]) matched += 1;
+			if (matched !== pattern.length) continue;
+			const segments: AltScreenSearchSegment[] = [];
+			for (let sourcePosition = position - pattern.length + 1; sourcePosition <= position; sourcePosition++) {
+				const source = sourceRing[sourcePosition % pattern.length];
+				if (!source) continue;
+				const previous = segments[segments.length - 1];
+				if (previous && previous.row === source.row && source.startCol <= previous.endCol) {
+					previous.endCol = Math.max(previous.endCol, source.endCol);
+				} else {
+					segments.push({ ...source });
+				}
+			}
+			if (segments.length > 0) matches.push({ segments });
+			matched = 0;
+			if (matches.length >= MAX_SEARCH_MATCHES) return false;
+		}
+		return true;
+	};
+
+	for (let row = 0; row < rowCount; row++) {
+		const line = stripTerminalSequences(lineAt(row) ?? "");
 		let column = 0;
 		for (const grapheme of segmenter.segment(line)) {
 			const text = grapheme.segment;
 			const width = visibleWidth(text);
 			if (/^\s+$/u.test(text)) {
-				if (corpus.text.length > 0) pendingSeparator = true;
+				if (emittedText) pendingSeparator = true;
 				column += width;
 				continue;
 			}
 			if (pendingSeparator) {
-				appendMappedText(" ", undefined, corpus);
+				if (!emit(" ", undefined)) return matches;
 				pendingSeparator = false;
 			}
-			appendMappedText(text, { row, startCol: column, endCol: column + width }, corpus);
+			if (!emit(text.toLocaleLowerCase(), { row, startCol: column, endCol: column + width })) return matches;
+			emittedText = true;
 			column += width;
 		}
-		if (corpus.text.length > 0) pendingSeparator = true;
+		if (emittedText) pendingSeparator = true;
 	}
-
-	return corpus;
-}
-
-function normalizeQuery(query: string): string {
-	return query.replace(/\s+/gu, " ").trim();
-}
-
-function escapeRegExp(text: string): string {
-	return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+	return matches;
 }
 
 export function findAltScreenSearchMatches(lines: readonly string[], query: string): AltScreenSearchMatch[] {
-	const normalizedQuery = normalizeQuery(query);
-	if (!normalizedQuery) return [];
-
-	const corpus = buildSearchCorpus(lines);
-	const expression = new RegExp(escapeRegExp(normalizedQuery), "giu");
-	const matches: AltScreenSearchMatch[] = [];
-
-	for (const match of corpus.text.matchAll(expression)) {
-		const start = match.index;
-		const end = start + match[0].length;
-		const segments: AltScreenSearchSegment[] = [];
-		for (let index = start; index < end; index++) {
-			const span = corpus.source[index];
-			if (!span) continue;
-			const previous = segments[segments.length - 1];
-			if (previous && previous.row === span.row && span.startCol <= previous.endCol) {
-				previous.endCol = Math.max(previous.endCol, span.endCol);
-			} else {
-				segments.push({ ...span });
-			}
-		}
-		if (segments.length > 0) matches.push({ segments });
-	}
-
-	return matches;
+	return findAltScreenSearchMatchesInRows(lines.length, (row) => lines[row], query);
 }
 
 export function getAltScreenSearchMatchKey(match: AltScreenSearchMatch): string {
