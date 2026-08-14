@@ -662,6 +662,13 @@ export abstract class TuiBase extends Container implements TUI {
 		return this.overlayStack.some((o) => this.isOverlayVisible(o));
 	}
 
+	/** Check if the focused component is a visible overlay */
+	protected isOverlayFocused(): boolean {
+		return this.overlayStack.some(
+			(entry) => entry.component === this.focusedComponent && this.isOverlayVisible(entry),
+		);
+	}
+
 	/** Check if an overlay entry is currently visible */
 	private isOverlayVisible(entry: OverlayStackEntry): boolean {
 		if (entry.hidden) return false;

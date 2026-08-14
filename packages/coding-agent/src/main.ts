@@ -665,6 +665,10 @@ export async function main(args: string[], options?: MainOptions) {
 		time("firstTimeSetup");
 	}
 
+	if (appMode === "interactive" && parsed.useTheme !== undefined) {
+		startupSettingsManager.applyOverrides({ theme: parsed.useTheme });
+	}
+
 	// Decide the final runtime cwd before creating cwd-bound runtime services.
 	// --session and --resume may select a session from another project, so project-local
 	// settings, resources, provider registrations, and models must be resolved only after
@@ -933,6 +937,7 @@ export async function main(args: string[], options?: MainOptions) {
 			initialMessages: parsed.messages,
 			verbose: parsed.verbose,
 			tuiMode: parsed.tuiMode,
+			initialThemeSetting: parsed.useTheme,
 		});
 		if (startupBenchmark) {
 			await interactiveMode.init();

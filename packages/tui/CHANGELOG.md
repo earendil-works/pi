@@ -13,8 +13,11 @@
 
 ### Fixed
 
+- Fixed fullscreen mouse drag selection and OSC 8 link activation in terminals that report generic SGR mouse release button codes ([#7963](https://github.com/earendil-works/pi/issues/7963)).
 - Fixed fullscreen transcript search snapping back to the current match during manual scrolling and fragmented SGR mouse input leaking into the search query.
 - Fixed required LaTeX arguments starting on a new line being parsed as empty ([#7760](https://github.com/earendil-works/pi/issues/7760)).
+- Fixed LaTeX control spaces split across line endings causing complete expressions to fall back to raw source.
+- Fixed focused fullscreen overlays not receiving mouse wheel or viewport scroll keys such as PageUp and PageDown ([#7894](https://github.com/earendil-works/pi/issues/7894)).
 
 ## [0.84.1] - 2026-08-07
 

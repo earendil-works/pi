@@ -415,6 +415,18 @@ R\left(\frac{\pi}{4}\right)
 		assert.strictEqual(renderLatex(String.raw`\det(A)`), "det(A)");
 	});
 
+	it("treats a backslash followed by a line ending as control space", () => {
+		const source = String.raw`\boxed{
+(1,1,1),\ (1,1,2),\ (1,2,5),\ (1,5,13),\ (2,5,29),\
+(1,13,34),\ (1,34,89)
+}.`;
+		assert.strictEqual(
+			renderLatex(source, { display: true }),
+			"[(1,1,1), (1,1,2), (1,2,5), (1,5,13), (2,5,29), (1,13,34), (1,34,89)].",
+		);
+		assert.strictEqual(renderLatex("a\\\r\nb"), "a b");
+	});
+
 	it("stacks operator limits in display mode", () => {
 		assert.strictEqual(renderLatex(String.raw`\sum_{i=0}^n x_i`, { display: true }), " n\n ∑  xᵢ\ni=0");
 		assert.strictEqual(renderLatex(String.raw`\min_{x\in X} f(x)`, { display: true }), "min f(x)\nx∈X");

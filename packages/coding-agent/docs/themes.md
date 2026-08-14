@@ -39,6 +39,23 @@ Select a theme via `/settings` or in `settings.json`:
 
 On first run, pi detects your terminal background and defaults to `dark` or `light`.
 
+### Initial Theme
+
+Start an interactive run with a theme without changing the saved setting:
+
+```bash
+pi --use-theme light
+```
+
+To follow terminal appearance, use `lightTheme/darkTheme` syntax:
+
+```bash
+pi --use-theme light/dark
+```
+
+The CLI value is the initial theme for that run. Choosing another theme later in `/settings` applies it immediately
+and saves it normally.
+
 ## Creating a Custom Theme
 
 1. Create a theme file:

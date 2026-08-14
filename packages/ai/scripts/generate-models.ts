@@ -148,10 +148,6 @@ const COPILOT_STATIC_HEADERS = {
 	"Copilot-Integration-Id": "vscode-chat",
 } as const;
 
-const KIMI_STATIC_HEADERS = {
-	"User-Agent": "KimiCLI/1.5",
-} as const;
-
 const TOGETHER_BASE_URL = "https://api.together.ai/v1";
 const TOGETHER_BASE_COMPAT: OpenAICompletionsCompat = {
 	supportsStore: false,
@@ -2057,7 +2053,6 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					provider: "kimi-coding",
 					// Kimi For Coding's Anthropic-compatible API - SDK appends /v1/messages
 					baseUrl: "https://api.kimi.com/coding",
-					headers: { ...KIMI_STATIC_HEADERS },
 					compat: {
 						...(allowEmptySignature ? { allowEmptySignature: true } : {}),
 						forceAdaptiveThinking: true,

@@ -532,6 +532,10 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		this.flashes.flash(message, durationMs);
 	}
 
+	private shouldDeferViewportInputToOverlay(): boolean {
+		return this.isOverlayFocused() && this.activeSearch?.overlay?.isFocused() !== true;
+	}
+
 	private handleViewportInput(data: string): { consume?: boolean } | undefined {
 		if (data === FOCUS_OUT) {
 			const hadActiveSelection = this.selectionPressActive;
@@ -556,6 +560,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 
 		const wheelEvent = this.parseWheelEvent(data);
 		if (wheelEvent) {
+			if (this.shouldDeferViewportInputToOverlay()) return undefined;
 			this.routeWheel(wheelEvent);
 			return { consume: true };
 		}
@@ -589,6 +594,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 				return { consume: true };
 			}
 		}
+		if (this.shouldDeferViewportInputToOverlay()) return undefined;
 		if (keybindings.matches(data, "tui.altScreen.pageUp")) {
 			if (!isRelease) {
 				this.scrollBy(-Math.max(1, this.getPrimaryScrollView().viewportHeight - PAGE_SCROLL_OVERLAP));
@@ -943,7 +949,8 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 	}
 
 	private handleSelectionMouseEvent(event: SgrMouseEvent): void {
-		if ((event.button & 3) !== 0) return;
+		const button = event.button & 3;
+		if (button !== 0 && !(event.release && button === 3)) return;
 		const anchorScrollView = this.selectionAnchor?.scrollView;
 		const point = this.getSelectionPoint(event, anchorScrollView);
 		if (event.release) {

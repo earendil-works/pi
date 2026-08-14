@@ -1449,7 +1449,7 @@ export class AgentSession {
 		} satisfies CustomMessage<T>;
 		if (options?.deliverAs === "nextTurn") {
 			this._pendingNextTurnMessages.push(appMessage);
-		} else if (this.isStreaming) {
+		} else if (this.isStreaming && options?.triggerTurn !== false) {
 			if (options?.deliverAs === "followUp") {
 				this.agent.followUp(appMessage);
 			} else {
@@ -3220,11 +3220,13 @@ export class AgentSession {
 	/**
 	 * Export session to HTML.
 	 * @param outputPath Optional output path (defaults to session directory)
+	 * @param options Optional export presentation settings
 	 * @returns Path to exported file
 	 */
-	async exportToHtml(outputPath?: string): Promise<string> {
-		const configuredThemeName = this.settingsManager.getTheme();
-		const themeName = configuredThemeName && getThemeByName(configuredThemeName) ? configuredThemeName : undefined;
+	async exportToHtml(outputPath?: string, options: { themeName?: string } = {}): Promise<string> {
+		const themeName = [options.themeName, this.settingsManager.getTheme()].find(
+			(candidate) => candidate !== undefined && getThemeByName(candidate) !== undefined,
+		);
 
 		// Create tool renderer if we have an extension runner (for custom tool HTML rendering)
 		const toolRenderer: ToolHtmlRenderer = createToolHtmlRenderer({

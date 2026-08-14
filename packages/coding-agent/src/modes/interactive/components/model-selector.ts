@@ -11,6 +11,7 @@ import {
 } from "@earendil-works/pi-tui";
 import type { ModelRuntime } from "../../../core/model-runtime.ts";
 import type { SettingsManager } from "../../../core/settings-manager.ts";
+import { refreshModelCatalogs } from "../model-catalog-refresh.ts";
 import { getModelSelectorSearchText } from "../model-search.ts";
 import { theme } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
@@ -167,7 +168,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
 			this.refreshAbortController.abort();
 		}, timeoutMs);
 		try {
-			const result = await this.modelRuntime.refresh({ signal: this.refreshAbortController.signal });
+			const result = await refreshModelCatalogs(this.modelRuntime, this.refreshAbortController.signal);
 			if (this.closed) return;
 			this.refreshStatusMessage = "";
 			if (result.aborted && timedOut) {

@@ -1,4 +1,3 @@
-import type * as NodeOs from "node:os";
 import type * as NodeZlib from "node:zlib";
 import type {
 	Tool as OpenAITool,
@@ -6,20 +5,6 @@ import type {
 	ResponseInput,
 	ResponseStreamEvent,
 } from "openai/resources/responses/responses.js";
-
-type ProcessWithOsBuiltinModule = typeof process & {
-	getBuiltinModule?: (id: "node:os") => typeof NodeOs;
-};
-
-function loadNodeOs(): typeof NodeOs | null {
-	if (typeof process === "undefined" || !(process.versions?.node || process.versions?.bun)) {
-		return null;
-	}
-	return (process as ProcessWithOsBuiltinModule).getBuiltinModule?.("node:os") ?? null;
-}
-
-// NEVER convert to top-level runtime imports - breaks browser/Vite builds
-const _os: typeof NodeOs | null = loadNodeOs();
 
 import { clampThinkingLevel } from "../models.ts";
 import { registerSessionResourceCleanup } from "../session-resources.ts";
@@ -46,6 +31,7 @@ import { formatProviderError, normalizeProviderError } from "../utils/error-body
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { resolveHttpProxyUrlForTarget } from "../utils/node-http-proxy.ts";
+import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { uuidv7 } from "../utils/uuid.ts";
 import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
@@ -1618,8 +1604,7 @@ function buildBaseCodexHeaders(
 	headers.set("Authorization", `Bearer ${token}`);
 	headers.set("chatgpt-account-id", accountId);
 	headers.set("originator", "pi");
-	const userAgent = _os ? `pi (${_os.platform()} ${_os.release()}; ${_os.arch()})` : "pi (browser)";
-	headers.set("User-Agent", userAgent);
+	headers.set("User-Agent", getPiUserAgent());
 	return headers;
 }
 

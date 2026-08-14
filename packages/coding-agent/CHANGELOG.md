@@ -7,17 +7,24 @@
 - Added fullscreen transcript search with `Ctrl+Shift+F`, incremental match highlighting, configurable search match theme colors, and next/previous navigation with `Enter`/`Ctrl+G` and `Shift+Enter`/`Ctrl+Shift+G`.
 - Added experimental strict JSON-schema constrained sampling for the default `read`, `bash`, `edit`, and `write` tools under `PI_EXPERIMENTAL=1`.
 - Added a fullscreen exit output setting to choose between printing the final transcript and only a session resume hint.
+- Added the `defaultTools` setting for configuring the initial built-in tool selection globally or per project.
+- Added `--use-theme <name[/name]>` to choose an initial per-run interactive theme without changing saved settings ([#7722](https://github.com/earendil-works/pi/pull/7722) by [@rwachtler](https://github.com/rwachtler)).
 
 ### Changed
 
+- Changed inherited Kimi Coding requests to use pi's runtime `User-Agent` header.
 - Replaced the inherited Mistral SDK transport with a native Chat Completions HTTP stream, eliminating its generated client and schema runtime overhead.
 - Documented the generic `AI_AGENT=pi` process marker and how it differs from `PI_CODING_AGENT=true` ([#7747](https://github.com/earendil-works/pi/issues/7747)).
 
 ### Fixed
 
+- Fixed managed-tool downloads delaying TUI startup and hiding diagnostics in fullscreen mode by mounting the TUI first and showing download progress and warnings inside it.
+- Fixed opening a model selector immediately after startup cancelling and restarting the in-progress model catalog refresh.
 - Fixed inherited GitHub Copilot login triggering API rate limits while enabling model policies by limiting concurrent policy updates ([#6187](https://github.com/earendil-works/pi/issues/6187)).
 - Fixed fullscreen transcript search snapping back to the current match during manual scrolling and fragmented mouse input leaking into the search query.
 - Fixed inherited required LaTeX arguments starting on a new line being parsed as empty ([#7760](https://github.com/earendil-works/pi/issues/7760)).
+- Updated the transitive `nanoid` development dependency to address a denial-of-service vulnerability.
+- Fixed fallback rendering for extension tool results to collapse long output and honor tool expansion ([#7979](https://github.com/earendil-works/pi/issues/7979)).
 
 ## [0.84.1] - 2026-08-07
 

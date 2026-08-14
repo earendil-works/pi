@@ -344,7 +344,7 @@ describe("ToolExecutionComponent parity", () => {
 		expect(rendered).toContain("arg:bar");
 	});
 
-	test("falls back when custom renderers are absent", () => {
+	test("collapses fallback results until expanded", () => {
 		const toolDefinition: ToolDefinition = {
 			...createBaseToolDefinition(),
 		};
@@ -358,10 +358,20 @@ describe("ToolExecutionComponent parity", () => {
 			createFakeTui(),
 			process.cwd(),
 		);
-		component.updateResult({ content: [{ type: "text", text: "done" }], details: {}, isError: false }, false);
-		const rendered = stripAnsi(component.render(120).join("\n"));
-		expect(rendered).toContain("custom_tool");
-		expect(rendered).toContain("done");
+		const output = Array.from({ length: 15 }, (_, index) => `line-${index + 1}`).join("\n");
+		component.updateResult({ content: [{ type: "text", text: output }], details: {}, isError: false }, false);
+
+		const collapsed = stripAnsi(component.render(120).join("\n"));
+		expect(collapsed).toContain("custom_tool");
+		expect(collapsed).toContain("line-10");
+		expect(collapsed).not.toContain("line-11");
+		expect(collapsed).toContain("5 more lines");
+		expect(collapsed).toContain("to expand");
+
+		component.setExpanded(true);
+		const expanded = stripAnsi(component.render(120).join("\n"));
+		expect(expanded).toContain("line-15");
+		expect(expanded).not.toContain("more lines");
 	});
 
 	test("trims trailing blank display lines from write previews", () => {
