@@ -144,8 +144,11 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 			),
 
 		input: (title, placeholder, opts) =>
-			createDialogPromise(opts, undefined, { method: "input", title, placeholder, timeout: opts?.timeout }, (r) =>
-				"cancelled" in r && r.cancelled ? undefined : "value" in r ? r.value : undefined,
+			createDialogPromise(
+				opts,
+				undefined,
+				{ method: "input", title, placeholder, timeout: opts?.timeout, secret: opts?.secret },
+				(r) => ("cancelled" in r && r.cancelled ? undefined : "value" in r ? r.value : undefined),
 			),
 
 		notify(message: string, type?: "info" | "warning" | "error"): void {

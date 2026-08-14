@@ -98,6 +98,8 @@ export interface ExtensionUIDialogOptions {
 	signal?: AbortSignal;
 	/** Timeout in milliseconds. Dialog auto-dismisses with live countdown display. */
 	timeout?: number;
+	/** Mask entered text. RPC clients receive this as a secret-input presentation hint. */
+	secret?: boolean;
 }
 
 /** Placement for extension widgets. */

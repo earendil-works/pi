@@ -69,6 +69,7 @@ export interface BashOperations {
 			signal?: AbortSignal;
 			timeout?: number;
 			env?: NodeJS.ProcessEnv;
+			stdin?: string;
 		},
 	) => Promise<{ exitCode: number | null }>;
 }
@@ -81,7 +82,7 @@ export interface BashOperations {
  */
 export function createLocalBashOperations(options?: { shellPath?: string }): BashOperations {
 	return {
-		exec: async (command, cwd, { onData, signal, timeout, env }) => {
+		exec: async (command, cwd, { onData, signal, timeout, env, stdin }) => {
 			const timeoutMs = resolveTimeoutMs(timeout);
 			if (signal?.aborted) {
 				throw new Error("aborted");
@@ -94,16 +95,20 @@ export function createLocalBashOperations(options?: { shellPath?: string }): Bas
 			}
 
 			const commandFromStdin = shellConfig.commandTransport === "stdin";
+			if (commandFromStdin && stdin !== undefined) {
+				throw new Error("Cannot provide command input when the configured shell reads commands from stdin");
+			}
+			const pipeStdin = commandFromStdin || stdin !== undefined;
 			const child = spawn(shellConfig.shell, commandFromStdin ? shellConfig.args : [...shellConfig.args, command], {
 				cwd,
 				detached: process.platform !== "win32",
 				env: env ?? getShellEnv(),
-				stdio: [commandFromStdin ? "pipe" : "ignore", "pipe", "pipe"],
+				stdio: [pipeStdin ? "pipe" : "ignore", "pipe", "pipe"],
 				windowsHide: true,
 			});
-			if (commandFromStdin) {
+			if (pipeStdin) {
 				child.stdin?.on("error", () => {});
-				child.stdin?.end(command);
+				child.stdin?.end(commandFromStdin ? command : stdin);
 			}
 			if (child.pid) trackDetachedChildPid(child.pid);
 			let timedOut = false;
@@ -194,6 +199,8 @@ export interface BashToolOptions {
 	exposeSessionEnvironment?: boolean;
 	/** Hook to adjust command, cwd, or env before execution */
 	spawnHook?: BashSpawnHook;
+	/** Optional private standard input supplied to the command without including it in command arguments. */
+	stdin?: string;
 }
 
 const BASH_PREVIEW_LINES = 5;
@@ -321,6 +328,7 @@ export function createBashToolDefinition(
 	const commandPrefix = options?.commandPrefix;
 	const exposeSessionEnvironment = options?.exposeSessionEnvironment ?? true;
 	const spawnHook = options?.spawnHook;
+	const stdin = options?.stdin;
 	return {
 		name: "bash",
 		label: "bash",
@@ -431,6 +439,7 @@ export function createBashToolDefinition(
 						signal,
 						timeout,
 						env: spawnContext.env,
+						stdin,
 					});
 					exitCode = result.exitCode;
 				} catch (err) {
