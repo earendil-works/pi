@@ -148,8 +148,11 @@ const COPILOT_STATIC_HEADERS = {
 	"Copilot-Integration-Id": "vscode-chat",
 } as const;
 
+const aiPackageVersion = (JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8")) as { version: string })
+	.version;
+
 const KIMI_STATIC_HEADERS = {
-	"User-Agent": "KimiCLI/1.5",
+	"User-Agent": `pi/${aiPackageVersion}`,
 } as const;
 
 const TOGETHER_BASE_URL = "https://api.together.ai/v1";
