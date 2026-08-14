@@ -2185,6 +2185,51 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 			}
 		}
 
+		// Process SiliconFlow models. OpenAI-compatible endpoint. Reasoning models
+		// whose models.dev reasoning_options include a toggle accept a top-level
+		// enable_thinking flag (qwen thinking format); all other reasoning models
+		// keep the server default.
+		const siliconflowBaseCompat: OpenAICompletionsCompat = {
+			supportsStore: false,
+			supportsDeveloperRole: false,
+			supportsReasoningEffort: false,
+			maxTokensField: "max_tokens",
+			supportsStrictMode: false,
+			supportsLongCacheRetention: false,
+		};
+		const siliconflowToggleCompat: OpenAICompletionsCompat = {
+			...siliconflowBaseCompat,
+			thinkingFormat: "qwen",
+		};
+		if (data.siliconflow?.models) {
+			for (const [modelId, model] of Object.entries(data.siliconflow.models)) {
+				const m = model as ModelsDevModel;
+				if (m.tool_call !== true) continue;
+
+				const supportsToggle = (m.reasoning_options ?? []).some((option) => option.type === "toggle");
+
+				models.push({
+					id: modelId,
+					name: m.name || modelId,
+					api: "openai-completions",
+					provider: "siliconflow",
+					baseUrl: "https://api.siliconflow.com/v1",
+					reasoning: m.reasoning === true,
+					input: m.modalities?.input?.includes("image") ? ["text", "image"] : ["text"],
+					cost: {
+						input: m.cost?.input || 0,
+						output: m.cost?.output || 0,
+						cacheRead: m.cost?.cache_read || 0,
+						cacheWrite: m.cost?.cache_write || 0,
+					},
+					compat: supportsToggle ? siliconflowToggleCompat : siliconflowBaseCompat,
+					contextWindow: m.limit?.context || 4096,
+					maxTokens: m.limit?.output || 4096,
+				});
+				recordModelsDevReasoningOptions("siliconflow", modelId, m);
+			}
+		}
+
 		// Process Alibaba Cloud Model Studio Token Plan models. International and
 		// China use separate endpoints and API keys (sk-sp- prefix). The Individual
 		// provider reuses the international source and endpoint with a narrower catalog.

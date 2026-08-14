@@ -110,6 +110,8 @@ const PROVIDER_MODEL_PAIRS: ProviderModelPair[] = [
 	{ provider: "together", model: "moonshotai/Kimi-K2.6", label: "together-kimi-k2.6" },
 	// Baseten
 	{ provider: "baseten", model: "zai-org/GLM-5.2", label: "baseten-glm-5.2" },
+	// SiliconFlow
+	{ provider: "siliconflow", model: "zai-org/GLM-5.2", label: "siliconflow-glm-5.2" },
 	// Kimi For Coding
 	{ provider: "kimi-coding", model: "kimi-for-coding", label: "kimi-for-coding" },
 	// Mistral
