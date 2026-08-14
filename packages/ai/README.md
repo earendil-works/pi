@@ -87,6 +87,7 @@ Unified LLM API with provider collections, automatic auth resolution, token and 
 - **Kimi For Coding** (Moonshot AI subscription endpoint, uses Anthropic-compatible API)
 - **Qwen Token Plan** (separate Individual and existing catalogs, with a separate China provider)
 - **Xiaomi MiMo** (defaults to API billing endpoint, with separate Token Plan providers for `cn`/`ams`/`sgp` regions)
+- **Volcengine Ark / BytePlus Ark** (pay-as-you-go plus Agent Plan and Coding Plan providers)
 - **Any OpenAI-compatible API**: Ollama, vLLM, LM Studio, etc.
 
 ## Installation
@@ -414,6 +415,11 @@ Built-in providers resolve these env vars (Node.js; in browsers pass `apiKey` ex
 |----------|------------------------|
 | OpenAI | `OPENAI_API_KEY` |
 | Ant Ling | `ANT_LING_API_KEY` |
+| BytePlus Ark | `ARK_API_KEY` |
+| BytePlus Ark Coding Plan | `ARK_CODING_PLAN_API_KEY` |
+| Volcengine Ark | `ARK_CN_API_KEY` |
+| Volcengine Ark Agent Plan | `ARK_AGENT_PLAN_CN_API_KEY` |
+| Volcengine Ark Coding Plan | `ARK_CODING_PLAN_CN_API_KEY` |
 | Azure OpenAI | `AZURE_OPENAI_API_KEY` + `AZURE_OPENAI_BASE_URL` (e.g. `https://{resource}.ai.azure.com`) or `AZURE_OPENAI_RESOURCE_NAME`. Supports `*.openai.azure.com`, `*.cognitiveservices.azure.com` and `*.ai.azure.com`; root endpoints auto-normalize to `/openai/v1`. Optional: `AZURE_OPENAI_API_VERSION` (default `v1`), `AZURE_OPENAI_DEPLOYMENT_NAME_MAP`. |
 | Anthropic | `ANTHROPIC_API_KEY` or `ANTHROPIC_OAUTH_TOKEN` |
 | DeepSeek | `DEEPSEEK_API_KEY` |
@@ -452,6 +458,11 @@ Built-in providers resolve these env vars (Node.js; in browsers pass `apiKey` ex
 `QWEN_TOKEN_PLAN_API_KEY`. The Individual provider exposes only the models documented for Individual
 subscriptions, while the existing provider retains its broader catalog for backward compatibility.
 Stored credentials remain provider-scoped, so save the key under the provider ID you register.
+
+The Ark provider IDs are `ark` and `ark-coding-plan` for BytePlus, plus `ark-cn`,
+`ark-agent-plan-cn`, and `ark-coding-plan-cn` for Volcengine. Their built-in catalogs are explicit
+allowlists for the corresponding Responses endpoints; they do not expand from the account-wide
+`/models` response at runtime.
 
 Amazon Bedrock resolves ambient AWS credentials (`AWS_PROFILE`, access key pairs, `AWS_BEARER_TOKEN_BEDROCK`, ECS task roles, web identity tokens); its provider-owned login flow supports bearer tokens, AWS profiles, and the existing credential chain. Vertex AI resolves either an explicit key or gcloud Application Default Credentials plus project/location, with a provider-owned login flow for API keys, ADC, and service-account files.
 

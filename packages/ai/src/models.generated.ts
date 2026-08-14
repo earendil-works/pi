@@ -4,6 +4,11 @@
 import { AMAZON_BEDROCK_MODELS } from "./providers/amazon-bedrock.models.ts";
 import { ANT_LING_MODELS } from "./providers/ant-ling.models.ts";
 import { ANTHROPIC_MODELS } from "./providers/anthropic.models.ts";
+import { ARK_MODELS } from "./providers/ark.models.ts";
+import { ARK_AGENT_PLAN_CN_MODELS } from "./providers/ark-agent-plan-cn.models.ts";
+import { ARK_CN_MODELS } from "./providers/ark-cn.models.ts";
+import { ARK_CODING_PLAN_MODELS } from "./providers/ark-coding-plan.models.ts";
+import { ARK_CODING_PLAN_CN_MODELS } from "./providers/ark-coding-plan-cn.models.ts";
 import { AZURE_OPENAI_RESPONSES_MODELS } from "./providers/azure-openai-responses.models.ts";
 import { BASETEN_MODELS } from "./providers/baseten.models.ts";
 import { CEREBRAS_MODELS } from "./providers/cerebras.models.ts";
@@ -45,6 +50,11 @@ export const MODELS: {
 	readonly "amazon-bedrock": typeof AMAZON_BEDROCK_MODELS;
 	readonly "ant-ling": typeof ANT_LING_MODELS;
 	readonly "anthropic": typeof ANTHROPIC_MODELS;
+	readonly "ark": typeof ARK_MODELS;
+	readonly "ark-agent-plan-cn": typeof ARK_AGENT_PLAN_CN_MODELS;
+	readonly "ark-cn": typeof ARK_CN_MODELS;
+	readonly "ark-coding-plan": typeof ARK_CODING_PLAN_MODELS;
+	readonly "ark-coding-plan-cn": typeof ARK_CODING_PLAN_CN_MODELS;
 	readonly "azure-openai-responses": typeof AZURE_OPENAI_RESPONSES_MODELS;
 	readonly "baseten": typeof BASETEN_MODELS;
 	readonly "cerebras": typeof CEREBRAS_MODELS;
@@ -85,6 +95,11 @@ export const MODELS: {
 	"amazon-bedrock": AMAZON_BEDROCK_MODELS,
 	"ant-ling": ANT_LING_MODELS,
 	"anthropic": ANTHROPIC_MODELS,
+	"ark": ARK_MODELS,
+	"ark-agent-plan-cn": ARK_AGENT_PLAN_CN_MODELS,
+	"ark-cn": ARK_CN_MODELS,
+	"ark-coding-plan": ARK_CODING_PLAN_MODELS,
+	"ark-coding-plan-cn": ARK_CODING_PLAN_CN_MODELS,
 	"azure-openai-responses": AZURE_OPENAI_RESPONSES_MODELS,
 	"baseten": BASETEN_MODELS,
 	"cerebras": CEREBRAS_MODELS,

@@ -78,6 +78,11 @@ function getApiKeyEnvVars(provider: string): readonly string[] | undefined {
 
 	const envMap: Record<string, string> = {
 		"ant-ling": "ANT_LING_API_KEY",
+		ark: "ARK_API_KEY",
+		"ark-agent-plan-cn": "ARK_AGENT_PLAN_CN_API_KEY",
+		"ark-cn": "ARK_CN_API_KEY",
+		"ark-coding-plan": "ARK_CODING_PLAN_API_KEY",
+		"ark-coding-plan-cn": "ARK_CODING_PLAN_CN_API_KEY",
 		"qwen-token-plan": "QWEN_TOKEN_PLAN_API_KEY",
 		"qwen-token-plan-cn": "QWEN_TOKEN_PLAN_CN_API_KEY",
 		"qwen-token-plan-individual": "QWEN_TOKEN_PLAN_API_KEY",

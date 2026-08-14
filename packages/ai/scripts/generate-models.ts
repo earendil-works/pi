@@ -321,6 +321,111 @@ const KIMI_K3_COST = {
 	cacheRead: 0.3,
 	cacheWrite: 0,
 } as const;
+
+type ArkProviderId = "ark" | "ark-agent-plan-cn" | "ark-cn" | "ark-coding-plan" | "ark-coding-plan-cn";
+
+interface ArkModelProfile {
+	reasoning: boolean;
+	input: Model<"openai-responses">["input"];
+	contextWindow: number;
+	maxTokens: number;
+}
+
+interface ArkModelSpec {
+	id: string;
+	name: string;
+	profile: ArkModelProfile;
+}
+
+// Pi reports costs in USD per million tokens. Ark plans are subscription-backed,
+// while regional pay-as-you-go catalogs do not provide one shared USD price.
+const ARK_UNREPORTED_COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } as const;
+const ARK_RESPONSES_COMPAT: OpenAIResponsesCompat = {
+	supportsDeveloperRole: false,
+	supportsLongCacheRetention: false,
+	supportsStrictMode: false,
+};
+
+const ARK_MODEL_PROFILES = {
+	doubaoSeedEvolving: { reasoning: true, input: ["text", "image"], contextWindow: 1000000, maxTokens: 262144 },
+	doubaoSeed21: { reasoning: true, input: ["text", "image"], contextWindow: 262144, maxTokens: 262144 },
+	doubaoSeed20: { reasoning: true, input: ["text", "image"], contextWindow: 262144, maxTokens: 131072 },
+	deepseekV4: { reasoning: true, input: ["text"], contextWindow: 1000000, maxTokens: 384000 },
+	kimiK3: { reasoning: true, input: ["text", "image"], contextWindow: 1000000, maxTokens: KIMI_K3_MAX_TOKENS },
+	glm52: { reasoning: true, input: ["text"], contextWindow: 1000000, maxTokens: 131072 },
+	kimiK27Code: { reasoning: true, input: ["text", "image"], contextWindow: 262144, maxTokens: 32768 },
+	minimaxM3: { reasoning: true, input: ["text", "image"], contextWindow: 1000000, maxTokens: 512000 },
+	seed20: { reasoning: true, input: ["text", "image"], contextWindow: 262144, maxTokens: 131072 },
+	seed16Code: { reasoning: true, input: ["text", "image"], contextWindow: 262144, maxTokens: 32768 },
+	glm51: { reasoning: true, input: ["text"], contextWindow: 204800, maxTokens: 131072 },
+	kimiK25: { reasoning: true, input: ["text", "image"], contextWindow: 262144, maxTokens: 262144 },
+	gptOss120b: { reasoning: true, input: ["text"], contextWindow: 131072, maxTokens: 131072 },
+} as const satisfies Record<string, ArkModelProfile>;
+
+function createArkModels(
+	provider: ArkProviderId,
+	baseUrl: string,
+	specs: readonly ArkModelSpec[],
+): Model<"openai-responses">[] {
+	return specs.map(({ id, name, profile }) => ({
+		id,
+		name,
+		api: "openai-responses",
+		provider,
+		baseUrl,
+		reasoning: profile.reasoning,
+		input: [...profile.input],
+		cost: { ...ARK_UNREPORTED_COST },
+		contextWindow: profile.contextWindow,
+		maxTokens: profile.maxTokens,
+		compat: { ...ARK_RESPONSES_COMPAT },
+	}));
+}
+
+const ARK_MODELS: Model<"openai-responses">[] = [
+	...createArkModels("ark-agent-plan-cn", "https://ark.cn-beijing.volces.com/api/plan/v3", [
+		{ id: "doubao-seed-evolving", name: "Doubao Seed Evolving", profile: ARK_MODEL_PROFILES.doubaoSeedEvolving },
+		{ id: "doubao-seed-2.1-turbo", name: "Doubao Seed 2.1 Turbo", profile: ARK_MODEL_PROFILES.doubaoSeed21 },
+		{ id: "doubao-seed-2.0-lite", name: "Doubao Seed 2.0 Lite", profile: ARK_MODEL_PROFILES.doubaoSeed20 },
+		{ id: "doubao-seed-2.0-mini", name: "Doubao Seed 2.0 Mini", profile: ARK_MODEL_PROFILES.doubaoSeed20 },
+		{ id: "deepseek-v4-flash", name: "DeepSeek V4 Flash", profile: ARK_MODEL_PROFILES.deepseekV4 },
+		{ id: "kimi-k3", name: "Kimi K3", profile: ARK_MODEL_PROFILES.kimiK3 },
+		{ id: "glm-5.2", name: "GLM 5.2", profile: ARK_MODEL_PROFILES.glm52 },
+		{ id: "kimi-k2.7-code", name: "Kimi K2.7 Code", profile: ARK_MODEL_PROFILES.kimiK27Code },
+		{ id: "minimax-m3", name: "MiniMax M3", profile: ARK_MODEL_PROFILES.minimaxM3 },
+		{ id: "deepseek-v4-pro", name: "DeepSeek V4 Pro", profile: ARK_MODEL_PROFILES.deepseekV4 },
+	]),
+	...createArkModels("ark-coding-plan-cn", "https://ark.cn-beijing.volces.com/api/coding/v3", [
+		{ id: "doubao-seed-2.1-turbo", name: "Doubao Seed 2.1 Turbo", profile: ARK_MODEL_PROFILES.doubaoSeed21 },
+		{ id: "doubao-seed-2.0-lite", name: "Doubao Seed 2.0 Lite", profile: ARK_MODEL_PROFILES.doubaoSeed20 },
+		{ id: "deepseek-v4-flash", name: "DeepSeek V4 Flash", profile: ARK_MODEL_PROFILES.deepseekV4 },
+		{ id: "glm-5.2", name: "GLM 5.2", profile: ARK_MODEL_PROFILES.glm52 },
+		{ id: "kimi-k2.7-code", name: "Kimi K2.7 Code", profile: ARK_MODEL_PROFILES.kimiK27Code },
+		{ id: "minimax-m3", name: "MiniMax M3", profile: ARK_MODEL_PROFILES.minimaxM3 },
+		{ id: "deepseek-v4-pro", name: "DeepSeek V4 Pro", profile: ARK_MODEL_PROFILES.deepseekV4 },
+	]),
+	...createArkModels("ark-cn", "https://ark.cn-beijing.volces.com/api/v3", [
+		{ id: "doubao-seed-evolving", name: "Doubao Seed Evolving", profile: ARK_MODEL_PROFILES.doubaoSeedEvolving },
+		{ id: "doubao-seed-2-1-pro-260628", name: "Doubao Seed 2.1 Pro", profile: ARK_MODEL_PROFILES.doubaoSeed21 },
+		{ id: "doubao-seed-2-1-turbo-260628", name: "Doubao Seed 2.1 Turbo", profile: ARK_MODEL_PROFILES.doubaoSeed21 },
+	]),
+	...createArkModels("ark", "https://ark.ap-southeast.bytepluses.com/api/v3", [
+		{ id: "dola-seed-evolving-latest-version", name: "Dola Seed Evolving", profile: ARK_MODEL_PROFILES.doubaoSeedEvolving },
+		{ id: "dola-seed-2-1-turbo-260628", name: "Dola Seed 2.1 Turbo", profile: ARK_MODEL_PROFILES.doubaoSeed21 },
+	]),
+	...createArkModels("ark-coding-plan", "https://ark.ap-southeast.bytepluses.com/api/coding/v3", [
+		{ id: "seed-2-0-pro-260328", name: "Dola Seed 2.0 Pro", profile: ARK_MODEL_PROFILES.seed20 },
+		{ id: "seed-2-0-lite-260228", name: "Dola Seed 2.0 Lite", profile: ARK_MODEL_PROFILES.seed20 },
+		{ id: "seed-2-0-code-preview-260328", name: "Dola Seed 2.0 Code", profile: ARK_MODEL_PROFILES.seed20 },
+		{ id: "bytedance-seed-code", name: "ByteDance Seed Code", profile: ARK_MODEL_PROFILES.seed16Code },
+		{ id: "glm-5.2", name: "GLM 5.2", profile: ARK_MODEL_PROFILES.glm52 },
+		{ id: "deepseek-v4-flash-260425", name: "DeepSeek V4 Flash", profile: ARK_MODEL_PROFILES.deepseekV4 },
+		{ id: "deepseek-v4-pro-260425", name: "DeepSeek V4 Pro", profile: ARK_MODEL_PROFILES.deepseekV4 },
+		{ id: "glm-5-1-260408", name: "GLM 5.1", profile: ARK_MODEL_PROFILES.glm51 },
+		{ id: "kimi-k2-5-260127", name: "Kimi K2.5", profile: ARK_MODEL_PROFILES.kimiK25 },
+		{ id: "gpt-oss-120b-250805", name: "GPT OSS 120B", profile: ARK_MODEL_PROFILES.gptOss120b },
+	]),
+];
 // Kimi Coding is subscription-backed, so models.dev reports zero cost. Use the
 // equivalent Moonshot API rates to estimate the value of subscription usage.
 const KIMI_CODING_IMPLIED_COSTS: Record<string, Model<Api>["cost"]> = {
@@ -2289,6 +2394,7 @@ async function generateModels() {
 			!(model.provider === "xai" && XAI_BUILTIN_EXCLUDED_MODEL_IDS.has(model.id)) &&
 			!((model.provider === "opencode" || model.provider === "opencode-go") && model.id === "gpt-5.3-codex-spark"),
 	);
+	allModels.push(...ARK_MODELS);
 
 	// Temporary overrides until upstream model metadata is corrected.
 	for (const candidate of allModels) {

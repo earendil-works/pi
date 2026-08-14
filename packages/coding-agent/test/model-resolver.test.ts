@@ -694,6 +694,14 @@ describe("resolveCliModel", () => {
 });
 
 describe("default model selection", () => {
+	test("ark defaults track each provider catalog", () => {
+		expect(defaultModelPerProvider.ark).toBe("dola-seed-evolving-latest-version");
+		expect(defaultModelPerProvider["ark-agent-plan-cn"]).toBe("doubao-seed-evolving");
+		expect(defaultModelPerProvider["ark-cn"]).toBe("doubao-seed-evolving");
+		expect(defaultModelPerProvider["ark-coding-plan"]).toBe("glm-5.2");
+		expect(defaultModelPerProvider["ark-coding-plan-cn"]).toBe("doubao-seed-2.1-turbo");
+	});
+
 	test("openai defaults track current models", () => {
 		expect(defaultModelPerProvider.openai).toBe("gpt-5.5");
 		expect(defaultModelPerProvider["openai-codex"]).toBe("gpt-5.5");

@@ -5,6 +5,11 @@ import type { Api, Model } from "../types.ts";
 import { amazonBedrockProvider } from "./amazon-bedrock.ts";
 import { antLingProvider } from "./ant-ling.ts";
 import { anthropicProvider } from "./anthropic.ts";
+import { arkProvider } from "./ark.ts";
+import { arkAgentPlanCnProvider } from "./ark-agent-plan-cn.ts";
+import { arkCnProvider } from "./ark-cn.ts";
+import { arkCodingPlanProvider } from "./ark-coding-plan.ts";
+import { arkCodingPlanCnProvider } from "./ark-coding-plan-cn.ts";
 import { azureOpenAIResponsesProvider } from "./azure-openai-responses.ts";
 import { basetenProvider } from "./baseten.ts";
 import { cerebrasProvider } from "./cerebras.ts";
@@ -91,6 +96,11 @@ export function builtinProviders(): Provider[] {
 		amazonBedrockProvider(),
 		antLingProvider(),
 		anthropicProvider(),
+		arkProvider(),
+		arkAgentPlanCnProvider(),
+		arkCnProvider(),
+		arkCodingPlanProvider(),
+		arkCodingPlanCnProvider(),
 		azureOpenAIResponsesProvider(),
 		basetenProvider(),
 		cerebrasProvider(),

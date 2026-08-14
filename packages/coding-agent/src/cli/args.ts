@@ -371,6 +371,11 @@ ${chalk.bold("Environment Variables:")}
   ANTHROPIC_API_KEY                - Anthropic Claude API key
   ANTHROPIC_OAUTH_TOKEN            - Anthropic OAuth token (alternative to API key)
   ANT_LING_API_KEY                 - Ant Ling API key
+  ARK_API_KEY                      - BytePlus Ark API key
+  ARK_AGENT_PLAN_CN_API_KEY        - Volcengine Ark Agent Plan API key
+  ARK_CN_API_KEY                   - Volcengine Ark API key
+  ARK_CODING_PLAN_API_KEY          - BytePlus Ark Coding Plan API key
+  ARK_CODING_PLAN_CN_API_KEY       - Volcengine Ark Coding Plan API key
   OPENAI_API_KEY                   - OpenAI GPT API key
   AZURE_OPENAI_API_KEY             - Azure OpenAI API key
   AZURE_OPENAI_BASE_URL            - Azure OpenAI/Cognitive Services base URL (e.g. https://{resource}.openai.azure.com)
