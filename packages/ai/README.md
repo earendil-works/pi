@@ -794,7 +794,7 @@ Many models support thinking/reasoning capabilities where they can show their in
 const model = models.getModel('anthropic', 'claude-sonnet-4-5')!;
 // or models.getModel('openai', 'gpt-5-mini');
 // or models.getModel('google', 'gemini-2.5-flash');
-// or models.getModel('xai', 'grok-4.5');
+// or models.getModel('xai', 'grok-4.6');
 
 // Check if model supports reasoning
 if (model.reasoning) {
