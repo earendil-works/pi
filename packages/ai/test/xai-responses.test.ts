@@ -125,6 +125,21 @@ describe("xAI Responses provider", () => {
 		);
 	});
 
+	it("requests encrypted reasoning without an effort override", async () => {
+		const captured = await captureRequest(
+			XAI_MODELS["grok-4.5"],
+			{ messages: [{ role: "user", content: "hello", timestamp: 1 }] },
+			{ apiKey: "xai-test-token" },
+		);
+
+		expect(captured.body).toMatchObject({
+			model: "grok-4.5",
+			store: false,
+			include: ["reasoning.encrypted_content"],
+		});
+		expect(captured.body).not.toHaveProperty("reasoning");
+	});
+
 	it("uses /responses for Grok 4.6 with xhigh effort and encrypted reasoning", async () => {
 		const captured = await captureRequest(
 			XAI_MODELS["grok-4.6"],

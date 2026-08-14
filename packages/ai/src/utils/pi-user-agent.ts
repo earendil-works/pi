@@ -19,7 +19,6 @@ export function getPiUserAgent(): string {
 	return nodeOs ? `pi (${nodeOs.platform()} ${nodeOs.release()}; ${nodeOs.arch()})` : "pi (browser)";
 }
 
-/** Replace any User-Agent in `headers` with pi's runtime User-Agent. */
 export function forcePiUserAgent(headers: ProviderHeaders): void {
 	for (const name of Object.keys(headers)) {
 		if (name.toLowerCase() === "user-agent") delete headers[name];
