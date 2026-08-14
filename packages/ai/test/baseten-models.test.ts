@@ -54,6 +54,13 @@ describe("Baseten models", () => {
 		});
 	});
 
+	it("caps DeepSeek V4 Flash output tokens below its context window", () => {
+		const model = getModel("baseten", "deepseek-ai/DeepSeek-V4-Flash-0731");
+
+		expect(model.contextWindow).toBe(1_048_576);
+		expect(model.maxTokens).toBe(384_000);
+	});
+
 	it("models Kimi K2.6 reasoning as an explicit off/on toggle", async () => {
 		const model = getModel("baseten", "moonshotai/Kimi-K2.6");
 		let payload: Record<string, unknown> | undefined;

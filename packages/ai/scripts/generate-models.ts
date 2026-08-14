@@ -1203,6 +1203,11 @@ function processBasetenModels(provider: ModelsDevProvider | undefined): Model<Ap
 				? toggleThinkingLevelMap
 				: getEffortThinkingLevelMap(reasoningOptions);
 
+		// models.dev reports 1M output here, but Baseten serves a 384k max output.
+		// https://docs.baseten.co/inference/model-apis/overview.md#supported-models
+		const maxTokens =
+			modelId === "deepseek-ai/DeepSeek-V4-Flash-0731" ? 384000 : (model.limit?.output || 4096);
+
 		models.push({
 			id: modelId,
 			name: model.name || modelId,
@@ -1220,7 +1225,7 @@ function processBasetenModels(provider: ModelsDevProvider | undefined): Model<Ap
 			},
 			compat,
 			contextWindow: model.limit?.context || 4096,
-			maxTokens: model.limit?.output || 4096,
+			maxTokens,
 		});
 	}
 
