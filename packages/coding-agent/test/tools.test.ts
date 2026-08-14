@@ -79,6 +79,118 @@ describe("Coding Agent Tools", () => {
 			expect(result.details).toBeUndefined();
 		});
 
+		it("should preview long lines during normal reads", async () => {
+			const testFile = join(testDir, "long-line.txt");
+			const longLine = "x".repeat(3000);
+			writeFileSync(testFile, longLine);
+
+			const result = await readTool.execute("test-call-long-line", { path: testFile });
+
+			expect(getTextOutput(result)).toBe(
+				`${"x".repeat(2000)}\n\n[Line 1 shortened: showing 2,000 of 3,000 characters. Use offset=1, limit=1 to read the complete line.]`,
+			);
+			expect(result.details?.longLinesShortened).toBe(1);
+		});
+
+		it("should preserve a line at the preview boundary", async () => {
+			const testFile = join(testDir, "preview-boundary-line.txt");
+			const boundaryLine = "😀".repeat(2000);
+			writeFileSync(testFile, boundaryLine);
+
+			const result = await readTool.execute("test-call-preview-boundary", { path: testFile });
+
+			expect(getTextOutput(result)).toBe(boundaryLine);
+			expect(result.details).toBeUndefined();
+		});
+
+		it("should return a complete long line when limit is one", async () => {
+			const testFile = join(testDir, "focused-long-line.txt");
+			const longLine = "x".repeat(3000);
+			writeFileSync(testFile, longLine);
+
+			const result = await readTool.execute("test-call-focused-long-line", {
+				path: testFile,
+				offset: 1,
+				limit: 1,
+			});
+
+			expect(getTextOutput(result)).toBe(longLine);
+			expect(result.details).toBeUndefined();
+		});
+
+		it("should count Unicode code points and preserve CRLF line endings", async () => {
+			const testFile = join(testDir, "unicode-crlf-long-line.txt");
+			const longLine = "😀".repeat(2001);
+			writeFileSync(testFile, `before\r\n${longLine}\r\nafter`);
+
+			const result = await readTool.execute("test-call-unicode-crlf-long-line", {
+				path: testFile,
+				offset: 2,
+			});
+			const focusedResult = await readTool.execute("test-call-unicode-crlf-focused-line", {
+				path: testFile,
+				offset: 2,
+				limit: 1,
+			});
+
+			expect(getTextOutput(result)).toBe(
+				`${"😀".repeat(2000)}\r\nafter\n\n[Line 2 shortened: showing 2,000 of 2,001 characters. Use offset=2, limit=1 to read the complete line.]`,
+			);
+			expect(result.details?.longLinesShortened).toBe(1);
+			expect(getTextOutput(focusedResult)).toBe(
+				`${longLine}\r\n\n[1 more lines in file. Use offset=3 to continue.]`,
+			);
+		});
+
+		it("should report every shortened line", async () => {
+			const testFile = join(testDir, "multiple-long-lines.txt");
+			writeFileSync(testFile, `${"a".repeat(2001)}\nshort\n${"b".repeat(2002)}`);
+
+			const result = await readTool.execute("test-call-multiple-long-lines", { path: testFile });
+			const output = getTextOutput(result);
+
+			expect(output).toContain("a".repeat(2000));
+			expect(output).not.toContain("a".repeat(2001));
+			expect(output).toContain("b".repeat(2000));
+			expect(output).not.toContain("b".repeat(2001));
+			expect(output).toContain(
+				"[Line 1 shortened: showing 2,000 of 2,001 characters. Use offset=1, limit=1 to read the complete line.]",
+			);
+			expect(output).toContain(
+				"[Line 3 shortened: showing 2,000 of 2,002 characters. Use offset=3, limit=1 to read the complete line.]",
+			);
+			expect(result.details?.longLinesShortened).toBe(2);
+		});
+
+		it("should preview a line at the exact byte limit and preserve focused recovery", async () => {
+			const testFile = join(testDir, "byte-boundary-long-line.txt");
+			const longLine = "x".repeat(50 * 1024);
+			writeFileSync(testFile, longLine);
+
+			const previewResult = await readTool.execute("test-call-byte-boundary-preview", { path: testFile });
+			const focusedResult = await readTool.execute("test-call-byte-boundary-focused", {
+				path: testFile,
+				limit: 1,
+			});
+
+			expect(getTextOutput(previewResult)).toBe(
+				`${"x".repeat(2000)}\n\n[Line 1 shortened: showing 2,000 of 51,200 characters. Use offset=1, limit=1 to read the complete line.]`,
+			);
+			expect(getTextOutput(focusedResult)).toBe(longLine);
+		});
+
+		it("should preserve core handling for lines above the byte limit", async () => {
+			const testFile = join(testDir, "over-byte-limit-long-line.txt");
+			writeFileSync(testFile, "x".repeat(50 * 1024 + 1));
+
+			const result = await readTool.execute("test-call-over-byte-limit", { path: testFile });
+
+			expect(getTextOutput(result)).toMatch(/^\[Line 1 is .* exceeds 50\.0KB limit\. Use bash:/);
+			expect(getTextOutput(result)).not.toContain("shortened");
+			expect(result.details?.truncation?.firstLineExceedsLimit).toBe(true);
+			expect(result.details?.longLinesShortened).toBeUndefined();
+		});
+
 		it("should handle non-existent files", async () => {
 			const testFile = join(testDir, "nonexistent.txt");
 
