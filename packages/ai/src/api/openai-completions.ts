@@ -1082,7 +1082,7 @@ export function convertMessages(
 			// Some providers don't accept null content, use empty string instead
 			const assistantMsg: ChatCompletionAssistantMessageParam = {
 				role: "assistant",
-				content: compat.requiresAssistantAfterToolResult ? "" : null,
+				content: compat.requiresAssistantAfterToolResult || compat.requiresNonNullAssistantContent ? "" : null,
 			};
 
 			const assistantTextParts = msg.content
@@ -1452,6 +1452,7 @@ function detectCompat(model: Model<"openai-completions">): ResolvedOpenAIComplet
 		maxTokensField: useMaxTokens ? "max_tokens" : "max_completion_tokens",
 		requiresToolResultName: false,
 		requiresAssistantAfterToolResult: false,
+		requiresNonNullAssistantContent: false,
 		requiresThinkingAsText: false,
 		requiresReasoningContentOnAssistantMessages: isDeepSeek,
 		thinkingFormat: isDeepSeek
@@ -1503,6 +1504,8 @@ function getCompat(model: Model<"openai-completions">): ResolvedOpenAICompletion
 		requiresToolResultName: model.compat.requiresToolResultName ?? detected.requiresToolResultName,
 		requiresAssistantAfterToolResult:
 			model.compat.requiresAssistantAfterToolResult ?? detected.requiresAssistantAfterToolResult,
+		requiresNonNullAssistantContent:
+			model.compat.requiresNonNullAssistantContent ?? detected.requiresNonNullAssistantContent,
 		requiresThinkingAsText: model.compat.requiresThinkingAsText ?? detected.requiresThinkingAsText,
 		requiresReasoningContentOnAssistantMessages:
 			model.compat.requiresReasoningContentOnAssistantMessages ??

@@ -749,6 +749,7 @@ interface ProviderModelConfig {
     maxTokensField?: "max_completion_tokens" | "max_tokens";
     requiresToolResultName?: boolean;
     requiresAssistantAfterToolResult?: boolean;
+    requiresNonNullAssistantContent?: boolean;
     requiresThinkingAsText?: boolean;
     requiresReasoningContentOnAssistantMessages?: boolean;
     thinkingFormat?: "openai" | "openrouter" | "deepseek" | "together" | "zai" | "qwen" | "chat-template" | "qwen-chat-template" | "string-thinking" | "ant-ling";
