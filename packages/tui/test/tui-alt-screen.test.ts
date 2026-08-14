@@ -963,6 +963,90 @@ describe("TuiAltScreen", () => {
 		tui.stop();
 	});
 
+	it("cancels an active mouse selection without copying or forwarding Escape", async () => {
+		const terminal = new RecordingTerminal(20, 4);
+		const tui = new TuiAltScreen(terminal);
+		const focused = new InputOverlay();
+		tui.addChild(new Text("alpha\nbeta\ngamma", 0, 0));
+		tui.addChild(focused);
+		tui.setFocus(focused);
+		tui.start();
+		await terminal.waitForRender();
+
+		terminal.sendInput("\x1b[<0;1;1M");
+		terminal.sendInput("\x1b[<32;4;2M");
+		await terminal.waitForRender();
+		const cancelEventCount = terminal.events.length;
+		terminal.sendInput("\x1b");
+		await terminal.waitForRender();
+
+		const cancelWrites = terminal.events
+			.slice(cancelEventCount)
+			.filter((event): event is { type: "write"; data: string } => event.type === "write")
+			.map((event) => event.data)
+			.join("");
+		assert.ok(cancelWrites.includes("alpha"));
+		assert.ok(cancelWrites.includes("beta"));
+		assert.ok(!cancelWrites.includes("\x1b[7m"));
+		assert.deepStrictEqual(focused.inputs, []);
+
+		terminal.sendInput("\x1b[<32;6;3M");
+		terminal.sendInput("\x1b[<0;6;3m");
+		await terminal.waitForRender();
+		assert.ok(terminal.events.every((event) => event.type !== "write" || !event.data.includes("\x1b]52;c;")));
+		assert.ok(!terminal.getViewport().some((line) => line.includes("Copied!")));
+		tui.stop();
+	});
+
+	it("does not repaint when cancelling a zero-width mouse selection", async () => {
+		const terminal = new RecordingTerminal(20, 2);
+		const tui = new TuiAltScreen(terminal);
+		tui.addChild(new Text("alpha\nbeta", 0, 0));
+		tui.start();
+		await terminal.waitForRender();
+
+		terminal.sendInput("\x1b[<0;1;1M");
+		await terminal.waitForRender();
+		const pressedWriteCount = terminal.events.filter((event) => event.type === "write").length;
+		terminal.sendInput("\x1b");
+		await terminal.waitForRender();
+		assert.strictEqual(terminal.events.filter((event) => event.type === "write").length, pressedWriteCount);
+
+		terminal.sendInput("\x1b[<0;1;1m");
+		await terminal.waitForRender();
+		assert.strictEqual(terminal.events.filter((event) => event.type === "write").length, pressedWriteCount);
+		tui.stop();
+	});
+
+	it("leaves completed mouse selections intact when Escape is pressed", async () => {
+		const terminal = new RecordingTerminal(20, 3);
+		const tui = new TuiAltScreen(terminal);
+		const focused = new InputOverlay();
+		tui.addChild(new Text("alpha\nbeta", 0, 0));
+		tui.addChild(focused);
+		tui.setFocus(focused);
+		tui.start();
+		await terminal.waitForRender();
+
+		terminal.sendInput("\x1b[<0;1;1M");
+		terminal.sendInput("\x1b[<32;4;2M");
+		terminal.sendInput("\x1b[<0;4;2m");
+		await terminal.waitForRender();
+		terminal.sendInput("\x1b");
+		await terminal.waitForRender();
+		assert.deepStrictEqual(focused.inputs, ["\x1b"]);
+
+		const redrawEventCount = terminal.events.length;
+		tui.renderNow(true);
+		const redrawWrites = terminal.events
+			.slice(redrawEventCount)
+			.filter((event): event is { type: "write"; data: string } => event.type === "write")
+			.map((event) => event.data)
+			.join("");
+		assert.ok(redrawWrites.includes("\x1b[7m"));
+		tui.stop();
+	});
+
 	it("does not append whitespace to double-click word highlighting", async () => {
 		const terminal = new RecordingTerminal(20, 1);
 		const tui = new TuiAltScreen(terminal);
@@ -1186,6 +1270,33 @@ describe("TuiAltScreen", () => {
 			terminal.events.some((event) => event.type === "write" && event.data.includes(expectedClipboardSequence)),
 			JSON.stringify(terminal.events.filter((event) => event.type === "write" && event.data.includes("\x1b]52;c;"))),
 		);
+		tui.stop();
+	});
+
+	it("stops selection auto-scroll when Escape cancels the drag", async () => {
+		const terminal = new RecordingTerminal(20, 4);
+		const tui = new TuiAltScreen(terminal);
+		tui.addChild(new Text(Array.from({ length: 10 }, (_, index) => `line ${index + 1}`).join("\n"), 0, 0));
+		tui.start();
+		await terminal.waitForRender();
+		assert.strictEqual(tui.viewportTop, 6);
+
+		terminal.sendInput("\x1b[<0;1;3M");
+		terminal.sendInput("\x1b[<32;1;1M");
+		await new Promise((resolve) => setTimeout(resolve, 130));
+		await terminal.waitForRender();
+		assert.ok(tui.viewportTop < 6);
+
+		terminal.sendInput("\x1b");
+		await terminal.waitForRender();
+		const cancelledViewportTop = tui.viewportTop;
+		await new Promise((resolve) => setTimeout(resolve, 130));
+		await terminal.waitForRender();
+		assert.strictEqual(tui.viewportTop, cancelledViewportTop);
+
+		terminal.sendInput("\x1b[<0;1;1m");
+		await terminal.waitForRender();
+		assert.ok(terminal.events.every((event) => event.type !== "write" || !event.data.includes("\x1b]52;c;")));
 		tui.stop();
 	});
 
