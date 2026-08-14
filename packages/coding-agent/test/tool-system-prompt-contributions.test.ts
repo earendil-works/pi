@@ -33,4 +33,14 @@ describe("built-in tool system prompt contributions", () => {
 
 		expect(definition.promptGuidelines).toBeUndefined();
 	});
+
+	test("scopes the bash PI_* guideline to questions about the active model or session", () => {
+		const definition = createBashToolDefinition("/workspace");
+		const guideline = (definition.promptGuidelines ?? []).find((entry) => entry.includes("PI_*"));
+
+		expect(guideline).toBe(
+			"When the user asks which model, provider, reasoning level, or Pi session is active, inspect the relevant PI_* environment variables instead of inferring the answer.",
+		);
+		expect(guideline?.startsWith("When the user asks")).toBe(true);
+	});
 });

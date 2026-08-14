@@ -45,7 +45,9 @@ const bashSchema = Type.Object({
 
 export const bashToolSystemPromptContribution = {
 	snippet: "Execute bash commands (ls, grep, find, etc.)",
-	guidelines: ["You can inspect PI_* environment variables for current model and session details."],
+	guidelines: [
+		"When the user asks which model, provider, reasoning level, or Pi session is active, inspect the relevant PI_* environment variables instead of inferring the answer.",
+	],
 } as const;
 
 export type BashToolInput = Static<typeof bashSchema>;

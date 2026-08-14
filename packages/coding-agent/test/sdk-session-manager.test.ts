@@ -105,7 +105,7 @@ describe("createAgentSession session manager defaults", () => {
 		});
 		expect(session.sessionFile).toBeTruthy();
 		expect(session.systemPrompt).toContain(
-			"You can inspect PI_* environment variables for current model and session details.",
+			"When the user asks which model, provider, reasoning level, or Pi session is active, inspect the relevant PI_* environment variables instead of inferring the answer.",
 		);
 
 		const bashTool = session.agent.state.tools.find((tool) => tool.name === "bash");
