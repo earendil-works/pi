@@ -22,6 +22,8 @@ function resetState(): void {
 
 const roots: string[] = [];
 
+const DIRECTORY_LINK_TYPE = process.platform === "win32" ? "junction" : "dir";
+
 function fixture(): string {
 	const root = join(tmpdir(), `pi-ext-realpath-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 	mkdirSync(root, { recursive: true });
@@ -67,7 +69,9 @@ export default function () {
 
 		const topLevel = join(root, "node_modules", "@test");
 		mkdirSync(topLevel, { recursive: true });
-		symlinkSync(join("..", ".pnpm", "@test+ext@1.0.0", "node_modules", "@test", "ext"), join(topLevel, "ext"));
+		// Junctions (win32) require an absolute target; pnpm's own relative
+		// link targets are equivalent here since the store path is absolute.
+		symlinkSync(join(storePkgDir, "ext"), join(topLevel, "ext"), DIRECTORY_LINK_TYPE);
 
 		const entry = join(topLevel, "ext", "index.ts");
 		expect(existsSync(entry)).toBe(true);
