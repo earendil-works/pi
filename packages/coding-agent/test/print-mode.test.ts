@@ -1,5 +1,13 @@
 import type { AssistantMessage, ImageContent } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("../src/core/output-guard.ts", () => ({
+	writeRawStdout: vi.fn(),
+	flushRawStdout: vi.fn(async () => {}),
+	waitForRawStdoutBackpressure: vi.fn(async () => {}),
+}));
+
+import { writeRawStdout } from "../src/core/output-guard.ts";
 import type { SessionShutdownEvent } from "../src/index.ts";
 import { runPrintMode } from "../src/modes/print-mode.ts";
 
@@ -121,6 +129,47 @@ describe("runPrintMode", () => {
 		expect(session.prompt).toHaveBeenCalledWith("hello");
 		expect(session.extensionRunner.emit).toHaveBeenCalledTimes(1);
 		expect(session.extensionRunner.emit).toHaveBeenCalledWith({ type: "session_shutdown", reason: "quit" });
+	});
+
+	it("KHA-346a: prints the last assistant TEXT even when the final assistant message is tool-call-only", async () => {
+		const runtimeHost = createRuntimeHost(createAssistantMessage({ text: "the real report" }));
+		// Simulate a long agentic run's tail: the final assistant message carries
+		// no text content (it ended on tool calls) — the previous one has the report.
+		runtimeHost.session.state.messages.push(createAssistantMessage({}));
+
+		const exitCode = await runPrintMode(runtimeHost as unknown as Parameters<typeof runPrintMode>[0], {
+			mode: "text",
+		});
+
+		expect(exitCode).toBe(0);
+		expect(writeRawStdout).toHaveBeenCalledWith("the real report\n");
+	});
+
+	it("KHA-346b: prints the last assistant TEXT even when the session tail is a non-assistant entry", async () => {
+		const runtimeHost = createRuntimeHost(createAssistantMessage({ text: "the real report" }));
+		runtimeHost.session.state.messages.push({
+			role: "user",
+			content: "injected tail",
+		} as unknown as AssistantMessage);
+
+		const exitCode = await runPrintMode(runtimeHost as unknown as Parameters<typeof runPrintMode>[0], {
+			mode: "text",
+		});
+
+		expect(exitCode).toBe(0);
+		expect(writeRawStdout).toHaveBeenCalledWith("the real report\n");
+	});
+
+	it("KHA-346c: a print run with NO printable text anywhere exits non-zero and says so on stderr", async () => {
+		const runtimeHost = createRuntimeHost(createAssistantMessage({}));
+		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+		const exitCode = await runPrintMode(runtimeHost as unknown as Parameters<typeof runPrintMode>[0], {
+			mode: "text",
+		});
+
+		expect(exitCode).toBe(1);
+		expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("no text output"));
 	});
 
 	it("emits session_shutdown and returns non-zero on assistant error", async () => {

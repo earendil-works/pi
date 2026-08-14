@@ -138,20 +138,40 @@ export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: Pr
 
 		if (mode === "text") {
 			const state = session.state;
-			const lastMessage = state.messages[state.messages.length - 1];
-
-			if (lastMessage?.role === "assistant") {
-				const assistantMsg = lastMessage as AssistantMessage;
+			// Walk BACKWARDS to the last assistant message that carries text.
+			// A long agentic run can legitimately end on a tool-call-only
+			// assistant message, or on a non-assistant entry (compaction,
+			// extension injection) — the previous behaviour printed "the
+			// literal last entry or nothing", which emitted ZERO bytes with
+			// exit 0 on exactly those tails, silently losing the run's report.
+			// An error/abort on the terminal assistant message still reports
+			// as an error; a session with no printable text anywhere is a
+			// FAILED print, not a silent success.
+			let printedText = false;
+			let reportedError = false;
+			for (let i = state.messages.length - 1; i >= 0; i--) {
+				const candidate = state.messages[i];
+				if (candidate?.role !== "assistant") continue;
+				const assistantMsg = candidate as AssistantMessage;
 				if (assistantMsg.stopReason === "error" || assistantMsg.stopReason === "aborted") {
 					console.error(assistantMsg.errorMessage || `Request ${assistantMsg.stopReason}`);
 					exitCode = 1;
-				} else {
-					for (const content of assistantMsg.content) {
-						if (content.type === "text") {
-							writeRawStdout(`${content.text}\n`);
-						}
-					}
+					reportedError = true;
+					break;
 				}
+				const textParts = assistantMsg.content.filter((content) => content.type === "text");
+				if (textParts.length === 0) continue;
+				for (const content of textParts) {
+					writeRawStdout(`${content.text}\n`);
+				}
+				printedText = true;
+				break;
+			}
+			if (!printedText && !reportedError) {
+				console.error(
+					"pi: print mode produced no text output (no assistant message with text content in the session)",
+				);
+				exitCode = 1;
 			}
 		}
 
