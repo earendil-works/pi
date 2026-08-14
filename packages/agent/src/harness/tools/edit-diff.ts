@@ -31,9 +31,14 @@ export function normalizeForFuzzyMatch(text: string): string {
 	return (
 		text
 			.normalize("NFKC")
-			// Strip trailing whitespace per line
+			// Strip trailing whitespace per line and collapse interior whitespace runs
+			// while preserving leading indentation for meaningful fuzzy matching
 			.split("\n")
-			.map((line) => line.trimEnd())
+			.map((line) => {
+				const leading = line.match(/^\s*/)?.[0] ?? "";
+				const rest = line.slice(leading.length).trimEnd().replace(/\s{2,}/g, " ");
+				return leading + rest;
+			})
 			.join("\n")
 			// Smart single quotes → '
 			.replace(/[\u2018\u2019\u201A\u201B]/g, "'")
