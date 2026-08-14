@@ -25,7 +25,7 @@ import { CONFIG_DIR_NAME, getAgentDir, isBunBinary } from "../../config.ts";
 // NOTE: This import works because loader.ts exports are NOT re-exported from index.ts,
 // avoiding a circular dependency. Extensions can import from @earendil-works/pi-coding-agent.
 import * as _bundledPiCodingAgent from "../../index.ts";
-import { resolvePath } from "../../utils/paths.ts";
+import { canonicalizePath, resolvePath } from "../../utils/paths.ts";
 import { createEventBus, type EventBus } from "../event-bus.ts";
 import type { ExecOptions } from "../exec.ts";
 import { execCommand } from "../exec.ts";
@@ -452,7 +452,12 @@ async function loadExtensionModule(extensionPath: string, cacheToken?: Extension
 				: { alias: getAliases() }),
 	});
 
-	const module = await jiti.import(extensionPath, { default: true });
+	// Realpath the entry before handing it to jiti: pnpm's isolated layout
+	// symlinks node_modules/<pkg> into .pnpm/<pkg>@<ver>/node_modules/<pkg>,
+	// and jiti's resolver (unlike Node's native loader) doesn't realpath
+	// before resolving imports, so upward traversal from the symlink path
+	// misses declared deps that only exist as store siblings. See #8092.
+	const module = await jiti.import(canonicalizePath(extensionPath), { default: true });
 	const factory = module as ExtensionFactory;
 	if (typeof factory !== "function") {
 		return undefined;
