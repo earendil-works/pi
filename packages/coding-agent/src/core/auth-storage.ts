@@ -34,6 +34,24 @@ type AuthFileReadState = {
 	reload?: AuthFileReload;
 };
 
+/**
+ * Resolve the file mode for auth.json and models-store.json.
+ *
+ * Defaults to 0o600 (owner read/write only). Set PI_AGENT_FILE_MODE to a
+ * permission octal (e.g. "0660") to allow group-readable shared state for
+ * trusted multi-user environments (see #7779).
+ */
+function resolveAgentFileMode(): number {
+	const env = process.env.PI_AGENT_FILE_MODE;
+	if (env) {
+		const parsed = parseInt(env, 8);
+		if (!Number.isNaN(parsed) && parsed >= 0 && parsed <= 0o777) {
+			return parsed;
+		}
+	}
+	return 0o600;
+}
+
 let sharedAuthFileReadState: { authPath: string; readState: AuthFileReadState } | undefined;
 
 export interface AuthStorageBackend {
@@ -46,9 +64,11 @@ export interface AuthStorageBackend {
 
 export class FileAuthStorageBackend implements AuthStorageBackend {
 	private authPath: string;
+	private fileMode: number;
 
-	constructor(authPath: string = join(getAgentDir(), "auth.json")) {
+	constructor(authPath: string = join(getAgentDir(), "auth.json"), fileMode?: number) {
 		this.authPath = normalizePath(authPath);
+		this.fileMode = fileMode ?? resolveAgentFileMode();
 	}
 
 	private ensureParentDir(): void {
@@ -61,7 +81,7 @@ export class FileAuthStorageBackend implements AuthStorageBackend {
 	private ensureFileExists(): void {
 		if (!existsSync(this.authPath)) {
 			writeFileSync(this.authPath, "{}", AUTH_FILE_WRITE_OPTIONS);
-			chmodSync(this.authPath, 0o600);
+			chmodSync(this.authPath, this.fileMode);
 		}
 	}
 
@@ -103,7 +123,7 @@ export class FileAuthStorageBackend implements AuthStorageBackend {
 			const { result, next } = fn(current);
 			if (next !== undefined) {
 				writeFileSync(this.authPath, next, AUTH_FILE_WRITE_OPTIONS);
-				chmodSync(this.authPath, 0o600);
+				chmodSync(this.authPath, this.fileMode);
 			}
 			return result;
 		} finally {
@@ -185,7 +205,7 @@ export class FileAuthStorageBackend implements AuthStorageBackend {
 			options?.signal?.throwIfAborted();
 			if (next !== undefined) {
 				writeFileSync(this.authPath, next, AUTH_FILE_WRITE_OPTIONS);
-				chmodSync(this.authPath, 0o600);
+				chmodSync(this.authPath, this.fileMode);
 			}
 			throwIfCompromised();
 			return result;
