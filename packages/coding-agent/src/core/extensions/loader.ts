@@ -452,11 +452,6 @@ async function loadExtensionModule(extensionPath: string, cacheToken?: Extension
 				: { alias: getAliases() }),
 	});
 
-	// Realpath the entry before handing it to jiti: pnpm's isolated layout
-	// symlinks node_modules/<pkg> into .pnpm/<pkg>@<ver>/node_modules/<pkg>,
-	// and jiti's resolver (unlike Node's native loader) doesn't realpath
-	// before resolving imports, so upward traversal from the symlink path
-	// misses declared deps that only exist as store siblings. See #8092.
 	const module = await jiti.import(canonicalizePath(extensionPath), { default: true });
 	const factory = module as ExtensionFactory;
 	if (typeof factory !== "function") {
