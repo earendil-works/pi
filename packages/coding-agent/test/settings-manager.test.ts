@@ -449,6 +449,19 @@ describe("SettingsManager", () => {
 		expect(reloadedManager.getFullscreenScrollbar()).toBe("auto");
 	});
 
+	it("defaults and persists fullscreen copy on select", async () => {
+		const manager = SettingsManager.create(projectDir, agentDir);
+		expect(manager.getFullscreenCopyOnSelect()).toBe(true);
+
+		manager.setFullscreenCopyOnSelect(false);
+		await manager.flush();
+		expect(manager.getFullscreenCopyOnSelect()).toBe(false);
+		expect(JSON.parse(readFileSync(join(agentDir, "settings.json"), "utf-8")).fullscreenCopyOnSelect).toBe(false);
+
+		writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ fullscreenCopyOnSelect: "false" }));
+		expect(SettingsManager.create(projectDir, agentDir).getFullscreenCopyOnSelect()).toBe(true);
+	});
+
 	describe("outputPad", () => {
 		it("should default to 1 and persist binary values", async () => {
 			const manager = SettingsManager.create(projectDir, agentDir);

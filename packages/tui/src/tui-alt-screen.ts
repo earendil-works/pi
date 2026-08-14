@@ -149,6 +149,8 @@ export interface TuiAltScreenOptions {
 	searchMatchStyle?: (text: string) => string;
 	/** Style the current transcript search match. */
 	searchCurrentMatchStyle?: (text: string) => string;
+	/** Copy selected text to the clipboard as soon as mouse selection completes. */
+	copyOnSelect?: boolean;
 	/** Open an OSC 8 hyperlink activated with a primary-button click. */
 	openUrl?: (url: string) => void;
 	/** Handle an unmodified secondary-button press for clipboard paste. Currently enabled on Windows only. */
@@ -190,6 +192,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 	private readonly mouseEnabled: boolean;
 	private readonly searchMatchStyle: (text: string) => string;
 	private readonly searchCurrentMatchStyle: (text: string) => string;
+	private copyOnSelect: boolean;
 	private readonly openUrl?: (url: string) => void;
 	private readonly onRightClickPaste?: () => void;
 
@@ -212,6 +215,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		this.mouseEnabled = options.mouse ?? true;
 		this.searchMatchStyle = options.searchMatchStyle ?? ((text) => `\x1b[4m${text}\x1b[24m`);
 		this.searchCurrentMatchStyle = options.searchCurrentMatchStyle ?? ((text) => `\x1b[1;7m${text}\x1b[22;27m`);
+		this.copyOnSelect = options.copyOnSelect ?? true;
 		this.openUrl = options.openUrl;
 		this.onRightClickPaste = options.onRightClickPaste;
 		this.addInputListener((data) => this.handleViewportInput(data));
@@ -397,6 +401,14 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 	scrollToBottom(): void {
 		this.getPrimaryScrollView().scrollToEnd();
 		this.requestRender();
+	}
+
+	setCopyOnSelect(enabled: boolean): void {
+		this.copyOnSelect = enabled;
+	}
+
+	copyActiveSelectionToClipboard(): boolean {
+		return this.copySelectionToClipboard();
 	}
 
 	private scrollToPrompt(direction: -1 | 1): void {
@@ -970,7 +982,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 				this.requestRender();
 				return;
 			}
-			this.copySelectionToClipboard();
+			if (this.copyOnSelect) this.copySelectionToClipboard();
 			this.requestRender();
 			return;
 		}
@@ -1046,14 +1058,14 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		return { start: Math.max(minColumn, start), end: Math.min(maxColumn, end) };
 	}
 
-	private copySelectionToClipboard(): void {
+	private copySelectionToClipboard(): boolean {
 		const selection = this.getSelectionBounds();
-		if (!selection) return;
+		if (!selection) return false;
 		let sourceLines: readonly string[] = this.previousScreen;
 		if (selection.start.scrollView) {
-			if (!this.currentLayout) return;
+			if (!this.currentLayout) return false;
 			const box = getScrollViewBox(this.currentLayout, selection.start.scrollView);
-			if (!box?.scrollContentLines) return;
+			if (!box?.scrollContentLines) return false;
 			sourceLines = box.scrollContentLines;
 		}
 		const lines: string[] = [];
@@ -1067,9 +1079,10 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 			);
 		}
 		const text = lines.join("\n");
-		if (text.length === 0) return;
+		if (text.length === 0) return false;
 		this.terminal.write(`\x1b]52;c;${Buffer.from(text).toString("base64")}\x07`);
 		this.flash("Copied!");
+		return true;
 	}
 
 	private applySearchTextHighlight(text: string, current: boolean): string {

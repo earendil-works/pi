@@ -1035,6 +1035,53 @@ describe("TuiAltScreen", () => {
 		tui.stop();
 	});
 
+	it("keeps fullscreen selection highlighted when copy on select is disabled", async () => {
+		const terminal = new RecordingTerminal(20, 4);
+		const tui = new TuiAltScreen(terminal, undefined, undefined, { copyOnSelect: false });
+		tui.addChild(new Text("alpha\nbeta\ngamma\ndelta", 0, 0));
+		tui.start();
+		await terminal.waitForRender();
+
+		terminal.sendInput("\x1b[<0;1;1M");
+		terminal.sendInput("\x1b[<32;4;2M");
+		terminal.sendInput("\x1b[<0;4;2m");
+		await terminal.waitForRender();
+
+		assert.strictEqual(
+			terminal.events.filter((event) => event.type === "write" && event.data.includes("\x1b]52;c;")).length,
+			0,
+		);
+		assert.ok(terminal.events.some((event) => event.type === "write" && event.data.includes("\x1b[7m")));
+		assert.ok(!terminal.getViewport().some((line) => line.includes("Copied!")));
+
+		const expectedClipboardSequence = `\x1b]52;c;${Buffer.from("alpha\nbeta").toString("base64")}\x07`;
+		assert.strictEqual(tui.copyActiveSelectionToClipboard(), true);
+		await terminal.waitForRender();
+		assert.ok(
+			terminal.events.some((event) => event.type === "write" && event.data.includes(expectedClipboardSequence)),
+			JSON.stringify(terminal.events.filter((event) => event.type === "write" && event.data.includes("\x1b]52;c;"))),
+		);
+		assert.ok(terminal.getViewport().some((line) => line.includes("Copied!")));
+
+		tui.stop();
+	});
+
+	it("reports when there is no active fullscreen selection to copy", async () => {
+		const terminal = new RecordingTerminal(20, 4);
+		const tui = new TuiAltScreen(terminal);
+		tui.addChild(new Text("alpha\nbeta", 0, 0));
+		tui.start();
+		await terminal.waitForRender();
+
+		assert.strictEqual(tui.copyActiveSelectionToClipboard(), false);
+		assert.strictEqual(
+			terminal.events.filter((event) => event.type === "write" && event.data.includes("\x1b]52;c;")).length,
+			0,
+		);
+
+		tui.stop();
+	});
+
 	it("does not repaint idle or zero-width selections on focus loss", async () => {
 		const terminal = new RecordingTerminal(20, 4);
 		const tui = new TuiAltScreen(terminal);

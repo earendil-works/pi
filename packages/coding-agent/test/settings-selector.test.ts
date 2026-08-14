@@ -40,4 +40,24 @@ describe("SettingsSelectorComponent", () => {
 		cycle("Fullscreen scrollbar", 3);
 		expect(onScrollbarChange.mock.calls.flat()).toEqual(["always", "hidden", "auto"]);
 	});
+
+	it("toggles fullscreen copy on select", () => {
+		const onChange = vi.fn();
+		const selector = new SettingsSelectorComponent(
+			{
+				fullscreenCopyOnSelect: true,
+				warnings: {},
+				availableThinkingLevels: [],
+				availableThemes: [],
+			} as unknown as SettingsConfig,
+			{ onFullscreenCopyOnSelectChange: onChange } as unknown as SettingsCallbacks,
+		);
+		const settingsList = selector.getSettingsList();
+
+		for (const character of "Fullscreen copy on select") settingsList.handleInput(character);
+		settingsList.handleInput("\r");
+		settingsList.handleInput("\r");
+
+		expect(onChange.mock.calls.flat()).toEqual([false, true]);
+	});
 });
