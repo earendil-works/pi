@@ -195,8 +195,8 @@ describe("openai-completions tool_choice", () => {
 		expect("strict" in (tool ?? {})).toBe(false);
 	});
 
-	it("maps groq qwen3 reasoning levels to default reasoning_effort", async () => {
-		const model = getModel("groq", "qwen/qwen3-32b")!;
+	it("maps unsupported groq qwen3 reasoning levels to none", async () => {
+		const model = getModel("groq", "qwen/qwen3.6-27b")!;
 		let payload: unknown;
 
 		await streamSimple(
@@ -220,7 +220,7 @@ describe("openai-completions tool_choice", () => {
 		).result();
 
 		const params = (payload ?? mockState.lastParams) as { reasoning_effort?: string };
-		expect(params.reasoning_effort).toBe("default");
+		expect(params.reasoning_effort).toBe("none");
 	});
 
 	it("keeps normal reasoning_effort for groq models without compat mapping", async () => {
@@ -252,7 +252,7 @@ describe("openai-completions tool_choice", () => {
 	});
 
 	it("enables tool_stream for supported z.ai models with tools", async () => {
-		const model = getModel("zai", "glm-5.1")!;
+		const model = getModel("zai", "glm-5-turbo")!;
 		const tools: Tool[] = [
 			{
 				name: "ping",
@@ -289,11 +289,9 @@ describe("openai-completions tool_choice", () => {
 	});
 
 	it("stores z.ai tool_stream support in model compat metadata", () => {
-		expect(getModel("zai", "glm-5.1")?.compat?.zaiToolStream).toBe(true);
-		expect(getModel("zai", "glm-4.7")?.compat?.zaiToolStream).toBe(true);
-		expect(getModel("zai", "glm-4.7")?.compat?.zaiToolStream).toBe(true);
-		expect(getModel("zai", "glm-5-turbo")?.compat?.zaiToolStream).toBe(true);
-		expect(getModel("zai", "glm-4.5-air")?.compat?.zaiToolStream).toBeUndefined();
+		for (const modelId of ["glm-4.7", "glm-5-turbo", "glm-5.2", "glm-5.2-highspeed", "glm-5.3"] as const) {
+			expect(getModel("zai", modelId)?.compat?.zaiToolStream).toBe(true);
+		}
 	});
 
 	it("stores z.ai GLM-5.2 effort metadata", () => {
@@ -436,8 +434,9 @@ describe("openai-completions tool_choice", () => {
 		expect(params.reasoning_effort).toBeUndefined();
 	});
 
-	it("omits tool_stream for unsupported z.ai models", async () => {
-		const model = getModel("zai", "glm-4.5-air")!;
+	it("omits tool_stream when explicitly unsupported by z.ai model metadata", async () => {
+		const baseModel = getModel("zai", "glm-4.7")!;
+		const model = { ...baseModel, compat: { ...baseModel.compat, zaiToolStream: false } } as const;
 		const tools: Tool[] = [
 			{
 				name: "ping",
@@ -474,7 +473,7 @@ describe("openai-completions tool_choice", () => {
 	});
 
 	it("respects explicit z.ai tool_stream compat override", async () => {
-		const baseModel = getModel("zai", "glm-4.5-air")!;
+		const baseModel = getModel("zai", "glm-4.7")!;
 		const model = {
 			...baseModel,
 			compat: {
@@ -518,7 +517,7 @@ describe("openai-completions tool_choice", () => {
 	});
 
 	it("omits tool_stream when no tools are provided", async () => {
-		const model = getModel("zai", "glm-5.1")!;
+		const model = getModel("zai", "glm-5-turbo")!;
 		let payload: unknown;
 
 		await streamSimple(
@@ -560,7 +559,7 @@ describe("openai-completions tool_choice", () => {
 			},
 		];
 
-		const model = getModel("zai", "glm-5.1")!;
+		const model = getModel("zai", "glm-5-turbo")!;
 		const response = await streamSimple(
 			model,
 			{
@@ -1412,7 +1411,7 @@ describe("openai-completions tool_choice", () => {
 	});
 
 	it("sends max_tokens for OpenCode completions models", async () => {
-		const cases = [getModel("opencode-go", "kimi-k2.6")!, getModel("opencode", "grok-build-0.1")!] as const;
+		const cases = [getModel("opencode-go", "kimi-k2.6")!, getModel("opencode", "kimi-k2.6")!] as const;
 
 		for (const model of cases) {
 			let payload: unknown;
@@ -1439,7 +1438,7 @@ describe("openai-completions tool_choice", () => {
 	});
 
 	it("sends max_tokens for Z.AI completions models", async () => {
-		const cases = [getModel("zai", "glm-5.1")!, getModel("zai", "glm-5.2")!] as const;
+		const cases = [getModel("zai", "glm-5-turbo")!, getModel("zai", "glm-5.2")!] as const;
 
 		for (const model of cases) {
 			expect(model.compat?.maxTokensField).toBe("max_tokens");
