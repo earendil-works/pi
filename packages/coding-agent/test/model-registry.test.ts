@@ -1,12 +1,48 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { Api, Context, Model, OpenAICompletionsCompat } from "@tculpepp/spi-ai";
 import { getApiProvider } from "@tculpepp/spi-ai";
 import { getOAuthProvider } from "@tculpepp/spi-ai/oauth";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.js";
 import { clearApiKeyCache, ModelRegistry } from "../src/core/model-registry.js";
+
+/**
+ * Tripwire (Finding B, defense in depth): ModelRegistry defaults to secureMode: true now, but
+ * this catches the *next* insecure-construction pattern — e.g. a call site that passes
+ * `secureMode: false` explicitly in production code — somewhere the type-level default can't
+ * reach. Fails loudly on any new call site so a human confirms it's deliberately safe.
+ */
+describe("ModelRegistry construction tripwire", () => {
+	test("no unreviewed production call site constructs ModelRegistry", () => {
+		const srcDir = join(dirname(fileURLToPath(import.meta.url)), "..", "src");
+		const callSitePattern = /ModelRegistry\.(create|inMemory)\(/;
+		const offenders: string[] = [];
+
+		function walk(dir: string): void {
+			for (const entry of readdirSync(dir, { withFileTypes: true })) {
+				const fullPath = join(dir, entry.name);
+				if (entry.isDirectory()) {
+					walk(fullPath);
+				} else if (entry.isFile() && entry.name.endsWith(".ts")) {
+					if (callSitePattern.test(readFileSync(fullPath, "utf-8"))) {
+						offenders.push(fullPath);
+					}
+				}
+			}
+		}
+		walk(srcDir);
+
+		// Known-safe: both call setSecureMode(settingsManager.getSecureMode()) immediately after
+		// construction. If a new call site shows up here, verify it follows the same convention
+		// before adding it to this allowlist.
+		const knownSafe = [join(srcDir, "core", "sdk.ts"), join(srcDir, "core", "agent-session-services.ts")];
+
+		expect(offenders.sort()).toEqual(knownSafe.sort());
+	});
+});
 
 describe("ModelRegistry", () => {
 	let tempDir: string;
@@ -717,7 +753,8 @@ describe("ModelRegistry", () => {
 
 	describe("dynamic provider lifecycle", () => {
 		test("failed registerProvider does not persist invalid streamSimple config", () => {
-			const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+			// secureMode: false — this test targets streamSimple validation, not secureMode's baseUrl gate.
+			const registry = ModelRegistry.create(authStorage, modelsJsonPath, false);
 
 			expect(() =>
 				registry.registerProvider("broken-provider", {
@@ -776,7 +813,8 @@ describe("ModelRegistry", () => {
 		});
 
 		test("unregisterProvider removes custom OAuth provider and restores built-in OAuth provider", () => {
-			const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+			// secureMode: false — this test targets OAuth provider override/restore behavior, not secureMode's baseUrl gate.
+			const registry = ModelRegistry.create(authStorage, modelsJsonPath, false);
 
 			registry.registerProvider("anthropic", {
 				oauth: {
@@ -799,7 +837,8 @@ describe("ModelRegistry", () => {
 		});
 
 		test("unregisterProvider removes custom streamSimple override and restores built-in API stream handler", () => {
-			const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+			// secureMode: false — this test targets streamSimple override/restore behavior, not secureMode's baseUrl gate.
+			const registry = ModelRegistry.create(authStorage, modelsJsonPath, false);
 
 			registry.registerProvider("stream-override-provider", {
 				api: "openai-completions",
@@ -830,16 +869,26 @@ describe("ModelRegistry", () => {
 	});
 
 	describe("secureMode enforcement", () => {
-		test("secureMode defaults to false", () => {
+		test("secureMode defaults to true", () => {
 			const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+
+			expect(registry.getSecureMode()).toBe(true);
+			expect(registry.isProviderAllowed("anthropic")).toBe(false);
+		});
+
+		test("create()/inMemory() accept an explicit secureMode: false override for legitimate insecure use", () => {
+			const registry = ModelRegistry.create(authStorage, modelsJsonPath, false);
 
 			expect(registry.getSecureMode()).toBe(false);
 			expect(registry.isProviderAllowed("anthropic")).toBe(true);
+
+			const inMemoryRegistry = ModelRegistry.inMemory(authStorage, false);
+			expect(inMemoryRegistry.getSecureMode()).toBe(false);
 		});
 
 		test("getAvailable includes providers without baseUrl when secureMode is off", () => {
 			authStorage.set("anthropic", { type: "api_key", key: "sk-test" });
-			const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+			const registry = ModelRegistry.create(authStorage, modelsJsonPath, false);
 
 			const available = registry.getAvailable();
 			expect(available.some((m) => m.provider === "anthropic")).toBe(true);
@@ -922,7 +971,7 @@ describe("ModelRegistry", () => {
 		});
 
 		test("isProviderAllowed is true for any provider when secureMode is off", () => {
-			const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+			const registry = ModelRegistry.create(authStorage, modelsJsonPath, false);
 
 			expect(registry.isProviderAllowed("anthropic")).toBe(true);
 			expect(registry.isProviderAllowed("some-unknown-provider")).toBe(true);

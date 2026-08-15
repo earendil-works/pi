@@ -66,7 +66,7 @@ function createSession() {
 		sessionManager,
 		settingsManager,
 		cwd: process.cwd(),
-		modelRegistry: ModelRegistry.inMemory(authStorage),
+		modelRegistry: ModelRegistry.inMemory(authStorage, false),
 		resourceLoader: createTestResourceLoader(),
 	});
 

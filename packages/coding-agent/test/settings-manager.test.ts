@@ -309,4 +309,24 @@ describe("SettingsManager", () => {
 			expect(manager.getSessionDir()).toBe("./sessions");
 		});
 	});
+
+	describe("getSecureMode", () => {
+		it("defaults to true when unset", () => {
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ theme: "dark" }));
+			const manager = SettingsManager.create(projectDir, agentDir);
+			expect(manager.getSecureMode()).toBe(true);
+		});
+
+		it("respects an explicit false", () => {
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ secureMode: false }));
+			const manager = SettingsManager.create(projectDir, agentDir);
+			expect(manager.getSecureMode()).toBe(false);
+		});
+
+		it("respects an explicit true", () => {
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ secureMode: true }));
+			const manager = SettingsManager.create(projectDir, agentDir);
+			expect(manager.getSecureMode()).toBe(true);
+		});
+	});
 });

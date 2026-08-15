@@ -390,7 +390,9 @@ function createHarnessWithResourceLoader(
 
 	const authStorage = AuthStorage.create(join(tempDir, "auth.json"));
 	authStorage.setRuntimeApiKey(model.provider, "faux-key");
-	const modelRegistry = ModelRegistry.create(authStorage, tempDir);
+	// secureMode: false — this harness exercises session/agent mechanics unrelated to
+	// secureMode enforcement, and the faux model has no models.json-registered baseUrl.
+	const modelRegistry = ModelRegistry.create(authStorage, tempDir, false);
 
 	const session = new AgentSession({
 		agent,

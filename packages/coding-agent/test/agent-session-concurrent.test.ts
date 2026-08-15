@@ -110,7 +110,7 @@ describe("AgentSession concurrent prompt guard", () => {
 		const sessionManager = SessionManager.inMemory();
 		const settingsManager = SettingsManager.create(tempDir, tempDir);
 		const authStorage = AuthStorage.create(join(tempDir, "auth.json"));
-		const modelRegistry = ModelRegistry.create(authStorage, tempDir);
+		const modelRegistry = ModelRegistry.create(authStorage, tempDir, false);
 		// Set a runtime API key so validation passes
 		authStorage.setRuntimeApiKey("anthropic", "test-key");
 
@@ -235,7 +235,7 @@ describe("AgentSession concurrent prompt guard", () => {
 		const sessionManager = SessionManager.inMemory();
 		const settingsManager = SettingsManager.create(tempDir, tempDir);
 		const authStorage = AuthStorage.create(join(tempDir, "auth.json"));
-		const modelRegistry = ModelRegistry.create(authStorage, tempDir);
+		const modelRegistry = ModelRegistry.create(authStorage, tempDir, false);
 		authStorage.setRuntimeApiKey("anthropic", "test-key");
 
 		const extensionsResult = await createTestExtensionsResult([
@@ -313,7 +313,7 @@ describe("AgentSession concurrent prompt guard", () => {
 		const sessionManager = SessionManager.inMemory();
 		const settingsManager = SettingsManager.create(tempDir, tempDir);
 		const authStorage = AuthStorage.create(join(tempDir, "auth.json"));
-		const modelRegistry = ModelRegistry.create(authStorage, tempDir);
+		const modelRegistry = ModelRegistry.create(authStorage, tempDir, false);
 		authStorage.setRuntimeApiKey("anthropic", "test-key");
 
 		session = new AgentSession({
@@ -419,7 +419,7 @@ describe("AgentSession concurrent prompt guard", () => {
 		const sessionManager = SessionManager.inMemory();
 		const settingsManager = SettingsManager.create(tempDir, tempDir);
 		const authStorage = AuthStorage.create(join(tempDir, "auth.json"));
-		const modelRegistry = ModelRegistry.create(authStorage, tempDir);
+		const modelRegistry = ModelRegistry.create(authStorage, tempDir, false);
 		authStorage.setRuntimeApiKey("anthropic", "test-key");
 
 		session = new AgentSession({
@@ -556,7 +556,7 @@ describe("AgentSession concurrent prompt guard", () => {
 		const sessionManager = SessionManager.inMemory();
 		const settingsManager = SettingsManager.create(tempDir, tempDir);
 		const authStorage = AuthStorage.create(join(tempDir, "auth.json"));
-		const modelRegistry = ModelRegistry.create(authStorage, tempDir);
+		const modelRegistry = ModelRegistry.create(authStorage, tempDir, false);
 		authStorage.setRuntimeApiKey("anthropic", "test-key");
 
 		session = new AgentSession({

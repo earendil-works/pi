@@ -27,7 +27,10 @@ describe("ExtensionRunner", () => {
 		fs.mkdirSync(extensionsDir);
 		sessionManager = SessionManager.inMemory();
 		const authStorage = AuthStorage.create(path.join(tempDir, "auth.json"));
-		modelRegistry = ModelRegistry.create(authStorage);
+		// secureMode: false — most tests in this file exercise extension/provider mechanics
+		// unrelated to secureMode; the "under secureMode" describe block below opts back in
+		// explicitly per test via setSecureMode(true).
+		modelRegistry = ModelRegistry.create(authStorage, undefined, false);
 	});
 
 	afterEach(() => {

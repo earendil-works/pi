@@ -325,6 +325,22 @@ export interface ResolveCliModelResult {
  * Note: This does not apply the thinking level by itself, but it may *parse* and
  * return a thinking level from "<pattern>:<thinking>" so the caller can apply it.
  */
+/**
+ * secureMode gate: shared by every resolveCliModel() return path that resolves a
+ * concrete model, so a disallowed provider can't slip through via an untested path.
+ */
+function checkSecureModeGate(model: Model<Api>, modelRegistry: ModelRegistry): ResolveCliModelResult | undefined {
+	if (!modelRegistry.isProviderAllowed(model.provider)) {
+		return {
+			model: undefined,
+			thinkingLevel: undefined,
+			warning: undefined,
+			error: `[secureMode] Provider "${model.provider}" requires an explicit baseUrl in models.json. Configure it to point to your internal infrastructure.`,
+		};
+	}
+	return undefined;
+}
+
 export function resolveCliModel(options: {
 	cliProvider?: string;
 	cliModel?: string;
@@ -391,6 +407,8 @@ export function resolveCliModel(options: {
 			(m) => m.id.toLowerCase() === lower || `${m.provider}/${m.id}`.toLowerCase() === lower,
 		);
 		if (exact) {
+			const blocked = checkSecureModeGate(exact, modelRegistry);
+			if (blocked) return blocked;
 			return { model: exact, warning: undefined, thinkingLevel: undefined, error: undefined };
 		}
 	}
@@ -409,14 +427,8 @@ export function resolveCliModel(options: {
 	});
 
 	if (model) {
-		if (!modelRegistry.isProviderAllowed(model.provider)) {
-			return {
-				model: undefined,
-				thinkingLevel: undefined,
-				warning: undefined,
-				error: `[secureMode] Provider "${model.provider}" requires an explicit baseUrl in models.json. Configure it to point to your internal infrastructure.`,
-			};
-		}
+		const blocked = checkSecureModeGate(model, modelRegistry);
+		if (blocked) return blocked;
 		return { model, thinkingLevel, warning, error: undefined };
 	}
 
@@ -430,6 +442,8 @@ export function resolveCliModel(options: {
 			(m) => m.id.toLowerCase() === lower || `${m.provider}/${m.id}`.toLowerCase() === lower,
 		);
 		if (exact) {
+			const blocked = checkSecureModeGate(exact, modelRegistry);
+			if (blocked) return blocked;
 			return { model: exact, warning: undefined, thinkingLevel: undefined, error: undefined };
 		}
 		// Also try parseModelPattern on the full input against all models
@@ -437,6 +451,8 @@ export function resolveCliModel(options: {
 			allowInvalidThinkingLevelFallback: false,
 		});
 		if (fallback.model) {
+			const blocked = checkSecureModeGate(fallback.model, modelRegistry);
+			if (blocked) return blocked;
 			return {
 				model: fallback.model,
 				thinkingLevel: fallback.thinkingLevel,
@@ -449,6 +465,8 @@ export function resolveCliModel(options: {
 	if (provider) {
 		const fallbackModel = buildFallbackModel(provider, pattern, availableModels);
 		if (fallbackModel) {
+			const blocked = checkSecureModeGate(fallbackModel, modelRegistry);
+			if (blocked) return blocked;
 			const fallbackWarning = warning
 				? `${warning} Model "${pattern}" not found for provider "${provider}". Using custom model id.`
 				: `Model "${pattern}" not found for provider "${provider}". Using custom model id.`;

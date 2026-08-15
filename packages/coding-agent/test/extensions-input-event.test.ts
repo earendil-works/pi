@@ -29,7 +29,7 @@ describe("Input Event", () => {
 		for (let i = 0; i < extensions.length; i++) fs.writeFileSync(path.join(extensionsDir, `e${i}.ts`), extensions[i]);
 		const result = await discoverAndLoadExtensions([], tempDir, tempDir);
 		const sm = SessionManager.inMemory();
-		const mr = ModelRegistry.create(AuthStorage.create(path.join(tempDir, "auth.json")));
+		const mr = ModelRegistry.create(AuthStorage.create(path.join(tempDir, "auth.json")), undefined, false);
 		return new ExtensionRunner(result.extensions, result.runtime, tempDir, sm, mr);
 	}
 
