@@ -84,9 +84,15 @@ class RecordingTerminal implements Terminal {
 class CursorComponent implements Component {
 	frame = 0;
 	showCursor = true;
+	cursorOffset = 5;
 
 	render(): string[] {
-		return [`streamed chunk ${this.frame}`, `> draft${this.showCursor ? CURSOR_MARKER : ""}`];
+		const draft = "draft";
+		const cursor = this.showCursor ? CURSOR_MARKER : "";
+		return [
+			`streamed chunk ${this.frame}`,
+			`> ${draft.slice(0, this.cursorOffset)}${cursor}${draft.slice(this.cursorOffset)}`,
+		];
 	}
 
 	invalidate(): void {}
@@ -165,6 +171,28 @@ for (const rendererCase of rendererCases) {
 				await renderNextFrame(tui, terminal, component);
 				assert.strictEqual(countSequence(terminal, HIDE_CURSOR), 0);
 				assert.strictEqual(countSequence(terminal, SHOW_CURSOR), 1);
+			} finally {
+				tui.stop();
+			}
+		});
+
+		it("does not re-emit visibility when the cursor moves during streaming", async () => {
+			const terminal = new RecordingTerminal();
+			const tui = rendererCase.create(terminal);
+			const component = new CursorComponent();
+			tui.addChild(component);
+			tui.start();
+			await terminal.waitForRender();
+
+			try {
+				terminal.clearWrites();
+				for (const cursorOffset of [3, 0, 4, 1]) {
+					component.cursorOffset = cursorOffset;
+					await renderNextFrame(tui, terminal, component);
+				}
+
+				assert.strictEqual(countSequence(terminal, HIDE_CURSOR), 0);
+				assert.strictEqual(countSequence(terminal, SHOW_CURSOR), 0);
 			} finally {
 				tui.stop();
 			}
