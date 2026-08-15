@@ -110,6 +110,17 @@ const rendererCases: RendererCase[] = [
 	},
 ];
 
+const defaultRendererCases: RendererCase[] = [
+	{
+		name: "regular renderer",
+		create: (terminal) => new TuiMainScreen(terminal),
+	},
+	{
+		name: "fullscreen renderer",
+		create: (terminal) => new TuiAltScreen(terminal),
+	},
+];
+
 function countSequence(terminal: RecordingTerminal, sequence: string): number {
 	return terminal.writes.reduce((count, write) => count + write.split(sequence).length - 1, 0);
 }
@@ -249,6 +260,33 @@ for (const rendererCase of rendererCases) {
 		});
 	});
 }
+
+describe("default hidden hardware cursor", () => {
+	for (const rendererCase of defaultRendererCases) {
+		it(`does not re-emit hide while ${rendererCase.name} streams`, () => {
+			const terminal = new RecordingTerminal();
+			const tui = rendererCase.create(terminal);
+			const component = new CursorComponent();
+			tui.addChild(component);
+			tui.start();
+			tui.renderNow();
+
+			try {
+				assert.strictEqual(countSequence(terminal, HIDE_CURSOR), 1);
+				assert.strictEqual(countSequence(terminal, SHOW_CURSOR), 0);
+
+				terminal.clearWrites();
+				renderNextFrame(tui, component);
+				renderNextFrame(tui, component);
+				renderNextFrame(tui, component);
+				assert.strictEqual(countSequence(terminal, HIDE_CURSOR), 0);
+				assert.strictEqual(countSequence(terminal, SHOW_CURSOR), 0);
+			} finally {
+				tui.stop();
+			}
+		});
+	}
+});
 
 describe("fullscreen renderer lifecycle", () => {
 	it("restores cursor visibility after leaving the alternate screen", () => {
