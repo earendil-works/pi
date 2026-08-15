@@ -1065,7 +1065,7 @@ export class AgentSession {
 		try {
 			await this.agent.prompt(messages);
 			while (await this._handlePostAgentRun()) {
-				await this.agent.continue();
+				await this._continueIfSafe();
 			}
 		} finally {
 			this._systemPromptOverride = undefined;
@@ -1102,6 +1102,21 @@ export class AgentSession {
 		// The agent loop drains both queues before emitting agent_end. Any messages
 		// here were queued by agent_end extension handlers and need a continuation.
 		return this.agent.hasQueuedMessages();
+	}
+
+	/**
+	 * Continue the agent only when safe — never continue from a trailing assistant
+	 * message. agent.continue() throws "Cannot continue from message role: assistant"
+	 * when the last context message is an assistant turn with nothing queued
+	 * (e.g. after auto-compaction leaves a completed turn at the tail).
+	 */
+	private async _continueIfSafe(): Promise<void> {
+		const messages = this.agent.state.messages;
+		const last = messages[messages.length - 1];
+		if (last && last.role === "assistant") {
+			return;
+		}
+		await this.agent.continue();
 	}
 
 	/**
@@ -2012,13 +2027,22 @@ export class AgentSession {
 			}
 
 			this._overflowRecoveryAttempted = true;
-			// Remove the failed or truncated message from agent state. It remains in session history,
-			// but must not be included in the compact-and-retry context.
-			const messages = this.agent.state.messages;
-			if (messages.length > 0 && messages[messages.length - 1].role === "assistant") {
-				this.agent.state.messages = messages.slice(0, -1);
+			// A completed turn (stopReason "stop", e.g. silent overflow detected via
+			// usage.input + usage.cacheRead > contextWindow) has nothing to retry —
+			// its response is already finished and persisted. Retrying it would
+			// continue() from a trailing assistant message, which throws
+			// "Cannot continue from message role: assistant" (crash after compaction).
+			// Only retry when the turn was rejected mid-flight (stopReason "error").
+			const turnIncomplete = assistantMessage.stopReason === "error";
+			if (turnIncomplete) {
+				// Remove the error message from agent state (it IS saved to session for history,
+				// but we don't want it in context for the retry)
+				const messages = this.agent.state.messages;
+				if (messages.length > 0 && messages[messages.length - 1].role === "assistant") {
+					this.agent.state.messages = messages.slice(0, -1);
+				}
 			}
-			return await this._runAutoCompaction("overflow", willRetry);
+			return await this._runAutoCompaction("overflow", turnIncomplete);
 		}
 
 		// Case 2: Threshold - context is getting large

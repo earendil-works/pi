@@ -446,4 +446,150 @@ describe("AgentSession auto-compaction queue resume", () => {
 		// Should NOT compact because the only usage data is from a kept pre-compaction message
 		expect(runAutoCompactionSpy).not.toHaveBeenCalled();
 	});
+
+	it("should compact WITHOUT retry for silent overflow on a completed turn (stopReason stop)", async () => {
+		// Regression: a finished turn whose usage exceeds the context window
+		// (silent overflow, e.g. cacheRead > window) previously set willRetry=true,
+		// which made the post-compaction continue() throw
+		// "Cannot continue from message role: assistant" (trailing assistant message
+		// is only popped for stopReason "error").
+		const model = session.model!;
+		const completedOverflow: AssistantMessage = {
+			role: "assistant",
+			content: [{ type: "text", text: "finished response, context over window" }],
+			api: model.api,
+			provider: model.provider,
+			model: model.id,
+			usage: {
+				input: 10_000,
+				output: 500,
+				cacheRead: model.contextWindow! + 100_000,
+				cacheWrite: 0,
+				totalTokens: model.contextWindow! + 110_500,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			stopReason: "stop",
+			timestamp: Date.now(),
+		};
+
+		session.agent.state.messages = [
+			{ role: "user", content: [{ type: "text", text: "hello" }], timestamp: Date.now() - 1000 },
+			completedOverflow,
+		];
+
+		const runAutoCompactionSpy = vi
+			.spyOn(
+				session as unknown as {
+					_runAutoCompaction: (reason: "overflow" | "threshold", willRetry: boolean) => Promise<boolean>;
+				},
+				"_runAutoCompaction",
+			)
+			.mockResolvedValue(false);
+
+		const checkCompaction = (
+			session as unknown as {
+				_checkCompaction: (assistantMessage: AssistantMessage, skipAbortedCheck?: boolean) => Promise<boolean>;
+			}
+		)._checkCompaction.bind(session);
+
+		const result = await checkCompaction(completedOverflow, false);
+
+		// Compact happened (frees the oversized context) but WITHOUT retry — the
+		// completed turn must stay in context, no continue() follows.
+		expect(runAutoCompactionSpy).toHaveBeenCalledWith("overflow", false);
+		expect(result).toBe(false);
+		expect(session.agent.state.messages[session.agent.state.messages.length - 1]).toBe(completedOverflow);
+	});
+
+	it("should still retry (willRetry=true) for mid-flight overflow errors", async () => {
+		const model = session.model!;
+		const errorOverflow: AssistantMessage = {
+			role: "assistant",
+			content: [{ type: "text", text: "" }],
+			api: model.api,
+			provider: model.provider,
+			model: model.id,
+			usage: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 0,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			stopReason: "error",
+			errorMessage: "prompt is too long",
+			timestamp: Date.now(),
+		};
+
+		session.agent.state.messages = [
+			{ role: "user", content: [{ type: "text", text: "hello" }], timestamp: Date.now() - 1000 },
+			errorOverflow,
+		];
+
+		const runAutoCompactionSpy = vi
+			.spyOn(
+				session as unknown as {
+					_runAutoCompaction: (reason: "overflow" | "threshold", willRetry: boolean) => Promise<boolean>;
+				},
+				"_runAutoCompaction",
+			)
+			.mockResolvedValue(false);
+
+		const checkCompaction = (
+			session as unknown as {
+				_checkCompaction: (assistantMessage: AssistantMessage, skipAbortedCheck?: boolean) => Promise<boolean>;
+			}
+		)._checkCompaction.bind(session);
+
+		await checkCompaction(errorOverflow, false);
+
+		// Mid-flight error overflow still retries, and the error message is popped
+		// so continue() can resume the user's turn.
+		expect(runAutoCompactionSpy).toHaveBeenCalledWith("overflow", true);
+		expect(session.agent.state.messages[session.agent.state.messages.length - 1]?.role).not.toBe("assistant");
+	});
+
+	it("should not call agent.continue() when the tail is an assistant message", async () => {
+		// Regression guard: _continueIfSafe must no-op instead of throwing
+		// "Cannot continue from message role: assistant".
+		session.agent.state.messages = [
+			{ role: "user", content: [{ type: "text", text: "hello" }], timestamp: Date.now() - 1000 },
+			{
+				role: "assistant",
+				content: [{ type: "text", text: "done" }],
+				api: session.model!.api,
+				provider: session.model!.provider,
+				model: session.model!.id,
+				usage: {
+					input: 10,
+					output: 10,
+					cacheRead: 0,
+					cacheWrite: 0,
+					totalTokens: 20,
+					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+				},
+				stopReason: "stop",
+				timestamp: Date.now(),
+			},
+		];
+
+		const continueSpy = vi.spyOn(session.agent, "continue").mockResolvedValue();
+
+		const continueIfSafe = (session as unknown as { _continueIfSafe: () => Promise<void> })._continueIfSafe.bind(
+			session,
+		);
+
+		await continueIfSafe();
+		expect(continueSpy).not.toHaveBeenCalled();
+
+		// Sanity: with a user tail, continue IS called
+		session.agent.state.messages.push({
+			role: "user",
+			content: [{ type: "text", text: "next" }],
+			timestamp: Date.now(),
+		});
+		await continueIfSafe();
+		expect(continueSpy).toHaveBeenCalledTimes(1);
+	});
 });
