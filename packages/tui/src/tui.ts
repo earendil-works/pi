@@ -378,6 +378,11 @@ export abstract class TuiBase extends Container implements TUI {
 
 	protected resetRenderState(): void {}
 
+	private resetAllRenderState(): void {
+		this.resetRenderState();
+		this.invalidateTerminalCursorVisibility();
+	}
+
 	protected beforeTerminalStart(): void {}
 
 	protected afterTerminalStart(): void {}
@@ -397,6 +402,7 @@ export abstract class TuiBase extends Container implements TUI {
 		return true;
 	}
 
+	// Fullscreen appends the sequence to synchronized output; direct callers preserve Terminal method overrides.
 	protected transitionTerminalCursorVisibility(visible: boolean): string {
 		return this.updateTerminalCursorVisibility(visible) ? (visible ? SHOW_CURSOR : HIDE_CURSOR) : "";
 	}
@@ -586,7 +592,7 @@ export abstract class TuiBase extends Container implements TUI {
 		if (!options?.nonCapturing && this.isOverlayVisible(entry)) {
 			this.setFocus(component);
 		}
-		this.writeTerminalCursorVisibility(false, { force: true });
+		this.writeTerminalCursorVisibility(false);
 		this.requestRender();
 
 		// Return handle for controlling this overlay
@@ -603,7 +609,7 @@ export abstract class TuiBase extends Container implements TUI {
 						this.setFocus(topVisible?.component ?? entry.preFocus);
 					}
 					if (this.overlayStack.length === 0) {
-						this.writeTerminalCursorVisibility(false, { force: true });
+						this.writeTerminalCursorVisibility(false);
 					}
 					this.requestRender();
 				}
@@ -683,7 +689,7 @@ export abstract class TuiBase extends Container implements TUI {
 			this.setFocus(topVisible?.component ?? overlay.preFocus);
 		}
 		if (this.overlayStack.length === 0) {
-			this.writeTerminalCursorVisibility(false, { force: true });
+			this.writeTerminalCursorVisibility(false);
 		}
 		this.requestRender();
 	}
@@ -735,7 +741,7 @@ export abstract class TuiBase extends Container implements TUI {
 			() => this.requestRender(),
 		);
 		this.afterTerminalStart();
-		this.writeTerminalCursorVisibility(false, { force: true });
+		this.writeTerminalCursorVisibility(false);
 		if (this.terminalColorSchemeNotificationsEnabled) {
 			this.terminal.write("\x1b[?2031h");
 		}
@@ -794,7 +800,7 @@ export abstract class TuiBase extends Container implements TUI {
 	}
 
 	renderNow(force = false): void {
-		if (force) this.resetRenderState();
+		if (force) this.resetAllRenderState();
 		this.renderRequested = false;
 		this.cancelRenderTimer();
 		this.lastRenderAt = performance.now();
@@ -803,7 +809,7 @@ export abstract class TuiBase extends Container implements TUI {
 
 	requestRender(force = false): void {
 		if (force) {
-			this.resetRenderState();
+			this.resetAllRenderState();
 			this.requestImmediateRender();
 			return;
 		}

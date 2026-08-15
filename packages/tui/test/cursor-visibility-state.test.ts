@@ -75,10 +75,6 @@ class RecordingTerminal implements Terminal {
 	clearWrites(): void {
 		this.writes.length = 0;
 	}
-
-	async waitForRender(): Promise<void> {
-		await new Promise<void>((resolve) => setTimeout(resolve, 25));
-	}
 }
 
 class CursorComponent implements Component {
@@ -118,40 +114,42 @@ function countSequence(terminal: RecordingTerminal, sequence: string): number {
 	return terminal.writes.reduce((count, write) => count + write.split(sequence).length - 1, 0);
 }
 
-async function renderNextFrame(tui: TUI, terminal: RecordingTerminal, component: CursorComponent): Promise<void> {
+function renderNextFrame(tui: TUI, component: CursorComponent): void {
 	component.frame += 1;
-	tui.requestRender();
-	await terminal.waitForRender();
+	tui.renderNow();
 }
 
 for (const rendererCase of rendererCases) {
 	describe(rendererCase.name, () => {
-		it("emits cursor visibility only when the state changes", async () => {
+		it("emits cursor visibility only when the state changes", () => {
 			const terminal = new RecordingTerminal();
 			const tui = rendererCase.create(terminal);
 			const component = new CursorComponent();
 			tui.addChild(component);
 			tui.start();
-			await terminal.waitForRender();
+			tui.renderNow();
 
 			try {
-				assert.strictEqual(countSequence(terminal, HIDE_CURSOR), tui.mode === "fullscreen" ? 2 : 1);
+				assert.strictEqual(countSequence(terminal, HIDE_CURSOR), 1);
 				assert.strictEqual(countSequence(terminal, SHOW_CURSOR), 1);
-				assert.strictEqual(terminal.hideCursorCalls, 1);
+				assert.strictEqual(terminal.hideCursorCalls, tui.mode === "regular" ? 1 : 0);
 				assert.strictEqual(terminal.showCursorCalls, tui.mode === "regular" ? 1 : 0);
 
 				terminal.clearWrites();
 				tui.renderNow(true);
-				await renderNextFrame(tui, terminal, component);
-				await renderNextFrame(tui, terminal, component);
-				await renderNextFrame(tui, terminal, component);
+				assert.strictEqual(countSequence(terminal, HIDE_CURSOR), 0);
+				assert.strictEqual(countSequence(terminal, SHOW_CURSOR), 1);
 
+				terminal.clearWrites();
+				renderNextFrame(tui, component);
+				renderNextFrame(tui, component);
+				renderNextFrame(tui, component);
 				assert.strictEqual(countSequence(terminal, HIDE_CURSOR), 0);
 				assert.strictEqual(countSequence(terminal, SHOW_CURSOR), 0);
 
 				terminal.clearWrites();
 				component.showCursor = false;
-				await renderNextFrame(tui, terminal, component);
+				renderNextFrame(tui, component);
 				assert.strictEqual(countSequence(terminal, HIDE_CURSOR), 1);
 				assert.strictEqual(countSequence(terminal, SHOW_CURSOR), 0);
 
@@ -162,13 +160,13 @@ for (const rendererCase of rendererCases) {
 				}
 
 				terminal.clearWrites();
-				await renderNextFrame(tui, terminal, component);
+				renderNextFrame(tui, component);
 				assert.strictEqual(countSequence(terminal, HIDE_CURSOR), 0);
 				assert.strictEqual(countSequence(terminal, SHOW_CURSOR), 0);
 
 				terminal.clearWrites();
 				component.showCursor = true;
-				await renderNextFrame(tui, terminal, component);
+				renderNextFrame(tui, component);
 				assert.strictEqual(countSequence(terminal, HIDE_CURSOR), 0);
 				assert.strictEqual(countSequence(terminal, SHOW_CURSOR), 1);
 			} finally {
@@ -176,19 +174,19 @@ for (const rendererCase of rendererCases) {
 			}
 		});
 
-		it("does not re-emit visibility when the cursor moves during streaming", async () => {
+		it("does not re-emit visibility when the cursor moves during streaming", () => {
 			const terminal = new RecordingTerminal();
 			const tui = rendererCase.create(terminal);
 			const component = new CursorComponent();
 			tui.addChild(component);
 			tui.start();
-			await terminal.waitForRender();
+			tui.renderNow();
 
 			try {
 				terminal.clearWrites();
 				for (const cursorOffset of [3, 0, 4, 1]) {
 					component.cursorOffset = cursorOffset;
-					await renderNextFrame(tui, terminal, component);
+					renderNextFrame(tui, component);
 				}
 
 				assert.strictEqual(countSequence(terminal, HIDE_CURSOR), 0);
@@ -198,33 +196,53 @@ for (const rendererCase of rendererCases) {
 			}
 		});
 
-		it("applies hardware cursor setting changes once", async () => {
+		it("applies hardware cursor setting changes once", () => {
 			const terminal = new RecordingTerminal();
 			const tui = rendererCase.create(terminal);
 			const component = new CursorComponent();
 			tui.addChild(component);
 			tui.start();
-			await terminal.waitForRender();
+			tui.renderNow();
 
 			try {
 				terminal.clearWrites();
 				const hideCursorCalls = terminal.hideCursorCalls;
 				tui.setShowHardwareCursor(false);
-				await terminal.waitForRender();
+				tui.renderNow();
 				assert.strictEqual(countSequence(terminal, HIDE_CURSOR), 1);
 				assert.strictEqual(countSequence(terminal, SHOW_CURSOR), 0);
 				assert.strictEqual(terminal.hideCursorCalls, hideCursorCalls + 1);
 
 				terminal.clearWrites();
 				tui.setShowHardwareCursor(true);
-				await terminal.waitForRender();
+				tui.renderNow();
 				assert.strictEqual(countSequence(terminal, HIDE_CURSOR), 0);
 				assert.strictEqual(countSequence(terminal, SHOW_CURSOR), 1);
 
 				terminal.clearWrites();
-				await renderNextFrame(tui, terminal, component);
+				renderNextFrame(tui, component);
 				assert.strictEqual(countSequence(terminal, HIDE_CURSOR), 0);
 				assert.strictEqual(countSequence(terminal, SHOW_CURSOR), 0);
+			} finally {
+				tui.stop();
+			}
+		});
+
+		it("reasserts cursor visibility after restart", () => {
+			const terminal = new RecordingTerminal();
+			const tui = rendererCase.create(terminal);
+			const component = new CursorComponent();
+			tui.addChild(component);
+			tui.start();
+			tui.renderNow();
+			tui.stop({ preserveScreen: true });
+			terminal.clearWrites();
+
+			tui.start();
+			tui.renderNow();
+			try {
+				assert.strictEqual(countSequence(terminal, HIDE_CURSOR), 1);
+				assert.strictEqual(countSequence(terminal, SHOW_CURSOR), 1);
 			} finally {
 				tui.stop();
 			}
@@ -233,13 +251,13 @@ for (const rendererCase of rendererCases) {
 }
 
 describe("fullscreen renderer lifecycle", () => {
-	it("restores cursor visibility after leaving the alternate screen", async () => {
+	it("restores cursor visibility after leaving the alternate screen", () => {
 		const terminal = new RecordingTerminal();
 		const tui = new TuiAltScreen(terminal, true);
 		const component = new CursorComponent();
 		tui.addChild(component);
 		tui.start();
-		await terminal.waitForRender();
+		tui.renderNow();
 		terminal.clearWrites();
 
 		tui.stop({ preserveScreen: true });
