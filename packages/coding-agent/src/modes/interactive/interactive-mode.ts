@@ -151,6 +151,7 @@ import { TreeSelectorComponent } from "./components/tree-selector.ts";
 import { TrustSelectorComponent } from "./components/trust-selector.ts";
 import { UserMessageComponent } from "./components/user-message.ts";
 import { UserMessageSelectorComponent } from "./components/user-message-selector.ts";
+import { createExtensionWidgetBoundary } from "./extension-widget-boundary.ts";
 import { editInExternalEditor } from "./external-editor.ts";
 import { refreshModelCatalogs } from "./model-catalog-refresh.ts";
 import { getModelSearchText } from "./model-search.ts";
@@ -2249,8 +2250,29 @@ export class InteractiveMode {
 		if (leadingSpacer) {
 			container.addChild(new Spacer(1));
 		}
-		for (const component of widgets.values()) {
-			container.addChild(component);
+		for (const [key, component] of widgets.entries()) {
+			// Render error boundary: a throwing widget must be disabled, not fatal.
+			// The TUI render timer has no error boundary of its own, so an
+			// exception here would otherwise escape as an uncaughtException and
+			// exit the process.
+			container.addChild(
+				createExtensionWidgetBoundary({
+					key,
+					component,
+					onDisable: (widgetKey, widget, error) => {
+						console.error(
+							`${APP_NAME}: extension widget "${widgetKey}" threw during render and was disabled:`,
+							error,
+						);
+						try {
+							widget.dispose?.();
+						} catch {}
+						this.extensionWidgetsAbove.delete(widgetKey);
+						this.extensionWidgetsBelow.delete(widgetKey);
+						this.ui.requestRender();
+					},
+				}),
+			);
 		}
 	}
 

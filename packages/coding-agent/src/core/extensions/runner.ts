@@ -4,7 +4,7 @@
 
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { ImageContent, Model, Provider, ProviderHeaders } from "@earendil-works/pi-ai";
-import type { KeyId } from "@earendil-works/pi-tui";
+import type { Component, KeyId, TUI } from "@earendil-works/pi-tui";
 import { type Theme, theme } from "../../modes/interactive/theme/theme.ts";
 import type { ResourceDiagnostic } from "../diagnostics.ts";
 import type { KeybindingsConfig } from "../keybindings.ts";
@@ -35,6 +35,7 @@ import type {
 	ExtensionRuntime,
 	ExtensionShortcut,
 	ExtensionUIContext,
+	ExtensionWidgetOptions,
 	InputEvent,
 	InputEventResult,
 	InputSource,
@@ -295,6 +296,8 @@ export class ExtensionRunner {
 	private shortcutDiagnostics: ResourceDiagnostic[] = [];
 	private commandDiagnostics: ResourceDiagnostic[] = [];
 	private staleMessage: string | undefined;
+	/** Widget keys registered through this runner's ui context; released on invalidate. */
+	private ownedWidgetKeys: Set<string> = new Set();
 
 	constructor(
 		extensions: Extension[],
@@ -431,8 +434,46 @@ export class ExtensionRunner {
 	}
 
 	setUIContext(uiContext?: ExtensionUIContext, mode: ExtensionMode = "print"): void {
-		this.uiContext = uiContext ?? noOpUIContext;
+		this.uiContext = uiContext ? this.trackOwnedWidgets(uiContext) : noOpUIContext;
 		this.mode = mode;
+	}
+
+	/**
+	 * Wrap a ui context so widgets registered through this runner are tracked
+	 * and force-removed when the runner is invalidated. Extensions capture ctx
+	 * in widget render closures (a documented contract violation, but a common
+	 * one); without ownership tracking those closures keep rendering against a
+	 * stale ctx after session replacement or reload. Prototype-based wrapping
+	 * keeps getters (e.g. theme) lazy.
+	 */
+	private trackOwnedWidgets(uiContext: ExtensionUIContext): ExtensionUIContext {
+		const wrapped = Object.create(uiContext) as ExtensionUIContext;
+		const track = (key: string, content: unknown): void => {
+			if (content === undefined) this.ownedWidgetKeys.delete(key);
+			else this.ownedWidgetKeys.add(key);
+		};
+		wrapped.setWidget = (
+			key: string,
+			content: string[] | ((tui: TUI, theme: Theme) => Component & { dispose?(): void }) | undefined,
+			options?: ExtensionWidgetOptions,
+		) => {
+			track(key, content);
+			return uiContext.setWidget(key, content as never, options);
+		};
+		return wrapped;
+	}
+
+	/** Remove all widgets this runner registered. Best-effort by design. */
+	private releaseOwnedWidgets(): void {
+		const keys = [...this.ownedWidgetKeys];
+		this.ownedWidgetKeys.clear();
+		for (const key of keys) {
+			try {
+				this.uiContext.setWidget(key, undefined);
+			} catch {
+				// Widget teardown must never turn invalidation into a crash.
+			}
+		}
 	}
 
 	getUIContext(): ExtensionUIContext {
@@ -546,6 +587,7 @@ export class ExtensionRunner {
 		if (!this.staleMessage) {
 			this.staleMessage = message;
 			this.runtime.invalidate(message);
+			this.releaseOwnedWidgets();
 		}
 	}
 
