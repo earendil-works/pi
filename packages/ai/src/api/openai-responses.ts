@@ -47,7 +47,9 @@ function getClientApiKey(provider: string, apiKey: string | undefined, headers: 
 }
 
 function detectSessionAffinityFormat(model: Pick<Model<"openai-responses">, "provider" | "baseUrl">) {
-	return model.provider === "openrouter" || model.baseUrl.includes("openrouter.ai") ? "openrouter" : "openai";
+	if (model.provider === "openrouter" || model.baseUrl.includes("openrouter.ai")) return "openrouter";
+	if (model.provider === "openai" || model.baseUrl.includes("api.openai.com")) return "openai-nosession";
+	return "openai";
 }
 
 /**

@@ -287,10 +287,10 @@ describe("openai-responses provider defaults", () => {
 		},
 	);
 
-	it("sets cache-affinity headers for official OpenAI Responses requests with a sessionId", async () => {
+	it("omits the underscore session header for official OpenAI Responses requests", async () => {
 		const captured = await captureOpenAIResponseHeaders({ sessionId: "session-123" });
 
-		expect(captured.sessionId).toBe("session-123");
+		expect(captured.sessionId).toBeNull();
 		expect(captured.clientRequestId).toBe("session-123");
 	});
 
