@@ -248,6 +248,10 @@ export class Container implements Component {
  * TUI - Main class for managing terminal UI with differential rendering
  */
 const SEGMENT_RESET = "\x1b[0m\x1b]8;;\x07";
+const SHOW_CURSOR = "\x1b[?25h";
+const HIDE_CURSOR = "\x1b[?25l";
+
+type TerminalCursorVisibility = "unknown" | "visible" | "hidden";
 
 /** Composite overlay content into a terminal line at a fixed column. */
 export function compositeTuiLine(
@@ -342,6 +346,7 @@ export abstract class TuiBase extends Container implements TUI {
 	private lastRenderAt = 0;
 	private static readonly MIN_RENDER_INTERVAL_MS = 16;
 	private showHardwareCursor = process.env.PI_HARDWARE_CURSOR === "1";
+	private terminalCursorVisibility: TerminalCursorVisibility = "unknown";
 	private clearOnShrink = process.env.PI_CLEAR_ON_SHRINK === "1";
 	protected fullRedrawCount = 0;
 	protected stopped = false;
@@ -381,6 +386,28 @@ export abstract class TuiBase extends Container implements TUI {
 
 	protected afterTerminalStop(_options: TuiStopOptions): void {}
 
+	protected invalidateTerminalCursorVisibility(): void {
+		this.terminalCursorVisibility = "unknown";
+	}
+
+	private updateTerminalCursorVisibility(visible: boolean): boolean {
+		const nextVisibility = visible ? "visible" : "hidden";
+		if (this.terminalCursorVisibility === nextVisibility) return false;
+		this.terminalCursorVisibility = nextVisibility;
+		return true;
+	}
+
+	protected transitionTerminalCursorVisibility(visible: boolean): string {
+		return this.updateTerminalCursorVisibility(visible) ? (visible ? SHOW_CURSOR : HIDE_CURSOR) : "";
+	}
+
+	protected writeTerminalCursorVisibility(visible: boolean, { force = false }: { force?: boolean } = {}): void {
+		const changed = this.updateTerminalCursorVisibility(visible);
+		if (!changed && !force) return;
+		if (visible) this.terminal.showCursor();
+		else this.terminal.hideCursor();
+	}
+
 	get fullRedraws(): number {
 		return this.fullRedrawCount;
 	}
@@ -393,7 +420,7 @@ export abstract class TuiBase extends Container implements TUI {
 		if (this.showHardwareCursor === enabled) return;
 		this.showHardwareCursor = enabled;
 		if (!enabled) {
-			this.terminal.hideCursor();
+			this.writeTerminalCursorVisibility(false, { force: true });
 		}
 		this.requestRender();
 	}
@@ -559,7 +586,7 @@ export abstract class TuiBase extends Container implements TUI {
 		if (!options?.nonCapturing && this.isOverlayVisible(entry)) {
 			this.setFocus(component);
 		}
-		this.terminal.hideCursor();
+		this.writeTerminalCursorVisibility(false, { force: true });
 		this.requestRender();
 
 		// Return handle for controlling this overlay
@@ -575,7 +602,9 @@ export abstract class TuiBase extends Container implements TUI {
 						const topVisible = this.getTopmostVisibleOverlay();
 						this.setFocus(topVisible?.component ?? entry.preFocus);
 					}
-					if (this.overlayStack.length === 0) this.terminal.hideCursor();
+					if (this.overlayStack.length === 0) {
+						this.writeTerminalCursorVisibility(false, { force: true });
+					}
 					this.requestRender();
 				}
 			},
@@ -653,7 +682,9 @@ export abstract class TuiBase extends Container implements TUI {
 			const topVisible = this.getTopmostVisibleOverlay();
 			this.setFocus(topVisible?.component ?? overlay.preFocus);
 		}
-		if (this.overlayStack.length === 0) this.terminal.hideCursor();
+		if (this.overlayStack.length === 0) {
+			this.writeTerminalCursorVisibility(false, { force: true });
+		}
 		this.requestRender();
 	}
 
@@ -697,13 +728,14 @@ export abstract class TuiBase extends Container implements TUI {
 
 	start(): void {
 		this.stopped = false;
+		this.invalidateTerminalCursorVisibility();
 		this.beforeTerminalStart();
 		this.terminal.start(
 			(data) => this.handleTerminalInput(data),
 			() => this.requestRender(),
 		);
 		this.afterTerminalStart();
-		this.terminal.hideCursor();
+		this.writeTerminalCursorVisibility(false, { force: true });
 		if (this.terminalColorSchemeNotificationsEnabled) {
 			this.terminal.write("\x1b[?2031h");
 		}
@@ -756,7 +788,7 @@ export abstract class TuiBase extends Container implements TUI {
 			this.terminal.write("\x1b[?2031l");
 		}
 		this.beforeTerminalStop(options);
-		this.terminal.showCursor();
+		this.writeTerminalCursorVisibility(true, { force: true });
 		this.terminal.stop();
 		this.afterTerminalStop(options);
 	}

@@ -553,7 +553,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
 	 */
 	private positionHardwareCursor(cursorPos: { row: number; col: number } | null, totalLines: number): void {
 		if (!cursorPos || totalLines <= 0) {
-			this.terminal.hideCursor();
+			this.writeTerminalCursorVisibility(false);
 			return;
 		}
 
@@ -571,16 +571,9 @@ export class TuiMainScreen extends TuiBase implements TUI {
 		}
 		// Move to absolute column (1-indexed)
 		buffer += `\x1b[${targetCol + 1}G`;
-
-		if (buffer) {
-			this.terminal.write(buffer);
-		}
+		this.terminal.write(buffer);
+		this.writeTerminalCursorVisibility(this.getShowHardwareCursor());
 
 		this.hardwareCursorRow = targetRow;
-		if (this.getShowHardwareCursor()) {
-			this.terminal.showCursor();
-		} else {
-			this.terminal.hideCursor();
-		}
 	}
 }
