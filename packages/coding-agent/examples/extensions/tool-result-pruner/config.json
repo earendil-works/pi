@@ -1,0 +1,9 @@
+{
+  "excludeTools": [
+    "subagent",
+    "memory_search",
+    "session_search",
+    "knowledge_search",
+    "hindsight_recall"
+  ]
+}
