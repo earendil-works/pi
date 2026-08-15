@@ -1999,14 +1999,17 @@ export class AgentSession {
 			}
 
 			if (this._overflowRecoveryAttempted) {
+				// A repeated ambiguous length stop (recoverable but not a detected overflow) must not be
+				// labeled as context overflow: reserve that wording for responses matching isContextOverflow().
 				this._emit({
 					type: "compaction_end",
 					reason: "overflow",
 					result: undefined,
 					aborted: false,
 					willRetry: false,
-					errorMessage:
-						"Context overflow recovery failed after one compact-and-retry attempt. Try reducing context or switching to a larger-context model.",
+					errorMessage: isContextOverflow(assistantMessage, contextWindow)
+						? "Context overflow recovery failed after one compact-and-retry attempt. Try reducing context or switching to a larger-context model."
+						: "Truncated response recovery failed after one compact-and-retry attempt.",
 				});
 				return false;
 			}

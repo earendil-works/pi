@@ -353,7 +353,7 @@ describe("AgentSession compaction characterization", () => {
 		expect(harness.faux.state.callCount).toBe(2);
 		expect(harness.eventsOfType("compaction_start").filter((event) => event.reason === "overflow")).toHaveLength(1);
 		expect(harness.eventsOfType("compaction_end").at(-1)?.errorMessage).toBe(
-			"Context overflow recovery failed after one compact-and-retry attempt. Try reducing context or switching to a larger-context model.",
+			"Truncated response recovery failed after one compact-and-retry attempt.",
 		);
 	});
 
@@ -436,6 +436,35 @@ describe("AgentSession compaction characterization", () => {
 
 		await sessionInternals._checkCompaction(overflowMessage);
 		await sessionInternals._checkCompaction({ ...overflowMessage, timestamp: Date.now() + 1 });
+
+		expect(runAutoCompactionSpy).toHaveBeenCalledTimes(1);
+		expect(compactionErrors).toContain(
+			"Context overflow recovery failed after one compact-and-retry attempt. Try reducing context or switching to a larger-context model.",
+		);
+	});
+
+	it("keeps overflow wording when a repeated length stop fills the context window", async () => {
+		const harness = await createHarness({
+			models: [{ id: "faux-1", contextWindow: 100, maxTokens: 100 }],
+		});
+		harnesses.push(harness);
+		const sessionInternals = harness.session as unknown as SessionWithCompactionInternals;
+		// MiMo-style overflow: length stop with zero output while input fills the context window.
+		const lengthOverflowMessage = createAssistant(harness, {
+			stopReason: "length",
+			totalTokens: 100,
+			timestamp: Date.now(),
+		});
+		const runAutoCompactionSpy = vi.spyOn(sessionInternals, "_runAutoCompaction").mockResolvedValue(false);
+		const compactionErrors: string[] = [];
+		harness.session.subscribe((event) => {
+			if (event.type === "compaction_end" && event.errorMessage) {
+				compactionErrors.push(event.errorMessage);
+			}
+		});
+
+		await sessionInternals._checkCompaction(lengthOverflowMessage);
+		await sessionInternals._checkCompaction({ ...lengthOverflowMessage, timestamp: Date.now() + 1 });
 
 		expect(runAutoCompactionSpy).toHaveBeenCalledTimes(1);
 		expect(compactionErrors).toContain(
