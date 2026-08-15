@@ -68,6 +68,7 @@ import { DEFAULT_THINKING_LEVEL } from "./defaults.ts";
 import { exportSessionToHtml, type ToolHtmlRenderer } from "./export-html/index.ts";
 import { createToolHtmlRenderer } from "./export-html/tool-renderer.ts";
 import {
+	type BoundaryCompactionOptions,
 	type ContextUsage,
 	type ExtensionCommandContextActions,
 	type ExtensionErrorListener,
@@ -313,6 +314,7 @@ export class AgentSession {
 	private _unsubscribeAgent?: () => void;
 	private _eventListeners: AgentSessionEventListener[] = [];
 	private _isAgentRunActive = false;
+	private _abortRequested = false;
 	private _idleWaitPromise: Promise<void> | undefined;
 	private _resolveIdleWait: (() => void) | undefined;
 
@@ -326,6 +328,8 @@ export class AgentSession {
 	// Compaction state
 	private _compactionAbortController: AbortController | undefined = undefined;
 	private _autoCompactionAbortController: AbortController | undefined = undefined;
+	private _pendingBoundaryCompaction: BoundaryCompactionOptions | undefined;
+	private _boundaryCompactionInProgress = false;
 	private _overflowRecoveryAttempted = false;
 
 	// Branch summarization state
@@ -541,11 +545,23 @@ export class AgentSession {
 		this.agent.prepareNextTurnWithContext = async (turn, signal) => {
 			const previousSnapshot = await previousPrepareNextTurnWithContext?.(turn, signal);
 			const previousContext = previousSnapshot?.context ?? turn.context;
+			const boundaryRequest = this._pendingBoundaryCompaction;
+			this._pendingBoundaryCompaction = undefined;
+
+			if (boundaryRequest && !signal?.aborted) {
+				this._boundaryCompactionInProgress = true;
+				try {
+					await this._runAutoCompaction(boundaryRequest.reason, false, boundaryRequest.customInstructions, signal);
+				} finally {
+					this._boundaryCompactionInProgress = false;
+				}
+			}
 
 			return {
 				...previousSnapshot,
 				context: {
 					...previousContext,
+					messages: this.agent.state.messages.slice(),
 					systemPrompt: this._systemPromptOverride ?? this._baseSystemPrompt,
 					tools: this.agent.state.tools.slice(),
 				},
@@ -595,6 +611,7 @@ export class AgentSession {
 
 	private async _emitAgentSettled(): Promise<void> {
 		this._isAgentRunActive = false;
+		this._pendingBoundaryCompaction = undefined;
 		try {
 			await this._extensionRunner.emit({ type: "agent_settled" });
 			this._emit({ type: "agent_settled" });
@@ -610,6 +627,14 @@ export class AgentSession {
 	private _handleAgentEvent = async (event: AgentEvent): Promise<void> => {
 		// When a user message starts, check if it's from either queue and remove it BEFORE emitting
 		// This ensures the UI sees the updated queue state
+		if (event.type === "agent_start") {
+			this._pendingBoundaryCompaction = undefined;
+		}
+
+		if (event.type === "agent_end") {
+			this._pendingBoundaryCompaction = undefined;
+		}
+
 		if (event.type === "message_start" && event.message.role === "user") {
 			this._overflowRecoveryAttempted = false;
 			const messageText = contentText(event.message.content, "");
@@ -1062,15 +1087,18 @@ export class AgentSession {
 
 	private async _runAgentPrompt(messages: AgentMessage | AgentMessage[]): Promise<void> {
 		this._isAgentRunActive = true;
+		this._abortRequested = false;
 		try {
 			await this.agent.prompt(messages);
 			while (await this._handlePostAgentRun()) {
+				if (this._abortRequested) break;
 				await this.agent.continue();
 			}
 		} finally {
 			this._systemPromptOverride = undefined;
 			this._flushPendingBashMessages();
 			await this._emitAgentSettled();
+			this._abortRequested = false;
 		}
 	}
 
@@ -1548,7 +1576,10 @@ export class AgentSession {
 	 * Abort current operation and wait for agent to become idle.
 	 */
 	async abort(): Promise<void> {
+		this._abortRequested = true;
 		this.abortRetry();
+		this._pendingBoundaryCompaction = undefined;
+		this._autoCompactionAbortController?.abort();
 		this.agent.abort();
 		await this.waitForIdle();
 	}
@@ -1936,8 +1967,34 @@ export class AgentSession {
 	 * Cancel in-progress compaction (manual or auto).
 	 */
 	abortCompaction(): void {
+		this._pendingBoundaryCompaction = undefined;
 		this._compactionAbortController?.abort();
 		this._autoCompactionAbortController?.abort();
+		if (this._boundaryCompactionInProgress) {
+			this.agent.abort();
+		}
+	}
+
+	/**
+	 * Request compaction after the current assistant/tool turn completes.
+	 */
+	requestCompactionAtTurnBoundary(options: BoundaryCompactionOptions): boolean {
+		if (!this._isAgentRunActive || this.agent.signal?.aborted || this._boundaryCompactionInProgress) {
+			return false;
+		}
+
+		const existing = this._pendingBoundaryCompaction;
+		if (!existing) {
+			this._pendingBoundaryCompaction = { ...options };
+			return true;
+		}
+
+		if (existing.reason === "threshold" && options.reason === "manual") {
+			this._pendingBoundaryCompaction = { ...options };
+		} else if (!existing.customInstructions && options.customInstructions) {
+			existing.customInstructions = options.customInstructions;
+		}
+		return true;
 	}
 
 	/**
@@ -2055,12 +2112,19 @@ export class AgentSession {
 	/**
 	 * Internal: Run auto-compaction with events.
 	 */
-	private async _runAutoCompaction(reason: "overflow" | "threshold", willRetry: boolean): Promise<boolean> {
+	private async _runAutoCompaction(
+		reason: "manual" | "overflow" | "threshold",
+		willRetry: boolean,
+		customInstructions?: string,
+		runSignal?: AbortSignal,
+	): Promise<boolean> {
 		const settings = this.settingsManager.getCompactionSettings();
 		let started = false;
+		let runAbortListener: (() => void) | undefined;
+		let compactionAbortController: AbortController | undefined;
 
 		try {
-			if (!this.model) {
+			if (!this.model || runSignal?.aborted) {
 				return false;
 			}
 
@@ -2074,7 +2138,17 @@ export class AgentSession {
 			}
 
 			this._emit({ type: "compaction_start", reason });
-			this._autoCompactionAbortController = new AbortController();
+			const activeCompactionAbortController = new AbortController();
+			compactionAbortController = activeCompactionAbortController;
+			this._autoCompactionAbortController = activeCompactionAbortController;
+			if (runSignal) {
+				runAbortListener = () => activeCompactionAbortController.abort();
+				if (runSignal.aborted) {
+					activeCompactionAbortController.abort();
+				} else {
+					runSignal.addEventListener("abort", runAbortListener, { once: true });
+				}
+			}
 			started = true;
 
 			let extensionCompaction: CompactionResult | undefined;
@@ -2085,10 +2159,10 @@ export class AgentSession {
 					type: "session_before_compact",
 					preparation,
 					branchEntries: pathEntries,
-					customInstructions: undefined,
+					customInstructions,
 					reason,
 					willRetry,
-					signal: this._autoCompactionAbortController.signal,
+					signal: activeCompactionAbortController.signal,
 				})) as SessionBeforeCompactResult | undefined;
 
 				if (extensionResult?.cancel) {
@@ -2128,8 +2202,8 @@ export class AgentSession {
 					requestModel,
 					apiKey,
 					headers,
-					undefined,
-					this._autoCompactionAbortController.signal,
+					customInstructions,
+					activeCompactionAbortController.signal,
 					this.thinkingLevel,
 					this.agent.streamFunction,
 					env,
@@ -2143,7 +2217,7 @@ export class AgentSession {
 				details = compactResult.details;
 			}
 
-			if (this._autoCompactionAbortController.signal.aborted) {
+			if (activeCompactionAbortController.signal.aborted) {
 				this._emit({
 					type: "compaction_end",
 					reason,
@@ -2203,21 +2277,26 @@ export class AgentSession {
 			return this.agent.hasQueuedMessages();
 		} catch (error) {
 			const errorMessage = error instanceof Error ? error.message : "compaction failed";
+			const aborted = compactionAbortController?.signal.aborted === true || runSignal?.aborted === true;
 			if (started) {
 				this._emit({
 					type: "compaction_end",
 					reason,
 					result: undefined,
-					aborted: false,
+					aborted,
 					willRetry: false,
-					errorMessage:
-						reason === "overflow"
+					errorMessage: aborted
+						? undefined
+						: reason === "overflow"
 							? `Context overflow recovery failed: ${errorMessage}`
 							: `Auto-compaction failed: ${errorMessage}`,
 				});
 			}
 			return false;
 		} finally {
+			if (runSignal && runAbortListener) {
+				runSignal.removeEventListener("abort", runAbortListener);
+			}
 			this._autoCompactionAbortController = undefined;
 		}
 	}
@@ -2440,6 +2519,7 @@ export class AgentSession {
 						}
 					})();
 				},
+				requestCompactionAtTurnBoundary: (options) => this.requestCompactionAtTurnBoundary(options),
 				getSystemPrompt: () => this.systemPrompt,
 				getSystemPromptOptions: () => this._baseSystemPromptOptions,
 			},

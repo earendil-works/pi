@@ -39,6 +39,7 @@ export type {
 	BeforeProviderHeadersEvent,
 	BeforeProviderRequestEvent,
 	BeforeProviderRequestEventResult,
+	BoundaryCompactionOptions,
 	BuildSystemPromptOptions,
 	// Context
 	CompactOptions,

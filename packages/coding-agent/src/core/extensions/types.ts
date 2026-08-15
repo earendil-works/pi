@@ -299,6 +299,12 @@ export interface CompactOptions {
 	onError?: (error: Error) => void;
 }
 
+/** Request context compaction after the current agent turn reaches its safe boundary. */
+export interface BoundaryCompactionOptions {
+	reason: "manual" | "threshold";
+	customInstructions?: string;
+}
+
 /**
  * Context passed to extension event handlers.
  */
@@ -342,6 +348,8 @@ export interface ExtensionContext {
 	getContextUsage(): ContextUsage | undefined;
 	/** Trigger compaction without awaiting completion. */
 	compact(options?: CompactOptions): void;
+	/** Request compaction after the current assistant/tool turn completes. */
+	requestCompactionAtTurnBoundary(options: BoundaryCompactionOptions): boolean;
 	/** Get the current effective system prompt. */
 	getSystemPrompt(): string;
 }
@@ -1656,6 +1664,7 @@ export interface ExtensionContextActions {
 	shutdown: () => void;
 	getContextUsage: () => ContextUsage | undefined;
 	compact: (options?: CompactOptions) => void;
+	requestCompactionAtTurnBoundary: (options: BoundaryCompactionOptions) => boolean;
 	getSystemPrompt: () => string;
 	getSystemPromptOptions?: () => BuildSystemPromptOptions;
 }

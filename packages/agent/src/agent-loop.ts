@@ -244,6 +244,11 @@ async function runLoop(
 				};
 			}
 
+			if (signal?.aborted) {
+				await emit({ type: "agent_end", messages: newMessages });
+				return;
+			}
+
 			if (
 				await config.shouldStopAfterTurn?.({
 					message,

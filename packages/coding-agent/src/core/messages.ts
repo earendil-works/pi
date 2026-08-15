@@ -160,6 +160,9 @@ export function convertToLlm(messages: AgentMessage[]): Message[] {
 						timestamp: m.timestamp,
 					};
 				case "custom": {
+					// Historical pi-vcc continuation records are inert compatibility data.
+					// Never expose them to a provider after session reload.
+					if (m.customType === "pi-vcc-continuation") return undefined;
 					const content = typeof m.content === "string" ? [{ type: "text" as const, text: m.content }] : m.content;
 					return {
 						role: "user",

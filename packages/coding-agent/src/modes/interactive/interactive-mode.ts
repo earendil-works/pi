@@ -2041,6 +2041,7 @@ export class InteractiveMode {
 					}
 				})();
 			},
+			requestCompactionAtTurnBoundary: (options) => this.session.requestCompactionAtTurnBoundary(options),
 			getSystemPrompt: () => this.session.systemPrompt,
 		});
 

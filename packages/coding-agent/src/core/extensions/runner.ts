@@ -17,6 +17,7 @@ import type {
 	BeforeAgentStartEventResult,
 	BeforeProviderHeadersEvent,
 	BeforeProviderRequestEvent,
+	BoundaryCompactionOptions,
 	CompactOptions,
 	ContextEvent,
 	ContextEventResult,
@@ -284,6 +285,7 @@ export class ExtensionRunner {
 	private hasPendingMessagesFn: () => boolean = () => false;
 	private getContextUsageFn: () => ContextUsage | undefined = () => undefined;
 	private compactFn: (options?: CompactOptions) => void = () => {};
+	private requestCompactionAtTurnBoundaryFn: (options: BoundaryCompactionOptions) => boolean = () => false;
 	private getSystemPromptFn: () => string = () => "";
 	private getSystemPromptOptionsFn: () => BuildSystemPromptOptions = () => ({ cwd: this.cwd });
 	private newSessionHandler: NewSessionHandler = async () => ({ cancelled: false });
@@ -347,6 +349,7 @@ export class ExtensionRunner {
 		this.shutdownHandler = contextActions.shutdown;
 		this.getContextUsageFn = contextActions.getContextUsage;
 		this.compactFn = contextActions.compact;
+		this.requestCompactionAtTurnBoundaryFn = contextActions.requestCompactionAtTurnBoundary;
 		this.getSystemPromptFn = contextActions.getSystemPrompt;
 		this.getSystemPromptOptionsFn = contextActions.getSystemPromptOptions ?? (() => ({ cwd: this.cwd }));
 
@@ -742,6 +745,10 @@ export class ExtensionRunner {
 			compact: (options) => {
 				runner.assertActive();
 				runner.compactFn(options);
+			},
+			requestCompactionAtTurnBoundary: (options) => {
+				runner.assertActive();
+				return runner.requestCompactionAtTurnBoundaryFn(options);
 			},
 			getSystemPrompt: () => {
 				runner.assertActive();

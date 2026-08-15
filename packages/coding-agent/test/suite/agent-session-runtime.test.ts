@@ -200,7 +200,7 @@ describe("AgentSessionRuntime characterization", () => {
 		expect(switchResult.cancelled).toBe(false);
 		expect(runtime.session.sessionFile).toBe(firstSessionFile);
 		// The outgoing session settled before replacement: the interrupted tool
-		// call has a persisted tool result instead of dangling forever.
+		// call has a persisted tool result and no post-abort provider turn.
 		const outgoingEntries = SessionManager.open(outgoingSession.sessionFile!)
 			.getEntries()
 			.filter((entry) => entry.type === "message");
@@ -208,7 +208,6 @@ describe("AgentSessionRuntime characterization", () => {
 			"user",
 			"assistant",
 			"toolResult",
-			"assistant",
 		]);
 	});
 

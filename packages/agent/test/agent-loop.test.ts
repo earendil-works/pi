@@ -1101,6 +1101,69 @@ describe("agentLoop with AgentMessage", () => {
 		expect(convertedSecondTurnSystemPrompt).toBe("second prompt");
 	});
 
+	it("should stop before another provider request when prepareNextTurn aborts the run", async () => {
+		const controller = new AbortController();
+		const toolSchema = Type.Object({ value: Type.String() });
+		const tool: AgentTool<typeof toolSchema, { value: string }> = {
+			name: "echo",
+			label: "Echo",
+			description: "Echo tool",
+			parameters: toolSchema,
+			async execute(_toolCallId, params) {
+				return {
+					content: [{ type: "text", text: `echoed: ${params.value}` }],
+					details: { value: params.value },
+				};
+			},
+		};
+		const context: AgentContext = {
+			systemPrompt: "",
+			messages: [],
+			tools: [tool],
+		};
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+			prepareNextTurn: async () => {
+				controller.abort();
+				return undefined;
+			},
+		};
+
+		let llmCalls = 0;
+		const events: AgentEvent[] = [];
+		const stream = agentLoop([createUserMessage("echo something")], context, config, controller.signal, () => {
+			llmCalls++;
+			const mockStream = new MockAssistantStream();
+			queueMicrotask(() => {
+				if (llmCalls === 1) {
+					mockStream.push({
+						type: "done",
+						reason: "toolUse",
+						message: createAssistantMessage(
+							[{ type: "toolCall", id: "tool-1", name: "echo", arguments: { value: "hello" } }],
+							"toolUse",
+						),
+					});
+				} else {
+					mockStream.push({
+						type: "done",
+						reason: "stop",
+						message: createAssistantMessage([{ type: "text", text: "should not run" }]),
+					});
+				}
+			});
+			return mockStream;
+		});
+
+		for await (const event of stream) {
+			events.push(event);
+		}
+
+		expect(llmCalls).toBe(1);
+		expect(events.at(-1)?.type).toBe("agent_end");
+	});
+
 	it("should stop after the current turn when shouldStopAfterTurn returns true", async () => {
 		const toolSchema = Type.Object({ value: Type.String() });
 		const executed: string[] = [];
