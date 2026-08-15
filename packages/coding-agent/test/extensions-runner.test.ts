@@ -695,6 +695,75 @@ describe("ExtensionRunner", () => {
 		});
 	});
 
+	describe("provider registration under secureMode", () => {
+		it("bindCore reports a secureMode violation from a queued registration as an extension error, not a throw", () => {
+			modelRegistry.setSecureMode(true);
+
+			const runtime = createExtensionRuntime();
+			runtime.registerProvider(
+				"internal-llm",
+				{
+					apiKey: "TEST_KEY",
+					api: "openai-completions",
+				},
+				"/tmp/no-baseurl-extension.ts",
+			);
+
+			const runner = new ExtensionRunner([], runtime, tempDir, sessionManager, modelRegistry);
+			const errors: string[] = [];
+			runner.onError((error) => errors.push(`${error.extensionPath}: ${error.error}`));
+
+			expect(() => runner.bindCore(extensionActions, extensionContextActions)).not.toThrow();
+			expect(errors).toHaveLength(1);
+			expect(errors[0]).toContain("/tmp/no-baseurl-extension.ts");
+			expect(errors[0]).toContain("[secureMode]");
+			expect(modelRegistry.find("internal-llm", "instant-model")).toBeUndefined();
+		});
+
+		it("bindCore flushes a queued registration with baseUrl when secureMode is enabled", () => {
+			modelRegistry.setSecureMode(true);
+
+			const runtime = createExtensionRuntime();
+			runtime.registerProvider("internal-llm", providerModelConfig, "/tmp/ok-extension.ts");
+
+			const runner = new ExtensionRunner([], runtime, tempDir, sessionManager, modelRegistry);
+			const errors: string[] = [];
+			runner.onError((error) => errors.push(`${error.extensionPath}: ${error.error}`));
+
+			runner.bindCore(extensionActions, extensionContextActions);
+
+			expect(errors).toEqual([]);
+			expect(modelRegistry.find("internal-llm", "instant-model")).toBeDefined();
+		});
+
+		it("post-bind registerProvider throws when secureMode is enabled and no baseUrl is given", () => {
+			modelRegistry.setSecureMode(true);
+
+			const runtime = createExtensionRuntime();
+			const runner = new ExtensionRunner([], runtime, tempDir, sessionManager, modelRegistry);
+			runner.bindCore(extensionActions, extensionContextActions);
+
+			expect(() =>
+				runtime.registerProvider("internal-llm", {
+					apiKey: "TEST_KEY",
+					api: "openai-completions",
+				}),
+			).toThrow(/\[secureMode\]/);
+			expect(modelRegistry.find("internal-llm", "instant-model")).toBeUndefined();
+		});
+
+		it("post-bind registerProvider succeeds when secureMode is enabled and baseUrl is given", () => {
+			modelRegistry.setSecureMode(true);
+
+			const runtime = createExtensionRuntime();
+			const runner = new ExtensionRunner([], runtime, tempDir, sessionManager, modelRegistry);
+			runner.bindCore(extensionActions, extensionContextActions);
+
+			expect(() => runtime.registerProvider("internal-llm", providerModelConfig)).not.toThrow();
+			expect(modelRegistry.find("internal-llm", "instant-model")).toBeDefined();
+		});
+	});
+
 	describe("hasHandlers", () => {
 		it("returns true when handlers exist for event type", async () => {
 			const extCode = `

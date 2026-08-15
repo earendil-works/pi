@@ -829,6 +829,221 @@ describe("ModelRegistry", () => {
 		});
 	});
 
+	describe("secureMode enforcement", () => {
+		test("secureMode defaults to false", () => {
+			const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+
+			expect(registry.getSecureMode()).toBe(false);
+			expect(registry.isProviderAllowed("anthropic")).toBe(true);
+		});
+
+		test("getAvailable includes providers without baseUrl when secureMode is off", () => {
+			authStorage.set("anthropic", { type: "api_key", key: "sk-test" });
+			const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+
+			const available = registry.getAvailable();
+			expect(available.some((m) => m.provider === "anthropic")).toBe(true);
+		});
+
+		test("getAvailable excludes providers without baseUrl when secureMode is enabled, even with configured auth", () => {
+			authStorage.set("anthropic", { type: "api_key", key: "sk-test" });
+			const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+			registry.setSecureMode(true);
+
+			const available = registry.getAvailable();
+			expect(available.some((m) => m.provider === "anthropic")).toBe(false);
+		});
+
+		test("getAvailable includes providers with an explicit baseUrl override when secureMode is enabled", () => {
+			writeRawModelsJson({
+				anthropic: overrideConfig("https://my-proxy.example.com/v1"),
+			});
+			authStorage.set("anthropic", { type: "api_key", key: "sk-test" });
+
+			const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+			registry.setSecureMode(true);
+
+			const available = registry.getAvailable();
+			expect(available.some((m) => m.provider === "anthropic")).toBe(true);
+		});
+
+		test("getAvailable still requires configured auth for baseUrl-allowlisted providers under secureMode", () => {
+			writeRawModelsJson({
+				anthropic: overrideConfig("https://my-proxy.example.com/v1"),
+			});
+			// No authStorage.set(...) call: baseUrl is allowlisted but no auth is configured.
+
+			const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+			registry.setSecureMode(true);
+
+			const available = registry.getAvailable();
+			expect(available.some((m) => m.provider === "anthropic")).toBe(false);
+		});
+
+		test("secureMode filters every unconfigured built-in provider, not just one", () => {
+			authStorage.set("anthropic", { type: "api_key", key: "sk-test" });
+			authStorage.set("openai", { type: "api_key", key: "sk-test" });
+			const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+			registry.setSecureMode(true);
+
+			expect(registry.getAvailable()).toHaveLength(0);
+		});
+
+		test("modelOverrides-only config does not allowlist a provider under secureMode", () => {
+			writeRawModelsJson({
+				anthropic: {
+					modelOverrides: {
+						"anthropic/claude-sonnet-4": { name: "Renamed Sonnet" },
+					},
+				},
+			});
+			authStorage.set("anthropic", { type: "api_key", key: "sk-test" });
+
+			const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+			registry.setSecureMode(true);
+
+			expect(registry.isProviderAllowed("anthropic")).toBe(false);
+			expect(registry.getAvailable().some((m) => m.provider === "anthropic")).toBe(false);
+		});
+
+		test("compat-only config does not allowlist a provider under secureMode", () => {
+			writeRawModelsJson({
+				anthropic: {
+					compat: { supportsUsageInStreaming: false },
+				},
+			});
+			authStorage.set("anthropic", { type: "api_key", key: "sk-test" });
+
+			const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+			registry.setSecureMode(true);
+
+			expect(registry.isProviderAllowed("anthropic")).toBe(false);
+			expect(registry.getAvailable().some((m) => m.provider === "anthropic")).toBe(false);
+		});
+
+		test("isProviderAllowed is true for any provider when secureMode is off", () => {
+			const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+
+			expect(registry.isProviderAllowed("anthropic")).toBe(true);
+			expect(registry.isProviderAllowed("some-unknown-provider")).toBe(true);
+		});
+
+		test("isProviderAllowed is false for a provider without baseUrl when secureMode is enabled", () => {
+			const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+			registry.setSecureMode(true);
+
+			expect(registry.isProviderAllowed("anthropic")).toBe(false);
+		});
+
+		test("isProviderAllowed is true for a provider with an explicit baseUrl when secureMode is enabled", () => {
+			writeRawModelsJson({
+				anthropic: overrideConfig("https://my-proxy.example.com/v1"),
+			});
+			const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+			registry.setSecureMode(true);
+
+			expect(registry.isProviderAllowed("anthropic")).toBe(true);
+		});
+
+		test("registerProvider throws when secureMode is enabled and no baseUrl is given", () => {
+			const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+			registry.setSecureMode(true);
+
+			expect(() =>
+				registry.registerProvider("internal-llm", {
+					apiKey: "TEST_KEY",
+					api: "openai-completions",
+				}),
+			).toThrow(/\[secureMode\]/);
+		});
+
+		test("registerProvider rejects a header-only override without baseUrl when secureMode is enabled", () => {
+			const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+			registry.setSecureMode(true);
+
+			expect(() =>
+				registry.registerProvider("anthropic", {
+					headers: { "X-Custom": "value" },
+				}),
+			).toThrow(/\[secureMode\]/);
+		});
+
+		test("registerProvider does not register a rejected provider under secureMode", () => {
+			const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+			registry.setSecureMode(true);
+
+			expect(() =>
+				registry.registerProvider("internal-llm", {
+					apiKey: "TEST_KEY",
+					api: "openai-completions",
+				}),
+			).toThrow();
+
+			expect(registry.getAll().some((m) => m.provider === "internal-llm")).toBe(false);
+		});
+
+		test("registerProvider succeeds when secureMode is enabled and baseUrl is given", () => {
+			const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+			registry.setSecureMode(true);
+
+			expect(() =>
+				registry.registerProvider("internal-llm", {
+					baseUrl: "http://inference.internal:8000/v1",
+					apiKey: "TEST_KEY",
+					api: "openai-completions",
+					models: [
+						{
+							id: "internal-model",
+							name: "Internal Model",
+							reasoning: false,
+							input: ["text"],
+							cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+							contextWindow: 128000,
+							maxTokens: 4096,
+						},
+					],
+				}),
+			).not.toThrow();
+
+			expect(registry.isProviderAllowed("internal-llm")).toBe(true);
+			expect(registry.getAvailable().some((m) => m.provider === "internal-llm")).toBe(true);
+		});
+
+		test("secureMode setting persists across refresh()", () => {
+			const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+			registry.setSecureMode(true);
+			registry.refresh();
+
+			expect(registry.getSecureMode()).toBe(true);
+			expect(registry.isProviderAllowed("anthropic")).toBe(false);
+		});
+
+		test("a provider's baseUrl allowlisting is dropped after refresh() if removed from models.json", () => {
+			writeRawModelsJson({
+				anthropic: overrideConfig("https://my-proxy.example.com/v1"),
+			});
+			const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+			registry.setSecureMode(true);
+			expect(registry.isProviderAllowed("anthropic")).toBe(true);
+
+			writeRawModelsJson({});
+			registry.refresh();
+
+			expect(registry.isProviderAllowed("anthropic")).toBe(false);
+		});
+
+		test("disabling secureMode after enabling it restores full availability", () => {
+			authStorage.set("anthropic", { type: "api_key", key: "sk-test" });
+			const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+
+			registry.setSecureMode(true);
+			expect(registry.getAvailable().some((m) => m.provider === "anthropic")).toBe(false);
+
+			registry.setSecureMode(false);
+			expect(registry.getAvailable().some((m) => m.provider === "anthropic")).toBe(true);
+		});
+	});
+
 	describe("API key resolution", () => {
 		/** Create provider config with custom apiKey */
 		function providerWithApiKey(apiKey: string) {
