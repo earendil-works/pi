@@ -3164,7 +3164,9 @@ export class AgentSession {
 				output: usageTotals.output,
 				cacheRead: usageTotals.cacheRead,
 				cacheWrite: usageTotals.cacheWrite,
-				total: usageTotals.input + usageTotals.output + usageTotals.cacheRead + usageTotals.cacheWrite,
+				// BILLABLE only: cache is billed at 1/120th the input rate; including it
+				// inflates totals and skews compaction budgets + consumer write-backs.
+				total: usageTotals.input + usageTotals.output,
 			},
 			cost: usageTotals.cost,
 			contextUsage: this.getContextUsage(),
