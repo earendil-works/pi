@@ -89,6 +89,22 @@ describe("AgentSession queue characterization", () => {
 		expect(harness.session.messages).toEqual([]);
 	});
 
+	it("persists queued lanes and distinct duplicate order before consumption", async () => {
+		const waiting = await createWaitingHarness();
+		const { harness, waitForToolStart, promptPromise, releaseToolExecution } = waiting;
+		harnesses.push(harness);
+		harness.setResponses([fauxAssistantMessage(fauxToolCall("wait", {}), { stopReason: "toolUse" }), fauxAssistantMessage("done"), fauxAssistantMessage("done")]);
+		await waitForToolStart;
+		await harness.session.steer("same text");
+		await harness.session.steer("same text");
+		const queued = harness.session.sessionManager.getEntries().filter((entry) => entry.type === "custom" && entry.customType === "pi.durable_queue");
+		expect(queued).toHaveLength(2);
+		expect(queued.map((entry) => (entry.type === "custom" ? (entry.data as { action: string }).action : ""))).toEqual(["enqueue", "enqueue"]);
+		expect(harness.session.getSteeringMessages()).toEqual(["same text", "same text"]);
+		releaseToolExecution();
+		await promptPromise;
+	});
+
 	it("delivers extension-origin steering messages before the next LLM call", async () => {
 		let extensionApi: ExtensionAPI | undefined;
 		const waiting = await createWaitingHarness({

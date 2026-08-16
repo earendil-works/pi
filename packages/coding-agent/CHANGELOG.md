@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- Persisted steer and follow-up queue entries with lane/order state so accepted queued input survives session restart without text-based duplicate matching.
 - Fixed compaction to refuse sessions with no eligible messages instead of producing empty summaries ([#4811](https://github.com/earendil-works/pi/issues/4811)).
 - Fixed successful overflow-triggered auto-compaction to avoid retrying completed assistant responses ([#5720](https://github.com/earendil-works/pi/issues/5720)).
 

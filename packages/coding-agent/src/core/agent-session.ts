@@ -197,6 +197,8 @@ export interface ExtensionBindings {
 
 /** Options for AgentSession.prompt() */
 export interface PromptOptions {
+	/** Stable caller identity for durable queued input. */
+	clientMessageId?: string;
 	/** Whether to expand file-based prompt templates (default: true) */
 	expandPromptTemplates?: boolean;
 	/** Image attachments */
@@ -268,6 +270,13 @@ export class AgentSession {
 	private _steeringMessages: string[] = [];
 	/** Tracks pending follow-up messages for UI display. Removed when delivered. */
 	private _followUpMessages: string[] = [];
+	private _durableQueue: Array<{
+		id: string;
+		lane: "steer" | "followUp";
+		text: string;
+		clientMessageId?: string;
+		images?: ImageContent[];
+	}> = [];
 	/** Messages queued to be included with the next user prompt as context ("asides"). */
 	private _pendingNextTurnMessages: CustomMessage[] = [];
 
@@ -337,6 +346,7 @@ export class AgentSession {
 		this._excludedToolNames = config.excludedToolNames ? new Set(config.excludedToolNames) : undefined;
 		this._baseToolsOverride = config.baseToolsOverride;
 		this._sessionStartEvent = config.sessionStartEvent ?? { type: "session_start", reason: "startup" };
+		this._restoreDurableQueue();
 
 		// Always subscribe to agent events for internal handling
 		// (session persistence, extensions, auto-compaction, retry logic)
@@ -482,6 +492,7 @@ export class AgentSession {
 			this._overflowRecoveryAttempted = false;
 			const messageText = this._getUserMessageText(event.message);
 			if (messageText) {
+				this._consumeDurableQueue(messageText);
 				// Check steering queue first
 				const steeringIndex = this._steeringMessages.indexOf(messageText);
 				if (steeringIndex !== -1) {
@@ -1037,9 +1048,9 @@ export class AgentSession {
 					);
 				}
 				if (options.streamingBehavior === "followUp") {
-					await this._queueFollowUp(expandedText, currentImages);
+					await this._queueFollowUp(expandedText, currentImages, options.clientMessageId);
 				} else {
-					await this._queueSteer(expandedText, currentImages);
+					await this._queueSteer(expandedText, currentImages, options.clientMessageId);
 				}
 				preflightResult?.(true);
 				return;
@@ -1242,7 +1253,8 @@ export class AgentSession {
 	/**
 	 * Internal: Queue a steering message (already expanded, no extension command check).
 	 */
-	private async _queueSteer(text: string, images?: ImageContent[]): Promise<void> {
+	private async _queueSteer(text: string, images?: ImageContent[], clientMessageId?: string): Promise<void> {
+		this._persistQueue("steer", text, images, clientMessageId);
 		this._steeringMessages.push(text);
 		this._emitQueueUpdate();
 		const content: (TextContent | ImageContent)[] = [{ type: "text", text }];
@@ -1259,7 +1271,8 @@ export class AgentSession {
 	/**
 	 * Internal: Queue a follow-up message (already expanded, no extension command check).
 	 */
-	private async _queueFollowUp(text: string, images?: ImageContent[]): Promise<void> {
+	private async _queueFollowUp(text: string, images?: ImageContent[], clientMessageId?: string): Promise<void> {
+		this._persistQueue("followUp", text, images, clientMessageId);
 		this._followUpMessages.push(text);
 		this._emitQueueUpdate();
 		const content: (TextContent | ImageContent)[] = [{ type: "text", text }];
@@ -1403,6 +1416,82 @@ export class AgentSession {
 	/** Get pending follow-up messages (read-only) */
 	getFollowUpMessages(): readonly string[] {
 		return this._followUpMessages;
+	}
+
+	/** Resume queued input persisted before a service restart. */
+	async resumeDurableQueue(): Promise<void> {
+		if (this.isStreaming || this._durableQueue.length === 0) return;
+		const pending = [...this._durableQueue];
+		for (const item of pending) {
+			this._durableQueue = this._durableQueue.filter((candidate) => candidate.id !== item.id);
+			this.sessionManager.appendCustomEntry("pi.durable_queue", { action: "consume", id: item.id });
+			await this.prompt(item.text, {
+				expandPromptTemplates: false,
+				images: item.images,
+				clientMessageId: item.clientMessageId,
+			});
+		}
+	}
+
+	private _persistQueue(
+		lane: "steer" | "followUp",
+		text: string,
+		images?: ImageContent[],
+		clientMessageId?: string,
+	): void {
+		const item = {
+			id: crypto.randomUUID(),
+			lane,
+			text,
+			...(clientMessageId ? { clientMessageId } : {}),
+			...(images ? { images: [...images] } : {}),
+		};
+		this._durableQueue.push(item);
+		this.sessionManager.appendCustomEntry("pi.durable_queue", { action: "enqueue", item });
+	}
+
+	private _consumeDurableQueue(text: string): void {
+		const index = this._durableQueue.findIndex((item) => item.text === text);
+		const item = index < 0 ? undefined : this._durableQueue.splice(index, 1)[0];
+		if (item) this.sessionManager.appendCustomEntry("pi.durable_queue", { action: "consume", id: item.id });
+	}
+
+	private _restoreDurableQueue(): void {
+		const state = new Map<
+			string,
+			{ id: string; lane: "steer" | "followUp"; text: string; clientMessageId?: string; images?: ImageContent[] }
+		>();
+		for (const entry of this.sessionManager.getEntries()) {
+			if (
+				entry.type !== "custom" ||
+				entry.customType !== "pi.durable_queue" ||
+				!entry.data ||
+				typeof entry.data !== "object"
+			)
+				continue;
+			const data = entry.data as {
+				action?: string;
+				id?: string;
+				item?: { id?: string; lane?: string; text?: string; clientMessageId?: string; images?: ImageContent[] };
+			};
+			if (
+				data.action === "enqueue" &&
+				data.item?.id &&
+				(data.item.lane === "steer" || data.item.lane === "followUp") &&
+				typeof data.item.text === "string"
+			)
+				state.set(data.item.id, {
+					id: data.item.id,
+					lane: data.item.lane,
+					text: data.item.text,
+					...(data.item.clientMessageId ? { clientMessageId: data.item.clientMessageId } : {}),
+					...(data.item.images ? { images: data.item.images } : {}),
+				});
+			if (data.action === "consume" && data.id) state.delete(data.id);
+		}
+		this._durableQueue = [...state.values()];
+		this._steeringMessages = this._durableQueue.filter((item) => item.lane === "steer").map((item) => item.text);
+		this._followUpMessages = this._durableQueue.filter((item) => item.lane === "followUp").map((item) => item.text);
 	}
 
 	get resourceLoader(): ResourceLoader {
