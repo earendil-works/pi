@@ -343,7 +343,7 @@ export class ToolExecutionComponent extends Container {
 			const caps = getCapabilities();
 			for (let i = 0; i < imageBlocks.length; i++) {
 				const img = imageBlocks[i];
-				if (caps.images && this.showImages && img.data && img.mimeType) {
+				if (caps.images && this.showImages && this.expanded && img.data && img.mimeType) {
 					const converted = this.convertedImages.get(i);
 					const imageData = converted?.data ?? img.data;
 					const imageMimeType = converted?.mimeType ?? img.mimeType;

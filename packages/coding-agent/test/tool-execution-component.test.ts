@@ -1,7 +1,7 @@
 import { join, resolve } from "node:path";
-import { Text, type TUI } from "@earendil-works/pi-tui";
+import { resetCapabilitiesCache, setCapabilities, setCellDimensions, Text, type TUI } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
-import { beforeAll, describe, expect, test } from "vitest";
+import { afterEach, beforeAll, describe, expect, test } from "vitest";
 import { getReadmePath } from "../src/config.ts";
 import type { ToolDefinition } from "../src/core/extensions/types.ts";
 import { type BashOperations, createBashToolDefinition } from "../src/core/tools/bash.ts";
@@ -33,6 +33,11 @@ function createFakeTui(): TUI {
 describe("ToolExecutionComponent parity", () => {
 	beforeAll(() => {
 		initTheme("dark");
+	});
+
+	afterEach(() => {
+		resetCapabilitiesCache();
+		setCellDimensions({ widthPx: 9, heightPx: 18 });
 	});
 
 	test("stacks custom call and result renderers like the old implementation", () => {
@@ -427,6 +432,45 @@ describe("ToolExecutionComponent parity", () => {
 		const rendered = component.render(120).join("\n");
 		expect(stripAnsi(rendered)).toContain(error);
 		expect(rendered).toContain(theme.fg("toolOutput", error));
+	});
+
+	test("does not reserve terminal image rows for collapsed read results", () => {
+		setCapabilities({ images: "kitty", trueColor: true, hyperlinks: true });
+		setCellDimensions({ widthPx: 10, heightPx: 10 });
+
+		const component = new ToolExecutionComponent(
+			"read",
+			"tool-image-read-collapsed",
+			{ path: "page.png" },
+			{ showImages: true },
+			createReadToolDefinition(process.cwd()),
+			createFakeTui(),
+			process.cwd(),
+		);
+		component.updateResult(
+			{
+				content: [
+					{ type: "text", text: "Read image file [image/png]" },
+					{
+						type: "image",
+						data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==",
+						mimeType: "image/png",
+					},
+				],
+				details: undefined,
+				isError: false,
+			},
+			false,
+		);
+
+		const collapsed = component.render(120);
+		expect(stripAnsi(collapsed.join("\n"))).toContain("page.png");
+		expect(collapsed.join("\n")).not.toContain("\x1b_G");
+		expect(collapsed.filter((line) => line === "").length).toBeLessThan(5);
+
+		component.setExpanded(true);
+		const expanded = component.render(120);
+		expect(expanded.join("\n")).toContain("\x1b_G");
 	});
 
 	test("collapses ordinary read results until expanded", () => {
