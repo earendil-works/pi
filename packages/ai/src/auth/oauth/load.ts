@@ -16,6 +16,7 @@ type OAuthFlowLoaders = {
 	openaiCodex: () => OAuthAuth | Promise<OAuthAuth>;
 	githubCopilot: () => OAuthAuth | Promise<OAuthAuth>;
 	openrouter: () => OAuthAuth | Promise<OAuthAuth>;
+	kiro: () => OAuthAuth | Promise<OAuthAuth>;
 	kimiCoding: () => OAuthAuth | Promise<OAuthAuth>;
 	xai: () => OAuthAuth | Promise<OAuthAuth>;
 	radius: (options: { name: string; gateway: string }) => OAuthAuth | Promise<OAuthAuth>;
@@ -65,4 +66,9 @@ export const loadRadiusOAuth = async (options: { name: string; gateway: string }
 			createRadiusOAuth: (input: { name: string; gateway: string }) => OAuthAuth;
 		}
 	).createRadiusOAuth(options);
+};
+
+export const loadKiroOAuth = async (): Promise<OAuthAuth> => {
+	if (bundledLoaders) return bundledLoaders.kiro();
+	return ((await importOAuthModule("./kiro.ts")) as { kiroOAuth: OAuthAuth }).kiroOAuth;
 };
