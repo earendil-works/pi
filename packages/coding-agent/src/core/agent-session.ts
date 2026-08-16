@@ -322,6 +322,9 @@ export class AgentSession {
 	private _followUpMessages: string[] = [];
 	/** Messages queued to be included with the next user prompt as context ("asides"). */
 	private _pendingNextTurnMessages: CustomMessage[] = [];
+	/** Custom messages sent with triggerTurn false during a run, delivered when the run settles. */
+	private _pendingTurnEndMessages: CustomMessage[] = [];
+	private _disposed = false;
 
 	// Compaction state
 	private _compactionAbortController: AbortController | undefined = undefined;
@@ -593,8 +596,48 @@ export class AgentSession {
 		resolve();
 	}
 
+	/** Append deferred triggerTurn-false custom messages via the idle-path logic. */
+	private _flushPendingTurnEndMessages(): void {
+		// Snapshot the queue: a listener below may synchronously start a new run
+		// and defer more messages. Those belong to the next settlement; delivering
+		// them here would append them mid-run.
+		const messages = this._pendingTurnEndMessages.splice(0);
+		for (const message of messages) {
+			// A listener may synchronously dispose the session mid-drain; stop
+			// delivering into a disposed session.
+			if (this._disposed) break;
+			// The drain must never throw, or the caller's idle resolution is
+			// skipped and a hung waitForIdle deadlocks teardown.
+			try {
+				this.agent.state.messages.push(message);
+				this.sessionManager.appendCustomMessageEntry(
+					message.customType,
+					message.content,
+					message.display,
+					message.details,
+				);
+			} catch {
+				// SessionManager advances its parent pointer before writing, so after
+				// a failed append the next entry would chain onto a parent that never
+				// reached disk. Drop the remaining messages rather than persist an
+				// orphaned branch.
+				break;
+			}
+			try {
+				this._emit({ type: "message_start", message });
+				this._emit({ type: "message_end", message });
+			} catch {
+				// A throwing listener skips only this message's events; keep draining.
+			}
+		}
+	}
+
 	private async _emitAgentSettled(): Promise<void> {
 		this._isAgentRunActive = false;
+		// Deliver custom messages deferred by sendCustomMessage during the run.
+		// agent_end extension handlers ran before this point, so messages they
+		// send (e.g. plan-mode completion) are delivered and persisted here too.
+		this._flushPendingTurnEndMessages();
 		try {
 			await this._extensionRunner.emit({ type: "agent_settled" });
 			this._emit({ type: "agent_settled" });
@@ -837,6 +880,7 @@ export class AgentSession {
 	 * Call this when completely done with the session.
 	 */
 	dispose(): void {
+		this._disposed = true;
 		try {
 			this.abortRetry();
 			this.abortCompaction();
@@ -845,6 +889,31 @@ export class AgentSession {
 			this.agent.abort();
 		} catch {
 			// Dispose must succeed even if an abort hook throws.
+		}
+
+		// Safety net for deferred custom messages at teardown. Persist them only
+		// if no run is active: mid-run the transcript may end on an assistant
+		// toolCall entry with no toolResult, and persisting a custom message there
+		// would recreate the mid-turn ordering corruption this queue exists to
+		// prevent. In that case drop the messages instead - losing a notification
+		// on hard quit is acceptable, corrupting the transcript is not.
+		if (this._isAgentRunActive) {
+			this._pendingTurnEndMessages = [];
+		} else {
+			while (this._pendingTurnEndMessages.length > 0) {
+				const message = this._pendingTurnEndMessages.shift();
+				if (!message) break;
+				try {
+					this.sessionManager.appendCustomMessageEntry(
+						message.customType,
+						message.content,
+						message.display,
+						message.details,
+					);
+				} catch {
+					// Dispose must succeed; skip entries that fail to persist.
+				}
+			}
 		}
 
 		this._extensionRunner.invalidate(
@@ -1425,8 +1494,10 @@ export class AgentSession {
 	/**
 	 * Send a custom message to the session. Creates a CustomMessageEntry.
 	 *
-	 * Handles three cases:
-	 * - Streaming: queues message, processed when loop pulls from queue
+	 * Handles four cases:
+	 * - Streaming + triggerTurn: queues message, processed when loop pulls from queue
+	 * - Streaming + triggerTurn false: deferred until the run settles, then appended
+	 *   to state/session; the in-flight message array is never mutated mid-turn
 	 * - Not streaming + triggerTurn: appends to state/session, starts new turn
 	 * - Not streaming + no trigger: appends to state/session, no turn
 	 *
@@ -1457,6 +1528,13 @@ export class AgentSession {
 			}
 		} else if (options?.triggerTurn) {
 			await this._runAgentPrompt(appMessage);
+		} else if (this.isStreaming) {
+			// triggerTurn false must not steer or follow up, but pushing directly onto
+			// agent.state.messages mid-turn can land the message between an assistant
+			// toolCall message and its toolResults. Custom messages convert to user
+			// messages for the LLM, and strict providers reject tool results that do
+			// not immediately follow tool calls. Defer until the run settles instead.
+			this._pendingTurnEndMessages.push(appMessage);
 		} else {
 			this.agent.state.messages.push(appMessage);
 			this.sessionManager.appendCustomMessageEntry(

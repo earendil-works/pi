@@ -325,6 +325,113 @@ describe("AgentSession queue characterization", () => {
 		).toBe(true);
 	});
 
+	it("defers custom messages with triggerTurn false until the run settles", async () => {
+		const waiting = await createWaitingHarness();
+		const { harness, waitForToolStart, promptPromise, releaseToolExecution } = waiting;
+		harnesses.push(harness);
+
+		harness.setResponses([
+			fauxAssistantMessage(fauxToolCall("wait", {}), { stopReason: "toolUse" }),
+			fauxAssistantMessage("original turn complete"),
+		]);
+
+		await waitForToolStart;
+		await harness.session.sendCustomMessage(
+			{ customType: "no-turn", content: "deferred", display: true, details: {} },
+			{ triggerTurn: false },
+		);
+		// The in-flight message array must not be mutated mid-turn: the custom
+		// message would land between the assistant toolCall and its toolResult.
+		expect(harness.session.messages.some((message) => message.role === "custom")).toBe(false);
+		releaseToolExecution();
+		await promptPromise;
+
+		// Delivered and persisted when the run settles, ordered after the toolResult.
+		const roles = harness.session.messages.map((message) => message.role);
+		expect(roles.indexOf("custom")).toBeGreaterThan(roles.indexOf("toolResult"));
+		expect(
+			harness.session.messages.some((message) => message.role === "custom" && message.customType === "no-turn"),
+		).toBe(true);
+		expect(
+			harness.sessionManager
+				.getEntries()
+				.some((entry) => entry.type === "custom_message" && entry.customType === "no-turn"),
+		).toBe(true);
+	});
+
+	it("delivers custom messages sent with triggerTurn false from agent_end without another prompt", async () => {
+		let sent = false;
+		const harness = await createHarness({
+			extensionFactories: [
+				(pi: ExtensionAPI) => {
+					pi.on("agent_end", async () => {
+						if (sent) return;
+						sent = true;
+						pi.sendMessage(
+							{ customType: "run-complete", content: "all done", display: true },
+							{ triggerTurn: false },
+						);
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+
+		harness.setResponses([fauxAssistantMessage("reply")]);
+
+		await harness.session.prompt("hello");
+		await harness.session.agent.waitForIdle();
+
+		expect(
+			harness.session.messages.some((message) => message.role === "custom" && message.customType === "run-complete"),
+		).toBe(true);
+		expect(
+			harness.sessionManager
+				.getEntries()
+				.some((entry) => entry.type === "custom_message" && entry.customType === "run-complete"),
+		).toBe(true);
+	});
+
+	it("keeps draining deferred custom messages when a listener throws", async () => {
+		const waiting = await createWaitingHarness();
+		const { harness, waitForToolStart, promptPromise, releaseToolExecution } = waiting;
+		harnesses.push(harness);
+
+		harness.setResponses([
+			fauxAssistantMessage(fauxToolCall("wait", {}), { stopReason: "toolUse" }),
+			fauxAssistantMessage("original turn complete"),
+		]);
+		harness.session.subscribe((event) => {
+			if (event.type === "message_end" && event.message.role === "custom" && event.message.customType === "boom") {
+				throw new Error("listener failure");
+			}
+		});
+
+		await waitForToolStart;
+		await harness.session.sendCustomMessage(
+			{ customType: "boom", content: "first", display: true, details: {} },
+			{ triggerTurn: false },
+		);
+		await harness.session.sendCustomMessage(
+			{ customType: "after-boom", content: "second", display: true, details: {} },
+			{ triggerTurn: false },
+		);
+		releaseToolExecution();
+		await promptPromise;
+		await harness.session.waitForIdle();
+
+		// Both messages are delivered and persisted despite the throwing listener.
+		const customTypes = harness.session.messages
+			.filter((message) => message.role === "custom")
+			.map((message) => message.customType);
+		expect(customTypes).toEqual(["boom", "after-boom"]);
+		const persistedTypes = harness.sessionManager
+			.getEntries()
+			.filter((entry) => entry.type === "custom_message")
+			.map((entry) => entry.customType);
+		expect(persistedTypes).toEqual(["boom", "after-boom"]);
+	});
+
 	it("injects nextTurn custom messages into the next prompt", async () => {
 		const harness = await createHarness();
 		harnesses.push(harness);
