@@ -295,8 +295,8 @@ export class ModelRegistry {
 	private loadError: string | undefined = undefined;
 	/** Providers that have an explicit baseUrl configured (from models.json or extension registration). */
 	private providersWithCustomBaseUrl: Set<string> = new Set();
-	/** When true, only providers in providersWithCustomBaseUrl are available. */
-	private secureMode: boolean = false;
+	/** When true, only providers in providersWithCustomBaseUrl are available. Secure by default. */
+	private secureMode: boolean = true;
 
 	private constructor(
 		readonly authStorage: AuthStorage,
@@ -305,12 +305,20 @@ export class ModelRegistry {
 		this.loadModels();
 	}
 
-	static create(authStorage: AuthStorage, modelsJsonPath: string = join(getAgentDir(), "models.json")): ModelRegistry {
-		return new ModelRegistry(authStorage, modelsJsonPath);
+	static create(
+		authStorage: AuthStorage,
+		modelsJsonPath: string = join(getAgentDir(), "models.json"),
+		secureMode = true,
+	): ModelRegistry {
+		const registry = new ModelRegistry(authStorage, modelsJsonPath);
+		registry.setSecureMode(secureMode);
+		return registry;
 	}
 
-	static inMemory(authStorage: AuthStorage): ModelRegistry {
-		return new ModelRegistry(authStorage, undefined);
+	static inMemory(authStorage: AuthStorage, secureMode = true): ModelRegistry {
+		const registry = new ModelRegistry(authStorage, undefined);
+		registry.setSecureMode(secureMode);
+		return registry;
 	}
 
 	/**

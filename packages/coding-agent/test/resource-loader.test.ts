@@ -199,7 +199,7 @@ Project skill`,
 
 			const sessionManager = SessionManager.inMemory();
 			const authStorage = AuthStorage.create(join(tempDir, "auth.json"));
-			const modelRegistry = ModelRegistry.create(authStorage);
+			const modelRegistry = ModelRegistry.create(authStorage, undefined, false);
 			const runner = new ExtensionRunner(
 				extensionsResult.extensions,
 				extensionsResult.runtime,
@@ -548,7 +548,7 @@ export default function(pi: ExtensionAPI) {
 
 			const sessionManager = SessionManager.inMemory();
 			const authStorage = AuthStorage.create(join(tempDir, "auth-explicit.json"));
-			const modelRegistry = ModelRegistry.create(authStorage);
+			const modelRegistry = ModelRegistry.create(authStorage, undefined, false);
 			const runner = new ExtensionRunner(
 				extensionsResult.extensions,
 				extensionsResult.runtime,

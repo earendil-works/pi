@@ -65,6 +65,23 @@ const mockOpenRouterModels: Model<"anthropic-messages">[] = [
 
 const allModels = [...mockModels, ...mockOpenRouterModels];
 
+/**
+ * Minimal ModelRegistry mock for resolveCliModel()/findInitialModel() tests.
+ * Open-by-default (isProviderAllowed always true) unless a secureMode allowlist is given,
+ * matching secureMode-off behavior so pre-existing resolution tests are unaffected.
+ */
+function mockRegistry(
+	models: Model<"anthropic-messages">[],
+	options?: { allowedProviders?: string[] },
+): Parameters<typeof resolveCliModel>[0]["modelRegistry"] {
+	return {
+		getAll: () => models,
+		isProviderAllowed: options?.allowedProviders
+			? (provider: string) => options.allowedProviders!.includes(provider)
+			: () => true,
+	} as unknown as Parameters<typeof resolveCliModel>[0]["modelRegistry"];
+}
+
 describe("parseModelPattern", () => {
 	describe("simple patterns without colons", () => {
 		test("exact match returns model with undefined thinking level", () => {
@@ -208,9 +225,7 @@ describe("parseModelPattern", () => {
 
 describe("resolveCliModel", () => {
 	test("resolves --model provider/id without --provider", () => {
-		const registry = {
-			getAll: () => allModels,
-		} as unknown as Parameters<typeof resolveCliModel>[0]["modelRegistry"];
+		const registry = mockRegistry(allModels);
 
 		const result = resolveCliModel({
 			cliModel: "openai/gpt-4o",
@@ -223,9 +238,7 @@ describe("resolveCliModel", () => {
 	});
 
 	test("resolves fuzzy patterns within an explicit provider", () => {
-		const registry = {
-			getAll: () => allModels,
-		} as unknown as Parameters<typeof resolveCliModel>[0]["modelRegistry"];
+		const registry = mockRegistry(allModels);
 
 		const result = resolveCliModel({
 			cliProvider: "openai",
@@ -239,9 +252,7 @@ describe("resolveCliModel", () => {
 	});
 
 	test("supports --model <pattern>:<thinking> (without explicit --thinking)", () => {
-		const registry = {
-			getAll: () => allModels,
-		} as unknown as Parameters<typeof resolveCliModel>[0]["modelRegistry"];
+		const registry = mockRegistry(allModels);
 
 		const result = resolveCliModel({
 			cliModel: "sonnet:high",
@@ -254,9 +265,7 @@ describe("resolveCliModel", () => {
 	});
 
 	test("prefers exact model id match over provider inference (OpenRouter-style ids)", () => {
-		const registry = {
-			getAll: () => allModels,
-		} as unknown as Parameters<typeof resolveCliModel>[0]["modelRegistry"];
+		const registry = mockRegistry(allModels);
 
 		const result = resolveCliModel({
 			cliModel: "openai/gpt-4o:extended",
@@ -269,9 +278,7 @@ describe("resolveCliModel", () => {
 	});
 
 	test("does not strip invalid :suffix as thinking level in --model (treat as raw id)", () => {
-		const registry = {
-			getAll: () => allModels,
-		} as unknown as Parameters<typeof resolveCliModel>[0]["modelRegistry"];
+		const registry = mockRegistry(allModels);
 
 		const result = resolveCliModel({
 			cliProvider: "openai",
@@ -285,9 +292,7 @@ describe("resolveCliModel", () => {
 	});
 
 	test("allows custom model ids for explicit providers without double prefixing", () => {
-		const registry = {
-			getAll: () => allModels,
-		} as unknown as Parameters<typeof resolveCliModel>[0]["modelRegistry"];
+		const registry = mockRegistry(allModels);
 
 		const result = resolveCliModel({
 			cliProvider: "openrouter",
@@ -301,9 +306,7 @@ describe("resolveCliModel", () => {
 	});
 
 	test("returns a clear error when there are no models", () => {
-		const registry = {
-			getAll: () => [],
-		} as unknown as Parameters<typeof resolveCliModel>[0]["modelRegistry"];
+		const registry = mockRegistry([]);
 
 		const result = resolveCliModel({
 			cliProvider: "openai",
@@ -342,9 +345,7 @@ describe("resolveCliModel", () => {
 			contextWindow: 128000,
 			maxTokens: 8192,
 		};
-		const registry = {
-			getAll: () => [...allModels, zaiModel, gatewayModel],
-		} as unknown as Parameters<typeof resolveCliModel>[0]["modelRegistry"];
+		const registry = mockRegistry([...allModels, zaiModel, gatewayModel]);
 
 		const result = resolveCliModel({
 			cliModel: "zai/glm-5",
@@ -357,9 +358,7 @@ describe("resolveCliModel", () => {
 	});
 
 	test("resolves provider-prefixed fuzzy patterns (openrouter/qwen -> openrouter model)", () => {
-		const registry = {
-			getAll: () => allModels,
-		} as unknown as Parameters<typeof resolveCliModel>[0]["modelRegistry"];
+		const registry = mockRegistry(allModels);
 
 		const result = resolveCliModel({
 			cliModel: "openrouter/qwen",
@@ -369,6 +368,196 @@ describe("resolveCliModel", () => {
 		expect(result.error).toBeUndefined();
 		expect(result.model?.provider).toBe("openrouter");
 		expect(result.model?.id).toBe("qwen/qwen3-coder:exacto");
+	});
+});
+
+describe("resolveCliModel secureMode enforcement", () => {
+	// Regression coverage for the original secureMode bypass (Finding A): resolveCliModel()
+	// has multiple internal return paths that resolve a model, and only one of them used to
+	// check isProviderAllowed() before returning. A disallowed provider could slip through
+	// via any of the other paths. Each test below isolates one specific return path.
+
+	test("already-guarded path: explicit --provider + exact match within provider is blocked when disallowed", () => {
+		const models: Model<"anthropic-messages">[] = [
+			{
+				id: "seed-model",
+				name: "Seed Model",
+				api: "anthropic-messages",
+				provider: "internal",
+				baseUrl: "https://internal.example.com",
+				reasoning: false,
+				input: ["text"],
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+				contextWindow: 8192,
+				maxTokens: 4096,
+			},
+		];
+		const registry = mockRegistry(models, { allowedProviders: [] });
+
+		const result = resolveCliModel({
+			cliProvider: "internal",
+			cliModel: "seed-model",
+			modelRegistry: registry,
+		});
+
+		expect(result.model).toBeUndefined();
+		expect(result.error).toMatch(/\[secureMode\]/);
+		expect(result.error).toContain("internal");
+	});
+
+	test("bare-id exact match (no --provider, no slash) is blocked when the resolved provider is disallowed", () => {
+		const models: Model<"anthropic-messages">[] = [
+			{
+				id: "foo-model",
+				name: "Foo Model",
+				api: "anthropic-messages",
+				provider: "internal",
+				baseUrl: "https://internal.example.com",
+				reasoning: false,
+				input: ["text"],
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+				contextWindow: 8192,
+				maxTokens: 4096,
+			},
+		];
+
+		const blockedRegistry = mockRegistry(models, { allowedProviders: [] });
+		const blockedResult = resolveCliModel({ cliModel: "foo-model", modelRegistry: blockedRegistry });
+		expect(blockedResult.model).toBeUndefined();
+		expect(blockedResult.error).toMatch(/\[secureMode\]/);
+
+		const allowedRegistry = mockRegistry(models, { allowedProviders: ["internal"] });
+		const allowedResult = resolveCliModel({ cliModel: "foo-model", modelRegistry: allowedRegistry });
+		expect(allowedResult.error).toBeUndefined();
+		expect(allowedResult.model?.id).toBe("foo-model");
+	});
+
+	test("inferred-provider exact-id fallback is blocked when the actually-resolved provider is disallowed", () => {
+		// cliModel "internal/beta" makes resolveCliModel *infer* provider "internal" from the
+		// slash prefix, but the model that actually matches by raw id belongs to provider "other".
+		// The guard must check the resolved model's real provider, not the inferred one.
+		const models: Model<"anthropic-messages">[] = [
+			{
+				id: "alpha",
+				name: "Alpha",
+				api: "anthropic-messages",
+				provider: "internal",
+				baseUrl: "https://internal.example.com",
+				reasoning: false,
+				input: ["text"],
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+				contextWindow: 8192,
+				maxTokens: 4096,
+			},
+			{
+				id: "internal/beta",
+				name: "Beta",
+				api: "anthropic-messages",
+				provider: "other",
+				baseUrl: "https://other.example.com",
+				reasoning: false,
+				input: ["text"],
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+				contextWindow: 8192,
+				maxTokens: 4096,
+			},
+		];
+
+		const blockedRegistry = mockRegistry(models, { allowedProviders: ["internal"] });
+		const blockedResult = resolveCliModel({ cliModel: "internal/beta", modelRegistry: blockedRegistry });
+		expect(blockedResult.model).toBeUndefined();
+		expect(blockedResult.error).toMatch(/\[secureMode\]/);
+		expect(blockedResult.error).toContain("other");
+
+		const allowedRegistry = mockRegistry(models, { allowedProviders: ["internal", "other"] });
+		const allowedResult = resolveCliModel({ cliModel: "internal/beta", modelRegistry: allowedRegistry });
+		expect(allowedResult.error).toBeUndefined();
+		expect(allowedResult.model?.provider).toBe("other");
+		expect(allowedResult.model?.id).toBe("internal/beta");
+	});
+
+	test("inferred-provider parseModelPattern fallback is blocked when the actually-resolved provider is disallowed", () => {
+		// cliModel "internal/gizmo" infers provider "internal" from the slash prefix, finds no
+		// match within "internal"'s models, and no raw-id match either. It only resolves via a
+		// full-string fuzzy match against ALL models, landing on provider "gamma".
+		const models: Model<"anthropic-messages">[] = [
+			{
+				id: "alpha",
+				name: "Alpha",
+				api: "anthropic-messages",
+				provider: "internal",
+				baseUrl: "https://internal.example.com",
+				reasoning: false,
+				input: ["text"],
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+				contextWindow: 8192,
+				maxTokens: 4096,
+			},
+			{
+				id: "internal/gizmo-2",
+				name: "Gizmo 2",
+				api: "anthropic-messages",
+				provider: "gamma",
+				baseUrl: "https://gamma.example.com",
+				reasoning: false,
+				input: ["text"],
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+				contextWindow: 8192,
+				maxTokens: 4096,
+			},
+		];
+
+		const blockedRegistry = mockRegistry(models, { allowedProviders: ["internal"] });
+		const blockedResult = resolveCliModel({ cliModel: "internal/gizmo", modelRegistry: blockedRegistry });
+		expect(blockedResult.model).toBeUndefined();
+		expect(blockedResult.error).toMatch(/\[secureMode\]/);
+		expect(blockedResult.error).toContain("gamma");
+
+		const allowedRegistry = mockRegistry(models, { allowedProviders: ["internal", "gamma"] });
+		const allowedResult = resolveCliModel({ cliModel: "internal/gizmo", modelRegistry: allowedRegistry });
+		expect(allowedResult.error).toBeUndefined();
+		expect(allowedResult.model?.provider).toBe("gamma");
+		expect(allowedResult.model?.id).toBe("internal/gizmo-2");
+	});
+
+	test("buildFallbackModel (synthetic custom model id for a known provider) is blocked when the provider is disallowed", () => {
+		// Fifth return path, not called out in the original finding but discovered while
+		// auditing resolveCliModel(): getAll() is unfiltered by secureMode, so an explicit
+		// --provider with an unrecognized model id synthesizes a "custom model id" result
+		// for that provider without ever consulting isProviderAllowed().
+		const models: Model<"anthropic-messages">[] = [
+			{
+				id: "seed-model",
+				name: "Seed Model",
+				api: "anthropic-messages",
+				provider: "internal",
+				baseUrl: "https://internal.example.com",
+				reasoning: false,
+				input: ["text"],
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+				contextWindow: 8192,
+				maxTokens: 4096,
+			},
+		];
+
+		const blockedRegistry = mockRegistry(models, { allowedProviders: [] });
+		const blockedResult = resolveCliModel({
+			cliProvider: "internal",
+			cliModel: "custom-unknown-id",
+			modelRegistry: blockedRegistry,
+		});
+		expect(blockedResult.model).toBeUndefined();
+		expect(blockedResult.error).toMatch(/\[secureMode\]/);
+
+		const allowedRegistry = mockRegistry(models, { allowedProviders: ["internal"] });
+		const allowedResult = resolveCliModel({
+			cliProvider: "internal",
+			cliModel: "custom-unknown-id",
+			modelRegistry: allowedRegistry,
+		});
+		expect(allowedResult.error).toBeUndefined();
+		expect(allowedResult.model?.provider).toBe("internal");
+		expect(allowedResult.model?.id).toBe("custom-unknown-id");
 	});
 });
 
@@ -390,9 +579,7 @@ describe("default model selection", () => {
 	});
 
 	test("findInitialModel accepts explicit provider custom model ids", async () => {
-		const registry = {
-			getAll: () => allModels,
-		} as unknown as Parameters<typeof findInitialModel>[0]["modelRegistry"];
+		const registry = mockRegistry(allModels);
 
 		const result = await findInitialModel({
 			cliProvider: "openrouter",
