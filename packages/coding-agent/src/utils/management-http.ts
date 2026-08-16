@@ -7,8 +7,17 @@ export interface FetchRetryOptions {
 	maxRetries?: number;
 	/** Retry transient HTTP responses as well as transport failures. Defaults to true. */
 	retryOnStatus?: boolean;
-	/** Per-attempt timeout. A new timeout is created for every attempt. */
+	/** Overall time budget shared by all attempts. */
 	timeoutMs?: number;
+	/** Per-attempt timeout. A new timeout is created for every attempt. */
+	attemptTimeoutMs?: number;
+}
+
+function combineSignals(signals: Array<AbortSignal | undefined>): AbortSignal | undefined {
+	const active = signals.filter((signal): signal is AbortSignal => signal !== undefined);
+	if (active.length === 0) return undefined;
+	if (active.length === 1) return active[0];
+	return AbortSignal.any(active);
 }
 
 /**
@@ -19,8 +28,9 @@ export interface FetchRetryOptions {
  * agent/model operations: those can fail after the HTTP request starts and are
  * retried by their semantic caller instead.
  *
- * Caller cancellation is terminal. When timeoutMs is supplied, it is the
- * overall time budget shared by all attempts.
+ * Caller cancellation is terminal. timeoutMs is the overall time budget shared
+ * by all attempts. attemptTimeoutMs aborts only the current attempt so a hung
+ * connection can be retried.
  */
 export async function fetchWithRetry(
 	input: FetchInput,
@@ -32,17 +42,17 @@ export async function fetchWithRetry(
 			? 2
 			: Math.max(0, Math.floor(options.maxRetries));
 	const retryOnStatus = options.retryOnStatus ?? true;
-	const parentSignal = init?.signal;
+	const parentSignal = init?.signal ?? undefined;
 	const timeoutSignal =
 		options.timeoutMs !== undefined && options.timeoutMs > 0 ? AbortSignal.timeout(options.timeoutMs) : undefined;
-	const signal = timeoutSignal
-		? parentSignal
-			? AbortSignal.any([parentSignal, timeoutSignal])
-			: timeoutSignal
-		: parentSignal;
+	const attemptTimeoutMs =
+		options.attemptTimeoutMs !== undefined && options.attemptTimeoutMs > 0 ? options.attemptTimeoutMs : undefined;
 
 	for (let attempt = 0; ; attempt++) {
-		signal?.throwIfAborted();
+		parentSignal?.throwIfAborted();
+		timeoutSignal?.throwIfAborted();
+		const attemptTimeoutSignal = attemptTimeoutMs !== undefined ? AbortSignal.timeout(attemptTimeoutMs) : undefined;
+		const signal = combineSignals([parentSignal, timeoutSignal, attemptTimeoutSignal]);
 
 		try {
 			const response = await fetch(input, signal ? { ...init, signal } : init);
@@ -55,10 +65,16 @@ export async function fetchWithRetry(
 				// do if cancelling its body also fails.
 			}
 		} catch (error) {
+			const attemptTimedOut = Boolean(
+				attemptTimeoutSignal?.aborted && !parentSignal?.aborted && !timeoutSignal?.aborted,
+			);
 			if (
 				parentSignal?.aborted ||
 				timeoutSignal?.aborted ||
-				(error instanceof Error && error.name === "AbortError" && timeoutSignal === undefined) ||
+				(error instanceof Error &&
+					error.name === "AbortError" &&
+					!attemptTimedOut &&
+					timeoutSignal === undefined) ||
 				attempt >= maxRetries
 			) {
 				throw error;

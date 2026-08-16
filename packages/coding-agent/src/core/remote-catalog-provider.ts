@@ -5,6 +5,7 @@ import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 
 const DEFAULT_CATALOG_BASE_URL = "https://pi.dev";
 export const REMOTE_CATALOG_REFRESH_INTERVAL_MS = 4 * 60 * 60 * 1000;
+const REMOTE_CATALOG_ATTEMPT_TIMEOUT_MS = 3_000;
 
 function mergeModels(baseline: readonly Model<Api>[], dynamic: readonly Model<Api>[]): Model<Api>[] {
 	const merged = [...baseline];
@@ -75,17 +76,33 @@ export function withRemoteCatalog(
 			}
 
 			// Only revalidate when a cached body backs the validator, so a 304 can never
-			// leave the overlay empty.
+			// leave the overlay empty. Revalidation is one attempt: a hang or transport
+			// failure falls back to a full download instead of retrying If-None-Match.
 			const validator = stored?.models.length ? stored.etag : undefined;
 			const url = new URL(`/api/models/providers/${encodeURIComponent(provider.id)}`, catalogBaseUrl);
-			const response = await fetchWithRetry(url, {
-				headers: {
-					accept: "application/json",
-					"User-Agent": getPiUserAgent(VERSION),
-					...(validator ? { "if-none-match": validator } : {}),
-				},
-				signal: context.signal,
-			});
+			const fetchCatalog = (revalidate: string | undefined) =>
+				fetchWithRetry(
+					url,
+					{
+						headers: {
+							accept: "application/json",
+							"User-Agent": getPiUserAgent(VERSION),
+							...(revalidate ? { "if-none-match": revalidate } : {}),
+						},
+						signal: context.signal,
+					},
+					{
+						attemptTimeoutMs: REMOTE_CATALOG_ATTEMPT_TIMEOUT_MS,
+						...(revalidate ? { maxRetries: 0 } : {}),
+					},
+				);
+			let response: Response;
+			try {
+				response = await fetchCatalog(validator);
+			} catch (error) {
+				if (!validator || context.signal.aborted) throw error;
+				response = await fetchCatalog(undefined);
+			}
 			if (context.signal.aborted) return;
 			const checkedAt = Date.now();
 			// Unchanged: dynamicModels already holds the stored overlay, so only the

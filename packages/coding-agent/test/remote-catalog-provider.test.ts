@@ -48,6 +48,15 @@ function testProvider(localGeneratedAt?: number) {
 	);
 }
 
+function headerRecord(init: RequestInit | undefined): Record<string, string> {
+	return (init?.headers ?? {}) as Record<string, string>;
+}
+
+function shortenCatalogAttemptTimeouts(): void {
+	const timeout = AbortSignal.timeout.bind(AbortSignal);
+	vi.spyOn(AbortSignal, "timeout").mockImplementation((ms) => timeout(ms > 100 ? 20 : ms));
+}
+
 async function refreshProvider(
 	provider: Provider,
 	store: InMemoryModelsStore,
@@ -143,6 +152,85 @@ describe("remote catalog provider", () => {
 		expect(stored?.checkedAt).toBeGreaterThanOrEqual(checkedAt ?? 0);
 	});
 
+	it("retries a hung If-None-Match revalidation without the validator", async () => {
+		shortenCatalogAttemptTimeouts();
+		let downloads = 0;
+		const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
+			if (headerRecord(init)["if-none-match"]) {
+				await new Promise<Response>((_, reject) => {
+					init?.signal?.addEventListener("abort", () => {
+						reject(Object.assign(new Error("This operation was aborted"), { name: "AbortError" }));
+					});
+				});
+			}
+			downloads++;
+			const id = downloads === 1 ? "dynamic" : "refreshed";
+			return new Response(JSON.stringify({ [id]: model(id) }), {
+				headers: { "content-type": "application/json", etag: `"${id}"` },
+			});
+		});
+		const provider = testProvider();
+		const store = new InMemoryModelsStore();
+
+		await refreshProvider(provider, store);
+		await refreshProvider(provider, store, { force: true });
+
+		const revalidations = fetchSpy.mock.calls.filter((call) => headerRecord(call[1])["if-none-match"]);
+		const fallbacks = fetchSpy.mock.calls.filter((call) => !headerRecord(call[1])["if-none-match"]);
+		expect(revalidations.length).toBe(1);
+		expect(fallbacks.length).toBe(2);
+		expect(provider.getModels().map((entry) => entry.id)).toEqual(["static", "refreshed"]);
+	});
+
+	it("falls back to a full download after a transport error on revalidation", async () => {
+		const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
+			if (headerRecord(init)["if-none-match"]) throw new Error("fetch failed");
+			return new Response(JSON.stringify({ refreshed: model("refreshed") }), {
+				headers: { "content-type": "application/json", etag: '"catalog-2"' },
+			});
+		});
+		const provider = testProvider();
+		const store = new InMemoryModelsStore();
+		await store.write(provider.id, {
+			models: [model("dynamic")],
+			checkedAt: Date.now(),
+			lastModified: Date.now(),
+			etag: '"catalog-1"',
+		});
+
+		await refreshProvider(provider, store, { force: true });
+
+		expect(fetchSpy).toHaveBeenCalledTimes(2);
+		expect(headerRecord(fetchSpy.mock.calls[0]?.[1])["if-none-match"]).toBe('"catalog-1"');
+		expect(headerRecord(fetchSpy.mock.calls[1]?.[1])["if-none-match"]).toBeUndefined();
+		expect(provider.getModels().map((entry) => entry.id)).toEqual(["static", "refreshed"]);
+	});
+
+	it("does not fall back when the caller aborts revalidation", async () => {
+		const controller = new AbortController();
+		const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
+			if (headerRecord(init)["if-none-match"]) {
+				controller.abort();
+				throw Object.assign(new Error("This operation was aborted"), { name: "AbortError" });
+			}
+			return new Response(JSON.stringify({ dynamic: model("dynamic") }), {
+				headers: { "content-type": "application/json", etag: '"catalog-1"' },
+			});
+		});
+		const provider = testProvider();
+		const store = new InMemoryModelsStore();
+		await store.write(provider.id, {
+			models: [model("dynamic")],
+			checkedAt: Date.now(),
+			lastModified: Date.now(),
+			etag: '"catalog-1"',
+		});
+
+		await expect(refreshProvider(provider, store, { force: true, signal: controller.signal })).rejects.toThrow();
+		expect(fetchSpy).toHaveBeenCalledTimes(1);
+		expect(headerRecord(fetchSpy.mock.calls[0]?.[1])["if-none-match"]).toBe('"catalog-1"');
+	});
+
 	it("drops a stale etag when the overlay becomes unavailable", async () => {
 		const responses = [
 			new Response(JSON.stringify({ dynamic: model("dynamic") }), {
@@ -166,8 +254,6 @@ describe("remote catalog provider", () => {
 				headers: { "content-type": "application/json", etag: '"catalog-1"' },
 			}),
 			new Response("rate limited", { status: 429 }),
-			new Response("rate limited", { status: 429 }),
-			new Response("rate limited", { status: 429 }),
 			new Response(null, { status: 304, headers: { etag: '"catalog-1"' } }),
 		];
 		const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => responses.shift() as Response);
@@ -182,7 +268,7 @@ describe("remote catalog provider", () => {
 		expect(stored?.models.map((entry) => entry.id)).toEqual(["dynamic"]);
 
 		await refreshProvider(provider, store, { force: true });
-		expect(fetchSpy.mock.calls[4]?.[1]?.headers).toMatchObject({ "if-none-match": '"catalog-1"' });
+		expect(fetchSpy.mock.calls[2]?.[1]?.headers).toMatchObject({ "if-none-match": '"catalog-1"' });
 		expect(provider.getModels().map((entry) => entry.id)).toEqual(["static", "dynamic"]);
 	});
 
