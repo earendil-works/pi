@@ -9,7 +9,7 @@ import type { AutocompleteProviderFactory } from "../src/core/extensions/types.t
 import type { SourceInfo } from "../src/core/source-info.ts";
 import type { AuthSelectorProvider } from "../src/modes/interactive/components/oauth-selector.ts";
 import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
-import { initTheme } from "../src/modes/interactive/theme/theme.ts";
+import { initTheme, setTheme, theme } from "../src/modes/interactive/theme/theme.ts";
 
 function renderLastLine(container: Container, width = 120): string {
 	const last = container.children[container.children.length - 1];
@@ -713,6 +713,33 @@ describe("InteractiveMode.showLoadedResources", () => {
 		expect(output).toContain("[Skills]");
 		expect(output).toContain("commit");
 		expect(output).not.toContain("resource-list");
+	});
+
+	test("recolors mounted resource labels after invalidation", () => {
+		const fakeThis = createShowLoadedResourcesThis({
+			quietStartup: false,
+			contextFiles: [{ path: "/tmp/project/AGENTS.md" }],
+		});
+
+		initTheme("dark");
+		(InteractiveMode as any).prototype.showLoadedResources.call(fakeThis, {
+			force: false,
+		});
+		const darkHeading = theme.getFgAnsi("mdHeading");
+		const darkDim = theme.getFgAnsi("dim");
+		expect(renderAll(fakeThis.loadedResourcesContainer)).toContain(darkHeading);
+
+		setTheme("light");
+		const lightHeading = theme.getFgAnsi("mdHeading");
+		const lightDim = theme.getFgAnsi("dim");
+		fakeThis.loadedResourcesContainer.invalidate();
+		const output = renderAll(fakeThis.loadedResourcesContainer);
+
+		expect(output).toContain(lightHeading);
+		expect(output).toContain(lightDim);
+		expect(output).not.toContain(darkHeading);
+		expect(output).not.toContain(darkDim);
+		setTheme("dark");
 	});
 
 	test("shows full resource listing when expanded", () => {
