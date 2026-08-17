@@ -830,3 +830,114 @@ describe("TUI differential rendering", () => {
 		tui.stop();
 	});
 });
+
+describe("TUI long transcript repairs", () => {
+	it("repairs changes just above the viewport without clearing the scrollback", async () => {
+		const terminal = new LoggingVirtualTerminal(80, 30);
+		const tui: TUI = new TuiMainScreen(terminal);
+		const component = new TestComponent();
+		tui.addChild(component);
+
+		const line = (i: number): string => `line ${i} ${"x".repeat(60)}`;
+		component.lines = Array.from({ length: 10000 }, (_, i) => line(i));
+		tui.start();
+		await terminal.waitForRender();
+		terminal.clearWrites();
+
+		// Tool-result-like update ~50 rows above the bottom, while streaming
+		// continues appending below it. This used to clear screen and scrollback
+		// and reprint all 10k lines on every such update in long transcripts.
+		component.lines = [...component.lines];
+		component.lines[9950] = `updated result ${"y".repeat(60)}`;
+		component.lines.push(line(10000), line(10001));
+		tui.requestRender();
+		await terminal.waitForRender();
+
+		const writes = terminal.getWrites();
+		assert.ok(!writes.includes("\x1b[3J"), "scrollback must not be cleared");
+		assert.ok(writes.includes("\x1b[2J\x1b[H"), "screen is cleared for the tail reprint");
+		assert.ok(!writes.includes("line 100 "), "unchanged rows above the repair are not reprinted");
+		assert.ok(writes.includes("updated result"), "the repaired tail is written");
+
+		// The emulator only retains the last 1000 rows; verify the repaired tail
+		// relative to the end of the scroll buffer.
+		const scrollback = terminal.getScrollBuffer();
+		const last = scrollback.length - 1;
+		assert.match(scrollback[last] ?? "", /line 10001/);
+		assert.match(scrollback[last - 1] ?? "", /line 10000/);
+		assert.match(scrollback[last - 51] ?? "", /updated result/);
+		assert.match(scrollback[last - 50] ?? "", /line 9951/);
+		assert.match(scrollback[last - 72] ?? "", /line 9949/);
+
+		tui.stop();
+	});
+
+	it("tail-reprints far-above-viewport changes without clearing the scrollback", async () => {
+		const terminal = new LoggingVirtualTerminal(80, 30);
+		const tui: TUI = new TuiMainScreen(terminal);
+		const component = new TestComponent();
+		tui.addChild(component);
+
+		const line = (i: number): string => `line ${i} ${"x".repeat(60)}`;
+		component.lines = Array.from({ length: 10000 }, (_, i) => line(i));
+		tui.start();
+		await terminal.waitForRender();
+		terminal.clearWrites();
+
+		// A change thousands of rows up is repaired the same way: clear the screen
+		// and reprint everything from the change down. The scrollback above it is
+		// unchanged and must be preserved.
+		component.lines = [...component.lines];
+		component.lines[100] = `updated top ${"y".repeat(60)}`;
+		tui.requestRender();
+		await terminal.waitForRender();
+
+		const writes = terminal.getWrites();
+		assert.ok(writes.includes("\x1b[2J\x1b[H"), "screen is cleared for the tail reprint");
+		assert.ok(!writes.includes("\x1b[3J"), "scrollback must not be cleared");
+		assert.ok(writes.includes("updated top"), "the changed row is written");
+		assert.ok(!writes.includes("line 0 "), "rows above the change are not reprinted");
+
+		// The emulator trims old rows out of its scrollback; the final viewport
+		// must show the last rows of the transcript.
+		const viewport = terminal.getViewport();
+		assert.match(viewport[0] ?? "", /line 9970/);
+		assert.match(viewport[29] ?? "", /line 9999/);
+
+		tui.stop();
+	});
+
+	it("tail-repairs a shrink above the viewport", async () => {
+		const terminal = new LoggingVirtualTerminal(80, 30);
+		const tui: TUI = new TuiMainScreen(terminal);
+		const component = new TestComponent();
+		tui.addChild(component);
+
+		const line = (i: number): string => `line ${i} ${"x".repeat(60)}`;
+		component.lines = Array.from({ length: 10000 }, (_, i) => line(i));
+		tui.start();
+		await terminal.waitForRender();
+		terminal.clearWrites();
+
+		// A component above the viewport shrinks by several lines and its first
+		// line changes. The tail below must shift up and stay aligned.
+		component.lines = [...component.lines];
+		component.lines.splice(9950, 5, `shrunk ${"z".repeat(60)}`);
+		tui.requestRender();
+		await terminal.waitForRender();
+
+		const writes = terminal.getWrites();
+		assert.ok(writes.includes("\x1b[2J\x1b[H"), "screen is cleared for the tail reprint");
+		assert.ok(!writes.includes("\x1b[3J"), "scrollback must not be cleared");
+
+		// 9996 lines remain (five removed, one inserted). The last row is the old
+		// row 9999; the shrunk row sits 45 rows above the bottom.
+		const scrollback = terminal.getScrollBuffer();
+		const last = scrollback.length - 1;
+		assert.match(scrollback[last] ?? "", /line 9999/);
+		assert.match(scrollback[last - 45] ?? "", /shrunk/);
+		assert.match(scrollback[last - 44] ?? "", /line 9955/);
+
+		tui.stop();
+	});
+});

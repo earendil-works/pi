@@ -206,16 +206,26 @@ export class TuiMainScreen extends TuiBase implements TUI {
 
 		newLines = this.applyLineResets(newLines);
 
-		// Helper to clear scrollback and viewport and render all new lines
-		const fullRender = (clear: boolean): void => {
+		// Helper to clear scrollback and viewport and render all new lines.
+		// When `clear` is false and `fromRow` is > 0, only the screen is cleared and
+		// the tail (fromRow onward) is reprinted. Rows above fromRow are unchanged
+		// and stay in the terminal's scrollback, which is the only way to repair a
+		// change above the viewport: cursor movement cannot enter the scrollback.
+		const fullRender = (options: { clear: boolean; fromRow?: number }): void => {
+			const { clear, fromRow = 0 } = options;
 			this.fullRedrawCount += 1;
 			let buffer = "\x1b[?2026h"; // Begin synchronized output
 			if (clear) {
 				buffer += this.deleteKittyImages(this.previousKittyImageIds);
 				buffer += "\x1b[2J\x1b[H\x1b[3J"; // Clear screen, home, then clear scrollback
+			} else if (fromRow > 0) {
+				// Tail repair: replace everything from fromRow down without touching
+				// the unchanged rows above it. Delete only images in that range.
+				buffer += this.deleteChangedKittyImages(fromRow, this.previousLines.length - 1);
+				buffer += "\x1b[2J\x1b[H"; // Clear screen, home (keep scrollback)
 			}
-			for (let i = 0; i < newLines.length; i++) {
-				if (i > 0) buffer += "\r\n";
+			for (let i = fromRow; i < newLines.length; i++) {
+				if (i > fromRow) buffer += "\r\n";
 				const line = newLines[i];
 				const isImage = isImageLine(line);
 				const imageReservedRows = isImage ? this.getKittyImageReservedRows(newLines, i) : 1;
@@ -262,14 +272,14 @@ export class TuiMainScreen extends TuiBase implements TUI {
 		// First render - just output everything without clearing (assumes clean screen)
 		if (this.previousLines.length === 0 && !widthChanged && !heightChanged) {
 			logRedraw("first render");
-			fullRender(false);
+			fullRender({ clear: false });
 			return;
 		}
 
 		// Width changes always need a full re-render because wrapping changes.
 		if (widthChanged) {
 			logRedraw(`terminal width changed (${this.previousWidth} -> ${width})`);
-			fullRender(true);
+			fullRender({ clear: true });
 			return;
 		}
 
@@ -278,7 +288,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
 		// In that environment, a full redraw causes the entire history to replay on every toggle.
 		if (heightChanged && !isTermuxSession()) {
 			logRedraw(`terminal height changed (${this.previousHeight} -> ${height})`);
-			fullRender(true);
+			fullRender({ clear: true });
 			return;
 		}
 
@@ -287,7 +297,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
 		// Configurable via setClearOnShrink() or PI_CLEAR_ON_SHRINK=0 env var
 		if (this.getClearOnShrink() && newLines.length < this.maxLinesRendered && !this.hasOverlayEntries) {
 			logRedraw(`clearOnShrink (maxLinesRendered=${this.maxLinesRendered})`);
-			fullRender(true);
+			fullRender({ clear: true });
 			return;
 		}
 
@@ -337,7 +347,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
 				const targetRow = Math.max(0, newLines.length - 1);
 				if (targetRow < prevViewportTop) {
 					logRedraw(`deleted lines moved viewport up (${targetRow} < ${prevViewportTop})`);
-					fullRender(true);
+					fullRender({ clear: true });
 					return;
 				}
 				const lineDiff = computeLineDiff(targetRow);
@@ -348,7 +358,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
 				const extraLines = this.previousLines.length - newLines.length;
 				if (extraLines > height) {
 					logRedraw(`extraLines > height (${extraLines} > ${height})`);
-					fullRender(true);
+					fullRender({ clear: true });
 					return;
 				}
 				const clearStartOffset = newLines.length === 0 ? 0 : 1;
@@ -377,11 +387,24 @@ export class TuiMainScreen extends TuiBase implements TUI {
 			return;
 		}
 
-		// Differential rendering can only touch what was actually visible.
-		// If the first changed line is above the previous viewport, we need a full redraw.
+		// A change above the viewport cannot be reached by cursor movement (cursor-up
+		// at the screen edge scrolls the viewport instead of entering the scrollback).
+		// Repair it by clearing the screen and reprinting the tail, keeping the
+		// unchanged rows above it in the scrollback. Long transcripts hit this
+		// constantly when tool results update above the streaming content; clearing
+		// the scrollback and reprinting 10k+ lines each time visibly flashes the
+		// whole screen.
 		if (firstChanged < prevViewportTop) {
-			logRedraw(`firstChanged < viewportTop (${firstChanged} < ${prevViewportTop})`);
-			fullRender(true);
+			logRedraw(`tail repair above viewport (${firstChanged} < ${prevViewportTop})`);
+			// The reprinted tail must fill the whole screen: a stale viewport top
+			// can make the first change land inside the final viewport, in which
+			// case start from the viewport top instead.
+			const fromRow = Math.min(firstChanged, Math.max(0, newLines.length - height));
+			if (fromRow === 0) {
+				fullRender({ clear: true });
+			} else {
+				fullRender({ clear: false, fromRow });
+			}
 			return;
 		}
 
@@ -428,7 +451,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
 					logRedraw(
 						`kitty image pre-clear would scroll (${imageStartScreenRow} + ${imageReservedRows} > ${height})`,
 					);
-					fullRender(true);
+					fullRender({ clear: true });
 					return;
 				}
 
