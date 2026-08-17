@@ -2,6 +2,27 @@ import { describe, expect, test, vi } from "vitest";
 import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
 
 describe("InteractiveMode compaction events", () => {
+	test("does not start another manual compaction while one is active", async () => {
+		const fakeThis = {
+			session: {
+				isCompacting: true,
+				compact: vi.fn(),
+			},
+			clearStatusIndicator: vi.fn(),
+			showStatus: vi.fn(),
+		};
+		const handleCompactCommand = Reflect.get(InteractiveMode.prototype, "handleCompactCommand") as (
+			this: typeof fakeThis,
+			customInstructions?: string,
+		) => Promise<void>;
+
+		await handleCompactCommand.call(fakeThis, "keep details");
+
+		expect(fakeThis.session.compact).not.toHaveBeenCalled();
+		expect(fakeThis.clearStatusIndicator).not.toHaveBeenCalled();
+		expect(fakeThis.showStatus).toHaveBeenCalledWith("Compaction already in progress");
+	});
+
 	test("rebuilds chat and appends a synthetic compaction summary at the bottom", async () => {
 		const fakeThis = {
 			isInitialized: true,

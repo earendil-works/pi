@@ -6417,6 +6417,11 @@ export class InteractiveMode {
 	}
 
 	private async handleCompactCommand(customInstructions?: string): Promise<void> {
+		if (this.session.isCompacting) {
+			this.showStatus("Compaction already in progress");
+			return;
+		}
+
 		this.clearStatusIndicator();
 
 		try {
