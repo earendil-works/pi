@@ -13,7 +13,7 @@ afterEach(() => {
 });
 
 describe("strict model generation", () => {
-	it("fails before mutating generated data when an Individual model loses tool support", () => {
+	it("fails before mutating generated data when a shared Token Plan model loses tool support", () => {
 		const fixtureRoot = mkdtempSync(join(tmpdir(), "pi-generate-models-"));
 		temporaryRoots.push(fixtureRoot);
 		const isolatedPackageRoot = join(fixtureRoot, "package");
@@ -25,6 +25,7 @@ describe("strict model generation", () => {
 		const modelIds = [
 			"deepseek-v4-flash-0731",
 			"deepseek-v4-pro",
+			"deepseek-v4-pro-0813",
 			"glm-5.2",
 			"qwen3.6-flash",
 			"qwen3.7-max",
@@ -75,7 +76,7 @@ describe("strict model generation", () => {
 
 		expect(result.status).toBe(1);
 		expect(`${result.stdout}\n${result.stderr}`).toContain(
-			"qwen-token-plan-individual model IDs do not match (missing: deepseek-v4-flash-0731)",
+			"qwen-token-plan model IDs do not match (missing: deepseek-v4-flash-0731)",
 		);
 		expect(generatedPaths.map((path) => readFileSync(join(isolatedPackageRoot, path), "utf8"))).toEqual(
 			isolatedBefore,

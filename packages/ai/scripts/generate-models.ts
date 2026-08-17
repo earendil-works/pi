@@ -301,6 +301,17 @@ const QWEN_TOKEN_PLAN_PROVIDER_IDS = new Set<string>([
 	"qwen-token-plan-cn",
 	"qwen-token-plan-individual",
 ]);
+// International and China Token Plans expose the same text-model catalog.
+const QWEN_TOKEN_PLAN_MODEL_IDS = new Set<string>([
+	"deepseek-v4-pro",
+	"deepseek-v4-pro-0813",
+	"deepseek-v4-flash-0731",
+	"glm-5.2",
+	"qwen3.6-flash",
+	"qwen3.7-max",
+	"qwen3.7-plus",
+	"qwen3.8-max",
+]);
 // QwenCloud Token Plan Individual text-model allowlist, verified 2026-08-05.
 // Retired models remain excluded above even if the public catalog lags.
 // https://docs.qwencloud.com/token-plan/personal/token-plan-personal-overview
@@ -2198,7 +2209,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 				source: "alibaba-token-plan",
 				provider: "qwen-token-plan",
 				baseUrl: "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
-				modelIds: undefined,
+				modelIds: QWEN_TOKEN_PLAN_MODEL_IDS,
 			},
 			{
 				source: "alibaba-token-plan",
@@ -2210,7 +2221,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 				source: "alibaba-token-plan-cn",
 				provider: "qwen-token-plan-cn",
 				baseUrl: "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
-				modelIds: undefined,
+				modelIds: QWEN_TOKEN_PLAN_MODEL_IDS,
 			},
 		] as const;
 

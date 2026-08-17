@@ -40,18 +40,11 @@ vi.mock("openai", () => {
 });
 
 const TEXT_MODELS = [
-	"MiniMax-M2.5",
-	"deepseek-v3.2",
-	"deepseek-v4-flash",
 	"deepseek-v4-pro",
-	"glm-5",
-	"glm-5.1",
+	"deepseek-v4-pro-0813",
+	"deepseek-v4-flash-0731",
 	"glm-5.2",
-	"kimi-k2.5",
-	"kimi-k2.6",
-	"kimi-k2.7-code",
 	"qwen3.6-flash",
-	"qwen3.6-plus",
 	"qwen3.7-max",
 	"qwen3.7-plus",
 	"qwen3.8-max",
@@ -69,22 +62,7 @@ const INDIVIDUAL_TEXT_MODELS = [
 
 const IMAGE_MODELS = ["qwen-image-2.0", "qwen-image-2.0-pro", "wan2.7-image", "wan2.7-image-pro"];
 
-const QWEN_THINKING_MODELS = [
-	"deepseek-v3.2",
-	"deepseek-v4-flash",
-	"deepseek-v4-pro",
-	"glm-5",
-	"glm-5.1",
-	"glm-5.2",
-	"kimi-k2.5",
-	"kimi-k2.6",
-	"kimi-k2.7-code",
-	"qwen3.6-flash",
-	"qwen3.6-plus",
-	"qwen3.7-max",
-	"qwen3.7-plus",
-	"qwen3.8-max",
-] as const;
+const QWEN_THINKING_MODELS = TEXT_MODELS;
 
 type QwenTokenPlanProvider = "qwen-token-plan" | "qwen-token-plan-cn" | "qwen-token-plan-individual";
 type QwenTokenPlanModelCase = { provider: QwenTokenPlanProvider; modelId: string };
@@ -96,7 +74,12 @@ const QWEN_THINKING_MODEL_CASES: QwenTokenPlanModelCase[] = [
 	...INDIVIDUAL_TEXT_MODELS.map((modelId) => ({ provider: "qwen-token-plan-individual" as const, modelId })),
 ];
 
-const QWEN_REASONING_EFFORT_MODELS = ["deepseek-v4-flash", "deepseek-v4-pro", "glm-5", "glm-5.1", "glm-5.2"] as const;
+const QWEN_REASONING_EFFORT_MODELS = [
+	"deepseek-v4-pro",
+	"deepseek-v4-pro-0813",
+	"deepseek-v4-flash-0731",
+	"glm-5.2",
+] as const;
 
 const QWEN_REASONING_EFFORT_MODEL_CASES: QwenTokenPlanModelCase[] = [
 	...(["qwen-token-plan", "qwen-token-plan-cn"] as const).flatMap((provider) =>
@@ -123,12 +106,15 @@ describe("Qwen Token Plan models", () => {
 		]);
 	});
 
-	it.each(["qwen-token-plan", "qwen-token-plan-cn"] as const)("exposes all text models on %s", (provider) => {
-		const modelIds = getModels(provider).map((model) => model.id);
-		for (const expected of TEXT_MODELS) {
-			expect(modelIds, `${provider} should include ${expected}`).toContain(expected);
-		}
-	});
+	it.each(["qwen-token-plan", "qwen-token-plan-cn"] as const)(
+		"exposes exactly the shared text-model catalog on %s",
+		(provider) => {
+			const modelIds = getModels(provider)
+				.map((model) => model.id)
+				.sort();
+			expect(modelIds).toEqual([...TEXT_MODELS].sort());
+		},
+	);
 
 	it.each(["qwen-token-plan", "qwen-token-plan-cn"] as const)("omits image models from %s", (provider) => {
 		const modelIds = getModels(provider).map((model) => model.id);
@@ -167,6 +153,7 @@ describe("Qwen Token Plan models", () => {
 			).result();
 
 			expect(payload).toHaveProperty("enable_thinking", true);
+			expect(payload).toHaveProperty("model", modelId);
 			expect(payload).not.toHaveProperty("thinking");
 		},
 	);
@@ -244,6 +231,7 @@ describe("Qwen Token Plan models", () => {
 			).result();
 
 			expect(payload).toHaveProperty("reasoning_effort", "high");
+			expect(payload).toHaveProperty("model", modelId);
 		},
 	);
 
