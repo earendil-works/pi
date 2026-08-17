@@ -530,10 +530,12 @@ export default function (pi: ExtensionAPI) {
 				if (projectAgentsRequested.length > 0) {
 					const names = projectAgentsRequested.map((a) => a.name).join(", ");
 					const dir = discovery.projectAgentsDir ?? "(unknown)";
-					const ok = await ctx.ui.confirm(
-						"Run project-local agents?",
-						`Agents: ${names}\nSource: ${dir}\n\nProject agents are repo-controlled. Only continue for trusted repositories.`,
-					);
+					if (!ctx.isProjectTrusted()) {
+						const ok = await ctx.ui.confirm(
+							"Run project-local agents?",
+							`Agents: ${names}\nSource: ${dir}\n\nProject agents are repo-controlled. Only continue for trusted repositories.`,
+						);
+					}
 					if (!ok)
 						return {
 							content: [{ type: "text", text: "Canceled: project-local agents not approved." }],
