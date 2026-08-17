@@ -120,20 +120,24 @@ describe("InteractiveMode.showStatus", () => {
 
 describe("InteractiveMode.showWarning", () => {
 	test("recolors existing warnings after invalidation", () => {
-		const fakeThis: any = {
+		const fixture = {
 			chatContainer: new Container(),
 			ui: { requestRender: vi.fn() },
 		};
+		const showWarning = InteractiveMode.prototype.showWarning as unknown as (
+			this: typeof fixture,
+			warningMessage: string,
+		) => void;
 
 		initTheme("dark");
-		(InteractiveMode as any).prototype.showWarning.call(fakeThis, "WARNING_TEXT");
+		showWarning.call(fixture, "WARNING_TEXT");
 		const darkWarning = theme.getFgAnsi("warning");
-		expect(renderAll(fakeThis.chatContainer)).toContain(darkWarning);
+		expect(renderAll(fixture.chatContainer)).toContain(darkWarning);
 
 		setTheme("light");
 		const lightWarning = theme.getFgAnsi("warning");
-		fakeThis.chatContainer.invalidate();
-		const output = renderAll(fakeThis.chatContainer);
+		fixture.chatContainer.invalidate();
+		const output = renderAll(fixture.chatContainer);
 
 		expect(output).toContain(lightWarning);
 		expect(output).not.toContain(darkWarning);
