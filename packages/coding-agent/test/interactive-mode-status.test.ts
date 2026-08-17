@@ -118,6 +118,29 @@ describe("InteractiveMode.showStatus", () => {
 	});
 });
 
+describe("InteractiveMode.showWarning", () => {
+	test("recolors existing warnings after invalidation", () => {
+		const fakeThis: any = {
+			chatContainer: new Container(),
+			ui: { requestRender: vi.fn() },
+		};
+
+		initTheme("dark");
+		(InteractiveMode as any).prototype.showWarning.call(fakeThis, "WARNING_TEXT");
+		const darkWarning = theme.getFgAnsi("warning");
+		expect(renderAll(fakeThis.chatContainer)).toContain(darkWarning);
+
+		setTheme("light");
+		const lightWarning = theme.getFgAnsi("warning");
+		fakeThis.chatContainer.invalidate();
+		const output = renderAll(fakeThis.chatContainer);
+
+		expect(output).toContain(lightWarning);
+		expect(output).not.toContain(darkWarning);
+		setTheme("dark");
+	});
+});
+
 describe("InteractiveMode.showManagedToolStatus", () => {
 	beforeAll(() => initTheme("dark"));
 

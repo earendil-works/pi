@@ -178,6 +178,19 @@ function isExpandable(obj: unknown): obj is Expandable {
 	return typeof obj === "object" && obj !== null && "setExpanded" in obj && typeof obj.setExpanded === "function";
 }
 
+class DynamicText extends Text {
+	private readonly getText: () => string;
+
+	constructor(getText: () => string, paddingX = 1, paddingY = 1) {
+		super(getText(), paddingX, paddingY);
+		this.getText = getText;
+	}
+
+	override invalidate(): void {
+		this.setText(this.getText());
+	}
+}
+
 class ExpandableText extends Text implements Expandable {
 	private readonly getCollapsedText: () => string;
 	private readonly getExpandedText: () => string;
@@ -960,12 +973,11 @@ export class InteractiveMode {
 					rawKeyHint("!", "bash"),
 					hint("app.tools.expand", "more"),
 				].join(theme.fg("muted", " · "));
-			const getCompactOnboarding = () =>
-				theme.fg("dim", `Press ${keyText("app.tools.expand")} to show full startup help and loaded resources.`);
 			const getOnboarding = () =>
 				theme.fg("dim", `Pi can explain its own features and look up its docs. Ask it how to use or extend Pi.`);
 			this.builtInHeader = new ExpandableText(
-				() => `${getLogo()}\n${getCompactInstructions()}\n${getCompactOnboarding()}\n\n${getOnboarding()}`,
+				() =>
+					`${getLogo()}\n${getCompactInstructions()}\n${theme.fg("dim", `Press ${keyText("app.tools.expand")} to show full startup help and loaded resources.`)}\n\n${getOnboarding()}`,
 				() => `${getLogo()}\n${getExpandedInstructions()}\n\n${getOnboarding()}`,
 				this.getStartupExpansionState(),
 				1,
@@ -4152,7 +4164,7 @@ export class InteractiveMode {
 
 	showWarning(warningMessage: string): void {
 		this.chatContainer.addChild(new Spacer(1));
-		this.chatContainer.addChild(new Text(theme.fg("warning", `Warning: ${warningMessage}`), 1, 0));
+		this.chatContainer.addChild(new DynamicText(() => theme.fg("warning", `Warning: ${warningMessage}`), 1, 0));
 		this.ui.requestRender();
 	}
 
