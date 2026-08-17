@@ -134,14 +134,17 @@ describe("InteractiveMode.showWarning", () => {
 		const darkWarning = theme.getFgAnsi("warning");
 		expect(renderAll(fixture.chatContainer)).toContain(darkWarning);
 
-		setTheme("light");
-		const lightWarning = theme.getFgAnsi("warning");
-		fixture.chatContainer.invalidate();
-		const output = renderAll(fixture.chatContainer);
+		try {
+			setTheme("light");
+			const lightWarning = theme.getFgAnsi("warning");
+			fixture.chatContainer.invalidate();
+			const output = renderAll(fixture.chatContainer);
 
-		expect(output).toContain(lightWarning);
-		expect(output).not.toContain(darkWarning);
-		setTheme("dark");
+			expect(output).toContain(lightWarning);
+			expect(output).not.toContain(darkWarning);
+		} finally {
+			setTheme("dark");
+		}
 	});
 });
 
@@ -747,28 +750,41 @@ describe("InteractiveMode.showLoadedResources", () => {
 			quietStartup: false,
 			contextFiles: [{ path: "/tmp/project/AGENTS.md" }],
 		});
+		const showLoadedResources = (
+			InteractiveMode as unknown as {
+				prototype: {
+					showLoadedResources(
+						this: typeof fakeThis,
+						options: { force: boolean; showDiagnosticsWhenQuiet?: boolean },
+					): void;
+				};
+			}
+		).prototype.showLoadedResources;
 
 		initTheme("dark");
-		(InteractiveMode as any).prototype.showLoadedResources.call(fakeThis, {
+		showLoadedResources.call(fakeThis, {
 			force: false,
 		});
 		const darkHeading = theme.getFgAnsi("mdHeading");
 		const darkDim = theme.getFgAnsi("dim");
 		expect(renderAll(fakeThis.loadedResourcesContainer)).toContain(darkHeading);
 
-		setTheme("light");
-		const lightHeading = theme.getFgAnsi("mdHeading");
-		const lightDim = theme.getFgAnsi("dim");
-		(InteractiveMode as any).prototype.showLoadedResources.call(fakeThis, {
-			force: false,
-		});
-		const output = renderAll(fakeThis.loadedResourcesContainer);
+		try {
+			setTheme("light");
+			const lightHeading = theme.getFgAnsi("mdHeading");
+			const lightDim = theme.getFgAnsi("dim");
+			showLoadedResources.call(fakeThis, {
+				force: false,
+			});
+			const output = renderAll(fakeThis.loadedResourcesContainer);
 
-		expect(output).toContain(lightHeading);
-		expect(output).toContain(lightDim);
-		expect(output).not.toContain(darkHeading);
-		expect(output).not.toContain(darkDim);
-		setTheme("dark");
+			expect(output).toContain(lightHeading);
+			expect(output).toContain(lightDim);
+			expect(output).not.toContain(darkHeading);
+			expect(output).not.toContain(darkDim);
+		} finally {
+			setTheme("dark");
+		}
 	});
 
 	test("shows full resource listing when expanded", () => {
