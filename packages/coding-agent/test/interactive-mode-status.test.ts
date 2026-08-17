@@ -715,7 +715,7 @@ describe("InteractiveMode.showLoadedResources", () => {
 		expect(output).not.toContain("resource-list");
 	});
 
-	test("recolors mounted resource labels after invalidation", () => {
+	test("recolors resource labels when rebuilt after a theme change", () => {
 		const fakeThis = createShowLoadedResourcesThis({
 			quietStartup: false,
 			contextFiles: [{ path: "/tmp/project/AGENTS.md" }],
@@ -732,7 +732,9 @@ describe("InteractiveMode.showLoadedResources", () => {
 		setTheme("light");
 		const lightHeading = theme.getFgAnsi("mdHeading");
 		const lightDim = theme.getFgAnsi("dim");
-		fakeThis.loadedResourcesContainer.invalidate();
+		(InteractiveMode as any).prototype.showLoadedResources.call(fakeThis, {
+			force: false,
+		});
 		const output = renderAll(fakeThis.loadedResourcesContainer);
 
 		expect(output).toContain(lightHeading);
