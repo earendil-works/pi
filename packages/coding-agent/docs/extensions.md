@@ -1018,6 +1018,25 @@ pi.on("tool_result", async (event, ctx) => {
 
 Control flow helpers. `ctx.isIdle()` is false while Pi is processing an agent run, automatic retry, auto-compaction retry, or queued continuation.
 
+### ctx.requestReload()
+
+Schedule the same runtime reload as `/reload` after the current extension operation and agent work settle. Commands, tools, event handlers, and shortcuts can call it.
+
+The request is fire-and-forget. Call it last and return: the current context becomes stale when reload starts, and the handler cannot await or catch reload failures. Concurrent requests are coalesced; requests during reload are ignored, and teardown discards pending requests.
+
+```typescript
+pi.registerCommand("reload-runtime", {
+  description: "Reload runtime resources",
+  handler: async (_args, ctx) => {
+    ctx.requestReload();
+  },
+});
+```
+
+TUI and RPC modes support reload requests; print and JSON modes ignore them. RPC temporarily rejects non-control commands while reloading. A failure after the old runtime is invalidated raises `RuntimeReloadError` instead of leaving partial state.
+
+See [reload-runtime.ts](../examples/extensions/reload-runtime.ts) for command and tool examples.
+
 ### ctx.shutdown()
 
 Request a graceful shutdown of pi.
@@ -1271,62 +1290,6 @@ pi.registerCommand("handoff", {
     });
   },
 });
-```
-
-### ctx.reload()
-
-Run the same reload flow as `/reload`.
-
-```typescript
-pi.registerCommand("reload-runtime", {
-  description: "Reload extensions, skills, prompts, themes, and context files",
-  handler: async (_args, ctx) => {
-    await ctx.reload();
-    return;
-  },
-});
-```
-
-Important behavior:
-- `await ctx.reload()` emits `session_shutdown` for the current extension runtime
-- It then reloads resources and emits `session_start` with `reason: "reload"` and `resources_discover` with reason `"reload"`
-- The currently running command handler still continues in the old call frame
-- Code after `await ctx.reload()` still runs from the pre-reload version
-- Code after `await ctx.reload()` must not assume old in-memory extension state is still valid
-- After the handler returns, future commands/events/tool calls use the new extension version
-
-For predictable behavior, treat reload as terminal for that handler (`await ctx.reload(); return;`).
-
-Tools run with `ExtensionContext`, so they cannot call `ctx.reload()` directly. Use a command as the reload entrypoint, then expose a tool that queues that command as a follow-up user message.
-
-Example tool the LLM can call to trigger reload:
-
-```typescript
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
-
-export default function (pi: ExtensionAPI) {
-  pi.registerCommand("reload-runtime", {
-    description: "Reload extensions, skills, prompts, themes, and context files",
-    handler: async (_args, ctx) => {
-      await ctx.reload();
-      return;
-    },
-  });
-
-  pi.registerTool({
-    name: "reload_runtime",
-    label: "Reload Runtime",
-    description: "Reload extensions, skills, prompts, themes, and context files",
-    parameters: Type.Object({}),
-    async execute() {
-      pi.sendUserMessage("/reload-runtime", { deliverAs: "followUp" });
-      return {
-        content: [{ type: "text", text: "Queued /reload-runtime as a follow-up command." }],
-      };
-    },
-  });
-}
 ```
 
 ## ExtensionAPI Methods
@@ -2926,7 +2889,7 @@ All examples in [examples/extensions/](../examples/extensions/).
 | `handoff.ts` | Cross-provider model handoff | `registerCommand`, `ui.editor`, `ui.custom` |
 | `qna.ts` | Q&A with custom UI | `registerCommand`, `ui.custom`, `setEditorText` |
 | `send-user-message.ts` | Inject user messages | `registerCommand`, `sendUserMessage` |
-| `reload-runtime.ts` | Reload command and LLM tool handoff | `registerCommand`, `ctx.reload()`, `sendUserMessage` |
+| `reload-runtime.ts` | Deferred command and tool reload requests | `ctx.requestReload()` |
 | `shutdown-command.ts` | Graceful shutdown command | `registerCommand`, `shutdown()` |
 | **Events & Gates** |||
 | `permission-gate.ts` | Block dangerous commands | `on("tool_call")`, `ui.confirm` |

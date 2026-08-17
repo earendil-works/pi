@@ -338,10 +338,8 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 				switchSession: async (sessionPath, options) => {
 					return runtimeHost.switchSession(sessionPath, options);
 				},
-				reload: async () => {
-					await session.reload();
-				},
 			},
+			reloadHooks: {},
 			shutdownHandler: () => {
 				shutdownRequested = true;
 			},
@@ -779,6 +777,9 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 
 		const command = parsed as RpcCommand;
 		try {
+			if (command.type !== "abort" && command.type !== "abort_retry" && command.type !== "abort_bash") {
+				session.assertRuntimeAvailable();
+			}
 			const response = await handleCommand(command);
 			if (response) {
 				output(response);

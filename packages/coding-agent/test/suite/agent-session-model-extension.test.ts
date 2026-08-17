@@ -373,13 +373,17 @@ describe("AgentSession model and extension characterization", () => {
 		).toBe(true);
 	});
 
-	it("bindExtensions emits session_start and reload emits session_shutdown then session_start", async () => {
+	it("uses the same extension lifecycle for startup and reload", async () => {
 		const lifecycleEvents: string[] = [];
 		const harness = await createHarness({
 			extensionFactories: [
 				(pi) => {
 					pi.on("session_start", async (event) => {
 						lifecycleEvents.push(`start:${event.reason}`);
+					});
+					pi.on("resources_discover", (event) => {
+						lifecycleEvents.push(`resources:${event.reason}`);
+						return {};
 					});
 					pi.on("session_shutdown", async (event) => {
 						lifecycleEvents.push(`shutdown:${event.reason}`);
@@ -389,9 +393,15 @@ describe("AgentSession model and extension characterization", () => {
 		});
 		harnesses.push(harness);
 
-		await harness.session.bindExtensions({ shutdownHandler: () => {} });
+		await harness.session.bindExtensions({ mode: "print" });
 		await harness.session.reload();
 
-		expect(lifecycleEvents).toEqual(["start:startup", "shutdown:reload", "start:reload"]);
+		expect(lifecycleEvents).toEqual([
+			"start:startup",
+			"resources:startup",
+			"shutdown:reload",
+			"start:reload",
+			"resources:reload",
+		]);
 	});
 });

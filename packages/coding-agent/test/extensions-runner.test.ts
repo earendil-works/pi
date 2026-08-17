@@ -96,11 +96,26 @@ describe("ExtensionRunner", () => {
 		abort: () => {},
 		hasPendingMessages: () => false,
 		shutdown: () => {},
+		requestReload: () => {},
+		onOperationComplete: async () => {},
 		getContextUsage: () => undefined,
 		compact: () => {},
 		getSystemPrompt: () => "",
 		getScopedModels: () => [],
 	};
+
+	describe("requestReload", () => {
+		it("routes ctx.requestReload through the bound context action", async () => {
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			const requestReload = vi.fn();
+			runner.bindCore(extensionActions, { ...extensionContextActions, requestReload });
+
+			runner.createContext().requestReload();
+
+			expect(requestReload).toHaveBeenCalledOnce();
+		});
+	});
 
 	describe("scopedModels", () => {
 		it("reflects the getScopedModels context action on ctx.scopedModels", async () => {
@@ -933,7 +948,6 @@ describe("ExtensionRunner", () => {
 				fork,
 				navigateTree: async () => ({ cancelled: false }),
 				switchSession: async () => ({ cancelled: false }),
-				reload: async () => {},
 			});
 
 			const commandContext = runner.createCommandContext();

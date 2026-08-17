@@ -1,7 +1,7 @@
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { Container, Text } from "@earendil-works/pi-tui";
 import { describe, expect, it, vi } from "vitest";
-import type { AgentSessionEvent } from "../../../src/core/agent-session.ts";
+import type { AgentSessionEvent, RuntimeReloadCallbacks } from "../../../src/core/agent-session.ts";
 import type { ExtensionUIContext } from "../../../src/core/extensions/index.ts";
 import { InteractiveMode } from "../../../src/modes/interactive/interactive-mode.ts";
 import { initTheme, type Theme, theme } from "../../../src/modes/interactive/theme/theme.ts";
@@ -91,10 +91,10 @@ type ReloadCommandContext = {
 	session: {
 		isStreaming: boolean;
 		isCompacting: boolean;
-		reload: (options?: { beforeSessionStart?: () => void | Promise<void> }) => Promise<void>;
+		reload: () => Promise<void>;
 		resourceLoader: { getThemes: () => { themes: [] } };
 		extensionRunner: unknown;
-		modelRegistry: { getError: () => string | undefined };
+		modelRuntime: { getError: () => string | undefined };
 	};
 	settingsManager: {
 		getHttpIdleTimeoutMs: () => number;
@@ -118,6 +118,7 @@ type ReloadCommandContext = {
 	editor: unknown;
 	defaultEditor: { setPaddingX: (padding: number) => void; setAutocompleteMaxVisible: (maxVisible: number) => void };
 	themeController: { applyFromSettings: () => Promise<void> };
+	applyRuntimeSettings: () => void;
 	resetExtensionUI: () => void;
 	rebuildChatFromMessages: () => void;
 	setupAutocompleteProvider: () => void;
@@ -136,6 +137,7 @@ type InteractiveModePrototype = {
 	): void;
 	rebindCurrentSession(this: RebindContext, options?: { renderBeforeBind?: boolean }): Promise<void>;
 	handleReloadCommand(this: ReloadCommandContext): Promise<void>;
+	createReloadHooks(this: ReloadCommandContext): RuntimeReloadCallbacks;
 };
 
 const interactiveModePrototype = InteractiveMode.prototype as unknown as InteractiveModePrototype;
@@ -160,12 +162,10 @@ function createReloadCommandContext(overrides: ReloadCommandContextOverrides = {
 		session: {
 			isStreaming: false,
 			isCompacting: false,
-			reload: async (options) => {
-				await options?.beforeSessionStart?.();
-			},
+			reload: async () => {},
 			resourceLoader: { getThemes: () => ({ themes: [] }) },
 			extensionRunner: {},
-			modelRegistry: { getError: () => undefined },
+			modelRuntime: { getError: () => undefined },
 			...overrides.session,
 		},
 		settingsManager: {
@@ -190,6 +190,7 @@ function createReloadCommandContext(overrides: ReloadCommandContextOverrides = {
 		editor,
 		defaultEditor: { setPaddingX: () => {}, setAutocompleteMaxVisible: () => {}, ...overrides.defaultEditor },
 		themeController: { applyFromSettings: async () => {}, ...overrides.themeController },
+		applyRuntimeSettings: overrides.applyRuntimeSettings ?? (() => {}),
 		customHeader: overrides.customHeader,
 		builtInHeader: overrides.builtInHeader,
 		resetExtensionUI: overrides.resetExtensionUI ?? (() => {}),
@@ -435,11 +436,12 @@ describe("regression #5943: session_start transient UI", () => {
 			await harness.session.bindExtensions({
 				uiContext: createUiContext((message) => events.push(message)),
 				mode: "tui",
+				reloadHooks: { beforeSessionStart },
 			});
 			expect(events).toEqual(["start:startup", "notify:startup"]);
 
 			events.length = 0;
-			await harness.session.reload({ beforeSessionStart });
+			await harness.session.reload();
 
 			expect(beforeSessionStart).toHaveBeenCalledTimes(1);
 			expect(events).toEqual(["render", "start:reload", "notify:reload"]);
@@ -454,22 +456,38 @@ describe("regression #5943: session_start transient UI", () => {
 		let context: ReloadCommandContext;
 		context = createReloadCommandContext({
 			settingsManager: { getHideThinkingBlock: () => true },
-			session: {
-				reload: async (options) => {
-					events.push("reload");
-					await options?.beforeSessionStart?.();
-					events.push(`start:${context.hideThinkingBlock}`);
-				},
-			},
 			rebuildChatFromMessages: () => {
 				events.push(`rebuild:${context.hideThinkingBlock}`);
 			},
 		});
 
-		await interactiveModePrototype.handleReloadCommand.call(context);
+		const hooks = interactiveModePrototype.createReloadHooks.call(context);
+		await hooks.beforeReload?.();
+		events.push("reload");
+		await hooks.beforeSessionStart?.();
+		events.push(`start:${context.hideThinkingBlock}`);
+		await hooks.afterReload?.();
 
 		expect(context.hideThinkingBlock).toBe(true);
 		expect(events).toEqual(["reload", "rebuild:true", "start:true"]);
+	});
+
+	it("restores the editor when reload fails", async () => {
+		initTheme("dark", false);
+		const editor = {};
+		let focused: unknown;
+		const context = createReloadCommandContext({
+			editor,
+			ui: {
+				setFocus: (component) => {
+					focused = component;
+				},
+			},
+		});
+		const hooks = interactiveModePrototype.createReloadHooks.call(context);
+		await hooks.beforeReload?.();
+		await hooks.reloadFailed?.(new Error("resource reload failed"));
+		expect(focused).toBe(editor);
 	});
 
 	it("keeps the reload blocker focused until async reload completes", async () => {
@@ -488,13 +506,6 @@ describe("regression #5943: session_start transient UI", () => {
 
 		const context = createReloadCommandContext({
 			editor,
-			session: {
-				reload: async (options) => {
-					await options?.beforeSessionStart?.();
-					markReloadWaiting();
-					await reloadFinished;
-				},
-			},
 			ui: {
 				setFocus: (component) => {
 					focused = component;
@@ -505,7 +516,14 @@ describe("regression #5943: session_start transient UI", () => {
 			},
 		});
 
-		const reloadPromise = interactiveModePrototype.handleReloadCommand.call(context);
+		const hooks = interactiveModePrototype.createReloadHooks.call(context);
+		await hooks.beforeReload?.();
+		const reloadPromise = (async () => {
+			await hooks.beforeSessionStart?.();
+			markReloadWaiting();
+			await reloadFinished;
+			await hooks.afterReload?.();
+		})();
 		await reloadWaiting;
 
 		expect(chatRestored).toBe(true);
