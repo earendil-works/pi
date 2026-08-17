@@ -345,18 +345,19 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 						if (aborted || (isCodexNonTransportError(error) && !connectionLimitBeforeStart)) {
 							throw error;
 						}
+						const fallbackToSse = !websocketStarted && isSseRequired(error);
 						appendAssistantMessageDiagnostic(
 							output,
 							createAssistantMessageDiagnostic("provider_transport_failure", error, {
 								configuredTransport: transport,
-								fallbackTransport: websocketStarted ? undefined : "sse",
+								fallbackTransport: fallbackToSse ? "sse" : undefined,
 								eventsEmitted: websocketStarted,
 								phase: websocketStarted ? "after_message_stream_start" : "before_message_stream_start",
 								requestBytes: new TextEncoder().encode(bodyJson).byteLength,
 							}),
 						);
-						recordWebSocketFailure(cacheSessionId, error);
-						if (websocketStarted) {
+						recordWebSocketFailure(cacheSessionId, error, fallbackToSse);
+						if (!fallbackToSse) {
 							throw error;
 						}
 						recordWebSocketSseFallback(cacheSessionId);
@@ -935,14 +936,16 @@ function recordWebSocketSseFallback(sessionId: string | undefined): void {
 	stats.websocketFallbackActive = isWebSocketSseFallbackActive(sessionId);
 }
 
-function recordWebSocketFailure(sessionId: string | undefined, error: unknown): void {
+function recordWebSocketFailure(sessionId: string | undefined, error: unknown, activateSseFallback: boolean): void {
 	if (!sessionId) return;
-	websocketSseFallbackSessions.add(sessionId);
+	if (activateSseFallback) {
+		websocketSseFallbackSessions.add(sessionId);
+	}
 
 	const stats = getOrCreateWebSocketDebugStats(sessionId);
 	stats.websocketFailures++;
 	stats.lastWebSocketError = formatThrownValue(error);
-	stats.websocketFallbackActive = true;
+	stats.websocketFallbackActive = isWebSocketSseFallbackActive(sessionId);
 }
 
 type WebSocketConstructor = new (
@@ -996,6 +999,10 @@ class WebSocketCloseError extends Error {
 		this.reason = options?.reason;
 		this.wasClean = options?.wasClean;
 	}
+}
+
+function isSseRequired(error: unknown): boolean {
+	return error instanceof WebSocketCloseError && error.code === WEBSOCKET_MESSAGE_TOO_BIG_CLOSE_CODE;
 }
 
 function getWebSocketReadyState(socket: WebSocketLike): number | undefined {

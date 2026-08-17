@@ -1526,8 +1526,7 @@ describe("openai-codex streaming", () => {
 		expect(global.fetch).not.toHaveBeenCalled();
 	});
 
-	it("falls back to SSE when websocket connect does not open before the connect timeout", async () => {
-		vi.useFakeTimers();
+	it("does not fall back to SSE when a websocket closes with code 1006", async () => {
 		const token = mockToken();
 		const encoder = new TextEncoder();
 		const sse = buildSSEPayload({ status: "completed" });
@@ -1553,6 +1552,10 @@ describe("openai-codex streaming", () => {
 		class MockWebSocket {
 			private listeners = new Map<string, Set<(event: unknown) => void>>();
 
+			constructor() {
+				queueMicrotask(() => this.dispatch("open", {}));
+			}
+
 			addEventListener(type: string, listener: (event: unknown) => void): void {
 				let listeners = this.listeners.get(type);
 				if (!listeners) {
@@ -1567,10 +1570,16 @@ describe("openai-codex streaming", () => {
 			}
 
 			send(): void {
-				throw new Error("send should not be called before websocket open");
+				queueMicrotask(() => this.dispatch("close", { code: 1006, reason: "Connection ended", wasClean: false }));
 			}
 
 			close(): void {}
+
+			private dispatch(type: string, event: unknown): void {
+				for (const listener of this.listeners.get(type) ?? []) {
+					listener(event);
+				}
+			}
 		}
 
 		vi.stubGlobal("WebSocket", MockWebSocket);
@@ -1594,22 +1603,20 @@ describe("openai-codex streaming", () => {
 
 		const resultPromise = streamOpenAICodexResponses(model, context, {
 			apiKey: token,
-			sessionId: "ws-connect-timeout",
+			sessionId: "ws-close-1006",
 			transport: "auto",
 			timeoutMs: 300_000,
 			websocketConnectTimeoutMs: 50,
 		}).result();
 
-		await vi.advanceTimersByTimeAsync(50);
-
 		const result = await resultPromise;
-		expect(result.content.find((content) => content.type === "text")?.text).toBe("Hello");
-		expect(fetchMock).toHaveBeenCalledTimes(1);
-		expect(getOpenAICodexWebSocketDebugStats("ws-connect-timeout")).toMatchObject({
+		expect(result.stopReason).toBe("error");
+		expect(result.errorMessage).toBe("WebSocket closed 1006 Connection ended");
+		expect(fetchMock).not.toHaveBeenCalled();
+		expect(getOpenAICodexWebSocketDebugStats("ws-close-1006")).toMatchObject({
 			websocketFailures: 1,
-			sseFallbacks: 1,
-			websocketFallbackActive: true,
-			lastWebSocketError: "WebSocket connect timeout after 50ms",
+			websocketFallbackActive: false,
+			lastWebSocketError: "WebSocket closed 1006 Connection ended",
 		});
 	});
 
@@ -1675,7 +1682,7 @@ describe("openai-codex streaming", () => {
 		expect(fetchMock).not.toHaveBeenCalled();
 	});
 
-	it("falls back to SSE when a websocket is idle before the first event", async () => {
+	it("falls back to SSE when a websocket closes with code 1009 before the first event", async () => {
 		vi.useFakeTimers();
 		const token = mockToken();
 		const sentBodies: unknown[] = [];
@@ -1724,6 +1731,7 @@ describe("openai-codex streaming", () => {
 
 			send(data: string): void {
 				sentBodies.push(JSON.parse(data));
+				queueMicrotask(() => this.dispatch("close", { code: 1009 }));
 			}
 
 			close(): void {
@@ -1758,19 +1766,18 @@ describe("openai-codex streaming", () => {
 
 		const resultPromise = streamOpenAICodexResponses(model, context, {
 			apiKey: token,
-			sessionId: "ws-idle-before-start",
+			sessionId: "ws-close-1009",
 			transport: "auto",
 			timeoutMs: 50,
 		}).result();
 
 		await vi.advanceTimersByTimeAsync(0);
 		expect(sentBodies).toHaveLength(1);
-		await vi.advanceTimersByTimeAsync(50);
 
 		const result = await resultPromise;
 		expect(result.content.find((content) => content.type === "text")?.text).toBe("Hello");
 		expect(fetchMock).toHaveBeenCalledTimes(1);
-		expect(getOpenAICodexWebSocketDebugStats("ws-idle-before-start")).toMatchObject({
+		expect(getOpenAICodexWebSocketDebugStats("ws-close-1009")).toMatchObject({
 			websocketFailures: 1,
 			sseFallbacks: 1,
 			websocketFallbackActive: true,
@@ -2226,7 +2233,7 @@ describe("openai-codex streaming", () => {
 						return;
 					}
 					if (sentBodies.length === 3 && recoveryTransport === "sse") {
-						queueMicrotask(() => this.dispatch("error", { message: "retry websocket failed" }));
+						queueMicrotask(() => this.dispatch("close", { code: 1009 }));
 						return;
 					}
 
