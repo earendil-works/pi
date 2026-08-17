@@ -1,3 +1,4 @@
+import { hostname } from "node:os";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import { type Component, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type { AgentSession } from "../../../core/agent-session.ts";
@@ -113,8 +114,9 @@ export class FooterComponent implements Component {
 		// Replace home directory with ~
 		let pwd = formatCwdForFooter(this.session.sessionManager.getCwd(), process.env.HOME || process.env.USERPROFILE);
 
-		// Add git branch if available
+		// Add hostname and git branch if available
 		const branch = this.footerData.getGitBranch();
+		pwd = `${hostname()}:${pwd}`;
 		if (branch) {
 			pwd = `${pwd} (${branch})`;
 		}
