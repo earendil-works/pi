@@ -37,6 +37,7 @@
 ### Fixed
 
 - Fixed GitHub Copilot login triggering API rate limits while enabling model policies by limiting concurrent policy updates ([#6187](https://github.com/earendil-works/pi/issues/6187)).
+- Fixed GitHub Copilot login still triggering API rate limits by updating only account models with unconfigured policies and honoring server retry delays ([#7850](https://github.com/earendil-works/pi/issues/7850)).
 - Fixed upstream request buffer limit failures to trigger automatic assistant retries.
 - Fixed OpenAI Responses function and custom tool calls to preserve namespaces during streaming, proxying, and replay ([#7709](https://github.com/earendil-works/pi/issues/7709)).
 - Fixed built-in and custom DeepSeek API models to send output limits through the supported `max_tokens` field.
