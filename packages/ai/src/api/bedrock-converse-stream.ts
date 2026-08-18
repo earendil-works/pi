@@ -101,9 +101,17 @@ export interface BedrockOptions extends StreamOptions {
 	bearerToken?: string;
 }
 
-type Block = (TextContent | ThinkingContent | ToolCall) & { index?: number; partialJson?: string };
+type Block = (TextContent | ThinkingContent | ToolCall) & {
+	index?: number;
+	partialJson?: string;
+	/** Scratch buffer for encrypted reasoning deltas, joined into `thinkingSignature`. */
+	redactedChunks?: Uint8Array[];
+};
 
 const EMPTY_TEXT_PLACEHOLDER = "<empty>";
+
+/** Matches the placeholder the Anthropic API path uses for redacted thinking. */
+const REDACTED_THINKING_PLACEHOLDER = "[Reasoning redacted]";
 
 export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> = (
 	model: Model<"bedrock-converse-stream">,
@@ -313,13 +321,13 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 				throw new Error(output.errorMessage || "An unknown error occurred");
 			}
 
+			// A stream can settle without stopping every block, so finalize here too.
+			for (const block of output.content) finalizeStreamingBlock(block as Block);
 			stream.push({ type: "done", reason: output.stopReason, message: output });
 			stream.end();
 		} catch (error) {
 			for (const block of output.content) {
-				delete (block as Block).index;
-				// partialJson is only a streaming scratch buffer; never persist it.
-				delete (block as Block).partialJson;
+				finalizeStreamingBlock(block as Block);
 			}
 			output.stopReason = options.signal?.aborted ? "aborted" : "error";
 			output.errorMessage = formatBedrockError(error);
@@ -624,12 +632,54 @@ function handleContentBlockDelta(
 					partial: output,
 				});
 			}
-			if (delta.reasoningContent.signature) {
+			// `thinkingSignature` holds either an Anthropic signature or an opaque redacted
+			// payload, never both: mixing them would corrupt whichever arrived first.
+			if (delta.reasoningContent.signature && !thinkingBlock.redacted) {
 				thinkingBlock.thinkingSignature =
 					(thinkingBlock.thinkingSignature || "") + delta.reasoningContent.signature;
 			}
+			if (delta.reasoningContent.redactedContent?.length) {
+				// Encrypted reasoning from non-Anthropic models on Bedrock (e.g. OpenAI GPT-5.6).
+				// The payload is opaque, so keep it verbatim in `thinkingSignature` the way the
+				// Anthropic path stores redacted thinking, and replay it on the next turn.
+				if (!thinkingBlock.redacted) {
+					thinkingBlock.redacted = true;
+					thinkingBlock.thinkingSignature = "";
+					thinkingBlock.thinking += REDACTED_THINKING_PLACEHOLDER;
+					stream.push({
+						type: "thinking_delta",
+						contentIndex: thinkingIndex,
+						delta: REDACTED_THINKING_PLACEHOLDER,
+						partial: output,
+					});
+				}
+				thinkingBlock.redactedChunks ??= [];
+				thinkingBlock.redactedChunks.push(delta.reasoningContent.redactedContent);
+			}
 		}
 	}
+}
+
+/**
+ * Encodes buffered encrypted reasoning into `thinkingSignature` and drops the scratch
+ * buffer, which must never reach a persisted message: `Uint8Array` serializes to an
+ * index-keyed object roughly ten times the size of the base64 payload.
+ */
+function flushRedactedContent(block: Block): void {
+	if (block.type !== "thinking" || !block.redactedChunks) return;
+	block.thinkingSignature = bytesToBase64(block.redactedChunks);
+	delete block.redactedChunks;
+}
+
+/**
+ * Strips every streaming scratch field. Runs from the terminal paths as well as
+ * `contentBlockStop`, because a stream can settle without stopping each block.
+ */
+function finalizeStreamingBlock(block: Block): void {
+	delete block.index;
+	// partialJson is only a streaming scratch buffer; never persist it.
+	delete block.partialJson;
+	flushRedactedContent(block);
 }
 
 function handleMetadata(
@@ -663,6 +713,7 @@ function handleContentBlockStop(
 			stream.push({ type: "text_end", contentIndex: index, content: block.text, partial: output });
 			break;
 		case "thinking":
+			flushRedactedContent(block);
 			stream.push({ type: "thinking_end", contentIndex: index, content: block.thinking, partial: output });
 			break;
 		case "toolCall":
@@ -936,6 +987,15 @@ function convertMessages(
 							});
 							break;
 						case "thinking": {
+							// Encrypted reasoning is opaque: replay the stored payload as the
+							// `redactedContent` member instead of lowering it to reasoning text.
+							if (c.redacted) {
+								const redactedContent = decodeRedactedContent(c.thinkingSignature);
+								if (redactedContent?.length) {
+									contentBlocks.push({ reasoningContent: { redactedContent } });
+								}
+								continue;
+							}
 							// Skip empty thinking blocks
 							const thinking = sanitizeSurrogates(c.thinking);
 							if (thinking.trim().length === 0) continue;
@@ -1223,11 +1283,43 @@ function createImageBlock(mimeType: string, data: string) {
 			throw new Error(`Unknown image type: ${mimeType}`);
 	}
 
+	return { source: { bytes: base64ToBytes(data) }, format };
+}
+
+function base64ToBytes(data: string): Uint8Array {
 	const binaryString = atob(data);
 	const bytes = new Uint8Array(binaryString.length);
 	for (let i = 0; i < binaryString.length; i++) {
 		bytes[i] = binaryString.charCodeAt(i);
 	}
+	return bytes;
+}
 
-	return { source: { bytes }, format };
+/**
+ * Decodes a stored redacted payload. The AWS SDK hands the blob over as bytes, but a
+ * persisted session carries it as base64. A hand-edited or externally produced session
+ * can hold a signature that is not base64; drop that block instead of failing the
+ * whole request.
+ */
+function decodeRedactedContent(signature: string | undefined): Uint8Array | undefined {
+	if (!signature) return undefined;
+	try {
+		return base64ToBytes(signature);
+	} catch {
+		return undefined;
+	}
+}
+
+function bytesToBase64(chunks: Uint8Array[]): string {
+	// Encrypted reasoning runs to tens of KB, so build the binary string in slices
+	// rather than one concatenation per byte. The window stays under the engine's
+	// argument-count limit for spread calls.
+	const WINDOW = 0x8000;
+	let binary = "";
+	for (const chunk of chunks) {
+		for (let i = 0; i < chunk.length; i += WINDOW) {
+			binary += String.fromCharCode(...chunk.subarray(i, i + WINDOW));
+		}
+	}
+	return btoa(binary);
 }
