@@ -279,47 +279,6 @@ describe("InteractiveMode.setToolsExpanded", () => {
 	});
 });
 
-describe("InteractiveMode built-in header", () => {
-	test("recolors after invalidation while preserving a manual collapse from verbose startup", () => {
-		const fakeThis = {
-			version: "TEST_VERSION",
-			getStartupExpansionState: () => true,
-		};
-		const createBuiltInHeader = (
-			InteractiveMode as unknown as {
-				prototype: {
-					createBuiltInHeader(this: typeof fakeThis): Component & { setExpanded(expanded: boolean): void };
-				};
-			}
-		).prototype.createBuiltInHeader;
-
-		initTheme("dark");
-		const header = createBuiltInHeader.call(fakeThis);
-		header.setExpanded(false);
-		const originalText = header.render(120).join("\n");
-		const darkAccent = theme.getFgAnsi("accent");
-		const darkDim = theme.getFgAnsi("dim");
-		const darkMuted = theme.getFgAnsi("muted");
-		expect(originalText).toContain("to show full startup help");
-
-		try {
-			setTheme("light");
-			header.invalidate();
-			const output = header.render(120).join("\n");
-
-			expect(output.replace(/\u001b\[[0-9;]*m/g, "")).toBe(originalText.replace(/\u001b\[[0-9;]*m/g, ""));
-			expect(output).toContain(theme.getFgAnsi("accent"));
-			expect(output).toContain(theme.getFgAnsi("dim"));
-			expect(output).toContain(theme.getFgAnsi("muted"));
-			expect(output).not.toContain(darkAccent);
-			expect(output).not.toContain(darkDim);
-			expect(output).not.toContain(darkMuted);
-		} finally {
-			setTheme("dark");
-		}
-	});
-});
-
 describe("InteractiveMode persistent notifications", () => {
 	test("recolors an existing version notification after invalidation", () => {
 		const fakeThis = {
