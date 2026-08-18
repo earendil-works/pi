@@ -1,3 +1,4 @@
+import { t } from "@earendil-works/pi-tui";
 import { type ExecFileSyncOptionsWithStringEncoding, execFileSync, execSync, spawn } from "child_process";
 import { platform } from "os";
 import { isWaylandSession } from "./clipboard-image.ts";
@@ -170,6 +171,6 @@ export async function copyToClipboard(text: string): Promise<void> {
 	}
 
 	if (!copied) {
-		throw new Error("Failed to copy to clipboard");
+		throw new Error(t("codingAgent.errors.clipboard.failedToCopy"));
 	}
 }

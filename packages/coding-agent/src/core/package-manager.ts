@@ -24,6 +24,7 @@ function getEnv(): NodeJS.ProcessEnv {
 
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import type { Readable } from "node:stream";
+import { t } from "@earendil-works/pi-tui";
 import { globSync } from "glob";
 import ignore from "ignore";
 import { minimatch } from "minimatch";
@@ -984,7 +985,7 @@ export class DefaultPackageManager implements PackageManager {
 		const parsed = this.parseSource(source);
 		const scope: SourceScope = options?.local ? "project" : "user";
 		this.assertProjectTrustedForScope(scope);
-		await this.withProgress("install", source, `Installing ${source}...`, async () => {
+		await this.withProgress("install", source, t("codingAgent.packageManager.installing", { source }), async () => {
 			if (parsed.type === "npm") {
 				await this.installNpm(parsed, scope, false);
 				return;
@@ -996,11 +997,11 @@ export class DefaultPackageManager implements PackageManager {
 			if (parsed.type === "local") {
 				const resolved = this.resolvePath(parsed.path);
 				if (!existsSync(resolved)) {
-					throw new Error(`Path does not exist: ${resolved}`);
+					throw new Error(t("codingAgent.errors.package.pathNotExist", { path: resolved }));
 				}
 				return;
 			}
-			throw new Error(`Unsupported install source: ${source}`);
+			throw new Error(t("codingAgent.errors.package.unsupportedInstallSource", { source }));
 		});
 	}
 
@@ -1013,7 +1014,7 @@ export class DefaultPackageManager implements PackageManager {
 		const parsed = this.parseSource(source);
 		const scope: SourceScope = options?.local ? "project" : "user";
 		this.assertProjectTrustedForScope(scope);
-		await this.withProgress("remove", source, `Removing ${source}...`, async () => {
+		await this.withProgress("remove", source, t("codingAgent.packageManager.removing", { source }), async () => {
 			if (parsed.type === "npm") {
 				await this.uninstallNpm(parsed, scope);
 				return;
@@ -1025,7 +1026,7 @@ export class DefaultPackageManager implements PackageManager {
 			if (parsed.type === "local") {
 				return;
 			}
-			throw new Error(`Unsupported remove source: ${source}`);
+			throw new Error(t("codingAgent.errors.package.unsupportedRemoveSource", { source }));
 		});
 	}
 
@@ -1115,9 +1116,14 @@ export class DefaultPackageManager implements PackageManager {
 		if (gitCandidates.length > 0) {
 			const gitTasks = gitCandidates.map(
 				(entry) => async () =>
-					this.withProgress("update", entry.source, `Updating ${entry.source}...`, async () => {
-						await this.updateGit(entry.parsed, entry.scope);
-					}),
+					this.withProgress(
+						"update",
+						entry.source,
+						t("codingAgent.packageManager.updating", { source: entry.source }),
+						async () => {
+							await this.updateGit(entry.parsed, entry.scope);
+						},
+					),
 			);
 			tasks.push(this.runWithConcurrency(gitTasks, GIT_UPDATE_CONCURRENCY).then(() => {}));
 		}
@@ -1147,7 +1153,10 @@ export class DefaultPackageManager implements PackageManager {
 		}
 
 		const sourceLabel = sources.length === 1 ? sources[0].source : `${scope} npm packages`;
-		const message = sources.length === 1 ? `Updating ${sources[0].source}...` : `Updating ${scope} npm packages...`;
+		const message =
+			sources.length === 1
+				? t("codingAgent.packageManager.updatingPackages", { scope: sources[0].source })
+				: t("codingAgent.packageManager.updatingPackages", { scope });
 		const specs = sources.map((entry) => (entry.parsed.version ? entry.parsed.spec : `${entry.parsed.name}@latest`));
 
 		await this.withProgress("update", sourceLabel, message, async () => {
@@ -1254,7 +1263,8 @@ export class DefaultPackageManager implements PackageManager {
 				}
 				const action = await onMissing(resolvedSource);
 				if (action === "skip") return false;
-				if (action === "error") throw new Error(`Missing source: ${resolvedSource}`);
+				if (action === "error")
+					throw new Error(t("codingAgent.errors.package.missingSource", { source: resolvedSource }));
 				await this.installParsedSource(parsed, resolvedScope);
 				return true;
 			};
@@ -1374,9 +1384,9 @@ export class DefaultPackageManager implements PackageManager {
 	private buildNoMatchingPackageMessage(source: string, configuredPackages: PackageSource[]): string {
 		const suggestion = this.findSuggestedConfiguredSource(source, configuredPackages);
 		if (!suggestion) {
-			return `No matching package found for ${source}`;
+			return t("codingAgent.errors.package.noMatchingPackage", { source });
 		}
-		return `No matching package found for ${source}. Did you mean ${suggestion}?`;
+		return t("codingAgent.errors.package.noMatchingPackageSuggestion", { source, suggestion });
 	}
 
 	private findSuggestedConfiguredSource(source: string, configuredPackages: PackageSource[]): string | undefined {
@@ -1494,7 +1504,7 @@ export class DefaultPackageManager implements PackageManager {
 			{ cwd: this.cwd, timeoutMs: NETWORK_TIMEOUT_MS },
 		);
 		const raw = stdout.trim();
-		if (!raw) throw new Error("Empty response from npm view");
+		if (!raw) throw new Error(t("codingAgent.errors.package.emptyNpmResponse"));
 		const parsed = JSON.parse(raw) as unknown;
 		if (typeof parsed === "string") {
 			return parsed;
@@ -1504,7 +1514,7 @@ export class DefaultPackageManager implements PackageManager {
 			const latest = range ? maxSatisfying(versions, range) : [...versions].sort(rcompare)[0];
 			if (latest) return latest;
 		}
-		throw new Error("Unexpected response from npm view");
+		throw new Error(t("codingAgent.errors.package.unexpectedNpmResponse"));
 	}
 
 	private async gitHasAvailableUpdate(installedPath: string): Promise<boolean> {
@@ -1537,7 +1547,7 @@ export class DefaultPackageManager implements PackageManager {
 		const remoteHead = await this.runGitRemoteCommand(installedPath, ["ls-remote", "origin", "HEAD"]);
 		const match = remoteHead.match(/^([0-9a-f]{40})\s+HEAD$/m);
 		if (!match?.[1]) {
-			throw new Error("Failed to determine remote HEAD");
+			throw new Error(t("codingAgent.errors.package.failedRemoteHead"));
 		}
 		return match[1];
 	}
@@ -1552,11 +1562,11 @@ export class DefaultPackageManager implements PackageManager {
 			});
 			const trimmedUpstream = upstream.trim();
 			if (!trimmedUpstream.startsWith("origin/")) {
-				throw new Error(`Unsupported upstream remote: ${trimmedUpstream}`);
+				throw new Error(t("codingAgent.errors.package.unsupportedUpstreamRemote", { remote: trimmedUpstream }));
 			}
 			const branch = trimmedUpstream.slice("origin/".length);
 			if (!branch) {
-				throw new Error("Missing upstream branch name");
+				throw new Error(t("codingAgent.errors.package.missingUpstreamBranch"));
 			}
 			const head = await this.runCommandCapture("git", ["rev-parse", "@{upstream}"], {
 				cwd: installedPath,
@@ -1718,7 +1728,7 @@ export class DefaultPackageManager implements PackageManager {
 
 	private assertProjectTrustedForScope(scope: SourceScope): void {
 		if (scope === "project" && !this.settingsManager.isProjectTrusted()) {
-			throw new Error("Project is not trusted; refusing to access project package storage");
+			throw new Error(t("codingAgent.errors.package.projectNotTrustedStorage"));
 		}
 	}
 

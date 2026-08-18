@@ -1,4 +1,5 @@
 import type { AgentState } from "@earendil-works/pi-agent-core";
+import { t } from "@earendil-works/pi-tui";
 import { existsSync, readFileSync, writeFileSync } from "fs";
 import { basename, join } from "path";
 import { APP_NAME, getExportTemplateDir } from "../../config.ts";
@@ -242,10 +243,10 @@ export async function exportSessionToHtml(
 
 	const sessionFile = sm.getSessionFile();
 	if (!sessionFile) {
-		throw new Error("Cannot export in-memory session to HTML");
+		throw new Error(t("codingAgent.errors.export.cannotExportInMemory"));
 	}
 	if (!existsSync(sessionFile)) {
-		throw new Error("Nothing to export yet - start a conversation first");
+		throw new Error(t("codingAgent.errors.export.nothingToExport"));
 	}
 
 	const entries = sm.getEntries();

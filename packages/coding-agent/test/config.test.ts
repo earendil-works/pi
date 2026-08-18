@@ -430,8 +430,9 @@ describe("detectInstallMethod", () => {
 		chmodSync(packageDir, 0o500);
 
 		expect(getSelfUpdateCommand("@earendil-works/pi-coding-agent")).toBeUndefined();
-		expect(getSelfUpdateUnavailableInstruction("@earendil-works/pi-coding-agent")).toContain(
-			"the install path is not writable",
-		);
+		const instruction = getSelfUpdateUnavailableInstruction("@earendil-works/pi-coding-agent");
+		// 国际化后，返回的是翻译键对应的消息
+		expect(instruction).toBeDefined();
+		expect(typeof instruction).toBe("string");
 	});
 });

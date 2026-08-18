@@ -2,6 +2,7 @@
  * Shared diff computation utilities for the edit and similar tools.
  */
 
+import { t } from "@earendil-works/pi-tui";
 import * as Diff from "diff";
 import { constants } from "fs";
 import { access, readFile } from "fs/promises";
@@ -93,7 +94,7 @@ function getReplacementLineRange(lines: LineSpan[], replacement: TextReplacement
 		}
 	}
 	if (startLine === -1) {
-		throw new Error("Replacement range is outside the base content.");
+		throw new Error(t("codingAgent.errors.tools.editDiffRangeOutside"));
 	}
 
 	let endLine = startLine;
@@ -101,7 +102,7 @@ function getReplacementLineRange(lines: LineSpan[], replacement: TextReplacement
 		endLine++;
 	}
 	if (endLine >= lines.length) {
-		throw new Error("Replacement range is outside the base content.");
+		throw new Error(t("codingAgent.errors.tools.editDiffRangeOutside"));
 	}
 
 	return { startLine, endLine: endLine + 1 };
@@ -136,7 +137,7 @@ export function applyReplacementsPreservingUnchangedLines(
 	const originalLines = splitLinesWithEndings(originalContent);
 	const baseLines = getLineSpans(baseContent);
 	if (originalLines.length !== baseLines.length) {
-		throw new Error("Cannot preserve unchanged lines because the base content has a different line count.");
+		throw new Error(t("codingAgent.errors.tools.editDiffPreserveFailed"));
 	}
 
 	const groups: Array<{ startLine: number; endLine: number; replacements: TextReplacement[] }> = [];

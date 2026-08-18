@@ -1,6 +1,6 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { Transport } from "@earendil-works/pi-ai";
-import type { TuiMode as RendererTuiMode, ScrollViewScrollbar } from "@earendil-works/pi-tui";
+import { type TuiMode as RendererTuiMode, type ScrollViewScrollbar, t } from "@earendil-works/pi-tui";
 import { randomUUID } from "crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
@@ -134,6 +134,7 @@ export interface Settings {
 	httpProxy?: string; // Proxy URL applied as HTTP_PROXY and HTTPS_PROXY for Pi-managed HTTP clients
 	httpIdleTimeoutMs?: number; // HTTP header/body idle timeout in milliseconds; 0 disables it
 	websocketConnectTimeoutMs?: number; // WebSocket connect/open handshake timeout in milliseconds; 0 disables it
+	locale?: string; // UI language locale (e.g., "en", "zh-CN"); default: auto-detect
 	tuiMode?: TuiMode; // default: "regular"
 	fullscreenExitOutput?: FullscreenExitOutput; // default: "transcript"; no effect in regular TUI mode
 	fullscreenScrollbar?: ScrollViewScrollbar; // default: "auto"; no effect in regular TUI mode
@@ -451,6 +452,14 @@ export class SettingsManager {
 		return structuredClone(this.globalSettings);
 	}
 
+	/**
+	 * Get the user-configured locale, if any.
+	 * Priority: project settings > global settings > undefined (falls back to env/detection)
+	 */
+	getLocale(): string | undefined {
+		return this.projectSettings.locale ?? this.globalSettings.locale;
+	}
+
 	getProjectSettings(): Settings {
 		return structuredClone(this.projectSettings);
 	}
@@ -541,7 +550,7 @@ export class SettingsManager {
 
 	private assertProjectTrustedForWrite(): void {
 		if (!this.projectTrusted) {
-			throw new Error("Project is not trusted; refusing to write project settings");
+			throw new Error(t("codingAgent.errors.settings.projectNotTrustedStorage"));
 		}
 	}
 
