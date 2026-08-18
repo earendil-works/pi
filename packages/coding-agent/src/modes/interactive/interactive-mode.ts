@@ -37,6 +37,7 @@ import {
 	Spacer,
 	setKeybindings,
 	Text,
+	TruncatedText,
 	type TUI,
 	TuiAltScreen,
 	TuiMainScreen,
@@ -119,7 +120,7 @@ import { CustomEntryComponent } from "./components/custom-entry.ts";
 import { CustomMessageComponent } from "./components/custom-message.ts";
 import { DaxnutsComponent } from "./components/daxnuts.ts";
 import { DynamicBorder } from "./components/dynamic-border.ts";
-import { DynamicText, DynamicTruncatedText, ExpandableText } from "./components/dynamic-text.ts";
+import { DynamicText, ExpandableText } from "./components/dynamic-text.ts";
 import { EarendilAnnouncementComponent } from "./components/earendil-announcement.ts";
 import { ExtensionEditorComponent } from "./components/extension-editor.ts";
 import { ExtensionInputComponent } from "./components/extension-input.ts";
@@ -428,7 +429,7 @@ export class InteractiveMode {
 
 	// Status line tracking (for mutating immediately-sequential status updates)
 	private lastStatusSpacer: Spacer | undefined = undefined;
-	private lastStatusText: DynamicText<string> | undefined = undefined;
+	private lastStatusText: Text | undefined = undefined;
 	private managedToolStatusStarted = false;
 
 	// Streaming message tracking
@@ -759,9 +760,7 @@ export class InteractiveMode {
 			const condensedText = `Updated to v${latestVersion}. Use ${theme.bold("/changelog")} to view full changelog.`;
 			this.chatContainer.addChild(new Text(condensedText, 1, 0));
 		} else {
-			this.chatContainer.addChild(
-				new DynamicText("What's New", (text) => theme.bold(theme.fg("accent", text)), 1, 0),
-			);
+			this.chatContainer.addChild(new Text(theme.bold(theme.fg("accent", "What's New")), 1, 0));
 			this.chatContainer.addChild(new Spacer(1));
 			this.chatContainer.addChild(
 				new Markdown(this.changelogMarkdown.trim(), 1, 0, this.getMarkdownThemeWithSettings()),
@@ -2158,7 +2157,7 @@ export class InteractiveMode {
 				container.addChild(new Text(line, 1, 0));
 			}
 			if (content.length > InteractiveMode.MAX_WIDGET_LINES) {
-				container.addChild(new DynamicText("... (widget truncated)", (text) => theme.fg("muted", text), 1, 0));
+				container.addChild(new Text(theme.fg("muted", "... (widget truncated)"), 1, 0));
 			}
 			component = container;
 		} else {
@@ -2763,17 +2762,17 @@ export class InteractiveMode {
 	 */
 	private showExtensionError(extensionPath: string, error: string, stack?: string): void {
 		const errorMsg = `Extension "${extensionPath}" error: ${error}`;
-		const errorText = new DynamicText(errorMsg, (message) => theme.fg("error", message), 1, 0);
+		const errorText = new Text(theme.fg("error", errorMsg), 1, 0);
 		this.chatContainer.addChild(errorText);
 		if (stack) {
 			// Show stack trace in dim color, indented
 			const stackLines = stack
 				.split("\n")
 				.slice(1) // Skip first line (duplicates error message)
-				.map((line) => `  ${line.trim()}`)
+				.map((line) => theme.fg("dim", `  ${line.trim()}`))
 				.join("\n");
 			if (stackLines) {
-				this.chatContainer.addChild(new DynamicText(stackLines, (lines) => theme.fg("dim", lines), 1, 0));
+				this.chatContainer.addChild(new Text(stackLines, 1, 0));
 			}
 		}
 		this.ui.requestRender();
@@ -3356,9 +3355,7 @@ export class InteractiveMode {
 						this.showError(event.errorMessage);
 					} else {
 						this.chatContainer.addChild(new Spacer(1));
-						this.chatContainer.addChild(
-							new DynamicText(event.errorMessage, (message) => theme.fg("error", message), 1, 0),
-						);
+						this.chatContainer.addChild(new Text(theme.fg("error", event.errorMessage), 1, 0));
 					}
 				}
 				void this.flushCompactionQueue({ willRetry: event.willRetry });
@@ -3439,10 +3436,8 @@ export class InteractiveMode {
 			this.managedToolStatusStarted = true;
 		}
 		const message = status.type === "warning" ? `Warning: ${status.message}` : status.message;
-		const color: ThemeColor = status.type === "warning" ? "warning" : "dim";
-		this.chatContainer.addChild(
-			new DynamicText({ color, message }, (source) => theme.fg(source.color, source.message), 1, 0),
-		);
+		const color = status.type === "warning" ? "warning" : "dim";
+		this.chatContainer.addChild(new Text(theme.fg(color, message), 1, 0));
 		this.lastStatusSpacer = undefined;
 		this.lastStatusText = undefined;
 		this.ui.requestRender();
@@ -3460,13 +3455,13 @@ export class InteractiveMode {
 		const secondLast = children.length > 1 ? children[children.length - 2] : undefined;
 
 		if (last && secondLast && last === this.lastStatusText && secondLast === this.lastStatusSpacer) {
-			this.lastStatusText.setSource(message);
+			this.lastStatusText.setText(theme.fg("dim", message));
 			this.ui.requestRender();
 			return;
 		}
 
 		const spacer = new Spacer(1);
-		const text = new DynamicText(message, (source) => theme.fg("dim", source), 1, 0);
+		const text = new Text(theme.fg("dim", message), 1, 0);
 		this.chatContainer.addChild(spacer);
 		this.chatContainer.addChild(text);
 		this.lastStatusSpacer = spacer;
@@ -3731,9 +3726,9 @@ export class InteractiveMode {
 		} else if (miss.idleMs >= CACHE_TTL_MS) {
 			label = `Cache miss after ${Math.round(miss.idleMs / 60_000)}m idle`;
 		}
-		const text = `${label}: ${reBilled}`;
+		const text = theme.fg("warning", `${label}: ${reBilled}`);
 		this.chatContainer.addChild(new Spacer(1));
-		this.chatContainer.addChild(new DynamicText(text, (source) => theme.fg("warning", source), 1, 0));
+		this.chatContainer.addChild(new Text(text, 1, 0));
 	}
 
 	renderInitialMessages(): void {
@@ -3762,9 +3757,11 @@ export class InteractiveMode {
 			this.chatContainer.addChild(new Spacer(1));
 		}
 		this.chatContainer.addChild(
-			new DynamicText(
-				`This project is not trusted. Project ${CONFIG_DIR_NAME} resources and packages are ignored. Use /trust to save a trust decision, then restart pi.`,
-				(message) => theme.fg("warning", message),
+			new Text(
+				theme.fg(
+					"warning",
+					`This project is not trusted. Project ${CONFIG_DIR_NAME} resources and packages are ignored. Use /trust to save a trust decision, then restart pi.`,
+				),
 				1,
 				0,
 			),
@@ -4138,34 +4135,30 @@ export class InteractiveMode {
 
 	showError(errorMessage: string): void {
 		this.chatContainer.addChild(new Spacer(1));
-		this.chatContainer.addChild(
-			new DynamicText(errorMessage, (message) => theme.fg("error", `Error: ${message}`), this.outputPad, 0),
-		);
+		this.chatContainer.addChild(new Text(theme.fg("error", `Error: ${errorMessage}`), this.outputPad, 0));
 		this.ui.requestRender();
 	}
 
 	showWarning(warningMessage: string): void {
 		this.chatContainer.addChild(new Spacer(1));
-		this.chatContainer.addChild(
-			new DynamicText(warningMessage, (message) => theme.fg("warning", `Warning: ${message}`), 1, 0),
-		);
+		this.chatContainer.addChild(new Text(theme.fg("warning", `Warning: ${warningMessage}`), 1, 0));
 		this.ui.requestRender();
 	}
 
 	showNewVersionNotification(release: LatestPiRelease): void {
+		const action = theme.fg("accent", `${APP_NAME} update`);
+		const updateInstruction = theme.fg("muted", `New version ${release.version} is available. Run `) + action;
 		const changelogUrl = "https://pi.dev/changelog";
+		const changelogLink = getCapabilities().hyperlinks
+			? hyperlink(theme.fg("accent", changelogUrl), changelogUrl)
+			: theme.fg("accent", changelogUrl);
+		const changelogLine = theme.fg("muted", "Changelog: ") + changelogLink;
 		const note = release.note?.trim();
 
 		this.chatContainer.addChild(new Spacer(1));
 		this.chatContainer.addChild(new DynamicBorder((text) => theme.fg("warning", text)));
 		this.chatContainer.addChild(
-			new DynamicText(
-				release.version,
-				(version) =>
-					`${theme.bold(theme.fg("warning", "Update Available"))}\n${theme.fg("muted", `New version ${version} is available. Run `)}${theme.fg("accent", `${APP_NAME} update`)}`,
-				1,
-				0,
-			),
+			new Text(`${theme.bold(theme.fg("warning", "Update Available"))}\n${updateInstruction}`, 1, 0),
 		);
 		if (note) {
 			this.chatContainer.addChild(new Spacer(1));
@@ -4176,31 +4169,21 @@ export class InteractiveMode {
 			);
 			this.chatContainer.addChild(new Spacer(1));
 		}
-		this.chatContainer.addChild(
-			new DynamicText(
-				changelogUrl,
-				(url) => {
-					const link = getCapabilities().hyperlinks
-						? hyperlink(theme.fg("accent", url), url)
-						: theme.fg("accent", url);
-					return theme.fg("muted", "Changelog: ") + link;
-				},
-				1,
-				0,
-			),
-		);
+		this.chatContainer.addChild(new Text(changelogLine, 1, 0));
 		this.chatContainer.addChild(new DynamicBorder((text) => theme.fg("warning", text)));
 		this.ui.requestRender();
 	}
 
 	showPackageUpdateNotification(packages: string[]): void {
+		const action = theme.fg("accent", `${APP_NAME} update --extensions`);
+		const updateInstruction = theme.fg("muted", "Package updates are available. Run ") + action;
+		const packageLines = packages.map((pkg) => `- ${pkg}`).join("\n");
+
 		this.chatContainer.addChild(new Spacer(1));
 		this.chatContainer.addChild(new DynamicBorder((text) => theme.fg("warning", text)));
 		this.chatContainer.addChild(
-			new DynamicText(
-				[...packages],
-				(items) =>
-					`${theme.bold(theme.fg("warning", "Package Updates Available"))}\n${theme.fg("muted", "Package updates are available. Run ")}${theme.fg("accent", `${APP_NAME} update --extensions`)}\n${theme.fg("muted", "Packages:")}\n${items.map((pkg) => `- ${pkg}`).join("\n")}`,
+			new Text(
+				`${theme.bold(theme.fg("warning", "Package Updates Available"))}\n${updateInstruction}\n${theme.fg("muted", "Packages:")}\n${packageLines}`,
 				1,
 				0,
 			),
@@ -4251,24 +4234,16 @@ export class InteractiveMode {
 		if (steeringMessages.length > 0 || followUpMessages.length > 0) {
 			this.pendingMessagesContainer.addChild(new Spacer(1));
 			for (const message of steeringMessages) {
-				this.pendingMessagesContainer.addChild(
-					new DynamicTruncatedText(message, (source) => theme.fg("dim", `Steering: ${source}`), 1, 0),
-				);
+				const text = theme.fg("dim", `Steering: ${message}`);
+				this.pendingMessagesContainer.addChild(new TruncatedText(text, 1, 0));
 			}
 			for (const message of followUpMessages) {
-				this.pendingMessagesContainer.addChild(
-					new DynamicTruncatedText(message, (source) => theme.fg("dim", `Follow-up: ${source}`), 1, 0),
-				);
+				const text = theme.fg("dim", `Follow-up: ${message}`);
+				this.pendingMessagesContainer.addChild(new TruncatedText(text, 1, 0));
 			}
 			const dequeueHint = this.getAppKeyDisplay("app.message.dequeue");
-			this.pendingMessagesContainer.addChild(
-				new DynamicTruncatedText(
-					dequeueHint,
-					(hint) => theme.fg("dim", `↳ ${hint} to edit all queued messages`),
-					1,
-					0,
-				),
-			);
+			const hintText = theme.fg("dim", `↳ ${dequeueHint} to edit all queued messages`);
+			this.pendingMessagesContainer.addChild(new TruncatedText(hintText, 1, 0));
 		}
 	}
 
@@ -5596,9 +5571,9 @@ export class InteractiveMode {
 
 		if (providerId === "amazon-bedrock") {
 			dialog.showDetails([
-				{ color: "text", text: "You can also use an AWS profile, IAM keys, or role-based credentials." },
-				{ color: "muted", text: "See:" },
-				{ color: "accent", text: `  ${path.join(getDocsPath(), "providers.md")}` },
+				theme.fg("text", "You can also use an AWS profile, IAM keys, or role-based credentials."),
+				theme.fg("muted", "See:"),
+				theme.fg("accent", `  ${path.join(getDocsPath(), "providers.md")}`),
 			]);
 		}
 
@@ -5766,9 +5741,8 @@ export class InteractiveMode {
 		reloadBox.addChild(new DynamicBorder(borderColor));
 		reloadBox.addChild(new Spacer(1));
 		reloadBox.addChild(
-			new DynamicText(
-				"Reloading keybindings, extensions, skills, prompts, themes, and context files...",
-				(message) => theme.fg("muted", message),
+			new Text(
+				theme.fg("muted", "Reloading keybindings, extensions, skills, prompts, themes, and context files..."),
 				1,
 				0,
 			),
@@ -6050,9 +6024,7 @@ export class InteractiveMode {
 			const currentName = this.sessionManager.getSessionName();
 			if (currentName) {
 				this.chatContainer.addChild(new Spacer(1));
-				this.chatContainer.addChild(
-					new DynamicText(currentName, (name) => theme.fg("dim", `Session name: ${name}`), 1, 0),
-				);
+				this.chatContainer.addChild(new Text(theme.fg("dim", `Session name: ${currentName}`), 1, 0));
 			} else {
 				this.showWarning("Usage: /name <name>");
 			}
@@ -6066,14 +6038,7 @@ export class InteractiveMode {
 			this.showWarning(`Session name was normalized from ${JSON.stringify(name)} to ${JSON.stringify(sessionName)}`);
 		}
 		this.chatContainer.addChild(new Spacer(1));
-		this.chatContainer.addChild(
-			new DynamicText(
-				sessionName ?? name,
-				(updatedName) => theme.fg("dim", `Session name set: ${updatedName}`),
-				1,
-				0,
-			),
-		);
+		this.chatContainer.addChild(new Text(theme.fg("dim", `Session name set: ${sessionName ?? name}`), 1, 0));
 		this.ui.requestRender();
 	}
 
@@ -6088,62 +6053,55 @@ export class InteractiveMode {
 		// grouped separately so the breakdown reconciles with the session total.
 		const usageBreakdown = getUsageCostBreakdown(entries);
 
+		let info = `${theme.bold("Session Info")}\n\n`;
+		if (sessionName) {
+			info += `${theme.fg("dim", "Name:")} ${sessionName}\n`;
+		}
+		info += `${theme.fg("dim", "File:")} ${stats.sessionFile ?? "In-memory"}\n`;
+		info += `${theme.fg("dim", "ID:")} ${stats.sessionId}\n\n`;
+		info += `${theme.bold("Messages")}\n`;
+		info += `${theme.fg("dim", "Total:")} ${stats.totalMessages}\n`;
+		info += `${theme.fg("dim", "User:")} ${stats.userMessages}\n`;
+		info += `${theme.fg("dim", "Assistant:")} ${stats.assistantMessages}\n`;
+		info += `${theme.fg("dim", "Tools:")} ${stats.toolCalls} calls, ${stats.toolResults} results\n\n`;
+		info += `${theme.bold("Tokens")}\n`;
+		// "Input" is the full prompt volume. With cache activity, split it into
+		// cached (served from cache) vs uncached (everything else) - the only
+		// provider-independent split. Cache writes, where reported, are a detail
+		// of the uncached portion.
+		const { input, cacheRead, cacheWrite } = stats.tokens;
+		const promptTokens = input + cacheRead + cacheWrite;
+		info += `${theme.fg("dim", "Input:")} ${promptTokens.toLocaleString()}\n`;
+		if (promptTokens > 0 && (cacheRead > 0 || cacheWrite > 0)) {
+			const hitRate = theme.fg("dim", `(${((cacheRead / promptTokens) * 100).toFixed(1)}%)`);
+			info += `  ${theme.fg("dim", "Cached:")} ${cacheRead.toLocaleString()} ${hitRate}\n`;
+			const written =
+				cacheWrite > 0 ? ` ${theme.fg("dim", `(${cacheWrite.toLocaleString()} written to cache)`)}` : "";
+			info += `  ${theme.fg("dim", "Uncached:")} ${(input + cacheWrite).toLocaleString()}${written}\n`;
+		}
+		info += `${theme.fg("dim", "Output:")} ${stats.tokens.output.toLocaleString()}\n`;
+		info += `${theme.fg("dim", "Total:")} ${stats.tokens.total.toLocaleString()}\n`;
+
+		if (stats.cost > 0 || cacheWaste.missedTokens > 0) {
+			info += `\n${theme.bold("Cost")}\n`;
+			info += `${theme.fg("dim", "Total:")} $${stats.cost.toFixed(3)}`;
+			if (usageBreakdown.length > 1) {
+				for (const entry of usageBreakdown) {
+					info += `\n  ${theme.fg("dim", `${entry.key}:`)} $${entry.cost.toFixed(3)} ${theme.fg("dim", `(${formatTokens(entry.tokens)} tokens)`)}`;
+				}
+			}
+			if (cacheWaste.missedTokens > 0) {
+				const missLabel = cacheWaste.missCount === 1 ? "1 miss" : `${cacheWaste.missCount} misses`;
+				const detail = `${cacheWaste.missedTokens.toLocaleString()} tokens, ${missLabel}`;
+				info +=
+					cacheWaste.missedCost >= 0.0001
+						? `\n${theme.fg("dim", "Cache Re-billed:")} $${cacheWaste.missedCost.toFixed(3)} ${theme.fg("dim", `(${detail})`)}`
+						: `\n${theme.fg("dim", "Cache Re-billed:")} ${detail}`;
+			}
+		}
+
 		this.chatContainer.addChild(new Spacer(1));
-		this.chatContainer.addChild(
-			new DynamicText(
-				{ cacheWaste, sessionName, stats, usageBreakdown },
-				(source) => {
-					let info = `${theme.bold("Session Info")}\n\n`;
-					if (source.sessionName) {
-						info += `${theme.fg("dim", "Name:")} ${source.sessionName}\n`;
-					}
-					info += `${theme.fg("dim", "File:")} ${source.stats.sessionFile ?? "In-memory"}\n`;
-					info += `${theme.fg("dim", "ID:")} ${source.stats.sessionId}\n\n`;
-					info += `${theme.bold("Messages")}\n`;
-					info += `${theme.fg("dim", "Total:")} ${source.stats.totalMessages}\n`;
-					info += `${theme.fg("dim", "User:")} ${source.stats.userMessages}\n`;
-					info += `${theme.fg("dim", "Assistant:")} ${source.stats.assistantMessages}\n`;
-					info += `${theme.fg("dim", "Tools:")} ${source.stats.toolCalls} calls, ${source.stats.toolResults} results\n\n`;
-					info += `${theme.bold("Tokens")}\n`;
-
-					// "Input" is the full prompt volume. Cache writes are part of the uncached portion.
-					const { input, cacheRead, cacheWrite } = source.stats.tokens;
-					const promptTokens = input + cacheRead + cacheWrite;
-					info += `${theme.fg("dim", "Input:")} ${promptTokens.toLocaleString()}\n`;
-					if (promptTokens > 0 && (cacheRead > 0 || cacheWrite > 0)) {
-						const hitRate = theme.fg("dim", `(${((cacheRead / promptTokens) * 100).toFixed(1)}%)`);
-						info += `  ${theme.fg("dim", "Cached:")} ${cacheRead.toLocaleString()} ${hitRate}\n`;
-						const written =
-							cacheWrite > 0 ? ` ${theme.fg("dim", `(${cacheWrite.toLocaleString()} written to cache)`)}` : "";
-						info += `  ${theme.fg("dim", "Uncached:")} ${(input + cacheWrite).toLocaleString()}${written}\n`;
-					}
-					info += `${theme.fg("dim", "Output:")} ${source.stats.tokens.output.toLocaleString()}\n`;
-					info += `${theme.fg("dim", "Total:")} ${source.stats.tokens.total.toLocaleString()}\n`;
-
-					if (source.stats.cost > 0 || source.cacheWaste.missedTokens > 0) {
-						info += `\n${theme.bold("Cost")}\n`;
-						info += `${theme.fg("dim", "Total:")} $${source.stats.cost.toFixed(3)}`;
-						if (source.usageBreakdown.length > 1) {
-							for (const entry of source.usageBreakdown) {
-								info += `\n  ${theme.fg("dim", `${entry.key}:`)} $${entry.cost.toFixed(3)} ${theme.fg("dim", `(${formatTokens(entry.tokens)} tokens)`)}`;
-							}
-						}
-						if (source.cacheWaste.missedTokens > 0) {
-							const missLabel =
-								source.cacheWaste.missCount === 1 ? "1 miss" : `${source.cacheWaste.missCount} misses`;
-							const detail = `${source.cacheWaste.missedTokens.toLocaleString()} tokens, ${missLabel}`;
-							info +=
-								source.cacheWaste.missedCost >= 0.0001
-									? `\n${theme.fg("dim", "Cache Re-billed:")} $${source.cacheWaste.missedCost.toFixed(3)} ${theme.fg("dim", `(${detail})`)}`
-									: `\n${theme.fg("dim", "Cache Re-billed:")} ${detail}`;
-						}
-					}
-					return info;
-				},
-				1,
-				0,
-			),
-		);
+		this.chatContainer.addChild(new Text(info, 1, 0));
 		this.ui.requestRender();
 	}
 
@@ -6161,7 +6119,7 @@ export class InteractiveMode {
 
 		this.chatContainer.addChild(new Spacer(1));
 		this.chatContainer.addChild(new DynamicBorder());
-		this.chatContainer.addChild(new DynamicText("What's New", (text) => theme.bold(theme.fg("accent", text)), 1, 0));
+		this.chatContainer.addChild(new Text(theme.bold(theme.fg("accent", "What's New")), 1, 0));
 		this.chatContainer.addChild(new Spacer(1));
 		this.chatContainer.addChild(new Markdown(changelogMarkdown, 1, 1, this.getMarkdownThemeWithSettings()));
 		this.chatContainer.addChild(new DynamicBorder());
@@ -6292,9 +6250,7 @@ export class InteractiveMode {
 
 		this.chatContainer.addChild(new Spacer(1));
 		this.chatContainer.addChild(new DynamicBorder());
-		this.chatContainer.addChild(
-			new DynamicText("Keyboard Shortcuts", (text) => theme.bold(theme.fg("accent", text)), 1, 0),
-		);
+		this.chatContainer.addChild(new Text(theme.bold(theme.fg("accent", "Keyboard Shortcuts")), 1, 0));
 		this.chatContainer.addChild(new Spacer(1));
 		this.chatContainer.addChild(new Markdown(hotkeys.trim(), 1, 1, this.getMarkdownThemeWithSettings()));
 		this.chatContainer.addChild(new DynamicBorder());
@@ -6309,9 +6265,7 @@ export class InteractiveMode {
 				return;
 			}
 			this.chatContainer.addChild(new Spacer(1));
-			this.chatContainer.addChild(
-				new DynamicText("✓ New session started", (text) => theme.fg("accent", text), 1, 1),
-			);
+			this.chatContainer.addChild(new Text(`${theme.fg("accent", "✓ New session started")}`, 1, 1));
 			this.ui.requestRender();
 		} catch (error: unknown) {
 			await this.handleFatalRuntimeError("Failed to create session", error);
@@ -6346,12 +6300,7 @@ export class InteractiveMode {
 
 		this.chatContainer.addChild(new Spacer(1));
 		this.chatContainer.addChild(
-			new DynamicText(
-				debugLogPath,
-				(logPath) => `${theme.fg("accent", "✓ Debug log written")}\n${theme.fg("muted", logPath)}`,
-				1,
-				1,
-			),
+			new Text(`${theme.fg("accent", "✓ Debug log written")}\n${theme.fg("muted", debugLogPath)}`, 1, 1),
 		);
 		this.ui.requestRender();
 	}

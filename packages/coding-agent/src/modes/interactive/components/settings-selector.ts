@@ -11,6 +11,7 @@ import {
 	type SettingItem,
 	SettingsList,
 	Spacer,
+	Text,
 } from "@earendil-works/pi-tui";
 import { formatHttpIdleTimeoutMs, HTTP_IDLE_TIMEOUT_CHOICES } from "../../../core/http-dispatcher.ts";
 import type {
@@ -28,7 +29,6 @@ import {
 	theme,
 } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
-import { DynamicText } from "./dynamic-text.ts";
 import { keyDisplayText } from "./keybinding-hints.ts";
 
 const SETTINGS_SUBMENU_SELECT_LIST_LAYOUT: SelectListLayoutOptions = {
@@ -189,12 +189,12 @@ class SelectSubmenu extends Container {
 		super();
 
 		// Title
-		this.addChild(new DynamicText(title, (text) => theme.bold(theme.fg("accent", text)), 0, 0));
+		this.addChild(new Text(theme.bold(theme.fg("accent", title)), 0, 0));
 
 		// Description
 		if (description) {
 			this.addChild(new Spacer(1));
-			this.addChild(new DynamicText(description, (text) => theme.fg("muted", text), 0, 0));
+			this.addChild(new Text(theme.fg("muted", description), 0, 0));
 		}
 
 		// Spacer
@@ -230,7 +230,7 @@ class SelectSubmenu extends Container {
 
 		// Hint
 		this.addChild(new Spacer(1));
-		this.addChild(new DynamicText("  Enter to select · Esc to go back", (text) => theme.fg("dim", text), 0, 0));
+		this.addChild(new Text(theme.fg("dim", "  Enter to select · Esc to go back"), 0, 0));
 	}
 
 	handleInput(data: string): void {
@@ -356,19 +356,10 @@ class ThemeSubmenu extends Container {
 	private showAutomaticMenu(): void {
 		this.mode = "automatic";
 		const content = new Container();
-		content.addChild(new DynamicText("Automatic Theme", (text) => theme.bold(theme.fg("accent", text)), 0, 0));
+		content.addChild(new Text(theme.bold(theme.fg("accent", "Automatic Theme")), 0, 0));
 		content.addChild(new Spacer(1));
-		content.addChild(
-			new DynamicText(
-				"Choose themes for terminal light and dark appearance.",
-				(text) => theme.fg("muted", text),
-				0,
-				0,
-			),
-		);
-		content.addChild(
-			new DynamicText("Light/dark detection requires terminal support.", (text) => theme.fg("muted", text), 0, 0),
-		);
+		content.addChild(new Text(theme.fg("muted", "Choose themes for terminal light and dark appearance."), 0, 0));
+		content.addChild(new Text(theme.fg("muted", "Light/dark detection requires terminal support."), 0, 0));
 		content.addChild(new Spacer(1));
 
 		const items: SettingItem[] = [

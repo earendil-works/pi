@@ -7,7 +7,6 @@ import { Container, getKeybindings, Spacer, Text, type TUI } from "@earendil-wor
 import { theme } from "../theme/theme.ts";
 import { CountdownTimer } from "./countdown-timer.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
-import { DynamicText } from "./dynamic-text.ts";
 import { keyHint, rawKeyHint } from "./keybinding-hints.ts";
 
 export interface ExtensionSelectorOptions {
@@ -22,7 +21,7 @@ export class ExtensionSelectorComponent extends Container {
 	private listContainer: Container;
 	private onSelectCallback: (option: string) => void;
 	private onCancelCallback: () => void;
-	private titleText: DynamicText<string>;
+	private titleText: Text;
 	private baseTitle: string;
 	private countdown: CountdownTimer | undefined;
 	private onToggleToolsExpanded: (() => void) | undefined;
@@ -45,7 +44,7 @@ export class ExtensionSelectorComponent extends Container {
 		this.addChild(new DynamicBorder());
 		this.addChild(new Spacer(1));
 
-		this.titleText = new DynamicText(title, (text) => theme.fg("accent", theme.bold(text)), 1, 0);
+		this.titleText = new Text(theme.fg("accent", theme.bold(title)), 1, 0);
 		this.addChild(this.titleText);
 		this.addChild(new Spacer(1));
 
@@ -53,7 +52,7 @@ export class ExtensionSelectorComponent extends Container {
 			this.countdown = new CountdownTimer(
 				opts.timeout,
 				opts.tui,
-				(s) => this.titleText.setSource(`${this.baseTitle} (${s}s)`),
+				(s) => this.titleText.setText(theme.fg("accent", theme.bold(`${this.baseTitle} (${s}s)`))),
 				() => this.onCancelCallback(),
 			);
 		}
@@ -62,10 +61,8 @@ export class ExtensionSelectorComponent extends Container {
 		this.addChild(this.listContainer);
 		this.addChild(new Spacer(1));
 		this.addChild(
-			new DynamicText(
-				undefined,
-				() =>
-					rawKeyHint("↑↓", "navigate") +
+			new Text(
+				rawKeyHint("↑↓", "navigate") +
 					"  " +
 					keyHint("tui.select.confirm", "select") +
 					"  " +
@@ -77,11 +74,6 @@ export class ExtensionSelectorComponent extends Container {
 		this.addChild(new Spacer(1));
 		this.addChild(new DynamicBorder());
 
-		this.updateList();
-	}
-
-	override invalidate(): void {
-		super.invalidate();
 		this.updateList();
 	}
 

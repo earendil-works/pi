@@ -9,7 +9,7 @@ import type { AutocompleteProviderFactory } from "../src/core/extensions/types.t
 import type { SourceInfo } from "../src/core/source-info.ts";
 import type { AuthSelectorProvider } from "../src/modes/interactive/components/oauth-selector.ts";
 import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
-import { initTheme, setTheme, theme } from "../src/modes/interactive/theme/theme.ts";
+import { initTheme, theme } from "../src/modes/interactive/theme/theme.ts";
 
 function renderLastLine(container: Container, width = 120): string {
 	const last = container.children[container.children.length - 1];
@@ -115,36 +115,6 @@ describe("InteractiveMode.showStatus", () => {
 		// adds spacer + text
 		expect(fakeThis.chatContainer.children).toHaveLength(5);
 		expect(renderLastLine(fakeThis.chatContainer)).toContain("STATUS_TWO");
-	});
-});
-
-describe("InteractiveMode.showWarning", () => {
-	test("recolors existing warnings after invalidation", () => {
-		const fixture = {
-			chatContainer: new Container(),
-			ui: { requestRender: vi.fn() },
-		};
-		const showWarning = InteractiveMode.prototype.showWarning as unknown as (
-			this: typeof fixture,
-			warningMessage: string,
-		) => void;
-
-		initTheme("dark");
-		showWarning.call(fixture, "WARNING_TEXT");
-		const darkWarning = theme.getFgAnsi("warning");
-		expect(renderAll(fixture.chatContainer)).toContain(darkWarning);
-
-		try {
-			setTheme("light");
-			const lightWarning = theme.getFgAnsi("warning");
-			fixture.chatContainer.invalidate();
-			const output = renderAll(fixture.chatContainer);
-
-			expect(output).toContain(lightWarning);
-			expect(output).not.toContain(darkWarning);
-		} finally {
-			setTheme("dark");
-		}
 	});
 });
 

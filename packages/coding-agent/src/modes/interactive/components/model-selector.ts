@@ -15,7 +15,6 @@ import { refreshModelCatalogs } from "../model-catalog-refresh.ts";
 import { getModelSelectorSearchText } from "../model-search.ts";
 import { theme } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
-import { DynamicText } from "./dynamic-text.ts";
 import { keyHint } from "./keybinding-hints.ts";
 
 interface ModelItem {
@@ -102,7 +101,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
 			this.addChild(this.scopeHintText);
 		} else {
 			const hintText = "Only showing models from configured providers. Use /login to add providers.";
-			this.addChild(new DynamicText(hintText, (text) => theme.fg("warning", text), 0, 0));
+			this.addChild(new Text(theme.fg("warning", hintText), 0, 0));
 		}
 		this.addChild(new Spacer(1));
 
@@ -136,13 +135,6 @@ export class ModelSelectorComponent extends Container implements Focusable {
 		else this.updateList();
 		this.tui.requestRender();
 		void this.refreshModels();
-	}
-
-	override invalidate(): void {
-		super.invalidate();
-		this.scopeText?.setText(this.getScopeText());
-		this.scopeHintText?.setText(this.getScopeHintText());
-		this.updateList();
 	}
 
 	private loadModelsFromSnapshot(): void {

@@ -6,7 +6,6 @@ import {
 } from "../../../core/trust-manager.ts";
 import { theme } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
-import { DynamicText } from "./dynamic-text.ts";
 import { keyHint, rawKeyHint } from "./keybinding-hints.ts";
 
 export type TrustSelection = Pick<ProjectTrustOption, "trusted" | "updates">;
@@ -52,24 +51,21 @@ export class TrustSelectorComponent extends Container {
 
 		this.addChild(new DynamicBorder());
 		this.addChild(new Spacer(1));
-		this.addChild(new DynamicText("Project trust", (text) => theme.fg("accent", theme.bold(text)), 1, 0));
-		this.addChild(new DynamicText(options.cwd, (cwd) => theme.fg("muted", cwd), 1, 0));
+		this.addChild(new Text(theme.fg("accent", theme.bold("Project trust")), 1, 0));
+		this.addChild(new Text(theme.fg("muted", options.cwd), 1, 0));
 		this.addChild(new Spacer(1));
 		this.addChild(
-			new DynamicText(
-				formatDecision(this.trustOptions[0]?.savedPath, options.savedDecision),
-				(decision) => theme.fg("muted", `Saved decision: ${decision}`),
+			new Text(
+				theme.fg(
+					"muted",
+					`Saved decision: ${formatDecision(this.trustOptions[0]?.savedPath, options.savedDecision)}`,
+				),
 				1,
 				0,
 			),
 		);
 		this.addChild(
-			new DynamicText(
-				options.projectTrusted,
-				(trusted) => theme.fg("muted", `Current session: ${trusted ? "trusted" : "untrusted"}`),
-				1,
-				0,
-			),
+			new Text(theme.fg("muted", `Current session: ${options.projectTrusted ? "trusted" : "untrusted"}`), 1, 0),
 		);
 		this.addChild(new Spacer(1));
 
@@ -77,10 +73,8 @@ export class TrustSelectorComponent extends Container {
 		this.addChild(this.listContainer);
 		this.addChild(new Spacer(1));
 		this.addChild(
-			new DynamicText(
-				undefined,
-				() =>
-					rawKeyHint("↑↓", "navigate") +
+			new Text(
+				rawKeyHint("↑↓", "navigate") +
 					"  " +
 					keyHint("tui.select.confirm", "save") +
 					"  " +
@@ -92,11 +86,6 @@ export class TrustSelectorComponent extends Container {
 		this.addChild(new Spacer(1));
 		this.addChild(new DynamicBorder());
 
-		this.updateList();
-	}
-
-	override invalidate(): void {
-		super.invalidate();
 		this.updateList();
 	}
 

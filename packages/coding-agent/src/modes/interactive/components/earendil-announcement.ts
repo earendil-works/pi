@@ -1,9 +1,8 @@
 import * as fs from "node:fs";
-import { Container, Image, Spacer } from "@earendil-works/pi-tui";
+import { Container, Image, Spacer, Text } from "@earendil-works/pi-tui";
 import { getBundledInteractiveAssetPath } from "../../../config.ts";
 import { theme } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
-import { DynamicText } from "./dynamic-text.ts";
 
 const BLOG_URL = "https://mariozechner.at/posts/2026-04-08-ive-sold-out/";
 const IMAGE_FILENAME = "clankolas.png";
@@ -30,10 +29,10 @@ export class EarendilAnnouncementComponent extends Container {
 		super();
 
 		this.addChild(new DynamicBorder((text) => theme.fg("accent", text)));
-		this.addChild(new DynamicText("pi has joined Earendil", (text) => theme.bold(theme.fg("accent", text)), 1, 0));
+		this.addChild(new Text(theme.bold(theme.fg("accent", "pi has joined Earendil")), 1, 0));
 		this.addChild(new Spacer(1));
-		this.addChild(new DynamicText("Read the blog post:", (text) => theme.fg("muted", text), 1, 0));
-		this.addChild(new DynamicText(BLOG_URL, (url) => theme.fg("mdLink", url), 1, 0));
+		this.addChild(new Text(theme.fg("muted", "Read the blog post:"), 1, 0));
+		this.addChild(new Text(theme.fg("mdLink", BLOG_URL), 1, 0));
 		this.addChild(new Spacer(1));
 
 		const imageBase64 = loadImageBase64();
