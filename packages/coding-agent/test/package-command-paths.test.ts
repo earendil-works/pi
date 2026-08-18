@@ -659,6 +659,7 @@ fs.writeFileSync(recordPath,JSON.stringify(records));
 	});
 
 	it("retries a transient self-update version check", async () => {
+		process.env.PI_PACKAGE_DIR = join(tempDir, "node_modules", "@earendil-works", "pi-coding-agent");
 		const previousSkipVersionCheck = process.env.PI_SKIP_VERSION_CHECK;
 		delete process.env.PI_SKIP_VERSION_CHECK;
 		const fetchMock = vi
