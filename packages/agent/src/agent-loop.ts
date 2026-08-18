@@ -297,6 +297,53 @@ export async function buildProviderContext(
 	};
 }
 
+
+/**
+ * Inactivity watchdog for LLM event streams.
+ *
+ * A provider stream that stalls mid-response otherwise hangs the agent loop
+ * forever: the `for await` never resolves, no timeout exists at this layer,
+ * and callers keep rendering a live spinner over a dead turn. Each `next()`
+ * races a timer that resets on every received event; on expiry the iterator
+ * throws a `StreamStallError`, which `streamAssistantResponse` converts into
+ * a normal error-stopped assistant message so the existing error path
+ * (turn_end + agent_end, provider-error retry handling) takes over.
+ *
+ * Tune with PI_STREAM_INACTIVITY_MS (default 180000; 0 disables).
+ */
+class StreamStallError extends Error {
+	constructor(ms: number) {
+		super(`stream stalled: no events for ${Math.round(ms / 1000)}s (inactivity watchdog)`);
+		this.name = "StreamStallError";
+	}
+}
+
+function withInactivityWatchdog<T>(stream: AsyncIterable<T>): AsyncIterable<T> {
+	const ms = Number(process.env.PI_STREAM_INACTIVITY_MS ?? 180000);
+	if (!ms || Number.isNaN(ms)) return stream;
+	const inner = stream[Symbol.asyncIterator]();
+	return {
+		[Symbol.asyncIterator]() {
+			return {
+				next: async (...args: [] | [undefined]) => {
+					let timer: ReturnType<typeof setTimeout> | undefined;
+					try {
+						return await Promise.race([
+							inner.next(...args),
+							new Promise<never>((_, reject) => {
+								timer = setTimeout(() => reject(new StreamStallError(ms)), ms);
+								timer.unref?.();
+							}),
+						]);
+					} finally {
+						clearTimeout(timer);
+					}
+				},
+			};
+		},
+	};
+}
+
 /**
  * Stream an assistant response from the LLM.
  * This is where AgentMessage[] gets transformed to Message[] for the LLM.
@@ -323,7 +370,8 @@ async function streamAssistantResponse(
 	let partialMessage: AssistantMessage | null = null;
 	let addedPartial = false;
 
-	for await (const event of response) {
+	try {
+	for await (const event of withInactivityWatchdog(response)) {
 		switch (event.type) {
 			case "start":
 				partialMessage = event.partial;
@@ -367,6 +415,31 @@ async function streamAssistantResponse(
 				return finalMessage;
 			}
 		}
+	}
+	} catch (err) {
+		if (err instanceof StreamStallError) {
+			// Convert the stall into an error-stopped message: the loop's existing
+			// error handling ends the turn cleanly instead of hanging forever.
+			const base: AssistantMessage = partialMessage ?? {
+				role: "assistant",
+				content: [],
+				api: config.model.api,
+				provider: config.model.provider,
+				model: config.model.id,
+				usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+				stopReason: "error",
+			};
+			const stalled: AssistantMessage = { ...base, stopReason: "error", errorMessage: err.message };
+			if (addedPartial) {
+				context.messages[context.messages.length - 1] = stalled;
+			} else {
+				context.messages.push(stalled);
+				await emit({ type: "message_start", message: { ...stalled } });
+			}
+			await emit({ type: "message_end", message: stalled });
+			return stalled;
+		}
+		throw err;
 	}
 
 	const finalMessage = await response.result();
