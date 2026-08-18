@@ -53,11 +53,13 @@ import {
 	getAuthPath,
 	getDebugLogPath,
 	getDocsPath,
+	getModelsPath,
 	getShareViewerUrl,
 	VERSION,
 } from "../../config.ts";
 import { type AgentSession, type AgentSessionEvent, parseSkillBlock } from "../../core/agent-session.ts";
 import { type AgentSessionRuntime, SessionImportFileNotFoundError } from "../../core/agent-session-runtime.ts";
+import { AuthStorage } from "../../core/auth-storage.ts";
 import {
 	CACHE_TTL_MS,
 	type CacheMiss,
@@ -280,6 +282,39 @@ type LoginProviderCompletionOption = {
 };
 
 const AUTH_TYPE_ORDER = { oauth: 0, api_key: 1 } satisfies Record<AuthSelectorProvider["authType"], number>;
+
+// Synthetic provider IDs for the /login vendor-specific options.
+const VENDOR_OPENAI_COMPATIBLE = "__vendor_openai_compatible";
+const VENDOR_OPENAI_COMPATIBLE_PROBE = "__vendor_openai_compatible_probe";
+
+function slugFromBaseUrl(baseUrl: string): string {
+	try {
+		const url = new URL(baseUrl);
+		return url.hostname.replace(/\./g, "-").toLowerCase();
+	} catch {
+		return baseUrl
+			.replace(/^https?:\/\//, "")
+			.replace(/\/.*$/, "")
+			.replace(/[^a-zA-Z0-9-]/g, "-")
+			.replace(/^-+|-+$/g, "")
+			.toLowerCase();
+	}
+}
+
+function parseOpenaiModelsResponse(body: unknown): string[] {
+	if (typeof body !== "object" || body === null) return [];
+	const obj = body as Record<string, unknown>;
+	const data = obj.data;
+	if (!Array.isArray(data)) return [];
+	return data
+		.map((entry: unknown) => {
+			if (typeof entry !== "object" || entry === null) return undefined;
+			const e = entry as Record<string, unknown>;
+			const id = e.id;
+			return typeof id === "string" ? id : undefined;
+		})
+		.filter((id: string | undefined): id is string => id !== undefined);
+}
 
 function createFuzzyAutocompleteItems<T>(
 	items: T[],
@@ -5290,7 +5325,20 @@ export class InteractiveMode {
 				});
 			}
 		}
-		return options.sort((a, b) => a.name.localeCompare(b.name));
+		options.sort((a, b) => a.name.localeCompare(b.name));
+		if (!authType || authType === "api_key") {
+			options.push({
+				id: VENDOR_OPENAI_COMPATIBLE,
+				name: "OpenAI Compatible API",
+				authType: "api_key",
+			});
+			options.push({
+				id: VENDOR_OPENAI_COMPATIBLE_PROBE,
+				name: "OpenAI Compatible API (auto-detect models)",
+				authType: "api_key",
+			});
+		}
+		return options;
 	}
 
 	private async getLogoutProviderOptions(): Promise<AuthSelectorProvider[]> {
@@ -5341,6 +5389,14 @@ export class InteractiveMode {
 	}
 
 	private async startProviderLogin(providerOption: AuthSelectorProvider): Promise<void> {
+		if (providerOption.id === VENDOR_OPENAI_COMPATIBLE) {
+			await this.handleVendorOpenaiCompatibleLogin();
+			return;
+		}
+		if (providerOption.id === VENDOR_OPENAI_COMPATIBLE_PROBE) {
+			await this.handleVendorOpenaiCompatibleProbeLogin();
+			return;
+		}
 		if (providerOption.authType === "oauth") {
 			await this.showLoginDialog(providerOption.id, providerOption.name);
 		} else if (providerOption.method?.login) {
@@ -5660,6 +5716,289 @@ export class InteractiveMode {
 				this.showError(`Failed to save API key for ${providerName}: ${errorMsg}`);
 			}
 		}
+	}
+
+	private async handleVendorOpenaiCompatibleLogin(): Promise<void> {
+		const previousModel = this.session.model;
+		const dialog = new LoginDialogComponent(this.ui, VENDOR_OPENAI_COMPATIBLE, () => {}, "OpenAI Compatible API");
+		this.editorContainer.clear();
+		this.editorContainer.addChild(dialog);
+		this.ui.setFocus(dialog);
+		this.ui.requestRender();
+
+		const restoreEditor = () => {
+			this.editorContainer.clear();
+			this.editorContainer.addChild(this.editor);
+			this.ui.setFocus(this.editor);
+			this.ui.requestRender();
+		};
+
+		try {
+			const baseUrl = await dialog.showPrompt("Enter OpenAI-compatible base URL:", "https://api.openai.com/v1");
+			if (!baseUrl.trim()) {
+				restoreEditor();
+				this.showError("Base URL is required.");
+				return;
+			}
+
+			const modelName = await dialog.showPrompt("Enter model name:", "gpt-4o");
+			if (!modelName.trim()) {
+				restoreEditor();
+				this.showError("Model name is required.");
+				return;
+			}
+
+			const apiKey = await dialog.showPrompt("Enter API key (optional, press Enter to skip):");
+
+			const slug = slugFromBaseUrl(baseUrl);
+			const baseProviderId = `openai-${slug}`;
+			const providerId = this.uniqueProviderId(baseProviderId);
+			const trimmedModelName = modelName.trim();
+
+			const providerConfig = {
+				baseUrl: baseUrl.trim(),
+				api: "openai-completions",
+				models: [
+					{
+						id: trimmedModelName,
+						name: trimmedModelName,
+						contextWindow: 128000,
+						maxTokens: 16384,
+						input: ["text"],
+						cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+					},
+				],
+			};
+
+			this.writeModelsJsonProvider(providerId, providerConfig, apiKey.trim() || undefined);
+
+			if (apiKey.trim()) {
+				const storage = AuthStorage.create(getAuthPath());
+				await storage.modify(providerId, async () => ({
+					type: "api_key" as const,
+					key: apiKey.trim(),
+				}));
+			}
+
+			await this.session.modelRuntime.refresh({
+				providers: [providerId],
+				allowNetwork: false,
+			});
+
+			restoreEditor();
+
+			const availableModels = this.session.modelRuntime.getAvailableSnapshot();
+			const selectedModel = availableModels.find((m) => m.provider === providerId && m.id === trimmedModelName);
+			if (selectedModel && isUnknownModel(previousModel)) {
+				await this.session.setModel(selectedModel);
+				this.showStatus(
+					`Added provider "${providerId}" with model "${trimmedModelName}". Credentials saved to ${getAuthPath()}.`,
+				);
+			} else {
+				this.showStatus(
+					`Added provider "${providerId}" with model "${trimmedModelName}". Use /model to select it. Credentials saved to ${getAuthPath()}.`,
+				);
+			}
+		} catch (error: unknown) {
+			restoreEditor();
+			if (error instanceof Error && error.message !== "Login cancelled") {
+				this.showError(`Failed to add OpenAI-compatible provider: ${error.message}`);
+			}
+		}
+	}
+
+	private async handleVendorOpenaiCompatibleProbeLogin(): Promise<void> {
+		const previousModel = this.session.model;
+		const dialog = new LoginDialogComponent(
+			this.ui,
+			VENDOR_OPENAI_COMPATIBLE_PROBE,
+			() => {},
+			"OpenAI Compatible API (auto-detect models)",
+		);
+		this.editorContainer.clear();
+		this.editorContainer.addChild(dialog);
+		this.ui.setFocus(dialog);
+		this.ui.requestRender();
+
+		const restoreEditor = () => {
+			this.editorContainer.clear();
+			this.editorContainer.addChild(this.editor);
+			this.ui.setFocus(this.editor);
+			this.ui.requestRender();
+		};
+
+		try {
+			const baseUrl = await dialog.showPrompt("Enter OpenAI-compatible base URL:", "https://api.openai.com/v1");
+			if (!baseUrl.trim()) {
+				restoreEditor();
+				this.showError("Base URL is required.");
+				return;
+			}
+
+			const apiKey = await dialog.showPrompt("Enter API key (optional, press Enter to skip):");
+
+			dialog.showProgress("Probing /models endpoint...");
+			const trimmedBaseUrl = baseUrl.trim();
+			const trimmedApiKey = apiKey.trim() || undefined;
+
+			const modelsEndpoint = `${trimmedBaseUrl.replace(/\/+$/, "")}/models`;
+
+			const headers: Record<string, string> = {
+				"Content-Type": "application/json",
+			};
+			if (trimmedApiKey) {
+				headers.Authorization = `Bearer ${trimmedApiKey}`;
+			}
+
+			let response: Response;
+			try {
+				response = await fetch(modelsEndpoint, { headers, signal: AbortSignal.timeout(15_000) });
+			} catch (fetchError: unknown) {
+				restoreEditor();
+				this.showError(
+					`Failed to probe /models endpoint: ${fetchError instanceof Error ? fetchError.message : String(fetchError)}`,
+				);
+				return;
+			}
+
+			if (!response.ok) {
+				restoreEditor();
+				this.showError(
+					`/models endpoint returned ${response.status}: ${response.statusText}. Check the base URL and try again with a different endpoint.`,
+				);
+				return;
+			}
+
+			let body: unknown;
+			try {
+				body = (await response.json()) as unknown;
+			} catch {
+				restoreEditor();
+				this.showError("Failed to parse /models response as JSON.");
+				return;
+			}
+
+			const modelIds = parseOpenaiModelsResponse(body);
+			if (modelIds.length === 0) {
+				restoreEditor();
+				this.showError("No models found in the /models response.");
+				return;
+			}
+
+			const slug = slugFromBaseUrl(trimmedBaseUrl);
+			const baseProviderId = `openai-${slug}`;
+			const providerId = this.uniqueProviderId(baseProviderId);
+
+			const modelDefs = modelIds.map((modelId) => ({
+				id: modelId,
+				name: modelId,
+				contextWindow: 128000,
+				maxTokens: 16384,
+				input: ["text"],
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			}));
+
+			const providerConfig = {
+				baseUrl: trimmedBaseUrl,
+				api: "openai-completions",
+				models: modelDefs,
+			};
+
+			this.writeModelsJsonProvider(providerId, providerConfig, trimmedApiKey);
+
+			if (trimmedApiKey) {
+				const storage = AuthStorage.create(getAuthPath());
+				await storage.modify(providerId, async () => ({
+					type: "api_key" as const,
+					key: trimmedApiKey,
+				}));
+			}
+
+			await this.session.modelRuntime.refresh({
+				providers: [providerId],
+				allowNetwork: false,
+			});
+
+			restoreEditor();
+
+			const firstModel = modelDefs[0];
+			if (firstModel && isUnknownModel(previousModel)) {
+				const availableModels = this.session.modelRuntime.getAvailableSnapshot();
+				const selectedModel = availableModels.find((m) => m.provider === providerId && m.id === firstModel.id);
+				if (selectedModel) {
+					await this.session.setModel(selectedModel);
+				}
+			}
+
+			const summary = `Added provider "${providerId}" with ${modelIds.length} model${modelIds.length > 1 ? "s" : ""}: ${modelIds.join(", ")}`;
+			this.showStatus(summary);
+		} catch (error: unknown) {
+			restoreEditor();
+			if (error instanceof Error && error.message !== "Login cancelled") {
+				this.showError(`Failed to add OpenAI-compatible provider: ${error.message}`);
+			}
+		}
+	}
+
+	private writeModelsJsonProvider(
+		providerId: string,
+		newProvider: {
+			baseUrl: string;
+			api: string;
+			models: Array<{
+				id: string;
+				name: string;
+				contextWindow: number;
+				maxTokens: number;
+				input: string[];
+				cost: { input: number; output: number; cacheRead: number; cacheWrite: number };
+			}>;
+		},
+		apiKey?: string,
+	): void {
+		const modelsPath = getModelsPath();
+		let existing: { providers?: Record<string, unknown> } = {};
+		try {
+			const content = fs.readFileSync(modelsPath, "utf-8");
+			existing = JSON.parse(content) as { providers?: Record<string, unknown> };
+		} catch {
+			// File doesn't exist or is invalid — start fresh
+			existing = {};
+		}
+
+		const providers = existing.providers ?? {};
+		const providerEntry: Record<string, unknown> = {
+			name: providerId,
+			baseUrl: newProvider.baseUrl,
+			api: newProvider.api,
+			models: newProvider.models,
+		};
+		if (apiKey) {
+			providerEntry.apiKey = apiKey;
+		}
+		providers[providerId] = providerEntry;
+
+		existing.providers = providers;
+		fs.writeFileSync(modelsPath, `${JSON.stringify(existing, null, 2)}\n`, "utf-8");
+	}
+
+	private uniqueProviderId(baseProviderId: string): string {
+		const modelsPath = getModelsPath();
+		let existing: { providers?: Record<string, unknown> } = {};
+		try {
+			const content = fs.readFileSync(modelsPath, "utf-8");
+			existing = JSON.parse(content) as { providers?: Record<string, unknown> };
+		} catch {
+			return baseProviderId;
+		}
+		if (!existing.providers || existing.providers[baseProviderId] === undefined) {
+			return baseProviderId;
+		}
+		let suffix = 2;
+		while (existing.providers[`${baseProviderId}-${suffix}`] !== undefined) {
+			suffix++;
+		}
+		return `${baseProviderId}-${suffix}`;
 	}
 
 	private showAuthSelect(
