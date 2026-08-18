@@ -45,6 +45,10 @@ export class FirstTimeSetupComponent extends Container {
 		this.update();
 	}
 
+	override invalidate(): void {
+		this.update();
+	}
+
 	// Rebuild the whole dialog on every change so theme previews recolor all text.
 	private update(): void {
 		this.clear();

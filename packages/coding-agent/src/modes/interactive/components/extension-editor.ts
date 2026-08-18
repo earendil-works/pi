@@ -10,13 +10,13 @@ import {
 	type Focusable,
 	getKeybindings,
 	Spacer,
-	Text,
 	type TUI,
 } from "@earendil-works/pi-tui";
 import type { KeybindingsManager } from "../../../core/keybindings.ts";
 import { editInExternalEditor } from "../external-editor.ts";
 import { getEditorTheme, theme } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
+import { DynamicText } from "./dynamic-text.ts";
 import { keyHint } from "./keybinding-hints.ts";
 
 export class ExtensionEditorComponent extends Container implements Focusable {
@@ -63,7 +63,7 @@ export class ExtensionEditorComponent extends Container implements Focusable {
 		this.addChild(new Spacer(1));
 
 		// Add title
-		this.addChild(new Text(theme.fg("accent", title), 1, 0));
+		this.addChild(new DynamicText(title, (text) => theme.fg("accent", text), 1, 0));
 		this.addChild(new Spacer(1));
 
 		// Create editor
@@ -80,14 +80,20 @@ export class ExtensionEditorComponent extends Container implements Focusable {
 		this.addChild(new Spacer(1));
 
 		// Add hint
-		const hint =
-			keyHint("tui.select.confirm", "submit") +
-			"  " +
-			keyHint("tui.input.newLine", "newline") +
-			"  " +
-			keyHint("tui.select.cancel", "cancel") +
-			`  ${keyHint("app.editor.external", "external editor")}`;
-		this.addChild(new Text(hint, 1, 0));
+		this.addChild(
+			new DynamicText(
+				undefined,
+				() =>
+					keyHint("tui.select.confirm", "submit") +
+					"  " +
+					keyHint("tui.input.newLine", "newline") +
+					"  " +
+					keyHint("tui.select.cancel", "cancel") +
+					`  ${keyHint("app.editor.external", "external editor")}`,
+				1,
+				0,
+			),
+		);
 
 		this.addChild(new Spacer(1));
 

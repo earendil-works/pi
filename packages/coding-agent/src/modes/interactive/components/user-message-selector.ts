@@ -1,6 +1,7 @@
 import { type Component, Container, getKeybindings, Spacer, Text, truncateToWidth } from "@earendil-works/pi-tui";
 import { theme } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
+import { DynamicText } from "./dynamic-text.ts";
 
 interface UserMessageItem {
 	id: string; // Entry ID in the session
@@ -122,8 +123,9 @@ export class UserMessageSelectorComponent extends Container {
 		this.addChild(new Spacer(1));
 		this.addChild(new Text(theme.bold("Fork from Message"), 1, 0));
 		this.addChild(
-			new Text(
-				theme.fg("muted", "Select a user message to copy the active path up to that point into a new session"),
+			new DynamicText(
+				"Select a user message to copy the active path up to that point into a new session",
+				(text) => theme.fg("muted", text),
 				1,
 				0,
 			),

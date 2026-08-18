@@ -18,6 +18,7 @@ import type { SessionInfo, SessionListProgress } from "../../../core/session-man
 import { canonicalizePath as _canonicalizePath } from "../../../utils/paths.ts";
 import { theme } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
+import { DynamicText } from "./dynamic-text.ts";
 import { keyHint, keyText } from "./keybinding-hints.ts";
 import { filterAndSortSessions, hasSessionName, type NameFilter, type SortMode } from "./session-selector-search.ts";
 
@@ -875,8 +876,13 @@ export class SessionSelectorComponent extends Container implements Focusable {
 		panel.addChild(this.renameInput);
 		panel.addChild(new Spacer(1));
 		panel.addChild(
-			new Text(
-				theme.fg("muted", `${keyText("tui.select.confirm")} to save · ${keyText("tui.select.cancel")} to cancel`),
+			new DynamicText(
+				undefined,
+				() =>
+					theme.fg(
+						"muted",
+						`${keyText("tui.select.confirm")} to save · ${keyText("tui.select.cancel")} to cancel`,
+					),
 				1,
 				0,
 			),
