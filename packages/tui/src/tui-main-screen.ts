@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { performance } from "node:perf_hooks";
 import { deleteKittyImage, isImageLine } from "./terminal-image.ts";
 import { type TUI, TuiBase, type TuiStopOptions } from "./tui.ts";
 import { visibleWidth } from "./utils.ts";
@@ -194,7 +195,10 @@ export class TuiMainScreen extends TuiBase implements TUI {
 		};
 
 		// Render all components to get new lines
-		let newLines = this.render(width);
+		let newLines = this.render(width, {
+			deadline: performance.now() + 8,
+			requestRender: () => this.requestRender(),
+		});
 
 		// Composite overlays into the rendered lines (before differential compare)
 		if (this.hasOverlayEntries) {

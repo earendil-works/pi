@@ -38,6 +38,30 @@ function stripAnsi(line: string): string {
 
 describe("Markdown component", () => {
 	describe("Transforms", () => {
+		it("yields large Markdown rendering and resumes on a later frame", () => {
+			const source = Array.from({ length: 10_000 }, (_, index) => `line ${index}`).join("\n");
+			const markdown = new Markdown(source, 0, 0, defaultMarkdownTheme);
+			let requestedFrames = 0;
+
+			const partial = markdown.render(80, {
+				deadline: Number.NEGATIVE_INFINITY,
+				requestRender: () => {
+					requestedFrames++;
+				},
+			});
+			assert.deepStrictEqual(partial, []);
+			assert.equal(requestedFrames, 1);
+
+			const complete = markdown.render(80, {
+				deadline: Number.POSITIVE_INFINITY,
+				requestRender: () => {
+					requestedFrames++;
+				},
+			});
+			assert.equal(complete.length, 10_000);
+			assert.equal(stripAnsi(complete[9_999]).trim(), "line 9999");
+		});
+
 		it("caches transformed Markdown by source and available width", () => {
 			const calls: Array<{ source: string; availableWidth: number }> = [];
 			const markdown = new Markdown("source", 2, 0, defaultMarkdownTheme, undefined, {

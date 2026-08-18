@@ -20,13 +20,21 @@ import { extractSegments, normalizeTerminalOutput, sliceByColumn, sliceWithWidth
 /**
  * Component interface - all components must implement this
  */
+export interface RenderContext {
+	/** Request another frame after yielding from a long render. */
+	requestRender: () => void;
+	/** Monotonic deadline for cooperative work in the current frame. */
+	deadline: number;
+}
+
 export interface Component {
 	/**
 	 * Render the component to lines for the given viewport width
 	 * @param width - Current viewport width
+	 * @param context - Optional cooperative rendering budget
 	 * @returns Array of strings, each representing a line
 	 */
-	render(width: number): string[];
+	render(width: number, context?: RenderContext): string[];
 
 	/**
 	 * Optional handler for keyboard input when component has focus
@@ -232,10 +240,10 @@ export class Container implements Component {
 		}
 	}
 
-	render(width: number): string[] {
+	render(width: number, context?: RenderContext): string[] {
 		const lines: string[] = [];
 		for (const child of this.children) {
-			const childLines = child.render(width);
+			const childLines = child.render(width, context);
 			for (const line of childLines) {
 				lines.push(line);
 			}

@@ -1,8 +1,9 @@
+import { performance } from "node:perf_hooks";
 import type { ScrollView } from "./components/scroll-view.ts";
 import { allocateStackSizes, visibleStackEntries } from "./components/stack.ts";
 import { getLayoutNode } from "./layout-node.ts";
 import { cropKittyImageLine, getKittyImageMetadata, isImageLine } from "./terminal-image.ts";
-import { type Component, CURSOR_MARKER, compositeTuiLine } from "./tui.ts";
+import { type Component, CURSOR_MARKER, compositeTuiLine, type RenderContext } from "./tui.ts";
 import { extractAnsiCode, getGraphemeCellRange, sliceByColumn, visibleWidth } from "./utils.ts";
 
 const OSC133_ZONE_PREFIX = /^(?:\x1b\]133;[ABC](?:\x07|\x1b\\))+/;
@@ -68,7 +69,11 @@ function renderCached(context: LayoutContext, component: Component, width: numbe
 	}
 	let lines = widths.get(safeWidth);
 	if (!lines) {
-		lines = component.render(safeWidth);
+		const renderContext: RenderContext = {
+			requestRender: context.requestRender,
+			deadline: performance.now() + 8,
+		};
+		lines = component.render(safeWidth, renderContext);
 		widths.set(safeWidth, lines);
 	}
 	return lines;

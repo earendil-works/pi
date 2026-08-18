@@ -1,7 +1,8 @@
+import { performance } from "node:perf_hooks";
 import { Marked, type Token, Tokenizer, type TokenizerExtension, type Tokens } from "marked";
 import { renderLatex } from "../latex.ts";
 import { getCapabilities, hyperlink, isImageLine } from "../terminal-image.ts";
-import type { Component } from "../tui.ts";
+import type { Component, RenderContext } from "../tui.ts";
 import { applyBackgroundToLine, visibleWidth, wrapTextWithAnsi } from "../utils.ts";
 
 const STRICT_STRIKETHROUGH_REGEX = /^(~~)(?=[^\s~])((?:\\.|[^\\])*?(?:\\.|[^\s~\\]))\1(?=[^~]|$)/;
@@ -233,6 +234,18 @@ interface InlineStyleContext {
 	stylePrefix: string;
 }
 
+interface ProgressiveRender {
+	text: string;
+	width: number;
+	tokens: Token[];
+	tokenIndex: number;
+	renderedLines: string[];
+	wrapIndex: number;
+	wrappedLines: string[];
+	styleIndex: number;
+	contentLines: string[];
+}
+
 export class Markdown implements Component {
 	private text: string;
 	private paddingX: number; // Left/right padding
@@ -246,6 +259,7 @@ export class Markdown implements Component {
 	private cachedText?: string;
 	private cachedWidth?: number;
 	private cachedLines?: string[];
+	private progressiveRender?: ProgressiveRender;
 
 	constructor(
 		text: string,
@@ -272,100 +286,105 @@ export class Markdown implements Component {
 		this.cachedText = undefined;
 		this.cachedWidth = undefined;
 		this.cachedLines = undefined;
+		this.progressiveRender = undefined;
 	}
 
-	render(width: number): string[] {
-		// Check cache
+	render(width: number, context?: RenderContext): string[] {
 		if (this.cachedLines && this.cachedText === this.text && this.cachedWidth === width) {
 			return this.cachedLines;
 		}
 
-		// Calculate available width for content (subtract horizontal padding)
 		const contentWidth = Math.max(1, width - this.paddingX * 2);
 		const text = this.options.transform?.(this.text, contentWidth) ?? this.text;
-
-		// Don't render anything if there's no actual text
 		if (!text || text.trim() === "") {
 			const result: string[] = [];
-			// Update cache
 			this.cachedText = this.text;
 			this.cachedWidth = width;
 			this.cachedLines = result;
 			return result;
 		}
 
-		// Replace tabs with 3 spaces for consistent rendering
 		const normalizedText = text.replace(/\t/g, "   ");
-
-		// Parse markdown to HTML-like tokens
-		const tokens = markdownParser.lexer(normalizedText);
-		trimPartialClosingFences(tokens);
-
-		// Convert tokens to styled terminal output
-		const renderedLines: string[] = [];
-
-		for (let i = 0; i < tokens.length; i++) {
-			const token = tokens[i];
-			const nextToken = tokens[i + 1];
-			const tokenLines = this.renderToken(token, contentWidth, nextToken?.type);
-			for (const tokenLine of tokenLines) {
-				renderedLines.push(tokenLine);
-			}
+		if (
+			!this.progressiveRender ||
+			this.progressiveRender.text !== normalizedText ||
+			this.progressiveRender.width !== width
+		) {
+			const tokens = markdownParser.lexer(normalizedText);
+			trimPartialClosingFences(tokens);
+			this.progressiveRender = {
+				text: normalizedText,
+				width,
+				tokens,
+				tokenIndex: 0,
+				renderedLines: [],
+				wrapIndex: 0,
+				wrappedLines: [],
+				styleIndex: 0,
+				contentLines: [],
+			};
 		}
 
-		// Wrap lines (NO padding, NO background yet)
-		const wrappedLines: string[] = [];
-		for (const line of renderedLines) {
-			if (isImageLine(line)) {
-				wrappedLines.push(line);
-			} else {
-				for (const wrappedLine of wrapTextWithAnsi(line, contentWidth)) {
-					wrappedLines.push(wrappedLine);
-				}
-			}
+		const state = this.progressiveRender;
+		const deadline = context?.deadline ?? Number.POSITIVE_INFINITY;
+		while (state.tokenIndex < state.tokens.length && performance.now() < deadline) {
+			const index = state.tokenIndex++;
+			state.renderedLines.push(
+				...this.renderToken(state.tokens[index], contentWidth, state.tokens[index + 1]?.type),
+			);
+		}
+		while (
+			state.tokenIndex === state.tokens.length &&
+			state.wrapIndex < state.renderedLines.length &&
+			performance.now() < deadline
+		) {
+			const line = state.renderedLines[state.wrapIndex++];
+			state.wrappedLines.push(...(isImageLine(line) ? [line] : wrapTextWithAnsi(line, contentWidth)));
 		}
 
-		// Add margins and background to each wrapped line
 		const leftMargin = " ".repeat(this.paddingX);
 		const rightMargin = " ".repeat(this.paddingX);
 		const bgFn = this.defaultTextStyle?.bgColor;
-		const contentLines: string[] = [];
-
-		for (const line of wrappedLines) {
+		while (
+			state.wrapIndex === state.renderedLines.length &&
+			state.styleIndex < state.wrappedLines.length &&
+			performance.now() < deadline
+		) {
+			const line = state.wrappedLines[state.styleIndex++];
 			if (isImageLine(line)) {
-				contentLines.push(line);
+				state.contentLines.push(line);
 				continue;
 			}
-
 			const lineWithMargins = leftMargin + line + rightMargin;
-
-			if (bgFn) {
-				contentLines.push(applyBackgroundToLine(lineWithMargins, width, bgFn));
-			} else {
-				// No background - just pad to width
-				const visibleLen = visibleWidth(lineWithMargins);
-				const paddingNeeded = Math.max(0, width - visibleLen);
-				contentLines.push(lineWithMargins + " ".repeat(paddingNeeded));
-			}
+			state.contentLines.push(
+				bgFn
+					? applyBackgroundToLine(lineWithMargins, width, bgFn)
+					: lineWithMargins + " ".repeat(Math.max(0, width - visibleWidth(lineWithMargins))),
+			);
 		}
 
-		// Add top/bottom padding (empty lines)
-		const emptyLine = " ".repeat(width);
-		const emptyLines: string[] = [];
-		for (let i = 0; i < this.paddingY; i++) {
-			const line = bgFn ? applyBackgroundToLine(emptyLine, width, bgFn) : emptyLine;
-			emptyLines.push(line);
+		if (
+			state.tokenIndex < state.tokens.length ||
+			state.wrapIndex < state.renderedLines.length ||
+			state.styleIndex < state.wrappedLines.length
+		) {
+			context?.requestRender();
+			return this.withPadding(state.contentLines, width, bgFn);
 		}
 
-		// Combine top padding, content, and bottom padding
-		const result = emptyLines.concat(contentLines, emptyLines);
-
-		// Update cache
+		const result = this.withPadding(state.contentLines, width, bgFn);
 		this.cachedText = this.text;
 		this.cachedWidth = width;
 		this.cachedLines = result;
-
+		this.progressiveRender = undefined;
 		return result.length > 0 ? result : [""];
+	}
+
+	private withPadding(contentLines: readonly string[], width: number, bgFn: DefaultTextStyle["bgColor"]): string[] {
+		const emptyLine = " ".repeat(width);
+		const paddingLine = bgFn ? applyBackgroundToLine(emptyLine, width, bgFn) : emptyLine;
+		const padding = Array.from({ length: this.paddingY }, () => paddingLine);
+		return [...padding, ...contentLines, ...padding];
 	}
 
 	/**
