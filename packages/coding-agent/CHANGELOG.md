@@ -1,6 +1,44 @@
 # Changelog
 
+> **Fork notice:** this is the closed-network fork
+> [tculpepp/secure-pi-mono](https://github.com/tculpepp/secure-pi-mono). Entries below
+> the fork section are upstream's; issue links point at
+> [earendil-works/pi](https://github.com/earendil-works/pi).
+
 ## [Unreleased]
+
+### Fork: closed-network and secureMode (synced with upstream v0.84.2)
+
+#### Added
+
+- `secureMode` setting, enabled by default: only providers with an explicit `baseUrl` in
+  `models.json` may be listed or used, so built-in commercial cloud endpoints are blocked
+  unless redirected to internal infrastructure. Disable with `"secureMode": false` in
+  `settings.json`.
+- Enforcement now lives in `ModelRuntime`, including a gate in `prepareRequest()` so a
+  blocked provider cannot send a request even when a model reference is obtained through
+  an unguarded path. `ModelRegistry` re-exports `setSecureMode`, `getSecureMode`, and
+  `isProviderAllowed` for extensions.
+- `CreateModelRuntimeOptions.modelNetworkEnabled`, defaulting closed whenever
+  `SPI_OFFLINE` is set.
+
+#### Changed
+
+- Outbound non-LLM calls are off permanently: `main()` forces `SPI_OFFLINE` and
+  `SPI_SKIP_VERSION_CHECK`, and `ModelRuntime.refresh()` treats the offline flag as a
+  ceiling, so a caller passing `allowNetwork: true` cannot punch through.
+- `/share` is refused, since it uploads the transcript to a GitHub gist.
+- The RPC background model-catalog refresh is removed as unreachable in closed-network
+  mode.
+- `update --extensions` no longer reaches the package manager, a consequence of forcing
+  `SPI_OFFLINE`.
+- CLI renamed `pi` to `spi`; config directory `.pi/` to `.spi/`; environment variables
+  `PI_*` to `SPI_*`; packages `@earendil-works/pi-*` to `@tculpepp/spi-*`.
+- Extension manifests prefer the `spi` key and still accept upstream's `pi` key. The
+  extension loader resolves `@earendil-works/pi-*` and legacy `@mariozechner/pi-*`
+  specifiers alongside `@tculpepp/spi-*`.
+
+### Upstream
 
 ### Added
 

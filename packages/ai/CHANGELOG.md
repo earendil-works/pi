@@ -1,5 +1,10 @@
 # Changelog
 
+> **Fork notice:** this is the closed-network fork
+> [tculpepp/secure-pi-mono](https://github.com/tculpepp/secure-pi-mono), published as
+> `@tculpepp/spi-*`. Entries below are upstream's; issue links point at
+> [earendil-works/pi](https://github.com/earendil-works/pi).
+
 ## [Unreleased]
 
 ### Breaking Changes
