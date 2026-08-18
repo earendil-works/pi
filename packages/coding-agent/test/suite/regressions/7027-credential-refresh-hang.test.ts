@@ -62,7 +62,15 @@ describe("issues #7027 and #7113 credential refresh hang", () => {
 			},
 		};
 		const credentials = AuthStorage.inMemory();
-		const runtime = await ModelRuntime.create({ credentials, modelsPath: null, allowModelNetwork: false });
+		// Reproduces a stalled *network* catalog refresh, so lift the offline
+		// ceiling the coding-agent suite sets via SPI_OFFLINE.
+		const runtime = await ModelRuntime.create({
+			secureMode: false,
+			modelNetworkEnabled: true,
+			credentials,
+			modelsPath: null,
+			allowModelNetwork: false,
+		});
 		runtime.registerNativeProvider(provider);
 		await runtime.refresh({ allowNetwork: false, providers: [provider.id] });
 

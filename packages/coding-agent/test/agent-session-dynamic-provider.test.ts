@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Provider } from "@tculpepp/spi-ai";
@@ -51,11 +51,16 @@ describe("AgentSession dynamic provider registration", () => {
 	});
 
 	async function createSession(extensionFactories: ExtensionFactory[]) {
+		// This exercises upstream provider registration, so opt out of the
+		// fork's secureMode; createAgentSession applies the setting to the
+		// runtime it is handed.
+		writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ secureMode: false }));
 		const settingsManager = SettingsManager.create(tempDir, agentDir);
 		const sessionManager = SessionManager.inMemory();
 		const authStorage = AuthStorage.create(join(agentDir, "auth.json"));
 		await authStorage.modify("anthropic", async () => ({ type: "api_key", key: "test-key" }));
 		const modelRuntime = await ModelRuntime.create({
+			secureMode: false,
 			credentials: authStorage,
 			modelsPath: join(agentDir, "models.json"),
 		});

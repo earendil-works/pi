@@ -11,20 +11,33 @@ function wrap(runtime: ModelRuntime): ModelRegistry {
 	return registry;
 }
 
-/** Load optional models.json configuration without introducing file-backed catalog locks into unit tests. */
-export async function createModelRegistry(credentials: CredentialStore, modelsPath?: string): Promise<ModelRegistry> {
+/**
+ * Load optional models.json configuration without introducing file-backed catalog locks into unit tests.
+ *
+ * secureMode is off here so these helpers exercise upstream provider behaviour.
+ * The closed-network policy has its own coverage in secure-mode.test.ts.
+ */
+export async function createModelRegistry(
+	credentials: CredentialStore,
+	modelsPath?: string,
+	secureMode = false,
+): Promise<ModelRegistry> {
 	return wrap(
 		await ModelRuntime.create({
 			credentials,
 			modelsPath,
 			modelsStore: new InMemoryCodingAgentModelsStore(),
 			allowModelNetwork: false,
+			secureMode,
 		}),
 	);
 }
 
-export async function createInMemoryModelRegistry(credentials: CredentialStore): Promise<ModelRegistry> {
-	return wrap(await ModelRuntime.create({ credentials, modelsPath: null, allowModelNetwork: false }));
+export async function createInMemoryModelRegistry(
+	credentials: CredentialStore,
+	secureMode = false,
+): Promise<ModelRegistry> {
+	return wrap(await ModelRuntime.create({ credentials, modelsPath: null, allowModelNetwork: false, secureMode }));
 }
 
 export function getModelRuntime(modelRegistry: ModelRegistry): ModelRuntime {

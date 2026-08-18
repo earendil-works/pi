@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -91,6 +91,8 @@ describe("createAgentSession provider attribution headers", () => {
 			sessionId?: string;
 		} = {},
 	): Promise<ProviderHeaders | undefined> {
+		// Exercises upstream attribution headers, not the fork's provider policy.
+		writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ secureMode: false }));
 		const settingsManager = SettingsManager.create(cwd, agentDir);
 		if (options.telemetryEnabled === false) {
 			settingsManager.setEnableInstallTelemetry(false);

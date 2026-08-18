@@ -311,6 +311,7 @@ describe("resolveCliModel", () => {
 	test("resolves --model provider/id without --provider", () => {
 		const registry = {
 			getModels: () => allModels,
+			isProviderAllowed: () => true,
 		} as unknown as Parameters<typeof resolveCliModel>[0]["modelRuntime"];
 
 		const result = resolveCliModel({
@@ -326,6 +327,7 @@ describe("resolveCliModel", () => {
 	test("resolves fuzzy patterns within an explicit provider", () => {
 		const registry = {
 			getModels: () => allModels,
+			isProviderAllowed: () => true,
 		} as unknown as Parameters<typeof resolveCliModel>[0]["modelRuntime"];
 
 		const result = resolveCliModel({
@@ -342,6 +344,7 @@ describe("resolveCliModel", () => {
 	test("supports --model <pattern>:<thinking> (without explicit --thinking)", () => {
 		const registry = {
 			getModels: () => allModels,
+			isProviderAllowed: () => true,
 		} as unknown as Parameters<typeof resolveCliModel>[0]["modelRuntime"];
 
 		const result = resolveCliModel({
@@ -357,6 +360,7 @@ describe("resolveCliModel", () => {
 	test("prefers exact model id match over provider inference (OpenRouter-style ids)", () => {
 		const registry = {
 			getModels: () => allModels,
+			isProviderAllowed: () => true,
 		} as unknown as Parameters<typeof resolveCliModel>[0]["modelRuntime"];
 
 		const result = resolveCliModel({
@@ -372,6 +376,7 @@ describe("resolveCliModel", () => {
 	test("does not strip invalid :suffix as thinking level in --model (treat as raw id)", () => {
 		const registry = {
 			getModels: () => allModels,
+			isProviderAllowed: () => true,
 		} as unknown as Parameters<typeof resolveCliModel>[0]["modelRuntime"];
 
 		const result = resolveCliModel({
@@ -388,6 +393,7 @@ describe("resolveCliModel", () => {
 	test("allows custom model ids for explicit providers without double prefixing", () => {
 		const registry = {
 			getModels: () => allModels,
+			isProviderAllowed: () => true,
 		} as unknown as Parameters<typeof resolveCliModel>[0]["modelRuntime"];
 
 		const result = resolveCliModel({
@@ -404,6 +410,7 @@ describe("resolveCliModel", () => {
 	test("returns a clear error when there are no models", () => {
 		const registry = {
 			getModels: () => [],
+			isProviderAllowed: () => true,
 		} as unknown as Parameters<typeof resolveCliModel>[0]["modelRuntime"];
 
 		const result = resolveCliModel({
@@ -432,6 +439,7 @@ describe("resolveCliModel", () => {
 		const registry = {
 			getModels: () => [azureModel, codexModel],
 			hasConfiguredAuth: (provider: string) => provider === "openai-codex",
+			isProviderAllowed: () => true,
 		} as unknown as Parameters<typeof resolveCliModel>[0]["modelRuntime"];
 
 		const result = resolveCliModel({
@@ -460,6 +468,7 @@ describe("resolveCliModel", () => {
 		const registry = {
 			getModels: () => [azureModel, codexModel],
 			hasConfiguredAuth: () => false,
+			isProviderAllowed: () => true,
 		} as unknown as Parameters<typeof resolveCliModel>[0]["modelRuntime"];
 
 		const result = resolveCliModel({
@@ -504,6 +513,7 @@ describe("resolveCliModel", () => {
 		const registry = {
 			getModels: () => [...allModels, zaiModel, gatewayModel],
 			hasConfiguredAuth: () => true,
+			isProviderAllowed: () => true,
 		} as unknown as Parameters<typeof resolveCliModel>[0]["modelRuntime"];
 
 		const result = resolveCliModel({
@@ -544,6 +554,7 @@ describe("resolveCliModel", () => {
 		const registry = {
 			getModels: () => [...allModels, commandcodeModel, xiaomiModel],
 			hasConfiguredAuth: (provider: string) => provider === "commandcode",
+			isProviderAllowed: () => true,
 		} as unknown as Parameters<typeof resolveCliModel>[0]["modelRuntime"];
 
 		const result = resolveCliModel({
@@ -559,6 +570,7 @@ describe("resolveCliModel", () => {
 	test("resolves provider-prefixed fuzzy patterns (openrouter/qwen -> openrouter model)", () => {
 		const registry = {
 			getModels: () => allModels,
+			isProviderAllowed: () => true,
 		} as unknown as Parameters<typeof resolveCliModel>[0]["modelRuntime"];
 
 		const result = resolveCliModel({
@@ -592,6 +604,7 @@ describe("resolveCliModel", () => {
 		test("strips :thinking suffix from custom model id in fallback path", () => {
 			const registry = {
 				getModels: () => modelsWithNeuralwatt,
+				isProviderAllowed: () => true,
 			} as unknown as Parameters<typeof resolveCliModel>[0]["modelRuntime"];
 
 			const result = resolveCliModel({
@@ -610,6 +623,7 @@ describe("resolveCliModel", () => {
 		test("custom model without thinking suffix works normally in fallback path", () => {
 			const registry = {
 				getModels: () => modelsWithNeuralwatt,
+				isProviderAllowed: () => true,
 			} as unknown as Parameters<typeof resolveCliModel>[0]["modelRuntime"];
 
 			const result = resolveCliModel({
@@ -626,6 +640,7 @@ describe("resolveCliModel", () => {
 		test("all valid thinking levels work in fallback path", () => {
 			const registry = {
 				getModels: () => modelsWithNeuralwatt,
+				isProviderAllowed: () => true,
 			} as unknown as Parameters<typeof resolveCliModel>[0]["modelRuntime"];
 
 			for (const level of ["off", "minimal", "low", "medium", "high", "xhigh", "max"]) {
@@ -643,6 +658,7 @@ describe("resolveCliModel", () => {
 		test("invalid thinking suffix on custom model is treated as part of model id", () => {
 			const registry = {
 				getModels: () => modelsWithNeuralwatt,
+				isProviderAllowed: () => true,
 			} as unknown as Parameters<typeof resolveCliModel>[0]["modelRuntime"];
 
 			const result = resolveCliModel({
@@ -660,6 +676,7 @@ describe("resolveCliModel", () => {
 		test("explicit --provider with custom model:thinking strips suffix correctly", () => {
 			const registry = {
 				getModels: () => modelsWithNeuralwatt,
+				isProviderAllowed: () => true,
 			} as unknown as Parameters<typeof resolveCliModel>[0]["modelRuntime"];
 
 			const result = resolveCliModel({
@@ -677,6 +694,7 @@ describe("resolveCliModel", () => {
 		test("with explicit --thinking, :suffix is kept as part of model id", () => {
 			const registry = {
 				getModels: () => modelsWithNeuralwatt,
+				isProviderAllowed: () => true,
 			} as unknown as Parameters<typeof resolveCliModel>[0]["modelRuntime"];
 
 			const result = resolveCliModel({
@@ -734,6 +752,7 @@ describe("default model selection", () => {
 	test("findInitialModel accepts explicit provider custom model ids", async () => {
 		const registry = {
 			getModels: () => allModels,
+			isProviderAllowed: () => true,
 		} as unknown as Parameters<typeof findInitialModel>[0]["modelRuntime"];
 
 		const result = await findInitialModel({
@@ -764,6 +783,7 @@ describe("default model selection", () => {
 
 		const registry = {
 			getAvailableSnapshot: () => [aiGatewayModel],
+			isProviderAllowed: () => true,
 		} as unknown as Parameters<typeof findInitialModel>[0]["modelRuntime"];
 
 		const result = await findInitialModel({
@@ -801,6 +821,7 @@ describe("default model selection", () => {
 					: undefined,
 			hasConfiguredAuth: (provider: string) => provider === "spark-two",
 			getAvailableSnapshot: () => [localDeepSeekModel],
+			isProviderAllowed: () => true,
 		} as unknown as Parameters<typeof findInitialModel>[0]["modelRuntime"];
 
 		const result = await findInitialModel({

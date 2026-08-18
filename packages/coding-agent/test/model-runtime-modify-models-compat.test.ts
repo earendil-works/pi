@@ -32,6 +32,7 @@ function model(id: string): Model<"openai-completions"> {
 describe("extension provider model lifecycle", () => {
 	it("registers native pi-ai providers with their auth implementation", async () => {
 		const runtime = await ModelRuntime.create({
+			secureMode: false,
 			credentials: AuthStorage.inMemory(),
 			modelsStore: new InMemoryModelsStore(),
 			modelsPath: null,
@@ -104,6 +105,7 @@ describe("extension provider model lifecycle", () => {
 		);
 		try {
 			const runtime = await ModelRuntime.create({
+				secureMode: false,
 				credentials: AuthStorage.inMemory(),
 				modelsStore: new InMemoryModelsStore(),
 				modelsPath,
@@ -232,6 +234,7 @@ describe("extension provider model lifecycle", () => {
 		);
 		try {
 			const runtime = await ModelRuntime.create({
+				secureMode: false,
 				credentials: AuthStorage.inMemory(),
 				modelsStore: new InMemoryModelsStore(),
 				modelsPath,
@@ -269,6 +272,7 @@ describe("extension provider model lifecycle", () => {
 	it("publishes refreshModels results without forcing ModelsStore persistence", async () => {
 		const modelsStore = new InMemoryModelsStore();
 		const runtime = await ModelRuntime.create({
+			secureMode: false,
 			credentials: AuthStorage.inMemory(),
 			modelsStore,
 			modelsPath: null,
@@ -294,6 +298,7 @@ describe("extension provider model lifecycle", () => {
 
 	it("applies legacy OAuth modifyModels after async credential initialization", async () => {
 		const runtime = await ModelRuntime.create({
+			secureMode: false,
 			credentials: AuthStorage.inMemory({
 				"extension-oauth": {
 					type: "oauth",

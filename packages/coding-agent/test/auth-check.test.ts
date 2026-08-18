@@ -13,6 +13,7 @@ const tempDir = join(tmpdir(), `pi-test-auth-check-${Date.now()}-${Math.random()
 
 async function createRuntime(credentials: AuthStorage | ReadOnlyAuthStorage): Promise<ModelRuntime> {
 	return ModelRuntime.create({
+		secureMode: false,
 		credentials,
 		modelsPath: null,
 		modelsStore: new InMemoryModelsStore(),

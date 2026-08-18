@@ -36,7 +36,7 @@ describe("ModelRuntime auth options", () => {
 	it("accepts a pi-ai CredentialStore", async () => {
 		const credentials = new InMemoryCredentialStore();
 		await credentials.modify("anthropic", async () => ({ type: "api_key", key: "stored-key" }));
-		const runtime = await ModelRuntime.create({ credentials, modelsPath: null });
+		const runtime = await ModelRuntime.create({ secureMode: false, credentials, modelsPath: null });
 
 		expect((await runtime.getAuth("anthropic"))?.auth.apiKey).toBe("stored-key");
 	});
@@ -55,7 +55,7 @@ describe("ModelRuntime auth options", () => {
 			modify: (providerId, fn) => base.modify(providerId, fn),
 			delete: (providerId) => base.delete(providerId),
 		};
-		const runtime = await ModelRuntime.create({ credentials, modelsPath: null });
+		const runtime = await ModelRuntime.create({ secureMode: false, credentials, modelsPath: null });
 
 		reads.length = 0;
 		await runtime.getAvailable("anthropic");
@@ -71,7 +71,11 @@ describe("ModelRuntime auth options", () => {
 	});
 
 	it("projects provider-owned methods, names, and status", async () => {
-		const runtime = await ModelRuntime.create({ credentials: AuthStorage.inMemory(), modelsPath: null });
+		const runtime = await ModelRuntime.create({
+			secureMode: false,
+			credentials: AuthStorage.inMemory(),
+			modelsPath: null,
+		});
 		const options = authOptions(runtime);
 
 		expect(options).toEqual(
@@ -107,6 +111,7 @@ describe("ModelRuntime auth options", () => {
 
 	it("attaches the provider's active auth status to every method option", async () => {
 		const runtime = await ModelRuntime.create({
+			secureMode: false,
 			credentials: AuthStorage.inMemory({
 				anthropic: {
 					type: "oauth",
@@ -125,6 +130,7 @@ describe("ModelRuntime auth options", () => {
 
 	it("distinguishes subscription OAuth from generic OAuth sign-in", async () => {
 		const runtime = await ModelRuntime.create({
+			secureMode: false,
 			credentials: AuthStorage.inMemory({
 				anthropic: {
 					type: "oauth",
@@ -157,7 +163,11 @@ describe("ModelRuntime auth options", () => {
 	});
 
 	it("constructs an API key method for an extension API-key provider", async () => {
-		const runtime = await ModelRuntime.create({ credentials: AuthStorage.inMemory(), modelsPath: null });
+		const runtime = await ModelRuntime.create({
+			secureMode: false,
+			credentials: AuthStorage.inMemory(),
+			modelsPath: null,
+		});
 		runtime.registerProvider("extension-api-key", {
 			name: "Extension API Key",
 			baseUrl: "https://example.test/v1",
@@ -177,7 +187,11 @@ describe("ModelRuntime auth options", () => {
 	});
 
 	it("resolves configured auth from request-scoped environment overrides", async () => {
-		const runtime = await ModelRuntime.create({ credentials: AuthStorage.inMemory(), modelsPath: null });
+		const runtime = await ModelRuntime.create({
+			secureMode: false,
+			credentials: AuthStorage.inMemory(),
+			modelsPath: null,
+		});
 		runtime.registerProvider("request-env-provider", {
 			baseUrl: "https://example.test/v1",
 			apiKey: "$REQUEST_SCOPED_API_KEY",
@@ -194,7 +208,11 @@ describe("ModelRuntime auth options", () => {
 	});
 
 	it("lets an explicit Authorization header override authHeader case-insensitively", async () => {
-		const runtime = await ModelRuntime.create({ credentials: AuthStorage.inMemory(), modelsPath: null });
+		const runtime = await ModelRuntime.create({
+			secureMode: false,
+			credentials: AuthStorage.inMemory(),
+			modelsPath: null,
+		});
 		let capturedHeaders: Record<string, string | null> | undefined;
 		runtime.registerProvider("auth-header-provider", {
 			baseUrl: "https://example.test/v1",
@@ -216,7 +234,11 @@ describe("ModelRuntime auth options", () => {
 	});
 
 	it("transforms fully assembled headers once without forwarding the transform", async () => {
-		const runtime = await ModelRuntime.create({ credentials: AuthStorage.inMemory(), modelsPath: null });
+		const runtime = await ModelRuntime.create({
+			secureMode: false,
+			credentials: AuthStorage.inMemory(),
+			modelsPath: null,
+		});
 		let capturedHeaders: Record<string, string | null> | undefined;
 		let transforms = 0;
 		runtime.registerProvider("header-provider", {
@@ -272,7 +294,7 @@ describe("ModelRuntime auth options", () => {
 				expires: 0,
 			},
 		});
-		const runtime = await ModelRuntime.create({ credentials, modelsPath: null });
+		const runtime = await ModelRuntime.create({ secureMode: false, credentials, modelsPath: null });
 		let refreshSignal: AbortSignal | undefined;
 		runtime.registerProvider("extension-oauth", {
 			name: "Extension OAuth",
@@ -300,7 +322,11 @@ describe("ModelRuntime auth options", () => {
 	});
 
 	it("does not fabricate an API key method for an extension OAuth-only provider", async () => {
-		const runtime = await ModelRuntime.create({ credentials: AuthStorage.inMemory(), modelsPath: null });
+		const runtime = await ModelRuntime.create({
+			secureMode: false,
+			credentials: AuthStorage.inMemory(),
+			modelsPath: null,
+		});
 		runtime.registerProvider("extension-oauth", {
 			name: "Extension OAuth",
 			baseUrl: "https://example.test/v1",

@@ -81,7 +81,8 @@ describe("createAgentSession stream options", () => {
 		extensionSource?: string,
 	): Promise<SimpleStreamOptions | undefined> {
 		const model = createModel(api);
-		const settingsManager = SettingsManager.inMemory(settings);
+		// Exercises upstream header/timeout assembly, not the fork's provider policy.
+		const settingsManager = SettingsManager.inMemory({ secureMode: false, ...settings });
 		if (extensionSource) {
 			const extensionsDir = join(agentDir, "extensions");
 			mkdirSync(extensionsDir, { recursive: true });

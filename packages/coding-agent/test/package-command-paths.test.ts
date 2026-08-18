@@ -285,7 +285,10 @@ describe("package commands", () => {
 		}
 	});
 
-	it("uses saved project trust during update", async () => {
+	// Closed-network fork: main() forces SPI_OFFLINE, and upstream gates
+	// updateConfiguredSources() on it, so `update --extensions` is a no-op here.
+	// Upstream asserts the npm command runs; this fork asserts it does not.
+	it("does not reach the package manager during update in closed-network mode", async () => {
 		mkdirSync(join(projectDir, ".spi"), { recursive: true });
 		const fakeNpmPath = join(tempDir, "fake-trusted-project-npm.cjs");
 		const recordPath = join(tempDir, "trusted-project-update.json");
@@ -303,7 +306,7 @@ describe("package commands", () => {
 		try {
 			await expect(main(["update", "--extensions"])).resolves.toBeUndefined();
 
-			expect(existsSync(recordPath)).toBe(true);
+			expect(existsSync(recordPath)).toBe(false);
 			expect(process.exitCode).toBeUndefined();
 		} finally {
 			logSpy.mockRestore();

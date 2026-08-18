@@ -52,7 +52,7 @@ async function createCloudflareRuntime(): Promise<{ modelRuntime: ModelRuntime; 
 			CLOUDFLARE_GATEWAY_ID: "test-gateway",
 		},
 	}));
-	const modelRuntime = await ModelRuntime.create({ credentials: authStorage, modelsPath: null });
+	const modelRuntime = await ModelRuntime.create({ secureMode: false, credentials: authStorage, modelsPath: null });
 	return { modelRuntime, modelRegistry: new ModelRegistry(modelRuntime) };
 }
 
