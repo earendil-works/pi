@@ -125,6 +125,7 @@ export interface Settings {
 	treeFilterMode?: "default" | "no-tools" | "user-only" | "labeled-only" | "all"; // Default filter when opening /tree
 	thinkingBudgets?: ThinkingBudgetsSettings; // Custom token budgets for thinking levels
 	editorPaddingX?: number; // Horizontal padding for input editor (default: 0)
+	promptPrefix?: string; // Prefix shown before the input editor (default: "❯ ")
 	outputPad?: 0 | 1; // Horizontal padding for chat message output (default: 1)
 	autocompleteMaxVisible?: number; // Max visible items in autocomplete dropdown (default: 5)
 	showHardwareCursor?: boolean; // Show terminal cursor while still positioning it for IME
@@ -1234,6 +1235,10 @@ export class SettingsManager {
 
 	getEditorPaddingX(): number {
 		return this.settings.editorPaddingX ?? 0;
+	}
+
+	getPromptPrefix(): string {
+		return typeof this.settings.promptPrefix === "string" ? this.settings.promptPrefix : "❯ ";
 	}
 
 	setEditorPaddingX(padding: number): void {

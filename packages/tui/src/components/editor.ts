@@ -10,6 +10,7 @@ import {
 	getWordSegmenter,
 	isWhitespaceChar,
 	sliceByColumn,
+	truncateToWidth,
 	visibleWidth,
 } from "../utils.ts";
 import { findWordBackward, findWordForward } from "../word-navigation.ts";
@@ -227,12 +228,15 @@ interface LayoutLine {
 
 export interface EditorTheme {
 	borderColor: (str: string) => string;
+	prefixColor?: (str: string) => string;
 	selectList: SelectListTheme;
 }
 
 export interface EditorOptions {
 	paddingX?: number;
 	autocompleteMaxVisible?: number;
+	/** Optional marker shown before the first visual line; later lines align with its text column. */
+	prefix?: string;
 }
 
 const SLASH_COMMAND_SELECT_LIST_LAYOUT: SelectListLayoutOptions = {
@@ -280,6 +284,8 @@ export class Editor implements Component, Focusable {
 	protected tui: TUI;
 	private theme: EditorTheme;
 	private paddingX: number = 0;
+	private prefix: string = "";
+	private prefixColor: (str: string) => string = (str) => str;
 
 	// Store last render width for cursor navigation
 	private lastWidth: number = 80;
@@ -350,6 +356,8 @@ export class Editor implements Component, Focusable {
 		this.paddingX = Number.isFinite(paddingX) ? Math.max(0, Math.floor(paddingX)) : 0;
 		const maxVisible = options.autocompleteMaxVisible ?? 5;
 		this.autocompleteMaxVisible = Number.isFinite(maxVisible) ? Math.max(3, Math.min(20, Math.floor(maxVisible))) : 5;
+		this.prefix = options.prefix ?? "";
+		this.prefixColor = theme.prefixColor ?? ((str: string) => str);
 	}
 
 	/** Set of currently valid paste IDs, for marker-aware segmentation. */
@@ -370,6 +378,13 @@ export class Editor implements Component, Focusable {
 		const newPadding = Number.isFinite(padding) ? Math.max(0, Math.floor(padding)) : 0;
 		if (this.paddingX !== newPadding) {
 			this.paddingX = newPadding;
+			this.tui.requestRender();
+		}
+	}
+
+	setPrefix(prefix: string): void {
+		if (this.prefix !== prefix) {
+			this.prefix = prefix;
 			this.tui.requestRender();
 		}
 	}
@@ -486,7 +501,10 @@ export class Editor implements Component, Focusable {
 
 		// Layout width: with padding the cursor can overflow into it,
 		// without padding we reserve 1 column for the cursor.
-		const layoutWidth = Math.max(1, contentWidth - (paddingX ? 0 : 1));
+		let layoutWidth = Math.max(1, contentWidth - (paddingX ? 0 : 1));
+		const prefix = truncateToWidth(this.prefix, Math.max(0, contentWidth - 1), "");
+		const prefixVisibleWidth = visibleWidth(prefix);
+		layoutWidth = Math.max(1, layoutWidth - prefixVisibleWidth);
 
 		// Store for cursor navigation (must match wrapping width)
 		this.lastWidth = layoutWidth;
@@ -536,7 +554,12 @@ export class Editor implements Component, Focusable {
 		// autocomplete (e.g. slash-command menu) is visible.
 		const emitCursorMarker = this.focused;
 
-		for (const layoutLine of visibleLines) {
+		const indent = " ".repeat(prefixVisibleWidth);
+		const leadingForLine = (lineIndex: number): string =>
+			prefix && lineIndex === 0 && this.scrollOffset === 0 ? this.prefixColor(prefix) : indent;
+
+		for (let lineIndex = 0; lineIndex < visibleLines.length; lineIndex++) {
+			const layoutLine = visibleLines[lineIndex];
 			let displayText = layoutLine.text;
 			let lineVisibleWidth = visibleWidth(layoutLine.text);
 			let cursorInPadding = false;
@@ -564,18 +587,19 @@ export class Editor implements Component, Focusable {
 					displayText = before + marker + cursor;
 					lineVisibleWidth = lineVisibleWidth + 1;
 					// If cursor overflows content width into the padding, flag it
-					if (lineVisibleWidth > contentWidth && paddingX > 0) {
+					if (prefixVisibleWidth + lineVisibleWidth > contentWidth && paddingX > 0) {
 						cursorInPadding = true;
 					}
 				}
 			}
 
 			// Calculate padding based on actual visible width
-			const padding = " ".repeat(Math.max(0, contentWidth - lineVisibleWidth));
+			const leading = leadingForLine(lineIndex);
+			const padding = " ".repeat(Math.max(0, contentWidth - prefixVisibleWidth - lineVisibleWidth));
 			const lineRightPadding = cursorInPadding ? rightPadding.slice(1) : rightPadding;
 
 			// Render the line (no side borders, just horizontal lines above and below)
-			result.push(`${leftPadding}${displayText}${padding}${lineRightPadding}`);
+			result.push(`${leftPadding}${leading}${displayText}${padding}${lineRightPadding}`);
 		}
 
 		// Render bottom border (with scroll indicator if more content below)
@@ -589,11 +613,11 @@ export class Editor implements Component, Focusable {
 
 		// Add autocomplete list if active
 		if (this.autocompleteState && this.autocompleteList) {
-			const autocompleteResult = this.autocompleteList.render(contentWidth);
+			const autocompleteResult = this.autocompleteList.render(Math.max(1, contentWidth - prefixVisibleWidth));
 			for (const line of autocompleteResult) {
 				const lineWidth = visibleWidth(line);
-				const linePadding = " ".repeat(Math.max(0, contentWidth - lineWidth));
-				result.push(`${leftPadding}${line}${linePadding}${rightPadding}`);
+				const linePadding = " ".repeat(Math.max(0, contentWidth - prefixVisibleWidth - lineWidth));
+				result.push(`${leftPadding}${indent}${line}${linePadding}${rightPadding}`);
 			}
 		}
 

@@ -149,6 +149,10 @@
 					"$ref": "#/$defs/colorValue",
 					"description": "Transcript search match text and current-match background (falls back to text when omitted)"
 				},
+				"promptPrefix": {
+					"$ref": "#/$defs/colorValue",
+					"description": "Editor prompt prefix (falls back to accent when omitted)"
+				},
 				"userMessageBg": {
 					"$ref": "#/$defs/colorValue",
 					"description": "User message background"

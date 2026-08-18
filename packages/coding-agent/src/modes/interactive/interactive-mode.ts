@@ -585,6 +585,7 @@ export class InteractiveMode {
 		this.defaultEditor = new CustomEditor(this.ui, getEditorTheme(), this.keybindings, {
 			paddingX: editorPaddingX,
 			autocompleteMaxVisible,
+			prefix: this.settingsManager.getPromptPrefix(),
 		});
 		this.editor = this.defaultEditor;
 		this.editorContainer = new Container();
@@ -1943,6 +1944,7 @@ export class InteractiveMode {
 		const editorPaddingX = this.settingsManager.getEditorPaddingX();
 		const autocompleteMaxVisible = this.settingsManager.getAutocompleteMaxVisible();
 		this.defaultEditor.setPaddingX(editorPaddingX);
+		this.defaultEditor.setPrefix(this.settingsManager.getPromptPrefix());
 		this.defaultEditor.setAutocompleteMaxVisible(autocompleteMaxVisible);
 		if (this.editor !== this.defaultEditor) {
 			this.editor.setPaddingX?.(editorPaddingX);

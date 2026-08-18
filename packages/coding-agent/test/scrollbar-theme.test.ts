@@ -27,7 +27,7 @@ afterEach(() => {
 	}
 });
 
-describe("optional fullscreen theme colors", () => {
+describe("optional theme colors", () => {
 	it("falls back to selectedBg when scrollbarThumb is omitted", () => {
 		const themeJson = loadDarkTheme();
 		themeJson.name = "legacy-scrollbar-theme";
@@ -66,5 +66,22 @@ describe("optional fullscreen theme colors", () => {
 		const loadedTheme = loadThemeFromPath(writeTheme(themeJson), "truecolor");
 		expect(loadedTheme.getBgAnsi("searchMatchBg")).toBe("\x1b[48;2;17;34;51m");
 		expect(loadedTheme.getFgAnsi("searchMatchText")).toBe("\x1b[38;2;34;51;68m");
+	});
+
+	it("falls back to accent when promptPrefix is omitted", () => {
+		const themeJson = loadDarkTheme();
+		themeJson.name = "legacy-prompt-prefix-theme";
+
+		const loadedTheme = loadThemeFromPath(writeTheme(themeJson), "truecolor");
+		expect(loadedTheme.getFgAnsi("promptPrefix")).toBe(loadedTheme.getFgAnsi("accent"));
+	});
+
+	it("uses an explicitly configured promptPrefix", () => {
+		const themeJson = loadDarkTheme();
+		themeJson.name = "custom-prompt-prefix-theme";
+		themeJson.colors.promptPrefix = "#123456";
+
+		const loadedTheme = loadThemeFromPath(writeTheme(themeJson), "truecolor");
+		expect(loadedTheme.getFgAnsi("promptPrefix")).toBe("\x1b[38;2;18;52;86m");
 	});
 });

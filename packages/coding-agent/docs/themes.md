@@ -91,6 +91,7 @@ vim ~/.pi/agent/themes/my-theme.json
     "scrollbarThumb": "#555566",
     "searchMatchBg": "#2d2d30",
     "searchMatchText": "",
+    "promptPrefix": "primary",
     "userMessageBg": "#2d2d30",
     "userMessageText": "",
     "customMessageBg": "#2d2d30",
@@ -160,15 +161,15 @@ vim ~/.pi/agent/themes/my-theme.json
 
 - `name` is required, must be unique, and must not contain `/`.
 - `vars` is optional. Define reusable colors here, then reference them in `colors`.
-- `colors` must define all 51 required tokens. `thinkingMax`, `scrollbarThumb`, and the two search highlight tokens are optional and use the fallbacks listed below.
+- `colors` must define all 51 required tokens. `thinkingMax`, `scrollbarThumb`, the search highlight tokens, and `promptPrefix` are optional and use the fallbacks listed below.
 
 The `$schema` field enables editor auto-completion and validation.
 
 ## Color Tokens
 
-Every theme must define all 51 required color tokens. The optional tokens preserve compatibility with existing themes: `thinkingMax` falls back to `thinkingXhigh`, `scrollbarThumb` and `searchMatchBg` fall back to `selectedBg`, and `searchMatchText` falls back to `text`. Other search matches use `searchMatchText` on `searchMatchBg` with an underline; the current match reverses that foreground/background pair and uses bold text.
+Every theme must define all 51 required color tokens. Optional tokens preserve compatibility with existing themes: `thinkingMax` falls back to `thinkingXhigh`, `scrollbarThumb` and `searchMatchBg` fall back to `selectedBg`, `searchMatchText` falls back to `text`, and `promptPrefix` falls back to `accent`. Other search matches use `searchMatchText` on `searchMatchBg` with an underline; the current match reverses that foreground/background pair and uses bold text.
 
-### Core UI (11 colors)
+### Core UI (11 required, 1 optional)
 
 | Token | Purpose |
 |-------|---------|
@@ -183,6 +184,7 @@ Every theme must define all 51 required color tokens. The optional tokens preser
 | `dim` | Tertiary text |
 | `text` | Default text (usually `""`) |
 | `thinkingText` | Thinking block text |
+| `promptPrefix` | Editor prompt prefix; optional, falls back to `accent` |
 
 ### Backgrounds & Content (11 required, 3 optional)
 

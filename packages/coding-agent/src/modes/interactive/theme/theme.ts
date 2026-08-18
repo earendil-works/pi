@@ -50,6 +50,7 @@ const ThemeJsonSchema = Type.Object({
 		scrollbarThumb: Type.Optional(ColorValueSchema),
 		searchMatchBg: Type.Optional(ColorValueSchema),
 		searchMatchText: Type.Optional(ColorValueSchema),
+		promptPrefix: Type.Optional(ColorValueSchema),
 		userMessageBg: ColorValueSchema,
 		userMessageText: ColorValueSchema,
 		customMessageBg: ColorValueSchema,
@@ -156,6 +157,7 @@ export type ThemeColor =
 	| "thinkingHigh"
 	| "thinkingXhigh"
 	| "thinkingMax"
+	| "promptPrefix"
 	| "bashMode";
 
 export type ThemeBg =
@@ -168,7 +170,7 @@ export type ThemeBg =
 	| "toolSuccessBg"
 	| "toolErrorBg";
 
-type OptionalThemeColor = "thinkingMax" | "searchMatchText";
+type OptionalThemeColor = "thinkingMax" | "searchMatchText" | "promptPrefix";
 type OptionalThemeBg = "scrollbarThumb" | "searchMatchBg";
 
 type ColorMode = "truecolor" | "256color";
@@ -333,6 +335,7 @@ function withThemeColorFallbacks(colors: ThemeJson["colors"]): ThemeJson["colors
 	scrollbarThumb: ColorValue;
 	searchMatchBg: ColorValue;
 	searchMatchText: ColorValue;
+	promptPrefix: ColorValue;
 } {
 	return {
 		...colors,
@@ -340,6 +343,7 @@ function withThemeColorFallbacks(colors: ThemeJson["colors"]): ThemeJson["colors
 		scrollbarThumb: colors.scrollbarThumb ?? colors.selectedBg,
 		searchMatchBg: colors.searchMatchBg ?? colors.selectedBg,
 		searchMatchText: colors.searchMatchText ?? colors.text,
+		promptPrefix: colors.promptPrefix ?? colors.accent,
 	};
 }
 
@@ -372,6 +376,7 @@ export class Theme {
 			...fgColors,
 			thinkingMax: fgColors.thinkingMax ?? fgColors.thinkingXhigh,
 			searchMatchText: fgColors.searchMatchText ?? fgColors.text,
+			promptPrefix: fgColors.promptPrefix ?? fgColors.accent,
 		};
 		for (const [key, value] of Object.entries(colors) as [ThemeColor, string | number][]) {
 			this.fgColors.set(key, fgAnsi(value, mode));
@@ -1320,6 +1325,7 @@ export function getSelectListTheme(): SelectListTheme {
 export function getEditorTheme(): EditorTheme {
 	return {
 		borderColor: (text: string) => theme.fg("borderMuted", text),
+		prefixColor: (text: string) => theme.fg("promptPrefix", text),
 		selectList: getSelectListTheme(),
 	};
 }

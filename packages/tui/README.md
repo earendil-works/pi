@@ -356,11 +356,13 @@ Multi-line text editor with autocomplete, file completion, paste handling, and v
 ```typescript
 interface EditorTheme {
   borderColor: (str: string) => string;
+  prefixColor?: (str: string) => string;
   selectList: SelectListTheme;
 }
 
 interface EditorOptions {
   paddingX?: number;  // Horizontal padding (default: 0)
+  prefix?: string;    // Marker before the first visual line (default: "")
 }
 
 const editor = new Editor(tui, theme, options?);  // tui is required for height-aware scrolling
