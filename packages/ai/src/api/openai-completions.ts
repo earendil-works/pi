@@ -622,15 +622,16 @@ export const streamSimple: StreamFunction<"openai-completions", SimpleStreamOpti
 ): AssistantMessageEventStream => {
 	getClientApiKey(model.provider, options?.apiKey, options?.headers);
 
-	const base = buildBaseOptions(model, context, options, options?.apiKey);
+	const base = {
+		...buildBaseOptions(model, context, options, options?.apiKey),
+		toolChoice: options?.toolChoice,
+	} satisfies OpenAICompletionsOptions;
 	const clampedReasoning = options?.reasoning ? clampThinkingLevel(model, options.reasoning) : undefined;
 	const reasoningEffort = clampedReasoning === "off" ? undefined : clampedReasoning;
-	const toolChoice = (options as OpenAICompletionsOptions | undefined)?.toolChoice;
 
 	return stream(model, context, {
 		...base,
 		reasoningEffort,
-		toolChoice,
 		thinkingBudgets: options?.thinkingBudgets,
 	} satisfies OpenAICompletionsOptions);
 };

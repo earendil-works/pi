@@ -64,7 +64,6 @@
 		"@aws-sdk/client-bedrock-runtime": "3.1048.0",
 		"@earendil-works/pi-telemetry": "^0.84.2",
 		"@google/genai": "1.52.0",
-		"@opentelemetry/api": "1.9.0",
 		"@smithy/node-http-handler": "4.7.3",
 		"http-proxy-agent": "7.0.2",
 		"https-proxy-agent": "7.0.6",

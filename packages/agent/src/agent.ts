@@ -1,4 +1,5 @@
 import type {
+	Context,
 	ImageContent,
 	Message,
 	Model,
@@ -7,7 +8,11 @@ import type {
 	ThinkingBudgets,
 	Transport,
 } from "@earendil-works/pi-ai";
-import { runAgentLoop, runAgentLoopContinue } from "./agent-loop.ts";
+import {
+	buildProviderContext as buildProviderContextFromAgentContext,
+	runAgentLoop,
+	runAgentLoopContinue,
+} from "./agent-loop.ts";
 import { getDefaultStreamFn } from "./stream-fn.ts";
 import type {
 	AfterToolCallContext,
@@ -259,6 +264,15 @@ export class Agent {
 	 */
 	get state(): AgentState {
 		return this._state;
+	}
+
+	/** Build a provider context through the same transform and conversion pipeline used by agent requests. */
+	async buildProviderContext(context: AgentContext, signal?: AbortSignal): Promise<Context> {
+		return buildProviderContextFromAgentContext(
+			context,
+			{ convertToLlm: this.convertToLlm, transformContext: this.transformContext },
+			signal,
+		);
 	}
 
 	/** Controls how queued steering messages are drained. */

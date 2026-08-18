@@ -1,8 +1,11 @@
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import {
 	type AssistantMessage,
+	type Context,
 	createAssistantMessageEventStream,
 	fauxAssistantMessage,
 	type Model,
+	type SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { estimateTokens } from "../../src/core/compaction/index.ts";
@@ -47,10 +50,15 @@ function createAssistant(
 	};
 }
 
-function useSummaryStreamFn(harness: Harness, summary: string): () => number {
+function useSummaryStreamFn(
+	harness: Harness,
+	summary: string,
+	onRequest?: (context: Context, options: SimpleStreamOptions | undefined) => void,
+): () => number {
 	let callCount = 0;
-	harness.session.agent.streamFunction = (model) => {
+	harness.session.agent.streamFunction = (model, context, options) => {
 		callCount++;
+		onRequest?.(context, options);
 		const stream = createAssistantMessageEventStream();
 		queueMicrotask(() => {
 			const message: AssistantMessage = {
@@ -244,6 +252,34 @@ describe("AgentSession compaction characterization", () => {
 
 		expect(result.summary).toContain("summary with bearer auth");
 		expect(harness.faux.state.callCount).toBe(1);
+	});
+
+	it("uses the standalone compaction request context", async () => {
+		const harness = await createHarness({ settings: { compaction: { keepRecentTokens: 1 } } });
+		harnesses.push(harness);
+		seedCompactableSession(harness);
+
+		const transformContext = vi.fn(async (messages: AgentMessage[]) => messages);
+		harness.session.agent.transformContext = transformContext;
+		harness.session.agent.sessionId = "active-routing-session";
+		harness.session.agent.transport = "websocket";
+
+		let requestContext: Context | undefined;
+		let requestOptions: SimpleStreamOptions | undefined;
+		useSummaryStreamFn(harness, "standalone summary", (context, options) => {
+			requestContext = context;
+			requestOptions = options;
+		});
+
+		await harness.session.compact();
+
+		expect(transformContext).not.toHaveBeenCalled();
+		expect(requestContext?.systemPrompt).not.toBe(harness.session.agent.state.systemPrompt);
+		expect(requestContext?.tools).toBeUndefined();
+		expect(JSON.stringify(requestContext?.messages)).toContain("<conversation>");
+		expect(requestOptions).toMatchObject({ cacheRetention: "none" });
+		expect(requestOptions?.sessionId).not.toBe("active-routing-session");
+		expect(requestOptions?.transport).toBeUndefined();
 	});
 
 	it("persists usage from pi-generated manual compaction", async () => {

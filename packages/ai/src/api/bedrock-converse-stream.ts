@@ -505,7 +505,10 @@ export const streamSimple: StreamFunction<"bedrock-converse-stream", SimpleStrea
 	context: Context,
 	options?: SimpleStreamOptions,
 ): AssistantMessageEventStream => {
-	const base = buildBaseOptions(model, context, options, undefined);
+	const base = {
+		...buildBaseOptions(model, context, options, undefined),
+		toolChoice: options?.toolChoice,
+	} satisfies BedrockOptions;
 	if (!options?.reasoning) {
 		return stream(model, context, { ...base, reasoning: undefined } satisfies BedrockOptions);
 	}

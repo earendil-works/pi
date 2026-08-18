@@ -63,6 +63,11 @@ export function isValidThinkingLevel(level: string): level is ThinkingLevel {
 	return VALID_THINKING_LEVELS.includes(level as ThinkingLevel);
 }
 
+export function normalizeSessionName(value: string): string | undefined {
+	const name = value.trim();
+	return name.length > 0 ? name : undefined;
+}
+
 export function parseArgs(args: string[]): Args {
 	const result: Args = {
 		messages: [],

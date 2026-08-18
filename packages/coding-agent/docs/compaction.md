@@ -281,7 +281,9 @@ pi.on("session_before_compact", async (event, ctx) => {
   const { preparation, branchEntries, customInstructions, reason, willRetry, signal } = event;
 
   // preparation.messagesToSummarize - messages to summarize
+  // preparation.sourceMessages - optional active-context history prefix, including any previous summary
   // preparation.turnPrefixMessages - split turn prefix (if isSplitTurn)
+  // preparation.turnPrefixSourceMessages - optional active-context prefix through the split turn
   // preparation.previousSummary - previous compaction summary
   // preparation.fileOps - extracted file operations
   // preparation.tokensBefore - context tokens before compaction

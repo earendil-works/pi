@@ -34,7 +34,7 @@ export const defaultModelPerProvider: Record<KnownProvider, string> = {
 	"vercel-ai-gateway": "zai/glm-5.1",
 	xai: "grok-4.6",
 	groq: "openai/gpt-oss-120b",
-	cerebras: "zai-glm-4.7",
+	cerebras: "gpt-oss-120b",
 	zai: "glm-5.3",
 	"zai-coding-cn": "glm-5.3",
 	mistral: "devstral-medium-latest",

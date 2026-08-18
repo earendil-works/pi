@@ -10,6 +10,7 @@ import type {
 import { calculateCost } from "../models.ts";
 import type {
 	AnthropicMessagesCompat,
+	AnthropicRefusalFallback,
 	Api,
 	AssistantMessage,
 	CacheRetention,
@@ -168,12 +169,17 @@ export type AnthropicEffort = "low" | "medium" | "high" | "xhigh" | "max";
 
 export type AnthropicThinkingDisplay = "summarized" | "omitted";
 
+type MessageCreateParamsStreamingWithFallbacks = MessageCreateParamsStreaming & {
+	fallbacks?: AnthropicRefusalFallback;
+};
+
 const FINE_GRAINED_TOOL_STREAMING_BETA = "fine-grained-tool-streaming-2025-05-14";
 const INTERLEAVED_THINKING_BETA = "interleaved-thinking-2025-05-14";
+const SERVER_SIDE_FALLBACK_BETA = "server-side-fallback-2026-07-01";
 
 function getAnthropicCompat(
 	model: Model<"anthropic-messages">,
-): Required<Omit<AnthropicMessagesCompat, "forceAdaptiveThinking">> {
+): Required<Omit<AnthropicMessagesCompat, "forceAdaptiveThinking" | "allowedFallbackModels">> {
 	return {
 		supportsEagerToolInputStreaming: model.compat?.supportsEagerToolInputStreaming ?? true,
 		supportsLongCacheRetention: model.compat?.supportsLongCacheRetention ?? true,
@@ -248,6 +254,12 @@ export interface AnthropicOptions extends StreamOptions {
 	 * Default: true.
 	 */
 	interleavedThinking?: boolean;
+	/**
+	 * Anthropic refusal fallback. When set, the request includes the server-side
+	 * fallback beta and Anthropic retries eligible refusals on the configured
+	 * fallback target before returning a final response.
+	 */
+	refusalFallbacks?: AnthropicRefusalFallback;
 	/**
 	 * Anthropic tool choice behavior. String values map to Anthropic's built-in
 	 * choices; `{ type: "tool", name }` forces a specific tool.
@@ -553,6 +565,7 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 					apiKey,
 					options?.interleavedThinking ?? true,
 					shouldUseFineGrainedToolStreamingBeta(model, context),
+					options?.refusalFallbacks !== undefined,
 					options?.headers,
 					options?.fetch,
 					copilotDynamicHeaders,
@@ -588,6 +601,7 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 			for await (const event of iterateAnthropicEvents(response, options?.signal)) {
 				if (event.type === "message_start") {
 					output.responseId = event.message.id;
+					output.model = event.message.model;
 					// Capture initial token usage from message_start event
 					// This ensures we have input token counts even if the stream is aborted early
 					output.usage.input = event.message.usage.input_tokens || 0;
@@ -820,9 +834,16 @@ export const streamSimple: StreamFunction<"anthropic-messages", SimpleStreamOpti
 ): AssistantMessageEventStream => {
 	assertRequestAuth(model.provider, options?.apiKey, options?.headers);
 
-	const base = buildBaseOptions(model, context, options, options?.apiKey);
+	const base = {
+		...buildBaseOptions(model, context, options, options?.apiKey),
+		toolChoice: options?.toolChoice,
+	} satisfies AnthropicOptions;
 	if (!options?.reasoning) {
-		return stream(model, context, { ...base, thinkingEnabled: false } satisfies AnthropicOptions);
+		return stream(model, context, {
+			...base,
+			refusalFallbacks: options?.refusalFallbacks,
+			thinkingEnabled: false,
+		} satisfies AnthropicOptions);
 	}
 
 	// For models with adaptive thinking: use an effort level.
@@ -831,6 +852,7 @@ export const streamSimple: StreamFunction<"anthropic-messages", SimpleStreamOpti
 		const effort = mapThinkingLevelToEffort(model, options.reasoning);
 		return stream(model, context, {
 			...base,
+			refusalFallbacks: options?.refusalFallbacks,
 			thinkingEnabled: true,
 			effort,
 		} satisfies AnthropicOptions);
@@ -849,6 +871,7 @@ export const streamSimple: StreamFunction<"anthropic-messages", SimpleStreamOpti
 
 	return stream(model, context, {
 		...base,
+		refusalFallbacks: options?.refusalFallbacks,
 		maxTokens,
 		thinkingEnabled: true,
 		thinkingBudgetTokens: Math.min(adjusted.thinkingBudget, Math.max(0, maxTokens - 1024)),
@@ -864,6 +887,7 @@ function createClient(
 	apiKey: string | undefined,
 	interleavedThinking: boolean,
 	useFineGrainedToolStreamingBeta: boolean,
+	useServerSideFallbackBeta: boolean,
 	optionsHeaders?: ProviderHeaders,
 	fetch?: typeof globalThis.fetch,
 	dynamicHeaders?: Record<string, string>,
@@ -877,6 +901,9 @@ function createClient(
 	}
 	if (needsInterleavedBeta) {
 		betaFeatures.push(INTERLEAVED_THINKING_BETA);
+	}
+	if (useServerSideFallbackBeta) {
+		betaFeatures.push(SERVER_SIDE_FALLBACK_BETA);
 	}
 
 	// Copilot: Bearer auth, selective betas.
@@ -959,7 +986,7 @@ function buildParams(
 	context: Context,
 	isOAuthToken: boolean,
 	options?: AnthropicOptions,
-): MessageCreateParamsStreaming {
+): MessageCreateParamsStreamingWithFallbacks {
 	const { cacheControl } = getCacheControl(model, options?.cacheRetention, options?.env);
 	const compat = getAnthropicCompat(model);
 	const transformedMessages = transformMessages(context.messages, model, normalizeToolCallId);
@@ -976,7 +1003,7 @@ function buildParams(
 		deferredTools = [];
 	}
 	const deferredToolNames = new Set(deferredTools.map((tool) => normalizeToolName(tool.name)));
-	const params: MessageCreateParamsStreaming = {
+	const params: MessageCreateParamsStreamingWithFallbacks = {
 		model: model.id,
 		messages: convertMessages(
 			transformedMessages,
@@ -1086,6 +1113,10 @@ function buildParams(
 		} else {
 			params.tool_choice = options.toolChoice;
 		}
+	}
+
+	if (options?.refusalFallbacks !== undefined) {
+		params.fallbacks = options.refusalFallbacks;
 	}
 
 	return params;

@@ -303,7 +303,10 @@ export const streamSimple: StreamFunction<"google-generative-ai", SimpleStreamOp
 		throw new Error(`No API key for provider: ${model.provider}`);
 	}
 
-	const base = buildBaseOptions(model, context, options, apiKey);
+	const base = {
+		...buildBaseOptions(model, context, options, apiKey),
+		toolChoice: options?.toolChoice,
+	} satisfies GoogleOptions;
 	if (!options?.reasoning) {
 		return stream(model, context, { ...base, thinking: { enabled: false } } satisfies GoogleOptions);
 	}
