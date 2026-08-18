@@ -32,6 +32,8 @@ export { areExperimentalFeaturesEnabled } from "./experimental.ts";
 // Extensions system
 export {
 	type AgentEndEvent,
+	type AgentRecoveryExhaustedEvent,
+	type AgentRecoveryExhaustedResult,
 	type AgentSettledEvent,
 	type AgentStartEvent,
 	type AgentToolResult,
@@ -51,6 +53,7 @@ export {
 	type ExtensionError,
 	type ExtensionEvent,
 	type ExtensionFactory,
+	type ExtensionFeatures,
 	type ExtensionFlag,
 	type ExtensionHandler,
 	ExtensionRunner,
@@ -58,6 +61,7 @@ export {
 	type ExtensionUIContext,
 	type InlineExtension,
 	type LoadExtensionsResult,
+	MAX_AGENT_RECOVERY_EXHAUSTED_CONTINUATIONS,
 	type MessageRenderer,
 	type RegisteredCommand,
 	type SessionBeforeCompactEvent,

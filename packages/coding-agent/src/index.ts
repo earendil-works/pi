@@ -53,6 +53,8 @@ export { createEventBus, type EventBus, type EventBusController } from "./core/e
 // Extension system
 export type {
 	AgentEndEvent,
+	AgentRecoveryExhaustedEvent,
+	AgentRecoveryExhaustedResult,
 	AgentSettledEvent,
 	AgentStartEvent,
 	AgentToolResult,
@@ -85,6 +87,7 @@ export type {
 	ExtensionError,
 	ExtensionEvent,
 	ExtensionFactory,
+	ExtensionFeatures,
 	ExtensionFlag,
 	ExtensionHandler,
 	ExtensionRuntime,
@@ -163,6 +166,7 @@ export {
 	isReadToolResult,
 	isToolCallEventType,
 	isWriteToolResult,
+	MAX_AGENT_RECOVERY_EXHAUSTED_CONTINUATIONS,
 	wrapRegisteredTool,
 	wrapRegisteredTools,
 } from "./core/extensions/index.ts";

@@ -76,6 +76,7 @@ import {
 	ExtensionRunner,
 	type ExtensionUIContext,
 	type InputSource,
+	MAX_AGENT_RECOVERY_EXHAUSTED_CONTINUATIONS,
 	type MessageEndEvent,
 	type MessageStartEvent,
 	type MessageUpdateEvent,
@@ -336,6 +337,8 @@ export class AgentSession {
 	// Retry state
 	private _retryAbortController: AbortController | undefined = undefined;
 	private _retryAttempt = 0;
+	private _promptAbortController: AbortController | undefined = undefined;
+	private _recoveryExhaustedContinuations = 0;
 
 	// Bash execution state
 	private readonly _bashAbortControllers = new Set<AbortController>();
@@ -1070,16 +1073,88 @@ export class AgentSession {
 
 	private async _runAgentPrompt(messages: AgentMessage | AgentMessage[]): Promise<void> {
 		this._isAgentRunActive = true;
+		this._recoveryExhaustedContinuations = 0;
+		this._promptAbortController = new AbortController();
 		try {
 			await this.agent.prompt(messages);
-			while (await this._handlePostAgentRun()) {
-				await this.agent.continue();
+			while (true) {
+				const lastAssistant = this._lastAssistantMessage;
+				const nativeRetryAttempts = this._retryAttempt;
+				const overflowRecoveryAttempted = this._overflowRecoveryAttempted;
+				if (await this._handlePostAgentRun()) {
+					await this.agent.continue();
+					continue;
+				}
+				if (
+					await this._tryAgentRecoveryExhaustedContinuation(
+						lastAssistant,
+						nativeRetryAttempts,
+						overflowRecoveryAttempted,
+					)
+				) {
+					await this.agent.continue();
+					continue;
+				}
+				break;
 			}
 		} finally {
+			this._promptAbortController = undefined;
 			this._systemPromptOverride = undefined;
 			this._flushPendingBashMessages();
 			await this._emitAgentSettled();
 		}
+	}
+
+	private _isAgentRecoveryExhaustedCandidate(message: AssistantMessage, overflowRecoveryAttempted: boolean): boolean {
+		if (message.stopReason === "aborted") {
+			return false;
+		}
+		if (message.stopReason === "error") {
+			return true;
+		}
+		return overflowRecoveryAttempted && message.stopReason === "length";
+	}
+
+	private async _tryAgentRecoveryExhaustedContinuation(
+		message: AssistantMessage | undefined,
+		nativeRetryAttempts: number,
+		overflowRecoveryAttempted: boolean,
+	): Promise<boolean> {
+		const signal = this._promptAbortController?.signal;
+		if (!message || !signal || signal.aborted) {
+			return false;
+		}
+		if (!this._isAgentRecoveryExhaustedCandidate(message, overflowRecoveryAttempted)) {
+			return false;
+		}
+		if (this._recoveryExhaustedContinuations >= MAX_AGENT_RECOVERY_EXHAUSTED_CONTINUATIONS) {
+			return false;
+		}
+		if (!this._extensionRunner.hasHandlers("agent_recovery_exhausted")) {
+			return false;
+		}
+
+		const retry = await this._extensionRunner.emitAgentRecoveryExhausted({
+			type: "agent_recovery_exhausted",
+			message,
+			nativeRetryAttempts,
+			overflowRecoveryAttempted,
+			signal,
+		});
+
+		if (!retry || signal.aborted) {
+			return false;
+		}
+		if (this._recoveryExhaustedContinuations >= MAX_AGENT_RECOVERY_EXHAUSTED_CONTINUATIONS) {
+			return false;
+		}
+
+		this._recoveryExhaustedContinuations++;
+		const messages = this.agent.state.messages;
+		if (messages.length > 0 && messages[messages.length - 1].role === "assistant") {
+			this.agent.state.messages = messages.slice(0, -1);
+		}
+		return true;
 	}
 
 	private async _handlePostAgentRun(): Promise<boolean> {
@@ -1556,6 +1631,7 @@ export class AgentSession {
 	 * Abort current operation and wait for agent to become idle.
 	 */
 	async abort(): Promise<void> {
+		this._promptAbortController?.abort();
 		this.abortRetry();
 		this.agent.abort();
 		await this.waitForIdle();
@@ -2833,6 +2909,7 @@ export class AgentSession {
 	 */
 	abortRetry(): void {
 		this._retryAbortController?.abort();
+		this._promptAbortController?.abort();
 	}
 
 	/** Whether auto-retry is currently in progress */

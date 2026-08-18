@@ -309,7 +309,8 @@ user sends prompt ────────────────────�
   │   └─► turn_end                                 │       │
   │                                                        │
   ├─► agent_end                                            │
-  └─► agent_settled (no retry/compaction/follow-up left)   │
+  ├─► agent_recovery_exhausted (native retry/overflow done; can request one continue)
+  └─► agent_settled (no retry/compaction/follow-up/hook continue left) │
                                                            │
 user sends another prompt ◄────────────────────────────────┘
 
@@ -566,7 +567,7 @@ Inside `before_agent_start`, `event.systemPrompt` and `ctx.getSystemPrompt()` bo
 
 #### agent_start / agent_end / agent_settled
 
-`agent_start` fires when a low-level agent run begins. `agent_end` fires when that run ends, but Pi may still auto-retry, auto-compact and retry, or continue with queued follow-up messages. Use `agent_settled` for status integrations that need to know Pi will not continue running automatically.
+`agent_start` fires when a low-level agent run begins. `agent_end` fires when that run ends, but Pi may still auto-retry, auto-compact and retry, continue with queued follow-up messages, or honor `agent_recovery_exhausted`. Use `agent_settled` for status integrations that need to know Pi will not continue running automatically.
 
 ```typescript
 pi.on("agent_start", async (_event, ctx) => {});
@@ -579,6 +580,36 @@ pi.on("agent_settled", async (_event, ctx) => {
   // ctx.isIdle() is true here unless another extension started a new run.
 });
 ```
+
+#### agent_recovery_exhausted
+
+Fires after native retry and overflow compact-and-retry are exhausted, and after queued follow-up/steering continuations, when the last assistant still failed. It does not fire on success, `stopReason: "aborted"`, mid-ladder retry, successful overflow recovery, or after the per-prompt continuation cap (`MAX_AGENT_RECOVERY_EXHAUSTED_CONTINUATIONS`, 8).
+
+Detect support at runtime with `pi.features`:
+
+```typescript
+const supported =
+  pi.features != null &&
+  Object.prototype.hasOwnProperty.call(pi.features, "agent_recovery_exhausted") &&
+  pi.features.agent_recovery_exhausted === true;
+```
+
+Return `{ retry: true }` to request one in-session continuation. Pi then removes the trailing failed assistant from active context (session history is unchanged) and calls `agent.continue()`. Any other result, a throw, or an aborted signal is a decline. Later handlers still run and cannot cancel an earlier retry vote.
+
+```typescript
+pi.on("agent_recovery_exhausted", async (event, ctx) => {
+  // event.message - failed assistant (includes stopReason / errorMessage)
+  // event.nativeRetryAttempts - completed native retries for this cycle
+  // event.overflowRecoveryAttempted - true after the single overflow compact-and-retry
+  // event.signal - abort signal for this prompt
+  if (event.signal.aborted) return;
+  const applied = await pi.setModel(fallbackModel);
+  if (!applied) return;
+  return { retry: true };
+});
+```
+
+`agent_settled` still fires exactly once per prompt, after native recovery and any accepted hook continuations finish.
 
 #### turn_start / turn_end
 
@@ -1339,6 +1370,10 @@ export default function (pi: ExtensionAPI) {
 ```
 
 ## ExtensionAPI Methods
+
+### pi.features
+
+Frozen runtime feature flags. On current hosts this is `{ agent_recovery_exhausted: true }`. Treat a missing `features` object, a missing key, or a value other than `true` as unsupported.
 
 ### pi.on(event, handler)
 

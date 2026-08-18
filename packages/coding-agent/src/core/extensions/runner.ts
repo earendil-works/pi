@@ -13,6 +13,8 @@ import type { ScopedModel } from "../model-resolver.ts";
 import type { SessionManager } from "../session-manager.ts";
 import type { BuildSystemPromptOptions } from "../system-prompt.ts";
 import type {
+	AgentRecoveryExhaustedEvent,
+	AgentRecoveryExhaustedResult,
 	BeforeAgentStartEvent,
 	BeforeAgentStartEventResult,
 	BeforeProviderHeadersEvent,
@@ -135,6 +137,7 @@ type RunnerEmitEvent = Exclude<
 	| MessageEndEvent
 	| ResourcesDiscoverEvent
 	| InputEvent
+	| AgentRecoveryExhaustedEvent
 >;
 
 type SessionBeforeEvent = Extract<
@@ -830,6 +833,36 @@ export class ExtensionRunner {
 		}
 
 		return result as RunnerEmitResult<TEvent>;
+	}
+
+	async emitAgentRecoveryExhausted(event: AgentRecoveryExhaustedEvent): Promise<boolean> {
+		const ctx = this.createContext();
+		let retry = false;
+
+		for (const ext of this.extensions) {
+			const handlers = ext.handlers.get("agent_recovery_exhausted");
+			if (!handlers || handlers.length === 0) continue;
+
+			for (const handler of handlers) {
+				try {
+					const handlerResult = (await handler(event, ctx)) as AgentRecoveryExhaustedResult | undefined;
+					if (handlerResult?.retry === true) {
+						retry = true;
+					}
+				} catch (err) {
+					const message = err instanceof Error ? err.message : String(err);
+					const stack = err instanceof Error ? err.stack : undefined;
+					this.emitError({
+						extensionPath: ext.path,
+						event: event.type,
+						error: message,
+						stack,
+					});
+				}
+			}
+		}
+
+		return retry;
 	}
 
 	async emitMessageEnd(event: MessageEndEvent): Promise<AgentMessage | undefined> {

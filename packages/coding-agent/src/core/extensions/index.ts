@@ -22,6 +22,8 @@ export { ExtensionRunner } from "./runner.ts";
 export type {
 	AfterProviderResponseEvent,
 	AgentEndEvent,
+	AgentRecoveryExhaustedEvent,
+	AgentRecoveryExhaustedResult,
 	AgentSettledEvent,
 	AgentStartEvent,
 	// Re-exports
@@ -69,6 +71,7 @@ export type {
 	ExtensionError,
 	ExtensionEvent,
 	ExtensionFactory,
+	ExtensionFeatures,
 	ExtensionFlag,
 	ExtensionHandler,
 	ExtensionMode,
@@ -183,5 +186,6 @@ export {
 	isReadToolResult,
 	isToolCallEventType,
 	isWriteToolResult,
+	MAX_AGENT_RECOVERY_EXHAUSTED_CONTINUATIONS,
 } from "./types.ts";
 export { wrapRegisteredTool, wrapRegisteredTools } from "./wrapper.ts";

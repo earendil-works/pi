@@ -256,6 +256,10 @@ function createExtensionAPI(
 	eventBus: EventBus,
 ): ExtensionAPI {
 	const api = {
+		features: Object.freeze({
+			agent_recovery_exhausted: true,
+		}),
+
 		// Registration methods - write to extension
 		on(event: string, handler: HandlerFn): void {
 			runtime.assertActive();

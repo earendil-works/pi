@@ -17,6 +17,7 @@ import type {
 } from "@earendil-works/pi-agent-core";
 import type {
 	Api,
+	AssistantMessage,
 	AssistantMessageEvent,
 	AssistantMessageEventStream,
 	ConstrainedSamplingConfig,
@@ -740,6 +741,30 @@ export interface AgentSettledEvent {
 	type: "agent_settled";
 }
 
+/** Per-prompt cap on hook-driven continuations after native recovery is exhausted. */
+export const MAX_AGENT_RECOVERY_EXHAUSTED_CONTINUATIONS = 8;
+
+/** Fired after native retry and overflow recovery are exhausted, before agent_settled. */
+export interface AgentRecoveryExhaustedEvent {
+	type: "agent_recovery_exhausted";
+	/** Failed assistant that exhausted native recovery. */
+	message: AssistantMessage;
+	/**
+	 * Completed native retry attempts for this post-run cycle, captured
+	 * before `_handlePostAgentRun` resets `_retryAttempt`. `0` when native
+	 * retry never started (disabled, non-retryable, or 401/403).
+	 */
+	nativeRetryAttempts: number;
+	/** True when this cycle already consumed the single overflow compact-and-retry. */
+	overflowRecoveryAttempted: boolean;
+	/** Abort signal for this `_runAgentPrompt` invocation. */
+	signal: AbortSignal;
+}
+
+export interface AgentRecoveryExhaustedResult {
+	retry?: boolean;
+}
+
 /** Fired at the start of each turn */
 export interface TurnStartEvent {
 	type: "turn_start";
@@ -1059,6 +1084,7 @@ export type ExtensionEvent =
 	| AgentStartEvent
 	| AgentEndEvent
 	| AgentSettledEvent
+	| AgentRecoveryExhaustedEvent
 	| TurnStartEvent
 	| TurnEndEvent
 	| MessageStartEvent
@@ -1208,10 +1234,22 @@ export interface ResolvedCommand extends RegisteredCommand {
 // biome-ignore lint/suspicious/noConfusingVoidType: void allows bare return statements
 export type ExtensionHandler<E, R = undefined> = (event: E, ctx: ExtensionContext) => Promise<R | void> | R | void;
 
+/** Runtime feature flags advertised on hook-bearing hosts. */
+export interface ExtensionFeatures {
+	readonly agent_recovery_exhausted: true;
+}
+
 /**
  * ExtensionAPI passed to extension factory functions.
  */
 export interface ExtensionAPI {
+	/**
+	 * Runtime feature flags. Present on hosts that implement this surface.
+	 * Detect `agent_recovery_exhausted` by checking that `features` is a non-null
+	 * object whose own enumerable data property `agent_recovery_exhausted` is `true`.
+	 */
+	readonly features?: ExtensionFeatures;
+
 	// =========================================================================
 	// Event Subscription
 	// =========================================================================
@@ -1245,6 +1283,10 @@ export interface ExtensionAPI {
 	on(event: "agent_start", handler: ExtensionHandler<AgentStartEvent>): void;
 	on(event: "agent_end", handler: ExtensionHandler<AgentEndEvent>): void;
 	on(event: "agent_settled", handler: ExtensionHandler<AgentSettledEvent>): void;
+	on(
+		event: "agent_recovery_exhausted",
+		handler: ExtensionHandler<AgentRecoveryExhaustedEvent, AgentRecoveryExhaustedResult>,
+	): void;
 	on(event: "turn_start", handler: ExtensionHandler<TurnStartEvent>): void;
 	on(event: "turn_end", handler: ExtensionHandler<TurnEndEvent>): void;
 	on(event: "message_start", handler: ExtensionHandler<MessageStartEvent>): void;
