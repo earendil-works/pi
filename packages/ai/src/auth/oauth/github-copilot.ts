@@ -5,7 +5,7 @@
 import { GITHUB_COPILOT_MODELS } from "../../providers/github-copilot.models.ts";
 import { sleep } from "../../utils/sleep.ts";
 import type { OAuthAuth, OAuthCredential, ProviderAuthInteraction } from "../types.ts";
-import { abortableSleep, pollOAuthDeviceCodeFlow } from "./device-code.ts";
+import { pollOAuthDeviceCodeFlow } from "./device-code.ts";
 
 const decode = (s: string) => atob(s);
 const CLIENT_ID = decode("SXYxLmI1MDdhMDhjODdlY2ZlOTg=");
