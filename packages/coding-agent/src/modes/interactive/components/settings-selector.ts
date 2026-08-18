@@ -4,6 +4,7 @@ import {
 	type Component,
 	Container,
 	getCapabilities,
+	type Locale,
 	type ScrollViewScrollbar,
 	type SelectItem,
 	SelectList,
@@ -22,6 +23,7 @@ import type {
 	TuiMode,
 	WarningSettings,
 } from "../../../core/settings-manager.ts";
+import { SUPPORTED_LOCALES } from "../../../core/supported-locales.ts";
 import {
 	getSelectListTheme,
 	getSettingsListTheme,
@@ -98,6 +100,7 @@ export interface SettingsConfig {
 	fullscreenExitOutput: FullscreenExitOutput;
 	fullscreenScrollbar: ScrollViewScrollbar;
 	warnings: WarningSettings;
+	locale: Locale;
 }
 
 export interface SettingsCallbacks {
@@ -133,6 +136,7 @@ export interface SettingsCallbacks {
 	onFullscreenExitOutputChange: (output: FullscreenExitOutput) => void;
 	onFullscreenScrollbarChange: (mode: ScrollViewScrollbar) => void;
 	onWarningsChange: (warnings: WarningSettings) => void;
+	onLocaleChange: (locale: Locale) => void;
 	onCancel: () => void;
 }
 
@@ -671,6 +675,29 @@ export class SettingsSelectorComponent extends Container {
 				values: ["auto", "always", "hidden"],
 			},
 			{
+				id: "locale",
+				label: t("codingAgent.ui.settings.locale"),
+				description: t("codingAgent.ui.settings.localeDesc"),
+				currentValue: config.locale,
+				submenu: (currentValue, done) => {
+					const options = SUPPORTED_LOCALES.map((item) => ({
+						value: item.value,
+						label: item.label,
+					}));
+					return new SelectSubmenu(
+						t("codingAgent.ui.settings.language.title"),
+						t("codingAgent.ui.settings.language.selectDesc"),
+						options,
+						currentValue,
+						(value) => {
+							callbacks.onLocaleChange(value as Locale);
+							done(value);
+						},
+						() => done(),
+					);
+				},
+			},
+			{
 				id: "theme",
 				label: t("codingAgent.ui.settings.theme.title"),
 				description: t("codingAgent.ui.settings.theme.desc"),
@@ -893,6 +920,9 @@ export class SettingsSelectorComponent extends Container {
 						break;
 					case "theme":
 						callbacks.onThemeChange(newValue);
+						break;
+					case "locale":
+						callbacks.onLocaleChange(newValue as Locale);
 						break;
 				}
 			},

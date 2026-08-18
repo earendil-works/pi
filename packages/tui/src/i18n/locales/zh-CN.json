@@ -434,6 +434,13 @@
         "fullscreenExitOutputDesc": "退出全屏模式时打印会话记录或仅打印会话恢复提示",
         "fullscreenScrollbar": "全屏滚动条",
         "fullscreenScrollbarDesc": "全屏模式下的滚动条行为；在常规模式下无效",
+        "locale": "语言",
+        "localeDesc": "界面显示语言",
+        "language": {
+          "title": "语言",
+          "selectDesc": "选择界面显示语言",
+          "changed": "语言已切换为 {{language}} 部分已固定的语言无法及时刷新,重启终端即可解决."
+        },
         "hints": {
           "enterToSelect": "Enter 选择",
           "escToGoBack": "Esc 返回"

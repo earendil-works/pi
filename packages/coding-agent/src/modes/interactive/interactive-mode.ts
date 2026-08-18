@@ -30,12 +30,15 @@ import {
 	Container,
 	fuzzyFilter,
 	getCapabilities,
+	getLocale,
 	hyperlink,
+	type Locale,
 	Markdown,
 	matchesKey,
 	ProcessTerminal,
 	Spacer,
 	setKeybindings,
+	setLocale,
 	Text,
 	TruncatedText,
 	type TUI,
@@ -96,6 +99,7 @@ import { type SessionEntry, SessionManager, sessionEntryToContextMessages } from
 import type { FullscreenExitOutput, TuiMode } from "../../core/settings-manager.ts";
 import { BUILTIN_SLASH_COMMANDS } from "../../core/slash-commands.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
+import { isValidLocale, SUPPORTED_LOCALES } from "../../core/supported-locales.ts";
 import { isInstallTelemetryEnabled } from "../../core/telemetry.ts";
 import type { TruncationResult } from "../../core/tools/truncate.ts";
 import { hasTrustRequiringProjectResources, ProjectTrustStore } from "../../core/trust-manager.ts";
@@ -4528,6 +4532,7 @@ export class InteractiveMode {
 					fullscreenExitOutput: this.settingsManager.getFullscreenExitOutput(),
 					fullscreenScrollbar: this.settingsManager.getFullscreenScrollbar(),
 					warnings: this.settingsManager.getWarnings(),
+					locale: (this.settingsManager.getLocale() as Locale) ?? getLocale(),
 				},
 				{
 					onAutoCompactChange: (enabled) => {
@@ -4695,6 +4700,15 @@ export class InteractiveMode {
 					},
 					onWarningsChange: (warnings) => {
 						this.settingsManager.setWarnings(warnings);
+					},
+					onLocaleChange: (locale) => {
+						if (!isValidLocale(locale)) return;
+						setLocale(locale);
+						this.settingsManager.setLocale(locale);
+						this.setupAutocompleteProvider();
+						this.ui.requestRender();
+						const label = SUPPORTED_LOCALES.find((l) => l.value === locale)?.label ?? locale;
+						this.showStatus(t("codingAgent.ui.settings.language.changed", { language: label }));
 					},
 					onCancel: () => {
 						done();

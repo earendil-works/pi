@@ -434,6 +434,13 @@
         "fullscreenExitOutputDesc": "Print the transcript or only a session resume hint when exiting fullscreen mode",
         "fullscreenScrollbar": "Fullscreen scrollbar",
         "fullscreenScrollbarDesc": "Scrollbar behavior in fullscreen mode; has no effect in regular mode",
+        "locale": "Language",
+        "localeDesc": "UI display language",
+        "language": {
+          "title": "Language",
+          "selectDesc": "Select the UI display language",
+          "changed": "Language switched to {{language}}"
+        },
         "hints": {
           "enterToSelect": "Enter to select",
           "escToGoBack": "Esc to go back"

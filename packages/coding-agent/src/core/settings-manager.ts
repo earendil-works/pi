@@ -754,6 +754,12 @@ export class SettingsManager {
 		this.save();
 	}
 
+	setLocale(locale: string): void {
+		this.globalSettings.locale = locale;
+		this.markModified("locale");
+		this.save();
+	}
+
 	getDefaultThinkingLevel(): ThinkingLevel | undefined {
 		return this.settings.defaultThinkingLevel;
 	}
