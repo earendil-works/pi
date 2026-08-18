@@ -3835,7 +3835,12 @@ export class InteractiveMode {
 		const label = notice.kind === "compaction" ? "Compaction" : "Branch summary";
 		this.chatContainer.addChild(new Spacer(1));
 		this.chatContainer.addChild(
-			new Text(theme.fg("warning", `${label}: ${formatTokens(tokens)} tokens billed${cost}`), 1, 0),
+			new DynamicText(
+				`${label}: ${formatTokens(tokens)} tokens billed${cost}`,
+				(message) => theme.fg("warning", message),
+				1,
+				0,
+			),
 		);
 	}
 
