@@ -20,6 +20,39 @@ const items = [
 ];
 
 describe("SettingsList", () => {
+	it("keeps the unstyled cursor behavior when cursorStyle is omitted", () => {
+		const list = new SettingsList(
+			items.map((item) => ({ ...item })),
+			10,
+			testTheme,
+			() => {},
+			() => {},
+		);
+
+		assert.match(list.render(80)[0] ?? "", /^> /);
+	});
+
+	it("applies cursorStyle when rendering the selected item", () => {
+		let marker = "old:";
+		const list = new SettingsList(
+			items.map((item) => ({ ...item })),
+			10,
+			{
+				...testTheme,
+				cursorStyle: (cursor) => `${marker}${cursor}`,
+			},
+			() => {},
+			() => {},
+		);
+
+		assert.match(list.render(80)[0] ?? "", /^old:> /);
+		marker = "new:";
+		list.invalidate();
+		const output = list.render(80)[0] ?? "";
+		assert.match(output, /^new:> /);
+		assert.doesNotMatch(output, /^old:> /);
+	});
+
 	it("includes spaces in an active search instead of changing the selected setting", () => {
 		const changes: Array<{ id: string; value: string }> = [];
 		const list = new SettingsList(
