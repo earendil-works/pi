@@ -85,10 +85,17 @@ These variables are read by Pi itself:
 | `PI_SKIP_VERSION_CHECK` | Disable the `pi.dev` latest-version request |
 | `PI_TELEMETRY` | Override install/update telemetry and provider attribution headers: `1`/`true`/`yes` or `0`/`false`/`no` |
 | `PI_CACHE_RETENTION` | Set to `long` for extended provider prompt caching where supported |
+| `PI_PROVIDER_PAYLOAD_AUDIT` | Set to `1`, `true`, or `yes` to append provider-payload lineage hashes (not raw payload content) to the persistent session |
 | `PI_SHARE_VIEWER_URL` | Override the base URL used by `/share` |
 | `PI_HARDWARE_CURSOR` | Set to `1` to show the hardware cursor; see [Terminal setup](terminal-setup.md) |
 | `PI_TUI_ESC_TIMEOUT` | How long to wait after a lone ESC before treating it as Escape, in milliseconds; defaults to `100` over SSH and `10` otherwise. Increase if Alt-key input is misread as Escape |
 | `VISUAL`, `EDITOR` | External editor fallback when `externalEditor` is unset |
 | `HTTP_PROXY`, `HTTPS_PROXY` | Proxy outbound HTTP requests |
+
+### Provider Payload Audit
+
+`PI_PROVIDER_PAYLOAD_AUDIT` records a `provider-payload-audit` custom entry immediately before each provider request. The entry contains SHA-256 hashes, byte counts, array-item prefix comparisons, provider/model identity, and the corresponding session-context lineage. It does not contain the payload or retain payload object references.
+
+The classification distinguishes linear appends and retries from changed earlier sections, model changes, compaction, and explicit session-path transitions. Custom entries do not participate in provider context, so enabling the audit does not add content to the request. It does add diagnostic entries to the persistent session JSONL and is therefore disabled by default.
 
 Provider credentials such as `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, and cloud-provider configuration are listed in [Providers](providers.md#environment-variables-or-auth-file).

@@ -11,6 +11,7 @@ import { convertToLlm } from "./messages.ts";
 import { findInitialModel } from "./model-resolver.ts";
 import { ModelRuntime } from "./model-runtime.ts";
 import { mergeProviderAttributionHeaders } from "./provider-attribution.ts";
+import { ProviderPayloadAudit } from "./provider-payload-audit.ts";
 import type { ResourceLoader } from "./resource-loader.ts";
 import { DefaultResourceLoader } from "./resource-loader.ts";
 import { getDefaultSessionDir, SessionManager } from "./session-manager.ts";
@@ -293,6 +294,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	};
 
 	const extensionRunnerRef: { current?: ExtensionRunner } = {};
+	const providerPayloadAudit = new ProviderPayloadAudit(sessionManager);
 
 	agent = new Agent({
 		initialState: {
@@ -331,12 +333,16 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 				},
 			});
 		},
-		onPayload: async (payload, _model) => {
+		onPayload: async (payload, payloadModel) => {
+			// This is the final common boundary for normal turns, compaction,
+			// summarization, and conforming custom providers.
+			sessionManager.assertWriterOwnership();
 			const runner = extensionRunnerRef.current;
-			if (!runner?.hasHandlers("before_provider_request")) {
-				return payload;
-			}
-			return runner.emitBeforeProviderRequest(payload);
+			const finalPayload = runner?.hasHandlers("before_provider_request")
+				? await runner.emitBeforeProviderRequest(payload)
+				: payload;
+			providerPayloadAudit.record(finalPayload, payloadModel);
+			return finalPayload;
 		},
 		onResponse: async (response, _model) => {
 			const runner = extensionRunnerRef.current;
