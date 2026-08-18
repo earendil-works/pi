@@ -356,6 +356,66 @@ describe("AgentSession compaction characterization", () => {
 		expect(harness.session.getLastAssistantText()).toBe("completed response");
 	});
 
+	it("resumes the interrupted turn when compaction restores multiple failed attempts", async () => {
+		const harness = await createHarness({
+			models: [{ id: "faux-1", contextWindow: 1000, maxTokens: 100 }],
+			settings: {
+				retry: { enabled: true, maxRetries: 3, baseDelayMs: 0 },
+				compaction: { enabled: true, keepRecentTokens: 100, reserveTokens: 0 },
+			},
+		});
+		harnesses.push(harness);
+
+		harness.setResponses([
+			fauxAssistantMessage("seed response"),
+			fauxAssistantMessage("", {
+				stopReason: "error",
+				errorMessage: "server_error: transient failure",
+			}),
+			fauxAssistantMessage("partial reasoning", { stopReason: "length" }),
+			fauxAssistantMessage("default pi compaction summary"),
+			fauxAssistantMessage("completed response"),
+		]);
+
+		const session = harness.session;
+		let liveTailRoleAtCompactionEnd: string | undefined;
+		session.subscribe((event) => {
+			if (event.type === "compaction_end" && event.reason === "overflow" && event.willRetry) {
+				liveTailRoleAtCompactionEnd = session.messages.at(-1)?.role;
+			}
+		});
+
+		await session.prompt("seed prompt");
+		await expect(session.prompt("x".repeat(5000))).resolves.toBeUndefined();
+
+		expect(harness.faux.state.callCount).toBe(5);
+		expect(harness.getPendingResponseCount()).toBe(0);
+		expect(harness.eventsOfType("auto_retry_start")).toHaveLength(1);
+		expect(harness.eventsOfType("compaction_start")).toHaveLength(1);
+		expect(harness.eventsOfType("compaction_end")).toEqual([
+			expect.objectContaining({
+				reason: "overflow",
+				result: expect.objectContaining({ summary: "default pi compaction summary" }),
+				aborted: false,
+				willRetry: true,
+			}),
+		]);
+		expect(liveTailRoleAtCompactionEnd).toBe("user");
+
+		const entries = harness.sessionManager.getEntries();
+		expect(entries.filter((entry) => entry.type === "compaction")).toEqual([
+			expect.objectContaining({ fromHook: false }),
+		]);
+		expect(
+			entries.flatMap((entry) => {
+				if (entry.type !== "message" || entry.message.role !== "assistant") return [];
+				const { stopReason } = entry.message;
+				return stopReason === "error" || stopReason === "length" ? [stopReason] : [];
+			}),
+		).toEqual(["error", "length"]);
+		expect(harness.session.getLastAssistantText()).toBe("completed response");
+	});
+
 	it("does not compact when a length stop reaches the desired output limit", async () => {
 		const harness = await createHarness({
 			models: [{ id: "faux-1", contextWindow: 1_000_000, maxTokens: 100 }],
