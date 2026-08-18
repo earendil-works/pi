@@ -1,4 +1,4 @@
-import { Container, getKeybindings, Spacer, Text } from "@earendil-works/pi-tui";
+import { Container, getKeybindings, Spacer, Text, t } from "@earendil-works/pi-tui";
 import {
 	getProjectTrustOptions,
 	type ProjectTrustOption,
@@ -20,11 +20,11 @@ export interface TrustSelectorOptions {
 
 function formatDecision(trustPath: string | undefined, decision: ProjectTrustStoreEntry | null): string {
 	if (decision === null) {
-		return "none";
+		return t("codingAgent.ui.trust.none");
 	}
-	const label = decision.decision ? "trusted" : "untrusted";
+	const label = decision.decision ? t("codingAgent.ui.trust.trusted") : t("codingAgent.ui.trust.untrusted");
 	if (trustPath !== undefined && decision.path !== trustPath) {
-		return `${label} (inherited from ${decision.path})`;
+		return `${label} (${t("codingAgent.ui.trust.inheritedFrom", { path: decision.path })})`;
 	}
 	return `${label} (${decision.path})`;
 }
@@ -51,21 +51,28 @@ export class TrustSelectorComponent extends Container {
 
 		this.addChild(new DynamicBorder());
 		this.addChild(new Spacer(1));
-		this.addChild(new Text(theme.fg("accent", theme.bold("Project trust")), 1, 0));
+		this.addChild(new Text(theme.fg("accent", theme.bold(t("codingAgent.ui.trust.title"))), 1, 0));
 		this.addChild(new Text(theme.fg("muted", options.cwd), 1, 0));
 		this.addChild(new Spacer(1));
 		this.addChild(
 			new Text(
 				theme.fg(
 					"muted",
-					`Saved decision: ${formatDecision(this.trustOptions[0]?.savedPath, options.savedDecision)}`,
+					`${t("codingAgent.ui.trust.savedDecision")}: ${formatDecision(this.trustOptions[0]?.savedPath, options.savedDecision)}`,
 				),
 				1,
 				0,
 			),
 		);
 		this.addChild(
-			new Text(theme.fg("muted", `Current session: ${options.projectTrusted ? "trusted" : "untrusted"}`), 1, 0),
+			new Text(
+				theme.fg(
+					"muted",
+					`${t("codingAgent.ui.trust.currentSession")}: ${options.projectTrusted ? t("codingAgent.ui.trust.trusted") : t("codingAgent.ui.trust.untrusted")}`,
+				),
+				1,
+				0,
+			),
 		);
 		this.addChild(new Spacer(1));
 
@@ -74,11 +81,11 @@ export class TrustSelectorComponent extends Container {
 		this.addChild(new Spacer(1));
 		this.addChild(
 			new Text(
-				rawKeyHint("↑↓", "navigate") +
+				rawKeyHint("↑↓", t("codingAgent.ui.trust.navigate")) +
 					"  " +
-					keyHint("tui.select.confirm", "save") +
+					keyHint("tui.select.confirm", t("codingAgent.ui.trust.save")) +
 					"  " +
-					keyHint("tui.select.cancel", "cancel"),
+					keyHint("tui.select.cancel", t("codingAgent.ui.trust.cancel")),
 				1,
 				0,
 			),

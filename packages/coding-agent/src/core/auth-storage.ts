@@ -4,6 +4,7 @@
  */
 
 import type { AuthOperationOptions, Credential, CredentialInfo, CredentialStore } from "@earendil-works/pi-ai";
+import { t } from "@earendil-works/pi-tui";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 import lockfile from "proper-lockfile";
@@ -89,7 +90,7 @@ export class FileAuthStorageBackend implements AuthStorageBackend {
 			}
 		}
 
-		throw (lastError as Error) ?? new Error("Failed to acquire auth storage lock");
+		throw (lastError as Error) ?? new Error(t("codingAgent.errors.auth.lockFailed"));
 	}
 
 	withLock<T>(fn: (current: string | undefined) => LockResult<T>): T {
@@ -167,7 +168,7 @@ export class FileAuthStorageBackend implements AuthStorageBackend {
 		let lockCompromisedError: Error | undefined;
 		const throwIfCompromised = () => {
 			if (lockCompromised) {
-				throw lockCompromisedError ?? new Error("Auth storage lock was compromised");
+				throw lockCompromisedError ?? new Error(t("codingAgent.errors.auth.lockCompromised"));
 			}
 		};
 
@@ -220,15 +221,17 @@ export class ReadOnlyAuthStorage implements CredentialStore {
 				this.data = {};
 				return this.data;
 			}
-			throw new Error(`Failed to read auth.json: ${error instanceof Error ? error.message : String(error)}`);
+			throw new Error(
+				t("codingAgent.errors.auth.readFailed", { error: error instanceof Error ? error.message : String(error) }),
+			);
 		}
 
 		if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-			throw new Error("Invalid auth.json: expected an object");
+			throw new Error(t("codingAgent.errors.auth.invalidJson"));
 		}
 		for (const [providerId, credential] of Object.entries(parsed)) {
 			if (typeof credential !== "object" || credential === null || Array.isArray(credential)) {
-				throw new Error(`Invalid auth.json credential for provider "${providerId}"`);
+				throw new Error(t("codingAgent.errors.auth.invalidCredential", { providerId }));
 			}
 			const value = credential as Record<string, unknown>;
 			if (value.type === "api_key") {
@@ -249,7 +252,7 @@ export class ReadOnlyAuthStorage implements CredentialStore {
 			) {
 				continue;
 			}
-			throw new Error(`Invalid auth.json credential for provider "${providerId}"`);
+			throw new Error(t("codingAgent.errors.auth.invalidCredential", { providerId }));
 		}
 
 		this.data = parsed as AuthStorageData;
@@ -282,11 +285,11 @@ export class ReadOnlyAuthStorage implements CredentialStore {
 		_fn: (current: Credential | undefined) => Promise<Credential | undefined>,
 		_options?: AuthOperationOptions,
 	): Promise<Credential | undefined> {
-		throw new Error("Read-only credential storage cannot modify auth.json");
+		throw new Error(t("codingAgent.errors.auth.readOnlyCannotModify"));
 	}
 
 	async delete(_providerId: string, _options?: AuthOperationOptions): Promise<void> {
-		throw new Error("Read-only credential storage cannot modify auth.json");
+		throw new Error(t("codingAgent.errors.auth.readOnlyCannotModify"));
 	}
 }
 

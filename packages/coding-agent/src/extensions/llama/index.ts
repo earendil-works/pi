@@ -1,3 +1,4 @@
+import { t } from "@earendil-works/pi-tui";
 import type { ExtensionAPI, ExtensionCommandContext } from "../../core/extensions/types.ts";
 import { formatBytes, LlamaClient, type LlamaModelInfo, normalizeLlamaServerUrl } from "./client.ts";
 import { findHuggingFaceToken, HuggingFaceClient } from "./huggingface.ts";
@@ -15,7 +16,7 @@ function isConnectionError(error: unknown): boolean {
 }
 
 function connectionErrorMessage(error: unknown): string {
-	if (isConnectionError(error)) return "Could not connect to the server.";
+	if (isConnectionError(error)) return t("codingAgent.llama.couldNotConnect");
 	return error instanceof Error ? error.message : String(error);
 }
 
@@ -76,9 +77,9 @@ export default function llamaExtension(pi: ExtensionAPI): void {
 			const choice = await ui.select(`${loaded.length} model${loaded.length === 1 ? " is" : "s are"} loaded`, [
 				"Unload all and load",
 				"Keep loaded and load",
-				"Cancel",
+				t("codingAgent.llama.cancel"),
 			]);
-			if (!choice || choice === "Cancel") return;
+			if (!choice || choice === t("codingAgent.llama.cancel")) return;
 			replace = choice === "Unload all and load";
 		}
 
@@ -93,7 +94,7 @@ export default function llamaExtension(pi: ExtensionAPI): void {
 
 		try {
 			const result = await runWithProgress(ui, {
-				title: "Loading model",
+				title: t("codingAgent.llama.loadingModel"),
 				model: target.id,
 				initialMessage: "Starting…",
 				cancelTitle: "Stop loading?",
@@ -139,15 +140,18 @@ export default function llamaExtension(pi: ExtensionAPI): void {
 		const selected = await ui.searchModels((query, signal) => huggingFace.search(query, signal));
 		if (!selected) return;
 		const parsed = parseHuggingFaceModel(selected);
-		ui.showStatus("Loading model details", parsed.repository);
+		ui.showStatus(t("codingAgent.llama.loadingModelDetails"), parsed.repository);
 		const details = await huggingFace.details(parsed.repository);
 		if (details.gated) {
-			const approval = details.gated === "manual" ? "Manual approval is required" : "Accept the access terms";
+			const approval =
+				details.gated === "manual"
+					? t("codingAgent.llama.manualApprovalRequired")
+					: t("codingAgent.llama.acceptAccessTerms");
 			const choice = await ui.select(
 				`Hugging Face access required\n${details.id}\n\n${approval} at:\nhttps://huggingface.co/${details.id}\n\nThe llama.cpp server needs HF_TOKEN with access.`,
-				["Continue", "Back"],
+				[t("codingAgent.llama.continue"), t("codingAgent.llama.back")],
 			);
-			if (choice !== "Continue") return;
+			if (choice !== t("codingAgent.llama.continue")) return;
 		}
 		let quantization = parsed.quantization;
 		if (!quantization && details.quantizations.length > 0) {

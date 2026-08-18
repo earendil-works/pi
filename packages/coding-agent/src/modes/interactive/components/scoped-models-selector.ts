@@ -9,6 +9,7 @@ import {
 	matchesKey,
 	Spacer,
 	Text,
+	t,
 } from "@earendil-works/pi-tui";
 import { getModelSearchText } from "../model-search.ts";
 import { theme } from "../theme/theme.ts";
@@ -129,9 +130,16 @@ export class ScopedModelsSelectorComponent extends Container implements Focusabl
 		// Header
 		this.addChild(new DynamicBorder());
 		this.addChild(new Spacer(1));
-		this.addChild(new Text(theme.fg("accent", theme.bold("Model Configuration")), 0, 0));
+		this.addChild(new Text(theme.fg("accent", theme.bold(t("codingAgent.ui.scopedModels.title"))), 0, 0));
 		this.addChild(
-			new Text(theme.fg("muted", `Session-only. ${keyText("app.models.save")} to save to settings.`), 0, 0),
+			new Text(
+				theme.fg(
+					"muted",
+					`${t("codingAgent.ui.scopedModels.sessionOnly")} ${keyText("app.models.save")} ${t("codingAgent.ui.scopedModels.toSave")}`,
+				),
+				0,
+				0,
+			),
 		);
 		this.addChild(new Spacer(1));
 
@@ -271,7 +279,10 @@ export class ScopedModelsSelectorComponent extends Container implements Focusabl
 			this.listContainer.addChild(new Spacer(1));
 			this.listContainer.addChild(
 				new Text(
-					theme.fg("muted", `  ${selected.model ? `Model Name: ${selected.model.name}` : "Model unavailable"}`),
+					theme.fg(
+						"muted",
+						`  ${selected.model ? `${t("codingAgent.ui.scopedModels.modelName")}: ${selected.model.name}` : t("codingAgent.ui.scopedModels.modelUnavailable")}`,
+					),
 					0,
 					0,
 				),

@@ -1,3 +1,4 @@
+import { t } from "@earendil-works/pi-tui";
 export type LlamaModelStatus = "unloaded" | "loading" | "loaded" | "downloading" | "sleeping";
 
 export interface LlamaModelInfo {
@@ -100,7 +101,9 @@ function parseLoadProgress(data: unknown): LlamaProgress | undefined {
 		if (index >= 0) ratio = (index + (stageRatio ?? 0)) / stages.length;
 	}
 	return {
-		message: stage ? `Loading ${stage.replaceAll("_", " ")}` : "Loading model",
+		message: stage
+			? `${t("codingAgent.llama.loadingModel")} ${stage.replaceAll("_", " ")}`
+			: t("codingAgent.llama.loadingModel"),
 		ratio,
 	};
 }
@@ -120,7 +123,7 @@ function parseDownloadProgress(data: unknown): LlamaProgress | undefined {
 	}
 	if (total <= 0) return undefined;
 	return {
-		message: "Downloading model",
+		message: t("codingAgent.llama.downloadingModel"),
 		ratio: done / total,
 		detail: `${formatBytes(done)} / ${formatBytes(total)}`,
 	};
@@ -141,7 +144,7 @@ export function formatBytes(bytes: number): string {
 export function normalizeLlamaServerUrl(value: string): string {
 	const url = new URL(value.trim());
 	if (url.protocol !== "http:" && url.protocol !== "https:") {
-		throw new Error("Server URL must use http or https");
+		throw new Error(t("codingAgent.errors.llama.invalidUrlScheme"));
 	}
 	url.hash = "";
 	url.search = "";
@@ -175,17 +178,18 @@ export class LlamaClient {
 		} catch {
 			payload = undefined;
 		}
-		if (!response.ok) throw new Error(errorMessage(payload, `llama.cpp returned HTTP ${response.status}`));
+		if (!response.ok)
+			throw new Error(errorMessage(payload, t("codingAgent.errors.llama.httpError", { status: response.status })));
 		return payload;
 	}
 
 	async list(options: { reload?: boolean; signal?: AbortSignal } = {}): Promise<LlamaModelInfo[]> {
 		const payload = await this.request(`/models${options.reload ? "?reload=1" : ""}`, { signal: options.signal });
 		if (typeof payload !== "object" || payload === null || !Array.isArray((payload as { data?: unknown }).data)) {
-			throw new Error("llama.cpp returned an invalid model catalog");
+			throw new Error(t("codingAgent.errors.llama.invalidCatalog"));
 		}
 		const data = (payload as { data: unknown[] }).data;
-		if (!data.every(isModelInfo)) throw new Error("Server is not running in llama.cpp router mode");
+		if (!data.every(isModelInfo)) throw new Error(t("codingAgent.errors.llama.notRouterMode"));
 		return data;
 	}
 
@@ -214,7 +218,8 @@ export class LlamaClient {
 		const headers = new Headers();
 		if (this.apiKey) headers.set("Authorization", `Bearer ${this.apiKey}`);
 		const response = await fetch(`${this.serverUrl}/models/sse`, { headers, signal });
-		if (!response.ok || !response.body) throw new Error(`llama.cpp SSE returned HTTP ${response.status}`);
+		if (!response.ok || !response.body)
+			throw new Error(t("codingAgent.errors.llama.sseHttpError", { status: response.status }));
 		const reader = response.body.getReader();
 		const decoder = new TextDecoder();
 		let buffer = "";
@@ -258,13 +263,13 @@ export class LlamaClient {
 			if (event.event !== "model_status" && event.event !== "status_change") return;
 			const data = event.data as { status?: unknown } | undefined;
 			if (data?.status === "loaded") eventLoaded = true;
-			if (data?.status === "unloaded") eventError = "Model failed to load";
+			if (data?.status === "unloaded") eventError = t("codingAgent.llama.modelFailedToLoad");
 			const progress = parseLoadProgress(event.data);
 			if (progress) onProgress(progress);
 		}, watcher.signal).catch(() => {});
 		try {
 			await this.load(model, signal);
-			onProgress({ message: "Loading model" });
+			onProgress({ message: t("codingAgent.llama.loadingModel") });
 			while (true) {
 				if (signal?.aborted) throw signal.reason ?? new Error("Cancelled");
 				const entry = (await this.list({ signal })).find((candidate) => candidate.id === model);
@@ -273,8 +278,8 @@ export class LlamaClient {
 				if (entry?.status.failed || eventError) {
 					throw new Error(
 						entry?.status.exit_code === undefined
-							? (eventError ?? "Model failed to load")
-							: `Model exited with code ${entry.status.exit_code}`,
+							? (eventError ?? t("codingAgent.llama.modelFailedToLoad"))
+							: t("codingAgent.llama.modelExitedWithCode", { code: entry.status.exit_code }),
 					);
 				}
 				await sleep(250, signal);

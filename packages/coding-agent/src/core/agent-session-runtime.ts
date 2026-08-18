@@ -1,5 +1,6 @@
 import { copyFileSync, existsSync, mkdirSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
+import { t } from "@earendil-works/pi-tui";
 import { resolvePath } from "../utils/paths.ts";
 import type { AgentSession } from "./agent-session.ts";
 import type { AgentSessionRuntimeDiagnostic, AgentSessionServices } from "./agent-session-services.ts";
@@ -47,7 +48,7 @@ export class SessionImportFileNotFoundError extends Error {
 	readonly filePath: string;
 
 	constructor(filePath: string) {
-		super(`File not found: ${filePath}`);
+		super(t("codingAgent.errors.import.fileNotFound", { path: filePath }));
 		this.name = "SessionImportFileNotFoundError";
 		this.filePath = filePath;
 	}
@@ -273,14 +274,14 @@ export class AgentSessionRuntime {
 
 		const selectedEntry = this.session.sessionManager.getEntry(entryId);
 		if (!selectedEntry) {
-			throw new Error("Invalid entry ID for forking");
+			throw new Error(t("codingAgent.errors.fork.invalidEntryId"));
 		}
 
 		if (position === "at") {
 			targetLeafId = selectedEntry.id;
 		} else {
 			if (selectedEntry.type !== "message" || selectedEntry.message.role !== "user") {
-				throw new Error("Invalid entry ID for forking");
+				throw new Error(t("codingAgent.errors.fork.invalidEntryId"));
 			}
 			targetLeafId = selectedEntry.parentId;
 			selectedText = extractUserMessageText(selectedEntry.message.content);
@@ -290,7 +291,7 @@ export class AgentSessionRuntime {
 		if (this.session.sessionManager.isPersisted()) {
 			const currentSessionFile = this.session.sessionFile;
 			if (!currentSessionFile) {
-				throw new Error("Persisted session is missing a session file");
+				throw new Error(t("codingAgent.errors.session.missingSessionFile"));
 			}
 			const sessionDir = this.session.sessionManager.getSessionDir();
 			if (!targetLeafId) {
@@ -310,14 +311,12 @@ export class AgentSessionRuntime {
 			}
 
 			if (!existsSync(currentSessionFile)) {
-				throw new Error(
-					"This session has not been saved yet. Wait for the first assistant response before cloning or forking it.",
-				);
+				throw new Error(t("codingAgent.errors.fork.notSavedYet"));
 			}
 			const sessionManager = SessionManager.open(currentSessionFile, sessionDir);
 			const forkedSessionPath = sessionManager.createBranchedSession(targetLeafId);
 			if (!forkedSessionPath) {
-				throw new Error("Failed to create forked session");
+				throw new Error(t("codingAgent.errors.fork.createFailed"));
 			}
 			await this.teardownCurrent("fork", sessionManager.getSessionFile());
 			this.apply(

@@ -1,3 +1,4 @@
+import { t } from "@earendil-works/pi-tui";
 import { APP_NAME } from "../config.ts";
 import type { SourceInfo } from "./source-info.ts";
 
@@ -16,27 +17,59 @@ export interface BuiltinSlashCommand {
 	argumentHint?: string;
 }
 
+/**
+ * Get built-in slash commands with localized descriptions.
+ * Call this function after i18n is initialized.
+ */
+export function getBuiltinSlashCommands(): ReadonlyArray<BuiltinSlashCommand> {
+	return [
+		{ name: "settings", description: t("codingAgent.slash.settings") },
+		{ name: "model", description: t("codingAgent.slash.model"), argumentHint: "<provider/model>" },
+		{ name: "scoped-models", description: t("codingAgent.slash.scopedModels") },
+		{ name: "export", description: t("codingAgent.slash.export") },
+		{ name: "import", description: t("codingAgent.slash.import") },
+		{ name: "share", description: t("codingAgent.slash.share") },
+		{ name: "copy", description: t("codingAgent.slash.copy") },
+		{ name: "name", description: t("codingAgent.slash.name") },
+		{ name: "session", description: t("codingAgent.slash.session") },
+		{ name: "changelog", description: t("codingAgent.slash.changelog") },
+		{ name: "hotkeys", description: t("codingAgent.slash.hotkeys") },
+		{ name: "fork", description: t("codingAgent.slash.fork") },
+		{ name: "clone", description: t("codingAgent.slash.clone") },
+		{ name: "tree", description: t("codingAgent.slash.tree") },
+		{ name: "trust", description: t("codingAgent.slash.trust") },
+		{ name: "login", description: t("codingAgent.slash.login"), argumentHint: "<provider>" },
+		{ name: "logout", description: t("codingAgent.slash.logout") },
+		{ name: "new", description: t("codingAgent.slash.new") },
+		{ name: "compact", description: t("codingAgent.slash.compact") },
+		{ name: "resume", description: t("codingAgent.slash.resume") },
+		{ name: "reload", description: t("codingAgent.slash.reload") },
+		{ name: "quit", description: t("codingAgent.slash.quit", { appName: APP_NAME }) },
+	];
+}
+
+// Re-export for backward compatibility (non-localized, uses English keys)
 export const BUILTIN_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
-	{ name: "settings", description: "Open settings menu" },
-	{ name: "model", description: "Select model (opens selector UI)", argumentHint: "<provider/model>" },
-	{ name: "scoped-models", description: "Enable/disable models for Ctrl+P cycling" },
-	{ name: "export", description: "Export session (HTML default, or specify path: .html/.jsonl)" },
-	{ name: "import", description: "Import and resume a session from a JSONL file" },
-	{ name: "share", description: "Share session as a secret GitHub gist" },
-	{ name: "copy", description: "Copy last agent message to clipboard" },
-	{ name: "name", description: "Set session display name" },
-	{ name: "session", description: "Show session info and stats" },
-	{ name: "changelog", description: "Show changelog entries" },
-	{ name: "hotkeys", description: "Show all keyboard shortcuts" },
-	{ name: "fork", description: "Create a new fork from a previous user message" },
-	{ name: "clone", description: "Duplicate the current session at the current position" },
-	{ name: "tree", description: "Navigate session tree (switch branches)" },
-	{ name: "trust", description: "Save project trust decision for future sessions" },
-	{ name: "login", description: "Configure provider authentication", argumentHint: "<provider>" },
-	{ name: "logout", description: "Remove provider authentication" },
-	{ name: "new", description: "Start a new session" },
-	{ name: "compact", description: "Manually compact the session context" },
-	{ name: "resume", description: "Resume a different session" },
-	{ name: "reload", description: "Reload keybindings, extensions, skills, prompts, themes, and context files" },
-	{ name: "quit", description: `Quit ${APP_NAME}` },
+	{ name: "settings", description: t("codingAgent.slashFallback.settings") },
+	{ name: "model", description: t("codingAgent.slashFallback.model"), argumentHint: "<provider/model>" },
+	{ name: "scoped-models", description: t("codingAgent.slashFallback.scopedModels") },
+	{ name: "export", description: t("codingAgent.slashFallback.export") },
+	{ name: "import", description: t("codingAgent.slashFallback.import") },
+	{ name: "share", description: t("codingAgent.slashFallback.share") },
+	{ name: "copy", description: t("codingAgent.slashFallback.copy") },
+	{ name: "name", description: t("codingAgent.slashFallback.name") },
+	{ name: "session", description: t("codingAgent.slashFallback.session") },
+	{ name: "changelog", description: t("codingAgent.slashFallback.changelog") },
+	{ name: "hotkeys", description: t("codingAgent.slashFallback.hotkeys") },
+	{ name: "fork", description: t("codingAgent.slashFallback.fork") },
+	{ name: "clone", description: t("codingAgent.slashFallback.clone") },
+	{ name: "tree", description: t("codingAgent.slashFallback.tree") },
+	{ name: "trust", description: t("codingAgent.slashFallback.trust") },
+	{ name: "login", description: t("codingAgent.slashFallback.login"), argumentHint: "<provider>" },
+	{ name: "logout", description: t("codingAgent.slashFallback.logout") },
+	{ name: "new", description: t("codingAgent.slashFallback.newSession") },
+	{ name: "compact", description: t("codingAgent.slashFallback.compact") },
+	{ name: "resume", description: t("codingAgent.slashFallback.resume") },
+	{ name: "reload", description: t("codingAgent.slashFallback.reload") },
+	{ name: "quit", description: t("codingAgent.slashFallback.quit", { appName: APP_NAME }) },
 ];

@@ -46,6 +46,7 @@ import {
 	resetApiProviders,
 	streamSimple,
 } from "@earendil-works/pi-ai/compat";
+import { t } from "@earendil-works/pi-tui";
 import { getThemeByName, theme } from "../modes/interactive/theme/theme.ts";
 import { stripFrontmatter } from "../utils/frontmatter.ts";
 import { resolvePath } from "../utils/paths.ts";
@@ -435,11 +436,7 @@ export class AgentSession {
 
 		const isOAuth = this._modelRuntime.isUsingOAuth(model.provider);
 		if (isOAuth) {
-			throw new Error(
-				`Authentication failed for "${model.provider}". ` +
-					`Credentials may have expired or network is unavailable. ` +
-					`Run '/login ${model.provider}' to re-authenticate.`,
-			);
+			throw new Error(t("codingAgent.errors.auth.oauthFailed", { provider: model.provider }));
 		}
 		throw new Error(formatNoApiKeyFoundMessage(model.provider));
 	}
@@ -495,7 +492,7 @@ export class AgentSession {
 				if (err instanceof Error) {
 					throw err;
 				}
-				throw new Error(`Extension failed, blocking execution: ${String(err)}`);
+				throw new Error(t("codingAgent.errors.extension.blockedExecution", { error: String(err) }));
 			}
 		};
 
@@ -1138,9 +1135,7 @@ export class AgentSession {
 			}
 
 			if (this._compactionAbortController !== undefined) {
-				throw new Error(
-					"Cannot submit a prompt while compaction is in progress. Wait for compaction to finish and retry.",
-				);
+				throw new Error(t("codingAgent.errors.session.compactionInProgress"));
 			}
 
 			// Emit input event for extension interception (before skill/template expansion)
@@ -1173,9 +1168,7 @@ export class AgentSession {
 			// If streaming, queue via steer() or followUp() based on option
 			if (this.isStreaming) {
 				if (!options?.streamingBehavior) {
-					throw new Error(
-						"Agent is already processing. Specify streamingBehavior ('steer' or 'followUp') to queue the message.",
-					);
+					throw new Error(t("codingAgent.errors.session.agentAlreadyProcessing"));
 				}
 				if (options.streamingBehavior === "followUp") {
 					await this._queueFollowUp(expandedText, currentImages);
@@ -1200,11 +1193,7 @@ export class AgentSession {
 			if (!hasConfiguredAuth) {
 				const isOAuth = this._modelRuntime.isUsingOAuth(this.model.provider);
 				if (isOAuth) {
-					throw new Error(
-						`Authentication failed for "${this.model.provider}". ` +
-							`Credentials may have expired or network is unavailable. ` +
-							`Run '/login ${this.model.provider}' to re-authenticate.`,
-					);
+					throw new Error(t("codingAgent.errors.auth.oauthFailed", { provider: this.model.provider }));
 				}
 				throw new Error(formatNoApiKeyFoundMessage(this.model.provider));
 			}
@@ -1423,9 +1412,7 @@ export class AgentSession {
 		const command = this._extensionRunner.getCommand(commandName);
 
 		if (command) {
-			throw new Error(
-				`Extension command "/${commandName}" cannot be queued. Use prompt() or execute the command when not streaming.`,
-			);
+			throw new Error(t("codingAgent.errors.extension.commandCannotBeQueued", { commandName }));
 		}
 	}
 
@@ -1592,7 +1579,7 @@ export class AgentSession {
 	 */
 	async setModel(model: Model<any>): Promise<void> {
 		if (!(await this._modelRuntime.checkAuth(model.provider))) {
-			throw new Error(`No API key for ${model.provider}/${model.id}`);
+			throw new Error(t("codingAgent.errors.auth.noApiKey", { provider: model.provider, modelId: model.id }));
 		}
 
 		const previousModel = this.model;
@@ -1825,9 +1812,9 @@ export class AgentSession {
 				// Check why we can't compact
 				const lastEntry = pathEntries[pathEntries.length - 1];
 				if (lastEntry?.type === "compaction") {
-					throw new Error("Already compacted");
+					throw new Error(t("codingAgent.errors.compaction.alreadyCompacted"));
 				}
-				throw new Error("Nothing to compact (session too small)");
+				throw new Error(t("codingAgent.errors.compaction.nothingToCompact"));
 			}
 
 			let extensionCompaction: CompactionResult | undefined;
@@ -1844,7 +1831,7 @@ export class AgentSession {
 				})) as SessionBeforeCompactResult | undefined;
 
 				if (result?.cancel) {
-					throw new Error("Compaction cancelled");
+					throw new Error(t("codingAgent.errors.compaction.cancelled"));
 				}
 
 				if (result?.compaction) {
@@ -1935,7 +1922,7 @@ export class AgentSession {
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
 			const aborted = message === "Compaction cancelled" || (error instanceof Error && error.name === "AbortError");
-			const errorMessage = aborted ? undefined : `Compaction failed: ${message}`;
+			const errorMessage = aborted ? undefined : t("codingAgent.errors.compaction.failed", { error: message });
 			this._compactionAbortController = undefined;
 			this._emit({
 				type: "compaction_end",
@@ -2036,8 +2023,8 @@ export class AgentSession {
 
 			if (this._overflowRecoveryAttempted) {
 				const errorMessage = contextOverflow
-					? "Context overflow recovery failed after one compact-and-retry attempt. Try reducing context or switching to a larger-context model."
-					: "Truncated response recovery failed after one compact-and-retry attempt.";
+					? t("codingAgent.errors.compaction.overflowRecoveryFailed")
+					: t("codingAgent.errors.compaction.truncationRecoveryFailed");
 				this._emit({
 					type: "compaction_end",
 					reason: "overflow",
@@ -2271,8 +2258,8 @@ export class AgentSession {
 			if (started) {
 				const formattedErrorMessage =
 					reason === "overflow"
-						? `Context overflow recovery failed: ${errorMessage}`
-						: `Auto-compaction failed: ${errorMessage}`;
+						? t("codingAgent.errors.compaction.contextOverflowRecoveryFailed", { error: errorMessage })
+						: t("codingAgent.errors.compaction.autoCompactionFailed", { error: errorMessage });
 				this._emit({
 					type: "compaction_end",
 					reason,
@@ -2777,7 +2764,7 @@ export class AgentSession {
 			attempt: this._retryAttempt,
 			maxAttempts: settings.maxRetries,
 			delayMs,
-			errorMessage: message.errorMessage || "Unknown error",
+			errorMessage: message.errorMessage || t("codingAgent.errors.generic.error"),
 		});
 
 		// Remove error message from agent state (keep in session for history)
@@ -2798,7 +2785,7 @@ export class AgentSession {
 				type: "auto_retry_end",
 				success: false,
 				attempt,
-				finalError: "Retry cancelled",
+				finalError: t("codingAgent.errors.retry.cancelled"),
 			});
 			return false;
 		} finally {
@@ -2980,7 +2967,7 @@ export class AgentSession {
 		options: { summarize?: boolean; customInstructions?: string; replaceInstructions?: boolean; label?: string } = {},
 	): Promise<{ editorText?: string; cancelled: boolean; aborted?: boolean; summaryEntry?: BranchSummaryEntry }> {
 		if (this.isStreaming) {
-			throw new Error("Wait for the current response to finish before navigating the session tree.");
+			throw new Error(t("codingAgent.errors.session.waitForResponse"));
 		}
 
 		const oldLeafId = this.sessionManager.getLeafId();
@@ -2992,12 +2979,12 @@ export class AgentSession {
 
 		// Model required for summarization
 		if (options.summarize && !this.model) {
-			throw new Error("No model available for summarization");
+			throw new Error(t("codingAgent.errors.model.noModelForSummarization"));
 		}
 
 		const targetEntry = this.sessionManager.getEntry(targetId);
 		if (!targetEntry) {
-			throw new Error(`Entry ${targetId} not found`);
+			throw new Error(t("codingAgent.errors.session.entryNotFound", { entryId: targetId }));
 		}
 
 		// Collect entries to summarize (from old leaf to common ancestor)

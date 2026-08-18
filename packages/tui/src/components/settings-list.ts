@@ -1,4 +1,5 @@
 import { fuzzyFilter } from "../fuzzy.ts";
+import { t } from "../i18n/index.ts";
 import { getKeybindings } from "../keybindings.ts";
 import type { Component } from "../tui.ts";
 import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "../utils.ts";
@@ -96,7 +97,7 @@ export class SettingsList implements Component {
 		}
 
 		if (this.items.length === 0) {
-			lines.push(this.theme.hint("  No settings available"));
+			lines.push(this.theme.hint(`  ${t("codingAgent.ui.settings.noSettingsAvailable")}`));
 			if (this.searchEnabled) {
 				this.addHintLine(lines, width);
 			}
@@ -105,7 +106,7 @@ export class SettingsList implements Component {
 
 		const displayItems = this.searchEnabled ? this.filteredItems : this.items;
 		if (displayItems.length === 0) {
-			lines.push(truncateToWidth(this.theme.hint("  No matching settings"), width));
+			lines.push(truncateToWidth(this.theme.hint(`  ${t("codingAgent.ui.settings.noMatchingSettings")}`), width));
 			this.addHintLine(lines, width);
 			return lines;
 		}
@@ -239,8 +240,8 @@ export class SettingsList implements Component {
 			truncateToWidth(
 				this.theme.hint(
 					this.searchEnabled
-						? "  Type to search · Enter/Space to change · Esc to cancel"
-						: "  Enter/Space to change · Esc to cancel",
+						? `  ${t("codingAgent.ui.settings.searchHintWithSearch")}`
+						: `  ${t("codingAgent.ui.settings.searchHintWithoutSearch")}`,
 				),
 				width,
 			),

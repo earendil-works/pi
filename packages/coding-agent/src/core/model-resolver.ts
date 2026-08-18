@@ -10,6 +10,7 @@ import {
 	type Model,
 	modelsAreEqual,
 } from "@earendil-works/pi-ai";
+import { t } from "@earendil-works/pi-tui";
 import chalk from "chalk";
 import { minimatch } from "minimatch";
 import { isValidThinkingLevel } from "../cli/args.ts";
@@ -248,7 +249,7 @@ export function parseModelPattern(
 			return {
 				model: result.model,
 				thinkingLevel: undefined,
-				warning: `Invalid thinking level "${suffix}" in pattern "${pattern}". Using default instead.`,
+				warning: t("codingAgent.errors.model.invalidThinkingLevelInPattern", { suffix, pattern }),
 			};
 		}
 		return result;
@@ -321,7 +322,7 @@ export function resolveModelScopeFromModels(
 				diagnostics.push({
 					type: "warning",
 					code: "no-match",
-					message: `No models match pattern "${pattern}"`,
+					message: t("codingAgent.errors.model.noMatchPattern", { pattern }),
 					pattern,
 				});
 				continue;
@@ -345,7 +346,7 @@ export function resolveModelScopeFromModels(
 			diagnostics.push({
 				type: "warning",
 				code: "no-match",
-				message: `No models match pattern "${pattern}"`,
+				message: t("codingAgent.errors.model.noMatchPattern", { pattern }),
 				pattern,
 			});
 			continue;
@@ -375,7 +376,7 @@ export async function resolveModelScope(
 ): Promise<ScopedModel[]> {
 	const { scopedModels, diagnostics } = await resolveModelScopeWithDiagnostics(patterns, modelRuntime, options);
 	for (const diagnostic of diagnostics) {
-		console.warn(chalk.yellow(`Warning: ${diagnostic.message}`));
+		console.warn(chalk.yellow(t("codingAgent.errors.model.warningPrefix", { message: diagnostic.message })));
 	}
 	return scopedModels;
 }
@@ -421,7 +422,7 @@ export function resolveCliModel(options: {
 		return {
 			model: undefined,
 			warning: undefined,
-			error: "No models available. Check your installation or add models to models.json.",
+			error: t("codingAgent.errors.model.noModelsAvailable"),
 		};
 	}
 
@@ -436,7 +437,7 @@ export function resolveCliModel(options: {
 		return {
 			model: undefined,
 			warning: undefined,
-			error: `Unknown provider "${cliProvider}". Use --list-models to see available providers/models.`,
+			error: t("codingAgent.errors.model.unknownProvider", { provider: cliProvider }),
 		};
 	}
 
@@ -491,13 +492,13 @@ export function resolveCliModel(options: {
 				.join(", ");
 			const authHint =
 				authenticatedExactMatches.length === 0
-					? "No matching provider is authenticated."
-					: "More than one matching provider is authenticated.";
+					? t("codingAgent.errors.model.noMatchingProviderAuthenticated")
+					: t("codingAgent.errors.model.multipleProvidersAuthenticated");
 			return {
 				model: undefined,
 				warning: undefined,
 				thinkingLevel: undefined,
-				error: `Model "${cliModel}" is ambiguous across providers: ${matches}. ${authHint} Use --provider or provider/model.`,
+				error: t("codingAgent.errors.model.modelAmbiguous", { model: cliModel, matches, authHint }),
 			};
 		}
 	}
@@ -588,9 +589,11 @@ export function resolveCliModel(options: {
 			const requestedThinking = cliThinking ?? fallbackThinking;
 			const model =
 				requestedThinking && requestedThinking !== "off" ? { ...fallbackModel, reasoning: true } : fallbackModel;
-			const fallbackWarning = warning
-				? `${warning} Model "${fallbackPattern}" not found for provider "${provider}". Using custom model id.`
-				: `Model "${fallbackPattern}" not found for provider "${provider}". Using custom model id.`;
+			const providerModelNotFound = t("codingAgent.errors.model.modelNotFoundForProvider", {
+				pattern: fallbackPattern,
+				provider,
+			});
+			const fallbackWarning = warning ? `${warning} ${providerModelNotFound}` : providerModelNotFound;
 			return { model, thinkingLevel: fallbackThinking, warning: fallbackWarning, error: undefined };
 		}
 	}
@@ -600,7 +603,7 @@ export function resolveCliModel(options: {
 		model: undefined,
 		thinkingLevel: undefined,
 		warning,
-		error: `Model "${display}" not found. Use --list-models to see available models.`,
+		error: t("codingAgent.errors.model.modelNotFoundForDisplay", { display }),
 	};
 }
 
@@ -717,7 +720,9 @@ export async function restoreModelFromSession(
 
 	if (restoredModel && hasConfiguredAuth) {
 		if (shouldPrintMessages) {
-			console.log(chalk.dim(`Restored model: ${savedProvider}/${savedModelId}`));
+			console.log(
+				chalk.dim(t("codingAgent.errors.model.restoredModel", { provider: savedProvider, modelId: savedModelId })),
+			);
 		}
 		return { model: restoredModel, fallbackMessage: undefined };
 	}
@@ -726,17 +731,30 @@ export async function restoreModelFromSession(
 	const reason = !restoredModel ? "model no longer exists" : "no auth configured";
 
 	if (shouldPrintMessages) {
-		console.error(chalk.yellow(`Warning: Could not restore model ${savedProvider}/${savedModelId} (${reason}).`));
+		console.error(
+			chalk.yellow(
+				t("codingAgent.errors.model.couldNotRestore", { provider: savedProvider, modelId: savedModelId, reason }),
+			),
+		);
 	}
 
 	// If we already have a model, use it as fallback
 	if (currentModel) {
 		if (shouldPrintMessages) {
-			console.log(chalk.dim(`Falling back to: ${currentModel.provider}/${currentModel.id}`));
+			console.log(
+				chalk.dim(
+					t("codingAgent.errors.model.fallingBackTo", {
+						provider: currentModel.provider,
+						modelId: currentModel.id,
+					}),
+				),
+			);
 		}
 		return {
 			model: currentModel,
-			fallbackMessage: `Could not restore model ${savedProvider}/${savedModelId} (${reason}). Using ${currentModel.provider}/${currentModel.id}.`,
+			fallbackMessage:
+				t("codingAgent.errors.model.couldNotRestore", { provider: savedProvider, modelId: savedModelId, reason }) +
+				t("codingAgent.errors.model.usingFallback", { provider: currentModel.provider, modelId: currentModel.id }),
 		};
 	}
 
@@ -761,12 +779,19 @@ export async function restoreModelFromSession(
 		}
 
 		if (shouldPrintMessages) {
-			console.log(chalk.dim(`Falling back to: ${fallbackModel.provider}/${fallbackModel.id}`));
+			console.log(
+				chalk.dim(
+					t("codingAgent.errors.model.fallingBackTo", {
+						provider: fallbackModel.provider,
+						modelId: fallbackModel.id,
+					}),
+				),
+			);
 		}
 
 		return {
 			model: fallbackModel,
-			fallbackMessage: `Could not restore model ${savedProvider}/${savedModelId} (${reason}). Using ${fallbackModel.provider}/${fallbackModel.id}.`,
+			fallbackMessage: `${t("codingAgent.errors.model.couldNotRestore", { provider: savedProvider, modelId: savedModelId, reason })}${t("codingAgent.errors.model.usingFallback", { provider: fallbackModel.provider, modelId: fallbackModel.id })}`,
 		};
 	}
 

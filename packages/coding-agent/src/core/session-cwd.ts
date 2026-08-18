@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { t } from "@earendil-works/pi-tui";
 
 export interface SessionCwdIssue {
 	sessionFile?: string;
@@ -34,11 +35,15 @@ export function getMissingSessionCwdIssue(
 
 export function formatMissingSessionCwdError(issue: SessionCwdIssue): string {
 	const sessionFile = issue.sessionFile ? `\nSession file: ${issue.sessionFile}` : "";
-	return `Stored session working directory does not exist: ${issue.sessionCwd}${sessionFile}\nCurrent working directory: ${issue.fallbackCwd}`;
+	return t("codingAgent.errors.session.missingCwdError", {
+		cwd: issue.sessionCwd,
+		sessionFile,
+		fallback: issue.fallbackCwd,
+	});
 }
 
 export function formatMissingSessionCwdPrompt(issue: SessionCwdIssue): string {
-	return `cwd from session file does not exist\n${issue.sessionCwd}\n\ncontinue in current cwd\n${issue.fallbackCwd}`;
+	return t("codingAgent.errors.session.missingCwdPrompt", { cwd: issue.sessionCwd, fallback: issue.fallbackCwd });
 }
 
 export class MissingSessionCwdError extends Error {

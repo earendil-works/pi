@@ -6,6 +6,7 @@ import {
 } from "./alt-screen-search.ts";
 import { AltScreenFlashContainer } from "./components/alt-screen-flash.ts";
 import { ScrollView } from "./components/scroll-view.ts";
+import { t } from "./i18n/index.ts";
 import { getKeybindings } from "./keybindings.ts";
 import { isKeyRelease } from "./keys.ts";
 import {
@@ -1088,11 +1089,11 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		// without OSC 52 clipboard passthrough), so only report success when it actually copies.
 		if (this.copySelection) {
 			const ok = await this.copySelection(text);
-			this.flash(ok ? "Copied!" : "Copy failed");
+			this.flash(ok ? t("common.copied") : t("common.copyFailed"));
 			return;
 		}
 		this.terminal.write(`\x1b]52;c;${Buffer.from(text).toString("base64")}\x07`);
-		this.flash("Copied!");
+		this.flash(t("common.copied"));
 	}
 
 	private applySearchTextHighlight(text: string, current: boolean): string {

@@ -8,6 +8,7 @@ import {
 	Spacer,
 	Text,
 	type TUI,
+	t,
 } from "@earendil-works/pi-tui";
 import type { ModelRuntime } from "../../../core/model-runtime.ts";
 import type { SettingsManager } from "../../../core/settings-manager.ts";
@@ -57,7 +58,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
 	private onSelectCallback: (model: Model<any>) => void;
 	private onCancelCallback: () => void;
 	private errorMessage?: string;
-	private refreshStatusMessage = "Refreshing model catalogs…";
+	private refreshStatusMessage = t("codingAgent.ui.modelSelector.refreshing");
 	private refreshStatusSuccess = false;
 	private tui: TUI;
 	private scopedModels: ReadonlyArray<ScopedModelItem>;
@@ -100,7 +101,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
 			this.scopeHintText = new Text(this.getScopeHintText(), 0, 0);
 			this.addChild(this.scopeHintText);
 		} else {
-			const hintText = "Only showing models from configured providers. Use /login to add providers.";
+			const hintText = t("codingAgent.ui.modelSelector.onlyConfiguredProviders");
 			this.addChild(new Text(theme.fg("warning", hintText), 0, 0));
 		}
 		this.addChild(new Spacer(1));
@@ -172,7 +173,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
 			if (this.closed) return;
 			this.refreshStatusMessage = "";
 			if (result.aborted && timedOut) {
-				this.errorMessage = "Model refresh timed out; showing cached models.";
+				this.errorMessage = t("codingAgent.ui.modelSelector.refreshTimedOut");
 			} else if (result.errors.size === 1) {
 				this.errorMessage = `Could not refresh ${result.errors.keys().next().value}; showing cached models.`;
 			} else if (result.errors.size > 1) {
@@ -180,7 +181,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
 			} else {
 				this.errorMessage = this.modelRuntime.getError();
 				if (!this.errorMessage) {
-					this.refreshStatusMessage = "Model catalogs refreshed.";
+					this.refreshStatusMessage = t("codingAgent.ui.modelSelector.refreshSuccess");
 					this.refreshStatusSuccess = true;
 				}
 			}

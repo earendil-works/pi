@@ -1,25 +1,24 @@
-import { join } from "node:path";
+import { t } from "@earendil-works/pi-tui";
 import { getDocsPath } from "../config.ts";
 
 const UNKNOWN_PROVIDER = "unknown";
 
 export function getProviderLoginHelp(): string {
-	return [
-		"Use /login to log into a provider via OAuth or API key. See:",
-		`  ${join(getDocsPath(), "providers.md")}`,
-		`  ${join(getDocsPath(), "models.md")}`,
-	].join("\n");
+	return t("codingAgent.errors.auth.loginHelp", { docsPath: getDocsPath() });
 }
 
 export function formatNoModelsAvailableMessage(): string {
-	return `No models available. ${getProviderLoginHelp()}`;
+	return t("codingAgent.errors.auth.noModels", { loginHelp: getProviderLoginHelp() });
 }
 
 export function formatNoModelSelectedMessage(): string {
-	return `No model selected.\n\n${getProviderLoginHelp()}\n\nThen use /model to select a model.`;
+	return t("codingAgent.errors.auth.noModelSelected", { loginHelp: getProviderLoginHelp() });
 }
 
 export function formatNoApiKeyFoundMessage(provider: string): string {
 	const providerDisplay = provider === UNKNOWN_PROVIDER ? "the selected model" : provider;
-	return `No API key found for ${providerDisplay}.\n\n${getProviderLoginHelp()}`;
+	return t("codingAgent.errors.auth.noApiKeyForProvider", {
+		provider: providerDisplay,
+		loginHelp: getProviderLoginHelp(),
+	});
 }

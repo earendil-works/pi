@@ -1,5 +1,5 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
-import { Container, Markdown, type MarkdownTheme, Spacer, Text } from "@earendil-works/pi-tui";
+import { Container, Markdown, type MarkdownTheme, Spacer, Text, t } from "@earendil-works/pi-tui";
 import type { MarkdownTransformer } from "../../../core/extensions/types.ts";
 import { getMarkdownTheme, theme } from "../theme/theme.ts";
 import { createMarkdownTransform } from "./markdown-transform.ts";
@@ -26,7 +26,7 @@ export class AssistantMessageComponent extends Container {
 		message?: AssistantMessage,
 		hideThinkingBlock = false,
 		markdownTheme: MarkdownTheme = getMarkdownTheme(),
-		hiddenThinkingLabel = "Thinking...",
+		hiddenThinkingLabel = t("codingAgent.ui.assistant.thinking"),
 		outputPad = 1,
 		markdownTransformers: readonly MarkdownTransformer[] = [],
 	) {
@@ -184,11 +184,11 @@ export class AssistantMessageComponent extends Container {
 				const abortMessage =
 					message.errorMessage && message.errorMessage !== "Request was aborted"
 						? message.errorMessage
-						: "Operation aborted";
+						: t("codingAgent.errors.generic.operationAborted");
 				this.contentContainer.addChild(new Spacer(1));
 				this.contentContainer.addChild(new Text(theme.fg("error", abortMessage), this.outputPad, 0));
 			} else if (message.stopReason === "error") {
-				const errorMsg = message.errorMessage || "Unknown error";
+				const errorMsg = message.errorMessage || t("codingAgent.errors.generic.unknown");
 				this.contentContainer.addChild(new Spacer(1));
 				this.contentContainer.addChild(new Text(theme.fg("error", `Error: ${errorMsg}`), this.outputPad, 0));
 			}

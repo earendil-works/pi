@@ -10,6 +10,7 @@
 		"build:native:darwin": "native/darwin/build.sh",
 		"build:native:win32": "node native/win32/build.mjs",
 		"test": "node --test --test-reporter=dot --test-reporter-destination=stdout test/*.test.ts",
+		"check:i18n": "npx tsx scripts/check-i18n-keys.ts",
 		"prepublishOnly": "npm run clean && npm run build"
 	},
 	"files": [

@@ -10,6 +10,7 @@ import {
 	Input,
 	Spacer,
 	Text,
+	t,
 	truncateToWidth,
 	visibleWidth,
 } from "@earendil-works/pi-tui";
@@ -128,23 +129,29 @@ class SessionSelectorHeader implements Component {
 	invalidate(): void {}
 
 	render(width: number): string[] {
-		const title = this.scope === "current" ? "Resume Session (Current Folder)" : "Resume Session (All)";
+		const title =
+			this.scope === "current" ? t("codingAgent.ui.session.currentFolder") : t("codingAgent.ui.session.allFolders");
 		const leftText = theme.bold(title);
 
-		const sortLabel = this.sortMode === "threaded" ? "Threaded" : this.sortMode === "recent" ? "Recent" : "Fuzzy";
-		const sortText = theme.fg("muted", "Sort: ") + theme.fg("accent", sortLabel);
+		const sortLabel =
+			this.sortMode === "threaded"
+				? t("codingAgent.ui.session.threaded")
+				: this.sortMode === "recent"
+					? t("codingAgent.ui.session.recent")
+					: t("codingAgent.ui.session.fuzzy");
+		const sortText = theme.fg("muted", t("codingAgent.ui.session.sortLabel")) + theme.fg("accent", sortLabel);
 
-		const nameLabel = this.nameFilter === "all" ? "All" : "Named";
-		const nameText = theme.fg("muted", "Name: ") + theme.fg("accent", nameLabel);
+		const nameLabel = this.nameFilter === "all" ? t("codingAgent.ui.session.all") : t("codingAgent.ui.session.named");
+		const nameText = theme.fg("muted", t("codingAgent.ui.session.nameLabel")) + theme.fg("accent", nameLabel);
 
 		let scopeText: string;
 		if (this.loading) {
 			const progressText = this.loadProgress ? `${this.loadProgress.loaded}/${this.loadProgress.total}` : "...";
-			scopeText = `${theme.fg("muted", "○ Current Folder | ")}${theme.fg("accent", `Loading ${progressText}`)}`;
+			scopeText = `${theme.fg("muted", `○ ${t("codingAgent.ui.session.currentFolderShort")} | `)}${theme.fg("accent", `${t("codingAgent.ui.session.loading")} ${progressText}`)}`;
 		} else if (this.scope === "current") {
-			scopeText = `${theme.fg("accent", "◉ Current Folder")}${theme.fg("muted", " | ○ All")}`;
+			scopeText = `${theme.fg("accent", `◉ ${t("codingAgent.ui.session.currentFolderShort")}`)}${theme.fg("muted", ` | ○ ${t("codingAgent.ui.session.allShort")}`)}`;
 		} else {
-			scopeText = `${theme.fg("muted", "○ Current Folder | ")}${theme.fg("accent", "◉ All")}`;
+			scopeText = `${theme.fg("muted", `○ ${t("codingAgent.ui.session.currentFolderShort")} | `)}${theme.fg("accent", `◉ ${t("codingAgent.ui.session.allShort")}`)}`;
 		}
 
 		const rightText = truncateToWidth(`${scopeText}  ${nameText}  ${sortText}`, width, "");
@@ -156,7 +163,7 @@ class SessionSelectorHeader implements Component {
 		let hintLine1: string;
 		let hintLine2: string;
 		if (this.confirmingDeletePath !== null) {
-			const confirmHint = `Delete session? ${keyHint("tui.select.confirm", "confirm")} · ${keyHint("tui.select.cancel", "cancel")}`;
+			const confirmHint = `${t("codingAgent.ui.session.deleteConfirm")} ${keyHint("tui.select.confirm", t("codingAgent.ui.session.confirm"))} · ${keyHint("tui.select.cancel", t("codingAgent.ui.session.cancel"))}`;
 			hintLine1 = theme.fg("error", truncateToWidth(confirmHint, width, "…"));
 			hintLine2 = "";
 		} else if (this.statusMessage) {
@@ -167,15 +174,17 @@ class SessionSelectorHeader implements Component {
 			const pathState = this.showPath ? "(on)" : "(off)";
 			const sep = theme.fg("muted", " · ");
 			const hint1 =
-				keyHint("tui.input.tab", "scope") + sep + theme.fg("muted", 're:<pattern> regex · "phrase" exact');
+				keyHint("tui.input.tab", t("codingAgent.ui.session.scopeHint")) +
+				sep +
+				theme.fg("muted", t("codingAgent.ui.session.searchSyntax"));
 			const hint2Parts = [
-				keyHint("app.session.toggleSort", "sort"),
-				keyHint("app.session.toggleNamedFilter", "named"),
-				keyHint("app.session.delete", "delete"),
-				keyHint("app.session.togglePath", `path ${pathState}`),
+				keyHint("app.session.toggleSort", t("codingAgent.ui.session.sortHint")),
+				keyHint("app.session.toggleNamedFilter", t("codingAgent.ui.session.namedHint")),
+				keyHint("app.session.delete", t("codingAgent.ui.session.deleteHint")),
+				keyHint("app.session.togglePath", `${t("codingAgent.ui.session.pathHint")} ${pathState}`),
 			];
 			if (this.showRenameHint) {
-				hint2Parts.push(keyHint("app.session.rename", "rename"));
+				hint2Parts.push(keyHint("app.session.rename", t("codingAgent.ui.session.renameHint")));
 			}
 			const hint2 = hint2Parts.join(sep);
 			hintLine1 = truncateToWidth(hint1, width, "…");
@@ -423,16 +432,16 @@ class SessionList implements Component, Focusable {
 			if (this.nameFilter === "named") {
 				const toggleKey = keyText("app.session.toggleNamedFilter");
 				if (this.showCwd) {
-					emptyMessage = `  No named sessions found. Press ${toggleKey} to show all.`;
+					emptyMessage = `  ${t("codingAgent.ui.session.noNamedSessions", { key: toggleKey })}`;
 				} else {
-					emptyMessage = `  No named sessions in current folder. Press ${toggleKey} to show all, or Tab to view all.`;
+					emptyMessage = `  ${t("codingAgent.ui.session.noNamedSessionsInFolder", { key: toggleKey })}`;
 				}
 			} else if (this.showCwd) {
 				// "All" scope - no sessions anywhere that match filter
-				emptyMessage = "  No sessions found";
+				emptyMessage = `  ${t("codingAgent.ui.session.noSessionsFound")}`;
 			} else {
 				// "Current folder" scope - hint to try "all"
-				emptyMessage = "  No sessions in current folder. Press Tab to view all.";
+				emptyMessage = `  ${t("codingAgent.ui.session.noSessionsInFolder")}`;
 			}
 			lines.push(theme.fg("muted", truncateToWidth(emptyMessage, width, "…")));
 			return lines;
@@ -844,7 +853,10 @@ export class SessionSelectorComponent extends Container implements Focusable {
 				const showCwd = this.scope === "all";
 				this.sessionList.setSessions(sessions, showCwd);
 
-				const msg = result.method === "trash" ? "Session moved to trash" : "Session deleted";
+				const msg =
+					result.method === "trash"
+						? t("codingAgent.ui.session.movedToTrash")
+						: t("codingAgent.ui.session.sessionDeleted");
 				this.header.setStatusMessage({ type: "info", message: msg }, 2000);
 				await this.refreshSessionsAfterMutation();
 			} else {
@@ -870,13 +882,16 @@ export class SessionSelectorComponent extends Container implements Focusable {
 		this.renameInput.focused = true;
 
 		const panel = new Container();
-		panel.addChild(new Text(theme.bold("Rename Session"), 1, 0));
+		panel.addChild(new Text(theme.bold(t("codingAgent.ui.session.renameSession")), 1, 0));
 		panel.addChild(new Spacer(1));
 		panel.addChild(this.renameInput);
 		panel.addChild(new Spacer(1));
 		panel.addChild(
 			new Text(
-				theme.fg("muted", `${keyText("tui.select.confirm")} to save · ${keyText("tui.select.cancel")} to cancel`),
+				theme.fg(
+					"muted",
+					`${keyText("tui.select.confirm")} ${t("codingAgent.ui.session.toSave")} · ${keyText("tui.select.cancel")} ${t("codingAgent.ui.session.toCancel")}`,
+				),
 				1,
 				0,
 			),

@@ -20,6 +20,7 @@ import {
 	type StreamOptions,
 } from "@earendil-works/pi-ai";
 import { getApiProvider } from "@earendil-works/pi-ai/compat";
+import { t } from "@earendil-works/pi-tui";
 import type { ModelConfig, ModelsJsonModel, ModelsJsonModelOverride, ModelsJsonProvider } from "./model-config.ts";
 import {
 	clearConfigValueCache,
@@ -135,17 +136,15 @@ function modelFromJson(
 ): Model<Api> {
 	const api = definition.api ?? providerConfig.api ?? defaults?.api;
 	if (!api) {
-		throw new Error(
-			`Provider ${providerId}, model ${definition.id}: no "api" specified. Set at provider or model level.`,
-		);
+		throw new Error(t("codingAgent.errors.provider.noApi", { providerId, modelId: definition.id }));
 	}
 	const baseUrl = definition.baseUrl ?? providerConfig.baseUrl ?? defaults?.baseUrl;
-	if (!baseUrl) throw new Error(`Provider ${providerId}: "baseUrl" is required when defining custom models.`);
+	if (!baseUrl) throw new Error(t("codingAgent.errors.provider.baseUrlRequired", { providerId }));
 	if (definition.contextWindow !== undefined && definition.contextWindow <= 0) {
-		throw new Error(`Provider ${providerId}, model ${definition.id}: invalid contextWindow`);
+		throw new Error(t("codingAgent.errors.provider.invalidContextWindow", { providerId, modelId: definition.id }));
 	}
 	if (definition.maxTokens !== undefined && definition.maxTokens <= 0) {
-		throw new Error(`Provider ${providerId}, model ${definition.id}: invalid maxTokens`);
+		throw new Error(t("codingAgent.errors.provider.invalidMaxTokens", { providerId, modelId: definition.id }));
 	}
 	return {
 		id: definition.id,
@@ -172,7 +171,7 @@ function applyModelsJson(
 ): Model<Api>[] {
 	if (!config) return [...baseModels];
 	if (config.oauth && !config.baseUrl) {
-		throw new Error(`Provider ${providerId}: "baseUrl" is required when "oauth" is set.`);
+		throw new Error(t("codingAgent.errors.provider.baseUrlRequiredForOauth", { providerId }));
 	}
 	const hasOverrides = config.modelOverrides && Object.keys(config.modelOverrides).length > 0;
 	if (
@@ -185,9 +184,7 @@ function applyModelsJson(
 		!config.oauth &&
 		config.authHeader === undefined
 	) {
-		throw new Error(
-			`Provider ${providerId}: must specify "baseUrl", "headers", "compat", "modelOverrides", or "models".`,
-		);
+		throw new Error(t("codingAgent.errors.provider.mustSpecifyField", { providerId }));
 	}
 
 	const models: Model<Api>[] = baseModels.map((model) => ({
@@ -218,12 +215,10 @@ function applyExtension(
 		const defaults = models.find((model) => model.id === definition.id) ?? models[0];
 		const api = definition.api ?? config.api ?? defaults?.api;
 		if (!api) {
-			throw new Error(
-				`Provider ${providerId}, model ${definition.id}: no "api" specified. Set at provider or model level.`,
-			);
+			throw new Error(t("codingAgent.errors.provider.noApi", { providerId, modelId: definition.id }));
 		}
 		const baseUrl = definition.baseUrl ?? config.baseUrl ?? defaults?.baseUrl;
-		if (!baseUrl) throw new Error(`Provider ${providerId}: "baseUrl" is required when defining custom models.`);
+		if (!baseUrl) throw new Error(t("codingAgent.errors.provider.baseUrlRequired", { providerId }));
 		return {
 			...definition,
 			api,
@@ -263,7 +258,7 @@ function withConfiguredAuth(
 	let mergedHeaders: ProviderHeaders | undefined =
 		auth.headers || headers ? { ...auth.headers, ...headers } : undefined;
 	if (authHeader) {
-		if (!auth.apiKey) throw new Error("authHeader requires a resolved API key");
+		if (!auth.apiKey) throw new Error(t("codingAgent.errors.provider.authHeaderRequiresKey"));
 		mergedHeaders = { ...mergedHeaders, Authorization: `Bearer ${auth.apiKey}` };
 	}
 	return { ...auth, headers: mergedHeaders };
@@ -317,7 +312,7 @@ function composeApiKeyAuth(
 			inherited?.login ??
 			(async (interaction: AuthInteraction) => ({
 				type: "api_key",
-				key: await interaction.prompt({ type: "secret", message: "Enter API key" }),
+				key: await interaction.prompt({ type: "secret", message: t("codingAgent.auth.enterApiKey") }),
 			})),
 		check: async (input) => {
 			if (input.credential) {
@@ -411,7 +406,7 @@ export function validateExtensionProvider(
 	extension: ProviderConfigInput,
 ): void {
 	if (extension.streamSimple && !extension.api) {
-		throw new Error(`Provider ${providerId}: "api" is required when registering streamSimple.`);
+		throw new Error(t("codingAgent.errors.provider.apiRequiredForStream", { providerId }));
 	}
 	applyExtension(providerId, applyModelsJson(providerId, base?.getModels() ?? [], modelsConfig), extension);
 }
@@ -448,7 +443,7 @@ export function composeModelProvider(
 	getModels();
 	const apiKey = composeApiKeyAuth(providerId, base, config, extension);
 	const oauth = composeOAuthAuth(providerId, base, config, extension);
-	if (!apiKey && !oauth) throw new Error(`Provider ${providerId}: no authentication method configured.`);
+	if (!apiKey && !oauth) throw new Error(t("codingAgent.errors.provider.noAuthMethod", { providerId }));
 
 	const supportsBaseApi = (model: Model<Api>) => base?.getModels().some((entry) => entry.api === model.api) ?? false;
 	const streamWith = (
@@ -467,7 +462,7 @@ export function composeModelProvider(
 					: base.stream(model, context, options);
 			}
 			const api = getApiProvider(model.api);
-			if (!api) throw new Error(`No API provider registered for api: ${model.api}`);
+			if (!api) throw new Error(t("codingAgent.errors.provider.noApiProviderRegistered", { api: model.api }));
 			return simple
 				? api.streamSimple(model, context, options as SimpleStreamOptions)
 				: api.stream(model, context, options);

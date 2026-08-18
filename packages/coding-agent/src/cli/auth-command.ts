@@ -1,4 +1,5 @@
 import type { AuthResult } from "@earendil-works/pi-ai";
+import { t } from "@earendil-works/pi-tui";
 import { APP_NAME } from "../config.ts";
 import type { Args } from "./args.ts";
 
@@ -15,18 +16,23 @@ export interface AuthCommand {
 
 export class AuthCommandError extends Error {}
 
-const AUTH_COMMAND_USAGE: Record<AuthCommandKind, string> = {
-	check: `${APP_NAME} auth check --provider <provider> [--json] [--credentials] [--no-refresh]`,
-	api_key: `${APP_NAME} auth print-api-key --provider <provider> [--model <model>]`,
-	bearer_token: `${APP_NAME} auth print-bearer-token --provider <provider> [--model <model>] [--min-expiry <duration>]`,
-};
-
-export function getAuthCommandName(kind: AuthCommandKind): string {
-	return kind === "check" ? "auth check" : kind === "api_key" ? "auth print-api-key" : "auth print-bearer-token";
+function getAuthCommandUsageText(kind: AuthCommandKind): string {
+	switch (kind) {
+		case "check":
+			return t("codingAgent.cli.authHelp.authCheck");
+		case "api_key":
+			return t("codingAgent.cli.authHelp.printApiKey");
+		case "bearer_token":
+			return t("codingAgent.cli.authHelp.printBearerToken");
+	}
 }
 
 export function getAuthCommandUsage(kind: AuthCommandKind): string {
-	return AUTH_COMMAND_USAGE[kind];
+	return getAuthCommandUsageText(kind);
+}
+
+export function getAuthCommandName(kind: AuthCommandKind): string {
+	return kind === "check" ? "auth check" : kind === "api_key" ? "auth print-api-key" : "auth print-bearer-token";
 }
 
 export function isAuthCommandHelp(args: string[]): boolean {
@@ -37,12 +43,11 @@ export function isAuthCommandHelp(args: string[]): boolean {
 }
 
 export function printAuthCommandHelp(): void {
-	console.log(`Usage:
-  pi auth print-api-key [--provider <provider>] [--model <model>]
-  pi auth print-bearer-token [--provider <provider>] [--model <model>] [--min-expiry <duration>]
-  pi auth check [--provider <provider>] [--model <model>] [--json] [--credentials] [--no-refresh]
-
-Auth commands require at least one of --provider or --model. Checks refresh expired OAuth credentials by default; --no-refresh prevents this. --credentials emits the credential, or includes it in JSON output.`);
+	console.log(`${t("codingAgent.cli.authHelp.usage")}
+${t("codingAgent.cli.authHelp.printApiKey")}
+${t("codingAgent.cli.authHelp.printBearerToken")}
+${t("codingAgent.cli.authHelp.authCheck")}
+${t("codingAgent.cli.authHelp.description")}`);
 }
 
 export function parseAuthCommand(args: string[]): AuthCommand | undefined {
@@ -58,7 +63,7 @@ export function parseAuthCommand(args: string[]): AuthCommand | undefined {
 					: undefined;
 	if (!kind) {
 		throw new AuthCommandError(
-			`Unknown auth command "${args[1] ?? ""}". Use "${APP_NAME} auth print-api-key", "${APP_NAME} auth print-bearer-token", or "${APP_NAME} auth check".`,
+			t("codingAgent.errors.auth.unknownAuthCommand", { command: args[1] ?? "", appName: APP_NAME }),
 		);
 	}
 
@@ -70,18 +75,17 @@ export function parseAuthCommand(args: string[]): AuthCommand | undefined {
 	for (let index = 2; index < args.length; index++) {
 		const arg = args[index];
 		if (arg === "--min-expiry") {
-			if (kind !== "bearer_token")
-				throw new AuthCommandError("--min-expiry is only supported by print-bearer-token");
+			if (kind !== "bearer_token") throw new AuthCommandError(t("codingAgent.errors.auth.minExpiryOnlyBearer"));
 			const value = args[++index];
 			const match = value ? /^(\d+)(ms|s|m|h)$/iu.exec(value) : undefined;
-			if (!match) throw new AuthCommandError("--min-expiry must use a duration such as 30m or 1h");
+			if (!match) throw new AuthCommandError(t("codingAgent.errors.auth.minExpiryInvalidDuration"));
 			const amount = Number(match[1]);
 			const unit = match[2];
 			minExpiryMs = amount * (unit === "ms" ? 1 : unit === "s" ? 1_000 : unit === "m" ? 60_000 : 3_600_000);
 			continue;
 		}
 		if (arg === "--json" || arg === "--credentials" || arg === "--no-refresh") {
-			if (kind !== "check") throw new AuthCommandError(`${arg} is only supported by auth check`);
+			if (kind !== "check") throw new AuthCommandError(t("codingAgent.errors.auth.flagOnlyForCheck", { flag: arg }));
 			if (arg === "--json") json = true;
 			else if (arg === "--credentials") credentials = true;
 			else noRefresh = true;
@@ -99,20 +103,22 @@ export function validateAuthCommandArgs(args: Args, kind: AuthCommandKind): { pr
 	const provider = args.provider?.trim() || undefined;
 	const model = args.model?.trim() || undefined;
 	if (args.unknownFlags.size > 0) {
-		const option = args.unknownFlags.keys().next().value;
-		throw new AuthCommandError(`Unknown option --${option} for "${getAuthCommandName(kind)}".`);
+		const option = args.unknownFlags.keys().next().value ?? "";
+		throw new AuthCommandError(
+			t("codingAgent.errors.auth.unknownAuthOption", { option, command: getAuthCommandName(kind) }),
+		);
 	}
 	if (args.apiKey !== undefined || args.messages.length > 0 || args.fileArgs.length > 0) {
-		throw new AuthCommandError("Auth commands only accept --provider and --model");
+		throw new AuthCommandError(t("codingAgent.errors.auth.authOnlyProviderModel"));
 	}
 	if (kind === "check") {
 		if (!provider && !model) {
-			throw new AuthCommandError("Auth checks require --provider <provider> or --model <model>");
+			throw new AuthCommandError(t("codingAgent.errors.auth.authCheckRequiresProvider"));
 		}
 		return { provider, model };
 	}
 	if (!provider && !model) {
-		throw new AuthCommandError("Credential printing requires --provider <provider> or --model <model>");
+		throw new AuthCommandError(t("codingAgent.errors.auth.credentialPrintRequiresProvider"));
 	}
 	return { provider, model };
 }

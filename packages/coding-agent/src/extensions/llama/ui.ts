@@ -9,6 +9,7 @@ import {
 	Spacer,
 	Text,
 	type TUI,
+	t,
 	truncateToWidth,
 	visibleWidth,
 } from "@earendil-works/pi-tui";
@@ -202,7 +203,7 @@ class HuggingFaceSearch extends Container implements Focusable {
 		const cached = this.cache.get(this.query.toLowerCase());
 		if (cached) {
 			this.results = cached;
-			this.status = cached.length === 0 ? "No GGUF models found" : "";
+			this.status = cached.length === 0 ? t("codingAgent.llama.noGgufModels") : "";
 			this.filterResults();
 			return;
 		}
@@ -220,7 +221,7 @@ class HuggingFaceSearch extends Container implements Focusable {
 			if (this.closed || request.signal.aborted || this.query !== query) return;
 			this.results = results;
 			this.selectedIndex = 0;
-			this.status = results.length === 0 ? "No GGUF models found" : "";
+			this.status = results.length === 0 ? t("codingAgent.llama.noGgufModels") : "";
 			this.filterResults();
 		} catch (error) {
 			if (this.closed || request.signal.aborted || this.query !== query) return;
@@ -290,7 +291,9 @@ class LlamaView implements LlamaUi, Focusable {
 		this.tui = tui;
 		this.theme = theme;
 		this.keybindings = keybindings;
-		this.content = frame(theme, "llama.cpp models", [new Text(theme.fg("muted", "Loading…"), 1, 1)]);
+		this.content = frame(theme, t("codingAgent.llama.llamaCppModels"), [
+			new Text(theme.fg("muted", `${t("codingAgent.llama.loadingModel")}…`), 1, 1),
+		]);
 	}
 
 	get focused(): boolean {
@@ -330,7 +333,11 @@ class LlamaView implements LlamaUi, Focusable {
 				label: model.id,
 				description: modelDescription(model),
 			})),
-			{ value: DOWNLOAD_VALUE, label: "Download model…", description: "Hugging Face owner/repository[:quant]" },
+			{
+				value: DOWNLOAD_VALUE,
+				label: t("codingAgent.llama.downloadModel"),
+				description: t("codingAgent.llama.huggingFaceHint"),
+			},
 		];
 		return new Promise((resolve) => {
 			const list = new SelectList(items, Math.min(items.length, 12), selectTheme(this.theme), {

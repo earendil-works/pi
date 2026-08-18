@@ -1,4 +1,4 @@
-import { type Component, Loader, type TUI } from "@earendil-works/pi-tui";
+import { type Component, Loader, type TUI, t } from "@earendil-works/pi-tui";
 import type { WorkingIndicatorOptions } from "../../../core/extensions/index.ts";
 import { theme } from "../theme/theme.ts";
 import { CountdownTimer } from "./countdown-timer.ts";
@@ -75,11 +75,11 @@ export type CompactionStatusReason = "manual" | "threshold" | "overflow";
 
 export class CompactionStatusIndicator extends StatusIndicator {
 	constructor(ui: TUI, reason: CompactionStatusReason) {
-		const cancelHint = `(${keyText("app.interrupt")} to cancel)`;
+		const cancelHint = `(${keyText("app.interrupt")} ${t("codingAgent.ui.status.toCancel")})`;
 		const label =
 			reason === "manual"
-				? `Compacting context... ${cancelHint}`
-				: `${reason === "overflow" ? "Context overflow detected, " : ""}Auto-compacting... ${cancelHint}`;
+				? `${t("codingAgent.ui.status.compactingContext")} ${cancelHint}`
+				: `${reason === "overflow" ? `${t("codingAgent.ui.status.contextOverflow")} ` : ""}${t("codingAgent.ui.status.autoCompacting")} ${cancelHint}`;
 		super(
 			"compaction",
 			ui,
@@ -97,7 +97,7 @@ export class BranchSummaryStatusIndicator extends StatusIndicator {
 			ui,
 			(spinner) => theme.fg("accent", spinner),
 			(text) => theme.fg("muted", text),
-			`Summarizing branch... (${keyText("app.interrupt")} to cancel)`,
+			`${t("codingAgent.ui.status.summarizingBranch")} (${keyText("app.interrupt")} ${t("codingAgent.ui.status.toCancel")})`,
 		);
 	}
 }

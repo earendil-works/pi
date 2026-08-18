@@ -1,4 +1,4 @@
-import { Container, getKeybindings, Spacer, Text } from "@earendil-works/pi-tui";
+import { Container, getKeybindings, Spacer, Text, t } from "@earendil-works/pi-tui";
 import { APP_NAME } from "../../../config.ts";
 import { type TerminalTheme, theme } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
@@ -16,14 +16,14 @@ export interface FirstTimeSetupOptions {
 	onCancel: () => void;
 }
 
-const THEME_OPTIONS: Array<{ value: TerminalTheme; label: string }> = [
-	{ value: "dark", label: "Dark" },
-	{ value: "light", label: "Light" },
+const THEME_OPTIONS: Array<{ value: TerminalTheme; label: string | (() => string) }> = [
+	{ value: "dark", label: () => t("codingAgent.ui.firstTime.darkTheme") },
+	{ value: "light", label: () => t("codingAgent.ui.firstTime.lightTheme") },
 ];
 
-const ANALYTICS_OPTIONS: Array<{ value: boolean; label: string }> = [
-	{ value: true, label: "Share anonymous usage data" },
-	{ value: false, label: "Don't share" },
+const ANALYTICS_OPTIONS: Array<{ value: boolean; label: string | (() => string) }> = [
+	{ value: true, label: () => t("codingAgent.ui.firstTime.shareAnalytics") },
+	{ value: false, label: () => t("codingAgent.ui.firstTime.dontShare") },
 ];
 
 const SETUP_LOGO_LINES = ["██████", "██  ██", "████  ██", "██    ██"];
@@ -53,25 +53,17 @@ export class FirstTimeSetupComponent extends Container {
 		this.addChild(new Text(theme.fg("accent", SETUP_LOGO_LINES.join("\n")), 1, 0));
 		this.addChild(new Spacer(1));
 		this.addChild(
-			new Text(theme.fg("accent", theme.bold(`Welcome to ${APP_NAME}, the minimal coding agent.`)), 1, 0),
+			new Text(theme.fg("accent", theme.bold(`${t("codingAgent.ui.firstTime.welcome")} ${APP_NAME}`)), 1, 0),
 		);
 		this.addChild(new Spacer(1));
 
 		if (this.step === "theme") {
-			this.addChild(new Text(theme.fg("text", "Pick a theme."), 1, 0));
-			this.addChild(new Text(theme.fg("muted", `Detected system appearance: ${this.options.detectedTheme}`), 1, 0));
-			this.addChild(new Spacer(1));
-			this.addOptionList(
-				THEME_OPTIONS.map((option) => option.label),
-				this.themeIndex,
-			);
-		} else {
-			this.addChild(new Text(theme.fg("text", "Opt-in to anonymous usage data sharing?"), 1, 0));
+			this.addChild(new Text(theme.fg("text", t("codingAgent.ui.firstTime.pickTheme")), 1, 0));
 			this.addChild(
 				new Text(
 					theme.fg(
 						"muted",
-						"Opting in stores a tracking identifier in settings.json and enables anonymous\nusage analytics. This helps us to better debug, reproduce, and resolve issues\nand bugs within Pi. You can observe what is shared using /privacy and make\nchanges anytime in settings.json.",
+						t("codingAgent.ui.firstTime.detectedAppearance", { appearance: String(this.options.detectedTheme) }),
 					),
 					1,
 					0,
@@ -79,7 +71,15 @@ export class FirstTimeSetupComponent extends Container {
 			);
 			this.addChild(new Spacer(1));
 			this.addOptionList(
-				ANALYTICS_OPTIONS.map((option) => option.label),
+				THEME_OPTIONS.map((option) => (typeof option.label === "function" ? option.label() : option.label)),
+				this.themeIndex,
+			);
+		} else {
+			this.addChild(new Text(theme.fg("text", t("codingAgent.ui.firstTime.analyticsQuestion")), 1, 0));
+			this.addChild(new Text(theme.fg("muted", t("codingAgent.ui.firstTime.analyticsDescription")), 1, 0));
+			this.addChild(new Spacer(1));
+			this.addOptionList(
+				ANALYTICS_OPTIONS.map((option) => (typeof option.label === "function" ? option.label() : option.label)),
 				this.analyticsIndex,
 			);
 		}

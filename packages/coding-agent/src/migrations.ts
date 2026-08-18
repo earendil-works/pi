@@ -2,6 +2,7 @@
  * One-time migrations that run on startup.
  */
 
+import { t } from "@earendil-works/pi-tui";
 import chalk from "chalk";
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
@@ -141,12 +142,15 @@ function migrateCommandsToPrompts(baseDir: string, label: string): boolean {
 	if (existsSync(commandsDir) && !existsSync(promptsDir)) {
 		try {
 			renameSync(commandsDir, promptsDir);
-			console.log(chalk.green(`Migrated ${label} commands/ → prompts/`));
+			console.log(chalk.green(t("codingAgent.migrations.migratedCommandsToPrompts", { label })));
 			return true;
 		} catch (err) {
 			console.log(
 				chalk.yellow(
-					`Warning: Could not migrate ${label} commands/ to prompts/: ${err instanceof Error ? err.message : err}`,
+					t("codingAgent.migrations.couldNotMigrateCommands", {
+						label,
+						error: err instanceof Error ? err.message : String(err),
+					}),
 				),
 			);
 		}
@@ -211,7 +215,7 @@ function migrateToolsToBin(): void {
 	}
 
 	if (movedAny) {
-		console.log(chalk.green(`Migrated managed binaries tools/ → bin/`));
+		console.log(chalk.green(t("codingAgent.migrations.migratedToolsToBin")));
 	}
 }
 
@@ -278,12 +282,12 @@ export async function showDeprecationWarnings(warnings: string[]): Promise<void>
 	if (warnings.length === 0) return;
 
 	for (const warning of warnings) {
-		console.log(chalk.yellow(`Warning: ${warning}`));
+		console.log(chalk.yellow(`${t("codingAgent.errors.generic.warning")}: ${warning}`));
 	}
-	console.log(chalk.yellow(`\nMove your extensions to the extensions/ directory.`));
-	console.log(chalk.yellow(`Migration guide: ${MIGRATION_GUIDE_URL}`));
-	console.log(chalk.yellow(`Documentation: ${EXTENSIONS_DOC_URL}`));
-	console.log(chalk.dim(`\nPress any key to continue...`));
+	console.log(chalk.yellow(`\n${t("codingAgent.migrations.moveExtensions")}`));
+	console.log(chalk.yellow(t("codingAgent.migrations.migrationGuide", { url: MIGRATION_GUIDE_URL })));
+	console.log(chalk.yellow(t("codingAgent.migrations.documentation", { url: EXTENSIONS_DOC_URL })));
+	console.log(chalk.dim(`\n${t("codingAgent.migrations.pressAnyKey")}`));
 
 	await new Promise<void>((resolve) => {
 		process.stdin.setRawMode?.(true);

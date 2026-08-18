@@ -1,5 +1,5 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
-import { Container, type SelectItem, SelectList, type SelectListLayoutOptions } from "@earendil-works/pi-tui";
+import { Container, type SelectItem, SelectList, type SelectListLayoutOptions, t } from "@earendil-works/pi-tui";
 import { getSelectListTheme } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
 
@@ -8,15 +8,17 @@ const THINKING_SELECT_LIST_LAYOUT: SelectListLayoutOptions = {
 	maxPrimaryColumnWidth: 32,
 };
 
-const LEVEL_DESCRIPTIONS: Record<ThinkingLevel, string> = {
-	off: "No reasoning",
-	minimal: "Very brief reasoning (~1k tokens)",
-	low: "Light reasoning (~2k tokens)",
-	medium: "Moderate reasoning (~8k tokens)",
-	high: "Deep reasoning (~16k tokens)",
-	xhigh: "Extra-high reasoning (~32k tokens)",
-	max: "Maximum reasoning",
-};
+function getLevelDescriptions(): Record<ThinkingLevel, string> {
+	return {
+		off: t("codingAgent.ui.settings.thinking.off"),
+		minimal: t("codingAgent.ui.settings.thinking.minimal"),
+		low: t("codingAgent.ui.settings.thinking.low"),
+		medium: t("codingAgent.ui.settings.thinking.medium"),
+		high: t("codingAgent.ui.settings.thinking.high"),
+		xhigh: t("codingAgent.ui.settings.thinking.xhigh"),
+		max: t("codingAgent.ui.settings.thinking.max"),
+	};
+}
 
 /**
  * Component that renders a thinking level selector with borders
@@ -32,10 +34,11 @@ export class ThinkingSelectorComponent extends Container {
 	) {
 		super();
 
+		const levelDescriptions = getLevelDescriptions();
 		const thinkingLevels: SelectItem[] = availableLevels.map((level) => ({
 			value: level,
 			label: level,
-			description: LEVEL_DESCRIPTIONS[level],
+			description: levelDescriptions[level],
 		}));
 
 		// Add top border

@@ -1,5 +1,6 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { type ImageContent, type Message, type TextContent, type Usage, uuidv7 } from "@earendil-works/pi-ai";
+import { t } from "@earendil-works/pi-tui";
 import { randomUUID } from "crypto";
 import {
 	appendFileSync,
@@ -211,9 +212,7 @@ function createSessionId(): string {
 
 export function assertValidSessionId(id: string): void {
 	if (!/^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/.test(id)) {
-		throw new Error(
-			"Session id must be non-empty, contain only alphanumeric characters, '-', '_', and '.', and start and end with an alphanumeric character",
-		);
+		throw new Error(t("codingAgent.errors.session.invalidSessionId"));
 	}
 }
 
@@ -495,7 +494,7 @@ const MAX_SESSION_HEADER_SCAN_BYTES = 1024 * 1024;
 
 class SessionHeaderScanLimitError extends Error {
 	constructor(filePath: string) {
-		super(`Session header exceeds ${MAX_SESSION_HEADER_SCAN_BYTES}-byte scan limit: ${filePath}`);
+		super(t("codingAgent.errors.session.headerScanLimit", { limit: MAX_SESSION_HEADER_SCAN_BYTES, path: filePath }));
 		this.name = "SessionHeaderScanLimitError";
 	}
 }
@@ -902,7 +901,9 @@ export class SessionManager {
 			if (this.fileEntries.length === 0) {
 				const explicitPath = this.sessionFile;
 				if (statSync(explicitPath).size > 0) {
-					throw new Error(`Session file is not a valid ${APP_NAME} session: ${explicitPath}`);
+					throw new Error(
+						t("codingAgent.errors.session.notValidSession", { appName: APP_NAME, path: explicitPath }),
+					);
 				}
 				this.newSession();
 				this.sessionFile = explicitPath;
@@ -1231,7 +1232,7 @@ export class SessionManager {
 	 */
 	appendLabelChange(targetId: string, label: string | undefined): string {
 		if (!this.byId.has(targetId)) {
-			throw new Error(`Entry ${targetId} not found`);
+			throw new Error(t("codingAgent.errors.session.entryNotFound", { entryId: targetId }));
 		}
 		const entry: LabelEntry = {
 			type: "label",
@@ -1359,7 +1360,7 @@ export class SessionManager {
 	 */
 	branch(branchFromId: string): void {
 		if (!this.byId.has(branchFromId)) {
-			throw new Error(`Entry ${branchFromId} not found`);
+			throw new Error(t("codingAgent.errors.session.entryNotFound", { entryId: branchFromId }));
 		}
 		this.leafId = branchFromId;
 	}
@@ -1386,7 +1387,7 @@ export class SessionManager {
 		usage?: Usage,
 	): string {
 		if (branchFromId !== null && !this.byId.has(branchFromId)) {
-			throw new Error(`Entry ${branchFromId} not found`);
+			throw new Error(t("codingAgent.errors.session.entryNotFound", { entryId: branchFromId }));
 		}
 		this.leafId = branchFromId;
 		const entry: BranchSummaryEntry = {
@@ -1413,7 +1414,7 @@ export class SessionManager {
 		const previousSessionFile = this.sessionFile;
 		const path = this.getBranch(leafId);
 		if (path.length === 0) {
-			throw new Error(`Entry ${leafId} not found`);
+			throw new Error(t("codingAgent.errors.session.entryNotFound", { entryId: leafId }));
 		}
 
 		// Filter out LabelEntry from path - we'll recreate them from the resolved map.
@@ -1586,12 +1587,12 @@ export class SessionManager {
 		const resolvedTargetCwd = resolvePath(targetCwd);
 		const sourceEntries = loadEntriesFromFile(resolvedSourcePath);
 		if (sourceEntries.length === 0) {
-			throw new Error(`Cannot fork: source session file is empty or invalid: ${resolvedSourcePath}`);
+			throw new Error(t("codingAgent.errors.fork.sourceEmptyOrInvalid", { path: resolvedSourcePath }));
 		}
 
 		const sourceHeader = sourceEntries.find((e) => e.type === "session") as SessionHeader | undefined;
 		if (!sourceHeader) {
-			throw new Error(`Cannot fork: source session has no header: ${resolvedSourcePath}`);
+			throw new Error(t("codingAgent.errors.fork.sourceNoHeader", { path: resolvedSourcePath }));
 		}
 
 		const dir = sessionDir ? normalizePath(sessionDir) : getDefaultSessionDir(resolvedTargetCwd);

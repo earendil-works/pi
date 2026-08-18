@@ -8,6 +8,7 @@ import {
 	Spacer,
 	sliceByColumn,
 	Text,
+	t,
 	truncateToWidth,
 	visibleWidth,
 	wrapTextWithAnsi,
@@ -1298,11 +1299,11 @@ class LabelInput implements Component, Focusable {
 		const lines: string[] = [];
 		const indent = "  ";
 		const availableWidth = width - indent.length;
-		lines.push(truncateToWidth(`${indent}${theme.fg("muted", "Label (empty to remove):")}`, width));
+		lines.push(truncateToWidth(`${indent}${theme.fg("muted", t("codingAgent.ui.tree.labelHint"))}`, width));
 		lines.push(...this.input.render(availableWidth).map((line) => truncateToWidth(`${indent}${line}`, width)));
 		lines.push(
 			truncateToWidth(
-				`${indent}${keyHint("tui.select.confirm", "save")}  ${keyHint("tui.select.cancel", "cancel")}`,
+				`${indent}${keyHint("tui.select.confirm", t("codingAgent.ui.tree.save"))}  ${keyHint("tui.select.cancel", t("codingAgent.ui.tree.cancel"))}`,
 				width,
 			),
 		);

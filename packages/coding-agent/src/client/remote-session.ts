@@ -15,6 +15,7 @@ import type {
 	ThinkingLevel,
 	TranscriptItem,
 } from "@earendil-works/pi-protocol";
+import { t } from "@earendil-works/pi-tui";
 import {
 	applyTranscriptProgress,
 	applyTranscriptSnapshot,
@@ -49,7 +50,7 @@ export interface RemoteSessionOptions {
 
 class RemoteSessionDisposedError extends Error {
 	constructor() {
-		super("Remote session is disposed");
+		super(t("codingAgent.errors.session.remoteSessionDisposed"));
 		this.name = "RemoteSessionDisposedError";
 	}
 }
@@ -60,7 +61,7 @@ async function settleRemoteSessionDisposal(cleanup: readonly Promise<void>[]): P
 		result.status === "rejected" && !(result.reason instanceof RemoteSessionDisposedError) ? [result.reason] : [],
 	);
 	if (errors.length === 1) throw errors[0];
-	if (errors.length > 1) throw new AggregateError(errors, "Failed to dispose remote session");
+	if (errors.length > 1) throw new AggregateError(errors, t("codingAgent.errors.session.remoteSessionDisposeFailed"));
 }
 
 export class RemoteSession {
@@ -178,7 +179,9 @@ export class RemoteSession {
 		this.#assertAvailable();
 		const handle = this.#requireHandle();
 		if (this.phase !== "idle" && this.phase !== "turn") {
-			throw new Error(`Session cannot accept input during ${this.phase ?? "unknown"} phase`);
+			throw new Error(
+				t("codingAgent.errors.session.remoteSessionCannotAcceptInput", { phase: this.phase ?? "unknown" }),
+			);
 		}
 		await this.#runOperation("submit", () =>
 			(this.phase === "idle" ? handle.prompt(normalized) : handle.steer(normalized)).then(() => undefined),
@@ -246,7 +249,12 @@ export class RemoteSession {
 	async #replace(operation: "open" | "create", prepare: () => Promise<SessionLease>): Promise<void> {
 		this.#assertAvailable();
 		if (this.#handle && this.phase !== "idle") {
-			throw new Error(`Cannot ${operation} a session while session is ${this.phase ?? "unavailable"}`);
+			throw new Error(
+				t("codingAgent.errors.session.remoteSessionCannotOperation", {
+					operation,
+					phase: this.phase ?? "unavailable",
+				}),
+			);
 		}
 		await this.#runOperation(operation, () =>
 			this.#trackAttachmentOperation(() => this.#prepareReplacement(operation, prepare)),
@@ -270,11 +278,16 @@ export class RemoteSession {
 		const snapshot = next.snapshot;
 		if (!snapshot) {
 			await this.#detach(next);
-			throw new Error(`Session ${next.id} did not provide a snapshot`);
+			throw new Error(t("codingAgent.errors.session.remoteSessionNoSnapshot", { sessionId: next.id }));
 		}
 		if (previous && previous.id !== next.id && previous.attached && this.phase !== "idle") {
 			await this.#detach(next);
-			throw new Error(`Cannot ${operation} a session while session is ${this.phase ?? "unavailable"}`);
+			throw new Error(
+				t("codingAgent.errors.session.remoteSessionCannotOperation", {
+					operation,
+					phase: this.phase ?? "unavailable",
+				}),
+			);
 		}
 		if (previous && previous.id !== next.id && previous.attached) {
 			try {
@@ -283,7 +296,10 @@ export class RemoteSession {
 				try {
 					await this.#detach(next);
 				} catch (cleanupError) {
-					throw new AggregateError([error, cleanupError], "Failed to replace remote session attachment");
+					throw new AggregateError(
+						[error, cleanupError],
+						t("codingAgent.errors.session.remoteSessionReplaceAttachmentFailed"),
+					);
 				}
 				throw error;
 			}
@@ -300,7 +316,12 @@ export class RemoteSession {
 		this.#assertAvailable();
 		this.#requireHandle();
 		if (this.phase !== "idle") {
-			throw new Error(`Cannot ${description} while session is ${this.phase ?? "unavailable"}`);
+			throw new Error(
+				t("codingAgent.errors.session.remoteSessionCannotDescription", {
+					description,
+					phase: this.phase ?? "unavailable",
+				}),
+			);
 		}
 		await this.#runOperation(operation, run);
 	}
@@ -318,7 +339,7 @@ export class RemoteSession {
 			await Promise.race([
 				running,
 				this.#disposeSignal.then(() => {
-					throw new Error("Remote session is disposed");
+					throw new Error(t("codingAgent.errors.session.remoteSessionDisposed"));
 				}),
 			]);
 		} finally {
@@ -337,7 +358,7 @@ export class RemoteSession {
 
 	#bind(handle: SessionLease, knownSnapshot?: SessionSnapshot): void {
 		const snapshot = knownSnapshot ?? handle.snapshot;
-		if (!snapshot) throw new Error(`Session ${handle.id} did not provide a snapshot`);
+		if (!snapshot) throw new Error(t("codingAgent.errors.session.remoteSessionNoSnapshot", { sessionId: handle.id }));
 		this.#clearSubscriptions();
 		this.#handle = handle;
 		this.#transcript = createTranscriptState(snapshot);
@@ -393,19 +414,21 @@ export class RemoteSession {
 	}
 
 	#requireHandle(): SessionLease {
-		if (!this.#handle) throw new Error("No remote session is attached");
+		if (!this.#handle) throw new Error(t("codingAgent.errors.session.remoteSessionNoSessionAttached"));
 		return this.#handle;
 	}
 
 	#assertAvailable(): void {
 		this.#assertNotDisposed();
 		if (this.#lifecycle.status === "busy") {
-			throw new Error(`Remote session is busy with ${this.#lifecycle.operation}`);
+			throw new Error(
+				t("codingAgent.errors.session.remoteSessionBusyWith", { operation: this.#lifecycle.operation }),
+			);
 		}
 	}
 
 	#assertNotDisposed(): void {
-		if (this.disposed) throw new Error("Remote session is disposed");
+		if (this.disposed) throw new Error(t("codingAgent.errors.session.remoteSessionDisposed"));
 	}
 
 	async #assertNotDisposedAfterAwait(handle: SessionLease): Promise<void> {

@@ -12,6 +12,7 @@ import {
 	Input,
 	matchesKey,
 	Spacer,
+	t,
 	truncateToWidth,
 	visibleWidth,
 } from "@earendil-works/pi-tui";
@@ -31,12 +32,14 @@ export type ScopedResolvedPaths = Record<ConfigWriteScope, ResolvedPaths>;
 
 const RESOURCE_TYPES = ["extensions", "skills", "prompts", "themes"] as const satisfies readonly ResourceType[];
 
-const RESOURCE_TYPE_LABELS: Record<ResourceType, string> = {
-	extensions: "Extensions",
-	skills: "Skills",
-	prompts: "Prompts",
-	themes: "Themes",
-};
+function getResourceTypeLabels(): Record<ResourceType, string> {
+	return {
+		extensions: t("codingAgent.ui.config.extensions"),
+		skills: t("codingAgent.ui.config.skills"),
+		prompts: t("codingAgent.ui.config.prompts"),
+		themes: t("codingAgent.ui.config.themes"),
+	};
+}
 
 interface ResourceItem {
 	path: string;
@@ -120,9 +123,10 @@ function buildGroups(resolved: ResolvedPaths, agentDir: string): ResourceGroup[]
 
 			let subgroup = group.subgroups.find((sg) => sg.type === resourceType);
 			if (!subgroup) {
+				const labels = getResourceTypeLabels();
 				subgroup = {
 					type: resourceType,
-					label: RESOURCE_TYPE_LABELS[resourceType],
+					label: labels[resourceType],
 					items: [],
 				};
 				group.subgroups.push(subgroup);

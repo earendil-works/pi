@@ -12,6 +12,7 @@ import {
 	SettingsList,
 	Spacer,
 	Text,
+	t,
 } from "@earendil-works/pi-tui";
 import { formatHttpIdleTimeoutMs, HTTP_IDLE_TIMEOUT_CHOICES } from "../../../core/http-dispatcher.ts";
 import type {
@@ -36,25 +37,31 @@ const SETTINGS_SUBMENU_SELECT_LIST_LAYOUT: SelectListLayoutOptions = {
 	maxPrimaryColumnWidth: 32,
 };
 
-const THINKING_DESCRIPTIONS: Record<ThinkingLevel, string> = {
-	off: "No reasoning",
-	minimal: "Very brief reasoning (~1k tokens)",
-	low: "Light reasoning (~2k tokens)",
-	medium: "Moderate reasoning (~8k tokens)",
-	high: "Deep reasoning (~16k tokens)",
-	xhigh: "Extra-high reasoning (~32k tokens)",
-	max: "Maximum reasoning",
-};
+function getThinkingDescriptions(): Record<ThinkingLevel, string> {
+	return {
+		off: t("codingAgent.ui.settings.thinking.off"),
+		minimal: t("codingAgent.ui.settings.thinking.minimal"),
+		low: t("codingAgent.ui.settings.thinking.low"),
+		medium: t("codingAgent.ui.settings.thinking.medium"),
+		high: t("codingAgent.ui.settings.thinking.high"),
+		xhigh: t("codingAgent.ui.settings.thinking.xhigh"),
+		max: t("codingAgent.ui.settings.thinking.max"),
+	};
+}
 
-const DEFAULT_PROJECT_TRUST_LABELS: Record<DefaultProjectTrust, string> = {
-	ask: "Ask",
-	always: "Always trust",
-	never: "Never trust",
-};
+function getDefaultProjectTrustLabels(): Record<DefaultProjectTrust, string> {
+	return {
+		ask: t("codingAgent.ui.settings.trust.ask"),
+		always: t("codingAgent.ui.settings.trust.always"),
+		never: t("codingAgent.ui.settings.trust.never"),
+	};
+}
 
-const DEFAULT_PROJECT_TRUST_BY_LABEL = new Map(
-	Object.entries(DEFAULT_PROJECT_TRUST_LABELS).map(([value, label]) => [label, value as DefaultProjectTrust]),
-);
+function getDefaultProjectTrustByLabel(): Map<string, DefaultProjectTrust> {
+	return new Map(
+		Object.entries(getDefaultProjectTrustLabels()).map(([value, label]) => [label, value as DefaultProjectTrust]),
+	);
+}
 
 export interface SettingsConfig {
 	autoCompact: boolean;
@@ -144,8 +151,8 @@ class WarningSettingsSubmenu extends Container {
 		const items: SettingItem[] = [
 			{
 				id: "anthropic-extra-usage",
-				label: "Anthropic extra usage",
-				description: "Warn when Anthropic subscription auth may use paid extra usage",
+				label: t("codingAgent.ui.settings.warnings.anthropicExtraUsage"),
+				description: t("codingAgent.ui.settings.warnings.anthropicExtraUsageDesc"),
 				currentValue: (this.state.anthropicExtraUsage ?? true) ? "true" : "false",
 				values: ["true", "false"],
 			},
@@ -230,7 +237,16 @@ class SelectSubmenu extends Container {
 
 		// Hint
 		this.addChild(new Spacer(1));
-		this.addChild(new Text(theme.fg("dim", "  Enter to select · Esc to go back"), 0, 0));
+		this.addChild(
+			new Text(
+				theme.fg(
+					"dim",
+					`  ${t("codingAgent.ui.settings.hints.enterToSelect")} · ${t("codingAgent.ui.settings.hints.escToGoBack")}`,
+				),
+				0,
+				0,
+			),
+		);
 	}
 
 	handleInput(data: string): void {
@@ -248,8 +264,8 @@ function singleModeThemeItems(availableThemes: string[]): SelectItem[] {
 	return [
 		{
 			value: AUTOMATIC_THEME_VALUE,
-			label: "Automatic",
-			description: "Use separate themes for light and dark terminal appearance",
+			label: t("codingAgent.ui.settings.theme.automatic"),
+			description: t("codingAgent.ui.settings.theme.automaticDesc"),
 		},
 		...themeItems(availableThemes),
 	];
@@ -330,8 +346,8 @@ class ThemeSubmenu extends Container {
 	private showSingleMenu(): void {
 		this.mode = "single";
 		const menu = new SelectSubmenu(
-			"Theme",
-			"Select a theme, or choose Automatic to follow terminal appearance.",
+			t("codingAgent.ui.settings.theme.title"),
+			t("codingAgent.ui.settings.theme.selectDesc"),
 			singleModeThemeItems(this.availableThemes),
 			this.singleTheme,
 			(value) => {
@@ -356,22 +372,22 @@ class ThemeSubmenu extends Container {
 	private showAutomaticMenu(): void {
 		this.mode = "automatic";
 		const content = new Container();
-		content.addChild(new Text(theme.bold(theme.fg("accent", "Automatic Theme")), 0, 0));
+		content.addChild(new Text(theme.bold(theme.fg("accent", t("codingAgent.ui.settings.theme.autoTitle"))), 0, 0));
 		content.addChild(new Spacer(1));
-		content.addChild(new Text(theme.fg("muted", "Choose themes for terminal light and dark appearance."), 0, 0));
-		content.addChild(new Text(theme.fg("muted", "Light/dark detection requires terminal support."), 0, 0));
+		content.addChild(new Text(theme.fg("muted", t("codingAgent.ui.settings.theme.autoDesc1")), 0, 0));
+		content.addChild(new Text(theme.fg("muted", t("codingAgent.ui.settings.theme.autoDesc2")), 0, 0));
 		content.addChild(new Spacer(1));
 
 		const items: SettingItem[] = [
 			{
 				id: "light-theme",
-				label: "Light theme",
-				description: "Theme to use in automatic mode when the terminal is light",
+				label: t("codingAgent.ui.settings.theme.lightTheme"),
+				description: t("codingAgent.ui.settings.theme.lightThemeDesc"),
 				currentValue: this.lightTheme,
 				submenu: (currentValue, done) =>
 					this.createThemeSelect(
-						"Light Theme",
-						"Select the theme to use for light terminal appearance",
+						t("codingAgent.ui.settings.theme.lightTitle"),
+						t("codingAgent.ui.settings.theme.lightDesc"),
 						currentValue,
 						done,
 						(value) => {
@@ -383,13 +399,13 @@ class ThemeSubmenu extends Container {
 			},
 			{
 				id: "dark-theme",
-				label: "Dark theme",
-				description: "Theme to use in automatic mode when the terminal is dark",
+				label: t("codingAgent.ui.settings.theme.darkTheme"),
+				description: t("codingAgent.ui.settings.theme.darkThemeDesc"),
 				currentValue: this.darkTheme,
 				submenu: (currentValue, done) =>
 					this.createThemeSelect(
-						"Dark Theme",
-						"Select the theme to use for dark terminal appearance",
+						t("codingAgent.ui.settings.theme.darkTitle"),
+						t("codingAgent.ui.settings.theme.darkDesc"),
 						currentValue,
 						done,
 						(value) => {
@@ -401,17 +417,17 @@ class ThemeSubmenu extends Container {
 			},
 			{
 				id: "apply",
-				label: "Apply",
-				description: "Save and go back",
-				currentValue: "save and go back",
-				values: ["save and go back"],
+				label: t("codingAgent.ui.settings.actions.apply"),
+				description: t("codingAgent.ui.settings.actions.applyDesc"),
+				currentValue: t("codingAgent.ui.settings.actions.applyValue"),
+				values: [t("codingAgent.ui.settings.actions.applyValue")],
 			},
 			{
 				id: "single-mode",
-				label: "Change mode",
-				description: "Switch to one theme for light and dark",
-				currentValue: "switch to single theme",
-				values: ["switch to single theme"],
+				label: t("codingAgent.ui.settings.actions.changeMode"),
+				description: t("codingAgent.ui.settings.actions.changeModeDesc"),
+				currentValue: t("codingAgent.ui.settings.actions.changeModeValue"),
+				values: [t("codingAgent.ui.settings.actions.changeModeValue")],
 			},
 		];
 
@@ -494,112 +510,113 @@ export class SettingsSelectorComponent extends Container {
 		const followUpKey = keyDisplayText("app.message.followUp");
 		let currentWarnings = { ...config.warnings };
 
+		const thinkingDescriptions = getThinkingDescriptions();
+		const defaultProjectTrustLabels = getDefaultProjectTrustLabels();
+
 		const items: SettingItem[] = [
 			{
 				id: "autocompact",
-				label: "Auto-compact",
-				description: "Automatically compact context when it gets too large",
+				label: t("codingAgent.ui.settings.autoCompact"),
+				description: t("codingAgent.ui.settings.autoCompactDesc"),
 				currentValue: config.autoCompact ? "true" : "false",
 				values: ["true", "false"],
 			},
 			{
 				id: "steering-mode",
-				label: "Steering mode",
-				description:
-					"Enter while streaming queues steering messages. 'one-at-a-time': deliver one, wait for response. 'all': deliver all at once.",
+				label: t("codingAgent.ui.settings.steeringMode"),
+				description: t("codingAgent.ui.settings.steeringModeDesc"),
 				currentValue: config.steeringMode,
 				values: ["one-at-a-time", "all"],
 			},
 			{
 				id: "follow-up-mode",
-				label: "Follow-up mode",
-				description: `${followUpKey} queues follow-up messages until agent stops. 'one-at-a-time': deliver one, wait for response. 'all': deliver all at once.`,
+				label: t("codingAgent.ui.settings.followUpMode"),
+				description: t("codingAgent.ui.settings.followUpModeDesc", { key: followUpKey }),
 				currentValue: config.followUpMode,
 				values: ["one-at-a-time", "all"],
 			},
 			{
 				id: "transport",
-				label: "Transport",
-				description: "Preferred transport for providers that support multiple transports",
+				label: t("codingAgent.ui.settings.transport"),
+				description: t("codingAgent.ui.settings.transportDesc"),
 				currentValue: config.transport,
 				values: ["sse", "websocket", "websocket-cached", "auto"],
 			},
 			{
 				id: "http-idle-timeout",
-				label: "HTTP idle timeout",
-				description:
-					"Maximum idle gap while waiting for HTTP headers or body chunks. Disable for local models that pause longer than five minutes.",
+				label: t("codingAgent.ui.settings.httpIdleTimeout"),
+				description: t("codingAgent.ui.settings.httpIdleTimeoutDesc"),
 				currentValue: formatHttpIdleTimeoutMs(config.httpIdleTimeoutMs),
 				values: HTTP_IDLE_TIMEOUT_CHOICES.map((choice) => choice.label),
 			},
 			{
 				id: "hide-thinking",
-				label: "Hide thinking",
-				description: "Hide thinking blocks in assistant responses",
+				label: t("codingAgent.ui.settings.hideThinking"),
+				description: t("codingAgent.ui.settings.hideThinkingDesc"),
 				currentValue: config.hideThinkingBlock ? "true" : "false",
 				values: ["true", "false"],
 			},
 			{
 				id: "mermaid-rendering",
-				label: "Mermaid diagrams",
-				description: "Render Mermaid code blocks as Unicode diagrams",
+				label: t("codingAgent.ui.settings.mermaidDiagrams"),
+				description: t("codingAgent.ui.settings.mermaidDiagramsDesc"),
 				currentValue: config.mermaidRenderingMode,
 				values: ["off", "final", "streaming"],
 			},
 			{
 				id: "cache-miss-notices",
-				label: "Cache miss notices",
-				description: "Show transcript notices for significant prompt-cache misses",
+				label: t("codingAgent.ui.settings.cacheMissNotices"),
+				description: t("codingAgent.ui.settings.cacheMissNoticesDesc"),
 				currentValue: config.showCacheMissNotices ? "true" : "false",
 				values: ["true", "false"],
 			},
 			{
 				id: "collapse-changelog",
-				label: "Collapse changelog",
-				description: "Show condensed changelog after updates",
+				label: t("codingAgent.ui.settings.collapseChangelog"),
+				description: t("codingAgent.ui.settings.collapseChangelogDesc"),
 				currentValue: config.collapseChangelog ? "true" : "false",
 				values: ["true", "false"],
 			},
 			{
 				id: "quiet-startup",
-				label: "Quiet startup",
-				description: "Disable verbose printing at startup",
+				label: t("codingAgent.ui.settings.quietStartup"),
+				description: t("codingAgent.ui.settings.quietStartupDesc"),
 				currentValue: config.quietStartup ? "true" : "false",
 				values: ["true", "false"],
 			},
 			{
 				id: "install-telemetry",
-				label: "Install telemetry",
-				description: "Send an anonymous version/update ping after changelog-detected updates",
+				label: t("codingAgent.ui.settings.installTelemetry"),
+				description: t("codingAgent.ui.settings.installTelemetryDesc"),
 				currentValue: config.enableInstallTelemetry ? "true" : "false",
 				values: ["true", "false"],
 			},
 			{
 				id: "default-project-trust",
-				label: "Default project trust",
-				description: "Fallback behavior when no extension or saved trust decision decides project trust",
-				currentValue: DEFAULT_PROJECT_TRUST_LABELS[config.defaultProjectTrust],
-				values: Object.values(DEFAULT_PROJECT_TRUST_LABELS),
+				label: t("codingAgent.ui.settings.defaultProjectTrust"),
+				description: t("codingAgent.ui.settings.defaultProjectTrustDesc"),
+				currentValue: defaultProjectTrustLabels[config.defaultProjectTrust],
+				values: Object.values(defaultProjectTrustLabels),
 			},
 			{
 				id: "double-escape-action",
-				label: "Double-escape action",
-				description: "Action when pressing Escape twice with empty editor",
+				label: t("codingAgent.ui.settings.doubleEscapeAction"),
+				description: t("codingAgent.ui.settings.doubleEscapeActionDesc"),
 				currentValue: config.doubleEscapeAction,
 				values: ["tree", "fork", "none"],
 			},
 			{
 				id: "tree-filter-mode",
-				label: "Tree filter mode",
-				description: "Default filter when opening /tree",
+				label: t("codingAgent.ui.settings.treeFilterMode"),
+				description: t("codingAgent.ui.settings.treeFilterModeDesc"),
 				currentValue: config.treeFilterMode,
 				values: ["default", "no-tools", "user-only", "labeled-only", "all"],
 			},
 			{
 				id: "warnings",
-				label: "Warnings",
-				description: "Enable or disable individual warnings",
-				currentValue: "configure",
+				label: t("codingAgent.ui.settings.warnings.title"),
+				description: t("codingAgent.ui.settings.warnings.desc"),
+				currentValue: t("codingAgent.ui.settings.warnings.configure"),
 				submenu: (_currentValue, done) =>
 					new WarningSettingsSubmenu(
 						currentWarnings,
@@ -612,17 +629,17 @@ export class SettingsSelectorComponent extends Container {
 			},
 			{
 				id: "thinking",
-				label: "Thinking level",
-				description: "Reasoning depth for thinking-capable models",
+				label: t("codingAgent.ui.settings.thinkingLevel"),
+				description: t("codingAgent.ui.settings.thinkingLevelDesc"),
 				currentValue: config.thinkingLevel,
 				submenu: (currentValue, done) =>
 					new SelectSubmenu(
-						"Thinking Level",
-						"Select reasoning depth for thinking-capable models",
+						t("codingAgent.ui.settings.thinking.title"),
+						t("codingAgent.ui.settings.thinking.selectDesc"),
 						config.availableThinkingLevels.map((level) => ({
 							value: level,
 							label: level,
-							description: THINKING_DESCRIPTIONS[level],
+							description: thinkingDescriptions[level],
 						})),
 						currentValue,
 						(value) => {
@@ -634,29 +651,29 @@ export class SettingsSelectorComponent extends Container {
 			},
 			{
 				id: "tui-mode",
-				label: "TUI mode",
-				description: "Interface layout; fullscreen mode is experimental",
+				label: t("codingAgent.ui.settings.tuiMode"),
+				description: t("codingAgent.ui.settings.tuiModeDesc"),
 				currentValue: config.tuiMode,
 				values: ["regular", "fullscreen"],
 			},
 			{
 				id: "fullscreen-exit-output",
-				label: "Fullscreen exit output",
-				description: "Print the transcript or only a session resume hint when exiting fullscreen mode",
+				label: t("codingAgent.ui.settings.fullscreenExitOutput"),
+				description: t("codingAgent.ui.settings.fullscreenExitOutputDesc"),
 				currentValue: config.fullscreenExitOutput,
 				values: ["transcript", "resume-hint"],
 			},
 			{
 				id: "fullscreen-scrollbar",
-				label: "Fullscreen scrollbar",
-				description: "Scrollbar behavior in fullscreen mode; has no effect in regular mode",
+				label: t("codingAgent.ui.settings.fullscreenScrollbar"),
+				description: t("codingAgent.ui.settings.fullscreenScrollbarDesc"),
 				currentValue: config.fullscreenScrollbar,
 				values: ["auto", "always", "hidden"],
 			},
 			{
 				id: "theme",
-				label: "Theme",
-				description: "Color theme for the interface",
+				label: t("codingAgent.ui.settings.theme.title"),
+				description: t("codingAgent.ui.settings.theme.desc"),
 				currentValue: config.currentTheme,
 				submenu: (currentValue, done) =>
 					new ThemeSubmenu(currentValue, config.terminalTheme, config.availableThemes, callbacks, done),
@@ -668,15 +685,15 @@ export class SettingsSelectorComponent extends Container {
 			// Insert after autocompact
 			items.splice(1, 0, {
 				id: "show-images",
-				label: "Show images",
-				description: "Render images inline in terminal",
+				label: t("codingAgent.ui.settings.showImages"),
+				description: t("codingAgent.ui.settings.showImagesDesc"),
 				currentValue: config.showImages ? "true" : "false",
 				values: ["true", "false"],
 			});
 			items.splice(2, 0, {
 				id: "image-width-cells",
-				label: "Image width",
-				description: "Preferred inline image width in terminal cells",
+				label: t("codingAgent.ui.settings.imageWidth"),
+				description: t("codingAgent.ui.settings.imageWidthDesc"),
 				currentValue: String(config.imageWidthCells),
 				values: ["60", "80", "120"],
 			});
@@ -685,8 +702,8 @@ export class SettingsSelectorComponent extends Container {
 		// Image auto-resize toggle (always available, affects both attached and read images)
 		items.splice(supportsImages ? 3 : 1, 0, {
 			id: "auto-resize-images",
-			label: "Auto-resize images",
-			description: "Resize large images to 2000x2000 max for better model compatibility",
+			label: t("codingAgent.ui.settings.autoResizeImages"),
+			description: t("codingAgent.ui.settings.autoResizeImagesDesc"),
 			currentValue: config.autoResizeImages ? "true" : "false",
 			values: ["true", "false"],
 		});
@@ -695,8 +712,8 @@ export class SettingsSelectorComponent extends Container {
 		const autoResizeIndex = items.findIndex((item) => item.id === "auto-resize-images");
 		items.splice(autoResizeIndex + 1, 0, {
 			id: "block-images",
-			label: "Block images",
-			description: "Prevent images from being sent to LLM providers",
+			label: t("codingAgent.ui.settings.blockImages"),
+			description: t("codingAgent.ui.settings.blockImagesDesc"),
 			currentValue: config.blockImages ? "true" : "false",
 			values: ["true", "false"],
 		});
@@ -705,8 +722,8 @@ export class SettingsSelectorComponent extends Container {
 		const blockImagesIndex = items.findIndex((item) => item.id === "block-images");
 		items.splice(blockImagesIndex + 1, 0, {
 			id: "skill-commands",
-			label: "Skill commands",
-			description: "Register skills as /skill:name commands",
+			label: t("codingAgent.ui.settings.skillCommands"),
+			description: t("codingAgent.ui.settings.skillCommandsDesc"),
 			currentValue: config.enableSkillCommands ? "true" : "false",
 			values: ["true", "false"],
 		});
@@ -715,8 +732,8 @@ export class SettingsSelectorComponent extends Container {
 		const skillCommandsIndex = items.findIndex((item) => item.id === "skill-commands");
 		items.splice(skillCommandsIndex + 1, 0, {
 			id: "show-hardware-cursor",
-			label: "Show hardware cursor",
-			description: "Show the terminal cursor while still positioning it for IME support",
+			label: t("codingAgent.ui.settings.showHardwareCursor"),
+			description: t("codingAgent.ui.settings.showHardwareCursorDesc"),
 			currentValue: config.showHardwareCursor ? "true" : "false",
 			values: ["true", "false"],
 		});
@@ -725,8 +742,8 @@ export class SettingsSelectorComponent extends Container {
 		const hardwareCursorIndex = items.findIndex((item) => item.id === "show-hardware-cursor");
 		items.splice(hardwareCursorIndex + 1, 0, {
 			id: "editor-padding",
-			label: "Editor padding",
-			description: "Horizontal padding for input editor (0-3)",
+			label: t("codingAgent.ui.settings.editorPadding"),
+			description: t("codingAgent.ui.settings.editorPaddingDesc"),
 			currentValue: String(config.editorPaddingX),
 			values: ["0", "1", "2", "3"],
 		});
@@ -735,8 +752,8 @@ export class SettingsSelectorComponent extends Container {
 		const editorPaddingIndex = items.findIndex((item) => item.id === "editor-padding");
 		items.splice(editorPaddingIndex + 1, 0, {
 			id: "output-padding",
-			label: "Output padding",
-			description: "Horizontal padding for user messages, assistant messages, and thinking",
+			label: t("codingAgent.ui.settings.outputPadding"),
+			description: t("codingAgent.ui.settings.outputPaddingDesc"),
 			currentValue: String(config.outputPad),
 			values: ["0", "1"],
 		});
@@ -745,8 +762,8 @@ export class SettingsSelectorComponent extends Container {
 		const outputPaddingIndex = items.findIndex((item) => item.id === "output-padding");
 		items.splice(outputPaddingIndex + 1, 0, {
 			id: "autocomplete-max-visible",
-			label: "Autocomplete max items",
-			description: "Max visible items in autocomplete dropdown (3-20)",
+			label: t("codingAgent.ui.settings.autocompleteMaxItems"),
+			description: t("codingAgent.ui.settings.autocompleteMaxItemsDesc"),
 			currentValue: String(config.autocompleteMaxVisible),
 			values: ["3", "5", "7", "10", "15", "20"],
 		});
@@ -755,8 +772,8 @@ export class SettingsSelectorComponent extends Container {
 		const autocompleteIndex = items.findIndex((item) => item.id === "autocomplete-max-visible");
 		items.splice(autocompleteIndex + 1, 0, {
 			id: "clear-on-shrink",
-			label: "Clear on shrink",
-			description: "Clear empty rows when content shrinks (may cause flicker)",
+			label: t("codingAgent.ui.settings.clearOnShrink"),
+			description: t("codingAgent.ui.settings.clearOnShrinkDesc"),
 			currentValue: config.clearOnShrink ? "true" : "false",
 			values: ["true", "false"],
 		});
@@ -765,8 +782,8 @@ export class SettingsSelectorComponent extends Container {
 		const clearOnShrinkIndex = items.findIndex((item) => item.id === "clear-on-shrink");
 		items.splice(clearOnShrinkIndex + 1, 0, {
 			id: "terminal-progress",
-			label: "Terminal progress",
-			description: "Show OSC 9;4 progress indicators in the terminal tab bar",
+			label: t("codingAgent.ui.settings.terminalProgress"),
+			description: t("codingAgent.ui.settings.terminalProgressDesc"),
 			currentValue: config.showTerminalProgress ? "true" : "false",
 			values: ["true", "false"],
 		});
@@ -833,7 +850,7 @@ export class SettingsSelectorComponent extends Container {
 						callbacks.onEnableInstallTelemetryChange(newValue === "true");
 						break;
 					case "default-project-trust": {
-						const defaultProjectTrust = DEFAULT_PROJECT_TRUST_BY_LABEL.get(newValue);
+						const defaultProjectTrust = getDefaultProjectTrustByLabel().get(newValue);
 						if (defaultProjectTrust) {
 							callbacks.onDefaultProjectTrustChange(defaultProjectTrust);
 						}

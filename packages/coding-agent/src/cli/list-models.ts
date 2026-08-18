@@ -3,7 +3,7 @@
  */
 
 import type { Api, Model } from "@earendil-works/pi-ai";
-import { fuzzyFilter } from "@earendil-works/pi-tui";
+import { fuzzyFilter, t } from "@earendil-works/pi-tui";
 import chalk from "chalk";
 import { formatNoModelsAvailableMessage } from "../core/auth-guidance.ts";
 import type { ModelRuntime } from "../core/model-runtime.ts";
@@ -33,7 +33,7 @@ export async function listModels(
 ): Promise<void> {
 	const loadError = modelRuntime.getError();
 	if (loadError) {
-		console.error(chalk.yellow(`Warning: errors loading models.json:\n${loadError}`));
+		console.error(chalk.yellow(t("codingAgent.cli.listModelsHeader.loadingWarning", { details: loadError })));
 	}
 
 	const models = [...(await modelRuntime.getAvailable(undefined, { signal }))];
@@ -50,7 +50,7 @@ export async function listModels(
 	}
 
 	if (filteredModels.length === 0) {
-		console.log(`No models matching "${searchPattern}"`);
+		console.log(t("codingAgent.cli.listModelsHeader.noMatchingModels", { pattern: searchPattern ?? "" }));
 		return;
 	}
 

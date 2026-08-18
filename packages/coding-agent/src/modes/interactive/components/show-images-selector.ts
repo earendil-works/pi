@@ -1,4 +1,4 @@
-import { Container, type SelectItem, SelectList, type SelectListLayoutOptions } from "@earendil-works/pi-tui";
+import { Container, type SelectItem, SelectList, type SelectListLayoutOptions, t } from "@earendil-works/pi-tui";
 import { getSelectListTheme } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
 
@@ -17,8 +17,12 @@ export class ShowImagesSelectorComponent extends Container {
 		super();
 
 		const items: SelectItem[] = [
-			{ value: "yes", label: "Yes", description: "Show images inline in terminal" },
-			{ value: "no", label: "No", description: "Show text placeholder instead" },
+			{
+				value: "yes",
+				label: t("codingAgent.ui.showImages.yes"),
+				description: t("codingAgent.ui.showImages.yesDesc"),
+			},
+			{ value: "no", label: t("codingAgent.ui.showImages.no"), description: t("codingAgent.ui.showImages.noDesc") },
 		];
 
 		// Add top border

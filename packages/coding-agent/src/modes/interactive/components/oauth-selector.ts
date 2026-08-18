@@ -7,6 +7,7 @@ import {
 	Input,
 	Spacer,
 	TruncatedText,
+	t,
 } from "@earendil-works/pi-tui";
 import { theme } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
@@ -20,7 +21,7 @@ export type AuthSelectorProvider = {
 };
 
 export function formatAuthSelectorProviderType(authType: AuthSelectorProvider["authType"]): string {
-	return authType === "oauth" ? "subscription" : "API key";
+	return authType === "oauth" ? t("codingAgent.ui.oauth.subscription") : t("codingAgent.ui.oauth.apiKey");
 }
 
 /**
@@ -69,7 +70,8 @@ export class OAuthSelectorComponent extends Container implements Focusable {
 		this.addChild(new Spacer(1));
 
 		// Add title
-		const title = mode === "login" ? "Select provider to configure:" : "Select provider to logout:";
+		const title =
+			mode === "login" ? t("codingAgent.ui.oauth.selectToConfig") : t("codingAgent.ui.oauth.selectToLogout");
 		this.addChild(new TruncatedText(theme.fg("accent", theme.bold(title)), 1, 0));
 		this.addChild(new Spacer(1));
 
@@ -154,9 +156,9 @@ export class OAuthSelectorComponent extends Container implements Focusable {
 			const message =
 				this.allProviders.length === 0
 					? this.mode === "login"
-						? "No providers available"
-						: "No providers logged in. Use /login first."
-					: "No matching providers";
+						? t("codingAgent.ui.oauth.noProvidersAvailable")
+						: t("codingAgent.ui.oauth.noProvidersLoggedIn")
+					: t("codingAgent.ui.oauth.noMatchingProviders");
 			this.listContainer.addChild(new TruncatedText(theme.fg("muted", `  ${message}`), 1, 0));
 		}
 	}

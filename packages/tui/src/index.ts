@@ -46,6 +46,22 @@ export {
 export type { EditorComponent } from "./editor-component.ts";
 // Fuzzy matching
 export { type FuzzyMatch, fuzzyFilter, fuzzyMatch } from "./fuzzy.ts";
+// i18n
+export {
+	formatDate,
+	formatNumber,
+	formatRelativeTime,
+	getLocale,
+	type I18nOptions,
+	initI18n,
+	isCJK,
+	type Locale,
+	type LocaleChangeListener,
+	onLocaleChange,
+	resetI18n,
+	setLocale,
+	t,
+} from "./i18n/index.ts";
 // Keybindings
 export {
 	getKeybindings,

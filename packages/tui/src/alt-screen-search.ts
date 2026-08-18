@@ -1,4 +1,5 @@
 import { Input } from "./components/input.ts";
+import { t } from "./i18n/index.ts";
 import type { Component, Focusable } from "./tui.ts";
 import { getGraphemeSegmenter, stripTerminalSequences, truncateToWidth, visibleWidth } from "./utils.ts";
 
@@ -140,12 +141,12 @@ export class AltScreenSearchComponent implements Component, Focusable {
 
 	render(width: number): string[] {
 		const safeWidth = Math.max(1, width);
-		const label = " Find transcript";
+		const label = ` ${t("altScreen.findTranscript")}`;
 		const query = this.input.getValue();
 		const status = !query
 			? ""
 			: this.resultCount === 0
-				? "No matches "
+				? `${t("common.noMatches")} `
 				: `${this.resultIndex + 1}/${this.resultCount} `;
 		const labelWidth = visibleWidth(label);
 		const statusWidth = visibleWidth(status);

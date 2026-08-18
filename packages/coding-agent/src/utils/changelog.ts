@@ -1,4 +1,5 @@
 import path from "node:path";
+import { t } from "@earendil-works/pi-tui";
 import { existsSync, readFileSync } from "fs";
 
 export interface ChangelogEntry {
@@ -162,7 +163,7 @@ export function parseChangelog(changelogPath: string): ChangelogEntry[] {
 
 		return entries;
 	} catch (error) {
-		console.error(`Warning: Could not parse changelog: ${error}`);
+		console.error(t("codingAgent.packageManager.success.changelogParseError", { error: String(error) }));
 		return [];
 	}
 }

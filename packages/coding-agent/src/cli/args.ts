@@ -3,6 +3,7 @@
  */
 
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
+import { t } from "@earendil-works/pi-tui";
 import chalk from "chalk";
 import { APP_NAME, CONFIG_DIR_NAME, ENV_AGENT_DIR, ENV_SESSION_DIR } from "../config.ts";
 import type { ExtensionFlag } from "../core/extensions/types.ts";
@@ -107,7 +108,7 @@ export function parseArgs(args: string[]): Args {
 			if (i + 1 < args.length) {
 				result.name = args[++i];
 			} else {
-				result.diagnostics.push({ type: "error", message: "--name requires a value" });
+				result.diagnostics.push({ type: "error", message: t("codingAgent.cli.errors.nameRequiresValue") });
 			}
 		} else if (arg === "--no-session") {
 			result.noSession = true;
@@ -142,7 +143,10 @@ export function parseArgs(args: string[]): Args {
 			} else {
 				result.diagnostics.push({
 					type: "warning",
-					message: `Invalid thinking level "${level}". Valid values: ${VALID_THINKING_LEVELS.join(", ")}`,
+					message: t("codingAgent.cli.errors.invalidThinkingLevel", {
+						level,
+						validValues: VALID_THINKING_LEVELS.join(", "),
+					}),
 				});
 			}
 		} else if (arg === "--print" || arg === "-p") {
@@ -171,7 +175,7 @@ export function parseArgs(args: string[]): Args {
 		} else if (arg === "--use-theme") {
 			const themeName = args[i + 1];
 			if (themeName === undefined || themeName.startsWith("-")) {
-				result.diagnostics.push({ type: "error", message: "--use-theme requires a theme name" });
+				result.diagnostics.push({ type: "error", message: t("codingAgent.cli.errors.useThemeRequiresName") });
 			} else {
 				result.useTheme = themeName;
 				i++;
@@ -197,12 +201,12 @@ export function parseArgs(args: string[]): Args {
 				result.tuiMode = mode;
 				i++;
 			} else if (mode === undefined || mode.startsWith("-")) {
-				result.diagnostics.push({ type: "error", message: "--tui-mode requires regular or fullscreen" });
+				result.diagnostics.push({ type: "error", message: t("codingAgent.cli.errors.tuiModeRequiresValue") });
 			} else {
 				i++;
 				result.diagnostics.push({
 					type: "error",
-					message: `Invalid TUI mode "${mode}". Valid values: regular, fullscreen`,
+					message: t("codingAgent.cli.errors.invalidTuiMode", { mode }),
 				});
 			}
 		} else if (arg === "--verbose") {
@@ -230,7 +234,10 @@ export function parseArgs(args: string[]): Args {
 				}
 			}
 		} else if (arg.startsWith("-") && !arg.startsWith("--")) {
-			result.diagnostics.push({ type: "error", message: `Unknown option: ${arg}` });
+			result.diagnostics.push({
+				type: "error",
+				message: t("codingAgent.cli.errors.unknownOption", { option: arg }),
+			});
 		} else if (!arg.startsWith("-")) {
 			result.messages.push(arg);
 		}
@@ -242,136 +249,157 @@ export function parseArgs(args: string[]): Args {
 export function printHelp(extensionFlags?: ExtensionFlag[]): void {
 	const extensionFlagsText =
 		extensionFlags && extensionFlags.length > 0
-			? `\n${chalk.bold("Extension CLI Flags:")}\n${extensionFlags
+			? `\n${chalk.bold(t("codingAgent.cli.extensionFlags"))}\n${extensionFlags
 					.map((flag) => {
 						const value = flag.type === "string" ? " <value>" : "";
-						const description = flag.description ?? `Registered by ${flag.extensionPath}`;
+						const description =
+							flag.description ?? t("codingAgent.cli.registeredBy", { path: flag.extensionPath });
 						return `  --${flag.name}${value}`.padEnd(30) + description;
 					})
 					.join("\n")}\n`
 			: "";
-	console.log(`${chalk.bold(APP_NAME)} - AI coding assistant with read, bash, edit, write tools
 
-${chalk.bold("Usage:")}
+	const commands = [
+		`  ${APP_NAME} install <source> [-l]     ${t("codingAgent.cli.help.install")}`,
+		`  ${APP_NAME} remove <source> [-l]      ${t("codingAgent.cli.help.remove")}`,
+		`  ${APP_NAME} uninstall <source> [-l]   ${t("codingAgent.cli.help.uninstall")}`,
+		`  ${APP_NAME} update [source|self|pi]   ${t("codingAgent.cli.help.update")}`,
+		`  ${APP_NAME} list                      ${t("codingAgent.cli.help.list")}`,
+		`  ${APP_NAME} config [-l]               ${t("codingAgent.cli.help.config")}`,
+		`  ${APP_NAME} auth <command>            ${t("codingAgent.cli.help.auth")}`,
+		`  ${APP_NAME} <command> --help          ${t("codingAgent.cli.help.help")}`,
+	].join("\n");
+
+	const options = [
+		`  --provider <name>              ${t("codingAgent.cli.optionsText.provider")}`,
+		`  --model <pattern>              ${t("codingAgent.cli.optionsText.model")}`,
+		`  --api-key <key>                ${t("codingAgent.cli.optionsText.apiKey")}`,
+		`  --system-prompt <text>         ${t("codingAgent.cli.optionsText.systemPrompt")}`,
+		`  --append-system-prompt <text>  ${t("codingAgent.cli.optionsText.appendSystemPrompt")}`,
+		`  --mode <mode>                  ${t("codingAgent.cli.optionsText.mode")}`,
+		`  --print, -p                    ${t("codingAgent.cli.optionsText.print")}`,
+		`  --continue, -c                 ${t("codingAgent.cli.optionsText.continue")}`,
+		`  --resume, -r                   ${t("codingAgent.cli.optionsText.resume")}`,
+		`  --session <path|id>            ${t("codingAgent.cli.optionsText.session")}`,
+		`  --session-id <id>              ${t("codingAgent.cli.optionsText.sessionId")}`,
+		`  --fork <path|id>               ${t("codingAgent.cli.optionsText.fork")}`,
+		`  --session-dir <dir>            ${t("codingAgent.cli.optionsText.sessionDir")}`,
+		`  --no-session                   ${t("codingAgent.cli.optionsText.noSession")}`,
+		`  --name, -n <name>              ${t("codingAgent.cli.optionsText.name")}`,
+		`  --models <patterns>            ${t("codingAgent.cli.optionsText.models")}`,
+		`  --no-tools, -nt                ${t("codingAgent.cli.optionsText.noTools")}`,
+		`  --no-builtin-tools, -nbt       ${t("codingAgent.cli.optionsText.noBuiltinTools")}`,
+		`  --tools, -t <tools>            ${t("codingAgent.cli.optionsText.tools")}`,
+		`  --exclude-tools, -xt <tools>   ${t("codingAgent.cli.optionsText.excludeTools")}`,
+		`  --thinking <level>             ${t("codingAgent.cli.optionsText.thinking")}`,
+		`  --extension, -e <path>         ${t("codingAgent.cli.optionsText.extension")}`,
+		`  --no-extensions, -ne           ${t("codingAgent.cli.optionsText.noExtensions")}`,
+		`  --skill <path>                 ${t("codingAgent.cli.optionsText.skill")}`,
+		`  --no-skills, -ns               ${t("codingAgent.cli.optionsText.noSkills")}`,
+		`  --prompt-template <path>       ${t("codingAgent.cli.optionsText.promptTemplate")}`,
+		`  --no-prompt-templates, -np     ${t("codingAgent.cli.optionsText.noPromptTemplates")}`,
+		`  --theme <path>                 ${t("codingAgent.cli.optionsText.theme")}`,
+		`  --use-theme <name[/name]>      ${t("codingAgent.cli.optionsText.useTheme")}`,
+		`  --no-themes                    ${t("codingAgent.cli.optionsText.noThemes")}`,
+		`  --no-context-files, -nc        ${t("codingAgent.cli.optionsText.noContextFiles")}`,
+		`  --export <file>                ${t("codingAgent.cli.optionsText.export")}`,
+		`  --list-models [search]         ${t("codingAgent.cli.optionsText.listModels")}`,
+		`  --verbose                      ${t("codingAgent.cli.optionsText.verbose")}`,
+		`  --tui-mode <mode>              ${t("codingAgent.cli.optionsText.tuiMode")}`,
+		`  --approve, -a                  ${t("codingAgent.cli.optionsText.approve")}`,
+		`  --no-approve, -na              ${t("codingAgent.cli.optionsText.noApprove")}`,
+		`  --offline                      ${t("codingAgent.cli.optionsText.offline")}`,
+		`  --help, -h                     ${t("codingAgent.cli.optionsText.helpFlag")}`,
+		`  --version, -v                  ${t("codingAgent.cli.optionsText.version")}`,
+	].join("\n");
+
+	const examples = [
+		`  # ${t("codingAgent.cli.examples.printApiKey")}`,
+		`  ${APP_NAME} auth print-api-key --provider openai`,
+		"",
+		`  # ${t("codingAgent.cli.examples.printBearerToken")}`,
+		`  ${APP_NAME} auth print-bearer-token --provider openai-codex`,
+		"",
+		`  # ${t("codingAgent.cli.examples.interactive")}`,
+		`  ${APP_NAME}`,
+		"",
+		`  # ${t("codingAgent.cli.examples.interactiveWithPrompt")}`,
+		`  ${APP_NAME} "List all .ts files in src/"`,
+		"",
+		`  # ${t("codingAgent.cli.examples.includeFiles")}`,
+		`  ${APP_NAME} @prompt.md @image.png "What color is the sky?"`,
+		"",
+		`  # ${t("codingAgent.cli.examples.nonInteractive")}`,
+		`  ${APP_NAME} -p "List all .ts files in src/"`,
+		"",
+		`  # ${t("codingAgent.cli.examples.multipleMessages")}`,
+		`  ${APP_NAME} "Read package.json" "What dependencies do we have?"`,
+		"",
+		`  # ${t("codingAgent.cli.examples.continueSession")}`,
+		`  ${APP_NAME} --continue "What did we discuss?"`,
+		"",
+		`  # ${t("codingAgent.cli.examples.namedSession")}`,
+		`  ${APP_NAME} --name "Refactor auth module"`,
+		"",
+		`  # ${t("codingAgent.cli.examples.differentModel")}`,
+		`  ${APP_NAME} --provider openai --model gpt-4o-mini "Help me refactor this code"`,
+		"",
+		`  # ${t("codingAgent.cli.examples.modelWithProvider")}`,
+		`  ${APP_NAME} --model openai/gpt-4o "Help me refactor this code"`,
+		"",
+		`  # ${t("codingAgent.cli.examples.modelWithThinking")}`,
+		`  ${APP_NAME} --model sonnet:high "Solve this complex problem"`,
+		"",
+		`  # ${t("codingAgent.cli.examples.limitCycling")}`,
+		`  ${APP_NAME} --models claude-sonnet,claude-haiku,gpt-4o`,
+		"",
+		`  # ${t("codingAgent.cli.examples.globPattern")}`,
+		`  ${APP_NAME} --models "github-copilot/*"`,
+		"",
+		`  # ${t("codingAgent.cli.examples.fixedThinking")}`,
+		`  ${APP_NAME} --models sonnet:high,haiku:low`,
+		"",
+		`  # ${t("codingAgent.cli.examples.specificThinking")}`,
+		`  ${APP_NAME} --thinking high "Solve this complex problem"`,
+		"",
+		`  # ${t("codingAgent.cli.examples.readOnly")}`,
+		`  ${APP_NAME} --tools read,grep,find,ls -p "Review the code in src/"`,
+		"",
+		`  # ${t("codingAgent.cli.examples.excludeTool")}`,
+		`  ${APP_NAME} --exclude-tools ask_question`,
+		"",
+		`  # ${t("codingAgent.cli.examples.exportHtml")}`,
+		`  ${APP_NAME} --export ~/${CONFIG_DIR_NAME}/agent/sessions/--path--/session.jsonl`,
+		`  ${APP_NAME} --export session.jsonl output.html`,
+	].join("\n");
+
+	const toolsList = [
+		`  read   - ${t("codingAgent.cli.toolsList.read")}`,
+		`  bash   - ${t("codingAgent.cli.toolsList.bash")}`,
+		`  edit   - ${t("codingAgent.cli.toolsList.edit")}`,
+		`  write  - ${t("codingAgent.cli.toolsList.write")}`,
+		`  grep   - ${t("codingAgent.cli.toolsList.grep")}`,
+		`  find   - ${t("codingAgent.cli.toolsList.find")}`,
+		`  ls     - ${t("codingAgent.cli.toolsList.ls")}`,
+	].join("\n");
+
+	console.log(`${chalk.bold(APP_NAME)} - ${t("codingAgent.cli.description")}
+
+${chalk.bold(t("codingAgent.cli.usage"))}
   ${APP_NAME} [options] [@files...] [messages...]
 
-${chalk.bold("Commands:")}
-  ${APP_NAME} install <source> [-l]     Install extension source and add to settings
-  ${APP_NAME} remove <source> [-l]      Remove extension source from settings
-  ${APP_NAME} uninstall <source> [-l]   Alias for remove
-  ${APP_NAME} update [source|self|pi]   Update pi, extensions, or model catalogs
-  ${APP_NAME} list                      List installed extensions from settings
-  ${APP_NAME} config [-l]               Open TUI to enable/disable package resources (Tab switches scope)
-  ${APP_NAME} auth <command>            Print credentials or check provider readiness
-  ${APP_NAME} <command> --help          Show help for install/remove/uninstall/update/list/config/auth
+${chalk.bold(t("codingAgent.cli.commands"))}
+${commands}
 
-${chalk.bold("Options:")}
-  --provider <name>              Provider name (default: google)
-  --model <pattern>              Model pattern or ID (supports "provider/id" and optional ":<thinking>")
-  --api-key <key>                API key (defaults to env vars)
-  --system-prompt <text>         System prompt (default: coding assistant prompt)
-  --append-system-prompt <text>  Append text or file contents to the system prompt (can be used multiple times)
-  --mode <mode>                  Output mode: text (default), json, or rpc
-  --print, -p                    Non-interactive mode: process prompt and exit
-  --continue, -c                 Continue previous session
-  --resume, -r                   Select a session to resume
-  --session <path|id>            Use specific session file or partial UUID
-  --session-id <id>              Use exact project session ID, creating it if missing
-  --fork <path|id>               Fork specific session file or partial UUID into a new session
-  --session-dir <dir>            Directory for session storage and lookup
-  --no-session                   Don't save session (ephemeral)
-  --name, -n <name>              Set session display name
-  --models <patterns>            Comma-separated model patterns for Ctrl+P cycling
-                                 Supports globs (anthropic/*, *sonnet*) and fuzzy matching
-  --no-tools, -nt                Disable all tools by default (built-in and extension)
-  --no-builtin-tools, -nbt       Disable built-in tools by default but keep extension/custom tools enabled
-  --tools, -t <tools>            Comma-separated allowlist of tool names to enable
-                                 Applies to built-in, extension, and custom tools
-  --exclude-tools, -xt <tools>   Comma-separated denylist of tool names to disable
-                                 Applies to built-in, extension, and custom tools
-  --thinking <level>             Set thinking level: off, minimal, low, medium, high, xhigh, max
-  --extension, -e <path>         Load an extension file (can be used multiple times)
-  --no-extensions, -ne           Disable extension discovery (explicit -e paths still work)
-  --skill <path>                 Load a skill file or directory (can be used multiple times)
-  --no-skills, -ns               Disable skills discovery and loading
-  --prompt-template <path>       Load a prompt template file or directory (can be used multiple times)
-  --no-prompt-templates, -np     Disable prompt template discovery and loading
-  --theme <path>                 Load a theme file or directory (can be used multiple times)
-  --use-theme <name[/name]>      Set the initial interactive theme for this run
-  --no-themes                    Disable theme discovery and loading
-  --no-context-files, -nc        Disable AGENTS.md and CLAUDE.md discovery and loading
-  --export <file>                Export session file to HTML and exit
-  --list-models [search]         List available models (with optional fuzzy search)
-  --verbose                      Force verbose startup (overrides quietStartup setting)
-  --tui-mode <mode>              TUI mode: regular (default) or fullscreen
-  --approve, -a                  Trust project-local files for this run
-  --no-approve, -na              Ignore project-local files for this run
-  --offline                      Disable startup network operations (same as PI_OFFLINE=1)
-  --help, -h                     Show this help
-  --version, -v                  Show version number
+${chalk.bold(t("codingAgent.cli.options"))}
+${options}
 
-Extensions can register additional flags (e.g., --plan from plan-mode extension).${extensionFlagsText}
+${t("codingAgent.cli.extensionFlagsHint")}${extensionFlagsText}
 
-${chalk.bold("Examples:")}
-  # Print a provider API key for an external client
-  ${APP_NAME} auth print-api-key --provider openai
+${chalk.bold(t("codingAgent.cli.examplesHeader"))}
+${examples}
 
-  # Print an OAuth bearer token for an external client (refreshes if expired)
-  ${APP_NAME} auth print-bearer-token --provider openai-codex
-
-  # Interactive mode
-  ${APP_NAME}
-
-  # Interactive mode with initial prompt
-  ${APP_NAME} "List all .ts files in src/"
-
-  # Include files in initial message
-  ${APP_NAME} @prompt.md @image.png "What color is the sky?"
-
-  # Non-interactive mode (process and exit)
-  ${APP_NAME} -p "List all .ts files in src/"
-
-  # Multiple messages (interactive)
-  ${APP_NAME} "Read package.json" "What dependencies do we have?"
-
-  # Continue previous session
-  ${APP_NAME} --continue "What did we discuss?"
-
-  # Start a named session
-  ${APP_NAME} --name "Refactor auth module"
-
-  # Use different model
-  ${APP_NAME} --provider openai --model gpt-4o-mini "Help me refactor this code"
-
-  # Use model with provider prefix (no --provider needed)
-  ${APP_NAME} --model openai/gpt-4o "Help me refactor this code"
-
-  # Use model with thinking level shorthand
-  ${APP_NAME} --model sonnet:high "Solve this complex problem"
-
-  # Limit model cycling to specific models
-  ${APP_NAME} --models claude-sonnet,claude-haiku,gpt-4o
-
-  # Limit to a specific provider with glob pattern
-  ${APP_NAME} --models "github-copilot/*"
-
-  # Cycle models with fixed thinking levels
-  ${APP_NAME} --models sonnet:high,haiku:low
-
-  # Start with a specific thinking level
-  ${APP_NAME} --thinking high "Solve this complex problem"
-
-  # Read-only mode (no file modifications possible)
-  ${APP_NAME} --tools read,grep,find,ls -p "Review the code in src/"
-
-  # Disable one tool while keeping the rest available
-  ${APP_NAME} --exclude-tools ask_question
-
-  # Export a session file to HTML
-  ${APP_NAME} --export ~/${CONFIG_DIR_NAME}/agent/sessions/--path--/session.jsonl
-  ${APP_NAME} --export session.jsonl output.html
-
-${chalk.bold("Environment Variables:")}
+${chalk.bold(t("codingAgent.cli.envVars"))}
   ANTHROPIC_AUTH_TOKEN             - Anthropic bearer auth token
   ANTHROPIC_API_KEY                - Anthropic Claude API key
   ANTHROPIC_OAUTH_TOKEN            - Anthropic OAuth token (alternative to API key)
@@ -421,13 +449,7 @@ ${chalk.bold("Environment Variables:")}
   PI_TELEMETRY                     - Override install telemetry when set to 1/true/yes or 0/false/no
   PI_SHARE_VIEWER_URL              - Base URL for /share command (default: https://pi.dev/session/)
 
-${chalk.bold("Built-in Tool Names:")}
-  read   - Read file contents
-  bash   - Execute bash commands
-  edit   - Edit files with find/replace
-  write  - Write files (creates/overwrites)
-  grep   - Search file contents (read-only, off by default)
-  find   - Find files by glob pattern (read-only, off by default)
-  ls     - List directory contents (read-only, off by default)
+${chalk.bold(t("codingAgent.cli.tools"))}
+${toolsList}
 `);
 }

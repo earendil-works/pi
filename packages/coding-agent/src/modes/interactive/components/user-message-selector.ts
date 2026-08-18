@@ -1,4 +1,4 @@
-import { type Component, Container, getKeybindings, Spacer, Text, truncateToWidth } from "@earendil-works/pi-tui";
+import { type Component, Container, getKeybindings, Spacer, Text, t, truncateToWidth } from "@earendil-works/pi-tui";
 import { theme } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
 
@@ -34,7 +34,7 @@ class UserMessageList implements Component {
 		const lines: string[] = [];
 
 		if (this.messages.length === 0) {
-			lines.push(theme.fg("muted", "  No user messages found"));
+			lines.push(theme.fg("muted", `  ${t("codingAgent.ui.userMessage.noMessages")}`));
 			return lines;
 		}
 
@@ -120,14 +120,8 @@ export class UserMessageSelectorComponent extends Container {
 
 		// Add header
 		this.addChild(new Spacer(1));
-		this.addChild(new Text(theme.bold("Fork from Message"), 1, 0));
-		this.addChild(
-			new Text(
-				theme.fg("muted", "Select a user message to copy the active path up to that point into a new session"),
-				1,
-				0,
-			),
-		);
+		this.addChild(new Text(theme.bold(t("codingAgent.ui.userMessage.forkFromMessage")), 1, 0));
+		this.addChild(new Text(theme.fg("muted", t("codingAgent.ui.userMessage.forkDescription")), 1, 0));
 		this.addChild(new Spacer(1));
 		this.addChild(new DynamicBorder());
 		this.addChild(new Spacer(1));

@@ -1,3 +1,5 @@
+process.env.PI_LOCALE = "en";
+
 import assert from "node:assert";
 import { describe, it } from "node:test";
 import { findAltScreenSearchMatches } from "../src/alt-screen-search.ts";
