@@ -54,6 +54,11 @@ describe("Baseten models", () => {
 		});
 	});
 
+	it("keeps both GLM 5.2 endpoints text-only", () => {
+		expect(getModel("baseten", "zai-org/GLM-5.2").input).toEqual(["text"]);
+		expect(getModel("baseten", "zai-org/GLM-5.2-Fast").input).toEqual(["text"]);
+	});
+
 	it("models Kimi K2.6 reasoning as an explicit off/on toggle", async () => {
 		const model = getModel("baseten", "moonshotai/Kimi-K2.6");
 		let payload: Record<string, unknown> | undefined;
