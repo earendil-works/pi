@@ -1,10 +1,7 @@
 import { join } from "node:path";
 import type { SessionMetadata, SessionRepo } from "@tculpepp/spi-agent-core";
 import { NodeExecutionEnv } from "@tculpepp/spi-agent-core/node";
-import {
-	createSessionBackendConformance,
-	type SessionBackendFixture,
-} from "@tculpepp/spi-agent-core/session/testing";
+import { createSessionBackendConformance, type SessionBackendFixture } from "@tculpepp/spi-agent-core/session/testing";
 import { describe, it } from "vitest";
 import { createNodeSqliteFactory, type SqliteSessionMetadata, SqliteSessionRepository } from "../src/index.ts";
 import { createTempDir } from "./test-utils.ts";

@@ -6,15 +6,7 @@
  */
 
 import type { ExtensionAPI } from "@tculpepp/spi-coding-agent";
-import {
-	Editor,
-	type EditorTheme,
-	Key,
-	matchesKey,
-	Text,
-	visibleWidth,
-	wrapTextWithAnsi,
-} from "@tculpepp/spi-tui";
+import { Editor, type EditorTheme, Key, matchesKey, Text, visibleWidth, wrapTextWithAnsi } from "@tculpepp/spi-tui";
 import { Type } from "typebox";
 
 // Types

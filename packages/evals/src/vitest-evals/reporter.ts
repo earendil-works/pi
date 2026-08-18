@@ -3,7 +3,7 @@ import { appendFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import type { Reporter, SerializedError, TestCase, TestModule, TestRunEndReason, Vitest } from "vitest/node";
 import { isHarnessRun } from "vitest-evals/harness";
-import { SPI_SESSION_SNAPSHOT_ARTIFACT, persistEvalArtifactReferences } from "./artifacts.ts";
+import { persistEvalArtifactReferences, SPI_SESSION_SNAPSHOT_ARTIFACT } from "./artifacts.ts";
 import { EVAL_HARNESS_ITERATION_ARTIFACT, parseEvalHarnessIterationArtifact } from "./harness-table.ts";
 import { formatHarnessComparisonReport, type HarnessObservation, summarizeHarnessComparisons } from "./summary.ts";
 
@@ -21,7 +21,9 @@ async function appendHarnessRunReport(test: TestCase): Promise<void> {
 	const artifactRunId = run.artifacts?.runId;
 	const runId = typeof artifactRunId === "string" ? artifactRunId : randomUUID();
 	const metadata = Object.fromEntries(
-		Object.entries(run.artifacts ?? {}).filter(([name]) => name !== "runId" && name !== SPI_SESSION_SNAPSHOT_ARTIFACT),
+		Object.entries(run.artifacts ?? {}).filter(
+			([name]) => name !== "runId" && name !== SPI_SESSION_SNAPSHOT_ARTIFACT,
+		),
 	);
 	const record = {
 		schemaVersion: 1,

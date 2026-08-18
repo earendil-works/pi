@@ -175,9 +175,12 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 
 	const authPath = options.agentDir ? join(agentDir, "auth.json") : undefined;
 	const modelsPath = options.agentDir ? join(agentDir, "models.json") : undefined;
-	const modelRuntime = options.modelRuntime ?? (await ModelRuntime.create({ authPath, modelsPath }));
-
+	// Settings first: the runtime needs the security policy before it composes providers.
 	const settingsManager = options.settingsManager ?? SettingsManager.create(cwd, agentDir);
+	const secureMode = settingsManager.getSecureMode();
+	const modelRuntime = options.modelRuntime ?? (await ModelRuntime.create({ authPath, modelsPath, secureMode }));
+	// A caller-supplied runtime is subject to the same policy.
+	modelRuntime.setSecureMode(secureMode);
 	const sessionManager = options.sessionManager ?? SessionManager.create(cwd, getDefaultSessionDir(cwd, agentDir));
 
 	if (!resourceLoader) {

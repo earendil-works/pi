@@ -54,6 +54,7 @@ import {
 } from "./provider-composer.ts";
 import { withRemoteCatalog } from "./remote-catalog-provider.ts";
 import { RuntimeCredentials } from "./runtime-credentials.ts";
+import { SECURE_MODE_PROVIDER_ERROR } from "./security-policy.ts";
 
 interface ModelRuntimeSnapshot {
 	all: readonly Model<Api>[];
@@ -79,6 +80,18 @@ export interface CreateModelRuntimeOptions {
 	signal?: AbortSignal;
 	/** Skip initial catalog and availability refresh. Static models remain available. */
 	refreshOnCreate?: boolean;
+	/**
+	 * Closed-network policy. Omitted means enabled: callers must opt out
+	 * explicitly, so a creation site that forgets to pass it stays secure.
+	 */
+	secureMode?: boolean;
+	/**
+	 * Ceiling on catalog refreshes over the network. Defaults to closed
+	 * whenever SPI_OFFLINE is set, which main() does unconditionally, so no
+	 * production path opens it. Exposed so tests that drive refresh sequencing
+	 * against fake providers can still exercise the network branch.
+	 */
+	modelNetworkEnabled?: boolean;
 }
 
 export interface ModelRuntimeAuthOverrides extends AuthOperationOptions {
@@ -137,6 +150,8 @@ export class ModelRuntime implements Models {
 	private readonly compositionErrors = new Map<string, string>();
 	private readonly modelsPath: string | undefined;
 	private readonly modelNetworkEnabled: boolean;
+	/** Closed-network policy. Defaults to true so an unconfigured runtime fails closed. */
+	private secureMode = true;
 	private config: ModelConfig;
 	private snapshot: ModelRuntimeSnapshot = {
 		all: [],
@@ -193,8 +208,9 @@ export class ModelRuntime implements Models {
 			modelsPath,
 			modelsStore,
 			providers,
-			process.env.SPI_OFFLINE === undefined,
+			options.modelNetworkEnabled ?? process.env.SPI_OFFLINE === undefined,
 		);
+		runtime.setSecureMode(options.secureMode ?? true);
 		runtime.configureRadiusProviders();
 		runtime.rebuildProviders();
 		const refreshFromNetwork = runtime.modelNetworkEnabled && options.allowModelNetwork === true;
@@ -278,7 +294,7 @@ export class ModelRuntime implements Models {
 		this.snapshot = {
 			...this.snapshot,
 			all,
-			available: all.filter((model) => this.snapshot.configuredProviders.has(model.provider)),
+			available: this.allowedOnly(all.filter((model) => this.snapshot.configuredProviders.has(model.provider))),
 		};
 	}
 
@@ -305,7 +321,7 @@ export class ModelRuntime implements Models {
 		);
 		this.snapshot = {
 			all: [...this.models.getModels()],
-			available: [...available],
+			available: this.allowedOnly(available),
 			configuredProviders,
 			storedProviders: new Set(credentials.map((entry) => entry.providerId)),
 			auth,
@@ -363,7 +379,9 @@ export class ModelRuntime implements Models {
 			);
 			this.snapshot = {
 				all,
-				available: all.flatMap((model) => availableById.get(`${model.provider}\0${model.id}`) ?? []),
+				available: this.allowedOnly(
+					all.flatMap((model) => availableById.get(`${model.provider}\0${model.id}`) ?? []),
+				),
 				configuredProviders,
 				storedProviders,
 				auth: authByProvider,
@@ -379,6 +397,33 @@ export class ModelRuntime implements Models {
 			}
 			throw error;
 		}
+	}
+
+	/** Enable or disable secureMode. Call after loading settings. */
+	setSecureMode(enabled: boolean): void {
+		if (this.secureMode === enabled) return;
+		this.secureMode = enabled;
+		this.updateModelSnapshot();
+	}
+
+	getSecureMode(): boolean {
+		return this.secureMode;
+	}
+
+	/**
+	 * A provider is permitted under secureMode only when it has an explicit
+	 * baseUrl, which is how an operator redirects it at internal infrastructure.
+	 * Built-in providers carry their vendor's cloud endpoint and are blocked.
+	 */
+	isProviderAllowed(providerId: string): boolean {
+		if (!this.secureMode) return true;
+		return Boolean(this.config.getProvider(providerId)?.baseUrl || this.extensionProviders.get(providerId)?.baseUrl);
+	}
+
+	/** Drop models whose provider is blocked by the current policy. */
+	private allowedOnly(models: readonly Model<Api>[]): Model<Api>[] {
+		if (!this.secureMode) return [...models];
+		return models.filter((model) => this.isProviderAllowed(model.provider));
 	}
 
 	getProviders(): readonly Provider[] {
@@ -403,11 +448,12 @@ export class ModelRuntime implements Models {
 
 	async getAvailable(providerId?: string, options?: AuthOperationOptions): Promise<readonly Model<Api>[]> {
 		if (providerId) {
+			if (!this.isProviderAllowed(providerId)) return [];
 			const errorSeq = ++this.availabilityErrorSeq;
 			try {
 				const available = await this.models.getAvailable(providerId, options);
 				if (errorSeq === this.availabilityErrorSeq) this.availabilityError = undefined;
-				return available;
+				return this.allowedOnly(available);
 			} catch (error) {
 				if (errorSeq === this.availabilityErrorSeq && !options?.signal?.aborted) {
 					this.availabilityError = error instanceof Error ? error.message : String(error);
@@ -580,6 +626,11 @@ export class ModelRuntime implements Models {
 	}> {
 		const provider = this.models.getProvider(model.provider);
 		if (!provider) throw new ModelsError("provider", `Unknown provider: ${model.provider}`);
+		// Last line of defence: even if a model reached here via an unguarded
+		// resolution path, no request leaves for a provider the policy blocks.
+		if (!this.isProviderAllowed(model.provider)) {
+			throw new ModelsError("provider", `[secureMode] Provider "${model.provider}": ${SECURE_MODE_PROVIDER_ERROR}`);
+		}
 		const resolution = await this.getAuth(model, {
 			apiKey: options?.apiKey,
 			env: options?.env,
@@ -698,7 +749,9 @@ export class ModelRuntime implements Models {
 		}
 		const refreshOptions = {
 			...options,
-			allowNetwork: options.allowNetwork ?? this.modelNetworkEnabled,
+			// modelNetworkEnabled is a ceiling, not a default: a caller passing
+			// allowNetwork: true must not punch through closed-network mode.
+			allowNetwork: (options.allowNetwork ?? this.modelNetworkEnabled) && this.modelNetworkEnabled,
 		};
 		// Published pi-ai builds before ModelsStore returned void and accepted a provider ID.
 		// The fallback keeps source-mode CLI tests working without rebuilding workspace dependencies.
@@ -732,6 +785,9 @@ export class ModelRuntime implements Models {
 
 	registerNativeProvider(provider: Provider): void {
 		if (!provider.id.trim()) throw new Error("Provider id must not be empty.");
+		if (this.secureMode && !this.config.getProvider(provider.id)?.baseUrl) {
+			throw new Error(`[secureMode] Provider "${provider.id}": ${SECURE_MODE_PROVIDER_ERROR}`);
+		}
 		this.extensionProviders.delete(provider.id);
 		this.nativeExtensionProviders.set(provider.id, provider);
 		this.recomposeProvider(provider.id);
@@ -740,6 +796,9 @@ export class ModelRuntime implements Models {
 	}
 
 	registerProvider(providerId: string, config: ProviderConfigInput): void {
+		if (this.secureMode && !config.baseUrl) {
+			throw new Error(`[secureMode] Provider "${providerId}": ${SECURE_MODE_PROVIDER_ERROR}`);
+		}
 		// Validate the incoming registration on its own, like the legacy registry:
 		// a broken re-registration must throw without touching the stored config.
 		validateExtensionProvider(providerId, this.builtins.get(providerId), this.config.getProvider(providerId), config);
@@ -771,7 +830,7 @@ export class ModelRuntime implements Models {
 				...this.snapshot,
 				auth,
 				configuredProviders,
-				available: this.snapshot.all.filter((model) => configuredProviders.has(model.provider)),
+				available: this.allowedOnly(this.snapshot.all.filter((model) => configuredProviders.has(model.provider))),
 			};
 		}
 		void this.refresh({ allowNetwork: false });

@@ -3,13 +3,7 @@
  */
 
 import type { ThinkingLevel } from "@tculpepp/spi-agent-core";
-import {
-	type Api,
-	type AuthOperationOptions,
-	type KnownProvider,
-	type Model,
-	modelsAreEqual,
-} from "@tculpepp/spi-ai";
+import { type Api, type AuthOperationOptions, type KnownProvider, type Model, modelsAreEqual } from "@tculpepp/spi-ai";
 import chalk from "chalk";
 import { minimatch } from "minimatch";
 import { isValidThinkingLevel } from "../cli/args.ts";
@@ -403,6 +397,26 @@ export interface ResolveCliModelResult {
  * return a thinking level from "<pattern>:<thinking>" so the caller can apply it.
  */
 export function resolveCliModel(options: {
+	cliProvider?: string;
+	cliModel?: string;
+	cliThinking?: ThinkingLevel;
+	modelRuntime: ModelRuntime;
+}): ResolveCliModelResult {
+	const result = resolveCliModelUnchecked(options);
+	// Gate the single exit point rather than each of the dozen return paths
+	// inside the resolver, so a new path cannot silently skip the check.
+	if (result.model && !options.modelRuntime.isProviderAllowed(result.model.provider)) {
+		return {
+			model: undefined,
+			thinkingLevel: undefined,
+			warning: undefined,
+			error: `[secureMode] Provider "${result.model.provider}" requires an explicit baseUrl in models.json. Configure it to point to your internal infrastructure.`,
+		};
+	}
+	return result;
+}
+
+function resolveCliModelUnchecked(options: {
 	cliProvider?: string;
 	cliModel?: string;
 	cliThinking?: ThinkingLevel;

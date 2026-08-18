@@ -569,11 +569,11 @@ export interface MainOptions {
 export async function main(args: string[], options?: MainOptions) {
 	resetTimings();
 	const extensionFactories = [...builtInExtensions, ...(options?.extensionFactories ?? [])];
-	const offlineMode = args.includes("--offline") || isTruthyEnvFlag(process.env.SPI_OFFLINE);
-	if (offlineMode) {
-		process.env.SPI_OFFLINE = "1";
-		process.env.SPI_SKIP_VERSION_CHECK = "1";
-	}
+	// Closed-network fork: outbound non-LLM traffic (version checks, package
+	// update checks, catalog fetches, session sharing) is disabled permanently
+	// rather than opt-in, so there is no flag combination that re-enables it.
+	process.env.SPI_OFFLINE = "1";
+	process.env.SPI_SKIP_VERSION_CHECK = "1";
 
 	if (await runAuthCommand(args)) {
 		return;
@@ -914,15 +914,8 @@ export async function main(args: string[], options?: MainOptions) {
 		process.exit(1);
 	}
 
-	// RPC refreshes catalogs here in the background; interactive mode starts its refresh after TUI initialization.
-	if (!offlineMode && appMode === "rpc") {
-		const controller = new AbortController();
-		const timeout = setTimeout(() => controller.abort(), 15_000);
-		void modelRuntime
-			.refresh({ signal: controller.signal })
-			.catch(() => {})
-			.finally(() => clearTimeout(timeout));
-	}
+	// Upstream refreshes model catalogs over the network here for RPC mode.
+	// Closed-network mode has no catalog endpoint to reach, so it is omitted.
 
 	if (appMode === "rpc") {
 		printTimings();

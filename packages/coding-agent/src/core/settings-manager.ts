@@ -137,6 +137,7 @@ export interface Settings {
 	tuiMode?: TuiMode; // default: "regular"
 	fullscreenExitOutput?: FullscreenExitOutput; // default: "transcript"; no effect in regular TUI mode
 	fullscreenScrollbar?: ScrollViewScrollbar; // default: "auto"; no effect in regular TUI mode
+	secureMode?: boolean; // When true, only providers with an explicit baseUrl in models.json are permitted (default: true)
 }
 
 function isMergeableObject(value: unknown): value is Record<string, unknown> {
@@ -763,6 +764,14 @@ export class SettingsManager {
 		this.globalSettings.transport = transport;
 		this.markModified("transport");
 		this.save();
+	}
+
+	/**
+	 * Closed-network security policy. Defaults to true so an absent or partial
+	 * settings.json fails closed rather than reaching commercial cloud endpoints.
+	 */
+	getSecureMode(): boolean {
+		return this.settings.secureMode ?? true;
 	}
 
 	getCompactionEnabled(): boolean {

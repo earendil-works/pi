@@ -92,8 +92,7 @@ export async function persistEvalArtifactReferences(
 	const references: Array<{ name: string; path: string }> = [];
 	for (const artifact of artifacts) {
 		if (
-			(artifact.type !== "@tculpepp/spi-evals:session" &&
-				artifact.type !== "@tculpepp/spi-evals:source") ||
+			(artifact.type !== "@tculpepp/spi-evals:session" && artifact.type !== "@tculpepp/spi-evals:source") ||
 			artifact.runId !== runId
 		) {
 			continue;

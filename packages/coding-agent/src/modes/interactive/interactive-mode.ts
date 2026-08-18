@@ -107,7 +107,7 @@ import { openBrowser } from "../../utils/open-browser.ts";
 import { getCwdRelativePath } from "../../utils/paths.ts";
 import { getPiUserAgent } from "../../utils/pi-user-agent.ts";
 import { killTrackedDetachedChildren } from "../../utils/shell.ts";
-import { ensureTool, type ToolStatus } from "../../utils/tools-manager.ts";
+import { ensureTool, isOfflineModeEnabled, type ToolStatus } from "../../utils/tools-manager.ts";
 import { checkForNewPiVersion, type LatestPiRelease } from "../../utils/version-check.ts";
 import { ArminComponent } from "./components/armin.ts";
 import { AssistantMessageComponent } from "./components/assistant-message.ts";
@@ -5962,6 +5962,13 @@ export class InteractiveMode {
 	}
 
 	private async handleShareCommand(): Promise<void> {
+		// Sharing uploads the transcript to a GitHub gist, which closed-network
+		// mode must never do regardless of how the command was reached.
+		if (isOfflineModeEnabled()) {
+			this.showError("Session sharing is not available in closed-network mode (SPI_OFFLINE is set).");
+			return;
+		}
+
 		// Check if gh is available and logged in
 		try {
 			const authResult = spawnSync("gh", ["auth", "status"], { encoding: "utf-8" });

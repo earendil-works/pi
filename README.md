@@ -10,6 +10,119 @@
 
 > New issues and PRs from new contributors are auto-closed by default. Maintainers review auto-closed issues daily. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
+# Pi — Secure Closed-Network Fork
+
+This is a security fork of [earendil-works/pi](https://github.com/earendil-works/pi)
+maintained for deployment in closed networks and high-security environments. It is
+**not** the upstream project. Upstream's own README follows below.
+
+Synced with upstream **v0.84.2**.
+
+## What this fork changes
+
+### 1. Outbound non-LLM calls are permanently disabled
+
+Version checks, package update checks, model-catalog fetches, and session sharing are
+suppressed at startup regardless of environment variables or flags. Upstream's code
+paths are gated rather than deleted, so diffs against upstream stay readable.
+
+| Feature | Upstream | This fork |
+|---------|----------|-----------|
+| npm version check at startup | Opt out via `PI_SKIP_VERSION_CHECK` | Always off |
+| Package update checks | Opt out via `PI_OFFLINE` | Always off |
+| Model catalog refresh over the network | On when not offline | Always off |
+| `/share` (GitHub gist upload) | Available | Returns an error |
+
+`SPI_OFFLINE` and `SPI_SKIP_VERSION_CHECK` are forced on at the top of `main()`, so no
+flag combination re-enables them. `ModelRuntime.refresh()` treats the offline flag as a
+ceiling: a caller passing `allowNetwork: true` still cannot reach the network.
+
+### 2. `secureMode` — provider allowlist enforcement
+
+`secureMode` is **on by default**. A provider is usable only when it has an explicit
+`baseUrl`, which is how an operator points it at internal infrastructure. Every built-in
+commercial endpoint (Anthropic, OpenAI, Google, Mistral, Bedrock, and the rest) is
+blocked unless redirected. The protocol implementations stay intact, so self-hosted
+models can reuse them without extra code.
+
+Enforcement lives in `ModelRuntime`, which is where providers, `baseUrl`, and
+availability actually live. `ModelRegistry` re-exports the policy for extensions.
+
+- `prepareRequest()` — the choke point every stream, complete, and deferred call passes
+  through, so a model that reached it by any resolution path still cannot send a request
+- the available-model snapshot — filtered at all four sites that compute it
+- `registerProvider()` and `registerNativeProvider()` — an extension cannot register a
+  cloud-reaching provider
+- `resolveCliModel()` — gated at its single exit rather than at each return path
+
+The policy fails closed: `secureMode` defaults to on in the runtime field, in
+`CreateModelRuntimeOptions`, and in `SettingsManager.getSecureMode()`. A creation site
+that never wires settings stays secure rather than open.
+
+Disable it, if you must, with `"secureMode": false` in `settings.json`.
+
+### 3. No default models
+
+Under `secureMode` the app starts with an empty model list. Configure at least one
+provider in `~/.spi/agent/models.json` before launching.
+
+## Configuring a self-hosted model
+
+`~/.spi/agent/models.json`:
+
+```json
+{
+  "providers": {
+    "internal-llm": {
+      "baseUrl": "http://inference.internal:8000/v1",
+      "api": "openai-completions",
+      "apiKey": "INTERNAL_API_KEY",
+      "compat": {
+        "supportsDeveloperRole": false,
+        "supportsReasoningEffort": false
+      },
+      "models": [
+        {
+          "id": "gemma-3-27b-it",
+          "name": "Gemma 3 27B (Internal)",
+          "input": ["text", "image"],
+          "contextWindow": 131072,
+          "maxTokens": 16384
+        }
+      ]
+    }
+  }
+}
+```
+
+`~/.spi/agent/settings.json`:
+
+```json
+{
+  "defaultProvider": "internal-llm",
+  "defaultModel": "gemma-3-27b-it"
+}
+```
+
+See [packages/coding-agent/docs/models.md](packages/coding-agent/docs/models.md) for the
+full reference, including how to redirect built-in providers through an internal proxy.
+
+## Naming
+
+The CLI is `spi`, the config directory is `~/.spi`, environment variables use the `SPI_`
+prefix, and packages publish under `@tculpepp/spi-*`. For compatibility, the extension
+loader still resolves upstream's `@earendil-works/pi-*` and legacy `@mariozechner/pi-*`
+specifiers, and package manifests accept upstream's `pi` key as well as `spi`.
+
+## Upstream
+
+Original project: [earendil-works/pi](https://github.com/earendil-works/pi) by
+[Mario Zechner](https://github.com/badlogic). All credit for the core agent, TUI, and
+provider infrastructure belongs to the upstream project. This fork adds closed-network
+and secure-mode defaults on top.
+
+---
+
 # Pi Agent Harness
 
 This is the home of the Pi agent harness project including our self extensible coding agent.

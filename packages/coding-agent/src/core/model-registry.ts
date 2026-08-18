@@ -53,6 +53,20 @@ export class ModelRegistry {
 		return [...this.runtime.getAvailableSnapshot()];
 	}
 
+	/** Enable or disable secureMode. Call after loading settings. */
+	setSecureMode(enabled: boolean): void {
+		this.runtime.setSecureMode(enabled);
+	}
+
+	getSecureMode(): boolean {
+		return this.runtime.getSecureMode();
+	}
+
+	/** True when the provider is permitted under the current security policy. */
+	isProviderAllowed(providerName: string): boolean {
+		return this.runtime.isProviderAllowed(providerName);
+	}
+
 	find(provider: string, modelId: string): Model<Api> | undefined {
 		return this.runtime.getModel(provider, modelId);
 	}

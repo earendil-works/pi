@@ -137,14 +137,19 @@ export async function createAgentSessionServices(
 ): Promise<AgentSessionServices> {
 	const cwd = resolvePath(options.cwd);
 	const agentDir = options.agentDir ? resolvePath(options.agentDir) : getAgentDir();
+	// Settings first: the runtime needs the security policy before it composes providers.
+	const settingsManager = options.settingsManager ?? SettingsManager.create(cwd, agentDir);
+	const secureMode = settingsManager.getSecureMode();
 	const modelRuntime =
 		options.modelRuntime ??
 		(await ModelRuntime.create({
 			authPath: join(agentDir, "auth.json"),
 			modelsPath: join(agentDir, "models.json"),
 			signal: options.modelRuntimeSignal,
+			secureMode,
 		}));
-	const settingsManager = options.settingsManager ?? SettingsManager.create(cwd, agentDir);
+	// A caller-supplied runtime is subject to the same policy.
+	modelRuntime.setSecureMode(secureMode);
 	const resourceLoader = new DefaultResourceLoader({
 		...(options.resourceLoaderOptions ?? {}),
 		cwd,

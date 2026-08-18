@@ -95,6 +95,25 @@ Set `SPI_SKIP_VERSION_CHECK=1` to disable the Pi version update check. Use `--of
 }
 ```
 
+### Security (closed-network fork)
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `secureMode` | boolean | `true` | When `true`, only providers with an explicit `baseUrl` in `models.json` may be listed or used. Built-in cloud endpoints (Anthropic, OpenAI, Google, and the rest) are blocked unless redirected. |
+
+`secureMode` is on by default, and it is enforced at the request layer, not just in the
+model picker: a blocked provider cannot send a request even if a model reference for it
+is obtained some other way. Extensions also cannot register a provider without a
+`baseUrl`.
+
+To opt out (not recommended outside development):
+
+```json
+{ "secureMode": false }
+```
+
+See [models.md](models.md) for how to configure self-hosted providers.
+
 ### Warnings
 
 | Setting | Type | Default | Description |
