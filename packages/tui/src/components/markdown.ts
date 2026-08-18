@@ -158,7 +158,7 @@ function trimPartialClosingFences(tokens: readonly Token[]): void {
 	}
 
 	// Trim streamed partial closing fences so code blocks do not shrink/flicker
-	// when the final fence character arrives. See https://github.com/earendil-works/pi/issues/5825.
+	// when the final fence character arrives. See https://github.com/tculpepp/secure-pi-mono/issues/5825.
 	const marker = /^(`{3,}|~{3,})/.exec(token.raw)?.[1];
 	const lastLine = token.raw.split("\n").pop();
 	if (!marker || !lastLine || lastLine.length >= marker.length || lastLine !== marker[0]?.repeat(lastLine.length)) {

@@ -10,8 +10,8 @@ describeEval("Pi Coding Agent smoke", { harness: piCodingAgentHarness }, (it) =>
 
 		expect(result.output.trim()).toBe("Paris");
 		expect(result.errors).toEqual([]);
-		expect(result.usage.provider).toBe(process.env.PI_PROVIDER);
-		expect(result.usage.model).toBe(process.env.PI_MODEL);
+		expect(result.usage.provider).toBe(process.env.SPI_PROVIDER);
+		expect(result.usage.model).toBe(process.env.SPI_MODEL);
 		expect(result.usage.totalTokens).toBeGreaterThan(0);
 	});
 });

@@ -1,4 +1,4 @@
-import type { RequestEnvelope } from "@earendil-works/pi-protocol";
+import type { RequestEnvelope } from "@tculpepp/spi-protocol";
 import { describe, expect, test } from "vitest";
 import { collectRequests, connectClient, MemoryServer, openRemoteSession, sessionSnapshot } from "./support.ts";
 

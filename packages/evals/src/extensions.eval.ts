@@ -21,7 +21,7 @@ function createExtensionAuthoringHarness(name: string, transformSystemPrompt?: (
 		...(transformSystemPrompt ? { transformSystemPrompt } : {}),
 		output: ({ response, session }) => {
 			const extensions = session.resourceLoader.getExtensions();
-			const extensionPath = join(session.sessionManager.getCwd(), ".pi", "extensions", "hello.ts");
+			const extensionPath = join(session.sessionManager.getCwd(), ".spi", "extensions", "hello.ts");
 			const extensionSource = existsSync(extensionPath) ? readFileSync(extensionPath, "utf8") : null;
 			return {
 				response,
@@ -61,8 +61,8 @@ const ExtensionAuthoringJudge = createJudge<PiCodingAgentInput, ExtensionAuthori
 				output.extensionSource.matchAll(/\b(?:from|import)\s+["']([^"']+)["']/g),
 				(match) => match[1],
 			);
-			if (!imports.includes("@earendil-works/pi-coding-agent")) {
-				failures.push("extension does not import the canonical @earendil-works/pi-coding-agent package");
+			if (!imports.includes("@tculpepp/spi-coding-agent")) {
+				failures.push("extension does not import the canonical @tculpepp/spi-coding-agent package");
 			}
 			if (imports.some((specifier) => specifier.startsWith("@mariozechner/"))) {
 				failures.push("extension imports a legacy @mariozechner package");

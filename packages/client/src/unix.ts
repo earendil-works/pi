@@ -1,5 +1,5 @@
 import { createConnection, type Socket } from "node:net";
-import { DEFAULT_MAX_FRAME_LENGTH } from "@earendil-works/pi-protocol";
+import { DEFAULT_MAX_FRAME_LENGTH } from "@tculpepp/spi-protocol";
 import type { ByteTransport, ByteTransportFactory, ByteTransportHandlers } from "./transport.ts";
 
 const MAX_UNIX_SOCKET_PATH_BYTES = process.platform === "linux" ? 107 : 103;

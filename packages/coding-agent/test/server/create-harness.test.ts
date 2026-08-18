@@ -7,10 +7,10 @@ import {
 	type Result,
 	Session,
 	type ShellExecOptions,
-} from "@earendil-works/pi-agent-core";
-import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
-import { createModels } from "@earendil-works/pi-ai";
-import { getModel } from "@earendil-works/pi-ai/compat";
+} from "@tculpepp/spi-agent-core";
+import { NodeExecutionEnv } from "@tculpepp/spi-agent-core/node";
+import { createModels } from "@tculpepp/spi-ai";
+import { getModel } from "@tculpepp/spi-ai/compat";
 import { Type } from "typebox";
 import { describe, expect, test, vi } from "vitest";
 import {
@@ -134,7 +134,7 @@ describe("coding-agent Harness construction", () => {
 		const session = new Session(new InMemorySessionStorage({ id: "session-file-harness", createdAt: 1 }));
 		const env = new CapturingExecutionEnv({
 			cwd: process.cwd(),
-			shellEnv: { PI_SESSION_FILE: "/stale/parent.jsonl", PI_CODING_AGENT: "true" },
+			shellEnv: { SPI_SESSION_FILE: "/stale/parent.jsonl", SPI_CODING_AGENT: "true" },
 		});
 		const created = await createCodingAgentHarness({
 			session,
@@ -149,15 +149,15 @@ describe("coding-agent Harness construction", () => {
 			if (!bash) throw new Error("Expected the default bash tool");
 
 			const result = await bash.execute("bash-call", {
-				command: `printf '%s' "$PI_SESSION_ID|$PI_SESSION_FILE|$PI_PROVIDER|$PI_MODEL|$PI_REASONING_LEVEL|$PI_CODING_AGENT"`,
+				command: `printf '%s' "$SPI_SESSION_ID|$SPI_SESSION_FILE|$SPI_PROVIDER|$SPI_MODEL|$SPI_REASONING_LEVEL|$SPI_CODING_AGENT"`,
 			});
 
 			expect(env.executionOverrides).toEqual({
-				PI_SESSION_ID: "session-file-harness",
-				PI_SESSION_FILE: "/sessions/current.jsonl",
-				PI_PROVIDER: "google",
-				PI_MODEL: "gemini-2.5-flash",
-				PI_REASONING_LEVEL: "high",
+				SPI_SESSION_ID: "session-file-harness",
+				SPI_SESSION_FILE: "/sessions/current.jsonl",
+				SPI_PROVIDER: "google",
+				SPI_MODEL: "gemini-2.5-flash",
+				SPI_REASONING_LEVEL: "high",
 			});
 			expect(result.content).toEqual([
 				{
@@ -175,7 +175,7 @@ describe("coding-agent Harness construction", () => {
 		const session = new Session(new InMemorySessionStorage({ id: "dynamic-bash-session", createdAt: 1 }));
 		const env = new CapturingExecutionEnv({
 			cwd: process.cwd(),
-			shellEnv: { PI_SESSION_FILE: "/stale/parent.jsonl", PI_CODING_AGENT: "true" },
+			shellEnv: { SPI_SESSION_FILE: "/stale/parent.jsonl", SPI_CODING_AGENT: "true" },
 		});
 		const created = await createCodingAgentHarness({
 			session,
@@ -191,18 +191,18 @@ describe("coding-agent Harness construction", () => {
 			if (!bash) throw new Error("Expected the default bash tool");
 
 			const result = await bash.execute("bash-call", {
-				command: `printf '%s:%s' "\${PI_SESSION_FILE+x}" "$PI_SESSION_ID|$PI_PROVIDER|$PI_MODEL|$PI_REASONING_LEVEL|$PI_CODING_AGENT"`,
+				command: `printf '%s:%s' "\${SPI_SESSION_FILE+x}" "$SPI_SESSION_ID|$SPI_PROVIDER|$SPI_MODEL|$SPI_REASONING_LEVEL|$SPI_CODING_AGENT"`,
 			});
 
 			expect(env.executionOverrides).toEqual({
-				PI_SESSION_ID: "dynamic-bash-session",
-				PI_SESSION_FILE: "",
-				PI_PROVIDER: "anthropic",
-				PI_MODEL: "claude-sonnet-4-5",
-				PI_REASONING_LEVEL: "low",
+				SPI_SESSION_ID: "dynamic-bash-session",
+				SPI_SESSION_FILE: "",
+				SPI_PROVIDER: "anthropic",
+				SPI_MODEL: "claude-sonnet-4-5",
+				SPI_REASONING_LEVEL: "low",
 			});
-			expect(Object.hasOwn(env.executionOverrides ?? {}, "PI_SESSION_FILE")).toBe(true);
-			expect(env.executionOverrides?.PI_SESSION_FILE).toBe("");
+			expect(Object.hasOwn(env.executionOverrides ?? {}, "SPI_SESSION_FILE")).toBe(true);
+			expect(env.executionOverrides?.SPI_SESSION_FILE).toBe("");
 			expect(result.content).toEqual([
 				{
 					type: "text",

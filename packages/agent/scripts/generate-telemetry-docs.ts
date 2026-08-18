@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import type { TelemetryAttributeDefinition, TelemetrySchemaDefinition } from "@earendil-works/pi-telemetry";
+import type { TelemetryAttributeDefinition, TelemetrySchemaDefinition } from "@tculpepp/spi-telemetry";
 import { AI_TELEMETRY_SCHEMA, HARNESS_TELEMETRY_SCHEMA } from "../src/harness/telemetry.ts";
 
 function escapeCell(value: string): string {

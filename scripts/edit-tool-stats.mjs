@@ -6,8 +6,8 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { createInterface } from "node:readline";
 
-const DEFAULT_SESSIONS_DIR = path.join(homedir(), ".pi/agent/sessions");
-const DEFAULT_ACTIVE_EDIT_EXTENSION_PATH = path.join(homedir(), ".pi/agent/extensions/edit.ts");
+const DEFAULT_SESSIONS_DIR = path.join(homedir(), ".spi/agent/sessions");
+const DEFAULT_ACTIVE_EDIT_EXTENSION_PATH = path.join(homedir(), ".spi/agent/extensions/edit.ts");
 const DEFAULT_TOP = 20;
 
 function parseArgs(argv) {
@@ -65,7 +65,7 @@ function printHelp() {
 	console.log(`Usage: node scripts/edit-tool-stats.mjs [options]
 
 Options:
-  --sessions-dir <path>  Sessions directory (default: ~/.pi/agent/sessions)
+  --sessions-dir <path>  Sessions directory (default: ~/.spi/agent/sessions)
   --model <substring>    Filter provider/model by substring
   --ext <extension>      Filter by file extension, e.g. .ts
   --failed-only          Include only failed edit calls

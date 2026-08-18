@@ -1,5 +1,5 @@
 import { join, resolve } from "node:path";
-import { Text, type TUI } from "@earendil-works/pi-tui";
+import { Text, type TUI } from "@tculpepp/spi-tui";
 import { Type } from "typebox";
 import { beforeAll, describe, expect, test } from "vitest";
 import { getReadmePath } from "../src/config.ts";
@@ -465,7 +465,7 @@ describe("ToolExecutionComponent parity", () => {
 		},
 		{
 			title: "AGENTS.md",
-			path: join(process.cwd(), ".pi", "AGENTS.md"),
+			path: join(process.cwd(), ".spi", "AGENTS.md"),
 			content: "Hidden resource instructions",
 			compact: "read resource .pi/AGENTS.md",
 			hidden: "Hidden resource instructions",
@@ -473,7 +473,7 @@ describe("ToolExecutionComponent parity", () => {
 		},
 		{
 			title: "AGENTS.override.md",
-			path: join(process.cwd(), ".pi", "AGENTS.override.md"),
+			path: join(process.cwd(), ".spi", "AGENTS.override.md"),
 			content: "Hidden override instructions",
 			compact: "read resource .pi/AGENTS.override.md",
 			hidden: "Hidden override instructions",

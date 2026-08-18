@@ -1,7 +1,7 @@
 import { lstat, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ServerMessageDecoder } from "@earendil-works/pi-protocol";
+import { ServerMessageDecoder } from "@tculpepp/spi-protocol";
 import { afterEach, expect, test, vi } from "vitest";
 import type { ByteConnection } from "../src/connection.ts";
 import { PiServer } from "../src/index.ts";

@@ -1,4 +1,4 @@
-import { type Entry, SessionError } from "@earendil-works/pi-agent-core";
+import { type Entry, SessionError } from "@tculpepp/spi-agent-core";
 import { joinSqlFragments, sql } from "../sql.ts";
 import type { SqliteDatabase } from "../types.ts";
 

@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ModelMetadata, SessionSnapshot, TranscriptProgress } from "@earendil-works/pi-protocol";
+import type { ModelMetadata, SessionSnapshot, TranscriptProgress } from "@tculpepp/spi-protocol";
 import { afterEach, describe, expect, test } from "vitest";
 import type { CreateSessionOptions, PiServer, PiSessionRuntime } from "../src/index.ts";
 import {

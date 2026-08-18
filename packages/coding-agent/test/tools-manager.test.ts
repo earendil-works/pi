@@ -3,7 +3,7 @@ import type * as Fs from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ensureTool, type ToolStatus } from "../src/utils/tools-manager.ts";
 
-const originalOffline = process.env.PI_OFFLINE;
+const originalOffline = process.env.SPI_OFFLINE;
 
 vi.mock("fs", async (importOriginal) => {
 	const actual = await importOriginal<typeof Fs>();
@@ -22,13 +22,13 @@ vi.mock("child_process", async (importOriginal) => {
 });
 
 afterEach(() => {
-	if (originalOffline === undefined) delete process.env.PI_OFFLINE;
-	else process.env.PI_OFFLINE = originalOffline;
+	if (originalOffline === undefined) delete process.env.SPI_OFFLINE;
+	else process.env.SPI_OFFLINE = originalOffline;
 });
 
 describe("ensureTool", () => {
 	it("reports status through a callback without writing to the console", async () => {
-		process.env.PI_OFFLINE = "1";
+		process.env.SPI_OFFLINE = "1";
 		const statuses: ToolStatus[] = [];
 		const consoleLog = vi.spyOn(console, "log").mockImplementation(() => {});
 

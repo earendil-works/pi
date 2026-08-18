@@ -1,4 +1,4 @@
-import { PROTOCOL_VERSION } from "@earendil-works/pi-protocol";
+import { PROTOCOL_VERSION } from "@tculpepp/spi-protocol";
 import { describe, expect, test } from "vitest";
 import { PiClient, PiClientDisposedError } from "../src/index.ts";
 import { attachSession, baseServerSnapshot, connectClient, MemoryByteServer, sessionSnapshot } from "./support.ts";

@@ -9,7 +9,7 @@ import {
 } from "../src/utils/version-check.ts";
 import { allowNetwork } from "./test-network-env.ts";
 
-const originalSkipVersionCheck = process.env.PI_SKIP_VERSION_CHECK;
+const originalSkipVersionCheck = process.env.SPI_SKIP_VERSION_CHECK;
 
 beforeEach(() => {
 	allowNetwork();
@@ -18,9 +18,9 @@ beforeEach(() => {
 afterEach(() => {
 	vi.unstubAllGlobals();
 	if (originalSkipVersionCheck === undefined) {
-		delete process.env.PI_SKIP_VERSION_CHECK;
+		delete process.env.SPI_SKIP_VERSION_CHECK;
 	} else {
-		process.env.PI_SKIP_VERSION_CHECK = originalSkipVersionCheck;
+		process.env.SPI_SKIP_VERSION_CHECK = originalSkipVersionCheck;
 	}
 });
 
@@ -112,7 +112,7 @@ describe("version checks", () => {
 	});
 
 	it("skips automatic api calls when version checks are disabled", async () => {
-		process.env.PI_SKIP_VERSION_CHECK = "1";
+		process.env.SPI_SKIP_VERSION_CHECK = "1";
 		const fetchMock = vi.fn();
 		vi.stubGlobal("fetch", fetchMock);
 
@@ -121,7 +121,7 @@ describe("version checks", () => {
 	});
 
 	it("allows direct api calls when automatic version checks are disabled", async () => {
-		process.env.PI_SKIP_VERSION_CHECK = "1";
+		process.env.SPI_SKIP_VERSION_CHECK = "1";
 		const fetchMock = vi.fn(async () => Response.json({ version: "1.2.4" }));
 		vi.stubGlobal("fetch", fetchMock);
 

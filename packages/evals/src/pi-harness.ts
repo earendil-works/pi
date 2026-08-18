@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
-import { contentText } from "@earendil-works/pi-ai";
+import { contentText } from "@tculpepp/spi-ai";
 import {
 	type AgentSession,
 	type CreateAgentSessionOptions,
@@ -12,7 +12,7 @@ import {
 	ModelRuntime,
 	SessionManager,
 	SettingsManager,
-} from "@earendil-works/pi-coding-agent";
+} from "@tculpepp/spi-coding-agent";
 import {
 	createHarness,
 	type Harness,
@@ -23,7 +23,7 @@ import {
 	type TranscriptEvent,
 	toJsonValue,
 } from "vitest-evals/harness";
-import { PI_SESSION_SNAPSHOT_ARTIFACT } from "./vitest-evals/artifacts.ts";
+import { SPI_SESSION_SNAPSHOT_ARTIFACT } from "./vitest-evals/artifacts.ts";
 
 export type PiCodingAgentInput = string | Array<{ type: "prompt"; content: string } | { type: "reload" }>;
 
@@ -45,12 +45,12 @@ type PiCodingAgentHarnessWithOutput<TOutput extends JsonValue> = PiCodingAgentHa
 
 export function resolveModelSelection(
 	explicitModel: PiCodingAgentModelSelection | undefined,
-	environment: { PI_PROVIDER?: string; PI_MODEL?: string } = process.env,
+	environment: { SPI_PROVIDER?: string; SPI_MODEL?: string } = process.env,
 ): PiCodingAgentModelSelection {
-	const provider = (explicitModel?.provider ?? environment.PI_PROVIDER)?.trim();
-	const id = (explicitModel?.id ?? environment.PI_MODEL)?.trim();
+	const provider = (explicitModel?.provider ?? environment.SPI_PROVIDER)?.trim();
+	const id = (explicitModel?.id ?? environment.SPI_MODEL)?.trim();
 	if (!provider || !id) {
-		throw new Error("Select a harness model explicitly or set both PI_PROVIDER and PI_MODEL as defaults.");
+		throw new Error("Select a harness model explicitly or set both SPI_PROVIDER and SPI_MODEL as defaults.");
 	}
 	return { provider, id };
 }
@@ -214,7 +214,7 @@ async function runPiCodingAgent<TOutput extends JsonValue>(
 		try {
 			const sessionPath = sessionManager.getSessionFile();
 			if (sessionPath && existsSync(sessionPath)) {
-				setArtifact(PI_SESSION_SNAPSHOT_ARTIFACT, await readFile(sessionPath, "utf8"));
+				setArtifact(SPI_SESSION_SNAPSHOT_ARTIFACT, await readFile(sessionPath, "utf8"));
 			}
 		} catch (error) {
 			cleanupErrors.push(error);

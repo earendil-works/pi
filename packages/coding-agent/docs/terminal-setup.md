@@ -81,7 +81,7 @@ return config
 
 If you already have a `config.keys` table, add the entry to it.
 
-On WSL, WezTerm may require a visible hardware cursor for IME candidate window positioning. If CJK IME candidates do not follow the text cursor, set `PI_HARDWARE_CURSOR=1` before running pi or set `showHardwareCursor` to `true` in settings.
+On WSL, WezTerm may require a visible hardware cursor for IME candidate window positioning. If CJK IME candidates do not follow the text cursor, set `SPI_HARDWARE_CURSOR=1` before running pi or set `showHardwareCursor` to `true` in settings.
 
 ## Alacritty
 
@@ -158,6 +158,6 @@ For the best experience, use a terminal that supports the Kitty keyboard protoco
 
 The built-in terminal has limited escape sequence support. Shift+Enter cannot be distinguished from Enter in IntelliJ's terminal.
 
-If you want the hardware cursor visible, set `PI_HARDWARE_CURSOR=1` before running pi (disabled by default for compatibility).
+If you want the hardware cursor visible, set `SPI_HARDWARE_CURSOR=1` before running pi (disabled by default for compatibility).
 
 Consider using a dedicated terminal emulator for the best experience.

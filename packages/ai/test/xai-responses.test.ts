@@ -8,7 +8,7 @@ import { XAI_MODELS } from "../src/providers/xai.models.ts";
 import { xaiProvider } from "../src/providers/xai.ts";
 import type { Context, Model } from "../src/types.ts";
 
-const PI_USER_AGENT = `pi (${platform()} ${release()}; ${arch()})`;
+const SPI_USER_AGENT = `pi (${platform()} ${release()}; ${arch()})`;
 
 type CapturedRequest = {
 	url: string;
@@ -104,7 +104,7 @@ describe("xAI Responses provider", () => {
 
 		expect(captured.url).toBe("https://api.x.ai/v1/responses");
 		expect(captured.headers.get("authorization")).toBe("Bearer xai-test-token");
-		expect(captured.headers.get("user-agent")).toBe(PI_USER_AGENT);
+		expect(captured.headers.get("user-agent")).toBe(SPI_USER_AGENT);
 		expect(captured.headers.get("session_id")).toBe("pi-session-123");
 		expect(captured.body).toMatchObject({
 			model: "grok-4.5",
@@ -204,7 +204,7 @@ describe("xAI Responses provider", () => {
 
 		expect(result.stopReason, result.errorMessage).toBe("stop");
 		expect(userAgent).not.toBeNull();
-		expect(userAgent).not.toBe(PI_USER_AGENT);
+		expect(userAgent).not.toBe(SPI_USER_AGENT);
 	});
 
 	it("forces pi's User-Agent on custom xAI Completions models over caller headers", async () => {
@@ -250,6 +250,6 @@ describe("xAI Responses provider", () => {
 		).result();
 
 		expect(result.stopReason, result.errorMessage).toBe("stop");
-		expect(userAgent).toBe(PI_USER_AGENT);
+		expect(userAgent).toBe(SPI_USER_AGENT);
 	});
 });

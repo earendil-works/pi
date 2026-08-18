@@ -2,7 +2,7 @@
 
 Pi runs bash in non-interactive mode (`bash -c`), which doesn't expand aliases by default.
 
-To enable your shell aliases, add to `~/.pi/agent/settings.json`:
+To enable your shell aliases, add to `~/.spi/agent/settings.json`:
 
 ```json
 {

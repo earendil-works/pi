@@ -1,13 +1,14 @@
 {
-	"name": "@earendil-works/pi-coding-agent",
+	"name": "@tculpepp/spi-coding-agent",
 	"version": "0.84.2",
 	"description": "Coding agent CLI with read, bash, edit, write tools and session management",
 	"type": "module",
 	"piConfig": {
-		"configDir": ".pi"
+		"name": "spi",
+		"configDir": ".spi"
 	},
 	"bin": {
-		"pi": "dist/cli.js"
+		"spi": "dist/cli.js"
 	},
 	"main": "./dist/index.js",
 	"types": "./dist/index.d.ts",
@@ -43,11 +44,11 @@
 		"prepublishOnly": "npm run clean && npm run build && npm run shrinkwrap"
 	},
 	"dependencies": {
-		"@earendil-works/pi-agent-core": "^0.84.2",
-		"@earendil-works/pi-ai": "^0.84.2",
-		"@earendil-works/pi-client": "^0.84.2",
-		"@earendil-works/pi-protocol": "^0.84.2",
-		"@earendil-works/pi-tui": "^0.84.2",
+		"@tculpepp/spi-agent-core": "^0.84.2",
+		"@tculpepp/spi-ai": "^0.84.2",
+		"@tculpepp/spi-client": "^0.84.2",
+		"@tculpepp/spi-protocol": "^0.84.2",
+		"@tculpepp/spi-tui": "^0.84.2",
 		"@silvia-odwyer/photon-node": "0.3.4",
 		"chalk": "5.6.2",
 		"cross-spawn": "7.0.6",
@@ -99,7 +100,7 @@
 	"license": "MIT",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/earendil-works/pi.git",
+		"url": "git+https://github.com/tculpepp/secure-pi-mono.git",
 		"directory": "packages/coding-agent"
 	},
 	"engines": {

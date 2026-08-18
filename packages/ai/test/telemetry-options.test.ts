@@ -1,4 +1,4 @@
-import { NOOP_TELEMETRY_CONTEXT, type TelemetryContext } from "@earendil-works/pi-telemetry";
+import { NOOP_TELEMETRY_CONTEXT, type TelemetryContext } from "@tculpepp/spi-telemetry";
 import { describe, expect, it } from "vitest";
 import { buildBaseOptions } from "../src/api/simple-options.ts";
 import { generateImages } from "../src/images.ts";

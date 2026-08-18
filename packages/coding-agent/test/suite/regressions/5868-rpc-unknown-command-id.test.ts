@@ -3,7 +3,7 @@ import type { AgentSessionRuntime } from "../../../src/core/agent-session-runtim
 import { runRpcMode } from "../../../src/modes/rpc/rpc-mode.ts";
 import { createHarness, type Harness } from "../harness.ts";
 
-// Regression for https://github.com/earendil-works/pi/issues/5868
+// Regression for https://github.com/tculpepp/secure-pi-mono/issues/5868
 
 const rpcIo = vi.hoisted(() => ({
 	outputLines: [] as string[],

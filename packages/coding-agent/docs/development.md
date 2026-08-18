@@ -1,11 +1,11 @@
 # Development
 
-See [AGENTS.md](https://github.com/earendil-works/pi-mono/blob/main/AGENTS.md) for additional guidelines.
+See [AGENTS.md](https://github.com/tculpepp/secure-pi-mono/blob/main/AGENTS.md) for additional guidelines.
 
 ## Setup
 
 ```bash
-git clone https://github.com/earendil-works/pi-mono
+git clone https://github.com/tculpepp/secure-pi-mono
 cd pi-mono
 npm install
 npm run build
@@ -27,7 +27,7 @@ Configure via `package.json`:
 {
   "piConfig": {
     "name": "pi",
-    "configDir": ".pi"
+    "configDir": ".spi"
   }
 }
 ```
@@ -48,7 +48,7 @@ Never use `__dirname` directly for package assets.
 
 ## Debug Command
 
-`/debug` (hidden) writes to `~/.pi/agent/pi-debug.log`:
+`/debug` (hidden) writes to `~/.spi/agent/pi-debug.log`:
 - Rendered TUI lines with ANSI codes
 - Last messages sent to the LLM
 

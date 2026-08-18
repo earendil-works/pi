@@ -291,10 +291,10 @@ describe("NodeExecutionEnv", () => {
 
 	it.each([
 		["a missing override preserves the base value", undefined, "x:/stale/parent.jsonl"],
-		["an empty override shadows the base value", { PI_SESSION_FILE: "" }, "x:"],
+		["an empty override shadows the base value", { SPI_SESSION_FILE: "" }, "x:"],
 		[
 			"a string override replaces the base value",
-			{ PI_SESSION_FILE: "/sessions/current.jsonl" },
+			{ SPI_SESSION_FILE: "/sessions/current.jsonl" },
 			"x:/sessions/current.jsonl",
 		],
 	] as const)(
@@ -304,14 +304,14 @@ describe("NodeExecutionEnv", () => {
 			const env = new NodeExecutionEnv({
 				cwd: root,
 				shellEnv: {
-					PI_SESSION_FILE: "/stale/parent.jsonl",
-					PI_CODING_AGENT: "true",
-					PI_NODE_ENV_PRESERVED_TEST: "preserved",
+					SPI_SESSION_FILE: "/stale/parent.jsonl",
+					SPI_CODING_AGENT: "true",
+					SPI_NODE_ENV_PRESERVED_TEST: "preserved",
 				},
 			});
 			const result = getOrThrow(
 				await env.exec(
-					`printf '%s:%s|%s|%s' "\${PI_SESSION_FILE+x}" "\${PI_SESSION_FILE-}" "$PI_CODING_AGENT" "$PI_NODE_ENV_PRESERVED_TEST"`,
+					`printf '%s:%s|%s|%s' "\${SPI_SESSION_FILE+x}" "\${SPI_SESSION_FILE-}" "$SPI_CODING_AGENT" "$SPI_NODE_ENV_PRESERVED_TEST"`,
 					{ env: overrides },
 				),
 			);
@@ -322,9 +322,9 @@ describe("NodeExecutionEnv", () => {
 
 	it("can replace rather than inherit the default shell environment", async () => {
 		const root = createTempDir();
-		const inheritedKey = "PI_NODE_ENV_INHERITED_TEST";
-		const configuredKey = "PI_NODE_ENV_CONFIGURED_TEST";
-		const explicitKey = "PI_NODE_ENV_EXPLICIT_TEST";
+		const inheritedKey = "SPI_NODE_ENV_INHERITED_TEST";
+		const configuredKey = "SPI_NODE_ENV_CONFIGURED_TEST";
+		const explicitKey = "SPI_NODE_ENV_EXPLICIT_TEST";
 		const previousInherited = process.env[inheritedKey];
 		process.env[inheritedKey] = "host";
 		try {

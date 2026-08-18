@@ -16,17 +16,17 @@ export const workspaceSourcePaths = {
 export default defineConfig({
 	resolve: {
 		alias: [
-			{ find: /^@earendil-works\/pi-telemetry$/, replacement: workspaceSourcePaths.telemetryIndex },
-			{ find: /^@earendil-works\/pi-telemetry\/testing$/, replacement: workspaceSourcePaths.telemetryTesting },
-			{ find: /^@earendil-works\/pi-ai$/, replacement: workspaceSourcePaths.aiIndex },
-			{ find: /^@earendil-works\/pi-ai\/compat$/, replacement: workspaceSourcePaths.aiCompat },
-			{ find: /^@earendil-works\/pi-ai\/oauth$/, replacement: workspaceSourcePaths.aiOAuth },
+			{ find: /^@tculpepp\/spi-telemetry$/, replacement: workspaceSourcePaths.telemetryIndex },
+			{ find: /^@tculpepp\/spi-telemetry\/testing$/, replacement: workspaceSourcePaths.telemetryTesting },
+			{ find: /^@tculpepp\/spi-ai$/, replacement: workspaceSourcePaths.aiIndex },
+			{ find: /^@tculpepp\/spi-ai\/compat$/, replacement: workspaceSourcePaths.aiCompat },
+			{ find: /^@tculpepp\/spi-ai\/oauth$/, replacement: workspaceSourcePaths.aiOAuth },
 			{
-				find: /^@earendil-works\/pi-ai\/providers\/(.+)$/,
+				find: /^@tculpepp\/spi-ai\/providers\/(.+)$/,
 				replacement: `${workspaceSourcePaths.aiProviders}/$1.ts`,
 			},
-			{ find: /^@earendil-works\/pi-agent-core$/, replacement: workspaceSourcePaths.agentIndex },
-			{ find: /^@earendil-works\/pi-tui$/, replacement: workspaceSourcePaths.tuiIndex },
+			{ find: /^@tculpepp\/spi-agent-core$/, replacement: workspaceSourcePaths.agentIndex },
+			{ find: /^@tculpepp\/spi-tui$/, replacement: workspaceSourcePaths.tuiIndex },
 		],
 	},
 });

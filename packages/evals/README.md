@@ -15,7 +15,7 @@ npm run eval -- --provider openai --model gpt-5.6-sol
 The equivalent environment variables are:
 
 ```bash
-PI_PROVIDER=openai PI_MODEL=gpt-5.6-sol npm run eval
+SPI_PROVIDER=openai SPI_MODEL=gpt-5.6-sol npm run eval
 ```
 
 CLI values take precedence and become defaults for harnesses that do not select a model explicitly. Provider and model must be supplied together. The runner also allows no default when every executed harness configures its own model.

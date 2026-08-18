@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
+import { NodeExecutionEnv } from "@tculpepp/spi-agent-core/node";
 import { describe, expect, it } from "vitest";
 import { createNodeSqliteFactory, SqliteSessionRepository } from "../src/index.ts";
 import { createTempDir, createUserMessage } from "./test-utils.ts";

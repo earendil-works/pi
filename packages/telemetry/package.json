@@ -1,5 +1,5 @@
 {
-	"name": "@earendil-works/pi-telemetry",
+	"name": "@tculpepp/spi-telemetry",
 	"version": "0.84.2",
 	"description": "Vendor-neutral telemetry contracts and typed schema utilities for pi",
 	"type": "module",
@@ -34,7 +34,7 @@
 	"license": "MIT",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/earendil-works/pi.git",
+		"url": "git+https://github.com/tculpepp/secure-pi-mono.git",
 		"directory": "packages/telemetry"
 	},
 	"engines": {

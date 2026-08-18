@@ -3,7 +3,7 @@ import type { Stats } from "node:fs";
 import { chmod, link, lstat, mkdir, rename, unlink } from "node:fs/promises";
 import { createConnection, createServer, type Server, type Socket } from "node:net";
 import { dirname, join } from "node:path";
-import { DEFAULT_MAX_FRAME_LENGTH } from "@earendil-works/pi-protocol";
+import { DEFAULT_MAX_FRAME_LENGTH } from "@tculpepp/spi-protocol";
 import type { ByteConnection, ByteConnectionAcceptor } from "../../connection.ts";
 import type { PiServerListener } from "../../listener.ts";
 import type { UnixListenerOptions } from "./types.ts";

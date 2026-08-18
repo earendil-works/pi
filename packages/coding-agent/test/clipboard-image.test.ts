@@ -126,7 +126,7 @@ describe("readClipboardImage", () => {
 
 			if (command === "powershell.exe") {
 				const spawnOptions = options as { env?: NodeJS.ProcessEnv };
-				expect(spawnOptions.env?.PI_WSL_CLIPBOARD_IMAGE_PATH).toBeUndefined();
+				expect(spawnOptions.env?.SPI_WSL_CLIPBOARD_IMAGE_PATH).toBeUndefined();
 				expect(args[2]).toContain("$path = 'C:\\Users\\O''Hare\\clip.png'");
 				if (!tmpFile) {
 					throw new Error("wslpath should be called before powershell.exe");

@@ -23,11 +23,11 @@ export default defineConfig({
 	},
 	resolve: {
 		alias: [
-			{ find: /^@earendil-works\/pi-telemetry$/, replacement: telemetryIndex },
-			{ find: /^@earendil-works\/pi-agent-core\/session\/testing$/, replacement: agentSessionTesting },
-			{ find: /^@earendil-works\/pi-agent-core\/node$/, replacement: agentNode },
-			{ find: /^@earendil-works\/pi-agent-core$/, replacement: agentIndex },
-			{ find: /^@earendil-works\/pi-ai$/, replacement: aiIndex },
+			{ find: /^@tculpepp\/spi-telemetry$/, replacement: telemetryIndex },
+			{ find: /^@tculpepp\/spi-agent-core\/session\/testing$/, replacement: agentSessionTesting },
+			{ find: /^@tculpepp\/spi-agent-core\/node$/, replacement: agentNode },
+			{ find: /^@tculpepp\/spi-agent-core$/, replacement: agentIndex },
+			{ find: /^@tculpepp\/spi-ai$/, replacement: aiIndex },
 		],
 	},
 });

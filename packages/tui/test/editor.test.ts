@@ -2287,7 +2287,7 @@ describe("Editor component", () => {
 		});
 
 		it("re-queries the autocomplete picker when the cursor moves back into the command name", async () => {
-			// Regression for earendil-works/pi#5496: arrowing left out of a slash
+			// Regression for tculpepp/secure-pi-mono#5496: arrowing left out of a slash
 			// command's argument region must re-query the picker, not leave the
 			// stale argument list showing. Before the fix, moveCursor() never
 			// called updateAutocomplete(), so `/cmd ` (argument menu) + Left kept

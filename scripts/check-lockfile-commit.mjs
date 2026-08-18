@@ -2,7 +2,7 @@
 
 import { execFileSync } from "node:child_process";
 
-const allowValue = process.env.PI_ALLOW_LOCKFILE_CHANGE;
+const allowValue = process.env.SPI_ALLOW_LOCKFILE_CHANGE;
 const allowed = allowValue === "1" || allowValue === "true" || allowValue === "yes";
 
 function git(args) {
@@ -84,7 +84,7 @@ if (!stagedFiles.includes("package-lock.json")) {
 }
 
 if (allowed) {
-	console.error("package-lock.json is staged; PI_ALLOW_LOCKFILE_CHANGE is set, allowing commit.");
+	console.error("package-lock.json is staged; SPI_ALLOW_LOCKFILE_CHANGE is set, allowing commit.");
 	process.exit(0);
 }
 
@@ -116,5 +116,5 @@ if (summary.length > 0) {
 
 console.error("");
 console.error("If this lockfile change is intentional, commit with:");
-console.error("  PI_ALLOW_LOCKFILE_CHANGE=1 git commit ...");
+console.error("  SPI_ALLOW_LOCKFILE_CHANGE=1 git commit ...");
 process.exit(1);

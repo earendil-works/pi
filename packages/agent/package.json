@@ -1,5 +1,5 @@
 {
-	"name": "@earendil-works/pi-agent-core",
+	"name": "@tculpepp/spi-agent-core",
 	"version": "0.84.2",
 	"description": "General-purpose agent with transport abstraction, state management, and attachment support",
 	"type": "module",
@@ -35,8 +35,8 @@
 		"prepublishOnly": "npm run build"
 	},
 	"dependencies": {
-		"@earendil-works/pi-ai": "^0.84.2",
-		"@earendil-works/pi-telemetry": "^0.84.2",
+		"@tculpepp/spi-ai": "^0.84.2",
+		"@tculpepp/spi-telemetry": "^0.84.2",
 		"diff": "8.0.4",
 		"ignore": "7.0.5",
 		"typebox": "1.3.7",
@@ -53,7 +53,7 @@
 	"license": "MIT",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/earendil-works/pi.git",
+		"url": "git+https://github.com/tculpepp/secure-pi-mono.git",
 		"directory": "packages/agent"
 	},
 	"engines": {

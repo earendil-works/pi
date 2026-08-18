@@ -4,7 +4,7 @@
 		"outDir": "./dist",
 		"rootDir": "./src",
 		"paths": {
-			"@earendil-works/pi-protocol": ["../protocol/dist/index.d.ts"]
+			"@tculpepp/spi-protocol": ["../protocol/dist/index.d.ts"]
 		}
 	},
 	"include": ["src/**/*.ts"],

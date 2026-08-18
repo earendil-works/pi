@@ -1,5 +1,5 @@
 {
-	"name": "@earendil-works/pi-protocol",
+	"name": "@tculpepp/spi-protocol",
 	"version": "0.84.2",
 	"description": "Transport-neutral CBOR protocol for remote pi sessions",
 	"type": "module",
@@ -32,7 +32,7 @@
 	"license": "MIT",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/earendil-works/pi.git",
+		"url": "git+https://github.com/tculpepp/secure-pi-mono.git",
 		"directory": "packages/protocol"
 	},
 	"engines": {

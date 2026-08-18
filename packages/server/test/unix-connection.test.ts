@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import type { Socket } from "node:net";
-import { encodeServerMessage, type ServerHelloError, ServerMessageDecoder } from "@earendil-works/pi-protocol";
+import { encodeServerMessage, type ServerHelloError, ServerMessageDecoder } from "@tculpepp/spi-protocol";
 import { expect, test, vi } from "vitest";
 import { UnixByteConnection } from "../src/transports/unix/listener.ts";
 

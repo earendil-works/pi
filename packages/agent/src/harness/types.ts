@@ -1,4 +1,4 @@
-import type { SimpleStreamOptions, Transport } from "@earendil-works/pi-ai";
+import type { SimpleStreamOptions, Transport } from "@tculpepp/spi-ai";
 import type { Static, TSchema } from "typebox";
 import type { AgentTool, AgentToolResult, AgentToolUpdateCallback } from "../types.ts";
 

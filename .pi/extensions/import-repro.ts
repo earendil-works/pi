@@ -10,7 +10,7 @@
  *   /ir b4d100022aefb12f25dd2d8485e0a82a
  *   /ir https://gist.github.com/mitsuhiko/b4d100022aefb12f25dd2d8485e0a82a
  *   /ir https://pi.dev/session/#b4d100022aefb12f25dd2d8485e0a82a
- *   /ir https://github.com/earendil-works/pi/issues/123
+ *   /ir https://github.com/tculpepp/secure-pi-mono/issues/123
  *
  *   pi "/ir <gist-id>"
  */
@@ -18,7 +18,7 @@
 import { Buffer } from "node:buffer";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, isAbsolute, join, resolve } from "node:path";
-import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionCommandContext } from "@tculpepp/spi-coding-agent";
 
 const GIST_ID_RE = /^[0-9a-fA-F]{20,}$/;
 const GIST_URL_RE = /^https:\/\/gist\.github\.com\/(?:[^/]+\/)?([0-9a-fA-F]{20,})(?:[/#?].*)?$/;

@@ -7,7 +7,7 @@ import type {
 	TextContent,
 	ThinkingBudgets,
 	Transport,
-} from "@earendil-works/pi-ai";
+} from "@tculpepp/spi-ai";
 import {
 	buildProviderContext as buildProviderContextFromAgentContext,
 	runAgentLoop,

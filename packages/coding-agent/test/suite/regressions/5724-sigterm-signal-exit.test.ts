@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { InteractiveMode } from "../../../src/modes/interactive/interactive-mode.ts";
 
-// Regression for https://github.com/earendil-works/pi/issues/5724
+// Regression for https://github.com/tculpepp/secure-pi-mono/issues/5724
 //
 // `proper-lockfile` installs `signal-exit`, whose signal listener re-sends
 // SIGTERM/SIGHUP when it observes no other process listeners during the same

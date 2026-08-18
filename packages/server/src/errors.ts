@@ -1,4 +1,4 @@
-import type { JsonValue, ProtocolErrorCode } from "@earendil-works/pi-protocol";
+import type { JsonValue, ProtocolErrorCode } from "@tculpepp/spi-protocol";
 
 export type PiServerOperationErrorCode = Extract<
 	ProtocolErrorCode,

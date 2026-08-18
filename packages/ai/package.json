@@ -1,5 +1,5 @@
 {
-	"name": "@earendil-works/pi-ai",
+	"name": "@tculpepp/spi-ai",
 	"version": "0.84.2",
 	"description": "Unified LLM API with automatic model discovery and provider configuration",
 	"type": "module",
@@ -62,7 +62,7 @@
 	"dependencies": {
 		"@anthropic-ai/sdk": "0.91.1",
 		"@aws-sdk/client-bedrock-runtime": "3.1048.0",
-		"@earendil-works/pi-telemetry": "^0.84.2",
+		"@tculpepp/spi-telemetry": "^0.84.2",
 		"@google/genai": "1.52.0",
 		"@smithy/node-http-handler": "4.7.3",
 		"http-proxy-agent": "7.0.2",
@@ -85,7 +85,7 @@
 	"license": "MIT",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/earendil-works/pi.git",
+		"url": "git+https://github.com/tculpepp/secure-pi-mono.git",
 		"directory": "packages/ai"
 	},
 	"engines": {

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { Command, EventEnvelope, SessionMetadata, SessionSnapshot } from "@earendil-works/pi-protocol";
+import type { Command, EventEnvelope, SessionMetadata, SessionSnapshot } from "@tculpepp/spi-protocol";
 import type { ByteConnection, ConnectionState } from "./connection.ts";
 import { PiServerError } from "./errors.ts";
 import type { CreateSessionOptions, PiServerService, PiSessionRuntime, PiSessionRuntimeEvent } from "./types.ts";

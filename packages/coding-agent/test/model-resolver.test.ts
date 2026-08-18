@@ -1,5 +1,5 @@
-import type { Model } from "@earendil-works/pi-ai";
-import { getBuiltinModels, getBuiltinProviders } from "@earendil-works/pi-ai/providers/all";
+import type { Model } from "@tculpepp/spi-ai";
+import { getBuiltinModels, getBuiltinProviders } from "@tculpepp/spi-ai/providers/all";
 import { describe, expect, test, vi } from "vitest";
 import {
 	defaultModelPerProvider,

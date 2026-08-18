@@ -10,7 +10,7 @@ import {
 	type ToolCall,
 	type ToolResultMessage,
 	type UserMessage,
-} from "@earendil-works/pi-ai";
+} from "@tculpepp/spi-ai";
 import type {
 	AssistantTranscriptItem,
 	JsonValue,
@@ -19,7 +19,7 @@ import type {
 	ToolTranscriptItem,
 	Usage,
 	UserTranscriptItem,
-} from "@earendil-works/pi-protocol";
+} from "@tculpepp/spi-protocol";
 
 type Assert<T extends true> = T;
 type ExactKeys<T, Keys extends keyof T> = keyof T extends Keys ? true : false;

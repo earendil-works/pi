@@ -7,8 +7,8 @@ import type {
 	Context,
 	Model,
 	OpenAICompletionsCompat,
-} from "@earendil-works/pi-ai/compat";
-import { getApiProvider, getSupportedThinkingLevels } from "@earendil-works/pi-ai/compat";
+} from "@tculpepp/spi-ai/compat";
+import { getApiProvider, getSupportedThinkingLevels } from "@tculpepp/spi-ai/compat";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { clearApiKeyCache, type ModelRegistry, type ProviderConfigInput } from "../src/core/model-registry.ts";

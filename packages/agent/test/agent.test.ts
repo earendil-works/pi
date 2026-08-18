@@ -4,7 +4,7 @@ import {
 	EventStream,
 	getModel,
 	type Message,
-} from "@earendil-works/pi-ai/compat";
+} from "@tculpepp/spi-ai/compat";
 import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
 import {

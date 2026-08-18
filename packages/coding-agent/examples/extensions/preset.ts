@@ -6,7 +6,7 @@
  * and can be activated via CLI flag, /preset command, or Ctrl+Shift+U to cycle.
  *
  * Config files (merged, project takes precedence):
- * - ~/.pi/agent/presets.json (global)
+ * - ~/.spi/agent/presets.json (global)
  * - <cwd>/.pi/presets.json (project-local)
  *
  * Example presets.json:
@@ -40,10 +40,10 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { Api, Model } from "@earendil-works/pi-ai";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { CONFIG_DIR_NAME, DynamicBorder, getAgentDir } from "@earendil-works/pi-coding-agent";
-import { Container, Key, type SelectItem, SelectList, Text } from "@earendil-works/pi-tui";
+import type { Api, Model } from "@tculpepp/spi-ai";
+import type { ExtensionAPI, ExtensionContext } from "@tculpepp/spi-coding-agent";
+import { CONFIG_DIR_NAME, DynamicBorder, getAgentDir } from "@tculpepp/spi-coding-agent";
+import { Container, Key, type SelectItem, SelectList, Text } from "@tculpepp/spi-tui";
 
 // Preset configuration
 interface Preset {

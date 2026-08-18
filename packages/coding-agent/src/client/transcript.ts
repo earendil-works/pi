@@ -1,4 +1,4 @@
-import type { JsonValue, SessionSnapshot, TranscriptItem, TranscriptProgress } from "@earendil-works/pi-protocol";
+import type { JsonValue, SessionSnapshot, TranscriptItem, TranscriptProgress } from "@tculpepp/spi-protocol";
 
 export interface TranscriptState {
 	readonly snapshot: SessionSnapshot;

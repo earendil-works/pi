@@ -1,4 +1,4 @@
-import type { AuthResult } from "@earendil-works/pi-ai";
+import type { AuthResult } from "@tculpepp/spi-ai";
 import { APP_NAME } from "../config.ts";
 import type { Args } from "./args.ts";
 

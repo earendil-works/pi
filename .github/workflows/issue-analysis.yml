@@ -11,18 +11,18 @@
 #
 # Setup required before this works:
 #   1. Create a `pi-analyze` GitHub environment on the repo and add a
-#      `PI_AUTH_JSON` secret containing the contents of a pi auth.json
-#      (~/.pi/agent/auth.json).
+#      `SPI_AUTH_JSON` secret containing the contents of a pi auth.json
+#      (~/.spi/agent/auth.json).
 #   2. Create the `pi-analyze` label.
 #   3. Add a repository secret `EARENDIL_ORG_READ_TOKEN` with permission to
 #      read `earendil-works` org membership. The authorization job uses it to
 #      verify that the label actor is an active member of `earendil-works/staff`.
-#   4. Add an environment secret `PI_GIST_TOKEN` on `pi-analyze` with gist
+#   4. Add an environment secret `SPI_GIST_TOKEN` on `pi-analyze` with gist
 #      creation permission. The analysis job uses it to upload the exported
 #      session gist.
-#   5. Add an environment secret `PI_AUTH_UPDATE_TOKEN` on `pi-analyze` with
+#   5. Add an environment secret `SPI_AUTH_UPDATE_TOKEN` on `pi-analyze` with
 #      permission to update this repo's environment secrets. The analysis job
-#      uses it to write back refreshed `PI_AUTH_JSON` contents. Fine-grained
+#      uses it to write back refreshed `SPI_AUTH_JSON` contents. Fine-grained
 #      tokens need repository permission `Environments: read and write` on this
 #      repo; classic tokens need the `repo` scope. The `Secrets` permission is
 #      not enough: it only covers repository-level Actions secrets, while every
@@ -31,7 +31,7 @@
 #      accessible by personal access token" and the stored credential goes stale
 #      until its refresh token is rejected.
 #
-# `PI_AUTH_JSON` must come from a login dedicated to this workflow. OpenAI Codex
+# `SPI_AUTH_JSON` must come from a login dedicated to this workflow. OpenAI Codex
 # rotates refresh tokens on every refresh, so sharing one auth.json with a
 # developer machine invalidates whichever copy refreshes second, and analysis
 # then fails with "OAuth refresh failed for openai-codex".
@@ -333,15 +333,15 @@ jobs:
         id: write_auth
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
-          PI_AUTH_JSON: ${{ secrets.PI_AUTH_JSON }}
+          SPI_AUTH_JSON: ${{ secrets.SPI_AUTH_JSON }}
         with:
           script: |
             const fs = require('fs');
             const path = require('path');
 
-            const authJson = process.env.PI_AUTH_JSON;
+            const authJson = process.env.SPI_AUTH_JSON;
             if (!authJson) {
-              throw new Error('PI_AUTH_JSON secret is not configured for the pi-analyze environment');
+              throw new Error('SPI_AUTH_JSON secret is not configured for the pi-analyze environment');
             }
 
             const agentDir = path.join(process.env.RUNNER_TEMP, 'pi-agent');
@@ -356,7 +356,7 @@ jobs:
         id: run_pi
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
-          PI_CODING_AGENT_DIR: ${{ runner.temp }}/pi-agent
+          SPI_CODING_AGENT_DIR: ${{ runner.temp }}/pi-agent
           GH_TOKEN: ${{ github.token }}
           ISSUE_URL: ${{ github.event.issue.html_url }}
           EXTRA_INSTRUCTIONS: ${{ needs.authorize.outputs.extra_instructions }}
@@ -419,9 +419,9 @@ jobs:
         if: always() && steps.write_auth.outcome == 'success'
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
-          GH_TOKEN: ${{ secrets.PI_AUTH_UPDATE_TOKEN }}
-          PI_AUTH_JSON: ${{ secrets.PI_AUTH_JSON }}
-          PI_CODING_AGENT_DIR: ${{ runner.temp }}/pi-agent
+          GH_TOKEN: ${{ secrets.SPI_AUTH_UPDATE_TOKEN }}
+          SPI_AUTH_JSON: ${{ secrets.SPI_AUTH_JSON }}
+          SPI_CODING_AGENT_DIR: ${{ runner.temp }}/pi-agent
         with:
           script: |
             const fs = require('fs');
@@ -429,10 +429,10 @@ jobs:
             const { spawn } = require('child_process');
 
             if (!process.env.GH_TOKEN) {
-              throw new Error('PI_AUTH_UPDATE_TOKEN is not configured for the pi-analyze environment');
+              throw new Error('SPI_AUTH_UPDATE_TOKEN is not configured for the pi-analyze environment');
             }
 
-            const authPath = path.join(process.env.PI_CODING_AGENT_DIR, 'auth.json');
+            const authPath = path.join(process.env.SPI_CODING_AGENT_DIR, 'auth.json');
             if (!fs.existsSync(authPath)) {
               core.warning('auth.json was not created; skipping auth persistence');
               return;
@@ -451,7 +451,7 @@ jobs:
               throw new Error('Refusing to persist auth.json without openai-codex OAuth refresh credentials');
             }
 
-            if (authJson === process.env.PI_AUTH_JSON) {
+            if (authJson === process.env.SPI_AUTH_JSON) {
               console.log('auth.json is unchanged; skipping secret update');
               return;
             }
@@ -459,7 +459,7 @@ jobs:
             await new Promise((resolve, reject) => {
               const child = spawn(
                 'gh',
-                ['secret', 'set', 'PI_AUTH_JSON', '--env', 'pi-analyze', '--repo', process.env.GITHUB_REPOSITORY],
+                ['secret', 'set', 'SPI_AUTH_JSON', '--env', 'pi-analyze', '--repo', process.env.GITHUB_REPOSITORY],
                 { env: process.env, stdio: ['pipe', 'inherit', 'pipe'] },
               );
               const stderrChunks = [];
@@ -477,7 +477,7 @@ jobs:
                 reject(
                   new Error(
                     `gh secret set failed with exit code ${code}${details ? `: ${details}` : ''}. ` +
-                      'PI_AUTH_UPDATE_TOKEN needs repository permission "Environments: read and write" on this repo.',
+                      'SPI_AUTH_UPDATE_TOKEN needs repository permission "Environments: read and write" on this repo.',
                   ),
                 );
               });
@@ -489,7 +489,7 @@ jobs:
         if: always()
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
-          PI_CODING_AGENT_DIR: ${{ runner.temp }}/pi-agent
+          SPI_CODING_AGENT_DIR: ${{ runner.temp }}/pi-agent
           WORKDIR: ${{ steps.workdir.outputs.name }}
         with:
           script: |
@@ -541,15 +541,15 @@ jobs:
         if: always() && steps.export_session_files.outcome == 'success'
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
-          PI_GIST_TOKEN: ${{ secrets.PI_GIST_TOKEN }}
+          SPI_GIST_TOKEN: ${{ secrets.SPI_GIST_TOKEN }}
         with:
-          github-token: ${{ secrets.PI_GIST_TOKEN }}
+          github-token: ${{ secrets.SPI_GIST_TOKEN }}
           script: |
             const fs = require('fs');
             const path = require('path');
 
-            if (!process.env.PI_GIST_TOKEN) {
-              throw new Error('PI_GIST_TOKEN is not configured');
+            if (!process.env.SPI_GIST_TOKEN) {
+              throw new Error('SPI_GIST_TOKEN is not configured');
             }
 
             const outDir = path.join(process.env.RUNNER_TEMP, 'pi-out');

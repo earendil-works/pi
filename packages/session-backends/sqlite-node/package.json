@@ -1,7 +1,7 @@
 {
-	"name": "@earendil-works/pi-session-backend-sqlite-node",
+	"name": "@tculpepp/spi-session-backend-sqlite-node",
 	"version": "0.84.2",
-	"description": "Node sqlite session backend for @earendil-works/pi-agent-core sessions",
+	"description": "Node sqlite session backend for @tculpepp/spi-agent-core sessions",
 	"type": "module",
 	"main": "./dist/index.js",
 	"types": "./dist/index.d.ts",
@@ -27,15 +27,15 @@
 	"license": "MIT",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/earendil-works/pi.git",
+		"url": "git+https://github.com/tculpepp/secure-pi-mono.git",
 		"directory": "packages/session-backends/sqlite-node"
 	},
 	"engines": {
 		"node": ">=22.19.0"
 	},
 	"dependencies": {
-		"@earendil-works/pi-ai": "^0.84.2",
-		"@earendil-works/pi-agent-core": "^0.84.2"
+		"@tculpepp/spi-ai": "^0.84.2",
+		"@tculpepp/spi-agent-core": "^0.84.2"
 	},
 	"devDependencies": {
 		"@vitest/coverage-v8": "4.1.9",

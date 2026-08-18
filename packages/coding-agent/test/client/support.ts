@@ -1,4 +1,4 @@
-import { type ByteTransport, type ByteTransportHandlers, PiClient } from "@earendil-works/pi-client";
+import { type ByteTransport, type ByteTransportHandlers, PiClient } from "@tculpepp/spi-client";
 import {
 	type ClientMessage,
 	ClientMessageDecoder,
@@ -8,7 +8,7 @@ import {
 	type ServerMessage,
 	type ServerSnapshot,
 	type SessionSnapshot,
-} from "@earendil-works/pi-protocol";
+} from "@tculpepp/spi-protocol";
 import { RemoteSession, type RemoteSessionOptions } from "../../src/client/remote-session.ts";
 
 export class MemoryServer {

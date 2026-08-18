@@ -1,5 +1,5 @@
 {
-	"$schema": "https://raw.githubusercontent.com/earendil-works/pi/main/packages/coding-agent/src/modes/interactive/theme/theme-schema.json",
+	"$schema": "https://raw.githubusercontent.com/tculpepp/secure-pi-mono/main/packages/coding-agent/src/modes/interactive/theme/theme-schema.json",
 	"name": "dark",
 	"vars": {
 		"cyan": "#00d7ff",

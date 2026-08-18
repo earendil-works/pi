@@ -15,7 +15,7 @@ Pi considers a project to have resources that require trust when it finds any of
 
 A bare `.pi` directory does not count as a project resource that requires trust.
 
-When an interactive session starts in a project with resources that require trust and no saved decision for the current directory or a parent directory, pi follows `defaultProjectTrust` from global settings. The default value is `"ask"`, which asks whether to trust the project when UI is available. Saved decisions are stored by canonical directory in `~/.pi/agent/trust.json`, and the closest saved decision on the current or parent path applies before the global default.
+When an interactive session starts in a project with resources that require trust and no saved decision for the current directory or a parent directory, pi follows `defaultProjectTrust` from global settings. The default value is `"ask"`, which asks whether to trust the project when UI is available. Saved decisions are stored by canonical directory in `~/.spi/agent/trust.json`, and the closest saved decision on the current or parent path applies before the global default.
 
 Trusting a project allows pi to load project resources that require trust, including:
 
@@ -45,7 +45,7 @@ Common patterns are documented in [Containerization](containerization.md):
 - run the whole `pi` process inside a container/sandbox
 - run host pi while routing built-in tool execution into a Gondolin micro-VM
 - mount only the workspace paths the agent should access
-- avoid mounting host `~/.pi/agent` unless the container should access host sessions, settings, and credentials
+- avoid mounting host `~/.spi/agent` unless the container should access host sessions, settings, and credentials
 - pass the minimum required API keys or use short-lived credentials
 - restrict network access when the task does not need it
 - review diffs and outputs before copying results back to trusted systems
@@ -54,6 +54,6 @@ If you bind-mount a host workspace read/write, writes from inside the container 
 
 ## Reporting Security Issues
 
-To report a security issue, follow the repository [Security Policy](https://github.com/earendil-works/pi-mono/blob/main/SECURITY.md). Do not open a public issue for security-sensitive reports.
+To report a security issue, follow the repository [Security Policy](https://github.com/tculpepp/secure-pi-mono/blob/main/SECURITY.md). Do not open a public issue for security-sensitive reports.
 
 Expected local-agent behavior, lack of a built-in sandbox, prompt injection from untrusted content, and behavior of user-installed extensions or skills are generally outside the security boundary unless the report demonstrates a real privilege-boundary bypass or shows how pi grants access that the local user did not already have.
