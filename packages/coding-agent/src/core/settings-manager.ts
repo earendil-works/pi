@@ -131,6 +131,7 @@ export interface Settings {
 	markdown?: MarkdownSettings;
 	warnings?: WarningSettings;
 	sessionDir?: string; // Custom session storage directory (same format as --session-dir CLI flag)
+	disabledCommands?: string[]; // Built-in slash commands to disable (e.g. ["share", "export"])
 	httpProxy?: string; // Proxy URL applied as HTTP_PROXY and HTTPS_PROXY for Pi-managed HTTP clients
 	httpIdleTimeoutMs?: number; // HTTP header/body idle timeout in milliseconds; 0 disables it
 	websocketConnectTimeoutMs?: number; // WebSocket connect/open handshake timeout in milliseconds; 0 disables it
@@ -1056,6 +1057,13 @@ export class SettingsManager {
 
 	getEnableSkillCommands(): boolean {
 		return this.settings.enableSkillCommands ?? true;
+	}
+
+	getDisabledCommands(): string[] {
+		// Union of global and project disabled commands (project can only add restrictions)
+		const global = this.globalSettings.disabledCommands ?? [];
+		const project = this.projectSettings.disabledCommands ?? [];
+		return [...new Set([...global, ...project])];
 	}
 
 	setEnableSkillCommands(enabled: boolean): void {

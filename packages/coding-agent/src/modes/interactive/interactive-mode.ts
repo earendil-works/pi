@@ -669,11 +669,14 @@ export class InteractiveMode {
 
 	private createBaseAutocompleteProvider(): AutocompleteProvider {
 		// Define commands for autocomplete
-		const slashCommands: SlashCommand[] = BUILTIN_SLASH_COMMANDS.map((command) => ({
-			name: command.name,
-			description: command.description,
-			...(command.argumentHint && { argumentHint: command.argumentHint }),
-		}));
+		const disabledCommands = new Set(this.settingsManager.getDisabledCommands());
+		const slashCommands: SlashCommand[] = BUILTIN_SLASH_COMMANDS
+			.filter((command) => !disabledCommands.has(command.name))
+			.map((command) => ({
+				name: command.name,
+				description: command.description,
+				...(command.argumentHint && { argumentHint: command.argumentHint }),
+			}));
 
 		const modelCommand = slashCommands.find((command) => command.name === "model");
 		if (modelCommand) {
@@ -2919,6 +2922,17 @@ export class InteractiveMode {
 			if (!text) return;
 
 			// Handle commands
+			if (text.startsWith("/")) {
+				const spaceIndex = text.indexOf(" ");
+				const commandName = spaceIndex === -1 ? text.slice(1) : text.slice(1, spaceIndex);
+				const disabledCommands = this.settingsManager.getDisabledCommands();
+				if (disabledCommands.includes(commandName)) {
+					this.showError(`The /${commandName} command is disabled by configuration.`);
+					this.editor.setText("");
+					return;
+				}
+			}
+
 			if (text === "/settings") {
 				this.showSettingsSelector();
 				this.editor.setText("");

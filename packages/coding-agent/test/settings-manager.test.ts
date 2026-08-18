@@ -598,4 +598,53 @@ describe("SettingsManager", () => {
 			expect(manager.getShellPath()).toBe(homedir());
 		});
 	});
+
+	describe("disabledCommands", () => {
+		it("should return empty array when no disabled commands configured", () => {
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({}));
+			const manager = SettingsManager.create(projectDir, agentDir);
+			expect(manager.getDisabledCommands()).toEqual([]);
+		});
+
+		it("should return global disabled commands", () => {
+			writeFileSync(
+				join(agentDir, "settings.json"),
+				JSON.stringify({ disabledCommands: ["share", "export"] }),
+			);
+			const manager = SettingsManager.create(projectDir, agentDir);
+			expect(manager.getDisabledCommands()).toEqual(["share", "export"]);
+		});
+
+		it("should union global and project disabled commands", () => {
+			writeFileSync(
+				join(agentDir, "settings.json"),
+				JSON.stringify({ disabledCommands: ["share"] }),
+			);
+			writeFileSync(
+				join(projectDir, ".pi", "settings.json"),
+				JSON.stringify({ disabledCommands: ["export"] }),
+			);
+			const manager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const disabled = manager.getDisabledCommands();
+			expect(disabled).toContain("share");
+			expect(disabled).toContain("export");
+			expect(disabled).toHaveLength(2);
+		});
+
+		it("should deduplicate overlapping entries", () => {
+			writeFileSync(
+				join(agentDir, "settings.json"),
+				JSON.stringify({ disabledCommands: ["share"] }),
+			);
+			writeFileSync(
+				join(projectDir, ".pi", "settings.json"),
+				JSON.stringify({ disabledCommands: ["share", "export"] }),
+			);
+			const manager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const disabled = manager.getDisabledCommands();
+			expect(disabled).toContain("share");
+			expect(disabled).toContain("export");
+			expect(disabled).toHaveLength(2);
+		});
+	});
 });
