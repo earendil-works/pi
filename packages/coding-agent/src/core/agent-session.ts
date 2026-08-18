@@ -15,6 +15,7 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import type {
 	Agent,
 	AgentEvent,
@@ -28,6 +29,7 @@ import { contentText } from "@earendil-works/pi-ai";
 import type {
 	AssistantMessage,
 	AuthResult,
+	Context,
 	ImageContent,
 	Model,
 	ProviderHeaders,
@@ -66,6 +68,7 @@ import {
 	shouldCompact,
 } from "./compaction/index.ts";
 import { DEFAULT_THINKING_LEVEL } from "./defaults.ts";
+import { areExperimentalFeaturesEnabled } from "./experimental.ts";
 import { exportSessionToHtml, type ToolHtmlRenderer } from "./export-html/index.ts";
 import { createToolHtmlRenderer } from "./export-html/tool-renderer.ts";
 import {
@@ -1801,6 +1804,88 @@ export class AgentSession {
 		env: Record<string, string> | undefined,
 		reason: "manual" | "threshold" | "overflow",
 	): Promise<CompactionResult> {
+		// Preserve standalone summarization outside experimental mode.
+		if (!areExperimentalFeaturesEnabled()) {
+			return compact(
+				preparation,
+				requestModel,
+				apiKey,
+				headers,
+				customInstructions,
+				signal,
+				this.thinkingLevel,
+				this.agent.streamFunction,
+				env,
+				this.settingsManager.getRetrySettings(),
+				this._summarizationRetryCallbacks({ source: "compaction", reason }),
+				undefined, // cacheFriendly
+			);
+		}
+
+		// Snapshot request-level context so every candidate uses the same system prompt and tool set.
+		const systemPrompt = this.agent.state.systemPrompt;
+		const tools = this.agent.state.tools.slice();
+		const buildSourceContext = async (messages: AgentMessage[]) =>
+			this.agent.buildProviderContext({ systemPrompt, messages: messages.slice(), tools: tools.slice() }, signal);
+		const fullContext = await buildSourceContext(this.agent.state.messages);
+		const isExactActiveMessagePrefix = (candidate: Context): boolean =>
+			candidate.messages.length > 0 &&
+			candidate.messages.length <= fullContext.messages.length &&
+			isDeepStrictEqual(candidate.messages, fullContext.messages.slice(0, candidate.messages.length));
+
+		// Context transforms may not preserve prefixes when run on truncated history.
+		// Keep this undefined unless the candidate remains an exact prefix; compact()
+		// treats an undefined source as a request for standalone, non-cached summarization.
+		let sourceContext: Context | undefined;
+		if (preparation.messagesToSummarize.length > 0 && preparation.sourceMessages) {
+			const candidateContext = await buildSourceContext(preparation.sourceMessages);
+			if (isExactActiveMessagePrefix(candidateContext)) {
+				sourceContext = candidateContext;
+			}
+		}
+
+		// A split-turn instruction identifies the turn at the end of its source context.
+		// Require both an exact active-context prefix and the provider-visible turn
+		// prefix as its suffix; otherwise use standalone summarization.
+		let turnPrefixSourceContext: Context | undefined;
+		if (
+			preparation.isSplitTurn &&
+			preparation.turnPrefixMessages.length > 0 &&
+			preparation.turnPrefixSourceMessages
+		) {
+			const candidateContext = await buildSourceContext(preparation.turnPrefixSourceMessages);
+			const providerTurnPrefix = await this.agent.convertToLlm(preparation.turnPrefixMessages.slice());
+			if (
+				isExactActiveMessagePrefix(candidateContext) &&
+				providerTurnPrefix.length > 0 &&
+				providerTurnPrefix.length <= candidateContext.messages.length &&
+				isDeepStrictEqual(candidateContext.messages.slice(-providerTurnPrefix.length), providerTurnPrefix)
+			) {
+				turnPrefixSourceContext = candidateContext;
+			}
+		}
+
+		// Split-turn compaction can make separate history and turn-prefix summary requests.
+		// If none of the summary requests compact() will make has a cache-safe provider-context prefix,
+		// run the whole compaction through standalone summarization.
+		if (sourceContext === undefined && turnPrefixSourceContext === undefined) {
+			return compact(
+				preparation,
+				requestModel,
+				apiKey,
+				headers,
+				customInstructions,
+				signal,
+				this.thinkingLevel,
+				this.agent.streamFunction,
+				env,
+				this.settingsManager.getRetrySettings(),
+				this._summarizationRetryCallbacks({ source: "compaction", reason }),
+				undefined, // cacheFriendly
+			);
+		}
+
+		// For split turns, either source may remain undefined so only that summary falls back.
 		return compact(
 			preparation,
 			requestModel,
@@ -1813,7 +1898,18 @@ export class AgentSession {
 			env,
 			this.settingsManager.getRetrySettings(),
 			this._summarizationRetryCallbacks({ source: "compaction", reason }),
-			undefined, // cacheFriendly
+			{
+				sourceContext,
+				turnPrefixSourceContext,
+				requestOptions: {
+					sessionId: this.agent.sessionId,
+					onPayload: this.agent.onPayload,
+					onResponse: this.agent.onResponse,
+					transport: this.agent.transport,
+					thinkingBudgets: this.agent.thinkingBudgets,
+					maxRetryDelayMs: this.agent.maxRetryDelayMs,
+				},
+			},
 		);
 	}
 

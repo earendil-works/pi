@@ -7,8 +7,8 @@ import {
 	type Model,
 	type SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { estimateTokens } from "../../src/core/compaction/index.ts";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { estimateTokens, prepareCompaction } from "../../src/core/compaction/index.ts";
 import { createHarness, getUserTexts, type Harness } from "./harness.ts";
 
 type SessionWithCompactionInternals = {
@@ -95,8 +95,18 @@ function seedCompactableSession(harness: Harness): void {
 
 describe("AgentSession compaction characterization", () => {
 	const harnesses: Harness[] = [];
+	const originalPiExperimental = process.env.PI_EXPERIMENTAL;
+
+	beforeEach(() => {
+		delete process.env.PI_EXPERIMENTAL;
+	});
 
 	afterEach(() => {
+		if (originalPiExperimental === undefined) {
+			delete process.env.PI_EXPERIMENTAL;
+		} else {
+			process.env.PI_EXPERIMENTAL = originalPiExperimental;
+		}
 		vi.useRealTimers();
 		vi.restoreAllMocks();
 		while (harnesses.length > 0) {
@@ -254,7 +264,7 @@ describe("AgentSession compaction characterization", () => {
 		expect(harness.faux.state.callCount).toBe(1);
 	});
 
-	it("uses the standalone compaction request context", async () => {
+	it("uses the standalone compaction request context outside experimental mode", async () => {
 		const harness = await createHarness({ settings: { compaction: { keepRecentTokens: 1 } } });
 		harnesses.push(harness);
 		seedCompactableSession(harness);
@@ -280,6 +290,174 @@ describe("AgentSession compaction characterization", () => {
 		expect(requestOptions).toMatchObject({ cacheRetention: "none" });
 		expect(requestOptions?.sessionId).not.toBe("active-routing-session");
 		expect(requestOptions?.transport).toBeUndefined();
+	});
+
+	it.each([
+		{ mode: "manual", keepRecentTokens: 2, expectedCalls: 1 },
+		{ mode: "automatic", keepRecentTokens: 1, expectedCalls: 2 },
+	] as const)("builds $mode compaction contexts through the active agent request pipeline", async (testCase) => {
+		process.env.PI_EXPERIMENTAL = "1";
+		const harness = await createHarness({
+			settings: { compaction: { keepRecentTokens: testCase.keepRecentTokens } },
+		});
+		harnesses.push(harness);
+
+		const now = Date.now();
+		harness.sessionManager.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "old request ".repeat(20) }],
+			timestamp: now - 4000,
+		});
+		harness.sessionManager.appendMessage({
+			...createAssistant(harness, { stopReason: "stop", totalTokens: 100, timestamp: now - 3000 }),
+			content: [{ type: "text", text: "old response ".repeat(20) }],
+		});
+		harness.sessionManager.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "new" }],
+			timestamp: now - 2000,
+		});
+		harness.sessionManager.appendMessage({
+			...createAssistant(harness, { stopReason: "stop", totalTokens: 200, timestamp: now - 1000 }),
+			content: [{ type: "text", text: "ok" }],
+		});
+		harness.session.agent.state.messages = harness.sessionManager.buildSessionContext().messages;
+
+		const preparation = prepareCompaction(
+			harness.sessionManager.getBranch(),
+			harness.settingsManager.getCompactionSettings(),
+		);
+		if (!preparation?.sourceMessages || !preparation.turnPrefixSourceMessages) {
+			throw new Error("Expected compaction source messages");
+		}
+		const activeMessages = harness.session.agent.state.messages.slice();
+
+		const transformMarker: AgentMessage = {
+			role: "custom",
+			customType: "compaction-transform-marker",
+			content: "transformed context",
+			display: false,
+			timestamp: now - 5000,
+		};
+		harness.session.agent.transformContext = async (messages) => [transformMarker, ...messages];
+		const originalConvertToLlm = harness.session.agent.convertToLlm;
+		const convertedInputs: AgentMessage[][] = [];
+		harness.session.agent.convertToLlm = async (messages) => {
+			convertedInputs.push(messages);
+			return await originalConvertToLlm(messages);
+		};
+
+		const onPayload = async (payload: unknown) => payload;
+		const onResponse = async () => {};
+		harness.session.agent.sessionId = "compaction-routing-session";
+		harness.session.agent.onPayload = onPayload;
+		harness.session.agent.onResponse = onResponse;
+		harness.session.agent.transport = "websocket";
+		harness.session.agent.thinkingBudgets = { low: 1234 };
+		harness.session.agent.maxRetryDelayMs = 4321;
+
+		const requestContexts: Context[] = [];
+		const requestOptions: Array<SimpleStreamOptions | undefined> = [];
+		useSummaryStreamFn(harness, "pipeline summary", (context, options) => {
+			requestContexts.push(context);
+			requestOptions.push(options);
+		});
+
+		if (testCase.mode === "manual") {
+			await harness.session.compact();
+		} else {
+			const sessionInternals = harness.session as unknown as SessionWithCompactionInternals;
+			await sessionInternals._runAutoCompaction("threshold", false);
+		}
+
+		const sourcePrefixes = preparation.isSplitTurn
+			? [preparation.sourceMessages, preparation.turnPrefixSourceMessages]
+			: [preparation.sourceMessages];
+		expect(sourcePrefixes).toHaveLength(testCase.expectedCalls);
+		expect(requestContexts).toHaveLength(testCase.expectedCalls);
+		expect(convertedInputs).toHaveLength(testCase.expectedCalls + 1 + (preparation.isSplitTurn ? 1 : 0));
+		expect(convertedInputs[0]).toEqual([transformMarker, ...activeMessages]);
+
+		for (let i = 0; i < sourcePrefixes.length; i++) {
+			const transformedSource = [transformMarker, ...sourcePrefixes[i]];
+			expect(convertedInputs[i + 1]).toEqual(transformedSource);
+			expect(requestContexts[i].systemPrompt).toBe(harness.session.agent.state.systemPrompt);
+			expect(requestContexts[i].tools).toEqual(harness.session.agent.state.tools);
+			expect(requestContexts[i].messages.slice(0, -1)).toEqual(await originalConvertToLlm(transformedSource));
+			expect(requestOptions[i]).toMatchObject({
+				cacheRetention: "short",
+				sessionId: "compaction-routing-session",
+				transport: "websocket",
+				thinkingBudgets: { low: 1234 },
+				maxRetryDelayMs: 4321,
+			});
+			expect(requestOptions[i]?.onPayload).toBe(onPayload);
+			expect(requestOptions[i]?.onResponse).toBe(onResponse);
+		}
+		if (preparation.isSplitTurn) {
+			expect(convertedInputs.at(-1)).toEqual(preparation.turnPrefixMessages);
+		}
+	});
+
+	it("uses standalone summarization when a context transform breaks source prefixes", async () => {
+		process.env.PI_EXPERIMENTAL = "1";
+		const harness = await createHarness({ settings: { compaction: { keepRecentTokens: 1 } } });
+		harnesses.push(harness);
+
+		const now = Date.now();
+		harness.sessionManager.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "old request ".repeat(20) }],
+			timestamp: now - 4000,
+		});
+		harness.sessionManager.appendMessage({
+			...createAssistant(harness, { stopReason: "stop", totalTokens: 100, timestamp: now - 3000 }),
+			content: [{ type: "text", text: "old response ".repeat(20) }],
+		});
+		harness.sessionManager.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "large final request" }],
+			timestamp: now - 2000,
+		});
+		harness.sessionManager.appendMessage({
+			...createAssistant(harness, { stopReason: "stop", totalTokens: 200, timestamp: now - 1000 }),
+			content: [{ type: "text", text: "kept suffix" }],
+		});
+		harness.session.agent.state.messages = harness.sessionManager.buildSessionContext().messages;
+
+		const preparation = prepareCompaction(
+			harness.sessionManager.getBranch(),
+			harness.settingsManager.getCompactionSettings(),
+		);
+		expect(preparation?.isSplitTurn).toBe(true);
+
+		const appendedContext: AgentMessage = {
+			role: "custom",
+			customType: "appended-context",
+			content: "provider-only context",
+			display: false,
+			timestamp: now,
+		};
+		harness.session.agent.transformContext = async (messages) => [...messages, appendedContext];
+
+		const requestContexts: Context[] = [];
+		const requestOptions: Array<SimpleStreamOptions | undefined> = [];
+		useSummaryStreamFn(harness, "summary", (context, options) => {
+			requestContexts.push(context);
+			requestOptions.push(options);
+		});
+
+		await harness.session.compact();
+
+		expect(requestContexts).toHaveLength(2);
+		for (let i = 0; i < requestContexts.length; i++) {
+			expect(requestContexts[i].systemPrompt).not.toBe(harness.session.agent.state.systemPrompt);
+			expect(requestContexts[i].tools).toBeUndefined();
+			expect(JSON.stringify(requestContexts[i].messages)).toContain("<conversation>");
+			expect(JSON.stringify(requestContexts[i].messages)).not.toContain("provider-only context");
+			expect(requestOptions[i]).toMatchObject({ cacheRetention: "none" });
+			expect(requestOptions[i]?.sessionId).not.toBe(harness.session.agent.sessionId);
+		}
 	});
 
 	it("persists usage from pi-generated manual compaction", async () => {
