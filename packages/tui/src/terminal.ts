@@ -1,10 +1,58 @@
 import * as fs from "node:fs";
 import { createRequire } from "node:module";
 import * as path from "node:path";
-import { setKittyProtocolActive } from "./keys.js";
-import { StdinBuffer } from "./stdin-buffer.js";
+import { fileURLToPath } from "node:url";
+import { setKittyProtocolActive } from "./keys.ts";
+import { isNativeModifierPressed } from "./native-modifiers.ts";
+import { StdinBuffer } from "./stdin-buffer.ts";
 
 const cjsRequire = createRequire(import.meta.url);
+
+const TERMINAL_PROGRESS_KEEPALIVE_MS = 1000;
+const TERMINAL_PROGRESS_ACTIVE_SEQUENCE = "\x1b]9;4;3\x07";
+const TERMINAL_PROGRESS_CLEAR_SEQUENCE = "\x1b]9;4;0\x07";
+const NATIVE_SHIFT_ENTER_SEQUENCE = "\x1b[13;2u";
+const DESIRED_KITTY_KEYBOARD_PROTOCOL_FLAGS = 7;
+const KEYBOARD_PROTOCOL_RESPONSE_FRAGMENT_TIMEOUT_MS = 150;
+const KITTY_KEYBOARD_PROTOCOL_QUERY = `\x1b[>${DESIRED_KITTY_KEYBOARD_PROTOCOL_FLAGS}u\x1b[?u\x1b[c`;
+
+export type KeyboardProtocolNegotiationSequence =
+	| { type: "kitty-flags"; flags: number }
+	| { type: "device-attributes" };
+
+export function parseKeyboardProtocolNegotiationSequence(
+	sequence: string,
+): KeyboardProtocolNegotiationSequence | undefined {
+	const kittyFlags = sequence.match(/^\x1b\[\?(\d+)u$/);
+	if (kittyFlags) {
+		return { type: "kitty-flags", flags: Number.parseInt(kittyFlags[1]!, 10) };
+	}
+	if (/^\x1b\[\?[\d;]*c$/.test(sequence)) {
+		return { type: "device-attributes" };
+	}
+	return undefined;
+}
+
+function isKeyboardProtocolNegotiationSequencePrefix(sequence: string): boolean {
+	return sequence === "\x1b[" || /^\x1b\[\?[\d;]*$/.test(sequence);
+}
+
+export function isAppleTerminalSession(): boolean {
+	return process.platform === "darwin" && process.env.TERM_PROGRAM === "Apple_Terminal";
+}
+
+export function normalizeNativeShiftEnterInput(
+	data: string,
+	shouldDetectNativeShiftEnter: boolean,
+	isShiftPressed: boolean,
+): string {
+	if (shouldDetectNativeShiftEnter && data === "\r" && isShiftPressed) return NATIVE_SHIFT_ENTER_SEQUENCE;
+	return data;
+}
+
+export function normalizeAppleTerminalInput(data: string, isAppleTerminal: boolean, isShiftPressed: boolean): string {
+	return normalizeNativeShiftEnterInput(data, isAppleTerminal, isShiftPressed);
+}
 
 /**
  * Minimal terminal interface for TUI
@@ -48,6 +96,28 @@ export interface Terminal {
 
 	// Title operations
 	setTitle(title: string): void; // Set terminal window title
+
+	// Progress indicator (OSC 9;4)
+	setProgress(active: boolean): void;
+}
+
+const DEFAULT_ESCAPE_TIMEOUT_MS = 10;
+const DEFAULT_SSH_ESCAPE_TIMEOUT_MS = 100;
+
+/**
+ * Resolve how long to wait for the rest of an escape sequence before
+ * dispatching a lone ESC as the Escape key. Legacy Alt+key input is ESC plus
+ * another byte, so high-latency transports need a longer reassembly window.
+ */
+export function resolveEscapeTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {
+	const configured = Number(env.PI_TUI_ESC_TIMEOUT);
+	if (Number.isFinite(configured) && configured > 0) {
+		return configured;
+	}
+	if (env.SSH_CONNECTION || env.SSH_TTY) {
+		return DEFAULT_SSH_ESCAPE_TIMEOUT_MS;
+	}
+	return DEFAULT_ESCAPE_TIMEOUT_MS;
 }
 
 /**
@@ -59,8 +129,12 @@ export class ProcessTerminal implements Terminal {
 	private resizeHandler?: () => void;
 	private _kittyProtocolActive = false;
 	private _modifyOtherKeysActive = false;
+	private keyboardProtocolPushed = false;
+	private keyboardProtocolNegotiationBuffer = "";
+	private keyboardProtocolBufferFlushTimer?: ReturnType<typeof setTimeout>;
 	private stdinBuffer?: StdinBuffer;
 	private stdinDataHandler?: (data: string) => void;
+	private progressInterval?: ReturnType<typeof setInterval>;
 	private writeLogPath = (() => {
 		const env = process.env.PI_TUI_WRITE_LOG || "";
 		if (!env) return "";
@@ -78,6 +152,10 @@ export class ProcessTerminal implements Terminal {
 
 	get kittyProtocolActive(): boolean {
 		return this._kittyProtocolActive;
+	}
+
+	get modifyOtherKeysActive(): boolean {
+		return this._modifyOtherKeysActive;
 	}
 
 	start(onInput: (data: string) => void, onResize: () => void): void {
@@ -110,8 +188,7 @@ export class ProcessTerminal implements Terminal {
 		// since that resets console mode flags.
 		this.enableWindowsVTInput();
 
-		// Query and enable Kitty keyboard protocol
-		// The query handler intercepts input temporarily, then installs the user's handler
+		// Query Kitty keyboard protocol and fall back to modifyOtherKeys when DA confirms no Kitty response.
 		// See: https://sw.kovidgoyal.net/kitty/keyboard-protocol/
 		this.queryAndEnableKittyProtocol();
 	}
@@ -125,33 +202,20 @@ export class ProcessTerminal implements Terminal {
 	 * to handle the case where the response arrives split across multiple events.
 	 */
 	private setupStdinBuffer(): void {
-		this.stdinBuffer = new StdinBuffer({ timeout: 10 });
-
-		// Kitty protocol response pattern: \x1b[?<flags>u
-		const kittyResponsePattern = /^\x1b\[\?(\d+)u$/;
+		this.stdinBuffer = new StdinBuffer({ escapeTimeout: resolveEscapeTimeoutMs() });
 
 		// Forward individual sequences to the input handler
 		this.stdinBuffer.on("data", (sequence) => {
-			// Check for Kitty protocol response (only if not already enabled)
-			if (!this._kittyProtocolActive) {
-				const match = sequence.match(kittyResponsePattern);
-				if (match) {
-					this._kittyProtocolActive = true;
-					setKittyProtocolActive(true);
-
-					// Enable Kitty keyboard protocol (push flags)
-					// Flag 1 = disambiguate escape codes
-					// Flag 2 = report event types (press/repeat/release)
-					// Flag 4 = report alternate keys (shifted key, base layout key)
-					// Base layout key enables shortcuts to work with non-Latin keyboard layouts
-					process.stdout.write("\x1b[>7u");
-					return; // Don't forward protocol response to TUI
-				}
+			const negotiationSequence = this.readKeyboardProtocolNegotiationSequence(sequence);
+			if (negotiationSequence === "pending") {
+				this.scheduleKeyboardProtocolNegotiationBufferFlush();
+				return; // Wait briefly for the rest of a split Kitty response.
+			}
+			if (this.handleKeyboardProtocolNegotiationSequence(negotiationSequence)) {
+				return;
 			}
 
-			if (this.inputHandler) {
-				this.inputHandler(sequence);
-			}
+			this.forwardInputSequence(sequence);
 		});
 
 		// Re-wrap paste content with bracketed paste markers for existing editor handling
@@ -168,29 +232,129 @@ export class ProcessTerminal implements Terminal {
 	}
 
 	/**
-	 * Query terminal for Kitty keyboard protocol support and enable if available.
+	 * Query terminal for Kitty keyboard protocol support and enable it if available.
 	 *
-	 * Sends CSI ? u to query current flags. If terminal responds with CSI ? <flags> u,
-	 * it supports the protocol and we enable it with CSI > 1 u.
+	 * Kitty's progressive enhancement detection requires requesting the desired
+	 * flags before querying them. The trailing DA query is a sentinel supported by
+	 * terminals that do not know Kitty keyboard protocol; receiving DA before a
+	 * Kitty response enables modifyOtherKeys fallback without a startup timeout.
 	 *
-	 * If no Kitty response arrives shortly after startup, fall back to enabling
-	 * xterm modifyOtherKeys mode 2. This is needed for tmux, which can forward
-	 * modified enter keys as CSI-u when extended-keys is enabled, but may not
-	 * answer the Kitty protocol query.
-	 *
-	 * The response is detected in setupStdinBuffer's data handler, which properly
-	 * handles the case where the response arrives split across multiple stdin events.
+	 * The requested flags are:
+	 * - 1 = disambiguate escape codes
+	 * - 2 = report event types (press/repeat/release)
+	 * - 4 = report alternate keys (shifted key, base layout key)
 	 */
 	private queryAndEnableKittyProtocol(): void {
 		this.setupStdinBuffer();
 		process.stdin.on("data", this.stdinDataHandler!);
-		process.stdout.write("\x1b[?u");
-		setTimeout(() => {
-			if (!this._kittyProtocolActive && !this._modifyOtherKeysActive) {
-				process.stdout.write("\x1b[>4;2m");
-				this._modifyOtherKeysActive = true;
+		this.keyboardProtocolPushed = true;
+		this.clearKeyboardProtocolNegotiationBuffer();
+		process.stdout.write(KITTY_KEYBOARD_PROTOCOL_QUERY);
+	}
+
+	private handleKeyboardProtocolNegotiationSequence(
+		negotiationSequence: KeyboardProtocolNegotiationSequence | undefined,
+	): boolean {
+		if (!negotiationSequence) return false;
+		this.clearKeyboardProtocolNegotiationBuffer();
+		if (negotiationSequence.type === "kitty-flags") {
+			if (negotiationSequence.flags !== 0) {
+				this.disableModifyOtherKeys();
+				if (!this._kittyProtocolActive) {
+					this._kittyProtocolActive = true;
+					setKittyProtocolActive(true);
+				}
+			} else {
+				this.enableModifyOtherKeys();
 			}
-		}, 150);
+			return true;
+		}
+
+		if (!this._kittyProtocolActive) {
+			this.enableModifyOtherKeys();
+		}
+		return true;
+	}
+
+	private readKeyboardProtocolNegotiationSequence(
+		sequence: string,
+	): KeyboardProtocolNegotiationSequence | "pending" | undefined {
+		if (this.keyboardProtocolNegotiationBuffer) {
+			const bufferedSequence = this.keyboardProtocolNegotiationBuffer + sequence;
+			const negotiationSequence = parseKeyboardProtocolNegotiationSequence(bufferedSequence);
+			if (negotiationSequence) {
+				this.clearKeyboardProtocolNegotiationBuffer();
+				return negotiationSequence;
+			}
+			if (isKeyboardProtocolNegotiationSequencePrefix(bufferedSequence)) {
+				this.setKeyboardProtocolNegotiationBuffer(bufferedSequence);
+				return "pending";
+			}
+			this.flushKeyboardProtocolNegotiationBufferAsInput();
+		}
+
+		const negotiationSequence = parseKeyboardProtocolNegotiationSequence(sequence);
+		if (negotiationSequence) return negotiationSequence;
+		if (isKeyboardProtocolNegotiationSequencePrefix(sequence)) {
+			this.setKeyboardProtocolNegotiationBuffer(sequence);
+			return "pending";
+		}
+		return undefined;
+	}
+
+	private setKeyboardProtocolNegotiationBuffer(sequence: string): void {
+		this.clearKeyboardProtocolNegotiationBufferFlushTimer();
+		this.keyboardProtocolNegotiationBuffer = sequence;
+	}
+
+	private clearKeyboardProtocolNegotiationBuffer(): void {
+		this.clearKeyboardProtocolNegotiationBufferFlushTimer();
+		this.keyboardProtocolNegotiationBuffer = "";
+	}
+
+	private flushKeyboardProtocolNegotiationBufferAsInput(): void {
+		if (!this.keyboardProtocolNegotiationBuffer) return;
+		const sequence = this.keyboardProtocolNegotiationBuffer;
+		this.clearKeyboardProtocolNegotiationBuffer();
+		this.forwardInputSequence(sequence);
+	}
+
+	private scheduleKeyboardProtocolNegotiationBufferFlush(): void {
+		if (!this.keyboardProtocolNegotiationBuffer || this.keyboardProtocolBufferFlushTimer) return;
+		this.keyboardProtocolBufferFlushTimer = setTimeout(() => {
+			this.keyboardProtocolBufferFlushTimer = undefined;
+			this.flushKeyboardProtocolNegotiationBufferAsInput();
+		}, KEYBOARD_PROTOCOL_RESPONSE_FRAGMENT_TIMEOUT_MS);
+	}
+
+	private clearKeyboardProtocolNegotiationBufferFlushTimer(): void {
+		if (!this.keyboardProtocolBufferFlushTimer) return;
+		clearTimeout(this.keyboardProtocolBufferFlushTimer);
+		this.keyboardProtocolBufferFlushTimer = undefined;
+	}
+
+	private forwardInputSequence(sequence: string): void {
+		if (!this.inputHandler) return;
+		const shouldDetectNativeShiftEnter =
+			sequence === "\r" && (isAppleTerminalSession() || process.platform === "win32");
+		const input = normalizeNativeShiftEnterInput(
+			sequence,
+			shouldDetectNativeShiftEnter,
+			shouldDetectNativeShiftEnter && isNativeModifierPressed("shift"),
+		);
+		this.inputHandler(input);
+	}
+
+	private enableModifyOtherKeys(): void {
+		if (this._kittyProtocolActive || this._modifyOtherKeysActive) return;
+		process.stdout.write("\x1b[>4;2m");
+		this._modifyOtherKeysActive = true;
+	}
+
+	private disableModifyOtherKeys(): void {
+		if (!this._modifyOtherKeysActive) return;
+		process.stdout.write("\x1b[>4;0m");
+		this._modifyOtherKeysActive = false;
 	}
 
 	/**
@@ -202,38 +366,45 @@ export class ProcessTerminal implements Terminal {
 	private enableWindowsVTInput(): void {
 		if (process.platform !== "win32") return;
 		try {
-			// Dynamic require to avoid bundling koffi's 74MB of cross-platform
-			// native binaries into every compiled binary. Koffi is only needed
-			// on Windows for VT input support.
-			const koffi = cjsRequire("koffi");
-			const k32 = koffi.load("kernel32.dll");
-			const GetStdHandle = k32.func("void* __stdcall GetStdHandle(int)");
-			const GetConsoleMode = k32.func("bool __stdcall GetConsoleMode(void*, _Out_ uint32_t*)");
-			const SetConsoleMode = k32.func("bool __stdcall SetConsoleMode(void*, uint32_t)");
+			const arch = process.arch;
+			if (arch !== "x64" && arch !== "arm64") return;
 
-			const STD_INPUT_HANDLE = -10;
-			const ENABLE_VIRTUAL_TERMINAL_INPUT = 0x0200;
-			const handle = GetStdHandle(STD_INPUT_HANDLE);
-			const mode = new Uint32Array(1);
-			GetConsoleMode(handle, mode);
-			SetConsoleMode(handle, mode[0]! | ENABLE_VIRTUAL_TERMINAL_INPUT);
+			// Dynamic require so non-Windows and bundled/browser paths never load the
+			// native helper. In the npm package native/ is next to dist/; in compiled
+			// binary archives native/ is copied next to the executable.
+			const moduleDir = path.dirname(fileURLToPath(import.meta.url));
+			const nativePath = path.join("native", "win32", "prebuilds", `win32-${arch}`, "win32-console-mode.node");
+			const candidates = [
+				path.join(moduleDir, "..", nativePath),
+				path.join(moduleDir, nativePath),
+				path.join(path.dirname(process.execPath), nativePath),
+			];
+			for (const modulePath of candidates) {
+				try {
+					const helper = cjsRequire(modulePath) as { enableVirtualTerminalInput?: () => boolean };
+					helper.enableVirtualTerminalInput?.();
+					return;
+				} catch {
+					// Try the next possible packaging location.
+				}
+			}
 		} catch {
-			// koffi not available — Shift+Tab won't be distinguishable from Tab
+			// Native helper not available — Shift+Tab won't be distinguishable from Tab.
 		}
 	}
 
 	async drainInput(maxMs = 1000, idleMs = 50): Promise<void> {
-		if (this._kittyProtocolActive) {
+		const shouldDisableKittyProtocol = this.keyboardProtocolPushed || this._kittyProtocolActive;
+		this.clearKeyboardProtocolNegotiationBuffer();
+		if (shouldDisableKittyProtocol) {
 			// Disable Kitty keyboard protocol first so any late key releases
 			// do not generate new Kitty escape sequences.
 			process.stdout.write("\x1b[<u");
+			this.keyboardProtocolPushed = false;
 			this._kittyProtocolActive = false;
 			setKittyProtocolActive(false);
 		}
-		if (this._modifyOtherKeysActive) {
-			process.stdout.write("\x1b[>4;0m");
-			this._modifyOtherKeysActive = false;
-		}
+		this.disableModifyOtherKeys();
 
 		const previousHandler = this.inputHandler;
 		this.inputHandler = undefined;
@@ -261,19 +432,24 @@ export class ProcessTerminal implements Terminal {
 	}
 
 	stop(): void {
+		if (this.clearProgressInterval()) {
+			process.stdout.write(TERMINAL_PROGRESS_CLEAR_SEQUENCE);
+		}
+
 		// Disable bracketed paste mode
 		process.stdout.write("\x1b[?2004l");
 
+		const shouldDisableKittyProtocol = this.keyboardProtocolPushed || this._kittyProtocolActive;
+		this.clearKeyboardProtocolNegotiationBuffer();
+
 		// Disable Kitty keyboard protocol if not already done by drainInput()
-		if (this._kittyProtocolActive) {
+		if (shouldDisableKittyProtocol) {
 			process.stdout.write("\x1b[<u");
+			this.keyboardProtocolPushed = false;
 			this._kittyProtocolActive = false;
 			setKittyProtocolActive(false);
 		}
-		if (this._modifyOtherKeysActive) {
-			process.stdout.write("\x1b[>4;0m");
-			this._modifyOtherKeysActive = false;
-		}
+		this.disableModifyOtherKeys();
 
 		// Clean up StdinBuffer
 		if (this.stdinBuffer) {
@@ -315,11 +491,11 @@ export class ProcessTerminal implements Terminal {
 	}
 
 	get columns(): number {
-		return process.stdout.columns || 80;
+		return process.stdout.columns || Number(process.env.COLUMNS) || 80;
 	}
 
 	get rows(): number {
-		return process.stdout.rows || 24;
+		return process.stdout.rows || Number(process.env.LINES) || 24;
 	}
 
 	moveBy(lines: number): void {
@@ -356,5 +532,28 @@ export class ProcessTerminal implements Terminal {
 	setTitle(title: string): void {
 		// OSC 0;title BEL - set terminal window title
 		process.stdout.write(`\x1b]0;${title}\x07`);
+	}
+
+	setProgress(active: boolean): void {
+		if (active) {
+			// OSC 9;4;3 - indeterminate progress
+			process.stdout.write(TERMINAL_PROGRESS_ACTIVE_SEQUENCE);
+			if (!this.progressInterval) {
+				this.progressInterval = setInterval(() => {
+					process.stdout.write(TERMINAL_PROGRESS_ACTIVE_SEQUENCE);
+				}, TERMINAL_PROGRESS_KEEPALIVE_MS);
+			}
+		} else {
+			this.clearProgressInterval();
+			// OSC 9;4;0 - clear progress
+			process.stdout.write(TERMINAL_PROGRESS_CLEAR_SEQUENCE);
+		}
+	}
+
+	private clearProgressInterval(): boolean {
+		if (!this.progressInterval) return false;
+		clearInterval(this.progressInterval);
+		this.progressInterval = undefined;
+		return true;
 	}
 }

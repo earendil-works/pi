@@ -2,8 +2,8 @@
  * System prompt construction and project context loading
  */
 
-import { getDocsPath, getExamplesPath, getReadmePath } from "../config.js";
-import { formatSkillsForPrompt, type Skill } from "./skills.js";
+import { getDocsPath, getExamplesPath, getReadmePath } from "../config.ts";
+import { formatSkillsForPrompt, type Skill } from "./skills.ts";
 
 export interface BuildSystemPromptOptions {
 	/** Custom system prompt (replaces default). */
@@ -16,8 +16,8 @@ export interface BuildSystemPromptOptions {
 	promptGuidelines?: string[];
 	/** Text to append to system prompt. */
 	appendSystemPrompt?: string;
-	/** Working directory. Default: process.cwd() */
-	cwd?: string;
+	/** Working directory. */
+	cwd: string;
 	/** Pre-loaded context files. */
 	contextFiles?: Array<{ path: string; content: string }>;
 	/** Pre-loaded skills. */
@@ -25,7 +25,7 @@ export interface BuildSystemPromptOptions {
 }
 
 /** Build the system prompt with tools, guidelines, and context */
-export function buildSystemPrompt(options: BuildSystemPromptOptions = {}): string {
+export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 	const {
 		customPrompt,
 		selectedTools,
@@ -36,10 +36,7 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions = {}): strin
 		contextFiles: providedContextFiles,
 		skills: providedSkills,
 	} = options;
-	const resolvedCwd = cwd ?? process.cwd();
-	const promptCwd = resolvedCwd.replace(/\\/g, "/");
-
-	const date = new Date().toISOString().slice(0, 10);
+	const promptCwd = cwd.replace(/\\/g, "/");
 
 	const appendSection = appendSystemPrompt ? `\n\n${appendSystemPrompt}` : "";
 
@@ -55,11 +52,12 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions = {}): strin
 
 		// Append project context files
 		if (contextFiles.length > 0) {
-			prompt += "\n\n# Project Context\n\n";
+			prompt += "\n\n<project_context>\n\n";
 			prompt += "Project-specific instructions and guidelines:\n\n";
 			for (const { path: filePath, content } of contextFiles) {
-				prompt += `## ${filePath}\n\n${content}\n\n`;
+				prompt += `<project_instructions path="${filePath}">\n${content}\n</project_instructions>\n\n`;
 			}
+			prompt += "</project_context>\n";
 		}
 
 		// Append skills section (only if read tool is available)
@@ -68,9 +66,7 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions = {}): strin
 			prompt += formatSkillsForPrompt(skills);
 		}
 
-		// Add date and working directory last
-		prompt += `\nCurrent date: ${date}`;
-		prompt += `\nCurrent working directory: ${promptCwd}`;
+		prompt += `\nCurrent working directory: ${promptCwd}\n`;
 
 		return prompt;
 	}
@@ -107,8 +103,6 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions = {}): strin
 	// File exploration guidelines
 	if (hasBash && !hasGrep && !hasFind && !hasLs) {
 		addGuideline("Use bash for file operations like ls, rg, find");
-	} else if (hasBash && (hasGrep || hasFind || hasLs)) {
-		addGuideline("Prefer grep/find/ls tools over bash for file exploration (faster, respects .gitignore)");
 	}
 
 	for (const guideline of promptGuidelines ?? []) {
@@ -138,7 +132,8 @@ Pi documentation (read only when the user asks about pi itself, its SDK, extensi
 - Main documentation: ${readmePath}
 - Additional docs: ${docsPath}
 - Examples: ${examplesPath} (extensions, custom tools, SDK)
-- When asked about: extensions (docs/extensions.md, examples/extensions/), themes (docs/themes.md), skills (docs/skills.md), prompt templates (docs/prompt-templates.md), TUI components (docs/tui.md), keybindings (docs/keybindings.md), SDK integrations (docs/sdk.md), custom providers (docs/custom-provider.md), adding models (docs/models.md), pi packages (docs/packages.md)
+- When reading pi docs or examples, resolve docs/... under Additional docs and examples/... under Examples, not the current working directory
+- When asked about: extensions (docs/extensions.md, examples/extensions/), themes (docs/themes.md), skills (docs/skills.md), prompt templates (docs/prompt-templates.md), TUI components (docs/tui.md), keybindings (docs/keybindings.md), SDK integrations (docs/sdk.md), custom providers (docs/custom-provider.md), adding models (docs/models.md), pi packages (docs/packages.md), environment variables (docs/environment-variables.md)
 - When working on pi topics, read the docs and examples, and follow .md cross-references before implementing
 - Always read pi .md files completely and follow links to related docs (e.g., tui.md for TUI API details)`;
 
@@ -148,11 +143,12 @@ Pi documentation (read only when the user asks about pi itself, its SDK, extensi
 
 	// Append project context files
 	if (contextFiles.length > 0) {
-		prompt += "\n\n# Project Context\n\n";
+		prompt += "\n\n<project_context>\n\n";
 		prompt += "Project-specific instructions and guidelines:\n\n";
 		for (const { path: filePath, content } of contextFiles) {
-			prompt += `## ${filePath}\n\n${content}\n\n`;
+			prompt += `<project_instructions path="${filePath}">\n${content}\n</project_instructions>\n\n`;
 		}
+		prompt += "</project_context>\n";
 	}
 
 	// Append skills section (only if read tool is available)
@@ -160,8 +156,6 @@ Pi documentation (read only when the user asks about pi itself, its SDK, extensi
 		prompt += formatSkillsForPrompt(skills);
 	}
 
-	// Add date and working directory last
-	prompt += `\nCurrent date: ${date}`;
 	prompt += `\nCurrent working directory: ${promptCwd}`;
 
 	return prompt;

@@ -1,7 +1,10 @@
-import { type Component, truncateToWidth, visibleWidth } from "@tculpepp/spi-tui";
-import type { AgentSession } from "../../../core/agent-session.js";
-import type { ReadonlyFooterDataProvider } from "../../../core/footer-data-provider.js";
-import { theme } from "../theme/theme.js";
+import { isAbsolute, relative, resolve, sep } from "node:path";
+import { type Component, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import type { AgentSession } from "../../../core/agent-session.ts";
+import { areExperimentalFeaturesEnabled } from "../../../core/experimental.ts";
+import type { ReadonlyFooterDataProvider } from "../../../core/footer-data-provider.ts";
+import { addUsageToTotals, createUsageTotals } from "../../../core/usage-totals.ts";
+import { theme } from "../theme/theme.ts";
 
 /**
  * Sanitize text for display in a single-line status.
@@ -16,14 +19,28 @@ function sanitizeStatusText(text: string): string {
 }
 
 /**
- * Format token counts (similar to web-ui)
+ * Format token counts for compact footer display.
  */
-function formatTokens(count: number): string {
+export function formatTokens(count: number): string {
 	if (count < 1000) return count.toString();
 	if (count < 10000) return `${(count / 1000).toFixed(1)}k`;
 	if (count < 1000000) return `${Math.round(count / 1000)}k`;
 	if (count < 10000000) return `${(count / 1000000).toFixed(1)}M`;
 	return `${Math.round(count / 1000000)}M`;
+}
+
+export function formatCwdForFooter(cwd: string, home: string | undefined): string {
+	if (!home) return cwd;
+
+	const resolvedCwd = resolve(cwd);
+	const resolvedHome = resolve(home);
+	const relativeToHome = relative(resolvedHome, resolvedCwd);
+	const isInsideHome =
+		relativeToHome === "" ||
+		(relativeToHome !== ".." && !relativeToHome.startsWith(`..${sep}`) && !isAbsolute(relativeToHome));
+
+	if (!isInsideHome) return cwd;
+	return relativeToHome === "" ? "~" : `~${sep}${relativeToHome}`;
 }
 
 /**
@@ -32,11 +49,13 @@ function formatTokens(count: number): string {
  */
 export class FooterComponent implements Component {
 	private autoCompactEnabled = true;
+	private session: AgentSession;
+	private footerData: ReadonlyFooterDataProvider;
 
-	constructor(
-		private session: AgentSession,
-		private footerData: ReadonlyFooterDataProvider,
-	) {}
+	constructor(session: AgentSession, footerData: ReadonlyFooterDataProvider) {
+		this.session = session;
+		this.footerData = footerData;
+	}
 
 	setSession(session: AgentSession): void {
 		this.session = session;
@@ -66,19 +85,21 @@ export class FooterComponent implements Component {
 		const state = this.session.state;
 
 		// Calculate cumulative usage from ALL session entries (not just post-compaction messages)
-		let totalInput = 0;
-		let totalOutput = 0;
-		let totalCacheRead = 0;
-		let totalCacheWrite = 0;
-		let totalCost = 0;
+		const usageTotals = createUsageTotals();
+		let latestCacheHitRate: number | undefined;
 
 		for (const entry of this.session.sessionManager.getEntries()) {
 			if (entry.type === "message" && entry.message.role === "assistant") {
-				totalInput += entry.message.usage.input;
-				totalOutput += entry.message.usage.output;
-				totalCacheRead += entry.message.usage.cacheRead;
-				totalCacheWrite += entry.message.usage.cacheWrite;
-				totalCost += entry.message.usage.cost.total;
+				addUsageToTotals(usageTotals, entry.message.usage);
+
+				const latestPromptTokens =
+					entry.message.usage.input + entry.message.usage.cacheRead + entry.message.usage.cacheWrite;
+				latestCacheHitRate =
+					latestPromptTokens > 0 ? (entry.message.usage.cacheRead / latestPromptTokens) * 100 : undefined;
+			} else if (entry.type === "message" && entry.message.role === "toolResult" && entry.message.usage) {
+				addUsageToTotals(usageTotals, entry.message.usage);
+			} else if ((entry.type === "branch_summary" || entry.type === "compaction") && entry.usage) {
+				addUsageToTotals(usageTotals, entry.usage);
 			}
 		}
 
@@ -90,11 +111,7 @@ export class FooterComponent implements Component {
 		const contextPercent = contextUsage?.percent !== null ? contextPercentValue.toFixed(1) : "?";
 
 		// Replace home directory with ~
-		let pwd = this.session.sessionManager.getCwd();
-		const home = process.env.HOME || process.env.USERPROFILE;
-		if (home && pwd.startsWith(home)) {
-			pwd = `~${pwd.slice(home.length)}`;
-		}
+		let pwd = formatCwdForFooter(this.session.sessionManager.getCwd(), process.env.HOME || process.env.USERPROFILE);
 
 		// Add git branch if available
 		const branch = this.footerData.getGitBranch();
@@ -110,15 +127,20 @@ export class FooterComponent implements Component {
 
 		// Build stats line
 		const statsParts = [];
-		if (totalInput) statsParts.push(`↑${formatTokens(totalInput)}`);
-		if (totalOutput) statsParts.push(`↓${formatTokens(totalOutput)}`);
-		if (totalCacheRead) statsParts.push(`R${formatTokens(totalCacheRead)}`);
-		if (totalCacheWrite) statsParts.push(`W${formatTokens(totalCacheWrite)}`);
+		if (usageTotals.input) statsParts.push(`↑${formatTokens(usageTotals.input)}`);
+		if (usageTotals.output) statsParts.push(`↓${formatTokens(usageTotals.output)}`);
+		if (usageTotals.cacheRead) statsParts.push(`R${formatTokens(usageTotals.cacheRead)}`);
+		if (usageTotals.cacheWrite) statsParts.push(`W${formatTokens(usageTotals.cacheWrite)}`);
+		if ((usageTotals.cacheRead > 0 || usageTotals.cacheWrite > 0) && latestCacheHitRate !== undefined) {
+			statsParts.push(`CH${latestCacheHitRate.toFixed(1)}%`);
+		}
 
-		// Show cost with "(sub)" indicator if using OAuth subscription
-		const usingSubscription = state.model ? this.session.modelRegistry.isUsingOAuth(state.model) : false;
-		if (totalCost || usingSubscription) {
-			const costStr = `$${totalCost.toFixed(3)}${usingSubscription ? " (sub)" : ""}`;
+		// Kimi Coding is subscription-backed despite using API-key authentication.
+		const usingSubscription = state.model
+			? state.model.provider === "kimi-coding" || this.session.modelRuntime.isUsingSubscription(state.model.provider)
+			: false;
+		if (usageTotals.cost || usingSubscription) {
+			const costStr = `$${usageTotals.cost.toFixed(3)}${usingSubscription ? " (sub)" : ""}`;
 			statsParts.push(costStr);
 		}
 
@@ -137,6 +159,9 @@ export class FooterComponent implements Component {
 			contextPercentStr = contextPercentDisplay;
 		}
 		statsParts.push(contextPercentStr);
+		if (areExperimentalFeaturesEnabled()) {
+			statsParts.push(`${theme.fg("dim", "•")} ${theme.bold(theme.fg("warning", "xp"))}`);
+		}
 
 		let statsLeft = statsParts.join(" ");
 

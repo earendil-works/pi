@@ -5,8 +5,8 @@
  * (logo + keybinding hints) with a custom component showing the pi mascot.
  */
 
-import type { ExtensionAPI, Theme } from "@tculpepp/spi-coding-agent";
-import { VERSION } from "@tculpepp/spi-coding-agent";
+import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
+import { VERSION } from "@earendil-works/pi-coding-agent";
 
 // --- PI MASCOT ---
 // Based on pi_mascot.ts - the pi agent character
@@ -47,7 +47,7 @@ function getPiMascot(theme: Theme): string[] {
 export default function (pi: ExtensionAPI) {
 	// Set custom header immediately on load (if UI is available)
 	pi.on("session_start", async (_event, ctx) => {
-		if (ctx.hasUI) {
+		if (ctx.mode === "tui") {
 			ctx.ui.setHeader((_tui, theme) => {
 				return {
 					render(_width: number): string[] {

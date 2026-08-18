@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { getModel } from "../src/models.js";
-import { stream } from "../src/stream.js";
-import type { Context, Model } from "../src/types.js";
+import { getModel, stream } from "../src/compat.ts";
+import type { Context, Model } from "../src/types.ts";
 
 function makeContext(): Context {
 	return {
@@ -16,10 +15,10 @@ function makeContext(): Context {
 }
 
 describe.skipIf(!process.env.OPENAI_API_KEY)("xhigh reasoning", () => {
-	describe("codex-max (supports xhigh)", () => {
+	describe("gpt 5.5 (supports xhigh)", () => {
 		// Note: codex models only support the responses API, not chat completions
 		it("should work with openai-responses", async () => {
-			const model = getModel("openai", "gpt-5.1-codex-max");
+			const model = getModel("openai", "gpt-5.5");
 			const s = stream(model, makeContext(), { reasoningEffort: "xhigh" });
 			let hasThinking = false;
 

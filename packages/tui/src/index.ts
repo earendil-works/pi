@@ -1,5 +1,6 @@
 // Core TUI interfaces and classes
 
+export { Marked, type Token, type Tokens } from "marked";
 // Autocomplete support
 export {
 	type AutocompleteItem,
@@ -7,30 +8,44 @@ export {
 	type AutocompleteSuggestions,
 	CombinedAutocompleteProvider,
 	type SlashCommand,
-} from "./autocomplete.js";
+} from "./autocomplete.ts";
 // Components
-export { Box } from "./components/box.js";
-export { CancellableLoader } from "./components/cancellable-loader.js";
-export { Editor, type EditorOptions, type EditorTheme } from "./components/editor.js";
-export { Image, type ImageOptions, type ImageTheme } from "./components/image.js";
-export { Input } from "./components/input.js";
-export { Loader } from "./components/loader.js";
-export { type DefaultTextStyle, Markdown, type MarkdownTheme } from "./components/markdown.js";
+export { Box } from "./components/box.ts";
+export { CancellableLoader } from "./components/cancellable-loader.ts";
+export { Editor, type EditorOptions, type EditorTheme } from "./components/editor.ts";
+export { HStack } from "./components/h-stack.ts";
+export { Image, type ImageOptions, type ImageTheme } from "./components/image.ts";
+export { Input } from "./components/input.ts";
+export { Loader, type LoaderIndicatorOptions } from "./components/loader.ts";
+export { type DefaultTextStyle, Markdown, type MarkdownOptions, type MarkdownTheme } from "./components/markdown.ts";
+export {
+	ScrollView,
+	type ScrollViewOptions,
+	type ScrollViewScrollbar,
+	type ScrollViewScrollToOptions,
+} from "./components/scroll-view.ts";
 export {
 	type SelectItem,
 	SelectList,
 	type SelectListLayoutOptions,
 	type SelectListTheme,
 	type SelectListTruncatePrimaryContext,
-} from "./components/select-list.js";
-export { type SettingItem, SettingsList, type SettingsListTheme } from "./components/settings-list.js";
-export { Spacer } from "./components/spacer.js";
-export { Text } from "./components/text.js";
-export { TruncatedText } from "./components/truncated-text.js";
+} from "./components/select-list.ts";
+export { type SettingItem, SettingsList, type SettingsListTheme } from "./components/settings-list.ts";
+export { Spacer } from "./components/spacer.ts";
+export { Text } from "./components/text.ts";
+export { TruncatedText } from "./components/truncated-text.ts";
+export {
+	type StackChild,
+	type StackEntry,
+	type StackEntryOptions,
+	type StackOptions,
+	VStack,
+} from "./components/v-stack.ts";
 // Editor component interface (for custom editors)
-export type { EditorComponent } from "./editor-component.js";
+export type { EditorComponent } from "./editor-component.ts";
 // Fuzzy matching
-export { type FuzzyMatch, fuzzyFilter, fuzzyMatch } from "./fuzzy.js";
+export { type FuzzyMatch, fuzzyFilter, fuzzyMatch } from "./fuzzy.ts";
 // Keybindings
 export {
 	getKeybindings,
@@ -43,7 +58,7 @@ export {
 	KeybindingsManager,
 	setKeybindings,
 	TUI_KEYBINDINGS,
-} from "./keybindings.js";
+} from "./keybindings.ts";
 // Keyboard input handling
 export {
 	decodeKittyPrintable,
@@ -56,11 +71,20 @@ export {
 	matchesKey,
 	parseKey,
 	setKittyProtocolActive,
-} from "./keys.js";
+} from "./keys.ts";
+// LaTeX rendering
+export { type RenderLatexOptions, renderLatex } from "./latex.ts";
 // Input buffering for batch splitting
-export { StdinBuffer, type StdinBufferEventMap, type StdinBufferOptions } from "./stdin-buffer.js";
+export { StdinBuffer, type StdinBufferEventMap, type StdinBufferOptions } from "./stdin-buffer.ts";
 // Terminal interface and implementations
-export { ProcessTerminal, type Terminal } from "./terminal.js";
+export { ProcessTerminal, type Terminal } from "./terminal.ts";
+// Terminal colors
+export {
+	parseOsc11BackgroundColor,
+	parseTerminalColorSchemeReport,
+	type RgbColor,
+	type TerminalColorScheme,
+} from "./terminal-colors.ts";
 // Terminal image support
 export {
 	allocateImageId,
@@ -78,27 +102,46 @@ export {
 	getJpegDimensions,
 	getPngDimensions,
 	getWebpDimensions,
+	hyperlink,
 	type ImageDimensions,
 	type ImageProtocol,
 	type ImageRenderOptions,
 	imageFallback,
 	renderImage,
 	resetCapabilitiesCache,
+	setCapabilities,
 	setCellDimensions,
 	type TerminalCapabilities,
-} from "./terminal-image.js";
+} from "./terminal-image.ts";
 export {
 	type Component,
 	Container,
 	CURSOR_MARKER,
+	compositeTuiLine,
 	type Focusable,
 	isFocusable,
+	isViewportTUI,
 	type OverlayAnchor,
 	type OverlayHandle,
 	type OverlayMargin,
 	type OverlayOptions,
+	type OverlayUnfocusOptions,
 	type SizeValue,
-	TUI,
-} from "./tui.js";
+	type TUI,
+	type TuiInputListener,
+	type TuiInputListenerResult,
+	type TuiMode,
+	type TuiStopOptions,
+	type ViewportTUI,
+} from "./tui.ts";
+export { TuiAltScreen, type TuiAltScreenOptions } from "./tui-alt-screen.ts";
+export { TuiMainScreen, type TuiMainScreenRenderState } from "./tui-main-screen.ts";
 // Utilities
-export { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "./utils.js";
+export {
+	getOsc8LinkAtColumn,
+	sliceByColumn,
+	stripTerminalSequences,
+	truncateToWidth,
+	visibleWidth,
+	wrapTextWithAnsi,
+} from "./utils.ts";

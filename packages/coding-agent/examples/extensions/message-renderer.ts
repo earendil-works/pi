@@ -7,12 +7,12 @@
  * Usage: /status [message] - sends a status message with custom rendering
  */
 
-import type { ExtensionAPI } from "@tculpepp/spi-coding-agent";
-import { Box, Text } from "@tculpepp/spi-tui";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { Box, Text } from "@earendil-works/pi-tui";
 
 export default function (pi: ExtensionAPI) {
 	// Register custom renderer for "status-update" messages
-	pi.registerMessageRenderer("status-update", (message, { expanded }, theme) => {
+	pi.registerMessageRenderer("status-update", (message, { expanded, outputPad }, theme) => {
 		const details = message.details as { level: string; timestamp: number } | undefined;
 		const level = details?.level ?? "info";
 
@@ -29,7 +29,7 @@ export default function (pi: ExtensionAPI) {
 		}
 
 		// Use Box with customMessageBg for consistent styling
-		const box = new Box(1, 1, (t) => theme.bg("customMessageBg", t));
+		const box = new Box(outputPad, 1, (t) => theme.bg("customMessageBg", t));
 		box.addChild(new Text(text, 0, 0));
 		return box;
 	});

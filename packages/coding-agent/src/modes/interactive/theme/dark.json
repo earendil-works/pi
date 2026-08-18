@@ -1,5 +1,5 @@
 {
-	"$schema": "https://raw.githubusercontent.com/tculpepp/secure-pi-mono/main/packages/coding-agent/src/modes/interactive/theme/theme-schema.json",
+	"$schema": "https://raw.githubusercontent.com/earendil-works/pi/main/packages/coding-agent/src/modes/interactive/theme/theme-schema.json",
 	"name": "dark",
 	"vars": {
 		"cyan": "#00d7ff",
@@ -7,6 +7,7 @@
 		"green": "#b5bd68",
 		"red": "#cc6666",
 		"yellow": "#ffff00",
+		"text": "#d4d4d4",
 		"gray": "#808080",
 		"dimGray": "#666666",
 		"darkGray": "#505050",
@@ -28,19 +29,22 @@
 		"warning": "yellow",
 		"muted": "gray",
 		"dim": "dimGray",
-		"text": "",
+		"text": "text",
 		"thinkingText": "gray",
 
 		"selectedBg": "selectedBg",
+		"scrollbarThumb": "selectedBg",
+		"searchMatchBg": "selectedBg",
+		"searchMatchText": "text",
 		"userMessageBg": "userMsgBg",
-		"userMessageText": "",
+		"userMessageText": "text",
 		"customMessageBg": "customMsgBg",
-		"customMessageText": "",
+		"customMessageText": "text",
 		"customMessageLabel": "#9575cd",
 		"toolPendingBg": "toolPendingBg",
 		"toolSuccessBg": "toolSuccessBg",
 		"toolErrorBg": "toolErrorBg",
-		"toolTitle": "",
+		"toolTitle": "text",
 		"toolOutput": "gray",
 
 		"mdHeading": "#f0c674",
@@ -74,6 +78,7 @@
 		"thinkingMedium": "#81a2be",
 		"thinkingHigh": "#b294bb",
 		"thinkingXhigh": "#d183e8",
+		"thinkingMax": "#ff5fff",
 
 		"bashMode": "green"
 	},

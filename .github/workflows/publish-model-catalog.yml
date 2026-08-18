@@ -1,0 +1,146 @@
+name: Publish Model Catalog
+
+on:
+  workflow_run:
+    workflows:
+      - CI
+    types:
+      - completed
+  pull_request:
+    paths:
+      - '.github/workflows/publish-model-catalog.yml'
+      - '.gitignore'
+      - 'package.json'
+      - 'packages/ai/**'
+      - 'scripts/publish-model-catalog.mjs'
+  # GitHub schedules use UTC. Run hourly candidates across the CET/CEST
+  # boundaries; the publish job only uploads at 10:17, 12:17, and 14:17
+  # Europe/Vienna time.
+  schedule:
+    - cron: '17 8-13 * * 1-5'
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: 'Commit, branch, or tag to generate from'
+        required: false
+        default: 'main'
+        type: string
+      publish:
+        description: 'Upload the generated catalog to production R2'
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  generate:
+    if: ${{ github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main') }}
+    runs-on: ubuntu-latest
+    env:
+      SOURCE_REF: ${{ github.event.workflow_run.head_sha || inputs.source_ref || github.sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.SOURCE_REF }}
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Generate model catalog JSON
+        run: npm run generate:model-catalog
+
+      - name: Validate model catalog JSON
+        run: npm run check:model-catalog
+
+      - name: Upload model catalog JSON
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: model-catalog-json
+          path: .artifacts/model-catalog
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_run' || (github.event_name == 'workflow_dispatch' && inputs.publish) }}
+    needs: generate
+    runs-on: ubuntu-latest
+    environment: pi-model-upload
+    concurrency:
+      group: publish-model-catalog-r2
+      cancel-in-progress: true
+    env:
+      SOURCE_REF: ${{ github.event.workflow_run.head_sha || inputs.source_ref || github.sha }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.PI_ARTIFACTS_R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.PI_ARTIFACTS_R2_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: auto
+      AWS_EC2_METADATA_DISABLED: 'true'
+      R2_ENDPOINT: https://67c0d357268b0fca6e0b465bb9d01b84.r2.cloudflarestorage.com
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.SOURCE_REF }}
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+
+      - name: Download model catalog JSON
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: model-catalog-json
+          path: .artifacts/model-catalog
+
+      - name: Verify AWS CLI
+        run: aws --version
+
+      - name: Check publication window
+        id: publication-window
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          MANUAL_PUBLISH: ${{ inputs.publish || false }}
+        run: |
+          set -euo pipefail
+
+          local_day="$(TZ=Europe/Vienna date +%u)"
+          local_hour_text="$(TZ=Europe/Vienna date +%H)"
+          local_hour="$((10#$local_hour_text))"
+          local_time="$(TZ=Europe/Vienna date '+%Y-%m-%d %H:%M:%S %Z')"
+          allowed=false
+          reason="outside the Monday-Friday 10:00-15:00 Europe/Vienna publication window"
+
+          if [[ "$EVENT_NAME" == "workflow_dispatch" && "$MANUAL_PUBLISH" == "true" ]]; then
+            allowed=true
+            reason="manual publication"
+          elif (( local_day <= 5 && local_hour >= 10 && local_hour < 15 )); then
+            if [[ "$EVENT_NAME" != "schedule" ]] || (( (local_hour - 10) % 2 == 0 )); then
+              allowed=true
+              reason="business-hours publication"
+            else
+              reason="not a scheduled 10:17, 12:17, or 14:17 Europe/Vienna publication"
+            fi
+          fi
+
+          echo "allowed=$allowed" >> "$GITHUB_OUTPUT"
+          echo "R2 publication allowed: $allowed ($reason; local time: $local_time)"
+
+      - name: Publish model catalog to R2
+        if: steps.publication-window.outputs.allowed == 'true'
+        run: |
+          node scripts/publish-model-catalog.mjs \
+            --input .artifacts/model-catalog \
+            --bucket pi-artifacts \
+            --endpoint "$R2_ENDPOINT" \
+            --source-commit "$(git rev-parse HEAD)"

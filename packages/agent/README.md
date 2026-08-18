@@ -1,24 +1,35 @@
-# @tculpepp/spi-agent-core
+# @earendil-works/pi-agent-core
 
-Stateful agent with tool execution and event streaming. Built on `@tculpepp/spi-ai`.
+Stateful agent with tool execution and event streaming. Built on `@earendil-works/pi-ai`.
 
 ## Installation
 
 ```bash
-npm install @tculpepp/spi-agent-core
+npm install @earendil-works/pi-agent-core
 ```
+
+### SQLite session backends
+
+The SQLite session backend and the `node:sqlite` adapter live in a separate package, `@earendil-works/pi-session-backend-sqlite-node`, so the core package does not pull in runtime builtins or native SQLite dependencies by default. The backend accepts a runtime-specific SQLite factory, allowing other session backends to ship as their own packages in the future.
 
 ## Quick Start
 
 ```typescript
-import { Agent } from "@tculpepp/spi-agent-core";
-import { getModel } from "@tculpepp/spi-ai";
+import { Agent } from "@earendil-works/pi-agent-core";
+import { createModels } from "@earendil-works/pi-ai";
+import { anthropicProvider } from "@earendil-works/pi-ai/providers/anthropic";
+
+const models = createModels();
+models.setProvider(anthropicProvider());
+const model = models.getModel("anthropic", "claude-sonnet-4-6");
+if (!model) throw new Error("Model not found");
 
 const agent = new Agent({
   initialState: {
     systemPrompt: "You are a helpful assistant.",
-    model: getModel("anthropic", "claude-sonnet-4-20250514"),
+    model,
   },
+  streamFn: models.streamSimple.bind(models),
 });
 
 agent.subscribe((event) => {
@@ -101,10 +112,36 @@ prompt("Read config.json")
 
 Tool execution mode is configurable:
 
-- `parallel` (default): preflight tool calls sequentially, execute allowed tools concurrently, emit final `tool_execution_end` and `toolResult` messages in assistant source order
+- `parallel` (default): preflight tool calls sequentially, execute allowed tools concurrently, emit `tool_execution_end` as soon as each tool is finalized, then emit toolResult messages and `turn_end.toolResults` in assistant source order
 - `sequential`: execute tool calls one by one, matching the historical behavior
 
-The `beforeToolCall` hook runs after `tool_execution_start` and validated argument parsing. It can block execution. The `afterToolCall` hook runs after tool execution finishes and before `tool_execution_end` and final tool result message events are emitted.
+In parallel mode, tool completion events follow tool completion order, but persisted toolResult messages still follow assistant source order.
+
+The mode can be set globally via `toolExecution` in the agent config, or per-tool via `executionMode` on `AgentTool`. If any tool call in a batch targets a tool with `executionMode: "sequential"`, the entire batch executes sequentially regardless of the global setting.
+
+The `beforeToolCall` hook runs after `tool_execution_start` and validated argument parsing. It can block execution and attach `terminate: true` to the blocked result. The `afterToolCall` hook runs after tool execution finishes and before `tool_execution_end` and final tool result message events are emitted.
+
+Tools, blocked `beforeToolCall` results, and `afterToolCall` overrides can return `terminate: true` to hint that the automatic follow-up LLM call should be skipped. The loop only stops early when every finalized tool result in that batch sets `terminate: true`. Mixed batches continue normally.
+
+The `Agent` class accepts `shouldStopAfterTurn` in `AgentOptions`. Low-level loop callers can set the same hook in `AgentLoopConfig`:
+
+```typescript
+const stream = agentLoop(
+  prompts,
+  context,
+  {
+    model,
+    convertToLlm,
+    shouldStopAfterTurn: async ({ message, toolResults, context, newMessages }) => {
+      return shouldCompactBeforeNextTurn(context.messages);
+    },
+  },
+  undefined,
+  models.streamSimple.bind(models),
+);
+```
+
+`shouldStopAfterTurn` runs after `turn_end` is emitted and after the assistant response and any tool executions have completed normally. If it returns `true`, the loop emits `agent_end` and exits before polling steering or follow-up queues, and before starting another LLM call. It does not abort the provider stream, does not cancel running tools, and does not alter the assistant message stop reason. The `AgentOptions` callback also receives the active run's `AbortSignal` as its second argument.
 
 When you use the `Agent` class, assistant `message_end` processing is treated as a barrier before tool preflight begins. That means `beforeToolCall` sees agent state that already includes the assistant message that requested the tool call.
 
@@ -133,8 +170,8 @@ The last message in context must be `user` or `toolResult` (not `assistant`).
 | `tool_execution_start` | Tool begins |
 | `tool_execution_update` | Tool streams progress |
 | `tool_execution_end` | Tool completes |
-+
-+`Agent.subscribe()` listeners are awaited in registration order. `agent_end` means no more loop events will be emitted, but `await agent.waitForIdle()` and `await agent.prompt(...)` only settle after awaited `agent_end` listeners finish.
+
+`Agent.subscribe()` listeners are awaited in registration order. `agent_end` means no more loop events will be emitted, but `await agent.waitForIdle()` and `await agent.prompt(...)` only settle after awaited `agent_end` listeners finish.
 
 ## Agent Options
 
@@ -144,7 +181,7 @@ const agent = new Agent({
   initialState: {
     systemPrompt: string,
     model: Model<any>,
-    thinkingLevel: "off" | "minimal" | "low" | "medium" | "high" | "xhigh",
+    thinkingLevel: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max",
     tools: AgentTool<any>[],
     messages: AgentMessage[],
   },
@@ -161,8 +198,8 @@ const agent = new Agent({
   // Follow-up mode: "one-at-a-time" (default) or "all"
   followUpMode: "one-at-a-time",
 
-  // Custom stream function (for proxy backends)
-  streamFn: streamProxy,
+  // Required stream function
+  streamFn: models.streamSimple.bind(models),
 
   // Session ID for provider caching
   sessionId: "session-123",
@@ -176,15 +213,23 @@ const agent = new Agent({
   // Preflight each tool call after args are validated. Can block execution.
   beforeToolCall: async ({ toolCall, args, context }) => {
     if (toolCall.name === "bash") {
-      return { block: true, reason: "bash is disabled" };
+      return { block: true, reason: "bash is disabled", terminate: true };
     }
   },
 
   // Postprocess each tool result before final tool events are emitted.
   afterToolCall: async ({ toolCall, result, isError, context }) => {
+    if (toolCall.name === "notify_done" && !isError) {
+      return { terminate: true };
+    }
     if (!isError) {
       return { details: { ...result.details, audited: true } };
     }
+  },
+
+  // Stop gracefully after a completed turn, before queued messages are polled.
+  shouldStopAfterTurn: async ({ context }, signal) => {
+    return shouldCompactBeforeNextTurn(context.messages, signal);
   },
 
   // Custom thinking budgets for token-based providers
@@ -251,6 +296,7 @@ agent.state.tools = [myTool];
 agent.toolExecution = "sequential";
 agent.beforeToolCall = async ({ toolCall }) => undefined;
 agent.afterToolCall = async ({ toolCall, result }) => undefined;
+agent.shouldStopAfterTurn = async ({ context }) => shouldCompactBeforeNextTurn(context.messages);
 agent.state.messages = newMessages; // top-level array is copied
 agent.state.messages.push(message);
 agent.reset();
@@ -332,7 +378,7 @@ Follow-up messages are checked only when there are no more tool calls and no ste
 Extend `AgentMessage` via declaration merging:
 
 ```typescript
-declare module "@tculpepp/spi-agent-core" {
+declare module "@earendil-works/pi-agent-core" {
   interface CustomAgentMessages {
     notification: { role: "notification"; text: string; timestamp: number };
   }
@@ -346,6 +392,7 @@ Handle custom types in `convertToLlm`:
 
 ```typescript
 const agent = new Agent({
+  streamFn: models.streamSimple.bind(models),
   convertToLlm: (messages) => messages.flatMap(m => {
     if (m.role === "notification") return []; // Filter out
     return [m];
@@ -358,7 +405,7 @@ const agent = new Agent({
 Define tools using `AgentTool`:
 
 ```typescript
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 
 const readFileTool: AgentTool = {
   name: "read_file",
@@ -367,12 +414,19 @@ const readFileTool: AgentTool = {
   parameters: Type.Object({
     path: Type.String({ description: "File path" }),
   }),
+  // Override execution mode for this tool (optional).
+  // "sequential" forces the entire batch to run one at a time.
+  // "parallel" allows concurrent execution with other tool calls.
+  // If omitted, the global toolExecution config applies.
+  executionMode: "sequential",
   execute: async (toolCallId, params, signal, onUpdate) => {
     const content = await fs.readFile(params.path, "utf-8");
 
     // Optional: stream progress
     onUpdate?.({ content: [{ type: "text", text: "Reading..." }], details: {} });
 
+    // Optional: add `terminate: true` here to skip the automatic follow-up LLM call
+    // when every finalized tool result in the batch does the same.
     return {
       content: [{ type: "text", text: content }],
       details: { path: params.path, size: content.length },
@@ -399,12 +453,14 @@ execute: async (toolCallId, params, signal, onUpdate) => {
 
 Thrown errors are caught by the agent and reported to the LLM as tool errors with `isError: true`.
 
+Return `terminate: true` from `execute()`, a blocked `beforeToolCall`, or `afterToolCall` to hint that the agent should stop after the current tool batch. This only takes effect when every finalized tool result in the batch is terminating. The hint is runtime-only; emitted `toolResult` transcript messages remain standard LLM tool results.
+
 ## Proxy Usage
 
 For browser apps that proxy through a backend:
 
 ```typescript
-import { Agent, streamProxy } from "@tculpepp/spi-agent-core";
+import { Agent, streamProxy } from "@earendil-works/pi-agent-core";
 
 const agent = new Agent({
   streamFn: (model, context, options) =>
@@ -421,7 +477,7 @@ const agent = new Agent({
 For direct control without the Agent class:
 
 ```typescript
-import { agentLoop, agentLoopContinue } from "@tculpepp/spi-agent-core";
+import { agentLoop, agentLoopContinue } from "@earendil-works/pi-agent-core";
 
 const context: AgentContext = {
   systemPrompt: "You are helpful.",
@@ -432,19 +488,20 @@ const context: AgentContext = {
 const config: AgentLoopConfig = {
   model: getModel("openai", "gpt-4o"),
   convertToLlm: (msgs) => msgs.filter(m => ["user", "assistant", "toolResult"].includes(m.role)),
-  toolExecution: "parallel",
+  toolExecution: "parallel",  // overridden by per-tool executionMode if set
   beforeToolCall: async ({ toolCall, args, context }) => undefined,
   afterToolCall: async ({ toolCall, result, isError, context }) => undefined,
 };
 
 const userMessage = { role: "user", content: "Hello", timestamp: Date.now() };
 
-for await (const event of agentLoop([userMessage], context, config)) {
+const streamFn = models.streamSimple.bind(models);
+for await (const event of agentLoop([userMessage], context, config, undefined, streamFn)) {
   console.log(event.type);
 }
 
 // Continue from existing context
-for await (const event of agentLoopContinue(context, config)) {
+for await (const event of agentLoopContinue(context, config, undefined, streamFn)) {
   console.log(event.type);
 }
 ```

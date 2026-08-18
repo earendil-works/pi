@@ -5,12 +5,13 @@
  * Responses and events are emitted as JSON lines on stdout.
  */
 
-import type { AgentMessage, ThinkingLevel } from "@tculpepp/spi-agent-core";
-import type { ImageContent, Model } from "@tculpepp/spi-ai";
-import type { SessionStats } from "../../core/agent-session.js";
-import type { BashResult } from "../../core/bash-executor.js";
-import type { CompactionResult } from "../../core/compaction/index.js";
-import type { SourceInfo } from "../../core/source-info.js";
+import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
+import type { ImageContent, Model } from "@earendil-works/pi-ai";
+import type { SessionStats } from "../../core/agent-session.ts";
+import type { BashResult } from "../../core/bash-executor.ts";
+import type { CompactionResult } from "../../core/compaction/index.ts";
+import type { SessionEntry, SessionTreeNode } from "../../core/session-manager.ts";
+import type { SourceInfo } from "../../core/source-info.ts";
 
 // ============================================================================
 // RPC Commands (stdin)
@@ -35,6 +36,7 @@ export type RpcCommand =
 	// Thinking
 	| { id?: string; type: "set_thinking_level"; level: ThinkingLevel }
 	| { id?: string; type: "cycle_thinking_level" }
+	| { id?: string; type: "get_available_thinking_levels" }
 
 	// Queue modes
 	| { id?: string; type: "set_steering_mode"; mode: "all" | "one-at-a-time" }
@@ -49,7 +51,7 @@ export type RpcCommand =
 	| { id?: string; type: "abort_retry" }
 
 	// Bash
-	| { id?: string; type: "bash"; command: string }
+	| { id?: string; type: "bash"; command: string; excludeFromContext?: boolean }
 	| { id?: string; type: "abort_bash" }
 
 	// Session
@@ -57,7 +59,10 @@ export type RpcCommand =
 	| { id?: string; type: "export_html"; outputPath?: string }
 	| { id?: string; type: "switch_session"; sessionPath: string }
 	| { id?: string; type: "fork"; entryId: string }
+	| { id?: string; type: "clone" }
 	| { id?: string; type: "get_fork_messages" }
+	| { id?: string; type: "get_entries"; since?: string }
+	| { id?: string; type: "get_tree" }
 	| { id?: string; type: "get_last_assistant_text" }
 	| { id?: string; type: "set_session_name"; name: string }
 
@@ -150,6 +155,13 @@ export type RpcResponse =
 			success: true;
 			data: { level: ThinkingLevel } | null;
 	  }
+	| {
+			id?: string;
+			type: "response";
+			command: "get_available_thinking_levels";
+			success: true;
+			data: { levels: ThinkingLevel[] };
+	  }
 
 	// Queue modes
 	| { id?: string; type: "response"; command: "set_steering_mode"; success: true }
@@ -172,12 +184,27 @@ export type RpcResponse =
 	| { id?: string; type: "response"; command: "export_html"; success: true; data: { path: string } }
 	| { id?: string; type: "response"; command: "switch_session"; success: true; data: { cancelled: boolean } }
 	| { id?: string; type: "response"; command: "fork"; success: true; data: { text: string; cancelled: boolean } }
+	| { id?: string; type: "response"; command: "clone"; success: true; data: { cancelled: boolean } }
 	| {
 			id?: string;
 			type: "response";
 			command: "get_fork_messages";
 			success: true;
 			data: { messages: Array<{ entryId: string; text: string }> };
+	  }
+	| {
+			id?: string;
+			type: "response";
+			command: "get_entries";
+			success: true;
+			data: { entries: SessionEntry[]; leafId: string | null };
+	  }
+	| {
+			id?: string;
+			type: "response";
+			command: "get_tree";
+			success: true;
+			data: { tree: SessionTreeNode[]; leafId: string | null };
 	  }
 	| {
 			id?: string;

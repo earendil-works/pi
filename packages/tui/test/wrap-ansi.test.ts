@@ -1,6 +1,6 @@
 import assert from "node:assert";
 import { describe, it } from "node:test";
-import { visibleWidth, wrapTextWithAnsi } from "../src/utils.js";
+import { visibleWidth, wrapTextWithAnsi } from "../src/utils.ts";
 
 describe("wrapTextWithAnsi", () => {
 	describe("underline styling", () => {
@@ -101,6 +101,26 @@ describe("wrapTextWithAnsi", () => {
 	});
 
 	describe("basic wrapping", () => {
+		it("should handle LF, CRLF, and CR line endings", () => {
+			assert.deepStrictEqual(wrapTextWithAnsi("first\nsecond\r\nthird\rfourth", 80), [
+				"first",
+				"second",
+				"third",
+				"fourth",
+			]);
+		});
+
+		it("should preserve ANSI state across CRLF and CR line endings", () => {
+			const red = "\x1b[31m";
+			const reset = "\x1b[0m";
+
+			assert.deepStrictEqual(wrapTextWithAnsi(`${red}first\r\nsecond\rthird${reset}`, 80), [
+				`${red}first`,
+				`${red}second`,
+				`${red}third${reset}`,
+			]);
+		});
+
 		it("should wrap plain text correctly", () => {
 			const text = "hello world this is a test";
 			const wrapped = wrapTextWithAnsi(text, 10);
@@ -108,6 +128,30 @@ describe("wrapTextWithAnsi", () => {
 			assert.ok(wrapped.length > 1);
 			for (const line of wrapped) {
 				assert.ok(visibleWidth(line) <= 10);
+			}
+		});
+
+		it("should break CJK runs at grapheme boundaries after Latin text", () => {
+			const text = "This is an example 中文汉字测试段落内容中文汉字测试段落内容.";
+			const wrapped = wrapTextWithAnsi(text, 40);
+
+			assert.deepStrictEqual(wrapped, ["This is an example 中文汉字测试段落内容", "中文汉字测试段落内容."]);
+			for (const line of wrapped) {
+				assert.ok(visibleWidth(line) <= 40);
+			}
+		});
+
+		it("should preserve color codes when wrapping CJK runs", () => {
+			const red = "\x1b[31m";
+			const reset = "\x1b[0m";
+			const text = `${red}This is an example 中文汉字测试段落内容中文汉字测试段落内容.${reset}`;
+			const wrapped = wrapTextWithAnsi(text, 40);
+
+			assert.strictEqual(wrapped.length, 2);
+			assert.strictEqual(wrapped[0], `${red}This is an example 中文汉字测试段落内容`);
+			assert.strictEqual(wrapped[1], `${red}中文汉字测试段落内容.${reset}`);
+			for (const line of wrapped) {
+				assert.ok(visibleWidth(line) <= 40);
 			}
 		});
 
@@ -148,5 +192,75 @@ describe("wrapTextWithAnsi", () => {
 				assert.strictEqual(wrapped[i].endsWith("\x1b[0m"), false);
 			}
 		});
+	});
+});
+
+describe("wrapTextWithAnsi with OSC 8 hyperlinks", () => {
+	it("re-emits OSC 8 open at the start of continuation lines", () => {
+		// A hyperlink whose text is long enough to wrap
+		const url = "https://example.com";
+		// OSC 8 open + text that is 10 visible chars + OSC 8 close
+		const input = `\x1b]8;;${url}\x1b\\0123456789\x1b]8;;\x1b\\`;
+		const lines = wrapTextWithAnsi(input, 6);
+
+		// Every line that contains visible text from inside the hyperlink
+		// should start with the OSC 8 open sequence (or be preceded by it).
+		for (const line of lines) {
+			// If the line has visible content it must begin with the OSC 8 re-open
+			// OR it is the line where the close appeared with no following content.
+			const stripped = line.replace(/\x1b\]8;;[^\x1b\x07]*\x1b\\/g, "").replace(/\x1b\[[0-9;]*m/g, "");
+			if (stripped.trim().length > 0) {
+				assert.ok(
+					line.startsWith(`\x1b]8;;${url}\x1b\\`) || line.includes(`\x1b]8;;${url}\x1b\\`),
+					`Line "${line}" has visible text but no OSC 8 re-open`,
+				);
+			}
+		}
+	});
+
+	it("closes OSC 8 before each line break", () => {
+		const url = "https://example.com";
+		const input = `\x1b]8;;${url}\x1b\\0123456789\x1b]8;;\x1b\\`;
+		const lines = wrapTextWithAnsi(input, 6);
+
+		for (let i = 0; i < lines.length - 1; i++) {
+			const line = lines[i];
+			// Every non-final line that is inside a hyperlink should end with the close
+			if (line.includes(`\x1b]8;;${url}\x1b\\`)) {
+				assert.ok(
+					line.endsWith("\x1b]8;;\x1b\\"),
+					`Non-final line "${line}" is inside a hyperlink but does not close it`,
+				);
+			}
+		}
+	});
+
+	it("preserves BEL terminators when wrapping OAuth-style hyperlinks", () => {
+		const url = `https://example.com/oauth/${"a".repeat(32)}`;
+		const input = `\x1b]8;;${url}\x07${url}\x1b]8;;\x07`;
+		const lines = wrapTextWithAnsi(input, 20);
+
+		assert.ok(lines.length > 1);
+		for (const line of lines) {
+			assert.ok(line.includes(`\x1b]8;;${url}\x07`), `Line "${line}" does not reopen the hyperlink with BEL`);
+			assert.ok(!line.includes(`\x1b]8;;${url}\x1b\\`), `Line "${line}" reopens the hyperlink with ST`);
+		}
+		for (const line of lines.slice(0, -1)) {
+			assert.ok(line.endsWith("\x1b]8;;\x07"), `Line "${line}" does not close the hyperlink with BEL`);
+		}
+	});
+
+	it("does not emit OSC 8 sequences on lines that are outside the hyperlink", () => {
+		const url = "https://example.com";
+		const input = `before \x1b]8;;${url}\x1b\\link\x1b]8;;\x1b\\ after`;
+		const lines = wrapTextWithAnsi(input, 80);
+
+		// With width 80 everything fits on one line; there should be exactly one
+		// OSC 8 open and one OSC 8 close.
+		assert.strictEqual(lines.length, 1);
+		const openCount = (lines[0].match(/\x1b\]8;;https:[^\x1b]+\x1b\\/g) ?? []).length;
+		const closeCount = (lines[0].match(/\x1b\]8;;\x1b\\/g) ?? []).length;
+		assert.strictEqual(openCount, 1);
+		assert.strictEqual(closeCount, 1);
 	});
 });

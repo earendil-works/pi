@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { type LabelEntry, SessionManager } from "../../src/core/session-manager.js";
+import { type LabelEntry, SessionManager } from "../../src/core/session-manager.ts";
 
 describe("SessionManager labels", () => {
 	it("sets and gets labels", () => {
@@ -140,6 +140,19 @@ describe("SessionManager labels", () => {
 		const msg2Node = msg1Node?.children.find((n) => n.entry.id === msg2Id);
 		expect(msg1Node?.labelTimestamp).toBe(msg1LabelEntry.timestamp);
 		expect(msg2Node?.labelTimestamp).toBe(msg2LabelEntry.timestamp);
+	});
+
+	it("rewires children of removed labels when forking", () => {
+		const session = SessionManager.inMemory();
+
+		const msg1Id = session.appendMessage({ role: "user", content: "hello", timestamp: 1 });
+		session.appendLabelChange(msg1Id, "checkpoint");
+		const modelChangeId = session.appendModelChange("anthropic", "claude-test");
+		const msg2Id = session.appendMessage({ role: "user", content: "followup", timestamp: 2 });
+
+		session.createBranchedSession(msg2Id);
+
+		expect(session.getEntry(modelChangeId)?.parentId).toBe(msg1Id);
 	});
 
 	it("labels not on path are not preserved in createBranchedSession", () => {

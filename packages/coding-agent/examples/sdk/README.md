@@ -12,7 +12,7 @@ The runtime example shows how to build a recreate function that closes over proc
 | `02-custom-model.ts` | Select model and thinking level |
 | `03-custom-prompt.ts` | Replace or modify system prompt |
 | `04-skills.ts` | Discover, filter, or replace skills |
-| `05-tools.ts` | Built-in tools, custom tools |
+| `05-tools.ts` | Built-in tool allowlists |
 | `06-extensions.ts` | Logging, blocking, result modification |
 | `07-context-files.ts` | AGENTS.md context files |
 | `08-slash-commands.ts` | File-based slash commands |
@@ -32,51 +32,46 @@ npx tsx examples/sdk/01-minimal.ts
 ## Quick Reference
 
 ```typescript
-import { getModel } from "@tculpepp/spi-ai";
+import { getModel } from "@earendil-works/pi-ai";
 import {
-  AuthStorage,
   createAgentSession,
   DefaultResourceLoader,
-  ModelRegistry,
+  ModelRuntime,
   SessionManager,
   SettingsManager,
-  codingTools,
-  readOnlyTools,
-  readTool, bashTool, editTool, writeTool,
-} from "@tculpepp/spi-coding-agent";
+} from "@earendil-works/pi-coding-agent";
 
-// Auth and models setup
-const authStorage = AuthStorage.create();
-const modelRegistry = ModelRegistry.create(authStorage);
+const modelRuntime = await ModelRuntime.create();
 
 // Minimal
-const { session } = await createAgentSession({ authStorage, modelRegistry });
+const { session } = await createAgentSession({ modelRuntime });
 
 // Custom model
 const model = getModel("anthropic", "claude-opus-4-5");
-const { session } = await createAgentSession({ model, thinkingLevel: "high", authStorage, modelRegistry });
+const { session } = await createAgentSession({ model, thinkingLevel: "high", modelRuntime });
 
 // Modify prompt
 const loader = new DefaultResourceLoader({
   systemPromptOverride: (base) => `${base}\n\nBe concise.`,
 });
 await loader.reload();
-const { session } = await createAgentSession({ resourceLoader: loader, authStorage, modelRegistry });
+const { session } = await createAgentSession({ resourceLoader: loader, modelRuntime });
 
 // Read-only
-const { session } = await createAgentSession({ tools: readOnlyTools, authStorage, modelRegistry });
+const { session } = await createAgentSession({ tools: ["read", "grep", "find", "ls"], modelRuntime });
 
 // In-memory
 const { session } = await createAgentSession({
   sessionManager: SessionManager.inMemory(),
-  authStorage,
-  modelRegistry,
+  modelRuntime,
 });
 
 // Full control
-const customAuth = AuthStorage.create("/my/app/auth.json");
-customAuth.setRuntimeApiKey("anthropic", process.env.MY_KEY!);
-const customRegistry = ModelRegistry.create(customAuth);
+const customRuntime = await ModelRuntime.create({
+  authPath: "/my/app/auth.json",
+  modelsPath: "/my/app/models.json",
+});
+await customRuntime.setRuntimeApiKey("anthropic", process.env.MY_KEY!);
 
 const resourceLoader = new DefaultResourceLoader({
   systemPromptOverride: () => "You are helpful.",
@@ -89,11 +84,10 @@ await resourceLoader.reload();
 
 const { session } = await createAgentSession({
   model,
-  authStorage: customAuth,
-  modelRegistry: customRegistry,
+  modelRuntime: customRuntime,
   resourceLoader,
-  tools: [readTool, bashTool],
-  customTools: [{ tool: myTool }],
+  tools: ["read", "bash", "my_tool"],
+  customTools: [myTool],
   sessionManager: SessionManager.inMemory(),
   settingsManager: SettingsManager.inMemory(),
 });
@@ -111,15 +105,14 @@ await session.prompt("Hello");
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `authStorage` | `AuthStorage.create()` | Credential storage |
-| `modelRegistry` | `ModelRegistry.create(authStorage)` | Model registry |
+| `modelRuntime` | Runtime using `agentDir/auth.json` and `models.json` | Canonical model and authentication runtime |
 | `cwd` | `process.cwd()` | Working directory |
-| `agentDir` | `~/.spi/agent` | Config directory |
+| `agentDir` | `~/.pi/agent` | Config directory |
 | `model` | From settings/first available | Model to use |
 | `thinkingLevel` | From settings/"off" | off, low, medium, high |
-| `tools` | `codingTools` | Built-in tools |
+| `tools` | `["read", "bash", "edit", "write"]` built-ins | Allowlist tool names across built-in, extension, and custom tools |
 | `customTools` | `[]` | Additional tool definitions |
-| `resourceLoader` | DefaultResourceLoader | Resource loader for extensions, skills, prompts, themes |
+| `resourceLoader` | DefaultResourceLoader | Resource loader for extensions, skills, prompts, themes, and context files |
 | `sessionManager` | `SessionManager.create(cwd)` | Persistence |
 | `settingsManager` | `SettingsManager.create(cwd, agentDir)` | Settings overrides |
 
@@ -139,7 +132,7 @@ session.subscribe((event) => {
     case "tool_execution_end":
       console.log(`Result: ${event.result}`);
       break;
-    case "agent_end":
+    case "agent_settled":
       console.log("Done");
       break;
   }

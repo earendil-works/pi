@@ -1,6 +1,6 @@
 import type { Terminal as XtermTerminalType } from "@xterm/headless";
 import xterm from "@xterm/headless";
-import type { Terminal } from "../src/terminal.js";
+import type { Terminal } from "../src/terminal.ts";
 
 // Extract Terminal class from the module
 const XtermTerminal = xterm.Terminal;
@@ -99,6 +99,8 @@ export class VirtualTerminal implements Terminal {
 		// OSC 0;title BEL - set terminal window title
 		this.xterm.write(`\x1b]0;${title}\x07`);
 	}
+
+	setProgress(_active: boolean): void {}
 
 	// Test-specific methods not in Terminal interface
 
@@ -205,5 +207,12 @@ export class VirtualTerminal implements Terminal {
 			x: buffer.cursorX,
 			y: buffer.cursorY,
 		};
+	}
+
+	/** Wait for TUI's throttled render pipeline to settle. */
+	async waitForRender(): Promise<void> {
+		await new Promise<void>((resolve) => process.nextTick(resolve));
+		await new Promise<void>((resolve) => setTimeout(resolve, 20));
+		await this.flush();
 	}
 }

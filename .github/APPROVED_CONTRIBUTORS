@@ -1,7 +1,377 @@
-# GitHub handles of users approved to submit PRs
+# GitHub handles approved to bypass contribution auto-close
+# Format: <username> <capability>
+# capability:
+#   issue  future issues stay open
+#   pr     future issues and PRs stay open
 
-# One handle per line (without @)
+herrnel pr
+julien-c pr
+barapa pr
+alasano pr
+aadishv pr
+airtonix pr
+aliou pr
+aos pr
+austinm911 pr
+banteg pr
+ben-vargas pr
+butelo pr
+can1357 pr
+CarlosGtrz pr
+cau1k pr
+cmf pr
+crcatala pr
+Cursivez pr
+cv pr
+dannote pr
+default-anton pr
+dnouri pr
+DronNick pr
+enisdenjo pr
+ferologics pr
+fightbulc pr
+ghoulr pr
+gnattu pr
+HACKE-RC pr
+hewliyang pr
+hjanuschka pr
+iamd3vil pr
+jblwilliams pr
+joshp123 pr
+jsinge97 pr
+justram pr
+kaofelix pr
+kiliman pr
+kim0 pr
+lockmeister pr
+LukeFost pr
+lukele pr
+m-box-mr pr
+marckrenn pr
+markusylisiurunen pr
+mcinteerj pr
+melihmucuk pr
+mitsuhiko pr
+mrexodia pr
+nathyong pr
+nickseelert pr
+nicobailon pr
+ninlds pr
+ogulcancelik pr
+patrick-kidger pr
+paulbettner pr
+Perlence pr
+pjtf93 pr
+prateekmedia pr
+prathamdby pr
+ribelo pr
+richardgill pr
+robinwander pr
+ronyrus pr
+roshanasingh4 pr
+scutifer pr
+skuridin pr
+steipete pr
+svkozak pr
+tallshort pr
+theBucky pr
+thomasmhr pr
+tiagoefreitas pr
+timolins pr
+tmustier pr
+tudoroancea pr
+unexge pr
+vaayne pr
+VaclavSynacek pr
+vsabavat pr
+w-winter pr
+Whamp pr
+WismutHansen pr
+XesGaDeus pr
+yevhen pr
+badlogictest pr
+terrorobe pr
+zedrdave pr
+mrud pr
+toorusr pr
+andresaraujo pr
+lightningRalf pr
+williballenthin pr
+masonc15 pr
+4h9fbZ pr
+haoqixu pr
+Graffioh pr
+charles-cooper pr
+emanuelst pr
+juanibiapina pr
+liby pr
+pasky pr
+odysseus0 pr
+giuseppeg pr
+michaelpersonal pr
+academo pr
+PriNova pr
+semtexzv pr
+jasonish pr
+markusn pr
+SamFold pr
+Soleone pr
+virtuald pr
+NateSmyth pr
+7Sageer pr
+MatthieuBizien pr
+sumeet pr
+marchellodev pr
+vedang pr
+lucemia pr
+mcollina pr
+lajarre pr
+smithbm2316 pr
+drewburr pr
+gordonhwc pr
+deybhayden pr
+tintinweb pr
+asoules pr
+zhahaoyu pr
+in0vik pr
+jtac pr
+yzhg1983 pr
+smcllns pr
+dmmulroy pr
+zmberber pr
+andresvi94 pr
+sudosubin pr
+Mic92 pr
+pmateusz pr
+wirjo pr
+jay-aye-see-kay pr
+lucasmeijer pr
+Evizero pr
 
-# Add new contributors by commenting lgtm on their issue
+ofa1 pr
 
-tculpepp
+crisog issue
+
+mpazik pr
+
+vekexasia pr
+
+Michaelliv pr
+
+cmraible pr
+
+dljsjr pr
+
+drio pr
+
+jlaneve pr
+
+tantara pr
+
+Nutlope pr
+
+xl0 pr
+
+mdsjip pr
+
+Exrun94 pr
+
+marcbloech pr
+
+pidalf pr
+
+injaneity pr
+
+thirtythreeforty pr
+
+justinpbarnett pr
+
+cristinaponcela pr
+
+LooSik pr
+
+mchenco pr
+
+Phoen1xCode pr
+
+louis030195 pr
+
+technocidal pr
+
+pandada8 pr
+
+npupko issue
+
+chrisvariety pr
+
+maximilianzuern pr
+
+brianmichel pr
+
+abhinavmathur-atlan pr
+
+mattiacerutti pr
+
+josephyoung pr
+
+mbazso pr
+
+AJM10565 pr
+
+DanielThomas pr
+
+MichaelYochpaz pr
+
+stephanmck pr
+
+rolfvreijdenberger pr
+
+psoukie pr
+
+vastxie pr
+
+ItsumoSeito pr
+
+davidlifschitz pr
+
+vdxz pr
+
+dangooddd pr
+
+Mearman pr
+
+dodiego pr
+
+any-victor pr
+
+geraschenko pr
+
+skhoroshavin pr
+
+cyzlmh pr
+
+xz-dev pr
+
+rajp152k pr
+
+affanali2k3 pr
+
+ArcadiaLin pr
+
+anilgulecha pr
+
+DeviosLang pr
+
+HarrodRen pr
+
+aaronkyriesenbach pr
+
+farid-fari pr
+
+petrroll pr
+
+vibeinging pr
+
+DivineDominion pr
+
+ananthakumaran pr
+
+andrebreijao pr
+
+anh-chu pr
+
+rsaryev pr
+
+QuintinShaw pr
+
+R-Taneja pr
+
+zaycruz pr
+
+mteam88 pr
+
+christianbasch pr
+
+cpacker pr
+
+rgarcia pr
+
+renaudhartert-db pr
+
+HyeokjaeLee pr
+
+arajkumar pr
+
+brianstanley pr
+
+scruffymongrel pr
+
+SI-RUI-ZHANG pr
+
+sunnyyoung pr
+
+muyiyr pr
+
+hi-neason pr
+
+acmerfight pr
+
+tizmagik pr
+
+jingtao-wisdomgraph pr
+
+XRX193 pr
+
+autopeasant pr
+
+Snail-Turbo pr
+
+futile pr
+
+arasovic pr
+
+xXJSONDeruloXx pr
+
+Marvae pr
+
+skkdevcraft pr
+
+PierrunoYT pr
+
+zhichli pr
+
+wesleyzhangwq pr
+
+dgokeeffe pr
+
+vipentti pr
+
+midastruth pr
+
+Maximo-Guk pr
+
+bigoldcat123 pr
+
+johnatbasicas pr
+
+powerfooI pr
+
+yearth pr
+
+pablasso pr
+
+bilby91 pr
+
+giannisCKS pr
+
+Panoplos pr
+
+haoyongchun1125-maker pr
+
+gwokhou pr
+
+gaoyk19 pr
+
+cad0p pr
+
+Jaaneek pr

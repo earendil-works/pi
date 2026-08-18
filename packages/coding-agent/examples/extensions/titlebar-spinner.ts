@@ -9,7 +9,7 @@
  */
 
 import path from "node:path";
-import type { ExtensionAPI, ExtensionContext } from "@tculpepp/spi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 const BRAILLE_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
@@ -48,7 +48,7 @@ export default function (pi: ExtensionAPI) {
 		startAnimation(ctx);
 	});
 
-	pi.on("agent_end", async (_event, ctx) => {
+	pi.on("agent_settled", async (_event, ctx) => {
 		stopAnimation(ctx);
 	});
 

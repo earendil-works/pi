@@ -2,9 +2,32 @@
 
 Pi uses the [Kitty keyboard protocol](https://sw.kovidgoyal.net/kitty/keyboard-protocol/) for reliable modifier key detection. Most modern terminals support this protocol, but some require configuration.
 
-## Kitty, iTerm2
+## Kitty
 
-Work out of the box.
+Works out of the box.
+
+## iTerm2
+
+### Regular TUI mode
+
+Works out of the box.
+
+### Fullscreen TUI mode
+
+Pi owns the viewport, so iTerm2 sends mouse-wheel reports instead of scrolling its native scrollback. With iTerm2's default fast-trackpad behavior, those reports can lose most of an accelerated wheel delta, making fullscreen scrolling much slower than regular scrolling.
+
+If fast mouse-wheel gestures move only about one line at a time in fullscreen mode:
+
+1. Open **iTerm2 → Settings → Advanced**.
+2. Search for **Trackpad scrolls fast?** and set it to **No**.
+
+This is an iTerm2-wide workaround and may also change native trackpad scrolling. The underlying behavior is tracked in [iTerm2 issue 9619](https://gitlab.com/gnachman/iterm2/-/work_items/9619).
+
+## Apple Terminal
+
+Pi enables enhanced key reporting when available. If Terminal.app still sends plain Return for `Shift+Enter`, pi uses a local macOS modifier fallback to treat that Return as `Shift+Enter`.
+
+This fallback only works when pi runs on the same Mac as Terminal.app. It cannot detect the local keyboard over remote SSH.
 
 ## Ghostty
 
@@ -24,17 +47,15 @@ That mapping sends a raw linefeed byte. Inside pi, that is indistinguishable fro
 
 If Claude Code 2.x or newer is the only reason you added that mapping, you can remove it, unless you want to use Claude Code in tmux, where it still requires that Ghostty mapping.
 
-If you want `Shift+Enter` to keep working in tmux via that remap, add `ctrl+j` to your pi `newLine` keybinding in `~/.spi/agent/keybindings.json`:
+Pi binds `Ctrl+J` as a default newline alias, so `Shift+Enter` keeps working in tmux via that remap without extra pi configuration.
 
-```json
-{
-  "newLine": ["shift+enter", "ctrl+j"]
-}
-```
+### Fullscreen TUI mode
+
+In fullscreen mode, links remain clickable, but Ghostty does not show its hover underline or lower-left URL preview while pi captures mouse input. Hold `Shift+Command` on macOS or `Shift+Ctrl` on Linux to use Ghostty's native link handling.
 
 ## WezTerm
 
-Create `~/.wezterm.lua`:
+WezTerm usually works out of the box for `Shift+Enter` via xterm modifyOtherKeys. To use the Kitty keyboard protocol explicitly, create `~/.wezterm.lua`:
 
 ```lua
 local wezterm = require 'wezterm'
@@ -43,14 +64,50 @@ config.enable_kitty_keyboard = true
 return config
 ```
 
+On macOS, WezTerm binds `Option+Enter` to fullscreen by default. To use `Option+Enter` for pi follow-up queueing, add this key override:
+
+```lua
+local wezterm = require 'wezterm'
+local config = wezterm.config_builder()
+config.keys = {
+  {
+    key = 'Enter',
+    mods = 'ALT',
+    action = wezterm.action.SendString('\x1b[13;3u'),
+  },
+}
+return config
+```
+
+If you already have a `config.keys` table, add the entry to it.
+
+On WSL, WezTerm may require a visible hardware cursor for IME candidate window positioning. If CJK IME candidates do not follow the text cursor, set `PI_HARDWARE_CURSOR=1` before running pi or set `showHardwareCursor` to `true` in settings.
+
+## Alacritty
+
+Alacritty usually works out of the box for `Shift+Enter`. On macOS, `Option+Enter` may arrive as plain `Enter`. To use `Option+Enter` for pi follow-up queueing, add to `~/.config/alacritty/alacritty.toml`:
+
+```toml
+[[keyboard.bindings]]
+key = "Enter"
+mods = "Alt"
+chars = "\u001b[13;3u"
+```
+
+Restart Alacritty after changing the config.
+
 ## VS Code (Integrated Terminal)
+
+VS Code 1.109.5 and newer enable Kitty keyboard protocol in the integrated terminal by default, so `Shift+Enter` should work out of the box.
+
+VS Code versions older than 1.109.5 need an explicit terminal keybinding for `Shift+Enter`.
 
 `keybindings.json` locations:
 - macOS: `~/Library/Application Support/Code/User/keybindings.json`
 - Linux: `~/.config/Code/User/keybindings.json`
 - Windows: `%APPDATA%\\Code\\User\\keybindings.json`
 
-Add to `keybindings.json` to enable `Shift+Enter` for multi-line input:
+Add to `keybindings.json`:
 
 ```json
 {

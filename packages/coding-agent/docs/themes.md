@@ -19,8 +19,8 @@ Themes are JSON files that define colors for the TUI.
 Pi loads themes from:
 
 - Built-in: `dark`, `light`
-- Global: `~/.spi/agent/themes/*.json`
-- Project: `.spi/themes/*.json`
+- Global: `~/.pi/agent/themes/*.json`
+- Project: `.pi/themes/*.json` (only after the project is trusted)
 - Packages: `themes/` directories or `pi.themes` entries in `package.json`
 - Settings: `themes` array with files or directories
 - CLI: `--theme <path>` (repeatable)
@@ -39,20 +39,37 @@ Select a theme via `/settings` or in `settings.json`:
 
 On first run, pi detects your terminal background and defaults to `dark` or `light`.
 
+### Initial Theme
+
+Start an interactive run with a theme without changing the saved setting:
+
+```bash
+pi --use-theme light
+```
+
+To follow terminal appearance, use `lightTheme/darkTheme` syntax:
+
+```bash
+pi --use-theme light/dark
+```
+
+The CLI value is the initial theme for that run. Choosing another theme later in `/settings` applies it immediately
+and saves it normally.
+
 ## Creating a Custom Theme
 
 1. Create a theme file:
 
 ```bash
-mkdir -p ~/.spi/agent/themes
-vim ~/.spi/agent/themes/my-theme.json
+mkdir -p ~/.pi/agent/themes
+vim ~/.pi/agent/themes/my-theme.json
 ```
 
 2. Define the theme with all required colors (see [Color Tokens](#color-tokens)):
 
 ```json
 {
-  "$schema": "https://raw.githubusercontent.com/tculpepp/secure-pi-mono/main/packages/coding-agent/src/modes/interactive/theme/theme-schema.json",
+  "$schema": "https://raw.githubusercontent.com/earendil-works/pi/main/packages/coding-agent/src/modes/interactive/theme/theme-schema.json",
   "name": "my-theme",
   "vars": {
     "primary": "#00aaff",
@@ -71,6 +88,9 @@ vim ~/.spi/agent/themes/my-theme.json
     "text": "",
     "thinkingText": "secondary",
     "selectedBg": "#2d2d30",
+    "scrollbarThumb": "#555566",
+    "searchMatchBg": "#2d2d30",
+    "searchMatchText": "",
     "userMessageBg": "#2d2d30",
     "userMessageText": "",
     "customMessageBg": "#2d2d30",
@@ -109,6 +129,7 @@ vim ~/.spi/agent/themes/my-theme.json
     "thinkingMedium": "#00ffff",
     "thinkingHigh": "#ff00ff",
     "thinkingXhigh": "#ff0000",
+    "thinkingMax": "#ff0088",
     "bashMode": "#ffaa00"
   }
 }
@@ -122,7 +143,7 @@ vim ~/.spi/agent/themes/my-theme.json
 
 ```json
 {
-  "$schema": "https://raw.githubusercontent.com/tculpepp/secure-pi-mono/main/packages/coding-agent/src/modes/interactive/theme/theme-schema.json",
+  "$schema": "https://raw.githubusercontent.com/earendil-works/pi/main/packages/coding-agent/src/modes/interactive/theme/theme-schema.json",
   "name": "my-theme",
   "vars": {
     "blue": "#0066cc",
@@ -137,15 +158,15 @@ vim ~/.spi/agent/themes/my-theme.json
 }
 ```
 
-- `name` is required and must be unique.
+- `name` is required, must be unique, and must not contain `/`.
 - `vars` is optional. Define reusable colors here, then reference them in `colors`.
-- `colors` must define all 51 required tokens.
+- `colors` must define all 51 required tokens. `thinkingMax`, `scrollbarThumb`, and the two search highlight tokens are optional and use the fallbacks listed below.
 
 The `$schema` field enables editor auto-completion and validation.
 
 ## Color Tokens
 
-Every theme must define all 51 color tokens. There are no optional colors.
+Every theme must define all 51 required color tokens. The optional tokens preserve compatibility with existing themes: `thinkingMax` falls back to `thinkingXhigh`, `scrollbarThumb` and `searchMatchBg` fall back to `selectedBg`, and `searchMatchText` falls back to `text`. Other search matches use `searchMatchText` on `searchMatchBg` with an underline; the current match reverses that foreground/background pair and uses bold text.
 
 ### Core UI (11 colors)
 
@@ -163,11 +184,14 @@ Every theme must define all 51 color tokens. There are no optional colors.
 | `text` | Default text (usually `""`) |
 | `thinkingText` | Thinking block text |
 
-### Backgrounds & Content (11 colors)
+### Backgrounds & Content (11 required, 3 optional)
 
 | Token | Purpose |
 |-------|---------|
 | `selectedBg` | Selected line background |
+| `scrollbarThumb` | Fullscreen scrollbar thumb background; optional, falls back to `selectedBg` |
+| `searchMatchBg` | Transcript search match background and current-match text; optional, falls back to `selectedBg` |
+| `searchMatchText` | Transcript search match text and current-match background; optional, falls back to `text` |
 | `userMessageBg` | User message background |
 | `userMessageText` | User message text |
 | `customMessageBg` | Extension message background |
@@ -216,7 +240,7 @@ Every theme must define all 51 color tokens. There are no optional colors.
 | `syntaxOperator` | Operators |
 | `syntaxPunctuation` | Punctuation |
 
-### Thinking Level Borders (6 colors)
+### Thinking Level Borders (6 required, 1 optional)
 
 Editor border colors indicating thinking level (visual hierarchy from subtle to prominent):
 
@@ -228,6 +252,7 @@ Editor border colors indicating thinking level (visual hierarchy from subtle to 
 | `thinkingMedium` | Medium thinking |
 | `thinkingHigh` | High thinking |
 | `thinkingXhigh` | Extra high thinking |
+| `thinkingMax` | Maximum thinking; optional, falls back to `thinkingXhigh` |
 
 ### Bash Mode (1 color)
 

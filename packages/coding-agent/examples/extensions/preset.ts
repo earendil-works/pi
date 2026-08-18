@@ -6,8 +6,8 @@
  * and can be activated via CLI flag, /preset command, or Ctrl+Shift+U to cycle.
  *
  * Config files (merged, project takes precedence):
- * - ~/.spi/agent/presets.json (global)
- * - <cwd>/.spi/presets.json (project-local)
+ * - ~/.pi/agent/presets.json (global)
+ * - <cwd>/.pi/presets.json (project-local)
  *
  * Example presets.json:
  * ```json
@@ -40,9 +40,10 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { ExtensionAPI, ExtensionContext } from "@tculpepp/spi-coding-agent";
-import { DynamicBorder, getAgentDir } from "@tculpepp/spi-coding-agent";
-import { Container, Key, type SelectItem, SelectList, Text } from "@tculpepp/spi-tui";
+import type { Api, Model } from "@earendil-works/pi-ai";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { CONFIG_DIR_NAME, DynamicBorder, getAgentDir } from "@earendil-works/pi-coding-agent";
+import { Container, Key, type SelectItem, SelectList, Text } from "@earendil-works/pi-tui";
 
 // Preset configuration
 interface Preset {
@@ -51,7 +52,7 @@ interface Preset {
 	/** Model ID (e.g., "claude-sonnet-4-5") */
 	model?: string;
 	/** Thinking level */
-	thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+	thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 	/** Tools to enable (replaces default set) */
 	tools?: string[];
 	/** Instructions to append to system prompt */
@@ -68,7 +69,7 @@ interface PresetsConfig {
  */
 function loadPresets(cwd: string): PresetsConfig {
 	const globalPath = join(getAgentDir(), "presets.json");
-	const projectPath = join(cwd, ".pi", "presets.json");
+	const projectPath = join(cwd, CONFIG_DIR_NAME, "presets.json");
 
 	let globalPresets: PresetsConfig = {};
 	let projectPresets: PresetsConfig = {};
@@ -97,10 +98,17 @@ function loadPresets(cwd: string): PresetsConfig {
 	return { ...globalPresets, ...projectPresets };
 }
 
+interface OriginalState {
+	model: Model<Api> | undefined;
+	thinkingLevel: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+	tools: string[];
+}
+
 export default function presetExtension(pi: ExtensionAPI) {
 	let presets: PresetsConfig = {};
 	let activePresetName: string | undefined;
 	let activePreset: Preset | undefined;
+	let originalState: OriginalState | undefined;
 
 	// Register --preset CLI flag
 	pi.registerFlag("preset", {
@@ -112,6 +120,15 @@ export default function presetExtension(pi: ExtensionAPI) {
 	 * Apply a preset configuration.
 	 */
 	async function applyPreset(name: string, preset: Preset, ctx: ExtensionContext): Promise<boolean> {
+		// Snapshot state before the first preset is applied (i.e. only when transitioning from no-preset)
+		if (activePresetName === undefined) {
+			originalState = {
+				model: ctx.model,
+				thinkingLevel: pi.getThinkingLevel(),
+				tools: pi.getActiveTools(),
+			};
+		}
+
 		// Apply model if specified
 		if (preset.provider && preset.model) {
 			const model = ctx.modelRegistry.find(preset.provider, preset.model);
@@ -183,7 +200,10 @@ export default function presetExtension(pi: ExtensionAPI) {
 		const presetNames = Object.keys(presets);
 
 		if (presetNames.length === 0) {
-			ctx.ui.notify("No presets defined. Add presets to ~/.spi/agent/presets.json or .spi/presets.json", "warning");
+			ctx.ui.notify(
+				`No presets defined. Add presets to ${join(getAgentDir(), "presets.json")} or ${join(ctx.cwd, CONFIG_DIR_NAME, "presets.json")}`,
+				"warning",
+			);
 			return;
 		}
 
@@ -248,10 +268,18 @@ export default function presetExtension(pi: ExtensionAPI) {
 		if (!result) return;
 
 		if (result === "(none)") {
-			// Clear preset and restore defaults
+			// Clear preset and restore original state
 			activePresetName = undefined;
 			activePreset = undefined;
-			pi.setActiveTools(["read", "bash", "edit", "write"]);
+			if (originalState) {
+				if (originalState.model) {
+					await pi.setModel(originalState.model);
+				}
+				pi.setThinkingLevel(originalState.thinkingLevel);
+				pi.setActiveTools(originalState.tools);
+			} else {
+				pi.setActiveTools(["read", "bash", "edit", "write"]);
+			}
 			ctx.ui.notify("Preset cleared, defaults restored", "info");
 			updateStatus(ctx);
 			return;
@@ -283,7 +311,10 @@ export default function presetExtension(pi: ExtensionAPI) {
 	async function cyclePreset(ctx: ExtensionContext): Promise<void> {
 		const presetNames = getPresetOrder();
 		if (presetNames.length === 0) {
-			ctx.ui.notify("No presets defined. Add presets to ~/.spi/agent/presets.json or .spi/presets.json", "warning");
+			ctx.ui.notify(
+				`No presets defined. Add presets to ${join(getAgentDir(), "presets.json")} or ${join(ctx.cwd, CONFIG_DIR_NAME, "presets.json")}`,
+				"warning",
+			);
 			return;
 		}
 
@@ -296,7 +327,15 @@ export default function presetExtension(pi: ExtensionAPI) {
 		if (nextName === "(none)") {
 			activePresetName = undefined;
 			activePreset = undefined;
-			pi.setActiveTools(["read", "bash", "edit", "write"]);
+			if (originalState) {
+				if (originalState.model) {
+					await pi.setModel(originalState.model);
+				}
+				pi.setThinkingLevel(originalState.thinkingLevel);
+				pi.setActiveTools(originalState.tools);
+			} else {
+				pi.setActiveTools(["read", "bash", "edit", "write"]);
+			}
 			ctx.ui.notify("Preset cleared, defaults restored", "info");
 			updateStatus(ctx);
 			return;

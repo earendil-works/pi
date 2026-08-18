@@ -1,9 +1,9 @@
 import { homedir } from "os";
 import { join, resolve } from "path";
 import { describe, expect, it } from "vitest";
-import type { ResourceDiagnostic } from "../src/core/diagnostics.js";
-import { formatSkillsForPrompt, loadSkills, loadSkillsFromDir, type Skill } from "../src/core/skills.js";
-import { createSyntheticSourceInfo } from "../src/core/source-info.js";
+import type { ResourceDiagnostic } from "../src/core/diagnostics.ts";
+import { formatSkillsForPrompt, loadSkills, loadSkillsFromDir, type Skill } from "../src/core/skills.ts";
+import { createSyntheticSourceInfo } from "../src/core/source-info.ts";
 
 const fixturesDir = resolve(__dirname, "fixtures/skills");
 const collisionFixturesDir = resolve(__dirname, "fixtures/skills-collision");
@@ -41,7 +41,7 @@ describe("skills", () => {
 			expect(diagnostics).toHaveLength(0);
 		});
 
-		it("should warn when name doesn't match parent directory", () => {
+		it("should allow names that don't match parent directory", () => {
 			const { skills, diagnostics } = loadSkillsFromDir({
 				dir: join(fixturesDir, "name-mismatch"),
 				source: "test",
@@ -51,7 +51,7 @@ describe("skills", () => {
 			expect(skills[0].name).toBe("different-name");
 			expect(
 				diagnostics.some((d: ResourceDiagnostic) => d.message.includes("does not match parent directory")),
-			).toBe(true);
+			).toBe(false);
 		});
 
 		it("should warn when name contains invalid characters", () => {
@@ -354,6 +354,7 @@ describe("skills", () => {
 				agentDir: emptyAgentDir,
 				cwd: emptyCwd,
 				skillPaths: [join(fixturesDir, "valid-skill")],
+				includeDefaults: true,
 			});
 			expect(skills).toHaveLength(1);
 			expect(skills[0].sourceInfo.scope).toBe("temporary");
@@ -365,22 +366,25 @@ describe("skills", () => {
 				agentDir: emptyAgentDir,
 				cwd: emptyCwd,
 				skillPaths: ["/non/existent/path"],
+				includeDefaults: true,
 			});
 			expect(skills).toHaveLength(0);
 			expect(diagnostics.some((d: ResourceDiagnostic) => d.message.includes("does not exist"))).toBe(true);
 		});
 
 		it("should expand ~ in skillPaths", () => {
-			const homeSkillsDir = join(homedir(), ".spi/agent/skills");
+			const homeSkillsDir = join(homedir(), ".pi/agent/skills");
 			const { skills: withTilde } = loadSkills({
 				agentDir: emptyAgentDir,
 				cwd: emptyCwd,
-				skillPaths: ["~/.spi/agent/skills"],
+				skillPaths: ["~/.pi/agent/skills"],
+				includeDefaults: true,
 			});
 			const { skills: withoutTilde } = loadSkills({
 				agentDir: emptyAgentDir,
 				cwd: emptyCwd,
 				skillPaths: [homeSkillsDir],
+				includeDefaults: true,
 			});
 			expect(withTilde.length).toBe(withoutTilde.length);
 		});

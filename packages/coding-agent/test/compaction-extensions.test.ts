@@ -1,3 +1,4 @@
+import { createModelRegistry, getModelRuntime } from "./model-runtime-test-utils.ts";
 /**
  * Tests for compaction extension events (before_compact / compact).
  */
@@ -5,24 +6,23 @@
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Agent } from "@tculpepp/spi-agent-core";
-import { getModel } from "@tculpepp/spi-ai";
+import { Agent } from "@earendil-works/pi-agent-core";
+import { getModel, streamSimple } from "@earendil-works/pi-ai/compat";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { AgentSession } from "../src/core/agent-session.js";
-import { AuthStorage } from "../src/core/auth-storage.js";
+import { AgentSession } from "../src/core/agent-session.ts";
+import { AuthStorage } from "../src/core/auth-storage.ts";
 import {
 	createExtensionRuntime,
 	type Extension,
 	type SessionBeforeCompactEvent,
 	type SessionCompactEvent,
 	type SessionEvent,
-} from "../src/core/extensions/index.js";
-import { ModelRegistry } from "../src/core/model-registry.js";
-import { SessionManager } from "../src/core/session-manager.js";
-import { SettingsManager } from "../src/core/settings-manager.js";
-import { createSyntheticSourceInfo } from "../src/core/source-info.js";
-import { codingTools } from "../src/core/tools/index.js";
-import { createTestResourceLoader } from "./utilities.js";
+} from "../src/core/extensions/index.ts";
+import { SessionManager } from "../src/core/session-manager.ts";
+import { SettingsManager } from "../src/core/settings-manager.ts";
+import { createSyntheticSourceInfo } from "../src/core/source-info.ts";
+import { createCodingTools } from "../src/index.ts";
+import { createTestResourceLoader } from "./utilities.ts";
 
 const API_KEY = process.env.ANTHROPIC_OAUTH_TOKEN || process.env.ANTHROPIC_API_KEY;
 
@@ -31,7 +31,7 @@ describe.skipIf(!API_KEY)("Compaction extensions", () => {
 	let tempDir: string;
 	let capturedEvents: SessionEvent[];
 
-	beforeEach(() => {
+	beforeEach(async () => {
 		tempDir = join(tmpdir(), `pi-compaction-extensions-test-${Date.now()}`);
 		mkdirSync(tempDir, { recursive: true });
 		capturedEvents = [];
@@ -85,21 +85,23 @@ describe.skipIf(!API_KEY)("Compaction extensions", () => {
 		};
 	}
 
-	function createSession(extensions: Extension[]) {
+	async function createSession(extensions: Extension[]) {
 		const model = getModel("anthropic", "claude-sonnet-4-5")!;
 		const agent = new Agent({
 			getApiKey: () => API_KEY,
+			streamFn: streamSimple,
 			initialState: {
 				model,
 				systemPrompt: "You are a helpful assistant. Be concise.",
-				tools: codingTools,
+				tools: createCodingTools(process.cwd()),
 			},
 		});
 
 		const sessionManager = SessionManager.create(tempDir);
 		const settingsManager = SettingsManager.create(tempDir, tempDir);
+		settingsManager.applyOverrides({ compaction: { keepRecentTokens: 1 } });
 		const authStorage = AuthStorage.create(join(tempDir, "auth.json"));
-		const modelRegistry = ModelRegistry.create(authStorage, undefined, false);
+		const modelRegistry = await createModelRegistry(authStorage);
 
 		const runtime = createExtensionRuntime();
 		const resourceLoader = {
@@ -112,7 +114,7 @@ describe.skipIf(!API_KEY)("Compaction extensions", () => {
 			sessionManager,
 			settingsManager,
 			cwd: tempDir,
-			modelRegistry,
+			modelRuntime: getModelRuntime(modelRegistry),
 			resourceLoader,
 		});
 
@@ -121,7 +123,7 @@ describe.skipIf(!API_KEY)("Compaction extensions", () => {
 
 	it("should emit before_compact and compact events", async () => {
 		const extension = createExtension();
-		createSession([extension]);
+		await createSession([extension]);
 
 		await session.prompt("What is 2+2? Reply with just the number.");
 		await session.agent.waitForIdle();
@@ -157,7 +159,7 @@ describe.skipIf(!API_KEY)("Compaction extensions", () => {
 
 	it("should allow extensions to cancel compaction", async () => {
 		const extension = createExtension(() => ({ cancel: true }));
-		createSession([extension]);
+		await createSession([extension]);
 
 		await session.prompt("What is 2+2? Reply with just the number.");
 		await session.agent.waitForIdle();
@@ -183,7 +185,7 @@ describe.skipIf(!API_KEY)("Compaction extensions", () => {
 			}
 			return undefined;
 		});
-		createSession([extension]);
+		await createSession([extension]);
 
 		await session.prompt("What is 2+2? Reply with just the number.");
 		await session.agent.waitForIdle();
@@ -207,7 +209,7 @@ describe.skipIf(!API_KEY)("Compaction extensions", () => {
 
 	it("should include entries in compact event after compaction is saved", async () => {
 		const extension = createExtension();
-		createSession([extension]);
+		await createSession([extension]);
 
 		await session.prompt("What is 2+2? Reply with just the number.");
 		await session.agent.waitForIdle();
@@ -258,7 +260,7 @@ describe.skipIf(!API_KEY)("Compaction extensions", () => {
 			shortcuts: new Map(),
 		};
 
-		createSession([throwingExtension]);
+		await createSession([throwingExtension]);
 
 		await session.prompt("What is 2+2? Reply with just the number.");
 		await session.agent.waitForIdle();
@@ -338,7 +340,7 @@ describe.skipIf(!API_KEY)("Compaction extensions", () => {
 			shortcuts: new Map(),
 		};
 
-		createSession([extension1, extension2]);
+		await createSession([extension1, extension2]);
 
 		await session.prompt("What is 2+2? Reply with just the number.");
 		await session.agent.waitForIdle();
@@ -355,7 +357,7 @@ describe.skipIf(!API_KEY)("Compaction extensions", () => {
 			capturedBeforeEvent = event;
 			return undefined;
 		});
-		createSession([extension]);
+		await createSession([extension]);
 
 		await session.prompt("What is 2+2? Reply with just the number.");
 		await session.agent.waitForIdle();
@@ -377,10 +379,9 @@ describe.skipIf(!API_KEY)("Compaction extensions", () => {
 
 		expect(Array.isArray(event.branchEntries)).toBe(true);
 
-		// sessionManager, modelRegistry, and model are now on ctx, not event
-		// Verify they're accessible via session
+		// sessionManager and model runtime remain available on the session.
 		expect(typeof session.sessionManager.getEntries).toBe("function");
-		expect(typeof session.modelRegistry.getApiKeyAndHeaders).toBe("function");
+		expect(typeof session.modelRuntime.getAuth).toBe("function");
 
 		const entries = session.sessionManager.getEntries();
 		expect(Array.isArray(entries)).toBe(true);
@@ -402,7 +403,7 @@ describe.skipIf(!API_KEY)("Compaction extensions", () => {
 			}
 			return undefined;
 		});
-		createSession([extension]);
+		await createSession([extension]);
 
 		await session.prompt("What is 2+2? Reply with just the number.");
 		await session.agent.waitForIdle();

@@ -10,13 +10,13 @@ export {
 	type ModelCycleResult,
 	type PromptOptions,
 	type SessionStats,
-} from "./agent-session.js";
+} from "./agent-session.ts";
 export {
 	AgentSessionRuntime,
 	type CreateAgentSessionRuntimeFactory,
 	type CreateAgentSessionRuntimeResult,
 	createAgentSessionRuntime,
-} from "./agent-session-runtime.js";
+} from "./agent-session-runtime.ts";
 export {
 	type AgentSessionRuntimeDiagnostic,
 	type AgentSessionServices,
@@ -24,17 +24,21 @@ export {
 	type CreateAgentSessionServicesOptions,
 	createAgentSessionFromServices,
 	createAgentSessionServices,
-} from "./agent-session-services.js";
-export { type BashExecutorOptions, type BashResult, executeBash, executeBashWithOperations } from "./bash-executor.js";
-export type { CompactionResult } from "./compaction/index.js";
-export { createEventBus, type EventBus, type EventBusController } from "./event-bus.js";
+} from "./agent-session-services.ts";
+export { type BashExecutorOptions, type BashResult, executeBashWithOperations } from "./bash-executor.ts";
+export type { CompactionResult } from "./compaction/index.ts";
+export { createEventBus, type EventBus, type EventBusController } from "./event-bus.ts";
+export { areExperimentalFeaturesEnabled } from "./experimental.ts";
 // Extensions system
 export {
 	type AgentEndEvent,
+	type AgentSettledEvent,
 	type AgentStartEvent,
 	type AgentToolResult,
 	type AgentToolUpdateCallback,
 	type BeforeAgentStartEvent,
+	type BeforeAgentStartEventResult,
+	type BuildSystemPromptOptions,
 	type ContextEvent,
 	defineTool,
 	discoverAndLoadExtensions,
@@ -52,6 +56,7 @@ export {
 	ExtensionRunner,
 	type ExtensionShortcut,
 	type ExtensionUIContext,
+	type InlineExtension,
 	type LoadExtensionsResult,
 	type MessageRenderer,
 	type RegisteredCommand,
@@ -70,5 +75,6 @@ export {
 	type ToolResultEvent,
 	type TurnEndEvent,
 	type TurnStartEvent,
-} from "./extensions/index.js";
-export { createSyntheticSourceInfo } from "./source-info.js";
+	type WorkingIndicatorOptions,
+} from "./extensions/index.ts";
+export { createSyntheticSourceInfo } from "./source-info.ts";

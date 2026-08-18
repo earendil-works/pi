@@ -1,20 +1,42 @@
 <p align="center">
-  <a href="https://www.npmjs.com/package/@tculpepp/spi-coding-agent"><img alt="npm" src="https://img.shields.io/npm/v/@tculpepp/spi-coding-agent?style=flat-square" /></a>
-  <a href="https://github.com/tculpepp/secure-pi-mono/actions/workflows/ci.yml"><img alt="Build status" src="https://img.shields.io/github/actions/workflow/status/tculpepp/secure-pi-mono/ci.yml?style=flat-square&branch=main" /></a>
+  <a href="https://pi.dev">
+    <img alt="pi logo" src="https://pi.dev/logo-auto.svg" width="128">
+  </a>
+</p>
+<p align="center">
+  <a href="https://discord.com/invite/3cU7Bz4UPx"><img alt="Discord" src="https://img.shields.io/badge/discord-community-5865F2?style=flat-square&logo=discord&logoColor=white" /></a>
+  <a href="https://www.npmjs.com/package/@earendil-works/pi-coding-agent"><img alt="npm" src="https://img.shields.io/npm/v/@earendil-works/pi-coding-agent?style=flat-square" /></a>
 </p>
 
-> **Fork notice:** This is a security-hardened fork of [badlogic/pi-mono](https://github.com/badlogic/pi-mono) by [Mario Zechner](https://github.com/badlogic), maintained for deployment in closed networks. See the original project for the upstream community release.
+> New issues and PRs from new contributors are auto-closed by default. Maintainers review auto-closed issues daily. See [CONTRIBUTING.md](../../CONTRIBUTING.md).
 
-Spi is a minimal terminal coding harness. Adapt spi to your workflows, not the other way around, without having to fork and modify spi internals. Extend it with TypeScript [Extensions](#extensions), [Skills](#skills), [Prompt Templates](#prompt-templates), and [Themes](#themes). Put your extensions, skills, prompt templates, and themes in [Spi Packages](#pi-packages) and share them with others via npm or git.
+---
 
-Spi ships with powerful defaults but skips features like sub agents and plan mode. Instead, you can ask spi to build what you want or install a third party spi package that matches your workflow.
+Pi is a minimal terminal coding harness. Adapt pi to your workflows, not the other way around, without having to fork and modify pi internals. Extend it with TypeScript [Extensions](#extensions), [Skills](#skills), [Prompt Templates](#prompt-templates), and [Themes](#themes). Put your extensions, skills, prompt templates, and themes in [Pi Packages](#pi-packages) and share them with others via npm or git.
 
-Spi runs in four modes: interactive, print or JSON, RPC for process integration, and an SDK for embedding in your own apps. See [openclaw/openclaw](https://github.com/openclaw/openclaw) for a real-world SDK integration.
+Pi ships with powerful defaults but skips features like sub agents and plan mode. Instead, you can ask pi to build what you want or install a third party pi package that matches your workflow.
+
+Pi runs in four modes: interactive, print or JSON, RPC for process integration, and an SDK for embedding in your own apps.
+
+## Share your OSS coding agent sessions
+
+If you use pi for open source work, please share your coding agent sessions.
+
+Public OSS session data helps improve models, prompts, tools, and evaluations using real development workflows.
+
+For the full explanation, see [this post on X](https://x.com/badlogicgames/status/2037811643774652911).
+
+To publish sessions, use [`badlogic/pi-share-hf`](https://github.com/badlogic/pi-share-hf). Read its README.md for setup instructions. All you need is a Hugging Face account, the Hugging Face CLI, and `pi-share-hf`.
+
+You can also watch [this video](https://x.com/badlogicgames/status/2041151967695634619), where I show how I publish my `pi-mono` sessions.
+
+I regularly publish my own `pi-mono` work sessions here:
+
+- [badlogicgames/pi-mono on Hugging Face](https://huggingface.co/datasets/badlogicgames/pi-mono)
 
 ## Table of Contents
 
 - [Quick Start](#quick-start)
-- [Closed-Network Mode](#closed-network-mode)
 - [Providers & Models](#providers--models)
 - [Interactive Mode](#interactive-mode)
   - [Editor](#editor)
@@ -41,13 +63,29 @@ Spi runs in four modes: interactive, print or JSON, RPC for process integration,
 ## Quick Start
 
 ```bash
-npm install -g @tculpepp/spi-coding-agent
+npm install -g --ignore-scripts @earendil-works/pi-coding-agent
 ```
 
-This build runs in **closed-network mode** by default. Configure a self-hosted model endpoint before first launch (see [Closed-Network Mode](#closed-network-mode)):
+`--ignore-scripts` disables dependency lifecycle scripts during install. Pi does not require install scripts for normal npm installs.
+
+Installer alternative:
 
 ```bash
-spi
+curl -fsSL https://pi.dev/install.sh | sh
+```
+
+Authenticate with an API key:
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...
+pi
+```
+
+Or use your existing subscription:
+
+```bash
+pi
+/login  # Then select provider
 ```
 
 Then just talk to pi. By default, pi gives the model four tools: `read`, `write`, `edit`, and `bash`. The model uses these to fulfill your requests. Add capabilities via [skills](#skills), [prompt templates](#prompt-templates), [extensions](#extensions), or [pi packages](#pi-packages).
@@ -56,148 +94,53 @@ Then just talk to pi. By default, pi gives the model four tools: `read`, `write`
 
 ---
 
-## Closed-Network Mode
-
-This fork is configured for deployment in closed networks that cannot reach commercial LLM cloud endpoints. Two behavioral changes are always active:
-
-1. **secureMode enforcement** — enabled by default. Only providers that have an explicit `baseUrl` configured in `models.json` are visible in the model list. Built-in providers (Anthropic, OpenAI, Google, etc.) are hidden unless redirected to internal infrastructure. The protocol implementations (OpenAI-compat, Anthropic-compat, Google-compat) remain intact so self-hosted models can use them.
-
-2. **Outbound calls disabled** — version checks and package update checks are permanently suppressed. The `/share` command is also unavailable.
-
-### Configuring a Self-Hosted Model
-
-Create `~/.spi/agent/models.json` with your internal inference endpoint. Spi reuses the same wire protocol as the commercial providers, so any OpenAI-compatible server works with `api: "openai-completions"`.
-
-**vLLM / llama.cpp / LM Studio** (standard OpenAI-compat, `/v1` path):
-
-```json
-{
-  "providers": {
-    "internal-llm": {
-      "baseUrl": "http://inference.internal:8000/v1",
-      "api": "openai-completions",
-      "apiKey": "INTERNAL_API_KEY",
-      "compat": {
-        "supportsDeveloperRole": false,
-        "supportsReasoningEffort": false
-      },
-      "models": [
-        {
-          "id": "gemma-3-27b-it",
-          "name": "Gemma 3 27B (Internal)",
-          "input": ["text", "image"],
-          "contextWindow": 131072,
-          "maxTokens": 16384
-        }
-      ]
-    }
-  }
-}
-```
-
-**Open WebUI** (uses `/api/chat/completions`, not `/api/v1/chat/completions` — set `baseUrl` to `.../api`):
-
-```json
-{
-  "providers": {
-    "open-webui": {
-      "baseUrl": "http://openwebui.internal:3000/api",
-      "api": "openai-completions",
-      "apiKey": "OPENWEBUI_API_KEY",
-      "compat": {
-        "supportsDeveloperRole": false,
-        "supportsReasoningEffort": false,
-        "supportsUsageInStreaming": false,
-        "supportsStore": false,
-        "supportsStrictMode": false,
-        "maxTokensField": "max_tokens"
-      },
-      "models": [
-        {
-          "id": "gemma3:27b",
-          "name": "Gemma 3 27B",
-          "input": ["text", "image"],
-          "contextWindow": 131072,
-          "maxTokens": 16384
-        },
-        {
-          "id": "mistral:7b",
-          "name": "Mistral 7B",
-          "input": ["text"],
-          "contextWindow": 32768,
-          "maxTokens": 8192
-        }
-      ]
-    }
-  }
-}
-```
-
-Generate an Open WebUI API key from Settings → Account. Model IDs use Ollama's `name:tag` format — check your Open WebUI model list for the exact strings.
-
-Then start spi and the model is immediately available:
-
-```bash
-spi --model gemma3:27b
-```
-
-#### Protocol selection
-
-| Your server speaks | Use `api` |
-|--------------------|-----------|
-| OpenAI Chat Completions | `openai-completions` |
-| OpenAI Responses | `openai-responses` |
-| Anthropic Messages | `anthropic-messages` |
-| Google Generative AI | `google-generative-ai` |
-
-#### Redirecting a built-in provider through an internal proxy
-
-If your infrastructure proxies traffic for a specific commercial API (e.g., an Anthropic-compatible gateway), point the existing provider at it. The model list is preserved; only the endpoint changes:
-
-```json
-{
-  "providers": {
-    "anthropic": {
-      "baseUrl": "https://llm-gateway.internal/anthropic",
-      "apiKey": "INTERNAL_GATEWAY_KEY"
-    }
-  }
-}
-```
-
-In `secureMode` this provider entry (with its explicit `baseUrl`) makes all built-in Anthropic models available again, routed through your gateway.
-
-#### API key resolution
-
-The `apiKey` field supports three formats:
-
-- **Environment variable name** — `"INTERNAL_API_KEY"` reads `$INTERNAL_API_KEY` at runtime
-- **Shell command** — `"!command"` runs the command and uses stdout (e.g., `"!vault kv get -field=token secret/llm"`)
-- **Literal value** — the string is used as-is (not recommended for secrets)
-
-See [docs/models.md](docs/models.md) for the full configuration reference.
-
----
-
 ## Providers & Models
 
-Spi ships with protocol implementations for 10 LLM APIs. In this closed-network build, **all built-in commercial cloud endpoints are hidden when `secureMode: true`**. Providers only appear in the model list after the user configures an explicit `baseUrl` in `models.json`.
+For each built-in provider, pi maintains a list of tool-capable models. Configured provider catalogs refresh automatically; run `pi update --models` to force an immediate refresh. Authenticate via subscription (`/login`) or API key, then select any model from that provider via `/model` (or Ctrl+L).
 
-The protocol implementations themselves remain intact, so any self-hosted model that speaks a supported wire format works without code changes.
+**Subscriptions:**
+- Anthropic Claude Pro/Max
+- OpenAI ChatGPT Plus/Pro (Codex)
+- GitHub Copilot
 
-**Supported protocols:**
-- `openai-completions` — OpenAI Chat Completions and compatibles (vLLM, Ollama, LM Studio, llama.cpp, SGLang)
-- `openai-responses` — OpenAI Responses API
-- `anthropic-messages` — Anthropic Messages API and compatibles
-- `google-generative-ai` — Google Generative AI REST API
-- `google-vertex` — Google Vertex AI
-- `azure-openai-responses` — Azure OpenAI Responses
-- `bedrock-converse-stream` — Amazon Bedrock Converse
-- `mistral-conversations` — Mistral Conversations API
+**API keys:**
+- Anthropic
+- Ant Ling
+- OpenAI
+- Azure OpenAI
+- DeepSeek
+- NVIDIA NIM
+- Google Gemini
+- Google Vertex
+- Amazon Bedrock
+- Mistral
+- Groq
+- Cerebras
+- Cloudflare AI Gateway
+- Cloudflare Workers AI
+- xAI
+- OpenRouter
+- Vercel AI Gateway
+- ZAI Coding Plan (Global)
+- ZAI Coding Plan (China)
+- OpenCode Zen
+- OpenCode Go
+- Hugging Face
+- Fireworks
+- Together AI
+- Baseten
+- Kimi For Coding
+- MiniMax
+- Xiaomi MiMo
+- Xiaomi MiMo Token Plan (China)
+- Xiaomi MiMo Token Plan (Amsterdam)
+- Xiaomi MiMo Token Plan (Singapore)
 
-**Add self-hosted providers:** Configure via `~/.spi/agent/models.json`. See [Closed-Network Mode](#closed-network-mode) for a quick-start and [docs/models.md](docs/models.md) for the full reference.
+Pi also supports the llama.cpp router server. Configure it with `/login llama.cpp`, manage downloads and loaded models with `/llama`, then select a loaded model with `/model`. See [docs/llama-cpp.md](docs/llama-cpp.md) for setup and usage.
 
-**Custom APIs or OAuth:** Use extensions. See [docs/custom-provider.md](docs/custom-provider.md).
+See [docs/providers.md](docs/providers.md) for other provider setup instructions.
+
+**Custom providers & models:** Add providers via `~/.pi/agent/models.json` if they speak a supported API (OpenAI, Anthropic, Google). For custom APIs or OAuth, use extensions. See [docs/models.md](docs/models.md) and [docs/custom-provider.md](docs/custom-provider.md).
 
 ---
 
@@ -210,7 +153,7 @@ The interface from top to bottom:
 - **Startup header** - Shows shortcuts (`/hotkeys` for all), loaded AGENTS.md files, prompt templates, skills, and extensions
 - **Messages** - Your messages, assistant responses, tool calls and results, notifications, errors, and extension UI
 - **Editor** - Where you type; border color indicates thinking level
-- **Footer** - Working directory, session name, total token/cache usage, cost, context usage, current model
+- **Footer** - Working directory, session name, total token/cache usage (`↑` input, `↓` output, `R` cache read, `W` cache write, `CH` latest cache hit rate), cost, context usage, current model. Totals include assistant responses, usage reported by tools, and summary generation.
 
 The editor can be temporarily replaced by other UI, like built-in `/settings` or custom UI from extensions (e.g., a Q&A tool that lets the user answer model questions in a structured format). [Extensions](#extensions) can also replace the editor, add widgets above/below it, a status line, custom footer, or overlays.
 
@@ -221,7 +164,8 @@ The editor can be temporarily replaced by other UI, like built-in `/settings` or
 | File reference | Type `@` to fuzzy-search project files |
 | Path completion | Tab to complete paths |
 | Multi-line | Shift+Enter (or Ctrl+Enter on Windows Terminal) |
-| Images | Ctrl+V to paste (Alt+V on Windows), or drag onto terminal |
+| External editor | Ctrl+G opens `externalEditor`, `$VISUAL`, `$EDITOR`, Notepad on Windows, or `nano` elsewhere |
+| Clipboard | Ctrl+V to paste an image or text (Alt+V on Windows), or drag images onto terminal |
 | Bash commands | `!command` runs and sends output to LLM, `!!command` runs without sending |
 
 Standard editing keybindings for delete word, undo, etc. See [docs/keybindings.md](docs/keybindings.md).
@@ -232,28 +176,32 @@ Type `/` in the editor to trigger commands. [Extensions](#extensions) can regist
 
 | Command | Description |
 |---------|-------------|
-| `/login`, `/logout` | OAuth authentication |
+| `/login`, `/logout` | Manage provider credentials |
+| [`/llama`](docs/llama-cpp.md) | Download, load, and unload llama.cpp router models |
 | `/model` | Switch models |
 | `/scoped-models` | Enable/disable models for Ctrl+P cycling |
 | `/settings` | Thinking level, theme, message delivery, transport |
 | `/resume` | Pick from previous sessions |
 | `/new` | Start a new session |
 | `/name <name>` | Set session display name |
-| `/session` | Show session info (path, tokens, cost) |
+| `/session` | Show session info (file, ID, messages, tokens, cost) |
 | `/tree` | Jump to any point in the session and continue from there |
-| `/fork` | Create a new session from the current branch |
+| `/trust` | Save project trust decision for future sessions (restart required) |
+| `/fork` | Create a new session from a previous user message |
+| `/clone` | Duplicate the current active branch into a new session |
 | `/compact [prompt]` | Manually compact context, optional custom instructions |
 | `/copy` | Copy last assistant message to clipboard |
-| `/export [file]` | Export session to HTML file |
-| `/share` | Upload as private GitHub gist with shareable HTML link (unavailable in closed-network mode) |
-| `/reload` | Reload keybindings, extensions, skills, prompts, and context files (themes hot-reload automatically) |
+| `/export [file]` | Export session to HTML or JSONL file |
+| `/import <file>` | Import and resume a session from a JSONL file |
+| `/share` | Upload as private GitHub gist with shareable HTML link |
+| `/reload` | Reload keybindings, extensions, skills, prompts, themes, and context files |
 | `/hotkeys` | Show all keyboard shortcuts |
 | `/changelog` | Display version history |
-| `/quit` | Quit spi |
+| `/quit` | Quit pi |
 
 ### Keyboard Shortcuts
 
-See `/hotkeys` for the full list. Customize via `~/.spi/agent/keybindings.json`. See [docs/keybindings.md](docs/keybindings.md).
+See `/hotkeys` for the full list. Customize via `~/.pi/agent/keybindings.json`. See [docs/keybindings.md](docs/keybindings.md).
 
 **Commonly used:**
 
@@ -268,6 +216,7 @@ See `/hotkeys` for the full list. Customize via `~/.spi/agent/keybindings.json`.
 | Shift+Tab | Cycle thinking level |
 | Ctrl+O | Collapse/expand tool output |
 | Ctrl+T | Collapse/expand thinking blocks |
+| Ctrl+X | Copy the last assistant message |
 
 ### Message Queue
 
@@ -278,7 +227,7 @@ Submit messages while the agent is working:
 - **Escape** aborts and restores queued messages to editor
 - **Alt+Up** retrieves queued messages back to editor
 
-On Windows Terminal, `Alt+Enter` is fullscreen by default. Remap it in [docs/terminal-setup.md](docs/terminal-setup.md) so spi can receive the follow-up shortcut.
+On Windows Terminal, `Alt+Enter` is fullscreen by default. Remap it in [docs/terminal-setup.md](docs/terminal-setup.md) so pi can receive the follow-up shortcut.
 
 Configure delivery in [settings](docs/settings.md): `steeringMode` and `followUpMode` can be `"one-at-a-time"` (default, waits for response) or `"all"` (delivers all queued at once). `transport` selects provider transport preference (`"sse"`, `"websocket"`, or `"auto"`) for providers that support multiple transports.
 
@@ -286,19 +235,22 @@ Configure delivery in [settings](docs/settings.md): `steeringMode` and `followUp
 
 ## Sessions
 
-Sessions are stored as JSONL files with a tree structure. Each entry has an `id` and `parentId`, enabling in-place branching without creating new files. See [docs/session.md](docs/session.md) for file format.
+Sessions are stored as JSONL files with a tree structure. Each entry has an `id` and `parentId`, enabling in-place branching without creating new files. See [docs/session-format.md](docs/session-format.md) for file format.
 
 ### Management
 
-Sessions auto-save to `~/.spi/agent/sessions/` organized by working directory.
+Sessions auto-save to `~/.pi/agent/sessions/` organized by working directory.
 
 ```bash
-spi -c                  # Continue most recent session
-spi -r                  # Browse and select from past sessions
-spi --no-session        # Ephemeral mode (don't save)
-spi --session <path>    # Use specific session file or ID
-spi --fork <path>       # Fork specific session file or ID into a new session
+pi -c                  # Continue most recent session
+pi -r                  # Browse and select from past sessions
+pi --no-session        # Ephemeral mode (don't save)
+pi --name "my task"    # Set session display name at startup
+pi --session <path|id> # Use specific session file or ID
+pi --fork <path|id>    # Fork specific session file or ID into a new session
 ```
+
+Use `/session` in interactive mode to see the current session ID before reusing it with `--session <id>` or `--fork <id>`.
 
 ### Branching
 
@@ -308,9 +260,12 @@ spi --fork <path>       # Fork specific session file or ID into a new session
 
 - Search by typing, fold/unfold and jump between branches with Ctrl+←/Ctrl+→ or Alt+←/Alt+→, page with ←/→
 - Filter modes (Ctrl+O): default → no-tools → user-only → labeled-only → all
+- Press Ctrl+X to copy the selected message
 - Press Shift+L to label entries as bookmarks and Shift+T to toggle label timestamps
 
-**`/fork`** - Create a new session file from the current branch. Opens a selector, copies history up to the selected point, and places that message in the editor for modification.
+**`/fork`** - Create a new session file from a previous user message on the active branch. Opens a selector, copies the active path up to that point, and places the selected prompt in the editor for modification.
+
+**`/clone`** - Duplicate the current active branch into a new session file at the current position. The new session keeps the full active-path history and opens with an empty editor.
 
 **`--fork <path|id>`** - Fork an existing session file or partial session UUID directly from the CLI. This copies the full source session into a new session file in the current project.
 
@@ -332,25 +287,52 @@ Use `/settings` to modify common options, or edit JSON files directly:
 
 | Location | Scope |
 |----------|-------|
-| `~/.spi/agent/settings.json` | Global (all projects) |
-| `.spi/settings.json` | Project (overrides global) |
+| `~/.pi/agent/settings.json` | Global (all projects) |
+| `.pi/settings.json` | Project (overrides global) |
 
 See [docs/settings.md](docs/settings.md) for all options.
+
+### Project Trust
+
+On interactive startup, pi asks before trusting a project folder that contains project-local settings, resources, or project `.agents/skills` and has no saved decision for the folder or a parent folder in `~/.pi/agent/trust.json`. Trusting a project allows pi to load `.pi/settings.json` and `.pi` resources, install missing project packages, and execute project extensions.
+
+Before the trust decision, pi loads only context files, user/global extensions, and CLI `-e` extensions so they can handle the `project_trust` event. Project-local extensions, project package-managed extensions, and project settings are loaded only after the project is trusted. This split also applies when switching to a session from a different cwd whose trust has not been resolved in the current process.
+
+Non-interactive modes (`-p`, `--mode json`, and `--mode rpc`) do not show a trust prompt. Without an applicable saved trust decision, they use `defaultProjectTrust` from global settings: `ask` (default) and `never` ignore those project resources, while `always` trusts them. Pass `--approve`/`-a` or `--no-approve`/`-na` to override project trust for one run.
+
+If no extension or saved decision applies, `defaultProjectTrust` controls the fallback behavior. Set it to `"ask"`, `"always"`, or `"never"` in `~/.pi/agent/settings.json`, or change it with `/settings`.
+
+`pi config` and package commands use the same project trust flow, except `pi update` never prompts. Pass `--approve` to trust project-local settings for one command or `--no-approve` to ignore them.
+
+Use `/trust` in interactive mode to save a project trust decision for future sessions, including trust for the immediate parent folder. It writes `~/.pi/agent/trust.json` only; the current session is not reloaded, so restart pi for changes to take effect.
+
+### Telemetry and update checks
+
+Pi has two separate startup features:
+
+- **Update check:** fetches `https://pi.dev/api/latest-version` to check whether a newer Pi version exists. Disable it with `PI_SKIP_VERSION_CHECK=1`. Disabling update checks only turns off this check.
+- **Install/update telemetry:** after first install or a changelog-detected update, sends an anonymous version ping to `https://pi.dev/api/report-install`. This setting also controls optional provider attribution headers for OpenRouter, Cloudflare, and direct NVIDIA NIM requests. Opt out by setting `enableInstallTelemetry` to `false` in `settings.json`, or by setting `PI_TELEMETRY=0`. This does not disable update checks; Pi may still contact `pi.dev` for the latest version unless update checks are disabled or offline mode is enabled.
+
+Use `--offline` or `PI_OFFLINE=1` to disable all startup network operations described here, including update checks, package update checks, and install/update telemetry.
 
 ---
 
 ## Context Files
 
-Spi loads `AGENTS.md` (or `CLAUDE.md`) at startup from:
-- `~/.spi/agent/AGENTS.md` (global)
+Pi loads `AGENTS.md` (or `CLAUDE.md`) at startup from:
+- `~/.pi/agent/AGENTS.md` (global)
 - Parent directories (walking up from cwd)
 - Current directory
 
-Use for project instructions, conventions, common commands. All matching files are concatenated.
+If a directory contains `AGENTS.override.md`, Pi loads it instead of `AGENTS.md` or `CLAUDE.md` from that directory. Context files from other directories are still concatenated.
+
+Use for project instructions (`AGENTS.md`/`CLAUDE.md`), conventions, common commands. All matching files are concatenated.
+
+Disable context file loading with `--no-context-files` (or `-nc`).
 
 ### System Prompt
 
-Replace the default system prompt with `.spi/SYSTEM.md` (project) or `~/.spi/agent/SYSTEM.md` (global). Append without replacing via `APPEND_SYSTEM.md`.
+Replace the default system prompt with `.pi/SYSTEM.md` (project) or `~/.pi/agent/SYSTEM.md` (global). Append without replacing via `APPEND_SYSTEM.md`.
 
 ---
 
@@ -361,19 +343,19 @@ Replace the default system prompt with `.spi/SYSTEM.md` (project) or `~/.spi/age
 Reusable prompts as Markdown files. Type `/name` to expand.
 
 ```markdown
-<!-- ~/.spi/agent/prompts/review.md -->
+<!-- ~/.pi/agent/prompts/review.md -->
 Review this code for bugs, security issues, and performance problems.
 Focus on: {{focus}}
 ```
 
-Place in `~/.spi/agent/prompts/`, `.spi/prompts/`, or a [pi package](#pi-packages) to share with others. See [docs/prompt-templates.md](docs/prompt-templates.md).
+Place in `~/.pi/agent/prompts/`, `.pi/prompts/`, or a [pi package](#pi-packages) to share with others. See [docs/prompt-templates.md](docs/prompt-templates.md).
 
 ### Skills
 
 On-demand capability packages following the [Agent Skills standard](https://agentskills.io). Invoke via `/skill:name` or let the agent load them automatically.
 
 ```markdown
-<!-- ~/.spi/agent/skills/my-skill/SKILL.md -->
+<!-- ~/.pi/agent/skills/my-skill/SKILL.md -->
 # My Skill
 Use this skill when the user asks about X.
 
@@ -382,13 +364,13 @@ Use this skill when the user asks about X.
 2. Then that
 ```
 
-Place in `~/.spi/agent/skills/`, `~/.agents/skills/`, `.spi/skills/`, or `.agents/skills/` (from `cwd` up through parent directories) or a [pi package](#pi-packages) to share with others. See [docs/skills.md](docs/skills.md).
+Place in `~/.pi/agent/skills/`, `~/.agents/skills/`, `.pi/skills/`, or `.agents/skills/` (from `cwd` up through parent directories) or a [pi package](#pi-packages) to share with others. See [docs/skills.md](docs/skills.md).
 
 ### Extensions
 
 <p align="center"><img src="docs/images/doom-extension.png" alt="Doom Extension" width="600"></p>
 
-TypeScript modules that extend spi with custom tools, commands, keyboard shortcuts, event handlers, and UI components.
+TypeScript modules that extend pi with custom tools, commands, keyboard shortcuts, event handlers, and UI components.
 
 ```typescript
 export default function (pi: ExtensionAPI) {
@@ -397,6 +379,8 @@ export default function (pi: ExtensionAPI) {
   pi.on("tool_call", async (event, ctx) => { ... });
 }
 ```
+
+The default export can also be `async`. pi waits for async extension factories before startup continues, which is useful for one-time initialization such as fetching remote model lists before calling `pi.registerProvider()`.
 
 **What's possible:**
 - Custom tools (or replace built-in tools entirely)
@@ -408,17 +392,17 @@ export default function (pi: ExtensionAPI) {
 - Git checkpointing and auto-commit
 - SSH and sandbox execution
 - MCP server integration
-- Make spi look like Claude Code
+- Make pi look like Claude Code
 - Games while waiting (yes, Doom runs)
 - ...anything you can dream up
 
-Place in `~/.spi/agent/extensions/`, `.spi/extensions/`, or a [pi package](#pi-packages) to share with others. See [docs/extensions.md](docs/extensions.md) and [examples/extensions/](examples/extensions/).
+Place in `~/.pi/agent/extensions/`, `.pi/extensions/`, or a [pi package](#pi-packages) to share with others. See [docs/extensions.md](docs/extensions.md) and [examples/extensions/](examples/extensions/).
 
 ### Themes
 
-Built-in: `dark`, `light`. Themes hot-reload: modify the active theme file and spi immediately applies changes.
+Built-in: `dark`, `light`. Themes hot-reload: modify the active theme file and pi immediately applies changes.
 
-Place in `~/.spi/agent/themes/`, `.spi/themes/`, or a [pi package](#pi-packages) to share with others. See [docs/themes.md](docs/themes.md).
+Place in `~/.pi/agent/themes/`, `.pi/themes/`, or a [pi package](#pi-packages) to share with others. See [docs/themes.md](docs/themes.md).
 
 ### Pi Packages
 
@@ -427,32 +411,38 @@ Bundle and share extensions, skills, prompts, and themes via npm or git. Find pa
 > **Security:** Pi packages run with full system access. Extensions execute arbitrary code, and skills can instruct the model to perform any action including running executables. Review source code before installing third-party packages.
 
 ```bash
-spi install npm:@foo/pi-tools
-spi install npm:@foo/pi-tools@1.2.3      # pinned version
-spi install git:github.com/user/repo
-spi install git:github.com/user/repo@v1  # tag or commit
-spi install git:git@github.com:user/repo
-spi install git:git@github.com:user/repo@v1  # tag or commit
-spi install https://github.com/user/repo
-spi install https://github.com/user/repo@v1      # tag or commit
-spi install ssh://git@github.com/user/repo
-spi install ssh://git@github.com/user/repo@v1    # tag or commit
-spi remove npm:@foo/pi-tools
-spi uninstall npm:@foo/pi-tools          # alias for remove
-spi list
-spi update                               # skips pinned packages
-spi config                               # enable/disable extensions, skills, prompts, themes
+pi install npm:@foo/pi-tools
+pi install npm:@foo/pi-tools@1.2.3      # pinned version
+pi install git:github.com/user/repo
+pi install git:github.com/user/repo@v1  # tag or commit
+pi install git:git@github.com:user/repo
+pi install git:git@github.com:user/repo@v1  # tag or commit
+pi install https://github.com/user/repo
+pi install https://github.com/user/repo@v1      # tag or commit
+pi install ssh://git@github.com/user/repo
+pi install ssh://git@github.com/user/repo@v1    # tag or commit
+pi remove npm:@foo/pi-tools
+pi uninstall npm:@foo/pi-tools          # alias for remove
+pi list
+pi update                               # update pi only
+pi update --all                         # update pi and packages
+pi update --extensions                  # update packages only
+pi update --models                      # refresh model catalogs only
+pi update --self                        # update pi only
+pi update --self --force                # reinstall pi even if current
+pi update npm:@foo/pi-tools             # update one package
+pi config                               # enable/disable extensions, skills, prompts, themes
 ```
 
-Packages install to `~/.spi/agent/git/` (git) or global npm. Use `-l` for project-local installs (`.spi/git/`, `.spi/npm/`). If you use a Node version manager and want package installs to reuse a stable npm context, set `npmCommand` in `settings.json`, for example `["mise", "exec", "node@20", "--", "npm"]`.
+Packages install to `~/.pi/agent/git/` (git) or `~/.pi/agent/npm/` (npm). Use `-l` for project-local installs (`.pi/git/`, `.pi/npm/`). Git `@ref` values are pinned tags or commits; pinned packages are skipped by `pi update --extensions` and `pi update --all`, so use `pi install git:host/user/repo@new-ref` to move an existing package to a new ref. Git packages install dependencies with `npm install --omit=dev` by default, so runtime deps must be listed under `dependencies`; when `npmCommand` is configured, git packages use plain `install` for compatibility with wrappers. If you use a Node version manager and want package installs to reuse a stable npm context, set `npmCommand` in `settings.json`, for example `["mise", "exec", "node@20", "--", "npm"]`.
 
-Create a package by adding a `spi` key to `package.json`:
+Create a package by adding a `pi` key to `package.json`:
 
 ```json
 {
-  "name": "my-spi-package",
-  "keywords": ["spi-package"],
-  "spi": {
+  "name": "my-pi-package",
+  "keywords": ["pi-package"],
+  "pi": {
     "extensions": ["./extensions"],
     "skills": ["./skills"],
     "prompts": ["./prompts"],
@@ -461,7 +451,7 @@ Create a package by adding a `spi` key to `package.json`:
 }
 ```
 
-Without a `spi` manifest, spi auto-discovers from conventional directories (`extensions/`, `skills/`, `prompts/`, `themes/`).
+Without a `pi` manifest, pi auto-discovers from conventional directories (`extensions/`, `skills/`, `prompts/`, `themes/`).
 
 See [docs/packages.md](docs/packages.md).
 
@@ -472,14 +462,12 @@ See [docs/packages.md](docs/packages.md).
 ### SDK
 
 ```typescript
-import { AuthStorage, createAgentSession, ModelRegistry, SessionManager } from "@tculpepp/spi-coding-agent";
+import { createAgentSession, ModelRuntime, SessionManager } from "@earendil-works/pi-coding-agent";
 
-const authStorage = AuthStorage.create();
-const modelRegistry = ModelRegistry.create(authStorage);
+const modelRuntime = await ModelRuntime.create();
 const { session } = await createAgentSession({
   sessionManager: SessionManager.inMemory(),
-  authStorage,
-  modelRegistry,
+  modelRuntime,
 });
 
 await session.prompt("What files are in the current directory?");
@@ -494,7 +482,7 @@ See [docs/sdk.md](docs/sdk.md) and [examples/sdk/](examples/sdk/).
 For non-Node.js integrations, use RPC mode over stdin/stdout:
 
 ```bash
-spi --mode rpc
+pi --mode rpc
 ```
 
 RPC mode uses strict LF-delimited JSONL framing. Clients must split records on `\n` only. Do not use generic line readers like Node `readline`, which also split on Unicode separators inside JSON payloads.
@@ -526,19 +514,27 @@ Read the [blog post](https://mariozechner.at/posts/2025-11-30-pi-coding-agent/) 
 ## CLI Reference
 
 ```bash
-spi [options] [@files...] [messages...]
+pi [options] [@files...] [messages...]
 ```
 
 ### Package Commands
 
 ```bash
-spi install <source> [-l]     # Install package, -l for project-local
-spi remove <source> [-l]      # Remove package
-spi uninstall <source> [-l]   # Alias for remove
-spi update [source]           # Update packages (skips pinned)
-spi list                      # List installed packages
-spi config                    # Enable/disable package resources
+pi install <source> [-l]     # Install package, -l for project-local
+pi remove <source> [-l]      # Remove package
+pi uninstall <source> [-l]   # Alias for remove
+pi update [source|self|pi]   # Update pi only, or one package source
+pi update --all              # Update pi and packages
+pi update --extensions       # Update packages only
+pi update --models           # Refresh model catalogs only
+pi update --self             # Update pi only
+pi update --self --force     # Reinstall pi even if current
+pi update --extension <src>  # Update one package
+pi list                      # List installed packages
+pi config                    # Enable/disable package resources
 ```
+
+`pi config` and project package commands accept `--approve`/`--no-approve` to trust or ignore project-local settings for one command. `pi update` never prompts for project trust.
 
 ### Modes
 
@@ -550,10 +546,10 @@ spi config                    # Enable/disable package resources
 | `--mode rpc` | RPC mode for process integration (see [docs/rpc.md](docs/rpc.md)) |
 | `--export <in> [out]` | Export session to HTML |
 
-In print mode, spi also reads piped stdin and merges it into the initial prompt:
+In print mode, pi also reads piped stdin and merges it into the initial prompt:
 
 ```bash
-cat README.md | spi -p "Summarize this text"
+cat README.md | pi -p "Summarize this text"
 ```
 
 ### Model Options
@@ -563,7 +559,7 @@ cat README.md | spi -p "Summarize this text"
 | `--provider <name>` | Provider (anthropic, openai, google, etc.) |
 | `--model <pattern>` | Model pattern or ID (supports `provider/id` and optional `:<thinking>`) |
 | `--api-key <key>` | API key (overrides env vars) |
-| `--thinking <level>` | `off`, `minimal`, `low`, `medium`, `high`, `xhigh` |
+| `--thinking <level>` | `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max` |
 | `--models <patterns>` | Comma-separated patterns for Ctrl+P cycling |
 | `--list-models [search]` | List available models |
 
@@ -573,17 +569,20 @@ cat README.md | spi -p "Summarize this text"
 |--------|-------------|
 | `-c`, `--continue` | Continue most recent session |
 | `-r`, `--resume` | Browse and select session |
-| `--session <path>` | Use specific session file or partial UUID |
-| `--fork <path>` | Fork specific session file or partial UUID into a new session |
+| `--session <path\|id>` | Use specific session file or partial UUID |
+| `--fork <path\|id>` | Fork specific session file or partial UUID into a new session |
 | `--session-dir <dir>` | Custom session storage directory |
 | `--no-session` | Ephemeral mode (don't save) |
+| `--name <name>`, `-n <name>` | Set session display name at startup |
 
 ### Tool Options
 
 | Option | Description |
 |--------|-------------|
-| `--tools <list>` | Enable specific built-in tools (default: `read,bash,edit,write`) |
-| `--no-tools` | Disable all built-in tools (extension tools still work) |
+| `--tools <list>`, `-t <list>` | Allowlist specific tool names across built-in, extension, and custom tools |
+| `--exclude-tools <list>`, `-xt <list>` | Disable specific tool names across built-in, extension, and custom tools |
+| `--no-builtin-tools`, `-nbt` | Disable built-in tools by default but keep extension/custom tools enabled |
+| `--no-tools`, `-nt` | Disable all tools by default |
 
 Available built-in tools: `read`, `bash`, `edit`, `write`, `grep`, `find`, `ls`
 
@@ -599,6 +598,7 @@ Available built-in tools: `read`, `bash`, `edit`, `write`, `grep`, `find`, `ls`
 | `--no-prompt-templates` | Disable prompt template discovery |
 | `--theme <path>` | Load theme (repeatable) |
 | `--no-themes` | Disable theme discovery |
+| `--no-context-files`, `-nc` | Disable AGENTS.md and CLAUDE.md context file discovery |
 
 Combine `--no-*` with explicit flags to load exactly what you need, ignoring settings.json (e.g., `--no-extensions -e ./my-ext.ts`).
 
@@ -608,7 +608,11 @@ Combine `--no-*` with explicit flags to load exactly what you need, ignoring set
 |--------|-------------|
 | `--system-prompt <text>` | Replace default prompt (context files and skills still appended) |
 | `--append-system-prompt <text>` | Append to system prompt |
+| `--tui-mode <mode>` | TUI mode: `regular` (default) or experimental `fullscreen` |
+| `--use-theme <name[/name]>` | Set the initial interactive theme for this run without changing settings |
 | `--verbose` | Force verbose startup |
+| `-a`, `--approve` | Trust project-local files for this run |
+| `-na`, `--no-approve` | Ignore project-local files for this run |
 | `-h`, `--help` | Show help |
 | `-v`, `--version` | Show version |
 
@@ -617,51 +621,74 @@ Combine `--no-*` with explicit flags to load exactly what you need, ignoring set
 Prefix files with `@` to include in the message:
 
 ```bash
-spi @prompt.md "Answer this"
-spi -p @screenshot.png "What's in this image?"
-spi @code.ts @test.ts "Review these files"
+pi @prompt.md "Answer this"
+pi -p @screenshot.png "What's in this image?"
+pi @code.ts @test.ts "Review these files"
 ```
 
 ### Examples
 
 ```bash
 # Interactive with initial prompt
-spi "List all .ts files in src/"
+pi "List all .ts files in src/"
 
 # Non-interactive
-spi -p "Summarize this codebase"
+pi -p "Summarize this codebase"
 
 # Non-interactive with piped stdin
-cat README.md | spi -p "Summarize this text"
+cat README.md | pi -p "Summarize this text"
+
+# Named one-shot session
+pi --name "release audit" -p "Audit this repository"
 
 # Different model
-spi --provider openai --model gpt-4o "Help me refactor"
+pi --provider openai --model gpt-4o "Help me refactor"
 
 # Model with provider prefix (no --provider needed)
-spi --model openai/gpt-4o "Help me refactor"
+pi --model openai/gpt-4o "Help me refactor"
 
 # Model with thinking level shorthand
-spi --model sonnet:high "Solve this complex problem"
+pi --model sonnet:high "Solve this complex problem"
 
 # Limit model cycling
-spi --models "claude-*,gpt-4o"
+pi --models "claude-*,gpt-4o"
 
 # Read-only mode
-spi --tools read,grep,find,ls -p "Review the code"
+pi --tools read,grep,find,ls -p "Review the code"
+
+# Disable one extension or built-in tool while keeping the rest available
+pi --exclude-tools ask_question
 
 # High thinking level
-spi --thinking high "Solve this complex problem"
+pi --thinking high "Solve this complex problem"
 ```
 
 ### Environment Variables
 
 | Variable | Description |
 |----------|-------------|
-| `SPI_CODING_AGENT_DIR` | Override config directory (default: `~/.spi/agent`) |
-| `SPI_PACKAGE_DIR` | Override package directory (useful for Nix/Guix where store paths tokenize poorly) |
-| `SPI_SKIP_VERSION_CHECK` | Skip version check at startup |
-| `SPI_CACHE_RETENTION` | Set to `long` for extended prompt cache (Anthropic: 1h, OpenAI: 24h) |
-| `VISUAL`, `EDITOR` | External editor for Ctrl+G |
+| `AI_AGENT` | Set to `pi` by the CLI and RPC entry points so generic tooling can attribute child processes to Pi |
+| `PI_CODING_AGENT` | Set to `true` by the CLI and RPC entry points so child processes can detect that they run inside Pi |
+| `PI_CODING_AGENT_DIR` | Override config directory (default: `~/.pi/agent`) |
+| `PI_CODING_AGENT_SESSION_DIR` | Override session storage directory (overridden by `--session-dir`) |
+| `PI_PACKAGE_DIR` | Override package directory (useful for Nix/Guix where store paths tokenize poorly) |
+| `PI_OFFLINE` | Disable startup network operations, including update checks, package update checks, and install/update telemetry |
+| `PI_SKIP_VERSION_CHECK` | Skip the Pi version update check at startup. This prevents the `pi.dev` latest-version request |
+| `PI_TELEMETRY` | Override install/update telemetry and provider attribution headers. Use `1`/`true`/`yes` to enable or `0`/`false`/`no` to disable. This does not disable update checks |
+| `PI_CACHE_RETENTION` | Set to `long` for extended prompt cache (Anthropic: 1h, OpenAI: 24h) |
+| `VISUAL`, `EDITOR` | Fallback external editor for Ctrl+G when `externalEditor` is unset; defaults to Notepad on Windows and `nano` elsewhere |
+
+Commands run by the LLM-callable bash tool also receive current session metadata:
+
+| Variable | Description |
+|----------|-------------|
+| `PI_SESSION_ID` | Current session ID |
+| `PI_SESSION_FILE` | Absolute session JSONL path; unset for ephemeral sessions |
+| `PI_PROVIDER` | Currently selected model provider |
+| `PI_MODEL` | Currently selected model ID |
+| `PI_REASONING_LEVEL` | Current effective reasoning level |
+
+These values are resolved when each command starts. See [Environment Variables](docs/environment-variables.md#bash-tool-session-environment) for semantics, examples, and custom-tool opt-out.
 
 ---
 
@@ -669,14 +696,18 @@ spi --thinking high "Solve this complex problem"
 
 See [CONTRIBUTING.md](../../CONTRIBUTING.md) for guidelines and [docs/development.md](docs/development.md) for setup, forking, and debugging.
 
----
-
 ## License
 
 MIT
 
 ## See Also
 
-- [@tculpepp/spi-ai](https://www.npmjs.com/package/@tculpepp/spi-ai): Core LLM toolkit
-- [@tculpepp/spi-agent-core](https://www.npmjs.com/package/@tculpepp/spi-agent-core): Agent framework
-- [@tculpepp/spi-tui](https://www.npmjs.com/package/@tculpepp/spi-tui): Terminal UI components
+- [@earendil-works/pi-ai](https://www.npmjs.com/package/@earendil-works/pi-ai): Core LLM toolkit
+- [@earendil-works/pi-agent-core](https://www.npmjs.com/package/@earendil-works/pi-agent-core): Agent framework
+- [@earendil-works/pi-tui](https://www.npmjs.com/package/@earendil-works/pi-tui): Terminal UI components
+
+<p align="center">
+  <a href="https://pi.dev">pi.dev</a> domain graciously donated by
+  <br /><br />
+  <a href="https://exe.dev"><img src="docs/images/exy.png" alt="Exy mascot" width="48" /><br />exe.dev</a>
+</p>

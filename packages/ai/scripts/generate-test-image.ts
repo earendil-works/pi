@@ -1,7 +1,7 @@
-#!/usr/bin/env tsx
+#!/usr/bin/env node
 
 import { createCanvas } from "canvas";
-import { writeFileSync } from "fs";
+import { mkdirSync, writeFileSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 
@@ -27,7 +27,6 @@ const buffer = canvas.toBuffer("image/png");
 const outputPath = join(__dirname, "..", "test", "data", "red-circle.png");
 
 // Ensure the directory exists
-import { mkdirSync } from "fs";
 mkdirSync(join(__dirname, "..", "test", "data"), { recursive: true });
 
 writeFileSync(outputPath, buffer);

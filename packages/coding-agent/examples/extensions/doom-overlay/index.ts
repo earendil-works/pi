@@ -9,10 +9,10 @@
  * This demonstrates that overlays can handle real-time game rendering at 35 FPS.
  */
 
-import type { ExtensionAPI } from "@tculpepp/spi-coding-agent";
-import { DoomOverlayComponent } from "./doom-component.js";
-import { DoomEngine } from "./doom-engine.js";
-import { ensureWadFile } from "./wad-finder.js";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { DoomOverlayComponent } from "./doom-component.ts";
+import { DoomEngine } from "./doom-engine.ts";
+import { ensureWadFile } from "./wad-finder.ts";
 
 // Persistent engine instance - survives between invocations
 let activeEngine: DoomEngine | null = null;
@@ -23,7 +23,7 @@ export default function (pi: ExtensionAPI) {
 		description: "Play DOOM as an overlay. Q to pause and exit.",
 
 		handler: async (args, ctx) => {
-			if (!ctx.hasUI) {
+			if (ctx.mode !== "tui") {
 				ctx.ui.notify("DOOM requires interactive mode", "error");
 				return;
 			}

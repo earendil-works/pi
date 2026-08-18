@@ -17,10 +17,9 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { getModels } from "../src/models.js";
-import { complete } from "../src/stream.js";
-import type { Context } from "../src/types.js";
-import { hasBedrockCredentials } from "./bedrock-utils.js";
+import { complete, getModels } from "../src/compat.ts";
+import type { Context } from "../src/types.ts";
+import { hasBedrockCredentials } from "./bedrock-utils.ts";
 
 describe("Amazon Bedrock Models", () => {
 	const models = getModels("amazon-bedrock");
@@ -28,6 +27,11 @@ describe("Amazon Bedrock Models", () => {
 	it("should get all available Bedrock models", () => {
 		expect(models.length).toBeGreaterThan(0);
 		console.log(`Found ${models.length} Bedrock models`);
+	});
+
+	it("exposes Claude Opus 5 through an inference profile only", () => {
+		expect(models.some((model) => model.id === "global.anthropic.claude-opus-5")).toBe(true);
+		expect(models.some((model) => model.id === "anthropic.claude-opus-5")).toBe(false);
 	});
 
 	if (hasBedrockCredentials() && process.env.BEDROCK_EXTENSIVE_MODEL_TEST) {

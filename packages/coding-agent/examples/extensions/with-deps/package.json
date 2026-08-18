@@ -1,7 +1,7 @@
 {
   "name": "pi-extension-with-deps",
   "private": true,
-  "version": "1.30.2",
+  "version": "0.84.2",
   "type": "module",
   "scripts": {
     "clean": "echo 'nothing to clean'",
@@ -14,9 +14,9 @@
     ]
   },
   "dependencies": {
-    "ms": "^2.1.3"
+    "ms": "2.1.3"
   },
   "devDependencies": {
-    "@types/ms": "^2.1.0"
+    "@types/ms": "2.1.0"
   }
 }

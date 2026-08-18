@@ -1,4 +1,4 @@
-import type { Component } from "../tui.js";
+import type { Component } from "../tui.ts";
 
 /**
  * Spacer component that renders empty lines

@@ -15,13 +15,13 @@
  *   /overlay-sidepanel  - Responsive sidepanel (hides when terminal < 100 cols)
  *   /overlay-toggle     - Toggle visibility demo (demonstrates OverlayHandle.setHidden)
  *   /overlay-passive    - Non-capturing overlay demo (passive info panel alongside active overlay)
- *   /overlay-focus      - Focus cycling and rendering order with non-capturing overlays
+ *   /overlay-focus      - Focus cycling, input routing, dismissal, and rendering order with overlays
  *   /overlay-streaming  - Multiple input panels with simulated streaming (Tab to cycle focus)
  */
 
-import type { ExtensionAPI, ExtensionCommandContext, Theme } from "@tculpepp/spi-coding-agent";
-import type { Component, OverlayAnchor, OverlayHandle, OverlayOptions, TUI } from "@tculpepp/spi-tui";
-import { matchesKey, truncateToWidth, visibleWidth } from "@tculpepp/spi-tui";
+import type { ExtensionAPI, ExtensionCommandContext, Theme } from "@earendil-works/pi-coding-agent";
+import type { Component, OverlayAnchor, OverlayHandle, OverlayOptions, TUI } from "@earendil-works/pi-tui";
+import { Input, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { spawn } from "child_process";
 
 // Global handle for toggle demo (in real code, use a more elegant pattern)
@@ -272,9 +272,9 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
-	// Focus cycling demo - demonstrates focus(), unfocus(), isFocused() and rendering order
+	// Focus cycling demo - demonstrates focus(), input routing, per-panel dismissal, and rendering order
 	pi.registerCommand("overlay-focus", {
-		description: "Test focus cycling and rendering order with non-capturing overlays",
+		description: "Test focus cycling, input routing, dismissal, and rendering order with overlays",
 		handler: async (_args: string, ctx: ExtensionCommandContext) => {
 			ctx.ui.setEditorText("");
 			await ctx.ui.custom<void>((tui, theme, _kb, done) => new FocusDemoController(tui, theme, done), {
@@ -303,7 +303,11 @@ function sleep(ms: number): Promise<void> {
 
 // Base overlay component with common rendering
 abstract class BaseOverlay {
-	constructor(protected theme: Theme) {}
+	protected theme: Theme;
+
+	constructor(theme: Theme) {
+		this.theme = theme;
+	}
 
 	protected box(lines: string[], width: number, title?: string): string[] {
 		const th = this.theme;
@@ -330,12 +334,13 @@ abstract class BaseOverlay {
 
 // Anchor position test
 class AnchorTestComponent extends BaseOverlay {
-	constructor(
-		theme: Theme,
-		private anchor: OverlayAnchor,
-		private done: (result: "next" | "confirm" | "cancel") => void,
-	) {
+	private anchor: OverlayAnchor;
+	private done: (result: "next" | "confirm" | "cancel") => void;
+
+	constructor(theme: Theme, anchor: OverlayAnchor, done: (result: "next" | "confirm" | "cancel") => void) {
 		super(theme);
+		this.anchor = anchor;
+		this.done = done;
 	}
 
 	handleInput(data: string): void {
@@ -368,12 +373,17 @@ class AnchorTestComponent extends BaseOverlay {
 
 // Margin/offset test
 class MarginTestComponent extends BaseOverlay {
+	private config: { name: string; options: OverlayOptions };
+	private done: (result: "next" | "close") => void;
+
 	constructor(
 		theme: Theme,
-		private config: { name: string; options: OverlayOptions },
-		private done: (result: "next" | "close") => void,
+		config: { name: string; options: OverlayOptions },
+		done: (result: "next" | "close") => void,
 	) {
 		super(theme);
+		this.config = config;
+		this.done = done;
 	}
 
 	handleInput(data: string): void {
@@ -403,13 +413,15 @@ class MarginTestComponent extends BaseOverlay {
 
 // Stacked overlay test
 class StackOverlayComponent extends BaseOverlay {
-	constructor(
-		theme: Theme,
-		private num: number,
-		private position: string,
-		private done: (result: string) => void,
-	) {
+	private num: number;
+	private position: string;
+	private done: (result: string) => void;
+
+	constructor(theme: Theme, num: number, position: string, done: (result: string) => void) {
 		super(theme);
+		this.num = num;
+		this.position = position;
+		this.done = done;
 	}
 
 	handleInput(data: string): void {
@@ -446,19 +458,19 @@ class StackOverlayComponent extends BaseOverlay {
 
 // Streaming overflow test - spawns real process with colored output (original crash scenario)
 class StreamingOverflowComponent extends BaseOverlay {
+	private tui: TUI;
 	private lines: string[] = [];
 	private proc: ReturnType<typeof spawn> | null = null;
 	private scrollOffset = 0;
 	private maxVisibleLines = 15;
 	private finished = false;
 	private disposed = false;
+	private done: () => void;
 
-	constructor(
-		private tui: TUI,
-		theme: Theme,
-		private done: () => void,
-	) {
+	constructor(tui: TUI, theme: Theme, done: () => void) {
 		super(theme);
+		this.tui = tui;
+		this.done = done;
 		this.startProcess();
 	}
 
@@ -579,11 +591,11 @@ class StreamingOverflowComponent extends BaseOverlay {
 
 // Edge position test
 class EdgeTestComponent extends BaseOverlay {
-	constructor(
-		theme: Theme,
-		private done: () => void,
-	) {
+	private done: () => void;
+
+	constructor(theme: Theme, done: () => void) {
 		super(theme);
+		this.done = done;
 	}
 
 	handleInput(data: string): void {
@@ -614,12 +626,17 @@ class EdgeTestComponent extends BaseOverlay {
 
 // Percentage positioning test
 class PercentTestComponent extends BaseOverlay {
+	private config: { name: string; row: number; col: number };
+	private done: (result: "next" | "close") => void;
+
 	constructor(
 		theme: Theme,
-		private config: { name: string; row: number; col: number },
-		private done: (result: "next" | "close") => void,
+		config: { name: string; row: number; col: number },
+		done: (result: "next" | "close") => void,
 	) {
 		super(theme);
+		this.config = config;
+		this.done = done;
 	}
 
 	handleInput(data: string): void {
@@ -649,11 +666,11 @@ class PercentTestComponent extends BaseOverlay {
 
 // MaxHeight test - renders 20 lines, truncated to 10 by maxHeight
 class MaxHeightTestComponent extends BaseOverlay {
-	constructor(
-		theme: Theme,
-		private done: () => void,
-	) {
+	private done: () => void;
+
+	constructor(theme: Theme, done: () => void) {
 		super(theme);
+		this.done = done;
 	}
 
 	handleInput(data: string): void {
@@ -684,15 +701,15 @@ class MaxHeightTestComponent extends BaseOverlay {
 
 // Responsive sidepanel - demonstrates percentage width and visibility callback
 class SidepanelComponent extends BaseOverlay {
+	private tui: TUI;
 	private items = ["Dashboard", "Messages", "Settings", "Help", "About"];
 	private selectedIndex = 0;
+	private done: () => void;
 
-	constructor(
-		private tui: TUI,
-		theme: Theme,
-		private done: () => void,
-	) {
+	constructor(tui: TUI, theme: Theme, done: () => void) {
 		super(theme);
+		this.tui = tui;
+		this.done = done;
 	}
 
 	handleInput(data: string): void {
@@ -745,18 +762,18 @@ class SidepanelComponent extends BaseOverlay {
 
 // Animation demo - proves overlays can handle real-time updates like pi-doom
 class AnimationDemoComponent extends BaseOverlay {
+	private tui: TUI;
 	private frame = 0;
 	private interval: ReturnType<typeof setInterval> | null = null;
 	private fps = 0;
 	private lastFpsUpdate = Date.now();
 	private framesSinceLastFps = 0;
+	private done: () => void;
 
-	constructor(
-		private tui: TUI,
-		theme: Theme,
-		private done: () => void,
-	) {
+	constructor(tui: TUI, theme: Theme, done: () => void) {
 		super(theme);
+		this.tui = tui;
+		this.done = done;
 		this.startAnimation();
 	}
 
@@ -860,15 +877,15 @@ function hslToRgb(h: number, s: number, l: number): [number, number, number] {
 
 // Toggle demo - demonstrates OverlayHandle.setHidden() via onHandle callback
 class ToggleDemoComponent extends BaseOverlay {
+	private tui: TUI;
 	private toggleCount = 0;
 	private isToggling = false;
+	private done: () => void;
 
-	constructor(
-		private tui: TUI,
-		theme: Theme,
-		private done: () => void,
-	) {
+	constructor(tui: TUI, theme: Theme, done: () => void) {
 		super(theme);
+		this.tui = tui;
+		this.done = done;
 	}
 
 	handleInput(data: string): void {
@@ -923,19 +940,19 @@ class ToggleDemoComponent extends BaseOverlay {
 
 class PassiveDemoController extends BaseOverlay {
 	focused = false;
+	private tui: TUI;
 	private typed = "";
 	private timerComponent: TimerPanel;
 	private timerHandle: OverlayHandle | null = null;
 	private interval: ReturnType<typeof setInterval> | null = null;
 	private inputCount = 0;
 	private lastInputDebug = "";
+	private done: () => void;
 
-	constructor(
-		private tui: TUI,
-		theme: Theme,
-		private done: () => void,
-	) {
+	constructor(tui: TUI, theme: Theme, done: () => void) {
 		super(theme);
+		this.tui = tui;
+		this.done = done;
 		this.timerComponent = new TimerPanel(theme);
 		this.timerHandle = this.tui.showOverlay(this.timerComponent, {
 			nonCapturing: true,
@@ -1014,57 +1031,66 @@ class TimerPanel extends BaseOverlay {
 
 // === Focus cycling demo ===
 
+type FocusPanelColor = "error" | "success" | "accent";
+type FocusPanelConfig = { label: string; color: FocusPanelColor; options: OverlayOptions };
+type FocusPanelEntry = { panel: FocusPanel; handle: OverlayHandle };
+
+const FOCUS_PANEL_CONFIGS = [
+	{ label: "Alpha", color: "error", options: { row: 2, col: 4, width: 34 } },
+	{ label: "Beta", color: "success", options: { row: 5, col: 28, width: 34 } },
+	{ label: "Gamma", color: "accent", options: { row: 8, col: 52, width: 34 } },
+] satisfies FocusPanelConfig[];
+
 class FocusDemoController extends BaseOverlay {
-	private panels: FocusPanel[] = [];
-	private handles: OverlayHandle[] = [];
-	private focusIndex = -1;
+	private readonly tui: TUI;
+	private entries: FocusPanelEntry[] = [];
+	private readonly done: () => void;
+	private closed = false;
 
-	constructor(
-		private tui: TUI,
-		theme: Theme,
-		private done: () => void,
-	) {
+	constructor(tui: TUI, theme: Theme, done: () => void) {
 		super(theme);
-		const colors = ["error", "success", "accent"] as const;
-		const labels = ["Alpha", "Beta", "Gamma"];
+		this.tui = tui;
+		this.done = done;
 
-		for (let i = 0; i < 3; i++) {
-			const panel = new FocusPanel(
-				theme,
-				labels[i]!,
-				colors[i]!,
-				() => this.cycleFocus(),
-				() => this.close(),
-			);
-			const handle = this.tui.showOverlay(panel, {
-				nonCapturing: true,
-				row: 2,
-				col: 5 + i * 6,
-				width: 28,
-			});
-			panel.handle = handle;
-			this.panels.push(panel);
-			this.handles.push(handle);
+		for (const config of FOCUS_PANEL_CONFIGS) {
+			const panel = new FocusPanel({ theme, config, controller: this });
+			const handle = this.tui.showOverlay(panel, { nonCapturing: true, ...config.options });
+			this.entries.push({ panel, handle });
 		}
+
+		this.focusFirstOpenPanel();
 	}
 
-	private cycleFocus(): void {
-		if (this.focusIndex >= 0 && this.focusIndex < this.handles.length) {
-			this.handles[this.focusIndex]!.unfocus();
-		}
-		this.focusIndex++;
-		if (this.focusIndex >= this.handles.length) {
-			this.focusIndex = -1;
-		} else {
-			this.handles[this.focusIndex]!.focus();
-		}
-		this.tui.requestRender();
+	focusNext(current: FocusPanel, direction: 1 | -1 = 1): void {
+		const openEntries = this.openEntries();
+		const currentOpenPosition = openEntries.findIndex((entry) => entry.panel === current);
+		if (currentOpenPosition === -1) throw new Error(`Panel ${current.label} is not open`);
+		const nextOpenPosition = (currentOpenPosition + direction + openEntries.length) % openEntries.length;
+		this.focusEntryAt(openEntries, nextOpenPosition);
 	}
 
-	private close(): void {
-		for (const handle of this.handles) handle.hide();
-		this.handles = [];
-		this.panels = [];
+	dismiss(panel: FocusPanel): void {
+		const openEntries = this.openEntries();
+		const currentOpenPosition = openEntries.findIndex((candidate) => candidate.panel === panel);
+		if (currentOpenPosition === -1) return;
+		const entry = openEntries[currentOpenPosition];
+		if (!entry) throw new Error(`Invalid focus panel index ${currentOpenPosition}`);
+		const remainingEntries = openEntries.filter((candidate) => candidate.panel !== panel);
+
+		entry.panel.closed = true;
+		entry.handle.hide();
+		if (remainingEntries.length === 0) {
+			this.close();
+			return;
+		}
+
+		this.focusEntryAt(remainingEntries, currentOpenPosition % remainingEntries.length);
+	}
+
+	close(): void {
+		if (this.closed) return;
+		this.closed = true;
+		this.hidePanels();
 		this.done();
 	}
 
@@ -1072,80 +1098,148 @@ class FocusDemoController extends BaseOverlay {
 		if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c")) {
 			this.close();
 		} else if (matchesKey(data, "tab")) {
-			this.cycleFocus();
+			this.focusFirstOpenPanel();
 		}
 	}
 
 	render(width: number): string[] {
 		const th = this.theme;
-		const focused = this.focusIndex === -1 ? "Controller" : (this.panels[this.focusIndex]?.label ?? "?");
+		const focused = this.entries.find((entry) => entry.handle.isFocused())?.panel.label ?? "Controller";
 		return this.box(
 			[
 				"",
 				` Current focus: ${th.fg("accent", focused)}`,
 				"",
 				" Three overlapping panels above are",
-				` all ${th.fg("accent", "nonCapturing")}. Press Tab to`,
-				" cycle focus() between them.",
+				` ${th.fg("accent", "nonCapturing")} overlays controlled with`,
+				" raw OverlayHandle.focus()/hide().",
 				"",
-				" Focused panel renders on top",
-				" (focus-based rendering order).",
+				" Type in the focused panel's input.",
+				" Focused panel renders on top.",
 				"",
-				th.fg("dim", " Tab = cycle focus | Esc = close"),
+				th.fg("dim", " Tab/Shift+Tab = cycle panels"),
+				th.fg("dim", " Esc/Ctrl+D = dismiss panel"),
+				th.fg("dim", " Ctrl+C = close all"),
 				"",
 			],
 			width,
-			"Focus Demo",
+			"Focus + Input Demo",
 		);
 	}
 
 	override dispose(): void {
-		for (const handle of this.handles) handle.hide();
+		if (this.closed) return;
+		this.closed = true;
+		this.hidePanels();
+	}
+
+	private focusFirstOpenPanel(): void {
+		const firstOpen = this.openEntries()[0];
+		if (firstOpen) {
+			firstOpen.handle.focus();
+			this.tui.requestRender();
+		}
+	}
+
+	private focusEntryAt(entries: FocusPanelEntry[], index: number): void {
+		const entry = entries[index];
+		if (!entry) throw new Error(`Invalid focus panel index ${index}`);
+		entry.handle.focus();
+		this.tui.requestRender();
+	}
+
+	private hidePanels(): void {
+		for (const entry of this.entries) {
+			if (!entry.panel.closed) {
+				entry.panel.closed = true;
+				entry.handle.hide();
+			}
+		}
+		this.entries = [];
+	}
+
+	private openEntries(): FocusPanelEntry[] {
+		return this.entries.filter((entry) => !entry.panel.closed);
 	}
 }
 
 class FocusPanel extends BaseOverlay {
-	handle: OverlayHandle | null = null;
+	focused = false;
+	closed = false;
 	readonly label: string;
+	private readonly color: FocusPanelColor;
+	private readonly controller: FocusDemoController;
+	private readonly input = new Input();
+	private inputs: string[] = [];
 
-	constructor(
-		theme: Theme,
-		label: string,
-		private color: "error" | "success" | "accent",
-		private onTab: () => void,
-		private onClose: () => void,
-	) {
+	constructor({
+		theme,
+		config,
+		controller,
+	}: {
+		theme: Theme;
+		config: FocusPanelConfig;
+		controller: FocusDemoController;
+	}) {
 		super(theme);
-		this.label = label;
+		this.label = config.label;
+		this.color = config.color;
+		this.controller = controller;
 	}
 
 	handleInput(data: string): void {
 		if (matchesKey(data, "tab")) {
-			this.onTab();
-		} else if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c")) {
-			this.onClose();
+			this.controller.focusNext(this);
+		} else if (matchesKey(data, "shift+tab")) {
+			this.controller.focusNext(this, -1);
+		} else if (matchesKey(data, "escape") || matchesKey(data, "ctrl+d")) {
+			this.controller.dismiss(this);
+		} else if (matchesKey(data, "ctrl+c")) {
+			this.controller.close();
+		} else if (matchesKey(data, "return")) {
+			this.inputs.push("Enter");
+		} else if (matchesKey(data, "up")) {
+			this.inputs.push("↑");
+		} else if (matchesKey(data, "down")) {
+			this.inputs.push("↓");
+		} else if (matchesKey(data, "left")) {
+			this.input.handleInput(data);
+			this.inputs.push("←");
+		} else if (matchesKey(data, "right")) {
+			this.input.handleInput(data);
+			this.inputs.push("→");
+		} else if (matchesKey(data, "backspace")) {
+			this.input.handleInput(data);
+			this.inputs.push("Backspace");
+		} else {
+			this.input.handleInput(data);
+			this.inputs.push(JSON.stringify(data));
 		}
 	}
 
 	render(width: number): string[] {
 		const th = this.theme;
-		const focused = this.handle?.isFocused() ?? false;
 		const innerW = Math.max(1, width - 2);
-		const border = (c: string) => th.fg(this.color, c);
+		const border = (c: string) => th.fg(this.focused ? this.color : "dim", c);
 		const padLine = (s: string) => truncateToWidth(s, innerW, "...", true);
+		const recent = this.inputs.length === 0 ? "(none)" : this.inputs.slice(-6).join(" ");
 		const lines: string[] = [];
 
+		this.input.focused = this.focused;
+		const [inputLine = ""] = this.input.render(Math.max(1, innerW - 8));
 		lines.push(border(`╭${"─".repeat(innerW)}╮`));
-		lines.push(border("│") + padLine(` ${th.fg("accent", this.label)}`) + border("│"));
+		lines.push(
+			border("│") +
+				padLine(
+					` ${th.fg(this.color, this.label)} ${this.focused ? th.fg("success", "FOCUSED") : th.fg("dim", "visible")}`,
+				) +
+				border("│"),
+		);
 		lines.push(border("│") + padLine("") + border("│"));
-		if (focused) {
-			lines.push(border("│") + padLine(th.fg("success", " ● FOCUSED")) + border("│"));
-			lines.push(border("│") + padLine(th.fg("dim", " (receiving input)")) + border("│"));
-		} else {
-			lines.push(border("│") + padLine(th.fg("dim", " ○ unfocused")) + border("│"));
-			lines.push(border("│") + padLine(th.fg("dim", " (passive)")) + border("│"));
-		}
-		lines.push(border("│") + padLine("") + border("│"));
+		lines.push(border("│") + padLine(` Input: ${inputLine}`) + border("│"));
+		lines.push(border("│") + padLine(` Keys: ${recent}`) + border("│"));
+		lines.push(border("│") + padLine(th.fg("dim", " Tab/Shift+Tab focus")) + border("│"));
+		lines.push(border("│") + padLine(th.fg("dim", " Esc/Ctrl+D dismiss")) + border("│"));
 		lines.push(border(`╰${"─".repeat(innerW)}╯`));
 
 		return lines;
@@ -1155,19 +1249,19 @@ class FocusPanel extends BaseOverlay {
 // === Streaming input panel test (/overlay-streaming) ===
 
 class StreamingInputController extends BaseOverlay {
+	private tui: TUI;
 	private panels: StreamingInputPanel[] = [];
 	private handles: OverlayHandle[] = [];
 	private focusIndex = -1; // -1 = controller focused, 0-2 = panel focused
 	private streamLines: string[] = [];
 	private streamInterval: ReturnType<typeof setInterval> | null = null;
 	private lineCount = 0;
+	private done: () => void;
 
-	constructor(
-		private tui: TUI,
-		theme: Theme,
-		private done: () => void,
-	) {
+	constructor(tui: TUI, theme: Theme, done: () => void) {
 		super(theme);
+		this.tui = tui;
+		this.done = done;
 
 		// Create 3 input panels as non-capturing overlays
 		const colors = ["error", "success", "accent"] as const;
@@ -1287,17 +1381,25 @@ class StreamingInputController extends BaseOverlay {
 
 class StreamingInputPanel implements Component {
 	handle: OverlayHandle | null = null;
+	private theme: Theme;
 	private typed = "";
 	readonly label: string;
+	private color: "error" | "success" | "accent";
+	private onTab: () => void;
+	private onClose: () => void;
 
 	constructor(
-		private theme: Theme,
+		theme: Theme,
 		label: string,
-		private color: "error" | "success" | "accent",
-		private onTab: () => void,
-		private onClose: () => void,
+		color: "error" | "success" | "accent",
+		onTab: () => void,
+		onClose: () => void,
 	) {
+		this.theme = theme;
 		this.label = label;
+		this.color = color;
+		this.onTab = onTab;
+		this.onClose = onClose;
 	}
 
 	handleInput(data: string): void {

@@ -5,17 +5,18 @@
  * a summary of the branch being left so context isn't lost.
  */
 
-import type { AgentMessage } from "@tculpepp/spi-agent-core";
-import type { Model } from "@tculpepp/spi-ai";
-import { completeSimple } from "@tculpepp/spi-ai";
+import type { AgentMessage, StreamFn } from "@earendil-works/pi-agent-core";
+import type { RetryCallbacks, RetryPolicy } from "@earendil-works/pi-ai";
+import { contentText } from "@earendil-works/pi-ai";
+import type { Model, SimpleStreamOptions, Usage } from "@earendil-works/pi-ai/compat";
 import {
 	convertToLlm,
 	createBranchSummaryMessage,
 	createCompactionSummaryMessage,
 	createCustomMessage,
-} from "../messages.js";
-import type { ReadonlySessionManager, SessionEntry } from "../session-manager.js";
-import { estimateTokens } from "./compaction.js";
+} from "../messages.ts";
+import type { ReadonlySessionManager, SessionEntry } from "../session-manager.ts";
+import { completeSummarization, estimateTokens } from "./compaction.ts";
 import {
 	computeFileLists,
 	createFileOps,
@@ -24,7 +25,7 @@ import {
 	formatFileOperations,
 	SUMMARIZATION_SYSTEM_PROMPT,
 	serializeConversation,
-} from "./utils.js";
+} from "./utils.ts";
 
 // ============================================================================
 // Types
@@ -32,6 +33,7 @@ import {
 
 export interface BranchSummaryResult {
 	summary?: string;
+	usage?: Usage;
 	readFiles?: string[];
 	modifiedFiles?: string[];
 	aborted?: boolean;
@@ -44,7 +46,7 @@ export interface BranchSummaryDetails {
 	modifiedFiles: string[];
 }
 
-export type { FileOperations } from "./utils.js";
+export type { FileOperations } from "./utils.ts";
 
 export interface BranchPreparation {
 	/** Messages extracted for summarization, in chronological order */
@@ -66,9 +68,11 @@ export interface GenerateBranchSummaryOptions {
 	/** Model to use for summarization */
 	model: Model<any>;
 	/** API key for the model */
-	apiKey: string;
+	apiKey?: string;
 	/** Request headers for the model */
 	headers?: Record<string, string>;
+	/** Provider-scoped environment values for the model */
+	env?: Record<string, string>;
 	/** Abort signal for cancellation */
 	signal: AbortSignal;
 	/** Optional custom instructions for summarization */
@@ -77,6 +81,12 @@ export interface GenerateBranchSummaryOptions {
 	replaceInstructions?: boolean;
 	/** Tokens reserved for prompt + LLM response (default 16384) */
 	reserveTokens?: number;
+	/** Optional session stream function. Used to preserve SDK request behavior without mutating agent state. */
+	streamFn?: StreamFn;
+	/** Retry policy for transient summarization errors. Reuses coding-agent's `settings.retry`. */
+	retry?: RetryPolicy;
+	/** Optional callbacks for retry reporting (e.g. TUI retry indicators). */
+	callbacks?: RetryCallbacks;
 }
 
 // ============================================================================
@@ -284,7 +294,19 @@ export async function generateBranchSummary(
 	entries: SessionEntry[],
 	options: GenerateBranchSummaryOptions,
 ): Promise<BranchSummaryResult> {
-	const { model, apiKey, headers, signal, customInstructions, replaceInstructions, reserveTokens = 16384 } = options;
+	const {
+		model,
+		apiKey,
+		headers,
+		env,
+		signal,
+		customInstructions,
+		replaceInstructions,
+		reserveTokens = 16384,
+		streamFn,
+		retry,
+		callbacks,
+	} = options;
 
 	// Token budget = context window minus reserved space for prompt + response
 	const contextWindow = model.contextWindow || 128000;
@@ -320,12 +342,13 @@ export async function generateBranchSummary(
 		},
 	];
 
-	// Call LLM for summarization
-	const response = await completeSimple(
-		model,
-		{ systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, messages: summarizationMessages },
-		{ apiKey, headers, signal, maxTokens: 2048 },
-	);
+	// Call LLM for summarization. Prefer the session stream function so SDK
+	// request behavior (timeouts, retries, attribution headers) stays consistent
+	// without running through agent state/events. Retried via completeSummarization
+	// so transient stream drops reuse the configured retry policy.
+	const context = { systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, messages: summarizationMessages };
+	const requestOptions: SimpleStreamOptions = { apiKey, headers, env, signal, maxTokens: 2048 };
+	const response = await completeSummarization(model, context, requestOptions, streamFn, retry, callbacks);
 
 	// Check if aborted or errored
 	if (response.stopReason === "aborted") {
@@ -334,11 +357,11 @@ export async function generateBranchSummary(
 	if (response.stopReason === "error") {
 		return { error: response.errorMessage || "Summarization failed" };
 	}
+	if (response.content.some((block) => block.type === "toolCall")) {
+		return { error: "Branch summarization attempted to call a tool" };
+	}
 
-	let summary = response.content
-		.filter((c): c is { type: "text"; text: string } => c.type === "text")
-		.map((c) => c.text)
-		.join("\n");
+	let summary = contentText(response.content);
 
 	// Prepend preamble to provide context about the branch summary
 	summary = BRANCH_SUMMARY_PREAMBLE + summary;
@@ -349,6 +372,7 @@ export async function generateBranchSummary(
 
 	return {
 		summary: summary || "No summary generated",
+		usage: response.usage,
 		readFiles,
 		modifiedFiles,
 	};

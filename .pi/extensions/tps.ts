@@ -1,5 +1,5 @@
-import type { AssistantMessage } from "@tculpepp/spi-ai";
-import type { ExtensionAPI } from "@tculpepp/spi-coding-agent";
+import type { AssistantMessage } from "@earendil-works/pi-ai";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 function isAssistantMessage(message: unknown): message is AssistantMessage {
 	if (!message || typeof message !== "object") return false;

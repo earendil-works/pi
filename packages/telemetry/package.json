@@ -1,0 +1,47 @@
+{
+	"name": "@earendil-works/pi-telemetry",
+	"version": "0.84.2",
+	"description": "Vendor-neutral telemetry contracts and typed schema utilities for pi",
+	"type": "module",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		},
+		"./testing": {
+			"types": "./dist/testing/index.d.ts",
+			"import": "./dist/testing/index.js"
+		}
+	},
+	"files": [
+		"dist",
+		"README.md"
+	],
+	"scripts": {
+		"clean": "shx rm -rf dist",
+		"build": "tsgo -p tsconfig.build.json",
+		"test": "vitest --run",
+		"prepublishOnly": "npm run clean && npm run build"
+	},
+	"keywords": [
+		"telemetry",
+		"tracing",
+		"observability"
+	],
+	"author": "Mario Zechner",
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/earendil-works/pi.git",
+		"directory": "packages/telemetry"
+	},
+	"engines": {
+		"node": ">=22.19.0"
+	},
+	"devDependencies": {
+		"@types/node": "24.12.4",
+		"vitest": "4.1.9"
+	}
+}

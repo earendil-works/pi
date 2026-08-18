@@ -1,28 +1,33 @@
+import { createInMemoryModelRegistry, createModelRegistry, getModelRuntime } from "../model-runtime-test-utils.ts";
 /**
  * Local test harness for the new coding-agent test suite.
  */
 
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AgentMessage, AgentTool } from "@tculpepp/spi-agent-core";
-import { Agent } from "@tculpepp/spi-agent-core";
-import type { FauxModelDefinition, FauxProviderRegistration, FauxResponseStep, Model } from "@tculpepp/spi-ai";
-import { registerFauxProvider } from "@tculpepp/spi-ai";
-import { AgentSession, type AgentSessionEvent } from "../../src/core/agent-session.js";
-import { AuthStorage } from "../../src/core/auth-storage.js";
-import type { ExtensionRunner } from "../../src/core/extensions/index.js";
-import { convertToLlm } from "../../src/core/messages.js";
-import { ModelRegistry } from "../../src/core/model-registry.js";
-import { SessionManager } from "../../src/core/session-manager.js";
-import type { Settings } from "../../src/core/settings-manager.js";
-import { SettingsManager } from "../../src/core/settings-manager.js";
-import type { ExtensionFactory, ResourceLoader } from "../../src/index.js";
+import type { AgentMessage, AgentTool } from "@earendil-works/pi-agent-core";
+import { Agent } from "@earendil-works/pi-agent-core";
+import type {
+	FauxModelDefinition,
+	FauxProviderRegistration,
+	FauxResponseStep,
+	Model,
+} from "@earendil-works/pi-ai/compat";
+import { registerFauxProvider, streamSimple } from "@earendil-works/pi-ai/compat";
+import { AgentSession, type AgentSessionEvent } from "../../src/core/agent-session.ts";
+import { AuthStorage } from "../../src/core/auth-storage.ts";
+import type { ExtensionRunner } from "../../src/core/extensions/index.ts";
+import { convertToLlm } from "../../src/core/messages.ts";
+import { SessionManager } from "../../src/core/session-manager.ts";
+import type { Settings } from "../../src/core/settings-manager.ts";
+import { SettingsManager } from "../../src/core/settings-manager.ts";
+import type { InlineExtension, ResourceLoader } from "../../src/index.ts";
 import {
 	type CreateTestExtensionsResultInput,
 	createTestExtensionsResult,
 	createTestResourceLoader,
-} from "../utilities.js";
+} from "../utilities.ts";
 
 type MessageTextPart = { type: "text"; text: string };
 
@@ -60,9 +65,13 @@ export interface HarnessOptions {
 	settings?: Partial<Settings>;
 	systemPrompt?: string;
 	tools?: AgentTool[];
+	initialActiveToolNames?: string[];
+	allowedToolNames?: string[];
+	excludedToolNames?: string[];
 	resourceLoader?: ResourceLoader;
-	extensionFactories?: Array<ExtensionFactory | CreateTestExtensionsResultInput>;
+	extensionFactories?: Array<InlineExtension | CreateTestExtensionsResultInput>;
 	withConfiguredAuth?: boolean;
+	modelsJson?: Record<string, unknown>;
 }
 
 export interface Harness {
@@ -105,9 +114,13 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 
 	const authStorage = AuthStorage.inMemory();
 	if (withConfiguredAuth) {
-		authStorage.setRuntimeApiKey(model.provider, "faux-key");
+		await authStorage.modify(model.provider, async () => ({ type: "api_key", key: "faux-key" }));
 	}
-	const modelRegistry = ModelRegistry.inMemory(authStorage);
+	const modelsPath = options.modelsJson === undefined ? undefined : join(tempDir, "models.json");
+	if (modelsPath) writeFileSync(modelsPath, JSON.stringify(options.modelsJson));
+	const modelRegistry = modelsPath
+		? await createModelRegistry(authStorage, modelsPath)
+		: await createInMemoryModelRegistry(authStorage);
 	if (withConfiguredAuth) {
 		modelRegistry.registerProvider(model.provider, {
 			baseUrl: model.baseUrl,
@@ -129,6 +142,7 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 
 	const agent = new Agent({
 		getApiKey: () => (withConfiguredAuth ? "faux-key" : undefined),
+		streamFn: streamSimple,
 		initialState: {
 			model,
 			systemPrompt: options.systemPrompt ?? "You are a test assistant.",
@@ -141,6 +155,17 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 				return payload;
 			}
 			return runner.emitBeforeProviderRequest(payload);
+		},
+		onResponse: async (response) => {
+			const runner = extensionRunnerRef.current;
+			if (!runner?.hasHandlers("after_provider_response")) {
+				return;
+			}
+			await runner.emit({
+				type: "after_provider_response",
+				status: response.status,
+				headers: response.headers,
+			});
 		},
 		transformContext: async (messages: AgentMessage[]) => {
 			const runner = extensionRunnerRef.current;
@@ -159,9 +184,12 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 		sessionManager,
 		settingsManager,
 		cwd: tempDir,
-		modelRegistry,
+		modelRuntime: getModelRuntime(modelRegistry),
 		resourceLoader,
 		baseToolsOverride: toolMap,
+		initialActiveToolNames: options.initialActiveToolNames,
+		allowedToolNames: options.allowedToolNames,
+		excludedToolNames: options.excludedToolNames,
 		extensionRunnerRef,
 	});
 

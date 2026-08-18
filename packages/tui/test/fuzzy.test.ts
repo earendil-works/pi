@@ -1,6 +1,6 @@
 import assert from "node:assert";
 import { describe, it } from "node:test";
-import { fuzzyFilter, fuzzyMatch } from "../src/fuzzy.js";
+import { fuzzyFilter, fuzzyMatch } from "../src/fuzzy.ts";
 
 describe("fuzzyMatch", () => {
 	it("empty query matches everything with score 0", () => {
@@ -83,6 +83,13 @@ describe("fuzzyFilter", () => {
 		assert.strictEqual(result[0], "app");
 	});
 
+	it("prioritizes exact matches over longer prefix matches", () => {
+		const items = ["clone", "cl"];
+		const result = fuzzyFilter(items, "cl", (x: string) => x);
+
+		assert.deepStrictEqual(result, ["cl", "clone"]);
+	});
+
 	it("works with custom getText function", () => {
 		const items = [
 			{ name: "foo", id: 1 },
@@ -94,5 +101,12 @@ describe("fuzzyFilter", () => {
 		assert.strictEqual(result.length, 2);
 		assert.ok(result.map((r) => r.name).includes("foo"));
 		assert.ok(result.map((r) => r.name).includes("foobar"));
+	});
+
+	it("matches slash-separated provider/model queries against reordered text", () => {
+		const item = { id: "gpt-5.5", provider: "openai-codex" };
+		const result = fuzzyFilter([item], "openai-codex/gpt-5.5", (model) => `${model.id} ${model.provider}`);
+
+		assert.deepStrictEqual(result, [item]);
 	});
 });

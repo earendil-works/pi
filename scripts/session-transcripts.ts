@@ -1,9 +1,9 @@
-#!/usr/bin/env npx tsx
+#!/usr/bin/env node
 /**
  * Extracts session transcripts for a given cwd, splits into context-sized files,
  * optionally spawns subagents to analyze patterns.
  *
- * Usage: npx tsx scripts/session-transcripts.ts [--analyze] [--output <dir>] [cwd]
+ * Usage: node scripts/session-transcripts.ts [--analyze] [--output <dir>] [cwd]
  *   --analyze      Spawn pi subagents to analyze each transcript file
  *   --output <dir> Output directory for transcript files (defaults to ./session-transcripts)
  *   cwd            Working directory to extract sessions for (defaults to current)
@@ -14,7 +14,7 @@ import { spawn } from "child_process";
 import { createInterface } from "node:readline";
 import { homedir } from "os";
 import { join, resolve } from "path";
-import { parseSessionEntries, type SessionMessageEntry } from "../packages/coding-agent/src/core/session-manager.js";
+import { parseSessionEntries, type SessionMessageEntry } from "../packages/coding-agent/src/core/session-manager.ts";
 import chalk from "chalk";
 
 const MAX_CHARS_PER_FILE = 100_000; // ~20k tokens, leaving room for prompt + analysis + output

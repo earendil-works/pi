@@ -56,7 +56,7 @@ describe("Bug regression: isImageLine() crash with image escape sequences", () =
 		});
 
 		it("new implementation returns true correctly", async () => {
-			const { isImageLine } = await import("../src/terminal-image.js");
+			const { isImageLine } = await import("../src/terminal-image.ts");
 
 			// Line containing image escape sequence with text before it
 			const lineWithImageSequence =
@@ -68,7 +68,7 @@ describe("Bug regression: isImageLine() crash with image escape sequences", () =
 		});
 
 		it("new implementation detects Kitty sequences in any position", async () => {
-			const { isImageLine } = await import("../src/terminal-image.js");
+			const { isImageLine } = await import("../src/terminal-image.ts");
 
 			const scenarios = [
 				"At start: \x1b_Ga=T,f=100,data...\x1b\\",
@@ -85,7 +85,7 @@ describe("Bug regression: isImageLine() crash with image escape sequences", () =
 		});
 
 		it("new implementation detects iTerm2 sequences in any position", async () => {
-			const { isImageLine } = await import("../src/terminal-image.js");
+			const { isImageLine } = await import("../src/terminal-image.ts");
 
 			const scenarios = [
 				"At start: \x1b]1337;File=size=100,100:base64...\x07",
@@ -121,7 +121,7 @@ describe("Bug regression: isImageLine() crash with image escape sequences", () =
 		 */
 
 		it("detects image sequences in read tool output", async () => {
-			const { isImageLine } = await import("../src/terminal-image.js");
+			const { isImageLine } = await import("../src/terminal-image.ts");
 
 			// Simulate output when read tool processes an image
 			// The line might have text from the read result plus the image escape sequence
@@ -131,7 +131,7 @@ describe("Bug regression: isImageLine() crash with image escape sequences", () =
 		});
 
 		it("detects Kitty sequences from Image component", async () => {
-			const { isImageLine } = await import("../src/terminal-image.js");
+			const { isImageLine } = await import("../src/terminal-image.ts");
 
 			// Kitty image component creates multi-line output with escape sequences
 			const kittyLine = "\x1b_Ga=T,f=100,t=f,d=base64data...\x1b\\\x1b_Gm=i=1;\x1b\\";
@@ -140,7 +140,7 @@ describe("Bug regression: isImageLine() crash with image escape sequences", () =
 		});
 
 		it("handles ANSI codes before image sequences", async () => {
-			const { isImageLine } = await import("../src/terminal-image.js");
+			const { isImageLine } = await import("../src/terminal-image.ts");
 
 			// Line might have styling (error, warning, etc.) before image data
 			const lines = [
@@ -161,7 +161,7 @@ describe("Bug regression: isImageLine() crash with image escape sequences", () =
 
 	describe("Crash scenario simulation", () => {
 		it("does NOT crash on very long lines with image sequences", async () => {
-			const { isImageLine } = await import("../src/terminal-image.js");
+			const { isImageLine } = await import("../src/terminal-image.ts");
 
 			/**
 			 * Simulate the exact crash scenario:
@@ -190,7 +190,7 @@ describe("Bug regression: isImageLine() crash with image escape sequences", () =
 		});
 
 		it("handles lines exactly matching crash log dimensions", async () => {
-			const { isImageLine } = await import("../src/terminal-image.js");
+			const { isImageLine } = await import("../src/terminal-image.ts");
 
 			/**
 			 * Crash log showed: line 58649 chars wide, terminal width 115
@@ -211,7 +211,7 @@ describe("Bug regression: isImageLine() crash with image escape sequences", () =
 
 	describe("Negative cases: Don't false positive", () => {
 		it("does not detect images in regular long text", async () => {
-			const { isImageLine } = await import("../src/terminal-image.js");
+			const { isImageLine } = await import("../src/terminal-image.ts");
 
 			// Very long line WITHOUT image sequences
 			const longText = "A".repeat(100000);
@@ -220,7 +220,7 @@ describe("Bug regression: isImageLine() crash with image escape sequences", () =
 		});
 
 		it("does not detect images in lines with file paths", async () => {
-			const { isImageLine } = await import("../src/terminal-image.js");
+			const { isImageLine } = await import("../src/terminal-image.ts");
 
 			const filePaths = [
 				"/path/to/1337/image.jpg",

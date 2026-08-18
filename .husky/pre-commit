@@ -3,6 +3,11 @@
 # Get list of staged files before running check
 STAGED_FILES=$(git diff --cached --name-only)
 
+node scripts/check-lockfile-commit.mjs
+if [ $? -ne 0 ]; then
+  exit 1
+fi
+
 # Run the check script (formatting, linting, and type checking)
 echo "Running formatting, linting, and type checking..."
 npm run check

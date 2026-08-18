@@ -1,11 +1,16 @@
 import assert from "node:assert";
 import { describe, it } from "node:test";
 import type { Terminal as XtermTerminalType } from "@xterm/headless";
-import { type Component, TUI } from "../src/tui.js";
-import { VirtualTerminal } from "./virtual-terminal.js";
+import type { Component, TUI } from "../src/tui.ts";
+import { TuiMainScreen } from "../src/tui-main-screen.ts";
+import { VirtualTerminal } from "./virtual-terminal.ts";
 
 class StaticLines implements Component {
-	constructor(private readonly lines: string[]) {}
+	private readonly lines: string[];
+
+	constructor(lines: string[]) {
+		this.lines = lines;
+	}
 
 	render(): string[] {
 		return this.lines;
@@ -15,7 +20,11 @@ class StaticLines implements Component {
 }
 
 class StaticOverlay implements Component {
-	constructor(private readonly line: string) {}
+	private readonly line: string;
+
+	constructor(line: string) {
+		this.line = line;
+	}
 
 	render(): string[] {
 		return [this.line];
@@ -37,7 +46,7 @@ function getCellItalic(terminal: VirtualTerminal, row: number, col: number): num
 async function renderAndFlush(tui: TUI, terminal: VirtualTerminal): Promise<void> {
 	tui.requestRender(true);
 	await new Promise<void>((resolve) => process.nextTick(resolve));
-	await terminal.flush();
+	await terminal.waitForRender();
 }
 
 describe("TUI overlay compositing", () => {
@@ -46,7 +55,7 @@ describe("TUI overlay compositing", () => {
 		const baseLine = `\x1b[3m${"X".repeat(width)}\x1b[23m`;
 
 		const terminal = new VirtualTerminal(width, 6);
-		const tui = new TUI(terminal);
+		const tui: TUI = new TuiMainScreen(terminal);
 		tui.addChild(new StaticLines([baseLine, "INPUT"]));
 		tui.start();
 		await renderAndFlush(tui, terminal);
@@ -59,7 +68,7 @@ describe("TUI overlay compositing", () => {
 		const baseLine = `\x1b[3m${"X".repeat(width)}\x1b[23m`;
 
 		const terminal = new VirtualTerminal(width, 6);
-		const tui = new TUI(terminal);
+		const tui: TUI = new TuiMainScreen(terminal);
 		tui.addChild(new StaticLines([baseLine, "INPUT"]));
 
 		tui.showOverlay(new StaticOverlay("OVR"), { row: 0, col: 5, width: 3 });

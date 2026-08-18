@@ -18,7 +18,7 @@ tmux kill-server
 tmux
 ```
 
-Pi requests extended key reporting automatically when Kitty keyboard protocol is not available. With `extended-keys-format csi-u`, tmux forwards modified keys in CSI-u format, which is the most reliable configuration.
+Pi requests extended key reporting automatically when Kitty keyboard protocol is not available. With `extended-keys-format csi-u`, tmux forwards modified keys in CSI-u format, which is the most reliable configuration. The `extended-keys-format` option requires tmux 3.5 or later.
 
 ## Why `csi-u` Is Recommended
 
@@ -57,5 +57,7 @@ This affects the default keybindings (`Enter` to submit, `Shift+Enter` for newli
 
 ## Requirements
 
-- tmux 3.2 or later (run `tmux -V` to check)
+- tmux 3.5 or later for `extended-keys-format csi-u` (run `tmux -V` to check)
 - A terminal emulator that supports extended keys (Ghostty, Kitty, iTerm2, WezTerm, Windows Terminal)
+
+With tmux 3.2 through 3.4, omit `extended-keys-format csi-u`; Pi still supports tmux's default xterm `modifyOtherKeys` format.

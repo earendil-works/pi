@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { loginAnthropic, refreshAnthropicToken } from "../src/utils/oauth/anthropic.js";
+import { anthropicOAuth } from "../src/auth/oauth/anthropic.ts";
+import type { AuthEvent, AuthPrompt } from "../src/auth/types.ts";
+
+const neverAbortedSignal = new AbortController().signal;
 
 function jsonResponse(body: unknown, status: number = 200): Response {
 	return new Response(JSON.stringify(body), {
@@ -52,18 +55,17 @@ describe.sequential("Anthropic OAuth", () => {
 		});
 		vi.stubGlobal("fetch", fetchMock);
 
-		const credentials = await loginAnthropic({
-			onAuth: (info) => {
-				authUrl = info.url;
+		const credentials = await anthropicOAuth.login({
+			signal: neverAbortedSignal,
+			notify: (event) => {
+				if (event.type === "auth_url") authUrl = event.url;
 			},
-			onPrompt: async () => "",
-			onManualCodeInput: async () => {
+			prompt: async (prompt) => {
+				if (prompt.type !== "manual_code") throw new Error(`Unexpected prompt: ${prompt.type}`);
 				const url = new URL(authUrl);
 				const state = url.searchParams.get("state");
 				const redirectUri = url.searchParams.get("redirect_uri");
-				if (!state || !redirectUri) {
-					throw new Error("Missing OAuth state or redirect_uri in auth URL");
-				}
+				if (!state || !redirectUri) throw new Error("Missing OAuth state or redirect_uri in auth URL");
 				return `${redirectUri}?code=manual-code&state=${state}`;
 			},
 		});
@@ -90,10 +92,53 @@ describe.sequential("Anthropic OAuth", () => {
 		});
 		vi.stubGlobal("fetch", fetchMock);
 
-		const credentials = await refreshAnthropicToken("refresh-token");
+		const credentials = await anthropicOAuth.refresh(
+			{
+				type: "oauth",
+				access: "old-access-token",
+				refresh: "refresh-token",
+				expires: 0,
+			},
+			neverAbortedSignal,
+		);
 
 		expect(credentials.access).toBe("new-access-token");
 		expect(credentials.refresh).toBe("new-refresh-token");
 		expect(fetchMock).toHaveBeenCalledOnce();
+	});
+
+	it("anthropicOAuth.login resolves through the manual_code prompt and aborts it after settling", async () => {
+		const fetchMock = vi.fn(async (input: unknown): Promise<Response> => {
+			const url = typeof input === "string" ? input : String(input);
+			if (url.includes("/oauth/token")) {
+				return jsonResponse({ access_token: "access", refresh_token: "refresh", expires_in: 3600 });
+			}
+			throw new Error(`Unexpected fetch: ${url}`);
+		});
+		vi.stubGlobal("fetch", fetchMock);
+
+		const events: AuthEvent[] = [];
+		const prompts: AuthPrompt[] = [];
+		let manualSignal: AbortSignal | undefined;
+
+		const credential = await anthropicOAuth.login({
+			signal: neverAbortedSignal,
+			notify: (event) => events.push(event),
+			prompt: async (prompt) => {
+				prompts.push(prompt);
+				if (prompt.type === "manual_code") {
+					manualSignal = prompt.signal;
+					return "the-code";
+				}
+				throw new Error(`Unexpected prompt: ${prompt.type}`);
+			},
+		});
+
+		expect(credential.type).toBe("oauth");
+		expect(credential.access).toBe("access");
+		expect(events.some((e) => e.type === "auth_url")).toBe(true);
+		expect(prompts.some((p) => p.type === "manual_code")).toBe(true);
+		// the prompt's signal is aborted once login settles, so UIs can dismiss it
+		expect(manualSignal?.aborted).toBe(true);
 	});
 });

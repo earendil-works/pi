@@ -2,6 +2,11 @@
 	"extends": "../../tsconfig.base.json",
 	"compilerOptions": {
 		"outDir": "./dist",
+		"paths": {
+			"@earendil-works/pi-telemetry": ["../telemetry/dist/index.d.ts"],
+			"@earendil-works/pi-ai": ["../ai/dist/index.d.ts"],
+			"@earendil-works/pi-ai/*": ["../ai/dist/*.d.ts", "../ai/dist/providers/*.d.ts"]
+		},
 		"rootDir": "./src"
 	},
 	"include": ["src/**/*.ts"],

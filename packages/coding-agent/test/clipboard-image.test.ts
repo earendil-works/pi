@@ -1,4 +1,5 @@
 import type { SpawnSyncReturns } from "child_process";
+import { writeFileSync } from "fs";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 
 const mocks = vi.hoisted(() => {
@@ -69,7 +70,7 @@ describe("readClipboardImage", () => {
 			throw new Error(`Unexpected spawnSync call: ${command} ${args.join(" ")}`);
 		});
 
-		const { readClipboardImage } = await import("../src/utils/clipboard-image.js");
+		const { readClipboardImage } = await import("../src/utils/clipboard-image.ts");
 		const result = await readClipboardImage({ platform: "linux", env: { WAYLAND_DISPLAY: "1" } });
 		expect(result).not.toBeNull();
 		expect(result?.mimeType).toBe("image/png");
@@ -100,37 +101,84 @@ describe("readClipboardImage", () => {
 			return spawnOk(Buffer.alloc(0));
 		});
 
-		const { readClipboardImage } = await import("../src/utils/clipboard-image.js");
+		const { readClipboardImage } = await import("../src/utils/clipboard-image.ts");
 		const result = await readClipboardImage({ platform: "linux", env: { XDG_SESSION_TYPE: "wayland" } });
 		expect(result).not.toBeNull();
 		expect(result?.mimeType).toBe("image/png");
 		expect(Array.from(result?.bytes ?? [])).toEqual([9, 8]);
 	});
 
+	test("WSL: passes PowerShell path directly instead of through a custom env var", async () => {
+		mocks.clipboard.hasImage.mockImplementation(() => {
+			throw new Error("clipboard.hasImage should not be called before PowerShell on WSL");
+		});
+
+		let tmpFile: string | undefined;
+		mocks.spawnSync.mockImplementation((command, args, options) => {
+			if (command === "wl-paste" || command === "xclip") {
+				return spawnOk(Buffer.alloc(0));
+			}
+
+			if (command === "wslpath") {
+				tmpFile = args[1];
+				return spawnOk(Buffer.from("C:\\Users\\O'Hare\\clip.png\n", "utf-8"));
+			}
+
+			if (command === "powershell.exe") {
+				const spawnOptions = options as { env?: NodeJS.ProcessEnv };
+				expect(spawnOptions.env?.PI_WSL_CLIPBOARD_IMAGE_PATH).toBeUndefined();
+				expect(args[2]).toContain("$path = 'C:\\Users\\O''Hare\\clip.png'");
+				if (!tmpFile) {
+					throw new Error("wslpath should be called before powershell.exe");
+				}
+				writeFileSync(tmpFile, Buffer.from([4, 5, 6]));
+				return spawnOk(Buffer.from("ok\n", "utf-8"));
+			}
+
+			throw new Error(`Unexpected spawnSync call: ${command} ${args.join(" ")}`);
+		});
+
+		const { readClipboardImage } = await import("../src/utils/clipboard-image.ts");
+		const result = await readClipboardImage({ platform: "linux", env: { WSL_DISTRO_NAME: "Ubuntu" } });
+		expect(result).not.toBeNull();
+		expect(result?.mimeType).toBe("image/png");
+		expect(Array.from(result?.bytes ?? [])).toEqual([4, 5, 6]);
+	});
+
 	test("Non-Wayland: uses clipboard", async () => {
 		mocks.spawnSync.mockImplementation(() => {
-			throw new Error("spawnSync should not be called for non-Wayland sessions");
+			throw new Error(
+				"spawnSync should not be called for non-Wayland sessions when native clipboard returns an image",
+			);
 		});
 
 		mocks.clipboard.hasImage.mockReturnValue(true);
 		mocks.clipboard.getImageBinary.mockResolvedValue(new Uint8Array([7]));
 
-		const { readClipboardImage } = await import("../src/utils/clipboard-image.js");
+		const { readClipboardImage } = await import("../src/utils/clipboard-image.ts");
 		const result = await readClipboardImage({ platform: "linux", env: {} });
 		expect(result).not.toBeNull();
 		expect(result?.mimeType).toBe("image/png");
 		expect(Array.from(result?.bytes ?? [])).toEqual([7]);
 	});
 
-	test("Non-Wayland: returns null when clipboard has no image", async () => {
-		mocks.spawnSync.mockImplementation(() => {
-			throw new Error("spawnSync should not be called for non-Wayland sessions");
+	test("Non-Wayland: falls back to xclip when clipboard has no image", async () => {
+		mocks.spawnSync.mockImplementation((command, args, _options) => {
+			if (command === "xclip" && args.includes("TARGETS")) {
+				return spawnOk(Buffer.from("image/png\n", "utf-8"));
+			}
+			if (command === "xclip" && args.includes("image/png")) {
+				return spawnOk(Buffer.from([8, 9]));
+			}
+			throw new Error(`Unexpected spawnSync call: ${command} ${args.join(" ")}`);
 		});
 
 		mocks.clipboard.hasImage.mockReturnValue(false);
 
-		const { readClipboardImage } = await import("../src/utils/clipboard-image.js");
+		const { readClipboardImage } = await import("../src/utils/clipboard-image.ts");
 		const result = await readClipboardImage({ platform: "linux", env: {} });
-		expect(result).toBeNull();
+		expect(result).not.toBeNull();
+		expect(result?.mimeType).toBe("image/png");
+		expect(Array.from(result?.bytes ?? [])).toEqual([8, 9]);
 	});
 });

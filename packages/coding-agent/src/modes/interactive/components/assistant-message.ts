@@ -1,6 +1,12 @@
-import type { AssistantMessage } from "@tculpepp/spi-ai";
-import { Container, Markdown, type MarkdownTheme, Spacer, Text } from "@tculpepp/spi-tui";
-import { getMarkdownTheme, theme } from "../theme/theme.js";
+import type { AssistantMessage } from "@earendil-works/pi-ai";
+import { Container, Markdown, type MarkdownTheme, Spacer, Text } from "@earendil-works/pi-tui";
+import type { MarkdownTransformer } from "../../../core/extensions/types.ts";
+import { getMarkdownTheme, theme } from "../theme/theme.ts";
+import { createMarkdownTransform } from "./markdown-transform.ts";
+
+const OSC133_ZONE_START = "\x1b]133;A\x07";
+const OSC133_ZONE_END = "\x1b]133;B\x07";
+const OSC133_ZONE_FINAL = "\x1b]133;C\x07";
 
 /**
  * Component that renders a complete assistant message
@@ -10,19 +16,27 @@ export class AssistantMessageComponent extends Container {
 	private hideThinkingBlock: boolean;
 	private markdownTheme: MarkdownTheme;
 	private hiddenThinkingLabel: string;
+	private outputPad: number;
+	private markdownTransformers: readonly MarkdownTransformer[];
 	private lastMessage?: AssistantMessage;
+	private hasToolCalls = false;
+	private isStreaming = false;
 
 	constructor(
 		message?: AssistantMessage,
 		hideThinkingBlock = false,
 		markdownTheme: MarkdownTheme = getMarkdownTheme(),
 		hiddenThinkingLabel = "Thinking...",
+		outputPad = 1,
+		markdownTransformers: readonly MarkdownTransformer[] = [],
 	) {
 		super();
 
 		this.hideThinkingBlock = hideThinkingBlock;
 		this.markdownTheme = markdownTheme;
 		this.hiddenThinkingLabel = hiddenThinkingLabel;
+		this.outputPad = outputPad;
+		this.markdownTransformers = markdownTransformers;
 
 		// Container for text/thinking content
 		this.contentContainer = new Container();
@@ -54,8 +68,27 @@ export class AssistantMessageComponent extends Container {
 		}
 	}
 
-	updateContent(message: AssistantMessage): void {
+	setOutputPad(padding: number): void {
+		this.outputPad = padding;
+		if (this.lastMessage) {
+			this.updateContent(this.lastMessage);
+		}
+	}
+
+	override render(width: number): string[] {
+		const lines = super.render(width);
+		if (this.hasToolCalls || lines.length === 0) {
+			return lines;
+		}
+
+		lines[0] = OSC133_ZONE_START + lines[0];
+		lines[lines.length - 1] = OSC133_ZONE_END + OSC133_ZONE_FINAL + lines[lines.length - 1];
+		return lines;
+	}
+
+	updateContent(message: AssistantMessage, isStreaming = this.isStreaming): void {
 		this.lastMessage = message;
+		this.isStreaming = isStreaming;
 
 		// Clear content container
 		this.contentContainer.clear();
@@ -74,8 +107,29 @@ export class AssistantMessageComponent extends Container {
 			if (content.type === "text" && content.text.trim()) {
 				// Assistant text messages with no background - trim the text
 				// Set paddingY=0 to avoid extra spacing before tool executions
-				this.contentContainer.addChild(new Markdown(content.text.trim(), 1, 0, this.markdownTheme));
-			} else if (content.type === "thinking" && content.thinking.trim()) {
+				this.contentContainer.addChild(
+					new Markdown(content.text.trim(), this.outputPad, 0, this.markdownTheme, undefined, {
+						transform: createMarkdownTransform("assistant", this.isStreaming, this.markdownTransformers),
+					}),
+				);
+			} else if (content.type === "thinking") {
+				const thinkingBlocks: string[] = [];
+				for (; i < message.content.length; i++) {
+					const thinkingContent = message.content[i];
+					if (thinkingContent.type !== "thinking") {
+						break;
+					}
+					const thinking = thinkingContent.thinking.trim();
+					if (thinking) {
+						thinkingBlocks.push(thinking);
+					}
+				}
+				i--;
+
+				if (thinkingBlocks.length === 0) {
+					continue;
+				}
+
 				// Add spacing only when another visible assistant content block follows.
 				// This avoids a superfluous blank line before separately-rendered tool execution blocks.
 				const hasVisibleContentAfter = message.content
@@ -83,47 +137,60 @@ export class AssistantMessageComponent extends Container {
 					.some((c) => (c.type === "text" && c.text.trim()) || (c.type === "thinking" && c.thinking.trim()));
 
 				if (this.hideThinkingBlock) {
-					// Show static thinking label when hidden
+					// Show one static label for each run of thinking blocks when hidden.
 					this.contentContainer.addChild(
-						new Text(theme.italic(theme.fg("thinkingText", this.hiddenThinkingLabel)), 1, 0),
+						new Text(theme.italic(theme.fg("thinkingText", this.hiddenThinkingLabel)), this.outputPad, 0),
 					);
-					if (hasVisibleContentAfter) {
-						this.contentContainer.addChild(new Spacer(1));
-					}
 				} else {
-					// Thinking traces in thinkingText color, italic
+					// Render each run of thinking blocks as one Markdown section.
 					this.contentContainer.addChild(
-						new Markdown(content.thinking.trim(), 1, 0, this.markdownTheme, {
-							color: (text: string) => theme.fg("thinkingText", text),
-							italic: true,
-						}),
+						new Markdown(
+							thinkingBlocks.join("\n\n"),
+							this.outputPad,
+							0,
+							this.markdownTheme,
+							{
+								color: (text: string) => theme.fg("thinkingText", text),
+								italic: true,
+							},
+							{
+								transform: createMarkdownTransform(
+									"assistant-thinking",
+									this.isStreaming,
+									this.markdownTransformers,
+								),
+							},
+						),
 					);
-					if (hasVisibleContentAfter) {
-						this.contentContainer.addChild(new Spacer(1));
-					}
+				}
+				if (hasVisibleContentAfter) {
+					this.contentContainer.addChild(new Spacer(1));
 				}
 			}
 		}
 
-		// Check if aborted - show after partial content
-		// But only if there are no tool calls (tool execution components will show the error)
+		// Check if incomplete/failed - show after partial content.
+		// For aborted/error tool calls, tool execution components show the error.
+		// Length stops can happen before a tool call is complete, so surface them here too.
 		const hasToolCalls = message.content.some((c) => c.type === "toolCall");
-		if (!hasToolCalls) {
+		this.hasToolCalls = hasToolCalls;
+		if (message.stopReason === "length") {
+			this.contentContainer.addChild(new Spacer(1));
+			this.contentContainer.addChild(
+				new Text(theme.fg("error", "Response was truncated before completion."), this.outputPad, 0),
+			);
+		} else if (!hasToolCalls) {
 			if (message.stopReason === "aborted") {
 				const abortMessage =
 					message.errorMessage && message.errorMessage !== "Request was aborted"
 						? message.errorMessage
 						: "Operation aborted";
-				if (hasVisibleContent) {
-					this.contentContainer.addChild(new Spacer(1));
-				} else {
-					this.contentContainer.addChild(new Spacer(1));
-				}
-				this.contentContainer.addChild(new Text(theme.fg("error", abortMessage), 1, 0));
+				this.contentContainer.addChild(new Spacer(1));
+				this.contentContainer.addChild(new Text(theme.fg("error", abortMessage), this.outputPad, 0));
 			} else if (message.stopReason === "error") {
 				const errorMsg = message.errorMessage || "Unknown error";
 				this.contentContainer.addChild(new Spacer(1));
-				this.contentContainer.addChild(new Text(theme.fg("error", `Error: ${errorMsg}`), 1, 0));
+				this.contentContainer.addChild(new Text(theme.fg("error", `Error: ${errorMsg}`), this.outputPad, 0));
 			}
 		}
 	}
