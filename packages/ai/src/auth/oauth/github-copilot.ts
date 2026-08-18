@@ -407,6 +407,10 @@ async function enableGitHubCopilotModel(
 	return response.ok;
 }
 
+/**
+ * Enable the requested GitHub Copilot models and return the successful IDs.
+ * Policy updates are best effort; exhausted rate limiting stops the batch.
+ */
 async function enableGitHubCopilotModels(
 	token: string,
 	modelIds: readonly string[],
