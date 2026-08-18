@@ -745,11 +745,15 @@ describe("InteractiveMode.showLoadedResources", () => {
 		expect(output).not.toContain("resource-list");
 	});
 
-	test("recolors resource labels when rebuilt after a theme change", () => {
+	test("recolors captured resources on invalidation without rereading loaders", () => {
 		const fakeThis = createShowLoadedResourcesThis({
 			quietStartup: false,
 			contextFiles: [{ path: "/tmp/project/AGENTS.md" }],
 		});
+		const getSkills = vi.spyOn(fakeThis.session.resourceLoader, "getSkills");
+		const getPrompts = vi.spyOn(fakeThis.session.resourceLoader, "getPrompts");
+		const getThemes = vi.spyOn(fakeThis.session.resourceLoader, "getThemes");
+		const getExtensions = vi.spyOn(fakeThis.session.resourceLoader, "getExtensions");
 		const showLoadedResources = (
 			InteractiveMode as unknown as {
 				prototype: {
@@ -770,20 +774,22 @@ describe("InteractiveMode.showLoadedResources", () => {
 		expect(renderAll(fakeThis.loadedResourcesContainer)).toContain(darkHeading);
 
 		try {
-			setTheme("light");
+			initTheme("light");
 			const lightHeading = theme.getFgAnsi("mdHeading");
 			const lightDim = theme.getFgAnsi("dim");
-			showLoadedResources.call(fakeThis, {
-				force: false,
-			});
+			fakeThis.loadedResourcesContainer.invalidate();
 			const output = renderAll(fakeThis.loadedResourcesContainer);
 
 			expect(output).toContain(lightHeading);
 			expect(output).toContain(lightDim);
 			expect(output).not.toContain(darkHeading);
 			expect(output).not.toContain(darkDim);
+			expect(getSkills).toHaveBeenCalledTimes(1);
+			expect(getPrompts).toHaveBeenCalledTimes(1);
+			expect(getThemes).toHaveBeenCalledTimes(1);
+			expect(getExtensions).toHaveBeenCalledTimes(1);
 		} finally {
-			setTheme("dark");
+			initTheme("dark");
 		}
 	});
 
