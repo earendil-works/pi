@@ -120,7 +120,6 @@ import { CustomEntryComponent } from "./components/custom-entry.ts";
 import { CustomMessageComponent } from "./components/custom-message.ts";
 import { DaxnutsComponent } from "./components/daxnuts.ts";
 import { DynamicBorder } from "./components/dynamic-border.ts";
-import { DynamicText, ExpandableText } from "./components/dynamic-text.ts";
 import { EarendilAnnouncementComponent } from "./components/earendil-announcement.ts";
 import { ExtensionEditorComponent } from "./components/extension-editor.ts";
 import { ExtensionInputComponent } from "./components/extension-input.ts";
@@ -177,6 +176,62 @@ interface Expandable {
 
 function isExpandable(obj: unknown): obj is Expandable {
 	return typeof obj === "object" && obj !== null && "setExpanded" in obj && typeof obj.setExpanded === "function";
+}
+
+class DynamicText<T> extends Text {
+	private source: T;
+	private readonly format: (source: T) => string;
+
+	constructor(source: T, format: (source: T) => string, paddingX = 1, paddingY = 1) {
+		super(format(source), paddingX, paddingY);
+		this.source = source;
+		this.format = format;
+	}
+
+	setSource(source: T): void {
+		this.source = source;
+		this.refresh();
+	}
+
+	override invalidate(): void {
+		this.refresh();
+	}
+
+	private refresh(): void {
+		this.setText(this.format(this.source));
+	}
+}
+
+class ExpandableText extends Text implements Expandable {
+	private expanded: boolean;
+	private readonly getCollapsedText: () => string;
+	private readonly getExpandedText: () => string;
+
+	constructor(
+		getCollapsedText: () => string,
+		getExpandedText: () => string,
+		expanded = false,
+		paddingX = 0,
+		paddingY = 0,
+	) {
+		super(expanded ? getExpandedText() : getCollapsedText(), paddingX, paddingY);
+		this.expanded = expanded;
+		this.getCollapsedText = getCollapsedText;
+		this.getExpandedText = getExpandedText;
+	}
+
+	setExpanded(expanded: boolean): void {
+		this.expanded = expanded;
+		this.refresh();
+	}
+
+	override invalidate(): void {
+		this.refresh();
+	}
+
+	private refresh(): void {
+		this.setText(this.expanded ? this.getExpandedText() : this.getCollapsedText());
+	}
 }
 
 type CompactionQueuedMessage = {
@@ -429,7 +484,7 @@ export class InteractiveMode {
 
 	// Status line tracking (for mutating immediately-sequential status updates)
 	private lastStatusSpacer: Spacer | undefined = undefined;
-	private lastStatusText: Text | undefined = undefined;
+	private lastStatusText: DynamicText<string> | undefined = undefined;
 	private managedToolStatusStarted = false;
 
 	// Streaming message tracking
@@ -3436,8 +3491,10 @@ export class InteractiveMode {
 			this.managedToolStatusStarted = true;
 		}
 		const message = status.type === "warning" ? `Warning: ${status.message}` : status.message;
-		const color = status.type === "warning" ? "warning" : "dim";
-		this.chatContainer.addChild(new Text(theme.fg(color, message), 1, 0));
+		const color: ThemeColor = status.type === "warning" ? "warning" : "dim";
+		this.chatContainer.addChild(
+			new DynamicText({ color, message }, (source) => theme.fg(source.color, source.message), 1, 0),
+		);
 		this.lastStatusSpacer = undefined;
 		this.lastStatusText = undefined;
 		this.ui.requestRender();
@@ -3455,13 +3512,13 @@ export class InteractiveMode {
 		const secondLast = children.length > 1 ? children[children.length - 2] : undefined;
 
 		if (last && secondLast && last === this.lastStatusText && secondLast === this.lastStatusSpacer) {
-			this.lastStatusText.setText(theme.fg("dim", message));
+			this.lastStatusText.setSource(message);
 			this.ui.requestRender();
 			return;
 		}
 
 		const spacer = new Spacer(1);
-		const text = new Text(theme.fg("dim", message), 1, 0);
+		const text = new DynamicText(message, (source) => theme.fg("dim", source), 1, 0);
 		this.chatContainer.addChild(spacer);
 		this.chatContainer.addChild(text);
 		this.lastStatusSpacer = spacer;
@@ -4135,13 +4192,17 @@ export class InteractiveMode {
 
 	showError(errorMessage: string): void {
 		this.chatContainer.addChild(new Spacer(1));
-		this.chatContainer.addChild(new Text(theme.fg("error", `Error: ${errorMessage}`), this.outputPad, 0));
+		this.chatContainer.addChild(
+			new DynamicText(errorMessage, (message) => theme.fg("error", `Error: ${message}`), this.outputPad, 0),
+		);
 		this.ui.requestRender();
 	}
 
 	showWarning(warningMessage: string): void {
 		this.chatContainer.addChild(new Spacer(1));
-		this.chatContainer.addChild(new Text(theme.fg("warning", `Warning: ${warningMessage}`), 1, 0));
+		this.chatContainer.addChild(
+			new DynamicText(warningMessage, (message) => theme.fg("warning", `Warning: ${message}`), 1, 0),
+		);
 		this.ui.requestRender();
 	}
 

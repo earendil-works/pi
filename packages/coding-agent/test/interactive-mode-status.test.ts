@@ -9,7 +9,7 @@ import type { AutocompleteProviderFactory } from "../src/core/extensions/types.t
 import type { SourceInfo } from "../src/core/source-info.ts";
 import type { AuthSelectorProvider } from "../src/modes/interactive/components/oauth-selector.ts";
 import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
-import { initTheme, theme } from "../src/modes/interactive/theme/theme.ts";
+import { initTheme, setTheme, theme } from "../src/modes/interactive/theme/theme.ts";
 
 function renderLastLine(container: Container, width = 120): string {
 	const last = container.children[container.children.length - 1];
@@ -116,6 +116,39 @@ describe("InteractiveMode.showStatus", () => {
 		expect(fakeThis.chatContainer.children).toHaveLength(5);
 		expect(renderLastLine(fakeThis.chatContainer)).toContain("STATUS_TWO");
 	});
+
+	test("recolors existing status, warning, and error text after invalidation", () => {
+		const fakeThis: any = {
+			chatContainer: new Container(),
+			ui: { requestRender: vi.fn() },
+			lastStatusSpacer: undefined,
+			lastStatusText: undefined,
+			outputPad: 1,
+		};
+
+		initTheme("dark");
+		(InteractiveMode as any).prototype.showStatus.call(fakeThis, "STATUS_TEXT");
+		InteractiveMode.prototype.showWarning.call(fakeThis, "WARNING_TEXT");
+		InteractiveMode.prototype.showError.call(fakeThis, "ERROR_TEXT");
+		const darkDim = theme.getFgAnsi("dim");
+		const darkWarning = theme.getFgAnsi("warning");
+		const darkError = theme.getFgAnsi("error");
+
+		try {
+			setTheme("light");
+			fakeThis.chatContainer.invalidate();
+			const output = renderAll(fakeThis.chatContainer);
+
+			expect(output).toContain(theme.getFgAnsi("dim"));
+			expect(output).toContain(theme.getFgAnsi("warning"));
+			expect(output).toContain(theme.getFgAnsi("error"));
+			expect(output).not.toContain(darkDim);
+			expect(output).not.toContain(darkWarning);
+			expect(output).not.toContain(darkError);
+		} finally {
+			setTheme("dark");
+		}
+	});
 });
 
 describe("InteractiveMode.showManagedToolStatus", () => {
@@ -139,6 +172,32 @@ describe("InteractiveMode.showManagedToolStatus", () => {
 		expect(normalizeRenderedOutput(fakeThis.chatContainer)).toBe(
 			"fd downloading\n rg downloading\n Warning: rg failed",
 		);
+	});
+
+	test("recolors existing tool status text after invalidation", () => {
+		const fakeThis: any = {
+			chatContainer: new Container(),
+			ui: { requestRender: vi.fn() },
+			managedToolStatusStarted: false,
+			lastStatusSpacer: undefined,
+			lastStatusText: undefined,
+		};
+		const showManagedToolStatus = (InteractiveMode as any).prototype.showManagedToolStatus;
+
+		initTheme("dark");
+		showManagedToolStatus.call(fakeThis, { type: "warning", message: "TOOL_WARNING" });
+		const darkWarning = theme.getFgAnsi("warning");
+
+		try {
+			setTheme("light");
+			fakeThis.chatContainer.invalidate();
+			const output = renderAll(fakeThis.chatContainer);
+
+			expect(output).toContain(theme.getFgAnsi("warning"));
+			expect(output).not.toContain(darkWarning);
+		} finally {
+			setTheme("dark");
+		}
 	});
 });
 
@@ -758,6 +817,45 @@ describe("InteractiveMode.showLoadedResources", () => {
 			expect(getPrompts).toHaveBeenCalledTimes(1);
 			expect(getThemes).toHaveBeenCalledTimes(1);
 			expect(getExtensions).toHaveBeenCalledTimes(1);
+		} finally {
+			initTheme("dark");
+		}
+	});
+
+	test("preserves a manually collapsed resource listing across theme invalidation", () => {
+		const fakeThis = createShowLoadedResourcesThis({
+			quietStartup: false,
+			verbose: true,
+			skills: [{ filePath: "/tmp/skill/SKILL.md", name: "commit" }],
+		});
+		fakeThis.builtInHeader = undefined;
+		fakeThis.customHeader = undefined;
+		fakeThis.showStatus = vi.fn();
+
+		(InteractiveMode as any).prototype.showLoadedResources.call(fakeThis, {
+			force: false,
+		});
+		const setToolsExpanded = (InteractiveMode as any).prototype.setToolsExpanded;
+
+		// Verbose startup begins expanded. The first toggle synchronizes the
+		// expansion flag, and the second represents the user's manual collapse.
+		setToolsExpanded.call(fakeThis, true);
+		setToolsExpanded.call(fakeThis, false);
+		expect(renderAll(fakeThis.loadedResourcesContainer)).toContain("commit");
+		expect(renderAll(fakeThis.loadedResourcesContainer)).not.toContain("resource-list");
+
+		initTheme("dark");
+		const darkHeading = theme.getFgAnsi("mdHeading");
+		try {
+			initTheme("light");
+			const lightHeading = theme.getFgAnsi("mdHeading");
+			fakeThis.loadedResourcesContainer.invalidate();
+			const output = renderAll(fakeThis.loadedResourcesContainer);
+
+			expect(output).toContain("commit");
+			expect(output).not.toContain("resource-list");
+			expect(output).toContain(lightHeading);
+			expect(output).not.toContain(darkHeading);
 		} finally {
 			initTheme("dark");
 		}
