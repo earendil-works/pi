@@ -9,11 +9,14 @@ import {
 	mkdirSync,
 	openSync,
 	readdirSync,
+	readFileSync,
 	readSync,
 	statSync,
+	unlinkSync,
 	writeFileSync,
 } from "fs";
 import { readdir, stat } from "fs/promises";
+import { hostname } from "os";
 import { join, resolve } from "path";
 import { createInterface } from "readline";
 import { StringDecoder } from "string_decoder";
@@ -841,6 +844,228 @@ async function listSessionsFromDir(
 	return sessions;
 }
 
+interface SessionWriterOwner {
+	pid: number;
+	host: string;
+	token: string;
+	sessionId: string;
+	acquiredAt: string;
+}
+
+interface SessionWriterLock {
+	path: string;
+	token: string;
+	exitHandler: () => void;
+}
+
+const SESSION_WRITER_LOCK_SUFFIX = ".writer.lock";
+const SESSION_WRITER_RECOVERY_SUFFIX = ".recovery";
+const SESSION_TAIL_READ_BUFFER_SIZE = 64 * 1024;
+
+export class SessionWriterOwnershipError extends Error {
+	readonly sessionFile: string;
+	readonly owner?: SessionWriterOwner;
+
+	constructor(sessionFile: string, owner?: SessionWriterOwner) {
+		const ownerDescription = owner
+			? `pid ${owner.pid} on ${owner.host}`
+			: "an unknown writer whose lock cannot be safely recovered";
+		super(
+			`Session ${sessionFile} is owned by another live process (${ownerDescription}). ` +
+				"Close that process or explicitly hand off ownership before continuing.",
+		);
+		this.name = "SessionWriterOwnershipError";
+		this.sessionFile = sessionFile;
+		this.owner = owner;
+	}
+}
+
+export class SessionDurableTailError extends Error {
+	readonly sessionFile: string;
+
+	constructor(sessionFile: string, message: string) {
+		super(`Session ${sessionFile} changed outside its owning process: ${message}`);
+		this.name = "SessionDurableTailError";
+		this.sessionFile = sessionFile;
+	}
+}
+
+function errorCode(error: unknown): string | undefined {
+	return typeof error === "object" && error !== null && "code" in error
+		? String((error as { code?: unknown }).code)
+		: undefined;
+}
+
+function parseSessionWriterOwner(content: string): SessionWriterOwner | undefined {
+	try {
+		const value = JSON.parse(content) as Partial<SessionWriterOwner>;
+		if (
+			typeof value.pid !== "number" ||
+			!Number.isInteger(value.pid) ||
+			value.pid <= 0 ||
+			typeof value.host !== "string" ||
+			typeof value.token !== "string" ||
+			typeof value.sessionId !== "string" ||
+			typeof value.acquiredAt !== "string"
+		) {
+			return undefined;
+		}
+		return value as SessionWriterOwner;
+	} catch {
+		return undefined;
+	}
+}
+
+function readSessionWriterOwner(lockPath: string): SessionWriterOwner | undefined {
+	try {
+		return parseSessionWriterOwner(readFileSync(lockPath, "utf8"));
+	} catch {
+		return undefined;
+	}
+}
+
+function processIsAlive(pid: number): boolean {
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch (error) {
+		return errorCode(error) !== "ESRCH";
+	}
+}
+
+function removeOwnedLock(lockPath: string, token: string): void {
+	const owner = readSessionWriterOwner(lockPath);
+	if (!owner || owner.token !== token) return;
+	try {
+		unlinkSync(lockPath);
+	} catch (error) {
+		if (errorCode(error) !== "ENOENT") throw error;
+	}
+}
+
+function tryRecoverDeadWriter(lockPath: string, expectedOwner: SessionWriterOwner): boolean {
+	if (expectedOwner.host !== hostname() || processIsAlive(expectedOwner.pid)) return false;
+
+	const recoveryPath = `${lockPath}${SESSION_WRITER_RECOVERY_SUFFIX}`;
+	const recoveryToken = randomUUID();
+	try {
+		writeFileSync(recoveryPath, recoveryToken, { encoding: "utf8", flag: "wx" });
+	} catch {
+		return false;
+	}
+
+	try {
+		const currentOwner = readSessionWriterOwner(lockPath);
+		if (
+			!currentOwner ||
+			currentOwner.token !== expectedOwner.token ||
+			currentOwner.host !== hostname() ||
+			processIsAlive(currentOwner.pid)
+		) {
+			return false;
+		}
+		unlinkSync(lockPath);
+		return true;
+	} finally {
+		try {
+			if (readFileSync(recoveryPath, "utf8") === recoveryToken) {
+				unlinkSync(recoveryPath);
+			}
+		} catch {
+			// A failed recovery remains fail-closed for the next owner.
+		}
+	}
+}
+
+function acquireSessionWriterLock(sessionFile: string, sessionId: string): SessionWriterLock {
+	const lockPath = `${sessionFile}${SESSION_WRITER_LOCK_SUFFIX}`;
+	const owner: SessionWriterOwner = {
+		pid: process.pid,
+		host: hostname(),
+		token: randomUUID(),
+		sessionId,
+		acquiredAt: new Date().toISOString(),
+	};
+
+	for (let attempt = 0; attempt < 2; attempt++) {
+		try {
+			writeFileSync(lockPath, JSON.stringify(owner), { encoding: "utf8", flag: "wx" });
+			const exitHandler = () => removeOwnedLock(lockPath, owner.token);
+			process.once("exit", exitHandler);
+			return { path: lockPath, token: owner.token, exitHandler };
+		} catch (error) {
+			if (errorCode(error) !== "EEXIST") throw error;
+			const currentOwner = readSessionWriterOwner(lockPath);
+			if (attempt === 0 && currentOwner && tryRecoverDeadWriter(lockPath, currentOwner)) {
+				continue;
+			}
+			throw new SessionWriterOwnershipError(sessionFile, currentOwner);
+		}
+	}
+
+	throw new SessionWriterOwnershipError(sessionFile, readSessionWriterOwner(lockPath));
+}
+
+function getLastSessionEntryId(entries: FileEntry[]): string | null {
+	for (let index = entries.length - 1; index >= 0; index--) {
+		const entry = entries[index];
+		if (entry.type !== "session" && typeof entry.id === "string") return entry.id;
+	}
+	return null;
+}
+
+function parseDurableTailLine(line: Buffer, sessionFile: string): FileEntry | undefined {
+	const text = line.toString("utf8");
+	if (!text.trim()) return undefined;
+	const entry = parseSessionEntryLine(text);
+	if (!entry) {
+		throw new SessionDurableTailError(sessionFile, "the physical tail is not valid JSONL");
+	}
+	if (entry.type !== "session" && typeof entry.id !== "string") {
+		throw new SessionDurableTailError(sessionFile, "the physical tail entry has no stable id");
+	}
+	return entry;
+}
+
+function readDurableTailId(sessionFile: string): string | null {
+	if (!existsSync(sessionFile)) return null;
+	const size = statSync(sessionFile).size;
+	if (size === 0) return null;
+
+	const fd = openSync(sessionFile, "r");
+	try {
+		let offset = size;
+		let lineChunks: Buffer[] = [];
+		while (offset > 0) {
+			const length = Math.min(SESSION_TAIL_READ_BUFFER_SIZE, offset);
+			const start = offset - length;
+			const buffer = Buffer.allocUnsafe(length);
+			const bytesRead = readSync(fd, buffer, 0, length, start);
+			if (bytesRead !== length) {
+				throw new SessionDurableTailError(sessionFile, "the physical tail changed while it was being verified");
+			}
+			let segmentEnd = bytesRead;
+
+			for (let index = bytesRead - 1; index >= 0; index--) {
+				if (buffer[index] !== 0x0a) continue;
+				lineChunks.unshift(buffer.subarray(index + 1, segmentEnd));
+				const entry = parseDurableTailLine(Buffer.concat(lineChunks), sessionFile);
+				if (entry) return entry.type === "session" ? null : entry.id;
+				lineChunks = [];
+				segmentEnd = index;
+			}
+
+			lineChunks.unshift(buffer.subarray(0, segmentEnd));
+			offset = start;
+		}
+
+		const entry = parseDurableTailLine(Buffer.concat(lineChunks), sessionFile);
+		return !entry || entry.type === "session" ? null : entry.id;
+	} finally {
+		closeSync(fd);
+	}
+}
+
 /**
  * Manages conversation sessions as append-only trees stored in JSONL files.
  *
@@ -864,6 +1089,9 @@ export class SessionManager {
 	private labelsById: Map<string, string> = new Map();
 	private labelTimestampsById: Map<string, string> = new Map();
 	private leafId: string | null = null;
+	private durableTailId: string | null = null;
+	private writerLock: SessionWriterLock | undefined;
+	private writerOwnershipInvalid: SessionDurableTailError | undefined;
 
 	private constructor(
 		cwd: string,
@@ -893,6 +1121,10 @@ export class SessionManager {
 	}
 
 	private _setSessionFile(sessionFile: string, preloadedFileEntries?: FileEntry[]): void {
+		this._releaseWriterOwnership();
+		this.writerOwnershipInvalid = undefined;
+		this.durableTailId = null;
+		this.flushed = false;
 		this.sessionFile = resolvePath(sessionFile);
 		if (existsSync(this.sessionFile)) {
 			this.fileEntries = preloadedFileEntries ?? loadEntriesFromFile(this.sessionFile);
@@ -907,19 +1139,31 @@ export class SessionManager {
 				this.newSession();
 				this.sessionFile = explicitPath;
 				this._rewriteFile();
-				this.flushed = true;
 				return;
 			}
 
-			const header = this.fileEntries.find((e) => e.type === "session") as SessionHeader | undefined;
+			let header = this.fileEntries.find((e) => e.type === "session") as SessionHeader | undefined;
 			this.sessionId = header?.id ?? createSessionId();
-
-			if (migrateToCurrentVersion(this.fileEntries)) {
-				this._rewriteFile();
-			}
-
-			this._buildIndex();
+			this.durableTailId = getLastSessionEntryId(this.fileEntries);
 			this.flushed = true;
+
+			if ((header?.version ?? 1) < CURRENT_SESSION_VERSION) {
+				// Acquire ownership, then reload under that ownership so migration can
+				// never rewrite entries appended between the initial read and the lock.
+				this.assertWriterOwnership();
+				this.fileEntries = loadEntriesFromFile(this.sessionFile);
+				header = this.fileEntries.find((e) => e.type === "session") as SessionHeader | undefined;
+				if (!header || header.id !== this.sessionId) {
+					throw new SessionDurableTailError(this.sessionFile, "its header changed while ownership was acquired");
+				}
+				this.durableTailId = getLastSessionEntryId(this.fileEntries);
+				if (migrateToCurrentVersion(this.fileEntries)) {
+					this._buildIndex();
+					this._rewriteFile();
+				}
+			} else {
+				this._buildIndex();
+			}
 		} else {
 			const explicitPath = this.sessionFile;
 			this.newSession();
@@ -928,6 +1172,9 @@ export class SessionManager {
 	}
 
 	newSession(options?: NewSessionOptions): string | undefined {
+		this._releaseWriterOwnership();
+		this.writerOwnershipInvalid = undefined;
+		this.durableTailId = null;
 		if (options?.id !== undefined) {
 			assertValidSessionId(options.id);
 		}
@@ -976,8 +1223,82 @@ export class SessionManager {
 		}
 	}
 
+	private _releaseWriterOwnership(): void {
+		const lock = this.writerLock;
+		if (!lock) return;
+		removeOwnedLock(lock.path, lock.token);
+		process.removeListener("exit", lock.exitHandler);
+		this.writerLock = undefined;
+	}
+
+	private _ensureWriterOwnership(): void {
+		if (!this.persist || !this.sessionFile) return;
+		if (this.writerOwnershipInvalid) throw this.writerOwnershipInvalid;
+
+		const expectedLockPath = `${this.sessionFile}${SESSION_WRITER_LOCK_SUFFIX}`;
+		if (this.writerLock) {
+			if (this.writerLock.path !== expectedLockPath) {
+				this._releaseWriterOwnership();
+			} else {
+				const owner = readSessionWriterOwner(this.writerLock.path);
+				if (owner?.token === this.writerLock.token) return;
+				throw new SessionWriterOwnershipError(this.sessionFile, owner);
+			}
+		}
+
+		this.writerLock = acquireSessionWriterLock(this.sessionFile, this.sessionId);
+	}
+
+	private _verifyDurableTail(): void {
+		if (!this.persist || !this.sessionFile) return;
+		if (!existsSync(this.sessionFile)) {
+			if (this.flushed || this.durableTailId !== null) {
+				throw new SessionDurableTailError(this.sessionFile, "the persisted file disappeared");
+			}
+			return;
+		}
+
+		if (statSync(this.sessionFile).size === 0 && !this.flushed && this.durableTailId === null) {
+			return;
+		}
+
+		const header = readSessionHeader(this.sessionFile);
+		if (!header || header.id !== this.sessionId) {
+			throw new SessionDurableTailError(this.sessionFile, "the session header no longer matches");
+		}
+		const actualTailId = readDurableTailId(this.sessionFile);
+		if (actualTailId !== this.durableTailId) {
+			throw new SessionDurableTailError(
+				this.sessionFile,
+				`expected durable tail ${this.durableTailId ?? "<header>"}, found ${actualTailId ?? "<header>"}`,
+			);
+		}
+	}
+
+	/**
+	 * Require this process to own the persisted session and prove that the file's
+	 * physical tail still matches the last entry this manager observed.
+	 */
+	assertWriterOwnership(): void {
+		this._ensureWriterOwnership();
+		try {
+			this._verifyDurableTail();
+		} catch (error) {
+			if (error instanceof SessionDurableTailError) {
+				this.writerOwnershipInvalid = error;
+			}
+			throw error;
+		}
+	}
+
+	/** Release persisted-session ownership so another process can explicitly take over. */
+	dispose(): void {
+		this._releaseWriterOwnership();
+	}
+
 	private _rewriteFile(): void {
 		if (!this.persist || !this.sessionFile) return;
+		this.assertWriterOwnership();
 		const fd = openSync(this.sessionFile, "w");
 		try {
 			for (const entry of this.fileEntries) {
@@ -986,6 +1307,8 @@ export class SessionManager {
 		} finally {
 			closeSync(fd);
 		}
+		this.durableTailId = getLastSessionEntryId(this.fileEntries);
+		this.flushed = true;
 	}
 
 	isPersisted(): boolean {
@@ -1014,13 +1337,18 @@ export class SessionManager {
 
 	_persist(entry: SessionEntry): void {
 		if (!this.persist || !this.sessionFile) return;
+		this.assertWriterOwnership();
 
-		const hasAssistant = this.fileEntries.some((e) => e.type === "message" && e.message.role === "assistant");
+		const hasAssistant =
+			this.fileEntries.some((e) => e.type === "message" && e.message.role === "assistant") ||
+			(entry.type === "message" && entry.message.role === "assistant");
 		if (!hasAssistant) {
 			if (this.flushed) {
 				appendFileSync(this.sessionFile, `${JSON.stringify(entry)}\n`);
+				this.durableTailId = entry.id;
 			} else {
-				// Mark as not flushed so when assistant arrives, all entries get written
+				// Keep pre-assistant entries in memory. The writer lock still reserves
+				// this session path until the first assistant response flushes them.
 				this.flushed = false;
 			}
 			return;
@@ -1029,23 +1357,28 @@ export class SessionManager {
 		if (!this.flushed) {
 			const fd = openSync(this.sessionFile, "wx");
 			try {
-				for (const e of this.fileEntries) {
-					writeFileSync(fd, `${JSON.stringify(e)}\n`);
+				for (const existingEntry of this.fileEntries) {
+					writeFileSync(fd, `${JSON.stringify(existingEntry)}\n`);
 				}
+				writeFileSync(fd, `${JSON.stringify(entry)}\n`);
 			} finally {
 				closeSync(fd);
 			}
 			this.flushed = true;
+			this.durableTailId = entry.id;
 		} else {
 			appendFileSync(this.sessionFile, `${JSON.stringify(entry)}\n`);
+			this.durableTailId = entry.id;
 		}
 	}
 
 	private _appendEntry(entry: SessionEntry): void {
+		// Persist first so a failed ownership or durable-tail check cannot leave a
+		// losing writer's divergent entry in its in-memory provider context.
+		this._persist(entry);
 		this.fileEntries.push(entry);
 		this.byId.set(entry.id, entry);
 		this.leafId = entry.id;
-		this._persist(entry);
 	}
 
 	/** Append a message as child of current leaf, then advance leaf. Returns entry id.
@@ -1469,6 +1802,10 @@ export class SessionManager {
 				parentId = labelEntry.id;
 			}
 
+			this._releaseWriterOwnership();
+			this.writerOwnershipInvalid = undefined;
+			this.durableTailId = null;
+			this.flushed = false;
 			this.fileEntries = [header, ...pathWithoutLabels, ...labelEntries];
 			this.sessionId = newSessionId;
 			this.sessionFile = newSessionFile;
@@ -1507,6 +1844,7 @@ export class SessionManager {
 		}
 		this.fileEntries = [header, ...pathWithoutLabels, ...labelEntries];
 		this.sessionId = newSessionId;
+		this.durableTailId = null;
 		this._buildIndex();
 		return undefined;
 	}

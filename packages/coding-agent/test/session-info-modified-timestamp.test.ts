@@ -20,23 +20,27 @@ function createSessionFile(path: string): void {
 	// SessionManager only persists once it has seen at least one assistant message.
 	// Add a minimal assistant entry so subsequent appends are persisted.
 	const mgr = SessionManager.open(path);
-	mgr.appendMessage({
-		role: "assistant",
-		content: [{ type: "text", text: "hi" }],
-		api: "openai-completions",
-		provider: "openai",
-		model: "test",
-		usage: {
-			input: 1,
-			output: 1,
-			cacheRead: 0,
-			cacheWrite: 0,
-			totalTokens: 2,
-			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-		},
-		stopReason: "stop",
-		timestamp: Date.now(),
-	});
+	try {
+		mgr.appendMessage({
+			role: "assistant",
+			content: [{ type: "text", text: "hi" }],
+			api: "openai-completions",
+			provider: "openai",
+			model: "test",
+			usage: {
+				input: 1,
+				output: 1,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 2,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			stopReason: "stop",
+			timestamp: Date.now(),
+		});
+	} finally {
+		mgr.dispose();
+	}
 }
 
 describe("SessionInfo.modified", () => {

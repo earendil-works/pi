@@ -861,6 +861,7 @@ export class AgentSession {
 		this._disconnectFromAgent();
 		this._eventListeners = [];
 		cleanupSessionResources(this.sessionId);
+		this.sessionManager.dispose();
 	}
 
 	// =========================================================================
@@ -1069,6 +1070,9 @@ export class AgentSession {
 	// =========================================================================
 
 	private async _runAgentPrompt(messages: AgentMessage | AgentMessage[]): Promise<void> {
+		// Every provider turn must prove exclusive ownership of the persisted
+		// session before the agent can construct or issue a request.
+		this.sessionManager.assertWriterOwnership();
 		this._isAgentRunActive = true;
 		try {
 			await this.agent.prompt(messages);
@@ -1276,6 +1280,12 @@ export class AgentSession {
 			return;
 		}
 
+		try {
+			this.sessionManager.assertWriterOwnership();
+		} catch (error) {
+			preflightResult?.(false);
+			throw error;
+		}
 		preflightResult?.(true);
 		await this._runAgentPrompt(messages);
 	}
