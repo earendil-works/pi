@@ -5203,6 +5203,14 @@ export class InteractiveMode {
 				userMessages.map((m) => ({ id: m.entryId, text: m.text })),
 				async (entryId) => {
 					done();
+					// The user committed to forking: stop the active response first.
+					// Mirrors showTreeSelector so we never race a fork against an
+					// in-flight run, including retries or post-run continuations
+					// that re-enter streaming without a fresh agent_start event.
+					if (this.session.isStreaming) {
+						this.restoreQueuedMessagesToEditor();
+						await this.session.abort();
+					}
 					try {
 						const result = await this.runtimeHost.fork(entryId);
 						if (result.cancelled) {
