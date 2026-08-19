@@ -37,6 +37,8 @@ class ThrowingStatement implements SqliteStatement {
 	all<TRow extends object>(..._params: unknown[]): TRow[] {
 		return [];
 	}
+
+	*iterate<TRow extends object>(..._params: unknown[]): Iterable<TRow> {}
 }
 
 class CountingDatabase implements SqliteDatabase {

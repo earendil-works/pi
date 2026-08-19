@@ -55,6 +55,7 @@ function formatAzureOpenAIError(error: unknown): string {
 // Azure OpenAI Responses-specific options
 export interface AzureOpenAIResponsesOptions extends StreamOptions {
 	reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+	toolChoice?: ResponseCreateParamsStreaming["tool_choice"];
 	reasoningSummary?: "auto" | "detailed" | "concise" | null;
 	azureApiVersion?: string;
 	azureResourceName?: string;
@@ -168,7 +169,10 @@ export const streamSimple: StreamFunction<"azure-openai-responses", SimpleStream
 		throw new Error(`No API key for provider: ${model.provider}`);
 	}
 
-	const base = buildBaseOptions(model, context, options, apiKey);
+	const base = {
+		...buildBaseOptions(model, context, options, apiKey),
+		toolChoice: options?.toolChoice,
+	} satisfies AzureOpenAIResponsesOptions;
 	const clampedReasoning = options?.reasoning ? clampThinkingLevel(model, options.reasoning) : undefined;
 	const reasoningEffort = clampedReasoning === "off" ? undefined : clampedReasoning;
 
@@ -302,6 +306,9 @@ function buildParams(
 			supportsStrictMode: model.compat?.supportsStrictMode ?? true,
 			supportsOpenAIGrammarTools: model.compat?.supportsOpenAIGrammarTools ?? false,
 		});
+	}
+	if (options?.toolChoice !== undefined) {
+		params.tool_choice = options.toolChoice;
 	}
 
 	if (model.reasoning) {

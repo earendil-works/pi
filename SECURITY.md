@@ -4,7 +4,7 @@ This document should guide you about understanding the security concept behind
 Pi and also where the boundaries are.
 
 In general Pi is a coding agent that runs locally within the security boundary
-of the user that is running it.  It's the responsibiltiy of the user to monitor
+of the user that is running it.  It's the responsibility of the user to monitor
 its operations or to contain it within a container, virtual machine or other
 Sandbox solution.
 
@@ -42,7 +42,7 @@ reports and coordinate disclosure as appropriate.
 ## Scope
 
 Security issues in the distributed packages, command-line tools, APIs, and
-repository code are in scope as well as earendil operated infrastricture
+repository code are in scope as well as earendil operated infrastructure
 on `pi.dev`.
 
 ## Out Of Scope

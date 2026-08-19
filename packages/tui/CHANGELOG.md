@@ -2,9 +2,32 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed duplicate fullscreen right-click paste in VS Code-based terminals on Windows ([#8186](https://github.com/earendil-works/pi/issues/8186)).
+- Fixed padded text exceeding narrow terminal widths ([#8252](https://github.com/earendil-works/pi/issues/8252)).
+
+## [0.84.2] - 2026-08-14
+
+### Added
+
+- Added unbound single-line transcript scrolling actions, `tui.altScreen.lineUp` and `tui.altScreen.lineDown`, for fullscreen TUI keybindings ([#7903](https://github.com/earendil-works/pi/pull/7903) by [@midastruth](https://github.com/midastruth)).
+- Added incremental primary-scroll-view search to the fullscreen TUI with configurable match styles, `Ctrl+Shift+F`, and next/previous navigation with `Enter`/`Ctrl+G` and `Shift+Enter`/`Ctrl+Shift+G`.
+
 ### Changed
 
 - Reduced alternate-screen per-frame allocation churn roughly 9-18x by painting full-width layout rows as direct line references instead of recompositing every visible row through ANSI/grapheme segmentation on each frame.
+
+### Fixed
+
+- Fixed fullscreen mouse drag selection and OSC 8 link activation in terminals that report generic SGR mouse release button codes ([#7963](https://github.com/earendil-works/pi/issues/7963)).
+- Fixed fullscreen transcript search snapping back to the current match during manual scrolling and fragmented SGR mouse input leaking into the search query.
+- Fixed required LaTeX arguments starting on a new line being parsed as empty ([#7760](https://github.com/earendil-works/pi/issues/7760)).
+- Fixed LaTeX control spaces split across line endings causing complete expressions to fall back to raw source.
+- Fixed focused fullscreen overlays not receiving mouse wheel or viewport scroll keys such as PageUp and PageDown ([#7894](https://github.com/earendil-works/pi/issues/7894)).
+- Fixed split `Alt+Enter` input over SSH being misread as Escape, added `PI_TUI_ESC_TIMEOUT` for high-latency terminals, and limited that timeout to lone Escape input ([#7899](https://github.com/earendil-works/pi/pull/7899) by [@powerfooI](https://github.com/powerfooI)).
+- Fixed idle fullscreen sessions repainting and clearing text selection when the terminal loses focus ([#7892](https://github.com/earendil-works/pi/pull/7892) by [@terrorobe](https://github.com/terrorobe)).
+- Fixed fullscreen selection copy falsely reporting success when OSC 52 is unsupported by allowing host clipboard integration and reporting verified failures ([#8110](https://github.com/earendil-works/pi/pull/8110) by [@Panoplos](https://github.com/Panoplos)).
 
 ## [0.84.1] - 2026-08-07
 

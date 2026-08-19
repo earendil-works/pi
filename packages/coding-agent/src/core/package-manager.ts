@@ -27,7 +27,7 @@ import type { Readable } from "node:stream";
 import { globSync } from "glob";
 import ignore from "ignore";
 import { minimatch } from "minimatch";
-import { maxSatisfying, rcompare, satisfies, valid, validRange } from "semver";
+import { gt, maxSatisfying, rcompare, satisfies, valid, validRange } from "semver";
 import { CONFIG_DIR_NAME } from "../config.ts";
 import { spawnProcess, spawnProcessSync } from "../utils/child-process.ts";
 import { type GitSource, parseGitUrl } from "../utils/git.ts";
@@ -397,7 +397,12 @@ function collectSkillEntries(
 			}
 
 			const relPath = toPosixPath(relative(root, fullPath));
-			if (mode === "pi" && dir === root && isFile && entry.name.endsWith(".md") && !ig.ignores(relPath)) {
+			const shouldIncludeMarkdownFile =
+				isFile &&
+				entry.name.endsWith(".md") &&
+				!ig.ignores(relPath) &&
+				((mode === "pi" && dir === root) || (mode === "agents" && dir !== root));
+			if (shouldIncludeMarkdownFile) {
 				entries.push(fullPath);
 				continue;
 			}
@@ -1129,7 +1134,7 @@ export class DefaultPackageManager implements PackageManager {
 
 		try {
 			const targetVersion = await this.getLatestNpmVersion(source.version ? source.spec : source.name, source.range);
-			return targetVersion !== installedVersion;
+			return gt(targetVersion, installedVersion);
 		} catch {
 			// Preserve existing update behavior when version lookup fails.
 			return true;
@@ -1463,7 +1468,7 @@ export class DefaultPackageManager implements PackageManager {
 
 		try {
 			const targetVersion = await this.getLatestNpmVersion(source.version ? source.spec : source.name, source.range);
-			return targetVersion !== installedVersion;
+			return gt(targetVersion, installedVersion);
 		} catch {
 			return false;
 		}

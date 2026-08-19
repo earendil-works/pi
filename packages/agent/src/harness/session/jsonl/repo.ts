@@ -24,8 +24,81 @@ function validateSessionId(id: string): void {
 	}
 }
 
-function sessionDirectoryName(cwd: string): string {
+function jsonlSessionDirectoryName(cwd: string): string {
 	return `--${cwd.replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`;
+}
+
+async function jsonlSessionsRoot(options: JsonlSessionRepoOptions): Promise<string> {
+	return fileResult(
+		await options.fs.absolutePath(options.sessionsRoot),
+		`Failed to resolve sessions root ${options.sessionsRoot}`,
+	);
+}
+
+async function jsonlSessionDirectory(
+	fs: JsonlSessionRepoFileSystem,
+	sessionsRoot: string,
+	cwd: string,
+): Promise<string> {
+	return fileResult(
+		await fs.joinPath([sessionsRoot, jsonlSessionDirectoryName(cwd)]),
+		`Failed to resolve sessions directory for ${cwd}`,
+	);
+}
+
+async function jsonlSessionDirectories(options: JsonlSessionRepoOptions, cwd?: string): Promise<string[]> {
+	const sessionsRoot = await jsonlSessionsRoot(options);
+	if (cwd !== undefined) {
+		const resolvedCwd = fileResult(await options.fs.absolutePath(cwd), `Failed to resolve session cwd ${cwd}`);
+		const directory = await jsonlSessionDirectory(options.fs, sessionsRoot, resolvedCwd);
+		return fileResult(await options.fs.exists(directory), `Failed to check sessions directory ${directory}`)
+			? [directory]
+			: [];
+	}
+	if (!fileResult(await options.fs.exists(sessionsRoot), `Failed to check sessions directory ${sessionsRoot}`))
+		return [];
+	return fileResult(await options.fs.listDir(sessionsRoot), `Failed to list sessions directory ${sessionsRoot}`)
+		.filter((entry) => entry.kind === "directory" || entry.kind === "symlink")
+		.map((entry) => entry.path);
+}
+
+export async function listJsonlSessionMetadata(
+	options: JsonlSessionRepoOptions,
+	query: JsonlSessionListOptions = {},
+): Promise<JsonlSessionMetadata[]> {
+	const metadata: JsonlSessionMetadata[] = [];
+	for (const directory of await jsonlSessionDirectories(options, query.cwd)) {
+		const files = fileResult(
+			await options.fs.listDir(directory),
+			`Failed to list sessions directory ${directory}`,
+		).filter((entry) => entry.kind !== "directory" && entry.name.endsWith(".jsonl"));
+		for (const file of files) {
+			const [firstLine] = fileResult(
+				await options.fs.readTextLines(file.path, { maxLines: 1 }),
+				`Failed to read session header ${file.path}`,
+			);
+			if (!firstLine) continue;
+			const headerResult = parseHeader(firstLine);
+			if (!headerResult.ok) continue;
+			metadata.push(metadataFromHeader(headerResult.value, file.path, file.mtimeMs));
+		}
+	}
+	return metadata.sort((left, right) => right.modifiedAt - left.modifiedAt);
+}
+
+export async function loadJsonlSessionStorage(
+	options: JsonlSessionRepoOptions,
+	metadata: JsonlSessionMetadata,
+): Promise<JsonlSessionStorage> {
+	if (!fileResult(await options.fs.exists(metadata.path), `Failed to check session ${metadata.path}`)) {
+		throw new SessionError("not_found", `Session not found: ${metadata.id}`);
+	}
+	const storage = await JsonlSessionStorage.load(options.fs, metadata.path);
+	const loadedMetadata = await storage.getMetadata();
+	if (loadedMetadata.id !== metadata.id) {
+		throw new SessionError("invalid_entry", `Session id does not match header: ${metadata.id}`);
+	}
+	return storage;
 }
 
 function sessionFileName(createdAt: number, id: string): string {
@@ -83,15 +156,7 @@ export class JsonlSessionRepo
 	}
 
 	private async loadStorage(metadata: JsonlSessionMetadata): Promise<JsonlSessionStorage> {
-		if (!fileResult(await this.fs.exists(metadata.path), `Failed to check session ${metadata.path}`)) {
-			throw new SessionError("not_found", `Session not found: ${metadata.id}`);
-		}
-		const storage = await JsonlSessionStorage.load(this.fs, metadata.path);
-		const loadedMetadata = await storage.getMetadata();
-		if (loadedMetadata.id !== metadata.id) {
-			throw new SessionError("invalid_entry", `Session id does not match header: ${metadata.id}`);
-		}
-		return storage;
+		return loadJsonlSessionStorage({ fs: this.fs, sessionsRoot: this.sessionsRootInput }, metadata);
 	}
 
 	private async resolveCreateDestination(options: JsonlSessionCreateOptions): Promise<{ id: string; cwd: string }> {
@@ -155,25 +220,7 @@ export class JsonlSessionRepo
 	}
 
 	private async listDirect(options: JsonlSessionListOptions): Promise<JsonlSessionMetadata[]> {
-		const directories = await this.sessionDirectories(options.cwd);
-		const metadata: JsonlSessionMetadata[] = [];
-		for (const directory of directories) {
-			const files = fileResult(
-				await this.fs.listDir(directory),
-				`Failed to list sessions directory ${directory}`,
-			).filter((entry) => entry.kind !== "directory" && entry.name.endsWith(".jsonl"));
-			for (const file of files) {
-				const [firstLine] = fileResult(
-					await this.fs.readTextLines(file.path, { maxLines: 1 }),
-					`Failed to read session header ${file.path}`,
-				);
-				if (!firstLine) continue;
-				const headerResult = parseHeader(firstLine);
-				if (!headerResult.ok) continue;
-				metadata.push(metadataFromHeader(headerResult.value, file.path, file.mtimeMs));
-			}
-		}
-		return metadata.sort((left, right) => right.modifiedAt - left.modifiedAt);
+		return listJsonlSessionMetadata({ fs: this.fs, sessionsRoot: this.sessionsRootInput }, options);
 	}
 
 	private async sessionIdExists(id: string, cwd: string): Promise<boolean> {
@@ -184,24 +231,9 @@ export class JsonlSessionRepo
 		return files.some((entry) => entry.kind !== "directory" && entry.name.endsWith(suffix));
 	}
 
-	private async sessionDirectories(cwd?: string): Promise<string[]> {
-		const root = await this.root();
-		if (cwd !== undefined) {
-			const resolvedCwd = fileResult(await this.fs.absolutePath(cwd), `Failed to resolve session cwd ${cwd}`);
-			const directory = await this.sessionDirectory(resolvedCwd);
-			return fileResult(await this.fs.exists(directory), `Failed to check sessions directory ${directory}`)
-				? [directory]
-				: [];
-		}
-		if (!fileResult(await this.fs.exists(root), `Failed to check sessions directory ${root}`)) return [];
-		return fileResult(await this.fs.listDir(root), `Failed to list sessions directory ${root}`)
-			.filter((entry) => entry.kind === "directory" || entry.kind === "symlink")
-			.map((entry) => entry.path);
-	}
-
 	private async sessionDirectory(cwd: string): Promise<string> {
 		return fileResult(
-			await this.fs.joinPath([await this.root(), sessionDirectoryName(cwd)]),
+			await this.fs.joinPath([await this.root(), jsonlSessionDirectoryName(cwd)]),
 			`Failed to resolve sessions directory for ${cwd}`,
 		);
 	}

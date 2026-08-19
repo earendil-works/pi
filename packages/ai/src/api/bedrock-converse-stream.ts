@@ -23,7 +23,7 @@ import {
 	ToolResultStatus,
 } from "@aws-sdk/client-bedrock-runtime";
 import { NodeHttpHandler } from "@smithy/node-http-handler";
-import type { BuildMiddleware, DocumentType, MetadataBearer } from "@smithy/types";
+import type { BuildMiddleware, DeserializeMiddleware, DocumentType, HttpResponse, MetadataBearer } from "@smithy/types";
 import { HttpProxyAgent } from "http-proxy-agent";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import { calculateCost } from "../models.ts";
@@ -35,6 +35,7 @@ import type {
 	ImageContent,
 	Model,
 	ProviderEnv,
+	ProviderResponse,
 	SimpleStreamOptions,
 	StopReason,
 	StreamFunction,
@@ -55,7 +56,7 @@ import { parseStreamingJson } from "../utils/json-parse.ts";
 import { resolveHttpProxyUrlForTarget } from "../utils/node-http-proxy.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
-import { resolveJsonSchemaStrictSampling } from "./constrained-sampling.ts";
+import { getJsonSchemaToolParameters, resolveJsonSchemaStrictSampling } from "./constrained-sampling.ts";
 import {
 	adjustMaxTokensForThinking,
 	buildBaseOptions,
@@ -225,7 +226,14 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 		let responseRequestId: string | undefined;
 
 		try {
+			const supportsStrictMode = model.compat?.supportsStrictMode ?? false;
 			const client = new BedrockRuntimeClient(config);
+			let observedRawResponse = false;
+			if (options.onResponse) {
+				addResponseHeadersMiddleware(client, options.onResponse, model, () => {
+					observedRawResponse = true;
+				});
+			}
 			const customHeaders = providerHeadersToRecord(options.headers);
 			if (customHeaders) {
 				addCustomHeadersMiddleware(client, customHeaders);
@@ -240,7 +248,7 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 					...(inferenceMaxTokens !== undefined && { maxTokens: inferenceMaxTokens }),
 					...(options.temperature !== undefined && { temperature: options.temperature }),
 				},
-				toolConfig: convertToolConfig(context.tools, options.toolChoice, model.compat?.supportsStrictMode ?? false),
+				toolConfig: convertToolConfig(context.tools, options.toolChoice, supportsStrictMode),
 				additionalModelRequestFields: buildAdditionalModelRequestFields(model, options),
 				...(options.requestMetadata !== undefined && { requestMetadata: options.requestMetadata }),
 			};
@@ -252,7 +260,7 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 
 			const response = await client.send(command, { abortSignal: options.signal });
 			responseRequestId = normalizeDiagnosticValue(response.$metadata.requestId);
-			if (response.$metadata.httpStatusCode !== undefined) {
+			if (!observedRawResponse && response.$metadata.httpStatusCode !== undefined) {
 				const responseHeaders: Record<string, string> = {};
 				if (response.$metadata.requestId) {
 					responseHeaders["x-amzn-requestid"] = response.$metadata.requestId;
@@ -457,12 +465,50 @@ function addCustomHeadersMiddleware(client: BedrockRuntimeClient, headers: Recor
 	client.middlewareStack.add(middleware, { step: "build", name: "pi-ai-custom-headers", priority: "low" });
 }
 
+function isSmithyHttpResponse(response: unknown): response is HttpResponse {
+	if (!response || typeof response !== "object") return false;
+	const candidate = response as Partial<HttpResponse>;
+	return typeof candidate.statusCode === "number" && !!candidate.headers && typeof candidate.headers === "object";
+}
+
+function toProviderResponse(response: unknown): ProviderResponse | undefined {
+	if (!isSmithyHttpResponse(response)) return undefined;
+	return { status: response.statusCode, headers: { ...response.headers } };
+}
+
+/**
+ * Bedrock's modeled `$metadata` only preserves selected HTTP metadata (for example
+ * requestId), so custom gateway headers are otherwise lost before callers see
+ * `onResponse`. Capture the raw Smithy HTTP response at the deserialize step,
+ * after the SDK receives the response but before the event stream is consumed.
+ */
+function addResponseHeadersMiddleware(
+	client: BedrockRuntimeClient,
+	onResponse: NonNullable<BedrockOptions["onResponse"]>,
+	model: Model<"bedrock-converse-stream">,
+	onObserved: () => void,
+): void {
+	const middleware: DeserializeMiddleware<object, MetadataBearer> = (next) => async (args) => {
+		const result = await next(args);
+		const providerResponse = toProviderResponse(result.response);
+		if (providerResponse) {
+			onObserved();
+			await onResponse(providerResponse, model);
+		}
+		return result;
+	};
+	client.middlewareStack.add(middleware, { step: "deserialize", name: "pi-ai-response-headers" });
+}
+
 export const streamSimple: StreamFunction<"bedrock-converse-stream", SimpleStreamOptions> = (
 	model: Model<"bedrock-converse-stream">,
 	context: Context,
 	options?: SimpleStreamOptions,
 ): AssistantMessageEventStream => {
-	const base = buildBaseOptions(model, context, options, undefined);
+	const base = {
+		...buildBaseOptions(model, context, options, undefined),
+		toolChoice: options?.toolChoice,
+	} satisfies BedrockOptions;
 	if (!options?.reasoning) {
 		return stream(model, context, { ...base, reasoning: undefined } satisfies BedrockOptions);
 	}
@@ -800,6 +846,20 @@ function createRequiredTextBlock(text: string): ContentBlock.TextMember {
 	return createNonBlankTextBlock(text) ?? { text: EMPTY_TEXT_PLACEHOLDER };
 }
 
+function sanitizeBedrockDocument(value: DocumentType): DocumentType {
+	if (Array.isArray(value)) {
+		return value.map(sanitizeBedrockDocument);
+	}
+	if (value !== null && typeof value === "object") {
+		return Object.fromEntries(
+			Object.entries(value)
+				.filter(([key]) => key.length > 0)
+				.map(([key, nestedValue]) => [key, sanitizeBedrockDocument(nestedValue)]),
+		);
+	}
+	return value;
+}
+
 function convertToolResultContent(content: (TextContent | ImageContent)[]): ToolResultContentBlock[] {
 	const result: ToolResultContentBlock[] = [];
 	for (const c of content) {
@@ -872,7 +932,7 @@ function convertMessages(
 						}
 						case "toolCall":
 							contentBlocks.push({
-								toolUse: { toolUseId: c.id, name: c.name, input: c.arguments },
+								toolUse: { toolUseId: c.id, name: c.name, input: sanitizeBedrockDocument(c.arguments) },
 							});
 							break;
 						case "thinking": {
@@ -993,7 +1053,7 @@ function convertToolConfig(
 			toolSpec: {
 				name: tool.name,
 				description: tool.description,
-				inputSchema: { json: tool.parameters as unknown as DocumentType },
+				inputSchema: { json: getJsonSchemaToolParameters(tool, strict) as unknown as DocumentType },
 				...(strict === true ? { strict: true } : {}),
 			},
 		};

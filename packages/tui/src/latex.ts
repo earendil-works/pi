@@ -920,6 +920,13 @@ class LatexParser {
 
 		let command = "";
 		const first = this.source[this.position] ?? "";
+		if (first === "\n" || first === "\r") {
+			this.position++;
+			if (first === "\r" && this.source[this.position] === "\n") {
+				this.position++;
+			}
+			return " ";
+		}
 		if (/[A-Za-z]/.test(first)) {
 			const start = this.position;
 			while (this.position < this.source.length && /[A-Za-z]/.test(this.source[this.position] ?? "")) {
@@ -1145,7 +1152,7 @@ class LatexParser {
 	}
 
 	private parseRequiredArgumentValue(): string {
-		while (this.position < this.source.length && /[ \t]/.test(this.source[this.position] ?? "")) {
+		while (this.position < this.source.length && /\s/.test(this.source[this.position] ?? "")) {
 			this.position++;
 		}
 		if (this.position >= this.source.length) {

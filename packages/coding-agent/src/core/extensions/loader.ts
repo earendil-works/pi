@@ -46,7 +46,7 @@ import type {
 	ToolDefinition,
 } from "./types.ts";
 
-/** Modules available to extensions via virtualModules (for compiled Bun binary) */
+/** Modules available to extensions via virtualModules (for compiled binaries) */
 const VIRTUAL_MODULES: Record<string, unknown> = {
 	typebox: _bundledTypebox,
 	"typebox/compile": _bundledTypeboxCompile,
@@ -75,11 +75,14 @@ const VIRTUAL_MODULES: Record<string, unknown> = {
 
 const require = createRequire(import.meta.url);
 
+const isNodeSeaBinary =
+	("sea" in process.features && process.features.sea === true) ||
+	process.getBuiltinModule("node:sea")?.isSea() === true;
 const isTypeScriptSourceRuntime = !isBunBinary && path.extname(fileURLToPath(import.meta.url)) === ".ts";
 
 /**
  * Get aliases for jiti (used in built Node.js mode).
- * In Bun binary mode, virtualModules is used instead.
+ * In compiled binary mode, virtualModules is used instead.
  */
 let _aliases: Record<string, string> | null = null;
 
@@ -295,6 +298,11 @@ function createExtensionAPI(
 			options: { description?: string; type: "boolean" | "string"; default?: boolean | string },
 		): void {
 			runtime.assertActive();
+			if (options.default !== undefined && typeof options.default !== options.type) {
+				throw new Error(
+					`Invalid default for flag "${name}": expected ${options.type}, got ${typeof options.default}`,
+				);
+			}
 			extension.flags.set(name, { name, extensionPath: extension.path, ...options });
 			if (options.default !== undefined && !runtime.flagValues.has(name)) {
 				runtime.flagValues.set(name, options.default);
@@ -443,9 +451,9 @@ async function loadExtensionModule(extensionPath: string, cacheToken?: Extension
 
 	const jiti = createJiti(import.meta.url, {
 		moduleCache: false,
-		// Bun uses modules embedded in the executable. Source TypeScript reuses the
-		// host-resolved modules and root tsconfig paths. Built Node uses dist aliases.
-		...(isBunBinary
+		// Compiled binaries use modules embedded in the executable. Source TypeScript
+		// reuses host modules and root tsconfig paths. Built Node uses dist aliases.
+		...(isBunBinary || isNodeSeaBinary
 			? { virtualModules: VIRTUAL_MODULES, tryNative: false }
 			: isTypeScriptSourceRuntime
 				? { virtualModules: VIRTUAL_MODULES, tsconfigPaths: true }

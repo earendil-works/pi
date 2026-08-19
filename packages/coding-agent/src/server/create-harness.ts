@@ -11,6 +11,7 @@ import {
 	type HarnessTool,
 } from "@earendil-works/pi-agent-core";
 import type { Static, TSchema } from "typebox";
+import { getExperimentalToolSampling } from "../core/experimental.ts";
 import { type BuildSystemPromptOptions, buildSystemPrompt } from "../core/system-prompt.ts";
 import { bashToolSystemPromptContribution } from "../core/tools/bash.ts";
 import { editToolSystemPromptContribution } from "../core/tools/edit.ts";
@@ -30,6 +31,7 @@ function createCodingAgentHarnessTool<TParameters extends TSchema, TDetails>(
 	return {
 		...tool,
 		...prompt,
+		constrainedSampling: getExperimentalToolSampling(),
 		execute: (toolCallId, params, signal, onUpdate) =>
 			tool.execute(toolCallId, params as Static<TParameters>, signal, onUpdate, context),
 	};

@@ -6,7 +6,9 @@ it("derives model API, ID, and provider literals from grouped model data", () =>
 	expectTypeOf(XAI_MODELS["grok-4.5"].api).toEqualTypeOf<"openai-responses">();
 	expectTypeOf(XAI_MODELS["grok-4.5"].id).toEqualTypeOf<"grok-4.5">();
 	expectTypeOf(XAI_MODELS["grok-4.5"].provider).toEqualTypeOf<"xai">();
-	expectTypeOf(XAI_MODELS["grok-4.3"].api).toEqualTypeOf<"openai-completions">();
+	expectTypeOf(XAI_MODELS["grok-4.6"].api).toEqualTypeOf<"openai-responses">();
+	expectTypeOf(XAI_MODELS["grok-4.6"].id).toEqualTypeOf<"grok-4.6">();
+	expectTypeOf(XAI_MODELS["grok-4.3"].api).toEqualTypeOf<"openai-responses">();
 });
 
 it("routes GitHub Copilot Grok 4.5 through the Responses API", () => {

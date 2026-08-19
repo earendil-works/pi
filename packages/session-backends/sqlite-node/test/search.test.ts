@@ -13,8 +13,14 @@ function createSqliteFixture(options: ConstructorParameters<typeof SqliteSession
 	};
 }
 
+async function collect<T>(iterable: AsyncIterable<T>): Promise<T[]> {
+	const items: T[] = [];
+	for await (const item of iterable) items.push(item);
+	return items;
+}
+
 describe("SQLite FTS5 session search", () => {
-	it("matches trigrams within one cwd", async () => {
+	it("matches trigrams", async () => {
 		const root = createTempDir();
 		const env = new NodeExecutionEnv({ cwd: root });
 		const sqlite = createNodeSqliteFactory();
@@ -25,21 +31,36 @@ describe("SQLite FTS5 session search", () => {
 		const excluded = await repo.create({ cwd: `${root}/other`, id: "excluded" });
 		const entryId = await included.appendMessage(createUserMessage("Find the auth defect"));
 		await included.setName("Canonical name");
-		await excluded.appendMessage(createUserMessage("Find the auth defect"));
+		const excludedEntryId = await excluded.appendMessage(createUserMessage("Find the auth defect"));
 
-		await expect(search.search({ text: "auth", cwd: root })).resolves.toEqual([
-			expect.objectContaining({
-				entryId,
-				metadata: expect.objectContaining({
-					id: "included",
-					name: "Canonical name",
-					metadata: { name: "application-owned" },
+		const authHits = await collect(search.search("auth"));
+		expect(authHits).toHaveLength(2);
+		expect(authHits).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					sessionId: "included",
+					entryId,
+					timestamp: expect.any(Number),
+					metadata: expect.objectContaining({
+						id: "included",
+						createdAt: expect.any(Number),
+						name: "Canonical name",
+						metadata: { name: "application-owned" },
+					}),
 				}),
-			}),
-		]);
-		await expect(search.search({ text: "uth", cwd: root })).resolves.toEqual([
-			expect.objectContaining({ entryId, metadata: expect.objectContaining({ id: "included" }) }),
-		]);
+				expect.objectContaining({ sessionId: "excluded", entryId: excludedEntryId }),
+			]),
+		);
+		expect(await collect(search.search("uth"))).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					sessionId: "included",
+					entryId,
+					metadata: expect.objectContaining({ id: "included" }),
+				}),
+				expect.objectContaining({ sessionId: "excluded", entryId: excludedEntryId }),
+			]),
+		);
 	});
 
 	it("omits a cleared session name from search metadata", async () => {
@@ -54,8 +75,8 @@ describe("SQLite FTS5 session search", () => {
 		await session.setName("Temporary");
 		await session.setName(undefined);
 
-		const [result] = await search.search({ text: "auth" });
-		expect(result).toMatchObject({ entryId, metadata: { id: "session-1" } });
+		const [result] = await collect(search.search("auth"));
+		expect(result).toMatchObject({ sessionId: "session-1", entryId, metadata: { id: "session-1" } });
 		expect(result?.metadata).not.toHaveProperty("name");
 	});
 
@@ -68,7 +89,63 @@ describe("SQLite FTS5 session search", () => {
 		});
 		const { search } = fixture;
 
-		await expect(search.search({ text: 'missing "phrase"' })).resolves.toEqual([]);
+		expect(await collect(search.search('missing "phrase"'))).toEqual([]);
+	});
+
+	it("rebuilds existing entries when FTS is first initialized", async () => {
+		const root = createTempDir();
+		const env = new NodeExecutionEnv({ cwd: root });
+		const databasePath = join(root, "sessions.sqlite");
+		await using fixture = createSqliteFixture({
+			env,
+			sqlite: createNodeSqliteFactory(),
+			databasePath,
+		});
+		const { repository, search } = fixture;
+		const session = await repository.create({ cwd: root, id: "session-1" });
+		const entryId = await session.appendMessage(createUserMessage("Find the auth defect"));
+
+		expect(await collect(search.search("auth"))).toEqual([
+			expect.objectContaining({ sessionId: "session-1", entryId }),
+		]);
+	});
+
+	it("honors entry type filters", async () => {
+		const root = createTempDir();
+		const env = new NodeExecutionEnv({ cwd: root });
+		const databasePath = join(root, "sessions.sqlite");
+		await using fixture = createSqliteFixture({
+			env,
+			sqlite: createNodeSqliteFactory(),
+			databasePath,
+		});
+		const { repository, search } = fixture;
+		const session = await repository.create({ cwd: root, id: "session-1" });
+		const messageEntryId = await session.appendMessage(createUserMessage("Find the auth defect"));
+		await session.appendCustomEntry("note", { text: "Find the auth custom entry" });
+
+		expect(await collect(search.search("auth", { entryTypes: ["message"] }))).toEqual([
+			expect.objectContaining({ sessionId: "session-1", entryId: messageEntryId }),
+		]);
+	});
+
+	it("honors result limits", async () => {
+		const root = createTempDir();
+		const env = new NodeExecutionEnv({ cwd: root });
+		const databasePath = join(root, "sessions.sqlite");
+		await using fixture = createSqliteFixture({
+			env,
+			sqlite: createNodeSqliteFactory(),
+			databasePath,
+		});
+		const { repository, search } = fixture;
+		const first = await repository.create({ cwd: root, id: "session-1" });
+		const second = await repository.create({ cwd: root, id: "session-2" });
+		await first.appendMessage(createUserMessage("Find the auth defect"));
+		await second.appendMessage(createUserMessage("Find the auth defect too"));
+
+		expect(await collect(search.search("auth", { limit: 1 }))).toHaveLength(1);
+		expect(await collect(search.search("auth", { limit: 0 }))).toEqual([]);
 	});
 
 	it("removes deleted session entries from the index", async () => {
@@ -83,11 +160,52 @@ describe("SQLite FTS5 session search", () => {
 		const { repository, search } = fixture;
 		const session = await repository.create({ cwd: root, id: "session-1" });
 		await session.appendMessage(createUserMessage("Find the auth defect"));
-		await expect(search.search({ text: "auth" })).resolves.toHaveLength(1);
+		expect(await collect(search.search("auth"))).toHaveLength(1);
 
 		await repository.delete(await session.getMetadata());
 
-		await expect(search.search({ text: "auth" })).resolves.toEqual([]);
+		expect(await collect(search.search("auth"))).toEqual([]);
+	});
+
+	it("indexes and removes session entries through triggers after FTS initialization", async () => {
+		const root = createTempDir();
+		const env = new NodeExecutionEnv({ cwd: root });
+		const databasePath = join(root, "sessions.sqlite");
+		await using fixture = createSqliteFixture({
+			env,
+			sqlite: createNodeSqliteFactory(),
+			databasePath,
+		});
+		const { repository, search } = fixture;
+		expect(await collect(search.search("auth"))).toEqual([]);
+		const session = await repository.create({ cwd: root, id: "session-1" });
+		await session.appendMessage(createUserMessage("Find the auth defect"));
+		expect(await collect(search.search("auth"))).toHaveLength(1);
+
+		await repository.delete(await session.getMetadata());
+
+		expect(await collect(search.search("auth"))).toEqual([]);
+	});
+
+	it("removes deleted entries from FTS through triggers", async () => {
+		const root = createTempDir();
+		const env = new NodeExecutionEnv({ cwd: root });
+		const sqlite = createNodeSqliteFactory();
+		const databasePath = join(root, "sessions.sqlite");
+		await using fixture = createSqliteFixture({ env, sqlite, databasePath });
+		const { repository, search } = fixture;
+		const session = await repository.create({ cwd: root, id: "session-1" });
+		const entryId = await session.appendMessage(createUserMessage("Find the auth defect"));
+		expect(await collect(search.search("auth"))).toHaveLength(1);
+
+		const db = await sqlite.open(databasePath);
+		try {
+			await db.prepare("DELETE FROM entries WHERE session_id = ? AND id = ?").run("session-1", entryId);
+		} finally {
+			await db.close();
+		}
+
+		expect(await collect(search.search("auth"))).toEqual([]);
 	});
 
 	it("does not initialize FTS for canonical writes or blank searches", async () => {
@@ -97,7 +215,7 @@ describe("SQLite FTS5 session search", () => {
 		const databasePath = join(root, "sessions.sqlite");
 		await using fixture = createSqliteFixture({ env, sqlite, databasePath });
 		const { repository: repo, search } = fixture;
-		await expect(search.search({ text: "  " })).resolves.toEqual([]);
+		expect(await collect(search.search("  "))).toEqual([]);
 		const session = await repo.create({ cwd: root, id: "session-1" });
 
 		const db = await sqlite.open(databasePath);
@@ -119,7 +237,7 @@ describe("SQLite FTS5 session search", () => {
 		const databasePath = join(root, "sessions.sqlite");
 		await using fixture = createSqliteFixture({ env, sqlite, databasePath });
 		const { repository: repo, search } = fixture;
-		await search.search({ text: "initialize" });
+		await collect(search.search("initialize"));
 		const session = await repo.create({ cwd: root, id: "session-1" });
 
 		const db = await sqlite.open(databasePath);
@@ -140,7 +258,7 @@ describe("SQLite FTS5 session search", () => {
 		const databasePath = join(root, "sessions.sqlite");
 		await using fixture = createSqliteFixture({ env, sqlite, databasePath });
 		const { repository: repo, search } = fixture;
-		await search.search({ text: "initialize" });
+		await collect(search.search("initialize"));
 		const session = await repo.create({ cwd: root, id: "session-1" });
 		await session.appendMessage(createUserMessage("must remain"));
 		const metadata = await session.getMetadata();
@@ -166,7 +284,7 @@ describe("SQLite FTS5 session search", () => {
 			databasePath: join(root, "sessions.sqlite"),
 		});
 
-		await expect(search.search({ text: "auth" })).rejects.toThrow("setup failed");
+		await expect(collect(search.search("auth"))).rejects.toThrow("setup failed");
 		expect(counts.closes).toBe(1);
 	});
 
@@ -180,12 +298,16 @@ describe("SQLite FTS5 session search", () => {
 		});
 		const { repository: repo, search } = fixture;
 
-		await expect(search.search({ text: "auth" })).resolves.toEqual([]);
+		expect(await collect(search.search("auth"))).toEqual([]);
 		const session = await repo.create({ cwd: root, id: "session-1" });
 		const entryId = await session.appendMessage(createUserMessage("Find the auth defect"));
 
-		await expect(search.search({ text: "auth" })).resolves.toEqual([
-			expect.objectContaining({ entryId, metadata: expect.objectContaining({ id: "session-1" }) }),
+		expect(await collect(search.search("auth"))).toEqual([
+			expect.objectContaining({
+				sessionId: "session-1",
+				entryId,
+				metadata: expect.objectContaining({ id: "session-1" }),
+			}),
 		]);
 		await expect(session.appendMessage(createUserMessage("Still writable"))).resolves.toBeTypeOf("string");
 	});

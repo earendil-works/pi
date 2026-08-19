@@ -274,6 +274,29 @@ async function runLoop(
 	await emit({ type: "agent_end", messages: newMessages });
 }
 
+/** Build the provider context using the same transform and conversion pipeline as an agent request. */
+export async function buildProviderContext(
+	context: AgentContext,
+	config: Pick<AgentLoopConfig, "convertToLlm" | "transformContext">,
+	signal?: AbortSignal,
+): Promise<Context> {
+	// Apply context transform if configured (AgentMessage[] → AgentMessage[])
+	let messages = context.messages;
+	if (config.transformContext) {
+		messages = await config.transformContext(messages, signal);
+	}
+
+	// Convert to LLM-compatible messages (AgentMessage[] → Message[])
+	const llmMessages = await config.convertToLlm(messages);
+
+	// Build LLM context
+	return {
+		systemPrompt: context.systemPrompt,
+		messages: llmMessages,
+		tools: context.tools,
+	};
+}
+
 /**
  * Stream an assistant response from the LLM.
  * This is where AgentMessage[] gets transformed to Message[] for the LLM.
@@ -285,21 +308,7 @@ async function streamAssistantResponse(
 	emit: AgentEventSink,
 	streamFunction: StreamFn,
 ): Promise<AssistantMessage> {
-	// Apply context transform if configured (AgentMessage[] → AgentMessage[])
-	let messages = context.messages;
-	if (config.transformContext) {
-		messages = await config.transformContext(messages, signal);
-	}
-
-	// Convert to LLM-compatible messages (AgentMessage[] → Message[])
-	const llmMessages = await config.convertToLlm(messages);
-
-	// Build LLM context
-	const llmContext: Context = {
-		systemPrompt: context.systemPrompt,
-		messages: llmMessages,
-		tools: context.tools,
-	};
+	const llmContext = await buildProviderContext(context, config, signal);
 
 	// Resolve API key (important for expiring tokens)
 	const resolvedApiKey =

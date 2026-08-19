@@ -62,7 +62,7 @@ This tool executes a separate `pi` subprocess with a delegated system prompt and
 
 To enable project-local agents, pass `agentScope: "both"` (or `"project"`). Only do this for repositories you trust.
 
-When running interactively, the tool prompts for confirmation before running project-local agents. Set `confirmProjectAgents: false` to disable.
+When running interactively, the tool prompts for confirmation before running project-local agents in untrusted projects. Trusted projects skip the additional prompt. Set `confirmProjectAgents: false` to disable confirmation.
 
 ## Usage
 
@@ -136,6 +136,8 @@ model: claude-haiku-4-5
 
 System prompt for the agent goes here.
 ```
+
+When `model` is omitted, the subagent inherits the dispatching session's active model and thinking level.
 
 **Locations:**
 - `~/.pi/agent/agents/*.md` - User-level (always loaded)

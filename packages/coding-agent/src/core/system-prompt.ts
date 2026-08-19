@@ -66,7 +66,7 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 			prompt += formatSkillsForPrompt(skills);
 		}
 
-		prompt += `\nCurrent working directory: ${promptCwd}`;
+		prompt += `\nCurrent working directory: ${promptCwd}\n`;
 
 		return prompt;
 	}

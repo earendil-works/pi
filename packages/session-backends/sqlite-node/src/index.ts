@@ -48,6 +48,15 @@ class NodeSqliteStatement implements SqliteStatement {
 				: this.statement.all(...(params as SQLInputValue[]))
 		) as TRow[];
 	}
+
+	iterate<TRow extends object>(...params: unknown[]): Iterable<TRow> {
+		const [first, ...rest] = params;
+		return (
+			isNamedParameters(first)
+				? this.statement.iterate(first, ...(rest as SQLInputValue[]))
+				: this.statement.iterate(...(params as SQLInputValue[]))
+		) as Iterable<TRow>;
+	}
 }
 
 class NodeSqliteDatabase implements SqliteDatabase {

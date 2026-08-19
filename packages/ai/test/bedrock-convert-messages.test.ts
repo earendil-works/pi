@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 
 const bedrockMock = vi.hoisted(() => ({
 	constructorCalls: [] as Array<Record<string, unknown>>,
+	streamEvents: undefined as unknown[] | undefined,
 }));
 
 vi.mock("@aws-sdk/client-bedrock-runtime", () => {
@@ -13,7 +14,16 @@ vi.mock("@aws-sdk/client-bedrock-runtime", () => {
 			bedrockMock.constructorCalls.push(config);
 		}
 
-		send(): Promise<never> {
+		send(): Promise<unknown> {
+			if (bedrockMock.streamEvents) {
+				const events = bedrockMock.streamEvents;
+				return Promise.resolve({
+					$metadata: { httpStatusCode: 200 },
+					stream: (async function* () {
+						yield* events;
+					})(),
+				});
+			}
 			return Promise.reject(new Error("mock send"));
 		}
 	}
@@ -46,10 +56,29 @@ vi.mock("@aws-sdk/client-bedrock-runtime", () => {
 });
 
 import { stream as streamBedrock } from "../src/api/bedrock-converse-stream.ts";
-import { getModel } from "../src/compat.ts";
-import type { Context, Message } from "../src/types.ts";
+import type { Context, Message, Model } from "../src/types.ts";
 
-const baseModel = getModel("amazon-bedrock", "us.anthropic.claude-sonnet-4-5-20250929-v1:0");
+const baseModel: Model<"bedrock-converse-stream"> = {
+	id: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+	name: "Claude Sonnet 4.5 (US)",
+	api: "bedrock-converse-stream",
+	provider: "amazon-bedrock",
+	baseUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
+	reasoning: true,
+	input: ["text", "image"],
+	cost: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
+	contextWindow: 200000,
+	maxTokens: 64000,
+	compat: { supportsStrictMode: true },
+};
+
+const novaModel: Model<"bedrock-converse-stream"> = {
+	...baseModel,
+	id: "amazon.nova-lite-v1:0",
+	name: "Nova Lite",
+	reasoning: false,
+	compat: undefined,
+};
 
 async function capturePayload(context: Context, model = baseModel): Promise<unknown> {
 	let capturedPayload: unknown;
@@ -85,13 +114,62 @@ describe("Bedrock constrained sampling", () => {
 		expect(toolConfig.tools[0].toolSpec.strict).toBe(true);
 
 		context.tools![0].constrainedSampling = { type: "json_schema", strict: "prefer" };
-		const novaPayload = await capturePayload(context, getModel("amazon-bedrock", "amazon.nova-lite-v1:0"));
+		const novaPayload = await capturePayload(context, novaModel);
 		const novaToolConfig = (
 			novaPayload as {
 				toolConfig: { tools: Array<{ toolSpec: { strict?: boolean } }> };
 			}
 		).toolConfig;
 		expect(novaToolConfig.tools[0].toolSpec.strict).toBeUndefined();
+	});
+});
+
+describe("Bedrock tool arguments", () => {
+	it("preserves empty property names in streamed tool arguments", async () => {
+		bedrockMock.streamEvents = [
+			{ messageStart: { role: "assistant" } },
+			{
+				contentBlockStart: {
+					contentBlockIndex: 0,
+					start: { toolUse: { toolUseId: "tool-1", name: "edit" } },
+				},
+			},
+			{
+				contentBlockDelta: {
+					contentBlockIndex: 0,
+					delta: {
+						toolUse: {
+							input: '{"path":"/workspace/foobar/file.js","edits":[{"oldText":"first","newText":"updated first"},{"oldText":"second","newText":"updated second","":""}]}',
+						},
+					},
+				},
+			},
+			{ contentBlockStop: { contentBlockIndex: 0 } },
+			{ messageStop: { stopReason: "tool_use" } },
+		];
+
+		try {
+			const message = await streamBedrock(
+				baseModel,
+				{ messages: [{ role: "user", content: "Use the tool", timestamp: Date.now() }] },
+				{ cacheRetention: "none" },
+			).result();
+
+			expect(message.content[0]).toEqual({
+				type: "toolCall",
+				id: "tool-1",
+				name: "edit",
+				arguments: {
+					path: "/workspace/foobar/file.js",
+					edits: [
+						{ oldText: "first", newText: "updated first" },
+						{ oldText: "second", newText: "updated second", "": "" },
+					],
+				},
+			});
+		} finally {
+			bedrockMock.streamEvents = undefined;
+		}
 	});
 });
 
@@ -270,5 +348,63 @@ describe("bedrock convertMessages skips unknown content types", () => {
 		expect(payload).toBeDefined();
 		const p = payload as { messages: Array<{ role: string; content: unknown[] }> };
 		expect(p.messages).toHaveLength(0);
+	});
+
+	it("removes empty property names only from replayed Bedrock input", async () => {
+		const toolArguments = {
+			path: "/workspace/foobar/file.js",
+			edits: [
+				{ oldText: "first", newText: "updated first" },
+				{ oldText: "second", newText: "updated second", "": "" },
+			],
+		};
+		const messages: Message[] = [
+			{
+				role: "assistant",
+				content: [
+					{
+						type: "toolCall",
+						id: "tool-1",
+						name: "edit",
+						arguments: toolArguments,
+					},
+				],
+				api: "bedrock-converse-stream",
+				provider: "amazon-bedrock",
+				model: baseModel.id,
+				usage: {
+					input: 0,
+					output: 0,
+					cacheRead: 0,
+					cacheWrite: 0,
+					totalTokens: 0,
+					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+				},
+				stopReason: "toolUse",
+				timestamp: Date.now(),
+			},
+			{
+				role: "toolResult",
+				toolCallId: "tool-1",
+				toolName: "edit",
+				content: [{ type: "text", text: "done" }],
+				isError: false,
+				timestamp: Date.now(),
+			},
+			{ role: "user", content: "Continue", timestamp: Date.now() },
+		];
+
+		const payload = await capturePayload({ messages });
+		const p = payload as {
+			messages: Array<{ content: Array<{ toolUse?: { input: unknown } }> }>;
+		};
+		expect(p.messages[0].content[0].toolUse?.input).toEqual({
+			path: "/workspace/foobar/file.js",
+			edits: [
+				{ oldText: "first", newText: "updated first" },
+				{ oldText: "second", newText: "updated second" },
+			],
+		});
+		expect(toolArguments.edits[1]).toEqual({ oldText: "second", newText: "updated second", "": "" });
 	});
 });

@@ -19,6 +19,7 @@ type JsonAgentSessionEvent =
   | Exclude<AgentSessionEvent, { type: "message_update" }>
   | {
       type: "message_update";
+      usage: Usage;
       assistantMessageEvent: WithoutPartial<AssistantMessageEvent>;
     };
 ```
@@ -73,16 +74,17 @@ Followed by events as they occur:
 {"type":"agent_start"}
 {"type":"turn_start"}
 {"type":"message_start","message":{"role":"assistant","content":[],...}}
-{"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"Hello"}}
+{"type":"message_update","usage":{...},"assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"Hello"}}
 {"type":"message_end","message":{...}}
 {"type":"turn_end","message":{...},"toolResults":[]}
 {"type":"agent_end","messages":[...]}
 ```
 
 `message_update` records are delta-only. They omit both the cumulative `message` field and
-`assistantMessageEvent.partial` to keep stream size linear. Use `contentIndex` and `delta`
-to assemble live text, thinking, or tool-call arguments if needed. `message_end` contains
-the final authoritative message.
+`assistantMessageEvent.partial` to keep stream size linear. The top-level `usage` field contains
+the latest cumulative provider-reported usage and may remain zero when a provider only reports
+usage at completion. Use `contentIndex` and `delta` to assemble live text, thinking, or tool-call
+arguments if needed. `message_end` contains the final authoritative message.
 
 ## Example
 

@@ -78,7 +78,6 @@ export * from "./harness/prompt-templates.ts";
 // Harness
 export * from "./harness/result.ts";
 export * from "./harness/session/index.ts";
-export * from "./harness/session/search.ts";
 export * from "./harness/skills.ts";
 export * from "./harness/system-prompt.ts";
 export type {
@@ -139,6 +138,7 @@ export * from "./harness/utils/shell-output.ts";
 export * from "./harness/utils/truncate.ts";
 // Proxy utilities
 export * from "./proxy.ts";
+export * from "./search/index.ts";
 // Stream defaults
 export { setDefaultStreamFn } from "./stream-fn.ts";
 // Types

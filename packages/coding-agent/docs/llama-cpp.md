@@ -53,6 +53,8 @@ Start Pi and configure the provider:
 
 Enter the router URL and optional API key. The default URL is `http://127.0.0.1:8080`.
 
+If you start the router with `--no-models-autoload`, `/login llama.cpp` only stores the connection. Run `/llama` to load a model, then `/model` to select the loaded model for the current session.
+
 Environment variables can configure the same values without `/login`:
 
 ```bash

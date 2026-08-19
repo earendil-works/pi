@@ -42,13 +42,13 @@ You can also trigger manually with `/compact [instructions]`, where optional ins
 2. **Extract messages**: Collect messages from the previous kept boundary (or session start) up to the cut point
 3. **Generate summary**: Call LLM to summarize with structured format, passing the previous summary as iterative context when present
 4. **Append entry**: Save `CompactionEntry` with summary and `firstKeptEntryId`
-5. **Reload**: Session reloads, using summary + messages from `firstKeptEntryId` onwards
+5. **Rebuilds context**: Session rebuilds the context for the next request, using summary + messages from `firstKeptEntryId` onwards
 
 ```
 Before compaction:
 
   entry:  0     1     2     3      4     5     6      7      8     9
-        ┌─────┬─────┬─────┬─────┬──────┬─────┬──── ─┬──────┬─────┬─────┐
+        ┌─────┬─────┬─────┬──────┬─────┬─────┬──────┬──────┬─────┬─────┐
         │ hdr │ usr │ ass │ tool │ usr │ ass │ tool │ tool │ ass │ tool│
         └─────┴─────┴─────┴──────┴─────┴─────┴──────┴──────┴─────┴─────┘
                 └────────┬───────┘ └──────────────┬──────────────┘
@@ -59,7 +59,7 @@ Before compaction:
 After compaction (new entry appended):
 
   entry:  0     1     2     3      4     5     6      7      8     9     10
-        ┌─────┬─────┬─────┬─────┬──────┬─────┬──── ─┬──────┬─────┬─────┬─────┐
+        ┌─────┬─────┬─────┬──────┬─────┬─────┬──────┬──────┬─────┬─────┬─────┐
         │ hdr │ usr │ ass │ tool │ usr │ ass │ tool │ tool │ ass │ tool│ cmp │
         └─────┴─────┴─────┴──────┴─────┴─────┴──────┴──────┴─────┴─────┴─────┘
                └──────────┬──────┘ └──────────────────────┬───────────────────┘
@@ -281,7 +281,9 @@ pi.on("session_before_compact", async (event, ctx) => {
   const { preparation, branchEntries, customInstructions, reason, willRetry, signal } = event;
 
   // preparation.messagesToSummarize - messages to summarize
+  // preparation.sourceMessages - optional active-context history prefix, including any previous summary
   // preparation.turnPrefixMessages - split turn prefix (if isSplitTurn)
+  // preparation.turnPrefixSourceMessages - optional active-context prefix through the split turn
   // preparation.previousSummary - previous compaction summary
   // preparation.fileOps - extracted file operations
   // preparation.tokensBefore - context tokens before compaction
@@ -345,6 +347,21 @@ pi.on("session_before_compact", async (event, ctx) => {
 ```
 
 See [custom-compaction.ts](../examples/extensions/custom-compaction.ts) for a complete example using a different model.
+
+### session_compact_failed
+
+Fired when manual or automatic compaction fails or is aborted. This is useful for telemetry extensions that need to pair `session_before_compact` attempts with terminal outcomes.
+
+```typescript
+pi.on("session_compact_failed", async (event, ctx) => {
+  const { reason, errorMessage, aborted, willRetry, fromExtension } = event;
+  // reason - "manual" (/compact), "threshold", or "overflow"
+  // errorMessage - present for non-abort failures
+  // aborted - true for cancelled/aborted compactions
+  // willRetry - whether the aborted turn would have retried after compaction
+  // fromExtension - whether extension-provided compaction content was being used
+});
+```
 
 ### session_before_tree
 

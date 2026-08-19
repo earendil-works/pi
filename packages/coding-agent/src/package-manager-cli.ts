@@ -432,7 +432,7 @@ function printSelfUpdateUnavailable(
 	const entrypoint = process.argv[1];
 	if (entrypoint) {
 		console.error("");
-		console.error(`Location of pi executable: ${entrypoint}`);
+		console.error(`Location of ${APP_NAME} executable: ${entrypoint}`);
 	}
 }
 

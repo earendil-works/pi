@@ -1,6 +1,6 @@
 CREATE TABLE IF NOT EXISTS sessions (
 	id TEXT PRIMARY KEY,
-	created_at TEXT NOT NULL,
+	created_at INTEGER NOT NULL,
 	cwd TEXT NOT NULL,
 	parent_session_id TEXT NULL,
 	metadata TEXT NULL
@@ -15,7 +15,7 @@ CREATE TABLE IF NOT EXISTS entries (
 	id TEXT NOT NULL,
 	parent_id TEXT NULL,
 	type TEXT NOT NULL,
-	timestamp TEXT NOT NULL,
+	timestamp INTEGER NOT NULL,
 	payload TEXT NOT NULL,
 	PRIMARY KEY (session_id, id),
 	UNIQUE (session_id, seq)
@@ -71,7 +71,7 @@ CREATE TABLE IF NOT EXISTS records (
 	run_id TEXT NULL,
 	type TEXT NOT NULL,
 	op_kind TEXT NULL,
-	timestamp TEXT NOT NULL,
+	timestamp INTEGER NOT NULL,
 	payload TEXT NOT NULL,
 	PRIMARY KEY (session_id, id),
 	UNIQUE (session_id, seq)

@@ -71,7 +71,7 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.on("agent_end", async (event) => {
-		console.log(\`[Extension] Done, \${event.messages.length} messages\`);
+		console.log(\`[Extension] Low-level run ended, \${event.messages.length} messages\`);
 	});
 
 	// Register a custom tool

@@ -542,7 +542,7 @@ describe("Generate E2E Tests", () => {
 		});
 	});
 
-	describe.skipIf(!process.env.XAI_API_KEY)("xAI Provider (grok-4.3 via OpenAI Completions)", () => {
+	describe.skipIf(!process.env.XAI_API_KEY)("xAI Provider (grok-4.3 via OpenAI Responses)", () => {
 		const llm = getModel("xai", "grok-4.3");
 
 		it("should complete basic text generation", { retry: 3 }, async () => {
@@ -702,9 +702,9 @@ describe("Generate E2E Tests", () => {
 	);
 
 	describe.skipIf(!hasCloudflareAiGatewayCredentials() || !process.env.ANTHROPIC_API_KEY)(
-		"Cloudflare AI Gateway → Anthropic BYOK (claude-sonnet-4-5 via /anthropic messages)",
+		"Cloudflare AI Gateway → Anthropic BYOK (claude-sonnet-4.5 via /anthropic messages)",
 		() => {
-			const llm = getModel("cloudflare-ai-gateway", "claude-sonnet-4-5");
+			const llm = getModel("cloudflare-ai-gateway", "claude-sonnet-4.5");
 			const options = { headers: { Authorization: `Bearer ${process.env.ANTHROPIC_API_KEY}` } };
 			const thinkingOptions = {
 				...options,

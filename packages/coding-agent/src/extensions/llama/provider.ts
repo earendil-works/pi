@@ -25,6 +25,11 @@ async function resolveServerUrl(
 	return configured ? normalizeLlamaServerUrl(configured) : undefined;
 }
 
+function modelIsSelectable(model: LlamaModelInfo): boolean {
+	// llama.cpp reports idle-slept models as "sleeping"; requests wake them automatically.
+	return model.status.value === "loaded" || model.status.value === "sleeping";
+}
+
 function toPiModel(model: LlamaModelInfo, serverUrl: string): Model<"openai-completions"> {
 	const reportedContextWindow = model.meta?.n_ctx ?? model.meta?.n_ctx_train;
 	const contextWindow = reportedContextWindow && reportedContextWindow > 0 ? reportedContextWindow : 128000;
@@ -59,7 +64,7 @@ export function createLlamaProvider(): LlamaProviderController {
 	let models: readonly Model<"openai-completions">[] = [];
 
 	const setCatalog = (catalog: readonly LlamaModelInfo[], serverUrl: string): void => {
-		models = catalog.filter((model) => model.status.value === "loaded").map((model) => toPiModel(model, serverUrl));
+		models = catalog.filter((model) => modelIsSelectable(model)).map((model) => toPiModel(model, serverUrl));
 	};
 
 	const provider: Provider<"openai-completions"> = {
@@ -133,7 +138,7 @@ export function createLlamaProvider(): LlamaProviderController {
 			const catalog = await new LlamaClient(serverUrl, context.credential.key).list({ signal: context.signal });
 			if (context.signal.aborted) return;
 			const refreshed = catalog
-				.filter((model) => model.status.value === "loaded")
+				.filter((model) => modelIsSelectable(model))
 				.map((model) => toPiModel(model, serverUrl));
 			await context.publish({
 				persist: { models: refreshed, checkedAt: Date.now() },

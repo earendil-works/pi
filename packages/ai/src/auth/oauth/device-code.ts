@@ -23,7 +23,7 @@ export type OAuthDeviceCodePollOptions<T> = {
 	signal: AbortSignal;
 };
 
-function abortableSleep(ms: number, signal: AbortSignal, cancelMessage: string): Promise<void> {
+export function abortableSleep(ms: number, signal: AbortSignal, cancelMessage: string): Promise<void> {
 	return new Promise((resolve, reject) => {
 		if (signal.aborted) {
 			reject(new Error(cancelMessage));

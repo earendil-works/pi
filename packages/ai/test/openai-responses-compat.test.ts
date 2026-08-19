@@ -9,6 +9,7 @@ type CapturedHeaders = Headers | string[][] | Record<string, string | readonly s
 interface CapturedResponsesPayload {
 	prompt_cache_key?: string;
 	session_id?: string;
+	tools?: Array<{ name?: string; strict?: boolean }>;
 }
 
 function getHeader(headers: CapturedHeaders, name: string): string | null {
@@ -151,6 +152,57 @@ describe("openai-responses provider defaults", () => {
 			tool_choice: "required",
 			tools: [expect.objectContaining({ name: "ping" })],
 		});
+	});
+
+	it("sets strict mode explicitly for Cloudflare OpenAI Responses tools", async () => {
+		const model = getModel("cloudflare-ai-gateway", "gpt-5.6-sol");
+		let capturedPayload: CapturedResponsesPayload | undefined;
+
+		vi.spyOn(globalThis, "fetch").mockResolvedValue(
+			new Response("data: [DONE]\n\n", {
+				status: 200,
+				headers: { "content-type": "text/event-stream" },
+			}),
+		);
+
+		const stream = streamOpenAIResponses(
+			model,
+			{
+				messages: [{ role: "user", content: "Use a tool.", timestamp: Date.now() }],
+				tools: [
+					{
+						name: "ordinary",
+						description: "An ordinary tool",
+						parameters: Type.Object({
+							path: Type.String(),
+							offset: Type.Optional(Type.Number()),
+						}),
+					},
+					{
+						name: "constrained",
+						description: "A constrained tool",
+						parameters: Type.Object({ value: Type.String() }),
+						constrainedSampling: { type: "json_schema", strict: "prefer" },
+					},
+				],
+			},
+			{
+				apiKey: "test-key",
+				onPayload: (payload) => {
+					capturedPayload = payload as CapturedResponsesPayload;
+				},
+			},
+		);
+
+		for await (const event of stream) {
+			if (event.type === "done" || event.type === "error") break;
+		}
+
+		expect(model.compat?.supportsStrictMode).toBe(true);
+		expect(capturedPayload?.tools).toEqual([
+			expect.objectContaining({ name: "ordinary", strict: false }),
+			expect.objectContaining({ name: "constrained", strict: true }),
+		]);
 	});
 
 	it.each([

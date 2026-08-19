@@ -330,7 +330,8 @@ user sends another prompt ◄─────────────────
 
 /compact or auto-compaction
   ├─► session_before_compact (can cancel or customize)
-  └─► session_compact
+  ├─► session_compact (success)
+  └─► session_compact_failed (failure or abort)
 
 /tree navigation
   ├─► session_before_tree (can cancel or customize)
@@ -448,7 +449,7 @@ pi.on("session_before_fork", async (event, ctx) => {
 After a successful fork or clone, pi emits `session_shutdown` for the old extension instance, reloads and rebinds extensions for the new session, then emits `session_start` with `reason: "fork"` and `previousSessionFile`.
 Do cleanup work in `session_shutdown`, then reestablish any in-memory state in `session_start`.
 
-#### session_before_compact / session_compact
+#### session_before_compact / session_compact / session_compact_failed
 
 Fired on compaction. See [compaction.md](compaction.md) for details.
 
@@ -478,6 +479,14 @@ pi.on("session_compact", async (event, ctx) => {
   // event.fromExtension - whether extension provided it
   // event.reason - "manual" (/compact), "threshold", or "overflow"
   // event.willRetry - whether the aborted turn is retried after compaction (overflow recovery)
+});
+
+pi.on("session_compact_failed", async (event, ctx) => {
+  // event.reason - "manual" (/compact), "threshold", or "overflow"
+  // event.errorMessage - present for non-abort failures
+  // event.aborted - true for cancelled/aborted compactions
+  // event.willRetry - whether the aborted turn would have retried after compaction
+  // event.fromExtension - whether extension-provided compaction content was being used
 });
 ```
 
@@ -1426,12 +1435,16 @@ pi.sendUserMessage([
 // During streaming - must specify delivery mode
 pi.sendUserMessage("Focus on error handling", { deliverAs: "steer" });
 pi.sendUserMessage("And then summarize", { deliverAs: "followUp" });
+
+// Opt in to extension command dispatch and skill/prompt template expansion
+pi.sendUserMessage("/review src/index.ts", { expandPromptTemplates: true });
 ```
 
 **Options:**
 - `deliverAs` - Required when agent is streaming:
   - `"steer"` - Queues the message for delivery after the current assistant turn finishes executing its tool calls
   - `"followUp"` - Waits for agent to finish all tools
+- `expandPromptTemplates` - Dispatch extension commands and expand skill commands and prompt templates. Defaults to `false`.
 
 When not streaming, the message is sent immediately and triggers a new turn. When streaming without `deliverAs`, throws an error.
 

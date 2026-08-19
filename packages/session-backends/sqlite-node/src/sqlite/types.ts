@@ -13,6 +13,7 @@ export interface SqliteStatement {
 	run(...params: unknown[]): SqliteRunResult;
 	get<TRow extends object>(...params: unknown[]): TRow | undefined;
 	all<TRow extends object>(...params: unknown[]): TRow[];
+	iterate<TRow extends object>(...params: unknown[]): Iterable<TRow>;
 }
 
 /** SQLite database capability used by the SQLite session backend. */

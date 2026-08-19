@@ -526,6 +526,23 @@ describe("SettingsManager", () => {
 		});
 	});
 
+	describe("defaultTools", () => {
+		it("loads global defaults and lets project settings replace them", () => {
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ defaultTools: ["read", "bash"] }));
+
+			expect(SettingsManager.create(projectDir, agentDir).getDefaultTools()).toEqual(["read", "bash"]);
+
+			writeFileSync(join(projectDir, ".pi", "settings.json"), JSON.stringify({ defaultTools: ["grep"] }));
+
+			expect(SettingsManager.create(projectDir, agentDir).getDefaultTools()).toEqual(["grep"]);
+		});
+
+		it("preserves an empty tool list", () => {
+			expect(SettingsManager.inMemory({ defaultTools: [] }).getDefaultTools()).toEqual([]);
+			expect(SettingsManager.inMemory().getDefaultTools()).toBeUndefined();
+		});
+	});
+
 	describe("getSessionDir", () => {
 		it("should return undefined when not set", () => {
 			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ theme: "dark" }));

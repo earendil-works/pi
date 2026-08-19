@@ -39,6 +39,23 @@ Select a theme via `/settings` or in `settings.json`:
 
 On first run, pi detects your terminal background and defaults to `dark` or `light`.
 
+### Initial Theme
+
+Start an interactive run with a theme without changing the saved setting:
+
+```bash
+pi --use-theme light
+```
+
+To follow terminal appearance, use `lightTheme/darkTheme` syntax:
+
+```bash
+pi --use-theme light/dark
+```
+
+The CLI value is the initial theme for that run. Choosing another theme later in `/settings` applies it immediately
+and saves it normally.
+
 ## Creating a Custom Theme
 
 1. Create a theme file:
@@ -72,6 +89,8 @@ vim ~/.pi/agent/themes/my-theme.json
     "thinkingText": "secondary",
     "selectedBg": "#2d2d30",
     "scrollbarThumb": "#555566",
+    "searchMatchBg": "#2d2d30",
+    "searchMatchText": "",
     "userMessageBg": "#2d2d30",
     "userMessageText": "",
     "customMessageBg": "#2d2d30",
@@ -141,13 +160,13 @@ vim ~/.pi/agent/themes/my-theme.json
 
 - `name` is required, must be unique, and must not contain `/`.
 - `vars` is optional. Define reusable colors here, then reference them in `colors`.
-- `colors` must define all 51 required tokens. `thinkingMax` is optional and falls back to `thinkingXhigh`; `scrollbarThumb` is optional and falls back to `selectedBg`.
+- `colors` must define all 51 required tokens. `thinkingMax`, `scrollbarThumb`, and the two search highlight tokens are optional and use the fallbacks listed below.
 
 The `$schema` field enables editor auto-completion and validation.
 
 ## Color Tokens
 
-Every theme must define all 51 required color tokens. `thinkingMax` and `scrollbarThumb` are optional for compatibility with existing themes; when omitted, they use `thinkingXhigh` and `selectedBg`, respectively.
+Every theme must define all 51 required color tokens. The optional tokens preserve compatibility with existing themes: `thinkingMax` falls back to `thinkingXhigh`, `scrollbarThumb` and `searchMatchBg` fall back to `selectedBg`, and `searchMatchText` falls back to `text`. Other search matches use `searchMatchText` on `searchMatchBg` with an underline; the current match reverses that foreground/background pair and uses bold text.
 
 ### Core UI (11 colors)
 
@@ -165,12 +184,14 @@ Every theme must define all 51 required color tokens. `thinkingMax` and `scrollb
 | `text` | Default text (usually `""`) |
 | `thinkingText` | Thinking block text |
 
-### Backgrounds & Content (11 required, 1 optional)
+### Backgrounds & Content (11 required, 3 optional)
 
 | Token | Purpose |
 |-------|---------|
 | `selectedBg` | Selected line background |
 | `scrollbarThumb` | Fullscreen scrollbar thumb background; optional, falls back to `selectedBg` |
+| `searchMatchBg` | Transcript search match background and current-match text; optional, falls back to `selectedBg` |
+| `searchMatchText` | Transcript search match text and current-match background; optional, falls back to `text` |
 | `userMessageBg` | User message background |
 | `userMessageText` | User message text |
 | `customMessageBg` | Extension message background |

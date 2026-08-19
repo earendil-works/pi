@@ -34,7 +34,7 @@
 		},
 		"colors": {
 			"type": "object",
-			"description": "Theme color definitions (thinkingMax and scrollbarThumb are optional and use compatible fallbacks)",
+			"description": "Theme color definitions (thinkingMax, scrollbarThumb, and search highlight colors are optional and use compatible fallbacks)",
 			"required": [
 				"accent",
 				"border",
@@ -140,6 +140,14 @@
 				"scrollbarThumb": {
 					"$ref": "#/$defs/colorValue",
 					"description": "Fullscreen scrollbar thumb background (falls back to selectedBg when omitted)"
+				},
+				"searchMatchBg": {
+					"$ref": "#/$defs/colorValue",
+					"description": "Transcript search match background and current-match text (falls back to selectedBg when omitted)"
+				},
+				"searchMatchText": {
+					"$ref": "#/$defs/colorValue",
+					"description": "Transcript search match text and current-match background (falls back to text when omitted)"
 				},
 				"userMessageBg": {
 					"$ref": "#/$defs/colorValue",

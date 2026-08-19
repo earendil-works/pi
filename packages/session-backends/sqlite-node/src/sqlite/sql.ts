@@ -28,6 +28,10 @@ export class SqlQuery {
 	all<TRow extends object>(db: SqliteDatabase): TRow[] {
 		return db.prepare(this.queryText).all<TRow>(...this.params);
 	}
+
+	iterate<TRow extends object>(db: SqliteDatabase): Iterable<TRow> {
+		return db.prepare(this.queryText).iterate<TRow>(...this.params);
+	}
 }
 
 /** Builds a parameterized query. Nested queries are inlined; other interpolations become `?` parameters. */

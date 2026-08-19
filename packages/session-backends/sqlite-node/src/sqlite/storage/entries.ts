@@ -8,7 +8,7 @@ export interface EntryRow {
 	id: string;
 	parent_id: string | null;
 	type: Entry["type"];
-	timestamp: string;
+	timestamp: number;
 	payload: string;
 }
 
@@ -17,7 +17,7 @@ export interface NewEntryRow {
 	id: string;
 	parentId: string | null;
 	type: Entry["type"];
-	timestamp: string;
+	timestamp: number;
 	payload: string;
 }
 
