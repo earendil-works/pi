@@ -398,6 +398,8 @@ interface InteractiveTuiOptions {
 	logDirectory: string;
 	terminal?: Terminal;
 	onRightClickPaste?: () => void;
+	/** Lines scrolled per mouse-wheel event in fullscreen mode. */
+	wheelScrollLines?: number;
 }
 
 /** Composition root for selecting the interactive terminal renderer. */
@@ -410,6 +412,7 @@ export function createInteractiveTui(options: InteractiveTuiOptions): TuiMainScr
 			searchCurrentMatchStyle: (text) => theme.bold(theme.inverse(styleSearchMatch(text))),
 			openUrl: openBrowser,
 			onRightClickPaste: options.onRightClickPaste,
+			wheelScrollLines: options.wheelScrollLines,
 			copySelection: async (text) => {
 				try {
 					await copyToClipboard(text);
@@ -616,6 +619,7 @@ export class InteractiveMode {
 			showHardwareCursor: this.settingsManager.getShowHardwareCursor(),
 			logDirectory: getAgentDir(),
 			onRightClickPaste: this.onRightClickPaste,
+			wheelScrollLines: this.settingsManager.getFullscreenWheelScrollLines(),
 		});
 		this.ui = createInteractiveTuiReference(() => this.renderer);
 		this.ui.setClearOnShrink(this.settingsManager.getClearOnShrink());
@@ -896,6 +900,7 @@ export class InteractiveMode {
 			logDirectory: getAgentDir(),
 			terminal,
 			onRightClickPaste: this.onRightClickPaste,
+			wheelScrollLines: this.settingsManager.getFullscreenWheelScrollLines(),
 		});
 		nextUi.setClearOnShrink(clearOnShrink);
 		nextUi.onDebug = onDebug;
@@ -2004,6 +2009,13 @@ export class InteractiveMode {
 
 	private applyFullscreenScrollbarSetting(): void {
 		this.transcriptScrollView?.setScrollbar(this.settingsManager.getFullscreenScrollbar());
+	}
+
+	private applyFullscreenWheelScrollLinesSetting(): void {
+		const tui = this.renderer;
+		if (tui instanceof TuiAltScreen) {
+			tui.setWheelScrollLines(this.settingsManager.getFullscreenWheelScrollLines());
+		}
 	}
 
 	private applyRuntimeSettings(): void {
@@ -4588,6 +4600,7 @@ export class InteractiveMode {
 					tuiMode: this.ui.mode,
 					fullscreenExitOutput: this.settingsManager.getFullscreenExitOutput(),
 					fullscreenScrollbar: this.settingsManager.getFullscreenScrollbar(),
+					fullscreenWheelScrollLines: this.settingsManager.getFullscreenWheelScrollLines(),
 					warnings: this.settingsManager.getWarnings(),
 				},
 				{
@@ -4782,6 +4795,10 @@ export class InteractiveMode {
 					onFullscreenScrollbarChange: (mode) => {
 						this.settingsManager.setFullscreenScrollbar(mode);
 						this.applyFullscreenScrollbarSetting();
+					},
+					onFullscreenWheelScrollLinesChange: (lines) => {
+						this.settingsManager.setFullscreenWheelScrollLines(lines);
+						this.applyFullscreenWheelScrollLinesSetting();
 					},
 					onWarningsChange: (warnings) => {
 						this.settingsManager.setWarnings(warnings);

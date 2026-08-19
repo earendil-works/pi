@@ -84,6 +84,7 @@ export interface SettingsConfig {
 	tuiMode: TuiMode;
 	fullscreenExitOutput: FullscreenExitOutput;
 	fullscreenScrollbar: ScrollViewScrollbar;
+	fullscreenWheelScrollLines: number;
 	warnings: WarningSettings;
 }
 
@@ -122,6 +123,7 @@ export interface SettingsCallbacks {
 	onTuiModeChange: (mode: TuiMode) => void;
 	onFullscreenExitOutputChange: (output: FullscreenExitOutput) => void;
 	onFullscreenScrollbarChange: (mode: ScrollViewScrollbar) => void;
+	onFullscreenWheelScrollLinesChange: (lines: number) => void;
 	onWarningsChange: (warnings: WarningSettings) => void;
 	onCancel: () => void;
 }
@@ -778,6 +780,13 @@ export class SettingsSelectorComponent extends Container {
 				values: ["auto", "always", "hidden"],
 			},
 			{
+				id: "fullscreen-wheel-scroll-lines",
+				label: "Fullscreen wheel scroll lines",
+				description: "Lines scrolled per mouse-wheel event in fullscreen mode; has no effect in regular mode",
+				currentValue: String(config.fullscreenWheelScrollLines),
+				values: ["1", "2", "3", "4", "5", "6", "8", "10"],
+			},
+			{
 				id: "theme",
 				label: "Theme",
 				description: "Color theme for the interface",
@@ -997,6 +1006,9 @@ export class SettingsSelectorComponent extends Container {
 						break;
 					case "fullscreen-scrollbar":
 						callbacks.onFullscreenScrollbarChange(newValue as ScrollViewScrollbar);
+						break;
+					case "fullscreen-wheel-scroll-lines":
+						callbacks.onFullscreenWheelScrollLinesChange(parseInt(newValue, 10));
 						break;
 					case "theme":
 						callbacks.onThemeChange(newValue);

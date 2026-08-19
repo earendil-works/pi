@@ -191,7 +191,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 	private activeSearch?: ActiveSearch;
 	private pressedUrl?: string;
 	private selectionDragged = false;
-	private readonly wheelScrollLines: number;
+	private wheelScrollLines: number;
 	private readonly mouseEnabled: boolean;
 	private readonly searchMatchStyle: (text: string) => string;
 	private readonly searchCurrentMatchStyle: (text: string) => string;
@@ -237,6 +237,14 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		this.layoutRoot = component;
 		this.currentLayout = undefined;
 		this.requestRender();
+	}
+
+	/**
+	 * Update how many logical lines each mouse-wheel event scrolls at runtime,
+	 * so a settings change takes effect without recreating the renderer.
+	 */
+	setWheelScrollLines(lines: number): void {
+		this.wheelScrollLines = Math.max(1, Math.floor(lines));
 	}
 
 	override render(width: number): string[] {

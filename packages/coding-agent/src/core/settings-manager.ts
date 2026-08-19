@@ -139,6 +139,7 @@ export interface Settings {
 	tuiMode?: TuiMode; // default: "regular"
 	fullscreenExitOutput?: FullscreenExitOutput; // default: "transcript"; no effect in regular TUI mode
 	fullscreenScrollbar?: ScrollViewScrollbar; // default: "auto"; no effect in regular TUI mode
+	fullscreenWheelScrollLines?: number; // default: 1; no effect in regular TUI mode
 }
 
 function isMergeableObject(value: unknown): value is Record<string, unknown> {
@@ -1213,6 +1214,17 @@ export class SettingsManager {
 	setFullscreenScrollbar(mode: ScrollViewScrollbar): void {
 		this.globalSettings.fullscreenScrollbar = mode;
 		this.markModified("fullscreenScrollbar");
+		this.save();
+	}
+
+	getFullscreenWheelScrollLines(): number {
+		const n = this.settings.fullscreenWheelScrollLines;
+		return typeof n === "number" && Number.isFinite(n) && n >= 1 ? Math.floor(n) : 1;
+	}
+
+	setFullscreenWheelScrollLines(lines: number): void {
+		this.globalSettings.fullscreenWheelScrollLines = Math.max(1, Math.floor(lines));
+		this.markModified("fullscreenWheelScrollLines");
 		this.save();
 	}
 

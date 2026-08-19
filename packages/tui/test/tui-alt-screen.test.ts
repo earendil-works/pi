@@ -364,6 +364,26 @@ describe("TuiAltScreen", () => {
 		tui.stop();
 	});
 
+	it("applies wheelScrollLines at runtime via setWheelScrollLines", async () => {
+		const terminal = new VirtualTerminal(20, 4);
+		const tui = new TuiAltScreen(terminal);
+		tui.setWheelScrollLines(3);
+		const inner = new ScrollView(new Text("i1\ni2\ni3\ni4\ni5\ni6", 0, 0));
+		const outer = new ScrollView(
+			new VStack([{ component: inner, basis: 2 }, new Text("tail1\ntail2\ntail3\ntail4\ntail5", 0, 0)]),
+			{ primary: true },
+		);
+		tui.setLayoutRoot(outer);
+		tui.start();
+		await terminal.waitForRender();
+
+		terminal.sendInput("\x1b[<65;1;1M");
+		await terminal.waitForRender();
+		assert.strictEqual(inner.scrollTop, 3);
+		assert.strictEqual(outer.scrollTop, 0);
+		tui.stop();
+	});
+
 	it("supports configurable keyboard viewport navigation with four rows of page overlap", async () => {
 		const terminal = new VirtualTerminal(20, 8);
 		const tui = new TuiAltScreen(terminal);
