@@ -15,7 +15,7 @@ import { Compile } from "typebox/compile";
 import { getCustomThemesDir, getThemesDir } from "../../../config.ts";
 import type { SourceInfo } from "../../../core/source-info.ts";
 import { closeWatcher, watchWithErrorHandler } from "../../../utils/fs-watch.ts";
-import { highlight, supportsLanguage } from "../../../utils/syntax-highlight.ts";
+import { highlight, requestHighlightLanguage } from "../../../utils/syntax-highlight.ts";
 
 // ============================================================================
 // Types & Schema
@@ -1177,9 +1177,10 @@ function getCliHighlightTheme(t: Theme): CliHighlightTheme {
  * Returns array of highlighted lines.
  */
 export function highlightCode(code: string, lang?: string): string[] {
-	// Validate language before highlighting to avoid stderr spam from cli-highlight
-	const validLang = lang && supportsLanguage(lang) ? lang : undefined;
-	// Skip highlighting when no valid language is specified. cli-highlight's
+	// Validate language before highlighting to avoid stderr spam from highlight.js.
+	// Uncommon languages start loading in the background and render plainly once.
+	const validLang = lang ? requestHighlightLanguage(lang) : undefined;
+	// Skip highlighting when no valid language is specified. highlight.js's
 	// auto-detection is unreliable and can misidentify prose as AppleScript,
 	// LiveCodeServer, etc., coloring random English words as keywords.
 	if (!validLang) {
@@ -1193,7 +1194,7 @@ export function highlightCode(code: string, lang?: string): string[] {
 	try {
 		return highlight(code, opts).split("\n");
 	} catch {
-		return code.split("\n");
+		return code.split("\n").map((line) => theme.fg("mdCodeBlock", line));
 	}
 }
 
@@ -1284,26 +1285,7 @@ export function getMarkdownTheme(): MarkdownTheme {
 		italic: (text: string) => theme.italic(text),
 		underline: (text: string) => theme.underline(text),
 		strikethrough: (text: string) => chalk.strikethrough(text),
-		highlightCode: (code: string, lang?: string): string[] => {
-			// Validate language before highlighting to avoid stderr spam from cli-highlight
-			const validLang = lang && supportsLanguage(lang) ? lang : undefined;
-			// Skip highlighting when no valid language is specified. cli-highlight's
-			// auto-detection is unreliable and can misidentify prose as AppleScript,
-			// LiveCodeServer, etc., coloring random English words as keywords.
-			if (!validLang) {
-				return code.split("\n").map((line) => theme.fg("mdCodeBlock", line));
-			}
-			const opts = {
-				language: validLang,
-				ignoreIllegals: true,
-				theme: getCliHighlightTheme(theme),
-			};
-			try {
-				return highlight(code, opts).split("\n");
-			} catch {
-				return code.split("\n").map((line) => theme.fg("mdCodeBlock", line));
-			}
-		},
+		highlightCode,
 	};
 }
 

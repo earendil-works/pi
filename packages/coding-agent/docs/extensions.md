@@ -2890,11 +2890,11 @@ For syntax highlighting in custom tool renderers:
 import { highlightCode, getLanguageFromPath } from "@earendil-works/pi-coding-agent";
 
 // Highlight code with explicit language
-const highlighted = highlightCode("const x = 1;", "typescript", theme);
+const typescriptLines = highlightCode("const x = 1;", "typescript");
 
-// Auto-detect language from file path
+// Detect language from a file path
 const lang = getLanguageFromPath("/path/to/file.rs");  // "rust"
-const highlighted = highlightCode(code, lang, theme);
+const fileLines = highlightCode(code, lang);
 ```
 
 ## Error Handling

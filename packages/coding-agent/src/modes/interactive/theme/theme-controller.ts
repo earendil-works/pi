@@ -1,5 +1,6 @@
 import type { TUI } from "@earendil-works/pi-tui";
 import type { SettingsManager } from "../../../core/settings-manager.ts";
+import { onHighlightLanguageLoad } from "../../../utils/syntax-highlight.ts";
 import {
 	detectTerminalBackgroundFromEnv,
 	detectTerminalBackgroundTheme,
@@ -25,6 +26,7 @@ export class InteractiveThemeController {
 	private activeThemeName: string | undefined;
 	private autoSyncEnabled = false;
 	private terminalColorSchemeUnsubscribe: (() => void) | undefined;
+	private highlightLanguageLoadUnsubscribe: (() => void) | undefined;
 
 	constructor(
 		ui: TUI,
@@ -45,6 +47,15 @@ export class InteractiveThemeController {
 			this.terminalTheme,
 		);
 		initTheme(this.activeThemeName, true);
+		this.highlightLanguageLoadUnsubscribe = onHighlightLanguageLoad((event) => {
+			if ("error" in event) {
+				const message = event.error instanceof Error ? event.error.message : String(event.error);
+				this.showError(`Failed to load syntax highlighting language "${event.language}": ${message}`);
+				return;
+			}
+			this.ui.invalidate();
+			this.ui.requestRender();
+		});
 		this.bindTerminalColorSchemeListener();
 	}
 
@@ -117,6 +128,14 @@ export class InteractiveThemeController {
 
 	disableAutoSync(): void {
 		this.setAutoSync(false);
+	}
+
+	dispose(): void {
+		this.disableAutoSync();
+		this.terminalColorSchemeUnsubscribe?.();
+		this.terminalColorSchemeUnsubscribe = undefined;
+		this.highlightLanguageLoadUnsubscribe?.();
+		this.highlightLanguageLoadUnsubscribe = undefined;
 	}
 
 	getTerminalTheme(): TerminalTheme {
