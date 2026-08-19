@@ -6,23 +6,25 @@
 
 import { createAgentSession, SessionManager, SettingsManager } from "@tculpepp/spi-coding-agent";
 
+const cwd = process.cwd();
+
 // Load current settings (merged global + project)
-const settingsManagerFromDisk = SettingsManager.create();
+const settingsManagerFromDisk = SettingsManager.create(cwd);
 console.log("Current settings:", JSON.stringify(settingsManagerFromDisk.getGlobalSettings(), null, 2));
 
 // Override specific settings
-const settingsManager = SettingsManager.create();
+const settingsManager = SettingsManager.create(cwd);
 settingsManager.applyOverrides({
 	compaction: { enabled: false },
 	retry: { enabled: true, maxRetries: 5, baseDelayMs: 1000 },
 });
 
-await createAgentSession({
+const { session: customSettingsSession } = await createAgentSession({
 	settingsManager,
 	sessionManager: SessionManager.inMemory(),
 });
-
 console.log("Session created with custom settings");
+customSettingsSession.dispose();
 
 // Setters update memory immediately and queue persistence writes.
 // Call flush() when you need a durability boundary.
@@ -43,9 +45,9 @@ const inMemorySettings = SettingsManager.inMemory({
 	retry: { enabled: false },
 });
 
-await createAgentSession({
+const { session: testSession } = await createAgentSession({
 	settingsManager: inMemorySettings,
 	sessionManager: SessionManager.inMemory(),
 });
-
 console.log("Test session created with in-memory settings");
+testSession.dispose();

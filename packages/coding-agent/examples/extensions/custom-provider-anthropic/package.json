@@ -1,7 +1,7 @@
 {
   "name": "pi-extension-custom-provider-anthropic",
   "private": true,
-  "version": "1.17.2",
+  "version": "0.84.2",
   "type": "module",
   "scripts": {
     "clean": "echo 'nothing to clean'",
@@ -14,6 +14,6 @@
     ]
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.52.0"
+    "@anthropic-ai/sdk": "0.52.0"
   }
 }

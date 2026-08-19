@@ -1,14 +1,15 @@
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Type } from "@sinclair/typebox";
 import type { AgentTool } from "@tculpepp/spi-agent-core";
 import { fauxAssistantMessage, fauxToolCall, type Model } from "@tculpepp/spi-ai";
+import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
-import type { PromptTemplate } from "../../src/core/prompt-templates.js";
-import { createSyntheticSourceInfo } from "../../src/core/source-info.js";
-import { createTestResourceLoader } from "../utilities.js";
-import { createHarness, getMessageText, type Harness } from "./harness.js";
+import type { ExtensionAPI, InputEvent } from "../../src/core/extensions/index.ts";
+import type { PromptTemplate } from "../../src/core/prompt-templates.ts";
+import { createSyntheticSourceInfo } from "../../src/core/source-info.ts";
+import { createTestResourceLoader } from "../utilities.ts";
+import { createHarness, getMessageText, type Harness } from "./harness.ts";
 
 describe("AgentSession prompt characterization", () => {
 	const harnesses: Harness[] = [];
@@ -223,6 +224,39 @@ describe("AgentSession prompt characterization", () => {
 		expect(expandedPrompt).toBe("Review this code: src/index.ts");
 	});
 
+	it("sendUserMessage can opt into prompt template expansion", async () => {
+		const template: PromptTemplate = {
+			name: "review",
+			description: "Review template",
+			content: "Review this code: $1",
+			filePath: "/virtual/review.md",
+			sourceInfo: createSyntheticSourceInfo("/virtual/review.md", {
+				source: "local",
+				scope: "temporary",
+				origin: "top-level",
+			}),
+		};
+		const resourceLoader = {
+			...createTestResourceLoader(),
+			getPrompts: () => ({ prompts: [template], diagnostics: [] }),
+		};
+		const harness = await createHarness({ resourceLoader });
+		harnesses.push(harness);
+		let expandedPrompt = "";
+
+		harness.setResponses([
+			(context) => {
+				const user = context.messages.find((message) => message.role === "user");
+				expandedPrompt = user ? getMessageText(user) : "";
+				return fauxAssistantMessage("ok");
+			},
+		]);
+
+		await harness.session.sendUserMessage("/review src/index.ts", { expandPromptTemplates: true });
+
+		expect(expandedPrompt).toBe("Review this code: src/index.ts");
+	});
+
 	it("dispatches extension commands without consuming a provider response", async () => {
 		const commandRuns: string[] = [];
 		const harness = await createHarness({
@@ -247,6 +281,35 @@ describe("AgentSession prompt characterization", () => {
 		expect(harness.getPendingResponseCount()).toBe(1);
 	});
 
+	it("extension sendUserMessage can opt into extension command dispatch", async () => {
+		let extensionApi: ExtensionAPI | undefined;
+		let resolveCommandRun: (args: string) => void = () => {};
+		const commandRun = new Promise<string>((resolve) => {
+			resolveCommandRun = resolve;
+		});
+		const harness = await createHarness({
+			extensionFactories: [
+				(pi) => {
+					extensionApi = pi;
+					pi.registerCommand("testcmd", {
+						description: "Test command",
+						handler: async (args) => {
+							resolveCommandRun(args);
+						},
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		expect(extensionApi).toBeDefined();
+
+		extensionApi?.sendUserMessage("/testcmd hello world", { expandPromptTemplates: true });
+
+		await expect(commandRun).resolves.toBe("hello world");
+		expect(harness.session.messages).toEqual([]);
+		expect(harness.getPendingResponseCount()).toBe(0);
+	});
+
 	it("sendUserMessage while idle triggers a turn", async () => {
 		const harness = await createHarness();
 		harnesses.push(harness);
@@ -257,6 +320,80 @@ describe("AgentSession prompt characterization", () => {
 
 		expect(harness.session.messages.map((message) => message.role)).toEqual(["user", "assistant"]);
 		expect(getMessageText(harness.session.messages[0]!)).toBe("from extension");
+	});
+
+	it("does not report streamingBehavior to input handlers while idle", async () => {
+		const inputEvents: InputEvent[] = [];
+		const harness = await createHarness({
+			extensionFactories: [
+				(pi) => {
+					pi.on("input", (event) => {
+						inputEvents.push(event);
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		harness.setResponses([fauxAssistantMessage("ok")]);
+
+		await harness.session.prompt("idle", { streamingBehavior: "followUp" });
+
+		expect(inputEvents).toHaveLength(1);
+		expect(inputEvents[0]?.streamingBehavior).toBeUndefined();
+	});
+
+	it("reports streamingBehavior to input handlers while streaming", async () => {
+		let releaseToolExecution: (() => void) | undefined;
+		const toolRelease = new Promise<void>((resolve) => {
+			releaseToolExecution = resolve;
+		});
+		const inputEvents: InputEvent[] = [];
+		const waitTool: AgentTool = {
+			name: "wait",
+			label: "Wait",
+			description: "Wait for release",
+			parameters: Type.Object({}),
+			execute: async () => {
+				await toolRelease;
+				return {
+					content: [{ type: "text", text: "released" }],
+					details: {},
+				};
+			},
+		};
+		const harness = await createHarness({
+			tools: [waitTool],
+			extensionFactories: [
+				(pi) => {
+					pi.on("input", (event) => {
+						inputEvents.push(event);
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		harness.setResponses([
+			fauxAssistantMessage(fauxToolCall("wait", {}), { stopReason: "toolUse" }),
+			fauxAssistantMessage("done"),
+		]);
+
+		const sawToolStart = new Promise<void>((resolve) => {
+			const unsubscribe = harness.session.subscribe((event) => {
+				if (event.type === "tool_execution_start") {
+					unsubscribe();
+					resolve();
+				}
+			});
+		});
+
+		const promptPromise = harness.session.prompt("start");
+		await sawToolStart;
+		await harness.session.prompt("queued", { streamingBehavior: "followUp" });
+
+		expect(inputEvents.map((event) => event.streamingBehavior)).toEqual([undefined, "followUp"]);
+
+		releaseToolExecution?.();
+		await promptPromise;
 	});
 
 	it("throws when prompted during streaming without a streamingBehavior", async () => {
@@ -302,6 +439,52 @@ describe("AgentSession prompt characterization", () => {
 
 		releaseToolExecution?.();
 		await promptPromise;
+	});
+
+	it("throws when prompted during manual compaction", async () => {
+		let markCompactionStarted = () => {};
+		const compactionStarted = new Promise<void>((resolve) => {
+			markCompactionStarted = resolve;
+		});
+		let releaseCompaction = () => {};
+		const compactionReleased = new Promise<void>((resolve) => {
+			releaseCompaction = resolve;
+		});
+		const harness = await createHarness({
+			settings: { compaction: { keepRecentTokens: 1 } },
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_before_compact", async (event) => {
+						markCompactionStarted();
+						await compactionReleased;
+						return {
+							compaction: {
+								summary: "manual compacted",
+								firstKeptEntryId: event.preparation.firstKeptEntryId,
+								tokensBefore: event.preparation.tokensBefore,
+								details: {},
+							},
+						};
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		harness.setResponses([fauxAssistantMessage("one"), fauxAssistantMessage("two")]);
+		await harness.session.prompt("first");
+		await harness.session.prompt("second");
+
+		const compactPromise = harness.session.compact();
+		await compactionStarted;
+
+		try {
+			await expect(harness.session.prompt("third")).rejects.toThrow(
+				"Cannot submit a prompt while compaction is in progress. Wait for compaction to finish and retry.",
+			);
+		} finally {
+			releaseCompaction();
+			await compactPromise;
+		}
 	});
 
 	it("throws when prompting without a model", async () => {

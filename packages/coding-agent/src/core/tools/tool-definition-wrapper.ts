@@ -1,5 +1,5 @@
 import type { AgentTool } from "@tculpepp/spi-agent-core";
-import type { ExtensionContext, ToolDefinition } from "../extensions/types.js";
+import type { ExtensionContext, ToolDefinition } from "../extensions/types.ts";
 
 /** Wrap a ToolDefinition into an AgentTool for the core runtime. */
 export function wrapToolDefinition<TDetails = unknown>(
@@ -11,9 +11,11 @@ export function wrapToolDefinition<TDetails = unknown>(
 		label: definition.label,
 		description: definition.description,
 		parameters: definition.parameters,
+		constrainedSampling: definition.constrainedSampling,
 		prepareArguments: definition.prepareArguments,
-		execute: (toolCallId, params, signal, onUpdate) =>
-			definition.execute(toolCallId, params, signal, onUpdate, ctxFactory?.() as ExtensionContext),
+		executionMode: definition.executionMode,
+		execute: (toolCallId, params, signal, onUpdate, ctx?: ExtensionContext) =>
+			definition.execute(toolCallId, params, signal, onUpdate, ctx ?? (ctxFactory?.() as ExtensionContext)),
 	};
 }
 
@@ -37,7 +39,9 @@ export function createToolDefinitionFromAgentTool(tool: AgentTool<any>): ToolDef
 		label: tool.label,
 		description: tool.description,
 		parameters: tool.parameters as any,
+		constrainedSampling: tool.constrainedSampling,
 		prepareArguments: tool.prepareArguments,
+		executionMode: tool.executionMode,
 		execute: async (toolCallId, params, signal, onUpdate) => tool.execute(toolCallId, params, signal, onUpdate),
 	};
 }

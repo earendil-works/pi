@@ -1,5 +1,5 @@
 import type { ImageContent } from "@tculpepp/spi-ai";
-import type { Args } from "./args.js";
+import type { Args } from "./args.ts";
 
 export interface InitialMessageInput {
 	parsed: Args;

@@ -20,12 +20,12 @@
  *   pi -e ./tool-override.ts
  */
 
-import { Type } from "@sinclair/typebox";
 import type { TextContent } from "@tculpepp/spi-ai";
 import { type ExtensionAPI, getAgentDir, withFileMutationQueue } from "@tculpepp/spi-coding-agent";
 import { constants, readFileSync } from "fs";
 import { access, appendFile, readFile } from "fs/promises";
 import { join, resolve } from "path";
+import { Type } from "typebox";
 
 const LOG_FILE = join(getAgentDir(), "read-access.log");
 

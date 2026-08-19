@@ -2,30 +2,39 @@
 	"extends": "./tsconfig.base.json",
 	"compilerOptions": {
 		"noEmit": true,
+		"module": "NodeNext",
+		"moduleResolution": "NodeNext",
 		"paths": {
 			"*": ["./*"],
+			"@tculpepp/spi-telemetry": ["./packages/telemetry/src/index.ts"],
+			"@tculpepp/spi-telemetry/testing": ["./packages/telemetry/src/testing/index.ts"],
 			"@tculpepp/spi-ai": ["./packages/ai/src/index.ts"],
 			"@tculpepp/spi-ai/oauth": ["./packages/ai/src/oauth.ts"],
 			"@tculpepp/spi-ai/*": ["./packages/ai/src/*.ts", "./packages/ai/src/providers/*.ts"],
 			"@tculpepp/spi-ai/dist/*": ["./packages/ai/src/*"],
 			"@tculpepp/spi-agent-core": ["./packages/agent/src/index.ts"],
+			"@tculpepp/spi-agent-core/node": ["./packages/agent/src/node.ts"],
+			"@tculpepp/spi-agent-core/session/testing": [
+				"./packages/agent/src/harness/session/testing/index.ts"
+			],
 			"@tculpepp/spi-agent-core/*": ["./packages/agent/src/*"],
+			"@tculpepp/spi-session-backend-sqlite-node": ["./packages/session-backends/sqlite-node/src/index.ts"],
 			"@tculpepp/spi-coding-agent": ["./packages/coding-agent/src/index.ts"],
 			"@tculpepp/spi-coding-agent/hooks": ["./packages/coding-agent/src/core/hooks/index.ts"],
 			"@tculpepp/spi-coding-agent/*": ["./packages/coding-agent/src/*"],
-			"@sinclair/typebox": ["./node_modules/@sinclair/typebox"],
-			"@tculpepp/spi-mom": ["./packages/mom/src/index.ts"],
-			"@tculpepp/spi-mom/*": ["./packages/mom/src/*"],
-			"@tculpepp/spi": ["./packages/pods/src/index.ts"],
-			"@tculpepp/spi/*": ["./packages/pods/src/*"],
+			"@tculpepp/spi-protocol": ["./packages/protocol/src/index.ts"],
+			"@tculpepp/spi-protocol/*": ["./packages/protocol/src/*"],
+			"@tculpepp/spi-client": ["./packages/client/src/index.ts"],
+			"@tculpepp/spi-client/*": ["./packages/client/src/*"],
+			"@tculpepp/spi-server": ["./packages/server/src/index.ts"],
+			"@tculpepp/spi-server/*": ["./packages/server/src/*"],
+			"typebox": ["./node_modules/typebox"],
 			"@tculpepp/spi-tui": ["./packages/tui/src/index.ts"],
 			"@tculpepp/spi-tui/*": ["./packages/tui/src/*"],
-			"@tculpepp/spi-web-ui": ["./packages/web-ui/src/index.ts"],
-			"@tculpepp/spi-web-ui/*": ["./packages/web-ui/src/*"],
 			"@tculpepp/spi-agent-old": ["./packages/agent-old/src/index.ts"],
 			"@tculpepp/spi-agent-old/*": ["./packages/agent-old/src/*"]
 		}
 	},
-	"include": ["packages/*/src/**/*", "packages/*/test/**/*", "packages/coding-agent/examples/**/*"],
-	"exclude": ["packages/web-ui/**/*", "**/dist/**"]
+	"include": ["packages/*/src/**/*", "packages/*/test/**/*", "packages/session-backends/*/src/**/*", "packages/session-backends/*/test/**/*", "packages/coding-agent/examples/**/*"],
+	"exclude": ["**/dist/**", "packages/coding-agent/examples/extensions/gondolin/**"]
 }

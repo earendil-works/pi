@@ -1,16 +1,17 @@
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { registerFauxProvider } from "@tculpepp/spi-ai";
+import { registerFauxProvider } from "@tculpepp/spi-ai/compat";
 import { afterEach, describe, expect, it } from "vitest";
 import {
 	type CreateAgentSessionRuntimeFactory,
 	createAgentSessionFromServices,
 	createAgentSessionRuntime,
 	createAgentSessionServices,
-} from "../../../src/core/agent-session-runtime.js";
-import { AuthStorage } from "../../../src/core/auth-storage.js";
-import { SessionManager } from "../../../src/core/session-manager.js";
+} from "../../../src/core/agent-session-runtime.ts";
+import { AuthStorage } from "../../../src/core/auth-storage.ts";
+import { ModelRuntime } from "../../../src/core/model-runtime.ts";
+import { SessionManager } from "../../../src/core/session-manager.ts";
 
 describe("issue #2753 reload stale resource settings", () => {
 	const cleanups: Array<() => void> = [];
@@ -32,13 +33,17 @@ describe("issue #2753 reload stale resource settings", () => {
 			models: [{ id: "faux-1", reasoning: false }],
 		});
 		const authStorage = AuthStorage.inMemory();
-		authStorage.setRuntimeApiKey(faux.getModel().provider, "faux-key");
+		await authStorage.modify(faux.getModel().provider, async () => ({ type: "api_key", key: "faux-key" }));
+		const modelRuntime = await ModelRuntime.create({
+			credentials: authStorage,
+			modelsPath: join(agentDir, "models.json"),
+		});
 
 		const createRuntime: CreateAgentSessionRuntimeFactory = async ({ cwd, sessionManager, sessionStartEvent }) => {
 			const services = await createAgentSessionServices({
 				cwd,
 				agentDir,
-				authStorage,
+				modelRuntime,
 				resourceLoaderOptions: {
 					extensionFactories: [
 						(pi) => {

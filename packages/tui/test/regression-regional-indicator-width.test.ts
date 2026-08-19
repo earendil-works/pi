@@ -1,6 +1,6 @@
 import assert from "node:assert";
 import { describe, it } from "node:test";
-import { visibleWidth, wrapTextWithAnsi } from "../src/utils.js";
+import { visibleWidth, wrapTextWithAnsi } from "../src/utils.ts";
 
 describe("regional indicator width regression", () => {
 	it("treats partial flag grapheme as full-width to avoid streaming render drift", () => {

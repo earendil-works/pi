@@ -1,8 +1,8 @@
-import { fuzzyFilter } from "../fuzzy.js";
-import { getKeybindings } from "../keybindings.js";
-import type { Component } from "../tui.js";
-import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "../utils.js";
-import { Input } from "./input.js";
+import { fuzzyFilter } from "../fuzzy.ts";
+import { getKeybindings } from "../keybindings.ts";
+import type { Component } from "../tui.ts";
+import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "../utils.ts";
+import { Input } from "./input.ts";
 
 export interface SettingItem {
 	/** Unique identifier for this setting */
@@ -182,16 +182,15 @@ export class SettingsList implements Component {
 		} else if (kb.matches(data, "tui.select.down")) {
 			if (displayItems.length === 0) return;
 			this.selectedIndex = this.selectedIndex === displayItems.length - 1 ? 0 : this.selectedIndex + 1;
-		} else if (kb.matches(data, "tui.select.confirm") || data === " ") {
+		} else if (
+			kb.matches(data, "tui.select.confirm") ||
+			(data === " " && (!this.searchEnabled || this.searchInput?.getValue().length === 0))
+		) {
 			this.activateItem();
 		} else if (kb.matches(data, "tui.select.cancel")) {
 			this.onCancel();
 		} else if (this.searchEnabled && this.searchInput) {
-			const sanitized = data.replace(/ /g, "");
-			if (!sanitized) {
-				return;
-			}
-			this.searchInput.handleInput(sanitized);
+			this.searchInput.handleInput(data);
 			this.applyFilter(this.searchInput.getValue());
 		}
 	}

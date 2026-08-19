@@ -7,7 +7,8 @@
 
 import assert from "node:assert";
 import { beforeEach, describe, it } from "node:test";
-import { StdinBuffer } from "../src/stdin-buffer.js";
+import { matchesKey } from "../src/keys.ts";
+import { StdinBuffer } from "../src/stdin-buffer.ts";
 
 describe("StdinBuffer", () => {
 	let buffer: StdinBuffer;
@@ -133,6 +134,62 @@ describe("StdinBuffer", () => {
 
 			assert.deepStrictEqual(emittedSequences, ["\x1b[<35"]);
 		});
+
+		it("should flush a lone ESC as Escape when CR arrives after the timeout", async () => {
+			// Legacy-mode Alt+Enter is ESC + CR; when the terminal/transport splits
+			// the bytes further apart than the timeout, ESC is flushed alone and the
+			// host sees Escape (interrupt) instead of Alt+Enter. This locks in the
+			// behavior so the configurable timeout in ProcessTerminal stays honest.
+			processInput("\x1b");
+			await wait(20); // buffer timeout is 10ms in beforeEach
+			processInput("\r");
+
+			assert.deepStrictEqual(emittedSequences, ["\x1b", "\r"]);
+			assert.equal(matchesKey(emittedSequences[0] ?? "", "escape"), true);
+		});
+
+		it("should merge ESC + CR split across chunks within a larger timeout", async () => {
+			buffer = new StdinBuffer({ escapeTimeout: 100 });
+			emittedSequences = [];
+			buffer.on("data", (sequence) => {
+				emittedSequences.push(sequence);
+			});
+
+			processInput("\x1b");
+			await wait(20); // > 10ms default escapeTimeout, < 100ms configured escapeTimeout
+			processInput("\r");
+
+			assert.deepStrictEqual(emittedSequences, ["\x1b\r"]);
+			assert.equal(matchesKey(emittedSequences[0] ?? "", "alt+enter"), true);
+		});
+
+		it("does not apply the sequence timeout to a lone ESC", async () => {
+			buffer = new StdinBuffer({ timeout: 100 });
+			emittedSequences = [];
+			buffer.on("data", (sequence) => {
+				emittedSequences.push(sequence);
+			});
+
+			processInput("\x1b");
+			await wait(20);
+			processInput("\r");
+
+			assert.deepStrictEqual(emittedSequences, ["\x1b", "\r"]);
+			assert.equal(matchesKey(emittedSequences[0] ?? "", "escape"), true);
+		});
+
+		it("keeps fragmented mouse sequences buffered across delayed chunks by default", async () => {
+			const delayedBuffer = new StdinBuffer();
+			const delayedSequences: string[] = [];
+			delayedBuffer.on("data", (sequence) => delayedSequences.push(sequence));
+
+			delayedBuffer.process("\x1b[");
+			await wait(20);
+			assert.deepStrictEqual(delayedSequences, []);
+			delayedBuffer.process("<65;48;39M");
+			assert.deepStrictEqual(delayedSequences, ["\x1b[<65;48;39M"]);
+			delayedBuffer.destroy();
+		});
 	});
 
 	describe("Mixed Content", () => {
@@ -198,15 +255,51 @@ describe("StdinBuffer", () => {
 			assert.deepStrictEqual(emittedSequences, ["\x1b[3;1:3~"]);
 		});
 
+		it("should split ESC+ESC+CSI into standalone ESC and the CSI sequence (WezTerm Escape key regression)", () => {
+			// WezTerm with enable_kitty_keyboard sends Escape key press as raw \x1b
+			// and the release as a full Kitty CSI-u sequence, concatenated.
+			// The buffer must not treat \x1b\x1b as a complete meta-key when the
+			// following byte starts a new escape sequence.
+			processInput("\x1b\x1b[27;129:3u");
+			assert.deepStrictEqual(emittedSequences, ["\x1b", "\x1b[27;129:3u"]);
+		});
+
+		it("should split ESC+ESC+CSI with no modifier (no num_lock)", () => {
+			processInput("\x1b\x1b[27;1:3u");
+			assert.deepStrictEqual(emittedSequences, ["\x1b", "\x1b[27;1:3u"]);
+		});
+
+		it("should still emit ESC+ESC as a single sequence when not followed by a new escape", () => {
+			// \x1b\x1b alone (no following CSI) stays as-is — e.g. ctrl+alt+[
+			processInput("\x1b\x1b");
+			assert.deepStrictEqual(emittedSequences, ["\x1b\x1b"]);
+		});
+
 		it("should handle plain characters mixed with Kitty sequences", () => {
 			// Plain 'a' followed by Kitty release
 			processInput("a\x1b[97;1:3u");
 			assert.deepStrictEqual(emittedSequences, ["a", "\x1b[97;1:3u"]);
 		});
 
-		it("should handle Kitty sequence followed by plain characters", () => {
-			processInput("\x1b[97ua");
-			assert.deepStrictEqual(emittedSequences, ["\x1b[97u", "a"]);
+		it("should drop raw duplicate character after matching Kitty printable sequence", () => {
+			processInput("\x1b[224uà");
+			assert.deepStrictEqual(emittedSequences, ["\x1b[224u"]);
+		});
+
+		it("should drop raw duplicate character after matching Kitty printable sequence across chunks", () => {
+			processInput("\x1b[64u");
+			processInput("@");
+			assert.deepStrictEqual(emittedSequences, ["\x1b[64u"]);
+		});
+
+		it("should keep non-matching plain character after Kitty printable sequence", () => {
+			processInput("\x1b[97ub");
+			assert.deepStrictEqual(emittedSequences, ["\x1b[97u", "b"]);
+		});
+
+		it("should keep raw character after modified Kitty printable sequence", () => {
+			processInput("\x1b[64;3u@");
+			assert.deepStrictEqual(emittedSequences, ["\x1b[64;3u", "@"]);
 		});
 
 		it("should handle rapid typing simulation with Kitty protocol", () => {
@@ -276,6 +369,17 @@ describe("StdinBuffer", () => {
 			// After timeout, should emit
 			await wait(15);
 			assert.deepStrictEqual(emittedSequences, ["\x1b"]);
+		});
+
+		it("flushes a lone escape promptly with the longer default sequence timeout", async () => {
+			const defaultBuffer = new StdinBuffer();
+			const defaultSequences: string[] = [];
+			defaultBuffer.on("data", (sequence) => defaultSequences.push(sequence));
+
+			defaultBuffer.process("\x1b");
+			await wait(20);
+			assert.deepStrictEqual(defaultSequences, ["\x1b"]);
+			defaultBuffer.destroy();
 		});
 
 		it("should handle lone escape character with explicit flush", () => {

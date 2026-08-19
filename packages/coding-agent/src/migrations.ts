@@ -5,8 +5,8 @@
 import chalk from "chalk";
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
-import { CONFIG_DIR_NAME, getAgentDir, getBinDir } from "./config.js";
-import { migrateKeybindingsConfig } from "./core/keybindings.js";
+import { CONFIG_DIR_NAME, getAgentDir, getBinDir } from "./config.ts";
+import { migrateKeybindingsConfig } from "./core/keybindings.ts";
 
 const MIGRATION_GUIDE_URL =
 	"https://github.com/tculpepp/secure-pi-mono/blob/main/packages/coding-agent/CHANGELOG.md#extensions-migration";
@@ -79,7 +79,7 @@ export function migrateAuthToAuthJson(): string[] {
  * ~/.spi/agent/sessions/<encoded-cwd>/. This migration moves them
  * to the correct location based on the cwd in their session header.
  *
- * See: https://github.com/badlogic/pi-mono/issues/320
+ * See: https://github.com/tculpepp/secure-pi-mono/issues/320
  */
 export function migrateSessionsFromAgentRoot(): void {
 	const agentDir = getAgentDir();
@@ -302,7 +302,7 @@ export async function showDeprecationWarnings(warnings: string[]): Promise<void>
  *
  * @returns Object with migration results and deprecation warnings
  */
-export function runMigrations(cwd: string = process.cwd()): {
+export function runMigrations(cwd: string): {
 	migratedAuthProviders: string[];
 	deprecationWarnings: string[];
 } {

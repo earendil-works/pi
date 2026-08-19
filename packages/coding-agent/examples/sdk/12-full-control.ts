@@ -2,37 +2,27 @@
  * Full Control
  *
  * Replace everything - no discovery, explicit configuration.
- *
- * IMPORTANT: When providing `tools` with a custom `cwd`, use the tool factory
- * functions (createReadTool, createBashTool, etc.) to ensure tools resolve
- * paths relative to your cwd.
  */
 
-import { getModel } from "@tculpepp/spi-ai";
+import { getModel } from "@tculpepp/spi-ai/compat";
 import {
-	AuthStorage,
 	createAgentSession,
-	createBashTool,
 	createExtensionRuntime,
-	createReadTool,
-	ModelRegistry,
+	ModelRuntime,
 	type ResourceLoader,
 	SessionManager,
 	SettingsManager,
 } from "@tculpepp/spi-coding-agent";
 
-// Custom auth storage location
-const authStorage = AuthStorage.create("/tmp/my-agent/auth.json");
-
-// Runtime API key override (not persisted)
+const modelRuntime = await ModelRuntime.create({
+	authPath: "/tmp/my-agent/auth.json",
+	modelsPath: "/tmp/my-agent/models.json",
+});
 if (process.env.MY_ANTHROPIC_KEY) {
-	authStorage.setRuntimeApiKey("anthropic", process.env.MY_ANTHROPIC_KEY);
+	await modelRuntime.setRuntimeApiKey("anthropic", process.env.MY_ANTHROPIC_KEY);
 }
 
-// Model registry with no custom models.json
-const modelRegistry = ModelRegistry.inMemory(authStorage);
-
-const model = getModel("anthropic", "claude-sonnet-4-20250514");
+const model = getModel("anthropic", "claude-sonnet-4-5");
 if (!model) throw new Error("Model not found");
 
 // In-memory settings with overrides
@@ -41,7 +31,6 @@ const settingsManager = SettingsManager.inMemory({
 	retry: { enabled: true, maxRetries: 2 },
 });
 
-// When using a custom cwd with explicit tools, use the factory functions
 const cwd = process.cwd();
 
 const resourceLoader: ResourceLoader = {
@@ -52,7 +41,9 @@ const resourceLoader: ResourceLoader = {
 	getAgentsFiles: () => ({ agentsFiles: [] }),
 	getSystemPrompt: () => `You are a minimal assistant.
 Available: read, bash. Be concise.`,
+	getSystemPromptSource: () => undefined,
 	getAppendSystemPrompt: () => [],
+	getAppendSystemPromptSources: () => [],
 	extendResources: () => {},
 	reload: async () => {},
 };
@@ -62,20 +53,22 @@ const { session } = await createAgentSession({
 	agentDir: "/tmp/my-agent",
 	model,
 	thinkingLevel: "off",
-	authStorage,
-	modelRegistry,
+	modelRuntime,
 	resourceLoader,
-	// Use factory functions with the same cwd to ensure path resolution works correctly
-	tools: [createReadTool(cwd), createBashTool(cwd)],
-	sessionManager: SessionManager.inMemory(),
+	tools: ["read", "bash"],
+	sessionManager: SessionManager.inMemory(cwd),
 	settingsManager,
 });
 
-session.subscribe((event) => {
-	if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
-		process.stdout.write(event.assistantMessageEvent.delta);
-	}
-});
+try {
+	session.subscribe((event) => {
+		if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
+			process.stdout.write(event.assistantMessageEvent.delta);
+		}
+	});
 
-await session.prompt("List files in the current directory.");
-console.log();
+	await session.prompt("List files in the current directory.");
+	console.log();
+} finally {
+	session.dispose();
+}

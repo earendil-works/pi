@@ -15,7 +15,6 @@
  */
 
 import { mkdtemp, writeFile } from "node:fs/promises";
-import { Type } from "@sinclair/typebox";
 import type { ExtensionAPI } from "@tculpepp/spi-coding-agent";
 import {
 	DEFAULT_MAX_BYTES,
@@ -29,6 +28,7 @@ import { Text } from "@tculpepp/spi-tui";
 import { execSync } from "child_process";
 import { tmpdir } from "os";
 import { join } from "path";
+import { Type } from "typebox";
 
 const RgParams = Type.Object({
 	pattern: Type.String({ description: "Search pattern (regex)" }),

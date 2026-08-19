@@ -1,69 +1,70 @@
 /**
- * Closed-network security fork: main() must force outbound-call suppression
- * unconditionally, regardless of what SPI_OFFLINE / SPI_SKIP_VERSION_CHECK were
- * set to before the process started.
+ * Closed-network fork: main() forces outbound-call suppression unconditionally,
+ * whatever SPI_OFFLINE / SPI_SKIP_VERSION_CHECK held before the process started.
+ * Upstream treats these as opt-in; here there must be no way to switch them off.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { main } from "../src/main.js";
+import { main } from "../src/main.ts";
 
 describe("main() closed-network env forcing", () => {
 	const originalOffline = process.env.SPI_OFFLINE;
 	const originalSkipVersionCheck = process.env.SPI_SKIP_VERSION_CHECK;
 
 	beforeEach(() => {
-		// Deliberately set both to values that would disable suppression if honored,
-		// so we can prove main() overrides them regardless of prior state.
+		// Values that would disable suppression if main() honoured them.
 		process.env.SPI_OFFLINE = "0";
 		process.env.SPI_SKIP_VERSION_CHECK = "0";
 	});
 
 	afterEach(() => {
-		if (originalOffline === undefined) {
-			delete process.env.SPI_OFFLINE;
-		} else {
-			process.env.SPI_OFFLINE = originalOffline;
-		}
-		if (originalSkipVersionCheck === undefined) {
-			delete process.env.SPI_SKIP_VERSION_CHECK;
-		} else {
-			process.env.SPI_SKIP_VERSION_CHECK = originalSkipVersionCheck;
-		}
+		if (originalOffline === undefined) delete process.env.SPI_OFFLINE;
+		else process.env.SPI_OFFLINE = originalOffline;
+		if (originalSkipVersionCheck === undefined) delete process.env.SPI_SKIP_VERSION_CHECK;
+		else process.env.SPI_SKIP_VERSION_CHECK = originalSkipVersionCheck;
 		vi.restoreAllMocks();
 	});
 
-	it("forces SPI_OFFLINE and SPI_SKIP_VERSION_CHECK to '1' even when preset to disable them", async () => {
-		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+	/**
+	 * Runs main() far enough to execute the env-forcing lines at the top of its
+	 * body. Short-lived commands may exit the process, which would kill the test
+	 * worker, so process.exit is replaced with a sentinel throw.
+	 */
+	async function runMain(args: string[]): Promise<void> {
+		const exited = Symbol("exited");
+		vi.spyOn(console, "log").mockImplementation(() => {});
+		vi.spyOn(console, "error").mockImplementation(() => {});
+		vi.spyOn(process, "exit").mockImplementation((() => {
+			throw exited;
+		}) as never);
 
 		try {
-			// A command path that resolves without process.exit(), so main()'s
-			// full body runs (past the env-forcing lines) without killing the test worker.
-			await expect(main(["install", "--help"])).resolves.toBeUndefined();
-
-			expect(process.env.SPI_OFFLINE).toBe("1");
-			expect(process.env.SPI_SKIP_VERSION_CHECK).toBe("1");
-			expect(errorSpy).not.toHaveBeenCalled();
-		} finally {
-			logSpy.mockRestore();
-			errorSpy.mockRestore();
+			await main(args);
+		} catch (error) {
+			if (error !== exited) throw error;
 		}
+	}
+
+	it("forces both flags on even when preset to disable them", async () => {
+		await runMain(["install", "--help"]);
+
+		expect(process.env.SPI_OFFLINE).toBe("1");
+		expect(process.env.SPI_SKIP_VERSION_CHECK).toBe("1");
 	});
 
-	it("also forces suppression when the flags are unset beforehand", async () => {
+	it("forces both flags on when they are unset beforehand", async () => {
 		delete process.env.SPI_OFFLINE;
 		delete process.env.SPI_SKIP_VERSION_CHECK;
 
-		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+		await runMain(["install", "--help"]);
 
-		try {
-			await expect(main(["install", "--help"])).resolves.toBeUndefined();
+		expect(process.env.SPI_OFFLINE).toBe("1");
+		expect(process.env.SPI_SKIP_VERSION_CHECK).toBe("1");
+	});
 
-			expect(process.env.SPI_OFFLINE).toBe("1");
-			expect(process.env.SPI_SKIP_VERSION_CHECK).toBe("1");
-		} finally {
-			logSpy.mockRestore();
-			errorSpy.mockRestore();
-		}
+	it("forces both flags on even when --offline was never passed", async () => {
+		await runMain(["--version"]);
+
+		expect(process.env.SPI_OFFLINE).toBe("1");
+		expect(process.env.SPI_SKIP_VERSION_CHECK).toBe("1");
 	});
 });

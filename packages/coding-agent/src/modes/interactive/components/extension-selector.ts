@@ -4,14 +4,15 @@
  */
 
 import { Container, getKeybindings, Spacer, Text, type TUI } from "@tculpepp/spi-tui";
-import { theme } from "../theme/theme.js";
-import { CountdownTimer } from "./countdown-timer.js";
-import { DynamicBorder } from "./dynamic-border.js";
-import { keyHint, rawKeyHint } from "./keybinding-hints.js";
+import { theme } from "../theme/theme.ts";
+import { CountdownTimer } from "./countdown-timer.ts";
+import { DynamicBorder } from "./dynamic-border.ts";
+import { keyHint, rawKeyHint } from "./keybinding-hints.ts";
 
 export interface ExtensionSelectorOptions {
 	tui?: TUI;
 	timeout?: number;
+	onToggleToolsExpanded?: () => void;
 }
 
 export class ExtensionSelectorComponent extends Container {
@@ -23,6 +24,7 @@ export class ExtensionSelectorComponent extends Container {
 	private titleText: Text;
 	private baseTitle: string;
 	private countdown: CountdownTimer | undefined;
+	private onToggleToolsExpanded: (() => void) | undefined;
 
 	constructor(
 		title: string,
@@ -36,12 +38,13 @@ export class ExtensionSelectorComponent extends Container {
 		this.options = options;
 		this.onSelectCallback = onSelect;
 		this.onCancelCallback = onCancel;
+		this.onToggleToolsExpanded = opts?.onToggleToolsExpanded;
 		this.baseTitle = title;
 
 		this.addChild(new DynamicBorder());
 		this.addChild(new Spacer(1));
 
-		this.titleText = new Text(theme.fg("accent", title), 1, 0);
+		this.titleText = new Text(theme.fg("accent", theme.bold(title)), 1, 0);
 		this.addChild(this.titleText);
 		this.addChild(new Spacer(1));
 
@@ -49,7 +52,7 @@ export class ExtensionSelectorComponent extends Container {
 			this.countdown = new CountdownTimer(
 				opts.timeout,
 				opts.tui,
-				(s) => this.titleText.setText(theme.fg("accent", `${this.baseTitle} (${s}s)`)),
+				(s) => this.titleText.setText(theme.fg("accent", theme.bold(`${this.baseTitle} (${s}s)`))),
 				() => this.onCancelCallback(),
 			);
 		}
@@ -87,7 +90,9 @@ export class ExtensionSelectorComponent extends Container {
 
 	handleInput(keyData: string): void {
 		const kb = getKeybindings();
-		if (kb.matches(keyData, "tui.select.up") || keyData === "k") {
+		if (kb.matches(keyData, "app.tools.expand")) {
+			this.onToggleToolsExpanded?.();
+		} else if (kb.matches(keyData, "tui.select.up") || keyData === "k") {
 			this.selectedIndex = Math.max(0, this.selectedIndex - 1);
 			this.updateList();
 		} else if (kb.matches(keyData, "tui.select.down") || keyData === "j") {

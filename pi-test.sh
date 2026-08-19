@@ -33,6 +33,7 @@ if [[ "$NO_ENV" == "true" ]]; then
   unset COPILOT_GITHUB_TOKEN
   unset GH_TOKEN
   unset GITHUB_TOKEN
+  unset HF_TOKEN
   unset GOOGLE_APPLICATION_CREDENTIALS
   unset GOOGLE_CLOUD_PROJECT
   unset GCLOUD_PROJECT
@@ -53,10 +54,4 @@ if [[ "$NO_ENV" == "true" ]]; then
   echo "Running without API keys..."
 fi
 
-TSX_BIN="$SCRIPT_DIR/node_modules/.bin/tsx"
-if [[ ! -x "$TSX_BIN" ]]; then
-  echo "tsx not found at $TSX_BIN. Run npm install from the repo root first." >&2
-  exit 1
-fi
-
-"$TSX_BIN" "$SCRIPT_DIR/packages/coding-agent/src/cli.ts" ${ARGS[@]+"${ARGS[@]}"}
+"$SCRIPT_DIR/node_modules/.bin/tsx" --tsconfig "$SCRIPT_DIR/tsconfig.json" "$SCRIPT_DIR/packages/coding-agent/src/cli.ts" ${ARGS[@]+"${ARGS[@]}"}

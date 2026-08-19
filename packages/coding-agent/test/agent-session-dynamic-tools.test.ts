@@ -1,13 +1,14 @@
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Type } from "@sinclair/typebox";
-import { getModel } from "@tculpepp/spi-ai";
+import { getModel } from "@tculpepp/spi-ai/compat";
+import { Type } from "typebox";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { DefaultResourceLoader } from "../src/core/resource-loader.js";
-import { createAgentSession } from "../src/core/sdk.js";
-import { SessionManager } from "../src/core/session-manager.js";
-import { SettingsManager } from "../src/core/settings-manager.js";
+import { DefaultResourceLoader } from "../src/core/resource-loader.ts";
+import { createAgentSession } from "../src/core/sdk.ts";
+import { SessionManager } from "../src/core/session-manager.ts";
+import { SettingsManager } from "../src/core/settings-manager.ts";
+import { createBashTool } from "../src/core/tools/bash.ts";
 
 describe("AgentSession dynamic tool registration", () => {
 	let tempDir: string;
@@ -23,6 +24,76 @@ describe("AgentSession dynamic tool registration", () => {
 		if (tempDir && existsSync(tempDir)) {
 			rmSync(tempDir, { recursive: true, force: true });
 		}
+	});
+
+	it("exposes session state before custom bash spawn hooks and supports opting out", async () => {
+		const settingsManager = SettingsManager.create(tempDir, agentDir);
+		const sessionManager = SessionManager.create(tempDir, join(agentDir, "sessions"), { id: "bash-env-test" });
+		let sessionEnv: NodeJS.ProcessEnv | undefined;
+		let optedOutEnv: NodeJS.ProcessEnv | undefined;
+		const resourceLoader = new DefaultResourceLoader({
+			cwd: tempDir,
+			agentDir,
+			settingsManager,
+			extensionFactories: [
+				(pi) => {
+					pi.registerTool(
+						createBashTool(tempDir, {
+							spawnHook: (ctx) => {
+								sessionEnv = ctx.env;
+								return ctx;
+							},
+						}),
+					);
+					pi.registerTool({
+						...createBashTool(tempDir, {
+							exposeSessionEnvironment: false,
+							spawnHook: (ctx) => {
+								optedOutEnv = ctx.env;
+								return ctx;
+							},
+						}),
+						name: "bash_without_session_env",
+						label: "bash without session env",
+					});
+				},
+			],
+		});
+		await resourceLoader.reload();
+
+		const model = getModel("anthropic", "claude-sonnet-4-5")!;
+		const { session } = await createAgentSession({
+			cwd: tempDir,
+			agentDir,
+			model,
+			thinkingLevel: "high",
+			settingsManager,
+			sessionManager,
+			resourceLoader,
+		});
+
+		const bashTool = session.agent.state.tools.find((tool) => tool.name === "bash")!;
+		expect(session.systemPrompt).toContain(
+			"You can inspect PI_* environment variables for current model and session details.",
+		);
+		await bashTool.execute("bash-env", { command: "printf ok" });
+		expect(sessionEnv).toMatchObject({
+			SPI_SESSION_ID: session.sessionId,
+			SPI_SESSION_FILE: session.sessionFile,
+			SPI_PROVIDER: model.provider,
+			SPI_MODEL: model.id,
+			SPI_REASONING_LEVEL: session.thinkingLevel,
+		});
+
+		const optedOutBashTool = session.agent.state.tools.find((tool) => tool.name === "bash_without_session_env")!;
+		await optedOutBashTool.execute("bash-no-env", { command: "printf ok" });
+		expect(optedOutEnv).not.toHaveProperty("SPI_SESSION_ID");
+		expect(optedOutEnv).not.toHaveProperty("SPI_SESSION_FILE");
+		expect(optedOutEnv).not.toHaveProperty("SPI_PROVIDER");
+		expect(optedOutEnv).not.toHaveProperty("SPI_MODEL");
+		expect(optedOutEnv).not.toHaveProperty("SPI_REASONING_LEVEL");
+
+		session.dispose();
 	});
 
 	it("refreshes tool registry when tools are registered after initialization", async () => {
@@ -72,6 +143,9 @@ describe("AgentSession dynamic tool registration", () => {
 		const readTool = allTools.find((tool) => tool.name === "read");
 
 		expect(allTools.map((tool) => tool.name)).toContain("dynamic_tool");
+		expect(dynamicTool?.promptGuidelines).toEqual([
+			"Use dynamic_tool when the user asks for dynamic behavior tests.",
+		]);
 		expect(dynamicTool?.sourceInfo).toMatchObject({
 			path: "<inline:1>",
 			source: "inline",

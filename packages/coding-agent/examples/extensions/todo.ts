@@ -10,10 +10,10 @@
  * correct for that point in history.
  */
 
-import { Type } from "@sinclair/typebox";
 import { StringEnum } from "@tculpepp/spi-ai";
 import type { ExtensionAPI, ExtensionContext, Theme } from "@tculpepp/spi-coding-agent";
 import { matchesKey, Text, truncateToWidth } from "@tculpepp/spi-tui";
+import { Type } from "typebox";
 
 interface Todo {
 	id: number;
@@ -284,7 +284,7 @@ export default function (pi: ExtensionAPI) {
 	pi.registerCommand("todos", {
 		description: "Show all todos on the current branch",
 		handler: async (_args, ctx) => {
-			if (!ctx.hasUI) {
+			if (ctx.mode !== "tui") {
 				ctx.ui.notify("/todos requires interactive mode", "error");
 				return;
 			}

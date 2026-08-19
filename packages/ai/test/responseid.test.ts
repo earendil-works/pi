@@ -1,19 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { getModel } from "../src/models.js";
-import { complete } from "../src/stream.js";
-import type { Api, Context, Model, StreamOptions } from "../src/types.js";
-import { hasAzureOpenAICredentials, resolveAzureDeploymentName } from "./azure-utils.js";
-import { resolveApiKey } from "./oauth.js";
+import { complete, getModel } from "../src/compat.ts";
+import type { Api, Context, Model, StreamOptions } from "../src/types.ts";
+import { hasAzureOpenAICredentials, resolveAzureDeploymentName } from "./azure-utils.ts";
+import { resolveApiKey } from "./oauth.ts";
 
 type StreamOptionsWithExtras = StreamOptions & Record<string, unknown>;
 
-const oauthTokens = await Promise.all([
-	resolveApiKey("github-copilot"),
-	resolveApiKey("google-gemini-cli"),
-	resolveApiKey("google-antigravity"),
-	resolveApiKey("openai-codex"),
-]);
-const [githubCopilotToken, geminiCliToken, antigravityToken, openaiCodexToken] = oauthTokens;
+const oauthTokens = await Promise.all([resolveApiKey("github-copilot"), resolveApiKey("openai-codex")]);
+const [githubCopilotToken, openaiCodexToken] = oauthTokens;
 
 async function expectResponseId<TApi extends Api>(model: Model<TApi>, options: StreamOptionsWithExtras = {}) {
 	const context: Context = {
@@ -111,34 +105,15 @@ describe("responseId E2E Tests", () => {
 			"Anthropic path should expose responseId",
 			{ retry: 3, timeout: 30000 },
 			async () => {
-				const llm = getModel("github-copilot", "claude-sonnet-4");
+				const llm = getModel("github-copilot", "claude-sonnet-4.6");
 				await expectResponseId(llm, { apiKey: githubCopilotToken });
 			},
 		);
 	});
 
-	describe("Google Gemini CLI Provider", () => {
-		it.skipIf(!geminiCliToken)("should expose responseId", { retry: 3, timeout: 30000 }, async () => {
-			const llm = getModel("google-gemini-cli", "gemini-2.5-flash");
-			await expectResponseId(llm, { apiKey: geminiCliToken });
-		});
-	});
-
-	describe("Google Antigravity Provider", () => {
-		it.skipIf(!antigravityToken)("Gemini path should expose responseId", { retry: 3, timeout: 30000 }, async () => {
-			const llm = getModel("google-antigravity", "gemini-3.1-pro-high");
-			await expectResponseId(llm, { apiKey: antigravityToken });
-		});
-
-		it.skipIf(!antigravityToken)("Claude path should expose responseId", { retry: 3, timeout: 30000 }, async () => {
-			const llm = getModel("google-antigravity", "claude-sonnet-4-6");
-			await expectResponseId(llm, { apiKey: antigravityToken });
-		});
-	});
-
 	describe("OpenAI Codex Provider", () => {
 		it.skipIf(!openaiCodexToken)("should expose responseId", { retry: 3, timeout: 30000 }, async () => {
-			const llm = getModel("openai-codex", "gpt-5.2-codex");
+			const llm = getModel("openai-codex", "gpt-5.5");
 			await expectResponseId(llm, { apiKey: openaiCodexToken });
 		});
 	});

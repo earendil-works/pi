@@ -5,7 +5,7 @@
  * Tool selection persists across session reloads and respects branch navigation.
  *
  * Usage:
- * 1. Copy this file to ~/.spi/agent/extensions/ or your project's .spi/extensions/
+ * 1. Copy this file to ~/.spi/agent/extensions/ or your project's .pi/extensions/
  * 2. Use /tools to open the tool selector
  */
 
@@ -67,6 +67,11 @@ export default function toolsExtension(pi: ExtensionAPI) {
 	pi.registerCommand("tools", {
 		description: "Enable/disable tools",
 		handler: async (_args, ctx) => {
+			if (ctx.mode !== "tui") {
+				ctx.ui.notify("/tools requires TUI mode", "error");
+				return;
+			}
+
 			// Refresh tool list
 			allTools = pi.getAllTools();
 

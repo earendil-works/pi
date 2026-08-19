@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { getModel } from "../src/models.js";
-import { convertMessages } from "../src/providers/openai-completions.js";
+import { convertMessages } from "../src/api/openai-completions.ts";
+import { getModel } from "../src/compat.ts";
 import type {
 	AssistantMessage,
 	Context,
@@ -8,7 +8,7 @@ import type {
 	OpenAICompletionsCompat,
 	ToolResultMessage,
 	Usage,
-} from "../src/types.js";
+} from "../src/types.ts";
 
 const emptyUsage: Usage = {
 	input: 0,
@@ -19,21 +19,34 @@ const emptyUsage: Usage = {
 	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 };
 
-const compat: Required<OpenAICompletionsCompat> = {
+const compat: Omit<Required<OpenAICompletionsCompat>, "deferredToolsMode" | "thinkingTokenBudgetField"> & {
+	deferredToolsMode?: OpenAICompletionsCompat["deferredToolsMode"];
+	thinkingTokenBudgetField?: OpenAICompletionsCompat["thinkingTokenBudgetField"];
+} = {
 	supportsStore: true,
 	supportsDeveloperRole: true,
 	supportsReasoningEffort: true,
-	reasoningEffortMap: {},
 	supportsUsageInStreaming: true,
+	supportsFinishReason: true,
 	maxTokensField: "max_completion_tokens",
 	requiresToolResultName: false,
 	requiresAssistantAfterToolResult: false,
 	requiresThinkingAsText: false,
+	requiresReasoningContentOnAssistantMessages: false,
 	thinkingFormat: "openai",
 	openRouterRouting: {},
 	vercelGatewayRouting: {},
+	chatTemplateKwargs: {},
+	chatTemplateArgs: {},
 	zaiToolStream: false,
+	supportsThinkingTokenBudget: false,
+	thinkingTokenBudgetField: undefined,
 	supportsStrictMode: true,
+	supportsOpenAIGrammarTools: false,
+	cacheControlFormat: "anthropic",
+	sendSessionAffinityHeaders: false,
+	sessionAffinityFormat: "openai",
+	supportsLongCacheRetention: true,
 };
 
 function buildToolResult(toolCallId: string, timestamp: number): ToolResultMessage {
@@ -50,9 +63,20 @@ function buildToolResult(toolCallId: string, timestamp: number): ToolResultMessa
 	};
 }
 
+function buildEmptyToolResult(toolCallId: string, timestamp: number): ToolResultMessage {
+	return {
+		role: "toolResult",
+		toolCallId,
+		toolName: "bash",
+		content: [{ type: "text", text: "" }],
+		isError: false,
+		timestamp,
+	};
+}
+
 describe("openai-completions convertMessages", () => {
 	it("batches tool-result images after consecutive tool results", () => {
-		const baseModel = getModel("openai", "gpt-4o-mini");
+		const { compat: _compat, ...baseModel } = getModel("openai", "gpt-4o-mini");
 		const model: Model<"openai-completions"> = {
 			...baseModel,
 			api: "openai-completions",
@@ -95,5 +119,40 @@ describe("openai-completions convertMessages", () => {
 			(part) => part?.type === "image_url",
 		);
 		expect(imageParts.length).toBe(2);
+	});
+
+	it("uses '(no tool output)' placeholder for empty tool results without images", () => {
+		const { compat: _compat, ...baseModel } = getModel("openai", "gpt-4o-mini");
+		const model: Model<"openai-completions"> = {
+			...baseModel,
+			api: "openai-completions",
+			input: ["text", "image"],
+		};
+
+		const now = Date.now();
+		const assistantMessage: AssistantMessage = {
+			role: "assistant",
+			content: [{ type: "toolCall", id: "tool-1", name: "bash", arguments: { command: "true" } }],
+			api: model.api,
+			provider: model.provider,
+			model: model.id,
+			usage: emptyUsage,
+			stopReason: "toolUse",
+			timestamp: now,
+		};
+
+		const context: Context = {
+			messages: [
+				{ role: "user", content: "Run the command", timestamp: now - 1 },
+				assistantMessage,
+				buildEmptyToolResult("tool-1", now + 1),
+			],
+		};
+
+		const messages = convertMessages(model, context, compat);
+		const toolMessage = messages.find((m) => m.role === "tool") as { role: "tool"; content: string } | undefined;
+		expect(toolMessage).toBeTruthy();
+		expect(toolMessage?.content).toBe("(no tool output)");
+		expect(toolMessage?.content).not.toContain("see attached image");
 	});
 });

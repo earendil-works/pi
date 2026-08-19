@@ -13,12 +13,13 @@ import {
 	truncateToWidth,
 	visibleWidth,
 } from "@tculpepp/spi-tui";
-import { KeybindingsManager } from "../../../core/keybindings.js";
-import type { SessionInfo, SessionListProgress } from "../../../core/session-manager.js";
-import { theme } from "../theme/theme.js";
-import { DynamicBorder } from "./dynamic-border.js";
-import { keyHint, keyText } from "./keybinding-hints.js";
-import { filterAndSortSessions, hasSessionName, type NameFilter, type SortMode } from "./session-selector-search.js";
+import { KeybindingsManager } from "../../../core/keybindings.ts";
+import type { SessionInfo, SessionListProgress } from "../../../core/session-manager.ts";
+import { canonicalizePath as _canonicalizePath } from "../../../utils/paths.ts";
+import { theme } from "../theme/theme.ts";
+import { DynamicBorder } from "./dynamic-border.ts";
+import { keyHint, keyText } from "./keybinding-hints.ts";
+import { filterAndSortSessions, hasSessionName, type NameFilter, type SortMode } from "./session-selector-search.ts";
 
 type SessionScope = "current" | "all";
 
@@ -45,6 +46,11 @@ function formatSessionDate(date: Date): string {
 	if (diffDays < 30) return `${Math.floor(diffDays / 7)}w`;
 	if (diffDays < 365) return `${Math.floor(diffDays / 30)}mo`;
 	return `${Math.floor(diffDays / 365)}y`;
+}
+
+function canonicalizePath(path: string | undefined): string | undefined {
+	if (!path) return path;
+	return _canonicalizePath(path);
 }
 
 class SessionSelectorHeader implements Component {
@@ -184,6 +190,7 @@ class SessionSelectorHeader implements Component {
 interface SessionTreeNode {
 	session: SessionInfo;
 	children: SessionTreeNode[];
+	latestActivity: number;
 }
 
 /** Flattened node for display with tree structure info */
@@ -203,14 +210,16 @@ function buildSessionTree(sessions: SessionInfo[]): SessionTreeNode[] {
 	const byPath = new Map<string, SessionTreeNode>();
 
 	for (const session of sessions) {
-		byPath.set(session.path, { session, children: [] });
+		const sessionPath = canonicalizePath(session.path) ?? session.path;
+		byPath.set(sessionPath, { session, children: [], latestActivity: session.modified.getTime() });
 	}
 
 	const roots: SessionTreeNode[] = [];
 
 	for (const session of sessions) {
-		const node = byPath.get(session.path)!;
-		const parentPath = session.parentSessionPath;
+		const sessionPath = canonicalizePath(session.path) ?? session.path;
+		const node = byPath.get(sessionPath)!;
+		const parentPath = canonicalizePath(session.parentSessionPath);
 
 		if (parentPath && byPath.has(parentPath)) {
 			byPath.get(parentPath)!.children.push(node);
@@ -219,9 +228,22 @@ function buildSessionTree(sessions: SessionInfo[]): SessionTreeNode[] {
 		}
 	}
 
-	// Sort children and roots by modified date (descending)
+	const updateLatestActivity = (node: SessionTreeNode): number => {
+		let latestActivity = node.session.modified.getTime();
+		for (const child of node.children) {
+			latestActivity = Math.max(latestActivity, updateLatestActivity(child));
+		}
+		node.latestActivity = latestActivity;
+		return latestActivity;
+	};
+
+	for (const root of roots) {
+		updateLatestActivity(root);
+	}
+
+	// Sort children and roots by latest activity in each subtree (descending)
 	const sortNodes = (nodes: SessionTreeNode[]): void => {
-		nodes.sort((a, b) => b.session.modified.getTime() - a.session.modified.getTime());
+		nodes.sort((a, b) => b.latestActivity - a.latestActivity);
 		for (const node of nodes) {
 			sortNodes(node.children);
 		}
@@ -273,7 +295,7 @@ class SessionList implements Component, Focusable {
 	private keybindings: KeybindingsManager;
 	private showPath = false;
 	private confirmingDeletePath: string | null = null;
-	private currentSessionFilePath?: string;
+	private currentSessionCanonicalPath?: string;
 	public onSelect?: (sessionPath: string) => void;
 	public onCancel?: () => void;
 	public onExit: () => void = () => {};
@@ -312,7 +334,7 @@ class SessionList implements Component, Focusable {
 		this.sortMode = sortMode;
 		this.nameFilter = nameFilter;
 		this.keybindings = keybindings;
-		this.currentSessionFilePath = currentSessionFilePath;
+		this.currentSessionCanonicalPath = canonicalizePath(currentSessionFilePath);
 		this.filterSessions("");
 
 		// Handle Enter in search input - select current item
@@ -374,12 +396,17 @@ class SessionList implements Component, Focusable {
 		if (!selected) return;
 
 		// Prevent deleting current session
-		if (this.currentSessionFilePath && selected.session.path === this.currentSessionFilePath) {
+		if (this.isCurrentSessionPath(selected.session.path)) {
 			this.onError?.("Cannot delete the currently active session");
 			return;
 		}
 
 		this.setConfirmingDeletePath(selected.session.path);
+	}
+
+	private isCurrentSessionPath(path: string): boolean {
+		if (!this.currentSessionCanonicalPath) return false;
+		return (canonicalizePath(path) ?? path) === this.currentSessionCanonicalPath;
 	}
 
 	invalidate(): void {}
@@ -424,7 +451,7 @@ class SessionList implements Component, Focusable {
 			const session = node.session;
 			const isSelected = i === this.selectedIndex;
 			const isConfirmingDelete = session.path === this.confirmingDeletePath;
-			const isCurrent = this.currentSessionFilePath === session.path;
+			const isCurrent = this.isCurrentSessionPath(session.path);
 
 			// Build tree prefix
 			const prefix = this.buildTreePrefix(node);
@@ -681,7 +708,6 @@ export class SessionSelectorComponent extends Container implements Focusable {
 	private allSessions: SessionInfo[] | null = null;
 	private currentSessionsLoader: SessionsLoader;
 	private allSessionsLoader: SessionsLoader;
-	private onCancel: () => void;
 	private requestRender: () => void;
 	private renameSession?: (sessionPath: string, currentName: string | undefined) => Promise<void>;
 	private currentLoading = false;
@@ -738,7 +764,6 @@ export class SessionSelectorComponent extends Container implements Focusable {
 		this.keybindings = options?.keybindings ?? KeybindingsManager.create();
 		this.currentSessionsLoader = currentSessionsLoader;
 		this.allSessionsLoader = allSessionsLoader;
-		this.onCancel = onCancel;
 		this.requestRender = requestRender;
 		this.header = new SessionSelectorHeader(this.scope, this.sortMode, this.nameFilter, this.requestRender);
 		const renameSession = options?.renameSession;
@@ -935,10 +960,6 @@ export class SessionSelectorComponent extends Container implements Focusable {
 			this.header.setLoading(false);
 			this.sessionList.setSessions(sessions, showCwd);
 			this.requestRender();
-
-			if (scope === "all" && sessions.length === 0 && (this.currentSessions?.length ?? 0) === 0) {
-				this.onCancel();
-			}
 		} catch (err) {
 			if (scope === "current") {
 				this.currentLoading = false;

@@ -4,8 +4,8 @@ import { readFileSync, unlinkSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 
-import { clipboard } from "./clipboard-native.js";
-import { loadPhoton } from "./photon.js";
+import { clipboard } from "./clipboard-native.ts";
+import { loadPhoton } from "./photon.ts";
 
 export type ClipboardImage = {
 	bytes: Uint8Array;
@@ -172,17 +172,17 @@ function readClipboardImageViaPowerShell(): ClipboardImage | null {
 			return null;
 		}
 
+		const psQuotedWinPath = winPath.replaceAll("'", "''");
 		const psScript = [
 			"Add-Type -AssemblyName System.Windows.Forms",
 			"Add-Type -AssemblyName System.Drawing",
-			"$path = $env:PI_WSL_CLIPBOARD_IMAGE_PATH",
+			`$path = '${psQuotedWinPath}'`,
 			"$img = [System.Windows.Forms.Clipboard]::GetImage()",
 			"if ($img) { $img.Save($path, [System.Drawing.Imaging.ImageFormat]::Png); Write-Output 'ok' } else { Write-Output 'empty' }",
 		].join("; ");
 
 		const result = runCommand("powershell.exe", ["-NoProfile", "-Command", psScript], {
 			timeoutMs: DEFAULT_POWERSHELL_TIMEOUT_MS,
-			env: { ...process.env, PI_WSL_CLIPBOARD_IMAGE_PATH: winPath },
 		});
 		if (!result.ok) {
 			return null;
@@ -277,7 +277,7 @@ export async function readClipboardImage(options?: {
 		}
 
 		if (!image && !wayland) {
-			image = await readClipboardImageViaNativeClipboard();
+			image = (await readClipboardImageViaNativeClipboard()) ?? readClipboardImageViaXclip();
 		}
 	} else {
 		image = await readClipboardImageViaNativeClipboard();

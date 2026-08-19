@@ -5,12 +5,12 @@
  */
 
 import type { AssistantMessage } from "@tculpepp/spi-ai";
-import { ProcessTerminal, TUI } from "@tculpepp/spi-tui";
+import { ProcessTerminal, type TUI, TuiMainScreen } from "@tculpepp/spi-tui";
 import { readFileSync } from "fs";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
-import { AssistantMessageComponent } from "../src/modes/interactive/components/assistant-message.js";
-import { initTheme } from "../src/modes/interactive/theme/theme.js";
+import { AssistantMessageComponent } from "../src/modes/interactive/components/assistant-message.ts";
+import { initTheme } from "../src/modes/interactive/theme/theme.ts";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -42,7 +42,7 @@ async function sleep(ms: number): Promise<void> {
 
 async function main() {
 	const terminal = new ProcessTerminal();
-	const tui = new TUI(terminal);
+	const tui: TUI = new TuiMainScreen(terminal);
 
 	// Start with empty message
 	const message = {

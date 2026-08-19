@@ -4,7 +4,7 @@
 
 Skills are self-contained capability packages that the agent loads on-demand. A skill provides specialized workflows, setup instructions, helper scripts, and reference documentation for specific tasks.
 
-Pi implements the [Agent Skills standard](https://agentskills.io/specification), warning about violations but remaining lenient.
+Pi implements the [Agent Skills standard](https://agentskills.io/specification), warning about most violations but remaining lenient. Pi allows skill names to differ from their parent directory even though the standard disallows it; that rule is suboptimal for shared skill directories used across multiple agent harnesses.
 
 ## Table of Contents
 
@@ -26,17 +26,18 @@ Pi loads skills from:
 - Global:
   - `~/.spi/agent/skills/`
   - `~/.agents/skills/`
-- Project:
-  - `.spi/skills/`
+- Project (only after the project is trusted):
+  - `.pi/skills/`
   - `.agents/skills/` in `cwd` and ancestor directories (up to git repo root, or filesystem root when not in a repo)
 - Packages: `skills/` directories or `pi.skills` entries in `package.json`
 - Settings: `skills` array with files or directories
 - CLI: `--skill <path>` (repeatable, additive even with `--no-skills`)
 
 Discovery rules:
-- In `~/.spi/agent/skills/` and `.spi/skills/`, direct root `.md` files are discovered as individual skills
+- In `~/.spi/agent/skills/` and `.pi/skills/`, direct root `.md` files are discovered as individual skills when they have valid skill frontmatter with a non-empty `description`
 - In all skill locations, directories containing `SKILL.md` are discovered recursively
-- In `~/.agents/skills/` and project `.agents/skills/`, root `.md` files are ignored
+- In `~/.agents/skills/` and project `.agents/skills/`, root `.md` files are ignored, but nested `.md` files in grouping folders are discovered when they declare skill frontmatter
+- Root Markdown files other than `SKILL.md` that do not look like skills are ignored silently
 
 Disable discovery with `--no-skills` (explicit `--skill` paths still load).
 
@@ -53,7 +54,7 @@ To use skills from Claude Code or OpenAI Codex, add their directories to setting
 }
 ```
 
-For project-level Claude Code skills, add to `.spi/settings.json`:
+For project-level Claude Code skills, add to `.pi/settings.json`:
 
 ```json
 {
@@ -106,7 +107,7 @@ my-skill/
 
 ### SKILL.md Format
 
-```markdown
+````markdown
 ---
 name: my-skill
 description: What this skill does and when to use it. Be specific.
@@ -117,16 +118,16 @@ description: What this skill does and when to use it. Be specific.
 ## Setup
 
 Run once before first use:
-\`\`\`bash
+```bash
 cd /path/to/skill && npm install
-\`\`\`
+```
 
 ## Usage
 
-\`\`\`bash
+```bash
 ./scripts/process.sh <input>
-\`\`\`
 ```
+````
 
 Use relative paths from the skill directory:
 
@@ -140,7 +141,7 @@ Per the [Agent Skills specification](https://agentskills.io/specification#frontm
 
 | Field | Required | Description |
 |-------|----------|-------------|
-| `name` | Yes | Max 64 chars. Lowercase a-z, 0-9, hyphens. Must match parent directory. |
+| `name` | Yes | Max 64 chars. Lowercase a-z, 0-9, hyphens. Unlike the standard, Pi does not require this to match the parent directory because that standard requirement is suboptimal for shared skill directories. |
 | `description` | Yes | Max 1024 chars. What the skill does and when to use it. |
 | `license` | No | License name or reference to bundled file. |
 | `compatibility` | No | Max 500 chars. Environment requirements. |
@@ -154,7 +155,7 @@ Per the [Agent Skills specification](https://agentskills.io/specification#frontm
 - Lowercase letters, numbers, hyphens only
 - No leading/trailing hyphens
 - No consecutive hyphens
-- Must match parent directory name
+Pi does not require the name to match the parent directory. The Agent Skills standard does, but that requirement is suboptimal for shared skill directories used by multiple tools.
 
 Valid: `pdf-processing`, `data-analysis`, `code-review`
 Invalid: `PDF-Processing`, `-pdf`, `pdf--processing`
@@ -177,14 +178,13 @@ description: Helps with PDFs.
 
 Pi validates skills against the Agent Skills standard. Most issues produce warnings but still load the skill:
 
-- Name doesn't match parent directory
 - Name exceeds 64 characters or contains invalid characters
 - Name starts/ends with hyphen or has consecutive hyphens
 - Description exceeds 1024 characters
 
 Unknown frontmatter fields are ignored.
 
-**Exception:** Skills with missing description are not loaded.
+Declared skills with missing descriptions are not loaded. Malformed `SKILL.md` files and `SKILL.md` files without a description produce warnings and are not loaded. Other Markdown files without valid skill frontmatter are ignored.
 
 Name collisions (same name from different locations) warn and keep the first skill found.
 
@@ -198,7 +198,7 @@ brave-search/
 ```
 
 **SKILL.md:**
-```markdown
+````markdown
 ---
 name: brave-search
 description: Web search and content extraction via Brave Search API. Use for searching documentation, facts, or any web content.
@@ -208,23 +208,23 @@ description: Web search and content extraction via Brave Search API. Use for sea
 
 ## Setup
 
-\`\`\`bash
+```bash
 cd /path/to/brave-search && npm install
-\`\`\`
+```
 
 ## Search
 
-\`\`\`bash
+```bash
 ./search.js "query"              # Basic search
 ./search.js "query" --content    # Include page content
-\`\`\`
+```
 
 ## Extract Page Content
 
-\`\`\`bash
+```bash
 ./content.js https://example.com
-\`\`\`
 ```
+````
 
 ## Skill Repositories
 

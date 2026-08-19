@@ -4,9 +4,9 @@
  * Escape in editor returns to options, Escape in options cancels
  */
 
-import { Type } from "@sinclair/typebox";
 import type { ExtensionAPI } from "@tculpepp/spi-coding-agent";
-import { Editor, type EditorTheme, Key, matchesKey, Text, truncateToWidth } from "@tculpepp/spi-tui";
+import { Editor, type EditorTheme, Key, matchesKey, Text, visibleWidth, wrapTextWithAnsi } from "@tculpepp/spi-tui";
+import { Type } from "typebox";
 
 interface OptionWithDesc {
 	label: string;
@@ -39,9 +39,10 @@ export default function question(pi: ExtensionAPI) {
 		label: "Question",
 		description: "Ask the user a question and let them pick from options. Use when you need user input to proceed.",
 		parameters: QuestionParams,
+		executionMode: "sequential",
 
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-			if (!ctx.hasUI) {
+			if (ctx.mode !== "tui") {
 				return {
 					content: [{ type: "text", text: "Error: UI not available (running in non-interactive mode)" }],
 					details: {
@@ -139,10 +140,27 @@ export default function question(pi: ExtensionAPI) {
 						if (cachedLines) return cachedLines;
 
 						const lines: string[] = [];
-						const add = (s: string) => lines.push(truncateToWidth(s, width));
+						const renderWidth = Math.max(1, width);
 
-						add(theme.fg("accent", "─".repeat(width)));
-						add(theme.fg("text", ` ${params.question}`));
+						function addWrapped(text: string) {
+							lines.push(...wrapTextWithAnsi(text, renderWidth));
+						}
+
+						function addWrappedWithPrefix(prefix: string, text: string) {
+							const prefixWidth = visibleWidth(prefix);
+							if (prefixWidth >= renderWidth) {
+								addWrapped(prefix + text);
+								return;
+							}
+							const wrapped = wrapTextWithAnsi(text, renderWidth - prefixWidth);
+							const continuationPrefix = " ".repeat(prefixWidth);
+							for (let i = 0; i < wrapped.length; i++) {
+								lines.push(`${i === 0 ? prefix : continuationPrefix}${wrapped[i]}`);
+							}
+						}
+
+						lines.push(theme.fg("accent", "─".repeat(renderWidth)));
+						addWrappedWithPrefix(" ", theme.fg("text", params.question));
 						lines.push("");
 
 						for (let i = 0; i < allOptions.length; i++) {
@@ -150,36 +168,32 @@ export default function question(pi: ExtensionAPI) {
 							const selected = i === optionIndex;
 							const isOther = opt.isOther === true;
 							const prefix = selected ? theme.fg("accent", "> ") : "  ";
+							const label = `${i + 1}. ${opt.label}${isOther && editMode ? " ✎" : ""}`;
+							const color = selected || (isOther && editMode) ? "accent" : "text";
 
-							if (isOther && editMode) {
-								add(prefix + theme.fg("accent", `${i + 1}. ${opt.label} ✎`));
-							} else if (selected) {
-								add(prefix + theme.fg("accent", `${i + 1}. ${opt.label}`));
-							} else {
-								add(`  ${theme.fg("text", `${i + 1}. ${opt.label}`)}`);
-							}
+							addWrappedWithPrefix(prefix, theme.fg(color, label));
 
 							// Show description if present
 							if (opt.description) {
-								add(`     ${theme.fg("muted", opt.description)}`);
+								addWrappedWithPrefix("     ", theme.fg("muted", opt.description));
 							}
 						}
 
 						if (editMode) {
 							lines.push("");
-							add(theme.fg("muted", " Your answer:"));
-							for (const line of editor.render(width - 2)) {
-								add(` ${line}`);
+							addWrappedWithPrefix(" ", theme.fg("muted", "Your answer:"));
+							for (const line of editor.render(Math.max(1, renderWidth - 2))) {
+								lines.push(` ${line}`);
 							}
 						}
 
 						lines.push("");
 						if (editMode) {
-							add(theme.fg("dim", " Enter to submit • Esc to go back"));
+							addWrappedWithPrefix(" ", theme.fg("dim", "Enter to submit • Esc to go back"));
 						} else {
-							add(theme.fg("dim", " ↑↓ navigate • Enter to select • Esc to cancel"));
+							addWrappedWithPrefix(" ", theme.fg("dim", "↑↓ navigate • Enter to select • Esc to cancel"));
 						}
-						add(theme.fg("accent", "─".repeat(width)));
+						lines.push(theme.fg("accent", "─".repeat(renderWidth)));
 
 						cachedLines = lines;
 						return lines;

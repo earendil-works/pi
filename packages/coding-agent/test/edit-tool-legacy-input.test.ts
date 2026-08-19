@@ -2,8 +2,8 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import type { ExtensionContext } from "../src/core/extensions/types.js";
-import { createEditToolDefinition } from "../src/core/tools/edit.js";
+import type { ExtensionContext } from "../src/core/extensions/types.ts";
+import { createEditToolDefinition } from "../src/core/tools/edit.ts";
 
 const tempDirs: string[] = [];
 
@@ -86,5 +86,31 @@ describe("edit tool prepareArguments", () => {
 		const result = await definition.execute("tool-1", prepared, undefined, undefined, {} as ExtensionContext);
 		expect(result.content).toEqual([{ type: "text", text: "Successfully replaced 1 block(s) in legacy.txt." }]);
 		expect(await readFile(filePath, "utf8")).toBe("after\n");
+	});
+});
+
+describe("edit tool stringified edits", () => {
+	it("parses edits from a JSON string", () => {
+		const definition = createEditToolDefinition(process.cwd());
+		const prepared = definition.prepareArguments!({
+			path: "file.txt",
+			edits: JSON.stringify([{ oldText: "a", newText: "b" }]),
+		});
+		expect(prepared).toEqual({
+			path: "file.txt",
+			edits: [{ oldText: "a", newText: "b" }],
+		});
+	});
+
+	it("leaves edits alone when the string is not valid JSON", () => {
+		const definition = createEditToolDefinition(process.cwd());
+		const prepared = definition.prepareArguments!({
+			path: "file.txt",
+			edits: "not json",
+		});
+		expect(prepared).toEqual({
+			path: "file.txt",
+			edits: "not json",
+		});
 	});
 });

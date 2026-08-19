@@ -62,7 +62,7 @@ This tool executes a separate `pi` subprocess with a delegated system prompt and
 
 To enable project-local agents, pass `agentScope: "both"` (or `"project"`). Only do this for repositories you trust.
 
-When running interactively, the tool prompts for confirmation before running project-local agents. Set `confirmProjectAgents: false` to disable.
+When running interactively, the tool prompts for confirmation before running project-local agents in untrusted projects. Trusted projects skip the additional prompt. Set `confirmProjectAgents: false` to disable confirmation.
 
 ## Usage
 
@@ -113,6 +113,8 @@ Use a chain: first have scout find the read tool, then have planner suggest impr
 - Shows all tasks with live status (⏳ running, ✓ done, ✗ failed)
 - Updates as each task makes progress
 - Shows "2/3 done, 1 running" status
+- Returns each completed task's final output to the parent model, capped at 50 KB per task
+- Returns failure diagnostics from stderr/error messages when a child exits before producing output
 
 **Tool call formatting** (mimics built-in tools):
 - `$ command` for bash
@@ -134,6 +136,8 @@ model: claude-haiku-4-5
 
 System prompt for the agent goes here.
 ```
+
+When `model` is omitted, the subagent inherits the dispatching session's active model and thinking level.
 
 **Locations:**
 - `~/.spi/agent/agents/*.md` - User-level (always loaded)
@@ -168,5 +172,6 @@ Project agents override user agents with the same name when `agentScope: "both"`
 ## Limitations
 
 - Output truncated to last 10 items in collapsed view (expand to see all)
+- Parallel model-visible output is capped at 50 KB per task; full results remain in tool details
 - Agents discovered fresh on each invocation (allows editing mid-session)
 - Parallel mode limited to 8 tasks, 4 concurrent

@@ -1,4 +1,4 @@
-import type { AssistantMessage, AssistantMessageEvent } from "../types.js";
+import type { AssistantMessage, AssistantMessageEvent } from "../types.ts";
 
 // Generic event stream class for async iteration
 export class EventStream<T, R = T> implements AsyncIterable<T> {
@@ -7,11 +7,12 @@ export class EventStream<T, R = T> implements AsyncIterable<T> {
 	private done = false;
 	private finalResultPromise: Promise<R>;
 	private resolveFinalResult!: (result: R) => void;
+	private isComplete: (event: T) => boolean;
+	private extractResult: (event: T) => R;
 
-	constructor(
-		private isComplete: (event: T) => boolean,
-		private extractResult: (event: T) => R,
-	) {
+	constructor(isComplete: (event: T) => boolean, extractResult: (event: T) => R) {
+		this.isComplete = isComplete;
+		this.extractResult = extractResult;
 		this.finalResultPromise = new Promise((resolve) => {
 			this.resolveFinalResult = resolve;
 		});

@@ -11,9 +11,9 @@
  *
  * Config files (merged, project takes precedence):
  * - ~/.spi/agent/extensions/sandbox.json (global)
- * - <cwd>/.spi/sandbox.json (project-local)
+ * - <cwd>/.pi/sandbox.json (project-local)
  *
- * Example .spi/sandbox.json:
+ * Example .pi/sandbox.json:
  * ```json
  * {
  *   "enabled": true,
@@ -46,7 +46,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { SandboxManager, type SandboxRuntimeConfig } from "@anthropic-ai/sandbox-runtime";
 import type { ExtensionAPI } from "@tculpepp/spi-coding-agent";
-import { type BashOperations, createBashTool, getAgentDir } from "@tculpepp/spi-coding-agent";
+import { type BashOperations, CONFIG_DIR_NAME, createBashTool, getAgentDir } from "@tculpepp/spi-coding-agent";
 
 interface SandboxConfig extends SandboxRuntimeConfig {
 	enabled?: boolean;
@@ -77,7 +77,7 @@ const DEFAULT_CONFIG: SandboxConfig = {
 };
 
 function loadConfig(cwd: string): SandboxConfig {
-	const projectConfigPath = join(cwd, ".pi", "sandbox.json");
+	const projectConfigPath = join(cwd, CONFIG_DIR_NAME, "sandbox.json");
 	const globalConfigPath = join(getAgentDir(), "extensions", "sandbox.json");
 
 	let globalConfig: Partial<SandboxConfig> = {};

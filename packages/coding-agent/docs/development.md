@@ -1,6 +1,6 @@
 # Development
 
-See [AGENTS.md](../../../AGENTS.md) for additional guidelines.
+See [AGENTS.md](https://github.com/tculpepp/secure-pi-mono/blob/main/AGENTS.md) for additional guidelines.
 
 ## Setup
 
@@ -27,7 +27,7 @@ Configure via `package.json`:
 {
   "piConfig": {
     "name": "pi",
-    "configDir": ".pi"
+    "configDir": ".spi"
   }
 }
 ```

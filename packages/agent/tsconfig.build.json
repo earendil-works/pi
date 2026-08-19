@@ -2,6 +2,11 @@
 	"extends": "../../tsconfig.base.json",
 	"compilerOptions": {
 		"outDir": "./dist",
+		"paths": {
+			"@tculpepp/spi-telemetry": ["../telemetry/dist/index.d.ts"],
+			"@tculpepp/spi-ai": ["../ai/dist/index.d.ts"],
+			"@tculpepp/spi-ai/*": ["../ai/dist/*.d.ts", "../ai/dist/providers/*.d.ts"]
+		},
 		"rootDir": "./src"
 	},
 	"include": ["src/**/*.ts"],

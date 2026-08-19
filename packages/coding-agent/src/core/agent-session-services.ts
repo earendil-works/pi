@@ -1,15 +1,19 @@
 import { join } from "node:path";
 import type { ThinkingLevel } from "@tculpepp/spi-agent-core";
 import type { Model } from "@tculpepp/spi-ai";
-import { getAgentDir } from "../config.js";
-import { AuthStorage } from "./auth-storage.js";
-import type { SessionStartEvent, ToolDefinition } from "./extensions/index.js";
-import { ModelRegistry } from "./model-registry.js";
-import { DefaultResourceLoader, type DefaultResourceLoaderOptions, type ResourceLoader } from "./resource-loader.js";
-import { type CreateAgentSessionResult, createAgentSession } from "./sdk.js";
-import type { SessionManager } from "./session-manager.js";
-import { SettingsManager } from "./settings-manager.js";
-import type { Tool } from "./tools/index.js";
+import { getAgentDir } from "../config.ts";
+import { resolvePath } from "../utils/paths.ts";
+import type { SessionStartEvent, ToolDefinition } from "./extensions/index.ts";
+import { ModelRuntime } from "./model-runtime.ts";
+import {
+	DefaultResourceLoader,
+	type DefaultResourceLoaderOptions,
+	type ResourceLoader,
+	type ResourceLoaderReloadOptions,
+} from "./resource-loader.ts";
+import { type CreateAgentSessionOptions, type CreateAgentSessionResult, createAgentSession } from "./sdk.ts";
+import type { SessionManager } from "./session-manager.ts";
+import { SettingsManager } from "./settings-manager.ts";
 
 /**
  * Non-fatal issues collected while creating services or sessions.
@@ -33,11 +37,12 @@ export interface AgentSessionRuntimeDiagnostic {
 export interface CreateAgentSessionServicesOptions {
 	cwd: string;
 	agentDir?: string;
-	authStorage?: AuthStorage;
 	settingsManager?: SettingsManager;
-	modelRegistry?: ModelRegistry;
+	modelRuntime?: ModelRuntime;
+	modelRuntimeSignal?: AbortSignal;
 	extensionFlagValues?: Map<string, boolean | string>;
 	resourceLoaderOptions?: Omit<DefaultResourceLoaderOptions, "cwd" | "agentDir" | "settingsManager">;
+	resourceLoaderReloadOptions?: ResourceLoaderReloadOptions;
 }
 
 /**
@@ -53,7 +58,9 @@ export interface CreateAgentSessionFromServicesOptions {
 	model?: Model<any>;
 	thinkingLevel?: ThinkingLevel;
 	scopedModels?: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel }>;
-	tools?: Tool[];
+	tools?: string[];
+	excludeTools?: CreateAgentSessionOptions["excludeTools"];
+	noTools?: CreateAgentSessionOptions["noTools"];
 	customTools?: ToolDefinition[];
 }
 
@@ -66,9 +73,8 @@ export interface CreateAgentSessionFromServicesOptions {
 export interface AgentSessionServices {
 	cwd: string;
 	agentDir: string;
-	authStorage: AuthStorage;
+	modelRuntime: ModelRuntime;
 	settingsManager: SettingsManager;
-	modelRegistry: ModelRegistry;
 	resourceLoader: ResourceLoader;
 	diagnostics: AgentSessionRuntimeDiagnostic[];
 }
@@ -129,25 +135,34 @@ function applyExtensionFlagValues(
 export async function createAgentSessionServices(
 	options: CreateAgentSessionServicesOptions,
 ): Promise<AgentSessionServices> {
-	const cwd = options.cwd;
-	const agentDir = options.agentDir ?? getAgentDir();
-	const authStorage = options.authStorage ?? AuthStorage.create(join(agentDir, "auth.json"));
+	const cwd = resolvePath(options.cwd);
+	const agentDir = options.agentDir ? resolvePath(options.agentDir) : getAgentDir();
+	// Settings first: the runtime needs the security policy before it composes providers.
 	const settingsManager = options.settingsManager ?? SettingsManager.create(cwd, agentDir);
-	const modelRegistry = options.modelRegistry ?? ModelRegistry.create(authStorage, join(agentDir, "models.json"));
-	modelRegistry.setSecureMode(settingsManager.getSecureMode());
+	const secureMode = settingsManager.getSecureMode();
+	const modelRuntime =
+		options.modelRuntime ??
+		(await ModelRuntime.create({
+			authPath: join(agentDir, "auth.json"),
+			modelsPath: join(agentDir, "models.json"),
+			signal: options.modelRuntimeSignal,
+			secureMode,
+		}));
+	// A caller-supplied runtime is subject to the same policy.
+	modelRuntime.setSecureMode(secureMode);
 	const resourceLoader = new DefaultResourceLoader({
 		...(options.resourceLoaderOptions ?? {}),
 		cwd,
 		agentDir,
 		settingsManager,
 	});
-	await resourceLoader.reload();
+	await resourceLoader.reload(options.resourceLoaderReloadOptions);
 
 	const diagnostics: AgentSessionRuntimeDiagnostic[] = [];
 	const extensionsResult = resourceLoader.getExtensions();
 	for (const { name, config, extensionPath } of extensionsResult.runtime.pendingProviderRegistrations) {
 		try {
-			modelRegistry.registerProvider(name, config);
+			modelRuntime.registerProvider(name, config);
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
 			diagnostics.push({
@@ -157,14 +172,26 @@ export async function createAgentSessionServices(
 		}
 	}
 	extensionsResult.runtime.pendingProviderRegistrations = [];
+	for (const { provider, extensionPath } of extensionsResult.runtime.pendingNativeProviderRegistrations) {
+		try {
+			modelRuntime.registerNativeProvider(provider);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			diagnostics.push({
+				type: "error",
+				message: `Extension "${extensionPath}" error: ${message}`,
+			});
+		}
+	}
+	extensionsResult.runtime.pendingNativeProviderRegistrations = [];
+	await modelRuntime.refresh({ allowNetwork: false });
 	diagnostics.push(...applyExtensionFlagValues(resourceLoader, options.extensionFlagValues));
 
 	return {
 		cwd,
 		agentDir,
-		authStorage,
+		modelRuntime,
 		settingsManager,
-		modelRegistry,
 		resourceLoader,
 		diagnostics,
 	};
@@ -183,15 +210,16 @@ export async function createAgentSessionFromServices(
 	return createAgentSession({
 		cwd: options.services.cwd,
 		agentDir: options.services.agentDir,
-		authStorage: options.services.authStorage,
+		modelRuntime: options.services.modelRuntime,
 		settingsManager: options.services.settingsManager,
-		modelRegistry: options.services.modelRegistry,
 		resourceLoader: options.services.resourceLoader,
 		sessionManager: options.sessionManager,
 		model: options.model,
 		thinkingLevel: options.thinkingLevel,
 		scopedModels: options.scopedModels,
 		tools: options.tools,
+		excludeTools: options.excludeTools,
+		noTools: options.noTools,
 		customTools: options.customTools,
 		sessionStartEvent: options.sessionStartEvent,
 	});

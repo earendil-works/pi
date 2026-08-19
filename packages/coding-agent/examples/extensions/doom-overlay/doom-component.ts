@@ -7,8 +7,8 @@
 
 import type { Component } from "@tculpepp/spi-tui";
 import { isKeyRelease, type TUI } from "@tculpepp/spi-tui";
-import type { DoomEngine } from "./doom-engine.js";
-import { DoomKeys, mapKeyToDoom } from "./doom-keys.js";
+import type { DoomEngine } from "./doom-engine.ts";
+import { DoomKeys, mapKeyToDoom } from "./doom-keys.ts";
 
 function renderHalfBlock(
 	rgba: Uint8Array,

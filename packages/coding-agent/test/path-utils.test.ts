@@ -2,7 +2,7 @@ import { mkdtempSync, readdirSync, rmdirSync, unlinkSync, writeFileSync } from "
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { expandPath, resolveReadPath, resolveToCwd } from "../src/core/tools/path-utils.js";
+import { expandPath, resolveReadPath, resolveToCwd } from "../src/core/tools/path-utils.ts";
 
 describe("path-utils", () => {
 	describe("expandPath", () => {
@@ -16,6 +16,11 @@ describe("path-utils", () => {
 			expect(result).not.toContain("~/");
 		});
 
+		it("should keep tilde-prefixed filenames literal", () => {
+			expect(expandPath("~draft.md")).toBe("~draft.md");
+			expect(expandPath("@~draft.md")).toBe("~draft.md");
+		});
+
 		it("should normalize Unicode spaces", () => {
 			// Non-breaking space (U+00A0) should become regular space
 			const withNBSP = "file\u00A0name.txt";
@@ -26,13 +31,20 @@ describe("path-utils", () => {
 
 	describe("resolveToCwd", () => {
 		it("should resolve absolute paths as-is", () => {
-			const result = resolveToCwd("/absolute/path/file.txt", "/some/cwd");
-			expect(result).toBe("/absolute/path/file.txt");
+			const absolutePath = resolve(tmpdir(), "absolute", "path", "file.txt");
+			const result = resolveToCwd(absolutePath, resolve(tmpdir(), "some", "cwd"));
+			expect(result).toBe(absolutePath);
 		});
 
 		it("should resolve relative paths against cwd", () => {
 			const result = resolveToCwd("relative/file.txt", "/some/cwd");
 			expect(result).toBe(resolve("/some/cwd", "relative/file.txt"));
+		});
+
+		it("should resolve tilde-prefixed filenames against cwd", () => {
+			const cwd = join(tmpdir(), "pi-path-utils-cwd");
+			expect(resolveToCwd("~draft.md", cwd)).toBe(resolve(cwd, "~draft.md"));
+			expect(resolveToCwd("@~draft.md", cwd)).toBe(resolve(cwd, "~draft.md"));
 		});
 	});
 
@@ -141,6 +153,21 @@ describe("path-utils", () => {
 			const result = resolveReadPath(userName, tempDir);
 
 			// This works because tryMacOSScreenshotPath() handles this case
+			expect(result).toBe(join(tempDir, macosName));
+		});
+
+		it("should handle macOS screenshot lowercase am/pm variant (en_AU locale)", () => {
+			// Some locales like en_AU use lowercase am/pm in screenshot names
+			const macosName = "Screenshot 2024-01-01 at 10.00.00\u202Fam.png"; // U+202F + lowercase
+			const userName = "Screenshot 2024-01-01 at 10.00.00 am.png"; // regular space + lowercase
+
+			// Create file with macOS-style name
+			writeFileSync(join(tempDir, macosName), "content");
+
+			// User provides regular space path
+			const result = resolveReadPath(userName, tempDir);
+
+			// This works because tryMacOSScreenshotPath() uses case-insensitive matching
 			expect(result).toBe(join(tempDir, macosName));
 		});
 	});

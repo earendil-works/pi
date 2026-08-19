@@ -311,7 +311,7 @@ export default function (pi: ExtensionAPI) {
 		description: "Play Snake!",
 
 		handler: async (_args, ctx) => {
-			if (!ctx.hasUI) {
+			if (ctx.mode !== "tui") {
 				ctx.ui.notify("Snake requires interactive mode", "error");
 				return;
 			}

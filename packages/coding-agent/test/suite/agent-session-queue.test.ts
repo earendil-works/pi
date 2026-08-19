@@ -1,9 +1,9 @@
-import { Type } from "@sinclair/typebox";
 import type { AgentTool } from "@tculpepp/spi-agent-core";
 import { fauxAssistantMessage, fauxToolCall } from "@tculpepp/spi-ai";
 import type { ExtensionAPI } from "@tculpepp/spi-coding-agent";
+import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
-import { createHarness, getAssistantTexts, getMessageText, getUserTexts, type Harness } from "./harness.js";
+import { createHarness, getAssistantTexts, getMessageText, getUserTexts, type Harness } from "./harness.ts";
 
 async function createWaitingHarness(
 	options: {
@@ -418,5 +418,28 @@ describe("AgentSession queue characterization", () => {
 		await expect(harness.session.followUp("/testcmd queued")).rejects.toThrow(
 			'Extension command "/testcmd" cannot be queued. Use prompt() or execute the command when not streaming.',
 		);
+	});
+
+	it("delivers follow-ups queued during agent_end", async () => {
+		let sent = false;
+		const harness = await createHarness({
+			extensionFactories: [
+				(pi: ExtensionAPI) => {
+					pi.on("agent_end", async () => {
+						if (sent) return;
+						sent = true;
+						pi.sendUserMessage("conflict report", { deliverAs: "followUp" });
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+
+		harness.setResponses([fauxAssistantMessage("reply"), fauxAssistantMessage("follow-up reply")]);
+
+		await harness.session.prompt("hello");
+		await harness.session.agent.waitForIdle();
+
+		expect(getUserTexts(harness)).toEqual(["hello", "conflict report"]);
 	});
 });

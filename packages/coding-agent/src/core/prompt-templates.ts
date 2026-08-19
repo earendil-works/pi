@@ -1,9 +1,9 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "fs";
-import { homedir } from "os";
-import { basename, dirname, isAbsolute, join, resolve, sep } from "path";
-import { CONFIG_DIR_NAME, getPromptsDir } from "../config.js";
-import { parseFrontmatter } from "../utils/frontmatter.js";
-import { createSyntheticSourceInfo, type SourceInfo } from "./source-info.js";
+import { basename, dirname, join, resolve, sep } from "path";
+import { CONFIG_DIR_NAME } from "../config.ts";
+import { parseFrontmatter } from "../utils/frontmatter.ts";
+import { resolvePath } from "../utils/paths.ts";
+import { createSyntheticSourceInfo, type SourceInfo } from "./source-info.ts";
 
 /**
  * Represents a prompt template loaded from a markdown file
@@ -11,6 +11,7 @@ import { createSyntheticSourceInfo, type SourceInfo } from "./source-info.js";
 export interface PromptTemplate {
 	name: string;
 	description: string;
+	argumentHint?: string;
 	content: string;
 	sourceInfo: SourceInfo;
 	filePath: string; // Absolute path to the template file
@@ -36,7 +37,7 @@ export function parseCommandArgs(argsString: string): string[] {
 			}
 		} else if (char === '"' || char === "'") {
 			inQuote = char;
-		} else if (char === " " || char === "\t") {
+		} else if (/\s/.test(char)) {
 			if (current) {
 				args.push(current);
 				current = "";
@@ -58,46 +59,46 @@ export function parseCommandArgs(argsString: string): string[] {
  * Supports:
  * - $1, $2, ... for positional args
  * - $@ and $ARGUMENTS for all args
+ * - ${N:-default} for positional arg N with default when missing/empty
+ * - ${@:-default} and ${ARGUMENTS:-default} for all args with a default when empty
  * - ${@:N} for args from Nth onwards (bash-style slicing)
  * - ${@:N:L} for L args starting from Nth
  *
- * Note: Replacement happens on the template string only. Argument values
+ * Note: Replacement happens on the template string only. Argument and default values
  * containing patterns like $1, $@, or $ARGUMENTS are NOT recursively substituted.
  */
 export function substituteArgs(content: string, args: string[]): string {
-	let result = content;
-
-	// Replace $1, $2, etc. with positional args FIRST (before wildcards)
-	// This prevents wildcard replacement values containing $<digit> patterns from being re-substituted
-	result = result.replace(/\$(\d+)/g, (_, num) => {
-		const index = parseInt(num, 10) - 1;
-		return args[index] ?? "";
-	});
-
-	// Replace ${@:start} or ${@:start:length} with sliced args (bash-style)
-	// Process BEFORE simple $@ to avoid conflicts
-	result = result.replace(/\$\{@:(\d+)(?::(\d+))?\}/g, (_, startStr, lengthStr) => {
-		let start = parseInt(startStr, 10) - 1; // Convert to 0-indexed (user provides 1-indexed)
-		// Treat 0 as 1 (bash convention: args start at 1)
-		if (start < 0) start = 0;
-
-		if (lengthStr) {
-			const length = parseInt(lengthStr, 10);
-			return args.slice(start, start + length).join(" ");
-		}
-		return args.slice(start).join(" ");
-	});
-
-	// Pre-compute all args joined (optimization)
 	const allArgs = args.join(" ");
 
-	// Replace $ARGUMENTS with all args joined (new syntax, aligns with Claude, Codex, OpenCode)
-	result = result.replace(/\$ARGUMENTS/g, allArgs);
+	return content.replace(
+		/\$\{(\d+|ARGUMENTS|@):-([^}]*)\}|\$\{@:(\d+)(?::(\d+))?\}|\$(ARGUMENTS|@|\d+)/g,
+		(_match, defaultTarget, defaultValue, sliceStart, sliceLength, simple) => {
+			if (defaultTarget) {
+				const value =
+					defaultTarget === "@" || defaultTarget === "ARGUMENTS" ? allArgs : args[parseInt(defaultTarget, 10) - 1];
+				return value ? value : defaultValue;
+			}
 
-	// Replace $@ with all args joined (existing syntax)
-	result = result.replace(/\$@/g, allArgs);
+			if (sliceStart) {
+				let start = parseInt(sliceStart, 10) - 1; // Convert to 0-indexed (user provides 1-indexed)
+				// Treat 0 as 1 (bash convention: args start at 1)
+				if (start < 0) start = 0;
 
-	return result;
+				if (sliceLength) {
+					const length = parseInt(sliceLength, 10);
+					return args.slice(start, start + length).join(" ");
+				}
+				return args.slice(start).join(" ");
+			}
+
+			if (simple === "ARGUMENTS" || simple === "@") {
+				return allArgs;
+			}
+
+			const index = parseInt(simple, 10) - 1;
+			return args[index] ?? "";
+		},
+	);
 }
 
 function loadTemplateFromFile(filePath: string, sourceInfo: SourceInfo): PromptTemplate | null {
@@ -121,6 +122,7 @@ function loadTemplateFromFile(filePath: string, sourceInfo: SourceInfo): PromptT
 		return {
 			name,
 			description,
+			...(frontmatter["argument-hint"] && { argumentHint: frontmatter["argument-hint"] }),
 			content: body,
 			sourceInfo,
 			filePath,
@@ -173,27 +175,14 @@ function loadTemplatesFromDir(dir: string, getSourceInfo: (filePath: string) => 
 }
 
 export interface LoadPromptTemplatesOptions {
-	/** Working directory for project-local templates. Default: process.cwd() */
-	cwd?: string;
-	/** Agent config directory for global templates. Default: from getPromptsDir() */
-	agentDir?: string;
-	/** Explicit prompt template paths (files or directories) */
-	promptPaths?: string[];
-	/** Include default prompt directories. Default: true */
-	includeDefaults?: boolean;
-}
-
-function normalizePath(input: string): string {
-	const trimmed = input.trim();
-	if (trimmed === "~") return homedir();
-	if (trimmed.startsWith("~/")) return join(homedir(), trimmed.slice(2));
-	if (trimmed.startsWith("~")) return join(homedir(), trimmed.slice(1));
-	return trimmed;
-}
-
-function resolvePromptPath(p: string, cwd: string): string {
-	const normalized = normalizePath(p);
-	return isAbsolute(normalized) ? normalized : resolve(cwd, normalized);
+	/** Working directory for project-local templates. */
+	cwd: string;
+	/** Agent config directory for global templates. */
+	agentDir: string;
+	/** Explicit prompt template paths (files or directories). */
+	promptPaths: string[];
+	/** Include default prompt directories. */
+	includeDefaults: boolean;
 }
 
 /**
@@ -202,15 +191,15 @@ function resolvePromptPath(p: string, cwd: string): string {
  * 2. Project: cwd/{CONFIG_DIR_NAME}/prompts/
  * 3. Explicit prompt paths
  */
-export function loadPromptTemplates(options: LoadPromptTemplatesOptions = {}): PromptTemplate[] {
-	const resolvedCwd = options.cwd ?? process.cwd();
-	const resolvedAgentDir = options.agentDir ?? getPromptsDir();
-	const promptPaths = options.promptPaths ?? [];
-	const includeDefaults = options.includeDefaults ?? true;
+export function loadPromptTemplates(options: LoadPromptTemplatesOptions): PromptTemplate[] {
+	const resolvedCwd = resolvePath(options.cwd);
+	const resolvedAgentDir = resolvePath(options.agentDir);
+	const promptPaths = options.promptPaths;
+	const includeDefaults = options.includeDefaults;
 
 	const templates: PromptTemplate[] = [];
 
-	const globalPromptsDir = options.agentDir ? join(options.agentDir, "prompts") : resolvedAgentDir;
+	const globalPromptsDir = join(resolvedAgentDir, "prompts");
 	const projectPromptsDir = resolve(resolvedCwd, CONFIG_DIR_NAME, "prompts");
 
 	const isUnderPath = (target: string, root: string): boolean => {
@@ -250,7 +239,7 @@ export function loadPromptTemplates(options: LoadPromptTemplatesOptions = {}): P
 
 	// 3. Load explicit prompt paths
 	for (const rawPath of promptPaths) {
-		const resolvedPath = resolvePromptPath(rawPath, resolvedCwd);
+		const resolvedPath = resolvePath(rawPath, resolvedCwd, { trim: true });
 		if (!existsSync(resolvedPath)) {
 			continue;
 		}
@@ -280,9 +269,11 @@ export function loadPromptTemplates(options: LoadPromptTemplatesOptions = {}): P
 export function expandPromptTemplate(text: string, templates: PromptTemplate[]): string {
 	if (!text.startsWith("/")) return text;
 
-	const spaceIndex = text.indexOf(" ");
-	const templateName = spaceIndex === -1 ? text.slice(1) : text.slice(1, spaceIndex);
-	const argsString = spaceIndex === -1 ? "" : text.slice(spaceIndex + 1);
+	const match = text.match(/^\/([^\s]+)(?:\s+([\s\S]*))?$/);
+	if (!match) return text;
+
+	const templateName = match[1];
+	const argsString = match[2] ?? "";
 
 	const template = templates.find((t) => t.name === templateName);
 	if (template) {

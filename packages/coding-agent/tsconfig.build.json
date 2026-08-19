@@ -2,8 +2,18 @@
 	"extends": "../../tsconfig.base.json",
 	"compilerOptions": {
 		"outDir": "./dist",
+		"paths": {
+			"@tculpepp/spi-agent-core": ["../agent/dist/index.d.ts"],
+			"@tculpepp/spi-agent-core/*": ["../agent/dist/*.d.ts"],
+			"@tculpepp/spi-ai": ["../ai/dist/index.d.ts"],
+			"@tculpepp/spi-ai/*": ["../ai/dist/*.d.ts", "../ai/dist/providers/*.d.ts"],
+			"@tculpepp/spi-client": ["../client/dist/index.d.ts"],
+			"@tculpepp/spi-protocol": ["../protocol/dist/index.d.ts"],
+			"@tculpepp/spi-tui": ["../tui/dist/index.d.ts"],
+			"@tculpepp/spi-tui/*": ["../tui/dist/*.d.ts", "../tui/dist/components/*.d.ts"]
+		},
 		"rootDir": "./src"
 	},
-	"include": ["src/**/*.ts"],
-	"exclude": ["node_modules", "dist", "**/*.d.ts", "src/**/*.d.ts"]
+	"include": ["src/**/*.ts", "src/**/*.d.ts"],
+	"exclude": ["node_modules", "dist"]
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { AssistantMessage } from "../src/types.js";
-import { isContextOverflow } from "../src/utils/overflow.js";
+import type { AssistantMessage } from "../src/types.ts";
+import { isContextOverflow, isRecoverableLength } from "../src/utils/overflow.ts";
 
 function createErrorMessage(errorMessage: string): AssistantMessage {
 	return {
@@ -35,6 +35,46 @@ describe("isContextOverflow", () => {
 		expect(isContextOverflow(message, 32768)).toBe(true);
 	});
 
+	it("detects Together AI context length errors", () => {
+		const message = createErrorMessage(
+			"400 The input (516368 tokens) is longer than the model's context length (262144 tokens).",
+		);
+		expect(isContextOverflow(message, 262144)).toBe(true);
+	});
+
+	it("detects LiteLLM-wrapped OpenAI maximum context length errors", () => {
+		const message = createErrorMessage(
+			"Error: 503 litellm.ServiceUnavailableError: litellm.MidStreamFallbackError: litellm.APIConnectionError: APIConnectionError: OpenAIException - Requested token count exceeds the model's maximum context length of 131072 tokens.",
+		);
+		expect(isContextOverflow(message, 131072)).toBe(true);
+	});
+
+	it("detects OpenAI-compatible parenthesized maximum context length errors", () => {
+		const message = createErrorMessage(
+			"Error: 400 Input length (265330) exceeds model's maximum context length (262144).",
+		);
+		expect(isContextOverflow(message, 262144)).toBe(true);
+	});
+
+	it("detects OpenRouter Poolside maximum allowed input length errors", () => {
+		const message = createErrorMessage(
+			"Provider returned error: Input length 131393 exceeds the maximum allowed input length of 131040 tokens.",
+		);
+		expect(isContextOverflow(message, 131072)).toBe(true);
+	});
+
+	it("detects DS4 configured context size errors", () => {
+		const message = createErrorMessage(
+			"400 Prompt has 256468 tokens, but the configured context size is 256000 tokens",
+		);
+		expect(isContextOverflow(message, 256000)).toBe(true);
+
+		const commaMessage = createErrorMessage(
+			"Prompt has 5,958,968 tokens, but the configured context size is 256,000 tokens",
+		);
+		expect(isContextOverflow(commaMessage, 256000)).toBe(true);
+	});
+
 	it("does not treat generic non-overflow Ollama errors as overflow", () => {
 		const message = createErrorMessage("500 `model runner crashed unexpectedly`");
 		expect(isContextOverflow(message, 32768)).toBe(false);
@@ -59,6 +99,79 @@ describe("isContextOverflow", () => {
 
 	it("does not treat HTTP 429 style errors as overflow", () => {
 		const message = createErrorMessage("Too many requests. Please slow down.");
+		expect(isContextOverflow(message, 200000)).toBe(false);
+	});
+
+	function createLengthStopMessage(options: {
+		input: number;
+		cacheRead: number;
+		output: number;
+		cacheWrite?: number;
+		api?: AssistantMessage["api"];
+		provider?: string;
+		model?: string;
+	}): AssistantMessage {
+		const cacheWrite = options.cacheWrite ?? 0;
+		return {
+			role: "assistant",
+			content: [],
+			api: options.api ?? "openai-completions",
+			provider: options.provider ?? "test-provider",
+			model: options.model ?? "test-model",
+			usage: {
+				input: options.input,
+				output: options.output,
+				cacheRead: options.cacheRead,
+				cacheWrite,
+				totalTokens: options.input + options.cacheRead + cacheWrite + options.output,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			stopReason: "length",
+			timestamp: Date.now(),
+		};
+	}
+
+	it("detects Xiaomi-style overflow (length stop with zero output and filled context)", () => {
+		const message = createLengthStopMessage({
+			input: 58,
+			cacheRead: 1048512,
+			output: 0,
+			provider: "xiaomi",
+			model: "mimo-v2.5-pro",
+		});
+		expect(isContextOverflow(message, 1048576)).toBe(true);
+	});
+
+	it("treats a length stop below the desired output limit as recoverable", () => {
+		const message = createLengthStopMessage({
+			input: 3,
+			cacheRead: 253584,
+			cacheWrite: 25554,
+			output: 16,
+			api: "openai-responses",
+			provider: "openai",
+			model: "gpt-5.6-sol",
+		});
+		expect(isRecoverableLength(message, 128000)).toBe(true);
+	});
+
+	it("does not recover a length stop that reached the desired output limit", () => {
+		const message = createLengthStopMessage({ input: 4062, cacheRead: 0, output: 1024 });
+		expect(isRecoverableLength(message, 1024)).toBe(false);
+	});
+
+	it("treats zero-output length stops as recoverable without context metadata", () => {
+		const message = createLengthStopMessage({ input: 100, cacheRead: 0, output: 0 });
+		expect(isRecoverableLength(message, 128000)).toBe(true);
+	});
+
+	it("does not treat normal length stops with output as context overflow", () => {
+		const message = createLengthStopMessage({ input: 1000, cacheRead: 0, output: 4096 });
+		expect(isContextOverflow(message, 200000)).toBe(false);
+	});
+
+	it("does not treat zero-output length stops far below context as context overflow", () => {
+		const message = createLengthStopMessage({ input: 100, cacheRead: 0, output: 0 });
 		expect(isContextOverflow(message, 200000)).toBe(false);
 	});
 });
