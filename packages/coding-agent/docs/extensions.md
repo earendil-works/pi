@@ -284,7 +284,10 @@ pi starts
       ▼
 user sends prompt ─────────────────────────────────────────┐
   │                                                        │
-  ├─► (extension commands checked first, bypass if found)  │
+  ├─► (built-in slash commands: input event fires first)   │
+  │     ├─► if handled: command is suppressed              │
+  │     └─► if continue: built-in handler runs normally    │
+  ├─► (extension commands checked, bypass if found)        │
   ├─► input (can intercept, transform, or handle)          │
   ├─► (skill/template expansion if not handled)            │
   ├─► before_agent_start (can inject message, modify system prompt)
@@ -892,14 +895,18 @@ pi.on("user_bash", (event, ctx) => {
 
 #### input
 
-Fired when user input is received, after extension commands are checked but before skill and template expansion. The event sees the raw input text, so `/skill:foo` and `/template` are not yet expanded.
+Fired when user input is received, before skill and template expansion. For built-in slash commands (`/share`, `/export`, `/settings`, etc.), the event fires before the command is dispatched — returning `handled` suppresses the command. For extension and skill commands, the event fires inside `session.prompt()` after extension command dispatch but before expansion.
 
 **Processing order:**
-1. Extension commands (`/cmd`) checked first - if found, handler runs and input event is skipped
-2. `input` event fires - can intercept, transform, or handle
-3. If not handled: skill commands (`/skill:name`) expanded to skill content
-4. If not handled: prompt templates (`/template`) expanded to template content
-5. Agent processing begins (`before_agent_start`, etc.)
+1. Built-in slash commands: `input` event fires — can intercept or observe
+2. If not handled: built-in handler runs (if matched)
+3. Extension commands (`/cmd`) checked — if found, handler runs via `session.prompt()`
+4. `input` event fires again (inside `session.prompt()`) — this covers non-builtin input
+5. If not handled: skill commands (`/skill:name`) expanded to skill content
+6. If not handled: prompt templates (`/template`) expanded to template content
+7. Agent processing begins (`before_agent_start`, etc.)
+
+The `input` event does **not** double-fire for the same input. Built-in commands fire it in the TUI before dispatch; all other input fires it inside `session.prompt()`. These are mutually exclusive paths.
 
 ```typescript
 pi.on("input", async (event, ctx) => {
@@ -922,6 +929,12 @@ pi.on("input", async (event, ctx) => {
 
   // Route by source: skip processing for extension-injected messages
   if (event.source === "extension") return { action: "continue" };
+
+  // Block specific built-in commands (e.g. prevent session data export)
+  if (event.text === "/share" || event.text.startsWith("/export")) {
+    ctx.ui.notify("Session export is disabled by policy", "warning");
+    return { action: "handled" };
+  }
 
   // Intercept skill commands before expansion
   if (event.text.startsWith("/skill:")) {
