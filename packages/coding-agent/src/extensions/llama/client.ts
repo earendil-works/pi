@@ -180,13 +180,28 @@ export class LlamaClient {
 	}
 
 	async list(options: { reload?: boolean; signal?: AbortSignal } = {}): Promise<LlamaModelInfo[]> {
-		const payload = await this.request(`/models${options.reload ? "?reload=1" : ""}`, { signal: options.signal });
-		if (typeof payload !== "object" || payload === null || !Array.isArray((payload as { data?: unknown }).data)) {
-			throw new Error("llama.cpp returned an invalid model catalog");
+		const reloadQuery = options.reload ? "?reload=1" : "";
+		const candidates = [`/v1/models${reloadQuery}`, `/models${reloadQuery}`];
+		let lastError: unknown;
+		for (const candidate of candidates) {
+			try {
+				const payload = await this.request(candidate, { signal: options.signal });
+				if (typeof payload !== "object" || payload === null || !Array.isArray((payload as { data?: unknown }).data)) {
+					lastError = new Error("llama.cpp returned an invalid model catalog");
+					continue;
+				}
+				const data = (payload as { data: unknown[] }).data;
+				if (!data.every(isModelInfo)) {
+					lastError = new Error("Server is not running in llama.cpp router mode");
+					continue;
+				}
+				return data;
+			} catch (err) {
+				lastError = err;
+				// try next candidate
+			}
 		}
-		const data = (payload as { data: unknown[] }).data;
-		if (!data.every(isModelInfo)) throw new Error("Server is not running in llama.cpp router mode");
-		return data;
+		throw lastError instanceof Error ? lastError : new Error("Failed to list models");
 	}
 
 	async load(model: string, signal?: AbortSignal): Promise<void> {
