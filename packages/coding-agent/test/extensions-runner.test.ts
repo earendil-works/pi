@@ -640,6 +640,24 @@ describe("ExtensionRunner", () => {
 			expect(runner.getEntryRenderer("my-entry")).toBeDefined();
 			expect(runner.getEntryRenderer("not-exists")).toBeUndefined();
 		});
+
+		it("gets tool renderer by tool name", async () => {
+			const extCode = `
+				export default function(pi) {
+					pi.registerToolRenderer("custom-tool", {
+						renderCall: () => null,
+						renderResult: () => null,
+					});
+				}
+			`;
+			fs.writeFileSync(path.join(extensionsDir, "tool-renderer.ts"), extCode);
+
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+
+			expect(runner.getToolRenderer("custom-tool")).toBeDefined();
+			expect(runner.getToolRenderer("not-exists")).toBeUndefined();
+		});
 	});
 
 	describe("flags", () => {

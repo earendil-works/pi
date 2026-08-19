@@ -1617,6 +1617,24 @@ pi.registerEntryRenderer("status-card", (entry, { expanded }, theme) => {
 pi.appendEntry("status-card", { title: "Indexed files", count: 17 });
 ```
 
+### pi.registerToolRenderer(toolName, renderer)
+
+Register an external custom renderer for a tool. This overrides the tool definition's `renderCall`, `renderResult`, and `renderShell` in the interactive TUI and HTML session export without re-registering or wrapping the tool.
+
+```typescript
+import { Text } from "@earendil-works/pi-tui";
+
+pi.registerToolRenderer("mcpScript", {
+  renderCall(args, theme) {
+    return new Text(theme.fg("accent", "MCP Script: ") + (args.code?.slice(0, 50) ?? ""));
+  },
+  renderResult(result, { expanded }, theme) {
+    const text = result.content?.find((c) => c.type === "text")?.text ?? "";
+    return new Text(theme.fg("toolOutput", expanded ? text : text.slice(0, 100)));
+  },
+});
+```
+
 ### pi.registerShortcut(shortcut, options)
 
 Register a keyboard shortcut. See [keybindings.md](keybindings.md) for the shortcut format and built-in keybindings.

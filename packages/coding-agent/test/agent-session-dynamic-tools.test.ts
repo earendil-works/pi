@@ -253,4 +253,59 @@ describe("AgentSession dynamic tool registration", () => {
 
 		session.dispose();
 	});
+
+	it("overrides tool definition rendering with registered tool renderer", async () => {
+		const settingsManager = SettingsManager.create(tempDir, agentDir);
+		const sessionManager = SessionManager.inMemory();
+
+		const resourceLoader = new DefaultResourceLoader({
+			cwd: tempDir,
+			agentDir,
+			settingsManager,
+			extensionFactories: [
+				(pi) => {
+					pi.registerTool({
+						name: "my_custom_tool",
+						label: "My Custom Tool",
+						description: "Tool with built-in renderer",
+						parameters: Type.Object({}),
+						renderShell: "default",
+						renderCall: () => undefined as any,
+						renderResult: () => undefined as any,
+						execute: async () => ({
+							content: [{ type: "text", text: "ok" }],
+							details: {},
+						}),
+					});
+				},
+				(pi) => {
+					pi.registerToolRenderer("my_custom_tool", {
+						renderShell: "self",
+						renderCall: () => "external_call" as any,
+						renderResult: () => "external_result" as any,
+					});
+				},
+			],
+		});
+		await resourceLoader.reload();
+
+		const { session } = await createAgentSession({
+			cwd: tempDir,
+			agentDir,
+			model: getModel("anthropic", "claude-sonnet-4-5")!,
+			settingsManager,
+			sessionManager,
+			resourceLoader,
+		});
+
+		await session.bindExtensions({});
+
+		const toolDef = session.getToolDefinition("my_custom_tool");
+		expect(toolDef).toBeDefined();
+		expect(toolDef?.renderShell).toBe("self");
+		expect(toolDef?.renderCall?.({} as any, {} as any, {} as any)).toBe("external_call");
+		expect(toolDef?.renderResult?.({} as any, {} as any, {} as any, {} as any)).toBe("external_result");
+
+		session.dispose();
+	});
 });

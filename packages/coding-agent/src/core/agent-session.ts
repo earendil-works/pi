@@ -924,7 +924,34 @@ export class AgentSession {
 	}
 
 	getToolDefinition(name: string): ToolDefinition | undefined {
-		return this._toolDefinitions.get(name)?.definition;
+		const baseDef = this._toolDefinitions.get(name)?.definition;
+		const customRenderer = this._extensionRunner?.getToolRenderer(name);
+		if (!customRenderer) {
+			return baseDef;
+		}
+
+		if (!baseDef) {
+			return {
+				name,
+				label: name,
+				description: "",
+				parameters: undefined as any,
+				execute: async () => ({
+					content: [{ type: "text", text: "" }],
+					details: {},
+				}),
+				renderShell: customRenderer.renderShell,
+				renderCall: customRenderer.renderCall,
+				renderResult: customRenderer.renderResult,
+			};
+		}
+
+		return {
+			...baseDef,
+			renderShell: customRenderer.renderShell ?? baseDef.renderShell,
+			renderCall: customRenderer.renderCall ?? baseDef.renderCall,
+			renderResult: customRenderer.renderResult ?? baseDef.renderResult,
+		};
 	}
 
 	/**

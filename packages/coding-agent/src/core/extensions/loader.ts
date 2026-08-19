@@ -44,6 +44,7 @@ import type {
 	ProviderConfig,
 	RegisteredCommand,
 	ToolDefinition,
+	ToolRenderer,
 } from "./types.ts";
 
 /** Modules available to extensions via virtualModules (for compiled binaries) */
@@ -325,6 +326,12 @@ function createExtensionAPI(
 			extension.entryRenderers.set(customType, renderer as EntryRenderer);
 		},
 
+		registerToolRenderer(toolName: string, renderer: ToolRenderer): void {
+			runtime.assertActive();
+			extension.toolRenderers ??= new Map();
+			extension.toolRenderers.set(toolName, renderer as ToolRenderer);
+		},
+
 		// Flag access - checks extension registered it, reads from runtime
 		getFlag(name: string): boolean | string | undefined {
 			runtime.assertActive();
@@ -489,6 +496,7 @@ function createExtension(extensionPath: string, resolvedPath: string): Extension
 		tools: new Map(),
 		messageRenderers: new Map(),
 		entryRenderers: new Map(),
+		toolRenderers: new Map(),
 		commands: new Map(),
 		flags: new Map(),
 		shortcuts: new Map(),

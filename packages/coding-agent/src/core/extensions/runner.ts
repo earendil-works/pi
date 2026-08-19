@@ -60,6 +60,7 @@ import type {
 	SessionShutdownEvent,
 	ToolCallEvent,
 	ToolCallEventResult,
+	ToolRenderer,
 	ToolResultEvent,
 	ToolResultEventResult,
 	UserBashEvent,
@@ -593,6 +594,16 @@ export class ExtensionRunner {
 	getEntryRenderer(customType: string): EntryRenderer | undefined {
 		for (const ext of this.extensions) {
 			const renderer = ext.entryRenderers?.get(customType);
+			if (renderer) {
+				return renderer;
+			}
+		}
+		return undefined;
+	}
+
+	getToolRenderer(toolName: string): ToolRenderer | undefined {
+		for (const ext of this.extensions) {
+			const renderer = ext.toolRenderers?.get(toolName);
 			if (renderer) {
 				return renderer;
 			}

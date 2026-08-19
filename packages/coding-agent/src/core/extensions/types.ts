@@ -1184,6 +1184,20 @@ export type EntryRenderer<T = unknown> = (
 	theme: Theme,
 ) => Component | undefined;
 
+export interface ToolRenderer<TParams extends TSchema = TSchema, TDetails = unknown, TState = any> {
+	/** Controls whether ToolExecutionComponent renders the standard colored shell or the tool renders its own framing. */
+	renderShell?: "default" | "self";
+	/** Custom rendering for tool call display */
+	renderCall?: (args: Static<TParams>, theme: Theme, context: ToolRenderContext<TState, Static<TParams>>) => Component;
+	/** Custom rendering for tool result display */
+	renderResult?: (
+		result: AgentToolResult<TDetails>,
+		options: ToolRenderResultOptions,
+		theme: Theme,
+		context: ToolRenderContext<TState, Static<TParams>>,
+	) => Component;
+}
+
 // ============================================================================
 // Command Registration
 // ============================================================================
@@ -1316,6 +1330,12 @@ export interface ExtensionAPI {
 
 	/** Register a custom renderer for CustomEntry. Custom entries do not participate in LLM context. */
 	registerEntryRenderer<T = unknown>(customType: string, renderer: EntryRenderer<T>): void;
+
+	/** Register an external custom renderer for a tool (overrides tool definition rendering in TUI and export). */
+	registerToolRenderer<TParams extends TSchema = TSchema, TDetails = unknown, TState = any>(
+		toolName: string,
+		renderer: ToolRenderer<TParams, TDetails, TState>,
+	): void;
 
 	// =========================================================================
 	// Actions
@@ -1726,6 +1746,7 @@ export interface Extension {
 	messageRenderers: Map<string, MessageRenderer>;
 	markdownTransformer?: MarkdownTransformer;
 	entryRenderers?: Map<string, EntryRenderer>;
+	toolRenderers?: Map<string, ToolRenderer>;
 	commands: Map<string, RegisteredCommand>;
 	flags: Map<string, ExtensionFlag>;
 	shortcuts: Map<KeyId, ExtensionShortcut>;
