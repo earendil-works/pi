@@ -141,6 +141,29 @@ interface AiGatewayModel {
 	};
 }
 
+interface ShengSuanYunModel {
+	id:string;
+	name:string;
+	max_tokens:number;
+	context_window:number;
+	supports_prompt_cache?:boolean;
+	pricing: {
+        prompt?: number;
+        completion?: number;
+        cache?: number;
+        image?: number;
+        request?: number;
+    };
+	architecture: {
+		input: string;
+		output: string;
+		tokenizer: string;
+	};
+	support_apis?: string[];
+}
+const SHENG_SUAN_YUN_API_URL = "https://router.shengsuanyun.com/api/v1";
+const SHENG_SUAN_YUN_BASE_URL = "https://router.shengsuanyun.com/api";
+
 const COPILOT_STATIC_HEADERS = {
 	"User-Agent": "GitHubCopilotChat/0.35.0",
 	"Editor-Version": "vscode/1.107.0",
@@ -1125,6 +1148,108 @@ async function fetchAiGatewayModels(): Promise<Model<any>[]> {
 		return models;
 	} catch (error) {
 		console.error("Failed to fetch Vercel AI Gateway models:", error);
+		if (generatorOptions.strict) throw error;
+		return [];
+	}
+}
+
+async function fetchShengSuanYunModels(): Promise<Model<any>[]> {
+	try {
+		console.log("Fetching models from Sheng Suan Yun...");
+		const response = await fetch(`${SHENG_SUAN_YUN_API_URL}/models`);
+		if (!response.ok) throw new Error(`Sheng Suan Yun API returned ${response.status}`);
+		const data = await response.json();
+		const models: Model<any>[] = [];
+
+		const toNumber = (value: string | number | undefined): number => {
+			if (typeof value === "number") {
+				return Number.isFinite(value) ? value : 0;
+			}
+			const parsed = parseFloat(value ?? "0");
+			return Number.isFinite(parsed) ? parsed : 0;
+		};
+		type ReasoningOption =
+			| { type: "toggle" }
+			| { type: "effort"; values: ("none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "default" | null)[] }
+			| { type: "budget_tokens"; max?: number; min?: number };
+
+		const getReasoningOptions = (id: string): ReasoningOption[] | undefined => {
+			const exist: Record<string, ReasoningOption[]> = {
+				"deepseek/deepseek-v4": [
+					{ type: "toggle" },
+					{ type: "effort", values: ["none", "low", "high", "max"] }
+				],
+				"deepseek/deepseek-v3": [
+					{ type: "toggle" },
+					{ type: "effort", values: ["none", "low", "high", "max"] }
+				],
+				"openai/gpt-5.": [
+					{
+						type: "effort",
+						values: ["none", "low", "medium", "high", "xhigh", "max"]
+					}
+				],
+				"ali/qwen3": [{ type: "toggle" }, { type: "budget_tokens" }],
+				"bigmodel/glm-4.7": [{ type: "toggle" }],
+				"bigmodel/glm-5": [{ type: "toggle" }],
+				"moonshot/kimi": [
+					{
+						type: "effort",
+						values: ["low", "high", "max"]
+					}
+				],
+				"openai/o": [{ type: "effort", values: ["low", "medium", "high"] }],
+				"anthropic/claude": [
+					{ type: "budget_tokens", "min": 1024 },
+					{
+						type: "effort",
+						values: ["none", "low", "medium", "high", "xhigh", "max"]
+					}
+				]
+			};
+
+			for (const key in exist) {
+				if (id.startsWith(key)) {
+					return exist[key];
+				}
+			}
+			return undefined;
+		}
+
+		const items = Array.isArray(data.data) ? (data.data as ShengSuanYunModel[]) : [];
+		for (const model of items) {
+			if (!model.support_apis?.includes("/v1/messages")) continue;
+
+			const input: ("text" | "image")[] = ["text"];
+
+			const inputCost = roundCost(toNumber(model.pricing?.prompt) / 10_000);
+			const outputCost = roundCost(toNumber(model.pricing?.completion) / 10_000);
+			const cacheReadCost = 0;
+			const cacheWriteCost = roundCost(toNumber(model.pricing?.cache) / 10_000);
+			const reasoning = getReasoningOptions(model.id)?.some((option) => option.type === "toggle" || option.type === "effort") || false;
+			models.push({
+				id: model.id,
+				name: model.name || model.id,
+				api: "anthropic-messages",
+				baseUrl: SHENG_SUAN_YUN_BASE_URL,
+				provider: "sheng-suan-yun",
+				reasoning: reasoning,
+				input,
+				cost: {
+					input: inputCost,
+					output: outputCost,
+					cacheRead: cacheReadCost,
+					cacheWrite: cacheWriteCost,
+				},
+				contextWindow: model.context_window || 4096,
+				maxTokens: model.max_tokens || 4096,
+			});
+		}
+
+		console.log(`Fetched ${models.length} tool-capable models from ShengSuanYun`);
+		return models;
+	} catch (error) {
+		console.error("Failed to fetch ShengSuanYun models:", error);
 		if (generatorOptions.strict) throw error;
 		return [];
 	}
@@ -2278,9 +2403,10 @@ async function generateModels() {
 	const modelsDevModels = await loadModelsDevData();
 	const openRouterModels = await fetchOpenRouterModels();
 	const aiGatewayModels = await fetchAiGatewayModels();
+	const shengSuanYunModels = await fetchShengSuanYunModels();
 
 	// Combine models (models.dev has priority)
-	const allModels = [...modelsDevModels, ...openRouterModels, ...aiGatewayModels].filter(
+	const allModels = [...modelsDevModels, ...openRouterModels, ...aiGatewayModels, ...shengSuanYunModels].filter(
 		(model) =>
 			!(model.provider === "xai" && XAI_BUILTIN_EXCLUDED_MODEL_IDS.has(model.id)) &&
 			!((model.provider === "opencode" || model.provider === "opencode-go") && model.id === "gpt-5.3-codex-spark"),

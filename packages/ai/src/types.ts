@@ -33,6 +33,7 @@ export type KnownImagesApi = "openrouter-images";
 export type ImagesApi = KnownImagesApi | (string & {});
 
 export type KnownProvider =
+	| "sheng-suan-yun"
 	| "amazon-bedrock"
 	| "ant-ling"
 	| "anthropic"
