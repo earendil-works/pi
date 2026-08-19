@@ -80,7 +80,7 @@ function hasToolHistory(messages: Message[]): boolean {
 			return true;
 		}
 		if (msg.role === "assistant") {
-			if (msg.content.some((block) => block.type === "toolCall")) {
+			if ((msg.content ?? []).some((block) => block.type === "toolCall")) {
 				return true;
 			}
 		}
@@ -239,14 +239,46 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 				...(options?.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),
 				maxRetries: 0,
 			};
-			const { data: openaiStream, response } = await retryProviderRequest(
-				() => client.chat.completions.create(params, requestOptions).withResponse(),
-				{
-					maxRetries: options?.maxRetries,
-					maxRetryDelayMs: options?.maxRetryDelayMs,
-					signal: options?.signal,
-				},
-			);
+			// Error recovery for DeepSeek reasoning_content 400 errors.
+			// If the backend requires reasoning_content on all assistant messages but
+			// some are missing it (e.g. when routing through a proxy/gateway that doesn't
+			// match the `isDeepSeek` URL check), inject empty reasoning_content and retry.
+			const isReasoningContentError = (err: unknown) => {
+				const msg = (err as any)?.message || (err as any)?.error?.message || String(err);
+				return typeof msg === "string" && msg.includes("reasoning_content") && msg.includes("must be passed back");
+			};
+			const injectReasoningContentOnParams = (msgs: any[]) =>
+				msgs.map((m) => {
+					if (m.role === "assistant" && m.reasoning_content === undefined) {
+						return { ...m, reasoning_content: "" };
+					}
+					return m;
+				});
+			let openaiStream: any, response: any;
+			try {
+				({ data: openaiStream, response } = await retryProviderRequest(
+					() => client.chat.completions.create(params, requestOptions).withResponse(),
+					{
+						maxRetries: options?.maxRetries,
+						maxRetryDelayMs: options?.maxRetryDelayMs,
+						signal: options?.signal,
+					},
+				));
+			} catch (firstError) {
+				if (isReasoningContentError(firstError)) {
+					params.messages = injectReasoningContentOnParams(params.messages);
+					({ data: openaiStream, response } = await retryProviderRequest(
+						() => client.chat.completions.create(params, requestOptions).withResponse(),
+						{
+							maxRetries: options?.maxRetries,
+							maxRetryDelayMs: options?.maxRetryDelayMs,
+							signal: options?.signal,
+						},
+					));
+				} else {
+					throw firstError;
+				}
+			}
 			await options?.onResponse?.({ status: response.status, headers: headersToRecord(response.headers) }, model);
 			stream.push({ type: "start", partial: output });
 
@@ -1030,6 +1062,17 @@ export function convertMessages(
 	};
 
 	const transformedMessages = transformMessages(context.messages, model, (id) => normalizeToolCallId(id));
+	// Detect conversations that use reasoning_content thinking blocks (e.g. DeepSeek
+	// via a proxy/gateway that doesn't match the `isDeepSeek` URL check). If any
+	// assistant message carries a reasoning_content thinking signature, inject empty
+	// reasoning_content on all assistant messages to prevent 400 errors.
+	const conversationUsesReasoningContent = transformedMessages.some(
+		(msg) =>
+			msg.role === "assistant" &&
+			(msg.content ?? []).some(
+				(block) => block.type === "thinking" && block.thinkingSignature === "reasoning_content",
+			),
+	);
 
 	if (context.systemPrompt) {
 		const useDeveloperRole = model.reasoning && compat.supportsDeveloperRole;
@@ -1173,8 +1216,8 @@ export function convertMessages(
 				}
 			}
 			if (
-				compat.requiresReasoningContentOnAssistantMessages &&
-				model.reasoning &&
+				(compat.requiresReasoningContentOnAssistantMessages ||
+					conversationUsesReasoningContent) &&
 				(assistantMsg as { reasoning_content?: string }).reasoning_content === undefined
 			) {
 				(assistantMsg as { reasoning_content?: string }).reasoning_content = "";
@@ -1201,11 +1244,12 @@ export function convertMessages(
 				const toolMsg = transformedMessages[j] as ToolResultMessage;
 
 				// Extract text and image content
-				const textResult = toolMsg.content
+				const toolMsgContent = toolMsg.content ?? [];
+				const textResult = toolMsgContent
 					.filter(isTextContentBlock)
 					.map((block) => block.text)
 					.join("\n");
-				const hasImages = toolMsg.content.some((c) => c.type === "image");
+				const hasImages = toolMsgContent.some((c) => c.type === "image");
 
 				// Always send tool result with text (or placeholder if only images)
 				const hasText = textResult.length > 0;
@@ -1228,7 +1272,7 @@ export function convertMessages(
 				}
 
 				if (hasImages && model.input.includes("image")) {
-					for (const block of toolMsg.content) {
+					for (const block of toolMsgContent) {
 						if (isImageContentBlock(block)) {
 							imageBlocks.push({
 								type: "image_url",

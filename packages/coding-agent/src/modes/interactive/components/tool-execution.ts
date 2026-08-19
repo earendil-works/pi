@@ -180,7 +180,7 @@ export class ToolExecutionComponent extends Container {
 		if (caps.images !== "kitty") return;
 		if (!this.result) return;
 
-		const imageBlocks = this.result.content.filter((c) => c.type === "image");
+		const imageBlocks = (this.result.content ?? []).filter((c) => c.type === "image");
 		for (let i = 0; i < imageBlocks.length; i++) {
 			const img = imageBlocks[i];
 			if (!img.data || !img.mimeType) continue;
@@ -294,7 +294,7 @@ export class ToolExecutionComponent extends Container {
 				} else {
 					try {
 						const component = resultRenderer(
-							{ content: this.result.content as any, details: this.result.details },
+							{ content: (this.result.content ?? []) as any, details: this.result.details },
 							{ expanded: this.expanded, isPartial: this.isPartial },
 							theme,
 							this.getRenderContext(this.resultRendererComponent),
@@ -328,7 +328,7 @@ export class ToolExecutionComponent extends Container {
 		this.imageSpacers = [];
 
 		if (this.result) {
-			const imageBlocks = this.result.content.filter((c) => c.type === "image");
+			const imageBlocks = (this.result.content ?? []).filter((c) => c.type === "image");
 			const caps = getCapabilities();
 			for (let i = 0; i < imageBlocks.length; i++) {
 				const img = imageBlocks[i];
