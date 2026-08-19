@@ -40,7 +40,7 @@ import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { shortHash } from "../utils/hash.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { parseStreamingJson } from "../utils/json-parse.ts";
-import { forcePiUserAgent } from "../utils/pi-user-agent.ts";
+import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
@@ -647,7 +647,7 @@ function createClient(
 	sessionId?: string,
 	compat: ResolvedOpenAICompletionsCompat = getCompat(model),
 ) {
-	const headers: ProviderHeaders = { ...model.headers };
+	const headers: ProviderHeaders = { "User-Agent": getPiUserAgent(), ...model.headers };
 	if (model.provider === "github-copilot") {
 		const hasImages = hasCopilotVisionInput(context.messages);
 		const copilotHeaders = buildCopilotDynamicHeaders({
@@ -672,10 +672,6 @@ function createClient(
 	// Merge options headers last so they can override defaults
 	if (optionsHeaders) {
 		Object.assign(headers, optionsHeaders);
-	}
-
-	if (model.provider === "xai") {
-		forcePiUserAgent(headers);
 	}
 
 	return new OpenAI({
