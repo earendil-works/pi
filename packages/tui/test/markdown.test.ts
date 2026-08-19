@@ -2,7 +2,7 @@ import assert from "node:assert";
 import { afterEach, describe, it } from "node:test";
 import type { Terminal as XtermTerminalType } from "@xterm/headless";
 import { Chalk } from "chalk";
-import { Markdown } from "../src/components/markdown.ts";
+import { Markdown, type MarkdownTheme } from "../src/components/markdown.ts";
 import { resetCapabilitiesCache, setCapabilities } from "../src/terminal-image.ts";
 import type { Component, TUI } from "../src/tui.ts";
 import { TuiMainScreen } from "../src/tui-main-screen.ts";
@@ -30,6 +30,20 @@ function getCellUnderline(terminal: VirtualTerminal, row: number, col: number): 
 	const cell = line.getCell(col);
 	assert.ok(cell, `Missing cell at row ${row} col ${col}`);
 	return cell.isUnderline();
+}
+
+function getCellForeground(terminal: VirtualTerminal, row: number, col: number) {
+	const xterm = (terminal as unknown as { xterm: XtermTerminalType }).xterm;
+	const buffer = xterm.buffer.active;
+	const line = buffer.getLine(buffer.viewportY + row);
+	assert.ok(line, `Missing buffer line at row ${row}`);
+	const cell = line.getCell(col);
+	assert.ok(cell, `Missing cell at row ${row} col ${col}`);
+	return {
+		color: cell.getFgColor(),
+		isDefault: cell.isFgDefault(),
+		isRgb: cell.isFgRGB(),
+	};
 }
 
 function stripAnsi(line: string): string {
@@ -477,6 +491,100 @@ describe("Markdown component", () => {
 			assert.ok(allText.includes("Description"), "Should contain 'Description'");
 			assert.ok(allText.includes("npm install"), "Should contain 'npm install'");
 			assert.ok(allText.includes("Install"), "Should contain 'Install'");
+		});
+
+		it("should not leak wrapped link color into table borders or plain cells", async () => {
+			const source = `| Link | Plain |
+| --- | --- |
+| [one two three four five six](https://example.com) | normal text |`;
+
+			try {
+				for (const hyperlinks of [true, false]) {
+					setCapabilities({ images: null, trueColor: false, hyperlinks });
+					const terminal = new VirtualTerminal(24, 10);
+					const tui: TUI = new TuiMainScreen(terminal);
+					tui.addChild(new Markdown(source, 0, 0, defaultMarkdownTheme));
+					tui.start();
+
+					try {
+						await terminal.waitForRender();
+						const viewport = terminal.getViewport();
+						const row = viewport.findIndex((line) => line.includes("one") && line.includes("norm"));
+						assert.notStrictEqual(row, -1, `Missing wrapped table row: ${JSON.stringify(viewport)}`);
+						const line = viewport[row];
+						const linkCol = line.indexOf("one");
+						const separatorCol = line.indexOf("│", linkCol);
+						const plainCol = line.indexOf("norm");
+						assert.ok(linkCol >= 0 && separatorCol > linkCol && plainCol > separatorCol);
+						assert.strictEqual(getCellForeground(terminal, row, linkCol).isDefault, false);
+						assert.strictEqual(getCellForeground(terminal, row, separatorCol).isDefault, true);
+						assert.strictEqual(getCellForeground(terminal, row, plainCol).isDefault, true);
+					} finally {
+						tui.stop();
+					}
+				}
+			} finally {
+				resetCapabilitiesCache();
+			}
+		});
+
+		it("should restore the enclosing style after a wrapped table link", async () => {
+			const quoteColor = 0x123456;
+			const theme: MarkdownTheme = {
+				...defaultMarkdownTheme,
+				// Use a basic wrapper that does not automatically reopen itself after nested resets.
+				quote: (text) => `\x1b[38;2;18;52;86m${text}\x1b[39m`,
+				link: (text) => `\x1b[38;2;129;162;190m${text}\x1b[39m`,
+			};
+			const source = `> | Link | Plain |
+> | --- | --- |
+> | [one two three four five six](https://example.com) | normal text |`;
+
+			setCapabilities({ images: null, trueColor: true, hyperlinks: true });
+			const terminal = new VirtualTerminal(28, 10);
+			const tui: TUI = new TuiMainScreen(terminal);
+			tui.addChild(new Markdown(source, 0, 0, theme));
+			tui.start();
+
+			try {
+				await terminal.waitForRender();
+				const viewport = terminal.getViewport();
+				const row = viewport.findIndex((line) => line.includes("one") && line.includes("normal"));
+				assert.notStrictEqual(row, -1, `Missing wrapped blockquote table row: ${JSON.stringify(viewport)}`);
+				const line = viewport[row];
+				const linkCol = line.indexOf("one");
+				const separatorCol = line.indexOf("│", linkCol);
+				const plainCol = line.indexOf("normal");
+				assert.ok(linkCol >= 0 && separatorCol > linkCol && plainCol > separatorCol);
+
+				const linkForeground = getCellForeground(terminal, row, linkCol);
+				const separatorForeground = getCellForeground(terminal, row, separatorCol);
+				const plainForeground = getCellForeground(terminal, row, plainCol);
+				assert.notStrictEqual(linkForeground.color, quoteColor);
+				assert.deepStrictEqual(separatorForeground, { color: quoteColor, isDefault: false, isRgb: true });
+				assert.deepStrictEqual(plainForeground, { color: quoteColor, isDefault: false, isRgb: true });
+
+				const finalRow = viewport.findIndex((line) => line.includes("five six"));
+				assert.notStrictEqual(finalRow, -1, `Missing final wrapped link row: ${JSON.stringify(viewport)}`);
+				const finalLine = viewport[finalRow];
+				const finalLinkCol = finalLine.indexOf("five six");
+				const finalSeparatorCol = finalLine.indexOf("│", finalLinkCol);
+				const finalBorderCol = finalLine.lastIndexOf("│");
+				assert.ok(finalLinkCol >= 0 && finalSeparatorCol > finalLinkCol && finalBorderCol > finalSeparatorCol);
+				assert.deepStrictEqual(getCellForeground(terminal, finalRow, finalSeparatorCol), {
+					color: quoteColor,
+					isDefault: false,
+					isRgb: true,
+				});
+				assert.deepStrictEqual(getCellForeground(terminal, finalRow, finalBorderCol), {
+					color: quoteColor,
+					isDefault: false,
+					isRgb: true,
+				});
+			} finally {
+				tui.stop();
+				resetCapabilitiesCache();
+			}
 		});
 
 		it("should wrap long cell content to multiple lines", () => {
