@@ -2988,6 +2988,27 @@ export class InteractiveMode {
 			text = text.trim();
 			if (!text) return;
 
+			// Emit input event for built-in slash commands so extensions can observe or intercept them.
+			// Extension and skill commands already flow through session.prompt() which emits input,
+			// so this only fires for builtins to avoid double-emission.
+			if (text.startsWith("/")) {
+				const spaceIndex = text.indexOf(" ");
+				const commandName = spaceIndex === -1 ? text.slice(1) : text.slice(1, spaceIndex);
+				const isBuiltin = BUILTIN_SLASH_COMMANDS.some((cmd) => cmd.name === commandName);
+				if (isBuiltin && this.session.extensionRunner.hasHandlers("input")) {
+					const inputResult = await this.session.extensionRunner.emitInput(
+						text,
+						undefined,
+						"interactive",
+						undefined,
+					);
+					if (inputResult.action === "handled") {
+						this.editor.setText("");
+						return;
+					}
+				}
+			}
+
 			// Handle commands
 			if (text === "/settings") {
 				this.showSettingsSelector();
