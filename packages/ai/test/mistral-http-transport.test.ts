@@ -1,8 +1,11 @@
+import { arch, platform, release } from "node:os";
 import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
 import { stream as streamMistral } from "../src/api/mistral-conversations.ts";
 import { getModel } from "../src/compat.ts";
 import type { Context, FetchFunction, ProviderResponse } from "../src/types.ts";
+
+const PI_USER_AGENT = `pi (${platform()} ${release()}; ${arch()})`;
 
 function createSseResponse(events: unknown[], headers?: Record<string, string>): Response {
 	const body = `${events.map((event) => `data: ${JSON.stringify(event)}`).join("\r\n\r\n")}\r\n\r\ndata: [DONE]\r\n\r\n`;
@@ -109,6 +112,7 @@ describe("Mistral HTTP transport", () => {
 		expect(headers.get("accept")).toBe("text/event-stream");
 		expect(headers.get("x-affinity")).toBe("session-1");
 		expect(headers.get("x-custom")).toBe("value");
+		expect(headers.get("user-agent")).toBe(PI_USER_AGENT);
 		expect(callbackPayload?.maxTokens).toBe(123);
 		expect(callbackPayload?.promptMode).toBe("reasoning");
 		expect(callbackPayload?.promptCacheKey).toBe("session-1");
@@ -356,11 +360,12 @@ describe("Mistral HTTP transport", () => {
 			apiKey: "request-key",
 			fetch,
 			sessionId: "automatic-affinity",
-			headers: { authorization: null, "x-affinity": null },
+			headers: { authorization: null, "x-affinity": null, "User-Agent": "custom-agent" },
 		}).result();
 
 		expect(requestHeaders?.has("authorization")).toBe(false);
 		expect(requestHeaders?.has("x-affinity")).toBe(false);
+		expect(requestHeaders?.get("user-agent")).toBe("custom-agent");
 	});
 
 	it("aborts while waiting for an SSE chunk", async () => {

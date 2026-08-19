@@ -26,6 +26,7 @@ import type {
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { providerHeadersToRecord } from "../utils/headers.ts";
+import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import type { GoogleApiThinkingLevel, ResolvedGoogleThinkingLevel } from "./google-shared.ts";
@@ -391,7 +392,7 @@ function buildHttpOptions(model: Model<"google-vertex">, optionsHeaders?: Provid
 		}
 	}
 
-	const headers = providerHeadersToRecord({ ...model.headers, ...optionsHeaders });
+	const headers = providerHeadersToRecord({ "User-Agent": getPiUserAgent(), ...model.headers, ...optionsHeaders });
 	if (headers) {
 		httpOptions.headers = headers;
 	}
