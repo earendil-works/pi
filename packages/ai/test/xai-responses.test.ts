@@ -184,7 +184,7 @@ describe("xAI Responses provider", () => {
 		});
 	});
 
-	it("keeps the SDK User-Agent for non-xAI Responses requests", async () => {
+	it("uses pi's User-Agent by default for Responses requests", async () => {
 		let userAgent: string | null = null;
 		vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
 			userAgent = new Request(input, init).headers.get("user-agent");
@@ -203,8 +203,17 @@ describe("xAI Responses provider", () => {
 		).result();
 
 		expect(result.stopReason, result.errorMessage).toBe("stop");
-		expect(userAgent).not.toBeNull();
-		expect(userAgent).not.toBe(PI_USER_AGENT);
+		expect(userAgent).toBe(PI_USER_AGENT);
+	});
+
+	it("lets explicit headers override the default Responses User-Agent", async () => {
+		const captured = await captureRequest(
+			XAI_MODELS["grok-4.5"],
+			{ messages: [{ role: "user", content: "hello", timestamp: 1 }] },
+			{ apiKey: "xai-test-token", headers: { "User-Agent": "custom-agent" } },
+		);
+
+		expect(captured.headers.get("user-agent")).toBe("custom-agent");
 	});
 
 	it("forces pi's User-Agent on custom xAI Completions models over caller headers", async () => {
