@@ -50,7 +50,6 @@
 - Fixed managed-tool downloads delaying TUI startup and hiding diagnostics in fullscreen mode by mounting the TUI first and showing download progress and warnings inside it.
 - Fixed opening a model selector immediately after startup cancelling and restarting the in-progress model catalog refresh.
 - Fixed inherited GitHub Copilot login triggering API rate limits while enabling model policies by limiting concurrent policy updates ([#6187](https://github.com/earendil-works/pi/issues/6187)).
-- Fixed inherited GitHub Copilot login still triggering API rate limits by updating only account models with unconfigured policies and honoring server retry delays ([#7850](https://github.com/earendil-works/pi/issues/7850)).
 - Fixed fullscreen transcript search snapping back to the current match during manual scrolling and fragmented mouse input leaking into the search query.
 - Fixed inherited required LaTeX arguments starting on a new line being parsed as empty ([#7760](https://github.com/earendil-works/pi/issues/7760)).
 - Updated the transitive `nanoid` development dependency to address a denial-of-service vulnerability.
