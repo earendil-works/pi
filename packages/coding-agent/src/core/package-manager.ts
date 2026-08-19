@@ -1487,24 +1487,53 @@ export class DefaultPackageManager implements PackageManager {
 		}
 	}
 
+	// npm's own install resolution (npm install/update/outdated) skips versions younger than the
+	// configured min-release-age, but `npm view <spec> version` always reports the raw registry
+	// `latest` dist-tag regardless of that setting. Reading the effective `before` cutoff here lets
+	// getLatestNpmVersion report the same version npm would actually install.
+	private async getReleaseAgeCutoff(): Promise<number | undefined> {
+		const npmCommand = this.getNpmCommand();
+		try {
+			const stdout = await this.runCommandCapture(
+				npmCommand.command,
+				[...npmCommand.args, "config", "list", "--json"],
+				{ cwd: this.cwd, timeoutMs: NETWORK_TIMEOUT_MS },
+			);
+			const config = JSON.parse(stdout.trim()) as Record<string, unknown>;
+			const before = config.before;
+			if (typeof before !== "string") return undefined;
+			const cutoff = Date.parse(before);
+			return Number.isNaN(cutoff) ? undefined : cutoff;
+		} catch {
+			return undefined;
+		}
+	}
+
 	private async getLatestNpmVersion(packageSpec: string, range?: string): Promise<string> {
 		const npmCommand = this.getNpmCommand();
 		const stdout = await this.runCommandCapture(
 			npmCommand.command,
-			[...npmCommand.args, "view", packageSpec, "version", "--json"],
+			[...npmCommand.args, "view", packageSpec, "time", "--json"],
 			{ cwd: this.cwd, timeoutMs: NETWORK_TIMEOUT_MS },
 		);
 		const raw = stdout.trim();
 		if (!raw) throw new Error("Empty response from npm view");
 		const parsed = JSON.parse(raw) as unknown;
-		if (typeof parsed === "string") {
-			return parsed;
+		// A spec resolving to multiple versions (e.g. a range) returns one entry per match, each
+		// carrying the same package-level time map, so any entry's map is the full picture.
+		const timesEntry = Array.isArray(parsed) ? parsed[0] : parsed;
+		if (!timesEntry || typeof timesEntry !== "object" || Array.isArray(timesEntry)) {
+			throw new Error("Unexpected response from npm view");
 		}
-		if (Array.isArray(parsed)) {
-			const versions = parsed.filter((value): value is string => typeof value === "string" && value.length > 0);
-			const latest = range ? maxSatisfying(versions, range) : [...versions].sort(rcompare)[0];
-			if (latest) return latest;
-		}
+		const times = timesEntry as Record<string, string>;
+		const cutoff = await this.getReleaseAgeCutoff();
+		const versions = Object.keys(times).filter((version) => {
+			if (version === "created" || version === "modified") return false;
+			if (cutoff === undefined) return true;
+			return Date.parse(times[version]) <= cutoff;
+		});
+		const latest = range ? maxSatisfying(versions, range) : [...versions].sort(rcompare)[0];
+		if (latest) return latest;
 		throw new Error("Unexpected response from npm view");
 	}
 

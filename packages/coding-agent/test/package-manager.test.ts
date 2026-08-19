@@ -87,6 +87,9 @@ describe("DefaultPackageManager", () => {
 			agentDir,
 			settingsManager,
 		});
+		// Most tests exercise npm view lookups without caring about min-release-age; default it to
+		// "no cutoff" so they don't need to account for the extra npm config lookup.
+		vi.spyOn(packageManager as any, "getReleaseAgeCutoff").mockResolvedValue(undefined);
 	});
 
 	afterEach(() => {
@@ -2214,14 +2217,14 @@ export default function(api) { api.registerTool({ name: "test", description: "te
 
 			const runCommandCaptureSpy = vi
 				.spyOn(packageManager as any, "runCommandCapture")
-				.mockResolvedValue('["1.0.0","1.2.0"]');
+				.mockResolvedValue('{"1.0.0":"2020-01-01T00:00:00.000Z","1.2.0":"2020-01-02T00:00:00.000Z"}');
 			const runCommandSpy = vi.spyOn(packageManager as any, "runCommand").mockResolvedValue(undefined);
 
 			await packageManager.update("npm:example");
 
 			expect(runCommandCaptureSpy).toHaveBeenCalledWith(
 				"npm",
-				["view", "example@^1.0.0", "version", "--json"],
+				["view", "example@^1.0.0", "time", "--json"],
 				expect.objectContaining({ cwd: tempDir, timeoutMs: expect.any(Number) }),
 			);
 			expect(runCommandSpy).toHaveBeenCalledWith(
@@ -2239,14 +2242,16 @@ export default function(api) { api.registerTool({ name: "test", description: "te
 
 			const runCommandCaptureSpy = vi
 				.spyOn(packageManager as any, "runCommandCapture")
-				.mockResolvedValue('["1.0.0","1.3.1","1.0.2"]');
+				.mockResolvedValue(
+					'{"1.0.0":"2020-01-01T00:00:00.000Z","1.3.1":"2020-01-03T00:00:00.000Z","1.0.2":"2020-01-02T00:00:00.000Z"}',
+				);
 			const runCommandSpy = vi.spyOn(packageManager as any, "runCommand").mockResolvedValue(undefined);
 
 			await packageManager.update("npm:example");
 
 			expect(runCommandCaptureSpy).toHaveBeenCalledWith(
 				"npm",
-				["view", "example@^1.0.0", "version", "--json"],
+				["view", "example@^1.0.0", "time", "--json"],
 				expect.objectContaining({ cwd: tempDir, timeoutMs: expect.any(Number) }),
 			);
 			expect(runCommandSpy).not.toHaveBeenCalled();
@@ -2258,14 +2263,16 @@ export default function(api) { api.registerTool({ name: "test", description: "te
 			writeFileSync(join(installedPath, "package.json"), JSON.stringify({ name: "example", version: "2.0.0" }));
 			settingsManager.setProjectPackages(["npm:example"]);
 
-			const runCommandCaptureSpy = vi.spyOn(packageManager as any, "runCommandCapture").mockResolvedValue('"1.9.0"');
+			const runCommandCaptureSpy = vi
+				.spyOn(packageManager as any, "runCommandCapture")
+				.mockResolvedValue('{"1.9.0":"2020-01-01T00:00:00.000Z"}');
 			const runCommandSpy = vi.spyOn(packageManager as any, "runCommand").mockResolvedValue(undefined);
 
 			await packageManager.update("npm:example");
 
 			expect(runCommandCaptureSpy).toHaveBeenCalledWith(
 				"npm",
-				["view", "example", "version", "--json"],
+				["view", "example", "time", "--json"],
 				expect.objectContaining({ cwd: tempDir, timeoutMs: expect.any(Number) }),
 			);
 			expect(runCommandSpy).not.toHaveBeenCalled();
@@ -2360,10 +2367,10 @@ export default function(api) { api.registerTool({ name: "test", description: "te
 					switch (args[1]) {
 						case "user-old":
 						case "project-old":
-							return '"2.0.0"';
+							return '{"2.0.0":"2020-01-02T00:00:00.000Z"}';
 						case "user-current":
 						case "project-current":
-							return '"1.0.0"';
+							return '{"1.0.0":"2020-01-01T00:00:00.000Z"}';
 						case "user-unknown":
 							throw new Error("registry unavailable");
 						default:
@@ -2518,7 +2525,7 @@ export default function(api) { api.registerTool({ name: "test", description: "te
 			writeFileSync(join(installedPath, "package.json"), JSON.stringify({ name: "example", version: "1.0.0" }));
 			settingsManager.setProjectPackages(["npm:example"]);
 
-			vi.spyOn(packageManager as any, "runCommandCapture").mockResolvedValue('"1.2.3"');
+			vi.spyOn(packageManager as any, "runCommandCapture").mockResolvedValue('{"1.2.3":"2020-01-01T00:00:00.000Z"}');
 
 			const updates = await packageManager.checkForAvailableUpdates();
 			expect(updates).toEqual([
@@ -2537,7 +2544,7 @@ export default function(api) { api.registerTool({ name: "test", description: "te
 			writeFileSync(join(installedPath, "package.json"), JSON.stringify({ name: "example", version: "2.0.0" }));
 			settingsManager.setProjectPackages(["npm:example"]);
 
-			vi.spyOn(packageManager as any, "runCommandCapture").mockResolvedValue('"1.9.0"');
+			vi.spyOn(packageManager as any, "runCommandCapture").mockResolvedValue('{"1.9.0":"2020-01-01T00:00:00.000Z"}');
 
 			const updates = await packageManager.checkForAvailableUpdates();
 			expect(updates).toEqual([]);
@@ -2563,16 +2570,79 @@ export default function(api) { api.registerTool({ name: "test", description: "te
 		});
 
 		it("should use npm view to fetch latest version", async () => {
-			const runCommandCaptureSpy = vi.spyOn(packageManager as any, "runCommandCapture").mockResolvedValue('"1.2.3"');
+			const runCommandCaptureSpy = vi
+				.spyOn(packageManager as any, "runCommandCapture")
+				.mockResolvedValue('{"1.2.3":"2020-01-01T00:00:00.000Z"}');
 
 			const latest = await (packageManager as any).getLatestNpmVersion("example");
 			expect(latest).toBe("1.2.3");
 			expect(runCommandCaptureSpy).toHaveBeenCalledTimes(1);
 			expect(runCommandCaptureSpy).toHaveBeenCalledWith(
 				"npm",
-				["view", "example", "version", "--json"],
+				["view", "example", "time", "--json"],
 				expect.objectContaining({ cwd: tempDir, timeoutMs: expect.any(Number) }),
 			);
+		});
+
+		it("should not report a version younger than the configured min-release-age as the latest", async () => {
+			vi.spyOn(packageManager as any, "getReleaseAgeCutoff").mockResolvedValue(
+				Date.parse("2020-01-05T00:00:00.000Z"),
+			);
+			vi.spyOn(packageManager as any, "runCommandCapture").mockResolvedValue(
+				JSON.stringify({
+					"1.0.0": "2020-01-01T00:00:00.000Z",
+					"1.1.0": "2020-01-04T00:00:00.000Z",
+					"1.2.0": "2020-01-10T00:00:00.000Z",
+				}),
+			);
+
+			const latest = await (packageManager as any).getLatestNpmVersion("example");
+			expect(latest).toBe("1.1.0");
+		});
+
+		it("should not report an npm update when the only newer version is too young under min-release-age", async () => {
+			const installedPath = join(tempDir, ".pi", "npm", "node_modules", "example");
+			mkdirSync(installedPath, { recursive: true });
+			writeFileSync(join(installedPath, "package.json"), JSON.stringify({ name: "example", version: "1.1.0" }));
+			settingsManager.setProjectPackages(["npm:example"]);
+
+			vi.spyOn(packageManager as any, "getReleaseAgeCutoff").mockResolvedValue(
+				Date.parse("2020-01-05T00:00:00.000Z"),
+			);
+			vi.spyOn(packageManager as any, "runCommandCapture").mockResolvedValue(
+				JSON.stringify({
+					"1.0.0": "2020-01-01T00:00:00.000Z",
+					"1.1.0": "2020-01-04T00:00:00.000Z",
+					"1.2.0": "2020-01-10T00:00:00.000Z",
+				}),
+			);
+
+			const updates = await packageManager.checkForAvailableUpdates();
+			expect(updates).toEqual([]);
+		});
+
+		it("should read the min-release-age cutoff from npm config's before value", async () => {
+			// The shared beforeEach stubs getReleaseAgeCutoff itself; restore it to exercise the real lookup.
+			((packageManager as any).getReleaseAgeCutoff as ReturnType<typeof vi.fn>).mockRestore();
+			const runCommandCaptureSpy = vi
+				.spyOn(packageManager as any, "runCommandCapture")
+				.mockResolvedValue(JSON.stringify({ before: "2020-01-05T00:00:00.000Z" }));
+
+			const cutoff = await (packageManager as any).getReleaseAgeCutoff();
+			expect(cutoff).toBe(Date.parse("2020-01-05T00:00:00.000Z"));
+			expect(runCommandCaptureSpy).toHaveBeenCalledWith(
+				"npm",
+				["config", "list", "--json"],
+				expect.objectContaining({ cwd: tempDir, timeoutMs: expect.any(Number) }),
+			);
+		});
+
+		it("should treat a missing before value as no release-age cutoff", async () => {
+			((packageManager as any).getReleaseAgeCutoff as ReturnType<typeof vi.fn>).mockRestore();
+			vi.spyOn(packageManager as any, "runCommandCapture").mockResolvedValue(JSON.stringify({}));
+
+			const cutoff = await (packageManager as any).getReleaseAgeCutoff();
+			expect(cutoff).toBeUndefined();
 		});
 
 		it("should use npmCommand argv for npm update checks", async () => {
@@ -2585,13 +2655,16 @@ export default function(api) { api.registerTool({ name: "test", description: "te
 				settingsManager,
 			});
 
-			const runCommandCaptureSpy = vi.spyOn(packageManager as any, "runCommandCapture").mockResolvedValue('"1.2.3"');
+			vi.spyOn(packageManager as any, "getReleaseAgeCutoff").mockResolvedValue(undefined);
+			const runCommandCaptureSpy = vi
+				.spyOn(packageManager as any, "runCommandCapture")
+				.mockResolvedValue('{"1.2.3":"2020-01-01T00:00:00.000Z"}');
 
 			const latest = await (packageManager as any).getLatestNpmVersion("@scope/pkg");
 			expect(latest).toBe("1.2.3");
 			expect(runCommandCaptureSpy).toHaveBeenCalledWith(
 				"mise",
-				["exec", "node@20", "--", "npm", "view", "@scope/pkg", "version", "--json"],
+				["exec", "node@20", "--", "npm", "view", "@scope/pkg", "time", "--json"],
 				expect.objectContaining({ cwd: tempDir }),
 			);
 		});
