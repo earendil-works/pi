@@ -243,16 +243,16 @@ export class ToolExecutionComponent extends Container {
 			const lines: string[] = [];
 			if (contentLines.length > 0) {
 				lines.push("");
-				lines.push(...contentLines);
+				for (const line of contentLines) lines.push(line);
 			}
 			for (let i = 0; i < this.imageComponents.length; i++) {
 				const spacer = this.imageSpacers[i];
 				if (spacer) {
-					lines.push(...spacer.render(width));
+					for (const line of spacer.render(width)) lines.push(line);
 				}
 				const imageComponent = this.imageComponents[i];
 				if (imageComponent) {
-					lines.push(...imageComponent.render(width));
+					for (const line of imageComponent.render(width)) lines.push(line);
 				}
 			}
 			return lines;
