@@ -3,7 +3,6 @@
  */
 
 import { type Content, FinishReason, FunctionCallingConfigMode, type Part } from "@google/genai";
-import { getSupportedThinkingLevels } from "../models.ts";
 import type {
 	Context,
 	ImageContent,
@@ -30,22 +29,12 @@ export type GoogleApiThinkingLevel = "THINKING_LEVEL_UNSPECIFIED" | "MINIMAL" | 
 export type ResolvedGoogleThinkingLevel = Exclude<ThinkingLevel, "xhigh" | "max">;
 
 /**
- * The lowest thinking level the model declares it accepts, or undefined when thinking can be
- * turned off outright. Used when the caller asked for NO thinking: some Gemini models cannot be
- * silenced, so the nearest thing is their lowest level.
- *
- * getSupportedThinkingLevels already returns ascending order and already drops the levels the
- * model's thinkingLevelMap marks unsupported, so reading it keeps that knowledge in one place —
- * the catalog — instead of a second id-based guess in each adapter.
+ * Gemini flash versions that have dropped MINIMAL: sending it returns 400 INVALID_ARGUMENT, so
+ * they take LOW as their lowest level instead. Listed per version, not by family regex —
+ * gemini-3.6-flash still accepts MINIMAL, and guessing wrong fails every call to the model.
  */
-export function lowestSupportedThinkingLevel<T extends GoogleApiType>(
-	model: Model<T>,
-): ResolvedGoogleThinkingLevel | undefined {
-	const supported = getSupportedThinkingLevels(model);
-	if (supported.includes("off")) return undefined;
-	return supported.find(
-		(level): level is ResolvedGoogleThinkingLevel => level !== "off" && level !== "xhigh" && level !== "max",
-	);
+export function dropsMinimalThinking(modelId: string): boolean {
+	return /gemini-3\.7-flash/.test(modelId.toLowerCase());
 }
 
 /** Resolve a supported pi level or model-specific Google mapping to a standard Google level. */

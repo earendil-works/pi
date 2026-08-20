@@ -28,8 +28,8 @@ import type { GoogleApiThinkingLevel, ResolvedGoogleThinkingLevel } from "./goog
 import {
 	convertMessages,
 	convertTools,
+	dropsMinimalThinking,
 	isThinkingPart,
-	lowestSupportedThinkingLevel,
 	mapStopReason,
 	resolveGoogleFunctionCallingMode,
 	resolveGoogleThinkingLevel,
@@ -431,10 +431,25 @@ function isGemini3FlashModel(model: Model<"google-generative-ai">): boolean {
 }
 
 function getDisabledThinkingConfig(model: Model<"google-generative-ai">): ThinkingConfig {
-	// Gemini 2.x can be told to stop thinking outright; the rest get their lowest declared level,
-	// without includeThoughts, so hidden thinking stays invisible to pi.
-	const lowest = lowestSupportedThinkingLevel(model);
-	return lowest ? { thinkingLevel: getThinkingLevel(lowest, model) as any } : { thinkingBudget: 0 };
+	// Google docs: Gemini 3.1 Pro cannot disable thinking, and Gemini 3 Flash / Flash-Lite
+	// do not support full thinking-off either. For Gemini 3 models, use the lowest supported
+	// thinkingLevel without includeThoughts so hidden thinking remains invisible to pi.
+	if (isGemini3ProModel(model)) {
+		return { thinkingLevel: "LOW" as any };
+	}
+	if (isGemini3FlashModel(model)) {
+		// Verified against generativelanguage.googleapis.com on 2026-08-19: gemini-3.7-flash
+		// rejects MINIMAL with 400 INVALID_ARGUMENT "Thinking level MINIMAL is not supported for
+		// this model", while LOW/MEDIUM/HIGH are accepted. gemini-3.6-flash still takes MINIMAL,
+		// so this is per-version rather than a change to the whole flash family.
+		return { thinkingLevel: (dropsMinimalThinking(model.id) ? "LOW" : "MINIMAL") as any };
+	}
+	if (isGemma4Model(model)) {
+		return { thinkingLevel: "MINIMAL" as any };
+	}
+
+	// Gemini 2.x supports disabling via thinkingBudget = 0.
+	return { thinkingBudget: 0 };
 }
 
 function getThinkingLevel(

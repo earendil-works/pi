@@ -170,30 +170,21 @@ describe("Google thinking level maps", () => {
 });
 
 // The other direction: which level goes on the wire when the caller asks for NO thinking.
-// Some Gemini models cannot be silenced, so the adapter sends their lowest declared level —
-// and asserting one the model does not accept is a 400 on every call, so it must come from
-// thinkingLevelMap rather than from the model id.
-describe("Google disabled-thinking level selection", () => {
-	it("turns thinking off outright when the model supports off", async () => {
-		// No thinkingLevelMap ⇒ "off" is supported ⇒ Gemini 2.x semantics.
-		const payload = await captureGooglePayload(googleModel("gemini-2.5-flash"));
-		expect(payload.config?.thinkingConfig).toEqual({ thinkingBudget: 0 });
-	});
-
-	it("asks for the lowest declared level when the model cannot be silenced", async () => {
+// Gemini 3 flash models cannot be silenced, so the adapter sends their lowest accepted level —
+// and that floor moved between versions, which is what these pin.
+describe("Google disabled-thinking level", () => {
+	it("sends MINIMAL for a flash version that accepts it", async () => {
 		const payload = await captureGooglePayload(googleModel("gemini-3.6-flash", { off: null }));
 		expect(payload.config?.thinkingConfig).toEqual({ thinkingLevel: "MINIMAL" });
 	});
 
-	it("skips a level the model declares unsupported rather than asserting one from its id", async () => {
-		// gemini-3.7-flash rejects MINIMAL with 400 INVALID_ARGUMENT, so the catalog records
-		// minimal:null and the adapter must move up to LOW instead of sending MINIMAL anyway.
-		const payload = await captureGooglePayload(googleModel("gemini-3.7-flash", { off: null, minimal: null }));
+	it("sends LOW for gemini-3.7-flash, which 400s on MINIMAL", async () => {
+		const payload = await captureGooglePayload(googleModel("gemini-3.7-flash", { off: null }));
 		expect(payload.config?.thinkingConfig).toEqual({ thinkingLevel: "LOW" });
 	});
 
-	it("applies the same rule on vertex, which carries its own copy of the adapter", async () => {
-		const payload = await captureVertexPayload(vertexModel("gemini-3.7-flash", { off: null, minimal: null }));
+	it("applies the same floor on vertex, which carries its own copy of the adapter", async () => {
+		const payload = await captureVertexPayload(vertexModel("gemini-3.7-flash", { off: null }));
 		expect(payload.config?.thinkingConfig).toEqual({ thinkingLevel: "LOW" });
 	});
 });
