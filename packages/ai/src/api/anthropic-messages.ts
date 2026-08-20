@@ -1117,6 +1117,18 @@ function normalizeToolCallId(id: string): string {
 	return id.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 64);
 }
 
+/**
+ * Convert a standard base64 string to unpadded base64url.
+ *
+ * Some Anthropic-compatible providers (notably kimi-coding) return thinking
+ * signatures as standard base64, but their request validator expects
+ * base64url on replay. The bytes are identical; only the textual encoding
+ * differs. This helper is idempotent for strings that are already base64url.
+ */
+function base64ToBase64Url(base64: string): string {
+	return base64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
 function convertToolResult(
 	msg: ToolResultMessage,
 	isOAuthToken: boolean,
@@ -1219,7 +1231,7 @@ function convertMessages(
 					if (block.redacted) {
 						blocks.push({
 							type: "redacted_thinking",
-							data: block.thinkingSignature!,
+							data: base64ToBase64Url(block.thinkingSignature!),
 						});
 						continue;
 					}
@@ -1246,7 +1258,7 @@ function convertMessages(
 						blocks.push({
 							type: "thinking",
 							thinking: sanitizeSurrogates(block.thinking),
-							signature: thinkingSignature,
+							signature: base64ToBase64Url(thinkingSignature),
 						});
 					}
 				} else if (block.type === "toolCall") {
