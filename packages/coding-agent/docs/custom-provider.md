@@ -643,7 +643,6 @@ Test your provider against the same test suites used by built-in providers. Copy
 | `abort.test.ts` | AbortSignal handling |
 | `empty.test.ts` | Empty/minimal responses |
 | `context-overflow.test.ts` | Context window limits |
-| `image-limits.test.ts` | Image input handling |
 | `unicode-surrogate.test.ts` | Unicode edge cases |
 | `tool-call-without-result.test.ts` | Tool call edge cases |
 | `image-tool-result.test.ts` | Images in tool results |

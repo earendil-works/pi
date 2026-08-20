@@ -1632,7 +1632,6 @@ Create or update test files to cover the new provider:
 - `abort.test.ts` - Request cancellation
 - `empty.test.ts` - Empty message handling
 - `context-overflow.test.ts` - Context limit errors
-- `image-limits.test.ts` - Image support (if applicable)
 - `unicode-surrogate.test.ts` - Unicode handling
 - `tool-call-without-result.test.ts` - Orphaned tool calls
 - `image-tool-result.test.ts` - Images in tool results
