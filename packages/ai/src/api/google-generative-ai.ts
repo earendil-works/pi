@@ -4,7 +4,7 @@ import {
 	GoogleGenAI,
 	type ThinkingConfig,
 } from "@google/genai";
-import { calculateCost, clampThinkingLevel } from "../models.ts";
+import { calculateCost, clampThinkingLevel, getSupportedThinkingLevels } from "../models.ts";
 import type {
 	Api,
 	AssistantMessage,
@@ -429,22 +429,21 @@ function isGemini3FlashModel(model: Model<"google-generative-ai">): boolean {
 	return /gemini-3(?:\.\d+)?-flash/.test(id) || id === "gemini-flash-latest" || id === "gemini-flash-lite-latest";
 }
 
-function getDisabledThinkingConfig(model: Model<"google-generative-ai">): ThinkingConfig {
-	// Google docs: Gemini 3.1 Pro cannot disable thinking, and Gemini 3 Flash / Flash-Lite
-	// do not support full thinking-off either. For Gemini 3 models, use the lowest supported
-	// thinkingLevel without includeThoughts so hidden thinking remains invisible to pi.
-	if (isGemini3ProModel(model)) {
-		return { thinkingLevel: "LOW" as any };
-	}
-	if (isGemini3FlashModel(model)) {
-		return { thinkingLevel: "MINIMAL" as any };
-	}
-	if (isGemma4Model(model)) {
-		return { thinkingLevel: "MINIMAL" as any };
-	}
+const ASCENDING_THINKING_LEVELS: readonly ResolvedGoogleThinkingLevel[] = ["minimal", "low", "medium", "high"];
 
-	// Gemini 2.x supports disabling via thinkingBudget = 0.
-	return { thinkingBudget: 0 };
+function getDisabledThinkingConfig(model: Model<"google-generative-ai">): ThinkingConfig {
+	// Some Gemini models cannot be told to stop thinking at all; for those we ask for the lowest
+	// level they support, without includeThoughts, so hidden thinking stays invisible to pi.
+	// Which levels those are is already recorded in the model's thinkingLevelMap by
+	// scripts/generate-models.ts — read it rather than re-deriving it from the id here, so a model
+	// whose supported levels differ from its name only has to be corrected in one place.
+	const supported = new Set(getSupportedThinkingLevels(model));
+	if (supported.has("off")) {
+		// Thinking can genuinely be turned off (Gemini 2.x): budget 0.
+		return { thinkingBudget: 0 };
+	}
+	const lowest = ASCENDING_THINKING_LEVELS.find((level) => supported.has(level));
+	return lowest ? { thinkingLevel: getThinkingLevel(lowest, model) as any } : { thinkingBudget: 0 };
 }
 
 function getThinkingLevel(

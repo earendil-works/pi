@@ -452,6 +452,10 @@ const GITHUB_COPILOT_THINKING_LEVEL_OVERRIDES = {
 	"claude-sonnet-4.6": { minimal: "low", max: "max" },
 } satisfies Record<string, NonNullable<Model<Api>["thinkingLevelMap"]>>;
 
+// Gemini flash models that have dropped MINIMAL. Verified against the live API, per model —
+// the family regex cannot tell them apart and a wrong guess is a 400 on every call.
+const GEMINI_MINIMAL_UNSUPPORTED = new Set(["gemini-3.7-flash"]);
+
 function mergeThinkingLevelMap(model: Model<any>, map: NonNullable<Model<any>["thinkingLevelMap"]>): void {
 	model.thinkingLevelMap = { ...model.thinkingLevelMap, ...map };
 }
@@ -919,7 +923,11 @@ function applyThinkingLevelMetadata(model: Model<any>): void {
 		mergeThinkingLevelMap(model, { off: null, minimal: null, low: "LOW", medium: null, high: "HIGH" });
 	}
 	if (isGoogleThinkingApi(model) && isGemini3FlashModel(model.id)) {
-		mergeThinkingLevelMap(model, { off: null });
+		// Checked against generativelanguage.googleapis.com on 2026-08-19: gemini-3.7-flash rejects
+		// MINIMAL with 400 INVALID_ARGUMENT "Thinking level MINIMAL is not supported for this model",
+		// while LOW/MEDIUM/HIGH and omitting the field all succeed. gemini-3.6-flash still accepts
+		// MINIMAL, so this is per-model rather than a change to the flash family.
+		mergeThinkingLevelMap(model, GEMINI_MINIMAL_UNSUPPORTED.has(model.id) ? { off: null, minimal: null } : { off: null });
 	}
 	if (isGoogleThinkingApi(model) && isGemma4Model(model.id)) {
 		mergeThinkingLevelMap(model, { off: null, minimal: "MINIMAL", low: null, medium: null, high: "HIGH" });
