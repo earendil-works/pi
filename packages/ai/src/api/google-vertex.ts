@@ -7,7 +7,7 @@ import {
 	type ThinkingConfig,
 	ThinkingLevel,
 } from "@google/genai";
-import { calculateCost, clampThinkingLevel, getSupportedThinkingLevels } from "../models.ts";
+import { calculateCost, clampThinkingLevel } from "../models.ts";
 import type {
 	Api,
 	AssistantMessage,
@@ -34,6 +34,7 @@ import {
 	convertMessages,
 	convertTools,
 	isThinkingPart,
+	lowestSupportedThinkingLevel,
 	mapStopReason,
 	resolveGoogleFunctionCallingMode,
 	resolveGoogleThinkingLevel,
@@ -523,20 +524,10 @@ function isGemini3FlashModel(model: Model<"google-generative-ai">): boolean {
 	return /gemini-3(?:\.\d+)?-flash/.test(id) || id === "gemini-flash-latest" || id === "gemini-flash-lite-latest";
 }
 
-const ASCENDING_THINKING_LEVELS: readonly ResolvedGoogleThinkingLevel[] = ["minimal", "low", "medium", "high"];
-
 function getDisabledThinkingConfig(model: Model<"google-vertex">): ThinkingConfig {
-	// Some Gemini models cannot be told to stop thinking at all; for those we ask for the lowest
-	// level they support, without includeThoughts, so hidden thinking stays invisible to pi.
-	// Which levels those are is already recorded in the model's thinkingLevelMap by
-	// scripts/generate-models.ts — read it rather than re-deriving it from the id here, so a model
-	// whose supported levels differ from its name only has to be corrected in one place.
-	const supported = new Set(getSupportedThinkingLevels(model));
-	if (supported.has("off")) {
-		// Thinking can genuinely be turned off (Gemini 2.x): budget 0.
-		return { thinkingBudget: 0 };
-	}
-	const lowest = ASCENDING_THINKING_LEVELS.find((level) => supported.has(level));
+	// Gemini 2.x can be told to stop thinking outright; the rest get their lowest declared level,
+	// without includeThoughts, so hidden thinking stays invisible to pi.
+	const lowest = lowestSupportedThinkingLevel(model);
 	if (!lowest) return { thinkingBudget: 0 };
 	const geminiModel = model as unknown as Model<"google-generative-ai">;
 	return { thinkingLevel: getGemini3ThinkingLevel(lowest, geminiModel) as ThinkingLevel };

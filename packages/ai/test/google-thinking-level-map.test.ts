@@ -16,7 +16,7 @@ const context: Context = {
 	messages: [{ role: "user", content: "Hello", timestamp: 0 }],
 };
 
-function googleModel(id: string, thinkingLevelMap: ThinkingLevelMap): Model<"google-generative-ai"> {
+function googleModel(id: string, thinkingLevelMap?: ThinkingLevelMap): Model<"google-generative-ai"> {
 	return {
 		id,
 		name: id,
@@ -32,7 +32,7 @@ function googleModel(id: string, thinkingLevelMap: ThinkingLevelMap): Model<"goo
 	};
 }
 
-function vertexModel(id: string, thinkingLevelMap: ThinkingLevelMap): Model<"google-vertex"> {
+function vertexModel(id: string, thinkingLevelMap?: ThinkingLevelMap): Model<"google-vertex"> {
 	return {
 		id,
 		name: id,
@@ -50,7 +50,7 @@ function vertexModel(id: string, thinkingLevelMap: ThinkingLevelMap): Model<"goo
 
 async function captureGooglePayload(
 	model: Model<"google-generative-ai">,
-	reasoning: ThinkingLevel,
+	reasoning?: ThinkingLevel,
 	thinkingBudgets?: ThinkingBudgets,
 ): Promise<GenerateContentParameters> {
 	let payload: GenerateContentParameters | undefined;
@@ -71,7 +71,7 @@ async function captureGooglePayload(
 
 async function captureVertexPayload(
 	model: Model<"google-vertex">,
-	reasoning: ThinkingLevel,
+	reasoning?: ThinkingLevel,
 	thinkingBudgets?: ThinkingBudgets,
 ): Promise<GenerateContentParameters> {
 	let payload: GenerateContentParameters | undefined;
@@ -166,5 +166,34 @@ describe("Google thinking level maps", () => {
 		});
 
 		expect(payload).toMatchObject({ config: { thinkingConfig: { thinkingBudget: 4321 } } });
+	});
+});
+
+// The other direction: which level goes on the wire when the caller asks for NO thinking.
+// Some Gemini models cannot be silenced, so the adapter sends their lowest declared level —
+// and asserting one the model does not accept is a 400 on every call, so it must come from
+// thinkingLevelMap rather than from the model id.
+describe("Google disabled-thinking level selection", () => {
+	it("turns thinking off outright when the model supports off", async () => {
+		// No thinkingLevelMap ⇒ "off" is supported ⇒ Gemini 2.x semantics.
+		const payload = await captureGooglePayload(googleModel("gemini-2.5-flash"));
+		expect(payload.config?.thinkingConfig).toEqual({ thinkingBudget: 0 });
+	});
+
+	it("asks for the lowest declared level when the model cannot be silenced", async () => {
+		const payload = await captureGooglePayload(googleModel("gemini-3.6-flash", { off: null }));
+		expect(payload.config?.thinkingConfig).toEqual({ thinkingLevel: "MINIMAL" });
+	});
+
+	it("skips a level the model declares unsupported rather than asserting one from its id", async () => {
+		// gemini-3.7-flash rejects MINIMAL with 400 INVALID_ARGUMENT, so the catalog records
+		// minimal:null and the adapter must move up to LOW instead of sending MINIMAL anyway.
+		const payload = await captureGooglePayload(googleModel("gemini-3.7-flash", { off: null, minimal: null }));
+		expect(payload.config?.thinkingConfig).toEqual({ thinkingLevel: "LOW" });
+	});
+
+	it("applies the same rule on vertex, which carries its own copy of the adapter", async () => {
+		const payload = await captureVertexPayload(vertexModel("gemini-3.7-flash", { off: null, minimal: null }));
+		expect(payload.config?.thinkingConfig).toEqual({ thinkingLevel: "LOW" });
 	});
 });

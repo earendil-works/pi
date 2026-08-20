@@ -3,6 +3,7 @@
  */
 
 import { type Content, FinishReason, FunctionCallingConfigMode, type Part } from "@google/genai";
+import { getSupportedThinkingLevels } from "../models.ts";
 import type {
 	Context,
 	ImageContent,
@@ -27,6 +28,25 @@ type GoogleApiType = "google-generative-ai" | "google-vertex";
  */
 export type GoogleApiThinkingLevel = "THINKING_LEVEL_UNSPECIFIED" | "MINIMAL" | "LOW" | "MEDIUM" | "HIGH";
 export type ResolvedGoogleThinkingLevel = Exclude<ThinkingLevel, "xhigh" | "max">;
+
+/**
+ * The lowest thinking level the model declares it accepts, or undefined when thinking can be
+ * turned off outright. Used when the caller asked for NO thinking: some Gemini models cannot be
+ * silenced, so the nearest thing is their lowest level.
+ *
+ * getSupportedThinkingLevels already returns ascending order and already drops the levels the
+ * model's thinkingLevelMap marks unsupported, so reading it keeps that knowledge in one place —
+ * the catalog — instead of a second id-based guess in each adapter.
+ */
+export function lowestSupportedThinkingLevel<T extends GoogleApiType>(
+	model: Model<T>,
+): ResolvedGoogleThinkingLevel | undefined {
+	const supported = getSupportedThinkingLevels(model);
+	if (supported.includes("off")) return undefined;
+	return supported.find(
+		(level): level is ResolvedGoogleThinkingLevel => level !== "off" && level !== "xhigh" && level !== "max",
+	);
+}
 
 /** Resolve a supported pi level or model-specific Google mapping to a standard Google level. */
 export function resolveGoogleThinkingLevel<T extends GoogleApiType>(
