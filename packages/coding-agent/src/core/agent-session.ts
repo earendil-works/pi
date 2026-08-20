@@ -327,6 +327,8 @@ export class AgentSession {
 	private _followUpMessages: string[] = [];
 	/** Messages queued to be included with the next user prompt as context ("asides"). */
 	private _pendingNextTurnMessages: CustomMessage[] = [];
+	/** Custom messages with triggerTurn false sent during a run, delivered when the run settles. */
+	private _pendingTurnEndMessages: CustomMessage[] = [];
 
 	// Compaction state
 	private _compactionAbortController: AbortController | undefined = undefined;
@@ -604,8 +606,28 @@ export class AgentSession {
 		resolve();
 	}
 
+	private _appendCustomMessage(message: CustomMessage): void {
+		this.agent.state.messages.push(message);
+		this.sessionManager.appendCustomMessageEntry(
+			message.customType,
+			message.content,
+			message.display,
+			message.details,
+		);
+		this._emit({ type: "message_start", message });
+		this._emit({ type: "message_end", message });
+	}
+
+	private _flushPendingTurnEndMessages(): void {
+		const messages = this._pendingTurnEndMessages.splice(0);
+		for (const message of messages) {
+			this._appendCustomMessage(message);
+		}
+	}
+
 	private async _emitAgentSettled(): Promise<void> {
 		this._isAgentRunActive = false;
+		this._flushPendingTurnEndMessages();
 		try {
 			await this._extensionRunner.emit({ type: "agent_settled" });
 			this._emit({ type: "agent_settled" });
@@ -1436,8 +1458,9 @@ export class AgentSession {
 	/**
 	 * Send a custom message to the session. Creates a CustomMessageEntry.
 	 *
-	 * Handles three cases:
-	 * - Streaming: queues message, processed when loop pulls from queue
+	 * Handles four cases:
+	 * - Streaming + triggerTurn not false: queues as steer/followUp
+	 * - Streaming + triggerTurn false: hold until the run settles (do not break tool batches)
 	 * - Not streaming + triggerTurn: appends to state/session, starts new turn
 	 * - Not streaming + no trigger: appends to state/session, no turn
 	 *
@@ -1466,18 +1489,13 @@ export class AgentSession {
 			} else {
 				this.agent.steer(appMessage);
 			}
+		} else if (this.isStreaming) {
+			// triggerTurn:false during a run must not splice into an in-flight tool batch
+			this._pendingTurnEndMessages.push(appMessage);
 		} else if (options?.triggerTurn) {
 			await this._runAgentPrompt(appMessage);
 		} else {
-			this.agent.state.messages.push(appMessage);
-			this.sessionManager.appendCustomMessageEntry(
-				message.customType,
-				message.content,
-				message.display,
-				message.details,
-			);
-			this._emit({ type: "message_start", message: appMessage });
-			this._emit({ type: "message_end", message: appMessage });
+			this._appendCustomMessage(appMessage);
 		}
 	}
 
