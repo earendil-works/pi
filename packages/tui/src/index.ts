@@ -139,9 +139,12 @@ export { TuiMainScreen, type TuiMainScreenRenderState } from "./tui-main-screen.
 // Utilities
 export {
 	getOsc8LinkAtColumn,
+	SOFT_WRAP_BREAK_MARKER,
+	SOFT_WRAP_SPACE_MARKER,
 	sliceByColumn,
 	stripTerminalSequences,
 	truncateToWidth,
 	visibleWidth,
+	type WrapTextOptions,
 	wrapTextWithAnsi,
 } from "./utils.ts";

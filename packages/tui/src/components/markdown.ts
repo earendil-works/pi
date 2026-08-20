@@ -319,7 +319,7 @@ export class Markdown implements Component {
 			if (isImageLine(line)) {
 				wrappedLines.push(line);
 			} else {
-				for (const wrappedLine of wrapTextWithAnsi(line, contentWidth)) {
+				for (const wrappedLine of wrapTextWithAnsi(line, contentWidth, { softWrapMarkers: true })) {
 					wrappedLines.push(wrappedLine);
 				}
 			}
@@ -591,7 +591,7 @@ export class Markdown implements Component {
 
 				for (const quoteLine of renderedQuoteLines) {
 					const styledLine = applyQuoteStyle(quoteLine);
-					const wrappedLines = wrapTextWithAnsi(styledLine, quoteContentWidth);
+					const wrappedLines = wrapTextWithAnsi(styledLine, quoteContentWidth, { softWrapMarkers: true });
 					for (const wrappedLine of wrappedLines) {
 						lines.push(this.theme.quoteBorder("│ ") + wrappedLine);
 					}
@@ -785,7 +785,7 @@ export class Markdown implements Component {
 
 				const itemLines = this.renderToken(itemToken, itemWidth, undefined, styleContext);
 				for (const line of itemLines) {
-					for (const wrappedLine of wrapTextWithAnsi(line, itemWidth)) {
+					for (const wrappedLine of wrapTextWithAnsi(line, itemWidth, { softWrapMarkers: true })) {
 						const linePrefix = renderedAnyLine ? continuationPrefix : firstPrefix;
 						lines.push(linePrefix + wrappedLine);
 						renderedAnyLine = true;
@@ -858,7 +858,7 @@ export class Markdown implements Component {
 		const availableForCells = availableWidth - borderOverhead;
 		if (availableForCells < numCols) {
 			// Too narrow to render a stable table. Fall back to raw markdown.
-			const fallbackLines = token.raw ? wrapTextWithAnsi(token.raw, availableWidth) : [];
+			const fallbackLines = token.raw ? wrapTextWithAnsi(token.raw, availableWidth, { softWrapMarkers: true }) : [];
 			if (nextTokenType && nextTokenType !== "space") {
 				fallbackLines.push("");
 			}

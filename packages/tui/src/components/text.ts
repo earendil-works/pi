@@ -64,8 +64,8 @@ export class Text implements Component {
 		const paddingX = Math.min(this.paddingX, Math.max(0, Math.floor((width - 1) / 2)));
 		const contentWidth = Math.max(1, width - paddingX * 2);
 
-		// Wrap text (this preserves ANSI codes but does NOT pad)
-		const wrappedLines = wrapTextWithAnsi(normalizedText, contentWidth);
+		// Wrap text (this preserves ANSI codes and soft wrap markers but does NOT pad)
+		const wrappedLines = wrapTextWithAnsi(normalizedText, contentWidth, { softWrapMarkers: true });
 
 		// Add margins and background to each line
 		const leftMargin = " ".repeat(paddingX);

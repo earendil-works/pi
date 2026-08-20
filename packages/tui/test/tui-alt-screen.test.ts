@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import { findAltScreenSearchMatches } from "../src/alt-screen-search.ts";
 import { HStack } from "../src/components/h-stack.ts";
 import { Image } from "../src/components/image.ts";
+import { Markdown } from "../src/components/markdown.ts";
 import { ScrollView } from "../src/components/scroll-view.ts";
 import { Text } from "../src/components/text.ts";
 import { VStack } from "../src/components/v-stack.ts";
@@ -15,6 +16,7 @@ import {
 	setCapabilities,
 } from "../src/terminal-image.ts";
 import { TuiAltScreen } from "../src/tui-alt-screen.ts";
+import { defaultMarkdownTheme } from "./test-themes.ts";
 import { VirtualTerminal } from "./virtual-terminal.ts";
 
 const OSC133_ZONE_START = "\x1b]133;A\x07";
@@ -969,6 +971,120 @@ describe("TuiAltScreen", () => {
 		);
 		assert.ok(terminal.getViewport().some((line) => line.includes("Copied!")));
 
+		tui.stop();
+	});
+
+	it("copies soft-wrapped lines as one logical line", async () => {
+		const terminal = new RecordingTerminal(20, 3);
+		const copied: string[] = [];
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			copySelection: async (text) => {
+				copied.push(text);
+				return true;
+			},
+		});
+		tui.addChild(new Text("alpha beta gamma delta epsilon", 0, 0));
+		tui.start();
+		await terminal.waitForRender();
+
+		terminal.sendInput("\x1b[<0;1;1M");
+		terminal.sendInput("\x1b[<32;20;2M");
+		terminal.sendInput("\x1b[<0;20;2m");
+		await terminal.waitForRender();
+
+		assert.deepStrictEqual(copied, ["alpha beta gamma delta epsilon"]);
+		tui.stop();
+	});
+
+	it("copies unbroken words broken across lines without inserting spaces", async () => {
+		const terminal = new RecordingTerminal(20, 3);
+		const copied: string[] = [];
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			copySelection: async (text) => {
+				copied.push(text);
+				return true;
+			},
+		});
+		tui.addChild(new Text("https://example.com/very/long/path", 0, 0));
+		tui.start();
+		await terminal.waitForRender();
+
+		terminal.sendInput("\x1b[<0;1;1M");
+		terminal.sendInput("\x1b[<32;20;2M");
+		terminal.sendInput("\x1b[<0;20;2m");
+		await terminal.waitForRender();
+
+		assert.deepStrictEqual(copied, ["https://example.com/very/long/path"]);
+		tui.stop();
+	});
+
+	it("copies markdown paragraphs with soft-wrapping and preserves explicit paragraph breaks", async () => {
+		const terminal = new RecordingTerminal(25, 6);
+		const copied: string[] = [];
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			copySelection: async (text) => {
+				copied.push(text);
+				return true;
+			},
+		});
+		tui.addChild(
+			new Markdown("First paragraph that is long enough to wrap.\n\nSecond paragraph.", 0, 0, defaultMarkdownTheme),
+		);
+		tui.start();
+		await terminal.waitForRender();
+
+		terminal.sendInput("\x1b[<0;1;1M");
+		terminal.sendInput("\x1b[<32;25;4M");
+		terminal.sendInput("\x1b[<0;25;4m");
+		await terminal.waitForRender();
+
+		assert.deepStrictEqual(copied, ["First paragraph that is long enough to wrap.\n\nSecond paragraph."]);
+		tui.stop();
+	});
+
+	it("copies code blocks preserving indentation and newlines", async () => {
+		const terminal = new RecordingTerminal(30, 8);
+		const copied: string[] = [];
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			copySelection: async (text) => {
+				copied.push(text);
+				return true;
+			},
+		});
+		tui.addChild(new Markdown("```js\nfunction foo() {\n  return 42;\n}\n```", 0, 0, defaultMarkdownTheme));
+		tui.start();
+		await terminal.waitForRender();
+
+		terminal.sendInput("\x1b[<0;1;1M");
+		terminal.sendInput("\x1b[<32;30;5M");
+		terminal.sendInput("\x1b[<0;30;5m");
+		await terminal.waitForRender();
+
+		assert.deepStrictEqual(copied, ["```js\n  function foo() {\n    return 42;\n  }\n```"]);
+		tui.stop();
+	});
+
+	it("copies soft-wrapped list items preserving bullet and without continuation indentation", async () => {
+		const terminal = new RecordingTerminal(25, 6);
+		const copied: string[] = [];
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			copySelection: async (text) => {
+				copied.push(text);
+				return true;
+			},
+		});
+		tui.addChild(
+			new Markdown("- First item that is long enough to wrap.\n- Second item.", 0, 0, defaultMarkdownTheme),
+		);
+		tui.start();
+		await terminal.waitForRender();
+
+		terminal.sendInput("\x1b[<0;1;1M");
+		terminal.sendInput("\x1b[<32;25;3M");
+		terminal.sendInput("\x1b[<0;25;3m");
+		await terminal.waitForRender();
+
+		assert.deepStrictEqual(copied, ["- First item that is long enough to wrap.\n- Second item."]);
 		tui.stop();
 	});
 

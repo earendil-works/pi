@@ -167,7 +167,7 @@ export class SettingsList implements Component {
 		const selectedItem = displayItems[this.selectedIndex];
 		if (selectedItem?.description) {
 			lines.push("");
-			const wrappedDesc = wrapTextWithAnsi(selectedItem.description, width - 4);
+			const wrappedDesc = wrapTextWithAnsi(selectedItem.description, width - 4, { softWrapMarkers: true });
 			for (const line of wrappedDesc) {
 				lines.push(this.theme.description(`  ${line}`));
 			}

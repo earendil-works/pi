@@ -43,6 +43,8 @@ import {
 	getGraphemeCellRange,
 	getOsc8LinkAtColumn,
 	getWordSegmenter,
+	SOFT_WRAP_BREAK_MARKER,
+	SOFT_WRAP_SPACE_MARKER,
 	sliceByColumn,
 	stripTerminalSequences,
 	visibleWidth,
@@ -1070,17 +1072,35 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 			if (!box?.scrollContentLines) return;
 			sourceLines = box.scrollContentLines;
 		}
-		const lines: string[] = [];
+		let text = "";
+		let previousSoftWrap: "space" | "break" | undefined;
 		for (let row = selection.start.row; row <= selection.end.row; row++) {
 			const line = sourceLines[row] ?? "";
 			const columns = this.getSelectionColumns(line, row, selection);
-			lines.push(
-				stripTerminalSequences(
-					sliceByColumn(line, columns.start, Math.max(0, columns.end - columns.start), true),
-				).trimEnd(),
-			);
+			const sliced = sliceByColumn(line, columns.start, Math.max(0, columns.end - columns.start), true);
+			let extracted = stripTerminalSequences(sliced).trimEnd();
+			if (previousSoftWrap) {
+				extracted = extracted.trimStart();
+			}
+			if (row === selection.start.row) {
+				text = extracted;
+			} else if (previousSoftWrap === "space") {
+				text += (text.length > 0 && extracted.length > 0 ? " " : "") + extracted;
+			} else if (previousSoftWrap === "break") {
+				text += extracted;
+			} else {
+				text += `\n${extracted}`;
+			}
+			if (row < selection.end.row) {
+				if (line.includes(SOFT_WRAP_SPACE_MARKER)) {
+					previousSoftWrap = "space";
+				} else if (line.includes(SOFT_WRAP_BREAK_MARKER)) {
+					previousSoftWrap = "break";
+				} else {
+					previousSoftWrap = undefined;
+				}
+			}
 		}
-		const text = lines.join("\n");
 		if (text.length === 0) return;
 		// Prefer an injected clipboard implementation (native clipboard + platform tools with a
 		// verified success path) when the host app provides one. A bare OSC 52 write can show

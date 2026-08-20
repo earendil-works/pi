@@ -818,6 +818,13 @@ function splitIntoTokensWithAnsi(text: string): string[] {
 	return tokens;
 }
 
+export const SOFT_WRAP_SPACE_MARKER = "\x1b_pi:ws\x07";
+export const SOFT_WRAP_BREAK_MARKER = "\x1b_pi:wb\x07";
+
+export interface WrapTextOptions {
+	softWrapMarkers?: boolean;
+}
+
 /**
  * Wrap text with ANSI codes preserved.
  *
@@ -827,12 +834,15 @@ function splitIntoTokensWithAnsi(text: string): string[] {
  *
  * @param text - Text to wrap (may contain ANSI codes and newlines)
  * @param width - Maximum visible width per line
+ * @param options - Optional wrapping options (e.g. softWrapMarkers)
  * @returns Array of wrapped lines (NOT padded to width)
  */
-export function wrapTextWithAnsi(text: string, width: number): string[] {
+export function wrapTextWithAnsi(text: string, width: number, options?: WrapTextOptions): string[] {
 	if (!text) {
 		return [""];
 	}
+
+	const softWrapMarkers = options?.softWrapMarkers ?? false;
 
 	// Handle newlines by processing each line separately
 	// Track ANSI state across lines so styles carry over after literal newlines
@@ -843,7 +853,7 @@ export function wrapTextWithAnsi(text: string, width: number): string[] {
 	for (const inputLine of inputLines) {
 		// Prepend active ANSI codes from previous lines (except for first line)
 		const prefix = result.length > 0 ? tracker.getActiveCodes() : "";
-		const wrappedLines = wrapSingleLine(prefix + inputLine, width);
+		const wrappedLines = wrapSingleLine(prefix + inputLine, width, softWrapMarkers);
 		for (const wrappedLine of wrappedLines) {
 			result.push(wrappedLine);
 		}
@@ -854,7 +864,7 @@ export function wrapTextWithAnsi(text: string, width: number): string[] {
 	return result.length > 0 ? result : [""];
 }
 
-function wrapSingleLine(line: string, width: number): string[] {
+function wrapSingleLine(line: string, width: number, softWrapMarkers = false): string[] {
 	if (!line) {
 		return [""];
 	}
@@ -883,17 +893,17 @@ function wrapSingleLine(line: string, width: number): string[] {
 				if (lineEndReset) {
 					currentLine += lineEndReset;
 				}
-				wrapped.push(currentLine);
+				wrapped.push(currentLine + (softWrapMarkers ? SOFT_WRAP_SPACE_MARKER : ""));
 				currentLine = "";
 				currentVisibleLength = 0;
 			}
 
 			// Break long token - breakLongWord handles its own resets
-			const broken = breakLongWord(token, width, tracker);
+			const broken = breakLongWord(token, width, tracker, softWrapMarkers);
 			for (let i = 0; i < broken.length - 1; i++) {
 				wrapped.push(broken[i]!);
 			}
-			currentLine = broken[broken.length - 1];
+			currentLine = broken[broken.length - 1]!;
 			currentVisibleLength = visibleWidth(currentLine);
 			continue;
 		}
@@ -908,7 +918,7 @@ function wrapSingleLine(line: string, width: number): string[] {
 			if (lineEndReset) {
 				lineToWrap += lineEndReset;
 			}
-			wrapped.push(lineToWrap);
+			wrapped.push(lineToWrap + (softWrapMarkers ? SOFT_WRAP_SPACE_MARKER : ""));
 			if (isWhitespace) {
 				// Don't start new line with whitespace
 				currentLine = tracker.getActiveCodes();
@@ -951,7 +961,7 @@ export function isPunctuationChar(char: string): boolean {
 	return PUNCTUATION_REGEX.test(char);
 }
 
-function breakLongWord(word: string, width: number, tracker: AnsiCodeTracker): string[] {
+function breakLongWord(word: string, width: number, tracker: AnsiCodeTracker, softWrapMarkers = false): string[] {
 	const lines: string[] = [];
 	let currentLine = tracker.getActiveCodes();
 	let currentWidth = 0;
@@ -1003,7 +1013,7 @@ function breakLongWord(word: string, width: number, tracker: AnsiCodeTracker): s
 			if (lineEndReset) {
 				currentLine += lineEndReset;
 			}
-			lines.push(currentLine);
+			lines.push(currentLine + (softWrapMarkers ? SOFT_WRAP_BREAK_MARKER : ""));
 			currentLine = tracker.getActiveCodes();
 			currentWidth = 0;
 		}
