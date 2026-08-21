@@ -67,6 +67,45 @@ const MAX_CACHED_OFFSCREEN_KITTY_TRANSMISSION_BYTES = 32 * 1024 * 1024;
 const MAX_CACHED_OFFSCREEN_KITTY_DECODED_BYTES = 64 * 1024 * 1024;
 const DOUBLE_CLICK_INTERVAL_MS = 500;
 const wordSegmenter = getWordSegmenter();
+/**
+ * Separator runs that count as word constituents for double-click selection,
+ * mirroring how Intl.Segmenter keeps `_` and `.` inside words.
+ */
+const WORD_SEPARATOR_REGEX = /^[-/]+$/;
+
+interface WordRange {
+	start: number;
+	end: number;
+}
+
+/**
+ * Selection ranges (in columns) for double-click and word drags. Intl.Segmenter
+ * splits paths and kebab-case identifiers at `/` and `-`, so double-clicking
+ * `extensions/starline/fixed-editor/compositor.ts` would select one component.
+ * Merge separator runs into the surrounding word; every other non-word
+ * segment stays an individually selectable range.
+ */
+function getWordRanges(line: string): WordRange[] {
+	const ranges: WordRange[] = [];
+	let token: WordRange | undefined;
+	let start = 0;
+	for (const segment of wordSegmenter.segment(line)) {
+		const end = start + visibleWidth(segment.segment);
+		if (segment.isWordLike || WORD_SEPARATOR_REGEX.test(segment.segment)) {
+			if (token) token.end = end;
+			else token = { start, end };
+		} else {
+			if (token) {
+				ranges.push(token);
+				token = undefined;
+			}
+			ranges.push({ start, end });
+		}
+		start = end;
+	}
+	if (token) ranges.push(token);
+	return ranges;
+}
 
 interface CachedKittyImage {
 	transmissionGeneration: number;
@@ -832,16 +871,13 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 
 	private getWordSelection(point: SelectionPoint): SelectionRange | undefined {
 		const line = stripTerminalSequences(this.getSelectionSourceLine(point));
-		let start = 0;
-		for (const segment of wordSegmenter.segment(line)) {
-			const end = start + visibleWidth(segment.segment);
-			if (point.col >= start && point.col < end) {
+		for (const range of getWordRanges(line)) {
+			if (point.col >= range.start && point.col < range.end) {
 				return {
-					start: { ...point, col: start },
-					end: { ...point, col: end, boundary: true },
+					start: { ...point, col: range.start },
+					end: { ...point, col: range.end, boundary: true },
 				};
 			}
-			start = end;
 		}
 		return undefined;
 	}

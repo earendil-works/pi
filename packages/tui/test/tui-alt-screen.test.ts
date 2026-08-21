@@ -1056,6 +1056,60 @@ describe("TuiAltScreen", () => {
 		tui.stop();
 	});
 
+	it("selects whole paths and kebab-case identifiers on double click", async () => {
+		const terminal = new RecordingTerminal(80, 1);
+		const copied: string[] = [];
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			copySelection: async (text) => {
+				copied.push(text);
+				return true;
+			},
+		});
+		tui.addChild(new Text("see extensions/starline/fixed-editor/compositor.ts and @earendil-works/pi-tui", 0, 0));
+		tui.start();
+		await terminal.waitForRender();
+
+		// Double-click inside "compositor.ts" selects the whole path.
+		for (const kind of ["M", "m", "M", "m"]) terminal.sendInput(`\x1b[<0;45;1${kind}`);
+		await terminal.waitForRender();
+		assert.strictEqual(copied.at(-1), "extensions/starline/fixed-editor/compositor.ts");
+
+		// Double-click inside "pi-tui" selects the whole scoped package name.
+		for (const kind of ["M", "m", "M", "m"]) terminal.sendInput(`\x1b[<0;61;1${kind}`);
+		await terminal.waitForRender();
+		assert.strictEqual(copied.at(-1), "earendil-works/pi-tui");
+
+		tui.stop();
+	});
+
+	it("keeps spaces and other punctuation as double-click boundaries", async () => {
+		const terminal = new RecordingTerminal(40, 1);
+		const copied: string[] = [];
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			copySelection: async (text) => {
+				copied.push(text);
+				return true;
+			},
+		});
+		tui.addChild(new Text("hello world foo_bar file.ts v1.2.3", 0, 0));
+		tui.start();
+		await terminal.waitForRender();
+
+		for (const [column, expected] of [
+			[2, "hello"],
+			[8, "world"],
+			[14, "foo_bar"],
+			[21, "file.ts"],
+			[29, "v1.2.3"],
+		] as const) {
+			for (const kind of ["M", "m", "M", "m"]) terminal.sendInput(`\x1b[<0;${column};1${kind}`);
+			await terminal.waitForRender();
+			assert.strictEqual(copied.at(-1), expected);
+		}
+
+		tui.stop();
+	});
+
 	it("selects whole words on double click, extends word drags, and selects lines on triple click", async () => {
 		const terminal = new RecordingTerminal(20, 2);
 		const tui = new TuiAltScreen(terminal);
