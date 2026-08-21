@@ -855,9 +855,12 @@ function applyThinkingLevelMetadata(model: Model<any>): void {
 	) {
 		mergeThinkingLevelMap(model, { off: "none" });
 	}
-	// xAI models without verified effort options (e.g. grok-build-0.1) must not
-	// send the undocumented "none"/"minimal" efforts.
-	if (model.provider === "xai" && model.api === "openai-responses" && model.thinkingLevelMap === undefined) {
+	if (model.provider === "xai" && model.api === "openai-responses" && model.id === "grok-build-0.1") {
+		// Grok Build reasons at a fixed level and rejects explicit reasoning effort.
+		mergeThinkingLevelMap(model, { off: null, minimal: null, low: null, medium: null });
+	} else if (model.provider === "xai" && model.api === "openai-responses" && model.thinkingLevelMap === undefined) {
+		// xAI models without verified effort options must not send undocumented
+		// "none"/"minimal" efforts.
 		mergeThinkingLevelMap(model, { off: null, minimal: null });
 	}
 	if (supportsOpenAiXhigh(model.id)) {
@@ -1734,7 +1737,10 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					api: "openai-responses",
 					provider: "xai",
 					baseUrl: "https://api.x.ai/v1",
-					compat: { ...XAI_RESPONSES_COMPAT },
+					compat: {
+						...XAI_RESPONSES_COMPAT,
+						...(modelId === "grok-build-0.1" ? { supportsReasoningEffort: false } : {}),
+					},
 					reasoning: m.reasoning === true,
 					input: m.modalities?.input?.includes("image") ? ["text", "image"] : ["text"],
 					cost: {

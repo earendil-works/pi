@@ -68,6 +68,7 @@ function resolveCacheRetention(cacheRetention?: CacheRetention, env?: ProviderEn
 function getCompat(model: Model<"openai-responses">): Required<OpenAIResponsesCompat> {
 	return {
 		supportsDeveloperRole: model.compat?.supportsDeveloperRole ?? true,
+		supportsReasoningEffort: model.compat?.supportsReasoningEffort ?? true,
 		sessionAffinityFormat: model.compat?.sessionAffinityFormat ?? detectSessionAffinityFormat(model),
 		supportsLongCacheRetention: model.compat?.supportsLongCacheRetention ?? true,
 		supportsStrictMode: model.compat?.supportsStrictMode ?? false,
@@ -322,15 +323,21 @@ function buildParams(
 
 	if (model.reasoning) {
 		if (options?.reasoningEffort || options?.reasoningSummary) {
-			const effort = options?.reasoningEffort
-				? (model.thinkingLevelMap?.[options.reasoningEffort] ?? options.reasoningEffort)
-				: "medium";
+			const effort = (
+				options?.reasoningEffort
+					? (model.thinkingLevelMap?.[options.reasoningEffort] ?? options.reasoningEffort)
+					: "medium"
+			) as NonNullable<typeof params.reasoning>["effort"];
 			params.reasoning = {
-				effort: effort as NonNullable<typeof params.reasoning>["effort"],
+				...(compat.supportsReasoningEffort ? { effort } : {}),
 				summary: options?.reasoningSummary || "auto",
 			};
 			params.include = ["reasoning.encrypted_content"];
-		} else if (model.provider !== "github-copilot" && model.thinkingLevelMap?.off !== null) {
+		} else if (
+			compat.supportsReasoningEffort &&
+			model.provider !== "github-copilot" &&
+			model.thinkingLevelMap?.off !== null
+		) {
 			params.reasoning = {
 				effort: (model.thinkingLevelMap?.off ?? "none") as NonNullable<typeof params.reasoning>["effort"],
 			};

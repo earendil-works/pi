@@ -6,7 +6,7 @@ import { stream as streamOpenAIResponses } from "../src/api/openai-responses.ts"
 import { getSupportedThinkingLevels } from "../src/models.ts";
 import { XAI_MODELS } from "../src/providers/xai.models.ts";
 import { xaiProvider } from "../src/providers/xai.ts";
-import type { Context, Model } from "../src/types.ts";
+import type { Context, Model, SimpleStreamOptions } from "../src/types.ts";
 
 const PI_USER_AGENT = `pi (${platform()} ${release()}; ${arch()})`;
 
@@ -107,6 +107,28 @@ async function captureRequest(
 	return captured!;
 }
 
+async function captureSimpleRequest(
+	model: Model<"openai-responses">,
+	context: Context,
+	options: SimpleStreamOptions,
+): Promise<CapturedRequest> {
+	let captured: CapturedRequest | undefined;
+	vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+		const request = new Request(input, init);
+		captured = {
+			url: request.url,
+			headers: request.headers,
+			body: JSON.parse(await request.clone().text()) as Record<string, unknown>,
+		};
+		return completedResponse();
+	});
+
+	const result = await xaiProvider().streamSimple(model, context, options).result();
+	expect(result.stopReason, result.errorMessage).toBe("stop");
+	expect(captured).toBeDefined();
+	return captured!;
+}
+
 describe("xAI Responses provider", () => {
 	afterEach(() => {
 		vi.restoreAllMocks();
@@ -131,7 +153,7 @@ describe("xAI Responses provider", () => {
 		expect(getSupportedThinkingLevels(XAI_MODELS["grok-4.5"])).toEqual(["low", "medium", "high"]);
 		expect(getSupportedThinkingLevels(XAI_MODELS["grok-4.6"])).toEqual(["low", "medium", "high", "xhigh"]);
 		expect(getSupportedThinkingLevels(XAI_MODELS["grok-4.3"])).toEqual(["off", "low", "medium", "high"]);
-		expect(getSupportedThinkingLevels(XAI_MODELS["grok-build-0.1"])).toEqual(["low", "medium", "high"]);
+		expect(getSupportedThinkingLevels(XAI_MODELS["grok-build-0.1"])).toEqual(["high"]);
 	});
 
 	it("uses /responses with bearer auth and xAI-compatible request fields", async () => {
@@ -185,6 +207,36 @@ describe("xAI Responses provider", () => {
 			include: ["reasoning.encrypted_content"],
 		});
 		expect(captured.body).not.toHaveProperty("reasoning");
+	});
+
+	it("omits reasoning effort for Grok Build while requesting encrypted reasoning", async () => {
+		const captured = await captureSimpleRequest(
+			XAI_MODELS["grok-build-0.1"],
+			{ messages: [{ role: "user", content: "hello", timestamp: 1 }] },
+			{ apiKey: "xai-test-token", reasoning: "high" },
+		);
+
+		expect(captured.body).toMatchObject({
+			model: "grok-build-0.1",
+			reasoning: { summary: "auto" },
+			include: ["reasoning.encrypted_content"],
+		});
+		expect(captured.body).not.toHaveProperty("reasoning.effort");
+	});
+
+	it("omits the default reasoning effort when the Responses provider does not support it", async () => {
+		const model = {
+			...XAI_MODELS["grok-build-0.1"],
+			id: "grok-build-without-thinking-map",
+			thinkingLevelMap: undefined,
+		} satisfies Model<"openai-responses">;
+		const captured = await captureRequest(
+			model,
+			{ messages: [{ role: "user", content: "hello", timestamp: 1 }] },
+			{ apiKey: "xai-test-token" },
+		);
+
+		expect(captured.body).not.toHaveProperty("reasoning.effort");
 	});
 
 	it("uses /responses for Grok 4.6 with xhigh effort and encrypted reasoning", async () => {
