@@ -1,6 +1,6 @@
 import { mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
@@ -757,6 +757,154 @@ Extension prompt content`,
 			expect(loader.getThemes().themes.find((theme) => theme.name === "extension-theme")?.sourceInfo).toMatchObject(
 				extensionMetadata,
 			);
+		});
+	});
+
+	describe("excludeExtensions option", () => {
+		// Two auto-discovered user extensions, one per supported layout: `alpha.ts` (name is
+		// the file stem) and `beta/index.ts` (name is the directory).
+		const writeDiscoveredExtensions = () => {
+			const userExtDir = join(agentDir, "extensions");
+			const betaDir = join(userExtDir, "beta");
+			mkdirSync(betaDir, { recursive: true });
+			const alphaPath = join(userExtDir, "alpha.ts");
+			const betaPath = join(betaDir, "index.ts");
+			writeFileSync(alphaPath, "export default function() {}");
+			writeFileSync(betaPath, "export default function() {}");
+			return { alphaPath, betaPath };
+		};
+
+		const loadedPaths = (loader: DefaultResourceLoader) =>
+			loader.getExtensions().extensions.map((extension) => extension.path);
+
+		it("should exclude an auto-discovered extension by file stem", async () => {
+			const { alphaPath, betaPath } = writeDiscoveredExtensions();
+
+			const loader = new DefaultResourceLoader({ cwd, agentDir, excludeExtensions: ["alpha"] });
+			await loader.reload();
+
+			expect(loadedPaths(loader)).toEqual([betaPath]);
+			expect(loadedPaths(loader)).not.toContain(alphaPath);
+		});
+
+		it("should exclude an auto-discovered extension by directory name", async () => {
+			const { alphaPath } = writeDiscoveredExtensions();
+
+			const loader = new DefaultResourceLoader({ cwd, agentDir, excludeExtensions: ["beta"] });
+			await loader.reload();
+
+			expect(loadedPaths(loader)).toEqual([alphaPath]);
+		});
+
+		it("should match names case-insensitively", async () => {
+			const { betaPath } = writeDiscoveredExtensions();
+
+			const loader = new DefaultResourceLoader({ cwd, agentDir, excludeExtensions: ["ALPHA"] });
+			await loader.reload();
+
+			expect(loadedPaths(loader)).toEqual([betaPath]);
+		});
+
+		it("should exclude by absolute path", async () => {
+			const { alphaPath, betaPath } = writeDiscoveredExtensions();
+
+			const loader = new DefaultResourceLoader({ cwd, agentDir, excludeExtensions: [alphaPath] });
+			await loader.reload();
+
+			expect(loadedPaths(loader)).toEqual([betaPath]);
+		});
+
+		it("should exclude by path relative to cwd", async () => {
+			const { betaPath } = writeDiscoveredExtensions();
+			const relativeAlpha = relative(cwd, join(agentDir, "extensions", "alpha.ts"));
+
+			const loader = new DefaultResourceLoader({ cwd, agentDir, excludeExtensions: [relativeAlpha] });
+			await loader.reload();
+
+			expect(loadedPaths(loader)).toEqual([betaPath]);
+		});
+
+		it("should exclude an explicitly requested -e extension", async () => {
+			// An explicit exclusion is the more specific instruction, so it wins over -e.
+			const explicitPath = join(tempDir, "explicit.ts");
+			writeFileSync(explicitPath, "export default function() {}");
+
+			const loader = new DefaultResourceLoader({
+				cwd,
+				agentDir,
+				additionalExtensionPaths: [explicitPath],
+				excludeExtensions: ["explicit"],
+			});
+			await loader.reload();
+
+			expect(loadedPaths(loader)).toEqual([]);
+			expect(loader.getExtensions().errors).toEqual([]);
+		});
+
+		it("should also exclude from the pre-trust extension pass", async () => {
+			// loadProjectTrustExtensions() resolves extensions on its own path; a filter that
+			// only ran on the final pass would still let the excluded extension run its
+			// project_trust handler.
+			writeDiscoveredExtensions();
+			const betaPath = join(agentDir, "extensions", "beta", "index.ts");
+
+			const loader = new DefaultResourceLoader({ cwd, agentDir, excludeExtensions: ["alpha"] });
+			const preTrust = await loader.loadProjectTrustExtensions();
+
+			expect(preTrust.extensions.map((extension) => extension.path)).toEqual([betaPath]);
+		});
+
+		it("should warn once about an entry that matched nothing", async () => {
+			writeDiscoveredExtensions();
+			const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+
+			const loader = new DefaultResourceLoader({ cwd, agentDir, excludeExtensions: ["alpha", "typo"] });
+			await loader.reload();
+
+			const warnings = consoleError.mock.calls
+				.map(([message]) => String(message))
+				.filter((message) => message.includes("--exclude-extensions"));
+			expect(warnings).toHaveLength(1);
+			expect(warnings[0]).toContain("typo");
+			consoleError.mockRestore();
+		});
+
+		it("should still exclude an -e path when noExtensions is set", async () => {
+			const explicitPath = join(tempDir, "explicit.ts");
+			writeFileSync(explicitPath, "export default function() {}");
+
+			const loader = new DefaultResourceLoader({
+				cwd,
+				agentDir,
+				noExtensions: true,
+				additionalExtensionPaths: [explicitPath],
+				excludeExtensions: ["explicit"],
+			});
+			await loader.reload();
+
+			expect(loadedPaths(loader)).toEqual([]);
+		});
+
+		it("should be a no-op alongside noExtensions", async () => {
+			writeDiscoveredExtensions();
+			const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+
+			const loader = new DefaultResourceLoader({
+				cwd,
+				agentDir,
+				noExtensions: true,
+				excludeExtensions: ["alpha"],
+			});
+			await loader.reload();
+
+			expect(loadedPaths(loader)).toEqual([]);
+			// noExtensions already dropped alpha, so the unmatched warning would be noise.
+			expect(
+				consoleError.mock.calls
+					.map(([message]) => String(message))
+					.filter((message) => message.includes("--exclude-extensions")),
+			).toEqual([]);
+			consoleError.mockRestore();
 		});
 	});
 

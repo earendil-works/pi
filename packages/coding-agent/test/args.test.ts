@@ -244,6 +244,40 @@ describe("parseArgs", () => {
 		});
 	});
 
+	describe("--exclude-extensions flag", () => {
+		test("parses a single name", () => {
+			const result = parseArgs(["--exclude-extensions", "mcp"]);
+			expect(result.excludeExtensions).toEqual(["mcp"]);
+		});
+
+		test("parses -xe shorthand", () => {
+			const result = parseArgs(["-xe", "mcp"]);
+			expect(result.excludeExtensions).toEqual(["mcp"]);
+		});
+
+		test("parses multiple comma-separated names", () => {
+			const result = parseArgs(["--exclude-extensions", "subagents,mcp"]);
+			expect(result.excludeExtensions).toEqual(["subagents", "mcp"]);
+		});
+
+		test("trims whitespace and drops empty entries", () => {
+			const result = parseArgs(["--exclude-extensions", " subagents , , mcp ,"]);
+			expect(result.excludeExtensions).toEqual(["subagents", "mcp"]);
+		});
+
+		test("accepts paths as entries", () => {
+			const result = parseArgs(["--exclude-extensions", "./ext/mcp.ts,/abs/subagents/index.ts"]);
+			expect(result.excludeExtensions).toEqual(["./ext/mcp.ts", "/abs/subagents/index.ts"]);
+		});
+
+		test("parses alongside --no-extensions and -e", () => {
+			const result = parseArgs(["--no-extensions", "-e", "foo.ts", "-xe", "foo"]);
+			expect(result.noExtensions).toBe(true);
+			expect(result.extensions).toEqual(["foo.ts"]);
+			expect(result.excludeExtensions).toEqual(["foo"]);
+		});
+	});
+
 	describe("--skill flag", () => {
 		test("parses single --skill", () => {
 			const result = parseArgs(["--skill", "./skill-dir"]);

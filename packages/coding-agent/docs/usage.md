@@ -220,6 +220,7 @@ Built-in tools: `read`, `bash`, `edit`, `write`, `grep`, `find`, `ls`.
 | Option | Description |
 |--------|-------------|
 | `-e`, `--extension <source>` | Load an extension from path, npm, or git; repeatable |
+| `--exclude-extensions <list>`, `-xe <list>` | Skip specific extensions by name or path |
 | `--no-extensions` | Disable extension discovery |
 | `--skill <path>` | Load a skill; repeatable |
 | `--no-skills` | Disable skill discovery |
@@ -233,6 +234,13 @@ Combine `--no-*` with explicit flags to load exactly what you need, ignoring set
 
 ```bash
 pi --no-extensions -e ./my-extension.ts
+```
+
+Use `--exclude-extensions` when you want your normal extension set minus a few entries, rather than an all-or-nothing switch. An entry matches an extension's name (the file stem for `foo.ts`, the directory name for `foo/index.ts`, case-insensitive) or its path. It applies to auto-discovered extensions and to explicit `-e` paths, so an exclusion always wins over an inclusion. Entries that match nothing print a warning.
+
+```bash
+# Normal configuration, minus two extensions
+pi --exclude-extensions subagents,mcp
 ```
 
 ### Other Options
@@ -295,6 +303,9 @@ pi --tools read,grep,find,ls -p "Review the code"
 
 # Disable one extension or built-in tool while keeping the rest available
 pi --exclude-tools ask_question
+
+# Keep the normal extension set minus two extensions
+pi --exclude-extensions subagents,mcp
 ```
 
 ## Design Principles

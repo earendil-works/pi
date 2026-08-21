@@ -34,6 +34,7 @@ export interface Args {
 	noTools?: boolean;
 	noBuiltinTools?: boolean;
 	extensions?: string[];
+	excludeExtensions?: string[];
 	noExtensions?: boolean;
 	print?: boolean;
 	export?: string;
@@ -157,6 +158,11 @@ export function parseArgs(args: string[]): Args {
 		} else if ((arg === "--extension" || arg === "-e") && i + 1 < args.length) {
 			result.extensions = result.extensions ?? [];
 			result.extensions.push(args[++i]);
+		} else if ((arg === "--exclude-extensions" || arg === "-xe") && i + 1 < args.length) {
+			result.excludeExtensions = args[++i]
+				.split(",")
+				.map((s) => s.trim())
+				.filter((name) => name.length > 0);
 		} else if (arg === "--no-extensions" || arg === "-ne") {
 			result.noExtensions = true;
 		} else if (arg === "--skill" && i + 1 < args.length) {
@@ -291,6 +297,9 @@ ${chalk.bold("Options:")}
                                  Applies to built-in, extension, and custom tools
   --thinking <level>             Set thinking level: off, minimal, low, medium, high, xhigh, max
   --extension, -e <path>         Load an extension file (can be used multiple times)
+  --exclude-extensions, -xe <names>
+                                 Comma-separated denylist of extension names or paths to skip
+                                 Matches the file stem (foo.ts) or directory name (foo/index.ts)
   --no-extensions, -ne           Disable extension discovery (explicit -e paths still work)
   --skill <path>                 Load a skill file or directory (can be used multiple times)
   --no-skills, -ns               Disable skills discovery and loading
@@ -366,6 +375,9 @@ ${chalk.bold("Examples:")}
 
   # Disable one tool while keeping the rest available
   ${APP_NAME} --exclude-tools ask_question
+
+  # Keep the normal extension set minus two extensions
+  ${APP_NAME} --exclude-extensions subagents,mcp
 
   # Export a session file to HTML
   ${APP_NAME} --export ~/${CONFIG_DIR_NAME}/agent/sessions/--path--/session.jsonl

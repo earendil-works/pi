@@ -68,6 +68,17 @@ function resolvePromptInput(input: string | undefined, description: string): str
 	return input;
 }
 
+/**
+ * The name a user would type for an extension path: the file stem for `foo.ts`, the
+ * directory name for `foo/index.ts`. Used by --exclude-extensions so a denylist entry
+ * does not have to spell out an absolute path.
+ */
+function extensionName(extensionPath: string): string {
+	const base = basename(extensionPath);
+	const stem = base.replace(/\.[cm]?[jt]sx?$/, "");
+	return stem === "index" ? basename(dirname(extensionPath)) : stem;
+}
+
 function loadContextFileFromDir(dir: string): { path: string; content: string } | null {
 	const candidates = ["AGENTS.override.md", "AGENTS.md", "AGENTS.MD", "CLAUDE.md", "CLAUDE.MD"];
 	for (const filename of candidates) {
@@ -167,6 +178,8 @@ export interface DefaultResourceLoaderOptions {
 	additionalThemePaths?: string[];
 	extensionFactories?: InlineExtension[];
 	noExtensions?: boolean;
+	/** Extension names (file stem or directory name, case-insensitive) or paths to skip. */
+	excludeExtensions?: string[];
 	noSkills?: boolean;
 	noPromptTemplates?: boolean;
 	noThemes?: boolean;
@@ -205,6 +218,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 	private additionalThemePaths: string[];
 	private extensionFactories: InlineExtension[];
 	private noExtensions: boolean;
+	private excludeExtensions: string[];
 	private noSkills: boolean;
 	private noPromptTemplates: boolean;
 	private noThemes: boolean;
@@ -267,6 +281,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 		this.additionalThemePaths = options.additionalThemePaths ?? [];
 		this.extensionFactories = options.extensionFactories ?? [];
 		this.noExtensions = options.noExtensions ?? false;
+		this.excludeExtensions = options.excludeExtensions ?? [];
 		this.noSkills = options.noSkills ?? false;
 		this.noPromptTemplates = options.noPromptTemplates ?? false;
 		this.noThemes = options.noThemes ?? false;
@@ -449,9 +464,12 @@ export class DefaultResourceLoader implements ResourceLoader {
 		const cliEnabledPrompts = getEnabledPaths(cliExtensionPaths.prompts);
 		const cliEnabledThemes = getEnabledPaths(cliExtensionPaths.themes);
 
-		const extensionPaths = this.noExtensions
-			? cliEnabledExtensions
-			: this.mergePaths(cliEnabledExtensions, enabledExtensions);
+		const extensionPaths = this.applyExtensionExclusions(
+			this.noExtensions ? cliEnabledExtensions : this.mergePaths(cliEnabledExtensions, enabledExtensions),
+			// noExtensions already suppressed discovery, so an entry naming a discovered
+			// extension legitimately matches nothing. Warning there would be noise.
+			{ warnUnmatched: !this.noExtensions },
+		);
 
 		const extensionsResult = await this.loadFinalExtensionSet(extensionPaths, preTrustExtensions);
 		for (const p of this.additionalExtensionPaths) {
@@ -553,9 +571,10 @@ export class DefaultResourceLoader implements ResourceLoader {
 		});
 		const enabledExtensions = resolvedPaths.extensions.filter((r) => r.enabled).map((r) => r.path);
 		const cliEnabledExtensions = cliExtensionPaths.extensions.filter((r) => r.enabled).map((r) => r.path);
-		const extensionPaths = this.noExtensions
-			? cliEnabledExtensions
-			: this.mergePaths(cliEnabledExtensions, enabledExtensions);
+		const extensionPaths = this.applyExtensionExclusions(
+			this.noExtensions ? cliEnabledExtensions : this.mergePaths(cliEnabledExtensions, enabledExtensions),
+			{ warnUnmatched: false },
+		);
 		const extensionsResult = await loadExtensionsCached(extensionPaths, this.cwd, this.eventBus);
 		if (!options.includeInlineFactories) {
 			return extensionsResult;
@@ -841,6 +860,47 @@ export class DefaultResourceLoader implements ResourceLoader {
 			origin: "top-level",
 			baseDir: statSync(normalizedPath).isDirectory() ? normalizedPath : resolve(normalizedPath, ".."),
 		};
+	}
+
+	/**
+	 * Drop extension paths named by --exclude-extensions. An entry matches either the
+	 * extension's name (file stem, or directory name for `foo/index.ts`) case-insensitively,
+	 * or its path. Explicit -e paths are filtered too: an exclusion is the more specific
+	 * instruction, so it wins over an inclusion.
+	 *
+	 * Callers set `warnUnmatched` only when the extension set is the complete one, so a
+	 * pass that deliberately sees fewer extensions (the pre-trust pass, or `noExtensions`)
+	 * cannot warn about an entry that would have matched otherwise.
+	 */
+	private applyExtensionExclusions(extensionPaths: string[], options: { warnUnmatched: boolean }): string[] {
+		if (this.excludeExtensions.length === 0) {
+			return extensionPaths;
+		}
+
+		const matched = new Set<string>();
+		const kept = extensionPaths.filter((extensionPath) => {
+			const name = extensionName(extensionPath).toLowerCase();
+			const canonical = canonicalizePath(extensionPath);
+			const entry = this.excludeExtensions.find(
+				(candidate) =>
+					candidate.toLowerCase() === name || canonicalizePath(this.resolveResourcePath(candidate)) === canonical,
+			);
+			if (entry === undefined) {
+				return true;
+			}
+			matched.add(entry);
+			return false;
+		});
+
+		if (options.warnUnmatched) {
+			for (const entry of this.excludeExtensions) {
+				if (!matched.has(entry)) {
+					console.error(chalk.yellow(`Warning: --exclude-extensions matched no extension: ${entry}`));
+				}
+			}
+		}
+
+		return kept;
 	}
 
 	private mergePaths(primary: string[], additional: string[]): string[] {

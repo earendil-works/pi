@@ -32,6 +32,7 @@ See [examples/extensions/](../examples/extensions/) for working implementations.
 
 - [Quick Start](#quick-start)
 - [Extension Locations](#extension-locations)
+  - [Skipping Extensions](#skipping-extensions)
 - [Available Imports](#available-imports)
 - [Writing an Extension](#writing-an-extension)
   - [Extension Styles](#extension-styles)
@@ -133,6 +134,18 @@ Additional paths via `settings.json`:
   ]
 }
 ```
+
+### Skipping Extensions
+
+`--no-extensions` (`-ne`) disables discovery entirely. To keep your normal set minus a few entries, use `--exclude-extensions` (`-xe`) with a comma-separated list:
+
+```bash
+pi --exclude-extensions subagents,mcp
+```
+
+An entry matches an extension's name — the file stem for `foo.ts`, the directory name for `foo/index.ts`, case-insensitive — or its absolute or relative path. Exclusions apply to auto-discovered extensions and to explicit `-e` paths, so an exclusion always wins over an inclusion. An entry that matches nothing prints a warning rather than failing silently.
+
+This is useful when an extension spawns child pi processes: the child can inherit the user's real configuration while suppressing the spawning extension itself (so children do not spawn grandchildren) and any extension whose startup cost is not worth paying per child.
 
 To share extensions via npm or git as pi packages, see [packages.md](packages.md).
 

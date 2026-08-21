@@ -629,6 +629,14 @@ const { session } = await createAgentSession({ resourceLoader: loader });
 
 Extensions can register tools, subscribe to events, add commands, and more. See [extensions.md](extensions.md) for the full API.
 
+**Skipping extensions:** `noExtensions: true` disables discovery entirely. `excludeExtensions` keeps discovery on but drops named entries — the CLI `--exclude-extensions` flag. Each entry matches an extension's name (the file stem for `foo.ts`, the directory name for `foo/index.ts`, case-insensitive) or its path, and applies to `additionalExtensionPaths` as well as discovered ones.
+
+```typescript
+const loader = new DefaultResourceLoader({
+  excludeExtensions: ["subagents", "mcp"],
+});
+```
+
 **Named inline extensions:** By default, inline factories display as `<inline:1>`, `<inline:2>`, etc. in the startup Extensions list. To show a descriptive name instead, wrap the factory:
 
 ```typescript
