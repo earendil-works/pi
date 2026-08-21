@@ -5,6 +5,7 @@ import {
 	buildSessionContext,
 	type CompactionEntry,
 	type CustomEntry,
+	type CustomMessageEntry,
 	type ModelChangeEntry,
 	type SessionEntry,
 	type SessionMessageEntry,
@@ -58,12 +59,70 @@ function custom(id: string, parentId: string | null, customType: string, data?: 
 	return { type: "custom", id, parentId, timestamp: "2025-01-01T00:00:00Z", customType, data };
 }
 
+function customMessage(id: string, parentId: string | null, customType: string): CustomMessageEntry {
+	return {
+		type: "custom_message",
+		id,
+		parentId,
+		timestamp: "2025-01-01T00:00:00Z",
+		customType,
+		content: `notice: ${customType}`,
+		display: true,
+	};
+}
+
 function thinkingLevel(id: string, parentId: string | null, level: string): ThinkingLevelChangeEntry {
 	return { type: "thinking_level_change", id, parentId, timestamp: "2025-01-01T00:00:00Z", thinkingLevel: level };
 }
 
 function modelChange(id: string, parentId: string | null, provider: string, modelId: string): ModelChangeEntry {
 	return { type: "model_change", id, parentId, timestamp: "2025-01-01T00:00:00Z", provider, modelId };
+}
+
+function toolCallMsg(id: string, parentId: string | null, callIds: string[]): SessionMessageEntry {
+	return {
+		type: "message",
+		id,
+		parentId,
+		timestamp: "2025-01-01T00:00:00Z",
+		message: {
+			role: "assistant",
+			content: [
+				{ type: "text", text: "running tools" },
+				...callIds.map((callId) => ({ type: "toolCall" as const, id: callId, name: "bash", arguments: {} })),
+			],
+			api: "anthropic-messages",
+			provider: "anthropic",
+			model: "claude-test",
+			usage: {
+				input: 1,
+				output: 1,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 2,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			stopReason: "toolUse",
+			timestamp: 1,
+		},
+	};
+}
+
+function toolResultMsg(id: string, parentId: string | null, callId: string): SessionMessageEntry {
+	return {
+		type: "message",
+		id,
+		parentId,
+		timestamp: "2025-01-01T00:00:00Z",
+		message: {
+			role: "toolResult",
+			toolCallId: callId,
+			toolName: "bash",
+			content: [{ type: "text", text: "done" }],
+			isError: false,
+			timestamp: 1,
+		},
+	};
 }
 
 describe("buildSessionContext", () => {
@@ -300,6 +359,83 @@ describe("buildSessionContext", () => {
 			const ctx = buildSessionContext(entries, "2");
 			// Should only get the orphan since parent chain is broken
 			expect(ctx.messages).toHaveLength(1);
+		});
+	});
+
+	describe("tool result ordering", () => {
+		it("hoists tool results past interleaved custom entries", () => {
+			// Extensions can append custom entries between the assistant tool-call
+			// message and its results; flattening must keep the result adjacent to
+			// its tool_calls message or providers reject the sequence.
+			const entries: SessionEntry[] = [
+				msg("1", null, "user", "go"),
+				toolCallMsg("2", "1", ["call_X"]),
+				customMessage("3", "2", "notice"),
+				toolResultMsg("4", "3", "call_X"),
+				msg("5", "4", "user", "next"),
+			];
+			const ctx = buildSessionContext(entries);
+			expect(ctx.messages.map((m) => m.role)).toEqual(["user", "assistant", "toolResult", "custom", "user"]);
+			expect((ctx.messages[1] as any).content[1]).toMatchObject({ type: "toolCall", id: "call_X" });
+			expect((ctx.messages[2] as any).toolCallId).toBe("call_X");
+		});
+
+		it("drops tool results whose tool call is missing from context", () => {
+			const entries: SessionEntry[] = [
+				msg("1", null, "user", "go"),
+				toolResultMsg("2", "1", "call_GONE"),
+				msg("3", "2", "user", "next"),
+			];
+			const ctx = buildSessionContext(entries);
+			expect(ctx.messages.map((m) => m.role)).toEqual(["user", "user"]);
+		});
+
+		it("groups parallel tool results under their shared assistant message", () => {
+			const entries: SessionEntry[] = [
+				msg("1", null, "user", "go"),
+				toolCallMsg("2", "1", ["call_X", "call_Y"]),
+				customMessage("3", "2", "notice"),
+				toolResultMsg("4", "3", "call_X"),
+				customMessage("5", "4", "notice2"),
+				toolResultMsg("6", "5", "call_Y"),
+				msg("7", "6", "user", "next"),
+			];
+			const ctx = buildSessionContext(entries);
+			expect(ctx.messages.map((m) => m.role)).toEqual([
+				"user",
+				"assistant",
+				"toolResult",
+				"toolResult",
+				"custom",
+				"custom",
+				"user",
+			]);
+			expect((ctx.messages[2] as any).toolCallId).toBe("call_X");
+			expect((ctx.messages[3] as any).toolCallId).toBe("call_Y");
+		});
+
+		it("pairs results with the assistant that declared their tool call", () => {
+			const entries: SessionEntry[] = [
+				msg("1", null, "user", "go"),
+				toolCallMsg("2", "1", ["call_X"]),
+				toolCallMsg("3", "2", ["call_Y"]),
+				toolResultMsg("4", "3", "call_X"),
+				toolResultMsg("5", "4", "call_Y"),
+				msg("6", "5", "user", "next"),
+			];
+			const ctx = buildSessionContext(entries);
+			expect(ctx.messages.map((m) => m.role)).toEqual([
+				"user",
+				"assistant",
+				"toolResult",
+				"assistant",
+				"toolResult",
+				"user",
+			]);
+			expect((ctx.messages[1] as any).content[1]).toMatchObject({ type: "toolCall", id: "call_X" });
+			expect((ctx.messages[2] as any).toolCallId).toBe("call_X");
+			expect((ctx.messages[3] as any).content[1]).toMatchObject({ type: "toolCall", id: "call_Y" });
+			expect((ctx.messages[4] as any).toolCallId).toBe("call_Y");
 		});
 	});
 });

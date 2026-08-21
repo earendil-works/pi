@@ -1,5 +1,13 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import { type ImageContent, type Message, type TextContent, type Usage, uuidv7 } from "@earendil-works/pi-ai";
+import {
+	type AssistantMessage,
+	type ImageContent,
+	type Message,
+	type TextContent,
+	type ToolResultMessage,
+	type Usage,
+	uuidv7,
+} from "@earendil-works/pi-ai";
 import { randomUUID } from "crypto";
 import {
 	appendFileSync,
@@ -454,6 +462,57 @@ export function buildContextEntries(
 }
 
 /**
+ * Re-pair tool results with the assistant message that issued their tool calls.
+ *
+ * Session trees can chain custom entries (extension notices, etc.) between an
+ * assistant tool-call message and its results, because appends always chain to
+ * the current leaf. Flattening such a path emits user messages between the
+ * assistant message and its tool results, which providers reject with
+ * "Messages with role 'tool' must be a response to a preceding message with
+ * 'tool_calls'". Hoist each tool result directly after its owning assistant
+ * message, preserving result order; drop results whose tool call is not in the
+ * rebuilt context (e.g. compacted away or removed by session edits).
+ */
+export function normalizeToolResults(messages: AgentMessage[]): AgentMessage[] {
+	const ownerByCallId = new Map<string, AssistantMessage>();
+	for (const message of messages) {
+		if (message.role !== "assistant") continue;
+		for (const part of message.content) {
+			if (part.type === "toolCall") ownerByCallId.set(part.id, message);
+		}
+	}
+
+	const resultsByOwner = new Map<AssistantMessage, ToolResultMessage[]>();
+	const normalized: AgentMessage[] = [];
+	for (const message of messages) {
+		if (message.role === "toolResult") {
+			const owner = ownerByCallId.get(message.toolCallId);
+			if (!owner) continue;
+			const results = resultsByOwner.get(owner);
+			if (results) {
+				results.push(message);
+			} else {
+				resultsByOwner.set(owner, [message]);
+			}
+			continue;
+		}
+		normalized.push(message);
+	}
+
+	// Emit each owner's results right after it. Results may precede or follow
+	// their owner in the flattened input, so flush them in a second walk.
+	const result: AgentMessage[] = [];
+	for (const message of normalized) {
+		result.push(message);
+		if (message.role === "assistant") {
+			const results = resultsByOwner.get(message);
+			if (results) result.push(...results);
+		}
+	}
+	return result;
+}
+
+/**
  * Build the session context from entries using tree traversal.
  * If leafId is provided, walks from that entry to root.
  * Handles compaction and branch summaries along the path.
@@ -465,7 +524,9 @@ export function buildSessionContext(
 ): SessionContext {
 	const path = buildSessionPath(entries, leafId, byId);
 	const { thinkingLevel, model } = getSessionContextSettings(path);
-	const messages = buildContextEntries(entries, leafId, byId).flatMap(sessionEntryToContextMessages);
+	const messages = normalizeToolResults(
+		buildContextEntries(entries, leafId, byId).flatMap(sessionEntryToContextMessages),
+	);
 	return { messages, thinkingLevel, model };
 }
 

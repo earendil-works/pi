@@ -1,5 +1,5 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import type { AssistantMessage } from "@earendil-works/pi-ai";
+import type { AssistantMessage, ToolResultMessage } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 import { buildSessionContext } from "../../../src/harness/session/context.ts";
 import type { Entry } from "../../../src/harness/session/types.ts";
@@ -24,6 +24,28 @@ function assistantMessage(text: string): AssistantMessage {
 			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 		},
 		stopReason: "stop",
+		timestamp: 1,
+	};
+}
+
+function toolCallMessage(callIds: string[]): AssistantMessage {
+	return {
+		...assistantMessage("running tools"),
+		content: [
+			{ type: "text", text: "running tools" },
+			...callIds.map((callId) => ({ type: "toolCall" as const, id: callId, name: "bash", arguments: {} })),
+		],
+		stopReason: "toolUse",
+	};
+}
+
+function toolResultMessage(callId: string): ToolResultMessage {
+	return {
+		role: "toolResult",
+		toolCallId: callId,
+		toolName: "bash",
+		content: [{ type: "text", text: "done" }],
+		isError: false,
 		timestamp: 1,
 	};
 }
@@ -120,5 +142,47 @@ describe("v4 session context", () => {
 		});
 		expect(context.messages.map((message) => message.role)).toEqual(["user", "user"]);
 		expect(context.messages[1]).toMatchObject({ content: [{ type: "text", text: "note: project me" }] });
+	});
+
+	it("hoists tool results past projected custom entries", () => {
+		// Extensions can append custom entries between the assistant tool-call
+		// message and its results; flattening must keep the result adjacent to
+		// its tool_calls message or providers reject the sequence.
+		const entries: Entry[] = [
+			entry({ type: "message", id: "user", parentId: null, message: userMessage("go") }, 1),
+			entry({ type: "message", id: "assistant", parentId: "user", message: toolCallMessage(["call_X"]) }, 2),
+			entry({ type: "custom", id: "notice", parentId: "assistant", customType: "notice", data: "attention" }, 3),
+			entry({ type: "message", id: "result", parentId: "notice", message: toolResultMessage("call_X") }, 4),
+			entry({ type: "message", id: "next", parentId: "result", message: userMessage("next") }, 5),
+		];
+
+		const context = buildSessionContext(entries, {
+			entryProjectors: {
+				notice: (custom) => [userMessage(`notice: ${String(custom.data)}`)],
+			},
+		});
+		expect(context.messages.map((message) => message.role)).toEqual([
+			"user",
+			"assistant",
+			"toolResult",
+			"user",
+			"user",
+		]);
+		expect(context.messages[1]).toMatchObject({
+			content: expect.arrayContaining([expect.objectContaining({ type: "toolCall", id: "call_X" })]),
+		});
+		expect(context.messages[2]).toMatchObject({ toolCallId: "call_X" });
+		expect(context.messages[3]).toMatchObject({ content: [{ type: "text", text: "notice: attention" }] });
+	});
+
+	it("drops tool results whose tool call is missing from context", () => {
+		const entries: Entry[] = [
+			entry({ type: "message", id: "user", parentId: null, message: userMessage("go") }, 1),
+			entry({ type: "message", id: "result", parentId: "user", message: toolResultMessage("call_GONE") }, 2),
+			entry({ type: "message", id: "next", parentId: "result", message: userMessage("next") }, 3),
+		];
+
+		const context = buildSessionContext(entries);
+		expect(context.messages.map((message) => message.role)).toEqual(["user", "user"]);
 	});
 });
