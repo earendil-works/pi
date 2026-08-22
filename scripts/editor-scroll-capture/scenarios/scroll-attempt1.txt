@@ -1,0 +1,21 @@
+# Editor scroll repro attempts — real render pipeline (PTY)
+# Initial: 45-line generated text, cursor at end (bottom, scrolled)
+wait 0.8
+key end
+wait 0.3
+key up x10
+wait 0.3
+key f5
+wait 0.4
+key f8
+wait 0.4
+key f7
+wait 0.4
+key f6
+wait 0.4
+key up x3
+wait 0.3
+key down x3
+wait 0.3
+key ctrl+c
+wait 0.5
