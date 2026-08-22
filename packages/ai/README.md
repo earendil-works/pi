@@ -75,6 +75,7 @@ Unified LLM API with provider collections, automatic auth resolution, token and 
 - **Vercel AI Gateway**
 - **ZAI Coding Plan (Global)** (with separate China provider)
 - **MiniMax** (with separate China provider)
+- **MindsHub** (OpenAI-compatible gateway to Claude, GPT, Gemini, Kimi, DeepSeek, Qwen, GLM, Grok, and more under one key)
 - **Together AI**
 - **Baseten**
 - **Hugging Face**
@@ -435,6 +436,7 @@ Built-in providers resolve these env vars (Node.js; in browsers pass `apiKey` ex
 | ZAI Coding Plan (China) | `ZAI_CODING_CN_API_KEY` |
 | MiniMax (Global) | `MINIMAX_API_KEY` |
 | MiniMax (China) | `MINIMAX_CN_API_KEY` |
+| MindsHub | `MINDSHUB_API_KEY` |
 | Moonshot AI / Moonshot AI (China) | `MOONSHOT_API_KEY` |
 | Hugging Face | `HF_TOKEN` |
 | OpenCode Zen / OpenCode Go | `OPENCODE_API_KEY` |

@@ -55,6 +55,7 @@ export type KnownProvider =
 	| "mistral"
 	| "minimax"
 	| "minimax-cn"
+	| "mindshub"
 	| "moonshotai"
 	| "moonshotai-cn"
 	| "huggingface"
