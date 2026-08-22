@@ -6,6 +6,16 @@ import { visibleWidth } from "./utils.ts";
 
 const KITTY_SEQUENCE_PREFIX = "\x1b_G";
 
+// Autowrap control: with autowrap enabled, terminals commit the wrap when the
+// last column of a row is written (Windows ConPTY eagerly, xterm as pending
+// wrap). Relative cursor navigation between full-width lines (borders, editor
+// rows) then drifts by one row per full-width line, desyncing
+// hardwareCursorRow and shifting the rendered frame down on every repaint.
+// Disable autowrap around each render so `\r\n` row navigation is exact on
+// every terminal (same approach as tui-alt-screen).
+const DISABLE_AUTOWRAP = "\x1b[?7l";
+const ENABLE_AUTOWRAP = "\x1b[?7h";
+
 interface KittyImageHeader {
 	ids: number[];
 	rows: number;
@@ -209,7 +219,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
 		// Helper to clear scrollback and viewport and render all new lines
 		const fullRender = (clear: boolean): void => {
 			this.fullRedrawCount += 1;
-			let buffer = "\x1b[?2026h"; // Begin synchronized output
+			let buffer = "\x1b[?2026h" + DISABLE_AUTOWRAP; // Begin synchronized output, disable autowrap
 			if (clear) {
 				buffer += this.deleteKittyImages(this.previousKittyImageIds);
 				buffer += "\x1b[2J\x1b[H\x1b[3J"; // Clear screen, home, then clear scrollback
@@ -231,7 +241,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
 				}
 				buffer += line;
 			}
-			buffer += "\x1b[?2026l"; // End synchronized output
+			buffer += ENABLE_AUTOWRAP + "\x1b[?2026l"; // Re-enable autowrap, end synchronized output
 			this.terminal.write(buffer);
 			this.cursorRow = Math.max(0, newLines.length - 1);
 			this.hardwareCursorRow = this.cursorRow;
@@ -331,7 +341,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
 		// All changes are in deleted lines (nothing to render, just clear)
 		if (firstChanged >= newLines.length) {
 			if (this.previousLines.length > newLines.length) {
-				let buffer = "\x1b[?2026h";
+				let buffer = "\x1b[?2026h" + DISABLE_AUTOWRAP;
 				buffer += this.deleteChangedKittyImages(firstChanged, lastChanged);
 				// Move to end of new content (clamp to 0 for empty content)
 				const targetRow = Math.max(0, newLines.length - 1);
@@ -363,7 +373,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
 				if (moveBack > 0) {
 					buffer += `\x1b[${moveBack}A`;
 				}
-				buffer += "\x1b[?2026l";
+				buffer += ENABLE_AUTOWRAP + "\x1b[?2026l";
 				this.terminal.write(buffer);
 				this.cursorRow = targetRow;
 				this.hardwareCursorRow = targetRow;
@@ -387,7 +397,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
 
 		// Render from first changed line to end
 		// Build buffer with all updates wrapped in synchronized output
-		let buffer = "\x1b[?2026h"; // Begin synchronized output
+		let buffer = "\x1b[?2026h" + DISABLE_AUTOWRAP; // Begin synchronized output, disable autowrap
 		buffer += this.deleteChangedKittyImages(firstChanged, lastChanged);
 		const prevViewportBottom = prevViewportTop + height - 1;
 		const moveTargetRow = appendStart ? firstChanged - 1 : firstChanged;
@@ -494,7 +504,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
 			buffer += `\x1b[${extraLines}A`;
 		}
 
-		buffer += "\x1b[?2026l"; // End synchronized output
+		buffer += ENABLE_AUTOWRAP + "\x1b[?2026l"; // Re-enable autowrap, end synchronized output
 
 		if (process.env.PI_TUI_DEBUG === "1") {
 			const debugDir = "/tmp/tui";

@@ -830,3 +830,49 @@ describe("TUI differential rendering", () => {
 		tui.stop();
 	});
 });
+
+describe("TUI autowrap guard", () => {
+	it("disables and re-enables autowrap around every render (regression: ConPTY autowrap drift)", async () => {
+		// Windows ConPTY commits autowrap eagerly after writing the last column,
+		// while pi tracks the cursor without accounting for it. Without disabling
+		// autowrap around renders, relative `\r\n` navigation between full-width
+		// lines (e.g. the Editor's borders) drifts one row per line, shifting the
+		// frame down and hiding the cursor below the fold.
+		const terminal = new LoggingVirtualTerminal(40, 10);
+		const tui: TUI = new TuiMainScreen(terminal);
+		const component = new TestComponent();
+		// Full-width lines (borders) trigger the wrap on eager-wrap terminals.
+		component.lines = ["─".repeat(40), "editor line", "─".repeat(40)];
+		tui.addChild(component);
+		tui.start();
+		await terminal.waitForRender();
+
+		const firstRender = terminal.getWrites();
+		assert.ok(
+			firstRender.includes("\x1b[?2026h\x1b[?7l"),
+			"first render should disable autowrap after starting synchronized output",
+		);
+		assert.ok(
+			firstRender.includes("\x1b[?7h\x1b[?2026l"),
+			"first render should re-enable autowrap before ending synchronized output",
+		);
+
+		// Incremental renders must carry the same guard.
+		terminal.clearWrites();
+		component.lines = ["─".repeat(40), "editor line changed", "─".repeat(40)];
+		tui.requestRender();
+		await terminal.waitForRender();
+
+		const incremental = terminal.getWrites();
+		assert.ok(
+			incremental.includes("\x1b[?2026h\x1b[?7l"),
+			"incremental render should disable autowrap",
+		);
+		assert.ok(
+			incremental.includes("\x1b[?7h\x1b[?2026l"),
+			"incremental render should re-enable autowrap",
+		);
+
+		tui.stop();
+	});
+});
