@@ -27,7 +27,7 @@ async function resolveServerUrl(
 
 function modelIsSelectable(model: LlamaModelInfo): boolean {
 	// llama.cpp reports idle-slept models as "sleeping"; requests wake them automatically.
-	return model.status.value === "loaded" || model.status.value === "sleeping";
+	return model.status.value === "loaded" || model.status.value === "sleeping" || model.source !== "cache";
 }
 
 function toPiModel(model: LlamaModelInfo, serverUrl: string): Model<"openai-completions"> {
