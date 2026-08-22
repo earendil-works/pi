@@ -26,8 +26,15 @@ async function resolveServerUrl(
 }
 
 function modelIsSelectable(model: LlamaModelInfo): boolean {
-	// llama.cpp reports idle-slept models as "sleeping"; requests wake them automatically.
-	return model.status.value === "loaded" || model.status.value === "sleeping" || model.source !== "cache";
+	return (
+		model.status.value === "loaded" ||
+		// llama.cpp reports idle-slept models as "sleeping"; requests wake them automatically.
+		model.status.value === "sleeping" ||
+		// presets from --models-preset should always be available
+		model.source === "preset" ||
+		// llama-swap doesn't set "source", treat as presets
+		!model.source
+	);
 }
 
 function toPiModel(model: LlamaModelInfo, serverUrl: string): Model<"openai-completions"> {
