@@ -7,6 +7,7 @@ import type {
 	Context,
 	Model,
 	OpenAICompletionsCompat,
+	OpenAIResponsesCompat,
 } from "@earendil-works/pi-ai/compat";
 import { getApiProvider, getSupportedThinkingLevels } from "@earendil-works/pi-ai/compat";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
@@ -468,6 +469,50 @@ describe("ModelRegistry", () => {
 			expect(model?.thinkingLevelMap).toEqual({ minimal: null, high: "max" });
 			expect(compat?.supportsStrictMode).toBe(false);
 			expect(compat?.cacheControlFormat).toBe("anthropic");
+		});
+
+		test("accepts Responses system prompt format at provider and model levels", async () => {
+			writeRawModelsJson({
+				demo: {
+					baseUrl: "https://example.com/v1",
+					apiKey: "DEMO_KEY",
+					api: "openai-responses",
+					compat: {
+						systemPromptFormat: "instructions",
+					},
+					models: [
+						{
+							id: "provider-format-model",
+							reasoning: true,
+							input: ["text"],
+							cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+							contextWindow: 1000,
+							maxTokens: 100,
+						},
+						{
+							id: "model-format-model",
+							reasoning: true,
+							input: ["text"],
+							cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+							contextWindow: 1000,
+							maxTokens: 100,
+							compat: {
+								systemPromptFormat: "input",
+							},
+						},
+					],
+				},
+			});
+
+			const registry = await createModelRegistry(authStorage, modelsJsonPath);
+			const providerCompat = registry.find("demo", "provider-format-model")?.compat as
+				| OpenAIResponsesCompat
+				| undefined;
+			const modelCompat = registry.find("demo", "model-format-model")?.compat as OpenAIResponsesCompat | undefined;
+
+			expect(registry.getError()).toBeUndefined();
+			expect(providerCompat?.systemPromptFormat).toBe("instructions");
+			expect(modelCompat?.systemPromptFormat).toBe("input");
 		});
 
 		test("compat schema accepts chat template thinking configuration", async () => {

@@ -460,6 +460,7 @@ For providers with partial OpenAI compatibility, use the `compat` field.
 |-------|-------------|
 | `supportsStore` | Provider supports `store` field |
 | `supportsDeveloperRole` | Use `developer` vs `system` role |
+| `systemPromptFormat` | For `openai-responses`, serialize the system prompt as an `input` developer/system message (default) or in the top-level `instructions` field. |
 | `supportsReasoningEffort` | Support for `reasoning_effort` parameter |
 | `supportsUsageInStreaming` | Supports `stream_options: { include_usage: true }` (default: `true`) |
 | `supportsFinishReason` | Whether streamed responses include `finish_reason`. When `false`, pi infers `stop` or `toolUse` when the stream ends. Default: `true`. |
@@ -482,6 +483,26 @@ For providers with partial OpenAI compatibility, use the `compat` field.
 | `supportsLongCacheRetention` | Whether the provider accepts long cache retention when cache retention is `long`: `prompt_cache_retention: "24h"` for OpenAI prompt caching, or `cache_control.ttl: "1h"` when `cacheControlFormat` is `anthropic`. Default: `true`. |
 | `openRouterRouting` | OpenRouter provider routing preferences. This object is sent as-is in the `provider` field of the [OpenRouter API request](https://openrouter.ai/docs/guides/routing/provider-selection). |
 | `vercelGatewayRouting` | Vercel AI Gateway routing config for provider selection (`only`, `order`) |
+
+For an `openai-responses` proxy that expects the system prompt in the top-level `instructions` field:
+
+```json
+{
+  "providers": {
+    "responses-proxy": {
+      "baseUrl": "https://proxy.example.com/v1",
+      "apiKey": "$RESPONSES_PROXY_KEY",
+      "api": "openai-responses",
+      "compat": {
+        "systemPromptFormat": "instructions"
+      },
+      "models": [{ "id": "gpt-5.4" }]
+    }
+  }
+}
+```
+
+`systemPromptFormat` defaults to `input`. Setting it to `instructions` moves the dynamic system prompt instead of copying it, so the prompt is sent exactly once. Avoid also setting `samplingParams.instructions`: sampling parameters are merged last and will override the dynamic system prompt.
 
 `openrouter` uses `reasoning: { effort }`. `together` uses `reasoning: { enabled }` and also `reasoning_effort` when `supportsReasoningEffort` is enabled. `qwen` uses top-level `enable_thinking`. Use `qwen-chat-template` for local Qwen-compatible servers that require `chat_template_kwargs.enable_thinking` and `preserve_thinking`. Use `chat-template` for vLLM/Hugging Face chat templates that need configurable `chat_template_kwargs`, such as `chatTemplateKwargs: { "thinking": { "$var": "thinking.enabled" } }` for DeepSeek V3.x templates. Use `thinkingFormat: "baseten"` with `chatTemplateArgs` for providers that expose toggle controls through `chat_template_args` and optionally support top-level `reasoning_effort`.
 
