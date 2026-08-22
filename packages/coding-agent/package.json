@@ -9,19 +9,19 @@
 	"bin": {
 		"pi": "dist/bundle/cli.js"
 	},
-	"main": "./dist/bundle/index.js",
+	"main": "./dist/index.js",
 	"types": "./dist/index.d.ts",
 	"exports": {
 		".": {
 			"types": "./dist/index.d.ts",
-			"import": "./dist/bundle/index.js"
+			"import": "./dist/index.js"
 		},
 		"./rpc-entry": {
 			"import": "./dist/bundle/rpc-entry.js"
 		},
 		"./client": {
 			"types": "./dist/client/index.d.ts",
-			"import": "./dist/bundle/client.js"
+			"import": "./dist/client/index.js"
 		}
 	},
 	"files": [

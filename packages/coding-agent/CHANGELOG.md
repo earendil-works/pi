@@ -8,7 +8,7 @@
 
 ### Changed
 
-- Changed the Node.js distribution to load a bundled runtime and made legacy emitted module paths re-export its bindings, reducing startup filesystem reads without creating duplicate coding-agent module instances.
+- Changed the Node.js CLI and RPC entrypoints to load a bundled runtime, reducing startup filesystem reads while keeping the public library and legacy module paths on the modular runtime for normal dependency identity.
 - Changed session sharing to render clickable terminal links and Radius shares to display only the artifact's canonical URL.
 
 ### Fixed
