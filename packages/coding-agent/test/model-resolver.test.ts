@@ -748,6 +748,22 @@ describe("default model selection", () => {
 		expect(result.model?.id).toBe("openai/ghost-model");
 	});
 
+	test("findInitialModel surfaces the custom-model-id warning as fallbackMessage", async () => {
+		const registry = {
+			getModels: () => allModels,
+		} as unknown as Parameters<typeof findInitialModel>[0]["modelRuntime"];
+
+		const result = await findInitialModel({
+			cliProvider: "openrouter",
+			cliModel: "openrouter/openai/ghost-model",
+			scopedModels: [],
+			isContinuing: false,
+			modelRuntime: registry,
+		});
+
+		expect(result.fallbackMessage).toContain('Model "openai/ghost-model" not found for provider "openrouter"');
+	});
+
 	test("findInitialModel selects ai-gateway default when available", async () => {
 		const aiGatewayModel: Model<"anthropic-messages"> = {
 			id: "anthropic/claude-opus-4-6",

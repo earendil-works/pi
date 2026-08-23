@@ -220,6 +220,8 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		model = result.model;
 		if (!model) {
 			modelFallbackMessage = formatNoModelsAvailableMessage();
+		} else if (result.fallbackMessage) {
+			modelFallbackMessage = result.fallbackMessage;
 		} else if (modelFallbackMessage) {
 			modelFallbackMessage += `. Using ${model.provider}/${model.id}`;
 		}
