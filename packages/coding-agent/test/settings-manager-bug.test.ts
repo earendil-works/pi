@@ -144,4 +144,42 @@ describe("SettingsManager - External Edit Preservation", () => {
 		const savedProjectSettings = JSON.parse(readFileSync(projectSettingsPath, "utf-8"));
 		expect(savedProjectSettings.extensions).toEqual(["./in-memory-extension.ts"]);
 	});
+
+	it("should pick up concurrent default model edits when saving an unrelated setting", async () => {
+		const settingsPath = join(agentDir, "settings.json");
+
+		writeFileSync(
+			settingsPath,
+			JSON.stringify({
+				defaultProvider: "anthropic",
+				defaultModel: "claude-from-startup",
+			}),
+		);
+
+		const manager = SettingsManager.create(projectDir, agentDir);
+
+		// Another pi session persists a different default while this one runs.
+		writeFileSync(
+			settingsPath,
+			JSON.stringify(
+				{
+					defaultProvider: "openai",
+					defaultModel: "gpt-from-other-session",
+				},
+				null,
+				2,
+			),
+		);
+
+		manager.setTheme("light");
+		await manager.flush();
+
+		const savedSettings = JSON.parse(readFileSync(settingsPath, "utf-8"));
+		expect(savedSettings.defaultProvider).toBe("openai");
+		expect(savedSettings.defaultModel).toBe("gpt-from-other-session");
+		expect(savedSettings.theme).toBe("light");
+
+		expect(manager.getDefaultProvider()).toBe("openai");
+		expect(manager.getDefaultModel()).toBe("gpt-from-other-session");
+	});
 });

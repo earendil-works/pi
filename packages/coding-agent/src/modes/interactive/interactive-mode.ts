@@ -3378,6 +3378,13 @@ export class InteractiveMode {
 
 			case "agent_settled":
 				await this.checkShutdownRequested();
+				for (const { scope, path, error } of this.settingsManager.drainErrors()) {
+					this.showWarning(
+						path
+							? `Invalid settings file ${path}: ${error.message}`
+							: `Invalid ${scope} settings: ${error.message}`,
+					);
+				}
 				break;
 
 			case "compaction_start": {

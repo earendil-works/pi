@@ -2,11 +2,11 @@ import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { Transport } from "@earendil-works/pi-ai";
 import type { TuiMode as RendererTuiMode, ScrollViewScrollbar } from "@earendil-works/pi-tui";
 import { randomUUID } from "crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 import lockfile from "proper-lockfile";
 import { CONFIG_DIR_NAME, getAgentDir } from "../config.ts";
-import { normalizePath, resolvePath } from "../utils/paths.ts";
+import { getFileRevision, normalizePath, resolvePath } from "../utils/paths.ts";
 import { stripBom } from "../utils/text.ts";
 import { DEFAULT_HTTP_IDLE_TIMEOUT_MS, parseHttpIdleTimeoutMs } from "./http-dispatcher.ts";
 
@@ -265,7 +265,20 @@ export class FileSettingsStorage implements SettingsStorage {
 				if (!release) {
 					release = this.acquireLockSyncWithRetry(path);
 				}
-				writeFileSync(path, next, "utf-8");
+				// Write to a temp file in the same directory and rename so readers never
+				// observe a partially written settings file (rename is atomic on POSIX).
+				const tempPath = `${path}.${process.pid}.${Date.now()}.tmp`;
+				try {
+					writeFileSync(tempPath, next, "utf-8");
+					renameSync(tempPath, path);
+				} catch (error) {
+					try {
+						unlinkSync(tempPath);
+					} catch {
+						// Temp file already gone; nothing to clean up.
+					}
+					throw error;
+				}
 			}
 		} finally {
 			if (release) {
@@ -307,6 +320,7 @@ export class SettingsManager {
 	private writeQueue: Promise<void> = Promise.resolve();
 	private errors: SettingsError[];
 	private settingsPaths: SettingsPaths;
+	private fileRevisions: Partial<Record<SettingsScope, string | undefined>> = {};
 
 	private constructor(
 		storage: SettingsStorage,
@@ -327,6 +341,7 @@ export class SettingsManager {
 		this.errors = [...initialErrors];
 		this.settingsPaths = settingsPaths;
 		this.settings = deepMergeSettings(this.globalSettings, this.projectSettings);
+		this.syncFileRevisions();
 	}
 
 	/** Create a SettingsManager that loads from files */
@@ -513,6 +528,7 @@ export class SettingsManager {
 			this.recordError("project", projectLoad.error);
 		}
 		this.settings = deepMergeSettings(this.globalSettings, this.projectSettings);
+		this.fileRevisions.project = this.settingsPaths.project ? getFileRevision(this.settingsPaths.project) : undefined;
 	}
 
 	async reload(): Promise<void> {
@@ -541,6 +557,7 @@ export class SettingsManager {
 		}
 
 		this.settings = deepMergeSettings(this.globalSettings, this.projectSettings);
+		this.syncFileRevisions();
 	}
 
 	/** Apply additional overrides on top of current settings */
@@ -591,13 +608,13 @@ export class SettingsManager {
 		this.modifiedProjectNestedFields.clear();
 	}
 
-	private enqueueWrite(scope: SettingsScope, task: () => void): void {
+	private enqueueWrite(scope: SettingsScope, task: () => void | Promise<void>): void {
 		this.writeQueue = this.writeQueue
-			.then(() => {
+			.then(async () => {
 				if (scope === "project") {
 					this.assertProjectTrustedForWrite();
 				}
-				task();
+				await task();
 				this.clearModifiedScope(scope);
 			})
 			.catch((error) => {
@@ -611,6 +628,45 @@ export class SettingsManager {
 			snapshot.set(key, new Set(value));
 		}
 		return snapshot;
+	}
+
+	private syncFileRevisions(): void {
+		for (const scope of ["global", "project"] as const) {
+			const path = this.settingsPaths[scope];
+			this.fileRevisions[scope] = path ? getFileRevision(path) : undefined;
+		}
+	}
+
+	/**
+	 * Reload in-memory settings for a scope when the file changed on disk since we
+	 * last read or wrote it. Without this, a long-running session would merge its
+	 * stale snapshot over concurrent edits (e.g. another pi session changing
+	 * defaultProvider/defaultModel). External values win for unmodified fields;
+	 * fields explicitly modified in this session are merged on top by the caller.
+	 */
+	private reloadScopeIfChanged(scope: SettingsScope): void {
+		const path = this.settingsPaths[scope];
+		if (!path) return;
+		if (getFileRevision(path) === this.fileRevisions[scope]) return;
+
+		const load = SettingsManager.tryLoadFromStorage(
+			this.storage,
+			scope,
+			scope === "project" ? this.projectTrusted : true,
+		);
+		if (load.error) {
+			this.recordError(scope, load.error);
+			this.fileRevisions[scope] = getFileRevision(path);
+			return;
+		}
+		if (scope === "global") {
+			this.globalSettings = load.settings;
+			this.globalSettingsLoadError = null;
+		} else {
+			this.projectSettings = load.settings;
+			this.projectSettingsLoadError = null;
+		}
+		this.fileRevisions[scope] = getFileRevision(path);
 	}
 
 	private persistScopedSettings(
@@ -655,8 +711,11 @@ export class SettingsManager {
 		const modifiedFields = new Set(this.modifiedFields);
 		const modifiedNestedFields = this.cloneModifiedNestedFields(this.modifiedNestedFields);
 
-		this.enqueueWrite("global", () => {
+		this.enqueueWrite("global", async () => {
+			this.reloadScopeIfChanged("global");
 			this.persistScopedSettings("global", snapshotGlobalSettings, modifiedFields, modifiedNestedFields);
+			this.syncFileRevisions();
+			this.settings = deepMergeSettings(this.globalSettings, this.projectSettings);
 		});
 	}
 
@@ -672,8 +731,11 @@ export class SettingsManager {
 		const snapshotProjectSettings = structuredClone(this.projectSettings);
 		const modifiedFields = new Set(this.modifiedProjectFields);
 		const modifiedNestedFields = this.cloneModifiedNestedFields(this.modifiedProjectNestedFields);
-		this.enqueueWrite("project", () => {
+		this.enqueueWrite("project", async () => {
+			this.reloadScopeIfChanged("project");
 			this.persistScopedSettings("project", snapshotProjectSettings, modifiedFields, modifiedNestedFields);
+			this.syncFileRevisions();
+			this.settings = deepMergeSettings(this.globalSettings, this.projectSettings);
 		});
 	}
 
