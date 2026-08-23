@@ -10,6 +10,7 @@ import * as path from "node:path";
 import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { AuthEvent, AuthPrompt } from "@earendil-works/pi-ai";
 import type { AssistantMessage, ImageContent, Message, Model, Usage } from "@earendil-works/pi-ai/compat";
+import { DEFAULT_RADIUS_GATEWAY } from "@earendil-works/pi-ai/providers/radius-config";
 import type {
 	AutocompleteItem,
 	AutocompleteProvider,
@@ -45,6 +46,7 @@ import {
 } from "@earendil-works/pi-tui";
 import chalk from "chalk";
 import { spawn, spawnSync } from "child_process";
+import { getAuthCredential } from "../../cli/auth-command.ts";
 import {
 	APP_NAME,
 	APP_TITLE,
@@ -109,6 +111,7 @@ import { openBrowser } from "../../utils/open-browser.ts";
 import { getCwdRelativePath } from "../../utils/paths.ts";
 import { getPiUserAgent } from "../../utils/pi-user-agent.ts";
 import { killTrackedDetachedChildren } from "../../utils/shell.ts";
+import { loadAllHighlightLanguages } from "../../utils/syntax-highlight.ts";
 import { ensureTool, type ToolStatus } from "../../utils/tools-manager.ts";
 import { checkForNewPiVersion, type LatestPiRelease } from "../../utils/version-check.ts";
 import { ArminComponent } from "./components/armin.ts";
@@ -1049,6 +1052,14 @@ export class InteractiveMode {
 
 		// Initialize available provider count for footer display
 		await this.updateAvailableProviderCount();
+
+		// Flush the completed startup state before loading the remaining syntax grammars.
+		this.ui.renderNow();
+		void loadAllHighlightLanguages().then(() => {
+			if (!this.isInitialized) return;
+			this.ui.invalidate();
+			this.ui.requestRender();
+		});
 	}
 
 	/**
@@ -6081,27 +6092,115 @@ export class InteractiveMode {
 	}
 
 	private async handleShareCommand(): Promise<void> {
-		// Check if gh is available and logged in
+		// Radius artifacts natively support JSONL sessions. Gist fallback keeps the legacy HTML upload.
+		const jsonlFile = path.join(os.tmpdir(), "session.jsonl");
+		let htmlFile = null;
+
 		try {
-			const authResult = spawnSync("gh", ["auth", "status"], { encoding: "utf-8" });
-			if (authResult.status !== 0) {
-				this.showError("GitHub CLI is not logged in. Run 'gh auth login' first.");
+			try {
+				this.session.exportToJsonl(jsonlFile);
+			} catch (error: unknown) {
+				this.showError(`Failed to export session: ${error instanceof Error ? error.message : "Unknown error"}`);
 				return;
 			}
-		} catch {
-			this.showError("GitHub CLI (gh) is not installed. Install it from https://cli.github.com/");
-			return;
-		}
+			if (await this.tryShareViaRadius(jsonlFile)) return;
 
-		// Export to a temp file
-		const tmpFile = path.join(os.tmpdir(), "session.html");
+			try {
+				const authResult = spawnSync("gh", ["auth", "status"], { encoding: "utf-8" });
+				if (authResult.status !== 0) {
+					this.showError("GitHub CLI is not logged in. Run 'gh auth login' first.");
+					return;
+				}
+			} catch {
+				this.showError("GitHub CLI (gh) is not installed. Install it from https://cli.github.com/");
+				return;
+			}
+
+			try {
+				htmlFile = path.join(os.tmpdir(), "session.html");
+				await this.session.exportToHtml(htmlFile, { themeName: theme.name });
+			} catch (error: unknown) {
+				this.showError(`Failed to export session: ${error instanceof Error ? error.message : "Unknown error"}`);
+				return;
+			}
+			await this.shareViaGist(htmlFile);
+		} finally {
+			for (const tmpFile of [jsonlFile, htmlFile]) {
+				try {
+					if (tmpFile !== null) {
+						fs.unlinkSync(tmpFile);
+					}
+				} catch {
+					// Ignore cleanup errors
+				}
+			}
+		}
+	}
+
+	private async tryShareViaRadius(tmpFile: string): Promise<boolean> {
+		const provider = this.session.modelRuntime.getProvider("radius");
+		if (!provider) return false;
+
+		const gatewayUrl = DEFAULT_RADIUS_GATEWAY;
+
+		const token = getAuthCredential(
+			await this.session.modelRuntime.getAuth("radius", { minOAuthValidityMs: 5 * 60_000 }),
+		);
+		if (!token) return false;
+
+		const loader = new BorderedLoader(this.ui, theme, "Uploading to Radius...");
+		this.editorContainer.clear();
+		this.editorContainer.addChild(loader);
+		this.ui.setFocus(loader);
+		this.ui.requestRender();
+		loader.onAbort = () => {
+			this.restoreShareEditor(loader);
+			this.showStatus("Share cancelled");
+		};
+
 		try {
-			await this.session.exportToHtml(tmpFile, { themeName: theme.name });
+			const body = fs.readFileSync(tmpFile);
+			const url = new URL("/v1/artifacts", gatewayUrl);
+			url.searchParams.set("visibility", "organization");
+			url.searchParams.set("title", "Pi session");
+			const response = await fetch(url, {
+				method: "POST",
+				headers: {
+					Authorization: `Bearer ${token}`,
+					"Content-Type": "application/x-ndjson",
+					"Content-Length": String(body.byteLength),
+				},
+				body,
+				signal: loader.signal,
+			});
+			if (loader.signal.aborted) return true;
+			const json = (await response.json().catch(() => null)) as {
+				artifact?: { canonical_url: string };
+				error?: string;
+			} | null;
+			if (loader.signal.aborted) return true;
+			this.restoreShareEditor(loader);
+			if (!response.ok || !json?.artifact) {
+				this.showError(
+					`Failed to upload Radius artifact: ${json?.error || response.statusText || response.status}`,
+				);
+				return true;
+			}
+			const shareUrl = json.artifact.canonical_url;
+			this.showStatus(`Share URL: ${hyperlink(shareUrl, shareUrl)}`);
+			return true;
 		} catch (error: unknown) {
-			this.showError(`Failed to export session: ${error instanceof Error ? error.message : "Unknown error"}`);
-			return;
+			if (!loader.signal.aborted) {
+				this.restoreShareEditor(loader);
+				this.showError(
+					`Failed to upload Radius artifact: ${error instanceof Error ? error.message : "Unknown error"}`,
+				);
+			}
+			return true;
 		}
+	}
 
+	private async shareViaGist(tmpFile: string): Promise<void> {
 		// Show cancellable loader, replacing the editor
 		const loader = new BorderedLoader(this.ui, theme, "Creating gist...");
 		this.editorContainer.clear();
@@ -6109,24 +6208,12 @@ export class InteractiveMode {
 		this.ui.setFocus(loader);
 		this.ui.requestRender();
 
-		const restoreEditor = () => {
-			loader.dispose();
-			this.editorContainer.clear();
-			this.editorContainer.addChild(this.editor);
-			this.ui.setFocus(this.editor);
-			try {
-				fs.unlinkSync(tmpFile);
-			} catch {
-				// Ignore cleanup errors
-			}
-		};
-
 		// Create a secret gist asynchronously
 		let proc: ReturnType<typeof spawn> | null = null;
 
 		loader.onAbort = () => {
 			proc?.kill();
-			restoreEditor();
+			this.restoreShareEditor(loader);
 			this.showStatus("Share cancelled");
 		};
 
@@ -6146,7 +6233,7 @@ export class InteractiveMode {
 
 			if (loader.signal.aborted) return;
 
-			restoreEditor();
+			this.restoreShareEditor(loader);
 
 			if (result.code !== 0) {
 				const errorMsg = result.stderr?.trim() || "Unknown error";
@@ -6165,13 +6252,20 @@ export class InteractiveMode {
 
 			// Create the preview URL
 			const previewUrl = getShareViewerUrl(gistId);
-			this.showStatus(`Share URL: ${previewUrl}\nGist: ${gistUrl}`);
+			this.showStatus(`Share URL: ${hyperlink(previewUrl, previewUrl)}\nGist: ${hyperlink(gistUrl, gistUrl)}`);
 		} catch (error: unknown) {
 			if (!loader.signal.aborted) {
-				restoreEditor();
+				this.restoreShareEditor(loader);
 				this.showError(`Failed to create gist: ${error instanceof Error ? error.message : "Unknown error"}`);
 			}
 		}
+	}
+
+	private restoreShareEditor(loader: BorderedLoader): void {
+		loader.dispose();
+		this.editorContainer.clear();
+		this.editorContainer.addChild(this.editor);
+		this.ui.setFocus(this.editor);
 	}
 
 	private async handleCopyCommand(options: { flashConfirmation?: boolean } = {}): Promise<void> {

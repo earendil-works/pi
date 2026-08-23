@@ -1,9 +1,46 @@
 import { resetCapabilitiesCache, setCapabilities } from "@earendil-works/pi-tui";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { highlightCode, initTheme } from "../src/modes/interactive/theme/theme.ts";
-import { highlight, renderHighlightedHtml, supportsLanguage } from "../src/utils/syntax-highlight.ts";
+import {
+	highlight,
+	loadAllHighlightLanguages,
+	renderHighlightedHtml,
+	supportsLanguage,
+} from "../src/utils/syntax-highlight.ts";
+
+const eagerLanguages = [
+	"python",
+	"java",
+	"go",
+	"javascript",
+	"cpp",
+	"typescript",
+	"php",
+	"ruby",
+	"c",
+	"csharp",
+	"nix",
+	"bash",
+	"rust",
+	"scala",
+	"kotlin",
+	"swift",
+	"dart",
+	"groovy",
+	"perl",
+	"lua",
+];
+const eagerLanguagesLoadedAtStartup = eagerLanguages.every(supportsLanguage);
+const uncommonLanguageLoadedAtStartup = supportsLanguage("ada");
 
 describe("syntax highlight renderer", () => {
+	it("loads the twenty most common languages at startup and defers the rest", async () => {
+		expect(eagerLanguagesLoadedAtStartup).toBe(true);
+		expect(uncommonLanguageLoadedAtStartup).toBe(false);
+		await loadAllHighlightLanguages();
+		expect(supportsLanguage("ada")).toBe(true);
+	});
+
 	it("renders highlighted spans with the provided theme", () => {
 		const rendered = renderHighlightedHtml('<span class="hljs-keyword">const</span> value', {
 			keyword: (text) => `[keyword:${text}]`,

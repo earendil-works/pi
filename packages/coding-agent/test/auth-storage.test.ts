@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type CredentialStore, createModels, type Provider } from "@earendil-works/pi-ai";
@@ -137,6 +137,22 @@ describe("AuthStorage", () => {
 		await expect(second).resolves.toEqual({ type: "api_key", key: "new" });
 		expect(lockSpy).toHaveBeenCalledTimes(1);
 		expect(release).toHaveBeenCalledTimes(1);
+	});
+
+	test.skipIf(process.platform === "win32")("creates new auth files with owner-only permissions", () => {
+		AuthStorage.create(authJsonPath);
+
+		expect(statSync(authJsonPath).mode & 0o777).toBe(0o600);
+	});
+
+	test.skipIf(process.platform === "win32")("preserves the mode of an existing auth file", async () => {
+		writeAuthJson({ anthropic: { type: "api_key", key: "old" } });
+		chmodSync(authJsonPath, 0o660);
+		const storage = AuthStorage.create(authJsonPath);
+
+		await storage.modify("anthropic", async () => ({ type: "api_key", key: "new" }));
+
+		expect(statSync(authJsonPath).mode & 0o777).toBe(0o660);
 	});
 
 	test("modify persists a credential while preserving unrelated external edits", async () => {
