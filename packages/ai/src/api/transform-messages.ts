@@ -160,6 +160,14 @@ export function transformMessages<TApi extends Api>(
 	const result: Message[] = [];
 	let pendingToolCalls: ToolCall[] = [];
 	let existingToolResultIds = new Set<string>();
+	// Tool results belonging to skipped errored/aborted assistant messages must be
+	// dropped too, or providers that validate message order (e.g. Kimi) reject the
+	// request: "messages with role 'tool' must be a response to a preceding message
+	// with 'tool_calls'".
+	const droppedToolCallIds = new Set<string>();
+	// Synthetic "No result provided" results inserted below, tracked so they can be
+	// dropped when the real result arrives later (see dedupe pass at the end).
+	const syntheticToolCallIds = new Set<string>();
 	const insertSyntheticToolResults = () => {
 		if (pendingToolCalls.length > 0) {
 			for (const tc of pendingToolCalls) {
@@ -172,6 +180,7 @@ export function transformMessages<TApi extends Api>(
 						isError: true,
 						timestamp: Date.now(),
 					} as ToolResultMessage);
+					syntheticToolCallIds.add(tc.id);
 				}
 			}
 			pendingToolCalls = [];
@@ -193,6 +202,12 @@ export function transformMessages<TApi extends Api>(
 			// - The model should retry from the last valid state
 			const assistantMsg = msg as AssistantMessage;
 			if (assistantMsg.stopReason === "error" || assistantMsg.stopReason === "aborted") {
+				// Its tool results must not be replayed either: a `tool` message
+				// without a preceding assistant `tool_calls` message is rejected by
+				// providers that validate message order (e.g. Kimi).
+				for (const block of assistantMsg.content) {
+					if (block.type === "toolCall") droppedToolCallIds.add(block.id);
+				}
 				continue;
 			}
 
@@ -205,6 +220,7 @@ export function transformMessages<TApi extends Api>(
 
 			result.push(msg);
 		} else if (msg.role === "toolResult") {
+			if (droppedToolCallIds.has(msg.toolCallId)) continue;
 			existingToolResultIds.add(msg.toolCallId);
 			result.push(msg);
 		} else if (msg.role === "user") {
@@ -218,6 +234,62 @@ export function transformMessages<TApi extends Api>(
 
 	// If the conversation ends with unresolved tool calls, synthesize results now.
 	insertSyntheticToolResults();
+
+	// Dedupe tool results: a synthetic "No result provided" may have been inserted
+	// for a tool call whose real result arrives later (interrupted by a custom/user
+	// message). Duplicate tool_call_ids make strict providers (e.g. Kimi) reject the
+	// request with "Invalid request: tokenization failed".
+	{
+		const seen = new Set<string>();
+		for (let i = result.length - 1; i >= 0; i--) {
+			const msg = result[i];
+			if (msg.role !== "toolResult") continue;
+			if (seen.has(msg.toolCallId)) {
+				if (syntheticToolCallIds.has(msg.toolCallId)) result.splice(i, 1);
+				continue;
+			}
+			seen.add(msg.toolCallId);
+		}
+	}
+	// Normalize tool-result placement. Providers that validate message order
+	// (e.g. Kimi) reject requests where a `tool` message follows a `user` message
+	// instead of the assistant message that issued the tool call. Session history
+	// can interleave custom messages (e.g. background-task notifications) between
+	// an assistant tool call and its result. Move each assistant's tool results to
+	// immediately after it, before any interleaved user messages.
+	for (let i = 0; i < result.length; i++) {
+		const assistant = result[i];
+		if (assistant.role !== "assistant") continue;
+		const toolCallIds = new Set<string>(assistant.content.filter((b) => b.type === "toolCall").map((b) => b.id));
+		if (toolCallIds.size === 0) continue;
+		let k = i + 1;
+		let interrupted = false;
+		while (k < result.length) {
+			const next = result[k];
+			if (next.role === "toolResult" && toolCallIds.has(next.toolCallId)) {
+				k++;
+				continue;
+			}
+			if (next.role === "user") {
+				interrupted = true;
+				k++;
+				continue;
+			}
+			break;
+		}
+		if (!interrupted) {
+			i = k - 1;
+			continue;
+		}
+		const segment = result.splice(i + 1, k - (i + 1));
+		result.splice(
+			i + 1,
+			0,
+			...segment.filter((m): m is ToolResultMessage => m.role === "toolResult"),
+			...segment.filter((m) => m.role === "user"),
+		);
+		i = k - 1;
+	}
 
 	return result;
 }
