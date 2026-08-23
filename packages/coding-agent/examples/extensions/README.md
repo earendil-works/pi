@@ -2,6 +2,12 @@
 
 Example extensions for pi-coding-agent.
 
+## Pairing device (docs, not a runtime extension)
+
+| File | Description |
+|------|-------------|
+| `gbr-pair.md` | Pair a phone running **Build Remote Agent** (`gbr/1`) to this desktop `pi` session. Spectator via `gbr-agent` loopback `:8788` or `gbr-mcp`. Not affiliated with xAI or SpaceX. |
+
 ## Usage
 
 ```bash
