@@ -504,6 +504,49 @@ export const APP_TITLE: string = piConfigName ? APP_NAME : "π";
 export const CONFIG_DIR_NAME: string = pkg.piConfig?.configDir || ".pi";
 export const VERSION: string = pkg.version || "0.0.0";
 
+// =============================================================================
+// Development Build Detection
+// =============================================================================
+
+/**
+ * True when running from the source checkout (`src/`) rather than from a
+ * packaged `dist/` install (npm, bun binary).
+ *
+ * The source tree ships a `src/` directory inside the package root; packaged
+ * installs only carry `dist/`. This is the same signal used to pick theme and
+ * export-template directories for tsx runs.
+ */
+export function isDevSourceBuild(): boolean {
+	try {
+		return existsSync(join(getPackageDir(), "src"));
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * Name of the git branch the source checkout is on, when running a dev build.
+ *
+ * Prefers the `PI_DEV_BRANCH` env var (set by wrappers like `pi-test.sh` so no
+ * git subprocess is spawned during startup) and falls back to asking git about
+ * the package directory. Returns undefined for packaged builds or detached HEAD.
+ */
+export function getDevBranchName(): string | undefined {
+	const fromEnv = process.env.PI_DEV_BRANCH;
+	if (fromEnv) return fromEnv;
+	if (!isDevSourceBuild()) return undefined;
+	try {
+		const result = spawnProcessSync("git", ["-C", getPackageDir(), "branch", "--show-current"], {
+			encoding: "utf8",
+			stdio: ["ignore", "pipe", "ignore"],
+		});
+		const branch = result.stdout.trim();
+		return branch || undefined;
+	} catch {
+		return undefined;
+	}
+}
+
 // e.g., PI_CODING_AGENT_DIR or TAU_CODING_AGENT_DIR
 export const ENV_AGENT_DIR = `${APP_NAME.toUpperCase()}_CODING_AGENT_DIR`;
 export const ENV_SESSION_DIR = `${APP_NAME.toUpperCase()}_CODING_AGENT_SESSION_DIR`;

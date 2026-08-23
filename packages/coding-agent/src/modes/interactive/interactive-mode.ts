@@ -59,7 +59,9 @@ import {
 	getAgentDir,
 	getAuthPath,
 	getDebugLogPath,
+	getDevBranchName,
 	getDocsPath,
+	isDevSourceBuild,
 	VERSION,
 } from "../../config.ts";
 import { type AgentSession, type AgentSessionEvent, parseSkillBlock } from "../../core/agent-session.ts";
@@ -213,6 +215,17 @@ function isWorkingStatusEditor(editor: EditorComponent): editor is WorkingStatus
 
 function isExpandable(obj: unknown): obj is Expandable {
 	return typeof obj === "object" && obj !== null && "setExpanded" in obj && typeof obj.setExpanded === "function";
+}
+
+/**
+ * Render the version label for a dev (source checkout) build so it is unambiguous
+ * that this is not the released binary: yellow background, black text, blinking
+ * (SGR 5;30;43), with the current git branch when available.
+ */
+function formatLocalBuildVersion(version: string): string {
+	const branch = getDevBranchName();
+	const label = ` v${version} [LOCAL${branch ? `: ${branch}` : ""}] `;
+	return `\x1b[1;5;30;43m${label}\x1b[0m`;
 }
 
 class ExpandableText extends Text implements Expandable {
@@ -955,7 +968,10 @@ export class InteractiveMode {
 
 		// Add header with keybindings from config (unless silenced)
 		if (this.options.verbose || !this.settingsManager.getQuietStartup()) {
-			const logo = theme.bold(theme.fg("accent", APP_NAME)) + theme.fg("dim", ` v${this.version}`);
+			const versionPart = isDevSourceBuild()
+				? formatLocalBuildVersion(this.version)
+				: theme.fg("dim", ` v${this.version}`);
+			const logo = theme.bold(theme.fg("accent", APP_NAME)) + versionPart;
 
 			// Build startup instructions using keybinding hint helpers
 			const hint = (keybinding: AppKeybinding, description: string) => keyHint(keybinding, description);
