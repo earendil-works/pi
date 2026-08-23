@@ -1,4 +1,3 @@
-import { createInterface } from "node:readline";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Text } from "@earendil-works/pi-tui";
 import { spawn } from "child_process";
@@ -6,6 +5,7 @@ import path from "path";
 import { type Static, Type } from "typebox";
 import { keyHint } from "../../modes/interactive/components/keybinding-hints.ts";
 import type { Theme } from "../../modes/interactive/theme/theme.ts";
+import { attachCappedLineReader } from "../../utils/capped-line-reader.ts";
 import { ensureTool } from "../../utils/tools-manager.ts";
 import type { ToolDefinition, ToolRenderResultOptions } from "../extensions/types.ts";
 import { pathExists, resolveToCwd } from "./path-utils.ts";
@@ -267,9 +267,18 @@ export function createFindToolDefinition(
 						args.push("--", effectivePattern, searchPath);
 
 						const child = spawn(fdPath, args, { stdio: ["ignore", "pipe", "pipe"] });
-						const rl = createInterface({ input: child.stdout });
 						let stderr = "";
 						const lines: string[] = [];
+						// Not readline: it grows one line with an unbounded append, so an
+						// oversized line throws in the parent's `data` handler rather than failing
+						// the tool, and it splits on U+2028/U+2029, which are legal in a filename.
+						const reader = attachCappedLineReader(child.stdout, {
+							onLine: (line) => {
+								lines.push(line);
+							},
+							// A path past the cap is not a path; dropping it loses one result.
+							onOversize: () => {},
+						});
 
 						stopChild = () => {
 							if (!child.killed) {
@@ -278,15 +287,11 @@ export function createFindToolDefinition(
 						};
 
 						const cleanup = () => {
-							rl.close();
+							reader.detach();
 						};
 
 						child.stderr?.on("data", (chunk) => {
 							stderr += chunk.toString();
-						});
-
-						rl.on("line", (line) => {
-							lines.push(line);
 						});
 
 						child.on("error", (error) => {

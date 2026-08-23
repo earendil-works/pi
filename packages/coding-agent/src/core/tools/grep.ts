@@ -1,5 +1,4 @@
 import { readFile as fsReadFile, stat as fsStat } from "node:fs/promises";
-import { createInterface } from "node:readline";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Text } from "@earendil-works/pi-tui";
 import { spawn } from "child_process";
@@ -7,6 +6,7 @@ import path from "path";
 import { type Static, Type } from "typebox";
 import { keyHint } from "../../modes/interactive/components/keybinding-hints.ts";
 import type { Theme } from "../../modes/interactive/theme/theme.ts";
+import { attachCappedLineReader } from "../../utils/capped-line-reader.ts";
 import { ensureTool } from "../../utils/tools-manager.ts";
 import type { ToolDefinition, ToolRenderResultOptions } from "../extensions/types.ts";
 import { resolveToCwd } from "./path-utils.ts";
@@ -47,6 +47,8 @@ export interface GrepToolDetails {
 	truncation?: TruncationResult;
 	matchLimitReached?: number;
 	linesTruncated?: boolean;
+	/** Number of `rg --json` events discarded for exceeding the reader's line cap. */
+	eventsDiscarded?: number;
 }
 
 /**
@@ -68,6 +70,12 @@ const defaultGrepOperations: GrepOperations = {
 export interface GrepToolOptions {
 	/** Custom operations for grep. Default: local filesystem plus ripgrep */
 	operations?: GrepOperations;
+	/**
+	 * Max code units held for one `rg --json` event. Default
+	 * `DEFAULT_LINE_CAP_CHARS`. Lowered by tests so an oversized event is reachable
+	 * without writing half a gigabyte.
+	 */
+	lineCapChars?: number;
 }
 
 function formatGrepCall(
@@ -115,11 +123,13 @@ function formatGrepResult(
 	const matchLimit = result.details?.matchLimitReached;
 	const truncation = result.details?.truncation;
 	const linesTruncated = result.details?.linesTruncated;
-	if (matchLimit || truncation?.truncated || linesTruncated) {
+	const eventsDiscarded = result.details?.eventsDiscarded;
+	if (matchLimit || truncation?.truncated || linesTruncated || eventsDiscarded) {
 		const warnings: string[] = [];
 		if (matchLimit) warnings.push(`${matchLimit} matches limit`);
 		if (truncation?.truncated) warnings.push(`${formatSize(truncation.maxBytes ?? DEFAULT_MAX_BYTES)} limit`);
 		if (linesTruncated) warnings.push("some lines truncated");
+		if (eventsDiscarded) warnings.push(`${eventsDiscarded} oversized matches dropped`);
 		text += `\n${theme.fg("warning", `[Truncated: ${warnings.join(", ")}]`)}`;
 	}
 	return text;
@@ -224,17 +234,18 @@ export function createGrepToolDefinition(
 						args.push("--", pattern, searchPath);
 
 						const child = spawn(rgPath, args, { stdio: ["ignore", "pipe", "pipe"] });
-						const rl = createInterface({ input: child.stdout });
 						let stderr = "";
 						let matchCount = 0;
 						let matchLimitReached = false;
 						let linesTruncated = false;
 						let aborted = false;
 						let killedDueToLimit = false;
+						let eventsDiscarded = 0;
+						const discardedPaths = new Set<string>();
 						const outputLines: string[] = [];
 
 						const cleanup = () => {
-							rl.close();
+							reader.detach();
 							signal?.removeEventListener("abort", onAbort);
 						};
 						const stopChild = (dueToLimit = false) => {
@@ -274,26 +285,49 @@ export function createGrepToolDefinition(
 
 						// Collect matches during streaming, then format them after rg exits.
 						const matches: Array<{ filePath: string; lineNumber: number; lineText?: string }> = [];
-						rl.on("line", (line) => {
-							if (!line.trim() || matchCount >= effectiveLimit) return;
-							let event: any;
-							try {
-								event = JSON.parse(line);
-							} catch {
-								return;
-							}
-							if (event.type === "match") {
-								matchCount++;
-								const filePath = event.data?.path?.text;
-								const lineNumber = event.data?.line_number;
-								const lineText = event.data?.lines?.text;
-								if (filePath && typeof lineNumber === "number")
-									matches.push({ filePath, lineNumber, lineText });
-								if (matchCount >= effectiveLimit) {
-									matchLimitReached = true;
-									stopChild(true);
+						// `rg --json` puts the whole matched line, and one entry per submatch, in a
+						// single event, so one match in a minified bundle is one enormous line and
+						// `--max-columns` cannot bound it - ripgrep documents that flag as having no
+						// effect under `--json`. The cap therefore belongs at the reader, which
+						// discards the event instead of letting the parent process die holding it.
+						const reader = attachCappedLineReader(child.stdout, {
+							capChars: options?.lineCapChars,
+							onLine: (line) => {
+								if (!line.trim() || matchCount >= effectiveLimit) return;
+								let event: any;
+								try {
+									event = JSON.parse(line);
+								} catch {
+									return;
 								}
-							}
+								if (event.type === "match") {
+									matchCount++;
+									const filePath = event.data?.path?.text;
+									const lineNumber = event.data?.line_number;
+									const lineText = event.data?.lines?.text;
+									if (filePath && typeof lineNumber === "number")
+										matches.push({ filePath, lineNumber, lineText });
+									if (matchCount >= effectiveLimit) {
+										matchLimitReached = true;
+										stopChild(true);
+									}
+								}
+							},
+							onOversize: ({ prefix }) => {
+								// A discarded event is a lost match, not a lost byte: report it rather
+								// than return output that reads as complete. The path is sniffed from
+								// the retained head, which is truncated JSON, so it names the file only
+								// when it survived - `rg` emits `path` first.
+								if (!prefix.includes('"type":"match"')) return;
+								eventsDiscarded++;
+								const sniffed = /"path":\{"text":"((?:[^"\\]|\\.)*)"/.exec(prefix);
+								if (!sniffed) return;
+								try {
+									discardedPaths.add(formatPath(JSON.parse(`"${sniffed[1]}"`) as string));
+								} catch {
+									// Undecodable capture: counted, unnamed.
+								}
+							},
 						});
 
 						child.on("error", (error) => {
@@ -311,7 +345,7 @@ export function createGrepToolDefinition(
 								settle(() => reject(new Error(errorMsg)));
 								return;
 							}
-							if (matchCount === 0) {
+							if (matchCount === 0 && eventsDiscarded === 0) {
 								settle(() =>
 									resolve({ content: [{ type: "text", text: "No matches found" }], details: undefined }),
 								);
@@ -357,6 +391,13 @@ export function createGrepToolDefinition(
 									`Some lines truncated to ${GREP_MAX_LINE_LENGTH} chars. Use read tool to see full lines`,
 								);
 								details.linesTruncated = true;
+							}
+							if (eventsDiscarded > 0) {
+								const where = discardedPaths.size > 0 ? ` in ${[...discardedPaths].sort().join(", ")}` : "";
+								notices.push(
+									`${eventsDiscarded} match${eventsDiscarded === 1 ? "" : "es"} MISSING${where}: line too large to read. Use read tool on that file`,
+								);
+								details.eventsDiscarded = eventsDiscarded;
 							}
 							if (notices.length > 0) output += `\n\n[${notices.join(". ")}]`;
 							settle(() =>
