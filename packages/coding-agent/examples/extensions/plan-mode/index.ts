@@ -214,7 +214,9 @@ Restrictions:
 Ask clarifying questions using the questionnaire tool.
 Use brave-search skill via bash for web research.
 
-Create a detailed numbered plan under a "Plan:" header:
+IMPORTANT: Only output a "Plan:" section when the user explicitly asks you to create a plan. Never use "Plan:" format for demonstrations, examples, explanations of how plan mode works, or quoting previous messages - doing so will be mistakenly extracted as a real plan.
+
+When the user does ask for a plan, create a detailed numbered plan under a "Plan:" header:
 
 Plan:
 1. First step description

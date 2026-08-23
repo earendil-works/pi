@@ -19,7 +19,7 @@ const DESTRUCTIVE_PATTERNS = [
 	/\btruncate\b/i,
 	/\bdd\b/i,
 	/\bshred\b/i,
-	/(^|[^<])>(?!>)/,
+	/(^|[^<])>(?!>)(?!\s*\/dev\/null)/,
 	/>>/,
 	/\bnpm\s+(install|uninstall|update|ci|link|publish)/i,
 	/\byarn\s+(add|remove|install|publish)/i,
@@ -37,7 +37,7 @@ const DESTRUCTIVE_PATTERNS = [
 	/\bshutdown\b/i,
 	/\bsystemctl\s+(start|stop|restart|enable|disable)/i,
 	/\bservice\s+\S+\s+(start|stop|restart)/i,
-	/\b(vim?|nano|emacs|code|subl)\b/i,
+	/(^|[;&|]\s*)(vim?|nano|emacs|code|subl)(\s|$)/i,
 ];
 
 // Safe read-only commands allowed in plan mode
