@@ -134,7 +134,7 @@ Nothing in the table can cancel a quit once a gesture has been accepted.
 
 ## Open questions and verification
 
-- The quit path signals the abort of a turn in progress and exits without waiting for it to settle, so the partial assistant message and the `Operation aborted` tool results may not reach the session file. [The turn](../foundations/the-turn.md) and [input](../foundations/input.md) state that they are written. Not confirmed by hand; if they are lost, it may be worth treating as a bug rather than documenting.
+- The quit path signals the abort of a turn in progress and exits without waiting for it to settle, so the partial assistant message and the `Operation aborted` tool results may not reach the session file. [The turn](../foundations/the-turn.md) and [input](../foundations/input.md) say the same. Not confirmed by hand; if they are lost, it may be worth treating as a bug rather than documenting.
 - `/exit` being sent to the model as text is a consequence of the unknown-slash-command rule and is probably not what anyone typing it wants. May be worth treating as a bug rather than documenting.
 - Whether the terminal title is reset on quit was not determined; no reset was found in the shutdown path, so the title probably stays `π - <dir>` until the shell or the next program changes it.
 - The exact look of the frozen frame after the cursor is moved below it (whether the editor border and footer remain, whether the status line's blank rows remain) was read from the render code and not observed.

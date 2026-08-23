@@ -157,7 +157,7 @@ A failure to load the chosen session that is not the missing-directory case ends
 - A session that has no prompt yet but does have a response (an aborted first turn) shows `(no messages)` as its title.
 - A whitespace-only name counts as no name: the row falls back to the first message and `Name: Named` hides it.
 - Typing a query in Threaded sort flattens the tree; clearing the query restores it.
-- `--session <id>` accepts any unique prefix of the id; an exact match in the current project wins over a prefix match, and the current project wins over other projects.
+- `--session <id>` accepts any prefix of the id; an exact match in the current project wins over a prefix match, the current project wins over other projects, and a prefix that matches several sessions opens the first match in the picker's order with no warning.
 - `--session` with a path is opened wherever it is, without the cross-project prompt, and sessions started from it with `/new` are filed in that file's directory.
 - `--fork` of a session in the current project makes a copy in the same directory; the copy contains every branch of the original and its header names the original as parent.
 - `pi -c` with a custom session directory only considers files whose recorded directory is the current one; with the default layout it takes the newest file in the per-directory folder regardless.

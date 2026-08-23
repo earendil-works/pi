@@ -73,7 +73,7 @@ The queue is empty when the last message has been delivered; the turn settles on
 | Escape (once; twice within 500 ms) | Aborts the turn. | Aborts the turn and puts every queued message into the editor, ahead of the current text; the pending area clears. |
 | Ctrl+C once / twice; Ctrl+D | Ctrl+C clears the editor. | Same; the queue stays. Quitting drops the queue. |
 | Another message submitted (Enter; Alt+Enter follow-up) | Queues. | Adds to the queue. |
-| A slash command or shortcut that opens an overlay or changes the session | Overlays leave the queue alone. | A session switch (`/new`, `/resume`, `/fork`, `/clone`, `/import`, `/tree` elsewhere) aborts the turn and drops the queue without returning it; nothing says so. `/compact` aborts and drops it. `/tree` summarisation first, then the switch. See "Open questions". |
+| A slash command or shortcut that opens an overlay or changes the session | Overlays leave the queue alone. | A session switch (`/new`, `/resume`, `/fork`, `/clone`, `/import`) aborts the turn and drops the queue without returning it; nothing says so. `/compact` aborts and drops it. Choosing another entry in `/tree` returns the queue to the editor and then aborts. See "Open questions". |
 | Model or thinking level changed | No effect. | No effect on the queue. |
 | Provider error, rate limit, timeout, or network lost | No effect. | The queue survives a retry and is delivered when the retry succeeds. If the turn fails for good, a leftover queue is delivered by a fresh model call right away. |
 | Context window exhausted (auto-compaction) | Messages typed during compaction go to the holding queue. | Queued messages survive compaction; the holding queue is flushed after it, with a re-queue when a retry follows. |

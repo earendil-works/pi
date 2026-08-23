@@ -162,7 +162,7 @@ The vocabulary used across these documents. When a document uses one of these wo
 
 **Transient error.** A provider or network failure that pi treats as worth retrying: the provider is overloaded or rate-limiting, returned a 5xx or 429 status, the connection was refused, reset, or lost, the name lookup failed, the request timed out, or the stream ended before its end marker. Decided by matching the error text against a fixed list; an error that matches neither the transient list nor the quota list is not retried. Quota, billing, balance, and usage-limit errors are never transient, whatever else their text says.
 
-**Switch.** Replacing the current session with another (`/new`, `/resume`, `/fork`, `/clone`, `/import`, `/tree` to another branch). A switch aborts any turn in progress, flushes what was aborted into the old session, and drops the queue.
+**Switch.** Replacing the current session with another (`/new`, `/resume`, `/fork`, `/clone`, `/import`). A switch aborts any turn in progress, flushes what was aborted into the old session, and drops the queue. Moving within the session with `/tree` is not a switch: it aborts a turn too, but returns the queue to the editor first.
 
 **Quit.** The user's orderly exit from pi: `/quit`, Ctrl+D on an empty editor, or Ctrl+C twice within 500 ms. A quit stops drawing, restores the terminal, aborts whatever the session was doing (a turn, a retry countdown, a compaction, a shell command), prints the resume hint, and exits with status 0. An exit caused by a signal, a dead terminal, or a crash is not a quit; those are in [process lifecycle](cross-cutting/process-lifecycle.md).
 

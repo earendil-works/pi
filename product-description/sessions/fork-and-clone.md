@@ -6,7 +6,7 @@
 
 `pi --fork <path|id>` does a coarser version at startup: it copies a whole session file, every branch included, into the current project and starts there. It is described with the other command-line entry points in [resuming](resuming.md) and only summarised here.
 
-Both commands are a [switch](../glossary.md#events-that-end-or-interrupt-a-turn). A turn in progress is aborted and written to the old session before the copy is made. Neither needs the model, and neither is refused while the agent is working. Both are refused on a session that has no file yet.
+Both commands are a [switch](../glossary.md#events-that-end-or-interrupt-a-turn). A turn in progress is aborted and written to the old session before the copy is made. Neither needs the model, and neither is refused while the agent is working. Both are refused on a session that has no file yet, with one exception: forking from the very first message starts a plain new session and needs no file.
 
 ## The simple case
 

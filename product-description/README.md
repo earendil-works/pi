@@ -62,7 +62,7 @@ For each document:
 1. Read the key and event handlers in `packages/coding-agent/src/modes/interactive/interactive-mode.ts` for the feature, the component it renders in `.../interactive/components/`, and the session-level behavior in `packages/coding-agent/src/core/agent-session.ts` and `packages/agent/src/agent-loop.ts`.
 2. Read the matching tests in `packages/coding-agent/test/` and `packages/coding-agent/test/suite/`. Files like `test/suite/agent-session-queue.test.ts`, `test/suite/agent-session-retry-events.test.ts`, `test/suite/agent-session-compaction.test.ts`, `test/interactive-mode-status.test.ts`, `test/tree-selector.test.ts`, and `packages/tui/test/editor.test.ts` are close to executable specifications of the edge cases. The `test/suite/regressions/` directory is one file per reported issue and is the sharpest source of "what happens if".
 3. Draft the document.
-4. Try anything ambiguous in the running product: `./pi-test.sh` from the repo root, in tmux, with `PI_CODING_AGENT_DIR` pointed at a scratch directory so the user's own settings, credentials, and sessions are untouched. Tests settle "what happens"; the running product settles how it feels, what is visible while the interaction is in progress, and what the timing is like.
+4. Try anything ambiguous in the running product: `./pi-test.sh` from the repo root (in tmux, or with the scripted driver in `verification/driver/`), with `PI_CODING_AGENT_DIR` and `HOME` pointed at scratch directories so the user's own settings, credentials, sessions, and skills are untouched. Tests settle "what happens"; the running product settles how it feels, what is visible while the interaction is in progress, and what the timing is like.
 5. Record the commit verified against.
 
 ### Verification
@@ -177,7 +177,7 @@ Status is one of `not started`, `drafted`, or `verified`.
 | Document | Status |
 | --- | --- |
 | glossary.md | drafted |
-| bug-triage.md | not started |
+| bug-triage.md | drafted |
 | verification/ (3 checklists) | not started |
 | foundations/the-turn.md | drafted |
 | foundations/input.md | drafted |

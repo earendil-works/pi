@@ -82,7 +82,7 @@ stateDiagram-v2
 
 ## Edge cases
 
-- The session id in the resume hint is the full UUID; `--session` accepts a unique prefix of it.
+- The session id in the resume hint is the full UUID; `--session` accepts a prefix of it, and an ambiguous prefix opens the first match without a warning.
 - The directory name encodes the path, so the same project reached through a symlink gets a separate session directory.
 - Old session files (versions 1 and 2) are migrated in place when opened.
 - A zero-byte file given to `--session` is initialised as a new session in place; a non-empty file that is not a session is refused with `Session file is not a valid pi session` and pi exits.

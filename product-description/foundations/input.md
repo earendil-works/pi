@@ -125,7 +125,7 @@ These are the words every cancel-and-interrupt table in the repo uses.
 
 **Interrupt** is anything that ends an interaction that is neither the user's Escape nor a clean end: a provider error, a lost connection, a context overflow, a dead terminal, a signal. Every document's table says what is kept after each.
 
-**Switch** is replacing the current session with another: `/new`, `/resume`, `/fork`, `/clone`, `/import`, or choosing another branch in `/tree`. A switch aborts a turn in progress, writes the aborted state to the old session, and drops the queue without returning it to the editor.
+**Switch** is replacing the current session with another: `/new`, `/resume`, `/fork`, `/clone`, or `/import`. A switch aborts a turn in progress, writes the aborted state to the old session, and drops the queue without returning it to the editor. Choosing another entry in `/tree` is a move within the session, not a switch: it aborts too, but returns the queue to the editor first.
 
 | Event | While idle | While working |
 | --- | --- | --- |

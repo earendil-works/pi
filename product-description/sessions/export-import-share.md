@@ -108,7 +108,7 @@ After any cancel the editor is back with whatever it held before the command (th
 
 **Session persistence.** `/export` reads the session file for HTML (hence the refusal before the first assistant message) and the in-memory branch for JSONL. `/import` copies the file into `~/.pi/agent/sessions/<cwd dir>/` and opens the copy; the original is untouched. The copy keeps the original session id, so `/session` shows that id and `pi --session <id>` finds the copy. A file already in the session directory is opened in place, not copied. `/share` writes nothing to the session.
 
-**Branching and history.** HTML and the gist carry every branch; the page's sidebar shows the tree with filters (Default, No-tools, User, Labeled, All) and a search box. JSONL carries only the active branch and flattens it, so `/import` of an exported JSONL shows a single-branch `/tree`. Importing a session's original file (not an export) keeps its branches. The command text is in the prompt history.
+**Branching and history.** HTML and the gist carry every branch; the page's sidebar shows the tree with filters (Default, No-tools, User, Labeled, All) and a search box. JSONL carries only the active branch and flattens it, so `/import` of an exported JSONL shows a single-branch `/tree`. Importing a session's original file (not an export) keeps its branches. Like every built-in slash command, `/export` is not added to the prompt history.
 
 **Compaction.** Compaction entries and summaries are exported as entries and shown in the HTML as `[compaction]` blocks; an imported session keeps its compactions and shows `Session compacted N times` after the switch, like a resume.
 
