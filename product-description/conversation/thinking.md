@@ -81,7 +81,7 @@ A level change takes effect at the next model call; see [the turn](../foundation
 
 **Session persistence.** A thinking-level entry is appended when the effective level changes; resuming restores the last one on the branch.
 
-**Branching and history.** `/tree` to another branch restores that branch's level.
+**Branching and history.** `/tree` to another branch changes the messages only; the level stays what it is, even if the other branch recorded a different one. A resume, fork, or clone restores the level from the branch it opens.
 
 **Compaction.** Thinking text is part of the assistant messages that compaction summarises; hidden or shown makes no difference to the model.
 

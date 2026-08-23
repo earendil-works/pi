@@ -4,11 +4,11 @@
 
 The autocomplete popup is a short list drawn directly under the editor that offers completions for three things: slash commands when the user types `/` at the start of the message, files and directories when the user types `@` (or `#`) at a word boundary, and file paths when the user presses Tab. It is reached only from the editor, appears and disappears on its own as the text changes, and never changes anything but the editor's text.
 
-It works whatever the agent is doing. File completion needs the `fd` binary that pi downloads on first run; without it, `@` offers nothing.
+It works whatever the agent is doing. File completion needs the `fd` binary: pi uses one already on `PATH`, or the copy it downloads to `~/.pi/agent/bin/` on first run; with neither (offline first run on a machine without `fd`), `@` offers nothing.
 
 ## The simple case
 
-The user types `/` in an empty editor. A list of slash commands appears below the box, five at a time, each with its name, argument hint, and description; `/changelog` is highlighted first. Typing `mo` narrows it to `/model`; Enter fills in `/model ` and, because it is a slash command, submits it at once, opening the model selector.
+The user types `/` in an empty editor. A list of slash commands appears below the box, five at a time with a `(1/24)` counter, each with its name, argument hint, and description (`model  <provider/model> — Select model (opens selector UI)`); `settings` is highlighted first. Typing `mo` narrows it to `model`; Enter fills in `/model ` and, because it is a slash command, submits it at once, opening the model selector.
 
 Later they type `Look at @auth` and the list shows up to 20 files whose names or paths match `auth`, best matches first. Down moves the highlight; Tab inserts `src/auth.ts ` and closes the list; the editor keeps focus and they carry on typing.
 

@@ -38,7 +38,7 @@ Undo: Ctrl+- undoes the last change. Typed words are undone a word at a time (a 
 
 Newline: Shift+Enter or Ctrl+J. Typing `\` and then Enter also inserts a newline (the backslash is removed), for terminals where Shift+Enter cannot be told from Enter. Shift+Space inserts a plain space for terminals that send something else for it.
 
-Prompt history: Up when the cursor is on the first line of the text and either the text is empty, the cursor is at column 0, or history is already being browsed, recalls the previous submitted line (the most recent first), with the cursor at its start. Up on the first line in any other position jumps to the start of the line instead. Down while browsing and on the last line recalls the next newer entry with the cursor at its end, and past the newest restores the draft that was in the box when browsing began. Any edit while browsing makes the recalled text the new draft. The history holds the last 100 submissions, skips an entry identical to the previous one, and is in memory only; it starts empty each run, seeded with the user messages of a resumed session.
+Prompt history: Up when the cursor is on the first line of the text and either the text is empty, the cursor is at column 0, or history is already being browsed, recalls the previous submitted line (the most recent first), with the cursor at its start. Up on the first line in any other position jumps to the start of the line instead. Down while browsing and on the last line recalls the next newer entry with the cursor at its end, and past the newest restores the draft that was in the box when browsing began. Any edit while browsing makes the recalled text the new draft. The history holds the last 100 submissions (prompts, shell commands, and queued messages; built-in slash commands such as `/settings` are not added), skips an entry identical to the previous one, and is in memory only; it starts empty each run, seeded with the user messages of a resumed session.
 
 Paste: text arriving as a bracketed paste (including a file path dropped onto the terminal) is inserted at the cursor with its line endings normalised, tabs expanded, and control characters removed. A pasted path beginning with `/`, `~`, or `.` gets a space put before it when the cursor follows a word character, so that dropping a file after typing `look at` does not fuse them. A paste of more than 10 lines or more than 1,000 characters is collapsed into a marker, `[paste #1 +42 lines]` or `[paste #1 1234 chars]`, which behaves as one character: the cursor skips over it, Backspace removes it whole, and its content is restored only on submit. Several markers are numbered in order and renumbered when one is deleted. Ctrl+V is not a paste key; it is described in [attachments](attachments.md) and [clipboard](../cross-cutting/clipboard.md).
 
@@ -80,7 +80,7 @@ There is no "done" for the editor other than submit. After a submit the box is e
 | Escape (once; twice within 500 ms) | Arms the double-Escape; twice opens the tree. | No effect, unless bash mode (clears) or the agent is working (aborts; the text is kept, with the queue put in front of it). |
 | Ctrl+C once / twice; Ctrl+D | Ctrl+C arms the quit; Ctrl+D quits. | Ctrl+C clears the box (and arms the quit); Ctrl+D deletes the character under the cursor. |
 | Another message submitted (Enter; Alt+Enter follow-up) | Nothing. | Submits or queues, emptying the box. |
-| A slash command or shortcut that opens an overlay or changes the session | The overlay replaces the box. | The overlay replaces the box; the text is kept and is back when it closes. A session switch keeps the text too. `/tree` and `/fork` may overwrite it with a selected message. |
+| A slash command or shortcut that opens an overlay or changes the session | The overlay replaces the box. `/tree` and `/fork` fill the empty box with the chosen message. | The overlay replaces the box; the text is kept and is back when it closes. A session switch keeps the text too. `/tree` and `/fork` leave existing text alone and drop the chosen message. |
 | Model or thinking level changed | Border colour. | Border colour; the text is kept. |
 | Provider error, rate limit, timeout, or network lost | No effect. | No effect. |
 | Context window exhausted (auto-compaction) | No effect. | No effect on the text; Enter queues. |
@@ -95,7 +95,7 @@ A paste that arrives while an overlay is open goes to the overlay (a selector's 
 
 **Session persistence.** The editor's text is never saved. A session resumed into the same run does not restore a draft.
 
-**Branching and history.** Choosing a user message in `/tree` or `/fork` puts that message's text into the box, replacing whatever was there.
+**Branching and history.** Choosing a user message in `/tree` or `/fork` puts that message's text into the box only when the box is empty; text already there (including a queue returned by the abort that `/tree` performs first) is kept and the chosen text is dropped.
 
 **Compaction.** No interaction.
 

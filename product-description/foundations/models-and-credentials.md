@@ -41,7 +41,7 @@ The user has `ANTHROPIC_API_KEY` set in their shell. They run `pi`; the footer's
 
 **OAuth tokens** are refreshed automatically when fewer than five minutes of validity remain, at the start of the model call that needs them, with a 15 second limit on the refresh. A failed refresh fails that call with `OAuth refresh failed for <provider>`; pi does not fall back to an environment variable. Subscription providers (Anthropic Pro/Max, ChatGPT, GitHub Copilot) mark the footer's cost with `(sub)`; the Anthropic subscription shows a one-time warning about paid extra usage unless `warnings.anthropicExtraUsage` is off.
 
-**No credentials.** pi starts normally and draws everything; the footer's right side reads `no-model`, `(provider)` is absent, and the first prompt ends at once with `Error: No model selected.` followed by the login instructions and `Then use /model to select a model.` The prompt is not recorded. Nothing else is restricted: `/login` works, `/settings` works, shell commands work, sessions resume. After `/login` succeeds pi selects that provider's default model if none was selected.
+**No credentials.** pi starts normally and draws everything, with a warning under the header: `Warning: No models available. Use /login to log into a provider via OAuth or API key. See:` followed by the paths of the providers and models documentation. The footer's right side reads `unknown` (a placeholder stands in for the model), `(provider)` is absent, and the first prompt ends at once with `Error: No API key found for the selected model.`, a blank line, and the same login instructions. The prompt is not recorded and is not drawn in the transcript. Nothing else is restricted: `/login` works, `/settings` works, shell commands work, sessions resume. After `/login` succeeds pi selects that provider's default model if none was selected. (`Error: No model selected.` with `Then use /model to select a model.` is the message when a model was deliberately cleared, which the default configuration cannot reach.)
 
 > Technical note: `auth.json` is created with owner-only permissions (0600) inside an owner-only directory, and writes to it are serialised through a lock file so that two pi processes logging in at once do not clobber each other. A stored API key may be a command to run or `$VAR` to expand rather than a literal key.
 
@@ -72,7 +72,7 @@ stateDiagram-v2
 | Escape (once; twice within 500 ms) | Closes the model selector or login dialog without changes (a login in progress is abandoned). | Aborts the turn; the model is unchanged. |
 | Ctrl+C once / twice; Ctrl+D | Quitting keeps the default; a session-only model choice is in the session file. | Same. |
 | Another message submitted (Enter; Alt+Enter follow-up) | Uses the current model. | Queued; delivered to whichever model is current when it is sent. |
-| A slash command or shortcut that opens an overlay or changes the session | A session switch restores the new session's model. `/new` keeps the current model and level. | Same, after aborting. |
+| A slash command or shortcut that opens an overlay or changes the session | A session switch restores the new session's model. `/new` does not keep the current model: it chooses the startup model again (the saved default, else the first available), so a session-only choice is lost. | Same, after aborting. |
 | Model or thinking level changed | Recorded in the session at once. | Recorded at once; used from the next call. |
 | Provider error, rate limit, timeout, or network lost | The catalogue refresh at startup fails silently; the built-in model list is used. | The call fails and retries per [the turn](the-turn.md#cancel-and-interrupt). |
 | Context window exhausted (auto-compaction) | Switching to a model with a larger window lifts an overflow without compaction: the overflow check is skipped when the last message came from a different model. | Same. |
@@ -85,7 +85,7 @@ stateDiagram-v2
 
 **Session persistence.** Model and thinking-level changes are entries in the session; the default lives in settings.
 
-**Branching and history.** Moving the active position with `/tree` restores the model and level recorded on that branch.
+**Branching and history.** Moving the active position with `/tree` changes the messages only; the model and level stay as they are. Resuming, forking, or cloning restores the model and level recorded on the branch that is opened.
 
 **Compaction.** The context window of the current model sets the auto-compaction threshold; a model switch changes the threshold immediately and skips the overflow check for messages from the old model.
 

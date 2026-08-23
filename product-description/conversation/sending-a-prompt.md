@@ -40,8 +40,8 @@ See [the editor](the-editor.md). Whatever is in the editor when Enter is pressed
 ### Resolves at once
 
 - **Empty text.** Nothing.
-- **No model selected.** A blank line and `Error: No model selected.` followed by the login instructions and `Then use /model to select a model.`, in the error colour. The prompt is not in the session; it is in the prompt history (Up recalls it).
-- **No credential for the model's provider.** `Error: No API key for <provider>/<model>` (or, for OAuth providers, an instruction to `/login <provider>`). Same consequences.
+- **No credential for any provider.** A blank line and `Error: No API key found for the selected model.`, a blank line, and `Use /login to log into a provider via OAuth or API key. See:` with two documentation paths, in the error colour. The prompt is not in the session and is not drawn; it is in the prompt history (Up recalls it).
+- **No credential for the selected model's provider.** `Error: No API key found for <provider>.` with the same help, or for OAuth providers `Authentication failed for "<provider>". … Run '/login <provider>' to re-authenticate.` Same consequences.
 - **The agent is working or compacting.** The text is queued, not sent; see [the message queue](the-message-queue.md).
 - **A slash command or shell command.** Handled by their own documents; no prompt is sent.
 
@@ -90,7 +90,7 @@ Everything is in the session: the user message, each assistant message, each too
 | Another message submitted (Enter; Alt+Enter follow-up) | Enter queues a steering message that is delivered before the first model call if it arrives in time. | Enter steers; Alt+Enter queues a follow-up. |
 | A slash command or shortcut that opens an overlay or changes the session | Overlays open; the turn continues. `/new`, `/resume`, `/fork`, `/clone`, `/import`, `/tree` (to another point), `/compact`, `/quit` abort the turn first; the queue is dropped. `/reload` is refused. | Same. |
 | Model or thinking level changed | Takes effect on the first call if changed before it starts. | Next model call. |
-| Provider error, rate limit, timeout, or network lost | Transient: `Retrying (1/3) in 2s... (escape to cancel)` counting down in the status line, then a fresh attempt; the failed attempt is in the session but not on screen. After three: `Error: Retry failed after 3 attempts: <message>`. Not transient (quota, billing): `Error: <message>` at once. A stalled stream fails after five minutes of silence (`httpIdleTimeoutMs`). | Same; a failed message that had tool calls shows `Error: …` in each unfinished tool box. |
+| Provider error, rate limit, timeout, or network lost | Transient: the failed assistant block stays on screen ending with `Error: <message>`, and the status line shows `Retrying (1/3) in 2s... (escape to cancel)` counting down, then a fresh attempt streams in below it; the failed attempt is in the session too, though the next model call does not see it. After three failures: `Error: Retry failed after 3 attempts: <message>` under the third block. Not transient (quota, billing): `Error: <message>` at once and the turn settles. A stalled stream fails after five minutes of silence (`httpIdleTimeoutMs`). | Same; a failed message that had tool calls shows `Error: …` in each unfinished tool box. |
 | Context window exhausted (auto-compaction) | An overflow error on the first call: `Context overflow detected, Auto-compacting... (escape to cancel)`, then the call is retried once. | Same; after a successful response that overflowed, compaction runs without a retry. |
 | Terminal resized; pi suspended (Ctrl+Z) and resumed | Redraws. | Redraws; streaming continues unseen during suspend and is drawn on `fg`. |
 | Process ends: terminal closed (SIGHUP), SIGTERM, killed | The user message is in the session only if a session file already exists; a brand-new session leaves nothing. | SIGHUP/SIGTERM abort and exit; a kill loses the partial message. See [process lifecycle](../cross-cutting/process-lifecycle.md). |
@@ -123,7 +123,7 @@ Everything is in the session: the user message, each assistant message, each too
 - A steering message typed before the first token arrives is delivered before the first model call, so the model's first message may answer both.
 - Aborting during a tool call leaves the tool's box in the error tint with `Operation aborted`; the file the tool was writing may be partly written.
 - Two Escapes in a row after an abort open the tree (the editor is empty after the queue was returned only if the queue was empty).
-- The failed attempts of a retry are not drawn, but `/session` counts them and `/tree` lists them.
+- The failed attempts of a retry stay drawn, each ending with `Error: <message>`; `/session` counts them and `/tree` lists them. After the last failure the message appears twice, once under the block and once as `Retry failed after 3 attempts: …`.
 - Switching models mid-turn can make the provider miss its prompt cache; with notices on, `Cache miss after model switch: …` is shown.
 
 ## Open questions and verification

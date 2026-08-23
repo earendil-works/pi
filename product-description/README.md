@@ -192,27 +192,27 @@ Status is one of `not started`, `drafted`, or `verified`.
 | conversation/attachments.md | drafted |
 | conversation/thinking.md | drafted |
 | conversation/the-transcript.md | drafted |
-| sessions/new-session.md | not started |
-| sessions/resuming.md | not started |
-| sessions/the-tree.md | not started |
-| sessions/fork-and-clone.md | not started |
-| sessions/naming-and-info.md | not started |
-| sessions/compaction.md | not started |
-| sessions/export-import-share.md | not started |
-| sessions/quitting.md | not started |
-| models/the-model-selector.md | not started |
-| models/cycling-models.md | not started |
-| models/login-and-logout.md | not started |
-| settings/the-settings-panel.md | not started |
-| settings/themes.md | not started |
-| settings/reload-and-hotkeys.md | not started |
-| settings/project-trust.md | not started |
-| startup/launching-pi.md | not started |
-| cross-cutting/busy-state.md | not started |
-| cross-cutting/errors-and-retries.md | not started |
-| cross-cutting/the-terminal.md | not started |
-| cross-cutting/process-lifecycle.md | not started |
-| cross-cutting/clipboard.md | not started |
+| sessions/new-session.md | drafted |
+| sessions/resuming.md | drafted |
+| sessions/the-tree.md | drafted |
+| sessions/fork-and-clone.md | drafted |
+| sessions/naming-and-info.md | drafted |
+| sessions/compaction.md | drafted |
+| sessions/export-import-share.md | drafted |
+| sessions/quitting.md | drafted |
+| models/the-model-selector.md | drafted |
+| models/cycling-models.md | drafted |
+| models/login-and-logout.md | drafted |
+| settings/the-settings-panel.md | drafted |
+| settings/themes.md | drafted |
+| settings/reload-and-hotkeys.md | drafted |
+| settings/project-trust.md | drafted |
+| startup/launching-pi.md | drafted |
+| cross-cutting/busy-state.md | drafted |
+| cross-cutting/errors-and-retries.md | drafted |
+| cross-cutting/the-terminal.md | drafted |
+| cross-cutting/process-lifecycle.md | drafted |
+| cross-cutting/clipboard.md | drafted |
 
 ## Reference
 

@@ -152,7 +152,7 @@ pi sets `AI_AGENT=pi` and `PI_CODING_AGENT=true` in every process it starts, and
 - A project `.pi/settings.json` in an untrusted project is not merely ignored: the startup warning names it and `/trust` is the way out.
 - `defaultProjectTrust` and `httpProxy` are read from the global file only; putting them in a project file does nothing.
 - `editorPaddingX` and `autocompleteMaxVisible` are clamped when written by `/settings`; values outside the range written by hand are clamped on read.
-- A `theme` value containing `/` (`light/dark`) means an automatic light/dark pair and is shown as "Automatic" in the panel.
+- A `theme` value containing `/` (`light/dark`) means an automatic light/dark pair; the panel's Theme row shows the raw value, and the submenu offers "Automatic" to set one.
 - The user docs list `websocketConnectTimeoutMs` with a default of 15000; the settings code has no default for it and leaves the provider's own in place.
 - Settings written by an older pi under old names (`queueMode`, `websockets`, `retry.maxDelayMs`) are migrated when read.
 

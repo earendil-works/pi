@@ -99,7 +99,7 @@ While a retry countdown, compaction, or branch summarization is running, Escape 
 
 ### Ctrl+C and Ctrl+D
 
-Ctrl+C never interrupts the model. One press clears the editor (the text is not added to history and cannot be recovered with undo). A second press within 500 ms of the first quits pi with the normal shutdown: the turn in progress is aborted and written, and `To resume this session: pi --session <id>` is printed. The window is not extended by the second press; a third press 600 ms after the first starts a new window.
+Ctrl+C never interrupts the model. One press clears the editor (the text is not added to history and cannot be recovered with undo). A second press within 500 ms of the first quits pi with the normal shutdown: the turn in progress is aborted (without waiting for the aborted message to be written), and `To resume this session: pi --session <id>` is printed when the session has a file. The window is not extended by the second press; a third press 600 ms after the first starts a new window.
 
 Ctrl+D quits at once, with no confirmation, when the editor is empty; with text in the editor it deletes forward. Quitting is described in [quitting](../sessions/quitting.md).
 
