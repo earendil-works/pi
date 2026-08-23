@@ -176,9 +176,7 @@ The vocabulary used across these documents. When a document uses one of these wo
 
 **Model catalogue.** The list of models pi knows for each provider: a built-in list, refreshed from the vendor in the background at startup, after `/login`, and whenever the model selector or `/scoped-models` opens, with a 15-second limit. A refresh that fails leaves the cached list in use and says so inline (`showing cached models`). The product's own wording is `model catalogs`.
 
-**Scoped models.** The subset of models that Ctrl+P cycles through, set with `--models` or `/scoped-models`. With no scope, Ctrl+P cycles every available model.
-
-**Model scope.** The scoped models taken as a whole, in their order: "a scope exists" means scoped models are set, "no scope" means Ctrl+P cycles every available model. A scope is run state: it is resolved from `--models` or `enabledModels` at startup, edited live in `/scoped-models`, shown as the scoped list in the model selector, and never written to the session.
+**Scoped models.** Also called the *model scope*. The subset of models that Ctrl+P cycles through, in its order, set with `--models` or `enabledModels` at startup and edited live with `/scoped-models`. "A scope exists" means scoped models are set; with no scope, Ctrl+P cycles every available model. A scope is run state: it is shown as the scoped list in the model selector and never written to the session.
 
 **Credential.** What authenticates a provider: an API key in an environment variable, or an entry in `~/.pi/agent/auth.json` written by `/login` (an API key or an OAuth token). A stored credential takes precedence over an environment variable for the same provider.
 

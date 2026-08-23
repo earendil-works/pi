@@ -90,7 +90,7 @@ Escape or Ctrl+C at any point abandons the login: the dialog's abort reaches the
 
 When the sign-in completes, the credential is written to `auth.json` (creating the file with owner-only permissions if needed), the editor returns, and a status line is added: `Logged in to <Name>. Credentials saved to <path>` for an account, `Saved API key for <Name>. Credentials saved to <path>` for a key, with the full path of `auth.json`. The footer's provider count updates at once, so `(provider)` may appear in front of the model; the border is redrawn.
 
-If no model was selected when the login started (the footer read `no-model`), the provider's default model (`claude-opus-4-8` for Anthropic, `gpt-5.5` for OpenAI, `gemini-3.1-pro-preview` for Google, `gpt-5.4` for GitHub Copilot) is selected, recorded in the session, and saved as the default model; the status reads `Logged in to <Name>. Selected <id>. Credentials saved to <path>` and the footer shows the model with the thinking level derived for it. When that cannot be done the plain status is followed by an error line, one of:
+If no real model was selected when the login started (the footer read `unknown`), the provider's default model (`claude-opus-4-8` for Anthropic, `gpt-5.5` for OpenAI, `gemini-3.1-pro-preview` for Google, `gpt-5.4` for GitHub Copilot) is selected, recorded in the session, and saved as the default model; the status reads `Logged in to <Name>. Selected <id>. Credentials saved to <path>` and the footer shows the model with the thinking level derived for it. When that cannot be done the plain status is followed by an error line, one of:
 
 - `Logged in to <Name>, but no default model is configured for provider "<id>". Use /model to select a model.`
 - `Logged in to <Name>, but no models are available for that provider. Use /model to select a model.`
@@ -111,7 +111,7 @@ A sign-in that fails ends with `Error: Failed to login to <Name>: <message>` or 
 
 | Modifier | Before open | While open |
 | --- | --- | --- |
-| Model | A selected model is never changed by `/login`; with `no-model` in the footer, a login selects and saves the provider's default. `/logout` never changes it. | No effect until accepted. |
+| Model | A selected model is never changed by `/login`; with the `unknown` placeholder in the footer, a login selects and saves the provider's default. `/logout` never changes it. | No effect until accepted. |
 | Thinking level | Unchanged by logout. A login that selects a model re-derives the level for it (per-model setting, saved default, else the current level, clamped). | No effect. |
 | Agent busy | The overlays open over a working turn; the turn continues. A new credential is used from the next model call; a removed one fails the next model call of that provider. | The current model call finishes with the credential it started with. |
 | Attachments | Editor text and images are kept behind the overlays and return. | No effect. |
@@ -153,7 +153,7 @@ A sign-in that fails ends with `Error: Failed to login to <Name>: <message>` or 
 
 ## Edge cases
 
-- `/login` with no credentials at all works the same; after success the footer goes from `no-model` to the provider's default model without a visit to the model selector, and the first prompt works. The no-credentials startup is in [launching pi](../startup/launching-pi.md).
+- `/login` with no credentials at all works the same; after success the footer goes from `unknown` to the provider's default model without a visit to the model selector, and the first prompt works. The no-credentials startup is in [launching pi](../startup/launching-pi.md).
 - A provider configured by environment variable shows `✓ env: …` in `/login` but is absent from `/logout`, which lists stored credentials only.
 - `/login anthropic` offers both `Sign in with an account` and `Sign in with an API key`; choosing the key when an account sign-in is stored replaces the stored credential (one per provider).
 - Logging in to a provider that already has a stored credential replaces it silently; there is no confirmation.

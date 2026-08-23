@@ -115,7 +115,7 @@ Escape is the only way out. Nothing is recorded in the session by the overlay it
 
 **Session persistence.** A Ctrl+P switch appends a model-change entry and, when the level changes, a thinking-level entry. The scope itself is not in the session: a resumed session uses the scope the run started with, and its recorded model is restored even when it is outside that scope.
 
-**Branching and history.** `/tree` restores the model recorded on the chosen branch, scope or no scope. The `/scoped-models` line is in the prompt history.
+**Branching and history.** `/tree` leaves the model as it is; a resume, fork, or clone restores the model recorded on the branch it opens, scope or no scope. The `/scoped-models` line is in the prompt history.
 
 **Compaction.** The threshold follows the model Ctrl+P lands on; see [compaction](../sessions/compaction.md).
 
@@ -144,7 +144,7 @@ Duplicates are collapsed and the scope keeps pattern order. A pattern matching n
 - `--models` that matches nothing at all (`--models nonexistent`) prints the warning and starts with no scope; `Model scope:` is not printed.
 - `enabledModels: []` in settings is the same as no setting.
 - The `Model scope:` line shows ids with their `:level` suffixes (`claude-opus-4-8:high, gpt-5.5`) and the live cycle key, so a rebound key appears there by its new name.
-- Ctrl+P with no model selected at all (`no-model` in the footer) and two providers available switches to the second available model; with one provider, `Only one model available`.
+- Ctrl+P with no credential at all (`unknown` in the footer) and two providers available switches to the second available model; with one provider, `Only one model available`.
 - Glob patterns match against both `provider/id` and `id`, so `--models '*opus*'` matches Opus models of every available provider, not only Anthropic's.
 - An `[unavailable]` row shows the raw pattern text as saved, which for a glob pattern that matched nothing is the glob itself (`anthropic/* [unavailable] ✗`).
 - From `all enabled`, Ctrl+X then Ctrl+A returns to `all enabled`; Enter on one row then Ctrl+A also returns to `all enabled`.

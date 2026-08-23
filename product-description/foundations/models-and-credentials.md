@@ -21,7 +21,7 @@ The user has `ANTHROPIC_API_KEY` set in their shell. They run `pi`; the footer's
 1. A resumed session with messages: the model recorded in the session, if available. Otherwise the rule below, with a `Could not restore model <provider>/<id> (<reason>). Using <provider>/<id>.` warning.
 2. The saved default (`defaultProvider` and `defaultModel` in settings, written by Ctrl+S in the model selector), if available and, when `--models` or `enabledModels` restricts the scope, inside the scope.
 3. Otherwise the first model of the scope, or with no scope the first available provider's default model, walking pi's provider list in its own order (Amazon Bedrock, Ant Ling, Anthropic, OpenAI, …). With one credential this is simply that provider's default model: `claude-opus-4-8` for Anthropic, `gpt-5.5` for OpenAI, `gemini-3.1-pro-preview` for Google, `gpt-5.4` for GitHub Copilot.
-4. No available model: the footer shows `no-model` and the first prompt fails; see "No credentials".
+4. No available model: a placeholder is selected, the footer shows `unknown`, and the first prompt fails; see "No credentials".
 
 `--model <pattern>` accepts `provider/id`, a bare id, or a substring (`sonnet`), optionally with `:level` for the thinking level (`sonnet:high`); an ambiguous bare id is an error, and a substring prefers the undated alias over dated versions. `--thinking <level>` overrides any suffix.
 
@@ -49,7 +49,7 @@ The user has `ANTHROPIC_API_KEY` set in their shell. They run `pi`; the footer's
 stateDiagram-v2
     [*] --> resolving : pi starts
     resolving --> selected : a credentialed model is found
-    resolving --> none : no credential anywhere (footer shows no-model)
+    resolving --> none : no credential anywhere (footer shows unknown)
     none --> selected : /login succeeds, or /model after a credential appears
     selected --> selected : /model, Ctrl+P, Ctrl+L (recorded in the session)
     selected --> none : /logout of the only credentialed provider

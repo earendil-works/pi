@@ -94,7 +94,7 @@ A `--name` given at startup applied to the first session only; the new session h
 | Terminal resized; pi suspended (Ctrl+Z) and resumed | The editor re-wraps; suspend keeps the text. | The new frame is drawn at the current width on resume. |
 | Process ends: terminal closed (SIGHUP), SIGTERM, killed | The text is lost. | Whatever was appended to the old file is there; the new session has no file yet. See [process lifecycle](../cross-cutting/process-lifecycle.md). |
 | Session or files changed from outside | No effect. | The new session re-reads context files and settings from disk, so changes made since startup are picked up. |
-| Credentials lost, or logged out | No effect. | With no available model the new session starts with no model in the footer; the first prompt fails with `No model selected.` |
+| Credentials lost, or logged out | No effect. | With no available model the new session starts with the `unknown` placeholder in the footer; the first prompt fails with `No API key found for the selected model.` |
 
 After the switch the editor is empty whatever happened, and nothing from the old session is recoverable except by `/resume`.
 
@@ -134,7 +134,7 @@ After the switch the editor is empty whatever happened, and nothing from the old
 
 ## Open questions and verification
 
-- Whether `/new` keeps or resets the model: this document reads the new session's model from the same resolution a fresh start uses (saved default, else first available), which resets a session-only `/model` choice. [models and credentials](../foundations/models-and-credentials.md) says `/new` keeps the current model and level. One of the two is wrong; the code path read here has no carry-over of the old session's model. Not confirmed by hand; if the reset is confirmed, it may be worth treating as a bug rather than documenting.
+- `/new` resets a session-only `/model` choice: the new session's model comes from the same resolution a fresh start uses (saved default, else first available), with no carry-over from the old session. Read from the switch path, not confirmed by hand; may be worth treating as a bug rather than documenting.
 - A user shell command (`!`) running at `/new`: [shell commands](../conversation/shell-commands.md) reads that the command keeps running and its record lands in the new session. The switch path read here also aborts the old session's running shell commands when it closes the session, which would kill the command and record it as cancelled in the old session. Not confirmed by hand.
 - Whether the old transcript is visibly cleared from the frame or simply scrolls away (regular TUI mode) was not observed.
 - The `✓ New session started` line is the only feedback; whether the loaded-resources block is visibly redrawn above it, or looks identical to before, was not observed.

@@ -106,6 +106,8 @@ verification/
   conversation.md                checklists for foundations/ and conversation/
   sessions.md                    checklists for sessions/ and startup/
   settings.md                    checklists for models/, settings/, and cross-cutting/
+  driver/                        a scripted pseudo-terminal driver (drive.py, render.mjs, an example scenario)
+                                 for the items that can be checked without a person at the keyboard
 
 foundations/
   the-turn.md                    what a turn is: prompt, working, done; what sent, working, and settled mean;

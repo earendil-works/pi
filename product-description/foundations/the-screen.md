@@ -8,7 +8,7 @@ There is no mouse interaction in regular mode. The terminal's own scrollback, se
 
 ## The simple case
 
-On a fresh start the user sees, top to bottom: the header (`pi v0.84.1` with a one-line shortcut strip and two dim hint lines), a blank line, the editor with its coloured border and a blinking cursor inside, and the two dim footer lines. As the conversation proceeds, user messages, assistant messages, and tool boxes are appended above the editor and the whole thing scrolls up into the terminal's history. While the agent works a spinner line sits directly above the editor; when the user queues a message a dim `Steering: …` line appears above that.
+On a fresh start the user sees, top to bottom: the header (`pi v0.84.2` with a one-line shortcut strip and two dim hint lines), a blank line, the editor with its coloured border and a blinking cursor inside, and the two dim footer lines. As the conversation proceeds, user messages, assistant messages, and tool boxes are appended above the editor and the whole thing scrolls up into the terminal's history. While the agent works a spinner line sits directly above the editor; when the user queues a message a dim `Steering: …` line appears above that.
 
 ## The parts of the screen
 
@@ -63,7 +63,7 @@ Tokens are shown as `950`, `1.2k`, `12k`, or `1.2M`.
 | Terminal resized; pi suspended (Ctrl+Z) and resumed | Everything still on screen re-wraps to the new width; scrolled-off lines do not. Suspend restores the terminal's normal screen; `fg` redraws pi's bottom block. | Same. |
 | Process ends: terminal closed (SIGHUP), SIGTERM, killed | The terminal is restored to its normal mode; on a kill it may be left in raw mode with a hidden cursor (`reset` fixes it). | Same. |
 | Session or files changed from outside | No effect. | No effect. |
-| Credentials lost, or logged out | The footer may lose its `(provider)` prefix or show `no-model`. | Same. |
+| Credentials lost, or logged out | The footer may lose its `(provider)` prefix; with no credential left it shows `unknown`. | Same. |
 
 ## Interactions with other systems
 

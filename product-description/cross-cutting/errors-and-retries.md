@@ -197,7 +197,7 @@ A resumed session therefore shows the failed attempts again as assistant blocks 
 
 ## Open questions and verification
 
-- The on-screen fate of a failed attempt: the code ends the failed assistant block with `Error: <message>` and leaves it in the transcript, which contradicts [sending a prompt](../conversation/sending-a-prompt.md#cancel-and-interrupt) ("the failed attempt is in the session but not on screen"). This document follows the code; needs a hand check with a real provider error, and one of the two documents needs correcting.
+- The on-screen fate of a failed attempt (the failed assistant block stays, ending with `Error: <message>`, and the next attempt streams in below it) is read from the code and agreed with [sending a prompt](../conversation/sending-a-prompt.md#cancel-and-interrupt); it still needs a hand check with a real provider error.
 - The exact provider wordings (`overloaded_error`, `rate_limit_error`, the Anthropic 529 text) were not observed; the examples here are from the tests and the classifier's comments.
 - The idle timeout's error text was read from the HTTP layer's timeout classes (`Headers Timeout Error`, `Body Timeout Error`) and assumed to contain `Timeout`; whether the provider SDK rewraps it into something that still matches the transient list was not confirmed. Also unconfirmed: whether five silent minutes is counted from the last byte or from the start of the request.
 - Overflow recovery's failure text, `Auto-compaction failed: …`, and `Context overflow recovery failed: …` are added as plain error-coloured text without the `Error:` prefix that every other error has, while the manual path uses the prefix. May be worth treating as a bug rather than documenting.

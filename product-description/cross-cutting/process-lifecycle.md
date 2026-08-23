@@ -33,7 +33,7 @@ stateDiagram-v2
 
 ### The baseline: an orderly quit
 
-`/quit`, Ctrl+D on an empty editor, or Ctrl+C twice within 500 ms. pi stops listening for input and waits up to one second for any keys still in flight (it stops early after 50 ms of silence), restores the terminal, then disposes the session: the turn in progress is aborted and written, extensions are told to shut down, and running shell processes end with it. Then the resume hint is printed below the last frame and the process exits with code 0. The transcript stays in the terminal's scrollback exactly as it was drawn; the editor and footer remain on screen as the last frame, followed by `To resume this session: pi --session <id>`.
+`/quit`, Ctrl+D on an empty editor, or Ctrl+C twice within 500 ms. pi stops listening for input and waits up to one second for any keys still in flight (it stops early after 50 ms of silence), restores the terminal, then disposes the session: the turn in progress is aborted (without waiting for the aborted message to be written), extensions are told to shut down, and running shell processes end with it. Then the resume hint is printed below the last frame and the process exits with code 0. The transcript stays in the terminal's scrollback exactly as it was drawn; the editor and footer remain on screen as the last frame, followed by `To resume this session: pi --session <id>`.
 
 > Technical note: the one-second drain exists because a terminal speaking the Kitty protocol may still be sending key-release events for the keys that triggered the quit; without the drain they would land in the shell as stray characters. The terminal is restored before extensions are disposed so that extension cleanup cannot repaint over the final frame.
 
@@ -105,7 +105,7 @@ The resume hint is printed only on an orderly quit, only when stdout is a termin
 | Event | While idle | While working |
 | --- | --- | --- |
 | Escape (once; twice within 500 ms) | No effect on the process. | Aborts the turn; the process continues. |
-| Ctrl+C once / twice; Ctrl+D | Once clears the editor; twice, or Ctrl+D, is the orderly quit (exit 0, hint). | Same; the turn is aborted and written first. |
+| Ctrl+C once / twice; Ctrl+D | Once clears the editor; twice, or Ctrl+D, is the orderly quit (exit 0, hint). | Same; the turn is aborted on the way out, without waiting for the aborted message to reach the file. |
 | Another message submitted (Enter; Alt+Enter follow-up) | No effect. | Queued messages are in memory only and are lost on every exit except the orderly quit and signals, which return nothing either: the queue is dropped. |
 | A slash command or shortcut that opens an overlay or changes the session | `/quit` is the orderly quit. A session switch disposes the old session cleanly. | Same. |
 | Model or thinking level changed | Written to the session file at once, so it survives any later exit. | Same. |
