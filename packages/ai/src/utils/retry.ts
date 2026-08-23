@@ -90,12 +90,28 @@ const RETRYABLE_PROVIDER_ERROR_PATTERN = buildProviderErrorPattern([
 ]);
 
 /**
+ * Optional per-call overrides for {@link isRetryableAssistantError} and
+ * {@link retryAssistantCall}. Patterns are case-insensitive regular-expression
+ * sources; an error message matching any override is treated as retryable even
+ * when it matches the built-in non-retryable limit patterns (e.g. usage/quota
+ * exhaustion), giving callers a way to keep running through provider limits.
+ */
+export interface RetryOverrides {
+	nonRetryableOverrides?: string[];
+}
+
+function matchesAnyPattern(message: string, patterns: readonly string[]): boolean {
+	if (patterns.length === 0) return false;
+	return new RegExp(patterns.join("|"), "i").test(message);
+}
+
+/**
  * Retry policy: bounded attempts with exponential backoff (`baseDelayMs * 2^(attempt-1)`).
  * Matches `settings.retry` (`enabled`, `maxRetries`, `baseDelayMs`) in coding-agent; kept
  * here so the classifier and the policy-driven retry loop live together and stay reusable
  * by the SDK and other callers.
  */
-export interface RetryPolicy {
+export interface RetryPolicy extends RetryOverrides {
 	enabled: boolean;
 	/** Max retry attempts (0 = no retries). The initial call never counts as a retry. */
 	maxRetries: number;
@@ -186,7 +202,7 @@ export async function retryAssistantCall(
 		}
 
 		// Non-retryable, or budget exhausted: return the final error message.
-		if (attempt >= maxAttempts || !isRetryableAssistantError(response)) {
+		if (attempt >= maxAttempts || !isRetryableAssistantError(response, policy)) {
 			if (lastRetry) await callbacks?.onRetryFinished?.(false, lastRetry.attempt, response.errorMessage);
 			return response;
 		}
@@ -219,10 +235,14 @@ export async function retryAssistantCall(
  * This does not implement retry policy. Callers should first handle context
  * overflow separately, then apply their own retry budget, backoff, and reporting
  * before restarting the assistant turn.
+ *
+ * Error messages matching `overrides.nonRetryableOverrides` are downgraded to
+ * retryable even when they match the built-in non-retryable limit patterns.
  */
-export function isRetryableAssistantError(message: AssistantMessage): boolean {
+export function isRetryableAssistantError(message: AssistantMessage, overrides?: RetryOverrides): boolean {
 	if (message.stopReason !== "error" || !message.errorMessage) return false;
 	const errorMessage = message.errorMessage;
+	if (matchesAnyPattern(errorMessage, overrides?.nonRetryableOverrides ?? [])) return true;
 	if (NON_RETRYABLE_PROVIDER_LIMIT_ERROR_PATTERN.test(errorMessage)) return false;
 	return RETRYABLE_PROVIDER_ERROR_PATTERN.test(errorMessage);
 }

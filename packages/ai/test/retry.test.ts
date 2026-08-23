@@ -76,6 +76,12 @@ describe("provider retry classification", () => {
 		).toBe(false);
 	});
 
+	it("downgrades limit errors matching nonRetryableOverrides to retryable", () => {
+		const message = fauxAssistantMessage("", { stopReason: "error", errorMessage: "429 quota exceeded" });
+		expect(isRetryableAssistantError(message, { nonRetryableOverrides: ["quota.?exceeded"] })).toBe(true);
+		expect(isRetryableAssistantError(message, { nonRetryableOverrides: ["unrelated-pattern"] })).toBe(false);
+	});
+
 	it("classifies assistant error messages", () => {
 		expect(
 			isRetryableAssistantError(fauxAssistantMessage("", { stopReason: "error", errorMessage: "overloaded_error" })),
@@ -120,6 +126,18 @@ describe("retryAssistantCall", () => {
 		expect(produce).toHaveBeenCalledTimes(1);
 		expect(onRetryScheduled).not.toHaveBeenCalled();
 		expect(onRetryFinished).not.toHaveBeenCalled();
+	});
+
+	it("retries a quota error downgraded by nonRetryableOverrides", async () => {
+		const produce = vi.fn(async () =>
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: "insufficient_quota" }),
+		);
+		const onRetryScheduled = vi.fn();
+		const policy: RetryPolicy = { enabled: true, maxRetries: 2, baseDelayMs: 0, nonRetryableOverrides: ["quota"] };
+		const res = await retryAssistantCall(produce, policy, undefined, { onRetryScheduled });
+		expect(res.stopReason).toBe("error");
+		expect(produce).toHaveBeenCalledTimes(3); // 1 initial + 2 retries
+		expect(onRetryScheduled).toHaveBeenCalledTimes(2);
 	});
 
 	it("retries a transient error up to maxRetries then returns the final error", async () => {

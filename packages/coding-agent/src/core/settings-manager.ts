@@ -31,6 +31,7 @@ export interface RetrySettings {
 	enabled?: boolean; // default: true
 	maxRetries?: number; // default: 3
 	baseDelayMs?: number; // default: 2000 (exponential backoff: 2s, 4s, 8s)
+	nonRetryableOverrides?: string[]; // error-message regex sources treated as retryable despite matching built-in non-retryable limits (e.g. usage-limit errors)
 	provider?: ProviderRetrySettings;
 }
 
@@ -943,6 +944,10 @@ export class SettingsManager {
 			maxRetries: this.settings.retry?.maxRetries ?? 3,
 			baseDelayMs: this.settings.retry?.baseDelayMs ?? 2000,
 		};
+	}
+
+	getNonRetryableOverrides(): string[] {
+		return [...(this.settings.retry?.nonRetryableOverrides ?? [])];
 	}
 
 	getHttpIdleTimeoutMs(): number {
