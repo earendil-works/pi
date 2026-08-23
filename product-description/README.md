@@ -177,12 +177,12 @@ Status is one of `not started`, `drafted`, or `verified`.
 | glossary.md | drafted |
 | bug-triage.md | not started |
 | verification/ (3 checklists) | not started |
-| foundations/the-turn.md | not started |
-| foundations/input.md | not started |
-| foundations/the-screen.md | not started |
-| foundations/sessions.md | not started |
-| foundations/models-and-credentials.md | not started |
-| foundations/configuration.md | not started |
+| foundations/the-turn.md | drafted |
+| foundations/input.md | drafted |
+| foundations/the-screen.md | drafted |
+| foundations/sessions.md | drafted |
+| foundations/models-and-credentials.md | drafted |
+| foundations/configuration.md | drafted |
 | conversation/the-editor.md | not started |
 | conversation/autocomplete.md | not started |
 | conversation/sending-a-prompt.md | not started |
