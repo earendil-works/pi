@@ -711,6 +711,18 @@ export interface AfterProviderResponseEvent {
 	headers: Record<string, string>;
 }
 
+/**
+ * Fired when a provider call fails (stopReason "error"). Unlike
+ * `after_provider_response`, this also covers failures with no HTTP response,
+ * such as network errors and mid-stream failures.
+ */
+export interface ProviderErrorEvent {
+	type: "provider_error";
+	provider: string;
+	modelId: string;
+	error: string;
+}
+
 /** Fired after user submits prompt but before agent loop. */
 export interface BeforeAgentStartEvent {
 	type: "before_agent_start";
@@ -1055,6 +1067,7 @@ export type ExtensionEvent =
 	| BeforeProviderRequestEvent
 	| BeforeProviderHeadersEvent
 	| AfterProviderResponseEvent
+	| ProviderErrorEvent
 	| BeforeAgentStartEvent
 	| AgentStartEvent
 	| AgentEndEvent
@@ -1241,6 +1254,7 @@ export interface ExtensionAPI {
 	): void;
 	on(event: "before_provider_headers", handler: ExtensionHandler<BeforeProviderHeadersEvent>): void;
 	on(event: "after_provider_response", handler: ExtensionHandler<AfterProviderResponseEvent>): void;
+	on(event: "provider_error", handler: ExtensionHandler<ProviderErrorEvent>): void;
 	on(event: "before_agent_start", handler: ExtensionHandler<BeforeAgentStartEvent, BeforeAgentStartEventResult>): void;
 	on(event: "agent_start", handler: ExtensionHandler<AgentStartEvent>): void;
 	on(event: "agent_end", handler: ExtensionHandler<AgentEndEvent>): void;

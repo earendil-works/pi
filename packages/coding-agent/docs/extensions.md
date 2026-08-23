@@ -298,6 +298,7 @@ user sends prompt ────────────────────�
   │   ├─► before_provider_headers (can mutate headers)     |
   │   ├─► before_provider_request (can inspect or replace payload)
   │   ├─► after_provider_response (status + headers, before stream consume)
+  │   ├─► provider_error (failed provider call, per attempt)
   │   │                                            │       │
   │   │   LLM responds, may call tools:            │       │
   │   │     ├─► tool_execution_start               │       │
@@ -716,6 +717,19 @@ pi.on("after_provider_response", (event, ctx) => {
 ```
 
 Header availability depends on provider and transport. Providers that abstract HTTP responses may not expose headers.
+
+#### provider_error
+
+Fired when a provider call fails (assistant message with stopReason `"error"`). Unlike `after_provider_response`, this also covers failures with no HTTP response, such as network errors and mid-stream failures. Fired once per failed attempt, including attempts that an automatic retry will reschedule.
+
+```typescript
+pi.on("provider_error", async (event, ctx) => {
+  // event.provider - provider id (e.g. "anthropic")
+  // event.modelId - model id that failed
+  // event.error - error message from the provider
+  ctx.ui.notify(`${event.provider}/${event.modelId} failed: ${event.error}`, "warning");
+});
+```
 
 ### Model Events
 

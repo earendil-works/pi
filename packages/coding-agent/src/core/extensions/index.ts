@@ -112,6 +112,7 @@ export type {
 	ProjectTrustHandler,
 	// Provider Registration
 	ProviderConfig,
+	ProviderErrorEvent,
 	ProviderModelConfig,
 	ReadToolCallEvent,
 	ReadToolResultEvent,

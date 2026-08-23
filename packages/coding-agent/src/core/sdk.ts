@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import { Agent, type AgentMessage, setDefaultStreamFn, type ThinkingLevel } from "@earendil-works/pi-agent-core";
+import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { clampThinkingLevel, type Message, type Model, streamSimple } from "@earendil-works/pi-ai/compat";
 import { getAgentDir } from "../config.ts";
 import { resolvePath } from "../utils/paths.ts";
@@ -319,7 +320,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			const websocketConnectTimeoutMs =
 				options?.websocketConnectTimeoutMs ?? settingsManager.getWebSocketConnectTimeoutMs();
 			const headerRunner = extensionRunnerRef.current;
-			return modelRuntime.streamSimple(model, context, {
+			const stream = modelRuntime.streamSimple(model, context, {
 				...options,
 				timeoutMs,
 				websocketConnectTimeoutMs,
@@ -337,6 +338,31 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 						: (headers ?? {});
 				},
 			});
+			const runner = extensionRunnerRef.current;
+			if (!runner?.hasHandlers("provider_error")) {
+				return stream;
+			}
+			// Provider failures are encoded in the returned stream as error events
+			// (pi-ai contract), so tee the stream to surface each failed attempt.
+			const wrapped = createAssistantMessageEventStream();
+			void (async () => {
+				try {
+					for await (const event of stream) {
+						if (event.type === "error" && event.error.stopReason === "error") {
+							await runner.emit({
+								type: "provider_error",
+								provider: model.provider,
+								modelId: model.id,
+								error: event.error.errorMessage || "Unknown provider error",
+							});
+						}
+						wrapped.push(event);
+					}
+				} finally {
+					wrapped.end();
+				}
+			})();
+			return wrapped;
 		},
 		onPayload: async (payload, _model) => {
 			const runner = extensionRunnerRef.current;

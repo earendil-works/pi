@@ -113,6 +113,7 @@ export type {
 	ProjectTrustEventResult,
 	ProjectTrustHandler,
 	ProviderConfig,
+	ProviderErrorEvent,
 	ProviderModelConfig,
 	ReadToolCallEvent,
 	RegisteredCommand,

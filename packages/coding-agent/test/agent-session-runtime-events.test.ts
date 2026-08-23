@@ -14,6 +14,7 @@ import { ModelRuntime } from "../src/core/model-runtime.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 import type {
 	ExtensionFactory,
+	ProviderErrorEvent,
 	SessionBeforeForkEvent,
 	SessionBeforeSwitchEvent,
 	SessionShutdownEvent,
@@ -253,5 +254,22 @@ describe("AgentSessionRuntime session lifecycle events", () => {
 		const cancelAtResult = await runtimeHost.fork("missing-entry", { position: "at" });
 		expect(cancelAtResult).toEqual({ cancelled: true });
 		expect(events).toEqual([{ type: "session_before_fork", entryId: "missing-entry", position: "at" }]);
+	});
+
+	it("emits provider_error when a provider call fails", async () => {
+		const errors: ProviderErrorEvent[] = [];
+		const { runtimeHost, faux } = await createRuntimeHost((pi) => {
+			pi.on("provider_error", (event) => {
+				errors.push(event);
+			});
+		});
+
+		faux.setResponses([fauxAssistantMessage("", { stopReason: "error", errorMessage: "quota exceeded" })]);
+		await runtimeHost.session.prompt("hello");
+
+		const model = faux.getModel();
+		expect(errors).toEqual([
+			{ type: "provider_error", provider: model.provider, modelId: model.id, error: "quota exceeded" },
+		]);
 	});
 });
