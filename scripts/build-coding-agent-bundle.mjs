@@ -28,7 +28,24 @@ const allowedExternalPackages = new Set([
 const lazyJitiPlugin = {
 	name: "lazy-jiti-transform",
 	setup(build) {
-		build.onResolve({ filter: /^jiti\/static$/ }, () => ({ external: true, path: "jiti" }));
+		build.onResolve({ filter: /^jiti\/static$/ }, () => ({
+			namespace: "lazy-jiti",
+			path: "jiti/static",
+		}));
+		build.onLoad({ filter: /.*/, namespace: "lazy-jiti" }, () => ({
+			contents: `
+import { createRequire } from "node:module";
+
+const require = createRequire(import.meta.url);
+let createJitiImpl;
+
+export function createJiti(...args) {
+	createJitiImpl ??= require("jiti").createJiti;
+	return createJitiImpl(...args);
+}
+`,
+			loader: "js",
+		}));
 	},
 };
 
@@ -47,8 +64,9 @@ function commonBuildOptions() {
 		minifyWhitespace: true,
 		platform: "node",
 		// The source uses jiti/static so Bun embeds its Babel transform. The Node
-		// package can use regular jiti from its direct dependency and load Babel
-		// only when an extension actually needs transformation.
+		// package replaces it with a synchronous lazy require so jiti loads only
+		// when importing an extension; Babel remains deferred until a cache miss
+		// needs transformation.
 		plugins: [lazyJitiPlugin],
 		sourcemap: false,
 		target: "node22.19",
