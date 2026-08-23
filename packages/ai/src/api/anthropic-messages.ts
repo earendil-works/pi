@@ -184,6 +184,7 @@ function getAnthropicCompat(
 	model: Model<"anthropic-messages">,
 ): Required<Omit<AnthropicMessagesCompat, "forceAdaptiveThinking" | "allowedFallbackModels">> {
 	return {
+		supportsTools: model.compat?.supportsTools ?? true,
 		supportsEagerToolInputStreaming: model.compat?.supportsEagerToolInputStreaming ?? true,
 		supportsLongCacheRetention: model.compat?.supportsLongCacheRetention ?? true,
 		sendSessionAffinityHeaders: model.compat?.sendSessionAffinityHeaders ?? false,
@@ -1038,7 +1039,7 @@ function buildParams(
 		params.temperature = options.temperature;
 	}
 
-	if (immediateTools.length > 0 || deferredTools.length > 0) {
+	if (compat.supportsTools && (immediateTools.length > 0 || deferredTools.length > 0)) {
 		params.tools = [
 			...convertTools(
 				immediateTools,
@@ -1096,7 +1097,7 @@ function buildParams(
 		}
 	}
 
-	if (options?.toolChoice) {
+	if (compat.supportsTools && options?.toolChoice) {
 		if (typeof options.toolChoice === "string") {
 			params.tool_choice = { type: options.toolChoice };
 		} else {
@@ -1320,7 +1321,8 @@ function convertMessages(
 }
 
 function shouldUseFineGrainedToolStreamingBeta(model: Model<"anthropic-messages">, context: Context): boolean {
-	return !!context.tools?.length && !getAnthropicCompat(model).supportsEagerToolInputStreaming;
+	const compat = getAnthropicCompat(model);
+	return compat.supportsTools && !!context.tools?.length && !compat.supportsEagerToolInputStreaming;
 }
 
 function convertTools(

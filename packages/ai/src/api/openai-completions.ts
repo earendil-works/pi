@@ -805,25 +805,27 @@ function buildParams(
 		params.temperature = options.temperature;
 	}
 
-	const deferredToolNames =
-		compat.deferredToolsMode === "kimi" ? getDeferredToolNames(context.messages) : new Set<string>();
-	const activeTools = context.tools?.filter((tool) => !deferredToolNames.has(tool.name));
-	if (activeTools && activeTools.length > 0) {
-		params.tools = convertTools(activeTools, compat);
-		if (compat.zaiToolStream) {
-			(params as any).tool_stream = true;
+	if (compat.supportsTools) {
+		const deferredToolNames =
+			compat.deferredToolsMode === "kimi" ? getDeferredToolNames(context.messages) : new Set<string>();
+		const activeTools = context.tools?.filter((tool) => !deferredToolNames.has(tool.name));
+		if (activeTools && activeTools.length > 0) {
+			params.tools = convertTools(activeTools, compat);
+			if (compat.zaiToolStream) {
+				(params as any).tool_stream = true;
+			}
+		} else if (hasToolHistory(context.messages)) {
+			// Anthropic (via LiteLLM/proxy) requires tools param when conversation has tool_calls/tool_results
+			params.tools = [];
 		}
-	} else if (hasToolHistory(context.messages)) {
-		// Anthropic (via LiteLLM/proxy) requires tools param when conversation has tool_calls/tool_results
-		params.tools = [];
+
+		if (options?.toolChoice) {
+			params.tool_choice = options.toolChoice;
+		}
 	}
 
 	if (cacheControl) {
 		applyAnthropicCacheControl(messages, params.tools, cacheControl);
-	}
-
-	if (options?.toolChoice) {
-		params.tool_choice = options.toolChoice;
 	}
 
 	const thinkingTokenBudgetField = resolveThinkingTokenBudgetField(compat);

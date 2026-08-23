@@ -555,6 +555,8 @@ export type AssistantMessageEvent =
  * Use this to override URL-based auto-detection for custom providers.
  */
 export interface OpenAICompletionsCompat {
+	/** Whether the provider supports tool calling. When false, tools and tool_choice are omitted from requests. Default: true. */
+	supportsTools?: boolean;
 	/** Whether the provider supports the `store` field. Default: auto-detected from URL. */
 	supportsStore?: boolean;
 	/** Whether the provider supports the `developer` role (vs `system`). Default: auto-detected from URL. */
@@ -626,6 +628,8 @@ export interface OpenAICompletionsCompat {
 
 /** Compatibility settings for OpenAI Responses APIs. */
 export interface OpenAIResponsesCompat {
+	/** Whether the provider supports tool calling. When false, tools and tool_choice are omitted from requests. Default: true. */
+	supportsTools?: boolean;
 	/** Whether the provider supports the `developer` role (vs `system`). Default: true. */
 	supportsDeveloperRole?: boolean;
 	/** Session-affinity header format: `openai` sends `session_id` and `x-client-request-id`; `openai-nosession` sends `x-client-request-id`; `openrouter` sends `x-session-id`. Does not affect the `prompt_cache_key` body param, which is governed by cache retention. Default: auto-detected. */
@@ -646,6 +650,8 @@ export interface OpenAIResponsesCompat {
 
 /** Compatibility settings for Anthropic Messages-compatible APIs. */
 export interface AnthropicMessagesCompat {
+	/** Whether the provider supports tool calling. When false, tools and tool_choice are omitted from requests. Default: true. */
+	supportsTools?: boolean;
 	/**
 	 * Whether the provider accepts per-tool `eager_input_streaming`.
 	 * When false, the Anthropic provider omits `tools[].eager_input_streaming`
@@ -709,6 +715,8 @@ export interface AnthropicMessagesCompat {
 
 /** Compatibility settings for Amazon Bedrock models. */
 export interface BedrockCompat {
+	/** Whether the model supports tool calling. When false, tools are omitted from requests. Default: true. */
+	supportsTools?: boolean;
 	/** Whether the model supports Bedrock strict tool schemas. Default: false. */
 	supportsStrictMode?: boolean;
 }

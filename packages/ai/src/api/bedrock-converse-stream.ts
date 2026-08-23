@@ -235,6 +235,7 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 
 		try {
 			const supportsStrictMode = model.compat?.supportsStrictMode ?? false;
+			const supportsTools = model.compat?.supportsTools ?? true;
 			const client = new BedrockRuntimeClient(config);
 			let observedRawResponse = false;
 			if (options.onResponse) {
@@ -256,7 +257,7 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 					...(inferenceMaxTokens !== undefined && { maxTokens: inferenceMaxTokens }),
 					...(options.temperature !== undefined && { temperature: options.temperature }),
 				},
-				toolConfig: convertToolConfig(context.tools, options.toolChoice, supportsStrictMode),
+				toolConfig: convertToolConfig(context.tools, options.toolChoice, supportsStrictMode, supportsTools),
 				additionalModelRequestFields: buildAdditionalModelRequestFields(model, options),
 				...(options.requestMetadata !== undefined && { requestMetadata: options.requestMetadata }),
 			};
@@ -1103,7 +1104,9 @@ function convertToolConfig(
 	tools: Tool[] | undefined,
 	toolChoice: BedrockOptions["toolChoice"],
 	supportsStrictMode: boolean,
+	supportsTools = true,
 ): ToolConfiguration | undefined {
+	if (!supportsTools) return undefined;
 	if (!tools?.length) return undefined;
 	if (toolChoice === "none") return undefined;
 

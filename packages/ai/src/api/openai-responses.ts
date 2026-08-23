@@ -67,6 +67,7 @@ function resolveCacheRetention(cacheRetention?: CacheRetention, env?: ProviderEn
 
 function getCompat(model: Model<"openai-responses">): Required<OpenAIResponsesCompat> {
 	return {
+		supportsTools: model.compat?.supportsTools ?? true,
 		supportsDeveloperRole: model.compat?.supportsDeveloperRole ?? true,
 		sessionAffinityFormat: model.compat?.sessionAffinityFormat ?? detectSessionAffinityFormat(model),
 		supportsLongCacheRetention: model.compat?.supportsLongCacheRetention ?? true,
@@ -269,11 +270,13 @@ function buildParams(
 		compat.supportsOpenAIGrammarTools,
 	),
 ) {
-	const deferredToolsMode = compat.supportsAdditionalTools
-		? "additional-tools"
-		: compat.supportsToolSearch
-			? "tool-search"
-			: undefined;
+	const deferredToolsMode = compat.supportsTools
+		? compat.supportsAdditionalTools
+			? "additional-tools"
+			: compat.supportsToolSearch
+				? "tool-search"
+				: undefined
+		: undefined;
 	const toolPlacement = splitDeferredTools(context, deferredToolsMode !== undefined);
 	const messages = convertResponsesMessages(model, context, OPENAI_TOOL_CALL_PROVIDERS, {
 		grammarToolInputProperties,
@@ -309,14 +312,14 @@ function buildParams(
 		params.service_tier = options.serviceTier;
 	}
 
-	if (toolPlacement.immediate.length > 0) {
+	if (compat.supportsTools && toolPlacement.immediate.length > 0) {
 		params.tools = convertResponsesTools(toolPlacement.immediate, {
 			supportsStrictMode: compat.supportsStrictMode,
 			supportsOpenAIGrammarTools: compat.supportsOpenAIGrammarTools,
 		});
 	}
 
-	if (options?.toolChoice !== undefined) {
+	if (compat.supportsTools && options?.toolChoice !== undefined) {
 		params.tool_choice = options.toolChoice;
 	}
 

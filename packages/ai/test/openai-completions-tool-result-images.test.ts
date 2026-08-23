@@ -23,6 +23,7 @@ const compat: Omit<Required<OpenAICompletionsCompat>, "deferredToolsMode" | "thi
 	deferredToolsMode?: OpenAICompletionsCompat["deferredToolsMode"];
 	thinkingTokenBudgetField?: OpenAICompletionsCompat["thinkingTokenBudgetField"];
 } = {
+	supportsTools: true,
 	supportsStore: true,
 	supportsDeveloperRole: true,
 	supportsReasoningEffort: true,

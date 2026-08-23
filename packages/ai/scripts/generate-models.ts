@@ -567,6 +567,7 @@ function isAnthropicTemperatureUnsupportedModel(modelId: string): boolean {
 }
 
 const OPENAI_COMPLETIONS_DEFAULT_COMPAT = {
+	supportsTools: true,
 	supportsStore: true,
 	supportsDeveloperRole: true,
 	supportsReasoningEffort: true,

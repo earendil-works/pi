@@ -362,6 +362,7 @@ describe("deferred tools", () => {
 		});
 
 		const messages = convertMessages(makeKimiModel("kimi"), context, {
+			supportsTools: true,
 			supportsStore: false,
 			supportsDeveloperRole: false,
 			supportsReasoningEffort: false,

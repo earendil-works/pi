@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getModel, streamSimple } from "../src/compat.ts";
+import type { Tool } from "../src/types.ts";
 
 // Empty tools arrays must NOT be serialized as `tools: []` — some OpenAI-compatible
 // backends (e.g. DashScope / Aliyun Qwen via compatible-mode) reject the request with
@@ -300,5 +301,88 @@ describe("openai-completions empty tools handling", () => {
 		const params = mockState.lastParams as { tools?: unknown[] };
 		expect(Array.isArray(params.tools)).toBe(true);
 		expect(params.tools).toEqual([]);
+	});
+
+	it("omits tools and tool_choice when compat.supportsTools is false", async () => {
+		const { compat: _compat, ...baseModel } = getModel("openai", "gpt-4o-mini")!;
+		const model = {
+			...baseModel,
+			api: "openai-completions",
+			compat: { supportsTools: false },
+		} as const;
+
+		const dummyTool: Tool = {
+			name: "test_tool",
+			description: "A test tool",
+			parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] },
+		};
+
+		await streamSimple(
+			model,
+			{
+				messages: [{ role: "user", content: "hi", timestamp: Date.now() }],
+				tools: [dummyTool],
+			},
+			{ apiKey: "test", toolChoice: "auto" },
+		).result();
+
+		const params = mockState.lastParams as { tools?: unknown; tool_choice?: unknown };
+		expect("tools" in (params as object)).toBe(false);
+		expect("tool_choice" in (params as object)).toBe(false);
+	});
+
+	it("omits tools even with tool history when compat.supportsTools is false", async () => {
+		const { compat: _compat, ...baseModel } = getModel("openai", "gpt-4o-mini")!;
+		const model = {
+			...baseModel,
+			api: "openai-completions",
+			compat: { supportsTools: false },
+		} as const;
+
+		await streamSimple(
+			model,
+			{
+				messages: [
+					{ role: "user", content: "use the tool", timestamp: Date.now() },
+					{
+						role: "assistant",
+						content: [
+							{
+								type: "toolCall",
+								id: "t1",
+								name: "noop",
+								arguments: {},
+							},
+						],
+						stopReason: "toolUse",
+						usage: {
+							input: 0,
+							output: 0,
+							cacheRead: 0,
+							cacheWrite: 0,
+							totalTokens: 0,
+							cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+						},
+						api: "openai-completions",
+						provider: "openai",
+						model: "gpt-4o-mini",
+						timestamp: Date.now(),
+					},
+					{
+						role: "toolResult",
+						toolCallId: "t1",
+						toolName: "noop",
+						content: [{ type: "text", text: "done" }],
+						isError: false,
+						timestamp: Date.now(),
+					},
+				],
+				tools: [],
+			},
+			{ apiKey: "test" },
+		).result();
+
+		const params = mockState.lastParams as { tools?: unknown };
+		expect("tools" in (params as object)).toBe(false);
 	});
 });

@@ -22,6 +22,7 @@ const emptyUsage: Usage = {
 };
 
 const compat = {
+	supportsTools: true,
 	supportsStore: true,
 	supportsDeveloperRole: true,
 	supportsReasoningEffort: true,
