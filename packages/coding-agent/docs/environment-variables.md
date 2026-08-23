@@ -4,7 +4,7 @@ Pi uses environment variables in three ways:
 
 - Variables such as `PI_OFFLINE` configure the Pi process.
 - Pi sets process markers so child processes can identify Pi as the launching agent.
-- Commands run by the LLM-callable bash tool receive `PI_*` variables describing the current session.
+- Commands run by the LLM-callable shell tools receive `PI_*` variables describing the current session.
 
 Provider API-key variables are documented separately in [Providers](providers.md#environment-variables-or-auth-file).
 
@@ -17,9 +17,9 @@ The CLI and RPC entry points set two process markers:
 
 Child processes inherit both markers. They are not session-specific and are not set automatically when Pi is embedded through the SDK.
 
-## Bash Tool Session Environment
+## Shell Tool Session Environment
 
-Commands run by the bash tool receive the current Pi session state:
+Commands run by the `bash` and `powershell` tools receive the current Pi session state:
 
 | Variable | Description |
 |----------|-------------|
@@ -29,7 +29,7 @@ Commands run by the bash tool receive the current Pi session state:
 | `PI_MODEL` | Currently selected model ID |
 | `PI_REASONING_LEVEL` | Current effective reasoning level: `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max` |
 
-The values are resolved when each command starts. Switching models or changing the reasoning level therefore affects the next bash command without restarting Pi. `PI_PROVIDER` and `PI_MODEL` identify the selected Pi model, not a different upstream model that a router may choose internally.
+The values are resolved when each command starts. Switching models or changing the reasoning level therefore affects the next shell command without restarting Pi. `PI_PROVIDER` and `PI_MODEL` identify the selected Pi model, not a different upstream model that a router may choose internally.
 
 When asked which model or provider is running, inspect these variables instead of inferring the answer from the system prompt:
 
@@ -46,11 +46,11 @@ if [ -n "$PI_SESSION_FILE" ]; then
 fi
 ```
 
-These variables are injected into the LLM-callable bash tool. They are not injected into user-entered `!` or `!!` commands.
+These variables are injected into the LLM-callable `bash` and `powershell` tools. They are not injected into user-entered `!` or `!!` commands.
 
-### Custom Bash Tools
+### Custom Shell Tools
 
-Bash tools created with `createBashTool()` expose the session environment by default when registered with Pi. Injection happens before `spawnHook`, so a hook receives the variables in `ctx.env`:
+Tools created with `createBashTool()` or `createPowerShellTool()` expose the session environment by default when registered with Pi. Injection happens before `spawnHook`, so a hook receives the variables in `ctx.env`:
 
 ```typescript
 const bashTool = createBashTool(cwd, {
@@ -64,7 +64,7 @@ const bashTool = createBashTool(cwd, {
 Disable session metadata independently of the spawn hook:
 
 ```typescript
-const bashTool = createBashTool(cwd, {
+const powershellTool = createPowerShellTool(cwd, {
   exposeSessionEnvironment: false,
   spawnHook: (ctx) => ctx,
 });

@@ -435,12 +435,13 @@ ${chalk.bold("Environment Variables:")}
   PI_SHARE_VIEWER_URL              - Base URL for /share command (default: https://pi.dev/session/)
 
 ${chalk.bold("Built-in Tool Names:")}
-  read   - Read file contents
-  bash   - Execute bash commands
-  edit   - Edit files with find/replace
-  write  - Write files (creates/overwrites)
-  grep   - Search file contents (read-only, off by default)
-  find   - Find files by glob pattern (read-only, off by default)
-  ls     - List directory contents (read-only, off by default)
+  read       - Read file contents
+  bash       - Execute bash commands
+  powershell - Execute PowerShell commands on Windows
+  edit       - Edit files with find/replace
+  write      - Write files (creates/overwrites)
+  grep       - Search file contents (read-only, off by default)
+  find       - Find files by glob pattern (read-only, off by default)
+  ls         - List directory contents (read-only, off by default)
 `);
 }

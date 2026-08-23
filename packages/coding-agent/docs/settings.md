@@ -220,11 +220,19 @@ Windows paths in JSON must use forward slashes or escaped backslashes:
 |---------|------|---------|-------------|
 | `defaultTools` | string[] | - | Built-in tools enabled initially. When omitted, Pi uses its standard defaults |
 
-`defaultTools` selects the built-in tools enabled at startup. Extension and SDK custom tools remain enabled:
+`defaultTools` selects the built-in tools enabled at startup. Extension and SDK custom tools remain enabled. Available built-ins are `read`, `bash`, `powershell`, `edit`, `write`, `grep`, `find`, and `ls`:
 
 ```json
 {
   "defaultTools": ["bash", "edit", "write"]
+}
+```
+
+On Windows, select `powershell` instead of `bash`, or include both:
+
+```json
+{
+  "defaultTools": ["read", "powershell", "edit", "write"]
 }
 ```
 
