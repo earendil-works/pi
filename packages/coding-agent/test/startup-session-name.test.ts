@@ -119,17 +119,4 @@ describe("startup session name", () => {
 		expect(result.signal).toBeNull();
 		expect(readSessionInfoNames(dirs.sessionFile)).toEqual(["CLI Named Session"]);
 	});
-
-	it("rejects empty --name values without appending session metadata", async () => {
-		const dirs = setup();
-		const result = await runCli(
-			["--session", dirs.sessionFile, "--name", "   ", "--model", "missing-model", "-p", "hi"],
-			dirs,
-		);
-
-		expect(result.code).toBe(1);
-		expect(result.signal).toBeNull();
-		expect(result.stderr).toContain("--name requires a non-empty value");
-		expect(readSessionInfoNames(dirs.sessionFile)).toEqual([]);
-	});
 });

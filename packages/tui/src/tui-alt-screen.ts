@@ -158,6 +158,11 @@ export interface TuiAltScreenOptions {
 	openUrl?: (url: string) => void;
 	/** Handle an unmodified secondary-button press for clipboard paste. Currently enabled on Windows only. */
 	onRightClickPaste?: () => void;
+	/**
+	 * Copy selected text to the system clipboard. Return `true` on success; the caller flashes
+	 * an error otherwise. When omitted, the selection is copied via an OSC 52 write.
+	 */
+	copySelection?: (text: string) => Promise<boolean>;
 }
 
 /** Alternate-screen TUI with a scrollable, application-owned viewport. */
@@ -197,6 +202,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 	private readonly searchCurrentMatchStyle: (text: string) => string;
 	private readonly openUrl?: (url: string) => void;
 	private readonly onRightClickPaste?: () => void;
+	private readonly copySelection?: (text: string) => Promise<boolean>;
 
 	constructor(
 		terminal: Terminal,
@@ -219,6 +225,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		this.searchCurrentMatchStyle = options.searchCurrentMatchStyle ?? ((text) => `\x1b[1;7m${text}\x1b[22;27m`);
 		this.openUrl = options.openUrl;
 		this.onRightClickPaste = options.onRightClickPaste;
+		this.copySelection = options.copySelection;
 		this.addInputListener((data) => this.handleViewportInput(data));
 	}
 
@@ -750,7 +757,13 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 	}
 
 	private handleRightClickPaste(event: SgrMouseEvent): boolean {
-		if (!this.onRightClickPaste || process.platform !== "win32" || event.release || event.button !== 2) {
+		if (
+			!this.onRightClickPaste ||
+			process.platform !== "win32" ||
+			process.env.TERM_PROGRAM?.toLowerCase() === "vscode" ||
+			event.release ||
+			event.button !== 2
+		) {
 			return false;
 		}
 		try {
@@ -1004,7 +1017,8 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 	}
 
 	private handleSelectionMouseEvent(event: SgrMouseEvent): void {
-		if ((event.button & 3) !== 0) return;
+		const button = event.button & 3;
+		if (button !== 0 && !(event.release && button === 3)) return;
 		const anchorScrollView = this.selectionAnchor?.scrollView;
 		const point = this.getSelectionPoint(event, anchorScrollView);
 		if (event.release) {
@@ -1032,7 +1046,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 				this.requestRender();
 				return;
 			}
-			this.copySelectionToClipboard();
+			void this.copySelectionToClipboard();
 			this.requestRender();
 			return;
 		}
@@ -1108,7 +1122,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		return { start: Math.max(minColumn, start), end: Math.min(maxColumn, end) };
 	}
 
-	private copySelectionToClipboard(): void {
+	private async copySelectionToClipboard(): Promise<void> {
 		const selection = this.getSelectionBounds();
 		if (!selection) return;
 		let sourceLines: readonly string[] = this.previousScreen;
@@ -1130,6 +1144,15 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		}
 		const text = lines.join("\n");
 		if (text.length === 0) return;
+		// Prefer an injected clipboard implementation (native clipboard + platform tools with a
+		// verified success path) when the host app provides one. A bare OSC 52 write can show
+		// "Copied!" while leaving the system clipboard untouched (e.g. macOS Terminal.app, tmux
+		// without OSC 52 clipboard passthrough), so only report success when it actually copies.
+		if (this.copySelection) {
+			const ok = await this.copySelection(text);
+			this.flash(ok ? "Copied!" : "Copy failed");
+			return;
+		}
 		this.terminal.write(`\x1b]52;c;${Buffer.from(text).toString("base64")}\x07`);
 		this.flash("Copied!");
 	}

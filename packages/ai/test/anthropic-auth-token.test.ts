@@ -1,3 +1,4 @@
+import { arch, platform, release } from "node:os";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { stream as streamAnthropic } from "../src/api/anthropic-messages.ts";
 import { ANTHROPIC_AUTH_TOKEN_ENV, ANTHROPIC_OAUTH_TOKEN_ENV } from "../src/env-api-keys.ts";
@@ -51,6 +52,7 @@ vi.mock("@anthropic-ai/sdk", () => {
 	return { default: FakeAnthropic };
 });
 
+const PI_USER_AGENT = `pi (${platform()} ${release()}; ${arch()})`;
 const neverAbortedSignal = new AbortController().signal;
 
 const context: Context = {
@@ -69,6 +71,14 @@ const anthropicModel: Model<"anthropic-messages"> = {
 	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 	contextWindow: 100000,
 	maxTokens: 4096,
+};
+
+const kimiCodingModel: Model<"anthropic-messages"> = {
+	...anthropicModel,
+	id: "kimi-for-coding",
+	name: "Kimi For Coding",
+	provider: "kimi-coding",
+	baseUrl: "https://api.kimi.com/coding",
 };
 
 afterEach(() => {
@@ -183,5 +193,24 @@ describe("Anthropic auth token env", () => {
 
 		const headers = mockState.constructorOpts?.defaultHeaders as Record<string, string>;
 		expect(headers.Authorization).toBe("Bearer explicit-token");
+	});
+});
+
+describe("Anthropic-compatible user agents", () => {
+	it("uses pi's User-Agent by default for Anthropic Messages requests", async () => {
+		await streamAnthropic(anthropicModel, context, { apiKey: "anthropic-key" }).result();
+
+		const headers = mockState.constructorOpts?.defaultHeaders as Record<string, string>;
+		expect(headers["User-Agent"]).toBe(PI_USER_AGENT);
+	});
+
+	it("lets explicit headers override the default Anthropic Messages User-Agent", async () => {
+		await streamAnthropic(kimiCodingModel, context, {
+			apiKey: "kimi-key",
+			headers: { "User-Agent": "custom-client" },
+		}).result();
+
+		const headers = mockState.constructorOpts?.defaultHeaders as Record<string, string>;
+		expect(headers["User-Agent"]).toBe("custom-client");
 	});
 });

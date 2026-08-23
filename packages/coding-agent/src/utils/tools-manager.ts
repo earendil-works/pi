@@ -1,4 +1,3 @@
-import chalk from "chalk";
 import { type SpawnSyncReturns, spawnSync } from "child_process";
 import { chmodSync, createWriteStream, existsSync, mkdirSync, readdirSync, renameSync, rmSync } from "fs";
 import { arch, platform } from "os";
@@ -323,9 +322,20 @@ const TERMUX_PACKAGES: Record<string, string> = {
 	rg: "ripgrep",
 };
 
-// Ensure a tool is available, downloading if necessary
-// Returns the path to the tool, or null if unavailable
-export async function ensureTool(tool: "fd" | "rg", silent: boolean = false): Promise<string | undefined> {
+export interface ToolStatus {
+	type: "info" | "warning";
+	message: string;
+}
+
+/**
+ * Ensure a tool is available, downloading if necessary.
+ * Reports progress through `onStatus`; status messages are otherwise silent.
+ * Returns the tool path, or undefined if unavailable.
+ */
+export async function ensureTool(
+	tool: "fd" | "rg",
+	onStatus?: (status: ToolStatus) => void,
+): Promise<string | undefined> {
 	const existingPath = getToolPath(tool);
 	if (existingPath) {
 		return existingPath;
@@ -335,9 +345,7 @@ export async function ensureTool(tool: "fd" | "rg", silent: boolean = false): Pr
 	if (!config) return undefined;
 
 	if (isOfflineModeEnabled()) {
-		if (!silent) {
-			console.log(chalk.yellow(`${config.name} not found. Offline mode enabled, skipping download.`));
-		}
+		onStatus?.({ type: "warning", message: `${config.name} not found. Offline mode enabled, skipping download.` });
 		return undefined;
 	}
 
@@ -345,27 +353,22 @@ export async function ensureTool(tool: "fd" | "rg", silent: boolean = false): Pr
 	// Users must install via pkg.
 	if (platform() === "android") {
 		const pkgName = TERMUX_PACKAGES[tool] ?? tool;
-		if (!silent) {
-			console.log(chalk.yellow(`${config.name} not found. Install with: pkg install ${pkgName}`));
-		}
+		onStatus?.({ type: "warning", message: `${config.name} not found. Install with: pkg install ${pkgName}` });
 		return undefined;
 	}
 
 	// Tool not found - download it
-	if (!silent) {
-		console.log(chalk.dim(`${config.name} not found. Downloading...`));
-	}
+	onStatus?.({ type: "info", message: `${config.name} not found. Downloading...` });
 
 	try {
 		const path = await downloadTool(tool);
-		if (!silent) {
-			console.log(chalk.dim(`${config.name} installed to ${path}`));
-		}
+		onStatus?.({ type: "info", message: `${config.name} installed to ${path}` });
 		return path;
 	} catch (e) {
-		if (!silent) {
-			console.log(chalk.yellow(`Failed to download ${config.name}: ${e instanceof Error ? e.message : e}`));
-		}
+		onStatus?.({
+			type: "warning",
+			message: `Failed to download ${config.name}: ${e instanceof Error ? e.message : e}`,
+		});
 		return undefined;
 	}
 }

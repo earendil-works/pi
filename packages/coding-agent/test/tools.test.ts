@@ -486,9 +486,8 @@ describe("Coding Agent Tools", () => {
 		});
 
 		it("should respect timeout", async () => {
-			await expect(bashTool.execute("test-call-10", { command: "sleep 5", timeout: 1 })).rejects.toThrow(
-				/timed out/i,
-			);
+			const command = `${JSON.stringify(process.execPath)} -e ${JSON.stringify("setInterval(() => {}, 1000)")}`;
+			await expect(bashTool.execute("test-call-10", { command, timeout: 0.05 })).rejects.toThrow(/timed out/i);
 		});
 
 		it("should include full output path for truncated timeout and abort errors", async () => {

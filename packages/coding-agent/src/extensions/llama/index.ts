@@ -53,6 +53,8 @@ export default function llamaExtension(pi: ExtensionAPI): void {
 		provider.setCatalog(current, client.serverUrl);
 		const result = await ctx.modelRegistry.refresh({
 			providers: [LLAMA_PROVIDER_ID],
+			// /llama already contacted the configured llama.cpp server, so keep this refresh live even in PI_OFFLINE.
+			allowNetwork: true,
 			signal,
 		});
 		if (result.aborted) throw new Error("Model catalog refresh timed out.");

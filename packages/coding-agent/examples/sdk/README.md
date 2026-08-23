@@ -132,7 +132,7 @@ session.subscribe((event) => {
     case "tool_execution_end":
       console.log(`Result: ${event.result}`);
       break;
-    case "agent_end":
+    case "agent_settled":
       console.log("Done");
       break;
   }

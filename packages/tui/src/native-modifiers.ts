@@ -1,6 +1,6 @@
 import { createRequire } from "node:module";
 import * as path from "node:path";
-import { fileURLToPath } from "node:url";
+import { getNativeModuleCandidates } from "./native-module-path.ts";
 
 const cjsRequire = createRequire(import.meta.url);
 
@@ -33,14 +33,7 @@ function loadNativeModifiersHelper(): NativeModifiersHelper | undefined {
 		return undefined;
 	}
 
-	const moduleDir = path.dirname(fileURLToPath(import.meta.url));
-	const candidates = [
-		path.join(moduleDir, "..", nativePath),
-		path.join(moduleDir, nativePath),
-		path.join(path.dirname(process.execPath), nativePath),
-	];
-
-	for (const modulePath of candidates) {
+	for (const modulePath of getNativeModuleCandidates(nativePath)) {
 		try {
 			const helper = cjsRequire(modulePath) as unknown;
 			if (isNativeModifiersHelper(helper)) {

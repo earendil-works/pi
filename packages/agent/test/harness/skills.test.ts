@@ -113,4 +113,23 @@ Use this skill.
 		expect(skills.map((skill) => skill.name)).toEqual(["skills"]);
 		expect(skills[0]?.content).toBe("Root content");
 	});
+
+	it("ignores root markdown docs that do not declare skills", async () => {
+		const root = createTempDir();
+		const env = new NodeExecutionEnv({ cwd: root });
+		await env.createDir("skills/nested-skill", { recursive: true });
+		await env.writeFile("skills/README.md", "# Shared skills\n\nDocumentation.");
+		await env.writeFile("skills/AGENTS.md", "# Agent notes\n\nDocumentation.");
+		await env.writeFile("skills/CLAUDE.md", "---\ndescription: [invalid\n---\n\nDocumentation.");
+		await env.writeFile("skills/root.md", "---\ndescription: Root skill\n---\nRoot content");
+		await env.writeFile(
+			"skills/nested-skill/SKILL.md",
+			"---\nname: nested-skill\ndescription: Nested skill\n---\nNested content",
+		);
+
+		const { skills, diagnostics } = await loadSkills(env, "skills");
+
+		expect(diagnostics).toEqual([]);
+		expect(skills.map((skill) => skill.name).sort()).toEqual(["nested-skill", "skills"]);
+	});
 });

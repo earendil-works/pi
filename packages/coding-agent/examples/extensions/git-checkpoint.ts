@@ -46,8 +46,8 @@ export default function (pi: ExtensionAPI) {
 		}
 	});
 
-	pi.on("agent_end", async () => {
-		// Clear checkpoints after agent completes
+	pi.on("agent_settled", async () => {
+		// Clear checkpoints after the full agent run completes
 		checkpoints.clear();
 	});
 }

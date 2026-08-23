@@ -59,7 +59,7 @@ describe("llama.cpp extension", () => {
 		expect(() => normalizeLlamaServerUrl("file:///tmp/llama")).toThrow("http or https");
 	});
 
-	it("exposes only loaded models with router metadata", () => {
+	it("exposes loaded and sleeping models with router metadata", () => {
 		const controller = createLlamaProvider();
 		controller.setCatalog(
 			[
@@ -69,6 +69,7 @@ describe("llama.cpp extension", () => {
 					architecture: { input_modalities: ["text", "image"] },
 					meta: { n_ctx: 65536, n_ctx_train: 131072 },
 				},
+				{ id: "sleeping", status: { value: "sleeping" } },
 				{ id: "unloaded", status: { value: "unloaded" } },
 				{ id: "loading", status: { value: "loading" } },
 			],
@@ -83,16 +84,21 @@ describe("llama.cpp extension", () => {
 				maxTokens: 65536,
 				input: ["text", "image"],
 			}),
+			expect.objectContaining({
+				id: "sleeping",
+				baseUrl: "http://localhost:8080/v1",
+			}),
 		]);
 	});
 
-	it("persists and restores loaded models for cache-only startup refreshes", async () => {
+	it("persists and restores selectable models for cache-only startup refreshes", async () => {
 		let cachedEntry: ModelsStoreEntry | undefined;
 		const { url } = await listen((request, response) => {
 			if (request.url === "/models") {
 				json(response, {
 					data: [
 						{ id: "loaded", status: { value: "loaded" }, meta: { n_ctx: 32768 } },
+						{ id: "sleeping", status: { value: "sleeping" }, meta: { n_ctx: 32768 } },
 						{ id: "unloaded", status: { value: "unloaded" } },
 					],
 				});
@@ -115,8 +121,8 @@ describe("llama.cpp extension", () => {
 			allowNetwork: true,
 			signal: new AbortController().signal,
 		});
-		expect(first.provider.getModels().map((model) => model.id)).toEqual(["loaded"]);
-		expect(cachedEntry?.models.map((model) => model.id)).toEqual(["loaded"]);
+		expect(first.provider.getModels().map((model) => model.id)).toEqual(["loaded", "sleeping"]);
+		expect(cachedEntry?.models.map((model) => model.id)).toEqual(["loaded", "sleeping"]);
 
 		const second = createLlamaProvider();
 		await second.provider.refreshModels?.({
@@ -128,6 +134,7 @@ describe("llama.cpp extension", () => {
 		});
 		expect(second.provider.getModels()).toEqual([
 			expect.objectContaining({ id: "loaded", baseUrl: `${url}/v1`, contextWindow: 32768 }),
+			expect.objectContaining({ id: "sleeping", baseUrl: `${url}/v1`, contextWindow: 32768 }),
 		]);
 	});
 

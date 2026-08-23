@@ -6,6 +6,7 @@ import { Compile } from "typebox/compile";
 import type { TLocalizedValidationError } from "typebox/error";
 import { stripJsonComments } from "../utils/json.ts";
 import { normalizePath } from "../utils/paths.ts";
+import { stripBom } from "../utils/text.ts";
 
 const PercentileCutoffsSchema = Type.Object({
 	p50: Type.Optional(Type.Number()),
@@ -259,7 +260,7 @@ export class ModelConfig {
 
 		let parsed: unknown;
 		try {
-			parsed = JSON.parse(stripJsonComments(content));
+			parsed = JSON.parse(stripJsonComments(stripBom(content)));
 		} catch (error) {
 			return new ModelConfig(
 				new Map(),

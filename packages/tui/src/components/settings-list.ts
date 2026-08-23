@@ -15,8 +15,12 @@ export interface SettingItem {
 	currentValue: string;
 	/** If provided, Enter/Space cycles through these values */
 	values?: string[];
-	/** If provided, Enter opens this submenu. Receives current value and done callback. */
-	submenu?: (currentValue: string, done: (selectedValue?: string) => void) => Component;
+	/** If provided, Enter opens this submenu. Receives current value and done callback.
+	 *  done() accepts an optional selectedValue and an optional navigateTo id to move the cursor after close. */
+	submenu?: (
+		currentValue: string,
+		done: (selectedValue?: string, options?: { navigateTo?: string }) => void,
+	) => Component;
 }
 
 export interface SettingsListTheme {
@@ -45,6 +49,7 @@ export class SettingsList implements Component {
 	// Submenu state
 	private submenuComponent: Component | null = null;
 	private submenuItemIndex: number | null = null;
+	private navigateAfterClose: string | null = null;
 
 	constructor(
 		items: SettingItem[],
@@ -71,6 +76,15 @@ export class SettingsList implements Component {
 		const item = this.items.find((i) => i.id === id);
 		if (item) {
 			item.currentValue = newValue;
+		}
+	}
+
+	/** Move selection to the item with the given id (no-op if not found). */
+	selectItem(id: string): void {
+		const items = this.searchEnabled ? this.filteredItems : this.items;
+		const index = items.findIndex((i) => i.id === id);
+		if (index !== -1) {
+			this.selectedIndex = index;
 		}
 	}
 
@@ -118,7 +132,7 @@ export class SettingsList implements Component {
 		const endIndex = Math.min(startIndex + this.maxVisible, displayItems.length);
 
 		// Calculate max label width for alignment
-		const maxLabelWidth = Math.min(30, Math.max(...this.items.map((item) => visibleWidth(item.label))));
+		const maxLabelWidth = Math.min(36, Math.max(...this.items.map((item) => visibleWidth(item.label))));
 
 		// Render visible items
 		for (let i = startIndex; i < endIndex; i++) {
@@ -202,13 +216,19 @@ export class SettingsList implements Component {
 		if (item.submenu) {
 			// Open submenu, passing current value so it can pre-select correctly
 			this.submenuItemIndex = this.selectedIndex;
-			this.submenuComponent = item.submenu(item.currentValue, (selectedValue?: string) => {
-				if (selectedValue !== undefined) {
-					item.currentValue = selectedValue;
-					this.onChange(item.id, selectedValue);
-				}
-				this.closeSubmenu();
-			});
+			this.submenuComponent = item.submenu(
+				item.currentValue,
+				(selectedValue?: string, options?: { navigateTo?: string }) => {
+					if (selectedValue !== undefined) {
+						item.currentValue = selectedValue;
+						this.onChange(item.id, selectedValue);
+					}
+					if (options?.navigateTo) {
+						this.navigateAfterClose = options.navigateTo;
+					}
+					this.closeSubmenu();
+				},
+			);
 		} else if (item.values && item.values.length > 0) {
 			// Cycle through values
 			const currentIndex = item.values.indexOf(item.currentValue);
@@ -221,8 +241,15 @@ export class SettingsList implements Component {
 
 	private closeSubmenu(): void {
 		this.submenuComponent = null;
-		// Restore selection to the item that opened the submenu
-		if (this.submenuItemIndex !== null) {
+		if (this.navigateAfterClose !== null) {
+			const id = this.navigateAfterClose;
+			this.navigateAfterClose = null;
+			this.submenuItemIndex = null;
+			this.selectItem(id);
+			// Open the target item's submenu automatically
+			this.activateItem();
+		} else if (this.submenuItemIndex !== null) {
+			// Restore selection to the item that opened the submenu
 			this.selectedIndex = this.submenuItemIndex;
 			this.submenuItemIndex = null;
 		}

@@ -346,6 +346,21 @@ pi.on("session_before_compact", async (event, ctx) => {
 
 See [custom-compaction.ts](../examples/extensions/custom-compaction.ts) for a complete example using a different model.
 
+### session_compact_failed
+
+Fired when manual or automatic compaction fails or is aborted. This is useful for telemetry extensions that need to pair `session_before_compact` attempts with terminal outcomes.
+
+```typescript
+pi.on("session_compact_failed", async (event, ctx) => {
+  const { reason, errorMessage, aborted, willRetry, fromExtension } = event;
+  // reason - "manual" (/compact), "threshold", or "overflow"
+  // errorMessage - present for non-abort failures
+  // aborted - true for cancelled/aborted compactions
+  // willRetry - whether the aborted turn would have retried after compaction
+  // fromExtension - whether extension-provided compaction content was being used
+});
+```
+
 ### session_before_tree
 
 Fired before `/tree` navigation. Always fires regardless of whether user chose to summarize. Can cancel navigation or provide custom summary.
