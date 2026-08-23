@@ -111,6 +111,32 @@ describe("#6647 compaction retries transient summarization failures", () => {
 		expect(model.id).toBeTruthy();
 	});
 
+	it("retries a transport-level undici abort during summarization and compacts successfully", async () => {
+		const harness = await createHarness({ withConfiguredAuth: false });
+		harnesses.push(harness);
+		seedCompactableSession(harness);
+		harness.settingsManager.applyOverrides({ retry: { enabled: true, maxRetries: 3, baseDelayMs: 0 } });
+
+		const error: AssistantMessage = {
+			...fauxAssistantMessage("", { stopReason: "error", errorMessage: "This operation was aborted" }),
+			usage: createUsage(10),
+		};
+		const success: AssistantMessage = {
+			...fauxAssistantMessage("recovered from abort"),
+			usage: createUsage(10),
+		};
+		const getCallCount = useScriptedStreamFn(harness, [error, error, success]);
+
+		const result = await harness.session.compact();
+
+		expect(result.summary).toContain("recovered from abort");
+		expect(getCallCount()).toBe(3); // 1 initial + 2 retries
+		const starts = harness.eventsOfType("summarization_retry_scheduled");
+		expect(starts).toHaveLength(2);
+		expect(starts[0]).toMatchObject({ attempt: 1, maxAttempts: 3, errorMessage: "This operation was aborted" });
+		expect(starts[1]).toMatchObject({ attempt: 2, maxAttempts: 3 });
+	});
+
 	it("does not retry a non-retryable error (insufficient_quota)", async () => {
 		const harness = await createHarness({ withConfiguredAuth: false });
 		harnesses.push(harness);

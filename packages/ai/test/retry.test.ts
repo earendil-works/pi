@@ -77,6 +77,19 @@ describe("provider retry classification", () => {
 		).toBe(true);
 	});
 
+	it("matches undici transport-level abort wording", () => {
+		expect(
+			isRetryableAssistantError(
+				fauxAssistantMessage("", { stopReason: "error", errorMessage: "This operation was aborted" }),
+			),
+		).toBe(true);
+		expect(
+			isRetryableAssistantError(
+				fauxAssistantMessage("", { stopReason: "error", errorMessage: "The operation was aborted" }),
+			),
+		).toBe(true);
+	});
+
 	it("keeps provider limit errors non-retryable", () => {
 		expect(
 			isRetryableAssistantError(

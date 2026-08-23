@@ -60,6 +60,13 @@ const RETRYABLE_PROVIDER_ERROR_PATTERN = buildProviderErrorPattern([
 	"upstream.?connect",
 	"reset before headers",
 	"socket hang up",
+
+	// Undici transport-level abort ("This/The operation was aborted"). A genuine
+	// connection drop surfaces here as an error when no local abort signal fired;
+	// user- or locally-cancelled requests are mapped to stopReason "aborted" before
+	// this classifier runs, so an error stop carrying abort wording is a transient
+	// remote drop that retry can recover from.
+	"operation was aborted",
 	"socket connection was closed",
 	"timed? out",
 	"timeout",
