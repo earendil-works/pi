@@ -54,7 +54,7 @@ Tokens are shown as `950`, `1.2k`, `12k`, or `1.2M`.
 | Event | While idle | While working |
 | --- | --- | --- |
 | Escape (once; twice within 500 ms) | Closes an overlay; otherwise see [input](input.md#escape). Twice: the tree overlay replaces the editor. | The status line clears; the partial message gets its `Operation aborted` line. |
-| Ctrl+C once / twice; Ctrl+D | The editor empties; twice, the screen is left as it was, pi's bottom block is removed, and the resume hint is printed below the transcript. | Same. |
+| Ctrl+C once / twice; Ctrl+D | The editor empties; twice, the last frame (transcript, editor, footer) is left on screen as it was and the resume hint is printed below it. | Same. |
 | Another message submitted (Enter; Alt+Enter follow-up) | The editor empties, the message is added to the transcript. | The editor empties, the pending area gains a line. |
 | A slash command or shortcut that opens an overlay or changes the session | The overlay replaces the editor. A session switch clears the transcript and redraws it from the new session (or shows the header for a new one). | Same; the status line stays while the turn continues behind an overlay. |
 | Model or thinking level changed | Footer and border update. | Same. |

@@ -115,7 +115,7 @@ Escape is the only way out. Nothing is recorded in the session by the overlay it
 
 **Session persistence.** A Ctrl+P switch appends a model-change entry and, when the level changes, a thinking-level entry. The scope itself is not in the session: a resumed session uses the scope the run started with, and its recorded model is restored even when it is outside that scope.
 
-**Branching and history.** `/tree` leaves the model as it is; a resume, fork, or clone restores the model recorded on the branch it opens, scope or no scope. The `/scoped-models` line is in the prompt history.
+**Branching and history.** `/tree` leaves the model as it is; a resume, fork, or clone restores the model recorded on the branch it opens, scope or no scope. Like every built-in slash command, `/scoped-models` is not added to the prompt history.
 
 **Compaction.** The threshold follows the model Ctrl+P lands on; see [compaction](../sessions/compaction.md).
 

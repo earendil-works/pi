@@ -102,7 +102,7 @@ Limits that are not settings: tool output 2,000 lines or 50 KB; prompt history 1
 | --- | --- |
 | `PI_CODING_AGENT_DIR` | Relocate the agent directory. |
 | `PI_CODING_AGENT_SESSION_DIR` | Relocate session storage (below `--session-dir`, above `sessionDir`). |
-| `PI_OFFLINE` (`1`, `true`, `yes`) or `--offline` | No startup network: no version check, no catalogue refresh, no package check, no telemetry. |
+| `PI_OFFLINE` (`1`, `true`, `yes`) or `--offline` | No startup network: no version check, no catalogue refresh, no package check, no telemetry, no `fd`/`rg` download. (The model selector still prints `Model catalogs refreshed.` when opened.) |
 | `PI_SKIP_VERSION_CHECK` | No version check only. |
 | `PI_HARDWARE_CURSOR=1` | Show the terminal's cursor (for IME positioning); the setting overrides it. |
 | `PI_CLEAR_ON_SHRINK=1` | As the setting. |
@@ -123,10 +123,10 @@ pi sets `AI_AGENT=pi` and `PI_CODING_AGENT=true` in every process it starts, and
 
 ## Changing configuration at runtime
 
-- `/settings` writes each change to the global file as it is made and applies it to the running session at once for everything it exposes (theme, padding, thinking visibility, transport, queue modes, auto-compaction, image settings, trust default, double-Escape action, TUI mode). Nothing needs a restart except `quietStartup` and `collapseChangelog`, which apply at the next start.
+- `/settings` writes each change to the global file as it is made and applies it to the running session at once for everything it exposes (theme, padding, thinking visibility, transport, queue modes, auto-compaction, image settings, trust default, double-Escape action, TUI mode). Nothing needs a restart except `quietStartup`, `collapseChangelog`, the project-trust default, and install telemetry, which apply at the next start or install.
 - Ctrl+S in the model, thinking, and scoped-models selectors writes `defaultProvider`/`defaultModel`, `defaultThinkingLevel`, and `enabledModels`.
-- `/reload` re-reads `keybindings.json`, context files, and the resource directories; it does not re-read `settings.json` for values that were already applied, and is refused while the agent is working.
-- Editing `settings.json` by hand while pi runs: the next `/settings` write merges around the edit; the running session keeps its current values until restart. `models.json` and `auth.json` are watched or re-read and take effect without restart.
+- `/reload` re-reads `settings.json` (applying theme, padding, queue modes, and the rest), `keybindings.json`, context files, and the resource directories; it is refused while the agent is working.
+- Editing `settings.json` by hand while pi runs: the next `/settings` write merges around the edit; the running session keeps its current values until `/reload` or a restart. `models.json` and `auth.json` are watched or re-read and take effect without restart.
 - `/trust` writes `trust.json` and asks for a restart.
 
 ## Interactions with other systems
@@ -158,7 +158,6 @@ pi sets `AI_AGENT=pi` and `PI_CODING_AGENT=true` in every process it starts, and
 
 ## Open questions and verification
 
-- Whether `/reload` re-reads `settings.json` at all (it reloads resources and keybindings; the settings manager's in-memory copy may or may not be refreshed) was not determined.
 - Whether the `PI_HARDWARE_CURSOR`/`PI_CLEAR_ON_SHRINK` precedence (setting beats environment) is intended or an accident of the getters was not determined; it is the reverse of every other environment variable.
 - The claim that `auth.json` changes from another process are picked up on the next call was read from a revision-cache in the auth store and not observed.
 - The `websocketConnectTimeoutMs` documentation mismatch may be worth treating as a documentation bug rather than documenting here.

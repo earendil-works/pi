@@ -45,7 +45,7 @@ While suspended nothing in pi runs. A model response in progress is not cancelle
 
 `fg` (or `%1`, or `bg` followed by `fg`) delivers SIGCONT. pi puts the terminal back into raw mode, re-negotiates the keyboard protocol, re-reads the terminal size, and repaints the whole screen from scratch: the transcript is reprinted below the shell's prompt line, followed by the pending area, status line, editor (with its text intact), and footer. The old copy above the shell prompt remains in scrollback, so the transcript appears twice. The editor's text, the prompt history, the queue, and the kill ring are all as they were.
 
-On Windows, Ctrl+Z shows the status message `Suspend to background is not supported on Windows` and does nothing else.
+On Windows, Ctrl+Z is not bound by default; if the user binds `app.suspend`, pressing it shows the status message `Suspend to background is not supported on Windows` and does nothing else.
 
 > Technical note: SIGTSTP is sent to the process group, so anything pi spawned in its own group stops too, but the `bash` tool and `!` commands are spawned detached into separate groups and are unaffected. A keepalive timer is armed before stopping so that Node does not exit on `fg` for lack of pending work. Ctrl+Z pressed inside the external editor (Ctrl+G) suspends the editor, not pi; pi is waiting for the editor to exit.
 

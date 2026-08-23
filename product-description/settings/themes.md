@@ -134,7 +134,7 @@ Not from the theme: the terminal's own background (pi paints no full-screen back
 - Both built-in themes use a green for bash mode (`#b5bd68` in `dark`, `#588458` in `light`), so the bash-mode border looks alike in either; the thinking ramp differs more (see the table under "Accepted").
 - A pair whose halves are the same name (`dark/dark`) behaves like the fixed theme but keeps the terminal notifications on.
 - A setting with two slashes (`a/b/c`) is neither a pair nor a name: pi reports it as a theme it could not load and falls back to `dark`.
-- The `Theme` row in the settings list shows the raw setting, so a pair reads `light/dark`, not `Automatic`; the word `Automatic` appears only inside the submenu. [Configuration](../foundations/configuration.md) says the row shows "Automatic"; this document is the one to trust.
+- The `Theme` row in the settings list shows the raw setting, so a pair reads `light/dark`, not `Automatic`; the word `Automatic` appears only inside the submenu.
 - With a pair saved and a terminal that does not support the notifications, pi stays on the half chosen at startup until the next start or `/reload`.
 - A custom theme file that lacks the newest colour roles (`thinkingMax`, `scrollbarThumb`, the search-match colours) falls back to older roles (`thinkingXhigh`, `selectedBg`, text) rather than failing.
 - Opening the Theme submenu while the agent is working and leaving the preview on a theme for a while makes the streamed text arrive in it; pressing Escape then redraws that text in the original theme, since it is still on screen.

@@ -137,7 +137,7 @@ A sign-in that fails ends with `Error: Failed to login to <Name>: <message>` or 
 
 **Session persistence.** Credentials are not in the session. The only session entries a login can add are the model-change (and thinking-level) entries of an auto-selected model. A logout adds nothing.
 
-**Branching and history.** No interaction; `/login …` and `/logout` are in the prompt history like any submitted line.
+**Branching and history.** No interaction. Like every built-in slash command, `/login …` and `/logout` are not added to the prompt history.
 
 **Compaction.** No interaction.
 

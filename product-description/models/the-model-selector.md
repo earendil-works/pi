@@ -133,7 +133,7 @@ After any close the editor has the text it had before, the cursor where it was, 
 
 **Session persistence.** Accepting appends a model-change entry and, when the level changed, a thinking-level entry, at the active position. They are written with the session file like any other entry (the file itself is created with the first assistant message; see [sessions](../foundations/sessions.md)). Resuming the session restores the model recorded last if it is still available.
 
-**Branching and history.** The entries are part of the branch they were made on. Moving the active position with `/tree` changes the messages only and leaves the model as it is; resuming, forking, or cloning restores the model recorded on the branch opened, and the selector then shows that model as current. The `/model` line is in the prompt history like any submitted line.
+**Branching and history.** The entries are part of the branch they were made on. Moving the active position with `/tree` changes the messages only and leaves the model as it is; resuming, forking, or cloning restores the model recorded on the branch opened, and the selector then shows that model as current. Like every built-in slash command, the `/model` line is not added to the prompt history.
 
 **Compaction.** The new model's context window sets the auto-compaction threshold from the next model call. A switch to a model with a larger window lifts an overflow without compaction: the overflow check is skipped when the last assistant message came from a different model. See [compaction](../sessions/compaction.md).
 

@@ -51,10 +51,10 @@ At the moment of failure the assistant block stops and gains its `Error:` line; 
 
 These fail before anything is sent; the prompt is not in the session, the editor is emptied, and the text is in the prompt history.
 
-- **No model selected.** `Error: No model selected.`, a blank line, `Use /login to log into a provider via OAuth or API key. See:` with two documentation paths, and `Then use /model to select a model.` Happens with no credentials at all (the footer shows `no-model`).
+- **No credential for any provider.** `Error: No API key found for the selected model.` (the footer reads `unknown`), a blank line, `Use /login to log into a provider via OAuth or API key. See:` with two documentation paths. Happens with no credentials at all.
 - **No credential for the model's provider.** `Error: No API key found for <provider>.` followed by the same login help. For a provider logged in with OAuth whose token cannot be refreshed: `Error: Authentication failed for "<provider>". Credentials may have expired or network is unavailable. Run '/login <provider>' to re-authenticate.`
 - **Compaction in progress.** Not an error the user normally sees: Enter during compaction goes to the holding queue with `Queued message for after compaction`. The refusal `Cannot submit a prompt while compaction is in progress. Wait for compaction to finish and retry.` exists for programmatic callers and surfaces in the terminal only as `Error: Failed to send queued message: …` if the holding queue is flushed at a bad moment, in which case the messages go back into the holding queue.
-- **Setting the model to one without a credential** (`/model <id>` or Ctrl+P onto it): `Error: No API key for <provider>/<id>`; the model is unchanged.
+- **Setting the model to one without a credential** (`/model <id>`; Ctrl+P skips such models, so it cannot land there): `Error: No API key for <provider>/<id>`; the model is unchanged.
 - **An unknown thinking level** (`/thinking foo`): `Error: Unknown thinking level "foo". Available levels: off, minimal, …`.
 
 ### Provider errors mid-turn
@@ -103,11 +103,11 @@ A `!` command that exits non-zero shows `(exit N)` in the error colour after its
 - Nothing to do: `Error: Nothing to compact (session too small)` or `Error: Already compacted`.
 - The summarization call fails with a transient error: `Error: <provider message>` is added, the status line shows the same `Retrying (n/3) in Ns...` countdown, and on the next attempt the compaction indicator returns. Three failures end it: manual, `Error: Compaction failed: <message>`; automatic, `Auto-compaction failed: <message>` or `Context overflow recovery failed: <message>` in the error colour with no prefix. A non-transient error (quota) ends it at once.
 - A branch summary cancelled with Escape: `Branch summarization cancelled`, and the tree reopens at the same entry. A branch summary that fails: `Error: <message>`, and the navigation does not happen.
-- No model selected when compacting: the same `No model selected.` text as a refused prompt.
+- No credential when compacting: the same `No API key found for the selected model.` text as a refused prompt, prefixed `Compaction failed:`.
 
 ### Login and logout failures
 
-Escape anywhere in the login dialog abandons it silently; nothing is printed. A failed OAuth flow prints `Error: Failed to login to <Provider>: <reason>`; a failed API-key save, `Error: Failed to save API key for <Provider>: <reason>`. A login that saved the credential but could not refresh the model list prints `Error: Logged in to <Provider>, but local model state could not be synchronized: …`; the credential is kept. A successful login whose provider has no usable default model prints the success status and then `Error: Logged in to <Provider>, but … Use /model to select a model.` `/logout` failures print `Error: Logout failed: <reason>`; a logout that could not read the store, `Error: Could not read stored credentials: …`.
+Escape anywhere in the login dialog abandons it; reading the code, what is printed is probably `Error: Failed to login to <Provider>: This operation was aborted` rather than nothing (see [login and logout](../models/login-and-logout.md#open-questions-and-verification)). A failed OAuth flow prints `Error: Failed to login to <Provider>: <reason>`; a failed API-key save, `Error: Failed to save API key for <Provider>: <reason>`. A login that saved the credential but could not refresh the model list prints `Error: Logged in to <Provider>, but local model state could not be synchronized: …`; the credential is kept. A successful login whose provider has no usable default model prints the success status and then `Error: Logged in to <Provider>, but … Use /model to select a model.` `/logout` failures print `Error: Logout failed: <reason>`; a logout that could not read the store, `Error: Could not read stored credentials: …`.
 
 ### Startup diagnostics and warnings
 
