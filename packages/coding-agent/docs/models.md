@@ -38,6 +38,8 @@ The `apiKey` value is a placeholder because Ollama ignores it. pi still treats m
 
 Some OpenAI-compatible servers do not understand the `developer` role used for reasoning-capable models. For those providers, set `compat.supportsDeveloperRole` to `false` so pi sends the system prompt as a `system` message instead. If the server also does not support `reasoning_effort`, set `compat.supportsReasoningEffort` to `false` too.
 
+Models without tool-calling support (or servers that error on `tools` payloads) should set `compat.supportsTools` to `false`. pi then omits `tools` and `tool_choice` from outgoing requests entirely instead of sending them.
+
 You can set `compat` at the provider level to apply to all models, or at the model level to override a specific model. This commonly applies to Ollama, vLLM, SGLang, and similar OpenAI-compatible servers.
 
 ```json
@@ -458,6 +460,7 @@ For providers with partial OpenAI compatibility, use the `compat` field.
 
 | Field | Description |
 |-------|-------------|
+| `supportsTools` | Whether the model/provider supports tool calling; when `false`, `tools` and `tool_choice` are omitted from requests (default: `true`) |
 | `supportsStore` | Provider supports `store` field |
 | `supportsDeveloperRole` | Use `developer` vs `system` role |
 | `supportsReasoningEffort` | Support for `reasoning_effort` parameter |

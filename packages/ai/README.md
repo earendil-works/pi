@@ -1169,6 +1169,7 @@ The `openai-completions` API is implemented by many providers with minor differe
 
 ```typescript
 interface OpenAICompletionsCompat {
+  supportsTools?: boolean;           // Whether provider supports tool calling; false omits tools and tool_choice from requests (default: true)
   supportsStore?: boolean;           // Whether provider supports the `store` field (default: true)
   supportsDeveloperRole?: boolean;   // Whether provider supports `developer` role vs `system` (default: true)
   supportsReasoningEffort?: boolean; // Whether provider supports `reasoning_effort` (default: true)
@@ -1193,6 +1194,7 @@ interface OpenAICompletionsCompat {
 }
 
 interface OpenAIResponsesCompat {
+  supportsTools?: boolean;           // Whether provider supports tool calling; false omits tools and tool_choice from requests (default: true)
   supportsDeveloperRole?: boolean;   // Whether provider supports `developer` role vs `system` (default: true)
   sessionAffinityFormat?: 'openai' | 'openai-nosession' | 'openrouter'; // Session-affinity header format: 'openai' sends `session_id` and `x-client-request-id`; 'openai-nosession' sends `x-client-request-id`; 'openrouter' sends `x-session-id`. Does not affect the `prompt_cache_key` body param (default: auto-detected)
   supportsLongCacheRetention?: boolean; // Whether provider supports `prompt_cache_retention: "24h"` (default: true)
