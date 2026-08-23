@@ -1,8 +1,36 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { Container } from "../../../../tui/src/tui.ts";
+import { InteractiveMode } from "../../../src/modes/interactive/interactive-mode.ts";
 import { createHarness, getUserTexts, type Harness } from "../harness.ts";
+
+function createInteractiveWorkingFixture() {
+	const statusContainer = new Container();
+	statusContainer.addChild({
+		render: () => ["Working..."],
+		invalidate: () => {},
+		dispose: () => {},
+		kind: "working",
+	} as any);
+	const fakeMode: any = {
+		isInitialized: true,
+		footer: { invalidate: vi.fn() },
+		settingsManager: { getShowTerminalProgress: () => false },
+		ui: { requestRender: vi.fn(), getClearOnShrink: () => false },
+		options: { tuiMode: "regular" },
+		statusContainer,
+		activeStatusIndicator: statusContainer.children[0],
+		chatContainer: new Container(),
+		pendingTools: new Map(),
+		checkShutdownRequested: vi.fn(),
+		clearStatusIndicator: (InteractiveMode as any).prototype.clearStatusIndicator,
+	};
+	const handleEvent = (event: any) => (InteractiveMode as any).prototype.handleEvent.call(fakeMode, event);
+	const rendered = () => statusContainer.children.flatMap((child) => child.render(120)).join("\n");
+	return { fakeMode, handleEvent, rendered };
+}
 
 function createWaitTool(released: Promise<void>): AgentTool {
 	return {
@@ -26,9 +54,59 @@ describe("regression #6363: agent settled event and idle waiting", () => {
 		}
 	});
 
+	it("keeps the interactive working marker through agent_end and clears it at settlement", async () => {
+		const interactive = createInteractiveWorkingFixture();
+
+		await interactive.handleEvent({ type: "agent_end", messages: [], willRetry: false });
+		expect(interactive.rendered()).toContain("Working...");
+
+		await interactive.handleEvent({ type: "agent_settled" });
+		expect(interactive.rendered()).not.toContain("Working...");
+		expect(interactive.fakeMode.checkShutdownRequested).toHaveBeenCalledOnce();
+	});
+
+	it("keeps the rendered working marker while an extension settlement callback is awaited", async () => {
+		let enterSettlement = () => {};
+		const settlementEntered = new Promise<void>((resolve) => {
+			enterSettlement = resolve;
+		});
+		let releaseSettlement = () => {};
+		const settlementReleased = new Promise<void>((resolve) => {
+			releaseSettlement = resolve;
+		});
+		const harness = await createHarness({
+			extensionFactories: [
+				(pi) => {
+					pi.on("agent_settled", async () => {
+						enterSettlement();
+						await settlementReleased;
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		const interactive = createInteractiveWorkingFixture();
+		harness.session.subscribe((event) => {
+			if (event.type === "agent_end" || event.type === "agent_settled") return interactive.handleEvent(event);
+		});
+		harness.setResponses([fauxAssistantMessage("done")]);
+
+		const prompt = harness.session.prompt("test");
+		await settlementEntered;
+		expect(interactive.rendered()).toContain("Working...");
+		expect(harness.eventsOfType("agent_settled")).toHaveLength(0);
+
+		releaseSettlement();
+		await prompt;
+		expect(interactive.rendered()).not.toContain("Working...");
+		expect(harness.eventsOfType("agent_settled")).toHaveLength(1);
+	});
+
 	it("emits one agent_settled event after automatic retry finishes", async () => {
 		const extensionEvents: string[] = [];
 		const publicEvents: string[] = [];
+		const interactive = createInteractiveWorkingFixture();
+		const markerAtAgentEnds: boolean[] = [];
 		const harness = await createHarness({
 			settings: { retry: { enabled: true, maxRetries: 3, baseDelayMs: 1 } },
 			extensionFactories: [
@@ -43,10 +121,11 @@ describe("regression #6363: agent settled event and idle waiting", () => {
 			],
 		});
 		harnesses.push(harness);
-		harness.session.subscribe((event) => {
-			if (event.type === "agent_settled") {
-				publicEvents.push("agent_settled");
-			}
+		harness.session.subscribe(async (event) => {
+			if (event.type !== "agent_end" && event.type !== "agent_settled") return;
+			await interactive.handleEvent(event);
+			if (event.type === "agent_end") markerAtAgentEnds.push(interactive.rendered().includes("Working..."));
+			if (event.type === "agent_settled") publicEvents.push("agent_settled");
 		});
 		harness.setResponses([
 			fauxAssistantMessage("", { stopReason: "error", errorMessage: "overloaded_error" }),
@@ -59,11 +138,15 @@ describe("regression #6363: agent settled event and idle waiting", () => {
 		expect(harness.eventsOfType("agent_settled")).toHaveLength(1);
 		expect(extensionEvents).toEqual(["agent_end", "agent_end", "agent_settled:true"]);
 		expect(publicEvents).toEqual(["agent_settled"]);
+		expect(markerAtAgentEnds).toEqual([true, true]);
+		expect(interactive.rendered()).not.toContain("Working...");
 	});
 
 	it("settles only after follow-ups queued by agent_end handlers run", async () => {
 		let queuedFollowUp = false;
 		const settledIdleStates: boolean[] = [];
+		const interactive = createInteractiveWorkingFixture();
+		const markerAtAgentEnds: boolean[] = [];
 		const harness = await createHarness({
 			extensionFactories: [
 				(pi) => {
@@ -79,6 +162,11 @@ describe("regression #6363: agent settled event and idle waiting", () => {
 			],
 		});
 		harnesses.push(harness);
+		harness.session.subscribe(async (event) => {
+			if (event.type !== "agent_end" && event.type !== "agent_settled") return;
+			await interactive.handleEvent(event);
+			if (event.type === "agent_end") markerAtAgentEnds.push(interactive.rendered().includes("Working..."));
+		});
 		harness.setResponses([fauxAssistantMessage("first"), fauxAssistantMessage("second")]);
 
 		await harness.session.prompt("hello");
@@ -87,6 +175,8 @@ describe("regression #6363: agent settled event and idle waiting", () => {
 		expect(harness.eventsOfType("agent_end")).toHaveLength(2);
 		expect(harness.eventsOfType("agent_settled")).toHaveLength(1);
 		expect(settledIdleStates).toEqual([true]);
+		expect(markerAtAgentEnds).toEqual([true, true]);
+		expect(interactive.rendered()).not.toContain("Working...");
 	});
 
 	it("extension command waitForIdle waits for session-level settlement", async () => {

@@ -3368,7 +3368,6 @@ export class InteractiveMode {
 				if (this.settingsManager.getShowTerminalProgress()) {
 					this.ui.terminal.setProgress(false);
 				}
-				this.clearStatusIndicator("working");
 				if (this.streamingComponent) {
 					this.chatContainer.removeChild(this.streamingComponent);
 					this.streamingComponent = undefined;
@@ -3380,6 +3379,8 @@ export class InteractiveMode {
 				break;
 
 			case "agent_settled":
+				this.clearStatusIndicator("working");
+				this.ui.requestRender();
 				await this.checkShutdownRequested();
 				break;
 
