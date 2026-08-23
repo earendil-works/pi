@@ -1,0 +1,1 @@
+Read `README.md`, then `goal.md`. The coverage table in `README.md` is the work list. The source repo is the enclosing pi-mono checkout, which is read-only reference material for this directory: do not modify anything outside `product-description/` while working here.
