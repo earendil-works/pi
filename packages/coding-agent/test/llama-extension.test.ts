@@ -59,7 +59,7 @@ describe("llama.cpp extension", () => {
 		expect(() => normalizeLlamaServerUrl("file:///tmp/llama")).toThrow("http or https");
 	});
 
-	it("exposes loaded and sleeping models with router metadata", () => {
+	it("exposes loaded, sleeping, and unloaded models with router metadata", () => {
 		const controller = createLlamaProvider();
 		controller.setCatalog(
 			[
@@ -86,6 +86,10 @@ describe("llama.cpp extension", () => {
 			}),
 			expect.objectContaining({
 				id: "sleeping",
+				baseUrl: "http://localhost:8080/v1",
+			}),
+			expect.objectContaining({
+				id: "unloaded",
 				baseUrl: "http://localhost:8080/v1",
 			}),
 		]);
@@ -121,8 +125,8 @@ describe("llama.cpp extension", () => {
 			allowNetwork: true,
 			signal: new AbortController().signal,
 		});
-		expect(first.provider.getModels().map((model) => model.id)).toEqual(["loaded", "sleeping"]);
-		expect(cachedEntry?.models.map((model) => model.id)).toEqual(["loaded", "sleeping"]);
+		expect(first.provider.getModels().map((model) => model.id)).toEqual(["loaded", "sleeping", "unloaded"]);
+		expect(cachedEntry?.models.map((model) => model.id)).toEqual(["loaded", "sleeping", "unloaded"]);
 
 		const second = createLlamaProvider();
 		await second.provider.refreshModels?.({
@@ -135,6 +139,7 @@ describe("llama.cpp extension", () => {
 		expect(second.provider.getModels()).toEqual([
 			expect.objectContaining({ id: "loaded", baseUrl: `${url}/v1`, contextWindow: 32768 }),
 			expect.objectContaining({ id: "sleeping", baseUrl: `${url}/v1`, contextWindow: 32768 }),
+			expect.objectContaining({ id: "unloaded", baseUrl: `${url}/v1`, contextWindow: 128000 }),
 		]);
 	});
 
