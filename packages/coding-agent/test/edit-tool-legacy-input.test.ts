@@ -113,4 +113,19 @@ describe("edit tool stringified edits", () => {
 			edits: "not json",
 		});
 	});
+
+	it("repairs raw control characters inside stringified edits", () => {
+		const definition = createEditToolDefinition(process.cwd());
+		// Models sometimes emit real newlines/tabs unescaped inside string values,
+		// which is invalid JSON and used to fall through to a validation error.
+		const edits = '[{"oldText":"a","newText":"line one\nline\ttwo"}]';
+		const prepared = definition.prepareArguments!({
+			path: "file.txt",
+			edits,
+		});
+		expect(prepared).toEqual({
+			path: "file.txt",
+			edits: [{ oldText: "a", newText: "line one\nline\ttwo" }],
+		});
+	});
 });

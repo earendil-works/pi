@@ -1,4 +1,5 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
+import { parseJsonWithRepair } from "@earendil-works/pi-ai";
 import { Box, Container, Spacer, Text } from "@earendil-works/pi-tui";
 import { constants } from "fs";
 import { access as fsAccess, readFile as fsReadFile, writeFile as fsWriteFile } from "fs/promises";
@@ -122,9 +123,11 @@ function prepareEditArguments(input: unknown): EditToolInput {
 
 	// Some models (Opus 4.6, GLM-5.1) send edits as a JSON string instead of an array.
 	// Others send a single edit object instead of a one-element edits array.
+	// parseJsonWithRepair also tolerates raw control characters (real newlines/tabs)
+	// that models sometimes emit unescaped inside string values.
 	if (typeof args.edits === "string") {
 		try {
-			const parsed = JSON.parse(args.edits);
+			const parsed = parseJsonWithRepair(args.edits);
 			if (Array.isArray(parsed)) {
 				args.edits = parsed;
 			} else if (isSingleEditInput(parsed)) {

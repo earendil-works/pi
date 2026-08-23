@@ -1,3 +1,4 @@
+import { parseJsonWithRepair } from "@earendil-works/pi-ai";
 import { type Static, Type } from "typebox";
 import type { AgentHarnessTool, FileError } from "../types.ts";
 import {
@@ -57,7 +58,9 @@ function prepareEditArguments(input: unknown): EditToolInput {
 	const args = input as Record<string, unknown>;
 	if (typeof args.edits === "string") {
 		try {
-			const parsed: unknown = JSON.parse(args.edits);
+			// parseJsonWithRepair also tolerates raw control characters (real
+			// newlines/tabs) that models sometimes emit unescaped in string values.
+			const parsed: unknown = parseJsonWithRepair(args.edits);
 			if (Array.isArray(parsed)) {
 				args.edits = parsed;
 			} else if (isSingleEditInput(parsed)) {
