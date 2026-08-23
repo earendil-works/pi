@@ -509,6 +509,12 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 			for await (const chunk of openaiStream) {
 				if (!chunk || typeof chunk !== "object") continue;
 
+				if ("error" in chunk && (chunk as any).error) {
+					const errObj = (chunk as any).error;
+					const msg = typeof errObj === "string" ? errObj : errObj.message || JSON.stringify(errObj);
+					throw new Error(msg);
+				}
+
 				// OpenAI documents ChatCompletionChunk.id as the unique chat completion identifier,
 				// and each chunk in a streamed completion carries the same id.
 				output.responseId ||= chunk.id;
@@ -522,15 +528,22 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 				const choice = Array.isArray(chunk.choices) ? chunk.choices[0] : undefined;
 				if (!choice) continue;
 
+				if ("error" in choice && (choice as any).error) {
+					const errObj = (choice as any).error;
+					const msg = typeof errObj === "string" ? errObj : errObj.message || JSON.stringify(errObj);
+					throw new Error(msg);
+				}
+
 				// Fallback: some providers (e.g., Moonshot) return usage
 				// in choice.usage instead of the standard chunk.usage
 				if (!chunk.usage && (choice as any).usage) {
 					output.usage = parseChunkUsage((choice as any).usage, model);
 				}
 
-				if (choice.finish_reason) {
-					output.rawStopReason = choice.finish_reason;
-					const finishReasonResult = mapStopReason(choice.finish_reason);
+				const nativeFinishReason = (choice as any).native_finish_reason;
+				if (choice.finish_reason || nativeFinishReason) {
+					output.rawStopReason = nativeFinishReason ?? choice.finish_reason;
+					const finishReasonResult = mapStopReason(choice.finish_reason, nativeFinishReason);
 					output.stopReason = finishReasonResult.stopReason;
 					if (finishReasonResult.errorMessage) {
 						output.errorMessage = finishReasonResult.errorMessage;
@@ -1500,10 +1513,16 @@ function parseChunkUsage(
 	return usage;
 }
 
-function mapStopReason(reason: ChatCompletionChunk.Choice["finish_reason"] | string): {
+function mapStopReason(
+	reason: ChatCompletionChunk.Choice["finish_reason"] | string,
+	nativeReason?: string | null,
+): {
 	stopReason: StopReason;
 	errorMessage?: string;
 } {
+	if (nativeReason === "network_error" || nativeReason === "error") {
+		return { stopReason: "error", errorMessage: `Provider native_finish_reason: ${nativeReason}` };
+	}
 	if (reason === null) return { stopReason: "stop" };
 	switch (reason) {
 		case "stop":
@@ -1583,6 +1602,7 @@ function detectCompat(model: Model<"openai-completions">): ResolvedOpenAIComplet
 	const cacheControlFormat = provider === "openrouter" && model.id.startsWith("anthropic/") ? "anthropic" : undefined;
 
 	return {
+		supportsTools: true,
 		supportsStore: !isNonStandard,
 		supportsDeveloperRole: isOpenRouterDeveloperRoleModel || (!isNonStandard && !isOpenRouter),
 		supportsReasoningEffort:
@@ -1637,6 +1657,7 @@ function getCompat(model: Model<"openai-completions">): ResolvedOpenAICompletion
 	if (!model.compat) return detected;
 
 	return {
+		supportsTools: model.compat.supportsTools ?? detected.supportsTools,
 		supportsStore: model.compat.supportsStore ?? detected.supportsStore,
 		supportsDeveloperRole: model.compat.supportsDeveloperRole ?? detected.supportsDeveloperRole,
 		supportsReasoningEffort: model.compat.supportsReasoningEffort ?? detected.supportsReasoningEffort,

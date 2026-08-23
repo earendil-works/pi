@@ -76,4 +76,87 @@ describe("OpenAI completions raw stop reasons", () => {
 		expect(message.rawStopReason).toBe("content_filter");
 		expect(message.errorMessage).toBe("Provider finish_reason: content_filter");
 	});
+
+	it("surfaces error when native_finish_reason is network_error even if finish_reason is stop", async () => {
+		mockState.chunks = [
+			{
+				id: "chatcmpl-3",
+				choices: [{ index: 0, delta: {}, finish_reason: "stop", native_finish_reason: "network_error" }],
+			},
+		];
+
+		const message = await streamOpenAICompletions(model, context, { apiKey: "test" }).result();
+
+		expect(message.stopReason).toBe("error");
+		expect(message.rawStopReason).toBe("network_error");
+		expect(message.errorMessage).toBe("Provider native_finish_reason: network_error");
+	});
+
+	it("surfaces error when native_finish_reason is error", async () => {
+		mockState.chunks = [
+			{
+				id: "chatcmpl-4",
+				choices: [{ index: 0, delta: {}, finish_reason: "stop", native_finish_reason: "error" }],
+			},
+		];
+
+		const message = await streamOpenAICompletions(model, context, { apiKey: "test" }).result();
+
+		expect(message.stopReason).toBe("error");
+		expect(message.rawStopReason).toBe("error");
+		expect(message.errorMessage).toBe("Provider native_finish_reason: error");
+	});
+
+	it("surfaces error when chunk contains an error payload", async () => {
+		mockState.chunks = [
+			{
+				id: "chatcmpl-5",
+				error: { message: "Model does not support tools", code: 400 },
+			},
+		];
+
+		const message = await streamOpenAICompletions(model, context, { apiKey: "test" }).result();
+
+		expect(message.stopReason).toBe("error");
+		expect(message.errorMessage).toContain("Model does not support tools");
+	});
+
+	it("surfaces error when choice contains an error payload", async () => {
+		mockState.chunks = [
+			{
+				id: "chatcmpl-6",
+				choices: [
+					{
+						index: 0,
+						error: { message: "Internal server error" },
+					},
+				],
+			},
+		];
+
+		const message = await streamOpenAICompletions(model, context, { apiKey: "test" }).result();
+
+		expect(message.stopReason).toBe("error");
+		expect(message.errorMessage).toContain("Internal server error");
+	});
+
+	it("preserves partial text when stream terminates with abnormal native finish reason", async () => {
+		mockState.chunks = [
+			{
+				id: "chatcmpl-7",
+				choices: [{ index: 0, delta: { content: "Partial response before failure" } }],
+			},
+			{
+				id: "chatcmpl-7",
+				choices: [{ index: 0, delta: {}, finish_reason: "stop", native_finish_reason: "network_error" }],
+			},
+		];
+
+		const message = await streamOpenAICompletions(model, context, { apiKey: "test" }).result();
+
+		expect(message.stopReason).toBe("error");
+		expect(message.rawStopReason).toBe("network_error");
+		expect(message.errorMessage).toBe("Provider native_finish_reason: network_error");
+		expect(message.content).toEqual([{ type: "text", text: "Partial response before failure" }]);
+	});
 });
