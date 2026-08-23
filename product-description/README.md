@@ -183,15 +183,15 @@ Status is one of `not started`, `drafted`, or `verified`.
 | foundations/sessions.md | drafted |
 | foundations/models-and-credentials.md | drafted |
 | foundations/configuration.md | drafted |
-| conversation/the-editor.md | not started |
-| conversation/autocomplete.md | not started |
-| conversation/sending-a-prompt.md | not started |
-| conversation/tool-calls.md | not started |
-| conversation/the-message-queue.md | not started |
+| conversation/the-editor.md | drafted |
+| conversation/autocomplete.md | drafted |
+| conversation/sending-a-prompt.md | drafted |
+| conversation/tool-calls.md | drafted |
+| conversation/the-message-queue.md | drafted |
 | conversation/shell-commands.md | drafted |
-| conversation/attachments.md | not started |
-| conversation/thinking.md | not started |
-| conversation/the-transcript.md | not started |
+| conversation/attachments.md | drafted |
+| conversation/thinking.md | drafted |
+| conversation/the-transcript.md | drafted |
 | sessions/new-session.md | not started |
 | sessions/resuming.md | not started |
 | sessions/the-tree.md | not started |
