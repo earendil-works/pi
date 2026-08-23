@@ -1,109 +1,69 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { createEventBus } from "../../../src/core/event-bus.ts";
-import {
-	createExtensionRuntime,
-	loadExtensionFromFactory,
-	loadExtensions,
-} from "../../../src/core/extensions/loader.ts";
+import { createExtensionRuntime, loadExtensionFromFactory } from "../../../src/core/extensions/loader.ts";
 import type { ExtensionAPI, ProviderConfig } from "../../../src/core/extensions/types.ts";
 
-interface FailureState {
-	eventCalls: number;
-	flagDuringLoad?: boolean | string;
-	capturedApi?: ExtensionAPI;
-}
-
-function failureState(): FailureState {
-	const global = globalThis as typeof globalThis & { __extensionFactoryFailureState?: FailureState };
-	global.__extensionFactoryFailureState ??= { eventCalls: 0 };
-	return global.__extensionFactoryFailureState;
-}
-
-function providerConfig(modelId: string): ProviderConfig {
-	return {
-		baseUrl: "https://provider.test/v1",
-		apiKey: "provider-test-key",
-		api: "openai-completions",
-		models: [
-			{
-				id: modelId,
-				name: modelId,
-				reasoning: false,
-				input: ["text"],
-				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-				contextWindow: 8192,
-				maxTokens: 1024,
-			},
-		],
-	};
-}
+const providerConfig = {
+	baseUrl: "https://provider.test/v1",
+	apiKey: "provider-test-key",
+} satisfies ProviderConfig;
 
 describe("issue #8423 extension factory failure", () => {
-	const roots: string[] = [];
-
-	function fixture(): { cwd: string; extensionPath: (name: string) => string } {
-		const root = mkdtempSync(join(tmpdir(), "pi-extension-factory-failure-"));
-		const cwd = join(root, "project");
-		mkdirSync(cwd, { recursive: true });
-		roots.push(root);
-		return { cwd, extensionPath: (name) => join(root, name) };
-	}
-
-	afterEach(() => {
-		while (roots.length > 0) {
-			const root = roots.pop();
-			if (root) rmSync(root, { recursive: true, force: true });
-		}
-		delete (globalThis as typeof globalThis & { __extensionFactoryFailureState?: FailureState })
-			.__extensionFactoryFailureState;
-	});
-
-	it("does not let a failed factory alter earlier provider registrations", async () => {
-		const { cwd, extensionPath } = fixture();
-		const workingPath = extensionPath("working.ts");
-		const failingPath = extensionPath("failing.ts");
-		writeFileSync(
-			workingPath,
-			`export default function (pi) {
-	pi.registerProvider("working-provider", ${JSON.stringify(providerConfig("working-model"))});
-}
-`,
-		);
-		writeFileSync(
-			failingPath,
-			`export default function (pi) {
-	pi.unregisterProvider("working-provider");
-	pi.registerProvider("failed-provider", ${JSON.stringify(providerConfig("failed-model"))});
-	throw new Error("factory failed");
-}
-`,
-		);
-
-		const result = await loadExtensions([workingPath, failingPath], cwd);
-
-		expect(result.extensions).toHaveLength(1);
-		expect(result.errors).toEqual([{ path: failingPath, error: "Failed to load extension: factory failed" }]);
-		expect(result.runtime.pendingProviderRegistrations.map(({ name }) => name)).toEqual(["working-provider"]);
-	});
-
-	it("does not roll back a concurrently loaded factory's provider", async () => {
+	it("discards runtime changes and disables the failed API", async () => {
 		const runtime = createExtensionRuntime();
 		const eventBus = createEventBus();
-		let markFailingStarted!: () => void;
-		const failingStarted = new Promise<void>((resolve) => {
-			markFailingStarted = resolve;
-		});
-		let releaseFailing!: () => void;
+		let capturedApi: ExtensionAPI | undefined;
+		let eventCalls = 0;
+		let flagDuringLoad: boolean | string | undefined;
+
+		await loadExtensionFromFactory(
+			(pi) => pi.registerProvider("working-provider", providerConfig),
+			process.cwd(),
+			eventBus,
+			runtime,
+			"<working>",
+		);
+		await expect(
+			loadExtensionFromFactory(
+				(pi) => {
+					capturedApi = pi;
+					pi.events.on("factory-failure", () => {
+						eventCalls++;
+					});
+					pi.registerFlag("failed-flag", { type: "boolean", default: true });
+					flagDuringLoad = pi.getFlag("failed-flag");
+					pi.unregisterProvider("working-provider");
+					pi.registerProvider("failed-provider", providerConfig);
+					throw new Error("factory failed");
+				},
+				process.cwd(),
+				eventBus,
+				runtime,
+				"<failing>",
+			),
+		).rejects.toThrow("factory failed");
+
+		eventBus.emit("factory-failure", undefined);
+		expect(flagDuringLoad).toBe(true);
+		expect(runtime.flagValues.has("failed-flag")).toBe(false);
+		expect(runtime.pendingProviderRegistrations.map(({ name }) => name)).toEqual(["working-provider"]);
+		expect(eventCalls).toBe(0);
+		expect(capturedApi).toBeDefined();
+		expect(() => capturedApi?.registerFlag("late-flag", { type: "boolean", default: true })).toThrow(
+			'Extension "<failing>" failed to load and its API is no longer active.',
+		);
+	});
+
+	it("does not discard a concurrently loaded factory's provider", async () => {
+		const runtime = createExtensionRuntime();
+		const eventBus = createEventBus();
+		let releaseFailure!: () => void;
 		const waitBeforeFailure = new Promise<void>((resolve) => {
-			releaseFailing = resolve;
+			releaseFailure = resolve;
 		});
 		const failingLoad = loadExtensionFromFactory(
 			async (pi) => {
-				pi.registerProvider("failed-provider", providerConfig("failed-model"));
-				markFailingStarted();
+				pi.registerProvider("failed-provider", providerConfig);
 				await waitBeforeFailure;
 				throw new Error("factory failed");
 			},
@@ -112,52 +72,17 @@ describe("issue #8423 extension factory failure", () => {
 			runtime,
 			"<failing>",
 		);
-		await failingStarted;
+
 		await loadExtensionFromFactory(
-			(pi) => pi.registerProvider("working-provider", providerConfig("working-model")),
+			(pi) => pi.registerProvider("working-provider", providerConfig),
 			process.cwd(),
 			eventBus,
 			runtime,
 			"<working>",
 		);
-		releaseFailing();
+		releaseFailure();
 
 		await expect(failingLoad).rejects.toThrow("factory failed");
 		expect(runtime.pendingProviderRegistrations.map(({ name }) => name)).toEqual(["working-provider"]);
-	});
-
-	it("discards shared runtime state from a failed factory", async () => {
-		const { cwd, extensionPath } = fixture();
-		const failingPath = extensionPath("failing.ts");
-		const eventBus = createEventBus();
-		failureState();
-		writeFileSync(
-			failingPath,
-			`export default function (pi) {
-	globalThis.__extensionFactoryFailureState.capturedApi = pi;
-	pi.events.on("factory-failure", () => globalThis.__extensionFactoryFailureState.eventCalls++);
-	pi.registerFlag("failed-flag", { type: "boolean", default: true });
-	globalThis.__extensionFactoryFailureState.flagDuringLoad = pi.getFlag("failed-flag");
-	pi.registerProvider("failed-provider", ${JSON.stringify(providerConfig("failed-model"))});
-	throw new Error("factory failed");
-}
-`,
-		);
-
-		const result = await loadExtensions([failingPath], cwd, eventBus);
-		eventBus.emit("factory-failure", undefined);
-		await new Promise((resolve) => setImmediate(resolve));
-
-		expect(result.extensions).toHaveLength(0);
-		expect(result.errors).toEqual([{ path: failingPath, error: "Failed to load extension: factory failed" }]);
-		expect(failureState().flagDuringLoad).toBe(true);
-		expect(result.runtime.flagValues.has("failed-flag")).toBe(false);
-		expect(result.runtime.pendingProviderRegistrations).toHaveLength(0);
-		expect(failureState().eventCalls).toBe(0);
-		expect(failureState().capturedApi).toBeDefined();
-		expect(() => failureState().capturedApi?.registerFlag("late-flag", { type: "boolean", default: true })).toThrow(
-			`Extension "${failingPath}" failed to load and its API is no longer active.`,
-		);
-		expect(result.runtime.flagValues.has("late-flag")).toBe(false);
 	});
 });

@@ -146,17 +146,6 @@ function getAliases(): Record<string, string> {
 
 type HandlerFn = (...args: unknown[]) => Promise<unknown>;
 
-type ProviderRegistrationOperation =
-	| { type: "register"; name: string; config: ProviderConfig }
-	| { type: "registerNative"; provider: Provider }
-	| { type: "unregister"; name: string };
-
-interface ExtensionAPILoad {
-	api: ExtensionAPI;
-	commit: () => void;
-	discard: () => void;
-}
-
 let extensionCacheCwd: string | undefined;
 let extensionCacheGeneration = 0;
 const extensionCache = new Map<string, ExtensionFactory>();
@@ -265,17 +254,25 @@ function createExtensionAPI(
 	runtime: ExtensionRuntime,
 	cwd: string,
 	eventBus: EventBus,
-): ExtensionAPILoad {
+): { api: ExtensionAPI; commit: () => void; discard: () => void } {
 	const pendingFlagValues = new Map<string, boolean | string>();
-	const pendingProviderOperations: ProviderRegistrationOperation[] = [];
-	const pendingEventBusUnsubscribers = new Set<() => void>();
-	let loading = true;
-	let discarded = false;
+	const pendingRuntimeChanges: Array<() => void> = [];
+	const loadingUnsubscribers: Array<() => void> = [];
+	let state: "loading" | "active" | "failed" = "loading";
 	const assertActive = () => {
-		if (discarded) {
+		if (state === "failed") {
 			throw new Error(`Extension "${extension.path}" failed to load and its API is no longer active.`);
 		}
 		runtime.assertActive();
+	};
+	const applyRuntimeChange = (change: () => void) => {
+		if (state === "loading") pendingRuntimeChanges.push(change);
+		else change();
+	};
+	const clearPending = () => {
+		pendingFlagValues.clear();
+		pendingRuntimeChanges.length = 0;
+		loadingUnsubscribers.length = 0;
 	};
 
 	const api = {
@@ -328,7 +325,7 @@ function createExtensionAPI(
 			}
 			extension.flags.set(name, { name, extensionPath: extension.path, ...options });
 			if (options.default !== undefined && !runtime.flagValues.has(name)) {
-				if (loading) {
+				if (state === "loading") {
 					if (!pendingFlagValues.has(name)) pendingFlagValues.set(name, options.default);
 				} else {
 					runtime.flagValues.set(name, options.default);
@@ -434,27 +431,15 @@ function createExtensionAPI(
 			assertActive();
 			if (typeof providerOrName === "string") {
 				if (!config) throw new Error("Provider config is required when registering by name");
-				if (loading) {
-					pendingProviderOperations.push({ type: "register", name: providerOrName, config });
-				} else {
-					runtime.registerProvider(providerOrName, config, extension.path);
-				}
+				applyRuntimeChange(() => runtime.registerProvider(providerOrName, config, extension.path));
 				return;
 			}
-			if (loading) {
-				pendingProviderOperations.push({ type: "registerNative", provider: providerOrName });
-			} else {
-				runtime.registerNativeProvider(providerOrName, extension.path);
-			}
+			applyRuntimeChange(() => runtime.registerNativeProvider(providerOrName, extension.path));
 		},
 
 		unregisterProvider(name: string) {
 			assertActive();
-			if (loading) {
-				pendingProviderOperations.push({ type: "unregister", name });
-			} else {
-				runtime.unregisterProvider(name, extension.path);
-			}
+			applyRuntimeChange(() => runtime.unregisterProvider(name, extension.path));
 		},
 
 		events: {
@@ -465,11 +450,8 @@ function createExtensionAPI(
 			on(channel, handler) {
 				assertActive();
 				const unsubscribe = runtime.trackEventBusSubscription(eventBus.on(channel, handler));
-				if (loading) pendingEventBusUnsubscribers.add(unsubscribe);
-				return () => {
-					pendingEventBusUnsubscribers.delete(unsubscribe);
-					unsubscribe();
-				};
+				if (state === "loading") loadingUnsubscribers.push(unsubscribe);
+				return unsubscribe;
 			},
 		},
 	} as ExtensionAPI;
@@ -477,37 +459,20 @@ function createExtensionAPI(
 	return {
 		api,
 		commit: () => {
-			if (!loading) return;
+			if (state !== "loading") return;
 			runtime.assertActive();
 			for (const [name, value] of pendingFlagValues) {
 				if (!runtime.flagValues.has(name)) runtime.flagValues.set(name, value);
 			}
-			for (const operation of pendingProviderOperations) {
-				switch (operation.type) {
-					case "register":
-						runtime.registerProvider(operation.name, operation.config, extension.path);
-						break;
-					case "registerNative":
-						runtime.registerNativeProvider(operation.provider, extension.path);
-						break;
-					case "unregister":
-						runtime.unregisterProvider(operation.name, extension.path);
-						break;
-				}
-			}
-			pendingFlagValues.clear();
-			pendingProviderOperations.length = 0;
-			pendingEventBusUnsubscribers.clear();
-			loading = false;
+			for (const apply of pendingRuntimeChanges) apply();
+			state = "active";
+			clearPending();
 		},
 		discard: () => {
-			if (!loading) return;
-			discarded = true;
-			for (const unsubscribe of pendingEventBusUnsubscribers) unsubscribe();
-			pendingEventBusUnsubscribers.clear();
-			pendingFlagValues.clear();
-			pendingProviderOperations.length = 0;
-			loading = false;
+			if (state !== "loading") return;
+			state = "failed";
+			for (const unsubscribe of loadingUnsubscribers) unsubscribe();
+			clearPending();
 		},
 	};
 }
