@@ -178,7 +178,7 @@ Status is one of `not started`, `drafted`, or `verified`.
 | --- | --- |
 | glossary.md | drafted |
 | bug-triage.md | drafted |
-| verification/ (3 checklists) | not started |
+| verification/ (3 checklists) | drafted |
 | foundations/the-turn.md | drafted |
 | foundations/input.md | drafted |
 | foundations/the-screen.md | drafted |

@@ -1,0 +1,20 @@
+{
+  "cols": 100, "rows": 40,
+  "cwd": "/tmp/pi-desc-proj",
+  "env": {"PI_CODING_AGENT_DIR": "/tmp/pi-desc-home", "PI_OFFLINE": "1", "HOME": "/tmp/pi-desc-userhome"},
+  "argv": ["/path/to/pi-mono/pi-test.sh", "--no-env"],
+  "steps": [
+    {"wait": 10.0, "snap": "01-startup"},
+    {"keys": "!echo hello{CR}", "wait": 2.0, "snap": "02-echo"},
+    {"keys": "!sleep 30{CR}", "wait": 1.5, "snap": "03-sleep-running"},
+    {"keys": "{ESC}", "wait": 1.5, "snap": "04-sleep-cancelled"},
+    {"keys": "!{CR}", "wait": 2.0, "snap": "05-bare-bang"},
+    {"keys": "!!printf 'a\\nb\\nc'{CR}", "wait": 2.0, "snap": "06-double-bang"},
+    {"keys": "hello there", "wait": 0.5},
+    {"keys": "{C-c}", "wait": 0.8, "snap": "07-ctrl-c-once"},
+    {"keys": "{ESC}", "wait": 0.2},
+    {"keys": "{ESC}", "wait": 1.5, "snap": "08-double-escape"},
+    {"keys": "{ESC}", "wait": 1.0, "snap": "09-escape-closes-tree"},
+    {"keys": "{C-c}{C-c}", "wait": 2.0, "snap": "10-quit"}
+  ]
+}
