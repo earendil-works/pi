@@ -902,6 +902,48 @@ export class Editor implements Component, Focusable {
 		}
 	}
 
+	handleClick(x: number, y: number, width: number): void {
+		const visualLines = this.buildVisualLineMap(this.lastWidth);
+		const visibleLineCount = Math.min(
+			Math.max(5, Math.floor(this.tui.terminal.rows * 0.3)),
+			visualLines.length - this.scrollOffset,
+		);
+		if (y < 1 || y > visibleLineCount) return;
+		const visualLineIndex = this.scrollOffset + y - 1;
+		const visualLine = visualLines[visualLineIndex];
+		if (!visualLine) return;
+
+		const paddingX = Math.min(this.paddingX, Math.max(0, Math.floor((width - 1) / 2)));
+		const visualCol = Math.max(0, x - paddingX);
+		const logicalLine = this.state.lines[visualLine.logicalLine] ?? "";
+		const chunk = logicalLine.slice(visualLine.startCol, visualLine.startCol + visualLine.length);
+		const isLastVisualLine =
+			visualLineIndex === visualLines.length - 1 ||
+			visualLines[visualLineIndex + 1]?.logicalLine !== visualLine.logicalLine;
+		let targetCol = isLastVisualLine ? visualLine.startCol + chunk.length : visualLine.startCol;
+		let currentWidth = 0;
+		for (const grapheme of graphemeSegmenter.segment(chunk)) {
+			if (visualCol < currentWidth + visibleWidth(grapheme.segment)) {
+				targetCol = visualLine.startCol + grapheme.index;
+				break;
+			}
+			currentWidth += visibleWidth(grapheme.segment);
+			if (!isLastVisualLine) targetCol = visualLine.startCol + grapheme.index;
+		}
+
+		for (const segment of this.segment(logicalLine, "grapheme")) {
+			if (targetCol > segment.index && targetCol < segment.index + segment.segment.length) {
+				targetCol = segment.index;
+				break;
+			}
+		}
+		this.lastAction = null;
+		this.state.cursorLine = visualLine.logicalLine;
+		this.setCursorCol(targetCol);
+		if (this.autocompleteState) this.updateAutocomplete();
+		this.tui.requestRender();
+	}
+
 	private layoutText(contentWidth: number): LayoutLine[] {
 		const layoutLines: LayoutLine[] = [];
 

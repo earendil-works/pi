@@ -12,6 +12,7 @@ import {
 	getScrollbarGeometry,
 	getScrollViewBox,
 	getScrollViewsAt,
+	type LayoutBox,
 	type LayoutFrame,
 	renderLayoutFrame,
 	type ScrollbarGeometry,
@@ -30,6 +31,7 @@ import {
 } from "./terminal-image.ts";
 import {
 	type Component,
+	Container,
 	CURSOR_MARKER,
 	compositeTuiLine,
 	type OverlayHandle,
@@ -984,6 +986,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 				this.requestRender();
 				return;
 			}
+			if (!this.getSelectionBounds()) this.handleComponentClick(event.x, event.y);
 			void this.copySelectionToClipboard();
 			this.requestRender();
 			return;
@@ -1020,6 +1023,45 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 					Math.max(0, Math.min(this.terminal.columns - 1, event.x)),
 				);
 		this.requestRender();
+	}
+
+	private getFocusedComponentTarget(x: number, y: number): LayoutBox | undefined {
+		const component = this.getFocusedComponent();
+		if (!component || !this.currentLayout || this.hasOverlay()) return undefined;
+
+		const visit = (box: LayoutBox): LayoutBox | undefined => {
+			if (
+				x < box.rect.x ||
+				x >= box.rect.x + box.rect.width ||
+				y < box.rect.y ||
+				y >= box.rect.y + box.rect.height ||
+				x < box.clip.x ||
+				x >= box.clip.x + box.clip.width ||
+				y < box.clip.y ||
+				y >= box.clip.y + box.clip.height
+			) {
+				return undefined;
+			}
+			for (const child of box.children) {
+				const target = visit(child);
+				if (target) return target;
+			}
+			return box.component === component ||
+				(box.component instanceof Container && this.containsComponent(box.component, component))
+				? box
+				: undefined;
+		};
+		return visit(this.currentLayout.root);
+	}
+
+	private handleComponentClick(x: number, y: number): void {
+		const target = this.getFocusedComponentTarget(x, y);
+		if (!target) return;
+		target.component.handleClick?.(
+			x - target.rect.x,
+			y - target.rect.y + (target.lineOffset ?? 0),
+			target.rect.width,
+		);
 	}
 
 	private getSelectionBounds(): { start: SelectionPoint; end: SelectionPoint } | undefined {

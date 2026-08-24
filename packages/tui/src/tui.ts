@@ -33,6 +33,9 @@ export interface Component {
 	 */
 	handleInput?(data: string): void;
 
+	/** Handle a primary-button click at component-local terminal coordinates. */
+	handleClick?(x: number, y: number, width: number): void;
+
 	/**
 	 * If true, component receives key release events (Kitty protocol).
 	 * Default is false - release events are filtered out.
@@ -241,6 +244,18 @@ export class Container implements Component {
 			}
 		}
 		return lines;
+	}
+
+	handleClick(x: number, y: number, width: number): void {
+		let offset = 0;
+		for (const child of this.children) {
+			const height = child.render(width).length;
+			if (y >= offset && y < offset + height) {
+				child.handleClick?.(x, y - offset, width);
+				return;
+			}
+			offset += height;
+		}
 	}
 }
 
@@ -536,7 +551,7 @@ export abstract class TuiBase extends Container implements TUI {
 		return this.getMountedRoots().some((child) => this.containsComponent(child, component));
 	}
 
-	private containsComponent(root: Component, target: Component): boolean {
+	protected containsComponent(root: Component, target: Component): boolean {
 		if (root === target) return true;
 		if (!(root instanceof Container)) return false;
 		return root.children.some((child) => this.containsComponent(child, target));
