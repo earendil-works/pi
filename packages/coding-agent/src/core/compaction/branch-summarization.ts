@@ -16,7 +16,12 @@ import {
 	createCustomMessage,
 } from "../messages.ts";
 import type { ReadonlySessionManager, SessionEntry } from "../session-manager.ts";
-import { completeSummarization, estimateTokens, getSummarizationFailure } from "./compaction.ts";
+import {
+	completeSummarization,
+	effectiveReserveTokens,
+	estimateTokens,
+	getSummarizationFailure,
+} from "./compaction.ts";
 import {
 	computeFileLists,
 	createFileOps,
@@ -308,9 +313,13 @@ export async function generateBranchSummary(
 		callbacks,
 	} = options;
 
-	// Token budget = context window minus reserved space for prompt + response
+	// Token budget = context window minus the space reserved for prompt + response.
+	// The reserve is clamped to a safe proportion of the actual window so a fixed
+	// configured reserve (default 16384) can never exceed a small local model's window
+	// and produce a negative budget (see effectiveReserveTokens).
 	const contextWindow = model.contextWindow || 128000;
-	const tokenBudget = contextWindow - reserveTokens;
+	const reserve = effectiveReserveTokens(reserveTokens, contextWindow);
+	const tokenBudget = contextWindow - reserve;
 
 	const { messages, fileOps } = prepareBranchEntries(entries, tokenBudget);
 

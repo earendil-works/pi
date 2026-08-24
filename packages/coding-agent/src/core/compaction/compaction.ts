@@ -284,11 +284,35 @@ export function estimateProjectedContextTokens(
 }
 
 /**
+ * Clamp a configured token reserve to a safe proportion of a model's actual context window.
+ *
+ * The stock reserve (16384) is fixed and sized for large hosted models. On small local
+ * models (e.g. `qwen2.5-coder-7b` with a tight window) an unclamped reserve can exceed the
+ * viable budget: `contextWindow - reserve` goes negative, which either triggers spurious
+ * compaction on every turn or leaves no space for the response (a `request exceeds context`
+ * overflow). The effective reserve is therefore capped to a fraction of the real window and
+ * can never exceed the window minus a small safety headroom.
+ *
+ * The user-visible configured meaning is preserved for windows large enough to honor it;
+ * clamping only kicks in when the configured reserve would otherwise not fit the window.
+ */
+export function effectiveReserveTokens(reserveTokens: number, contextWindow: number): number {
+	if (contextWindow <= 0) return reserveTokens;
+	// Reserve at most a quarter of the window so at least three quarters stay available.
+	const proportionalCap = Math.floor(contextWindow * 0.25);
+	// Always leave at least a small headroom below the window for the provider/system response.
+	const safetyHeadroom = Math.max(256, Math.floor(contextWindow * 0.05));
+	const maxReserve = Math.max(0, contextWindow - safetyHeadroom);
+	return Math.min(reserveTokens, proportionalCap, maxReserve);
+}
+
+/**
  * Check if compaction should trigger based on context usage.
  */
 export function shouldCompact(contextTokens: number, contextWindow: number, settings: CompactionSettings): boolean {
 	if (!settings.enabled) return false;
-	return contextTokens > contextWindow - settings.reserveTokens;
+	const reserve = effectiveReserveTokens(settings.reserveTokens, contextWindow);
+	return contextTokens > contextWindow - reserve;
 }
 
 // ============================================================================
@@ -788,6 +812,118 @@ export async function generateSummaryWithUsage(
 }
 
 // ============================================================================
+// Summary degeneracy guard
+// ============================================================================
+//
+// A summary can reach a `stop` reason and still be unusable: the model may return a
+// stub that is essentially just the appended file lists, or a short prose narration
+// with none of the structured sections the summarization prompt demands
+// (goal/constraints/progress/next steps). Persisting such a stub silently shortens
+// production history without enough content to resume from. These checks reject such
+// degenerate output so it is discarded instead of persisted, while leaving genuine
+// summaries alone.
+
+/** Floor (in chars) toward which contact-length compaction summaries for substantial histories are expected. */
+export const COMPACTION_SUMMARY_MIN_CHARS = 2000;
+/** Smaller floor used for split-turn prefix summaries; the retained suffix carries near-term context. */
+export const TURN_PREFIX_SUMMARY_MIN_CHARS = 800;
+/** Minimum distinct structured headings a substantial summary body must carry. */
+export const COMPACTION_MIN_SECTIONS = 2;
+/** Approximate chars of summary body produced per token of summarized history. */
+const SUMMARY_CHARS_PER_TOKEN = 0.25;
+
+/**
+ * Length floor (chars) for a summary body describing the given amount of history.
+ * The floor scales with the history (capped at COMPACTION_SUMMARY_MIN_CHARS) so a
+ * fragmentary transcript may legitimately yield a small summary, while a substantial
+ * history reduced to a stub is rejected.
+ */
+export function summaryCharsFloorForTokens(
+	summarizedTokens: number,
+	maxChars: number = COMPACTION_SUMMARY_MIN_CHARS,
+): number {
+	if (!Number.isFinite(summarizedTokens) || summarizedTokens <= 0) return 1;
+	return Math.min(maxChars, Math.max(1, Math.round(summarizedTokens * SUMMARY_CHARS_PER_TOKEN)));
+}
+
+const STRUCTURED_SECTION_PATTERN = /^(#{1,3}\s+[A-Za-z][A-Za-z0-9 &'()-]*)(?:\r?\n|$)/gm;
+
+/** Total estimated tokens across messages (uses the same conservative per-message estimator as cut-point detection). */
+function estimateMessagesTokens(messages: AgentMessage[]): number {
+	return messages.reduce((sum, message) => sum + estimateTokens(message), 0);
+}
+
+/** The file-operations appendix appended by formatFileOperations. */
+const FILE_OPS_APPENDIX = /<(?:read-files|modified-files)>[\s\S]*$/i;
+
+/**
+ * Strip the trailing file-operations block (when present) from a summary body so
+ * degenerate checks measure the actual summarized text, not appended file lists.
+ */
+export function stripSummaryAppendix(summary: string): string {
+	const match = summary.match(FILE_OPS_APPENDIX);
+	return match ? summary.slice(0, match.index) : summary;
+}
+
+/** Count distinct structured headings present in a summary body. */
+export function countStructuredSections(summary: string): number {
+	const seen = new Set<string>();
+	for (const match of summary.matchAll(STRUCTURED_SECTION_PATTERN)) {
+		seen.add(match[1]!.replace(/^#{1,3}\s+/i, "").toLowerCase());
+	}
+	return seen.size;
+}
+
+/**
+ * True when a summary is a usable checkpoint: a non-empty body at least the summary
+ * floor for its history; once long enough to warrant an outline, it must carry the
+ * required structured headings.
+ */
+export function isSummaryUsable(
+	summary: string,
+	summarizedTokens: number,
+	maxChars: number = COMPACTION_SUMMARY_MIN_CHARS,
+): boolean {
+	const body = stripSummaryAppendix(summary).trim();
+	if (body.length === 0) return false;
+	if (body.length < summaryCharsFloorForTokens(summarizedTokens, maxChars)) return false;
+	if (body.length >= maxChars && countStructuredSections(body) < COMPACTION_MIN_SECTIONS) {
+		return false;
+	}
+	return true;
+}
+
+/**
+ * Throw if a produced summary is a degenerate stub: empty body, far too short for the
+ * history summarized, or long-running narration missing the required sections.
+ */
+function assertSummaryUsable(
+	summary: string,
+	purpose: string,
+	summarizedTokens: number,
+	maxChars: number = COMPACTION_SUMMARY_MIN_CHARS,
+): void {
+	const body = stripSummaryAppendix(summary).trim();
+	if (body.length === 0) {
+		throw new Error(`${purpose} produced an empty body; the degenerate summary was discarded.`);
+	}
+	const floor = summaryCharsFloorForTokens(summarizedTokens, maxChars);
+	if (body.length < floor) {
+		throw new Error(
+			`${purpose} was too short (${body.length} chars; history being summarized needs at least ${floor}) ` +
+				"to survive as a checkpoint and was discarded.",
+		);
+	}
+	if (body.length >= maxChars) {
+		const sections = countStructuredSections(body);
+		if (sections < COMPACTION_MIN_SECTIONS) {
+			throw new Error(
+				`${purpose} is missing the required structured sections (only ${sections} of at least ` +
+					`${COMPACTION_MIN_SECTIONS} goal/constraints/progress/next steps) and was discarded.`,
+			);
+		}
+	}
+}
 // Compaction Preparation (for extensions)
 // ============================================================================
 
@@ -1033,6 +1169,9 @@ export async function compact(
 				callbacks,
 				sessionId,
 			);
+			if (!signal?.aborted) {
+				assertSummaryUsable(historyResult.text, "Compaction history", estimateMessagesTokens(messagesToSummarize));
+			}
 			historyText = historyResult.text;
 			historyUsage = historyResult.usage;
 		}
@@ -1050,6 +1189,14 @@ export async function compact(
 			callbacks,
 			sessionId,
 		);
+		if (!signal?.aborted) {
+			assertSummaryUsable(
+				turnPrefixResult.text,
+				"Split-turn prefix",
+				estimateMessagesTokens(turnPrefixMessages),
+				TURN_PREFIX_SUMMARY_MIN_CHARS,
+			);
+		}
 		// Merge into single summary
 		summary = `${historyText}\n\n---\n\n**Turn Context (split turn):**\n\n${turnPrefixResult.text}`;
 		summaryUsage = historyUsage ? combineUsage(historyUsage, turnPrefixResult.usage) : turnPrefixResult.usage;
@@ -1071,6 +1218,9 @@ export async function compact(
 			callbacks,
 			sessionId,
 		);
+		if (!signal?.aborted) {
+			assertSummaryUsable(result.text, "Compaction summary", estimateMessagesTokens(messagesToSummarize));
+		}
 		summary = result.text;
 		summaryUsage = result.usage;
 	}
