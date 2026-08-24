@@ -40,7 +40,10 @@ export class ToolExecutionComponent extends Container {
 		isError: boolean;
 		details?: any;
 	};
-	private convertedImages: Map<number, { data: string; mimeType: string }> = new Map();
+	private convertedImages: Map<
+		number,
+		{ sourceData: string; sourceMimeType: string; data: string; mimeType: string }
+	> = new Map();
 	private hideComponent = false;
 
 	constructor(
@@ -195,16 +198,23 @@ export class ToolExecutionComponent extends Container {
 		for (let i = 0; i < imageBlocks.length; i++) {
 			const img = imageBlocks[i];
 			if (!img.data || !img.mimeType) continue;
-			if (img.mimeType === "image/png") continue;
-			if (this.convertedImages.has(i)) continue;
+			const sourceData = img.data;
+			const sourceMimeType = img.mimeType;
+			if (sourceMimeType === "image/png") continue;
+			const cached = this.convertedImages.get(i);
+			if (cached?.sourceData === sourceData && cached.sourceMimeType === sourceMimeType) continue;
 
 			const index = i;
-			convertToPng(img.data, img.mimeType).then((converted) => {
-				if (converted) {
-					this.convertedImages.set(index, converted);
-					this.updateDisplay();
-					this.ui.requestRender();
-				}
+			convertToPng(sourceData, sourceMimeType).then((converted) => {
+				const currentImage = this.result?.content.filter((content) => content.type === "image")[index];
+				if (!converted || currentImage?.data !== sourceData || currentImage.mimeType !== sourceMimeType) return;
+				this.convertedImages.set(index, {
+					sourceData,
+					sourceMimeType,
+					...converted,
+				});
+				this.updateDisplay();
+				this.ui.requestRender();
 			});
 		}
 	}
@@ -344,7 +354,9 @@ export class ToolExecutionComponent extends Container {
 			for (let i = 0; i < imageBlocks.length; i++) {
 				const img = imageBlocks[i];
 				if (caps.images && this.showImages && img.data && img.mimeType) {
-					const converted = this.convertedImages.get(i);
+					const cached = this.convertedImages.get(i);
+					const converted =
+						cached?.sourceData === img.data && cached.sourceMimeType === img.mimeType ? cached : undefined;
 					const imageData = converted?.data ?? img.data;
 					const imageMimeType = converted?.mimeType ?? img.mimeType;
 					if (caps.images === "kitty" && imageMimeType !== "image/png") continue;
