@@ -46,6 +46,15 @@ export interface EditorComponent extends Component {
 	/** Insert text at current cursor position */
 	insertTextAtCursor?(text: string): void;
 
+	/** Register an attached image and insert its atomic `[Image N]` marker. */
+	insertImageMarker?(filePath: string): number;
+
+	/** Currently pending image attachments, ordered by marker position. */
+	getImageAttachments?(): Array<{ id: number; path: string }>;
+
+	/** Drop all pending image attachments. */
+	clearImages?(): void;
+
 	/**
 	 * Get text with any markers expanded (e.g., paste markers).
 	 * Falls back to getText() if not implemented.
