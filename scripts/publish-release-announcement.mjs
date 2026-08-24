@@ -57,8 +57,8 @@ function parseArgs(args) {
 	if (!options.version || !STABLE_SEMVER_RE.test(options.version)) {
 		throw new Error("--version must be a stable semver version");
 	}
-	if (Boolean(options.installerPackageJson) !== Boolean(options.installerPackageLock)) {
-		throw new Error("--installer-package-json and --installer-package-lock must be provided together");
+	if (!options.installerPackageJson || !options.installerPackageLock) {
+		throw new Error("--installer-package-json and --installer-package-lock are required");
 	}
 	return options;
 }
@@ -302,6 +302,57 @@ async function main() {
 		}
 
 		writeFileSync(latestPath, `${JSON.stringify(release, null, "\t")}\n`);
+		validateInstallerArtifacts(options.installerPackageJson, options.installerPackageLock, options.version);
+		const installerReleasePrefix = `${INSTALLER_PREFIX}/releases/${options.version}`;
+		putObject(
+			options.bucket,
+			options.endpoint,
+			options.installerPackageJson,
+			`${installerReleasePrefix}/package.json`,
+			"public, max-age=31536000, immutable",
+			{ missing: true },
+		);
+		putObject(
+			options.bucket,
+			options.endpoint,
+			options.installerPackageLock,
+			`${installerReleasePrefix}/package-lock.json`,
+			"public, max-age=31536000, immutable",
+			{ missing: true },
+		);
+		putJson(
+			options.bucket,
+			options.endpoint,
+			releasePath,
+			`${installerReleasePrefix}/metadata.json`,
+			"public, max-age=31536000, immutable",
+			{ missing: true },
+		);
+		const installerLatest = await advanceLatestRelease(
+			options.version,
+			() =>
+				readLatestRelease(
+					options.bucket,
+					options.endpoint,
+					`${INSTALLER_PREFIX}/latest.json`,
+					join(temporaryDirectory, "installer-latest-current.json"),
+				),
+			(condition) =>
+				putJson(
+					options.bucket,
+					options.endpoint,
+					latestPath,
+					`${INSTALLER_PREFIX}/latest.json`,
+					"no-store",
+					condition,
+				),
+		);
+		console.log(
+			installerLatest.advanced
+				? `Published installer artifacts for Pi ${options.version} through s3://${options.bucket}/${INSTALLER_PREFIX}/latest.json`
+				: `Pi ${installerLatest.version} is already the latest installer release.`,
+		);
+
 		const result = await advanceLatestRelease(
 			options.version,
 			() =>
@@ -326,59 +377,6 @@ async function main() {
 				? `Announced Pi ${options.version} through s3://${options.bucket}/${RELEASES_PREFIX}/latest.json`
 				: `Pi ${result.version} is already the latest announced release.`,
 		);
-
-		if (options.installerPackageJson) {
-			validateInstallerArtifacts(options.installerPackageJson, options.installerPackageLock, options.version);
-			const installerReleasePrefix = `${INSTALLER_PREFIX}/releases/${options.version}`;
-			putObject(
-				options.bucket,
-				options.endpoint,
-				options.installerPackageJson,
-				`${installerReleasePrefix}/package.json`,
-				"public, max-age=31536000, immutable",
-				{ missing: true },
-			);
-			putObject(
-				options.bucket,
-				options.endpoint,
-				options.installerPackageLock,
-				`${installerReleasePrefix}/package-lock.json`,
-				"public, max-age=31536000, immutable",
-				{ missing: true },
-			);
-			putJson(
-				options.bucket,
-				options.endpoint,
-				releasePath,
-				`${installerReleasePrefix}/metadata.json`,
-				"public, max-age=31536000, immutable",
-				{ missing: true },
-			);
-			const installerLatest = await advanceLatestRelease(
-				options.version,
-				() =>
-					readLatestRelease(
-						options.bucket,
-						options.endpoint,
-						`${INSTALLER_PREFIX}/latest.json`,
-						join(temporaryDirectory, "installer-latest-current.json"),
-					),
-				(condition) =>
-					putJson(
-						options.bucket,
-						options.endpoint,
-						latestPath,
-						`${INSTALLER_PREFIX}/latest.json`,
-						"no-store",
-						condition,
-					),
-			);
-			console.log(
-				installerLatest.advanced
-					? `Published installer artifacts for Pi ${options.version} through s3://${options.bucket}/${INSTALLER_PREFIX}/latest.json`
-					: `Pi ${installerLatest.version} is already the latest installer release.`,
-			);
-		}
 	} finally {
 		rmSync(temporaryDirectory, { force: true, recursive: true });
 	}

@@ -10,7 +10,6 @@ import * as path from "node:path";
 import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { AuthEvent, AuthPrompt } from "@earendil-works/pi-ai";
 import type { AssistantMessage, ImageContent, Message, Model, Usage } from "@earendil-works/pi-ai/compat";
-import { DEFAULT_RADIUS_GATEWAY } from "@earendil-works/pi-ai/providers/radius-config";
 import type {
 	AutocompleteItem,
 	AutocompleteProvider,
@@ -45,8 +44,7 @@ import {
 	visibleWidth,
 } from "@earendil-works/pi-tui";
 import chalk from "chalk";
-import { spawn, spawnSync } from "child_process";
-import { getAuthCredential } from "../../cli/auth-command.ts";
+import { spawn } from "child_process";
 import {
 	APP_NAME,
 	APP_TITLE,
@@ -55,7 +53,6 @@ import {
 	getAuthPath,
 	getDebugLogPath,
 	getDocsPath,
-	getShareViewerUrl,
 	VERSION,
 } from "../../config.ts";
 import { type AgentSession, type AgentSessionEvent, parseSkillBlock } from "../../core/agent-session.ts";
@@ -117,7 +114,6 @@ import { checkForNewPiVersion, type LatestPiRelease } from "../../utils/version-
 import { ArminComponent } from "./components/armin.ts";
 import { AssistantMessageComponent } from "./components/assistant-message.ts";
 import { BashExecutionComponent } from "./components/bash-execution.ts";
-import { BorderedLoader } from "./components/bordered-loader.ts";
 import { BranchSummaryMessageComponent } from "./components/branch-summary-message.ts";
 import { CompactionSummaryMessageComponent } from "./components/compaction-summary-message.ts";
 import { CustomEditor } from "./components/custom-editor.ts";
@@ -160,6 +156,7 @@ import { UserMessageSelectorComponent } from "./components/user-message-selector
 import { editInExternalEditor } from "./external-editor.ts";
 import { refreshModelCatalogs } from "./model-catalog-refresh.ts";
 import { getModelSearchText } from "./model-search.ts";
+import { shareSession } from "./session-share.ts";
 import {
 	getAvailableThemes,
 	getAvailableThemesWithPaths,
@@ -6092,180 +6089,14 @@ export class InteractiveMode {
 	}
 
 	private async handleShareCommand(): Promise<void> {
-		// Radius artifacts natively support JSONL sessions. Gist fallback keeps the legacy HTML upload.
-		const jsonlFile = path.join(os.tmpdir(), "session.jsonl");
-		let htmlFile = null;
-
-		try {
-			try {
-				this.session.exportToJsonl(jsonlFile);
-			} catch (error: unknown) {
-				this.showError(`Failed to export session: ${error instanceof Error ? error.message : "Unknown error"}`);
-				return;
-			}
-			if (await this.tryShareViaRadius(jsonlFile)) return;
-
-			try {
-				const authResult = spawnSync("gh", ["auth", "status"], { encoding: "utf-8" });
-				if (authResult.status !== 0) {
-					this.showError("GitHub CLI is not logged in. Run 'gh auth login' first.");
-					return;
-				}
-			} catch {
-				this.showError("GitHub CLI (gh) is not installed. Install it from https://cli.github.com/");
-				return;
-			}
-
-			try {
-				htmlFile = path.join(os.tmpdir(), "session.html");
-				await this.session.exportToHtml(htmlFile, { themeName: theme.name });
-			} catch (error: unknown) {
-				this.showError(`Failed to export session: ${error instanceof Error ? error.message : "Unknown error"}`);
-				return;
-			}
-			await this.shareViaGist(htmlFile);
-		} finally {
-			for (const tmpFile of [jsonlFile, htmlFile]) {
-				try {
-					if (tmpFile !== null) {
-						fs.unlinkSync(tmpFile);
-					}
-				} catch {
-					// Ignore cleanup errors
-				}
-			}
-		}
-	}
-
-	private async tryShareViaRadius(tmpFile: string): Promise<boolean> {
-		const provider = this.session.modelRuntime.getProvider("radius");
-		if (!provider) return false;
-
-		const gatewayUrl = DEFAULT_RADIUS_GATEWAY;
-
-		const token = getAuthCredential(
-			await this.session.modelRuntime.getAuth("radius", { minOAuthValidityMs: 5 * 60_000 }),
-		);
-		if (!token) return false;
-
-		const loader = new BorderedLoader(this.ui, theme, "Uploading to Radius...");
-		this.editorContainer.clear();
-		this.editorContainer.addChild(loader);
-		this.ui.setFocus(loader);
-		this.ui.requestRender();
-		loader.onAbort = () => {
-			this.restoreShareEditor(loader);
-			this.showStatus("Share cancelled");
-		};
-
-		try {
-			const body = fs.readFileSync(tmpFile);
-			const url = new URL("/v1/artifacts", gatewayUrl);
-			url.searchParams.set("visibility", "organization");
-			url.searchParams.set("title", "Pi session");
-			const response = await fetch(url, {
-				method: "POST",
-				headers: {
-					Authorization: `Bearer ${token}`,
-					"Content-Type": "application/x-ndjson",
-					"Content-Length": String(body.byteLength),
-				},
-				body,
-				signal: loader.signal,
-			});
-			if (loader.signal.aborted) return true;
-			const json = (await response.json().catch(() => null)) as {
-				artifact?: { canonical_url: string };
-				error?: string;
-			} | null;
-			if (loader.signal.aborted) return true;
-			this.restoreShareEditor(loader);
-			if (!response.ok || !json?.artifact) {
-				this.showError(
-					`Failed to upload Radius artifact: ${json?.error || response.statusText || response.status}`,
-				);
-				return true;
-			}
-			const shareUrl = json.artifact.canonical_url;
-			this.showStatus(`Share URL: ${hyperlink(shareUrl, shareUrl)}`);
-			return true;
-		} catch (error: unknown) {
-			if (!loader.signal.aborted) {
-				this.restoreShareEditor(loader);
-				this.showError(
-					`Failed to upload Radius artifact: ${error instanceof Error ? error.message : "Unknown error"}`,
-				);
-			}
-			return true;
-		}
-	}
-
-	private async shareViaGist(tmpFile: string): Promise<void> {
-		// Show cancellable loader, replacing the editor
-		const loader = new BorderedLoader(this.ui, theme, "Creating gist...");
-		this.editorContainer.clear();
-		this.editorContainer.addChild(loader);
-		this.ui.setFocus(loader);
-		this.ui.requestRender();
-
-		// Create a secret gist asynchronously
-		let proc: ReturnType<typeof spawn> | null = null;
-
-		loader.onAbort = () => {
-			proc?.kill();
-			this.restoreShareEditor(loader);
-			this.showStatus("Share cancelled");
-		};
-
-		try {
-			const result = await new Promise<{ stdout: string; stderr: string; code: number | null }>((resolve) => {
-				proc = spawn("gh", ["gist", "create", "--public=false", tmpFile]);
-				let stdout = "";
-				let stderr = "";
-				proc.stdout?.on("data", (data) => {
-					stdout += data.toString();
-				});
-				proc.stderr?.on("data", (data) => {
-					stderr += data.toString();
-				});
-				proc.on("close", (code) => resolve({ stdout, stderr, code }));
-			});
-
-			if (loader.signal.aborted) return;
-
-			this.restoreShareEditor(loader);
-
-			if (result.code !== 0) {
-				const errorMsg = result.stderr?.trim() || "Unknown error";
-				this.showError(`Failed to create gist: ${errorMsg}`);
-				return;
-			}
-
-			// Extract gist ID from the URL returned by gh
-			// gh returns something like: https://gist.github.com/username/GIST_ID
-			const gistUrl = result.stdout?.trim();
-			const gistId = gistUrl?.split("/").pop();
-			if (!gistId) {
-				this.showError("Failed to parse gist ID from gh output");
-				return;
-			}
-
-			// Create the preview URL
-			const previewUrl = getShareViewerUrl(gistId);
-			this.showStatus(`Share URL: ${hyperlink(previewUrl, previewUrl)}\nGist: ${hyperlink(gistUrl, gistUrl)}`);
-		} catch (error: unknown) {
-			if (!loader.signal.aborted) {
-				this.restoreShareEditor(loader);
-				this.showError(`Failed to create gist: ${error instanceof Error ? error.message : "Unknown error"}`);
-			}
-		}
-	}
-
-	private restoreShareEditor(loader: BorderedLoader): void {
-		loader.dispose();
-		this.editorContainer.clear();
-		this.editorContainer.addChild(this.editor);
-		this.ui.setFocus(this.editor);
+		await shareSession({
+			session: this.session,
+			ui: this.ui,
+			editorContainer: this.editorContainer,
+			editor: this.editor,
+			showStatus: (message) => this.showStatus(message),
+			showError: (message) => this.showError(message),
+		});
 	}
 
 	private async handleCopyCommand(options: { flashConfirmation?: boolean } = {}): Promise<void> {

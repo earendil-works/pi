@@ -120,7 +120,15 @@ Add to `keybindings.json`:
 
 ## Windows Terminal
 
-Add to `settings.json` (Ctrl+Shift+, or Settings → Open JSON file) to forward the modified Enter keys pi uses:
+Pi uses Windows-style keybindings when running natively on Windows or in WSL:
+
+- `Alt+V` pastes an image or clipboard text.
+- `Ctrl+F` searches the transcript in fullscreen mode, and `Ctrl+Up`/`Ctrl+Down` jump between marked messages.
+- `Alt+P` cycles to the previous model.
+- `Ctrl+Z` undoes editing on native Windows; WSL uses `Alt+Z` so `Ctrl+Z` can suspend pi.
+- `Ctrl+Q` queues a follow-up message and `Alt+Q` restores queued messages.
+
+Add to `settings.json` (Ctrl+Shift+, or Settings → Open JSON file) to forward `Shift+Enter` for inserting a new line:
 
 ```json
 {
@@ -128,20 +136,14 @@ Add to `settings.json` (Ctrl+Shift+, or Settings → Open JSON file) to forward 
     {
       "command": { "action": "sendInput", "input": "\u001b[13;2u" },
       "keys": "shift+enter"
-    },
-    {
-      "command": { "action": "sendInput", "input": "\u001b[13;3u" },
-      "keys": "alt+enter"
     }
   ]
 }
 ```
 
-- `Shift+Enter` inserts a new line.
-- Windows Terminal binds `Alt+Enter` to fullscreen by default. That prevents pi from receiving `Alt+Enter` for follow-up queueing.
-- Remapping `Alt+Enter` to `sendInput` forwards the real key chord to pi instead.
+Windows Terminal binds `Alt+Enter` to fullscreen by default. To use it instead of pi's `Ctrl+Q` default for follow-up queueing, configure Windows Terminal to send the key and bind `app.message.followUp` to `alt+enter` in pi.
 
-If you already have an `actions` array, add the objects to it. If the old fullscreen behavior persists, fully close and reopen Windows Terminal.
+If you already have an `actions` array, add the object to it. Fully close and reopen Windows Terminal after changing its settings.
 
 ## xfce4-terminal, terminator
 
