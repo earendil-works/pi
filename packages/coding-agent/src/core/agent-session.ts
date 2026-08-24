@@ -1125,6 +1125,14 @@ export class AgentSession {
 	 * @throws Error if no model selected or no API key available (when not streaming)
 	 */
 	async prompt(text: string, options?: PromptOptions): Promise<void> {
+		await this._prompt(text, options);
+	}
+
+	private async _prompt(
+		text: string,
+		options?: PromptOptions,
+		orderedContent?: (TextContent | ImageContent)[],
+	): Promise<void> {
 		const expandPromptTemplates = options?.expandPromptTemplates ?? true;
 		const preflightResult = options?.preflightResult;
 		let messages: AgentMessage[] | undefined;
@@ -1164,6 +1172,7 @@ export class AgentSession {
 				if (inputResult.action === "transform") {
 					currentText = inputResult.text;
 					currentImages = inputResult.images ?? currentImages;
+					orderedContent = undefined;
 				}
 			}
 
@@ -1172,6 +1181,7 @@ export class AgentSession {
 			if (expandPromptTemplates) {
 				expandedText = this._expandSkillCommand(expandedText);
 				expandedText = expandPromptTemplate(expandedText, [...this.promptTemplates]);
+				if (expandedText !== currentText) orderedContent = undefined;
 			}
 
 			// If streaming, queue via steer() or followUp() based on option
@@ -1182,9 +1192,9 @@ export class AgentSession {
 					);
 				}
 				if (options.streamingBehavior === "followUp") {
-					await this._queueFollowUp(expandedText, currentImages);
+					await this._queueFollowUp(expandedText, currentImages, orderedContent);
 				} else {
-					await this._queueSteer(expandedText, currentImages);
+					await this._queueSteer(expandedText, currentImages, orderedContent);
 				}
 				preflightResult?.(true);
 				return;
@@ -1224,13 +1234,9 @@ export class AgentSession {
 			messages = [];
 
 			// Add user message
-			const userContent: (TextContent | ImageContent)[] = [{ type: "text", text: expandedText }];
-			if (currentImages) {
-				userContent.push(...currentImages);
-			}
 			messages.push({
 				role: "user",
-				content: userContent,
+				content: this._createUserContent(expandedText, currentImages, orderedContent),
 				timestamp: Date.now(),
 			});
 
@@ -1387,16 +1393,16 @@ export class AgentSession {
 	/**
 	 * Internal: Queue a steering message (already expanded, no extension command check).
 	 */
-	private async _queueSteer(text: string, images?: ImageContent[]): Promise<void> {
+	private async _queueSteer(
+		text: string,
+		images?: ImageContent[],
+		orderedContent?: (TextContent | ImageContent)[],
+	): Promise<void> {
 		this._steeringMessages.push(text);
 		this._emitQueueUpdate();
-		const content: (TextContent | ImageContent)[] = [{ type: "text", text }];
-		if (images) {
-			content.push(...images);
-		}
 		this.agent.steer({
 			role: "user",
-			content,
+			content: this._createUserContent(text, images, orderedContent),
 			timestamp: Date.now(),
 		});
 	}
@@ -1404,18 +1410,26 @@ export class AgentSession {
 	/**
 	 * Internal: Queue a follow-up message (already expanded, no extension command check).
 	 */
-	private async _queueFollowUp(text: string, images?: ImageContent[]): Promise<void> {
+	private async _queueFollowUp(
+		text: string,
+		images?: ImageContent[],
+		orderedContent?: (TextContent | ImageContent)[],
+	): Promise<void> {
 		this._followUpMessages.push(text);
 		this._emitQueueUpdate();
-		const content: (TextContent | ImageContent)[] = [{ type: "text", text }];
-		if (images) {
-			content.push(...images);
-		}
 		this.agent.followUp({
 			role: "user",
-			content,
+			content: this._createUserContent(text, images, orderedContent),
 			timestamp: Date.now(),
 		});
+	}
+
+	private _createUserContent(
+		text: string,
+		images?: ImageContent[],
+		orderedContent?: (TextContent | ImageContent)[],
+	): (TextContent | ImageContent)[] {
+		return orderedContent ?? [{ type: "text", text }, ...(images ?? [])];
 	}
 
 	/**
@@ -1496,6 +1510,7 @@ export class AgentSession {
 		// Normalize content to text string + optional images
 		let text: string;
 		let images: ImageContent[] | undefined;
+		const orderedContent = typeof content === "string" ? undefined : [...content];
 
 		if (typeof content === "string") {
 			text = content;
@@ -1513,12 +1528,16 @@ export class AgentSession {
 			if (images.length === 0) images = undefined;
 		}
 
-		await this.prompt(text, {
-			expandPromptTemplates: options?.expandPromptTemplates ?? false,
-			streamingBehavior: options?.deliverAs,
-			images,
-			source: "extension",
-		});
+		await this._prompt(
+			text,
+			{
+				expandPromptTemplates: options?.expandPromptTemplates ?? false,
+				streamingBehavior: options?.deliverAs,
+				images,
+				source: "extension",
+			},
+			orderedContent,
+		);
 	}
 
 	/**
