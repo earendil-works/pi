@@ -63,7 +63,12 @@ import {
 } from "./constrained-sampling.ts";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
-import { buildBaseOptions, clampThinkingBudgetToAnswerRoom, thinkingBudgetForLevel } from "./simple-options.ts";
+import {
+	buildBaseOptions,
+	clampReasoning,
+	clampThinkingBudgetToAnswerRoom,
+	thinkingBudgetForLevel,
+} from "./simple-options.ts";
 import { transformMessages } from "./transform-messages.ts";
 
 /**
@@ -945,15 +950,23 @@ function buildParams(
 			(params as any).thinking = { type: "disabled" };
 		}
 		if (options?.reasoningEffort && compat.supportsReasoningEffort) {
-			(params as any).reasoning_effort =
-				model.thinkingLevelMap?.[options.reasoningEffort] ?? options.reasoningEffort;
+			// DeepSeek does not expose a numeric thinking budget field, so reasoning and
+			// the answer share max_tokens. An xhigh/max request must not reach the wire
+			// unmapped: clamp it to the mapped "high" level so the model cannot burn the
+			// whole output budget on hidden thinking and return no answer.
+			const requested = options.reasoningEffort;
+			const mapped = model.thinkingLevelMap?.[clampReasoning(requested)!];
+			(params as any).reasoning_effort = typeof mapped === "string" ? mapped : requested;
 		}
 	} else if (compat.thinkingFormat === "openrouter" && model.reasoning) {
 		// OpenRouter normalizes reasoning across providers via a nested reasoning object.
+		// Clamp xhigh/max before the map lookup, exactly as the deepseek branch does
+		// above: a map that routes xhigh->'xhigh' (or lacks a key for max) would send an
+		// unbounded thinking level to the wire and let reasoning starve the answer slot.
 		const openRouterParams = params as typeof params & { reasoning?: { effort?: string } };
 		if (options?.reasoningEffort) {
 			openRouterParams.reasoning = {
-				effort: model.thinkingLevelMap?.[options.reasoningEffort] ?? options.reasoningEffort,
+				effort: model.thinkingLevelMap?.[clampReasoning(options.reasoningEffort)!] ?? options.reasoningEffort,
 			};
 		} else if (model.thinkingLevelMap?.off !== null) {
 			openRouterParams.reasoning = { effort: model.thinkingLevelMap?.off ?? "none" };
