@@ -36,6 +36,7 @@ import type {
 	EntryRenderer,
 	Extension,
 	ExtensionAPI,
+	ExtensionCapabilities,
 	ExtensionFactory,
 	ExtensionRuntime,
 	LoadExtensionsResult,
@@ -251,6 +252,10 @@ export function createExtensionRuntime(): ExtensionRuntime {
  * Registration methods write to the extension object.
  * Action methods delegate to the shared runtime.
  */
+const EXTENSION_CAPABILITIES = Object.freeze({
+	turnPreflight: true,
+}) satisfies ExtensionCapabilities;
+
 function createExtensionAPI(
 	extension: Extension,
 	runtime: ExtensionRuntime,
@@ -278,6 +283,8 @@ function createExtensionAPI(
 	};
 
 	const api = {
+		capabilities: EXTENSION_CAPABILITIES,
+
 		// Registration methods - write to extension
 		on(event: string, handler: HandlerFn): void {
 			assertActive();

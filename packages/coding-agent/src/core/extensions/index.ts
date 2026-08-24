@@ -27,6 +27,7 @@ export type {
 	// Re-exports
 	AgentToolResult,
 	AgentToolUpdateCallback,
+	AgentTurnResult,
 	AppendEntryHandler,
 	// App keybindings (for custom editors)
 	AppKeybinding,
@@ -61,6 +62,7 @@ export type {
 	ExtensionActions,
 	// API
 	ExtensionAPI,
+	ExtensionCapabilities,
 	ExtensionCommandContext,
 	ExtensionCommandContextActions,
 	ExtensionContext,
@@ -163,6 +165,7 @@ export type {
 	ToolResultEventResult,
 	TreePreparation,
 	TurnEndEvent,
+	TurnPreflightCancellationEntryData,
 	TurnStartEvent,
 	// Events - User Bash
 	UserBashEvent,
@@ -183,5 +186,6 @@ export {
 	isReadToolResult,
 	isToolCallEventType,
 	isWriteToolResult,
+	TURN_PREFLIGHT_CANCELLATION_ENTRY_TYPE,
 } from "./types.ts";
 export { wrapRegisteredTool, wrapRegisteredTools } from "./wrapper.ts";

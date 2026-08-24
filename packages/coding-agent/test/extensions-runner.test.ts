@@ -775,6 +775,106 @@ describe("ExtensionRunner", () => {
 				systemPrompt: "base\nfirst\nsecond",
 			});
 		});
+
+		it("short-circuits cancellation and discards earlier preflight mutations", async () => {
+			const extCode1 = `
+				export default function(pi) {
+					pi.on("before_agent_start", () => ({
+						message: { customType: "early", content: "discard me", display: false },
+						systemPrompt: "discard me too",
+					}));
+				}
+			`;
+			const extCode2 = `
+				export default function(pi) {
+					pi.on("before_agent_start", () => ({
+						cancel: true,
+						cancelReason: "blocked by runner test",
+					}));
+				}
+			`;
+			const extCode3 = `
+				export default function(pi) {
+					pi.on("before_agent_start", () => {
+						throw new Error("later handler ran");
+					});
+				}
+			`;
+			fs.writeFileSync(path.join(extensionsDir, "before-agent-start-1.ts"), extCode1);
+			fs.writeFileSync(path.join(extensionsDir, "before-agent-start-2.ts"), extCode2);
+			fs.writeFileSync(path.join(extensionsDir, "before-agent-start-3.ts"), extCode3);
+
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			expect(result.errors).toEqual([]);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			const errors: string[] = [];
+			runner.onError((error) => errors.push(error.error));
+			runner.bindCore(extensionActions, extensionContextActions);
+
+			const preflight = await runner.emitBeforeAgentStart("blocked", undefined, "base", {
+				cwd: tempDir,
+			});
+
+			expect(errors).toEqual([]);
+			expect(preflight).toEqual({
+				cancellation: {
+					source: result.extensions[1]?.sourceInfo,
+					cancelReason: "blocked by runner test",
+				},
+			});
+		});
+
+		it("isolates each handler from trigger-message mutations", async () => {
+			const extCode1 = `
+				export default function(pi) {
+					pi.on("before_agent_start", (event) => {
+						if (event.triggerMessage.role === "custom") {
+							event.triggerMessage.details.origin = "mutated";
+						}
+					});
+				}
+			`;
+			const extCode2 = `
+				export default function(pi) {
+					pi.on("before_agent_start", (event) => ({
+						message: {
+							customType: "observed",
+							content: event.triggerMessage.role === "custom" ? event.triggerMessage.details.origin : "wrong role",
+							display: false,
+						},
+					}));
+				}
+			`;
+			fs.writeFileSync(path.join(extensionsDir, "before-agent-start-1.ts"), extCode1);
+			fs.writeFileSync(path.join(extensionsDir, "before-agent-start-2.ts"), extCode2);
+
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			expect(result.errors).toEqual([]);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			runner.bindCore(extensionActions, extensionContextActions);
+			const triggerMessage = {
+				role: "custom" as const,
+				customType: "external-trigger",
+				content: "wake up",
+				display: true,
+				details: { origin: "original" },
+				timestamp: 123,
+			};
+
+			const preflight = await runner.emitBeforeAgentStart(
+				"wake up",
+				undefined,
+				"base",
+				{ cwd: tempDir },
+				triggerMessage,
+			);
+
+			expect(triggerMessage.details).toEqual({ origin: "original" });
+			expect(preflight).toEqual({
+				messages: [expect.objectContaining({ customType: "observed", content: "original" })],
+				systemPrompt: undefined,
+			});
+		});
 	});
 
 	describe("tool_result chaining", () => {

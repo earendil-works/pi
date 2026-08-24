@@ -68,6 +68,7 @@ import { DEFAULT_THINKING_LEVEL, THINKING_LEVEL_OPTIONS } from "./defaults.ts";
 import { exportSessionToHtml, type ToolHtmlRenderer } from "./export-html/index.ts";
 import { createToolHtmlRenderer } from "./export-html/tool-renderer.ts";
 import {
+	type AgentTurnResult,
 	type ContextUsage,
 	type ExtensionCommandContextActions,
 	type ExtensionErrorListener,
@@ -90,7 +91,9 @@ import {
 	type ToolExecutionUpdateEvent,
 	type ToolInfo,
 	type TreePreparation,
+	TURN_PREFLIGHT_CANCELLATION_ENTRY_TYPE,
 	type TurnEndEvent,
+	type TurnPreflightCancellationEntryData,
 	type TurnStartEvent,
 	wrapRegisteredTools,
 } from "./extensions/index.ts";
@@ -1085,6 +1088,65 @@ export class AgentSession {
 		}
 	}
 
+	private async _applyAgentStartPreflight(
+		messages: AgentMessage[],
+		triggerMessage: Extract<AgentMessage, { role: "user" | "custom" }>,
+		prompt: string,
+		images: ImageContent[] | undefined,
+	): Promise<AgentTurnResult> {
+		const result = await this._extensionRunner.emitBeforeAgentStart(
+			prompt,
+			images,
+			this._baseSystemPrompt,
+			this._baseSystemPromptOptions,
+			triggerMessage,
+		);
+		if (result?.cancellation) {
+			this.agent.state.messages.push(triggerMessage);
+			const triggerMessageEntryId =
+				triggerMessage.role === "custom"
+					? this.sessionManager.appendCustomMessageEntry(
+							triggerMessage.customType,
+							triggerMessage.content,
+							triggerMessage.display,
+							triggerMessage.details,
+						)
+					: this.sessionManager.appendMessage(triggerMessage);
+			this._emit({ type: "message_start", message: triggerMessage });
+			this._emit({ type: "message_end", message: triggerMessage });
+			const cancellationEntry: TurnPreflightCancellationEntryData = {
+				source: result.cancellation.source,
+				cancelReason: result.cancellation.cancelReason,
+				triggerMessageEntryId,
+			};
+			this.sessionManager.appendCustomEntry(TURN_PREFLIGHT_CANCELLATION_ENTRY_TYPE, cancellationEntry);
+			return { cancelled: true, cancelReason: result.cancellation.cancelReason };
+		}
+
+		if (result?.messages) {
+			for (const msg of result.messages) {
+				messages.push({
+					role: "custom",
+					customType: msg.customType,
+					// Untyped extensions can pass null/missing content; normalize at ingestion.
+					content: msg.content ?? [],
+					display: msg.display,
+					details: msg.details,
+					timestamp: Date.now(),
+				});
+			}
+		}
+
+		if (result?.systemPrompt !== undefined) {
+			this._systemPromptOverride = result.systemPrompt;
+			this.agent.state.systemPrompt = result.systemPrompt;
+		} else {
+			this._systemPromptOverride = undefined;
+			this.agent.state.systemPrompt = this._baseSystemPrompt;
+		}
+		return { cancelled: false };
+	}
+
 	private async _handlePostAgentRun(): Promise<boolean> {
 		const msg = this._lastAssistantMessage;
 		this._lastAssistantMessage = undefined;
@@ -1228,48 +1290,27 @@ export class AgentSession {
 			if (currentImages) {
 				userContent.push(...currentImages);
 			}
-			messages.push({
-				role: "user",
+			const userMessage = {
+				role: "user" as const,
 				content: userContent,
 				timestamp: Date.now(),
-			});
+			};
+			messages.push(userMessage);
 
 			// Inject any pending "nextTurn" messages as context alongside the user message
 			for (const msg of this._pendingNextTurnMessages) {
 				messages.push(msg);
 			}
-			this._pendingNextTurnMessages = [];
 
-			// Emit before_agent_start extension event
-			const result = await this._extensionRunner.emitBeforeAgentStart(
-				expandedText,
-				currentImages,
-				this._baseSystemPrompt,
-				this._baseSystemPromptOptions,
-			);
-			// Add all custom messages from extensions
-			if (result?.messages) {
-				for (const msg of result.messages) {
-					messages.push({
-						role: "custom",
-						customType: msg.customType,
-						// Untyped extensions can pass null/missing content; normalize at ingestion.
-						content: msg.content ?? [],
-						display: msg.display,
-						details: msg.details,
-						timestamp: Date.now(),
-					});
-				}
+			const turnPreflight = await this._applyAgentStartPreflight(messages, userMessage, expandedText, currentImages);
+			if (turnPreflight.cancelled) {
+				// Keep next-turn messages queued because this turn never started. Cancellation is
+				// handled successfully so RPC callers still receive an acknowledgement.
+				messages = undefined;
+				preflightResult?.(true);
+				return;
 			}
-			// Apply extension-modified system prompt, or reset to base
-			if (result?.systemPrompt !== undefined) {
-				this._systemPromptOverride = result.systemPrompt;
-				this.agent.state.systemPrompt = result.systemPrompt;
-			} else {
-				// Ensure we're using the base prompt (in case previous turn had modifications)
-				this._systemPromptOverride = undefined;
-				this.agent.state.systemPrompt = this._baseSystemPrompt;
-			}
+			this._pendingNextTurnMessages = [];
 		} catch (error) {
 			preflightResult?.(false);
 			throw error;
@@ -1438,17 +1479,21 @@ export class AgentSession {
 	 *
 	 * Handles three cases:
 	 * - Streaming: queues message, processed when loop pulls from queue
-	 * - Not streaming + triggerTurn: appends to state/session, starts new turn
+	 * - Not streaming + triggerTurn: runs preflight, then starts a new turn unless cancelled
 	 * - Not streaming + no trigger: appends to state/session, no turn
 	 *
+	 * A cancelled preflight persists the delivered custom message and a linked cancellation entry,
+	 * but does not start an agent turn.
+	 *
 	 * @param message Custom message with customType, content, display, details
-	 * @param options.triggerTurn If true and not streaming, triggers a new LLM turn
+	 * @param options.triggerTurn If true and not streaming, triggers a cancellable new LLM turn
 	 * @param options.deliverAs Delivery mode: "steer", "followUp", or "nextTurn"
+	 * @returns Whether the requested turn was cancelled during preflight
 	 */
 	async sendCustomMessage<T = unknown>(
 		message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
 		options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" },
-	): Promise<void> {
+	): Promise<AgentTurnResult> {
 		const appMessage = {
 			role: "custom" as const,
 			customType: message.customType,
@@ -1467,7 +1512,21 @@ export class AgentSession {
 				this.agent.steer(appMessage);
 			}
 		} else if (options?.triggerTurn) {
-			await this._runAgentPrompt(appMessage);
+			const images =
+				typeof appMessage.content === "string"
+					? undefined
+					: appMessage.content.filter((part): part is ImageContent => part.type === "image");
+			const messages: AgentMessage[] = [appMessage];
+			const turnPreflight = await this._applyAgentStartPreflight(
+				messages,
+				appMessage,
+				contentText(appMessage.content),
+				images && images.length > 0 ? images : undefined,
+			);
+			if (turnPreflight.cancelled) {
+				return turnPreflight;
+			}
+			await this._runAgentPrompt(messages);
 		} else {
 			this.agent.state.messages.push(appMessage);
 			this.sessionManager.appendCustomMessageEntry(
@@ -1479,6 +1538,7 @@ export class AgentSession {
 			this._emit({ type: "message_start", message: appMessage });
 			this._emit({ type: "message_end", message: appMessage });
 		}
+		return { cancelled: false };
 	}
 
 	/**

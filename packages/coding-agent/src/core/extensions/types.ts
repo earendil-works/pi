@@ -299,6 +299,28 @@ export interface CompactOptions {
 	onError?: (error: Error) => void;
 }
 
+/** Capabilities advertised by the active extension runtime. */
+export interface ExtensionCapabilities {
+	/** Cancellable before_agent_start preflight with native trigger provenance and durable cancellation records. */
+	readonly turnPreflight: true;
+}
+
+/** Outcome of an extension-triggered agent turn. */
+export type AgentTurnResult = { cancelled: false } | { cancelled: true; cancelReason: string };
+
+/** Stable custom-entry type used for durable turn-preflight cancellation records. */
+export const TURN_PREFLIGHT_CANCELLATION_ENTRY_TYPE = "turn-preflight-cancellation";
+
+/** Provenance recorded when before_agent_start cancels a delivered trigger message. */
+export interface TurnPreflightCancellationEntryData {
+	/** Extension that cancelled the turn. */
+	source: SourceInfo;
+	/** Human-readable reason supplied by the extension, or Pi's normalized default. */
+	cancelReason: string;
+	/** Session entry id of the native user/custom message that triggered preflight. */
+	triggerMessageEntryId: string;
+}
+
 /**
  * Context passed to extension event handlers.
  */
@@ -395,7 +417,7 @@ export interface ReplacedSessionContext extends ExtensionCommandContext {
 	sendMessage<T = unknown>(
 		message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
 		options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" },
-	): Promise<void>;
+	): Promise<AgentTurnResult>;
 
 	sendUserMessage(
 		content: string | (TextContent | ImageContent)[],
@@ -711,12 +733,14 @@ export interface AfterProviderResponseEvent {
 	headers: Record<string, string>;
 }
 
-/** Fired after user submits prompt but before agent loop. */
+/** Fired before an agent loop triggered by a user or custom message. */
 export interface BeforeAgentStartEvent {
 	type: "before_agent_start";
-	/** The raw user prompt text (after expansion). */
+	/** The user or custom message that triggered this agent turn. */
+	triggerMessage: AgentMessage;
+	/** Text extracted from the trigger. User prompts are supplied after prompt expansion. */
 	prompt: string;
-	/** Images attached to the user prompt, if any. */
+	/** Images attached to the triggering message, if any. */
 	images?: ImageContent[];
 	/** The fully assembled system prompt string. */
 	systemPrompt: string;
@@ -1116,6 +1140,10 @@ export interface MessageEndEventResult {
 }
 
 export interface BeforeAgentStartEventResult {
+	/** Cancel the agent turn before any provider request. Later handlers are not invoked. */
+	cancel?: boolean;
+	/** Human-readable cancellation reason recorded durably and returned to async callers. */
+	cancelReason?: string;
 	message?: Pick<CustomMessage, "customType" | "content" | "display" | "details">;
 	/** Replace the system prompt for this turn. If multiple extensions return this, they are chained. */
 	systemPrompt?: string;
@@ -1212,6 +1240,9 @@ export type ExtensionHandler<E, R = undefined> = (event: E, ctx: ExtensionContex
  * ExtensionAPI passed to extension factory functions.
  */
 export interface ExtensionAPI {
+	/** Runtime features. Use capability detection instead of version checks. */
+	readonly capabilities: Readonly<ExtensionCapabilities>;
+
 	// =========================================================================
 	// Event Subscription
 	// =========================================================================
