@@ -1,5 +1,8 @@
+import type { ImageContent } from "@earendil-works/pi-ai";
 import { describe, expect, it, vi } from "vitest";
 import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
+
+type UserInput = { text: string; images: ImageContent[] };
 
 type SubmitContext = {
 	defaultEditor: { onSubmit?: (text: string) => void };
@@ -7,20 +10,23 @@ type SubmitContext = {
 		addToHistory?: (text: string) => void;
 		setText: (text: string) => void;
 	};
-	session: {
-		isCompacting: boolean;
-		isStreaming: boolean;
-		isBashRunning: boolean;
-		prompt: (text: string, options?: unknown) => Promise<void>;
+	runtimeHost: {
+		session: {
+			isCompacting: boolean;
+			isStreaming: boolean;
+			isBashRunning: boolean;
+			prompt: (text: string, options?: unknown) => Promise<void>;
+		};
 	};
 	flushPendingBashComponents: () => void;
-	onInputCallback?: (text: string) => void;
-	pendingUserInputs: string[];
+	onInputCallback?: (input: UserInput) => void;
+	pendingImageAttachments: Map<number, { path: string; hash: string }>;
+	pendingUserInputs: UserInput[];
 };
 
 type InputContext = {
-	onInputCallback?: (text: string) => void;
-	pendingUserInputs: string[];
+	onInputCallback?: (input: UserInput) => void;
+	pendingUserInputs: UserInput[];
 };
 
 type StartupSubmitContext = {
@@ -31,27 +37,30 @@ type StartupSubmitContext = {
 type InteractiveModePrivate = {
 	handleStartupSubmit(this: StartupSubmitContext, text: string): void;
 	setupEditorSubmitHandler(this: SubmitContext): void;
-	getUserInput(this: InputContext): Promise<string>;
+	getUserInput(this: InputContext): Promise<UserInput>;
 };
 
 const interactiveModePrototype = InteractiveMode.prototype as unknown as InteractiveModePrivate;
 
 function createSubmitContext(): SubmitContext {
-	return {
+	return Object.assign(Object.create(InteractiveMode.prototype), {
 		defaultEditor: {},
 		editor: {
 			addToHistory: vi.fn(),
 			setText: vi.fn(),
 		},
-		session: {
-			isCompacting: false,
-			isStreaming: false,
-			isBashRunning: false,
-			prompt: vi.fn(async () => {}),
+		runtimeHost: {
+			session: {
+				isCompacting: false,
+				isStreaming: false,
+				isBashRunning: false,
+				prompt: vi.fn(async () => {}),
+			},
 		},
 		flushPendingBashComponents: vi.fn(),
+		pendingImageAttachments: new Map(),
 		pendingUserInputs: [],
-	};
+	}) as SubmitContext;
 }
 
 describe("InteractiveMode startup input", () => {
@@ -73,17 +82,18 @@ describe("InteractiveMode startup input", () => {
 
 		await context.defaultEditor.onSubmit?.(" early prompt ");
 
-		expect(context.pendingUserInputs).toEqual(["early prompt"]);
+		expect(context.pendingUserInputs).toEqual([{ text: "early prompt", images: [] }]);
 		expect(context.flushPendingBashComponents).toHaveBeenCalledTimes(1);
 		expect(context.editor.addToHistory).toHaveBeenCalledWith("early prompt");
 	});
 
 	it("returns queued startup input before installing a new input callback", async () => {
+		const input = { text: "queued prompt", images: [] };
 		const context: InputContext = {
-			pendingUserInputs: ["queued prompt"],
+			pendingUserInputs: [input],
 		};
 
-		await expect(interactiveModePrototype.getUserInput.call(context)).resolves.toBe("queued prompt");
+		await expect(interactiveModePrototype.getUserInput.call(context)).resolves.toBe(input);
 		expect(context.onInputCallback).toBeUndefined();
 		expect(context.pendingUserInputs).toEqual([]);
 	});
