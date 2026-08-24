@@ -272,13 +272,24 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 				body = nextBody as RequestBody;
 			}
 			const websocketRequestId = codexSessionId || uuidv7();
-			const sseHeaders = buildSSEHeaders(model.headers, options?.headers, accountId, apiKey, codexSessionId);
+			// Pi has one stable session identity for both the cache session and the
+			// provider conversation thread. Send it through every Codex affinity field.
+			const codexThreadId = codexSessionId;
+			const sseHeaders = buildSSEHeaders(
+				model.headers,
+				options?.headers,
+				accountId,
+				apiKey,
+				codexSessionId,
+				codexThreadId,
+			);
 			const websocketHeaders = buildWebSocketHeaders(
 				model.headers,
 				options?.headers,
 				accountId,
 				apiKey,
 				websocketRequestId,
+				codexThreadId,
 			);
 			const bodyJson = JSON.stringify(body);
 			const httpTimeoutMs = normalizeTimeoutMs(options?.timeoutMs);
@@ -1617,6 +1628,7 @@ function buildSSEHeaders(
 	accountId: string,
 	token: string,
 	sessionId?: string,
+	threadId?: string,
 ): Headers {
 	const headers = buildBaseCodexHeaders(initHeaders, additionalHeaders, accountId, token);
 	headers.set("OpenAI-Beta", "responses=experimental");
@@ -1625,6 +1637,11 @@ function buildSSEHeaders(
 
 	if (sessionId) {
 		headers.set("session-id", sessionId);
+	}
+	if (threadId) {
+		headers.set("thread-id", threadId);
+		headers.set("x-client-request-id", threadId);
+	} else if (sessionId) {
 		headers.set("x-client-request-id", sessionId);
 	}
 
@@ -1637,6 +1654,7 @@ function buildWebSocketHeaders(
 	accountId: string,
 	token: string,
 	requestId: string,
+	threadId?: string,
 ): Headers {
 	const headers = buildBaseCodexHeaders(initHeaders, additionalHeaders, accountId, token);
 	headers.delete("accept");
@@ -1644,7 +1662,10 @@ function buildWebSocketHeaders(
 	headers.delete("OpenAI-Beta");
 	headers.delete("openai-beta");
 	headers.set("OpenAI-Beta", OPENAI_BETA_RESPONSES_WEBSOCKETS);
-	headers.set("x-client-request-id", requestId);
+	headers.set("x-client-request-id", threadId ?? requestId);
 	headers.set("session-id", requestId);
+	if (threadId) {
+		headers.set("thread-id", threadId);
+	}
 	return headers;
 }

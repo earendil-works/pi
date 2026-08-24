@@ -11,7 +11,7 @@ import {
 	stream as streamOpenAICodexResponses,
 	streamSimple as streamSimpleOpenAICodexResponses,
 } from "../src/api/openai-codex-responses.ts";
-import type { Context, Model } from "../src/types.ts";
+import type { AssistantMessage, Context, Model } from "../src/types.ts";
 
 const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
 
@@ -554,8 +554,9 @@ describe("openai-codex streaming", () => {
 			}
 			if (url === "https://chatgpt.com/backend-api/codex/responses") {
 				const headers = init?.headers instanceof Headers ? init.headers : undefined;
-				// Verify sessionId is set in headers
+				// Verify all Codex affinity headers use the stable Pi session identity.
 				expect(headers?.get("session-id")).toBe(sessionId);
+				expect(headers?.get("thread-id")).toBe(sessionId);
 				expect(headers?.has("session_id")).toBe(false);
 				expect(headers?.get("x-client-request-id")).toBe(sessionId);
 
@@ -593,6 +594,145 @@ describe("openai-codex streaming", () => {
 
 		const streamResult = streamOpenAICodexResponses(model, context, { apiKey: token, sessionId, transport: "sse" });
 		await streamResult.result();
+	});
+
+	it("preserves Codex cache affinity across retries and tool-result continuations", async () => {
+		const token = mockToken();
+		const sessionId = "stable-cache-session";
+		const requestSnapshots: Array<{
+			affinity: {
+				promptCacheKey: unknown;
+				sessionId: string | null;
+				threadId: string | null;
+				clientRequestId: string | null;
+			};
+			shape: Record<string, unknown>;
+			input: unknown[];
+		}> = [];
+		let fetchCount = 0;
+
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async (_input: string | URL, init?: RequestInit) => {
+				fetchCount++;
+				const headers = init?.headers instanceof Headers ? init.headers : new Headers(init?.headers);
+				const body = decodeCodexRequestBody(init?.body);
+				if (!body) throw new Error("Expected a Codex request body");
+				const { input, ...shape } = body;
+				requestSnapshots.push({
+					affinity: {
+						promptCacheKey: body.prompt_cache_key,
+						sessionId: headers.get("session-id"),
+						threadId: headers.get("thread-id"),
+						clientRequestId: headers.get("x-client-request-id"),
+					},
+					shape,
+					input: Array.isArray(input) ? input : [],
+				});
+
+				if (fetchCount === 1) return new Response("retry", { status: 503 });
+				const encoder = new TextEncoder();
+				return new Response(
+					new ReadableStream<Uint8Array>({
+						start(controller) {
+							controller.enqueue(encoder.encode(buildSSEPayload({ status: "completed" })));
+							controller.close();
+						},
+					}),
+					{ status: 200, headers: { "content-type": "text/event-stream" } },
+				);
+			}),
+		);
+
+		const model: Model<"openai-codex-responses"> = {
+			id: "gpt-5.6-luna",
+			name: "GPT-5.6 Luna",
+			api: "openai-codex-responses",
+			provider: "clawrouter",
+			baseUrl: "http://gateway.invalid/v1",
+			reasoning: true,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 400000,
+			maxTokens: 128000,
+		};
+		const tool = {
+			name: "sample_tool",
+			description: "Sample tool",
+			parameters: Type.Object({ payload: Type.String() }),
+		};
+		const firstContext: Context = {
+			systemPrompt: "Stable system prompt",
+			messages: [{ role: "user", content: "Use the tool", timestamp: 1 }],
+			tools: [tool],
+		};
+		const toolCall: AssistantMessage = {
+			role: "assistant",
+			content: [{ type: "toolCall", id: "call_1", name: "sample_tool", arguments: { payload: "x" } }],
+			api: "openai-codex-responses",
+			provider: "clawrouter",
+			model: "gpt-5.6-luna",
+			usage: {
+				input: 10,
+				output: 3,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 13,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			stopReason: "toolUse",
+			timestamp: 2,
+		};
+		const secondContext: Context = {
+			...firstContext,
+			messages: [
+				...firstContext.messages,
+				toolCall,
+				{
+					role: "toolResult",
+					toolCallId: "call_1",
+					toolName: "sample_tool",
+					content: [{ type: "text", text: "result" }],
+					isError: false,
+					timestamp: 3,
+				},
+				{ role: "user", content: "Continue", timestamp: 4 },
+			],
+		};
+		const finalAssistant: AssistantMessage = {
+			...toolCall,
+			content: [{ type: "text", text: "Finished" }],
+			stopReason: "stop",
+			timestamp: 5,
+		};
+		const thirdContext: Context = {
+			...secondContext,
+			messages: [...secondContext.messages, finalAssistant, { role: "user", content: "Next", timestamp: 6 }],
+		};
+		const options = { apiKey: token, sessionId, transport: "sse" as const, maxRetries: 1 };
+
+		await streamOpenAICodexResponses(model, firstContext, options).result();
+		await streamOpenAICodexResponses(model, secondContext, options).result();
+		await streamOpenAICodexResponses(model, thirdContext, options).result();
+
+		expect(fetchCount).toBe(4);
+		expect(requestSnapshots).toHaveLength(4);
+		const [retry, first, continuation, subsequent] = requestSnapshots;
+		expect(retry).toEqual(first);
+		expect(first.affinity).toEqual({
+			promptCacheKey: sessionId,
+			sessionId,
+			threadId: sessionId,
+			clientRequestId: sessionId,
+		});
+		expect(continuation.affinity).toEqual(first.affinity);
+		expect(subsequent.affinity).toEqual(first.affinity);
+		expect(continuation.shape).toEqual(first.shape);
+		expect(subsequent.shape).toEqual(first.shape);
+		expect(continuation.input.slice(0, first.input.length)).toEqual(first.input);
+		expect(subsequent.input.slice(0, continuation.input.length)).toEqual(continuation.input);
+		expect(continuation.input.length).toBeGreaterThan(first.input.length);
+		expect(subsequent.input.length).toBeGreaterThan(continuation.input.length);
 	});
 
 	it("omits SSE cache affinity when cacheRetention is none", async () => {
@@ -1332,6 +1472,7 @@ describe("openai-codex streaming", () => {
 		expect(result.endTurn).toBe(false);
 		expect(sentBodies).toHaveLength(1);
 		expect(capturedWebSocketHeaders?.["session-id"]).toBe("session-auto");
+		expect(capturedWebSocketHeaders?.["thread-id"]).toBe("session-auto");
 		expect(capturedWebSocketHeaders?.session_id).toBeUndefined();
 		expect(capturedWebSocketHeaders?.["x-client-request-id"]).toBe("session-auto");
 		expect(global.fetch).not.toHaveBeenCalled();
