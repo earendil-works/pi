@@ -1,11 +1,13 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { type ImageContent, type Message, type TextContent, type Usage, uuidv7 } from "@earendil-works/pi-ai";
+import chalk from "chalk";
 import { randomUUID } from "crypto";
 import {
 	appendFileSync,
 	closeSync,
 	createReadStream,
 	existsSync,
+	fstatSync,
 	mkdirSync,
 	openSync,
 	readdirSync,
@@ -500,6 +502,33 @@ class SessionHeaderScanLimitError extends Error {
 	}
 }
 
+/**
+ * Best-effort line-boundary repair after a failed session-file write.
+ *
+ * A failed append (e.g. ENOSPC mid-write) can leave a partial entry at the
+ * file tail with no trailing newline. If the next successful append is then
+ * written at EOF, it lands on the SAME physical line — and the loader skips
+ * that whole line, silently costing TWO entries (the torn remainder plus the
+ * complete entry concatenated after it). Re-establishing the newline boundary
+ * keeps the damage to the one entry that was already lost.
+ */
+function repairTornTail(file: string): void {
+	try {
+		const fd = openSync(file, "r");
+		try {
+			const { size } = fstatSync(fd);
+			if (size === 0) return;
+			const last = Buffer.alloc(1);
+			readSync(fd, last, 0, 1, size - 1);
+			if (last[0] !== 0x0a) appendFileSync(file, "\n");
+		} finally {
+			closeSync(fd);
+		}
+	} catch {
+		// Best-effort: the original write error is what must propagate.
+	}
+}
+
 function parseSessionEntryLine(line: string): FileEntry | null {
 	if (!line.trim()) return null;
 	try {
@@ -516,6 +545,7 @@ export function loadEntriesFromFile(filePath: string): FileEntry[] {
 	if (!existsSync(resolvedFilePath)) return [];
 
 	const entries: FileEntry[] = [];
+	let skippedMalformedLines = 0;
 	const fd = openSync(resolvedFilePath, "r");
 	try {
 		const decoder = new StringDecoder("utf8");
@@ -530,8 +560,10 @@ export function loadEntriesFromFile(filePath: string): FileEntry[] {
 			let lineStart = 0;
 			let newlineIndex = pending.indexOf("\n", lineStart);
 			while (newlineIndex !== -1) {
-				const entry = parseSessionEntryLine(pending.slice(lineStart, newlineIndex));
+				const line = pending.slice(lineStart, newlineIndex);
+				const entry = parseSessionEntryLine(line);
 				if (entry) entries.push(entry);
+				else if (line.trim()) skippedMalformedLines++;
 				lineStart = newlineIndex + 1;
 				newlineIndex = pending.indexOf("\n", lineStart);
 			}
@@ -539,10 +571,23 @@ export function loadEntriesFromFile(filePath: string): FileEntry[] {
 		}
 
 		pending += decoder.end();
-		const finalEntry = parseSessionEntryLine(pending);
-		if (finalEntry) entries.push(finalEntry);
+		if (pending.trim()) {
+			const finalEntry = parseSessionEntryLine(pending);
+			if (finalEntry) entries.push(finalEntry);
+			else skippedMalformedLines++;
+		}
 	} finally {
 		closeSync(fd);
+	}
+	if (skippedMalformedLines > 0) {
+		// Never silent: a skipped line is missing from replay, and a torn-append
+		// artifact (a partial write followed by a later append on the same line)
+		// costs TWO entries — the loader drops both with the malformed line.
+		console.error(
+			chalk.yellow(
+				`Warning: ${resolvedFilePath}: skipped ${skippedMalformedLines} malformed session line(s); those entries are missing from this session's replay.`,
+			),
+		);
 	}
 
 	// Validate session header
@@ -983,6 +1028,9 @@ export class SessionManager {
 			for (const entry of this.fileEntries) {
 				writeFileSync(fd, `${JSON.stringify(entry)}\n`);
 			}
+		} catch (error) {
+			repairTornTail(this.sessionFile);
+			throw error;
 		} finally {
 			closeSync(fd);
 		}
@@ -1018,7 +1066,12 @@ export class SessionManager {
 		const hasAssistant = this.fileEntries.some((e) => e.type === "message" && e.message.role === "assistant");
 		if (!hasAssistant) {
 			if (this.flushed) {
-				appendFileSync(this.sessionFile, `${JSON.stringify(entry)}\n`);
+				try {
+					appendFileSync(this.sessionFile, `${JSON.stringify(entry)}\n`);
+				} catch (error) {
+					repairTornTail(this.sessionFile);
+					throw error;
+				}
 			} else {
 				// Mark as not flushed so when assistant arrives, all entries get written
 				this.flushed = false;
@@ -1032,12 +1085,20 @@ export class SessionManager {
 				for (const e of this.fileEntries) {
 					writeFileSync(fd, `${JSON.stringify(e)}\n`);
 				}
+			} catch (error) {
+				repairTornTail(this.sessionFile);
+				throw error;
 			} finally {
 				closeSync(fd);
 			}
 			this.flushed = true;
 		} else {
-			appendFileSync(this.sessionFile, `${JSON.stringify(entry)}\n`);
+			try {
+				appendFileSync(this.sessionFile, `${JSON.stringify(entry)}\n`);
+			} catch (error) {
+				repairTornTail(this.sessionFile);
+				throw error;
+			}
 		}
 	}
 
@@ -1621,10 +1682,15 @@ export class SessionManager {
 		writeFileSync(newSessionFile, `${JSON.stringify(newHeader)}\n`, { flag: "wx" });
 
 		// Copy all non-header entries from source
-		for (const entry of sourceEntries) {
-			if (entry.type !== "session") {
-				appendFileSync(newSessionFile, `${JSON.stringify(entry)}\n`);
+		try {
+			for (const entry of sourceEntries) {
+				if (entry.type !== "session") {
+					appendFileSync(newSessionFile, `${JSON.stringify(entry)}\n`);
+				}
 			}
+		} catch (error) {
+			repairTornTail(newSessionFile);
+			throw error;
 		}
 
 		return new SessionManager(resolvedTargetCwd, dir, newSessionFile, true);
