@@ -104,6 +104,7 @@ function convertToolResultOutput<TApi extends Api>(
 }
 
 export interface OpenAIResponsesStreamOptions {
+	signal?: AbortSignal;
 	serviceTier?: ResponseCreateParamsStreaming["service_tier"];
 	grammarToolInputProperties?: ReadonlyMap<string, string>;
 	resolveServiceTier?: (
@@ -595,6 +596,7 @@ export async function processResponsesStream<TApi extends Api>(
 	};
 
 	for await (const event of openaiStream) {
+		if (options?.signal?.aborted) break;
 		if (event.type === "response.created") {
 			output.responseId = event.response.id;
 		} else if (event.type === "response.output_item.added") {
@@ -754,7 +756,7 @@ export async function processResponsesStream<TApi extends Api>(
 			throw new Error(msg);
 		}
 	}
-	if (!sawTerminalResponseEvent) {
+	if (!sawTerminalResponseEvent && !options?.signal?.aborted) {
 		throw new Error("OpenAI Responses stream ended before a terminal response event");
 	}
 }
