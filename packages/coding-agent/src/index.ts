@@ -396,8 +396,13 @@ export {
 	getSettingsListTheme,
 	highlightCode,
 	initTheme,
+	style,
 	Theme,
+	type ThemeBg,
 	type ThemeColor,
+	type ThemeColorValue,
+	type ThemeStyle,
+	type ThemeToken,
 } from "./modes/interactive/theme/theme.ts";
 // Clipboard utilities
 export { copyToClipboard } from "./utils/clipboard.ts";

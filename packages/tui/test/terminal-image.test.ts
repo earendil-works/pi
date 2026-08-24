@@ -370,8 +370,21 @@ describe("detectCapabilities", () => {
 		withEnv({ COLORTERM: "truecolor", TMUX: "/tmp/tmux-1000/default,1234,0", TERM: "tmux-256color" }, () => {
 			const caps = detectCapabilities(() => false);
 			assert.strictEqual(caps.trueColor, true);
+			assert.strictEqual(caps.colorMode, "truecolor");
 			assert.strictEqual(caps.hyperlinks, false);
 			assert.strictEqual(caps.images, null);
+		});
+	});
+
+	it("detects 256-color, basic-color, and colorless terminals", () => {
+		withEnv({ TERM: "xterm-256color" }, () => {
+			assert.strictEqual(detectCapabilities().colorMode, "256color");
+		});
+		withEnv({ TERM: "linux" }, () => {
+			assert.strictEqual(detectCapabilities().colorMode, "16color");
+		});
+		withEnv({ TERM: "dumb" }, () => {
+			assert.strictEqual(detectCapabilities().colorMode, "none");
 		});
 	});
 });

@@ -4,6 +4,7 @@
 
 ### Added
 
+- Added theme color values, OKLCH theme definitions, and concise `style()` rendering with direct theme token support and terminal color fallback.
 - Added transcript usage notices for compaction and branch summaries when cache miss notices are enabled.
 
 ### Changed

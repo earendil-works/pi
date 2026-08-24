@@ -276,11 +276,12 @@ The `export` section controls colors for `/export` HTML output. If omitted, colo
 
 ## Color Values
 
-Four formats are supported:
+Five formats are supported:
 
 | Format | Example | Description |
 |--------|---------|-------------|
-| Hex | `"#ff0000"` | 6-digit hex RGB |
+| Hex | `"#ff0000"` | 3- or 6-digit sRGB hex |
+| OKLCH | `"oklch(62% 0.1 200)"` | Perceptual lightness, chroma, and hue |
 | 256-color | `39` | xterm 256-color palette index (0-255) |
 | Variable | `"primary"` | Reference to a `vars` entry |
 | Default | `""` | Terminal's default color |
@@ -293,7 +294,7 @@ Four formats are supported:
 
 ### Terminal Compatibility
 
-Pi uses 24-bit RGB colors. Most modern terminals support this (iTerm2, Kitty, WezTerm, Windows Terminal, VS Code). For older terminals with only 256-color support, pi falls back to the nearest approximation.
+Pi uses 24-bit RGB colors when available. It gamut-maps OKLCH to sRGB and falls back to the nearest 256-color or basic ANSI color for less capable terminals.
 
 Check truecolor support:
 

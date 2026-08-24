@@ -21,7 +21,7 @@
 				"oneOf": [
 					{
 						"type": "string",
-						"description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+						"description": "Hex color (#RGB or #RRGGBB), OKLCH color, variable reference, or empty string for terminal default"
 					},
 					{
 						"type": "integer",
@@ -338,7 +338,7 @@
 			"oneOf": [
 				{
 					"type": "string",
-					"description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+					"description": "Hex color (#RGB or #RRGGBB), OKLCH color, variable reference, or empty string for terminal default"
 				},
 				{
 					"type": "integer",

@@ -413,17 +413,43 @@ pi.registerCommand("pick", {
 
 ## Theming
 
-Components accept theme objects for styling.
+Components accept theme objects for styling. Use `style()` to apply foreground and background colors, text attributes, and terminal fallbacks in one call:
 
-**In `renderCall`/`renderResult`**, use the `theme` parameter:
+```typescript
+import { style } from "@earendil-works/pi-coding-agent";
+
+renderResult(result, options, theme, context) {
+  return new Text(style("Done!", {
+    fg: "success",
+    bg: "toolSuccessBg",
+    bold: true,
+  }), 0, 0);
+}
+```
+
+A style color can be either a token or a concrete color. These are equivalent:
+
+```typescript
+style("Done!", { fg: "toolSuccessBg" });
+style("Done!", { fg: theme.colors.toolSuccessBg });
+```
+
+Use concrete colors for color math:
+
+```typescript
+import { mixColors } from "@earendil-works/pi-tui";
+
+const softer = mixColors(theme.colors.success, theme.colors.toolSuccessBg, 0.2);
+style("Done!", { fg: softer, bg: "toolSuccessBg" });
+```
+
+Any color token can be used as either `fg` or `bg`. The token's name describes its intended role but does not restrict its use. Pi converts concrete colors to truecolor, 256-color, or basic ANSI output based on terminal capabilities.
+
+The existing `theme.fg()` and `theme.bg()` methods remain available for compatibility:
 
 ```typescript
 renderResult(result, options, theme, context) {
-  // Use theme.fg() for foreground colors
   return new Text(theme.fg("success", "Done!"), 0, 0);
-  
-  // Use theme.bg() for background colors
-  const styled = theme.bg("toolPendingBg", theme.fg("accent", "text"));
 }
 ```
 

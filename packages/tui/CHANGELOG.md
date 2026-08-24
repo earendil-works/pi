@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added terminal-independent sRGB, OKLCH, and indexed color values with color mixing and truecolor, 256-color, basic ANSI, and colorless style serialization.
+
 ### Fixed
 
 - Fixed duplicate fullscreen right-click paste in VS Code-based terminals on Windows ([#8186](https://github.com/earendil-works/pi/issues/8186)).

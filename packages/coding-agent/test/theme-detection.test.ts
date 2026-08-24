@@ -153,6 +153,18 @@ describe("theme color mode", () => {
 		if (!truecolorTheme) throw new Error("dark theme not found");
 		expect(truecolorTheme.getColorMode()).toBe("truecolor");
 		expect(truecolorTheme.getFgAnsi("accent")).toMatch(/^\x1b\[38;2;\d+;\d+;\d+m$/);
+
+		setCapabilities({ images: null, trueColor: false, hyperlinks: false, colorMode: "16color" });
+		const basicColorTheme = getThemeByName("dark");
+		if (!basicColorTheme) throw new Error("dark theme not found");
+		expect(basicColorTheme.getColorMode()).toBe("16color");
+		expect(basicColorTheme.getFgAnsi("accent")).toMatch(/^\x1b\[(?:3\d|9\d)m$/);
+
+		setCapabilities({ images: null, trueColor: false, hyperlinks: false, colorMode: "none" });
+		const colorlessTheme = getThemeByName("dark");
+		if (!colorlessTheme) throw new Error("dark theme not found");
+		expect(colorlessTheme.getColorMode()).toBe("none");
+		expect(colorlessTheme.fg("accent", "text")).toBe("text");
 	});
 });
 

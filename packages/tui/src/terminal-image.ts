@@ -2,6 +2,7 @@ import { execSync } from "node:child_process";
 import { homedir } from "node:os";
 import { isAbsolute } from "node:path";
 import { pathToFileURL } from "node:url";
+import type { TerminalColorMode } from "./colors.ts";
 
 export type ImageProtocol = "kitty" | "iterm2" | null;
 
@@ -9,6 +10,8 @@ export interface TerminalCapabilities {
 	images: ImageProtocol;
 	trueColor: boolean;
 	hyperlinks: boolean;
+	/** Detailed color support. Omitted capability objects retain the legacy truecolor/256-color behavior. */
+	colorMode?: TerminalColorMode;
 }
 
 export interface CellDimensions {
@@ -72,67 +75,79 @@ export function detectCapabilities(tmuxForwardsHyperlink: () => boolean = probeT
 	const colorTerm = process.env.COLORTERM?.toLowerCase() || "";
 	const hasTrueColorHint = colorTerm === "truecolor" || colorTerm === "24bit";
 	const isWindowsConsole = process.platform === "win32";
+	const capabilities = (images: ImageProtocol, trueColor: boolean, hyperlinks: boolean): TerminalCapabilities => ({
+		images,
+		trueColor,
+		hyperlinks,
+		colorMode: trueColor
+			? "truecolor"
+			: term === "" || term === "dumb"
+				? "none"
+				: term.includes("256color")
+					? "256color"
+					: "16color",
+	});
 
 	// Emit OSC 8 hyperlinks only when tmux confirms it forwards.
 	// Image protocols are unreliable under tmux, so leave `images: null`.
 	if (process.env.TMUX || term.startsWith("tmux")) {
-		return { images: null, trueColor: hasTrueColorHint, hyperlinks: tmuxForwardsHyperlink() };
+		return capabilities(null, hasTrueColorHint, tmuxForwardsHyperlink());
 	}
 
 	// screen does not forward OSC 8 hyperlinks, so keep them off there.
 	if (term.startsWith("screen")) {
-		return { images: null, trueColor: hasTrueColorHint, hyperlinks: false };
+		return capabilities(null, hasTrueColorHint, false);
 	}
 
 	if (process.env.KITTY_WINDOW_ID || termProgram === "kitty") {
-		return { images: "kitty", trueColor: true, hyperlinks: true };
+		return capabilities("kitty", true, true);
 	}
 
 	if (termProgram === "ghostty" || term.includes("ghostty") || process.env.GHOSTTY_RESOURCES_DIR) {
-		return { images: "kitty", trueColor: true, hyperlinks: true };
+		return capabilities("kitty", true, true);
 	}
 
 	if (process.env.WEZTERM_PANE || termProgram === "wezterm") {
-		return { images: "kitty", trueColor: true, hyperlinks: true };
+		return capabilities("kitty", true, true);
 	}
 
 	// Warp supports the Kitty graphics protocol and OSC 8 hyperlinks.
 	if (termProgram === "warpterminal" || process.env.WARP_SESSION_ID || process.env.WARP_TERMINAL_SESSION_UUID) {
-		return { images: "kitty", trueColor: true, hyperlinks: true };
+		return capabilities("kitty", true, true);
 	}
 
 	if (process.env.ITERM_SESSION_ID || termProgram === "iterm.app") {
-		return { images: "iterm2", trueColor: true, hyperlinks: true };
+		return capabilities("iterm2", true, true);
 	}
 
 	if (process.env.WT_SESSION) {
-		return { images: null, trueColor: true, hyperlinks: true };
+		return capabilities(null, true, true);
 	}
 
 	if (termProgram === "vscode") {
-		return { images: null, trueColor: true, hyperlinks: true };
+		return capabilities(null, true, true);
 	}
 
 	if (termProgram === "alacritty") {
-		return { images: null, trueColor: true, hyperlinks: true };
+		return capabilities(null, true, true);
 	}
 
 	if (terminalEmulator === "jetbrains-jediterm") {
-		return { images: null, trueColor: true, hyperlinks: false };
+		return capabilities(null, true, false);
 	}
 
 	// Windows Terminal does not always set WT_SESSION, for example when it hosts
 	// a cmd.exe launched directly from Win+R. Modern Windows consoles support
 	// truecolor; keep hyperlinks off unless we positively detected support above.
 	if (isWindowsConsole) {
-		return { images: null, trueColor: true, hyperlinks: false };
+		return capabilities(null, true, false);
 	}
 
 	// Unknown terminal: be conservative. OSC 8 is rendered invisibly as "just
 	// text" on terminals that swallow it, which means the URL disappears from
 	// the rendered output. Default to the legacy `text (url)` behavior unless we
 	// have positively identified a hyperlink-capable terminal above.
-	return { images: null, trueColor: hasTrueColorHint, hyperlinks: false };
+	return capabilities(null, hasTrueColorHint, false);
 }
 
 export function getCapabilities(): TerminalCapabilities {
@@ -140,6 +155,10 @@ export function getCapabilities(): TerminalCapabilities {
 		cachedCapabilities = detectCapabilities();
 	}
 	return cachedCapabilities;
+}
+
+export function getTerminalColorMode(capabilities: TerminalCapabilities = getCapabilities()): TerminalColorMode {
+	return capabilities.colorMode ?? (capabilities.trueColor ? "truecolor" : "256color");
 }
 
 export function resetCapabilitiesCache(): void {
