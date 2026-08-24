@@ -5,7 +5,7 @@ import { createProvider, type Provider } from "../models.ts";
 import { XAI_MODELS } from "./xai.models.ts";
 
 export function xaiProvider(): Provider<"openai-responses"> {
-	return createProvider({
+	return createProvider<"openai-responses">({
 		id: "xai",
 		name: "xAI",
 		baseUrl: "https://api.x.ai/v1",
