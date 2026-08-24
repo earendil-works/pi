@@ -65,6 +65,7 @@ describe("ToolExecutionComponent parity", () => {
 		const rendered = stripAnsi(component.render(120).join("\n"));
 		expect(rendered).toContain("custom call");
 		expect(rendered).toContain("custom result");
+		expect(rendered.split("\n")[0]?.trim().length).toBeGreaterThan(0);
 	});
 
 	test("self-rendered empty tool rows take no layout space", () => {

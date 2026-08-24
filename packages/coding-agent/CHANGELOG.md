@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Tightened tool-row chrome: no leading spacer, no vertical box padding, and no extra blank line above self-rendered tool shells.
+
 ## [0.84.3] - 2026-08-24
 
 ### New Features
