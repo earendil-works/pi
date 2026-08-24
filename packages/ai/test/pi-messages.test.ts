@@ -165,13 +165,13 @@ describe("pi-messages", () => {
 		const model = createModel(baseUrl);
 
 		let observedHeaders: Record<string, string> | undefined;
-		const options: PiMessagesOptions = {
+		const options = {
 			apiKey: "test-key",
 			debug: true,
 			onResponse: (response) => {
 				observedHeaders = response.headers;
 			},
-		};
+		} satisfies PiMessagesOptions;
 		const message = await streamSimple(model, context, options).result();
 
 		expect(message.stopReason).toBe("stop");

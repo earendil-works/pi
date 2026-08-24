@@ -3,6 +3,7 @@ import type { ModelsStore, ModelsStoreEntry, ModelsStoreOperationOptions } from 
 import { getAgentDir } from "../config.ts";
 import { raceWithAbortSignal } from "../utils/abort.ts";
 import { getFileRevision, normalizePath } from "../utils/paths.ts";
+import { stripBom } from "../utils/text.ts";
 import { type AuthStorageBackend, FileAuthStorageBackend } from "./auth-storage.ts";
 
 type StoredModels = Record<string, ModelsStoreEntry>;
@@ -59,7 +60,7 @@ export class FileModelsStore implements ModelsStore {
 	}
 
 	private parse(content: string | undefined): StoredModels {
-		return content ? (JSON.parse(content) as StoredModels) : {};
+		return content ? (JSON.parse(stripBom(content)) as StoredModels) : {};
 	}
 
 	private updateReadState(readState: ModelsFileReadState, data: StoredModels, revision?: string): void {

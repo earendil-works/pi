@@ -1,5 +1,5 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import type { AssistantMessage, Model } from "@earendil-works/pi-ai";
+import type { AssistantMessage, Context, Model } from "@earendil-works/pi-ai";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	type CompactionPreparation,
@@ -59,6 +59,12 @@ const mockSummaryResponse: AssistantMessage = {
 	timestamp: Date.now(),
 };
 
+const mockToolCallResponse: AssistantMessage = {
+	...mockSummaryResponse,
+	content: [{ type: "toolCall", id: "tool-call-1", name: "read", arguments: { path: "README.md" } }],
+	stopReason: "toolUse",
+};
+
 const messages: AgentMessage[] = [{ role: "user", content: "Summarize this.", timestamp: Date.now() }];
 
 describe("generateSummary reasoning options", () => {
@@ -103,6 +109,7 @@ describe("generateSummary reasoning options", () => {
 		const requestOptions = completeSimpleMock.mock.calls.map((call) => call[2]);
 		expect(requestOptions).toHaveLength(2);
 		expect(requestOptions.every((options) => options?.cacheRetention === "none")).toBe(true);
+		expect(requestOptions.every((options) => options?.toolChoice === "none")).toBe(true);
 
 		const sessionIds = requestOptions.map((options) => options?.sessionId);
 		expect(sessionIds[0]).not.toBe(sessionIds[1]);
@@ -112,13 +119,58 @@ describe("generateSummary reasoning options", () => {
 		await completeSummarization(
 			createModel(false),
 			{ systemPrompt: "Summarize", messages: [] },
-			{ sessionId: "current-routing-session", cacheRetention: "long" },
+			{ sessionId: "current-routing-session", cacheRetention: "long", toolChoice: "auto" },
 		);
 
 		expect(completeSimpleMock.mock.calls[0][2]).toMatchObject({
 			sessionId: "current-routing-session",
 			cacheRetention: "none",
+			toolChoice: "none",
 		});
+	});
+
+	it("preserves the standalone split-turn summary prompt", async () => {
+		const preparation: CompactionPreparation = {
+			firstKeptEntryId: "entry-keep",
+			messagesToSummarize: [],
+			turnPrefixMessages: messages,
+			isSplitTurn: true,
+			tokensBefore: 100,
+			fileOps: { read: new Set(), written: new Set(), edited: new Set() },
+			settings: { enabled: true, reserveTokens: 2000, keepRecentTokens: 20 },
+		};
+
+		await compact(preparation, createModel(false), "test-key");
+
+		const requestContext = completeSimpleMock.mock.calls[0][1] as Context;
+		const prompt = JSON.stringify(requestContext.messages);
+		expect(prompt).toContain("This is the PREFIX of a turn that was too large to keep");
+		expect(prompt).toContain("<conversation>");
+	});
+
+	it("rejects tool calls from conversation summaries", async () => {
+		completeSimpleMock.mockResolvedValueOnce(mockToolCallResponse);
+
+		await expect(generateSummaryWithUsage(messages, createModel(false), 2000, "test-key")).rejects.toThrow(
+			"Summarization attempted to call a tool",
+		);
+	});
+
+	it("rejects tool calls from split-turn summaries", async () => {
+		completeSimpleMock.mockResolvedValueOnce(mockToolCallResponse);
+		const preparation: CompactionPreparation = {
+			firstKeptEntryId: "entry-keep",
+			messagesToSummarize: [],
+			turnPrefixMessages: messages,
+			isSplitTurn: true,
+			tokensBefore: 100,
+			fileOps: { read: new Set(), written: new Set(), edited: new Set() },
+			settings: { enabled: true, reserveTokens: 2000, keepRecentTokens: 20 },
+		};
+
+		await expect(compact(preparation, createModel(false), "test-key")).rejects.toThrow(
+			"Turn prefix summarization attempted to call a tool",
+		);
 	});
 
 	it("does not set reasoning when thinking is off", async () => {
@@ -161,18 +213,24 @@ describe("generateSummary reasoning options", () => {
 		expect(completeSimpleMock.mock.calls[0][2]).not.toHaveProperty("reasoning");
 	});
 
-	it("sets Anthropic refusal fallback from model metadata", async () => {
+	it("leaves Anthropic refusal fallback handling to pi-ai model metadata", async () => {
 		await generateSummary(
 			messages,
-			createModel(true, 8192, { allowedFallbackModels: ["claude-opus-4-8", "claude-opus-5"] }),
+			createModel(true, 8192, {
+				allowedFallbackModels: [
+					{
+						provider: "anthropic",
+						model: "claude-opus-4-8",
+						cost: { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
+					},
+				],
+			}),
 			2000,
 			"test-key",
 		);
 
 		expect(completeSimpleMock).toHaveBeenCalledTimes(1);
-		expect(completeSimpleMock.mock.calls[0][2]).toMatchObject({
-			refusalFallbacks: [{ model: "claude-opus-4-8" }],
-		});
+		expect(completeSimpleMock.mock.calls[0][2]).not.toHaveProperty("refusalFallbacks");
 	});
 
 	it("does not set Anthropic refusal fallback for models without allowed fallback targets", async () => {

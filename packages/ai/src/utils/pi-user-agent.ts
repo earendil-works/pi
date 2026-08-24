@@ -1,5 +1,4 @@
 import type * as NodeOs from "node:os";
-import type { ProviderHeaders } from "../types.ts";
 
 type ProcessWithOsBuiltinModule = typeof process & {
 	getBuiltinModule?: (id: "node:os") => typeof NodeOs;
@@ -17,11 +16,4 @@ const nodeOs = loadNodeOs();
 
 export function getPiUserAgent(): string {
 	return nodeOs ? `pi (${nodeOs.platform()} ${nodeOs.release()}; ${nodeOs.arch()})` : "pi (browser)";
-}
-
-export function forcePiUserAgent(headers: ProviderHeaders): void {
-	for (const name of Object.keys(headers)) {
-		if (name.toLowerCase() === "user-agent") delete headers[name];
-	}
-	headers["User-Agent"] = getPiUserAgent();
 }

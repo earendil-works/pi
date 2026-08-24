@@ -38,6 +38,53 @@ function completedResponse(): Response {
 	});
 }
 
+const customCompletionsModel: Model<"openai-completions"> = {
+	id: "grok-custom",
+	name: "Grok Custom",
+	api: "openai-completions",
+	provider: "xai",
+	baseUrl: "https://api.x.ai/v1",
+	reasoning: false,
+	input: ["text"],
+	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+	contextWindow: 128000,
+	maxTokens: 16384,
+};
+
+async function captureCompletionsUserAgent(headers?: Record<string, string>): Promise<string | null> {
+	let userAgent: string | null = null;
+	vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+		userAgent = new Request(input, init).headers.get("user-agent");
+		const chunks = [
+			{ id: "chatcmpl-ua", choices: [{ delta: { content: "ok" }, finish_reason: null, index: 0 }] },
+			{
+				id: "chatcmpl-ua",
+				choices: [{ delta: {}, finish_reason: "stop", index: 0 }],
+				usage: {
+					prompt_tokens: 1,
+					completion_tokens: 1,
+					prompt_tokens_details: { cached_tokens: 0 },
+					completion_tokens_details: { reasoning_tokens: 0 },
+				},
+			},
+		];
+		const body = `${chunks.map((chunk) => `data: ${JSON.stringify(chunk)}`).join("\n\n")}\n\ndata: [DONE]\n\n`;
+		return new Response(body, {
+			status: 200,
+			headers: { "content-type": "text/event-stream" },
+		});
+	});
+
+	const result = await streamOpenAICompletions(
+		customCompletionsModel,
+		{ messages: [{ role: "user", content: "hello", timestamp: 1 }] },
+		{ apiKey: "xai-test-token", headers },
+	).result();
+
+	expect(result.stopReason, result.errorMessage).toBe("stop");
+	return userAgent;
+}
+
 async function captureRequest(
 	model: Model<"openai-responses">,
 	context: Context,
@@ -184,7 +231,7 @@ describe("xAI Responses provider", () => {
 		});
 	});
 
-	it("keeps the SDK User-Agent for non-xAI Responses requests", async () => {
+	it("uses pi's User-Agent by default for Responses requests", async () => {
 		let userAgent: string | null = null;
 		vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
 			userAgent = new Request(input, init).headers.get("user-agent");
@@ -203,53 +250,24 @@ describe("xAI Responses provider", () => {
 		).result();
 
 		expect(result.stopReason, result.errorMessage).toBe("stop");
-		expect(userAgent).not.toBeNull();
-		expect(userAgent).not.toBe(PI_USER_AGENT);
+		expect(userAgent).toBe(PI_USER_AGENT);
 	});
 
-	it("forces pi's User-Agent on custom xAI Completions models over caller headers", async () => {
-		let userAgent: string | null = null;
-		vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-			userAgent = new Request(input, init).headers.get("user-agent");
-			const chunks = [
-				{ id: "chatcmpl-ua", choices: [{ delta: { content: "ok" }, finish_reason: null, index: 0 }] },
-				{
-					id: "chatcmpl-ua",
-					choices: [{ delta: {}, finish_reason: "stop", index: 0 }],
-					usage: {
-						prompt_tokens: 1,
-						completion_tokens: 1,
-						prompt_tokens_details: { cached_tokens: 0 },
-						completion_tokens_details: { reasoning_tokens: 0 },
-					},
-				},
-			];
-			const body = `${chunks.map((chunk) => `data: ${JSON.stringify(chunk)}`).join("\n\n")}\n\ndata: [DONE]\n\n`;
-			return new Response(body, {
-				status: 200,
-				headers: { "content-type": "text/event-stream" },
-			});
-		});
-
-		const customModel: Model<"openai-completions"> = {
-			id: "grok-custom",
-			name: "Grok Custom",
-			api: "openai-completions",
-			provider: "xai",
-			baseUrl: "https://api.x.ai/v1",
-			reasoning: false,
-			input: ["text"],
-			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-			contextWindow: 128000,
-			maxTokens: 16384,
-		};
-		const result = await streamOpenAICompletions(
-			customModel,
+	it("lets explicit headers override the default Responses User-Agent", async () => {
+		const captured = await captureRequest(
+			XAI_MODELS["grok-4.5"],
 			{ messages: [{ role: "user", content: "hello", timestamp: 1 }] },
 			{ apiKey: "xai-test-token", headers: { "User-Agent": "custom-agent" } },
-		).result();
+		);
 
-		expect(result.stopReason, result.errorMessage).toBe("stop");
-		expect(userAgent).toBe(PI_USER_AGENT);
+		expect(captured.headers.get("user-agent")).toBe("custom-agent");
+	});
+
+	it("uses pi's User-Agent by default for Completions requests", async () => {
+		expect(await captureCompletionsUserAgent()).toBe(PI_USER_AGENT);
+	});
+
+	it("lets explicit headers override the default Completions User-Agent", async () => {
+		expect(await captureCompletionsUserAgent({ "User-Agent": "custom-agent" })).toBe("custom-agent");
 	});
 });

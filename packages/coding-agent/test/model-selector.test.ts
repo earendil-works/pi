@@ -34,7 +34,6 @@ describe("model selector", () => {
 		const selector = new ModelSelectorComponent(
 			createFakeTui(),
 			harness.getModel(),
-			harness.settingsManager,
 			harness.session.modelRuntime,
 			[],
 			() => {},
