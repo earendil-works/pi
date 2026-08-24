@@ -360,6 +360,17 @@ const BEDROCK_MANTLE_OPENAI_RESPONSES_MODEL_IDS = new Set([
 	"xai.grok-4.6",
 ]);
 const BEDROCK_MANTLE_OPENAI_RESPONSES_V1_MODEL_IDS = new Set(["openai.gpt-oss-120b", "openai.gpt-oss-20b"]);
+const BEDROCK_MANTLE_ANTHROPIC_MESSAGES_MODEL_IDS = new Set([
+	"anthropic.claude-opus-5",
+	"anthropic.claude-sonnet-5",
+	"anthropic.claude-mythos-5",
+	"anthropic.claude-fable-5",
+	"anthropic.claude-opus-4-8",
+	"anthropic.claude-opus-4-7",
+	"anthropic.claude-haiku-4-5",
+	"anthropic.claude-mythos-preview",
+]);
+const BEDROCK_MANTLE_ANTHROPIC_MESSAGES_ROOT_MODEL_IDS = new Set(["anthropic.claude-mythos-preview"]);
 const MODELS_DEV_OPENAI_UNSUPPORTED_MODEL_IDS = new Set(["gpt-5.6"]);
 const OPENAI_TOOL_SEARCH_MODEL_IDS = new Set([
 	"gpt-5.4",
@@ -1023,8 +1034,57 @@ function isBedrockMantleOpenAIResponsesModelId(modelId: string): boolean {
 	return BEDROCK_MANTLE_OPENAI_RESPONSES_MODEL_IDS.has(modelId);
 }
 
+function getBedrockMantleAnthropicMessagesBaseUrl(modelId: string): string {
+	return BEDROCK_MANTLE_ANTHROPIC_MESSAGES_ROOT_MODEL_IDS.has(modelId)
+		? "https://bedrock-mantle.us-east-1.api.aws"
+		: "https://bedrock-mantle.us-east-1.api.aws/anthropic";
+}
+
+function isBedrockMantleAnthropicMessagesModelId(modelId: string): boolean {
+	return BEDROCK_MANTLE_ANTHROPIC_MESSAGES_MODEL_IDS.has(modelId);
+}
+
 // These model-card entries are not yet present in models.dev's Bedrock catalog. Keep the normal
 // models.dev metadata for IDs that upstream already publishes; only supplement missing model IDs here.
+const BEDROCK_MANTLE_ANTHROPIC_MESSAGES_SUPPLEMENTAL_MODELS: Model<"anthropic-messages">[] = [
+	{
+		id: "anthropic.claude-mythos-5",
+		name: "Claude Mythos 5",
+		api: "anthropic-messages",
+		provider: "amazon-bedrock",
+		baseUrl: getBedrockMantleAnthropicMessagesBaseUrl("anthropic.claude-mythos-5"),
+		reasoning: true,
+		input: ["text", "image"],
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		contextWindow: 1_000_000,
+		maxTokens: 128_000,
+	},
+	{
+		id: "anthropic.claude-haiku-4-5",
+		name: "Claude Haiku 4.5",
+		api: "anthropic-messages",
+		provider: "amazon-bedrock",
+		baseUrl: getBedrockMantleAnthropicMessagesBaseUrl("anthropic.claude-haiku-4-5"),
+		reasoning: true,
+		input: ["text", "image"],
+		cost: { input: 1, output: 5, cacheRead: 0.1, cacheWrite: 1.25 },
+		contextWindow: 200_000,
+		maxTokens: 64_000,
+	},
+	{
+		id: "anthropic.claude-mythos-preview",
+		name: "Claude Mythos Preview",
+		api: "anthropic-messages",
+		provider: "amazon-bedrock",
+		baseUrl: getBedrockMantleAnthropicMessagesBaseUrl("anthropic.claude-mythos-preview"),
+		reasoning: true,
+		input: ["text", "image"],
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		contextWindow: 1_000_000,
+		maxTokens: 128_000,
+	},
+];
+
 const BEDROCK_MANTLE_OPENAI_RESPONSES_SUPPLEMENTAL_MODELS: Model<"openai-responses">[] = [
 	{
 		id: "google.gemma-4-31b",
@@ -1516,9 +1576,30 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 			for (const [modelId, model] of Object.entries(data["amazon-bedrock"].models)) {
 				const m = model as ModelsDevModel;
 				if (m.tool_call !== true) continue;
-				if (BEDROCK_INFERENCE_PROFILE_ONLY_MODEL_IDS.has(modelId)) continue;
 
 				let id = modelId;
+
+				if (isBedrockMantleAnthropicMessagesModelId(id)) {
+					models.push({
+						id,
+						name: m.name || id,
+						api: "anthropic-messages" as const,
+						provider: "amazon-bedrock" as const,
+						baseUrl: getBedrockMantleAnthropicMessagesBaseUrl(id),
+						reasoning: m.reasoning === true,
+						input: (m.modalities?.input?.includes("image") ? ["text", "image"] : ["text"]) as ("text" | "image")[],
+						cost: {
+							input: m.cost?.input || 0,
+							output: m.cost?.output || 0,
+							cacheRead: m.cost?.cache_read || 0,
+							cacheWrite: m.cost?.cache_write || 0,
+						},
+						contextWindow: m.limit?.context || 4096,
+						maxTokens: m.limit?.output || 4096,
+					});
+					recordModelsDevReasoningOptions("amazon-bedrock" as const, id, m);
+					continue;
+				}
 
 				if (isBedrockMantleOpenAIResponsesModelId(id)) {
 					models.push({
@@ -1546,6 +1627,8 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					recordModelsDevReasoningOptions("amazon-bedrock" as const, id, m);
 					continue;
 				}
+
+				if (BEDROCK_INFERENCE_PROFILE_ONLY_MODEL_IDS.has(modelId)) continue;
 
 				if (id.startsWith("ai21.jamba")) {
 					// These models doesn't support tool use in streaming mode
@@ -1579,6 +1662,11 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 			}
 
 			const bedrockModelIds = new Set(models.filter((model) => model.provider === "amazon-bedrock").map((model) => model.id));
+			for (const model of BEDROCK_MANTLE_ANTHROPIC_MESSAGES_SUPPLEMENTAL_MODELS) {
+				if (!bedrockModelIds.has(model.id)) {
+					models.push(model);
+				}
+			}
 			for (const model of BEDROCK_MANTLE_OPENAI_RESPONSES_SUPPLEMENTAL_MODELS) {
 				if (!bedrockModelIds.has(model.id)) {
 					models.push(model);

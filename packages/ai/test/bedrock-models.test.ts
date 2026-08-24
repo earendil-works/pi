@@ -29,9 +29,14 @@ describe("Amazon Bedrock Models", () => {
 		console.log(`Found ${models.length} Bedrock models`);
 	});
 
-	it("exposes Claude Opus 5 through an inference profile only", () => {
-		expect(models.some((model) => model.id === "global.anthropic.claude-opus-5")).toBe(true);
-		expect(models.some((model) => model.id === "anthropic.claude-opus-5")).toBe(false);
+	it("exposes Claude Opus 5 runtime inference profiles and the Mantle Messages base model", () => {
+		expect(getModel("amazon-bedrock", "global.anthropic.claude-opus-5")).toMatchObject({
+			api: "bedrock-converse-stream",
+		});
+		expect(getModel("amazon-bedrock", "anthropic.claude-opus-5")).toMatchObject({
+			api: "anthropic-messages",
+			baseUrl: "https://bedrock-mantle.us-east-1.api.aws/anthropic",
+		});
 	});
 
 	it("routes Bedrock Responses-compatible models through Mantle under the Bedrock provider", () => {
@@ -65,11 +70,37 @@ describe("Amazon Bedrock Models", () => {
 		}
 	});
 
+	it("routes Bedrock Messages-compatible models through Mantle under the Bedrock provider", () => {
+		for (const id of [
+			"anthropic.claude-opus-5",
+			"anthropic.claude-sonnet-5",
+			"anthropic.claude-mythos-5",
+			"anthropic.claude-fable-5",
+			"anthropic.claude-opus-4-8",
+			"anthropic.claude-opus-4-7",
+			"anthropic.claude-haiku-4-5",
+		] as const) {
+			expect(getModel("amazon-bedrock", id)).toMatchObject({
+				api: "anthropic-messages",
+				provider: "amazon-bedrock",
+				baseUrl: "https://bedrock-mantle.us-east-1.api.aws/anthropic",
+			});
+		}
+
+		expect(getModel("amazon-bedrock", "anthropic.claude-mythos-preview")).toMatchObject({
+			api: "anthropic-messages",
+			provider: "amazon-bedrock",
+			baseUrl: "https://bedrock-mantle.us-east-1.api.aws",
+		});
+	});
+
 	it("keeps non-Mantle Bedrock Runtime models on Converse", () => {
 		for (const id of [
 			"us.anthropic.claude-opus-4-6-v1",
 			"openai.gpt-oss-120b-1:0",
 			"global.openai.gpt-5.6-sol",
+			"anthropic.claude-haiku-4-5-20251001-v1:0",
+			"global.anthropic.claude-fable-5",
 		] as const) {
 			expect(getModel("amazon-bedrock", id)).toMatchObject({
 				api: "bedrock-converse-stream",
@@ -79,9 +110,9 @@ describe("Amazon Bedrock Models", () => {
 	});
 
 	if (hasBedrockCredentials() && process.env.BEDROCK_EXTENSIVE_MODEL_TEST) {
-		const extensiveModels = process.env.BEDROCK_MANTLE_OPENAI_RESPONSES_TEST
+		const extensiveModels = process.env.BEDROCK_MANTLE_TEST
 			? models
-			: models.filter((model) => model.api !== "openai-responses");
+			: models.filter((model) => model.api !== "openai-responses" && model.api !== "anthropic-messages");
 
 		for (const model of extensiveModels) {
 			it(`should make a simple request with ${model.id}`, { timeout: 10_000 }, async () => {

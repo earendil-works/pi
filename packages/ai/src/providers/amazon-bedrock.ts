@@ -1,4 +1,5 @@
 import { bedrockConverseStreamApi } from "../api/bedrock-converse-stream.lazy.ts";
+import { bedrockMantleAnthropicMessagesApi } from "../api/bedrock-mantle-anthropic-messages.lazy.ts";
 import { bedrockMantleOpenAIResponsesApi } from "../api/bedrock-mantle-openai-responses.lazy.ts";
 import type { ApiKeyAuth } from "../auth/types.ts";
 import { createProvider, type Provider } from "../models.ts";
@@ -80,8 +81,10 @@ export const bedrockAuth: ApiKeyAuth = {
 	},
 };
 
-export function amazonBedrockProvider(): Provider<"bedrock-converse-stream" | "openai-responses"> {
-	return createProvider<"bedrock-converse-stream" | "openai-responses">({
+export function amazonBedrockProvider(): Provider<
+	"bedrock-converse-stream" | "openai-responses" | "anthropic-messages"
+> {
+	return createProvider<"bedrock-converse-stream" | "openai-responses" | "anthropic-messages">({
 		id: "amazon-bedrock",
 		name: "Amazon Bedrock",
 		auth: { apiKey: bedrockAuth },
@@ -89,6 +92,7 @@ export function amazonBedrockProvider(): Provider<"bedrock-converse-stream" | "o
 		api: {
 			"bedrock-converse-stream": bedrockConverseStreamApi(),
 			"openai-responses": bedrockMantleOpenAIResponsesApi(),
+			"anthropic-messages": bedrockMantleAnthropicMessagesApi(),
 		},
 	});
 }
