@@ -139,6 +139,7 @@ async function walkDirectoryWithFd(
 		"d",
 		"--follow",
 		"--hidden",
+   		"--no-ignore",
 		"--exclude",
 		".git",
 		"--exclude",
