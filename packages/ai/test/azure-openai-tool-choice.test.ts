@@ -76,4 +76,27 @@ describe("Azure OpenAI tool choice", () => {
 		expect(payload).toMatchObject({ tool_choice: "none" });
 		expect((payload as { tools?: unknown[] }).tools).toHaveLength(1);
 	});
+
+	it("omits toolChoice when no tools are provided", async () => {
+		let payload: unknown;
+		const result = streamSimple(
+			model,
+			{
+				messages: [{ role: "user", content: "Summarize this", timestamp: 1 }],
+			},
+			{
+				apiKey: "test-key",
+				toolChoice: "none",
+				onPayload: (requestPayload) => {
+					payload = requestPayload;
+					throw new Error("payload captured");
+				},
+			},
+		);
+
+		await result.result();
+
+		expect(payload).not.toHaveProperty("tool_choice");
+		expect(payload).not.toHaveProperty("tools");
+	});
 });

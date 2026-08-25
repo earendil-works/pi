@@ -308,7 +308,7 @@ function buildParams(
 			supportsOpenAIGrammarTools: model.compat?.supportsOpenAIGrammarTools ?? false,
 		});
 	}
-	if (options?.toolChoice !== undefined) {
+	if (options?.toolChoice !== undefined && params.tools?.length) {
 		params.tool_choice = options.toolChoice;
 	}
 

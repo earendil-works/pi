@@ -5,6 +5,7 @@
 ### Fixed
 
 - Fixed OpenAI-compatible Chat Completions requests sending `tool_choice` without tools, which gateways can reject during compaction ([#8607](https://github.com/earendil-works/pi/issues/8607)).
+- Fixed OpenAI Responses and Azure OpenAI Responses requests sending `tool_choice` without tools, which providers can reject during compaction.
 
 ## [0.84.3] - 2026-08-24
 
