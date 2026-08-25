@@ -316,7 +316,7 @@ function buildParams(
 		});
 	}
 
-	if (options?.toolChoice !== undefined) {
+	if (options?.toolChoice !== undefined && toolPlacement.immediate.length > 0) {
 		params.tool_choice = options.toolChoice;
 	}
 
