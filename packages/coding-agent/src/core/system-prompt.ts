@@ -60,10 +60,15 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 			prompt += "</project_context>\n";
 		}
 
-		// Append skills section (only if read tool is available)
-		const customPromptHasRead = !selectedTools || selectedTools.includes("read");
-		if (customPromptHasRead && skills.length > 0) {
-			prompt += formatSkillsForPrompt(skills);
+		// Append skills section when a file-loading tool is available.
+		const customPromptTools = selectedTools || ["read", "bash", "edit", "write"];
+		const customPromptSkillLoader = customPromptTools.includes("read")
+			? "read"
+			: customPromptTools.includes("bash")
+				? "bash"
+				: null;
+		if (customPromptSkillLoader && skills.length > 0) {
+			prompt += formatSkillsForPrompt(skills, customPromptSkillLoader);
 		}
 
 		prompt += `\nCurrent working directory: ${promptCwd}\n`;
@@ -158,9 +163,10 @@ Pi documentation (read only when the user asks about pi itself, its SDK, extensi
 		prompt += "</project_context>\n";
 	}
 
-	// Append skills section (only if read tool is available)
-	if (hasRead && skills.length > 0) {
-		prompt += formatSkillsForPrompt(skills);
+	// Append skills section when a file-loading tool is available.
+	const skillLoader = hasRead ? "read" : hasBash ? "bash" : null;
+	if (skillLoader && skills.length > 0) {
+		prompt += formatSkillsForPrompt(skills, skillLoader);
 	}
 
 	prompt += `\nCurrent working directory: ${promptCwd}`;

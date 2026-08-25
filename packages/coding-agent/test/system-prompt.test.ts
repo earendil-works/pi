@@ -1,5 +1,20 @@
 import { describe, expect, test } from "vitest";
+import type { Skill } from "../src/core/skills.ts";
 import { buildSystemPrompt } from "../src/core/system-prompt.ts";
+
+const testSkill: Skill = {
+	name: "test-skill",
+	description: "A test skill.",
+	filePath: "/path/to/skill/SKILL.md",
+	baseDir: "/path/to/skill",
+	disableModelInvocation: false,
+	sourceInfo: {
+		path: "/path/to/skill/SKILL.md",
+		source: "test",
+		scope: "temporary",
+		origin: "top-level",
+	},
+};
 
 describe("buildSystemPrompt", () => {
 	describe("empty tools", () => {
@@ -71,6 +86,44 @@ describe("buildSystemPrompt", () => {
 				"- When reading pi docs or examples, resolve docs/... under Additional docs and examples/... under Examples, not the current working directory",
 			);
 			expect(prompt).toContain("environment variables (docs/environment-variables.md)");
+		});
+	});
+
+	describe("skills", () => {
+		test("includes skills when read is selected", () => {
+			const prompt = buildSystemPrompt({
+				selectedTools: ["read"],
+				contextFiles: [],
+				skills: [testSkill],
+				cwd: process.cwd(),
+			});
+
+			expect(prompt).toContain("<available_skills>");
+			expect(prompt).toContain("Use the read tool to load a skill's file");
+		});
+
+		test("includes skills when bash is selected without read", () => {
+			const prompt = buildSystemPrompt({
+				selectedTools: ["bash"],
+				contextFiles: [],
+				skills: [testSkill],
+				cwd: process.cwd(),
+			});
+
+			expect(prompt).toContain("<available_skills>");
+			expect(prompt).toContain("Use bash to load a skill's file");
+			expect(prompt).not.toContain("Use the read tool to load a skill's file");
+		});
+
+		test("omits skills when neither read nor bash is selected", () => {
+			const prompt = buildSystemPrompt({
+				selectedTools: ["edit"],
+				contextFiles: [],
+				skills: [testSkill],
+				cwd: process.cwd(),
+			});
+
+			expect(prompt).not.toContain("<available_skills>");
 		});
 	});
 
