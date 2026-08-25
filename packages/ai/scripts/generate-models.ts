@@ -1347,6 +1347,66 @@ function processBasetenModels(provider: ModelsDevProvider | undefined): Model<Ap
 	return models;
 }
 
+// Opper is an OpenAI-compatible gateway (api.opper.ai/v3/compat) fronting many
+// upstream providers; model ids keep the upstream prefix (anthropic/…, openai/…).
+// The compat surface passes top-level reasoning_effort through to the upstream
+// model unchanged, accepts the developer role, strict JSON schema and strict
+// tools, and reports usage in the final streaming chunk (measured against
+// POST /v3/compat/chat/completions, 2026-08-25). models.dev carries the
+// per-model effort sets, so the thinking-level map comes straight from there.
+function processOpperModels(provider: ModelsDevProvider | undefined): Model<Api>[] {
+	if (!provider?.models) return [];
+
+	const baseUrl = "https://api.opper.ai/v3/compat";
+	const baseCompat: OpenAICompletionsCompat = {
+		supportsStore: false,
+		supportsDeveloperRole: true,
+		supportsReasoningEffort: false,
+		supportsUsageInStreaming: true,
+		maxTokensField: "max_tokens",
+		supportsStrictMode: true,
+		supportsLongCacheRetention: false,
+	};
+	const reasoningEffortCompat: OpenAICompletionsCompat = {
+		...baseCompat,
+		supportsReasoningEffort: true,
+		thinkingFormat: "openai",
+	};
+	const models: Model<Api>[] = [];
+
+	for (const [modelId, model] of Object.entries(provider.models)) {
+		if (model.status === "deprecated") continue;
+
+		const reasoning = model.reasoning === true;
+		const reasoningOptions = model.reasoning_options ?? [];
+		const supportsEffort = reasoningOptions.some((option) => option.type === "effort");
+		const thinkingLevelMap = supportsEffort ? getEffortThinkingLevelMap(reasoningOptions) : undefined;
+
+		models.push({
+			id: modelId,
+			name: model.name || modelId,
+			api: "openai-completions",
+			provider: "opper",
+			baseUrl,
+			reasoning,
+			...(thinkingLevelMap ? { thinkingLevelMap } : {}),
+			input: model.modalities?.input?.includes("image") ? ["text", "image"] : ["text"],
+			cost: {
+				input: model.cost?.input || 0,
+				output: model.cost?.output || 0,
+				cacheRead: model.cost?.cache_read || 0,
+				cacheWrite: model.cost?.cache_write || 0,
+			},
+			compat: supportsEffort ? reasoningEffortCompat : baseCompat,
+			contextWindow: model.limit?.context || 4096,
+			maxTokens: model.limit?.output || 4096,
+		});
+		recordModelsDevReasoningOptions("opper", modelId, model);
+	}
+
+	return models;
+}
+
 function processFireworksModels(provider: ModelsDevProvider | undefined): Model<Api>[] {
 	if (!provider?.models) return [];
 
@@ -1942,6 +2002,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 		}
 
 		models.push(...processBasetenModels(data.baseten));
+		models.push(...processOpperModels(data.opper));
 
 		// Process OpenCode models (Zen and Go)
 		// API mapping based on provider.npm field:

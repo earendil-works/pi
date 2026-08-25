@@ -206,6 +206,14 @@ describe("Tool Call Without Result Tests", () => {
 		});
 	});
 
+	describe.skipIf(!process.env.OPPER_API_KEY)("Opper Provider", () => {
+		const model = getModel("opper", "anthropic/claude-sonnet-4-6");
+
+		it("should filter out tool calls without corresponding tool results", { retry: 3, timeout: 30000 }, async () => {
+			await testToolCallWithoutResult(model, { reasoningEffort: "medium" });
+		});
+	});
+
 	describe.skipIf(!process.env.ZAI_API_KEY)("zAI Provider", () => {
 		const model = getModel("zai", "glm-5.2");
 

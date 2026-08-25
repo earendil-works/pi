@@ -201,6 +201,18 @@ describe("AI Providers Abort Tests", () => {
 		});
 	});
 
+	describe.skipIf(!process.env.OPPER_API_KEY)("Opper Provider Abort", () => {
+		const llm = getModel("opper", "anthropic/claude-sonnet-4-6");
+
+		it("should abort mid-stream", { retry: 3 }, async () => {
+			await testAbortSignal(llm, { reasoningEffort: "medium" });
+		});
+
+		it("should handle immediate abort", { retry: 3 }, async () => {
+			await testImmediateAbort(llm, { reasoningEffort: "medium" });
+		});
+	});
+
 	describe.skipIf(!process.env.MINIMAX_API_KEY)("MiniMax Provider Abort", () => {
 		const llm = getModel("minimax", "MiniMax-M2.7");
 

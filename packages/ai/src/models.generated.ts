@@ -28,6 +28,7 @@ import { OPENAI_CODEX_MODELS } from "./providers/openai-codex.models.ts";
 import { OPENCODE_MODELS } from "./providers/opencode.models.ts";
 import { OPENCODE_GO_MODELS } from "./providers/opencode-go.models.ts";
 import { OPENROUTER_MODELS } from "./providers/openrouter.models.ts";
+import { OPPER_MODELS } from "./providers/opper.models.ts";
 import { QWEN_TOKEN_PLAN_MODELS } from "./providers/qwen-token-plan.models.ts";
 import { QWEN_TOKEN_PLAN_CN_MODELS } from "./providers/qwen-token-plan-cn.models.ts";
 import { QWEN_TOKEN_PLAN_INDIVIDUAL_MODELS } from "./providers/qwen-token-plan-individual.models.ts";
@@ -69,6 +70,7 @@ export const MODELS: {
 	readonly "opencode": typeof OPENCODE_MODELS;
 	readonly "opencode-go": typeof OPENCODE_GO_MODELS;
 	readonly "openrouter": typeof OPENROUTER_MODELS;
+	readonly "opper": typeof OPPER_MODELS;
 	readonly "qwen-token-plan": typeof QWEN_TOKEN_PLAN_MODELS;
 	readonly "qwen-token-plan-cn": typeof QWEN_TOKEN_PLAN_CN_MODELS;
 	readonly "qwen-token-plan-individual": typeof QWEN_TOKEN_PLAN_INDIVIDUAL_MODELS;
@@ -109,6 +111,7 @@ export const MODELS: {
 	"opencode": OPENCODE_MODELS,
 	"opencode-go": OPENCODE_GO_MODELS,
 	"openrouter": OPENROUTER_MODELS,
+	"opper": OPPER_MODELS,
 	"qwen-token-plan": QWEN_TOKEN_PLAN_MODELS,
 	"qwen-token-plan-cn": QWEN_TOKEN_PLAN_CN_MODELS,
 	"qwen-token-plan-individual": QWEN_TOKEN_PLAN_INDIVIDUAL_MODELS,

@@ -709,6 +709,10 @@ describe("default model selection", () => {
 		expect(defaultModelPerProvider["ant-ling"]).toBe("Ring-2.6-1T");
 	});
 
+	test("opper default tracks a current gateway model", () => {
+		expect(defaultModelPerProvider.opper).toBe("anthropic/claude-sonnet-4-6");
+	});
+
 	test("built-in defaults exist in generated provider catalogs", () => {
 		for (const provider of getBuiltinProviders()) {
 			const defaultId = defaultModelPerProvider[provider];

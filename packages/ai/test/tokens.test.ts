@@ -201,6 +201,14 @@ describe("Token Statistics on Abort", () => {
 		});
 	});
 
+	describe.skipIf(!process.env.OPPER_API_KEY)("Opper Provider", () => {
+		const llm = getModel("opper", "anthropic/claude-sonnet-4-6");
+
+		it("should include token stats when aborted mid-stream", { retry: 3, timeout: 30000 }, async () => {
+			await testTokensOnAbort(llm, { reasoningEffort: "medium" });
+		});
+	});
+
 	describe.skipIf(!process.env.ZAI_API_KEY)("zAI Provider", () => {
 		const llm = getModel("zai", "glm-5.2");
 

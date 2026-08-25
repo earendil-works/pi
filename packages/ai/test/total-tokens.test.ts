@@ -396,6 +396,32 @@ describe("totalTokens field", () => {
 	});
 
 	// =========================================================================
+	// Opper
+	// =========================================================================
+
+	describe.skipIf(!process.env.OPPER_API_KEY)("Opper", () => {
+		it(
+			"Claude Sonnet 4.6 - should return totalTokens equal to sum of components",
+			{ retry: 3, timeout: 60000 },
+			async () => {
+				const llm = getModel("opper", "anthropic/claude-sonnet-4-6");
+
+				console.log(`\nOpper / ${llm.id}:`);
+				const { first, second } = await testTotalTokensWithCache(llm, {
+					apiKey: process.env.OPPER_API_KEY,
+					reasoningEffort: "medium",
+				});
+
+				logUsage("First request", first);
+				logUsage("Second request", second);
+
+				assertTotalTokensEqualsComponents(first);
+				assertTotalTokensEqualsComponents(second);
+			},
+		);
+	});
+
+	// =========================================================================
 	// Baseten
 	// =========================================================================
 

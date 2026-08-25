@@ -63,6 +63,7 @@ export type KnownProvider =
 	| "baseten"
 	| "opencode"
 	| "opencode-go"
+	| "opper"
 	| "kimi-coding"
 	| "cloudflare-workers-ai"
 	| "cloudflare-ai-gateway"
