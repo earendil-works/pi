@@ -53,6 +53,48 @@ export type QueueMode = "all" | "one-at-a-time";
 export type AgentToolCall = Extract<AssistantMessage["content"][number], { type: "toolCall" }>;
 
 /**
+ * Immutable call data provided to a tool-owned speculation policy.
+ *
+ * `args` are the validated arguments that would be passed to `execute()`.
+ */
+export interface ToolSpeculationContext {
+	toolCall: AgentToolCall;
+	args: Record<string, unknown>;
+}
+
+/**
+ * Explicit opt-in for physical execution before the provider response finishes.
+ *
+ * A speculative result remains invisible until ordinary tool dispatch commits it.
+ */
+export interface ToolSpeculationPolicy {
+	safe: true;
+	mode?: "finalized";
+	canExecute?: (context: ToolSpeculationContext) => boolean | Promise<boolean>;
+}
+
+/** Diagnostic information for one speculative execution candidate. */
+export interface SpeculativeToolTelemetry {
+	toolName: string;
+	toolCallId: string;
+	candidateStartedAt?: number;
+	candidateFinishedAt?: number;
+	dispatchReachedAt?: number;
+	outcome: "committed" | "discarded" | "ineligible" | "fingerprint_mismatch" | "aborted";
+	reason?: string;
+	executionDurationMs?: number;
+	overlapMs?: number;
+}
+
+/** Opt-in configuration for finalized, discard-safe tool execution. */
+export interface SpeculativeToolExecutionConfig {
+	enabled: boolean;
+	maxInFlight?: number;
+	canExecute?: (tool: AgentTool, toolCall: AgentToolCall) => boolean | Promise<boolean>;
+	onTelemetry?: (event: SpeculativeToolTelemetry) => void;
+}
+
+/**
  * Result returned from `beforeToolCall`.
  *
  * Returning `{ block: true }` prevents the tool from executing. The loop emits an error tool result instead.
@@ -265,6 +307,14 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 	 *
 	 * Default: "parallel"
 	 */
+
+	/**
+	 * Opt-in speculative execution for finalized, discard-safe tool calls.
+	 *
+	 * Disabled by default. Candidates do not emit normal tool lifecycle events or
+	 * alter the transcript until ordinary dispatch commits their result.
+	 */
+	speculativeToolExecution?: SpeculativeToolExecutionConfig;
 	toolExecution?: ToolExecutionMode;
 
 	/**
@@ -406,6 +456,12 @@ export interface AgentTool<TParameters extends TSchema = TSchema, TDetails = any
 	 * If omitted, the default execution mode applies.
 	 */
 	executionMode?: ToolExecutionMode;
+
+	/**
+	 * Opt-in declaration that this tool may be physically executed after its
+	 * streamed call arguments are finalized, before ordinary dispatch commits it.
+	 */
+	speculation?: ToolSpeculationPolicy;
 }
 
 /** Context snapshot passed into the low-level agent loop. */

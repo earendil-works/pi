@@ -3,7 +3,7 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { Api, ImageContent, Model, TextContent } from "@earendil-works/pi-ai";
 import { Text } from "@earendil-works/pi-tui";
 import { constants } from "fs";
-import { access as fsAccess, readFile as fsReadFile } from "fs/promises";
+import { access as fsAccess, readFile as fsReadFile, realpath, stat } from "fs/promises";
 import { type Static, Type } from "typebox";
 import { getReadmePath } from "../../config.ts";
 import { keyHint, keyText } from "../../modes/interactive/components/keybinding-hints.ts";
@@ -66,6 +66,51 @@ export interface ReadToolOptions {
 	autoResizeImages?: boolean;
 	/** Custom operations for file reading. Default: local filesystem */
 	operations?: ReadOperations;
+}
+
+async function canSpeculateLocalRead(cwd: string, path: string): Promise<boolean> {
+	if (
+		path.startsWith("www.") ||
+		/^[a-z][a-z0-9+.-]*:\/\//i.test(path) ||
+		path.includes(":") ||
+		path.includes("?") ||
+		path.includes("#")
+	) {
+		return false;
+	}
+
+	try {
+		const workspacePath = await realpath(cwd);
+		const requestedPath = resolveToCwd(path, cwd);
+		const resolvedPath = await realpath(requestedPath);
+		const workspaceRelativePath = relative(workspacePath, resolvedPath);
+		if (
+			workspaceRelativePath === "" ||
+			workspaceRelativePath === ".." ||
+			workspaceRelativePath.startsWith(`..${sep}`) ||
+			isAbsolute(workspaceRelativePath)
+		) {
+			return false;
+		}
+
+		const target = await stat(resolvedPath);
+		if (target.isDirectory()) return true;
+		if (!target.isFile()) return false;
+		if (await detectSupportedImageMimeTypeFromFile(resolvedPath)) return false;
+
+		const content = await fsReadFile(resolvedPath);
+		if (
+			content.includes(0) ||
+			content.subarray(0, 5).toString("ascii") === "%PDF-" ||
+			content.subarray(0, 15).toString("ascii") === "SQLite format 3\u0000"
+		) {
+			return false;
+		}
+		new TextDecoder("utf-8", { fatal: true }).decode(content);
+		return true;
+	} catch {
+		return false;
+	}
 }
 
 type ReadRenderArgs = { path?: string; file_path?: string; offset?: number; limit?: number };
@@ -220,6 +265,14 @@ export function createReadToolDefinition(
 		promptGuidelines: [...readToolSystemPromptContribution.guidelines],
 		parameters: readSchema,
 		constrainedSampling: getExperimentalToolSampling(),
+		speculation: {
+			safe: true,
+			mode: "finalized",
+			canExecute: async ({ args }) =>
+				ops === defaultReadOperations &&
+				typeof args.path === "string" &&
+				(await canSpeculateLocalRead(cwd, args.path)),
+		},
 		async execute(
 			_toolCallId,
 			{ path, offset, limit }: { path: string; offset?: number; limit?: number },

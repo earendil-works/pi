@@ -14,6 +14,7 @@ import type {
 	AgentToolUpdateCallback,
 	ThinkingLevel,
 	ToolExecutionMode,
+	ToolSpeculationPolicy,
 } from "@earendil-works/pi-agent-core";
 import type {
 	Api,
@@ -477,6 +478,9 @@ export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = un
 	 * If omitted, the default execution mode applies.
 	 */
 	executionMode?: ToolExecutionMode;
+
+	/** Explicit opt-in for finalized, discard-safe speculative execution. */
+	speculation?: ToolSpeculationPolicy;
 
 	/** Execute the tool. */
 	execute(

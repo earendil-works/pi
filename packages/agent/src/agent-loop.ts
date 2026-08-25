@@ -19,10 +19,174 @@ import type {
 	AgentTool,
 	AgentToolCall,
 	AgentToolResult,
+	SpeculativeToolExecutionConfig,
+	SpeculativeToolTelemetry,
 	StreamFn,
 } from "./types.ts";
 
 export type AgentEventSink = (event: AgentEvent) => Promise<void> | void;
+
+type SpeculativeRawOutcome = {
+	result: AgentToolResult<any>;
+	isError: boolean;
+	executionArgs: unknown;
+};
+
+type SpeculativeToolCandidate = {
+	toolCall: AgentToolCall;
+	tool: AgentTool<any>;
+	executionArgs: unknown;
+	fingerprint: string;
+	startedAt: number;
+	finishedAt?: number;
+	dispatchReachedAt?: number;
+	state: "running" | "completed" | "committed" | "discarded";
+	controller: AbortController;
+	promise: Promise<SpeculativeRawOutcome>;
+	reported: boolean;
+};
+
+type SpeculativeCandidateRegistry = Map<string, SpeculativeToolCandidate>;
+
+const speculativeCandidateRegistries = new WeakMap<AssistantMessage, SpeculativeCandidateRegistry>();
+
+function canonicalJson(value: unknown, ancestors = new Set<object>()): string {
+	if (value === null) return "null";
+	if (typeof value === "string" || typeof value === "boolean") return JSON.stringify(value);
+	if (typeof value === "number") {
+		if (!Number.isFinite(value)) throw new Error("Non-finite numbers are not JSON values");
+		return JSON.stringify(value);
+	}
+	if (Array.isArray(value)) {
+		if (ancestors.has(value)) throw new Error("Circular values are not JSON values");
+		ancestors.add(value);
+		try {
+			return `[${value.map((entry) => canonicalJson(entry, ancestors)).join(",")}]`;
+		} finally {
+			ancestors.delete(value);
+		}
+	}
+	if (
+		typeof value !== "object" ||
+		value === null ||
+		Array.isArray(value) ||
+		Object.getPrototypeOf(value) !== Object.prototype
+	) {
+		throw new Error("Non-JSON value");
+	}
+	const objectValue = value as Record<string, unknown>;
+	if (ancestors.has(objectValue)) throw new Error("Circular values are not JSON values");
+	ancestors.add(objectValue);
+	try {
+		return `{${Object.keys(objectValue)
+			.sort()
+			.map((key) => `${JSON.stringify(key)}:${canonicalJson(objectValue[key], ancestors)}`)
+			.join(",")}}`;
+	} finally {
+		ancestors.delete(objectValue);
+	}
+}
+
+function createExecutionFingerprint(toolCall: AgentToolCall, executionArgs: unknown): string {
+	return canonicalJson({ name: toolCall.name, args: executionArgs });
+}
+
+function emitSpeculationTelemetry(config: SpeculativeToolExecutionConfig, telemetry: SpeculativeToolTelemetry): void {
+	try {
+		config.onTelemetry?.(telemetry);
+	} catch {
+		// Observability must not affect agent execution.
+	}
+	console.debug("speculative-tool-execution", {
+		toolCallId: telemetry.toolCallId,
+		toolName: telemetry.toolName,
+		outcome: telemetry.outcome,
+		reason: telemetry.reason,
+		executionDurationMs: telemetry.executionDurationMs,
+		overlapMs: telemetry.overlapMs,
+	});
+}
+
+function reportCandidate(
+	config: SpeculativeToolExecutionConfig,
+	candidate: SpeculativeToolCandidate,
+	outcome: Exclude<SpeculativeToolTelemetry["outcome"], "ineligible">,
+	reason?: string,
+): void {
+	if (candidate.reported) return;
+	candidate.reported = true;
+	const executionDurationMs =
+		candidate.finishedAt === undefined ? undefined : candidate.finishedAt - candidate.startedAt;
+	const overlapMs =
+		outcome === "committed" && executionDurationMs !== undefined && candidate.dispatchReachedAt !== undefined
+			? Math.min(executionDurationMs, Math.max(0, candidate.dispatchReachedAt - candidate.startedAt))
+			: undefined;
+	emitSpeculationTelemetry(config, {
+		toolName: candidate.tool.name,
+		toolCallId: candidate.toolCall.id,
+		candidateStartedAt: candidate.startedAt,
+		candidateFinishedAt: candidate.finishedAt,
+		dispatchReachedAt: candidate.dispatchReachedAt,
+		outcome,
+		reason,
+		executionDurationMs,
+		overlapMs,
+	});
+}
+
+function reportIneligibleCandidate(
+	config: SpeculativeToolExecutionConfig,
+	toolCall: AgentToolCall,
+	reason: string,
+): void {
+	emitSpeculationTelemetry(config, {
+		toolName: toolCall.name,
+		toolCallId: toolCall.id,
+		outcome: "ineligible",
+		reason,
+	});
+}
+
+function createCandidateSignal(
+	runSignal: AbortSignal | undefined,
+	controller: AbortController,
+): { signal: AbortSignal; dispose: () => void } {
+	const abort = () => controller.abort();
+	if (runSignal?.aborted) {
+		abort();
+		return { signal: controller.signal, dispose: () => {} };
+	}
+	runSignal?.addEventListener("abort", abort, { once: true });
+	return {
+		signal: controller.signal,
+		dispose: () => runSignal?.removeEventListener("abort", abort),
+	};
+}
+
+function discardCandidate(
+	config: SpeculativeToolExecutionConfig,
+	candidate: SpeculativeToolCandidate,
+	outcome: "discarded" | "fingerprint_mismatch" | "aborted",
+	reason: string,
+): void {
+	if (candidate.reported || candidate.state === "committed") return;
+	candidate.state = "discarded";
+	candidate.controller.abort();
+	reportCandidate(config, candidate, outcome, reason);
+}
+
+function discardAllCandidates(
+	config: SpeculativeToolExecutionConfig,
+	registry: SpeculativeCandidateRegistry | undefined,
+	reason: string,
+	outcome: "discarded" | "aborted" = "discarded",
+): void {
+	if (!registry) return;
+	for (const candidate of registry.values()) {
+		discardCandidate(config, candidate, outcome, reason);
+	}
+	registry.clear();
+}
 
 /**
  * Start an agent loop with a new prompt message.
@@ -285,90 +449,137 @@ async function streamAssistantResponse(
 	emit: AgentEventSink,
 	streamFunction: StreamFn,
 ): Promise<AssistantMessage> {
-	// Apply context transform if configured (AgentMessage[] → AgentMessage[])
 	let messages = context.messages;
 	if (config.transformContext) {
 		messages = await config.transformContext(messages, signal);
 	}
 
-	// Convert to LLM-compatible messages (AgentMessage[] → Message[])
 	const llmMessages = await config.convertToLlm(messages);
-
-	// Build LLM context
 	const llmContext: Context = {
 		systemPrompt: context.systemPrompt,
 		messages: llmMessages,
 		tools: context.tools,
 	};
-
-	// Resolve API key (important for expiring tokens)
 	const resolvedApiKey =
 		(config.getApiKey ? await config.getApiKey(config.model.provider) : undefined) || config.apiKey;
-
 	const response = await streamFunction(config.model, llmContext, {
 		...config,
 		apiKey: resolvedApiKey,
 		signal,
 	});
-
+	const speculationConfig =
+		config.speculativeToolExecution?.enabled === true ? config.speculativeToolExecution : undefined;
+	const candidates = speculationConfig ? new Map<string, SpeculativeToolCandidate>() : undefined;
+	let speculationBarrier = false;
 	let partialMessage: AssistantMessage | null = null;
 	let addedPartial = false;
+	let completed = false;
 
-	for await (const event of response) {
-		switch (event.type) {
-			case "start":
-				partialMessage = event.partial;
-				context.messages.push(partialMessage);
-				addedPartial = true;
-				await emit({ type: "message_start", message: { ...partialMessage } });
+	try {
+		let finalMessage: AssistantMessage | undefined;
+		for await (const event of response) {
+			if (event.type === "done" || event.type === "error") {
+				finalMessage = await response.result();
 				break;
+			}
 
-			case "text_start":
-			case "text_delta":
-			case "text_end":
-			case "thinking_start":
-			case "thinking_delta":
-			case "thinking_end":
-			case "toolcall_start":
-			case "toolcall_delta":
-			case "toolcall_end":
-				if (partialMessage) {
+			switch (event.type) {
+				case "start":
 					partialMessage = event.partial;
-					context.messages[context.messages.length - 1] = partialMessage;
-					await emit({
-						type: "message_update",
-						assistantMessageEvent: event,
-						message: { ...partialMessage },
-					});
-				}
-				break;
+					context.messages.push(partialMessage);
+					addedPartial = true;
+					await emit({ type: "message_start", message: { ...partialMessage } });
+					break;
 
-			case "done":
-			case "error": {
-				const finalMessage = await response.result();
-				if (addedPartial) {
-					context.messages[context.messages.length - 1] = finalMessage;
-				} else {
-					context.messages.push(finalMessage);
-				}
-				if (!addedPartial) {
-					await emit({ type: "message_start", message: { ...finalMessage } });
-				}
-				await emit({ type: "message_end", message: finalMessage });
-				return finalMessage;
+				case "text_start":
+				case "text_delta":
+				case "text_end":
+				case "thinking_start":
+				case "thinking_delta":
+				case "thinking_end":
+				case "toolcall_start":
+				case "toolcall_delta":
+					if (partialMessage) {
+						partialMessage = event.partial;
+						context.messages[context.messages.length - 1] = partialMessage;
+						await emit({
+							type: "message_update",
+							assistantMessageEvent: event,
+							message: { ...partialMessage },
+						});
+					}
+					break;
+
+				case "toolcall_end":
+					if (partialMessage) {
+						partialMessage = event.partial;
+						context.messages[context.messages.length - 1] = partialMessage;
+						await emit({
+							type: "message_update",
+							assistantMessageEvent: event,
+							message: { ...partialMessage },
+						});
+					}
+					if (speculationConfig && candidates) {
+						if (speculationBarrier) {
+							reportIneligibleCandidate(speculationConfig, event.toolCall, "preceding speculation barrier");
+						} else {
+							const eligible = await maybeStartSpeculativeCandidate(
+								context,
+								event.toolCall,
+								config,
+								signal,
+								candidates,
+							);
+							if (!eligible) speculationBarrier = true;
+						}
+					}
+					break;
 			}
 		}
-	}
 
-	const finalMessage = await response.result();
-	if (addedPartial) {
-		context.messages[context.messages.length - 1] = finalMessage;
-	} else {
-		context.messages.push(finalMessage);
-		await emit({ type: "message_start", message: { ...finalMessage } });
+		const settledMessage = finalMessage ?? (await response.result());
+		if (addedPartial) {
+			context.messages[context.messages.length - 1] = settledMessage;
+		} else {
+			context.messages.push(settledMessage);
+			await emit({ type: "message_start", message: { ...settledMessage } });
+		}
+
+		if (speculationConfig && candidates) {
+			if (
+				signal?.aborted ||
+				settledMessage.stopReason === "error" ||
+				settledMessage.stopReason === "aborted" ||
+				settledMessage.stopReason === "length"
+			) {
+				discardAllCandidates(
+					speculationConfig,
+					candidates,
+					signal?.aborted ? "run aborted" : `final message stop reason: ${settledMessage.stopReason}`,
+					signal?.aborted ? "aborted" : "discarded",
+				);
+			} else {
+				reconcileSpeculativeCandidates(settledMessage, candidates, speculationConfig, context);
+				if (candidates.size > 0) {
+					speculativeCandidateRegistries.set(settledMessage, candidates);
+				}
+			}
+		}
+
+		await emit({ type: "message_end", message: settledMessage });
+		completed = true;
+		return settledMessage;
+	} finally {
+		if (!completed && speculationConfig) {
+			discardAllCandidates(
+				speculationConfig,
+				candidates,
+				signal?.aborted ? "run aborted" : "stream did not produce a runnable message",
+				signal?.aborted ? "aborted" : "discarded",
+			);
+		}
 	}
-	await emit({ type: "message_end", message: finalMessage });
-	return finalMessage;
 }
 
 /**
@@ -416,13 +627,15 @@ async function executeToolCalls(
 	emit: AgentEventSink,
 ): Promise<ExecutedToolCallBatch> {
 	const toolCalls = assistantMessage.content.filter((c) => c.type === "toolCall");
+	const candidates = speculativeCandidateRegistries.get(assistantMessage);
+	speculativeCandidateRegistries.delete(assistantMessage);
 	const hasSequentialToolCall = toolCalls.some(
 		(tc) => currentContext.tools?.find((t) => t.name === tc.name)?.executionMode === "sequential",
 	);
 	if (config.toolExecution === "sequential" || hasSequentialToolCall) {
-		return executeToolCallsSequential(currentContext, assistantMessage, toolCalls, config, signal, emit);
+		return executeToolCallsSequential(currentContext, assistantMessage, toolCalls, config, signal, emit, candidates);
 	}
-	return executeToolCallsParallel(currentContext, assistantMessage, toolCalls, config, signal, emit);
+	return executeToolCallsParallel(currentContext, assistantMessage, toolCalls, config, signal, emit, candidates);
 }
 
 type ExecutedToolCallBatch = {
@@ -437,6 +650,7 @@ async function executeToolCallsSequential(
 	config: AgentLoopConfig,
 	signal: AbortSignal | undefined,
 	emit: AgentEventSink,
+	candidates: SpeculativeCandidateRegistry | undefined,
 ): Promise<ExecutedToolCallBatch> {
 	const finalizedCalls: FinalizedToolCallOutcome[] = [];
 	const messages: ToolResultMessage[] = [];
@@ -458,7 +672,7 @@ async function executeToolCallsSequential(
 				isError: preparation.isError,
 			};
 		} else {
-			const executed = await executePreparedToolCall(preparation, signal, emit);
+			const executed = await executePreparedToolCall(preparation, signal, emit, candidates, config);
 			finalized = await finalizeExecutedToolCall(
 				currentContext,
 				assistantMessage,
@@ -493,6 +707,7 @@ async function executeToolCallsParallel(
 	config: AgentLoopConfig,
 	signal: AbortSignal | undefined,
 	emit: AgentEventSink,
+	candidates: SpeculativeCandidateRegistry | undefined,
 ): Promise<ExecutedToolCallBatch> {
 	const finalizedCalls: FinalizedToolCallEntry[] = [];
 
@@ -520,7 +735,7 @@ async function executeToolCallsParallel(
 		}
 
 		finalizedCalls.push(async () => {
-			const executed = await executePreparedToolCall(preparation, signal, emit);
+			const executed = await executePreparedToolCall(preparation, signal, emit, candidates, config);
 			const finalized = await finalizeExecutedToolCall(
 				currentContext,
 				assistantMessage,
@@ -597,14 +812,11 @@ function prepareToolCallArguments(tool: AgentTool<any>, toolCall: AgentToolCall)
 	};
 }
 
-async function prepareToolCall(
+function prepareToolCallWithoutHook(
 	currentContext: AgentContext,
-	assistantMessage: AssistantMessage,
 	toolCall: AgentToolCall,
-	config: AgentLoopConfig,
-	signal: AbortSignal | undefined,
-): Promise<PreparedToolCall | ImmediateToolCallOutcome> {
-	const tool = currentContext.tools?.find((t) => t.name === toolCall.name);
+): PreparedToolCall | ImmediateToolCallOutcome {
+	const tool = currentContext.tools?.find((candidate) => candidate.name === toolCall.name);
 	if (!tool) {
 		return {
 			kind: "immediate",
@@ -615,48 +827,11 @@ async function prepareToolCall(
 
 	try {
 		const preparedToolCall = prepareToolCallArguments(tool, toolCall);
-		const validatedArgs = validateToolArguments(tool, preparedToolCall);
-		if (config.beforeToolCall) {
-			const beforeResult = await config.beforeToolCall(
-				{
-					assistantMessage,
-					toolCall,
-					args: validatedArgs,
-					context: currentContext,
-				},
-				signal,
-			);
-			if (signal?.aborted) {
-				return {
-					kind: "immediate",
-					result: createErrorToolResult("Operation aborted"),
-					isError: true,
-				};
-			}
-			if (beforeResult?.block) {
-				const result = createErrorToolResult(beforeResult.reason || "Tool execution was blocked");
-				if (beforeResult.terminate === true) {
-					result.terminate = true;
-				}
-				return {
-					kind: "immediate",
-					result,
-					isError: true,
-				};
-			}
-		}
-		if (signal?.aborted) {
-			return {
-				kind: "immediate",
-				result: createErrorToolResult("Operation aborted"),
-				isError: true,
-			};
-		}
 		return {
 			kind: "prepared",
 			toolCall,
 			tool,
-			args: validatedArgs,
+			args: validateToolArguments(tool, preparedToolCall),
 		};
 	} catch (error) {
 		return {
@@ -667,46 +842,279 @@ async function prepareToolCall(
 	}
 }
 
+async function prepareToolCall(
+	currentContext: AgentContext,
+	assistantMessage: AssistantMessage,
+	toolCall: AgentToolCall,
+	config: AgentLoopConfig,
+	signal: AbortSignal | undefined,
+): Promise<PreparedToolCall | ImmediateToolCallOutcome> {
+	const preparation = prepareToolCallWithoutHook(currentContext, toolCall);
+	if (preparation.kind === "immediate") return preparation;
+
+	if (config.beforeToolCall) {
+		const beforeResult = await config.beforeToolCall(
+			{
+				assistantMessage,
+				toolCall,
+				args: preparation.args,
+				context: currentContext,
+			},
+			signal,
+		);
+		if (signal?.aborted) {
+			return {
+				kind: "immediate",
+				result: createErrorToolResult("Operation aborted"),
+				isError: true,
+			};
+		}
+		if (beforeResult?.block) {
+			const result = createErrorToolResult(beforeResult.reason || "Tool execution was blocked");
+			if (beforeResult.terminate === true) {
+				result.terminate = true;
+			}
+			return {
+				kind: "immediate",
+				result,
+				isError: true,
+			};
+		}
+	}
+	if (signal?.aborted) {
+		return {
+			kind: "immediate",
+			result: createErrorToolResult("Operation aborted"),
+			isError: true,
+		};
+	}
+	return preparation;
+}
+
+async function executePreparedToolRaw(
+	prepared: PreparedToolCall,
+	signal: AbortSignal | undefined,
+	onUpdate: (partialResult: AgentToolResult<any>) => void,
+): Promise<SpeculativeRawOutcome> {
+	try {
+		const result = await prepared.tool.execute(prepared.toolCall.id, prepared.args as never, signal, onUpdate);
+		return { result, isError: false, executionArgs: prepared.args };
+	} catch (error) {
+		return {
+			result: createErrorToolResult(error instanceof Error ? error.message : String(error)),
+			isError: true,
+			executionArgs: prepared.args,
+		};
+	}
+}
+
+async function maybeStartSpeculativeCandidate(
+	currentContext: AgentContext,
+	toolCall: AgentToolCall,
+	config: AgentLoopConfig,
+	signal: AbortSignal | undefined,
+	registry: SpeculativeCandidateRegistry,
+): Promise<boolean> {
+	const speculationConfig = config.speculativeToolExecution as SpeculativeToolExecutionConfig;
+	if (signal?.aborted) {
+		reportIneligibleCandidate(speculationConfig, toolCall, "run aborted");
+		return false;
+	}
+	if (config.toolExecution === "sequential") {
+		reportIneligibleCandidate(speculationConfig, toolCall, "sequential tool execution");
+		return false;
+	}
+	const maxInFlight =
+		typeof speculationConfig.maxInFlight === "number" && Number.isFinite(speculationConfig.maxInFlight)
+			? Math.max(1, Math.floor(speculationConfig.maxInFlight))
+			: 2;
+	if (registry.size >= maxInFlight) {
+		reportIneligibleCandidate(speculationConfig, toolCall, "speculation capacity exhausted");
+		return false;
+	}
+	const tool = currentContext.tools?.find((candidate) => candidate.name === toolCall.name);
+	if (!tool) {
+		reportIneligibleCandidate(speculationConfig, toolCall, "tool not directly advertised");
+		return false;
+	}
+	if (tool.executionMode === "sequential") {
+		reportIneligibleCandidate(speculationConfig, toolCall, "sequential tool");
+		return false;
+	}
+	if (!tool.speculation || tool.speculation.safe !== true) {
+		reportIneligibleCandidate(speculationConfig, toolCall, "tool is not speculation-safe");
+		return false;
+	}
+	if (config.beforeToolCall) {
+		reportIneligibleCandidate(speculationConfig, toolCall, "beforeToolCall is configured");
+		return false;
+	}
+	const preparation = prepareToolCallWithoutHook(currentContext, toolCall);
+	if (preparation.kind === "immediate") {
+		reportIneligibleCandidate(speculationConfig, toolCall, "tool arguments could not be prepared");
+		return false;
+	}
+	if (typeof preparation.args !== "object" || preparation.args === null || Array.isArray(preparation.args)) {
+		reportIneligibleCandidate(speculationConfig, toolCall, "validated arguments are not an object");
+		return false;
+	}
+	let fingerprint: string;
+	try {
+		fingerprint = createExecutionFingerprint(toolCall, preparation.args);
+	} catch {
+		reportIneligibleCandidate(speculationConfig, toolCall, "execution arguments are not canonical JSON");
+		return false;
+	}
+	try {
+		if (
+			tool.speculation.canExecute &&
+			!(await tool.speculation.canExecute({
+				toolCall,
+				args: preparation.args as Record<string, unknown>,
+			}))
+		) {
+			reportIneligibleCandidate(speculationConfig, toolCall, "tool speculation policy vetoed execution");
+			return false;
+		}
+		if (speculationConfig.canExecute && !(await speculationConfig.canExecute(tool, toolCall))) {
+			reportIneligibleCandidate(speculationConfig, toolCall, "host speculation policy vetoed execution");
+			return false;
+		}
+	} catch {
+		reportIneligibleCandidate(speculationConfig, toolCall, "speculation policy failed");
+		return false;
+	}
+
+	const controller = new AbortController();
+	const candidateSignal = createCandidateSignal(signal, controller);
+	const startedAt = Date.now();
+	let candidate: SpeculativeToolCandidate;
+	const promise = executePreparedToolRaw(preparation, candidateSignal.signal, () => {}).then((outcome) => {
+		candidateSignal.dispose();
+		candidate.finishedAt = Date.now();
+		if (candidate.state === "running") candidate.state = "completed";
+		return outcome;
+	});
+	candidate = {
+		toolCall,
+		tool,
+		executionArgs: preparation.args,
+		fingerprint,
+		startedAt,
+		state: "running",
+		controller,
+		promise,
+		reported: false,
+	};
+	registry.set(toolCall.id, candidate);
+	return true;
+}
+
+function takeMatchingCandidate(
+	prepared: PreparedToolCall,
+	registry: SpeculativeCandidateRegistry | undefined,
+	speculationConfig: SpeculativeToolExecutionConfig | undefined,
+): SpeculativeToolCandidate | undefined {
+	const candidate = registry?.get(prepared.toolCall.id);
+	if (!candidate || !speculationConfig) return undefined;
+	registry?.delete(prepared.toolCall.id);
+	candidate.dispatchReachedAt = Date.now();
+	let fingerprint: string;
+	try {
+		fingerprint = createExecutionFingerprint(prepared.toolCall, prepared.args);
+	} catch {
+		discardCandidate(
+			speculationConfig,
+			candidate,
+			"fingerprint_mismatch",
+			"final execution arguments are not canonical JSON",
+		);
+		return undefined;
+	}
+	if (candidate.fingerprint !== fingerprint) {
+		discardCandidate(speculationConfig, candidate, "fingerprint_mismatch", "final execution arguments changed");
+		return undefined;
+	}
+	if (candidate.state === "discarded") return undefined;
+	candidate.state = "committed";
+	return candidate;
+}
+
+function reconcileSpeculativeCandidates(
+	assistantMessage: AssistantMessage,
+	registry: SpeculativeCandidateRegistry,
+	config: SpeculativeToolExecutionConfig,
+	context: AgentContext,
+): void {
+	for (const [toolCallId, candidate] of registry) {
+		const finalToolCall = assistantMessage.content.find(
+			(content): content is AgentToolCall => content.type === "toolCall" && content.id === toolCallId,
+		);
+		if (!finalToolCall) {
+			registry.delete(toolCallId);
+			discardCandidate(config, candidate, "discarded", "final message removed tool call");
+			continue;
+		}
+		const preparation = prepareToolCallWithoutHook(context, finalToolCall);
+		if (preparation.kind === "immediate") {
+			registry.delete(toolCallId);
+			discardCandidate(config, candidate, "fingerprint_mismatch", "final tool call could not be prepared");
+			continue;
+		}
+		try {
+			if (candidate.fingerprint === createExecutionFingerprint(finalToolCall, preparation.args)) continue;
+		} catch {
+			// The mismatch path below aborts the candidate and preserves ordinary dispatch.
+		}
+		registry.delete(toolCallId);
+		discardCandidate(config, candidate, "fingerprint_mismatch", "final execution arguments changed");
+	}
+}
+
 async function executePreparedToolCall(
 	prepared: PreparedToolCall,
 	signal: AbortSignal | undefined,
 	emit: AgentEventSink,
+	candidates: SpeculativeCandidateRegistry | undefined,
+	config: AgentLoopConfig,
 ): Promise<ExecutedToolCallOutcome> {
+	const candidate = takeMatchingCandidate(prepared, candidates, config.speculativeToolExecution);
+	if (candidate) {
+		const outcome = await candidate.promise;
+		reportCandidate(
+			config.speculativeToolExecution as SpeculativeToolExecutionConfig,
+			candidate,
+			signal?.aborted ? "aborted" : "committed",
+			signal?.aborted ? "run aborted before candidate commit" : undefined,
+		);
+		return outcome;
+	}
+
 	const updateEvents: Promise<void>[] = [];
 	let acceptingUpdates = true;
-
-	try {
-		const result = await prepared.tool.execute(
-			prepared.toolCall.id,
-			prepared.args as never,
-			signal,
-			(partialResult) => {
-				if (!acceptingUpdates) return;
-				updateEvents.push(
-					Promise.resolve(
-						emit({
-							type: "tool_execution_update",
-							toolCallId: prepared.toolCall.id,
-							toolName: prepared.toolCall.name,
-							args: prepared.toolCall.arguments,
-							partialResult,
-						}),
-					),
-				);
-			},
+	const outcome = await executePreparedToolRaw(prepared, signal, (partialResult) => {
+		if (!acceptingUpdates) return;
+		updateEvents.push(
+			Promise.resolve(
+				emit({
+					type: "tool_execution_update",
+					toolCallId: prepared.toolCall.id,
+					toolName: prepared.toolCall.name,
+					args: prepared.toolCall.arguments,
+					partialResult,
+				}),
+			),
 		);
-		acceptingUpdates = false;
+	});
+	acceptingUpdates = false;
+	try {
 		await Promise.all(updateEvents);
-		return { result, isError: false };
+		return outcome;
 	} catch (error) {
-		acceptingUpdates = false;
-		await Promise.all(updateEvents);
 		return {
 			result: createErrorToolResult(error instanceof Error ? error.message : String(error)),
 			isError: true,
 		};
-	} finally {
-		acceptingUpdates = false;
 	}
 }
 

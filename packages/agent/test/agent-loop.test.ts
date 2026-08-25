@@ -10,7 +10,14 @@ import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
 import { agentLoop, agentLoopContinue } from "../src/agent-loop.ts";
 import { setDefaultStreamFn } from "../src/index.ts";
-import type { AgentContext, AgentEvent, AgentLoopConfig, AgentMessage, AgentTool } from "../src/types.ts";
+import type {
+	AgentContext,
+	AgentEvent,
+	AgentLoopConfig,
+	AgentMessage,
+	AgentTool,
+	AgentToolCall,
+} from "../src/types.ts";
 
 // Mock stream for testing - mimics MockAssistantStream
 class MockAssistantStream extends EventStream<AssistantMessageEvent, AssistantMessage> {
@@ -1603,5 +1610,229 @@ describe("agentLoopContinue with AgentMessage", () => {
 		const messages = await stream.result();
 		expect(messages.length).toBe(1);
 		expect(messages[0].role).toBe("assistant");
+	});
+});
+
+describe("speculative tool execution", () => {
+	it("starts after toolcall_end, commits exactly once, and preserves lifecycle events", async () => {
+		const schema = Type.Object({ value: Type.String() });
+		let signalStarted = () => {};
+		const started = new Promise<void>((resolve) => {
+			signalStarted = resolve;
+		});
+		let releaseExecution = () => {};
+		const release = new Promise<void>((resolve) => {
+			releaseExecution = resolve;
+		});
+		const telemetry: Array<{ outcome: string; overlapMs?: number }> = [];
+		let executions = 0;
+		const tool: AgentTool<typeof schema, { value: string }> = {
+			name: "sleep_read",
+			label: "Sleep read",
+			description: "Discard-safe controlled read",
+			parameters: schema,
+			speculation: { safe: true, mode: "finalized" },
+			async execute(_toolCallId, params) {
+				executions++;
+				signalStarted();
+				await release;
+				return { content: [{ type: "text", text: params.value }], details: { value: params.value } };
+			},
+		};
+		const call: AgentToolCall = {
+			type: "toolCall",
+			id: "speculative-1",
+			name: "sleep_read",
+			arguments: { value: "early" },
+		};
+		const partial = createAssistantMessage([call], "toolUse");
+		const firstResponse = new MockAssistantStream();
+		let providerCalls = 0;
+		const events: AgentEvent[] = [];
+		const stream = agentLoop(
+			[createUserMessage("read")],
+			{ systemPrompt: "", messages: [], tools: [tool] },
+			{
+				model: createModel(),
+				convertToLlm: identityConverter,
+				speculativeToolExecution: { enabled: true, onTelemetry: (event) => telemetry.push(event) },
+			},
+			undefined,
+			() => {
+				providerCalls++;
+				if (providerCalls === 1) return firstResponse;
+				const response = new MockAssistantStream();
+				queueMicrotask(() => {
+					response.push({
+						type: "done",
+						reason: "stop",
+						message: createAssistantMessage([{ type: "text", text: "done" }]),
+					});
+				});
+				return response;
+			},
+		);
+		const consume = (async () => {
+			for await (const event of stream) events.push(event);
+		})();
+
+		firstResponse.push({ type: "start", partial });
+		firstResponse.push({ type: "toolcall_end", contentIndex: 0, toolCall: call, partial });
+		await started;
+		expect(executions).toBe(1);
+		expect(events.filter((event) => event.type === "tool_execution_start")).toHaveLength(0);
+
+		firstResponse.push({ type: "done", reason: "toolUse", message: partial });
+		await Promise.resolve();
+		releaseExecution();
+		const messages = await stream.result();
+		await consume;
+
+		expect(executions).toBe(1);
+		expect(events.filter((event) => event.type === "tool_execution_start")).toHaveLength(1);
+		expect(events.filter((event) => event.type === "tool_execution_end")).toHaveLength(1);
+		expect(messages.filter((message) => message.role === "toolResult")).toHaveLength(1);
+		expect(telemetry).toContainEqual(expect.objectContaining({ outcome: "committed" }));
+	});
+
+	it("enforces barriers and re-executes only a changed final fingerprint", async () => {
+		const schema = Type.Object({ value: Type.String() });
+		const starts: string[] = [];
+		const telemetry: Array<{ outcome: string }> = [];
+		let signalCandidatesStarted = () => {};
+		const candidatesStarted = new Promise<void>((resolve) => {
+			signalCandidatesStarted = resolve;
+		});
+		const safeTool: AgentTool<typeof schema, { value: string }> = {
+			name: "safe",
+			label: "Safe",
+			description: "Discard-safe test tool",
+			parameters: schema,
+			speculation: { safe: true },
+			async execute(_toolCallId, params) {
+				starts.push(`safe:${params.value}`);
+				if (starts.length === 2) signalCandidatesStarted();
+				return { content: [{ type: "text", text: params.value }], details: { value: params.value } };
+			},
+		};
+		const unsafeTool: AgentTool<typeof schema, { value: string }> = {
+			name: "unsafe",
+			label: "Unsafe",
+			description: "Unsafe test tool",
+			parameters: schema,
+			executionMode: "sequential",
+			async execute(_toolCallId, params) {
+				starts.push(`unsafe:${params.value}`);
+				return { content: [{ type: "text", text: params.value }], details: { value: params.value } };
+			},
+		};
+		const initialCalls: AgentToolCall[] = [
+			{ type: "toolCall", id: "safe-a", name: "safe", arguments: { value: "a" } },
+			{ type: "toolCall", id: "safe-b", name: "safe", arguments: { value: "b" } },
+			{ type: "toolCall", id: "unsafe-c", name: "unsafe", arguments: { value: "c" } },
+			{ type: "toolCall", id: "safe-d", name: "safe", arguments: { value: "d" } },
+		];
+		const partial = createAssistantMessage(initialCalls, "toolUse");
+		const firstResponse = new MockAssistantStream();
+		let providerCalls = 0;
+		const stream = agentLoop(
+			[createUserMessage("read")],
+			{ systemPrompt: "", messages: [], tools: [safeTool, unsafeTool] },
+			{
+				model: createModel(),
+				convertToLlm: identityConverter,
+				speculativeToolExecution: { enabled: true, maxInFlight: 2, onTelemetry: (event) => telemetry.push(event) },
+			},
+			undefined,
+			() => {
+				providerCalls++;
+				if (providerCalls === 1) return firstResponse;
+				const response = new MockAssistantStream();
+				queueMicrotask(() => {
+					response.push({
+						type: "done",
+						reason: "stop",
+						message: createAssistantMessage([{ type: "text", text: "done" }]),
+					});
+				});
+				return response;
+			},
+		);
+
+		firstResponse.push({ type: "start", partial });
+		for (const [contentIndex, toolCall] of initialCalls.entries()) {
+			firstResponse.push({ type: "toolcall_end", contentIndex, toolCall, partial });
+		}
+		await candidatesStarted;
+		expect(starts).toEqual(["safe:a", "safe:b"]);
+
+		const finalCalls = initialCalls.map((toolCall) =>
+			toolCall.id === "safe-b" ? { ...toolCall, arguments: { value: "changed" } } : toolCall,
+		);
+		firstResponse.push({
+			type: "done",
+			reason: "toolUse",
+			message: createAssistantMessage(finalCalls, "toolUse"),
+		});
+		await stream.result();
+
+		expect(starts).toEqual(["safe:a", "safe:b", "safe:changed", "unsafe:c", "safe:d"]);
+		expect(telemetry).toContainEqual(expect.objectContaining({ outcome: "fingerprint_mismatch" }));
+	});
+
+	it("leaves unmarked tools disabled until ordinary dispatch", async () => {
+		const schema = Type.Object({ value: Type.String() });
+		let executions = 0;
+		const tool: AgentTool<typeof schema, { value: string }> = {
+			name: "unmarked",
+			label: "Unmarked",
+			description: "No speculation declaration",
+			parameters: schema,
+			async execute(_toolCallId, params) {
+				executions++;
+				return { content: [{ type: "text", text: params.value }], details: { value: params.value } };
+			},
+		};
+		const call: AgentToolCall = {
+			type: "toolCall",
+			id: "unmarked-1",
+			name: "unmarked",
+			arguments: { value: "ordinary" },
+		};
+		const partial = createAssistantMessage([call], "toolUse");
+		const firstResponse = new MockAssistantStream();
+		let providerCalls = 0;
+		const stream = agentLoop(
+			[createUserMessage("run")],
+			{ systemPrompt: "", messages: [], tools: [tool] },
+			{
+				model: createModel(),
+				convertToLlm: identityConverter,
+				speculativeToolExecution: { enabled: true },
+			},
+			undefined,
+			() => {
+				providerCalls++;
+				if (providerCalls === 1) return firstResponse;
+				const response = new MockAssistantStream();
+				queueMicrotask(() => {
+					response.push({
+						type: "done",
+						reason: "stop",
+						message: createAssistantMessage([{ type: "text", text: "done" }]),
+					});
+				});
+				return response;
+			},
+		);
+
+		firstResponse.push({ type: "start", partial });
+		firstResponse.push({ type: "toolcall_end", contentIndex: 0, toolCall: call, partial });
+		await Promise.resolve();
+		await Promise.resolve();
+		expect(executions).toBe(0);
+		firstResponse.push({ type: "done", reason: "toolUse", message: partial });
+		await stream.result();
+		expect(executions).toBe(1);
 	});
 });
