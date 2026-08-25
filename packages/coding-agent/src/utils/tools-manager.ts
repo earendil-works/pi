@@ -1,5 +1,5 @@
 import { type SpawnSyncReturns, spawnSync } from "child_process";
-import { chmodSync, createWriteStream, existsSync, mkdirSync, readdirSync, renameSync, rmSync } from "fs";
+import { chmodSync, createWriteStream, existsSync, linkSync, mkdirSync, readdirSync, rmSync } from "fs";
 import { arch, platform } from "os";
 import { join } from "path";
 import { Readable } from "stream";
@@ -238,6 +238,18 @@ function extractZipArchive(archivePath: string, extractDir: string, assetName: s
 	throw new Error(`Failed to extract ${assetName}: ${failures.join("; ")}`);
 }
 
+export function publishBinary(extractedBinary: string, binaryPath: string, platformName: string): void {
+	if (platformName !== "win32") {
+		chmodSync(extractedBinary, 0o755);
+	}
+
+	try {
+		linkSync(extractedBinary, binaryPath);
+	} catch (error) {
+		if (!existsSync(binaryPath)) throw error;
+	}
+}
+
 // Download and install a tool
 async function downloadTool(tool: "fd" | "rg"): Promise<string> {
 	const config = TOOLS[tool];
@@ -262,7 +274,10 @@ async function downloadTool(tool: "fd" | "rg"): Promise<string> {
 	mkdirSync(TOOLS_DIR, { recursive: true });
 
 	const downloadUrl = `https://github.com/${config.repo}/releases/download/${config.tagPrefix}${version}/${assetName}`;
-	const archivePath = join(TOOLS_DIR, assetName);
+	const archivePath = join(
+		TOOLS_DIR,
+		`${assetName}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 10)}`,
+	);
 	const binaryExt = plat === "win32" ? ".exe" : "";
 	const binaryPath = join(TOOLS_DIR, config.binaryName + binaryExt);
 
@@ -298,14 +313,9 @@ async function downloadTool(tool: "fd" | "rg"): Promise<string> {
 		}
 
 		if (extractedBinary) {
-			renameSync(extractedBinary, binaryPath);
+			publishBinary(extractedBinary, binaryPath, plat);
 		} else {
 			throw new Error(`Binary not found in archive: expected ${binaryFileName} under ${extractDir}`);
-		}
-
-		// Make executable (Unix only)
-		if (plat !== "win32") {
-			chmodSync(binaryPath, 0o755);
 		}
 	} finally {
 		// Cleanup
