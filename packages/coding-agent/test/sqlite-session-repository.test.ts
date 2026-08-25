@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { BackendSessionManager } from "../src/core/backend-session-manager.ts";
 import { CodingAgentSqliteSessionRepository } from "../src/core/sqlite-session-repository.ts";
 
 function createUserMessage(text: string): AgentMessage {
@@ -40,7 +41,8 @@ describe("CodingAgentSqliteSessionRepository", () => {
 		repo = new CodingAgentSqliteSessionRepository(databasePath);
 	});
 
-	afterEach(() => {
+	afterEach(async () => {
+		await repo.close();
 		rmSync(root, { recursive: true, force: true });
 	});
 
@@ -55,8 +57,7 @@ describe("CodingAgentSqliteSessionRepository", () => {
 			id: "session-1",
 			storagePath: databasePath,
 		});
-		await session.close();
-		await session.close();
+		await repo.release(session);
 
 		expect((await repo.list(cwd)).map((item) => item.id)).toEqual(["session-1"]);
 		const [info] = await repo.listSessionInfo(cwd);
@@ -69,8 +70,12 @@ describe("CodingAgentSqliteSessionRepository", () => {
 		expect(info?.modified.getTime()).toBeGreaterThanOrEqual(info?.created.getTime() ?? 0);
 		expect(await repo.list(join(root, "other"))).toEqual([]);
 		const reopened = await repo.openById("session-1");
-		expect((await reopened.buildContext()).messages.map((message) => message.role)).toEqual(["user", "assistant"]);
-		await reopened.close();
+		const reopenedManager = await BackendSessionManager.hydrate(reopened, "sqlite");
+		expect(reopenedManager.buildSessionContext().messages.map((message) => message.role)).toEqual([
+			"user",
+			"assistant",
+		]);
+		await repo.release(reopened);
 	});
 
 	it("continues the most recent cwd session or creates one", async () => {
@@ -78,23 +83,25 @@ describe("CodingAgentSqliteSessionRepository", () => {
 		const created = await repo.continueRecent(cwd);
 		const createdId = (await created.getMetadata()).id;
 		await created.appendMessage(createUserMessage("persisted"));
-		await created.close();
+		await repo.release(created);
 
 		const continued = await repo.continueRecent(cwd);
 		expect((await continued.getMetadata()).id).toBe(createdId);
-		expect((await continued.buildContext()).messages).toHaveLength(1);
-		await continued.close();
+		const continuedManager = await BackendSessionManager.hydrate(continued, "sqlite");
+		expect(continuedManager.buildSessionContext().messages).toHaveLength(1);
+		await repo.release(continued);
 	});
 
 	it("forks and deletes sessions by id", async () => {
 		const source = await repo.create({ cwd: root, id: "source" });
 		await source.appendMessage(createUserMessage("one"));
 		await source.appendMessage(createAssistantMessage("two"));
-		await source.close();
+		await repo.release(source);
 
 		const fork = await repo.fork("source", { cwd: root, id: "fork" });
-		expect((await fork.buildContext()).messages.map((message) => message.role)).toEqual(["user", "assistant"]);
-		await fork.close();
+		const forkManager = await BackendSessionManager.hydrate(fork, "sqlite");
+		expect(forkManager.buildSessionContext().messages.map((message) => message.role)).toEqual(["user", "assistant"]);
+		await repo.release(fork);
 		await repo.deleteById("source");
 		expect((await repo.list()).map((item) => item.id)).toEqual(["fork"]);
 		await expect(repo.openById("source")).rejects.toMatchObject({ code: "not_found" });
@@ -114,11 +121,11 @@ describe("CodingAgentSqliteSessionRepository", () => {
 	it("supports repeated open and close cycles", async () => {
 		const created = await repo.create({ cwd: root, id: "session-1" });
 		await created.appendMessage(createUserMessage("one"));
-		await created.close();
+		await repo.release(created);
 		for (let index = 0; index < 5; index += 1) {
 			const opened = await repo.openById("session-1");
 			expect(await opened.getLeafId()).not.toBeNull();
-			await opened.close();
+			await repo.release(opened);
 		}
 	});
 });

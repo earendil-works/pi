@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { fauxAssistantMessage, getModel, registerFauxProvider } from "@earendil-works/pi-ai/compat";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
+import { BackendSessionManager } from "../src/core/backend-session-manager.ts";
 import { ModelRuntime } from "../src/core/model-runtime.ts";
 import { createAgentSession } from "../src/core/sdk.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
@@ -109,8 +110,13 @@ describe("createAgentSession session manager defaults", () => {
 
 		const repository = new CodingAgentSqliteSessionRepository(join(agentDir, "sessions.sqlite"));
 		const reopened = await repository.openById(sessionId);
-		expect((await reopened.buildContext()).messages.map((message) => message.role)).toEqual(["user", "assistant"]);
-		await reopened.close();
+		const reopenedManager = await BackendSessionManager.hydrate(reopened, "sqlite");
+		expect(reopenedManager.buildSessionContext().messages.map((message) => message.role)).toEqual([
+			"user",
+			"assistant",
+		]);
+		await repository.release(reopened);
+		await repository.close();
 		faux.unregister();
 	});
 

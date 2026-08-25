@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { chmodSync, existsSync, mkdirSync, rmSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, rmSync } from "node:fs";
 import { isBuiltin } from "node:module";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,6 +10,7 @@ const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptDir, "..");
 const codingAgentDir = join(repoRoot, "packages", "coding-agent");
 const aiDistDir = join(repoRoot, "packages", "ai", "dist");
+const sqliteDistDir = join(repoRoot, "packages", "session-backends", "sqlite-node", "dist");
 const codingAgentDistDir = join(codingAgentDir, "dist");
 const bundleDir = join(codingAgentDistDir, "bundle");
 const banner = {
@@ -145,6 +146,10 @@ const mainResult = await build({
 const bedrockLoaderOutput = findContainingOutput(mainResult.metafile, "packages/ai/dist/api/bedrock-converse-stream.lazy.js");
 const oauthLoaderOutput = findContainingOutput(mainResult.metafile, "packages/ai/dist/auth/oauth/load.js");
 const imageResizeOutput = findContainingOutput(mainResult.metafile, "packages/coding-agent/dist/utils/image-resize.js");
+const sqliteMigrationsOutput = findContainingOutput(
+	mainResult.metafile,
+	"packages/session-backends/sqlite-node/dist/sqlite/migrations.js",
+);
 if (dirname(bedrockLoaderOutput) !== dirname(oauthLoaderOutput)) {
 	throw new Error("Bedrock and OAuth lazy loaders were emitted into different directories");
 }
@@ -174,6 +179,10 @@ const imageResizeWorkerOutput = resolve(dirname(bedrockLoaderOutput), "image-res
 if (dirname(imageResizeOutput) !== dirname(imageResizeWorkerOutput)) {
 	throw new Error("Image resize implementation and worker were emitted into different directories");
 }
+
+cpSync(join(sqliteDistDir, "sqlite", "migrations"), join(dirname(sqliteMigrationsOutput), "migrations"), {
+	recursive: true,
+});
 
 validateExternalImports([mainResult.metafile, lazyResult.metafile]);
 chmodSync(join(bundleDir, "cli.js"), 0o755);

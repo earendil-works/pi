@@ -191,9 +191,8 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			const [{ BackendSessionManager }, { CodingAgentSqliteSessionRepository, SQLITE_SESSIONS_DATABASE }] =
 				await Promise.all([import("./backend-session-manager.ts"), import("./sqlite-session-repository.ts")]);
 			const repository = new CodingAgentSqliteSessionRepository(join(agentDir, SQLITE_SESSIONS_DATABASE));
-			sessionManager = (await BackendSessionManager.hydrate(
-				await repository.create({ cwd }),
-				"sqlite",
+			sessionManager = (await BackendSessionManager.hydrate(await repository.create({ cwd }), "sqlite", () =>
+				repository.close(),
 			)) as unknown as SessionManager;
 		} else {
 			sessionManager = SessionManager.create(cwd, getDefaultSessionDir(cwd, agentDir));

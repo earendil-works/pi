@@ -390,7 +390,7 @@ export async function createSessionManager(
 			sqliteSession = await repository.fork(parsed.fork, { cwd, id: parsed.sessionId });
 		} else if (parsed.parentSession) {
 			const parent = await repository.openById(parsed.parentSession);
-			await parent.close();
+			await repository.release(parent);
 			sqliteSession = await repository.create({
 				cwd,
 				id: parsed.sessionId,
@@ -410,7 +410,9 @@ export async function createSessionManager(
 		} else {
 			sqliteSession = await repository.create({ cwd });
 		}
-		return (await BackendSessionManager.hydrate(sqliteSession, "sqlite")) as unknown as SessionManager;
+		return (await BackendSessionManager.hydrate(sqliteSession, "sqlite", () =>
+			repository.close(),
+		)) as unknown as SessionManager;
 	}
 
 	if (parsed.fork) {

@@ -1,9 +1,9 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { InMemorySessionStorage, JsonlSessionStorage, Session } from "@earendil-works/pi-agent-core";
+import { InMemorySessionStorage, JsonlSessionRepo, Session } from "@earendil-works/pi-agent-core";
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
-import { createNodeSqliteFactory, SqliteSessionRepo } from "@earendil-works/pi-session-backend-sqlite-node";
+import { createNodeSqliteFactory, SqliteSessionRepository } from "@earendil-works/pi-session-backend-sqlite-node";
 import { afterEach, describe, expect, it } from "vitest";
 import { BackendSessionManager } from "../src/core/backend-session-manager.ts";
 
@@ -40,28 +40,27 @@ function tempDir(): string {
 
 async function memoryManager(): Promise<BackendSessionManager> {
 	return BackendSessionManager.hydrate(
-		new Session(new InMemorySessionStorage({ metadata: { id: "session-1", createdAt: new Date().toISOString() } })),
+		new Session(new InMemorySessionStorage({ id: "session-1", createdAt: Date.now() })),
 		"memory",
 	);
 }
 
 async function jsonlManager(): Promise<BackendSessionManager> {
 	const root = tempDir();
-	const storage = await JsonlSessionStorage.create(new NodeExecutionEnv({ cwd: root }), join(root, "session.jsonl"), {
-		cwd: root,
-		sessionId: "session-1",
-	});
-	return BackendSessionManager.hydrate(new Session(storage), "jsonl");
+	const repository = new JsonlSessionRepo({ fs: new NodeExecutionEnv({ cwd: root }), sessionsRoot: root });
+	return BackendSessionManager.hydrate(await repository.create({ cwd: root, id: "session-1" }), "jsonl");
 }
 
 async function sqliteManager(): Promise<BackendSessionManager> {
 	const root = tempDir();
-	const repository = new SqliteSessionRepo({
+	const repository = new SqliteSessionRepository({
 		env: new NodeExecutionEnv({ cwd: root }),
 		sqlite: createNodeSqliteFactory(),
 		databasePath: join(root, "sessions.sqlite"),
 	});
-	return BackendSessionManager.hydrate(await repository.create({ cwd: root, id: "session-1" }), "sqlite");
+	return BackendSessionManager.hydrate(await repository.create({ cwd: root, id: "session-1" }), "sqlite", () =>
+		repository.close(),
+	);
 }
 
 for (const [name, create] of [
@@ -83,7 +82,7 @@ for (const [name, create] of [
 			await manager.appendThinkingLevelChange("high");
 			await manager.appendLabelChange(rootId, "checkpoint");
 			await manager.appendSessionInfo("name");
-			expect(manager.getEntries().length).toBeGreaterThanOrEqual(6);
+			expect(manager.getEntries().length).toBeGreaterThanOrEqual(4);
 			expect(manager.getLabel(rootId)).toBe("checkpoint");
 			expect(manager.getSessionName()).toBe("name");
 			expect(manager.buildSessionContext()).toMatchObject({

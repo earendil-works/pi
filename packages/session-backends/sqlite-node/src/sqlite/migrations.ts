@@ -30,11 +30,6 @@ export async function loadMigrations(): Promise<SqliteMigration[]> {
 			order: 3,
 			sql: await loadMigrationSql("./migrations/003_usage_analytics_index.sql"),
 		},
-		{
-			id: "004_session_search_fts.sql",
-			order: 4,
-			sql: await loadMigrationSql("./migrations/004_session_search_fts.sql"),
-		},
 	];
 }
 

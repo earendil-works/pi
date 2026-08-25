@@ -2,6 +2,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { BackendSessionManager } from "../src/core/backend-session-manager.ts";
 import { parseSessionEntries, SessionManager } from "../src/core/session-manager.ts";
 import { exportSqliteSessionToJsonl, importJsonlIntoSqlite } from "../src/core/sqlite-session-interchange.ts";
 import { CodingAgentSqliteSessionRepository } from "../src/core/sqlite-session-repository.ts";
@@ -15,7 +16,10 @@ describe("SQLite JSONL interchange", () => {
 		repository = new CodingAgentSqliteSessionRepository(join(root, "sessions.sqlite"));
 	});
 
-	afterEach(() => rmSync(root, { recursive: true, force: true }));
+	afterEach(async () => {
+		await repository.close();
+		rmSync(root, { recursive: true, force: true });
+	});
 
 	it("round-trips a JSONL session through SQLite", async () => {
 		const source = SessionManager.create(root, root, { id: "roundtrip" });
@@ -38,7 +42,11 @@ describe("SQLite JSONL interchange", () => {
 			timestamp: Date.now(),
 		});
 		const imported = await importJsonlIntoSqlite({ repository, inputPath: source.getSessionFile()! });
-		expect((await imported.buildContext()).messages.map((message) => message.role)).toEqual(["user", "assistant"]);
+		const importedManager = await BackendSessionManager.hydrate(imported, "sqlite");
+		expect(importedManager.buildSessionContext().messages.map((message) => message.role)).toEqual([
+			"user",
+			"assistant",
+		]);
 
 		const outputPath = join(root, "export", "session.jsonl");
 		await exportSqliteSessionToJsonl({ session: imported, outputPath });
@@ -47,7 +55,7 @@ describe("SQLite JSONL interchange", () => {
 		const messages = exported.filter((entry) => entry.type === "message");
 		expect(messages[0]?.parentId).toBeNull();
 		expect(messages[1]?.parentId).toBe(messages[0]?.id);
-		await imported.close();
+		await repository.release(imported);
 	});
 
 	it("removes a partially imported session on failure", async () => {
@@ -62,8 +70,8 @@ describe("SQLite JSONL interchange", () => {
 
 	it("rejects session id collisions without changing the existing session", async () => {
 		const existing = await repository.create({ cwd: root, id: "duplicate" });
-		await existing.appendSessionName("existing");
-		await existing.close();
+		await existing.setName("existing");
+		await repository.release(existing);
 		const path = join(root, "duplicate.jsonl");
 		writeFileSync(
 			path,
@@ -71,7 +79,7 @@ describe("SQLite JSONL interchange", () => {
 		);
 		await expect(importJsonlIntoSqlite({ repository, inputPath: path })).rejects.toThrow();
 		const reopened = await repository.openById("duplicate");
-		expect(await reopened.getSessionName()).toBe("existing");
-		await reopened.close();
+		expect(await reopened.getName()).toBe("existing");
+		await repository.release(reopened);
 	});
 });

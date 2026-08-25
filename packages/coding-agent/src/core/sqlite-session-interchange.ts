@@ -1,7 +1,8 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
-import type { Session, SessionTreeEntry } from "@earendil-works/pi-agent-core";
+import type { Session } from "@earendil-works/pi-agent-core";
 import type { SqliteSessionMetadata } from "@earendil-works/pi-session-backend-sqlite-node";
+import { BackendSessionManager } from "./backend-session-manager.ts";
 import {
 	CURRENT_SESSION_VERSION,
 	migrateSessionEntries,
@@ -10,6 +11,93 @@ import {
 	type SessionHeader,
 } from "./session-manager.ts";
 import type { CodingAgentSqliteSessionRepository } from "./sqlite-session-repository.ts";
+
+const CUSTOM_MESSAGE_TYPE = "coding-agent:custom-message";
+const COMPACTION_DETAILS_KEY = "__codingAgentCompaction";
+
+async function appendImportedEntry(session: Session<SqliteSessionMetadata>, entry: SessionEntry): Promise<void> {
+	if (entry.parentId !== (await session.getLeafId())) await session.moveLane("main", entry.parentId);
+	switch (entry.type) {
+		case "label":
+			await session.setLabel(entry.targetId, entry.label);
+			return;
+		case "session_info":
+			await session.setName(entry.name);
+			return;
+		case "custom_message":
+			await session.appendEntry(
+				{
+					id: entry.id,
+					type: "custom",
+					customType: CUSTOM_MESSAGE_TYPE,
+					data: {
+						customType: entry.customType,
+						content: entry.content,
+						display: entry.display,
+						details: entry.details,
+					},
+				},
+				"main",
+			);
+			return;
+		case "compaction":
+			await session.appendEntry(
+				{
+					id: entry.id,
+					type: "compaction",
+					summary: entry.summary,
+					retainedTail: [],
+					tokensBefore: entry.tokensBefore,
+					details: {
+						[COMPACTION_DETAILS_KEY]: {
+							firstKeptEntryId: entry.firstKeptEntryId,
+							fromHook: entry.fromHook,
+						},
+						details: entry.details,
+					},
+					usage: entry.usage,
+				},
+				"main",
+			);
+			return;
+		case "message":
+			await session.appendEntry({ id: entry.id, type: "message", message: entry.message }, "main");
+			return;
+		case "thinking_level_change":
+			await session.appendEntry(
+				{ id: entry.id, type: "thinking_level_change", thinkingLevel: entry.thinkingLevel },
+				"main",
+			);
+			return;
+		case "model_change":
+			await session.appendEntry(
+				{ id: entry.id, type: "model_change", provider: entry.provider, modelId: entry.modelId },
+				"main",
+			);
+			return;
+		case "branch_summary":
+			await session.appendEntry(
+				{
+					id: entry.id,
+					type: "branch_summary",
+					fromId: entry.fromId,
+					summary: entry.summary,
+					details: entry.details,
+					usage: entry.usage,
+				},
+				"main",
+			);
+			return;
+		case "custom":
+			await session.appendEntry(
+				{ id: entry.id, type: "custom", customType: entry.customType, data: entry.data },
+				"main",
+			);
+			return;
+		default:
+			throw new Error(`Unsupported session entry type: ${String((entry as { type?: unknown }).type)}`);
+	}
+}
 
 export async function importJsonlIntoSqlite(options: {
 	repository: CodingAgentSqliteSessionRepository;
@@ -30,13 +118,11 @@ export async function importJsonlIntoSqlite(options: {
 	});
 	try {
 		for (const entry of entries) {
-			if (entry.type !== "session") {
-				await session.getStorage().appendEntry(entry as SessionTreeEntry);
-			}
+			if (entry.type !== "session") await appendImportedEntry(session, entry);
 		}
 		return session;
 	} catch (error) {
-		await session.close();
+		await options.repository.release(session);
 		try {
 			await options.repository.deleteById(id);
 		} catch {
@@ -56,14 +142,14 @@ export async function exportSqliteSessionToJsonl(options: {
 		type: "session",
 		version: CURRENT_SESSION_VERSION,
 		id: metadata.id,
-		timestamp: metadata.createdAt,
+		timestamp: new Date(metadata.createdAt).toISOString(),
 		cwd: metadata.cwd,
 	};
+	const manager = await BackendSessionManager.hydrate(options.session, "sqlite");
 	const lines = [JSON.stringify(header)];
 	let parentId: string | null = null;
-	for (const entry of await options.session.getBranch()) {
-		if (entry.type === "leaf") continue;
-		const linear = { ...(entry as SessionEntry), parentId };
+	for (const entry of manager.getBranch()) {
+		const linear = { ...entry, parentId };
 		lines.push(JSON.stringify(linear));
 		parentId = entry.id;
 	}

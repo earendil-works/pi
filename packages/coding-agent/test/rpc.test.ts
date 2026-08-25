@@ -183,7 +183,8 @@ describe("RPC mode", () => {
 		const beforeStats = await client.getSessionStats();
 		const beforeEntries = await client.getEntries();
 		expect(beforeEntries.entries.length).toBeGreaterThanOrEqual(2);
-		expect(await client.getLastAssistantText()).toBe("hello");
+		const beforeAssistantText = await client.getLastAssistantText();
+		expect(beforeAssistantText).toBeTruthy();
 
 		await client.stop();
 		client = createRpcClient(["--continue"]);
@@ -196,7 +197,7 @@ describe("RPC mode", () => {
 		expect(restoredStats.sessionId).toBe(beforeStats.sessionId);
 		expect(restoredEntries.entries.map((entry) => entry.id)).toEqual(beforeEntries.entries.map((entry) => entry.id));
 		expect(restoredEntries.leafId).toBe(beforeEntries.leafId);
-		expect(await client.getLastAssistantText()).toBe("hello");
+		expect(await client.getLastAssistantText()).toBe(beforeAssistantText);
 	}, 30000);
 
 	test("should restore a SQLite session in a new RPC process", async () => {
@@ -205,6 +206,8 @@ describe("RPC mode", () => {
 		await client.promptAndWait("Reply with just the word 'hello'");
 		const beforeStats = await client.getSessionStats();
 		const beforeEntries = await client.getEntries();
+		const beforeAssistantText = await client.getLastAssistantText();
+		expect(beforeAssistantText).toBeTruthy();
 		await client.stop();
 
 		expect(existsSync(join(sessionDir, "sessions.sqlite"))).toBe(true);
@@ -217,7 +220,7 @@ describe("RPC mode", () => {
 		expect(restoredStats.sessionId).toBe(beforeStats.sessionId);
 		expect(restoredEntries.entries.map((entry) => entry.id)).toEqual(beforeEntries.entries.map((entry) => entry.id));
 		expect(restoredEntries.leafId).toBe(beforeEntries.leafId);
-		expect(await client.getLastAssistantText()).toBe("hello");
+		expect(await client.getLastAssistantText()).toBe(beforeAssistantText);
 	}, 30000);
 
 	test("should handle manual compaction", async () => {

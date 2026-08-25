@@ -16,7 +16,6 @@ describe("SQLite migrations", () => {
 				"001_initial.sql",
 				"002_session_discovery.sql",
 				"003_usage_analytics_index.sql",
-				"004_session_search_fts.sql",
 			]);
 			const tables = db
 				.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")
@@ -50,10 +49,6 @@ describe("SQLite migrations", () => {
 			const entryIndexes = db.prepare("PRAGMA index_list(entries)").all<{ name: string }>();
 			expect(entryIndexes.map((index) => index.name)).not.toContain("idx_entries_session_seq");
 			expect(entryIndexes.map((index) => index.name)).toContain("idx_entries_message_timestamp");
-			const searchTables = db
-				.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'session_search_fts'")
-				.all<{ name: string }>();
-			expect(searchTables).toEqual([{ name: "session_search_fts" }]);
 			const branchEntryIndexes = db.prepare("PRAGMA index_list(branch_entries)").all<{ name: string }>();
 			expect(branchEntryIndexes.map((index) => index.name)).toContain("idx_branch_entries_session_entry");
 			const recordIndexes = db.prepare("PRAGMA index_list(records)").all<{ name: string }>();

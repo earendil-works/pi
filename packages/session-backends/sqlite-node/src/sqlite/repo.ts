@@ -53,7 +53,6 @@ import {
 	readOpenOperationRows,
 	readRecordRows,
 } from "./storage/records.ts";
-import { sessionSearchParts } from "./storage/session-search.ts";
 import {
 	advanceSequence,
 	createSequence,
@@ -186,13 +185,6 @@ function getDiscoveryText(entry: Entry): { firstMessage: string | null; messageT
 		firstMessage: entry.message.role === "user" && text ? text : null,
 		messageText: text || null,
 	};
-}
-
-function insertSessionSearchParts(db: SqliteDatabase, sessionId: string, entry: Entry): void {
-	for (const part of sessionSearchParts(entry)) {
-		sql`INSERT INTO session_search_fts(session_id, entry_id, role, kind, timestamp, text)
-			VALUES (${sessionId}, ${entry.id}, ${part.role}, ${part.kind}, ${entry.timestamp}, ${part.text})`.run(db);
-	}
 }
 
 function updateSessionDiscovery(db: SqliteDatabase, sessionId: string, entry: Entry): void {
@@ -456,7 +448,14 @@ class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadata> {
 	}
 
 	async getMetadata(): Promise<SqliteSessionMetadata> {
-		return decodeSessionMetadata(requireSessionRow(this.db, this.metadata.id), this.metadata.path);
+		const current = decodeSessionMetadata(requireSessionRow(this.db, this.metadata.id), this.metadata.path);
+		return {
+			...current,
+			updatedAt: this.metadata.updatedAt,
+			messageCount: this.metadata.messageCount,
+			firstMessage: this.metadata.firstMessage,
+			allMessagesText: this.metadata.allMessagesText,
+		};
 	}
 
 	isForSession(sessionId: string): boolean {
@@ -519,7 +518,6 @@ class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadata> {
 				committed.parentId,
 			);
 			if (committed.type === "message") incrementMessageCount(this.db, this.metadata.id);
-			insertSessionSearchParts(this.db, this.metadata.id, committed);
 			updateSessionDiscovery(this.db, this.metadata.id, committed);
 			advanceSequence(this.db, this.metadata.id, seq);
 			return structuredClone(committed as TEntry);
@@ -662,11 +660,6 @@ class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadata> {
 		return this.enqueueWrite(() => {
 			const seq = getNextSequence(this.db, this.metadata.id);
 			appendFact(this.db, this.metadata.id, seq, "name", null, name === undefined ? null : JSON.stringify(name));
-			sql`DELETE FROM session_search_fts WHERE session_id = ${this.metadata.id} AND kind = 'name'`.run(this.db);
-			if (name) {
-				sql`INSERT INTO session_search_fts(session_id, entry_id, role, kind, timestamp, text)
-					VALUES (${this.metadata.id}, ${`fact:name:${seq}`}, 'meta', 'name', ${Date.now()}, ${name})`.run(this.db);
-			}
 			advanceSequence(this.db, this.metadata.id, seq);
 		});
 	}
@@ -808,6 +801,11 @@ export class SqliteSessionRepository
 		});
 	}
 
+	/** Release this repository's writer claim for a session without closing the repository. */
+	async release(metadata: SqliteSessionMetadata): Promise<void> {
+		return this.operations.enqueue(() => this.releaseStoragesForSession(metadata.id));
+	}
+
 	/** Reads the session catalog without acquiring or renewing per-session writer leases. */
 	async list(options: SqliteSessionListOptions = {}): Promise<SqliteSessionMetadata[]> {
 		return this.operations.enqueue(async () => {
@@ -829,7 +827,6 @@ export class SqliteSessionRepository
 					return;
 				}
 				claimWriterLease(db, metadata.id, this.leaseOptions);
-				sql`DELETE FROM session_search_fts WHERE session_id = ${metadata.id}`.run(db);
 				deleteBranchCache(db, metadata.id);
 				deleteFactRows(db, metadata.id);
 				deleteLaneRows(db, metadata.id);
@@ -926,7 +923,6 @@ export class SqliteSessionRepository
 							timestamp: entry.timestamp,
 							payload: entry.payload,
 						});
-						insertSessionSearchParts(db, id, decodeEntry(entry));
 					}
 
 					if (options.scope === "tree") {
@@ -936,13 +932,7 @@ export class SqliteSessionRepository
 					}
 
 					if (latestName?.value !== undefined && latestName.value !== null) {
-						const nameSeq = allocateSeq();
-						appendFact(db, id, nameSeq, "name", null, latestName.value);
-						const name = JSON.parse(latestName.value) as string;
-						if (name) {
-							sql`INSERT INTO session_search_fts(session_id, entry_id, role, kind, timestamp, text)
-								VALUES (${id}, ${`fact:name:${nameSeq}`}, 'meta', 'name', ${createdAt}, ${name})`.run(db);
-						}
+						appendFact(db, id, allocateSeq(), "name", null, latestName.value);
 					}
 					for (const label of labelsToCopy) appendFact(db, id, allocateSeq(), "label", label.key, label.value);
 

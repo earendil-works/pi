@@ -15,6 +15,7 @@ async function clean() {
 }
 
 async function copySqliteMigrations() {
+	await rm(migrationDestDir, { recursive: true, force: true });
 	await mkdir(migrationDestDir, { recursive: true });
 	await cp(migrationSourceDir, migrationDestDir, { recursive: true });
 }
