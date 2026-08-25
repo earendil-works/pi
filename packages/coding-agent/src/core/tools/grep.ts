@@ -250,6 +250,16 @@ export function createGrepToolDefinition(
 							}
 							if (!killedDueToLimit && code !== 0 && code !== 1) {
 								const errorMsg = stderr.trim() || `ripgrep exited with code ${code}`;
+								// If the failure is a pattern-parse problem, tell the caller how to recover
+								// instead of surfacing raw ripgrep stderr (which typically names an
+								// alternation or metacharacter but not the fix).
+								if (/regex parse error|regexParseError/i.test(errorMsg)) {
+									const hint =
+										`The pattern is not a valid regex. ${literal ? "" : "Set literal: true if you meant a plain string, "}` +
+										`or escape regex metacharacters (e.g. . * + ? ( ) [ ] { } | ^ $ \\). Introduce a simpler pattern first to confirm syntax.`;
+									settle(() => reject(new Error(`${errorMsg}\n${hint}`)));
+									return;
+								}
 								settle(() => reject(new Error(errorMsg)));
 								return;
 							}

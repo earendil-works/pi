@@ -251,24 +251,22 @@ function countOccurrences(content: string, oldText: string): number {
 }
 
 function getNotFoundError(path: string, editIndex: number, totalEdits: number): Error {
-	if (totalEdits === 1) {
-		return new Error(
-			`Could not find the exact text in ${path}. The old text must match exactly including all whitespace and newlines.`,
-		);
-	}
+	const base =
+		totalEdits === 1
+			? `Could not find the exact text in ${path}. The old text must match exactly including all whitespace and newlines.`
+			: `Could not find edits[${editIndex}] in ${path}. The oldText must match exactly including all whitespace and newlines.`;
 	return new Error(
-		`Could not find edits[${editIndex}] in ${path}. The oldText must match exactly including all whitespace and newlines.`,
+		`${base}\nCommon causes: the oldText copied from memory differs in whitespace/indentation, or uses different line endings. Read the file first to get the exact text, or choose a shorter, uniquely identifiable anchor.`,
 	);
 }
 
 function getDuplicateError(path: string, editIndex: number, totalEdits: number, occurrences: number): Error {
-	if (totalEdits === 1) {
-		return new Error(
-			`Found ${occurrences} occurrences of the text in ${path}. The text must be unique. Please provide more context to make it unique.`,
-		);
-	}
+	const base =
+		totalEdits === 1
+			? `Found ${occurrences} occurrences of the text in ${path}. The text must be unique. Please provide more context to make it unique.`
+			: `Found ${occurrences} occurrences of edits[${editIndex}] in ${path}. Each oldText must be unique. Please provide more context to make it unique.`;
 	return new Error(
-		`Found ${occurrences} occurrences of edits[${editIndex}] in ${path}. Each oldText must be unique. Please provide more context to make it unique.`,
+		`${base}\nExtend oldText with surrounding unique lines (e.g. the enclosing function signature or a distinctive neighboring line) so it matches exactly once.`,
 	);
 }
 

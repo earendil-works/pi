@@ -382,6 +382,8 @@
 - Fixed dash-prefixed prompts being parsed as options by supporting `--` as an end-of-options delimiter ([#7269](https://github.com/earendil-works/pi/issues/7269)).
 - Fixed the fixed 16384-token compaction reserve exceeding small local model context windows (e.g. an 8192-token local model got a negative budget, spuriously triggering every-turn compaction and overflowing the provider). The effective reserve is now clamped to a safe fraction of the actual context window in `shouldCompact` and branch summarization, while keeping the configured value for large windows.
 - Fixed degenerate compaction summaries (empty bodies, short stubs, or long unstructured narration with none of the required headings) being persisted as checkpoint history when they reached a `stop` reason but carried no usable content. Such summaries are now discarded, and the check is skipped on user abort; validation is scaled to the summarized history so short sessions still compact normally.
+- Improved the `edit` tool's not-found and non-unique error messages to name concrete recovery steps (read the file for the exact text, or extend `oldText` with surrounding unique lines) instead of only reporting the mismatch.
+- Improved `grep` to surface an actionable hint when a pattern is rejected as invalid regex (suggest `literal: true` for plain strings or escaping metacharacters) instead of only passing through raw ripgrep stderr.
 
 ## [0.84.2] - 2026-08-14
 

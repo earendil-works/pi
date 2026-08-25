@@ -305,6 +305,12 @@ describe("Coding Agent Tools", () => {
 					edits: [{ oldText: "nonexistent", newText: "testing" }],
 				}),
 			).rejects.toThrow(/Could not find the exact text/);
+			await expect(
+				editTool.execute("test-call-6", {
+					path: testFile,
+					edits: [{ oldText: "nonexistent", newText: "testing" }],
+				}),
+			).rejects.toThrow(/Read the file first to get the exact text/);
 		});
 
 		it("should include ENOENT when the edit target does not exist", async () => {
@@ -329,6 +335,12 @@ describe("Coding Agent Tools", () => {
 					edits: [{ oldText: "foo", newText: "bar" }],
 				}),
 			).rejects.toThrow(/Found 3 occurrences/);
+			await expect(
+				editTool.execute("test-call-7", {
+					path: testFile,
+					edits: [{ oldText: "foo", newText: "bar" }],
+				}),
+			).rejects.toThrow(/Extend oldText with surrounding unique lines/);
 		});
 
 		it("should replace multiple disjoint regions in one call", async () => {
@@ -875,6 +887,36 @@ describe("Coding Agent Tools", () => {
 
 			expect(getTextOutput(result)).toContain("No matches found");
 			expect(existsSync(marker)).toBe(false);
+		});
+
+		it("should surface an actionable hint for regex parse errors", async () => {
+			const testFile = join(testDir, "regex.txt");
+			writeFileSync(testFile, "def _sanitize_exec_prompt\n# a somewhat long source line with words\n");
+
+			// An unbalanced group that ripgrep rejects with a "regex parse error"
+			const badPattern = "exec:\\{agent\\})(";
+			await expect(
+				grepTool.execute("test-call-grep-regex", {
+					pattern: badPattern,
+					path: testFile,
+				}),
+			).rejects.toThrow(/regex parse error/i);
+			// The failure should carry the recovery hint (mention literal)
+			await expect(
+				grepTool.execute("test-call-grep-regex", {
+					pattern: badPattern,
+					path: testFile,
+				}),
+			).rejects.toThrow(/Set literal: true/i);
+
+			// literal mode should treat the text as a plain string and run cleanly
+			await expect(
+				grepTool.execute("test-call-grep-regex-hint", {
+					pattern: badPattern,
+					path: testFile,
+					literal: true,
+				}),
+			).resolves.toBeTruthy();
 		});
 	});
 
