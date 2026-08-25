@@ -170,6 +170,26 @@ describe("Coding Agent Tools", () => {
 			);
 		});
 
+		it("should not count a trailing newline as an extra line", async () => {
+			const testFile = join(testDir, "trailing-newline.txt");
+			writeFileSync(testFile, "Line 1\nLine 2\nLine 3\n");
+
+			const result = await readTool.execute("test-call-trailing-newline", { path: testFile });
+			const output = getTextOutput(result);
+
+			expect(output).toBe("Line 1\nLine 2\nLine 3");
+			expect(output).not.toContain("Use offset=");
+		});
+
+		it("should show error when offset is one past the last line of a file ending with a newline", async () => {
+			const testFile = join(testDir, "trailing-newline-offset.txt");
+			writeFileSync(testFile, "Line 1\nLine 2\nLine 3\n");
+
+			await expect(
+				readTool.execute("test-call-trailing-newline-offset", { path: testFile, offset: 4 }),
+			).rejects.toThrow(/Offset 4 is beyond end of file \(3 lines total\)/);
+		});
+
 		it("should include truncation details when truncated", async () => {
 			const testFile = join(testDir, "large-file.txt");
 			const lines = Array.from({ length: 2500 }, (_, i) => `Line ${i + 1}`);
