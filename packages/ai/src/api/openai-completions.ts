@@ -1136,30 +1136,32 @@ export function convertMessages(
 ): ChatCompletionMessageParam[] {
 	const params: ChatCompletionMessageParam[] = [];
 
+	const maxToolCallIdLength = 40;
+	const fitToolCallIdWithHash = (candidate: string, hashSource: string): string => {
+		if (candidate.length <= maxToolCallIdLength) return candidate;
+		const hash = shortHash(hashSource);
+		const prefix = candidate.slice(0, Math.max(1, maxToolCallIdLength - hash.length - 1));
+		return `${prefix}_${hash}`;
+	};
 	const normalizeToolCallId = (id: string): string => {
-		// Handle pipe-separated IDs from OpenAI Responses API
-		// Format: {call_id}|{id} where {id} can be 400+ chars with special chars (+, /, =)
-		// These come from providers like github-copilot, openai-codex, opencode
-		// Extract just the call_id part and normalize it
-		// Multiple tool calls in the same turn can share call_id but differ by item_id.
-		// Preserve item-level uniqueness when replaying into Chat Completions, which
-		// requires distinct tool call ids.
+		// Handle pipe-separated IDs from OpenAI Responses API.
+		// Format: {call_id}|{id} where {id} can be 400+ chars with special chars (+, /, =).
+		// Multiple tool calls in the same turn can share call_id but differ by item_id,
+		// so retain both parts before applying the Chat Completions length limit.
 		if (id.includes("|")) {
-			// Sanitize to allowed chars and truncate to 40 chars (OpenAI limit)
 			const separatorIndex = id.indexOf("|");
 			const callId = id.slice(0, separatorIndex).replace(/[^a-zA-Z0-9_-]/g, "_");
 			const itemId = id.slice(separatorIndex + 1).replace(/[^a-zA-Z0-9_-]/g, "_");
 			const combinedId = itemId.length > 0 ? `${callId}_${itemId}` : callId;
-			if (combinedId.length <= 40) {
-				return combinedId;
-			}
-			const hash = shortHash(id).slice(0, 8);
-			const prefix = callId.slice(0, Math.max(1, 40 - hash.length - 1));
-			return `${prefix}_${hash}`;
+			return fitToolCallIdWithHash(combinedId, id);
 		}
 
-		if (model.provider === "openai") return id.length > 40 ? id.slice(0, 40) : id;
-		return id;
+		// OpenAI-compatible gateways can forward Chat Completions history to a
+		// Responses backend, where call_id is capped. Normalize foreign IDs for every
+		// OpenAI-compatible provider, not only the provider named "openai".
+		if (id.length <= maxToolCallIdLength) return id;
+		const sanitizedId = id.replace(/[^a-zA-Z0-9_-]/g, "_");
+		return fitToolCallIdWithHash(sanitizedId, id);
 	};
 
 	const transformedMessages = transformMessages(context.messages, model, (id) => normalizeToolCallId(id));
