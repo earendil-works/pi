@@ -135,6 +135,7 @@ export interface Settings {
 	sessionDir?: string; // Custom session storage directory (same format as --session-dir CLI flag)
 	httpProxy?: string; // Proxy URL applied as HTTP_PROXY and HTTPS_PROXY for Pi-managed HTTP clients
 	httpIdleTimeoutMs?: number; // HTTP header/body idle timeout in milliseconds; 0 disables it
+	streamIdleTimeoutMs?: number; // Provider-stream event idle timeout in milliseconds; 0 disables it
 	websocketConnectTimeoutMs?: number; // WebSocket connect/open handshake timeout in milliseconds; 0 disables it
 	tuiMode?: TuiMode; // default: "regular"
 	fullscreenExitOutput?: FullscreenExitOutput; // default: "transcript"; no effect in regular TUI mode
@@ -893,6 +894,20 @@ export class SettingsManager {
 		}
 		this.globalSettings.httpIdleTimeoutMs = Math.floor(timeoutMs);
 		this.markModified("httpIdleTimeoutMs");
+		this.save();
+	}
+
+	/** Stored value without local default; undefined falls back to the agent package's DEFAULT_STREAM_IDLE_TIMEOUT_MS. */
+	getStreamIdleTimeoutMs(): number | undefined {
+		return parseTimeoutSetting(this.settings.streamIdleTimeoutMs, "streamIdleTimeoutMs");
+	}
+
+	setStreamIdleTimeoutMs(timeoutMs: number): void {
+		if (!Number.isFinite(timeoutMs) || timeoutMs < 0) {
+			throw new Error(`Invalid streamIdleTimeoutMs setting: ${String(timeoutMs)}`);
+		}
+		this.globalSettings.streamIdleTimeoutMs = Math.floor(timeoutMs);
+		this.markModified("streamIdleTimeoutMs");
 		this.save();
 	}
 

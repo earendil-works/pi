@@ -1605,3 +1605,310 @@ describe("agentLoopContinue with AgentMessage", () => {
 		expect(messages[0].role).toBe("assistant");
 	});
 });
+
+describe("stream idle timeout", () => {
+	const IDLE_THRESHOLD_MS = 40;
+
+	function sleep(ms: number): Promise<void> {
+		return new Promise((resolve) => {
+			setTimeout(resolve, ms);
+		});
+	}
+
+	function createPartialMessage(content: AssistantMessage["content"]): AssistantMessage {
+		return { ...createAssistantMessage(content), stopReason: "pending" };
+	}
+
+	function createSilentStallStreamFn(): { streamFn: () => MockAssistantStream; streams: MockAssistantStream[] } {
+		const streams: MockAssistantStream[] = [];
+		return {
+			streams,
+			streamFn: () => {
+				const stream = new MockAssistantStream();
+				streams.push(stream);
+				// Never pushes: simulates an open-but-silent provider stream.
+				return stream;
+			},
+		};
+	}
+
+	it("ends the turn as an error when the stream stalls after a partial response", async () => {
+		const context: AgentContext = { systemPrompt: "", messages: [], tools: [] };
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+			streamIdleTimeoutMs: IDLE_THRESHOLD_MS,
+		};
+
+		let mockStream: MockAssistantStream | undefined;
+		const streamFn = () => {
+			mockStream = new MockAssistantStream();
+			queueMicrotask(() => {
+				mockStream!.push({ type: "start", partial: createPartialMessage([{ type: "text", text: "" }]) });
+				mockStream!.push({
+					type: "text_delta",
+					contentIndex: 0,
+					delta: "partial ans",
+					partial: createPartialMessage([{ type: "text", text: "partial ans" }]),
+				});
+				// No further events, no close: stalled.
+			});
+			return mockStream!;
+		};
+
+		const events: AgentEvent[] = [];
+		const stream = agentLoop([createUserMessage("Hello")], context, config, undefined, streamFn);
+		for await (const event of stream) {
+			events.push(event);
+		}
+		const messages = await stream.result();
+
+		// Turn ends bounded by roughly the threshold plus processing time.
+		const finalMessage = messages[messages.length - 1];
+		expect(finalMessage.role).toBe("assistant");
+		if (finalMessage.role === "assistant") {
+			expect(finalMessage.stopReason).toBe("error");
+			expect(finalMessage.errorMessage).toContain(`${IDLE_THRESHOLD_MS}ms`);
+			// Partial content survives into the finalized error message.
+			expect(finalMessage.content).toContainEqual({ type: "text", text: "partial ans" });
+		}
+
+		// Same observable contract as provider errors: ... message_end -> turn_end -> agent_end.
+		const eventTypes = events.map((e) => e.type);
+		expect(eventTypes.slice(-3)).toEqual(["message_end", "turn_end", "agent_end"]);
+
+		// History ends with the error message: the pending partial became the final message.
+		const lastContextMessage = messages[messages.length - 1];
+		expect(lastContextMessage.role).toBe("assistant");
+		if (lastContextMessage.role === "assistant") {
+			expect(lastContextMessage.stopReason).toBe("error");
+		}
+
+		// Late pushes into the abandoned stream produce no further events (I6).
+		const updateCountBefore = events.filter((e) => e.type === "message_update").length;
+		expect(updateCountBefore).toBeGreaterThan(0);
+		mockStream!.push({
+			type: "text_delta",
+			contentIndex: 0,
+			delta: "late",
+			partial: createPartialMessage([{ type: "text", text: "late" }]),
+		});
+		await sleep(IDLE_THRESHOLD_MS * 2);
+		expect(events.filter((e) => e.type === "message_update").length).toBe(updateCountBefore);
+		expect(
+			messages[messages.length - 1].role === "assistant"
+				? (messages[messages.length - 1] as AssistantMessage).stopReason
+				: undefined,
+		).toBe("error");
+	});
+
+	it("ends the turn with a fresh zero-usage error message when the stream stalls before the first event", async () => {
+		const context: AgentContext = { systemPrompt: "", messages: [], tools: [] };
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+			streamIdleTimeoutMs: IDLE_THRESHOLD_MS,
+		};
+		const { streamFn } = createSilentStallStreamFn();
+
+		const events: AgentEvent[] = [];
+		const stream = agentLoop([createUserMessage("Hello")], context, config, undefined, streamFn);
+		for await (const event of stream) {
+			events.push(event);
+		}
+		const messages = await stream.result();
+
+		// Fresh error message appended after the user prompt.
+		expect(messages.map((m) => m.role)).toEqual(["user", "assistant"]);
+		const finalMessage = messages[1];
+		if (finalMessage.role === "assistant") {
+			expect(finalMessage.stopReason).toBe("error");
+			expect(finalMessage.errorMessage).toContain(`${IDLE_THRESHOLD_MS}ms`);
+			expect(finalMessage.usage.totalTokens).toBe(0);
+		}
+
+		// message_start + message_end emitted exactly once for the assistant message.
+		const assistantStarts = events.filter((e) => e.type === "message_start" && e.message.role === "assistant").length;
+		const assistantEnds = events.filter((e) => e.type === "message_end" && e.message.role === "assistant").length;
+		expect(assistantStarts).toBe(1);
+		expect(assistantEnds).toBe(1);
+
+		// Exactly one assistant message in history, no dangling pending partial.
+		const assistantMessages = messages.filter((m) => m.role === "assistant") as AssistantMessage[];
+		expect(assistantMessages.length).toBe(1);
+		expect(assistantMessages.every((m) => m.stopReason !== "pending")).toBe(true);
+	});
+
+	it("strips adapter streaming scratch fields from the finalized partial message", async () => {
+		const context: AgentContext = { systemPrompt: "", messages: [], tools: [] };
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+			streamIdleTimeoutMs: IDLE_THRESHOLD_MS,
+		};
+
+		const streamFn = () => {
+			const mockStream = new MockAssistantStream();
+			queueMicrotask(() => {
+				// Adapter partials carry streaming scratch fields that must not reach history.
+				const scratchContent = [
+					{ type: "text", text: "half-written", index: 0 },
+					{ type: "toolCall", id: "tool-1", name: "echo", arguments: {}, partialJson: '{"va' },
+				] as unknown as AssistantMessage["content"];
+				const partial = createPartialMessage(scratchContent);
+				mockStream.push({ type: "start", partial });
+				mockStream.push({ type: "text_delta", contentIndex: 0, delta: "half-written", partial });
+				// Stalled mid-tool-call.
+			});
+			return mockStream;
+		};
+
+		const stream = agentLoop([createUserMessage("Hello")], context, config, undefined, streamFn);
+		for await (const _event of stream) {
+			// consume
+		}
+		const messages = await stream.result();
+
+		// The finalized message (returned and emitted at message_end) carries no scratch fields.
+		const finalMessage = messages[messages.length - 1];
+		expect(finalMessage.role).toBe("assistant");
+		if (finalMessage.role === "assistant") {
+			for (const block of finalMessage.content) {
+				expect(block).not.toHaveProperty("index");
+				expect(block).not.toHaveProperty("partialJson");
+			}
+			expect(finalMessage.content[0]).toMatchObject({ type: "text", text: "half-written" });
+			expect(finalMessage.content[1]).toMatchObject({ type: "toolCall", id: "tool-1", name: "echo" });
+		}
+	});
+
+	it("keeps stopReason aborted when the user aborts while the watchdog is armed", async () => {
+		const controller = new AbortController();
+		const context: AgentContext = { systemPrompt: "", messages: [], tools: [] };
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+			streamIdleTimeoutMs: IDLE_THRESHOLD_MS,
+		};
+		const { streamFn } = createSilentStallStreamFn();
+
+		setTimeout(() => controller.abort(), IDLE_THRESHOLD_MS / 4);
+
+		const stream = agentLoop([createUserMessage("Hello")], context, config, controller.signal, streamFn);
+		for await (const _event of stream) {
+			// consume
+		}
+		const messages = await stream.result();
+
+		const finalMessage = messages[messages.length - 1];
+		expect(finalMessage.role).toBe("assistant");
+		if (finalMessage.role === "assistant") {
+			expect(finalMessage.stopReason).toBe("aborted");
+			expect(finalMessage.errorMessage).toBeUndefined();
+		}
+	});
+
+	it("does not end the turn when streamIdleTimeoutMs is 0 (disabled)", async () => {
+		const context: AgentContext = { systemPrompt: "", messages: [], tools: [] };
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+			streamIdleTimeoutMs: 0,
+		};
+		const { streams, streamFn } = createSilentStallStreamFn();
+
+		const events: AgentEvent[] = [];
+		const stream = agentLoop([createUserMessage("Hello")], context, config, undefined, streamFn);
+		const consumed = (async () => {
+			for await (const event of stream) {
+				events.push(event);
+			}
+		})();
+
+		// Generous real-time bound well past any sane threshold: nothing fires.
+		await sleep(200);
+		expect(events.some((e) => e.type === "turn_end")).toBe(false);
+
+		// Release the stream so the test can settle cleanly.
+		streams[0].push({
+			type: "done",
+			reason: "stop",
+			message: createAssistantMessage([{ type: "text", text: "finally arrived" }]),
+		});
+		await consumed;
+		const messages = await stream.result();
+
+		const finalMessage = messages[messages.length - 1];
+		expect(finalMessage.role).toBe("assistant");
+		expect(finalMessage.role === "assistant" ? finalMessage.stopReason : undefined).toBe("stop");
+	});
+
+	it("completes normally when gaps between events stay below the threshold", async () => {
+		const context: AgentContext = { systemPrompt: "", messages: [], tools: [] };
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+			streamIdleTimeoutMs: IDLE_THRESHOLD_MS,
+		};
+
+		const streamFn = () => {
+			const mockStream = new MockAssistantStream();
+			void (async () => {
+				mockStream.push({ type: "start", partial: createPartialMessage([{ type: "text", text: "" }]) });
+				await sleep(IDLE_THRESHOLD_MS / 4);
+				mockStream.push({
+					type: "text_delta",
+					contentIndex: 0,
+					delta: "slow but alive",
+					partial: createPartialMessage([{ type: "text", text: "slow but alive" }]),
+				});
+				await sleep(IDLE_THRESHOLD_MS / 4);
+				mockStream.push({
+					type: "done",
+					reason: "stop",
+					message: createAssistantMessage([{ type: "text", text: "slow but alive" }]),
+				});
+			})();
+			return mockStream;
+		};
+
+		const stream = agentLoop([createUserMessage("Hello")], context, config, undefined, streamFn);
+		for await (const _event of stream) {
+			// consume
+		}
+		const messages = await stream.result();
+
+		const finalMessage = messages[messages.length - 1];
+		expect(finalMessage.role === "assistant" ? finalMessage.stopReason : undefined).toBe("stop");
+		expect(messages.find((m) => m.role === "assistant" && m.stopReason === "error")).toBeUndefined();
+	});
+
+	it("leaves the normal provider-error path unchanged while the watchdog is armed", async () => {
+		const context: AgentContext = { systemPrompt: "", messages: [], tools: [] };
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+			streamIdleTimeoutMs: IDLE_THRESHOLD_MS,
+		};
+
+		const providerError = createAssistantMessage([{ type: "text", text: "" }], "error");
+		providerError.errorMessage = "provider exploded";
+		const streamFn = () => {
+			const mockStream = new MockAssistantStream();
+			queueMicrotask(() => {
+				mockStream.push({ type: "error", reason: "error", error: providerError });
+			});
+			return mockStream;
+		};
+
+		const stream = agentLoop([createUserMessage("Hello")], context, config, undefined, streamFn);
+		for await (const _event of stream) {
+			// consume
+		}
+		const messages = await stream.result();
+
+		const finalMessage = messages[messages.length - 1];
+		expect(finalMessage.role === "assistant" ? finalMessage.stopReason : undefined).toBe("error");
+		expect(finalMessage.role === "assistant" ? finalMessage.errorMessage : undefined).toBe("provider exploded");
+	});
+});

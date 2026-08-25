@@ -256,6 +256,9 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 	 */
 	getFollowUpMessages?: () => Promise<AgentMessage[]>;
 
+	/** Maximum silence in ms between events from the provider stream before the turn ends as a provider error. `0` disables. */
+	streamIdleTimeoutMs?: number;
+
 	/**
 	 * Tool execution mode.
 	 * - "sequential": execute tool calls one by one

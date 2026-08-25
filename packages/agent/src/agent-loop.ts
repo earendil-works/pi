@@ -5,6 +5,7 @@
 
 import {
 	type AssistantMessage,
+	type AssistantMessageEvent,
 	type Context,
 	EventStream,
 	type ToolResultMessage,
@@ -23,6 +24,18 @@ import type {
 } from "./types.ts";
 
 export type AgentEventSink = (event: AgentEvent) => Promise<void> | void;
+
+/** Default maximum silence between provider-stream events before a turn ends as an error. */
+export const DEFAULT_STREAM_IDLE_TIMEOUT_MS = 300_000;
+
+const EMPTY_USAGE = {
+	input: 0,
+	output: 0,
+	cacheRead: 0,
+	cacheWrite: 0,
+	totalTokens: 0,
+	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+};
 
 /**
  * Start an agent loop with a new prompt message.
@@ -314,50 +327,114 @@ async function streamAssistantResponse(
 	let partialMessage: AssistantMessage | null = null;
 	let addedPartial = false;
 
-	for await (const event of response) {
-		switch (event.type) {
-			case "start":
-				partialMessage = event.partial;
-				context.messages.push(partialMessage);
-				addedPartial = true;
-				await emit({ type: "message_start", message: { ...partialMessage } });
-				break;
+	// Watchdog: bound the time the iterator may stay silent. A stalled-but-open
+	// stream would otherwise park the await below forever (no turn end, Escape dead).
+	const idleTimeoutMs = config.streamIdleTimeoutMs ?? DEFAULT_STREAM_IDLE_TIMEOUT_MS;
+	const iterator = response[Symbol.asyncIterator]();
+	let idleTimer: ReturnType<typeof setTimeout> | undefined;
+	const clearIdleTimer = () => {
+		if (idleTimer !== undefined) {
+			clearTimeout(idleTimer);
+			idleTimer = undefined;
+		}
+	};
 
-			case "text_start":
-			case "text_delta":
-			case "text_end":
-			case "thinking_start":
-			case "thinking_delta":
-			case "thinking_end":
-			case "toolcall_start":
-			case "toolcall_delta":
-			case "toolcall_end":
-				if (partialMessage) {
-					partialMessage = event.partial;
-					context.messages[context.messages.length - 1] = partialMessage;
-					await emit({
-						type: "message_update",
-						assistantMessageEvent: event,
-						message: { ...partialMessage },
-					});
-				}
-				break;
+	try {
+		while (true) {
+			let settled: IteratorResult<AssistantMessageEvent> | "idle";
+			if (idleTimeoutMs > 0) {
+				const idle = new Promise<"idle">((resolve) => {
+					idleTimer = setTimeout(() => resolve("idle"), idleTimeoutMs);
+				});
+				settled = await Promise.race([iterator.next(), idle]);
+			} else {
+				settled = await iterator.next();
+			}
+			clearIdleTimer();
 
-			case "done":
-			case "error": {
-				const finalMessage = await response.result();
+			if (settled === "idle") {
+				// The producer task stays blocked (bounded leak is accepted), but end()
+				// turns any late push() into a no-op so nothing further is consumed or emitted.
+				response.end();
+				const aborted = signal?.aborted === true;
+				const errorMessage = aborted
+					? undefined
+					: `Provider stream idle for ${idleTimeoutMs}ms; ending turn as a retriable error`;
+				const finalMessage: AssistantMessage = partialMessage
+					? {
+							...sanitizePartialMessage(partialMessage),
+							stopReason: aborted ? "aborted" : "error",
+							errorMessage,
+						}
+					: {
+							role: "assistant",
+							content: [{ type: "text", text: "" }],
+							api: config.model.api,
+							provider: config.model.provider,
+							model: config.model.id,
+							usage: EMPTY_USAGE,
+							stopReason: aborted ? "aborted" : "error",
+							errorMessage,
+							timestamp: Date.now(),
+						};
 				if (addedPartial) {
 					context.messages[context.messages.length - 1] = finalMessage;
 				} else {
 					context.messages.push(finalMessage);
-				}
-				if (!addedPartial) {
 					await emit({ type: "message_start", message: { ...finalMessage } });
 				}
 				await emit({ type: "message_end", message: finalMessage });
 				return finalMessage;
 			}
+
+			if (settled.done) break;
+			const event = settled.value;
+			switch (event.type) {
+				case "start":
+					partialMessage = event.partial;
+					context.messages.push(partialMessage);
+					addedPartial = true;
+					await emit({ type: "message_start", message: { ...partialMessage } });
+					break;
+
+				case "text_start":
+				case "text_delta":
+				case "text_end":
+				case "thinking_start":
+				case "thinking_delta":
+				case "thinking_end":
+				case "toolcall_start":
+				case "toolcall_delta":
+				case "toolcall_end":
+					if (partialMessage) {
+						partialMessage = event.partial;
+						context.messages[context.messages.length - 1] = partialMessage;
+						await emit({
+							type: "message_update",
+							assistantMessageEvent: event,
+							message: { ...partialMessage },
+						});
+					}
+					break;
+
+				case "done":
+				case "error": {
+					const finalMessage = await response.result();
+					if (addedPartial) {
+						context.messages[context.messages.length - 1] = finalMessage;
+					} else {
+						context.messages.push(finalMessage);
+					}
+					if (!addedPartial) {
+						await emit({ type: "message_start", message: { ...finalMessage } });
+					}
+					await emit({ type: "message_end", message: finalMessage });
+					return finalMessage;
+				}
+			}
 		}
+	} finally {
+		clearIdleTimer();
 	}
 
 	const finalMessage = await response.result();
@@ -369,6 +446,22 @@ async function streamAssistantResponse(
 	}
 	await emit({ type: "message_end", message: finalMessage });
 	return finalMessage;
+}
+
+/**
+ * Copy of a partial assistant message with adapter streaming scratch fields
+ * (`index`, `partialJson`) removed so they never persist into history.
+ */
+function sanitizePartialMessage(message: AssistantMessage): AssistantMessage {
+	return {
+		...message,
+		content: message.content.map((block) => {
+			const sanitized = { ...block } as typeof block & { index?: number; partialJson?: string };
+			delete sanitized.index;
+			delete sanitized.partialJson;
+			return sanitized;
+		}),
+	};
 }
 
 /**

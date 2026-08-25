@@ -119,6 +119,8 @@ export interface AgentOptions {
 	thinkingBudgets?: ThinkingBudgets;
 	transport?: Transport;
 	maxRetryDelayMs?: number;
+	/** Optional cap for provider-stream event-level silence before the turn ends as an error. */
+	streamIdleTimeoutMs?: number;
 	toolExecution?: ToolExecutionMode;
 }
 
@@ -210,6 +212,8 @@ export class Agent {
 	public transport: Transport;
 	/** Optional cap for provider-requested retry delays. */
 	public maxRetryDelayMs?: number;
+	/** Optional cap for provider-stream event-level silence. */
+	public streamIdleTimeoutMs?: number;
 	/** Tool execution strategy for assistant messages that contain multiple tool calls. */
 	public toolExecution: ToolExecutionMode;
 
@@ -234,6 +238,7 @@ export class Agent {
 		this.thinkingBudgets = runtimeOptions.thinkingBudgets;
 		this.transport = runtimeOptions.transport ?? "auto";
 		this.maxRetryDelayMs = runtimeOptions.maxRetryDelayMs;
+		this.streamIdleTimeoutMs = runtimeOptions.streamIdleTimeoutMs;
 		this.toolExecution = runtimeOptions.toolExecution ?? "parallel";
 	}
 
@@ -454,6 +459,7 @@ export class Agent {
 			transport: this.transport,
 			thinkingBudgets: this.thinkingBudgets,
 			maxRetryDelayMs: this.maxRetryDelayMs,
+			streamIdleTimeoutMs: this.streamIdleTimeoutMs,
 			toolExecution: this.toolExecution,
 			beforeToolCall: this.beforeToolCall,
 			afterToolCall: this.afterToolCall,

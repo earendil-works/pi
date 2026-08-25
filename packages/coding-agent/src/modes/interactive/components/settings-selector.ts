@@ -1,4 +1,5 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
+import { DEFAULT_STREAM_IDLE_TIMEOUT_MS } from "@earendil-works/pi-agent-core";
 import { getSupportedThinkingLevels, type Model, type Transport } from "@earendil-works/pi-ai";
 import {
 	type Component,
@@ -25,6 +26,24 @@ import { keyDisplayText } from "./keybinding-hints.ts";
 import { SelectSubmenu, SteppedSubmenu, type SteppedSubmenuStep } from "./settings-submenu.ts";
 
 const MODEL_PICKER_LAYOUT = { minPrimaryColumnWidth: 12, maxPrimaryColumnWidth: 46 };
+
+// Same shape/values as HTTP_IDLE_TIMEOUT_CHOICES; 5 min matches the agent package's effective default.
+const STREAM_IDLE_TIMEOUT_CHOICES = [
+	{ label: "30 sec", timeoutMs: 30_000 },
+	{ label: "1 min", timeoutMs: 60_000 },
+	{ label: "2 min", timeoutMs: 120_000 },
+	{ label: "5 min", timeoutMs: DEFAULT_STREAM_IDLE_TIMEOUT_MS },
+	{ label: "disabled", timeoutMs: 0 },
+] as const;
+
+function formatStreamIdleTimeoutMs(timeoutMs: number): string {
+	const choice = STREAM_IDLE_TIMEOUT_CHOICES.find((item) => item.timeoutMs === timeoutMs);
+	if (choice) {
+		return choice.label;
+	}
+	return `${timeoutMs / 1000} sec`;
+}
+export { formatStreamIdleTimeoutMs };
 
 const THINKING_DESCRIPTIONS: Record<ThinkingLevel, string> = {
 	off: "No reasoning",
@@ -60,6 +79,7 @@ export interface SettingsConfig {
 	followUpMode: "all" | "one-at-a-time";
 	transport: Transport;
 	httpIdleTimeoutMs: number;
+	streamIdleTimeoutMs: number;
 	thinkingLevel: ThinkingLevel;
 	availableThinkingLevels: ThinkingLevel[];
 	modelThinkingLevels: Record<string, ThinkingLevel>;
@@ -98,6 +118,7 @@ export interface SettingsCallbacks {
 	onFollowUpModeChange: (mode: "all" | "one-at-a-time") => void;
 	onTransportChange: (transport: Transport) => void;
 	onHttpIdleTimeoutMsChange: (timeoutMs: number) => void;
+	onStreamIdleTimeoutMsChange: (timeoutMs: number) => void;
 	onModelThinkingLevelChange: (provider: string, modelId: string, level: ThinkingLevel) => void;
 	onModelThinkingLevelRemove: (provider: string, modelId: string) => void;
 	onThemeChange: (theme: string) => void;
@@ -491,6 +512,14 @@ export class SettingsSelectorComponent extends Container {
 				values: HTTP_IDLE_TIMEOUT_CHOICES.map((choice) => choice.label),
 			},
 			{
+				id: "stream-idle-timeout",
+				label: "Stream idle timeout",
+				description:
+					"Maximum silence between provider stream events before the turn ends as a retriable error. Disable to allow unbounded waits.",
+				currentValue: formatStreamIdleTimeoutMs(config.streamIdleTimeoutMs),
+				values: STREAM_IDLE_TIMEOUT_CHOICES.map((choice) => choice.label),
+			},
+			{
 				id: "hide-thinking",
 				label: "Hide thinking",
 				description: "Hide thinking blocks in assistant responses",
@@ -847,6 +876,13 @@ export class SettingsSelectorComponent extends Container {
 						const choice = HTTP_IDLE_TIMEOUT_CHOICES.find((item) => item.label === newValue);
 						if (choice) {
 							callbacks.onHttpIdleTimeoutMsChange(choice.timeoutMs);
+						}
+						break;
+					}
+					case "stream-idle-timeout": {
+						const choice = STREAM_IDLE_TIMEOUT_CHOICES.find((item) => item.label === newValue);
+						if (choice) {
+							callbacks.onStreamIdleTimeoutMsChange(choice.timeoutMs);
 						}
 						break;
 					}

@@ -358,6 +358,49 @@ describe("SettingsManager", () => {
 		});
 	});
 
+	describe("streamIdleTimeoutMs", () => {
+		it("should return undefined when absent (agent package default applies)", () => {
+			const manager = SettingsManager.create(projectDir, agentDir);
+			expect(manager.getStreamIdleTimeoutMs()).toBeUndefined();
+		});
+
+		it("should accept a numeric value from settings", () => {
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ streamIdleTimeoutMs: 60000 }));
+			const manager = SettingsManager.create(projectDir, agentDir);
+
+			expect(manager.getStreamIdleTimeoutMs()).toBe(60000);
+		});
+
+		it("should accept string forms like the sibling timeout setting", () => {
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ streamIdleTimeoutMs: "120000" }));
+			const manager = SettingsManager.create(projectDir, agentDir);
+			expect(manager.getStreamIdleTimeoutMs()).toBe(120000);
+
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ streamIdleTimeoutMs: "disabled" }));
+			const disabledManager = SettingsManager.create(projectDir, agentDir);
+			expect(disabledManager.getStreamIdleTimeoutMs()).toBe(0);
+		});
+
+		it("should reject invalid values", () => {
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ streamIdleTimeoutMs: -1 }));
+			const manager = SettingsManager.create(projectDir, agentDir);
+
+			expect(() => manager.getStreamIdleTimeoutMs()).toThrow("Invalid streamIdleTimeoutMs setting");
+		});
+
+		it("should round-trip through the setter and persist", async () => {
+			const manager = SettingsManager.create(projectDir, agentDir);
+
+			manager.setStreamIdleTimeoutMs(45000);
+			expect(manager.getStreamIdleTimeoutMs()).toBe(45000);
+			await manager.flush();
+			expect(JSON.parse(readFileSync(join(agentDir, "settings.json"), "utf8")).streamIdleTimeoutMs).toBe(45000);
+
+			manager.setStreamIdleTimeoutMs(0);
+			expect(manager.getStreamIdleTimeoutMs()).toBe(0);
+		});
+	});
+
 	describe("externalEditor", () => {
 		const originalVisual = process.env.VISUAL;
 		const originalEditor = process.env.EDITOR;
