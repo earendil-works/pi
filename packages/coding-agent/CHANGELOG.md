@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added `compaction.profiles` for per-model `reserveTokens` / `keepRecentTokens` overrides keyed by `"provider/modelId"`, so setups spanning models with very different context windows can tune auto-compaction per model ([#8133](https://github.com/earendil-works/pi/issues/8133)).
+
 ## [0.84.3] - 2026-08-24
 
 ### New Features

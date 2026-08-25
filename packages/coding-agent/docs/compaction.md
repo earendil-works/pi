@@ -34,6 +34,8 @@ contextTokens > contextWindow - reserveTokens
 
 By default, `reserveTokens` is 16384 tokens (configurable in `~/.pi/agent/settings.json` or `<project-dir>/.pi/settings.json`). This leaves room for the LLM's response.
 
+Both `reserveTokens` and `keepRecentTokens` can be overridden per model with a `compaction.profiles` entry keyed by `"provider/modelId"` (see [settings](./settings.md)); useful when one setup spans models with very different context windows.
+
 You can also trigger manually with `/compact [instructions]`, where optional instructions focus the summary.
 
 ### How It Works

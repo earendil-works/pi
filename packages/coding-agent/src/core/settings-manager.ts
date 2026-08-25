@@ -10,10 +10,16 @@ import { normalizePath, resolvePath } from "../utils/paths.ts";
 import { stripBom } from "../utils/text.ts";
 import { DEFAULT_HTTP_IDLE_TIMEOUT_MS, parseHttpIdleTimeoutMs } from "./http-dispatcher.ts";
 
+export interface CompactionProfileSettings {
+	reserveTokens?: number;
+	keepRecentTokens?: number;
+}
+
 export interface CompactionSettings {
 	enabled?: boolean; // default: true
 	reserveTokens?: number; // default: 16384
 	keepRecentTokens?: number; // default: 20000
+	profiles?: Record<string, CompactionProfileSettings>; // per-model token overrides keyed by "provider/modelId"
 }
 
 export interface BranchSummarySettings {
@@ -181,6 +187,11 @@ function parseTimeoutSetting(value: unknown, settingName: string): number | unde
 }
 
 export type SettingsScope = "global" | "project";
+
+/** Non-finite or non-positive token values count as unset so one bad entry can't disable the compaction safety margin. */
+function sanitizeCompactionTokenValue(value: unknown): number | undefined {
+	return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
+}
 
 export interface SettingsManagerCreateOptions {
 	projectTrusted?: boolean;
@@ -836,18 +847,34 @@ export class SettingsManager {
 	}
 
 	getCompactionReserveTokens(): number {
-		return this.settings.compaction?.reserveTokens ?? 16384;
+		return sanitizeCompactionTokenValue(this.settings.compaction?.reserveTokens) ?? 16384;
 	}
 
 	getCompactionKeepRecentTokens(): number {
-		return this.settings.compaction?.keepRecentTokens ?? 20000;
+		return sanitizeCompactionTokenValue(this.settings.compaction?.keepRecentTokens) ?? 20000;
 	}
 
-	getCompactionSettings(): { enabled: boolean; reserveTokens: number; keepRecentTokens: number } {
+	/**
+	 * Resolve compaction settings, optionally applying the per-model profile for
+	 * "provider/modelId". Profile values win over top-level values, which win over
+	 * defaults. Without both arguments this returns exactly the global resolution.
+	 */
+	getCompactionSettings(
+		provider?: string,
+		modelId?: string,
+	): { enabled: boolean; reserveTokens: number; keepRecentTokens: number } {
+		let profile: CompactionProfileSettings | undefined;
+		if (provider !== undefined && modelId !== undefined) {
+			const entry = this.settings.compaction?.profiles?.[`${provider}/${modelId}`];
+			if (typeof entry === "object" && entry !== null && !Array.isArray(entry)) {
+				profile = entry;
+			}
+		}
 		return {
 			enabled: this.getCompactionEnabled(),
-			reserveTokens: this.getCompactionReserveTokens(),
-			keepRecentTokens: this.getCompactionKeepRecentTokens(),
+			reserveTokens: sanitizeCompactionTokenValue(profile?.reserveTokens) ?? this.getCompactionReserveTokens(),
+			keepRecentTokens:
+				sanitizeCompactionTokenValue(profile?.keepRecentTokens) ?? this.getCompactionKeepRecentTokens(),
 		};
 	}
 

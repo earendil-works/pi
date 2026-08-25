@@ -714,6 +714,86 @@ describe("AgentSession compaction characterization", () => {
 		expect(runAutoCompactionSpy).not.toHaveBeenCalled();
 	});
 
+	it("applies the per-model compaction profile only to the profiled model", async () => {
+		// Top-level reserveTokens 500 gives "small" (window 1000) a 500-token
+		// trigger. "big" (window 1M) has a profile raising reserveTokens to
+		// 900_000, giving it a 100_000 trigger instead of the global ~999.5k.
+		// Identical message volumes are driven against both; only "small" and
+		// only post-profile boundary usage on "big" may cross their thresholds.
+		const preparations: Array<{ reserveTokens: number; keepRecentTokens: number }> = [];
+		const harness = await createHarness({
+			models: [
+				{ id: "small", contextWindow: 1000, maxTokens: 100 },
+				{ id: "big", contextWindow: 1_000_000, maxTokens: 100 },
+			],
+			settings: {
+				compaction: {
+					reserveTokens: 500,
+					keepRecentTokens: 1,
+					profiles: { "faux/big": { reserveTokens: 900_000 } },
+				},
+			},
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_before_compact", async (event) => {
+						preparations.push({
+							reserveTokens: event.preparation.settings.reserveTokens,
+							keepRecentTokens: event.preparation.settings.keepRecentTokens,
+						});
+						return {
+							compaction: {
+								summary: "profiled compaction",
+								firstKeptEntryId: event.preparation.firstKeptEntryId,
+								tokensBefore: event.preparation.tokensBefore,
+								details: {},
+							},
+						};
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		const sessionInternals = harness.session as unknown as SessionWithCompactionInternals;
+		const assistantFor = (model: Model<any>, totalTokens: number): AssistantMessage => ({
+			...fauxAssistantMessage("", { stopReason: "stop", timestamp: Date.now() }),
+			api: model.api,
+			provider: model.provider,
+			model: model.id,
+			usage: createUsage(totalTokens),
+		});
+
+		// Active model "small" (window 1000, top-level reserveTokens 500): identical
+		// turns of real volume cross its 500-token trigger and auto-compaction fires.
+		await harness.session.prompt("x".repeat(4000));
+		await harness.session.prompt("w".repeat(2000));
+		expect(harness.eventsOfType("compaction_end").at(-1)).toMatchObject({ reason: "threshold" });
+		// Extension-visible preparation.settings carries the resolved values (INV5).
+		expect(preparations.at(-1)).toEqual({ reserveTokens: 500, keepRecentTokens: 1 });
+
+		// Identical volume on "big": its 900_000 profiled reserveTokens put the
+		// trigger at 100_000, so nothing fires.
+		const bigModel = harness.getModel("big");
+		if (!bigModel) throw new Error("missing faux model 'big'");
+		const eventsBeforeBig = harness.eventsOfType("compaction_end").length;
+		await harness.session.setModel(bigModel);
+		harness.setResponses([fauxAssistantMessage(""), fauxAssistantMessage("")]);
+		await harness.session.prompt("x".repeat(4000));
+		await harness.session.prompt("w".repeat(2000));
+		expect(harness.eventsOfType("compaction_end").length).toBe(eventsBeforeBig);
+
+		// Boundary proof that the profile (not the global value) governs "big":
+		// 600 tokens stays below the 100_000 profiled trigger...
+		await expect(sessionInternals._checkCompaction(assistantFor(bigModel, 600))).resolves.toBe(false);
+		// ...while 100_001 crosses it, though it is far below the ~999_500 trigger
+		// the un-profiled global reserveTokens would give this model. The boolean
+		// return of _checkCompaction only reports queued-message continuation, so
+		// assert on the emitted compaction_end instead.
+		const eventsBeforeBoundary = harness.eventsOfType("compaction_end").length;
+		await sessionInternals._checkCompaction(assistantFor(bigModel, 100_001));
+		expect(harness.eventsOfType("compaction_end").length).toBe(eventsBeforeBoundary + 1);
+		expect(harness.eventsOfType("compaction_end").at(-1)).toMatchObject({ reason: "threshold" });
+	});
+
 	it("does not trigger threshold compaction below the threshold or when disabled", async () => {
 		const belowThresholdHarness = await createHarness({
 			settings: { compaction: { enabled: true, reserveTokens: 1000 } },

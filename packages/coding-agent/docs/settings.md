@@ -116,16 +116,24 @@ Set `PI_SKIP_VERSION_CHECK=1` to disable the Pi version update check. Use `--off
 | `compaction.enabled` | boolean | `true` | Enable auto-compaction |
 | `compaction.reserveTokens` | number | `16384` | Tokens reserved for LLM response |
 | `compaction.keepRecentTokens` | number | `20000` | Recent tokens to keep (not summarized) |
+| `compaction.profiles` | object | - | Per-model overrides of `reserveTokens` / `keepRecentTokens`, keyed by `"provider/modelId"` |
 
 ```json
 {
   "compaction": {
     "enabled": true,
     "reserveTokens": 16384,
-    "keepRecentTokens": 20000
+    "keepRecentTokens": 20000,
+    "profiles": {
+      "some-provider/big-context-model": {
+        "reserveTokens": 400000
+      }
+    }
   }
 }
 ```
+
+A profile may set any subset of the two token fields; each field resolves profile value first, then top-level value, then default. Keys match exactly (`provider/modelId`) — no globs. `compaction.enabled` stays global.
 
 ### Branch Summary
 
