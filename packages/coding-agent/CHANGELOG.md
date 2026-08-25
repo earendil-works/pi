@@ -380,6 +380,8 @@
 - Fixed branch summary entries recording the navigation destination in `fromId` instead of the pre-navigation source leaf.
 - Fixed threshold auto-compaction being skipped when providers omit streaming usage data ([#8328](https://github.com/earendil-works/pi/issues/8328)).
 - Fixed dash-prefixed prompts being parsed as options by supporting `--` as an end-of-options delimiter ([#7269](https://github.com/earendil-works/pi/issues/7269)).
+- Fixed the fixed 16384-token compaction reserve exceeding small local model context windows (e.g. an 8192-token local model got a negative budget, spuriously triggering every-turn compaction and overflowing the provider). The effective reserve is now clamped to a safe fraction of the actual context window in `shouldCompact` and branch summarization, while keeping the configured value for large windows.
+- Fixed degenerate compaction summaries (empty bodies, short stubs, or long unstructured narration with none of the required headings) being persisted as checkpoint history when they reached a `stop` reason but carried no usable content. Such summaries are now discarded, and the check is skipped on user abort; validation is scaled to the summarized history so short sessions still compact normally.
 
 ## [0.84.2] - 2026-08-14
 
