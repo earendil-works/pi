@@ -911,11 +911,14 @@ function sanitizeBedrockDocument(value: DocumentType): DocumentType {
 	return value;
 }
 
-function convertToolResultContent(content: (TextContent | ImageContent)[]): ToolResultContentBlock[] {
+function convertToolResultContent(
+	content: (TextContent | ImageContent)[],
+	hoistImages = false,
+): ToolResultContentBlock[] {
 	const result: ToolResultContentBlock[] = [];
 	for (const c of content) {
 		if (c.type === "image") {
-			result.push({ image: createImageBlock(c.mimeType, c.data) });
+			if (!hoistImages) result.push({ image: createImageBlock(c.mimeType, c.data) });
 		} else {
 			const textBlock = createNonBlankTextBlock(c.text);
 			if (textBlock) result.push(textBlock);
@@ -923,6 +926,21 @@ function convertToolResultContent(content: (TextContent | ImageContent)[]): Tool
 	}
 	if (result.length === 0) result.push({ text: EMPTY_TEXT_PLACEHOLDER });
 	return result;
+}
+
+// OpenAI models on Bedrock reject image blocks nested in toolResult.content
+// ("This model doesn't support the image field for user messages"), but accept
+// the same images as sibling content blocks of the user message that carries
+// the tool results. Model IDs may carry a cross-region inference profile
+// prefix (us./eu./apac.), e.g. "us.openai.gpt-5.6-sol".
+function shouldHoistToolResultImages(model: Model<"bedrock-converse-stream">): boolean {
+	return model.id.startsWith("openai.") || model.id.includes(".openai.");
+}
+
+function convertToolResultImages(content: (TextContent | ImageContent)[]): ContentBlock.ImageMember[] {
+	return content
+		.filter((c): c is ImageContent => c.type === "image")
+		.map((c) => ({ image: createImageBlock(c.mimeType, c.data) }));
 }
 
 function convertMessages(
@@ -1045,15 +1063,18 @@ function convertMessages(
 				// Collect all consecutive toolResult messages into a single user message
 				// Bedrock requires all tool results to be in one message
 				const toolResults: ContentBlock.ToolResultMember[] = [];
+				const toolImages: ContentBlock.ImageMember[] = [];
+				const hoistImages = shouldHoistToolResultImages(model);
 
 				// Add current tool result with all content blocks combined
 				toolResults.push({
 					toolResult: {
 						toolUseId: m.toolCallId,
-						content: convertToolResultContent(m.content),
+						content: convertToolResultContent(m.content, hoistImages),
 						status: m.isError ? ToolResultStatus.ERROR : ToolResultStatus.SUCCESS,
 					},
 				});
+				if (hoistImages) toolImages.push(...convertToolResultImages(m.content));
 
 				// Look ahead for consecutive toolResult messages
 				let j = i + 1;
@@ -1062,10 +1083,11 @@ function convertMessages(
 					toolResults.push({
 						toolResult: {
 							toolUseId: nextMsg.toolCallId,
-							content: convertToolResultContent(nextMsg.content),
+							content: convertToolResultContent(nextMsg.content, hoistImages),
 							status: nextMsg.isError ? ToolResultStatus.ERROR : ToolResultStatus.SUCCESS,
 						},
 					});
+					if (hoistImages) toolImages.push(...convertToolResultImages(nextMsg.content));
 					j++;
 				}
 
@@ -1074,7 +1096,7 @@ function convertMessages(
 
 				result.push({
 					role: ConversationRole.USER,
-					content: toolResults,
+					content: [...toolResults, ...toolImages],
 				});
 				break;
 			}
