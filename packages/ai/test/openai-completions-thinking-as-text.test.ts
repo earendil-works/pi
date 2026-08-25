@@ -46,6 +46,7 @@ const compat = {
 	sendSessionAffinityHeaders: false,
 	sessionAffinityFormat: "openai",
 	supportsLongCacheRetention: true,
+	supportsGoogleThoughtSignatures: false,
 } satisfies Omit<
 	Required<OpenAICompletionsCompat>,
 	"cacheControlFormat" | "deferredToolsMode" | "thinkingTokenBudgetField"

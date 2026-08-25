@@ -178,12 +178,17 @@ interface OpenAICompatCacheControl {
 
 type ResolvedOpenAICompletionsCompat = Omit<
 	Required<OpenAICompletionsCompat>,
-	"cacheControlFormat" | "deferredToolsMode" | "supportsThinkingTokenBudget" | "thinkingTokenBudgetField"
+	| "cacheControlFormat"
+	| "deferredToolsMode"
+	| "supportsThinkingTokenBudget"
+	| "thinkingTokenBudgetField"
+	| "supportsGoogleThoughtSignatures"
 > & {
 	cacheControlFormat?: OpenAICompletionsCompat["cacheControlFormat"];
 	deferredToolsMode?: OpenAICompletionsCompat["deferredToolsMode"];
 	supportsThinkingTokenBudget?: OpenAICompletionsCompat["supportsThinkingTokenBudget"];
 	thinkingTokenBudgetField?: OpenAICompletionsCompat["thinkingTokenBudgetField"];
+	supportsGoogleThoughtSignatures?: OpenAICompletionsCompat["supportsGoogleThoughtSignatures"];
 };
 
 type ResolvedChatTemplateKwargValue = string | number | boolean | null;
@@ -268,6 +273,10 @@ type ChatCompletionToolWithCacheControl = OpenAI.Chat.Completions.ChatCompletion
 	cache_control?: OpenAICompatCacheControl;
 };
 
+type ChatCompletionMessageToolCallWithExtraContent = ChatCompletionMessageToolCall & {
+	extra_content?: { google?: { thought_signature?: string } };
+};
+
 function resolveCacheRetention(cacheRetention?: CacheRetention, env?: ProviderEnv): CacheRetention {
 	if (cacheRetention) {
 		return cacheRetention;
@@ -350,6 +359,7 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 				type?: string;
 				function?: { name?: string; arguments?: string };
 				custom?: { name?: string; input?: string };
+				extra_content?: { google?: { thought_signature?: string } };
 			};
 
 			let textBlock: TextContent | null = null;
@@ -593,6 +603,20 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 							if (!block.id && toolCall.id) {
 								block.id = toolCall.id;
 								toolCallBlocksById.set(toolCall.id, block);
+							}
+							// Google-style thought signatures (Gemini 3 via OpenAI-compatible
+							// endpoints) must be preserved verbatim: first non-empty value wins,
+							// later deltas never overwrite. Unlike the scratch fields,
+							// thoughtSignature persists into the final message so it can be
+							// echoed back on replay.
+							const signature = toolCall.extra_content?.google?.thought_signature;
+							if (
+								compat.supportsGoogleThoughtSignatures &&
+								!block.thoughtSignature &&
+								typeof signature === "string" &&
+								signature.length > 0
+							) {
+								block.thoughtSignature = signature;
 							}
 							const name = toolCall.function?.name ?? toolCall.custom?.name;
 							if (!block.name && name) {
@@ -1281,7 +1305,7 @@ export function convertMessages(
 			}
 
 			if (toolCalls.length > 0) {
-				assistantMsg.tool_calls = toolCalls.map((tc): ChatCompletionMessageToolCall => {
+				assistantMsg.tool_calls = toolCalls.map((tc): ChatCompletionMessageToolCallWithExtraContent => {
 					const customInputProperty = options?.grammarToolInputProperties?.get(tc.name);
 					if (customInputProperty !== undefined) {
 						return {
@@ -1300,6 +1324,11 @@ export function convertMessages(
 							name: tc.name,
 							arguments: JSON.stringify(tc.arguments),
 						},
+						// Echo the captured Google thought signature back verbatim so Gemini
+						// 3 via OpenAI-compatible endpoints accepts the replayed tool call.
+						...(compat.supportsGoogleThoughtSignatures && tc.thoughtSignature
+							? { extra_content: { google: { thought_signature: tc.thoughtSignature } } }
+							: {}),
 					};
 				});
 			}
@@ -1625,6 +1654,7 @@ function detectCompat(model: Model<"openai-completions">): ResolvedOpenAIComplet
 			isNvidia ||
 			isAntLing
 		),
+		supportsGoogleThoughtSignatures: false,
 	};
 }
 
@@ -1665,5 +1695,7 @@ function getCompat(model: Model<"openai-completions">): ResolvedOpenAICompletion
 		deferredToolsMode: model.compat.deferredToolsMode ?? detected.deferredToolsMode,
 		sessionAffinityFormat: model.compat.sessionAffinityFormat ?? detected.sessionAffinityFormat,
 		supportsLongCacheRetention: model.compat.supportsLongCacheRetention ?? detected.supportsLongCacheRetention,
+		supportsGoogleThoughtSignatures:
+			model.compat.supportsGoogleThoughtSignatures ?? detected.supportsGoogleThoughtSignatures,
 	};
 }

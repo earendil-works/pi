@@ -47,6 +47,7 @@ const compat: Omit<Required<OpenAICompletionsCompat>, "deferredToolsMode" | "thi
 	sendSessionAffinityHeaders: false,
 	sessionAffinityFormat: "openai",
 	supportsLongCacheRetention: true,
+	supportsGoogleThoughtSignatures: false,
 };
 
 function buildToolResult(toolCallId: string, timestamp: number): ToolResultMessage {

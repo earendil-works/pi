@@ -729,6 +729,22 @@ function applyOpenAICompletionsCompatMetadata(model: Model<Api>): void {
 	}
 }
 
+/**
+ * Gemini 3.x models served through OpenAI-compatible endpoints require Google-style
+ * `extra_content.google.thought_signature` round-tripping on function tool calls; without it
+ * they reject replayed requests with "Function call is missing a thought_signature".
+ * Not a detected value: enablement is catalog-rule or user-supplied compat only.
+ */
+function applyGoogleThoughtSignatureCompatMetadata(model: Model<Api>): void {
+	if (model.api !== "openai-completions") return;
+	if (
+		(model.provider === "openrouter" && /^~?google\/gemini-3/.test(model.id)) ||
+		(model.provider === "github-copilot" && /^gemini-3/.test(model.id))
+	) {
+		model.compat = { ...(model.compat ?? {}), supportsGoogleThoughtSignatures: true };
+	}
+}
+
 function applyAnthropicMessagesCompatMetadata(model: Model<Api>): void {
 	if (model.api !== "anthropic-messages") return;
 	const compat = getAnthropicMessagesCompat(model.provider, model.id);
@@ -2801,6 +2817,7 @@ async function generateModels() {
 
 	for (const model of allModels) {
 		applyOpenAICompletionsCompatMetadata(model);
+		applyGoogleThoughtSignatureCompatMetadata(model);
 		applyAnthropicMessagesCompatMetadata(model);
 		applyModelsDevReasoningOptionMetadata(model);
 		applyThinkingLevelMetadata(model);
