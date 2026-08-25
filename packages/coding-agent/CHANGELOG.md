@@ -2,10 +2,6 @@
 
 ## [Unreleased]
 
-### Fixed
-
-- Fixed read tool line counts being one higher than the actual number of lines for files ending with a newline, which made truncation notices report a phantom extra line and let `offset` one past the end of file return an empty success instead of an error ([#7329](https://github.com/earendil-works/pi/issues/7329)).
-
 ## [0.84.3] - 2026-08-24
 
 ### New Features
