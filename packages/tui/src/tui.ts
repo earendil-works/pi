@@ -59,6 +59,12 @@ export interface TuiMouseEventResult {
 	render?: boolean;
 }
 
+export interface TuiSelectionPoint {
+	x: number;
+	y: number;
+	boundary?: boolean;
+}
+
 /** Internal target metadata used by containers and alternate-screen dispatch. */
 export interface TuiMouseDispatchTarget {
 	component: Component;
@@ -123,6 +129,12 @@ export interface Component {
 
 	/** Optional normalized mouse handler. */
 	handleMouse?(event: TuiMouseEvent): TuiMouseEventResult | undefined;
+
+	/** Optional handler for a completed screen selection within this component. */
+	handleSelection?(start: TuiSelectionPoint, end: TuiSelectionPoint, width: number): boolean;
+
+	/** Clear component-owned selection state. */
+	clearSelection?(): void;
 
 	/**
 	 * If true, component receives key release events (Kitty protocol).
@@ -352,6 +364,24 @@ export class Container implements Component {
 			childY += childHeight;
 		}
 		return undefined;
+	}
+
+	handleSelection(start: TuiSelectionPoint, end: TuiSelectionPoint, width: number): boolean {
+		let childY = 0;
+		for (const child of this.children) {
+			const childHeight = child.render(width).length;
+			if (start.y >= childY && start.y < childY + childHeight && end.y >= childY && end.y < childY + childHeight) {
+				return (
+					child.handleSelection?.({ ...start, y: start.y - childY }, { ...end, y: end.y - childY }, width) ?? false
+				);
+			}
+			childY += childHeight;
+		}
+		return false;
+	}
+
+	clearSelection(): void {
+		for (const child of this.children) child.clearSelection?.();
 	}
 
 	render(width: number): string[] {

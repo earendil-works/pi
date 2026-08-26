@@ -9,6 +9,7 @@ import {
 	type TUI,
 	type TuiMouseEvent,
 	type TuiMouseEventResult,
+	type TuiSelectionPoint,
 } from "../tui.ts";
 import { UndoStack } from "../undo-stack.ts";
 import {
@@ -219,6 +220,11 @@ interface EditorState {
 	cursorCol: number;
 }
 
+interface EditorPosition {
+	line: number;
+	col: number;
+}
+
 /** Undo snapshot: editor text state plus the paste registry. */
 interface EditorSnapshot {
 	state: EditorState;
@@ -343,6 +349,7 @@ export class Editor implements Component, Focusable {
 	// vertical move can resolve it to a visual column on whatever VL it belongs
 	// to.
 	private snappedFromCursorCol: number | null = null;
+	private selection?: { start: EditorPosition; end: EditorPosition };
 
 	// Undo support
 	private undoStack = new UndoStack<EditorSnapshot>();
@@ -638,37 +645,12 @@ export class Editor implements Component, Focusable {
 		// The renderer synthesizes a click when press and release land on the same
 		// cell without movement, which is the gesture that positions the cursor.
 		if (event.type !== "click" || event.button !== "left") return undefined;
-		if (event.y <= 0 || event.y > this.renderedVisibleLineCount) return { handled: true, focus: true };
+		const position = this.getPositionAt(event.x, event.y, event.width, "start");
+		if (!position) return { handled: true, focus: true };
 
-		const visualLines = this.buildVisualLineMap(this.lastWidth);
-		const visualLineIndex = this.scrollOffset + event.y - 1;
-		const visualLine = visualLines[visualLineIndex];
-		if (!visualLine) return { handled: true, focus: true };
-		const logicalLine = this.state.lines[visualLine.logicalLine] ?? "";
-		const chunkEnd = visualLine.startCol + visualLine.length;
-		const chunk = logicalLine.slice(visualLine.startCol, chunkEnd);
-		const maxPadding = Math.max(0, Math.floor((event.width - 1) / 2));
-		const paddingX = Math.min(this.paddingX, maxPadding);
-		const targetColumn = Math.max(0, event.x - paddingX);
-		let visibleColumn = 0;
-		let targetIndex = chunk.length;
-		let lastGraphemeIndex = 0;
-		for (const grapheme of this.segment(chunk, "grapheme")) {
-			const nextColumn = visibleColumn + visibleWidth(grapheme.segment);
-			lastGraphemeIndex = grapheme.index;
-			if (targetColumn < nextColumn) {
-				targetIndex = grapheme.index;
-				break;
-			}
-			visibleColumn = nextColumn;
-		}
-		const isLastSegment =
-			visualLineIndex === visualLines.length - 1 ||
-			visualLines[visualLineIndex + 1]?.logicalLine !== visualLine.logicalLine;
-		if (!isLastSegment && targetIndex === chunk.length && chunk.length > 0) targetIndex = lastGraphemeIndex;
-
-		this.state.cursorLine = visualLine.logicalLine;
-		this.setCursorCol(visualLine.startCol + targetIndex);
+		this.state.cursorLine = position.line;
+		this.selection = undefined;
+		this.setCursorCol(position.col);
 		this.lastAction = null;
 		this.exitHistoryBrowsing();
 		if (this.autocompleteState) this.updateAutocomplete();
@@ -677,6 +659,24 @@ export class Editor implements Component, Focusable {
 
 	handleInput(data: string): void {
 		const kb = getKeybindings();
+		if (
+			this.selection &&
+			(kb.matches(data, "tui.editor.deleteCharBackward") ||
+				matchesKey(data, "shift+backspace") ||
+				kb.matches(data, "tui.editor.deleteCharForward") ||
+				matchesKey(data, "shift+delete"))
+		) {
+			this.deleteSelection();
+			return;
+		}
+		const selectedTextInput = matchesKey(data, "shift+space")
+			? " "
+			: (decodePrintableKey(data) ?? (data.charCodeAt(0) >= 32 ? data : undefined));
+		if (this.selection && selectedTextInput !== undefined) {
+			this.replaceSelection(selectedTextInput);
+			return;
+		}
+		this.selection = undefined;
 
 		// Handle character jump mode (awaiting next character to jump to)
 		if (this.jumpMode !== null) {
@@ -975,6 +975,123 @@ export class Editor implements Component, Focusable {
 		if (data.charCodeAt(0) >= 32) {
 			this.insertCharacter(data);
 		}
+	}
+
+	handleSelection(start: TuiSelectionPoint, end: TuiSelectionPoint, width: number): boolean {
+		const startPosition = this.getPositionAt(start.x, start.y, width, "start");
+		const endPosition = this.getPositionAt(end.x, end.y, width, end.boundary ? "boundary" : "end");
+		if (!startPosition || !endPosition) return false;
+		if (startPosition.line === endPosition.line && startPosition.col === endPosition.col) return false;
+
+		this.selection = { start: startPosition, end: endPosition };
+		this.lastAction = null;
+		return true;
+	}
+
+	clearSelection(): void {
+		this.selection = undefined;
+	}
+
+	private getPositionAt(
+		x: number,
+		y: number,
+		width: number,
+		mode: "start" | "end" | "boundary",
+	): EditorPosition | undefined {
+		if (y <= 0 || y > this.renderedVisibleLineCount) return undefined;
+		const visualLines = this.buildVisualLineMap(this.lastWidth);
+		const visualLineIndex = this.scrollOffset + y - 1;
+		const visualLine = visualLines[visualLineIndex];
+		if (!visualLine) return undefined;
+
+		const paddingX = Math.min(this.paddingX, Math.max(0, Math.floor((width - 1) / 2)));
+		const visualCol = Math.max(0, x - paddingX);
+		const logicalLine = this.state.lines[visualLine.logicalLine] ?? "";
+		const chunk = logicalLine.slice(visualLine.startCol, visualLine.startCol + visualLine.length);
+		const isLastVisualLine =
+			visualLineIndex === visualLines.length - 1 ||
+			visualLines[visualLineIndex + 1]?.logicalLine !== visualLine.logicalLine;
+		let targetCol = isLastVisualLine || mode !== "start" ? visualLine.startCol + chunk.length : visualLine.startCol;
+		let currentWidth = 0;
+		for (const grapheme of this.segment(chunk, "grapheme")) {
+			if (visualCol < currentWidth + visibleWidth(grapheme.segment)) {
+				targetCol = visualLine.startCol + grapheme.index + (mode === "end" ? grapheme.segment.length : 0);
+				break;
+			}
+			currentWidth += visibleWidth(grapheme.segment);
+			if (!isLastVisualLine && mode === "start") targetCol = visualLine.startCol + grapheme.index;
+		}
+
+		for (const segment of this.segment(logicalLine, "grapheme")) {
+			if (targetCol > segment.index && targetCol < segment.index + segment.segment.length) {
+				targetCol = mode === "end" ? segment.index + segment.segment.length : segment.index;
+				break;
+			}
+		}
+		return { line: visualLine.logicalLine, col: targetCol };
+	}
+
+	private deleteSelection(): void {
+		if (!this.selection) return;
+		this.cancelAutocomplete();
+		this.exitHistoryBrowsing();
+		this.lastAction = null;
+		this.pushUndoSnapshot();
+		this.removeSelection();
+		this.onChange?.(this.getText());
+		this.tui.requestRender();
+	}
+
+	private replaceSelection(text: string): void {
+		if (!this.selection) return;
+		this.cancelAutocomplete();
+		this.exitHistoryBrowsing();
+		this.lastAction = null;
+		this.pushUndoSnapshot();
+		this.removeSelection();
+		this.insertCharacter(text, true);
+		this.lastAction = "type-word";
+	}
+
+	private removeSelection(): void {
+		const selection = this.selection!;
+		this.selection = undefined;
+		const selectedText =
+			selection.start.line === selection.end.line
+				? this.state.lines[selection.start.line]!.slice(selection.start.col, selection.end.col)
+				: [
+						this.state.lines[selection.start.line]!.slice(selection.start.col),
+						...this.state.lines.slice(selection.start.line + 1, selection.end.line),
+						this.state.lines[selection.end.line]!.slice(0, selection.end.col),
+					].join("\n");
+		const before = this.state.lines[selection.start.line]!.slice(0, selection.start.col);
+		const after = this.state.lines[selection.end.line]!.slice(selection.end.col);
+		this.state.lines.splice(selection.start.line, selection.end.line - selection.start.line + 1, before + after);
+		this.state.cursorLine = selection.start.line;
+		this.setCursorCol(selection.start.col);
+		this.removePastes(
+			new Set(
+				[...selectedText.matchAll(PASTE_MARKER_REGEX)]
+					.map((match) => Number(match[1]))
+					.filter((id) => this.pastes.has(id)),
+			),
+		);
+	}
+
+	private removePastes(removedIds: Set<number>): void {
+		if (removedIds.size === 0) return;
+		const remaining = [...this.pastes].filter(([id]) => !removedIds.has(id));
+		const idMap = new Map(remaining.map(([id], index) => [id, index + 1]));
+		const remap = (text: string): string =>
+			text.replace(PASTE_MARKER_REGEX, (fullMatch, idGroup, suffixGroup = "") => {
+				const id = idMap.get(Number(idGroup));
+				return id === undefined ? fullMatch : `[paste #${id}${suffixGroup}]`;
+			});
+		const cursorPrefix = remap(this.state.lines[this.state.cursorLine]!.slice(0, this.state.cursorCol));
+		this.pastes = new Map(remaining.map(([, content], index) => [index + 1, content]));
+		this.pasteCounter = this.pastes.size;
+		this.state.lines = this.state.lines.map(remap);
+		this.setCursorCol(cursorPrefix.length);
 	}
 
 	private layoutText(contentWidth: number): LayoutLine[] {

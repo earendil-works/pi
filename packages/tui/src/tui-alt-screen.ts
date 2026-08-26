@@ -7,7 +7,7 @@ import {
 import { AltScreenFlashContainer } from "./components/alt-screen-flash.ts";
 import { ScrollView } from "./components/scroll-view.ts";
 import { getKeybindings } from "./keybindings.ts";
-import { isKeyRelease } from "./keys.ts";
+import { decodePrintableKey, isKeyRelease, matchesKey } from "./keys.ts";
 import {
 	getLayoutBoxesAt,
 	getScrollbarGeometry,
@@ -201,6 +201,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 	private activeSearch?: ActiveSearch;
 	private pressedUrl?: string;
 	private selectionDragged = false;
+	private componentSelectionOwner?: Component;
 	private mouseCapture?: TuiMouseDispatchTarget;
 	private mousePressTarget?: TuiMouseDispatchTarget;
 	private mousePressPoint?: { x: number; y: number };
@@ -230,6 +231,8 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		this.implicitDocument = {
 			render: (width) => super.render(width),
 			handleMouse: (event) => super.handleMouse(event),
+			handleSelection: (start, end, width) => super.handleSelection(start, end, width),
+			clearSelection: () => super.clearSelection(),
 			invalidate: () => {
 				for (const child of this.children) child.invalidate();
 			},
@@ -580,6 +583,8 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 			this.selectionDragged = false;
 			this.clearComponentMouseGesture();
 			this.lastComponentClick = undefined;
+			this.componentSelectionOwner?.clearSelection?.();
+			this.componentSelectionOwner = undefined;
 			if (hadActiveSelection) {
 				this.selectionAnchor = undefined;
 				this.selectionFocus = undefined;
@@ -616,6 +621,24 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 
 		const keybindings = getKeybindings();
 		const isRelease = isKeyRelease(data);
+		if (!isRelease && this.componentSelectionOwner && this.getSelectionBounds()) {
+			const owner = this.componentSelectionOwner;
+			this.componentSelectionOwner = undefined;
+			this.selectionAnchor = undefined;
+			this.selectionFocus = undefined;
+			this.selectionGranularity = "character";
+			this.selectionInitialRange = undefined;
+			const editsSelection =
+				keybindings.matches(data, "tui.editor.deleteCharBackward") ||
+				matchesKey(data, "shift+backspace") ||
+				keybindings.matches(data, "tui.editor.deleteCharForward") ||
+				matchesKey(data, "shift+delete") ||
+				matchesKey(data, "shift+space") ||
+				decodePrintableKey(data) !== undefined ||
+				data.charCodeAt(0) >= 32;
+			if (!editsSelection) owner.clearSelection?.();
+			this.requestRender();
+		}
 		if (keybindings.matches(data, "tui.altScreen.search")) {
 			if (!isRelease) this.openSearch();
 			return { consume: true };
@@ -777,6 +800,8 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 	}
 
 	private clearTextSelection(): void {
+		this.componentSelectionOwner?.clearSelection?.();
+		this.componentSelectionOwner = undefined;
 		this.stopSelectionAutoScroll();
 		this.selectionPressActive = false;
 		this.selectionAnchor = undefined;
@@ -1203,6 +1228,8 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 					return;
 				}
 			}
+			const selection = this.getSelectionBounds();
+			this.componentSelectionOwner = selection ? this.handleComponentSelection(selection) : undefined;
 			void this.copySelectionToClipboard();
 			this.requestRender();
 			return;
@@ -1218,6 +1245,8 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 			return;
 		}
 		this.stopSelectionAutoScroll();
+		this.componentSelectionOwner?.clearSelection?.();
+		this.componentSelectionOwner = undefined;
 		this.selectionPressActive = true;
 		const scrollView =
 			!this.hasOverlay() && this.currentLayout
@@ -1239,6 +1268,50 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 					Math.max(0, Math.min(this.terminal.columns - 1, event.x)),
 				);
 		this.requestRender();
+	}
+
+	private handleComponentSelection(selection: { start: SelectionPoint; end: SelectionPoint }): Component | undefined {
+		if (!this.currentLayout) return undefined;
+		const focused = this.getFocusedComponent();
+		if (!focused?.handleSelection) return undefined;
+		const scrollViewBox = selection.start.scrollView
+			? getScrollViewBox(this.currentLayout, selection.start.scrollView)
+			: undefined;
+		if (selection.start.scrollView && !scrollViewBox) return undefined;
+		if (scrollViewBox) {
+			const target = scrollViewBox.children[0];
+			return target?.component.handleSelection?.(
+				{ x: selection.start.col, y: selection.start.row },
+				{
+					x: selection.end.col,
+					y: selection.end.row,
+					...(selection.end.boundary ? { boundary: true } : {}),
+				},
+				target.rect.width,
+			)
+				? focused
+				: undefined;
+		}
+		const start = { x: selection.start.col, y: selection.start.row };
+		const end = { x: selection.end.col, y: selection.end.row };
+		const startTarget = getLayoutBoxesAt(this.currentLayout, start.x, start.y).find(
+			(box) => box.component === focused,
+		);
+		const endX = selection.end.boundary ? Math.max(0, end.x - 1) : end.x;
+		const endTarget = getLayoutBoxesAt(this.currentLayout, endX, end.y).find((box) => box.component === focused);
+		if (!startTarget || startTarget !== endTarget) return undefined;
+		const offsetY = startTarget.rect.y - (startTarget.lineOffset ?? 0);
+		return focused.handleSelection?.(
+			{ x: start.x - startTarget.rect.x, y: start.y - offsetY },
+			{
+				x: end.x - startTarget.rect.x,
+				y: end.y - offsetY,
+				...(selection.end.boundary ? { boundary: true } : {}),
+			},
+			startTarget.rect.width,
+		)
+			? focused
+			: undefined;
 	}
 
 	private getSelectionBounds(): { start: SelectionPoint; end: SelectionPoint } | undefined {

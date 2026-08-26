@@ -176,4 +176,29 @@ describe("mouse-aware components", () => {
 		assert.deepStrictEqual(editor.getCursor(), cursorBefore);
 		tui.stop();
 	});
+
+	for (const { name, input, expected } of [
+		{ name: "deletes", input: "\x7f", expected: " world" },
+		{ name: "replaces", input: "pi", expected: "pi world" },
+	]) {
+		it(`${name} selected editor text`, async () => {
+			const terminal = new VirtualTerminal(20, 6);
+			const tui = new TuiAltScreen(terminal, undefined, undefined, { copySelection: async () => true });
+			const editor = new Editor(tui, editorTheme);
+			editor.setText("hello world");
+			tui.addChild(editor);
+			tui.setFocus(editor);
+			tui.start();
+			await terminal.waitForRender();
+
+			terminal.sendInput("\x1b[<0;1;2M");
+			terminal.sendInput("\x1b[<32;5;2M");
+			terminal.sendInput("\x1b[<0;5;2m");
+			terminal.sendInput(input);
+			await terminal.waitForRender();
+
+			assert.strictEqual(editor.getText(), expected);
+			tui.stop();
+		});
+	}
 });
