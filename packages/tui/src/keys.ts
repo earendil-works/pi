@@ -478,6 +478,10 @@ const LEGACY_SEQUENCE_KEY_IDS: Record<string, KeyId> = {
 	"\x1bf": "alt+right",
 	"\x1bp": "alt+up",
 	"\x1bn": "alt+down",
+	"\x1b\x1b[A": "alt+up",
+	"\x1b\x1b[B": "alt+down",
+	"\x1b\x1b[C": "alt+right",
+	"\x1b\x1b[D": "alt+left",
 } as const;
 
 type LegacyModifierKey = keyof typeof LEGACY_SHIFT_SEQUENCES;
@@ -1043,7 +1047,10 @@ export function matchesKey(data: string, keyId: KeyId): boolean {
 
 		case "up":
 			if (modifier === MODIFIERS.alt) {
-				return data === "\x1bp" || matchesKittySequence(data, ARROW_CODEPOINTS.up, MODIFIERS.alt);
+				return (
+					LEGACY_SEQUENCE_KEY_IDS[data] === "alt+up" ||
+					matchesKittySequence(data, ARROW_CODEPOINTS.up, MODIFIERS.alt)
+				);
 			}
 			if (modifier === 0) {
 				return (
@@ -1058,7 +1065,10 @@ export function matchesKey(data: string, keyId: KeyId): boolean {
 
 		case "down":
 			if (modifier === MODIFIERS.alt) {
-				return data === "\x1bn" || matchesKittySequence(data, ARROW_CODEPOINTS.down, MODIFIERS.alt);
+				return (
+					LEGACY_SEQUENCE_KEY_IDS[data] === "alt+down" ||
+					matchesKittySequence(data, ARROW_CODEPOINTS.down, MODIFIERS.alt)
+				);
 			}
 			if (modifier === 0) {
 				return (
@@ -1076,7 +1086,7 @@ export function matchesKey(data: string, keyId: KeyId): boolean {
 				return (
 					data === "\x1b[1;3D" ||
 					(!_kittyProtocolActive && data === "\x1bB") ||
-					data === "\x1bb" ||
+					LEGACY_SEQUENCE_KEY_IDS[data] === "alt+left" ||
 					matchesKittySequence(data, ARROW_CODEPOINTS.left, MODIFIERS.alt)
 				);
 			}
@@ -1103,7 +1113,7 @@ export function matchesKey(data: string, keyId: KeyId): boolean {
 				return (
 					data === "\x1b[1;3C" ||
 					(!_kittyProtocolActive && data === "\x1bF") ||
-					data === "\x1bf" ||
+					LEGACY_SEQUENCE_KEY_IDS[data] === "alt+right" ||
 					matchesKittySequence(data, ARROW_CODEPOINTS.right, MODIFIERS.alt)
 				);
 			}

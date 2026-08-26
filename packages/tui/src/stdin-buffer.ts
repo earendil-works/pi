@@ -198,6 +198,21 @@ function extractCompleteSequences(buffer: string): { sequences: string[]; remain
 	while (pos < buffer.length) {
 		const remaining = buffer.slice(pos);
 
+		// A second ESC may be the prefix for an Option-modified escape sequence.
+		// Wait briefly for the next byte instead of finalizing Ctrl+Alt+[ early.
+		if (remaining === `${ESC}${ESC}`) return { sequences, remainder: remaining };
+
+		// Apple Terminal prefixes the ordinary arrow sequence with ESC for
+		// Option+arrow. Preserve it as one event so key matching sees Alt+arrow.
+		if (remaining.startsWith(`${ESC}${ESC}[`)) {
+			if (remaining.length < 4) return { sequences, remainder: remaining };
+			if (/[ABCD]/.test(remaining[3]!)) {
+				sequences.push(remaining.slice(0, 4));
+				pos += 4;
+				continue;
+			}
+		}
+
 		// Try to extract a sequence starting at this position
 		if (remaining.startsWith(ESC)) {
 			// Find the end of this escape sequence

@@ -64,6 +64,13 @@ describe("StdinBuffer", () => {
 			assert.deepStrictEqual(emittedSequences, [upArrow]);
 		});
 
+		it("should preserve Apple Terminal Option+arrow sequences", () => {
+			for (const sequence of ["\x1b\x1b[A", "\x1b\x1b[B", "\x1b\x1b[C", "\x1b\x1b[D"]) {
+				processInput(sequence);
+			}
+			assert.deepStrictEqual(emittedSequences, ["\x1b\x1b[A", "\x1b\x1b[B", "\x1b\x1b[C", "\x1b\x1b[D"]);
+		});
+
 		it("should pass through complete function key sequences", () => {
 			const f1 = "\x1b[11~";
 			processInput(f1);
@@ -107,6 +114,22 @@ describe("StdinBuffer", () => {
 
 			processInput("5H");
 			assert.deepStrictEqual(emittedSequences, ["\x1b[1;5H"]);
+		});
+
+		it("should preserve Apple Terminal Option+arrow sequences split across chunks", () => {
+			processInput("\x1b");
+			processInput("\x1b[");
+			processInput("A");
+
+			assert.deepStrictEqual(emittedSequences, ["\x1b\x1b[A"]);
+		});
+
+		it("should preserve Apple Terminal Option+arrow when each escape arrives separately", () => {
+			processInput("\x1b");
+			processInput("\x1b");
+			processInput("[A");
+
+			assert.deepStrictEqual(emittedSequences, ["\x1b\x1b[A"]);
 		});
 
 		it("should buffer split across many chunks", () => {
@@ -269,9 +292,11 @@ describe("StdinBuffer", () => {
 			assert.deepStrictEqual(emittedSequences, ["\x1b", "\x1b[27;1:3u"]);
 		});
 
-		it("should still emit ESC+ESC as a single sequence when not followed by a new escape", () => {
+		it("should still emit ESC+ESC as a single sequence when not followed by a new escape", async () => {
 			// \x1b\x1b alone (no following CSI) stays as-is — e.g. ctrl+alt+[
 			processInput("\x1b\x1b");
+			assert.deepStrictEqual(emittedSequences, []);
+			await wait(15);
 			assert.deepStrictEqual(emittedSequences, ["\x1b\x1b"]);
 		});
 

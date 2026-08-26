@@ -500,6 +500,16 @@ describe("matchesKey", () => {
 		it("should match alt+arrows", () => {
 			assert.strictEqual(matchesKey("\x1bp", "alt+up"), true);
 			assert.strictEqual(matchesKey("\x1bp", "up"), false);
+			for (const [sequence, key] of [
+				["\x1b\x1b[A", "up"],
+				["\x1b\x1b[B", "down"],
+				["\x1b\x1b[C", "right"],
+				["\x1b\x1b[D", "left"],
+			] as const) {
+				assert.strictEqual(matchesKey(sequence, `alt+${key}`), true);
+				assert.strictEqual(matchesKey(sequence, key), false);
+				assert.strictEqual(parseKey(sequence), `alt+${key}`);
+			}
 		});
 
 		it("should match rxvt modifier sequences", () => {
