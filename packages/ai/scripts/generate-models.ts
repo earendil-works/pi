@@ -258,6 +258,24 @@ const NVIDIA_NIM_UNSUPPORTED_MODELS = new Set([
 	"upstage/solar-10.7b-instruct",
 ]);
 const ZAI_TOOL_STREAM_UNSUPPORTED_MODELS = new Set(["glm-4.5", "glm-4.5-air", "glm-4.5-flash", "glm-4.5v"]);
+const ZAI_CODING_PLAN_MODEL_OVERRIDES = {
+	"glm-5.3-flash": {
+		id: "glm-5.3-flash",
+		name: "GLM-5.3 Flash",
+		tool_call: true,
+		reasoning: true,
+		reasoning_options: [{ type: "effort", values: ["low", "high", "max"] }],
+		modalities: {
+			input: ["text", "image"],
+			output: ["text"],
+		},
+		limit: {
+			context: 1_000_000,
+			output: 131_072,
+		},
+	},
+} satisfies Record<string, ModelsDevModel>;
+
 const OPENCODE_GO_GLM52_THINKING_LEVEL_MAP = {
 	off: null,
 	minimal: null,
@@ -1209,7 +1227,10 @@ function processZaiModels(data: ModelsDevCatalog): Model<Api>[] {
 	const models: Model<Api>[] = [];
 
 	for (const { source, provider, baseUrl } of variants) {
-		for (const [modelId, model] of Object.entries(data[source]?.models ?? {})) {
+		for (const [modelId, model] of Object.entries({
+			...data[source]?.models,
+			...ZAI_CODING_PLAN_MODEL_OVERRIDES,
+		})) {
 			const m = model as ModelsDevModel;
 			if (m.tool_call !== true) continue;
 			const supportsImage = m.modalities?.input?.includes("image");

@@ -83,4 +83,67 @@ describe("strict model generation", () => {
 		);
 		expect(generatedPaths.map((path) => readFileSync(join(packageRoot, path), "utf8"))).toEqual(sourceBefore);
 	});
+
+	it("includes GLM-5.3 Flash in both Z.AI Coding Plan catalogs", () => {
+		const fixtureRoot = mkdtempSync(join(tmpdir(), "pi-generate-models-"));
+		temporaryRoots.push(fixtureRoot);
+		const outputDir = join(fixtureRoot, "catalog");
+		const preloadPath = join(fixtureRoot, "mock-models-dev.mjs");
+		writeFileSync(
+			preloadPath,
+			`globalThis.fetch = async (input) => {\n` +
+				`  if (String(input) === "https://models.dev/api.json") {\n` +
+				`    return new Response(JSON.stringify({}), { status: 200 });\n` +
+				`  }\n` +
+				`  return new Response("", { status: 500 });\n` +
+				`};\n`,
+		);
+
+		const result = spawnSync(
+			process.execPath,
+			[
+				"--import",
+				pathToFileURL(preloadPath).href,
+				"scripts/generate-models.ts",
+				"--json-only",
+				"--json-output",
+				outputDir,
+			],
+			{
+				cwd: packageRoot,
+				encoding: "utf8",
+				timeout: 10_000,
+			},
+		);
+
+		expect(result.status).toBe(0);
+		for (const [provider, baseUrl] of Object.entries({
+			zai: "https://api.z.ai/api/coding/paas/v4",
+			"zai-coding-cn": "https://open.bigmodel.cn/api/coding/paas/v4",
+		})) {
+			const catalog = JSON.parse(readFileSync(join(outputDir, "providers", `${provider}.json`), "utf8"));
+			expect(catalog["glm-5.3-flash"]).toMatchObject({
+				id: "glm-5.3-flash",
+				name: "GLM-5.3 Flash",
+				api: "openai-completions",
+				provider,
+				baseUrl,
+				reasoning: true,
+				input: ["text", "image"],
+				contextWindow: 1_000_000,
+				maxTokens: 131_072,
+				thinkingLevelMap: {
+					off: null,
+					low: "low",
+					high: "high",
+					max: "max",
+				},
+				compat: {
+					thinkingFormat: "zai",
+					supportsReasoningEffort: true,
+					zaiToolStream: true,
+				},
+			});
+		}
+	});
 });
