@@ -835,37 +835,38 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 
 	private getWordSelection(point: SelectionPoint): SelectionRange | undefined {
 		const line = stripTerminalSequences(this.getSelectionSourceLine(point));
-		const segments: Array<{ start: number; end: number; isWordLike: boolean; isTerminalJoiner: boolean }> = [];
+		const segments: Array<{ start: number; end: number; selectable: boolean; joiner: boolean }> = [];
 		let start = 0;
 		for (const segment of wordSegmenter.segment(line)) {
 			const end = start + visibleWidth(segment.segment);
-			segments.push({
-				start,
-				end,
-				isWordLike: segment.isWordLike === true,
-				isTerminalJoiner: TERMINAL_WORD_SELECTION_JOINERS.has(segment.segment),
-			});
+			const joiner = TERMINAL_WORD_SELECTION_JOINERS.has(segment.segment);
+			segments.push({ start, end, selectable: segment.isWordLike === true || joiner, joiner });
 			start = end;
 		}
 		const clickedSegmentIndex = segments.findIndex(
 			(segment) => point.col >= segment.start && point.col < segment.end,
 		);
 		if (clickedSegmentIndex < 0) return undefined;
-		const canCoalesce = (leftIndex: number, rightIndex: number): boolean => {
-			const left = segments[leftIndex];
-			const right = segments[rightIndex];
-			if (!left || !right) return false;
-			const leftSelectable = left.isWordLike || left.isTerminalJoiner;
-			const rightSelectable = right.isWordLike || right.isTerminalJoiner;
-			return leftSelectable && rightSelectable && (left.isTerminalJoiner || right.isTerminalJoiner);
-		};
-		let rangeStartIndex = clickedSegmentIndex;
-		let rangeEndIndex = clickedSegmentIndex;
-		while (rangeStartIndex > 0 && canCoalesce(rangeStartIndex - 1, rangeStartIndex)) rangeStartIndex--;
-		while (rangeEndIndex < segments.length - 1 && canCoalesce(rangeEndIndex, rangeEndIndex + 1)) rangeEndIndex++;
+
+		const canJoin = (
+			left: { selectable: boolean; joiner: boolean },
+			right: { selectable: boolean; joiner: boolean },
+		): boolean => left.selectable && right.selectable && (left.joiner || right.joiner);
+		let selectionStart = segments[clickedSegmentIndex].start;
+		let selectionEnd = segments[clickedSegmentIndex].end;
+		for (let index = clickedSegmentIndex; index > 0 && canJoin(segments[index - 1], segments[index]); index--) {
+			selectionStart = segments[index - 1].start;
+		}
+		for (
+			let index = clickedSegmentIndex;
+			index < segments.length - 1 && canJoin(segments[index], segments[index + 1]);
+			index++
+		) {
+			selectionEnd = segments[index + 1].end;
+		}
 		return {
-			start: { ...point, col: segments[rangeStartIndex]?.start ?? 0 },
-			end: { ...point, col: segments[rangeEndIndex]?.end ?? 0, boundary: true },
+			start: { ...point, col: selectionStart },
+			end: { ...point, col: selectionEnd, boundary: true },
 		};
 	}
 
