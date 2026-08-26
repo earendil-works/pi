@@ -283,7 +283,7 @@ const DEEPSEEK_V4_THINKING_LEVEL_MAP = {
 	high: "high",
 	max: "max",
 } as const;
-const DEEPSEEK_V4_FLASH_THINKING_LEVEL_MAP = {
+const DEEPSEEK_V4_LOW_HIGH_MAX_THINKING_LEVEL_MAP = {
 	...DEEPSEEK_V4_THINKING_LEVEL_MAP,
 	low: "low",
 } as const;
@@ -933,8 +933,8 @@ function applyThinkingLevelMetadata(model: Model<any>): void {
 			model.provider === "openrouter"
 				? { ...DEEPSEEK_V4_THINKING_LEVEL_MAP, xhigh: "xhigh", max: null }
 				: (model.provider === "deepseek" || model.provider === "opencode" || model.provider === "opencode-go") &&
-					model.id.includes("deepseek-v4-flash")
-					? DEEPSEEK_V4_FLASH_THINKING_LEVEL_MAP
+					(model.id.includes("deepseek-v4-flash") || model.id.includes("deepseek-v4-pro"))
+					? DEEPSEEK_V4_LOW_HIGH_MAX_THINKING_LEVEL_MAP
 					: DEEPSEEK_V4_THINKING_LEVEL_MAP,
 		);
 	}

@@ -88,8 +88,20 @@ describe("getSupportedThinkingLevels", () => {
 		expect(getSupportedThinkingLevels(model!)).toEqual(["off", "low", "high", "max"]);
 	});
 
+	it("includes low/high/max plus off for DeepSeek V4 Pro on the DeepSeek provider", () => {
+		const model = getModel("deepseek", "deepseek-v4-pro");
+		expect(model).toBeDefined();
+		expect(getSupportedThinkingLevels(model!)).toEqual(["off", "low", "high", "max"]);
+	});
+
 	it("includes low/high/max plus off for DeepSeek V4 Flash on opencode-go", () => {
 		const model = getModel("opencode-go", "deepseek-v4-flash");
+		expect(model).toBeDefined();
+		expect(getSupportedThinkingLevels(model!)).toEqual(["off", "low", "high", "max"]);
+	});
+
+	it("includes low/high/max plus off for DeepSeek V4 Pro on opencode-go", () => {
+		const model = getModel("opencode-go", "deepseek-v4-pro");
 		expect(model).toBeDefined();
 		expect(getSupportedThinkingLevels(model!)).toEqual(["off", "low", "high", "max"]);
 	});
@@ -129,6 +141,12 @@ describe("getSupportedThinkingLevels", () => {
 
 	it("includes only high/xhigh plus off for DeepSeek V4 Flash on OpenRouter", () => {
 		const model = getModel("openrouter", "deepseek/deepseek-v4-flash");
+		expect(model).toBeDefined();
+		expect(getSupportedThinkingLevels(model!)).toEqual(["off", "high", "xhigh"]);
+	});
+
+	it("includes only high/xhigh plus off for DeepSeek V4 Pro on OpenRouter", () => {
+		const model = getModel("openrouter", "deepseek/deepseek-v4-pro");
 		expect(model).toBeDefined();
 		expect(getSupportedThinkingLevels(model!)).toEqual(["off", "high", "xhigh"]);
 	});
