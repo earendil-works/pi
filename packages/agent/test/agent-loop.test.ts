@@ -1480,6 +1480,86 @@ describe("agentLoop with AgentMessage", () => {
 
 		expect(llmCalls).toBe(1);
 	});
+
+	it("stops the loop when the run is aborted during tool execution (no second LLM call)", async () => {
+		const toolSchema = Type.Object({});
+		let toolStarted = false;
+		let releaseTool: (() => void) | undefined;
+		const abortController = new AbortController();
+
+		const slowTool: AgentTool<typeof toolSchema> = {
+			name: "slow",
+			label: "Slow",
+			description: "Slow tool",
+			parameters: toolSchema,
+			async execute(_id, _params, signal) {
+				toolStarted = true;
+				await new Promise<void>((resolve) => {
+					releaseTool = resolve;
+					signal?.addEventListener("abort", () => resolve(), { once: true });
+				});
+				return {
+					content: [{ type: "text", text: "aborted" }],
+					details: {},
+					isError: true,
+				};
+			},
+		};
+
+		const context: AgentContext = { systemPrompt: "", messages: [], tools: [slowTool] };
+		let llmCalls = 0;
+		let queuedDelivered = false;
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+			toolExecution: "sequential",
+			getSteeringMessages: async () => {
+				// A second message sits in the queue while the tool runs.
+				if (toolStarted && !queuedDelivered) {
+					queuedDelivered = true;
+					return [createUserMessage("second message")];
+				}
+				return [];
+			},
+		};
+
+		const events: AgentEvent[] = [];
+		const stream = agentLoop(
+			[createUserMessage("start")],
+			context,
+			config,
+			abortController.signal,
+			(_model, _ctx, _options) => {
+				llmCalls++;
+				const mockStream = new MockAssistantStream();
+				queueMicrotask(() => {
+					const message = createAssistantMessage(
+						[{ type: "toolCall", id: "tool-1", name: "slow", arguments: {} }],
+						"toolUse",
+					);
+					mockStream.push({ type: "done", reason: "toolUse", message });
+				});
+				return mockStream;
+			},
+		);
+
+		// Wait until the tool has started executing, then abort mid-execution.
+		while (!toolStarted) {
+			await new Promise((resolve) => setTimeout(resolve, 5));
+		}
+		abortController.abort();
+		releaseTool?.();
+
+		for await (const event of stream) {
+			events.push(event);
+		}
+
+		// Exactly one stop: the aborted tool run, not a second spurious one.
+		const agentEnds = events.filter((e) => e.type === "agent_end");
+		expect(agentEnds.length).toBe(1);
+		// The queue must not be drained into a cancelled signal (second LLM call).
+		expect(llmCalls).toBe(1);
+	});
 });
 
 describe("agentLoopContinue with AgentMessage", () => {

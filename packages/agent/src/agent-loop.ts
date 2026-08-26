@@ -223,6 +223,17 @@ async function runLoop(
 
 			await emit({ type: "turn_end", message, toolResults });
 
+			// The run was aborted while a tool was executing (user pressed Stop).
+			// Stop the loop here instead of continuing: the signal is already
+			// cancelled, so the next LLM call would fail immediately and produce a
+			// second spurious "aborted" result — one Stop click appearing as two
+			// cancellations. (The streamAssistantResponse path above already exits
+			// on error/aborted; the tool-execution path needs the same guard.)
+			if (signal.aborted) {
+				await emit({ type: "agent_end", messages: newMessages });
+				return;
+			}
+
 			const nextTurnContext = {
 				message,
 				toolResults,
