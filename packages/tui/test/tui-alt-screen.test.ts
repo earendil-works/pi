@@ -1039,6 +1039,35 @@ describe("TuiAltScreen", () => {
 		tui.stop();
 	});
 
+	it("coalesces slash and hyphen separated segments for double-click word selection", async () => {
+		for (const { line, needle } of [
+			{ line: "extensions/starline/fixed-editor/compositor.ts", needle: "starline" },
+			{ line: "earendil-works/pi-tui", needle: "works" },
+		]) {
+			const copied: string[] = [];
+			const terminal = new RecordingTerminal(80, 1);
+			const tui = new TuiAltScreen(terminal, undefined, undefined, {
+				copySelection: async (text) => {
+					copied.push(text);
+					return true;
+				},
+			});
+			tui.addChild(new Text(line, 0, 0));
+			tui.start();
+			await terminal.waitForRender();
+
+			const oneBasedClickColumn = line.indexOf(needle) + 1;
+			terminal.sendInput(`\x1b[<0;${oneBasedClickColumn};1M`);
+			terminal.sendInput(`\x1b[<0;${oneBasedClickColumn};1m`);
+			terminal.sendInput(`\x1b[<0;${oneBasedClickColumn};1M`);
+			terminal.sendInput(`\x1b[<0;${oneBasedClickColumn};1m`);
+			await terminal.waitForRender();
+
+			assert.deepStrictEqual(copied, [line]);
+			tui.stop();
+		}
+	});
+
 	it("highlights a complete whitespace segment during a word drag", async () => {
 		const terminal = new RecordingTerminal(20, 1);
 		const tui = new TuiAltScreen(terminal);
