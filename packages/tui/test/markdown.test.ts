@@ -1300,16 +1300,14 @@ bar`,
 
 			const lines = markdown.render(80);
 
-			// Both lines should have the quote border
+			// Lazy continuation: one paragraph joined at the soft break.
 			const plainLines = lines.map((line) => line.replace(/\x1b\[[0-9;]*m/g, ""));
 			const quotedLines = plainLines.filter((line) => line.startsWith("│ "));
-			assert.strictEqual(quotedLines.length, 2, `Expected 2 quoted lines, got: ${JSON.stringify(plainLines)}`);
+			assert.strictEqual(quotedLines.length, 1, `Expected 1 quoted line, got: ${JSON.stringify(plainLines)}`);
 
 			// Both lines should have italic (from theme.quote styling)
 			const fooLine = lines.find((line) => line.includes("Foo"));
 			const barLine = lines.find((line) => line.includes("bar"));
-			assert.ok(fooLine, "Should have Foo line");
-			assert.ok(barLine, "Should have bar line");
 
 			// Check that both have italic (\x1b[3m) - blockquotes use theme styling, not default message color
 			assert.ok(fooLine?.includes("\x1b[3m"), `Foo line should have italic: ${fooLine}`);
@@ -1334,10 +1332,10 @@ bar`,
 
 			const lines = markdown.render(80);
 
-			// Both lines should have the quote border
+			// Explicit multiline quote: still one paragraph joined at the soft break.
 			const plainLines = lines.map((line) => line.replace(/\x1b\[[0-9;]*m/g, ""));
 			const quotedLines = plainLines.filter((line) => line.startsWith("│ "));
-			assert.strictEqual(quotedLines.length, 2, `Expected 2 quoted lines, got: ${JSON.stringify(plainLines)}`);
+			assert.strictEqual(quotedLines.length, 1, `Expected 1 quoted line, got: ${JSON.stringify(plainLines)}`);
 
 			// Both lines should have italic (from theme.quote styling)
 			const fooLine = lines.find((line) => line.includes("Foo"));
@@ -1712,6 +1710,34 @@ bar`,
 				joinedPlain.includes("<div>") && joinedPlain.includes("</div>"),
 				"Should render HTML in code blocks",
 			);
+		});
+	});
+
+	describe("Soft line breaks", () => {
+		it("should reflow single-newline paragraphs instead of breaking lines", () => {
+			// Soft breaks (single \n inside a paragraph) must render as spaces per CommonMark,
+			// so wrapped source lines flow into one paragraph.
+			const markdown = new Markdown(
+				"First, I check the parse tree.\nThen I trace how tokens flow.\nFinally, I conclude.",
+				0,
+				0,
+				defaultMarkdownTheme,
+			);
+
+			const lines = markdown.render(80).map((line) => stripAnsi(line).trimEnd());
+			const joined = lines.filter((line) => line.length > 0).join(" ");
+			assert.ok(
+				joined.includes("parse tree. Then I trace how tokens flow."),
+				`Soft breaks must render as spaces, got: ${JSON.stringify(joined)}`,
+			);
+		});
+
+		it("should keep explicit hard breaks (br tokens) as line breaks", () => {
+			const markdown = new Markdown("line one  \nline two", 0, 0, defaultMarkdownTheme);
+
+			const lines = markdown.render(80).map((line) => stripAnsi(line).trimEnd());
+			const nonEmpty = lines.filter((line) => line.length > 0);
+			assert.strictEqual(nonEmpty.length, 2);
 		});
 	});
 

@@ -639,6 +639,10 @@ export class Markdown implements Component {
 			const segments: string[] = text.split("\n");
 			return segments.map((segment: string) => applyText(segment)).join("\n");
 		};
+		// Soft line breaks inside paragraphs render as spaces per CommonMark,
+		// so wrapped source lines reflow into one paragraph instead of breaking.
+		// (Hard breaks arrive as separate "br" tokens; rendered LaTeX keeps real newlines.)
+		const applyTextWithSoftBreaks = (text: string): string => applyText(text.replace(/\s*\n\s*/g, " "));
 
 		for (const token of tokens) {
 			switch (token.type) {
@@ -653,7 +657,7 @@ export class Markdown implements Component {
 				}
 
 				case "escape":
-					result += applyTextWithNewlines(this.options.preserveBackslashEscapes ? token.raw : token.text);
+					result += applyTextWithSoftBreaks(this.options.preserveBackslashEscapes ? token.raw : token.text);
 					break;
 
 				case "text":
@@ -661,7 +665,7 @@ export class Markdown implements Component {
 					if (token.tokens && token.tokens.length > 0) {
 						result += this.renderInlineTokens(token.tokens, resolvedStyleContext);
 					} else {
-						result += applyTextWithNewlines(token.text);
+						result += applyTextWithSoftBreaks(token.text);
 					}
 					break;
 
@@ -721,14 +725,14 @@ export class Markdown implements Component {
 				case "html":
 					// Render inline HTML as plain text
 					if ("raw" in token && typeof token.raw === "string") {
-						result += applyTextWithNewlines(token.raw);
+						result += applyTextWithSoftBreaks(token.raw);
 					}
 					break;
 
 				default:
 					// Handle any other inline token types as plain text
 					if ("text" in token && typeof token.text === "string") {
-						result += applyTextWithNewlines(token.text);
+						result += applyTextWithSoftBreaks(token.text);
 					}
 			}
 		}
