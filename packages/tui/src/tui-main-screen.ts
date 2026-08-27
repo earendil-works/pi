@@ -206,6 +206,14 @@ export class TuiMainScreen extends TuiBase implements TUI {
 		return reservedRows;
 	}
 
+	private hasKittyImageStraddlingViewport(lines: string[], viewportTop: number): boolean {
+		for (let i = 0; i < viewportTop && i < lines.length; i++) {
+			if (extractKittyImageIds(lines[i] ?? "").length === 0) continue;
+			if (i + this.getKittyImageReservedRows(lines, i) > viewportTop) return true;
+		}
+		return false;
+	}
+
 	private expandChangedRangeForKittyImages(
 		firstChanged: number,
 		lastChanged: number,
@@ -445,12 +453,40 @@ export class TuiMainScreen extends TuiBase implements TUI {
 			return;
 		}
 
-		// Differential rendering can only touch what was actually visible.
-		// If the first changed line is above the previous viewport, we need a full redraw.
+		// Lines above the viewport have already become terminal scrollback and cannot be
+		// updated in place. Keep those lines as historical snapshots instead of clearing
+		// scrollback and replaying the entire document. If the change reaches the visible
+		// viewport, clamp the differential update to its first visible row.
+		let preservePreviousKittyImageIds = false;
 		if (firstChanged < prevViewportTop) {
-			logRedraw(`firstChanged < viewportTop (${firstChanged} < ${prevViewportTop})`);
-			fullRender(true);
-			return;
+			// A transient component may have made the terminal working area taller than
+			// the current document. In that case clamping would leave stale rows behind.
+			if (this.maxLinesRendered > newLines.length) {
+				logRedraw(`above-viewport change with stale rows (max=${this.maxLinesRendered}, new=${newLines.length})`);
+				fullRender(true);
+				return;
+			}
+			const kittyImageStraddlesViewport =
+				this.hasKittyImageStraddlingViewport(this.previousLines, prevViewportTop) ||
+				this.hasKittyImageStraddlingViewport(newLines, prevViewportTop);
+			if (kittyImageStraddlesViewport) {
+				logRedraw(`kitty image straddles viewport (${firstChanged} < ${prevViewportTop})`);
+				fullRender(true);
+				return;
+			}
+			preservePreviousKittyImageIds = true;
+			if (lastChanged < prevViewportTop) {
+				this.positionHardwareCursor(cursorPos, newLines.length);
+				this.previousLines = newLines;
+				const nextKittyImageIds = this.collectKittyImageIds(newLines);
+				for (const id of this.previousKittyImageIds) nextKittyImageIds.add(id);
+				this.previousKittyImageIds = nextKittyImageIds;
+				this.previousWidth = width;
+				this.previousHeight = height;
+				this.previousViewportTop = prevViewportTop;
+				return;
+			}
+			firstChanged = prevViewportTop;
 		}
 
 		// Render from first changed line to end
@@ -609,7 +645,11 @@ export class TuiMainScreen extends TuiBase implements TUI {
 		this.positionHardwareCursor(cursorPos, newLines.length);
 
 		this.previousLines = newLines;
-		this.previousKittyImageIds = this.collectKittyImageIds(newLines);
+		const nextKittyImageIds = this.collectKittyImageIds(newLines);
+		if (preservePreviousKittyImageIds) {
+			for (const id of this.previousKittyImageIds) nextKittyImageIds.add(id);
+		}
+		this.previousKittyImageIds = nextKittyImageIds;
 		this.previousWidth = width;
 		this.previousHeight = height;
 	}
