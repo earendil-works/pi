@@ -156,6 +156,8 @@ export interface TuiAltScreenOptions {
 	openUrl?: (url: string) => void;
 	/** Handle an unmodified secondary-button press for clipboard paste. Currently enabled on Windows only. */
 	onRightClickPaste?: () => void;
+	/** Automatically copy selected text to the clipboard on mouse release (default: true). */
+	copyOnSelect?: boolean;
 	/**
 	 * Copy selected text to the system clipboard. Return `true` on success; the caller flashes
 	 * an error otherwise. When omitted, the selection is copied via an OSC 52 write.
@@ -200,6 +202,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 	private readonly searchCurrentMatchStyle: (text: string) => string;
 	private readonly openUrl?: (url: string) => void;
 	private readonly onRightClickPaste?: () => void;
+	private copyOnSelect: boolean;
 	private readonly copySelection?: (text: string) => Promise<boolean>;
 
 	constructor(
@@ -223,6 +226,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		this.searchCurrentMatchStyle = options.searchCurrentMatchStyle ?? ((text) => `\x1b[1;7m${text}\x1b[22;27m`);
 		this.openUrl = options.openUrl;
 		this.onRightClickPaste = options.onRightClickPaste;
+		this.copyOnSelect = options.copyOnSelect ?? true;
 		this.copySelection = options.copySelection;
 		this.addInputListener((data) => this.handleViewportInput(data));
 	}
@@ -233,6 +237,26 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 
 	get isFollowingOutput(): boolean {
 		return this.getPrimaryScrollView().isFollowingEnd;
+	}
+
+	getCopyOnSelect(): boolean {
+		return this.copyOnSelect;
+	}
+
+	setCopyOnSelect(enabled: boolean): void {
+		this.copyOnSelect = enabled;
+	}
+
+	/** Whether the fullscreen viewport has a non-empty active text selection. */
+	hasActiveSelection(): boolean {
+		return this.getActiveSelectionText() !== undefined;
+	}
+
+	/** Copy the active fullscreen text selection, if any, using the configured selection clipboard path. */
+	async copyActiveSelectionToClipboard(): Promise<boolean> {
+		const text = this.getActiveSelectionText();
+		if (!text) return false;
+		return this.copyTextToClipboard(text);
 	}
 
 	setLayoutRoot(component: Component | undefined): void {
@@ -1008,7 +1032,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 				this.requestRender();
 				return;
 			}
-			void this.copySelectionToClipboard();
+			if (this.copyOnSelect) void this.copySelectionToClipboard();
 			this.requestRender();
 			return;
 		}
@@ -1084,14 +1108,14 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		return { start: Math.max(minColumn, start), end: Math.min(maxColumn, end) };
 	}
 
-	private async copySelectionToClipboard(): Promise<void> {
+	private getActiveSelectionText(): string | undefined {
 		const selection = this.getSelectionBounds();
-		if (!selection) return;
+		if (!selection) return undefined;
 		let sourceLines: readonly string[] = this.previousScreen;
 		if (selection.start.scrollView) {
-			if (!this.currentLayout) return;
+			if (!this.currentLayout) return undefined;
 			const box = getScrollViewBox(this.currentLayout, selection.start.scrollView);
-			if (!box?.scrollContentLines) return;
+			if (!box?.scrollContentLines) return undefined;
 			sourceLines = box.scrollContentLines;
 		}
 		const lines: string[] = [];
@@ -1105,7 +1129,16 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 			);
 		}
 		const text = lines.join("\n");
-		if (text.length === 0) return;
+		return text.length === 0 ? undefined : text;
+	}
+
+	private async copySelectionToClipboard(): Promise<boolean> {
+		const text = this.getActiveSelectionText();
+		if (!text) return false;
+		return this.copyTextToClipboard(text);
+	}
+
+	private async copyTextToClipboard(text: string): Promise<boolean> {
 		// Prefer an injected clipboard implementation (native clipboard + platform tools with a
 		// verified success path) when the host app provides one. A bare OSC 52 write can show
 		// "Copied!" while leaving the system clipboard untouched (e.g. macOS Terminal.app, tmux
@@ -1113,10 +1146,11 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		if (this.copySelection) {
 			const ok = await this.copySelection(text);
 			this.flash(ok ? "Copied!" : "Copy failed");
-			return;
+			return ok;
 		}
 		this.terminal.write(`\x1b]52;c;${Buffer.from(text).toString("base64")}\x07`);
 		this.flash("Copied!");
+		return true;
 	}
 
 	private applySearchTextHighlight(text: string, current: boolean): string {
