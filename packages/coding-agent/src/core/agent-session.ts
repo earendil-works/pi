@@ -2329,8 +2329,28 @@ export class AgentSession {
 			this.sessionManager.appendCompaction(summary, firstKeptEntryId, tokensBefore, details, fromExtension, usage);
 			const newEntries = this.sessionManager.getEntries();
 			const sessionContext = this.sessionManager.buildSessionContext();
-			this.agent.state.messages = sessionContext.messages;
-			const estimatedTokensAfter = estimateMessagesTokens(sessionContext.messages);
+			let messages = sessionContext.messages;
+			if (willRetry) {
+				// Failed attempts are persisted before being removed from live context. Rebuilding can
+				// restore multiple consecutive attempts (for example, retryable error then length stop),
+				// so remove the whole failed suffix from live context while preserving session history.
+				let failedTailStart = messages.length;
+				while (failedTailStart > 0) {
+					const message = messages[failedTailStart - 1];
+					if (
+						message.role !== "assistant" ||
+						(message.stopReason !== "error" && message.stopReason !== "length")
+					) {
+						break;
+					}
+					failedTailStart--;
+				}
+				if (failedTailStart < messages.length) {
+					messages = messages.slice(0, failedTailStart);
+				}
+			}
+			this.agent.state.messages = messages;
+			const estimatedTokensAfter = estimateMessagesTokens(messages);
 
 			// Get the saved compaction entry for the extension event
 			const savedCompactionEntry = newEntries.find((e) => e.type === "compaction" && e.summary === summary) as
@@ -2358,15 +2378,6 @@ export class AgentSession {
 			this._emit({ type: "compaction_end", reason, result, aborted: false, willRetry });
 
 			if (willRetry) {
-				const messages = this.agent.state.messages;
-				const lastMsg = messages[messages.length - 1];
-				// The overflow response was persisted on message_end before _checkCompaction() removed it
-				// from agent state. Rebuilding state from the new compaction can restore that kept entry,
-				// leaving an assistant as the final message. agent.continue() rejects that state, so remove
-				// the retriable error or truncated-length response again before continuing the interrupted turn.
-				if (lastMsg?.role === "assistant" && (lastMsg.stopReason === "error" || lastMsg.stopReason === "length")) {
-					this.agent.state.messages = messages.slice(0, -1);
-				}
 				return true;
 			}
 
