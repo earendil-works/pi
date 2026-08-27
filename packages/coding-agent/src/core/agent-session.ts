@@ -1977,8 +1977,13 @@ export class AgentSession {
 	 * continues the interrupted agent turn.
 	 *
 	 * @param customInstructions Optional instructions for the compaction summary
+	 * @param options.model One-off model for this compaction only
+	 * @param options.thinkingLevel One-off thinking level for this compaction only
 	 */
-	async compact(customInstructions?: string): Promise<CompactionResult> {
+	async compact(
+		customInstructions?: string,
+		options: { model?: Model<string>; thinkingLevel?: ThinkingLevel } = {},
+	): Promise<CompactionResult> {
 		await this.abort();
 		this._compactionAbortController = new AbortController();
 		this._emit({ type: "compaction_start", reason: "manual" });
@@ -1986,8 +1991,22 @@ export class AgentSession {
 
 		try {
 			const settings = this.settingsManager.getCompactionSettings();
-			const { model: summarizationModel, thinkingLevel: summarizationThinkingLevel } =
-				this.resolveSummarizationConfig("compaction");
+			let summarizationModel: Model<string>;
+			let summarizationThinkingLevel: ThinkingLevel;
+			if (options.model) {
+				summarizationModel = options.model;
+				summarizationThinkingLevel = clampThinkingLevel(
+					summarizationModel,
+					options.thinkingLevel ?? settings.thinkingLevel ?? this.thinkingLevel,
+				) as ThinkingLevel;
+			} else {
+				const configured = this.resolveSummarizationConfig("compaction");
+				summarizationModel = configured.model;
+				summarizationThinkingLevel =
+					options.thinkingLevel === undefined
+						? configured.thinkingLevel
+						: (clampThinkingLevel(summarizationModel, options.thinkingLevel) as ThinkingLevel);
+			}
 			const {
 				model: requestModel,
 				apiKey,

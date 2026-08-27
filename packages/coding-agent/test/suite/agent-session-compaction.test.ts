@@ -360,6 +360,69 @@ describe("AgentSession compaction characterization", () => {
 		expect(calls).toEqual([{ modelId: "faux-summary", reasoning: "high" }]);
 	});
 
+	it("uses one-off manual compaction model and thinking overrides without changing the session or settings", async () => {
+		const harness = await createHarness({
+			models: [
+				{ id: "faux-1", reasoning: true },
+				{ id: "faux-configured", reasoning: true },
+				{ id: "faux-temporary", reasoning: true },
+			],
+			settings: {
+				compaction: { keepRecentTokens: 1, model: "faux-configured", thinkingLevel: "medium" },
+			},
+		});
+		harnesses.push(harness);
+		seedCompactableSession(harness);
+		const mainModel = harness.session.model;
+		const mainThinkingLevel = harness.session.thinkingLevel;
+		const settingsBefore = {
+			compaction: harness.settingsManager.getCompactionSettings(),
+			defaultProvider: harness.settingsManager.getDefaultProvider(),
+			defaultModel: harness.settingsManager.getDefaultModel(),
+			defaultThinkingLevel: harness.settingsManager.getDefaultThinkingLevel(),
+		};
+		const calls: Array<{ modelId: string; reasoning: unknown }> = [];
+		harness.session.agent.streamFunction = (model, _context, options) => {
+			calls.push({ modelId: model.id, reasoning: options?.reasoning });
+			const stream = createAssistantMessageEventStream();
+			queueMicrotask(() => {
+				stream.push({
+					type: "done",
+					reason: "stop",
+					message: {
+						...fauxAssistantMessage("summary from temporary model"),
+						api: model.api,
+						provider: model.provider,
+						model: model.id,
+						usage: createUsage(10),
+					},
+				});
+			});
+			return stream;
+		};
+
+		const result = await harness.session.compact(undefined, {
+			model: harness.getModel("faux-temporary"),
+			thinkingLevel: "high",
+		});
+
+		expect(result.summary).toContain("summary from temporary model");
+		expect(calls).toEqual([{ modelId: "faux-temporary", reasoning: "high" }]);
+		expect(harness.session.model).toBe(mainModel);
+		expect(harness.session.thinkingLevel).toBe(mainThinkingLevel);
+		expect({
+			compaction: harness.settingsManager.getCompactionSettings(),
+			defaultProvider: harness.settingsManager.getDefaultProvider(),
+			defaultModel: harness.settingsManager.getDefaultModel(),
+			defaultThinkingLevel: harness.settingsManager.getDefaultThinkingLevel(),
+		}).toEqual(settingsBefore);
+		expect(
+			harness.sessionManager
+				.getEntries()
+				.filter((entry) => entry.type === "model_change" || entry.type === "thinking_level_change"),
+		).toHaveLength(0);
+	});
+
 	it("points to the relevant settings when a summarization model is not found", async () => {
 		const harness = await createHarness({
 			settings: { compaction: { provider: "missing-provider" } },

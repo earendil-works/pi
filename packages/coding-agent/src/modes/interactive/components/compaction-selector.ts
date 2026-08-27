@@ -2,16 +2,16 @@ import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { Model } from "@earendil-works/pi-ai/compat";
 import { SummarizationSelectorComponent } from "./summarization-selector.ts";
 
-export type BranchSummaryChoice = "No summary" | "Summarize" | "Summarize with custom prompt";
+export type CompactionChoice = "Compact" | "Compact with custom prompt" | "Cancel";
 
-const SUMMARY_CHOICES: BranchSummaryChoice[] = ["No summary", "Summarize", "Summarize with custom prompt"];
+const COMPACTION_CHOICES: CompactionChoice[] = ["Compact", "Compact with custom prompt", "Cancel"];
 
-/** Selector for choosing whether and how to summarize the branch being left. */
-export class BranchSummarySelectorComponent extends SummarizationSelectorComponent<BranchSummaryChoice> {
+/** Selector for configuring and starting manual compaction. */
+export class CompactionSelectorComponent extends SummarizationSelectorComponent<CompactionChoice> {
 	constructor(
 		model: Model<string> | undefined,
 		thinkingLevel: ThinkingLevel,
-		onSelect: (choice: BranchSummaryChoice) => void,
+		onSelect: (choice: CompactionChoice) => void,
 		onSelectModel: () => void,
 		onCycleModel: (
 			direction: "forward" | "backward",
@@ -21,8 +21,8 @@ export class BranchSummarySelectorComponent extends SummarizationSelectorCompone
 		onCancel: () => void,
 	) {
 		super({
-			title: "Summarize branch?",
-			choices: SUMMARY_CHOICES,
+			title: "Compact context?",
+			choices: COMPACTION_CHOICES,
 			model,
 			thinkingLevel,
 			onSelect,

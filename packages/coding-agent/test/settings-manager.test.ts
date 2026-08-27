@@ -25,6 +25,37 @@ describe("SettingsManager", () => {
 		}
 	});
 
+	describe("summarization settings", () => {
+		it("skips the compaction prompt by default and allows opting in", () => {
+			expect(SettingsManager.inMemory().getCompactionSkipPrompt()).toBe(true);
+			expect(SettingsManager.inMemory({ compaction: { skipPrompt: false } }).getCompactionSkipPrompt()).toBe(false);
+		});
+
+		it("persists compaction and branch summary model configurations", () => {
+			const manager = SettingsManager.inMemory({
+				compaction: { enabled: false, skipPrompt: false },
+				branchSummary: { skipPrompt: true },
+			});
+
+			manager.setSummarizationConfig("compaction", "anthropic", "compact-model", "low");
+			manager.setSummarizationConfig("branchSummary", "openai", "branch-model", "high");
+
+			expect(manager.getGlobalSettings().compaction).toEqual({
+				enabled: false,
+				skipPrompt: false,
+				provider: "anthropic",
+				model: "compact-model",
+				thinkingLevel: "low",
+			});
+			expect(manager.getGlobalSettings().branchSummary).toEqual({
+				skipPrompt: true,
+				provider: "openai",
+				model: "branch-model",
+				thinkingLevel: "high",
+			});
+		});
+	});
+
 	describe("preserves externally added settings", () => {
 		it("should preserve enabledModels when changing thinking level", async () => {
 			// Create initial settings file

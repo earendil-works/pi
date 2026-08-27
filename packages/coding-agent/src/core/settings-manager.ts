@@ -14,6 +14,7 @@ export interface CompactionSettings {
 	enabled?: boolean; // default: true
 	reserveTokens?: number; // default: 16384
 	keepRecentTokens?: number; // default: 20000
+	skipPrompt?: boolean; // default: true - when false, bare /compact opens a configuration prompt
 	provider?: string; // default: current session provider
 	model?: string; // default: current session model ID
 	thinkingLevel?: ThinkingLevel; // default: current session thinking level
@@ -853,6 +854,10 @@ export class SettingsManager {
 		return this.settings.compaction?.keepRecentTokens ?? 20000;
 	}
 
+	getCompactionSkipPrompt(): boolean {
+		return this.settings.compaction?.skipPrompt ?? true;
+	}
+
 	getCompactionSettings(): {
 		enabled: boolean;
 		reserveTokens: number;
@@ -889,6 +894,23 @@ export class SettingsManager {
 
 	getBranchSummarySkipPrompt(): boolean {
 		return this.settings.branchSummary?.skipPrompt ?? false;
+	}
+
+	setSummarizationConfig(
+		settingsKey: "compaction" | "branchSummary",
+		provider: string,
+		model: string,
+		thinkingLevel: ThinkingLevel,
+	): void {
+		const settings = this.globalSettings[settingsKey] ?? {};
+		this.globalSettings[settingsKey] = settings;
+		settings.provider = provider;
+		settings.model = model;
+		settings.thinkingLevel = thinkingLevel;
+		this.markModified(settingsKey, "provider");
+		this.markModified(settingsKey, "model");
+		this.markModified(settingsKey, "thinkingLevel");
+		this.save();
 	}
 
 	getRetryEnabled(): boolean {
