@@ -227,7 +227,7 @@ export function convertMessages<T extends GoogleApiType>(model: Model<T>, contex
 				? msg.content.filter((c): c is ImageContent => c.type === "image")
 				: [];
 
-			const hasText = textResult.length > 0;
+			const hasText = textResult.trim().length > 0;
 			const hasImages = imageContent.length > 0;
 
 			// Gemini 3+ models support multimodal function responses with images nested inside

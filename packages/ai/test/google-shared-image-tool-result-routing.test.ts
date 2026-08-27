@@ -99,4 +99,44 @@ describe("google-shared image tool result routing", () => {
 		expect(imageResponse?.parts).toHaveLength(1);
 		expect(imageResponse?.parts?.[0]?.inlineData).toBeTruthy();
 	});
+
+	it("treats whitespace-only tool result text as empty output", () => {
+		const model = makeModel("google-generative-ai", "google", "gemini-2.5-flash");
+		const now = Date.now();
+		const context: Context = {
+			messages: [
+				{ role: "user", content: "run the command", timestamp: now },
+				{
+					role: "assistant",
+					content: [{ type: "toolCall", id: "call_ws", name: "bash", arguments: { command: "true" } }],
+					api: "google-generative-ai",
+					provider: "google",
+					model: "gemini-2.5-flash",
+					usage: {
+						input: 0,
+						output: 0,
+						cacheRead: 0,
+						cacheWrite: 0,
+						totalTokens: 0,
+						cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+					},
+					stopReason: "toolUse",
+					timestamp: now,
+				},
+				{
+					role: "toolResult",
+					toolCallId: "call_ws",
+					toolName: "bash",
+					content: [{ type: "text", text: "\r\n" }],
+					isError: false,
+					timestamp: now,
+				},
+			],
+		};
+
+		const contents = convertMessages(model, context);
+		const functionResponse = contents[2]?.parts?.[0]?.functionResponse;
+		expect(functionResponse).toBeTruthy();
+		expect(functionResponse?.response).toEqual({ output: "" });
+	});
 });

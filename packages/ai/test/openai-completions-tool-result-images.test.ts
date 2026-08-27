@@ -74,6 +74,17 @@ function buildEmptyToolResult(toolCallId: string, timestamp: number): ToolResult
 	};
 }
 
+function buildWhitespaceToolResult(toolCallId: string, timestamp: number): ToolResultMessage {
+	return {
+		role: "toolResult",
+		toolCallId,
+		toolName: "bash",
+		content: [{ type: "text", text: "\r\n" }],
+		isError: false,
+		timestamp,
+	};
+}
+
 describe("openai-completions convertMessages", () => {
 	it("batches tool-result images after consecutive tool results", () => {
 		const { compat: _compat, ...baseModel } = getModel("openai", "gpt-4o-mini");
@@ -146,6 +157,41 @@ describe("openai-completions convertMessages", () => {
 				{ role: "user", content: "Run the command", timestamp: now - 1 },
 				assistantMessage,
 				buildEmptyToolResult("tool-1", now + 1),
+			],
+		};
+
+		const messages = convertMessages(model, context, compat);
+		const toolMessage = messages.find((m) => m.role === "tool") as { role: "tool"; content: string } | undefined;
+		expect(toolMessage).toBeTruthy();
+		expect(toolMessage?.content).toBe("(no tool output)");
+		expect(toolMessage?.content).not.toContain("see attached image");
+	});
+
+	it("uses '(no tool output)' placeholder for whitespace-only tool results", () => {
+		const { compat: _compat, ...baseModel } = getModel("openai", "gpt-4o-mini");
+		const model: Model<"openai-completions"> = {
+			...baseModel,
+			api: "openai-completions",
+			input: ["text", "image"],
+		};
+
+		const now = Date.now();
+		const assistantMessage: AssistantMessage = {
+			role: "assistant",
+			content: [{ type: "toolCall", id: "tool-1", name: "bash", arguments: { command: "true" } }],
+			api: model.api,
+			provider: model.provider,
+			model: model.id,
+			usage: emptyUsage,
+			stopReason: "toolUse",
+			timestamp: now,
+		};
+
+		const context: Context = {
+			messages: [
+				{ role: "user", content: "Run the command", timestamp: now - 1 },
+				assistantMessage,
+				buildWhitespaceToolResult("tool-1", now + 1),
 			],
 		};
 
