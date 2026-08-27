@@ -859,7 +859,13 @@ function buildParams(
 			thinking?: { type: "enabled" | "disabled"; clear_thinking?: boolean };
 			reasoning_effort?: string;
 		};
-		zaiParams.thinking = options?.reasoningEffort ? { type: "enabled", clear_thinking: false } : { type: "disabled" };
+		// Forced-thinking models (thinkingLevelMap.off === null, e.g. GLM-5.3 / GLM-5.3-Flash)
+		// ignore `disabled` and fold their mandatory reasoning into `content`, so keep thinking on.
+		// Mirrors the guard used by the deepseek/openrouter handlers below.
+		const forcedThinking = model.thinkingLevelMap?.off === null;
+		zaiParams.thinking = (options?.reasoningEffort || forcedThinking)
+			? { type: "enabled", clear_thinking: false }
+			: { type: "disabled" };
 		if (options?.reasoningEffort && compat.supportsReasoningEffort) {
 			const mappedEffort = model.thinkingLevelMap?.[options.reasoningEffort];
 			const effort = mappedEffort === undefined ? options.reasoningEffort : mappedEffort;
