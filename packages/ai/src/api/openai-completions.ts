@@ -1587,6 +1587,10 @@ function detectCompat(model: Model<"openai-completions">): ResolvedOpenAIComplet
 	const isNvidia = provider === "nvidia" || baseUrl.includes("integrate.api.nvidia.com");
 	const isAntLing = provider === "ant-ling" || baseUrl.includes("api.ant-ling.com");
 	const isDeepSeek = provider === "deepseek" || baseUrl.toLowerCase().includes("deepseek.com");
+	// DeepSeek-family models served by other gateways (api.b.ai, token.sensenova.cn,
+	// openrouter-hosted `deepseek/*`, ...) share the api.deepseek.com requirement that
+	// assistant messages carry `reasoning_content` back in thinking mode.
+	const isDeepSeekFamily = isDeepSeek || model.id.toLowerCase().includes("deepseek");
 
 	const isNonStandard =
 		isNvidia ||
@@ -1631,7 +1635,7 @@ function detectCompat(model: Model<"openai-completions">): ResolvedOpenAIComplet
 		requiresToolResultName: false,
 		requiresAssistantAfterToolResult: false,
 		requiresThinkingAsText: false,
-		requiresReasoningContentOnAssistantMessages: isDeepSeek,
+		requiresReasoningContentOnAssistantMessages: isDeepSeekFamily,
 		thinkingFormat: isDeepSeek
 			? "deepseek"
 			: isZai

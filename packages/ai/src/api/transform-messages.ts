@@ -57,6 +57,21 @@ function downgradeUnsupportedImages<TApi extends Api>(messages: Message[], model
 }
 
 /**
+ * Whether the target model is a DeepSeek-family thinking endpoint that requires
+ * `reasoning_content` to be passed back on assistant messages: the official
+ * api.deepseek.com route, and DeepSeek-compatible gateways serving deepseek
+ * models under a different provider/baseUrl (e.g. api.b.ai, token.sensenova.cn,
+ * or openrouter-hosted `deepseek/*` models).
+ */
+function isDeepSeekFamilyTarget<TApi extends Api>(model: Model<TApi>): boolean {
+	return (
+		model.provider === "deepseek" ||
+		model.baseUrl.toLowerCase().includes("deepseek.com") ||
+		model.id.toLowerCase().includes("deepseek")
+	);
+}
+
+/**
  * Normalize tool call ID for cross-provider compatibility.
  * OpenAI Responses API generates IDs that are 450+ chars with special characters like `|`.
  * Anthropic APIs require IDs matching ^[a-zA-Z0-9_-]+$ (max 64 chars).
@@ -110,6 +125,18 @@ export function transformMessages<TApi extends Api>(
 					// Skip empty thinking blocks, convert others to plain text
 					if (!block.thinking || block.thinking.trim() === "") return [];
 					if (isSameModel) return block;
+					// Cross-model replay into a DeepSeek-family thinking endpoint: the API
+					// rejects assistant messages that omit `reasoning_content` in thinking
+					// mode (e.g. "The `reasoning_content` in the thinking mode must be passed
+					// back to the API"). Keep the text in a thinking block carrying the field
+					// DeepSeek expects instead of folding it into `content`.
+					if (isDeepSeekFamilyTarget(model)) {
+						return {
+							type: "thinking" as const,
+							thinking: block.thinking,
+							thinkingSignature: "reasoning_content",
+						};
+					}
 					return {
 						type: "text" as const,
 						text: block.thinking,
