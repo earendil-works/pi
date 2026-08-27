@@ -1133,7 +1133,13 @@ describe("TuiAltScreen", () => {
 				return true;
 			},
 		});
-		tui.addChild(new Text("alpha\nbeta", 0, 0));
+		const transcript = new ScrollView(new Text("alpha\nbeta", 0, 0), { primary: true });
+		tui.setLayoutRoot(
+			new HStack([
+				{ component: transcript, basis: 15, shrink: 0 },
+				{ component: new Text("", 0, 0), basis: 5, shrink: 0 },
+			]),
+		);
 		tui.showOverlay(new Text("SIDE\nPANEL", 0, 0), {
 			anchor: "top-right",
 			width: 5,
@@ -1145,15 +1151,16 @@ describe("TuiAltScreen", () => {
 		await terminal.waitForRender();
 
 		terminal.sendInput("\x1b[<0;1;1M");
-		terminal.sendInput("\x1b[<0;1;1m");
-		terminal.sendInput("\x1b[<0;1;1M");
-		terminal.sendInput("\x1b[<0;1;1m");
-		terminal.sendInput("\x1b[<0;1;1M");
-		terminal.sendInput("\x1b[<0;1;1m");
+		terminal.sendInput("\x1b[<32;18;2M");
+		terminal.sendInput("\x1b[<0;18;2m");
 		await terminal.waitForRender();
 
-		assert.ok(copied.length > 0);
-		assert.ok(copied.every((text) => text === "alpha"));
+		assert.deepStrictEqual(copied, ["alpha\nbeta"]);
+
+		terminal.sendInput("\x1b[<0;18;1M");
+		terminal.sendInput("\x1b[<0;18;1m");
+		await terminal.waitForRender();
+		assert.deepStrictEqual(copied, ["alpha\nbeta"]);
 		tui.stop();
 	});
 
