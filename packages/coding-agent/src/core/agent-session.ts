@@ -44,6 +44,7 @@ import {
 	isContextOverflow,
 	isRecoverableLength,
 	isRetryableAssistantError,
+	isTransportAbortError,
 	modelsAreEqual,
 	type RetryCallbacks,
 	resetApiProviders,
@@ -3322,10 +3323,17 @@ export class AgentSession {
 	/**
 	 * Check if an error is retryable (overloaded, rate limit, server errors).
 	 * Context overflow errors are NOT retryable (handled by compaction instead).
+	 *
+	 * Transport-level abort wording (undici "operation was aborted") is excluded here:
+	 * during an agent turn it is ambiguous between a genuine remote drop and a local
+	 * abort race (ESC-cancel, session switch), and auto-retrying the latter persists
+	 * spurious extra turns into the outgoing session. Summarization calls keep
+	 * abort-worded retryability via retryAssistantCall, which is signal-aware.
 	 */
 	private _isRetryableError(message: AssistantMessage): boolean {
 		// Context overflow is handled by compaction, not retry.
 		if (isContextOverflow(message, this.model?.contextWindow ?? 0)) return false;
+		if (isTransportAbortError(message)) return false;
 		return isRetryableAssistantError(message);
 	}
 

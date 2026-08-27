@@ -233,6 +233,20 @@ export async function retryAssistantCall(
 }
 
 /**
+ * True when an error-stop message carries transport-level abort wording (e.g. undici's
+ * "This/The operation was aborted"). Such errors are retryable for summarization calls
+ * (see {@link isRetryableAssistantError}), but ambiguous for the agent-turn loop: a local
+ * abort race (session switch, ESC-cancel) can surface the same wording, so the agent loop
+ * must not auto-retry them.
+ */
+const TRANSPORT_ABORT_ERROR_PATTERN = /operation.?was.?aborted/i;
+
+export function isTransportAbortError(message: AssistantMessage): boolean {
+	if (message.stopReason !== "error" || !message.errorMessage) return false;
+	return TRANSPORT_ABORT_ERROR_PATTERN.test(message.errorMessage);
+}
+
+/**
  * Classifies whether a failed assistant message looks like a transient provider
  * or transport error, so callers can decide if the last assistant turn should be
  * restarted.
