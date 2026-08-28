@@ -819,10 +819,11 @@ function buildParams(
 	}
 
 	if (options?.maxTokens) {
+		const effectiveMax = applyMaxTokensCap(options.maxTokens, model);
 		if (compat.maxTokensField === "max_tokens") {
-			(params as any).max_tokens = options.maxTokens;
+			(params as any).max_tokens = effectiveMax;
 		} else {
-			params.max_completion_tokens = options.maxTokens;
+			params.max_completion_tokens = effectiveMax;
 		}
 	}
 
@@ -914,13 +915,18 @@ function buildParams(
 		}
 	} else if (compat.thinkingFormat === "openrouter" && model.reasoning) {
 		// OpenRouter normalizes reasoning across providers via a nested reasoning object.
+		// Only send a "disable" effort when the model explicitly maps "off" to a string.
+		// Without `!= null` (vs `!== null`), models with `reasoning: true` and no
+		// `thinkingLevelMap.off` (e.g. openrouter/free) would receive
+		// `reasoning: { effort: "none" }`, which the provider rejects with
+		// "Reasoning is mandatory for this endpoint and cannot be disabled".
 		const openRouterParams = params as typeof params & { reasoning?: { effort?: string } };
 		if (options?.reasoningEffort) {
 			openRouterParams.reasoning = {
 				effort: model.thinkingLevelMap?.[options.reasoningEffort] ?? options.reasoningEffort,
 			};
-		} else if (model.thinkingLevelMap?.off !== null) {
-			openRouterParams.reasoning = { effort: model.thinkingLevelMap?.off ?? "none" };
+		} else if (model.thinkingLevelMap?.off != null) {
+			openRouterParams.reasoning = { effort: model.thinkingLevelMap.off };
 		}
 	} else if (compat.thinkingFormat === "ant-ling" && model.reasoning && options?.reasoningEffort) {
 		const effort = model.thinkingLevelMap?.[options.reasoningEffort];
@@ -992,6 +998,46 @@ function resolveThinkingTokenBudgetField(
 	if (compat.supportsThinkingTokenBudget) return "thinking_token_budget";
 	return undefined;
 }
+
+/**
+ * Per-model runtime cap for the *output* token budget. Some providers /
+ * routes advertise a context window (e.g. 1,048,576) but reject
+ * max_tokens values above a smaller limit at the backend (e.g. M3 via
+ * GMICloud: 524288). The static JSON catalog cannot catch every
+ * dynamic route, so this table is the override.
+ *
+ * Key shape: `"<provider>/<modelId>"` (slash-separated, no provider
+ * prefix on the model id). Add a row when a specific model+provider
+ * combination rejects a max_tokens value the user passed in.
+ *
+ * The cap is the *upper bound*. If the user passed a smaller value,
+ * we honour it. If they passed nothing, we leave the request alone —
+ * this table does not invent a cap for uncapped callers.
+ *
+ * Keep this table small and named. No regex, no glob, no provider
+ * wildcards: a new model+provider cap should be a single new line,
+ * and grep should find it.
+ */
+const MAX_TOKENS_CAPS: Readonly<Record<string, number>> = Object.freeze({
+	// GMICloud rejects max_tokens > 524288 for MiniMax-M3 even though
+	// the catalog claims 1,048,576 context. Seen 2026-08-28 via
+	// OpenRouter route; user-visible 400 code 2013.
+	"openrouter/minimax-m3:free": 524288,
+	"openrouter/minimax/minimax-m3:free": 524288,
+	// Same model, different provider id (GMICloud's own slug).
+	"gmicloud/minimax-m3": 524288,
+	"nvidia/minimaxai/minimax-m3": 16384, // static catalog already says 16384; pinned here for clarity
+});
+
+function applyMaxTokensCap(requested: number, model: Model<"openai-completions">): number {
+	const key = `${model.provider}/${model.id}`;
+	const cap = MAX_TOKENS_CAPS[key];
+	if (cap === undefined) return requested;
+	return Math.min(requested, cap);
+}
+
+// Exported for unit testing only; not part of the public stream API.
+export const __test__ = { MAX_TOKENS_CAPS, applyMaxTokensCap };
 
 function resolveClampedThinkingBudget(
 	model: Model<"openai-completions">,
