@@ -32,6 +32,7 @@ export interface ImageRenderOptions {
 }
 
 let cachedCapabilities: TerminalCapabilities | null = null;
+let capabilityOverrides: Partial<TerminalCapabilities> = {};
 
 // Default cell dimensions - updated by TUI when terminal responds to query
 let cellDimensions: CellDimensions = { widthPx: 9, heightPx: 18 };
@@ -65,7 +66,7 @@ function probeTmuxHyperlinks(): boolean {
 	}
 }
 
-export function detectCapabilities(tmuxForwardsHyperlink: () => boolean = probeTmuxHyperlinks): TerminalCapabilities {
+function detectCapabilitiesFromEnvironment(tmuxForwardsHyperlink: () => boolean): TerminalCapabilities {
 	const termProgram = process.env.TERM_PROGRAM?.toLowerCase() || "";
 	const terminalEmulator = process.env.TERMINAL_EMULATOR?.toLowerCase() || "";
 	const term = process.env.TERM?.toLowerCase() || "";
@@ -135,14 +136,56 @@ export function detectCapabilities(tmuxForwardsHyperlink: () => boolean = probeT
 	return { images: null, trueColor: hasTrueColorHint, hyperlinks: false };
 }
 
+function parseBooleanCapabilityOverride(value: string | undefined): boolean | undefined {
+	return value === "1" ? true : value === "0" ? false : undefined;
+}
+
+export function detectCapabilities(tmuxForwardsHyperlink: () => boolean = probeTmuxHyperlinks): TerminalCapabilities {
+	const hyperlinks = parseBooleanCapabilityOverride(process.env.PI_HYPERLINKS);
+	const detected = detectCapabilitiesFromEnvironment(
+		hyperlinks === undefined ? tmuxForwardsHyperlink : () => hyperlinks,
+	);
+	const imageProtocol = process.env.PI_IMAGE_PROTOCOL?.toLowerCase();
+	const images =
+		imageProtocol === "kitty" || imageProtocol === "iterm2"
+			? imageProtocol
+			: imageProtocol === "none" || imageProtocol === "0"
+				? null
+				: undefined;
+	const trueColor = parseBooleanCapabilityOverride(process.env.PI_TRUE_COLOR);
+	return {
+		...detected,
+		...(images !== undefined ? { images } : {}),
+		...(trueColor !== undefined ? { trueColor } : {}),
+		...(hyperlinks !== undefined ? { hyperlinks } : {}),
+	};
+}
+
 export function getCapabilities(): TerminalCapabilities {
 	if (!cachedCapabilities) {
-		cachedCapabilities = detectCapabilities();
+		const hyperlinks = capabilityOverrides.hyperlinks;
+		cachedCapabilities = {
+			...detectCapabilities(hyperlinks === undefined ? undefined : () => hyperlinks),
+			...capabilityOverrides,
+		};
 	}
 	return cachedCapabilities;
 }
 
 export function resetCapabilitiesCache(): void {
+	cachedCapabilities = null;
+}
+
+/** Override selected auto-detected capabilities. */
+export function setCapabilityOverrides(overrides: Partial<TerminalCapabilities>): void {
+	if (
+		capabilityOverrides.images === overrides.images &&
+		capabilityOverrides.trueColor === overrides.trueColor &&
+		capabilityOverrides.hyperlinks === overrides.hyperlinks
+	) {
+		return;
+	}
+	capabilityOverrides = { ...overrides };
 	cachedCapabilities = null;
 }
 
