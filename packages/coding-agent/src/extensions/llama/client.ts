@@ -28,6 +28,10 @@ export interface LlamaModelsResponse {
 	object?: string;
 }
 
+export interface LlamaServerProps {
+	models_autoload?: boolean;
+}
+
 export interface LlamaModelEvent {
 	model: string;
 	event: string;
@@ -187,6 +191,13 @@ export class LlamaClient {
 		const data = (payload as { data: unknown[] }).data;
 		if (!data.every(isModelInfo)) throw new Error("Server is not running in llama.cpp router mode");
 		return data;
+	}
+
+	async props(options: { signal?: AbortSignal } = {}): Promise<LlamaServerProps> {
+		const payload = await this.request("/props", { signal: options.signal });
+		if (typeof payload !== "object" || payload === null) return {};
+		const { models_autoload: modelsAutoload } = payload as Record<string, unknown>;
+		return typeof modelsAutoload === "boolean" ? { models_autoload: modelsAutoload } : {};
 	}
 
 	async load(model: string, signal?: AbortSignal): Promise<void> {

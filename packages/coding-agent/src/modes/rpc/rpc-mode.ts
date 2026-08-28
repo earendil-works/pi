@@ -430,6 +430,10 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 				return success(id, "abort");
 			}
 
+			case "clear_queue": {
+				return success(id, "clear_queue", session.clearQueue());
+			}
+
 			case "new_session": {
 				const options = command.parentSession ? { parentSession: command.parentSession } : undefined;
 				const result = await runtimeHost.newSession(options);

@@ -117,6 +117,7 @@ Rules:
 
 - All new entries go under `## [Unreleased]`. Read the full section first and append to existing subsections; never duplicate them.
 - Released version sections (e.g. `## [0.12.2]`) are immutable; never modify them.
+- Do not create changelog entries when working on a branch other than `main` or pull request
 
 Attribution:
 

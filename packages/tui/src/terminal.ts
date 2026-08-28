@@ -1,9 +1,9 @@
 import * as fs from "node:fs";
 import { createRequire } from "node:module";
 import * as path from "node:path";
-import { fileURLToPath } from "node:url";
 import { setKittyProtocolActive } from "./keys.ts";
 import { isNativeModifierPressed } from "./native-modifiers.ts";
+import { getNativeModuleCandidates } from "./native-module-path.ts";
 import { StdinBuffer } from "./stdin-buffer.ts";
 
 const cjsRequire = createRequire(import.meta.url);
@@ -370,16 +370,10 @@ export class ProcessTerminal implements Terminal {
 			if (arch !== "x64" && arch !== "arm64") return;
 
 			// Dynamic require so non-Windows and bundled/browser paths never load the
-			// native helper. In the npm package native/ is next to dist/; in compiled
-			// binary archives native/ is copied next to the executable.
-			const moduleDir = path.dirname(fileURLToPath(import.meta.url));
+			// native helper. Installed packages resolve it from pi-tui; standalone
+			// binaries resolve the copy next to the executable.
 			const nativePath = path.join("native", "win32", "prebuilds", `win32-${arch}`, "win32-console-mode.node");
-			const candidates = [
-				path.join(moduleDir, "..", nativePath),
-				path.join(moduleDir, nativePath),
-				path.join(path.dirname(process.execPath), nativePath),
-			];
-			for (const modulePath of candidates) {
+			for (const modulePath of getNativeModuleCandidates(nativePath)) {
 				try {
 					const helper = cjsRequire(modulePath) as { enableVirtualTerminalInput?: () => boolean };
 					helper.enableVirtualTerminalInput?.();

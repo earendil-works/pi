@@ -691,6 +691,26 @@ describe("ExtensionRunner", () => {
 			expect(result.runtime.flagValues.get("shared-flag")).toBe(true);
 		});
 
+		it("rejects default values that do not match the flag type", async () => {
+			const extCode = `
+				export default function(pi) {
+					pi.registerFlag("safe-mode", {
+						type: "boolean",
+						default: "false",
+					});
+				}
+			`;
+			fs.writeFileSync(path.join(extensionsDir, "bad-flag-default.ts"), extCode);
+
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+
+			expect(result.extensions).toHaveLength(0);
+			expect(result.errors[0]?.error).toContain(
+				'Invalid default for flag "safe-mode": expected boolean, got string',
+			);
+			expect(result.runtime.flagValues.has("safe-mode")).toBe(false);
+		});
+
 		it("can set flag values", async () => {
 			const extCode = `
 				export default function(pi) {

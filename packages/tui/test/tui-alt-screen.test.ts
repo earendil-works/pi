@@ -225,8 +225,9 @@ describe("TuiAltScreen", () => {
 		}
 	});
 
-	it("invokes the right-click paste handler only on Windows", () => {
+	it("invokes the right-click paste handler only on Windows outside VS Code", () => {
 		const platformDescriptor = Object.getOwnPropertyDescriptor(process, "platform");
+		const termProgram = process.env.TERM_PROGRAM;
 		assert.ok(platformDescriptor);
 		const terminal = new VirtualTerminal();
 		let pasteCount = 0;
@@ -237,17 +238,25 @@ describe("TuiAltScreen", () => {
 		});
 		try {
 			Object.defineProperty(process, "platform", { configurable: true, value: "win32" });
+			delete process.env.TERM_PROGRAM;
 			tui.start();
 			terminal.sendInput("\x1b[<2;1;1M");
 			terminal.sendInput("\x1b[<2;1;1m");
 			assert.strictEqual(pasteCount, 1);
 
+			process.env.TERM_PROGRAM = "vscode";
+			terminal.sendInput("\x1b[<2;1;1M");
+			assert.strictEqual(pasteCount, 1);
+
 			Object.defineProperty(process, "platform", { configurable: true, value: "linux" });
+			delete process.env.TERM_PROGRAM;
 			terminal.sendInput("\x1b[<2;1;1M");
 			assert.strictEqual(pasteCount, 1);
 		} finally {
 			tui.stop();
 			Object.defineProperty(process, "platform", platformDescriptor);
+			if (termProgram === undefined) delete process.env.TERM_PROGRAM;
+			else process.env.TERM_PROGRAM = termProgram;
 		}
 	});
 
@@ -890,7 +899,7 @@ describe("TuiAltScreen", () => {
 		}
 	});
 
-	it("opens an OSC 8 hyperlink on click but not on drag", async () => {
+	it("opens an OSC 8 hyperlink with specific or generic release codes, but not on drag", async () => {
 		const terminal = new RecordingTerminal(20, 3);
 		const openedUrls: string[] = [];
 		const tui = new TuiAltScreen(terminal, undefined, undefined, {
@@ -910,7 +919,7 @@ describe("TuiAltScreen", () => {
 		await terminal.waitForRender();
 
 		terminal.sendInput("\x1b[<0;2;1M");
-		terminal.sendInput("\x1b[<0;2;1m");
+		terminal.sendInput("\x1b[<3;2;1m");
 		await terminal.waitForRender();
 		assert.deepStrictEqual(openedUrls, [url]);
 
@@ -933,7 +942,7 @@ describe("TuiAltScreen", () => {
 		tui.stop();
 	});
 
-	it("selects visible text with the mouse and copies it with OSC 52", async () => {
+	it("selects visible text with the mouse and copies it with OSC 52 after a generic release", async () => {
 		const terminal = new RecordingTerminal(20, 4);
 		const tui = new TuiAltScreen(terminal);
 		tui.addChild(new Text("\x1b[1mal\x1b[0mpha\nbeta\ngamma\ndelta", 0, 0));
@@ -942,7 +951,7 @@ describe("TuiAltScreen", () => {
 
 		terminal.sendInput("\x1b[<0;1;1M");
 		terminal.sendInput("\x1b[<32;4;2M");
-		terminal.sendInput("\x1b[<0;4;2m");
+		terminal.sendInput("\x1b[<3;4;2m");
 		await terminal.waitForRender();
 
 		const expectedClipboardSequence = `\x1b]52;c;${Buffer.from("alpha\nbeta").toString("base64")}\x07`;
@@ -963,6 +972,118 @@ describe("TuiAltScreen", () => {
 		tui.stop();
 	});
 
+	it("uses an injected copySelection handler instead of OSC 52 and reports success", async () => {
+		const terminal = new RecordingTerminal(20, 4);
+		const copied: string[] = [];
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			copySelection: async (text) => {
+				copied.push(text);
+				return true;
+			},
+		});
+		tui.addChild(new Text("alpha\nbeta\ngamma\ndelta", 0, 0));
+		tui.start();
+		await terminal.waitForRender();
+
+		terminal.sendInput("\x1b[<0;1;1M");
+		terminal.sendInput("\x1b[<32;4;2M");
+		terminal.sendInput("\x1b[<0;4;2m");
+		await terminal.waitForRender();
+
+		assert.deepStrictEqual(copied, ["alpha\nbeta"]);
+		assert.ok(
+			terminal.events.every((event) => event.type !== "write" || !event.data.includes("\x1b]52;c;")),
+			"must not emit OSC 52 when a copySelection handler is provided",
+		);
+		assert.ok(terminal.getViewport().some((line) => line.includes("Copied!")));
+
+		tui.stop();
+	});
+
+	it("leaves selections visible without copying when copyOnSelect is disabled", async () => {
+		const terminal = new RecordingTerminal(20, 4);
+		const copied: string[] = [];
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			copyOnSelect: false,
+			copySelection: async (text) => {
+				copied.push(text);
+				return true;
+			},
+		});
+		tui.addChild(new Text("alpha\nbeta\ngamma\ndelta", 0, 0));
+		tui.start();
+		await terminal.waitForRender();
+
+		terminal.sendInput("\x1b[<0;1;1M");
+		terminal.sendInput("\x1b[<32;4;2M");
+		terminal.sendInput("\x1b[<0;4;2m");
+		await terminal.waitForRender();
+
+		assert.deepStrictEqual(copied, []);
+		assert.strictEqual(tui.hasActiveSelection(), true);
+		assert.ok(terminal.events.some((event) => event.type === "write" && event.data.includes("\x1b[7m")));
+		assert.ok(terminal.getViewport().every((line) => !line.includes("Copied!")));
+
+		tui.stop();
+	});
+
+	it("copies an active selection programmatically", async () => {
+		const terminal = new RecordingTerminal(20, 4);
+		const copied: string[] = [];
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			copySelection: async (text) => {
+				copied.push(text);
+				return true;
+			},
+		});
+		tui.addChild(new Text("alpha\nbeta\ngamma\ndelta", 0, 0));
+		tui.start();
+		await terminal.waitForRender();
+
+		assert.strictEqual(tui.hasActiveSelection(), false);
+		assert.strictEqual(await tui.copyActiveSelectionToClipboard(), false);
+
+		terminal.sendInput("\x1b[<0;1;1M");
+		terminal.sendInput("\x1b[<32;4;2M");
+		terminal.sendInput("\x1b[<0;4;2m");
+		await terminal.waitForRender();
+
+		assert.deepStrictEqual(copied, ["alpha\nbeta"]);
+		assert.strictEqual(tui.hasActiveSelection(), true);
+
+		copied.length = 0;
+		assert.strictEqual(await tui.copyActiveSelectionToClipboard(), true);
+		await terminal.waitForRender();
+
+		assert.deepStrictEqual(copied, ["alpha\nbeta"]);
+		assert.ok(terminal.getViewport().some((line) => line.includes("Copied!")));
+
+		tui.stop();
+	});
+
+	it("flashes an error when the injected copySelection handler fails", async () => {
+		const terminal = new RecordingTerminal(20, 4);
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			copySelection: async () => false,
+		});
+		tui.addChild(new Text("alpha\nbeta\ngamma\ndelta", 0, 0));
+		tui.start();
+		await terminal.waitForRender();
+
+		terminal.sendInput("\x1b[<0;1;1M");
+		terminal.sendInput("\x1b[<32;4;2M");
+		terminal.sendInput("\x1b[<0;4;2m");
+		await terminal.waitForRender();
+
+		assert.ok(terminal.getViewport().some((line) => line.includes("Copy failed")));
+		assert.ok(
+			terminal.events.every((event) => event.type !== "write" || !event.data.includes("\x1b]52;c;")),
+			"must not emit OSC 52 when a copySelection handler is provided",
+		);
+
+		tui.stop();
+	});
+
 	it("does not append whitespace to double-click word highlighting", async () => {
 		const terminal = new RecordingTerminal(20, 1);
 		const tui = new TuiAltScreen(terminal);
@@ -977,6 +1098,35 @@ describe("TuiAltScreen", () => {
 
 		assert.ok(terminal.events.some((event) => event.type === "write" && event.data.includes("foo\x1b[27m")));
 		tui.stop();
+	});
+
+	it("coalesces slash and hyphen separated segments for double-click word selection", async () => {
+		for (const { line, needle } of [
+			{ line: "extensions/starline/fixed-editor/compositor.ts", needle: "starline" },
+			{ line: "earendil-works/pi-tui", needle: "works" },
+		]) {
+			const copied: string[] = [];
+			const terminal = new RecordingTerminal(80, 1);
+			const tui = new TuiAltScreen(terminal, undefined, undefined, {
+				copySelection: async (text) => {
+					copied.push(text);
+					return true;
+				},
+			});
+			tui.addChild(new Text(line, 0, 0));
+			tui.start();
+			await terminal.waitForRender();
+
+			const oneBasedClickColumn = line.indexOf(needle) + 1;
+			terminal.sendInput(`\x1b[<0;${oneBasedClickColumn};1M`);
+			terminal.sendInput(`\x1b[<0;${oneBasedClickColumn};1m`);
+			terminal.sendInput(`\x1b[<0;${oneBasedClickColumn};1M`);
+			terminal.sendInput(`\x1b[<0;${oneBasedClickColumn};1m`);
+			await terminal.waitForRender();
+
+			assert.deepStrictEqual(copied, [line]);
+			tui.stop();
+		}
 	});
 
 	it("highlights a complete whitespace segment during a word drag", async () => {

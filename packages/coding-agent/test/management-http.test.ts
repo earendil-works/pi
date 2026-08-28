@@ -30,6 +30,27 @@ describe("fetchWithRetry", () => {
 		expect(signals[0]).toBe(signals[1]);
 	});
 
+	it("retries an attempt timeout", async () => {
+		const controllers: AbortController[] = [];
+		vi.spyOn(AbortSignal, "timeout").mockImplementation(() => {
+			const controller = new AbortController();
+			controllers.push(controller);
+			return controller.signal;
+		});
+		const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
+			if (fetchMock.mock.calls.length === 1) {
+				controllers[0].abort();
+				init?.signal?.throwIfAborted();
+			}
+			return Response.json({ ok: true });
+		});
+
+		await fetchWithRetry("https://example.test", undefined, { attemptTimeoutMs: 4000 });
+
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+		expect(controllers).toHaveLength(2);
+	});
+
 	it("retries transient HTTP responses and returns the successful response", async () => {
 		const fetchMock = vi
 			.spyOn(globalThis, "fetch")

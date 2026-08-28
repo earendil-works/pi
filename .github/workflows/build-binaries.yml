@@ -128,9 +128,82 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  smoke-test-binaries:
+    runs-on: ${{ matrix.runner }}
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+    permissions:
+      actions: read
+    env:
+      RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+    steps:
+      - name: Download binary archives
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-assets-${{ env.RELEASE_TAG }}
+          path: release-assets
+
+      - name: Extract current-platform binary
+        id: binary
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          runtime_platform="$(node -p '`${process.platform}-${process.arch}`')"
+          case "${runtime_platform}" in
+            darwin-arm64|darwin-x64|linux-arm64|linux-x64)
+              platform="${runtime_platform}"
+              archive="release-assets/pi-${platform}.tar.gz"
+              root="extracted/pi"
+              binary="${root}/pi"
+              ;;
+            win32-arm64)
+              platform="windows-arm64"
+              archive="release-assets/pi-${platform}.zip"
+              root="extracted"
+              binary="${root}/pi.exe"
+              ;;
+            win32-x64)
+              platform="windows-x64"
+              archive="release-assets/pi-${platform}.zip"
+              root="extracted"
+              binary="${root}/pi.exe"
+              ;;
+            *)
+              echo "::error::Unsupported runner platform ${runtime_platform}"
+              exit 1
+              ;;
+          esac
+
+          mkdir -p extracted
+          if [[ "${archive}" == *.zip ]]; then
+            export ARCHIVE_PATH="$(cygpath -w "${archive}")"
+            export DESTINATION_PATH="$(cygpath -w extracted)"
+            powershell.exe -NoProfile -NonInteractive -Command \
+              'Expand-Archive -LiteralPath $env:ARCHIVE_PATH -DestinationPath $env:DESTINATION_PATH -Force'
+          else
+            tar -xf "${archive}" -C extracted
+          fi
+          echo "root=${root}" >> "${GITHUB_OUTPUT}"
+          echo "binary=${binary}" >> "${GITHUB_OUTPUT}"
+
+      - name: Smoke-test binary
+        shell: bash
+        run: |
+          "${{ steps.binary.outputs.binary }}" --help
+          "${{ steps.binary.outputs.binary }}" --version
+
   stage-github-release:
     runs-on: ubuntu-latest
-    needs: build
+    needs:
+      - build
+      - smoke-test-binaries
     permissions:
       actions: read
       contents: write
@@ -307,7 +380,9 @@ jobs:
           node scripts/publish-release-announcement.mjs \
             --version "${RELEASE_TAG#v}" \
             --bucket pi-artifacts \
-            --endpoint "$R2_ENDPOINT"
+            --endpoint "$R2_ENDPOINT" \
+            --installer-package-json packages/coding-agent/install-lock/package.json \
+            --installer-package-lock packages/coding-agent/install-lock/package-lock.json
 
   publish-github-release:
     runs-on: ubuntu-latest

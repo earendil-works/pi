@@ -2,7 +2,7 @@ import assert from "node:assert";
 import { afterEach, describe, it } from "node:test";
 import type { Terminal as XtermTerminalType } from "@xterm/headless";
 import { Chalk } from "chalk";
-import { Markdown } from "../src/components/markdown.ts";
+import { Markdown, type MarkdownTheme } from "../src/components/markdown.ts";
 import { resetCapabilitiesCache, setCapabilities } from "../src/terminal-image.ts";
 import type { Component, TUI } from "../src/tui.ts";
 import { TuiMainScreen } from "../src/tui-main-screen.ts";
@@ -12,24 +12,14 @@ import { VirtualTerminal } from "./virtual-terminal.ts";
 // Force full color in CI so ANSI assertions are deterministic
 const chalk = new Chalk({ level: 3 });
 
-function getCellItalic(terminal: VirtualTerminal, row: number, col: number): number {
+function getCell(terminal: VirtualTerminal, row: number, col: number) {
 	const xterm = (terminal as unknown as { xterm: XtermTerminalType }).xterm;
 	const buffer = xterm.buffer.active;
 	const line = buffer.getLine(buffer.viewportY + row);
 	assert.ok(line, `Missing buffer line at row ${row}`);
 	const cell = line.getCell(col);
 	assert.ok(cell, `Missing cell at row ${row} col ${col}`);
-	return cell.isItalic();
-}
-
-function getCellUnderline(terminal: VirtualTerminal, row: number, col: number): number {
-	const xterm = (terminal as unknown as { xterm: XtermTerminalType }).xterm;
-	const buffer = xterm.buffer.active;
-	const line = buffer.getLine(buffer.viewportY + row);
-	assert.ok(line, `Missing buffer line at row ${row}`);
-	const cell = line.getCell(col);
-	assert.ok(cell, `Missing cell at row ${row} col ${col}`);
-	return cell.isUnderline();
+	return cell;
 }
 
 function stripAnsi(line: string): string {
@@ -477,6 +467,105 @@ describe("Markdown component", () => {
 			assert.ok(allText.includes("Description"), "Should contain 'Description'");
 			assert.ok(allText.includes("npm install"), "Should contain 'npm install'");
 			assert.ok(allText.includes("Install"), "Should contain 'Install'");
+		});
+
+		it("should not leak wrapped link styles into table borders or plain cells", async () => {
+			const source = `| Link | Plain |
+| --- | --- |
+| [**one two three four five six**](https://example.com) | normal text |`;
+
+			try {
+				for (const hyperlinks of [true, false]) {
+					setCapabilities({ images: null, trueColor: false, hyperlinks });
+					const terminal = new VirtualTerminal(24, 16);
+					const tui: TUI = new TuiMainScreen(terminal);
+					tui.addChild(new Markdown(source, 0, 0, defaultMarkdownTheme));
+					tui.start();
+
+					try {
+						await terminal.waitForRender();
+						const viewport = terminal.getViewport();
+						const row = viewport.findIndex((line) => line.includes("one") && line.includes("norm"));
+						assert.notStrictEqual(row, -1, `Missing wrapped table row: ${JSON.stringify(viewport)}`);
+						const line = viewport[row];
+						const linkCol = line.indexOf("one");
+						const separatorCol = line.indexOf("│", linkCol);
+						const plainCol = line.indexOf("norm");
+						assert.ok(linkCol >= 0 && separatorCol > linkCol && plainCol > separatorCol);
+						assert.strictEqual(getCell(terminal, row, linkCol).isFgDefault(), false);
+						assert.strictEqual(getCell(terminal, row, separatorCol).isFgDefault(), true);
+						assert.strictEqual(getCell(terminal, row, plainCol).isFgDefault(), true);
+						assert.notStrictEqual(getCell(terminal, row, linkCol).isBold(), 0);
+						assert.strictEqual(getCell(terminal, row, separatorCol).isBold(), 0);
+						assert.strictEqual(getCell(terminal, row, plainCol).isBold(), 0);
+
+						if (!hyperlinks) {
+							const urlRow = viewport.findIndex((viewportLine) => viewportLine.includes("https"));
+							assert.notStrictEqual(urlRow, -1, `Missing fallback URL row: ${JSON.stringify(viewport)}`);
+							const urlLine = viewport[urlRow];
+							const urlCol = urlLine.indexOf("https");
+							const urlSeparatorCol = urlLine.indexOf("│", urlCol);
+							const urlBorderCol = urlLine.lastIndexOf("│");
+							assert.ok(urlCol >= 0 && urlSeparatorCol > urlCol && urlBorderCol > urlSeparatorCol);
+							assert.notStrictEqual(getCell(terminal, urlRow, urlCol).isDim(), 0);
+							assert.strictEqual(getCell(terminal, urlRow, urlSeparatorCol).isDim(), 0);
+							assert.strictEqual(getCell(terminal, urlRow, urlBorderCol).isDim(), 0);
+						}
+					} finally {
+						tui.stop();
+					}
+				}
+			} finally {
+				resetCapabilitiesCache();
+			}
+		});
+
+		it("should restore the enclosing style after a wrapped table link", async () => {
+			const quoteColor = 0x123456;
+			const theme: MarkdownTheme = {
+				...defaultMarkdownTheme,
+				// Use a basic wrapper that does not automatically reopen itself after nested resets.
+				quote: (text) => `\x1b[38;2;18;52;86m${text}\x1b[39m`,
+				link: (text) => `\x1b[38;2;129;162;190m${text}\x1b[39m`,
+			};
+			const source = `> | Link | Plain |
+> | --- | --- |
+> | [one two three four five six](https://example.com) | normal text |`;
+
+			setCapabilities({ images: null, trueColor: true, hyperlinks: true });
+			const terminal = new VirtualTerminal(28, 10);
+			const tui: TUI = new TuiMainScreen(terminal);
+			tui.addChild(new Markdown(source, 0, 0, theme));
+			tui.start();
+
+			try {
+				await terminal.waitForRender();
+				const viewport = terminal.getViewport();
+				const row = viewport.findIndex((line) => line.includes("one") && line.includes("normal"));
+				assert.notStrictEqual(row, -1, `Missing wrapped blockquote table row: ${JSON.stringify(viewport)}`);
+				const line = viewport[row];
+				const linkCol = line.indexOf("one");
+				const separatorCol = line.indexOf("│", linkCol);
+				const plainCol = line.indexOf("normal");
+				assert.ok(linkCol >= 0 && separatorCol > linkCol && plainCol > separatorCol);
+
+				assert.notStrictEqual(getCell(terminal, row, linkCol).getFgColor(), quoteColor);
+				assert.strictEqual(getCell(terminal, row, separatorCol).getFgColor(), quoteColor);
+				assert.strictEqual(getCell(terminal, row, plainCol).getFgColor(), quoteColor);
+
+				const finalRow = viewport.findIndex((line) => line.includes("five six"));
+				assert.notStrictEqual(finalRow, -1, `Missing final wrapped link row: ${JSON.stringify(viewport)}`);
+				const finalLine = viewport[finalRow];
+				const finalLinkCol = finalLine.indexOf("five six");
+				const finalSeparatorCol = finalLine.indexOf("│", finalLinkCol);
+				const finalBorderCol = finalLine.lastIndexOf("│");
+				assert.ok(finalLinkCol >= 0 && finalSeparatorCol > finalLinkCol && finalBorderCol > finalSeparatorCol);
+				assert.strictEqual(getCell(terminal, finalRow, finalSeparatorCol).getFgColor(), quoteColor);
+				assert.strictEqual(getCell(terminal, finalRow, finalBorderCol).getFgColor(), quoteColor);
+			} finally {
+				tui.stop();
+				resetCapabilitiesCache();
+			}
 		});
 
 		it("should wrap long cell content to multiple lines", () => {
@@ -988,7 +1077,7 @@ A=
 
 			assert.ok(component.markdownLineCount > 0);
 			const inputRow = component.markdownLineCount;
-			assert.strictEqual(getCellItalic(terminal, inputRow, 0), 0);
+			assert.strictEqual(getCell(terminal, inputRow, 0).isItalic(), 0);
 			tui.stop();
 		});
 	});
@@ -1432,7 +1521,11 @@ bar`,
 			assert.ok(contentWidth > 0, "Should have visible heading content");
 
 			for (let col = contentWidth; col < 80; col++) {
-				assert.strictEqual(getCellUnderline(terminal, 0, col), 0, `Expected no underline in padding at col ${col}`);
+				assert.strictEqual(
+					getCell(terminal, 0, col).isUnderline(),
+					0,
+					`Expected no underline in padding at col ${col}`,
+				);
 			}
 
 			tui.stop();
