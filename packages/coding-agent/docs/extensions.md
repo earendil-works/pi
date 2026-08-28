@@ -2975,6 +2975,7 @@ All examples in [examples/extensions/](../examples/extensions/).
 | `trigger-compact.ts` | Trigger compaction manually | `compact()` |
 | `git-checkpoint.ts` | Git stash on turns | `on("turn_start")`, `on("session_before_fork")`, `exec` |
 | `git-merge-and-resolve.ts` | Fetch, merge, and resolve conflicts | `on("agent_end")`, `exec`, `sendUserMessage` |
+| `artifact-verifier.ts` | Gate a configured success token on deterministic artifact verification and bounded repair | `on("message_end")`, `on("agent_end")`, `exec`, `sendUserMessage` |
 | `auto-commit-on-exit.ts` | Commit on shutdown | `on("session_shutdown")`, `exec` |
 | **UI Components** |||
 | `status-line.ts` | Footer status indicator | `setStatus`, session events |
@@ -3018,3 +3019,42 @@ All examples in [examples/extensions/](../examples/extensions/).
 | `inline-bash.ts` | Inline bash in tool calls | `on("tool_call")` |
 | `bash-spawn-hook.ts` | Adjust bash command, cwd, and env before execution | `createBashTool`, `spawnHook` |
 | `with-deps/` | Extension with npm dependencies | Package structure with `package.json` |
+
+### Artifact verifier contract
+
+The `artifact-verifier.ts` example is inert unless the trusted project root
+contains `.pi-artifact-verifier.json`:
+
+```json
+{
+  "version": 1,
+  "command": "node",
+  "args": ["./verify-artifact.mjs"],
+  "timeoutMs": 120000,
+  "maxRepairs": 2,
+  "successToken": "ARTIFACT_OK"
+}
+```
+
+The command runs without a shell in the project root. It must print one JSON
+object to stdout:
+
+```json
+{
+  "ok": false,
+  "summary": "Keyboard activation failed",
+  "issues": [
+    {
+      "code": "keyboard_activation",
+      "message": "Enter did not activate Move Left"
+    }
+  ]
+}
+```
+
+A zero exit code plus `"ok": true` releases the configured success token.
+Otherwise the extension sends the report back as a follow-up repair request.
+After `maxRepairs` failures it replaces later occurrences of the success token
+with `ARTIFACT_VERIFICATION_FAILED`. This keeps project-specific verification
+outside Pi while preventing a model from claiming success before the verifier
+accepts the artifact.
