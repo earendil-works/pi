@@ -188,6 +188,12 @@ async function runLoop(
 									: nextTurnSnapshot.thinkingLevel,
 					};
 				}
+				// Preparation can be long-running (for example, compaction). Pick up steering
+				// queued while it ran. Only poll again if the earlier poll returned nothing;
+				// otherwise one-at-a-time mode would deliver two messages in this turn.
+				if (pendingMessages.length === 0) {
+					pendingMessages = (await config.getSteeringMessages?.()) || [];
+				}
 				await emit({ type: "turn_start" });
 			}
 

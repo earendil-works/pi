@@ -453,6 +453,71 @@ describe("AgentSession compaction characterization", () => {
 		expect(harness.session.getLastAssistantText()).toBe("finished after compaction");
 	});
 
+	it("includes steering queued during compaction in the resumed assistant request", async () => {
+		const largeTool: AgentTool = {
+			name: "large_result",
+			label: "Large result",
+			description: "Returns enough content to cross the compaction threshold",
+			parameters: Type.Object({}),
+			execute: async () => ({
+				content: [{ type: "text", text: `large-tool-result:${"x".repeat(6800)}` }],
+				details: {},
+			}),
+		};
+		let markCompactionStarted = () => {};
+		const compactionStarted = new Promise<void>((resolve) => {
+			markCompactionStarted = resolve;
+		});
+		let releaseCompaction = () => {};
+		const compactionReleased = new Promise<void>((resolve) => {
+			releaseCompaction = resolve;
+		});
+		const harness = await createHarness({
+			models: [{ id: "faux-1", contextWindow: 2600, maxTokens: 100 }],
+			settings: { compaction: { enabled: true, reserveTokens: 400, keepRecentTokens: 1750 } },
+			tools: [largeTool],
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_before_compact", async (event) => {
+						markCompactionStarted();
+						await compactionReleased;
+						return {
+							compaction: {
+								summary: "compacted history",
+								firstKeptEntryId: event.preparation.firstKeptEntryId,
+								tokensBefore: event.preparation.tokensBefore,
+								details: {},
+							},
+						};
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		let resumedRequest = "";
+		harness.setResponses([
+			fauxAssistantMessage(`old-history:${"a".repeat(800)}`),
+			fauxAssistantMessage(`recent-history:${"b".repeat(800)}`),
+			fauxAssistantMessage(fauxToolCall("large_result", {}), { stopReason: "toolUse" }),
+			(context) => {
+				resumedRequest = JSON.stringify(context.messages);
+				return fauxAssistantMessage("finished after compaction");
+			},
+			fauxAssistantMessage("finished after delayed steering"),
+		]);
+
+		await harness.session.prompt("seed old history");
+		await harness.session.prompt("seed recent history");
+		const promptPromise = harness.session.prompt("run the large tool");
+		await compactionStarted;
+		await harness.session.steer("change direction");
+		releaseCompaction();
+		await promptPromise;
+
+		expect(resumedRequest).toContain("change direction");
+		expect(harness.faux.state.callCount).toBe(4);
+	});
+
 	it("does not compact after a terminating tool result", async () => {
 		const terminatingTool: AgentTool = {
 			name: "terminate_with_large_result",
