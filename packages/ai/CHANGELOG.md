@@ -15,6 +15,7 @@
 
 ### Added
 
+- Added Amazon Bedrock internal routing for OpenAI Responses-compatible Bedrock models.
 - Added provider-neutral `toolChoice` support to simple stream requests.
 - Added automatic Anthropic server-side refusal fallback for supported first-party models, including returned-model usage pricing ([#8017](https://github.com/earendil-works/pi/issues/8017)).
 - Added configurable OpenAI-compatible thinking-token budget fields for vLLM, Qwen/SGLang, and llama.cpp servers ([#8275](https://github.com/earendil-works/pi/pull/8275) by [@bnsd55](https://github.com/bnsd55)).
@@ -28,6 +29,7 @@
 
 ### Fixed
 
+- Fixed OpenAI GPT-5.x models from the Bedrock catalog being routed through the Amazon Bedrock Converse adapter instead of Bedrock's OpenAI-compatible Responses endpoint (Mantle).
 - Fixed OpenAI-compatible Chat Completions reasoning replay to preserve and resend assistant-level `reasoning_details` (`reasoning.text`, `reasoning.summary`, and `reasoning.encrypted`) verbatim and in order ([#7994](https://github.com/earendil-works/pi/issues/7994)).
 - Fixed Anthropic server-side fallback responses being priced with the requested model instead of the returned fallback model ([#8285](https://github.com/earendil-works/pi/issues/8285)).
 - Fixed GitHub Copilot login triggering model-policy rate limits by limiting policy updates, retrying model discovery once, and honoring server retry delays ([#7850](https://github.com/earendil-works/pi/issues/7850)).

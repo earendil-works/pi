@@ -362,6 +362,27 @@ const ANT_LING_RING_THINKING_LEVEL_MAP = {
 } as const;
 
 const BEDROCK_INFERENCE_PROFILE_ONLY_MODEL_IDS = new Set(["anthropic.claude-opus-5"]);
+// Bedrock Mantle/OpenAI Responses routing is based on AWS's model-card endpoint/API support metadata.
+// Sources checked:
+// - https://docs.aws.amazon.com/bedrock/latest/userguide/model-cards.html
+// - https://docs.aws.amazon.com/bedrock/latest/userguide/models-api-compatibility.html
+const BEDROCK_MANTLE_OPENAI_RESPONSES_MODEL_IDS = new Set([
+	"google.gemma-4-31b",
+	"google.gemma-4-26b-a4b",
+	"google.gemma-4-e2b",
+	"openai.gpt-5.6-sol",
+	"openai.gpt-5.6-terra",
+	"openai.gpt-5.6-luna",
+	"openai.gpt-5.6-cyber",
+	"openai.gpt-daybreak-blue-5.6-sol",
+	"openai.gpt-5.5",
+	"openai.gpt-5.4",
+	"openai.gpt-oss-120b",
+	"openai.gpt-oss-20b",
+	"xai.grok-4.3",
+	"xai.grok-4.6",
+]);
+const BEDROCK_MANTLE_OPENAI_RESPONSES_V1_MODEL_IDS = new Set(["openai.gpt-oss-120b", "openai.gpt-oss-20b"]);
 const MODELS_DEV_OPENAI_UNSUPPORTED_MODEL_IDS = new Set(["gpt-5.6"]);
 const OPENAI_TOOL_SEARCH_MODEL_IDS = new Set([
 	"gpt-5.4",
@@ -1015,6 +1036,86 @@ function getBedrockBaseUrl(modelId: string): string {
 		: "https://bedrock-runtime.us-east-1.amazonaws.com";
 }
 
+function getBedrockMantleOpenAIResponsesBaseUrl(modelId: string): string {
+	return BEDROCK_MANTLE_OPENAI_RESPONSES_V1_MODEL_IDS.has(modelId)
+		? "https://bedrock-mantle.us-east-1.api.aws/v1"
+		: "https://bedrock-mantle.us-east-1.api.aws/openai/v1";
+}
+
+function isBedrockMantleOpenAIResponsesModelId(modelId: string): boolean {
+	return BEDROCK_MANTLE_OPENAI_RESPONSES_MODEL_IDS.has(modelId);
+}
+
+// These model-card entries are not yet present in models.dev's Bedrock catalog. Keep the normal
+// models.dev metadata for IDs that upstream already publishes; only supplement missing model IDs here.
+const BEDROCK_MANTLE_OPENAI_RESPONSES_SUPPLEMENTAL_MODELS: Model<"openai-responses">[] = [
+	{
+		id: "google.gemma-4-31b",
+		name: "Gemma 4 31B",
+		api: "openai-responses",
+		provider: "amazon-bedrock",
+		baseUrl: getBedrockMantleOpenAIResponsesBaseUrl("google.gemma-4-31b"),
+		reasoning: true,
+		input: ["text", "image"],
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		contextWindow: 256_000,
+		maxTokens: 4096,
+		compat: { sessionAffinityFormat: "openai-nosession", supportsStrictMode: true },
+	},
+	{
+		id: "google.gemma-4-26b-a4b",
+		name: "Gemma 4 26B-A4B",
+		api: "openai-responses",
+		provider: "amazon-bedrock",
+		baseUrl: getBedrockMantleOpenAIResponsesBaseUrl("google.gemma-4-26b-a4b"),
+		reasoning: true,
+		input: ["text", "image"],
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		contextWindow: 256_000,
+		maxTokens: 4096,
+		compat: { sessionAffinityFormat: "openai-nosession", supportsStrictMode: true },
+	},
+	{
+		id: "google.gemma-4-e2b",
+		name: "Gemma 4 E2B",
+		api: "openai-responses",
+		provider: "amazon-bedrock",
+		baseUrl: getBedrockMantleOpenAIResponsesBaseUrl("google.gemma-4-e2b"),
+		reasoning: true,
+		input: ["text", "image"],
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		contextWindow: 128_000,
+		maxTokens: 4096,
+		compat: { sessionAffinityFormat: "openai-nosession", supportsStrictMode: true },
+	},
+	{
+		id: "openai.gpt-5.6-cyber",
+		name: "Daybreak Red: GPT-5.6 Cyber",
+		api: "openai-responses",
+		provider: "amazon-bedrock",
+		baseUrl: getBedrockMantleOpenAIResponsesBaseUrl("openai.gpt-5.6-cyber"),
+		reasoning: true,
+		input: ["text", "image"],
+		cost: { input: 13.75, output: 82.5, cacheRead: 1.375, cacheWrite: 17.1875 },
+		contextWindow: 272_000,
+		maxTokens: 128_000,
+		compat: { sessionAffinityFormat: "openai-nosession", supportsStrictMode: true },
+	},
+	{
+		id: "openai.gpt-daybreak-blue-5.6-sol",
+		name: "Daybreak Blue: GPT-5.6 Sol",
+		api: "openai-responses",
+		provider: "amazon-bedrock",
+		baseUrl: getBedrockMantleOpenAIResponsesBaseUrl("openai.gpt-daybreak-blue-5.6-sol"),
+		reasoning: true,
+		input: ["text", "image"],
+		cost: { input: 5.5, output: 33, cacheRead: 0.55, cacheWrite: 6.875 },
+		contextWindow: 1_000_000,
+		maxTokens: 128_000,
+		compat: { sessionAffinityFormat: "openai-nosession", supportsStrictMode: true },
+	},
+];
+
 function normalizeNvidiaModelId(modelId: string): string {
 	return modelId.toLowerCase().replaceAll("_", ".");
 }
@@ -1444,6 +1545,33 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 
 				let id = modelId;
 
+				if (isBedrockMantleOpenAIResponsesModelId(id)) {
+					models.push({
+						id,
+						name: m.name || id,
+						api: "openai-responses" as const,
+						provider: "amazon-bedrock" as const,
+						baseUrl: getBedrockMantleOpenAIResponsesBaseUrl(id),
+						reasoning: m.reasoning === true,
+						input: (m.modalities?.input?.includes("image") ? ["text", "image"] : ["text"]) as ("text" | "image")[],
+						cost: {
+							input: m.cost?.input || 0,
+							output: m.cost?.output || 0,
+							cacheRead: m.cost?.cache_read || 0,
+							cacheWrite: m.cost?.cache_write || 0,
+						},
+						contextWindow: m.limit?.context || 4096,
+						maxTokens: m.limit?.output || 4096,
+						...(m.reasoning === true && { thinkingLevelMap: { off: null } }),
+						compat: {
+							sessionAffinityFormat: "openai-nosession" as const,
+							...(m.structured_output === true && { supportsStrictMode: true }),
+						},
+					});
+					recordModelsDevReasoningOptions("amazon-bedrock" as const, id, m);
+					continue;
+				}
+
 				if (id.startsWith("ai21.jamba")) {
 					// These models doesn't support tool use in streaming mode
 					continue;
@@ -1473,6 +1601,13 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					...(m.structured_output === true && { compat: { supportsStrictMode: true } }),
 				});
 				recordModelsDevReasoningOptions("amazon-bedrock" as const, id, m);
+			}
+
+			const bedrockModelIds = new Set(models.filter((model) => model.provider === "amazon-bedrock").map((model) => model.id));
+			for (const model of BEDROCK_MANTLE_OPENAI_RESPONSES_SUPPLEMENTAL_MODELS) {
+				if (!bedrockModelIds.has(model.id)) {
+					models.push(model);
+				}
 			}
 		}
 

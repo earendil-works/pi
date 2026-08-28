@@ -80,7 +80,7 @@ Unified LLM API with provider collections, automatic auth resolution, token and 
 - **Hugging Face**
 - **Moonshot AI** (with separate China provider)
 - **GitHub Copilot** (requires OAuth, see below)
-- **Amazon Bedrock**
+- **Amazon Bedrock** (Converse and OpenAI-compatible Bedrock models)
 - **OpenCode Zen**
 - **OpenCode Go**
 - **Fireworks** (uses OpenAI- and Anthropic-compatible APIs)
@@ -453,7 +453,7 @@ Built-in providers resolve these env vars (Node.js; in browsers pass `apiKey` ex
 subscriptions, while the existing provider retains its broader catalog for backward compatibility.
 Stored credentials remain provider-scoped, so save the key under the provider ID you register.
 
-Amazon Bedrock resolves ambient AWS credentials (`AWS_PROFILE`, access key pairs, `AWS_BEARER_TOKEN_BEDROCK`, ECS task roles, web identity tokens); its provider-owned login flow supports bearer tokens, AWS profiles, and the existing credential chain. Vertex AI resolves either an explicit key or gcloud Application Default Credentials plus project/location, with a provider-owned login flow for API keys, ADC, and service-account files.
+Amazon Bedrock resolves ambient AWS credentials (`AWS_PROFILE`, access key pairs, `AWS_BEARER_TOKEN_BEDROCK`, ECS task roles, web identity tokens); its provider-owned login flow supports bearer tokens, AWS profiles, and the existing credential chain. OpenAI-compatible Bedrock models are routed internally through Bedrock's OpenAI Responses-compatible endpoint instead of Converse. Vertex AI resolves either an explicit key or gcloud Application Default Credentials plus project/location, with a provider-owned login flow for API keys, ADC, and service-account files.
 
 ## Tools
 

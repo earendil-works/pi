@@ -56,6 +56,13 @@ describe("isContextOverflow", () => {
 		expect(isContextOverflow(message, 262144)).toBe(true);
 	});
 
+	it("detects Amazon Bedrock Mantle OpenAI Responses prompt-token maximum errors", () => {
+		const message = createErrorMessage(
+			"Amazon Bedrock Mantle OpenAI Responses API error (400): invalid_prompt: prompt tokens (330095) exceed model maximum (278528) for base model abc",
+		);
+		expect(isContextOverflow(message, 272000)).toBe(true);
+	});
+
 	it("detects OpenRouter Poolside maximum allowed input length errors", () => {
 		const message = createErrorMessage(
 			"Provider returned error: Input length 131393 exceeds the maximum allowed input length of 131040 tokens.",

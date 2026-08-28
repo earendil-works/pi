@@ -95,5 +95,13 @@
 		"@types/node": "22.19.19",
 		"canvas": "3.2.3",
 		"vitest": "4.1.9"
+	},
+	"peerDependencies": {
+		"@aws/bedrock-token-generator": "1.1.0"
+	},
+	"peerDependenciesMeta": {
+		"@aws/bedrock-token-generator": {
+			"optional": true
+		}
 	}
 }
