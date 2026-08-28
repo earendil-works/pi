@@ -107,6 +107,42 @@ describe("openai-responses provider defaults", () => {
 		});
 	});
 
+	it.each(["deepseek-v4-flash", "deepseek-v4-pro"] as const)(
+		"sends max_output_tokens for DeepSeek %s Responses models",
+		async (modelId) => {
+			const model = getModel("deepseek", modelId);
+			let capturedPayload: unknown;
+
+			vi.spyOn(globalThis, "fetch").mockResolvedValue(
+				new Response("data: [DONE]\n\n", {
+					status: 200,
+					headers: { "content-type": "text/event-stream" },
+				}),
+			);
+
+			const stream = streamOpenAIResponses(
+				model,
+				{
+					systemPrompt: "sys",
+					messages: [{ role: "user", content: "hi", timestamp: Date.now() }],
+				},
+				{
+					apiKey: "test-key",
+					maxTokens: 123,
+					onPayload: (payload) => {
+						capturedPayload = payload;
+					},
+				},
+			);
+
+			for await (const event of stream) {
+				if (event.type === "done" || event.type === "error") break;
+			}
+
+			expect(capturedPayload).toMatchObject({ max_output_tokens: 123 });
+		},
+	);
+
 	it("forwards required tool choice", async () => {
 		let capturedPayload: unknown;
 

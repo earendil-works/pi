@@ -927,7 +927,7 @@ function applyThinkingLevelMetadata(model: Model<any>): void {
 	if (model.api === "anthropic-messages" && isAnthropicTemperatureUnsupportedModel(model.id)) {
 		mergeAnthropicMessagesCompat(model, { supportsTemperature: false });
 	}
-	if (model.api === "openai-completions" && model.id.includes("deepseek-v4")) {
+	if ((model.api === "openai-completions" || model.api === "openai-responses") && model.id.includes("deepseek-v4")) {
 		mergeThinkingLevelMap(
 			model,
 			model.provider === "openrouter"
@@ -2544,15 +2544,19 @@ async function generateModels() {
 		}
 	}
 
-	const deepseekCompat: OpenAICompletionsCompat = {
+	const deepseekCompletionsCompat: OpenAICompletionsCompat = {
 		requiresReasoningContentOnAssistantMessages: true,
 		thinkingFormat: "deepseek",
 	};
-	const deepseekV4Models: Model<"openai-completions">[] = [
+	const deepseekResponsesCompat: OpenAIResponsesCompat = {
+		supportsDeveloperRole: false,
+		supportsLongCacheRetention: false,
+	};
+	const deepseekV4Models: Model<"openai-responses">[] = [
 		{
 			id: "deepseek-v4-flash",
 			name: "DeepSeek V4 Flash",
-			api: "openai-completions",
+			api: "openai-responses",
 			baseUrl: "https://api.deepseek.com",
 			provider: "deepseek",
 			reasoning: true,
@@ -2565,12 +2569,12 @@ async function generateModels() {
 			},
 			contextWindow: 1000000,
 			maxTokens: 384000,
-			compat: deepseekCompat,
+			compat: deepseekResponsesCompat,
 		},
 		{
 			id: "deepseek-v4-flash-vision-exp",
 			name: "DeepSeek V4 Flash Vision Exp",
-			api: "openai-completions",
+			api: "openai-responses",
 			baseUrl: "https://api.deepseek.com",
 			provider: "deepseek",
 			reasoning: true,
@@ -2583,12 +2587,12 @@ async function generateModels() {
 			},
 			contextWindow: 1000000,
 			maxTokens: 384000,
-			compat: deepseekCompat,
+			compat: deepseekCompletionsCompat,
 		},
 		{
 			id: "deepseek-v4-pro",
 			name: "DeepSeek V4 Pro",
-			api: "openai-completions",
+			api: "openai-responses",
 			baseUrl: "https://api.deepseek.com",
 			provider: "deepseek",
 			reasoning: true,
@@ -2601,7 +2605,7 @@ async function generateModels() {
 			},
 			contextWindow: 1000000,
 			maxTokens: 384000,
-			compat: deepseekCompat,
+			compat: deepseekResponsesCompat,
 		},
 	];
 	allModels.push(...deepseekV4Models);
@@ -2657,6 +2661,13 @@ async function generateModels() {
 	allModels.push(...antLingModels);
 
 	for (const candidate of allModels) {
+		if (candidate.provider === "deepseek") {
+			// DeepSeek serves its models through an OpenAI Responses-compatible
+			// endpoint (POST /responses), not Chat Completions.
+			candidate.api = "openai-responses";
+			candidate.compat = { ...deepseekResponsesCompat };
+			continue;
+		}
 		if (
 			candidate.api === "openai-completions" &&
 			candidate.id.includes("deepseek-v4") &&
@@ -2668,9 +2679,9 @@ async function generateModels() {
 				...(preservesNativeReasoningEffort
 					? {
 							requiresReasoningContentOnAssistantMessages:
-								deepseekCompat.requiresReasoningContentOnAssistantMessages,
+								deepseekCompletionsCompat.requiresReasoningContentOnAssistantMessages,
 						}
-					: deepseekCompat),
+					: deepseekCompletionsCompat),
 			};
 		}
 	}
