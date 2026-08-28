@@ -8,6 +8,8 @@ import { pathToFileURL } from "node:url";
 import { getPublicWorkspacePackages } from "./release-packages.mjs";
 
 const RELEASES_PREFIX = "releases/v1";
+const INSTALLER_PREFIX = "installer/v1";
+const INSTALLER_PACKAGE_NAME = "@earendil-works/pi-coding-agent-install";
 const REGISTRY_URL = "https://registry.npmjs.org";
 const RETRY_DELAY_MS = 5000;
 const RETRY_TIMEOUT_MS = 10 * 60 * 1000;
@@ -18,19 +20,35 @@ function parseArgs(args) {
 	const options = {
 		bucket: undefined,
 		endpoint: undefined,
+		installerPackageJson: undefined,
+		installerPackageLock: undefined,
 		sourceCommit: undefined,
 		version: undefined,
 	};
 
 	for (let index = 0; index < args.length; index++) {
 		const arg = args[index];
-		if (arg !== "--bucket" && arg !== "--endpoint" && arg !== "--source-commit" && arg !== "--version") {
+		if (
+			arg !== "--bucket" &&
+			arg !== "--endpoint" &&
+			arg !== "--installer-package-json" &&
+			arg !== "--installer-package-lock" &&
+			arg !== "--source-commit" &&
+			arg !== "--version"
+		) {
 			throw new Error(`Unknown argument: ${arg}`);
 		}
 		const value = args[++index];
 		if (!value) throw new Error(`${arg} requires a value`);
 		options[
-			{ "--bucket": "bucket", "--endpoint": "endpoint", "--source-commit": "sourceCommit", "--version": "version" }[arg]
+			{
+				"--bucket": "bucket",
+				"--endpoint": "endpoint",
+				"--installer-package-json": "installerPackageJson",
+				"--installer-package-lock": "installerPackageLock",
+				"--source-commit": "sourceCommit",
+				"--version": "version",
+			}[arg]
 		] = value;
 	}
 
@@ -38,6 +56,9 @@ function parseArgs(args) {
 	if (!options.endpoint) throw new Error("--endpoint is required");
 	if (!options.version || !STABLE_SEMVER_RE.test(options.version)) {
 		throw new Error("--version must be a stable semver version");
+	}
+	if (!options.installerPackageJson || !options.installerPackageLock) {
+		throw new Error("--installer-package-json and --installer-package-lock are required");
 	}
 	return options;
 }
@@ -130,7 +151,7 @@ function runAws(args, { allowNotFound = false, allowPreconditionFailure = false 
 	throw new Error(`aws ${args.slice(0, 2).join(" ")} failed:\n${message}`);
 }
 
-function readLatestRelease(bucket, endpoint, outputPath) {
+function readLatestRelease(bucket, endpoint, key, outputPath) {
 	const head = runAws(
 		[
 			"s3api",
@@ -138,7 +159,7 @@ function readLatestRelease(bucket, endpoint, outputPath) {
 			"--bucket",
 			bucket,
 			"--key",
-			`${RELEASES_PREFIX}/latest.json`,
+			key,
 			"--endpoint-url",
 			endpoint,
 		],
@@ -156,7 +177,7 @@ function readLatestRelease(bucket, endpoint, outputPath) {
 		"--bucket",
 		bucket,
 		"--key",
-		`${RELEASES_PREFIX}/latest.json`,
+		key,
 		"--endpoint-url",
 		endpoint,
 		outputPath,
@@ -174,7 +195,7 @@ function readLatestRelease(bucket, endpoint, outputPath) {
 	return { etag: metadata.ETag, version: release.version };
 }
 
-function putJson(bucket, endpoint, path, key, cacheControl, condition) {
+function putObject(bucket, endpoint, path, key, cacheControl, condition) {
 	const args = [
 		"s3api",
 		"put-object",
@@ -194,6 +215,28 @@ function putJson(bucket, endpoint, path, key, cacheControl, condition) {
 	if (condition?.etag) args.push("--if-match", condition.etag);
 	if (condition?.missing) args.push("--if-none-match", "*");
 	return runAws(args, { allowPreconditionFailure: Boolean(condition) }) !== undefined;
+}
+
+function putJson(bucket, endpoint, path, key, cacheControl, condition) {
+	return putObject(bucket, endpoint, path, key, cacheControl, condition);
+}
+
+function validateInstallerArtifacts(packageJsonPath, packageLockPath, version) {
+	const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8"));
+	const packageLock = JSON.parse(readFileSync(packageLockPath, "utf8"));
+	const root = packageLock.packages?.[""];
+
+	if (packageJson.name !== INSTALLER_PACKAGE_NAME || packageJson.version !== version) {
+		throw new Error(`Installer package.json must describe ${INSTALLER_PACKAGE_NAME}@${version}`);
+	}
+	if (
+		packageLock.lockfileVersion !== 3 ||
+		packageLock.version !== version ||
+		root?.version !== version ||
+		root.dependencies?.["@earendil-works/pi-coding-agent"] !== version
+	) {
+		throw new Error(`Installer package-lock.json must describe Pi ${version}`);
+	}
 }
 
 export function compareReleaseVersions(left, right) {
@@ -259,9 +302,66 @@ async function main() {
 		}
 
 		writeFileSync(latestPath, `${JSON.stringify(release, null, "\t")}\n`);
+		validateInstallerArtifacts(options.installerPackageJson, options.installerPackageLock, options.version);
+		const installerReleasePrefix = `${INSTALLER_PREFIX}/releases/${options.version}`;
+		putObject(
+			options.bucket,
+			options.endpoint,
+			options.installerPackageJson,
+			`${installerReleasePrefix}/package.json`,
+			"public, max-age=31536000, immutable",
+			{ missing: true },
+		);
+		putObject(
+			options.bucket,
+			options.endpoint,
+			options.installerPackageLock,
+			`${installerReleasePrefix}/package-lock.json`,
+			"public, max-age=31536000, immutable",
+			{ missing: true },
+		);
+		putJson(
+			options.bucket,
+			options.endpoint,
+			releasePath,
+			`${installerReleasePrefix}/metadata.json`,
+			"public, max-age=31536000, immutable",
+			{ missing: true },
+		);
+		const installerLatest = await advanceLatestRelease(
+			options.version,
+			() =>
+				readLatestRelease(
+					options.bucket,
+					options.endpoint,
+					`${INSTALLER_PREFIX}/latest.json`,
+					join(temporaryDirectory, "installer-latest-current.json"),
+				),
+			(condition) =>
+				putJson(
+					options.bucket,
+					options.endpoint,
+					latestPath,
+					`${INSTALLER_PREFIX}/latest.json`,
+					"no-store",
+					condition,
+				),
+		);
+		console.log(
+			installerLatest.advanced
+				? `Published installer artifacts for Pi ${options.version} through s3://${options.bucket}/${INSTALLER_PREFIX}/latest.json`
+				: `Pi ${installerLatest.version} is already the latest installer release.`,
+		);
+
 		const result = await advanceLatestRelease(
 			options.version,
-			() => readLatestRelease(options.bucket, options.endpoint, join(temporaryDirectory, "latest-current.json")),
+			() =>
+				readLatestRelease(
+					options.bucket,
+					options.endpoint,
+					`${RELEASES_PREFIX}/latest.json`,
+					join(temporaryDirectory, "latest-current.json"),
+				),
 			(condition) =>
 				putJson(
 					options.bucket,

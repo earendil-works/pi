@@ -1,24 +1,23 @@
 {
 	"name": "@earendil-works/pi-coding-agent",
-	"version": "0.84.1",
+	"version": "0.84.3",
 	"lockfileVersion": 3,
 	"requires": true,
 	"packages": {
 		"": {
 			"name": "@earendil-works/pi-coding-agent",
-			"version": "0.84.1",
+			"version": "0.84.3",
 			"license": "MIT",
 			"dependencies": {
-				"@earendil-works/pi-agent-core": "^0.84.1",
-				"@earendil-works/pi-ai": "^0.84.1",
-				"@earendil-works/pi-client": "^0.84.1",
-				"@earendil-works/pi-protocol": "^0.84.1",
-				"@earendil-works/pi-tui": "^0.84.1",
+				"@earendil-works/pi-agent-core": "^0.84.3",
+				"@earendil-works/pi-ai": "^0.84.3",
+				"@earendil-works/pi-client": "^0.84.3",
+				"@earendil-works/pi-protocol": "^0.84.3",
+				"@earendil-works/pi-tui": "^0.84.3",
 				"@silvia-odwyer/photon-node": "0.3.4",
 				"chalk": "5.6.2",
 				"cross-spawn": "7.0.6",
 				"diff": "8.0.4",
-				"glob": "13.0.6",
 				"grok-mermaid": "0.2.2",
 				"highlight.js": "10.7.3",
 				"hosted-git-info": "9.0.3",
@@ -35,7 +34,7 @@
 				"@mariozechner/clipboard": "0.3.9"
 			},
 			"bin": {
-				"pi": "dist/cli.js"
+				"pi": "dist/bundle/cli.js"
 			},
 			"engines": {
 				"node": ">=22.19.0"
@@ -477,12 +476,12 @@
 			}
 		},
 		"node_modules/@earendil-works/pi-agent-core": {
-			"version": "0.84.1",
-			"resolved": "https://registry.npmjs.org/@earendil-works/pi-agent-core/-/pi-agent-core-0.84.1.tgz",
+			"version": "0.84.3",
+			"resolved": "https://registry.npmjs.org/@earendil-works/pi-agent-core/-/pi-agent-core-0.84.3.tgz",
 			"license": "MIT",
 			"dependencies": {
-				"@earendil-works/pi-ai": "^0.84.1",
-				"@earendil-works/pi-telemetry": "^0.84.1",
+				"@earendil-works/pi-ai": "^0.84.3",
+				"@earendil-works/pi-telemetry": "^0.84.3",
 				"diff": "8.0.4",
 				"ignore": "7.0.5",
 				"typebox": "1.3.7",
@@ -493,15 +492,14 @@
 			}
 		},
 		"node_modules/@earendil-works/pi-ai": {
-			"version": "0.84.1",
-			"resolved": "https://registry.npmjs.org/@earendil-works/pi-ai/-/pi-ai-0.84.1.tgz",
+			"version": "0.84.3",
+			"resolved": "https://registry.npmjs.org/@earendil-works/pi-ai/-/pi-ai-0.84.3.tgz",
 			"license": "MIT",
 			"dependencies": {
 				"@anthropic-ai/sdk": "0.91.1",
 				"@aws-sdk/client-bedrock-runtime": "3.1048.0",
-				"@earendil-works/pi-telemetry": "^0.84.1",
+				"@earendil-works/pi-telemetry": "^0.84.3",
 				"@google/genai": "1.52.0",
-				"@opentelemetry/api": "1.9.0",
 				"@smithy/node-http-handler": "4.7.3",
 				"http-proxy-agent": "7.0.2",
 				"https-proxy-agent": "7.0.6",
@@ -517,19 +515,19 @@
 			}
 		},
 		"node_modules/@earendil-works/pi-client": {
-			"version": "0.84.1",
-			"resolved": "https://registry.npmjs.org/@earendil-works/pi-client/-/pi-client-0.84.1.tgz",
+			"version": "0.84.3",
+			"resolved": "https://registry.npmjs.org/@earendil-works/pi-client/-/pi-client-0.84.3.tgz",
 			"license": "MIT",
 			"dependencies": {
-				"@earendil-works/pi-protocol": "^0.84.1"
+				"@earendil-works/pi-protocol": "^0.84.3"
 			},
 			"engines": {
 				"node": ">=22.19.0"
 			}
 		},
 		"node_modules/@earendil-works/pi-protocol": {
-			"version": "0.84.1",
-			"resolved": "https://registry.npmjs.org/@earendil-works/pi-protocol/-/pi-protocol-0.84.1.tgz",
+			"version": "0.84.3",
+			"resolved": "https://registry.npmjs.org/@earendil-works/pi-protocol/-/pi-protocol-0.84.3.tgz",
 			"license": "MIT",
 			"dependencies": {
 				"typebox": "1.3.7"
@@ -539,16 +537,16 @@
 			}
 		},
 		"node_modules/@earendil-works/pi-telemetry": {
-			"version": "0.84.1",
-			"resolved": "https://registry.npmjs.org/@earendil-works/pi-telemetry/-/pi-telemetry-0.84.1.tgz",
+			"version": "0.84.3",
+			"resolved": "https://registry.npmjs.org/@earendil-works/pi-telemetry/-/pi-telemetry-0.84.3.tgz",
 			"license": "MIT",
 			"engines": {
 				"node": ">=22.19.0"
 			}
 		},
 		"node_modules/@earendil-works/pi-tui": {
-			"version": "0.84.1",
-			"resolved": "https://registry.npmjs.org/@earendil-works/pi-tui/-/pi-tui-0.84.1.tgz",
+			"version": "0.84.3",
+			"resolved": "https://registry.npmjs.org/@earendil-works/pi-tui/-/pi-tui-0.84.3.tgz",
 			"license": "MIT",
 			"dependencies": {
 				"get-east-asian-width": "1.6.0",
@@ -772,15 +770,6 @@
 					"url": "https://github.com/sponsors/nodable"
 				}
 			]
-		},
-		"node_modules/@opentelemetry/api": {
-			"version": "1.9.0",
-			"resolved": "https://registry.npmjs.org/@opentelemetry/api/-/api-1.9.0.tgz",
-			"integrity": "sha512-3giAOQvZiH5F9bMlMiv8+GSPMeqg0dbaeo58/0SlA9sxSqZhnUtxzX9/2FzyhS9sWQf5S0GJE0AKBrFqjpeYcg==",
-			"license": "Apache-2.0",
-			"engines": {
-				"node": ">=8.0.0"
-			}
 		},
 		"node_modules/@protobufjs/aspromise": {
 			"version": "1.1.2",
@@ -1233,23 +1222,6 @@
 				"url": "https://github.com/sponsors/sindresorhus"
 			}
 		},
-		"node_modules/glob": {
-			"version": "13.0.6",
-			"resolved": "https://registry.npmjs.org/glob/-/glob-13.0.6.tgz",
-			"integrity": "sha512-Wjlyrolmm8uDpm/ogGyXZXb1Z+Ca2B8NbJwqBVg0axK9GbBeoS7yGV6vjXnYdGm6X53iehEuxxbyiKp8QmN4Vw==",
-			"license": "BlueOak-1.0.0",
-			"dependencies": {
-				"minimatch": "^10.2.2",
-				"minipass": "^7.1.3",
-				"path-scurry": "^2.0.2"
-			},
-			"engines": {
-				"node": "18 || 20 || >=22"
-			},
-			"funding": {
-				"url": "https://github.com/sponsors/isaacs"
-			}
-		},
 		"node_modules/google-auth-library": {
 			"version": "10.6.2",
 			"resolved": "https://registry.npmjs.org/google-auth-library/-/google-auth-library-10.6.2.tgz",
@@ -1447,15 +1419,6 @@
 				"url": "https://github.com/sponsors/isaacs"
 			}
 		},
-		"node_modules/minipass": {
-			"version": "7.1.3",
-			"resolved": "https://registry.npmjs.org/minipass/-/minipass-7.1.3.tgz",
-			"integrity": "sha512-tEBHqDnIoM/1rXME1zgka9g6Q2lcoCkxHLuc7ODJ5BxbP5d4c2Z5cGgtXAku59200Cx7diuHTOYfSBD8n6mm8A==",
-			"license": "BlueOak-1.0.0",
-			"engines": {
-				"node": ">=16 || 14 >=14.17"
-			}
-		},
 		"node_modules/ms": {
 			"version": "2.1.3",
 			"resolved": "https://registry.npmjs.org/ms/-/ms-2.1.3.tgz",
@@ -1565,22 +1528,6 @@
 			"license": "MIT",
 			"engines": {
 				"node": ">=8"
-			}
-		},
-		"node_modules/path-scurry": {
-			"version": "2.0.2",
-			"resolved": "https://registry.npmjs.org/path-scurry/-/path-scurry-2.0.2.tgz",
-			"integrity": "sha512-3O/iVVsJAPsOnpwWIeD+d6z/7PmqApyQePUtCndjatj/9I5LylHvt5qluFaBT3I5h3r1ejfR056c+FCv+NnNXg==",
-			"license": "BlueOak-1.0.0",
-			"dependencies": {
-				"lru-cache": "^11.0.0",
-				"minipass": "^7.1.2"
-			},
-			"engines": {
-				"node": "18 || 20 || >=22"
-			},
-			"funding": {
-				"url": "https://github.com/sponsors/isaacs"
 			}
 		},
 		"node_modules/proper-lockfile": {

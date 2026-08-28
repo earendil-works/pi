@@ -14,7 +14,7 @@ describe("AgentSession model and extension characterization", () => {
 		}
 	});
 
-	it("setModel saves the model and emits model_select", async () => {
+	it("setModel saves the model to the session and emits model_select", async () => {
 		const modelEvents: string[] = [];
 		const harness = await createHarness({
 			models: [
@@ -42,6 +42,127 @@ describe("AgentSession model and extension characterization", () => {
 				.filter((entry) => entry.type === "model_change")
 				.map((entry) => `${entry.provider}/${entry.modelId}`),
 		).toEqual([`${nextModel.provider}/${nextModel.id}`]);
+		expect(harness.settingsManager.getDefaultProvider()).toBeUndefined();
+		expect(harness.settingsManager.getDefaultModel()).toBeUndefined();
+	});
+
+	it("only persists model and thinking defaults when requested", async () => {
+		const harness = await createHarness({
+			models: [
+				{ id: "faux-1", name: "One", reasoning: true },
+				{ id: "faux-2", name: "Two", reasoning: true },
+			],
+		});
+		harnesses.push(harness);
+		const nextModel = harness.getModel("faux-2")!;
+
+		await harness.session.setModel(nextModel);
+		expect(harness.settingsManager.getDefaultProvider()).toBeUndefined();
+		expect(harness.settingsManager.getDefaultModel()).toBeUndefined();
+
+		harness.session.setThinkingLevel("low");
+		expect(harness.settingsManager.getDefaultThinkingLevel()).toBeUndefined();
+
+		await harness.session.setModel(nextModel, { persist: true });
+		expect(harness.settingsManager.getDefaultProvider()).toBe(nextModel.provider);
+		expect(harness.settingsManager.getDefaultModel()).toBe(nextModel.id);
+
+		harness.session.setThinkingLevel("high", { persist: true });
+		expect(harness.settingsManager.getDefaultThinkingLevel()).toBe("high");
+	});
+
+	it("persists the requested default thinking level even when the current model clamps it", async () => {
+		const harness = await createHarness({ models: [{ id: "faux-1", reasoning: true }] });
+		harnesses.push(harness);
+
+		harness.session.setThinkingLevel("max", { persist: true });
+
+		expect(harness.session.thinkingLevel).toBe("high");
+		expect(harness.settingsManager.getDefaultThinkingLevel()).toBe("max");
+	});
+
+	it("cycleModel and cycleThinkingLevel are session-only by default", async () => {
+		const harness = await createHarness({
+			models: [
+				{ id: "faux-1", name: "One", reasoning: true },
+				{ id: "faux-2", name: "Two", reasoning: true },
+			],
+			settings: {
+				defaultProvider: "faux",
+				defaultModel: "faux-1",
+				defaultThinkingLevel: "low",
+			},
+		});
+		harnesses.push(harness);
+
+		await harness.session.cycleModel();
+		expect(harness.session.model?.id).toBe("faux-2");
+		expect(harness.settingsManager.getDefaultModel()).toBe("faux-1");
+
+		harness.session.setThinkingLevel("off");
+		expect(harness.session.cycleThinkingLevel()).toBe("minimal");
+		expect(harness.settingsManager.getDefaultThinkingLevel()).toBe("low");
+	});
+
+	it("applies per-model thinking level override on model switch", async () => {
+		const harness = await createHarness({
+			models: [
+				{ id: "faux-1", name: "One", reasoning: true },
+				{ id: "faux-2", name: "Two", reasoning: true },
+			],
+			settings: { defaultThinkingLevel: "medium" },
+		});
+		harnesses.push(harness);
+
+		// Set a per-model override for faux-2
+		harness.settingsManager.setModelThinkingLevel("faux", "faux-2", "low");
+
+		// Session starts on faux-1 with default thinking
+		harness.session.setThinkingLevel("high");
+		expect(harness.session.thinkingLevel).toBe("high");
+
+		// Switch to faux-2 → per-model override should apply
+		const model2 = harness.getModel("faux-2")!;
+		await harness.session.setModel(model2);
+		expect(harness.session.thinkingLevel).toBe("low");
+
+		// Switch back to faux-1 → no per-model override, uses global default
+		const model1 = harness.getModel("faux-1")!;
+		await harness.session.setModel(model1);
+		expect(harness.session.thinkingLevel).toBe("medium");
+	});
+
+	it("falls back to current session thinking level when no per-model or global default is configured", async () => {
+		const harness = await createHarness({
+			models: [
+				{ id: "faux-1", name: "One", reasoning: true },
+				{ id: "faux-2", name: "Two", reasoning: true },
+			],
+		});
+		harnesses.push(harness);
+
+		harness.session.setThinkingLevel("high");
+		await harness.session.setModel(harness.getModel("faux-2")!);
+		expect(harness.session.thinkingLevel).toBe("high");
+	});
+
+	it("per-model override takes priority over global default during model switch", async () => {
+		const harness = await createHarness({
+			models: [
+				{ id: "faux-1", name: "One", reasoning: true },
+				{ id: "faux-2", name: "Two", reasoning: true },
+			],
+			settings: {
+				defaultThinkingLevel: "high",
+				modelThinkingLevels: { "faux/faux-2": "minimal" },
+			},
+		});
+		harnesses.push(harness);
+
+		// Start on a non-thinking model, then switch to faux-2
+		const model2 = harness.getModel("faux-2")!;
+		await harness.session.setModel(model2);
+		expect(harness.session.thinkingLevel).toBe("minimal");
 	});
 
 	it("cycles through scoped models and preserves the scoped thinking preference", async () => {

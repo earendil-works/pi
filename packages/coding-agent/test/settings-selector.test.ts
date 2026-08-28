@@ -17,16 +17,22 @@ describe("SettingsSelectorComponent", () => {
 	it("cycles through fullscreen settings", () => {
 		const onExitOutputChange = vi.fn();
 		const onScrollbarChange = vi.fn();
+		const onCopyOnSelectChange = vi.fn();
 		const config = {
 			fullscreenExitOutput: "transcript",
 			fullscreenScrollbar: "auto",
+			fullscreenCopyOnSelect: true,
 			warnings: {},
+			defaultModel: "not set",
+			availableDefaultModels: [],
 			availableThinkingLevels: [],
+			modelThinkingLevels: {},
 			availableThemes: [],
 		} as unknown as SettingsConfig;
 		const callbacks = {
 			onFullscreenExitOutputChange: onExitOutputChange,
 			onFullscreenScrollbarChange: onScrollbarChange,
+			onFullscreenCopyOnSelectChange: onCopyOnSelectChange,
 		} as unknown as SettingsCallbacks;
 
 		const cycle = (label: string, count: number) => {
@@ -39,5 +45,7 @@ describe("SettingsSelectorComponent", () => {
 		expect(onExitOutputChange.mock.calls.flat()).toEqual(["resume-hint", "transcript"]);
 		cycle("Fullscreen scrollbar", 3);
 		expect(onScrollbarChange.mock.calls.flat()).toEqual(["always", "hidden", "auto"]);
+		cycle("Fullscreen copy on select", 2);
+		expect(onCopyOnSelectChange.mock.calls.flat()).toEqual([false, true]);
 	});
 });

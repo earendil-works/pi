@@ -92,7 +92,7 @@ export default function (pi: ExtensionAPI) {
 		activeTui?.requestRender();
 	});
 
-	pi.on("agent_end", () => {
+	pi.on("agent_settled", () => {
 		isWorking = false;
 		stopSpinner();
 		activeTui?.requestRender();
