@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Changed `prepareNextTurn` and `prepareNextTurnWithContext` to run only when the agent loop will start another assistant turn ([#6879](https://github.com/earendil-works/pi/issues/6879)).
+
 ### Fixed
 
 - Fixed Windows `NodeExecutionEnv` aborts crashing when `taskkill.exe` is unavailable on `PATH` ([#6596](https://github.com/earendil-works/pi/issues/6596)).
