@@ -327,11 +327,15 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 					};
 				});
 
-				const filtered = fuzzyFilter(commandItems, prefix, (item) => item.name).map((item) => ({
-					value: item.name,
-					label: item.label,
-					...(item.description && { description: item.description }),
-				}));
+				// Match skill commands against the bare skill name (without the "skill:" prefix),
+				// so characters in the prefix (e.g. the 'i' in "skill") can't steal the first query character
+				const filtered = fuzzyFilter(commandItems, prefix, (item) => item.name.replace(/^skill:/, "")).map(
+					(item) => ({
+						value: item.name,
+						label: item.label,
+						...(item.description && { description: item.description }),
+					}),
+				);
 
 				if (filtered.length === 0) return null;
 
