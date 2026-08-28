@@ -1,7 +1,7 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
 import { spawn, spawnSync } from "child_process";
-import { getBinDir } from "../config.ts";
+import { getBinDir, getSettingsPath } from "../config.ts";
 
 export interface ShellConfig {
 	shell: string;
@@ -19,6 +19,43 @@ function isLegacyWslBashPath(path: string): boolean {
 
 function getBashShellConfig(shell: string): ShellConfig {
 	return isLegacyWslBashPath(shell) ? { shell, args: ["-s"], commandTransport: "stdin" } : { shell, args: ["-c"] };
+}
+
+/**
+ * Read the shellPath configured by the user in settings.json.
+ * The bash tool already honors `settings.shellPath`; making shell resolution
+ * here read the same value keeps header/API-key `!command` resolution
+ * consistent and avoids silently auto-selecting a broken shell (e.g. the
+ * WSL `bash.exe` shim) when the user has explicitly configured a working one.
+ */
+function getConfiguredShellPath(): string | undefined {
+	try {
+		const settingsPath = getSettingsPath();
+		if (!existsSync(settingsPath)) return undefined;
+		const settings: unknown = JSON.parse(readFileSync(settingsPath, "utf-8"));
+		const shellPath =
+			settings && typeof settings === "object" ? (settings as Record<string, unknown>)["shellPath"] : undefined;
+		if (typeof shellPath !== "string" || shellPath.trim() === "") return undefined;
+		const normalized = shellPath.replace(/\\/g, "/");
+		return existsSync(normalized) ? normalized : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+/**
+ * Windows system32 / WindowsApps "bash" are the WSL or Windows Subsystem for
+ * Linux shims, not real bash. When no distro is installed they exit non-zero
+ * with no output (and the WindowsApps shim may open the Store). Skip them so
+ * auto-detection never selects a shell that is not a functioning bash.
+ */
+function isWslShimBashPath(path: string): boolean {
+	const normalized = path.replace(/\\/g, "/").toLowerCase();
+	return (
+		normalized.endsWith("/system32/bash.exe") ||
+		normalized.endsWith("/sysnative/bash.exe") ||
+		normalized.includes("/windowsapps/bash.exe")
+	);
 }
 
 function findExecutableOnPath(executable: string): string | null {
@@ -65,12 +102,19 @@ function findExecutableOnPath(executable: string): string | null {
  * 3. On Unix: /bin/bash, then bash on PATH, then fallback to sh
  */
 export function getShellConfig(customShellPath?: string): ShellConfig {
-	// 1. Check user-specified shell path
+	// 1. Check the user-specified shell path: an explicit arg first, then the
+	//    shellPath configured in settings.json (used by the bash tool), so that
+	//    `!`-prefixed config/header commands don't silently fall back to an
+	//    auto-detected broken shell on Windows.
 	if (customShellPath) {
 		if (existsSync(customShellPath)) {
 			return getBashShellConfig(customShellPath);
 		}
 		throw new Error(`Custom shell path not found: ${customShellPath}`);
+	}
+	const configuredShellPath = getConfiguredShellPath();
+	if (configuredShellPath) {
+		return getBashShellConfig(configuredShellPath);
 	}
 
 	if (process.platform === "win32") {
@@ -91,9 +135,10 @@ export function getShellConfig(customShellPath?: string): ShellConfig {
 			}
 		}
 
-		// 3. Fallback: search bash.exe on PATH (Cygwin, MSYS2, WSL, etc.)
+		// 3. Fallback: search bash.exe on PATH (Cygwin, MSYS2, etc.), skipping
+		//    WSL / WindowsApps shims that are not a functioning bash.
 		const bashOnPath = findExecutableOnPath("bash.exe");
-		if (bashOnPath) {
+		if (bashOnPath && !isWslShimBashPath(bashOnPath)) {
 			return getBashShellConfig(bashOnPath);
 		}
 

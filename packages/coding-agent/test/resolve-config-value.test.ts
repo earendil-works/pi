@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { ENV_AGENT_DIR } from "../src/config.ts";
 import {
 	clearConfigValueCache,
 	resolveConfigValue,
@@ -52,6 +53,19 @@ describe("resolveConfigValue", () => {
 		expect(resolveConfigValue("!echo '  spaced-key  '")).toBe("spaced-key");
 		expect(resolveConfigValue("!printf 'line1\\nline2'")).toBe("line1\nline2");
 		expect(resolveConfigValue("!echo 'hello world' | tr ' ' '-'")).toBe("hello-world");
+	});
+
+	test("honors shellPath configured in settings.json for command resolution", () => {
+		const prior = process.env[ENV_AGENT_DIR];
+		process.env[ENV_AGENT_DIR] = tempDir;
+		writeFileSync(join(tempDir, "settings.json"), JSON.stringify({ shellPath: "/bin/bash" }));
+		try {
+			expect(resolveConfigValue("!echo 'via-configured-shell'")).toBe("via-configured-shell");
+		} finally {
+			if (prior === undefined) delete process.env[ENV_AGENT_DIR];
+			else process.env[ENV_AGENT_DIR] = prior;
+			rmSync(join(tempDir, "settings.json"), { force: true });
+		}
 	});
 
 	test.each(["!exit 1", "!nonexistent-command-12345", "!printf ''"])(
