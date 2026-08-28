@@ -27,7 +27,7 @@ afterEach(() => {
 	}
 });
 
-describe("optional fullscreen theme colors", () => {
+describe("optional theme colors", () => {
 	it("falls back to selectedBg when scrollbarThumb is omitted", () => {
 		const themeJson = loadDarkTheme();
 		themeJson.name = "legacy-scrollbar-theme";
@@ -66,5 +66,18 @@ describe("optional fullscreen theme colors", () => {
 		const loadedTheme = loadThemeFromPath(writeTheme(themeJson), "truecolor");
 		expect(loadedTheme.getBgAnsi("searchMatchBg")).toBe("\x1b[48;2;17;34;51m");
 		expect(loadedTheme.getFgAnsi("searchMatchText")).toBe("\x1b[38;2;34;51;68m");
+	});
+
+	it("falls back to existing tool colors for diff rows", () => {
+		const themeJson = loadDarkTheme();
+		themeJson.name = "legacy-diff-theme";
+		delete themeJson.colors.toolDiffText;
+		delete themeJson.colors.toolDiffAddedBg;
+		delete themeJson.colors.toolDiffRemovedBg;
+
+		const loadedTheme = loadThemeFromPath(writeTheme(themeJson), "truecolor");
+		expect(loadedTheme.getFgAnsi("toolDiffText")).toBe(loadedTheme.getFgAnsi("text"));
+		expect(loadedTheme.getBgAnsi("toolDiffAddedBg")).toBe(loadedTheme.getBgAnsi("toolSuccessBg"));
+		expect(loadedTheme.getBgAnsi("toolDiffRemovedBg")).toBe(loadedTheme.getBgAnsi("toolErrorBg"));
 	});
 });

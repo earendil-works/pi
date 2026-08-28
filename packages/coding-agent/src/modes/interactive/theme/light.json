@@ -16,6 +16,8 @@
 		"toolPendingBg": "#e8e8f0",
 		"toolSuccessBg": "#e8f0e8",
 		"toolErrorBg": "#f0e8e8",
+		"toolDiffAddedBg": "#d9ead3",
+		"toolDiffRemovedBg": "#f4cccc",
 		"customMsgBg": "#ede7f6"
 	},
 	"colors": {
@@ -60,6 +62,9 @@
 		"toolDiffAdded": "green",
 		"toolDiffRemoved": "red",
 		"toolDiffContext": "mediumGray",
+		"toolDiffText": "text",
+		"toolDiffAddedBg": "toolDiffAddedBg",
+		"toolDiffRemovedBg": "toolDiffRemovedBg",
 
 		"syntaxComment": "#008000",
 		"syntaxKeyword": "#0000FF",

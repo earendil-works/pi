@@ -124,7 +124,7 @@ describe("edit tool TUI rendering", () => {
 			"line 50 changed",
 			() => tui.requestRender(true),
 		);
-		expect(callOnlyRender).toContain("edit");
+		expect(callOnlyRender).toContain("Edit");
 		expect(callOnlyRender).toContain("line 950 changed");
 
 		const redrawsBeforeResult = tui.fullRedraws;

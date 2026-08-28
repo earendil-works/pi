@@ -115,9 +115,33 @@ describe("ToolExecutionComponent parity", () => {
 		);
 		component.updateResult({ content: [], details: { diff: "+1 after", firstChangedLine: 1 }, isError: false });
 		const rendered = stripAnsi(component.render(120).join("\n"));
-		expect(rendered).toContain("edit");
+		expect(rendered).toContain("Edit(");
 		expect(rendered).toContain("README.md");
 		expect(rendered).not.toContain(":1");
+	});
+
+	test("syntax-highlights edit previews based on the edited file path", () => {
+		const component = new ToolExecutionComponent(
+			"edit",
+			"tool-edit-syntax",
+			{ path: "example.ts", oldText: "const value = 1;", newText: "const value = 2;" },
+			{},
+			withBuiltInRenderers("edit", createBaseToolDefinition("edit")),
+			createFakeTui(),
+			process.cwd(),
+		);
+		component.updateResult(
+			{
+				content: [],
+				details: { diff: "-1 const value = 1;\n+1 const value = 2;", firstChangedLine: 1 },
+				isError: false,
+			},
+			false,
+		);
+
+		const rendered = component.render(120).join("\n");
+		expect(rendered).toContain(theme.getFgAnsi("syntaxKeyword"));
+		expect(rendered).toContain(theme.getFgAnsi("syntaxNumber"));
 	});
 
 	test("preserves legacy file_path rendering compatibility for built-in tools", () => {
@@ -386,9 +410,32 @@ describe("ToolExecutionComponent parity", () => {
 			process.cwd(),
 		);
 		const rendered = stripAnsi(component.render(120).join("\n"));
-		expect(rendered).toContain("one");
-		expect(rendered).toContain("two");
+		expect(rendered).toContain("Write(");
+		expect(rendered).toContain("└ 1  one");
+		expect(rendered).toContain("  2  two");
 		expect(rendered).not.toContain("two\n\n");
+	});
+
+	test("keeps write previews transparent while retaining the error background", () => {
+		const component = new ToolExecutionComponent(
+			"write",
+			"tool-write-background",
+			{ path: "README.md", content: "one" },
+			{},
+			createWriteToolDefinition(process.cwd()),
+			createFakeTui(),
+			process.cwd(),
+		);
+		expect(component.render(120).join("\n")).not.toContain(theme.getBgAnsi("toolPendingBg"));
+
+		component.updateResult({ content: [], details: undefined, isError: false }, false);
+		expect(component.render(120).join("\n")).not.toContain(theme.getBgAnsi("toolSuccessBg"));
+
+		component.updateResult(
+			{ content: [{ type: "text", text: "write failed" }], details: undefined, isError: true },
+			false,
+		);
+		expect(component.render(120).join("\n")).toContain(theme.getBgAnsi("toolErrorBg"));
 	});
 
 	test("trims trailing blank display lines from read results", () => {

@@ -295,18 +295,20 @@ export class ToolExecutionComponent extends Container {
 	}
 
 	private updateDisplay(): void {
-		const bgFn = this.isPartial
-			? (text: string) => theme.bg("toolPendingBg", text)
-			: this.result?.isError
-				? (text: string) => theme.bg("toolErrorBg", text)
-				: (text: string) => theme.bg("toolSuccessBg", text);
+		const bgFn = this.result?.isError
+			? (text: string) => theme.bg("toolErrorBg", text)
+			: this.toolName === "write" || this.toolName === "edit"
+				? undefined
+				: this.isPartial
+					? (text: string) => theme.bg("toolPendingBg", text)
+					: (text: string) => theme.bg("toolSuccessBg", text);
 
 		let hasContent = false;
 		this.hideComponent = false;
 		if (this.hasRendererDefinition()) {
 			const renderContainer = this.getRenderShell() === "self" ? this.selfRenderContainer : this.contentBox;
 			if (renderContainer instanceof Box) {
-				renderContainer.setBgFn(bgFn);
+				renderContainer.setBgFn(bgFn ?? ((text) => text));
 			}
 			renderContainer.clear();
 
@@ -357,7 +359,7 @@ export class ToolExecutionComponent extends Container {
 				}
 			}
 		} else {
-			this.contentText.setCustomBgFn(bgFn);
+			this.contentText.setCustomBgFn(bgFn ?? ((text) => text));
 			this.contentText.setText(this.formatToolExecution());
 			hasContent = true;
 		}

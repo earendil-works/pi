@@ -69,6 +69,7 @@ export type ThemeColor =
 	| "toolDiffAdded"
 	| "toolDiffRemoved"
 	| "toolDiffContext"
+	| "toolDiffText"
 	| "syntaxComment"
 	| "syntaxKeyword"
 	| "syntaxFunction"
@@ -95,10 +96,12 @@ export type ThemeBg =
 	| "customMessageBg"
 	| "toolPendingBg"
 	| "toolSuccessBg"
-	| "toolErrorBg";
+	| "toolErrorBg"
+	| "toolDiffAddedBg"
+	| "toolDiffRemovedBg";
 
-type OptionalThemeColor = "thinkingMax" | "searchMatchText";
-type OptionalThemeBg = "scrollbarThumb" | "searchMatchBg";
+type OptionalThemeColor = "thinkingMax" | "searchMatchText" | "toolDiffText";
+type OptionalThemeBg = "scrollbarThumb" | "searchMatchBg" | "toolDiffAddedBg" | "toolDiffRemovedBg";
 
 type ColorMode = "truecolor" | "256color";
 
@@ -262,6 +265,9 @@ function withThemeColorFallbacks(colors: ThemeJson["colors"]): ThemeJson["colors
 	scrollbarThumb: ColorValue;
 	searchMatchBg: ColorValue;
 	searchMatchText: ColorValue;
+	toolDiffText: ColorValue;
+	toolDiffAddedBg: ColorValue;
+	toolDiffRemovedBg: ColorValue;
 } {
 	return {
 		...colors,
@@ -269,6 +275,9 @@ function withThemeColorFallbacks(colors: ThemeJson["colors"]): ThemeJson["colors
 		scrollbarThumb: colors.scrollbarThumb ?? colors.selectedBg,
 		searchMatchBg: colors.searchMatchBg ?? colors.selectedBg,
 		searchMatchText: colors.searchMatchText ?? colors.text,
+		toolDiffText: colors.toolDiffText ?? colors.text,
+		toolDiffAddedBg: colors.toolDiffAddedBg ?? colors.toolSuccessBg,
+		toolDiffRemovedBg: colors.toolDiffRemovedBg ?? colors.toolErrorBg,
 	};
 }
 
@@ -301,6 +310,7 @@ export class Theme {
 			...fgColors,
 			thinkingMax: fgColors.thinkingMax ?? fgColors.thinkingXhigh,
 			searchMatchText: fgColors.searchMatchText ?? fgColors.text,
+			toolDiffText: fgColors.toolDiffText ?? fgColors.text,
 		};
 		for (const [key, value] of Object.entries(colors) as [ThemeColor, string | number][]) {
 			this.fgColors.set(key, fgAnsi(value, mode));
@@ -310,6 +320,8 @@ export class Theme {
 			...bgColors,
 			scrollbarThumb: bgColors.scrollbarThumb ?? bgColors.selectedBg,
 			searchMatchBg: bgColors.searchMatchBg ?? bgColors.selectedBg,
+			toolDiffAddedBg: bgColors.toolDiffAddedBg ?? bgColors.toolSuccessBg,
+			toolDiffRemovedBg: bgColors.toolDiffRemovedBg ?? bgColors.toolErrorBg,
 		};
 		for (const [key, value] of Object.entries(backgrounds) as [ThemeBg, string | number][]) {
 			this.bgColors.set(key, bgAnsi(value, mode));
@@ -535,6 +547,8 @@ function createTheme(themeJson: ThemeJson, mode?: ColorMode, sourcePath?: string
 		"toolPendingBg",
 		"toolSuccessBg",
 		"toolErrorBg",
+		"toolDiffAddedBg",
+		"toolDiffRemovedBg",
 	]);
 	for (const [key, value] of Object.entries(resolvedColors)) {
 		if (bgColorKeys.has(key)) {

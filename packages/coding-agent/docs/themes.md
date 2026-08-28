@@ -114,6 +114,9 @@ vim ~/.pi/agent/themes/my-theme.json
     "toolDiffAdded": "#00ff00",
     "toolDiffRemoved": "#ff0000",
     "toolDiffContext": "secondary",
+    "toolDiffText": "",
+    "toolDiffAddedBg": "#1e2e1e",
+    "toolDiffRemovedBg": "#2e1e1e",
     "syntaxComment": "secondary",
     "syntaxKeyword": "primary",
     "syntaxFunction": "#00aaff",
@@ -160,13 +163,13 @@ vim ~/.pi/agent/themes/my-theme.json
 
 - `name` is required, must be unique, and must not contain `/`.
 - `vars` is optional. Define reusable colors here, then reference them in `colors`.
-- `colors` must define all 51 required tokens. `thinkingMax`, `scrollbarThumb`, and the two search highlight tokens are optional and use the fallbacks listed below.
+- `colors` must define all 51 required tokens. `thinkingMax`, `scrollbarThumb`, the two search highlight tokens, and the three changed-row diff tokens are optional and use the fallbacks listed below.
 
 The `$schema` field enables editor auto-completion and validation.
 
 ## Color Tokens
 
-Every theme must define all 51 required color tokens. The optional tokens preserve compatibility with existing themes: `thinkingMax` falls back to `thinkingXhigh`, `scrollbarThumb` and `searchMatchBg` fall back to `selectedBg`, and `searchMatchText` falls back to `text`. Other search matches use `searchMatchText` on `searchMatchBg` with an underline; the current match reverses that foreground/background pair and uses bold text.
+Every theme must define all 51 required color tokens. The optional tokens preserve compatibility with existing themes: `thinkingMax` falls back to `thinkingXhigh`, `scrollbarThumb` and `searchMatchBg` fall back to `selectedBg`, `searchMatchText` and `toolDiffText` fall back to `text`, and the added/removed diff backgrounds fall back to `toolSuccessBg`/`toolErrorBg`. Other search matches use `searchMatchText` on `searchMatchBg` with an underline; the current match reverses that foreground/background pair and uses bold text.
 
 ### Core UI (11 colors)
 
@@ -218,13 +221,16 @@ Every theme must define all 51 required color tokens. The optional tokens preser
 | `mdHr` | Horizontal rule |
 | `mdListBullet` | List bullets |
 
-### Tool Diffs (3 colors)
+### Tool Diffs (3 required, 3 optional)
 
 | Token | Purpose |
 |-------|---------|
 | `toolDiffAdded` | Added lines |
 | `toolDiffRemoved` | Removed lines |
 | `toolDiffContext` | Context lines |
+| `toolDiffText` | Changed-line text; optional, falls back to `text` |
+| `toolDiffAddedBg` | Added-line background; optional, falls back to `toolSuccessBg` |
+| `toolDiffRemovedBg` | Removed-line background; optional, falls back to `toolErrorBg` |
 
 ### Syntax Highlighting (9 colors)
 
