@@ -5,6 +5,7 @@
 ### Fixed
 
 - Fixed OpenAI-compatible Chat Completions ignoring an explicitly requested `toolChoice` when no tools are defined.
+- Fixed thinking signature serialization to run once after the signature is complete ([#8671](https://github.com/earendil-works/pi/pull/8671)).
 
 ## [0.84.3] - 2026-08-24
 

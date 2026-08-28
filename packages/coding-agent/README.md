@@ -96,7 +96,7 @@ Then just talk to pi. By default, pi gives the model four tools: `read`, `write`
 
 ## Providers & Models
 
-For each built-in provider, pi maintains a list of tool-capable models. Configured provider catalogs refresh automatically; run `pi update --models` to force an immediate refresh. Authenticate via subscription (`/login`) or API key, then select any model from that provider via `/model` (or Ctrl+L).
+For each built-in provider, pi maintains a list of tool-capable models. Configured provider catalogs refresh automatically; run `pi update --models` to force an immediate refresh. Authenticate via subscription (`/login`) or API key, then select any model from that provider via `/model` (or Ctrl+L). Press Ctrl+S in the model picker to save the highlighted model as the startup default.
 
 **Subscriptions:**
 - Anthropic Claude Pro/Max
@@ -178,9 +178,10 @@ Type `/` in the editor to trigger commands. [Extensions](#extensions) can regist
 |---------|-------------|
 | `/login`, `/logout` | Manage provider credentials |
 | [`/llama`](docs/llama-cpp.md) | Download, load, and unload llama.cpp router models |
-| `/model` | Switch models |
+| `/model` | Switch models; Ctrl+S in the picker saves the startup default |
+| `/thinking` | Switch thinking level; Ctrl+S in the picker saves the startup default |
 | `/scoped-models` | Enable/disable models for Ctrl+P cycling |
-| `/settings` | Thinking level, theme, message delivery, transport |
+| `/settings` | Theme, message delivery, transport, and other preferences |
 | `/resume` | Pick from previous sessions |
 | `/new` | Start a new session |
 | `/name <name>` | Set session display name |
@@ -216,7 +217,7 @@ See `/hotkeys` for the full list. Customize via `~/.pi/agent/keybindings.json`. 
 | Shift+Tab | Cycle thinking level |
 | Ctrl+O | Collapse/expand tool output |
 | Ctrl+T | Collapse/expand thinking blocks |
-| Ctrl+X | Copy the last assistant message |
+| Ctrl+X | Copy the last assistant message; with fullscreen copy-on-select disabled, copy the active text selection |
 
 ### Message Queue
 

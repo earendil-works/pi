@@ -49,6 +49,30 @@ export function createJiti(...args) {
 	},
 };
 
+const httpsProxyAgentNamedExportPlugin = {
+	name: "https-proxy-agent-named-export",
+	setup(build) {
+		build.onResolve({ filter: /^https-proxy-agent$/ }, (args) => {
+			if (args.kind !== "dynamic-import") return undefined;
+			return {
+				namespace: "https-proxy-agent-named-export",
+				path: args.path,
+			};
+		});
+		build.onLoad(
+			{
+				filter: /^https-proxy-agent$/,
+				namespace: "https-proxy-agent-named-export",
+			},
+			() => ({
+				contents: 'export { HttpsProxyAgent } from "https-proxy-agent";',
+				loader: "js",
+				resolveDir: repoRoot,
+			}),
+		);
+	},
+};
+
 function commonBuildOptions() {
 	return {
 		absWorkingDir: repoRoot,
@@ -67,7 +91,7 @@ function commonBuildOptions() {
 		// package replaces it with a synchronous lazy require so jiti loads only
 		// when importing an extension; Babel remains deferred until a cache miss
 		// needs transformation.
-		plugins: [lazyJitiPlugin],
+		plugins: [lazyJitiPlugin, httpsProxyAgentNamedExportPlugin],
 		sourcemap: false,
 		target: "node22.19",
 		// Do not apply the monorepo's source-oriented path aliases while bundling

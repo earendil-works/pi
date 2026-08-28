@@ -2,6 +2,18 @@
 
 Pi uses the [Kitty keyboard protocol](https://sw.kovidgoyal.net/kitty/keyboard-protocol/) for reliable modifier key detection. Most modern terminals support this protocol, but some require configuration.
 
+## Capability Overrides
+
+Pi auto-detects OSC 8 hyperlinks, inline image protocols, and truecolor. If detection fails behind a terminal proxy or multiplexer, use these advanced overrides:
+
+| Capability | Environment variable | JSON setting |
+|------------|----------------------|--------------|
+| OSC 8 hyperlinks | `PI_HYPERLINKS=1\|0\|auto` | `terminal.hyperlinks: true\|false\|"auto"` |
+| Inline images | `PI_IMAGE_PROTOCOL=kitty\|iterm2\|none\|auto` | `terminal.images: "kitty"\|"iterm2"\|false\|"auto"` |
+| Truecolor | `PI_TRUE_COLOR=1\|0\|auto` | `terminal.trueColor: true\|false\|"auto"` |
+
+Settings take precedence over environment variables; unset or `auto` preserves detection. Only force capabilities supported by the complete terminal path, since unsupported escape sequences can corrupt rendering.
+
 ## Kitty
 
 Works out of the box.
