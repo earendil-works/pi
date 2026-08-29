@@ -314,10 +314,12 @@ function buildParams(
 			supportsStrictMode: compat.supportsStrictMode,
 			supportsOpenAIGrammarTools: compat.supportsOpenAIGrammarTools,
 		});
-	}
-
-	if (options?.toolChoice !== undefined) {
-		params.tool_choice = options.toolChoice;
+		if (options?.toolChoice !== undefined) {
+			params.tool_choice = options.toolChoice;
+		}
+	} else if (model.provider === "xai" || model.baseUrl.includes("api.x.ai")) {
+		// xAI 400s if tool_choice is set (or defaulted) with no tools array.
+		params.tools = [];
 	}
 
 	if (model.reasoning) {

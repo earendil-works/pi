@@ -154,6 +154,71 @@ describe("openai-responses provider defaults", () => {
 		});
 	});
 
+	it("omits tool_choice when no tools are sent", async () => {
+		let capturedPayload: Record<string, unknown> | undefined;
+
+		vi.spyOn(globalThis, "fetch").mockResolvedValue(
+			new Response("data: [DONE]\n\n", {
+				status: 200,
+				headers: { "content-type": "text/event-stream" },
+			}),
+		);
+
+		const stream = streamOpenAIResponses(
+			getModel("openai", "gpt-5.4"),
+			{
+				messages: [{ role: "user", content: "Summarize this.", timestamp: Date.now() }],
+			},
+			{
+				apiKey: "test-key",
+				toolChoice: "none",
+				onPayload: (payload) => {
+					capturedPayload = payload as Record<string, unknown>;
+				},
+			},
+		);
+
+		for await (const event of stream) {
+			if (event.type === "done" || event.type === "error") break;
+		}
+
+		expect(capturedPayload).toBeDefined();
+		expect(capturedPayload).not.toHaveProperty("tool_choice");
+		expect(capturedPayload).not.toHaveProperty("tools");
+	});
+
+	it("sends an empty tools array for xAI when no tools are present", async () => {
+		let capturedPayload: Record<string, unknown> | undefined;
+
+		vi.spyOn(globalThis, "fetch").mockResolvedValue(
+			new Response("data: [DONE]\n\n", {
+				status: 200,
+				headers: { "content-type": "text/event-stream" },
+			}),
+		);
+
+		const stream = streamOpenAIResponses(
+			getModel("xai", "grok-4.6"),
+			{
+				messages: [{ role: "user", content: "Summarize this.", timestamp: Date.now() }],
+			},
+			{
+				apiKey: "test-key",
+				toolChoice: "none",
+				onPayload: (payload) => {
+					capturedPayload = payload as Record<string, unknown>;
+				},
+			},
+		);
+
+		for await (const event of stream) {
+			if (event.type === "done" || event.type === "error") break;
+		}
+
+		expect(capturedPayload).toMatchObject({ tools: [] });
+		expect(capturedPayload).not.toHaveProperty("tool_choice");
+	});
+
 	it("sets strict mode explicitly for Cloudflare OpenAI Responses tools", async () => {
 		const model = getModel("cloudflare-ai-gateway", "gpt-5.6-sol");
 		let capturedPayload: CapturedResponsesPayload | undefined;
