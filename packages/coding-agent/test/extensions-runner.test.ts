@@ -562,6 +562,42 @@ describe("ExtensionRunner", () => {
 			expect(ctx.mode).toBe("tui");
 			expect(ctx.hasUI).toBe(true);
 		});
+
+		it("preserves class prototype UI methods after wrapping dialogs", async () => {
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			runner.bindCore(extensionActions, extensionContextActions);
+
+			class HostUi {
+				status: Array<[string, string | undefined]> = [];
+				notices: string[] = [];
+				selectCalls = 0;
+				setStatus(key: string, text: string | undefined) {
+					this.status.push([key, text]);
+				}
+				notify(message: string) {
+					this.notices.push(message);
+				}
+				async select(_title: string, options: string[]) {
+					this.selectCalls++;
+					return options[0];
+				}
+			}
+
+			const host = new HostUi();
+			runner.setUIContext(host as unknown as ExtensionUIContext, "rpc");
+			const ctx = runner.createContext();
+
+			expect(typeof ctx.ui.setStatus).toBe("function");
+			expect(typeof ctx.ui.notify).toBe("function");
+			ctx.ui.setStatus("k", "v");
+			ctx.ui.notify("hi", "info");
+			expect(host.status).toEqual([["k", "v"]]);
+			expect(host.notices).toEqual(["hi"]);
+
+			await ctx.ui.select("t", ["a", "b"]);
+			expect(host.selectCalls).toBe(1);
+		});
 	});
 
 	describe("error handling", () => {

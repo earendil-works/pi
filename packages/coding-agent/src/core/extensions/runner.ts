@@ -439,8 +439,11 @@ export class ExtensionRunner {
 	}
 
 	private wrapUIPromptContext(ui: ExtensionUIContext): ExtensionUIContext {
-		return {
-			...ui,
+		// Proxy, not `{ ...ui, select: ... }`. Object spread copies own enumerable
+		// properties only, so class prototype methods (setStatus, notify, ...) are
+		// dropped. First-party UIs are plain objects; embedders such as pi-web-ui
+		// pass a class instance.
+		const overrides: Pick<ExtensionUIContext, "select" | "confirm" | "input" | "editor" | "custom"> = {
 			select: (title, options, opts) => this.withUIPrompt("select", title, () => ui.select(title, options, opts)),
 			confirm: (title, message, opts) => this.withUIPrompt("confirm", title, () => ui.confirm(title, message, opts)),
 			input: (title, placeholder, opts) =>
@@ -448,6 +451,14 @@ export class ExtensionRunner {
 			editor: (title, prefill) => this.withUIPrompt("editor", title, () => ui.editor(title, prefill)),
 			custom: (factory, options) => this.withUIPrompt("custom", undefined, () => ui.custom(factory, options)),
 		};
+		return new Proxy(ui, {
+			get(target, prop, receiver) {
+				if (typeof prop === "string" && Object.hasOwn(overrides, prop)) {
+					return overrides[prop as keyof typeof overrides];
+				}
+				return Reflect.get(target, prop, receiver);
+			},
+		});
 	}
 
 	private withUIPrompt<T>(kind: UIPromptKind, title: string | undefined, run: () => Promise<T>): Promise<T> {
