@@ -32,7 +32,13 @@ import { buildInitialMessage } from "./cli/initial-message.ts";
 import { listModels } from "./cli/list-models.ts";
 import { createProjectTrustContext } from "./cli/project-trust.ts";
 import { selectSession } from "./cli/session-picker.ts";
-import { shouldRunFirstTimeSetup, showFirstTimeSetup, showStartupSelector } from "./cli/startup-ui.ts";
+import {
+	createStartupComposer,
+	type StartupComposerSession,
+	shouldRunFirstTimeSetup,
+	showFirstTimeSetup,
+	showStartupSelector,
+} from "./cli/startup-ui.ts";
 import { APP_NAME, ENV_SESSION_DIR, expandTildePath, getAgentDir, getPackageDir, VERSION } from "./config.ts";
 import { type CreateAgentSessionRuntimeFactory, createAgentSessionRuntime } from "./core/agent-session-runtime.ts";
 import {
@@ -704,6 +710,10 @@ export async function main(args: string[], options?: MainOptions) {
 			: undefined;
 	const trustPromptMode: AppMode = parsed.help || parsed.listModels !== undefined ? "print" : appMode;
 	const projectTrustByCwd = new Map<string, boolean>();
+	let startupComposer: StartupComposerSession | undefined;
+	const startupCancellation = { value: false };
+	let startupCancellationPromise: Promise<void> | undefined;
+	let resolveStartupCancellation: (() => void) | undefined;
 
 	const resolvedExtensionPaths = resolveCliPaths(cwd, parsed.extensions);
 	const resolvedSkillPaths = resolveCliPaths(cwd, parsed.skills);
@@ -749,7 +759,10 @@ export async function main(args: string[], options?: MainOptions) {
 										cwd,
 										mode: isInitialRuntime ? trustPromptMode : appMode,
 										settingsManager: startupSettingsManager,
-										hasUI: isInitialRuntime && trustPromptMode === "interactive",
+										hasUI:
+											isInitialRuntime && trustPromptMode === "interactive" && !startupCancellation.value,
+										terminal: startupComposer?.terminal,
+										startupComposer,
 									}),
 								onExtensionError: (message) => projectTrustDiagnostics.push({ type: "warning", message }),
 							});
@@ -837,12 +850,54 @@ export async function main(args: string[], options?: MainOptions) {
 		};
 	};
 	time("createRuntime");
-	const runtime = await createAgentSessionRuntime(createRuntime, {
+
+	const shouldStartStartupComposer = appMode === "interactive" && !isPlainRuntimeMetadataCommand(parsed);
+	if (shouldStartStartupComposer) {
+		startupCancellationPromise = new Promise<void>((resolve) => {
+			resolveStartupCancellation = resolve;
+		});
+		startupComposer = createStartupComposer(startupSettingsManager, {
+			onCancel: () => {
+				startupCancellation.value = true;
+				startupComposer?.stop();
+				resolveStartupCancellation?.();
+			},
+		});
+	}
+
+	const runtimePromise = createAgentSessionRuntime(createRuntime, {
 		cwd: sessionManager.getCwd(),
 		agentDir,
 		sessionManager,
 	});
+	let runtime: Awaited<ReturnType<typeof createAgentSessionRuntime>>;
+	if (startupComposer && startupCancellationPromise) {
+		try {
+			const result = await Promise.race([
+				runtimePromise.then((value) => ({ kind: "ready" as const, value })),
+				startupCancellationPromise.then(() => ({ kind: "cancelled" as const })),
+			]);
+			if (result.kind === "cancelled") {
+				void runtimePromise.then((resolvedRuntime) => resolvedRuntime.dispose()).catch(() => {});
+				stopThemeWatcher();
+				return;
+			}
+			runtime = result.value;
+		} catch (error) {
+			startupComposer.stop();
+			throw error;
+		}
+	} else {
+		try {
+			runtime = await runtimePromise;
+		} catch (error) {
+			startupComposer?.stop();
+			throw error;
+		}
+	}
 	time("createAgentSessionRuntime");
+	const initialEditorState = startupComposer?.getState();
+	startupComposer?.stop();
 	const { services, session, modelFallbackMessage } = runtime;
 	const { settingsManager, modelRuntime, resourceLoader } = services;
 	setCapabilityOverrides(settingsManager.getTerminalCapabilityOverrides());
@@ -939,6 +994,8 @@ export async function main(args: string[], options?: MainOptions) {
 			verbose: parsed.verbose,
 			tuiMode: parsed.tuiMode,
 			initialThemeSetting: parsed.useTheme,
+			terminal: startupComposer?.terminal,
+			initialEditorState,
 		});
 		if (startupBenchmark) {
 			await interactiveMode.init();

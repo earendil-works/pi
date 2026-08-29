@@ -1,9 +1,15 @@
 import {
+	Editor,
+	type EditorOptions,
+	type EditorState,
+	getKeybindings,
 	ProcessTerminal,
 	setCapabilityOverrides,
 	setKeybindings,
+	type Terminal,
 	type TUI,
 	TuiMainScreen,
+	type TuiStopOptions,
 } from "@earendil-works/pi-tui";
 import { existsSync } from "fs";
 import { APP_NAME, CONFIG_DIR_NAME, ENV_AGENT_DIR, getAgentDir, getSettingsPath, PACKAGE_NAME } from "../config.ts";
@@ -20,6 +26,7 @@ import {
 import {
 	detectTerminalBackgroundFromEnv,
 	detectTerminalThemeForAuto,
+	getEditorTheme,
 	initTheme,
 	loadThemeFromPath,
 	parseAutoThemeSetting,
@@ -32,6 +39,90 @@ import {
 const OFFICIAL_PACKAGE_NAME = "@earendil-works/pi-coding-agent";
 const OFFICIAL_APP_NAME = "pi";
 const OFFICIAL_CONFIG_DIR_NAME = ".pi";
+
+export type StartupComposerCancelReason = "interrupt" | "clear" | "exit";
+
+export interface StartupComposerOptions extends EditorOptions {
+	onCancel?: (reason: StartupComposerCancelReason) => void;
+}
+
+/** UI handoff used while a startup dialog temporarily owns the terminal. */
+export interface StartupComposerHandoff {
+	readonly ui: TUI;
+	pause(): void;
+	resume(): void;
+	isCancelled?(): boolean;
+	isRunning?(): boolean;
+}
+
+export interface StartupComposerSession extends StartupComposerHandoff {
+	readonly composer: StartupComposer;
+	readonly terminal: Terminal;
+	getState(): EditorState;
+	stop(options?: TuiStopOptions): void;
+	isRunning(): boolean;
+}
+
+/**
+ * The runtime-independent editor shown while the session runtime is loading.
+ * It deliberately forwards only editing input to Editor; runtime actions are
+ * handled after the normal InteractiveMode has taken over.
+ */
+function captureEditorState(editor: Editor): EditorState {
+	return (
+		editor.getState?.() ?? {
+			text: editor.getText(),
+			cursor: editor.getCursor(),
+			pasteRegistry: new Map(),
+			pasteCounter: 0,
+			pasteBuffer: "",
+			isInPaste: false,
+		}
+	);
+}
+
+export class StartupComposer extends Editor {
+	private readonly cancelCallback?: (reason: StartupComposerCancelReason) => void;
+
+	constructor(tui: TUI, options: StartupComposerOptions = {}) {
+		super(tui, getEditorTheme(), options);
+		this.cancelCallback = options.onCancel;
+	}
+
+	override handleInput(data: string): void {
+		const keybindings = getKeybindings();
+		if (keybindings.matches(data, "app.interrupt")) {
+			this.cancelCallback?.("interrupt");
+			return;
+		}
+		if (keybindings.matches(data, "app.clear") || keybindings.matches(data, "tui.input.copy")) {
+			this.cancelCallback?.("clear");
+			return;
+		}
+		if (keybindings.matches(data, "app.exit") && this.getText().length === 0) {
+			this.cancelCallback?.("exit");
+			return;
+		}
+		if (keybindings.matches(data, "tui.input.submit")) {
+			// Submission is intentionally disabled until the normal editor is ready.
+			return;
+		}
+
+		// No autocomplete provider or app handlers are installed here. Slash
+		// input and runtime shortcuts therefore remain plain editable text.
+		super.handleInput(data);
+	}
+}
+
+export interface StartupComposerCreateOptions extends StartupComposerOptions {
+	terminal?: Terminal;
+}
+
+export interface StartupTuiOptions {
+	terminal?: Terminal;
+	ui?: TUI;
+	handoff?: StartupComposerHandoff;
+}
 
 interface DistributionMetadata {
 	packageName: string;
@@ -80,27 +171,40 @@ async function loadStartupThemes(settingsManager: SettingsManager): Promise<Them
 	return loadThemes(resolvedPaths.themes);
 }
 
-export async function createStartupTui(settingsManager: SettingsManager): Promise<TUI> {
+function createConfiguredStartupTui(settingsManager: SettingsManager, terminal: Terminal): TUI {
 	setCapabilityOverrides(settingsManager.getTerminalCapabilityOverrides());
-	setRegisteredThemes(await loadStartupThemes(settingsManager));
 	const terminalTheme = detectTerminalBackgroundFromEnv().theme;
 	initTheme(resolveThemeSetting(settingsManager.getThemeSetting(), terminalTheme) ?? terminalTheme);
 	setKeybindings(KeybindingsManager.create());
-	const ui: TUI = new TuiMainScreen(new ProcessTerminal(), settingsManager.getShowHardwareCursor(), getAgentDir());
+	const ui: TUI = new TuiMainScreen(terminal, settingsManager.getShowHardwareCursor(), getAgentDir());
 	ui.setClearOnShrink(settingsManager.getClearOnShrink());
 	return ui;
 }
 
-export function startStartupTui(ui: TUI, settingsManager: SettingsManager): void {
-	ui.start();
-	void applyDetectedStartupTheme(ui, settingsManager);
+export async function createStartupTui(
+	settingsManager: SettingsManager,
+	terminal: Terminal = new ProcessTerminal(),
+): Promise<TUI> {
+	setCapabilityOverrides(settingsManager.getTerminalCapabilityOverrides());
+	setRegisteredThemes(await loadStartupThemes(settingsManager));
+	return createConfiguredStartupTui(settingsManager, terminal);
 }
 
-async function applyDetectedStartupTheme(ui: TUI, settingsManager: SettingsManager): Promise<void> {
+export function startStartupTui(ui: TUI, settingsManager: SettingsManager, isActive: () => boolean = () => true): void {
+	ui.start();
+	void applyDetectedStartupTheme(ui, settingsManager, isActive);
+}
+
+async function applyDetectedStartupTheme(
+	ui: TUI,
+	settingsManager: SettingsManager,
+	isActive: () => boolean,
+): Promise<void> {
 	const themeSetting = settingsManager.getThemeSetting();
 	if (themeSetting && !parseAutoThemeSetting(themeSetting)) return;
 
 	const terminalTheme = await detectTerminalThemeForAuto({ ui, timeoutMs: 100 });
+	if (!isActive()) return;
 	setTheme(resolveThemeSetting(themeSetting, terminalTheme) ?? terminalTheme);
 	ui.invalidate();
 	ui.requestRender();
@@ -110,6 +214,89 @@ async function clearStartupTui(ui: TUI): Promise<void> {
 	ui.clear();
 	ui.requestRender();
 	await new Promise((resolve) => setTimeout(resolve, 25));
+}
+
+/**
+ * Start the runtime-independent composer on a terminal immediately.
+ *
+ * The returned session owns the renderer until the runtime is ready. Dialogs
+ * can pause it and reuse the same renderer and terminal through the handoff
+ * methods, keeping the draft out of selector/input components.
+ */
+export function createStartupComposer(
+	settingsManager: SettingsManager,
+	options: StartupComposerCreateOptions = {},
+): StartupComposerSession {
+	const { terminal: configuredTerminal, ...composerOptions } = options;
+	const terminal = configuredTerminal ?? new ProcessTerminal();
+	const ui = createConfiguredStartupTui(settingsManager, terminal);
+	let running = false;
+	let paused = false;
+	let stopped = false;
+	let cancelled = false;
+	let pausedState: EditorState | undefined;
+
+	const composer = new StartupComposer(ui, {
+		...composerOptions,
+		onCancel: (reason) => {
+			cancelled = true;
+			composerOptions.onCancel?.(reason);
+		},
+	});
+
+	ui.addChild(composer);
+	ui.setFocus(composer);
+	running = true;
+	startStartupTui(ui, settingsManager, () => running && !stopped);
+	ui.renderNow();
+
+	const session: StartupComposerSession = {
+		ui,
+		composer,
+		terminal,
+		getState: () => captureEditorState(composer),
+		pause: () => {
+			if (!running || paused || stopped) return;
+			pausedState = captureEditorState(composer);
+			ui.removeChild(composer);
+			ui.setFocus(null);
+			ui.stop({ preserveScreen: true });
+			running = false;
+			paused = true;
+		},
+		resume: () => {
+			if (!paused || stopped) return;
+			if (pausedState) {
+				composer.setState?.(pausedState);
+			}
+			ui.clear();
+			ui.addChild(composer);
+			ui.setFocus(composer);
+			running = true;
+			paused = false;
+			startStartupTui(ui, settingsManager, () => running && !stopped);
+			ui.renderNow(true);
+			pausedState = undefined;
+		},
+		stop: (stopOptions) => {
+			if (running || paused) {
+				ui.removeChild(composer);
+				ui.setFocus(null);
+				ui.stop(stopOptions);
+				running = false;
+			}
+			stopped = true;
+			paused = false;
+			pausedState = undefined;
+			if (stopOptions?.preserveScreen !== true) {
+				terminal.clearScreen();
+			}
+		},
+		isRunning: () => running,
+		isCancelled: () => cancelled,
+	};
+
+	return session;
 }
 
 /**
@@ -142,8 +329,22 @@ export async function showStartupSelector<T>(
 	settingsManager: SettingsManager,
 	title: string,
 	options: Array<{ label: string; value: T }>,
+	startupOptions: StartupTuiOptions = {},
 ): Promise<T | undefined> {
-	const ui = await createStartupTui(settingsManager);
+	if (startupOptions.handoff?.isCancelled?.()) {
+		return undefined;
+	}
+
+	const handoff = startupOptions.handoff;
+	handoff?.pause();
+	let ui: TUI;
+	try {
+		ui = startupOptions.ui ?? handoff?.ui ?? (await createStartupTui(settingsManager, startupOptions.terminal));
+	} catch (error) {
+		handoff?.resume();
+		throw error;
+	}
+
 	return new Promise((resolve) => {
 		let settled = false;
 		const finish = async (result: T | undefined) => {
@@ -151,8 +352,12 @@ export async function showStartupSelector<T>(
 				return;
 			}
 			settled = true;
+			ui.setFocus(null);
+			ui.removeChild(selector);
+			selector.dispose();
 			await clearStartupTui(ui);
 			ui.stop();
+			handoff?.resume();
 			resolve(result);
 		};
 
@@ -165,7 +370,7 @@ export async function showStartupSelector<T>(
 		);
 		ui.addChild(selector);
 		ui.setFocus(selector);
-		startStartupTui(ui, settingsManager);
+		startStartupTui(ui, settingsManager, () => handoff?.isRunning?.() ?? true);
 	});
 }
 
@@ -215,8 +420,22 @@ export async function showStartupInput(
 	settingsManager: SettingsManager,
 	title: string,
 	placeholder?: string,
+	startupOptions: StartupTuiOptions = {},
 ): Promise<string | undefined> {
-	const ui = await createStartupTui(settingsManager);
+	if (startupOptions.handoff?.isCancelled?.()) {
+		return undefined;
+	}
+
+	const handoff = startupOptions.handoff;
+	handoff?.pause();
+	let ui: TUI;
+	try {
+		ui = startupOptions.ui ?? handoff?.ui ?? (await createStartupTui(settingsManager, startupOptions.terminal));
+	} catch (error) {
+		handoff?.resume();
+		throw error;
+	}
+
 	return new Promise((resolve) => {
 		let settled = false;
 		const finish = async (result: string | undefined) => {
@@ -225,8 +444,11 @@ export async function showStartupInput(
 			}
 			settled = true;
 			input.dispose();
+			ui.setFocus(null);
+			ui.removeChild(input);
 			await clearStartupTui(ui);
 			ui.stop();
+			handoff?.resume();
 			resolve(result);
 		};
 
@@ -241,6 +463,6 @@ export async function showStartupInput(
 		);
 		ui.addChild(input);
 		ui.setFocus(input);
-		startStartupTui(ui, settingsManager);
+		startStartupTui(ui, settingsManager, () => handoff?.isRunning?.() ?? true);
 	});
 }

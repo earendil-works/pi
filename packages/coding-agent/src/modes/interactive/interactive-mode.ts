@@ -14,6 +14,7 @@ import type {
 	AutocompleteItem,
 	AutocompleteProvider,
 	EditorComponent,
+	EditorState,
 	Keybinding,
 	KeyId,
 	MarkdownTheme,
@@ -354,6 +355,10 @@ export interface InteractiveModeOptions {
 	tuiMode?: TuiMode;
 	/** Initial interactive theme setting for this invocation. */
 	initialThemeSetting?: string;
+	/** Terminal to reuse from startup UI. */
+	terminal?: Terminal;
+	/** Draft state captured by the startup composer. */
+	initialEditorState?: EditorState;
 }
 
 interface InteractiveTuiOptions {
@@ -582,6 +587,7 @@ export class InteractiveMode {
 			tuiMode,
 			showHardwareCursor: this.settingsManager.getShowHardwareCursor(),
 			logDirectory: getAgentDir(),
+			terminal: options.terminal,
 			onRightClickPaste: this.onRightClickPaste,
 			fullscreenCopyOnSelect: this.settingsManager.getFullscreenCopyOnSelect(),
 		});
@@ -606,6 +612,9 @@ export class InteractiveMode {
 			paddingX: editorPaddingX,
 			autocompleteMaxVisible,
 		});
+		if (options.initialEditorState) {
+			this.defaultEditor.setState(options.initialEditorState);
+		}
 		this.editor = this.defaultEditor;
 		this.editorContainer = new Container();
 		this.editorContainer.addChild(this.editor as Component);
@@ -951,6 +960,10 @@ export class InteractiveMode {
 		this.defaultEditor.onAction("app.clear", () => this.handleCtrlC());
 		this.defaultEditor.onCtrlD = () => this.handleCtrlD();
 		this.defaultEditor.onSubmit = (text) => this.handleStartupSubmit(text);
+		// Do not let Enter clear or submit the draft while managed tools are loading.
+		// The submit handler is installed only after startup completes, so the
+		// editor's cursor and paste registry remain intact during this phase.
+		this.defaultEditor.disableSubmit = true;
 		this.ui.setFocus(this.editor);
 
 		// Start the UI before initializing extensions so session_start handlers can use interactive dialogs
@@ -1031,6 +1044,7 @@ export class InteractiveMode {
 		this.fdPath = fdPath;
 
 		// Enable the remaining input handlers only after managed-tool setup completes.
+		this.defaultEditor.disableSubmit = false;
 		this.setupKeyHandlers();
 		this.setupEditorSubmitHandler();
 		this.ui.requestRender();
@@ -2675,8 +2689,10 @@ export class InteractiveMode {
 	private setCustomEditorComponent(factory: EditorFactory | undefined): void {
 		this.editorComponentFactory = factory;
 
-		// Save text from current editor before switching
-		const currentText = this.editor.getText();
+		// Save the complete draft before switching. Custom editors that do not
+		// implement state transfer still receive the text-only fallback.
+		const currentState = this.editor.getState?.();
+		const currentText = currentState?.text ?? this.editor.getText();
 
 		this.disposeActiveSelector();
 		this.editorContainer.clear();
@@ -2689,8 +2705,12 @@ export class InteractiveMode {
 			newEditor.onSubmit = this.defaultEditor.onSubmit;
 			newEditor.onChange = this.defaultEditor.onChange;
 
-			// Copy text from previous editor
-			newEditor.setText(currentText);
+			// Copy the complete state when both editors support the transfer API.
+			if (currentState && newEditor.setState) {
+				newEditor.setState(currentState);
+			} else {
+				newEditor.setText(currentText);
+			}
 
 			// Copy appearance settings if supported
 			if (newEditor.borderColor !== undefined) {
@@ -2732,8 +2752,12 @@ export class InteractiveMode {
 
 			this.editor = newEditor;
 		} else {
-			// Restore default editor with text from custom editor
-			this.defaultEditor.setText(currentText);
+			// Restore default editor with the complete state when available.
+			if (currentState) {
+				this.defaultEditor.setState(currentState);
+			} else {
+				this.defaultEditor.setText(currentText);
+			}
 			this.editor = this.defaultEditor;
 		}
 
@@ -4004,13 +4028,19 @@ export class InteractiveMode {
 		this.isShuttingDown = true;
 		try {
 			this.unregisterSignalHandlers();
-		} catch {}
+		} catch {
+			// Best-effort cleanup while handling the original crash.
+		}
 		try {
 			killTrackedDetachedChildren();
-		} catch {}
+		} catch {
+			// Best-effort cleanup while handling the original crash.
+		}
 		try {
 			this.ui.stop();
-		} catch {}
+		} catch {
+			// Best-effort cleanup while handling the original crash.
+		}
 		console.error(`${APP_NAME} exiting due to uncaughtException:`);
 		console.error(error);
 		process.exit(1);

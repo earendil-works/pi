@@ -1,4 +1,5 @@
 import type { AutocompleteProvider } from "./autocomplete.ts";
+import type { EditorState } from "./components/editor.ts";
 import type { Component } from "./tui.ts";
 
 /**
@@ -51,6 +52,12 @@ export interface EditorComponent extends Component {
 	 * Falls back to getText() if not implemented.
 	 */
 	getExpandedText?(): string;
+
+	/** Capture transferable text, cursor, paste, and bracketed-paste state. */
+	getState?(): EditorState;
+
+	/** Restore transferable text, cursor, paste, and bracketed-paste state. */
+	setState?(state: EditorState): void;
 
 	// =========================================================================
 	// Autocomplete support (optional)

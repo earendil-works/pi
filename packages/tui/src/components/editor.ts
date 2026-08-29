@@ -206,7 +206,22 @@ export function wordWrapLine(line: string, maxWidth: number, preSegmented?: Intl
 }
 
 // Kitty CSI-u sequences for printable keys, including optional shifted/base codepoints.
-interface EditorState {
+/**
+ * Transferable editor state for handing a draft to another editor instance.
+ *
+ * The paste registry and bracketed-paste fields are included so large pastes
+ * remain atomic and can still be expanded after a renderer handoff.
+ */
+export interface EditorState {
+	text: string;
+	cursor: { line: number; col: number };
+	pasteRegistry: Map<number, string>;
+	pasteCounter: number;
+	pasteBuffer: string;
+	isInPaste: boolean;
+}
+
+interface EditorTextState {
 	lines: string[];
 	cursorLine: number;
 	cursorCol: number;
@@ -214,7 +229,7 @@ interface EditorState {
 
 /** Undo snapshot: editor text state plus the paste registry. */
 interface EditorSnapshot {
-	state: EditorState;
+	state: EditorTextState;
 	pastes: Map<number, string>;
 	pasteCounter: number;
 }
@@ -268,7 +283,7 @@ function createScrollBorder(direction: "↑" | "↓", hiddenLineCount: number, w
 }
 
 export class Editor implements Component, Focusable {
-	private state: EditorState = {
+	private state: EditorTextState = {
 		lines: [""],
 		cursorLine: 0,
 		cursorCol: 0,
@@ -316,7 +331,7 @@ export class Editor implements Component, Focusable {
 	// Prompt history for up/down navigation
 	private history: string[] = [];
 	private historyIndex: number = -1; // -1 = not browsing, 0 = most recent, 1 = older, etc.
-	private historyDraft: EditorState | null = null;
+	private historyDraft: EditorTextState | null = null;
 
 	// Kill ring for Emacs-style kill/yank operations
 	private killRing = new KillRing();
@@ -1017,6 +1032,68 @@ export class Editor implements Component, Focusable {
 
 	getCursor(): { line: number; col: number } {
 		return { line: this.state.cursorLine, col: this.state.cursorCol };
+	}
+
+	/**
+	 * Capture all draft state needed to continue editing in another editor.
+	 * Copies are returned so the source editor can continue changing safely.
+	 */
+	getState(): EditorState {
+		return {
+			text: this.getText(),
+			cursor: this.getCursor(),
+			pasteRegistry: new Map(this.pastes),
+			pasteCounter: this.pasteCounter,
+			pasteBuffer: this.pasteBuffer,
+			isInPaste: this.isInPaste,
+		};
+	}
+
+	/**
+	 * Restore a previously captured draft state without submitting or adding an
+	 * undo entry. Invalid cursor values are clamped to the transferred text.
+	 */
+	setState(state: EditorState): void {
+		this.cancelAutocomplete();
+		this.lastAction = null;
+		this.exitHistoryBrowsing();
+
+		const lines = state.text.split("\n");
+		const requestedLine = Number.isInteger(state.cursor.line) ? state.cursor.line : 0;
+		const cursorLine = Math.max(0, Math.min(lines.length - 1, requestedLine));
+		const requestedCol = Number.isInteger(state.cursor.col) ? state.cursor.col : 0;
+		const cursorCol = Math.max(0, Math.min(lines[cursorLine]?.length ?? 0, requestedCol));
+		this.state = { lines, cursorLine, cursorCol };
+
+		const pastes = new Map<number, string>();
+		let maxPasteId = 0;
+		for (const [pasteId, pasteContent] of state.pasteRegistry) {
+			if (!Number.isInteger(pasteId) || pasteId <= 0 || typeof pasteContent !== "string") continue;
+			pastes.set(pasteId, pasteContent);
+			maxPasteId = Math.max(maxPasteId, pasteId);
+		}
+		this.pastes = pastes;
+		const requestedCounter = Number.isInteger(state.pasteCounter) ? state.pasteCounter : 0;
+		this.pasteCounter = Math.max(0, requestedCounter, maxPasteId);
+		this.pasteBuffer = state.pasteBuffer;
+		this.isInPaste = state.isInPaste;
+
+		this.scrollOffset = 0;
+		this.preferredVisualCol = null;
+		this.snappedFromCursorCol = null;
+		this.undoStack.clear();
+		this.onChange?.(this.getText());
+		this.tui.requestRender();
+	}
+
+	/** Alias for integrations that prefer an explicit editor-state name. */
+	getEditorState(): EditorState {
+		return this.getState();
+	}
+
+	/** Alias for integrations that prefer an explicit editor-state name. */
+	setEditorState(state: EditorState): void {
+		this.setState(state);
 	}
 
 	setText(text: string): void {

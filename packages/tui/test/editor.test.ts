@@ -311,6 +311,57 @@ describe("Editor component", () => {
 			lines[0] = "mutated";
 			assert.deepStrictEqual(editor.getLines(), ["a", "b"]);
 		});
+
+		// Regression coverage for #8689.
+		it("transfers cursor and large-paste state between editors", () => {
+			const source = new Editor(createTestTUI(), defaultEditorTheme);
+			source.setText("before ");
+			const pastedText = "x".repeat(1001);
+			source.handleInput(`\x1b[200~${pastedText}\x1b[201~`);
+			source.handleInput("\x1b[D");
+
+			const state = source.getState();
+			assert.strictEqual(state.text, `before [paste #1 1001 chars]`);
+			assert.strictEqual(state.pasteRegistry.get(1), pastedText);
+
+			const target = new Editor(createTestTUI(), defaultEditorTheme);
+			target.setState(state);
+
+			assert.strictEqual(target.getText(), source.getText());
+			assert.strictEqual(target.getExpandedText(), `before ${pastedText}`);
+			assert.deepStrictEqual(target.getCursor(), source.getCursor());
+			assert.deepStrictEqual(target.getState().pasteRegistry, state.pasteRegistry);
+		});
+
+		it("transfers an in-progress bracketed paste buffer", () => {
+			const source = new Editor(createTestTUI(), defaultEditorTheme);
+			source.handleInput("\x1b[200~partial");
+			const target = new Editor(createTestTUI(), defaultEditorTheme);
+
+			target.setState(source.getState());
+			target.handleInput(" content\x1b[201~");
+
+			assert.strictEqual(target.getText(), "partial content");
+			assert.strictEqual(target.getState().isInPaste, false);
+		});
+
+		// Regression coverage for #8689.
+		it("transfers multiline draft text without expanding paste markers", () => {
+			const source = new Editor(createTestTUI(), defaultEditorTheme);
+			const pastedText = "x".repeat(1001);
+			source.setText("prefix\n");
+			source.handleInput(`\x1b[200~${pastedText}\x1b[201~`);
+			source.handleInput("\x1b[D");
+
+			const state = source.getState();
+			const target = new Editor(createTestTUI(), defaultEditorTheme);
+			target.setState(state);
+
+			assert.strictEqual(target.getText(), "prefix\n[paste #1 1001 chars]");
+			assert.strictEqual(target.getExpandedText(), `prefix\n${pastedText}`);
+			assert.deepStrictEqual(target.getCursor(), { line: 1, col: 0 });
+			assert.deepStrictEqual(target.getState().pasteRegistry, state.pasteRegistry);
+		});
 	});
 
 	describe("Backslash+Enter newline workaround", () => {
@@ -3956,7 +4007,7 @@ describe("Editor component", () => {
 			editor.render(80);
 
 			const text = editor.getText();
-			const _marker = text.match(/\[paste #\d+ \d+ chars\]/)![0];
+			assert.match(text, /\[paste #\d+ \d+ chars\]/);
 			// Line 0: "12345678901234567890"
 			// Line 1: "" (empty)
 			// Line 2: "hello [paste #1 2000 chars]"
