@@ -188,6 +188,28 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		time("resourceLoader.reload");
 	}
 
+	// Extension-registered providers (name+config form) are queued while the
+	// extension runtime is loading and only applied when the AgentSession binds
+	// — after this function has already resolved the initial model. Flush them
+	// here and rehydrate the availability snapshot so session restore and
+	// findInitialModel see extension providers; otherwise fresh sessions
+	// intermittently start on another provider's default model.
+	const extensionRuntime = resourceLoader.getExtensions().runtime;
+	for (const { name, config } of extensionRuntime.pendingProviderRegistrations.splice(0)) {
+		try {
+			modelRuntime.registerProvider(name, config);
+		} catch (error) {
+			console.error(
+				`Failed to register extension provider "${name}":`,
+				error instanceof Error ? error.message : error,
+			);
+		}
+	}
+	for (const { provider } of extensionRuntime.pendingNativeProviderRegistrations.splice(0)) {
+		modelRuntime.registerNativeProvider(provider);
+	}
+	await modelRuntime.refresh({ allowNetwork: false });
+
 	// Check if session has existing data to restore
 	const existingSession = sessionManager.buildSessionContext();
 	const hasExistingSession = existingSession.messages.length > 0;
