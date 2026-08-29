@@ -1,4 +1,4 @@
-# Contributing to pi
+# Contributing to Pi
 
 This guide exists to save both sides time.
 
