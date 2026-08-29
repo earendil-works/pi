@@ -1075,7 +1075,7 @@ describe("openai-completions tool_choice", () => {
 	});
 
 	it("uses system messages for non-OpenAI/Anthropic OpenRouter reasoning model instructions", async () => {
-		const model = getModel("openrouter", "deepseek/deepseek-v4-pro")!;
+		const model = getModel("openrouter", "z-ai/glm-5.2")!;
 		let payload: unknown;
 
 		await streamSimple(

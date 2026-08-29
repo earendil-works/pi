@@ -442,6 +442,11 @@ const XAI_RESPONSES_COMPAT: OpenAIResponsesCompat = {
 	supportsLongCacheRetention: false,
 };
 
+// DeepSeek V4 is served through OpenAI Responses-compatible endpoints (POST
+// /responses) on these third-party providers as well. Their provider factories
+// register an openai-responses implementation alongside openai-completions.
+const DEEPSEEK_RESPONSES_PROVIDERS = new Set<KnownProvider>(["opencode", "opencode-go", "openrouter"]);
+
 const OPENCODE_OPENAI_COMPLETIONS_LONG_CACHE_RETENTION_UNSUPPORTED_MODELS = new Set([
 	"opencode:deepseek-v4-flash",
 	"opencode:deepseek-v4-pro",
@@ -512,6 +517,10 @@ function supportsDirectReasoningEffort(model: Model<Api>): boolean {
 function applyModelsDevReasoningOptionMetadata(model: Model<Api>): void {
 	const reasoningOptions = modelsDevReasoningOptions.get(getModelKey(model));
 	if (!reasoningOptions || !supportsDirectReasoningEffort(model)) return;
+	// DeepSeek V4 reasoning levels are curated explicitly in
+	// applyThinkingLevelMetadata; the models.dev effort lists omit the "off"
+	// toggle and would otherwise clobber the supported-level map.
+	if (model.id.includes("deepseek-v4")) return;
 	const thinkingLevelMap = getEffortThinkingLevelMap(reasoningOptions);
 	if (thinkingLevelMap) mergeThinkingLevelMap(model, thinkingLevelMap);
 }
@@ -2661,11 +2670,20 @@ async function generateModels() {
 	allModels.push(...antLingModels);
 
 	for (const candidate of allModels) {
-		if (candidate.provider === "deepseek") {
-			// DeepSeek serves its models through an OpenAI Responses-compatible
-			// endpoint (POST /responses), not Chat Completions.
+		if (
+			candidate.provider === "deepseek" ||
+			(candidate.id.includes("deepseek-v4") && DEEPSEEK_RESPONSES_PROVIDERS.has(candidate.provider))
+		) {
+			// DeepSeek serves these models through an OpenAI Responses-compatible
+			// endpoint (POST /responses); OpenRouter and OpenCode Zen/Go expose
+			// the same endpoint for their DeepSeek V4 mirrors.
 			candidate.api = "openai-responses";
-			candidate.compat = { ...deepseekResponsesCompat };
+			candidate.compat = {
+				...(candidate.provider === "opencode" || candidate.provider === "opencode-go"
+					? { sessionAffinityFormat: "openai-nosession" as const }
+					: {}),
+				...deepseekResponsesCompat,
+			};
 			continue;
 		}
 		if (

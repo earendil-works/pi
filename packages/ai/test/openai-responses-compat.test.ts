@@ -143,6 +143,22 @@ describe("openai-responses provider defaults", () => {
 		},
 	);
 
+	it("serves DeepSeek V4 through the Responses API on OpenRouter and OpenCode", () => {
+		const models = [
+			getModel("openrouter", "deepseek/deepseek-v4-pro"),
+			getModel("opencode", "deepseek-v4-pro"),
+			getModel("opencode-go", "deepseek-v4-pro"),
+		];
+
+		for (const model of models) {
+			expect(model?.api).toBe("openai-responses");
+			expect(model?.compat).toMatchObject({
+				supportsDeveloperRole: false,
+				supportsLongCacheRetention: false,
+			});
+		}
+	});
+
 	it("forwards required tool choice", async () => {
 		let capturedPayload: unknown;
 
