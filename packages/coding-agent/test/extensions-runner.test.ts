@@ -569,14 +569,24 @@ describe("ExtensionRunner", () => {
 			runner.bindCore(extensionActions, extensionContextActions);
 
 			class HostUi {
-				status: Array<[string, string | undefined]> = [];
-				notices: string[] = [];
+				#status: Array<[string, string | undefined]> = [];
+				#notices: string[] = [];
+				#currentTheme = {} as ExtensionUIContext["theme"];
 				selectCalls = 0;
+				get status() {
+					return this.#status;
+				}
+				get notices() {
+					return this.#notices;
+				}
+				get theme() {
+					return this.#currentTheme;
+				}
 				setStatus(key: string, text: string | undefined) {
-					this.status.push([key, text]);
+					this.#status.push([key, text]);
 				}
 				notify(message: string) {
-					this.notices.push(message);
+					this.#notices.push(message);
 				}
 				async select(_title: string, options: string[]) {
 					this.selectCalls++;
@@ -590,13 +600,36 @@ describe("ExtensionRunner", () => {
 
 			expect(typeof ctx.ui.setStatus).toBe("function");
 			expect(typeof ctx.ui.notify).toBe("function");
+			expect(ctx.ui.notify).toBe(ctx.ui.notify);
 			ctx.ui.setStatus("k", "v");
 			ctx.ui.notify("hi", "info");
+			expect(ctx.ui.theme).toBe(host.theme);
 			expect(host.status).toEqual([["k", "v"]]);
 			expect(host.notices).toEqual(["hi"]);
 
 			await ctx.ui.select("t", ["a", "b"]);
 			expect(host.selectCalls).toBe(1);
+		});
+
+		it("preserves frozen own UI methods after wrapping dialogs", async () => {
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			runner.bindCore(extensionActions, extensionContextActions);
+
+			const notices: string[] = [];
+			const host = Object.freeze({
+				notify(message: string) {
+					notices.push(message);
+				},
+			});
+
+			runner.setUIContext(host as unknown as ExtensionUIContext, "rpc");
+			const ctx = runner.createContext();
+
+			const notify = ctx.ui.notify;
+			expect(notify).toBe(ctx.ui.notify);
+			notify("hi", "info");
+			expect(notices).toEqual(["hi"]);
 		});
 	});
 
