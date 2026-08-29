@@ -610,6 +610,27 @@ describe("ExtensionRunner", () => {
 			await ctx.ui.select("t", ["a", "b"]);
 			expect(host.selectCalls).toBe(1);
 		});
+
+		it("preserves frozen own UI methods after wrapping dialogs", async () => {
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			runner.bindCore(extensionActions, extensionContextActions);
+
+			const notices: string[] = [];
+			const host = Object.freeze({
+				notify(message: string) {
+					notices.push(message);
+				},
+			});
+
+			runner.setUIContext(host as unknown as ExtensionUIContext, "rpc");
+			const ctx = runner.createContext();
+
+			const notify = ctx.ui.notify;
+			expect(notify).toBe(ctx.ui.notify);
+			notify("hi", "info");
+			expect(notices).toEqual(["hi"]);
+		});
 	});
 
 	describe("error handling", () => {

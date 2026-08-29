@@ -445,6 +445,7 @@ export class ExtensionRunner {
 		// pass a class instance.
 		type BoundMethod = (...args: never[]) => unknown;
 		const boundMethods = new WeakMap<BoundMethod, BoundMethod>();
+		const proxyTarget = Object.create(Object.getPrototypeOf(ui)) as ExtensionUIContext;
 		const overrides: Pick<ExtensionUIContext, "select" | "confirm" | "input" | "editor" | "custom"> = {
 			select: (title, options, opts) => this.withUIPrompt("select", title, () => ui.select(title, options, opts)),
 			confirm: (title, message, opts) => this.withUIPrompt("confirm", title, () => ui.confirm(title, message, opts)),
@@ -453,12 +454,12 @@ export class ExtensionRunner {
 			editor: (title, prefill) => this.withUIPrompt("editor", title, () => ui.editor(title, prefill)),
 			custom: (factory, options) => this.withUIPrompt("custom", undefined, () => ui.custom(factory, options)),
 		};
-		return new Proxy(ui, {
-			get(target, prop) {
+		return new Proxy(proxyTarget, {
+			get(_target, prop) {
 				if (typeof prop === "string" && Object.hasOwn(overrides, prop)) {
 					return overrides[prop as keyof typeof overrides];
 				}
-				const value = Reflect.get(target, prop, target);
+				const value = Reflect.get(ui, prop, ui);
 				if (typeof value !== "function") {
 					return value;
 				}
@@ -467,7 +468,7 @@ export class ExtensionRunner {
 				if (bound) {
 					return bound;
 				}
-				const nextBound = method.bind(target) as BoundMethod;
+				const nextBound = method.bind(ui) as BoundMethod;
 				boundMethods.set(method, nextBound);
 				return nextBound;
 			},
