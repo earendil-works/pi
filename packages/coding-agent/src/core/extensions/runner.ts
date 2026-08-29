@@ -443,6 +443,8 @@ export class ExtensionRunner {
 		// properties only, so class prototype methods (setStatus, notify, ...) are
 		// dropped. First-party UIs are plain objects; embedders such as pi-web-ui
 		// pass a class instance.
+		type BoundMethod = (...args: never[]) => unknown;
+		const boundMethods = new WeakMap<BoundMethod, BoundMethod>();
 		const overrides: Pick<ExtensionUIContext, "select" | "confirm" | "input" | "editor" | "custom"> = {
 			select: (title, options, opts) => this.withUIPrompt("select", title, () => ui.select(title, options, opts)),
 			confirm: (title, message, opts) => this.withUIPrompt("confirm", title, () => ui.confirm(title, message, opts)),
@@ -452,11 +454,22 @@ export class ExtensionRunner {
 			custom: (factory, options) => this.withUIPrompt("custom", undefined, () => ui.custom(factory, options)),
 		};
 		return new Proxy(ui, {
-			get(target, prop, receiver) {
+			get(target, prop) {
 				if (typeof prop === "string" && Object.hasOwn(overrides, prop)) {
 					return overrides[prop as keyof typeof overrides];
 				}
-				return Reflect.get(target, prop, receiver);
+				const value = Reflect.get(target, prop, target);
+				if (typeof value !== "function") {
+					return value;
+				}
+				const method = value as BoundMethod;
+				const bound = boundMethods.get(method);
+				if (bound) {
+					return bound;
+				}
+				const nextBound = method.bind(target) as BoundMethod;
+				boundMethods.set(method, nextBound);
+				return nextBound;
 			},
 		});
 	}
