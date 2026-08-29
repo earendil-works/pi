@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { deleteKittyImage, isImageLine } from "./terminal-image.ts";
 import { type TUI, TuiBase, type TuiStopOptions } from "./tui.ts";
-import { visibleWidth } from "./utils.ts";
+import { truncateToWidth, visibleWidth } from "./utils.ts";
 
 const KITTY_SEQUENCE_PREFIX = "\x1b_G";
 const MAX_RENDER_WRITE_CHARS = 1024 * 1024;
@@ -514,34 +514,38 @@ export class TuiMainScreen extends TuiBase implements TUI {
 
 			output.append("\x1b[2K"); // Clear current line
 			if (!isImage && visibleWidth(line) > width) {
-				// Log all lines to crash file for debugging
-				const crashLogPath = path.join(this.logDirectory, "pi-crash.log");
-				const crashData = [
-					`Crash at ${new Date().toISOString()}`,
-					`Terminal width: ${width}`,
-					`Line ${i} visible width: ${visibleWidth(line)}`,
-					"",
-					"=== All rendered lines ===",
-					...newLines.map((l, idx) => `[${idx}] (w=${visibleWidth(l)}) ${l}`),
-					"",
-				].join("\n");
-				fs.mkdirSync(path.dirname(crashLogPath), { recursive: true });
-				fs.writeFileSync(crashLogPath, crashData);
-
-				// Clean up terminal state before throwing
-				this.stop();
-
-				const errorMsg = [
-					`Rendered line ${i} exceeds terminal width (${visibleWidth(line)} > ${width}).`,
-					"",
-					"This is likely caused by a custom TUI component not truncating its output.",
-					"Use visibleWidth() to measure and truncateToWidth() to truncate lines.",
-					"",
-					`Debug log written to: ${crashLogPath}`,
-				].join("\n");
-				throw new Error(errorMsg);
+				// Adaptive: truncate instead of crashing. Preserve crash log for debugging but don't throw.
+				// This handles long skill names like /gather-context-and-clarify (27 chars) + description
+				// at narrow widths (80-88 cols) where the startup box (87w) would otherwise overflow.
+				if (process.env.PI_TUI_STRICT === "1") {
+					const crashLogPath = path.join(this.logDirectory, "pi-crash.log");
+					const crashData = [
+						`Crash at ${new Date().toISOString()}`,
+						`Terminal width: ${width}`,
+						`Line ${i} visible width: ${visibleWidth(line)}`,
+						"",
+						"=== All rendered lines ===",
+						...newLines.map((l, idx) => `[${idx}] (w=${visibleWidth(l)}) ${l}`),
+						"",
+					].join("\n");
+					fs.mkdirSync(path.dirname(crashLogPath), { recursive: true });
+					fs.writeFileSync(crashLogPath, crashData);
+					this.stop();
+					const errorMsg = [
+						`Rendered line ${i} exceeds terminal width (${visibleWidth(line)} > ${width}).`,
+						"",
+						"This is likely caused by a custom TUI component not truncating its output.",
+						"Use visibleWidth() to measure and truncateToWidth() to truncate lines.",
+						"",
+						`Debug log written to: ${crashLogPath}`,
+					].join("\n");
+					throw new Error(errorMsg);
+				}
+				// Non-strict (default): adaptively truncate to terminal width, no ellipsis to preserve layout
+				output.append(truncateToWidth(line, width, ""));
+			} else {
+				output.append(line);
 			}
-			output.append(line);
 		}
 
 		// Track where cursor ended up after rendering
