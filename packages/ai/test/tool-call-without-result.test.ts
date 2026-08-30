@@ -278,6 +278,14 @@ describe("Tool Call Without Result Tests", () => {
 		});
 	});
 
+	describe.skipIf(!process.env.TENCENT_TOKEN_PLAN_API_KEY)("Tencent Token Plan Individual Provider", () => {
+		const model = getModel("tencent-token-plan-individual", "glm-5.2");
+
+		it("should filter out tool calls without corresponding tool results", { retry: 3, timeout: 30000 }, async () => {
+			await testToolCallWithoutResult(model);
+		});
+	});
+
 	describe.skipIf(!process.env.QWEN_TOKEN_PLAN_CN_API_KEY)("Qwen Token Plan (CN) Provider", () => {
 		const model = getModel("qwen-token-plan-cn", "qwen3.7-max");
 

@@ -631,6 +631,27 @@ describe("totalTokens field", () => {
 	});
 
 	// =========================================================================
+	// Tencent Token Plan Individual
+	// =========================================================================
+
+	describe.skipIf(!process.env.TENCENT_TOKEN_PLAN_API_KEY)("Tencent Token Plan Individual", () => {
+		it("glm-5.2 - should return totalTokens equal to sum of components", { retry: 3, timeout: 60000 }, async () => {
+			const llm = getModel("tencent-token-plan-individual", "glm-5.2");
+
+			console.log(`\nTencent Token Plan Individual / ${llm.id}:`);
+			const { first, second } = await testTotalTokensWithCache(llm, {
+				apiKey: process.env.TENCENT_TOKEN_PLAN_API_KEY,
+			});
+
+			logUsage("First request", first);
+			logUsage("Second request", second);
+
+			assertTotalTokensEqualsComponents(first);
+			assertTotalTokensEqualsComponents(second);
+		});
+	});
+
+	// =========================================================================
 	// Qwen Token Plan CN
 	// =========================================================================
 

@@ -491,6 +491,18 @@ describe("Context overflow error handling", () => {
 		}, 120000);
 	});
 
+	describe.skipIf(!process.env.TENCENT_TOKEN_PLAN_API_KEY)("Tencent Token Plan Individual", () => {
+		it("glm-5.2 - should detect overflow via isContextOverflow", async () => {
+			const model = getModel("tencent-token-plan-individual", "glm-5.2");
+			const result = await testContextOverflow(model, process.env.TENCENT_TOKEN_PLAN_API_KEY!);
+			logResult(result);
+
+			expect(result.stopReason).toBe("error");
+			expect(result.errorMessage).toMatch(/input length/i);
+			expect(isContextOverflow(result.response, model.contextWindow)).toBe(true);
+		}, 120000);
+	});
+
 	describe.skipIf(!process.env.QWEN_TOKEN_PLAN_CN_API_KEY)("Qwen Token Plan (CN)", () => {
 		it("qwen3.7-max - should detect overflow via isContextOverflow", async () => {
 			const model = getModel("qwen-token-plan-cn", "qwen3.7-max");

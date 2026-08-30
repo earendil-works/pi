@@ -150,6 +150,17 @@ const PROVIDER_MODEL_PAIRS: ProviderModelPair[] = [
 		model: "glm-5.2",
 		label: "qwen-token-plan-individual-glm-5.2",
 	},
+	// Tencent Token Plan Individual
+	{
+		provider: "tencent-token-plan-individual",
+		model: "glm-5.2",
+		label: "tencent-token-plan-individual-glm-5.2",
+	},
+	{
+		provider: "tencent-token-plan-individual",
+		model: "deepseek/deepseek-v4-flash",
+		label: "tencent-token-plan-individual-deepseek-v4-flash",
+	},
 ];
 
 // Cached context structure
