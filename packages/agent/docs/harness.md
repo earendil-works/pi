@@ -572,8 +572,10 @@ stops renewal after the queue drains and deletes only its matching `(owner_id,
 fence)` pair — so a stale owner cannot release the replacement that succeeded it.
 This is what makes "one process owns one session" an enforced property rather than
 a convention the serving layer is trusted to uphold. Memory and JSONL have no
-equivalent and rely on process ownership; a JSONL session opened twice is corrupt
-and undetected.
+cross-process equivalent and rely on process ownership. Within one process, opening
+a JSONL session transfers writer ownership to the new instance; superseded instances
+reject later writes. Two processes opening the same file remains unsupported and
+undetected.
 
 Atomicity itself needs no special handling. A multi-write transaction is all-or-none
 by the file format: WAL frames become visible only when the commit record lands, so a

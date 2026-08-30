@@ -15,7 +15,8 @@ export type JsonlSessionRepoFileSystem = Pick<
 	| "exists"
 	| "createDir"
 	| "remove"
->;
+> &
+	Partial<Pick<FileSystem, "canonicalPath">>;
 
 export interface JsonlSessionRepoOptions {
 	fs: JsonlSessionRepoFileSystem;

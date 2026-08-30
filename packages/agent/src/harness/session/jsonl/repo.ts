@@ -86,14 +86,25 @@ export async function listJsonlSessionMetadata(
 	return metadata.sort((left, right) => right.modifiedAt - left.modifiedAt);
 }
 
+/** Load a read-only snapshot without superseding the active in-process writer. */
 export async function loadJsonlSessionStorage(
 	options: JsonlSessionRepoOptions,
 	metadata: JsonlSessionMetadata,
 ): Promise<JsonlSessionStorage> {
+	return openJsonlSessionStorage(options, metadata, false);
+}
+
+async function openJsonlSessionStorage(
+	options: JsonlSessionRepoOptions,
+	metadata: JsonlSessionMetadata,
+	writable: boolean,
+): Promise<JsonlSessionStorage> {
 	if (!fileResult(await options.fs.exists(metadata.path), `Failed to check session ${metadata.path}`)) {
 		throw new SessionError("not_found", `Session not found: ${metadata.id}`);
 	}
-	const storage = await JsonlSessionStorage.load(options.fs, metadata.path);
+	const storage = await (writable
+		? JsonlSessionStorage.open(options.fs, metadata.path, metadata.id)
+		: JsonlSessionStorage.load(options.fs, metadata.path));
 	const loadedMetadata = await storage.getMetadata();
 	if (loadedMetadata.id !== metadata.id) {
 		throw new SessionError("invalid_entry", `Session id does not match header: ${metadata.id}`);
@@ -128,7 +139,7 @@ export class JsonlSessionRepo
 	}
 
 	async open(metadata: JsonlSessionMetadata): Promise<Session<JsonlSessionMetadata>> {
-		return new Session(await this.loadStorage(metadata));
+		return new Session(await this.loadStorage(metadata, true));
 	}
 
 	async list(options: JsonlSessionListOptions = {}): Promise<JsonlSessionMetadata[]> {
@@ -155,8 +166,8 @@ export class JsonlSessionRepo
 		});
 	}
 
-	private async loadStorage(metadata: JsonlSessionMetadata): Promise<JsonlSessionStorage> {
-		return loadJsonlSessionStorage({ fs: this.fs, sessionsRoot: this.sessionsRootInput }, metadata);
+	private async loadStorage(metadata: JsonlSessionMetadata, writable = false): Promise<JsonlSessionStorage> {
+		return openJsonlSessionStorage({ fs: this.fs, sessionsRoot: this.sessionsRootInput }, metadata, writable);
 	}
 
 	private async resolveCreateDestination(options: JsonlSessionCreateOptions): Promise<{ id: string; cwd: string }> {

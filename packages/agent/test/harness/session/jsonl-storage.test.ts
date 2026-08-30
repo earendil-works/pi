@@ -439,6 +439,86 @@ describe("JSONL v4 per-session storage", () => {
 		expect((await restored.getLog()).map((item) => item.seq)).toEqual([1, 2, 3, 4, 5, 6]);
 	});
 
+	it("transfers writer ownership to a newly opened session", async () => {
+		const root = createTempDir();
+		const firstRepository = createRepository(root);
+		const firstWriter = await firstRepository.create({ id: "single-writer", cwd: root });
+		const secondRepository = createRepository(root);
+		const secondWriter = await secondRepository.open(await firstWriter.getMetadata());
+
+		await expect(firstWriter.appendCustomEntry("stale")).rejects.toMatchObject({
+			code: "storage",
+			message: expect.stringContaining("reopen"),
+		});
+		const committedId = await secondWriter.appendCustomEntry("current");
+
+		const restored = await reopen(root, secondWriter);
+		expect(await restored.getEntry(committedId)).toMatchObject({ id: committedId, seq: 1 });
+		expect((await restored.getLog()).map((item) => item.seq)).toEqual([1]);
+	});
+
+	it("does not transfer writer ownership when metadata validation fails", async () => {
+		const root = createTempDir();
+		const firstWriter = await createRepository(root).create({ id: "valid-id", cwd: root });
+		const metadata = await firstWriter.getMetadata();
+
+		await expect(createRepository(root).open({ ...metadata, id: "wrong-id" })).rejects.toMatchObject({
+			code: "invalid_entry",
+		});
+		const committedId = await firstWriter.appendCustomEntry("still-current");
+
+		expect(await firstWriter.getEntry(committedId)).toMatchObject({ id: committedId, seq: 1 });
+	});
+
+	it("waits for an admitted append before transferring writer ownership", async () => {
+		const root = createTempDir();
+		const firstEnv = new NodeExecutionEnv({ cwd: root });
+		const firstRepository = new JsonlSessionRepo({ fs: firstEnv, sessionsRoot: root });
+		const firstWriter = await firstRepository.create({ id: "writer-handoff", cwd: root });
+		const metadata = await firstWriter.getMetadata();
+		const appendFile = firstEnv.appendFile.bind(firstEnv);
+		let notifyAppendStarted = () => {};
+		let releaseAppend = () => {};
+		const appendStarted = new Promise<void>((resolve) => {
+			notifyAppendStarted = resolve;
+		});
+		const appendGate = new Promise<void>((resolve) => {
+			releaseAppend = resolve;
+		});
+		vi.spyOn(firstEnv, "appendFile").mockImplementationOnce(async (...args) => {
+			notifyAppendStarted();
+			await appendGate;
+			return appendFile(...args);
+		});
+
+		const firstWrite = firstWriter.appendEntry({ type: "custom", id: "first", customType: "note" }, "main");
+		await appendStarted;
+		const secondWriterPromise = createRepository(root).open(metadata);
+		releaseAppend();
+
+		const first = await firstWrite;
+		const secondWriter = await secondWriterPromise;
+		const second = await secondWriter.appendEntry({ type: "custom", id: "second", customType: "note" }, "main");
+
+		expect([first.seq, second.seq]).toEqual([1, 2]);
+		expect((await reopen(root, secondWriter)).getLog()).resolves.toEqual([
+			{ kind: "entry", seq: 1, entry: first },
+			{ kind: "entry", seq: 2, entry: second },
+		]);
+	});
+
+	it("does not transfer source writer ownership when forking", async () => {
+		const root = createTempDir();
+		const repository = createRepository(root);
+		const source = await repository.create({ id: "source-writer", cwd: root });
+		await source.appendMessage(userMessage("before fork"));
+
+		await repository.fork(await source.getMetadata(), { id: "fork", cwd: root });
+		const committedId = await source.appendCustomEntry("after-fork");
+
+		expect(await source.getEntry(committedId)).toMatchObject({ id: committedId, seq: 2 });
+	});
+
 	it("rejects non-JSON payloads without changing the durable prefix", async () => {
 		const root = createTempDir();
 		const session = await createRepository(root).create({ id: "validation", cwd: root });

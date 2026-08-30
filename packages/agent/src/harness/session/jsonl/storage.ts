@@ -20,6 +20,44 @@ import { encodeHeader, encodeMutation, metadataFromHeader, parseHeader, parseMut
 import { fileResult, invalidFile, JsonlDecodeError } from "./errors.ts";
 import type { JsonlSessionMetadata, JsonlSessionRepoFileSystem, JsonlV4Header } from "./types.ts";
 
+const fileOperationTails = new Map<string, Promise<void>>();
+
+/**
+ * Serializes writer handoff and mutations for one JSONL path in this JavaScript
+ * realm. JSONL still relies on the caller to enforce single-process ownership.
+ */
+function enqueueFileOperation<T>(path: string, operation: () => Promise<T>): Promise<T> {
+	const result = (fileOperationTails.get(path) ?? Promise.resolve()).then(operation);
+	const tail = result.then(
+		() => undefined,
+		() => undefined,
+	);
+	fileOperationTails.set(path, tail);
+	void tail.then(() => {
+		if (fileOperationTails.get(path) === tail) fileOperationTails.delete(path);
+	});
+	return result;
+}
+
+interface WriterClaim {
+	path: string;
+}
+
+// Claims are weakly tied to storage lifetime because the current Session API has no explicit close operation.
+const activeWriterClaims = new Map<string, WriterClaim>();
+const writerClaimFinalizer = new FinalizationRegistry<WriterClaim>((claim) => {
+	if (activeWriterClaims.get(claim.path) === claim) activeWriterClaims.delete(claim.path);
+});
+
+function invalidateWriter(path: string): void {
+	activeWriterClaims.delete(path);
+}
+
+async function resolveCoordinationPath(fs: JsonlSessionRepoFileSystem, path: string): Promise<string> {
+	if (fs.canonicalPath === undefined) return path;
+	return fileResult(await fs.canonicalPath(path), `Failed to resolve session path ${path}`);
+}
+
 /**
  * Build a complete sibling temporary file, then atomically rename it over the destination.
  * The populate callback must create or overwrite `tempPath` with the complete file. The
@@ -48,12 +86,15 @@ async function publishFileAtomically(
 export class JsonlSessionStorage implements SessionStorage<JsonlSessionMetadata> {
 	private readonly fs: JsonlSessionRepoFileSystem;
 	private readonly metadata: JsonlSessionMetadata;
+	private readonly coordinationPath: string;
 	private readonly state = new SessionState();
+	private writerClaim: WriterClaim | undefined;
 	private tail: Promise<void> = Promise.resolve();
 
-	constructor(fs: JsonlSessionRepoFileSystem, metadata: JsonlSessionMetadata) {
+	constructor(fs: JsonlSessionRepoFileSystem, metadata: JsonlSessionMetadata, coordinationPath = metadata.path) {
 		this.fs = fs;
 		this.metadata = structuredClone(metadata);
+		this.coordinationPath = coordinationPath;
 	}
 
 	static async create(
@@ -61,12 +102,50 @@ export class JsonlSessionStorage implements SessionStorage<JsonlSessionMetadata>
 		path: string,
 		header: JsonlV4Header,
 	): Promise<JsonlSessionStorage> {
-		fileResult(await fs.writeFile(path, encodeHeader(header)), `Failed to initialize session ${path}`);
-		const fileInfo = fileResult(await fs.fileInfo(path), `Failed to read session metadata ${path}`);
-		return new JsonlSessionStorage(fs, metadataFromHeader(header, path, fileInfo.mtimeMs));
+		await enqueueFileOperation(path, async () => {
+			fileResult(await fs.writeFile(path, encodeHeader(header)), `Failed to initialize session ${path}`);
+		});
+		const canonicalPath = await resolveCoordinationPath(fs, path);
+		return enqueueFileOperation(canonicalPath, async () => {
+			const fileInfo = fileResult(
+				await fs.fileInfo(canonicalPath),
+				`Failed to read session metadata ${canonicalPath}`,
+			);
+			return new JsonlSessionStorage(
+				fs,
+				metadataFromHeader(header, path, fileInfo.mtimeMs),
+				canonicalPath,
+			).activateWriter();
+		});
 	}
 
+	/** Load an unclaimed snapshot for read-only consumers such as search indexing. */
 	static async load(fs: JsonlSessionRepoFileSystem, path: string): Promise<JsonlSessionStorage> {
+		const canonicalPath = await resolveCoordinationPath(fs, path);
+		return enqueueFileOperation(canonicalPath, () => JsonlSessionStorage.loadUnlocked(fs, path, canonicalPath));
+	}
+
+	/** Load a writable session and supersede any older writer for the same path in this process. */
+	static async open(
+		fs: JsonlSessionRepoFileSystem,
+		path: string,
+		expectedSessionId: string,
+	): Promise<JsonlSessionStorage> {
+		const canonicalPath = await resolveCoordinationPath(fs, path);
+		return enqueueFileOperation(canonicalPath, async () => {
+			const storage = await JsonlSessionStorage.loadUnlocked(fs, path, canonicalPath);
+			if (storage.metadata.id !== expectedSessionId) {
+				throw new SessionError("invalid_entry", `Session id does not match header: ${expectedSessionId}`);
+			}
+			return storage.activateWriter();
+		});
+	}
+
+	private static async loadUnlocked(
+		fs: JsonlSessionRepoFileSystem,
+		path: string,
+		coordinationPath: string,
+	): Promise<JsonlSessionStorage> {
 		const content = fileResult(await fs.readTextFile(path), `Failed to read session ${path}`);
 		const physicalLines = content.split("\n");
 		if (physicalLines.at(-1) === "") physicalLines.pop();
@@ -76,7 +155,11 @@ export class JsonlSessionStorage implements SessionStorage<JsonlSessionMetadata>
 		const headerResult = parseHeader(physicalLines[0]);
 		if (!headerResult.ok) throw invalidFile(path, 1, headerResult.error);
 		const fileInfo = fileResult(await fs.fileInfo(path), `Failed to read session metadata ${path}`);
-		const storage = new JsonlSessionStorage(fs, metadataFromHeader(headerResult.value, path, fileInfo.mtimeMs));
+		const storage = new JsonlSessionStorage(
+			fs,
+			metadataFromHeader(headerResult.value, path, fileInfo.mtimeMs),
+			coordinationPath,
+		);
 		for (let index = 1; index < physicalLines.length; index++) {
 			const line = physicalLines[index]!;
 			const mutationResult = parseMutation(line);
@@ -88,6 +171,7 @@ export class JsonlSessionStorage implements SessionStorage<JsonlSessionMetadata>
 					await publishFileAtomically(fs, path, async (tempPath) => {
 						fileResult(await fs.writeFile(tempPath, validPrefix), `Failed to stage torn-tail repair ${path}`);
 					});
+					invalidateWriter(coordinationPath);
 					return storage;
 				}
 				throw invalidFile(path, index + 1, mutationResult.error);
@@ -103,20 +187,24 @@ export class JsonlSessionStorage implements SessionStorage<JsonlSessionMetadata>
 		}
 		if (!content.endsWith("\n")) {
 			fileResult(await fs.appendFile(path, "\n"), `Failed to repair unterminated session tail ${path}`);
+			invalidateWriter(coordinationPath);
 		}
 		return storage;
 	}
 
-	async fork(path: string, header: JsonlV4Header, options: ForkOptions): Promise<JsonlSessionStorage> {
-		const mutations = this.state.createForkMutations(options);
-		await publishFileAtomically(this.fs, path, async (tempPath) => {
-			const targetStorage = await JsonlSessionStorage.create(this.fs, tempPath, header);
-			for (const mutation of mutations) {
-				await targetStorage.appendMutation(mutation);
-				targetStorage.applyMutation(mutation);
-			}
+	fork(path: string, header: JsonlV4Header, options: ForkOptions): Promise<JsonlSessionStorage> {
+		return this.enqueueRead(async () => {
+			const current = await JsonlSessionStorage.loadUnlocked(this.fs, this.metadata.path, this.coordinationPath);
+			const mutations = current.state.createForkMutations(options);
+			await publishFileAtomically(this.fs, path, async (tempPath) => {
+				const targetStorage = await JsonlSessionStorage.create(this.fs, tempPath, header);
+				for (const mutation of mutations) {
+					await targetStorage.appendMutation(mutation);
+					targetStorage.applyMutation(mutation);
+				}
+			});
+			return JsonlSessionStorage.open(this.fs, path, header.id);
 		});
-		return JsonlSessionStorage.load(this.fs, path);
 	}
 
 	async drain(): Promise<void> {
@@ -256,7 +344,12 @@ export class JsonlSessionStorage implements SessionStorage<JsonlSessionMetadata>
 	}
 
 	private enqueue<T>(operation: () => Promise<T>): Promise<T> {
-		const result = this.tail.then(operation);
+		const result = this.tail.then(() =>
+			enqueueFileOperation(this.coordinationPath, async () => {
+				this.assertActiveWriter();
+				return operation();
+			}),
+		);
 		this.tail = result.then(
 			() => undefined,
 			() => undefined,
@@ -273,5 +366,31 @@ export class JsonlSessionStorage implements SessionStorage<JsonlSessionMetadata>
 
 	private applyMutation(mutation: SessionMutation): void {
 		this.state.applyMutation(mutation);
+	}
+
+	private activateWriter(): this {
+		const claim = { path: this.coordinationPath };
+		activeWriterClaims.set(claim.path, claim);
+		writerClaimFinalizer.register(this, claim, claim);
+		this.writerClaim = claim;
+		return this;
+	}
+
+	private assertActiveWriter(): void {
+		if (this.writerClaim === undefined || activeWriterClaims.get(this.coordinationPath) !== this.writerClaim) {
+			throw new SessionError(
+				"storage",
+				`JSONL session ${this.metadata.id} writer was superseded; reopen before writing`,
+			);
+		}
+	}
+
+	private enqueueRead<T>(operation: () => Promise<T>): Promise<T> {
+		const result = this.tail.then(() => enqueueFileOperation(this.coordinationPath, operation));
+		this.tail = result.then(
+			() => undefined,
+			() => undefined,
+		);
+		return result;
 	}
 }
