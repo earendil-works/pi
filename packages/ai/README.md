@@ -446,6 +446,7 @@ Built-in providers resolve these env vars (Node.js; in browsers pass `apiKey` ex
 | Xiaomi MiMo Token Plan (China) | `XIAOMI_TOKEN_PLAN_CN_API_KEY` |
 | Xiaomi MiMo Token Plan (Amsterdam) | `XIAOMI_TOKEN_PLAN_AMS_API_KEY` |
 | Xiaomi MiMo Token Plan (Singapore) | `XIAOMI_TOKEN_PLAN_SGP_API_KEY` |
+| Tencent Token Plan (Individual) | `TENCENT_TOKEN_PLAN_API_KEY` |
 | GitHub Copilot | `COPILOT_GITHUB_TOKEN` |
 
 `qwen-token-plan-individual` and `qwen-token-plan` share the international endpoint and

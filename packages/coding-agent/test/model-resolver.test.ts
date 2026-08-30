@@ -742,6 +742,10 @@ describe("default model selection", () => {
 		expect(defaultModelPerProvider["qwen-token-plan-individual"]).toBe("qwen3.8-max");
 	});
 
+	test("tencent token plan individual default tracks current model", () => {
+		expect(defaultModelPerProvider["tencent-token-plan-individual"]).toBe("glm-5.2");
+	});
+
 	test("findInitialModel accepts explicit provider custom model ids", async () => {
 		const registry = {
 			getModels: () => allModels,

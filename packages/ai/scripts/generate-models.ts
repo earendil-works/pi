@@ -2656,6 +2656,150 @@ async function generateModels() {
 	];
 	allModels.push(...antLingModels);
 
+	// Tencent Cloud Token Plan Individual (通用 Token Plan). One prepaid endpoint
+	// shared by the Individual plans; the 通用 and Hy plan catalogs differ, so the
+	// documented 通用 model IDs are declared here. models.dev only carries the Hy
+	// plan models under `tencent-token-plan`.
+	// https://cloud.tencent.com/document/product/1823/130119
+	const TENCENT_TOKEN_PLAN_BASE_URL = "https://api.lkeap.cloud.tencent.com/plan/v3";
+	const tencentTokenPlanCompat: OpenAICompletionsCompat = {
+		thinkingFormat: "deepseek",
+		supportsDeveloperRole: false,
+		supportsStore: false,
+		supportsReasoningEffort: true,
+		requiresReasoningContentOnAssistantMessages: true,
+		maxTokensField: "max_tokens",
+	};
+	// Both V4 sizes document `low`, unlike DeepSeek's own deployment where only Flash has it.
+	const TENCENT_TOKEN_PLAN_DEEPSEEK_V4_THINKING_LEVEL_MAP = {
+		minimal: null,
+		low: "low",
+		medium: null,
+		high: "high",
+		max: "max",
+	} as const;
+	// GLM-5.2 upstream advertises `high` and `max`, surfaced here under the same names.
+	// Verified against this endpoint with a 600-token budget: `max` exhausts it on
+	// every run (572+ reasoning tokens) while `high` converges (304-408), so the two
+	// tiers are distinct. `low` and `medium` behave exactly like `high` — the endpoint
+	// accepts any effort value and silently ignores the ones it does not implement.
+	const TENCENT_TOKEN_PLAN_GLM52_THINKING_LEVEL_MAP = {
+		off: null,
+		minimal: null,
+		low: null,
+		medium: null,
+		high: "high",
+		xhigh: null,
+		max: "max",
+	} as const;
+	// Always-thinking models with no effort vocabulary have no level to pick from.
+	const TENCENT_TOKEN_PLAN_FIXED_THINKING_LEVEL_MAP = {
+		off: null,
+		minimal: null,
+		low: null,
+		medium: null,
+		high: null,
+		xhigh: null,
+		max: null,
+	} as const;
+	// Only models with a documented effort vocabulary send `reasoning_effort`; the
+	// rest must not, because the endpoint silently accepts and then ignores unknown
+	// effort values.
+	const tencentTokenPlanEffortModels: Model<"openai-completions">[] = [
+		{
+			id: "deepseek/deepseek-v4-flash",
+			name: "DeepSeek V4 Flash",
+			api: "openai-completions",
+			provider: "tencent-token-plan-individual",
+			baseUrl: TENCENT_TOKEN_PLAN_BASE_URL,
+			reasoning: true,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 1000000,
+			maxTokens: 384000,
+			compat: tencentTokenPlanCompat,
+		},
+		{
+			id: "deepseek/deepseek-v4-pro",
+			name: "DeepSeek V4 Pro",
+			api: "openai-completions",
+			provider: "tencent-token-plan-individual",
+			baseUrl: TENCENT_TOKEN_PLAN_BASE_URL,
+			reasoning: true,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 1000000,
+			maxTokens: 384000,
+			compat: tencentTokenPlanCompat,
+		},
+		{
+			id: "glm-5.2",
+			name: "GLM-5.2",
+			api: "openai-completions",
+			provider: "tencent-token-plan-individual",
+			baseUrl: TENCENT_TOKEN_PLAN_BASE_URL,
+			reasoning: true,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 1000000,
+			maxTokens: 131072,
+			compat: tencentTokenPlanCompat,
+		},
+	];
+	// Auto routes to an unknown model and MiniMax-M2.7 is always thinking, so both
+	// omit the reasoning parameter instead of toggling it off. With no level to
+	// select, they also expose an empty thinking-level list.
+	const tencentTokenPlanAlwaysThinkingModels: Model<"openai-completions">[] = [
+		{
+			id: "tc-code-latest",
+			name: "Auto",
+			api: "openai-completions",
+			provider: "tencent-token-plan-individual",
+			baseUrl: TENCENT_TOKEN_PLAN_BASE_URL,
+			reasoning: true,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			// Auto publishes no limits. The /coding/v3 catalog lists 131072/16384, but this
+			// endpoint served 40000 output tokens without complaint, so that output figure
+			// is too low here. 65536 sits inside the measured floor and the input window.
+			contextWindow: 131072,
+			maxTokens: 65536,
+			compat: { ...tencentTokenPlanCompat, supportsReasoningEffort: false },
+		},
+		{
+			id: "minimax-m2.7",
+			name: "MiniMax-M2.7",
+			api: "openai-completions",
+			provider: "tencent-token-plan-individual",
+			baseUrl: TENCENT_TOKEN_PLAN_BASE_URL,
+			reasoning: true,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 204800,
+			maxTokens: 131072,
+			compat: { ...tencentTokenPlanCompat, supportsReasoningEffort: false },
+		},
+	];
+	// GLM-5 and GLM-5.1 are omitted: both are reasoning toggle-only, so they offer no
+	// effort control over GLM-5.2. Kimi-K2.5 is documented as retired on 2026-08-31
+	// and is intentionally absent.
+	allModels.push(...tencentTokenPlanEffortModels, ...tencentTokenPlanAlwaysThinkingModels);
+
+	// Runs after the shared rules because this endpoint publishes its own effort
+	// vocabulary: the generic deepseek-v4 map would otherwise overwrite the `low`
+	// tier that both V4 sizes document here.
+	function applyTencentTokenPlanThinkingLevelMetadata(models: Model<Api>[]): void {
+		for (const model of models) {
+			if (model.provider !== "tencent-token-plan-individual") continue;
+			const thinkingLevelMap = model.id.includes("deepseek-v4")
+				? TENCENT_TOKEN_PLAN_DEEPSEEK_V4_THINKING_LEVEL_MAP
+				: model.id === "glm-5.2"
+					? TENCENT_TOKEN_PLAN_GLM52_THINKING_LEVEL_MAP
+					: TENCENT_TOKEN_PLAN_FIXED_THINKING_LEVEL_MAP;
+			mergeThinkingLevelMap(model, thinkingLevelMap);
+		}
+	}
+
 	for (const candidate of allModels) {
 		if (
 			candidate.api === "openai-completions" &&
@@ -2890,6 +3034,7 @@ async function generateModels() {
 		applyOpenAIExplicitPromptCacheMetadata(model);
 	}
 	applyAnthropicAllowedFallbackModelMetadata(allModels.filter(isAnthropicFallbackMetadataModel));
+	applyTencentTokenPlanThinkingLevelMetadata(allModels);
 
 	// Group by provider and deduplicate by model ID
 	const providers: Record<string, Record<string, Model<any>>> = {};

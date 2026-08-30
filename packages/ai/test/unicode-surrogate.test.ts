@@ -744,6 +744,29 @@ describe("AI Providers Unicode Surrogate Pair Tests", () => {
 		});
 	});
 
+	describe.skipIf(!process.env.TENCENT_TOKEN_PLAN_API_KEY)(
+		"Tencent Token Plan Individual Provider Unicode Handling",
+		() => {
+			const llm = getModel("tencent-token-plan-individual", "glm-5.2");
+
+			it("should handle emoji in tool results", { retry: 3, timeout: 30000 }, async () => {
+				await testEmojiInToolResults(llm);
+			});
+
+			it("should handle real-world LinkedIn comment data with emoji", { retry: 3, timeout: 30000 }, async () => {
+				await testRealWorldLinkedInData(llm);
+			});
+
+			it(
+				"should handle unpaired high surrogate (0xD83D) in tool results",
+				{ retry: 3, timeout: 30000 },
+				async () => {
+					await testUnpairedHighSurrogate(llm);
+				},
+			);
+		},
+	);
+
 	describe.skipIf(!process.env.QWEN_TOKEN_PLAN_CN_API_KEY)("Qwen Token Plan (CN) Provider Unicode Handling", () => {
 		const llm = getModel("qwen-token-plan-cn", "qwen3.7-max");
 
