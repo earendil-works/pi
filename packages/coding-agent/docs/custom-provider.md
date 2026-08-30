@@ -20,6 +20,7 @@ See these complete provider examples:
 - [Quick Reference](#quick-reference)
 - [Override Existing Provider](#override-existing-provider)
 - [Register New Provider](#register-new-provider)
+- [Cleaning Up Session Resources](#cleaning-up-session-resources)
 - [Unregister Provider](#unregister-provider)
 - [OAuth Support](#oauth-support)
 - [Custom Streaming API](#custom-streaming-api)
@@ -184,6 +185,36 @@ pi.registerProvider("my-llm", {
 When `models` is provided, it **replaces** all existing models for that provider.
 
 `apiKey` and custom header values use the same config value syntax as `models.json`: `!command` at the start executes a command for the whole value, `$ENV_VAR` and `${ENV_VAR}` interpolate environment variables, `$$` emits a literal `$`, and `$!` emits a literal `!`.
+
+## Cleaning Up Session Resources
+
+If your extension imports pi-ai **api subpath modules** (for example
+`@earendil-works/pi-ai/api/openai-codex-responses`) they resolve from your
+extension's own `node_modules`, giving you a private pi-ai module instance.
+Pi's session teardown drains the *bundled* pi-ai's session-resource registry,
+but it cannot reach a private instance — so long-lived transports your
+instance pools (like the codex WebSocket cache, which idles connections for
+five minutes) keep a scripted `pi -p` run's process alive after the answer.
+
+Close what your instance owns from a `session_shutdown` handler:
+
+```typescript
+import { closeOpenAICodexWebSocketSessions } from "@earendil-works/pi-ai/api/openai-codex-responses";
+
+export default function (pi: ExtensionAPI) {
+  // ... registerProvider(...) ...
+  pi.on("session_shutdown", () => {
+    try {
+      closeOpenAICodexWebSocketSessions();
+    } catch {
+      /* never block shutdown */
+    }
+  });
+}
+```
+
+The root import (`@earendil-works/pi-ai`) is aliased to the bundled compat
+module and needs no such handler — this only applies to api subpath imports.
 
 ## Unregister Provider
 

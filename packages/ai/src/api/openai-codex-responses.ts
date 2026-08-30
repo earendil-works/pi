@@ -1033,6 +1033,10 @@ function scheduleSessionWebSocketExpiry(sessionId: string, accountId: string, en
 		if (accountEntries?.get(accountId) === entry) accountEntries.delete(accountId);
 		if (accountEntries?.size === 0) websocketSessionCache.delete(sessionId);
 	}, SESSION_WEBSOCKET_CACHE_TTL_MS);
+	// An idle cache entry must not keep a one-shot process alive: when the
+	// server closes its side early the socket handle goes away, but a ref'd
+	// timer would still pin the event loop for the full TTL.
+	entry.idleTimer.unref?.();
 }
 
 async function connectWebSocket(

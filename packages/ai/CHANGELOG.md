@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Unref'd the codex WebSocket idle-cache timer so a pooled connection whose server side already closed cannot pin a one-shot process's event loop for the full 5-minute TTL.
+
 ## [0.84.4] - 2026-08-28
 
 ### Added
