@@ -2315,24 +2315,30 @@ If a slot intentionally has no visible content, return an empty `Component` such
 
 #### Keybinding Hints
 
-Use `keyHint()` to display keybinding hints that respect the active keybinding configuration:
+Use `pi.keyHint()` to display keybinding hints that respect the active keybinding configuration:
 
 ```typescript
-import { keyHint } from "@earendil-works/pi-coding-agent";
-
-renderResult(result, { expanded }, theme, context) {
-  let text = theme.fg("success", "✓ Done");
-  if (!expanded) {
-    text += ` (${keyHint("app.tools.expand", "to expand")})`;
-  }
-  return new Text(text, 0, 0);
+export default function (pi: ExtensionAPI) {
+  pi.registerTool({
+    // ...
+    renderResult(result, { expanded }, theme, context) {
+      let text = theme.fg("success", "✓ Done");
+      if (!expanded) {
+        text += ` (${pi.keyHint("app.tools.expand", "to expand")})`;
+      }
+      return new Text(text, 0, 0);
+    },
+  });
 }
 ```
 
-Available functions:
-- `keyHint(keybinding, description)` - Formats a configured keybinding id such as `"app.tools.expand"` or `"tui.select.confirm"`
-- `keyText(keybinding)` - Returns the raw configured key text for a keybinding id
-- `rawKeyHint(key, description)` - Format a raw key string
+Available on the `ExtensionAPI` instance:
+- `pi.keyHint(keybinding, description)` - Formats a configured keybinding id such as `"app.tools.expand"` or `"tui.select.confirm"`
+- `pi.keyText(keybinding)` - Returns the raw configured key text for a keybinding id
+- `pi.keyDisplayText(keybinding)` - Like `keyText` with capitalized key parts
+- `pi.getKeybindings()` - The host's keybindings manager, for `getKeys()` and `matches()`. Resolved on every call; do not cache the returned instance.
+
+Do not import `keyHint`/`keyText`/`getKeybindings` from `@earendil-works/pi-coding-agent` or `@earendil-works/pi-tui` in an extension. An installed extension can resolve its own copy of those packages, and that copy's module-local keybindings manager never receives the host's `app.*` bindings, so hints render with an empty key. The `pi.*` methods above are bound to the host and always see the merged bindings.
 
 Use namespaced keybinding ids:
 - Coding-agent ids use the `app.*` namespace, for example `app.tools.expand`, `app.editor.external`, `app.session.rename`

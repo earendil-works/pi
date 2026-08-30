@@ -39,10 +39,12 @@ import type {
 	Component,
 	EditorComponent,
 	EditorTheme,
+	Keybinding,
 	KeyId,
 	OverlayHandle,
 	OverlayOptions,
 	TUI,
+	KeybindingsManager as TuiKeybindingsManager,
 } from "@earendil-works/pi-tui";
 import type { Static, TSchema } from "typebox";
 import type { Theme } from "../../modes/interactive/theme/theme.ts";
@@ -1407,6 +1409,32 @@ export interface ExtensionAPI {
 
 	/** Get available slash commands in the current session. */
 	getCommands(): SlashCommandInfo[];
+
+	// =========================================================================
+	// Keybindings
+	// =========================================================================
+
+	/**
+	 * Get the host's keybindings manager: app and TUI definitions merged with
+	 * the user's keybindings.json once the interactive UI has initialized.
+	 *
+	 * Extensions must use this (or the formatting helpers below) instead of
+	 * importing `getKeybindings()`/`keyText()` from their own copy of the pi
+	 * packages: an extension can resolve a separate module instance whose
+	 * module-local manager never sees the host's `app.*` bindings, so lookups
+	 * come back empty. The host manager is resolved on every call, so do not
+	 * cache the returned instance.
+	 */
+	getKeybindings(): TuiKeybindingsManager;
+
+	/** Bound keys of a keybinding formatted for display (e.g. "ctrl+o"); empty string when unbound. */
+	keyText(keybinding: Keybinding): string;
+
+	/** Like `keyText` with capitalized key parts (e.g. "Ctrl+O"). */
+	keyDisplayText(keybinding: Keybinding): string;
+
+	/** Themed hint combining the bound key and a description (e.g. "ctrl+o to expand"). */
+	keyHint(keybinding: Keybinding, description: string): string;
 
 	// =========================================================================
 	// Model and Thinking Level

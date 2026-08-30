@@ -12,8 +12,8 @@ import type { Provider } from "@earendil-works/pi-ai";
 import * as _bundledPiAiCompat from "@earendil-works/pi-ai/compat";
 import * as _bundledPiAiOauth from "@earendil-works/pi-ai/oauth";
 import * as _bundledPiAiProviders from "@earendil-works/pi-ai/providers/all";
-import type { KeyId } from "@earendil-works/pi-tui";
 import * as _bundledPiTui from "@earendil-works/pi-tui";
+import { getKeybindings as getHostKeybindings, type Keybinding, type KeyId } from "@earendil-works/pi-tui";
 import { createJiti } from "jiti/static";
 // Static imports of packages that extensions may use.
 // These MUST be static so Bun bundles them into the compiled binary.
@@ -25,6 +25,7 @@ import { CONFIG_DIR_NAME, getAgentDir, isBunBinary } from "../../config.ts";
 // NOTE: This import works because loader.ts exports are NOT re-exported from index.ts,
 // avoiding a circular dependency. Extensions can import from @earendil-works/pi-coding-agent.
 import * as _bundledPiCodingAgent from "../../index.ts";
+import { keyDisplayText, keyHint, keyText } from "../../modes/interactive/components/keybinding-hints.ts";
 import { resolvePath } from "../../utils/paths.ts";
 import { createEventBus, type EventBus } from "../event-bus.ts";
 import type { ExecOptions } from "../exec.ts";
@@ -412,6 +413,28 @@ function createExtensionAPI(
 		getCommands() {
 			assertActive();
 			return runtime.getCommands();
+		},
+
+		// Keybindings - host-bound so extensions see the host's merged app.*
+		// bindings even when they resolve their own copy of the pi packages (#4748)
+		getKeybindings() {
+			assertActive();
+			return getHostKeybindings();
+		},
+
+		keyText(keybinding: Keybinding) {
+			assertActive();
+			return keyText(keybinding);
+		},
+
+		keyDisplayText(keybinding: Keybinding) {
+			assertActive();
+			return keyDisplayText(keybinding);
+		},
+
+		keyHint(keybinding: Keybinding, description: string) {
+			assertActive();
+			return keyHint(keybinding, description);
 		},
 
 		setModel(model) {
