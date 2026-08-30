@@ -250,13 +250,119 @@ function countOccurrences(content: string, oldText: string): number {
 	return fuzzyContent.split(fuzzyOldText).length - 1;
 }
 
-function getNotFoundError(path: string, editIndex: number, totalEdits: number): Error {
+const MAX_NEAREST_SCAN_LINES = 5000;
+const MAX_NEAREST_WINDOW_LINES = 6;
+const MAX_NEAREST_COMPARE_LINE_CHARS = 1000;
+const MAX_NEAREST_EXCERPT_LINE_CHARS = 500;
+
+function collapseWhitespace(line: string): string {
+	return line.trim().replace(/\s+/g, " ").toLowerCase().slice(0, MAX_NEAREST_COMPARE_LINE_CHARS);
+}
+
+function charBigrams(value: string): Set<string> {
+	const set = new Set<string>();
+	for (let i = 0; i < value.length - 1; i++) {
+		set.add(value.slice(i, i + 2));
+	}
+	return set;
+}
+
+function bigramDice(a: string, b: string): number {
+	const ab = charBigrams(a);
+	const bb = charBigrams(b);
+	if (ab.size === 0 || bb.size === 0) return 0;
+	let intersection = 0;
+	for (const gram of ab) {
+		if (bb.has(gram)) intersection++;
+	}
+	return (2 * intersection) / (ab.size + bb.size);
+}
+
+/**
+ * Find the current lines nearest to a stale oldText that failed exact and
+ * fuzzy matching, so the error can hand the model ground truth instead of
+ * a bare not-found. Returns 1-based start line and the bounded window, or
+ * null when the content is empty, too large, or nothing plausibly matches.
+ */
+function findNearestCurrentRegion(content: string, oldText: string): { startLine: number; lines: string[] } | null {
+	const rawLines = content.split("\n");
+	const fuzzyLines = normalizeForFuzzyMatch(content).split("\n");
+	if (rawLines.length === 0 || rawLines.length !== fuzzyLines.length || rawLines.length > MAX_NEAREST_SCAN_LINES) {
+		return null;
+	}
+
+	const anchor = normalizeForFuzzyMatch(oldText)
+		.split("\n")
+		.filter((line) => line.trim().length > 0)
+		.map(collapseWhitespace)
+		.filter((line) => line.length > 0);
+	if (anchor.length === 0) return null;
+	const windowHeight = Math.min(anchor.length, MAX_NEAREST_WINDOW_LINES);
+
+	// Slide the whole stale oldText over the file and score aligned windows with
+	// bigram Dice, so a multi-line anchor prefers the region where the whole
+	// sequence (not just the longest line) resembles the file.
+	let bestStart = -1;
+	let bestScore = 0;
+	const collapsedLines = fuzzyLines.map(collapseWhitespace);
+	for (let start = 0; start + windowHeight <= collapsedLines.length; start++) {
+		let total = 0;
+		let pairs = 0;
+		for (let row = 0; row < windowHeight; row++) {
+			const a = anchor[row];
+			const b = collapsedLines[start + row];
+			if (a.length === 0 || b.length === 0) continue;
+			total += bigramDice(a, b);
+			pairs++;
+		}
+		if (pairs === 0) continue;
+		const score = total / pairs;
+		if (score > bestScore) {
+			bestScore = score;
+			bestStart = start;
+		}
+	}
+	if (bestStart === -1 || bestScore < 0.25) return null;
+
+	// Center the returned window on the best-aligned region, then widen to the
+	// fixed cap so the model sees surrounding context in both directions.
+	const center = bestStart + Math.floor(windowHeight / 2);
+	const half = Math.floor(MAX_NEAREST_WINDOW_LINES / 2);
+	const start = Math.max(0, center - half);
+	const end = Math.min(rawLines.length, start + MAX_NEAREST_WINDOW_LINES);
+	return { startLine: start + 1, lines: rawLines.slice(start, end) };
+}
+
+function getNotFoundError(
+	path: string,
+	editIndex: number,
+	totalEdits: number,
+	content: string,
+	oldText: string,
+): Error {
 	const base =
 		totalEdits === 1
 			? `Could not find the exact text in ${path}. The old text must match exactly including all whitespace and newlines.`
 			: `Could not find edits[${editIndex}] in ${path}. The oldText must match exactly including all whitespace and newlines.`;
+	const guidance =
+		"\nCommon causes: the oldText copied from memory differs in whitespace/indentation, or uses different line endings. Read the file first to get the exact text, or choose a shorter, uniquely identifiable anchor.";
+	const region = findNearestCurrentRegion(content, oldText);
+	if (!region) {
+		return new Error(`${base}${guidance}`);
+	}
+	const width = String(region.startLine + region.lines.length - 1).length;
+	const excerptLines = region.lines.map((line, offset) => {
+		const truncated = line.length > MAX_NEAREST_EXCERPT_LINE_CHARS;
+		const displayedLine = truncated
+			? `${line.slice(0, MAX_NEAREST_EXCERPT_LINE_CHARS)}… [${line.length - MAX_NEAREST_EXCERPT_LINE_CHARS} more chars]`
+			: line;
+		return { text: `${String(region.startLine + offset).padStart(width)}| ${displayedLine}`, truncated };
+	});
+	const retryGuidance = excerptLines.some(({ truncated }) => truncated)
+		? "Read the file to retrieve any truncated line, then use the relevant exact current text as your oldText."
+		: "Use the relevant exact current text shown above as your oldText.";
 	return new Error(
-		`${base}\nCommon causes: the oldText copied from memory differs in whitespace/indentation, or uses different line endings. Read the file first to get the exact text, or choose a shorter, uniquely identifiable anchor.`,
+		`${base}${guidance}\n\nThe target file currently contains this text near line ${region.startLine}:\n${excerptLines.map(({ text }) => text).join("\n")}\n${retryGuidance}`,
 	);
 }
 
@@ -320,7 +426,7 @@ export function applyEditsToNormalizedContent(
 		const edit = normalizedEdits[i];
 		const matchResult = fuzzyFindText(replacementBaseContent, edit.oldText);
 		if (!matchResult.found) {
-			throw getNotFoundError(path, i, normalizedEdits.length);
+			throw getNotFoundError(path, i, normalizedEdits.length, normalizedContent, edit.oldText);
 		}
 
 		const occurrences = countOccurrences(replacementBaseContent, edit.oldText);

@@ -475,6 +475,84 @@ describe("AgentHarness tools", () => {
 			).rejects.toThrow(/Found 3 occurrences/);
 		});
 
+		it("includes current lines near a stale oldText so the model can recover", async () => {
+			const context = createContext();
+			getOrThrow(
+				await context.env.writeFile(
+					"stale.txt",
+					["function alpha() {", "  return 1;", "}", "", "function beta() {", "  return 2;", "}"].join("\n") +
+						"\n",
+					BACKGROUND_CONTEXT,
+				),
+			);
+			const tool = createEditTool();
+
+			await expect(
+				tool.execute(
+					"edit-stale-1",
+					{
+						path: "stale.txt",
+						edits: [{ oldText: "function beta() {\n  return 999;", newText: "function beta() {\n  return 2;" }],
+					},
+					noUpdate,
+					context,
+					invocation,
+					BACKGROUND_CONTEXT,
+				),
+			).rejects.toThrow(/currently contains this text near line \d+:.*function beta\(\) \{/s);
+		});
+
+		it("bounds long lines in the recovery excerpt", async () => {
+			const context = createContext();
+			const longLine = `function beta() { ${"x".repeat(10_000)}`;
+			getOrThrow(await context.env.writeFile("stale-long.txt", `${longLine}\n`, BACKGROUND_CONTEXT));
+
+			const message = await createEditTool()
+				.execute(
+					"edit-stale-long",
+					{
+						path: "stale-long.txt",
+						edits: [{ oldText: "function beta() { stale", newText: "changed" }],
+					},
+					noUpdate,
+					context,
+					invocation,
+					BACKGROUND_CONTEXT,
+				)
+				.then(
+					() => "",
+					(error: Error) => error.message,
+				);
+			expect(message).toMatch(/currently contains this text near line \d+/);
+			expect(message).toContain("more chars]");
+			expect(message).not.toContain("x".repeat(501));
+			expect(message.length).toBeLessThan(5000);
+		});
+
+		it("falls back to the plain message when nothing plausibly matches", async () => {
+			const context = createContext();
+			getOrThrow(
+				await context.env.writeFile("no-plausible.txt", "completely different content\n", BACKGROUND_CONTEXT),
+			);
+			const tool = createEditTool();
+
+			const message = await tool
+				.execute(
+					"edit-stale-2",
+					{
+						path: "no-plausible.txt",
+						edits: [{ oldText: "function beta() {\n  return 999;", newText: "changed" }],
+					},
+					noUpdate,
+					context,
+					invocation,
+					BACKGROUND_CONTEXT,
+				)
+				.catch((error: Error) => error.message);
+			expect(message).toMatch(/Could not find the exact text/);
+			expect(message).not.toMatch(/currently contains this text/);
+		});
+
 		it("keeps the mutation queue locked until an aborted edit write settles", async () => {
 			const env = new BlockingEditExecutionEnv({ cwd: createTempDir() });
 			getOrThrow(await env.writeFile("file.txt", "alpha\nbeta\n", BACKGROUND_CONTEXT));

@@ -1246,6 +1246,63 @@ describe("edit tool fuzzy matching", () => {
 		).rejects.toThrow(/Could not find the exact text/);
 	});
 
+	it("should include the current lines near a stale oldText so the model can recover", async () => {
+		const testFile = join(testDir, "stale-oldtext.txt");
+		writeFileSync(
+			testFile,
+			`function alpha() {
+  return 1;
+}
+
+function beta() {
+  return 2;
+}\n`,
+		);
+
+		// The beta block drifted (return 999), so the exact+fuzzy match fails. The
+		// error should surface the actual beta lines instead of a bare not-found.
+		await expect(
+			editTool.execute("test-stale-oldtext-1", {
+				path: testFile,
+				edits: [{ oldText: "function beta() {\n  return 999;", newText: "function beta() {\n  return 2;" }],
+			}),
+		).rejects.toThrow(/currently contains this text near line \d+:.*function beta\(\) \{/s);
+	});
+
+	it("should bound long lines in the recovery excerpt", async () => {
+		const testFile = join(testDir, "stale-long-line.txt");
+		const longLine = `function beta() { ${"x".repeat(10_000)}`;
+		writeFileSync(testFile, `${longLine}\n`);
+
+		const message = await editTool
+			.execute("test-stale-long", {
+				path: testFile,
+				edits: [{ oldText: "function beta() { stale", newText: "changed" }],
+			})
+			.then(
+				() => "",
+				(error: Error) => error.message,
+			);
+		expect(message).toMatch(/currently contains this text near line \d+/);
+		expect(message).toContain("more chars]");
+		expect(message).not.toContain("x".repeat(501));
+		expect(message.length).toBeLessThan(5000);
+	});
+
+	it("should fall back to the plain message when nothing plausibly matches", async () => {
+		const testFile = join(testDir, "no-plausible-match.txt");
+		writeFileSync(testFile, "completely different content\n");
+
+		const message = await editTool
+			.execute("test-stale-oldtext-2", {
+				path: testFile,
+				edits: [{ oldText: "function beta() {\n  return 999;", newText: "changed" }],
+			})
+			.catch((error: Error) => error.message);
+		expect(message).toMatch(/Could not find the exact text/);
+		expect(message).not.toMatch(/currently contains this text/);
+	});
+
 	it("should detect duplicates after fuzzy normalization", async () => {
 		const testFile = join(testDir, "fuzzy-dups.txt");
 		// Two lines that are identical after trailing whitespace is stripped
