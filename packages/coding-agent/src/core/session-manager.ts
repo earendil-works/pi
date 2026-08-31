@@ -545,12 +545,11 @@ export function loadEntriesFromFile(filePath: string): FileEntry[] {
 		closeSync(fd);
 	}
 
-	// Validate session header before repairing the file.
+	// Validate a session header exists before repairing the file. Forks may
+	// prepend non-session entries (e.g. a title record) before the header.
 	if (entries.length === 0) return entries;
-	const header = entries[0];
-	if (header.type !== "session" || typeof (header as { id?: unknown }).id !== "string") {
-		return [];
-	}
+	const header = entries.find((entry) => entry.type === "session" && "id" in entry && typeof entry.id === "string");
+	if (!header) return [];
 
 	if (pending) appendFileSync(resolvedFilePath, "\n");
 	return entries;
@@ -558,14 +557,17 @@ export function loadEntriesFromFile(filePath: string): FileEntry[] {
 
 /**
  * Inspect a physical line while searching for the first parsed session entry.
- * Blank and malformed lines are skipped to match loadEntriesFromFile().
- * Returns undefined to keep scanning, null for a parsed non-header entry, or the header.
+ * Blank, malformed, and non-header entries are skipped so forks that prepend
+ * metadata lines (e.g. a title record) still resolve their session header.
+ * Returns undefined to keep scanning, or the header.
  */
-function parseSessionHeaderCandidate(line: string): SessionHeader | null | undefined {
+function parseSessionHeaderCandidate(line: string): SessionHeader | undefined {
 	if (!line.trim()) return undefined;
 	const entry = parseSessionEntryLine(line);
 	if (!entry) return undefined;
-	if (entry.type !== "session" || typeof (entry as { id?: unknown }).id !== "string") return null;
+	if (entry.type !== "session" || !("id" in entry) || typeof entry.id !== "string") {
+		return undefined;
+	}
 	return entry;
 }
 
@@ -705,7 +707,9 @@ async function buildSessionInfo(filePath: string): Promise<SessionInfo | null> {
 			if (!entry) continue;
 
 			if (!header) {
-				if (entry.type !== "session") return null;
+				// Tolerate non-session entries before the header (e.g. a
+				// title record written ahead of it by forks).
+				if (entry.type !== "session") continue;
 				header = entry;
 				continue;
 			}
