@@ -287,6 +287,11 @@ const DEEPSEEK_V4_FLASH_THINKING_LEVEL_MAP = {
 	...DEEPSEEK_V4_THINKING_LEVEL_MAP,
 	low: "low",
 } as const;
+// Gateways that apply one reasoning contract to every model they serve, DeepSeek V4 included.
+// Melious takes reasoning_effort low, medium or high on all of them and returns the reasoning in
+// reasoning_content, all verified against the live API, so the DeepSeek-specific thinking format
+// and effort levels would hide working levels and add ones the host does not document.
+const DEEPSEEK_V4_OVERRIDE_EXEMPT_PROVIDERS = new Set<string>(["melious"]);
 const QWEN_TOKEN_PLAN_HIGH_MAX_THINKING_LEVEL_MAP = {
 	minimal: null,
 	low: null,
@@ -360,6 +365,515 @@ const ANT_LING_RING_THINKING_LEVEL_MAP = {
 	high: "high",
 	xhigh: "xhigh",
 } as const;
+
+// Melious (https://melious.ai) serves open-weight models on European infrastructure over an
+// OpenAI-compatible API. Its catalog is not published on models.dev, so the tool-capable chat
+// models are listed here, like the Ant Ling and OpenAI Codex catalogs below.
+//
+// Source: GET https://api.melious.ai/v1/models?include_meta=true, verified 2026-08-27. Included
+// when `_meta.type` is "chat" and `_meta.capabilities.function_calling` is true, matching the
+// tool_call filter applied to models.dev providers.
+//
+// Cost: Melious prices in EUR; converted at 1.17 USD/EUR (ECB reference rate, captured
+// 2026-08-20). Context and output limits are the largest values verified against the live API.
+//
+// Reasoning: `reasoning_effort` accepts low, medium and high, and the reasoning text comes back
+// in `message.reasoning_content`. There is no reliable off state - an explicit "none" silences
+// some models and is ignored by others - so no off level is exposed.
+const MELIOUS_BASE_URL = "https://api.melious.ai/v1";
+// Advertised by GET /v1/models but not serving as of 2026-08-31: every request shape returns
+// provider_error, invalid_request_error or model_not_found. Verified with two retries each, with
+// and without max_tokens. Drop the entry here once the model answers a plain completion again.
+const MELIOUS_UNAVAILABLE_MODEL_IDS = new Set([
+	"deepseek-v3.1",
+	"gpt-oss-20b",
+	"llama-3.3-70b-instruct",
+	"mistral-medium-3.5-128b",
+	"nemotron-3-super-120b-a12b",
+	"qwen3-32b",
+	"qwen3-vl-235b-a22b-instruct",
+	"qwen3.8-max",
+]);
+const MELIOUS_REASONING_OPTIONS: ModelsDevReasoningOption[] = [{ type: "effort", values: ["low", "medium", "high"] }];
+const MELIOUS_BASE_COMPAT: OpenAICompletionsCompat = {
+	supportsStore: false,
+	// Melious rejects the developer role: "Invalid role 'developer'".
+	supportsDeveloperRole: false,
+	supportsReasoningEffort: false,
+	maxTokensField: "max_tokens",
+	supportsStrictMode: true,
+	supportsLongCacheRetention: false,
+};
+const MELIOUS_REASONING_COMPAT: OpenAICompletionsCompat = {
+	...MELIOUS_BASE_COMPAT,
+	supportsReasoningEffort: true,
+	thinkingFormat: "openai",
+};
+
+interface MeliousCatalogEntry {
+	id: string;
+	name: string;
+	reasoning: boolean;
+	/** Set when `_meta.input_modalities` includes "image". */
+	vision?: true;
+	context: number;
+	output: number;
+	cost: { input: number; output: number; cacheRead?: number };
+}
+
+const MELIOUS_CATALOG: MeliousCatalogEntry[] = [
+	{
+		id: "deepseek-r1-0528",
+		name: "DeepSeek R1 0528",
+		reasoning: true,
+		context: 164000,
+		output: 164000,
+		cost: { input: 0.702, output: 2.808, cacheRead: 0.1872 },
+	},
+	{
+		id: "deepseek-v3.1",
+		name: "DeepSeek-V3.1",
+		reasoning: true,
+		context: 164000,
+		output: 8192,
+		cost: { input: 0.234, output: 0.936 },
+	},
+	{
+		id: "deepseek-v3.2",
+		name: "DeepSeek V3.2",
+		reasoning: true,
+		context: 164000,
+		output: 164000,
+		cost: { input: 0.351, output: 0.585, cacheRead: 0.0936 },
+	},
+	{
+		id: "deepseek-v4-flash-0731",
+		name: "DeepSeek V4 Flash 0731",
+		reasoning: true,
+		context: 1000000,
+		output: 1000000,
+		cost: { input: 0.117, output: 0.351, cacheRead: 0.0234 },
+	},
+	{
+		id: "deepseek-v4-pro",
+		name: "DeepSeek V4 Pro",
+		reasoning: true,
+		context: 1000000,
+		output: 1000000,
+		cost: { input: 1.872, output: 3.744, cacheRead: 0.468 },
+	},
+	{
+		id: "deepseek-v4-pro-0813",
+		name: "DeepSeek V4 Pro 0813",
+		reasoning: true,
+		context: 1000000,
+		output: 1000000,
+		cost: { input: 1.17, output: 3.51, cacheRead: 0.234 },
+	},
+	{
+		id: "devstral-2-123b-instruct-2512",
+		name: "Devstral 2",
+		reasoning: true,
+		context: 200000,
+		output: 16384,
+		cost: { input: 0.468, output: 2.34 },
+	},
+	{
+		id: "gemma-3-27b-it",
+		name: "Gemma 3 27B",
+		reasoning: true,
+		vision: true,
+		context: 40000,
+		output: 32768,
+		cost: { input: 0.2925, output: 0.585 },
+	},
+	{
+		id: "gemma-4-26b-a4b",
+		name: "Gemma 4 26B A4B IT",
+		reasoning: true,
+		vision: true,
+		context: 256000,
+		output: 81920,
+		cost: { input: 0.117, output: 0.585 },
+	},
+	{
+		id: "gemma-4-31b",
+		name: "Gemma 4 31B IT",
+		reasoning: true,
+		vision: true,
+		context: 256000,
+		output: 131072,
+		cost: { input: 0.117, output: 0.351, cacheRead: 0.0234 },
+	},
+	{
+		id: "glm-4.7",
+		name: "GLM-4.7",
+		reasoning: true,
+		context: 203000,
+		output: 131072,
+		cost: { input: 0.6435, output: 2.574 },
+	},
+	{
+		id: "glm-5",
+		name: "GLM-5",
+		reasoning: true,
+		context: 203000,
+		output: 203000,
+		cost: { input: 1.1115, output: 3.393, cacheRead: 0.2691 },
+	},
+	{
+		id: "glm-5.1",
+		name: "GLM-5.1",
+		reasoning: true,
+		context: 203000,
+		output: 203000,
+		cost: { input: 1.521, output: 4.68, cacheRead: 0.3744 },
+	},
+	{
+		id: "glm-5.2",
+		name: "GLM-5.2",
+		reasoning: true,
+		context: 1000000,
+		output: 1000000,
+		cost: { input: 1.17, output: 4.68, cacheRead: 0.2925 },
+	},
+	{
+		id: "gpt-oss-120b",
+		name: "GPT OSS 120B",
+		reasoning: true,
+		context: 131072,
+		output: 32768,
+		cost: { input: 0.0468, output: 0.234 },
+	},
+	{
+		id: "gpt-oss-20b",
+		name: "GPT OSS 20B",
+		reasoning: true,
+		context: 131000,
+		output: 32768,
+		cost: { input: 0.0351, output: 0.1521 },
+	},
+	{
+		id: "hermes-4-405b",
+		name: "Hermes 4 405B",
+		reasoning: true,
+		context: 128000,
+		output: 128000,
+		cost: { input: 1.1115, output: 3.3345 },
+	},
+	{
+		id: "hermes-4-70b",
+		name: "Hermes 4 70B",
+		reasoning: true,
+		context: 128000,
+		output: 128000,
+		cost: { input: 0.1404, output: 0.468 },
+	},
+	{
+		id: "holo2-30b-a3b",
+		name: "Holo2 30B A3B",
+		reasoning: true,
+		vision: true,
+		context: 131072,
+		output: 32768,
+		cost: { input: 0.351, output: 0.819 },
+	},
+	{
+		id: "kimi-k2.5",
+		name: "Kimi K2.5",
+		reasoning: true,
+		vision: true,
+		context: 262000,
+		output: 262000,
+		cost: { input: 0.585, output: 2.9835, cacheRead: 0.1404 },
+	},
+	{
+		id: "kimi-k2.6",
+		name: "Kimi K2.6",
+		reasoning: true,
+		vision: true,
+		context: 262000,
+		output: 262000,
+		cost: { input: 0.819, output: 4.095, cacheRead: 0.2691 },
+	},
+	{
+		id: "kimi-k2.7-code",
+		name: "Kimi K2.7 Code",
+		reasoning: true,
+		vision: true,
+		context: 262144,
+		output: 262144,
+		cost: { input: 0.819, output: 3.51, cacheRead: 0.2223 },
+	},
+	{
+		id: "kimi-k3",
+		name: "Kimi K3",
+		reasoning: true,
+		vision: true,
+		context: 1000000,
+		output: 1000000,
+		cost: { input: 3.2175, output: 16.0875, cacheRead: 0.7956 },
+	},
+	{
+		id: "llama-3.1-405b-instruct",
+		name: "Llama 3.1 405B Instruct",
+		reasoning: false,
+		context: 128000,
+		output: 4096,
+		cost: { input: 2.0475, output: 2.0475 },
+	},
+	{
+		id: "llama-3.1-8b-instruct",
+		name: "Llama-3.1-8B-Instruct",
+		reasoning: false,
+		context: 128000,
+		output: 128000,
+		cost: { input: 0.1755, output: 0.1755 },
+	},
+	{
+		id: "llama-3.3-70b-instruct",
+		name: "Llama-3.3-70B-Instruct",
+		reasoning: false,
+		context: 131072,
+		output: 4096,
+		cost: { input: 0.702, output: 0.7605 },
+	},
+	{
+		id: "minimax-m2.5",
+		name: "MiniMax-M2.5",
+		reasoning: true,
+		context: 197000,
+		output: 197000,
+		cost: { input: 0.2925, output: 1.2168, cacheRead: 0.0936 },
+	},
+	{
+		id: "minimax-m2.7",
+		name: "MiniMax-M2.7",
+		reasoning: true,
+		context: 192000,
+		output: 192000,
+		cost: { input: 0.702, output: 2.808 },
+	},
+	{
+		id: "minimax-m3",
+		name: "MiniMax-M3",
+		reasoning: true,
+		vision: true,
+		context: 1000000,
+		output: 1000000,
+		cost: { input: 0.468, output: 2.34, cacheRead: 0.117 },
+	},
+	{
+		id: "mistral-medium-3.5-128b",
+		name: "Mistral Medium 3.5",
+		reasoning: true,
+		vision: true,
+		context: 256000,
+		output: 256000,
+		cost: { input: 1.755, output: 5.85 },
+	},
+	{
+		id: "mistral-small-3.2-24b-instruct",
+		name: "Mistral Small 3.2",
+		reasoning: false,
+		vision: true,
+		context: 131072,
+		output: 131072,
+		cost: { input: 0.117, output: 0.351 },
+	},
+	{
+		id: "mistral-small-4-119b-instruct",
+		name: "Mistral Small 4",
+		reasoning: true,
+		vision: true,
+		context: 262144,
+		output: 262144,
+		cost: { input: 0.1755, output: 0.702 },
+	},
+	{
+		id: "muse-glimmer",
+		name: "Muse Glimmer 30B",
+		reasoning: true,
+		vision: true,
+		context: 128000,
+		output: 128000,
+		cost: { input: 0.234, output: 1.17, cacheRead: 0.0585 },
+	},
+	{
+		id: "nemotron-3-nano-30b-a3b",
+		name: "Nemotron 3 Nano 30B A3B",
+		reasoning: true,
+		context: 128000,
+		output: 128000,
+		cost: { input: 0.0702, output: 0.2808 },
+	},
+	{
+		id: "nemotron-3-super-120b-a12b",
+		name: "Nemotron 3 Super 120B A12B",
+		reasoning: true,
+		context: 262000,
+		output: 262000,
+		cost: { input: 0.351, output: 1.053 },
+	},
+	{
+		id: "pixtral-12b-2409",
+		name: "Pixtral 12B",
+		reasoning: false,
+		vision: true,
+		context: 128000,
+		output: 4096,
+		cost: { input: 0.234, output: 0.234 },
+	},
+	{
+		id: "qwen3-235b-a22b-instruct",
+		name: "Qwen3 235B-A22B Instruct 2507",
+		reasoning: false,
+		context: 262144,
+		output: 262144,
+		cost: { input: 0.0819, output: 0.4914, cacheRead: 0.0234 },
+	},
+	{
+		id: "qwen3-30b-a3b-instruct",
+		name: "Qwen3 30B A3B",
+		reasoning: false,
+		context: 262144,
+		output: 262144,
+		cost: { input: 0.117, output: 0.351 },
+	},
+	{
+		id: "qwen3-32b",
+		name: "Qwen3 32B",
+		reasoning: true,
+		context: 32768,
+		output: 16384,
+		cost: { input: 0.0936, output: 0.2808 },
+	},
+	{
+		id: "qwen3-coder-30b-a3b-instruct",
+		name: "Qwen3-Coder 30B-A3B Instruct",
+		reasoning: false,
+		context: 262144,
+		output: 262144,
+		cost: { input: 0.0702, output: 0.2808 },
+	},
+	{
+		id: "qwen3-coder-next",
+		name: "Qwen3 Coder Next",
+		reasoning: false,
+		context: 256000,
+		output: 256000,
+		cost: { input: 0.1989, output: 1.053 },
+	},
+	{
+		id: "qwen3-next-80b-a3b-thinking",
+		name: "Qwen3-Next 80B-A3B (Thinking)",
+		reasoning: true,
+		context: 262144,
+		output: 128000,
+		cost: { input: 0.1755, output: 1.404 },
+	},
+	{
+		id: "qwen3-vl-235b-a22b-instruct",
+		name: "Qwen3 VL 235B A22B Instruct",
+		reasoning: false,
+		vision: true,
+		context: 131000,
+		output: 32768,
+		cost: { input: 0.234, output: 2.106 },
+	},
+	{
+		id: "qwen3.5-122b-a10b",
+		name: "Qwen3.5 122B-A10B",
+		reasoning: true,
+		vision: true,
+		context: 262000,
+		output: 262000,
+		cost: { input: 0.117, output: 0.351, cacheRead: 0.1404 },
+	},
+	{
+		id: "qwen3.5-397b-a17b",
+		name: "Qwen3.5 397B-A17B",
+		reasoning: true,
+		vision: true,
+		context: 256000,
+		output: 256000,
+		cost: { input: 0.702, output: 4.212 },
+	},
+	{
+		id: "qwen3.5-9b",
+		name: "Qwen3.5 9B",
+		reasoning: true,
+		vision: true,
+		context: 262000,
+		output: 262000,
+		cost: { input: 0.117, output: 0.234, cacheRead: 0.0468 },
+	},
+	{
+		id: "qwen3.6-27b",
+		name: "Qwen3.6 27B",
+		reasoning: true,
+		vision: true,
+		context: 262000,
+		output: 262000,
+		cost: { input: 0.234, output: 1.404 },
+	},
+	{
+		id: "qwen3.6-35b-a3b",
+		name: "Qwen3.6 35B-A3B",
+		reasoning: true,
+		vision: true,
+		context: 256000,
+		output: 256000,
+		cost: { input: 0.1755, output: 0.585 },
+	},
+	{
+		id: "qwen3.8-27b",
+		name: "Qwen3.8 27B",
+		reasoning: true,
+		vision: true,
+		context: 262000,
+		output: 32768,
+		cost: { input: 0.468, output: 2.808, cacheRead: 0.117 },
+	},
+	{
+		id: "qwen3.8-max",
+		name: "Qwen3.8 Max",
+		reasoning: true,
+		context: 256000,
+		output: 131072,
+		cost: { input: 2.691, output: 6.3765, cacheRead: 0.6669 },
+	},
+];
+
+function buildMeliousModels(): Model<"openai-completions">[] {
+	const thinkingLevelMap = getEffortThinkingLevelMap(MELIOUS_REASONING_OPTIONS);
+	const models: Model<"openai-completions">[] = [];
+
+	for (const entry of MELIOUS_CATALOG) {
+		if (MELIOUS_UNAVAILABLE_MODEL_IDS.has(entry.id)) continue;
+		models.push({
+			id: entry.id,
+			name: entry.name,
+			api: "openai-completions",
+			provider: "melious",
+			baseUrl: MELIOUS_BASE_URL,
+			reasoning: entry.reasoning,
+			...(entry.reasoning && thinkingLevelMap ? { thinkingLevelMap } : {}),
+			input: entry.vision ? ["text", "image"] : ["text"],
+			cost: {
+				input: entry.cost.input,
+				output: entry.cost.output,
+				cacheRead: entry.cost.cacheRead ?? 0,
+				cacheWrite: 0,
+			},
+			compat: entry.reasoning ? MELIOUS_REASONING_COMPAT : MELIOUS_BASE_COMPAT,
+			contextWindow: entry.context,
+			maxTokens: entry.output,
+		});
+	}
+
+	return models;
+}
 
 const BEDROCK_INFERENCE_PROFILE_ONLY_MODEL_IDS = new Set(["anthropic.claude-opus-5"]);
 const MODELS_DEV_OPENAI_UNSUPPORTED_MODEL_IDS = new Set(["gpt-5.6"]);
@@ -927,7 +1441,11 @@ function applyThinkingLevelMetadata(model: Model<any>): void {
 	if (model.api === "anthropic-messages" && isAnthropicTemperatureUnsupportedModel(model.id)) {
 		mergeAnthropicMessagesCompat(model, { supportsTemperature: false });
 	}
-	if (model.api === "openai-completions" && model.id.includes("deepseek-v4")) {
+	if (
+		model.api === "openai-completions" &&
+		model.id.includes("deepseek-v4") &&
+		!DEEPSEEK_V4_OVERRIDE_EXEMPT_PROVIDERS.has(model.provider)
+	) {
 		mergeThinkingLevelMap(
 			model,
 			model.provider === "openrouter"
@@ -2656,11 +3174,14 @@ async function generateModels() {
 	];
 	allModels.push(...antLingModels);
 
+	allModels.push(...buildMeliousModels());
+
 	for (const candidate of allModels) {
 		if (
 			candidate.api === "openai-completions" &&
 			candidate.id.includes("deepseek-v4") &&
-			!QWEN_TOKEN_PLAN_PROVIDER_IDS.has(candidate.provider)
+			!QWEN_TOKEN_PLAN_PROVIDER_IDS.has(candidate.provider) &&
+			!DEEPSEEK_V4_OVERRIDE_EXEMPT_PROVIDERS.has(candidate.provider)
 		) {
 			const preservesNativeReasoningEffort = candidate.provider === "openrouter" || candidate.provider === "opencode";
 			candidate.compat = {

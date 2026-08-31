@@ -349,6 +349,22 @@ describe("Context overflow error handling", () => {
 	});
 
 	// =============================================================================
+	// Melious
+	// Uses OpenAI-compatible Chat Completions API
+	// =============================================================================
+
+	describe.skipIf(!process.env.MELIOUS_API_KEY)("Melious", () => {
+		it("glm-5.1 - should detect overflow via isContextOverflow", async () => {
+			const model = getModel("melious", "glm-5.1");
+			const result = await testContextOverflow(model, process.env.MELIOUS_API_KEY!);
+			logResult(result);
+
+			expect(result.stopReason).toBe("error");
+			expect(isContextOverflow(result.response, model.contextWindow)).toBe(true);
+		}, 120000);
+	});
+
+	// =============================================================================
 	// z.ai
 	// Special case: may return explicit overflow error text, may accept overflow silently,
 	// or may rate limit instead

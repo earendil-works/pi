@@ -93,6 +93,7 @@ pi
 | Fireworks | `FIREWORKS_API_KEY` | `fireworks` |
 | Together AI | `TOGETHER_API_KEY` | `together` |
 | Baseten | `BASETEN_API_KEY` | `baseten` |
+| Melious | `MELIOUS_API_KEY` | `melious` |
 | Kimi For Coding | `KIMI_API_KEY` | `kimi-coding` |
 | MiniMax | `MINIMAX_API_KEY` | `minimax` |
 | MiniMax (China) | `MINIMAX_CN_API_KEY` | `minimax-cn` |
@@ -121,6 +122,7 @@ Store credentials in `~/.pi/agent/auth.json`:
   "opencode": { "type": "api_key", "key": "..." },
   "opencode-go": { "type": "api_key", "key": "..." },
   "together": { "type": "api_key", "key": "..." },
+  "melious": { "type": "api_key", "key": "sk-mel-..." },
   "qwen-token-plan":  { "type": "api_key", "key": "sk-sp-..." },
   "qwen-token-plan-individual": { "type": "api_key", "key": "sk-sp-..." },
   "qwen-token-plan-cn": { "type": "api_key", "key": "sk-sp-..." },

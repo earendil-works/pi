@@ -19,6 +19,7 @@ import type { AssistantMessage } from "../types.ts";
  * - OpenRouter: "This endpoint's maximum context length is X tokens. However, you requested about Y tokens"
  * - OpenRouter/Poolside: "Input length X exceeds the maximum allowed input length of Y tokens."
  * - Together AI: "The input (X tokens) is longer than the model's context length (Y tokens)."
+ * - Melious: "This conversation (X tokens) exceeds the model's context window (Y tokens)."
  * - llama.cpp: "the request exceeds the available context size, try increasing it"
  * - LM Studio: "tokens to keep from the initial prompt is greater than the context length"
  * - GitHub Copilot: "prompt token count of X exceeds the limit of Y"
@@ -46,6 +47,7 @@ const OVERFLOW_PATTERNS = [
 	/maximum context length is \d+ tokens/i, // OpenRouter (most backends)
 	/exceeds (?:the )?maximum allowed input length of [\d,]+ tokens?/i, // OpenRouter/Poolside
 	/input \(\d+ tokens\) is longer than the model'?s context length \(\d+ tokens\)/i, // Together AI
+	/exceeds the model'?s context window/i, // Melious
 	/exceeds the limit of \d+/i, // GitHub Copilot
 	/exceeds the available context size/i, // llama.cpp server
 	/greater than the context length/i, // LM Studio
@@ -101,6 +103,7 @@ const NON_OVERFLOW_PATTERNS = [
  * - OpenRouter (most backends): "maximum context length is X tokens"
  * - OpenRouter/Poolside: "Input length X exceeds the maximum allowed input length of Y tokens."
  * - Together AI: "The input (X tokens) is longer than the model's context length (Y tokens)."
+ * - Melious: "This conversation (X tokens) exceeds the model's context window (Y tokens)."
  * - llama.cpp: "exceeds the available context size"
  * - LM Studio: "greater than the context length"
  * - Kimi For Coding: "exceeded model token limit: X (requested: Y)"

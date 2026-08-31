@@ -77,6 +77,7 @@ Unified LLM API with provider collections, automatic auth resolution, token and 
 - **MiniMax** (with separate China provider)
 - **Together AI**
 - **Baseten**
+- **Melious** (open-weight models on European infrastructure)
 - **Hugging Face**
 - **Moonshot AI** (with separate China provider)
 - **GitHub Copilot** (requires OAuth, see below)
@@ -429,6 +430,7 @@ Built-in providers resolve these env vars (Node.js; in browsers pass `apiKey` ex
 | Fireworks | `FIREWORKS_API_KEY` |
 | Together AI | `TOGETHER_API_KEY` |
 | Baseten | `BASETEN_API_KEY` |
+| Melious | `MELIOUS_API_KEY` |
 | OpenRouter | `OPENROUTER_API_KEY` |
 | Vercel AI Gateway | `AI_GATEWAY_API_KEY` |
 | ZAI Coding Plan (Global) | `ZAI_API_KEY` |

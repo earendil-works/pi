@@ -201,6 +201,18 @@ describe("AI Providers Abort Tests", () => {
 		});
 	});
 
+	describe.skipIf(!process.env.MELIOUS_API_KEY)("Melious Provider Abort", () => {
+		const llm = getModel("melious", "glm-5.1");
+
+		it("should abort mid-stream", { retry: 3 }, async () => {
+			await testAbortSignal(llm, { reasoningEffort: "high" });
+		});
+
+		it("should handle immediate abort", { retry: 3 }, async () => {
+			await testImmediateAbort(llm, { reasoningEffort: "high" });
+		});
+	});
+
 	describe.skipIf(!process.env.MINIMAX_API_KEY)("MiniMax Provider Abort", () => {
 		const llm = getModel("minimax", "MiniMax-M2.7");
 

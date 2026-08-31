@@ -742,6 +742,10 @@ describe("default model selection", () => {
 		expect(defaultModelPerProvider["qwen-token-plan-individual"]).toBe("qwen3.8-max");
 	});
 
+	test("melious default tracks current model", () => {
+		expect(defaultModelPerProvider.melious).toBe("glm-5.1");
+	});
+
 	test("findInitialModel accepts explicit provider custom model ids", async () => {
 		const registry = {
 			getModels: () => allModels,

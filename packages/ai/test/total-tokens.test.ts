@@ -396,6 +396,29 @@ describe("totalTokens field", () => {
 	});
 
 	// =========================================================================
+	// Melious
+	// =========================================================================
+
+	describe.skipIf(!process.env.MELIOUS_API_KEY)("Melious", () => {
+		it("GLM-5.1 - should return totalTokens equal to sum of components", { retry: 3, timeout: 60000 }, async () => {
+			const llm = getModel("melious", "glm-5.1");
+
+			console.log(`
+Melious / ${llm.id}:`);
+			const { first, second } = await testTotalTokensWithCache(llm, {
+				apiKey: process.env.MELIOUS_API_KEY,
+				reasoningEffort: "high",
+			});
+
+			logUsage("First request", first);
+			logUsage("Second request", second);
+
+			assertTotalTokensEqualsComponents(first);
+			assertTotalTokensEqualsComponents(second);
+		});
+	});
+
+	// =========================================================================
 	// Baseten
 	// =========================================================================
 

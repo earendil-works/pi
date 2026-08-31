@@ -129,6 +129,7 @@ For each built-in provider, pi maintains a list of tool-capable models. Configur
 - Fireworks
 - Together AI
 - Baseten
+- Melious
 - Kimi For Coding
 - MiniMax
 - Xiaomi MiMo

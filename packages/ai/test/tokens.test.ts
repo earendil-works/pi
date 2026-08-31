@@ -193,6 +193,14 @@ describe("Token Statistics on Abort", () => {
 		});
 	});
 
+	describe.skipIf(!process.env.MELIOUS_API_KEY)("Melious Provider", () => {
+		const llm = getModel("melious", "glm-5.1");
+
+		it("should include token stats when aborted mid-stream", { retry: 3, timeout: 30000 }, async () => {
+			await testTokensOnAbort(llm, { reasoningEffort: "high" });
+		});
+	});
+
 	describe.skipIf(!process.env.BASETEN_API_KEY)("Baseten Provider", () => {
 		const llm = getModel("baseten", "zai-org/GLM-5.2");
 
