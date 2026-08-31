@@ -249,6 +249,28 @@ describe("extensions discovery", () => {
 		expect(result.extensions[0].path).toContain("index.ts");
 	});
 
+	it("skips directories with a .disabled suffix even when they contain index.ts", async () => {
+		const subdir = path.join(extensionsDir, "my-extension.disabled");
+		fs.mkdirSync(subdir);
+		fs.writeFileSync(path.join(subdir, "index.ts"), extensionCode);
+
+		const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+
+		expect(result.errors).toHaveLength(0);
+		expect(result.extensions).toHaveLength(0);
+	});
+
+	it("skips files with a .disabled suffix", async () => {
+		fs.writeFileSync(path.join(extensionsDir, "foo.ts.disabled"), extensionCode);
+		fs.writeFileSync(path.join(extensionsDir, "bar.ts"), extensionCode);
+
+		const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+
+		expect(result.errors).toHaveLength(0);
+		expect(result.extensions).toHaveLength(1);
+		expect(path.basename(result.extensions[0].path)).toBe("bar.ts");
+	});
+
 	it("ignores subdirectory without index or package.json", async () => {
 		const subdir = path.join(extensionsDir, "not-an-extension");
 		fs.mkdirSync(subdir);

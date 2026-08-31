@@ -717,6 +717,7 @@ function resolveExtensionEntries(dir: string): string[] | null {
  * 3. Subdirectory with package.json: `extensions/* /package.json` with "pi" field → load what it declares
  *
  * No recursion beyond one level. Complex packages must use package.json manifest.
+ * Entries whose name ends with `.disabled` are skipped, whether file or directory.
  */
 function discoverExtensionsInDir(dir: string): string[] {
 	if (!fs.existsSync(dir)) {
@@ -729,6 +730,15 @@ function discoverExtensionsInDir(dir: string): string[] {
 		const entries = fs.readdirSync(dir, { withFileTypes: true });
 
 		for (const entry of entries) {
+			// A ".disabled" suffix opts an entry out of discovery. Files named
+			// "foo.ts.disabled" were already skipped implicitly (isExtensionFile
+			// matches only *.ts/*.js); without this guard, a directory renamed to
+			// "my-extension.disabled" still loads via its index.ts, which makes the
+			// rename-to-disable convention silently ineffective for directories.
+			if (entry.name.endsWith(".disabled")) {
+				continue;
+			}
+
 			const entryPath = path.join(dir, entry.name);
 
 			// 1. Direct files: *.ts or *.js
