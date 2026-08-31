@@ -9,6 +9,7 @@ import { BASETEN_MODELS } from "./providers/baseten.models.ts";
 import { CEREBRAS_MODELS } from "./providers/cerebras.models.ts";
 import { CLOUDFLARE_AI_GATEWAY_MODELS } from "./providers/cloudflare-ai-gateway.models.ts";
 import { CLOUDFLARE_WORKERS_AI_MODELS } from "./providers/cloudflare-workers-ai.models.ts";
+import { CORALBRICKS_MODELS } from "./providers/coralbricks.models.ts";
 import { DEEPSEEK_MODELS } from "./providers/deepseek.models.ts";
 import { FIREWORKS_MODELS } from "./providers/fireworks.models.ts";
 import { GITHUB_COPILOT_MODELS } from "./providers/github-copilot.models.ts";
@@ -50,6 +51,7 @@ export const MODELS: {
 	readonly "cerebras": typeof CEREBRAS_MODELS;
 	readonly "cloudflare-ai-gateway": typeof CLOUDFLARE_AI_GATEWAY_MODELS;
 	readonly "cloudflare-workers-ai": typeof CLOUDFLARE_WORKERS_AI_MODELS;
+	readonly "coralbricks": typeof CORALBRICKS_MODELS;
 	readonly "deepseek": typeof DEEPSEEK_MODELS;
 	readonly "fireworks": typeof FIREWORKS_MODELS;
 	readonly "github-copilot": typeof GITHUB_COPILOT_MODELS;
@@ -90,6 +92,7 @@ export const MODELS: {
 	"cerebras": CEREBRAS_MODELS,
 	"cloudflare-ai-gateway": CLOUDFLARE_AI_GATEWAY_MODELS,
 	"cloudflare-workers-ai": CLOUDFLARE_WORKERS_AI_MODELS,
+	"coralbricks": CORALBRICKS_MODELS,
 	"deepseek": DEEPSEEK_MODELS,
 	"fireworks": FIREWORKS_MODELS,
 	"github-copilot": GITHUB_COPILOT_MODELS,
