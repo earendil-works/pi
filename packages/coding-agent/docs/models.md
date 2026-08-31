@@ -118,6 +118,27 @@ Use `google-generative-ai` with a `baseUrl` to add models from Google AI Studio,
 
 The `baseUrl` is required when adding custom models to the `google-generative-ai` API type.
 
+## Remote OpenAI-compatible Example
+
+Remote proxies and subscription endpoints work the same way as local servers — set `baseUrl` to the remote host and resolve the key from an environment variable with the `$VAR` syntax:
+
+```json
+{
+  "providers": {
+    "standardcompute": {
+      "baseUrl": "https://api.stdcmpt.com/v1",
+      "api": "openai-completions",
+      "apiKey": "$STANDARD_COMPUTE_KEY",
+      "models": [
+        { "id": "standardcompute" }
+      ]
+    }
+  }
+}
+```
+
+If the endpoint also serves the Anthropic Messages API, you can declare a second provider entry pointing at the same host with `"api": "anthropic-messages"` — useful for comparing how a model behaves across API types. The same pattern applies to self-hosted proxies such as LiteLLM.
+
 ## Supported APIs
 
 | API | Description |
