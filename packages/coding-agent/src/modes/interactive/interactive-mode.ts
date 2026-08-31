@@ -2159,6 +2159,16 @@ export class InteractiveMode {
 		}
 	}
 
+	private showWorkingStatusIndicator(): void {
+		this.showStatusIndicator(
+			new WorkingStatusIndicator(
+				this.ui,
+				this.workingMessage ?? this.defaultWorkingMessage,
+				this.workingIndicatorOptions,
+			),
+		);
+	}
+
 	private setWorkingVisible(visible: boolean): void {
 		this.workingVisible = visible;
 		if (!visible) {
@@ -2167,13 +2177,7 @@ export class InteractiveMode {
 			return;
 		}
 		if (this.session.isStreaming && this.activeStatusIndicator?.kind !== "working") {
-			this.showStatusIndicator(
-				new WorkingStatusIndicator(
-					this.ui,
-					this.workingMessage ?? this.defaultWorkingMessage,
-					this.workingIndicatorOptions,
-				),
-			);
+			this.showWorkingStatusIndicator();
 		}
 		this.ui.requestRender();
 	}
@@ -3182,23 +3186,22 @@ export class InteractiveMode {
 		switch (event.type) {
 			case "agent_start":
 				this.pendingTools.clear();
-				if (this.settingsManager.getShowTerminalProgress()) {
-					this.ui.terminal.setProgress(true);
-				}
 				// Restore main escape handler if retry handler is still active
 				// (retry success event fires later, but we need main handler now)
 				if (this.retryEscapeHandler) {
 					this.defaultEditor.onEscape = this.retryEscapeHandler;
 					this.retryEscapeHandler = undefined;
 				}
+				break;
+
+			case "turn_start":
+				if (this.settingsManager.getShowTerminalProgress()) {
+					this.ui.terminal.setProgress(true);
+				}
 				if (this.workingVisible) {
-					this.showStatusIndicator(
-						new WorkingStatusIndicator(
-							this.ui,
-							this.workingMessage ?? this.defaultWorkingMessage,
-							this.workingIndicatorOptions,
-						),
-					);
+					if (this.activeStatusIndicator?.kind !== "working") {
+						this.showWorkingStatusIndicator();
+					}
 				} else {
 					this.clearStatusIndicator();
 				}

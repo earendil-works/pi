@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.84.4] - 2026-08-28
+
+### Breaking Changes
+
+- Changed `prepareNextTurn` and `prepareNextTurnWithContext` to run only after `shouldStopAfterTurn` and queued-message checks determine that the agent loop will start another assistant turn. They no longer run after final or terminating turns; move end-of-run work to `agent_end` handling ([#6879](https://github.com/earendil-works/pi/issues/6879)).
+
 ### Fixed
 
 - Fixed Windows `NodeExecutionEnv` aborts crashing when `taskkill.exe` is unavailable on `PATH` ([#6596](https://github.com/earendil-works/pi/issues/6596)).
