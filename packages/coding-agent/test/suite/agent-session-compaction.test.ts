@@ -394,7 +394,8 @@ describe("AgentSession compaction characterization", () => {
 		expect(harness.session.getLastAssistantText()).toBe("completed response");
 	});
 
-	it("compacts after a tool result before the next assistant request in the same run", async () => {
+	// Regression test for #8884: compaction must be checked between assistant tool turns.
+	it("checks compaction after a tool result before the next assistant request in the same run", async () => {
 		const toolResult = `large-tool-result:${"x".repeat(6800)}`;
 		const largeTool: AgentTool = {
 			name: "large_result",
@@ -425,6 +426,8 @@ describe("AgentSession compaction characterization", () => {
 			],
 		});
 		harnesses.push(harness);
+		const sessionInternals = harness.session as unknown as SessionWithCompactionInternals;
+		const checkCompactionSpy = vi.spyOn(sessionInternals, "_checkCompaction");
 		let resumedRequest = "";
 		harness.setResponses([
 			fauxAssistantMessage(`old-history:${"a".repeat(800)}`),
@@ -443,6 +446,11 @@ describe("AgentSession compaction characterization", () => {
 		await harness.session.prompt("run the large tool");
 
 		expect(order).toEqual(["compaction", "provider"]);
+		expect(checkCompactionSpy).toHaveBeenCalledWith(
+			expect.objectContaining({ stopReason: "toolUse" }),
+			true,
+			expect.any(Array),
+		);
 		expect(harness.eventsOfType("agent_start")).toHaveLength(agentStartsBefore + 1);
 		expect(harness.eventsOfType("compaction_start").at(-1)).toEqual({
 			type: "compaction_start",
