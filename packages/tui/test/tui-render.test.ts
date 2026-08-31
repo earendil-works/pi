@@ -208,8 +208,8 @@ describe("TUI bounded render output", () => {
 
 describe("TUI crash dump without configured log directory", () => {
 	it("writes the crash dump to the OS temp directory instead of a home-directory default", async () => {
-		const crashLogPath = join(tmpdir(), "pi-tui-crash.log");
-		rmSync(crashLogPath, { force: true });
+		const crashDir = mkdtempSync(join(tmpdir(), "pi-tui-crash-"));
+		const crashLogPath = join(crashDir, "pi-tui-crash.log");
 		try {
 			const terminal = new VirtualTerminal(40, 10);
 			const tui: TUI = new TuiMainScreen(terminal);
@@ -231,7 +231,7 @@ describe("TUI crash dump without configured log directory", () => {
 			);
 			assert.match(readFileSync(crashLogPath, "utf-8"), /Terminal width: 40/);
 		} finally {
-			rmSync(crashLogPath, { force: true });
+			rmSync(crashDir, { recursive: true, force: true });
 		}
 	});
 });
