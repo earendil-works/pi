@@ -206,10 +206,29 @@ describe("TUI bounded render output", () => {
 	});
 });
 
+/** Set each environment variable to `value`, returning a function that restores the previous state. */
+function overrideEnv(names: readonly string[], value: string): () => void {
+	const previousValues = names.map((name) => [name, process.env[name]] as const);
+	for (const name of names) {
+		process.env[name] = value;
+	}
+	return () => {
+		for (const [name, previousValue] of previousValues) {
+			if (previousValue === undefined) delete process.env[name];
+			else process.env[name] = previousValue;
+		}
+	};
+}
+
 describe("TUI crash dump without configured log directory", () => {
 	it("writes the crash dump to the OS temp directory instead of a home-directory default", async () => {
+		// The TUI falls back to os.tmpdir() when no log directory is configured, so
+		// isolate the test by pointing the temp directory at a fresh directory rather
+		// than sharing the real one with concurrent test runs. os.tmpdir() reads
+		// TMPDIR on POSIX and TEMP/TMP on Windows, so override all three.
 		const crashDir = mkdtempSync(join(tmpdir(), "pi-tui-crash-"));
 		const crashLogPath = join(crashDir, "pi-tui-crash.log");
+		const restoreTmpdirEnv = overrideEnv(["TMPDIR", "TEMP", "TMP"], crashDir);
 		try {
 			const terminal = new VirtualTerminal(40, 10);
 			const tui: TUI = new TuiMainScreen(terminal);
@@ -231,6 +250,7 @@ describe("TUI crash dump without configured log directory", () => {
 			);
 			assert.match(readFileSync(crashLogPath, "utf-8"), /Terminal width: 40/);
 		} finally {
+			restoreTmpdirEnv();
 			rmSync(crashDir, { recursive: true, force: true });
 		}
 	});
