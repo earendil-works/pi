@@ -321,6 +321,7 @@ export class AgentSession {
 	private _isAgentRunActive = false;
 	private _idleWaitPromise: Promise<void> | undefined;
 	private _resolveIdleWait: (() => void) | undefined;
+	private _pendingStreamingPromptPreflights = new Set<Promise<void>>();
 
 	/** Tracks pending steering messages for UI display. Removed when delivered. */
 	private _steeringMessages: string[] = [];
@@ -1143,6 +1144,12 @@ export class AgentSession {
 			return true;
 		}
 
+		// A compaction_end listener can submit a prompt that awaits input hooks before queueing.
+		// Wait for those dispatches so the final queue snapshot cannot miss them.
+		while (this._pendingStreamingPromptPreflights.size > 0) {
+			await Promise.all(this._pendingStreamingPromptPreflights);
+		}
+
 		// The agent loop drains both queues before emitting agent_end. Any messages
 		// here were queued by agent_end extension handlers and need a continuation.
 		return this.agent.hasQueuedMessages();
@@ -1161,6 +1168,7 @@ export class AgentSession {
 		const expandPromptTemplates = options?.expandPromptTemplates ?? true;
 		const preflightResult = options?.preflightResult;
 		let messages: AgentMessage[] | undefined;
+		let finishStreamingPreflight: (() => void) | undefined;
 
 		try {
 			// Handle extension commands first (execute immediately, even during streaming)
@@ -1178,6 +1186,19 @@ export class AgentSession {
 				throw new Error(
 					"Cannot submit a prompt while compaction is in progress. Wait for compaction to finish and retry.",
 				);
+			}
+
+			if (this.isStreaming && options?.streamingBehavior) {
+				// Publish the continuation intent before input hooks introduce an async gap.
+				let resolveStreamingPreflight!: () => void;
+				const streamingPreflight = new Promise<void>((resolve) => {
+					resolveStreamingPreflight = resolve;
+				});
+				this._pendingStreamingPromptPreflights.add(streamingPreflight);
+				finishStreamingPreflight = () => {
+					this._pendingStreamingPromptPreflights.delete(streamingPreflight);
+					resolveStreamingPreflight();
+				};
 			}
 
 			// Emit input event for extension interception (before skill/template expansion)
@@ -1307,6 +1328,8 @@ export class AgentSession {
 		} catch (error) {
 			preflightResult?.(false);
 			throw error;
+		} finally {
+			finishStreamingPreflight?.();
 		}
 
 		if (!messages) {
