@@ -17,6 +17,14 @@
 		"./unix": {
 			"types": "./dist/transports/unix/index.d.ts",
 			"import": "./dist/transports/unix/index.js"
+		},
+		"./tcp": {
+			"types": "./dist/transports/tcp/index.d.ts",
+			"import": "./dist/transports/tcp/index.js"
+		},
+		"./ws": {
+			"types": "./dist/transports/ws/index.d.ts",
+			"import": "./dist/transports/ws/index.js"
 		}
 	},
 	"files": [

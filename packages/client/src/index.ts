@@ -7,6 +7,7 @@ export {
 	PiSessionOwnershipError,
 } from "./errors.ts";
 export type { AcquireSessionOptions, PiSessionHandle, SessionLease, SessionLeaseMode } from "./session-handle.ts";
+export { createTcpTransportFactory, type TcpTransportOptions } from "./tcp.ts";
 export type { ByteTransport, ByteTransportFactory, ByteTransportHandlers } from "./transport.ts";
 export type {
 	ConnectionState,
@@ -16,3 +17,5 @@ export type {
 	PiClientOptions,
 	Unsubscribe,
 } from "./types.ts";
+export { createUnixTransportFactory, type UnixTransportOptions } from "./unix.ts";
+export { createWebSocketTransportFactory, type WebSocketTransportOptions } from "./ws.ts";

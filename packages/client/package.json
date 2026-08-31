@@ -14,6 +14,14 @@
 			"types": "./dist/unix.d.ts",
 			"import": "./dist/unix.js"
 		},
+		"./tcp": {
+			"types": "./dist/tcp.d.ts",
+			"import": "./dist/tcp.js"
+		},
+		"./ws": {
+			"types": "./dist/ws.d.ts",
+			"import": "./dist/ws.js"
+		},
 		"./package.json": "./package.json"
 	},
 	"sideEffects": false,

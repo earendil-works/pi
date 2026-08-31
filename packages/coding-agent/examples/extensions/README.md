@@ -31,6 +31,7 @@ cp permission-gate.ts ~/.pi/agent/extensions/
 | Extension | Description |
 |-----------|-------------|
 | `todo.ts` | Todo list tool + `/todos` command with custom rendering and state persistence |
+| `fetch-url.ts` | `fetch_url` tool using global fetch, with prompt contributions, custom rendering, `--fetch-timeout` flag, and `/fetch-url` command |
 | `hello.ts` | Minimal custom tool example |
 | `question.ts` | Demonstrates `ctx.ui.select()` for asking the user questions with custom UI |
 | `questionnaire.ts` | Multi-question input with tab bar navigation between questions |
@@ -129,6 +130,7 @@ cp permission-gate.ts ~/.pi/agent/extensions/
 |-----------|-------------|
 | `custom-provider-anthropic/` | Custom Anthropic provider with OAuth support and custom streaming implementation |
 | `custom-provider-gitlab-duo/` | GitLab Duo provider using pi-ai's built-in Anthropic/OpenAI streaming via proxy |
+| `custom-provider-openai-compatible.ts` | Minimal OpenAI-compatible provider reusing pi-ai's built-in `openai-completions` API (no streaming code) |
 
 ### External Dependencies
 

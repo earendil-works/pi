@@ -27,6 +27,8 @@ import {
 	validateAuthCommandArgs,
 } from "./cli/auth-command.ts";
 import { resolveCredentialForPrint } from "./cli/credential-print.ts";
+import { experimentalCli } from "./cli/experimental/cli.ts";
+import { runClient, runPi, runServer } from "./cli/experimental/runner.ts";
 import { processFileArguments } from "./cli/file-processor.ts";
 import { buildInitialMessage } from "./cli/initial-message.ts";
 import { listModels } from "./cli/list-models.ts";
@@ -558,6 +560,19 @@ export interface MainOptions {
 	extensionFactories?: InlineExtension[];
 }
 
+/**
+ * Dispatch an experimental subcommand (server / client) to its execution
+ * layer. The experimental CLI parser is transport-only; unsupported legacy
+ * options are reported by the parser itself.
+ */
+async function dispatchExperimentalCommand(args: string[]): Promise<void> {
+	const result = await experimentalCli.execute(args, { runPi, runServer, runClient });
+	if (!result.ok) {
+		for (const error of result.errors) console.error(error);
+		process.exitCode = 1;
+	}
+}
+
 export async function main(args: string[], options?: MainOptions) {
 	resetTimings();
 	const extensionFactories = [...builtInExtensions, ...(options?.extensionFactories ?? [])];
@@ -565,6 +580,13 @@ export async function main(args: string[], options?: MainOptions) {
 	if (offlineMode) {
 		process.env.PI_OFFLINE = "1";
 		process.env.PI_SKIP_VERSION_CHECK = "1";
+	}
+
+	// Experimental subcommands (pi server / pi client) are dispatched before
+	// the legacy parser, which does not understand their transport options.
+	if (args[0] === "server" || args[0] === "client") {
+		await dispatchExperimentalCommand(args);
+		return;
 	}
 
 	if (await runAuthCommand(args)) {
