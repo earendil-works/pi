@@ -23,6 +23,7 @@ export interface AppKeybindings {
 	"app.tools.expand": true;
 	"app.thinking.toggle": true;
 	"app.session.toggleNamedFilter": true;
+	"app.session.toggleHeadless": true;
 	"app.editor.external": true;
 	"app.message.copy": true;
 	"app.message.followUp": true;
@@ -117,6 +118,10 @@ export const KEYBINDINGS = {
 	"app.session.toggleNamedFilter": {
 		defaultKeys: "ctrl+n",
 		description: "Toggle named session filter",
+	},
+	"app.session.toggleHeadless": {
+		defaultKeys: "ctrl+shift+h",
+		description: "Toggle visibility of headless (automation) sessions",
 	},
 	"app.editor.external": {
 		defaultKeys: "ctrl+g",

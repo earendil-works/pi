@@ -49,6 +49,10 @@ In the picker you can:
 
 When available, pi uses the `trash` CLI for deletion instead of permanently removing files.
 
+### Hiding automation sessions
+
+Sessions launched by automation (RPC mode, subagents, non-interactive runs) are marked `headless` and are **hidden by default** in the resume picker so they don't crowd out your real interactive conversations. Press `ctrl+shift+h` in the picker to toggle headless sessions on/off.
+
 ## Naming Sessions
 
 Use `/name <name>` to set a human-readable session name:

@@ -29,6 +29,14 @@ import {
 
 export const CURRENT_SESSION_VERSION = 3;
 
+/**
+ * How a session was launched. `interactive` sessions are the normal TUI chats a
+ * user drives by hand; `headless` sessions are created by automation (RPC mode,
+ * non-interactive runs, subagent/extension spawns) and are usually not worth
+ * manually resuming, so the resume picker hides them by default.
+ */
+export type SessionMode = "interactive" | "headless";
+
 export interface SessionHeader {
 	type: "session";
 	version?: number; // v1 sessions don't have this
@@ -36,11 +44,15 @@ export interface SessionHeader {
 	timestamp: string;
 	cwd: string;
 	parentSession?: string;
+	/** Whether this session was launched interactively or by automation. */
+	mode?: SessionMode;
 }
 
 export interface NewSessionOptions {
 	id?: string;
 	parentSession?: string;
+	/** Session launch mode. Defaults to "interactive" when omitted. */
+	mode?: SessionMode;
 }
 
 export interface SessionEntryBase {
@@ -180,6 +192,8 @@ export interface SessionInfo {
 	name?: string;
 	/** Path to the parent session (if this session was forked). */
 	parentSessionPath?: string;
+	/** How the session was launched; undefined for legacy sessions (treated as interactive). */
+	mode?: SessionMode;
 	created: Date;
 	modified: Date;
 	messageCount: number;
@@ -754,6 +768,7 @@ async function buildSessionInfo(filePath: string): Promise<SessionInfo | null> {
 			cwd,
 			name,
 			parentSessionPath,
+			mode: header.mode,
 			created: new Date(header.timestamp),
 			modified,
 			messageCount,
@@ -941,6 +956,7 @@ export class SessionManager {
 			timestamp,
 			cwd: this.cwd,
 			parentSession: options?.parentSession,
+			mode: options?.mode,
 		};
 		this.fileEntries = [header];
 		this.byId.clear();
@@ -1618,6 +1634,7 @@ export class SessionManager {
 			timestamp,
 			cwd: resolvedTargetCwd,
 			parentSession: resolvedSourcePath,
+			mode: options?.mode,
 		};
 		writeFileSync(newSessionFile, `${JSON.stringify(newHeader)}\n`, { flag: "wx" });
 

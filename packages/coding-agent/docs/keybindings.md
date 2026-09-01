@@ -138,6 +138,7 @@ This routing remains configurable through the ordinary action bindings. For exam
 | `app.session.togglePath` | `ctrl+p` | Toggle path display |
 | `app.session.toggleSort` | `ctrl+s` | Toggle sort mode |
 | `app.session.toggleNamedFilter` | `ctrl+n` | Toggle named-only filter |
+| `app.session.toggleHeadless` | `ctrl+shift+h` | Toggle visibility of headless (automation) sessions |
 | `app.session.rename` | `ctrl+r` | Rename session |
 | `app.session.delete` | `ctrl+d` | Delete session |
 | `app.session.deleteNoninvasive` | `ctrl+backspace` | Delete session when query is empty |

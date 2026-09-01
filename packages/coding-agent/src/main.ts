@@ -439,7 +439,10 @@ export async function createSessionManager(
 		);
 	}
 
-	return SessionManager.create(cwd, sessionDir, { id: parsed.sessionId });
+	// Sessions created by automation (RPC mode) are headless and hidden from the
+	// default resume picker; interactive TUI sessions are the ones users resume.
+	const sessionMode = parsed.mode === "rpc" ? "headless" : "interactive";
+	return SessionManager.create(cwd, sessionDir, { id: parsed.sessionId, mode: sessionMode });
 }
 
 function buildSessionOptions(

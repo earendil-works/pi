@@ -19,7 +19,13 @@ import { canonicalizePath as _canonicalizePath } from "../../../utils/paths.ts";
 import { theme } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
 import { keyHint, keyText } from "./keybinding-hints.ts";
-import { filterAndSortSessions, hasSessionName, type NameFilter, type SortMode } from "./session-selector-search.ts";
+import {
+	filterAndSortSessions,
+	hasSessionName,
+	isSessionVisible,
+	type NameFilter,
+	type SortMode,
+} from "./session-selector-search.ts";
 
 type SessionScope = "current" | "all";
 
@@ -171,6 +177,7 @@ class SessionSelectorHeader implements Component {
 			const hint2Parts = [
 				keyHint("app.session.toggleSort", "sort"),
 				keyHint("app.session.toggleNamedFilter", "named"),
+				keyHint("app.session.toggleHeadless", "headless"),
 				keyHint("app.session.delete", "delete"),
 				keyHint("app.session.togglePath", `path ${pathState}`),
 			];
@@ -292,6 +299,7 @@ class SessionList implements Component, Focusable {
 	private showCwd = false;
 	private sortMode: SortMode = "threaded";
 	private nameFilter: NameFilter = "all";
+	private showHeadless = false;
 	private keybindings: KeybindingsManager;
 	private showPath = false;
 	private confirmingDeletePath: string | null = null;
@@ -302,6 +310,7 @@ class SessionList implements Component, Focusable {
 	public onToggleScope?: () => void;
 	public onToggleSort?: () => void;
 	public onToggleNameFilter?: () => void;
+	public onToggleHeadlessVisibility?: () => void;
 	public onTogglePath?: (showPath: boolean) => void;
 	public onDeleteConfirmationChange?: (path: string | null) => void;
 	public onDeleteSession?: (sessionPath: string) => Promise<void>;
@@ -358,6 +367,11 @@ class SessionList implements Component, Focusable {
 		this.filterSessions(this.searchInput.getValue());
 	}
 
+	setShowHeadless(showHeadless: boolean): void {
+		this.showHeadless = showHeadless;
+		this.filterSessions(this.searchInput.getValue());
+	}
+
 	setSessions(sessions: SessionInfo[], showCwd: boolean): void {
 		this.allSessions = sessions;
 		this.showCwd = showCwd;
@@ -366,8 +380,10 @@ class SessionList implements Component, Focusable {
 
 	private filterSessions(query: string): void {
 		const trimmed = query.trim();
-		const nameFiltered =
-			this.nameFilter === "all" ? this.allSessions : this.allSessions.filter((session) => hasSessionName(session));
+		const visible = this.allSessions.filter((session) =>
+			isSessionVisible(session, { showHeadless: this.showHeadless }),
+		);
+		const nameFiltered = this.nameFilter === "all" ? visible : visible.filter((session) => hasSessionName(session));
 
 		if (this.sortMode === "threaded" && !trimmed) {
 			// Threaded mode without search: show tree structure
@@ -565,6 +581,12 @@ class SessionList implements Component, Focusable {
 			return;
 		}
 
+		// Ctrl+Shift+H: toggle visibility of headless (automation) sessions
+		if (this.keybindings.matches(keyData, "app.session.toggleHeadless")) {
+			this.onToggleHeadlessVisibility?.();
+			return;
+		}
+
 		// Ctrl+P: toggle path display
 		if (kb.matches(keyData, "app.session.togglePath")) {
 			this.showPath = !this.showPath;
@@ -702,6 +724,7 @@ export class SessionSelectorComponent extends Container implements Focusable {
 	private header: SessionSelectorHeader;
 	private keybindings: KeybindingsManager;
 	private scope: SessionScope = "current";
+	private showHeadless = false;
 	private sortMode: SortMode = "threaded";
 	private nameFilter: NameFilter = "all";
 	private currentSessions: SessionInfo[] | null = null;
@@ -804,6 +827,7 @@ export class SessionSelectorComponent extends Container implements Focusable {
 		this.sessionList.onToggleScope = () => this.toggleScope();
 		this.sessionList.onToggleSort = () => this.toggleSortMode();
 		this.sessionList.onToggleNameFilter = () => this.toggleNameFilter();
+		this.sessionList.onToggleHeadlessVisibility = () => this.toggleHeadlessVisibility();
 		this.sessionList.onRenameSession = (sessionPath) => {
 			if (!renameSession) return;
 			if (this.scope === "current" && this.currentLoading) return;
@@ -993,6 +1017,12 @@ export class SessionSelectorComponent extends Container implements Focusable {
 		this.nameFilter = this.nameFilter === "all" ? "named" : "all";
 		this.header.setNameFilter(this.nameFilter);
 		this.sessionList.setNameFilter(this.nameFilter);
+		this.requestRender();
+	}
+
+	private toggleHeadlessVisibility(): void {
+		this.showHeadless = !this.showHeadless;
+		this.sessionList.setShowHeadless(this.showHeadless);
 		this.requestRender();
 	}
 

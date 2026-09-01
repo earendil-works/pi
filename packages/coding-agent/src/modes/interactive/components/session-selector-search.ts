@@ -5,6 +5,23 @@ export type SortMode = "threaded" | "recent" | "relevance";
 
 export type NameFilter = "all" | "named";
 
+/** Visibility toggles for the session list. */
+export interface SessionVisibilityOptions {
+	/** When true, show automation/headless sessions; when false (default) they are hidden. */
+	showHeadless?: boolean;
+}
+
+/**
+ * Whether a session should appear in the resume picker.
+ * Headless (automation) sessions are hidden by default so machine-generated
+ * sessions don't crowd out real interactive conversations. Legacy sessions
+ * without a `mode` are treated as interactive (visible).
+ */
+export function isSessionVisible(session: SessionInfo, opts: SessionVisibilityOptions = {}): boolean {
+	if (opts.showHeadless) return true;
+	return session.mode !== "headless";
+}
+
 export interface ParsedSearchQuery {
 	mode: "tokens" | "regex";
 	tokens: { kind: "fuzzy" | "phrase"; value: string }[];
