@@ -81,6 +81,25 @@ Run 2 scouts in parallel: one to find models, one to find providers
 Use a chain: first have scout find the read tool, then have planner suggest improvements
 ```
 
+### Model and thinking overrides
+
+Any dispatch can pin a specific model (`"provider/model"`) and thinking level, without defining a separate agent. Pass them at the top level (applies to all agents in the call) or per task/step (takes precedence):
+
+```
+Spawn a worker on qwen3.8-flash with low reasoning effort to summarize this directory
+```
+
+```
+chain: [
+  { agent: "scout",   task: "explore the codebase",          model: "opencode-go/qwen3.8-flash",   thinking: "low"  },
+  { agent: "planner", task: "plan the refactor of {previous}", model: "opencode-go/qwen3.8-max",     thinking: "high" }
+]
+```
+
+Precedence for the model: per-task `model` → top-level `model` → `model` in the agent's frontmatter → session model.
+
+Precedence for thinking: per-task `thinking` → top-level `thinking` → session thinking level. The session level is inherited even when a model override is present, but not when the agent defines its own `model` in its frontmatter (that agent owns its full configuration).
+
 ### Workflow prompts
 ```
 /implement add Redis caching to the session store

@@ -280,6 +280,8 @@ async function runSingleAgent(
 	signal: AbortSignal | undefined,
 	onUpdate: OnUpdateCallback | undefined,
 	makeDetails: (results: SingleResult[]) => SubagentDetails,
+	modelOverride?: string,
+	thinkingOverride?: ThinkingLevel,
 ): Promise<SingleResult> {
 	const agent = agents.find((a) => a.name === agentName);
 
@@ -298,12 +300,13 @@ async function runSingleAgent(
 	}
 
 	const args: string[] = ["--mode", "json", "-p", "--no-session"];
-	const inheritsDispatchConfig = !agent.model;
-	const model = agent.model ?? dispatchDefaults.model;
+	const model = modelOverride ?? agent.model ?? dispatchDefaults.model;
+	// An agent-defined model owns its full config (no thinking inheritance). An explicit
+	// model override only replaces the model, so session thinking still applies unless overridden.
+	const inheritsThinking = !agent.model || Boolean(modelOverride);
 	if (model) args.push("--model", model);
-	if (inheritsDispatchConfig && dispatchDefaults.thinkingLevel) {
-		args.push("--thinking", dispatchDefaults.thinkingLevel);
-	}
+	const thinking = thinkingOverride ?? (inheritsThinking ? dispatchDefaults.thinkingLevel : undefined);
+	if (thinking) args.push("--thinking", thinking);
 	if (agent.tools && agent.tools.length > 0) args.push("--tools", agent.tools.join(","));
 
 	let tmpPromptDir: string | null = null;
@@ -443,12 +446,28 @@ const TaskItem = Type.Object({
 	agent: Type.String({ description: "Name of the agent to invoke" }),
 	task: Type.String({ description: "Task to delegate to the agent" }),
 	cwd: Type.Optional(Type.String({ description: "Working directory for the agent process" })),
+	model: Type.Optional(
+		Type.String({ description: 'Model override for this task, as "provider/model" (e.g. "opencode-go/qwen3.8-flash")' }),
+	),
+	thinking: Type.Optional(
+		StringEnum(["minimal", "low", "medium", "high", "max"] as const, {
+			description: 'Thinking level (reasoning effort) for this task. Defaults to the session level.',
+		}),
+	),
 });
 
 const ChainItem = Type.Object({
 	agent: Type.String({ description: "Name of the agent to invoke" }),
 	task: Type.String({ description: "Task with optional {previous} placeholder for prior output" }),
 	cwd: Type.Optional(Type.String({ description: "Working directory for the agent process" })),
+	model: Type.Optional(
+		Type.String({ description: 'Model override for this step, as "provider/model" (e.g. "opencode-go/qwen3.8-flash")' }),
+	),
+	thinking: Type.Optional(
+		StringEnum(["minimal", "low", "medium", "high", "max"] as const, {
+			description: 'Thinking level (reasoning effort) for this step. Defaults to the session level.',
+		}),
+	),
 });
 
 const AgentScopeSchema = StringEnum(["user", "project", "both"] as const, {
@@ -461,6 +480,18 @@ const SubagentParams = Type.Object({
 	task: Type.Optional(Type.String({ description: "Task to delegate (for single mode)" })),
 	tasks: Type.Optional(Type.Array(TaskItem, { description: "Array of {agent, task} for parallel execution" })),
 	chain: Type.Optional(Type.Array(ChainItem, { description: "Array of {agent, task} for sequential execution" })),
+	model: Type.Optional(
+		Type.String({
+			description:
+				'Model override for the agent(s), as "provider/model" (e.g. "opencode-go/qwen3.8-flash"). Overrides agent-defined and session-default models. Per-task "model" in tasks/chain takes precedence.',
+		}),
+	),
+	thinking: Type.Optional(
+		StringEnum(["minimal", "low", "medium", "high", "max"] as const, {
+			description:
+				'Thinking level for the agent(s). Defaults to the session thinking level. Per-task "thinking" in tasks/chain takes precedence.',
+		}),
+	),
 	agentScope: Type.Optional(AgentScopeSchema),
 	confirmProjectAgents: Type.Optional(
 		Type.Boolean({ description: "Prompt before running project-local agents. Default: true.", default: true }),
@@ -475,6 +506,8 @@ export default function (pi: ExtensionAPI) {
 		description: [
 			"Delegate tasks to specialized subagents with isolated context.",
 			"Modes: single (agent + task), parallel (tasks array), chain (sequential with {previous} placeholder).",
+			'Model: pass "provider/model" (e.g. "opencode-go/qwen3.8-flash") to run the agent on a specific model instead of the session default.',
+			'Thinking: pass a thinking level ("minimal"|"low"|"medium"|"high"|"max") to control reasoning effort; defaults to the session level.',
 			`Default agent scope is "user" (from ${path.join(getAgentDir(), "agents")}).`,
 			`To enable project-local agents in ${CONFIG_DIR_NAME}/agents, set agentScope: "both" (or "project").`,
 		].join(" "),
@@ -581,6 +614,8 @@ export default function (pi: ExtensionAPI) {
 						signal,
 						chainUpdate,
 						makeDetails("chain"),
+						step.model ?? params.model,
+						step.thinking ?? params.thinking,
 					);
 					results.push(result);
 
@@ -660,6 +695,8 @@ export default function (pi: ExtensionAPI) {
 							}
 						},
 						makeDetails("parallel"),
+						t.model ?? params.model,
+						t.thinking ?? params.thinking,
 					);
 					allResults[index] = result;
 					emitParallelUpdate();
@@ -697,6 +734,8 @@ export default function (pi: ExtensionAPI) {
 					signal,
 					onUpdate,
 					makeDetails("single"),
+					params.model,
+					params.thinking,
 				);
 				const isError = isFailedResult(result);
 				if (isError) {
@@ -722,22 +761,30 @@ export default function (pi: ExtensionAPI) {
 
 		renderCall(args, theme, _context) {
 			const scope: AgentScope = args.agentScope ?? "user";
+			const dispatchSuffix = (model?: string, thinking?: string) => {
+				if (!model && !thinking) return "";
+				const parts = [model, thinking && `thinking:${thinking}`].filter(Boolean).join(" · ");
+				return theme.fg("dim", ` {${parts}}`);
+			};
 			if (args.chain && args.chain.length > 0) {
 				let text =
 					theme.fg("toolTitle", theme.bold("subagent ")) +
 					theme.fg("accent", `chain (${args.chain.length} steps)`) +
-					theme.fg("muted", ` [${scope}]`);
+					theme.fg("muted", ` [${scope}]`) +
+					dispatchSuffix(args.model, args.thinking);
 				for (let i = 0; i < Math.min(args.chain.length, 3); i++) {
 					const step = args.chain[i];
 					// Clean up {previous} placeholder for display
 					const cleanTask = step.task.replace(/\{previous\}/g, "").trim();
 					const preview = cleanTask.length > 40 ? `${cleanTask.slice(0, 40)}...` : cleanTask;
+					const stepSuffix = step.model ? theme.fg("dim", ` {${step.model}}`) : "";
 					text +=
 						"\n  " +
 						theme.fg("muted", `${i + 1}.`) +
 						" " +
 						theme.fg("accent", step.agent) +
-						theme.fg("dim", ` ${preview}`);
+						theme.fg("dim", ` ${preview}`) +
+						stepSuffix;
 				}
 				if (args.chain.length > 3) text += `\n  ${theme.fg("muted", `... +${args.chain.length - 3} more`)}`;
 				return new Text(text, 0, 0);
@@ -746,10 +793,12 @@ export default function (pi: ExtensionAPI) {
 				let text =
 					theme.fg("toolTitle", theme.bold("subagent ")) +
 					theme.fg("accent", `parallel (${args.tasks.length} tasks)`) +
-					theme.fg("muted", ` [${scope}]`);
+					theme.fg("muted", ` [${scope}]`) +
+					dispatchSuffix(args.model, args.thinking);
 				for (const t of args.tasks.slice(0, 3)) {
 					const preview = t.task.length > 40 ? `${t.task.slice(0, 40)}...` : t.task;
-					text += `\n  ${theme.fg("accent", t.agent)}${theme.fg("dim", ` ${preview}`)}`;
+					const taskSuffix = t.model ? theme.fg("dim", ` {${t.model}}`) : "";
+					text += `\n  ${theme.fg("accent", t.agent)}${theme.fg("dim", ` ${preview}`)}${taskSuffix}`;
 				}
 				if (args.tasks.length > 3) text += `\n  ${theme.fg("muted", `... +${args.tasks.length - 3} more`)}`;
 				return new Text(text, 0, 0);
@@ -759,7 +808,8 @@ export default function (pi: ExtensionAPI) {
 			let text =
 				theme.fg("toolTitle", theme.bold("subagent ")) +
 				theme.fg("accent", agentName) +
-				theme.fg("muted", ` [${scope}]`);
+				theme.fg("muted", ` [${scope}]`) +
+				dispatchSuffix(args.model, args.thinking);
 			text += `\n  ${theme.fg("dim", preview)}`;
 			return new Text(text, 0, 0);
 		},
