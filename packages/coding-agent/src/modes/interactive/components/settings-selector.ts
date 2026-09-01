@@ -191,8 +191,11 @@ function modelItemLabel(model: Model<any>): string {
 	return `${model.id} ${theme.fg("muted", `[${model.provider}]`)}`;
 }
 
-function themeItems(availableThemes: string[]): SelectItem[] {
-	return availableThemes.map((name) => ({ value: name, label: name }));
+function themeItems(availableThemes: string[], currentTheme: string): SelectItem[] {
+	return availableThemes.map((name) => ({
+		value: name,
+		label: `${name === currentTheme ? "✓ " : "  "}${name}`,
+	}));
 }
 
 const AUTOMATIC_THEME_VALUE = "/";
@@ -204,10 +207,7 @@ function singleModeThemeItems(availableThemes: string[], currentTheme: string): 
 			label: "  Automatic",
 			description: "Use separate themes for light and dark terminal appearance",
 		},
-		...availableThemes.map((name) => ({
-			value: name,
-			label: `${name === currentTheme ? "✓ " : "  "}${name}`,
-		})),
+		...themeItems(availableThemes, currentTheme),
 	];
 }
 
@@ -404,7 +404,7 @@ class ThemeSubmenu extends Container {
 		return new SelectSubmenu(
 			title,
 			description,
-			themeItems(this.availableThemes),
+			themeItems(this.availableThemes, currentValue),
 			currentValue,
 			onSelect,
 			() => {
