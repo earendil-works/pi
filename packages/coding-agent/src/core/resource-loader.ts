@@ -575,6 +575,19 @@ export class DefaultResourceLoader implements ResourceLoader {
 		extensionPaths: string[],
 		preTrustExtensions: LoadExtensionsResult | undefined,
 	): Promise<LoadExtensionsResult> {
+		if (preTrustExtensions) {
+			// A pre-trust runtime that was invalidated while project trust was being
+			// resolved (session replaced during the trust window) must never be
+			// served to the final load pass: every remaining factory would throw
+			// "ctx is stale" on its first registration call, permanently failing to
+			// load those extensions. Drop it and take the full-reload path with a
+			// fresh runtime instead.
+			try {
+				preTrustExtensions.runtime.assertActive();
+			} catch {
+				preTrustExtensions = undefined;
+			}
+		}
 		if (!preTrustExtensions) {
 			const extensionsResult = await loadExtensionsCached(extensionPaths, this.cwd, this.eventBus);
 			const inlineExtensions = await this.loadExtensionFactories(extensionsResult.runtime);
