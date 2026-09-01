@@ -79,6 +79,21 @@ const mockOpenRouterModels: Model<"anthropic-messages">[] = [
 
 const allModels = [...mockModels, ...mockOpenRouterModels];
 
+function catalogModel(provider: string, id: string): Model<"anthropic-messages"> {
+	return {
+		id,
+		name: id,
+		api: "anthropic-messages",
+		provider,
+		baseUrl: "https://example.test",
+		reasoning: false,
+		input: ["text"],
+		cost: { input: 1, output: 2, cacheRead: 0.1, cacheWrite: 1 },
+		contextWindow: 128000,
+		maxTokens: 8192,
+	};
+}
+
 describe("parseModelPattern", () => {
 	describe("simple patterns without colons", () => {
 		test("exact match returns model with undefined thinking level", () => {
@@ -701,6 +716,107 @@ describe("resolveCliModel", () => {
 			// :high is kept as part of the model id since --thinking was explicit
 			expect(result.model?.id).toBe("zai-org/GLM-5.1-FP8:high");
 			expect(result.thinkingLevel).toBeUndefined();
+		});
+	});
+
+	describe("G-411a --provider without --model", () => {
+		test("selects the provider default when --provider is given without --model", () => {
+			const registry = {
+				getModels: () => [
+					...allModels,
+					catalogModel("deepseek", "deepseek-chat"),
+					catalogModel("deepseek", defaultModelPerProvider.deepseek),
+				],
+			} as unknown as Parameters<typeof resolveCliModel>[0]["modelRuntime"];
+
+			const result = resolveCliModel({
+				cliProvider: "deepseek",
+				modelRuntime: registry,
+			});
+
+			expect(result.error).toBeUndefined();
+			expect(result.warning).toBeUndefined();
+			expect(result.model?.provider).toBe("deepseek");
+			expect(result.model?.id).toBe(defaultModelPerProvider.deepseek);
+		});
+
+		test("falls back to the provider's first catalog model when its default is missing", () => {
+			const registry = {
+				getModels: () => [...allModels, catalogModel("deepseek", "deepseek-chat")],
+			} as unknown as Parameters<typeof resolveCliModel>[0]["modelRuntime"];
+
+			const result = resolveCliModel({
+				cliProvider: "deepseek",
+				modelRuntime: registry,
+			});
+
+			expect(result.error).toBeUndefined();
+			expect(result.model?.provider).toBe("deepseek");
+			expect(result.model?.id).toBe("deepseek-chat");
+		});
+
+		test("returns Unknown provider when --provider is not a known name and --model is omitted", () => {
+			const registry = {
+				getModels: () => allModels,
+			} as unknown as Parameters<typeof resolveCliModel>[0]["modelRuntime"];
+
+			const result = resolveCliModel({
+				cliProvider: "not-a-real-provider",
+				modelRuntime: registry,
+			});
+
+			expect(result.model).toBeUndefined();
+			expect(result.error).toBe(
+				'Unknown provider "not-a-real-provider". Use --list-models to see available providers/models.',
+			);
+		});
+
+		test("returns a loud error naming the provider when it has no catalog models", () => {
+			const registry = {
+				getModels: () => allModels,
+			} as unknown as Parameters<typeof resolveCliModel>[0]["modelRuntime"];
+
+			const result = resolveCliModel({
+				cliProvider: "xai",
+				modelRuntime: registry,
+			});
+
+			expect(result.model).toBeUndefined();
+			expect(result.error).toBe(
+				'No models available for provider "xai". Use --list-models to see available providers/models.',
+			);
+		});
+
+		test("keeps --provider + --model resolution unchanged", () => {
+			const registry = {
+				getModels: () => allModels,
+			} as unknown as Parameters<typeof resolveCliModel>[0]["modelRuntime"];
+
+			const result = resolveCliModel({
+				cliProvider: "openai",
+				cliModel: "4o",
+				modelRuntime: registry,
+			});
+
+			expect(result.error).toBeUndefined();
+			expect(result.model?.provider).toBe("openai");
+			expect(result.model?.id).toBe("gpt-4o");
+		});
+
+		test("keeps neither --provider nor --model as an empty resolution", () => {
+			const registry = {
+				getModels: () => allModels,
+			} as unknown as Parameters<typeof resolveCliModel>[0]["modelRuntime"];
+
+			const result = resolveCliModel({
+				modelRuntime: registry,
+			});
+
+			expect(result).toEqual({
+				model: undefined,
+				warning: undefined,
+				error: undefined,
+			});
 		});
 	});
 });

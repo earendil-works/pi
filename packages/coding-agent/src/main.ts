@@ -459,8 +459,9 @@ function buildSessionOptions(
 
 	// Model from CLI
 	// - supports --provider <name> --model <pattern>
+	// - supports --provider <name> (that provider's default / first catalog model)
 	// - supports --model <provider>/<pattern>
-	if (parsed.model) {
+	if (parsed.model || parsed.provider) {
 		const resolved = resolveCliModel({
 			cliProvider: parsed.provider,
 			cliModel: parsed.model,

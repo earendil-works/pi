@@ -391,11 +391,49 @@ export interface ResolveCliModelResult {
 	error: string | undefined;
 }
 
+function canonicalProviderId(name: string, availableModels: Model<Api>[]): string | undefined {
+	const lower = name.toLowerCase();
+	for (const model of availableModels) {
+		if (model.provider.toLowerCase() === lower) return model.provider;
+	}
+	for (const id of Object.keys(defaultModelPerProvider) as KnownProvider[]) {
+		if (id.toLowerCase() === lower) return id;
+	}
+	return undefined;
+}
+
+function resolveProviderOnlyCliModel(cliProvider: string, availableModels: Model<Api>[]): ResolveCliModelResult {
+	const provider = canonicalProviderId(cliProvider, availableModels);
+	if (!provider) {
+		return {
+			model: undefined,
+			warning: undefined,
+			error: `Unknown provider "${cliProvider}". Use --list-models to see available providers/models.`,
+		};
+	}
+
+	const providerModels = availableModels.filter((model) => model.provider === provider);
+	if (providerModels.length === 0) {
+		return {
+			model: undefined,
+			warning: undefined,
+			error: `No models available for provider "${provider}". Use --list-models to see available providers/models.`,
+		};
+	}
+
+	const defaultId = defaultModelPerProvider[provider as KnownProvider];
+	const model = defaultId
+		? (providerModels.find((candidate) => candidate.id === defaultId) ?? providerModels[0])
+		: providerModels[0];
+	return { model, warning: undefined, error: undefined };
+}
+
 /**
  * Resolve a single model from CLI flags.
  *
  * Supports:
  * - --provider <provider> --model <pattern>
+ * - --provider <provider> (provider default, or that provider's first catalog model)
  * - --model <provider>/<pattern>
  * - Fuzzy matching (same rules as model scoping: exact id, then partial id/name)
  *
@@ -411,7 +449,10 @@ export function resolveCliModel(options: {
 	const { cliProvider, cliModel, cliThinking, modelRuntime } = options;
 
 	if (!cliModel) {
-		return { model: undefined, warning: undefined, error: undefined };
+		if (!cliProvider) {
+			return { model: undefined, warning: undefined, error: undefined };
+		}
+		return resolveProviderOnlyCliModel(cliProvider, [...modelRuntime.getModels()]);
 	}
 
 	// Important: use *all* models here, not just models with pre-configured auth.
