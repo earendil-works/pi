@@ -975,6 +975,12 @@ function applyThinkingLevelMetadata(model: Model<any>): void {
 	if (model.provider === "fireworks" && model.id.includes("glm-5p2")) {
 		mergeThinkingLevelMap(model, { off: "none", minimal: null, low: "high", medium: "high", max: "max" });
 	}
+	if (model.provider === "fireworks" && model.id.includes("glm-5p3")) {
+		// GLM 5.3 and GLM 5.3 Flash are thinking-only: reasoning_effort "none" is a 400
+		// ("GLM-5.3 is a thinking-only model"), so "off" stays unmapped. Both take only
+		// "high" and "max", so low/medium ride on "high" like GLM 5.2.
+		mergeThinkingLevelMap(model, { off: null, minimal: null, low: "high", medium: "high", max: "max" });
+	}
 	if (model.provider === "opencode-go" && model.id === "glm-5.2") {
 		mergeThinkingLevelMap(model, OPENCODE_GO_GLM52_THINKING_LEVEL_MAP);
 	}
