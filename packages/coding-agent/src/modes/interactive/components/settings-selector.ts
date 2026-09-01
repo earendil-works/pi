@@ -197,14 +197,17 @@ function themeItems(availableThemes: string[]): SelectItem[] {
 
 const AUTOMATIC_THEME_VALUE = "/";
 
-function singleModeThemeItems(availableThemes: string[]): SelectItem[] {
+function singleModeThemeItems(availableThemes: string[], currentTheme: string): SelectItem[] {
 	return [
 		{
 			value: AUTOMATIC_THEME_VALUE,
-			label: "Automatic",
+			label: "  Automatic",
 			description: "Use separate themes for light and dark terminal appearance",
 		},
-		...themeItems(availableThemes),
+		...availableThemes.map((name) => ({
+			value: name,
+			label: `${name === currentTheme ? "✓ " : "  "}${name}`,
+		})),
 	];
 }
 
@@ -285,7 +288,7 @@ class ThemeSubmenu extends Container {
 		const menu = new SelectSubmenu(
 			"Theme",
 			"Select a theme, or choose Automatic to follow terminal appearance.",
-			singleModeThemeItems(this.availableThemes),
+			singleModeThemeItems(this.availableThemes, this.singleTheme),
 			this.singleTheme,
 			(value) => {
 				if (value === AUTOMATIC_THEME_VALUE) {

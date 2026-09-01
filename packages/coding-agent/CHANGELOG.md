@@ -24,7 +24,7 @@
 
 ### Changed
 
-- Changed selectors in `/thinking`, `/model`, `/scoped-models`, `/trust`, and per-model thinking settings to keep active options marked while browsing. `/scoped-models` now uses consistent per-item toggles and strikes through unavailable models ([#8900](https://github.com/earendil-works/pi/pull/8900)).
+- Changed selectors in `/thinking`, `/model`, `/scoped-models`, `/trust`, per-model thinking settings, and fixed-theme settings to keep active options marked while browsing. `/scoped-models` now uses consistent per-item toggles and strikes through unavailable models ([#8900](https://github.com/earendil-works/pi/pull/8900)).
 
 ### Fixed
 
