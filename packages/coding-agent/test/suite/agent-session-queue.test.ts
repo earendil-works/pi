@@ -422,13 +422,20 @@ describe("AgentSession queue characterization", () => {
 
 	it("delivers follow-ups queued during agent_end", async () => {
 		let sent = false;
+		let pendingTextAtQueue = false;
+		let queuedAgentMessageAtQueue = false;
 		const harness = await createHarness({
 			extensionFactories: [
 				(pi: ExtensionAPI) => {
-					pi.on("agent_end", async () => {
+					pi.on("agent_end", async (_event, ctx) => {
 						if (sent) return;
 						sent = true;
-						pi.sendUserMessage("conflict report", { deliverAs: "followUp" });
+						pi.sendMessage(
+							{ customType: "conflict-report", content: "conflict report", display: true, details: {} },
+							{ deliverAs: "followUp" },
+						);
+						pendingTextAtQueue = ctx.hasPendingMessages();
+						queuedAgentMessageAtQueue = ctx.hasQueuedAgentMessages();
 					});
 				},
 			],
@@ -440,6 +447,12 @@ describe("AgentSession queue characterization", () => {
 		await harness.session.prompt("hello");
 		await harness.session.agent.waitForIdle();
 
-		expect(getUserTexts(harness)).toEqual(["hello", "conflict report"]);
+		expect(pendingTextAtQueue).toBe(false);
+		expect(queuedAgentMessageAtQueue).toBe(true);
+		expect(
+			harness.session.messages.some(
+				(message) => message.role === "custom" && message.customType === "conflict-report",
+			),
+		).toBe(true);
 	});
 });

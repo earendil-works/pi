@@ -1041,9 +1041,11 @@ pi.on("tool_result", async (event, ctx) => {
 });
 ```
 
-### ctx.isIdle() / ctx.abort() / ctx.hasPendingMessages()
+### ctx.isIdle() / ctx.abort() / ctx.hasPendingMessages() / ctx.hasQueuedAgentMessages()
 
 Control flow helpers. `ctx.isIdle()` is false while Pi is processing an agent run, automatic retry, auto-compaction retry, or queued continuation.
+
+`ctx.hasPendingMessages()` reports text messages tracked by the session for the editor and queue UI. `ctx.hasQueuedAgentMessages()` reports the low-level agent queue directly, including custom messages queued with `pi.sendMessage(..., { deliverAs: "steer" | "followUp" })`. Use the latter when deciding whether the agent loop still has work to process; it does not include `deliverAs: "nextTurn"` messages.
 
 ### ctx.shutdown()
 

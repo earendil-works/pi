@@ -95,6 +95,7 @@ describe("ExtensionRunner", () => {
 		getSignal: () => undefined,
 		abort: () => {},
 		hasPendingMessages: () => false,
+		hasQueuedAgentMessages: () => false,
 		shutdown: () => {},
 		getContextUsage: () => undefined,
 		compact: () => {},
@@ -539,6 +540,26 @@ describe("ExtensionRunner", () => {
 
 			const ctx = runner.createContext();
 			expect(ctx.isProjectTrusted()).toBe(false);
+		});
+
+		it("exposes low-level agent queue state separately from session pending text", async () => {
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			let queued = false;
+
+			runner.bindCore(extensionActions, {
+				...extensionContextActions,
+				hasPendingMessages: () => false,
+				hasQueuedAgentMessages: () => queued,
+			});
+
+			const ctx = runner.createContext();
+			expect(ctx.hasPendingMessages()).toBe(false);
+			expect(ctx.hasQueuedAgentMessages()).toBe(false);
+
+			queued = true;
+			expect(ctx.hasPendingMessages()).toBe(false);
+			expect(ctx.hasQueuedAgentMessages()).toBe(true);
 		});
 
 		it("exposes rpc mode with hasUI true when an RPC UI context is provided", async () => {

@@ -17,6 +17,7 @@ function createContext(tokens: number | null, compact = vi.fn()): ExtensionConte
 		signal: undefined,
 		abort: vi.fn(),
 		hasPendingMessages: () => false,
+		hasQueuedAgentMessages: () => false,
 		shutdown: vi.fn(),
 		getContextUsage: () => ({ tokens, contextWindow: 200_000, percent: tokens === null ? null : tokens / 2000 }),
 		compact,
