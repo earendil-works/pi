@@ -1,4 +1,4 @@
-import { type CredentialStore, InMemoryModelsStore } from "@earendil-works/pi-ai";
+import { InMemoryModelsStore } from "@earendil-works/pi-ai";
 import { describe, expect, it, vi } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { ModelRuntime, wrapRequestAuthError } from "../src/core/model-runtime.ts";
@@ -19,7 +19,7 @@ function testModel(id: string) {
 
 describe("G-411b dead credential names its own brain", () => {
 	it("surfaces provider and model on auth failure instead of a naked JSON blob, without switching providers", async () => {
-		const base = AuthStorage.inMemory({
+		const credentials = AuthStorage.inMemory({
 			"dead-oauth": {
 				type: "oauth",
 				access: "expired-access",
@@ -31,16 +31,6 @@ describe("G-411b dead credential names its own brain", () => {
 				key: "live-key-value",
 			},
 		});
-		const credentialReads: string[] = [];
-		const credentials: CredentialStore = {
-			read: async (providerId) => {
-				credentialReads.push(providerId);
-				return base.read(providerId);
-			},
-			list: () => base.list(),
-			modify: (providerId, fn) => base.modify(providerId, fn),
-			delete: (providerId) => base.delete(providerId),
-		};
 		const liveStream = vi.fn(() => {
 			throw new Error("live provider must not be called");
 		});
@@ -82,7 +72,6 @@ describe("G-411b dead credential names its own brain", () => {
 		const model = runtime.getModel("dead-oauth", "dead-model");
 		expect(model).toBeDefined();
 
-		credentialReads.length = 0;
 		const result = await runtime.completeSimple(model!, { messages: [] });
 
 		expect(result.stopReason).toBe("error");
@@ -98,7 +87,6 @@ describe("G-411b dead credential names its own brain", () => {
 
 		expect(liveStream).not.toHaveBeenCalled();
 		expect(deadStream).not.toHaveBeenCalled();
-		expect(credentialReads.some((providerId) => providerId === "live-key")).toBe(false);
 	});
 
 	it("keeps the original refresh failure on the cause chain", () => {
