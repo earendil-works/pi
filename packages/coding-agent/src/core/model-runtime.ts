@@ -110,6 +110,23 @@ export class CredentialSynchronizationError extends Error {
 	}
 }
 
+/** Human-facing wrapper for a request-time auth failure. Original error stays on `cause`. */
+export function wrapRequestAuthError(
+	error: unknown,
+	model: { provider: string; id: string },
+	configuredProviderIds: Iterable<string>,
+): ModelsError {
+	if (error instanceof ModelsError && error.message.startsWith("Authentication failed for ")) {
+		return error;
+	}
+	const others = [...new Set(configuredProviderIds)].filter((id) => id !== model.provider).sort();
+	const alternatives =
+		others.length > 0 ? `Other configured providers: ${others.join(", ")}.` : "No other configured providers.";
+	const message = `Authentication failed for ${model.provider}/${model.id}. ${alternatives} Switch with --provider <name>.`;
+	const code = error instanceof ModelsError && (error.code === "oauth" || error.code === "auth") ? error.code : "auth";
+	return new ModelsError(code, message, { cause: error });
+}
+
 function mergeHeaders(
 	base: ProviderHeaders | undefined,
 	override: ProviderHeaders | undefined,
@@ -580,12 +597,23 @@ export class ModelRuntime implements Models {
 	}> {
 		const provider = this.models.getProvider(model.provider);
 		if (!provider) throw new ModelsError("provider", `Unknown provider: ${model.provider}`);
-		const resolution = await this.getAuth(model, {
-			apiKey: options?.apiKey,
-			env: options?.env,
-			signal: options?.signal,
-		});
-		if (!resolution) throw new ModelsError("auth", `Provider is not configured: ${model.provider}`);
+		let resolution: AuthResult | undefined;
+		try {
+			resolution = await this.getAuth(model, {
+				apiKey: options?.apiKey,
+				env: options?.env,
+				signal: options?.signal,
+			});
+		} catch (error) {
+			throw wrapRequestAuthError(error, model, this.snapshot.configuredProviders);
+		}
+		if (!resolution) {
+			throw wrapRequestAuthError(
+				new ModelsError("auth", `Provider is not configured: ${model.provider}`),
+				model,
+				this.snapshot.configuredProviders,
+			);
+		}
 
 		const { transformHeaders, ...rawProviderOptions } = options ?? {};
 		const providerOptions = rawProviderOptions as Omit<TOptions, "transformHeaders"> & ProviderRequestOptions;
