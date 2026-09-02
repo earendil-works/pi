@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, mkdirSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, rmSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { resolvePath } from "../utils/paths.ts";
 import type { AgentSession } from "./agent-session.ts";
@@ -62,6 +62,22 @@ function extractUserMessageText(content: string | Array<{ type: string; text?: s
 		.filter((part): part is { type: "text"; text: string } => part.type === "text" && typeof part.text === "string")
 		.map((part) => part.text)
 		.join("");
+}
+
+/**
+ * Pick a destination path for an imported session file that never overwrites an
+ * existing file: `foo.jsonl` becomes `foo-1.jsonl`, `foo-2.jsonl`, ...
+ */
+function resolveImportDestination(sessionDir: string, fileName: string): string {
+	let candidate = join(sessionDir, fileName);
+	if (!existsSync(candidate)) return candidate;
+	const dotIndex = fileName.lastIndexOf(".");
+	const stem = dotIndex > 0 ? fileName.slice(0, dotIndex) : fileName;
+	const extension = dotIndex > 0 ? fileName.slice(dotIndex) : "";
+	for (let suffix = 1; ; suffix++) {
+		candidate = join(sessionDir, `${stem}-${suffix}${extension}`);
+		if (!existsSync(candidate)) return candidate;
+	}
 }
 
 /**
@@ -354,6 +370,10 @@ export class AgentSessionRuntime {
 	/**
 	 * Import a session JSONL file and switch runtime state to the imported session.
 	 *
+	 * The file is copied into the session directory. When a file with the same name
+	 * already exists there, a unique destination name is chosen instead of
+	 * overwriting it. If the import fails after copying, the copy is removed again.
+	 *
 	 * @returns `{ cancelled: true }` when cancelled by `session_before_switch`, otherwise `{ cancelled: false }`.
 	 * @throws {SessionImportFileNotFoundError} When the input path does not exist.
 	 * @throws {MissingSessionCwdError} When the imported session cwd cannot be resolved and no override is provided.
@@ -369,30 +389,39 @@ export class AgentSessionRuntime {
 			mkdirSync(sessionDir, { recursive: true });
 		}
 
-		const destinationPath = join(sessionDir, basename(resolvedPath));
+		const isInPlace = resolve(join(sessionDir, basename(resolvedPath))) === resolvedPath;
+		const destinationPath = isInPlace ? resolvedPath : resolveImportDestination(sessionDir, basename(resolvedPath));
 		const beforeResult = await this.emitBeforeSwitch("resume", destinationPath);
 		if (beforeResult.cancelled) {
 			return beforeResult;
 		}
 
 		const previousSessionFile = this.session.sessionFile;
-		if (resolve(destinationPath) !== resolvedPath) {
+		if (!isInPlace) {
 			copyFileSync(resolvedPath, destinationPath);
 		}
 
-		const sessionManager = SessionManager.open(destinationPath, sessionDir, cwdOverride);
-		assertSessionCwdExists(sessionManager, this.cwd);
-		await this.teardownCurrent("resume", sessionManager.getSessionFile());
-		this.apply(
-			await this.createRuntime({
-				cwd: sessionManager.getCwd(),
-				agentDir: this.services.agentDir,
-				sessionManager,
-				sessionStartEvent: { type: "session_start", reason: "resume", previousSessionFile },
-			}),
-		);
-		await this.finishSessionReplacement();
-		return { cancelled: false };
+		try {
+			const sessionManager = SessionManager.open(destinationPath, sessionDir, cwdOverride);
+			assertSessionCwdExists(sessionManager, this.cwd);
+			await this.teardownCurrent("resume", sessionManager.getSessionFile());
+			this.apply(
+				await this.createRuntime({
+					cwd: sessionManager.getCwd(),
+					agentDir: this.services.agentDir,
+					sessionManager,
+					sessionStartEvent: { type: "session_start", reason: "resume", previousSessionFile },
+				}),
+			);
+			await this.finishSessionReplacement();
+			return { cancelled: false };
+		} catch (error) {
+			// A failed import must not leave the copied file behind.
+			if (!isInPlace) {
+				rmSync(destinationPath, { force: true });
+			}
+			throw error;
+		}
 	}
 
 	async dispose(): Promise<void> {
