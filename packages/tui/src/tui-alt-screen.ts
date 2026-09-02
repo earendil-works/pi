@@ -314,7 +314,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 				? ENABLE_BUTTON_MOTION_MOUSE
 				: ENABLE_ALL_MOTION_MOUSE;
 		this.terminal.write(
-			`${ENTER_ALT_SCREEN}${DISABLE_AUTOWRAP}${this.mouseEnabled ? mouseSequence : ""}\x1b[2J\x1b[H\x1b[?25l`,
+			`${ENTER_ALT_SCREEN}${DISABLE_AUTOWRAP}${this.mouseEnabled ? mouseSequence : ""}\x1b[2J\x1b[H${this.transitionTerminalCursorVisibility(false)}`,
 		);
 	}
 
@@ -335,8 +335,10 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 	protected override afterTerminalStop(options: TuiStopOptions): void {
 		if (!this.altScreenActive) return;
 		this.altScreenActive = false;
+		this.invalidateTerminalCursorVisibility();
+		const showCursor = this.transitionTerminalCursorVisibility(true);
 		if (options.preserveScreen) {
-			this.terminal.write(`${BEGIN_SYNCHRONIZED_OUTPUT}${EXIT_ALT_SCREEN}\x1b[?25h${END_SYNCHRONIZED_OUTPUT}`);
+			this.terminal.write(`${BEGIN_SYNCHRONIZED_OUTPUT}${EXIT_ALT_SCREEN}${showCursor}${END_SYNCHRONIZED_OUTPUT}`);
 		} else {
 			const width = Math.max(1, this.terminal.columns);
 			const documentLines = this.render(width).map((line) => line.replace(OSC133_ZONE_PREFIX, ""));
@@ -348,7 +350,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 				if (row > 0) buffer += "\r\n";
 				buffer += `\r\x1b[2K${this.lastDocument[row] ?? ""}`;
 			}
-			buffer += `\x1b[0m${ENABLE_AUTOWRAP}\r\n\x1b[?25h${END_SYNCHRONIZED_OUTPUT}`;
+			buffer += `\x1b[0m${ENABLE_AUTOWRAP}\r\n${showCursor}${END_SYNCHRONIZED_OUTPUT}`;
 			this.terminal.write(buffer);
 		}
 		if (this.savedCapabilities) {
@@ -1363,10 +1365,8 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 
 		if (cursorPos) {
 			buffer += `\x1b[${cursorPos.row + 1};${Math.min(width, cursorPos.col) + 1}H`;
-			buffer += this.getShowHardwareCursor() ? "\x1b[?25h" : "\x1b[?25l";
-		} else {
-			buffer += "\x1b[?25l";
 		}
+		buffer += this.transitionTerminalCursorVisibility(cursorPos !== null && this.getShowHardwareCursor());
 		buffer += END_SYNCHRONIZED_OUTPUT;
 		this.terminal.write(buffer);
 
