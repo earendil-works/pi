@@ -91,6 +91,20 @@ describe("llama.cpp extension", () => {
 		]);
 	});
 
+	it("exposes reasoning and supportsReasoningEffort for per-request thinking control", () => {
+		const controller = createLlamaProvider();
+		controller.setCatalog(
+			[{ id: "qwen3-8b", status: { value: "loaded" }, meta: { n_ctx: 131072 } }],
+			"http://localhost:8080",
+		);
+
+		const model = controller.provider.getModels()[0];
+		expect(model).toBeDefined();
+		expect(model?.reasoning).toBe(true);
+		expect(model?.compat?.supportsReasoningEffort).toBe(true);
+		expect(model?.compat?.supportsUsageInStreaming).toBe(true);
+	});
+
 	it("persists and restores selectable models for cache-only startup refreshes", async () => {
 		let cachedEntry: ModelsStoreEntry | undefined;
 		const { url } = await listen((request, response) => {

@@ -55,7 +55,7 @@ function toPiModel(model: LlamaModelInfo, serverUrl: string): Model<"openai-comp
 		api: "openai-completions",
 		provider: LLAMA_PROVIDER_ID,
 		baseUrl: llamaInferenceUrl(serverUrl),
-		reasoning: false,
+		reasoning: true,
 		input: model.architecture?.input_modalities?.includes("image") ? ["text", "image"] : ["text"],
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 		contextWindow,
@@ -63,7 +63,7 @@ function toPiModel(model: LlamaModelInfo, serverUrl: string): Model<"openai-comp
 		compat: {
 			supportsStore: false,
 			supportsDeveloperRole: false,
-			supportsReasoningEffort: false,
+			supportsReasoningEffort: true,
 			supportsUsageInStreaming: true,
 			supportsStrictMode: false,
 			maxTokensField: "max_tokens",
