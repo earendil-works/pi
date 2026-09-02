@@ -99,6 +99,7 @@ pi
 | Qwen Token Plan (existing catalog) | `QWEN_TOKEN_PLAN_API_KEY` | `qwen-token-plan` |
 | Qwen Token Plan (Individual) | `QWEN_TOKEN_PLAN_API_KEY` | `qwen-token-plan-individual` |
 | Qwen Token Plan (China) | `QWEN_TOKEN_PLAN_CN_API_KEY` | `qwen-token-plan-cn` |
+| Qwen Token Plan (Individual, China) | `QWEN_TOKEN_PLAN_CN_API_KEY` | `qwen-token-plan-individual-cn` |
 | Xiaomi MiMo | `XIAOMI_API_KEY` | `xiaomi` |
 | Xiaomi MiMo Token Plan (China) | `XIAOMI_TOKEN_PLAN_CN_API_KEY` | `xiaomi-token-plan-cn` |
 | Xiaomi MiMo Token Plan (Amsterdam) | `XIAOMI_TOKEN_PLAN_AMS_API_KEY` | `xiaomi-token-plan-ams` |
@@ -124,6 +125,7 @@ Store credentials in `~/.pi/agent/auth.json`:
   "qwen-token-plan":  { "type": "api_key", "key": "sk-sp-..." },
   "qwen-token-plan-individual": { "type": "api_key", "key": "sk-sp-..." },
   "qwen-token-plan-cn": { "type": "api_key", "key": "sk-sp-..." },
+  "qwen-token-plan-individual-cn": { "type": "api_key", "key": "sk-sp-..." },
   "xiaomi": { "type": "api_key", "key": "..." },
   "xiaomi-token-plan-cn":  { "type": "api_key", "key": "..." },
   "xiaomi-token-plan-ams": { "type": "api_key", "key": "..." },
@@ -133,8 +135,9 @@ Store credentials in `~/.pi/agent/auth.json`:
 
 `qwen-token-plan-individual` uses the same international endpoint and `QWEN_TOKEN_PLAN_API_KEY` as
 `qwen-token-plan`, but limits the picker to the models documented for Individual subscriptions. The existing
-provider keeps its broader catalog for backward compatibility. When using `auth.json`, store the
-credential under the provider you select; an environment variable is shared by both international providers.
+provider keeps its broader catalog for backward compatibility. `qwen-token-plan-individual-cn` does the same
+for the China endpoint and `QWEN_TOKEN_PLAN_CN_API_KEY`. When using `auth.json`, store the
+credential under the provider you select; each environment variable is shared by the two providers of its region.
 
 The file is created with `0600` permissions (user read/write only). Auth file credentials take priority over environment variables.
 
