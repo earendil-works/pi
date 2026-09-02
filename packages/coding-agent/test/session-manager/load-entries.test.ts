@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { SessionEntry } from "../../src/core/session-manager.ts";
+import type { FileEntry, SessionEntry, SessionMessageEntry } from "../../src/core/session-manager.ts";
 import { SessionManager } from "../../src/core/session-manager.ts";
 
 const UUID_V7_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -128,5 +128,55 @@ describe("SessionManager.inMemory with preloaded entries", () => {
 		expect(session.getSessionId()).toBe("empty-session");
 		expect(session.getEntries()).toEqual([]);
 		expect(session.getLeafId()).toBeNull();
+	});
+
+	it("takes the session identity from a header among the entries", () => {
+		const body = storedEntries((source) => source.appendMessage(userMessage("hello")));
+		const entries: FileEntry[] = [
+			{ type: "session", version: 3, id: "stored-session", timestamp: "2026-01-01T00:00:00Z", cwd: "/stored" },
+			...body,
+		];
+
+		const session = SessionManager.inMemory("/project", { id: "ignored" }, entries);
+
+		expect(session.getSessionId()).toBe("stored-session");
+		expect(session.getHeader()!.cwd).toBe("/stored");
+	});
+
+	it("migrates entries restored with an older header", () => {
+		const entries: FileEntry[] = [
+			{ type: "session", version: 2, id: "v2-session", timestamp: "2026-01-01T00:00:00Z", cwd: "/project" },
+			{
+				type: "message",
+				id: "abc12345",
+				parentId: null,
+				timestamp: "2026-01-01T00:00:01Z",
+				message: { role: "hookMessage", content: "from a hook", timestamp: 1 },
+			} as unknown as SessionMessageEntry,
+		];
+
+		const session = SessionManager.inMemory("/project", undefined, entries);
+		const restored = session.getEntries()[0] as SessionMessageEntry;
+
+		expect(session.getHeader()!.version).toBe(3);
+		expect(restored.message.role).toBe("custom");
+		expect(restored.id).toBe("abc12345");
+	});
+
+	it("adopts headerless entries as current-version without migrating them", () => {
+		const entries: SessionEntry[] = [
+			{
+				type: "message",
+				id: "abc12345",
+				parentId: null,
+				timestamp: "2026-01-01T00:00:01Z",
+				message: { role: "hookMessage", content: "from a hook", timestamp: 1 },
+			} as unknown as SessionMessageEntry,
+		];
+
+		const session = SessionManager.inMemory("/project", undefined, entries);
+		const restored = session.getEntries()[0] as SessionMessageEntry;
+
+		expect(restored.message.role).toBe("hookMessage");
 	});
 });

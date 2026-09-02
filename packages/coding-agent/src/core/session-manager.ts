@@ -957,13 +957,13 @@ export class SessionManager {
 		if (header) {
 			this.fileEntries = entries;
 			this.sessionId = header.id;
+
+			if (migrateToCurrentVersion(this.fileEntries)) {
+				this._rewriteFile();
+			}
 		} else {
 			this.newSession(options);
 			this.fileEntries = this.fileEntries.concat(entries);
-		}
-
-		if (migrateToCurrentVersion(this.fileEntries)) {
-			this._rewriteFile();
 		}
 
 		this._buildIndex();
@@ -1580,7 +1580,7 @@ export class SessionManager {
 	}
 
 	/** Create an in-memory session (no file persistence), optionally from entries held outside the filesystem. */
-	static inMemory(cwd: string = process.cwd(), options?: NewSessionOptions, entries?: SessionEntry[]): SessionManager {
+	static inMemory(cwd: string = process.cwd(), options?: NewSessionOptions, entries?: FileEntry[]): SessionManager {
 		return new SessionManager(cwd, "", undefined, false, options, entries);
 	}
 
