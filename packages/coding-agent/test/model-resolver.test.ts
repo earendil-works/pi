@@ -711,6 +711,11 @@ describe("default model selection", () => {
 		expect(defaultModelPerProvider["openai-codex"]).toBe("gpt-5.5");
 	});
 
+	test("anthropic provider defaults are explicit", () => {
+		expect(defaultModelPerProvider.anthropic).toBe("claude-opus-4-8");
+		expect(defaultModelPerProvider["anthropic-vertex"]).toBe("claude-opus-5");
+	});
+
 	test("zai, minimax, cerebras, and ant-ling defaults track current models", () => {
 		expect(defaultModelPerProvider.zai).toBe("glm-5.3");
 		expect(defaultModelPerProvider["zai-coding-cn"]).toBe("glm-5.3");

@@ -48,6 +48,7 @@ Unified LLM API with provider collections, automatic auth resolution, token and 
 - [Bundling and Tree Shaking](#bundling-and-tree-shaking)
 - [OAuth Providers](#oauth-providers)
   - [Vertex AI](#vertex-ai)
+  - [Anthropic Vertex AI](#anthropic-vertex-ai)
   - [CLI Login](#cli-login)
   - [Programmatic OAuth](#programmatic-oauth)
 - [Migrating from the Old Global API](#migrating-from-the-old-global-api)
@@ -65,6 +66,7 @@ Unified LLM API with provider collections, automatic auth resolution, token and 
 - **Anthropic**
 - **Google**
 - **Vertex AI** (Gemini via Vertex AI)
+- **Anthropic Vertex AI** (Claude via Vertex AI and Google Cloud ADC)
 - **Mistral**
 - **Groq**
 - **Cerebras**
@@ -416,6 +418,7 @@ Built-in providers resolve these env vars (Node.js; in browsers pass `apiKey` ex
 | Ant Ling | `ANT_LING_API_KEY` |
 | Azure OpenAI | `AZURE_OPENAI_API_KEY` + `AZURE_OPENAI_BASE_URL` (e.g. `https://{resource}.ai.azure.com`) or `AZURE_OPENAI_RESOURCE_NAME`. Supports `*.openai.azure.com`, `*.cognitiveservices.azure.com` and `*.ai.azure.com`; root endpoints auto-normalize to `/openai/v1`. Optional: `AZURE_OPENAI_API_VERSION` (default `v1`), `AZURE_OPENAI_DEPLOYMENT_NAME_MAP`. |
 | Anthropic | `ANTHROPIC_API_KEY` or `ANTHROPIC_OAUTH_TOKEN` |
+| Anthropic Vertex AI | Google ADC; optional `ANTHROPIC_VERTEX_PROJECT_ID` (or `GOOGLE_CLOUD_PROJECT` / `GCLOUD_PROJECT`) when ADC cannot infer the project; optional `CLOUD_ML_REGION` (or `GOOGLE_CLOUD_LOCATION`, defaults to `global`) and `ANTHROPIC_VERTEX_BASE_URL` |
 | DeepSeek | `DEEPSEEK_API_KEY` |
 | NVIDIA NIM | `NVIDIA_API_KEY` |
 | Google | `GEMINI_API_KEY` |
@@ -453,7 +456,7 @@ Built-in providers resolve these env vars (Node.js; in browsers pass `apiKey` ex
 subscriptions, while the existing provider retains its broader catalog for backward compatibility.
 Stored credentials remain provider-scoped, so save the key under the provider ID you register.
 
-Amazon Bedrock resolves ambient AWS credentials (`AWS_PROFILE`, access key pairs, `AWS_BEARER_TOKEN_BEDROCK`, ECS task roles, web identity tokens); its provider-owned login flow supports bearer tokens, AWS profiles, and the existing credential chain. Vertex AI resolves either an explicit key or gcloud Application Default Credentials plus project/location, with a provider-owned login flow for API keys, ADC, and service-account files.
+Amazon Bedrock resolves ambient AWS credentials (`AWS_PROFILE`, access key pairs, `AWS_BEARER_TOKEN_BEDROCK`, ECS task roles, web identity tokens); its provider-owned login flow supports bearer tokens, AWS profiles, and the existing credential chain. Vertex AI resolves either an explicit key or gcloud Application Default Credentials plus project/location, with a provider-owned login flow for API keys, ADC, and service-account files. Anthropic Vertex AI is a separate Claude provider that uses the Google ADC chain directly; the SDK can resolve an attached service account even when no local credential file exists, but applications that use provider availability checks should supply a project variable so metadata-only credentials are discoverable.
 
 ## Tools
 
@@ -1152,6 +1155,7 @@ Built-in API implementations live under `./api/<api-id>`:
 | API id | Options type |
 |--------|--------------|
 | `anthropic-messages` | `AnthropicOptions` |
+| `anthropic-vertex` | `AnthropicVertexOptions` |
 | `openai-completions` | `OpenAICompletionsOptions` |
 | `openai-responses` | `OpenAIResponsesOptions` |
 | `openai-codex-responses` | `OpenAICodexResponsesOptions` |
@@ -1394,9 +1398,9 @@ const response = await models.complete(model, {
 
 Browser compatibility notes:
 
-- Amazon Bedrock (`bedrock-converse-stream`) is not supported in browser environments. It can still appear in model lists; calls fail at runtime.
+- Amazon Bedrock (`bedrock-converse-stream`) and Anthropic Vertex AI (`anthropic-vertex`) are not supported in browser environments. They can still appear in model lists; calls fail at runtime.
 - OAuth login flows are Node-only. They are lazy-loaded behind bundler-opaque imports, so registering an OAuth-capable provider does not pull Node-only code into a browser bundle — only actually logging in would.
-- Use a server-side proxy or backend service if you need Bedrock or OAuth-based auth from a web app.
+- Use a server-side proxy or backend service if you need Bedrock, Anthropic Vertex, or OAuth-based auth from a web app.
 
 ## Bundling and Tree Shaking
 
@@ -1416,7 +1420,7 @@ Rules:
 - `@earendil-works/pi-ai/providers/<provider>` imports that provider's catalog and lazy API wrapper only.
 - `@earendil-works/pi-ai/providers/all` imports every built-in provider factory and all catalogs. Use it only when you want the full built-in set.
 - With code splitting, provider SDKs stay in lazy chunks and load on first request.
-- Without code splitting, bundlers fold reachable lazy API implementations into the single bundle. A single-provider bundle then includes that provider's SDK; `providers/all` includes all statically visible SDKs. Bedrock is the exception: its AWS SDK implementation is loaded through a bundler-opaque Node-only import.
+- Without code splitting, bundlers fold reachable lazy API implementations into the single bundle. A single-provider bundle then includes that provider's SDK; `providers/all` includes all statically visible SDKs. Bedrock and Anthropic Vertex are exceptions: their Node-only SDK implementations are loaded through bundler-opaque imports.
 - Importing `@earendil-works/pi-ai/api/<api-id>` directly loads that API implementation and its SDK immediately.
 
 Avoid `@earendil-works/pi-ai/compat` in new bundled apps; it preserves the old global API and imports the full built-in catalog surface.
@@ -1451,6 +1455,17 @@ setBedrockProviderModule(bedrockProviderModule);
 ```
 
 That explicit override bundles the AWS SDK. Without it, Bedrock's opaque runtime import expects the package's Bedrock implementation file to be available at runtime.
+
+Anthropic Vertex uses the same explicit-registration pattern for standalone single-file Node or Bun bundles:
+
+```typescript
+import { anthropicVertexProviderModule } from '@earendil-works/pi-ai/anthropic-vertex-provider';
+import { setAnthropicVertexProviderModule } from '@earendil-works/pi-ai/api/anthropic-vertex.lazy';
+
+setAnthropicVertexProviderModule(anthropicVertexProviderModule);
+```
+
+This bundles the Google auth dependency tree. Normal Node package usage loads it lazily on the first Anthropic Vertex request.
 
 ### Provider-Scoped Environment Overrides
 
@@ -1537,6 +1552,19 @@ export GOOGLE_APPLICATION_CREDENTIALS="/path/to/service-account.json"
 ```
 
 Official docs: [Application Default Credentials](https://cloud.google.com/docs/authentication/application-default-credentials)
+
+### Anthropic Vertex AI
+
+The `anthropic-vertex` provider serves Claude through Google Cloud. It uses the full Google [Application Default Credentials chain](https://cloud.google.com/docs/authentication/application-default-credentials); Anthropic API keys and the `/login` flow do not apply. Set a project explicitly, or let the Google auth client infer it from ADC at request time:
+
+```bash
+gcloud auth application-default login
+export ANTHROPIC_VERTEX_PROJECT_ID="my-project"
+# Optional; defaults to the global endpoint
+export CLOUD_ML_REGION="us"
+```
+
+Workload identity and attached Google Cloud service accounts also work without a local credential file. Provider availability checks do not probe the metadata server, however, so applications that use them for model discovery should set `ANTHROPIC_VERTEX_PROJECT_ID`, `GOOGLE_CLOUD_PROJECT`, or `GCLOUD_PROJECT`. Model availability varies by endpoint type: newer Claude models are served only from the `global` and multi-region (`us`, `eu`) endpoints, while specific regions such as `us-east5` cover Claude Sonnet 4.6 and earlier. See [Claude on Vertex AI](https://platform.claude.com/docs/en/build-with-claude/claude-on-vertex-ai) for model access, regions, and endpoint details.
 
 ### CLI Login
 

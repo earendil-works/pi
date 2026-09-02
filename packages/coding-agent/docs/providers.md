@@ -295,6 +295,58 @@ export GOOGLE_CLOUD_LOCATION=us-central1
 
 Or set `GOOGLE_APPLICATION_CREDENTIALS` to a service account key file.
 
+### Anthropic Vertex AI
+
+Claude models on Vertex AI use ambient [Application Default Credentials](https://cloud.google.com/docs/authentication/application-default-credentials); Anthropic API keys and `/login` are not used.
+
+```bash
+gcloud auth application-default login
+export ANTHROPIC_VERTEX_PROJECT_ID=your-project
+pi --provider anthropic-vertex --model claude-opus-5
+```
+
+The location defaults to `global`. Set `CLOUD_ML_REGION` for a multi-region (`us`, `eu`) or single-region endpoint:
+
+```bash
+export CLOUD_ML_REGION=us
+```
+
+The location applies to every model in the session, and not every model is served from every endpoint type: Anthropic documents specific regions such as `us-east5` for Claude Sonnet 4.6 and earlier, while newer models are offered only on `global` and the multi-region endpoints. A model that is unavailable in the selected location returns a 404 from Vertex AI.
+
+Configuration precedence:
+
+| Setting | Resolution order |
+|---------|------------------|
+| Project | API option, provider-scoped `ANTHROPIC_VERTEX_PROJECT_ID`, `GOOGLE_CLOUD_PROJECT`, `GCLOUD_PROJECT`, then process variables in the same order; if none is set, the SDK may infer a project from ADC at request time |
+| Location | API option, provider-scoped `CLOUD_ML_REGION`, `GOOGLE_CLOUD_LOCATION`, process variables in the same order, then `global` |
+| Base URL | Concrete model URL, provider-scoped `ANTHROPIC_VERTEX_BASE_URL`, process `ANTHROPIC_VERTEX_BASE_URL`, then the SDK-derived Vertex endpoint |
+
+Pi prefers the provider-specific `ANTHROPIC_VERTEX_PROJECT_ID` over the generic Google project variables, so a scoped provider setting always wins. [Claude Code](https://code.claude.com/docs/en/google-vertex-ai) resolves the same variables in the opposite order; if you run both against one Google Cloud project, set the variables consistently.
+
+A custom `ANTHROPIC_VERTEX_BASE_URL` must include the API prefix expected by the SDK, normally `/v1`; the SDK appends the project, location, publisher, model, and `:streamRawPredict` path. [Claude Code's documented example](https://code.claude.com/docs/en/google-vertex-ai) omits `/v1`, so it is not interchangeable with Pi's.
+
+Provider-scoped values can be supplied manually through an `auth.json` credential `env` object:
+
+```json
+{
+  "anthropic-vertex": {
+    "type": "api_key",
+    "env": {
+      "ANTHROPIC_VERTEX_PROJECT_ID": "your-project",
+      "CLOUD_ML_REGION": "us"
+    }
+  }
+}
+```
+
+Google credential files are process-scoped, however: a scoped `GOOGLE_APPLICATION_CREDENTIALS` value is accepted only when it matches the process value. Use workload identity, attached service accounts, `gcloud auth application-default login`, or set `GOOGLE_APPLICATION_CREDENTIALS` before starting Pi.
+
+Pi does not contact the Google metadata server while deciding which providers to show. For workload identity or attached service accounts without a detectable local credential file, set `ANTHROPIC_VERTEX_PROJECT_ID`, `GOOGLE_CLOUD_PROJECT`, or `GCLOUD_PROJECT` so the provider appears in model selection and saved defaults can be restored. On Windows, also set a project variable or point `GOOGLE_APPLICATION_CREDENTIALS` at the ADC file explicitly.
+
+The built-in catalog is generated from models.dev's Claude-only Vertex catalog. Until that catalog includes Fable 5, Pi reuses models.dev's direct Anthropic Fable record; a specialized Vertex record automatically takes precedence when available. Model availability still depends on the selected project, location, and publisher-model access.
+
+Catalog costs reflect global list prices. Anthropic currently documents a 10% premium for regional and multi-region Vertex endpoints; see [Claude on Vertex AI](https://platform.claude.com/docs/en/build-with-claude/claude-on-vertex-ai) for current availability and pricing.
+
 ## llama.cpp
 
 Pi supports the llama.cpp router server. Configure it with `/login llama.cpp`, manage loaded models with `/llama`, and select a loaded model with `/model`.

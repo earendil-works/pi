@@ -164,6 +164,22 @@ export function getEnvApiKey(provider: string, env?: ProviderEnv): string | unde
 		}
 	}
 
+	// Anthropic on Vertex AI uses ambient Google ADC. A project signal is enough
+	// for attached-service-account environments; an ADC file is enough when the
+	// SDK can infer the project from its credentials.
+	if (provider === "anthropic-vertex") {
+		const hasCredentials = hasVertexAdcCredentials(env);
+		const hasProject = !!(
+			getProviderEnvValue("ANTHROPIC_VERTEX_PROJECT_ID", env) ||
+			getProviderEnvValue("GOOGLE_CLOUD_PROJECT", env) ||
+			getProviderEnvValue("GCLOUD_PROJECT", env)
+		);
+
+		if (hasCredentials || hasProject) {
+			return "<authenticated>";
+		}
+	}
+
 	if (provider === "amazon-bedrock") {
 		// Amazon Bedrock supports multiple credential sources:
 		// 1. AWS_PROFILE - named profile from ~/.aws/credentials

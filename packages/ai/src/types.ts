@@ -1,5 +1,6 @@
 import type { TelemetryContext } from "@earendil-works/pi-telemetry";
 import type { AnthropicOptions } from "./api/anthropic-messages.ts";
+import type { AnthropicVertexOptions } from "./api/anthropic-vertex.ts";
 import type { AzureOpenAIResponsesOptions } from "./api/azure-openai-responses.ts";
 import type { BedrockOptions } from "./api/bedrock-converse-stream.ts";
 import type { GoogleOptions } from "./api/google-generative-ai.ts";
@@ -21,6 +22,7 @@ export type KnownApi =
 	| "azure-openai-responses"
 	| "openai-codex-responses"
 	| "anthropic-messages"
+	| "anthropic-vertex"
 	| "bedrock-converse-stream"
 	| "google-generative-ai"
 	| "google-vertex"
@@ -36,6 +38,7 @@ export type KnownProvider =
 	| "amazon-bedrock"
 	| "ant-ling"
 	| "anthropic"
+	| "anthropic-vertex"
 	| "google"
 	| "google-vertex"
 	| "openai"
@@ -242,6 +245,7 @@ export type DeferredCancelOptions = ProviderRequestOptions<Model<Api>>;
  */
 export interface ApiOptionsMap {
 	"anthropic-messages": AnthropicOptions;
+	"anthropic-vertex": AnthropicVertexOptions;
 	"openai-completions": OpenAICompletionsOptions;
 	"openai-responses": OpenAIResponsesOptions;
 	"openai-codex-responses": OpenAICodexResponsesOptions;
@@ -844,7 +848,7 @@ export interface Model<TApi extends Api> {
 		? OpenAICompletionsCompat
 		: TApi extends "openai-responses" | "azure-openai-responses" | "openai-codex-responses"
 			? OpenAIResponsesCompat
-			: TApi extends "anthropic-messages"
+			: TApi extends "anthropic-messages" | "anthropic-vertex"
 				? AnthropicMessagesCompat
 				: TApi extends "bedrock-converse-stream"
 					? BedrockCompat

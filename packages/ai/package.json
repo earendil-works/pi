@@ -35,6 +35,10 @@
 			"types": "./dist/bedrock-provider.d.ts",
 			"import": "./dist/bedrock-provider.js"
 		},
+		"./anthropic-vertex-provider": {
+			"types": "./dist/anthropic-vertex-provider.d.ts",
+			"import": "./dist/anthropic-vertex-provider.js"
+		},
 		"./bun-oauth": {
 			"types": "./dist/bun-oauth.d.ts",
 			"import": "./dist/bun-oauth.js"
@@ -61,6 +65,7 @@
 	},
 	"dependencies": {
 		"@anthropic-ai/sdk": "0.91.1",
+		"@anthropic-ai/vertex-sdk": "0.16.1",
 		"@aws-sdk/client-bedrock-runtime": "3.1048.0",
 		"@earendil-works/pi-telemetry": "^0.84.4",
 		"@google/genai": "1.52.0",

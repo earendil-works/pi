@@ -492,7 +492,9 @@ function recordModelsDevReasoningOptions(provider: string, id: string, sourceMod
 }
 
 function supportsDirectReasoningEffort(model: Model<Api>): boolean {
-	if (model.api === "anthropic-messages") return model.compat?.forceAdaptiveThinking === true;
+	if (model.api === "anthropic-messages" || model.api === "anthropic-vertex") {
+		return model.compat?.forceAdaptiveThinking === true;
+	}
 	if (
 		model.api === "openai-responses" ||
 		model.api === "azure-openai-responses" ||
@@ -585,7 +587,10 @@ function isAnthropicTemperatureUnsupportedModel(modelId: string): boolean {
 		id.includes("opus-4-8") ||
 		id.includes("opus-4.8") ||
 		id.includes("opus-5") ||
-		id.includes("opus.5")
+		id.includes("opus.5") ||
+		id.includes("sonnet-5") ||
+		id.includes("sonnet.5") ||
+		id.includes("fable-5")
 	);
 }
 
@@ -921,10 +926,16 @@ function applyThinkingLevelMetadata(model: Model<any>): void {
 	if (model.id.includes("fable-5")) {
 		mergeThinkingLevelMap(model, { off: null, xhigh: "xhigh", max: "max" });
 	}
-	if (model.api === "anthropic-messages" && isAnthropicAdaptiveThinkingModel(model.id)) {
+	if (
+		(model.api === "anthropic-messages" || model.api === "anthropic-vertex") &&
+		isAnthropicAdaptiveThinkingModel(model.id)
+	) {
 		mergeAnthropicMessagesCompat(model, { forceAdaptiveThinking: true });
 	}
-	if (model.api === "anthropic-messages" && isAnthropicTemperatureUnsupportedModel(model.id)) {
+	if (
+		(model.api === "anthropic-messages" || model.api === "anthropic-vertex") &&
+		isAnthropicTemperatureUnsupportedModel(model.id)
+	) {
 		mergeAnthropicMessagesCompat(model, { supportsTemperature: false });
 	}
 	if (model.api === "openai-completions" && model.id.includes("deepseek-v4")) {
@@ -1501,6 +1512,39 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 				});
 				recordModelsDevReasoningOptions("anthropic", modelId, m);
 			}
+		}
+
+		// Process the Claude-only Vertex catalog. Vertex request IDs use bare
+		// aliases where models.dev marks the moving alias with terminal @default;
+		// dated @YYYYMMDD revisions remain part of the official request ID.
+		const anthropicVertexModels = { ...(data["google-vertex-anthropic"]?.models ?? {}) };
+		const fable = data.anthropic?.models?.["claude-fable-5"];
+		if (!anthropicVertexModels["claude-fable-5"] && fable) {
+			// Fable 5 is officially available on Vertex, but models.dev has not yet
+			// copied its record into the specialized Vertex catalog. Reuse the direct
+			// Anthropic record so metadata stays upstream-owned; the specialized record
+			// automatically wins once it appears.
+			// https://platform.claude.com/docs/en/build-with-claude/claude-on-vertex-ai
+			anthropicVertexModels["claude-fable-5"] = fable;
+		}
+		for (const [modelId, model] of Object.entries(anthropicVertexModels)) {
+			const m = model as ModelsDevModel;
+			if (m.tool_call !== true || m.status === "deprecated" || modelId.includes("mythos")) continue;
+			const id = modelId.endsWith("@default") ? modelId.slice(0, -8) : modelId;
+
+			models.push({
+				id,
+				name: m.name || id,
+				api: "anthropic-vertex",
+				provider: "anthropic-vertex",
+				baseUrl: VERTEX_BASE_URL,
+				reasoning: m.reasoning === true,
+				input: m.modalities?.input?.includes("image") ? ["text", "image"] : ["text"],
+				cost: getModelsDevCost(m.cost),
+				contextWindow: m.limit?.context || 4096,
+				maxTokens: m.limit?.output || 4096,
+			});
+			recordModelsDevReasoningOptions("anthropic-vertex", id, m);
 		}
 
 		// Process Google models

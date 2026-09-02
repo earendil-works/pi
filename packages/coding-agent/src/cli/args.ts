@@ -398,6 +398,13 @@ ${chalk.bold("Environment Variables:")}
   DEEPSEEK_API_KEY                 - DeepSeek API key
   NVIDIA_API_KEY                   - NVIDIA NIM API key
   GEMINI_API_KEY                   - Google Gemini API key
+  GOOGLE_CLOUD_PROJECT             - GCP project for Vertex AI
+  GCLOUD_PROJECT                   - Alternative GCP project variable for Vertex AI
+  GOOGLE_CLOUD_LOCATION            - GCP location for Vertex AI
+  ANTHROPIC_VERTEX_PROJECT_ID      - Preferred GCP project override for Anthropic Vertex AI
+  CLOUD_ML_REGION                  - Preferred location override for Anthropic Vertex AI (default: global)
+  ANTHROPIC_VERTEX_BASE_URL        - Optional Anthropic Vertex AI proxy endpoint
+  GOOGLE_APPLICATION_CREDENTIALS   - Google Application Default Credentials file
   GROQ_API_KEY                     - Groq API key
   CEREBRAS_API_KEY                 - Cerebras API key
   XAI_API_KEY                      - xAI Grok API key

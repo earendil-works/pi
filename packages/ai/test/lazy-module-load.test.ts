@@ -8,7 +8,13 @@ const aiEntryUrl = new URL("../src/index.ts", import.meta.url).href;
 const compatEntryUrl = new URL("../src/compat.ts", import.meta.url).href;
 const providersAllUrl = new URL("../src/providers/all.ts", import.meta.url).href;
 
-const SDK_SPECIFIERS = ["@anthropic-ai/sdk", "openai", "@google/genai", "@aws-sdk/client-bedrock-runtime"] as const;
+const SDK_SPECIFIERS = [
+	"@anthropic-ai/sdk",
+	"@anthropic-ai/vertex-sdk",
+	"openai",
+	"@google/genai",
+	"@aws-sdk/client-bedrock-runtime",
+] as const;
 
 type ProbeResult = {
 	loadedSpecifiers: string[];
@@ -109,5 +115,75 @@ describe("lazy provider module loading", () => {
 		`);
 
 		expect(result.loadedSpecifiers).toEqual(["@anthropic-ai/sdk"]);
+	});
+
+	it("loads only the Anthropic and Anthropic Vertex SDKs when streaming through the Vertex lazy API wrapper", () => {
+		const result = runProbe(`
+			const compat = await import(${JSON.stringify(compatEntryUrl)});
+			const model = {
+				id: "claude-sonnet-4-6",
+				name: "Claude Sonnet 4 (Vertex)",
+				api: "anthropic-vertex",
+				provider: "anthropic-vertex",
+				baseUrl: "https://{location}-aiplatform.googleapis.com/v1",
+				reasoning: true,
+				input: ["text"],
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+				contextWindow: 200000,
+				maxTokens: 8192,
+			};
+			const context = { messages: [{ role: "user", content: "hi" }] };
+			await compat.anthropicVertexApi().streamSimple(model, context).result();
+		`);
+
+		expect(result.loadedSpecifiers).toEqual(["@anthropic-ai/vertex-sdk", "@anthropic-ai/sdk"]);
+	});
+
+	it("does not load the Anthropic Vertex SDK when a Bun-style override is registered", () => {
+		const result = runProbe(`
+			const compat = await import(${JSON.stringify(compatEntryUrl)});
+			const makeStream = (model) => {
+				const stream = mod.createAssistantMessageEventStream();
+				queueMicrotask(() => {
+					const message = {
+						role: "assistant",
+						content: [],
+						api: model.api,
+						provider: model.provider,
+						model: model.id,
+						usage: {
+							input: 0,
+							output: 0,
+							cacheRead: 0,
+							cacheWrite: 0,
+							totalTokens: 0,
+							cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+						},
+						stopReason: "stop",
+						timestamp: Date.now(),
+					};
+					stream.push({ type: "done", reason: "stop", message });
+					stream.end(message);
+				});
+				return stream;
+			};
+			compat.setAnthropicVertexProviderModule({ stream: makeStream, streamSimple: makeStream });
+			const model = {
+				id: "claude-sonnet-4-6",
+				name: "Claude Sonnet 4 (Vertex)",
+				api: "anthropic-vertex",
+				provider: "anthropic-vertex",
+				baseUrl: "https://{location}-aiplatform.googleapis.com/v1",
+				reasoning: true,
+				input: ["text"],
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+				contextWindow: 200000,
+				maxTokens: 8192,
+			};
+			const context = { messages: [{ role: "user", content: "hi" }] };
+			await compat.anthropicVertexApi().streamSimple(model, context).result();
+		`);
+
+		expect(result.loadedSpecifiers).toEqual([]);
 	});
 });

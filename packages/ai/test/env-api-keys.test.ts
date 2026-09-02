@@ -113,4 +113,11 @@ describe("environment API keys", () => {
 
 		expect(getEnvApiKey("anthropic")).toBe("api-key");
 	});
+
+	it("reports Anthropic Vertex ambient auth from a scoped project signal without exposing an API key", () => {
+		const env = { ANTHROPIC_VERTEX_PROJECT_ID: "project-id" };
+
+		expect(findEnvKeys("anthropic-vertex", env)).toBeUndefined();
+		expect(getEnvApiKey("anthropic-vertex", env)).toBe("<authenticated>");
+	});
 });

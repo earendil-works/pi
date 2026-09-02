@@ -92,6 +92,7 @@ try {
 
 	const aiSdkPackages = [
 		"@anthropic-ai/sdk",
+		"@anthropic-ai/vertex-sdk",
 		"@aws-sdk/client-bedrock-runtime",
 		"@google/genai",
 		"@mistralai/mistralai",
