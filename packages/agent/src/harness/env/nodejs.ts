@@ -14,7 +14,7 @@ import {
 	rm,
 	writeFile,
 } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
+import { homedir, constants as osConstants, tmpdir } from "node:os";
 import { basename, isAbsolute, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
@@ -287,11 +287,15 @@ function killProcessTree(pid: number): void {
 	}
 }
 
-function waitForChildProcess(child: ChildProcess, spillIsDraining: () => boolean): Promise<number | null> {
+function waitForChildProcess(
+	child: ChildProcess,
+	spillIsDraining: () => boolean,
+): Promise<{ code: number | null; signal: NodeJS.Signals | null }> {
 	return new Promise((resolvePromise, reject) => {
 		let settled = false;
 		let exited = false;
 		let exitCode: number | null = null;
+		let exitSignal: NodeJS.Signals | null = null;
 		let postExitTimer: ReturnType<typeof setTimeout> | undefined;
 		let stdoutEnded = child.stdout === null;
 		let stderrEnded = child.stderr === null;
@@ -306,22 +310,22 @@ function waitForChildProcess(child: ChildProcess, spillIsDraining: () => boolean
 			child.stdout?.removeListener("data", onData);
 			child.stderr?.removeListener("data", onData);
 		};
-		const finalize = (code: number | null): void => {
+		const finalize = (): void => {
 			if (settled) return;
 			settled = true;
 			cleanup();
 			child.stdout?.destroy();
 			child.stderr?.destroy();
-			resolvePromise(code);
+			resolvePromise({ code: exitCode, signal: exitSignal });
 		};
 		const maybeFinalizeAfterExit = (): void => {
-			if (exited && stdoutEnded && stderrEnded) finalize(exitCode);
+			if (exited && stdoutEnded && stderrEnded) finalize();
 		};
 		const armIdleTimer = (): void => {
 			if (postExitTimer) clearTimeout(postExitTimer);
 			postExitTimer = setTimeout(() => {
 				if (spillIsDraining()) armIdleTimer();
-				else finalize(exitCode);
+				else finalize();
 			}, EXIT_STDIO_GRACE_MS);
 		};
 		const onData = (): void => {
@@ -341,13 +345,18 @@ function waitForChildProcess(child: ChildProcess, spillIsDraining: () => boolean
 			cleanup();
 			reject(error);
 		};
-		const onExit = (code: number | null): void => {
+		const onExit = (code: number | null, signal: NodeJS.Signals | null): void => {
 			exited = true;
 			exitCode = code;
+			exitSignal = signal;
 			maybeFinalizeAfterExit();
 			if (!settled) armIdleTimer();
 		};
-		const onClose = (code: number | null): void => finalize(code);
+		const onClose = (code: number | null, signal: NodeJS.Signals | null): void => {
+			exitCode = code;
+			exitSignal = signal;
+			finalize();
+		};
 
 		child.stdout?.once("end", onStdoutEnd);
 		child.stderr?.once("end", onStderrEnd);
@@ -577,7 +586,7 @@ export class NodeExecutionEnv implements ExecutionEnv {
 					spillStart !== undefined &&
 					(spillStream === undefined || spillBackpressured),
 			).then(
-				async (code) => {
+				async ({ code, signal: exitSignal }) => {
 					await finishSpill();
 					try {
 						capture.finish();
@@ -602,9 +611,13 @@ export class NodeExecutionEnv implements ExecutionEnv {
 						return;
 					}
 					const output = capture.snapshot();
+					// A process killed by a signal (e.g. OOM killer) has no exit code; map it
+					// to the conventional 128 + signal number so callers do not mistake it
+					// for a successful exit.
+					const exitCode = code ?? (exitSignal ? 128 + (osConstants.signals[exitSignal] ?? 0) : 1);
 					settle(
 						ok({
-							exitCode: code ?? 0,
+							exitCode,
 							truncation: output.truncation,
 							...(output.spillPath === undefined ? {} : { spillPath: output.spillPath }),
 							...(output.lastLineBytes === undefined ? {} : { lastLineBytes: output.lastLineBytes }),
