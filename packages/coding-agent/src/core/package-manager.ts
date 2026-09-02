@@ -32,7 +32,7 @@ function getEnv(): NodeJS.ProcessEnv {
 	}
 }
 
-import { basename, dirname, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { Readable } from "node:stream";
 import ignore from "ignore";
 import { minimatch } from "minimatch";
@@ -69,6 +69,7 @@ export interface PathMetadata {
 	scope: SourceScope;
 	origin: "package" | "top-level";
 	baseDir?: string;
+	changelogPath?: string;
 }
 
 export interface ResolvedResource {
@@ -102,6 +103,14 @@ export interface PackageUpdate {
 	scope: Exclude<SourceScope, "temporary">;
 }
 
+export interface PackageUpdateResult extends PackageUpdate {
+	installedPath: string;
+	baseDir: string;
+	fromVersion?: string;
+	toVersion?: string;
+	changelogPath?: string;
+}
+
 export interface ConfiguredPackage {
 	source: string;
 	scope: "user" | "project";
@@ -115,7 +124,7 @@ export interface PackageManager {
 	installAndPersist(source: string, options?: { local?: boolean }): Promise<void>;
 	remove(source: string, options?: { local?: boolean }): Promise<void>;
 	removeAndPersist(source: string, options?: { local?: boolean }): Promise<boolean>;
-	update(source?: string): Promise<void>;
+	update(source?: string): Promise<PackageUpdateResult[]>;
 	listConfiguredPackages(): ConfiguredPackage[];
 	resolveExtensionSources(
 		sources: string[],
@@ -652,6 +661,35 @@ function collectResourceFiles(dir: string, resourceType: ResourceType): string[]
 	return collectFiles(dir, FILE_PATTERNS[resourceType]);
 }
 
+function hasManifestResourceFields(manifest: PiManifest): boolean {
+	return RESOURCE_TYPES.some((resourceType) => manifest[resourceType] !== undefined);
+}
+
+function isPathInside(parent: string, child: string): boolean {
+	const relativePath = relative(parent, child);
+	return (
+		relativePath !== "" && relativePath !== ".." && !relativePath.startsWith(`..${sep}`) && !isAbsolute(relativePath)
+	);
+}
+
+function resolvePackageChangelogPath(packageRoot: string, manifest: PiManifest | null): string | undefined {
+	const changelogPath = manifest?.changelogPath ?? "CHANGELOG.md";
+	if (!changelogPath) return undefined;
+
+	const resolvedPath = resolve(packageRoot, changelogPath);
+	if (!existsSync(resolvedPath)) return undefined;
+
+	const canonicalPackageRoot = canonicalizePath(packageRoot);
+	const canonicalChangelogPath = canonicalizePath(resolvedPath);
+	if (!isPathInside(canonicalPackageRoot, canonicalChangelogPath)) return undefined;
+
+	try {
+		return statSync(resolvedPath).isFile() ? resolvedPath : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
 function matchesAnyPattern(filePath: string, patterns: string[], baseDir: string): boolean {
 	const rel = toPosixPath(relative(baseDir, filePath));
 	const name = basename(filePath);
@@ -1056,7 +1094,7 @@ export class DefaultPackageManager implements PackageManager {
 		return this.removeSourceFromSettings(source, options);
 	}
 
-	async update(source?: string): Promise<void> {
+	async update(source?: string): Promise<PackageUpdateResult[]> {
 		const globalSettings = this.settingsManager.getGlobalSettings();
 		const projectSettings = this.settingsManager.getProjectSettings();
 		const identity = source ? this.getPackageIdentity(source) : undefined;
@@ -1085,12 +1123,12 @@ export class DefaultPackageManager implements PackageManager {
 			);
 		}
 
-		await this.updateConfiguredSources(updateSources);
+		return await this.updateConfiguredSources(updateSources);
 	}
 
-	private async updateConfiguredSources(sources: ConfiguredUpdateSource[]): Promise<void> {
+	private async updateConfiguredSources(sources: ConfiguredUpdateSource[]): Promise<PackageUpdateResult[]> {
 		if (isOfflineModeEnabled() || sources.length === 0) {
-			return;
+			return [];
 		}
 
 		const npmCandidates: NpmUpdateTarget[] = [];
@@ -1127,7 +1165,7 @@ export class DefaultPackageManager implements PackageManager {
 			}
 		}
 
-		const tasks: Promise<void>[] = [];
+		const tasks: Promise<PackageUpdateResult[]>[] = [];
 		if (userNpmUpdates.length > 0) {
 			tasks.push(this.updateNpmBatch(userNpmUpdates, "user"));
 		}
@@ -1135,16 +1173,16 @@ export class DefaultPackageManager implements PackageManager {
 			tasks.push(this.updateNpmBatch(projectNpmUpdates, "project"));
 		}
 		if (gitCandidates.length > 0) {
-			const gitTasks = gitCandidates.map(
-				(entry) => async () =>
-					this.withProgress("update", entry.source, `Updating ${entry.source}...`, async () => {
-						await this.updateGit(entry.parsed, entry.scope);
-					}),
+			const gitTasks = gitCandidates.map((entry) => async () => this.updateGitWithResult(entry));
+			tasks.push(
+				this.runWithConcurrency(gitTasks, GIT_UPDATE_CONCURRENCY).then((results) =>
+					results.filter((result): result is PackageUpdateResult => result !== undefined),
+				),
 			);
-			tasks.push(this.runWithConcurrency(gitTasks, GIT_UPDATE_CONCURRENCY).then(() => {}));
 		}
 
-		await Promise.all(tasks);
+		const results = await Promise.all(tasks);
+		return results.flat();
 	}
 
 	private async shouldUpdateNpmSource(source: NpmSource, scope: InstalledSourceScope): Promise<boolean> {
@@ -1163,9 +1201,21 @@ export class DefaultPackageManager implements PackageManager {
 		}
 	}
 
-	private async updateNpmBatch(sources: NpmUpdateTarget[], scope: InstalledSourceScope): Promise<void> {
+	private async updateNpmBatch(
+		sources: NpmUpdateTarget[],
+		scope: InstalledSourceScope,
+	): Promise<PackageUpdateResult[]> {
 		if (sources.length === 0) {
-			return;
+			return [];
+		}
+
+		const beforeVersions = new Map<string, { installedPath: string; version?: string }>();
+		for (const entry of sources) {
+			const installedPath = this.getNpmInstallPath(entry.parsed, scope);
+			beforeVersions.set(entry.source, {
+				installedPath,
+				version: existsSync(installedPath) ? this.getInstalledNpmVersion(installedPath) : undefined,
+			});
 		}
 
 		const sourceLabel = sources.length === 1 ? sources[0].source : `${scope} npm packages`;
@@ -1174,6 +1224,22 @@ export class DefaultPackageManager implements PackageManager {
 
 		await this.withProgress("update", sourceLabel, message, async () => {
 			await this.installNpmBatch(specs, scope);
+		});
+
+		return sources.map((entry) => {
+			const installedPath = this.getNpmInstallPath(entry.parsed, scope);
+			const before = beforeVersions.get(entry.source);
+			return {
+				source: entry.source,
+				displayName: entry.parsed.name,
+				type: "npm" as const,
+				scope,
+				installedPath,
+				baseDir: installedPath,
+				fromVersion: before?.version,
+				toVersion: this.getInstalledNpmVersion(installedPath),
+				changelogPath: this.getPackageChangelogPath(installedPath),
+			};
 		});
 	}
 
@@ -1506,6 +1572,10 @@ export class DefaultPackageManager implements PackageManager {
 		} catch {
 			return undefined;
 		}
+	}
+
+	private getPackageChangelogPath(packageRoot: string): string | undefined {
+		return resolvePackageChangelogPath(packageRoot, readPiManifest(join(packageRoot, "package.json")));
 	}
 
 	private async getLatestNpmVersion(packageSpec: string, range?: string): Promise<string> {
@@ -1862,6 +1932,36 @@ export class DefaultPackageManager implements PackageManager {
 		}
 	}
 
+	private async updateGitWithResult(entry: GitUpdateTarget): Promise<PackageUpdateResult | undefined> {
+		const installedPath = this.getGitInstallPath(entry.parsed, entry.scope);
+		const fromVersion = existsSync(installedPath) ? this.getInstalledNpmVersion(installedPath) : undefined;
+		let result: PackageUpdateResult | undefined;
+
+		await this.withProgress("update", entry.source, `Updating ${entry.source}...`, async () => {
+			await this.updateGit(entry.parsed, entry.scope);
+			const toVersion = this.getInstalledNpmVersion(installedPath);
+			if (fromVersion === undefined && toVersion === undefined) {
+				return;
+			}
+			if (fromVersion === toVersion) {
+				return;
+			}
+			result = {
+				source: entry.source,
+				displayName: `${entry.parsed.host}/${entry.parsed.path}`,
+				type: "git",
+				scope: entry.scope,
+				installedPath,
+				baseDir: installedPath,
+				fromVersion,
+				toVersion,
+				changelogPath: this.getPackageChangelogPath(installedPath),
+			};
+		});
+
+		return result;
+	}
+
 	private async updateGit(source: GitSource, scope: SourceScope): Promise<void> {
 		const targetDir = this.getGitInstallPath(source, scope);
 		if (!existsSync(targetDir)) {
@@ -2156,6 +2256,14 @@ export class DefaultPackageManager implements PackageManager {
 		filter: PackageFilter | undefined,
 		metadata: PathMetadata,
 	): boolean {
+		const manifest = readPiManifest(join(packageRoot, "package.json"));
+		const changelogPath = resolvePackageChangelogPath(packageRoot, manifest);
+		if (changelogPath) {
+			metadata.changelogPath = changelogPath;
+		} else {
+			delete metadata.changelogPath;
+		}
+
 		if (filter) {
 			for (const resourceType of RESOURCE_TYPES) {
 				const patterns = filter[resourceType];
@@ -2171,10 +2279,9 @@ export class DefaultPackageManager implements PackageManager {
 			return true;
 		}
 
-		const manifest = readPiManifest(join(packageRoot, "package.json"));
-		if (manifest) {
+		if (manifest && hasManifestResourceFields(manifest)) {
 			for (const resourceType of RESOURCE_TYPES) {
-				const entries = manifest[resourceType as keyof PiManifest];
+				const entries = manifest[resourceType];
 				this.addManifestEntries(
 					entries,
 					packageRoot,
@@ -2208,7 +2315,7 @@ export class DefaultPackageManager implements PackageManager {
 		metadata: PathMetadata,
 	): void {
 		const manifest = readPiManifest(join(packageRoot, "package.json"));
-		const entries = manifest?.[resourceType as keyof PiManifest];
+		const entries = manifest?.[resourceType];
 		if (entries) {
 			this.addManifestEntries(entries, packageRoot, resourceType, target, metadata);
 			return;
@@ -2277,7 +2384,7 @@ export class DefaultPackageManager implements PackageManager {
 		resourceType: ResourceType,
 	): { allFiles: string[]; enabledByManifest: Set<string> } {
 		const manifest = readPiManifest(join(packageRoot, "package.json"));
-		const entries = manifest?.[resourceType as keyof PiManifest];
+		const entries = manifest?.[resourceType];
 		if (entries && entries.length > 0) {
 			const allFiles = this.collectFilesFromManifestEntries(entries, packageRoot, resourceType);
 			const manifestPatterns = entries.filter(isOverridePattern);

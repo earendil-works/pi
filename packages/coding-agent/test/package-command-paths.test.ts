@@ -17,6 +17,7 @@ import { ENV_AGENT_DIR, PACKAGE_NAME, VERSION } from "../src/config.ts";
 import { ModelRuntime } from "../src/core/model-runtime.ts";
 import type { ResolvedPaths } from "../src/core/package-manager.ts";
 import { InMemorySettingsStorage, SettingsManager } from "../src/core/settings-manager.ts";
+import { getSourcePackageKey } from "../src/core/source-info.ts";
 import { ProjectTrustStore } from "../src/core/trust-manager.ts";
 import { main } from "../src/main.ts";
 import { ConfigSelectorComponent } from "../src/modes/interactive/components/config-selector.ts";
@@ -387,6 +388,58 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 			await expect(main(["update", "--extensions"])).resolves.toBeUndefined();
 
 			expect(existsSync(recordPath)).toBe(true);
+			expect(process.exitCode).toBeUndefined();
+		} finally {
+			logSpy.mockRestore();
+		}
+	});
+
+	it("records extension changelog baseline versions during package update", async () => {
+		const packageRoot = join(agentDir, "npm", "node_modules", "fake-changelog-package");
+		const fakeNpmPath = join(tempDir, "fake-changelog-npm.cjs");
+		const changelogPath = join(packageRoot, "CHANGELOG.md");
+		mkdirSync(packageRoot, { recursive: true });
+		writeFileSync(
+			join(packageRoot, "package.json"),
+			JSON.stringify({ name: "fake-changelog-package", version: "1.0.0" }),
+		);
+		writeFileSync(changelogPath, "## [1.1.0]\n\n- Updated");
+		writeFileSync(
+			fakeNpmPath,
+			`const fs = require("node:fs");
+const path = require("node:path");
+const args = process.argv.slice(2);
+if (args[0] === "view") {
+	console.log(JSON.stringify("1.1.0"));
+	process.exit(0);
+}
+if (args[0] === "install") {
+	fs.writeFileSync(
+		path.join(${JSON.stringify(packageRoot)}, "package.json"),
+		JSON.stringify({ name: "fake-changelog-package", version: "1.1.0" })
+	);
+	process.exit(0);
+}
+throw new Error("Unexpected npm args: " + args.join(" "));
+`,
+		);
+		writeFileSync(
+			join(agentDir, "settings.json"),
+			JSON.stringify({ packages: ["npm:fake-changelog-package"], npmCommand: [originalExecPath, fakeNpmPath] }),
+		);
+		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+		try {
+			await expect(runPackageCommandDirectly(["update", "--extensions"])).resolves.toBeUndefined();
+
+			const settings = JSON.parse(readFileSync(join(agentDir, "settings.json"), "utf-8")) as {
+				extensionChangelogVersions?: Record<string, string>;
+			};
+			const key = getSourcePackageKey({
+				source: "npm:fake-changelog-package",
+				scope: "user",
+			});
+			expect(settings.extensionChangelogVersions?.[key]).toBe("1.0.0");
 			expect(process.exitCode).toBeUndefined();
 		} finally {
 			logSpy.mockRestore();

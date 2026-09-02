@@ -191,6 +191,7 @@ export {
 } from "./core/model-runtime.ts";
 export type {
 	PackageManager,
+	PackageUpdateResult,
 	PathMetadata,
 	ProgressCallback,
 	ProgressEvent,

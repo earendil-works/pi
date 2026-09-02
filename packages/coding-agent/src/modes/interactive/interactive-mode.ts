@@ -96,12 +96,19 @@ import { formatMissingSessionCwdPrompt, MissingSessionCwdError } from "../../cor
 import { type SessionEntry, SessionManager, sessionEntryToContextMessages } from "../../core/session-manager.ts";
 import type { FullscreenExitOutput, TuiMode } from "../../core/settings-manager.ts";
 import { BUILTIN_SLASH_COMMANDS } from "../../core/slash-commands.ts";
-import type { SourceInfo } from "../../core/source-info.ts";
+import { getSourcePackageKey, type SourceInfo } from "../../core/source-info.ts";
 import { isInstallTelemetryEnabled } from "../../core/telemetry.ts";
 import type { TruncationResult } from "../../core/tools/truncate.ts";
 import { hasTrustRequiringProjectResources, ProjectTrustStore } from "../../core/trust-manager.ts";
 import { getUsageCostBreakdown } from "../../core/usage-totals.ts";
-import { getChangelogPath, getNewEntries, normalizeChangelogLinks, parseChangelog } from "../../utils/changelog.ts";
+import {
+	type ChangelogEntry,
+	compareVersions,
+	getChangelogPath,
+	getNewEntries,
+	normalizeChangelogLinks,
+	parseChangelog,
+} from "../../utils/changelog.ts";
 import { copyToClipboard, readClipboardText } from "../../utils/clipboard.ts";
 import { extensionForImageMimeType, readClipboardImage } from "../../utils/clipboard-image.ts";
 import { parseGitUrl } from "../../utils/git.ts";
@@ -110,8 +117,9 @@ import { getCwdRelativePath } from "../../utils/paths.ts";
 import { getPiUserAgent } from "../../utils/pi-user-agent.ts";
 import { killTrackedDetachedChildren } from "../../utils/shell.ts";
 import { loadAllHighlightLanguages } from "../../utils/syntax-highlight.ts";
+import { stripBom } from "../../utils/text.ts";
 import { ensureTool, type ToolStatus } from "../../utils/tools-manager.ts";
-import { checkForNewPiVersion, type LatestPiRelease } from "../../utils/version-check.ts";
+import { checkForNewPiVersion, comparePackageVersions, type LatestPiRelease } from "../../utils/version-check.ts";
 import { ArminComponent } from "./components/armin.ts";
 import { AssistantMessageComponent } from "./components/assistant-message.ts";
 import { BashExecutionComponent } from "./components/bash-execution.ts";
@@ -462,6 +470,7 @@ export class InteractiveMode {
 	private lastSigintTime = 0;
 	private lastEscapeTime = 0;
 	private changelogMarkdown: string | undefined = undefined;
+	private extensionChangelogMarkdown: string | undefined = undefined;
 	private startupNoticesShown = false;
 	private anthropicSubscriptionWarningShown = false;
 
@@ -801,7 +810,7 @@ export class InteractiveMode {
 		}
 		this.startupNoticesShown = true;
 
-		if (!this.changelogMarkdown) {
+		if (!this.changelogMarkdown && !this.extensionChangelogMarkdown) {
 			return;
 		}
 
@@ -809,16 +818,29 @@ export class InteractiveMode {
 			this.chatContainer.addChild(new Spacer(1));
 		}
 		this.chatContainer.addChild(new DynamicBorder());
-		if (this.settingsManager.getCollapseChangelog()) {
-			const versionMatch = this.changelogMarkdown.match(/##\s+\[?(\d+\.\d+\.\d+)\]?/);
-			const latestVersion = versionMatch ? versionMatch[1] : this.version;
-			const condensedText = `Updated to v${latestVersion}. Use ${theme.bold("/changelog")} to view full changelog.`;
-			this.chatContainer.addChild(new Text(condensedText, 1, 0));
-		} else {
-			this.chatContainer.addChild(new Text(theme.bold(theme.fg("accent", "What's New")), 1, 0));
+		if (this.changelogMarkdown) {
+			if (this.settingsManager.getCollapseChangelog()) {
+				const versionMatch = this.changelogMarkdown.match(/##\s+\[?(\d+\.\d+\.\d+)\]?/);
+				const latestVersion = versionMatch ? versionMatch[1] : this.version;
+				const condensedText = `Updated to v${latestVersion}. Use ${theme.bold("/changelog")} to view full changelog.`;
+				this.chatContainer.addChild(new Text(condensedText, 1, 0));
+			} else {
+				this.chatContainer.addChild(new Text(theme.bold(theme.fg("accent", "What's New")), 1, 0));
+				this.chatContainer.addChild(new Spacer(1));
+				this.chatContainer.addChild(
+					new Markdown(this.changelogMarkdown.trim(), 1, 0, this.getMarkdownThemeWithSettings()),
+				);
+				this.chatContainer.addChild(new Spacer(1));
+			}
+		}
+		if (this.extensionChangelogMarkdown) {
+			if (this.changelogMarkdown) {
+				this.chatContainer.addChild(new Spacer(1));
+			}
+			this.chatContainer.addChild(new Text(theme.bold(theme.fg("accent", "Extension Updates")), 1, 0));
 			this.chatContainer.addChild(new Spacer(1));
 			this.chatContainer.addChild(
-				new Markdown(this.changelogMarkdown.trim(), 1, 0, this.getMarkdownThemeWithSettings()),
+				new Markdown(this.extensionChangelogMarkdown.trim(), 1, 0, this.getMarkdownThemeWithSettings()),
 			);
 			this.chatContainer.addChild(new Spacer(1));
 		}
@@ -899,8 +921,9 @@ export class InteractiveMode {
 
 		this.registerSignalHandlers();
 
-		// Load changelog (only show new entries, skip for resumed sessions)
+		// Load changelogs (only show new entries, skip for resumed sessions)
 		this.changelogMarkdown = this.getChangelogForDisplay();
+		this.extensionChangelogMarkdown = this.getExtensionChangelogForDisplay();
 
 		if (this.session.scopedModels.length > 0 && (this.options.verbose || !this.settingsManager.getQuietStartup())) {
 			const modelList = this.session.scopedModels
@@ -1285,6 +1308,98 @@ export class InteractiveMode {
 		}
 
 		return undefined;
+	}
+
+	private getExtensionChangelogForDisplay(): string | undefined {
+		// Skip changelog for resumed/continued sessions (already have messages)
+		if (this.session.state.messages.length > 0) {
+			return undefined;
+		}
+
+		const seenKeys = new Set<string>();
+		const notices: string[] = [];
+		for (const extension of this.session.resourceLoader.getExtensions().extensions) {
+			const sourceInfo = extension.sourceInfo;
+			if (sourceInfo.origin !== "package" || !sourceInfo.baseDir || !sourceInfo.changelogPath) {
+				continue;
+			}
+
+			const key = getSourcePackageKey(sourceInfo);
+			if (seenKeys.has(key)) {
+				continue;
+			}
+			seenKeys.add(key);
+
+			const currentVersion = this.getPackageVersion(sourceInfo.baseDir);
+			if (!currentVersion) {
+				continue;
+			}
+
+			const lastVersion = this.settingsManager.getExtensionChangelogVersion(key);
+			if (!lastVersion) {
+				// Fresh extension install - record the version, don't show changelog.
+				this.settingsManager.setExtensionChangelogVersion(key, currentVersion);
+				continue;
+			}
+
+			const comparison = comparePackageVersions(currentVersion, lastVersion);
+			const isNewerVersion = comparison === undefined ? currentVersion !== lastVersion : comparison > 0;
+			if (!isNewerVersion) {
+				continue;
+			}
+
+			const currentEntry = this.parseChangelogEntryVersion(currentVersion);
+			const newEntries = getNewEntries(parseChangelog(sourceInfo.changelogPath), lastVersion).filter(
+				(entry) => !currentEntry || compareVersions(entry, currentEntry) <= 0,
+			);
+			if (newEntries.length === 0) {
+				continue;
+			}
+
+			this.settingsManager.setExtensionChangelogVersion(key, currentVersion);
+			notices.push(
+				[
+					`### ${this.getPackageDisplayName(sourceInfo.baseDir, sourceInfo.source)} ${lastVersion} → ${currentVersion}`,
+				]
+					.concat(newEntries.map((entry) => entry.content))
+					.join("\n\n"),
+			);
+		}
+
+		return notices.length > 0 ? notices.join("\n\n") : undefined;
+	}
+
+	private getPackageVersion(packageRoot: string): string | undefined {
+		try {
+			const content = fs.readFileSync(path.join(packageRoot, "package.json"), "utf-8");
+			const pkg = JSON.parse(stripBom(content)) as { version?: unknown };
+			return typeof pkg.version === "string" ? pkg.version : undefined;
+		} catch {
+			return undefined;
+		}
+	}
+
+	private getPackageDisplayName(packageRoot: string, fallback: string): string {
+		try {
+			const content = fs.readFileSync(path.join(packageRoot, "package.json"), "utf-8");
+			const pkg = JSON.parse(stripBom(content)) as { name?: unknown };
+			return typeof pkg.name === "string" && pkg.name ? pkg.name : fallback;
+		} catch {
+			return fallback;
+		}
+	}
+
+	private parseChangelogEntryVersion(version: string): ChangelogEntry | undefined {
+		const match = version.match(/^(\d+)\.(\d+)\.(\d+)/);
+		if (!match) {
+			return undefined;
+		}
+		return {
+			major: Number.parseInt(match[1], 10),
+			minor: Number.parseInt(match[2], 10),
+			patch: Number.parseInt(match[3], 10),
+			content: "",
+		};
 	}
 
 	private reportInstallTelemetry(version: string): void {

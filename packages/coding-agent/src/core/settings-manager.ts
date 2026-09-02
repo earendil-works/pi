@@ -93,6 +93,7 @@ export type PackageSource =
 
 export interface Settings {
 	lastChangelogVersion?: string;
+	extensionChangelogVersions?: Record<string, string>;
 	defaultProvider?: string;
 	defaultModel?: string;
 	defaultThinkingLevel?: ThinkingLevel;
@@ -706,6 +707,19 @@ export class SettingsManager {
 	setLastChangelogVersion(version: string): void {
 		this.globalSettings.lastChangelogVersion = version;
 		this.markModified("lastChangelogVersion");
+		this.save();
+	}
+
+	getExtensionChangelogVersion(key: string): string | undefined {
+		return this.settings.extensionChangelogVersions?.[key];
+	}
+
+	setExtensionChangelogVersion(key: string, version: string): void {
+		this.globalSettings.extensionChangelogVersions = {
+			...(this.globalSettings.extensionChangelogVersions ?? {}),
+			[key]: version,
+		};
+		this.markModified("extensionChangelogVersions", key);
 		this.save();
 	}
 
