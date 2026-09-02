@@ -622,6 +622,13 @@ export interface OpenAICompletionsCompat {
 	sessionAffinityFormat?: SessionAffinityFormat;
 	/** Whether the provider supports long prompt cache retention (`prompt_cache_retention: "24h"` or Anthropic-style `cache_control.ttl: "1h"`, depending on format). Default: true. */
 	supportsLongCacheRetention?: boolean;
+	/**
+	 * vLLM scheduler priority sent as the top-level `priority` request field (lower values are
+	 * handled earlier; server default 0). Only meaningful when vLLM runs with
+	 * `--scheduling-policy priority`; useful for keeping background/batch work from stalling
+	 * interactive sessions. Off by default; not set on the generated catalog.
+	 */
+	vllmPriority?: number;
 }
 
 /** Compatibility settings for OpenAI Responses APIs. */

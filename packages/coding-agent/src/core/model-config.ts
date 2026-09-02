@@ -109,6 +109,7 @@ const OpenAICompletionsCompatSchema = Type.Object({
 		Type.Union([Type.Literal("openai"), Type.Literal("openai-nosession"), Type.Literal("openrouter")]),
 	),
 	supportsLongCacheRetention: Type.Optional(Type.Boolean()),
+	vllmPriority: Type.Optional(Type.Number()),
 });
 
 const OpenAIResponsesCompatSchema = Type.Object({
