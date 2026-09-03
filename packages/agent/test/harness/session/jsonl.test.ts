@@ -342,6 +342,23 @@ describe("JSONL v4 persistence", () => {
 		expect((await verified.getStats()).messageCount).toBe(3);
 	});
 
+	it("rejects stale writes after deleting the session file", async () => {
+		const root = createTempDir();
+		const repository = createRepository(root);
+		const session = await repository.create({ id: "victim", cwd: root });
+		await session.appendMessage({ role: "user", content: [{ type: "text", text: "before delete" }], timestamp: 1 });
+		const metadata = await session.getMetadata();
+
+		await repository.delete(metadata);
+		expect(existsSync(metadata.path)).toBe(false);
+
+		await expect(
+			session.appendMessage({ role: "user", content: [{ type: "text", text: "after delete" }], timestamp: 2 }),
+		).rejects.toMatchObject({ code: "not_found" });
+		expect(existsSync(metadata.path)).toBe(false);
+		await expect(repository.create({ id: "victim", cwd: root })).resolves.toBeDefined();
+	});
+
 	it("reopens a tree fork with its lanes and facts", async () => {
 		const root = createTempDir();
 		const repository = createRepository(root);

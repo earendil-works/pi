@@ -265,6 +265,9 @@ export class JsonlSessionStorage implements SessionStorage<JsonlSessionMetadata>
 	}
 
 	private async appendMutation(mutation: SessionMutation): Promise<void> {
+		if (!fileResult(await this.fs.exists(this.metadata.path), `Failed to check session ${this.metadata.path}`)) {
+			throw new SessionError("not_found", `Session not found: ${this.metadata.id}`);
+		}
 		fileResult(
 			await this.fs.appendFile(this.metadata.path, encodeMutation(mutation)),
 			`Failed to append session ${this.metadata.path}`,
