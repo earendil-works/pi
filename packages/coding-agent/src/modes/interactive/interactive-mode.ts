@@ -89,6 +89,7 @@ import {
 	findExactModelReferenceMatch,
 	resolveModelScopeFromModels,
 } from "../../core/model-resolver.ts";
+import { getModelDisplayLabel } from "../../core/model-display.ts";
 import { CredentialSynchronizationError } from "../../core/model-runtime.ts";
 import { DefaultPackageManager } from "../../core/package-manager.ts";
 import type { ResourceDiagnostic } from "../../core/resource-loader.ts";
@@ -705,8 +706,11 @@ export class InteractiveMode {
 
 				return createFuzzyAutocompleteItems(items, prefix, getModelSearchText, (item) => ({
 					value: item.label,
-					label: item.id,
-					description: item.provider,
+					label: getModelDisplayLabel(
+						{ id: item.id, name: item.name },
+						this.settingsManager.getModelDisplayMode(),
+					),
+					description: `${item.provider} · ${item.id}`,
 				}));
 			};
 		}
