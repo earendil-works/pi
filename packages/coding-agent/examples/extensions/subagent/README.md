@@ -62,7 +62,7 @@ This tool executes a separate `pi` subprocess with a delegated system prompt and
 
 To enable project-local agents, pass `agentScope: "both"` (or `"project"`). Only do this for repositories you trust.
 
-When running interactively, the tool prompts for confirmation before running project-local agents in untrusted projects. Trusted projects skip the additional prompt. Set `confirmProjectAgents: false` to disable confirmation.
+When running interactively, the tool prompts for confirmation before running project-local agents unless the session trust context reports trusted and the agents come from that session project's `.pi/agents` directory. Agents loaded from another task `cwd` still require confirmation. Set `confirmProjectAgents: false` to disable confirmation.
 
 ## Usage
 
@@ -176,5 +176,5 @@ Project agents override user agents with the same name when `agentScope: "both"`
 - Single and chain output is capped at 50 KB/2,000 lines; full results remain in tool details
 - Parallel output keeps a separate 50 KB budget per task, allowing up to roughly 400 KB across eight tasks
 - Child usage is displayed in tool details but is not added to the calling session's usage totals
-- Agents are snapshotted from each task's effective cwd when the tool invocation starts
+- Agents are snapshotted from each task's effective cwd when the tool invocation starts; relative task cwd values resolve from the session cwd
 - Parallel mode limited to 8 tasks, 4 concurrent

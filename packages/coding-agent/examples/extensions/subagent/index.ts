@@ -323,13 +323,16 @@ interface ProcessOutcome {
 interface ResolvedAgent {
 	agent?: AgentConfig;
 	available: AgentConfig[];
+	cwd: string;
 }
 
 function resolveAgent(defaultCwd: string, scope: AgentScope, name: string, cwd?: string): ResolvedAgent {
-	const discovery = discoverAgents(cwd ?? defaultCwd, scope);
+	const effectiveCwd = path.resolve(defaultCwd, cwd ?? ".");
+	const discovery = discoverAgents(effectiveCwd, scope);
 	return {
 		agent: discovery.agents.find((candidate) => candidate.name === name),
 		available: discovery.agents,
+		cwd: effectiveCwd,
 	};
 }
 
@@ -355,12 +358,10 @@ function createUnstartedResult(
 }
 
 async function runSingleAgent(
-	defaultCwd: string,
 	dispatchDefaults: DispatchDefaults,
 	resolvedAgent: ResolvedAgent,
 	agentName: string,
 	task: string,
-	cwd: string | undefined,
 	step: number | undefined,
 	signal: AbortSignal | undefined,
 	onUpdate: OnUpdateCallback | undefined,
@@ -370,7 +371,7 @@ async function runSingleAgent(
 		return createUnstartedResult(agentName, task, step, "aborted", "Subagent was aborted before starting");
 	}
 
-	const effectiveCwd = cwd ?? defaultCwd;
+	const effectiveCwd = resolvedAgent.cwd;
 	const agent = resolvedAgent.agent;
 	if (!agent) {
 		const available = resolvedAgent.available.map((candidate) => `"${candidate.name}"`).join(", ") || "none";
@@ -665,12 +666,7 @@ export default function (pi: ExtensionAPI) {
 			);
 			const resolvedSingle = params.agent ? resolveAgent(ctx.cwd, agentScope, params.agent, params.cwd) : undefined;
 
-			if (
-				(agentScope === "project" || agentScope === "both") &&
-				confirmProjectAgents &&
-				ctx.hasUI &&
-				!ctx.isProjectTrusted()
-			) {
+			if ((agentScope === "project" || agentScope === "both") && confirmProjectAgents && ctx.hasUI) {
 				let selectedAgents: ResolvedAgent[] = [];
 				if (hasChain) selectedAgents = resolvedChain;
 				else if (hasTasks) selectedAgents = resolvedTasks;
@@ -682,7 +678,14 @@ export default function (pi: ExtensionAPI) {
 					}
 				}
 
-				const projectAgentsRequested = Array.from(projectAgentsByPath.values());
+				const trustedProjectAgentsDir =
+					ctx.isProjectTrusted() && discovery.projectAgentsDir
+						? fs.realpathSync(discovery.projectAgentsDir)
+						: undefined;
+				const projectAgentsRequested = Array.from(projectAgentsByPath.values()).filter(
+					(agent) =>
+						!trustedProjectAgentsDir || fs.realpathSync(path.dirname(agent.filePath)) !== trustedProjectAgentsDir,
+				);
 				if (projectAgentsRequested.length > 0) {
 					const sources = projectAgentsRequested.map((agent) => `- ${agent.name}: ${agent.filePath}`).join("\n");
 					const ok = await ctx.ui.confirm(
@@ -722,12 +725,10 @@ export default function (pi: ExtensionAPI) {
 						: undefined;
 
 					const result = await runSingleAgent(
-						ctx.cwd,
 						dispatchDefaults,
 						resolvedChain[i],
 						step.agent,
 						taskWithContext,
-						step.cwd,
 						i + 1,
 						signal,
 						chainUpdate,
@@ -809,12 +810,10 @@ export default function (pi: ExtensionAPI) {
 
 				const results = await mapWithConcurrencyLimit(params.tasks, MAX_CONCURRENCY, async (t, index) => {
 					const result = await runSingleAgent(
-						ctx.cwd,
 						dispatchDefaults,
 						resolvedTasks[index],
 						t.agent,
 						t.task,
-						t.cwd,
 						undefined,
 						signal,
 						// Per-task update callback
@@ -851,14 +850,12 @@ export default function (pi: ExtensionAPI) {
 				};
 			}
 
-			if (params.agent && params.task) {
+			if (params.agent && params.task && resolvedSingle) {
 				const result = await runSingleAgent(
-					ctx.cwd,
 					dispatchDefaults,
-					resolvedSingle ?? { available: [] },
+					resolvedSingle,
 					params.agent,
 					params.task,
-					params.cwd,
 					undefined,
 					signal,
 					onUpdate,

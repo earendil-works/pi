@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -22,6 +22,7 @@ const fixtureScenario = {
 	hold: (startsFile: string) => `hold:${startsFile}`,
 	ignoreSigterm: (pidFile: string) => `ignore-sigterm:${pidFile}`,
 	recordArgv: (outputFile: string) => `record-argv:${outputFile}`,
+	recordInvocation: (outputFile: string) => `record-invocation:${outputFile}`,
 	toolWait: (releaseFile: string) => `tool-wait:${releaseFile}`,
 } as const;
 
@@ -123,8 +124,9 @@ function createContext(cwd: string): ExtensionContext {
 function createInteractiveContext(
 	base: ExtensionContext,
 	confirm: (title: string, message: string) => Promise<boolean>,
+	trusted = false,
 ): ExtensionContext {
-	return { ...base, hasUI: true, ui: { confirm } } as unknown as ExtensionContext;
+	return { ...base, hasUI: true, ui: { confirm }, isProjectTrusted: () => trusted } as unknown as ExtensionContext;
 }
 
 function singleTask(task: string, overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -446,6 +448,32 @@ describe("subagent example extension", () => {
 	});
 
 	describe("task cwd agent discovery", () => {
+		it("resolves a relative task cwd against the session cwd for discovery and execution", async () => {
+			const startupRoot = join(tempDir, "startup-project");
+			const sessionRoot = join(tempDir, "session-project");
+			const startupChild = join(startupRoot, "child");
+			const sessionChild = join(sessionRoot, "child");
+			mkdirSync(startupChild, { recursive: true });
+			mkdirSync(sessionChild, { recursive: true });
+			createProjectAgent(startupChild, "worker", { model: "startup-model" });
+			createProjectAgent(sessionChild, "worker", { model: "session-model" });
+			const invocationFile = join(tempDir, "relative-cwd-invocation.json");
+			const originalCwd = process.cwd();
+
+			try {
+				process.chdir(startupRoot);
+				await executeSubagent(singleTask(fixtureScenario.recordInvocation(invocationFile), { cwd: "child" }), {
+					context: createContext(sessionRoot),
+				});
+			} finally {
+				process.chdir(originalCwd);
+			}
+
+			const invocation = JSON.parse(readFileSync(invocationFile, "utf8")) as { argv: string[]; cwd: string };
+			expect(invocation.cwd).toBe(realpathSync(sessionChild));
+			expect(invocation.argv[invocation.argv.indexOf("--model") + 1]).toBe("session-model");
+		});
+
 		it("uses and confirms the project agent from the child task cwd", async () => {
 			const childCwd = join(tempDir, "confirmed-project");
 			mkdirSync(childCwd);
@@ -466,6 +494,34 @@ describe("subagent example extension", () => {
 				"Run project-local agents?",
 				expect.stringContaining(join(childCwd, CONFIG_DIR_NAME, "agents")),
 			);
+		});
+
+		// Regression coverage for #8261 when a trusted session delegates into another project.
+		it("confirms an external task cwd agent even when the session trust context reports trusted", async () => {
+			const projectsRoot = join(tempDir, "projects");
+			const sessionCwd = join(projectsRoot, "session-project");
+			const externalCwd = join(projectsRoot, "external-project");
+			mkdirSync(sessionCwd, { recursive: true });
+			mkdirSync(externalCwd, { recursive: true });
+			createProjectAgent(sessionCwd, "worker", { model: "session-model" });
+			createProjectAgent(externalCwd, "worker", { model: "external-model" });
+			const argvFile = join(tempDir, "external-child-argv.json");
+			const confirm = vi.fn(async (_title: string, _message: string) => true);
+			await executeSubagent(
+				singleTask(fixtureScenario.recordArgv(argvFile), {
+					cwd: externalCwd,
+					confirmProjectAgents: true,
+				}),
+				{ context: createInteractiveContext(createContext(sessionCwd), confirm, true) },
+			);
+
+			expect.soft(selectedModel(argvFile)).toBe("external-model");
+			expect(confirm).toHaveBeenCalledOnce();
+			expect(confirm).toHaveBeenCalledWith(
+				"Run project-local agents?",
+				expect.stringContaining(join(externalCwd, CONFIG_DIR_NAME, "agents")),
+			);
+			expect(String(confirm.mock.calls[0][1])).not.toContain(join(sessionCwd, CONFIG_DIR_NAME, "agents"));
 		});
 
 		it("resolves and confirms each project-agent source for parallel task cwd values", async () => {

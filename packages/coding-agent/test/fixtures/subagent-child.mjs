@@ -36,6 +36,12 @@ const emitMessage = (message) => emit({ type: "message_end", message });
 if (task.startsWith("record-argv:")) {
 	fs.writeFileSync(task.slice("record-argv:".length), JSON.stringify(process.argv));
 	emitMessage(assistant("done"));
+} else if (task.startsWith("record-invocation:")) {
+	fs.writeFileSync(
+		task.slice("record-invocation:".length),
+		JSON.stringify({ argv: process.argv, cwd: process.cwd() }),
+	);
+	emitMessage(assistant("done"));
 } else if (task === "tool-then-final") {
 	emitMessage(assistant("working", { stopReason: "toolUse", toolCall: true }));
 	setTimeout(() => emitMessage(assistant("finished")), 150);
