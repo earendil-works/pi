@@ -8,6 +8,7 @@ import type {
 	Transport,
 } from "@earendil-works/pi-ai";
 import { runAgentLoop, runAgentLoopContinue } from "./agent-loop.ts";
+import { composeToolPolicy, type ToolPolicy } from "./policy.ts";
 import { getDefaultStreamFn } from "./stream-fn.ts";
 import type {
 	AfterToolCallContext,
@@ -103,7 +104,10 @@ export interface AgentOptions {
 	getApiKey?: (provider: string) => Promise<string | undefined> | string | undefined;
 	onPayload?: SimpleStreamOptions["onPayload"];
 	onResponse?: SimpleStreamOptions["onResponse"];
+	streamOptions?: SimpleStreamOptions;
 	beforeToolCall?: (context: BeforeToolCallContext, signal?: AbortSignal) => Promise<BeforeToolCallResult | undefined>;
+	/** Optional opt-in authorization layer evaluated before beforeToolCall. */
+	toolPolicy?: ToolPolicy;
 	afterToolCall?: (context: AfterToolCallContext, signal?: AbortSignal) => Promise<AfterToolCallResult | undefined>;
 	shouldStopAfterTurn?: (context: ShouldStopAfterTurnContext, signal?: AbortSignal) => boolean | Promise<boolean>;
 	prepareNextTurn?: (
@@ -182,6 +186,7 @@ export class Agent {
 	public getApiKey?: (provider: string) => Promise<string | undefined> | string | undefined;
 	public onPayload?: SimpleStreamOptions["onPayload"];
 	public onResponse?: SimpleStreamOptions["onResponse"];
+	public streamOptions: SimpleStreamOptions;
 	public beforeToolCall?: (
 		context: BeforeToolCallContext,
 		signal?: AbortSignal,
@@ -223,7 +228,8 @@ export class Agent {
 		this.getApiKey = runtimeOptions.getApiKey;
 		this.onPayload = runtimeOptions.onPayload;
 		this.onResponse = runtimeOptions.onResponse;
-		this.beforeToolCall = runtimeOptions.beforeToolCall;
+		this.streamOptions = { ...(runtimeOptions.streamOptions ?? {}) };
+		this.beforeToolCall = composeToolPolicy(runtimeOptions.toolPolicy, runtimeOptions.beforeToolCall);
 		this.afterToolCall = runtimeOptions.afterToolCall;
 		this.shouldStopAfterTurn = runtimeOptions.shouldStopAfterTurn;
 		this.prepareNextTurn = runtimeOptions.prepareNextTurn;
@@ -446,6 +452,7 @@ export class Agent {
 		let skipInitialSteeringPoll = options.skipInitialSteeringPoll === true;
 		const shouldStopAfterTurn = this.shouldStopAfterTurn;
 		return {
+			...this.streamOptions,
 			model: this._state.model,
 			reasoning: this._state.thinkingLevel === "off" ? undefined : this._state.thinkingLevel,
 			sessionId: this.sessionId,

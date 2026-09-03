@@ -136,6 +136,7 @@ export {
 } from "./harness/types.ts";
 export * from "./harness/utils/shell-output.ts";
 export * from "./harness/utils/truncate.ts";
+export * from "./policy.ts";
 // Proxy utilities
 export * from "./proxy.ts";
 export * from "./search/index.ts";
