@@ -1062,16 +1062,13 @@ function buildParams(
 	const compat = getAnthropicCompat(model);
 	const transformedMessages = transformMessages(context.messages, model, normalizeToolCallId);
 	const normalizeToolName = isOAuthToken ? toClaudeCodeName : (name: string) => name;
-	const nativeSystemIndices = compat.supportsMidConvoSystemMessages
-		? nativeSystemMessageIndices(transformedMessages)
-		: new Set<number>();
 	const systemToolChanges = compat.supportsMidConvoSystemMessages && compat.supportsMidConvoToolChanges;
 	const toolPlacement = splitDeferredTools(
 		{ ...context, messages: transformedMessages },
 		{
 			toolResultMarkers: compat.supportsToolReferences,
 			// A tool added by a system message can only load there through a tool_addition block.
-			systemMarkers: (_message, index) => systemToolChanges && nativeSystemIndices.has(index),
+			systemMarkers: systemToolChanges,
 			normalizeName: normalizeToolName,
 		},
 	);
@@ -1093,7 +1090,7 @@ function buildParams(
 		deferredToolNames,
 		normalizeToolName,
 		model.compat?.supportsMidConvoEffort === true ? model.provider : undefined,
-		{ nativeIndices: nativeSystemIndices, toolChanges: systemToolChanges },
+		{ native: compat.supportsMidConvoSystemMessages, toolChanges: systemToolChanges },
 	);
 	const activeEffort = options?.effort ?? "high";
 	const betaFeatures = getBetaFeatures(model, context, isOAuthToken, options);
@@ -1267,33 +1264,10 @@ interface ConvertedAnthropicMessages {
 }
 
 interface SystemMessageRendering {
-	/** Indices of system messages Anthropic accepts as `role: "system"` entries. */
-	nativeIndices: ReadonlySet<number>;
+	/** Whether the model accepts `role: "system"` entries inside `messages`. Otherwise they render as user text. */
+	native: boolean;
 	/** Whether native system messages may carry `tool_addition` and `tool_removal` blocks. */
 	toolChanges: boolean;
-}
-
-/**
- * Anthropic accepts a mid-conversation system message only directly after a user
- * turn (tool results count) and directly before an assistant turn or the end of
- * the array. Consecutive system messages are judged as one group. Any other
- * position is rendered as user text instead.
- */
-function nativeSystemMessageIndices(messages: readonly Message[]): Set<number> {
-	const native = new Set<number>();
-	for (let index = 0; index < messages.length; index++) {
-		if (messages[index].role !== "system") continue;
-		let start = index;
-		while (start > 0 && messages[start - 1].role === "system") start--;
-		let end = index;
-		while (end + 1 < messages.length && messages[end + 1].role === "system") end++;
-		const previous = messages[start - 1];
-		const next = messages[end + 1];
-		const afterUserTurn = previous !== undefined && (previous.role === "user" || previous.role === "toolResult");
-		const beforeAssistantTurn = next === undefined || next.role === "assistant";
-		if (afterUserTurn && beforeAssistantTurn) native.add(index);
-	}
-	return native;
 }
 
 function convertMessages(
@@ -1304,17 +1278,28 @@ function convertMessages(
 	deferredToolNames: ReadonlySet<string> = new Set(),
 	normalizeToolName: (name: string) => string = (name) => name,
 	managedProvider?: string,
-	systemMessages: SystemMessageRendering = { nativeIndices: new Set(), toolChanges: false },
+	systemMessages: SystemMessageRendering = { native: false, toolChanges: false },
 ): ConvertedAnthropicMessages {
 	const params: MessageParam[] = [];
 	const assistantLevels = new Map<number, AnthropicEffort>();
 	const loadedToolNames = new Set<string>();
+	// Anthropic rejects a `role: "system"` message unless it directly precedes an assistant
+	// message or ends the array (verified against the API: "role 'system' must precede an
+	// 'assistant' message or end the array"). Dropping an aborted assistant turn leaves
+	// `[user, system, user]`, so native system messages are held back until the next
+	// assistant message or the end. No assistant turn lies in between, so the model sees
+	// the same content before it next acts, and the prefix up to the moved message is kept.
+	const pendingSystem: MessageParam[] = [];
+	const flushPendingSystem = (): void => {
+		params.push(...pendingSystem);
+		pendingSystem.length = 0;
+	};
 
 	for (let i = 0; i < transformedMessages.length; i++) {
 		const msg = transformedMessages[i];
 
 		if (msg.role === "system") {
-			if (!systemMessages.nativeIndices.has(i)) {
+			if (!systemMessages.native) {
 				const text = renderSystemMessageAsUserText(msg);
 				if (text.length > 0)
 					params.push({ role: "user", content: [{ type: "text", text: sanitizeSurrogates(text) }] });
@@ -1337,7 +1322,7 @@ function convertMessages(
 					blocks.push({ type: "tool_addition", tool: { type: "tool_reference", name } });
 				}
 			}
-			if (blocks.length > 0) params.push({ role: "system", content: blocks });
+			if (blocks.length > 0) pendingSystem.push({ role: "system", content: blocks });
 			continue;
 		}
 		if (msg.role === "user") {
@@ -1433,6 +1418,7 @@ function convertMessages(
 				}
 			}
 			if (blocks.length === 0) continue;
+			flushPendingSystem();
 			const messageIndex = params.length;
 			params.push({
 				role: "assistant",
@@ -1474,6 +1460,8 @@ function convertMessages(
 			});
 		}
 	}
+
+	flushPendingSystem();
 
 	// Add cache_control to the last user or system message to cache conversation history
 	if (cacheControl && params.length > 0) {

@@ -195,24 +195,47 @@ describe("Anthropic mid-conversation system messages", () => {
 		expect(payload.betas).toContain("mid-conversation-tool-changes-2026-07-01");
 	});
 
-	test("renders misplaced system messages as user text and declares their tools immediately", async () => {
+	test("holds a system message back until the next assistant turn after an aborted turn is dropped", async () => {
+		// Anthropic rejects `[user, system, user]`: a system message must directly precede an
+		// assistant message or end the array. Dropping the aborted turn produces exactly that.
 		const context: Context = {
 			systemPrompt: "base",
 			messages: [
 				{ role: "user", content: "hello", timestamp: 1 },
-				makeAssistant(),
-				{ role: "system", content: "after assistant", toolsAdded: [lateTool], timestamp: 3 },
+				{ role: "system", content: "Plan mode is on.", toolsAdded: [lateTool], timestamp: 2 },
+				{ ...makeAssistant(), stopReason: "aborted", content: [], timestamp: 3 },
 				{ role: "user", content: "next", timestamp: 4 },
+				makeAssistant(),
+				{ role: "user", content: "again", timestamp: 6 },
 			],
 			tools: [makeTool("read"), lateTool],
 		};
 		const payload = await captureAnthropic(getModel("anthropic", "claude-fable-5-1"), context);
 
-		expect(contentRoles(payload)).toEqual(["user", "assistant", "user", "user"]);
+		expect(contentRoles(payload)).toEqual(["user", "user", "system", "assistant", "user"]);
 		expect(payload.messages[2]?.content).toEqual([
-			{ type: "text", text: "<system_update>\nafter assistant\n</system_update>" },
+			{ type: "text", text: "Plan mode is on." },
+			{ type: "tool_addition", tool: { type: "tool_reference", name: "late_tool" } },
 		]);
-		expect(payload.tools?.map((tool) => tool.name)).toEqual(["late_tool", "read", PLACEHOLDER]);
+		// The moved message keeps its tool deferred, so the declared tool list does not change.
+		expect(payload.tools?.map((tool) => `${tool.name}${tool.defer_loading ? "(d)" : ""}`)).toEqual([
+			"read",
+			`${PLACEHOLDER}(d)`,
+			"late_tool(d)",
+		]);
+	});
+
+	test("holds a leading system message back until after the first user message", async () => {
+		const context: Context = {
+			systemPrompt: "base",
+			messages: [
+				{ role: "system", content: "changed", timestamp: 1 },
+				{ role: "user", content: "hello", timestamp: 2 },
+			],
+		};
+		const payload = await captureAnthropic(getModel("anthropic", "claude-fable-5-1"), context);
+
+		expect(contentRoles(payload)).toEqual(["user", "system"]);
 	});
 
 	test("falls back to user text on models without native support", async () => {

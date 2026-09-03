@@ -1,4 +1,4 @@
-import type { Context, SystemMessage, Tool } from "../types.ts";
+import type { Context, Tool } from "../types.ts";
 import { resolveMessageToolChange } from "./system-messages.ts";
 
 type ToolNameNormalizer = (name: string) => string;
@@ -9,7 +9,7 @@ export interface ToolPlacementOptions {
 	/** Whether a tool marked on a tool result can load at that result. */
 	toolResultMarkers: boolean;
 	/** Whether a tool carried by a system message can load at that message. */
-	systemMarkers: boolean | ((message: SystemMessage, index: number) => boolean);
+	systemMarkers: boolean;
 	normalizeName?: ToolNameNormalizer;
 }
 
@@ -41,8 +41,6 @@ export function declaredTools(context: Context): Tool[] {
  */
 export function splitDeferredTools(context: Context, options: ToolPlacementOptions): ToolPlacement {
 	const normalizeName = options.normalizeName ?? identityToolName;
-	const canAnchorSystemMarker =
-		typeof options.systemMarkers === "function" ? options.systemMarkers : () => options.systemMarkers === true;
 
 	const definitions = new Map<string, Tool>();
 	for (const message of context.messages) {
@@ -67,22 +65,22 @@ export function splitDeferredTools(context: Context, options: ToolPlacementOptio
 		if (usedNames.has(name)) placedImmediate.add(name);
 		else deferred.set(name, definition);
 	};
-	context.messages.forEach((message, index) => {
+	for (const message of context.messages) {
 		if (message.role === "assistant") {
 			for (const block of message.content) {
 				if (block.type === "toolCall") usedNames.add(normalizeName(block.name));
 			}
-			return;
+			continue;
 		}
 		if (message.role === "toolResult") {
-			if (!options.toolResultMarkers) return;
+			if (!options.toolResultMarkers) continue;
 			for (const name of resolveMessageToolChange(message).addedNames) placeMarked(normalizeName(name));
-			return;
+			continue;
 		}
-		if (message.role === "system" && canAnchorSystemMarker(message, index)) {
+		if (message.role === "system" && options.systemMarkers) {
 			for (const tool of message.toolsAdded ?? []) placeMarked(normalizeName(tool.name));
 		}
-	});
+	}
 
 	const immediate = [...definitions]
 		.filter(([name]) => !deferred.has(name))
