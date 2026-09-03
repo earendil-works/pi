@@ -1096,10 +1096,10 @@ describe("openai-completions tool_choice", () => {
 		expect(params.messages?.[0]?.role).toBe("system");
 	});
 
-	it("keeps developer messages for OpenAI and Anthropic OpenRouter reasoning model instructions", async () => {
+	it("keeps developer messages for OpenAI and Anthropic OpenRouter batch instructions", async () => {
 		for (const model of [
 			getModel("openrouter", "openai/gpt-5.2-codex"),
-			getModel("openrouter", "anthropic/claude-sonnet-4.5"),
+			getModel("openrouter", "anthropic/claude-fable-5.1:batch"),
 		]) {
 			expect(model).toBeDefined();
 			let payload: unknown;

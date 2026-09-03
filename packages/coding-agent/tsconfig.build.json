@@ -3,11 +3,19 @@
 	"compilerOptions": {
 		"outDir": "./dist",
 		"paths": {
+			"@earendil-works/chord": ["../chord/dist/index.d.ts"],
+			"@earendil-works/chord/bundler": ["../chord/dist/bundler.d.ts"],
+			"@earendil-works/chord/node": ["../chord/dist/node.d.ts"],
 			"@earendil-works/pi-agent-core": ["../agent/dist/index.d.ts"],
 			"@earendil-works/pi-agent-core/*": ["../agent/dist/*.d.ts"],
 			"@earendil-works/pi-ai": ["../ai/dist/index.d.ts"],
 			"@earendil-works/pi-ai/*": ["../ai/dist/*.d.ts", "../ai/dist/providers/*.d.ts"],
 			"@earendil-works/pi-client": ["../client/dist/index.d.ts"],
+			"@earendil-works/pi-client/unix": ["../client/dist/unix.d.ts"],
+			"@earendil-works/pi-client/*": ["../client/dist/*.d.ts"],
+			"@earendil-works/pi-server": ["../server/dist/index.d.ts"],
+			"@earendil-works/pi-server/unix": ["../server/dist/transports/unix/index.d.ts"],
+			"@earendil-works/pi-server/*": ["../server/dist/*.d.ts", "../server/dist/transports/*/index.d.ts"],
 			"@earendil-works/pi-protocol": ["../protocol/dist/index.d.ts"],
 			"@earendil-works/pi-tui": ["../tui/dist/index.d.ts"],
 			"@earendil-works/pi-tui/*": ["../tui/dist/*.d.ts", "../tui/dist/components/*.d.ts"]

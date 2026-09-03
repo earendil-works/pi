@@ -394,6 +394,8 @@ By default pi sends per-tool `eager_input_streaming: true`. If a proxy or Anthro
 
 Some Anthropic models require adaptive thinking (`thinking.type: "adaptive"` plus `output_config.effort`) instead of the legacy budget-based thinking payload. Built-in models set this automatically. For custom providers or aliases that route to those models, set `forceAdaptiveThinking` to `true`.
 
+Claude models with per-turn effort support use `supportsMidConvoEffort`. Pi then persists each response's provider effort, reconstructs effort-only system messages on later requests, and sends thinking binding controls with `prefix_mismatch_behavior: "drop_block"` to avoid stale signed-thinking prefixes causing persistent 400 responses. Set this only for the exact supported Claude model on a faithful Anthropic Messages transport; do not enable it for APIs that merely imitate the Messages shape.
+
 Some Anthropic-compatible providers emit thinking blocks with empty signatures and still expect them on replay. Set `allowEmptySignature` to `true` only for those providers; real Anthropic rejects empty thinking signatures.
 
 Built-in Anthropic models enable `supportsStrictTools` in their model metadata. Custom Anthropic-compatible models must set it to `true` when their endpoint accepts strict JSON-schema tool definitions.
@@ -430,6 +432,7 @@ Built-in Anthropic models enable `supportsStrictTools` in their model metadata. 
 | `sendSessionAffinityHeaders` | Whether to send `x-session-affinity` from the session id when caching is enabled. Default: auto-detected for known providers. |
 | `supportsCacheControlOnTools` | Whether the provider accepts Anthropic-style `cache_control` markers on tool definitions. Default: `true`. |
 | `forceAdaptiveThinking` | Whether to send adaptive thinking (`thinking.type: "adaptive"` plus `output_config.effort`) for this model. Built-in adaptive models set this automatically. Default: `false`. |
+| `supportsMidConvoEffort` | Whether the exact Claude model transport supports per-turn effort system messages and thinking binding controls. Pi persists native effort levels and always sends `drop_block` when enabled. Default: `false`. |
 | `allowEmptySignature` | Whether to replay empty thinking signatures as `signature: ""` instead of converting thinking to text. Default: `false`. |
 | `supportsStrictTools` | Whether the provider accepts strict JSON-schema tool definitions. Default: `false`; built-in Anthropic models enable it in generated metadata. |
 

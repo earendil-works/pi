@@ -90,6 +90,8 @@ These actions apply when interactive mode uses `--tui-mode fullscreen` and targe
 
 Fullscreen transcript bindings take precedence over editor bindings. The default unmodified navigation keys therefore control the transcript in fullscreen mode, while their `ctrl` variants continue to control the editor. Outside fullscreen mode, both variants control the editor.
 
+The transcript search panel shows the configured previous/next shortcuts and clickable arrow controls. Press `tui.altScreen.search` again, or use `tui.altScreen.searchClose`, to close it.
+
 | Key | Default mode | Fullscreen mode |
 |-----|--------------|-----------------|
 | `home`, `end` | Editor | Transcript |

@@ -1,15 +1,14 @@
 #!/usr/bin/env node
-import { registerBunOAuthFlows } from "@earendil-works/pi-ai/bun-oauth";
-import { APP_NAME } from "../config.ts";
-
-process.title = APP_NAME;
-process.emitWarning = (() => {}) as typeof process.emitWarning;
-
-registerBunOAuthFlows();
-
+import { runCoordinatorProcess } from "../experimental/coordinator.ts";
+import { consumeInternalProcessRole, getInternalProcessRole } from "../experimental/process.ts";
 import { restoreSandboxEnv } from "./restore-sandbox-env.ts";
 
 restoreSandboxEnv();
 
-await import("./register-bedrock.ts");
-await import("../cli.ts");
+if (getInternalProcessRole() === "coordinator") {
+	consumeInternalProcessRole();
+	await runCoordinatorProcess(process.argv.slice(2));
+} else {
+	await import("./runtime-setup.ts");
+	await import("../cli.ts");
+}

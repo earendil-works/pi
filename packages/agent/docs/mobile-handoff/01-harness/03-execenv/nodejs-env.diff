@@ -1,0 +1,137 @@
+diff --git a/packages/agent/src/harness/env/nodejs.ts b/packages/agent/src/harness/env/nodejs.ts
+index 732dc84db..db9eb9a57 100644
+--- a/packages/agent/src/harness/env/nodejs.ts
++++ b/packages/agent/src/harness/env/nodejs.ts
+@@ -19,6 +19,7 @@ import { basename, isAbsolute, join, resolve } from "node:path";
+ import { createInterface } from "node:readline";
+ import { fileURLToPath } from "node:url";
+ import type { Context } from "../context.ts";
++import { OutputCapture } from "../utils/output-capture.ts";
+ import {
+ 	type ExecutionEnv,
+ 	ExecutionError,
+@@ -28,7 +29,10 @@ import {
+ 	type FileKind,
+ 	ok,
+ 	type Result,
++	type ShellCapabilities,
+ 	type ShellExecOptions,
++	type ShellExecResult,
++	type ShellStream,
+ 	toError,
+ } from "../types.ts";
+ 
+@@ -365,11 +369,15 @@ export class NodeExecutionEnv implements ExecutionEnv {
+ 		return ok(join(...parts));
+ 	}
+ 
++	capabilities(): ShellCapabilities {
++		return { capture: true, spill: true, liveUpdates: true };
++	}
++
+ 	async exec(
+ 		command: string,
+ 		options: ShellExecOptions | undefined,
+ 		context: Context,
+-	): Promise<Result<{ stdout: string; stderr: string; exitCode: number }, ExecutionError>> {
++	): Promise<Result<ShellExecResult, ExecutionError>> {
+ 		const signal = context.abortSignal;
+ 		if (signal?.aborted) return err(new ExecutionError("aborted", "aborted"));
+ 		const timeoutMsResult = resolveTimeoutMs(options?.timeout);
+@@ -392,9 +400,28 @@ export class NodeExecutionEnv implements ExecutionEnv {
+ 			);
+ 		}
+ 
++		// Spill lives in the exec env, on the machine where the model's own `read`
++		// and `grep` run — the whole reason capping happens here rather than on the
++		// agent side (`executionenv.md` §1).
++		let spillHandle: string | undefined;
++		let spillChain: Promise<void> = Promise.resolve();
++		const wantSpill = options?.capture?.spill === true;
++
+ 		return await new Promise((resolvePromise) => {
+-			let stdout = "";
+-			let stderr = "";
++			const capture = new OutputCapture(options?.capture, options?.onUpdate);
++			const spillChunk = (chunk: string): Promise<void> => {
++				if (!wantSpill) return Promise.resolve();
++				spillChain = spillChain.then(async () => {
++					if (spillHandle === undefined) {
++						const created = await this.createTempFile({ prefix: "pi-output-", suffix: ".log" }, context);
++						if (!created.ok) return;
++						spillHandle = created.value;
++						capture.setSpillPath(spillHandle);
++					}
++					await this.appendFile(spillHandle, chunk, context);
++				});
++				return spillChain;
++			};
+ 			let settled = false;
+ 			let timedOut = false;
+ 			let callbackError: ExecutionError | undefined;
+@@ -407,7 +434,7 @@ export class NodeExecutionEnv implements ExecutionEnv {
+ 				}
+ 			};
+ 
+-			const settle = (result: Result<{ stdout: string; stderr: string; exitCode: number }, ExecutionError>) => {
++			const settle = (result: Result<ShellExecResult, ExecutionError>) => {
+ 				if (timeoutId) clearTimeout(timeoutId);
+ 				if (signal) signal.removeEventListener("abort", onAbort);
+ 				if (child?.pid) this.activeChildPids.delete(child.pid);
+@@ -458,31 +485,32 @@ export class NodeExecutionEnv implements ExecutionEnv {
+ 				}
+ 			}
+ 
++			// setEncoding("utf8") is what keeps a chunk boundary from splitting a
++			// codepoint; without it a multi-byte sequence straddling a read bakes in a
++			// replacement character (`executionenv.md` §8).
+ 			child.stdout?.setEncoding("utf8");
+ 			child.stderr?.setEncoding("utf8");
+-			child.stdout?.on("data", (chunk: string) => {
+-				stdout += chunk;
+-				try {
+-					options?.onStdout?.(chunk, context);
+-				} catch (error) {
+-					const cause = toError(error);
+-					callbackError = new ExecutionError("callback_error", cause.message, cause);
+-					onAbort();
+-				}
+-			});
+-			child.stderr?.on("data", (chunk: string) => {
+-				stderr += chunk;
++			const feed = (stream: ShellStream, chunk: string) => {
+ 				try {
+-					options?.onStderr?.(chunk, context);
++					capture.push(stream, chunk, context);
++					void spillChunk(chunk);
+ 				} catch (error) {
+ 					const cause = toError(error);
+ 					callbackError = new ExecutionError("callback_error", cause.message, cause);
+ 					onAbort();
+ 				}
+-			});
++			};
++			child.stdout?.on("data", (chunk: string) => feed("stdout", chunk));
++			child.stderr?.on("data", (chunk: string) => feed("stderr", chunk));
+ 
+ 			void waitForChildProcess(child).then(
+-				(code) => {
++				async (code) => {
++					// The spill chain is async and lazy: the file is created on the first
++					// chunk. Await it before snapshotting, or the returned CapturedOutput
++					// reports no spillPath for output that was in fact archived.
++					await spillChain;
++					capture.flush(context);
++					capture.dispose();
+ 					if (callbackError) {
+ 						settle(err(callbackError));
+ 						return;
+@@ -495,7 +523,7 @@ export class NodeExecutionEnv implements ExecutionEnv {
+ 						settle(err(new ExecutionError("aborted", "aborted")));
+ 						return;
+ 					}
+-					settle(ok({ stdout, stderr, exitCode: code ?? 0 }));
++					settle(ok({ output: capture.snapshot(), exitCode: code ?? 0 }));
+ 				},
+ 				(error: Error) => settle(err(new ExecutionError("spawn_error", error.message, error))),
+ 			);

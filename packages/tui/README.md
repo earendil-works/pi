@@ -11,7 +11,7 @@ Minimal terminal UI framework with differential rendering and synchronized outpu
 - **Bracketed Paste Mode**: Handles large pastes correctly with markers for >10 line pastes
 - **Component-based**: Simple Component interface with render() method
 - **Theme Support**: Components accept theme interfaces for customizable styling
-- **Built-in Components**: Text, TruncatedText, Input, Editor, Markdown, Loader, SelectList, SettingsList, Spacer, Image, Box, Container, VStack, HStack, ScrollView
+- **Built-in Components**: Text, TruncatedText, Input, Editor, Markdown, Loader, SelectList, SettingsList, MouseRegion, Spacer, Image, Box, Container, VStack, HStack, ScrollView
 - **Inline Images**: Renders images in terminals that support Kitty or iTerm2 graphics protocols
 - **Autocomplete Support**: File paths and slash commands
 
@@ -121,7 +121,7 @@ if (isViewportTUI(tui)) {
 }
 ```
 
-Stack entries support `basis`, `grow`, `shrink`, `minSize`, `maxSize`, and responsive `visible` callbacks. Mouse-wheel input targets the scroll view under the pointer and unused delta chains to outer scroll views by default. The primary scroll view receives the alternate-screen keyboard navigation actions and wheel input over non-scrollable regions. It can also jump between OSC 133 semantic prompt markers, matching common terminal prompt-navigation shortcuts. Press `Ctrl+Shift+F` to search its rendered content, `Enter`/`Ctrl+G` and `Shift+Enter`/`Ctrl+Shift+G` to move between matches, and `Escape` to close search. `TuiAltScreenOptions.searchMatchStyle` and `searchCurrentMatchStyle` customize match highlighting.
+Stack entries support `basis`, `grow`, `shrink`, `minSize`, `maxSize`, and responsive `visible` callbacks. Mouse-wheel input targets the scroll view under the pointer and unused delta chains to outer scroll views by default. The primary scroll view receives the alternate-screen keyboard navigation actions and wheel input over non-scrollable regions. It can also jump between OSC 133 semantic prompt markers, matching common terminal prompt-navigation shortcuts. Press `Ctrl+Shift+F` to open or close its bordered search panel. The panel shows the configured previous/next shortcuts and provides clickable arrow controls; by default, `Enter`/`Ctrl+G` and `Shift+Enter`/`Ctrl+Shift+G` move between matches, and `Escape` also closes search. `TuiAltScreenOptions.searchMatchStyle` and `searchCurrentMatchStyle` customize match highlighting, while `searchNavigationButtonStyle` styles each arrow button and receives its hover state.
 
 Layout geometry is rebuilt for each requested frame. Stateful components are retained, and their existing rendered-line caches remain effective. Calling `render(width)` directly on these layout components produces an unbounded document, which is also used when alt mode restores the main screen.
 
@@ -177,6 +177,7 @@ handle.unfocus();           // Release focus to normal fallback
 handle.unfocus({ target: baseComponent }); // Release this overlay to a specific component
 handle.unfocus({ target: null });   // Release this overlay and leave focus empty
 handle.isFocused();         // Check if overlay has focus
+handle.getBounds();         // Get last rendered terminal-relative bounds
 
 handle.unfocus();
 // Overlay loses focus; TUI falls back to another visible capturing overlay or the previous focus target.
@@ -211,6 +212,7 @@ All components implement:
 interface Component {
   render(width: number): string[];
   handleInput?(data: string): void;
+  handleMouse?(event: TuiMouseEvent): TuiMouseEventResult | undefined;
   invalidate?(): void;
 }
 ```
@@ -219,9 +221,49 @@ interface Component {
 |--------|-------------|
 | `render(width)` | Returns an array of strings, one per line. Each line **must not exceed `width`** or the TUI will error. Use `truncateToWidth()` or manual wrapping to ensure this. |
 | `handleInput?(data)` | Called when the component has focus and receives keyboard input. The `data` string contains raw terminal input (may include ANSI escape sequences). |
+| `handleMouse?(event)` | Called by `TuiAltScreen` for normalized pointer input targeted at the component. |
 | `invalidate?()` | Called to clear any cached render state. Components should re-render from scratch on the next `render()` call. |
 
 The TUI appends a full SGR reset and OSC 8 reset at the end of each rendered line. Styles do not carry across lines. If you emit multi-line text with styling, reapply styles per line or use `wrapTextWithAnsi()` so styles are preserved for each wrapped line.
+
+### Mouse Input
+
+`TuiAltScreen` normalizes SGR mouse input and hit-tests components and overlays. Events contain component-local `x`/`y`, absolute `screenX`/`screenY`, bounds, button, modifiers, click count, and wheel delta. `TuiMainScreen` does not capture mouse input because the terminal owns its scrollback.
+
+```typescript
+import type { TuiMouseEvent, TuiMouseEventResult } from "@earendil-works/pi-tui";
+
+handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+  if (event.type === "click" && event.button === "left") {
+    this.expanded = !this.expanded;
+    return { handled: true };
+  }
+  if (event.type === "press" && event.button === "left") {
+    return { handled: true, capture: true, focus: true };
+  }
+  if (event.type === "drag") {
+    this.updateFromPointer(event.x, event.y);
+    return { handled: true, render: true };
+  }
+  return undefined;
+}
+```
+
+Returning `handled` suppresses renderer-level fallback behavior. `capture` keeps subsequent drag and release events routed to the same component. `focus` requests keyboard focus. The optional `render` flag controls repainting: press, click, drag, and wheel default to rendering; move and release do not. Set `render: true` for a hover state that visibly changed, or `render: false` for a handled no-op. Render requests are coalesced and terminal output remains differential.
+
+Unhandled gestures retain alternate-screen defaults: wheel input scrolls the nearest `ScrollView` and chains unused delta, primary-button drags select text, OSC 8 links open before parent click handlers, and unhandled right-click preserves configured paste behavior. A click is emitted only when press/release completes without a drag.
+
+Use `MouseRegion` to add mouse behavior without changing a component's rendering:
+
+```typescript
+const collapsible = new MouseRegion(content, (event) => {
+  if (event.type !== "click" || event.button !== "left") return undefined;
+  expanded = !expanded;
+  return { handled: true };
+});
+```
+
+`Container` and `Box` route events to nested children using geometry recorded by the last rendered frame, so pointer motion does not rerender children merely to hit-test them. Explicit `VStack`, `HStack`, and `ScrollView` layouts use the alternate-screen layout frame directly.
 
 ### Focusable Interface (IME Support)
 
@@ -247,7 +289,7 @@ When a `Focusable` component has focus, TUI:
 3. Positions the hardware terminal cursor at that location
 4. Shows the hardware cursor only when `showHardwareCursor` is enabled
 
-The cursor remains hidden by default. This keeps the fake cursor rendering, while still positioning the hardware cursor for terminals that track IME candidate windows with hidden cursors. Some terminals require a visible hardware cursor for IME positioning; enable it with the renderer constructor's `showHardwareCursor` argument, `setShowHardwareCursor(true)`, or `PI_HARDWARE_CURSOR=1`. The `Editor` and `Input` built-in components already implement this interface.
+The cursor remains hidden by default. This keeps the fake cursor rendering, while still positioning the hardware cursor for terminals that track IME candidate windows with hidden cursors. Some terminals require a visible hardware cursor for IME positioning; enable it with the renderer constructor's `showHardwareCursor` argument or `setShowHardwareCursor(true)`. The `Editor` and `Input` built-in components already implement this interface.
 
 **Container components with embedded inputs:** When a container component (dialog, selector, etc.) contains an `Input` or `Editor` child, the container must implement `Focusable` and propagate the focus state to the child:
 
@@ -339,6 +381,8 @@ input.setValue("initial");
 input.getValue();
 ```
 
+Clicking positions the cursor and gives the input keyboard focus in alternate-screen mode.
+
 **Key Bindings:**
 - `Enter` - Submit
 - `Ctrl+A` / `Ctrl+E` - Line start/end
@@ -374,6 +418,7 @@ editor.getPaddingX();  // Get current padding
 ```
 
 **Features:**
+- Click-to-position cursor and clickable autocomplete rows in alternate-screen mode
 - Multi-line editing with word wrap
 - Slash command autocomplete (type `/`)
 - File path autocomplete (press `Tab`)
@@ -514,6 +559,8 @@ list.setFilter("opt"); // Filter items
 ```
 
 **Controls:**
+- Mouse move/wheel: Highlight rows in alternate-screen mode
+- Click: Select a row
 - Arrow keys: Navigate
 - Enter: Select
 - Escape: Cancel
@@ -554,6 +601,8 @@ settings.updateValue("theme", "light");
 ```
 
 **Controls:**
+- Mouse move/wheel: Highlight rows in alternate-screen mode
+- Click: Activate a row
 - Arrow keys: Navigate
 - Enter/Space: Activate (cycle value or open submenu)
 - Escape: Cancel

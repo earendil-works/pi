@@ -1,6 +1,6 @@
 {
 	"name": "@earendil-works/pi-session-backend-sqlite-node",
-	"version": "0.84.3",
+	"version": "0.84.4",
 	"description": "Node sqlite session backend for @earendil-works/pi-agent-core sessions",
 	"type": "module",
 	"main": "./dist/index.js",
@@ -18,7 +18,8 @@
 	],
 	"scripts": {
 		"clean": "node -e \"import('node:fs/promises').then(fs=>fs.rm('dist',{recursive:true,force:true}))\"",
-		"build": "tsgo -p tsconfig.build.json && node ./scripts/prepare-dist.mjs copy-sqlite-migrations",
+		"build": "tsgo -p tsconfig.build.json && node scripts/copy-migrations.mjs",
+		"bench:session:timing": "vitest bench --config vitest.benchmark.config.ts",
 		"test": "vitest --run",
 		"coverage": "vitest --run --coverage",
 		"prepublishOnly": "npm run clean && npm run build"
@@ -34,8 +35,8 @@
 		"node": ">=22.19.0"
 	},
 	"dependencies": {
-		"@earendil-works/pi-ai": "^0.84.3",
-		"@earendil-works/pi-agent-core": "^0.84.3"
+		"@earendil-works/pi-ai": "^0.84.4",
+		"@earendil-works/pi-agent-core": "^0.84.4"
 	},
 	"devDependencies": {
 		"@vitest/coverage-v8": "4.1.9",
