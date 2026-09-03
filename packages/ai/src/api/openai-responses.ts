@@ -22,6 +22,7 @@ import { headersToRecord } from "../utils/headers.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
+import { supportsMidConversationToolChanges } from "../utils/system-messages.ts";
 import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
@@ -275,7 +276,7 @@ function buildParams(
 			: undefined;
 	const toolPlacement = splitDeferredTools(context, {
 		toolResultMarkers: deferredToolsMode !== undefined,
-		systemMarkers: deferredToolsMode !== undefined,
+		systemMarkers: supportsMidConversationToolChanges(model),
 	});
 	const messages = convertResponsesMessages(model, context, OPENAI_TOOL_CALL_PROVIDERS, {
 		grammarToolInputProperties,

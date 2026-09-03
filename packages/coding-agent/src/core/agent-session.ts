@@ -25,7 +25,7 @@ import type {
 	PrepareNextTurnContext,
 	ThinkingLevel,
 } from "@earendil-works/pi-agent-core";
-import { contentText, supportsMidConversationSystemMessages } from "@earendil-works/pi-ai";
+import { contentText, supportsMidConversationToolChanges } from "@earendil-works/pi-ai";
 import type {
 	AssistantMessage,
 	AuthResult,
@@ -1133,14 +1133,14 @@ export class AgentSession {
 			const tool = this._toolRegistry.get(name);
 			return tool ? [tool] : [];
 		});
-		// Only patch the prompt incrementally where the transport delivers system messages as such.
-		// Elsewhere the update would arrive as a tagged user turn, so replace the baseline instead.
+		// Prompt and tool updates must use the same native, transcript-anchored transition.
+		// Elsewhere replace the baseline instead.
 		const model = this.model;
 		const update = prepareModelContextUpdate({
 			options,
 			tools: new Map(selectedTools.map((tool) => [tool.name, systemPromptTool(tool)])),
 			previous: this._modelContextState,
-			incremental: model !== undefined && supportsMidConversationSystemMessages(model),
+			incremental: model !== undefined && supportsMidConversationToolChanges(model),
 		});
 		const message = update.type === "incremental" ? createSystemPromptUpdateMessage(update) : undefined;
 		if (update.type !== "unchanged") {

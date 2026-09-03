@@ -6,7 +6,7 @@ import { declaredTools, splitDeferredTools } from "../src/utils/deferred-tools.t
 import {
 	addedToolNames,
 	renderSystemMessageAsUserText,
-	supportsMidConversationSystemMessages,
+	supportsMidConversationToolChanges,
 } from "../src/utils/system-messages.ts";
 
 const PLACEHOLDER = "__pi_deferred_tool_placeholder__";
@@ -76,28 +76,19 @@ describe("system message helpers", () => {
 		expect(renderSystemMessageAsUserText({ role: "system", content: "", timestamp: 1 })).toBe("");
 	});
 
-	test("reports mid-conversation system message support per transport", () => {
-		// Native system/developer roles.
-		expect(supportsMidConversationSystemMessages(getModel("openai", "gpt-5.4"))).toBe(true);
-		expect(supportsMidConversationSystemMessages(getModel("mistral", "mistral-large-latest"))).toBe(true);
-		// Anthropic depends on the generated compat flag.
-		expect(supportsMidConversationSystemMessages(getModel("anthropic", "claude-opus-4-8"))).toBe(true);
-		expect(supportsMidConversationSystemMessages(getModel("anthropic", "claude-opus-4-6"))).toBe(false);
-		// Rendered as tagged user text.
-		expect(supportsMidConversationSystemMessages(getModel("google", "gemini-2.5-flash"))).toBe(false);
-		// Custom APIs default to false and can opt in through compat.
-		const custom = {
-			...getModel("anthropic", "claude-opus-4-6"),
-			api: "custom-api",
-			compat: undefined,
-		} as Model<Api>;
-		expect(supportsMidConversationSystemMessages(custom)).toBe(false);
+	test("reports mid-conversation tool-change support only for native complete transitions", () => {
+		expect(supportsMidConversationToolChanges(getModel("openai", "gpt-5.4"))).toBe(true);
+		expect(supportsMidConversationToolChanges(getModel("openai", "gpt-5.3-chat-latest"))).toBe(false);
+		expect(supportsMidConversationToolChanges(getModel("mistral", "mistral-large-latest"))).toBe(false);
+		expect(supportsMidConversationToolChanges(getModel("anthropic", "claude-opus-4-8"))).toBe(true);
+		expect(supportsMidConversationToolChanges(getModel("anthropic", "claude-opus-4-6"))).toBe(false);
+		expect(supportsMidConversationToolChanges(getModel("google", "gemini-2.5-flash"))).toBe(false);
 		expect(
-			supportsMidConversationSystemMessages({
-				...custom,
-				compat: { supportsMidConvoSystemMessages: true },
-			} as Model<Api>),
-		).toBe(true);
+			supportsMidConversationToolChanges({
+				...getModel("openai", "gpt-5.4"),
+				compat: { supportsToolSearch: true },
+			}),
+		).toBe(false);
 	});
 
 	test("reads added tool names from tool-result markers and system messages", () => {

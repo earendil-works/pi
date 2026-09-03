@@ -32,6 +32,7 @@ import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { resolveHttpProxyUrlForTarget } from "../utils/node-http-proxy.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
+import { supportsMidConversationToolChanges } from "../utils/system-messages.ts";
 import { uuidv7 } from "../utils/uuid.ts";
 import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
@@ -532,7 +533,7 @@ function buildRequestBody(
 			: undefined;
 	const toolPlacement = splitDeferredTools(context, {
 		toolResultMarkers: deferredToolsMode !== undefined,
-		systemMarkers: deferredToolsMode !== undefined,
+		systemMarkers: supportsMidConversationToolChanges(model),
 	});
 	const messages = convertResponsesMessages(model, context, CODEX_TOOL_CALL_PROVIDERS, {
 		includeSystemPrompt: false,

@@ -42,7 +42,12 @@ import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
-import { addedToolNames, getSystemMessageText, renderSystemMessageAsUserText } from "../utils/system-messages.ts";
+import {
+	addedToolNames,
+	getSystemMessageText,
+	renderSystemMessageAsUserText,
+	supportsMidConversationToolChanges,
+} from "../utils/system-messages.ts";
 import { getJsonSchemaToolParameters, resolveJsonSchemaStrictSampling } from "./constrained-sampling.ts";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.ts";
 import { adjustMaxTokensForThinking, buildBaseOptions, clampMaxTokensToContext } from "./simple-options.ts";
@@ -1041,8 +1046,7 @@ function getBetaFeatures(
 	}
 	// Sent whenever the model supports it rather than only when a request carries tool
 	// changes, so the beta set stays constant for the whole conversation.
-	const compat = getAnthropicCompat(model);
-	if (compat.supportsMidConvoSystemMessages && compat.supportsMidConvoToolChanges) {
+	if (supportsMidConversationToolChanges(model)) {
 		features.push(MID_CONVERSATION_TOOL_CHANGES_BETA);
 	}
 	return [...new Set(features)];
@@ -1058,7 +1062,7 @@ function buildParams(
 	const compat = getAnthropicCompat(model);
 	const transformedMessages = transformMessages(context.messages, model, normalizeToolCallId);
 	const normalizeToolName = isOAuthToken ? toClaudeCodeName : (name: string) => name;
-	const systemToolChanges = compat.supportsMidConvoSystemMessages && compat.supportsMidConvoToolChanges;
+	const systemToolChanges = supportsMidConversationToolChanges(model);
 	const toolPlacement = splitDeferredTools(
 		{ ...context, messages: transformedMessages },
 		{

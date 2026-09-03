@@ -107,7 +107,11 @@ function createTempDir(): string {
 
 export async function createHarness(options: HarnessOptions = {}): Promise<Harness> {
 	const tempDir = createTempDir();
-	const compat = { supportsMidConvoSystemMessages: options.supportsMidConvoSystemMessages ?? true };
+	const supportsMidConvoSystemMessages = options.supportsMidConvoSystemMessages ?? true;
+	const compat = {
+		supportsMidConvoSystemMessages,
+		supportsMidConvoToolChanges: supportsMidConvoSystemMessages,
+	};
 	const fauxProvider: FauxProviderRegistration = registerFauxProvider({
 		models: (options.models ?? [{ id: "faux-1", name: "Faux Model" }]).map((definition) => ({
 			...definition,

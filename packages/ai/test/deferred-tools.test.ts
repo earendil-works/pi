@@ -631,7 +631,7 @@ describe("deferred tools", () => {
 		expect(payload.input?.some((item) => item.type === "additional_tools")).toBe(false);
 	});
 
-	it("loads a system-added tool through client tool search when additional_tools is unsupported", async () => {
+	it("declares a system-added tool immediately when only tool search is supported", async () => {
 		const model: Model<"openai-responses"> = {
 			...getModel("openai", "gpt-5.4"),
 			provider: "openai-proxy",
@@ -650,8 +650,8 @@ describe("deferred tools", () => {
 			(item): item is OpenAIToolSearchOutput => item.type === "tool_search_output",
 		);
 
-		expect(openAIToolNames(payload)).toEqual(["base_tool"]);
-		expect(searchOutput?.tools).toMatchObject([{ type: "function", name: "late_tool", defer_loading: true }]);
+		expect(openAIToolNames(payload)).toEqual(["base_tool", "late_tool"]);
+		expect(searchOutput).toBeUndefined();
 	});
 
 	it.each(["gpt-5.2", "gpt-5.4-nano", "gpt-5.5-pro"] as const)(

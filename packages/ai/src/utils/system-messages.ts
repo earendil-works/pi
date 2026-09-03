@@ -14,31 +14,32 @@ export function renderSystemMessageAsUserText(message: SystemMessage): string {
 	return text.length > 0 ? `<system_update>\n${text}\n</system_update>` : "";
 }
 
+/** Responses transports, where `supportsAdditionalTools` provides transcript-anchored tool loads. */
+const RESPONSES_APIS: ReadonlySet<string> = new Set<Api>([
+	"openai-responses",
+	"azure-openai-responses",
+	"openai-codex-responses",
+]);
+
 /**
- * Whether the transport delivers a mid-conversation system message with a system-level role.
+ * Whether the model supports transcript-anchored tool additions and removals: either both
+ * Anthropic mid-conversation flags (any transport, so custom providers can opt in) or
+ * `supportsAdditionalTools` on a Responses transport.
  *
- * Transports that answer false render it as a tagged user turn instead. That is fine for
- * messages a caller emits deliberately, but a harness that patches its prompt incrementally
- * should prefer replacing the top-level system prompt on those models, since a user turn
- * carrying operator instructions is untested territory for them.
- *
- * `compat.supportsMidConvoSystemMessages` wins when set, so custom providers can opt in.
+ * Harness prompt updates use the same capability: a standalone system message is otherwise
+ * not enough to keep prompt and tool state coherent. Tool-search-only models can load a tool,
+ * but cannot apply a complete tool-state transition, so they remain baseline replacements.
  */
-export function supportsMidConversationSystemMessages(model: Model<Api>): boolean {
-	const compat = model.compat as { supportsMidConvoSystemMessages?: boolean } | undefined;
-	if (compat?.supportsMidConvoSystemMessages !== undefined) return compat.supportsMidConvoSystemMessages;
-	switch (model.api) {
-		case "openai-completions":
-		case "openai-responses":
-		case "azure-openai-responses":
-		case "openai-codex-responses":
-		case "mistral-conversations":
-			return true;
-		default:
-			// anthropic-messages needs the generated compat flag; Google, Bedrock, pi-messages and
-			// custom APIs either render system messages as user text or have unknown behavior.
-			return false;
-	}
+export function supportsMidConversationToolChanges(model: Model<Api>): boolean {
+	const compat = model.compat as
+		| {
+				supportsAdditionalTools?: boolean;
+				supportsMidConvoSystemMessages?: boolean;
+				supportsMidConvoToolChanges?: boolean;
+		  }
+		| undefined;
+	if (compat?.supportsMidConvoSystemMessages && compat.supportsMidConvoToolChanges) return true;
+	return RESPONSES_APIS.has(model.api) && compat?.supportsAdditionalTools === true;
 }
 
 /** Names of tools that become available at this message, from either a system update or a tool-result marker. */
