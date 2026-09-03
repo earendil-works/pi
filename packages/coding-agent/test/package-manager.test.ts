@@ -1647,6 +1647,60 @@ Content`,
 			expect(result.skills.some((r) => isEnabled(r, "pdf-to-markdown", "includes"))).toBe(true);
 			expect(result.skills.some((r) => isEnabled(r, "document-processor-api", "includes"))).toBe(true);
 		});
+
+		it("should sort manifest glob matches and use exact entries for dot paths and symlink traversal", async () => {
+			const pkgDir = join(tempDir, "manifest-glob-semantics-pkg");
+			const extensionFilesDir = join(pkgDir, "extension-files");
+			const extensionGroupDir = join(pkgDir, "extension-groups", "group");
+			const linkedPluginSource = join(pkgDir, "linked-plugin-source");
+			mkdirSync(join(extensionFilesDir, "nested"), { recursive: true });
+			mkdirSync(extensionGroupDir, { recursive: true });
+			mkdirSync(join(pkgDir, "plugins", "local", "skills", "local-skill"), { recursive: true });
+			mkdirSync(join(linkedPluginSource, "skills", "linked-skill"), { recursive: true });
+			writeFileSync(join(extensionFilesDir, "z.ts"), "export default function() {}");
+			writeFileSync(join(extensionFilesDir, "a.ts"), "export default function() {}");
+			writeFileSync(join(extensionFilesDir, ".ignored.ts"), "export default function() {}");
+			writeFileSync(join(extensionFilesDir, "nested", ".hidden.ts"), "export default function() {}");
+			writeFileSync(join(extensionGroupDir, "index.ts"), "export default function() {}");
+			writeFileSync(
+				join(pkgDir, "plugins", "local", "skills", "local-skill", "SKILL.md"),
+				"---\nname: local-skill\ndescription: Local\n---\n",
+			);
+			writeFileSync(
+				join(linkedPluginSource, "skills", "linked-skill", "SKILL.md"),
+				"---\nname: linked-skill\ndescription: Linked\n---\n",
+			);
+			symlinkSync(
+				linkedPluginSource,
+				join(pkgDir, "plugins", "linked"),
+				process.platform === "win32" ? "junction" : "dir",
+			);
+			writeFileSync(
+				join(pkgDir, "package.json"),
+				JSON.stringify({
+					name: "manifest-glob-semantics-pkg",
+					pi: {
+						extensions: [
+							"./extension-files/*.ts",
+							"./extension-files/**/.ignored.ts",
+							"./extension-files/nested/.hidden.ts",
+							"./extension-groups/*/",
+						],
+						skills: ["./plugins/*/skills", "./plugins/linked/skills"],
+					},
+				}),
+			);
+
+			const result = await packageManager.resolveExtensionSources([pkgDir]);
+			expect(result.extensions.map((resource) => relative(pkgDir, resource.path))).toEqual([
+				join("extension-files", "a.ts"),
+				join("extension-files", "z.ts"),
+				join("extension-files", "nested", ".hidden.ts"),
+				join("extension-groups", "group", "index.ts"),
+			]);
+			expect(result.skills.some((resource) => pathEndsWith(resource.path, "local-skill/SKILL.md"))).toBe(true);
+			expect(result.skills.some((resource) => pathEndsWith(resource.path, "linked-skill/SKILL.md"))).toBe(true);
+		});
 	});
 
 	describe("pattern filtering in package filters", () => {

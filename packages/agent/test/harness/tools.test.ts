@@ -263,7 +263,7 @@ describe("AgentHarness tools", () => {
 				context,
 			);
 
-			expect(textOutput(result)).toBe("Successfully wrote 5 bytes to nested/dir/file.txt");
+			expect(textOutput(result)).toBe("Successfully wrote to nested/dir/file.txt");
 			expect(getOrThrow(await context.env.readTextFile("nested/dir/file.txt"))).toBe("hello");
 		});
 

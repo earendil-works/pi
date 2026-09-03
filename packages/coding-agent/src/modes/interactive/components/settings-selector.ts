@@ -24,9 +24,6 @@ import { DynamicBorder } from "./dynamic-border.ts";
 import { keyDisplayText } from "./keybinding-hints.ts";
 import { SelectSubmenu, SteppedSubmenu, type SteppedSubmenuStep } from "./settings-submenu.ts";
 
-const NO_DEFAULT_MODEL_VALUE = "__none__";
-const NO_DEFAULT_MODEL_LABEL = "not set";
-
 const MODEL_PICKER_LAYOUT = { minPrimaryColumnWidth: 12, maxPrimaryColumnWidth: 46 };
 
 const THINKING_DESCRIPTIONS: Record<ThinkingLevel, string> = {
@@ -52,6 +49,7 @@ const DEFAULT_PROJECT_TRUST_BY_LABEL = new Map(
 export interface SettingsConfig {
 	autoCompact: boolean;
 	defaultModel: string;
+	currentModel?: Model<any>;
 	availableDefaultModels: readonly Model<any>[];
 	showImages: boolean;
 	imageWidthCells: number;
@@ -86,12 +84,12 @@ export interface SettingsConfig {
 	tuiMode: TuiMode;
 	fullscreenExitOutput: FullscreenExitOutput;
 	fullscreenScrollbar: ScrollViewScrollbar;
+	fullscreenCopyOnSelect: boolean;
 	warnings: WarningSettings;
 }
 
 export interface SettingsCallbacks {
 	onAutoCompactChange: (enabled: boolean) => void;
-	onDefaultModelChange: (model: Model<any>) => Promise<void>;
 	onShowImagesChange: (enabled: boolean) => void;
 	onImageWidthCellsChange: (width: number) => void;
 	onAutoResizeImagesChange: (enabled: boolean) => void;
@@ -101,7 +99,6 @@ export interface SettingsCallbacks {
 	onFollowUpModeChange: (mode: "all" | "one-at-a-time") => void;
 	onTransportChange: (transport: Transport) => void;
 	onHttpIdleTimeoutMsChange: (timeoutMs: number) => void;
-	onThinkingLevelChange: (level: ThinkingLevel) => void;
 	onModelThinkingLevelChange: (provider: string, modelId: string, level: ThinkingLevel) => void;
 	onModelThinkingLevelRemove: (provider: string, modelId: string) => void;
 	onThemeChange: (theme: string) => void;
@@ -124,6 +121,7 @@ export interface SettingsCallbacks {
 	onTuiModeChange: (mode: TuiMode) => void;
 	onFullscreenExitOutputChange: (output: FullscreenExitOutput) => void;
 	onFullscreenScrollbarChange: (mode: ScrollViewScrollbar) => void;
+	onFullscreenCopyOnSelectChange: (enabled: boolean) => void;
 	onWarningsChange: (warnings: WarningSettings) => void;
 	onCancel: () => void;
 }
@@ -183,16 +181,6 @@ function modelDisplayLabel(model: Model<any>): string {
 	return `${model.id} [${model.provider}]`;
 }
 
-function defaultModelDisplayValue(
-	key: string,
-	model: Model<any> | undefined,
-	overrides: Record<string, ThinkingLevel>,
-): string {
-	const label = model ? modelDisplayLabel(model) : key;
-	const override = overrides[key];
-	return override ? `${label} \u00b7 ${override}` : label;
-}
-
 function modelThinkingOverridesSummary(overrides: Record<string, ThinkingLevel>): string {
 	const count = Object.keys(overrides).length;
 	if (count === 0) return "none";
@@ -203,38 +191,23 @@ function modelItemLabel(model: Model<any>): string {
 	return `${model.id} ${theme.fg("muted", `[${model.provider}]`)}`;
 }
 
-function defaultModelItems(models: readonly Model<any>[], overrides?: Record<string, ThinkingLevel>): SelectItem[] {
-	return [...models]
-		.sort((a, b) => {
-			const providerCompare = a.provider.localeCompare(b.provider);
-			if (providerCompare !== 0) return providerCompare;
-			return (a.name || a.id).localeCompare(b.name || b.id);
-		})
-		.map((model) => {
-			const key = modelSettingKey(model);
-			const override = overrides?.[key];
-			return {
-				value: key,
-				label: modelItemLabel(model),
-				description: override ?? undefined,
-			};
-		});
-}
-
-function themeItems(availableThemes: string[]): SelectItem[] {
-	return availableThemes.map((name) => ({ value: name, label: name }));
+function themeItems(availableThemes: string[], currentTheme: string): SelectItem[] {
+	return availableThemes.map((name) => ({
+		value: name,
+		label: `${name === currentTheme ? "✓ " : "  "}${name}`,
+	}));
 }
 
 const AUTOMATIC_THEME_VALUE = "/";
 
-function singleModeThemeItems(availableThemes: string[]): SelectItem[] {
+function singleModeThemeItems(availableThemes: string[], currentTheme: string): SelectItem[] {
 	return [
 		{
 			value: AUTOMATIC_THEME_VALUE,
-			label: "Automatic",
+			label: "  Automatic",
 			description: "Use separate themes for light and dark terminal appearance",
 		},
-		...themeItems(availableThemes),
+		...themeItems(availableThemes, currentTheme),
 	];
 }
 
@@ -315,7 +288,7 @@ class ThemeSubmenu extends Container {
 		const menu = new SelectSubmenu(
 			"Theme",
 			"Select a theme, or choose Automatic to follow terminal appearance.",
-			singleModeThemeItems(this.availableThemes),
+			singleModeThemeItems(this.availableThemes, this.singleTheme),
 			this.singleTheme,
 			(value) => {
 				if (value === AUTOMATIC_THEME_VALUE) {
@@ -431,7 +404,7 @@ class ThemeSubmenu extends Container {
 		return new SelectSubmenu(
 			title,
 			description,
-			themeItems(this.availableThemes),
+			themeItems(this.availableThemes, currentValue),
 			currentValue,
 			onSelect,
 			() => {
@@ -478,13 +451,11 @@ export class SettingsSelectorComponent extends Container {
 		const cycleThinkingKey = keyDisplayText("app.thinking.cycle");
 		let currentWarnings = { ...config.warnings };
 		const currentModelThinkingLevels = { ...config.modelThinkingLevels };
-		let lastSelectedDefaultModel: Model<any> | undefined;
 		const defaultModelByValue = new Map(
 			config.availableDefaultModels.map((model) => [modelSettingKey(model), model]),
 		);
-		let currentDefaultModelKey: string | undefined = defaultModelByValue.has(config.defaultModel)
-			? config.defaultModel
-			: undefined;
+		const currentDefaultModelKey = defaultModelByValue.has(config.defaultModel) ? config.defaultModel : undefined;
+		const currentModelKey = config.currentModel ? modelSettingKey(config.currentModel) : undefined;
 
 		const items: SettingItem[] = [
 			{
@@ -517,55 +488,6 @@ export class SettingsSelectorComponent extends Container {
 				values: ["sse", "websocket", "websocket-cached", "auto"],
 			},
 			{
-				id: "default-model",
-				label: "Default model",
-				description: "Startup model for new sessions",
-				currentValue: defaultModelDisplayValue(
-					config.defaultModel,
-					defaultModelByValue.get(config.defaultModel),
-					currentModelThinkingLevels,
-				),
-				submenu: (currentValue, done) => {
-					const fresh = defaultModelItems(config.availableDefaultModels, currentModelThinkingLevels);
-					const options =
-						fresh.length > 0
-							? fresh
-							: [
-									{
-										value: NO_DEFAULT_MODEL_VALUE,
-										label: "No models available",
-										description: "Log in to a provider or configure an API key first",
-									},
-								];
-					return new SelectSubmenu(
-						"Default Model",
-						"Select the model to use when starting new sessions",
-						options,
-						currentValue === NO_DEFAULT_MODEL_LABEL ? NO_DEFAULT_MODEL_VALUE : currentValue,
-						(value) => {
-							const model = defaultModelByValue.get(value);
-							if (!model) {
-								done();
-								return;
-							}
-							void callbacks.onDefaultModelChange(model).then(
-								() => {
-									lastSelectedDefaultModel = model;
-									currentDefaultModelKey = value;
-									done(defaultModelDisplayValue(value, model, currentModelThinkingLevels), {
-										navigateTo: "model-thinking",
-									});
-								},
-								() => done(),
-							);
-						},
-						() => done(),
-						undefined,
-						{ searchable: true, layout: MODEL_PICKER_LAYOUT },
-					);
-				},
-			},
-			{
 				id: "http-idle-timeout",
 				label: "HTTP idle timeout",
 				description:
@@ -590,7 +512,7 @@ export class SettingsSelectorComponent extends Container {
 			{
 				id: "cache-miss-notices",
 				label: "Cache miss notices",
-				description: "Show transcript notices for significant prompt-cache misses and compaction costs",
+				description: "Show transcript notices for cache costs and provider recovery diagnostics",
 				currentValue: config.showCacheMissNotices ? "true" : "false",
 				values: ["true", "false"],
 			},
@@ -652,36 +574,11 @@ export class SettingsSelectorComponent extends Container {
 					),
 			},
 			{
-				id: "thinking",
-				label: "Default thinking level",
-				description: `Startup reasoning depth for thinking-capable models. ${cycleThinkingKey} cycles in-session.`,
-				currentValue: config.thinkingLevel,
-				submenu: (currentValue, done) =>
-					new SelectSubmenu(
-						"Default Thinking Level",
-						"Select the reasoning depth to use when starting new sessions",
-						config.availableThinkingLevels.map((level) => ({
-							value: level,
-							label: level,
-							description: THINKING_DESCRIPTIONS[level],
-						})),
-						currentValue,
-						(value) => {
-							callbacks.onThinkingLevelChange(value as ThinkingLevel);
-							done(value);
-						},
-						() => done(),
-					),
-			},
-			{
 				id: "model-thinking",
 				label: "Default thinking level per model",
 				description: `Override the default thinking level for specific models. ${cycleThinkingKey} cycles in-session.`,
 				currentValue: modelThinkingOverridesSummary(currentModelThinkingLevels),
 				submenu: (_currentValue, done) => {
-					const preselected = lastSelectedDefaultModel;
-					lastSelectedDefaultModel = undefined;
-
 					const steps: SteppedSubmenuStep[] = [
 						{
 							key: "model",
@@ -691,11 +588,11 @@ export class SettingsSelectorComponent extends Container {
 								const sorted = [...config.availableDefaultModels].sort((a, b) => {
 									const aKey = modelSettingKey(a);
 									const bKey = modelSettingKey(b);
+									if (aKey === currentModelKey) return -1;
+									if (bKey === currentModelKey) return 1;
 									if (aKey === currentDefaultModelKey) return -1;
 									if (bKey === currentDefaultModelKey) return 1;
-									const pc = a.provider.localeCompare(b.provider);
-									if (pc !== 0) return pc;
-									return (a.name || a.id).localeCompare(b.name || b.id);
+									return a.provider.localeCompare(b.provider);
 								});
 								const items: SelectItem[] = sorted.map((model) => {
 									const key = modelSettingKey(model);
@@ -715,7 +612,7 @@ export class SettingsSelectorComponent extends Container {
 								}
 								return items;
 							},
-							preselect: () => currentDefaultModelKey,
+							preselect: () => currentModelKey ?? currentDefaultModelKey,
 							searchable: true,
 							layout: MODEL_PICKER_LAYOUT,
 						},
@@ -732,15 +629,16 @@ export class SettingsSelectorComponent extends Container {
 								const levels = (
 									model.reasoning ? getSupportedThinkingLevels(model) : ["off"]
 								) as ThinkingLevel[];
+								const activeLevel = currentModelThinkingLevels[ctx.model];
 								const items: SelectItem[] = levels.map((level) => ({
 									value: level,
-									label: level,
+									label: `${level === activeLevel ? "✓ " : "  "}${level}`,
 									description: THINKING_DESCRIPTIONS[level],
 								}));
 								if (currentModelThinkingLevels[ctx.model] !== undefined) {
 									items.push({
 										value: CLEAR_OVERRIDE_VALUE,
-										label: "(clear override)",
+										label: "  (clear override)",
 										description: `Revert to global default (${config.thinkingLevel})`,
 									});
 								}
@@ -770,19 +668,9 @@ export class SettingsSelectorComponent extends Container {
 							}
 						},
 						() => {
-							this.settingsList.updateValue(
-								"default-model",
-								defaultModelDisplayValue(
-									currentDefaultModelKey ?? config.defaultModel,
-									defaultModelByValue.get(currentDefaultModelKey ?? config.defaultModel),
-									currentModelThinkingLevels,
-								),
-							);
 							done(summary());
 						},
-						preselected
-							? { startAtStep: 1, initialContext: { model: modelSettingKey(preselected) } }
-							: { loop: true },
+						{ loop: true },
 					);
 				},
 			},
@@ -806,6 +694,13 @@ export class SettingsSelectorComponent extends Container {
 				description: "Scrollbar behavior in fullscreen mode; has no effect in regular mode",
 				currentValue: config.fullscreenScrollbar,
 				values: ["auto", "always", "hidden"],
+			},
+			{
+				id: "fullscreen-copy-on-select",
+				label: "Fullscreen copy on select",
+				description: "Automatically copy selected text in fullscreen mode; disable to copy selections with Ctrl+X",
+				currentValue: config.fullscreenCopyOnSelect ? "true" : "false",
+				values: ["true", "false"],
 			},
 			{
 				id: "theme",
@@ -1027,6 +922,9 @@ export class SettingsSelectorComponent extends Container {
 						break;
 					case "fullscreen-scrollbar":
 						callbacks.onFullscreenScrollbarChange(newValue as ScrollViewScrollbar);
+						break;
+					case "fullscreen-copy-on-select":
+						callbacks.onFullscreenCopyOnSelectChange(newValue === "true");
 						break;
 					case "theme":
 						callbacks.onThemeChange(newValue);

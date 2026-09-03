@@ -109,13 +109,12 @@ describe("generateSummary reasoning options", () => {
 		const requestOptions = completeSimpleMock.mock.calls.map((call) => call[2]);
 		expect(requestOptions).toHaveLength(2);
 		expect(requestOptions.every((options) => options?.cacheRetention === "none")).toBe(true);
-		expect(requestOptions.every((options) => options?.toolChoice === "none")).toBe(true);
 
 		const sessionIds = requestOptions.map((options) => options?.sessionId);
 		expect(sessionIds[0]).not.toBe(sessionIds[1]);
 	});
 
-	it("honors a caller-supplied routing session without prompt caching", async () => {
+	it("honors caller-supplied routing session and tool choice without prompt caching", async () => {
 		await completeSummarization(
 			createModel(false),
 			{ systemPrompt: "Summarize", messages: [] },
@@ -125,7 +124,7 @@ describe("generateSummary reasoning options", () => {
 		expect(completeSimpleMock.mock.calls[0][2]).toMatchObject({
 			sessionId: "current-routing-session",
 			cacheRetention: "none",
-			toolChoice: "none",
+			toolChoice: "auto",
 		});
 	});
 
@@ -170,6 +169,39 @@ describe("generateSummary reasoning options", () => {
 
 		await expect(compact(preparation, createModel(false), "test-key")).rejects.toThrow(
 			"Turn prefix summarization attempted to call a tool",
+		);
+	});
+
+	it("rejects a length-limited history summary", async () => {
+		completeSimpleMock.mockResolvedValueOnce({
+			...mockSummaryResponse,
+			stopReason: "length",
+			content: [{ type: "text", text: "partial" }],
+		});
+
+		await expect(generateSummaryWithUsage(messages, createModel(false), 2000, "test-key")).rejects.toThrow(
+			"generation hit the token cap",
+		);
+	});
+
+	it("rejects a length-limited split-turn summary", async () => {
+		completeSimpleMock.mockResolvedValueOnce({
+			...mockSummaryResponse,
+			stopReason: "length",
+			content: [{ type: "text", text: "partial" }],
+		});
+		const preparation: CompactionPreparation = {
+			firstKeptEntryId: "entry-keep",
+			messagesToSummarize: [],
+			turnPrefixMessages: messages,
+			isSplitTurn: true,
+			tokensBefore: 100,
+			fileOps: { read: new Set(), written: new Set(), edited: new Set() },
+			settings: { enabled: true, reserveTokens: 2000, keepRecentTokens: 20 },
+		};
+
+		await expect(compact(preparation, createModel(false), "test-key")).rejects.toThrow(
+			"generation hit the token cap",
 		);
 	});
 

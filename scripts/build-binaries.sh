@@ -159,6 +159,35 @@ else
     PLATFORMS=(darwin-arm64 darwin-x64 linux-x64 linux-arm64 windows-x64 windows-arm64)
 fi
 
+set_clipboard_target() {
+    case "$1" in
+        darwin-arm64)
+            clipboard_native_package="clipboard-darwin-arm64"
+            clipboard_native_file="clipboard.darwin-arm64.node"
+            ;;
+        darwin-x64)
+            clipboard_native_package="clipboard-darwin-x64"
+            clipboard_native_file="clipboard.darwin-x64.node"
+            ;;
+        linux-x64)
+            clipboard_native_package="clipboard-linux-x64-gnu"
+            clipboard_native_file="clipboard.linux-x64-gnu.node"
+            ;;
+        linux-arm64)
+            clipboard_native_package="clipboard-linux-arm64-gnu"
+            clipboard_native_file="clipboard.linux-arm64-gnu.node"
+            ;;
+        windows-x64)
+            clipboard_native_package="clipboard-win32-x64-msvc"
+            clipboard_native_file="clipboard.win32-x64-msvc.node"
+            ;;
+        windows-arm64)
+            clipboard_native_package="clipboard-win32-arm64-msvc"
+            clipboard_native_file="clipboard.win32-arm64-msvc.node"
+            ;;
+    esac
+}
+
 for platform in "${PLATFORMS[@]}"; do
     echo "Building for $platform..."
     bun_target="bun-$platform"
@@ -195,35 +224,9 @@ for platform in "${PLATFORMS[@]}"; do
     cp -r docs "$OUTPUT_DIR/$platform/"
     cp -r examples "$OUTPUT_DIR/$platform/"
 
-    case "$platform" in
-        darwin-arm64)
-            clipboard_native_package="clipboard-darwin-arm64"
-            clipboard_native_file="clipboard.darwin-arm64.node"
-            ;;
-        darwin-x64)
-            clipboard_native_package="clipboard-darwin-x64"
-            clipboard_native_file="clipboard.darwin-x64.node"
-            ;;
-        linux-x64)
-            clipboard_native_package="clipboard-linux-x64-gnu"
-            clipboard_native_file="clipboard.linux-x64-gnu.node"
-            ;;
-        linux-arm64)
-            clipboard_native_package="clipboard-linux-arm64-gnu"
-            clipboard_native_file="clipboard.linux-arm64-gnu.node"
-            ;;
-        windows-x64)
-            clipboard_native_package="clipboard-win32-x64-msvc"
-            clipboard_native_file="clipboard.win32-x64-msvc.node"
-            ;;
-        windows-arm64)
-            clipboard_native_package="clipboard-win32-arm64-msvc"
-            clipboard_native_file="clipboard.win32-arm64-msvc.node"
-            ;;
-    esac
+    set_clipboard_target "$platform"
     mkdir -p "$OUTPUT_DIR/$platform/node_modules/@mariozechner"
     cp -r ../../node_modules/@mariozechner/clipboard "$OUTPUT_DIR/$platform/node_modules/@mariozechner/"
-    cp -r ../../node_modules/@mariozechner/$clipboard_native_package "$OUTPUT_DIR/$platform/node_modules/@mariozechner/"
     cp "../../node_modules/@mariozechner/$clipboard_native_package/$clipboard_native_file" \
         "$OUTPUT_DIR/$platform/node_modules/@mariozechner/clipboard/"
 

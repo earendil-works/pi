@@ -8,7 +8,7 @@ import { VirtualTerminal } from "../../tui/test/virtual-terminal.ts";
 import type { AutocompleteProviderFactory } from "../src/core/extensions/types.ts";
 import type { SourceInfo } from "../src/core/source-info.ts";
 import type { AuthSelectorProvider } from "../src/modes/interactive/components/oauth-selector.ts";
-import { InteractiveMode, parseDefaultFlagArgs } from "../src/modes/interactive/interactive-mode.ts";
+import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
 
 function renderLastLine(container: Container, width = 120): string {
@@ -401,22 +401,6 @@ describe("InteractiveMode.setupAutocompleteProvider", () => {
 });
 
 describe("InteractiveMode.createBaseAutocompleteProvider", () => {
-	describe("parseDefaultFlagArgs", () => {
-		test("parses --default as a persistent model selection", () => {
-			expect(parseDefaultFlagArgs("model", "--default openai/gpt-5")).toEqual({
-				persist: true,
-				searchTerm: "openai/gpt-5",
-			});
-		});
-
-		test("rejects unknown /model flags", () => {
-			expect(parseDefaultFlagArgs("model", "--global openai/gpt-5")).toMatchObject({
-				persist: false,
-				error: 'Unknown /model option "--global". Supported option: --default.',
-			});
-		});
-	});
-
 	test("matches model command arguments across provider/model order", async () => {
 		type TestModel = { id: string; provider: string; name: string };
 		type FakeInteractiveMode = {
@@ -466,52 +450,6 @@ describe("InteractiveMode.createBaseAutocompleteProvider", () => {
 			"openai-codex/gpt-5.5",
 			"github-copilot/gpt-5.2-codex",
 		]);
-	});
-
-	test("preserves --default when completing model command arguments", async () => {
-		type TestModel = { id: string; provider: string; name: string };
-		type FakeInteractiveMode = {
-			session: {
-				scopedModels: Array<{ model: TestModel }>;
-				modelRuntime: { getAvailableSnapshot: () => TestModel[] };
-				promptTemplates: [];
-				extensionRunner: { getRegisteredCommands: () => [] };
-				resourceLoader: { getSkills: () => { skills: [] } };
-			};
-			settingsManager: { getEnableSkillCommands: () => boolean };
-			skillCommands: Map<string, string>;
-			sessionManager: { getCwd: () => string };
-			fdPath: null;
-		};
-
-		const createBaseAutocompleteProvider = (
-			InteractiveMode as unknown as {
-				prototype: { createBaseAutocompleteProvider(this: FakeInteractiveMode): AutocompleteProvider };
-			}
-		).prototype.createBaseAutocompleteProvider;
-		const models = [{ id: "gpt-5.5", provider: "openai-codex", name: "GPT-5.5" }];
-		const fakeThis: FakeInteractiveMode = {
-			session: {
-				scopedModels: [],
-				modelRuntime: { getAvailableSnapshot: () => models },
-				promptTemplates: [],
-				extensionRunner: { getRegisteredCommands: () => [] },
-				resourceLoader: { getSkills: () => ({ skills: [] }) },
-			},
-			settingsManager: { getEnableSkillCommands: () => false },
-			skillCommands: new Map(),
-			sessionManager: { getCwd: () => "/tmp" },
-			fdPath: null,
-		};
-
-		const provider = createBaseAutocompleteProvider.call(fakeThis);
-		const line = "/model --default codex";
-		const suggestions = await provider.getSuggestions([line], 0, line.length, {
-			signal: new AbortController().signal,
-		});
-
-		expect(suggestions?.prefix).toBe("--default codex");
-		expect(suggestions?.items[0]?.value).toBe("--default openai-codex/gpt-5.5");
 	});
 
 	test("matches login command arguments by provider id and name", async () => {

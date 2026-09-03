@@ -8,8 +8,11 @@ const OPENROUTER_ANTHROPIC_LATEST_MODEL_IDS = [
 	"~anthropic/claude-sonnet-latest",
 ] as const;
 
-describe("OpenRouter Anthropic cache control metadata", () => {
-	it.each(OPENROUTER_ANTHROPIC_LATEST_MODEL_IDS)("enables cache control for %s", (modelId) => {
-		expect(getModel("openrouter", modelId).compat?.cacheControlFormat).toBe("anthropic");
+describe("OpenRouter Anthropic latest alias metadata", () => {
+	it.each(OPENROUTER_ANTHROPIC_LATEST_MODEL_IDS)("keeps completions cache control for %s", (modelId) => {
+		const model = getModel("openrouter", modelId);
+		expect(model.api).toBe("openai-completions");
+		if (model.api !== "openai-completions") throw new Error(`Unexpected API for ${modelId}`);
+		expect(model.compat?.cacheControlFormat).toBe("anthropic");
 	});
 });

@@ -92,11 +92,13 @@ describe("experimental CLI commands", () => {
 		const result = experimentalCli.parse(["--unknown", "@prompt.md", "--", "--listen", "unix:///tmp/pi.sock"]);
 		expect(result).toMatchObject({
 			ok: true,
-			command: { command: "pi", options: { fileArgs: ["prompt.md"] } },
+			command: {
+				command: "pi",
+				options: { fileArgs: ["prompt.md"], messages: ["--listen", "unix:///tmp/pi.sock"] },
+			},
 		});
 		if (!result.ok || result.command.command !== "pi") return;
-		expect(result.command.options.unknownFlags.get("unknown")).toBe(true);
-		expect(result.command.options.unknownFlags.get("listen")).toBe("unix:///tmp/pi.sock");
+		expect(result.command.options.unknownFlags).toEqual(new Map([["unknown", true]]));
 	});
 
 	test.each([

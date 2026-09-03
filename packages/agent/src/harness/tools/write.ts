@@ -30,7 +30,7 @@ export function createWriteTool<TContext extends ExecutionToolContext = Executio
 				getOrThrow(await env.writeFile(absolutePath, content, signal));
 				if (signal?.aborted) throw new Error("Operation aborted");
 				return {
-					content: [{ type: "text", text: `Successfully wrote ${content.length} bytes to ${path}` }],
+					content: [{ type: "text", text: `Successfully wrote to ${path}` }],
 					details: undefined,
 				};
 			});

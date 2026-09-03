@@ -16,7 +16,7 @@ import {
 	createCustomMessage,
 } from "../messages.ts";
 import type { ReadonlySessionManager, SessionEntry } from "../session-manager.ts";
-import { completeSummarization, estimateTokens } from "./compaction.ts";
+import { completeSummarization, estimateTokens, getSummarizationFailure } from "./compaction.ts";
 import {
 	computeFileLists,
 	createFileOps,
@@ -354,8 +354,9 @@ export async function generateBranchSummary(
 	if (response.stopReason === "aborted") {
 		return { aborted: true };
 	}
-	if (response.stopReason === "error") {
-		return { error: response.errorMessage || "Summarization failed" };
+	const failure = getSummarizationFailure(response, "Branch summarization");
+	if (failure) {
+		return { error: failure };
 	}
 	if (response.content.some((block) => block.type === "toolCall")) {
 		return { error: "Branch summarization attempted to call a tool" };

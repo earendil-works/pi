@@ -110,6 +110,7 @@ describe("AgentSession model and extension characterization", () => {
 				{ id: "faux-1", name: "One", reasoning: true },
 				{ id: "faux-2", name: "Two", reasoning: true },
 			],
+			settings: { defaultThinkingLevel: "medium" },
 		});
 		harnesses.push(harness);
 
@@ -125,10 +126,24 @@ describe("AgentSession model and extension characterization", () => {
 		await harness.session.setModel(model2);
 		expect(harness.session.thinkingLevel).toBe("low");
 
-		// Switch back to faux-1 → no per-model override, carries session level
+		// Switch back to faux-1 → no per-model override, uses global default
 		const model1 = harness.getModel("faux-1")!;
 		await harness.session.setModel(model1);
-		expect(harness.session.thinkingLevel).toBe("low");
+		expect(harness.session.thinkingLevel).toBe("medium");
+	});
+
+	it("falls back to current session thinking level when no per-model or global default is configured", async () => {
+		const harness = await createHarness({
+			models: [
+				{ id: "faux-1", name: "One", reasoning: true },
+				{ id: "faux-2", name: "Two", reasoning: true },
+			],
+		});
+		harnesses.push(harness);
+
+		harness.session.setThinkingLevel("high");
+		await harness.session.setModel(harness.getModel("faux-2")!);
+		expect(harness.session.thinkingLevel).toBe("high");
 	});
 
 	it("per-model override takes priority over global default during model switch", async () => {
