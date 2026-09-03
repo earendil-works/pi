@@ -29,6 +29,12 @@ export { type BashExecutorOptions, type BashResult, executeBashWithOperations } 
 export type { CompactionResult } from "./compaction/index.ts";
 export { createEventBus, type EventBus, type EventBusController } from "./event-bus.ts";
 export { areExperimentalFeaturesEnabled } from "./experimental.ts";
+export {
+	DEFAULT_MODEL_DISPLAY_MODE,
+	getModelDisplayLabel,
+	isOpaqueModelId,
+	type ModelDisplayMode,
+} from "./model-display.ts";
 // Extensions system
 export {
 	type AgentEndEvent,

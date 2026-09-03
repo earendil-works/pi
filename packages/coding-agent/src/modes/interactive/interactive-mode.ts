@@ -5001,6 +5001,7 @@ export class InteractiveMode {
 				initialSearchInput,
 				(model) => selectModel(model, true),
 				defaultProvider && defaultModel ? { provider: defaultProvider, id: defaultModel } : undefined,
+				this.settingsManager.getModelDisplayMode(),
 			);
 			return { component: selector, focus: selector, dispose: () => selector.dispose() };
 		});

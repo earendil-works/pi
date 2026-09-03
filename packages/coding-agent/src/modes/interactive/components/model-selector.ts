@@ -11,6 +11,7 @@ import {
 	type TUI,
 } from "@earendil-works/pi-tui";
 import type { ModelRuntime } from "../../../core/model-runtime.ts";
+import { DEFAULT_MODEL_DISPLAY_MODE, getModelDisplayLabel, type ModelDisplayMode } from "../../../core/model-display.ts";
 import { refreshModelCatalogs } from "../model-catalog-refresh.ts";
 import { getModelSelectorSearchText } from "../model-search.ts";
 import { theme } from "../theme/theme.ts";
@@ -67,6 +68,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
 	private tui: TUI;
 	private scopedModels: ReadonlyArray<ScopedModelItem>;
 	private defaultModel?: DefaultModelReference;
+	private modelDisplayMode: ModelDisplayMode = DEFAULT_MODEL_DISPLAY_MODE;
 	private scope: ModelScope = "all";
 	private scopeText?: Text;
 	private scopeHintText?: Text;
@@ -84,6 +86,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
 		initialSearchInput?: string,
 		onSelectAsDefault?: (model: Model<any>) => void,
 		defaultModel?: DefaultModelReference,
+		modelDisplayMode: ModelDisplayMode = DEFAULT_MODEL_DISPLAY_MODE,
 	) {
 		super();
 
@@ -92,6 +95,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
 		this.modelRuntime = modelRuntime;
 		this.scopedModels = scopedModels;
 		this.defaultModel = defaultModel;
+		this.modelDisplayMode = modelDisplayMode;
 		this.scope = scopedModels.length > 0 ? "scoped" : "all";
 		this.onSelectCallback = onSelect;
 		this.onSelectAsDefaultCallback = onSelectAsDefault;
@@ -318,7 +322,8 @@ export class ModelSelectorComponent extends Container implements Focusable {
 
 			const cursor = isSelected ? theme.fg("accent", "→ ") : "  ";
 			const currentMarker = isCurrent ? theme.fg("accent", "✓ ") : "  ";
-			const modelText = isSelected ? theme.fg("accent", item.id) : item.id;
+			const label = getModelDisplayLabel(item.model, this.modelDisplayMode);
+			const modelText = isSelected ? theme.fg("accent", label) : label;
 			const providerBadge = theme.fg("muted", `[${item.provider}]`);
 			const line = `${cursor}${currentMarker}${modelText} ${providerBadge}${defaultBadge}`;
 
@@ -342,8 +347,15 @@ export class ModelSelectorComponent extends Container implements Focusable {
 			this.listContainer.addChild(new Text(theme.fg("muted", "  No matching models"), 0, 0));
 		} else {
 			const selected = this.filteredModels[this.selectedIndex];
+			const label = getModelDisplayLabel(selected.model, this.modelDisplayMode);
 			this.listContainer.addChild(new Spacer(1));
-			this.listContainer.addChild(new Text(theme.fg("muted", `  Model Name: ${selected.model.name}`), 0, 0));
+			// Always surface both name and id; the primary label (shown in the list) is
+			// whichever getModelDisplayLabel returned, so show the other field as detail.
+			const detail =
+				label === selected.model.id
+					? `Model Name: ${selected.model.name}`
+					: `Model ID: ${selected.model.id}`;
+			this.listContainer.addChild(new Text(theme.fg("muted", `  ${detail}`), 0, 0));
 		}
 		if (this.refreshStatusMessage) {
 			this.listContainer.addChild(new Spacer(1));

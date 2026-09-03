@@ -9,6 +9,7 @@ import { CONFIG_DIR_NAME, getAgentDir } from "../config.ts";
 import { normalizePath, resolvePath } from "../utils/paths.ts";
 import { stripBom } from "../utils/text.ts";
 import { DEFAULT_HTTP_IDLE_TIMEOUT_MS, parseHttpIdleTimeoutMs } from "./http-dispatcher.ts";
+import { DEFAULT_MODEL_DISPLAY_MODE, type ModelDisplayMode } from "./model-display.ts";
 
 export interface CompactionSettings {
 	enabled?: boolean; // default: true
@@ -98,6 +99,7 @@ export interface Settings {
 	defaultThinkingLevel?: ThinkingLevel;
 	modelThinkingLevels?: Record<string, ThinkingLevel>; // per-model default thinking level overrides keyed by "provider/modelId"
 	transport?: TransportSetting; // default: "auto"
+	modelDisplay?: ModelDisplayMode; // default: "auto" - how models are labeled in the footer and /model list ("id" | "name" | "auto")
 	steeringMode?: "all" | "one-at-a-time";
 	followUpMode?: "all" | "one-at-a-time";
 	theme?: string;
@@ -749,6 +751,18 @@ export class SettingsManager {
 	setSteeringMode(mode: "all" | "one-at-a-time"): void {
 		this.globalSettings.steeringMode = mode;
 		this.markModified("steeringMode");
+		this.save();
+	}
+
+	getModelDisplayMode(): ModelDisplayMode {
+		const value = this.settings.modelDisplay;
+		if (value === "id" || value === "name" || value === "auto") return value;
+		return DEFAULT_MODEL_DISPLAY_MODE;
+	}
+
+	setModelDisplayMode(mode: ModelDisplayMode): void {
+		this.globalSettings.modelDisplay = mode;
+		this.markModified("modelDisplay");
 		this.save();
 	}
 
