@@ -27,7 +27,7 @@ import {
 	withFileMutationQueue,
 } from "@earendil-works/pi-coding-agent";
 import { Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
-import { Type } from "typebox";
+import { type Static, Type } from "typebox";
 import { type AgentConfig, type AgentScope, discoverAgents } from "./agents.ts";
 
 const MAX_PARALLEL_TASKS = 8;
@@ -468,6 +468,25 @@ const SubagentParams = Type.Object({
 	cwd: Type.Optional(Type.String({ description: "Working directory for the agent process (single mode)" })),
 });
 
+function prepareSubagentArguments(input: unknown): Static<typeof SubagentParams> {
+	if (!input || typeof input !== "object") return input as Static<typeof SubagentParams>;
+	const args = input as Record<string, unknown>;
+	// Some models serialize array parameters as a JSON string instead of an array.
+	// Parse them back so the schema validator sees a real array of objects.
+	for (const key of ["tasks", "chain"] as const) {
+		const value = args[key];
+		if (typeof value === "string") {
+			try {
+				const parsed: unknown = JSON.parse(value);
+				if (Array.isArray(parsed)) args[key] = parsed;
+			} catch {
+				// Not valid JSON - leave untouched for the validator to report normally.
+			}
+		}
+	}
+	return args as Static<typeof SubagentParams>;
+}
+
 export default function (pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "subagent",
@@ -479,6 +498,7 @@ export default function (pi: ExtensionAPI) {
 			`To enable project-local agents in ${CONFIG_DIR_NAME}/agents, set agentScope: "both" (or "project").`,
 		].join(" "),
 		parameters: SubagentParams,
+		prepareArguments: prepareSubagentArguments,
 
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
 			const agentScope: AgentScope = params.agentScope ?? "user";
