@@ -1,7 +1,7 @@
 import { getKeybindings } from "../keybindings.ts";
 import { decodeKittyPrintable } from "../keys.ts";
 import { KillRing } from "../kill-ring.ts";
-import { type Component, CURSOR_MARKER, type Focusable } from "../tui.ts";
+import { type Component, CURSOR_MARKER, type Focusable, type TuiMouseEvent, type TuiMouseEventResult } from "../tui.ts";
 import { UndoStack } from "../undo-stack.ts";
 import { getGraphemeSegmenter, isWhitespaceChar, sliceByColumn, visibleWidth } from "../utils.ts";
 import { findWordBackward, findWordForward } from "../word-navigation.ts";
@@ -19,6 +19,7 @@ interface InputState {
 export class Input implements Component, Focusable {
 	private value: string = "";
 	private cursor: number = 0; // Cursor position in the value
+	private renderedStartColumn = 0;
 	public onSubmit?: (value: string) => void;
 	public onEscape?: () => void;
 
@@ -210,6 +211,24 @@ export class Input implements Component, Focusable {
 		}
 	}
 
+	handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+		if (event.type !== "press" || event.button !== "left" || event.y !== 0) return undefined;
+		const visibleColumn = Math.max(0, event.x - 2);
+		const targetColumn = this.renderedStartColumn + visibleColumn;
+		let currentColumn = 0;
+		this.cursor = this.value.length;
+		for (const grapheme of segmenter.segment(this.value)) {
+			const nextColumn = currentColumn + visibleWidth(grapheme.segment);
+			if (targetColumn < nextColumn) {
+				this.cursor = grapheme.index;
+				break;
+			}
+			currentColumn = nextColumn;
+		}
+		this.lastAction = null;
+		return { handled: true, focus: true };
+	}
+
 	private insertCharacter(char: string): void {
 		// Undo coalescing: consecutive word chars coalesce into one undo unit
 		if (isWhitespaceChar(char) || this.lastAction !== "type-word") {
@@ -386,6 +405,7 @@ export class Input implements Component, Focusable {
 
 		let visibleText = "";
 		let cursorDisplay = this.cursor;
+		this.renderedStartColumn = 0;
 		const totalWidth = visibleWidth(this.value);
 
 		if (totalWidth < availableWidth) {
@@ -412,6 +432,7 @@ export class Input implements Component, Focusable {
 					startCol = Math.max(0, cursorCol - halfWidth);
 				}
 
+				this.renderedStartColumn = startCol;
 				visibleText = sliceByColumn(this.value, startCol, scrollWidth, true);
 				const beforeCursor = sliceByColumn(this.value, startCol, Math.max(0, cursorCol - startCol), true);
 				cursorDisplay = beforeCursor.length;

@@ -2,8 +2,6 @@
  * Minimal TUI implementation with differential rendering
  */
 
-import * as os from "node:os";
-import * as path from "node:path";
 import { performance } from "node:perf_hooks";
 import { isKeyRelease, matchesKey } from "./keys.ts";
 import type { Terminal } from "./terminal.ts";
@@ -20,6 +18,96 @@ import { extractSegments, normalizeTerminalOutput, sliceByColumn, sliceWithWidth
 /**
  * Component interface - all components must implement this
  */
+export type TuiMouseEventType = "press" | "release" | "move" | "drag" | "click" | "wheel";
+export type TuiMouseButton = "left" | "middle" | "right" | "none";
+
+/** Normalized cell-based mouse event. Coordinates are zero-based. */
+export interface TuiMouseEvent {
+	type: TuiMouseEventType;
+	button: TuiMouseButton;
+	/** Coordinates local to the receiving component. */
+	x: number;
+	y: number;
+	/** Absolute terminal coordinates. */
+	screenX: number;
+	screenY: number;
+	/** Current component bounds. */
+	width: number;
+	height: number;
+	shift: boolean;
+	alt: boolean;
+	ctrl: boolean;
+	/** Logical lines. Negative values scroll up. */
+	wheelDelta?: number;
+	/** Consecutive click count when type is click. */
+	clickCount?: number;
+}
+
+export interface TuiMouseEventResult {
+	/** Stop propagation and suppress renderer-level fallback behavior. */
+	handled?: boolean;
+	/** Route subsequent drag/release events to this component. Implies handled. */
+	capture?: boolean;
+	/** Give keyboard focus to this component. Implies handled. */
+	focus?: boolean;
+	/**
+	 * Explicitly request or suppress a render. Move and release default to false;
+	 * press, click, drag, and wheel default to true.
+	 */
+	render?: boolean;
+}
+
+/** Internal target metadata used by containers and alternate-screen dispatch. */
+export interface TuiMouseDispatchTarget {
+	component: Component;
+	originX: number;
+	originY: number;
+	width: number;
+	height: number;
+}
+
+/** Result of dispatching to a concrete component. */
+export interface TuiMouseDispatchResult extends TuiMouseEventResult {
+	handled: true;
+	target: TuiMouseDispatchTarget;
+	/** Keyboard focus target, which may be a delegating parent container. */
+	focusTarget?: Component;
+}
+
+/**
+ * Dispatch an event to a component and retain the exact target and coordinate
+ * transform. Containers use this when forwarding events to nested children.
+ */
+export function dispatchMouseEvent(component: Component, event: TuiMouseEvent): TuiMouseDispatchResult | undefined {
+	const result = component.handleMouse?.(event);
+	if (!result) return undefined;
+	if ("target" in result) return result as TuiMouseDispatchResult;
+	if (!result.handled && !result.capture && !result.focus) return undefined;
+	return {
+		...result,
+		handled: true,
+		...(result.focus ? { focusTarget: component } : {}),
+		target: {
+			component,
+			originX: event.screenX - event.x,
+			originY: event.screenY - event.y,
+			width: event.width,
+			height: event.height,
+		},
+	};
+}
+
+/** Recreate local coordinates for a previously dispatched mouse target. */
+export function retargetMouseEvent(event: TuiMouseEvent, target: TuiMouseDispatchTarget): TuiMouseEvent {
+	return {
+		...event,
+		x: event.screenX - target.originX,
+		y: event.screenY - target.originY,
+		width: target.width,
+		height: target.height,
+	};
+}
+
 export interface Component {
 	/**
 	 * Render the component to lines for the given viewport width
@@ -28,10 +116,11 @@ export interface Component {
 	 */
 	render(width: number): string[];
 
-	/**
-	 * Optional handler for keyboard input when component has focus
-	 */
+	/** Optional handler for keyboard input when component has focus. */
 	handleInput?(data: string): void;
+
+	/** Optional normalized mouse handler. */
+	handleMouse?(event: TuiMouseEvent): TuiMouseEventResult | undefined;
 
 	/**
 	 * If true, component receives key release events (Kitty protocol).
@@ -193,6 +282,14 @@ type OverlayStackEntry = {
 	focusOrder: number;
 };
 
+type RenderedOverlayLayout = {
+	entry: OverlayStackEntry;
+	row: number;
+	col: number;
+	width: number;
+	height: number;
+};
+
 type OverlayBlockedFocusResume = { status: "restore-overlay" } | { status: "focus-target"; target: Component | null };
 type EligibleOverlayFocusRestoreState = { status: "eligible"; overlay: OverlayStackEntry };
 type BlockedOverlayFocusRestoreState = {
@@ -210,6 +307,7 @@ type OverlayFocusRestorePolicy = "clear" | "preserve";
  */
 export class Container implements Component {
 	children: Component[] = [];
+	private mouseLayout?: { width: number; children: Array<{ component: Component; height: number }> };
 
 	addChild(component: Component): void {
 		this.children.push(component);
@@ -232,14 +330,39 @@ export class Container implements Component {
 		}
 	}
 
+	handleMouse(event: TuiMouseEvent): TuiMouseDispatchResult | undefined {
+		if (event.y < 0 || event.y >= event.height) return undefined;
+		const mouseChildren =
+			this.mouseLayout?.width === event.width
+				? this.mouseLayout.children
+				: this.children.map((component) => ({ component, height: component.render(event.width).length }));
+		let childY = 0;
+		for (const { component: child, height: childHeight } of mouseChildren) {
+			if (event.y >= childY && event.y < childY + childHeight) {
+				const result = dispatchMouseEvent(child, {
+					...event,
+					y: event.y - childY,
+					height: childHeight,
+				});
+				if (result?.focus && (this as Component).handleInput) return { ...result, focusTarget: this };
+				return result;
+			}
+			childY += childHeight;
+		}
+		return undefined;
+	}
+
 	render(width: number): string[] {
 		const lines: string[] = [];
+		const mouseChildren: Array<{ component: Component; height: number }> = [];
 		for (const child of this.children) {
 			const childLines = child.render(width);
+			mouseChildren.push({ component: child, height: childLines.length });
 			for (const line of childLines) {
 				lines.push(line);
 			}
 		}
+		this.mouseLayout = { width, children: mouseChildren };
 		return lines;
 	}
 }
@@ -341,19 +464,21 @@ export abstract class TuiBase extends Container implements TUI {
 	private renderTimer: NodeJS.Timeout | undefined;
 	private lastRenderAt = 0;
 	private static readonly MIN_RENDER_INTERVAL_MS = 16;
-	private showHardwareCursor = process.env.PI_HARDWARE_CURSOR === "1";
-	private clearOnShrink = process.env.PI_CLEAR_ON_SHRINK === "1";
+	private showHardwareCursor = false;
+	private clearOnShrink = false;
 	protected fullRedrawCount = 0;
 	protected stopped = false;
 	private pendingOsc11BackgroundReplies = 0;
 	private pendingOsc11BackgroundQueries: PendingOsc11BackgroundQuery[] = [];
 	private terminalColorSchemeListeners = new Set<(scheme: TerminalColorScheme) => void>();
 	private terminalColorSchemeNotificationsEnabled = false;
-	protected readonly logDirectory: string;
+	/** Directory for debug/crash logs. When undefined, debug logging is disabled and crash dumps fall back to the OS temp directory. */
+	protected readonly logDirectory: string | undefined;
 
 	// Overlay stack for modal components rendered on top of base content
 	private focusOrderCounter = 0;
 	private overlayStack: OverlayStackEntry[] = [];
+	private renderedOverlayLayouts: RenderedOverlayLayout[] = [];
 
 	get hasOverlayEntries(): boolean {
 		return this.overlayStack.length > 0;
@@ -363,7 +488,7 @@ export abstract class TuiBase extends Container implements TUI {
 	constructor(terminal: Terminal, showHardwareCursor?: boolean, logDirectory?: string) {
 		super();
 		this.terminal = terminal;
-		this.logDirectory = logDirectory ?? process.env.PI_CODING_AGENT_DIR ?? path.join(os.homedir(), ".pi", "agent");
+		this.logDirectory = logDirectory;
 		if (showHardwareCursor !== undefined) {
 			this.showHardwareCursor = showHardwareCursor;
 		}
@@ -404,8 +529,8 @@ export abstract class TuiBase extends Container implements TUI {
 
 	/**
 	 * Set whether to trigger full re-render when content shrinks.
-	 * When true (default), empty rows are cleared when content shrinks.
-	 * When false, empty rows remain (reduces redraws on slower terminals).
+	 * When true, empty rows are cleared when content shrinks.
+	 * When false (default), empty rows remain (reduces redraws on slower terminals).
 	 */
 	setClearOnShrink(enabled: boolean): void {
 		this.clearOnShrink = enabled;
@@ -667,6 +792,46 @@ export abstract class TuiBase extends Container implements TUI {
 		return this.overlayStack.some(
 			(entry) => entry.component === this.focusedComponent && this.isOverlayVisible(entry),
 		);
+	}
+
+	/** Keep overlay containers as keyboard focus owners when a nested control is clicked. */
+	protected resolveMouseFocusTarget(component: Component): Component {
+		for (let index = this.overlayStack.length - 1; index >= 0; index--) {
+			const overlay = this.overlayStack[index]!;
+			if (this.isOverlayVisible(overlay) && this.containsComponent(overlay.component, component)) {
+				return overlay.component;
+			}
+		}
+		return component;
+	}
+
+	/** Dispatch to the visually topmost overlay under the pointer. */
+	protected dispatchMouseToOverlay(event: TuiMouseEvent): { hit: boolean; result?: TuiMouseDispatchResult } {
+		for (let index = this.renderedOverlayLayouts.length - 1; index >= 0; index--) {
+			const layout = this.renderedOverlayLayouts[index]!;
+			if (
+				event.screenX < layout.col ||
+				event.screenX >= layout.col + layout.width ||
+				event.screenY < layout.row ||
+				event.screenY >= layout.row + layout.height
+			) {
+				continue;
+			}
+			const result = dispatchMouseEvent(layout.entry.component, {
+				...event,
+				x: event.screenX - layout.col,
+				y: event.screenY - layout.row,
+				width: layout.width,
+				height: layout.height,
+			});
+			return result
+				? {
+						hit: true,
+						result: result.focus ? { ...result, focusTarget: layout.entry.component } : result,
+					}
+				: { hit: true };
+		}
+		return { hit: false };
 	}
 
 	/** Check if an overlay entry is currently visible */
@@ -1097,11 +1262,14 @@ export abstract class TuiBase extends Container implements TUI {
 
 	/** Composite all overlays into content lines (sorted by focusOrder, higher = on top). */
 	protected compositeOverlays(lines: string[], termWidth: number, termHeight: number): string[] {
-		if (this.overlayStack.length === 0) return lines;
+		if (this.overlayStack.length === 0) {
+			this.renderedOverlayLayouts = [];
+			return lines;
+		}
 		const result = [...lines];
 
 		// Pre-render all visible overlays and calculate positions
-		const rendered: { overlayLines: string[]; row: number; col: number; w: number }[] = [];
+		const rendered: { entry: OverlayStackEntry; overlayLines: string[]; row: number; col: number; w: number }[] = [];
 		let minLinesNeeded = result.length;
 
 		const visibleEntries = this.overlayStack.filter((e) => this.isOverlayVisible(e));
@@ -1124,9 +1292,16 @@ export abstract class TuiBase extends Container implements TUI {
 			// Get final row/col with actual overlay height
 			const { row, col } = this.resolveOverlayLayout(options, overlayLines.length, termWidth, termHeight);
 
-			rendered.push({ overlayLines, row, col, w: width });
+			rendered.push({ entry, overlayLines, row, col, w: width });
 			minLinesNeeded = Math.max(minLinesNeeded, row + overlayLines.length);
 		}
+		this.renderedOverlayLayouts = rendered.map(({ entry, row, col, w, overlayLines }) => ({
+			entry,
+			row,
+			col,
+			width: w,
+			height: overlayLines.length,
+		}));
 
 		// Pad to at least terminal height so overlays have screen-relative positions.
 		// Excludes maxLinesRendered: the historical high-water mark caused self-reinforcing

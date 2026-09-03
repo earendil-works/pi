@@ -5,6 +5,10 @@ import { dirname, join, resolve } from "path";
 import { fileURLToPath } from "url";
 import { getEffortThinkingLevelMap, type ModelsDevReasoningOption } from "./models-dev-reasoning-options.ts";
 import {
+	getOpenRouterThinkingLevelMap,
+	type OpenRouterReasoningMetadata,
+} from "./openrouter-reasoning-options.ts";
+import {
 	CLOUDFLARE_AI_GATEWAY_ANTHROPIC_BASE_URL,
 	CLOUDFLARE_AI_GATEWAY_COMPAT_BASE_URL,
 	CLOUDFLARE_AI_GATEWAY_OPENAI_BASE_URL,
@@ -125,6 +129,25 @@ type ModelsDevCatalog = Record<string, ModelsDevProvider>;
 
 interface NvidiaNimModelListItem {
 	id: string;
+}
+
+interface OpenRouterModelListItem {
+	id: string;
+	name: string;
+	supported_parameters?: string[];
+	architecture?: { modality?: string };
+	pricing?: {
+		prompt?: string;
+		completion?: string;
+		input_cache_read?: string;
+		input_cache_write?: string;
+	};
+	top_provider?: {
+		context_length?: number;
+		max_completion_tokens?: number;
+	};
+	context_length?: number;
+	reasoning?: OpenRouterReasoningMetadata;
 }
 
 interface AiGatewayModel {
@@ -264,7 +287,7 @@ const DEEPSEEK_V4_FLASH_THINKING_LEVEL_MAP = {
 	...DEEPSEEK_V4_THINKING_LEVEL_MAP,
 	low: "low",
 } as const;
-const QWEN_TOKEN_PLAN_HIGH_MAX_THINKING_LEVEL_MAP = {
+const QWEN_TOKEN_PLAN_FALLBACK_THINKING_LEVEL_MAP = {
 	minimal: null,
 	low: null,
 	medium: null,
@@ -272,25 +295,7 @@ const QWEN_TOKEN_PLAN_HIGH_MAX_THINKING_LEVEL_MAP = {
 	xhigh: null,
 	max: "max",
 } as const;
-const QWEN_TOKEN_PLAN_QWEN38_THINKING_LEVEL_MAP = {
-	minimal: null,
-	low: "low",
-	medium: "medium",
-	high: null,
-	xhigh: "xhigh",
-	max: null,
-} as const;
-const QWEN_TOKEN_PLAN_REASONING_EFFORT_UNSUPPORTED_MODEL_IDS = new Set([
-	"MiniMax-M2.5",
-	"deepseek-v3.2",
-	"kimi-k2.5",
-	"kimi-k2.6",
-	"kimi-k2.7-code",
-	"qwen3.6-flash",
-	"qwen3.6-plus",
-	"qwen3.7-max",
-	"qwen3.7-plus",
-]);
+const QWEN_TOKEN_PLAN_REASONING_EFFORT_FALLBACK_MODEL_IDS = new Set(["glm-5", "glm-5.1"]);
 // Retired preview id — models.dev may still list it after GA ships.
 const QWEN_TOKEN_PLAN_EXCLUDED_MODEL_IDS = new Set(["qwen3.8-max-preview"]);
 const QWEN_TOKEN_PLAN_PROVIDER_IDS = new Set<string>([
@@ -298,7 +303,7 @@ const QWEN_TOKEN_PLAN_PROVIDER_IDS = new Set<string>([
 	"qwen-token-plan-cn",
 	"qwen-token-plan-individual",
 ]);
-// QwenCloud Token Plan Individual text-model allowlist, verified 2026-08-05.
+// QwenCloud Token Plan Individual text-model allowlist, verified 2026-09-03.
 // Retired models remain excluded above even if the public catalog lags.
 // https://docs.qwencloud.com/token-plan/personal/token-plan-personal-overview
 const QWEN_TOKEN_PLAN_INDIVIDUAL_MODEL_IDS = new Set<string>([
@@ -309,6 +314,7 @@ const QWEN_TOKEN_PLAN_INDIVIDUAL_MODEL_IDS = new Set<string>([
 	"qwen3.6-flash",
 	"qwen3.7-max",
 	"qwen3.7-plus",
+	"qwen3.8-flash",
 	"qwen3.8-max",
 ]);
 
@@ -536,6 +542,16 @@ function isGoogleThinkingApi(model: Model<any>): boolean {
 	return model.api === "google-generative-ai" || model.api === "google-vertex";
 }
 
+const VERIFIED_ANTHROPIC_MID_CONVO_EFFORT_PROVIDERS = new Set(["anthropic", "openrouter"]);
+
+function supportsAnthropicMidConvoEffort(modelId: string): boolean {
+	const id = modelId.toLowerCase().replace(/^~?anthropic\//, "");
+	return (
+		/^claude-opus-5(?:-\d{8})?$/.test(id) ||
+		/^claude-(?:fable|mythos)-5(?:[.-]1)(?:-\d{8})?$/.test(id)
+	);
+}
+
 function isAnthropicAdaptiveThinkingModel(modelId: string): boolean {
 	return (
 		modelId.includes("opus-4-6") ||
@@ -550,7 +566,8 @@ function isAnthropicAdaptiveThinkingModel(modelId: string): boolean {
 		modelId.includes("sonnet-4.6") ||
 		modelId.includes("sonnet-5") ||
 		modelId.includes("sonnet.5") ||
-		modelId.includes("fable-5")
+		modelId.includes("fable-5") ||
+		modelId.includes("mythos-5")
 	);
 }
 
@@ -734,6 +751,7 @@ function applyAnthropicMessagesCompatMetadata(model: Model<Api>): void {
 	const compat = getAnthropicMessagesCompat(model.provider, model.id);
 	if (compat) {
 		mergeAnthropicMessagesCompat(model, compat);
+		if (compat.supportsMidConvoEffort) mergeThinkingLevelMap(model, { off: null });
 	}
 }
 
@@ -751,7 +769,10 @@ function applyAnthropicAllowedFallbackModelMetadata(models: readonly Model<"anth
 		const model = modelsById.get(modelId);
 		if (!model) continue;
 
-		const allowedFallbackModels = fallbackModelIds.flatMap((fallbackModelId) => {
+		const compatibleFallbackModelIds = model.compat?.supportsMidConvoEffort
+			? fallbackModelIds.filter(supportsAnthropicMidConvoEffort)
+			: fallbackModelIds;
+		const allowedFallbackModels = compatibleFallbackModelIds.flatMap((fallbackModelId) => {
 			const fallbackModel = modelsById.get(fallbackModelId);
 			return fallbackModel
 				? [{ provider: fallbackModel.provider, model: fallbackModel.id, cost: fallbackModel.cost }]
@@ -977,6 +998,12 @@ function applyThinkingLevelMetadata(model: Model<any>): void {
 
 function getAnthropicMessagesCompat(provider: string, modelId: string): AnthropicMessagesCompat | undefined {
 	const compat: AnthropicMessagesCompat = {};
+	if (
+		VERIFIED_ANTHROPIC_MID_CONVO_EFFORT_PROVIDERS.has(provider) &&
+		supportsAnthropicMidConvoEffort(modelId)
+	) {
+		compat.supportsMidConvoEffort = true;
+	}
 	if (EAGER_TOOL_INPUT_STREAMING_UNSUPPORTED_ANTHROPIC_MODELS.has(`${provider}:${modelId}`)) {
 		compat.supportsEagerToolInputStreaming = false;
 	}
@@ -1051,11 +1078,11 @@ async function fetchOpenRouterModels(): Promise<Model<any>[]> {
 		console.log("Fetching models from OpenRouter API...");
 		const response = await fetch("https://openrouter.ai/api/v1/models");
 		if (!response.ok) throw new Error(`OpenRouter API returned ${response.status}`);
-		const data = await response.json();
+		const data = (await response.json()) as { data?: OpenRouterModelListItem[] };
 
 		const models: Model<any>[] = [];
 
-		for (const model of data.data) {
+		for (const model of data.data ?? []) {
 			// Only include models that support tools
 			if (!model.supported_parameters?.includes("tools")) continue;
 
@@ -1078,14 +1105,17 @@ async function fetchOpenRouterModels(): Promise<Model<any>[]> {
 			const cacheWriteCost = roundCost(parseFloat(model.pricing?.input_cache_write || "0") * 1_000_000);
 
 			const contextWindow = model.top_provider?.context_length || model.context_length || 4096;
+			const thinkingLevelMap = getOpenRouterThinkingLevelMap(model.reasoning);
 
+			const useAnthropicMessages = /^anthropic\//.test(modelKey) && !modelKey.endsWith(":batch");
 			const normalizedModel: Model<any> = {
 				id: modelKey,
 				name: model.name,
-				api: "openai-completions",
-				baseUrl: "https://openrouter.ai/api/v1",
+				api: useAnthropicMessages ? "anthropic-messages" : "openai-completions",
+				baseUrl: useAnthropicMessages ? "https://openrouter.ai/api" : "https://openrouter.ai/api/v1",
 				provider,
 				reasoning: model.supported_parameters?.includes("reasoning") || false,
+				...(thinkingLevelMap && { thinkingLevelMap }),
 				input,
 				cost: {
 					input: inputCost,
@@ -1297,6 +1327,8 @@ function processBasetenModels(provider: ModelsDevProvider | undefined): Model<Ap
 			: supportsToggle
 				? toggleThinkingLevelMap
 				: getEffortThinkingLevelMap(reasoningOptions);
+		// Baseten's GLM-5.2 endpoints are text-only despite models.dev reporting image input.
+		const supportsImageInput = !isGlm52 && model.modalities?.input?.includes("image");
 
 		models.push({
 			id: modelId,
@@ -1306,7 +1338,7 @@ function processBasetenModels(provider: ModelsDevProvider | undefined): Model<Ap
 			baseUrl,
 			reasoning,
 			...(thinkingLevelMap ? { thinkingLevelMap } : {}),
-			input: model.modalities?.input?.includes("image") ? ["text", "image"] : ["text"],
+			input: supportsImageInput ? ["text", "image"] : ["text"],
 			cost: {
 				input: model.cost?.input || 0,
 				output: model.cost?.output || 0,
@@ -1367,7 +1399,7 @@ function processFireworksModels(provider: ModelsDevProvider | undefined): Model<
 			maxTokens: model.limit?.output || 4096,
 		};
 
-		if (modelId.includes("glm-5p2")) {
+		if (modelId.includes("glm-")) {
 			models.push({
 				...common,
 				api: "openai-completions",
@@ -1666,6 +1698,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 		}
 
 		// Process Cloudflare AI Gateway models
+		const cloudflareAIGatewayModelIds = new Set<string>();
 		if (data["cloudflare-ai-gateway"]?.models) {
 			for (const [prefixedId, model] of Object.entries(data["cloudflare-ai-gateway"].models)) {
 				const m = model as ModelsDevModel;
@@ -1700,6 +1733,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 				const compat =
 					upstream === "anthropic" || upstream === "workers-ai" ? { sendSessionAffinityHeaders: true } : undefined;
 
+				cloudflareAIGatewayModelIds.add(id);
 				models.push({
 					id,
 					name: m.name || id,
@@ -1717,6 +1751,41 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					contextWindow: m.limit?.context || 4096,
 					maxTokens: m.limit?.output || 4096,
 					...(compat ? { compat } : {}),
+				});
+				recordModelsDevReasoningOptions("cloudflare-ai-gateway", id, m);
+			}
+		}
+
+		// The gateway proxies Workers AI through its OpenAI-compatible /compat endpoint,
+		// but models.dev may omit or intermittently drop those `workers-ai/*` entries
+		// from the AI Gateway catalog. Mirror the Workers AI catalog under the documented
+		// prefix so the gateway keeps its OpenAI-compatible models stable.
+		if (data["cloudflare-workers-ai"]?.models) {
+			for (const [modelId, model] of Object.entries(data["cloudflare-workers-ai"].models)) {
+				const m = model as ModelsDevModel;
+				if (m.tool_call !== true) continue;
+
+				const id = `workers-ai/${modelId}`;
+				if (cloudflareAIGatewayModelIds.has(id)) continue;
+				cloudflareAIGatewayModelIds.add(id);
+
+				models.push({
+					id,
+					name: m.name || id,
+					api: "openai-completions",
+					provider: "cloudflare-ai-gateway",
+					baseUrl: CLOUDFLARE_AI_GATEWAY_COMPAT_BASE_URL,
+					reasoning: m.reasoning === true,
+					input: m.modalities?.input?.includes("image") ? ["text", "image"] : ["text"],
+					cost: {
+						input: m.cost?.input || 0,
+						output: m.cost?.output || 0,
+						cacheRead: m.cost?.cache_read || 0,
+						cacheWrite: m.cost?.cache_write || 0,
+					},
+					contextWindow: m.limit?.context || 4096,
+					maxTokens: m.limit?.output || 4096,
+					compat: { sendSessionAffinityHeaders: true },
 				});
 				recordModelsDevReasoningOptions("cloudflare-ai-gateway", id, m);
 			}
@@ -1997,7 +2066,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 				if (m.status === "deprecated") continue;
 
 				// Claude 4.x and 5.x models route to Anthropic Messages API
-				const isCopilotClaude = /^claude-(haiku|sonnet|opus)-[45]([.\-]|$)/.test(modelId);
+				const isCopilotClaude = /^claude-(haiku|sonnet|opus|fable)-[45]([.\-]|$)/.test(modelId);
 				// Grok, gpt-5, oswe, and MAI-Code models are only served through
 				// the Copilot /responses endpoint.
 				const needsResponsesApi =
@@ -2279,7 +2348,11 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 				if (m.tool_call !== true) continue;
 				if (QWEN_TOKEN_PLAN_EXCLUDED_MODEL_IDS.has(modelId)) continue;
 				if (modelIds && !modelIds.has(modelId)) continue;
-				const supportsReasoningEffort = !QWEN_TOKEN_PLAN_REASONING_EFFORT_UNSUPPORTED_MODEL_IDS.has(modelId);
+				const thinkingLevelMap =
+					getEffortThinkingLevelMap(m.reasoning_options ?? []) ??
+					(QWEN_TOKEN_PLAN_REASONING_EFFORT_FALLBACK_MODEL_IDS.has(modelId)
+						? QWEN_TOKEN_PLAN_FALLBACK_THINKING_LEVEL_MAP
+						: undefined);
 
 				models.push({
 					id: modelId,
@@ -2287,17 +2360,10 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					api: "openai-completions",
 					provider,
 					baseUrl,
-					compat: supportsReasoningEffort
+					compat: thinkingLevelMap
 						? qwenTokenPlanCompat
 						: { ...qwenTokenPlanCompat, supportsReasoningEffort: false },
-					...(supportsReasoningEffort
-						? {
-								thinkingLevelMap:
-									modelId === "qwen3.8-max"
-										? QWEN_TOKEN_PLAN_QWEN38_THINKING_LEVEL_MAP
-										: QWEN_TOKEN_PLAN_HIGH_MAX_THINKING_LEVEL_MAP,
-							}
-						: {}),
+					...(thinkingLevelMap ? { thinkingLevelMap } : {}),
 					reasoning: m.reasoning === true,
 					input: m.modalities?.input?.includes("image") ? ["text", "image"] : ["text"],
 					cost: {
@@ -2310,7 +2376,6 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					maxTokens: m.limit?.output || 4096,
 				});
 				emittedModelIds?.add(modelId);
-				recordModelsDevReasoningOptions(provider, modelId, m);
 			}
 
 			if (modelIds && emittedModelIds && generatorOptions.strict) {
@@ -2495,6 +2560,24 @@ async function generateModels() {
 			provider: "deepseek",
 			reasoning: true,
 			input: ["text"],
+			cost: {
+				input: 0.14,
+				output: 0.28,
+				cacheRead: 0.0028,
+				cacheWrite: 0,
+			},
+			contextWindow: 1000000,
+			maxTokens: 384000,
+			compat: deepseekCompat,
+		},
+		{
+			id: "deepseek-v4-flash-vision-exp",
+			name: "DeepSeek V4 Flash Vision Exp",
+			api: "openai-completions",
+			baseUrl: "https://api.deepseek.com",
+			provider: "deepseek",
+			reasoning: true,
+			input: ["text", "image"],
 			cost: {
 				input: 0.14,
 				output: 0.28,

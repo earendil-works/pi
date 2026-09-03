@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- Removed coding-agent environment-variable defaults from pi-tui. Applications must configure the hardware cursor and clear-on-shrink behavior through the renderer constructor and `setClearOnShrink()`. `PI_DEBUG_REDRAW` is now `PI_TUI_DEBUG_REDRAW`; debug and crash log filenames now use the `pi-tui-` prefix. When no log directory is supplied, redraw logging is disabled and crash dumps are written to the OS temp directory. ([#8699](https://github.com/earendil-works/pi/pull/8699) by [@geraschenko](https://github.com/geraschenko))
+
+## [0.84.4] - 2026-08-28
+
+### Added
+
+- Added environment and programmatic overrides for OSC 8 hyperlinks, inline image protocols, and truecolor terminal capabilities ([#8665](https://github.com/earendil-works/pi/issues/8665)).
+- Added a `TuiAltScreen` `copyOnSelect` option plus helpers to detect and copy the active fullscreen text selection programmatically ([#7720](https://github.com/earendil-works/pi/issues/7720)).
+
+### Fixed
+
+- Fixed main-screen rendering crashing when image-heavy output exceeded V8's string length limit ([#8028](https://github.com/earendil-works/pi/issues/8028)).
+- Fixed autocomplete ordering for nested results ([#8669](https://github.com/earendil-works/pi/pull/8669)).
+- Fixed fullscreen double-click word selection splitting paths and kebab-case tokens on `/` and `-` ([#7746](https://github.com/earendil-works/pi/issues/7746)).
+
 ## [0.84.3] - 2026-08-24
 
 ### Fixed

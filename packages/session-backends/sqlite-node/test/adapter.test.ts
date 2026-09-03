@@ -1,7 +1,52 @@
+import { access, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { createNodeSqliteFactory } from "../src/index.ts";
 
+async function withTempDir<T>(run: (directory: string) => Promise<T>): Promise<T> {
+	const directory = await mkdtemp(join(tmpdir(), "pi-sqlite-adapter-"));
+	try {
+		return await run(directory);
+	} finally {
+		await rm(directory, { recursive: true, force: true });
+	}
+}
+
 describe("node:sqlite adapter", () => {
+	it("does not create files for existing or read-only opens", async () => {
+		await withTempDir(async (directory) => {
+			const path = join(directory, "missing % #.sqlite");
+			const factory = createNodeSqliteFactory();
+
+			await expect(factory.openExisting(path)).rejects.toThrow();
+			await expect(access(path)).rejects.toThrow();
+			await expect(factory.openReadOnly(path)).rejects.toThrow();
+			await expect(access(path)).rejects.toThrow();
+		});
+	});
+
+	it("opens an existing database read-write or read-only without changing its mode", async () => {
+		await withTempDir(async (directory) => {
+			const path = join(directory, "existing % #.sqlite");
+			const factory = createNodeSqliteFactory();
+			const created = await factory.open(path);
+			created.exec("CREATE TABLE values_table (value INTEGER NOT NULL)");
+			created.close();
+
+			const writable = await factory.openExisting(path);
+			writable.exec("INSERT INTO values_table (value) VALUES (1)");
+			writable.close();
+			const readOnly = await factory.openReadOnly(path);
+			try {
+				expect(readOnly.prepare("SELECT value FROM values_table").all()).toEqual([{ value: 1 }]);
+				expect(() => readOnly.exec("INSERT INTO values_table (value) VALUES (2)")).toThrow();
+			} finally {
+				readOnly.close();
+			}
+		});
+	});
+
 	it("commits a synchronous transaction and returns its result", async () => {
 		const db = await createNodeSqliteFactory().open(":memory:");
 		try {

@@ -39,12 +39,14 @@ vi.mock("@anthropic-ai/sdk", () => {
 		constructor(opts: Record<string, unknown>) {
 			mockState.constructorOpts = opts;
 		}
-		messages = {
-			create: (params: Record<string, unknown>) => {
-				mockState.createParams = params;
-				return {
-					asResponse: async () => createSseResponse(),
-				};
+		beta = {
+			messages: {
+				create: (params: Record<string, unknown>) => {
+					mockState.createParams = params;
+					return {
+						asResponse: async () => createSseResponse(),
+					};
+				},
 			},
 		};
 	}
@@ -138,7 +140,7 @@ describe("Anthropic auth token env", () => {
 		expect(mockState.constructorOpts?.authToken).toBeNull();
 		const headers = mockState.constructorOpts?.defaultHeaders as Record<string, string | null>;
 		expect(headers.Authorization).toBe("Bearer gateway-token");
-		expect(headers["anthropic-beta"] ?? "").not.toContain("oauth-2025-04-20");
+		expect(mockState.createParams?.betas ?? []).not.toContain("oauth-2025-04-20");
 		expect(mockState.createParams?.system).toEqual([expect.objectContaining({ text: "System prompt." })]);
 	});
 
@@ -157,7 +159,7 @@ describe("Anthropic auth token env", () => {
 		expect(mockState.constructorOpts?.authToken).toBeNull();
 		const headers = mockState.constructorOpts?.defaultHeaders as Record<string, string>;
 		expect(headers.Authorization).toBe("Bearer ctx-token");
-		expect(headers["anthropic-beta"] ?? "").not.toContain("oauth-2025-04-20");
+		expect(mockState.createParams?.betas ?? []).not.toContain("oauth-2025-04-20");
 		expect(mockState.createParams?.system).toEqual([expect.objectContaining({ text: "System prompt." })]);
 	});
 
@@ -174,8 +176,7 @@ describe("Anthropic auth token env", () => {
 
 		expect(mockState.constructorOpts?.apiKey).toBeNull();
 		expect(mockState.constructorOpts?.authToken).toBe("sk-ant-oat-test");
-		const headers = mockState.constructorOpts?.defaultHeaders as Record<string, string>;
-		expect(headers["anthropic-beta"]).toContain("oauth-2025-04-20");
+		expect(mockState.createParams?.betas).toContain("oauth-2025-04-20");
 	});
 
 	it("lets explicit request headers override ANTHROPIC_AUTH_TOKEN", async () => {
@@ -212,5 +213,23 @@ describe("Anthropic-compatible user agents", () => {
 
 		const headers = mockState.constructorOpts?.defaultHeaders as Record<string, string>;
 		expect(headers["User-Agent"]).toBe("custom-client");
+	});
+
+	it("preserves explicit Anthropic beta header replacement", async () => {
+		await streamAnthropic(anthropicModel, context, {
+			apiKey: "anthropic-key",
+			headers: { "anthropic-beta": "custom-beta" },
+		}).result();
+
+		expect(mockState.createParams?.betas).toEqual(["custom-beta"]);
+	});
+
+	it("preserves explicit Anthropic beta header suppression", async () => {
+		await streamAnthropic(anthropicModel, context, {
+			apiKey: "anthropic-key",
+			headers: { "anthropic-beta": null },
+		}).result();
+
+		expect(mockState.createParams?.betas).toBeUndefined();
 	});
 });

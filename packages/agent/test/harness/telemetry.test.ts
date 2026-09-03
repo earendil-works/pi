@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { createTypedSpanStarter, NOOP_TELEMETRY_CONTEXT, type TelemetryContext } from "@earendil-works/pi-telemetry";
 import { describe, expect, expectTypeOf, it } from "vitest";
 import { renderAgentTelemetrySchemaMarkdown } from "../../scripts/generate-telemetry-docs.ts";
+import { BACKGROUND_CONTEXT, withTelemetryContext } from "../../src/harness/context.ts";
 import {
 	AGENT_TELEMETRY_SCHEMAS,
 	AI_TELEMETRY_SCHEMA,
@@ -82,8 +83,8 @@ describe("agent telemetry schemas", () => {
 		>();
 
 		const telemetryContext: TelemetryContext = NOOP_TELEMETRY_CONTEXT;
+		const context = withTelemetryContext(telemetryContext, BACKGROUND_CONTEXT);
 		await startAiSpan(
-			telemetryContext,
 			"pi.ai.request",
 			{
 				"pi.ai.operation": "stream",
@@ -97,6 +98,7 @@ describe("agent telemetry schemas", () => {
 				// @ts-expect-error pi.ai.request declares no span events
 				span.addEvent("chunk");
 			},
+			context,
 		);
 
 		const compileTimeFailures = () => {
@@ -109,9 +111,9 @@ describe("agent telemetry schemas", () => {
 				"pi.ai.unknown": true,
 			} as const;
 			// @ts-expect-error variables with unknown attributes are rejected
-			void startAiSpan(telemetryContext, "pi.ai.request", extraAttributes, () => {});
+			void startAiSpan("pi.ai.request", extraAttributes, () => {}, context);
 			// @ts-expect-error missing required start attributes
-			void startAiSpan(telemetryContext, "pi.ai.request", { "pi.ai.operation": "stream" }, () => {});
+			void startAiSpan("pi.ai.request", { "pi.ai.operation": "stream" }, () => {}, context);
 		};
 		expectTypeOf(compileTimeFailures).toBeFunction();
 	});
@@ -119,14 +121,27 @@ describe("agent telemetry schemas", () => {
 	it("infers per-span harness literals and optional completion enrichment", async () => {
 		type RunStart = HarnessSpanStartAttributes<"pi.harness.run">;
 		type RunEnd = HarnessSpanEndAttributes<"pi.harness.run">;
+		type WriteStart = HarnessSpanStartAttributes<"pi.session.write">;
+		type WriteEnd = HarnessSpanEndAttributes<"pi.session.write">;
 		expectTypeOf<RunStart["pi.operation.kind"]>().toEqualTypeOf<"run">();
 		expectTypeOf<RunEnd["pi.operation.outcome"]>().toEqualTypeOf<
 			"completed" | "aborted" | "failed" | "suspended" | undefined
 		>();
+		const writeStart = {
+			"pi.session.id": "session",
+			"pi.session.item_count": 2,
+			"pi.session.item_kinds": ["entry", "value", "list"],
+		} satisfies WriteStart;
+		const writeEnd = {
+			"pi.session.first_seq": 1,
+			"pi.session.last_seq": 2,
+		} satisfies WriteEnd;
+		expectTypeOf(writeStart["pi.session.item_count"]).toEqualTypeOf<number>();
+		expectTypeOf(writeEnd["pi.session.last_seq"]).toEqualTypeOf<number>();
 
 		const telemetryContext: TelemetryContext = NOOP_TELEMETRY_CONTEXT;
+		const context = withTelemetryContext(telemetryContext, BACKGROUND_CONTEXT);
 		await startHarnessSpan(
-			telemetryContext,
 			"pi.harness.run",
 			{
 				"pi.session.id": "session",
@@ -141,6 +156,7 @@ describe("agent telemetry schemas", () => {
 				// @ts-expect-error the harness schema declares no span events
 				span.addEvent("result");
 			},
+			context,
 		);
 
 		const compileTimeFailures = () => {
@@ -153,9 +169,8 @@ describe("agent telemetry schemas", () => {
 				"pi.unknown": true,
 			} as const;
 			// @ts-expect-error variables with unknown attributes are rejected
-			void startHarnessSpan(telemetryContext, "pi.harness.run", extraRunAttributes, () => {});
+			void startHarnessSpan("pi.harness.run", extraRunAttributes, () => {}, context);
 			void startHarnessSpan(
-				telemetryContext,
 				"pi.harness.checkpoint",
 				{
 					"pi.lane.name": "main",
@@ -166,9 +181,9 @@ describe("agent telemetry schemas", () => {
 					// @ts-expect-error empty end schemas reject every attribute
 					span.setAttributes({ "pi.unknown": true });
 				},
+				context,
 			);
 			void startHarnessSpan(
-				telemetryContext,
 				"pi.harness.run",
 				{
 					"pi.session.id": "session",
@@ -179,9 +194,10 @@ describe("agent telemetry schemas", () => {
 					"pi.operation.recovery": false,
 				},
 				() => {},
+				context,
 			);
 			// @ts-expect-error missing required run start attributes
-			void startHarnessSpan(telemetryContext, "pi.harness.run", {}, () => {});
+			void startHarnessSpan("pi.harness.run", {}, () => {}, context);
 		};
 		expectTypeOf(compileTimeFailures).toBeFunction();
 	});

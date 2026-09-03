@@ -68,7 +68,7 @@ export class ThinkingSelectorComponent extends Container implements Focusable {
 
 		this.allItems = availableLevels.map((level) => ({
 			value: level,
-			label: level,
+			label: `${level === currentLevel ? "✓ " : "  "}${level}`,
 			description:
 				level === defaultThinkingLevel ? `${LEVEL_DESCRIPTIONS[level]} · default` : LEVEL_DESCRIPTIONS[level],
 		}));
@@ -110,7 +110,7 @@ export class ThinkingSelectorComponent extends Container implements Focusable {
 
 	private applyFilter(query: string): void {
 		const filtered = query
-			? fuzzyFilter(this.allItems, query, (item) => `${item.label} ${item.description ?? ""}`)
+			? fuzzyFilter(this.allItems, query, (item) => `${item.value} ${item.description ?? ""}`)
 			: this.allItems;
 		const selectedValue = this.selectList.getSelectedItem()?.value as ThinkingLevel | undefined;
 		const newList = this.buildSelectList(filtered, selectedValue);

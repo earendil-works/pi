@@ -503,12 +503,11 @@ export async function processResponsesStream<TApi extends Api>(
 		}
 		if (item.type === "custom_tool_call") {
 			const inputProperty = options?.grammarToolInputProperties?.get(item.name) ?? "input";
-			const input = item.input || "";
 			const block: StreamingToolCall = {
 				type: "toolCall",
 				id: `${item.call_id}|${item.id}`,
 				name: item.name,
-				arguments: { [inputProperty]: input },
+				arguments: {},
 				...(item.namespace !== undefined ? { namespace: item.namespace } : {}),
 				customInput: {
 					property: inputProperty,
@@ -523,6 +522,9 @@ export async function processResponsesStream<TApi extends Api>(
 			} satisfies ResponsesOutputSlot;
 			outputSlots.set(outputIndex, slot);
 			stream.push({ type: "toolcall_start", contentIndex: slot.contentIndex, partial: output });
+			if (item.input) {
+				pushToolCallDelta(slot, appendCustomToolCallInput(block, item.input, false));
+			}
 			return slot;
 		}
 		return undefined;
@@ -588,7 +590,8 @@ export async function processResponsesStream<TApi extends Api>(
 		output.rawStopReason = incompleteReason ? `${status}.${incompleteReason}` : status;
 		const mappedStop = mapStopReason(status, incompleteReason);
 		output.stopReason = mappedStop.stopReason;
-		output.errorMessage = mappedStop.errorMessage;
+		if (mappedStop.errorMessage === undefined) delete output.errorMessage;
+		else output.errorMessage = mappedStop.errorMessage;
 		if (output.content.some((b) => b.type === "toolCall") && output.stopReason === "stop") {
 			output.stopReason = "toolUse";
 		}

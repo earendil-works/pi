@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { assertCompleteFrame, DEFAULT_MAX_FRAME_LENGTH, encodeFrame, FrameDecoder, FrameError } from "../src/index.ts";
+import { DEFAULT_MAX_FRAME_LENGTH, encodeFrame, FrameDecoder, FrameError } from "../src/index.ts";
 
 function concatenate(...chunks: Uint8Array[]): Uint8Array {
 	const result = new Uint8Array(chunks.reduce((length, chunk) => length + chunk.byteLength, 0));
@@ -17,13 +17,6 @@ describe("binary framing", () => {
 			new Uint8Array([0x00, 0x00, 0x00, 0x03, 0xaa, 0xbb, 0xcc]),
 		);
 		expect(encodeFrame(new Uint8Array())).toEqual(new Uint8Array([0, 0, 0, 0]));
-	});
-
-	test("validates one complete bounded frame without accepting trailing or partial bytes", () => {
-		expect(() => assertCompleteFrame(new Uint8Array([0, 0, 0, 2, 1, 2]), { maxFrameLength: 2 })).not.toThrow();
-		expect(() => assertCompleteFrame(new Uint8Array([0, 0, 0, 2, 1]))).toThrow(/complete/i);
-		expect(() => assertCompleteFrame(new Uint8Array([0, 0, 0, 1, 1, 2]))).toThrow(/exactly/i);
-		expect(() => assertCompleteFrame(new Uint8Array([0, 0, 0, 3, 1, 2, 3]), { maxFrameLength: 2 })).toThrow(/limit/i);
 	});
 
 	test("decodes fragmented, coalesced, and empty frames in order", () => {

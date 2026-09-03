@@ -3,7 +3,7 @@ import type { AddressInfo } from "node:net";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
 import { stream as streamAnthropic } from "../src/api/anthropic-messages.ts";
-import { getModel, getModels, streamSimple } from "../src/compat.ts";
+import { getModel, streamSimple } from "../src/compat.ts";
 import { findEnvKeys, getEnvApiKey } from "../src/env-api-keys.ts";
 import type { Context, Model, Tool } from "../src/types.ts";
 
@@ -35,17 +35,6 @@ describe("Fireworks models", () => {
 			cacheRead: 0.16,
 			cacheWrite: 0,
 		});
-	});
-
-	it("registers the Fire Pass turbo router model", () => {
-		const model = getModels("fireworks").find(
-			(candidate) => candidate.id.startsWith("accounts/fireworks/routers/") && candidate.id.endsWith("-turbo"),
-		);
-
-		expect(model).toBeDefined();
-		expect(model?.api).toBe("anthropic-messages");
-		expect(model?.baseUrl).toBe("https://api.fireworks.ai/inference");
-		expect(model?.input).toEqual(["text", "image"]);
 	});
 
 	it("aligns GLM 5.2 Fast with GLM 5.2's OpenAI-compatible config", () => {

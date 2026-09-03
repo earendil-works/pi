@@ -1,3 +1,4 @@
+import type { Context } from "../context.ts";
 import type { ExecutionEnv } from "../types.ts";
 import { getOrThrow } from "../types.ts";
 
@@ -17,19 +18,24 @@ function getState(env: ExecutionEnv): MutationQueueState {
 	return state;
 }
 
-async function getMutationQueueKey(env: ExecutionEnv, path: string): Promise<string> {
-	const absolutePath = getOrThrow(await env.absolutePath(path));
-	const canonicalPath = await env.canonicalPath(absolutePath);
+async function getMutationQueueKey(env: ExecutionEnv, path: string, context: Context): Promise<string> {
+	const absolutePath = getOrThrow(await env.absolutePath(path, context));
+	const canonicalPath = await env.canonicalPath(absolutePath, context);
 	if (canonicalPath.ok) return canonicalPath.value;
 	if (canonicalPath.error.code === "not_found" || canonicalPath.error.code === "not_supported") return absolutePath;
 	throw canonicalPath.error;
 }
 
 /** Serialize file mutations targeting the same environment and canonical path. */
-export async function withFileMutationQueue<T>(env: ExecutionEnv, path: string, fn: () => Promise<T>): Promise<T> {
+export async function withFileMutationQueue<T>(
+	env: ExecutionEnv,
+	path: string,
+	fn: () => Promise<T>,
+	context: Context,
+): Promise<T> {
 	const state = getState(env);
 	const registration = state.registration.then(async () => {
-		const key = await getMutationQueueKey(env, path);
+		const key = await getMutationQueueKey(env, path, context);
 		const currentQueue = state.queues.get(key) ?? Promise.resolve();
 
 		let releaseNext = () => {};

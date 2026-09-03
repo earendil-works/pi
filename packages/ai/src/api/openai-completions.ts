@@ -178,12 +178,17 @@ interface OpenAICompatCacheControl {
 
 type ResolvedOpenAICompletionsCompat = Omit<
 	Required<OpenAICompletionsCompat>,
-	"cacheControlFormat" | "deferredToolsMode" | "supportsThinkingTokenBudget" | "thinkingTokenBudgetField"
+	| "cacheControlFormat"
+	| "deferredToolsMode"
+	| "supportsThinkingTokenBudget"
+	| "thinkingTokenBudgetField"
+	| "vllmPriority"
 > & {
 	cacheControlFormat?: OpenAICompletionsCompat["cacheControlFormat"];
 	deferredToolsMode?: OpenAICompletionsCompat["deferredToolsMode"];
 	supportsThinkingTokenBudget?: OpenAICompletionsCompat["supportsThinkingTokenBudget"];
 	thinkingTokenBudgetField?: OpenAICompletionsCompat["thinkingTokenBudgetField"];
+	vllmPriority?: OpenAICompletionsCompat["vllmPriority"];
 };
 
 type ResolvedChatTemplateKwargValue = string | number | boolean | null;
@@ -247,6 +252,31 @@ function parseLegacyEncryptedReasoningDetail(
 	}
 }
 
+function fillMissingCommonReasoningDetailFields(
+	target: OpenAIReasoningDetailBase,
+	source: OpenAIReasoningDetail,
+): void {
+	target.id ??= source.id;
+	target.format ||= source.format;
+	target.index ??= source.index;
+}
+
+function appendOpenAIReasoningDetail(details: OpenAIReasoningDetail[], detail: OpenAIReasoningDetail): void {
+	const lastDetail = details[details.length - 1];
+	if (detail.type === "reasoning.text" && lastDetail?.type === "reasoning.text") {
+		lastDetail.text += detail.text;
+		lastDetail.signature ||= detail.signature;
+		fillMissingCommonReasoningDetailFields(lastDetail, detail);
+		return;
+	}
+	if (detail.type === "reasoning.summary" && lastDetail?.type === "reasoning.summary") {
+		lastDetail.summary += detail.summary;
+		fillMissingCommonReasoningDetailFields(lastDetail, detail);
+		return;
+	}
+	details.push({ ...detail });
+}
+
 const OPENAI_COMPLETIONS_REASONING_FIELDS = ["reasoning", "reasoning_content", "reasoning_text"] as const;
 
 type OpenAICompletionsReasoningField = (typeof OPENAI_COMPLETIONS_REASONING_FIELDS)[number];
@@ -302,6 +332,15 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 			},
 			stopReason: "pending",
 			timestamp: Date.now(),
+		};
+
+		// `reasoning_details` are replay metadata, not user-visible stream deltas.
+		// Keep them in memory during streaming and serialize once when the block is finalized.
+		let streamedReasoningDetails: OpenAIReasoningDetail[] | undefined;
+		const applyStreamedReasoningDetails = (block: ThinkingContent): void => {
+			if (streamedReasoningDetails !== undefined) {
+				block.thinkingSignature = JSON.stringify(streamedReasoningDetails);
+			}
 		};
 
 		try {
@@ -394,6 +433,7 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 						partial: output,
 					});
 				} else if (block.type === "thinking") {
+					applyStreamedReasoningDetails(block);
 					stream.push({
 						type: "thinking_end",
 						contentIndex,
@@ -464,7 +504,7 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 						type: "toolCall",
 						id: toolCall.id || "",
 						name,
-						arguments: hasCustomInput ? { [customInputProperty]: "" } : {},
+						arguments: {},
 						partialArgs: hasCustomInput ? undefined : "",
 						customInput: hasCustomInput
 							? { property: customInputProperty, jsonBuffer: { input: "", started: false, closed: false } }
@@ -496,7 +536,7 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 				}
 				if (toolCall.custom && !toolCall.function && !block.customInput) {
 					const customInputProperty = grammarToolInputProperties.get(block.name) ?? "input";
-					block.arguments = { [customInputProperty]: "" };
+					block.arguments = {};
 					block.customInput = {
 						property: customInputProperty,
 						jsonBuffer: { input: "", started: false, closed: false },
@@ -621,12 +661,12 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 					if (Array.isArray(reasoningDetails)) {
 						for (const detail of reasoningDetails) {
 							if (!isOpenAIReasoningDetail(detail)) continue;
-							const block = ensureThinkingBlock("");
-							const preservedDetails = parseOpenAIReasoningDetails(block.thinkingSignature) ?? [];
-							preservedDetails.push(detail);
-							// Keep provider replay data in the existing signature slot. OpenRouter
-							// requires the complete reasoning_details sequence in its original order.
-							block.thinkingSignature = JSON.stringify(preservedDetails);
+							ensureThinkingBlock("");
+							streamedReasoningDetails ??= [];
+							// Keep provider replay data in the existing signature slot. OpenRouter streams
+							// reasoning_details as deltas: consecutive text/summary deltas are merged into
+							// logical entries, while encrypted entries remain opaque and discrete.
+							appendOpenAIReasoningDetail(streamedReasoningDetails, detail);
 						}
 					}
 				}
@@ -656,6 +696,9 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 			stream.end();
 		} catch (error) {
 			for (const block of output.content) {
+				if (block.type === "thinking") {
+					applyStreamedReasoningDetails(block);
+				}
 				delete (block as { index?: number }).index;
 				// Streaming scratch buffers are only used during parsing; never persist them.
 				delete (block as { partialArgs?: string }).partialArgs;
@@ -685,8 +728,6 @@ export const streamSimple: StreamFunction<"openai-completions", SimpleStreamOpti
 	context: Context,
 	options?: SimpleStreamOptions,
 ): AssistantMessageEventStream => {
-	getClientApiKey(model.provider, options?.apiKey, options?.headers);
-
 	const base = {
 		...buildBaseOptions(model, context, options, options?.apiKey),
 		toolChoice: options?.toolChoice,
@@ -811,6 +852,10 @@ function buildParams(
 
 	if (options?.toolChoice) {
 		params.tool_choice = options.toolChoice;
+	}
+
+	if (compat.vllmPriority !== undefined) {
+		(params as any).priority = compat.vllmPriority;
 	}
 
 	const thinkingTokenBudgetField = resolveThinkingTokenBudgetField(compat);
@@ -1665,5 +1710,6 @@ function getCompat(model: Model<"openai-completions">): ResolvedOpenAICompletion
 		deferredToolsMode: model.compat.deferredToolsMode ?? detected.deferredToolsMode,
 		sessionAffinityFormat: model.compat.sessionAffinityFormat ?? detected.sessionAffinityFormat,
 		supportsLongCacheRetention: model.compat.supportsLongCacheRetention ?? detected.supportsLongCacheRetention,
+		vllmPriority: model.compat.vllmPriority,
 	};
 }
