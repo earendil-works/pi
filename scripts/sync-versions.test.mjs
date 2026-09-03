@@ -28,6 +28,11 @@ function runSyncVersions(root) {
 test("synchronizes private dependencies without touching registry aliases, generated manifests, or published lockstep", async () => {
 	const root = await mkdtemp(join(tmpdir(), "pi-sync-versions-"));
 	try {
+		await writeManifest(root, ".", {
+			name: "pi-monorepo",
+			version: "2.0.0",
+			private: true,
+		});
 		await writeManifest(root, "packages/ai", {
 			name: "@earendil-works/pi-ai",
 			version: "2.0.0",
@@ -63,6 +68,20 @@ test("synchronizes private dependencies without touching registry aliases, gener
 		const generatedManifest = await readManifest(root, "packages/coding-agent/install-lock");
 		assert.equal(generatedManifest.dependencies["@earendil-works/pi-coding-agent"], "^1.0.0");
 
+		await writeManifest(root, ".", {
+			name: "pi-monorepo",
+			version: "1.0.0",
+			private: true,
+		});
+		const rootLockstepFailure = runSyncVersions(root);
+		assert.equal(rootLockstepFailure.status, 1, rootLockstepFailure.stderr);
+		assert.match(rootLockstepFailure.stderr, /root package version/i);
+
+		await writeManifest(root, ".", {
+			name: "pi-monorepo",
+			version: "2.0.0",
+			private: true,
+		});
 		await writeManifest(root, "packages/ai", {
 			name: "@earendil-works/pi-ai",
 			version: "3.0.0",

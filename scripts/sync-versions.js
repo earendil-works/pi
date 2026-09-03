@@ -12,6 +12,8 @@ import { findPackageDirectories } from "./package-workspaces.mjs";
 const GENERATED_PACKAGE_SUFFIXES = [join("coding-agent", "install-lock")];
 
 const packageRoot = process.argv[2] ?? "packages";
+const rootPackagePath = join(packageRoot, "..", "package.json");
+const rootPackage = JSON.parse(readFileSync(rootPackagePath, "utf8"));
 const workspacePackages = findPackageDirectories(packageRoot)
 	.filter((directory) => !GENERATED_PACKAGE_SUFFIXES.some((suffix) => directory.endsWith(suffix)))
 	.map((directory) => {
@@ -36,7 +38,13 @@ if (versions.size > 1) {
 	process.exit(1);
 }
 
-console.log("\nAll non-private packages are at the same version (lockstep).");
+const [publishedVersion] = versions;
+if (publishedVersion && rootPackage.version !== publishedVersion) {
+	console.error(`\nERROR: Root package version ${rootPackage.version} does not match published package version ${publishedVersion}.`);
+	process.exit(1);
+}
+
+console.log("\nThe root and all non-private packages are at the same version (lockstep).");
 
 let totalUpdates = 0;
 const updatedPackages = new Set();
