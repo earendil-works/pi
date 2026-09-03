@@ -451,9 +451,21 @@ export function isViewportTUI(tui: TUI): tui is ViewportTUI {
 	return (tui as Partial<ViewportTUI>)[VIEWPORT_TUI] === true;
 }
 
+export interface TuiBaseOptions {
+	/**
+	 * Maximum width, in columns, at which the whole UI renders. When set, the
+	 * transcript, editor and all wrapping are computed at this width instead of the
+	 * full terminal width, leaving the remaining right-hand columns blank. Text
+	 * *wraps* at the boundary — it is never hidden. Omit to use the full terminal width.
+	 */
+	contentWidth?: number;
+}
+
 export abstract class TuiBase extends Container implements TUI {
 	abstract readonly mode: TuiMode;
 	public terminal: Terminal;
+	/** Maximum render width in columns; undefined means "full terminal width". */
+	private contentWidth?: number;
 	private focusedComponent: Component | null = null;
 	private inputListeners = new Set<TuiInputListener>();
 
@@ -485,10 +497,32 @@ export abstract class TuiBase extends Container implements TUI {
 	}
 	private overlayFocusRestore: OverlayFocusRestoreState = { status: "inactive" };
 
-	constructor(terminal: Terminal, showHardwareCursor?: boolean, logDirectory?: string) {
+	/**
+	 * The width in columns the whole UI should render at. Clamped to the terminal's
+	 * current width so a configured `contentWidth` never exceeds the available space.
+	 * This is the single source of truth for layout width; both render passes use it
+	 * so that narrowing the width wraps (rather than hides) all text.
+	 */
+	protected effectiveColumns(): number {
+		const full = Math.max(1, this.terminal.columns);
+		if (typeof this.contentWidth === "number" && Number.isFinite(this.contentWidth)) {
+			return Math.max(1, Math.min(full, Math.floor(this.contentWidth)));
+		}
+		return full;
+	}
+
+	/** Set the maximum render width in columns (see {@link TuiBaseOptions.contentWidth}). */
+	setContentWidth(width: number | undefined): void {
+		this.contentWidth =
+			typeof width === "number" && Number.isFinite(width) ? Math.max(1, Math.floor(width)) : undefined;
+		this.requestRender();
+	}
+
+	constructor(terminal: Terminal, showHardwareCursor?: boolean, logDirectory?: string, options?: TuiBaseOptions) {
 		super();
 		this.terminal = terminal;
 		this.logDirectory = logDirectory;
+		this.contentWidth = options?.contentWidth;
 		if (showHardwareCursor !== undefined) {
 			this.showHardwareCursor = showHardwareCursor;
 		}

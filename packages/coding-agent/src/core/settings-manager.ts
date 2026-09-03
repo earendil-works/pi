@@ -40,6 +40,7 @@ export type FullscreenExitOutput = "transcript" | "resume-hint";
 export interface TerminalSettings {
 	showImages?: boolean; // default: true (only relevant if terminal supports images)
 	imageWidthCells?: number; // default: 60 (preferred inline image width in terminal cells)
+	contentWidth?: number; // default: full terminal width (max render width in columns; text wraps at this width, never hidden)
 	clearOnShrink?: boolean; // default: false (clear empty rows when content shrinks)
 	showTerminalProgress?: boolean; // default: false (OSC 9;4 terminal progress indicators)
 	hyperlinks?: boolean | "auto";
@@ -1166,6 +1167,33 @@ export class SettingsManager {
 		}
 		this.globalSettings.terminal.imageWidthCells = Math.max(1, Math.floor(width));
 		this.markModified("terminal", "imageWidthCells");
+		this.save();
+	}
+
+	/**
+	 * Maximum width, in columns, at which the whole TUI renders. Returns `undefined`
+	 * when unset, meaning "use the full terminal width". When set, all text *wraps*
+	 * at this width (nothing is hidden) and the remaining right-hand columns are left
+	 * blank, so extension overlays / side panels can sit there without covering text.
+	 */
+	getContentWidth(): number | undefined {
+		const width = this.settings.terminal?.contentWidth;
+		if (typeof width !== "number" || !Number.isFinite(width)) {
+			return undefined;
+		}
+		return Math.max(1, Math.floor(width));
+	}
+
+	setContentWidth(width: number | undefined): void {
+		if (!this.globalSettings.terminal) {
+			this.globalSettings.terminal = {};
+		}
+		if (width === undefined || !Number.isFinite(width)) {
+			delete this.globalSettings.terminal.contentWidth;
+		} else {
+			this.globalSettings.terminal.contentWidth = Math.max(1, Math.floor(width));
+		}
+		this.markModified("terminal", "contentWidth");
 		this.save();
 	}
 

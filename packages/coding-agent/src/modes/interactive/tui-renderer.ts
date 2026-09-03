@@ -11,6 +11,7 @@ export interface InteractiveTuiOptions {
 	readonly terminal?: Terminal;
 	readonly onRightClickPaste?: () => void;
 	readonly fullscreenCopyOnSelect?: boolean;
+	readonly contentWidth?: number;
 }
 
 /** Composition root shared by coding-agent presentations. */
@@ -35,9 +36,12 @@ export function createInteractiveTui(options: InteractiveTuiOptions): TuiMainScr
 					return false;
 				}
 			},
+			contentWidth: options.contentWidth,
 		});
 	}
-	return new TuiMainScreen(terminal, options.showHardwareCursor, options.logDirectory);
+	return new TuiMainScreen(terminal, options.showHardwareCursor, options.logDirectory, {
+		contentWidth: options.contentWidth,
+	});
 }
 
 /** Stable reference for components while InteractiveMode replaces the active renderer. */

@@ -39,6 +39,7 @@ import {
 	type OverlayHandle,
 	retargetMouseEvent,
 	TuiBase,
+	type TuiBaseOptions,
 	type TuiMouseButton,
 	type TuiMouseDispatchResult,
 	type TuiMouseDispatchTarget,
@@ -153,7 +154,7 @@ interface SearchHighlightRange {
 	current: boolean;
 }
 
-export interface TuiAltScreenOptions {
+export interface TuiAltScreenOptions extends TuiBaseOptions {
 	/** Number of logical lines moved for each mouse-wheel event. */
 	wheelScrollLines?: number;
 	/** Capture mouse events for viewport scrolling and application-owned text selection. */
@@ -363,7 +364,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		if (options.preserveScreen) {
 			this.terminal.write(`${BEGIN_SYNCHRONIZED_OUTPUT}${EXIT_ALT_SCREEN}\x1b[?25h${END_SYNCHRONIZED_OUTPUT}`);
 		} else {
-			const width = Math.max(1, this.terminal.columns);
+			const width = this.effectiveColumns();
 			const documentLines = this.render(width).map((line) => line.replace(OSC133_ZONE_PREFIX, ""));
 			this.lastDocument = this.applyLineResets(documentLines.map((line) => line.replaceAll(CURSOR_MARKER, ""))).map(
 				(line) => (isImageLine(line) || visibleWidth(line) <= width ? line : sliceByColumn(line, 0, width, true)),
@@ -1528,7 +1529,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 
 	protected override doRender(): void {
 		if (this.stopped || !this.altScreenActive) return;
-		const width = Math.max(1, this.terminal.columns);
+		const width = this.effectiveColumns();
 		const height = Math.max(1, this.terminal.rows);
 		const root = this.layoutRoot ?? this.implicitScrollView;
 		let nextLayout = renderLayoutFrame(root, width, height, () => this.requestRender());

@@ -130,6 +130,7 @@ export {
 	type OverlayUnfocusOptions,
 	type SizeValue,
 	type TUI,
+	type TuiBaseOptions,
 	type TuiInputListener,
 	type TuiInputListenerResult,
 	type TuiMode,
