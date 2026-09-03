@@ -179,11 +179,17 @@ interface Expandable {
 }
 
 interface WorkingStatusEditor extends EditorComponent {
+	readonly embedWorkingStatus: boolean;
 	setWorkingStatusIndicator(indicator: WorkingStatusIndicator | undefined): void;
 }
 
 function isWorkingStatusEditor(editor: EditorComponent): editor is WorkingStatusEditor {
-	return "setWorkingStatusIndicator" in editor && typeof editor.setWorkingStatusIndicator === "function";
+	return (
+		"embedWorkingStatus" in editor &&
+		editor.embedWorkingStatus === true &&
+		"setWorkingStatusIndicator" in editor &&
+		typeof editor.setWorkingStatusIndicator === "function"
+	);
 }
 
 function isExpandable(obj: unknown): obj is Expandable {
@@ -614,6 +620,7 @@ export class InteractiveMode {
 		this.defaultEditor = new CustomEditor(this.ui, getEditorTheme(), this.keybindings, {
 			paddingX: editorPaddingX,
 			autocompleteMaxVisible,
+			embedWorkingStatus: true,
 		});
 		this.editor = this.defaultEditor;
 		this.editorContainer = new Container();
@@ -2149,8 +2156,7 @@ export class InteractiveMode {
 	}
 
 	private setEditorWorkingStatusIndicator(indicator: WorkingStatusIndicator | undefined): boolean {
-		this.defaultEditor.setWorkingStatusIndicator(indicator);
-		if (this.editor === this.defaultEditor) return true;
+		this.defaultEditor.setWorkingStatusIndicator(undefined);
 		if (!isWorkingStatusEditor(this.editor)) return false;
 		this.editor.setWorkingStatusIndicator(indicator);
 		return true;
@@ -2191,13 +2197,16 @@ export class InteractiveMode {
 	}
 
 	private showWorkingStatusIndicator(): void {
+		const colorFn = isWorkingStatusEditor(this.editor)
+			? (text: string) =>
+					(this.editor.borderColor ?? theme.getThinkingBorderColor(this.session.thinkingLevel || "off"))(text)
+			: undefined;
 		this.showStatusIndicator(
 			new WorkingStatusIndicator(
 				this.ui,
 				this.workingMessage ?? this.defaultWorkingMessage,
 				this.workingIndicatorOptions,
-				(text) =>
-					(this.editor.borderColor ?? theme.getThinkingBorderColor(this.session.thinkingLevel || "off"))(text),
+				colorFn,
 			),
 		);
 	}

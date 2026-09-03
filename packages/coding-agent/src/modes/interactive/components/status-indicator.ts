@@ -29,13 +29,15 @@ export class StatusIndicator extends Loader {
 export class WorkingStatusIndicator extends StatusIndicator {
 	private workingMessage: string;
 
-	constructor(
-		ui: TUI,
-		message: string,
-		indicator?: WorkingIndicatorOptions,
-		colorFn: (text: string) => string = (text) => theme.fg("accent", text),
-	) {
-		super("working", ui, colorFn, colorFn, message, indicator);
+	constructor(ui: TUI, message: string, indicator?: WorkingIndicatorOptions, colorFn?: (text: string) => string) {
+		super(
+			"working",
+			ui,
+			colorFn ?? ((text) => theme.fg("accent", text)),
+			colorFn ?? ((text) => theme.fg("muted", text)),
+			message,
+			indicator,
+		);
 		this.workingMessage = message;
 	}
 

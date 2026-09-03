@@ -2,12 +2,18 @@ import { Editor, type EditorOptions, type EditorTheme, type TUI, visibleWidth } 
 import type { AppKeybinding, KeybindingsManager } from "../../../core/keybindings.ts";
 import type { WorkingStatusIndicator } from "./status-indicator.ts";
 
+export type CustomEditorOptions = EditorOptions & {
+	/** Render the streaming working status in the editor's top border. */
+	embedWorkingStatus?: boolean;
+};
+
 /**
  * Custom editor that handles app-level keybindings for coding-agent.
  */
 export class CustomEditor extends Editor {
 	private keybindings: KeybindingsManager;
 	private workingStatusIndicator: WorkingStatusIndicator | undefined;
+	public readonly embedWorkingStatus: boolean;
 	public actionHandlers: Map<AppKeybinding, () => void> = new Map();
 
 	// Special handlers that can be dynamically replaced
@@ -17,9 +23,10 @@ export class CustomEditor extends Editor {
 	/** Handler for extension-registered shortcuts. Returns true if handled. */
 	public onExtensionShortcut?: (data: string) => boolean;
 
-	constructor(tui: TUI, theme: EditorTheme, keybindings: KeybindingsManager, options?: EditorOptions) {
+	constructor(tui: TUI, theme: EditorTheme, keybindings: KeybindingsManager, options?: CustomEditorOptions) {
 		super(tui, theme, options);
 		this.keybindings = keybindings;
+		this.embedWorkingStatus = options?.embedWorkingStatus ?? false;
 	}
 
 	setWorkingStatusIndicator(indicator: WorkingStatusIndicator | undefined): void {
@@ -27,7 +34,9 @@ export class CustomEditor extends Editor {
 	}
 
 	protected override renderTopBorder(width: number, hiddenLineCount: number): string {
-		if (!this.workingStatusIndicator || width <= 0) return super.renderTopBorder(width, hiddenLineCount);
+		if (!this.embedWorkingStatus || !this.workingStatusIndicator || width <= 0) {
+			return super.renderTopBorder(width, hiddenLineCount);
+		}
 
 		let status = this.workingStatusIndicator.renderInBorder(Math.max(1, width - 5));
 		let statusWidth = visibleWidth(status);

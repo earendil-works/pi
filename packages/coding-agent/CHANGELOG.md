@@ -12,7 +12,7 @@
 
 ### Changed
 
-- Moved the streaming working indicator into the editor border and matched its default spinner and label to the thinking-level border color.
+- Moved the streaming working indicator into the default editor border and matched its default spinner and label to the thinking-level border color. Custom editors retain the standalone indicator unless they opt in to embedding it.
 
 ### Fixed
 
