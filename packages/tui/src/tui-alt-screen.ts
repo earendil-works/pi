@@ -37,6 +37,7 @@ import {
 	compositeTuiLine,
 	dispatchMouseEvent,
 	type OverlayHandle,
+	type OverlaySelectionRegion,
 	retargetMouseEvent,
 	TuiBase,
 	type TuiMouseButton,
@@ -947,7 +948,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 	}
 
 	private getScrollbarTargetAt(x: number, y: number): ScrollbarTarget | undefined {
-		if (this.hasOverlay() || !this.currentLayout) return undefined;
+		if (this.hasSelectionBlockingOverlay() || !this.currentLayout) return undefined;
 		for (const scrollView of getScrollViewsAt(this.currentLayout, x, y)) {
 			const box = getScrollViewBox(this.currentLayout, scrollView);
 			const geometry = box ? getScrollbarGeometry(box) : undefined;
@@ -1045,7 +1046,21 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		};
 	}
 
-	private getSelectionPoint(event: SgrMouseEvent, scrollView?: ScrollView): SelectionPoint {
+	private getSelectionExclusionAt(x: number, y: number): OverlaySelectionRegion | undefined {
+		return this.getOverlaySelectionExclusions().find(
+			(region) =>
+				x >= region.col && x < region.col + region.width && y >= region.row && y < region.row + region.height,
+		);
+	}
+
+	private getSelectionPoint(event: SgrMouseEvent, scrollView?: ScrollView): SelectionPoint | undefined {
+		const exclusion = this.getSelectionExclusionAt(event.x, event.y);
+		if (exclusion) {
+			if (!scrollView) return undefined;
+			const boundaryX = event.x < exclusion.col ? exclusion.col - 1 : exclusion.col + exclusion.width;
+			const point = this.getScrollSelectionPoint(scrollView, boundaryX, event.y);
+			if (point) return point;
+		}
 		if (scrollView) {
 			const point = this.getScrollSelectionPoint(scrollView, event.x, event.y);
 			if (point) return point;
@@ -1214,6 +1229,17 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		if (button !== 0 && !(event.release && button === 3)) return;
 		const anchorScrollView = this.selectionAnchor?.scrollView;
 		const point = this.getSelectionPoint(event, anchorScrollView);
+		if (!point) {
+			this.selectionPressActive = false;
+			this.stopSelectionAutoScroll();
+			this.selectionAnchor = undefined;
+			this.selectionFocus = undefined;
+			this.selectionInitialRange = undefined;
+			this.selectionGranularity = "character";
+			this.pressedUrl = undefined;
+			this.requestRender();
+			return;
+		}
 		if (event.release) {
 			if (!this.selectionPressActive) return;
 			this.selectionPressActive = false;
@@ -1268,10 +1294,20 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		this.stopSelectionAutoScroll();
 		this.selectionPressActive = true;
 		const scrollView =
-			!this.hasOverlay() && this.currentLayout
+			!this.hasSelectionBlockingOverlay() && this.currentLayout
 				? getScrollViewsAt(this.currentLayout, event.x, event.y)[0]
 				: undefined;
 		const anchor = this.getSelectionPoint(event, scrollView);
+		if (!anchor) {
+			this.selectionPressActive = false;
+			this.selectionAnchor = undefined;
+			this.selectionFocus = undefined;
+			this.selectionInitialRange = undefined;
+			this.selectionGranularity = "character";
+			this.pressedUrl = undefined;
+			this.requestRender();
+			return;
+		}
 		const word = this.getWordSelection(anchor);
 		const clickCount = this.getClickCount(anchor, word);
 		const range = clickCount === 2 ? word : clickCount === 3 ? this.getLineSelection(anchor) : undefined;

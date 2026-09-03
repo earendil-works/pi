@@ -1225,6 +1225,46 @@ describe("TuiAltScreen", () => {
 		tui.stop();
 	});
 
+	it("keeps excluded overlays out of fullscreen text selection", async () => {
+		const terminal = new RecordingTerminal(20, 2);
+		const copied: string[] = [];
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			copySelection: async (text) => {
+				copied.push(text);
+				return true;
+			},
+		});
+		const transcript = new ScrollView(new Text("alpha\nbeta", 0, 0), { primary: true });
+		tui.setLayoutRoot(
+			new HStack([
+				{ component: transcript, basis: 15, shrink: 0 },
+				{ component: new Text("", 0, 0), basis: 5, shrink: 0 },
+			]),
+		);
+		tui.showOverlay(new Text("SIDE\nPANEL", 0, 0), {
+			anchor: "top-right",
+			width: 5,
+			margin: 0,
+			nonCapturing: true,
+			selection: "exclude",
+		});
+		tui.start();
+		await terminal.waitForRender();
+
+		terminal.sendInput("\x1b[<0;1;1M");
+		terminal.sendInput("\x1b[<32;18;2M");
+		terminal.sendInput("\x1b[<0;18;2m");
+		await terminal.waitForRender();
+
+		assert.deepStrictEqual(copied, ["alpha\nbeta"]);
+
+		terminal.sendInput("\x1b[<0;18;1M");
+		terminal.sendInput("\x1b[<0;18;1m");
+		await terminal.waitForRender();
+		assert.deepStrictEqual(copied, ["alpha\nbeta"]);
+		tui.stop();
+	});
+
 	it("does not repaint idle or zero-width selections on focus loss", async () => {
 		const terminal = new RecordingTerminal(20, 4);
 		const tui = new TuiAltScreen(terminal);
