@@ -3,7 +3,7 @@ import { describe, expect, test } from "vitest";
 import { getModel, streamSimple } from "../src/compat.ts";
 import type { Api, AssistantMessage, Context, Model, Tool } from "../src/types.ts";
 import { declaredTools, splitDeferredTools } from "../src/utils/deferred-tools.ts";
-import { renderSystemMessageAsUserText, resolveMessageToolChange } from "../src/utils/system-messages.ts";
+import { addedToolNames, renderSystemMessageAsUserText } from "../src/utils/system-messages.ts";
 
 const PLACEHOLDER = "__pi_deferred_tool_placeholder__";
 
@@ -72,27 +72,22 @@ describe("system message helpers", () => {
 		expect(renderSystemMessageAsUserText({ role: "system", content: "", timestamp: 1 })).toBe("");
 	});
 
-	test("unifies tool-result markers and system message deltas", () => {
+	test("reads added tool names from tool-result markers and system messages", () => {
 		const tool = makeTool("late_tool");
 		expect(
-			resolveMessageToolChange(
-				{
-					role: "toolResult",
-					toolCallId: "call-1",
-					toolName: "loader",
-					content: [{ type: "text", text: "loaded" }],
-					isError: false,
-					timestamp: 2,
-					addedToolNames: ["late_tool", "late_tool"],
-				},
-				(name) => (name === "late_tool" ? tool : undefined),
-			),
-		).toEqual({ added: [tool], removed: [], addedNames: ["late_tool"] });
-		expect(resolveMessageToolChange({ role: "system", content: "x", toolsRemoved: [tool], timestamp: 3 })).toEqual({
-			added: [],
-			removed: [tool],
-			addedNames: [],
-		});
+			addedToolNames({
+				role: "toolResult",
+				toolCallId: "call-1",
+				toolName: "loader",
+				content: [{ type: "text", text: "loaded" }],
+				isError: false,
+				timestamp: 2,
+				addedToolNames: ["late_tool", "late_tool"],
+			}),
+		).toEqual(["late_tool"]);
+		expect(addedToolNames({ role: "system", content: "x", toolsAdded: [tool], timestamp: 3 })).toEqual(["late_tool"]);
+		expect(addedToolNames({ role: "system", content: "x", toolsRemoved: [tool], timestamp: 3 })).toEqual([]);
+		expect(addedToolNames({ role: "user", content: "x", timestamp: 4 })).toEqual([]);
 	});
 });
 

@@ -1,5 +1,5 @@
 import type { Context, Tool } from "../types.ts";
-import { resolveMessageToolChange } from "./system-messages.ts";
+import { addedToolNames } from "./system-messages.ts";
 
 type ToolNameNormalizer = (name: string) => string;
 
@@ -50,6 +50,7 @@ export function splitDeferredTools(context: Context, options: ToolPlacementOptio
 			if (!definitions.has(name)) definitions.set(name, tool);
 		}
 	}
+	// Among live tools the last definition wins (OAuth canonicalization can map two names onto one).
 	const activeTools = new Map<string, Tool>();
 	for (const tool of context.tools ?? []) activeTools.set(normalizeName(tool.name), tool);
 	for (const [name, tool] of activeTools) {
@@ -72,14 +73,10 @@ export function splitDeferredTools(context: Context, options: ToolPlacementOptio
 			}
 			continue;
 		}
-		if (message.role === "toolResult") {
-			if (!options.toolResultMarkers) continue;
-			for (const name of resolveMessageToolChange(message).addedNames) placeMarked(normalizeName(name));
-			continue;
-		}
-		if (message.role === "system" && options.systemMarkers) {
-			for (const tool of message.toolsAdded ?? []) placeMarked(normalizeName(tool.name));
-		}
+		const markersEnabled =
+			message.role === "toolResult" ? options.toolResultMarkers : message.role === "system" && options.systemMarkers;
+		if (!markersEnabled) continue;
+		for (const name of addedToolNames(message)) placeMarked(normalizeName(name));
 	}
 
 	const immediate = [...definitions]

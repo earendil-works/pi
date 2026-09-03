@@ -46,7 +46,7 @@ import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
-import { getSystemMessageText, resolveMessageToolChange } from "../utils/system-messages.ts";
+import { addedToolNames, getSystemMessageText } from "../utils/system-messages.ts";
 import {
 	appendGrammarToolInputJsonDelta,
 	createGrammarToolInputProperties,
@@ -1228,7 +1228,7 @@ export function convertMessages(
 		}
 
 		if (msg.role === "system") {
-			const addedTools = takeDeferredToolLoads(resolveMessageToolChange(msg).addedNames);
+			const addedTools = takeDeferredToolLoads(addedToolNames(msg));
 			if (addedTools.length > 0) {
 				const kimiToolMessage: KimiToolSystemMessageParam = {
 					role: "system",
@@ -1412,7 +1412,7 @@ export function convertMessages(
 				}
 				params.push(toolResultMsg);
 
-				deferredTools.push(...takeDeferredToolLoads(resolveMessageToolChange(toolMsg).addedNames));
+				deferredTools.push(...takeDeferredToolLoads(addedToolNames(toolMsg)));
 
 				if (hasImages && model.input.includes("image")) {
 					for (const block of toolMsg.content) {

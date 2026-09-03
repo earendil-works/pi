@@ -42,11 +42,7 @@ import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
-import {
-	getSystemMessageText,
-	renderSystemMessageAsUserText,
-	resolveMessageToolChange,
-} from "../utils/system-messages.ts";
+import { addedToolNames, getSystemMessageText, renderSystemMessageAsUserText } from "../utils/system-messages.ts";
 import { getJsonSchemaToolParameters, resolveJsonSchemaStrictSampling } from "./constrained-sampling.ts";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.ts";
 import { adjustMaxTokensForThinking, buildBaseOptions, clampMaxTokensToContext } from "./simple-options.ts";
@@ -1231,7 +1227,7 @@ function convertToolResult(
 	normalizeToolName: (name: string) => string,
 ): { toolResult: ContentBlockParam; siblingContent: ContentBlockParam[] } {
 	const references: Array<{ type: "tool_reference"; tool_name: string }> = [];
-	for (const name of resolveMessageToolChange(msg).addedNames) {
+	for (const name of addedToolNames(msg)) {
 		const normalizedName = normalizeToolName(name);
 		if (!deferredToolNames.has(normalizedName) || loadedToolNames.has(normalizedName)) continue;
 		loadedToolNames.add(normalizedName);

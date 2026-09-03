@@ -1,5 +1,5 @@
 import type { AssistantMessage, Context, ImageContent, Message, TextContent, Tool, Usage } from "../types.ts";
-import { getSystemMessageText, getSystemMessageToolChange, resolveMessageToolChange } from "./system-messages.ts";
+import { addedToolNames, getSystemMessageText } from "./system-messages.ts";
 
 export interface ContextUsageEstimate {
 	/** Estimated total context tokens. */
@@ -125,15 +125,15 @@ export function estimateContextTokens(context: Context | readonly Message[]): Co
 	const estimate = estimateMessages(context.messages);
 	if (estimate.lastUsageIndex !== null) {
 		const trailingMessages = context.messages.slice(estimate.lastUsageIndex + 1);
+		// System messages carry their own definitions and are counted above; only tool-result markers
+		// still need the live definition from `context.tools`.
 		const systemAddedNames = new Set(
-			trailingMessages
-				.filter((message) => message.role === "system")
-				.flatMap((message) => getSystemMessageToolChange(message).addedNames),
+			trailingMessages.filter((message) => message.role === "system").flatMap(addedToolNames),
 		);
 		const legacyAddedNames = new Set(
 			trailingMessages
 				.filter((message) => message.role === "toolResult")
-				.flatMap((message) => resolveMessageToolChange(message).addedNames)
+				.flatMap(addedToolNames)
 				.filter((name) => !systemAddedNames.has(name)),
 		);
 		const addedToolTokens = estimateToolsTokens(context.tools?.filter((tool) => legacyAddedNames.has(tool.name)));

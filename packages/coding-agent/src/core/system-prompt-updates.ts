@@ -58,14 +58,11 @@ export function prepareModelContextUpdate(input: {
 		};
 	}
 
-	const promptDiff =
-		renderSystemPrompt(previous.prompt.pieces) === currentPrompt
-			? ({ type: "unchanged" } as const)
-			: diffSystemPrompts(previous.prompt.pieces, pieces);
+	const promptDiff = diffSystemPrompts(previous.prompt.pieces, pieces);
 	const toolsAdded = [...tools].filter(([name]) => !previous.tools.has(name)).map(([, tool]) => tool);
 	const toolsRemoved = [...previous.tools].filter(([name]) => !tools.has(name)).map(([, tool]) => tool);
 
-	if (promptDiff.type === "replace" || (options.forceSystemPrompt !== undefined && promptDiff.type !== "unchanged")) {
+	if (promptDiff.type === "replace") {
 		return {
 			type: "replacement",
 			state: { prompt: { pieces, baseline: currentPrompt }, tools },

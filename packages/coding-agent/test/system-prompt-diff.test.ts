@@ -11,9 +11,14 @@ function prompt(value: string): SystemPromptPiece[] {
 
 describe("diffSystemPrompts", () => {
 	test("renders additions, replacements, and removals as superseding guidance", () => {
-		expect(diffSystemPrompts(prompt("old"), prompt("new"))).toEqual({
+		expect(
+			diffSystemPrompts(
+				[{ type: "value", key: "section:review_mode", text: "Review carefully." }],
+				[{ type: "value", key: "section:review_mode", text: "Review very carefully." }],
+			),
+		).toEqual({
 			type: "update",
-			text: "The system guidance has changed. The following supersedes the previous system guidance:\n\nnew",
+			text: "The <review_mode> system guidance has changed. The following supersedes the previous <review_mode> system guidance:\n\nReview very carefully.",
 		});
 		expect(diffSystemPrompts([], [{ type: "value", key: "section:review_mode", text: "Review carefully." }])).toEqual(
 			{
@@ -27,6 +32,22 @@ describe("diffSystemPrompts", () => {
 				[{ type: "value", key: "skills", text: "" }],
 			),
 		).toEqual({ type: "update", text: "The previous skill guidance no longer applies." });
+	});
+
+	test("quotes retracted text for values without an anchor in the prompt", () => {
+		// A bare "no longer applies" would be ambiguous for unlabeled free text.
+		expect(diffSystemPrompts(prompt(""), prompt("talk like a pirate"))).toEqual({
+			type: "update",
+			text: "The following system guidance now applies:\n\ntalk like a pirate",
+		});
+		expect(diffSystemPrompts(prompt("talk like a pirate"), prompt(""))).toEqual({
+			type: "update",
+			text: "The following system guidance no longer applies:\n\ntalk like a pirate",
+		});
+		expect(diffSystemPrompts(prompt("talk like a pirate"), prompt("be brief"))).toEqual({
+			type: "update",
+			text: "The following system guidance no longer applies:\n\ntalk like a pirate\n\nThe following system guidance now applies:\n\nbe brief",
+		});
 	});
 
 	test("delivers text appended to free-text blocks and replaces on any other change", () => {
@@ -47,19 +68,6 @@ describe("diffSystemPrompts", () => {
 			type: "update",
 			text: "The following additional base system instructions now apply:\n\nmore",
 		});
-		expect(diffSystemPrompts(pieces({ cwd: "/tmp" }), pieces({ cwd: "/tmp", promptTail: "\nold tail" }))).toEqual({
-			type: "update",
-			text: "The following additional system guidance now applies:\n\nold tail",
-		});
-		expect(
-			diffSystemPrompts(
-				pieces({ cwd: "/tmp", promptTail: "\nold tail" }),
-				pieces({ cwd: "/tmp", promptTail: "\nold tail\nnew tail" }),
-			),
-		).toEqual({
-			type: "update",
-			text: "The following additional system guidance now applies:\n\nnew tail",
-		});
 
 		for (const current of [
 			{ ...base, customPrompt: "changed instructions" },
@@ -71,10 +79,26 @@ describe("diffSystemPrompts", () => {
 		]) {
 			expect(diffSystemPrompts(pieces(base), pieces(current))).toEqual({ type: "replace" });
 		}
-		for (const promptTail of ["", "\nnew tail", "\ninserted\nold tail"]) {
-			expect(
-				diffSystemPrompts(pieces({ cwd: "/tmp", promptTail: "\nold tail" }), pieces({ cwd: "/tmp", promptTail })),
-			).toEqual({ type: "replace" });
+	});
+
+	test("supersedes the prompt tail instead of replacing the baseline", () => {
+		// The tail carries per-turn extension guidance that is commonly conditional, so a removed or
+		// rewritten tail must not cost a cache miss.
+		const pieces = (promptTail: string) => buildSystemPromptPieces({ cwd: "/tmp", promptTail });
+
+		expect(diffSystemPrompts(pieces(""), pieces("\nold tail"))).toEqual({
+			type: "update",
+			text: "The following system guidance now applies:\n\nold tail",
+		});
+		expect(diffSystemPrompts(pieces("\nold tail"), pieces(""))).toEqual({
+			type: "update",
+			text: "The following system guidance no longer applies:\n\nold tail",
+		});
+		for (const promptTail of ["\nold tail\nnew tail", "\nnew tail", "\ninserted\nold tail"]) {
+			expect(diffSystemPrompts(pieces("\nold tail"), pieces(promptTail))).toEqual({
+				type: "update",
+				text: `The following system guidance no longer applies:\n\nold tail\n\nThe following system guidance now applies:\n\n${promptTail.trim()}`,
+			});
 		}
 	});
 

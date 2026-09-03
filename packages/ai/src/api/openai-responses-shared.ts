@@ -32,7 +32,7 @@ import type { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { shortHash } from "../utils/hash.ts";
 import { parseStreamingJson } from "../utils/json-parse.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
-import { getSystemMessageText, resolveMessageToolChange } from "../utils/system-messages.ts";
+import { addedToolNames, getSystemMessageText } from "../utils/system-messages.ts";
 import {
 	appendGrammarToolInputJsonDelta,
 	type GrammarToolInputJsonBuffer,
@@ -225,7 +225,7 @@ export function convertResponsesMessages<TApi extends Api>(
 	let msgIndex = 0;
 	for (const msg of transformedMessages) {
 		if (msg.role === "system") {
-			appendDeferredToolLoads(resolveMessageToolChange(msg).addedNames, `system:${msgIndex}`);
+			appendDeferredToolLoads(addedToolNames(msg), `system:${msgIndex}`);
 			const text = getSystemMessageText(msg);
 			if (text.length > 0) {
 				messages.push({ role: instructionRole, content: sanitizeSurrogates(text) });
@@ -358,7 +358,7 @@ export function convertResponsesMessages<TApi extends Api>(
 				});
 			}
 
-			appendDeferredToolLoads(resolveMessageToolChange(msg).addedNames, msg.toolCallId);
+			appendDeferredToolLoads(addedToolNames(msg), msg.toolCallId);
 		}
 		msgIndex++;
 	}

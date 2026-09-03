@@ -1,10 +1,4 @@
-import type { Message, SystemMessage, Tool } from "../types.ts";
-
-export interface ResolvedToolChange {
-	added: Tool[];
-	removed: Tool[];
-	addedNames: string[];
-}
+import type { Message, SystemMessage } from "../types.ts";
 
 export function getSystemMessageText(message: SystemMessage): string {
 	return typeof message.content === "string" ? message.content : message.content.map((block) => block.text).join("\n");
@@ -20,32 +14,9 @@ export function renderSystemMessageAsUserText(message: SystemMessage): string {
 	return text.length > 0 ? `<system_update>\n${text}\n</system_update>` : "";
 }
 
-export function getSystemMessageToolChange(message: SystemMessage): ResolvedToolChange {
-	const added = message.toolsAdded ?? [];
-	const removed = message.toolsRemoved ?? [];
-	return {
-		added,
-		removed,
-		addedNames: added.map((tool) => tool.name),
-	};
-}
-
-/** Normalize first-class system updates and tool-result additions into one chronological change. */
-export function resolveMessageToolChange(
-	message: Message,
-	resolveTool: (name: string) => Tool | undefined = () => undefined,
-): ResolvedToolChange {
-	if (message.role === "system") return getSystemMessageToolChange(message);
-	if (message.role === "toolResult") {
-		const addedNames = [...new Set(message.addedToolNames ?? [])];
-		return {
-			added: addedNames.flatMap((name) => {
-				const tool = resolveTool(name);
-				return tool ? [tool] : [];
-			}),
-			removed: [],
-			addedNames,
-		};
-	}
-	return { added: [], removed: [], addedNames: [] };
+/** Names of tools that become available at this message, from either a system update or a tool-result marker. */
+export function addedToolNames(message: Message): string[] {
+	if (message.role === "system") return (message.toolsAdded ?? []).map((tool) => tool.name);
+	if (message.role === "toolResult") return [...new Set(message.addedToolNames ?? [])];
+	return [];
 }

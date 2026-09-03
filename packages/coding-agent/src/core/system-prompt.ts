@@ -233,14 +233,15 @@ export function buildSystemPrompt(input: BuildSystemPromptInput): string {
 export type SystemPromptDiff = { type: "unchanged" } | { type: "update"; text: string } | { type: "replace" };
 
 /**
- * Free-text instruction blocks. Text appended to them can be delivered as an
- * appended instruction, but text that was edited or removed cannot be retracted
- * from the cached prefix, so those changes require a new baseline.
+ * Configured base instruction blocks. Text appended to them can be delivered as
+ * an appended instruction, but text that was edited or removed cannot be
+ * retracted from the cached prefix, so those changes require a new baseline.
+ * `promptTail` is deliberately not here: it carries per-turn extension guidance
+ * that comes and goes, so it is superseded like any other keyed value.
  */
 const APPEND_ONLY_TEXT_KEYS: Record<string, string> = {
 	customPrompt: "The following additional base system instructions now apply:",
 	appendSystemPrompt: "The following additional system instructions now apply:",
-	promptTail: "The following additional system guidance now applies:",
 };
 
 /**
@@ -248,8 +249,8 @@ const APPEND_ONLY_TEXT_KEYS: Record<string, string> = {
  *
  * Both piece lists come from the same builder, so their literal skeletons only
  * differ when the prompt switched template (default, custom, or forced), which
- * requires a new baseline. Free-text blocks may only grow. Every other change is
- * a keyed value update that can be appended.
+ * requires a new baseline. Configured base text may only grow. Every other change
+ * is a keyed value update that can be appended.
  */
 export function diffSystemPrompts(
 	previous: readonly SystemPromptPiece[],
@@ -295,8 +296,17 @@ function renderSystemPromptValueUpdate(key: string, previous: string, current: s
 	if (key === "cwd") return `The current working directory is now: ${current}`;
 	const subject =
 		SYSTEM_PROMPT_VALUE_SUBJECTS[key] ??
-		(key.startsWith("section:") ? `<${key.slice("section:".length)}> system guidance` : "system guidance");
-	if (!current) return `The previous ${subject} no longer applies.`;
-	if (!previous) return `The following ${subject} now applies:\n\n${current}`;
-	return `The ${subject} has changed. The following supersedes the previous ${subject}:\n\n${current}`;
+		(key.startsWith("section:") ? `<${key.slice("section:".length)}> system guidance` : undefined);
+	if (subject !== undefined) {
+		// The subject names a heading or tag the model can find in the prompt or in an earlier update.
+		if (!current) return `The previous ${subject} no longer applies.`;
+		if (!previous) return `The following ${subject} now applies:\n\n${current}`;
+		return `The ${subject} has changed. The following supersedes the previous ${subject}:\n\n${current}`;
+	}
+	// Unlabeled free text (e.g. the prompt tail) has no anchor in the prompt, so a bare "no longer
+	// applies" would be ambiguous. Quote the retracted text instead.
+	const parts: string[] = [];
+	if (previous) parts.push(`The following system guidance no longer applies:\n\n${previous}`);
+	if (current) parts.push(`The following system guidance now applies:\n\n${current}`);
+	return parts.join("\n\n");
 }

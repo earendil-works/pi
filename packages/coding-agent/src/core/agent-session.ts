@@ -303,10 +303,6 @@ interface ToolDefinitionEntry {
 	sourceInfo: SourceInfo;
 }
 
-interface ModelContextRuntimeState extends ModelContextState {
-	options: BuildSystemPromptOptions;
-}
-
 function estimateMessagesTokens(messages: AgentMessage[]): number {
 	let tokens = 0;
 	for (const message of messages) {
@@ -394,7 +390,9 @@ export class AgentSession {
 
 	// Base prompt options are rebuilt when resources or the default tool selection change.
 	private _baseSystemPromptOptions!: BuildSystemPromptOptions;
-	private _modelContextState?: ModelContextRuntimeState;
+	// Options as mutated by before_agent_start for the active run; cleared when the run settles.
+	private _runSystemPromptOptions?: BuildSystemPromptOptions;
+	private _modelContextState?: ModelContextState;
 
 	constructor(config: AgentSessionConfig) {
 		this.agent = config.agent;
@@ -586,8 +584,10 @@ export class AgentSession {
 			const previousSnapshot = await previousPrepareNextTurnWithContext?.({ ...turn, context }, signal);
 			const nextContext = previousSnapshot?.context ?? context;
 
+			// Tools can be registered or toggled mid-run (refreshTools, setActiveTools), so the tool
+			// selection and per-tool prompt text come from the rebuilt base rather than the run options.
 			const options = normalizeBuildSystemPromptOptions({
-				...(this._modelContextState?.options ?? this._baseSystemPromptOptions),
+				...(this._runSystemPromptOptions ?? this._baseSystemPromptOptions),
 				selectedTools: this.getActiveToolNames(),
 				toolSnippets: this._baseSystemPromptOptions.toolSnippets,
 				toolGuidelines: this._baseSystemPromptOptions.toolGuidelines,
@@ -1147,7 +1147,7 @@ export class AgentSession {
 		// Earlier messages are never rewritten: replacing the baseline is a deliberate cache miss,
 		// and previous system messages stay in the transcript as history.
 		this.agent.state.tools = selectedTools;
-		this._modelContextState = { ...update.state, options };
+		this._modelContextState = update.state;
 		this.agent.state.systemPrompt = update.state.prompt.baseline;
 		return message;
 	}
@@ -1157,13 +1157,12 @@ export class AgentSession {
 	 * where the transcript is rewritten anyway, so the new prefix costs nothing extra.
 	 */
 	private _rebaselineModelContext(): void {
-		const options = this._modelContextState?.options ?? this._baseSystemPromptOptions;
-		const pieces = this._modelContextState?.prompt.pieces ?? buildSystemPromptPieces(options);
+		const pieces = this._modelContextState?.prompt.pieces ?? buildSystemPromptPieces(this._baseSystemPromptOptions);
 		const prompt = renderSystemPrompt(pieces);
 		const tools =
 			this._modelContextState?.tools ??
 			new Map(this.agent.state.tools.map((tool) => [tool.name, systemPromptTool(tool)]));
-		this._modelContextState = { options, prompt: { pieces, baseline: prompt }, tools };
+		this._modelContextState = { prompt: { pieces, baseline: prompt }, tools };
 		this.sessionManager.appendSystemPromptState({ pieces, baseline: prompt }, [...tools.values()]);
 		this.agent.state.systemPrompt = prompt;
 	}
@@ -1177,7 +1176,6 @@ export class AgentSession {
 		// Entries written before `baseline` existed fall back to the rendered pieces.
 		const baseline = stored.baseline ?? renderSystemPrompt(stored.prompt);
 		this._modelContextState = {
-			options: this._baseSystemPromptOptions,
 			prompt: { pieces: stored.prompt, baseline },
 			tools: new Map(stored.tools.map((tool) => [tool.name, tool])),
 		};
@@ -1196,6 +1194,7 @@ export class AgentSession {
 				await this.agent.continue();
 			}
 		} finally {
+			this._runSystemPromptOptions = undefined;
 			this._flushPendingBashMessages();
 			this._flushPendingCustomMessages();
 			await this._emitAgentSettled();
@@ -1377,6 +1376,7 @@ export class AgentSession {
 				});
 			}
 			const updateMessage = this._preparePromptAndToolLoadout(result.systemPromptOptions);
+			this._runSystemPromptOptions = result.systemPromptOptions;
 			if (updateMessage) messages.push(updateMessage);
 		} catch (error) {
 			preflightResult?.(false);
