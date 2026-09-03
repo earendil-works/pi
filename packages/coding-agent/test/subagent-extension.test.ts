@@ -116,6 +116,7 @@ function createContext(cwd: string): ExtensionContext {
 		hasUI: false,
 		model: { provider: "test", id: "dispatch-alias" },
 		thinkingLevel: "high",
+		isProjectTrusted: () => false,
 	} as unknown as ExtensionContext;
 }
 

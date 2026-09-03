@@ -109,6 +109,15 @@ function getToolCall(output: AssistantMessage): ToolCall {
 	return block;
 }
 
+describe("OpenAI Responses terminal messages", () => {
+	it("omits an absent error message", async () => {
+		const output = createOutput();
+		await processResponsesStream(createFunctionCallEvents(), output, new AssistantMessageEventStream(), model);
+
+		expect(output).not.toHaveProperty("errorMessage");
+	});
+});
+
 describe("OpenAI Responses tool-call namespaces", () => {
 	it("round-trips a function namespace received only on output_item.done", async () => {
 		const output = createOutput();

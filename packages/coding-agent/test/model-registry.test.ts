@@ -11,6 +11,7 @@ import type {
 import { getApiProvider, getSupportedThinkingLevels } from "@earendil-works/pi-ai/compat";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
+import type { ModelsJsonProvider } from "../src/core/model-config.ts";
 import { clearApiKeyCache, type ModelRegistry, type ProviderConfigInput } from "../src/core/model-registry.ts";
 
 import { createModelRegistry } from "./model-runtime-test-utils.ts";
@@ -765,6 +766,26 @@ describe("ModelRegistry", () => {
 			const sonnet = models.find((m) => m.id === "anthropic/claude-sonnet-4");
 			const compat = sonnet?.compat as OpenAICompletionsCompat | undefined;
 			expect(compat?.openRouterRouting).toEqual({ only: ["amazon-bedrock"] });
+		});
+
+		test("supportsFinishReason can be configured at provider and model levels", async () => {
+			const provider: ModelsJsonProvider = {
+				compat: { supportsFinishReason: true },
+				modelOverrides: {
+					"anthropic/claude-sonnet-4": {
+						compat: { supportsFinishReason: false },
+					},
+				},
+			};
+			writeRawModelsJson({ openrouter: provider });
+
+			const registry = await createModelRegistry(authStorage, modelsJsonPath);
+			const models = getModelsForProvider(registry, "openrouter");
+			const sonnet = models.find((model) => model.id === "anthropic/claude-sonnet-4");
+			const opus = models.find((model) => model.id === "anthropic/claude-opus-4");
+
+			expect((sonnet?.compat as OpenAICompletionsCompat | undefined)?.supportsFinishReason).toBe(false);
+			expect((opus?.compat as OpenAICompletionsCompat | undefined)?.supportsFinishReason).toBe(true);
 		});
 
 		test("model override deep merges compat settings", async () => {

@@ -42,6 +42,8 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 
 	const contextFiles = providedContextFiles ?? [];
 	const skills = providedSkills ?? [];
+	const tools = selectedTools || ["read", "bash", "edit", "write"];
+	const skillFileReadTool = (["read", "bash"] as const).find((tool) => tools.includes(tool));
 
 	if (customPrompt) {
 		let prompt = customPrompt;
@@ -60,10 +62,9 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 			prompt += "</project_context>\n";
 		}
 
-		// Append skills section (only if read tool is available)
-		const customPromptHasRead = !selectedTools || selectedTools.includes("read");
-		if (customPromptHasRead && skills.length > 0) {
-			prompt += formatSkillsForPrompt(skills);
+		// Append skills when a tool capable of reading their files is available.
+		if (skillFileReadTool && skills.length > 0) {
+			prompt += formatSkillsForPrompt(skills, skillFileReadTool);
 		}
 
 		prompt += `\nCurrent working directory: ${promptCwd}\n`;
@@ -78,7 +79,6 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 
 	// Build tools list based on selected tools.
 	// A tool appears in Available tools only when the caller provides a one-line snippet.
-	const tools = selectedTools || ["read", "bash", "edit", "write"];
 	const visibleTools = tools.filter((name) => !!toolSnippets?.[name]);
 	const toolsList =
 		visibleTools.length > 0 ? visibleTools.map((name) => `- ${name}: ${toolSnippets![name]}`).join("\n") : "(none)";
@@ -95,14 +95,20 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 	};
 
 	const hasBash = tools.includes("bash");
+	const hasPowerShell = tools.includes("powershell");
 	const hasGrep = tools.includes("grep");
 	const hasFind = tools.includes("find");
 	const hasLs = tools.includes("ls");
-	const hasRead = tools.includes("read");
 
 	// File exploration guidelines
-	if (hasBash && !hasGrep && !hasFind && !hasLs) {
-		addGuideline("Use bash for file operations like ls, rg, find");
+	if ((hasBash || hasPowerShell) && !hasGrep && !hasFind && !hasLs) {
+		if (hasBash && hasPowerShell) {
+			addGuideline("Use bash or PowerShell for file operations like listing, searching, and finding files");
+		} else if (hasPowerShell) {
+			addGuideline("Use PowerShell for file operations like listing, searching, and finding files");
+		} else {
+			addGuideline("Use bash for file operations like ls, rg, find");
+		}
 	}
 
 	for (const guideline of promptGuidelines ?? []) {
@@ -151,9 +157,9 @@ Pi documentation (read only when the user asks about pi itself, its SDK, extensi
 		prompt += "</project_context>\n";
 	}
 
-	// Append skills section (only if read tool is available)
-	if (hasRead && skills.length > 0) {
-		prompt += formatSkillsForPrompt(skills);
+	// Append skills when a tool capable of reading their files is available.
+	if (skillFileReadTool && skills.length > 0) {
+		prompt += formatSkillsForPrompt(skills, skillFileReadTool);
 	}
 
 	prompt += `\nCurrent working directory: ${promptCwd}`;

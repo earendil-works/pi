@@ -2,6 +2,32 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed proxied assistant responses dropping persisted provider-native thinking levels.
+- Fixed the write tool reporting UTF-16 code-unit counts as byte counts by removing the misleading count ([#8979](https://github.com/earendil-works/pi/issues/8979)).
+
+## [0.84.4] - 2026-08-28
+
+### Breaking Changes
+
+- Changed `prepareNextTurn` and `prepareNextTurnWithContext` to run only after `shouldStopAfterTurn` and queued-message checks determine that the agent loop will start another assistant turn. They no longer run after final or terminating turns; move end-of-run work to `agent_end` handling ([#6879](https://github.com/earendil-works/pi/issues/6879)).
+
+### Fixed
+
+- Fixed Windows `NodeExecutionEnv` aborts crashing when `taskkill.exe` is unavailable on `PATH` ([#6596](https://github.com/earendil-works/pi/issues/6596)).
+
+### Removed
+
+- Removed the withdrawn manual-drive configuration, action inspection methods, action outcomes, and snapshot action field from `AgentHarness`.
+
+## [0.84.3] - 2026-08-24
+
+### Fixed
+
+- Fixed single-object `edit` tool inputs failing validation by accepting them as one-edit arrays ([#7835](https://github.com/earendil-works/pi/issues/7835)).
+- Fixed root Markdown files such as `README.md` and `AGENTS.md` in skill directories being reported as broken skills unless they declare valid skill frontmatter ([#7805](https://github.com/earendil-works/pi/issues/7805)).
+
 ## [0.84.2] - 2026-08-14
 
 ### Fixed

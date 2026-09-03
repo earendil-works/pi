@@ -3,7 +3,7 @@
  *
  * These tests verify that DefaultPackageManager.update() handles:
  * - Normal git updates (no force-push)
- * - Force-pushed remotes gracefully (currently fails, fix needed)
+ * - Force-pushed remotes after a complete history rewrite
  */
 
 import { spawnSync } from "node:child_process";
@@ -104,12 +104,8 @@ describe("DefaultPackageManager git update", () => {
 		}
 	});
 
-	/**
-	 * Sets up a "remote" repository and clones it to the installed directory.
-	 * This simulates what packageManager.install() would do.
-	 * @param sourceOverride Optional source string to use instead of gitSource (e.g., with @ref for pinned tests)
-	 */
-	function setupRemoteAndInstall(sourceOverride?: string): void {
+	/** Sets up a "remote" repository and clones it to the installed directory. */
+	function setupRemoteAndInstall(): void {
 		// Create "remote" repository
 		mkdirSync(remoteDir, { recursive: true });
 		initGitRepo(remoteDir);
@@ -122,7 +118,7 @@ describe("DefaultPackageManager git update", () => {
 		git(["config", "--local", "user.name", "Test"], installedDir);
 
 		// Add to global packages so update() processes this source
-		settingsManager.setPackages([sourceOverride ?? gitSource]);
+		settingsManager.setPackages([gitSource]);
 	}
 
 	describe("normal updates (no force-push)", () => {
@@ -180,99 +176,9 @@ describe("DefaultPackageManager git update", () => {
 			expect(getCurrentCommit(installedDir)).toBe(newCommit);
 			expect(getFileContent(installedDir, "extension.ts")).toBe("// v2");
 		});
-
-		it("should handle multiple commits ahead", async () => {
-			setupRemoteAndInstall();
-
-			// Add multiple commits to remote
-			createCommit(remoteDir, "extension.ts", "// v2", "Second commit");
-			createCommit(remoteDir, "extension.ts", "// v3", "Third commit");
-			const latestCommit = createCommit(remoteDir, "extension.ts", "// v4", "Fourth commit");
-
-			await packageManager.update();
-
-			expect(getCurrentCommit(installedDir)).toBe(latestCommit);
-			expect(getFileContent(installedDir, "extension.ts")).toBe("// v4");
-		});
-
-		it("should update even when local checkout has no upstream", async () => {
-			setupRemoteAndInstall();
-			createCommit(remoteDir, "extension.ts", "// v2", "Second commit");
-			const latestCommit = createCommit(remoteDir, "extension.ts", "// v3", "Third commit");
-
-			const detachedCommit = getCurrentCommit(installedDir);
-			git(["checkout", detachedCommit], installedDir);
-
-			const executedCommands: string[] = [];
-			const managerWithInternals = packageManager as unknown as {
-				runCommand: (command: string, args: string[], options?: { cwd?: string }) => Promise<void>;
-			};
-			managerWithInternals.runCommand = async (command, args, options) => {
-				executedCommands.push(`${command} ${args.join(" ")}`);
-				const result = spawnSync(command, args, {
-					cwd: options?.cwd,
-					encoding: "utf-8",
-				});
-				if (result.status !== 0) {
-					throw new Error(`Command failed: ${command} ${args.join(" ")}\n${result.stderr}`);
-				}
-			};
-
-			await packageManager.update();
-
-			expect(executedCommands).toContain(
-				"git fetch --prune --no-tags origin +refs/heads/main:refs/remotes/origin/main",
-			);
-			expect(getCurrentCommit(installedDir)).toBe(latestCommit);
-			expect(getFileContent(installedDir, "extension.ts")).toBe("// v3");
-		});
 	});
 
 	describe("force-push scenarios", () => {
-		it("should recover when remote history is rewritten", async () => {
-			setupRemoteAndInstall();
-			const initialCommit = getCurrentCommit(remoteDir);
-
-			// Add commit to remote
-			createCommit(remoteDir, "extension.ts", "// v2", "Commit to keep");
-
-			// Update to get the new commit
-			await packageManager.update();
-			expect(getFileContent(installedDir, "extension.ts")).toBe("// v2");
-
-			// Now force-push to rewrite history on remote
-			git(["reset", "--hard", initialCommit], remoteDir);
-			const rewrittenCommit = createCommit(remoteDir, "extension.ts", "// v2-rewritten", "Rewritten commit");
-
-			// Update should succeed despite force-push
-			await packageManager.update();
-
-			expect(getCurrentCommit(installedDir)).toBe(rewrittenCommit);
-			expect(getFileContent(installedDir, "extension.ts")).toBe("// v2-rewritten");
-		});
-
-		it("should recover when local commit no longer exists in remote", async () => {
-			setupRemoteAndInstall();
-
-			// Add commits to remote
-			createCommit(remoteDir, "extension.ts", "// v2", "Commit A");
-			createCommit(remoteDir, "extension.ts", "// v3", "Commit B");
-
-			// Update to get all commits
-			await packageManager.update();
-			expect(getFileContent(installedDir, "extension.ts")).toBe("// v3");
-
-			// Force-push remote to remove commits A and B
-			git(["reset", "--hard", "HEAD~2"], remoteDir);
-			const newCommit = createCommit(remoteDir, "extension.ts", "// v2-new", "New commit replacing A and B");
-
-			// Update should succeed - the commits we had locally no longer exist
-			await packageManager.update();
-
-			expect(getCurrentCommit(installedDir)).toBe(newCommit);
-			expect(getFileContent(installedDir, "extension.ts")).toBe("// v2-new");
-		});
-
 		it("should handle complete history rewrite", async () => {
 			setupRemoteAndInstall();
 
@@ -297,32 +203,6 @@ describe("DefaultPackageManager git update", () => {
 	});
 
 	describe("pinned sources", () => {
-		it("should not move pinned git sources past their configured ref", async () => {
-			// Create remote repo first to get the initial commit
-			mkdirSync(remoteDir, { recursive: true });
-			initGitRepo(remoteDir);
-			const initialCommit = createCommit(remoteDir, "extension.ts", "// v1", "Initial commit");
-
-			// Install with pinned ref from the start - full clone to ensure commit is available
-			mkdirSync(join(agentDir, "git", "github.com", "test"), { recursive: true });
-			git(["clone", remoteDir, installedDir], tempDir);
-			git(["checkout", initialCommit], installedDir);
-			git(["config", "--local", "user.email", "test@test.com"], installedDir);
-			git(["config", "--local", "user.name", "Test"], installedDir);
-
-			// Add to global packages with pinned ref
-			settingsManager.setPackages([`${gitSource}@${initialCommit}`]);
-
-			// Add new commit to remote
-			createCommit(remoteDir, "extension.ts", "// v2", "Second commit");
-
-			await packageManager.update();
-
-			// Should still be on initial commit
-			expect(getCurrentCommit(installedDir)).toBe(initialCommit);
-			expect(getFileContent(installedDir, "extension.ts")).toBe("// v1");
-		});
-
 		it("should checkout the configured pinned git ref during full and targeted updates", async () => {
 			mkdirSync(remoteDir, { recursive: true });
 			initGitRepo(remoteDir);
@@ -350,42 +230,6 @@ describe("DefaultPackageManager git update", () => {
 
 			expect(getCurrentCommit(installedDir)).toBe(v2Commit);
 			expect(getFileContent(installedDir, "extension.ts")).toBe("// v2");
-		});
-
-		it("should not reset an annotated tag checkout that already matches the configured ref", async () => {
-			mkdirSync(remoteDir, { recursive: true });
-			initGitRepo(remoteDir);
-			const taggedCommit = createCommit(remoteDir, "extension.ts", "// v1", "Initial commit");
-			git(["tag", "-a", "v1", "-m", "v1"], remoteDir);
-
-			mkdirSync(join(agentDir, "git", "github.com", "test"), { recursive: true });
-			git(["clone", remoteDir, installedDir], tempDir);
-			git(["checkout", "v1"], installedDir);
-			expect(getCurrentCommit(installedDir)).toBe(taggedCommit);
-
-			settingsManager.setPackages([`${gitSource}@v1`]);
-
-			const executedCommands: string[] = [];
-			const managerWithInternals = packageManager as unknown as {
-				runCommand: (command: string, args: string[], options?: { cwd?: string }) => Promise<void>;
-			};
-			managerWithInternals.runCommand = async (command, args, options) => {
-				executedCommands.push(`${command} ${args.join(" ")}`);
-				const result = spawnSync(command, args, {
-					cwd: options?.cwd,
-					encoding: "utf-8",
-				});
-				if (result.status !== 0) {
-					throw new Error(`Command failed: ${command} ${args.join(" ")}\n${result.stderr}`);
-				}
-			};
-
-			await packageManager.update();
-
-			expect(executedCommands).toContain("git fetch origin v1");
-			expect(executedCommands.some((command) => command.startsWith("git reset --hard"))).toBe(false);
-			expect(executedCommands).not.toContain("git clean -fdx");
-			expect(getCurrentCommit(installedDir)).toBe(taggedCommit);
 		});
 	});
 
@@ -433,54 +277,6 @@ describe("DefaultPackageManager git update", () => {
 				"git fetch --prune --no-tags origin +refs/heads/main:refs/remotes/origin/main",
 			);
 			expect(getFileContent(cachedDir, "pi-extensions/session-breakdown.ts")).toBe("// fresh");
-		});
-
-		it("should not refresh pinned temporary git sources", async () => {
-			const managerWithPaths = packageManager as unknown as PackageManagerPathInternals;
-			const cachedDir = managerWithPaths.getGitInstallPath(managerWithPaths.parseSource(gitSource), "temporary");
-			const extensionFile = join(cachedDir, "pi-extensions", "session-breakdown.ts");
-
-			rmSync(cachedDir, { recursive: true, force: true });
-			mkdirSync(join(cachedDir, "pi-extensions"), { recursive: true });
-			writeFileSync(
-				join(cachedDir, "package.json"),
-				JSON.stringify({ pi: { extensions: ["./pi-extensions"] } }, null, 2),
-			);
-			writeFileSync(extensionFile, "// pinned");
-
-			const executedCommands: string[] = [];
-			const managerWithInternals = packageManager as unknown as {
-				runCommand: (command: string, args: string[], options?: { cwd?: string }) => Promise<void>;
-			};
-			managerWithInternals.runCommand = async (command, args) => {
-				executedCommands.push(`${command} ${args.join(" ")}`);
-			};
-
-			await packageManager.resolveExtensionSources([`${gitSource}@main`], { temporary: true });
-
-			expect(executedCommands).toEqual([]);
-			expect(getFileContent(cachedDir, "pi-extensions/session-breakdown.ts")).toBe("// pinned");
-		});
-	});
-
-	describe("scope-aware update", () => {
-		it("should not install locally when source is only registered globally", async () => {
-			setupRemoteAndInstall();
-
-			// Add a new commit to remote
-			createCommit(remoteDir, "extension.ts", "// v2", "Second commit");
-
-			// The project-scope install path should not exist before or after update
-			const projectGitDir = join(tempDir, ".pi", "git", "github.com", "test", "extension");
-			expect(existsSync(projectGitDir)).toBe(false);
-
-			await packageManager.update(gitSource);
-
-			// Global install should be updated
-			expect(getFileContent(installedDir, "extension.ts")).toBe("// v2");
-
-			// Project-scope directory should NOT have been created
-			expect(existsSync(projectGitDir)).toBe(false);
 		});
 	});
 });

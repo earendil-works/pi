@@ -1,4 +1,5 @@
 import { parse } from "yaml";
+import { stripBom } from "./text.ts";
 
 type ParsedFrontmatter<T extends Record<string, unknown>> = {
 	frontmatter: T;
@@ -8,7 +9,7 @@ type ParsedFrontmatter<T extends Record<string, unknown>> = {
 const normalizeNewlines = (value: string): string => value.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
 
 const extractFrontmatter = (content: string): { yamlString: string | null; body: string } => {
-	const normalized = normalizeNewlines(content);
+	const normalized = normalizeNewlines(stripBom(content));
 
 	if (!normalized.startsWith("---")) {
 		return { yamlString: null, body: normalized };

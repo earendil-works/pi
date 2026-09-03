@@ -221,6 +221,14 @@ export class RpcClient {
 	}
 
 	/**
+	 * Clear queued steering and follow-up messages, returning their text.
+	 */
+	async clearQueue(): Promise<{ steering: string[]; followUp: string[] }> {
+		const response = await this.send({ type: "clear_queue" });
+		return this.getData(response);
+	}
+
+	/**
 	 * Start a new session, optionally with parent tracking.
 	 * @param parentSession - Optional parent session path for lineage tracking
 	 * @returns Object with `cancelled: true` if an extension cancelled the new session

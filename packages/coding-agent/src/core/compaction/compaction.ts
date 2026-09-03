@@ -497,9 +497,7 @@ Use this EXACT format:
 
 Keep each section concise. Preserve exact file paths, function names, and error messages.`;
 
-const UPDATE_SUMMARIZATION_PROMPT = `The messages above are NEW conversation messages to incorporate into the existing summary provided in <previous-summary> tags.
-
-Update the existing structured summary with new information. RULES:
+const UPDATE_SUMMARIZATION_INSTRUCTIONS = `Update the existing structured summary with new information. RULES:
 - PRESERVE all existing information from the previous summary
 - ADD new progress, decisions, and context from the new messages
 - UPDATE the Progress section: move items from "In Progress" to "Done" when completed
@@ -535,6 +533,24 @@ Use this EXACT format:
 - [Preserve important context, add new if needed]
 
 Keep each section concise. Preserve exact file paths, function names, and error messages.`;
+
+const UPDATE_SUMMARIZATION_PROMPT = `The messages above are NEW conversation messages to incorporate into the existing summary provided in <previous-summary> tags.
+
+${UPDATE_SUMMARIZATION_INSTRUCTIONS}`;
+
+/**
+ * Returns an error message when a summarization response cannot safely be persisted.
+ * A length stop contains partial text and must not become a session checkpoint.
+ */
+export function getSummarizationFailure(response: AssistantMessage, label: string): string | undefined {
+	if (response.stopReason === "error") {
+		return `${label} failed: ${response.errorMessage || "Unknown error"}`;
+	}
+	if (response.stopReason === "length") {
+		return `${label} failed: generation hit the token cap and the summary is incomplete`;
+	}
+	return undefined;
+}
 
 function createSummarizationOptions(
 	model: Model<any>,
@@ -622,6 +638,20 @@ export async function generateSummary(
 	).text;
 }
 
+/** Build the provider context for a standalone summary request. */
+function buildSummarizationContext(promptText: string): Context {
+	return {
+		systemPrompt: SUMMARIZATION_SYSTEM_PROMPT,
+		messages: [
+			{
+				role: "user",
+				content: [{ type: "text", text: promptText }],
+				timestamp: Date.now(),
+			},
+		],
+	};
+}
+
 /** Generate or update a conversation summary and return its provider usage. */
 export async function generateSummaryWithUsage(
 	currentMessages: AgentMessage[],
@@ -662,14 +692,6 @@ export async function generateSummaryWithUsage(
 	}
 	promptText += basePrompt;
 
-	const summarizationMessages = [
-		{
-			role: "user" as const,
-			content: [{ type: "text" as const, text: promptText }],
-			timestamp: Date.now(),
-		},
-	];
-
 	const completionOptions = createSummarizationOptions(
 		model,
 		maxTokens,
@@ -683,15 +705,19 @@ export async function generateSummaryWithUsage(
 
 	const response = await completeSummarization(
 		model,
-		{ systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, messages: summarizationMessages },
+		buildSummarizationContext(promptText),
 		completionOptions,
 		streamFn,
 		retry,
 		callbacks,
 	);
 
-	if (response.stopReason === "error") {
-		throw new Error(`Summarization failed: ${response.errorMessage || "Unknown error"}`);
+	const failure = getSummarizationFailure(response, "Summarization");
+	if (failure) {
+		throw new Error(failure);
+	}
+	if (response.content.some((block) => block.type === "toolCall")) {
+		throw new Error("Summarization attempted to call a tool");
 	}
 
 	const textContent = contentText(response.content);
@@ -961,25 +987,22 @@ async function generateTurnPrefixSummary(
 	const llmMessages = convertToLlm(messages);
 	const conversationText = serializeConversation(llmMessages);
 	const promptText = `<conversation>\n${conversationText}\n</conversation>\n\n${TURN_PREFIX_SUMMARIZATION_PROMPT}`;
-	const summarizationMessages = [
-		{
-			role: "user" as const,
-			content: [{ type: "text" as const, text: promptText }],
-			timestamp: Date.now(),
-		},
-	];
 
 	const response = await completeSummarization(
 		model,
-		{ systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, messages: summarizationMessages },
+		buildSummarizationContext(promptText),
 		createSummarizationOptions(model, maxTokens, apiKey, headers, env, signal, thinkingLevel, sessionId),
 		streamFn,
 		retry,
 		callbacks,
 	);
 
-	if (response.stopReason === "error") {
-		throw new Error(`Turn prefix summarization failed: ${response.errorMessage || "Unknown error"}`);
+	const failure = getSummarizationFailure(response, "Turn prefix summarization");
+	if (failure) {
+		throw new Error(failure);
+	}
+	if (response.content.some((block) => block.type === "toolCall")) {
+		throw new Error("Turn prefix summarization attempted to call a tool");
 	}
 
 	return {

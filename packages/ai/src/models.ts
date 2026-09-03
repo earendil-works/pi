@@ -214,6 +214,11 @@ export interface Models {
 
 	streamSimple(model: Model<Api>, context: Context, options?: ModelsSimpleStreamOptions): AssistantMessageEventStream;
 	completeSimple(model: Model<Api>, context: Context, options?: ModelsSimpleStreamOptions): Promise<AssistantMessage>;
+	streamDeferred(
+		model: Model<Api>,
+		handle: DeferredHandle,
+		options?: ModelsDeferredFetchOptions,
+	): AssistantMessageEventStream;
 	fetchDeferred(
 		model: Model<Api>,
 		handle: DeferredHandle,
@@ -703,11 +708,11 @@ class ModelsImpl implements MutableModels {
 		return this.streamSimple(model, context, options).result();
 	}
 
-	async fetchDeferred(
+	streamDeferred(
 		model: Model<Api>,
 		handle: DeferredHandle,
 		options?: ModelsDeferredFetchOptions,
-	): Promise<AssistantMessage> {
+	): AssistantMessageEventStream {
 		return lazyStream(model, async () => {
 			const provider = this.requireProvider(model);
 			if (!provider.fetchDeferred) {
@@ -715,7 +720,15 @@ class ModelsImpl implements MutableModels {
 			}
 			const { requestModel, requestOptions } = await this.applyAuth(model, options);
 			return provider.fetchDeferred(requestModel, handle, requestOptions as DeferredFetchOptions);
-		}).result();
+		});
+	}
+
+	async fetchDeferred(
+		model: Model<Api>,
+		handle: DeferredHandle,
+		options?: ModelsDeferredFetchOptions,
+	): Promise<AssistantMessage> {
+		return this.streamDeferred(model, handle, options).result();
 	}
 
 	async cancelDeferred(

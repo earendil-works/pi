@@ -60,6 +60,7 @@ const TEXT_MODELS = [
 const INDIVIDUAL_TEXT_MODELS = [
 	"deepseek-v4-flash-0731",
 	"deepseek-v4-pro",
+	"deepseek-v4-pro-0813",
 	"glm-5.2",
 	"qwen3.6-flash",
 	"qwen3.7-max",
@@ -102,7 +103,7 @@ const QWEN_REASONING_EFFORT_MODEL_CASES: QwenTokenPlanModelCase[] = [
 	...(["qwen-token-plan", "qwen-token-plan-cn"] as const).flatMap((provider) =>
 		QWEN_REASONING_EFFORT_MODELS.map((modelId) => ({ provider, modelId })),
 	),
-	...["deepseek-v4-flash-0731", "deepseek-v4-pro", "glm-5.2"].map((modelId) => ({
+	...["deepseek-v4-flash-0731", "deepseek-v4-pro", "deepseek-v4-pro-0813", "glm-5.2"].map((modelId) => ({
 		provider: "qwen-token-plan-individual" as const,
 		modelId,
 	})),

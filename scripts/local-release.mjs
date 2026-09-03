@@ -6,6 +6,7 @@ import { isAbsolute, join, relative, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 
 const packages = [
+	{ directory: "packages/chord", name: "@earendil-works/chord" },
 	{ directory: "packages/telemetry", name: "@earendil-works/pi-telemetry" },
 	{ directory: "packages/ai", name: "@earendil-works/pi-ai" },
 	{ directory: "packages/tui", name: "@earendil-works/pi-tui" },

@@ -665,7 +665,12 @@ export default function (pi: ExtensionAPI) {
 			);
 			const resolvedSingle = params.agent ? resolveAgent(ctx.cwd, agentScope, params.agent, params.cwd) : undefined;
 
-			if ((agentScope === "project" || agentScope === "both") && confirmProjectAgents && ctx.hasUI) {
+			if (
+				(agentScope === "project" || agentScope === "both") &&
+				confirmProjectAgents &&
+				ctx.hasUI &&
+				!ctx.isProjectTrusted()
+			) {
 				let selectedAgents: ResolvedAgent[] = [];
 				if (hasChain) selectedAgents = resolvedChain;
 				else if (hasTasks) selectedAgents = resolvedTasks;

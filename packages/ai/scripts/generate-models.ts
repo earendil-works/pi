@@ -5,6 +5,10 @@ import { dirname, join, resolve } from "path";
 import { fileURLToPath } from "url";
 import { getEffortThinkingLevelMap, type ModelsDevReasoningOption } from "./models-dev-reasoning-options.ts";
 import {
+	getOpenRouterThinkingLevelMap,
+	type OpenRouterReasoningMetadata,
+} from "./openrouter-reasoning-options.ts";
+import {
 	CLOUDFLARE_AI_GATEWAY_ANTHROPIC_BASE_URL,
 	CLOUDFLARE_AI_GATEWAY_COMPAT_BASE_URL,
 	CLOUDFLARE_AI_GATEWAY_OPENAI_BASE_URL,
@@ -127,6 +131,25 @@ interface NvidiaNimModelListItem {
 	id: string;
 }
 
+interface OpenRouterModelListItem {
+	id: string;
+	name: string;
+	supported_parameters?: string[];
+	architecture?: { modality?: string };
+	pricing?: {
+		prompt?: string;
+		completion?: string;
+		input_cache_read?: string;
+		input_cache_write?: string;
+	};
+	top_provider?: {
+		context_length?: number;
+		max_completion_tokens?: number;
+	};
+	context_length?: number;
+	reasoning?: OpenRouterReasoningMetadata;
+}
+
 interface AiGatewayModel {
 	id: string;
 	name?: string;
@@ -235,13 +258,6 @@ const NVIDIA_NIM_UNSUPPORTED_MODELS = new Set([
 	"upstage/solar-10.7b-instruct",
 ]);
 const ZAI_TOOL_STREAM_UNSUPPORTED_MODELS = new Set(["glm-4.5", "glm-4.5-air", "glm-4.5-flash", "glm-4.5v"]);
-const ZAI_GLM52_THINKING_LEVEL_MAP = {
-	minimal: null,
-	low: "high",
-	medium: "high",
-	high: "high",
-	max: "max",
-} as const;
 const OPENCODE_GO_GLM52_THINKING_LEVEL_MAP = {
 	off: null,
 	minimal: null,
@@ -255,6 +271,10 @@ const EAGER_TOOL_INPUT_STREAMING_UNSUPPORTED_ANTHROPIC_MODELS = new Set([
 	"github-copilot:claude-sonnet-4",
 	"github-copilot:claude-sonnet-4.5",
 ]);
+const ANTHROPIC_ALLOWED_FALLBACK_MODELS = {
+	"claude-fable-5": ["claude-opus-4-8", "claude-opus-5"],
+	"claude-opus-5": ["claude-opus-4-8"],
+} satisfies Record<string, string[]>;
 
 const DEEPSEEK_V4_THINKING_LEVEL_MAP = {
 	minimal: null,
@@ -307,6 +327,7 @@ const QWEN_TOKEN_PLAN_PROVIDER_IDS = new Set<string>([
 const QWEN_TOKEN_PLAN_INDIVIDUAL_MODEL_IDS = new Set<string>([
 	"deepseek-v4-flash-0731",
 	"deepseek-v4-pro",
+	"deepseek-v4-pro-0813",
 	"glm-5.2",
 	"qwen3.6-flash",
 	"qwen3.7-max",
@@ -538,6 +559,16 @@ function isGoogleThinkingApi(model: Model<any>): boolean {
 	return model.api === "google-generative-ai" || model.api === "google-vertex";
 }
 
+const VERIFIED_ANTHROPIC_MID_CONVO_EFFORT_PROVIDERS = new Set(["anthropic", "openrouter"]);
+
+function supportsAnthropicMidConvoEffort(modelId: string): boolean {
+	const id = modelId.toLowerCase().replace(/^~?anthropic\//, "");
+	return (
+		/^claude-opus-5(?:-\d{8})?$/.test(id) ||
+		/^claude-(?:fable|mythos)-5(?:[.-]1)(?:-\d{8})?$/.test(id)
+	);
+}
+
 function isAnthropicAdaptiveThinkingModel(modelId: string): boolean {
 	return (
 		modelId.includes("opus-4-6") ||
@@ -552,7 +583,8 @@ function isAnthropicAdaptiveThinkingModel(modelId: string): boolean {
 		modelId.includes("sonnet-4.6") ||
 		modelId.includes("sonnet-5") ||
 		modelId.includes("sonnet.5") ||
-		modelId.includes("fable-5")
+		modelId.includes("fable-5") ||
+		modelId.includes("mythos-5")
 	);
 }
 
@@ -589,7 +621,12 @@ const OPENAI_COMPLETIONS_DEFAULT_COMPAT = {
 	supportsOpenAIGrammarTools: false,
 	sendSessionAffinityHeaders: false,
 	supportsLongCacheRetention: true,
-} satisfies Required<Omit<OpenAICompletionsCompat, "cacheControlFormat" | "deferredToolsMode">> & {
+} satisfies Required<
+	Omit<
+		OpenAICompletionsCompat,
+		"cacheControlFormat" | "deferredToolsMode" | "supportsThinkingTokenBudget" | "thinkingTokenBudgetField"
+	>
+> & {
 	cacheControlFormat?: OpenAICompletionsCompat["cacheControlFormat"];
 	deferredToolsMode?: OpenAICompletionsCompat["deferredToolsMode"];
 };
@@ -723,6 +760,44 @@ function applyOpenAICompletionsCompatMetadata(model: Model<Api>): void {
 	model.compat = { ...detected, ...(model.compat as OpenAICompletionsCompat | undefined) };
 	if (Object.keys(model.compat).length === 0) {
 		delete model.compat;
+	}
+}
+
+function applyAnthropicMessagesCompatMetadata(model: Model<Api>): void {
+	if (model.api !== "anthropic-messages") return;
+	const compat = getAnthropicMessagesCompat(model.provider, model.id);
+	if (compat) {
+		mergeAnthropicMessagesCompat(model, compat);
+		if (compat.supportsMidConvoEffort) mergeThinkingLevelMap(model, { off: null });
+	}
+}
+
+function isAnthropicFallbackMetadataModel(model: Model<Api>): model is Model<"anthropic-messages"> {
+	if (model.provider !== "anthropic" || model.api !== "anthropic-messages") return false;
+	return (
+		model.id in ANTHROPIC_ALLOWED_FALLBACK_MODELS ||
+		Object.values(ANTHROPIC_ALLOWED_FALLBACK_MODELS).some((fallbackModelIds) => fallbackModelIds.includes(model.id))
+	);
+}
+
+function applyAnthropicAllowedFallbackModelMetadata(models: readonly Model<"anthropic-messages">[]): void {
+	const modelsById = new Map(models.map((model) => [model.id, model]));
+	for (const [modelId, fallbackModelIds] of Object.entries(ANTHROPIC_ALLOWED_FALLBACK_MODELS)) {
+		const model = modelsById.get(modelId);
+		if (!model) continue;
+
+		const compatibleFallbackModelIds = model.compat?.supportsMidConvoEffort
+			? fallbackModelIds.filter(supportsAnthropicMidConvoEffort)
+			: fallbackModelIds;
+		const allowedFallbackModels = compatibleFallbackModelIds.flatMap((fallbackModelId) => {
+			const fallbackModel = modelsById.get(fallbackModelId);
+			return fallbackModel
+				? [{ provider: fallbackModel.provider, model: fallbackModel.id, cost: fallbackModel.cost }]
+				: [];
+		});
+		if (allowedFallbackModels.length > 0) {
+			mergeAnthropicMessagesCompat(model, { allowedFallbackModels });
+		}
 	}
 }
 
@@ -940,6 +1015,12 @@ function applyThinkingLevelMetadata(model: Model<any>): void {
 
 function getAnthropicMessagesCompat(provider: string, modelId: string): AnthropicMessagesCompat | undefined {
 	const compat: AnthropicMessagesCompat = {};
+	if (
+		VERIFIED_ANTHROPIC_MID_CONVO_EFFORT_PROVIDERS.has(provider) &&
+		supportsAnthropicMidConvoEffort(modelId)
+	) {
+		compat.supportsMidConvoEffort = true;
+	}
 	if (EAGER_TOOL_INPUT_STREAMING_UNSUPPORTED_ANTHROPIC_MODELS.has(`${provider}:${modelId}`)) {
 		compat.supportsEagerToolInputStreaming = false;
 	}
@@ -1014,11 +1095,11 @@ async function fetchOpenRouterModels(): Promise<Model<any>[]> {
 		console.log("Fetching models from OpenRouter API...");
 		const response = await fetch("https://openrouter.ai/api/v1/models");
 		if (!response.ok) throw new Error(`OpenRouter API returned ${response.status}`);
-		const data = await response.json();
+		const data = (await response.json()) as { data?: OpenRouterModelListItem[] };
 
 		const models: Model<any>[] = [];
 
-		for (const model of data.data) {
+		for (const model of data.data ?? []) {
 			// Only include models that support tools
 			if (!model.supported_parameters?.includes("tools")) continue;
 
@@ -1041,14 +1122,17 @@ async function fetchOpenRouterModels(): Promise<Model<any>[]> {
 			const cacheWriteCost = roundCost(parseFloat(model.pricing?.input_cache_write || "0") * 1_000_000);
 
 			const contextWindow = model.top_provider?.context_length || model.context_length || 4096;
+			const thinkingLevelMap = getOpenRouterThinkingLevelMap(model.reasoning);
 
+			const useAnthropicMessages = /^anthropic\//.test(modelKey) && !modelKey.endsWith(":batch");
 			const normalizedModel: Model<any> = {
 				id: modelKey,
 				name: model.name,
-				api: "openai-completions",
-				baseUrl: "https://openrouter.ai/api/v1",
+				api: useAnthropicMessages ? "anthropic-messages" : "openai-completions",
+				baseUrl: useAnthropicMessages ? "https://openrouter.ai/api" : "https://openrouter.ai/api/v1",
 				provider,
 				reasoning: model.supported_parameters?.includes("reasoning") || false,
+				...(thinkingLevelMap && { thinkingLevelMap }),
 				input,
 				cost: {
 					input: inputCost,
@@ -1131,6 +1215,66 @@ async function fetchAiGatewayModels(): Promise<Model<any>[]> {
 	}
 }
 
+function processZaiModels(data: ModelsDevCatalog): Model<Api>[] {
+	const variants = [
+		{
+			source: "zai-coding-plan",
+			provider: "zai",
+			baseUrl: "https://api.z.ai/api/coding/paas/v4",
+		},
+		{
+			source: "zhipuai-coding-plan",
+			provider: "zai-coding-cn",
+			baseUrl: "https://open.bigmodel.cn/api/coding/paas/v4",
+		},
+	] as const;
+	const models: Model<Api>[] = [];
+
+	for (const { source, provider, baseUrl } of variants) {
+		for (const [modelId, model] of Object.entries(data[source]?.models ?? {})) {
+			const m = model as ModelsDevModel;
+			if (m.tool_call !== true) continue;
+			const supportsImage = m.modalities?.input?.includes("image");
+
+			const thinkingLevelMap = getEffortThinkingLevelMap(m.reasoning_options ?? []);
+			const isGlm52 = modelId === "glm-5.2" || modelId === "glm-5.2-highspeed";
+			if (thinkingLevelMap && isGlm52) {
+				thinkingLevelMap.off = "none";
+			}
+			const supportsReasoningEffort = thinkingLevelMap !== undefined;
+			const referenceCost = data.zai?.models[modelId]?.cost ?? m.cost;
+
+			models.push({
+				id: modelId,
+				name: m.name || modelId,
+				api: "openai-completions",
+				provider,
+				baseUrl,
+				reasoning: m.reasoning === true,
+				...(thinkingLevelMap ? { thinkingLevelMap } : {}),
+				input: supportsImage ? ["text", "image"] : ["text"],
+				cost: {
+					input: referenceCost?.input || 0,
+					output: referenceCost?.output || 0,
+					cacheRead: referenceCost?.cache_read || 0,
+					cacheWrite: referenceCost?.cache_write || 0,
+				},
+				compat: {
+					supportsDeveloperRole: false,
+					thinkingFormat: "zai",
+					...(supportsReasoningEffort ? { supportsReasoningEffort: true } : {}),
+					...(!ZAI_TOOL_STREAM_UNSUPPORTED_MODELS.has(modelId) ? { zaiToolStream: true } : {}),
+				},
+				contextWindow: m.limit?.context || 4096,
+				maxTokens: m.limit?.output || 4096,
+			});
+			recordModelsDevReasoningOptions(provider, modelId, m);
+		}
+	}
+
+	return models;
+}
+
 function processBasetenModels(provider: ModelsDevProvider | undefined): Model<Api>[] {
 	if (!provider?.models) return [];
 
@@ -1200,6 +1344,8 @@ function processBasetenModels(provider: ModelsDevProvider | undefined): Model<Ap
 			: supportsToggle
 				? toggleThinkingLevelMap
 				: getEffortThinkingLevelMap(reasoningOptions);
+		// Baseten's GLM-5.2 endpoints are text-only despite models.dev reporting image input.
+		const supportsImageInput = !isGlm52 && model.modalities?.input?.includes("image");
 
 		models.push({
 			id: modelId,
@@ -1209,7 +1355,7 @@ function processBasetenModels(provider: ModelsDevProvider | undefined): Model<Ap
 			baseUrl,
 			reasoning,
 			...(thinkingLevelMap ? { thinkingLevelMap } : {}),
-			input: model.modalities?.input?.includes("image") ? ["text", "image"] : ["text"],
+			input: supportsImageInput ? ["text", "image"] : ["text"],
 			cost: {
 				input: model.cost?.input || 0,
 				output: model.cost?.output || 0,
@@ -1270,7 +1416,7 @@ function processFireworksModels(provider: ModelsDevProvider | undefined): Model<
 			maxTokens: model.limit?.output || 4096,
 		};
 
-		if (modelId.includes("glm-5p2")) {
+		if (modelId.includes("glm-")) {
 			models.push({
 				...common,
 				api: "openai-completions",
@@ -1569,6 +1715,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 		}
 
 		// Process Cloudflare AI Gateway models
+		const cloudflareAIGatewayModelIds = new Set<string>();
 		if (data["cloudflare-ai-gateway"]?.models) {
 			for (const [prefixedId, model] of Object.entries(data["cloudflare-ai-gateway"].models)) {
 				const m = model as ModelsDevModel;
@@ -1603,6 +1750,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 				const compat =
 					upstream === "anthropic" || upstream === "workers-ai" ? { sendSessionAffinityHeaders: true } : undefined;
 
+				cloudflareAIGatewayModelIds.add(id);
 				models.push({
 					id,
 					name: m.name || id,
@@ -1620,6 +1768,41 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					contextWindow: m.limit?.context || 4096,
 					maxTokens: m.limit?.output || 4096,
 					...(compat ? { compat } : {}),
+				});
+				recordModelsDevReasoningOptions("cloudflare-ai-gateway", id, m);
+			}
+		}
+
+		// The gateway proxies Workers AI through its OpenAI-compatible /compat endpoint,
+		// but models.dev may omit or intermittently drop those `workers-ai/*` entries
+		// from the AI Gateway catalog. Mirror the Workers AI catalog under the documented
+		// prefix so the gateway keeps its OpenAI-compatible models stable.
+		if (data["cloudflare-workers-ai"]?.models) {
+			for (const [modelId, model] of Object.entries(data["cloudflare-workers-ai"].models)) {
+				const m = model as ModelsDevModel;
+				if (m.tool_call !== true) continue;
+
+				const id = `workers-ai/${modelId}`;
+				if (cloudflareAIGatewayModelIds.has(id)) continue;
+				cloudflareAIGatewayModelIds.add(id);
+
+				models.push({
+					id,
+					name: m.name || id,
+					api: "openai-completions",
+					provider: "cloudflare-ai-gateway",
+					baseUrl: CLOUDFLARE_AI_GATEWAY_COMPAT_BASE_URL,
+					reasoning: m.reasoning === true,
+					input: m.modalities?.input?.includes("image") ? ["text", "image"] : ["text"],
+					cost: {
+						input: m.cost?.input || 0,
+						output: m.cost?.output || 0,
+						cacheRead: m.cost?.cache_read || 0,
+						cacheWrite: m.cost?.cache_write || 0,
+					},
+					contextWindow: m.limit?.context || 4096,
+					maxTokens: m.limit?.output || 4096,
+					compat: { sendSessionAffinityHeaders: true },
 				});
 				recordModelsDevReasoningOptions("cloudflare-ai-gateway", id, m);
 			}
@@ -1653,49 +1836,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 			}
 		}
 
-		// Process zAi models
-		const zaiCodingPlanVariants = [
-			{ provider: "zai", baseUrl: "https://api.z.ai/api/coding/paas/v4" },
-			{ provider: "zai-coding-cn", baseUrl: "https://open.bigmodel.cn/api/coding/paas/v4" },
-		] as const;
-
-		if (data["zai-coding-plan"]?.models) {
-			for (const { provider, baseUrl } of zaiCodingPlanVariants) {
-				for (const [modelId, model] of Object.entries(data["zai-coding-plan"].models)) {
-					const m = model as ModelsDevModel;
-					if (m.tool_call !== true) continue;
-					const supportsImage = m.modalities?.input?.includes("image");
-
-					const isGlm52 = modelId === "glm-5.2";
-
-					models.push({
-						id: modelId,
-						name: m.name || modelId,
-						api: "openai-completions",
-						provider,
-						baseUrl,
-						reasoning: m.reasoning === true,
-						...(isGlm52 ? { thinkingLevelMap: ZAI_GLM52_THINKING_LEVEL_MAP } : {}),
-						input: supportsImage ? ["text", "image"] : ["text"],
-						cost: {
-							input: m.cost?.input || 0,
-							output: m.cost?.output || 0,
-							cacheRead: m.cost?.cache_read || 0,
-							cacheWrite: m.cost?.cache_write || 0,
-						},
-						compat: {
-							supportsDeveloperRole: false,
-							thinkingFormat: "zai",
-							...(isGlm52 ? { supportsReasoningEffort: true } : {}),
-							...(!ZAI_TOOL_STREAM_UNSUPPORTED_MODELS.has(modelId) ? { zaiToolStream: true } : {}),
-						},
-						contextWindow: m.limit?.context || 4096,
-						maxTokens: m.limit?.output || 4096,
-					});
-					recordModelsDevReasoningOptions(provider, modelId, m);
-				}
-			}
-		}
+		models.push(...processZaiModels(data));
 
 		// Process Mistral models
 		if (data.mistral?.models) {
@@ -1942,7 +2083,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 				if (m.status === "deprecated") continue;
 
 				// Claude 4.x and 5.x models route to Anthropic Messages API
-				const isCopilotClaude = /^claude-(haiku|sonnet|opus)-[45]([.\-]|$)/.test(modelId);
+				const isCopilotClaude = /^claude-(haiku|sonnet|opus|fable)-[45]([.\-]|$)/.test(modelId);
 				// Grok, gpt-5, oswe, and MAI-Code models are only served through
 				// the Copilot /responses endpoint.
 				const needsResponsesApi =
@@ -2451,6 +2592,24 @@ async function generateModels() {
 			compat: deepseekCompat,
 		},
 		{
+			id: "deepseek-v4-flash-vision-exp",
+			name: "DeepSeek V4 Flash Vision Exp",
+			api: "openai-completions",
+			baseUrl: "https://api.deepseek.com",
+			provider: "deepseek",
+			reasoning: true,
+			input: ["text", "image"],
+			cost: {
+				input: 0.14,
+				output: 0.28,
+				cacheRead: 0.0028,
+				cacheWrite: 0,
+			},
+			contextWindow: 1000000,
+			maxTokens: 384000,
+			compat: deepseekCompat,
+		},
+		{
 			id: "deepseek-v4-pro",
 			name: "DeepSeek V4 Pro",
 			api: "openai-completions",
@@ -2746,6 +2905,7 @@ async function generateModels() {
 
 	for (const model of allModels) {
 		applyOpenAICompletionsCompatMetadata(model);
+		applyAnthropicMessagesCompatMetadata(model);
 		applyModelsDevReasoningOptionMetadata(model);
 		applyThinkingLevelMetadata(model);
 		applyStrictToolCompatMetadata(model);
@@ -2753,6 +2913,7 @@ async function generateModels() {
 		applyOpenAIToolSearchMetadata(model);
 		applyOpenAIExplicitPromptCacheMetadata(model);
 	}
+	applyAnthropicAllowedFallbackModelMetadata(allModels.filter(isAnthropicFallbackMetadataModel));
 
 	// Group by provider and deduplicate by model ID
 	const providers: Record<string, Record<string, Model<any>>> = {};

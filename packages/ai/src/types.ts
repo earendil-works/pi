@@ -79,6 +79,7 @@ export type KnownImagesProvider = "openrouter";
 
 export type ImagesProviderId = KnownImagesProvider | string;
 
+export type ToolChoice = "auto" | "none";
 export type ThinkingLevel = "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 export type ModelThinkingLevel = "off" | ThinkingLevel;
 export type ThinkingLevelMap = Partial<Record<ModelThinkingLevel, string | null>>;
@@ -88,9 +89,12 @@ export type ChatTemplateKwargValue =
 	| boolean
 	| null
 	| {
-			$var: "thinking.enabled" | "thinking.effort";
+			$var: "thinking.enabled" | "thinking.effort" | "thinking.budget";
 			omitWhenOff?: boolean;
 	  };
+
+/** Top-level request field used to cap reasoning tokens on OpenAI-compatible servers. */
+export type ThinkingTokenBudgetField = "thinking_token_budget" | "thinking_budget" | "thinking_budget_tokens";
 
 /** Token budgets for each thinking level (token-based providers only) */
 export interface ThinkingBudgets {
@@ -300,8 +304,16 @@ export interface ImagesOptions extends ProviderRequestOptions<ImagesModel<Images
 
 export type ProviderImagesOptions = ImagesOptions & Record<string, unknown>;
 
+export interface AnthropicAllowedFallbackModel {
+	provider: ProviderId;
+	model: string;
+	cost: ModelCost;
+}
+
 // Unified options with reasoning passed to streamSimple() and completeSimple()
 export interface SimpleStreamOptions extends StreamOptions {
+	/** Provider-neutral tool selection for simple requests. When omitted, adapters use provider-specific behavior. */
+	toolChoice?: ToolChoice;
 	reasoning?: ThinkingLevel;
 	/** Ask a capable provider to return a durable handle and continue the request asynchronously. */
 	deferred?: boolean | { window?: "15m" | "1h" | "24h" };
@@ -344,7 +356,7 @@ export interface TextContent {
 export interface ThinkingContent {
 	type: "thinking";
 	thinking: string;
-	thinkingSignature?: string; // e.g., for OpenAI responses, the reasoning item ID
+	thinkingSignature?: string; // Provider-specific opaque or serialized reasoning replay data
 	/** When true, the thinking content was redacted by safety filters. The opaque
 	 *  encrypted payload is stored in `thinkingSignature` so it can be passed back
 	 *  to the API for multi-turn continuity. */
@@ -392,7 +404,7 @@ export interface Usage {
 
 export type StopReason = "pending" | "stop" | "length" | "toolUse" | "error" | "aborted" | "deferred";
 
-export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
+export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 
 export interface DeferredHandle {
 	provider: string;
@@ -420,6 +432,8 @@ export interface AssistantMessage {
 	model: string;
 	responseModel?: string; // Concrete `chunk.model` when different from the requested `model` (e.g. OpenRouter `auto` -> `anthropic/...`)
 	responseId?: string; // Provider-specific response/message identifier when the upstream API exposes one
+	/** Exact provider-native effort level used for this response. Absent for legacy or unmanaged responses. */
+	providerThinkingLevel?: string;
 	diagnostics?: AssistantMessageDiagnostic[]; // Redacted provider/runtime diagnostics for failures and recoveries.
 	usage: Usage;
 	stopReason: StopReason;
@@ -515,10 +529,19 @@ export interface Context {
 /**
  * Event protocol for AssistantMessageEventStream.
  *
- * Streams should emit `start` before partial updates, then terminate with either:
- * - `done` carrying the final successful AssistantMessage, or
- * - `error` carrying the final AssistantMessage with stopReason "error" or "aborted"
- *   and errorMessage.
+ * Successful streams emit `start` before partial updates and terminate with
+ * `done`. A stream may terminate directly with `error` when request setup fails
+ * before generation starts; after `start`, failures also terminate with `error`.
+ * Updates and `done` must never appear before `start`.
+ *
+ * `partial` is the shared live response-so-far helper, not an event-time
+ * snapshot. Text and thinking blocks are empty when their `*_start` event is
+ * emitted and grow only through their corresponding `*_delta` events until the
+ * authoritative `*_end`. Redacted thinking may be complete at start and emit no
+ * deltas. A streaming tool call starts with empty arguments and emits its full
+ * raw JSON through `toolcall_delta`; a provider that starts with complete
+ * arguments must emit a cumulative delta prefix that parses to those arguments
+ * before emitting any later argument delta.
  */
 export type AssistantMessageEvent =
 	| { type: "start"; partial: AssistantMessage }
@@ -576,9 +599,9 @@ export interface OpenAICompletionsCompat {
 		| "qwen-chat-template"
 		| "string-thinking"
 		| "ant-ling";
-	/** Kwargs to send as `chat_template_kwargs` when `thinkingFormat` is `chat-template`. Use `{ "$var": "thinking.enabled" }` or `{ "$var": "thinking.effort" }` for pi-controlled thinking values. */
+	/** Kwargs to send as `chat_template_kwargs` when `thinkingFormat` is `chat-template`. Use `{ "$var": "thinking.enabled" }`, `{ "$var": "thinking.effort" }`, or `{ "$var": "thinking.budget" }` for pi-controlled thinking values. */
 	chatTemplateKwargs?: Record<string, ChatTemplateKwargValue>;
-	/** Arguments to send as `chat_template_args` when `thinkingFormat` is `baseten`. Use `{ "$var": "thinking.enabled" }` or `{ "$var": "thinking.effort" }` for pi-controlled thinking values. */
+	/** Arguments to send as `chat_template_args` when `thinkingFormat` is `baseten`. Use `{ "$var": "thinking.enabled" }`, `{ "$var": "thinking.effort" }`, or `{ "$var": "thinking.budget" }` for pi-controlled thinking values. */
 	chatTemplateArgs?: Record<string, ChatTemplateKwargValue>;
 	/** OpenRouter-compatible routing preferences sent as the `provider` request field. */
 	openRouterRouting?: OpenRouterRouting;
@@ -586,7 +609,15 @@ export interface OpenAICompletionsCompat {
 	vercelGatewayRouting?: VercelGatewayRouting;
 	/** Whether z.ai supports top-level `tool_stream: true` for streaming tool call deltas. Default: false. */
 	zaiToolStream?: boolean;
-	/** Whether the provider supports top-level `thinking_token_budget` to cap reasoning tokens (vLLM). Reasoning and the answer share `max_tokens` on these endpoints, so without a budget a reasoning-heavy turn can consume the whole response and emit no answer. Default: false. */
+	/**
+	 * Top-level request field used to cap reasoning tokens from `thinkingBudgets`.
+	 * Reasoning and the answer share `max_tokens` on these endpoints, so without a budget a
+	 * reasoning-heavy turn can consume the whole response and emit no answer.
+	 * `"thinking_token_budget"` is vLLM, `"thinking_budget"` is Qwen/DashScope/SGLang,
+	 * `"thinking_budget_tokens"` is llama.cpp. Off by default; not set on the generated catalog.
+	 */
+	thinkingTokenBudgetField?: ThinkingTokenBudgetField;
+	/** Alias for `thinkingTokenBudgetField: "thinking_token_budget"` (vLLM). Prefer `thinkingTokenBudgetField`. Default: false. */
 	supportsThinkingTokenBudget?: boolean;
 	/** Whether the provider supports OpenAI custom tools with Lark/regex grammar formats. When false, grammar-constrained tools fall back to normal function tools. Default: false; the generated model catalog enables it for capable models. */
 	supportsOpenAIGrammarTools?: boolean;
@@ -602,6 +633,13 @@ export interface OpenAICompletionsCompat {
 	sessionAffinityFormat?: SessionAffinityFormat;
 	/** Whether the provider supports long prompt cache retention (`prompt_cache_retention: "24h"` or Anthropic-style `cache_control.ttl: "1h"`, depending on format). Default: true. */
 	supportsLongCacheRetention?: boolean;
+	/**
+	 * vLLM scheduler priority sent as the top-level `priority` request field (lower values are
+	 * handled earlier; server default 0). Only meaningful when vLLM runs with
+	 * `--scheduling-policy priority`; useful for keeping background/batch work from stalling
+	 * interactive sessions. Off by default; not set on the generated catalog.
+	 */
+	vllmPriority?: number;
 }
 
 /** Compatibility settings for OpenAI Responses APIs. */
@@ -622,6 +660,8 @@ export interface OpenAIResponsesCompat {
 	supportsToolSearch?: boolean;
 	/** Whether the model accepts `prompt_cache_options` (OpenAI GPT-5.6+ explicit prompt caching). Older OpenAI models reject the parameter. Default: false. */
 	supportsExplicitPromptCacheMode?: boolean;
+	/** Whether the provider accepts the `max_output_tokens` parameter. Some Codex-protocol gateways reject it. Default: true. */
+	supportsMaxOutputTokens?: boolean;
 }
 
 /** Compatibility settings for Anthropic Messages-compatible APIs. */
@@ -672,6 +712,15 @@ export interface AnthropicMessagesCompat {
 	allowEmptySignature?: boolean;
 	/** Whether the provider supports Anthropic strict tool schemas. Default: false; generated Anthropic models enable it explicitly. */
 	supportsStrictTools?: boolean;
+	/** Whether the exact model transport supports effort-only system messages and thinking binding controls. Default: false. */
+	supportsMidConvoEffort?: boolean;
+	/**
+	 * Models Anthropic accepts in `fallbacks` for server-side refusal fallback,
+	 * with local pricing metadata for returned fallback responses. When absent or
+	 * empty, callers must omit `fallbacks`; Anthropic rejects the field for models
+	 * with no permitted fallback targets.
+	 */
+	allowedFallbackModels?: AnthropicAllowedFallbackModel[];
 	/**
 	 * Whether the provider supports deferred tools loaded by `tool_reference`
 	 * blocks in tool results. Default: true for first-party Anthropic models
