@@ -14,7 +14,23 @@
 			"types": "./dist/node.d.ts",
 			"import": "./dist/node.js"
 		},
-		"./session/testing": {
+		"./harness/context": {
+			"types": "./dist/harness/context.d.ts",
+			"import": "./dist/harness/context.js"
+		},
+		"./harness/env/nodejs": {
+			"types": "./dist/harness/env/nodejs.d.ts",
+			"import": "./dist/harness/env/nodejs.js"
+		},
+		"./harness/runtime/reducer": {
+			"types": "./dist/harness/runtime/reducer.d.ts",
+			"import": "./dist/harness/runtime/reducer.js"
+		},
+		"./harness/session": {
+			"types": "./dist/harness/session/index.d.ts",
+			"import": "./dist/harness/session/index.js"
+		},
+		"./harness/session/testing": {
 			"types": "./dist/harness/session/testing/index.d.ts",
 			"import": "./dist/harness/session/testing/index.js"
 		},
@@ -29,12 +45,17 @@
 		"generate-telemetry-docs": "node scripts/generate-telemetry-docs.ts",
 		"check:telemetry-docs": "node scripts/generate-telemetry-docs.ts --check",
 		"build": "tsgo -p tsconfig.build.json",
+		"bench:session:timing": "vitest bench --config vitest.benchmark.config.ts",
+		"bench:session:memory": "tsx --tsconfig benchmark/tsconfig.json benchmark/session/loaded-footprint.ts",
+		"bench:session:allocations": "tsx --tsconfig benchmark/tsconfig.json benchmark/session/allocation-profile.ts",
 		"test": "vitest --run",
 		"test:harness": "vitest --run --config vitest.harness.config.ts",
+		"test:session:conformance": "vitest --run --config vitest.harness.config.ts test/harness/memory-conformance.test.ts",
 		"coverage:harness": "vitest --run --config vitest.harness.config.ts --coverage",
 		"prepublishOnly": "npm run build"
 	},
 	"dependencies": {
+		"@earendil-works/chord": "^0.84.4",
 		"@earendil-works/pi-ai": "^0.84.4",
 		"@earendil-works/pi-telemetry": "^0.84.4",
 		"diff": "8.0.4",

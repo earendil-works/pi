@@ -1,4 +1,4 @@
-import type { PiServerOptions } from "../../types.ts";
+import type { ServerOptions } from "../../types.ts";
 
 export interface UnixListenerOptions {
 	path: string;
@@ -12,4 +12,4 @@ export interface UnixListenerOptions {
 	onError?: (error: Error) => void;
 }
 
-export interface UnixServerOptions extends Omit<PiServerOptions, "listeners">, UnixListenerOptions {}
+export interface UnixServerOptions extends Omit<ServerOptions, "listeners">, UnixListenerOptions {}

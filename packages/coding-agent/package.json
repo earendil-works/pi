@@ -22,6 +22,11 @@
 		"./client": {
 			"types": "./dist/client/index.d.ts",
 			"import": "./dist/client/index.js"
+		},
+		"./experimental/plugin": {
+			"source": "./src/experimental/plugin.ts",
+			"types": "./dist/experimental/plugin.d.ts",
+			"import": "./dist/experimental/plugin.js"
 		}
 	},
 	"files": [
@@ -44,6 +49,7 @@
 		"prepublishOnly": "npm run clean && npm run build && npm run shrinkwrap"
 	},
 	"dependencies": {
+		"@earendil-works/chord": "^0.84.4",
 		"@earendil-works/pi-agent-core": "^0.84.4",
 		"@earendil-works/pi-ai": "^0.84.4",
 		"@earendil-works/pi-client": "^0.84.4",

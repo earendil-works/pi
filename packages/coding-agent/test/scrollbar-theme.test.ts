@@ -2,7 +2,10 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { loadThemeFromPath } from "../src/modes/interactive/theme/theme.ts";
+import { loadThemeFromPath, setThemeJsonValidator } from "../src/modes/interactive/theme/theme.ts";
+import { validateThemeJson } from "../src/modes/interactive/theme/theme-json.ts";
+
+setThemeJsonValidator(validateThemeJson);
 
 const tempDirs: string[] = [];
 
@@ -27,7 +30,7 @@ afterEach(() => {
 	}
 });
 
-describe("optional fullscreen theme colors", () => {
+describe("fullscreen theme colors", () => {
 	it.each(["scrollbarTrack", "scrollbarThumb"] as const)("requires %s", (token) => {
 		const themeJson = loadDarkTheme();
 		themeJson.name = `missing-${token}-theme`;

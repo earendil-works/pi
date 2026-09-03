@@ -57,6 +57,56 @@ describe("SettingsSelectorComponent", () => {
 		expect(onCopyOnSelectChange.mock.calls.flat()).toEqual([false, true]);
 	});
 
+	it("keeps the configured fixed theme marked while browsing", () => {
+		const config = {
+			defaultModel: "not set",
+			availableDefaultModels: [],
+			modelThinkingLevels: {},
+			currentTheme: "dark",
+			terminalTheme: "dark",
+			availableThemes: ["dark", "light"],
+			warnings: {},
+		} as unknown as SettingsConfig;
+		const callbacks = { onThemePreview: vi.fn(), onCancel: () => {} } as unknown as SettingsCallbacks;
+		const list = new SettingsSelectorComponent(config, callbacks).getSettingsList();
+
+		list.selectItem("theme");
+		list.handleInput("\r");
+		let output = stripAnsi(list.render(120).join("\n"));
+		expect(output).toContain("    Automatic");
+		expect(output).toContain("→ ✓ dark");
+
+		list.handleInput("\x1b[B");
+		output = stripAnsi(list.render(120).join("\n"));
+		expect(output).toContain("  ✓ dark");
+		expect(output).toContain("→   light");
+	});
+
+	it("keeps a configured automatic theme marked while browsing", () => {
+		const config = {
+			defaultModel: "not set",
+			availableDefaultModels: [],
+			modelThinkingLevels: {},
+			currentTheme: "light/dark",
+			terminalTheme: "dark",
+			availableThemes: ["dark", "light", "other"],
+			warnings: {},
+		} as unknown as SettingsConfig;
+		const callbacks = { onThemePreview: vi.fn(), onCancel: () => {} } as unknown as SettingsCallbacks;
+		const list = new SettingsSelectorComponent(config, callbacks).getSettingsList();
+
+		list.selectItem("theme");
+		list.handleInput("\r");
+		list.handleInput("\r");
+		let output = stripAnsi(list.render(120).join("\n"));
+		expect(output).toContain("→ ✓ light");
+
+		list.handleInput("\x1b[B");
+		output = stripAnsi(list.render(120).join("\n"));
+		expect(output).toContain("  ✓ light");
+		expect(output).toContain("→   other");
+	});
+
 	it("keeps the configured per-model thinking level marked while browsing", async () => {
 		harness = await createHarness({
 			models: [{ id: "thinking-model", reasoning: true }],

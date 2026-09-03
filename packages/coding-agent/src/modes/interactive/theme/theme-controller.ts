@@ -119,6 +119,12 @@ export class InteractiveThemeController {
 		this.setAutoSync(false);
 	}
 
+	dispose(): void {
+		this.setAutoSync(false);
+		this.terminalColorSchemeUnsubscribe?.();
+		this.terminalColorSchemeUnsubscribe = undefined;
+	}
+
 	getTerminalTheme(): TerminalTheme {
 		return this.terminalTheme;
 	}

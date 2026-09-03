@@ -11,7 +11,7 @@ function createSseResponse(events: Array<{ event: string; data: string }>): Resp
 
 function createFakeAnthropicClient(response: Response): Anthropic {
 	return {
-		messages: { create: () => ({ asResponse: async () => response }) },
+		beta: { messages: { create: () => ({ asResponse: async () => response }) } },
 	} as unknown as Anthropic;
 }
 
