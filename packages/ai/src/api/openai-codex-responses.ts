@@ -762,12 +762,33 @@ function normalizeCodexStatus(status: unknown): CodexResponseStatus | undefined 
 // SSE Parsing
 // ============================================================================
 
+// An SSE event ends at a blank line. Per the WHATWG event stream spec a line
+// may end with CRLF, LF or CR, so a blank line is any two consecutive
+// terminators. Matching only "\n\n" makes a CRLF stream unparseable, and the
+// pending buffer then grows to the size of the whole response.
+const SSE_EVENT_BOUNDARY = /\r\n\r\n|\r\n\r|\r\n\n|\r\r\n|\n\r\n|\r\r|\n\r|\n\n/gu;
+const SSE_LINE_BREAK = /\r\n|\r|\n/u;
+const SSE_MAX_BOUNDARY_LENGTH = 4;
+
+// A single Codex SSE event is at most a few megabytes (the terminal
+// response.completed event carries the full response object). Anything past
+// this means we are not going to find a boundary at all, so fail loudly
+// instead of accumulating until the process aborts on heap exhaustion.
+const SSE_MAX_PENDING_EVENT_BYTES = 64 * 1024 * 1024;
+
+function findSseEventBoundary(buffer: string, from: number): { index: number; length: number } | undefined {
+	SSE_EVENT_BOUNDARY.lastIndex = from;
+	const match = SSE_EVENT_BOUNDARY.exec(buffer);
+	return match ? { index: match.index, length: match[0].length } : undefined;
+}
+
 async function* parseSSE(response: Response, signal?: AbortSignal): AsyncGenerator<Record<string, unknown>> {
 	if (!response.body) return;
 
 	const reader = response.body.getReader();
 	const decoder = new TextDecoder();
 	let buffer = "";
+	let scanned = 0;
 	const onAbort = () => {
 		void reader.cancel().catch(() => {});
 	};
@@ -785,13 +806,19 @@ async function* parseSSE(response: Response, signal?: AbortSignal): AsyncGenerat
 			if (done) break;
 			buffer += decoder.decode(value, { stream: true });
 
-			let idx = buffer.indexOf("\n\n");
-			while (idx !== -1) {
-				const chunk = buffer.slice(0, idx);
-				buffer = buffer.slice(idx + 2);
+			// Resume the boundary search where the last one stopped instead of
+			// rescanning the whole buffer on every read, which is quadratic.
+			// Back off by one terminator so a boundary split across two reads
+			// is still found.
+			let searchFrom = Math.max(0, scanned - (SSE_MAX_BOUNDARY_LENGTH - 1));
+			let boundary = findSseEventBoundary(buffer, searchFrom);
+			while (boundary) {
+				const chunk = buffer.slice(0, boundary.index);
+				buffer = buffer.slice(boundary.index + boundary.length);
+				searchFrom = 0;
 
 				const dataLines = chunk
-					.split("\n")
+					.split(SSE_LINE_BREAK)
 					.filter((l) => l.startsWith("data:"))
 					.map((l) => l.slice(5).trim());
 				if (dataLines.length > 0) {
@@ -807,7 +834,15 @@ async function* parseSSE(response: Response, signal?: AbortSignal): AsyncGenerat
 						}
 					}
 				}
-				idx = buffer.indexOf("\n\n");
+				boundary = findSseEventBoundary(buffer, searchFrom);
+			}
+			scanned = buffer.length;
+
+			if (buffer.length > SSE_MAX_PENDING_EVENT_BYTES) {
+				throw new CodexProtocolError(
+					`Codex SSE event exceeded ${SSE_MAX_PENDING_EVENT_BYTES} bytes without an event boundary; ` +
+						"the response stream is malformed or is being rewritten in transit.",
+				);
 			}
 		}
 	} finally {
