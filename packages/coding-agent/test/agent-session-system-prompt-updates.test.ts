@@ -286,6 +286,7 @@ describe("AgentSession system prompt updates", () => {
 		const initial = prepareModelContextUpdate({
 			options,
 			tools: new Map([[firstTool.name, firstTool]]),
+			incremental: true,
 		});
 		expect(initial.type).toBe("initial");
 
@@ -296,6 +297,7 @@ describe("AgentSession system prompt updates", () => {
 				[secondTool.name, secondTool],
 			]),
 			previous: initial.state,
+			incremental: true,
 		});
 		expect(addition).toMatchObject({ type: "incremental", toolsAdded: [secondTool], toolsRemoved: [] });
 
@@ -303,7 +305,65 @@ describe("AgentSession system prompt updates", () => {
 			options,
 			tools: new Map([[secondTool.name, secondTool]]),
 			previous: addition.state,
+			incremental: true,
 		});
 		expect(removal).toMatchObject({ type: "incremental", toolsAdded: [], toolsRemoved: [firstTool] });
+
+		// Without mid-conversation system message support every change is a baseline replacement.
+		const reset = prepareModelContextUpdate({
+			options,
+			tools: new Map([[firstTool.name, firstTool]]),
+			previous: removal.state,
+			incremental: false,
+		});
+		expect(reset.type).toBe("replacement");
+		expect(
+			prepareModelContextUpdate({
+				options,
+				tools: new Map([[firstTool.name, firstTool]]),
+				previous: reset.state,
+				incremental: false,
+			}).type,
+		).toBe("unchanged");
+	});
+
+	test("replaces the baseline instead of appending on models without system message support", async () => {
+		harness = await createHarness({
+			supportsMidConvoSystemMessages: false,
+			extensionFactories: [
+				(pi) => {
+					pi.on("before_agent_start", (event) => {
+						if (event.prompt === "plan") {
+							event.systemPromptOptions.sections.plan_mode = "Do not modify files.";
+						}
+					});
+				},
+			],
+		});
+		const contexts: Context[] = [];
+		harness.setResponses([
+			(context) => {
+				contexts.push(context);
+				return fauxAssistantMessage("first");
+			},
+			(context) => {
+				contexts.push(context);
+				return fauxAssistantMessage("second");
+			},
+			(context) => {
+				contexts.push(context);
+				return fauxAssistantMessage("third");
+			},
+		]);
+
+		await harness.session.prompt("first");
+		await harness.session.prompt("plan");
+		await harness.session.prompt("back");
+
+		// The prompt is rewritten in place, exactly as before incremental updates existed.
+		expect(contexts[1]?.systemPrompt).toContain("<plan_mode>\nDo not modify files.\n</plan_mode>");
+		expect(contexts[2]?.systemPrompt).toBe(contexts[0]?.systemPrompt);
+		expect(contexts.every((context) => !context.messages.some((message) => message.role === "system"))).toBe(true);
+		expect(harness.session.agent.state.systemPrompt).toBe(harness.session.systemPrompt);
 	});
 });

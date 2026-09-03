@@ -39,6 +39,11 @@ export function systemPromptTool(tool: AgentTool): Tool {
 /**
  * Prepare one prompt and tool transition for the next provider request.
  *
+ * With `incremental` set, compatible changes become an appended system message
+ * and the baseline stays fixed. Without it, every change replaces the baseline,
+ * which is the right call for models that would only see the update as a
+ * tagged user turn.
+ *
  * Tool changes are a set difference by name. A tool whose definition changed
  * while staying active is not re-declared: providers keep the first definition
  * they saw, because replacing a declaration would change the cached prefix.
@@ -47,8 +52,9 @@ export function prepareModelContextUpdate(input: {
 	options: BuildSystemPromptOptions;
 	tools: Map<string, Tool>;
 	previous?: ModelContextState;
+	incremental: boolean;
 }): PreparedModelContextUpdate {
-	const { options, tools, previous } = input;
+	const { options, tools, previous, incremental } = input;
 	const pieces = buildSystemPromptPieces(options);
 	const currentPrompt = renderSystemPrompt(pieces);
 	if (!previous) {
@@ -62,17 +68,17 @@ export function prepareModelContextUpdate(input: {
 	const toolsAdded = [...tools].filter(([name]) => !previous.tools.has(name)).map(([, tool]) => tool);
 	const toolsRemoved = [...previous.tools].filter(([name]) => !tools.has(name)).map(([, tool]) => tool);
 
-	if (promptDiff.type === "replace") {
-		return {
-			type: "replacement",
-			state: { prompt: { pieces, baseline: currentPrompt }, tools },
-		};
-	}
-
 	if (promptDiff.type === "unchanged" && toolsAdded.length === 0 && toolsRemoved.length === 0) {
 		return {
 			type: "unchanged",
 			state: { prompt: { pieces, baseline: previous.prompt.baseline }, tools },
+		};
+	}
+
+	if (promptDiff.type === "replace" || !incremental) {
+		return {
+			type: "replacement",
+			state: { prompt: { pieces, baseline: currentPrompt }, tools },
 		};
 	}
 

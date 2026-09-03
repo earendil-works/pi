@@ -62,6 +62,12 @@ export function getAssistantTexts(harness: Harness): string[] {
 
 export interface HarnessOptions {
 	models?: FauxModelDefinition[];
+	/**
+	 * Whether the faux model accepts mid-conversation system messages, which lets the session
+	 * deliver prompt and tool changes incrementally. Default: true. Set false to exercise the
+	 * baseline-replacement path used for models without that support.
+	 */
+	supportsMidConvoSystemMessages?: boolean;
 	settings?: Partial<Settings>;
 	systemPrompt?: string;
 	tools?: AgentTool[];
@@ -101,8 +107,12 @@ function createTempDir(): string {
 
 export async function createHarness(options: HarnessOptions = {}): Promise<Harness> {
 	const tempDir = createTempDir();
+	const compat = { supportsMidConvoSystemMessages: options.supportsMidConvoSystemMessages ?? true };
 	const fauxProvider: FauxProviderRegistration = registerFauxProvider({
-		models: options.models,
+		models: (options.models ?? [{ id: "faux-1", name: "Faux Model" }]).map((definition) => ({
+			...definition,
+			compat: { ...compat, ...definition.compat },
+		})),
 	});
 	fauxProvider.setResponses([]);
 	const model = fauxProvider.getModel();
