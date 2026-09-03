@@ -183,6 +183,11 @@ describe("Google disabled-thinking level", () => {
 		expect(payload.config?.thinkingConfig).toEqual({ thinkingLevel: "LOW" });
 	});
 
+	it("sends LOW for gemini-3.8-flash, which 400s the same way", async () => {
+		const payload = await captureGooglePayload(googleModel("gemini-3.8-flash", { off: null }));
+		expect(payload.config?.thinkingConfig).toEqual({ thinkingLevel: "LOW" });
+	});
+
 	it("applies the same floor on vertex, which carries its own copy of the adapter", async () => {
 		const payload = await captureVertexPayload(vertexModel("gemini-3.7-flash", { off: null }));
 		expect(payload.config?.thinkingConfig).toEqual({ thinkingLevel: "LOW" });

@@ -34,7 +34,7 @@ export type ResolvedGoogleThinkingLevel = Exclude<ThinkingLevel, "xhigh" | "max"
  * gemini-3.6-flash still accepts MINIMAL, and guessing wrong fails every call to the model.
  */
 export function dropsMinimalThinking(modelId: string): boolean {
-	return /gemini-3\.7-flash/.test(modelId.toLowerCase());
+	return /gemini-3\.[78]-flash/.test(modelId.toLowerCase());
 }
 
 /** Resolve a supported pi level or model-specific Google mapping to a standard Google level. */
