@@ -1,4 +1,5 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
+import type { TuiMouseEvent } from "@earendil-works/pi-tui";
 import { describe, expect, test } from "vitest";
 import { AssistantMessageComponent } from "../src/modes/interactive/components/assistant-message.ts";
 import { UserMessageComponent } from "../src/modes/interactive/components/user-message.ts";
@@ -89,6 +90,41 @@ describe("AssistantMessageComponent", () => {
 
 		expect(rendered.match(/Thinking\.\.\./g)).toHaveLength(1);
 		expect(rendered).toContain("answer");
+	});
+
+	test("collapses individual thinking runs when clicked", () => {
+		initTheme("dark");
+		const component = new AssistantMessageComponent(
+			createAssistantMessage([
+				{ type: "thinking", thinking: "first reasoning" },
+				{ type: "text", text: "answer" },
+				{ type: "thinking", thinking: "second reasoning" },
+			]),
+		);
+		const width = 80;
+		const lines = component.render(width);
+		const firstThinkingRow = lines.findIndex((line) => stripAnsi(line).includes("first reasoning"));
+		expect(firstThinkingRow).toBeGreaterThanOrEqual(0);
+		const event: TuiMouseEvent = {
+			type: "click",
+			button: "left",
+			x: 1,
+			y: firstThinkingRow,
+			screenX: 1,
+			screenY: firstThinkingRow,
+			width,
+			height: lines.length,
+			shift: false,
+			alt: false,
+			ctrl: false,
+			clickCount: 1,
+		};
+		expect(component.handleMouse(event)?.handled).toBe(true);
+
+		const collapsed = stripAnsi(component.render(width).join("\n"));
+		expect(collapsed).not.toContain("first reasoning");
+		expect(collapsed).toContain("Thinking...");
+		expect(collapsed).toContain("second reasoning");
 	});
 
 	test("uses configured output padding for text and thinking", () => {

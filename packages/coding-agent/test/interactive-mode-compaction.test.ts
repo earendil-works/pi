@@ -197,6 +197,37 @@ describe("InteractiveMode compaction events", () => {
 		expect(fakeThis.flushCompactionQueue).toHaveBeenCalledWith({ willRetry: false });
 	});
 
+	test("updates the working state when the same agent run resumes after compaction", async () => {
+		const fakeThis = {
+			isInitialized: true,
+			footer: { invalidate: vi.fn() },
+			activeStatusIndicator: undefined,
+			workingVisible: true,
+			showWorkingStatusIndicator: vi.fn(),
+			clearStatusIndicator: vi.fn(),
+			settingsManager: { getShowTerminalProgress: () => true },
+			ui: { requestRender: vi.fn(), terminal: { setProgress: vi.fn() } },
+		};
+		const handleEvent = Reflect.get(InteractiveMode.prototype, "handleEvent") as (
+			this: typeof fakeThis,
+			event: { type: "turn_start" },
+		) => Promise<void>;
+
+		await handleEvent.call(fakeThis, { type: "turn_start" });
+
+		expect(fakeThis.ui.terminal.setProgress).toHaveBeenCalledWith(true);
+		expect(fakeThis.showWorkingStatusIndicator).toHaveBeenCalledTimes(1);
+		expect(fakeThis.clearStatusIndicator).not.toHaveBeenCalled();
+		expect(fakeThis.ui.requestRender).toHaveBeenCalledTimes(1);
+
+		fakeThis.workingVisible = false;
+		await handleEvent.call(fakeThis, { type: "turn_start" });
+
+		expect(fakeThis.showWorkingStatusIndicator).toHaveBeenCalledTimes(1);
+		expect(fakeThis.clearStatusIndicator).toHaveBeenCalledTimes(1);
+		expect(fakeThis.ui.requestRender).toHaveBeenCalledTimes(2);
+	});
+
 	test("preserves steering behavior when flushing into an active agent run", async () => {
 		const fakeThis = {
 			compactionQueuedMessages: [{ text: "change direction", mode: "steer" as const }],

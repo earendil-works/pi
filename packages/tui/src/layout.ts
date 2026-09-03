@@ -385,6 +385,19 @@ function containsPoint(rect: LayoutRect, x: number, y: number): boolean {
 	return x >= rect.x && x < rect.x + rect.width && y >= rect.y && y < rect.y + rect.height;
 }
 
+/** Return the visual hit path from the deepest component to the layout root. */
+export function getLayoutBoxesAt(frame: LayoutFrame, x: number, y: number): LayoutBox[] {
+	const result: Array<{ box: LayoutBox; depth: number }> = [];
+	const visit = (box: LayoutBox, depth: number): void => {
+		if (!containsPoint(box.clip, x, y)) return;
+		result.push({ box, depth });
+		for (const child of box.children) visit(child, depth + 1);
+	};
+	visit(frame.root, 0);
+	result.sort((a, b) => b.box.layer - a.box.layer || b.depth - a.depth);
+	return result.map(({ box }) => box);
+}
+
 export function getScrollViewBox(frame: LayoutFrame, scrollView: ScrollView): LayoutBox | undefined {
 	const visit = (box: LayoutBox): LayoutBox | undefined => {
 		if (box.scrollView === scrollView) return box;

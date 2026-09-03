@@ -299,10 +299,7 @@ export const streamSimple: StreamFunction<"google-generative-ai", SimpleStreamOp
 	context: Context,
 	options?: SimpleStreamOptions,
 ): AssistantMessageEventStream => {
-	const apiKey = options?.apiKey;
-	if (!apiKey) {
-		throw new Error(`No API key for provider: ${model.provider}`);
-	}
+	const apiKey = options?.apiKey ?? "";
 
 	const base = {
 		...buildBaseOptions(model, context, options, apiKey),

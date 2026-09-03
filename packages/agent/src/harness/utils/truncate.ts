@@ -51,7 +51,7 @@ interface RuntimeBuffer {
 const runtimeBuffer = (globalThis as { Buffer?: RuntimeBuffer }).Buffer;
 const nonAsciiPattern = /[^\x00-\x7f]/;
 
-function utf8ByteLength(content: string): number {
+export function utf8ByteLength(content: string): number {
 	if (runtimeBuffer) return runtimeBuffer.byteLength(content, "utf8");
 
 	const firstNonAscii = content.search(nonAsciiPattern);

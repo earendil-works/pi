@@ -123,7 +123,7 @@ See [set_follow_up_mode](#set_follow_up_mode) for controlling how follow-up mess
 
 #### abort
 
-Abort the current agent operation.
+Abort the current operation and wait for the session to become idle before responding.
 
 ```json
 {"type": "abort"}

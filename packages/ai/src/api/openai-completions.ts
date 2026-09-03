@@ -178,12 +178,17 @@ interface OpenAICompatCacheControl {
 
 type ResolvedOpenAICompletionsCompat = Omit<
 	Required<OpenAICompletionsCompat>,
-	"cacheControlFormat" | "deferredToolsMode" | "supportsThinkingTokenBudget" | "thinkingTokenBudgetField"
+	| "cacheControlFormat"
+	| "deferredToolsMode"
+	| "supportsThinkingTokenBudget"
+	| "thinkingTokenBudgetField"
+	| "vllmPriority"
 > & {
 	cacheControlFormat?: OpenAICompletionsCompat["cacheControlFormat"];
 	deferredToolsMode?: OpenAICompletionsCompat["deferredToolsMode"];
 	supportsThinkingTokenBudget?: OpenAICompletionsCompat["supportsThinkingTokenBudget"];
 	thinkingTokenBudgetField?: OpenAICompletionsCompat["thinkingTokenBudgetField"];
+	vllmPriority?: OpenAICompletionsCompat["vllmPriority"];
 };
 
 type ResolvedChatTemplateKwargValue = string | number | boolean | null;
@@ -499,7 +504,7 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 						type: "toolCall",
 						id: toolCall.id || "",
 						name,
-						arguments: hasCustomInput ? { [customInputProperty]: "" } : {},
+						arguments: {},
 						partialArgs: hasCustomInput ? undefined : "",
 						customInput: hasCustomInput
 							? { property: customInputProperty, jsonBuffer: { input: "", started: false, closed: false } }
@@ -531,7 +536,7 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 				}
 				if (toolCall.custom && !toolCall.function && !block.customInput) {
 					const customInputProperty = grammarToolInputProperties.get(block.name) ?? "input";
-					block.arguments = { [customInputProperty]: "" };
+					block.arguments = {};
 					block.customInput = {
 						property: customInputProperty,
 						jsonBuffer: { input: "", started: false, closed: false },
@@ -723,8 +728,6 @@ export const streamSimple: StreamFunction<"openai-completions", SimpleStreamOpti
 	context: Context,
 	options?: SimpleStreamOptions,
 ): AssistantMessageEventStream => {
-	getClientApiKey(model.provider, options?.apiKey, options?.headers);
-
 	const base = {
 		...buildBaseOptions(model, context, options, options?.apiKey),
 		toolChoice: options?.toolChoice,
@@ -849,6 +852,10 @@ function buildParams(
 
 	if (options?.toolChoice) {
 		params.tool_choice = options.toolChoice;
+	}
+
+	if (compat.vllmPriority !== undefined) {
+		(params as any).priority = compat.vllmPriority;
 	}
 
 	const thinkingTokenBudgetField = resolveThinkingTokenBudgetField(compat);
@@ -1703,5 +1710,6 @@ function getCompat(model: Model<"openai-completions">): ResolvedOpenAICompletion
 		deferredToolsMode: model.compat.deferredToolsMode ?? detected.deferredToolsMode,
 		sessionAffinityFormat: model.compat.sessionAffinityFormat ?? detected.sessionAffinityFormat,
 		supportsLongCacheRetention: model.compat.supportsLongCacheRetention ?? detected.supportsLongCacheRetention,
+		vllmPriority: model.compat.vllmPriority,
 	};
 }
