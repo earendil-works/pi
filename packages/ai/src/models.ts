@@ -791,12 +791,22 @@ export function createProvider<TApi extends Api = Api>(input: CreateProviderOpti
 
 	const apiFor = (model: Model<Api>): ProviderStreams | undefined => single ?? byApi?.[model.api];
 
+	const apiMismatch = (model: Model<Api>): boolean => {
+		if (single) {
+			// A single implementation covers only APIs that baseline models declare.
+			// A dynamic overlay model with a different api would route into the wrong
+			// protocol. Fail fast instead of hitting an invalid endpoint.
+			return baselineModels.length > 0 && baselineModels.every((baseline) => baseline.api !== model.api);
+		}
+		return byApi?.[model.api] === undefined;
+	};
+
 	const dispatch = (
 		model: Model<Api>,
 		run: (streams: ProviderStreams) => AssistantMessageEventStream,
 	): AssistantMessageEventStream => {
 		const streams = apiFor(model);
-		if (!streams) {
+		if (!streams || apiMismatch(model)) {
 			return lazyStream(model, async () => {
 				throw new ModelsError("stream", `Provider ${input.id} has no API implementation for "${model.api}"`);
 			});

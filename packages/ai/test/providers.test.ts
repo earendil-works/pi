@@ -510,6 +510,28 @@ describe("createProvider", () => {
 		expect(result.errorMessage).toContain("no API implementation");
 	});
 
+	it("rejects a dynamic overlay model whose api differs from the single baseline api", async () => {
+		// A remote catalog can introduce models that use an api the single
+		// implementation does not speak. Streaming them through it hits invalid
+		// endpoints. Fail fast instead.
+		const calls: string[] = [];
+		const provider = createProvider({
+			id: "mixed",
+			auth: { apiKey: { name: "Test", resolve: async () => ({ auth: {} }) } },
+			models: [testModel("api-a", "model-a")],
+			api: recordingStreams("a", calls),
+		});
+
+		const ok = await provider.streamSimple(testModel("api-a", "model-a"), context).result();
+		expect(ok.stopReason).toBe("stop");
+		expect(calls).toEqual(["a:model-a"]);
+
+		const result = await provider.streamSimple(testModel("api-b", "model-b"), context).result();
+		expect(result.stopReason).toBe("error");
+		expect(result.errorMessage).toContain('Provider mixed has no API implementation for "api-b"');
+		expect(calls).toEqual(["a:model-a"]);
+	});
+
 	it("lets a newer dynamic refresh bypass and supersede older network work", async () => {
 		let fetches = 0;
 		let markFirstStarted: (() => void) | undefined;

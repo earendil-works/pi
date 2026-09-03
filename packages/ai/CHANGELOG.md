@@ -8,6 +8,7 @@
 
 ### Fixed
 
+- Fixed single-API providers silently streaming dynamic overlay models whose `api` does not match the provider's implementation. They now fail fast with a clear error instead of hitting an invalid endpoint (as happened when the OpenRouter catalog switched `anthropic/*` models to `anthropic-messages`, producing a raw HTML 404).
 - Fixed the Qwen Token Plan Individual catalog to include Qwen3.8 Flash ([#9021](https://github.com/earendil-works/pi/issues/9021)).
 - Removed the unnecessary Chord dependency from pi-ai by defining its exported `JsonValue` type directly.
 - Fixed GitHub Copilot Claude Fable 5 requests to use the Anthropic Messages adapter so selected reasoning levels are sent ([#8961](https://github.com/earendil-works/pi/issues/8961)).
