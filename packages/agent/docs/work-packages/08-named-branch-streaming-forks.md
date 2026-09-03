@@ -238,3 +238,15 @@ WP08 is complete when:
 - shared conformance, focused backend tests, benchmarks, `npm run check`, and `./test.sh` pass;
 - normative docs and the roadmap reflect the new contract with historical documents untouched;
 - final Fable review reports no blocker.
+
+## 9. Open questions
+
+These do not change the current contract until resolved.
+
+### 9.1 Corruption checks
+
+Current: reject any malformed lane. Possible relaxation: trust supported atomic state and perform no fork-time corruption audit; branch forks only require the selected tip, config, and state. This removes global lane inventory validation.
+
+### 9.2 Sequence preservation
+
+Current: preserve source sequences, `nextSeq`, and list cursors. Possible relaxation: keep entry sequences but assign destination-local sequences to values, list elements, and reconstructed lane rows. Revisit if preservation materially complicates streaming.
