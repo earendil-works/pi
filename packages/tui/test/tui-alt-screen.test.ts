@@ -1,6 +1,6 @@
 import assert from "node:assert";
 import { describe, it } from "node:test";
-import { findAltScreenSearchMatches } from "../src/alt-screen-search.ts";
+import { AltScreenSearchComponent, findAltScreenSearchMatches } from "../src/alt-screen-search.ts";
 import { HStack } from "../src/components/h-stack.ts";
 import { Image } from "../src/components/image.ts";
 import { MouseRegion } from "../src/components/mouse-region.ts";
@@ -18,6 +18,7 @@ import {
 } from "../src/terminal-image.ts";
 import type { TuiMouseEvent } from "../src/tui.ts";
 import { TuiAltScreen } from "../src/tui-alt-screen.ts";
+import { stripTerminalSequences, visibleWidth } from "../src/utils.ts";
 import { VirtualTerminal } from "./virtual-terminal.ts";
 
 const OSC133_ZONE_START = "\x1b]133;A\x07";
@@ -623,6 +624,121 @@ describe("TuiAltScreen", () => {
 		]);
 	});
 
+	it("renders transcript search with a muted placeholder and right-aligned controls", () => {
+		const component = new AltScreenSearchComponent(() => {});
+		const rendered = component.render(48);
+		const lines = rendered.map((line) => stripTerminalSequences(line));
+
+		assert.strictEqual(lines.length, 3);
+		assert.ok(lines.every((line) => visibleWidth(line) === 48));
+		assert.match(lines[0] ?? "", /^┌─+┐$/);
+		assert.match(lines[1] ?? "", /^│ Find in transcript +│$/);
+		assert.ok(rendered[1]?.includes("\x1b[2m"));
+		assert.match(lines[2] ?? "", /^└─+ ↑ Shift\+Enter · ↓ Enter ─┘$/);
+		const controls = lines[2] ?? "";
+		assert.strictEqual(component.getNavigationDirectionAt(2, controls.indexOf("↑")), -1);
+		assert.strictEqual(component.getNavigationDirectionAt(2, controls.indexOf("Shift+Enter") + 5), -1);
+		assert.strictEqual(component.getNavigationDirectionAt(2, controls.indexOf("·")), undefined);
+		assert.strictEqual(component.getNavigationDirectionAt(2, controls.indexOf("↓")), 1);
+		assert.strictEqual(component.getNavigationDirectionAt(2, controls.lastIndexOf("Enter") + 2), 1);
+
+		component.handleInput("n");
+		component.setResult(0, 2);
+		const populatedRender = component.render(48);
+		const populated = populatedRender.map((line) => stripTerminalSequences(line));
+		assert.ok(populated[1]?.includes("n"));
+		assert.ok(populated[1]?.includes("1/2"));
+		assert.ok(populatedRender[1]?.includes("\x1b[2m 1/2 \x1b[22m"));
+		assert.ok(!populated.some((line) => line.includes("Find in transcript")));
+	});
+
+	it("navigates transcript search with hoverable arrow buttons and toggles it with its shortcut", async () => {
+		const terminal = new RecordingTerminal(120, 6);
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			searchNavigationButtonStyle: (text, hovered) => `${hovered ? "\x1b[45m" : "\x1b[44m"}${text}\x1b[49m`,
+		});
+		tui.addChild(new Text("needle one\nmiddle\nneedle two\nend", 0, 0));
+		tui.start();
+		await terminal.waitForRender();
+
+		terminal.sendInput("\x1b[102;6u");
+		terminal.sendInput("needle");
+		await terminal.waitForRender();
+		let viewport = terminal.getViewport();
+		assert.ok(viewport.some((line) => line.includes("1/2")));
+		assert.ok(viewport.some((line) => line.includes("↑ Shift+Enter · ↓ Enter")));
+
+		let arrowRow = viewport.findIndex((line) => line.includes("↑") && line.includes("↓"));
+		let arrowColumn = viewport[arrowRow]?.lastIndexOf("Enter") ?? -1;
+		assert.ok(arrowRow >= 0 && arrowColumn >= 0);
+		const hoverEventCount = terminal.events.length;
+		terminal.sendInput(`\x1b[<35;${arrowColumn + 1};${arrowRow + 1}M`);
+		await terminal.waitForRender();
+		assert.ok(
+			terminal.events
+				.slice(hoverEventCount)
+				.some((event) => event.type === "write" && event.data.includes("\x1b[45m↓ Enter\x1b[49m")),
+		);
+		terminal.sendInput(`\x1b[<0;${arrowColumn + 1};${arrowRow + 1}M`);
+		await terminal.waitForRender();
+		viewport = terminal.getViewport();
+		assert.ok(viewport.some((line) => line.includes("2/2")));
+		assert.ok(viewport.some((line) => line.includes("↑ Shift+Enter · ↓ Enter")));
+
+		arrowRow = viewport.findIndex((line) => line.includes("↑") && line.includes("↓"));
+		arrowColumn = (viewport[arrowRow]?.indexOf("Shift+Enter") ?? -3) + 3;
+		assert.ok(arrowRow >= 0 && arrowColumn >= 0);
+		terminal.sendInput(`\x1b[<0;${arrowColumn + 1};${arrowRow + 1}M`);
+		await terminal.waitForRender();
+		assert.ok(terminal.getViewport().some((line) => line.includes("1/2")));
+		assert.ok(terminal.getViewport().some((line) => line.includes("↑ Shift+Enter · ↓ Enter")));
+
+		terminal.sendInput("\x1b[102;6u");
+		await terminal.waitForRender();
+		assert.ok(!terminal.getViewport().some((line) => line.includes("↑ Shift+Enter · ↓ Enter")));
+		tui.stop();
+	});
+
+	it("does not treat transcript box drawing as search navigation buttons", async () => {
+		const terminal = new VirtualTerminal(80, 10);
+		const tui = new TuiAltScreen(terminal);
+		tui.addChild(
+			new Text(
+				[
+					"needle one",
+					"middle",
+					"needle two",
+					"filler",
+					"┌────────────────────────────────────────┐",
+					"│ box                                    │",
+					"└────────────────────────────────────────┘",
+					"end",
+				].join("\n"),
+				0,
+				0,
+			),
+		);
+		tui.start();
+		await terminal.waitForRender();
+
+		terminal.sendInput("\x1b[102;6u");
+		terminal.sendInput("needle");
+		await terminal.waitForRender();
+		let viewport = terminal.getViewport();
+		assert.ok(viewport.some((line) => line.includes("1/2")));
+		assert.ok(!viewport.some((line) => line.includes("2/2")));
+
+		const boxBottomRow = viewport.findIndex((line) => line.startsWith("└"));
+		assert.ok(boxBottomRow >= 0);
+		terminal.sendInput(`\x1b[<0;24;${boxBottomRow + 1}M`);
+		await terminal.waitForRender();
+
+		viewport = terminal.getViewport();
+		assert.ok(viewport.some((line) => line.includes("1/2")));
+		assert.ok(!viewport.some((line) => line.includes("2/2")));
+		tui.stop();
+	});
+
 	it("uses configured styles for current and non-current search matches", async () => {
 		const terminal = new RecordingTerminal(60, 4);
 		const tui = new TuiAltScreen(terminal, undefined, undefined, {
@@ -680,7 +796,8 @@ describe("TuiAltScreen", () => {
 		terminal.sendInput("needle");
 		await terminal.waitForRender();
 		assert.strictEqual(transcript.isFollowingEnd, false);
-		assert.ok(terminal.getViewport().some((line) => line.includes("Find transcript") && line.includes("2/2")));
+		assert.ok(terminal.getViewport().some((line) => line.includes("2/2")));
+		assert.ok(terminal.getViewport().some((line) => line.includes("↑ Shift+Enter · ↓ Enter")));
 		assert.ok(terminal.getViewport().some((line) => line.includes("line 10 needle two")));
 		assert.deepStrictEqual(editorInputs, []);
 		assert.ok(
@@ -690,22 +807,22 @@ describe("TuiAltScreen", () => {
 		for (let index = 0; index < 6; index++) terminal.sendInput("\x1b[<64;1;4M");
 		await terminal.waitForRender();
 		assert.strictEqual(transcript.scrollTop, 0);
-		assert.ok(terminal.getViewport().some((line) => line.includes("> needle")));
+		assert.ok(terminal.getViewport().some((line) => line.includes("needle") && line.includes("2/2")));
 
 		terminal.sendInput("\x07");
 		await terminal.waitForRender();
-		assert.ok(terminal.getViewport().some((line) => line.includes("Find transcript") && line.includes("1/2")));
+		assert.ok(terminal.getViewport().some((line) => line.includes("1/2")));
 		assert.ok(terminal.getViewport().some((line) => line.includes("line 5 needle one")));
 
 		terminal.sendInput("\x1b[103;6u");
 		await terminal.waitForRender();
-		assert.ok(terminal.getViewport().some((line) => line.includes("Find transcript") && line.includes("2/2")));
+		assert.ok(terminal.getViewport().some((line) => line.includes("2/2")));
 		assert.ok(terminal.getViewport().some((line) => line.includes("line 10 needle two")));
 
 		terminal.sendInput("\x1b");
 		terminal.sendInput("x");
 		await terminal.waitForRender();
-		assert.ok(!terminal.getViewport().some((line) => line.includes("Find transcript")));
+		assert.ok(!terminal.getViewport().some((line) => line.includes("↑ Shift+Enter · ↓ Enter")));
 		assert.deepStrictEqual(editorInputs, ["x"]);
 
 		tui.stop();
@@ -1837,13 +1954,13 @@ describe("TuiAltScreen", () => {
 
 		terminal.sendInput("\x1b[102;6u");
 		await terminal.waitForRender();
-		assert.ok(terminal.getViewport().some((line) => line.includes("Find transcript")));
+		assert.ok(terminal.getViewport().some((line) => line.includes("↑ ↓")));
 
 		terminal.sendInput("\x1b[5~");
 		terminal.sendInput("\x1b[<64;1;4M");
 		await terminal.waitForRender();
 		assert.ok(tui.viewportTop < topBefore);
-		assert.ok(terminal.getViewport().some((line) => line.includes("Find transcript")));
+		assert.ok(terminal.getViewport().some((line) => line.includes("↑ ↓")));
 		tui.stop();
 	});
 });

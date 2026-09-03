@@ -13,6 +13,10 @@
 - Added environment and programmatic overrides for OSC 8 hyperlinks, inline image protocols, and truecolor terminal capabilities ([#8665](https://github.com/earendil-works/pi/issues/8665)).
 - Added a `TuiAltScreen` `copyOnSelect` option plus helpers to detect and copy the active fullscreen text selection programmatically ([#7720](https://github.com/earendil-works/pi/issues/7720)).
 
+### Changed
+
+- Changed fullscreen transcript search to use a bordered, placeholder-based input with a muted result count, right-aligned clickable key-and-arrow buttons with configurable hover styling, and open-shortcut toggling.
+
 ### Fixed
 
 - Fixed main-screen rendering crashing when image-heavy output exceeded V8's string length limit ([#8028](https://github.com/earendil-works/pi/issues/8028)).

@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- Fixed branch summaries failing when reasoning consumes the previous 2048-token output cap ([#8845](https://github.com/earendil-works/pi/issues/8845)).
 - Fixed the write tool reporting UTF-16 code-unit counts as byte counts by removing the misleading count ([#8979](https://github.com/earendil-works/pi/issues/8979)).
 - Fixed proxied plain-HTTP provider requests hanging after a tool call by tunneling them with CONNECT ([#8134](https://github.com/earendil-works/pi/issues/8134)).
 - Fixed RPC `abort` reporting success without cancelling an in-progress manual compaction ([#8920](https://github.com/earendil-works/pi/issues/8920)).
@@ -32,6 +33,7 @@
 
 ### Changed
 
+- Changed fullscreen transcript search arrows to underline on hover and capitalized the search placeholder.
 - Changed selectors in `/thinking`, `/model`, `/scoped-models`, `/trust`, per-model thinking settings, and theme settings to keep active options marked while browsing. `/scoped-models` now uses consistent per-item toggles and strikes through unavailable models ([#8900](https://github.com/earendil-works/pi/pull/8900)).
 
 ### Fixed

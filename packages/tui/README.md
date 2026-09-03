@@ -121,7 +121,7 @@ if (isViewportTUI(tui)) {
 }
 ```
 
-Stack entries support `basis`, `grow`, `shrink`, `minSize`, `maxSize`, and responsive `visible` callbacks. Mouse-wheel input targets the scroll view under the pointer and unused delta chains to outer scroll views by default. `TuiAltScreenOptions.scrollToEndIndicator` can render a clickable jump-to-end control whenever a primary scroll view configured with `follow: "end"` is detached from the end; its `hovered` argument supports pointer-over styling. The primary scroll view receives the alternate-screen keyboard navigation actions and wheel input over non-scrollable regions. It can also jump between OSC 133 semantic prompt markers, matching common terminal prompt-navigation shortcuts. Press `Ctrl+Shift+F` to search its rendered content, `Enter`/`Ctrl+G` and `Shift+Enter`/`Ctrl+Shift+G` to move between matches, and `Escape` to close search. `TuiAltScreenOptions.searchMatchStyle` and `searchCurrentMatchStyle` customize match highlighting.
+Stack entries support `basis`, `grow`, `shrink`, `minSize`, `maxSize`, and responsive `visible` callbacks. Mouse-wheel input targets the scroll view under the pointer and unused delta chains to outer scroll views by default. `TuiAltScreenOptions.scrollToEndIndicator` can render a clickable jump-to-end control whenever a primary scroll view configured with `follow: "end"` is detached from the end; its `hovered` argument supports pointer-over styling. The primary scroll view receives the alternate-screen keyboard navigation actions and wheel input over non-scrollable regions. It can also jump between OSC 133 semantic prompt markers, matching common terminal prompt-navigation shortcuts. Press `Ctrl+Shift+F` to open or close its bordered search panel. The panel shows the configured previous/next shortcuts and provides clickable arrow controls; by default, `Enter`/`Ctrl+G` and `Shift+Enter`/`Ctrl+Shift+G` move between matches, and `Escape` also closes search. `TuiAltScreenOptions.searchMatchStyle` and `searchCurrentMatchStyle` customize match highlighting, while `searchNavigationButtonStyle` styles each arrow button and receives its hover state.
 
 Layout geometry is rebuilt for each requested frame. Stateful components are retained, and their existing rendered-line caches remain effective. Calling `render(width)` directly on these layout components produces an unbounded document, which is also used when alt mode restores the main screen.
 
@@ -177,6 +177,7 @@ handle.unfocus();           // Release focus to normal fallback
 handle.unfocus({ target: baseComponent }); // Release this overlay to a specific component
 handle.unfocus({ target: null });   // Release this overlay and leave focus empty
 handle.isFocused();         // Check if overlay has focus
+handle.getBounds();         // Get last rendered terminal-relative bounds
 
 handle.unfocus();
 // Overlay loses focus; TUI falls back to another visible capturing overlay or the previous focus target.

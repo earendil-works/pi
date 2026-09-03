@@ -33,6 +33,7 @@ export function createInteractiveTui(options: InteractiveTuiOptions): TuiMainScr
 					theme.fg("scrollToEndIndicatorText", hovered ? theme.underline(label) : label),
 				);
 			},
+			searchNavigationButtonStyle: (text, hovered) => (hovered ? theme.underline(text) : text),
 			openUrl: openBrowser,
 			onRightClickPaste: options.onRightClickPaste,
 			copyOnSelect: options.fullscreenCopyOnSelect,
