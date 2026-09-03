@@ -115,7 +115,6 @@ import {
 	renderSystemPrompt,
 } from "./system-prompt.ts";
 import {
-	consolidateSystemPromptMessages,
 	createSystemPromptUpdateMessage,
 	type ModelContextState,
 	prepareModelContextUpdate,
@@ -423,10 +422,8 @@ export class AgentSession {
 			activeToolNames: this._initialActiveToolNames,
 			includeAllExtensionTools: true,
 		});
-		// A resumed process has no provider cache to preserve. Restore the latest complete model-visible state.
-		if (this._restoreModelContextState()) {
-			this.agent.state.messages = consolidateSystemPromptMessages(this.agent.state.messages);
-		}
+		// Resume with the prompt baseline the session was recorded with so the provider prefix stays identical.
+		this._restoreModelContextState();
 	}
 
 	get modelRuntime(): ModelRuntime {
@@ -588,8 +585,6 @@ export class AgentSession {
 			const context = await this._compactBeforeNextAssistantResponse(turn.context);
 			const previousSnapshot = await previousPrepareNextTurnWithContext?.({ ...turn, context }, signal);
 			const nextContext = previousSnapshot?.context ?? context;
-			let updateMessage: AgentMessage | undefined;
-			let transcriptUpdate: "keep" | "replace" = "keep";
 
 			const options = normalizeBuildSystemPromptOptions({
 				...(this._modelContextState?.options ?? this._baseSystemPromptOptions),
@@ -597,9 +592,7 @@ export class AgentSession {
 				toolSnippets: this._baseSystemPromptOptions.toolSnippets,
 				toolGuidelines: this._baseSystemPromptOptions.toolGuidelines,
 			});
-			const prepared = this._preparePromptAndToolLoadout(options);
-			updateMessage = prepared.message;
-			transcriptUpdate = prepared.transcriptUpdate;
+			const updateMessage = this._preparePromptAndToolLoadout(options);
 			if (updateMessage) {
 				this.agent.state.messages.push(updateMessage);
 				this.sessionManager.appendMessage(updateMessage);
@@ -609,14 +602,8 @@ export class AgentSession {
 				...previousSnapshot,
 				context: {
 					...nextContext,
-					messages:
-						transcriptUpdate === "replace"
-							? this.agent.state.messages.slice()
-							: updateMessage
-								? [...nextContext.messages, updateMessage]
-								: nextContext.messages,
+					messages: updateMessage ? [...nextContext.messages, updateMessage] : nextContext.messages,
 					systemPrompt: this.agent.state.systemPrompt,
-					effectiveSystemPrompt: this.agent.state.effectiveSystemPrompt,
 					tools: this.agent.state.tools.slice(),
 				},
 				model: this.agent.state.model,
@@ -972,7 +959,9 @@ export class AgentSession {
 
 	/** Current effective system prompt (includes any per-turn extension modifications) */
 	get systemPrompt(): string {
-		return this.agent.state.effectiveSystemPrompt ?? this.agent.state.systemPrompt;
+		return this._modelContextState
+			? renderSystemPrompt(this._modelContextState.prompt.pieces)
+			: this.agent.state.systemPrompt;
 	}
 
 	/** Current retry attempt (0 if not retrying) */
@@ -1023,12 +1012,10 @@ export class AgentSession {
 		}
 		this.agent.state.tools = tools;
 
-		// Rebuild the default prompt for the next run. An active run keeps its provider baseline.
+		// Rebuild the default prompt for the next run. Once a baseline exists it is never rewritten;
+		// the change reaches the model as an appended system message on the next request.
 		const baseSystemPrompt = this._rebuildSystemPrompt(validToolNames);
-		if (!this.isStreaming) {
-			if (!this._modelContextState) this.agent.state.systemPrompt = baseSystemPrompt;
-			this.agent.state.effectiveSystemPrompt = baseSystemPrompt;
-		}
+		if (!this.isStreaming && !this._modelContextState) this.agent.state.systemPrompt = baseSystemPrompt;
 	}
 
 	/** Whether compaction or branch summarization is currently running */
@@ -1154,63 +1141,48 @@ export class AgentSession {
 		});
 		const message = update.type === "incremental" ? createSystemPromptUpdateMessage(update) : undefined;
 		if (update.type !== "unchanged") {
-			this.sessionManager.appendSystemPromptState(update.state.prompt.pieces, [...update.state.tools.values()]);
+			this.sessionManager.appendSystemPromptState(update.state.prompt, [...update.state.tools.values()]);
 		}
 
 		// Commit only after prompt validation and durable state preparation succeeds.
+		// Earlier messages are never rewritten: replacing the baseline is a deliberate cache miss,
+		// and previous system messages stay in the transcript as history.
 		this.agent.state.tools = selectedTools;
 		this._modelContextState = { ...update.state, options };
-		const transcriptUpdate: "keep" | "replace" =
-			update.type === "initial" || update.type === "replacement" ? "replace" : "keep";
-		if (update.type === "replacement") {
-			this.agent.state.messages = consolidateSystemPromptMessages(this.agent.state.messages);
-		}
 		this.agent.state.systemPrompt = update.state.prompt.baseline;
-		this.agent.state.effectiveSystemPrompt = renderSystemPrompt(update.state.prompt.pieces);
-		return { message, transcriptUpdate };
+		return message;
 	}
 
-	private _checkpointModelContext(persist: boolean): void {
-		this.agent.state.messages = consolidateSystemPromptMessages(this.agent.state.messages);
+	/**
+	 * Fold the current effective prompt into the baseline. Only called after compaction,
+	 * where the transcript is rewritten anyway, so the new prefix costs nothing extra.
+	 */
+	private _rebaselineModelContext(): void {
 		const options = this._modelContextState?.options ?? this._baseSystemPromptOptions;
 		const pieces = this._modelContextState?.prompt.pieces ?? buildSystemPromptPieces(options);
 		const prompt = renderSystemPrompt(pieces);
 		const tools =
 			this._modelContextState?.tools ??
 			new Map(this.agent.state.tools.map((tool) => [tool.name, systemPromptTool(tool)]));
-		this._modelContextState = {
-			options,
-			prompt: { pieces, baseline: prompt },
-			tools,
-		};
-		if (persist) this.sessionManager.appendSystemPromptState(pieces, [...tools.values()]);
+		this._modelContextState = { options, prompt: { pieces, baseline: prompt }, tools };
+		this.sessionManager.appendSystemPromptState({ pieces, baseline: prompt }, [...tools.values()]);
 		this.agent.state.systemPrompt = prompt;
-		this.agent.state.effectiveSystemPrompt = prompt;
 	}
 
-	private _restoreModelContextState(): ModelContextRuntimeState | undefined {
+	private _restoreModelContextState(): void {
 		const stored = this.sessionManager.getSystemPromptState();
 		if (!stored) {
 			this._modelContextState = undefined;
-			return undefined;
+			return;
 		}
-		const prompt = renderSystemPrompt(stored.prompt);
-		const tools = new Map(stored.tools.map((tool) => [tool.name, tool]));
+		// Entries written before `baseline` existed fall back to the rendered pieces.
+		const baseline = stored.baseline ?? renderSystemPrompt(stored.prompt);
 		this._modelContextState = {
 			options: this._baseSystemPromptOptions,
-			prompt: { pieces: stored.prompt, baseline: prompt },
-			tools,
+			prompt: { pieces: stored.prompt, baseline },
+			tools: new Map(stored.tools.map((tool) => [tool.name, tool])),
 		};
-		this.agent.state.systemPrompt = prompt;
-		this.agent.state.effectiveSystemPrompt = prompt;
-		return this._modelContextState;
-	}
-
-	private _resetModelContextState(): void {
-		this._modelContextState = undefined;
-		this.agent.state.systemPrompt = this.agent.state.effectiveSystemPrompt ?? this.agent.state.systemPrompt;
-		this.agent.state.effectiveSystemPrompt = undefined;
-		this.agent.state.messages = consolidateSystemPromptMessages(this.agent.state.messages);
+		this.agent.state.systemPrompt = baseline;
 	}
 
 	// =========================================================================
@@ -1225,9 +1197,6 @@ export class AgentSession {
 				await this.agent.continue();
 			}
 		} finally {
-			this.agent.state.effectiveSystemPrompt = this._modelContextState
-				? renderSystemPrompt(this._modelContextState.prompt.pieces)
-				: buildSystemPrompt(this._baseSystemPromptOptions);
 			this._flushPendingBashMessages();
 			this._flushPendingCustomMessages();
 			await this._emitAgentSettled();
@@ -1408,8 +1377,8 @@ export class AgentSession {
 					timestamp: Date.now(),
 				});
 			}
-			const preparedRun = this._preparePromptAndToolLoadout(result.systemPromptOptions);
-			if (preparedRun.message) messages.push(preparedRun.message);
+			const updateMessage = this._preparePromptAndToolLoadout(result.systemPromptOptions);
+			if (updateMessage) messages.push(updateMessage);
 		} catch (error) {
 			preflightResult?.(false);
 			throw error;
@@ -1748,7 +1717,6 @@ export class AgentSession {
 		source: "set" | "cycle" | "restore",
 	): Promise<void> {
 		if (modelsAreEqual(previousModel, nextModel)) return;
-		this._resetModelContextState();
 		await this._extensionRunner.emit({
 			type: "model_select",
 			model: nextModel,
@@ -2140,7 +2108,7 @@ export class AgentSession {
 			const newEntries = this.sessionManager.getEntries();
 			const sessionContext = this.sessionManager.buildSessionContext();
 			this.agent.state.messages = sessionContext.messages;
-			this._checkpointModelContext(true);
+			this._rebaselineModelContext();
 			const estimatedTokensAfter = estimateMessagesTokens(this.agent.state.messages);
 
 			// Get the saved compaction entry for the extension event
@@ -2466,7 +2434,7 @@ export class AgentSession {
 			const newEntries = this.sessionManager.getEntries();
 			const sessionContext = this.sessionManager.buildSessionContext();
 			this.agent.state.messages = sessionContext.messages;
-			this._checkpointModelContext(true);
+			this._rebaselineModelContext();
 			const estimatedTokensAfter = estimateMessagesTokens(this.agent.state.messages);
 
 			// Get the saved compaction entry for the extension event
@@ -2600,7 +2568,6 @@ export class AgentSession {
 		this._resourceLoader.extendResources(extensionPaths);
 		const systemPrompt = this._rebuildSystemPrompt(this.getActiveToolNames());
 		if (!this._modelContextState) this.agent.state.systemPrompt = systemPrompt;
-		this.agent.state.effectiveSystemPrompt = systemPrompt;
 	}
 
 	private buildExtensionResourcePaths(entries: Array<{ path: string; extensionPath: string }>): Array<{
@@ -3396,7 +3363,6 @@ export class AgentSession {
 			const sessionContext = this.sessionManager.buildSessionContext();
 			this.agent.state.messages = sessionContext.messages;
 			this._restoreModelContextState();
-			this._checkpointModelContext(false);
 
 			// Emit session_tree event
 			await this._extensionRunner.emit({

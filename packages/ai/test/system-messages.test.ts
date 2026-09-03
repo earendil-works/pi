@@ -1,40 +1,81 @@
 import { Type } from "typebox";
 import { describe, expect, test } from "vitest";
 import { getModel, streamSimple } from "../src/compat.ts";
-import type { AssistantMessage, Context, Tool } from "../src/types.ts";
-import {
-	consolidateSystemMessages,
-	fallbackUnsupportedToolChanges,
-	hardFallbackSystemMessages,
-} from "../src/utils/system-messages.ts";
+import type { Api, AssistantMessage, Context, Model, Tool } from "../src/types.ts";
+import { declaredTools, splitDeferredTools } from "../src/utils/deferred-tools.ts";
+import { renderSystemMessageAsUserText, resolveMessageToolChange } from "../src/utils/system-messages.ts";
 
-const assistant: AssistantMessage = {
-	role: "assistant",
-	content: [{ type: "thinking", thinking: "reasoning", thinkingSignature: "signed" }],
-	api: "anthropic-messages",
-	provider: "anthropic",
-	model: "claude-opus-4-8",
-	usage: {
-		input: 0,
-		output: 0,
-		cacheRead: 0,
-		cacheWrite: 0,
-		totalTokens: 0,
-		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-	},
-	stopReason: "stop",
-	timestamp: 1,
-};
+const PLACEHOLDER = "__pi_deferred_tool_placeholder__";
+
+function makeTool(name: string, description = `The ${name} tool`): Tool {
+	return { name, description, parameters: Type.Object({}) };
+}
+
+function makeAssistant(toolName?: string): AssistantMessage {
+	return {
+		role: "assistant",
+		content: toolName
+			? [{ type: "toolCall", id: "call_1", name: toolName, arguments: {} }]
+			: [{ type: "text", text: "ok" }],
+		api: "anthropic-messages",
+		provider: "anthropic",
+		model: "claude-fable-5-1",
+		usage: {
+			input: 0,
+			output: 0,
+			cacheRead: 0,
+			cacheWrite: 0,
+			totalTokens: 0,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+		},
+		stopReason: "stop",
+		timestamp: 2,
+	};
+}
 
 class PayloadCaptured extends Error {}
 
-describe("hardFallbackSystemMessages", () => {
-	test("uses complete current state and removes incompatible replay", () => {
-		const context: Context = {
-			systemPrompt: "old",
-			effectiveSystemPrompt: "new",
-			messages: [
-				assistant,
+interface AnthropicPayload {
+	betas?: string[];
+	tools?: Array<{ name: string; defer_loading?: boolean; description?: string }>;
+	messages: Array<{
+		role: string;
+		content: string | Array<{ type: string; text?: string; tool?: { type: string; name: string } }>;
+		output_config?: unknown;
+	}>;
+}
+
+/** Message roles without the effort-only system entries managed effort models append. */
+function contentRoles(payload: AnthropicPayload): string[] {
+	return payload.messages.filter((message) => message.output_config === undefined).map((message) => message.role);
+}
+
+async function captureAnthropic(model: Model<Api>, context: Context): Promise<AnthropicPayload> {
+	let captured: AnthropicPayload | undefined;
+	const stream = streamSimple({ ...model, baseUrl: "http://127.0.0.1:9" }, context, {
+		apiKey: "fake-key",
+		onPayload: (payload) => {
+			captured = payload as AnthropicPayload;
+			throw new PayloadCaptured();
+		},
+	});
+	await stream.result();
+	if (!captured) throw new Error("Expected payload capture");
+	return captured;
+}
+
+describe("system message helpers", () => {
+	test("renders operator text as a tagged user block", () => {
+		expect(renderSystemMessageAsUserText({ role: "system", content: "changed", timestamp: 1 })).toBe(
+			"<system_update>\nchanged\n</system_update>",
+		);
+		expect(renderSystemMessageAsUserText({ role: "system", content: "", timestamp: 1 })).toBe("");
+	});
+
+	test("unifies tool-result markers and system message deltas", () => {
+		const tool = makeTool("late_tool");
+		expect(
+			resolveMessageToolChange(
 				{
 					role: "toolResult",
 					toolCallId: "call-1",
@@ -42,109 +83,163 @@ describe("hardFallbackSystemMessages", () => {
 					content: [{ type: "text", text: "loaded" }],
 					isError: false,
 					timestamp: 2,
-					addedToolNames: ["late_tool"],
+					addedToolNames: ["late_tool", "late_tool"],
 				},
-				{
-					role: "system",
-					content: "changed",
-					timestamp: 3,
-				},
-			],
-		};
-
-		const fallback = hardFallbackSystemMessages(context);
-
-		expect(fallback.systemPrompt).toBe("new");
-		expect(fallback.messages).toEqual([
-			expect.objectContaining({
-				role: "assistant",
-				content: [{ type: "text", text: "reasoning" }],
-			}),
-			expect.objectContaining({ role: "toolResult" }),
-		]);
-		expect(fallback.messages[1]).not.toHaveProperty("addedToolNames");
-	});
-
-	test("consolidates chronological updates and provider replay data", () => {
-		const messages = consolidateSystemMessages([
-			assistant,
-			{
-				role: "toolResult",
-				toolCallId: "call-1",
-				toolName: "loader",
-				content: [{ type: "text", text: "loaded" }],
-				isError: false,
-				timestamp: 2,
-				addedToolNames: ["late_tool"],
-			},
-			{ role: "system", content: "changed", timestamp: 3 },
-		]);
-
-		expect(messages).toEqual([
-			expect.objectContaining({ role: "assistant", content: [{ type: "text", text: "reasoning" }] }),
-			expect.objectContaining({ role: "toolResult" }),
-		]);
-		expect(messages[1]).not.toHaveProperty("addedToolNames");
-	});
-
-	test("preserves provider replay data when no fallback is needed", () => {
-		const context: Context = { systemPrompt: "prompt", messages: [assistant] };
-
-		expect(hardFallbackSystemMessages(context)).toBe(context);
-	});
-
-	test("falls back only for tool changes unsupported by the transport", () => {
-		const tool: Tool = { name: "late_tool", description: "late tool", parameters: Type.Object({}) };
-		const addition: Context = {
-			systemPrompt: "old",
-			effectiveSystemPrompt: "current",
-			messages: [{ role: "system", content: "added", toolsAdded: [tool], timestamp: 1 }],
-			tools: [tool],
-		};
-		const removal: Context = {
-			...addition,
-			messages: [{ role: "system", content: "removed", toolsRemoved: [tool], timestamp: 1 }],
-			tools: [],
-		};
-
-		expect(fallbackUnsupportedToolChanges(addition, "all")).toBe(addition);
-		expect(fallbackUnsupportedToolChanges(addition, "additions")).toBe(addition);
-		expect(fallbackUnsupportedToolChanges(addition, "none").messages).toEqual([]);
-		expect(fallbackUnsupportedToolChanges(removal, "additions").messages).toEqual([]);
-	});
-
-	test("appends standalone guidance when complete effective state is unavailable", () => {
-		const fallback = hardFallbackSystemMessages({
-			systemPrompt: "old",
-			messages: [
-				{ role: "system", content: "first delta", timestamp: 1 },
-				{ role: "system", content: "later standalone guidance", timestamp: 2 },
-			],
+				(name) => (name === "late_tool" ? tool : undefined),
+			),
+		).toEqual({ added: [tool], removed: [], addedNames: ["late_tool"] });
+		expect(resolveMessageToolChange({ role: "system", content: "x", toolsRemoved: [tool], timestamp: 3 })).toEqual({
+			added: [],
+			removed: [tool],
+			addedNames: [],
 		});
+	});
+});
 
-		expect(fallback.systemPrompt).toBe("old\n\nfirst delta\n\nlater standalone guidance");
+describe("tool placement", () => {
+	test("keeps removed tools declared and orders the immediate set by name", () => {
+		const context: Context = {
+			messages: [
+				{ role: "user", content: "hi", timestamp: 1 },
+				{ role: "system", content: "bash withdrawn", toolsRemoved: [makeTool("bash")], timestamp: 2 },
+			],
+			tools: [makeTool("write"), makeTool("read")],
+		};
+		expect(declaredTools(context).map((tool) => tool.name)).toEqual(["bash", "read", "write"]);
 	});
 
-	test("lets unsupported Anthropic models hard-fallback instead of throwing", async () => {
+	test("prefers the definition recorded on the message over the live one", () => {
+		const recorded = makeTool("late_tool", "recorded");
 		const context: Context = {
-			systemPrompt: "old",
-			effectiveSystemPrompt: "new",
+			messages: [
+				{ role: "user", content: "hi", timestamp: 1 },
+				{ role: "system", content: "added", toolsAdded: [recorded], timestamp: 2 },
+			],
+			tools: [makeTool("late_tool", "live")],
+		};
+		const placement = splitDeferredTools(context, { toolResultMarkers: true, systemMarkers: true });
+		expect(placement.immediate).toEqual([]);
+		expect(placement.deferred.get("late_tool")?.description).toBe("recorded");
+	});
+
+	test("declares a system-added tool immediately when its marker cannot anchor", () => {
+		const context: Context = {
+			messages: [
+				{ role: "user", content: "hi", timestamp: 1 },
+				{ role: "system", content: "added", toolsAdded: [makeTool("late_tool")], timestamp: 2 },
+			],
+			tools: [makeTool("base_tool"), makeTool("late_tool")],
+		};
+		const placement = splitDeferredTools(context, { toolResultMarkers: true, systemMarkers: false });
+		expect(placement.immediate.map((tool) => tool.name)).toEqual(["base_tool", "late_tool"]);
+		expect(placement.deferred.size).toBe(0);
+	});
+});
+
+describe("Anthropic mid-conversation system messages", () => {
+	const lateTool = makeTool("late_tool");
+	const removedTool = makeTool("edit");
+
+	test("sends native system messages with tool changes on supported models", async () => {
+		const context: Context = {
+			systemPrompt: "base",
 			messages: [
 				{ role: "user", content: "hello", timestamp: 1 },
-				{ role: "system", content: "changed", timestamp: 2 },
+				{
+					role: "system",
+					content: "Plan mode is on.",
+					toolsAdded: [lateTool],
+					toolsRemoved: [removedTool],
+					timestamp: 2,
+				},
+			],
+			tools: [makeTool("read"), lateTool],
+		};
+		const payload = await captureAnthropic(getModel("anthropic", "claude-fable-5-1"), context);
+
+		expect(payload.betas).toContain("mid-conversation-tool-changes-2026-07-01");
+		expect(payload.tools?.map((tool) => `${tool.name}${tool.defer_loading ? "(d)" : ""}`)).toEqual([
+			"edit",
+			"read",
+			`${PLACEHOLDER}(d)`,
+			"late_tool(d)",
+		]);
+		expect(contentRoles(payload)).toEqual(["user", "system"]);
+		expect(payload.messages[1]?.content).toEqual([
+			{ type: "text", text: "Plan mode is on." },
+			{ type: "tool_removal", tool: { type: "tool_reference", name: "edit" } },
+			{
+				type: "tool_addition",
+				tool: { type: "tool_reference", name: "late_tool" },
+				cache_control: { type: "ephemeral" },
+			},
+		]);
+	});
+
+	test("keeps the beta set constant without tool changes", async () => {
+		const context: Context = { systemPrompt: "base", messages: [{ role: "user", content: "hello", timestamp: 1 }] };
+		const payload = await captureAnthropic(getModel("anthropic", "claude-fable-5-1"), context);
+		expect(payload.betas).toContain("mid-conversation-tool-changes-2026-07-01");
+	});
+
+	test("renders misplaced system messages as user text and declares their tools immediately", async () => {
+		const context: Context = {
+			systemPrompt: "base",
+			messages: [
+				{ role: "user", content: "hello", timestamp: 1 },
+				makeAssistant(),
+				{ role: "system", content: "after assistant", toolsAdded: [lateTool], timestamp: 3 },
+				{ role: "user", content: "next", timestamp: 4 },
+			],
+			tools: [makeTool("read"), lateTool],
+		};
+		const payload = await captureAnthropic(getModel("anthropic", "claude-fable-5-1"), context);
+
+		expect(contentRoles(payload)).toEqual(["user", "assistant", "user", "user"]);
+		expect(payload.messages[2]?.content).toEqual([
+			{ type: "text", text: "<system_update>\nafter assistant\n</system_update>" },
+		]);
+		expect(payload.tools?.map((tool) => tool.name)).toEqual(["late_tool", "read", PLACEHOLDER]);
+	});
+
+	test("falls back to user text on models without native support", async () => {
+		const context: Context = {
+			systemPrompt: "base",
+			messages: [
+				{ role: "user", content: "hello", timestamp: 1 },
+				{ role: "system", content: "changed", toolsRemoved: [removedTool], timestamp: 2 },
+			],
+			tools: [makeTool("read")],
+		};
+		const payload = await captureAnthropic(getModel("anthropic", "claude-opus-4-6"), context);
+
+		expect(payload.betas ?? []).not.toContain("mid-conversation-tool-changes-2026-07-01");
+		expect(contentRoles(payload)).toEqual(["user", "user"]);
+		expect(payload.messages[1]?.content).toEqual([
+			{ type: "text", text: "<system_update>\nchanged\n</system_update>", cache_control: { type: "ephemeral" } },
+		]);
+		expect(payload.tools?.map((tool) => tool.name)).toEqual(["edit", "read", PLACEHOLDER]);
+	});
+
+	test("never folds system messages into the top-level prompt or rewrites assistant turns", async () => {
+		const assistant: AssistantMessage = {
+			...makeAssistant(),
+			content: [{ type: "thinking", thinking: "reasoning", thinkingSignature: "signed" }],
+		};
+		const context: Context = {
+			systemPrompt: "old",
+			messages: [
+				{ role: "user", content: "hello", timestamp: 1 },
+				assistant,
+				{ role: "user", content: "again", timestamp: 3 },
+				{ role: "system", content: "changed", timestamp: 4 },
 			],
 		};
-		let payload: { system?: Array<{ text?: string }>; messages?: Array<{ role: string }> } | undefined;
-		const stream = streamSimple(getModel("anthropic", "claude-sonnet-4-6"), context, {
-			apiKey: "test",
-			onPayload: (value) => {
-				payload = value as typeof payload;
-				throw new PayloadCaptured();
-			},
-		});
-		await stream.result();
+		const payload = await captureAnthropic(getModel("anthropic", "claude-fable-5-1"), context);
+		const system = (payload as { system?: Array<{ text: string }> }).system;
 
-		expect(payload?.system?.[0]?.text).toBe("new");
-		expect(payload?.messages?.map((message) => message.role)).toEqual(["user"]);
+		expect(system?.map((block) => block.text)).toEqual(["old"]);
+		expect(payload.messages[1]?.content).toEqual([{ type: "thinking", thinking: "reasoning", signature: "signed" }]);
+		expect(contentRoles(payload)).toEqual(["user", "assistant", "user", "system"]);
 	});
 });

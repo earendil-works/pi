@@ -67,6 +67,9 @@ export interface SystemPromptEntry extends SessionEntryBase {
 	type: "system_prompt";
 	/** Complete prompt pieces at this point in the session. */
 	prompt: SystemPromptPiece[];
+	/** Top-level prompt sent to the provider. Stays fixed while `prompt` evolves through system messages. */
+	baseline: string;
+	/** Tool declarations active at this point, recorded so resumed sessions render them byte-identically. */
 	tools: Tool[];
 }
 
@@ -1101,13 +1104,14 @@ export class SessionManager {
 	}
 
 	/** Append the complete current prompt and active tool state as a non-message session entry. */
-	appendSystemPromptState(prompt: SystemPromptPiece[], tools: Tool[]): string {
+	appendSystemPromptState(prompt: { pieces: SystemPromptPiece[]; baseline: string }, tools: Tool[]): string {
 		const entry: SystemPromptEntry = {
 			type: "system_prompt",
 			id: generateId(this.byId),
 			parentId: this.leafId,
 			timestamp: new Date().toISOString(),
-			prompt,
+			prompt: prompt.pieces,
+			baseline: prompt.baseline,
 			tools,
 		};
 		this._appendEntry(entry);

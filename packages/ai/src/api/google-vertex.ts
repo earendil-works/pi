@@ -23,13 +23,13 @@ import type {
 	ThinkingContent,
 	ToolCall,
 } from "../types.ts";
+import { declaredTools } from "../utils/deferred-tools.ts";
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { providerHeadersToRecord } from "../utils/headers.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
-import { hardFallbackSystemMessages } from "../utils/system-messages.ts";
 import type { GoogleApiThinkingLevel, ResolvedGoogleThinkingLevel } from "./google-shared.ts";
 import {
 	convertMessages,
@@ -461,8 +461,8 @@ function buildParams(
 	context: Context,
 	options: GoogleVertexOptions = {},
 ): GenerateContentParameters {
-	const requestContext = hardFallbackSystemMessages(context);
-	const contents = convertMessages(model, requestContext);
+	const contents = convertMessages(model, context);
+	const tools = declaredTools(context);
 
 	const generationConfig: GenerateContentConfig = {};
 	if (options.temperature !== undefined) {
@@ -473,16 +473,15 @@ function buildParams(
 	}
 
 	const supportsStrictMode = supportsGoogleStrictToolSampling(model.id);
-	const functionCallingMode = requestContext.tools?.length
-		? resolveGoogleFunctionCallingMode(requestContext.tools, options.toolChoice, supportsStrictMode)
+	const functionCallingMode = tools.length
+		? resolveGoogleFunctionCallingMode(tools, options.toolChoice, supportsStrictMode)
 		: undefined;
 	const config: GenerateContentConfig = {
 		...(Object.keys(generationConfig).length > 0 && generationConfig),
-		...(requestContext.systemPrompt && { systemInstruction: sanitizeSurrogates(requestContext.systemPrompt) }),
-		...(requestContext.tools &&
-			requestContext.tools.length > 0 && {
-				tools: convertTools(requestContext.tools, false, supportsStrictMode),
-			}),
+		...(context.systemPrompt && { systemInstruction: sanitizeSurrogates(context.systemPrompt) }),
+		...(tools.length > 0 && {
+			tools: convertTools(tools, false, supportsStrictMode),
+		}),
 		...(functionCallingMode !== undefined && {
 			toolConfig: { functionCallingConfig: { mode: functionCallingMode } },
 		}),

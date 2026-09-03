@@ -334,8 +334,6 @@ export type AgentMessage = Message | CustomAgentMessages[keyof CustomAgentMessag
 export interface AgentState {
 	/** Stable top-level system prompt sent with each model request. */
 	systemPrompt: string;
-	/** Complete current prompt used when chronological system messages require hard fallback. */
-	effectiveSystemPrompt?: string;
 	/** Active model used for future turns. */
 	model: Model<any>;
 	/** Requested reasoning level for future turns. */
@@ -417,8 +415,6 @@ export interface AgentTool<TParameters extends TSchema = TSchema, TDetails = any
 export interface AgentContext {
 	/** Stable top-level system prompt included with the request. */
 	systemPrompt: string;
-	/** Complete current prompt used when chronological system messages require hard fallback. */
-	effectiveSystemPrompt?: string;
 	/** Transcript visible to the model. */
 	messages: AgentMessage[];
 	/** Tools available for this run. */

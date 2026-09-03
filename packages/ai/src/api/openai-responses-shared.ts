@@ -19,7 +19,6 @@ import type {
 	AssistantMessage,
 	Context,
 	ImageContent,
-	Message,
 	Model,
 	StopReason,
 	TextContent,
@@ -33,12 +32,7 @@ import type { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { shortHash } from "../utils/hash.ts";
 import { parseStreamingJson } from "../utils/json-parse.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
-import {
-	fallbackUnsupportedToolChanges,
-	getSystemMessageText,
-	hardFallbackSystemMessages,
-	resolveMessageToolChange,
-} from "../utils/system-messages.ts";
+import { getSystemMessageText, resolveMessageToolChange } from "../utils/system-messages.ts";
 import {
 	appendGrammarToolInputJsonDelta,
 	type GrammarToolInputJsonBuffer,
@@ -140,82 +134,6 @@ export interface ConvertResponsesToolsOptions {
 	deferLoading?: boolean;
 }
 
-/** Select native tool updates or complete-state fallback for a Responses request. */
-export function prepareResponsesToolContext(
-	context: Context,
-	options: {
-		supportsAdditionalTools: boolean;
-		supportsToolSearch: boolean;
-		requiresTopLevelTools: boolean;
-	},
-): { context: Context; deferredToolsMode?: ResponsesDeferredToolsMode } {
-	const deferredToolsMode = options.requiresTopLevelTools
-		? undefined
-		: options.supportsAdditionalTools
-			? "additional-tools"
-			: options.supportsToolSearch
-				? "tool-search"
-				: undefined;
-	if (
-		options.requiresTopLevelTools &&
-		context.messages.some((message) => {
-			const change = resolveMessageToolChange(message);
-			return change.addedNames.length > 0 || change.removed.length > 0;
-		})
-	) {
-		return { context: hardFallbackSystemMessages(context) };
-	}
-	return {
-		context: fallbackUnsupportedToolChanges(
-			context,
-			deferredToolsMode === "additional-tools" ? "all" : deferredToolsMode === "tool-search" ? "additions" : "none",
-		),
-		deferredToolsMode,
-	};
-}
-
-/** Rewind the final tool checkpoint so Responses can replay complete replacement snapshots chronologically. */
-function createAdditionalToolsState(
-	messages: readonly Message[],
-	currentTools: readonly Tool[] | undefined,
-): { tools: Map<string, Tool>; catalog: Map<string, Tool> } {
-	const catalog = new Map<string, Tool>();
-	for (const message of messages) {
-		if (message.role !== "system") continue;
-		const change = resolveMessageToolChange(message);
-		for (const tool of change.removed) catalog.set(tool.name, tool);
-		for (const tool of change.added) catalog.set(tool.name, tool);
-	}
-	for (const tool of currentTools ?? []) catalog.set(tool.name, tool);
-
-	const usedToolNamesBeforeAdditions = new Map<number, Set<string>>();
-	const usedToolNames = new Set<string>();
-	for (let index = 0; index < messages.length; index++) {
-		const message = messages[index];
-		const change = resolveMessageToolChange(message, (name) => catalog.get(name));
-		if (change.addedNames.length > 0) {
-			usedToolNamesBeforeAdditions.set(index, new Set(usedToolNames));
-		}
-		if (message.role === "assistant") {
-			for (const block of message.content) {
-				if (block.type === "toolCall") usedToolNames.add(block.name);
-			}
-		}
-	}
-
-	const tools = new Map<string, Tool>();
-	for (const tool of currentTools ?? []) tools.set(tool.name, tool);
-	for (let index = messages.length - 1; index >= 0; index--) {
-		const change = resolveMessageToolChange(messages[index], (name) => catalog.get(name));
-		const usedBeforeAddition = usedToolNamesBeforeAdditions.get(index);
-		for (const name of change.addedNames) {
-			if (!usedBeforeAddition?.has(name)) tools.delete(name);
-		}
-		for (const tool of change.removed) tools.set(tool.name, tool);
-	}
-	return { tools, catalog };
-}
-
 // =============================================================================
 // Message conversion
 // =============================================================================
@@ -255,61 +173,35 @@ export function convertResponsesMessages<TApi extends Api>(
 	};
 
 	const transformedMessages = transformMessages(context.messages, model, normalizeToolCallId);
-	const additionalToolsState =
-		options?.deferredToolsMode === "additional-tools"
-			? createAdditionalToolsState(transformedMessages, context.tools)
-			: undefined;
-	const grammarToolInputProperties = new Map(options?.grammarToolInputProperties);
-	for (const tool of additionalToolsState?.catalog.values() ?? []) {
-		const grammar = resolveGrammarConstrainedSampling(
-			tool,
-			options?.toolOptions?.supportsOpenAIGrammarTools ?? false,
-		);
-		if (grammar) grammarToolInputProperties.set(tool.name, grammar.inputProperty);
-	}
+	const grammarToolInputProperties = options?.grammarToolInputProperties ?? new Map<string, string>();
 
-	const appendAdditionalToolsSnapshot = (): void => {
-		if (!additionalToolsState) return;
-		messages.push({
-			type: "additional_tools",
-			role: "developer",
-			tools: convertResponsesTools([...additionalToolsState.tools.values()], options?.toolOptions),
-		} satisfies ResponseInputItem);
-	};
-	const applyAdditionalToolsChange = (message: Message): boolean => {
-		if (!additionalToolsState) return false;
-		const change = resolveMessageToolChange(message, (name) => additionalToolsState.catalog.get(name));
-		let changed = false;
-		for (const tool of change.removed) {
-			changed = additionalToolsState.tools.delete(tool.name) || changed;
+	/** Load deferred definitions at this point of the transcript, once each. */
+	const appendDeferredToolLoads = (names: readonly string[], seed: string): void => {
+		if (options?.deferredToolsMode === undefined) return;
+		const added: Tool[] = [];
+		for (const name of names) {
+			const tool = options.deferredTools?.get(name);
+			if (!tool || loadedToolNames.has(name)) continue;
+			loadedToolNames.add(name);
+			added.push(tool);
 		}
-		for (const tool of change.added) {
-			const previous = additionalToolsState.tools.get(tool.name);
-			if (previous === undefined || JSON.stringify(previous) !== JSON.stringify(tool)) {
-				additionalToolsState.tools.set(tool.name, tool);
-				changed = true;
-			}
-		}
-		return changed;
-	};
-	const appendToolSearchAdditions = (tools: Tool[], seed: string): void => {
-		const added = tools.filter((tool) => {
-			if (loadedToolNames.has(tool.name)) return false;
-			loadedToolNames.add(tool.name);
-			return true;
-		});
 		if (added.length === 0) return;
-		if (options?.deferredToolsMode !== "tool-search") {
-			throw new Error("OpenAI Responses does not support transcript-anchored tool addition");
+		if (options.deferredToolsMode === "additional-tools") {
+			messages.push({
+				type: "additional_tools",
+				role: "developer",
+				tools: convertResponsesTools(added, options.toolOptions),
+			} satisfies ResponseInputItem);
+			return;
 		}
-		const names = added.map((tool) => tool.name);
-		const searchCallId = `pi_tool_load_${shortHash(`${seed}:${names.join(",")}`)}`;
+		const addedNames = added.map((tool) => tool.name);
+		const searchCallId = `pi_tool_load_${shortHash(`${seed}:${addedNames.join(",")}`)}`;
 		messages.push({
 			type: "tool_search_call",
 			call_id: searchCallId,
 			execution: "client",
 			status: "completed",
-			arguments: { query: names.join(" "), limit: names.length },
+			arguments: { query: addedNames.join(" "), limit: addedNames.length },
 		} satisfies ResponseInputItem);
 		messages.push({
 			type: "tool_search_output",
@@ -320,7 +212,6 @@ export function convertResponsesMessages<TApi extends Api>(
 		} satisfies ResponseToolSearchOutputItemParam);
 	};
 
-	appendAdditionalToolsSnapshot();
 	const includeSystemPrompt = options?.includeSystemPrompt ?? true;
 	const compat = model.compat as { supportsDeveloperRole?: boolean } | undefined;
 	const instructionRole = model.reasoning && compat?.supportsDeveloperRole !== false ? "developer" : "system";
@@ -334,11 +225,7 @@ export function convertResponsesMessages<TApi extends Api>(
 	let msgIndex = 0;
 	for (const msg of transformedMessages) {
 		if (msg.role === "system") {
-			if (additionalToolsState) {
-				if (applyAdditionalToolsChange(msg)) appendAdditionalToolsSnapshot();
-			} else {
-				appendToolSearchAdditions(resolveMessageToolChange(msg).added, `system:${msgIndex}`);
-			}
+			appendDeferredToolLoads(resolveMessageToolChange(msg).addedNames, `system:${msgIndex}`);
 			const text = getSystemMessageText(msg);
 			if (text.length > 0) {
 				messages.push({ role: instructionRole, content: sanitizeSurrogates(text) });
@@ -422,10 +309,7 @@ export function convertResponsesMessages<TApi extends Api>(
 						itemId = undefined;
 					}
 
-					const canReplayNamespace =
-						isSameModel ||
-						additionalToolsState?.catalog.has(toolCall.name) === true ||
-						options?.deferredTools?.has(toolCall.name) === true;
+					const canReplayNamespace = isSameModel || options?.deferredTools?.has(toolCall.name) === true;
 
 					if (customInputProperty !== undefined) {
 						output.push({
@@ -474,14 +358,7 @@ export function convertResponsesMessages<TApi extends Api>(
 				});
 			}
 
-			if (additionalToolsState) {
-				if (applyAdditionalToolsChange(msg)) appendAdditionalToolsSnapshot();
-			} else {
-				appendToolSearchAdditions(
-					resolveMessageToolChange(msg, (name) => options?.deferredTools?.get(name)).added,
-					msg.toolCallId,
-				);
-			}
+			appendDeferredToolLoads(resolveMessageToolChange(msg).addedNames, msg.toolCallId);
 		}
 		msgIndex++;
 	}

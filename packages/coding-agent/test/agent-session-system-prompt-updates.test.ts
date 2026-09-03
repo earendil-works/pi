@@ -47,8 +47,8 @@ describe("AgentSession system prompt updates", () => {
 		await harness.session.prompt("first");
 		await harness.session.prompt("plan");
 		expect(harness.session.agent.state.systemPrompt).toBe(providerPrompts[0]);
-		expect(harness.session.agent.state.effectiveSystemPrompt).toContain("Do not modify files.");
-		expect(harness.session.systemPrompt).toBe(harness.session.agent.state.effectiveSystemPrompt);
+		expect(harness.session.systemPrompt).toContain("Do not modify files.");
+		expect(harness.session.systemPrompt).not.toBe(harness.session.agent.state.systemPrompt);
 		await harness.session.prompt("resume");
 
 		expect(providerPrompts[1]).toBe(providerPrompts[0]);
@@ -91,7 +91,7 @@ describe("AgentSession system prompt updates", () => {
 		expect(systemMessages.at(-1)).toContain("supersedes the previous");
 	});
 
-	test("uses complete-state fallback for legacy full prompt replacements", async () => {
+	test("replaces the baseline for legacy full prompt replacements without rewriting history", async () => {
 		harness = await createHarness({
 			extensionFactories: [
 				(pi) => {
@@ -111,13 +111,23 @@ describe("AgentSession system prompt updates", () => {
 				contexts.push(context);
 				return fauxAssistantMessage("second");
 			},
+			(context) => {
+				contexts.push(context);
+				return fauxAssistantMessage("third");
+			},
 		]);
 
 		await harness.session.prompt("first");
 		await harness.session.prompt("replace");
+		await harness.session.prompt("back");
 
 		expect(contexts[1]?.systemPrompt).toBe("replacement prompt");
 		expect(contexts[1]?.messages.some((message) => message.role === "system")).toBe(false);
+		// Returning to the default prompt is another replacement; nothing earlier is rewritten.
+		expect(contexts[2]?.systemPrompt).toBe(contexts[0]?.systemPrompt);
+		expect(contexts[2]?.messages.map((message) => message.role)).toEqual(
+			contexts[1]?.messages.map((message) => message.role).concat(["assistant", "user"]),
+		);
 	});
 
 	test("checkpoints the effective prompt after compaction", async () => {
@@ -147,6 +157,7 @@ describe("AgentSession system prompt updates", () => {
 		const checkpoint = entries[compactionIndex + 1];
 		expect(checkpoint?.type).toBe("system_prompt");
 		if (checkpoint?.type === "system_prompt") {
+			expect(checkpoint.baseline).toBe(harness.session.systemPrompt);
 			expect(checkpoint.prompt.map((piece) => piece.text).join("")).toBe(harness.session.systemPrompt);
 		}
 	});
@@ -294,41 +305,5 @@ describe("AgentSession system prompt updates", () => {
 			previous: addition.state,
 		});
 		expect(removal).toMatchObject({ type: "incremental", toolsAdded: [], toolsRemoved: [firstTool] });
-	});
-
-	test("uses a full tool delta when a minimal delta would lose declaration order", () => {
-		const firstTool: Tool = {
-			name: "first_tool",
-			description: "first tool",
-			parameters: Type.Object({}),
-		};
-		const secondTool: Tool = {
-			name: "second_tool",
-			description: "second tool",
-			parameters: Type.Object({}),
-		};
-		const options = normalizeBuildSystemPromptOptions({ cwd: "/tmp", customPrompt: "prompt" });
-		const initial = prepareModelContextUpdate({
-			options,
-			tools: new Map([
-				[firstTool.name, firstTool],
-				[secondTool.name, secondTool],
-			]),
-		});
-
-		const reordered = prepareModelContextUpdate({
-			options,
-			tools: new Map([
-				[secondTool.name, secondTool],
-				[firstTool.name, firstTool],
-			]),
-			previous: initial.state,
-		});
-
-		expect(reordered).toMatchObject({
-			type: "incremental",
-			toolsAdded: [secondTool, firstTool],
-			toolsRemoved: [firstTool, secondTool],
-		});
 	});
 });

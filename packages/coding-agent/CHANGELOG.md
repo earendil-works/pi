@@ -7,6 +7,7 @@
 - Fixed the write tool reporting UTF-16 code-unit counts as byte counts by removing the misleading count ([#8979](https://github.com/earendil-works/pi/issues/8979)).
 - Fixed proxied plain-HTTP provider requests hanging after a tool call by tunneling them with CONNECT ([#8134](https://github.com/earendil-works/pi/issues/8134)).
 - Fixed RPC `abort` reporting success without cancelling an in-progress manual compaction ([#8920](https://github.com/earendil-works/pi/issues/8920)).
+- Fixed inherited Anthropic deferred tool loading invalidating the cached prompt prefix when the first deferred tool is introduced mid-session.
 
 ## [0.84.4] - 2026-08-28
 

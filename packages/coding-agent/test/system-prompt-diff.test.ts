@@ -29,31 +29,13 @@ describe("diffSystemPrompts", () => {
 		).toEqual({ type: "update", text: "The previous skill guidance no longer applies." });
 	});
 
-	test("emits only strict line suffixes added to base instructions", () => {
-		const previous = buildSystemPromptPieces({
-			cwd: "/tmp",
-			customPrompt: "base instructions",
-			appendSystemPrompt: "existing addition",
-		});
-		const current = buildSystemPromptPieces({
-			cwd: "/tmp",
-			customPrompt: "base instructions",
-			appendSystemPrompt: "existing addition\nnew addition",
-		});
-
-		expect(diffSystemPrompts(previous, current)).toEqual({
-			type: "update",
-			text: "The following additional base system instructions now apply:\n\nnew addition",
-		});
-	});
-
-	test("replaces base instructions after non-additive changes", () => {
+	test("replaces base instructions after any change", () => {
 		const base = { cwd: "/tmp", customPrompt: "base instructions", appendSystemPrompt: "existing addition" };
 		for (const current of [
 			{ ...base, customPrompt: "changed instructions" },
-			{ ...base, appendSystemPrompt: "replacement addition" },
+			{ ...base, appendSystemPrompt: "existing addition\nnew addition" },
 			{ ...base, appendSystemPrompt: "" },
-			{ ...base, appendSystemPrompt: "inserted addition\nexisting addition" },
+			{ ...base, forceSystemPrompt: "forced" },
 		]) {
 			expect(diffSystemPrompts(buildSystemPromptPieces(base), buildSystemPromptPieces(current))).toEqual({
 				type: "replace",
@@ -61,19 +43,23 @@ describe("diffSystemPrompts", () => {
 		}
 	});
 
-	test("only appends to prompt tails", () => {
-		const previous = buildSystemPromptPieces({ cwd: "/tmp", promptTail: "\nold tail" });
-		expect(
-			diffSystemPrompts(previous, buildSystemPromptPieces({ cwd: "/tmp", promptTail: "\nold tail\nnew tail" })),
-		).toEqual({
+	test("treats the prompt tail as ordinary appended guidance", () => {
+		const empty = buildSystemPromptPieces({ cwd: "/tmp" });
+		const oldTail = buildSystemPromptPieces({ cwd: "/tmp", promptTail: "\nold tail" });
+		const newTail = buildSystemPromptPieces({ cwd: "/tmp", promptTail: "\nold tail\nnew tail" });
+
+		expect(diffSystemPrompts(empty, oldTail)).toEqual({
 			type: "update",
-			text: "The following additional system guidance now applies:\n\nnew tail",
+			text: "The following additional system guidance now applies:\n\nold tail",
 		});
-		for (const promptTail of ["", "\nnew tail", "\ninserted\nold tail"]) {
-			expect(diffSystemPrompts(previous, buildSystemPromptPieces({ cwd: "/tmp", promptTail }))).toEqual({
-				type: "replace",
-			});
-		}
+		expect(diffSystemPrompts(oldTail, newTail)).toEqual({
+			type: "update",
+			text: "The additional system guidance has changed. The following supersedes the previous additional system guidance:\n\nold tail\nnew tail",
+		});
+		expect(diffSystemPrompts(oldTail, empty)).toEqual({
+			type: "update",
+			text: "The previous additional system guidance no longer applies.",
+		});
 	});
 
 	test("keeps remaining custom sections stable when an earlier section is removed", () => {
@@ -94,23 +80,12 @@ describe("diffSystemPrompts", () => {
 		});
 	});
 
-	test("replaces structurally incompatible prompts", () => {
+	test("replaces prompts whose literal skeleton changed and ignores whitespace-only changes", () => {
 		const base = prompt("same");
-		const reordered: SystemPromptPiece[] = [
-			{ type: "value", key: "second", text: "two" },
-			{ type: "value", key: "first", text: "one" },
-		];
-		const originalOrder = [reordered[1], reordered[0]];
 		const changedLiteral = prompt("same");
 		changedLiteral[0] = { type: "literal", text: "changed\n" };
 
-		for (const [previous, current] of [
-			[base, [base[0], base[2], base[1]]],
-			[originalOrder, reordered],
-			[base, prompt(" same ")],
-			[base, changedLiteral],
-		] as Array<[SystemPromptPiece[], SystemPromptPiece[]]>) {
-			expect(diffSystemPrompts(previous, current)).toEqual({ type: "replace" });
-		}
+		expect(diffSystemPrompts(base, changedLiteral)).toEqual({ type: "replace" });
+		expect(diffSystemPrompts(base, prompt(" same "))).toEqual({ type: "unchanged" });
 	});
 });

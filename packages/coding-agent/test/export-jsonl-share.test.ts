@@ -73,7 +73,6 @@ describe("JSONL share export", () => {
 				false,
 			);
 
-			session.agent.state.effectiveSystemPrompt = `${session.state.systemPrompt}\n\nCurrent guidance`;
 			const sharePath = join(tempDir, "share.jsonl");
 			exportSessionForShare(sharePath, session);
 			const records = readFileSync(sharePath, "utf8")
@@ -99,7 +98,6 @@ describe("JSONL share export", () => {
 				timestamp: expect.any(String),
 			});
 			expect(shareEntry.data?.systemPrompt).toBe(session.systemPrompt);
-			expect(shareEntry.data?.systemPrompt).not.toBe(session.state.systemPrompt);
 			expect(shareEntry.data?.tools).toEqual([
 				expect.objectContaining({
 					name: "share_tool",

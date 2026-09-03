@@ -418,16 +418,33 @@ export interface DeferredHandle {
 	data?: JsonValue;
 }
 
+/**
+ * Operator instruction appended to the transcript after the conversation started.
+ *
+ * Providers with native mid-conversation system messages send it as one; others render
+ * it as a tagged user turn. Either way it is appended, never folded into the top-level
+ * system prompt, so the cached prefix and any provider conversation checks stay valid.
+ *
+ * Rendering of a persisted message must depend only on the fields stored on it and on
+ * the model. Adapters must never reinterpret existing fields, because a resumed session
+ * that renders history differently than it was sent invalidates the provider cache and,
+ * on models that bind thinking blocks to the conversation, every later thinking block.
+ * New behavior must arrive as new optional fields that older messages lack.
+ */
 export interface SystemMessage {
 	role: "system";
 	content: string | TextContent[];
 	/**
-	 * Complete provider-neutral definitions that become available at this point.
-	 * When a name also appears in `toolsRemoved`, adapters remove the old declaration first,
-	 * then add this one to preserve replacement and ordering semantics.
+	 * Complete definitions of tools that become available at this point. Adapters keep
+	 * these declared for the rest of the conversation and surface them here, so
+	 * `Context.tools` only needs to hold the tools that are callable right now.
 	 */
 	toolsAdded?: Tool[];
-	/** Complete provider-neutral definitions that stop being available at this point. */
+	/**
+	 * Complete definitions of tools that stop being available at this point. Adapters keep
+	 * the declaration in place, since removing it would change the cached prefix, and
+	 * withdraw the tool here where the provider supports it.
+	 */
 	toolsRemoved?: Tool[];
 	timestamp: number; // Unix timestamp in milliseconds
 }
@@ -537,9 +554,8 @@ export interface Tool<TParameters extends TSchema = TSchema> {
 export interface Context {
 	/** Stable top-level prompt used as the provider cache prefix. */
 	systemPrompt?: string;
-	/** Complete current prompt used when chronological system messages require hard fallback. */
-	effectiveSystemPrompt?: string;
 	messages: Message[];
+	/** Tools callable right now. Tools declared earlier in the transcript stay declared. */
 	tools?: Tool[];
 }
 
@@ -671,7 +687,7 @@ export interface OpenAIResponsesCompat {
 	supportsStrictMode?: boolean;
 	/** Whether to emit OpenAI custom tools with Lark/regex grammar formats. When false, grammar-constrained tools fall back to normal function tools. Default: false; the generated model catalog enables it for capable models. */
 	supportsOpenAIGrammarTools?: boolean;
-	/** Whether to send all tools through complete, message-anchored `additional_tools` snapshots instead of the top-level `tools` field. Default: false. */
+	/** Whether the model supports message-anchored `additional_tools` input items. Default: false. */
 	supportsAdditionalTools?: boolean;
 	/** Whether the model supports client-executed tool search for deferred tools. Default: false. */
 	supportsToolSearch?: boolean;
@@ -744,6 +760,19 @@ export interface AnthropicMessagesCompat {
 	 * except Haiku and models older than Claude 4.5; false for other providers.
 	 */
 	supportsToolReferences?: boolean;
+	/**
+	 * Whether the model accepts `role: "system"` messages inside `messages`.
+	 * Default: true for first-party Claude Opus 4.8, Opus 5, Fable 5/5.1, and
+	 * Mythos 5/5.1; false otherwise. Unsupported models receive system messages
+	 * as tagged user turns instead.
+	 */
+	supportsMidConvoSystemMessages?: boolean;
+	/**
+	 * Whether the model accepts `tool_addition` and `tool_removal` blocks in
+	 * mid-conversation system messages (beta). Default: same models as
+	 * `supportsMidConvoSystemMessages`. Requires that flag as well.
+	 */
+	supportsMidConvoToolChanges?: boolean;
 }
 
 /** Compatibility settings for Amazon Bedrock models. */

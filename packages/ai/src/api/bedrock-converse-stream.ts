@@ -48,6 +48,7 @@ import type {
 	ToolCall,
 	ToolResultMessage,
 } from "../types.ts";
+import { declaredTools } from "../utils/deferred-tools.ts";
 import { appendAssistantMessageDiagnostic } from "../utils/diagnostics.ts";
 import { normalizeProviderError } from "../utils/error-body.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
@@ -56,7 +57,7 @@ import { parseStreamingJson } from "../utils/json-parse.ts";
 import { resolveHttpProxyUrlForTarget } from "../utils/node-http-proxy.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
-import { hardFallbackSystemMessages } from "../utils/system-messages.ts";
+import { renderSystemMessageAsUserText } from "../utils/system-messages.ts";
 import { getJsonSchemaToolParameters, resolveJsonSchemaStrictSampling } from "./constrained-sampling.ts";
 import {
 	adjustMaxTokensForThinking,
@@ -120,7 +121,6 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 	options: BedrockOptions = {},
 ): AssistantMessageEventStream => {
 	const stream = new AssistantMessageEventStream();
-	const requestContext = hardFallbackSystemMessages(context);
 
 	(async () => {
 		const output: AssistantMessage = {
@@ -252,13 +252,13 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 			const inferenceMaxTokens = options.maxTokens ?? (isAnthropicClaudeModel(model) ? model.maxTokens : undefined);
 			let commandInput = {
 				modelId: model.id,
-				messages: convertMessages(requestContext, model, cacheRetention, options.env),
-				system: buildSystemPrompt(requestContext.systemPrompt, model, cacheRetention, options.env),
+				messages: convertMessages(context, model, cacheRetention, options.env),
+				system: buildSystemPrompt(context.systemPrompt, model, cacheRetention, options.env),
 				inferenceConfig: {
 					...(inferenceMaxTokens !== undefined && { maxTokens: inferenceMaxTokens }),
 					...(options.temperature !== undefined && { temperature: options.temperature }),
 				},
-				toolConfig: convertToolConfig(requestContext.tools, options.toolChoice, supportsStrictMode),
+				toolConfig: convertToolConfig(declaredTools(context), options.toolChoice, supportsStrictMode),
 				additionalModelRequestFields: buildAdditionalModelRequestFields(model, options),
 				...(options.requestMetadata !== undefined && { requestMetadata: options.requestMetadata }),
 			};
@@ -940,8 +940,12 @@ function convertMessages(
 		const m = transformedMessages[i];
 
 		switch (m.role) {
-			case "system":
+			case "system": {
+				// The Converse API has no mid-conversation system role; append operator context as user text.
+				const text = renderSystemMessageAsUserText(m);
+				if (text.length > 0) result.push({ role: "user", content: [createRequiredTextBlock(text)] });
 				continue;
+			}
 			case "user": {
 				const content: ContentBlock[] = [];
 				if (typeof m.content === "string") {

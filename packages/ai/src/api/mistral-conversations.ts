@@ -13,13 +13,14 @@ import type {
 	Tool,
 	ToolCall,
 } from "../types.ts";
+import { declaredTools } from "../utils/deferred-tools.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { shortHash } from "../utils/hash.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { parseStreamingJson } from "../utils/json-parse.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
-import { fallbackUnsupportedToolChanges, getSystemMessageText } from "../utils/system-messages.ts";
+import { getSystemMessageText } from "../utils/system-messages.ts";
 import { getJsonSchemaToolParameters, resolveJsonSchemaStrictSampling } from "./constrained-sampling.ts";
 import { buildBaseOptions } from "./simple-options.ts";
 import { transformMessages } from "./transform-messages.ts";
@@ -136,13 +137,10 @@ export const stream: StreamFunction<"mistral-conversations", MistralOptions> = (
 				throw new Error(`No API key for provider: ${model.provider}`);
 			}
 
-			const requestContext = fallbackUnsupportedToolChanges(context, "none");
 			const normalizeMistralToolCallId = createMistralToolCallIdNormalizer();
-			const transformedMessages = transformMessages(requestContext.messages, model, (id) =>
-				normalizeMistralToolCallId(id),
-			);
+			const transformedMessages = transformMessages(context.messages, model, (id) => normalizeMistralToolCallId(id));
 
-			let payload = buildChatPayload(model, requestContext, transformedMessages, options);
+			let payload = buildChatPayload(model, context, transformedMessages, options);
 			const nextPayload = await options?.onPayload?.(payload, model);
 			if (nextPayload !== undefined) {
 				payload = nextPayload as MistralChatPayload;
@@ -513,7 +511,8 @@ function buildChatPayload(
 		messages: toChatMessages(messages, model.input.includes("image")),
 	};
 
-	if (context.tools?.length) payload.tools = toFunctionTools(context.tools);
+	const tools = declaredTools(context);
+	if (tools.length) payload.tools = toFunctionTools(tools);
 	if (options?.temperature !== undefined) payload.temperature = options.temperature;
 	if (options?.maxTokens !== undefined) payload.maxTokens = options.maxTokens;
 	if (options?.toolChoice) payload.toolChoice = mapToolChoice(options.toolChoice);

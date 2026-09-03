@@ -44,6 +44,7 @@ const SYSTEM_PROMPT_VALUE_SUBJECTS: Record<string, string> = {
 	skills: "skill guidance",
 	tools: "available tool guidance",
 	guidelines: "operating guidelines",
+	promptTail: "additional system guidance",
 };
 
 /** Normalize prompt input into the mutable, collection-complete shape exposed to extensions. */
@@ -232,99 +233,39 @@ export function buildSystemPrompt(input: BuildSystemPromptInput): string {
 
 export type SystemPromptDiff = { type: "unchanged" } | { type: "update"; text: string } | { type: "replace" };
 
-interface PromptLayout {
-	literals: string[];
-	values: Map<string, string>;
-	placements: Array<{ key: string; literalIndex: number }>;
-}
+/** Keys whose change cannot be expressed as an appended instruction. */
+const BASE_INSTRUCTION_KEYS = new Set(["forceSystemPrompt", "customPrompt", "appendSystemPrompt"]);
 
-/** Render semantic, source-specific instructions for changed prompt values. */
+/**
+ * Render semantic, source-specific instructions for changed prompt values.
+ *
+ * Both piece lists come from the same builder, so their literal skeletons only
+ * differ when the prompt switched template (default, custom, or forced). That,
+ * or a change to the base instructions themselves, requires a new baseline.
+ * Every other change is a keyed value update that can be appended.
+ */
 export function diffSystemPrompts(
 	previous: readonly SystemPromptPiece[],
 	current: readonly SystemPromptPiece[],
 ): SystemPromptDiff {
-	const previousLayout = collectPromptLayout(previous);
-	const currentLayout = collectPromptLayout(current);
-	if (!previousLayout || !currentLayout || !hasCompatiblePromptLayout(previousLayout, currentLayout)) {
-		return { type: "replace" };
-	}
-	const updates: string[] = [];
-	const baseKeys = ["customPrompt", "appendSystemPrompt"] as const;
-	const previousBaseRaw = baseKeys.map((key) => previousLayout.values.get(key) ?? "").join("");
-	const currentBaseRaw = baseKeys.map((key) => currentLayout.values.get(key) ?? "").join("");
-	if (previousBaseRaw !== currentBaseRaw) {
-		const previousBase = previousBaseRaw.trim();
-		const currentBase = currentBaseRaw.trim();
-		if (previousBase === currentBase) return { type: "replace" };
-		const addition = strictLineSuffixAddition(previousBase, currentBase);
-		if (addition === undefined) return { type: "replace" };
-		updates.push(`The following additional base system instructions now apply:\n\n${addition}`);
-	}
+	const literals = (pieces: readonly SystemPromptPiece[]): string =>
+		JSON.stringify(pieces.flatMap((piece) => (piece.type === "literal" ? [piece.text] : [])));
+	if (literals(previous) !== literals(current)) return { type: "replace" };
 
-	const keys = new Set([...previousLayout.values.keys(), ...currentLayout.values.keys()]);
-	for (const key of keys) {
-		if (key === "customPrompt" || key === "appendSystemPrompt") continue;
-		const oldRawValue = previousLayout.values.get(key) ?? "";
-		const newRawValue = currentLayout.values.get(key) ?? "";
-		if (oldRawValue === newRawValue) continue;
-		const oldValue = oldRawValue.trim();
-		const newValue = newRawValue.trim();
-		if (oldValue === newValue) return { type: "replace" };
-		if (key === "promptTail") {
-			const addition = strictLineSuffixAddition(oldValue, newValue);
-			if (addition === undefined) return { type: "replace" };
-			updates.push(`The following additional system guidance now applies:\n\n${addition}`);
-			continue;
-		}
+	const values = (pieces: readonly SystemPromptPiece[]): Map<string, string> =>
+		new Map(pieces.flatMap((piece) => (piece.type === "value" ? [[piece.key, piece.text] as const] : [])));
+	const previousValues = values(previous);
+	const currentValues = values(current);
+	const updates: string[] = [];
+	for (const key of new Set([...previousValues.keys(), ...currentValues.keys()])) {
+		const oldValue = (previousValues.get(key) ?? "").trim();
+		const newValue = (currentValues.get(key) ?? "").trim();
+		if (oldValue === newValue) continue;
+		if (BASE_INSTRUCTION_KEYS.has(key)) return { type: "replace" };
 		updates.push(renderSystemPromptValueUpdate(key, oldValue, newValue));
 	}
 	if (updates.length === 0) return { type: "unchanged" };
 	return { type: "update", text: updates.join("\n\n") };
-}
-
-function collectPromptLayout(pieces: readonly SystemPromptPiece[]): PromptLayout | undefined {
-	const literals: string[] = [];
-	const values = new Map<string, string>();
-	const placements: PromptLayout["placements"] = [];
-	for (const piece of pieces) {
-		if (piece.type === "literal") {
-			literals.push(piece.text);
-			continue;
-		}
-		if (values.has(piece.key)) return undefined;
-		values.set(piece.key, piece.text);
-		placements.push({ key: piece.key, literalIndex: literals.length });
-	}
-	return { literals, values, placements };
-}
-
-function hasCompatiblePromptLayout(previous: PromptLayout, current: PromptLayout): boolean {
-	if (!sameStrings(previous.literals, current.literals)) return false;
-	const previousPlacements = new Map(previous.placements.map((placement) => [placement.key, placement.literalIndex]));
-	const currentPlacements = new Map(current.placements.map((placement) => [placement.key, placement.literalIndex]));
-	for (const [key, literalIndex] of previousPlacements) {
-		const currentLiteralIndex = currentPlacements.get(key);
-		if (currentLiteralIndex !== undefined && currentLiteralIndex !== literalIndex) return false;
-	}
-	const previousCommonKeys = previous.placements
-		.map((placement) => placement.key)
-		.filter((key) => current.values.has(key));
-	const currentCommonKeys = current.placements
-		.map((placement) => placement.key)
-		.filter((key) => previous.values.has(key));
-	return sameStrings(previousCommonKeys, currentCommonKeys);
-}
-
-function sameStrings(left: readonly string[], right: readonly string[]): boolean {
-	return left.length === right.length && left.every((value, index) => value === right[index]);
-}
-
-function strictLineSuffixAddition(previous: string, current: string): string | undefined {
-	if (previous.length === 0) return current.length > 0 ? current : undefined;
-	const prefix = `${previous}\n`;
-	if (!current.startsWith(prefix)) return undefined;
-	const addition = current.slice(prefix.length).trim();
-	return addition.length > 0 ? addition : undefined;
 }
 
 function renderSystemPromptValueUpdate(key: string, previous: string, current: string): string {

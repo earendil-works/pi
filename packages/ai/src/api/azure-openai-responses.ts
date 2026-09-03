@@ -10,13 +10,13 @@ import type {
 	StreamFunction,
 	StreamOptions,
 } from "../types.ts";
+import { declaredTools } from "../utils/deferred-tools.ts";
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
-import { fallbackUnsupportedToolChanges } from "../utils/system-messages.ts";
 import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
 import { convertResponsesMessages, convertResponsesTools, processResponsesStream } from "./openai-responses-shared.ts";
@@ -105,7 +105,7 @@ export const stream: StreamFunction<"azure-openai-responses", AzureOpenAIRespons
 			}
 			const client = createClient(model, apiKey, options);
 			const grammarToolInputProperties = createGrammarToolInputProperties(
-				context.tools,
+				declaredTools(context),
 				model.compat?.supportsOpenAIGrammarTools ?? false,
 			);
 			let params = buildParams(model, context, options, deploymentName, grammarToolInputProperties);
@@ -276,12 +276,12 @@ function buildParams(
 	options: AzureOpenAIResponsesOptions | undefined,
 	deploymentName: string,
 	grammarToolInputProperties: ReadonlyMap<string, string> = createGrammarToolInputProperties(
-		context.tools,
+		declaredTools(context),
 		model.compat?.supportsOpenAIGrammarTools ?? false,
 	),
 ) {
-	const requestContext = fallbackUnsupportedToolChanges(context, "none");
-	const messages = convertResponsesMessages(model, requestContext, AZURE_TOOL_CALL_PROVIDERS, {
+	const tools = declaredTools(context);
+	const messages = convertResponsesMessages(model, context, AZURE_TOOL_CALL_PROVIDERS, {
 		grammarToolInputProperties,
 	});
 
@@ -301,8 +301,8 @@ function buildParams(
 		params.temperature = options?.temperature;
 	}
 
-	if (requestContext.tools && requestContext.tools.length > 0) {
-		params.tools = convertResponsesTools(requestContext.tools, {
+	if (tools.length > 0) {
+		params.tools = convertResponsesTools(tools, {
 			supportsStrictMode: model.compat?.supportsStrictMode ?? true,
 			supportsOpenAIGrammarTools: model.compat?.supportsOpenAIGrammarTools ?? false,
 		});

@@ -570,9 +570,9 @@ pi.on("before_agent_start", async (event, ctx) => {
 
 The `systemPromptOptions` field contains the mutable structured data Pi uses to prepare the run. `selectedTools` is authoritative for both prompt rendering and the executable tool loadout. Collection fields are always initialized, and later handlers observe mutations made by earlier handlers through both `event.systemPromptOptions` and the lazily rendered `event.systemPrompt`/`ctx.getSystemPrompt()`. Custom `sections` render after the working directory in insertion order as `<section_name>content</section_name>`; section names must match `^[a-z][a-z0-9_-]*$`. `promptTail` renders after all sections. `appendSystemPrompt` retains its historical placement before project context, skills, and the working directory.
 
-When a returned `systemPrompt` starts with the current rendered prompt, Pi records only the appended suffix in `promptTail`. This preserves the common legacy pattern `systemPrompt: event.systemPrompt + "..."`. A strict line suffix added to `promptTail` can be delivered incrementally; editing or removing existing tail text resets the complete top-level prompt. Other returned `systemPrompt` values remain full replacements: Pi stores them as `forceSystemPrompt` for the rest of the handler chain, so ordinary option mutations no longer affect rendering unless a later handler clears that field.
+When a returned `systemPrompt` starts with the current rendered prompt, Pi records only the appended suffix in `promptTail`. This preserves the common legacy pattern `systemPrompt: event.systemPrompt + "..."`. Other returned `systemPrompt` values remain full replacements: Pi stores them as `forceSystemPrompt` for the rest of the handler chain, so ordinary option mutations no longer affect rendering unless a later handler clears that field.
 
-Pi treats `customPrompt` plus `appendSystemPrompt` as one logical base-instructions block. A strict line suffix added to that combined block can be delivered incrementally. Editing, inserting into, or removing existing base-instruction lines resets the complete top-level prompt.
+Pi sends the first rendered prompt of a session as the provider's top-level system prompt and keeps it fixed, so the provider's cached prefix stays valid. Later changes to `selectedTools`, `promptGuidelines`, `sections`, `promptTail`, `cwd`, context files, or skills reach the model as an appended system message describing what changed ("The <plan_mode> system guidance now applies: ..."). Only changes to `customPrompt`, `appendSystemPrompt`, or `forceSystemPrompt` replace the top-level prompt, which invalidates the cached prefix. Earlier messages are never rewritten. Tool loadout changes are delivered the same way: on Anthropic models with mid-conversation tool changes the tools are withdrawn and re-offered in place; elsewhere the message names them and Pi rejects calls to inactive tools.
 
 Inside `before_agent_start`, `event.systemPrompt` and `ctx.getSystemPrompt()` both reflect the chained system prompt as of the current handler. Later `before_agent_start` handlers can still modify it again.
 
@@ -2395,6 +2395,7 @@ You do not need to return provider-specific tool references or mark the loader a
 - **Anthropic**
   - **Models:** Sonnet, Opus, Fable version 4.5 or newer (without Haiku)
   - **Native representation:** Deferred definitions use `defer_loading`; the load point uses `tool_reference` content.
+  - **Placeholder:** Every request also declares a deferred `__pi_deferred_tool_placeholder__` tool. The first deferred tool in a request changes the cached prefix, so declaring one from the start keeps later deferred additions cache-neutral. The model never sees it and cannot call it.
 - **OpenAI**
   - **Models:** `gpt-5.4` and newer family
   - **Native representation:** Pi adds completed client `tool_search_call` and `tool_search_output` items at the load point.

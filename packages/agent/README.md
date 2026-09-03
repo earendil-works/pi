@@ -184,7 +184,6 @@ const agent = new Agent({
   // Initial state
   initialState: {
     systemPrompt: string,
-    effectiveSystemPrompt?: string,
     model: Model<any>,
     thinkingLevel: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max",
     tools: AgentTool<any>[],
@@ -252,7 +251,6 @@ const agent = new Agent({
 ```typescript
 interface AgentState {
   systemPrompt: string;
-  effectiveSystemPrompt?: string;
   model: Model<any>;
   thinkingLevel: ThinkingLevel;
   tools: AgentTool<any>[];
@@ -266,7 +264,7 @@ interface AgentState {
 
 Access state via `agent.state`.
 
-`systemPrompt` is the stable top-level provider baseline. When chronological `system` messages update it, `effectiveSystemPrompt` holds the complete current prompt for transports that must replace the baseline instead of replaying those messages.
+`systemPrompt` is the stable top-level provider baseline. Later instruction changes are appended to `messages` as `system` messages rather than folded into it, which keeps provider prompt caches valid.
 
 Assigning `agent.state.tools = [...]` or `agent.state.messages = [...]` copies the top-level array before storing it. Mutating the returned array mutates the current agent state.
 

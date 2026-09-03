@@ -247,56 +247,6 @@ describe("constrained tool sampling", () => {
 		});
 	});
 
-	it("replays removed grammar tools from additional_tools history", () => {
-		const grammarTool = makeTool({
-			constrainedSampling: { type: "grammar", variants: { openai_lark: "start: /[a-z]+/" } },
-		});
-		const context: Context = {
-			messages: [
-				{
-					role: "assistant",
-					api: "openai-responses",
-					provider: "openai",
-					model: "gpt-test",
-					content: [
-						{
-							type: "toolCall",
-							id: "call_1|ctc_1",
-							name: "sample_tool",
-							arguments: { payload: "abc" },
-						},
-					],
-					usage: makeUsage(),
-					stopReason: "toolUse",
-					timestamp: 1,
-				},
-				{
-					role: "toolResult",
-					toolCallId: "call_1|ctc_1",
-					toolName: "sample_tool",
-					content: [{ type: "text", text: "done" }],
-					isError: false,
-					timestamp: 2,
-				},
-				{ role: "system", content: "", toolsRemoved: [grammarTool], timestamp: 3 },
-			],
-			tools: [],
-		};
-
-		const messages = convertResponsesMessages(makeModel(), context, new Set(["openai"]), {
-			deferredToolsMode: "additional-tools",
-			toolOptions: { supportsOpenAIGrammarTools: true },
-		});
-
-		expect(messages.map((item) => item.type)).toEqual([
-			"additional_tools",
-			"custom_tool_call",
-			"custom_tool_call_output",
-			"additional_tools",
-		]);
-		expect(messages[1]).toMatchObject({ type: "custom_tool_call", name: "sample_tool", input: "abc" });
-	});
-
 	it("keeps grammar input JSON deltas append-only", () => {
 		const buffer = { input: "", started: false, closed: false };
 		const first = appendGrammarToolInputJsonDelta(buffer, "payload", 'a"', false);

@@ -105,6 +105,7 @@ function systemPrompt(id: string, parentId: string | null): SystemPromptEntry {
 		parentId,
 		timestamp: new Date().toISOString(),
 		prompt: [{ type: "literal", text: "updated prompt" }],
+		baseline: "updated prompt",
 		tools: [],
 	};
 }

@@ -1,5 +1,5 @@
-import type { AgentMessage, AgentTool } from "@earendil-works/pi-agent-core";
-import { consolidateSystemMessages, type SystemMessage, type Tool } from "@earendil-works/pi-ai/compat";
+import type { AgentTool } from "@earendil-works/pi-agent-core";
+import type { SystemMessage, Tool } from "@earendil-works/pi-ai/compat";
 import {
 	type BuildSystemPromptOptions,
 	buildSystemPromptPieces,
@@ -36,11 +36,13 @@ export function systemPromptTool(tool: AgentTool): Tool {
 	};
 }
 
-function toolDeclarationsEqual(left: Tool, right: Tool): boolean {
-	return JSON.stringify(left) === JSON.stringify(right);
-}
-
-/** Prepare one coherent prompt and tool transition for the next provider boundary. */
+/**
+ * Prepare one prompt and tool transition for the next provider request.
+ *
+ * Tool changes are a set difference by name. A tool whose definition changed
+ * while staying active is not re-declared: providers keep the first definition
+ * they saw, because replacing a declaration would change the cached prefix.
+ */
 export function prepareModelContextUpdate(input: {
 	options: BuildSystemPromptOptions;
 	tools: Map<string, Tool>;
@@ -60,39 +62,10 @@ export function prepareModelContextUpdate(input: {
 		renderSystemPrompt(previous.prompt.pieces) === currentPrompt
 			? ({ type: "unchanged" } as const)
 			: diffSystemPrompts(previous.prompt.pieces, pieces);
-	const currentToolEntries = [...tools];
-	let toolsAdded = currentToolEntries.filter(([name]) => !previous.tools.has(name)).map(([, tool]) => tool);
-	let toolsRemoved = [...previous.tools].filter(([name]) => !tools.has(name)).map(([, tool]) => tool);
-	for (const [name, tool] of tools) {
-		const previousTool = previous.tools.get(name);
-		if (previousTool !== undefined && !toolDeclarationsEqual(previousTool, tool)) {
-			toolsAdded.push(tool);
-			toolsRemoved.push(previousTool);
-		}
-	}
+	const toolsAdded = [...tools].filter(([name]) => !previous.tools.has(name)).map(([, tool]) => tool);
+	const toolsRemoved = [...previous.tools].filter(([name]) => !tools.has(name)).map(([, tool]) => tool);
 
-	// Map insertion order is provider-visible. If applying the minimal delta would
-	// not reproduce the exact current declaration list, encode a full remove/add
-	// transition. Adapters can then replay the same provider-neutral delta either
-	// incrementally or as a complete provider snapshot.
-	const replayedTools = new Map(previous.tools);
-	for (const tool of toolsRemoved) replayedTools.delete(tool.name);
-	for (const tool of toolsAdded) replayedTools.set(tool.name, tool);
-	if (
-		[...replayedTools].some(([name, tool], index) => {
-			const current = currentToolEntries[index];
-			return current === undefined || current[0] !== name || !toolDeclarationsEqual(current[1], tool);
-		}) ||
-		replayedTools.size !== tools.size
-	) {
-		toolsAdded = [...tools.values()];
-		toolsRemoved = [...previous.tools.values()];
-	}
-
-	const requiresReplacement =
-		promptDiff.type === "replace" || (options.forceSystemPrompt !== undefined && promptDiff.type !== "unchanged");
-
-	if (requiresReplacement) {
+	if (promptDiff.type === "replace" || (options.forceSystemPrompt !== undefined && promptDiff.type !== "unchanged")) {
 		return {
 			type: "replacement",
 			state: { prompt: { pieces, baseline: currentPrompt }, tools },
@@ -106,38 +79,28 @@ export function prepareModelContextUpdate(input: {
 		};
 	}
 
-	const state: ModelContextState = {
-		prompt: { pieces, baseline: previous.prompt.baseline },
-		tools,
-	};
 	return {
 		type: "incremental",
-		state,
+		state: { prompt: { pieces, baseline: previous.prompt.baseline }, tools },
 		promptText: promptDiff.type === "update" ? promptDiff.text : undefined,
 		toolsAdded,
 		toolsRemoved,
 	};
 }
 
-/** Serialize one incremental prompt/tool transition into provider-independent context. */
+/** Serialize one incremental prompt/tool transition into a provider-independent system message. */
 export function createSystemPromptUpdateMessage(
 	update: Extract<PreparedModelContextUpdate, { type: "incremental" }>,
 ): SystemMessage {
 	const text = update.promptText ? [update.promptText] : [];
-	const addedNames = new Set(update.toolsAdded.map((tool) => tool.name));
-	const removedNames = new Set(update.toolsRemoved.map((tool) => tool.name));
-	const refreshedNames = [...addedNames].filter((name) => removedNames.has(name));
-	const newNames = [...addedNames].filter((name) => !removedNames.has(name));
-	const unavailableNames = [...removedNames].filter((name) => !addedNames.has(name));
-	if (refreshedNames.length > 0) {
-		text.push(`The active declarations for the following tools have changed: ${refreshedNames.join(", ")}.`);
-	}
-	if (newNames.length > 0) {
-		text.push(`The following tools are now available and may be used: ${newNames.join(", ")}.`);
-	}
-	if (unavailableNames.length > 0) {
+	if (update.toolsAdded.length > 0) {
 		text.push(
-			`The following tools are no longer available. Do not call them; such calls will be rejected: ${unavailableNames.join(", ")}.`,
+			`The following tools are now available and may be used: ${update.toolsAdded.map((tool) => tool.name).join(", ")}.`,
+		);
+	}
+	if (update.toolsRemoved.length > 0) {
+		text.push(
+			`The following tools are no longer available. Do not call them; such calls will be rejected: ${update.toolsRemoved.map((tool) => tool.name).join(", ")}.`,
 		);
 	}
 	return {
@@ -147,19 +110,4 @@ export function createSystemPromptUpdateMessage(
 		toolsRemoved: update.toolsRemoved.length > 0 ? update.toolsRemoved : undefined,
 		timestamp: Date.now(),
 	};
-}
-
-/** Remove chronological updates and provider-bound replay data before complete-state replacement. */
-export function consolidateSystemPromptMessages(messages: readonly AgentMessage[]): AgentMessage[] {
-	return messages.flatMap<AgentMessage>((message) => {
-		switch (message.role) {
-			case "system":
-			case "user":
-			case "assistant":
-			case "toolResult":
-				return consolidateSystemMessages([message]);
-			default:
-				return [message];
-		}
-	});
 }
