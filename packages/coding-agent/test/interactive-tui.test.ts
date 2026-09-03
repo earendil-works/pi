@@ -1,13 +1,15 @@
 import type { Component, Terminal, TUI } from "@earendil-works/pi-tui";
-import { Container, isViewportTUI, Text } from "@earendil-works/pi-tui";
+import { Container, getKeybindings, isViewportTUI, ScrollView, setKeybindings, Text } from "@earendil-works/pi-tui";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { VirtualTerminal } from "../../tui/test/virtual-terminal.ts";
+import { KeybindingsManager } from "../src/core/keybindings.ts";
 import type { FullscreenExitOutput, TuiMode } from "../src/core/settings-manager.ts";
 import {
 	createInteractiveTui,
 	createInteractiveTuiReference,
 	InteractiveMode,
 } from "../src/modes/interactive/interactive-mode.ts";
+import { initTheme } from "../src/modes/interactive/theme/theme.ts";
 
 const clipboardMocks = vi.hoisted(() => ({
 	copyToClipboard: vi.fn<(text: string) => Promise<void>>(),
@@ -66,6 +68,43 @@ describe("createInteractiveTui", () => {
 		await altTerminal.waitForRender();
 		expect(altTerminal.writes.some((write) => write.includes("\x1b[?1049h"))).toBe(true);
 		altTui.stop();
+	});
+
+	it("shows the configured jump-to-bottom shortcut and follows it", async () => {
+		initTheme("dark");
+		const previousKeybindings = getKeybindings();
+		setKeybindings(new KeybindingsManager({ "tui.altScreen.bottom": "ctrl+j" }));
+		const terminal = new RecordingTerminal(50, 4);
+		const ui = createInteractiveTui({
+			tuiMode: "fullscreen",
+			showHardwareCursor: false,
+			logDirectory: "/tmp",
+			terminal,
+		});
+		ui.setLayoutRoot(
+			new ScrollView(new Text(Array.from({ length: 8 }, (_, index) => `line ${index + 1}`).join("\n"), 0, 0), {
+				follow: "end",
+				primary: true,
+			}),
+		);
+
+		ui.start();
+		try {
+			await terminal.waitForRender();
+			terminal.sendInput("\x1b[<64;1;1M");
+			await terminal.waitForRender();
+			expect(terminal.getViewport().some((line) => line.includes("↓ Jump to latest message · Press Ctrl+J"))).toBe(
+				true,
+			);
+
+			terminal.sendInput("\n");
+			await terminal.waitForRender();
+			expect(ui.isFollowingOutput).toBe(true);
+			expect(terminal.getViewport().some((line) => line.includes("Jump to latest message"))).toBe(false);
+		} finally {
+			ui.stop();
+			setKeybindings(previousKeybindings);
+		}
 	});
 
 	it("replaces the renderer and restores the previous screen for resume-hint exits", async () => {

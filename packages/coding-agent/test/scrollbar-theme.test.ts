@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { loadThemeFromPath } from "../src/modes/interactive/theme/theme.ts";
+import { validateThemeJson } from "../src/modes/interactive/theme/theme-json.ts";
 
 const tempDirs: string[] = [];
 
@@ -44,6 +45,29 @@ describe("optional fullscreen theme colors", () => {
 
 		const loadedTheme = loadThemeFromPath(writeTheme(themeJson), "truecolor");
 		expect(loadedTheme.getBgAnsi("scrollbarThumb")).toBe("\x1b[48;2;18;52;86m");
+	});
+
+	it("falls back to existing selection and text colors for the scroll-to-end indicator", () => {
+		const themeJson = loadDarkTheme();
+		themeJson.name = "legacy-scroll-to-end-indicator-theme";
+		delete themeJson.colors.scrollToEndIndicatorBg;
+		delete themeJson.colors.scrollToEndIndicatorText;
+		expect(() => validateThemeJson(themeJson.name, themeJson)).not.toThrow();
+
+		const loadedTheme = loadThemeFromPath(writeTheme(themeJson), "truecolor");
+		expect(loadedTheme.getBgAnsi("scrollToEndIndicatorBg")).toBe(loadedTheme.getBgAnsi("selectedBg"));
+		expect(loadedTheme.getFgAnsi("scrollToEndIndicatorText")).toBe(loadedTheme.getFgAnsi("text"));
+	});
+
+	it("uses explicitly configured scroll-to-end indicator colors", () => {
+		const themeJson = loadDarkTheme();
+		themeJson.name = "custom-scroll-to-end-indicator-theme";
+		themeJson.colors.scrollToEndIndicatorBg = "#112233";
+		themeJson.colors.scrollToEndIndicatorText = "#223344";
+
+		const loadedTheme = loadThemeFromPath(writeTheme(themeJson), "truecolor");
+		expect(loadedTheme.getBgAnsi("scrollToEndIndicatorBg")).toBe("\x1b[48;2;17;34;51m");
+		expect(loadedTheme.getFgAnsi("scrollToEndIndicatorText")).toBe("\x1b[38;2;34;51;68m");
 	});
 
 	it("falls back to existing selection and text colors for search highlights", () => {

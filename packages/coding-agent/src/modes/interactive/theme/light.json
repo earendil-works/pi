@@ -32,6 +32,8 @@
 		"thinkingText": "mediumGray",
 
 		"selectedBg": "selectedBg",
+		"scrollToEndIndicatorBg": "selectedBg",
+		"scrollToEndIndicatorText": "text",
 		"scrollbarThumb": "selectedBg",
 		"searchMatchBg": "selectedBg",
 		"searchMatchText": "text",

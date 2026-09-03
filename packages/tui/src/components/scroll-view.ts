@@ -2,7 +2,6 @@ import { LAYOUT_NODE, type ScrollLayoutNode } from "../layout-node.ts";
 import { type Component, Container } from "../tui.ts";
 
 export type ScrollViewScrollbar = "hidden" | "auto" | "always";
-
 export interface ScrollViewOptions {
 	axis?: "vertical";
 	follow?: "none" | "end";
@@ -20,7 +19,7 @@ export interface ScrollViewScrollToOptions {
 
 export class ScrollView extends Container {
 	private readonly child: Component;
-	private readonly followEnd: boolean;
+	readonly followEnd: boolean;
 	readonly primary: boolean;
 	readonly overscroll: "chain" | "contain";
 	readonly scrollbarStyle: (text: string) => string;

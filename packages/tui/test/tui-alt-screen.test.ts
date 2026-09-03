@@ -91,6 +91,174 @@ describe("TuiAltScreen", () => {
 		tui.stop();
 	});
 
+	it("shows a hoverable, clickable jump-to-end indicator above the editor while scrolled up", async () => {
+		const terminal = new RecordingTerminal(30, 6);
+		let indicatorRenderCount = 0;
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			scrollToEndIndicator: (hovered) => {
+				indicatorRenderCount += 1;
+				return `${hovered ? "\x1b[45m" : "\x1b[44m"} ↓ Jump to latest message \x1b[49m`;
+			},
+		});
+		const transcript = new ScrollView(
+			new Text(Array.from({ length: 8 }, (_, index) => `line ${index + 1}`).join("\n"), 0, 0),
+			{ follow: "end", primary: true, scrollbar: "auto", scrollbarHideDelayMs: 50 },
+		);
+		tui.setLayoutRoot(
+			new VStack([
+				{ component: transcript, basis: 0, grow: 1, minSize: 1 },
+				{ component: new Text("editor\nfooter", 0, 0), basis: "auto", minSize: 1 },
+			]),
+		);
+		tui.start();
+		await terminal.waitForRender();
+		assert.ok(!terminal.getViewport().some((line) => line.includes("Jump to latest message")));
+
+		terminal.sendInput("\x1b[<64;1;6M");
+		await terminal.waitForRender();
+		assert.strictEqual(transcript.isFollowingEnd, false);
+		assert.ok(terminal.getViewport()[3]?.includes("↓ Jump to latest message"));
+		assert.strictEqual(terminal.getViewport()[4]?.trimEnd(), "editor");
+		assert.strictEqual(transcript.isScrollbarVisible, true);
+		const indicatorWhileScrolling = terminal.getViewport()[3];
+		await new Promise((resolve) => setTimeout(resolve, 60));
+		await terminal.waitForRender();
+		assert.strictEqual(transcript.isScrollbarVisible, false);
+		assert.strictEqual(terminal.getViewport()[3], indicatorWhileScrolling);
+
+		terminal.sendInput("\x1b[<64;1;6M");
+		await terminal.waitForRender();
+		assert.strictEqual(transcript.scrollTop, 2);
+		terminal.sendInput("\x1b[<35;30;2M");
+		await new Promise((resolve) => setTimeout(resolve, 60));
+		assert.strictEqual(transcript.isScrollbarVisible, true);
+
+		const hoverEventCount = terminal.events.length;
+		terminal.sendInput("\x1b[<35;15;4M");
+		await terminal.waitForRender();
+		assert.ok(
+			terminal.events
+				.slice(hoverEventCount)
+				.some((event) => event.type === "write" && event.data.includes("\x1b[45m ↓ Jump to latest message ")),
+		);
+		await new Promise((resolve) => setTimeout(resolve, 60));
+		assert.strictEqual(transcript.isScrollbarVisible, false);
+
+		const renderCountBeforePress = indicatorRenderCount;
+		terminal.sendInput("\x1b[<0;15;4M");
+		assert.strictEqual(transcript.isFollowingEnd, false);
+		assert.strictEqual(indicatorRenderCount, renderCountBeforePress);
+		terminal.sendInput("\x1b[<32;1;1M");
+		terminal.sendInput("\x1b[<0;1;1m");
+		await terminal.waitForRender();
+		assert.strictEqual(transcript.isFollowingEnd, false);
+		assert.ok(terminal.getViewport()[3]?.includes("↓ Jump to latest message"));
+
+		terminal.sendInput("\x1b[<0;15;4M");
+		terminal.sendInput("\x1b[<0;15;4m");
+		await terminal.waitForRender();
+		assert.strictEqual(transcript.isFollowingEnd, true);
+		assert.ok(!terminal.getViewport().some((line) => line.includes("Jump to latest message")));
+		assert.deepStrictEqual(
+			terminal.getViewport().map((line) => line.trimEnd()),
+			["line 5", "line 6", "line 7", "line 8", "editor", "footer"],
+		);
+
+		tui.stop();
+	});
+
+	it("finishes a scrollbar drag released over the jump-to-end indicator", async () => {
+		const terminal = new VirtualTerminal(30, 6);
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			scrollToEndIndicator: () => " ↓ Jump to latest message ",
+		});
+		const transcript = new ScrollView(
+			new Text(Array.from({ length: 8 }, (_, index) => `line ${index + 1}`).join("\n"), 0, 0),
+			{ follow: "end", primary: true, scrollbar: "always" },
+		);
+		tui.setLayoutRoot(
+			new VStack([
+				{ component: transcript, basis: 0, grow: 1, minSize: 1 },
+				{ component: new Text("editor\nfooter", 0, 0), basis: "auto", minSize: 1 },
+			]),
+		);
+		tui.start();
+		await terminal.waitForRender();
+		transcript.scrollTo(2);
+		await terminal.waitForRender();
+
+		terminal.sendInput("\x1b[<0;30;2M");
+		terminal.sendInput("\x1b[<0;15;4m");
+		assert.strictEqual(transcript.scrollTop, 2);
+		assert.strictEqual(transcript.isFollowingEnd, false);
+
+		terminal.sendInput("\x1b[<0;1;1M");
+		assert.strictEqual(transcript.scrollTop, 2);
+		terminal.sendInput("\x1b[<0;1;1m");
+		tui.stop();
+	});
+
+	it("does not show the jump-to-end indicator for a primary scroll view without follow-end", async () => {
+		const terminal = new VirtualTerminal(30, 3);
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			scrollToEndIndicator: () => " ↓ Jump to latest message ",
+		});
+		const transcript = new ScrollView(new Text("one\ntwo\nthree\nfour\nfive", 0, 0), { primary: true });
+		tui.setLayoutRoot(transcript);
+		tui.start();
+		await terminal.waitForRender();
+
+		assert.strictEqual(transcript.followEnd, false);
+		assert.strictEqual(transcript.isFollowingEnd, false);
+		assert.ok(!terminal.getViewport().some((line) => line.includes("Jump to latest message")));
+
+		transcript.scrollToEnd();
+		await terminal.waitForRender();
+		assert.ok(!terminal.getViewport().some((line) => line.includes("Jump to latest message")));
+		tui.stop();
+	});
+
+	it("does not publish a jump-to-end target on an image row", async () => {
+		setCapabilities({ images: null, trueColor: true, hyperlinks: true });
+		try {
+			const terminal = new VirtualTerminal(30, 4);
+			const tui = new TuiAltScreen(terminal, undefined, undefined, {
+				scrollToEndIndicator: () => " ↓ Jump to latest message ",
+			});
+			const imageLine = encodeKitty("AAAA", { columns: 2, rows: 1, imageId: 700, moveCursor: false });
+			const transcript = new ScrollView(
+				{
+					render: () => ["line 1", "line 2", imageLine, "line 4"],
+					invalidate: () => {},
+				},
+				{ follow: "end", primary: true },
+			);
+			tui.setLayoutRoot(
+				new VStack([
+					{ component: transcript, basis: 0, grow: 1, minSize: 1 },
+					{ component: new Text("editor\nfooter", 0, 0), basis: "auto", minSize: 1 },
+				]),
+			);
+			tui.start();
+			await terminal.waitForRender();
+
+			terminal.sendInput("\x1b[<64;1;4M");
+			await terminal.waitForRender();
+			assert.strictEqual(transcript.scrollTop, 1);
+			assert.strictEqual(transcript.isFollowingEnd, false);
+			assert.ok(!terminal.getViewport().some((line) => line.includes("Jump to latest message")));
+
+			terminal.sendInput("\x1b[<0;15;2M");
+			terminal.sendInput("\x1b[<0;15;2m");
+			await terminal.waitForRender();
+			assert.strictEqual(transcript.scrollTop, 1);
+			assert.strictEqual(transcript.isFollowingEnd, false);
+			tui.stop();
+		} finally {
+			resetCapabilitiesCache();
+		}
+	});
+
 	it("keeps an explicit dock fixed while the transcript scrolls", async () => {
 		const terminal = new VirtualTerminal(20, 6);
 		const tui = new TuiAltScreen(terminal);

@@ -43,6 +43,7 @@ import {
 	type TuiMouseDispatchResult,
 	type TuiMouseDispatchTarget,
 	type TuiMouseEvent,
+	type TuiMouseEventResult,
 	type TuiStopOptions,
 	VIEWPORT_TUI,
 	type ViewportTUI,
@@ -134,6 +135,49 @@ interface ScrollbarTarget {
 	geometry: ScrollbarGeometry;
 }
 
+interface ScrollToEndIndicatorPlacement {
+	text: string;
+	row: number;
+	column: number;
+	width: number;
+}
+
+class ScrollToEndIndicatorComponent implements Component {
+	private hovered = false;
+	private readonly renderIndicator: (hovered: boolean) => string;
+	private readonly onClick: () => void;
+
+	constructor(renderIndicator: (hovered: boolean) => string, onClick: () => void) {
+		this.renderIndicator = renderIndicator;
+		this.onClick = onClick;
+	}
+
+	setHovered(hovered: boolean): boolean {
+		if (this.hovered === hovered) return false;
+		this.hovered = hovered;
+		return true;
+	}
+
+	render(width: number): string[] {
+		const normal = this.renderIndicator(false);
+		const indicatorWidth = Math.min(width, visibleWidth(normal));
+		if (indicatorWidth <= 0) return [];
+		const rendered = this.hovered ? this.renderIndicator(true) : normal;
+		const text = sliceByColumn(rendered, 0, indicatorWidth, true);
+		return [`${text}${" ".repeat(Math.max(0, indicatorWidth - visibleWidth(text)))}`];
+	}
+
+	handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+		if (event.button !== "left" || event.shift || event.alt || event.ctrl) return undefined;
+		if (event.type === "press") return { handled: true, render: false };
+		if (event.type !== "click") return undefined;
+		this.onClick();
+		return { handled: true, render: false };
+	}
+
+	invalidate(): void {}
+}
+
 type SearchSelectionMode = "query" | "retain" | "next" | "previous";
 
 interface ActiveSearch {
@@ -162,6 +206,11 @@ export interface TuiAltScreenOptions {
 	searchMatchStyle?: (text: string) => string;
 	/** Style the current transcript search match. */
 	searchCurrentMatchStyle?: (text: string) => string;
+	/**
+	 * Render a clickable follow-end primary-scroll-view indicator while detached from the end.
+	 * The unhovered output defines stable geometry for both visual states.
+	 */
+	scrollToEndIndicator?: (hovered: boolean) => string;
 	/** Open an OSC 8 hyperlink activated with a primary-button click. */
 	openUrl?: (url: string) => void;
 	/** Handle an unmodified secondary-button press for clipboard paste. Currently enabled on Windows only. */
@@ -203,6 +252,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 	private selectionPressActive = false;
 	private scrollbarDrag?: ScrollbarDrag;
 	private scrollbarHover?: ScrollView;
+	private renderedScrollToEndIndicatorTarget?: TuiMouseDispatchTarget;
 	private activeSearch?: ActiveSearch;
 	private pressedUrl?: string;
 	private selectionDragged = false;
@@ -221,6 +271,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 	private readonly mouseEnabled: boolean;
 	private readonly searchMatchStyle: (text: string) => string;
 	private readonly searchCurrentMatchStyle: (text: string) => string;
+	private readonly scrollToEndIndicator?: ScrollToEndIndicatorComponent;
 	private readonly openUrl?: (url: string) => void;
 	private readonly onRightClickPaste?: () => void;
 	private copyOnSelect: boolean;
@@ -246,6 +297,9 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		this.mouseEnabled = options.mouse ?? true;
 		this.searchMatchStyle = options.searchMatchStyle ?? ((text) => `\x1b[4m${text}\x1b[24m`);
 		this.searchCurrentMatchStyle = options.searchCurrentMatchStyle ?? ((text) => `\x1b[1;7m${text}\x1b[22;27m`);
+		this.scrollToEndIndicator = options.scrollToEndIndicator
+			? new ScrollToEndIndicatorComponent(options.scrollToEndIndicator, () => this.scrollToBottom())
+			: undefined;
 		this.openUrl = options.openUrl;
 		this.onRightClickPaste = options.onRightClickPaste;
 		this.copyOnSelect = options.copyOnSelect ?? true;
@@ -347,6 +401,8 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		this.stopSelectionAutoScroll();
 		this.selectionPressActive = false;
 		this.stopScrollbarHover();
+		this.scrollToEndIndicator?.setHovered(false);
+		this.renderedScrollToEndIndicatorTarget = undefined;
 		this.stopScrollbarDrag();
 		this.clearComponentMouseGesture();
 		this.flashes.dispose();
@@ -441,6 +497,8 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		this.previousScreenWidth = 0;
 		this.previousScreenHeight = 0;
 		this.currentLayout = undefined;
+		this.renderedScrollToEndIndicatorTarget = undefined;
+		this.scrollToEndIndicator?.setHovered(false);
 	}
 
 	scrollBy(lines: number): void {
@@ -602,6 +660,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 			this.selectionPressActive = false;
 			this.stopSelectionAutoScroll();
 			this.stopScrollbarHover();
+			this.setScrollToEndIndicatorHovered(false);
 			this.stopScrollbarDrag();
 			this.pressedUrl = undefined;
 			this.selectionDragged = false;
@@ -824,6 +883,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 					: "drag"
 				: "press";
 		const event = this.createMouseEvent(type, raw.button, raw.x, raw.y);
+		const indicatorTarget = this.updateScrollToEndIndicatorHover(raw.x, raw.y);
 
 		if (this.mouseCapture || this.mousePressTarget) {
 			const target = this.mouseCapture ?? this.mousePressTarget!;
@@ -849,15 +909,24 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		}
 
 		const overlay = this.dispatchMouseToOverlay(event);
+		let indicatorResult: TuiMouseDispatchResult | undefined;
 		if (!overlay.hit) {
-			const scrollbarHandled = this.handleScrollbarMouseEvent(raw);
-			if (!this.scrollbarDrag) this.updateScrollbarHover(raw.x, raw.y);
-			if (scrollbarHandled) return;
+			if (indicatorTarget && !this.scrollbarDrag) {
+				this.stopScrollbarHover();
+				indicatorResult = this.dispatchMouseToTarget(event, indicatorTarget);
+			} else {
+				const scrollbarHandled = this.handleScrollbarMouseEvent(raw);
+				if (!this.scrollbarDrag) this.updateScrollbarHover(raw.x, raw.y);
+				if (scrollbarHandled) return;
+			}
 		} else {
 			this.stopScrollbarHover();
 		}
 
-		const result = overlay.result ?? (overlay.hit ? undefined : this.dispatchMouseToLayout(event));
+		const result =
+			overlay.result ??
+			indicatorResult ??
+			(overlay.hit || indicatorTarget ? undefined : this.dispatchMouseToLayout(event));
 		if (result) {
 			const render = this.applyMouseDispatchResult(event, result);
 			if (type === "press") {
@@ -913,6 +982,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		}
 		const primary = this.getPrimaryScrollView();
 		if (remaining !== 0 && !seen.has(primary)) primary.scrollBy(remaining);
+		this.updateScrollToEndIndicatorHover(event.x, event.y);
 		this.updateScrollbarHover(event.x, event.y);
 		this.requestRender();
 	}
@@ -944,6 +1014,59 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 			// Clipboard paste is best-effort.
 		}
 		return true;
+	}
+
+	private getScrollToEndIndicatorPlacement(
+		screen: string[],
+		layout: LayoutFrame,
+		indicator: ScrollToEndIndicatorComponent,
+	): ScrollToEndIndicatorPlacement | undefined {
+		const scrollView = layout.primaryScrollView ?? this.implicitScrollView;
+		if (!scrollView.followEnd || scrollView.isFollowingEnd) return undefined;
+		const box = getScrollViewBox(layout, scrollView);
+		if (!box) return undefined;
+
+		const left = Math.max(0, box.rect.x, box.clip.x);
+		const top = Math.max(0, box.rect.y, box.clip.y);
+		// Reserve the configured scrollbar column even while an auto scrollbar is hidden so
+		// its visibility timeout cannot change the indicator's horizontal position.
+		const scrollbarColumn = scrollView.scrollbar === "hidden" ? undefined : box.rect.x + box.rect.width - 1;
+		const right = Math.min(
+			this.terminal.columns,
+			box.rect.x + box.rect.width,
+			box.clip.x + box.clip.width,
+			scrollbarColumn ?? Number.POSITIVE_INFINITY,
+		);
+		const bottom = Math.min(this.terminal.rows, box.rect.y + box.rect.height, box.clip.y + box.clip.height);
+		const availableWidth = right - left;
+		if (availableWidth <= 0 || bottom <= top) return undefined;
+		const row = bottom - 1;
+		if (isImageLine(screen[row] ?? "")) return undefined;
+		const rendered = indicator.render(availableWidth)[0];
+		if (!rendered) return undefined;
+		const width = visibleWidth(rendered);
+		return {
+			text: rendered,
+			row,
+			column: left + Math.floor((availableWidth - width) / 2),
+			width,
+		};
+	}
+
+	private setScrollToEndIndicatorHovered(hovered: boolean): void {
+		if (this.scrollToEndIndicator?.setHovered(hovered)) this.requestRender();
+	}
+
+	private updateScrollToEndIndicatorHover(x: number, y: number): TuiMouseDispatchTarget | undefined {
+		const target = this.hasOverlay() ? undefined : this.renderedScrollToEndIndicatorTarget;
+		const hovered =
+			target !== undefined &&
+			y >= target.originY &&
+			y < target.originY + target.height &&
+			x >= target.originX &&
+			x < target.originX + target.width;
+		this.setScrollToEndIndicatorHovered(hovered);
+		return hovered ? target : undefined;
 	}
 
 	private getScrollbarTargetAt(x: number, y: number): ScrollbarTarget | undefined {
@@ -1512,6 +1635,33 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		return /^\x1b\[<\d+;\d+;\d+[Mm]$/.test(data) || (data.length === 6 && data.startsWith("\x1b[M"));
 	}
 
+	private compositeScrollToEndIndicator(screen: string[], layout: LayoutFrame, width: number): string[] {
+		this.renderedScrollToEndIndicatorTarget = undefined;
+		const indicator = this.scrollToEndIndicator;
+		if (!indicator) return screen;
+		const placement = this.getScrollToEndIndicatorPlacement(screen, layout, indicator);
+		if (!placement) {
+			indicator.setHovered(false);
+			return screen;
+		}
+		const result = [...screen];
+		result[placement.row] = compositeTuiLine(
+			result[placement.row] ?? "",
+			placement.text,
+			placement.column,
+			placement.width,
+			width,
+		);
+		this.renderedScrollToEndIndicatorTarget = {
+			component: indicator,
+			originX: placement.column,
+			originY: placement.row,
+			width: placement.width,
+			height: 1,
+		};
+		return result;
+	}
+
 	private compositeFlashes(screen: string[], width: number, height: number): string[] {
 		const flashLines = this.flashes.render(width).slice(-height);
 		if (flashLines.length === 0) return screen;
@@ -1537,6 +1687,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		}
 		let screen = nextLayout.lines.map((line) => line.replace(OSC133_ZONE_PREFIX, ""));
 		screen = this.applySearchHighlights(screen, nextLayout);
+		screen = this.compositeScrollToEndIndicator(screen, nextLayout, width);
 		screen = this.compositeOverlays(screen, width, height);
 		if (screen.length > height) screen = screen.slice(screen.length - height);
 		screen = this.applySelection(screen, nextLayout);

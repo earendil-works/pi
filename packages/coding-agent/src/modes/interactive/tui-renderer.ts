@@ -2,6 +2,7 @@ import type { Terminal } from "@earendil-works/pi-tui";
 import { ProcessTerminal, type TUI, TuiAltScreen, TuiMainScreen } from "@earendil-works/pi-tui";
 import { copyToClipboard } from "../../utils/clipboard.ts";
 import { openBrowser } from "../../utils/open-browser.ts";
+import { keyDisplayText } from "./components/keybinding-hints.ts";
 import { theme } from "./theme/theme.ts";
 
 export interface InteractiveTuiOptions {
@@ -24,6 +25,14 @@ export function createInteractiveTui(options: InteractiveTuiOptions): TuiMainScr
 		return new TuiAltScreen(terminal, options.showHardwareCursor, options.logDirectory, {
 			searchMatchStyle: (text) => theme.underline(styleSearchMatch(text)),
 			searchCurrentMatchStyle: (text) => theme.bold(theme.inverse(styleSearchMatch(text))),
+			scrollToEndIndicator: (hovered) => {
+				const shortcut = keyDisplayText("tui.altScreen.bottom");
+				const label = theme.bold(` ↓ Jump to latest message${shortcut ? ` · Press ${shortcut}` : ""} `);
+				return theme.bg(
+					"scrollToEndIndicatorBg",
+					theme.fg("scrollToEndIndicatorText", hovered ? theme.underline(label) : label),
+				);
+			},
 			openUrl: openBrowser,
 			onRightClickPaste: options.onRightClickPaste,
 			copyOnSelect: options.fullscreenCopyOnSelect,

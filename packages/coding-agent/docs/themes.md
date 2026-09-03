@@ -88,6 +88,8 @@ vim ~/.pi/agent/themes/my-theme.json
     "text": "",
     "thinkingText": "secondary",
     "selectedBg": "#2d2d30",
+    "scrollToEndIndicatorBg": "#2d2d30",
+    "scrollToEndIndicatorText": "",
     "scrollbarThumb": "#555566",
     "searchMatchBg": "#2d2d30",
     "searchMatchText": "",
@@ -160,13 +162,13 @@ vim ~/.pi/agent/themes/my-theme.json
 
 - `name` is required, must be unique, and must not contain `/`.
 - `vars` is optional. Define reusable colors here, then reference them in `colors`.
-- `colors` must define all 51 required tokens. `thinkingMax`, `scrollbarThumb`, and the two search highlight tokens are optional and use the fallbacks listed below.
+- `colors` must define all 51 required tokens. `thinkingMax`, the two scroll-to-end indicator tokens, `scrollbarThumb`, and the two search highlight tokens are optional and use the fallbacks listed below.
 
 The `$schema` field enables editor auto-completion and validation.
 
 ## Color Tokens
 
-Every theme must define all 51 required color tokens. The optional tokens preserve compatibility with existing themes: `thinkingMax` falls back to `thinkingXhigh`, `scrollbarThumb` and `searchMatchBg` fall back to `selectedBg`, and `searchMatchText` falls back to `text`. Other search matches use `searchMatchText` on `searchMatchBg` with an underline; the current match reverses that foreground/background pair and uses bold text.
+Every theme must define all 51 required color tokens. The optional tokens preserve compatibility with existing themes: `thinkingMax` falls back to `thinkingXhigh`; `scrollToEndIndicatorBg`, `scrollbarThumb`, and `searchMatchBg` fall back to `selectedBg`; and `scrollToEndIndicatorText` and `searchMatchText` fall back to `text`. Other search matches use `searchMatchText` on `searchMatchBg` with an underline; the current match reverses that foreground/background pair and uses bold text.
 
 ### Core UI (11 colors)
 
@@ -184,11 +186,13 @@ Every theme must define all 51 required color tokens. The optional tokens preser
 | `text` | Default text (usually `""`) |
 | `thinkingText` | Thinking block text |
 
-### Backgrounds & Content (11 required, 3 optional)
+### Backgrounds & Content (11 required, 5 optional)
 
 | Token | Purpose |
 |-------|---------|
 | `selectedBg` | Selected line background |
+| `scrollToEndIndicatorBg` | Jump-to-latest indicator background; optional, falls back to `selectedBg` |
+| `scrollToEndIndicatorText` | Jump-to-latest indicator text; optional, falls back to `text` |
 | `scrollbarThumb` | Fullscreen scrollbar thumb background; optional, falls back to `selectedBg` |
 | `searchMatchBg` | Transcript search match background and current-match text; optional, falls back to `selectedBg` |
 | `searchMatchText` | Transcript search match text and current-match background; optional, falls back to `text` |
