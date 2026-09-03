@@ -44,7 +44,6 @@ const SYSTEM_PROMPT_VALUE_SUBJECTS: Record<string, string> = {
 	skills: "skill guidance",
 	tools: "available tool guidance",
 	guidelines: "operating guidelines",
-	promptTail: "additional system guidance",
 };
 
 /** Normalize prompt input into the mutable, collection-complete shape exposed to extensions. */
@@ -233,16 +232,24 @@ export function buildSystemPrompt(input: BuildSystemPromptInput): string {
 
 export type SystemPromptDiff = { type: "unchanged" } | { type: "update"; text: string } | { type: "replace" };
 
-/** Keys whose change cannot be expressed as an appended instruction. */
-const BASE_INSTRUCTION_KEYS = new Set(["forceSystemPrompt", "customPrompt", "appendSystemPrompt"]);
+/**
+ * Free-text instruction blocks. Text appended to them can be delivered as an
+ * appended instruction, but text that was edited or removed cannot be retracted
+ * from the cached prefix, so those changes require a new baseline.
+ */
+const APPEND_ONLY_TEXT_KEYS: Record<string, string> = {
+	customPrompt: "The following additional base system instructions now apply:",
+	appendSystemPrompt: "The following additional system instructions now apply:",
+	promptTail: "The following additional system guidance now applies:",
+};
 
 /**
  * Render semantic, source-specific instructions for changed prompt values.
  *
  * Both piece lists come from the same builder, so their literal skeletons only
- * differ when the prompt switched template (default, custom, or forced). That,
- * or a change to the base instructions themselves, requires a new baseline.
- * Every other change is a keyed value update that can be appended.
+ * differ when the prompt switched template (default, custom, or forced), which
+ * requires a new baseline. Free-text blocks may only grow. Every other change is
+ * a keyed value update that can be appended.
  */
 export function diffSystemPrompts(
 	previous: readonly SystemPromptPiece[],
@@ -261,11 +268,27 @@ export function diffSystemPrompts(
 		const oldValue = (previousValues.get(key) ?? "").trim();
 		const newValue = (currentValues.get(key) ?? "").trim();
 		if (oldValue === newValue) continue;
-		if (BASE_INSTRUCTION_KEYS.has(key)) return { type: "replace" };
+		if (key === "forceSystemPrompt") return { type: "replace" };
+		const headline = APPEND_ONLY_TEXT_KEYS[key];
+		if (headline !== undefined) {
+			const addition = strictLineSuffixAddition(oldValue, newValue);
+			if (addition === undefined) return { type: "replace" };
+			updates.push(`${headline}\n\n${addition}`);
+			continue;
+		}
 		updates.push(renderSystemPromptValueUpdate(key, oldValue, newValue));
 	}
 	if (updates.length === 0) return { type: "unchanged" };
 	return { type: "update", text: updates.join("\n\n") };
+}
+
+/** Text that `current` adds after `previous` at a line boundary, or undefined if anything else changed. */
+function strictLineSuffixAddition(previous: string, current: string): string | undefined {
+	if (previous.length === 0) return current;
+	const prefix = `${previous}\n`;
+	if (!current.startsWith(prefix)) return undefined;
+	const addition = current.slice(prefix.length).trim();
+	return addition.length > 0 ? addition : undefined;
 }
 
 function renderSystemPromptValueUpdate(key: string, previous: string, current: string): string {

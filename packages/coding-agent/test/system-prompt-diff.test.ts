@@ -29,37 +29,53 @@ describe("diffSystemPrompts", () => {
 		).toEqual({ type: "update", text: "The previous skill guidance no longer applies." });
 	});
 
-	test("replaces base instructions after any change", () => {
+	test("delivers text appended to free-text blocks and replaces on any other change", () => {
 		const base = { cwd: "/tmp", customPrompt: "base instructions", appendSystemPrompt: "existing addition" };
-		for (const current of [
-			{ ...base, customPrompt: "changed instructions" },
-			{ ...base, appendSystemPrompt: "existing addition\nnew addition" },
-			{ ...base, appendSystemPrompt: "" },
-			{ ...base, forceSystemPrompt: "forced" },
-		]) {
-			expect(diffSystemPrompts(buildSystemPromptPieces(base), buildSystemPromptPieces(current))).toEqual({
-				type: "replace",
-			});
-		}
-	});
+		const pieces = (options: Parameters<typeof buildSystemPromptPieces>[0]) => buildSystemPromptPieces(options);
 
-	test("treats the prompt tail as ordinary appended guidance", () => {
-		const empty = buildSystemPromptPieces({ cwd: "/tmp" });
-		const oldTail = buildSystemPromptPieces({ cwd: "/tmp", promptTail: "\nold tail" });
-		const newTail = buildSystemPromptPieces({ cwd: "/tmp", promptTail: "\nold tail\nnew tail" });
-
-		expect(diffSystemPrompts(empty, oldTail)).toEqual({
+		expect(
+			diffSystemPrompts(pieces(base), pieces({ ...base, appendSystemPrompt: "existing addition\nshout" })),
+		).toEqual({
+			type: "update",
+			text: "The following additional system instructions now apply:\n\nshout",
+		});
+		expect(diffSystemPrompts(pieces({ ...base, appendSystemPrompt: "" }), pieces(base))).toEqual({
+			type: "update",
+			text: "The following additional system instructions now apply:\n\nexisting addition",
+		});
+		expect(diffSystemPrompts(pieces(base), pieces({ ...base, customPrompt: "base instructions\nmore" }))).toEqual({
+			type: "update",
+			text: "The following additional base system instructions now apply:\n\nmore",
+		});
+		expect(diffSystemPrompts(pieces({ cwd: "/tmp" }), pieces({ cwd: "/tmp", promptTail: "\nold tail" }))).toEqual({
 			type: "update",
 			text: "The following additional system guidance now applies:\n\nold tail",
 		});
-		expect(diffSystemPrompts(oldTail, newTail)).toEqual({
+		expect(
+			diffSystemPrompts(
+				pieces({ cwd: "/tmp", promptTail: "\nold tail" }),
+				pieces({ cwd: "/tmp", promptTail: "\nold tail\nnew tail" }),
+			),
+		).toEqual({
 			type: "update",
-			text: "The additional system guidance has changed. The following supersedes the previous additional system guidance:\n\nold tail\nnew tail",
+			text: "The following additional system guidance now applies:\n\nnew tail",
 		});
-		expect(diffSystemPrompts(oldTail, empty)).toEqual({
-			type: "update",
-			text: "The previous additional system guidance no longer applies.",
-		});
+
+		for (const current of [
+			{ ...base, customPrompt: "changed instructions" },
+			{ ...base, customPrompt: "base instructions more" },
+			{ ...base, appendSystemPrompt: "replacement addition" },
+			{ ...base, appendSystemPrompt: "" },
+			{ ...base, appendSystemPrompt: "inserted addition\nexisting addition" },
+			{ ...base, forceSystemPrompt: "forced" },
+		]) {
+			expect(diffSystemPrompts(pieces(base), pieces(current))).toEqual({ type: "replace" });
+		}
+		for (const promptTail of ["", "\nnew tail", "\ninserted\nold tail"]) {
+			expect(
+				diffSystemPrompts(pieces({ cwd: "/tmp", promptTail: "\nold tail" }), pieces({ cwd: "/tmp", promptTail })),
+			).toEqual({ type: "replace" });
+		}
 	});
 
 	test("keeps remaining custom sections stable when an earlier section is removed", () => {
