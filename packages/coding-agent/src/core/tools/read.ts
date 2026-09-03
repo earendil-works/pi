@@ -18,10 +18,14 @@ import { getTextOutput, renderToolPath, replaceTabs, str } from "./render-utils.
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize, type TruncationResult, truncateHead } from "./truncate.ts";
 
+const READ_LINE_PREVIEW_CHARACTERS = 2000;
+
 const readSchema = Type.Object({
 	path: Type.String({ description: "Path to the file to read (relative or absolute)" }),
 	offset: Type.Optional(Type.Number({ description: "Line number to start reading from (1-indexed)" })),
-	limit: Type.Optional(Type.Number({ description: "Maximum number of lines to read" })),
+	limit: Type.Optional(
+		Type.Number({ description: "Maximum number of lines to read. Use 1 to return a complete long line." }),
+	),
 });
 
 export const readToolSystemPromptContribution = {
@@ -33,6 +37,35 @@ export type ReadToolInput = Static<typeof readSchema>;
 
 export interface ReadToolDetails {
 	truncation?: TruncationResult;
+	longLinesShortened?: number;
+}
+
+interface LongReadLinePreviewResult {
+	content: string;
+	notices: string[];
+}
+
+function previewLongReadLines(content: string, startLine: number): LongReadLinePreviewResult {
+	const notices: string[] = [];
+	const previewedContent = content
+		.split("\n")
+		.map((line, index) => {
+			const lineEnding = line.endsWith("\r") ? "\r" : "";
+			const lineText = lineEnding ? line.slice(0, -1) : line;
+			const characters = Array.from(lineText);
+			if (characters.length <= READ_LINE_PREVIEW_CHARACTERS) {
+				return line;
+			}
+
+			const lineNumber = startLine + index;
+			notices.push(
+				`[Line ${lineNumber} shortened: showing ${READ_LINE_PREVIEW_CHARACTERS.toLocaleString("en-US")} of ${characters.length.toLocaleString("en-US")} characters. Use offset=${lineNumber}, limit=1 to read the complete line.]`,
+			);
+			return `${characters.slice(0, READ_LINE_PREVIEW_CHARACTERS).join("")}${lineEnding}`;
+		})
+		.join("\n");
+
+	return { content: previewedContent, notices };
 }
 
 interface CompactReadClassification {
@@ -203,6 +236,11 @@ function formatReadResult(
 			text += `\n${theme.fg("warning", `[Truncated: ${truncation.outputLines} lines shown (${formatSize(truncation.maxBytes ?? DEFAULT_MAX_BYTES)} limit)]`)}`;
 		}
 	}
+	const longLinesShortened = result.details?.longLinesShortened;
+	if (longLinesShortened) {
+		const lineLabel = longLinesShortened === 1 ? "line" : "lines";
+		text += `\n${theme.fg("warning", `[${longLinesShortened} long ${lineLabel} shortened to ${READ_LINE_PREVIEW_CHARACTERS.toLocaleString("en-US")} characters]`)}`;
+	}
 	return text;
 }
 
@@ -215,7 +253,7 @@ export function createReadToolDefinition(
 	return {
 		name: "read",
 		label: "read",
-		description: `Read the contents of a file. Supports text files and images (jpg, png, gif, webp, bmp). Images are sent as attachments. For text files, output is truncated to ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). Use offset/limit for large files. When you need the full file, continue with offset until complete.`,
+		description: `Read the contents of a file. Supports text files and images (jpg, png, gif, webp, bmp). Images are sent as attachments. For text files, output is truncated to ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). In ordinary reads, lines longer than ${READ_LINE_PREVIEW_CHARACTERS.toLocaleString("en-US")} characters are shortened; use offset with limit=1 to read one in full. Use offset/limit for large files. When you need the full file, continue with offset until complete.`,
 		promptSnippet: readToolSystemPromptContribution.snippet,
 		promptGuidelines: [...readToolSystemPromptContribution.guidelines],
 		parameters: readSchema,
@@ -293,6 +331,10 @@ export function createReadToolDefinition(
 								}
 								// Apply truncation, respecting both line and byte limits.
 								const truncation = truncateHead(selectedContent);
+								const linePreview =
+									limit === 1
+										? { content: truncation.content, notices: [] }
+										: previewLongReadLines(truncation.content, startLineDisplay);
 								let outputText: string;
 								if (truncation.firstLineExceedsLimit) {
 									// First line alone exceeds the byte limit. Point the model at a bash fallback.
@@ -303,7 +345,7 @@ export function createReadToolDefinition(
 									// Truncation occurred. Build an actionable continuation notice.
 									const endLineDisplay = startLineDisplay + truncation.outputLines - 1;
 									const nextOffset = endLineDisplay + 1;
-									outputText = truncation.content;
+									outputText = linePreview.content;
 									if (truncation.truncatedBy === "lines") {
 										outputText += `\n\n[Showing lines ${startLineDisplay}-${endLineDisplay} of ${totalFileLines}. Use offset=${nextOffset} to continue.]`;
 									} else {
@@ -314,10 +356,14 @@ export function createReadToolDefinition(
 									// User-specified limit stopped early, but the file still has more content.
 									const remaining = allLines.length - (startLine + userLimitedLines);
 									const nextOffset = startLine + userLimitedLines + 1;
-									outputText = `${truncation.content}\n\n[${remaining} more lines in file. Use offset=${nextOffset} to continue.]`;
+									outputText = `${linePreview.content}\n\n[${remaining} more lines in file. Use offset=${nextOffset} to continue.]`;
 								} else {
 									// No truncation and no remaining user-limited content.
-									outputText = truncation.content;
+									outputText = linePreview.content;
+								}
+								if (linePreview.notices.length > 0) {
+									outputText += `\n\n${linePreview.notices.join("\n")}`;
+									details = { ...details, longLinesShortened: linePreview.notices.length };
 								}
 								content = [{ type: "text", text: outputText }];
 							}
