@@ -16,6 +16,7 @@ import type {
 	DefaultProjectTrust,
 	FullscreenExitOutput,
 	MermaidRenderingMode,
+	NewSessionInheritMode,
 	TuiMode,
 	WarningSettings,
 } from "../../../core/settings-manager.ts";
@@ -79,6 +80,7 @@ export interface SettingsConfig {
 	autocompleteMaxVisible: number;
 	quietStartup: boolean;
 	defaultProjectTrust: DefaultProjectTrust;
+	newSessionInherits: NewSessionInheritMode;
 	clearOnShrink: boolean;
 	showTerminalProgress: boolean;
 	tuiMode: TuiMode;
@@ -116,6 +118,7 @@ export interface SettingsCallbacks {
 	onAutocompleteMaxVisibleChange: (maxVisible: number) => void;
 	onQuietStartupChange: (enabled: boolean) => void;
 	onDefaultProjectTrustChange: (defaultProjectTrust: DefaultProjectTrust) => void;
+	onNewSessionInheritsChange: (mode: NewSessionInheritMode) => void;
 	onClearOnShrinkChange: (enabled: boolean) => void;
 	onShowTerminalProgressChange: (enabled: boolean) => void;
 	onTuiModeChange: (mode: TuiMode) => void;
@@ -545,6 +548,13 @@ export class SettingsSelectorComponent extends Container {
 				values: Object.values(DEFAULT_PROJECT_TRUST_LABELS),
 			},
 			{
+				id: "new-session-inherits",
+				label: "New session inherits",
+				description: "What /new carries over from the current session",
+				currentValue: config.newSessionInherits,
+				values: ["none", "model", "effort", "both"],
+			},
+			{
 				id: "double-escape-action",
 				label: "Double-escape action",
 				description: "Action when pressing Escape twice with empty editor",
@@ -888,6 +898,9 @@ export class SettingsSelectorComponent extends Container {
 						}
 						break;
 					}
+					case "new-session-inherits":
+						callbacks.onNewSessionInheritsChange(newValue as NewSessionInheritMode);
+						break;
 					case "double-escape-action":
 						callbacks.onDoubleEscapeActionChange(newValue as "fork" | "tree");
 						break;

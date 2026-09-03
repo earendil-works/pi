@@ -72,6 +72,9 @@ export interface WarningSettings {
 
 export type DefaultProjectTrust = "ask" | "always" | "never";
 
+/** What `/new` carries over from the current session. */
+export type NewSessionInheritMode = "none" | "model" | "effort" | "both";
+
 export type TransportSetting = Transport;
 
 /**
@@ -96,6 +99,7 @@ export interface Settings {
 	defaultProvider?: string;
 	defaultModel?: string;
 	defaultThinkingLevel?: ThinkingLevel;
+	newSessionInherits?: NewSessionInheritMode; // default: "none" - what /new carries over from the current session
 	modelThinkingLevels?: Record<string, ThinkingLevel>; // per-model default thinking level overrides keyed by "provider/modelId"
 	transport?: TransportSetting; // default: "auto"
 	steeringMode?: "all" | "one-at-a-time";
@@ -786,6 +790,16 @@ export class SettingsManager {
 	setDefaultThinkingLevel(level: ThinkingLevel): void {
 		this.globalSettings.defaultThinkingLevel = level;
 		this.markModified("defaultThinkingLevel");
+		this.save();
+	}
+
+	getNewSessionInherits(): NewSessionInheritMode {
+		return this.settings.newSessionInherits ?? "none";
+	}
+
+	setNewSessionInherits(mode: NewSessionInheritMode): void {
+		this.globalSettings.newSessionInherits = mode;
+		this.markModified("newSessionInherits");
 		this.save();
 	}
 

@@ -10,6 +10,7 @@ import type {
 	SessionStartEvent,
 } from "./extensions/index.ts";
 import { emitSessionShutdownEvent } from "./extensions/runner.ts";
+import type { SessionInheritState } from "./model-resolver.ts";
 import type { CreateAgentSessionResult } from "./sdk.ts";
 import { assertSessionCwdExists } from "./session-cwd.ts";
 import { SessionManager } from "./session-manager.ts";
@@ -38,6 +39,7 @@ export type CreateAgentSessionRuntimeFactory = (options: {
 	sessionManager: SessionManager;
 	sessionStartEvent?: SessionStartEvent;
 	projectTrustContext?: ProjectTrustContext;
+	inherit?: SessionInheritState;
 }) => Promise<CreateAgentSessionRuntimeResult>;
 
 /**
@@ -249,6 +251,7 @@ export class AgentSessionRuntime {
 				agentDir: this.services.agentDir,
 				sessionManager,
 				sessionStartEvent: { type: "session_start", reason: "new", previousSessionFile },
+				inherit: { model: this.session.model, thinkingLevel: this.session.thinkingLevel },
 			}),
 		);
 		if (options?.setup) {

@@ -4600,6 +4600,7 @@ export class InteractiveMode {
 					showHardwareCursor: this.settingsManager.getShowHardwareCursor(),
 					showCacheMissNotices: this.settingsManager.getShowCacheMissNotices(),
 					defaultProjectTrust: this.settingsManager.getDefaultProjectTrust(),
+					newSessionInherits: this.settingsManager.getNewSessionInherits(),
 					editorPaddingX: this.settingsManager.getEditorPaddingX(),
 					outputPad: this.settingsManager.getOutputPad(),
 					autocompleteMaxVisible: this.settingsManager.getAutocompleteMaxVisible(),
@@ -4709,6 +4710,9 @@ export class InteractiveMode {
 					},
 					onDefaultProjectTrustChange: (defaultProjectTrust) => {
 						this.settingsManager.setDefaultProjectTrust(defaultProjectTrust);
+					},
+					onNewSessionInheritsChange: (mode) => {
+						this.settingsManager.setNewSessionInherits(mode);
 					},
 					onDoubleEscapeActionChange: (action) => {
 						this.settingsManager.setDoubleEscapeAction(action);

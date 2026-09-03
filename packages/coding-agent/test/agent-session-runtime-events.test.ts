@@ -1,6 +1,8 @@
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
+import type { Model } from "@earendil-works/pi-ai";
 import { fauxAssistantMessage, registerFauxProvider } from "@earendil-works/pi-ai/compat";
 import { afterEach, describe, expect, it } from "vitest";
 import {
@@ -10,6 +12,7 @@ import {
 	createAgentSessionServices,
 } from "../src/core/agent-session-runtime.ts";
 import { AuthStorage } from "../src/core/auth-storage.ts";
+import { applySessionInherit, type SessionInheritState } from "../src/core/model-resolver.ts";
 import { ModelRuntime } from "../src/core/model-runtime.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 import type {
@@ -35,11 +38,15 @@ describe("AgentSessionRuntime session lifecycle events", () => {
 		}
 	});
 
-	async function createRuntimeHost(extensionFactory: ExtensionFactory) {
+	async function createRuntimeHost(
+		extensionFactory: ExtensionFactory,
+		fauxOptions: { models?: Array<{ id: string; reasoning?: boolean }> } = {},
+	) {
 		const tempDir = join(tmpdir(), `pi-runtime-events-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 		mkdirSync(tempDir, { recursive: true });
+		let lastInherit: SessionInheritState | undefined;
 
-		const faux = registerFauxProvider();
+		const faux = registerFauxProvider(fauxOptions);
 		faux.setResponses([fauxAssistantMessage("one"), fauxAssistantMessage("two"), fauxAssistantMessage("three")]);
 
 		const authStorage = AuthStorage.inMemory();
@@ -78,17 +85,26 @@ describe("AgentSessionRuntime session lifecycle events", () => {
 				noThemes: true,
 			},
 		};
-		const createRuntime: CreateAgentSessionRuntimeFactory = async ({ cwd, sessionManager, sessionStartEvent }) => {
+		const createRuntime: CreateAgentSessionRuntimeFactory = async ({
+			cwd,
+			sessionManager,
+			sessionStartEvent,
+			inherit,
+		}) => {
+			lastInherit = inherit;
 			const services = await createAgentSessionServices({
 				...runtimeOptions,
 				cwd,
 			});
+			const sessionOptions: { model?: Model<any>; thinkingLevel?: ThinkingLevel } = {};
+			applySessionInherit(sessionOptions, inherit, "both");
 			return {
 				...(await createAgentSessionFromServices({
 					services,
 					sessionManager,
 					sessionStartEvent,
-					model: faux.getModel(),
+					model: sessionOptions.model ?? faux.getModel(),
+					thinkingLevel: sessionOptions.thinkingLevel,
 				})),
 				services,
 				diagnostics: services.diagnostics,
@@ -109,7 +125,7 @@ describe("AgentSessionRuntime session lifecycle events", () => {
 			}
 		});
 
-		return { runtimeHost, faux };
+		return { runtimeHost, faux, lastInherit: () => lastInherit };
 	}
 
 	it("emits session_before_switch and session_start for new and resume flows", async () => {
@@ -178,6 +194,41 @@ describe("AgentSessionRuntime session lifecycle events", () => {
 		expect(result.cancelled).toBe(true);
 		expect(runtimeHost.session.sessionFile).toBe(originalSessionFile);
 		expect(events).toEqual([{ type: "session_before_switch", reason: "new", targetSessionFile: undefined }]);
+	});
+
+	it("passes current model and thinking level as inherit state on new session", async () => {
+		const { runtimeHost, lastInherit } = await createRuntimeHost(() => {}, {
+			models: [{ id: "faux-thinking", reasoning: true }],
+		});
+		await runtimeHost.session.prompt("hello");
+		const levels = runtimeHost.session.getAvailableThinkingLevels();
+		expect(levels.length).toBeGreaterThan(0);
+		const level = levels[levels.length - 1];
+		await runtimeHost.session.setThinkingLevel(level, { persist: false });
+
+		const modelBefore = runtimeHost.session.model!;
+		await runtimeHost.newSession();
+		await runtimeHost.session.bindExtensions({});
+
+		expect(lastInherit()).toEqual({
+			model: expect.objectContaining({ provider: modelBefore.provider, id: modelBefore.id }),
+			thinkingLevel: level,
+		});
+		expect(runtimeHost.session.model!.provider).toBe(modelBefore.provider);
+		expect(runtimeHost.session.model!.id).toBe(modelBefore.id);
+		expect(runtimeHost.session.thinkingLevel).toBe(level);
+	});
+
+	it("does not pass inherit state when resuming a session", async () => {
+		const { runtimeHost, lastInherit } = await createRuntimeHost(() => {});
+		await runtimeHost.session.prompt("hello");
+		const originalSessionFile = runtimeHost.session.sessionFile;
+
+		const switchResult = await runtimeHost.switchSession(originalSessionFile!);
+		expect(switchResult.cancelled).toBe(false);
+		await runtimeHost.session.bindExtensions({});
+
+		expect(lastInherit()).toBeUndefined();
 	});
 
 	it("runs beforeSessionInvalidate after session_shutdown and before rebindSession", async () => {

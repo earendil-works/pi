@@ -45,7 +45,13 @@ import { AuthStorage, ReadOnlyAuthStorage } from "./core/auth-storage.ts";
 import { exportFromFile } from "./core/export-html/index.ts";
 import type { InlineExtension } from "./core/extensions/types.ts";
 import { applyHttpProxySettings, configureHttpDispatcher } from "./core/http-dispatcher.ts";
-import { resolveCliModel, resolveModelScope, type ScopedModel } from "./core/model-resolver.ts";
+import {
+	applySessionInherit,
+	resolveCliModel,
+	resolveModelScope,
+	type ScopedModel,
+	type SessionInheritState,
+} from "./core/model-resolver.ts";
 import { ModelRuntime } from "./core/model-runtime.ts";
 import { restoreStdout, takeOverStdout } from "./core/output-guard.ts";
 import { type AppMode, resolveProjectTrusted } from "./core/project-trust.ts";
@@ -448,6 +454,7 @@ function buildSessionOptions(
 	hasExistingSession: boolean,
 	modelRuntime: ModelRuntime,
 	settingsManager: SettingsManager,
+	inherit?: SessionInheritState,
 ): {
 	options: CreateAgentSessionOptions;
 	cliThinkingFromModel: boolean;
@@ -483,6 +490,10 @@ function buildSessionOptions(
 			}
 		}
 	}
+
+	// Carry the previous session's model/effort into /new when configured.
+	// Runs before scoped/saved defaults so the inherited values win.
+	applySessionInherit(options, inherit, settingsManager.getNewSessionInherits());
 
 	if (!options.model && scopedModels.length > 0 && !hasExistingSession) {
 		// Check if saved default is in scoped models - use it if so, otherwise first scoped model
@@ -715,6 +726,7 @@ export async function main(args: string[], options?: MainOptions) {
 		sessionManager,
 		sessionStartEvent,
 		projectTrustContext,
+		inherit,
 	}) => {
 		const isInitialRuntime = sessionStartEvent === undefined;
 		const projectTrustDiagnostics: AgentSessionRuntimeDiagnostic[] = [];
@@ -799,6 +811,7 @@ export async function main(args: string[], options?: MainOptions) {
 			sessionManager.buildSessionContext().messages.length > 0,
 			modelRuntime,
 			settingsManager,
+			inherit,
 		);
 		diagnostics.push(...sessionOptionDiagnostics);
 

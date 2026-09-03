@@ -1,6 +1,7 @@
 import { mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { Agent } from "@earendil-works/pi-agent-core";
 import type { Model } from "@earendil-works/pi-ai";
 import { getModel, streamSimple } from "@earendil-works/pi-ai/compat";
@@ -9,6 +10,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import { AgentSession } from "../src/core/agent-session.ts";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import {
+	applySessionInherit,
 	defaultModelPerProvider,
 	findInitialModel,
 	parseModelPattern,
@@ -912,5 +914,62 @@ describe("default model selection", () => {
 			]);
 			expect(settingsManager.getEnabledModels()).toEqual([`${sonnet.provider}/${sonnet.id}`]);
 		});
+	});
+});
+
+describe("applySessionInherit", () => {
+	const model1 = { provider: "anthropic", id: "claude-opus-4-8" } as Model<any>;
+	const model2 = { provider: "openai", id: "gpt-5.5" } as Model<any>;
+
+	test("mode none keeps options unchanged", () => {
+		const options: { model?: Model<any>; thinkingLevel?: ThinkingLevel } = {};
+		applySessionInherit(options, { model: model1, thinkingLevel: "high" }, "none");
+		expect(options.model).toBeUndefined();
+		expect(options.thinkingLevel).toBeUndefined();
+	});
+
+	test("mode model inherits only the model", () => {
+		const options: { model?: Model<any>; thinkingLevel?: ThinkingLevel } = {};
+		applySessionInherit(options, { model: model1, thinkingLevel: "high" }, "model");
+		expect(options.model).toBe(model1);
+		expect(options.thinkingLevel).toBeUndefined();
+	});
+
+	test("mode effort inherits only the thinking level", () => {
+		const options: { model?: Model<any>; thinkingLevel?: ThinkingLevel } = {};
+		applySessionInherit(options, { model: model1, thinkingLevel: "high" }, "effort");
+		expect(options.model).toBeUndefined();
+		expect(options.thinkingLevel).toBe("high");
+	});
+
+	test("mode both inherits model and thinking level", () => {
+		const options: { model?: Model<any>; thinkingLevel?: ThinkingLevel } = {};
+		applySessionInherit(options, { model: model2, thinkingLevel: "low" }, "both");
+		expect(options.model).toBe(model2);
+		expect(options.thinkingLevel).toBe("low");
+	});
+
+	test("CLI-provided model is never overwritten", () => {
+		const options: { model?: Model<any>; thinkingLevel?: ThinkingLevel } = { model: model1 };
+		applySessionInherit(options, { model: model2, thinkingLevel: "high" }, "both");
+		expect(options.model).toBe(model1);
+		expect(options.thinkingLevel).toBe("high");
+	});
+
+	test("CLI-provided thinking level is never overwritten", () => {
+		const options: { model?: Model<any>; thinkingLevel?: ThinkingLevel } = {
+			model: model1,
+			thinkingLevel: "off",
+		};
+		applySessionInherit(options, { model: model2, thinkingLevel: "high" }, "both");
+		expect(options.model).toBe(model1);
+		expect(options.thinkingLevel).toBe("off");
+	});
+
+	test("missing inherit state is a no-op", () => {
+		const options: { model?: Model<any>; thinkingLevel?: ThinkingLevel } = {};
+		applySessionInherit(options, undefined, "both");
+		expect(options.model).toBeUndefined();
+		expect(options.thinkingLevel).toBeUndefined();
 	});
 });

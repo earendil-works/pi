@@ -15,6 +15,7 @@ import { minimatch } from "minimatch";
 import { isValidThinkingLevel } from "../cli/args.ts";
 import { DEFAULT_THINKING_LEVEL } from "./defaults.ts";
 import type { ModelRuntime } from "./model-runtime.ts";
+import type { NewSessionInheritMode } from "./settings-manager.ts";
 
 /** Default model IDs for each known provider */
 export const defaultModelPerProvider: Record<KnownProvider, string> = {
@@ -618,6 +619,30 @@ export interface InitialModelResult {
  * 4. Saved default from settings
  * 5. First available model with valid API key
  */
+
+/** Current session state that /new can carry over when configured. */
+export interface SessionInheritState {
+	model?: Model<any>;
+	thinkingLevel?: ThinkingLevel;
+}
+
+/**
+ * Apply the previous session's model/effort to new session options.
+ * CLI-provided values win and are never overwritten.
+ */
+export function applySessionInherit(
+	options: { model?: Model<any>; thinkingLevel?: ThinkingLevel },
+	inherit: SessionInheritState | undefined,
+	mode: NewSessionInheritMode | undefined,
+): void {
+	if (!inherit || mode === undefined || mode === "none") return;
+	if ((mode === "model" || mode === "both") && inherit.model && !options.model) {
+		options.model = inherit.model;
+	}
+	if ((mode === "effort" || mode === "both") && inherit.thinkingLevel && options.thinkingLevel === undefined) {
+		options.thinkingLevel = inherit.thinkingLevel;
+	}
+}
 export async function findInitialModel(options: {
 	cliProvider?: string;
 	cliModel?: string;
