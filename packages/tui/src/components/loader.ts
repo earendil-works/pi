@@ -61,6 +61,11 @@ export class Loader extends Text {
 		this.updateDisplay();
 	}
 
+	override invalidate(): void {
+		super.invalidate();
+		this.updateDisplay();
+	}
+
 	setIndicator(indicator?: LoaderIndicatorOptions): void {
 		this.renderIndicatorVerbatim = indicator !== undefined;
 		this.frames = indicator?.frames !== undefined ? [...indicator.frames] : [...DEFAULT_FRAMES];

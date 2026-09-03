@@ -27,8 +27,6 @@ export class StatusIndicator extends Loader {
 }
 
 export class WorkingStatusIndicator extends StatusIndicator {
-	private workingMessage: string;
-
 	constructor(ui: TUI, message: string, indicator?: WorkingIndicatorOptions, colorFn?: (text: string) => string) {
 		super(
 			"working",
@@ -38,12 +36,6 @@ export class WorkingStatusIndicator extends StatusIndicator {
 			message,
 			indicator,
 		);
-		this.workingMessage = message;
-	}
-
-	override setMessage(message: string): void {
-		this.workingMessage = message;
-		super.setMessage(message);
 	}
 
 	renderInBorder(width: number): string {
@@ -53,11 +45,6 @@ export class WorkingStatusIndicator extends StatusIndicator {
 
 	renderSpinnerInBorder(width: number): string {
 		return truncateToWidth(this.getRenderedIndicator(), width, "");
-	}
-
-	override invalidate(): void {
-		super.invalidate();
-		super.setMessage(this.workingMessage);
 	}
 }
 

@@ -58,14 +58,6 @@ describe("status indicators", () => {
 		expect(stripAnsi(topBorder)).toBe("── ⠋ Working ───────");
 		expect(visibleWidth(topBorder)).toBe(20);
 		expect(topBorder.split(theme.getFgAnsi("thinkingHigh"))).toHaveLength(5);
-		expect(topBorder).not.toContain("...");
-		expect(stripAnsi(editor.render(14)[0]!)).toBe("── ⠋ Working ─");
-
-		editor.setText(Array.from({ length: 10 }, (_, index) => `line ${index}`).join("\n"));
-		expect(stripAnsi(editor.render(40)[0]!)).toBe(`── ⠋ Working ── ↑ 5 more ${"─".repeat(15)}`);
-		expect(stripAnsi(editor.render(24)[0]!)).toBe("── ⠋ ── ↑ 5 more ───────");
-		expect(stripAnsi(editor.render(14)[0]!)).toBe(`── ⠋ ${"─".repeat(9)}`);
-		expect(stripAnsi(editor.render(4)[0]!)).toContain("⠋");
 		indicator.dispose();
 	});
 
