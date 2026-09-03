@@ -116,23 +116,23 @@ Configure Pi to use the corresponding OpenAI-compatible or Anthropic-compatible 
 [Docker Sandboxes](https://docs.docker.com/ai/sandboxes/) is a managed sandbox runtime from Docker that runs the whole `pi` process inside a sandbox.
 It is one of the container boundaries [No Built-in Sandbox](security.md#no-built-in-sandbox) points to.
 
-Launch `pi` from the project you want mounted:
-
-```bash
-sbx run --kit "docker.io/sbx/pi-kit:latest" pi
-```
-
-The kit pre-bakes `pi` into its image, so the sandbox starts without installing anything, and the current directory is the sandbox workspace.
-
 Unlike the Plain Docker pattern above, the provider credential is not passed into the container.
 The sandbox receives a sentinel value instead, and the `sbx` proxy substitutes the real credential on egress to `api.anthropic.com`.
-Store the credential on the host before you create the sandbox: credentials are wired at creation time.
+Credentials are wired at creation time, so store yours on the host before you create the sandbox.
 
 For a Claude Pro/Max subscription, run `claude setup-token` on a machine with Claude Code, then store the result on the host as a custom secret bound to `api.anthropic.com`, exposed to the sandbox as `ANTHROPIC_OAUTH_TOKEN`.
 The sandbox gets an OAuth-shaped placeholder, not the real token, and the proxy swaps it on egress to that host; `ANTHROPIC_OAUTH_TOKEN` is a variable pi already reads and prefers over an API key, so no extra pi configuration is needed.
 If an `anthropic` secret is already bound, remove it first with `sbx secret rm anthropic`: otherwise the proxy adds an `x-api-key` header alongside the Bearer token and Anthropic rejects the request.
 
 For an API key, store it with `sbx secret set anthropic` instead. The kit wires it the same way, as a sentinel the proxy substitutes on egress.
+
+With the credential stored, launch `pi` from the project you want mounted:
+
+```bash
+sbx run --kit "docker.io/sbx/pi-kit:latest" pi
+```
+
+The kit pre-bakes `pi` into its image, so the sandbox starts without installing anything, and the current directory is the sandbox workspace.
 
 Do not authenticate from inside the sandbox: `/login` there writes a real token into the container and defeats the proxy model.
 
