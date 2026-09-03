@@ -1515,8 +1515,8 @@ export interface ProviderConfig {
 	name?: string;
 	/** Base URL for the API endpoint. Required when defining models. */
 	baseUrl?: string;
-	/** API key literal, env interpolation ($ENV_VAR or ${ENV_VAR}), or leading !command. Required when defining models (unless oauth provided). */
-	apiKey?: string;
+	/** API key literal, env interpolation ($ENV_VAR or ${ENV_VAR}), leading !command, or a function read at request time (plugin auth files). Required when defining models (unless oauth provided). */
+	apiKey?: string | (() => string | undefined);
 	/** API type. Required at provider or model level when defining models. */
 	api?: Api;
 	/**

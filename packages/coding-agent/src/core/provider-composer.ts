@@ -29,6 +29,8 @@ import {
 	resolveConfigValueOrThrow,
 	resolveHeadersOrThrow,
 } from "./resolve-config-value.ts";
+import { type ProviderApiKey, resolveConfiguredApiKey } from "./provider-api-key.ts";
+export type { ProviderApiKey };
 
 export interface ExtensionOAuthConfig {
 	name: string;
@@ -46,7 +48,7 @@ export interface ExtensionOAuthConfig {
 export interface ProviderConfigInput {
 	name?: string;
 	baseUrl?: string;
-	apiKey?: string;
+	apiKey?: ProviderApiKey;
 	api?: Api;
 	streamSimple?: (model: Model<Api>, context: Context, options?: SimpleStreamOptions) => AssistantMessageEventStream;
 	headers?: Record<string, string>;
@@ -281,7 +283,7 @@ function withConfiguredAuth(
 function configuredApiKey(
 	config: ModelsJsonProvider | undefined,
 	extension: ProviderConfigInput | undefined,
-): string | undefined {
+): ProviderApiKey | undefined {
 	return extension?.apiKey ?? config?.apiKey;
 }
 
@@ -336,6 +338,11 @@ function composeApiKeyAuth(
 				return resolved ? { type: "api_key", source: resolved.source } : undefined;
 			}
 			if (rawKey !== undefined) {
+				if (typeof rawKey === "function") {
+					return resolveConfiguredApiKey(rawKey)
+						? { type: "api_key", source: "configured API key" }
+						: undefined;
+				}
 				if (isCommandConfigValue(rawKey)) return { type: "api_key", source: "configured API key" };
 				const envNames = getConfigValueEnvVarNames(rawKey);
 				for (const name of envNames) {
@@ -356,11 +363,20 @@ function composeApiKeyAuth(
 						? { auth: { apiKey: input.credential.key }, env: input.credential.env, source: "stored credential" }
 						: undefined;
 			} else if (rawKey !== undefined) {
-				const env = await configContextEnv([rawKey], input.ctx);
-				const key = resolveConfigValueOrThrow(rawKey, `API key for provider "${providerId}"`, env);
-				result = inherited
-					? await inherited.resolve({ ...input, credential: { type: "api_key", key } })
-					: { auth: { apiKey: key }, source: "configured API key" };
+				if (typeof rawKey === "function") {
+					const key = resolveConfiguredApiKey(rawKey);
+					result = key
+						? inherited
+							? await inherited.resolve({ ...input, credential: { type: "api_key", key } })
+							: { auth: { apiKey: key }, source: "configured API key" }
+						: undefined;
+				} else {
+					const env = await configContextEnv([rawKey], input.ctx);
+					const key = resolveConfigValueOrThrow(rawKey, `API key for provider "${providerId}"`, env);
+					result = inherited
+						? await inherited.resolve({ ...input, credential: { type: "api_key", key } })
+						: { auth: { apiKey: key }, source: "configured API key" };
+				}
 			} else {
 				result = await inherited?.resolve(input);
 			}
