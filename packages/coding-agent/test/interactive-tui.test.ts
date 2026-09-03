@@ -65,7 +65,29 @@ describe("createInteractiveTui", () => {
 		altTui.start();
 		await altTerminal.waitForRender();
 		expect(altTerminal.writes.some((write) => write.includes("\x1b[?1049h"))).toBe(true);
+		expect(altTerminal.writes.some((write) => write.includes("\x1b[?1000h"))).toBe(true);
 		altTui.stop();
+	});
+
+	it("disables fullscreen mouse tracking when PI_DISABLE_MOUSE is set", async () => {
+		process.env.PI_DISABLE_MOUSE = "1";
+		try {
+			const terminal = new RecordingTerminal();
+			const tui = createInteractiveTui({
+				tuiMode: "fullscreen",
+				showHardwareCursor: false,
+				logDirectory: "/tmp",
+				terminal,
+			});
+			expect(tui.mode).toBe("fullscreen");
+			tui.start();
+			await terminal.waitForRender();
+			expect(terminal.writes.some((write) => write.includes("\x1b[?1049h"))).toBe(true);
+			expect(terminal.writes.some((write) => write.includes("\x1b[?1000h"))).toBe(false);
+			tui.stop();
+		} finally {
+			delete process.env.PI_DISABLE_MOUSE;
+		}
 	});
 
 	it("replaces the renderer and restores the previous screen for resume-hint exits", async () => {

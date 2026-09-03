@@ -87,6 +87,7 @@ These variables are read by Pi itself:
 | `PI_CACHE_RETENTION` | Set to `long` for extended provider prompt caching where supported |
 | `PI_SHARE_VIEWER_URL` | Override the base URL used by `/share` |
 | `PI_HARDWARE_CURSOR` | Set to `1` to show the hardware cursor; see [Terminal setup](terminal-setup.md) |
+| `PI_DISABLE_MOUSE` | Set to `1`/`true`/`yes` to disable mouse tracking in fullscreen mode; useful when the terminal or a multiplexer mishandles mouse reports |
 | `PI_HYPERLINKS` | Override OSC 8 hyperlink detection with `1`, `0`, or `auto` |
 | `PI_IMAGE_PROTOCOL` | Override inline image detection with `kitty`, `iterm2`, `none`, or `auto` |
 | `PI_TRUE_COLOR` | Override truecolor detection with `1`, `0`, or `auto` |
