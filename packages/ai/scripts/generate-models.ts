@@ -569,6 +569,13 @@ function supportsAnthropicMidConvoEffort(modelId: string): boolean {
 	);
 }
 
+function supportsAnthropicMidConvoSystemMessages(modelId: string): boolean {
+	return (
+		/^claude-opus-(?:4-8|5)(?:-\d{8})?$/.test(modelId) ||
+		/^claude-(?:fable|mythos)-5(?:[.-]1)?(?:-\d{8})?$/.test(modelId)
+	);
+}
+
 function isAnthropicAdaptiveThinkingModel(modelId: string): boolean {
 	return (
 		modelId.includes("opus-4-6") ||
@@ -1020,6 +1027,10 @@ function getAnthropicMessagesCompat(provider: string, modelId: string): Anthropi
 		supportsAnthropicMidConvoEffort(modelId)
 	) {
 		compat.supportsMidConvoEffort = true;
+	}
+	if (provider === "anthropic" && supportsAnthropicMidConvoSystemMessages(modelId)) {
+		compat.supportsMidConvoSystemMessages = true;
+		compat.supportsMidConvoToolChanges = true;
 	}
 	if (EAGER_TOOL_INPUT_STREAMING_UNSUPPORTED_ANTHROPIC_MODELS.has(`${provider}:${modelId}`)) {
 		compat.supportsEagerToolInputStreaming = false;

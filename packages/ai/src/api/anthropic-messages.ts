@@ -225,24 +225,9 @@ function getAnthropicCompat(
 		allowEmptySignature: model.compat?.allowEmptySignature ?? false,
 		supportsStrictTools: model.compat?.supportsStrictTools ?? false,
 		supportsToolReferences: model.compat?.supportsToolReferences ?? defaultSupportsToolReferences(model),
-		supportsMidConvoSystemMessages:
-			model.compat?.supportsMidConvoSystemMessages ?? defaultSupportsMidConvoSystemMessages(model),
-		supportsMidConvoToolChanges:
-			model.compat?.supportsMidConvoToolChanges ?? defaultSupportsMidConvoSystemMessages(model),
+		supportsMidConvoSystemMessages: model.compat?.supportsMidConvoSystemMessages ?? false,
+		supportsMidConvoToolChanges: model.compat?.supportsMidConvoToolChanges ?? false,
 	};
-}
-
-/**
- * Default for `supportsMidConvoSystemMessages` and `supportsMidConvoToolChanges`:
- * first-party Claude Opus 4.8, Opus 5, Fable 5/5.1, and Mythos 5/5.1. Sonnet 5
- * and older models reject `role: "system"` inside `messages`.
- */
-function defaultSupportsMidConvoSystemMessages(model: Model<"anthropic-messages">): boolean {
-	if (model.provider !== "anthropic") return false;
-	return (
-		/^claude-opus-(?:4-8|5)(?:-\d{8})?$/.test(model.id) ||
-		/^claude-(?:fable|mythos)-5(?:[.-]1)?(?:-\d{8})?$/.test(model.id)
-	);
 }
 
 /**

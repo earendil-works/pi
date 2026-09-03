@@ -762,15 +762,15 @@ export interface AnthropicMessagesCompat {
 	supportsToolReferences?: boolean;
 	/**
 	 * Whether the model accepts `role: "system"` messages inside `messages`.
-	 * Default: true for first-party Claude Opus 4.8, Opus 5, Fable 5/5.1, and
-	 * Mythos 5/5.1; false otherwise. Unsupported models receive system messages
-	 * as tagged user turns instead.
+	 * Generated metadata enables this for verified first-party models. Default:
+	 * false. Unsupported models receive system messages as tagged user turns.
 	 */
 	supportsMidConvoSystemMessages?: boolean;
 	/**
 	 * Whether the model accepts `tool_addition` and `tool_removal` blocks in
-	 * mid-conversation system messages (beta). Default: same models as
-	 * `supportsMidConvoSystemMessages`. Requires that flag as well.
+	 * mid-conversation system messages (beta). Generated metadata enables this
+	 * for verified first-party models. Default: false. Requires
+	 * `supportsMidConvoSystemMessages` as well.
 	 */
 	supportsMidConvoToolChanges?: boolean;
 }

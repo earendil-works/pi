@@ -140,6 +140,19 @@ describe("Anthropic mid-conversation system messages", () => {
 	const lateTool = makeTool("late_tool");
 	const removedTool = makeTool("edit");
 
+	test("generates exact model and transport gates", () => {
+		for (const id of ["claude-fable-5", "claude-fable-5-1", "claude-opus-4-8", "claude-opus-5"] as const) {
+			expect(getModel("anthropic", id).compat).toMatchObject({
+				supportsMidConvoSystemMessages: true,
+				supportsMidConvoToolChanges: true,
+			});
+		}
+		expect(getModel("anthropic", "claude-sonnet-5").compat?.supportsMidConvoSystemMessages).toBeUndefined();
+		expect(
+			getModel("openrouter", "anthropic/claude-fable-5.1").compat?.supportsMidConvoSystemMessages,
+		).toBeUndefined();
+	});
+
 	test("sends native system messages with tool changes on supported models", async () => {
 		const context: Context = {
 			systemPrompt: "base",
