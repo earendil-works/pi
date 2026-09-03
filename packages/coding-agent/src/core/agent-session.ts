@@ -593,19 +593,18 @@ export class AgentSession {
 				toolGuidelines: this._baseSystemPromptOptions.toolGuidelines,
 			});
 			const updateMessage = this._preparePromptAndToolLoadout(options);
-			if (updateMessage) {
-				this.agent.state.messages.push(updateMessage);
-				this.sessionManager.appendMessage(updateMessage);
-			}
+			const messages = updateMessage
+				? [...(previousSnapshot?.messages ?? []), updateMessage]
+				: previousSnapshot?.messages;
 
 			return {
 				...previousSnapshot,
 				context: {
 					...nextContext,
-					messages: updateMessage ? [...nextContext.messages, updateMessage] : nextContext.messages,
 					systemPrompt: this.agent.state.systemPrompt,
 					tools: this.agent.state.tools.slice(),
 				},
+				messages,
 				model: this.agent.state.model,
 				thinkingLevel: this.agent.state.thinkingLevel,
 			};

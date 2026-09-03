@@ -1,7 +1,7 @@
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
-import type { ExtensionFactory } from "../../../src/index.ts";
+import type { AgentSessionEvent, ExtensionFactory } from "../../../src/index.ts";
 import { createHarness } from "../harness.ts";
 
 describe("extension active tools next-turn refresh", () => {
@@ -43,6 +43,12 @@ describe("extension active tools next-turn refresh", () => {
 
 		try {
 			harness.session.setActiveToolsByName(["switch_tools"]);
+			const systemMessageEvents: Array<Extract<AgentSessionEvent, { type: "message_start" | "message_end" }>> = [];
+			harness.session.subscribe((event) => {
+				if ((event.type === "message_start" || event.type === "message_end") && event.message.role === "system") {
+					systemMessageEvents.push(event);
+				}
+			});
 
 			const providerToolNames: string[][] = [];
 			harness.setResponses([
@@ -62,6 +68,16 @@ describe("extension active tools next-turn refresh", () => {
 
 			expect(harness.session.getActiveToolNames()).toEqual(["after_switch"]);
 			expect(providerToolNames).toEqual([["switch_tools"], ["after_switch"]]);
+			expect(systemMessageEvents.map((event) => event.type)).toEqual(["message_start", "message_end"]);
+			expect(systemMessageEvents[0]?.message).toMatchObject({
+				role: "system",
+				toolsAdded: [{ name: "after_switch" }],
+				toolsRemoved: [{ name: "switch_tools" }],
+			});
+			expect(systemMessageEvents[1]?.message).toBe(systemMessageEvents[0]?.message);
+			expect(harness.session.messages.filter((message) => message.role === "system")).toEqual([
+				systemMessageEvents[0]?.message,
+			]);
 		} finally {
 			harness.cleanup();
 		}

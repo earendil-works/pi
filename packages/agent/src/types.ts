@@ -138,6 +138,8 @@ export interface ShouldStopAfterTurnContext {
 export interface AgentLoopTurnUpdate {
 	/** Context for the next provider request. */
 	context?: AgentContext;
+	/** Messages to append before the next provider request, with message lifecycle events. */
+	messages?: AgentMessage[];
 	/** Model for the next provider request. */
 	model?: Model<any>;
 	/** Thinking level for the next provider request. */
@@ -224,7 +226,7 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 
 	/**
 	 * Called after `turn_end` when the loop will continue, immediately before the next turn starts.
-	 * Return replacement context/model/thinking state to affect that turn.
+	 * Return replacement context/model/thinking state or messages to append to affect that turn.
 	 * Return undefined to keep using the current context/config.
 	 */
 	prepareNextTurn?: (

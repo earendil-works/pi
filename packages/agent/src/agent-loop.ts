@@ -173,10 +173,12 @@ async function runLoop(
 
 		// Inner loop: process tool calls and steering messages
 		while (hasMoreToolCalls || pendingMessages.length > 0) {
+			let preparedMessages: AgentMessage[] = [];
 			if (lastCompletedTurn) {
 				const nextTurnSnapshot = await config.prepareNextTurn?.(lastCompletedTurn);
 				if (nextTurnSnapshot) {
 					currentContext = nextTurnSnapshot.context ?? currentContext;
+					preparedMessages = nextTurnSnapshot.messages ?? [];
 					config = {
 						...config,
 						model: nextTurnSnapshot.model ?? config.model,
@@ -197,16 +199,14 @@ async function runLoop(
 				await emit({ type: "turn_start" });
 			}
 
-			// Process pending messages (inject before next assistant response)
-			if (pendingMessages.length > 0) {
-				for (const message of pendingMessages) {
-					await emit({ type: "message_start", message });
-					await emit({ type: "message_end", message });
-					currentContext.messages.push(message);
-					newMessages.push(message);
-				}
-				pendingMessages = [];
+			// Process prepared and queued messages before the next assistant response.
+			for (const message of [...preparedMessages, ...pendingMessages]) {
+				await emit({ type: "message_start", message });
+				await emit({ type: "message_end", message });
+				currentContext.messages.push(message);
+				newMessages.push(message);
 			}
+			pendingMessages = [];
 
 			// Stream assistant response
 			const message = await streamAssistantResponse(currentContext, config, signal, emit, streamFunction);
