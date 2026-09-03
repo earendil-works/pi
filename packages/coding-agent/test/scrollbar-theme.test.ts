@@ -31,12 +31,16 @@ afterEach(() => {
 });
 
 describe("fullscreen theme colors", () => {
-	it.each(["scrollbarTrack", "scrollbarThumb"] as const)("requires %s", (token) => {
+	it.each([
+		["scrollbarTrack", "muted"],
+		["scrollbarThumb", "text"],
+	] as const)("falls back to %s when omitted", (token, fallback) => {
 		const themeJson = loadDarkTheme();
 		themeJson.name = `missing-${token}-theme`;
 		delete themeJson.colors[token];
 
-		expect(() => loadThemeFromPath(writeTheme(themeJson), "truecolor")).toThrow(token);
+		const loadedTheme = loadThemeFromPath(writeTheme(themeJson), "truecolor");
+		expect(loadedTheme.getFgAnsi(token)).toBe(loadedTheme.getFgAnsi(fallback));
 	});
 
 	it("uses explicitly configured scrollbar colors", () => {

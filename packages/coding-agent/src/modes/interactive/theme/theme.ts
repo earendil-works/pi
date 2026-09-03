@@ -98,7 +98,7 @@ export type ThemeBg =
 	| "toolSuccessBg"
 	| "toolErrorBg";
 
-type OptionalThemeColor = "thinkingMax" | "searchMatchText";
+type OptionalThemeColor = "scrollbarTrack" | "scrollbarThumb" | "thinkingMax" | "searchMatchText";
 type OptionalThemeBg = "searchMatchBg";
 
 type ColorMode = "truecolor" | "256color";
@@ -259,12 +259,16 @@ function resolveThemeColors<T extends Record<string, ColorValue>>(
 }
 
 function withThemeColorFallbacks(colors: ThemeJson["colors"]): ThemeJson["colors"] & {
+	scrollbarTrack: ColorValue;
+	scrollbarThumb: ColorValue;
 	thinkingMax: ColorValue;
 	searchMatchBg: ColorValue;
 	searchMatchText: ColorValue;
 } {
 	return {
 		...colors,
+		scrollbarTrack: colors.scrollbarTrack ?? colors.muted,
+		scrollbarThumb: colors.scrollbarThumb ?? colors.text,
 		thinkingMax: colors.thinkingMax ?? colors.thinkingXhigh,
 		searchMatchBg: colors.searchMatchBg ?? colors.selectedBg,
 		searchMatchText: colors.searchMatchText ?? colors.text,
@@ -298,6 +302,8 @@ export class Theme {
 		this.fgColors = new Map();
 		const colors = {
 			...fgColors,
+			scrollbarTrack: fgColors.scrollbarTrack ?? fgColors.muted,
+			scrollbarThumb: fgColors.scrollbarThumb ?? fgColors.text,
 			thinkingMax: fgColors.thinkingMax ?? fgColors.thinkingXhigh,
 			searchMatchText: fgColors.searchMatchText ?? fgColors.text,
 		};

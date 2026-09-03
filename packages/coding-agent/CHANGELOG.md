@@ -40,7 +40,7 @@
 - Added `fullscreenCopyOnSelect` to disable automatic fullscreen selection copy; when disabled, `Ctrl+X` copies the active text selection before falling back to the last assistant message, while `/tree` still copies the selected message ([#7720](https://github.com/earendil-works/pi/issues/7720)).
 
 ### Changed
-- Changed fullscreen scrollbars to reveal on pointer entry, use dedicated required `scrollbarTrack` and `scrollbarThumb` theme colors, keep one thumb color across normal and expanded states, and support track-click jumping.
+- Changed fullscreen scrollbars to reveal on pointer entry, support optional `scrollbarTrack` and `scrollbarThumb` theme colors with muted and text fallbacks, keep one thumb color across normal and expanded states, and support track-click jumping.
 - Changed fullscreen transcript search arrows to underline on hover and capitalized the search placeholder.
 - Changed selectors in `/thinking`, `/model`, `/scoped-models`, `/trust`, per-model thinking settings, and theme settings to keep active options marked while browsing. `/scoped-models` now uses consistent per-item toggles and strikes through unavailable models ([#8900](https://github.com/earendil-works/pi/pull/8900)).
 
