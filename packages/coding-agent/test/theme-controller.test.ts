@@ -9,13 +9,14 @@ function createUi() {
 	const queryTerminalColorScheme = vi.fn();
 	const setTerminalColorSchemeNotifications = vi.fn();
 	let terminalColorSchemeListener: ((terminalTheme: TerminalTheme) => void) | undefined;
+	const unsubscribeTerminalColorScheme = vi.fn();
 	const ui = {
 		invalidate: vi.fn(),
 		requestRender: vi.fn(),
 		setTerminalColorSchemeNotifications,
 		onTerminalColorSchemeChange: vi.fn((listener: (terminalTheme: TerminalTheme) => void) => {
 			terminalColorSchemeListener = listener;
-			return vi.fn();
+			return unsubscribeTerminalColorScheme;
 		}),
 		queryTerminalBackgroundColor,
 		queryTerminalColorScheme,
@@ -25,6 +26,7 @@ function createUi() {
 		queryTerminalBackgroundColor,
 		queryTerminalColorScheme,
 		setTerminalColorSchemeNotifications,
+		unsubscribeTerminalColorScheme,
 		emitTerminalColorScheme: (terminalTheme: TerminalTheme) => terminalColorSchemeListener?.(terminalTheme),
 	};
 }
@@ -74,6 +76,20 @@ describe("InteractiveThemeController", () => {
 
 		emitTerminalColorScheme("dark");
 		expect(theme.name).toBe("dark");
+	});
+
+	it("disables terminal appearance updates when disposed", async () => {
+		const { ui, queryTerminalColorScheme, setTerminalColorSchemeNotifications, unsubscribeTerminalColorScheme } =
+			createUi();
+		queryTerminalColorScheme.mockResolvedValue("light");
+		const manager = SettingsManager.inMemory({ theme: "light/dark" });
+		const controller = createController(ui, () => manager);
+		await controller.applyFromSettings();
+
+		controller.dispose();
+
+		expect(setTerminalColorSchemeNotifications).toHaveBeenLastCalledWith(false);
+		expect(unsubscribeTerminalColorScheme).toHaveBeenCalledOnce();
 	});
 
 	it("detects the current terminal appearance when selecting a theme pair", async () => {

@@ -203,7 +203,8 @@ export async function retryAssistantCall(
 		} catch (error) {
 			await callbacks?.onRetryFinished?.(false, attempt, lastRetry.errorMessage);
 			if (error instanceof RetrySleepAbortError) {
-				return { ...response, stopReason: "aborted", errorMessage: undefined };
+				const { errorMessage: _errorMessage, ...rest } = response;
+				return { ...rest, stopReason: "aborted" };
 			}
 			throw error;
 		}

@@ -66,16 +66,23 @@ function makeTool(overrides: Partial<Tool> = {}): Tool {
 	};
 }
 
-function captureToolCallDeltas(stream: AssistantMessageEventStream): string[] {
+function captureToolCallEvents(stream: AssistantMessageEventStream): {
+	starts: ToolCall["arguments"][];
+	deltas: string[];
+} {
+	const starts: ToolCall["arguments"][] = [];
 	const deltas: string[] = [];
 	const originalPush = stream.push.bind(stream);
 	stream.push = (event) => {
-		if (event.type === "toolcall_delta") {
+		if (event.type === "toolcall_start") {
+			const block = event.partial.content[event.contentIndex];
+			if (block?.type === "toolCall") starts.push(structuredClone(block.arguments));
+		} else if (event.type === "toolcall_delta") {
 			deltas.push(event.delta);
 		}
 		originalPush(event);
 	};
-	return deltas;
+	return { starts, deltas };
 }
 
 describe("constrained tool sampling", () => {
@@ -259,21 +266,21 @@ describe("constrained tool sampling", () => {
 		);
 	});
 
-	it("streams custom Responses tool calls as string arguments", async () => {
+	it("starts custom Responses tool calls with their initial input", async () => {
 		const output = makeOutput();
 		const stream = new AssistantMessageEventStream();
-		const deltas = captureToolCallDeltas(stream);
+		const { starts, deltas } = captureToolCallEvents(stream);
 		const events = [
 			{
 				type: "response.output_item.added",
 				output_index: 0,
-				item: { type: "custom_tool_call", call_id: "call_1", id: "ctc_1", name: "sample_tool", input: "" },
+				item: { type: "custom_tool_call", call_id: "call_1", id: "ctc_1", name: "sample_tool", input: "a" },
 			},
 			{
 				type: "response.custom_tool_call_input.delta",
 				output_index: 0,
 				item_id: "ctc_1",
-				delta: "ab",
+				delta: "b",
 			},
 			{
 				type: "response.custom_tool_call_input.done",
@@ -297,6 +304,7 @@ describe("constrained tool sampling", () => {
 		});
 
 		expect(output.stopReason).toBe("toolUse");
+		expect(starts).toEqual([{ payload: "a" }]);
 		expect(output.content).toEqual([
 			{ type: "toolCall", id: "call_1|ctc_1", name: "sample_tool", arguments: { payload: "abc" } },
 		]);

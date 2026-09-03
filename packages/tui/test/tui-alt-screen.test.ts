@@ -3,7 +3,9 @@ import { describe, it } from "node:test";
 import { AltScreenSearchComponent, findAltScreenSearchMatches } from "../src/alt-screen-search.ts";
 import { HStack } from "../src/components/h-stack.ts";
 import { Image } from "../src/components/image.ts";
+import { MouseRegion } from "../src/components/mouse-region.ts";
 import { ScrollView } from "../src/components/scroll-view.ts";
+import { SelectList } from "../src/components/select-list.ts";
 import { Text } from "../src/components/text.ts";
 import { VStack } from "../src/components/v-stack.ts";
 import { getKeybindings, KeybindingsManager, setKeybindings, TUI_KEYBINDINGS } from "../src/keybindings.ts";
@@ -14,6 +16,7 @@ import {
 	resetCapabilitiesCache,
 	setCapabilities,
 } from "../src/terminal-image.ts";
+import type { TuiMouseEvent } from "../src/tui.ts";
 import { TuiAltScreen } from "../src/tui-alt-screen.ts";
 import { stripTerminalSequences, visibleWidth } from "../src/utils.ts";
 import { VirtualTerminal } from "./virtual-terminal.ts";
@@ -176,6 +179,43 @@ describe("TuiAltScreen", () => {
 			terminal.getViewport().map((line) => line.trimEnd()),
 			["a4        b3", "a5        b4", "a6        b5", "a7        b6"],
 		);
+		tui.stop();
+	});
+
+	it("does not vertically redispatch misses through horizontal layout containers", async () => {
+		const terminal = new VirtualTerminal(20, 2);
+		const tui = new TuiAltScreen(terminal);
+		let selections = 0;
+		const list = new SelectList(
+			[
+				{ value: "a", label: "A" },
+				{ value: "b", label: "B" },
+			],
+			2,
+			{
+				selectedPrefix: (text) => text,
+				selectedText: (text) => text,
+				description: (text) => text,
+				scrollInfo: (text) => text,
+				noMatch: (text) => text,
+			},
+		);
+		list.onSelect = () => {
+			selections += 1;
+		};
+		tui.setLayoutRoot(
+			new HStack([
+				{ component: list, basis: 10 },
+				{ component: new Text("plain", 0, 0), basis: 10 },
+			]),
+		);
+		tui.start();
+		await terminal.waitForRender();
+
+		terminal.sendInput("\x1b[<0;15;1M");
+		terminal.sendInput("\x1b[<0;15;1m");
+		await terminal.waitForRender();
+		assert.strictEqual(selections, 0);
 		tui.stop();
 	});
 
@@ -1508,6 +1548,137 @@ describe("TuiAltScreen", () => {
 			["line 5", "line 6", "line 7", "line 8"],
 		);
 
+		tui.stop();
+	});
+
+	it("dispatches clicks to nested mouse regions without breaking drag selection", async () => {
+		const terminal = new RecordingTerminal(20, 2);
+		const tui = new TuiAltScreen(terminal);
+		let clicks = 0;
+		tui.addChild(
+			new MouseRegion(new Text("clickable\nselectable", 0, 0), (event) => {
+				if (event.type !== "click") return undefined;
+				clicks += 1;
+				return { handled: true };
+			}),
+		);
+		tui.start();
+		await terminal.waitForRender();
+
+		terminal.sendInput("\x1b[<0;2;1M");
+		terminal.sendInput("\x1b[<0;2;1m");
+		await terminal.waitForRender();
+		assert.strictEqual(clicks, 1);
+
+		terminal.sendInput("\x1b[<0;1;1M");
+		terminal.sendInput("\x1b[<32;4;2M");
+		terminal.sendInput("\x1b[<0;4;2m");
+		await terminal.waitForRender();
+		assert.strictEqual(clicks, 1);
+		assert.ok(terminal.events.some((event) => event.type === "write" && event.data.includes("\x1b]52;c;")));
+		tui.stop();
+	});
+
+	it("focuses and captures drag gestures for mouse-aware components", async () => {
+		const terminal = new VirtualTerminal(20, 2);
+		const tui = new TuiAltScreen(terminal);
+		const events: string[] = [];
+		const component = {
+			render: () => ["control"],
+			invalidate: () => {},
+			handleMouse: (event: TuiMouseEvent) => {
+				events.push(event.type);
+				return event.type === "press" ? { handled: true, capture: true, focus: true } : { handled: true };
+			},
+		};
+		tui.addChild(component);
+		tui.start();
+		await terminal.waitForRender();
+
+		terminal.sendInput("\x1b[<0;1;1M");
+		terminal.sendInput("\x1b[<32;5;2M");
+		terminal.sendInput("\x1b[<0;5;2m");
+		await terminal.waitForRender();
+
+		assert.deepStrictEqual(events, ["press", "drag", "release"]);
+		assert.strictEqual(tui.getFocusedComponent(), component);
+		tui.stop();
+	});
+
+	it("reports consecutive click counts to component-owned controls", async () => {
+		const terminal = new VirtualTerminal(20, 1);
+		const tui = new TuiAltScreen(terminal);
+		const clickCounts: number[] = [];
+		tui.addChild({
+			render: () => ["control"],
+			invalidate: () => {},
+			handleMouse: (event) => {
+				if (event.type === "press") return { handled: true };
+				if (event.type === "click") {
+					clickCounts.push(event.clickCount ?? 0);
+					return { handled: true };
+				}
+				return undefined;
+			},
+		});
+		tui.start();
+		await terminal.waitForRender();
+
+		for (let count = 0; count < 3; count++) {
+			terminal.sendInput("\x1b[<0;1;1M");
+			terminal.sendInput("\x1b[<0;1;1m");
+		}
+		await terminal.waitForRender();
+		assert.deepStrictEqual(clickCounts, [1, 2, 3]);
+		tui.stop();
+	});
+
+	it("does not rerender for handled no-op pointer motion", async () => {
+		const terminal = new RecordingTerminal(20, 2);
+		const tui = new TuiAltScreen(terminal);
+		let renderCount = 0;
+		tui.addChild({
+			render: () => {
+				renderCount += 1;
+				return ["hover target"];
+			},
+			invalidate: () => {},
+			handleMouse: (event) => (event.type === "move" ? { handled: true } : undefined),
+		});
+		tui.start();
+		await terminal.waitForRender();
+		const renderedBeforeMotion = renderCount;
+		const writesBeforeMotion = terminal.events.filter((event) => event.type === "write").length;
+
+		terminal.sendInput("\x1b[<35;1;1M");
+		await terminal.waitForRender();
+		assert.strictEqual(renderCount, renderedBeforeMotion);
+		assert.strictEqual(terminal.events.filter((event) => event.type === "write").length, writesBeforeMotion);
+		tui.stop();
+	});
+
+	it("lets mouse-aware components consume wheel events before viewport scrolling", async () => {
+		const terminal = new VirtualTerminal(20, 3);
+		const tui = new TuiAltScreen(terminal);
+		let wheelEvents = 0;
+		tui.addChild(
+			new MouseRegion(
+				new Text(Array.from({ length: 8 }, (_, index) => `line ${index + 1}`).join("\n"), 0, 0),
+				(event) => {
+					if (event.type !== "wheel") return undefined;
+					wheelEvents += 1;
+					return { handled: true };
+				},
+			),
+		);
+		tui.start();
+		await terminal.waitForRender();
+		const viewportTop = tui.viewportTop;
+
+		terminal.sendInput("\x1b[<64;1;1M");
+		await terminal.waitForRender();
+		assert.strictEqual(wheelEvents, 1);
+		assert.strictEqual(tui.viewportTop, viewportTop);
 		tui.stop();
 	});
 

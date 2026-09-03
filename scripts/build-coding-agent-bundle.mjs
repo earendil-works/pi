@@ -16,6 +16,11 @@ const banner = {
 	js: 'import { createRequire as __piCreateRequire } from "node:module"; const require = __piCreateRequire(import.meta.url);',
 };
 const allowedExternalPackages = new Set([
+	"@earendil-works/chord",
+	"@earendil-works/chord/bundler",
+	"@earendil-works/chord/context",
+	"@earendil-works/chord/delta",
+	"@earendil-works/chord/node",
 	"@silvia-odwyer/photon-node",
 	"jiti",
 	// Optional native accelerators. Their callers fall back to JavaScript when absent.
@@ -79,7 +84,7 @@ function commonBuildOptions() {
 		banner,
 		bundle: true,
 		define: { PI_BUNDLED_NODE: "true" },
-		external: ["@silvia-odwyer/photon-node"],
+		external: ["@earendil-works/chord", "@silvia-odwyer/photon-node"],
 		format: "esm",
 		legalComments: "none",
 		logLevel: "warning",
@@ -137,6 +142,7 @@ function outputBytes(metafiles) {
 
 for (const entry of [
 	join(codingAgentDistDir, "cli.js"),
+	join(codingAgentDistDir, "experimental", "coordinator-entry.js"),
 	join(codingAgentDistDir, "index.js"),
 	join(codingAgentDistDir, "rpc-entry.js"),
 	join(codingAgentDistDir, "client", "index.js"),
@@ -158,6 +164,7 @@ const mainResult = await build({
 	entryPoints: {
 		cli: join(codingAgentDistDir, "cli.js"),
 		client: join(codingAgentDistDir, "client", "index.js"),
+		coordinator: join(codingAgentDistDir, "experimental", "coordinator-entry.js"),
 		index: join(codingAgentDistDir, "index.js"),
 		"rpc-entry": join(codingAgentDistDir, "rpc-entry.js"),
 	},
@@ -201,6 +208,7 @@ if (dirname(imageResizeOutput) !== dirname(imageResizeWorkerOutput)) {
 
 validateExternalImports([mainResult.metafile, lazyResult.metafile]);
 chmodSync(join(bundleDir, "cli.js"), 0o755);
+chmodSync(join(bundleDir, "coordinator.js"), 0o755);
 chmodSync(join(bundleDir, "rpc-entry.js"), 0o755);
 
 const files = new Set([...Object.keys(mainResult.metafile.outputs), ...Object.keys(lazyResult.metafile.outputs)]).size;

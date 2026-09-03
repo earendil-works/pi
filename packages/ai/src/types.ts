@@ -325,8 +325,9 @@ export interface SimpleStreamOptions extends StreamOptions {
 //
 // Contract:
 // - Must return an AssistantMessageEventStream.
-// - Once invoked, request/model/runtime failures should be encoded in the
-//   returned stream, not thrown.
+// - Direct streamSimple() calls may throw synchronously when request auth is
+//   missing. Once a stream is returned, request/model/runtime failures should
+//   be encoded in that stream.
 // - Error termination must produce an AssistantMessage with stopReason
 //   "error" or "aborted" and errorMessage, emitted via the stream protocol.
 export type StreamFunction<TApi extends Api = Api, TOptions extends StreamOptions = StreamOptions> = (
@@ -404,7 +405,7 @@ export interface Usage {
 
 export type StopReason = "pending" | "stop" | "length" | "toolUse" | "error" | "aborted" | "deferred";
 
-export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
+export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 
 export interface DeferredHandle {
 	provider: string;
@@ -432,6 +433,8 @@ export interface AssistantMessage {
 	model: string;
 	responseModel?: string; // Concrete `chunk.model` when different from the requested `model` (e.g. OpenRouter `auto` -> `anthropic/...`)
 	responseId?: string; // Provider-specific response/message identifier when the upstream API exposes one
+	/** Exact provider-native effort level used for this response. Absent for legacy or unmanaged responses. */
+	providerThinkingLevel?: string;
 	diagnostics?: AssistantMessageDiagnostic[]; // Redacted provider/runtime diagnostics for failures and recoveries.
 	usage: Usage;
 	stopReason: StopReason;
@@ -527,10 +530,18 @@ export interface Context {
 /**
  * Event protocol for AssistantMessageEventStream.
  *
- * Streams should emit `start` before partial updates, then terminate with either:
- * - `done` carrying the final successful AssistantMessage, or
- * - `error` carrying the final AssistantMessage with stopReason "error" or "aborted"
- *   and errorMessage.
+ * Successful streams emit `start` before partial updates and terminate with
+ * `done`. A stream may terminate directly with `error` when request setup fails
+ * before generation starts; after `start`, failures also terminate with `error`.
+ * Direct `streamSimple()` calls throw synchronously when request auth is missing.
+ * Updates and `done` must never appear before `start`.
+ *
+ * `partial` is the shared live response-so-far helper, not an event-time
+ * snapshot. Text and thinking blocks are empty when their `*_start` event is
+ * emitted and grow only through their corresponding `*_delta` events until the
+ * authoritative `*_end`. Redacted thinking may be complete at start and emit no
+ * deltas. Tool-call arguments at `toolcall_start` are provider-specific;
+ * `toolcall_delta` carries subsequent JSON updates.
  */
 export type AssistantMessageEvent =
 	| { type: "start"; partial: AssistantMessage }
@@ -622,6 +633,13 @@ export interface OpenAICompletionsCompat {
 	sessionAffinityFormat?: SessionAffinityFormat;
 	/** Whether the provider supports long prompt cache retention (`prompt_cache_retention: "24h"` or Anthropic-style `cache_control.ttl: "1h"`, depending on format). Default: true. */
 	supportsLongCacheRetention?: boolean;
+	/**
+	 * vLLM scheduler priority sent as the top-level `priority` request field (lower values are
+	 * handled earlier; server default 0). Only meaningful when vLLM runs with
+	 * `--scheduling-policy priority`; useful for keeping background/batch work from stalling
+	 * interactive sessions. Off by default; not set on the generated catalog.
+	 */
+	vllmPriority?: number;
 }
 
 /** Compatibility settings for OpenAI Responses APIs. */
@@ -642,6 +660,8 @@ export interface OpenAIResponsesCompat {
 	supportsToolSearch?: boolean;
 	/** Whether the model accepts `prompt_cache_options` (OpenAI GPT-5.6+ explicit prompt caching). Older OpenAI models reject the parameter. Default: false. */
 	supportsExplicitPromptCacheMode?: boolean;
+	/** Whether the provider accepts the `max_output_tokens` parameter. Some Codex-protocol gateways reject it. Default: true. */
+	supportsMaxOutputTokens?: boolean;
 }
 
 /** Compatibility settings for Anthropic Messages-compatible APIs. */
@@ -692,6 +712,8 @@ export interface AnthropicMessagesCompat {
 	allowEmptySignature?: boolean;
 	/** Whether the provider supports Anthropic strict tool schemas. Default: false; generated Anthropic models enable it explicitly. */
 	supportsStrictTools?: boolean;
+	/** Whether the exact model transport supports effort-only system messages and thinking binding controls. Default: false. */
+	supportsMidConvoEffort?: boolean;
 	/**
 	 * Models Anthropic accepts in `fallbacks` for server-side refusal fallback,
 	 * with local pricing metadata for returned fallback responses. When absent or

@@ -164,7 +164,7 @@ One run checkpoint
 |---|---|---:|---|---|---|
 | `pi.lane.name` | `string` | yes |  | high cardinality | Lane name |
 | `pi.operation.id` | `string` | yes |  | high cardinality | Durable operation id |
-| `pi.checkpoint.kind` | `string` | yes | normal, failure_drain, abort_reconcile |  | Checkpoint purpose |
+| `pi.checkpoint.kind` | `string` | yes | normal, abort_reconcile |  | Checkpoint purpose |
 
 #### End attributes
 
@@ -282,8 +282,8 @@ One registered hook handler invocation
 |---|---|---:|---|---|---|
 | `pi.lane.name` | `string` | yes |  | high cardinality | Lane name |
 | `pi.operation.id` | `string` | no |  | high cardinality | Durable operation id when accepted |
-| `pi.hook.name` | `string` | yes | before_run, before_resume, before_run_end, transform_context, before_request, before_payload, after_response, before_tool, after_tool, before_compaction, before_navigation |  | Hook name |
-| `pi.hook.registration_id` | `string` | no |  |  | Stable hook registration id |
+| `pi.hook.name` | `string` | yes | before_run, before_drive, before_run_end, transform_context, before_request, before_payload, after_response, before_tool, after_tool, before_compaction, before_navigation |  | Hook name |
+| `pi.hook.registration_id` | `string` | no |  |  | Optional hook registration metadata |
 
 #### End attributes
 
@@ -301,7 +301,7 @@ No declared span events.
 
 One retry delay
 
-- Parents: `pi.harness.step`, `pi.harness.run`
+- Parents: `pi.harness.run`, `pi.harness.compaction`, `pi.harness.navigation`, `pi.harness.turn`, `pi.harness.checkpoint`
 - Default status: `ok`
 - Error when: Sleep work throws
 
@@ -336,7 +336,7 @@ One passive event listener invocation
 
 | Name | Type | Required | Values | Notes | Description |
 |---|---|---:|---|---|---|
-| `pi.event.type` | `string` | yes | run_start, run_resume, run_suspend, run_abort, run_end, fault, handler_error, turn_start, turn_end, retry_scheduled, retry_start, retry_end, message_start, message_update, message_end, tool_start, tool_update, tool_end, entry_added, write_pending, queue_update, fact_update, config_update, compaction_start, compaction_end, navigation_start, navigation_end, lane_created, usage | low cardinality | Delivered harness event type |
+| `pi.event.type` | `string` | yes | run_start, run_resume, run_suspend, operation_abort, run_end, fault, handler_error, turn_start, turn_end, retry_scheduled, retry_start, retry_end, message_start, message_update, message_end, tool_start, tool_update, tool_end, entry_added, queue_update, value_update, config_update, compaction_start, compaction_end, navigation_start, navigation_end, lane_created, usage | low cardinality | Delivered harness event type |
 | `pi.lane.name` | `string` | no |  | high cardinality | Lane name for lane-scoped events |
 
 #### End attributes
@@ -353,20 +353,21 @@ No declared span events.
 
 ### `pi.session.write`
 
-One committed session mutation
+One committed session transaction
 
 - Parents: root or any caller span
 - Default status: `ok`
-- Error when: Storage rejects the mutation
+- Error when: Storage rejects the transaction
 
 #### Start attributes
 
 | Name | Type | Required | Values | Notes | Description |
 |---|---|---:|---|---|---|
-| `pi.lane.name` | `string` | yes |  | high cardinality | Lane name |
-| `pi.operation.id` | `string` | no |  | high cardinality | Durable operation id when accepted |
-| `pi.session.mutation` | `string` | yes | entry, record, lane, fact |  | Session mutation kind |
-| `pi.session.item_type` | `string` | no |  |  | Entry, record, lane, or fact subtype |
+| `pi.session.id` | `string` | yes |  | high cardinality | Session id |
+| `pi.lane.name` | `string` | no |  | high cardinality | Lane name when supplied by the caller |
+| `pi.operation.id` | `string` | no |  | high cardinality | Durable operation id when supplied by the caller |
+| `pi.session.item_count` | `number` | yes |  |  | Number of writes in the transaction |
+| `pi.session.item_kinds` | `string[]` | yes | elements: entry, usage, value, list |  | Distinct write kinds in the transaction |
 
 #### End attributes
 
@@ -374,7 +375,8 @@ All end attributes are optional completion enrichment.
 
 | Name | Type | Values | Notes | Description |
 |---|---|---|---|---|
-| `pi.session.seq` | `number` |  |  | Committed session sequence when exposed |
+| `pi.session.first_seq` | `number` |  |  | First committed sequence in the transaction |
+| `pi.session.last_seq` | `number` |  |  | Last committed sequence in the transaction |
 
 #### Events
 

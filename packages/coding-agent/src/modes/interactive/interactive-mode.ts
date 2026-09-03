@@ -20,7 +20,6 @@ import type {
 	OverlayHandle,
 	OverlayOptions,
 	SlashCommand,
-	Terminal,
 	TuiMainScreenRenderState,
 } from "@earendil-works/pi-tui";
 import * as TuiLayouts from "@earendil-works/pi-tui";
@@ -33,7 +32,6 @@ import {
 	hyperlink,
 	Markdown,
 	matchesKey,
-	ProcessTerminal,
 	Spacer,
 	setCapabilityOverrides,
 	setKeybindings,
@@ -98,6 +96,7 @@ import type { FullscreenExitOutput, TuiMode } from "../../core/settings-manager.
 import { BUILTIN_SLASH_COMMANDS } from "../../core/slash-commands.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
 import { isInstallTelemetryEnabled } from "../../core/telemetry.ts";
+import { withBuiltInRenderers } from "../../core/tools/renderers/index.ts";
 import type { TruncationResult } from "../../core/tools/truncate.ts";
 import { hasTrustRequiringProjectResources, ProjectTrustStore } from "../../core/trust-manager.ts";
 import { getUsageCostBreakdown } from "../../core/usage-totals.ts";
@@ -105,13 +104,13 @@ import { getChangelogPath, getNewEntries, normalizeChangelogLinks, parseChangelo
 import { copyToClipboard, readClipboardText } from "../../utils/clipboard.ts";
 import { extensionForImageMimeType, readClipboardImage } from "../../utils/clipboard-image.ts";
 import { parseGitUrl } from "../../utils/git.ts";
-import { openBrowser } from "../../utils/open-browser.ts";
 import { getCwdRelativePath } from "../../utils/paths.ts";
 import { getPiUserAgent } from "../../utils/pi-user-agent.ts";
 import { killTrackedDetachedChildren } from "../../utils/shell.ts";
 import { loadAllHighlightLanguages } from "../../utils/syntax-highlight.ts";
 import { ensureTool, type ToolStatus } from "../../utils/tools-manager.ts";
 import { checkForNewPiVersion, type LatestPiRelease } from "../../utils/version-check.ts";
+import { createChatViewport } from "./chat-viewport.ts";
 import { ArminComponent } from "./components/armin.ts";
 import { AssistantMessageComponent } from "./components/assistant-message.ts";
 import { BashExecutionComponent } from "./components/bash-execution.ts";
@@ -172,6 +171,9 @@ import {
 	theme,
 } from "./theme/theme.ts";
 import { InteractiveThemeController } from "./theme/theme-controller.ts";
+import { createInteractiveTui, createInteractiveTuiReference } from "./tui-renderer.ts";
+
+export { createInteractiveTui, createInteractiveTuiReference } from "./tui-renderer.ts";
 
 /** Interface for components that can be expanded/collapsed */
 interface Expandable {
@@ -354,71 +356,6 @@ export interface InteractiveModeOptions {
 	tuiMode?: TuiMode;
 	/** Initial interactive theme setting for this invocation. */
 	initialThemeSetting?: string;
-}
-
-interface InteractiveTuiOptions {
-	tuiMode: TuiMode;
-	showHardwareCursor: boolean;
-	logDirectory: string;
-	terminal?: Terminal;
-	onRightClickPaste?: () => void;
-	fullscreenCopyOnSelect?: boolean;
-}
-
-/** Composition root for selecting the interactive terminal renderer. */
-export function createInteractiveTui(options: InteractiveTuiOptions): TuiMainScreen | TuiAltScreen {
-	const terminal = options.terminal ?? new ProcessTerminal();
-	if (options.tuiMode === "fullscreen") {
-		const styleSearchMatch = (text: string) => theme.bg("searchMatchBg", theme.fg("searchMatchText", text));
-		return new TuiAltScreen(terminal, options.showHardwareCursor, options.logDirectory, {
-			searchMatchStyle: (text) => theme.underline(styleSearchMatch(text)),
-			searchCurrentMatchStyle: (text) => theme.bold(theme.inverse(styleSearchMatch(text))),
-			searchNavigationButtonStyle: (text, hovered) => (hovered ? theme.underline(text) : text),
-			openUrl: openBrowser,
-			onRightClickPaste: options.onRightClickPaste,
-			copyOnSelect: options.fullscreenCopyOnSelect,
-			copySelection: async (text) => {
-				try {
-					await copyToClipboard(text);
-					return true;
-				} catch {
-					return false;
-				}
-			},
-		});
-	}
-	return new TuiMainScreen(terminal, options.showHardwareCursor, options.logDirectory);
-}
-
-/** Stable reference for components while InteractiveMode replaces the active renderer. */
-export function createInteractiveTuiReference(getTui: () => TUI): TUI {
-	return new Proxy({} as TUI, {
-		get: (_target, property) => {
-			const tui = getTui();
-			const value = Reflect.get(tui, property, tui);
-			if (typeof value !== "function") return value;
-			let methodTui = tui;
-			let method = value;
-			return (...args: unknown[]) => {
-				const currentTui = getTui();
-				if (currentTui !== methodTui) {
-					const currentMethod = Reflect.get(currentTui, property, currentTui);
-					if (typeof currentMethod !== "function") {
-						throw new TypeError(`TUI property ${String(property)} is not callable`);
-					}
-					methodTui = currentTui;
-					method = currentMethod;
-				}
-				return Reflect.apply(method, methodTui, args);
-			};
-		},
-		set: (_target, property, value) => {
-			const tui = getTui();
-			return Reflect.set(tui, property, value, tui);
-		},
-		has: (_target, property) => Reflect.has(getTui(), property),
-		getPrototypeOf: () => Reflect.getPrototypeOf(getTui()),
-	});
 }
 
 export class InteractiveMode {
@@ -920,25 +857,19 @@ export class InteractiveMode {
 
 		// Keep one component tree and remount it when changing renderers.
 		this.renderWidgets(); // Initialize with default spacer
-		this.transcriptScrollView = new TuiLayouts.ScrollView(this.documentContainer, {
-			follow: "end",
-			primary: true,
-			overscroll: "chain",
+		const viewport = createChatViewport({
+			document: this.documentContainer,
+			pendingMessages: this.pendingMessagesContainer,
+			status: this.statusContainer,
+			widgetsAbove: this.widgetContainerAbove,
+			editor: this.editorContainer,
+			widgetsBelow: this.widgetContainerBelow,
+			footer: this.footerContainer,
 			scrollbar: this.settingsManager.getFullscreenScrollbar(),
 			scrollbarStyle: (text) => theme.bg("scrollbarThumb", text),
 		});
-		const dock = new TuiLayouts.VStack([
-			{ component: this.pendingMessagesContainer, shrink: 1, minSize: 0 },
-			{ component: this.statusContainer, shrink: 1, minSize: 0 },
-			{ component: this.widgetContainerAbove, shrink: 1, minSize: 0 },
-			{ component: this.editorContainer, shrink: 1, minSize: 3 },
-			{ component: this.widgetContainerBelow, shrink: 1, minSize: 0 },
-			{ component: this.footerContainer, shrink: 1, minSize: 1 },
-		]);
-		this.fullscreenLayoutRoot = new TuiLayouts.VStack([
-			{ component: this.transcriptScrollView, basis: 0, grow: 1, shrink: 1, minSize: 1 },
-			{ component: dock, basis: "auto", grow: 0, shrink: 1, minSize: 1 },
-		]);
+		this.transcriptScrollView = viewport.transcript;
+		this.fullscreenLayoutRoot = viewport.root;
 		this.mountInteractiveTui(this.renderer, [
 			this.documentContainer,
 			this.pendingMessagesContainer,
@@ -2065,8 +1996,12 @@ export class InteractiveMode {
 	/**
 	 * Get a registered tool definition by name (for custom rendering).
 	 */
+	/**
+	 * Extension-registered definition, falling back to the built-in one. The renderer components take
+	 * whatever this returns, so they never reach into the tool registry themselves.
+	 */
 	private getRegisteredToolDefinition(toolName: string) {
-		return this.session.getToolDefinition(toolName);
+		return withBuiltInRenderers(toolName, this.session.getToolDefinition(toolName));
 	}
 
 	private getMarkdownTransformers(): MarkdownTransformer[] {
@@ -3322,6 +3257,7 @@ export class InteractiveMode {
 						for (const [, component] of this.pendingTools.entries()) {
 							component.setArgsComplete();
 						}
+						this.maybeShowAssistantDiagnostics(this.streamingMessage);
 						this.maybeShowCacheMissNotice(this.streamingMessage);
 					}
 					this.streamingComponent = undefined;
@@ -3764,6 +3700,7 @@ export class InteractiveMode {
 					}
 				}
 				if (message.stopReason !== "aborted" && message.stopReason !== "error") {
+					this.maybeShowAssistantDiagnostics(message);
 					const miss = cacheMisses.get(message);
 					if (miss) this.addCacheMissNotice(miss);
 				}
@@ -3824,6 +3761,32 @@ export class InteractiveMode {
 		this.chatContainer.addChild(
 			new Text(theme.fg("warning", `${label}: ${formatTokens(tokens)} tokens billed${cost}`), 1, 0),
 		);
+	}
+
+	private maybeShowAssistantDiagnostics(message: AssistantMessage): void {
+		if (!this.settingsManager.getShowCacheMissNotices()) return;
+
+		for (const diagnostic of message.diagnostics ?? []) {
+			if (diagnostic.type !== "anthropic_input_transformations") continue;
+			const transformations = diagnostic.details?.transformations;
+			if (!Array.isArray(transformations)) continue;
+
+			const dropped = transformations.flatMap((transformation): string[] => {
+				if (typeof transformation !== "object" || transformation === null) return [];
+				const details = transformation as Record<string, unknown>;
+				if (details.type !== "thinking_dropped") return [];
+				const reason = typeof details.reason === "string" ? details.reason : "unknown reason";
+				const location = typeof details.path === "string" ? ` at ${details.path}` : "";
+				return [`${reason}${location}`];
+			});
+			if (dropped.length === 0) continue;
+
+			const noun = dropped.length === 1 ? "thinking block" : `${dropped.length} thinking blocks`;
+			this.chatContainer.addChild(new Spacer(1));
+			this.chatContainer.addChild(
+				new Text(theme.fg("warning", `Anthropic dropped ${noun}: ${dropped.join("; ")}`), 1, 0),
+			);
+		}
 	}
 
 	/**

@@ -518,6 +518,15 @@ async function executeToolCallsParallel(
 		}
 
 		finalizedCalls.push(async () => {
+			if (signal?.aborted) {
+				const finalized = {
+					toolCall,
+					result: createErrorToolResult("Operation aborted"),
+					isError: true,
+				} satisfies FinalizedToolCallOutcome;
+				await emitToolExecutionEnd(finalized, emit);
+				return finalized;
+			}
 			const executed = await executePreparedToolCall(preparation, signal, emit);
 			const finalized = await finalizeExecutedToolCall(
 				currentContext,

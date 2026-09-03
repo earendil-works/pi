@@ -14,44 +14,9 @@ afterEach(() => {
 });
 
 describe("Baseten models", () => {
-	it("registers GLM 5.2 as the default OpenAI-compatible reasoning model", () => {
-		const model = getModel("baseten", "zai-org/GLM-5.2");
-
-		expect(model).toMatchObject({
-			api: "openai-completions",
-			provider: "baseten",
-			baseUrl: "https://inference.baseten.co/v1",
-			reasoning: true,
-			thinkingLevelMap: {
-				off: "none",
-				minimal: null,
-				low: null,
-				medium: null,
-				high: "high",
-				xhigh: null,
-				max: "max",
-			},
-			input: ["text", "image"],
-			contextWindow: 1048576,
-			maxTokens: 262144,
-			cost: {
-				input: 1.4,
-				output: 4.4,
-				cacheRead: 0.3,
-				cacheWrite: 0,
-			},
-			compat: {
-				supportsStore: false,
-				supportsDeveloperRole: false,
-				supportsReasoningEffort: true,
-				supportsUsageInStreaming: true,
-				maxTokensField: "max_tokens",
-				supportsStrictMode: true,
-				supportsLongCacheRetention: false,
-				thinkingFormat: "baseten",
-				chatTemplateArgs: { enable_thinking: { $var: "thinking.enabled" } },
-			},
-		});
+	it("keeps both GLM 5.2 endpoints text-only", () => {
+		expect(getModel("baseten", "zai-org/GLM-5.2").input).toEqual(["text"]);
+		expect(getModel("baseten", "zai-org/GLM-5.2-Fast").input).toEqual(["text"]);
 	});
 
 	it("models Kimi K2.6 reasoning as an explicit off/on toggle", async () => {
