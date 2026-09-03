@@ -56,6 +56,27 @@ describe("model selector", () => {
 		selector.dispose();
 	});
 
+	it("delegates model selection to the callback", async () => {
+		harness = await createHarness();
+		vi.spyOn(harness.session.modelRuntime, "refresh").mockResolvedValue({
+			aborted: false,
+			errors: new Map(),
+		});
+		const onSelect = vi.fn();
+		const selector = new ModelSelectorComponent(
+			createFakeTui(),
+			harness.getModel(),
+			harness.session.modelRuntime,
+			[],
+			onSelect,
+			() => {},
+		);
+
+		selector.handleInput("\r");
+
+		expect(onSelect).toHaveBeenCalledWith(harness.getModel());
+	});
+
 	it("lists every catalog that failed to refresh", async () => {
 		harness = await createHarness();
 		vi.spyOn(harness.session.modelRuntime, "refresh").mockResolvedValue({

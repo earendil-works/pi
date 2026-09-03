@@ -36,7 +36,7 @@ By default, `reserveTokens` is 16384 tokens (configurable in `~/.pi/agent/settin
 
 During a multi-turn agent run, Pi checks this threshold after tools finish and their results are appended, before starting the next assistant response. If the threshold is crossed, Pi compacts inside the same agent run and resumes with the summary and retained messages. It skips this between-turn check when the completed tool batch terminates the run and no queued message requires another response. Pi also checks the threshold before a new user prompt and after a low-level agent run ends.
 
-You can also trigger manually with `/compact [instructions]`, where optional instructions focus the summary.
+You can also trigger manually with `/compact [instructions]`, where optional instructions focus the summary. By default, bare `/compact` runs immediately. Set `compaction.skipPrompt` to `false` to show a prompt before bare manual compaction; the prompt supports a temporary model, thinking level, or custom instructions without changing the main session or settings. `/compact` with instructions continues to run immediately.
 
 ### How It Works
 
@@ -397,22 +397,4 @@ See `SessionBeforeTreeEvent` and `TreePreparation` in the types file.
 
 ## Settings
 
-Configure compaction in `~/.pi/agent/settings.json` or `<project-dir>/.pi/settings.json`:
-
-```json
-{
-  "compaction": {
-    "enabled": true,
-    "reserveTokens": 16384,
-    "keepRecentTokens": 20000
-  }
-}
-```
-
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `enabled` | `true` | Enable auto-compaction |
-| `reserveTokens` | `16384` | Tokens to reserve for LLM response |
-| `keepRecentTokens` | `20000` | Recent tokens to keep (not summarized) |
-
-Disable auto-compaction with `"enabled": false`. You can still compact manually with `/compact`.
+See [Settings: Compaction](settings.md#compaction) and [Settings: Branch Summary](settings.md#branch-summary) for configuration options.

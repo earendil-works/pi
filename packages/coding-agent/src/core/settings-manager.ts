@@ -14,11 +14,18 @@ export interface CompactionSettings {
 	enabled?: boolean; // default: true
 	reserveTokens?: number; // default: 16384
 	keepRecentTokens?: number; // default: 20000
+	skipPrompt?: boolean; // default: true - when false, bare /compact opens a configuration prompt
+	provider?: string; // default: current session provider
+	model?: string; // default: current session model ID
+	thinkingLevel?: ThinkingLevel; // default: current session thinking level
 }
 
 export interface BranchSummarySettings {
 	reserveTokens?: number; // default: 16384 (tokens reserved for prompt + LLM response)
 	skipPrompt?: boolean; // default: false - when true, skips "Summarize branch?" prompt and defaults to no summary
+	provider?: string; // default: current session provider
+	model?: string; // default: current session model ID
+	thinkingLevel?: ThinkingLevel; // default: current session thinking level
 }
 
 export interface ProviderRetrySettings {
@@ -847,23 +854,63 @@ export class SettingsManager {
 		return this.settings.compaction?.keepRecentTokens ?? 20000;
 	}
 
-	getCompactionSettings(): { enabled: boolean; reserveTokens: number; keepRecentTokens: number } {
+	getCompactionSkipPrompt(): boolean {
+		return this.settings.compaction?.skipPrompt ?? true;
+	}
+
+	getCompactionSettings(): {
+		enabled: boolean;
+		reserveTokens: number;
+		keepRecentTokens: number;
+		provider?: string;
+		model?: string;
+		thinkingLevel?: ThinkingLevel;
+	} {
 		return {
 			enabled: this.getCompactionEnabled(),
 			reserveTokens: this.getCompactionReserveTokens(),
 			keepRecentTokens: this.getCompactionKeepRecentTokens(),
+			provider: this.settings.compaction?.provider,
+			model: this.settings.compaction?.model,
+			thinkingLevel: this.settings.compaction?.thinkingLevel,
 		};
 	}
 
-	getBranchSummarySettings(): { reserveTokens: number; skipPrompt: boolean } {
+	getBranchSummarySettings(): {
+		reserveTokens: number;
+		skipPrompt: boolean;
+		provider?: string;
+		model?: string;
+		thinkingLevel?: ThinkingLevel;
+	} {
 		return {
 			reserveTokens: this.settings.branchSummary?.reserveTokens ?? 16384,
 			skipPrompt: this.settings.branchSummary?.skipPrompt ?? false,
+			provider: this.settings.branchSummary?.provider,
+			model: this.settings.branchSummary?.model,
+			thinkingLevel: this.settings.branchSummary?.thinkingLevel,
 		};
 	}
 
 	getBranchSummarySkipPrompt(): boolean {
 		return this.settings.branchSummary?.skipPrompt ?? false;
+	}
+
+	setSummarizationConfig(
+		settingsKey: "compaction" | "branchSummary",
+		provider: string,
+		model: string,
+		thinkingLevel: ThinkingLevel,
+	): void {
+		const settings = this.globalSettings[settingsKey] ?? {};
+		this.globalSettings[settingsKey] = settings;
+		settings.provider = provider;
+		settings.model = model;
+		settings.thinkingLevel = thinkingLevel;
+		this.markModified(settingsKey, "provider");
+		this.markModified(settingsKey, "model");
+		this.markModified(settingsKey, "thinkingLevel");
+		this.save();
 	}
 
 	getRetryEnabled(): boolean {

@@ -118,13 +118,23 @@ Set `PI_SKIP_VERSION_CHECK=1` to disable the Pi version update check. Use `--off
 | `compaction.enabled` | boolean | `true` | Enable auto-compaction |
 | `compaction.reserveTokens` | number | `16384` | Tokens reserved for LLM response |
 | `compaction.keepRecentTokens` | number | `20000` | Recent tokens to keep (not summarized) |
+| `compaction.skipPrompt` | boolean | `true` | Run bare `/compact` immediately; when `false`, show a prompt for temporary model, thinking level, or custom instructions |
+| `compaction.provider` | string | current session provider | Provider used for compaction summaries |
+| `compaction.model` | string | current session model | Model ID used for compaction summaries |
+| `compaction.thinkingLevel` | string | current session thinking level | Thinking level for compaction summaries: `"off"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"` |
+
+`compaction.provider` and `compaction.model` can be set independently. An omitted component is inherited from the current session model. When the manual compaction prompt is enabled, press Ctrl+S to save its current model and thinking level here.
 
 ```json
 {
   "compaction": {
     "enabled": true,
     "reserveTokens": 16384,
-    "keepRecentTokens": 20000
+    "keepRecentTokens": 20000,
+    "skipPrompt": true,
+    "provider": "anthropic",
+    "model": "claude-haiku-4-5",
+    "thinkingLevel": "low"
   }
 }
 ```
@@ -135,6 +145,11 @@ Set `PI_SKIP_VERSION_CHECK=1` to disable the Pi version update check. Use `--off
 |---------|------|---------|-------------|
 | `branchSummary.reserveTokens` | number | `16384` | Tokens reserved for branch summarization |
 | `branchSummary.skipPrompt` | boolean | `false` | Skip "Summarize branch?" prompt on `/tree` navigation (defaults to no summary) |
+| `branchSummary.provider` | string | current session provider | Provider used for branch summaries |
+| `branchSummary.model` | string | current session model | Model ID used for branch summaries |
+| `branchSummary.thinkingLevel` | string | current session thinking level | Thinking level for branch summaries: `"off"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"` |
+
+`branchSummary.provider` and `branchSummary.model` can be set independently. An omitted component is inherited from the current session model. In the branch summary prompt, press Ctrl+S to save its current model and thinking level here.
 
 ### Retry
 
@@ -331,7 +346,10 @@ See [packages.md](packages.md) for package management details.
   "compaction": {
     "enabled": true,
     "reserveTokens": 16384,
-    "keepRecentTokens": 20000
+    "keepRecentTokens": 20000,
+    "provider": "anthropic",
+    "model": "claude-haiku-4-5",
+    "thinkingLevel": "low"
   },
   "retry": {
     "enabled": true,
