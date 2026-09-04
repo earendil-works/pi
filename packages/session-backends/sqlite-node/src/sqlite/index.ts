@@ -1,3 +1,4 @@
+export * from "./migrations.ts";
 export * from "./repo.ts";
 export * from "./sql.ts";
 export * from "./storage.ts";

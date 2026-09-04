@@ -28,6 +28,12 @@
 				"./packages/agent/src/*"
 			],
 			"@earendil-works/pi-session-backend-sqlite-node": ["./packages/session-backends/sqlite-node/src/index.ts"],
+			"@earendil-works/pi-session-backend-sqlite-node/sqlite": [
+				"./packages/session-backends/sqlite-node/src/sqlite/core.ts"
+			],
+			"@earendil-works/pi-session-backend-sqlite-durable": [
+				"./packages/session-backends/sqlite-durable/src/index.ts"
+			],
 			"@earendil-works/pi-coding-agent": ["./packages/coding-agent/src/index.ts"],
 			"@earendil-works/pi-coding-agent/experimental/plugin": [
 				"./packages/coding-agent/src/experimental/plugin.ts"

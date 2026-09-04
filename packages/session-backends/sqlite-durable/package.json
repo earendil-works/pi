@@ -1,7 +1,7 @@
 {
-	"name": "@earendil-works/pi-session-backend-sqlite-node",
+	"name": "@earendil-works/pi-session-backend-sqlite-durable",
 	"version": "0.85.0",
-	"description": "Node sqlite session backend for @earendil-works/pi-agent-core sessions",
+	"description": "Cloudflare Durable Object SQLite session backend for @earendil-works/pi-agent-core sessions",
 	"type": "module",
 	"main": "./dist/index.js",
 	"types": "./dist/index.d.ts",
@@ -9,10 +9,6 @@
 		".": {
 			"types": "./dist/index.d.ts",
 			"import": "./dist/index.js"
-		},
-		"./sqlite": {
-			"types": "./dist/sqlite/core.d.ts",
-			"import": "./dist/sqlite/core.js"
 		}
 	},
 	"files": [
@@ -22,8 +18,7 @@
 	],
 	"scripts": {
 		"clean": "node -e \"import('node:fs/promises').then(fs=>fs.rm('dist',{recursive:true,force:true}))\"",
-		"build": "tsgo -p tsconfig.build.json && node scripts/copy-migrations.mjs",
-		"bench:session:timing": "vitest bench --config vitest.benchmark.config.ts",
+		"build": "tsgo -p tsconfig.build.json",
 		"test": "vitest --run",
 		"coverage": "vitest --run --coverage",
 		"prepublishOnly": "npm run clean && npm run build"
@@ -33,14 +28,12 @@
 	"repository": {
 		"type": "git",
 		"url": "git+https://github.com/earendil-works/pi.git",
-		"directory": "packages/session-backends/sqlite-node"
-	},
-	"engines": {
-		"node": ">=22.19.0"
+		"directory": "packages/session-backends/sqlite-durable"
 	},
 	"dependencies": {
 		"@earendil-works/pi-ai": "^0.85.0",
-		"@earendil-works/pi-agent-core": "^0.85.0"
+		"@earendil-works/pi-agent-core": "^0.85.0",
+		"@earendil-works/pi-session-backend-sqlite-node": "^0.85.0"
 	},
 	"devDependencies": {
 		"@vitest/coverage-v8": "4.1.9",

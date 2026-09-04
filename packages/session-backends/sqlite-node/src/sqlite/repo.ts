@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 import type { Context, Entry, ForkOptions, SessionCreateOptions, StoredValue } from "@earendil-works/pi-agent-core";
 import { branchTip, createForkSnapshot, StorageBackedSession } from "@earendil-works/pi-agent-core";
 import { uuidv7 } from "@earendil-works/pi-ai";
-import { applyInitialSchema } from "./migrations.ts";
+import { applyInitialSchema, SQLITE_STORAGE_VERSION } from "./migrations.ts";
 import { appendEntryToBranchIndex, scanBranchEntries } from "./session/branch-entries.ts";
 import { decodeEntryRow, type EntryRow, EntryRowWriter } from "./session/entries.ts";
 import {
@@ -21,7 +21,6 @@ import { sql } from "./sql.ts";
 import { SqliteStorage, type SqliteStorageSnapshot } from "./storage.ts";
 import type { SqliteDatabase, SqliteDatabaseFactory } from "./types.ts";
 
-export const SQLITE_STORAGE_VERSION = 1;
 export const SQLITE_SESSION_EXTENSION = ".sqlite";
 
 const FIRST_AVAILABLE_COMMIT_SEQ = 1;

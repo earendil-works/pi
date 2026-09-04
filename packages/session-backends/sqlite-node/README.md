@@ -2,6 +2,8 @@
 
 Node `node:sqlite` Session backend for `@earendil-works/pi-agent-core`.
 
+The `./sqlite` export is the schema, `SqliteStorage`, and session helpers without `node:sqlite` or filesystem APIs. Cloudflare Durable Object SQL uses `@earendil-works/pi-session-backend-sqlite-durable`.
+
 ```ts
 import { BACKGROUND_CONTEXT } from "@earendil-works/pi-agent-core";
 import {

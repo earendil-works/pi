@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Added
+
+- Exported a Workers-safe `./sqlite` entry with the SQL schema, `SqliteStorage`, and session helpers. It does not import `node:sqlite` or the filesystem repository.
+- Embedded `001_initial.sql` as `INITIAL_SCHEMA_SQL` so `applyInitialSchema` does not read the filesystem at runtime.
+
 ## [0.85.0] - 2026-09-04
 
 ## [0.84.4] - 2026-08-28

@@ -1,8 +1,8 @@
-import { readFile } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
+import { INITIAL_SCHEMA_SQL } from "./migrations/schema.ts";
 import type { SqliteDatabase } from "./types.ts";
 
+export const SQLITE_STORAGE_VERSION = 1;
+
 export async function applyInitialSchema(db: SqliteDatabase): Promise<void> {
-	const migration = await readFile(fileURLToPath(new URL("./migrations/001_initial.sql", import.meta.url)), "utf8");
-	db.exec(migration);
+	db.exec(INITIAL_SCHEMA_SQL);
 }
