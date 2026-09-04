@@ -105,7 +105,7 @@ export interface Settings {
 	branchSummary?: BranchSummarySettings;
 	retry?: RetrySettings;
 	hideThinkingBlock?: boolean;
-	showCacheMissNotices?: boolean; // default: false - show prompt-cache miss and compaction cost notices
+	showCacheMissNotices?: boolean; // default: false - show cache cost and provider recovery notices
 	externalEditor?: string; // Command for Ctrl+G external editor; takes precedence over VISUAL/EDITOR
 	shellPath?: string; // Custom shell path (e.g., for Cygwin users on Windows); supports leading ~ expansion
 	quietStartup?: boolean;
@@ -142,6 +142,7 @@ export interface Settings {
 	tuiMode?: TuiMode; // default: "regular"
 	fullscreenExitOutput?: FullscreenExitOutput; // default: "transcript"; no effect in regular TUI mode
 	fullscreenScrollbar?: ScrollViewScrollbar; // default: "auto"; no effect in regular TUI mode
+	fullscreenCopyOnSelect?: boolean; // default: true; no effect in regular TUI mode
 }
 
 function isMergeableObject(value: unknown): value is Record<string, unknown> {
@@ -1226,6 +1227,16 @@ export class SettingsManager {
 	setFullscreenScrollbar(mode: ScrollViewScrollbar): void {
 		this.globalSettings.fullscreenScrollbar = mode;
 		this.markModified("fullscreenScrollbar");
+		this.save();
+	}
+
+	getFullscreenCopyOnSelect(): boolean {
+		return this.settings.fullscreenCopyOnSelect ?? true;
+	}
+
+	setFullscreenCopyOnSelect(enabled: boolean): void {
+		this.globalSettings.fullscreenCopyOnSelect = enabled;
+		this.markModified("fullscreenCopyOnSelect");
 		this.save();
 	}
 

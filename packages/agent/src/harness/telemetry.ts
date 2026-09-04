@@ -1,7 +1,6 @@
 import type {
 	ExactTelemetryAttributes,
 	SchemaTelemetrySpan,
-	TelemetryContext,
 	TelemetrySchemaDefinition,
 	TelemetrySchemaSpanEndAttributes,
 	TelemetrySchemaSpanEventAttributes,
@@ -11,6 +10,7 @@ import type {
 	TelemetrySchemaSpanUnion,
 	TelemetrySpan,
 } from "@earendil-works/pi-telemetry";
+import { type Context, getTelemetryContext, withTelemetryContext } from "./context.ts";
 
 export type {
 	AttributeValue,
@@ -136,17 +136,19 @@ export type AiTelemetrySpan<Name extends AiSpanName> = SchemaTelemetrySpan<typeo
 export type AiSpan = TelemetrySchemaSpanUnion<typeof AI_TELEMETRY_SCHEMA>;
 
 export function startAiSpan<Name extends AiSpanName, const Attributes extends AiSpanStartAttributes<Name>, Result>(
-	telemetryContext: TelemetryContext,
 	name: Name,
 	attributes: ExactTelemetryAttributes<AiSpanStartAttributes<Name>, Attributes>,
-	callback: (span: AiTelemetrySpan<Name>) => Result | Promise<Result>,
+	callback: (span: AiTelemetrySpan<Name>, context: Context) => Result | Promise<Result>,
+	context: Context,
 ): Promise<Result> {
-	return telemetryContext.startSpan({ name, attributes }, (span) => callback(span as AiTelemetrySpan<Name>));
+	return getTelemetryContext(context).startSpan({ name, attributes }, (span) =>
+		callback(span as AiTelemetrySpan<Name>, withTelemetryContext(span, context)),
+	);
 }
 
 const HOOK_NAMES = [
 	"before_run",
-	"before_resume",
+	"before_drive",
 	"before_run_end",
 	"transform_context",
 	"before_request",
@@ -162,7 +164,7 @@ const EVENT_TYPES = [
 	"run_start",
 	"run_resume",
 	"run_suspend",
-	"run_abort",
+	"operation_abort",
 	"run_end",
 	"fault",
 	"handler_error",
@@ -178,9 +180,8 @@ const EVENT_TYPES = [
 	"tool_update",
 	"tool_end",
 	"entry_added",
-	"write_pending",
 	"queue_update",
-	"fact_update",
+	"value_update",
 	"config_update",
 	"compaction_start",
 	"compaction_end",
@@ -317,7 +318,7 @@ export const HARNESS_TELEMETRY_SCHEMA = {
 				"pi.checkpoint.kind": {
 					type: "string",
 					required: true,
-					values: ["normal", "failure_drain", "abort_reconcile"],
+					values: ["normal", "abort_reconcile"],
 					description: "Checkpoint purpose",
 				},
 			},
@@ -474,7 +475,7 @@ export const HARNESS_TELEMETRY_SCHEMA = {
 				"pi.hook.registration_id": {
 					type: "string",
 					required: false,
-					description: "Stable hook registration id",
+					description: "Optional hook registration metadata",
 				},
 			},
 			endAttributes: {
@@ -488,7 +489,16 @@ export const HARNESS_TELEMETRY_SCHEMA = {
 		},
 		"pi.harness.sleep": {
 			description: "One retry delay",
-			parents: { kind: "spans", spans: ["pi.harness.step", "pi.harness.run"] },
+			parents: {
+				kind: "spans",
+				spans: [
+					"pi.harness.run",
+					"pi.harness.compaction",
+					"pi.harness.navigation",
+					"pi.harness.turn",
+					"pi.harness.checkpoint",
+				],
+			},
 			startAttributes: {
 				"pi.operation.id": {
 					type: "string",
@@ -533,40 +543,50 @@ export const HARNESS_TELEMETRY_SCHEMA = {
 			status: { default: "ok", errorWhen: "The listener throws" },
 		},
 		"pi.session.write": {
-			description: "One committed session mutation",
+			description: "One committed session transaction",
 			parents: { kind: "any" },
 			startAttributes: {
-				"pi.lane.name": {
+				"pi.session.id": {
 					type: "string",
 					required: true,
 					cardinality: "high",
-					description: "Lane name",
+					description: "Session id",
+				},
+				"pi.lane.name": {
+					type: "string",
+					required: false,
+					cardinality: "high",
+					description: "Lane name when supplied by the caller",
 				},
 				"pi.operation.id": {
 					type: "string",
 					required: false,
 					cardinality: "high",
-					description: "Durable operation id when accepted",
+					description: "Durable operation id when supplied by the caller",
 				},
-				"pi.session.mutation": {
-					type: "string",
+				"pi.session.item_count": {
+					type: "number",
 					required: true,
-					values: ["entry", "record", "lane", "fact"],
-					description: "Session mutation kind",
+					description: "Number of writes in the transaction",
 				},
-				"pi.session.item_type": {
-					type: "string",
-					required: false,
-					description: "Entry, record, lane, or fact subtype",
+				"pi.session.item_kinds": {
+					type: "string[]",
+					required: true,
+					elementValues: ["entry", "usage", "value", "list"],
+					description: "Distinct write kinds in the transaction",
 				},
 			},
 			endAttributes: {
-				"pi.session.seq": {
+				"pi.session.first_seq": {
 					type: "number",
-					description: "Committed session sequence when exposed",
+					description: "First committed sequence in the transaction",
+				},
+				"pi.session.last_seq": {
+					type: "number",
+					description: "Last committed sequence in the transaction",
 				},
 			},
-			status: { default: "ok", errorWhen: "Storage rejects the mutation" },
+			status: { default: "ok", errorWhen: "Storage rejects the transaction" },
 		},
 	},
 } as const satisfies TelemetrySchemaDefinition;
@@ -604,12 +624,12 @@ export function startHarnessSpan<
 	const Attributes extends HarnessSpanStartAttributes<Name>,
 	Result,
 >(
-	telemetryContext: TelemetryContext,
 	name: Name,
 	attributes: ExactTelemetryAttributes<HarnessSpanStartAttributes<Name>, Attributes>,
-	callback: (span: HarnessTelemetrySpan<Name>) => Result | Promise<Result>,
+	callback: (span: HarnessTelemetrySpan<Name>, context: Context) => Result | Promise<Result>,
+	context: Context,
 ): Promise<Result> {
-	return telemetryContext.startSpan({ name, attributes }, (span: TelemetrySpan) =>
-		callback(span as HarnessTelemetrySpan<Name>),
+	return getTelemetryContext(context).startSpan({ name, attributes }, (span: TelemetrySpan) =>
+		callback(span as HarnessTelemetrySpan<Name>, withTelemetryContext(span, context)),
 	);
 }

@@ -1,50 +1,79 @@
 # @earendil-works/pi-server
 
-Experimental. This package is under active development and may change or be removed without notice. Its APIs and behavior are not yet stable.
+Experimental local server for the new durable Session and Agent Harness interfaces.
 
-Server package for pi.
+The current slice supports server- and Session-scoped facet-service routing and multi-presentation attachment. `RoutedServerServiceHost.attachClient()` creates one connection-scoped server service endpoint with narrow attachment-management capabilities. `RoutedSessionHandle.attachClient()` returns a presentation-scoped Session capability. Its `invokeService()` forwards an opaque service/member envelope to the selected Session endpoint; the server validates the attachment route but does not load the facet contract.
 
-## Session server core
+- server service calls and subscriptions route opaquely through the connection's `RoutedServerServiceAttachment`;
+- the application-owned `SessionDirectory` projects the private catalog into replicated presentation-safe state;
+- the application-owned `SessionManagement` creates, removes, attaches, and detaches Sessions without exposing route IDs in business results;
+- attachment changes are published out of band after the router installs or clears the live route;
+- Session service calls route through `invokeService` without server-side business-payload decoding;
+- service subscription updates remain scoped to the requesting attachment;
+- application observations such as transcripts route as ordinary service state without server-owned business schemas.
 
-The package exports the `PiServer` session server.
+A Session may have multiple presentation attachments. Repeating `attach` from one connection is idempotent; every successful attachment has a server-generated `attachmentId` delivered only as routing control data. Session requests carry `{ serverId, sessionId, attachmentId }`, and the server rejects stale or mismatched routes. Losing a connection rejects its local responses but releases its attachment only after admitted service calls settle. The host decides when zero presentation demand and worker-local Harness activity permit worker retirement. Server shutdown closes every routed Session handle, releasing its worker and Session writer ownership.
 
 ```ts
-import type { PiServerService } from "@earendil-works/pi-server";
-import { createUnixServer } from "@earendil-works/pi-server/unix";
+import { randomUUID } from "node:crypto";
+import { MemorySessionRepo, type Session } from "@earendil-works/pi-agent-core";
+import {
+  type RoutedServerServiceHost,
+  type RoutedSessionHandle,
+  type ServerHost,
+  SessionAmbiguousError,
+  SessionNotFoundError,
+} from "@earendil-works/pi-server";
+import { createUnixServer, getUnixSocketPath } from "@earendil-works/pi-server/unix";
 
-const service: PiServerService = {
-  async listSessions() {
-    return storage.listSessions();
-  },
-  async listModels() {
-    return modelRegistry.listModels();
-  },
-  async createSession(options) {
-    return storage.createAndOpen(options);
-  },
-  async openSession(sessionId) {
-    return storage.open(sessionId);
-  },
-};
+async function startServer(
+  serverServices: RoutedServerServiceHost,
+  openRoutedSession: (session: Session) => Promise<RoutedSessionHandle>,
+) {
+  const sessions = new MemorySessionRepo();
+  const host: ServerHost = {
+    serverServices,
+    async resolveSession(sessionId, context) {
+      const matches = (await sessions.list(undefined, context))
+        .filter((metadata) => metadata.id === sessionId);
+      if (matches.length === 0) {
+        throw new SessionNotFoundError(`Unknown session: ${sessionId}`);
+      }
+      if (matches.length > 1) throw new SessionAmbiguousError();
+      return matches[0];
+    },
+    async openSession(metadata, context) {
+      const session = await sessions.open(metadata, context);
+      try {
+        return await openRoutedSession(session);
+      } catch (error) {
+        try {
+          await session.close(context);
+        } catch (cleanupError) {
+          throw new AggregateError(
+            [error, cleanupError],
+            "Harness creation and Session cleanup failed",
+          );
+        }
+        throw error;
+      }
+    },
+  };
 
-const server = createUnixServer(service, {
-  path: "/tmp/pi/server.sock",
-});
-await server.start();
+  const serverId = randomUUID();
+  const server = createUnixServer(host, {
+    serverId,
+    path: getUnixSocketPath(serverId, "/run/user/1000/pi"),
+  });
+  await server.start();
+  return server;
+}
 ```
 
-`PiServer` composes transport listeners through the `PiServerListener` interface. Each listener must complete any transport-specific authentication and authorization before passing a connection to `PiServer`. For example, a WebSocket listener can validate credentials during the HTTP upgrade, while the Unix listener relies on socket filesystem permissions. The Unix submodule exports the `createUnixListener()` building block and `createUnixServer()` preset, keeping the common case concise without coupling the primary server to Unix sockets. The listener uses length-prefixed CBOR messages from `@earendil-works/pi-protocol`.
+Applications supply a required server service host, a bounded Session resolver, and a routed Session factory. Session discovery and management are application-owned services; the protocol server only asks the resolver for metadata when routing an attachment. The host owns acquiring the worker-local Session and Harness. Failures are cleaned up in that worker. Neither an open JavaScript Session nor a Harness crosses the process boundary.
 
-This package does not provide a standalone CLI or coding-agent service. Applications supply the `PiServerService` implementation.
+`serverId` is a logical identity supplied by the launcher, not a socket address. The Unix preset requires an explicit physical `path`; `getUnixSocketPath()` derives one from a caller-selected directory. Choose a short, private runtime directory rather than deriving the route from an unbounded home-directory path. A long-lived launcher can reuse the same ID and path when replacing a server process.
 
-`PiServerService.listSessions()` returns protocol `SessionMetadata`, not acquired runtime state. Services should map the durable fields their storage supports and may omit `updatedAt`, `parentSessionId`, `sessionName`, and `cwd`. `PiServer` refreshes available metadata from live snapshots without requiring stored sessions to fabricate phase, model, thinking-level, attachment, or lock values.
+`Server` composes transports through `ServerListener`; peer authentication remains application policy and is not implemented by the experimental Unix transport. The Unix submodule provides `createUnixListener()` and `createUnixServer()`. Low-level routed-envelope validation, CBOR, and framing come from `@earendil-works/pi-protocol`; Chord owns service-control parsing, error codes, snapshots and updates, and each subscription's replicated-state encoder.
 
-## Transport testing
-
-Custom transports can use `@earendil-works/pi-server/testing` for deterministic protocol conformance tests. It exports `createTestServer()`, `TestServerService`, `ProtocolTestClient`, and the transport-neutral `WireChannel` contract. `connectUnixTestClient()` is provided for Unix transport tests.
-
-## `pi-ai` protocol bridge
-
-`@earendil-works/pi-ai` domain objects and `@earendil-works/pi-protocol` wire DTOs remain independent. This package owns their boundary and exports `toProtocolModelMetadata()`, `toProtocolAssistantMessage()`, `toProtocolUserMessage()`, and `toProtocolToolResultMessage()`.
-
-The adapters reject invalid tool inputs, identifiers, timestamps, and mismatched tool results; `toProtocolToolResultMessage()` requires the original `ToolCall` so it can verify the association and convert its arguments itself. Diagnostic details are explicitly sanitized. Closed `pi-ai` unions are mapped exhaustively, and compile-time field manifests enumerate current `pi-ai` properties so additions require an explicit review. The protocol mirrors `pi-ai` vocabulary such as `toolCall` and `toolUse` where the semantics are identical. Protocol schemas enforce consistent lifecycle states, and tests encode adapter output through the runtime schemas so incompatible changes fail in the bridging package.
+Server and worker lifecycle is managed outside the public Pi protocol. The replaceable application server converts connection attachments into private demand updates; the worker combines generation-tagged demand with authoritative Harness activity. The experimental coordinator only supplies stable routing and reports generic server-generation connection changes.

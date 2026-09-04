@@ -95,7 +95,7 @@ describe("issue #3217 scoped model ordering", () => {
 			.filter((line) => line.includes(`[${modelOne.provider}]`));
 		const orderedIds = renderedLines.slice(0, 3).map((line) => {
 			const [modelId] = line.trim().replace(/^→\s*/, "").split(" [");
-			return modelId?.trim() ?? "";
+			return modelId?.replace(/^✓\s*/, "").trim() ?? "";
 		});
 
 		expect(orderedIds).toEqual([modelTwo.id, modelOne.id, modelThree.id]);

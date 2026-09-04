@@ -1,6 +1,6 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { constants, createReadStream } from "node:fs";
+import { constants, createReadStream, createWriteStream, type WriteStream } from "node:fs";
 import {
 	access,
 	appendFile,
@@ -14,10 +14,11 @@ import {
 	rm,
 	writeFile,
 } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
+import { homedir, constants as osConstants, tmpdir } from "node:os";
 import { basename, isAbsolute, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
+import type { Context } from "../context.ts";
 import {
 	type ExecutionEnv,
 	ExecutionError,
@@ -28,12 +29,17 @@ import {
 	ok,
 	type Result,
 	type ShellExecOptions,
+	type ShellExecResult,
 	toError,
 } from "../types.ts";
+import { OutputCapture } from "../utils/output-capture.ts";
 
 const MAX_TIMEOUT_MS = 2_147_483_647;
 const MAX_TIMEOUT_SECONDS = MAX_TIMEOUT_MS / 1000;
 const EXIT_STDIO_GRACE_MS = 100;
+const SPILL_HIGH_WATER_MARK = 8 * 1024 * 1024;
+
+type SpillChunk = string | Uint8Array;
 
 function resolveTimeoutMs(timeout: number | undefined): Result<number | undefined, ExecutionError> {
 	if (timeout === undefined) return ok(undefined);
@@ -281,11 +287,15 @@ function killProcessTree(pid: number): void {
 	}
 }
 
-function waitForChildProcess(child: ChildProcess): Promise<number | null> {
+function waitForChildProcess(
+	child: ChildProcess,
+	spillIsDraining: () => boolean,
+): Promise<{ code: number | null; signal: NodeJS.Signals | null }> {
 	return new Promise((resolvePromise, reject) => {
 		let settled = false;
 		let exited = false;
 		let exitCode: number | null = null;
+		let exitSignal: NodeJS.Signals | null = null;
 		let postExitTimer: ReturnType<typeof setTimeout> | undefined;
 		let stdoutEnded = child.stdout === null;
 		let stderrEnded = child.stderr === null;
@@ -300,20 +310,23 @@ function waitForChildProcess(child: ChildProcess): Promise<number | null> {
 			child.stdout?.removeListener("data", onData);
 			child.stderr?.removeListener("data", onData);
 		};
-		const finalize = (code: number | null): void => {
+		const finalize = (): void => {
 			if (settled) return;
 			settled = true;
 			cleanup();
 			child.stdout?.destroy();
 			child.stderr?.destroy();
-			resolvePromise(code);
+			resolvePromise({ code: exitCode, signal: exitSignal });
 		};
 		const maybeFinalizeAfterExit = (): void => {
-			if (exited && stdoutEnded && stderrEnded) finalize(exitCode);
+			if (exited && stdoutEnded && stderrEnded) finalize();
 		};
 		const armIdleTimer = (): void => {
 			if (postExitTimer) clearTimeout(postExitTimer);
-			postExitTimer = setTimeout(() => finalize(exitCode), EXIT_STDIO_GRACE_MS);
+			postExitTimer = setTimeout(() => {
+				if (spillIsDraining()) armIdleTimer();
+				else finalize();
+			}, EXIT_STDIO_GRACE_MS);
 		};
 		const onData = (): void => {
 			if (exited && !settled) armIdleTimer();
@@ -332,13 +345,18 @@ function waitForChildProcess(child: ChildProcess): Promise<number | null> {
 			cleanup();
 			reject(error);
 		};
-		const onExit = (code: number | null): void => {
+		const onExit = (code: number | null, signal: NodeJS.Signals | null): void => {
 			exited = true;
 			exitCode = code;
+			exitSignal = signal;
 			maybeFinalizeAfterExit();
 			if (!settled) armIdleTimer();
 		};
-		const onClose = (code: number | null): void => finalize(code);
+		const onClose = (code: number | null, signal: NodeJS.Signals | null): void => {
+			exitCode = code;
+			exitSignal = signal;
+			finalize();
+		};
 
 		child.stdout?.once("end", onStdoutEnd);
 		child.stderr?.once("end", onStderrEnd);
@@ -362,19 +380,21 @@ export class NodeExecutionEnv implements ExecutionEnv {
 		this.shellEnv = options.shellEnv;
 	}
 
-	async absolutePath(path: string): Promise<Result<string, FileError>> {
+	async absolutePath(path: string, _context: Context): Promise<Result<string, FileError>> {
 		return ok(resolvePath(this.cwd, path));
 	}
 
-	async joinPath(parts: string[]): Promise<Result<string, FileError>> {
+	async joinPath(parts: string[], _context: Context): Promise<Result<string, FileError>> {
 		return ok(join(...parts));
 	}
 
 	async exec(
 		command: string,
-		options?: ShellExecOptions,
-	): Promise<Result<{ stdout: string; stderr: string; exitCode: number }, ExecutionError>> {
-		if (options?.abortSignal?.aborted) return err(new ExecutionError("aborted", "aborted"));
+		options: ShellExecOptions | undefined,
+		context: Context,
+	): Promise<Result<ShellExecResult, ExecutionError>> {
+		const signal = context.abortSignal;
+		if (signal?.aborted) return err(new ExecutionError("aborted", "aborted"));
 		const timeoutMsResult = resolveTimeoutMs(options?.timeout);
 		if (!timeoutMsResult.ok) return err(timeoutMsResult.error);
 		const timeoutMs = timeoutMsResult.value;
@@ -396,27 +416,109 @@ export class NodeExecutionEnv implements ExecutionEnv {
 		}
 
 		return await new Promise((resolvePromise) => {
-			let stdout = "";
-			let stderr = "";
 			let settled = false;
 			let timedOut = false;
 			let callbackError: ExecutionError | undefined;
+			let spillError: ExecutionError | undefined;
 			let child: ReturnType<typeof spawn> | undefined;
 			let timeoutId: ReturnType<typeof setTimeout> | undefined;
+			const spillPrefix: SpillChunk[] = [];
+			let spillPath: string | undefined;
+			const spillQueue: SpillChunk[] = [];
+			let spillStart: Promise<void> | undefined;
+			let spillStream: WriteStream | undefined;
+			let spillBackpressured = false;
 
 			const onAbort = () => {
-				if (child?.pid) {
-					killProcessTree(child.pid);
-				}
+				if (child?.pid) killProcessTree(child.pid);
 			};
+			const failCallback = (error: unknown) => {
+				if (callbackError !== undefined) return;
+				const cause = toError(error);
+				callbackError = new ExecutionError("callback_error", cause.message, cause);
+				onAbort();
+			};
+			let capture: OutputCapture;
+			try {
+				capture = new OutputCapture(options?.capture, context, {
+					onUpdate: options?.onUpdate,
+					onError: failCallback,
+				});
+			} catch (error) {
+				const cause = toError(error);
+				resolvePromise(err(new ExecutionError("unknown", cause.message, cause)));
+				return;
+			}
 
-			const settle = (result: Result<{ stdout: string; stderr: string; exitCode: number }, ExecutionError>) => {
-				if (timeoutId) clearTimeout(timeoutId);
-				if (options?.abortSignal) options.abortSignal.removeEventListener("abort", onAbort);
-				if (child?.pid) this.activeChildPids.delete(child.pid);
+			const settle = (result: Result<ShellExecResult, ExecutionError>) => {
 				if (settled) return;
 				settled = true;
+				if (timeoutId) clearTimeout(timeoutId);
+				if (signal) signal.removeEventListener("abort", onAbort);
+				if (child?.pid) this.activeChildPids.delete(child.pid);
+				capture.dispose();
 				resolvePromise(result);
+			};
+			const pauseOutput = () => {
+				child?.stdout?.pause();
+				child?.stderr?.pause();
+			};
+			const resumeOutput = () => {
+				if (callbackError || spillError || timedOut || signal?.aborted || spillBackpressured) return;
+				child?.stdout?.resume();
+				child?.stderr?.resume();
+			};
+			const failSpill = (error: unknown) => {
+				if (spillError !== undefined) return;
+				const cause = toError(error);
+				spillError = new ExecutionError(
+					"unknown",
+					`Failed to preserve complete shell output: ${cause.message}`,
+					cause,
+				);
+				spillBackpressured = false;
+				onAbort();
+			};
+			const writeSpill = (chunk: SpillChunk): void => {
+				if (spillStream === undefined || chunk.length === 0) return;
+				if (spillStream.write(chunk) || spillBackpressured) return;
+				spillBackpressured = true;
+				pauseOutput();
+				spillStream.once("drain", () => {
+					spillBackpressured = false;
+					resumeOutput();
+				});
+			};
+			const startSpill = (chunk: SpillChunk): void => {
+				if (spillStream !== undefined) {
+					writeSpill(chunk);
+					return;
+				}
+				spillQueue.push(chunk);
+				if (spillStart !== undefined) return;
+				pauseOutput();
+				spillStart = (async () => {
+					const created = await this.createTempFile({ prefix: "pi-output-", suffix: ".log" }, context);
+					if (!created.ok) throw created.error;
+					spillPath = created.value;
+					capture.setSpillPath(spillPath);
+					spillStream = createWriteStream(spillPath, { flags: "a", highWaterMark: SPILL_HIGH_WATER_MARK });
+					spillStream.on("error", failSpill);
+					for (const queued of spillQueue) writeSpill(queued);
+					spillQueue.length = 0;
+				})()
+					.catch(failSpill)
+					.finally(resumeOutput);
+			};
+			const finishSpill = async (): Promise<void> => {
+				await spillStart;
+				const stream = spillStream;
+				if (stream === undefined || spillError !== undefined || stream.destroyed) return;
+				await new Promise<void>((resolveFinish) => {
+					stream.once("error", () => resolveFinish());
+					stream.once("finish", resolveFinish);
+					stream.end();
+				});
 			};
 
 			try {
@@ -444,48 +546,54 @@ export class NodeExecutionEnv implements ExecutionEnv {
 			}
 
 			timeoutId =
-				timeoutMs !== undefined
-					? setTimeout(() => {
+				timeoutMs === undefined
+					? undefined
+					: setTimeout(() => {
 							timedOut = true;
-							if (child?.pid) {
-								killProcessTree(child.pid);
-							}
-						}, timeoutMs)
-					: undefined;
+							onAbort();
+						}, timeoutMs);
 
-			if (options?.abortSignal) {
-				if (options.abortSignal.aborted) {
-					onAbort();
-				} else {
-					options.abortSignal.addEventListener("abort", onAbort, { once: true });
-				}
+			if (signal) {
+				if (signal.aborted) onAbort();
+				else signal.addEventListener("abort", onAbort, { once: true });
 			}
 
-			child.stdout?.setEncoding("utf8");
-			child.stderr?.setEncoding("utf8");
-			child.stdout?.on("data", (chunk: string) => {
-				stdout += chunk;
+			const feed = (chunk: Uint8Array) => {
 				try {
-					options?.onStdout?.(chunk);
+					const wasTruncated = capture.truncated;
+					capture.push(chunk);
+					if (!options?.capture?.spill || chunk.length === 0) return;
+					if (spillPath !== undefined || wasTruncated) {
+						startSpill(chunk);
+					} else if (capture.truncated) {
+						for (const prefix of spillPrefix) startSpill(prefix);
+						spillPrefix.length = 0;
+						startSpill(chunk);
+					} else {
+						spillPrefix.push(chunk);
+					}
 				} catch (error) {
-					const cause = toError(error);
-					callbackError = new ExecutionError("callback_error", cause.message, cause);
-					onAbort();
+					failCallback(error);
 				}
-			});
-			child.stderr?.on("data", (chunk: string) => {
-				stderr += chunk;
-				try {
-					options?.onStderr?.(chunk);
-				} catch (error) {
-					const cause = toError(error);
-					callbackError = new ExecutionError("callback_error", cause.message, cause);
-					onAbort();
-				}
-			});
+			};
+			child.stdout?.on("data", feed);
+			child.stderr?.on("data", feed);
 
-			void waitForChildProcess(child).then(
-				(code) => {
+			void waitForChildProcess(
+				child,
+				() =>
+					spillError === undefined &&
+					spillStart !== undefined &&
+					(spillStream === undefined || spillBackpressured),
+			).then(
+				async ({ code, signal: exitSignal }) => {
+					await finishSpill();
+					try {
+						capture.finish();
+						capture.flush();
+					} catch (error) {
+						failCallback(error);
+					}
 					if (callbackError) {
 						settle(err(callbackError));
 						return;
@@ -494,23 +602,40 @@ export class NodeExecutionEnv implements ExecutionEnv {
 						settle(err(new ExecutionError("timeout", `timeout:${options?.timeout}`)));
 						return;
 					}
-					if (options?.abortSignal?.aborted) {
+					if (signal?.aborted) {
 						settle(err(new ExecutionError("aborted", "aborted")));
 						return;
 					}
-					settle(ok({ stdout, stderr, exitCode: code ?? 0 }));
+					if (spillError) {
+						settle(err(spillError));
+						return;
+					}
+					const output = capture.snapshot();
+					// A process killed by a signal (e.g. OOM killer) has no exit code; map it
+					// to the conventional 128 + signal number so callers do not mistake it
+					// for a successful exit.
+					const exitCode = code ?? (exitSignal ? 128 + (osConstants.signals[exitSignal] ?? 0) : 1);
+					settle(
+						ok({
+							exitCode,
+							truncation: output.truncation,
+							...(output.spillPath === undefined ? {} : { spillPath: output.spillPath }),
+							...(output.lastLineBytes === undefined ? {} : { lastLineBytes: output.lastLineBytes }),
+						}),
+					);
 				},
 				(error: Error) => settle(err(new ExecutionError("spawn_error", error.message, error))),
 			);
 		});
 	}
 
-	async readTextFile(path: string, abortSignal?: AbortSignal): Promise<Result<string, FileError>> {
+	async readTextFile(path: string, context: Context): Promise<Result<string, FileError>> {
 		const resolved = resolvePath(this.cwd, path);
-		const aborted = abortResult<string>(abortSignal, resolved);
+		const signal = context.abortSignal;
+		const aborted = abortResult<string>(signal, resolved);
 		if (aborted) return aborted;
 		try {
-			return ok(await readFile(resolved, { encoding: "utf8", signal: abortSignal }));
+			return ok(await readFile(resolved, { encoding: "utf8", signal }));
 		} catch (error) {
 			return err(toFileError(error, resolved));
 		}
@@ -518,25 +643,27 @@ export class NodeExecutionEnv implements ExecutionEnv {
 
 	async readTextLines(
 		path: string,
-		options?: { maxLines?: number; abortSignal?: AbortSignal },
+		options: { maxLines?: number } | undefined,
+		context: Context,
 	): Promise<Result<string[], FileError>> {
 		const resolved = resolvePath(this.cwd, path);
-		const aborted = abortResult<string[]>(options?.abortSignal, resolved);
+		const signal = context.abortSignal;
+		const aborted = abortResult<string[]>(signal, resolved);
 		if (aborted) return aborted;
 		if (options?.maxLines !== undefined && options.maxLines <= 0) return ok([]);
 		let stream: ReturnType<typeof createReadStream> | undefined;
 		let lineReader: ReturnType<typeof createInterface> | undefined;
 		try {
-			stream = createReadStream(resolved, { encoding: "utf8", signal: options?.abortSignal });
+			stream = createReadStream(resolved, { encoding: "utf8", signal });
 			lineReader = createInterface({ input: stream, crlfDelay: Infinity });
 			const lines: string[] = [];
 			for await (const line of lineReader) {
-				const loopAbort = abortResult<string[]>(options?.abortSignal, resolved);
+				const loopAbort = abortResult<string[]>(signal, resolved);
 				if (loopAbort) return loopAbort;
 				lines.push(line);
 				if (options?.maxLines !== undefined && lines.length >= options.maxLines) break;
 			}
-			const afterReadAbort = abortResult<string[]>(options?.abortSignal, resolved);
+			const afterReadAbort = abortResult<string[]>(signal, resolved);
 			if (afterReadAbort) return afterReadAbort;
 			return ok(lines);
 		} catch (error) {
@@ -547,55 +674,55 @@ export class NodeExecutionEnv implements ExecutionEnv {
 		}
 	}
 
-	async readBinaryFile(path: string, abortSignal?: AbortSignal): Promise<Result<Uint8Array, FileError>> {
+	async readBinaryFile(path: string, context: Context): Promise<Result<Uint8Array, FileError>> {
 		const resolved = resolvePath(this.cwd, path);
-		const aborted = abortResult<Uint8Array>(abortSignal, resolved);
+		const signal = context.abortSignal;
+		const aborted = abortResult<Uint8Array>(signal, resolved);
 		if (aborted) return aborted;
 		try {
-			return ok(await readFile(resolved, { signal: abortSignal }));
+			return ok(await readFile(resolved, { signal }));
 		} catch (error) {
 			return err(toFileError(error, resolved));
 		}
 	}
 
-	async writeFile(
-		path: string,
-		content: string | Uint8Array,
-		abortSignal?: AbortSignal,
-	): Promise<Result<void, FileError>> {
+	async writeFile(path: string, content: string | Uint8Array, context: Context): Promise<Result<void, FileError>> {
 		const resolved = resolvePath(this.cwd, path);
-		const aborted = abortResult<void>(abortSignal, resolved);
+		const signal = context.abortSignal;
+		const aborted = abortResult<void>(signal, resolved);
 		if (aborted) return aborted;
 		try {
 			await mkdir(resolve(resolved, ".."), { recursive: true });
-			const afterMkdirAbort = abortResult<void>(abortSignal, resolved);
+			const afterMkdirAbort = abortResult<void>(signal, resolved);
 			if (afterMkdirAbort) return afterMkdirAbort;
-			await writeFile(resolved, content, { signal: abortSignal });
+			await writeFile(resolved, content, { signal });
 			return ok(undefined);
 		} catch (error) {
 			return err(toFileError(error, resolved));
 		}
 	}
 
-	async appendFile(path: string, content: string | Uint8Array): Promise<Result<void, FileError>> {
+	async appendFile(path: string, content: string | Uint8Array, context: Context): Promise<Result<void, FileError>> {
 		const resolved = resolvePath(this.cwd, path);
+		const signal = context.abortSignal;
+		const aborted = abortResult<void>(signal, resolved);
+		if (aborted) return aborted;
 		try {
 			await mkdir(resolve(resolved, ".."), { recursive: true });
+			const afterMkdirAbort = abortResult<void>(signal, resolved);
+			if (afterMkdirAbort) return afterMkdirAbort;
 			await appendFile(resolved, content);
-			return ok(undefined);
+			const afterAppendAbort = abortResult<void>(signal, resolved);
+			return afterAppendAbort ?? ok(undefined);
 		} catch (error) {
 			return err(toFileError(error, resolved));
 		}
 	}
 
-	async renameFile(
-		sourcePath: string,
-		destinationPath: string,
-		abortSignal?: AbortSignal,
-	): Promise<Result<void, FileError>> {
+	async renameFile(sourcePath: string, destinationPath: string, context: Context): Promise<Result<void, FileError>> {
 		const source = resolvePath(this.cwd, sourcePath);
 		const destination = resolvePath(this.cwd, destinationPath);
-		const aborted = abortResult<void>(abortSignal, destination);
+		const aborted = abortResult<void>(context.abortSignal, destination);
 		if (aborted) return aborted;
 		try {
 			await rename(source, destination);
@@ -605,8 +732,10 @@ export class NodeExecutionEnv implements ExecutionEnv {
 		}
 	}
 
-	async fileInfo(path: string): Promise<Result<FileInfo, FileError>> {
+	async fileInfo(path: string, context: Context): Promise<Result<FileInfo, FileError>> {
 		const resolved = resolvePath(this.cwd, path);
+		const aborted = abortResult<FileInfo>(context.abortSignal, resolved);
+		if (aborted) return aborted;
 		try {
 			return fileInfoFromStats(resolved, await lstat(resolved));
 		} catch (error) {
@@ -614,15 +743,16 @@ export class NodeExecutionEnv implements ExecutionEnv {
 		}
 	}
 
-	async listDir(path: string, abortSignal?: AbortSignal): Promise<Result<FileInfo[], FileError>> {
+	async listDir(path: string, context: Context): Promise<Result<FileInfo[], FileError>> {
 		const resolved = resolvePath(this.cwd, path);
-		const aborted = abortResult<FileInfo[]>(abortSignal, resolved);
+		const signal = context.abortSignal;
+		const aborted = abortResult<FileInfo[]>(signal, resolved);
 		if (aborted) return aborted;
 		try {
 			const entries = await readdir(resolved, { withFileTypes: true });
 			const infos: FileInfo[] = [];
 			for (const entry of entries) {
-				const loopAbort = abortResult<FileInfo[]>(abortSignal, resolved);
+				const loopAbort = abortResult<FileInfo[]>(signal, resolved);
 				if (loopAbort) return loopAbort;
 				const entryPath = resolve(resolved, entry.name);
 				try {
@@ -638,8 +768,10 @@ export class NodeExecutionEnv implements ExecutionEnv {
 		}
 	}
 
-	async canonicalPath(path: string): Promise<Result<string, FileError>> {
+	async canonicalPath(path: string, context: Context): Promise<Result<string, FileError>> {
 		const resolved = resolvePath(this.cwd, path);
+		const aborted = abortResult<string>(context.abortSignal, resolved);
+		if (aborted) return aborted;
 		try {
 			return ok(await realpath(resolved));
 		} catch (error) {
@@ -647,15 +779,21 @@ export class NodeExecutionEnv implements ExecutionEnv {
 		}
 	}
 
-	async exists(path: string): Promise<Result<boolean, FileError>> {
-		const result = await this.fileInfo(path);
+	async exists(path: string, context: Context): Promise<Result<boolean, FileError>> {
+		const result = await this.fileInfo(path, context);
 		if (result.ok) return ok(true);
 		if (result.error.code === "not_found") return ok(false);
 		return err(result.error);
 	}
 
-	async createDir(path: string, options?: { recursive?: boolean }): Promise<Result<void, FileError>> {
+	async createDir(
+		path: string,
+		options: { recursive?: boolean } | undefined,
+		context: Context,
+	): Promise<Result<void, FileError>> {
 		const resolved = resolvePath(this.cwd, path);
+		const aborted = abortResult<void>(context.abortSignal, resolved);
+		if (aborted) return aborted;
 		try {
 			await mkdir(resolved, { recursive: options?.recursive ?? true });
 			return ok(undefined);
@@ -664,8 +802,14 @@ export class NodeExecutionEnv implements ExecutionEnv {
 		}
 	}
 
-	async remove(path: string, options?: { recursive?: boolean; force?: boolean }): Promise<Result<void, FileError>> {
+	async remove(
+		path: string,
+		options: { recursive?: boolean; force?: boolean } | undefined,
+		context: Context,
+	): Promise<Result<void, FileError>> {
 		const resolved = resolvePath(this.cwd, path);
+		const aborted = abortResult<void>(context.abortSignal, resolved);
+		if (aborted) return aborted;
 		try {
 			await rm(resolved, { recursive: options?.recursive ?? false, force: options?.force ?? false });
 			return ok(undefined);
@@ -674,16 +818,22 @@ export class NodeExecutionEnv implements ExecutionEnv {
 		}
 	}
 
-	async createTempDir(prefix: string = "tmp-"): Promise<Result<string, FileError>> {
+	async createTempDir(prefix: string | undefined, context: Context): Promise<Result<string, FileError>> {
+		const aborted = abortResult<string>(context.abortSignal);
+		if (aborted) return aborted;
 		try {
+			prefix ??= "tmp-";
 			return ok(await mkdtemp(join(tmpdir(), prefix)));
 		} catch (error) {
 			return err(toFileError(error));
 		}
 	}
 
-	async createTempFile(options?: { prefix?: string; suffix?: string }): Promise<Result<string, FileError>> {
-		const dir = await this.createTempDir("tmp-");
+	async createTempFile(
+		options: { prefix?: string; suffix?: string } | undefined,
+		context: Context,
+	): Promise<Result<string, FileError>> {
+		const dir = await this.createTempDir("tmp-", context);
 		if (!dir.ok) return dir;
 		const filePath = join(dir.value, `${options?.prefix ?? ""}${randomUUID()}${options?.suffix ?? ""}`);
 		try {
@@ -694,7 +844,7 @@ export class NodeExecutionEnv implements ExecutionEnv {
 		}
 	}
 
-	async cleanup(): Promise<void> {
+	async cleanup(_context: Context): Promise<void> {
 		for (const pid of this.activeChildPids) killProcessTree(pid);
 		this.activeChildPids.clear();
 	}
