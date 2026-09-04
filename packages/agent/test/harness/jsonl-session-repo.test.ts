@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT, type Context } from "../../src/harness/context.ts";
 import { NodeExecutionEnv } from "../../src/harness/env/nodejs.ts";
@@ -194,6 +195,30 @@ describe("JsonlSessionRepo cwd-scoped lifecycle", () => {
 			repo.open(second.metadata, BACKGROUND_CONTEXT),
 		]);
 		await Promise.all(reopened.map((session) => session.close(BACKGROUND_CONTEXT)));
+		await repo.close(BACKGROUND_CONTEXT);
+	});
+
+	it("allows the same id when working-directory encodings collide", async () => {
+		// #9073
+		const root = createTempDir();
+		const fileSystem = new NodeExecutionEnv({ cwd: root });
+		const repo = new JsonlSessionRepo({ fileSystem, sessionsRoot: "sessions", now: () => NOW });
+		const firstCwd = join(root, "tenant-a", "project");
+		const secondCwd = join(root, "tenant", "a-project");
+
+		const first = await repo.create({ id: "same", cwd: firstCwd }, BACKGROUND_CONTEXT);
+		await first.close(BACKGROUND_CONTEXT);
+		const second = await repo.create({ id: "same", cwd: secondCwd }, BACKGROUND_CONTEXT);
+
+		expect(first.metadata.path).not.toBe(second.metadata.path);
+		expect(await repo.list({ cwd: firstCwd }, BACKGROUND_CONTEXT)).toMatchObject([
+			{ id: "same", cwd: firstCwd, path: first.metadata.path },
+		]);
+		expect(await repo.list({ cwd: secondCwd }, BACKGROUND_CONTEXT)).toMatchObject([
+			{ id: "same", cwd: secondCwd, path: second.metadata.path },
+		]);
+
+		await second.close(BACKGROUND_CONTEXT);
 		await repo.close(BACKGROUND_CONTEXT);
 	});
 });

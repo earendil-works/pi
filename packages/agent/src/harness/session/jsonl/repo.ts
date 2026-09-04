@@ -41,9 +41,14 @@ function sessionDirectoryName(cwd: string): string {
 	return `--${cwd.replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`;
 }
 
-function sessionFileName(createdAt: number, id: string): string {
+function sessionIdFileSuffix(id: string): string {
+	return `_${encodeURIComponent(id)}.jsonl`;
+}
+
+function sessionFileName(createdAt: number, id: string, collisionIndex = 0): string {
 	const timestamp = new Date(createdAt).toISOString().replace(/[:.]/g, "-");
-	return `${timestamp}_${encodeURIComponent(id)}.jsonl`;
+	const stamp = collisionIndex === 0 ? timestamp : `${timestamp}-${collisionIndex}`;
+	return `${stamp}${sessionIdFileSuffix(id)}`;
 }
 
 /** File-backed format-4 session repository lifecycle. */
@@ -272,29 +277,40 @@ export class JsonlSessionRepo
 
 	private async resolveNewSessionPath(cwd: string, createdAt: number, id: string, context: Context): Promise<string> {
 		const directory = await this.sessionDirectory(cwd, context);
-		await this.assertSessionIdAvailable(directory, id, context);
+		await this.assertSessionIdAvailable(directory, id, cwd, context);
 		fileValue(
 			await this.fileSystem.createDir(directory, undefined, context),
 			`Failed to create sessions directory ${directory}`,
 		);
-		return fileValue(
-			await this.fileSystem.joinPath([directory, sessionFileName(createdAt, id)], context),
-			`Failed to resolve path for session ${id}`,
-		);
+		for (let collisionIndex = 0; ; collisionIndex++) {
+			const path = fileValue(
+				await this.fileSystem.joinPath([directory, sessionFileName(createdAt, id, collisionIndex)], context),
+				`Failed to resolve path for session ${id}`,
+			);
+			if (!fileValue(await this.fileSystem.exists(path, context), `Failed to check session path ${path}`)) {
+				return path;
+			}
+		}
 	}
 
-	private async assertSessionIdAvailable(directory: string, id: string, context: Context): Promise<void> {
+	private async assertSessionIdAvailable(directory: string, id: string, cwd: string, context: Context): Promise<void> {
 		if (
 			!fileValue(await this.fileSystem.exists(directory, context), `Failed to check sessions directory ${directory}`)
 		)
 			return;
 
-		const suffix = `_${encodeURIComponent(id)}.jsonl`;
-		const idExists = fileValue(
+		const suffix = sessionIdFileSuffix(id);
+		const entries = fileValue(
 			await this.fileSystem.listDir(directory, context),
 			`Failed to list sessions directory ${directory}`,
-		).some((entry) => entry.kind !== "directory" && entry.name.endsWith(suffix));
-		if (idExists) throw new Error(`Session already exists: ${id}`);
+		);
+		for (const entry of entries) {
+			if (entry.kind === "directory" || !entry.name.endsWith(suffix)) continue;
+			const discovered = await this.readSessionMetadata(entry, context);
+			if (discovered !== undefined && discovered.id === id && discovered.cwd === cwd) {
+				throw new Error(`Session already exists: ${id}`);
+			}
+		}
 	}
 
 	private async loadClosedForkSourceSnapshot(
