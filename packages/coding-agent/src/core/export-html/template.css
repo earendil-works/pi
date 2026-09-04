@@ -791,6 +791,15 @@
       font-weight: bold;
     }
 
+    .hook-message-injected {
+      border-left: 3px solid var(--customMessageLabel);
+    }
+
+    .hook-injected {
+      color: var(--dim);
+      font-size: 11px;
+    }
+
     /* Skill invocation - matches compaction style (clickable, collapsed by default) */
     .skill-invocation {
       background: var(--customMessageBg);

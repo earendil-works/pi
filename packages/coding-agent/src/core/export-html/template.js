@@ -1306,9 +1306,11 @@
           </div>`;
         }
 
-        if (entry.type === 'custom_message' && entry.display) {
-          return `<div class="hook-message" id="${entryDomId}">${tsHtml}
+        if (entry.type === 'custom_message') {
+          const injected = entry.display === false;
+          return `<div class="hook-message${injected ? ' hook-message-injected' : ''}" id="${entryDomId}">${tsHtml}
             <div class="hook-type">[${escapeHtml(entry.customType)}]</div>
+            ${injected ? '<div class="hook-injected">injected into model context</div>' : ''}
             <div class="markdown-content">${safeMarkedParse(typeof entry.content === 'string' ? entry.content : JSON.stringify(entry.content))}</div>
           </div>`;
         }
