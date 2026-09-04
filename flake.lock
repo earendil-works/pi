@@ -1,0 +1,58 @@
+{
+  "nodes": {
+    "nixpkgs": {
+      "locked": {
+        "lastModified": 1788316716,
+        "narHash": "sha256-bc7rSpXIdn9QWGNqfWcPZWOhEVF8NoeAZkWq0XWnf/k=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "3ed67ec0a4d3c7ab4ae1f04f8ee8df07bfa506a2",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "ref": "nixos-unstable",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
+    "nixpkgs-darwin-x64": {
+      "locked": {
+        "lastModified": 1788334797,
+        "narHash": "sha256-nskSa8kDimM7F0VFSP8IdoSNo4G0vKzOtxwvOFpoGDI=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "c19db427a1fdfc7591c0b0baeb4665dcef2c61da",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "ref": "nixpkgs-26.05-darwin",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
+    "pi-source": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1788515858,
+        "narHash": "sha256-UVOAsKLb661PI3Q1WtJnzkSyI/UBUuBmYUeLLTJsu88=",
+        "type": "tarball",
+        "url": "https://github.com/earendil-works/pi/releases/download/v0.85.0/pi-0.85.0-source.tar.gz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://github.com/earendil-works/pi/releases/download/v0.85.0/pi-0.85.0-source.tar.gz"
+      }
+    },
+    "root": {
+      "inputs": {
+        "nixpkgs": "nixpkgs",
+        "nixpkgs-darwin-x64": "nixpkgs-darwin-x64",
+        "pi-source": "pi-source"
+      }
+    }
+  },
+  "root": "root",
+  "version": 7
+}

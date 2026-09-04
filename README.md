@@ -23,6 +23,14 @@ To learn more about Pi:
 * [Visit pi.dev](https://pi.dev), the project website with demos
 * [Read the documentation](https://pi.dev/docs/latest), but you can also ask the agent to explain itself
 
+## Run with Nix
+
+```bash
+nix run github:earendil-works/pi
+```
+
+The flake supports ARM64 and x86-64 on Linux and macOS. It builds the pinned Pi release from its official source archive and npm lockfile, and includes `fd` and `ripgrep` in Pi's runtime path.
+
 ## All Packages
 
 | Package | Description |

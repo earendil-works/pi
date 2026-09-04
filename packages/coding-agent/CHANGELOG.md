@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added a Nix flake for running Pi from pinned release sources on ARM64 and x86-64 Linux and macOS.
+
 ## [0.85.0] - 2026-09-04
 
 ### New Features
