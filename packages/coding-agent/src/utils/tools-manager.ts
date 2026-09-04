@@ -39,7 +39,7 @@ const TOOLS: Record<string, ToolConfig> = {
 				return `fd-v${version}-${archStr}-apple-darwin.tar.gz`;
 			} else if (plat === "linux") {
 				const archStr = architecture === "arm64" ? "aarch64" : "x86_64";
-				return `fd-v${version}-${archStr}-unknown-linux-gnu.tar.gz`;
+				return `fd-v${version}-${archStr}-unknown-linux-musl.tar.gz`;
 			} else if (plat === "win32") {
 				const archStr = architecture === "arm64" ? "aarch64" : "x86_64";
 				return `fd-v${version}-${archStr}-pc-windows-msvc.zip`;
@@ -57,10 +57,8 @@ const TOOLS: Record<string, ToolConfig> = {
 				const archStr = architecture === "arm64" ? "aarch64" : "x86_64";
 				return `ripgrep-${version}-${archStr}-apple-darwin.tar.gz`;
 			} else if (plat === "linux") {
-				if (architecture === "arm64") {
-					return `ripgrep-${version}-aarch64-unknown-linux-gnu.tar.gz`;
-				}
-				return `ripgrep-${version}-x86_64-unknown-linux-musl.tar.gz`;
+				const archStr = architecture === "arm64" ? "aarch64" : "x86_64";
+				return `ripgrep-${version}-${archStr}-unknown-linux-musl.tar.gz`;
 			} else if (plat === "win32") {
 				const archStr = architecture === "arm64" ? "aarch64" : "x86_64";
 				return `ripgrep-${version}-${archStr}-pc-windows-msvc.zip`;

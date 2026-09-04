@@ -1,6 +1,6 @@
 {
 	"name": "@earendil-works/chord",
-	"version": "0.84.4",
+	"version": "0.85.0",
 	"description": "Application composition runtime for services, replicated state, RPC, and plugins",
 	"type": "module",
 	"main": "./dist/index.js",
