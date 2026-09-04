@@ -1,5 +1,5 @@
 import type { Context } from "../../context.ts";
-import type { FileError, FileSystem, Result, TextLineReader } from "../../types.ts";
+import type { FileSystem, TextLineReader } from "../../types.ts";
 import type {
 	CommittedEntryWrite,
 	CommittedListAppendWrite,
@@ -9,12 +9,13 @@ import type {
 import { type ForkCurrentStatePlan, projectForkCurrentStateWrite, selectBranchFork } from "../fork-policy.ts";
 import type { ForkOptions } from "../types.ts";
 import { parseJsonlSessionHeader } from "./codec.ts";
-import { parseJsonlTransaction, serializeJsonlTransaction } from "./io.ts";
-import { JSONL_STORAGE_VERSION, type JsonlSessionMetadata, type JsonlStorageHeader } from "./types.ts";
+import { fileValue, parseJsonlTransaction, serializeJsonlTransaction } from "./io.ts";
+import { JSONL_STORAGE_VERSION, type JsonlStorageHeader } from "./types.ts";
 
-function fileValue<T>(result: Result<T, FileError>, action: string): T {
-	if (!result.ok) throw new Error(`${action}: ${result.error.message}`, { cause: result.error });
-	return result.value;
+interface JsonlForkSourceMetadata {
+	id: string;
+	cwd: string;
+	path: string;
 }
 
 function physicalKey(namespace: string, key: string): string {
@@ -23,7 +24,7 @@ function physicalKey(namespace: string, key: string): string {
 
 async function readJsonlForkHeader(
 	reader: TextLineReader,
-	source: JsonlSessionMetadata,
+	source: JsonlForkSourceMetadata,
 	context: Context,
 ): Promise<JsonlStorageHeader> {
 	const line = fileValue(await reader.readLine(context), `Failed to read JSONL fork source ${source.path}`);
@@ -59,7 +60,7 @@ function reachesForkBoundary(writes: readonly CommittedWrite[], stopBeforeSeq: n
 
 async function scanJsonlForkTransactions(
 	fileSystem: FileSystem,
-	source: JsonlSessionMetadata,
+	source: JsonlForkSourceMetadata,
 	stopBeforeSeq: number | undefined,
 	onTransaction: (writes: readonly CommittedWrite[]) => void | Promise<void>,
 	context: Context,
@@ -275,8 +276,8 @@ function projectJsonlForkWrite(
 }
 
 export type JsonlForkSource =
-	| { kind: "open"; metadata: JsonlSessionMetadata; nextSeq: number }
-	| { kind: "closed"; metadata: JsonlSessionMetadata };
+	| { kind: "open"; metadata: JsonlForkSourceMetadata; nextSeq: number }
+	| { kind: "closed"; metadata: JsonlForkSourceMetadata };
 
 export async function runJsonlFork(
 	options: {

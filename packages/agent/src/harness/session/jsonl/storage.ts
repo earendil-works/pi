@@ -1,9 +1,8 @@
 import type { Usage } from "@earendil-works/pi-ai";
 import { uuidv7 } from "@earendil-works/pi-ai/utils/uuid";
 import type { Context } from "../../context.ts";
-import type { FileError, FileSystem, Result } from "../../types.ts";
+import type { FileSystem } from "../../types.ts";
 import { insertUsage } from "../commit.ts";
-import { type ForkDestinationSnapshot, type ForkSourceSnapshot, forkSnapshotWrites } from "../fork.ts";
 import { type CommittedWrite, InMemoryStorageState } from "../in-memory-storage-state.ts";
 import type {
 	CommitResult,
@@ -19,14 +18,9 @@ import type {
 } from "../types.ts";
 import type { ListElement, ListReadOptions, StoredValue, Value, ValueList } from "../values.ts";
 import { type LegacyV3SessionHeader, parseJsonlSessionHeader } from "./codec.ts";
-import { parseJsonlTransaction, publishFileAtomically, serializeJsonlTransaction } from "./io.ts";
+import { fileValue, parseJsonlTransaction, publishFileAtomically, serializeJsonlTransaction } from "./io.ts";
 import { normalizeLegacyV3Header, normalizeLegacyV3Records } from "./legacy-v3.ts";
 import { JSONL_STORAGE_VERSION, type JsonlStorageHeader, type JsonlStorageOptions } from "./types.ts";
-
-function fileValue<T>(result: Result<T, FileError>, action: string): T {
-	if (!result.ok) throw new Error(`${action}: ${result.error.message}`, { cause: result.error });
-	return result.value;
-}
 
 function serializeStorage(header: JsonlStorageHeader, transactions: CommittedWrite[][]): string {
 	return `${[JSON.stringify(header), ...transactions.map(serializeJsonlTransaction)].join("\n")}\n`;
@@ -79,27 +73,6 @@ export class JsonlStorage implements Storage {
 		await publishFileAtomically(options.fileSystem, options.path, serializeStorage(header, transactions), context);
 		storage.storageState.applyValidated(prepared.writes);
 		return storage;
-	}
-
-	/** Atomically create storage from a complete prepared snapshot. */
-	static async createFromForkSnapshot(
-		options: JsonlStorageOptions,
-		header: JsonlStorageHeader,
-		snapshot: ForkDestinationSnapshot,
-		context: Context,
-	): Promise<JsonlStorage> {
-		const writes = forkSnapshotWrites(snapshot);
-		const snapshotHeader = { ...header, nextSeq: snapshot.nextSeq };
-		await publishFileAtomically(
-			options.fileSystem,
-			options.path,
-			serializeStorage(
-				snapshotHeader,
-				writes.map((write) => [write]),
-			),
-			context,
-		);
-		return JsonlStorage.open(options, context);
 	}
 
 	static async open(options: JsonlStorageOptions, context: Context): Promise<JsonlStorage> {
@@ -288,17 +261,6 @@ export class JsonlStorage implements Storage {
 	captureForkNextSeq(_context: Context): Promise<number> {
 		if (this.state !== "open") return Promise.reject(new Error("JsonlStorage is closed"));
 		const result = this.commitQueue.then(() => this.storageState.getNextSeq());
-		this.commitQueue = result.then(
-			() => undefined,
-			() => undefined,
-		);
-		return result;
-	}
-
-	/** Capture the state needed to fork at one serialized boundary between commits. */
-	captureForkSource(_context: Context): Promise<ForkSourceSnapshot> {
-		if (this.state !== "open") return Promise.reject(new Error("JsonlStorage is closed"));
-		const result = this.commitQueue.then(() => this.storageState.snapshotEntriesAndValues());
 		this.commitQueue = result.then(
 			() => undefined,
 			() => undefined,

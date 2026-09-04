@@ -10,7 +10,7 @@ import type {
 	CommittedWrite,
 } from "../commit.ts";
 
-function fileValue<T>(result: Result<T, FileError>, action: string): T {
+export function fileValue<T>(result: Result<T, FileError>, action: string): T {
 	if (!result.ok) throw new Error(`${action}: ${result.error.message}`, { cause: result.error });
 	return result.value;
 }

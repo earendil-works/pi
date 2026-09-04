@@ -382,11 +382,4 @@ export class InMemoryStorageState {
 	getNextSeq(): number {
 		return this.nextSeq;
 	}
-
-	snapshotEntriesAndValues(): { entries: Entry[]; scalarValues: StoredValue<unknown>[] } {
-		return {
-			entries: [...this.entries.values()].sort((left, right) => left.seq - right.seq),
-			scalarValues: [...this.scalarValues.values()],
-		};
-	}
 }

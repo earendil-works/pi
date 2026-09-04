@@ -9,6 +9,7 @@ import type { CommittedEntryWrite, CommittedValueSetWrite, CommittedWrite } from
 import type { JsonValue, LaneConfiguration } from "../types.ts";
 import { branchTip, entryLabel, laneConfig, laneState, sessionName } from "../values.ts";
 import { type LegacyV3SessionHeader, parseJsonlSessionHeader } from "./codec.ts";
+import { fileValue } from "./io.ts";
 import {
 	JSONL_FORMAT_VERSION,
 	JSONL_STORAGE_VERSION,
@@ -116,6 +117,12 @@ type LegacyV3Entry = RetainedLegacyV3Entry | DiscardedLegacyV3Entry;
 export interface NormalizedLegacyV3Records {
 	writes: CommittedWrite[];
 	importedUsage: Usage;
+	nextSeq: number;
+}
+
+export interface NormalizedLegacyV3Source {
+	header: JsonlStorageHeader;
+	writes: CommittedWrite[];
 	nextSeq: number;
 }
 
@@ -535,5 +542,60 @@ export function normalizeLegacyV3Records(recordLines: readonly string[]): Normal
 		writes,
 		importedUsage: aggregateImportedUsage(entries),
 		nextSeq: writes.length + 1,
+	};
+}
+
+// TODO: Share read-only complete-line and header parsing with JsonlStorage.open().
+async function readLegacyV3SourceLines(
+	fileSystem: FileSystem,
+	source: JsonlSessionMetadata,
+	context: Context,
+): Promise<{ header: LegacyV3SessionHeader; recordLines: string[] }> {
+	const reader = fileValue(
+		await fileSystem.openTextLineReader(source.path, context),
+		`Failed to open legacy v3 fork source ${source.path}`,
+	);
+	try {
+		const headerLine = fileValue(
+			await reader.readLine(context),
+			`Failed to read legacy v3 fork source ${source.path}`,
+		);
+		if (headerLine === undefined || !headerLine.terminated || headerLine.text === "") {
+			throw new Error(`Invalid legacy v3 JSONL storage ${source.path}: missing header`);
+		}
+		const parsed = parseJsonlSessionHeader(headerLine.text);
+		if (!parsed.ok || parsed.value.format !== "v3-legacy") {
+			throw new Error(`Invalid legacy v3 JSONL storage ${source.path}: expected format 3 header`, {
+				cause: parsed.ok ? undefined : parsed.error,
+			});
+		}
+		if (parsed.value.header.id !== source.id || parsed.value.header.cwd !== source.cwd) {
+			throw new Error(`Session identity does not match header: ${source.id}`);
+		}
+
+		const recordLines: string[] = [];
+		while (true) {
+			const line = fileValue(await reader.readLine(context), `Failed to read legacy v3 fork source ${source.path}`);
+			if (line === undefined || !line.terminated) break;
+			recordLines.push(line.text);
+		}
+		return { header: parsed.value.header, recordLines };
+	} finally {
+		await reader.close(context);
+	}
+}
+
+/** Read and normalize one closed legacy-v3 source without modifying it. */
+export async function readNormalizedLegacyV3Source(
+	fileSystem: FileSystem,
+	source: JsonlSessionMetadata,
+	context: Context,
+): Promise<NormalizedLegacyV3Source> {
+	const { header, recordLines } = await readLegacyV3SourceLines(fileSystem, source, context);
+	const { writes, nextSeq } = normalizeLegacyV3Records(recordLines);
+	return {
+		header: await normalizeLegacyV3Header(fileSystem, header, context),
+		writes,
+		nextSeq,
 	};
 }

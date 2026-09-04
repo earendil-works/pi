@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT } from "../../src/harness/context.ts";
 import { NodeExecutionEnv } from "../../src/harness/env/nodejs.ts";
 import * as sessionWrites from "../../src/harness/session/commit.ts";
-import type { ForkDestinationSnapshot } from "../../src/harness/session/fork.ts";
 import { JSONL_FORMAT_VERSION, JsonlStorage, type JsonlStorageHeader } from "../../src/harness/session/jsonl/index.ts";
 import * as storedValues from "../../src/harness/session/values.ts";
 import { getOrThrow } from "../../src/harness/types.ts";
@@ -20,106 +19,6 @@ function header(id: string): JsonlStorageHeader {
 		cwd: "/workspace",
 	};
 }
-
-function stored<T>(address: storedValues.Value<T>, value: T, seq: number): storedValues.StoredValue<unknown> {
-	return {
-		address: storedValues.value<unknown>(address.namespace, address.key),
-		value,
-		seq,
-	};
-}
-
-function preparedSnapshot(): ForkDestinationSnapshot {
-	return {
-		entries: new Map([
-			[
-				"root",
-				{
-					id: "root",
-					parentId: null,
-					type: "message",
-					message: { role: "user", content: "hello", timestamp: 1 },
-					seq: 1,
-					timestamp: NOW,
-				},
-			],
-		]),
-		scalarValues: [
-			stored(storedValues.branchTip("main"), "root", 2),
-			stored(storedValues.laneState("main"), { currentOperationId: null, lastOperationId: null, inbox: [] }, 3),
-			stored(storedValues.sessionName, "forked", 4),
-		],
-		nextSeq: 9,
-	};
-}
-
-describe("JsonlStorage snapshot creation", () => {
-	it("atomically publishes, advances, and reopens a prepared snapshot", async () => {
-		const fileSystem = new NodeExecutionEnv({ cwd: createTempDir() });
-		const options = { fileSystem, path: "fork.jsonl", now: () => NOW };
-		const storage = await JsonlStorage.createFromForkSnapshot(
-			options,
-			header("fork"),
-			preparedSnapshot(),
-			BACKGROUND_CONTEXT,
-		);
-
-		const lines = getOrThrow(await fileSystem.readTextFile("fork.jsonl", BACKGROUND_CONTEXT))
-			.trimEnd()
-			.split("\n");
-		expect(lines.slice(1).every((line) => !Array.isArray(JSON.parse(line)))).toBe(true);
-		expect((await storage.getEntries(["root"], BACKGROUND_CONTEXT)).get("root")?.timestamp).toBe(NOW);
-		expect((await storage.getValue(storedValues.branchTip("main"), BACKGROUND_CONTEXT))?.value).toBe("root");
-		expect((await storage.getValue(storedValues.laneState("main"), BACKGROUND_CONTEXT))?.value).toEqual({
-			currentOperationId: null,
-			lastOperationId: null,
-			inbox: [],
-		});
-		expect((await storage.getValue(storedValues.sessionName, BACKGROUND_CONTEXT))?.value).toBe("forked");
-		expect(await storage.getStats(BACKGROUND_CONTEXT)).toEqual({
-			messageCount: 1,
-			usage: {
-				input: 0,
-				output: 0,
-				cacheRead: 0,
-				cacheWrite: 0,
-				totalTokens: 0,
-				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-			},
-		});
-		expect(await storage.scanUsage({ order: "asc" }, BACKGROUND_CONTEXT)).toEqual([]);
-		expect(
-			(await storage.commit([storedValues.setValue(storedValues.sessionName, "updated")], BACKGROUND_CONTEXT))
-				.firstSeq,
-		).toBe(9);
-		expect(getOrThrow(await fileSystem.exists("fork.jsonl.tmp", BACKGROUND_CONTEXT))).toBe(false);
-		await storage.close(BACKGROUND_CONTEXT);
-
-		const reopened = await JsonlStorage.open(options, BACKGROUND_CONTEXT);
-		expect((await reopened.getEntries(["root"], BACKGROUND_CONTEXT)).has("root")).toBe(true);
-		expect((await reopened.getValue(storedValues.sessionName, BACKGROUND_CONTEXT))?.value).toBe("updated");
-		expect((await reopened.commit([], BACKGROUND_CONTEXT)).firstSeq).toBe(10);
-		await reopened.close(BACKGROUND_CONTEXT);
-	});
-
-	it("removes the temporary file when publication fails", async () => {
-		const fileSystem = new NodeExecutionEnv({ cwd: createTempDir() });
-		getOrThrow(await fileSystem.createDir("blocked.jsonl", undefined, BACKGROUND_CONTEXT));
-
-		await expect(
-			JsonlStorage.createFromForkSnapshot(
-				{ fileSystem, path: "blocked.jsonl", now: () => NOW },
-				header("blocked"),
-				preparedSnapshot(),
-				BACKGROUND_CONTEXT,
-			),
-		).rejects.toThrow("Failed to publish JSONL storage");
-		expect(getOrThrow(await fileSystem.exists("blocked.jsonl.tmp", BACKGROUND_CONTEXT))).toBe(false);
-		expect(getOrThrow(await fileSystem.fileInfo("blocked.jsonl", BACKGROUND_CONTEXT))).toMatchObject({
-			kind: "directory",
-		});
-	});
-});
 
 describe("JsonlStorage persistence", () => {
 	it("replays whole-list deletion without resurrecting earlier appends", async () => {
@@ -214,44 +113,6 @@ describe("JsonlStorage persistence", () => {
 		expect(next.firstSeq).toBe(5);
 		expect(next.stats).toEqual(historicalStats);
 		await reopened.close(BACKGROUND_CONTEXT);
-	});
-});
-
-describe("JsonlStorage snapshots", () => {
-	it("captures one serialized boundary between commits", async () => {
-		const fileSystem = new NodeExecutionEnv({ cwd: createTempDir() });
-		const options = { fileSystem, path: "session.jsonl", now: () => NOW };
-		const storage = await JsonlStorage.create(options, header("snapshot"), [], BACKGROUND_CONTEXT);
-
-		const firstCommit = storage.commit(
-			[
-				sessionWrites.insertEntry({ id: "root", parentId: null, type: "custom", customType: "root" }),
-				storedValues.setValue(storedValues.branchTip("main"), "root"),
-			],
-			BACKGROUND_CONTEXT,
-		);
-		const snapshot = storage.captureForkSource(BACKGROUND_CONTEXT);
-		const secondCommit = storage.commit(
-			[
-				sessionWrites.insertEntry({ id: "child", parentId: "root", type: "custom", customType: "child" }),
-				storedValues.setValue(storedValues.branchTip("main"), "child"),
-			],
-			BACKGROUND_CONTEXT,
-		);
-
-		await firstCommit;
-		const captured = await snapshot;
-		await secondCommit;
-
-		expect(captured.entries.map(({ id }) => id)).toEqual(["root"]);
-		expect(
-			captured.scalarValues.find(
-				({ address }) => address.namespace === storedValues.branchTip("main").namespace && address.key === "main",
-			)?.value,
-		).toBe("root");
-		expect((await storage.getEntries(["child"], BACKGROUND_CONTEXT)).has("child")).toBe(true);
-		expect((await storage.getValue(storedValues.branchTip("main"), BACKGROUND_CONTEXT))?.value).toBe("child");
-		await storage.close(BACKGROUND_CONTEXT);
 	});
 });
 

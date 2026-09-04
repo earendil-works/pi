@@ -1,4 +1,3 @@
-import type { CommittedWrite } from "./commit.ts";
 import { type ForkCurrentStatePlan, projectForkCurrentStateWrite, selectBranchFork } from "./fork-policy.ts";
 import type { Entry, ForkOptions } from "./types.ts";
 import { branchTip, laneConfig, laneState, type StoredValue, type Value, value } from "./values.ts";
@@ -61,22 +60,6 @@ export function createForkSnapshot(source: ForkSourceSnapshot, options: ForkOpti
 	}
 
 	return { entries, scalarValues, nextSeq };
-}
-
-export function forkSnapshotWrites(snapshot: ForkDestinationSnapshot): CommittedWrite[] {
-	const writes: CommittedWrite[] = [];
-	for (const entry of snapshot.entries.values()) writes.push({ kind: "entry", ...entry });
-	for (const stored of snapshot.scalarValues) {
-		writes.push({
-			kind: "value",
-			op: "set",
-			seq: stored.seq,
-			namespace: stored.address.namespace,
-			key: stored.address.key,
-			value: stored.value,
-		});
-	}
-	return writes.sort((left, right) => left.seq - right.seq);
 }
 
 function selectForkContents(
