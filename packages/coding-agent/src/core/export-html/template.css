@@ -588,8 +588,9 @@
     .diff-removed { color: var(--toolDiffRemoved); }
     .diff-context { color: var(--toolDiffContext); }
 
-    /* Model change */
-    .model-change {
+    /* State changes */
+    .model-change,
+    .system-prompt-change {
       padding: 0 var(--line-height);
       color: var(--dim);
       font-size: 11px;

@@ -340,6 +340,9 @@ class TreeList implements Component {
 			const entry = flatNode.node.entry;
 			const isCurrentLeaf = entry.id === this.currentLeafId;
 
+			// Prompt state is internal bookkeeping and is never selectable.
+			if (entry.type === "system_prompt") return false;
+
 			// Skip assistant messages with only tool calls (no text) unless error/aborted
 			// Always show current leaf so active position is visible
 			if (entry.type === "message" && entry.message.role === "assistant" && !isCurrentLeaf) {

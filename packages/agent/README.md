@@ -264,6 +264,8 @@ interface AgentState {
 
 Access state via `agent.state`.
 
+`systemPrompt` is the stable top-level provider baseline. Later instruction changes are appended to `messages` as `system` messages rather than folded into it, which keeps provider prompt caches valid.
+
 Assigning `agent.state.tools = [...]` or `agent.state.messages = [...]` copies the top-level array before storing it. Mutating the returned array mutates the current agent state.
 
 During streaming, `agent.state.streamingMessage` contains the current partial assistant message.

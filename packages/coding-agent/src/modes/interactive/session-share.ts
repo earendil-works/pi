@@ -31,7 +31,7 @@ export function exportSessionForShare(filePath: string, session: AgentSession): 
 			parentId,
 			timestamp,
 			data: {
-				systemPrompt: session.state.systemPrompt,
+				systemPrompt: session.systemPrompt,
 				tools: session.state.tools.map((tool) => ({
 					name: tool.name,
 					description: tool.description,

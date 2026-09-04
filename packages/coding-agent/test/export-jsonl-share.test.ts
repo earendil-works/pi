@@ -97,7 +97,7 @@ describe("JSONL share export", () => {
 				parentId: resultId,
 				timestamp: expect.any(String),
 			});
-			expect(shareEntry.data?.systemPrompt).toBe(session.state.systemPrompt);
+			expect(shareEntry.data?.systemPrompt).toBe(session.systemPrompt);
 			expect(shareEntry.data?.tools).toEqual([
 				expect.objectContaining({
 					name: "share_tool",

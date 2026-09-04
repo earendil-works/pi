@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 import type { Skill } from "../src/core/skills.ts";
 import { createSyntheticSourceInfo } from "../src/core/source-info.ts";
-import { buildSystemPrompt } from "../src/core/system-prompt.ts";
+import { buildSystemPrompt, normalizeBuildSystemPromptOptions } from "../src/core/system-prompt.ts";
 
 const testSkill: Skill = {
 	name: "test-skill",
@@ -37,8 +37,8 @@ describe("buildSystemPrompt", () => {
 		});
 	});
 
-	describe("default tools", () => {
-		test("includes all default tools when snippets are provided", () => {
+	describe("tool selection", () => {
+		test("does not infer active tools from available snippets", () => {
 			const prompt = buildSystemPrompt({
 				toolSnippets: {
 					read: "Read file contents",
@@ -46,15 +46,11 @@ describe("buildSystemPrompt", () => {
 					edit: "Make surgical edits",
 					write: "Create or overwrite files",
 				},
-				contextFiles: [],
-				skills: [],
 				cwd: process.cwd(),
 			});
 
-			expect(prompt).toContain("- read:");
-			expect(prompt).toContain("- bash:");
-			expect(prompt).toContain("- edit:");
-			expect(prompt).toContain("- write:");
+			expect(prompt).toContain("Available tools:\n(none)");
+			expect(prompt).not.toContain("- read:");
 		});
 
 		test.each([
@@ -112,6 +108,24 @@ describe("buildSystemPrompt", () => {
 		});
 	});
 
+	describe("custom sections", () => {
+		test("renders XML-wrapped sections in insertion order before the prompt tail", () => {
+			const prompt = buildSystemPrompt({
+				cwd: "/worktree",
+				sections: {
+					plan_mode: "Do not modify files.",
+					review_mode: "Review carefully.",
+				},
+				promptTail: "\n\nTail guidance.",
+			});
+
+			expect(prompt).toContain("Current working directory: /worktree");
+			expect(prompt).toContain("<plan_mode>\nDo not modify files.\n</plan_mode>");
+			expect(prompt.indexOf("<plan_mode>")).toBeLessThan(prompt.indexOf("<review_mode>"));
+			expect(prompt.endsWith("</review_mode>\n\nTail guidance.")).toBe(true);
+		});
+	});
+
 	describe("prompt guidelines", () => {
 		test("appends promptGuidelines to default guidelines", () => {
 			const prompt = buildSystemPrompt({
@@ -139,6 +153,15 @@ describe("buildSystemPrompt", () => {
 	});
 
 	describe("skills", () => {
+		test("clones skill objects before exposing prompt options", () => {
+			const skill = { ...testSkill };
+			const options = normalizeBuildSystemPromptOptions({ cwd: process.cwd(), skills: [skill] });
+			options.skills[0].description = "Changed description";
+			options.skills[0].disableModelInvocation = true;
+
+			expect(skill).toMatchObject({ description: "A test skill.", disableModelInvocation: false });
+		});
+
 		test.each([
 			{ name: "default prompt", customPrompt: undefined },
 			{ name: "custom prompt", customPrompt: "Custom system prompt" },

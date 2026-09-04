@@ -436,7 +436,7 @@ Built-in Anthropic models enable `supportsStrictTools` in their model metadata. 
 | `allowEmptySignature` | Whether to replay empty thinking signatures as `signature: ""` instead of converting thinking to text. Default: `false`. |
 | `supportsStrictTools` | Whether the provider accepts strict JSON-schema tool definitions. Default: `false`; built-in Anthropic models enable it in generated metadata. |
 | `supportsMidConvoSystemMessages` | Whether the model accepts `role: "system"` messages inside `messages`. Default: `false`; built-in Opus 4.8+, Fable, and Mythos models enable it in generated metadata. Models without it receive system messages as tagged user turns, so only set it on a faithful Anthropic Messages transport. |
-| `supportsMidConvoToolChanges` | Whether those system messages may carry `tool_addition` and `tool_removal` blocks (beta). Requires `supportsMidConvoSystemMessages`. Default: `false`; enabled alongside it in generated metadata. |
+| `supportsMidConvoToolChanges` | Whether those system messages may carry `tool_addition` and `tool_removal` blocks (beta). Requires `supportsMidConvoSystemMessages`. Pi delivers incremental prompt and tool loadout updates only when both flags are enabled. Default: `false`; enabled alongside it in generated metadata. |
 
 ## OpenAI Compatibility
 
