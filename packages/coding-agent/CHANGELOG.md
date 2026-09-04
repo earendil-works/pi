@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added `super+v` (Cmd+V) for clipboard image paste on macOS; `ctrl+v` keeps working as a fallback for terminals without Super-key reporting.
+
 ## [0.85.0] - 2026-09-04
 
 ### New Features

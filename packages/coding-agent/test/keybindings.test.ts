@@ -24,7 +24,9 @@ describe("Windows keybinding defaults", () => {
 		const windowsKeybindings = useWindowsKeybindings();
 		const nativeWindows = process.platform === "win32";
 
-		expect(KEYBINDINGS["app.clipboard.pasteImage"].defaultKeys).toBe(windowsKeybindings ? "alt+v" : "ctrl+v");
+		expect(KEYBINDINGS["app.clipboard.pasteImage"].defaultKeys).toEqual(
+			process.platform === "darwin" ? ["super+v", "ctrl+v"] : windowsKeybindings ? "alt+v" : "ctrl+v",
+		);
 		expect(KEYBINDINGS["tui.altScreen.search"].defaultKeys).toBe(windowsKeybindings ? "ctrl+f" : "ctrl+shift+f");
 		expect(KEYBINDINGS["app.message.followUp"].defaultKeys).toBe(windowsKeybindings ? "ctrl+q" : "alt+enter");
 		expect(KEYBINDINGS["app.model.cycleBackward"].defaultKeys).toBe(windowsKeybindings ? "alt+p" : "shift+ctrl+p");

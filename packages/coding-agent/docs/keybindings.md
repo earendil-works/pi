@@ -127,7 +127,7 @@ This routing remains configurable through the ordinary action bindings. For exam
 | `app.exit` | `ctrl+d` | Exit (when editor empty) |
 | `app.suspend` | `ctrl+z` (none on Windows) | Suspend to background |
 | `app.editor.external` | `ctrl+g` | Open in external editor (`externalEditor`, `$VISUAL`, `$EDITOR`, Notepad on Windows, or `nano` elsewhere) |
-| `app.clipboard.pasteImage` | `ctrl+v` (`alt+v` on Windows and WSL) | Paste image or text from clipboard |
+| `app.clipboard.pasteImage` | `ctrl+v` (plus `super+v` on macOS; `alt+v` on Windows and WSL) | Paste image or text from clipboard |
 
 ### Sessions
 
