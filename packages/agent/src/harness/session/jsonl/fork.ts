@@ -88,7 +88,7 @@ async function scanJsonlForkTransactions(
 class JsonlForkIndex {
 	private readonly currentScalarSeqs = new Map<string, number>();
 	private readonly branchTips = new Map<string, string | null>();
-	private readonly survivingListSeqs = new Map<string, Set<number>>();
+	private readonly firstSurvivingListSeqs = new Map<string, number>();
 	private readonly entryParents = new Map<string, string | null>();
 	private readonly copiedEntryIds = new Set<string>();
 	private readonly laneConfigs = new Set<string>();
@@ -112,16 +112,8 @@ class JsonlForkIndex {
 				}
 				case "list": {
 					const key = physicalKey(write.namespace, write.key);
-					if (write.op === "delete") {
-						this.survivingListSeqs.delete(key);
-					} else {
-						let sequences = this.survivingListSeqs.get(key);
-						if (sequences === undefined) {
-							sequences = new Set();
-							this.survivingListSeqs.set(key, sequences);
-						}
-						sequences.add(write.seq);
-					}
+					if (write.op === "delete") this.firstSurvivingListSeqs.delete(key);
+					else if (!this.firstSurvivingListSeqs.has(key)) this.firstSurvivingListSeqs.set(key, write.seq);
 					break;
 				}
 				case "usage":
@@ -157,7 +149,8 @@ class JsonlForkIndex {
 	}
 
 	isSurvivingListElement(namespace: string, key: string, seq: number): boolean {
-		return this.survivingListSeqs.get(physicalKey(namespace, key))?.has(seq) ?? false;
+		const firstSeq = this.firstSurvivingListSeqs.get(physicalKey(namespace, key));
+		return firstSeq !== undefined && seq >= firstSeq;
 	}
 
 	getParent(entryId: string): string | null | undefined {
