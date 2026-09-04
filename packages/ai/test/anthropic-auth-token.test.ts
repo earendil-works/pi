@@ -162,6 +162,7 @@ describe("Anthropic auth token env", () => {
 		expect(mockState.constructorOpts?.authToken).toBe("sk-ant-oat-test");
 		const headers = mockState.constructorOpts?.defaultHeaders as Record<string, string>;
 		expect(headers["anthropic-beta"]).toContain("oauth-2025-04-20");
+		expect(headers["user-agent"]).toBe("claude-cli/2.1.251");
 	});
 
 	it("lets explicit request headers override ANTHROPIC_AUTH_TOKEN", async () => {
