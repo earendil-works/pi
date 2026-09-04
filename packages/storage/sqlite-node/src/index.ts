@@ -61,7 +61,11 @@ class NodeSqliteDatabase implements SqliteDatabase {
 	}
 
 	async transaction<T>(fn: () => Promise<T>): Promise<T> {
-		this.db.exec("BEGIN");
+		// Acquire the write reservation before any reads in the transaction.
+		// With a deferred BEGIN, two WAL connections can both read and one will
+		// then fail immediately with SQLITE_BUSY_SNAPSHOT when upgrading to a
+		// writer; busy_timeout cannot safely retry that stale snapshot.
+		this.db.exec("BEGIN IMMEDIATE");
 		try {
 			const result = await fn();
 			this.db.exec("COMMIT");

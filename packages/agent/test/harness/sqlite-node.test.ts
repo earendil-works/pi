@@ -1,6 +1,7 @@
 import { join } from "node:path";
+import type { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
-import { createNodeSqliteFactory } from "../../../storage/sqlite-node/src/index.ts";
+import { createNodeSqliteFactory, wrapNodeSqliteDatabase } from "../../../storage/sqlite-node/src/index.ts";
 import { createTempDir } from "./session-test-utils.ts";
 
 describe("sqlite-node adapter", () => {
@@ -17,5 +18,19 @@ describe("sqlite-node adapter", () => {
 		} finally {
 			await db.close();
 		}
+	});
+
+	it("reserves the writer before transaction reads", async () => {
+		const commands: string[] = [];
+		const raw = {
+			exec(sql: string) {
+				commands.push(sql);
+			},
+		} as unknown as DatabaseSync;
+		const db = wrapNodeSqliteDatabase(raw);
+
+		await db.transaction(async () => "done");
+
+		expect(commands).toEqual(["BEGIN IMMEDIATE", "COMMIT"]);
 	});
 });
