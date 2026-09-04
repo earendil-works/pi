@@ -3,6 +3,7 @@ import type { AssistantMessage, StopReason } from "@earendil-works/pi-ai";
 import { BACKGROUND_CONTEXT } from "../../../context.ts";
 import { insertEntry, insertUsage } from "../../commit.ts";
 import type {
+	ForkOptions,
 	JsonValue,
 	LaneConfiguration,
 	LaneState,
@@ -14,6 +15,8 @@ import type {
 import {
 	appendList,
 	branchTip,
+	deleteList,
+	deleteValue,
 	entryLabel,
 	laneConfig,
 	laneState,
@@ -696,6 +699,508 @@ export function createSessionRepoForkBehaviorConformance<TMetadata extends Sessi
 			await Promise.all([tree.close(BACKGROUND_CONTEXT), branch.close(BACKGROUND_CONTEXT)]);
 		}),
 	];
+}
+
+/** WP08 cases enabled for Memory and JSONL while SQLite's streaming fork implementation is pending. */
+export function createSessionRepoStreamingForkConformance<TMetadata extends SessionMetadata>(
+	backendFactory: () => Promise<Pick<SessionRepo<TMetadata>, "create" | "fork">>,
+	onClose?: () => void | Promise<void>,
+): readonly ConformanceCase[] {
+	// Merge into createSessionRepoForkConformance once SQLite supports these cases.
+	return [
+		...createSessionRepoForkApplicationListConformance(backendFactory, onClose),
+		...createSessionRepoBranchForkApplicationStateConformance(backendFactory, onClose),
+		...createSessionRepoForkSequenceConformance(backendFactory, onClose),
+	];
+}
+
+/** Creates application-list fork cases. */
+function createSessionRepoForkApplicationListConformance<TMetadata extends SessionMetadata>(
+	backendFactory: () => Promise<Pick<SessionRepo<TMetadata>, "create" | "fork">>,
+	onClose?: () => void | Promise<void>,
+): readonly ConformanceCase[] {
+	const factory = prepareRepoCaseFactory(backendFactory, onClose);
+	return (["open", "closed"] as const).flatMap((sourceState) => [
+		createCase(
+			factory,
+			`fork application lists (${sourceState} source)`,
+			"tree fork copies lists at distinct addresses",
+			async ({ repo }) => {
+				// Each list keeps its own contents: keys "" and "other" in one namespace must not merge.
+				// A different namespace also stays separate; pi2.events is application-owned, not reserved.
+				const source = await repo.create({ id: "source" }, BACKGROUND_CONTEXT);
+				let fork: Session<TMetadata> | undefined;
+				try {
+					const events = list<string>("test.application.events");
+					const sibling = list<string>(events.namespace, "other");
+					const otherNamespace = list<string>("pi2.events");
+					const absent = list<string>(events.namespace, "absent");
+					await source.appendList(events, "event", BACKGROUND_CONTEXT);
+					await source.appendList(sibling, "sibling", BACKGROUND_CONTEXT);
+					await source.appendList(otherNamespace, "other namespace", BACKGROUND_CONTEXT);
+
+					if (sourceState === "closed") await source.close(BACKGROUND_CONTEXT);
+					fork = await repo.fork(source.metadata, { id: "fork", scope: "tree" }, BACKGROUND_CONTEXT);
+
+					deepStrictEqual(
+						(await fork.readList(events, undefined, BACKGROUND_CONTEXT)).map(({ value }) => value),
+						["event"],
+					);
+					deepStrictEqual(
+						(await fork.readList(sibling, undefined, BACKGROUND_CONTEXT)).map(({ value }) => value),
+						["sibling"],
+					);
+					deepStrictEqual(
+						(await fork.readList(otherNamespace, undefined, BACKGROUND_CONTEXT)).map(({ value }) => value),
+						["other namespace"],
+					);
+					deepStrictEqual(await fork.readList(absent, undefined, BACKGROUND_CONTEXT), []);
+				} finally {
+					await Promise.all([source.close(BACKGROUND_CONTEXT), fork?.close(BACKGROUND_CONTEXT)]);
+				}
+			},
+		),
+		createCase(
+			factory,
+			`fork application lists (${sourceState} source)`,
+			"tree fork copies only survivors after list deletion and reappend",
+			async ({ repo }) => {
+				// Append old -> delete -> append new must copy only new, even when changes share a transaction.
+				// A list deleted without a later append must remain empty in the fork.
+				const source = await repo.create({ id: "source" }, BACKGROUND_CONTEXT);
+				let fork: Session<TMetadata> | undefined;
+				try {
+					const events = list<string>("test.application.events");
+					const deleted = list<string>(events.namespace, "deleted");
+					await source.appendList(events, "old", BACKGROUND_CONTEXT);
+					await source.appendList(deleted, "removed", BACKGROUND_CONTEXT);
+					await source.mutate(
+						(mutator) =>
+							mutator.commit(
+								[
+									deleteList(events),
+									appendList(events, "temporary"),
+									deleteList(events),
+									appendList(events, "first survivor"),
+									deleteList(deleted),
+								],
+								BACKGROUND_CONTEXT,
+							),
+						BACKGROUND_CONTEXT,
+					);
+					await source.appendList(events, "second survivor", BACKGROUND_CONTEXT);
+
+					if (sourceState === "closed") await source.close(BACKGROUND_CONTEXT);
+					fork = await repo.fork(source.metadata, { id: "fork", scope: "tree" }, BACKGROUND_CONTEXT);
+
+					deepStrictEqual(
+						(await fork.readList(events, undefined, BACKGROUND_CONTEXT)).map(({ value }) => value),
+						["first survivor", "second survivor"],
+					);
+					deepStrictEqual(await fork.readList(deleted, undefined, BACKGROUND_CONTEXT), []);
+				} finally {
+					await Promise.all([source.close(BACKGROUND_CONTEXT), fork?.close(BACKGROUND_CONTEXT)]);
+				}
+			},
+		),
+		createCase(
+			factory,
+			`fork application lists (${sourceState} source)`,
+			"tree fork preserves list element sequences including gaps",
+			async ({ repo }) => {
+				// Other writes consume sequences too. List elements at seq 2 and 4 must stay at 2 and 4
+				// in the fork, not be renumbered to 1 and 2.
+				const source = await repo.create({ id: "source" }, BACKGROUND_CONTEXT);
+				let fork: Session<TMetadata> | undefined;
+				try {
+					const events = list<string>("test.application.events");
+					const committed = await source.mutate(
+						(mutator) =>
+							mutator.commit(
+								[
+									setValue(sessionName, "before"),
+									appendList(events, "first"),
+									setValue(sessionName, "between"),
+									appendList(events, "second"),
+								],
+								BACKGROUND_CONTEXT,
+							),
+						BACKGROUND_CONTEXT,
+					);
+
+					if (sourceState === "closed") await source.close(BACKGROUND_CONTEXT);
+					fork = await repo.fork(source.metadata, { id: "fork", scope: "tree" }, BACKGROUND_CONTEXT);
+
+					deepStrictEqual(await fork.readList(events, undefined, BACKGROUND_CONTEXT), [
+						{ seq: committed.seqs[1]!, value: "first" },
+						{ seq: committed.seqs[3]!, value: "second" },
+					]);
+				} finally {
+					await Promise.all([source.close(BACKGROUND_CONTEXT), fork?.close(BACKGROUND_CONTEXT)]);
+				}
+			},
+		),
+		...(["asc", "desc"] as const).map((order) =>
+			createCase(
+				factory,
+				`fork application lists (${sourceState} source)`,
+				`tree fork continues ${order} pagination using source cursors`,
+				async ({ repo }) => {
+					// A cursor from the source must resume at the same place in the fork. After reading
+					// [first, second] ascending, continue with [third]; descending does the reverse.
+					// Continuing after the final element must return an empty page, not repeat that element.
+					const source = await repo.create({ id: "source" }, BACKGROUND_CONTEXT);
+					let fork: Session<TMetadata> | undefined;
+					try {
+						const events = list<string>("test.application.events");
+						for (const item of ["first", "second", "third"]) {
+							await source.appendList(events, item, BACKGROUND_CONTEXT);
+						}
+						const firstPage = await source.readList(events, { order, limit: 2 }, BACKGROUND_CONTEXT);
+						strictEqual(firstPage.length, 2);
+						const cursor = { seq: firstPage[1]!.seq };
+						const lastPage = await source.readList(events, { order, cursor, limit: 2 }, BACKGROUND_CONTEXT);
+						deepStrictEqual(
+							lastPage.map(({ value }) => value),
+							[order === "asc" ? "third" : "first"],
+						);
+						const endCursor = { seq: lastPage[0]!.seq };
+
+						if (sourceState === "closed") await source.close(BACKGROUND_CONTEXT);
+						fork = await repo.fork(source.metadata, { id: "fork", scope: "tree" }, BACKGROUND_CONTEXT);
+
+						deepStrictEqual(await fork.readList(events, { order, limit: 2 }, BACKGROUND_CONTEXT), firstPage);
+						deepStrictEqual(
+							await fork.readList(events, { order, cursor, limit: 2 }, BACKGROUND_CONTEXT),
+							lastPage,
+						);
+						deepStrictEqual(
+							await fork.readList(events, { order, cursor: endCursor, limit: 2 }, BACKGROUND_CONTEXT),
+							[],
+						);
+					} finally {
+						await Promise.all([source.close(BACKGROUND_CONTEXT), fork?.close(BACKGROUND_CONTEXT)]);
+					}
+				},
+			),
+		),
+	]);
+}
+
+/** Creates branch application-state cases. */
+function createSessionRepoBranchForkApplicationStateConformance<TMetadata extends SessionMetadata>(
+	backendFactory: () => Promise<Pick<SessionRepo<TMetadata>, "create" | "fork">>,
+	onClose?: () => void | Promise<void>,
+): readonly ConformanceCase[] {
+	const factory = prepareRepoCaseFactory(backendFactory, onClose);
+	return (["open", "closed"] as const).flatMap((sourceState) => [
+		createCase(
+			factory,
+			`branch fork application state (${sourceState} source)`,
+			"excludes overwritten and unchanged application values",
+			async ({ repo }) => {
+				// WP08 §1.1: set v1 -> fork point -> overwrite with v2. A branch fork copies neither
+				// version: it cannot reconstruct v1 and must not copy v2. Even unchanged older values
+				// are excluded, so filtering current values by the fork point's sequence is not enough.
+				const source = await repo.create({ id: "source" }, BACKGROUND_CONTEXT);
+				let fork: Session<TMetadata> | undefined;
+				try {
+					const state = value<string>("test.application.state");
+					const unchanged = value<string>("test.application.settings");
+					const branch = await source.createBranch("review", null, BACKGROUND_CONTEXT);
+					await source.mutate(
+						(mutator) =>
+							mutator.commit(
+								[
+									setValue(laneConfig("review"), configuration),
+									setValue(laneState("review"), idleLaneState),
+									setValue(state, "v1"),
+									setValue(unchanged, "predates fork point"),
+								],
+								BACKGROUND_CONTEXT,
+							),
+						BACKGROUND_CONTEXT,
+					);
+					const entryId = await branch.appendCustomEntry("fork-point", undefined, BACKGROUND_CONTEXT);
+					await source.setValue(state, "v2", BACKGROUND_CONTEXT);
+					strictEqual((await source.getValue(state, BACKGROUND_CONTEXT))?.value, "v2");
+
+					if (sourceState === "closed") await source.close(BACKGROUND_CONTEXT);
+					fork = await repo.fork(
+						source.metadata,
+						{ scope: "branch", branch: "review", entryId },
+						BACKGROUND_CONTEXT,
+					);
+
+					strictEqual(await getBranchTip(fork, "review"), entryId);
+					strictEqual(await fork.getValue(state, BACKGROUND_CONTEXT), undefined);
+					// A survivor older than the fork point must also be excluded, not copied by a seq cutoff.
+					strictEqual(await fork.getValue(unchanged, BACKGROUND_CONTEXT), undefined);
+				} finally {
+					await Promise.all([source.close(BACKGROUND_CONTEXT), fork?.close(BACKGROUND_CONTEXT)]);
+				}
+			},
+		),
+		createCase(
+			factory,
+			`branch fork application state (${sourceState} source)`,
+			"excludes deleted/reappended and untouched application lists",
+			async ({ repo }) => {
+				// WP08 §1.1: append old -> fork point -> delete -> append new. A branch fork copies
+				// neither the deleted elements nor the new ones. A separate untouched list is also
+				// excluded, even though its elements still survive from before the fork point.
+				const source = await repo.create({ id: "source" }, BACKGROUND_CONTEXT);
+				let fork: Session<TMetadata> | undefined;
+				try {
+					const events = list<string>("test.application.events");
+					const untouched = list<string>(events.namespace, "untouched");
+					const branch = await source.createBranch("review", null, BACKGROUND_CONTEXT);
+					await source.mutate(
+						(mutator) =>
+							mutator.commit(
+								[
+									setValue(laneConfig("review"), configuration),
+									setValue(laneState("review"), idleLaneState),
+									appendList(events, "old first"),
+									appendList(events, "old second"),
+									appendList(untouched, "predates fork point"),
+								],
+								BACKGROUND_CONTEXT,
+							),
+						BACKGROUND_CONTEXT,
+					);
+					const entryId = await branch.appendCustomEntry("fork-point", undefined, BACKGROUND_CONTEXT);
+					await source.deleteList(events, BACKGROUND_CONTEXT);
+					await source.appendList(events, "new", BACKGROUND_CONTEXT);
+					deepStrictEqual(
+						(await source.readList(events, undefined, BACKGROUND_CONTEXT)).map(({ value }) => value),
+						["new"],
+					);
+
+					if (sourceState === "closed") await source.close(BACKGROUND_CONTEXT);
+					fork = await repo.fork(
+						source.metadata,
+						{ scope: "branch", branch: "review", entryId },
+						BACKGROUND_CONTEXT,
+					);
+
+					strictEqual(await getBranchTip(fork, "review"), entryId);
+					deepStrictEqual(await fork.readList(events, undefined, BACKGROUND_CONTEXT), []);
+					// Even elements still surviving from before the fork point are excluded.
+					deepStrictEqual(await fork.readList(untouched, undefined, BACKGROUND_CONTEXT), []);
+				} finally {
+					await Promise.all([source.close(BACKGROUND_CONTEXT), fork?.close(BACKGROUND_CONTEXT)]);
+				}
+			},
+		),
+	]);
+}
+
+async function createConfiguredForkSource<TMetadata extends SessionMetadata>(
+	repo: Pick<SessionRepo<TMetadata>, "create">,
+) {
+	const source = await repo.create({ id: "source" }, BACKGROUND_CONTEXT);
+	try {
+		const branch = await source.createBranch("review", null, BACKGROUND_CONTEXT);
+		await source.mutate(
+			(mutator) =>
+				mutator.commit(
+					[setValue(laneConfig("review"), configuration), setValue(laneState("review"), idleLaneState)],
+					BACKGROUND_CONTEXT,
+				),
+			BACKGROUND_CONTEXT,
+		);
+		return { source, branch };
+	} catch (error) {
+		await source.close(BACKGROUND_CONTEXT);
+		throw error;
+	}
+}
+
+/** Creates focused sequence-preservation cases for both fork scopes. */
+function createSessionRepoForkSequenceConformance<TMetadata extends SessionMetadata>(
+	backendFactory: () => Promise<Pick<SessionRepo<TMetadata>, "create" | "fork">>,
+	onClose?: () => void | Promise<void>,
+): readonly ConformanceCase[] {
+	const factory = prepareRepoCaseFactory(backendFactory, onClose);
+	return (["open", "closed"] as const).flatMap((sourceState) =>
+		(["branch", "tree"] as const).flatMap((scope) => {
+			const options: ForkOptions = scope === "branch" ? { scope, branch: "review" } : { scope };
+			const group = `fork sequences (${scope}, ${sourceState} source)`;
+			return [
+				createCase(factory, group, "preserves entry sequences including gaps", async ({ repo }) => {
+					// Entries at seq 4 and 7 must keep those sequences, not become entries 1 and 2.
+					// Compare the complete entries so their ids, parents, timestamps, and payloads also stay unchanged.
+					const { source, branch } = await createConfiguredForkSource(repo);
+					let fork: Session<TMetadata> | undefined;
+					try {
+						await branch.appendCustomEntry("first", { payload: 1 }, BACKGROUND_CONTEXT);
+						await source.setName("gap between entries", BACKGROUND_CONTEXT);
+						await branch.appendMessage({ role: "user", content: "second", timestamp: 1 }, BACKGROUND_CONTEXT);
+						const entries = await source.findEntries({ order: "asc" }, BACKGROUND_CONTEXT);
+						strictEqual(entries.length, 2);
+
+						if (sourceState === "closed") await source.close(BACKGROUND_CONTEXT);
+						fork = await repo.fork(source.metadata, options, BACKGROUND_CONTEXT);
+
+						deepStrictEqual(await fork.findEntries({ order: "asc" }, BACKGROUND_CONTEXT), entries);
+					} finally {
+						await Promise.all([source.close(BACKGROUND_CONTEXT), fork?.close(BACKGROUND_CONTEXT)]);
+					}
+				}),
+				...[
+					{ name: "session name", write: setValue(sessionName, "current name") },
+					{ name: "entry label", write: setValue(entryLabel(ROOT_ID), "current label") },
+					{ name: "lane configuration", write: setValue(laneConfig("review"), configuration) },
+					...(scope === "tree"
+						? [{ name: "application value", write: setValue(applicationValue, { current: true }) }]
+						: []),
+				].map(({ name, write }) =>
+					createCase(factory, group, `preserves the current ${name} row's sequence`, async ({ repo }) => {
+						// A value set at seq 6 and again at seq 8 must be copied at seq 8, even if its content
+						// did not change. Do not reuse the first set's sequence or allocate a new one.
+						const { source } = await createConfiguredForkSource(repo);
+						let fork: Session<TMetadata> | undefined;
+						try {
+							await source.mutate(
+								(mutator) =>
+									mutator.commit(
+										[
+											insertEntry({ id: ROOT_ID, parentId: null, type: "custom", customType: "root" }),
+											setValue(branchTip("review"), ROOT_ID),
+											write,
+										],
+										BACKGROUND_CONTEXT,
+									),
+								BACKGROUND_CONTEXT,
+							);
+							const replacement = await source.mutate(
+								(mutator) => mutator.commit([insertUsage(usageRow()), write], BACKGROUND_CONTEXT),
+								BACKGROUND_CONTEXT,
+							);
+							const address = value<unknown>(write.namespace, write.key);
+
+							if (sourceState === "closed") await source.close(BACKGROUND_CONTEXT);
+							fork = await repo.fork(source.metadata, options, BACKGROUND_CONTEXT);
+
+							deepStrictEqual(await fork.getValue(address, BACKGROUND_CONTEXT), {
+								address,
+								value: write.value,
+								seq: replacement.seqs[1]!,
+							});
+						} finally {
+							await Promise.all([source.close(BACKGROUND_CONTEXT), fork?.close(BACKGROUND_CONTEXT)]);
+						}
+					}),
+				),
+				createCase(factory, group, "reuses the current tip row's sequence", async ({ repo }) => {
+					// The current tip names the child at seq 7. Rewinding a branch fork to the root changes
+					// that value but keeps seq 7, not the root's old tip sequence. A tree fork keeps both unchanged.
+					const { source, branch } = await createConfiguredForkSource(repo);
+					let fork: Session<TMetadata> | undefined;
+					try {
+						const rootId = await branch.appendCustomEntry("root", undefined, BACKGROUND_CONTEXT);
+						const childId = await branch.appendCustomEntry("child", undefined, BACKGROUND_CONTEXT);
+						const tip = await source.getValue(branchTip("review"), BACKGROUND_CONTEXT);
+						if (tip === undefined) throw new Error("Expected source tip");
+
+						if (sourceState === "closed") await source.close(BACKGROUND_CONTEXT);
+						fork = await repo.fork(
+							source.metadata,
+							scope === "branch" ? { scope, branch: "review", entryId: childId, position: "before" } : options,
+							BACKGROUND_CONTEXT,
+						);
+
+						deepStrictEqual(await fork.getValue(branchTip("review"), BACKGROUND_CONTEXT), {
+							...tip,
+							value: scope === "branch" ? rootId : childId,
+						});
+					} finally {
+						await Promise.all([source.close(BACKGROUND_CONTEXT), fork?.close(BACKGROUND_CONTEXT)]);
+					}
+				}),
+				createCase(
+					factory,
+					group,
+					"reuses the current lane-state sequence for fresh idle state",
+					async ({ repo }) => {
+						// Source lane state at seq 4 remembers a previous operation. The fork clears that memory
+						// but stores the fresh idle state at seq 4, not the initial state's seq 3 or a new sequence.
+						const { source } = await createConfiguredForkSource(repo);
+						let fork: Session<TMetadata> | undefined;
+						try {
+							const address = laneState("review");
+							const replacement = await source.mutate(
+								(mutator) =>
+									mutator.commit(
+										[
+											setValue(address, {
+												currentOperationId: null,
+												lastOperationId: OPERATION_ID,
+												inbox: [],
+											}),
+										],
+										BACKGROUND_CONTEXT,
+									),
+								BACKGROUND_CONTEXT,
+							);
+
+							if (sourceState === "closed") await source.close(BACKGROUND_CONTEXT);
+							fork = await repo.fork(source.metadata, options, BACKGROUND_CONTEXT);
+
+							deepStrictEqual(await fork.getValue(address, BACKGROUND_CONTEXT), {
+								address,
+								value: idleLaneState,
+								seq: replacement.firstSeq,
+							});
+						} finally {
+							await Promise.all([source.close(BACKGROUND_CONTEXT), fork?.close(BACKGROUND_CONTEXT)]);
+						}
+					},
+				),
+				...[
+					{ name: "excluded usage", writes: [insertUsage(usageRow())] },
+					{
+						name: "scalar deletion",
+						writes: [setValue(applicationValue, "removed"), deleteValue(applicationValue)],
+					},
+					{ name: "list deletion", writes: [appendList(applicationList, "removed"), deleteList(applicationList)] },
+				].map(({ name, writes }) =>
+					createCase(
+						factory,
+						group,
+						`first fork write preserves source next sequence after ${name}`,
+						async ({ repo }) => {
+							// The fork must not reuse sequences from source writes it omits. For example, if the
+							// source ends with a list deletion at seq 10, the fork's first new write must use seq 11.
+							const { source } = await createConfiguredForkSource(repo);
+							let fork: Session<TMetadata> | undefined;
+							try {
+								const tail = await source.mutate(
+									(mutator) => mutator.commit(writes, BACKGROUND_CONTEXT),
+									BACKGROUND_CONTEXT,
+								);
+								const nextSeq = tail.seqs.at(-1)! + 1;
+
+								if (sourceState === "closed") await source.close(BACKGROUND_CONTEXT);
+								fork = await repo.fork(source.metadata, options, BACKGROUND_CONTEXT);
+								const committed = await fork.mutate(
+									(mutator) =>
+										mutator.commit([setValue(sessionName, "first destination write")], BACKGROUND_CONTEXT),
+									BACKGROUND_CONTEXT,
+								);
+
+								strictEqual(committed.firstSeq, nextSeq);
+								deepStrictEqual(committed.seqs, [nextSeq]);
+							} finally {
+								await Promise.all([source.close(BACKGROUND_CONTEXT), fork?.close(BACKGROUND_CONTEXT)]);
+							}
+						},
+					),
+				),
+			];
+		}),
+	);
 }
 
 /** Creates fork cases that require destination reservation across create and fork. */
