@@ -1,12 +1,13 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { constants, createReadStream, createWriteStream, type WriteStream } from "node:fs";
+import { constants, createWriteStream, type WriteStream } from "node:fs";
 import {
 	access,
 	appendFile,
 	lstat,
 	mkdir,
 	mkdtemp,
+	open as openFile,
 	readdir,
 	readFile,
 	realpath,
@@ -16,7 +17,6 @@ import {
 } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { basename, isAbsolute, join, resolve } from "node:path";
-import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import type { Context } from "../context.ts";
 import {
@@ -30,6 +30,7 @@ import {
 	type Result,
 	type ShellExecOptions,
 	type ShellExecResult,
+	type TextLineReader,
 	toError,
 } from "../types.ts";
 import { OutputCapture } from "../utils/output-capture.ts";
@@ -359,6 +360,66 @@ function waitForChildProcess(child: ChildProcess, spillIsDraining: () => boolean
 	});
 }
 
+/** Strict LF reader; Node readline does not report whether its final line was newline-terminated. */
+class NodeTextLineReader implements TextLineReader {
+	private readonly file: Awaited<ReturnType<typeof openFile>>;
+	private readonly path: string;
+	private readonly decoder = new TextDecoder();
+	private readonly chunk = new Uint8Array(64 * 1024);
+	private buffered = "";
+	private ended = false;
+	private closed = false;
+
+	constructor(file: Awaited<ReturnType<typeof openFile>>, path: string) {
+		this.file = file;
+		this.path = path;
+	}
+
+	async readLine(context: Context): Promise<Result<{ text: string; terminated: boolean } | undefined, FileError>> {
+		const aborted = abortResult<{ text: string; terminated: boolean } | undefined>(context.abortSignal, this.path);
+		if (aborted) return aborted;
+		if (this.closed) return err(new FileError("invalid", "Text line reader is closed", this.path));
+
+		try {
+			while (true) {
+				const newline = this.buffered.indexOf("\n");
+				if (newline !== -1) {
+					const text = this.buffered.slice(0, newline).replace(/\r$/, "");
+					this.buffered = this.buffered.slice(newline + 1);
+					return ok({ text, terminated: true });
+				}
+				if (this.ended) {
+					if (this.buffered.length === 0) return ok(undefined);
+					const text = this.buffered;
+					this.buffered = "";
+					return ok({ text, terminated: false });
+				}
+
+				const { bytesRead } = await this.file.read(this.chunk, 0, this.chunk.length, null);
+				const afterReadAbort = abortResult<{ text: string; terminated: boolean } | undefined>(
+					context.abortSignal,
+					this.path,
+				);
+				if (afterReadAbort) return afterReadAbort;
+				if (bytesRead === 0) {
+					this.buffered += this.decoder.decode();
+					this.ended = true;
+				} else {
+					this.buffered += this.decoder.decode(this.chunk.subarray(0, bytesRead), { stream: true });
+				}
+			}
+		} catch (error) {
+			return err(toFileError(error, this.path));
+		}
+	}
+
+	async close(_context: Context): Promise<void> {
+		if (this.closed) return;
+		this.closed = true;
+		await this.file.close().catch(() => undefined);
+	}
+}
+
 export class NodeExecutionEnv implements ExecutionEnv {
 	cwd: string;
 	private shellPath?: string;
@@ -616,6 +677,23 @@ export class NodeExecutionEnv implements ExecutionEnv {
 		});
 	}
 
+	async openTextLineReader(path: string, context: Context): Promise<Result<TextLineReader, FileError>> {
+		const resolved = resolvePath(this.cwd, path);
+		const aborted = abortResult<TextLineReader>(context.abortSignal, resolved);
+		if (aborted) return aborted;
+		try {
+			const file = await openFile(resolved, "r");
+			const afterOpenAbort = abortResult<TextLineReader>(context.abortSignal, resolved);
+			if (afterOpenAbort) {
+				await file.close().catch(() => undefined);
+				return afterOpenAbort;
+			}
+			return ok(new NodeTextLineReader(file, resolved));
+		} catch (error) {
+			return err(toFileError(error, resolved));
+		}
+	}
+
 	async readTextFile(path: string, context: Context): Promise<Result<string, FileError>> {
 		const resolved = resolvePath(this.cwd, path);
 		const signal = context.abortSignal;
@@ -633,31 +711,20 @@ export class NodeExecutionEnv implements ExecutionEnv {
 		options: { maxLines?: number } | undefined,
 		context: Context,
 	): Promise<Result<string[], FileError>> {
-		const resolved = resolvePath(this.cwd, path);
-		const signal = context.abortSignal;
-		const aborted = abortResult<string[]>(signal, resolved);
-		if (aborted) return aborted;
 		if (options?.maxLines !== undefined && options.maxLines <= 0) return ok([]);
-		let stream: ReturnType<typeof createReadStream> | undefined;
-		let lineReader: ReturnType<typeof createInterface> | undefined;
+		const opened = await this.openTextLineReader(path, context);
+		if (!opened.ok) return opened;
+		const lines: string[] = [];
 		try {
-			stream = createReadStream(resolved, { encoding: "utf8", signal });
-			lineReader = createInterface({ input: stream, crlfDelay: Infinity });
-			const lines: string[] = [];
-			for await (const line of lineReader) {
-				const loopAbort = abortResult<string[]>(signal, resolved);
-				if (loopAbort) return loopAbort;
-				lines.push(line);
-				if (options?.maxLines !== undefined && lines.length >= options.maxLines) break;
+			while (options?.maxLines === undefined || lines.length < options.maxLines) {
+				const line = await opened.value.readLine(context);
+				if (!line.ok) return line;
+				if (line.value === undefined) break;
+				lines.push(line.value.text);
 			}
-			const afterReadAbort = abortResult<string[]>(signal, resolved);
-			if (afterReadAbort) return afterReadAbort;
 			return ok(lines);
-		} catch (error) {
-			return err(toFileError(error, resolved));
 		} finally {
-			lineReader?.close();
-			stream?.destroy();
+			await opened.value.close(context);
 		}
 	}
 

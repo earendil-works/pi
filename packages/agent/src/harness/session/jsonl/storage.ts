@@ -4,16 +4,7 @@ import type { Context } from "../../context.ts";
 import type { FileError, FileSystem, Result } from "../../types.ts";
 import { insertUsage } from "../commit.ts";
 import { type ForkDestinationSnapshot, type ForkSourceSnapshot, forkSnapshotWrites } from "../fork.ts";
-import {
-	type CommittedEntryWrite,
-	type CommittedListAppendWrite,
-	type CommittedListDeleteWrite,
-	type CommittedUsageWrite,
-	type CommittedValueDeleteWrite,
-	type CommittedValueSetWrite,
-	type CommittedWrite,
-	InMemoryStorageState,
-} from "../in-memory-storage-state.ts";
+import { type CommittedWrite, InMemoryStorageState } from "../in-memory-storage-state.ts";
 import type {
 	CommitResult,
 	Entry,
@@ -28,6 +19,7 @@ import type {
 } from "../types.ts";
 import type { ListElement, ListReadOptions, StoredValue, Value, ValueList } from "../values.ts";
 import { type LegacyV3SessionHeader, parseJsonlSessionHeader } from "./codec.ts";
+import { parseJsonlTransaction, publishFileAtomically, serializeJsonlTransaction } from "./io.ts";
 import { normalizeLegacyV3Header, normalizeLegacyV3Records } from "./legacy-v3.ts";
 import { JSONL_STORAGE_VERSION, type JsonlStorageHeader, type JsonlStorageOptions } from "./types.ts";
 
@@ -36,52 +28,8 @@ function fileValue<T>(result: Result<T, FileError>, action: string): T {
 	return result.value;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function requireSafeInteger(value: unknown, field: string, minimum: number): void {
-	if (!Number.isSafeInteger(value) || (value as number) < minimum) throw new Error(`Invalid JSONL ${field}`);
-}
-
-function parseCommittedWrite(value: unknown): CommittedWrite {
-	if (!isRecord(value)) throw new Error("Invalid JSONL transaction write");
-	requireSafeInteger(value.seq, "write seq", 1);
-	switch (value.kind) {
-		case "entry":
-			requireSafeInteger(value.timestamp, "entry timestamp", 0);
-			return value as unknown as CommittedEntryWrite;
-		case "usage":
-			return value as unknown as CommittedUsageWrite;
-		case "value":
-			if (value.op === "set") return value as unknown as CommittedValueSetWrite;
-			if (value.op === "delete") return value as unknown as CommittedValueDeleteWrite;
-			throw new Error(`Invalid JSONL value operation: ${String(value.op)}`);
-		case "list":
-			if (value.op === "append") return value as unknown as CommittedListAppendWrite;
-			if (value.op === "delete") return value as unknown as CommittedListDeleteWrite;
-			throw new Error(`Invalid JSONL list operation: ${String(value.op)}`);
-		default:
-			throw new Error(`Invalid JSONL write kind: ${String(value.kind)}`);
-	}
-}
-
-function parseTransaction(line: string): CommittedWrite[] {
-	let value: unknown;
-	try {
-		value = JSON.parse(line);
-	} catch (error) {
-		throw new Error("Invalid JSONL transaction: not valid JSON", { cause: error });
-	}
-	return (Array.isArray(value) ? value : [value]).map(parseCommittedWrite);
-}
-
-function serializeTransaction(writes: CommittedWrite[]): string {
-	return JSON.stringify(writes.length === 1 ? writes[0] : writes);
-}
-
 function serializeStorage(header: JsonlStorageHeader, transactions: CommittedWrite[][]): string {
-	return `${[JSON.stringify(header), ...transactions.map(serializeTransaction)].join("\n")}\n`;
+	return `${[JSON.stringify(header), ...transactions.map(serializeJsonlTransaction)].join("\n")}\n`;
 }
 
 function splitCompleteLines(content: string): { lines: string[]; torn: boolean } {
@@ -89,28 +37,6 @@ function splitCompleteLines(content: string): { lines: string[]; torn: boolean }
 	const lastNewline = content.lastIndexOf("\n");
 	if (lastNewline === -1) return { lines: [], torn: true };
 	return { lines: content.slice(0, lastNewline).split("\n"), torn: true };
-}
-
-async function publishFileAtomically(
-	fileSystem: FileSystem,
-	destinationPath: string,
-	content: string,
-	context: Context,
-): Promise<void> {
-	const tempPath = `${destinationPath}.tmp`;
-	try {
-		fileValue(
-			await fileSystem.writeFile(tempPath, content, context),
-			`Failed to stage JSONL storage ${destinationPath}`,
-		);
-		fileValue(
-			await fileSystem.renameFile(tempPath, destinationPath, context),
-			`Failed to publish JSONL storage ${destinationPath}`,
-		);
-	} catch (error) {
-		await fileSystem.remove(tempPath, { force: true }, context);
-		throw error;
-	}
 }
 
 type LegacyV3Backing = {
@@ -201,7 +127,7 @@ export class JsonlStorage implements Storage {
 		for (let index = 1; index < lines.length; index++) {
 			const line = lines[index]!;
 			try {
-				storage.replayCommitted(parseTransaction(line));
+				storage.replayCommitted(parseJsonlTransaction(line));
 			} catch (error) {
 				throw new Error(`Invalid JSONL storage ${options.path}: line ${index + 1}`, { cause: error });
 			}
@@ -253,7 +179,7 @@ export class JsonlStorage implements Storage {
 		const prepared = this.storageState.prepareCommit(writes, this.now());
 		if (prepared.writes.length !== 0) {
 			fileValue(
-				await this.fileSystem.appendFile(this.path, `${serializeTransaction(prepared.writes)}\n`, context),
+				await this.fileSystem.appendFile(this.path, `${serializeJsonlTransaction(prepared.writes)}\n`, context),
 				`Failed to append JSONL storage ${this.path}`,
 			);
 		}
@@ -352,6 +278,21 @@ export class JsonlStorage implements Storage {
 
 	private withImportedUsage(stats: SessionStats): SessionStats {
 		return this.backing.kind === "v4" ? stats : { ...stats, usage: this.backing.importedUsage };
+	}
+
+	isLegacyV3(): boolean {
+		return this.backing.kind === "v3";
+	}
+
+	/** Capture the first sequence a later source commit would use. */
+	captureForkNextSeq(_context: Context): Promise<number> {
+		if (this.state !== "open") return Promise.reject(new Error("JsonlStorage is closed"));
+		const result = this.commitQueue.then(() => this.storageState.getNextSeq());
+		this.commitQueue = result.then(
+			() => undefined,
+			() => undefined,
+		);
+		return result;
 	}
 
 	/** Capture the state needed to fork at one serialized boundary between commits. */

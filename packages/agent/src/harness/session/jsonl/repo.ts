@@ -5,6 +5,7 @@ import { createForkSnapshot, type ForkSourceSnapshot } from "../fork.ts";
 import { StorageBackedSession } from "../session.ts";
 import type { ForkOptions, Session, SessionRepo } from "../types.ts";
 import { parseJsonlSessionHeader } from "./codec.ts";
+import { type JsonlForkSource, runJsonlFork } from "./fork.ts";
 import { metadataFromLegacyV3Header } from "./legacy-v3.ts";
 import { JsonlStorage } from "./storage.ts";
 import {
@@ -45,6 +46,10 @@ function sessionFileName(createdAt: number, id: string): string {
 	const timestamp = new Date(createdAt).toISOString().replace(/[:.]/g, "-");
 	return `${timestamp}_${encodeURIComponent(id)}.jsonl`;
 }
+
+type ResolvedJsonlForkSource =
+	| { kind: "snapshot"; snapshot: ForkSourceSnapshot }
+	| { kind: "stream"; source: JsonlForkSource };
 
 /** File-backed format-4 session repository lifecycle. */
 export class JsonlSessionRepo
@@ -154,23 +159,21 @@ export class JsonlSessionRepo
 	): Promise<Session<JsonlSessionMetadata>> {
 		this.assertOpen();
 		const createdAt = this.now();
-		const sourceStorage = this.openSessions.get(this.sessionKey(source.cwd, source.id));
-		const sourceSnapshot = await (sourceStorage === undefined
-			? this.loadClosedForkSourceSnapshot(source, context)
-			: sourceStorage.captureForkSource(context));
-		const { cwd, id } = await this.resolveCreateDestination(source.cwd, options.id, createdAt, context);
+		const cwd = source.cwd;
+		const id = options.id ?? uuidv7(createdAt);
 		const destinationKey = this.sessionKey(cwd, id);
 		if (this.openSessions.has(destinationKey) || this.pendingCreates.has(destinationKey)) {
 			throw new Error(`Session already exists: ${id}`);
 		}
 		this.pendingCreates.add(destinationKey);
 
+		const sourceStorage = this.openSessions.get(this.sessionKey(source.cwd, source.id));
 		let path: string | undefined;
 		let storage: JsonlStorage | undefined;
 		try {
+			const resolvedSource = await this.resolveForkSource(source, sourceStorage, context);
 			path = await this.resolveNewSessionPath(cwd, createdAt, id, context);
-			const snapshot = createForkSnapshot(sourceSnapshot, options);
-			const header: JsonlStorageHeader = {
+			const header: Omit<JsonlStorageHeader, "nextSeq"> = {
 				v: JSONL_FORMAT_VERSION,
 				kind: "header",
 				id,
@@ -179,12 +182,7 @@ export class JsonlSessionRepo
 				cwd,
 				parentSessionId: source.id,
 			};
-			storage = await JsonlStorage.createFromForkSnapshot(
-				{ fileSystem: this.fileSystem, path, now: this.now },
-				header,
-				snapshot,
-				context,
-			);
+			storage = await this.createForkStorage(path, header, resolvedSource, options, context);
 			const info = fileValue(await this.fileSystem.fileInfo(path, context), `Failed to read session ${path}`);
 			return this.publishOpenSession(metadataFromHeader(header, path, info.mtimeMs), storage, destinationKey);
 		} catch (error) {
@@ -295,6 +293,63 @@ export class JsonlSessionRepo
 			`Failed to list sessions directory ${directory}`,
 		).some((entry) => entry.kind !== "directory" && entry.name.endsWith(suffix));
 		if (idExists) throw new Error(`Session already exists: ${id}`);
+	}
+
+	private async resolveForkSource(
+		source: JsonlSessionMetadata,
+		storage: JsonlStorage | undefined,
+		context: Context,
+	): Promise<ResolvedJsonlForkSource> {
+		if (storage !== undefined) {
+			if (storage.isLegacyV3()) {
+				return { kind: "snapshot", snapshot: await storage.captureForkSource(context) };
+			}
+			const nextSeq = await storage.captureForkNextSeq(context);
+			return { kind: "stream", source: { kind: "open", metadata: source, nextSeq } };
+		}
+		if (await this.isLegacyV3ForkSource(source, context)) {
+			return { kind: "snapshot", snapshot: await this.loadClosedForkSourceSnapshot(source, context) };
+		}
+		return { kind: "stream", source: { kind: "closed", metadata: source } };
+	}
+
+	private async createForkStorage(
+		path: string,
+		header: Omit<JsonlStorageHeader, "nextSeq">,
+		source: ResolvedJsonlForkSource,
+		fork: ForkOptions,
+		context: Context,
+	): Promise<JsonlStorage> {
+		const storageOptions = { fileSystem: this.fileSystem, path, now: this.now };
+		if (source.kind === "snapshot") {
+			return JsonlStorage.createFromForkSnapshot(
+				storageOptions,
+				header,
+				createForkSnapshot(source.snapshot, fork),
+				context,
+			);
+		}
+		await runJsonlFork(
+			{
+				source: source.source,
+				fileSystem: this.fileSystem,
+				destinationPath: path,
+				destinationHeader: header,
+				fork,
+			},
+			context,
+		);
+		return JsonlStorage.open(storageOptions, context);
+	}
+
+	private async isLegacyV3ForkSource(source: JsonlSessionMetadata, context: Context): Promise<boolean> {
+		const lines = fileValue(
+			await this.fileSystem.readTextLines(source.path, { maxLines: 1 }, context),
+			`Failed to read session header ${source.path}`,
+		);
+		if (lines[0] === undefined) return false;
+		const parsed = parseJsonlSessionHeader(lines[0]);
+		return parsed.ok && parsed.value.format === "v3-legacy";
 	}
 
 	private async loadClosedForkSourceSnapshot(

@@ -1,5 +1,5 @@
 import type { CommittedWrite } from "./commit.ts";
-import { type ForkCurrentStatePlan, projectForkCurrentStateWrite } from "./fork-policy.ts";
+import { type ForkCurrentStatePlan, projectForkCurrentStateWrite, selectBranchFork } from "./fork-policy.ts";
 import type { Entry, ForkOptions } from "./types.ts";
 import { branchTip, laneConfig, laneState, type StoredValue, type Value, value } from "./values.ts";
 
@@ -91,31 +91,12 @@ function selectForkContents(
 	}
 
 	const sourceTip = sourceTips.find((stored) => stored.address.key === options.branch);
-	if (sourceTip === undefined) throw new Error(`Unknown source branch: ${options.branch}`);
-
-	const requested = options.entryId ?? sourceTip.value;
-	let found = requested === null;
-	let destinationTip: string | null = null;
-	let entryId = sourceTip.value;
-	while (entryId !== null) {
-		const entry = sourceEntries.get(entryId);
-		if (entry === undefined) throw new Error(`Corrupt source branch: missing parent ${entryId}`);
-		if (entry.id === requested) {
-			found = true;
-			destinationTip = options.position === "before" ? entry.parentId : entry.id;
-			if (options.position !== "before") entryIds.add(entry.id);
-		} else if (found) {
-			entryIds.add(entry.id);
-		}
-		entryId = entry.parentId;
-	}
-	if (!found) {
-		throw new Error(`Fork entry ${requested} is not on source branch ${JSON.stringify(options.branch)}`);
-	}
-	return {
-		entryIds,
-		plan: { scope: "branch", branch: options.branch, destinationTip },
-	};
+	const plan = selectBranchFork(options, {
+		tip: sourceTip?.value,
+		getParent: (entryId) => sourceEntries.get(entryId)?.parentId,
+		selectEntry: (entryId) => entryIds.add(entryId),
+	});
+	return { entryIds, plan };
 }
 
 function validateForkSourceSnapshot(
