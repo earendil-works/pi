@@ -72,6 +72,7 @@ const END_SYNCHRONIZED_OUTPUT = "\x1b[?2026l";
 const OSC133_ZONE_PREFIX = /^(?:\x1b\]133;[ABC](?:\x07|\x1b\\))+/;
 const OSC133_PROMPT_START = /^\x1b\]133;A(?:\x07|\x1b\\)/;
 const PAGE_SCROLL_OVERLAP = 4;
+const ALT_WHEEL_SCROLL_MULTIPLIER = 5;
 const MAX_CACHED_OFFSCREEN_KITTY_IMAGES = 16;
 const MAX_CACHED_OFFSCREEN_KITTY_TRANSMISSION_BYTES = 32 * 1024 * 1024;
 const MAX_CACHED_OFFSCREEN_KITTY_DECODED_BYTES = 64 * 1024 * 1024;
@@ -680,7 +681,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		const wheelEvent = this.parseWheelEvent(data);
 		if (wheelEvent) {
 			const event = this.createMouseEvent("wheel", wheelEvent.button, wheelEvent.x, wheelEvent.y, {
-				wheelDelta: wheelEvent.direction * this.wheelScrollLines,
+				wheelDelta: wheelEvent.direction * this.getWheelScrollLines(wheelEvent.button),
 			});
 			const overlay = this.dispatchMouseToOverlay(event);
 			const result = overlay.result ?? (overlay.hit ? undefined : this.dispatchMouseToLayout(event));
@@ -964,8 +965,13 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		return undefined;
 	}
 
+	private getWheelScrollLines(button: number): number {
+		// SGR mouse button codes use bit 3 (value 8) for the Alt modifier.
+		return (button & 8) !== 0 ? this.wheelScrollLines * ALT_WHEEL_SCROLL_MULTIPLIER : this.wheelScrollLines;
+	}
+
 	private routeWheel(event: WheelEvent): void {
-		let remaining = event.direction * this.wheelScrollLines;
+		let remaining = event.direction * this.getWheelScrollLines(event.button);
 		const seen = new Set<ScrollView>();
 		for (const scrollView of this.currentLayout ? getScrollViewsAt(this.currentLayout, event.x, event.y) : []) {
 			seen.add(scrollView);
