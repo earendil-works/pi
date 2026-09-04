@@ -2383,6 +2383,7 @@ You do not need to return provider-specific tool references or mark the loader a
 - **Anthropic**
   - **Models:** Sonnet, Opus, Fable version 4.5 or newer (without Haiku)
   - **Native representation:** Deferred definitions use `defer_loading`; the load point uses `tool_reference` content.
+  - **Placeholder:** Every request also declares a deferred `__pi_deferred_tool_placeholder__` tool. The first deferred tool in a request changes the cached prefix, so declaring one from the start keeps later deferred additions cache-neutral. The model never sees it and cannot call it.
 - **OpenAI**
   - **Models:** `gpt-5.4` and newer family
   - **Native representation:** Pi adds completed client `tool_search_call` and `tool_search_output` items at the load point.

@@ -267,6 +267,15 @@ export function estimateTokens(message: AgentMessage): number {
 	let chars = 0;
 
 	switch (message.role) {
+		case "system": {
+			chars =
+				(typeof message.content === "string"
+					? message.content.length
+					: message.content.reduce((total, block) => total + block.text.length, 0)) +
+				JSON.stringify(message.toolsAdded ?? []).length +
+				JSON.stringify(message.toolsRemoved ?? []).length;
+			return Math.ceil(chars / 4);
+		}
 		case "user": {
 			chars = estimateTextAndImageContentChars(
 				(message as { content: string | Array<{ type: string; text?: string }> }).content,
@@ -314,6 +323,7 @@ function isCutPointMessage(message: AgentMessage): boolean {
 		case "branchSummary":
 		case "compactionSummary":
 			return true;
+		case "system":
 		case "toolResult":
 			return false;
 	}
@@ -328,6 +338,7 @@ function isTurnStartMessage(message: AgentMessage): boolean {
 		case "branchSummary":
 		case "compactionSummary":
 			return true;
+		case "system":
 		case "assistant":
 		case "toolResult":
 			return false;

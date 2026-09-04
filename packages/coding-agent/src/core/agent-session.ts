@@ -681,6 +681,7 @@ export class AgentSession {
 					event.message.details,
 				);
 			} else if (
+				event.message.role === "system" ||
 				event.message.role === "user" ||
 				event.message.role === "assistant" ||
 				event.message.role === "toolResult"

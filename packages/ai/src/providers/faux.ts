@@ -19,6 +19,7 @@ import type {
 	Usage,
 } from "../types.ts";
 import { createAssistantMessageEventStream } from "../utils/event-stream.ts";
+import { getSystemMessageText } from "../utils/system-messages.ts";
 
 const DEFAULT_API = "faux";
 const DEFAULT_PROVIDER = "faux";
@@ -45,6 +46,8 @@ export interface FauxModelDefinition {
 	cost?: { input: number; output: number; cacheRead: number; cacheWrite: number };
 	contextWindow?: number;
 	maxTokens?: number;
+	/** Compatibility flags for capability helpers such as `supportsMidConversationSystemMessages`. */
+	compat?: Record<string, boolean>;
 }
 
 export type FauxContentBlock = TextContent | ThinkingContent | ToolCall;
@@ -194,6 +197,9 @@ function toolResultToText(message: ToolResultMessage): string {
 }
 
 function messageToText(message: Message): string {
+	if (message.role === "system") {
+		return getSystemMessageText(message);
+	}
 	if (message.role === "user") {
 		return contentToText(message.content);
 	}
@@ -483,6 +489,7 @@ export function createFauxCore(options: RegisterFauxProviderOptions) {
 		cost: definition.cost ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 		contextWindow: definition.contextWindow ?? 128000,
 		maxTokens: definition.maxTokens ?? 16384,
+		...(definition.compat === undefined ? {} : { compat: definition.compat }),
 	})) as [Model<string>, ...Model<string>[]];
 
 	const resolveResponse = async (

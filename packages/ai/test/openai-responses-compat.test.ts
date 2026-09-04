@@ -199,9 +199,10 @@ describe("openai-responses provider defaults", () => {
 		}
 
 		expect(model.compat?.supportsStrictMode).toBe(true);
+		// Declared tools are sorted by name so the order never depends on history.
 		expect(capturedPayload?.tools).toEqual([
-			expect.objectContaining({ name: "ordinary", strict: false }),
 			expect.objectContaining({ name: "constrained", strict: true }),
+			expect.objectContaining({ name: "ordinary", strict: false }),
 		]);
 	});
 

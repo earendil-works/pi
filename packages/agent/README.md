@@ -51,10 +51,10 @@ Transport-neutral facet-service primitives live in `@earendil-works/chord`. The 
 ### AgentMessage vs LLM Message
 
 The agent works with `AgentMessage`, a flexible type that can include:
-- Standard LLM messages (`user`, `assistant`, `toolResult`)
+- Standard LLM messages (`system`, `user`, `assistant`, `toolResult`)
 - Custom app-specific message types via declaration merging
 
-LLMs only understand `user`, `assistant`, and `toolResult`. The `convertToLlm` function bridges this gap by filtering and transforming messages before each LLM call.
+LLMs only understand `system`, `user`, `assistant`, and `toolResult`. The `convertToLlm` function bridges this gap by filtering and transforming messages before each LLM call.
 
 ### Message Flow
 
@@ -168,7 +168,7 @@ The last message in context must be `user` or `toolResult` (not `assistant`).
 | `agent_end` | Final event for the run. Awaited subscribers for this event still count toward settlement |
 | `turn_start` | New turn begins (one LLM call + tool executions) |
 | `turn_end` | Turn completes with assistant message and tool results |
-| `message_start` | Any message begins (user, assistant, toolResult) |
+| `message_start` | Any message begins (system, user, assistant, toolResult) |
 | `message_update` | **Assistant only.** Includes `assistantMessageEvent` with delta |
 | `message_end` | Message completes |
 | `tool_execution_start` | Tool begins |
@@ -491,7 +491,7 @@ const context: AgentContext = {
 
 const config: AgentLoopConfig = {
   model: getModel("openai", "gpt-4o"),
-  convertToLlm: (msgs) => msgs.filter(m => ["user", "assistant", "toolResult"].includes(m.role)),
+  convertToLlm: (msgs) => msgs.filter(m => ["system", "user", "assistant", "toolResult"].includes(m.role)),
   toolExecution: "parallel",  // overridden by per-tool executionMode if set
   beforeToolCall: async ({ toolCall, args, context }) => undefined,
   afterToolCall: async ({ toolCall, result, isError, context }) => undefined,

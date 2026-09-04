@@ -36,6 +36,7 @@ import type {
 	ToolCall,
 	ToolResultMessage,
 } from "../types.ts";
+import { declaredTools, splitDeferredTools } from "../utils/deferred-tools.ts";
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { shortHash } from "../utils/hash.ts";
@@ -45,6 +46,7 @@ import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
+import { addedToolNames, getSystemMessageText } from "../utils/system-messages.ts";
 import {
 	appendGrammarToolInputJsonDelta,
 	createGrammarToolInputProperties,
@@ -91,26 +93,6 @@ function hasToolHistory(messages: Message[]): boolean {
 		}
 	}
 	return false;
-}
-
-function getDeferredToolNames(messages: Message[]): Set<string> {
-	const names = new Set<string>();
-	for (const message of messages) {
-		if (message.role === "toolResult") {
-			for (const name of message.addedToolNames ?? []) {
-				names.add(name);
-			}
-		}
-	}
-	return names;
-}
-
-function getToolsByName(tools: Tool[] | undefined, names: Iterable<string>): Tool[] {
-	if (!tools) return [];
-	const toolsByName = new Map(tools.map((tool) => [tool.name, tool]));
-	return Array.from(names)
-		.map((name) => toolsByName.get(name))
-		.filter((tool): tool is Tool => tool !== undefined);
 }
 
 function isTextContentBlock(block: { type: string }): block is TextContent {
@@ -169,6 +151,8 @@ export interface OpenAICompletionsOptions extends StreamOptions {
 
 export interface ConvertCompletionsMessagesOptions {
 	grammarToolInputProperties?: ReadonlyMap<string, string>;
+	/** Definitions that load at their transcript marker through Kimi tool system messages. */
+	deferredTools?: ReadonlyMap<string, Tool>;
 }
 
 interface OpenAICompatCacheControl {
@@ -347,7 +331,7 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 			const apiKey = getClientApiKey(model.provider, options?.apiKey, options?.headers);
 			const compat = getCompat(model);
 			const grammarToolInputProperties = createGrammarToolInputProperties(
-				context.tools,
+				declaredTools(context),
 				compat.supportsOpenAIGrammarTools,
 			);
 			const cacheRetention = resolveCacheRetention(options?.cacheRetention, options?.env);
@@ -796,11 +780,18 @@ function buildParams(
 	compat: ResolvedOpenAICompletionsCompat = getCompat(model),
 	cacheRetention: CacheRetention = resolveCacheRetention(options?.cacheRetention, options?.env),
 	grammarToolInputProperties: ReadonlyMap<string, string> = createGrammarToolInputProperties(
-		context.tools,
+		declaredTools(context),
 		compat.supportsOpenAIGrammarTools,
 	),
 ) {
-	const messages = convertMessages(model, context, compat, { grammarToolInputProperties });
+	const toolPlacement = splitDeferredTools(context, {
+		toolResultMarkers: compat.deferredToolsMode === "kimi",
+		systemMarkers: compat.deferredToolsMode === "kimi",
+	});
+	const messages = convertMessages(model, context, compat, {
+		grammarToolInputProperties,
+		deferredTools: toolPlacement.deferred,
+	});
 	const cacheControl = getCompatCacheControl(compat, cacheRetention);
 
 	const params: OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming = {
@@ -835,11 +826,8 @@ function buildParams(
 		params.temperature = options.temperature;
 	}
 
-	const deferredToolNames =
-		compat.deferredToolsMode === "kimi" ? getDeferredToolNames(context.messages) : new Set<string>();
-	const activeTools = context.tools?.filter((tool) => !deferredToolNames.has(tool.name));
-	if (activeTools && activeTools.length > 0) {
-		params.tools = convertTools(activeTools, compat);
+	if (toolPlacement.immediate.length > 0) {
+		params.tools = convertTools(toolPlacement.immediate, compat);
 		if (compat.zaiToolStream) {
 			(params as any).tool_stream = true;
 		}
@@ -1182,6 +1170,18 @@ export function convertMessages(
 	options?: ConvertCompletionsMessagesOptions,
 ): ChatCompletionMessageParam[] {
 	const params: ChatCompletionMessageParam[] = [];
+	const loadedDeferredToolNames = new Set<string>();
+	/** Deferred definitions that become available at this point and were not loaded earlier. */
+	const takeDeferredToolLoads = (names: readonly string[]): Tool[] => {
+		const loads: Tool[] = [];
+		for (const name of names) {
+			const tool = options?.deferredTools?.get(name);
+			if (!tool || loadedDeferredToolNames.has(name)) continue;
+			loadedDeferredToolNames.add(name);
+			loads.push(tool);
+		}
+		return loads;
+	};
 
 	const normalizeToolCallId = (id: string): string => {
 		// Handle pipe-separated IDs from OpenAI Responses API
@@ -1211,10 +1211,9 @@ export function convertMessages(
 
 	const transformedMessages = transformMessages(context.messages, model, (id) => normalizeToolCallId(id));
 
+	const instructionRole = model.reasoning && compat.supportsDeveloperRole ? "developer" : "system";
 	if (context.systemPrompt) {
-		const useDeveloperRole = model.reasoning && compat.supportsDeveloperRole;
-		const role = useDeveloperRole ? "developer" : "system";
-		params.push({ role: role, content: sanitizeSurrogates(context.systemPrompt) });
+		params.push({ role: instructionRole, content: sanitizeSurrogates(context.systemPrompt) });
 	}
 
 	let lastRole: string | null = null;
@@ -1230,7 +1229,20 @@ export function convertMessages(
 			});
 		}
 
-		if (msg.role === "user") {
+		if (msg.role === "system") {
+			const addedTools = takeDeferredToolLoads(addedToolNames(msg));
+			if (addedTools.length > 0) {
+				const kimiToolMessage: KimiToolSystemMessageParam = {
+					role: "system",
+					tools: convertTools(addedTools, compat),
+				};
+				params.push(kimiToolMessage as unknown as ChatCompletionMessageParam);
+			}
+			const text = getSystemMessageText(msg);
+			if (text.length > 0) {
+				params.push({ role: instructionRole, content: sanitizeSurrogates(text) });
+			}
+		} else if (msg.role === "user") {
 			if (typeof msg.content === "string") {
 				params.push({
 					role: "user",
@@ -1375,7 +1387,7 @@ export function convertMessages(
 			params.push(assistantMsg);
 		} else if (msg.role === "toolResult") {
 			const imageBlocks: Array<{ type: "image_url"; image_url: { url: string } }> = [];
-			const deferredToolNames = new Set<string>();
+			const deferredTools: Tool[] = [];
 			let j = i;
 
 			for (; j < transformedMessages.length && transformedMessages[j].role === "toolResult"; j++) {
@@ -1402,11 +1414,7 @@ export function convertMessages(
 				}
 				params.push(toolResultMsg);
 
-				if (compat.deferredToolsMode === "kimi") {
-					for (const name of toolMsg.addedToolNames ?? []) {
-						deferredToolNames.add(name);
-					}
-				}
+				deferredTools.push(...takeDeferredToolLoads(addedToolNames(toolMsg)));
 
 				if (hasImages && model.input.includes("image")) {
 					for (const block of toolMsg.content) {
@@ -1447,16 +1455,13 @@ export function convertMessages(
 				lastRole = "toolResult";
 			}
 
-			if (deferredToolNames.size > 0) {
-				const deferredTools = getToolsByName(context.tools, deferredToolNames);
-				if (deferredTools.length > 0) {
-					const kimiToolMessage: KimiToolSystemMessageParam = {
-						role: "system",
-						tools: convertTools(deferredTools, compat),
-					};
-					// Kimi accepts a system message with tools but omits the standard content field.
-					params.push(kimiToolMessage as unknown as ChatCompletionMessageParam);
-				}
+			if (deferredTools.length > 0) {
+				const kimiToolMessage: KimiToolSystemMessageParam = {
+					role: "system",
+					tools: convertTools(deferredTools, compat),
+				};
+				// Kimi accepts a system message with tools but omits the standard content field.
+				params.push(kimiToolMessage as unknown as ChatCompletionMessageParam);
 			}
 			continue;
 		}
