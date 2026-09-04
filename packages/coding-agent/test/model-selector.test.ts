@@ -1,3 +1,4 @@
+import type { ModelsRefreshResult } from "@earendil-works/pi-ai";
 import { setKeybindings, type TUI } from "@earendil-works/pi-tui";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { KeybindingsManager } from "../src/core/keybindings.ts";
@@ -8,6 +9,14 @@ import { createHarness, type Harness } from "./suite/harness.ts";
 
 function createFakeTui(): TUI {
 	return { requestRender: () => {} } as unknown as TUI;
+}
+
+function createDeferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+	let resolvePromise!: (value: T) => void;
+	const promise = new Promise<T>((resolve) => {
+		resolvePromise = resolve;
+	});
+	return { promise, resolve: resolvePromise };
 }
 
 describe("model selector", () => {
@@ -102,5 +111,111 @@ describe("model selector", () => {
 			const rendered = stripAnsi(selector.render(120).join("\n"));
 			expect(rendered).toContain("Could not refresh 2 model catalogs (openai, anthropic); showing cached models.");
 		});
+	});
+
+	// #9109: Preserve model selector selection after background refresh
+	it("preserves the user's highlighted selection after background refresh completes", async () => {
+		harness = await createHarness({
+			models: [
+				{ id: "current-model", name: "Current Model", reasoning: true },
+				{ id: "browsed-model", name: "Browsed Model", reasoning: true },
+				{ id: "third-model", name: "Third Model", reasoning: true },
+			],
+		});
+		const deferred = createDeferred<ModelsRefreshResult>();
+		vi.spyOn(harness.session.modelRuntime, "refresh").mockImplementation(() => deferred.promise);
+
+		const currentModel = harness.getModel("current-model")!;
+		const selector = new ModelSelectorComponent(
+			createFakeTui(),
+			currentModel,
+			harness.session.modelRuntime,
+			[],
+			() => {},
+			() => {},
+		);
+
+		const getSelectedId = (): string | undefined => {
+			const line = stripAnsi(selector.render(120).join("\n"))
+				.split("\n")
+				.find((l) => l.startsWith("→ "));
+			return line
+				?.replace(/^→\s*(?:✓\s*)?/, "")
+				.split(" [")[0]
+				?.trim();
+		};
+
+		expect(getSelectedId()).toBe("current-model");
+
+		// User navigates down while refresh is in flight
+		selector.handleInput("\x1b[B");
+		expect(getSelectedId()).toBe("browsed-model");
+
+		// Refresh completes
+		deferred.resolve({ aborted: false, errors: new Map() });
+
+		await vi.waitFor(() => {
+			const rendered = stripAnsi(selector.render(120).join("\n"));
+			expect(rendered).toContain("Model catalogs refreshed.");
+		});
+
+		// Selection must remain on browsed-model, not reset to current-model
+		expect(getSelectedId()).toBe("browsed-model");
+		selector.dispose();
+	});
+
+	// #9109: Preserve filtered selection after background refresh
+	it("preserves filtered selection after background refresh completes", async () => {
+		harness = await createHarness({
+			models: [
+				{ id: "alpha-1", name: "Alpha One", reasoning: true },
+				{ id: "alpha-2", name: "Alpha Two", reasoning: true },
+				{ id: "beta-1", name: "Beta One", reasoning: true },
+			],
+		});
+		const deferred = createDeferred<ModelsRefreshResult>();
+		vi.spyOn(harness.session.modelRuntime, "refresh").mockImplementation(() => deferred.promise);
+
+		const currentModel = harness.getModel("alpha-1")!;
+		const selector = new ModelSelectorComponent(
+			createFakeTui(),
+			currentModel,
+			harness.session.modelRuntime,
+			[],
+			() => {},
+			() => {},
+		);
+
+		const getSelectedId = (): string | undefined => {
+			const line = stripAnsi(selector.render(120).join("\n"))
+				.split("\n")
+				.find((l) => l.startsWith("→ "));
+			return line
+				?.replace(/^→\s*(?:✓\s*)?/, "")
+				.split(" [")[0]
+				?.trim();
+		};
+
+		// User types a query to filter
+		for (const char of "alpha") {
+			selector.handleInput(char);
+		}
+		expect(getSelectedId()).toBe("alpha-1");
+
+		// Move to second matching model
+		selector.handleInput("\x1b[B");
+		expect(getSelectedId()).toBe("alpha-2");
+
+		// Refresh completes
+		deferred.resolve({ aborted: false, errors: new Map() });
+
+		await vi.waitFor(() => {
+			const rendered = stripAnsi(selector.render(120).join("\n"));
+			expect(rendered).toContain("Model catalogs refreshed.");
+		});
+
+		// Selection must remain on alpha-2
+		expect(getSelectedId()).toBe("alpha-2");
+		selector.dispose();
 	});
 });
