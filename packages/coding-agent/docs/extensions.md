@@ -2829,6 +2829,7 @@ export default function (pi: ExtensionAPI) {
 **Key points:**
 - Extend `CustomEditor` (not base `Editor`) to get app keybindings (escape to abort, ctrl+d, model switching)
 - Call `super.handleInput(data)` for keys you don't handle
+- Custom editors keep the standalone working row by default. Pass `{ embedWorkingStatus: true }` as the fourth `CustomEditor` constructor argument to use the built-in editor-border spinner instead.
 - Factory receives `tui`, `theme`, and `keybindings` from the app
 - Use `ctx.ui.getEditorComponent()` before `setEditorComponent()` to wrap the previously configured custom editor
 - Pass `undefined` to restore default: `ctx.ui.setEditorComponent(undefined)`

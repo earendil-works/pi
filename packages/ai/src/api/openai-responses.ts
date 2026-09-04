@@ -201,6 +201,8 @@ export const streamSimple: StreamFunction<"openai-responses", SimpleStreamOption
 	context: Context,
 	options?: SimpleStreamOptions,
 ): AssistantMessageEventStream => {
+	getClientApiKey(model.provider, options?.apiKey, options?.headers);
+
 	const base = {
 		...buildBaseOptions(model, context, options, options?.apiKey),
 		toolChoice: options?.toolChoice,

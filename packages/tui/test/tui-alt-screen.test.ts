@@ -1,6 +1,10 @@
 import assert from "node:assert";
 import { describe, it } from "node:test";
-import { findAltScreenSearchMatches } from "../src/alt-screen-search.ts";
+import {
+	AltScreenSearchComponent,
+	AltScreenSearchIndex,
+	findAltScreenSearchMatches,
+} from "../src/alt-screen-search.ts";
 import { HStack } from "../src/components/h-stack.ts";
 import { Image } from "../src/components/image.ts";
 import { MouseRegion } from "../src/components/mouse-region.ts";
@@ -18,6 +22,7 @@ import {
 } from "../src/terminal-image.ts";
 import type { TuiMouseEvent } from "../src/tui.ts";
 import { TuiAltScreen } from "../src/tui-alt-screen.ts";
+import { stripTerminalSequences, visibleWidth } from "../src/utils.ts";
 import { VirtualTerminal } from "./virtual-terminal.ts";
 
 const OSC133_ZONE_START = "\x1b]133;A\x07";
@@ -88,6 +93,93 @@ describe("TuiAltScreen", () => {
 			["line 6", "line 7", "line 8", "line 9"],
 		);
 
+		tui.stop();
+	});
+
+	it("shows a clickable jump-to-end indicator on the transcript's last row while scrolled up", async () => {
+		const terminal = new VirtualTerminal(30, 6);
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			scrollToEndIndicator: () => "\x1b[7m ↓ Jump to end \x1b[27m",
+		});
+		const transcript = new ScrollView(
+			new Text(Array.from({ length: 8 }, (_, index) => `line ${index + 1}`).join("\n"), 0, 0),
+			{ follow: "end", primary: true },
+		);
+		tui.setLayoutRoot(
+			new VStack([
+				{ component: transcript, basis: 0, grow: 1, minSize: 1 },
+				{ component: new Text("editor\nfooter", 0, 0), basis: "auto", minSize: 1 },
+			]),
+		);
+		tui.start();
+		await terminal.waitForRender();
+		assert.ok(!terminal.getViewport().some((line) => line.includes("Jump to end")));
+
+		terminal.sendInput("\x1b[<64;1;1M");
+		await terminal.waitForRender();
+		assert.strictEqual(transcript.isFollowingEnd, false);
+		assert.strictEqual(terminal.getViewport()[3], "line 7  ↓ Jump to end         ");
+		assert.strictEqual(terminal.getViewport()[4]?.trimEnd(), "editor");
+
+		// Pressing next to the label starts a selection instead of jumping.
+		terminal.sendInput("\x1b[<0;2;4M");
+		terminal.sendInput("\x1b[<0;2;4m");
+		await terminal.waitForRender();
+		assert.strictEqual(transcript.isFollowingEnd, false);
+
+		terminal.sendInput("\x1b[<0;15;4M");
+		terminal.sendInput("\x1b[<0;15;4m");
+		await terminal.waitForRender();
+		assert.strictEqual(transcript.isFollowingEnd, true);
+		assert.deepStrictEqual(
+			terminal.getViewport().map((line) => line.trimEnd()),
+			["line 5", "line 6", "line 7", "line 8", "editor", "footer"],
+		);
+		tui.stop();
+	});
+
+	it("leaves the scrollbar clickable when the jump-to-end indicator spans the transcript", async () => {
+		const terminal = new VirtualTerminal(30, 6);
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			scrollToEndIndicator: () => "↓".repeat(30),
+		});
+		const transcript = new ScrollView(
+			new Text(Array.from({ length: 12 }, (_, index) => `line ${index + 1}`).join("\n"), 0, 0),
+			{ follow: "end", primary: true, scrollbar: "always" },
+		);
+		tui.setLayoutRoot(
+			new VStack([
+				{ component: transcript, basis: 0, grow: 1, minSize: 1 },
+				{ component: new Text("editor\nfooter", 0, 0), basis: "auto", minSize: 1 },
+			]),
+		);
+		tui.start();
+		await terminal.waitForRender();
+
+		terminal.sendInput("\x1b[<64;1;1M");
+		await terminal.waitForRender();
+		assert.strictEqual(transcript.isFollowingEnd, false);
+
+		// The indicator must not intercept a press on the scrollbar's last column.
+		terminal.sendInput("\x1b[<0;30;4M");
+		terminal.sendInput("\x1b[<0;30;4m");
+		await terminal.waitForRender();
+		assert.strictEqual(transcript.isFollowingEnd, false);
+		tui.stop();
+	});
+
+	it("never shows the jump-to-end indicator for a primary scroll view without follow-end", async () => {
+		const terminal = new VirtualTerminal(30, 3);
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			scrollToEndIndicator: () => " ↓ Jump to end ",
+		});
+		const transcript = new ScrollView(new Text("one\ntwo\nthree\nfour\nfive", 0, 0), { primary: true });
+		tui.setLayoutRoot(transcript);
+		tui.start();
+		await terminal.waitForRender();
+
+		assert.strictEqual(transcript.isFollowingEnd, false);
+		assert.ok(!terminal.getViewport().some((line) => line.includes("Jump to end")));
 		tui.stop();
 	});
 
@@ -300,83 +392,54 @@ describe("TuiAltScreen", () => {
 		}
 	});
 
-	it("drags a visible scrollbar thumb and keeps it visible until release", async () => {
+	it("reveals an auto scrollbar when the pointer enters its hidden track", async () => {
 		const terminal = new RecordingTerminal(10, 5);
 		const tui = new TuiAltScreen(terminal);
 		const scrollView = new ScrollView(
 			new Text(Array.from({ length: 20 }, (_, index) => `line ${index + 1}`).join("\n"), 0, 0),
-			{
-				primary: true,
-				scrollbar: "auto",
-				scrollbarHideDelayMs: 50,
-			},
+			{ primary: true, scrollbar: "auto", scrollbarHideDelayMs: 20 },
 		);
 		tui.setLayoutRoot(scrollView);
 		tui.start();
 		await terminal.waitForRender();
 		assert.strictEqual(scrollView.isScrollbarVisible, false);
 
-		terminal.sendInput("\x1b[<65;10;1M");
+		terminal.sendInput("\x1b[<35;10;3M");
 		await terminal.waitForRender();
-		assert.strictEqual(scrollView.scrollTop, 1);
 		assert.strictEqual(scrollView.isScrollbarVisible, true);
+		assert.strictEqual(scrollView.isScrollbarActive, true);
+		assert.ok(terminal.getViewport().some((line) => /[│█]/.test(line)));
 
-		terminal.sendInput("\x1b[<0;10;1M");
+		terminal.sendInput("\x1b[<35;9;3M");
+		await new Promise((resolve) => setTimeout(resolve, 40));
 		await terminal.waitForRender();
-		await new Promise((resolve) => setTimeout(resolve, 70));
-		assert.strictEqual(scrollView.isScrollbarVisible, true);
-
-		terminal.sendInput("\x1b[<32;10;4M");
-		await terminal.waitForRender();
-		assert.strictEqual(scrollView.scrollTop, 15);
-		assert.deepStrictEqual(
-			terminal.getViewport().map((line) => line.trimEnd()),
-			["line 16", "line 17", "line 18", "line 19", "line 20"],
-		);
-
-		terminal.sendInput("\x1b[<0;10;4m");
-		await terminal.waitForRender();
-		assert.strictEqual(scrollView.isScrollbarVisible, true);
-		await new Promise((resolve) => setTimeout(resolve, 70));
-		assert.strictEqual(scrollView.isScrollbarVisible, true);
-		terminal.sendInput("\x1b[<35;9;4M");
-		await new Promise((resolve) => setTimeout(resolve, 70));
 		assert.strictEqual(scrollView.isScrollbarVisible, false);
-
-		terminal.sendInput("\x1b[<64;10;5M");
-		await terminal.waitForRender();
-		assert.strictEqual(scrollView.scrollTop, 14);
-		await new Promise((resolve) => setTimeout(resolve, 70));
-		assert.strictEqual(scrollView.isScrollbarVisible, true);
-		terminal.sendInput("\x1b[<35;9;5M");
-		await new Promise((resolve) => setTimeout(resolve, 70));
-		assert.strictEqual(scrollView.isScrollbarVisible, false);
-
-		assert.ok(terminal.events.every((event) => event.type !== "write" || !event.data.includes("\x1b]52;c;")));
 		tui.stop();
 	});
 
-	it("keeps the scrollbar column selectable while the thumb is hidden", async () => {
-		const terminal = new RecordingTerminal(10, 2);
+	it("jumps to a scrollbar track position and continues dragging from there", async () => {
+		const terminal = new RecordingTerminal(10, 10);
 		const tui = new TuiAltScreen(terminal);
-		const scrollView = new ScrollView(new Text("123456789A\nabcdefghij\nmore\nlines", 0, 0), {
-			scrollbar: "auto",
-		});
+		const scrollView = new ScrollView(
+			new Text(Array.from({ length: 50 }, (_, index) => `line ${index + 1}`).join("\n"), 0, 0),
+			{ primary: true, scrollbar: "always" },
+		);
 		tui.setLayoutRoot(scrollView);
 		tui.start();
 		await terminal.waitForRender();
-		assert.strictEqual(scrollView.isScrollbarVisible, false);
+		assert.strictEqual(scrollView.scrollTop, 0);
 
-		terminal.sendInput("\x1b[<0;10;1M");
-		terminal.sendInput("\x1b[<32;10;2M");
-		terminal.sendInput("\x1b[<0;10;2m");
+		terminal.sendInput("\x1b[<0;10;6M");
 		await terminal.waitForRender();
+		assert.strictEqual(scrollView.scrollTop, 20);
 
-		const expected = `\x1b]52;c;${Buffer.from("A\nabcdefghij").toString("base64")}\x07`;
-		assert.ok(
-			terminal.events.some((event) => event.type === "write" && event.data.includes(expected)),
-			JSON.stringify(terminal.events.filter((event) => event.type === "write" && event.data.includes("\x1b]52;c;"))),
-		);
+		terminal.sendInput("\x1b[<32;10;10M");
+		await terminal.waitForRender();
+		assert.strictEqual(scrollView.scrollTop, 40);
+
+		terminal.sendInput("\x1b[<0;10;10m");
+		await terminal.waitForRender();
+		assert.ok(terminal.events.every((event) => event.type !== "write" || !event.data.includes("\x1b]52;c;")));
 		tui.stop();
 	});
 
@@ -455,6 +518,153 @@ describe("TuiAltScreen", () => {
 		]);
 	});
 
+	it("maps normalized ASCII and Unicode search matches back to rendered columns", () => {
+		assert.deepStrictEqual(findAltScreenSearchMatches(["\x1b[31mfoo  bar\x1b[0m", "A界🙂éZ"], "oo   bar\nA界🙂é"), [
+			{
+				segments: [
+					{ row: 0, startCol: 1, endCol: 3 },
+					{ row: 0, startCol: 5, endCol: 8 },
+					{ row: 1, startCol: 0, endCol: 6 },
+				],
+			},
+		]);
+	});
+
+	it("reuses indexed transcript matches until the query or rendered lines change", () => {
+		const index = new AltScreenSearchIndex();
+		const initial = index.search(["alpha needle", "omega"], "needle");
+		assert.strictEqual(initial.changed, true);
+		assert.strictEqual(initial.matches.length, 1);
+
+		const cached = index.search(["alpha needle", "omega"], "needle");
+		assert.strictEqual(cached.changed, false);
+		assert.strictEqual(cached.matches, initial.matches);
+
+		const changedQuery = index.search(["alpha needle", "omega"], "omega");
+		assert.strictEqual(changedQuery.changed, true);
+		assert.notStrictEqual(changedQuery.matches, initial.matches);
+		assert.deepStrictEqual(changedQuery.matches[0]?.segments, [{ row: 1, startCol: 0, endCol: 5 }]);
+
+		const changedLines = index.search(["alpha needle", "no match"], "omega");
+		assert.strictEqual(changedLines.changed, true);
+		assert.deepStrictEqual(changedLines.matches, []);
+	});
+
+	it("renders transcript search with a muted placeholder and right-aligned controls", () => {
+		const component = new AltScreenSearchComponent(() => {});
+		const rendered = component.render(48);
+		const lines = rendered.map((line) => stripTerminalSequences(line));
+
+		assert.strictEqual(lines.length, 3);
+		assert.ok(lines.every((line) => visibleWidth(line) === 48));
+		assert.match(lines[0] ?? "", /^┌─+┐$/);
+		assert.match(lines[1] ?? "", /^│ Find in transcript +│$/);
+		assert.ok(rendered[1]?.includes("\x1b[2m"));
+		assert.match(lines[2] ?? "", /^└─+ ↑ Shift\+Enter · ↓ Enter ─┘$/);
+		const controls = lines[2] ?? "";
+		assert.strictEqual(component.getNavigationDirectionAt(2, controls.indexOf("↑")), -1);
+		assert.strictEqual(component.getNavigationDirectionAt(2, controls.indexOf("Shift+Enter") + 5), -1);
+		assert.strictEqual(component.getNavigationDirectionAt(2, controls.indexOf("·")), undefined);
+		assert.strictEqual(component.getNavigationDirectionAt(2, controls.indexOf("↓")), 1);
+		assert.strictEqual(component.getNavigationDirectionAt(2, controls.lastIndexOf("Enter") + 2), 1);
+
+		component.handleInput("n");
+		component.setResult(0, 2);
+		const populatedRender = component.render(48);
+		const populated = populatedRender.map((line) => stripTerminalSequences(line));
+		assert.ok(populated[1]?.includes("n"));
+		assert.ok(populated[1]?.includes("1/2"));
+		assert.ok(populatedRender[1]?.includes("\x1b[2m 1/2 \x1b[22m"));
+		assert.ok(!populated.some((line) => line.includes("Find in transcript")));
+	});
+
+	it("navigates transcript search with hoverable arrow buttons and toggles it with its shortcut", async () => {
+		const terminal = new RecordingTerminal(120, 6);
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			searchNavigationButtonStyle: (text, hovered) => `${hovered ? "\x1b[45m" : "\x1b[44m"}${text}\x1b[49m`,
+		});
+		tui.addChild(new Text("needle one\nmiddle\nneedle two\nend", 0, 0));
+		tui.start();
+		await terminal.waitForRender();
+
+		terminal.sendInput("\x1b[102;6u");
+		terminal.sendInput("needle");
+		await terminal.waitForRender();
+		let viewport = terminal.getViewport();
+		assert.ok(viewport.some((line) => line.includes("1/2")));
+		assert.ok(viewport.some((line) => line.includes("↑ Shift+Enter · ↓ Enter")));
+
+		let arrowRow = viewport.findIndex((line) => line.includes("↑") && line.includes("↓"));
+		let arrowColumn = viewport[arrowRow]?.lastIndexOf("Enter") ?? -1;
+		assert.ok(arrowRow >= 0 && arrowColumn >= 0);
+		const hoverEventCount = terminal.events.length;
+		terminal.sendInput(`\x1b[<35;${arrowColumn + 1};${arrowRow + 1}M`);
+		await terminal.waitForRender();
+		assert.ok(
+			terminal.events
+				.slice(hoverEventCount)
+				.some((event) => event.type === "write" && event.data.includes("\x1b[45m↓ Enter\x1b[49m")),
+		);
+		terminal.sendInput(`\x1b[<0;${arrowColumn + 1};${arrowRow + 1}M`);
+		await terminal.waitForRender();
+		viewport = terminal.getViewport();
+		assert.ok(viewport.some((line) => line.includes("2/2")));
+		assert.ok(viewport.some((line) => line.includes("↑ Shift+Enter · ↓ Enter")));
+
+		arrowRow = viewport.findIndex((line) => line.includes("↑") && line.includes("↓"));
+		arrowColumn = (viewport[arrowRow]?.indexOf("Shift+Enter") ?? -3) + 3;
+		assert.ok(arrowRow >= 0 && arrowColumn >= 0);
+		terminal.sendInput(`\x1b[<0;${arrowColumn + 1};${arrowRow + 1}M`);
+		await terminal.waitForRender();
+		assert.ok(terminal.getViewport().some((line) => line.includes("1/2")));
+		assert.ok(terminal.getViewport().some((line) => line.includes("↑ Shift+Enter · ↓ Enter")));
+
+		terminal.sendInput("\x1b[102;6u");
+		await terminal.waitForRender();
+		assert.ok(!terminal.getViewport().some((line) => line.includes("↑ Shift+Enter · ↓ Enter")));
+		tui.stop();
+	});
+
+	it("does not treat transcript box drawing as search navigation buttons", async () => {
+		const terminal = new VirtualTerminal(80, 10);
+		const tui = new TuiAltScreen(terminal);
+		tui.addChild(
+			new Text(
+				[
+					"needle one",
+					"middle",
+					"needle two",
+					"filler",
+					"┌────────────────────────────────────────┐",
+					"│ box                                    │",
+					"└────────────────────────────────────────┘",
+					"end",
+				].join("\n"),
+				0,
+				0,
+			),
+		);
+		tui.start();
+		await terminal.waitForRender();
+
+		terminal.sendInput("\x1b[102;6u");
+		terminal.sendInput("needle");
+		await terminal.waitForRender();
+		let viewport = terminal.getViewport();
+		assert.ok(viewport.some((line) => line.includes("1/2")));
+		assert.ok(!viewport.some((line) => line.includes("2/2")));
+
+		const boxBottomRow = viewport.findIndex((line) => line.startsWith("└"));
+		assert.ok(boxBottomRow >= 0);
+		terminal.sendInput(`\x1b[<0;24;${boxBottomRow + 1}M`);
+		await terminal.waitForRender();
+
+		viewport = terminal.getViewport();
+		assert.ok(viewport.some((line) => line.includes("1/2")));
+		assert.ok(!viewport.some((line) => line.includes("2/2")));
+		tui.stop();
+	});
+
 	it("uses configured styles for current and non-current search matches", async () => {
 		const terminal = new RecordingTerminal(60, 4);
 		const tui = new TuiAltScreen(terminal, undefined, undefined, {
@@ -512,7 +722,8 @@ describe("TuiAltScreen", () => {
 		terminal.sendInput("needle");
 		await terminal.waitForRender();
 		assert.strictEqual(transcript.isFollowingEnd, false);
-		assert.ok(terminal.getViewport().some((line) => line.includes("Find transcript") && line.includes("2/2")));
+		assert.ok(terminal.getViewport().some((line) => line.includes("2/2")));
+		assert.ok(terminal.getViewport().some((line) => line.includes("↑ Shift+Enter · ↓ Enter")));
 		assert.ok(terminal.getViewport().some((line) => line.includes("line 10 needle two")));
 		assert.deepStrictEqual(editorInputs, []);
 		assert.ok(
@@ -522,22 +733,22 @@ describe("TuiAltScreen", () => {
 		for (let index = 0; index < 6; index++) terminal.sendInput("\x1b[<64;1;4M");
 		await terminal.waitForRender();
 		assert.strictEqual(transcript.scrollTop, 0);
-		assert.ok(terminal.getViewport().some((line) => line.includes("> needle")));
+		assert.ok(terminal.getViewport().some((line) => line.includes("needle") && line.includes("2/2")));
 
 		terminal.sendInput("\x07");
 		await terminal.waitForRender();
-		assert.ok(terminal.getViewport().some((line) => line.includes("Find transcript") && line.includes("1/2")));
+		assert.ok(terminal.getViewport().some((line) => line.includes("1/2")));
 		assert.ok(terminal.getViewport().some((line) => line.includes("line 5 needle one")));
 
 		terminal.sendInput("\x1b[103;6u");
 		await terminal.waitForRender();
-		assert.ok(terminal.getViewport().some((line) => line.includes("Find transcript") && line.includes("2/2")));
+		assert.ok(terminal.getViewport().some((line) => line.includes("2/2")));
 		assert.ok(terminal.getViewport().some((line) => line.includes("line 10 needle two")));
 
 		terminal.sendInput("\x1b");
 		terminal.sendInput("x");
 		await terminal.waitForRender();
-		assert.ok(!terminal.getViewport().some((line) => line.includes("Find transcript")));
+		assert.ok(!terminal.getViewport().some((line) => line.includes("↑ Shift+Enter · ↓ Enter")));
 		assert.deepStrictEqual(editorInputs, ["x"]);
 
 		tui.stop();
@@ -1669,13 +1880,13 @@ describe("TuiAltScreen", () => {
 
 		terminal.sendInput("\x1b[102;6u");
 		await terminal.waitForRender();
-		assert.ok(terminal.getViewport().some((line) => line.includes("Find transcript")));
+		assert.ok(terminal.getViewport().some((line) => line.includes("↑ ↓")));
 
 		terminal.sendInput("\x1b[5~");
 		terminal.sendInput("\x1b[<64;1;4M");
 		await terminal.waitForRender();
 		assert.ok(tui.viewportTop < topBefore);
-		assert.ok(terminal.getViewport().some((line) => line.includes("Find transcript")));
+		assert.ok(terminal.getViewport().some((line) => line.includes("↑ ↓")));
 		tui.stop();
 	});
 });

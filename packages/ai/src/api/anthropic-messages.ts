@@ -851,6 +851,8 @@ export const streamSimple: StreamFunction<"anthropic-messages", SimpleStreamOpti
 	context: Context,
 	options?: SimpleStreamOptions,
 ): AssistantMessageEventStream => {
+	assertRequestAuth(model.provider, options?.apiKey, options?.headers);
+
 	const base = {
 		...buildBaseOptions(model, context, options, options?.apiKey),
 		toolChoice: options?.toolChoice,

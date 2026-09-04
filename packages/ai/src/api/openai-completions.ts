@@ -504,7 +504,7 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 						type: "toolCall",
 						id: toolCall.id || "",
 						name,
-						arguments: {},
+						arguments: hasCustomInput ? { [customInputProperty]: "" } : {},
 						partialArgs: hasCustomInput ? undefined : "",
 						customInput: hasCustomInput
 							? { property: customInputProperty, jsonBuffer: { input: "", started: false, closed: false } }
@@ -536,7 +536,7 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 				}
 				if (toolCall.custom && !toolCall.function && !block.customInput) {
 					const customInputProperty = grammarToolInputProperties.get(block.name) ?? "input";
-					block.arguments = {};
+					block.arguments = { [customInputProperty]: "" };
 					block.customInput = {
 						property: customInputProperty,
 						jsonBuffer: { input: "", started: false, closed: false },
@@ -728,6 +728,8 @@ export const streamSimple: StreamFunction<"openai-completions", SimpleStreamOpti
 	context: Context,
 	options?: SimpleStreamOptions,
 ): AssistantMessageEventStream => {
+	getClientApiKey(model.provider, options?.apiKey, options?.headers);
+
 	const base = {
 		...buildBaseOptions(model, context, options, options?.apiKey),
 		toolChoice: options?.toolChoice,

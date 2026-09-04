@@ -325,8 +325,9 @@ export interface SimpleStreamOptions extends StreamOptions {
 //
 // Contract:
 // - Must return an AssistantMessageEventStream.
-// - Once invoked, request/model/runtime failures should be encoded in the
-//   returned stream, not thrown.
+// - Direct streamSimple() calls may throw synchronously when request auth is
+//   missing. Once a stream is returned, request/model/runtime failures should
+//   be encoded in that stream.
 // - Error termination must produce an AssistantMessage with stopReason
 //   "error" or "aborted" and errorMessage, emitted via the stream protocol.
 export type StreamFunction<TApi extends Api = Api, TOptions extends StreamOptions = StreamOptions> = (
@@ -532,16 +533,15 @@ export interface Context {
  * Successful streams emit `start` before partial updates and terminate with
  * `done`. A stream may terminate directly with `error` when request setup fails
  * before generation starts; after `start`, failures also terminate with `error`.
+ * Direct `streamSimple()` calls throw synchronously when request auth is missing.
  * Updates and `done` must never appear before `start`.
  *
  * `partial` is the shared live response-so-far helper, not an event-time
  * snapshot. Text and thinking blocks are empty when their `*_start` event is
  * emitted and grow only through their corresponding `*_delta` events until the
  * authoritative `*_end`. Redacted thinking may be complete at start and emit no
- * deltas. A streaming tool call starts with empty arguments and emits its full
- * raw JSON through `toolcall_delta`; a provider that starts with complete
- * arguments must emit a cumulative delta prefix that parses to those arguments
- * before emitting any later argument delta.
+ * deltas. Tool-call arguments at `toolcall_start` are provider-specific;
+ * `toolcall_delta` carries subsequent JSON updates.
  */
 export type AssistantMessageEvent =
 	| { type: "start"; partial: AssistantMessage }

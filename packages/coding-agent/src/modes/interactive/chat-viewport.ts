@@ -9,7 +9,8 @@ export interface ChatViewportOptions {
 	readonly widgetsAbove?: Component;
 	readonly widgetsBelow?: Component;
 	readonly scrollbar?: ScrollViewScrollbar;
-	readonly scrollbarStyle?: (text: string) => string;
+	readonly scrollbarTrackStyle?: (text: string) => string;
+	readonly scrollbarThumbStyle?: (text: string) => string;
 }
 
 export interface ChatViewport {
@@ -24,7 +25,8 @@ export function createChatViewport(options: ChatViewportOptions): ChatViewport {
 		primary: true,
 		overscroll: "chain",
 		scrollbar: options.scrollbar ?? "auto",
-		...(options.scrollbarStyle === undefined ? {} : { scrollbarStyle: options.scrollbarStyle }),
+		...(options.scrollbarTrackStyle === undefined ? {} : { scrollbarTrackStyle: options.scrollbarTrackStyle }),
+		...(options.scrollbarThumbStyle === undefined ? {} : { scrollbarThumbStyle: options.scrollbarThumbStyle }),
 	});
 	const dock = new VStack([
 		{ component: options.pendingMessages, shrink: 1, minSize: 0 },

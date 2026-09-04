@@ -652,9 +652,9 @@ for await (const event of s) {
 
 ### Complete Event Reference
 
-Successful generation follows `start → updates* → done`. A failure after generation starts follows `start → updates* → error`. Request setup may fail before generation starts, in which case the stream contains only `error`; `done` and update events are invalid before `start`.
+Successful generation follows `start → updates* → done`. A failure after generation starts follows `start → updates* → error`. Request setup may fail before generation starts, in which case the stream contains only `error`; `done` and update events are invalid before `start`. Direct API `streamSimple()` calls throw synchronously when request auth is missing.
 
-Every non-terminal event's `partial` is the shared live response-so-far helper. It is intentionally not an event-time snapshot: providers may mutate the same message and content blocks as generation advances, including while older events wait in the stream queue. Inspect it when handling an event instead of retaining it as historical state. Text and ordinary thinking blocks are empty when their `*_start` event is emitted and grow only through matching `*_delta` events until the authoritative `*_end`; redacted thinking may be complete at start and emit no deltas. A streaming tool call starts with empty arguments and emits its full raw JSON through `toolcall_delta`. A provider that starts with complete arguments must emit a cumulative delta prefix that parses to those arguments at an event boundary before later argument deltas.
+Every non-terminal event's `partial` is the shared live response-so-far helper. It is intentionally not an event-time snapshot: providers may mutate the same message and content blocks as generation advances, including while older events wait in the stream queue. Inspect it when handling an event instead of retaining it as historical state. Text and ordinary thinking blocks are empty when their `*_start` event is emitted and grow only through matching `*_delta` events until the authoritative `*_end`; redacted thinking may be complete at start and emit no deltas. Tool-call arguments at `toolcall_start` are provider-specific; `toolcall_delta` carries subsequent JSON updates.
 
 All streaming events emitted during assistant message generation:
 
@@ -927,7 +927,7 @@ Every `AssistantMessage` includes a `stopReason` field that indicates how the ge
 
 ## Error Handling
 
-Request failures never throw out of the stream functions: when a request ends with an error (including aborts and tool call validation errors), the streaming API emits an error event and the final message carries the details. Setup failures may emit `error` without `start`; failures after generation begins emit `start`, any observed updates, then `error`:
+Request failures after a stream is returned never throw: when a request ends with an error (including aborts and tool call validation errors), the streaming API emits an error event and the final message carries the details. Setup failures may emit `error` without `start`; failures after generation begins emit `start`, any observed updates, then `error`. Direct API `streamSimple()` calls throw synchronously when request auth is missing:
 
 ```typescript
 // In streaming
@@ -949,7 +949,7 @@ if (message.stopReason === 'error' || message.stopReason === 'aborted') {
 }
 ```
 
-Auth failures (no key configured, OAuth refresh failed, unknown provider) surface the same way: as a stream error with `stopReason: "error"`.
+When using a provider collection, auth failures (OAuth refresh failed, unknown provider) surface as a stream error with `stopReason: "error"`. Direct API `streamSimple()` calls instead throw synchronously when their required auth is absent.
 
 ### Aborting Requests
 

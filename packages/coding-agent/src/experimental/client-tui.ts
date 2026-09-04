@@ -146,7 +146,8 @@ export class ExperimentalClientTui implements Component {
 			status: this.#statusContainer,
 			editor: this.#editorContainer,
 			footer: this.#footerComponent,
-			scrollbarStyle: (text) => theme.bg("scrollbarThumb", text),
+			scrollbarTrackStyle: (text) => theme.fg("scrollbarTrack", text),
+			scrollbarThumbStyle: (text) => theme.fg("scrollbarThumb", text),
 		}).root;
 		this.#rebuild();
 	}
