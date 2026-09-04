@@ -61,6 +61,8 @@ describeEval("Pi smoke", { harness }, (it) => {
 - `name`: stable harness identity used by reports and comparisons.
 - `model`: optional `{ provider, id }` selection. It overrides the runner's default model.
 - `noTools`: Pi's tool-disable configuration.
+- `tools`: optional allowlist of tool names available to the evaluated agent.
+- `customTools`: custom tool definitions to register for the evaluated agent.
 - `transformSystemPrompt`: transforms the complete default prompt before the eval starts.
 - `output`: transforms the final response and `AgentSession` into a JSON-safe domain result.
 
