@@ -75,10 +75,12 @@ function verifyCodingAgentPackageRoot(tarballs, directory) {
 		overrides,
 	};
 	writeFileSync(join(consumer, "package.json"), `${JSON.stringify(packageJson, undefined, "\t")}\n`);
+	console.log(`Verifying packed ${codingAgentPackageName} in an isolated install...`);
 	run("npm", ["install", "--omit=dev", "--ignore-scripts"], { cwd: consumer });
 	run("node", ["--input-type=module", "--eval", `import "${codingAgentPackageName}";`], {
 		cwd: consumer,
 	});
+	console.log(`Verified packed ${codingAgentPackageName} installs and imports from its public root.`);
 }
 
 function isPublished(name, version) {
