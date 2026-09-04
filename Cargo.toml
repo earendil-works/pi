@@ -1,0 +1,116 @@
+[workspace]
+resolver = "2"
+members = [
+  "packages/chord",
+  "packages/telemetry",
+  "packages/ai",
+  "packages/agent",
+  "packages/tui",
+  "packages/protocol",
+  "packages/client",
+  "packages/server",
+  "packages/session-backends/sqlite",
+  "packages/coding-agent",
+  "packages/evals",
+]
+
+[workspace.package]
+version = "0.84.4"
+edition = "2024"
+rust-version = "1.92"
+license = "MIT"
+repository = "https://github.com/earendil-works/pi-mono"
+authors = ["Pi contributors"]
+
+[workspace.dependencies]
+anyhow = "1.0"
+async-stream = "0.3"
+async-trait = "0.1"
+aws-config = "=1.8.12"
+aws-sdk-bedrockruntime = "=1.120.0"
+aws-smithy-types = "=1.3.5"
+aws-types = "=1.3.11"
+base64 = "0.22"
+bytes = "1.10"
+chrono = { version = "0.4", features = ["serde", "clock"] }
+ciborium = "0.2"
+clap = { version = "4.5", features = ["derive", "env"] }
+crossterm = { version = "0.29", features = ["event-stream"] }
+dashmap = "6.1"
+directories = "6.0"
+futures = "0.3"
+flate2 = "1.1"
+globset = "0.4"
+ignore = "0.4"
+indexmap = { version = "2.10", features = ["serde"] }
+jsonschema = "0.33"
+once_cell = "1.21"
+parking_lot = "0.12"
+rand = "0.9"
+regex = "1.11"
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls", "http2"] }
+rusqlite = { version = "0.37", features = ["bundled", "chrono"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_yaml = "0.9"
+sha2 = "0.10"
+shell-words = "1.1"
+strip-ansi-escapes = "0.2"
+tar = "0.4"
+thiserror = "2.0"
+tokio = { version = "1.47", features = ["full"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+tokio-util = { version = "0.7", features = ["codec", "rt"] }
+toml = "0.9"
+unicode-segmentation = "1.12"
+unicode-width = "0.2"
+url = { version = "2.5", features = ["serde"] }
+uuid = { version = "1.18", features = ["v4", "v7", "serde"] }
+walkdir = "2.5"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+too_many_lines = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+semicolon_if_nothing_returned = "allow"
+struct_field_names = "allow"
+double_ended_iterator_last = "allow"
+collapsible_if = "allow"
+cast_possible_wrap = "allow"
+cast_lossless = "allow"
+cast_possible_truncation = "allow"
+cast_sign_loss = "allow"
+cast_precision_loss = "allow"
+format_collect = "allow"
+format_push_string = "allow"
+map_unwrap_or = "allow"
+similar_names = "allow"
+type_complexity = "allow"
+default_trait_access = "allow"
+unnecessary_literal_bound = "allow"
+match_same_arms = "allow"
+unnecessary_wraps = "allow"
+unnecessary_lazy_evaluations = "allow"
+assigning_clones = "allow"
+needless_pass_by_value = "allow"
+large_enum_variant = "allow"
+explicit_counter_loop = "allow"
+needless_raw_string_hashes = "allow"
+manual_let_else = "allow"
+unnested_or_patterns = "allow"
+struct_excessive_bools = "allow"
+double_must_use = "allow"
+must_use_candidate = "allow"
+too_many_arguments = "allow"
+ptr_arg = "allow"
+possible_missing_else = "allow"
+collapsible_match = "allow"
+single_match_else = "allow"
+ref_option = "allow"

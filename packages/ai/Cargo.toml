@@ -1,0 +1,43 @@
+[package]
+name = "pi-ai"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Unified multi-provider LLM API for Pi"
+
+[dependencies]
+anyhow.workspace = true
+async-stream.workspace = true
+async-trait.workspace = true
+aws-config.workspace = true
+aws-sdk-bedrockruntime.workspace = true
+aws-smithy-types.workspace = true
+aws-types.workspace = true
+base64.workspace = true
+bytes.workspace = true
+chrono.workspace = true
+futures.workspace = true
+indexmap.workspace = true
+jsonschema.workspace = true
+parking_lot.workspace = true
+pi-telemetry = { path = "../telemetry" }
+rand.workspace = true
+regex.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-stream.workspace = true
+tokio-util.workspace = true
+url.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+axum = "0.8"
+
+[lints]
+workspace = true

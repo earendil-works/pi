@@ -68,7 +68,7 @@ cwe_ids:
   - CWE-...
 vulnerabilities:
   - package:
-      ecosystem: npm
+      ecosystem: cargo
       name: <package-name>
     vulnerable_version_range: <range>
     patched_versions: <range-or-version>

@@ -1,0 +1,23 @@
+[package]
+name = "pi-client"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+bytes.workspace = true
+ciborium.workspace = true
+chord = { path = "../chord" }
+futures.workspace = true
+pi-protocol = { path = "../protocol" }
+parking_lot.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+uuid.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,26 @@
+[package]
+name = "pi-tui"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Differential terminal UI framework for Pi"
+
+[dependencies]
+anyhow.workspace = true
+base64.workspace = true
+crossterm.workspace = true
+ignore.workspace = true
+parking_lot.workspace = true
+regex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+strip-ansi-escapes.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+unicode-segmentation.workspace = true
+unicode-width.workspace = true
+
+[lints]
+workspace = true

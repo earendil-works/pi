@@ -20,7 +20,7 @@ Review the completed workpackage and simplify its implementation without changin
 - Remove speculative defensive programming inside trusted code. Validate at real trust boundaries; rely on types and established invariants internally.
 - Do not keep fallback behavior for states that should be impossible. Prefer fixing the invariant or type model.
 - Simplify excessive state, boolean flags, branching, indirection, and special cases. Rework the underlying representation when that is clearer.
-- Tighten TypeScript types so invalid states are unrepresentable. Avoid `any`, unnecessary assertions, broad types, and optional fields for impossible states.
+- Tighten Rust types so invalid states are unrepresentable. Avoid unchecked conversions, broad `Value` use outside protocol boundaries, and optional fields for impossible states.
 - Prefer direct, readable code over cleverness, premature abstraction, and framework-like infrastructure.
 - Delete comments that merely restate the code, but preserve comments that explain constraints, intent, or non-obvious decisions.
 

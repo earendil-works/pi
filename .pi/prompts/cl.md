@@ -22,7 +22,7 @@ Audit changelog entries for all commits since the last release.
 
 4. **For each commit, check:**
    - Skip: changelog updates, doc-only changes, release housekeeping
-   - Skip: changes to generated model catalogs (for example `packages/ai/src/models.generated.ts`) unless accompanied by an intentional product-facing change in non-generated source/docs.
+   - Skip: cached remote model-catalog data unless accompanied by an intentional product-facing source or documentation change.
    - Determine which package(s) the commit affects (use `git show <hash> --stat`)
    - Verify a changelog entry exists in the affected package(s)
    - For external contributions (PRs), verify format: `Description ([#N](url) by [@user](url))`
