@@ -250,3 +250,11 @@ Current: reject any malformed lane. Possible relaxation: trust supported atomic 
 ### 9.2 Sequence preservation
 
 Current: preserve source sequences, `nextSeq`, and list cursors. Possible relaxation: keep entry sequences but assign destination-local sequences to values, list elements, and reconstructed lane rows. Revisit if preservation materially complicates streaming.
+
+### 9.3 JSONL source capture boundary
+
+Original requirement: capture the exact source file length at the commit-queue boundary and have both passes read only up to that length through the same fixed file handle.
+
+Current implementation: capture the source's current `nextSeq` at the commit-queue boundary and have both independently opened scans stop before that sequence. This is simpler and avoids adding byte-range semantics to `FileSystem`, while still excluding later append-only commits transaction by transaction.
+
+The current implementation assumes a format-4 source remains append-only and is not replaced while the fork runs. Concurrent compaction or another whole-file replacement could otherwise make the two scans observe different file incarnations. Decide whether to restore fixed-length capture, retain the sequence boundary with an explicit no-replacement invariant, or add replacement coordination when J1 compaction is implemented.
