@@ -36,3 +36,4 @@ export { TrustSelectorComponent } from "./trust-selector.ts";
 export { UserMessageComponent } from "./user-message.ts";
 export { UserMessageSelectorComponent } from "./user-message-selector.ts";
 export { truncateToVisualLines, type VisualTruncateResult } from "./visual-truncate.ts";
+export { extractThinkingPreview, WorkProcessComponent } from "./work-process.ts";

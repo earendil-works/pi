@@ -153,6 +153,7 @@ import { TreeSelectorComponent } from "./components/tree-selector.ts";
 import { TrustSelectorComponent } from "./components/trust-selector.ts";
 import { UserMessageComponent } from "./components/user-message.ts";
 import { UserMessageSelectorComponent } from "./components/user-message-selector.ts";
+import { extractThinkingPreview, WorkProcessComponent } from "./components/work-process.ts";
 import { editInExternalEditor } from "./external-editor.ts";
 import { refreshModelCatalogs } from "./model-catalog-refresh.ts";
 import { getModelSearchText } from "./model-search.ts";
@@ -429,6 +430,13 @@ export class InteractiveMode {
 
 	// Tool execution tracking: toolCallId -> component
 	private pendingTools = new Map<string, ToolExecutionComponent>();
+
+	// Work process grouping (request-level, UI-only; never persisted into session entries)
+	private currentWorkProcess: WorkProcessComponent | undefined = undefined;
+	private pendingWorkComponents: Component[] = [];
+	private currentWorkProcessFailed = false;
+	private agentStartedAt: number | undefined = undefined;
+	private lastWorkChild: Component | undefined = undefined;
 
 	// Tool output expansion state
 	private toolOutputExpanded = false;
@@ -2171,7 +2179,7 @@ export class InteractiveMode {
 
 	private setHiddenThinkingLabel(label?: string): void {
 		this.hiddenThinkingLabel = label ?? this.defaultHiddenThinkingLabel;
-		for (const child of this.chatContainer.children) {
+		for (const child of this.walkChatComponents()) {
 			if (child instanceof AssistantMessageComponent) {
 				child.setHiddenThinkingLabel(this.hiddenThinkingLabel);
 			}
@@ -2890,6 +2898,7 @@ export class InteractiveMode {
 		this.defaultEditor.onAction("app.model.select", () => this.showModelSelector());
 		this.defaultEditor.onAction("app.tools.expand", () => this.toggleToolOutputExpansion());
 		this.defaultEditor.onAction("app.thinking.toggle", () => this.toggleThinkingBlockVisibility());
+		this.defaultEditor.onAction("app.process.toggle", () => this.toggleWorkProcessCollapse());
 		this.defaultEditor.onAction("app.editor.external", () => void this.handleOpenExternalEditor());
 		this.defaultEditor.onAction(
 			"app.message.copy",
@@ -3172,6 +3181,8 @@ export class InteractiveMode {
 		switch (event.type) {
 			case "agent_start":
 				this.pendingTools.clear();
+				this.agentStartedAt = Date.now();
+				this.resetWorkProcessState();
 				// Restore main escape handler if retry handler is still active
 				// (retry success event fires later, but we need main handler now)
 				if (this.retryEscapeHandler) {
@@ -3235,7 +3246,7 @@ export class InteractiveMode {
 						this.getMarkdownTransformers(),
 					);
 					this.streamingMessage = event.message;
-					this.chatContainer.addChild(this.streamingComponent);
+					this.addWorkChild(this.streamingComponent);
 					this.streamingComponent.updateContent(this.streamingMessage, true);
 					this.ui.requestRender();
 				}
@@ -3262,7 +3273,9 @@ export class InteractiveMode {
 									this.sessionManager.getCwd(),
 								);
 								component.setExpanded(this.toolOutputExpanded);
-								this.chatContainer.addChild(component);
+								this.ensureWorkProcessOpen();
+								this.addWorkChild(component);
+								this.currentWorkProcess?.trackTool(content.name);
 								this.pendingTools.set(content.id, component);
 							} else {
 								const component = this.pendingTools.get(content.id);
@@ -3301,6 +3314,9 @@ export class InteractiveMode {
 								isError: true,
 							});
 						}
+						for (const [, component] of this.pendingTools.entries()) {
+							this.currentWorkProcess?.markToolErrored(component.getToolName());
+						}
 						this.pendingTools.clear();
 					} else {
 						// Args are now complete - trigger diff computation for edit tools
@@ -3309,6 +3325,15 @@ export class InteractiveMode {
 						}
 						this.maybeShowAssistantDiagnostics(this.streamingMessage);
 						this.maybeShowCacheMissNotice(this.streamingMessage);
+						const preview = extractThinkingPreview(this.streamingMessage);
+						if (preview) {
+							this.currentWorkProcess?.setThinkingPreview(preview);
+						}
+						if (!this.streamingMessage.content.some((c) => c.type === "toolCall")) {
+							// Final answer of the request: keep it outside the work process so it stays
+							// visible when the process is collapsed.
+							this.moveComponentToFinalAnswer(this.streamingComponent);
+						}
 					}
 					this.streamingComponent = undefined;
 					this.streamingMessage = undefined;
@@ -3337,7 +3362,9 @@ export class InteractiveMode {
 						this.sessionManager.getCwd(),
 					);
 					component.setExpanded(this.toolOutputExpanded);
-					this.chatContainer.addChild(component);
+					this.ensureWorkProcessOpen();
+					this.addWorkChild(component);
+					this.currentWorkProcess?.trackTool(event.toolName);
 					this.pendingTools.set(event.toolCallId, component);
 				}
 				component.markExecutionStarted();
@@ -3358,6 +3385,9 @@ export class InteractiveMode {
 				const component = this.pendingTools.get(event.toolCallId);
 				if (component) {
 					component.updateResult({ ...event.result, isError: event.isError });
+					if (event.isError) {
+						this.currentWorkProcess?.markToolErrored(component.getToolName());
+					}
 					this.pendingTools.delete(event.toolCallId);
 					this.ui.requestRender();
 				}
@@ -3370,11 +3400,12 @@ export class InteractiveMode {
 				}
 				this.clearStatusIndicator("working");
 				if (this.streamingComponent) {
-					this.chatContainer.removeChild(this.streamingComponent);
+					this.removeWorkChild(this.streamingComponent);
 					this.streamingComponent = undefined;
 					this.streamingMessage = undefined;
 				}
 				this.pendingTools.clear();
+				this.closeWorkProcess();
 
 				this.ui.requestRender();
 				break;
@@ -3554,6 +3585,100 @@ export class InteractiveMode {
 		this.ui.requestRender();
 	}
 
+	/**
+	 * Direct chat children plus the children of any work process group, so display-wide updates
+	 * (thinking visibility, tool expansion, images, padding) also reach nested components.
+	 */
+	private *walkChatComponents(): Iterable<Component> {
+		for (const child of this.chatContainer.children) {
+			yield child;
+			if (child instanceof WorkProcessComponent) {
+				yield* child.contentChildren();
+			}
+		}
+	}
+
+	/** Add an assistant/tool component created during an agent request to the current grouping.
+	 * Components stay in the chat container until the first tool call appears; after that they
+	 * are held by the work process component.
+	 */
+	private addWorkChild(component: Component): void {
+		this.lastWorkChild = component;
+		if (this.currentWorkProcess) {
+			this.currentWorkProcess.addChild(component);
+			return;
+		}
+		this.chatContainer.addChild(component);
+		this.pendingWorkComponents.push(component);
+	}
+
+	private removeWorkChild(component: Component): void {
+		if (this.currentWorkProcess?.contentChildren().includes(component)) {
+			this.currentWorkProcess.removeChild(component);
+		} else {
+			this.chatContainer.removeChild(component);
+		}
+	}
+
+	private resetWorkProcessState(): void {
+		this.currentWorkProcess = undefined;
+		this.pendingWorkComponents = [];
+		this.currentWorkProcessFailed = false;
+		this.lastWorkChild = undefined;
+	}
+
+	/** Open the request-level work process group on the first tool call of a request. */
+	private ensureWorkProcessOpen(): WorkProcessComponent {
+		if (!this.currentWorkProcess) {
+			const group = new WorkProcessComponent(this.agentStartedAt);
+			this.currentWorkProcess = group;
+			const first = this.pendingWorkComponents[0];
+			const insertIndex = first ? this.chatContainer.children.indexOf(first) : this.chatContainer.children.length;
+			if (insertIndex >= 0) {
+				this.chatContainer.children.splice(insertIndex, 0, group);
+			} else {
+				this.chatContainer.addChild(group);
+			}
+			for (const component of this.pendingWorkComponents) {
+				const index = this.chatContainer.children.indexOf(component);
+				if (index >= 0) {
+					this.chatContainer.children.splice(index, 1);
+				}
+				group.addChild(component);
+			}
+			this.pendingWorkComponents = [];
+		}
+		return this.currentWorkProcess;
+	}
+
+	/** Move a component out of the work process group, right after it (final answer placement). */
+	private moveComponentToFinalAnswer(component: Component): void {
+		const group = this.currentWorkProcess;
+		if (!group) return;
+		group.removeChild(component);
+		const groupIndex = this.chatContainer.children.indexOf(group);
+		if (groupIndex >= 0) {
+			this.chatContainer.children.splice(groupIndex + 1, 0, component);
+		} else {
+			this.chatContainer.addChild(component);
+		}
+	}
+
+	/** Complete the current work process group; auto-collapse unless the request failed. */
+	private closeWorkProcess(): void {
+		const group = this.currentWorkProcess;
+		const failed = this.currentWorkProcessFailed;
+		this.currentWorkProcess = undefined;
+		this.pendingWorkComponents = [];
+		this.currentWorkProcessFailed = false;
+		this.lastWorkChild = undefined;
+		if (!group) return;
+		group.setCompleted(Date.now());
+		if (!failed) {
+			group.setCollapsed(true);
+		}
+	}
+
 	private addCustomEntryToChat(entry: Extract<SessionEntry, { type: "custom" }>): void {
 		const renderer = this.session.extensionRunner.getEntryRenderer(entry.customType);
 		if (!renderer) {
@@ -3566,7 +3691,12 @@ export class InteractiveMode {
 		}
 
 		if (this.streamingComponent) {
-			const streamingIndex = this.chatContainer.children.indexOf(this.streamingComponent);
+			// The streaming assistant may be nested inside the work process group; custom entries
+			// then go before the whole group, keeping them outside the collapsible area.
+			const insertBefore = this.currentWorkProcess?.contentChildren().includes(this.streamingComponent)
+				? this.currentWorkProcess
+				: this.streamingComponent;
+			const streamingIndex = this.chatContainer.children.indexOf(insertBefore);
 			if (streamingIndex >= 0) {
 				this.chatContainer.children.splice(streamingIndex, 0, component);
 				return;
@@ -3670,7 +3800,11 @@ export class InteractiveMode {
 					this.outputPad,
 					this.getMarkdownTransformers(),
 				);
-				this.chatContainer.addChild(assistantComponent);
+				this.addWorkChild(assistantComponent);
+				const preview = extractThinkingPreview(message);
+				if (preview) {
+					this.currentWorkProcess?.setThinkingPreview(preview);
+				}
 				break;
 			}
 			case "toolResult": {
@@ -3688,6 +3822,7 @@ export class InteractiveMode {
 		options: { updateFooter?: boolean; populateHistory?: boolean } = {},
 	): void {
 		this.pendingTools.clear();
+		this.resetWorkProcessState();
 		const renderedPendingTools = new Map<string, ToolExecutionComponent>();
 		// Cache-miss notices are not persisted; re-derive them from the full entry
 		// list and re-inject them after the assistant messages that paid for them.
@@ -3702,10 +3837,12 @@ export class InteractiveMode {
 
 		for (const item of items) {
 			if (isCustomSessionEntry(item)) {
+				this.closeWorkProcess();
 				this.addCustomEntryToChat(item);
 				continue;
 			}
 			if (isCompactionCostNotice(item)) {
+				this.closeWorkProcess();
 				this.addCompactionCostNotice(item);
 				continue;
 			}
@@ -3713,6 +3850,10 @@ export class InteractiveMode {
 			const message = item;
 			// Assistant messages need special handling for tool calls
 			if (message.role === "assistant") {
+				const hasToolCalls = message.content.some((c) => c.type === "toolCall");
+				if (hasToolCalls) {
+					this.ensureWorkProcessOpen();
+				}
 				this.addMessageToChat(message);
 				// Render tool call components
 				for (const content of message.content) {
@@ -3730,7 +3871,8 @@ export class InteractiveMode {
 							this.sessionManager.getCwd(),
 						);
 						component.setExpanded(this.toolOutputExpanded);
-						this.chatContainer.addChild(component);
+						this.addWorkChild(component);
+						this.ensureWorkProcessOpen().trackTool(content.name);
 
 						if (message.stopReason === "aborted" || message.stopReason === "error") {
 							let errorMessage: string;
@@ -3744,12 +3886,23 @@ export class InteractiveMode {
 								errorMessage = message.errorMessage || "Error";
 							}
 							component.updateResult({ content: [{ type: "text", text: errorMessage }], isError: true });
+							this.ensureWorkProcessOpen().markToolErrored(content.name);
 						} else {
 							renderedPendingTools.set(content.id, component);
 						}
 					}
 				}
-				if (message.stopReason !== "aborted" && message.stopReason !== "error") {
+				if (message.stopReason === "aborted" || message.stopReason === "error") {
+					this.currentWorkProcessFailed = true;
+				} else {
+					if (!hasToolCalls) {
+						// Final answer of the request: move it out of the work process group so it
+						// stays visible when the group is collapsed.
+						const assistantComponent = this.lastWorkChild;
+						if (assistantComponent instanceof AssistantMessageComponent) {
+							this.moveComponentToFinalAnswer(assistantComponent);
+						}
+					}
 					this.maybeShowAssistantDiagnostics(message);
 					const miss = cacheMisses.get(message);
 					if (miss) this.addCacheMissNotice(miss);
@@ -3763,10 +3916,12 @@ export class InteractiveMode {
 				}
 			} else {
 				// All other messages use standard rendering
+				this.closeWorkProcess();
 				this.addMessageToChat(message, options);
 			}
 		}
 
+		this.closeWorkProcess();
 		for (const [toolCallId, component] of renderedPendingTools) {
 			this.pendingTools.set(toolCallId, component);
 		}
@@ -4210,6 +4365,24 @@ export class InteractiveMode {
 		this.setToolsExpanded(!this.toolOutputExpanded);
 	}
 
+	private toggleWorkProcessCollapse(): void {
+		const groups: WorkProcessComponent[] = [];
+		for (const child of this.chatContainer.children) {
+			if (child instanceof WorkProcessComponent) {
+				groups.push(child);
+			}
+		}
+		if (groups.length === 0) {
+			this.showStatus("No work process to toggle");
+			return;
+		}
+		const collapse = groups.some((group) => !group.isCollapsed());
+		for (const group of groups) {
+			group.setCollapsed(collapse);
+		}
+		this.showStatus(`Work process: ${collapse ? "collapsed" : "expanded"}`);
+	}
+
 	private setToolsExpanded(expanded: boolean): void {
 		if (expanded === this.toolOutputExpanded) return;
 
@@ -4218,11 +4391,14 @@ export class InteractiveMode {
 		if (isExpandable(activeHeader)) {
 			activeHeader.setExpanded(expanded);
 		}
-		for (const container of [this.loadedResourcesContainer, this.chatContainer]) {
-			for (const child of container.children) {
-				if (isExpandable(child)) {
-					child.setExpanded(expanded);
-				}
+		for (const child of this.loadedResourcesContainer.children) {
+			if (isExpandable(child)) {
+				child.setExpanded(expanded);
+			}
+		}
+		for (const child of this.walkChatComponents()) {
+			if (isExpandable(child)) {
+				child.setExpanded(expanded);
 			}
 		}
 		this.showStatus(`Tool output: ${expanded ? "expanded" : "collapsed"}`);
@@ -4230,7 +4406,7 @@ export class InteractiveMode {
 
 	/** Update rendered assistant messages without rebuilding live tool components. */
 	private updateThinkingBlockVisibility(): void {
-		for (const child of this.chatContainer.children) {
+		for (const child of this.walkChatComponents()) {
 			if (child instanceof AssistantMessageComponent) {
 				child.setHideThinkingBlock(this.hideThinkingBlock);
 			}
@@ -4608,7 +4784,7 @@ export class InteractiveMode {
 					},
 					onShowImagesChange: (enabled) => {
 						this.settingsManager.setShowImages(enabled);
-						for (const child of this.chatContainer.children) {
+						for (const child of this.walkChatComponents()) {
 							if (child instanceof ToolExecutionComponent) {
 								child.setShowImages(enabled);
 							}
@@ -4616,7 +4792,7 @@ export class InteractiveMode {
 					},
 					onImageWidthCellsChange: (width) => {
 						this.settingsManager.setImageWidthCells(width);
-						for (const child of this.chatContainer.children) {
+						for (const child of this.walkChatComponents()) {
 							if (child instanceof ToolExecutionComponent) {
 								child.setImageWidthCells(width);
 							}
@@ -4720,7 +4896,7 @@ export class InteractiveMode {
 						this.settingsManager.setOutputPad(padding);
 						this.outputPad = padding;
 						if (this.streamingComponent || this.session.isStreaming) {
-							for (const child of this.chatContainer.children) {
+							for (const child of this.walkChatComponents()) {
 								if (
 									child instanceof AssistantMessageComponent ||
 									child instanceof CustomMessageComponent ||
@@ -6321,6 +6497,7 @@ export class InteractiveMode {
 		const selectModel = this.getAppKeyDisplay("app.model.select");
 		const expandTools = this.getAppKeyDisplay("app.tools.expand");
 		const toggleThinking = this.getAppKeyDisplay("app.thinking.toggle");
+		const toggleProcess = this.getAppKeyDisplay("app.process.toggle");
 		const externalEditor = this.getAppKeyDisplay("app.editor.external");
 		const cycleModelBackward = this.getAppKeyDisplay("app.model.cycleBackward");
 		const copyMessage = this.getAppKeyDisplay("app.message.copy");
@@ -6366,6 +6543,7 @@ export class InteractiveMode {
 | \`${selectModel}\` | Open model selector |
 | \`${expandTools}\` | Toggle tool output expansion |
 | \`${toggleThinking}\` | Toggle thinking block visibility |
+| \`${toggleProcess}\` | Toggle work process groups |
 | \`${externalEditor}\` | Edit message in external editor |
 | \`${copyMessage}\` | Copy last assistant message |
 | \`${followUp}\` | Queue follow-up message |

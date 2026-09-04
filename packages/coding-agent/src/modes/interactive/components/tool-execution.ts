@@ -112,6 +112,9 @@ export class ToolExecutionComponent extends Container {
 
 		this.updateDisplay();
 	}
+	getToolName(): string {
+		return this.toolName;
+	}
 
 	private getCallRenderer(): ToolDefinition<any, any>["renderCall"] | undefined {
 		return this.toolDefinition?.renderCall;
@@ -171,7 +174,7 @@ export class ToolExecutionComponent extends Container {
 
 	private createResultRegion(component: Component): MouseRegion {
 		return new MouseRegion(component, (event) => {
-			if (!this.result || event.type !== "click" || event.button !== "left") return undefined;
+			if (event.type !== "click" || event.button !== "left") return undefined;
 			this.setExpanded(!this.expanded);
 			return { handled: true };
 		});
@@ -414,7 +417,17 @@ export class ToolExecutionComponent extends Container {
 		}
 		const output = this.getTextOutput();
 		if (output) {
-			text += `\n${output}`;
+			if (this.expanded) {
+				text += `\n${output}`;
+			} else {
+				const lines = output.split("\n");
+				const displayLines = lines.slice(0, FALLBACK_PREVIEW_LINES);
+				const remaining = lines.length - displayLines.length;
+				text += `\n${displayLines.join("\n")}`;
+				if (remaining > 0) {
+					text += `\n... (${remaining} more lines, ${keyHint("app.tools.expand", "to expand")})`;
+				}
+			}
 		}
 		return text;
 	}
