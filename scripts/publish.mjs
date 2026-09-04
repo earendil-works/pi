@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 
 import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, relative } from "node:path";
 import { getPublicWorkspacePackages } from "./release-packages.mjs";
 
 const packages = getPublicWorkspacePackages();
+const codingAgentPackageName = "@earendil-works/pi-coding-agent";
 
 const dryRun = process.argv.includes("--dry-run");
 const unknownArgs = process.argv.slice(2).filter((arg) => arg !== "--dry-run");
@@ -41,10 +43,42 @@ function assertBuildOutputExists(directory) {
 	}
 }
 
-function validatePack(directory) {
-	const result = run("npm", ["pack", "--dry-run", "--ignore-scripts", "--json"], { capture: true, cwd: directory });
+function fileSpecifier(fromDirectory, file) {
+	const relativePath = relative(fromDirectory, file).replaceAll("\\", "/");
+	return `file:${relativePath.startsWith(".") ? relativePath : `./${relativePath}`}`;
+}
+
+function packPackage(pkg, destination) {
+	const result = run("npm", ["pack", "--ignore-scripts", "--json", "--pack-destination", destination], {
+		capture: true,
+		cwd: pkg.directory,
+	});
 	const packed = JSON.parse(result.stdout)[0];
 	console.log(`  ${packed.filename}: ${packed.files.length} files, ${packed.size} bytes packed, ${packed.unpackedSize} bytes unpacked`);
+	return join(destination, packed.filename);
+}
+
+function verifyCodingAgentPackageRoot(tarballs, directory) {
+	const codingAgentTarball = tarballs.get(codingAgentPackageName);
+	if (codingAgentTarball === undefined) {
+		throw new Error(`${codingAgentPackageName} tarball is missing`);
+	}
+	const consumer = join(directory, "coding-agent-consumer");
+	mkdirSync(consumer);
+	const overrides = Object.fromEntries(
+		[...tarballs].map(([name, tarball]) => [name, fileSpecifier(consumer, tarball)]),
+	);
+	const packageJson = {
+		private: true,
+		type: "module",
+		dependencies: { [codingAgentPackageName]: fileSpecifier(consumer, codingAgentTarball) },
+		overrides,
+	};
+	writeFileSync(join(consumer, "package.json"), `${JSON.stringify(packageJson, undefined, "\t")}\n`);
+	run("npm", ["install", "--omit=dev", "--ignore-scripts"], { cwd: consumer });
+	run("node", ["--input-type=module", "--eval", `import "${codingAgentPackageName}";`], {
+		cwd: consumer,
+	});
 }
 
 function isPublished(name, version) {
@@ -74,23 +108,30 @@ if (versions.length !== 1) {
 
 console.log(`Publishing pi packages at ${versions[0]}${dryRun ? " (dry run)" : ""}\n`);
 
+const destination = mkdtempSync(join(tmpdir(), "pi-publish-check-"));
+const tarballs = new Map();
 const packageStates = packages.map((pkg) => ({
 	...pkg,
 	published: false,
 	version: packageVersions.get(pkg.name),
 }));
 
-for (const pkg of packageStates) {
-	assertBuildOutputExists(pkg.directory);
-	pkg.published = isPublished(pkg.name, pkg.version);
+try {
+	for (const pkg of packageStates) {
+		assertBuildOutputExists(pkg.directory);
+		pkg.published = isPublished(pkg.name, pkg.version);
 
-	if (pkg.published) {
-		console.log(`${pkg.name}@${pkg.version} is already published; validating package contents only.`);
-	} else {
-		console.log(`${pkg.name}@${pkg.version} is not published; validating package contents before publish.`);
+		if (pkg.published) {
+			console.log(`${pkg.name}@${pkg.version} is already published; validating package contents only.`);
+		} else {
+			console.log(`${pkg.name}@${pkg.version} is not published; validating package contents before publish.`);
+		}
+		tarballs.set(pkg.name, packPackage(pkg, destination));
+		console.log();
 	}
-	validatePack(pkg.directory);
-	console.log();
+	verifyCodingAgentPackageRoot(tarballs, destination);
+} finally {
+	rmSync(destination, { recursive: true, force: true });
 }
 
 if (dryRun) {
