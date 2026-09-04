@@ -76,7 +76,7 @@ function verifyCodingAgentPackageRoot(tarballs, directory) {
 	};
 	writeFileSync(join(consumer, "package.json"), `${JSON.stringify(packageJson, undefined, "\t")}\n`);
 	console.log(`Verifying packed ${codingAgentPackageName} in an isolated install...`);
-	run("npm", ["install", "--omit=dev", "--ignore-scripts"], { cwd: consumer });
+	run("npm", ["install", "--omit=dev", "--ignore-scripts", "--no-audit", "--no-fund"], { cwd: consumer });
 	run("node", ["--input-type=module", "--eval", `import "${codingAgentPackageName}";`], {
 		cwd: consumer,
 	});
