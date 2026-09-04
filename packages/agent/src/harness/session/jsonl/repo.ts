@@ -302,7 +302,9 @@ export class JsonlSessionRepo
 	): Promise<ResolvedJsonlForkSource> {
 		if (storage !== undefined) {
 			if (storage.isLegacyV3()) {
-				return { kind: "snapshot", snapshot: await storage.captureForkSource(context) };
+				throw new Error(
+					"Cannot fork an open legacy v3 JSONL session; commit a non-empty transaction to upgrade it to format 4 first",
+				);
 			}
 			const nextSeq = await storage.captureForkNextSeq(context);
 			return { kind: "stream", source: { kind: "open", metadata: source, nextSeq } };
