@@ -120,6 +120,7 @@ For each built-in provider, pi maintains a list of tool-capable models. Configur
 - Cloudflare Workers AI
 - xAI
 - OpenRouter
+- OrcaRouter
 - Vercel AI Gateway
 - ZAI Coding Plan (Global)
 - ZAI Coding Plan (China)

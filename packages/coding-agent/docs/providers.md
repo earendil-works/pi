@@ -51,6 +51,14 @@ Anthropic subscription auth is active for Claude Pro/Max accounts. Third-party h
 - On remote/headless machines (e.g. over SSH) the browser cannot reach the loopback callback; paste the final redirect URL (or the authorization code) into the login prompt instead
 - `OPENROUTER_API_KEY` remains available through **Use an API key**
 
+### OrcaRouter
+
+OrcaRouter is an OpenAI-compatible AI gateway (models and agents). The built-in `orcarouter` provider uses the fixed gateway base URL `https://api.orcarouter.ai/v1`; its model list is fetched live from the gateway catalog on every refresh, so the `/model` picker shows exactly the chat-capable models the configured workspace can call.
+
+- Run `/login orcarouter`, then select **Use an API key** to store an `ORCAROUTER_API_KEY`
+- Or set `ORCAROUTER_API_KEY` in the environment
+- The model catalog is fetched from `https://api.orcarouter.ai/v1/models` (Bearer-authenticated when a key is configured) and cached in `models-store.json`; text chat uses chat-capable models only, and multimodal chat models are filtered to entries that explicitly declare image input
+
 ### Radius
 
 Radius is a dynamic `pi-messages` gateway. `/login radius` stores OAuth tokens in `auth.json`; the gateway catalog is refreshed independently and cached in `models-store.json`. Custom Radius gateways can be declared in `models.json` with `"oauth": "radius"` and a gateway `baseUrl`.
@@ -83,6 +91,7 @@ pi
 | Cloudflare Workers AI | `CLOUDFLARE_API_KEY` (+ `CLOUDFLARE_ACCOUNT_ID`) | `cloudflare-workers-ai` |
 | xAI | `XAI_API_KEY` | `xai` |
 | OpenRouter | `OPENROUTER_API_KEY` | `openrouter` |
+| OrcaRouter | `ORCAROUTER_API_KEY` | `orcarouter` |
 | Vercel AI Gateway | `AI_GATEWAY_API_KEY` | `vercel-ai-gateway` |
 | ZAI Coding Plan (Global) | `ZAI_API_KEY` | `zai` |
 | ZAI Coding Plan (China) | `ZAI_CODING_CN_API_KEY` | `zai-coding-cn` |
@@ -121,6 +130,7 @@ Store credentials in `~/.pi/agent/auth.json`:
   "opencode": { "type": "api_key", "key": "..." },
   "opencode-go": { "type": "api_key", "key": "..." },
   "together": { "type": "api_key", "key": "..." },
+  "orcarouter": { "type": "api_key", "key": "..." },
   "qwen-token-plan":  { "type": "api_key", "key": "sk-sp-..." },
   "qwen-token-plan-individual": { "type": "api_key", "key": "sk-sp-..." },
   "qwen-token-plan-cn": { "type": "api_key", "key": "sk-sp-..." },

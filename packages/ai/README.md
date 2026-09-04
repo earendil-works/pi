@@ -73,6 +73,7 @@ Unified LLM API with provider collections, automatic auth resolution, token and 
 - **Cloudflare Workers AI**
 - **xAI**
 - **OpenRouter**
+- **OrcaRouter** (OpenAI-compatible gateway; dynamic live catalog, see below)
 - **Vercel AI Gateway**
 - **ZAI Coding Plan (Global)** (with separate China provider)
 - **MiniMax** (with separate China provider)
@@ -242,6 +243,7 @@ For apps that only need specific providers, there is one factory per built-in pr
 import { anthropicProvider } from '@earendil-works/pi-ai/providers/anthropic';
 import { openaiProvider } from '@earendil-works/pi-ai/providers/openai';
 import { openrouterProvider } from '@earendil-works/pi-ai/providers/openrouter';
+import { orcarouterProvider } from '@earendil-works/pi-ai/providers/orcarouter';
 import { amazonBedrockProvider } from '@earendil-works/pi-ai/providers/amazon-bedrock';
 // ...one module per provider in the Supported Providers list
 
@@ -311,7 +313,7 @@ const anthropic = getBuiltinModels('anthropic');
 
 ### Dynamic Providers
 
-Providers may have dynamic model lists (a llama.cpp server, a live OpenRouter listing). Reads stay sync; fetching is an explicit async verb:
+Providers may have dynamic model lists (a llama.cpp server, a live OpenRouter listing, an OrcaRouter gateway). Reads stay sync; fetching is an explicit async verb:
 
 ```typescript
 // getModels() returns the last-known list (empty before the first refresh)
@@ -431,6 +433,7 @@ Built-in providers resolve these env vars (Node.js; in browsers pass `apiKey` ex
 | Together AI | `TOGETHER_API_KEY` |
 | Baseten | `BASETEN_API_KEY` |
 | OpenRouter | `OPENROUTER_API_KEY` |
+| OrcaRouter | `ORCAROUTER_API_KEY` |
 | Vercel AI Gateway | `AI_GATEWAY_API_KEY` |
 | ZAI Coding Plan (Global) | `ZAI_API_KEY` |
 | ZAI Coding Plan (China) | `ZAI_CODING_CN_API_KEY` |
