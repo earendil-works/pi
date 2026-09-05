@@ -26,6 +26,7 @@ export {
 	createSessionRepoLifecycleConformance,
 	createSessionRepoMessageConformance,
 	createSessionRepoOwnershipConformance,
+	createSessionRepoStreamingForkConformance,
 } from "./conformance/session-repo.ts";
 export { createStorageConformance } from "./conformance/storage.ts";
 export { CommitDiscarded, GatingStorage } from "./gating-storage.ts";

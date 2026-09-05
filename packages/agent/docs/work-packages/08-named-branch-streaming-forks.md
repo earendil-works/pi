@@ -238,3 +238,31 @@ WP08 is complete when:
 - shared conformance, focused backend tests, benchmarks, `npm run check`, and `./test.sh` pass;
 - normative docs and the roadmap reflect the new contract with historical documents untouched;
 - final Fable review reports no blocker.
+
+## 9. Open questions
+
+These do not change the current contract until resolved.
+
+### 9.1 Corruption checks
+
+Current: reject any malformed lane. Possible relaxation: trust supported atomic state and perform no fork-time corruption audit; branch forks only require the selected tip, config, and state. This removes global lane inventory validation.
+
+### 9.2 Sequence preservation
+
+Current: preserve source sequences, `nextSeq`, and list cursors. Possible relaxation: keep entry sequences but assign destination-local sequences to values, list elements, and reconstructed lane rows. Revisit if preservation materially complicates streaming.
+
+### 9.3 JSONL source capture boundary
+
+Original requirement: capture the exact source file length at the commit-queue boundary and have both passes read only up to that length through the same fixed file handle.
+
+Current implementation: capture the source's current `nextSeq` at the commit-queue boundary and have both independently opened scans stop before that sequence. This is simpler and avoids adding byte-range semantics to `FileSystem`, while still excluding later append-only commits transaction by transaction.
+
+The current implementation assumes a format-4 source remains append-only and is not replaced while the fork runs. Concurrent compaction or another whole-file replacement could otherwise make the two scans observe different file incarnations. Decide whether to restore fixed-length capture, retain the sequence boundary with an explicit no-replacement invariant, or add replacement coordination when J1 compaction is implemented.
+
+### 9.4 Legacy-v3 normalization memory
+
+Original requirement: normalize a closed legacy-v3 source through a bounded disk-backed parser and index.
+
+Current implementation: read and normalize the complete v3 source in memory, write the normalized records to a temporary format-4 file, then fork that stable file through the ordinary two-pass format-4 path. This reuses the current fork semantics, keeps reminted IDs stable across both passes, and never modifies the v3 source, but retains source-sized lines, entries, maps, and normalized writes in memory.
+
+Decide whether closed legacy-v3 files are sufficiently rare and bounded to keep this exception, or replace only the normalization internals with a disk-backed index before WP08 completion.

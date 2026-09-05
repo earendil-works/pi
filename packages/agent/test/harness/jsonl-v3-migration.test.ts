@@ -303,22 +303,23 @@ describe("JSONL v3 migration", () => {
 			expect(getOrThrow(await fileSystem.readTextFile(path, BACKGROUND_CONTEXT))).toBe(content);
 		});
 
-		it("forks an already-open source without converting or renormalizing it", async () => {
+		it("rejects an open v3 source until a non-empty commit persists its format-4 ids", async () => {
 			const { path, content, metadata } = await writeForkFixture();
 			const source = await repo.open(metadata, BACKGROUND_CONTEXT);
 			const sourceEntries = await source.findEntries({ order: "asc" }, BACKGROUND_CONTEXT);
-			const sourceStats = await source.getStats(BACKGROUND_CONTEXT);
 
+			await expect(repo.fork(metadata, { id: "open-fork", scope: "tree" }, BACKGROUND_CONTEXT)).rejects.toThrow(
+				"Cannot fork an open legacy v3 JSONL session",
+			);
+			expect(getOrThrow(await fileSystem.readTextFile(path, BACKGROUND_CONTEXT))).toBe(content);
+
+			await source.setName("Upgraded source", BACKGROUND_CONTEXT);
 			const fork = await repo.fork(metadata, { id: "open-fork", scope: "tree" }, BACKGROUND_CONTEXT);
-			const forkEntries = await expectForkedState(fork);
 
 			expect(fork.metadata.id).toBe("open-fork");
-			expect(forkEntries).toEqual(sourceEntries);
-			expect(sourceStats.usage).toEqual(usage);
-			expect(await source.getStats(BACKGROUND_CONTEXT)).toEqual(sourceStats);
-			expect(getOrThrow(await fileSystem.readTextFile(path, BACKGROUND_CONTEXT))).toBe(content);
+			expect(await fork.findEntries({ order: "asc" }, BACKGROUND_CONTEXT)).toEqual(sourceEntries);
+			expect(await fork.getName(BACKGROUND_CONTEXT)).toBe("Upgraded source");
 			await Promise.all([source.close(BACKGROUND_CONTEXT), fork.close(BACKGROUND_CONTEXT)]);
-			expect(getOrThrow(await fileSystem.readTextFile(path, BACKGROUND_CONTEXT))).toBe(content);
 		});
 	});
 
