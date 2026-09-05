@@ -48,7 +48,6 @@ import {
 	streamSimple,
 } from "@earendil-works/pi-ai/compat";
 import { getThemeByName, theme } from "../modes/interactive/theme/theme.ts";
-import { stripFrontmatter } from "../utils/frontmatter.ts";
 import { sleep } from "../utils/sleep.ts";
 import { normalizeToolResultImages } from "../utils/tool-result-images.ts";
 import { formatNoApiKeyFoundMessage, formatNoModelSelectedMessage } from "./auth-guidance.ts";
@@ -97,6 +96,7 @@ import {
 } from "./extensions/index.ts";
 import { emitSessionShutdownEvent } from "./extensions/runner.ts";
 import type { BashExecutionMessage, CustomMessage } from "./messages.ts";
+import { buildSkillInvocation, expandMidsentence } from "./midsentence.ts";
 import { ModelRegistry } from "./model-registry.ts";
 import type { ModelRuntime } from "./model-runtime.ts";
 import { expandPromptTemplate, type PromptTemplate } from "./prompt-templates.ts";
@@ -1199,9 +1199,12 @@ export class AgentSession {
 				}
 			}
 
-			// Expand skill commands (/skill:name args) and prompt templates (/template args)
+			// Expand mid-sentence /name tokens (line 2+), then the native line-1
+			// expansions (skill commands and prompt templates) so their output is
+			// never rescanned
 			let expandedText = currentText;
 			if (expandPromptTemplates) {
+				expandedText = this._expandMidsentence(expandedText);
 				expandedText = this._expandSkillCommand(expandedText);
 				expandedText = expandPromptTemplate(expandedText, [...this.promptTemplates]);
 			}
@@ -1362,9 +1365,7 @@ export class AgentSession {
 
 		try {
 			const content = readFileSync(skill.filePath, "utf-8");
-			const body = stripFrontmatter(content).trim();
-			const skillBlock = `<skill name="${skill.name}" location="${skill.filePath}">\nReferences are relative to ${skill.baseDir}.\n\n${body}\n</skill>`;
-			return args ? `${skillBlock}\n\n${args}` : skillBlock;
+			return buildSkillInvocation(skill, content, args);
 		} catch (err) {
 			// Emit error like extension commands do
 			this._extensionRunner.emitError({
@@ -1374,6 +1375,19 @@ export class AgentSession {
 			});
 			return text; // Return original on error
 		}
+	}
+
+	/**
+	 * Expand mid-sentence `/name args` invocations (skills and prompt templates)
+	 * anywhere after the first line. Runs before the native expansions so native
+	 * line-1 output is never rescanned.
+	 */
+	private _expandMidsentence(text: string): string {
+		return expandMidsentence(
+			text,
+			{ skills: this.resourceLoader.getSkills().skills, templates: [...this.promptTemplates] },
+			{ readSkillFile: (filePath) => readFileSync(filePath, "utf-8") },
+		);
 	}
 
 	/**
@@ -1390,8 +1404,9 @@ export class AgentSession {
 			this._throwIfExtensionCommand(text);
 		}
 
-		// Expand skill commands and prompt templates
-		let expandedText = this._expandSkillCommand(text);
+		// Expand mid-sentence tokens, then skill commands and prompt templates
+		let expandedText = this._expandMidsentence(text);
+		expandedText = this._expandSkillCommand(expandedText);
 		expandedText = expandPromptTemplate(expandedText, [...this.promptTemplates]);
 
 		await this._queueSteer(expandedText, images);
@@ -1410,8 +1425,9 @@ export class AgentSession {
 			this._throwIfExtensionCommand(text);
 		}
 
-		// Expand skill commands and prompt templates
-		let expandedText = this._expandSkillCommand(text);
+		// Expand mid-sentence tokens, then skill commands and prompt templates
+		let expandedText = this._expandMidsentence(text);
+		expandedText = this._expandSkillCommand(expandedText);
 		expandedText = expandPromptTemplate(expandedText, [...this.promptTemplates]);
 
 		await this._queueFollowUp(expandedText, images);

@@ -62,6 +62,15 @@ Type `/` followed by the template name in the editor. Autocomplete shows availab
 /component Button "click handler" # Multiple arguments
 ```
 
+Templates also expand mid-sentence: a `/name` token anywhere in the message except the very start expands in place, with the rest of the line as arguments.
+
+```
+wrap this up please /review the staged changes
+and be strict
+```
+
+Mid-sentence names resolve against templates first; on a name shared with a skill, the template wins. Unknown names stay literal. The very start of the message is unaffected: a slash at position 0 begins a line-1 command, which consumes the whole first line.
+
 ## Arguments
 
 Templates support positional arguments, defaults, and simple slicing:

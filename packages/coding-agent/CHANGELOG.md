@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Mid-sentence skill and prompt template invocation** — `/name` tokens expand anywhere in a message except the very start, not just at position 0. Skill output is identical to `/skill:name`; template output is identical to line-1 expansion. Names resolve against templates first (on a collision the template wins), then skills by exact, unique case-insensitive, or unique prefix match; unresolvable names stay literal ([#8457](https://github.com/earendil-works/pi/issues/8457)).
+
 ## [0.85.1] - 2026-09-05
 
 ### New Features

@@ -82,6 +82,14 @@ Skills register as `/skill:name` commands:
 
 Arguments after the command are appended to the skill content as `User: <args>`.
 
+Skills can also be invoked mid-sentence: a `/name` token anywhere in the message except the very start expands in place, with the rest of the line as arguments.
+
+```bash
+can you check the build please run /verify-build on the current branch
+```
+
+The expansion is identical to the `/skill:name` command. Mid-sentence names resolve against prompt templates first; on a name shared with a template, the template wins. Unique prefixes and unique case-insensitive variants of a skill name also resolve; unknown names stay literal. Works for skills with `disable-model-invocation: true` too: they stay hidden from the system prompt but remain invocable anywhere in the message.
+
 Toggle skill commands via `/settings` in interactive mode or in `settings.json`:
 
 ```json
