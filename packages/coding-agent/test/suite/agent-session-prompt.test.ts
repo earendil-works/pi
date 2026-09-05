@@ -322,6 +322,28 @@ describe("AgentSession prompt characterization", () => {
 		expect(getMessageText(harness.session.messages[0]!)).toBe("from extension");
 	});
 
+	it("sendUserMessage preserves interleaved text and images", async () => {
+		const harness = await createHarness();
+		harnesses.push(harness);
+		let receivedContent: unknown;
+		harness.setResponses([
+			(context) => {
+				receivedContent = context.messages.find((message) => message.role === "user")?.content;
+				return fauxAssistantMessage("ok");
+			},
+		]);
+		const content = [
+			{ type: "text" as const, text: "before:" },
+			{ type: "image" as const, mimeType: "image/png" as const, data: "YmVmb3Jl" },
+			{ type: "text" as const, text: "after:" },
+			{ type: "image" as const, mimeType: "image/png" as const, data: "YWZ0ZXI=" },
+		];
+
+		await harness.session.sendUserMessage(content);
+
+		expect(receivedContent).toEqual(content);
+	});
+
 	it("does not report streamingBehavior to input handlers while idle", async () => {
 		const inputEvents: InputEvent[] = [];
 		const harness = await createHarness({
