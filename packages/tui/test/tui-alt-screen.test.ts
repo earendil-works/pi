@@ -273,6 +273,22 @@ describe("TuiAltScreen", () => {
 		tui.stop();
 	});
 
+	it("scrolls faster while Alt is held during wheel input", async () => {
+		const terminal = new VirtualTerminal(20, 4);
+		const tui = new TuiAltScreen(terminal);
+		const text = new Text(Array.from({ length: 12 }, (_, index) => `line ${index + 1}`).join("\n"), 0, 0);
+		tui.addChild(text);
+		tui.start();
+		await terminal.waitForRender();
+		assert.strictEqual(tui.viewportTop, 8);
+
+		// Alt modifier sets bit 8 on the wheel button (72 = 64 + 8).
+		terminal.sendInput("\x1b[<72;1;1M");
+		await terminal.waitForRender();
+		assert.strictEqual(tui.viewportTop, 3);
+		tui.stop();
+	});
+
 	it("does not vertically redispatch misses through horizontal layout containers", async () => {
 		const terminal = new VirtualTerminal(20, 2);
 		const tui = new TuiAltScreen(terminal);

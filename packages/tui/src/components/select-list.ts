@@ -115,23 +115,19 @@ export class SelectList implements Component {
 			if (this.selectedIndex !== previousIndex) this.notifySelectionChange();
 			return { handled: true, render: this.selectedIndex !== previousIndex };
 		}
-		if (event.type !== "move" && event.button !== "left") return undefined;
+		// Hover must not change selection: the visible range is centered on it.
+		if (event.button !== "left" || (event.type !== "press" && event.type !== "click")) return undefined;
 		const { startIndex, endIndex } = this.getVisibleRange();
 		const itemIndex = startIndex + event.y;
 		if (itemIndex < startIndex || itemIndex >= endIndex) return undefined;
 
-		if (event.type === "move" || event.type === "press") {
-			if (event.type === "press") this.mousePressedIndex = itemIndex;
-			const changed = this.selectedIndex !== itemIndex;
-			if (changed) {
+		if (event.type === "press") {
+			this.mousePressedIndex = itemIndex;
+			if (this.selectedIndex !== itemIndex) {
 				this.selectedIndex = itemIndex;
 				this.notifySelectionChange();
 			}
-			return {
-				handled: true,
-				focus: event.type === "press",
-				...(event.type === "move" ? { render: changed } : {}),
-			};
+			return { handled: true, focus: true };
 		}
 		if (event.type === "click") {
 			const clickedIndex = this.mousePressedIndex ?? itemIndex;

@@ -56,6 +56,29 @@ describe("model selector", () => {
 		selector.dispose();
 	});
 
+	it("uses the configured save binding", async () => {
+		setKeybindings(new KeybindingsManager({ "app.models.save": "ctrl+r" }));
+		harness = await createHarness();
+		const currentModel = harness.getModel()!;
+		const saveDefault = vi.fn();
+		const selector = new ModelSelectorComponent(
+			createFakeTui(),
+			currentModel,
+			harness.session.modelRuntime,
+			[],
+			() => {},
+			() => {},
+			undefined,
+			saveDefault,
+		);
+
+		expect(stripAnsi(selector.render(120).join("\n"))).toContain("Ctrl+R to set as default");
+		selector.handleInput("\x13");
+		expect(saveDefault).not.toHaveBeenCalled();
+		selector.handleInput("\x12");
+		expect(saveDefault).toHaveBeenCalledWith(currentModel);
+	});
+
 	it("lists every catalog that failed to refresh", async () => {
 		harness = await createHarness();
 		vi.spyOn(harness.session.modelRuntime, "refresh").mockResolvedValue({

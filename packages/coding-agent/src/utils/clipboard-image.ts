@@ -1,10 +1,11 @@
-import { spawnSync } from "child_process";
+import { getNativeClipboard } from "@earendil-works/pi-tui";
 import { randomUUID } from "crypto";
 import { readFileSync, unlinkSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 
-import { clipboard } from "./clipboard-native.ts";
+import { runClipboardCommand } from "./clipboard-command.ts";
+import { detectSupportedImageMimeType } from "./mime.ts";
 import { loadPhoton } from "./photon.ts";
 
 export type ClipboardImage = {
@@ -15,9 +16,7 @@ export type ClipboardImage = {
 const SUPPORTED_IMAGE_MIME_TYPES = ["image/png", "image/jpeg", "image/webp", "image/gif"] as const;
 
 const DEFAULT_LIST_TIMEOUT_MS = 1000;
-const DEFAULT_READ_TIMEOUT_MS = 3000;
 const DEFAULT_POWERSHELL_TIMEOUT_MS = 5000;
-const DEFAULT_MAX_BUFFER_BYTES = 50 * 1024 * 1024;
 
 export function isWaylandSession(env: NodeJS.ProcessEnv = process.env): boolean {
 	return Boolean(env.WAYLAND_DISPLAY) || env.XDG_SESSION_TYPE === "wayland";
@@ -86,42 +85,13 @@ async function convertToPng(bytes: Uint8Array): Promise<Uint8Array | null> {
 	}
 }
 
-function runCommand(
-	command: string,
-	args: string[],
-	options?: { timeoutMs?: number; maxBufferBytes?: number; env?: NodeJS.ProcessEnv },
-): { stdout: Buffer; ok: boolean } {
-	const timeoutMs = options?.timeoutMs ?? DEFAULT_READ_TIMEOUT_MS;
-	const maxBufferBytes = options?.maxBufferBytes ?? DEFAULT_MAX_BUFFER_BYTES;
+// Undefined means the backend failed; null means it has no image. An empty
+// Wayland clipboard must not fall through to stale X11 clipboard contents.
+async function readClipboardImageViaWlPaste(): Promise<ClipboardImage | null | undefined> {
+	const list = await runClipboardCommand("wl-paste", ["--list-types"], { timeoutMs: DEFAULT_LIST_TIMEOUT_MS });
+	if (list === undefined) return undefined;
 
-	const result = spawnSync(command, args, {
-		timeout: timeoutMs,
-		maxBuffer: maxBufferBytes,
-		env: options?.env,
-	});
-
-	if (result.error) {
-		return { ok: false, stdout: Buffer.alloc(0) };
-	}
-
-	if (result.status !== 0) {
-		return { ok: false, stdout: Buffer.alloc(0) };
-	}
-
-	const stdout = Buffer.isBuffer(result.stdout)
-		? result.stdout
-		: Buffer.from(result.stdout ?? "", typeof result.stdout === "string" ? "utf-8" : undefined);
-
-	return { ok: true, stdout };
-}
-
-function readClipboardImageViaWlPaste(): ClipboardImage | null {
-	const list = runCommand("wl-paste", ["--list-types"], { timeoutMs: DEFAULT_LIST_TIMEOUT_MS });
-	if (!list.ok) {
-		return null;
-	}
-
-	const types = list.stdout
+	const types = list
 		.toString("utf-8")
 		.split(/\r?\n/)
 		.map((t) => t.trim())
@@ -132,12 +102,11 @@ function readClipboardImageViaWlPaste(): ClipboardImage | null {
 		return null;
 	}
 
-	const data = runCommand("wl-paste", ["--type", selectedType, "--no-newline"]);
-	if (!data.ok || data.stdout.length === 0) {
-		return null;
-	}
+	const data = await runClipboardCommand("wl-paste", ["--type", selectedType, "--no-newline"]);
+	if (data === undefined) return undefined;
+	if (data.length === 0) return null;
 
-	return { bytes: data.stdout, mimeType: baseMimeType(selectedType) };
+	return { bytes: data, mimeType: baseMimeType(selectedType) };
 }
 
 function isWSL(env: NodeJS.ProcessEnv = process.env): boolean {
@@ -158,16 +127,18 @@ function isWSL(env: NodeJS.ProcessEnv = process.env): boolean {
  * Windows screenshots (Win+Shift+S). PowerShell can access the Windows clipboard
  * directly, so we use it as a fallback.
  */
-function readClipboardImageViaPowerShell(): ClipboardImage | null {
+async function readClipboardImageViaPowerShell(): Promise<ClipboardImage | null> {
 	const tmpFile = join(tmpdir(), `pi-wsl-clip-${randomUUID()}.png`);
 
 	try {
-		const winPathResult = runCommand("wslpath", ["-w", tmpFile], { timeoutMs: DEFAULT_LIST_TIMEOUT_MS });
-		if (!winPathResult.ok) {
+		const winPathResult = await runClipboardCommand("wslpath", ["-w", tmpFile], {
+			timeoutMs: DEFAULT_LIST_TIMEOUT_MS,
+		});
+		if (winPathResult === undefined) {
 			return null;
 		}
 
-		const winPath = winPathResult.stdout.toString("utf-8").trim();
+		const winPath = winPathResult.toString("utf-8").trim();
 		if (!winPath) {
 			return null;
 		}
@@ -181,14 +152,14 @@ function readClipboardImageViaPowerShell(): ClipboardImage | null {
 			"if ($img) { $img.Save($path, [System.Drawing.Imaging.ImageFormat]::Png); Write-Output 'ok' } else { Write-Output 'empty' }",
 		].join("; ");
 
-		const result = runCommand("powershell.exe", ["-NoProfile", "-Command", psScript], {
+		const result = await runClipboardCommand("powershell.exe", ["-NoProfile", "-Command", psScript], {
 			timeoutMs: DEFAULT_POWERSHELL_TIMEOUT_MS,
 		});
-		if (!result.ok) {
+		if (result === undefined) {
 			return null;
 		}
 
-		const output = result.stdout.toString("utf-8").trim();
+		const output = result.toString("utf-8").trim();
 		if (output !== "ok") {
 			return null;
 		}
@@ -210,45 +181,39 @@ function readClipboardImageViaPowerShell(): ClipboardImage | null {
 	}
 }
 
-function readClipboardImageViaXclip(): ClipboardImage | null {
-	const targets = runCommand("xclip", ["-selection", "clipboard", "-t", "TARGETS", "-o"], {
+async function readClipboardImageViaXclip(): Promise<ClipboardImage | null | undefined> {
+	const targets = await runClipboardCommand("xclip", ["-selection", "clipboard", "-t", "TARGETS", "-o"], {
 		timeoutMs: DEFAULT_LIST_TIMEOUT_MS,
 	});
 
 	let candidateTypes: string[] = [];
-	if (targets.ok) {
-		candidateTypes = targets.stdout
+	if (targets !== undefined) {
+		candidateTypes = targets
 			.toString("utf-8")
 			.split(/\r?\n/)
 			.map((t) => t.trim())
 			.filter(Boolean);
 	}
 
-	const preferred = candidateTypes.length > 0 ? selectPreferredImageMimeType(candidateTypes) : null;
-	const tryTypes = preferred ? [preferred, ...SUPPORTED_IMAGE_MIME_TYPES] : [...SUPPORTED_IMAGE_MIME_TYPES];
+	const preferred = selectPreferredImageMimeType(candidateTypes);
+	if (targets !== undefined && !preferred) return null;
+	const tryTypes = new Set(preferred ? [preferred, ...SUPPORTED_IMAGE_MIME_TYPES] : SUPPORTED_IMAGE_MIME_TYPES);
 
 	for (const mimeType of tryTypes) {
-		const data = runCommand("xclip", ["-selection", "clipboard", "-t", mimeType, "-o"]);
-		if (data.ok && data.stdout.length > 0) {
-			return { bytes: data.stdout, mimeType: baseMimeType(mimeType) };
+		const data = await runClipboardCommand("xclip", ["-selection", "clipboard", "-t", mimeType, "-o"]);
+		if (data !== undefined && data.length > 0) {
+			return { bytes: data, mimeType: baseMimeType(mimeType) };
 		}
 	}
 
-	return null;
+	return undefined;
 }
 
-async function readClipboardImageViaNativeClipboard(): Promise<ClipboardImage | null> {
-	if (!clipboard || !clipboard.hasImage()) {
-		return null;
-	}
-
-	const imageData = await clipboard.getImageBinary();
-	if (!imageData || imageData.length === 0) {
-		return null;
-	}
-
-	const bytes = imageData instanceof Uint8Array ? imageData : Uint8Array.from(imageData);
-	return { bytes, mimeType: "image/png" };
+async function readClipboardImageViaNativeClipboard(): Promise<ClipboardImage | null | undefined> {
+	const bytes = await getNativeClipboard()?.getImage();
+	if (bytes === undefined) return undefined;
+	if (!bytes?.length) return null;
+	return { bytes, mimeType: detectSupportedImageMimeType(bytes) ?? "application/octet-stream" };
 }
 
 export async function readClipboardImage(options?: {
@@ -262,23 +227,17 @@ export async function readClipboardImage(options?: {
 		return null;
 	}
 
-	let image: ClipboardImage | null = null;
+	let image: ClipboardImage | null | undefined;
 
 	if (platform === "linux") {
 		const wsl = isWSL(env);
-		const wayland = isWaylandSession(env);
-
-		if (wayland || wsl) {
-			image = readClipboardImageViaWlPaste() ?? readClipboardImageViaXclip();
+		if (isWaylandSession(env) || wsl) {
+			image = await readClipboardImageViaWlPaste();
 		}
-
-		if (!image && wsl) {
-			image = readClipboardImageViaPowerShell();
-		}
-
-		if (!image && !wayland) {
-			image = (await readClipboardImageViaNativeClipboard()) ?? readClipboardImageViaXclip();
-		}
+		if (image === undefined) image = await readClipboardImageViaXclip();
+		// Preserve Linux's empty/unavailable distinction if Windows has no image.
+		if (!image && wsl) image = (await readClipboardImageViaPowerShell()) ?? image;
+		if (image === undefined) image = await readClipboardImageViaNativeClipboard();
 	} else {
 		image = await readClipboardImageViaNativeClipboard();
 	}
@@ -287,7 +246,7 @@ export async function readClipboardImage(options?: {
 		return null;
 	}
 
-	// Convert unsupported formats (e.g., BMP from WSLg) to PNG
+	// Convert unsupported formats (e.g., Windows DIB data wrapped as BMP) to PNG
 	if (!isSupportedImageMimeType(image.mimeType)) {
 		const pngBytes = await convertToPng(image.bytes);
 		if (!pngBytes) {

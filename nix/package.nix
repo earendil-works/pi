@@ -3,11 +3,14 @@
   fd,
   importNpmLock,
   lib,
+  libxcb,
   makeWrapper,
   nodejs_22,
   ripgrep,
   source,
   stdenv,
+  wl-clipboard,
+  xclip,
 }:
 
 let
@@ -99,7 +102,10 @@ stdenv.mkDerivation {
   ]
   ++ lib.optionals stdenv.hostPlatform.isLinux [ autoPatchelfHook ];
 
-  buildInputs = [ nodejs ] ++ lib.optionals stdenv.hostPlatform.isLinux [ stdenv.cc.cc.lib ];
+  buildInputs = [ nodejs ] ++ lib.optionals stdenv.hostPlatform.isLinux [
+    stdenv.cc.cc.lib
+    libxcb
+  ];
 
   dontBuild = true;
   dontStrip = true;
@@ -113,24 +119,42 @@ stdenv.mkDerivation {
     makeWrapper ${nodejs}/bin/node "$out/bin/pi" \
       --add-flags "$out/lib/pi/dist/bundle/cli.js" \
       --prefix PATH : ${
-        lib.makeBinPath [
-          nodejs
-          fd
-          ripgrep
-        ]
+        lib.makeBinPath (
+          [
+            nodejs
+            fd
+            ripgrep
+          ]
+          ++ lib.optionals stdenv.hostPlatform.isLinux [
+            wl-clipboard
+            xclip
+          ]
+        )
       }
 
     runHook postInstall
   '';
 
-  postFixup = ''
+  doInstallCheck = true;
+  installCheckPhase = ''
+    runHook preInstallCheck
     test "$("$out/bin/pi" --version)" = "${packageJson.version}"
     ${nodejs}/bin/node -e \
       "require('$out/lib/pi/node_modules/esbuild').transformSync('const value: number = 1', { loader: 'ts' })"
+    # Load host-platform TUI helpers directly so missing native dependencies
+    # fail the build rather than silently disabling clipboard support.
     ${nodejs}/bin/node -e \
-      "require('$out/lib/pi/node_modules/@mariozechner/clipboard')"
+      "const fs = require('node:fs');
+       const path = require('node:path');
+       const dir = '$out/lib/pi/node_modules/@earendil-works/pi-tui/native/' + process.platform + '/prebuilds/' + process.platform + '-' + process.arch;
+       if (fs.existsSync(dir)) {
+         for (const file of fs.readdirSync(dir)) {
+           if (file.endsWith('.node')) require(path.join(dir, file));
+         }
+       }"
     ${nodejs}/bin/node -e \
       "require('$out/lib/pi/node_modules/@silvia-odwyer/photon-node')"
+    runHook postInstallCheck
   '';
 
   meta = {

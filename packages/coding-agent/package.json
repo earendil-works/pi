@@ -1,6 +1,6 @@
 {
 	"name": "@earendil-works/pi-coding-agent",
-	"version": "0.85.0",
+	"version": "0.85.1",
 	"description": "Coding agent CLI with read, bash, edit, write tools and session management",
 	"type": "module",
 	"piConfig": {
@@ -20,17 +20,17 @@
 			"import": "./dist/bundle/rpc-entry.js"
 		},
 		"./client": {
-			"types": "./dist/client/index.d.ts",
-			"import": "./dist/client/index.js"
+			"source": "./src/client/index.ts"
 		},
 		"./experimental/plugin": {
-			"source": "./src/experimental/plugin.ts",
-			"types": "./dist/experimental/plugin.d.ts",
-			"import": "./dist/experimental/plugin.js"
+			"source": "./src/experimental/plugin.ts"
 		}
 	},
 	"files": [
 		"dist",
+		"!dist/client",
+		"!dist/experimental",
+		"!dist/cli/experimental",
 		"docs",
 		"examples",
 		"containerization.md",
@@ -49,12 +49,10 @@
 		"prepublishOnly": "npm run clean && npm run build && npm run shrinkwrap"
 	},
 	"dependencies": {
-		"@earendil-works/chord": "^0.85.0",
-		"@earendil-works/pi-agent-core": "^0.85.0",
-		"@earendil-works/pi-ai": "^0.85.0",
-		"@earendil-works/pi-client": "^0.85.0",
-		"@earendil-works/pi-protocol": "^0.85.0",
-		"@earendil-works/pi-tui": "^0.85.0",
+		"@earendil-works/chord": "^0.85.1",
+		"@earendil-works/pi-agent-core": "^0.85.1",
+		"@earendil-works/pi-ai": "^0.85.1",
+		"@earendil-works/pi-tui": "^0.85.1",
 		"@silvia-odwyer/photon-node": "0.3.4",
 		"chalk": "5.6.2",
 		"cross-spawn": "7.0.6",
@@ -78,10 +76,10 @@
 			"rimraf": "6.1.2"
 		}
 	},
-	"optionalDependencies": {
-		"@mariozechner/clipboard": "0.3.9"
-	},
 	"devDependencies": {
+		"@earendil-works/pi-client": "^0.85.1",
+		"@earendil-works/pi-protocol": "^0.85.1",
+		"@earendil-works/pi-server": "^0.85.1",
 		"@types/cross-spawn": "6.0.6",
 		"@types/hosted-git-info": "3.0.5",
 		"@types/node": "22.19.19",

@@ -4,6 +4,7 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symli
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
+import { installCodingAgentConsumer, packReleasePackages, smokeTestCodingAgentConsumer } from "./coding-agent-consumer.mjs";
 
 const packages = [
 	{ directory: "packages/chord", name: "@earendil-works/chord" },
@@ -137,11 +138,6 @@ function prepareOutputDirectory(options, repoRoot) {
 	return outDir;
 }
 
-function fileSpecifier(fromDirectory, file) {
-	const relativePath = relative(fromDirectory, file).replaceAll("\\", "/");
-	return `file:${relativePath.startsWith(".") ? relativePath : `./${relativePath}`}`;
-}
-
 function currentBinaryPlatform() {
 	if (process.platform === "win32") return process.arch === "arm64" ? "windows-arm64" : "windows-x64";
 	if (process.platform === "darwin") return process.arch === "arm64" ? "darwin-arm64" : "darwin-x64";
@@ -157,7 +153,6 @@ function buildBunBinaryRelease(targetDirectory, archiveDirectory) {
 	const binaryBuildDirectory = join(archiveDirectory, "binary-build");
 	run("./scripts/build-binaries.sh", [
 		"--skip-install",
-		"--skip-deps",
 		"--skip-build",
 		"--platform",
 		platform,
@@ -184,22 +179,6 @@ function createPiShim(installDirectory) {
 		return;
 	}
 	symlinkSync(join("node_modules", ".bin", "pi"), join(installDirectory, "pi"));
-}
-
-function packPackage(pkg, tarballDirectory) {
-	const packageJson = readPackageJson(pkg.directory);
-	if (packageJson.name !== pkg.name) {
-		throw new Error(`${pkg.directory}/package.json has name ${packageJson.name}, expected ${pkg.name}`);
-	}
-
-	const output = run("npm", ["pack", "--json", "--pack-destination", tarballDirectory], {
-		capture: true,
-		cwd: pkg.directory,
-	});
-	// npm <11.6 returns an array; newer npm returns an object keyed by package name.
-	const parsed = JSON.parse(output);
-	const packed = Array.isArray(parsed) ? parsed[0] : Object.values(parsed)[0];
-	return join(tarballDirectory, packed.filename);
 }
 
 const options = parseArgs();
@@ -234,36 +213,22 @@ if (!options.skipTest) {
 	run("./test.sh", [], { cwd: repoRoot });
 }
 
-const tarballs = new Map();
-for (const pkg of packages) {
-	const tarball = packPackage(pkg, tarballDirectory);
-	tarballs.set(pkg.name, tarball);
-}
+const tarballs = packReleasePackages(packages, tarballDirectory);
 
 let binaryPlatform;
 if (!options.skipInstall) {
 	binaryPlatform = buildBunBinaryRelease(binaryDirectory, outDir);
 
-	mkdirSync(nodeInstallDirectory, { recursive: true });
-	const dependencies = Object.fromEntries(
-		packages.map((pkg) => [pkg.name, fileSpecifier(nodeInstallDirectory, tarballs.get(pkg.name))]),
-	);
-	const installPackageJson = `${JSON.stringify({ private: true, dependencies, overrides: dependencies }, undefined, "\t")}\n`;
-	writeFileSync(join(nodeInstallDirectory, "package.json"), installPackageJson);
-
-	run("npm", ["install", "--omit=dev", "--ignore-scripts"], { cwd: nodeInstallDirectory });
+	installCodingAgentConsumer(nodeInstallDirectory, tarballs);
+	smokeTestCodingAgentConsumer(nodeInstallDirectory);
 	createPiShim(nodeInstallDirectory);
 
 	if (!options.skipBunInstall) {
 		if (!commandExists("bun")) {
 			throw new Error("Bun is required for the isolated Bun install. Use --skip-bun-install to skip it.");
 		}
-		mkdirSync(bunInstallDirectory, { recursive: true });
-		const bunDependencies = Object.fromEntries(
-			packages.map((pkg) => [pkg.name, fileSpecifier(bunInstallDirectory, tarballs.get(pkg.name))]),
-		);
-		writeFileSync(join(bunInstallDirectory, "package.json"), `${JSON.stringify({ private: true, dependencies: bunDependencies, overrides: bunDependencies }, undefined, "\t")}\n`);
-		run("bun", ["install", "--production", "--ignore-scripts"], { cwd: bunInstallDirectory });
+		installCodingAgentConsumer(bunInstallDirectory, tarballs, "bun");
+		smokeTestCodingAgentConsumer(bunInstallDirectory, "bun");
 		createPiShim(bunInstallDirectory);
 	}
 }
