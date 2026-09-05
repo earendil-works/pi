@@ -1,6 +1,7 @@
 {
   autoPatchelfHook,
   fd,
+  fetchurl,
   importNpmLock,
   lib,
   libxcb,
@@ -18,6 +19,12 @@ let
   packageJson = lib.importJSON (source + "/packages/coding-agent/package.json");
   runtimePackageJson = removeAttrs packageJson [ "devDependencies" ];
   packageLock = lib.importJSON (source + "/packages/coding-agent/npm-shrinkwrap.json");
+  modelCatalogPin = lib.importJSON ./model-catalog.json;
+  modelCatalog = fetchurl {
+    name = "pi-model-catalog.json";
+    url = "https://pi.dev/api/models/revisions/${modelCatalogPin.revision}";
+    sha256 = lib.removePrefix "sha256-" modelCatalogPin.revision;
+  };
 
   workspacePackages = stdenv.mkDerivation {
     pname = "pi-workspace-packages";
@@ -34,6 +41,7 @@ let
 
     buildPhase = ''
       runHook preBuild
+      node packages/ai/scripts/hydrate-model-catalog.ts ${modelCatalog}
       npm run build:offline
       runHook postBuild
     '';

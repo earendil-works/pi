@@ -29,7 +29,34 @@ To learn more about Pi:
 nix run github:earendil-works/pi
 ```
 
-The flake supports ARM64 and x86-64 on Linux and macOS. It builds the pinned Pi release from its official source archive and npm lockfile, and includes `fd` and `ripgrep` in Pi's runtime path.
+The flake supports ARM64 and x86-64 on Linux and macOS. It builds the repository source using its npm lockfiles and a pinned model catalog from pi.dev. It includes `fd` and `ripgrep` in Pi's runtime path, plus X11 and Wayland clipboard tools on Linux.
+
+To build or run your checkout, including changes to tracked files:
+
+```bash
+nix build .
+./result/bin/pi
+# Or build and run directly:
+nix run .
+```
+
+No release archive, local `node_modules`, or pre-generated model data is required. Nix fetches the catalog revision recorded in `nix/model-catalog.json`, verifies its SHA-256, and hydrates provider data offline before compiling. New files must be added to Git for Nix to include them.
+
+To update the catalog pin independently of a Pi release:
+
+```bash
+node scripts/update-model-catalog-pin.mjs
+nix build .
+```
+
+The update command discovers the current compatible catalog using the checkout's Pi version, verifies both the discovery response and the immutable revision URL, and updates the pin. Review and commit the pin change. Ordinary builds never select the latest catalog.
+
+The offline hydration step is also available outside Nix for a downloaded catalog:
+
+```bash
+node packages/ai/scripts/hydrate-model-catalog.ts /path/to/models.json
+npm run build:offline
+```
 
 ## All Packages
 

@@ -8,13 +8,6 @@
     # Darwin branch that does so for pi's x86_64-darwin package.
     nixpkgs-darwin-x64.url = "github:NixOS/nixpkgs/nixpkgs-26.05-darwin";
 
-    # Git checkouts omit the ignored, generated model catalog required by the
-    # offline build. Official release source archives include that catalog.
-    # Update this URL and `flake.lock` after publishing each release.
-    pi-source = {
-      url = "https://github.com/earendil-works/pi/releases/download/v0.85.0/pi-0.85.0-source.tar.gz";
-      flake = false;
-    };
   };
 
   outputs =
@@ -22,7 +15,6 @@
       self,
       nixpkgs,
       nixpkgs-darwin-x64,
-      pi-source,
     }:
     let
       systems = [
@@ -38,7 +30,7 @@
         let
           pkgs = import (nixpkgsFor system) { inherit system; };
         in
-        pkgs.callPackage ./nix/package.nix { source = pi-source; };
+        pkgs.callPackage ./nix/package.nix { source = self; };
     in
     {
       packages = forAllSystems (system: {
@@ -56,7 +48,7 @@
       });
 
       overlays.default = final: _previous: {
-        pi = final.callPackage ./nix/package.nix { source = pi-source; };
+        pi = final.callPackage ./nix/package.nix { source = self; };
       };
     };
 }

@@ -32,24 +32,10 @@
         "type": "github"
       }
     },
-    "pi-source": {
-      "flake": false,
-      "locked": {
-        "lastModified": 1788515858,
-        "narHash": "sha256-UVOAsKLb661PI3Q1WtJnzkSyI/UBUuBmYUeLLTJsu88=",
-        "type": "tarball",
-        "url": "https://github.com/earendil-works/pi/releases/download/v0.85.0/pi-0.85.0-source.tar.gz"
-      },
-      "original": {
-        "type": "tarball",
-        "url": "https://github.com/earendil-works/pi/releases/download/v0.85.0/pi-0.85.0-source.tar.gz"
-      }
-    },
     "root": {
       "inputs": {
         "nixpkgs": "nixpkgs",
-        "nixpkgs-darwin-x64": "nixpkgs-darwin-x64",
-        "pi-source": "pi-source"
+        "nixpkgs-darwin-x64": "nixpkgs-darwin-x64"
       }
     }
   },
