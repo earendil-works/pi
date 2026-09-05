@@ -16,7 +16,7 @@ const context: Context = {
 	messages: [{ role: "user", content: "Hello", timestamp: 0 }],
 };
 
-function googleModel(id: string, thinkingLevelMap: ThinkingLevelMap): Model<"google-generative-ai"> {
+function googleModel(id: string, thinkingLevelMap?: ThinkingLevelMap): Model<"google-generative-ai"> {
 	return {
 		id,
 		name: id,
@@ -32,7 +32,7 @@ function googleModel(id: string, thinkingLevelMap: ThinkingLevelMap): Model<"goo
 	};
 }
 
-function vertexModel(id: string, thinkingLevelMap: ThinkingLevelMap): Model<"google-vertex"> {
+function vertexModel(id: string, thinkingLevelMap?: ThinkingLevelMap): Model<"google-vertex"> {
 	return {
 		id,
 		name: id,
@@ -50,7 +50,7 @@ function vertexModel(id: string, thinkingLevelMap: ThinkingLevelMap): Model<"goo
 
 async function captureGooglePayload(
 	model: Model<"google-generative-ai">,
-	reasoning: ThinkingLevel,
+	reasoning?: ThinkingLevel,
 	thinkingBudgets?: ThinkingBudgets,
 ): Promise<GenerateContentParameters> {
 	let payload: GenerateContentParameters | undefined;
@@ -71,7 +71,7 @@ async function captureGooglePayload(
 
 async function captureVertexPayload(
 	model: Model<"google-vertex">,
-	reasoning: ThinkingLevel,
+	reasoning?: ThinkingLevel,
 	thinkingBudgets?: ThinkingBudgets,
 ): Promise<GenerateContentParameters> {
 	let payload: GenerateContentParameters | undefined;
@@ -166,5 +166,30 @@ describe("Google thinking level maps", () => {
 		});
 
 		expect(payload).toMatchObject({ config: { thinkingConfig: { thinkingBudget: 4321 } } });
+	});
+});
+
+// The other direction: which level goes on the wire when the caller asks for NO thinking.
+// Gemini 3 flash models cannot be silenced, so the adapter sends their lowest accepted level —
+// and that floor moved between versions, which is what these pin.
+describe("Google disabled-thinking level", () => {
+	it("sends MINIMAL for a flash version that accepts it", async () => {
+		const payload = await captureGooglePayload(googleModel("gemini-3.6-flash", { off: null }));
+		expect(payload.config?.thinkingConfig).toEqual({ thinkingLevel: "MINIMAL" });
+	});
+
+	it("sends LOW for gemini-3.7-flash, which 400s on MINIMAL", async () => {
+		const payload = await captureGooglePayload(googleModel("gemini-3.7-flash", { off: null }));
+		expect(payload.config?.thinkingConfig).toEqual({ thinkingLevel: "LOW" });
+	});
+
+	it("sends LOW for gemini-3.8-flash, which 400s the same way", async () => {
+		const payload = await captureGooglePayload(googleModel("gemini-3.8-flash", { off: null }));
+		expect(payload.config?.thinkingConfig).toEqual({ thinkingLevel: "LOW" });
+	});
+
+	it("applies the same floor on vertex, which carries its own copy of the adapter", async () => {
+		const payload = await captureVertexPayload(vertexModel("gemini-3.7-flash", { off: null }));
+		expect(payload.config?.thinkingConfig).toEqual({ thinkingLevel: "LOW" });
 	});
 });
