@@ -189,16 +189,21 @@ export type ShutdownHandler = () => void;
 /**
  * Helper function to emit session_shutdown event to extensions.
  * Returns true if the event was emitted, false if there were no handlers.
+ *
+ * A runner that was already invalidated (its session disposed) must not be
+ * re-emitted: its shutdown already ran during the teardown that disposed it,
+ * and emitting again makes every `session_shutdown` handler throw the stale
+ * context error (double teardown races during session replacement).
  */
 export async function emitSessionShutdownEvent(
 	extensionRunner: ExtensionRunner,
 	event: SessionShutdownEvent,
 ): Promise<boolean> {
-	if (extensionRunner.hasHandlers("session_shutdown")) {
-		await extensionRunner.emit(event);
-		return true;
+	if (!extensionRunner.isActive || !extensionRunner.hasHandlers("session_shutdown")) {
+		return false;
 	}
-	return false;
+	await extensionRunner.emit(event);
+	return true;
 }
 
 export async function emitProjectTrustEvent(
@@ -597,6 +602,11 @@ export class ExtensionRunner {
 			this.staleMessage = message;
 			this.runtime.invalidate(message);
 		}
+	}
+
+	/** Whether this runner's context is still active (not invalidated by session replacement or reload). */
+	get isActive(): boolean {
+		return !this.staleMessage;
 	}
 
 	private assertActive(): void {

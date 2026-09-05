@@ -135,7 +135,7 @@ export class AgentSessionRuntime {
 		targetSessionFile?: string,
 	): Promise<{ cancelled: boolean }> {
 		const runner = this.session.extensionRunner;
-		if (!runner.hasHandlers("session_before_switch")) {
+		if (!runner.isActive || !runner.hasHandlers("session_before_switch")) {
 			return { cancelled: false };
 		}
 
@@ -152,7 +152,7 @@ export class AgentSessionRuntime {
 		options: { position: "before" | "at" },
 	): Promise<{ cancelled: boolean }> {
 		const runner = this.session.extensionRunner;
-		if (!runner.hasHandlers("session_before_fork")) {
+		if (!runner.isActive || !runner.hasHandlers("session_before_fork")) {
 			return { cancelled: false };
 		}
 
