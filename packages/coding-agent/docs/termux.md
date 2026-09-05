@@ -96,7 +96,6 @@ termux-camera-photo out.jpg   # Take photo
 ## Limitations
 
 - **No image clipboard**: Termux clipboard API only supports text
-- **No native binaries**: Some optional native dependencies (like the clipboard module) are unavailable on Android ARM64 and are skipped during installation
 - **Storage access**: To access files in `/storage/emulated/0` (Downloads, etc.), run `termux-setup-storage` once to grant permissions
 
 ## Troubleshooting

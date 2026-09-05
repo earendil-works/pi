@@ -76,9 +76,6 @@
 			"rimraf": "6.1.2"
 		}
 	},
-	"optionalDependencies": {
-		"@mariozechner/clipboard": "0.3.9"
-	},
 	"devDependencies": {
 		"@earendil-works/pi-client": "^0.85.1",
 		"@earendil-works/pi-protocol": "^0.85.1",

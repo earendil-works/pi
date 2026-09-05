@@ -1,5 +1,9 @@
 # Darwin native prebuilds
 
+The native platform helper provides modifier-key state and text/image clipboard access.
+
+Clipboard reads and writes return promises and perform AppKit operations on N-API worker threads, with an autorelease pool per operation. Modifier-key queries remain synchronous.
+
 Build both macOS architectures from the repository root:
 
 ```sh
@@ -15,6 +19,6 @@ CC=/path/to/osxcross/clang SDKROOT=/path/to/MacOSX.sdk \
   npm --prefix packages/tui run build:native:darwin
 ```
 
-The SDK must be obtained and used in accordance with Apple's license. Plain Linux or Windows clang is not enough because the addon includes and links CoreGraphics.
+The SDK must be obtained and used in accordance with Apple's license. Plain Linux or Windows clang is not enough because the Objective-C addon includes and links AppKit and CoreGraphics.
 
-Zig is not used here because it does not provide the Apple SDK or CoreGraphics framework stubs. It therefore does not make this build SDK-independent, and its clang driver does not currently handle this Mach-O bundle recipe as a drop-in replacement for Apple clang.
+Zig is not used here because it does not provide the Apple SDK, AppKit, or CoreGraphics framework stubs. It therefore does not make this build SDK-independent, and its clang driver does not currently handle this Mach-O bundle recipe as a drop-in replacement for Apple clang.
