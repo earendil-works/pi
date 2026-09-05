@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { exportModelCatalog } from "../scripts/export-model-catalog.ts";
 import { hydrateModelCatalog } from "../scripts/hydrate-model-catalog.ts";
 import {
 	assertExactModelIds,
@@ -135,6 +136,28 @@ describe("published model catalog hydration", () => {
 		writeFileSync(catalogPath, JSON.stringify({ "test-provider": values }));
 		expect(() => hydrateModelCatalog(packageRoot, catalogPath)).toThrow();
 		expect(readFileSync(join(dataDir, "test-provider.json"), "utf8")).toBe(original);
+	});
+});
+
+describe("release model catalog export", () => {
+	it("exports the existing model snapshot and round-trips through offline hydration", () => {
+		const { packageRoot, values } = createFixture();
+		const path = join(packageRoot, "models.json");
+		exportModelCatalog(packageRoot, path);
+		const bytes = readFileSync(path, "utf8");
+		expect(JSON.parse(bytes)).toEqual({ "test-provider": values });
+		hydrateModelCatalog(packageRoot, path);
+		exportModelCatalog(packageRoot, path);
+		expect(readFileSync(path, "utf8")).toBe(bytes);
+	});
+
+	it("rejects stale snapshot hashes without overwriting the export", () => {
+		const { packageRoot, dataDir } = createFixture();
+		const path = join(packageRoot, "models.json");
+		writeFileSync(path, "existing export");
+		writeFileSync(join(dataDir, "test-provider.json"), "{}");
+		expect(() => exportModelCatalog(packageRoot, path)).toThrow();
+		expect(readFileSync(path, "utf8")).toBe("existing export");
 	});
 });
 
