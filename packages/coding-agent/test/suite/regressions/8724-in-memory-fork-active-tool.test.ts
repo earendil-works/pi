@@ -95,6 +95,6 @@ describe("regression #8724: in-memory fork during an active tool turn", () => {
 		]);
 		await runtime.session.prompt("next prompt");
 
-		expect(capturedRoles).toEqual(["user"]);
+		expect(capturedRoles).toEqual(["user", "system"]);
 	});
 });

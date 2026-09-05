@@ -62,6 +62,12 @@ export function getAssistantTexts(harness: Harness): string[] {
 
 export interface HarnessOptions {
 	models?: FauxModelDefinition[];
+	/**
+	 * Whether the faux model accepts mid-conversation system messages, which lets the session
+	 * deliver prompt and tool changes incrementally. Default: true. Set false to exercise the
+	 * baseline-replacement path used for models without that support.
+	 */
+	supportsMidConvoSystemMessages?: boolean;
 	settings?: Partial<Settings>;
 	systemPrompt?: string;
 	tools?: AgentTool[];
@@ -69,6 +75,7 @@ export interface HarnessOptions {
 	allowedToolNames?: string[];
 	excludedToolNames?: string[];
 	resourceLoader?: ResourceLoader;
+	sessionManager?: SessionManager;
 	extensionFactories?: Array<InlineExtension | CreateTestExtensionsResultInput>;
 	withConfiguredAuth?: boolean;
 	modelsJson?: Record<string, unknown>;
@@ -100,8 +107,16 @@ function createTempDir(): string {
 
 export async function createHarness(options: HarnessOptions = {}): Promise<Harness> {
 	const tempDir = createTempDir();
+	const supportsMidConvoSystemMessages = options.supportsMidConvoSystemMessages ?? true;
+	const compat = {
+		supportsMidConvoSystemMessages,
+		supportsMidConvoToolChanges: supportsMidConvoSystemMessages,
+	};
 	const fauxProvider: FauxProviderRegistration = registerFauxProvider({
-		models: options.models,
+		models: (options.models ?? [{ id: "faux-1", name: "Faux Model" }]).map((definition) => ({
+			...definition,
+			compat: { ...compat, ...definition.compat },
+		})),
 	});
 	fauxProvider.setResponses([]);
 	const model = fauxProvider.getModel();
@@ -109,7 +124,7 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 	const withConfiguredAuth = options.withConfiguredAuth ?? true;
 	const extensionRunnerRef: { current?: ExtensionRunner } = {};
 
-	const sessionManager = SessionManager.inMemory();
+	const sessionManager = options.sessionManager ?? SessionManager.inMemory();
 	const settingsManager = SettingsManager.inMemory(options.settings);
 
 	const authStorage = AuthStorage.inMemory();
@@ -147,6 +162,7 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 			model,
 			systemPrompt: options.systemPrompt ?? "You are a test assistant.",
 			tools: [],
+			messages: sessionManager.buildSessionContext().messages,
 		},
 		convertToLlm,
 		onPayload: async (payload) => {

@@ -529,23 +529,31 @@ pi.on("session_shutdown", async (event, ctx) => {
 
 #### before_agent_start
 
-Fired after user submits prompt, before agent loop. Can inject a message and/or modify the system prompt.
+Fired after user submits prompt, before agent loop. Can inject a message and/or modify the system prompt and active tool loadout.
 
 ```typescript
 pi.on("before_agent_start", async (event, ctx) => {
   // event.prompt - user's prompt text
   // event.images - attached images (if any)
-  // event.systemPrompt - current chained system prompt for this handler
-  //   (includes changes from earlier before_agent_start handlers)
-  // event.systemPromptOptions - structured options used to build the system prompt
+  // event.systemPrompt - current system prompt, rendered on demand; includes
+  //   option mutations and full replacements from earlier handlers
+  // event.systemPromptOptions - mutable structured options used to build the prompt
   //   .customPrompt - any custom system prompt (from --system-prompt, SYSTEM.md, or custom templates)
-  //   .selectedTools - tools currently active in the prompt
+  //   .forceSystemPrompt - full replacement returned by an earlier handler
+  //   .selectedTools - tools active in both the prompt and executable loadout
   //   .toolSnippets - one-line descriptions for each tool
+  //   .toolGuidelines - guideline bullets contributed by each tool
   //   .promptGuidelines - custom guideline bullets
-  //   .appendSystemPrompt - text from --append-system-prompt flags
+  //   .appendSystemPrompt - configured text inserted before project context, skills, and cwd
+  //   .promptTail - text at the absolute end of the prompt
+  //   .sections - custom XML-wrapped sections keyed by tag name
   //   .cwd - working directory
   //   .contextFiles - AGENTS.md files and other loaded context files
   //   .skills - loaded skills
+  // Collection fields are always initialized. Mutations are visible to later handlers.
+  event.systemPromptOptions.promptGuidelines.push("Keep reviews focused.");
+  event.systemPromptOptions.sections.review_mode = "Review changes carefully.";
+  event.systemPromptOptions.selectedTools = ["read", "grep"];
 
   return {
     // Inject a persistent message (stored in session, sent to LLM)
@@ -554,13 +562,17 @@ pi.on("before_agent_start", async (event, ctx) => {
       content: "Additional context for the LLM",
       display: true,
     },
-    // Replace the system prompt for this turn (chained across extensions)
+    // Append to the current prompt using the legacy chained-string pattern
     systemPrompt: event.systemPrompt + "\n\nExtra instructions for this turn...",
   };
 });
 ```
 
-The `systemPromptOptions` field gives extensions access to the same structured data Pi uses to build the system prompt. This lets you inspect what Pi has loaded — custom prompts, guidelines, tool snippets, context files, skills — without re-discovering resources or re-parsing flags. Use it when your extension needs to make deep, informed changes to the system prompt while respecting user-provided configuration.
+The `systemPromptOptions` field contains the mutable structured data Pi uses to prepare the run. `selectedTools` is authoritative for both prompt rendering and the executable tool loadout. Collection fields are always initialized, and later handlers observe mutations made by earlier handlers through both `event.systemPromptOptions` and the lazily rendered `event.systemPrompt`/`ctx.getSystemPrompt()`. Custom `sections` render after the working directory in insertion order as `<section_name>content</section_name>`; section names must match `^[a-z][a-z0-9_-]*$`. `promptTail` renders after all sections. `appendSystemPrompt` retains its historical placement before project context, skills, and the working directory.
+
+When a returned `systemPrompt` starts with the current rendered prompt, Pi records only the appended suffix in `promptTail`. This preserves the common legacy pattern `systemPrompt: event.systemPrompt + "..."`. Other returned `systemPrompt` values remain full replacements: Pi stores them as `forceSystemPrompt` for the rest of the handler chain, so ordinary option mutations no longer affect rendering unless a later handler clears that field.
+
+On models with native transcript-anchored tool changes (OpenAI/Codex Responses models with `supportsAdditionalTools`, and Anthropic models with both `supportsMidConvoSystemMessages` and `supportsMidConvoToolChanges`), Pi sends the first rendered prompt of a session as the provider's top-level system prompt and keeps it fixed, so the provider's cached prefix stays valid. Later changes to `selectedTools`, `promptGuidelines`, `sections`, `promptTail`, `cwd`, context files, or skills reach the model as an appended system message describing what changed ("The <plan_mode> system guidance now applies: ..."), so conditional per-turn guidance never costs a cache miss. On other models every change replaces the top-level system prompt, as it always did; system messages are never synthesized for them. The configured blocks `customPrompt` and `appendSystemPrompt` may only grow: lines appended to them are delivered as additional instructions, but editing or removing existing text cannot be retracted from the cached prefix and replaces the top-level prompt, as does `forceSystemPrompt`. Earlier messages are never rewritten. Tool loadout changes are delivered through the same native transition; elsewhere Pi rejects calls to inactive tools.
 
 Inside `before_agent_start`, `event.systemPrompt` and `ctx.getSystemPrompt()` both reflect the chained system prompt as of the current handler. Later `before_agent_start` handlers can still modify it again.
 
@@ -1119,7 +1131,7 @@ const options = ctx.getSystemPromptOptions();
 const contextPaths = options.contextFiles?.map((file) => file.path) ?? [];
 ```
 
-This has the same shape and mutability as `before_agent_start` `event.systemPromptOptions`: custom prompt, active tools, tool snippets, prompt guidelines, appended system prompt text, cwd, loaded context files, and loaded skills. It may include full context file contents, so treat it as sensitive extension-local data and avoid exposing it through command lists, logs, or autocomplete metadata.
+This has the same shape and mutability as `before_agent_start` `event.systemPromptOptions`: custom prompt, active tools, tool snippets, prompt guidelines, configured appended prompt text, final prompt tail, cwd, loaded context files, and loaded skills. It may include full context file contents, so treat it as sensitive extension-local data and avoid exposing it through command lists, logs, or autocomplete metadata.
 
 This reports the current base prompt inputs. It does not include per-turn `before_agent_start` chained system-prompt changes, later `context` event message mutations, or `before_provider_request` payload rewrites.
 

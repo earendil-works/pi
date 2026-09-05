@@ -720,9 +720,12 @@ export interface BeforeAgentStartEvent {
 	prompt: string;
 	/** Images attached to the user prompt, if any. */
 	images?: ImageContent[];
-	/** The fully assembled system prompt string. */
-	systemPrompt: string;
-	/** Structured options used to build the system prompt. Extensions can inspect this to understand what Pi loaded without re-discovering resources. */
+	/** The current system prompt, rendered on demand from systemPromptOptions and earlier handler changes. */
+	readonly systemPrompt: string;
+	/**
+	 * Mutable options used to prepare the run. Later handlers observe mutations made by earlier handlers.
+	 * `selectedTools` controls both the rendered prompt and executable tool loadout. Collection fields are always initialized.
+	 */
 	systemPromptOptions: BuildSystemPromptOptions;
 }
 

@@ -7,6 +7,7 @@ import type {
 	SessionEntry,
 	SessionMessageEntry,
 	SessionTreeNode,
+	SystemPromptEntry,
 } from "../src/core/session-manager.ts";
 import { TreeSelectorComponent } from "../src/modes/interactive/components/tree-selector.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
@@ -97,6 +98,18 @@ function modelChange(id: string, parentId: string | null): ModelChangeEntry {
 	};
 }
 
+function systemPrompt(id: string, parentId: string | null): SystemPromptEntry {
+	return {
+		type: "system_prompt",
+		id,
+		parentId,
+		timestamp: new Date().toISOString(),
+		prompt: [{ type: "literal", text: "updated prompt" }],
+		baseline: "updated prompt",
+		tools: [],
+	};
+}
+
 // Helper to build a tree from entries using parentId relationships
 function buildTree(entries: Array<SessionEntry>): SessionTreeNode[] {
 	if (entries.length === 0) return [];
@@ -126,6 +139,25 @@ function buildTree(entries: Array<SessionEntry>): SessionTreeNode[] {
 }
 
 describe("TreeSelectorComponent", () => {
+	describe("filtering", () => {
+		test("excludes system prompt state from the all filter", () => {
+			const tree = buildTree([userMessage("user-1", null, "hello"), systemPrompt("prompt-1", "user-1")]);
+			const selector = new TreeSelectorComponent(
+				tree,
+				"prompt-1",
+				24,
+				() => {},
+				() => {},
+				undefined,
+				undefined,
+				"all",
+			);
+
+			expect(selector.getTreeList().getSelectedNode()?.entry.id).toBe("user-1");
+			expect(stripVTControlCharacters(selector.getTreeList().render(200).join("\n"))).not.toContain("system prompt");
+		});
+	});
+
 	describe("initial selection with metadata entries", () => {
 		test("focuses nearest visible ancestor when currentLeafId is a model_change with sibling branch", () => {
 			// Tree structure:
