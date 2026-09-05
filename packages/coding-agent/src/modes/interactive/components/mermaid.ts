@@ -1,14 +1,16 @@
-import { Marked, type Token } from "@earendil-works/pi-tui";
-import { type MermaidArt, render, type Span } from "grok-mermaid";
+import { getCapabilities, Marked, type Token } from "@earendil-works/pi-tui";
+import { type AnsiTheme, type MermaidArt, render, toAnsi } from "lovely-mermaid";
 import type { MarkdownTransformer } from "../../../core/extensions/types.ts";
 import type { MermaidRenderingMode } from "../../../core/settings-manager.ts";
-import type { Theme } from "../theme/theme.ts";
+import type { Theme, ThemeColor } from "../theme/theme.ts";
 
 const markdownParser = new Marked();
 
+type MermaidTheme = Pick<Theme, "fg" | "getFgAnsi">;
+
 interface MermaidTransformerOptions {
 	getMode: () => MermaidRenderingMode;
-	theme?: Theme;
+	theme?: MermaidTheme;
 }
 
 function isMermaid(token: Token): token is Token & { type: "code"; text: string; lang?: string } {
@@ -35,25 +37,29 @@ function codeSpan(line: string): string {
 	return `${fence}${padding}${content}${padding}${fence}`;
 }
 
-function styleSpan(span: Span, theme: Theme): string {
-	switch (span.cls) {
-		case "border":
-			return theme.fg("borderMuted", span.text);
-		case "text":
-			return theme.fg("text", span.text);
-		case "edge":
-			return theme.fg("accent", span.text);
-		case "edgeLabel":
-			return theme.fg("muted", span.text);
-		case "title":
-			return theme.fg("accent", theme.bold(span.text));
-		case "none":
-			return span.text;
-	}
-}
-
-function themedLines(art: MermaidArt, theme: Theme): string[] {
-	return art.styled.map((row) => row.map((span) => styleSpan(span, theme)).join(""));
+function themedLines(art: MermaidArt, theme: MermaidTheme): string[] {
+	const foreground = (color: ThemeColor) => theme.getFgAnsi(color).slice(2, -1);
+	const ansiTheme: AnsiTheme = {
+		border: foreground("borderMuted"),
+		text: foreground("text"),
+		edge: foreground("accent"),
+		edgeLabel: foreground("text"),
+		title: `1;${foreground("accent")}`,
+	};
+	const linkLabels = getCapabilities().hyperlinks;
+	const displayArt: MermaidArt = {
+		...art,
+		// Only osc 8 the text, not the whole box.
+		styled: art.styled.map((row) =>
+			row.map((span) => {
+				if (span.href === undefined || (linkLabels && span.role === "text")) return span;
+				const unlinked = { ...span };
+				delete unlinked.href;
+				return unlinked;
+			}),
+		),
+	};
+	return toAnsi(displayArt, ansiTheme);
 }
 
 /** Create a transformer that replaces top-level Mermaid code blocks with Unicode terminal diagrams. */
