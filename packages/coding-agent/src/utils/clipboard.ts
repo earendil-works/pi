@@ -49,13 +49,38 @@ function readWaylandClipboardText(): ClipboardReadResult {
 	}
 }
 
+function readX11ClipboardText(): ClipboardReadResult {
+	try {
+		const text = execFileSync("xclip", ["-selection", "clipboard", "-o"], READ_CLIPBOARD_OPTIONS);
+		return { ok: true, text: text || null };
+	} catch {
+		try {
+			const text = execFileSync("xsel", ["--clipboard", "--output"], READ_CLIPBOARD_OPTIONS);
+			return { ok: true, text: text || null };
+		} catch {
+			return { ok: false };
+		}
+	}
+}
+
 /** Read plain text from the system clipboard. */
 export async function readClipboardText(): Promise<string | null> {
-	if (platform() === "linux" && isWaylandSession() && process.env.WAYLAND_DISPLAY) {
-		const result = readWaylandClipboardText();
-		if (result.ok) {
-			return result.text;
+	if (platform() === "linux") {
+		if (isWaylandSession() && process.env.WAYLAND_DISPLAY) {
+			const result = readWaylandClipboardText();
+			if (result.ok) {
+				return result.text;
+			}
 		}
+
+		if (process.env.DISPLAY) {
+			const result = readX11ClipboardText();
+			if (result.ok) {
+				return result.text;
+			}
+		}
+
+		return null;
 	}
 
 	if (!clipboard) {

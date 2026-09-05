@@ -128,16 +128,71 @@ describe("readClipboardText", () => {
 		expect(mocks.clipboard.getText).not.toHaveBeenCalled();
 	});
 
-	test("falls back to the native clipboard when wl-paste is unavailable", async () => {
+	test("falls back to xclip when wl-paste is unavailable", async () => {
 		mockedPlatform.mockReturnValue("linux");
 		mocks.isWaylandSession.mockReturnValue(true);
 		vi.stubEnv("WAYLAND_DISPLAY", "wayland-0");
-		mockedExecFileSync.mockImplementation(() => {
-			throw new Error("wl-paste unavailable");
+		vi.stubEnv("DISPLAY", ":0");
+		mockedExecFileSync.mockImplementation((command) => {
+			if (command === "wl-paste") {
+				throw new Error("wl-paste unavailable");
+			}
+			return "X11 fallback text";
 		});
-		mocks.clipboard.getText.mockResolvedValue("X11 fallback text");
 
 		await expect(readClipboardText()).resolves.toBe("X11 fallback text");
+		expect(mockedExecFileSync).toHaveBeenNthCalledWith(2, "xclip", ["-selection", "clipboard", "-o"], {
+			encoding: "utf8",
+			maxBuffer: 50 * 1024 * 1024,
+			timeout: 5000,
+		});
+		expect(mocks.clipboard.getText).not.toHaveBeenCalled();
+	});
+
+	test("falls back to xsel when xclip is unavailable on X11", async () => {
+		mockedPlatform.mockReturnValue("linux");
+		vi.stubEnv("DISPLAY", ":0");
+		mockedExecFileSync.mockImplementation((command) => {
+			if (command === "xclip") {
+				throw new Error("xclip unavailable");
+			}
+			return "xsel text";
+		});
+
+		await expect(readClipboardText()).resolves.toBe("xsel text");
+		expect(mockedExecFileSync).toHaveBeenNthCalledWith(2, "xsel", ["--clipboard", "--output"], {
+			encoding: "utf8",
+			maxBuffer: 50 * 1024 * 1024,
+			timeout: 5000,
+		});
+		expect(mocks.clipboard.getText).not.toHaveBeenCalled();
+	});
+
+	test("treats an empty X11 clipboard as authoritative", async () => {
+		mockedPlatform.mockReturnValue("linux");
+		vi.stubEnv("DISPLAY", ":0");
+		mockedExecFileSync.mockReturnValue("");
+
+		await expect(readClipboardText()).resolves.toBeNull();
+		expect(mockedExecFileSync).toHaveBeenCalledTimes(1);
+		expect(mockedExecFileSync).toHaveBeenCalledWith("xclip", ["-selection", "clipboard", "-o"], {
+			encoding: "utf8",
+			maxBuffer: 50 * 1024 * 1024,
+			timeout: 5000,
+		});
+		expect(mocks.clipboard.getText).not.toHaveBeenCalled();
+	});
+
+	test("does not use the native clipboard when Linux tools are unavailable", async () => {
+		mockedPlatform.mockReturnValue("linux");
+		vi.stubEnv("DISPLAY", ":0");
+		mockedExecFileSync.mockImplementation(() => {
+			throw new Error("clipboard tool unavailable");
+		});
+		mocks.clipboard.getText.mockResolvedValue("native text");
+
+		await expect(readClipboardText()).resolves.toBeNull();
+		expect(mocks.clipboard.getText).not.toHaveBeenCalled();
 	});
 
 	test("returns null for empty or unavailable clipboard text", async () => {

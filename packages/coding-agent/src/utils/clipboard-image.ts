@@ -270,14 +270,12 @@ export async function readClipboardImage(options?: {
 
 		if (wayland || wsl) {
 			image = readClipboardImageViaWlPaste() ?? readClipboardImageViaXclip();
+		} else {
+			image = readClipboardImageViaXclip();
 		}
 
 		if (!image && wsl) {
 			image = readClipboardImageViaPowerShell();
-		}
-
-		if (!image && !wayland) {
-			image = (await readClipboardImageViaNativeClipboard()) ?? readClipboardImageViaXclip();
 		}
 	} else {
 		image = await readClipboardImageViaNativeClipboard();
