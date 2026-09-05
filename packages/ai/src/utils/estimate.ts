@@ -1,4 +1,5 @@
 import type { AssistantMessage, Context, ImageContent, Message, TextContent, Tool, Usage } from "../types.ts";
+import { addedToolNames, getSystemMessageText } from "./system-messages.ts";
 
 export interface ContextUsageEstimate {
 	/** Estimated total context tokens. */
@@ -45,6 +46,13 @@ export function estimateTextAndImageContentTokens(content: string | Array<TextCo
 export function estimateMessageTokens(message: Message): number {
 	let chars = 0;
 
+	if (message.role === "system") {
+		return (
+			estimateTextTokens(getSystemMessageText(message)) +
+			estimateToolsTokens(message.toolsAdded) +
+			estimateToolsTokens(message.toolsRemoved)
+		);
+	}
 	if (message.role === "user") return estimateTextAndImageContentTokens(message.content);
 	if (message.role === "toolResult") return estimateTextAndImageContentTokens(message.content);
 
@@ -116,13 +124,19 @@ export function estimateContextTokens(context: Context | readonly Message[]): Co
 
 	const estimate = estimateMessages(context.messages);
 	if (estimate.lastUsageIndex !== null) {
-		const addedNames = new Set(
-			context.messages
-				.slice(estimate.lastUsageIndex + 1)
-				.filter((message) => message.role === "toolResult")
-				.flatMap((message) => message.addedToolNames ?? []),
+		const trailingMessages = context.messages.slice(estimate.lastUsageIndex + 1);
+		// System messages carry their own definitions and are counted above; only tool-result markers
+		// still need the live definition from `context.tools`.
+		const systemAddedNames = new Set(
+			trailingMessages.filter((message) => message.role === "system").flatMap(addedToolNames),
 		);
-		const addedToolTokens = estimateToolsTokens(context.tools?.filter((tool) => addedNames.has(tool.name)));
+		const legacyAddedNames = new Set(
+			trailingMessages
+				.filter((message) => message.role === "toolResult")
+				.flatMap(addedToolNames)
+				.filter((name) => !systemAddedNames.has(name)),
+		);
+		const addedToolTokens = estimateToolsTokens(context.tools?.filter((tool) => legacyAddedNames.has(tool.name)));
 		return {
 			tokens: estimate.tokens + addedToolTokens,
 			usageTokens: estimate.usageTokens,

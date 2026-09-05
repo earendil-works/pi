@@ -23,6 +23,7 @@ import type {
 	ThinkingContent,
 	ToolCall,
 } from "../types.ts";
+import { declaredTools } from "../utils/deferred-tools.ts";
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { providerHeadersToRecord } from "../utils/headers.ts";
@@ -461,6 +462,7 @@ function buildParams(
 	options: GoogleVertexOptions = {},
 ): GenerateContentParameters {
 	const contents = convertMessages(model, context);
+	const tools = declaredTools(context);
 
 	const generationConfig: GenerateContentConfig = {};
 	if (options.temperature !== undefined) {
@@ -471,16 +473,15 @@ function buildParams(
 	}
 
 	const supportsStrictMode = supportsGoogleStrictToolSampling(model.id);
-	const functionCallingMode = context.tools?.length
-		? resolveGoogleFunctionCallingMode(context.tools, options.toolChoice, supportsStrictMode)
+	const functionCallingMode = tools.length
+		? resolveGoogleFunctionCallingMode(tools, options.toolChoice, supportsStrictMode)
 		: undefined;
 	const config: GenerateContentConfig = {
 		...(Object.keys(generationConfig).length > 0 && generationConfig),
 		...(context.systemPrompt && { systemInstruction: sanitizeSurrogates(context.systemPrompt) }),
-		...(context.tools &&
-			context.tools.length > 0 && {
-				tools: convertTools(context.tools, false, supportsStrictMode),
-			}),
+		...(tools.length > 0 && {
+			tools: convertTools(tools, false, supportsStrictMode),
+		}),
 		...(functionCallingMode !== undefined && {
 			toolConfig: { functionCallingConfig: { mode: functionCallingMode } },
 		}),

@@ -316,7 +316,8 @@ describe("Fireworks Anthropic session affinity and tool compat", () => {
 		const model = createAnthropicModel();
 		const request = await captureAnthropicRequest(model, createContext());
 
-		const tools = getTools(request.body);
+		// The breakpoint sits on the last immediate tool; deferred entries follow it.
+		const tools = getTools(request.body).filter((tool) => tool.defer_loading !== true);
 		const lastTool = tools[tools.length - 1];
 		expect(lastTool.cache_control).toBeDefined();
 		expect((lastTool.cache_control as { type: string }).type).toBe("ephemeral");

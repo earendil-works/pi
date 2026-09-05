@@ -10,6 +10,7 @@ import type {
 	BetaRawMessageStreamEvent as RawMessageStreamEvent,
 	BetaRefusalStopDetails as RefusalStopDetails,
 } from "@anthropic-ai/sdk/resources/beta/messages/messages.js";
+import { Type } from "typebox";
 import { calculateCost } from "../models.ts";
 import type {
 	AnthropicMessagesCompat,
@@ -41,7 +42,12 @@ import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
-
+import {
+	addedToolNames,
+	getSystemMessageText,
+	renderSystemMessageAsUserText,
+	supportsMidConversationToolChanges,
+} from "../utils/system-messages.ts";
 import { getJsonSchemaToolParameters, resolveJsonSchemaStrictSampling } from "./constrained-sampling.ts";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.ts";
 import { adjustMaxTokensForThinking, buildBaseOptions, clampMaxTokensToContext } from "./simple-options.ts";
@@ -177,6 +183,30 @@ const INTERLEAVED_THINKING_BETA = "interleaved-thinking-2025-05-14";
 const SERVER_SIDE_FALLBACK_BETA = "server-side-fallback-2026-07-01";
 const MID_CONVERSATION_OUTPUT_CONFIG_BETA = "mid-conversation-output-config-2026-07-01";
 const THINKING_BINDING_CONTROLS_BETA = "thinking-binding-controls-2026-08-01";
+const MID_CONVERSATION_TOOL_CHANGES_BETA = "mid-conversation-tool-changes-2026-07-01";
+
+/**
+ * Always-present deferred tool that keeps later deferred additions cache-neutral.
+ *
+ * Anthropic hashes the prompt-cache prefix over the rendered prompt. A tool with
+ * `defer_loading: true` renders nothing by itself, but the first deferred tool in
+ * a request adds a fixed "deferred tools are available" section to the tools
+ * block, which sits ahead of `system` in the prefix. Measured on Claude Fable 5.1:
+ * appending the first deferred tool to a conversation is a full prefix miss
+ * (`cache_miss_reason: tools_changed`), while appending further deferred tools
+ * to a request that already carries one is a cache hit. Declaring this
+ * placeholder from the first request therefore lets tools that are discovered
+ * mid-session load through `tool_reference` without invalidating the cache or
+ * failing the Fable 5.1 thinking-block conversation check. Claude Code does the
+ * same with its `DeferredToolPlaceholder` tool. The name is deliberately unlike
+ * anything a harness would register. The model never sees the name; Anthropic
+ * requires at least one non-deferred tool, so it is only added alongside one.
+ */
+const DEFERRED_TOOL_PLACEHOLDER: Tool = {
+	name: "__pi_deferred_tool_placeholder__",
+	description: "Reserved placeholder that keeps deferred tool loading active. Never call this tool.",
+	parameters: Type.Object({}),
+};
 
 function shouldUseServerSideFallbackBeta(model: Model<"anthropic-messages">): boolean {
 	return (model.compat?.allowedFallbackModels?.length ?? 0) > 0;
@@ -196,6 +226,8 @@ function getAnthropicCompat(
 		allowEmptySignature: model.compat?.allowEmptySignature ?? false,
 		supportsStrictTools: model.compat?.supportsStrictTools ?? false,
 		supportsToolReferences: model.compat?.supportsToolReferences ?? defaultSupportsToolReferences(model),
+		supportsMidConvoSystemMessages: model.compat?.supportsMidConvoSystemMessages ?? false,
+		supportsMidConvoToolChanges: model.compat?.supportsMidConvoToolChanges ?? false,
 	};
 }
 
@@ -1014,6 +1046,11 @@ function getBetaFeatures(
 	if (model.compat?.supportsMidConvoEffort === true) {
 		features.push(MID_CONVERSATION_OUTPUT_CONFIG_BETA, THINKING_BINDING_CONTROLS_BETA);
 	}
+	// Sent whenever the model supports it rather than only when a request carries tool
+	// changes, so the beta set stays constant for the whole conversation.
+	if (supportsMidConversationToolChanges(model)) {
+		features.push(MID_CONVERSATION_TOOL_CHANGES_BETA);
+	}
 	return [...new Set(features)];
 }
 
@@ -1027,10 +1064,15 @@ function buildParams(
 	const compat = getAnthropicCompat(model);
 	const transformedMessages = transformMessages(context.messages, model, normalizeToolCallId);
 	const normalizeToolName = isOAuthToken ? toClaudeCodeName : (name: string) => name;
+	const systemToolChanges = supportsMidConversationToolChanges(model);
 	const toolPlacement = splitDeferredTools(
 		{ ...context, messages: transformedMessages },
-		compat.supportsToolReferences,
-		normalizeToolName,
+		{
+			toolResultMarkers: compat.supportsToolReferences,
+			// A tool added by a system message can only load there through a tool_addition block.
+			systemMarkers: systemToolChanges,
+			normalizeName: normalizeToolName,
+		},
 	);
 	let immediateTools = toolPlacement.immediate;
 	let deferredTools = [...toolPlacement.deferred.values()];
@@ -1039,6 +1081,9 @@ function buildParams(
 		deferredTools = [];
 	}
 	const deferredToolNames = new Set(deferredTools.map((tool) => normalizeToolName(tool.name)));
+	if (compat.supportsToolReferences && immediateTools.length > 0) {
+		deferredTools = [DEFERRED_TOOL_PLACEHOLDER, ...deferredTools];
+	}
 	const converted = convertMessages(
 		transformedMessages,
 		isOAuthToken,
@@ -1047,6 +1092,7 @@ function buildParams(
 		deferredToolNames,
 		normalizeToolName,
 		model.compat?.supportsMidConvoEffort === true ? model.provider : undefined,
+		{ native: compat.supportsMidConvoSystemMessages, toolChanges: systemToolChanges },
 	);
 	const activeEffort = options?.effort ?? "high";
 	const betaFeatures = getBetaFeatures(model, context, isOAuthToken, options);
@@ -1187,7 +1233,7 @@ function convertToolResult(
 	normalizeToolName: (name: string) => string,
 ): { toolResult: ContentBlockParam; siblingContent: ContentBlockParam[] } {
 	const references: Array<{ type: "tool_reference"; tool_name: string }> = [];
-	for (const name of msg.addedToolNames ?? []) {
+	for (const name of addedToolNames(msg)) {
 		const normalizedName = normalizeToolName(name);
 		if (!deferredToolNames.has(normalizedName) || loadedToolNames.has(normalizedName)) continue;
 		loadedToolNames.add(normalizedName);
@@ -1219,6 +1265,13 @@ interface ConvertedAnthropicMessages {
 	assistantLevels: Map<number, AnthropicEffort>;
 }
 
+interface SystemMessageRendering {
+	/** Whether the model accepts `role: "system"` entries inside `messages`. Otherwise they render as user text. */
+	native: boolean;
+	/** Whether native system messages may carry `tool_addition` and `tool_removal` blocks. */
+	toolChanges: boolean;
+}
+
 function convertMessages(
 	transformedMessages: Message[],
 	isOAuthToken: boolean,
@@ -1227,14 +1280,53 @@ function convertMessages(
 	deferredToolNames: ReadonlySet<string> = new Set(),
 	normalizeToolName: (name: string) => string = (name) => name,
 	managedProvider?: string,
+	systemMessages: SystemMessageRendering = { native: false, toolChanges: false },
 ): ConvertedAnthropicMessages {
 	const params: MessageParam[] = [];
 	const assistantLevels = new Map<number, AnthropicEffort>();
 	const loadedToolNames = new Set<string>();
+	// Anthropic rejects a `role: "system"` message unless it directly precedes an assistant
+	// message or ends the array (verified against the API: "role 'system' must precede an
+	// 'assistant' message or end the array"). Dropping an aborted assistant turn leaves
+	// `[user, system, user]`, so native system messages are held back until the next
+	// assistant message or the end. No assistant turn lies in between, so the model sees
+	// the same content before it next acts, and the prefix up to the moved message is kept.
+	const pendingSystem: MessageParam[] = [];
+	const flushPendingSystem = (): void => {
+		params.push(...pendingSystem);
+		pendingSystem.length = 0;
+	};
 
 	for (let i = 0; i < transformedMessages.length; i++) {
 		const msg = transformedMessages[i];
 
+		if (msg.role === "system") {
+			if (!systemMessages.native) {
+				const text = renderSystemMessageAsUserText(msg);
+				if (text.length > 0)
+					params.push({ role: "user", content: [{ type: "text", text: sanitizeSurrogates(text) }] });
+				continue;
+			}
+			const blocks: ContentBlockParam[] = [];
+			const text = getSystemMessageText(msg);
+			if (text.length > 0) blocks.push({ type: "text", text: sanitizeSurrogates(text) });
+			if (systemMessages.toolChanges) {
+				// Withdraw before re-offering so a same-name pair nets out as offered.
+				for (const tool of msg.toolsRemoved ?? []) {
+					blocks.push({
+						type: "tool_removal",
+						tool: { type: "tool_reference", name: normalizeToolName(tool.name) },
+					});
+				}
+				for (const tool of msg.toolsAdded ?? []) {
+					const name = normalizeToolName(tool.name);
+					loadedToolNames.add(name);
+					blocks.push({ type: "tool_addition", tool: { type: "tool_reference", name } });
+				}
+			}
+			if (blocks.length > 0) pendingSystem.push({ role: "system", content: blocks });
+			continue;
+		}
 		if (msg.role === "user") {
 			if (typeof msg.content === "string") {
 				if (msg.content.trim().length > 0) {
@@ -1328,6 +1420,7 @@ function convertMessages(
 				}
 			}
 			if (blocks.length === 0) continue;
+			flushPendingSystem();
 			const messageIndex = params.length;
 			params.push({
 				role: "assistant",
@@ -1370,15 +1463,21 @@ function convertMessages(
 		}
 	}
 
-	// Add cache_control to the last user message to cache conversation history
+	flushPendingSystem();
+
+	// Add cache_control to the last user or system message to cache conversation history
 	if (cacheControl && params.length > 0) {
 		const lastMessage = params[params.length - 1];
-		if (lastMessage.role === "user") {
+		if (lastMessage.role === "user" || lastMessage.role === "system") {
 			if (Array.isArray(lastMessage.content)) {
 				const lastBlock = lastMessage.content[lastMessage.content.length - 1];
 				if (
 					lastBlock &&
-					(lastBlock.type === "text" || lastBlock.type === "image" || lastBlock.type === "tool_result")
+					(lastBlock.type === "text" ||
+						lastBlock.type === "image" ||
+						lastBlock.type === "tool_result" ||
+						lastBlock.type === "tool_addition" ||
+						lastBlock.type === "tool_removal")
 				) {
 					(lastBlock as any).cache_control = cacheControl;
 				}

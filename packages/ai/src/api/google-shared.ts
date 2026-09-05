@@ -16,6 +16,7 @@ import type {
 } from "../types.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
+import { renderSystemMessageAsUserText } from "../utils/system-messages.ts";
 import { getJsonSchemaToolParameters, resolveJsonSchemaStrictSampling } from "./constrained-sampling.ts";
 import { transformMessages } from "./transform-messages.ts";
 
@@ -138,7 +139,11 @@ export function convertMessages<T extends GoogleApiType>(model: Model<T>, contex
 	const transformedMessages = transformMessages(context.messages, model, normalizeToolCallId);
 
 	for (const msg of transformedMessages) {
-		if (msg.role === "user") {
+		if (msg.role === "system") {
+			// Gemini has no mid-conversation system role; append operator context as user text.
+			const text = renderSystemMessageAsUserText(msg);
+			if (text.length > 0) contents.push({ role: "user", parts: [{ text: sanitizeSurrogates(text) }] });
+		} else if (msg.role === "user") {
 			if (typeof msg.content === "string") {
 				contents.push({
 					role: "user",

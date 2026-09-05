@@ -10,6 +10,7 @@ import type {
 	StreamFunction,
 	StreamOptions,
 } from "../types.ts";
+import { declaredTools } from "../utils/deferred-tools.ts";
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
@@ -104,7 +105,7 @@ export const stream: StreamFunction<"azure-openai-responses", AzureOpenAIRespons
 			}
 			const client = createClient(model, apiKey, options);
 			const grammarToolInputProperties = createGrammarToolInputProperties(
-				context.tools,
+				declaredTools(context),
 				model.compat?.supportsOpenAIGrammarTools ?? false,
 			);
 			let params = buildParams(model, context, options, deploymentName, grammarToolInputProperties);
@@ -278,10 +279,11 @@ function buildParams(
 	options: AzureOpenAIResponsesOptions | undefined,
 	deploymentName: string,
 	grammarToolInputProperties: ReadonlyMap<string, string> = createGrammarToolInputProperties(
-		context.tools,
+		declaredTools(context),
 		model.compat?.supportsOpenAIGrammarTools ?? false,
 	),
 ) {
+	const tools = declaredTools(context);
 	const messages = convertResponsesMessages(model, context, AZURE_TOOL_CALL_PROVIDERS, {
 		grammarToolInputProperties,
 	});
@@ -302,8 +304,8 @@ function buildParams(
 		params.temperature = options?.temperature;
 	}
 
-	if (context.tools && context.tools.length > 0) {
-		params.tools = convertResponsesTools(context.tools, {
+	if (tools.length > 0) {
+		params.tools = convertResponsesTools(tools, {
 			supportsStrictMode: model.compat?.supportsStrictMode ?? true,
 			supportsOpenAIGrammarTools: model.compat?.supportsOpenAIGrammarTools ?? false,
 		});

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { convertMessages } from "../src/api/openai-completions.ts";
 import { getModel, streamSimple } from "../src/compat.ts";
 import type { Api, AssistantMessage, Context, Model, Tool, ToolResultMessage, UserMessage } from "../src/types.ts";
+import { splitDeferredTools } from "../src/utils/deferred-tools.ts";
 import { estimateContextTokens } from "../src/utils/estimate.ts";
 
 interface AnthropicToolPayload {
@@ -48,14 +49,31 @@ interface OpenAIToolSearchOutput {
 interface OpenAIAdditionalTools {
 	type: "additional_tools";
 	role: "developer";
-	tools: Array<{ type: string; name: string; defer_loading?: boolean }>;
+	tools: Array<{ type: string; name: string; description?: string; defer_loading?: boolean }>;
+}
+
+interface OpenAISystemMessage {
+	role: "system" | "developer";
+	content: string;
+	type?: undefined;
+	name?: undefined;
 }
 
 interface OpenAIPayload {
 	tools?: Array<{ name?: string; function?: { name: string } }>;
 	input?: Array<
-		OpenAIAdditionalTools | OpenAIToolSearchCall | OpenAIToolSearchOutput | { type?: string; name?: string }
+		| OpenAIAdditionalTools
+		| OpenAISystemMessage
+		| OpenAIToolSearchCall
+		| OpenAIToolSearchOutput
+		| { type?: string; name?: string }
 	>;
+}
+
+type OpenAIInputItem = NonNullable<OpenAIPayload["input"]>[number];
+
+function isOpenAIAdditionalTools(item: OpenAIInputItem): item is OpenAIAdditionalTools {
+	return item.type === "additional_tools" && "tools" in item;
 }
 
 interface KimiTool {
@@ -176,8 +194,21 @@ function findAnthropicToolResult(payload: AnthropicPayload): AnthropicContentBlo
 	return result;
 }
 
+const PLACEHOLDER = "__pi_deferred_tool_placeholder__";
+
+/** Anthropic tools without the always-present deferred placeholder. */
+function anthropicUserTools(payload: AnthropicPayload): AnthropicToolPayload[] {
+	return (payload.tools ?? []).filter((tool) => tool.name !== PLACEHOLDER);
+}
+
 function openAIToolNames(payload: OpenAIPayload): string[] {
 	return (payload.tools ?? []).map((tool) => tool.name ?? tool.function?.name ?? "");
+}
+
+function additionalToolSnapshots(payload: OpenAIPayload): string[][] {
+	return (payload.input ?? []).flatMap((item) =>
+		isOpenAIAdditionalTools(item) ? [item.tools.map((tool) => tool.name)] : [],
+	);
 }
 
 function makeCodexToken(): string {
@@ -189,8 +220,37 @@ describe("deferred tools", () => {
 		const context = makeContext([makeTool("base_tool"), makeTool("late_tool")]);
 		const payload = await capturePayload<AnthropicPayload>(getModel("anthropic", "claude-opus-4-6"), context);
 
-		expect(payload.tools).toMatchObject([{ name: "base_tool" }, { name: "late_tool", defer_loading: true }]);
+		expect(payload.tools).toMatchObject([
+			{ name: "base_tool" },
+			{ name: PLACEHOLDER, defer_loading: true },
+			{ name: "late_tool", defer_loading: true },
+		]);
 		expect(findAnthropicToolResult(payload).content).toEqual([{ type: "tool_reference", tool_name: "late_tool" }]);
+	});
+
+	it("always declares a deferred placeholder after the immediate Anthropic tools", async () => {
+		// The first deferred tool in a request adds a fixed section to the cached prefix.
+		// Declaring the placeholder up front keeps later deferred additions cache-neutral.
+		const context: Context = { messages: [makeUserMessage(1)], tools: [makeTool("base_tool")] };
+		const payload = await capturePayload<AnthropicPayload>(getModel("anthropic", "claude-opus-4-6"), context);
+
+		expect(payload.tools).toMatchObject([{ name: "base_tool" }, { name: PLACEHOLDER, defer_loading: true }]);
+		expect(payload.tools?.[0]?.defer_loading).toBeUndefined();
+	});
+
+	it("omits the deferred placeholder without tool references or immediate tools", async () => {
+		const withoutSupport = await capturePayload<AnthropicPayload>(getModel("anthropic", "claude-haiku-4-5"), {
+			messages: [makeUserMessage(1)],
+			tools: [makeTool("base_tool")],
+		});
+		expect(withoutSupport.tools?.map((tool) => tool.name)).toEqual(["base_tool"]);
+
+		// Anthropic rejects requests where every tool is deferred, so no tools means no placeholder.
+		const withoutTools = await capturePayload<AnthropicPayload>(getModel("anthropic", "claude-opus-4-6"), {
+			messages: [makeUserMessage(1)],
+			tools: [],
+		});
+		expect(withoutTools.tools).toBeUndefined();
 	});
 
 	it("preserves tool output as sibling content after emitting references", async () => {
@@ -237,7 +297,10 @@ describe("deferred tools", () => {
 
 		const payload = await capturePayload<AnthropicPayload>(getModel("anthropic", "claude-opus-4-8"), context);
 
-		expect(payload.tools).toMatchObject([{ name: "base_tool" }, { name: "late_tool", defer_loading: true }]);
+		expect(anthropicUserTools(payload)).toMatchObject([
+			{ name: "base_tool" },
+			{ name: "late_tool", defer_loading: true },
+		]);
 		expect(findAnthropicToolResult(payload).content).toEqual([{ type: "tool_reference", tool_name: "late_tool" }]);
 	});
 
@@ -245,7 +308,7 @@ describe("deferred tools", () => {
 		const context = makeContext([makeTool("base_tool")]);
 		const payload = await capturePayload<AnthropicPayload>(getModel("anthropic", "claude-opus-4-6"), context);
 
-		expect(payload.tools?.map((tool) => tool.name)).toEqual(["base_tool"]);
+		expect(anthropicUserTools(payload).map((tool) => tool.name)).toEqual(["base_tool"]);
 		const content = findAnthropicToolResult(payload).content;
 		expect(Array.isArray(content) && content.some((block) => block.type === "tool_reference")).toBe(false);
 	});
@@ -256,8 +319,8 @@ describe("deferred tools", () => {
 		assistant.content = [{ type: "toolCall", id: "call_1", name: "late_tool", arguments: {} }];
 		const payload = await capturePayload<AnthropicPayload>(getModel("anthropic", "claude-opus-4-6"), context);
 
-		expect(payload.tools?.map((tool) => tool.name)).toEqual(["base_tool", "late_tool"]);
-		expect(payload.tools?.every((tool) => !tool.defer_loading)).toBe(true);
+		expect(anthropicUserTools(payload).map((tool) => tool.name)).toEqual(["base_tool", "late_tool"]);
+		expect(anthropicUserTools(payload).every((tool) => !tool.defer_loading)).toBe(true);
 	});
 
 	it("normalizes OAuth names before checking prior tool usage", async () => {
@@ -270,8 +333,8 @@ describe("deferred tools", () => {
 			"sk-ant-oat-fake",
 		);
 
-		expect(payload.tools?.map((tool) => tool.name)).toEqual(["base_tool", "Read"]);
-		expect(payload.tools?.every((tool) => !tool.defer_loading)).toBe(true);
+		expect(anthropicUserTools(payload).map((tool) => tool.name)).toEqual(["Read", "base_tool"]);
+		expect(anthropicUserTools(payload).every((tool) => !tool.defer_loading)).toBe(true);
 		const content = findAnthropicToolResult(payload).content;
 		expect(Array.isArray(content) && content.some((block) => block.type === "tool_reference")).toBe(false);
 	});
@@ -284,7 +347,7 @@ describe("deferred tools", () => {
 			"sk-ant-oat-fake",
 		);
 
-		expect(payload.tools).toMatchObject([{ name: "base_tool" }, { name: "Read", defer_loading: true }]);
+		expect(anthropicUserTools(payload)).toMatchObject([{ name: "base_tool" }, { name: "Read", defer_loading: true }]);
 		const content = findAnthropicToolResult(payload).content;
 		expect(
 			Array.isArray(content) &&
@@ -303,7 +366,7 @@ describe("deferred tools", () => {
 			"sk-ant-oat-fake",
 		);
 
-		expect(payload.tools).toMatchObject([{ name: "Read", description: "Canonical definition" }]);
+		expect(anthropicUserTools(payload)).toMatchObject([{ name: "Read", description: "Canonical definition" }]);
 	});
 
 	it("uses the normal tool list when Anthropic tool references are unsupported", async () => {
@@ -324,7 +387,7 @@ describe("deferred tools", () => {
 		const context = makeContext([makeTool("late_tool")]);
 		const payload = await capturePayload<AnthropicPayload>(getModel("anthropic", "claude-opus-4-6"), context);
 
-		expect(payload.tools).toMatchObject([{ name: "late_tool" }]);
+		expect(payload.tools).toMatchObject([{ name: "late_tool" }, { name: PLACEHOLDER, defer_loading: true }]);
 		expect(payload.tools?.[0]?.defer_loading).toBeUndefined();
 		const content = findAnthropicToolResult(payload).content;
 		expect(Array.isArray(content) && content.some((block) => block.type === "tool_reference")).toBe(false);
@@ -342,8 +405,16 @@ describe("deferred tools", () => {
 		expect(payload.tools?.find((tool) => tool.name === "late_tool")?.defer_loading).toBe(true);
 	});
 
-	it("serializes Kimi deferred tools as system tool definitions", async () => {
-		const context = makeContext([makeTool("base_tool"), makeTool("late_tool")]);
+	it("deduplicates legacy and first-class Kimi tool additions", async () => {
+		const baseTool = makeTool("base_tool");
+		const lateTool = makeTool("late_tool");
+		const context = makeContext([baseTool, lateTool]);
+		context.messages.splice(3, 0, {
+			role: "system",
+			content: "",
+			toolsAdded: [lateTool],
+			timestamp: 4,
+		});
 		const payload = await capturePayload<KimiPayload>(makeKimiModel("kimi"), context);
 
 		expect(payload.tools?.map((tool) => tool.function.name)).toEqual(["base_tool"]);
@@ -352,6 +423,7 @@ describe("deferred tools", () => {
 		expect(toolResultIndex).toBeGreaterThanOrEqual(0);
 		expect(systemToolIndex).toBeGreaterThan(toolResultIndex);
 		expect(payload.messages[systemToolIndex]?.tools?.map((tool) => tool.function.name)).toEqual(["late_tool"]);
+		expect(payload.messages.filter((message) => message.tools !== undefined)).toHaveLength(1);
 	});
 
 	it("emits Kimi deferred schemas after all tool results in a batch", () => {
@@ -361,31 +433,37 @@ describe("deferred tools", () => {
 			toolCallId: "call_2",
 		});
 
-		const messages = convertMessages(makeKimiModel("kimi"), context, {
-			supportsStore: false,
-			supportsDeveloperRole: false,
-			supportsReasoningEffort: false,
-			supportsUsageInStreaming: true,
-			supportsFinishReason: true,
-			maxTokensField: "max_tokens",
-			requiresToolResultName: false,
-			requiresAssistantAfterToolResult: false,
-			requiresThinkingAsText: false,
-			requiresReasoningContentOnAssistantMessages: false,
-			thinkingFormat: "openai",
-			openRouterRouting: {},
-			vercelGatewayRouting: {},
-			chatTemplateKwargs: {},
-			chatTemplateArgs: {},
-			zaiToolStream: false,
-			supportsStrictMode: false,
-			supportsOpenAIGrammarTools: false,
-			cacheControlFormat: undefined,
-			sendSessionAffinityHeaders: false,
-			deferredToolsMode: "kimi",
-			sessionAffinityFormat: "openai",
-			supportsLongCacheRetention: false,
-		});
+		const placement = splitDeferredTools(context, { toolResultMarkers: true, systemMarkers: true });
+		const messages = convertMessages(
+			makeKimiModel("kimi"),
+			context,
+			{
+				supportsStore: false,
+				supportsDeveloperRole: false,
+				supportsReasoningEffort: false,
+				supportsUsageInStreaming: true,
+				supportsFinishReason: true,
+				maxTokensField: "max_tokens",
+				requiresToolResultName: false,
+				requiresAssistantAfterToolResult: false,
+				requiresThinkingAsText: false,
+				requiresReasoningContentOnAssistantMessages: false,
+				thinkingFormat: "openai",
+				openRouterRouting: {},
+				vercelGatewayRouting: {},
+				chatTemplateKwargs: {},
+				chatTemplateArgs: {},
+				zaiToolStream: false,
+				supportsStrictMode: false,
+				supportsOpenAIGrammarTools: false,
+				cacheControlFormat: undefined,
+				sendSessionAffinityHeaders: false,
+				deferredToolsMode: "kimi",
+				sessionAffinityFormat: "openai",
+				supportsLongCacheRetention: false,
+			},
+			{ deferredTools: placement.deferred },
+		);
 
 		expect(messages.map((message) => message.role)).toEqual(["user", "assistant", "tool", "tool", "system", "user"]);
 		expect((messages[4] as { tools?: KimiTool[] }).tools?.map((tool) => tool.function.name)).toEqual([
@@ -402,6 +480,22 @@ describe("deferred tools", () => {
 		expect(payload.messages.some((message) => message.tools !== undefined)).toBe(false);
 	});
 
+	it("projects OpenAI Completions system updates as developer messages", async () => {
+		const model: Model<"openai-completions"> = {
+			...makeKimiModel(),
+			provider: "openai",
+			reasoning: true,
+			compat: { supportsDeveloperRole: true },
+		};
+		const context: Context = {
+			messages: [makeUserMessage(1), { role: "system", content: "updated instructions", timestamp: 2 }],
+		};
+		const payload = await capturePayload<KimiPayload>(model, context);
+
+		expect(payload.messages.map((message) => message.role)).toEqual(["user", "developer"]);
+		expect(payload.messages[1]?.content).toBe("updated instructions");
+	});
+
 	it("loads an OpenAI Responses tool through additional_tools", async () => {
 		const context = makeContext([makeTool("base_tool"), makeTool("late_tool")]);
 		const payload = await capturePayload<OpenAIPayload>(getModel("openai", "gpt-5.4"), context);
@@ -415,6 +509,78 @@ describe("deferred tools", () => {
 		expect(additionalTools?.tools.every((tool) => tool.defer_loading === undefined)).toBe(true);
 		expect(payload.input?.some((item) => item.type === "tool_search_call")).toBe(false);
 		expect(payload.input?.some((item) => item.type === "tool_search_output")).toBe(false);
+	});
+
+	it("loads an OpenAI Responses tool carried by a system message", async () => {
+		const lateTool = makeTool("late_tool");
+		const context: Context = {
+			messages: [
+				makeUserMessage(1),
+				{
+					role: "system",
+					content: [{ type: "text", text: "late_tool is now available" }],
+					toolsAdded: [lateTool],
+					timestamp: 2,
+				},
+			],
+			tools: [makeTool("base_tool"), lateTool],
+		};
+		const payload = await capturePayload<OpenAIPayload>(getModel("openai", "gpt-5.4"), context);
+		const additionalToolsIndex = (payload.input ?? []).findIndex(isOpenAIAdditionalTools);
+		const instructionIndex = (payload.input ?? []).findIndex(
+			(item) => "role" in item && item.role === "developer" && "content" in item,
+		);
+
+		expect(openAIToolNames(payload)).toEqual(["base_tool"]);
+		expect(additionalToolSnapshots(payload)).toEqual([["late_tool"]]);
+		expect(additionalToolsIndex).toBeGreaterThanOrEqual(0);
+		expect(payload.input?.[instructionIndex]).toMatchObject({
+			role: "developer",
+			content: "late_tool is now available",
+		});
+	});
+
+	it("keeps a removed tool declared and sorts the top-level tools by name", async () => {
+		const removedTool = makeTool("removed_tool");
+		const context: Context = {
+			messages: [
+				makeUserMessage(1),
+				{
+					role: "system",
+					content: "removed_tool is no longer available",
+					toolsRemoved: [removedTool],
+					timestamp: 2,
+				},
+			],
+			tools: [makeTool("zeta_tool"), makeTool("base_tool")],
+		};
+		const payload = await capturePayload<OpenAIPayload>(getModel("openai", "gpt-5.4"), context);
+
+		expect(openAIToolNames(payload)).toEqual(["base_tool", "removed_tool", "zeta_tool"]);
+		expect(payload.input?.some((item) => item.type === "additional_tools")).toBe(false);
+		expect(payload.input).toContainEqual(
+			expect.objectContaining({ role: "developer", content: "removed_tool is no longer available" }),
+		);
+	});
+
+	it("declares a system-added tool at the top level when the model has no deferred loading", async () => {
+		const lateTool = makeTool("late_tool");
+		const context: Context = {
+			systemPrompt: "base prompt",
+			messages: [
+				makeUserMessage(1),
+				{ role: "system", content: "late_tool is now available", toolsAdded: [lateTool], timestamp: 2 },
+			],
+			tools: [makeTool("base_tool"), lateTool],
+		};
+		const payload = await capturePayload<OpenAIPayload>(getModel("openai", "gpt-5.3-chat-latest"), context);
+		const instructions = (payload.input ?? []).filter(
+			(item): item is OpenAISystemMessage =>
+				"role" in item && (item.role === "system" || item.role === "developer") && "content" in item,
+		);
+
+		expect(openAIToolNames(payload)).toEqual(["base_tool", "late_tool"]);
+		expect(instructions.map((item) => item.content)).toEqual(["base prompt", "late_tool is now available"]);
 	});
 
 	it("preserves an additional_tools marker after the loaded tool is used", async () => {
@@ -463,6 +629,29 @@ describe("deferred tools", () => {
 		expect(searchOutput?.call_id).toBe(searchCall?.call_id);
 		expect(searchOutput?.tools).toMatchObject([{ type: "function", name: "late_tool", defer_loading: true }]);
 		expect(payload.input?.some((item) => item.type === "additional_tools")).toBe(false);
+	});
+
+	it("declares a system-added tool immediately when only tool search is supported", async () => {
+		const model: Model<"openai-responses"> = {
+			...getModel("openai", "gpt-5.4"),
+			provider: "openai-proxy",
+			compat: { supportsAdditionalTools: false, supportsToolSearch: true },
+		};
+		const lateTool = makeTool("late_tool");
+		const context: Context = {
+			messages: [
+				makeUserMessage(1),
+				{ role: "system", content: "late_tool is now available", toolsAdded: [lateTool], timestamp: 2 },
+			],
+			tools: [makeTool("base_tool"), lateTool],
+		};
+		const payload = await capturePayload<OpenAIPayload>(model, context);
+		const searchOutput = payload.input?.find(
+			(item): item is OpenAIToolSearchOutput => item.type === "tool_search_output",
+		);
+
+		expect(openAIToolNames(payload)).toEqual(["base_tool", "late_tool"]);
+		expect(searchOutput).toBeUndefined();
 	});
 
 	it.each(["gpt-5.2", "gpt-5.4-nano", "gpt-5.5-pro"] as const)(
@@ -543,8 +732,22 @@ describe("deferred tools", () => {
 			messages: [assistant, makeToolResult(["late_tool"])],
 			tools: [lateTool],
 		});
+		const markedWithFirstClassUpdate = estimateContextTokens({
+			messages: [
+				assistant,
+				makeToolResult(["late_tool"]),
+				{
+					role: "system",
+					content: "",
+					toolsAdded: [lateTool],
+					timestamp: 5,
+				},
+			],
+			tools: [lateTool],
+		});
 
 		expect(marked.tokens).toBeGreaterThan(plain.tokens + 500);
 		expect(marked.trailingTokens).toBeGreaterThan(plain.trailingTokens + 500);
+		expect(markedWithFirstClassUpdate).toEqual(marked);
 	});
 });

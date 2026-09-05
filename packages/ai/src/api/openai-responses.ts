@@ -15,13 +15,14 @@ import type {
 	StreamOptions,
 	Usage,
 } from "../types.ts";
-import { splitDeferredTools } from "../utils/deferred-tools.ts";
+import { declaredTools, splitDeferredTools } from "../utils/deferred-tools.ts";
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
+import { supportsMidConversationToolChanges } from "../utils/system-messages.ts";
 import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
@@ -147,7 +148,7 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 			const cacheSessionId = cacheRetention === "none" ? undefined : options?.sessionId;
 			const compat = getCompat(model);
 			const grammarToolInputProperties = createGrammarToolInputProperties(
-				context.tools,
+				declaredTools(context),
 				compat.supportsOpenAIGrammarTools,
 			);
 			const client = createClient(model, context, apiKey, options?.headers, options?.fetch, cacheSessionId);
@@ -278,7 +279,7 @@ function buildParams(
 	options: OpenAIResponsesOptions | undefined,
 	compat: Required<OpenAIResponsesCompat> = getCompat(model),
 	grammarToolInputProperties: ReadonlyMap<string, string> = createGrammarToolInputProperties(
-		context.tools,
+		declaredTools(context),
 		compat.supportsOpenAIGrammarTools,
 	),
 ) {
@@ -287,7 +288,10 @@ function buildParams(
 		: compat.supportsToolSearch
 			? "tool-search"
 			: undefined;
-	const toolPlacement = splitDeferredTools(context, deferredToolsMode !== undefined);
+	const toolPlacement = splitDeferredTools(context, {
+		toolResultMarkers: deferredToolsMode !== undefined,
+		systemMarkers: supportsMidConversationToolChanges(model),
+	});
 	const messages = convertResponsesMessages(model, context, OPENAI_TOOL_CALL_PROVIDERS, {
 		grammarToolInputProperties,
 		deferredTools: toolPlacement.deferred,

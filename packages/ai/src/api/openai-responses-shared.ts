@@ -32,6 +32,7 @@ import type { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { shortHash } from "../utils/hash.ts";
 import { parseStreamingJson } from "../utils/json-parse.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
+import { addedToolNames, getSystemMessageText } from "../utils/system-messages.ts";
 import {
 	appendGrammarToolInputJsonDelta,
 	type GrammarToolInputJsonBuffer,
@@ -116,11 +117,13 @@ export interface OpenAIResponsesStreamOptions {
 	) => void;
 }
 
+export type ResponsesDeferredToolsMode = "additional-tools" | "tool-search";
+
 export interface ConvertResponsesMessagesOptions {
 	includeSystemPrompt?: boolean;
 	grammarToolInputProperties?: ReadonlyMap<string, string>;
 	deferredTools?: ReadonlyMap<string, Tool>;
-	deferredToolsMode?: "additional-tools" | "tool-search";
+	deferredToolsMode?: ResponsesDeferredToolsMode;
 	toolOptions?: ConvertResponsesToolsOptions;
 }
 
@@ -170,20 +173,64 @@ export function convertResponsesMessages<TApi extends Api>(
 	};
 
 	const transformedMessages = transformMessages(context.messages, model, normalizeToolCallId);
+	const grammarToolInputProperties = options?.grammarToolInputProperties ?? new Map<string, string>();
+
+	/** Load deferred definitions at this point of the transcript, once each. */
+	const appendDeferredToolLoads = (names: readonly string[], seed: string): void => {
+		if (options?.deferredToolsMode === undefined) return;
+		const added: Tool[] = [];
+		for (const name of names) {
+			const tool = options.deferredTools?.get(name);
+			if (!tool || loadedToolNames.has(name)) continue;
+			loadedToolNames.add(name);
+			added.push(tool);
+		}
+		if (added.length === 0) return;
+		if (options.deferredToolsMode === "additional-tools") {
+			messages.push({
+				type: "additional_tools",
+				role: "developer",
+				tools: convertResponsesTools(added, options.toolOptions),
+			} satisfies ResponseInputItem);
+			return;
+		}
+		const addedNames = added.map((tool) => tool.name);
+		const searchCallId = `pi_tool_load_${shortHash(`${seed}:${addedNames.join(",")}`)}`;
+		messages.push({
+			type: "tool_search_call",
+			call_id: searchCallId,
+			execution: "client",
+			status: "completed",
+			arguments: { query: addedNames.join(" "), limit: addedNames.length },
+		} satisfies ResponseInputItem);
+		messages.push({
+			type: "tool_search_output",
+			call_id: searchCallId,
+			execution: "client",
+			status: "completed",
+			tools: convertResponsesTools(added, { ...options.toolOptions, deferLoading: true }),
+		} satisfies ResponseToolSearchOutputItemParam);
+	};
 
 	const includeSystemPrompt = options?.includeSystemPrompt ?? true;
+	const compat = model.compat as { supportsDeveloperRole?: boolean } | undefined;
+	const instructionRole = model.reasoning && compat?.supportsDeveloperRole !== false ? "developer" : "system";
 	if (includeSystemPrompt && context.systemPrompt) {
-		const compat = model.compat as { supportsDeveloperRole?: boolean } | undefined;
-		const role = model.reasoning && compat?.supportsDeveloperRole !== false ? "developer" : "system";
 		messages.push({
-			role,
+			role: instructionRole,
 			content: sanitizeSurrogates(context.systemPrompt),
 		});
 	}
 
 	let msgIndex = 0;
 	for (const msg of transformedMessages) {
-		if (msg.role === "user") {
+		if (msg.role === "system") {
+			appendDeferredToolLoads(addedToolNames(msg), `system:${msgIndex}`);
+			const text = getSystemMessageText(msg);
+			if (text.length > 0) {
+				messages.push({ role: instructionRole, content: sanitizeSurrogates(text) });
+			}
+		} else if (msg.role === "user") {
 			if (typeof msg.content === "string") {
 				messages.push({
 					role: "user",
@@ -247,7 +294,7 @@ export function convertResponsesMessages<TApi extends Api>(
 				} else if (block.type === "toolCall") {
 					const toolCall = block as ToolCall;
 					const [callId, itemIdRaw] = toolCall.id.split("|");
-					const customInputProperty = options?.grammarToolInputProperties?.get(toolCall.name);
+					const customInputProperty = grammarToolInputProperties.get(toolCall.name);
 					let itemId: string | undefined = itemIdRaw;
 
 					// For different-model messages, set id to undefined to avoid pairing validation.
@@ -297,7 +344,7 @@ export function convertResponsesMessages<TApi extends Api>(
 			const [callId] = msg.toolCallId.split("|");
 			const output = convertToolResultOutput(model, msg.content);
 
-			if (options?.grammarToolInputProperties?.has(msg.toolName)) {
+			if (grammarToolInputProperties.has(msg.toolName)) {
 				messages.push({
 					type: "custom_tool_call_output",
 					call_id: callId,
@@ -311,40 +358,7 @@ export function convertResponsesMessages<TApi extends Api>(
 				});
 			}
 
-			const deferredTools: Tool[] = [];
-			for (const name of msg.addedToolNames ?? []) {
-				const tool = options?.deferredTools?.get(name);
-				if (!tool || loadedToolNames.has(name)) continue;
-				loadedToolNames.add(name);
-				deferredTools.push(tool);
-			}
-			if (deferredTools.length > 0 && options?.deferredToolsMode === "additional-tools") {
-				messages.push({
-					type: "additional_tools",
-					role: "developer",
-					tools: convertResponsesTools(deferredTools, options.toolOptions),
-				} satisfies ResponseInputItem);
-			} else if (deferredTools.length > 0 && options?.deferredToolsMode === "tool-search") {
-				const names = deferredTools.map((tool) => tool.name);
-				const searchCallId = `pi_tool_load_${shortHash(`${msg.toolCallId}:${names.join(",")}`)}`;
-				messages.push({
-					type: "tool_search_call",
-					call_id: searchCallId,
-					execution: "client",
-					status: "completed",
-					arguments: { query: names.join(" "), limit: names.length },
-				} satisfies ResponseInputItem);
-				messages.push({
-					type: "tool_search_output",
-					call_id: searchCallId,
-					execution: "client",
-					status: "completed",
-					tools: convertResponsesTools(deferredTools, {
-						...options.toolOptions,
-						deferLoading: true,
-					}),
-				} satisfies ResponseToolSearchOutputItemParam);
-			}
+			appendDeferredToolLoads(addedToolNames(msg), msg.toolCallId);
 		}
 		msgIndex++;
 	}
