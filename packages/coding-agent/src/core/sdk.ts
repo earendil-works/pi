@@ -199,8 +199,14 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	// If session has data, try to restore model from it
 	if (!model && hasExistingSession && existingSession.model) {
 		const restoredModel = modelRuntime.getModel(existingSession.model.provider, existingSession.model.modelId);
-		if (restoredModel && modelRuntime.hasConfiguredAuth(restoredModel.provider)) {
-			model = restoredModel;
+		if (restoredModel) {
+			// Resolve auth live instead of from the startup availability snapshot
+			// (see findInitialModel): the snapshot can be unsettled at startup,
+			// intermittently producing a spurious "Could not restore model" warning.
+			const auth = await modelRuntime.checkAuth(restoredModel.provider);
+			if (auth) {
+				model = restoredModel;
+			}
 		}
 		if (!model) {
 			modelFallbackMessage = `Could not restore model ${existingSession.model.provider}/${existingSession.model.modelId}`;

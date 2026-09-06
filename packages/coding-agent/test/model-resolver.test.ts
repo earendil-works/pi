@@ -810,7 +810,10 @@ describe("default model selection", () => {
 				provider === savedDeepSeekModel.provider && modelId === savedDeepSeekModel.id
 					? savedDeepSeekModel
 					: undefined,
-			hasConfiguredAuth: (provider: string) => provider === "spark-two",
+			// findInitialModel resolves saved-default auth live via checkAuth.
+			// Only the local ("spark-two") copy is authenticated, so the saved
+			// default (deepseek) must be ignored.
+			checkAuth: (provider: string) => Promise.resolve(provider === "spark-two" ? { type: "api_key" } : undefined),
 			getAvailableSnapshot: () => [localDeepSeekModel],
 		} as unknown as Parameters<typeof findInitialModel>[0]["modelRuntime"];
 
@@ -824,6 +827,46 @@ describe("default model selection", () => {
 
 		expect(result.model?.provider).toBe("spark-two");
 		expect(result.model?.id).toBe("deepseek-v4-flash");
+	});
+
+	test("findInitialModel selects a saved default when the availability snapshot is unsettled", async () => {
+		// Regression: at startup the availability snapshot (read by hasConfiguredAuth)
+		// can be unsettled because it is populated by an unawaited background refresh.
+		// When that snapshot is empty but the credential is actually configured, the
+		// saved default must still resolve. findInitialModel now resolves auth live via
+		// checkAuth, which is authoritative.
+		const savedModel: Model<"anthropic-messages"> = {
+			id: "local-model",
+			name: "Local Model",
+			api: "anthropic-messages",
+			provider: "llama.cpp",
+			baseUrl: "http://localhost:8080/v1",
+			reasoning: true,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 128000,
+			maxTokens: 8192,
+		};
+		const registry = {
+			getModel: (provider: string, modelId: string) =>
+				provider === savedModel.provider && modelId === savedModel.id ? savedModel : undefined,
+			// The snapshot is unsettled (empty), so hasConfiguredAuth reports false.
+			hasConfiguredAuth: () => false,
+			// The live check finds the credential is configured.
+			checkAuth: (provider: string) => Promise.resolve(provider === "llama.cpp" ? { type: "api_key" } : undefined),
+			getAvailableSnapshot: () => [savedModel],
+		} as unknown as Parameters<typeof findInitialModel>[0]["modelRuntime"];
+
+		const result = await findInitialModel({
+			scopedModels: [],
+			isContinuing: false,
+			defaultProvider: "llama.cpp",
+			defaultModelId: "local-model",
+			modelRuntime: registry,
+		});
+
+		expect(result.model?.provider).toBe("llama.cpp");
+		expect(result.model?.id).toBe("local-model");
 	});
 
 	describe("persisted default model scoping", () => {

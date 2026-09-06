@@ -674,15 +674,23 @@ export async function findInitialModel(options: {
 	// 3. Try saved default from settings if auth is configured.
 	if (defaultProvider && defaultModelId) {
 		const found = modelRuntime.getModel(defaultProvider, defaultModelId);
-		if (found && modelRuntime.hasConfiguredAuth(found.provider)) {
-			model = found;
-			const perModel = modelThinkingLevels?.[`${defaultProvider}/${defaultModelId}`];
-			if (perModel) {
-				thinkingLevel = perModel;
-			} else if (defaultThinkingLevel) {
-				thinkingLevel = defaultThinkingLevel;
+		if (found) {
+			// Resolve auth live instead of from the startup availability
+			// snapshot. That snapshot is populated by an unawaited background
+			// refresh and can be unsettled when findInitialModel() runs, which
+			// intermittently hides a configured credential and yields a spurious
+			// "No models available" warning.
+			const auth = await modelRuntime.checkAuth(found.provider);
+			if (auth) {
+				model = found;
+				const perModel = modelThinkingLevels?.[`${defaultProvider}/${defaultModelId}`];
+				if (perModel) {
+					thinkingLevel = perModel;
+				} else if (defaultThinkingLevel) {
+					thinkingLevel = defaultThinkingLevel;
+				}
+				return { model, thinkingLevel, fallbackMessage: undefined };
 			}
-			return { model, thinkingLevel, fallbackMessage: undefined };
 		}
 	}
 
