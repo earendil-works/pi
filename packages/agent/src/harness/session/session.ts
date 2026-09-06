@@ -1,299 +1,475 @@
-import { uuidv7 } from "@earendil-works/pi-ai";
+import { uuidv7 } from "@earendil-works/pi-ai/utils/uuid";
 import type { AgentMessage } from "../../types.ts";
+import type { Context } from "../context.ts";
+import { insertEntry } from "./commit.ts";
+import { MutationLine } from "./mutation-line.ts";
 import type {
-	BranchBounds,
+	Branch,
+	BranchScan,
+	CommitResult,
 	Entry,
 	EntryQuery,
 	IdGenerator,
-	LanePointer,
-	LaneRecord,
-	LogItem,
-	LogOptions,
-	NewRecord,
-	OperationStartedRecord,
-	ProvisionedEntry,
-	RecordBase,
-	RecordQuery,
+	JsonValue,
+	Session,
 	SessionMetadata,
+	SessionMutation,
+	SessionMutationCallback,
 	SessionStats,
-	SessionStorage,
-	SessionTree,
+	Storage,
+	StorageBranchScan,
+	Write,
 } from "./types.ts";
-import { SessionError } from "./types.ts";
+import {
+	appendList as appendListWrite,
+	branchTip,
+	deleteList as deleteListWrite,
+	deleteValue as deleteValueWrite,
+	entryLabel,
+	type ListElement,
+	type ListReadOptions,
+	type StoredValue,
+	sessionName,
+	setValue as setValueWrite,
+	type Value,
+	type ValueList,
+} from "./values.ts";
 
-type JsonValidationFrame = { value: unknown } | { exit: object };
-
-function invalidPayload(reason: string): never {
-	throw new SessionError("invalid_payload", `Durable payload ${reason}`);
+export interface StorageBackedSessionOptions {
+	mutationLine?: MutationLine;
+	idGenerator?: IdGenerator;
+	onClose?: () => void;
 }
 
-function assertValidLimit(limit: number | undefined): void {
-	if (limit !== undefined && (!Number.isInteger(limit) || limit <= 0)) {
-		throw new SessionError("invalid_query", "limit must be a positive integer");
+/** Durable session state is internally inconsistent and cannot be safely advanced. */
+export class SessionInvariantError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = "SessionInvariantError";
 	}
 }
 
-function assertValidCursor(afterSeq: number | undefined): void {
-	if (afterSeq !== undefined && (!Number.isInteger(afterSeq) || afterSeq < 0)) {
-		throw new SessionError("invalid_query", "cursor sequence must be a non-negative integer");
+/** A requested Branch name is invalid. */
+export class SessionInvalidBranchError extends Error {
+	readonly branch: string;
+	readonly reason: string;
+
+	constructor(branch: string, reason: string) {
+		super(`Invalid branch ${JSON.stringify(branch)}: ${reason}`);
+		this.name = "SessionInvalidBranchError";
+		this.branch = branch;
+		this.reason = reason;
 	}
 }
 
-export function assertJsonSerializable(value: unknown): void {
-	const active = new WeakSet<object>();
-	const stack: JsonValidationFrame[] = [{ value }];
-	while (stack.length > 0) {
-		const frame = stack.pop()!;
-		if ("exit" in frame) {
-			active.delete(frame.exit);
-			continue;
-		}
-		const candidate = frame.value;
-		if (candidate === null || typeof candidate === "string" || typeof candidate === "boolean") {
-			continue;
-		}
-		if (typeof candidate === "number") {
-			if (!Number.isFinite(candidate)) invalidPayload("contains a non-finite number");
-			continue;
-		}
-		if (typeof candidate !== "object") invalidPayload(`contains ${typeof candidate}`);
-		if (active.has(candidate)) invalidPayload("contains a cycle");
-		active.add(candidate);
-		stack.push({ exit: candidate });
+/** A requested branch already exists. */
+export class SessionBranchExistsError extends Error {
+	readonly branch: string;
 
-		if (Array.isArray(candidate)) {
-			if (Object.getPrototypeOf(candidate) !== Array.prototype) {
-				invalidPayload("contains a non-standard array");
-			}
-			if (
-				Object.getOwnPropertySymbols(candidate).length > 0 ||
-				Object.getOwnPropertyNames(candidate).length !== candidate.length + 1
-			) {
-				invalidPayload("contains an array with unsupported properties");
-			}
-			for (let index = candidate.length - 1; index >= 0; index--) {
-				if (!Object.hasOwn(candidate, index)) invalidPayload("contains a sparse array");
-				const descriptor = Object.getOwnPropertyDescriptor(candidate, index)!;
-				if (!("value" in descriptor)) invalidPayload("contains an array accessor");
-				stack.push({ value: descriptor.value });
-			}
-			continue;
-		}
-
-		const prototype = Object.getPrototypeOf(candidate);
-		if (prototype !== Object.prototype && prototype !== null) {
-			invalidPayload("contains a non-plain object");
-		}
-		if (Object.getOwnPropertySymbols(candidate).length > 0) {
-			invalidPayload("contains a symbol-keyed property");
-		}
-		const keys = Object.keys(candidate);
-		if (Object.getOwnPropertyNames(candidate).length !== keys.length) {
-			invalidPayload("contains a non-enumerable property");
-		}
-		for (let index = keys.length - 1; index >= 0; index--) {
-			const descriptor = Object.getOwnPropertyDescriptor(candidate, keys[index]!)!;
-			if (!("value" in descriptor)) invalidPayload("contains an accessor");
-			stack.push({ value: descriptor.value });
-		}
+	constructor(branch: string) {
+		super(`Branch already exists: ${branch}`);
+		this.name = "SessionBranchExistsError";
+		this.branch = branch;
 	}
 }
 
-export class Session<TMetadata extends SessionMetadata = SessionMetadata> implements SessionTree {
-	private readonly storage: SessionStorage<TMetadata>;
-	readonly idGenerator: IdGenerator;
+/** A pending assistant message cannot be persisted as a session entry. */
+export class SessionPendingAssistantMessageError extends Error {
+	constructor() {
+		super("Cannot persist a pending assistant message");
+		this.name = "SessionPendingAssistantMessageError";
+	}
+}
 
-	constructor(storage: SessionStorage<TMetadata>, options: { idGenerator?: IdGenerator } = {}) {
+/** A requested session entry target does not exist. */
+export class SessionUnknownTargetError extends Error {
+	readonly targetId: string;
+
+	constructor(targetId: string) {
+		super(`Unknown target: ${targetId}`);
+		this.name = "SessionUnknownTargetError";
+		this.targetId = targetId;
+	}
+}
+
+class StorageBackedSessionMutation implements SessionMutation {
+	private readonly storage: Storage;
+	private readonly release: () => void;
+	private active = true;
+	private commitResult: Promise<CommitResult> | undefined;
+	private endPromise: Promise<void> | undefined;
+
+	constructor(storage: Storage, release: () => void) {
 		this.storage = storage;
-		this.idGenerator = options.idGenerator ?? { next: () => uuidv7() };
+		this.release = release;
 	}
 
-	async getMetadata(): Promise<TMetadata> {
-		return this.storage.getMetadata();
-	}
-
-	view(lane: string): SessionTree {
-		if (lane === "main") return this;
-		return {
-			getLeafId: () => this.getLeafIdForLane(lane),
-			getEntry: (id) => this.getEntry(id),
-			getStats: () => this.getStats(),
-			getName: () => this.getName(),
-			setName: (name) => this.setName(name),
-			getLabel: (targetId) => this.getLabel(targetId),
-			setLabel: (targetId, label) => this.setLabel(targetId, label),
-			findEntries: (query) => this.queryEntries(query),
-			findEntry: async (query = {}) => (await this.queryEntries(query, 1))[0],
-			findEntriesOnBranch: (query) => this.queryBranchEntries(lane, query),
-			findEntryOnBranch: async (query = {}) => (await this.queryBranchEntries(lane, query, 1))[0],
-			appendMessage: (message) => this.appendMessageToLane(lane, message),
-			appendCustomEntry: (customType, data) => this.appendCustomEntryToLane(lane, customType, data),
-		};
-	}
-
-	async getLeafId(): Promise<string | null> {
-		return this.getLeafIdForLane("main");
-	}
-
-	async getEntry(id: string): Promise<Entry | undefined> {
-		return this.storage.getEntry(id);
-	}
-
-	async getStats(): Promise<SessionStats> {
-		return this.storage.getStats();
-	}
-
-	async getName(): Promise<string | undefined> {
-		return this.storage.getName();
-	}
-
-	async setName(name: string | undefined): Promise<void> {
-		await this.storage.setName(name);
-	}
-
-	async getLabel(targetId: string): Promise<string | undefined> {
-		return this.storage.getLabel(targetId);
-	}
-
-	async setLabel(targetId: string, label: string | undefined): Promise<void> {
-		await this.storage.setLabel(targetId, label);
-	}
-
-	async findEntries(query?: EntryQuery): Promise<Entry[]> {
-		return this.queryEntries(query);
-	}
-
-	async findEntry(query: EntryQuery = {}): Promise<Entry | undefined> {
-		return (await this.queryEntries(query, 1))[0];
-	}
-
-	async findEntriesOnBranch(query?: EntryQuery & BranchBounds): Promise<Entry[]> {
-		return this.queryBranchEntries("main", query);
-	}
-
-	async findEntryOnBranch(query: EntryQuery & BranchBounds = {}): Promise<Entry | undefined> {
-		return (await this.queryBranchEntries("main", query, 1))[0];
-	}
-
-	async appendMessage(message: AgentMessage): Promise<string> {
-		return this.appendMessageToLane("main", message);
-	}
-
-	async appendCustomEntry(customType: string, data?: unknown): Promise<string> {
-		return this.appendCustomEntryToLane("main", customType, data);
-	}
-
-	async getLanes(): Promise<LanePointer[]> {
-		return this.storage.getLanes();
-	}
-
-	async createLane(lane: string, at: string | null): Promise<void> {
-		await this.storage.createLane(lane, at);
-	}
-
-	async moveLane(lane: string, to: string | null): Promise<void> {
-		await this.storage.moveLane(lane, to);
-	}
-
-	async appendEntry<TEntry extends Entry>(entry: ProvisionedEntry<TEntry>, lane: string): Promise<TEntry> {
-		return this.commitEntry(entry, lane);
-	}
-
-	async appendRecord<TNewRecord extends NewRecord>(
-		record: TNewRecord,
-	): Promise<TNewRecord & Pick<RecordBase, "seq" | "timestamp">>;
-	async appendRecord(record: NewRecord): Promise<LaneRecord> {
-		return this.commitRecord(record);
-	}
-
-	async findRecords<K extends LaneRecord["type"]>(
-		query: RecordQuery & { type: K },
-	): Promise<Extract<LaneRecord, { type: K }>[]>;
-	async findRecords(query?: RecordQuery): Promise<LaneRecord[]>;
-	async findRecords(query?: RecordQuery): Promise<LaneRecord[]> {
-		return this.queryRecords(query);
-	}
-
-	async findOpenOperations(lane: string, options?: { limit?: number }): Promise<OperationStartedRecord[]> {
-		assertValidLimit(options?.limit);
-		return this.storage.findOpenOperations(lane, options);
-	}
-
-	async getLog(options?: LogOptions): Promise<LogItem[]> {
-		return this.queryLog(options);
-	}
-
-	/** Returns the lane's current leaf, or null when empty. Throws when the lane does not exist. */
-	private async getLeafIdForLane(lane: string): Promise<string | null> {
-		const pointer = (await this.getLanes()).find((candidate) => candidate.lane === lane);
-		if (!pointer) throw new SessionError("invalid_lane", `Lane not found: ${lane}`);
-		return pointer.leafId;
-	}
-
-	private async queryEntries(query: EntryQuery = {}, resultLimit = query.limit): Promise<Entry[]> {
-		assertValidLimit(query.limit);
-		assertValidCursor(query.cursor?.afterSeq);
-		return this.storage.findEntries(resultLimit === query.limit ? query : { ...query, limit: resultLimit });
-	}
-
-	/**
-	 * Queries from `query.start` toward the root, defaulting to the lane's current leaf.
-	 * `resultLimit` lets single-entry queries cap results without changing the caller's query.
-	 */
-	private async queryBranchEntries(
-		defaultLane: string,
-		query: EntryQuery & BranchBounds = {},
-		resultLimit = query.limit,
-	): Promise<Entry[]> {
-		assertValidLimit(query.limit);
-		assertValidCursor(query.cursor?.afterSeq);
-		const start = query.start ?? (await this.getLeafIdForLane(defaultLane));
-		if (start === null) return [];
-		const storageQuery = resultLimit === query.limit ? query : { ...query, limit: resultLimit };
-		return this.storage.findEntriesOnBranch({ ...storageQuery, start });
-	}
-
-	private async queryRecords(query: RecordQuery = {}): Promise<LaneRecord[]> {
-		assertValidLimit(query.limit);
-		assertValidCursor(query.afterSeq);
-		if (query.operationKind !== undefined && query.type !== "operation_started") {
-			throw new SessionError("invalid_query", 'operationKind requires type "operation_started"');
+	commit(writes: Write[], context: Context): Promise<CommitResult> {
+		this.assertActive();
+		if (this.commitResult !== undefined) return Promise.reject(new Error("SessionMutator commit already attempted"));
+		try {
+			for (const write of writes) {
+				if (
+					write.kind === "entry" &&
+					write.entry.type === "message" &&
+					write.entry.message.role === "assistant" &&
+					write.entry.message.stopReason === "pending"
+				) {
+					throw new SessionPendingAssistantMessageError();
+				}
+			}
+			this.commitResult = this.storage.commit(writes, context);
+		} catch (error) {
+			this.commitResult = Promise.reject(error);
 		}
-		return this.storage.findRecords(query);
+		return this.commitResult;
 	}
 
-	private async queryLog(options: LogOptions = {}): Promise<LogItem[]> {
-		assertValidLimit(options.limit);
-		assertValidCursor(options.afterSeq);
-		return this.storage.getLog(options);
+	end(_context: Context): Promise<void> {
+		if (this.endPromise !== undefined) return this.endPromise;
+		this.active = false;
+		this.endPromise = this.settle().finally(this.release);
+		return this.endPromise;
 	}
 
-	private async appendMessageToLane(lane: string, message: AgentMessage): Promise<string> {
-		const entry = await this.commitEntry({ type: "message", id: this.idGenerator.next(), message }, lane);
-		return entry.id;
+	getEntries(ids: string[], context: Context): Promise<Map<string, Entry>> {
+		this.assertActive();
+		return this.storage.getEntries(ids, context);
 	}
 
-	private async appendCustomEntryToLane(lane: string, customType: string, data?: unknown): Promise<string> {
-		const entry = await this.commitEntry(
-			data === undefined
-				? { type: "custom", id: this.idGenerator.next(), customType }
-				: { type: "custom", id: this.idGenerator.next(), customType, data },
-			lane,
+	getStats(context: Context): Promise<SessionStats> {
+		this.assertActive();
+		return this.storage.getStats(context);
+	}
+
+	getValue<T>(address: Value<T>, context: Context): Promise<StoredValue<T> | undefined> {
+		this.assertActive();
+		return this.storage.getValue(address, context);
+	}
+
+	scanValues<T>(prefix: Value<T>, context: Context): Promise<StoredValue<T>[]> {
+		this.assertActive();
+		return this.storage.scanValues(prefix, context);
+	}
+
+	readList<T>(
+		address: ValueList<T>,
+		options: ListReadOptions | undefined,
+		context: Context,
+	): Promise<ListElement<T>[]> {
+		this.assertActive();
+		return this.storage.readList(address, options, context);
+	}
+
+	scanBranch(query: StorageBranchScan, context: Context): Promise<Entry[]> {
+		this.assertActive();
+		return this.storage.scanBranch(query, context);
+	}
+
+	private settle(): Promise<void> {
+		return (
+			this.commitResult?.then(
+				() => undefined,
+				() => undefined,
+			) ?? Promise.resolve()
 		);
-		return entry.id;
 	}
 
-	private async commitEntry<TEntry extends Entry>(entry: ProvisionedEntry<TEntry>, lane: string): Promise<TEntry> {
-		assertJsonSerializable(entry);
-		return this.storage.appendEntry(entry, lane);
+	private assertActive(): void {
+		if (!this.active) throw new Error("SessionMutator cannot be used outside its mutation callback");
+	}
+}
+
+class StorageBackedBranch implements Branch {
+	readonly name: string;
+	private readonly session: StorageBackedSession;
+
+	constructor(name: string, session: StorageBackedSession) {
+		this.name = name;
+		this.session = session;
 	}
 
-	private async commitRecord<TNewRecord extends NewRecord>(
-		record: TNewRecord,
-	): Promise<TNewRecord & Pick<RecordBase, "seq" | "timestamp">> {
-		assertJsonSerializable(record);
-		return this.storage.appendRecord<LaneRecord>(record) as unknown as Promise<
-			TNewRecord & Pick<RecordBase, "seq" | "timestamp">
-		>;
+	getTipId(context: Context): Promise<string | null> {
+		return this.session.getBranchTip(this.name, context);
+	}
+
+	async findEntries(query: BranchScan | undefined, context: Context): Promise<Entry[]> {
+		query ??= {};
+		const start = query.start ?? (await this.getTipId(context));
+		if (start === null) return [];
+		return this.session.scanBranch({ ...query, start, order: query.order ?? "newestFirst" }, context);
+	}
+
+	async findEntry(query: BranchScan | undefined, context: Context): Promise<Entry | undefined> {
+		query ??= {};
+		return (
+			await this.findEntries({ ...query, limit: query.limit === undefined ? 1 : Math.min(query.limit, 1) }, context)
+		)[0];
+	}
+
+	appendMessage(message: AgentMessage, context: Context): Promise<string> {
+		return this.session.appendToBranch(this.name, { type: "message", message }, context);
+	}
+
+	appendCustomEntry(customType: string, data: JsonValue | undefined, context: Context): Promise<string> {
+		return this.session.appendToBranch(
+			this.name,
+			{ type: "custom", customType, ...(data === undefined ? {} : { data }) },
+			context,
+		);
+	}
+}
+
+/** Package-internal typed boundary shared by concrete session repositories. */
+export class StorageBackedSession<TMetadata extends SessionMetadata = SessionMetadata> implements Session<TMetadata> {
+	readonly metadata: TMetadata;
+	readonly idGenerator: IdGenerator;
+	private readonly storage: Storage;
+	private readonly mutationLine: MutationLine;
+	private readonly onClose: (() => void) | undefined;
+	private readonly branches = new Map<string, StorageBackedBranch>();
+	private readonly closedError = new Error("Session is closed");
+	private state: "open" | "closing" | "closed" = "open";
+	private closePromise: Promise<void> | undefined;
+
+	constructor(metadata: TMetadata, storage: Storage, options: StorageBackedSessionOptions = {}) {
+		this.metadata = metadata;
+		this.idGenerator = options.idGenerator ?? { next: uuidv7 };
+		this.storage = storage;
+		this.mutationLine = options.mutationLine ?? new MutationLine();
+		this.onClose = options.onClose;
+	}
+
+	async beginMutation(_context: Context): Promise<SessionMutation> {
+		this.assertOpen();
+		let grant!: (mutation: SessionMutation) => void;
+		let rejectGrant!: (error: unknown) => void;
+		const granted = new Promise<SessionMutation>((resolve, reject) => {
+			grant = resolve;
+			rejectGrant = reject;
+		});
+		let release!: () => void;
+		const finished = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		const line = this.mutationLine.run(async () => {
+			grant(new StorageBackedSessionMutation(this.storage, release));
+			await finished;
+		});
+		void line.catch(rejectGrant);
+		return granted;
+	}
+
+	async mutate<T>(mutation: SessionMutationCallback<T>, context: Context): Promise<T> {
+		const mutator = await this.beginMutation(context);
+		try {
+			return await mutation(mutator, context);
+		} finally {
+			await mutator.end(context);
+		}
+	}
+
+	async getEntries(ids: string[], context: Context): Promise<Map<string, Entry>> {
+		this.assertOpen();
+		return this.storage.getEntries(ids, context);
+	}
+
+	async getEntry(id: string, context: Context): Promise<Entry | undefined> {
+		return (await this.getEntries([id], context)).get(id);
+	}
+
+	async getValue<T>(address: Value<T>, context: Context): Promise<StoredValue<T> | undefined> {
+		this.assertOpen();
+		return this.storage.getValue(address, context);
+	}
+
+	async scanValues<T>(prefix: Value<T>, context: Context): Promise<StoredValue<T>[]> {
+		this.assertOpen();
+		return this.storage.scanValues(prefix, context);
+	}
+
+	async readList<T>(
+		address: ValueList<T>,
+		options: ListReadOptions | undefined,
+		context: Context,
+	): Promise<ListElement<T>[]> {
+		this.assertOpen();
+		return this.storage.readList(address, options, context);
+	}
+
+	async scanBranch(query: StorageBranchScan, context: Context): Promise<Entry[]> {
+		this.assertOpen();
+		return this.storage.scanBranch(query, context);
+	}
+
+	async getStats(context: Context): Promise<SessionStats> {
+		this.assertOpen();
+		return this.storage.getStats(context);
+	}
+
+	async getName(context: Context): Promise<string | undefined> {
+		return (await this.getValue(sessionName, context))?.value;
+	}
+
+	async getLabel(targetId: string, context: Context): Promise<string | undefined> {
+		return (await this.getValue(entryLabel(targetId), context))?.value;
+	}
+
+	async findEntries(query: EntryQuery | undefined, context: Context): Promise<Entry[]> {
+		query ??= {};
+		this.assertOpen();
+		const order = query.order ?? "desc";
+		if (query.cursor !== undefined) {
+			if (order === "asc" && query.cursor.seq === Number.MAX_SAFE_INTEGER) return [];
+			if (order === "desc" && query.cursor.seq <= 1) return [];
+		}
+		return this.storage.scanEntries(
+			{
+				type: query.type,
+				customType: query.customType,
+				order,
+				limit: query.limit,
+				...(query.cursor === undefined
+					? {}
+					: order === "asc"
+						? { fromSeq: query.cursor.seq + 1 }
+						: { toSeq: query.cursor.seq - 1 }),
+			},
+			context,
+		);
+	}
+
+	async findEntry(query: EntryQuery | undefined, context: Context): Promise<Entry | undefined> {
+		query ??= {};
+		return (
+			await this.findEntries({ ...query, limit: query.limit === undefined ? 1 : Math.min(query.limit, 1) }, context)
+		)[0];
+	}
+
+	async branch(name: string, context: Context): Promise<Branch | undefined> {
+		this.assertValidBranchName(name);
+		if ((await this.getValue(branchTip(name), context)) === undefined) return undefined;
+		return this.getOrCreateBranchObject(name);
+	}
+
+	async createBranch(name: string, at: string | null, context: Context): Promise<Branch> {
+		this.assertOpen();
+		this.assertValidBranchName(name);
+		await this.mutate(async (mutator) => {
+			if ((await mutator.getValue(branchTip(name), context)) !== undefined) {
+				throw new SessionBranchExistsError(name);
+			}
+			if (at !== null && !(await mutator.getEntries([at], context)).has(at)) {
+				throw new SessionUnknownTargetError(at);
+			}
+			await mutator.commit([setValueWrite(branchTip(name), at)], context);
+		}, context);
+		return this.getOrCreateBranchObject(name);
+	}
+
+	setValue<T>(address: Value<T>, next: NoInfer<T>, context: Context): Promise<void> {
+		return this.mutate(async (mutator) => {
+			await mutator.commit([setValueWrite(address, next)], context);
+		}, context);
+	}
+
+	deleteValue<T>(address: Value<T>, context: Context): Promise<void> {
+		return this.mutate(async (mutator) => {
+			await mutator.commit([deleteValueWrite(address)], context);
+		}, context);
+	}
+
+	appendList<T>(address: ValueList<T>, element: NoInfer<T>, context: Context): Promise<void> {
+		return this.mutate(async (mutator) => {
+			await mutator.commit([appendListWrite(address, element)], context);
+		}, context);
+	}
+
+	deleteList<T>(address: ValueList<T>, context: Context): Promise<void> {
+		return this.mutate(async (mutator) => {
+			await mutator.commit([deleteListWrite(address)], context);
+		}, context);
+	}
+
+	setName(name: string | undefined, context: Context): Promise<void> {
+		return name === undefined ? this.deleteValue(sessionName, context) : this.setValue(sessionName, name, context);
+	}
+
+	setLabel(targetId: string, label: string | undefined, context: Context): Promise<void> {
+		const address = entryLabel(targetId);
+		return label === undefined ? this.deleteValue(address, context) : this.setValue(address, label, context);
+	}
+
+	close(context: Context): Promise<void> {
+		if (this.closePromise !== undefined) return this.closePromise;
+		this.state = "closing";
+		this.closePromise = this.mutationLine
+			.seal(this.closedError)
+			.then(() => this.storage.close(context))
+			.finally(() => {
+				this.state = "closed";
+				this.onClose?.();
+			});
+		return this.closePromise;
+	}
+
+	async getBranchTip(name: string, context: Context): Promise<string | null> {
+		const stored = await this.getValue(branchTip(name), context);
+		if (stored === undefined) throw new SessionInvariantError(`Unknown branch: ${name}`);
+		return stored.value;
+	}
+
+	async appendToBranch(
+		name: string,
+		entry: { type: "message"; message: AgentMessage } | { type: "custom"; customType: string; data?: JsonValue },
+		context: Context,
+	): Promise<string> {
+		this.assertOpen();
+		if (entry.type === "message" && entry.message.role === "assistant" && entry.message.stopReason === "pending") {
+			throw new SessionPendingAssistantMessageError();
+		}
+		const id = this.idGenerator.next();
+		await this.mutate(async (mutator) => {
+			const tip = await mutator.getValue(branchTip(name), context);
+			if (tip === undefined) throw new SessionInvariantError(`Unknown branch: ${name}`);
+			await mutator.commit(
+				[
+					insertEntry(
+						entry.type === "message"
+							? { id, parentId: tip.value, type: "message", message: entry.message }
+							: {
+									id,
+									parentId: tip.value,
+									type: "custom",
+									customType: entry.customType,
+									...(entry.data === undefined ? {} : { data: entry.data }),
+								},
+					),
+					setValueWrite(branchTip(name), id),
+				],
+				context,
+			);
+		}, context);
+		return id;
+	}
+
+	private getOrCreateBranchObject(name: string): Branch {
+		let branch = this.branches.get(name);
+		if (branch === undefined) {
+			branch = new StorageBackedBranch(name, this);
+			this.branches.set(name, branch);
+		}
+		return branch;
+	}
+
+	private assertValidBranchName(name: string): void {
+		if (name.length === 0) throw new SessionInvalidBranchError(name, "branch name must not be empty");
+		if (name.includes("\u0000")) {
+			throw new SessionInvalidBranchError(name, "branch name must not contain \\u0000");
+		}
+	}
+
+	private assertOpen(): void {
+		if (this.state !== "open") throw this.closedError;
 	}
 }

@@ -101,7 +101,7 @@ describe("issue #7153 scoped models refresh", () => {
 
 		expect(refresh.refreshSignal).toBeDefined();
 		refresh.selector.handleInput("\x1b");
-		expect(refresh.refreshSignal?.aborted).toBe(true);
+		await vi.waitFor(() => expect(refresh.refreshSignal?.aborted).toBe(true));
 		expect(refresh.done).toHaveBeenCalledOnce();
 	});
 });

@@ -3,151 +3,82 @@ import {
 	ClientMessageDecoder,
 	encodeServerMessage,
 	PROTOCOL_VERSION,
-	type RequestEnvelope,
 	type ServerMessage,
-	type ServerSnapshot,
-	type SessionSnapshot,
 } from "@earendil-works/pi-protocol";
-import type { ByteTransport, ByteTransportHandlers, PiSessionHandle } from "../src/index.ts";
-import { PiClient } from "../src/index.ts";
+import type { ByteTransport, ByteTransportHandlers } from "../src/index.ts";
 
 export class MemoryByteServer {
-	private handlers: ByteTransportHandlers | undefined;
-	private readonly decoder = new ClientMessageDecoder();
-	private readonly messageListeners = new Set<(message: ClientMessage) => void>();
-	public readonly sentByClient: Uint8Array[] = [];
-	public clientCloseCount = 0;
+	readonly messages: ClientMessage[] = [];
+	readonly serverId: string;
+	clientCloseCount = 0;
+	private handlers?: ByteTransportHandlers;
+	private decoder = new ClientMessageDecoder();
+	private readonly messageWaiters: Array<{ count: number; resolve: () => void }> = [];
+
+	constructor(serverId = "00000000-0000-4000-8000-000000000001") {
+		this.serverId = serverId;
+	}
 
 	connect(handlers: ByteTransportHandlers): ByteTransport {
 		this.handlers = handlers;
+		this.decoder = new ClientMessageDecoder();
 		let closed = false;
 		return {
 			send: async (chunk) => {
-				if (closed) throw new Error("Transport is closed");
-				this.sentByClient.push(chunk.slice());
 				for (const message of this.decoder.push(chunk)) {
-					for (const listener of this.messageListeners) listener(message);
+					this.messages.push(message);
+					this.resolveMessageWaiters();
+					if (message.type === "hello") {
+						this.send({
+							type: "hello",
+							version: PROTOCOL_VERSION,
+							serverId: this.serverId,
+						});
+					}
 				}
 			},
 			close: () => {
 				if (closed) return;
 				closed = true;
-				this.clientCloseCount++;
+				this.clientCloseCount += 1;
+				if (this.handlers === handlers) this.handlers = undefined;
 			},
 		};
 	}
 
-	onMessage(listener: (message: ClientMessage) => void): () => void {
-		this.messageListeners.add(listener);
-		return () => this.messageListeners.delete(listener);
+	waitForMessages(count: number): Promise<void> {
+		if (this.messages.length >= count) return Promise.resolve();
+		return new Promise((resolve) => this.messageWaiters.push({ count, resolve }));
 	}
 
-	send(message: ServerMessage, splitAt?: number): void {
-		const frame = encodeServerMessage(message);
-		if (splitAt === undefined) {
-			this.sendRaw(frame);
-			return;
-		}
-		this.sendRaw(frame.subarray(0, splitAt));
-		this.sendRaw(frame.subarray(splitAt));
-	}
-
-	sendTogether(messages: ServerMessage[]): void {
-		const frames = messages.map((message) => encodeServerMessage(message));
-		const length = frames.reduce((total, frame) => total + frame.byteLength, 0);
-		const chunk = new Uint8Array(length);
-		let offset = 0;
-		for (const frame of frames) {
-			chunk.set(frame, offset);
-			offset += frame.byteLength;
-		}
-		this.sendRaw(chunk);
+	send(message: ServerMessage): void {
+		if (!this.handlers) throw new Error("No client connection");
+		this.handlers.onData(encodeServerMessage(message));
 	}
 
 	sendRaw(chunk: Uint8Array): void {
-		this.handlers?.onData(chunk);
+		if (!this.handlers) throw new Error("No client connection");
+		this.handlers.onData(chunk);
 	}
 
-	close(): void {
-		this.handlers?.onClose();
+	disconnect(): void {
+		const handlers = this.handlers;
+		this.handlers = undefined;
+		handlers?.onClose();
 	}
 
 	error(error: Error): void {
-		this.handlers?.onError(error);
+		const handlers = this.handlers;
+		this.handlers = undefined;
+		handlers?.onError(error);
 	}
-}
 
-export const baseServerSnapshot: ServerSnapshot = {
-	serverId: "server-1",
-	protocolVersion: PROTOCOL_VERSION,
-	revision: 1,
-	sessions: [],
-	models: [],
-};
-
-export function sessionSnapshot(id: string, overrides: Partial<SessionSnapshot> = {}): SessionSnapshot {
-	return {
-		id,
-		cwd: "/workspace",
-		createdAt: 1,
-		updatedAt: 1,
-		phase: "idle",
-		model: { provider: "faux", id: "model" },
-		thinkingLevel: "off",
-		attached: true,
-		locked: true,
-		revision: 1,
-		transcript: [],
-		queuedSteer: [],
-		queuedSteerCount: 0,
-		...overrides,
-	};
-}
-
-export function createClient(server: MemoryByteServer): PiClient {
-	return new PiClient({
-		transportFactory: (handlers) => server.connect(handlers),
-	});
-}
-
-export async function connectClient(server: MemoryByteServer): Promise<PiClient> {
-	const client = createClient(server);
-	server.onMessage((message) => {
-		if (message.type === "hello") {
-			server.send({
-				type: "hello",
-				version: PROTOCOL_VERSION,
-				connectionId: "connection-1",
-				snapshot: baseServerSnapshot,
-			});
+	private resolveMessageWaiters(): void {
+		for (let index = this.messageWaiters.length - 1; index >= 0; index--) {
+			const waiter = this.messageWaiters[index]!;
+			if (this.messages.length < waiter.count) continue;
+			this.messageWaiters.splice(index, 1);
+			waiter.resolve();
 		}
-	});
-	await client.connect();
-	return client;
-}
-
-export function collectRequests(server: MemoryByteServer): RequestEnvelope[] {
-	const requests: RequestEnvelope[] = [];
-	server.onMessage((message) => {
-		if (message.type === "request") requests.push(message);
-	});
-	return requests;
-}
-
-export async function attachSession(
-	client: PiClient,
-	server: MemoryByteServer,
-	snapshot: SessionSnapshot,
-): Promise<PiSessionHandle> {
-	const requests = collectRequests(server);
-	const attaching = client.attachSession(snapshot.id);
-	const request = requests.find((candidate) => candidate.request.command === "attach");
-	if (!request) throw new Error("Missing attach request");
-	server.send({
-		type: "response",
-		id: request.id,
-		ok: true,
-		result: { command: "attach", session: snapshot },
-	});
-	return attaching;
+	}
 }

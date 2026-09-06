@@ -9,10 +9,17 @@ import {
 } from "@earendil-works/pi-ai";
 
 import type { AgentMessage } from "../../types.ts";
+import type { Context } from "../context.ts";
 import { convertToLlm, createBranchSummaryMessage, createCompactionSummaryMessage } from "../messages.ts";
-import { type Entry, type Session, SessionError } from "../session/index.ts";
+import type { Branch, Entry, Session } from "../session/index.ts";
 import { BranchSummaryError, err, ok, type Result } from "../types.ts";
-import { completeSimpleWithRetries, estimateTokens, SUMMARIZATION_SYSTEM_PROMPT } from "./compaction.ts";
+import {
+	completeSimpleWithRetries,
+	createSummaryRequestOptions,
+	estimateTokens,
+	SUMMARIZATION_SYSTEM_PROMPT,
+	type SummaryRequest,
+} from "./compaction.ts";
 import {
 	computeFileLists,
 	createFileOps,
@@ -54,7 +61,7 @@ export interface BranchPreparation {
 export interface CollectEntriesResult {
 	/** Entries to summarize in chronological order. */
 	entries: Entry[];
-	/** Deepest common ancestor between the previous leaf and target entry. */
+	/** Deepest common ancestor between the previous tip and target entry. */
 	commonAncestorId: string | null;
 }
 
@@ -64,8 +71,6 @@ export interface GenerateBranchSummaryOptions {
 	models: Models;
 	/** Model used for summarization. */
 	model: Model<Api>;
-	/** Abort signal for the summarization request. */
-	signal: AbortSignal;
 	/** Optional instructions appended to or replacing the default prompt. */
 	customInstructions?: string;
 	/** Replace the default prompt with custom instructions instead of appending them. */
@@ -80,15 +85,17 @@ export interface GenerateBranchSummaryOptions {
 
 /** Collect entries that should be summarized before navigating to a different session tree entry. */
 export async function collectEntriesForBranchSummary(
-	session: Session,
-	oldLeafId: string | null,
+	branch: Pick<Branch, "findEntries">,
+	session: Pick<Session, "getEntry">,
+	oldTipId: string | null,
 	targetId: string,
+	context: Context,
 ): Promise<CollectEntriesResult> {
-	if (!oldLeafId) {
+	if (!oldTipId) {
 		return { entries: [], commonAncestorId: null };
 	}
-	const oldPath = new Set((await session.findEntriesOnBranch({ start: oldLeafId })).map((entry) => entry.id));
-	const targetPath = await session.findEntriesOnBranch({ start: targetId });
+	const oldPath = new Set((await branch.findEntries({ start: oldTipId }, context)).map((entry) => entry.id));
+	const targetPath = await branch.findEntries({ start: targetId }, context);
 	let commonAncestorId: string | null = null;
 	for (const entry of targetPath) {
 		if (oldPath.has(entry.id)) {
@@ -97,11 +104,11 @@ export async function collectEntriesForBranchSummary(
 		}
 	}
 	const entries: Entry[] = [];
-	let current: string | null = oldLeafId;
+	let current: string | null = oldTipId;
 
 	while (current && current !== commonAncestorId) {
-		const entry = await session.getEntry(current);
-		if (!entry) throw new SessionError("invalid_entry", `Entry ${current} not found`);
+		const entry = await session.getEntry(current, context);
+		if (!entry) throw new Error(`Corrupt session: entry ${current} not found`);
 		entries.push(entry);
 		current = entry.parentId;
 	}
@@ -120,9 +127,6 @@ function getMessageFromEntry(entry: Entry): AgentMessage | undefined {
 
 		case "compaction":
 			return createCompactionSummaryMessage(entry.summary, entry.tokensBefore, entry.timestamp);
-		case "thinking_level_change":
-		case "model_change":
-		case "active_tools_change":
 		case "custom":
 			return undefined;
 	}
@@ -134,15 +138,22 @@ export function prepareBranchEntries(entries: Entry[], tokenBudget: number = 0):
 	const fileOps = createFileOps();
 	let totalTokens = 0;
 	for (const entry of entries) {
-		if (entry.type === "branch_summary" && entry.details) {
-			const details = entry.details as BranchSummaryDetails;
-			if (Array.isArray(details.readFiles)) {
-				for (const f of details.readFiles) fileOps.read.add(f);
+		if (
+			entry.type !== "branch_summary" ||
+			typeof entry.details !== "object" ||
+			entry.details === null ||
+			Array.isArray(entry.details)
+		) {
+			continue;
+		}
+		if (Array.isArray(entry.details.readFiles)) {
+			for (const path of entry.details.readFiles) {
+				if (typeof path === "string") fileOps.read.add(path);
 			}
-			if (Array.isArray(details.modifiedFiles)) {
-				for (const f of details.modifiedFiles) {
-					fileOps.edited.add(f);
-				}
+		}
+		if (Array.isArray(entry.details.modifiedFiles)) {
+			for (const path of entry.details.modifiedFiles) {
+				if (typeof path === "string") fileOps.edited.add(path);
 			}
 		}
 	}
@@ -205,25 +216,37 @@ Use this EXACT format:
 Keep each section concise. Preserve exact file paths, function names, and error messages.`;
 
 /** Generate a summary for abandoned branch entries. */
-export async function generateBranchSummary(
+export function generateBranchSummary(
 	entries: Entry[],
 	options: GenerateBranchSummaryOptions,
+	context: Context,
 ): Promise<Result<BranchSummaryResult, BranchSummaryError>> {
-	const {
-		models,
-		model,
-		signal,
-		customInstructions,
-		replaceInstructions,
-		reserveTokens = 16384,
-		retry,
-		callbacks,
-	} = options;
+	const { models, model, customInstructions, replaceInstructions, reserveTokens = 16384, retry, callbacks } = options;
 	const contextWindow = model.contextWindow || 128000;
-	const tokenBudget = contextWindow - reserveTokens;
+	const preparation = prepareBranchEntries(entries, contextWindow - reserveTokens);
+	return generateBranchSummaryWithRequest(
+		preparation,
+		{ customInstructions, replaceInstructions },
+		(aiContext, requestOptions, requestContext) =>
+			completeSimpleWithRetries(models, model, aiContext, requestOptions, retry, callbacks, requestContext),
+		context,
+	);
+}
 
-	const { messages, fileOps } = prepareBranchEntries(entries, tokenBudget);
+export interface PreparedBranchSummaryOptions {
+	customInstructions?: string;
+	replaceInstructions?: boolean;
+}
 
+/** Generate a prepared branch summary through a caller-owned one-request boundary. */
+export async function generateBranchSummaryWithRequest(
+	preparation: BranchPreparation,
+	options: PreparedBranchSummaryOptions,
+	request: SummaryRequest,
+	context: Context,
+): Promise<Result<BranchSummaryResult, BranchSummaryError>> {
+	const { customInstructions, replaceInstructions } = options;
+	const { messages, fileOps } = preparation;
 	if (messages.length === 0) {
 		return ok({ summary: "No content to summarize", readFiles: [], modifiedFiles: [] });
 	}
@@ -246,13 +269,10 @@ export async function generateBranchSummary(
 			timestamp: Date.now(),
 		},
 	];
-	const response = await completeSimpleWithRetries(
-		models,
-		model,
+	const response = await request(
 		{ systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, messages: summarizationMessages },
-		{ signal, maxTokens: 2048 },
-		retry,
-		callbacks,
+		createSummaryRequestOptions({ maxTokens: 2048 }, context),
+		context,
 	);
 	if (response.stopReason === "aborted") {
 		return err(new BranchSummaryError("aborted", response.errorMessage || "Branch summary aborted"));

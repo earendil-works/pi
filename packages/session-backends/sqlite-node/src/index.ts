@@ -1,5 +1,6 @@
 import type { SQLInputValue } from "node:sqlite";
 import { DatabaseSync } from "node:sqlite";
+import { pathToFileURL } from "node:url";
 import { sql } from "./sqlite/sql.ts";
 import type { SqliteDatabase, SqliteDatabaseFactory, SqliteRunResult, SqliteStatement } from "./sqlite/types.ts";
 
@@ -47,6 +48,15 @@ class NodeSqliteStatement implements SqliteStatement {
 				? this.statement.all(first, ...(rest as SQLInputValue[]))
 				: this.statement.all(...(params as SQLInputValue[]))
 		) as TRow[];
+	}
+
+	iterate<TRow extends object>(...params: unknown[]): Iterable<TRow> {
+		const [first, ...rest] = params;
+		return (
+			isNamedParameters(first)
+				? this.statement.iterate(first, ...(rest as SQLInputValue[]))
+				: this.statement.iterate(...(params as SQLInputValue[]))
+		) as Iterable<TRow>;
 	}
 }
 
@@ -97,6 +107,14 @@ export function createNodeSqliteFactory(): SqliteDatabaseFactory {
 	return {
 		async open(path: string): Promise<SqliteDatabase> {
 			return new NodeSqliteDatabase(new DatabaseSync(path));
+		},
+		async openExisting(path: string): Promise<SqliteDatabase> {
+			const url = pathToFileURL(path);
+			url.searchParams.set("mode", "rw");
+			return new NodeSqliteDatabase(new DatabaseSync(url));
+		},
+		async openReadOnly(path: string): Promise<SqliteDatabase> {
+			return new NodeSqliteDatabase(new DatabaseSync(path, { readOnly: true }));
 		},
 	};
 }

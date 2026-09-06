@@ -1,0 +1,72 @@
+{
+	"name": "@earendil-works/chord",
+	"version": "0.85.1",
+	"description": "Application composition runtime for services, replicated state, RPC, and plugins",
+	"type": "module",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"source": "./src/index.ts",
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		},
+		"./context": {
+			"source": "./src/context/index.ts",
+			"types": "./dist/context/index.d.ts",
+			"import": "./dist/context/index.js"
+		},
+		"./delta": {
+			"source": "./src/delta/index.ts",
+			"types": "./dist/delta/index.d.ts",
+			"import": "./dist/delta/index.js"
+		},
+		"./bundler": {
+			"source": "./src/bundler.ts",
+			"types": "./dist/bundler.d.ts",
+			"import": "./dist/bundler.js"
+		},
+		"./node": {
+			"source": "./src/node.ts",
+			"types": "./dist/node.d.ts",
+			"import": "./dist/node.js"
+		},
+		"./package.json": "./package.json"
+	},
+	"sideEffects": false,
+	"files": [
+		"dist",
+		"README.md",
+		"src/delta/README.md"
+	],
+	"scripts": {
+		"clean": "shx rm -rf dist",
+		"build": "tsgo -p tsconfig.build.json",
+		"test": "vitest --run",
+		"prepublishOnly": "npm run clean && npm run build"
+	},
+	"keywords": [
+		"application",
+		"plugins",
+		"rpc",
+		"services",
+		"state"
+	],
+	"author": "Earendil Works",
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/earendil-works/pi.git",
+		"directory": "packages/chord"
+	},
+	"engines": {
+		"node": ">=22.19.0"
+	},
+	"dependencies": {
+		"esbuild": "0.28.1"
+	},
+	"devDependencies": {
+		"shx": "0.4.0",
+		"vitest": "4.1.9"
+	}
+}

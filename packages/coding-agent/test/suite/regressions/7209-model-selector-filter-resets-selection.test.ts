@@ -15,7 +15,7 @@ function selectedModelId(rendered: string): string | undefined {
 	const line = rendered.split("\n").find((l) => l.startsWith("→ "));
 	if (!line) return undefined;
 	const rest = line.replace(/^→\s*/, "");
-	const id = rest.split(" [")[0];
+	const id = rest.split(" [")[0]?.replace(/^✓\s*/, "");
 	return id?.trim() || undefined;
 }
 
@@ -51,7 +51,6 @@ describe("model selector filter resets selection to top", () => {
 		const selector = new ModelSelectorComponent(
 			createFakeTui(),
 			current,
-			harness.settingsManager,
 			harness.session.modelRuntime,
 			[],
 			() => {},
@@ -102,7 +101,6 @@ describe("model selector filter resets selection to top", () => {
 		const selector = new ModelSelectorComponent(
 			createFakeTui(),
 			alpha1,
-			harness.settingsManager,
 			harness.session.modelRuntime,
 			[{ model: alpha2 }, { model: alpha3 }, { model: alpha1 }],
 			() => {},

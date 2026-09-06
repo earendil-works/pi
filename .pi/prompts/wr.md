@@ -38,3 +38,4 @@ Constraints:
 - Do not open a PR unless I explicitly ask.
 - If this is not GitHub issue or PR work, do not post a GitHub comment.
 - If a final issue or PR comment was already posted in this session, do not post another one unless I explicitly ask.
+- When working against a branch other than `main`, skip the changelog.

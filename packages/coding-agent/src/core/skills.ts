@@ -114,10 +114,10 @@ function validateName(name: string): string[] {
 /**
  * Validate description per Agent Skills spec.
  */
-function validateDescription(description: string | undefined): string[] {
+function validateDescription(description: unknown): string[] {
 	const errors: string[] = [];
 
-	if (!description || description.trim() === "") {
+	if (typeof description !== "string" || description.trim() === "") {
 		errors.push("description is required");
 	} else if (description.length > MAX_DESCRIPTION_LENGTH) {
 		errors.push(`description exceeds ${MAX_DESCRIPTION_LENGTH} characters (${description.length})`);
@@ -279,49 +279,69 @@ function loadSkillFromFile(
 	source: string,
 ): { skill: Skill | null; diagnostics: ResourceDiagnostic[] } {
 	const diagnostics: ResourceDiagnostic[] = [];
+	const isDeclaredSkill = basename(filePath) === "SKILL.md";
 
+	let rawContent: string;
 	try {
-		const rawContent = readFileSync(filePath, "utf-8");
-		const { frontmatter } = parseFrontmatter<SkillFrontmatter>(rawContent);
-		const skillDir = dirname(filePath);
-		const parentDirName = basename(skillDir);
-
-		// Validate description
-		const descErrors = validateDescription(frontmatter.description);
-		for (const error of descErrors) {
-			diagnostics.push({ type: "warning", message: error, path: filePath });
-		}
-
-		// Use name from frontmatter, or fall back to parent directory name
-		const name = frontmatter.name || parentDirName;
-
-		// Validate name
-		const nameErrors = validateName(name);
-		for (const error of nameErrors) {
-			diagnostics.push({ type: "warning", message: error, path: filePath });
-		}
-
-		// Still load the skill even with warnings (unless description is completely missing)
-		if (!frontmatter.description || frontmatter.description.trim() === "") {
-			return { skill: null, diagnostics };
-		}
-
-		return {
-			skill: {
-				name,
-				description: frontmatter.description,
-				filePath,
-				baseDir: skillDir,
-				sourceInfo: createSkillSourceInfo(filePath, skillDir, source),
-				disableModelInvocation: frontmatter["disable-model-invocation"] === true,
-			},
-			diagnostics,
-		};
+		rawContent = readFileSync(filePath, "utf-8");
 	} catch (error) {
-		const message = error instanceof Error ? error.message : "failed to parse skill file";
+		const message = error instanceof Error ? error.message : "failed to read skill file";
 		diagnostics.push({ type: "warning", message, path: filePath });
 		return { skill: null, diagnostics };
 	}
+
+	let frontmatter: SkillFrontmatter;
+	try {
+		({ frontmatter } = parseFrontmatter<SkillFrontmatter>(rawContent));
+	} catch (error) {
+		if (isDeclaredSkill) {
+			const message = error instanceof Error ? error.message : "failed to parse skill file";
+			diagnostics.push({ type: "warning", message, path: filePath });
+		}
+		return { skill: null, diagnostics };
+	}
+
+	const description = frontmatter.description;
+	const hasDescription = typeof description === "string" && description.trim() !== "";
+	if (!isDeclaredSkill && !hasDescription) {
+		return { skill: null, diagnostics };
+	}
+
+	const skillDir = dirname(filePath);
+	const parentDirName = basename(skillDir);
+
+	// Validate description
+	const descErrors = validateDescription(description);
+	for (const error of descErrors) {
+		diagnostics.push({ type: "warning", message: error, path: filePath });
+	}
+
+	// Use name from frontmatter, or fall back to parent directory name
+	const frontmatterName = typeof frontmatter.name === "string" ? frontmatter.name : undefined;
+	const name = frontmatterName || parentDirName;
+
+	// Validate name
+	const nameErrors = validateName(name);
+	for (const error of nameErrors) {
+		diagnostics.push({ type: "warning", message: error, path: filePath });
+	}
+
+	// Still load the skill even with warnings, unless description is missing or empty.
+	if (!hasDescription) {
+		return { skill: null, diagnostics };
+	}
+
+	return {
+		skill: {
+			name,
+			description,
+			filePath,
+			baseDir: skillDir,
+			sourceInfo: createSkillSourceInfo(filePath, skillDir, source),
+			disableModelInvocation: frontmatter["disable-model-invocation"] === true,
+		},
+		diagnostics,
+	};
 }
 
 /**
@@ -332,7 +352,7 @@ function loadSkillFromFile(
  * Skills with disableModelInvocation=true are excluded from the prompt
  * (they can only be invoked explicitly via /skill:name commands).
  */
-export function formatSkillsForPrompt(skills: Skill[]): string {
+export function formatSkillsForPrompt(skills: Skill[], fileReadTool: "read" | "bash" = "read"): string {
 	const visibleSkills = skills.filter((s) => !s.disableModelInvocation);
 
 	if (visibleSkills.length === 0) {
@@ -341,7 +361,9 @@ export function formatSkillsForPrompt(skills: Skill[]): string {
 
 	const lines = [
 		"\n\nThe following skills provide specialized instructions for specific tasks.",
-		"Use the read tool to load a skill's file when the task matches its description.",
+		fileReadTool === "read"
+			? "Use the read tool to load a skill's file when the task matches its description."
+			: "Use bash to load a skill's file when the task matches its description.",
 		"When a skill file references a relative path, resolve it against the skill directory (parent of SKILL.md / dirname of the path) and use that absolute path in tool commands.",
 		"",
 		"<available_skills>",

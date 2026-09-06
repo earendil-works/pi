@@ -30,6 +30,8 @@
 		"dim": "dimGray",
 		"text": "",
 		"thinkingText": "gray",
+		"scrollbarTrack": "darkGray",
+		"scrollbarThumb": "",
 		"selectedBg": "selectedBg",
 		"userMessageBg": "userMsgBg",
 		"userMessageText": "",

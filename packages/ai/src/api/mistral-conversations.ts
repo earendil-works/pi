@@ -17,8 +17,9 @@ import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { shortHash } from "../utils/hash.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { parseStreamingJson } from "../utils/json-parse.ts";
+import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
-import { resolveJsonSchemaStrictSampling } from "./constrained-sampling.ts";
+import { getJsonSchemaToolParameters, resolveJsonSchemaStrictSampling } from "./constrained-sampling.ts";
 import { buildBaseOptions } from "./simple-options.ts";
 import { transformMessages } from "./transform-messages.ts";
 
@@ -187,7 +188,10 @@ export const streamSimple: StreamFunction<"mistral-conversations", SimpleStreamO
 		throw new Error(`No API key for provider: ${model.provider}`);
 	}
 
-	const base = buildBaseOptions(model, context, options, apiKey);
+	const base = {
+		...buildBaseOptions(model, context, options, apiKey),
+		toolChoice: options?.toolChoice,
+	} satisfies MistralOptions;
 	const clampedReasoning = options?.reasoning ? clampThinkingLevel(model, options.reasoning) : undefined;
 	const reasoning = clampedReasoning === "off" ? undefined : clampedReasoning;
 	const shouldUseReasoning = model.reasoning && reasoning !== undefined;
@@ -326,6 +330,7 @@ class MistralHttpError extends Error {
 
 function buildMistralHeaders(model: Model<"mistral-conversations">, apiKey: string, options?: MistralOptions): Headers {
 	const headers = new Headers({
+		"User-Agent": getPiUserAgent(),
 		accept: "text/event-stream",
 		authorization: `Bearer ${apiKey}`,
 		"content-type": "application/json",
@@ -559,7 +564,7 @@ async function consumeChatStream(
 	let currentBlock: TextContent | ThinkingContent | null = null;
 	const blocks = output.content;
 	const blockIndex = () => blocks.length - 1;
-	const toolBlocksByKey = new Map<string, number>();
+	const toolBlocksByKey = new Map<string | number, number>();
 
 	const finishCurrentBlock = (block?: typeof currentBlock) => {
 		if (!block) return;
@@ -688,7 +693,7 @@ async function consumeChatStream(
 				toolCall.id && toolCall.id !== "null"
 					? toolCall.id
 					: deriveMistralToolCallId(`toolcall:${toolCall.index ?? 0}`, 0);
-			const key = `${callId}:${toolCall.index || 0}`;
+			const key = toolCall.index ?? callId;
 			const existingIndex = toolBlocksByKey.get(key);
 			let block: (ToolCall & { partialArgs?: string }) | undefined;
 
@@ -753,7 +758,7 @@ function toFunctionTools(tools: Tool[]): MistralFunctionTool[] {
 			function: {
 				name: tool.name,
 				description: tool.description,
-				parameters: stripSymbolKeys(tool.parameters) as Record<string, unknown>,
+				parameters: stripSymbolKeys(getJsonSchemaToolParameters(tool, strict)) as Record<string, unknown>,
 				strict: strict ?? false,
 			},
 		};

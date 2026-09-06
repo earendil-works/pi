@@ -34,9 +34,10 @@ Pi loads skills from:
 - CLI: `--skill <path>` (repeatable, additive even with `--no-skills`)
 
 Discovery rules:
-- In `~/.pi/agent/skills/` and `.pi/skills/`, direct root `.md` files are discovered as individual skills
+- In `~/.pi/agent/skills/` and `.pi/skills/`, direct root `.md` files are discovered as individual skills when they have valid skill frontmatter with a non-empty `description`
 - In all skill locations, directories containing `SKILL.md` are discovered recursively
-- In `~/.agents/skills/` and project `.agents/skills/`, root `.md` files are ignored
+- In `~/.agents/skills/` and project `.agents/skills/`, root `.md` files are ignored, but nested `.md` files in grouping folders are discovered when they declare skill frontmatter
+- Root Markdown files other than `SKILL.md` that do not look like skills are ignored silently
 
 Disable discovery with `--no-skills` (explicit `--skill` paths still load).
 
@@ -65,7 +66,7 @@ For project-level Claude Code skills, add to `.pi/settings.json`:
 
 1. At startup, pi scans skill locations and extracts names and descriptions
 2. The system prompt includes available skills in XML format per the [specification](https://agentskills.io/integrate-skills)
-3. When a task matches, the agent uses `read` to load the full SKILL.md (models don't always do this; use prompting or `/skill:name` to force it)
+3. When a task matches, the agent uses `read`, or `bash` when `read` is unavailable, to load the full SKILL.md (models don't always do this; use prompting or `/skill:name` to force it)
 4. The agent follows the instructions, using relative paths to reference scripts and assets
 
 This is progressive disclosure: only descriptions are always in context, full instructions load on-demand.
@@ -183,7 +184,7 @@ Pi validates skills against the Agent Skills standard. Most issues produce warni
 
 Unknown frontmatter fields are ignored.
 
-**Exception:** Skills with missing description are not loaded.
+Declared skills with missing descriptions are not loaded. Malformed `SKILL.md` files and `SKILL.md` files without a description produce warnings and are not loaded. Other Markdown files without valid skill frontmatter are ignored.
 
 Name collisions (same name from different locations) warn and keep the first skill found.
 

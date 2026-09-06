@@ -110,7 +110,13 @@ describe("pi-messages", () => {
 					contentIndex: 1,
 					toolCall: { type: "toolCall", id: "call_1", name: "read", arguments: { path: "a.txt" } },
 				},
-				{ type: "done", reason: "toolUse", usage, responseId: "resp_1" },
+				{
+					type: "done",
+					reason: "toolUse",
+					usage,
+					responseId: "resp_1",
+					providerThinkingLevel: "high",
+				},
 			],
 		});
 		const model = createModel(baseUrl);
@@ -136,6 +142,7 @@ describe("pi-messages", () => {
 		expect(message.stopReason).toBe("toolUse");
 		expect(message.usage).toEqual(usage);
 		expect(message.responseId).toBe("resp_1");
+		expect(message.providerThinkingLevel).toBe("high");
 		expect(message.model).toBe("auto");
 		expect(message.provider).toBe("radius");
 		expect(message.content).toEqual([
@@ -165,13 +172,13 @@ describe("pi-messages", () => {
 		const model = createModel(baseUrl);
 
 		let observedHeaders: Record<string, string> | undefined;
-		const options: PiMessagesOptions = {
+		const options = {
 			apiKey: "test-key",
 			debug: true,
 			onResponse: (response) => {
 				observedHeaders = response.headers;
 			},
-		};
+		} satisfies PiMessagesOptions;
 		const message = await streamSimple(model, context, options).result();
 
 		expect(message.stopReason).toBe("stop");

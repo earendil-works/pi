@@ -153,8 +153,8 @@ describe("openai-completions cacheControlFormat", () => {
 		expectAnthropicCacheMarkers(params);
 	});
 
-	it("preserves Anthropic-style cache markers for OpenRouter Anthropic models", async () => {
-		const model = getModel("openrouter", "anthropic/claude-sonnet-4");
+	it("preserves Anthropic-style cache markers for OpenRouter Anthropic batch aliases", async () => {
+		const model = getModel("openrouter", "anthropic/claude-fable-5.1:batch");
 		const params = await capturePayload(model);
 		expectAnthropicCacheMarkers(params);
 	});
@@ -175,7 +175,7 @@ describe("openai-completions cacheControlFormat", () => {
 	});
 
 	it("moves the conversation cache marker to a tool result", async () => {
-		const model = getModel("openrouter", "anthropic/claude-sonnet-4");
+		const model = getModel("openrouter", "anthropic/claude-fable-5.1:batch");
 		const timestamp = Date.now();
 		const params = await capturePayload(model, undefined, [
 			{ role: "user", content: "Read the file", timestamp },

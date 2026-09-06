@@ -24,7 +24,7 @@ export const defaultModelPerProvider: Record<KnownProvider, string> = {
 	openai: "gpt-5.5",
 	"azure-openai-responses": "gpt-5.4",
 	"openai-codex": "gpt-5.5",
-	radius: "auto",
+	radius: "balanced",
 	nvidia: "nvidia/nemotron-3-super-120b-a12b",
 	deepseek: "deepseek-v4-pro",
 	google: "gemini-3.1-pro-preview",
@@ -34,11 +34,11 @@ export const defaultModelPerProvider: Record<KnownProvider, string> = {
 	llmgateway: "kimi-k3",
 	"llmgateway-devpass": "claude-sonnet-5",
 	"vercel-ai-gateway": "zai/glm-5.1",
-	xai: "grok-4.5",
+	xai: "grok-4.6",
 	groq: "openai/gpt-oss-120b",
-	cerebras: "zai-glm-4.7",
-	zai: "glm-5.1",
-	"zai-coding-cn": "glm-5.1",
+	cerebras: "gpt-oss-120b",
+	zai: "glm-5.3",
+	"zai-coding-cn": "glm-5.3",
 	mistral: "devstral-medium-latest",
 	minimax: "MiniMax-M2.7",
 	"minimax-cn": "MiniMax-M2.7",
@@ -628,6 +628,7 @@ export async function findInitialModel(options: {
 	defaultProvider?: string;
 	defaultModelId?: string;
 	defaultThinkingLevel?: ThinkingLevel;
+	modelThinkingLevels?: Record<string, ThinkingLevel>;
 	modelRuntime: ModelRuntime;
 }): Promise<InitialModelResult> {
 	const {
@@ -638,6 +639,7 @@ export async function findInitialModel(options: {
 		defaultProvider,
 		defaultModelId,
 		defaultThinkingLevel,
+		modelThinkingLevels,
 		modelRuntime,
 	} = options;
 
@@ -662,9 +664,11 @@ export async function findInitialModel(options: {
 
 	// 2. Use first model from scoped models (skip if continuing/resuming)
 	if (scopedModels.length > 0 && !isContinuing) {
+		const scopedModel = scopedModels[0];
+		const perModel = modelThinkingLevels?.[`${scopedModel.model.provider}/${scopedModel.model.id}`];
 		return {
-			model: scopedModels[0].model,
-			thinkingLevel: scopedModels[0].thinkingLevel ?? defaultThinkingLevel ?? DEFAULT_THINKING_LEVEL,
+			model: scopedModel.model,
+			thinkingLevel: scopedModel.thinkingLevel ?? perModel ?? defaultThinkingLevel ?? DEFAULT_THINKING_LEVEL,
 			fallbackMessage: undefined,
 		};
 	}
@@ -674,7 +678,10 @@ export async function findInitialModel(options: {
 		const found = modelRuntime.getModel(defaultProvider, defaultModelId);
 		if (found && modelRuntime.hasConfiguredAuth(found.provider)) {
 			model = found;
-			if (defaultThinkingLevel) {
+			const perModel = modelThinkingLevels?.[`${defaultProvider}/${defaultModelId}`];
+			if (perModel) {
+				thinkingLevel = perModel;
+			} else if (defaultThinkingLevel) {
 				thinkingLevel = defaultThinkingLevel;
 			}
 			return { model, thinkingLevel, fallbackMessage: undefined };

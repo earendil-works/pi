@@ -3,7 +3,7 @@ import { homedir } from "os";
 import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DEFAULT_HTTP_IDLE_TIMEOUT_MS } from "../src/core/http-dispatcher.ts";
-import { SettingsManager } from "../src/core/settings-manager.ts";
+import { type Settings, SettingsManager } from "../src/core/settings-manager.ts";
 
 describe("SettingsManager", () => {
 	const testDir = join(process.cwd(), "test-settings-tmp");
@@ -185,7 +185,7 @@ describe("SettingsManager", () => {
 			expect(manager.getDefaultModel()).toBe("claude-sonnet");
 		});
 
-		it("should keep previous settings when file is invalid", async () => {
+		it("should keep previous settings and report the file path when the file is invalid", async () => {
 			const settingsPath = join(agentDir, "settings.json");
 			writeFileSync(settingsPath, JSON.stringify({ theme: "dark" }));
 
@@ -195,6 +195,7 @@ describe("SettingsManager", () => {
 			await manager.reload();
 
 			expect(manager.getTheme()).toBe("dark");
+			expect(manager.drainErrors()).toMatchObject([{ scope: "global", path: settingsPath }]);
 		});
 	});
 
@@ -227,7 +228,10 @@ describe("SettingsManager", () => {
 			const errors = manager.drainErrors();
 
 			expect(errors).toHaveLength(2);
-			expect(errors.map((e) => e.scope).sort()).toEqual(["global", "project"]);
+			expect(errors).toMatchObject([
+				{ scope: "global", path: globalSettingsPath },
+				{ scope: "project", path: projectSettingsPath },
+			]);
 			expect(manager.drainErrors()).toEqual([]);
 		});
 	});
@@ -328,6 +332,25 @@ describe("SettingsManager", () => {
 
 			// And settings file should be created
 			expect(existsSync(join(projectDir, ".pi", "settings.json"))).toBe(true);
+		});
+	});
+
+	describe("terminal capability overrides", () => {
+		it("maps explicit values and omits auto values", () => {
+			const getOverrides = (terminal: NonNullable<Settings["terminal"]>) =>
+				SettingsManager.inMemory({ terminal }).getTerminalCapabilityOverrides();
+
+			expect(getOverrides({ images: false, trueColor: false, hyperlinks: false })).toEqual({
+				images: null,
+				trueColor: false,
+				hyperlinks: false,
+			});
+			expect(getOverrides({ images: "kitty", trueColor: true, hyperlinks: true })).toEqual({
+				images: "kitty",
+				trueColor: true,
+				hyperlinks: true,
+			});
+			expect(getOverrides({ images: "auto", trueColor: "auto", hyperlinks: "auto" })).toEqual({});
 		});
 	});
 
@@ -432,13 +455,16 @@ describe("SettingsManager", () => {
 		const manager = SettingsManager.create(projectDir, agentDir);
 		expect(manager.getFullscreenExitOutput()).toBe("transcript");
 		expect(manager.getFullscreenScrollbar()).toBe("auto");
+		expect(manager.getFullscreenCopyOnSelect()).toBe(true);
 
 		manager.setFullscreenExitOutput("resume-hint");
 		manager.setFullscreenScrollbar("hidden");
+		manager.setFullscreenCopyOnSelect(false);
 		await manager.flush();
 		const savedSettings = JSON.parse(readFileSync(join(agentDir, "settings.json"), "utf-8"));
 		expect(savedSettings.fullscreenExitOutput).toBe("resume-hint");
 		expect(savedSettings.fullscreenScrollbar).toBe("hidden");
+		expect(savedSettings.fullscreenCopyOnSelect).toBe(false);
 
 		writeFileSync(
 			join(agentDir, "settings.json"),
@@ -447,6 +473,7 @@ describe("SettingsManager", () => {
 		const reloadedManager = SettingsManager.create(projectDir, agentDir);
 		expect(reloadedManager.getFullscreenExitOutput()).toBe("transcript");
 		expect(reloadedManager.getFullscreenScrollbar()).toBe("auto");
+		expect(reloadedManager.getFullscreenCopyOnSelect()).toBe(true);
 	});
 
 	describe("outputPad", () => {
@@ -523,6 +550,23 @@ describe("SettingsManager", () => {
 			const savedSettings = JSON.parse(readFileSync(settingsPath, "utf-8"));
 			expect(savedSettings.shellCommandPrefix).toBe("shopt -s expand_aliases");
 			expect(savedSettings.theme).toBe("light");
+		});
+	});
+
+	describe("defaultTools", () => {
+		it("loads global defaults and lets project settings replace them", () => {
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ defaultTools: ["read", "bash"] }));
+
+			expect(SettingsManager.create(projectDir, agentDir).getDefaultTools()).toEqual(["read", "bash"]);
+
+			writeFileSync(join(projectDir, ".pi", "settings.json"), JSON.stringify({ defaultTools: ["grep"] }));
+
+			expect(SettingsManager.create(projectDir, agentDir).getDefaultTools()).toEqual(["grep"]);
+		});
+
+		it("preserves an empty tool list", () => {
+			expect(SettingsManager.inMemory({ defaultTools: [] }).getDefaultTools()).toEqual([]);
+			expect(SettingsManager.inMemory().getDefaultTools()).toBeUndefined();
 		});
 	});
 

@@ -1,12 +1,9 @@
 import * as fs from "node:fs";
-import { createRequire } from "node:module";
 import * as path from "node:path";
-import { fileURLToPath } from "node:url";
 import { setKittyProtocolActive } from "./keys.ts";
 import { isNativeModifierPressed } from "./native-modifiers.ts";
+import { getNativePlatformHelper } from "./native-platform.ts";
 import { StdinBuffer } from "./stdin-buffer.ts";
-
-const cjsRequire = createRequire(import.meta.url);
 
 const TERMINAL_PROGRESS_KEEPALIVE_MS = 1000;
 const TERMINAL_PROGRESS_ACTIVE_SEQUENCE = "\x1b]9;4;3\x07";
@@ -39,6 +36,20 @@ function isKeyboardProtocolNegotiationSequencePrefix(sequence: string): boolean 
 
 export function isAppleTerminalSession(): boolean {
 	return process.platform === "darwin" && process.env.TERM_PROGRAM === "Apple_Terminal";
+}
+
+/**
+ * Refresh terminal dimensions on POSIX platforms by sending SIGWINCH to this process.
+ * Best-effort: some environments (restricted seccomp or LSM policies) return EACCES
+ * for `kill(2)`; in that case the dimensions refresh is skipped rather than crashing.
+ */
+export function refreshTerminalDimensions(): void {
+	if (process.platform === "win32" || process.pid <= 0) return;
+	try {
+		process.kill(process.pid, "SIGWINCH");
+	} catch {
+		// Signal delivery not permitted in this environment; ignore.
+	}
 }
 
 export function normalizeNativeShiftEnterInput(
@@ -101,6 +112,25 @@ export interface Terminal {
 	setProgress(active: boolean): void;
 }
 
+const DEFAULT_ESCAPE_TIMEOUT_MS = 10;
+const DEFAULT_SSH_ESCAPE_TIMEOUT_MS = 100;
+
+/**
+ * Resolve how long to wait for the rest of an escape sequence before
+ * dispatching a lone ESC as the Escape key. Legacy Alt+key input is ESC plus
+ * another byte, so high-latency transports need a longer reassembly window.
+ */
+export function resolveEscapeTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {
+	const configured = Number(env.PI_TUI_ESC_TIMEOUT);
+	if (Number.isFinite(configured) && configured > 0) {
+		return configured;
+	}
+	if (env.SSH_CONNECTION || env.SSH_TTY) {
+		return DEFAULT_SSH_ESCAPE_TIMEOUT_MS;
+	}
+	return DEFAULT_ESCAPE_TIMEOUT_MS;
+}
+
 /**
  * Real terminal using process.stdin/stdout
  */
@@ -158,10 +188,8 @@ export class ProcessTerminal implements Terminal {
 		process.stdout.on("resize", this.resizeHandler);
 
 		// Refresh terminal dimensions - they may be stale after suspend/resume
-		// (SIGWINCH is lost while process is stopped). Unix only.
-		if (process.platform !== "win32") {
-			process.kill(process.pid, "SIGWINCH");
-		}
+		// (SIGWINCH is lost while process is stopped). Unix only, best-effort.
+		refreshTerminalDimensions();
 
 		// On Windows, enable ENABLE_VIRTUAL_TERMINAL_INPUT so the console sends
 		// VT escape sequences (e.g. \x1b[Z for Shift+Tab) instead of raw console
@@ -183,7 +211,7 @@ export class ProcessTerminal implements Terminal {
 	 * to handle the case where the response arrives split across multiple events.
 	 */
 	private setupStdinBuffer(): void {
-		this.stdinBuffer = new StdinBuffer({ timeout: 10 });
+		this.stdinBuffer = new StdinBuffer({ escapeTimeout: resolveEscapeTimeoutMs() });
 
 		// Forward individual sequences to the input handler
 		this.stdinBuffer.on("data", (sequence) => {
@@ -347,28 +375,7 @@ export class ProcessTerminal implements Terminal {
 	private enableWindowsVTInput(): void {
 		if (process.platform !== "win32") return;
 		try {
-			const arch = process.arch;
-			if (arch !== "x64" && arch !== "arm64") return;
-
-			// Dynamic require so non-Windows and bundled/browser paths never load the
-			// native helper. In the npm package native/ is next to dist/; in compiled
-			// binary archives native/ is copied next to the executable.
-			const moduleDir = path.dirname(fileURLToPath(import.meta.url));
-			const nativePath = path.join("native", "win32", "prebuilds", `win32-${arch}`, "win32-console-mode.node");
-			const candidates = [
-				path.join(moduleDir, "..", nativePath),
-				path.join(moduleDir, nativePath),
-				path.join(path.dirname(process.execPath), nativePath),
-			];
-			for (const modulePath of candidates) {
-				try {
-					const helper = cjsRequire(modulePath) as { enableVirtualTerminalInput?: () => boolean };
-					helper.enableVirtualTerminalInput?.();
-					return;
-				} catch {
-					// Try the next possible packaging location.
-				}
-			}
+			getNativePlatformHelper()?.enableVirtualTerminalInput?.();
 		} catch {
 			// Native helper not available — Shift+Tab won't be distinguishable from Tab.
 		}

@@ -2,9 +2,38 @@
 
 Pi uses the [Kitty keyboard protocol](https://sw.kovidgoyal.net/kitty/keyboard-protocol/) for reliable modifier key detection. Most modern terminals support this protocol, but some require configuration.
 
-## Kitty, iTerm2
+## Capability Overrides
 
-Work out of the box.
+Pi auto-detects OSC 8 hyperlinks, inline image protocols, and truecolor. If detection fails behind a terminal proxy or multiplexer, use these advanced overrides:
+
+| Capability | Environment variable | JSON setting |
+|------------|----------------------|--------------|
+| OSC 8 hyperlinks | `PI_HYPERLINKS=1\|0\|auto` | `terminal.hyperlinks: true\|false\|"auto"` |
+| Inline images | `PI_IMAGE_PROTOCOL=kitty\|iterm2\|none\|auto` | `terminal.images: "kitty"\|"iterm2"\|false\|"auto"` |
+| Truecolor | `PI_TRUE_COLOR=1\|0\|auto` | `terminal.trueColor: true\|false\|"auto"` |
+
+Settings take precedence over environment variables; unset or `auto` preserves detection. Only force capabilities supported by the complete terminal path, since unsupported escape sequences can corrupt rendering.
+
+## Kitty
+
+Works out of the box.
+
+## iTerm2
+
+### Regular TUI mode
+
+Works out of the box.
+
+### Fullscreen TUI mode
+
+Pi owns the viewport, so iTerm2 sends mouse-wheel reports instead of scrolling its native scrollback. With iTerm2's default fast-trackpad behavior, those reports can lose most of an accelerated wheel delta, making fullscreen scrolling much slower than regular scrolling.
+
+If fast mouse-wheel gestures move only about one line at a time in fullscreen mode:
+
+1. Open **iTerm2 → Settings → Advanced**.
+2. Search for **Trackpad scrolls fast?** and set it to **No**.
+
+This is an iTerm2-wide workaround and may also change native trackpad scrolling. The underlying behavior is tracked in [iTerm2 issue 9619](https://gitlab.com/gnachman/iterm2/-/work_items/9619).
 
 ## Apple Terminal
 
@@ -31,6 +60,10 @@ That mapping sends a raw linefeed byte. Inside pi, that is indistinguishable fro
 If Claude Code 2.x or newer is the only reason you added that mapping, you can remove it, unless you want to use Claude Code in tmux, where it still requires that Ghostty mapping.
 
 Pi binds `Ctrl+J` as a default newline alias, so `Shift+Enter` keeps working in tmux via that remap without extra pi configuration.
+
+### Fullscreen TUI mode
+
+In fullscreen mode, links remain clickable, but Ghostty does not show its hover underline or lower-left URL preview while pi captures mouse input. Hold `Shift+Command` on macOS or `Shift+Ctrl` on Linux to use Ghostty's native link handling.
 
 ## WezTerm
 
@@ -97,9 +130,32 @@ Add to `keybindings.json`:
 }
 ```
 
+## Zed (Integrated Terminal)
+
+Add these key bindings to your Zed `keymap.json`:
+
+```json
+{
+  "context": "Terminal",
+  "bindings": {
+    "shift-enter": ["terminal::SendText", "\u001b[13;2u"],
+    "ctrl--": ["terminal::SendText", "\u001b[45;5u"],
+    "ctrl-alt-]": ["terminal::SendText", "\u001b[93;7u"]
+  }
+}
+```
+
 ## Windows Terminal
 
-Add to `settings.json` (Ctrl+Shift+, or Settings → Open JSON file) to forward the modified Enter keys pi uses:
+Pi uses Windows-style keybindings when running natively on Windows or in WSL:
+
+- `Alt+V` pastes an image or clipboard text.
+- `Ctrl+F` searches the transcript in fullscreen mode, and `Ctrl+Up`/`Ctrl+Down` jump between marked messages.
+- `Alt+P` cycles to the previous model.
+- `Ctrl+Z` undoes editing on native Windows; WSL uses `Alt+Z` so `Ctrl+Z` can suspend pi.
+- `Ctrl+Q` queues a follow-up message and `Alt+Q` restores queued messages.
+
+Add to `settings.json` (Ctrl+Shift+, or Settings → Open JSON file) to forward `Shift+Enter` for inserting a new line:
 
 ```json
 {
@@ -107,20 +163,14 @@ Add to `settings.json` (Ctrl+Shift+, or Settings → Open JSON file) to forward 
     {
       "command": { "action": "sendInput", "input": "\u001b[13;2u" },
       "keys": "shift+enter"
-    },
-    {
-      "command": { "action": "sendInput", "input": "\u001b[13;3u" },
-      "keys": "alt+enter"
     }
   ]
 }
 ```
 
-- `Shift+Enter` inserts a new line.
-- Windows Terminal binds `Alt+Enter` to fullscreen by default. That prevents pi from receiving `Alt+Enter` for follow-up queueing.
-- Remapping `Alt+Enter` to `sendInput` forwards the real key chord to pi instead.
+Windows Terminal binds `Alt+Enter` to fullscreen by default. To use it instead of pi's `Ctrl+Q` default for follow-up queueing, configure Windows Terminal to send the key and bind `app.message.followUp` to `alt+enter` in pi.
 
-If you already have an `actions` array, add the objects to it. If the old fullscreen behavior persists, fully close and reopen Windows Terminal.
+If you already have an `actions` array, add the object to it. Fully close and reopen Windows Terminal after changing its settings.
 
 ## xfce4-terminal, terminator
 

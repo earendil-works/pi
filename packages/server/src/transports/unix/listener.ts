@@ -5,7 +5,7 @@ import { createConnection, createServer, type Server, type Socket } from "node:n
 import { dirname, join } from "node:path";
 import { DEFAULT_MAX_FRAME_LENGTH } from "@earendil-works/pi-protocol";
 import type { ByteConnection, ByteConnectionAcceptor } from "../../connection.ts";
-import type { PiServerListener } from "../../listener.ts";
+import type { ServerListener } from "../../listener.ts";
 import type { UnixListenerOptions } from "./types.ts";
 
 const DEFAULT_SOCKET_MODE = 0o600;
@@ -13,14 +13,6 @@ const DEFAULT_GRACEFUL_CLOSE_TIMEOUT_MS = 5_000;
 const MAX_UINT32 = 0xffff_ffff;
 const MAX_TIMER_DELAY_MS = 2_147_483_647;
 const SOCKET_PROBE_TIMEOUT_MS = 1_000;
-const MAX_UNIX_SOCKET_PATH_BYTES = process.platform === "linux" ? 107 : 103;
-
-export function validateUnixSocketPath(path: string, description = "Unix socket path"): void {
-	if (!path) throw new TypeError(`${description} must not be empty`);
-	if (Buffer.byteLength(path) > MAX_UNIX_SOCKET_PATH_BYTES) {
-		throw new TypeError(`${description} is too long; maximum is ${MAX_UNIX_SOCKET_PATH_BYTES} UTF-8 bytes`);
-	}
-}
 
 interface ResolvedUnixListenerOptions {
 	path: string;
@@ -34,7 +26,7 @@ interface FileIdentity {
 	dev: number;
 	ino: number;
 }
-class UnixListener implements PiServerListener {
+class UnixListener implements ServerListener {
 	private readonly options: ResolvedUnixListenerOptions;
 	private readonly path: string;
 	private readonly mode: number;
@@ -42,7 +34,6 @@ class UnixListener implements PiServerListener {
 	private server?: Server;
 	private socketIdentity?: FileIdentity;
 	private ownedBindPath?: string;
-	private boundPath?: string;
 	private closing = false;
 	private closePromise?: Promise<void>;
 	private accept?: ByteConnectionAcceptor;
@@ -53,17 +44,12 @@ class UnixListener implements PiServerListener {
 		this.mode = this.options.mode;
 	}
 
-	get address(): string | undefined {
-		return this.boundPath;
-	}
-
 	async start(accept: ByteConnectionAcceptor): Promise<void> {
 		if (this.server) throw new Error("Unix listener is already started");
 		if (this.closing) throw new Error("Unix listener is closing or closed");
 		this.accept = accept;
 
 		const ownedBindPath = getOwnedBindPath(this.path);
-		validateUnixSocketPath(ownedBindPath, "PiServer private Unix bind path");
 		await mkdir(dirname(this.path), { recursive: true, mode: 0o700 });
 		await removeStaleSocket(this.path);
 		await removeStaleSocket(ownedBindPath);
@@ -90,7 +76,8 @@ class UnixListener implements PiServerListener {
 			this.socketIdentity = { dev: stats.dev, ino: stats.ino };
 			await link(ownedBindPath, this.path);
 			await setSocketMode(this.path, this.mode);
-			this.boundPath = this.path;
+			await removePath(ownedBindPath);
+			this.ownedBindPath = undefined;
 		} catch (error) {
 			await this.closeServerAndCleanup(server);
 			this.server = undefined;
@@ -137,7 +124,6 @@ class UnixListener implements PiServerListener {
 	}
 
 	private async closeInternal(): Promise<void> {
-		this.boundPath = undefined;
 		const serverClosed = this.server ? this.closeServerAndCleanup(this.server) : this.cleanupOwnedSocket();
 		await Promise.all([...this.connections].map((connection) => connection.close()));
 		await serverClosed;
@@ -151,9 +137,10 @@ class UnixListener implements PiServerListener {
 		try {
 			await closeNetServer(server, (error) => this.reportError(error));
 		} finally {
-			await this.cleanupOwnedSocket();
+			// Remove an unpublished startup bind path before the public route.
 			if (this.ownedBindPath) await removePath(this.ownedBindPath);
 			this.ownedBindPath = undefined;
+			await this.cleanupOwnedSocket();
 		}
 	}
 
@@ -170,7 +157,7 @@ class UnixListener implements PiServerListener {
 		}
 		if (!current.isSocket() || current.dev !== identity.dev || current.ino !== identity.ino) return;
 
-		const preserved = join(dirname(this.path), `.c-${randomUUID().slice(0, 6)}`);
+		const preserved = join(dirname(this.path), `cleanup-${randomUUID().slice(0, 6)}`);
 		try {
 			await rename(this.path, preserved);
 		} catch (error) {
@@ -306,7 +293,7 @@ export class UnixByteConnection implements ByteConnection {
 
 function getOwnedBindPath(path: string): string {
 	const suffix = createHash("sha256").update(path).digest("hex").slice(0, 8);
-	return join(dirname(path), `.p-${suffix}`);
+	return join(dirname(path), `bind-${suffix}`);
 }
 
 async function removeStaleSocket(path: string): Promise<void> {
@@ -320,7 +307,7 @@ async function removeStaleSocket(path: string): Promise<void> {
 	if (!original.isSocket()) throw new Error(`Refusing to remove non-socket Unix listener path: ${path}`);
 	if (await isSocketLive(path)) throw new Error(`Unix listener is already running: ${path}`);
 
-	const preserved = join(dirname(path), `.s-${randomUUID().slice(0, 6)}`);
+	const preserved = join(dirname(path), `stale-${randomUUID().slice(0, 6)}`);
 	try {
 		await rename(path, preserved);
 	} catch (error) {
@@ -398,23 +385,23 @@ function isErrorCode(error: unknown, code: string): boolean {
 	return error instanceof Error && "code" in error && error.code === code;
 }
 
-export function createUnixListener(options: UnixListenerOptions): PiServerListener {
+export function createUnixListener(options: UnixListenerOptions): ServerListener {
 	return new UnixListener(options);
 }
 
 function resolveUnixListenerOptions(options: UnixListenerOptions): ResolvedUnixListenerOptions {
-	validateUnixSocketPath(options.path, "PiServer Unix socket path");
+	if (!options.path) throw new TypeError("Server Unix socket path must not be empty");
 	const mode = options.mode ?? DEFAULT_SOCKET_MODE;
 	if (!Number.isInteger(mode) || mode < 0 || mode > 0o777) {
-		throw new TypeError("PiServer Unix socket mode must be an integer between 0 and 0o777");
+		throw new TypeError("Server Unix socket mode must be an integer between 0 and 0o777");
 	}
 	const maxFrameLength = options.maxFrameLength ?? DEFAULT_MAX_FRAME_LENGTH;
 	if (!Number.isSafeInteger(maxFrameLength) || maxFrameLength <= 0 || maxFrameLength > MAX_UINT32) {
-		throw new TypeError(`PiServer maxFrameLength must be an integer between 1 and ${MAX_UINT32}`);
+		throw new TypeError(`Server maxFrameLength must be an integer between 1 and ${MAX_UINT32}`);
 	}
 	const maxPendingBytes = options.maxPendingBytes ?? maxFrameLength * 4;
 	if (!Number.isSafeInteger(maxPendingBytes) || maxPendingBytes < maxFrameLength + 4) {
-		throw new TypeError("PiServer maxPendingBytes must be a safe integer at least maxFrameLength + 4");
+		throw new TypeError("Server maxPendingBytes must be a safe integer at least maxFrameLength + 4");
 	}
 	const gracefulCloseTimeoutMs = options.gracefulCloseTimeoutMs ?? DEFAULT_GRACEFUL_CLOSE_TIMEOUT_MS;
 	if (
@@ -422,7 +409,7 @@ function resolveUnixListenerOptions(options: UnixListenerOptions): ResolvedUnixL
 		gracefulCloseTimeoutMs <= 0 ||
 		gracefulCloseTimeoutMs > MAX_TIMER_DELAY_MS
 	) {
-		throw new TypeError(`PiServer gracefulCloseTimeoutMs must be an integer between 1 and ${MAX_TIMER_DELAY_MS}`);
+		throw new TypeError(`Server gracefulCloseTimeoutMs must be an integer between 1 and ${MAX_TIMER_DELAY_MS}`);
 	}
 	return {
 		path: options.path,

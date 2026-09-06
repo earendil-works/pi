@@ -63,6 +63,13 @@ const SYMBOLS: Readonly<Record<string, string>> = {
 	uplus: "⊎",
 	sqcap: "⊓",
 	sqcup: "⊔",
+	bowtie: "⋈",
+	Join: "⋈",
+	ltimes: "⋉",
+	rtimes: "⋊",
+	leftouterjoin: "⟕",
+	rightouterjoin: "⟖",
+	fullouterjoin: "⟗",
 	triangleleft: "◁",
 	triangleright: "▷",
 	wr: "≀",
@@ -295,12 +302,15 @@ const RELATION_COMMANDS = new Set([
 	"Longleftrightarrow",
 	"Longrightarrow",
 	"Rightarrow",
+	"Join",
 	"Vdash",
 	"Vvdash",
 	"approx",
 	"asymp",
+	"bowtie",
 	"cong",
 	"dashv",
+	"fullouterjoin",
 	"doteq",
 	"downarrow",
 	"equiv",
@@ -321,6 +331,7 @@ const RELATION_COMMANDS = new Set([
 	"leftharpoonup",
 	"leftrightarrow",
 	"leftrightharpoons",
+	"leftouterjoin",
 	"leq",
 	"leqslant",
 	"ll",
@@ -328,6 +339,7 @@ const RELATION_COMMANDS = new Set([
 	"longleftrightarrow",
 	"longmapsto",
 	"longrightarrow",
+	"ltimes",
 	"mapsto",
 	"mid",
 	"models",
@@ -347,8 +359,10 @@ const RELATION_COMMANDS = new Set([
 	"rightharpoondown",
 	"rightharpoonup",
 	"rightleftharpoons",
+	"rightouterjoin",
 	"rightarrow",
 	"rightsquigarrow",
+	"rtimes",
 	"searrow",
 	"sim",
 	"simeq",
@@ -920,6 +934,13 @@ class LatexParser {
 
 		let command = "";
 		const first = this.source[this.position] ?? "";
+		if (first === "\n" || first === "\r") {
+			this.position++;
+			if (first === "\r" && this.source[this.position] === "\n") {
+				this.position++;
+			}
+			return " ";
+		}
 		if (/[A-Za-z]/.test(first)) {
 			const start = this.position;
 			while (this.position < this.source.length && /[A-Za-z]/.test(this.source[this.position] ?? "")) {
@@ -1145,7 +1166,7 @@ class LatexParser {
 	}
 
 	private parseRequiredArgumentValue(): string {
-		while (this.position < this.source.length && /[ \t]/.test(this.source[this.position] ?? "")) {
+		while (this.position < this.source.length && /\s/.test(this.source[this.position] ?? "")) {
 			this.position++;
 		}
 		if (this.position >= this.source.length) {

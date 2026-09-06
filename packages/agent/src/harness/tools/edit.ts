@@ -38,6 +38,13 @@ const editSchema = Type.Object(
 
 export type EditToolInput = Static<typeof editSchema>;
 type LegacyEditToolInput = EditToolInput & { oldText?: unknown; newText?: unknown };
+type SingleEditInput = { oldText: string; newText: string };
+
+function isSingleEditInput(value: unknown): value is SingleEditInput {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+	const edit = value as Record<string, unknown>;
+	return typeof edit.oldText === "string" && typeof edit.newText === "string";
+}
 
 export interface EditToolDetails {
 	diff: string;
@@ -51,8 +58,14 @@ function prepareEditArguments(input: unknown): EditToolInput {
 	if (typeof args.edits === "string") {
 		try {
 			const parsed: unknown = JSON.parse(args.edits);
-			if (Array.isArray(parsed)) args.edits = parsed;
+			if (Array.isArray(parsed)) {
+				args.edits = parsed;
+			} else if (isSingleEditInput(parsed)) {
+				args.edits = [parsed];
+			}
 		} catch {}
+	} else if (isSingleEditInput(args.edits)) {
+		args.edits = [args.edits];
 	}
 
 	const legacy = args as LegacyEditToolInput;
@@ -86,42 +99,47 @@ export function createEditTool<TContext extends ExecutionToolContext = Execution
 			"Edit a single file using exact text replacement. Every edits[].oldText must match a unique, non-overlapping region of the original file. If two changes affect the same block or nearby lines, merge them into one edit instead of emitting overlapping edits. Do not include large unchanged regions just to connect distant changes.",
 		parameters: editSchema,
 		prepareArguments: prepareEditArguments,
-		async execute(_toolCallId, input, signal, _onUpdate, { env }) {
+		async execute(_toolCallId, input, _onUpdate, { env }, _invocation, context) {
 			const { path, edits } = validateEditInput(input);
-			const absolutePath = await resolveToolPath(env, path, signal);
-			return withFileMutationQueue(env, absolutePath, async () => {
-				if (signal?.aborted) throw new Error("Operation aborted");
-				const info = await env.fileInfo(absolutePath, signal);
-				if (!info.ok) throw editAccessError(path, info.error);
-				if (info.value.kind !== "file" && info.value.kind !== "symlink") {
-					throw new Error(`Could not edit file: ${path}. Path is not a file.`);
-				}
+			const absolutePath = await resolveToolPath(env, path, context);
+			return withFileMutationQueue(
+				env,
+				absolutePath,
+				async () => {
+					if (context.abortSignal?.aborted) throw new Error("Operation aborted");
+					const info = await env.fileInfo(absolutePath, context);
+					if (!info.ok) throw editAccessError(path, info.error);
+					if (info.value.kind !== "file" && info.value.kind !== "symlink") {
+						throw new Error(`Could not edit file: ${path}. Path is not a file.`);
+					}
 
-				const readResult = await env.readTextFile(absolutePath, signal);
-				if (!readResult.ok) throw editAccessError(path, readResult.error);
-				if (signal?.aborted) throw new Error("Operation aborted");
+					const readResult = await env.readTextFile(absolutePath, context);
+					if (!readResult.ok) throw editAccessError(path, readResult.error);
+					if (context.abortSignal?.aborted) throw new Error("Operation aborted");
 
-				const { bom, text: content } = stripBom(readResult.value);
-				const originalEnding = detectLineEnding(content);
-				const normalizedContent = normalizeToLF(content);
-				const { baseContent, newContent } = applyEditsToNormalizedContent(normalizedContent, edits, path);
-				if (signal?.aborted) throw new Error("Operation aborted");
+					const { bom, text: content } = stripBom(readResult.value);
+					const originalEnding = detectLineEnding(content);
+					const normalizedContent = normalizeToLF(content);
+					const { baseContent, newContent } = applyEditsToNormalizedContent(normalizedContent, edits, path);
+					if (context.abortSignal?.aborted) throw new Error("Operation aborted");
 
-				const finalContent = bom + restoreLineEndings(newContent, originalEnding);
-				const writeResult = await env.writeFile(absolutePath, finalContent, signal);
-				if (!writeResult.ok) throw editAccessError(path, writeResult.error);
-				if (signal?.aborted) throw new Error("Operation aborted");
+					const finalContent = bom + restoreLineEndings(newContent, originalEnding);
+					const writeResult = await env.writeFile(absolutePath, finalContent, context);
+					if (!writeResult.ok) throw editAccessError(path, writeResult.error);
+					if (context.abortSignal?.aborted) throw new Error("Operation aborted");
 
-				const diffResult = generateDiffString(baseContent, newContent);
-				return {
-					content: [{ type: "text", text: `Successfully replaced ${edits.length} block(s) in ${path}.` }],
-					details: {
-						diff: diffResult.diff,
-						patch: generateUnifiedPatch(path, baseContent, newContent),
-						firstChangedLine: diffResult.firstChangedLine,
-					},
-				};
-			});
+					const diffResult = generateDiffString(baseContent, newContent);
+					return {
+						content: [{ type: "text", text: `Successfully replaced ${edits.length} block(s) in ${path}.` }],
+						details: {
+							diff: diffResult.diff,
+							patch: generateUnifiedPatch(path, baseContent, newContent),
+							firstChangedLine: diffResult.firstChangedLine,
+						},
+					};
+				},
+				context,
+			);
 		},
 	};
 }

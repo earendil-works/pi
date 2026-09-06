@@ -118,6 +118,30 @@ describe("InteractiveMode.showStatus", () => {
 	});
 });
 
+describe("InteractiveMode.showManagedToolStatus", () => {
+	beforeAll(() => initTheme("dark"));
+
+	test("renders tool updates as one contiguous group", () => {
+		const fakeThis: any = {
+			chatContainer: new Container(),
+			ui: { requestRender: vi.fn() },
+			managedToolStatusStarted: false,
+			lastStatusSpacer: undefined,
+			lastStatusText: undefined,
+		};
+		const showManagedToolStatus = (InteractiveMode as any).prototype.showManagedToolStatus;
+
+		showManagedToolStatus.call(fakeThis, { type: "info", message: "fd downloading" });
+		showManagedToolStatus.call(fakeThis, { type: "info", message: "rg downloading" });
+		showManagedToolStatus.call(fakeThis, { type: "warning", message: "rg failed" });
+
+		expect(fakeThis.chatContainer.children).toHaveLength(4);
+		expect(normalizeRenderedOutput(fakeThis.chatContainer)).toBe(
+			"fd downloading\n rg downloading\n Warning: rg failed",
+		);
+	});
+});
+
 describe("InteractiveMode.setToolsExpanded", () => {
 	test("applies expansion state to the active header and chat entries", () => {
 		const header = { setExpanded: vi.fn() };
