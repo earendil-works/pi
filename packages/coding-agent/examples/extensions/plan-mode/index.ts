@@ -16,7 +16,7 @@ import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage, TextContent } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Key } from "@earendil-works/pi-tui";
-import { extractTodoItems, isSafeCommand, markCompletedSteps, type TodoItem } from "./utils.ts";
+import { allStepsComplete, extractTodoItems, isSafeCommand, markCompletedSteps, type TodoItem } from "./utils.ts";
 
 // Tools
 const PLAN_MODE_TOOLS = ["read", "bash", "grep", "find", "ls", "questionnaire"];
@@ -36,11 +36,16 @@ function isAssistantMessage(m: AgentMessage): m is AssistantMessage {
 	return m.role === "assistant" && Array.isArray(m.content);
 }
 
-// Extract text content from an assistant message
+// Extract text content from an assistant message.
+// Includes thinking blocks: with reasoning-max models the [DONE:n] tags and
+// plan drafts usually land in thinking, not the visible text.
 function getTextContent(message: AssistantMessage): string {
 	return message.content
-		.filter((block): block is TextContent => block.type === "text")
-		.map((block) => block.text)
+		.map((block) => {
+			if (block.type === "text") return block.text;
+			if (block.type === "thinking") return (block as { thinking?: string }).thinking ?? "";
+			return "";
+		})
 		.join("\n");
 }
 
@@ -70,12 +75,11 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		// Widget showing todo list
 		if (executionMode && todoItems.length > 0) {
 			const lines = todoItems.map((item) => {
+				const text = item.text.length > 60 ? `${item.text.slice(0, 57)}...` : item.text;
 				if (item.completed) {
-					return (
-						ctx.ui.theme.fg("success", "☑ ") + ctx.ui.theme.fg("muted", ctx.ui.theme.strikethrough(item.text))
-					);
+					return ctx.ui.theme.fg("success", "☑ ") + ctx.ui.theme.fg("muted", ctx.ui.theme.strikethrough(text));
 				}
-				return `${ctx.ui.theme.fg("muted", "☐ ")}${item.text}`;
+				return `${ctx.ui.theme.fg("muted", "☐ ")}${text}`;
 			});
 			ctx.ui.setWidget("plan-todos", lines);
 		} else {
@@ -251,10 +255,9 @@ After completing a step, include a [DONE:n] tag in your response.`,
 		if (!executionMode || todoItems.length === 0) return;
 		if (!isAssistantMessage(event.message)) return;
 
-		const text = getTextContent(event.message);
-		if (markCompletedSteps(text, todoItems) > 0) {
-			updateStatus(ctx);
-		}
+		markCompletedSteps(getTextContent(event.message), todoItems);
+		// Always refresh: cheap, keeps the widget consistent even when nothing matched.
+		updateStatus(ctx);
 		persistState();
 	});
 
@@ -262,11 +265,18 @@ After completing a step, include a [DONE:n] tag in your response.`,
 	pi.on("agent_end", async (event, ctx) => {
 		// Check if execution is complete
 		if (executionMode && todoItems.length > 0) {
+			// Fallback: the model wrapped up without [DONE:n] tags ("All steps complete").
+			const lastAssistant = [...event.messages].reverse().find(isAssistantMessage);
+			if (lastAssistant && allStepsComplete(getTextContent(lastAssistant))) {
+				for (const t of todoItems) t.completed = true;
+			}
 			if (todoItems.every((t) => t.completed)) {
 				const completedList = todoItems.map((t) => `~~${t.text}~~`).join("\n");
 				pi.sendMessage(
 					{ customType: "plan-complete", content: `**Plan Complete!** ✓\n\n${completedList}`, display: true },
-					{ triggerTurn: false },
+					// nextTurn: delivered with the next user prompt instead of triggering an
+					// extra (expensive, reasoning-max) LLM turn to acknowledge the card.
+					{ deliverAs: "nextTurn" },
 				);
 				executionMode = false;
 				todoItems = [];
