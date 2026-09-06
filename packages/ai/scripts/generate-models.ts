@@ -8,6 +8,7 @@ import {
 	getOpenRouterThinkingLevelMap,
 	type OpenRouterReasoningMetadata,
 } from "./openrouter-reasoning-options.ts";
+import { clampOpenRouterFreeVariantLimits } from "./openrouter-variant-limits.ts";
 import {
 	CLOUDFLARE_AI_GATEWAY_ANTHROPIC_BASE_URL,
 	CLOUDFLARE_AI_GATEWAY_COMPAT_BASE_URL,
@@ -2943,6 +2944,9 @@ async function generateModels() {
 		applyOpenAIExplicitPromptCacheMetadata(model);
 	}
 	applyAnthropicAllowedFallbackModelMetadata(allModels.filter(isAnthropicFallbackMetadataModel));
+
+	// OpenRouter :free variants often inherit inflated limits from bad catalog data (#8760).
+	clampOpenRouterFreeVariantLimits(allModels);
 
 	// Group by provider and deduplicate by model ID
 	const providers: Record<string, Record<string, Model<any>>> = {};
