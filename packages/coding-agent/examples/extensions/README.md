@@ -19,6 +19,7 @@ cp permission-gate.ts ~/.pi/agent/extensions/
 | Extension | Description |
 |-----------|-------------|
 | `permission-gate.ts` | Prompts for confirmation before dangerous bash commands (rm -rf, sudo, etc.) |
+| `confirm-tools.ts` | Requires per-call approval for built-in and custom tools; blocks without a confirmation UI |
 | `project-trust.ts` | Demonstrates the `project_trust` event for user/global and CLI extensions |
 | `protected-paths.ts` | Blocks writes to protected paths (.env, .git/, node_modules/) |
 | `confirm-destructive.ts` | Confirms before destructive session actions (clear, switch, fork) |
@@ -136,6 +137,30 @@ cp permission-gate.ts ~/.pi/agent/extensions/
 |-----------|-------------|
 | `with-deps/` | Extension with its own package.json and dependencies (demonstrates jiti module resolution) |
 | `file-trigger.ts` | Watches a trigger file and injects contents into conversation |
+
+## Confirming tool calls
+
+From the repository root, load the opt-in extension to confirm every model-invoked tool:
+
+```bash
+./pi-test.sh -e packages/coding-agent/examples/extensions/confirm-tools.ts
+```
+
+To confirm only selected tools, add `--confirm-tools 'bash,edit,write,send_money'`.
+Names are exact and case-sensitive; unlisted tools run without this extension's confirmation.
+`*` (the default) also covers tools registered later. An empty list or empty list entry blocks calls.
+
+Each protected call presents its tool name and JSON arguments. Approval applies only to that
+call, including when the same tool is called again. Rejection, cancellation, or absence of a UI
+blocks execution. RPC clients must handle confirmation requests; headless clients cannot approve.
+Review the arguments against your original request, not instructions found in tool output.
+Reject calls whose arguments you cannot fully inspect in your client's dialog.
+
+This is an additional human approval step, not a sandbox or a prompt-injection detector.
+Loaded extensions and the UI client remain trusted. Direct extension side effects, user `!`
+commands, and tool calls outside the session's `tool_call` hook are not covered. For selective
+confirmation, include every tool that can perform the sensitive action, including general shell
+or code execution tools. Keep this extension and its configuration outside model-writable paths.
 
 ## Writing Extensions
 
