@@ -21,9 +21,11 @@ Use `/login` in interactive mode, then select a provider:
 - GitHub Copilot
 - xAI (Grok/X subscription)
 - OpenRouter (OAuth-minted API key billed from OpenRouter credits)
+- LLM Gateway (browser sign-in mints a 90-day API key billed from your LLM Gateway account)
+- LLM Gateway DevPass (the same sign-in, billed by your DevPass coding subscription)
 - Radius
 
-Use `/logout` to clear credentials. Tokens are stored in `~/.pi/agent/auth.json` and auto-refresh when expired. OpenRouter instead mints a user-controlled API key that does not expire automatically.
+Use `/logout` to clear credentials. Tokens are stored in `~/.pi/agent/auth.json` and auto-refresh when expired. OpenRouter instead mints a user-controlled API key that does not expire automatically. LLM Gateway also mints an API key, but it expires after 90 days; sign in again when the API starts returning 401.
 
 ### OpenAI Codex
 
@@ -50,6 +52,22 @@ Anthropic subscription auth is active for Claude Pro/Max accounts. Third-party h
 - The authorization creates a user-controlled OpenRouter API key billed from your OpenRouter credits
 - On remote/headless machines (e.g. over SSH) the browser cannot reach the loopback callback; paste the final redirect URL (or the authorization code) into the login prompt instead
 - `OPENROUTER_API_KEY` remains available through **Use an API key**
+
+### LLM Gateway
+
+- Run `/login llmgateway`, then select **Sign in with LLM Gateway** to open the browser authorization flow
+- The authorization mints an LLM Gateway API key valid for 90 days; run `/login llmgateway` again once the API starts returning 401
+- On remote/headless machines (e.g. over SSH) the browser cannot reach the loopback callback; paste the final redirect URL (or the `llmgtwy_...` key) into the login prompt instead
+- `LLMGATEWAY_API_KEY` remains available through **Use an API key**
+
+### LLM Gateway DevPass
+
+DevPass is LLM Gateway's flat-rate coding subscription. It uses the same endpoint and login flow as `llmgateway`; only the account behind the key differs, so pick the provider that matches how you want the usage billed.
+
+- Run `/login llmgateway-devpass`, then select **Sign in with LLM Gateway DevPass**; the browser flow mints the key in your DevPass organization so usage bills the subscription instead of pay-as-you-go credits
+- Requires an active DevPass plan — the authorization page fails without one
+- The catalog only lists models a coding plan covers; the gateway answers 403 for the rest
+- `LLMGATEWAY_DEVPASS_API_KEY` remains available through **Use an API key**
 
 ### Radius
 
@@ -83,6 +101,8 @@ pi
 | Cloudflare Workers AI | `CLOUDFLARE_API_KEY` (+ `CLOUDFLARE_ACCOUNT_ID`) | `cloudflare-workers-ai` |
 | xAI | `XAI_API_KEY` | `xai` |
 | OpenRouter | `OPENROUTER_API_KEY` | `openrouter` |
+| LLM Gateway | `LLMGATEWAY_API_KEY` | `llmgateway` |
+| LLM Gateway DevPass | `LLMGATEWAY_DEVPASS_API_KEY` | `llmgateway-devpass` |
 | Vercel AI Gateway | `AI_GATEWAY_API_KEY` | `vercel-ai-gateway` |
 | ZAI Coding Plan (Global) | `ZAI_API_KEY` | `zai` |
 | ZAI Coding Plan (China) | `ZAI_CODING_CN_API_KEY` | `zai-coding-cn` |

@@ -92,6 +92,8 @@ function getApiKeyEnvVars(provider: string): readonly string[] | undefined {
 		xai: "XAI_API_KEY",
 		radius: "RADIUS_API_KEY",
 		openrouter: "OPENROUTER_API_KEY",
+		llmgateway: "LLMGATEWAY_API_KEY",
+		"llmgateway-devpass": "LLMGATEWAY_DEVPASS_API_KEY",
 		"vercel-ai-gateway": "AI_GATEWAY_API_KEY",
 		zai: "ZAI_API_KEY",
 		"zai-coding-cn": "ZAI_CODING_CN_API_KEY",

@@ -33,6 +33,7 @@ import type { AssistantMessage } from "../types.ts";
  *   input filling the context window.
  * - DashScope/Qwen: "Range of input length should be [1, X]" (HTTP 400 invalid_parameter_error)
  * - Ollama: Some deployments truncate silently, others return errors like "prompt too long; exceeded max context length by X tokens"
+ * - LLM Gateway: "Request requires ~X tokens which exceeds the configured context size (Y) for model 'Z'." (pre-flight check; anthropic-routed models may surface Anthropic's message instead)
  */
 const OVERFLOW_PATTERNS = [
 	/prompt is too long/i, // Anthropic token overflow
@@ -56,6 +57,7 @@ const OVERFLOW_PATTERNS = [
 	/model_context_window_exceeded/i, // z.ai non-standard finish_reason surfaced as error text
 	/prompt too long; exceeded (?:max )?context length/i, // Ollama explicit overflow error
 	/range of input length should be/i, // DashScope / Qwen Token Plan
+	/exceeds the configured context size/i, // LLM Gateway pre-flight context check
 	/context[_ ]length[_ ]exceeded/i, // Generic fallback
 	/too many tokens/i, // Generic fallback
 	/token limit exceeded/i, // Generic fallback
