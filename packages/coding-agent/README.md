@@ -131,12 +131,15 @@ For each built-in provider, pi maintains a list of tool-capable models. Configur
 - Baseten
 - Kimi For Coding
 - MiniMax
+- LM Studio (local server, optional API key)
 - Xiaomi MiMo
 - Xiaomi MiMo Token Plan (China)
 - Xiaomi MiMo Token Plan (Amsterdam)
 - Xiaomi MiMo Token Plan (Singapore)
 
 Pi also supports the llama.cpp router server. Configure it with `/login llama.cpp`, manage downloads and loaded models with `/llama`, then select a loaded model with `/model`. See [docs/llama-cpp.md](docs/llama-cpp.md) for setup and usage.
+
+LM Studio is supported as a built-in provider: pi discovers the models loaded in your local LM Studio server (default `http://localhost:1234`, override with the `baseUrl` option) and lets you select them with `/model`. No API key is required; `/login lm-studio` accepts an optional key (empty input stores `nokey`) and an optional server URL (empty input keeps the default).
 
 See [docs/providers.md](docs/providers.md) for other provider setup instructions.
 

@@ -64,6 +64,7 @@ export type KnownProvider =
 	| "opencode"
 	| "opencode-go"
 	| "kimi-coding"
+	| "lm-studio"
 	| "cloudflare-workers-ai"
 	| "cloudflare-ai-gateway"
 	| "qwen-token-plan"

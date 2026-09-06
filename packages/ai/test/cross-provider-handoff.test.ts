@@ -29,6 +29,7 @@ import { completeSimple, getEnvApiKey, getModel } from "../src/compat.ts";
 import type { Api, AssistantMessage, Message, Model, Tool, ToolResultMessage } from "../src/types.ts";
 import { hasAzureOpenAICredentials } from "./azure-utils.ts";
 import { hasCloudflareAiGatewayCredentials, hasCloudflareWorkersAICredentials } from "./cloudflare-utils.ts";
+import { getLMStudioModelId, lmStudioTestModel } from "./lm-studio-utils.ts";
 import { resolveApiKey } from "./oauth.ts";
 
 // Simple tool for testing
@@ -41,6 +42,9 @@ const testTool: Tool<typeof testToolSchema> = {
 	description: "Doubles a number and returns the result",
 	parameters: testToolSchema,
 };
+
+// First model id loaded in a running local LM Studio server (undefined when absent)
+const lmStudioModelId = await getLMStudioModelId();
 
 // Provider/model pairs to test
 interface ProviderModelPair {
@@ -150,6 +154,8 @@ const PROVIDER_MODEL_PAIRS: ProviderModelPair[] = [
 		model: "glm-5.2",
 		label: "qwen-token-plan-individual-glm-5.2",
 	},
+	// LM Studio (local)
+	{ provider: "lm-studio", model: "local-model", label: "lm-studio-local-model" },
 ];
 
 // Cached context structure
@@ -168,6 +174,10 @@ interface CachedContext {
 async function getApiKey(provider: string): Promise<string | undefined> {
 	const oauthKey = await resolveApiKey(provider);
 	if (oauthKey) return oauthKey;
+	if (provider === "lm-studio") {
+		// Keyless local server; usable whenever a server with a loaded model is running
+		return lmStudioModelId ? "nokey" : undefined;
+	}
 	return getEnvApiKey(provider);
 }
 
@@ -177,6 +187,9 @@ async function getApiKey(provider: string): Promise<string | undefined> {
 function hasApiKey(pair: ProviderModelPair): boolean {
 	if (pair.provider === "azure-openai-responses") {
 		return hasAzureOpenAICredentials();
+	}
+	if (pair.provider === "lm-studio") {
+		return !!lmStudioModelId;
 	}
 	if (pair.provider === "cloudflare-workers-ai") {
 		return hasCloudflareWorkersAICredentials();
@@ -192,6 +205,17 @@ function getHeaders(pair: ProviderModelPair): Record<string, string> | undefined
 	if (!pair.upstreamApiKeyEnv) return undefined;
 	const upstreamApiKey = process.env[pair.upstreamApiKeyEnv];
 	return upstreamApiKey ? { Authorization: `Bearer ${upstreamApiKey}` } : undefined;
+}
+
+/**
+ * Resolve the model for a pair. LM Studio models are dynamic: the loaded
+ * model id is fetched from the local server instead of the static catalog.
+ */
+function resolveHandoffModel(provider: string, modelId: string): Model<Api> | undefined {
+	if (provider === "lm-studio") {
+		return lmStudioModelId ? lmStudioTestModel(lmStudioModelId) : undefined;
+	}
+	return (getModel as (p: string, m: string) => Model<Api> | undefined)(provider, modelId);
 }
 
 /**
@@ -221,7 +245,7 @@ async function generateContext(
 	pair: ProviderModelPair,
 	apiKey: string,
 ): Promise<{ messages: Message[]; api: Api } | null> {
-	const baseModel = (getModel as (p: string, m: string) => Model<Api> | undefined)(pair.provider, pair.model);
+	const baseModel = resolveHandoffModel(pair.provider, pair.model);
 	if (!baseModel) {
 		console.log(`  Model not found: ${pair.provider}/${pair.model}`);
 		return null;
@@ -434,10 +458,7 @@ describe.skipIf(!hasAnyApiKey())("Cross-Provider Handoff", () => {
 					},
 				];
 
-				const baseModel = (getModel as (p: string, m: string) => Model<Api> | undefined)(
-					targetPair.provider,
-					targetPair.model,
-				);
+				const baseModel = resolveHandoffModel(targetPair.provider, targetPair.model);
 				if (!baseModel) {
 					console.log(`[Target: ${targetPair.label}] Model not found`);
 					continue;
