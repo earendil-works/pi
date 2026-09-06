@@ -3,7 +3,11 @@ import net from "node:net";
 import tls from "node:tls";
 import * as undici from "undici";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { applyHttpProxySettings, configureHttpDispatcher } from "../src/core/http-dispatcher.ts";
+import {
+	applyHttpProxySettings,
+	configureHttpDispatcher,
+	lookupWithSystemResolver,
+} from "../src/core/http-dispatcher.ts";
 
 const PROXY_ENV_KEYS = ["HTTP_PROXY", "HTTPS_PROXY"] as const;
 const DISPATCHER_PROXY_ENV_KEYS = [...PROXY_ENV_KEYS, "http_proxy", "https_proxy", "NO_PROXY", "no_proxy"] as const;
@@ -148,6 +152,7 @@ describe("http dispatcher", () => {
 	});
 
 	it("allows two seconds for HTTPS connection attempts without changing the Node default", async () => {
+		// #9244 also asserts connect.lookup is Node dns.lookup (getaddrinfo).
 		// Preserve a deliberate host fetch override while testing the dispatcher itself.
 		globalThis.fetch = async () => {
 			throw new Error("Unexpected global fetch");
@@ -163,6 +168,7 @@ describe("http dispatcher", () => {
 		expect(connectSpy).toHaveBeenCalledWith(
 			expect.objectContaining({
 				autoSelectFamilyAttemptTimeout: 2_000,
+				lookup: lookupWithSystemResolver,
 			}),
 		);
 		expect(connectSpy.mock.calls[0]?.[0]).not.toHaveProperty("autoSelectFamily");

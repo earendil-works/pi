@@ -1,5 +1,11 @@
+import * as dns from "node:dns";
 import { EventEmitter } from "node:events";
 import * as undici from "undici";
+
+// Node dns.lookup is getaddrinfo / nsswitch (system resolver). Undici's
+// default connect path can use the process stub resolver (127.0.0.1), which
+// misses split-horizon names such as MagicDNS that resolve via getaddrinfo.
+export const lookupWithSystemResolver = dns.lookup;
 
 export const DEFAULT_HTTP_IDLE_TIMEOUT_MS = 300_000;
 // Node's 250ms default can terminate valid connection attempts on high-latency routes.
@@ -91,6 +97,7 @@ export function configureHttpDispatcher(timeoutMs: number = DEFAULT_HTTP_IDLE_TI
 			bodyTimeout: normalizedTimeoutMs,
 			connect: {
 				autoSelectFamilyAttemptTimeout: DEFAULT_AUTO_SELECT_FAMILY_ATTEMPT_TIMEOUT_MS,
+				lookup: lookupWithSystemResolver,
 			},
 			headersTimeout: normalizedTimeoutMs,
 			clientFactory: createUndiciClient,

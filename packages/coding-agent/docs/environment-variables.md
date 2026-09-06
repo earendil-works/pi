@@ -96,4 +96,6 @@ These variables are read by Pi itself:
 
 Provider credentials such as `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, and cloud-provider configuration are listed in [Providers](providers.md#environment-variables-or-auth-file).
 
+Node outbound fetch pins undici `connect.lookup` to `dns.lookup` (getaddrinfo / system resolver). Names that resolve via nsswitch or Tailscale MagicDNS should not need a process-wide `dns.lookup` patch. On older builds, `NODE_OPTIONS=--dns-result-order=verbatim` is the supported Node workaround to keep lookup order aligned with getaddrinfo.
+
 `PI_SERVER_DIR` and `PI_SERVER_ID` apply only to the source-only [experimental remote harness](development.md#experimental-remote-harness), not distributed builds.
