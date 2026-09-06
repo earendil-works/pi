@@ -1,6 +1,11 @@
 import { homedir } from "node:os";
 import * as path from "node:path";
-import { type AutocompleteProvider, CombinedAutocompleteProvider } from "@earendil-works/pi-tui";
+import {
+	type AutocompleteProvider,
+	CombinedAutocompleteProvider,
+	resetCapabilitiesCache,
+	setCapabilities,
+} from "@earendil-works/pi-tui";
 import { beforeAll, describe, expect, test, vi } from "vitest";
 import { type Component, Container, type Focusable, type TUI } from "../../tui/src/tui.ts";
 import { TuiMainScreen } from "../../tui/src/tui-main-screen.ts";
@@ -9,7 +14,7 @@ import type { AutocompleteProviderFactory } from "../src/core/extensions/types.t
 import type { SourceInfo } from "../src/core/source-info.ts";
 import type { AuthSelectorProvider } from "../src/modes/interactive/components/oauth-selector.ts";
 import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
-import { initTheme } from "../src/modes/interactive/theme/theme.ts";
+import { initTheme, setTheme, theme } from "../src/modes/interactive/theme/theme.ts";
 
 function renderLastLine(container: Container, width = 120): string {
 	const last = container.children[container.children.length - 1];
@@ -71,6 +76,23 @@ type ExtensionFixture = {
 	sourceInfo?: SourceInfo;
 };
 
+type StatusFixture = {
+	chatContainer: Container;
+	ui: { requestRender(): void };
+	lastStatusSpacer: Component | undefined;
+	lastStatusText: (Component & { setSource(source: string): void }) | undefined;
+	outputPad?: number;
+};
+
+type ManagedToolStatusFixture = StatusFixture & {
+	managedToolStatusStarted: boolean;
+};
+
+const statusMethods = InteractiveMode.prototype as unknown as {
+	showStatus(this: StatusFixture, message: string): void;
+	showManagedToolStatus(this: ManagedToolStatusFixture, status: { type: "info" | "warning"; message: string }): void;
+};
+
 describe("InteractiveMode.showStatus", () => {
 	beforeAll(() => {
 		// showStatus uses the global theme instance
@@ -78,18 +100,18 @@ describe("InteractiveMode.showStatus", () => {
 	});
 
 	test("coalesces immediately-sequential status messages", () => {
-		const fakeThis: any = {
+		const fakeThis: StatusFixture = {
 			chatContainer: new Container(),
 			ui: { requestRender: vi.fn() },
 			lastStatusSpacer: undefined,
 			lastStatusText: undefined,
 		};
 
-		(InteractiveMode as any).prototype.showStatus.call(fakeThis, "STATUS_ONE");
+		statusMethods.showStatus.call(fakeThis, "STATUS_ONE");
 		expect(fakeThis.chatContainer.children).toHaveLength(2);
 		expect(renderLastLine(fakeThis.chatContainer)).toContain("STATUS_ONE");
 
-		(InteractiveMode as any).prototype.showStatus.call(fakeThis, "STATUS_TWO");
+		statusMethods.showStatus.call(fakeThis, "STATUS_TWO");
 		// second status updates the previous line instead of appending
 		expect(fakeThis.chatContainer.children).toHaveLength(2);
 		expect(renderLastLine(fakeThis.chatContainer)).toContain("STATUS_TWO");
@@ -97,24 +119,57 @@ describe("InteractiveMode.showStatus", () => {
 	});
 
 	test("appends a new status line if something else was added in between", () => {
-		const fakeThis: any = {
+		const fakeThis: StatusFixture = {
 			chatContainer: new Container(),
 			ui: { requestRender: vi.fn() },
 			lastStatusSpacer: undefined,
 			lastStatusText: undefined,
 		};
 
-		(InteractiveMode as any).prototype.showStatus.call(fakeThis, "STATUS_ONE");
+		statusMethods.showStatus.call(fakeThis, "STATUS_ONE");
 		expect(fakeThis.chatContainer.children).toHaveLength(2);
 
 		// Something else gets added to the chat in between status updates
 		fakeThis.chatContainer.addChild({ render: () => ["OTHER"], invalidate: () => {} });
 		expect(fakeThis.chatContainer.children).toHaveLength(3);
 
-		(InteractiveMode as any).prototype.showStatus.call(fakeThis, "STATUS_TWO");
+		statusMethods.showStatus.call(fakeThis, "STATUS_TWO");
 		// adds spacer + text
 		expect(fakeThis.chatContainer.children).toHaveLength(5);
 		expect(renderLastLine(fakeThis.chatContainer)).toContain("STATUS_TWO");
+	});
+
+	test("recolors existing status, warning, and error text after invalidation", () => {
+		const fakeThis: StatusFixture = {
+			chatContainer: new Container(),
+			ui: { requestRender: vi.fn() },
+			lastStatusSpacer: undefined,
+			lastStatusText: undefined,
+			outputPad: 1,
+		};
+
+		initTheme("dark");
+		statusMethods.showStatus.call(fakeThis, "STATUS_TEXT");
+		InteractiveMode.prototype.showWarning.call(fakeThis, "WARNING_TEXT");
+		InteractiveMode.prototype.showError.call(fakeThis, "ERROR_TEXT");
+		const darkDim = theme.getFgAnsi("dim");
+		const darkWarning = theme.getFgAnsi("warning");
+		const darkError = theme.getFgAnsi("error");
+
+		try {
+			setTheme("light");
+			fakeThis.chatContainer.invalidate();
+			const output = renderAll(fakeThis.chatContainer);
+
+			expect(output).toContain(theme.getFgAnsi("dim"));
+			expect(output).toContain(theme.getFgAnsi("warning"));
+			expect(output).toContain(theme.getFgAnsi("error"));
+			expect(output).not.toContain(darkDim);
+			expect(output).not.toContain(darkWarning);
+			expect(output).not.toContain(darkError);
+		} finally {
+			setTheme("dark");
+		}
 	});
 });
 
@@ -122,23 +177,80 @@ describe("InteractiveMode.showManagedToolStatus", () => {
 	beforeAll(() => initTheme("dark"));
 
 	test("renders tool updates as one contiguous group", () => {
-		const fakeThis: any = {
+		const fakeThis: ManagedToolStatusFixture = {
 			chatContainer: new Container(),
 			ui: { requestRender: vi.fn() },
 			managedToolStatusStarted: false,
 			lastStatusSpacer: undefined,
 			lastStatusText: undefined,
 		};
-		const showManagedToolStatus = (InteractiveMode as any).prototype.showManagedToolStatus;
-
-		showManagedToolStatus.call(fakeThis, { type: "info", message: "fd downloading" });
-		showManagedToolStatus.call(fakeThis, { type: "info", message: "rg downloading" });
-		showManagedToolStatus.call(fakeThis, { type: "warning", message: "rg failed" });
+		statusMethods.showManagedToolStatus.call(fakeThis, { type: "info", message: "fd downloading" });
+		statusMethods.showManagedToolStatus.call(fakeThis, { type: "info", message: "rg downloading" });
+		statusMethods.showManagedToolStatus.call(fakeThis, { type: "warning", message: "rg failed" });
 
 		expect(fakeThis.chatContainer.children).toHaveLength(4);
 		expect(normalizeRenderedOutput(fakeThis.chatContainer)).toBe(
 			"fd downloading\n rg downloading\n Warning: rg failed",
 		);
+	});
+
+	test("recolors existing tool status text after invalidation", () => {
+		const fakeThis: ManagedToolStatusFixture = {
+			chatContainer: new Container(),
+			ui: { requestRender: vi.fn() },
+			managedToolStatusStarted: false,
+			lastStatusSpacer: undefined,
+			lastStatusText: undefined,
+		};
+		initTheme("dark");
+		statusMethods.showManagedToolStatus.call(fakeThis, { type: "warning", message: "TOOL_WARNING" });
+		const darkWarning = theme.getFgAnsi("warning");
+
+		try {
+			setTheme("light");
+			fakeThis.chatContainer.invalidate();
+			const output = renderAll(fakeThis.chatContainer);
+
+			expect(output).toContain(theme.getFgAnsi("warning"));
+			expect(output).not.toContain(darkWarning);
+		} finally {
+			setTheme("dark");
+		}
+	});
+});
+
+describe("InteractiveMode extension errors", () => {
+	test("recolors stack lines without changing blank-line layout", () => {
+		const fakeThis = {
+			chatContainer: new Container(),
+			ui: { requestRender: vi.fn() },
+		};
+		const showExtensionError = (
+			InteractiveMode as unknown as {
+				prototype: {
+					showExtensionError(this: typeof fakeThis, extensionPath: string, error: string, stack?: string): void;
+				};
+			}
+		).prototype.showExtensionError;
+
+		initTheme("dark");
+		showExtensionError.call(fakeThis, "extension.ts", "boom", "Error: boom\nat first\n\nat third");
+		const originalText = normalizeRenderedOutput(fakeThis.chatContainer);
+		const darkError = theme.getFgAnsi("error");
+		const darkDim = theme.getFgAnsi("dim");
+
+		try {
+			setTheme("light");
+			fakeThis.chatContainer.invalidate();
+			const output = renderAll(fakeThis.chatContainer);
+
+			expect(normalizeRenderedOutput(fakeThis.chatContainer)).toBe(originalText);
+			expect(originalText).toContain("at first\n\n   at third");
+			expect(output).not.toContain(darkError);
+			expect(output).not.toContain(darkDim);
+		} finally {
+			setTheme("dark");
+		}
 	});
 });
 
@@ -164,6 +276,109 @@ describe("InteractiveMode.setToolsExpanded", () => {
 		expect(loadedResourcesChild.setExpanded).toHaveBeenCalledWith(true);
 		expect(chatChild.setExpanded).toHaveBeenCalledWith(true);
 		expect(fakeThis.showStatus).toHaveBeenCalledWith("Tool output: expanded");
+	});
+});
+
+describe("InteractiveMode persistent notifications", () => {
+	test("recolors an existing version notification after invalidation", () => {
+		const fakeThis = {
+			chatContainer: new Container(),
+			ui: { requestRender: vi.fn() },
+			getMarkdownThemeWithSettings: () => ({}),
+		};
+
+		setCapabilities({ images: null, trueColor: true, hyperlinks: true });
+		initTheme("dark");
+		try {
+			InteractiveMode.prototype.showNewVersionNotification.call(fakeThis as never, { version: "9.9.9" });
+			const originalText = normalizeRenderedOutput(fakeThis.chatContainer);
+			const darkWarning = theme.getFgAnsi("warning");
+			const darkMuted = theme.getFgAnsi("muted");
+			const hyperlinkPrefix = "\x1b]8;;https://pi.dev/changelog\x1b\\";
+			expect(renderAll(fakeThis.chatContainer)).toContain(hyperlinkPrefix);
+
+			setTheme("light");
+			fakeThis.chatContainer.invalidate();
+			const output = renderAll(fakeThis.chatContainer);
+
+			expect(normalizeRenderedOutput(fakeThis.chatContainer)).toBe(originalText);
+			expect(output).toContain(hyperlinkPrefix);
+			expect(output).toContain(theme.getFgAnsi("warning"));
+			expect(output).toContain(theme.getFgAnsi("muted"));
+			expect(output).not.toContain(darkWarning);
+			expect(output).not.toContain(darkMuted);
+		} finally {
+			setTheme("dark");
+			resetCapabilitiesCache();
+		}
+	});
+
+	test("keeps a package notification snapshot while recoloring", () => {
+		const fakeThis = {
+			chatContainer: new Container(),
+			ui: { requestRender: vi.fn() },
+		};
+		const packages = ["package-a"];
+
+		initTheme("dark");
+		InteractiveMode.prototype.showPackageUpdateNotification.call(fakeThis as never, packages);
+		packages.push("package-b");
+		const originalText = normalizeRenderedOutput(fakeThis.chatContainer);
+		const darkWarning = theme.getFgAnsi("warning");
+
+		try {
+			setTheme("light");
+			fakeThis.chatContainer.invalidate();
+			const output = renderAll(fakeThis.chatContainer);
+
+			expect(normalizeRenderedOutput(fakeThis.chatContainer)).toBe(originalText);
+			expect(output).toContain("package-a");
+			expect(output).not.toContain("package-b");
+			expect(output).toContain(theme.getFgAnsi("warning"));
+			expect(output).not.toContain(darkWarning);
+		} finally {
+			setTheme("dark");
+		}
+	});
+});
+
+describe("InteractiveMode queued messages", () => {
+	test("preserves truncation and user ANSI while recoloring built-in labels", () => {
+		const userAnsi = "\x1b[38;2;9;8;7mCUSTOM\x1b[39m";
+		const fakeThis = {
+			pendingMessagesContainer: new Container(),
+			getAllQueuedMessages: () => ({
+				steering: [`a long queued message with ${userAnsi}`],
+				followUp: [],
+			}),
+			getAppKeyDisplay: () => "Ctrl+Q",
+		};
+		const updatePendingMessagesDisplay = (
+			InteractiveMode as unknown as {
+				prototype: {
+					updatePendingMessagesDisplay(this: typeof fakeThis): void;
+				};
+			}
+		).prototype.updatePendingMessagesDisplay;
+
+		initTheme("dark");
+		updatePendingMessagesDisplay.call(fakeThis);
+		const originalTruncatedText = normalizeRenderedOutput(fakeThis.pendingMessagesContainer, 20);
+		const darkDim = theme.getFgAnsi("dim");
+		expect(renderAll(fakeThis.pendingMessagesContainer)).toContain(userAnsi);
+
+		try {
+			setTheme("light");
+			fakeThis.pendingMessagesContainer.invalidate();
+			const output = renderAll(fakeThis.pendingMessagesContainer);
+
+			expect(normalizeRenderedOutput(fakeThis.pendingMessagesContainer, 20)).toBe(originalTruncatedText);
+			expect(output).toContain(userAnsi);
+			expect(output).toContain(theme.getFgAnsi("dim"));
+			expect(output).not.toContain(darkDim);
+		} finally {
+			setTheme("dark");
+		}
 	});
 });
 
@@ -713,6 +928,103 @@ describe("InteractiveMode.showLoadedResources", () => {
 		expect(output).toContain("[Skills]");
 		expect(output).toContain("commit");
 		expect(output).not.toContain("resource-list");
+	});
+
+	test("recolors captured resources on invalidation without rereading loaders", () => {
+		const fakeThis = createShowLoadedResourcesThis({
+			quietStartup: false,
+			contextFiles: [{ path: "/tmp/project/AGENTS.md" }],
+		});
+		const getSkills = vi.spyOn(fakeThis.session.resourceLoader, "getSkills");
+		const getPrompts = vi.spyOn(fakeThis.session.resourceLoader, "getPrompts");
+		const getThemes = vi.spyOn(fakeThis.session.resourceLoader, "getThemes");
+		const getExtensions = vi.spyOn(fakeThis.session.resourceLoader, "getExtensions");
+		const showLoadedResources = (
+			InteractiveMode as unknown as {
+				prototype: {
+					showLoadedResources(
+						this: typeof fakeThis,
+						options: { force: boolean; showDiagnosticsWhenQuiet?: boolean },
+					): void;
+				};
+			}
+		).prototype.showLoadedResources;
+
+		initTheme("dark");
+		showLoadedResources.call(fakeThis, {
+			force: false,
+		});
+		const darkHeading = theme.getFgAnsi("mdHeading");
+		const darkDim = theme.getFgAnsi("dim");
+		expect(renderAll(fakeThis.loadedResourcesContainer)).toContain(darkHeading);
+
+		try {
+			initTheme("light");
+			const lightHeading = theme.getFgAnsi("mdHeading");
+			const lightDim = theme.getFgAnsi("dim");
+			fakeThis.loadedResourcesContainer.invalidate();
+			const output = renderAll(fakeThis.loadedResourcesContainer);
+
+			expect(output).toContain(lightHeading);
+			expect(output).toContain(lightDim);
+			expect(output).not.toContain(darkHeading);
+			expect(output).not.toContain(darkDim);
+			expect(getSkills).toHaveBeenCalledTimes(1);
+			expect(getPrompts).toHaveBeenCalledTimes(1);
+			expect(getThemes).toHaveBeenCalledTimes(1);
+			expect(getExtensions).toHaveBeenCalledTimes(1);
+		} finally {
+			initTheme("dark");
+		}
+	});
+
+	test("preserves a manually collapsed resource listing across theme invalidation", () => {
+		const fakeThis = createShowLoadedResourcesThis({
+			quietStartup: false,
+			verbose: true,
+			skills: [{ filePath: "/tmp/skill/SKILL.md", name: "commit" }],
+		});
+		fakeThis.builtInHeader = undefined;
+		fakeThis.customHeader = undefined;
+		fakeThis.showStatus = vi.fn();
+
+		const methods = (
+			InteractiveMode as unknown as {
+				prototype: {
+					showLoadedResources(
+						this: typeof fakeThis,
+						options: { force: boolean; showDiagnosticsWhenQuiet?: boolean },
+					): void;
+					setToolsExpanded(this: typeof fakeThis, expanded: boolean): void;
+				};
+			}
+		).prototype;
+		methods.showLoadedResources.call(fakeThis, {
+			force: false,
+		});
+
+		// Verbose startup begins expanded. The first toggle synchronizes the
+		// expansion flag, and the second represents the user's manual collapse.
+		methods.setToolsExpanded.call(fakeThis, true);
+		methods.setToolsExpanded.call(fakeThis, false);
+		expect(renderAll(fakeThis.loadedResourcesContainer)).toContain("commit");
+		expect(renderAll(fakeThis.loadedResourcesContainer)).not.toContain("resource-list");
+
+		initTheme("dark");
+		const darkHeading = theme.getFgAnsi("mdHeading");
+		try {
+			initTheme("light");
+			const lightHeading = theme.getFgAnsi("mdHeading");
+			fakeThis.loadedResourcesContainer.invalidate();
+			const output = renderAll(fakeThis.loadedResourcesContainer);
+
+			expect(output).toContain("commit");
+			expect(output).not.toContain("resource-list");
+			expect(output).toContain(lightHeading);
+			expect(output).not.toContain(darkHeading);
+		} finally {
+			initTheme("dark");
+		}
 	});
 
 	test("shows full resource listing when expanded", () => {

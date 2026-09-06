@@ -269,6 +269,7 @@ export class Markdown implements Component {
 	}
 
 	invalidate(): void {
+		this.defaultStylePrefix = undefined;
 		this.cachedText = undefined;
 		this.cachedWidth = undefined;
 		this.cachedLines = undefined;
