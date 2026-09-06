@@ -439,8 +439,8 @@ export class ExtensionRunner {
 	}
 
 	private wrapUIPromptContext(ui: ExtensionUIContext): ExtensionUIContext {
-		return {
-			...ui,
+		// 使用 Object.create(ui) 而非 {...ui} 展开复制，以保留宿主类实例的原型方法以及 Proxy get 拦截属性
+		const overrides: Pick<ExtensionUIContext, "select" | "confirm" | "input" | "editor" | "custom"> = {
 			select: (title, options, opts) => this.withUIPrompt("select", title, () => ui.select(title, options, opts)),
 			confirm: (title, message, opts) => this.withUIPrompt("confirm", title, () => ui.confirm(title, message, opts)),
 			input: (title, placeholder, opts) =>
@@ -448,6 +448,7 @@ export class ExtensionRunner {
 			editor: (title, prefill) => this.withUIPrompt("editor", title, () => ui.editor(title, prefill)),
 			custom: (factory, options) => this.withUIPrompt("custom", undefined, () => ui.custom(factory, options)),
 		};
+		return Object.assign(Object.create(ui) as ExtensionUIContext, overrides);
 	}
 
 	private withUIPrompt<T>(kind: UIPromptKind, title: string | undefined, run: () => Promise<T>): Promise<T> {
