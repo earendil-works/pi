@@ -9,6 +9,9 @@ import { CONFIG_DIR_NAME, getAgentDir } from "../config.ts";
 import { normalizePath, resolvePath } from "../utils/paths.ts";
 import { stripBom } from "../utils/text.ts";
 import { DEFAULT_HTTP_IDLE_TIMEOUT_MS, parseHttpIdleTimeoutMs } from "./http-dispatcher.ts";
+import { type FallbackModelRef, parseFallbackChains } from "./provider-fallback.ts";
+
+export type { FallbackModelRef };
 
 export interface CompactionSettings {
 	enabled?: boolean; // default: true
@@ -32,6 +35,11 @@ export interface RetrySettings {
 	maxRetries?: number; // default: 3
 	baseDelayMs?: number; // default: 2000 (exponential backoff: 2s, 4s, 8s)
 	provider?: ProviderRetrySettings;
+	/**
+	 * Ordered provider/model hop lists used when the current provider is
+	 * unreachable (transport/timeout). Each entry is `provider/modelId`.
+	 */
+	fallbackChains?: string[][];
 }
 
 export type TuiMode = RendererTuiMode;
@@ -885,6 +893,10 @@ export class SettingsManager {
 			maxRetries: this.settings.retry?.maxRetries ?? 3,
 			baseDelayMs: this.settings.retry?.baseDelayMs ?? 2000,
 		};
+	}
+
+	getFallbackChains(): FallbackModelRef[][] {
+		return parseFallbackChains(this.settings.retry?.fallbackChains);
 	}
 
 	getHttpIdleTimeoutMs(): number {

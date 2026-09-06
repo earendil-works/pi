@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import { fauxAssistantMessage } from "../src/providers/faux.ts";
-import { isRetryableAssistantError, type RetryPolicy, retryAssistantCall } from "../src/utils/retry.ts";
+import {
+	isRetryableAssistantError,
+	isUnreachableAssistantError,
+	type RetryPolicy,
+	retryAssistantCall,
+} from "../src/utils/retry.ts";
 
 const openAIExplicitRetryMessage =
 	"An error occurred while processing your request. You can retry your request, or contact us through our help center at help.openai.com if the error persists. Please include the request ID req_******** in your message.";
@@ -86,6 +91,42 @@ describe("provider retry classification", () => {
 			),
 		).toBe(true);
 		expect(isRetryableAssistantError(fauxAssistantMessage("not an error"))).toBe(false);
+	});
+});
+
+describe("unreachable provider classification", () => {
+	it.each([
+		"connect ECONNREFUSED 127.0.0.1:9",
+		"fetch failed",
+		"getaddrinfo ENOTFOUND api.example.com",
+		"connect ETIMEDOUT 1.2.3.4:443",
+		"Provider finish_reason: network_error",
+		wrappedDnsLookupError,
+	])("matches transport/unreachable wording: %s", (errorMessage) => {
+		expect(isUnreachableAssistantError(fauxAssistantMessage("", { stopReason: "error", errorMessage }))).toBe(true);
+	});
+
+	it("does not hop on overloaded, 429, or quota errors", () => {
+		expect(
+			isUnreachableAssistantError(
+				fauxAssistantMessage("", { stopReason: "error", errorMessage: "overloaded_error" }),
+			),
+		).toBe(false);
+		expect(
+			isUnreachableAssistantError(
+				fauxAssistantMessage("", { stopReason: "error", errorMessage: "429 too many requests" }),
+			),
+		).toBe(false);
+		expect(
+			isUnreachableAssistantError(
+				fauxAssistantMessage("", { stopReason: "error", errorMessage: "insufficient_quota" }),
+			),
+		).toBe(false);
+		expect(
+			isUnreachableAssistantError(
+				fauxAssistantMessage("", { stopReason: "error", errorMessage: "401 unauthorized" }),
+			),
+		).toBe(false);
 	});
 });
 

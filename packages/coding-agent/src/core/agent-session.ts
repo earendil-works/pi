@@ -42,6 +42,7 @@ import {
 	isContextOverflow,
 	isRecoverableLength,
 	isRetryableAssistantError,
+	isUnreachableAssistantError,
 	modelsAreEqual,
 	type RetryCallbacks,
 	resetApiProviders,
@@ -79,6 +80,7 @@ import {
 	type MessageEndEvent,
 	type MessageStartEvent,
 	type MessageUpdateEvent,
+	type ModelSelectSource,
 	type ReplacedSessionContext,
 	type SessionBeforeCompactResult,
 	type SessionBeforeTreeResult,
@@ -100,6 +102,7 @@ import type { BashExecutionMessage, CustomMessage } from "./messages.ts";
 import { ModelRegistry } from "./model-registry.ts";
 import type { ModelRuntime } from "./model-runtime.ts";
 import { expandPromptTemplate, type PromptTemplate } from "./prompt-templates.ts";
+import { findNextFallbackRefs } from "./provider-fallback.ts";
 import type { ResourceExtensionPaths, ResourceLoader } from "./resource-loader.ts";
 import { exportSessionToJsonl } from "./session-export.ts";
 import type { BranchSummaryEntry, CompactionEntry, SessionEntry, SessionManager } from "./session-manager.ts";
@@ -168,6 +171,12 @@ export type AgentSessionEvent =
 	  }
 	| { type: "auto_retry_start"; attempt: number; maxAttempts: number; delayMs: number; errorMessage: string }
 	| { type: "auto_retry_end"; success: boolean; attempt: number; finalError?: string }
+	| {
+			type: "provider_fallback";
+			from: { provider: string; modelId: string };
+			to: { provider: string; modelId: string };
+			errorMessage: string;
+	  }
 	| {
 			type: "summarization_retry_scheduled";
 			attempt: number;
@@ -723,16 +732,20 @@ export class AgentSession {
 	};
 
 	private _willRetryAfterAgentEnd(event: Extract<AgentEvent, { type: "agent_end" }>): boolean {
-		const settings = this.settingsManager.getRetrySettings();
-		if (!settings.enabled || this._retryAttempt >= settings.maxRetries) {
-			return false;
-		}
-
 		for (let i = event.messages.length - 1; i >= 0; i--) {
 			const message = event.messages[i];
-			if (message.role === "assistant") {
-				return this._isRetryableError(message as AssistantMessage);
+			if (message.role !== "assistant") {
+				continue;
 			}
+			const assistantMessage = message as AssistantMessage;
+			if (this._hasProviderFallback(assistantMessage)) {
+				return true;
+			}
+			const settings = this.settingsManager.getRetrySettings();
+			if (!settings.enabled || this._retryAttempt >= settings.maxRetries) {
+				return false;
+			}
+			return this._isRetryableError(assistantMessage);
 		}
 		return false;
 	}
@@ -1122,6 +1135,10 @@ export class AgentSession {
 		this._lastAssistantMessage = undefined;
 		if (!msg) {
 			return false;
+		}
+
+		if (this._isUnreachableProviderError(msg) && (await this._prepareProviderFallback(msg))) {
+			return true;
 		}
 
 		if (this._isRetryableError(msg) && (await this._prepareRetry(msg))) {
@@ -1638,7 +1655,7 @@ export class AgentSession {
 	private async _emitModelSelect(
 		nextModel: Model<any>,
 		previousModel: Model<any> | undefined,
-		source: "set" | "cycle" | "restore",
+		source: ModelSelectSource,
 	): Promise<void> {
 		if (modelsAreEqual(previousModel, nextModel)) return;
 		await this._extensionRunner.emit({
@@ -2856,6 +2873,75 @@ export class AgentSession {
 		return isRetryableAssistantError(message);
 	}
 
+	private _isUnreachableProviderError(message: AssistantMessage): boolean {
+		if (isContextOverflow(message, this.model?.contextWindow ?? 0)) return false;
+		return isUnreachableAssistantError(message);
+	}
+
+	private _nextFallbackModels(): Model<any>[] {
+		const current = this.model;
+		if (!current) {
+			return [];
+		}
+		const refs = findNextFallbackRefs(
+			{ provider: current.provider, modelId: current.id },
+			this.settingsManager.getFallbackChains(),
+		);
+		const models: Model<any>[] = [];
+		for (const ref of refs) {
+			const model = this._modelRuntime.getModel(ref.provider, ref.modelId);
+			if (!model || !this._modelRuntime.hasConfiguredAuth(ref.provider)) {
+				continue;
+			}
+			models.push(model);
+		}
+		return models;
+	}
+
+	private _hasProviderFallback(message: AssistantMessage): boolean {
+		return this._isUnreachableProviderError(message) && this._nextFallbackModels().length > 0;
+	}
+
+	private _dropLastAssistantError(): void {
+		const messages = this.agent.state.messages;
+		if (messages.length > 0 && messages[messages.length - 1].role === "assistant") {
+			this.agent.state.messages = messages.slice(0, -1);
+		}
+	}
+
+	/**
+	 * Hop to the next registered, authenticated model in a matching fallback chain.
+	 * Transport/unreachable only. Does not persist the hop as the default model.
+	 */
+	private async _prepareProviderFallback(message: AssistantMessage): Promise<boolean> {
+		const current = this.model;
+		if (!current) {
+			return false;
+		}
+
+		for (const candidate of this._nextFallbackModels()) {
+			if (!(await this._modelRuntime.checkAuth(candidate.provider))) {
+				continue;
+			}
+
+			const thinkingLevel = this._getThinkingLevelForModelSwitch(candidate);
+			this.agent.state.model = candidate;
+			this.sessionManager.appendModelChange(candidate.provider, candidate.id);
+			this.setThinkingLevel(thinkingLevel);
+			this._dropLastAssistantError();
+			this._emit({
+				type: "provider_fallback",
+				from: { provider: current.provider, modelId: current.id },
+				to: { provider: candidate.provider, modelId: candidate.id },
+				errorMessage: message.errorMessage || "Unknown error",
+			});
+			await this._emitModelSelect(candidate, current, "fallback");
+			return true;
+		}
+
+		return false;
+	}
+
 	/**
 	 * Retry policy + callbacks shared by compaction and branch-summary summarization calls.
 	 * Uses the same `settings.retry` budget/backoff as agent-turn retries so a single transient
@@ -2916,10 +3002,7 @@ export class AgentSession {
 		});
 
 		// Remove error message from agent state (keep in session for history)
-		const messages = this.agent.state.messages;
-		if (messages.length > 0 && messages[messages.length - 1].role === "assistant") {
-			this.agent.state.messages = messages.slice(0, -1);
-		}
+		this._dropLastAssistantError();
 
 		// Wait with exponential backoff (abortable)
 		this._retryAbortController = new AbortController();

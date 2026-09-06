@@ -739,13 +739,13 @@ Header availability depends on provider and transport. Providers that abstract H
 
 #### model_select
 
-Fired when the model changes via `/model` command, model cycling (`Ctrl+P`), or session restore.
+Fired when the model changes via `/model` command, model cycling (`Ctrl+P`), session restore, or a transport-error fallback hop.
 
 ```typescript
 pi.on("model_select", async (event, ctx) => {
   // event.model - newly selected model
   // event.previousModel - previous model (undefined if first selection)
-  // event.source - "set" | "cycle" | "restore"
+  // event.source - "set" | "cycle" | "restore" | "fallback"
 
   const prev = event.previousModel
     ? `${event.previousModel.provider}/${event.previousModel.id}`

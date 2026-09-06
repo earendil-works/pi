@@ -146,6 +146,7 @@ Set `PI_SKIP_VERSION_CHECK=1` to disable the Pi version update check. Use `--off
 | `retry.provider.timeoutMs` | number | SDK default | Provider/SDK request timeout in milliseconds |
 | `retry.provider.maxRetries` | number | `0` | Provider/SDK retry attempts |
 | `retry.provider.maxRetryDelayMs` | number | `60000` | Max server-requested delay before failing (60s) |
+| `retry.fallbackChains` | `string[][]` | unset | Ordered `provider/modelId` hop lists. On transport/unreachable errors, Pi hops to the next registered, authenticated entry in the matching chain. Auth and quota failures do not hop. 429/5xx/overloaded stay on same-provider retry. The hop is session-only and is not saved as the default model. Project settings replace the whole list (arrays do not merge). |
 
 When a provider requests a retry delay longer than `retry.provider.maxRetryDelayMs`, the request fails immediately with an informative error instead of waiting silently. Set it to `0` to disable the limit.
 
@@ -161,7 +162,10 @@ Keep `retry.provider.maxRetries` at `0` unless provider-level retries are explic
       "timeoutMs": 3600000,
       "maxRetries": 0,
       "maxRetryDelayMs": 60000
-    }
+    },
+    "fallbackChains": [
+      ["primary-gw/kimi", "backup-gw/kimi"]
+    ]
   }
 }
 ```

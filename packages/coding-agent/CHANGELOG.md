@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added `retry.fallbackChains` so a session can hop to another registered provider/model on transport/unreachable errors ([#9242](https://github.com/earendil-works/pi/issues/9242)).
+
 ### Fixed
 
 - Fixed branch summaries failing when reasoning consumes the previous 2048-token output cap ([#8845](https://github.com/earendil-works/pi/issues/8845)).

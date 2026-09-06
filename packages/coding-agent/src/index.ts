@@ -258,6 +258,7 @@ export {
 export {
 	type CompactionSettings,
 	type DefaultProjectTrust,
+	type FallbackModelRef,
 	type FullscreenExitOutput,
 	type ImageSettings,
 	type PackageSource,

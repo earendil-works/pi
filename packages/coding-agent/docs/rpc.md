@@ -877,6 +877,7 @@ Events are streamed to stdout as JSON lines during agent operation. Events do no
 | `compaction_end` | Compaction completes |
 | `auto_retry_start` | Auto-retry begins (after transient error) |
 | `auto_retry_end` | Auto-retry completes (success or final failure) |
+| `provider_fallback` | Session hopped to the next model in `retry.fallbackChains` after a transport/unreachable error |
 | `summarization_retry_scheduled` | Retry scheduled for a transient compaction or branch-summary summarization error |
 | `summarization_retry_attempt_start` | Retried summarization request starts |
 | `summarization_retry_finished` | Summarization retry loop completes |
@@ -1135,6 +1136,19 @@ On final failure (max retries exceeded):
   "success": false,
   "attempt": 3,
   "finalError": "529 overloaded_error: Overloaded"
+}
+```
+
+### provider_fallback
+
+Emitted when the session hops to the next `provider/model` in `retry.fallbackChains` after a transport/unreachable error. Auth and quota failures do not emit this event.
+
+```json
+{
+  "type": "provider_fallback",
+  "from": { "provider": "primary-gw", "modelId": "kimi" },
+  "to": { "provider": "backup-gw", "modelId": "kimi" },
+  "errorMessage": "connect ECONNREFUSED 127.0.0.1:9"
 }
 ```
 

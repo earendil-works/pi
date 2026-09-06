@@ -5,6 +5,7 @@
 ### Added
 
 - Added Anthropic per-turn effort persistence, deterministic historical effort markers, and signed-thinking mismatch recovery for supported Claude models across Anthropic Messages transports, including OpenRouter.
+- Added `isUnreachableAssistantError` to classify transport/timeout failures separately from same-provider retryable errors ([#9242](https://github.com/earendil-works/pi/issues/9242)).
 
 ### Fixed
 

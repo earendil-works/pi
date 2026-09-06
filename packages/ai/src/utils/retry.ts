@@ -89,6 +89,34 @@ const RETRYABLE_PROVIDER_ERROR_PATTERN = buildProviderErrorPattern([
 	"ResourceExhausted",
 ]);
 
+const UNREACHABLE_PROVIDER_ERROR_PATTERN = buildProviderErrorPattern([
+	// Transport / gateway reachability. Used by coding-agent provider fallback
+	// hops so 429/5xx/overloaded stay on the same-provider retry path.
+	"network.?error",
+	"connection.?error",
+	"connection.?refused",
+	"connection.?lost",
+	"other side closed",
+	"fetch failed",
+	"getaddrinfo",
+	"ENOTFOUND",
+	"EAI_AGAIN",
+	"ENETUNREACH",
+	"EHOSTUNREACH",
+	"ECONNREFUSED",
+	"ECONNRESET",
+	"ETIMEDOUT",
+	"EPIPE",
+	"upstream.?connect",
+	"reset before headers",
+	"socket hang up",
+	"socket connection was closed",
+	"timed? out",
+	"timeout",
+	"network.?unreachable",
+	"host.?unreachable",
+]);
+
 /**
  * Retry policy: bounded attempts with exponential backoff (`baseDelayMs * 2^(attempt-1)`).
  * Matches `settings.retry` (`enabled`, `maxRetries`, `baseDelayMs`) in coding-agent; kept
@@ -226,4 +254,18 @@ export function isRetryableAssistantError(message: AssistantMessage): boolean {
 	const errorMessage = message.errorMessage;
 	if (NON_RETRYABLE_PROVIDER_LIMIT_ERROR_PATTERN.test(errorMessage)) return false;
 	return RETRYABLE_PROVIDER_ERROR_PATTERN.test(errorMessage);
+}
+
+/**
+ * Classifies whether a failed assistant message looks like the current
+ * provider/gateway is unreachable (DNS, connect, timeout, dropped socket).
+ *
+ * Auth and quota/billing errors are never unreachable. Overloaded, 429, and
+ * 5xx responses are retryable on the same provider but are not hops.
+ */
+export function isUnreachableAssistantError(message: AssistantMessage): boolean {
+	if (message.stopReason !== "error" || !message.errorMessage) return false;
+	const errorMessage = message.errorMessage;
+	if (NON_RETRYABLE_PROVIDER_LIMIT_ERROR_PATTERN.test(errorMessage)) return false;
+	return UNREACHABLE_PROVIDER_ERROR_PATTERN.test(errorMessage);
 }

@@ -3411,6 +3411,23 @@ export class InteractiveMode {
 				break;
 			}
 
+			case "provider_fallback": {
+				this.chatContainer.addChild(new Spacer(1));
+				this.chatContainer.addChild(
+					new Text(
+						theme.fg(
+							"warning",
+							`Fell back from ${event.from.provider}/${event.from.modelId} to ${event.to.provider}/${event.to.modelId}`,
+						),
+						1,
+						0,
+					),
+				);
+				this.footer.invalidate();
+				this.ui.requestRender();
+				break;
+			}
+
 			case "auto_retry_end": {
 				// Restore escape handler
 				if (this.retryEscapeHandler) {
