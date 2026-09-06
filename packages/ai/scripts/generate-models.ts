@@ -2093,11 +2093,11 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 
 				// Claude 4.x and 5.x models route to Anthropic Messages API
 				const isCopilotClaude = /^claude-(haiku|sonnet|opus|fable)-[45]([.\-]|$)/.test(modelId);
-				// Grok, gpt-5, oswe, and MAI-Code models are only served through
+				// GPT, Grok, OSWE, and MAI-Code models are only served through
 				// the Copilot /responses endpoint.
 				const needsResponsesApi =
+					modelId.startsWith("gpt-") ||
 					modelId.startsWith("grok-") ||
-					modelId.startsWith("gpt-5") ||
 					modelId.startsWith("oswe") ||
 					modelId.startsWith("mai-");
 
