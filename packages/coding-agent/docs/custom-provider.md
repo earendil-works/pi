@@ -86,6 +86,8 @@ An OAuth provider supplies a display name, login flow, token refresh, and access
 
 OAuth callbacks are UI-neutral. They can open an authorization URL, show a device code, report progress, request input, or ask the user to choose a login method. Honor cancellation and the supplied abort signal during network requests.
 
+Device-code login offers browser opening and code copying on Enter (`tui.select.confirm`) by default. Confirmation is optional; users can complete login manually without opening a browser or changing the clipboard. Set `openBrowserOnConfirm` or `copyCodeOnConfirm` to `false` in the `onDeviceCode` payload to disable either action. Native `AuthEvent` device-code notifications support the same flags.
+
 Never write access tokens, refresh tokens, authorization headers, or complete provider responses to ordinary logs.
 
 ## Supply and refresh models
