@@ -49,6 +49,14 @@ export type ToolExecutionMode = "sequential" | "parallel";
  */
 export type QueueMode = "all" | "one-at-a-time";
 
+/**
+ * Abort reason used when the user interrupts a running turn by submitting a new
+ * prompt (Claude Code-style submit-interrupt). The agent loop suppresses the
+ * otherwise-empty "aborted" assistant message for this reason so the follow-up
+ * user message is delivered without a confusing artifact.
+ */
+export const INTERRUPT_ABORT_REASON = "interrupt";
+
 /** A single tool call content block emitted by an assistant message. */
 export type AgentToolCall = Extract<AssistantMessage["content"][number], { type: "toolCall" }>;
 

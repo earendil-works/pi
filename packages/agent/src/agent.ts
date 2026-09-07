@@ -28,6 +28,8 @@ import type {
 	ToolExecutionMode,
 } from "./types.ts";
 
+import { INTERRUPT_ABORT_REASON } from "./types.ts";
+export { INTERRUPT_ABORT_REASON };
 export type { QueueMode } from "./types.ts";
 
 function defaultConvertToLlm(messages: AgentMessage[]): Message[] {
@@ -315,9 +317,9 @@ export class Agent {
 		return this.activeRun?.abortController.signal;
 	}
 
-	/** Abort the current run, if one is active. */
-	abort(): void {
-		this.activeRun?.abortController.abort();
+	/** Abort the current run, if one is active. Pass INTERRUPT_ABORT_REASON for a user submit-interrupt. */
+	abort(reason?: string): void {
+		this.activeRun?.abortController.abort(reason);
 	}
 
 	/**
@@ -502,13 +504,18 @@ export class Agent {
 		try {
 			await executor(abortController.signal);
 		} catch (error) {
-			await this.handleRunFailure(error, abortController.signal.aborted);
+			await this.handleRunFailure(error, abortController.signal.aborted, abortController.signal);
 		} finally {
 			this.finishRun();
 		}
 	}
 
-	private async handleRunFailure(error: unknown, aborted: boolean): Promise<void> {
+	private async handleRunFailure(error: unknown, aborted: boolean, signal?: AbortSignal): Promise<void> {
+		// A user submit-interrupt (reason "interrupt") stops the current turn to
+		// deliver the follow-up prompt immediately. Skip the otherwise-empty
+		// "aborted" assistant message so the transcript stays clean (the queued
+		// user message provides the context, matching Claude Code's behavior).
+		const isInterrupt = aborted && signal?.reason === INTERRUPT_ABORT_REASON;
 		const failureMessage = {
 			role: "assistant",
 			content: [{ type: "text", text: "" }],
@@ -520,10 +527,15 @@ export class Agent {
 			errorMessage: error instanceof Error ? error.message : String(error),
 			timestamp: Date.now(),
 		} satisfies AgentMessage;
-		await this.processEvents({ type: "message_start", message: failureMessage });
-		await this.processEvents({ type: "message_end", message: failureMessage });
+		if (!isInterrupt) {
+			await this.processEvents({ type: "message_start", message: failureMessage });
+			await this.processEvents({ type: "message_end", message: failureMessage });
+		}
 		await this.processEvents({ type: "turn_end", message: failureMessage, toolResults: [] });
-		await this.processEvents({ type: "agent_end", messages: [failureMessage] });
+		await this.processEvents({
+			type: "agent_end",
+			messages: isInterrupt ? this._state.messages.slice() : [failureMessage],
+		});
 	}
 
 	private finishRun(): void {

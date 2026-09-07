@@ -22,6 +22,7 @@ import type {
 	PrepareNextTurnContext,
 	StreamFn,
 } from "./types.ts";
+import { INTERRUPT_ABORT_REASON } from "./types.ts";
 
 export type AgentEventSink = (event: AgentEvent) => Promise<void> | void;
 
@@ -173,6 +174,13 @@ async function runLoop(
 
 		// Inner loop: process tool calls and steering messages
 		while (hasMoreToolCalls || pendingMessages.length > 0) {
+			// A user submit-interrupt cuts off the current turn. Stop cleanly instead of
+			// re-streaming, which would produce an empty "aborted" assistant message and
+			// consume a provider response that should stay queued. Other aborts (Esc,
+			// session switch) keep the existing behavior of emitting a final aborted message.
+			if (signal?.aborted && signal.reason === INTERRUPT_ABORT_REASON) {
+				break;
+			}
 			if (lastCompletedTurn) {
 				const nextTurnSnapshot = await config.prepareNextTurn?.(lastCompletedTurn);
 				if (nextTurnSnapshot) {
@@ -344,28 +352,42 @@ async function streamAssistantResponse(
 			case "done":
 			case "error": {
 				const finalMessage = await response.result();
+				// A user submit-interrupt (reason "interrupt") discards the aborted stream;
+				// skip the empty "aborted" message so the follow-up prompt is delivered
+				// without a confusing artifact.
+				const suppressMessage = finalMessage.stopReason === "aborted" && signal?.reason === INTERRUPT_ABORT_REASON;
 				if (addedPartial) {
 					context.messages[context.messages.length - 1] = finalMessage;
 				} else {
 					context.messages.push(finalMessage);
 				}
-				if (!addedPartial) {
+				if (!addedPartial && !suppressMessage) {
 					await emit({ type: "message_start", message: { ...finalMessage } });
 				}
-				await emit({ type: "message_end", message: finalMessage });
+				if (!suppressMessage) {
+					await emit({ type: "message_end", message: finalMessage });
+				}
 				return finalMessage;
 			}
 		}
 	}
 
 	const finalMessage = await response.result();
+	// A user submit-interrupt (reason "interrupt") discards the aborted stream; skip the
+	// empty "aborted" message so the follow-up prompt is delivered without a confusing
+	// artifact.
+	const suppressMessage = finalMessage.stopReason === "aborted" && signal?.reason === INTERRUPT_ABORT_REASON;
 	if (addedPartial) {
 		context.messages[context.messages.length - 1] = finalMessage;
 	} else {
 		context.messages.push(finalMessage);
-		await emit({ type: "message_start", message: { ...finalMessage } });
+		if (!suppressMessage) {
+			await emit({ type: "message_start", message: { ...finalMessage } });
+		}
 	}
-	await emit({ type: "message_end", message: finalMessage });
+	if (!suppressMessage) {
+		await emit({ type: "message_end", message: finalMessage });
+	}
 	return finalMessage;
 }
 

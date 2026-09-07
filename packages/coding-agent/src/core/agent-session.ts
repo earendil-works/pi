@@ -25,6 +25,7 @@ import type {
 	PrepareNextTurnContext,
 	ThinkingLevel,
 } from "@earendil-works/pi-agent-core";
+import { INTERRUPT_ABORT_REASON } from "@earendil-works/pi-agent-core";
 import { contentText } from "@earendil-works/pi-ai";
 import type {
 	AssistantMessage,
@@ -639,6 +640,10 @@ export class AgentSession {
 	// Track last assistant message for auto-compaction check
 	private _lastAssistantMessage: AssistantMessage | undefined = undefined;
 
+	// Set by interrupt() so the post-run handler skips retry/compaction on a stale
+	// message (the interrupted run may not have produced a terminal assistant message).
+	private _lastRunWasInterrupted = false;
+
 	/** Internal handler for agent events - shared by subscribe and reconnect */
 	private _handleAgentEvent = async (event: AgentEvent): Promise<void> => {
 		// When a user message starts, check if it's from either queue and remove it BEFORE emitting
@@ -1118,10 +1123,16 @@ export class AgentSession {
 	}
 
 	private async _handlePostAgentRun(): Promise<boolean> {
+		const wasInterrupted = this._lastRunWasInterrupted;
+		this._lastRunWasInterrupted = false;
 		const msg = this._lastAssistantMessage;
 		this._lastAssistantMessage = undefined;
-		if (!msg) {
-			return false;
+		// A submit-interrupt (interrupt()) aborts the run before the agent loop drains
+		// its queues, so deliver any queued messages now — even when no assistant
+		// message completed. For a normal run the loop drains the queues before
+		// agent_end and hasQueuedMessages() is false here.
+		if (wasInterrupted || !msg) {
+			return this.agent.hasQueuedMessages();
 		}
 
 		if (this._isRetryableError(msg) && (await this._prepareRetry(msg))) {
@@ -1621,6 +1632,27 @@ export class AgentSession {
 		this.abortCompaction();
 		this.abortBranchSummary();
 		this.agent.abort();
+		await this.waitForIdle();
+	}
+
+	/**
+	 * Interrupt the running turn as a user-initiated correction (Claude Code-style
+	 * submit-interrupt). Aborts in-flight work with {@link INTERRUPT_ABORT_REASON},
+	 * which suppresses the otherwise-empty "aborted" assistant message, then waits
+	 * for the run to settle. Typically followed by `prompt()` to deliver the new
+	 * message as a fresh turn.
+	 */
+	async interrupt(): Promise<void> {
+		// Only mark the run interrupted when there is something to interrupt, otherwise
+		// a stale flag would make the next post-run skip its retry/compaction checks.
+		if (!this.isIdle) {
+			this._lastRunWasInterrupted = true;
+		}
+		this.abortRetry();
+		this.abortCompaction();
+		this.abortBranchSummary();
+		this.abortBash();
+		this.agent.abort(INTERRUPT_ABORT_REASON);
 		await this.waitForIdle();
 	}
 

@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added submit-interrupt: submitting a new prompt while the agent is running now interrupts the in-progress turn (instead of waiting for it to finish) and processes the new message immediately, without leaving an empty "Operation aborted" message.
+
 ### Fixed
 
 - Fixed configurable save keybindings in the model and thinking selectors ([#8797](https://github.com/earendil-works/pi/issues/8797)).

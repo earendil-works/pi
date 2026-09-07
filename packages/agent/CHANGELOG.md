@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added `Agent.abort(reason)` and the `INTERRUPT_ABORT_REASON` constant. The agent loop stops cleanly on a submit-interrupt and suppresses the otherwise-empty "aborted" assistant message so the follow-up prompt is delivered without a confusing artifact.
+
 ## [0.85.0] - 2026-09-04
 
 ### Fixed

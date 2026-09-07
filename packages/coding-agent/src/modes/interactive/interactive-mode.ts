@@ -3132,12 +3132,16 @@ export class InteractiveMode {
 				return;
 			}
 
-			// If streaming, use prompt() with steer behavior
-			// This handles extension commands (execute immediately), prompt template expansion, and queueing
+			// If streaming, interrupt the running turn so the new message is processed
+			// immediately instead of waiting for the current turn to finish (Claude
+			// Code-style submit-interrupt). interrupt() aborts in-flight work with an
+			// "interrupt" reason that suppresses the empty aborted assistant message,
+			// then prompt() delivers the new message as a fresh turn.
 			if (this.session.isStreaming) {
 				this.editor.addToHistory?.(text);
 				this.editor.setText("");
-				await this.session.prompt(text, { streamingBehavior: "steer" });
+				await this.session.interrupt();
+				await this.session.prompt(text);
 				this.updatePendingMessagesDisplay();
 				this.ui.requestRender();
 				return;
