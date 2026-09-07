@@ -195,6 +195,7 @@ function getAnthropicCompat(
 		supportsTemperature: model.compat?.supportsTemperature ?? true,
 		allowEmptySignature: model.compat?.allowEmptySignature ?? false,
 		supportsStrictTools: model.compat?.supportsStrictTools ?? false,
+		sendStrictToolField: model.compat?.sendStrictToolField ?? true,
 		supportsToolReferences: model.compat?.supportsToolReferences ?? defaultSupportsToolReferences(model),
 	};
 }
@@ -1105,6 +1106,7 @@ function buildParams(
 				isOAuthToken,
 				compat.supportsEagerToolInputStreaming,
 				compat.supportsStrictTools,
+				compat.sendStrictToolField,
 				compat.supportsCacheControlOnTools ? cacheControl : undefined,
 			),
 			...convertTools(
@@ -1112,6 +1114,7 @@ function buildParams(
 				isOAuthToken,
 				compat.supportsEagerToolInputStreaming,
 				compat.supportsStrictTools,
+				compat.sendStrictToolField,
 				undefined,
 				true,
 			),
@@ -1426,6 +1429,7 @@ function convertTools(
 	isOAuthToken: boolean,
 	supportsEagerToolInputStreaming: boolean,
 	supportsStrictTools: boolean,
+	sendStrictToolField: boolean,
 	cacheControl?: CacheControlEphemeral,
 	deferLoading = false,
 ): BetaTool[] {
@@ -1452,7 +1456,7 @@ function convertTools(
 			name: isOAuthToken ? toClaudeCodeName(tool.name) : tool.name,
 			description: tool.description,
 			...(supportsEagerToolInputStreaming ? { eager_input_streaming: true } : {}),
-			...(strict === true ? { strict: true } : {}),
+			...(strict === true && sendStrictToolField ? { strict: true } : {}),
 			input_schema: inputSchema,
 			...(deferLoading ? { defer_loading: true } : {}),
 			...(cacheControl && index === tools.length - 1 ? { cache_control: cacheControl } : {}),

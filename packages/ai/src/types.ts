@@ -712,6 +712,15 @@ export interface AnthropicMessagesCompat {
 	allowEmptySignature?: boolean;
 	/** Whether the provider supports Anthropic strict tool schemas. Default: false; generated Anthropic models enable it explicitly. */
 	supportsStrictTools?: boolean;
+	/**
+	 * Whether to send the per-tool `strict: true` field when strict tool schemas
+	 * are active. Some Anthropic-compatible gateways (e.g. AWS Bedrock proxies)
+	 * require the strict-shaped `input_schema` (with `additionalProperties: false`)
+	 * but reject the `strict` field itself. Set to `false` to keep the strict
+	 * schema while omitting the field.
+	 * Default: true.
+	 */
+	sendStrictToolField?: boolean;
 	/** Whether the exact model transport supports effort-only system messages and thinking binding controls. Default: false. */
 	supportsMidConvoEffort?: boolean;
 	/**
