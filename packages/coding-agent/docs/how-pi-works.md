@@ -8,7 +8,7 @@ Messages and events in a session form a tree. Each path through that tree is a b
 
 A submitted message is added to the active branch. Pi builds a model request from the system prompt, active branch, available tools, and model settings, then sends it through the selected provider.
 
-The provider streams assistant text and tool calls. Pi records them, executes each tool call, records the results, and builds the next model request. The turn ends when the model returns without another tool call.
+The provider streams an assistant response, which can contain text and tool calls. Pi records the response, executes each tool call, and records the results. That completes one turn. If tool results or queued messages require another model request, Pi starts another turn. Otherwise, the run ends.
 
 Steering messages enter after the current assistant turn. Follow-up messages enter after the agent has finished its pending work. Aborting stops the current run and returns queued messages to the editor.
 
@@ -46,4 +46,4 @@ Skills provide on-demand instructions and supporting files. Prompt templates pro
 
 ## Trust and permissions
 
-Pi loads context files, resolves project trust, then conditionally loads project settings and resources. Enabled tools use the operating-system permissions of the Pi process. Extensions execute inside that process.
+Pi resolves project trust before loading project settings and resources. After the trust decision and project-resource loading, Pi loads context files. Enabled tools use the operating-system permissions of the Pi process. Extensions execute inside that process.

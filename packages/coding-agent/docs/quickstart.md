@@ -75,10 +75,16 @@ Read [How Pi Works](how-pi-works.md) for a deeper explanation and [Using Pi](usa
 
 ## Uninstall
 
-Use the package manager that installed Pi. The installer above uses npm:
+If you installed Pi directly with npm, uninstall it with:
 
 ```bash
 npm uninstall -g @earendil-works/pi-coding-agent
 ```
 
-This leaves your configuration, credentials, sessions, and installed Pi packages in `~/.pi/agent/`.
+If you used the shell installer, run it again and choose **Uninstall Pi**:
+
+```bash
+curl -fsSL https://pi.dev/install.sh | sh
+```
+
+Neither method removes your configuration, credentials, sessions, or installed Pi packages from `~/.pi/agent/`.
