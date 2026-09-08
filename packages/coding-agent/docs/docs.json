@@ -1,7 +1,7 @@
 {
   "navigation": [
     {
-      "title": "Start here",
+      "title": "Getting Started",
       "items": [
         {
           "title": "Overview",
@@ -12,6 +12,15 @@
           "path": "quickstart.md"
         },
         {
+          "title": "How Pi Works",
+          "path": "how-pi-works.md"
+        }
+      ]
+    },
+    {
+      "title": "Guides",
+      "items": [
+        {
           "title": "Using Pi",
           "path": "usage.md"
         },
@@ -20,12 +29,8 @@
           "path": "providers.md"
         },
         {
-          "title": "Security",
-          "path": "security.md"
-        },
-        {
-          "title": "Containerization",
-          "path": "containerization.md"
+          "title": "llama.cpp",
+          "path": "llama-cpp.md"
         },
         {
           "title": "Settings",
@@ -92,7 +97,7 @@
       ]
     },
     {
-      "title": "Programmatic Usage",
+      "title": "Build with Pi",
       "items": [
         {
           "title": "SDK",
@@ -113,8 +118,16 @@
       ]
     },
     {
-      "title": "Platform Setup",
+      "title": "Operations and Platforms",
       "items": [
+        {
+          "title": "Security",
+          "path": "security.md"
+        },
+        {
+          "title": "Containerization",
+          "path": "containerization.md"
+        },
         {
           "title": "Windows",
           "path": "windows.md"

@@ -1,84 +1,25 @@
-# Pi Documentation
+# Pi
 
-Pi is a minimal terminal coding harness. It is designed to stay small at the core while being extended through TypeScript extensions, skills, prompt templates, themes, and pi packages.
+Pi is an extensible coding agent for the terminal that can also be embedded in applications through its TypeScript SDK.
 
-## Quick start
+You give it a task, the model decides what to do, and Pi provides the tools, project context, and session history it needs to do the work.
 
-Install Pi with npm:
+The core is deliberately small. Instead of prescribing one workflow, Pi lets you add tools, commands, providers, event handlers, and terminal UI with extensions. Skills and prompt templates handle reusable instructions.
 
-```bash
-npm install -g --ignore-scripts @earendil-works/pi-coding-agent
-```
+## Start
 
-`--ignore-scripts` disables dependency lifecycle scripts during install. Pi does not require install scripts for normal npm installs.
+If you are new to Pi, follow the [Quickstart](quickstart.md). It takes you from installation to a first task.
 
-On Linux or macOS, you can also use the installer:
+[How Pi Works](how-pi-works.md) explains what happens after you submit a prompt, how context is assembled, and why sessions are trees rather than flat transcripts.
 
-```bash
-curl -fsSL https://pi.dev/install.sh | sh
-```
+## Use, extend, or embed Pi
 
-To uninstall pi itself, use npm for curl and npm installs:
+For everyday work, start with [Using Pi](usage.md). The [sessions](sessions.md), [providers](providers.md), and [settings](settings.md) guides cover the parts you are most likely to configure.
 
-```bash
-npm uninstall -g @earendil-works/pi-coding-agent
-```
+If Pi doesn't work the way you want, change it. [Extensions](extensions.md), [skills](skills.md), and [Pi packages](packages.md) are the main ways to adapt it without modifying the core.
 
-For pnpm, Yarn, or Bun installs, use the matching global remove command: `pnpm remove -g @earendil-works/pi-coding-agent`, `yarn global remove @earendil-works/pi-coding-agent`, or `bun uninstall -g @earendil-works/pi-coding-agent`.
+For applications, use the [SDK](sdk.md). Use [RPC](rpc.md) to control a Pi process or [JSON mode](json.md) to consume structured events from a single run.
 
-Then run it in a project directory:
+## Security
 
-```bash
-pi
-```
-
-Authenticate with `/login` for subscription providers, or set an API key such as `ANTHROPIC_API_KEY` before starting pi.
-
-For the full first-run flow, see [Quickstart](quickstart.md).
-
-## Start here
-
-- [Quickstart](quickstart.md) - install, authenticate, and run a first session.
-- [Using Pi](usage.md) - interactive mode, slash commands, context files, and CLI reference.
-- [Providers](providers.md) - subscription and API-key setup for built-in providers.
-- [llama.cpp](llama-cpp.md) - run a local router and manage models with `/llama`.
-- [Security](security.md) - project trust, sandbox boundaries, and vulnerability reporting.
-- [Containerization](containerization.md) - sandbox pi with Gondolin, Docker, or OpenShell.
-- [Settings](settings.md) - global and project settings.
-- [Keybindings](keybindings.md) - default shortcuts and custom keybindings.
-- [Sessions](sessions.md) - session management, branching, and tree navigation.
-- [Compaction](compaction.md) - context compaction and branch summarization.
-
-## Customization
-
-- [Extensions](extensions.md) - TypeScript modules for tools, commands, events, and custom UI.
-- [Skills](skills.md) - Agent Skills for reusable on-demand capabilities.
-- [Prompt templates](prompt-templates.md) - reusable prompts that expand from slash commands.
-- [Themes](themes.md) - built-in and custom terminal themes.
-- [Pi packages](packages.md) - bundle and share extensions, skills, prompts, and themes.
-- [Custom models](models.md) - add model entries for supported provider APIs.
-- [Custom providers](custom-provider.md) - implement custom APIs and OAuth flows.
-
-## Programmatic usage
-
-- [SDK](sdk.md) - embed pi in Node.js applications.
-- [RPC mode](rpc.md) - integrate over stdin/stdout JSONL.
-- [JSON event stream mode](json.md) - print mode with structured events.
-- [TUI components](tui.md) - build custom terminal UI for extensions.
-
-## Reference
-
-- [Environment variables](environment-variables.md) - Pi process configuration and session metadata available to bash tools.
-- [Session format](session-format.md) - JSONL session file format, entry types, and SessionManager API.
-
-## Platform setup
-
-- [Windows](windows.md)
-- [Termux on Android](termux.md)
-- [tmux](tmux.md)
-- [Terminal setup](terminal-setup.md)
-- [Shell aliases](shell-aliases.md)
-
-## Development
-
-- [Development](development.md) - local setup, project structure, and debugging.
+Pi's tools run with the same permissions as Pi itself. Project trust controls which project resources are loaded, but it doesn't sandbox tool calls. Read [Security](security.md) before working with untrusted code.
