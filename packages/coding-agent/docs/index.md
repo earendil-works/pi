@@ -18,7 +18,7 @@ For everyday work, start with [Using Pi](usage.md). The [sessions](sessions.md),
 
 If Pi doesn't work the way you want, change it. [Extensions](extensions.md), [skills](skills.md), and [Pi packages](packages.md) are the main ways to adapt it without modifying the core.
 
-For applications, use the [SDK](sdk.md). Use [RPC](rpc.md) to control a Pi process or [JSON mode](json.md) to consume structured events from a single run.
+Use [RPC](rpc.md) to control a Pi process or [JSON mode](json.md) to consume structured events from a single run. To build applications powered by Pi use the [SDK](sdk.md).
 
 ## Security
 
