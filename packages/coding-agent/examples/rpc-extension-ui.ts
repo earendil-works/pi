@@ -16,7 +16,7 @@
 
 import { spawn } from "node:child_process";
 import { dirname, join } from "node:path";
-import * as readline from "node:readline";
+import { StringDecoder } from "node:string_decoder";
 import { fileURLToPath } from "node:url";
 import {
 	type Component,
@@ -258,7 +258,7 @@ async function main() {
 
 	const agent = spawn(
 		"node",
-		[cliPath, "--mode", "rpc", "--no-session", "--no-extension", "--extension", extensionPath],
+		[cliPath, "--mode", "rpc", "--no-session", "--no-extensions", "--extension", extensionPath],
 		{ stdio: ["pipe", "pipe", "pipe"] },
 	);
 
@@ -518,9 +518,7 @@ async function main() {
 
 	// -- Process agent stdout --
 
-	const stdoutRl = readline.createInterface({ input: agent.stdout!, terminal: false });
-
-	stdoutRl.on("line", (line) => {
+	function handleAgentLine(line: string): void {
 		let data: Record<string, unknown>;
 		try {
 			data = JSON.parse(line);
@@ -582,6 +580,28 @@ async function main() {
 			outputLog.append("");
 			tui.requestRender();
 			return;
+		}
+	}
+
+	const stdoutDecoder = new StringDecoder("utf8");
+	let stdoutBuffer = "";
+
+	agent.stdout!.on("data", (chunk: Buffer) => {
+		stdoutBuffer += stdoutDecoder.write(chunk);
+		while (true) {
+			const newlineIndex = stdoutBuffer.indexOf("\n");
+			if (newlineIndex === -1) break;
+
+			const line = stdoutBuffer.slice(0, newlineIndex);
+			stdoutBuffer = stdoutBuffer.slice(newlineIndex + 1);
+			handleAgentLine(line.endsWith("\r") ? line.slice(0, -1) : line);
+		}
+	});
+
+	agent.stdout!.on("end", () => {
+		stdoutBuffer += stdoutDecoder.end();
+		if (stdoutBuffer.length > 0) {
+			handleAgentLine(stdoutBuffer.endsWith("\r") ? stdoutBuffer.slice(0, -1) : stdoutBuffer);
 		}
 	});
 

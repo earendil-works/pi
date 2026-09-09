@@ -44,6 +44,19 @@
               "path": "configuration.md"
             }
           ]
+        },
+        {
+          "title": "Building with Pi",
+          "items": [
+            {
+              "title": "CLI Integration",
+              "path": "cli-integration.md"
+            },
+            {
+              "title": "SDK",
+              "path": "sdk.md"
+            }
+          ]
         }
       ]
     },
@@ -53,6 +66,10 @@
         {
           "title": "Extensions",
           "path": "extensions.md"
+        },
+        {
+          "title": "Terminal UI",
+          "path": "tui.md"
         },
         {
           "title": "Skills",
@@ -110,27 +127,14 @@
         {
           "title": "Compaction",
           "path": "compaction.md"
-        }
-      ]
-    },
-    {
-      "title": "Build with Pi",
-      "items": [
-        {
-          "title": "SDK",
-          "path": "sdk.md"
         },
         {
-          "title": "RPC Mode",
-          "path": "rpc.md"
-        },
-        {
-          "title": "JSON Event Stream Mode",
+          "title": "JSON Event Stream",
           "path": "json.md"
         },
         {
-          "title": "TUI Components",
-          "path": "tui.md"
+          "title": "RPC Protocol",
+          "path": "rpc.md"
         }
       ]
     },
@@ -201,6 +205,10 @@
     {
       "from": "tree.md",
       "to": "sessions-and-context.md"
+    },
+    {
+      "from": "process-integration.md",
+      "to": "cli-integration.md"
     }
   ]
 }
