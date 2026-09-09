@@ -1,90 +1,109 @@
 # Quickstart
 
-This gets Pi installed and working on a real project.
+Pi runs in your terminal and works with files on your machine. To use it, you need access to a model through a supported provider. This can be a subscription, an API key, or a local model.
 
-## Install
+For native Windows setup, read [Windows Setup](windows.md). For Android, read [Termux Setup](termux.md).
 
-Pi requires Node.js 22.19 or newer. Install it from npm:
+## 1. Install Pi
+
+On macOS or Linux, you can use the installer:
+
+```bash
+curl -fsSL https://pi.dev/install.sh | sh
+```
+
+Alternatively, install Pi from npm. This requires Node.js 22.19 or newer:
 
 ```bash
 npm install -g --ignore-scripts @earendil-works/pi-coding-agent
 ```
 
-Pi doesn't need dependency lifecycle scripts. On Linux and macOS, you can use the installer instead:
+Pi does not require dependency lifecycle scripts for a normal npm installation.
+
+Verify the installation:
 
 ```bash
-curl -fsSL https://pi.dev/install.sh | sh
+pi --version
 ```
 
-## Run Pi
+## 2. Start Pi
 
-Go to the project you want to work on and start Pi:
+Change to the folder you want Pi to work with, then start it:
 
 ```bash
-cd /path/to/project
+cd /path/to/folder
 pi
 ```
 
-The directory matters. Pi uses it to find project files and configuration, and to group saved sessions.
+The working folder helps Pi discover relevant files, instructions, and configuration. Pi also uses it to group saved sessions.
 
-Run `/login`, choose a provider, and follow its authentication flow. If you prefer an API key, set it before starting Pi:
+<p align="center"><img src="images/interactive-mode.png" alt="Pi running in a terminal with a conversation, input editor, and status footer" width="750"></p>
 
-```bash
-export ANTHROPIC_API_KEY=sk-ant-...
-pi
+The interface shows your conversation, an editor for prompts and commands, and a footer with the current folder, model, and session status. See [Use Pi in the terminal](interactive-use.md) to learn how to add files, run commands, direct ongoing work, and manage results.
+
+## 3. Choose a model
+
+A **model** generates Pi's responses. A **provider** is the service or account Pi uses to access that model.
+
+In Pi, run:
+
+```text
+/login
 ```
 
-See [Models and Providers](models-and-providers.md) for other providers and authentication methods.
+Choose a provider, then follow the prompts to use a subscription or store an API key. Run `/model` afterward if you want to select a different available model.
 
-## Run a task
+See [Choose a model and provider](models-and-providers.md) for supported providers, environment-variable authentication, local models, and custom endpoints.
 
-A useful first request is:
+## 4. Give Pi a task
+
+Pi shows each file read, search, command, and edit it performs. It does not ask before every tool call.
+
+Enter a task that matches your work, for example:
+
+```text
+Summarize @meeting-notes.md and save the action items to action-items.md.
+```
 
 ```text
 Explain how this repository is structured and how to run its checks.
 ```
 
-As the model works, Pi shows every tool call and result. The default tools let it read and change files and run shell commands. Everything becomes part of the session.
-
-Pi doesn't ask before every tool call. Use version control and review what changed. For untrusted work, run Pi in a container or another sandbox. See [Security](security.md).
-
-## Add project instructions
-
-Most projects have commands and rules that the model can't infer reliably. Put them in an `AGENTS.md` file:
-
-```markdown
-# Project instructions
-
-- Run `npm run check` after changing code.
-- Do not run production migrations.
+```text
+Compare @previous.csv with @current.csv and summarize the important changes.
 ```
 
-Pi reads global and project context files when it starts. If you change them during a session, run `/reload`.
+Type `@` in the editor to search for a file instead of entering its full path. When Pi finishes, review its response and any changed files. Use version control or backups for important work. For untrusted or unattended work, use a container or another sandbox. See [Security](security.md).
 
 ## Continue later
 
-Pi saves sessions automatically. To continue the most recent one, run:
+Pi saves sessions automatically. Exit Pi, then resume the most recent session for the same working folder with:
 
 ```bash
 pi --continue
 ```
 
-Use `/resume` to choose another session. Use `/tree` to return to an earlier point without losing the work that followed it. [Sessions and Context](sessions-and-context.md) explains both.
+Use `/resume` to choose another saved session. See [Continue or branch a session](sessions-and-context.md) for session naming, branching, compaction, export, and sharing.
 
-Read [How Pi Works](how-pi-works.md) for a deeper explanation and [Pi in the Terminal](interactive-use.md) for the interactive controls.
+## Next steps
 
-## Uninstall
+- [Use Pi interactively](interactive-use.md) to learn input, commands, shortcuts, and queued messages.
+- [Add instructions](configuration.md#instructions) that Pi should follow whenever it works in a folder.
+- [Choose a model and provider](models-and-providers.md).
+- [Adapt Pi to your workflow](index.md#adapt-pi-to-your-workflow) with prompt templates, skills, extensions, or packages.
 
-If you installed Pi directly with npm, uninstall it with:
+## Uninstall Pi
+
+If you installed Pi with npm, run:
 
 ```bash
 npm uninstall -g @earendil-works/pi-coding-agent
 ```
 
-If you used the shell installer, run it again and choose **Uninstall Pi**:
+If you used the installer, run it again and choose **Uninstall Pi**:
 
 ```bash
 curl -fsSL https://pi.dev/install.sh | sh
 ```
 
-Neither method removes your configuration, credentials, sessions, or installed Pi packages from `~/.pi/agent/`.
+Neither method removes configuration, credentials, sessions, or installed Pi packages from `~/.pi/agent/`.
