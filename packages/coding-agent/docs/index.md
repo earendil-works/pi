@@ -16,7 +16,7 @@ If Pi is already installed, choose what you want to do:
 - [Configure Pi](configuration.md) for your preferences, working folders, instructions, and reusable resources.
 - [Understand how Pi works](how-pi-works.md), including tools, context, sessions, and the agent loop.
 
-## Adapt Pi to your workflow
+## Customise Pi
 
 Start with the least complex option that meets your need:
 

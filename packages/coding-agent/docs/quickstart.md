@@ -90,7 +90,7 @@ Use `/resume` to choose another saved session. See [Continue or branch a session
 - [Use Pi interactively](interactive-use.md) to learn input, commands, shortcuts, and queued messages.
 - [Add instructions](configuration.md#instructions) that Pi should follow whenever it works in a folder.
 - [Choose a model and provider](models-and-providers.md).
-- [Adapt Pi to your workflow](index.md#adapt-pi-to-your-workflow) with prompt templates, skills, extensions, or packages.
+- [Customise Pi](index.md#customise-pi) with prompt templates, skills, extensions, or packages.
 
 ## Uninstall Pi
 

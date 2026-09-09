@@ -46,6 +46,35 @@
           ]
         },
         {
+          "title": "Customising Pi",
+          "items": [
+            {
+              "title": "Prompt Templates",
+              "path": "prompt-templates.md"
+            },
+            {
+              "title": "Skills",
+              "path": "skills.md"
+            },
+            {
+              "title": "Extensions",
+              "path": "extensions.md"
+            },
+            {
+              "title": "Terminal UI",
+              "path": "tui.md"
+            },
+            {
+              "title": "Custom Providers",
+              "path": "custom-provider.md"
+            },
+            {
+              "title": "Pi Packages",
+              "path": "packages.md"
+            }
+          ]
+        },
+        {
           "title": "Building with Pi",
           "items": [
             {
@@ -57,35 +86,6 @@
               "path": "sdk.md"
             }
           ]
-        }
-      ]
-    },
-    {
-      "title": "Customization",
-      "items": [
-        {
-          "title": "Extensions",
-          "path": "extensions.md"
-        },
-        {
-          "title": "Terminal UI",
-          "path": "tui.md"
-        },
-        {
-          "title": "Skills",
-          "path": "skills.md"
-        },
-        {
-          "title": "Prompt Templates",
-          "path": "prompt-templates.md"
-        },
-        {
-          "title": "Pi Packages",
-          "path": "packages.md"
-        },
-        {
-          "title": "Custom Providers",
-          "path": "custom-provider.md"
         }
       ]
     },
