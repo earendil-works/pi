@@ -22,31 +22,28 @@
       "items": [
         {
           "title": "Using Pi",
-          "path": "usage.md"
-        },
-        {
-          "title": "Providers",
-          "path": "providers.md"
-        },
-        {
-          "title": "llama.cpp",
-          "path": "llama-cpp.md"
-        },
-        {
-          "title": "Settings",
-          "path": "settings.md"
-        },
-        {
-          "title": "Keybindings",
-          "path": "keybindings.md"
-        },
-        {
-          "title": "Sessions",
-          "path": "sessions.md"
-        },
-        {
-          "title": "Compaction",
-          "path": "compaction.md"
+          "items": [
+            {
+              "title": "Pi in the Terminal",
+              "path": "interactive-use.md"
+            },
+            {
+              "title": "Models and Providers",
+              "path": "models-and-providers.md"
+            },
+            {
+              "title": "Local Models with llama.cpp",
+              "path": "llama-cpp.md"
+            },
+            {
+              "title": "Sessions and Context",
+              "path": "sessions-and-context.md"
+            },
+            {
+              "title": "Configuration",
+              "path": "configuration.md"
+            }
+          ]
         }
       ]
     },
@@ -66,16 +63,8 @@
           "path": "prompt-templates.md"
         },
         {
-          "title": "Themes",
-          "path": "themes.md"
-        },
-        {
           "title": "Pi Packages",
           "path": "packages.md"
-        },
-        {
-          "title": "Custom Models",
-          "path": "models.md"
         },
         {
           "title": "Custom Providers",
@@ -87,12 +76,40 @@
       "title": "Reference",
       "items": [
         {
+          "title": "CLI and Modes",
+          "path": "cli.md"
+        },
+        {
+          "title": "Provider Authentication",
+          "path": "provider-reference.md"
+        },
+        {
+          "title": "Custom Models",
+          "path": "models.md"
+        },
+        {
+          "title": "Settings",
+          "path": "settings-reference.md"
+        },
+        {
           "title": "Environment Variables",
           "path": "environment-variables.md"
         },
         {
+          "title": "Keybindings",
+          "path": "keybindings.md"
+        },
+        {
+          "title": "Themes",
+          "path": "themes.md"
+        },
+        {
           "title": "Session Format",
           "path": "session-format.md"
+        },
+        {
+          "title": "Compaction",
+          "path": "compaction.md"
         }
       ]
     },
@@ -162,12 +179,28 @@
   ],
   "redirects": [
     {
+      "from": "usage.md",
+      "to": "interactive-use.md"
+    },
+    {
+      "from": "providers.md",
+      "to": "provider-reference.md"
+    },
+    {
+      "from": "settings.md",
+      "to": "settings-reference.md"
+    },
+    {
+      "from": "sessions.md",
+      "to": "sessions-and-context.md"
+    },
+    {
       "from": "session.md",
       "to": "session-format.md"
     },
     {
       "from": "tree.md",
-      "to": "sessions.md"
+      "to": "sessions-and-context.md"
     }
   ]
 }

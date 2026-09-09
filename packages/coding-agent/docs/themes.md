@@ -1,8 +1,6 @@
-> pi can create themes. Ask it to build one for your setup.
+# Themes Reference
 
-# Themes
-
-Themes are JSON files that define colors for the TUI.
+This reference describes theme discovery, selection, schema, color values, and TUI color tokens. For the setup workflow, see [Configuration](configuration.md#themes).
 
 ## Table of Contents
 

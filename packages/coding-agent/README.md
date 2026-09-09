@@ -139,7 +139,7 @@ For each built-in provider, pi maintains a list of tool-capable models. Configur
 
 Pi also supports the llama.cpp router server. Configure it with `/login llama.cpp`, manage downloads and loaded models with `/llama`, then select a loaded model with `/model`. See [docs/llama-cpp.md](docs/llama-cpp.md) for setup and usage.
 
-See [docs/providers.md](docs/providers.md) for other provider setup instructions.
+See [Models and Providers](docs/models-and-providers.md) for other provider setup instructions.
 
 **Custom providers & models:** Add providers via `~/.pi/agent/models.json` if they speak a supported API (OpenAI, Anthropic, Google). For custom APIs or OAuth, use extensions. See [docs/models.md](docs/models.md) and [docs/custom-provider.md](docs/custom-provider.md).
 
@@ -232,7 +232,7 @@ Submit messages while the agent is working:
 
 On Windows Terminal, `Alt+Enter` is fullscreen by default. Remap it in [docs/terminal-setup.md](docs/terminal-setup.md) so pi can receive the follow-up shortcut.
 
-Configure delivery in [settings](docs/settings.md): `steeringMode` and `followUpMode` can be `"one-at-a-time"` (default, waits for response) or `"all"` (delivers all queued at once). `transport` selects provider transport preference (`"sse"`, `"websocket"`, or `"auto"`) for providers that support multiple transports.
+Configure delivery in the [settings reference](docs/settings-reference.md#message-delivery): `steeringMode` and `followUpMode` can be `"one-at-a-time"` (default, waits for response) or `"all"` (delivers all queued at once). `transport` selects provider transport preference (`"sse"`, `"websocket"`, or `"auto"`) for providers that support multiple transports.
 
 ---
 
@@ -302,7 +302,7 @@ Use `/settings` to modify common options, or edit JSON files directly:
 | `~/.pi/agent/settings.json` | Global (all projects) |
 | `.pi/settings.json` | Project (overrides global) |
 
-See [docs/settings.md](docs/settings.md) for all options.
+See the [Settings Reference](docs/settings-reference.md) for all options.
 
 ### Project Trust
 

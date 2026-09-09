@@ -1,6 +1,6 @@
-# Keybindings
+# Keybindings Reference
 
-All keyboard shortcuts can be customized via `~/.pi/agent/keybindings.json`. Each action can be bound to one or more keys.
+This reference lists the key syntax, configurable action identifiers, defaults, and configuration format. For the setup workflow, see [Configuration](configuration.md#keybindings).
 
 The config file uses the same namespaced keybinding ids that pi uses internally and that extension authors use in `keyHint()` and injected `keybindings` managers.
 

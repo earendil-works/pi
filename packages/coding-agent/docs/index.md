@@ -14,7 +14,7 @@ If you are new to Pi, follow the [Quickstart](quickstart.md). It takes you from 
 
 ## Use, extend, or embed Pi
 
-For everyday work, start with [Using Pi](usage.md). The [sessions](sessions.md), [providers](providers.md), and [settings](settings.md) guides cover the parts you are most likely to configure.
+For everyday work, learn how to [use Pi in the terminal](interactive-use.md), [set up models and providers](models-and-providers.md), [manage sessions and context](sessions-and-context.md), and [configure Pi](configuration.md).
 
 If Pi doesn't work the way you want, change it. [Extensions](extensions.md), [skills](skills.md), and [Pi packages](packages.md) are the main ways to adapt it without modifying the core.
 

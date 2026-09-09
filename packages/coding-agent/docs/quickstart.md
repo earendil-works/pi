@@ -34,7 +34,7 @@ export ANTHROPIC_API_KEY=sk-ant-...
 pi
 ```
 
-See [Providers](providers.md) for other providers and authentication methods.
+See [Models and Providers](models-and-providers.md) for other providers and authentication methods.
 
 ## Run a task
 
@@ -69,9 +69,9 @@ Pi saves sessions automatically. To continue the most recent one, run:
 pi --continue
 ```
 
-Use `/resume` to choose another session. Use `/tree` to return to an earlier point without losing the work that followed it. The [Sessions](sessions.md) guide explains both.
+Use `/resume` to choose another session. Use `/tree` to return to an earlier point without losing the work that followed it. [Sessions and Context](sessions-and-context.md) explains both.
 
-Read [How Pi Works](how-pi-works.md) for a deeper explanation and [Using Pi](usage.md) for the interactive controls.
+Read [How Pi Works](how-pi-works.md) for a deeper explanation and [Pi in the Terminal](interactive-use.md) for the interactive controls.
 
 ## Uninstall
 
