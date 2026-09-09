@@ -1,69 +1,88 @@
-# Pi in the Terminal
+# Use Pi in the terminal
 
-Interactive mode lets you prompt Pi, follow its tool calls, and change direction while it works. Start it from the project you want Pi to use:
+Run `pi` from the folder you want to work in. Pi uses that folder to discover files, instructions, and configuration, and to group saved sessions. If you have not installed Pi or chosen a model yet, follow the [Quickstart](quickstart.md).
 
-```bash
-cd /path/to/project
-pi
-```
-
-The working directory determines which project configuration and context Pi discovers. Pi may ask you to trust project-local resources before loading them. See [Security](security.md#project-trust).
-
-## Read the interface
+Pi may ask whether to trust project resources before loading them. See [Project trust](security.md#project-trust).
 
 <p align="center"><img src="images/interactive-mode.png" alt="Pi interactive mode showing a conversation, editor, and status information" width="750"></p>
 
-The interface has four main areas:
+The transcript shows your prompts, Pi's responses, tool calls, results, and errors. You write prompts and commands in the editor. The footer shows the current folder, session, model, context usage, and accumulated usage and cost.
 
-- The startup header lists loaded context files and resources.
-- The transcript contains messages, tool calls, results, notifications, and errors.
-- The editor accepts prompts and commands. Its border indicates the current thinking level.
-- The footer shows the working directory, session, context usage, model, and accumulated usage and cost.
+## Enter a prompt
 
-Press `Ctrl+O` to expand or collapse tool output. Press `Ctrl+T` to expand or collapse thinking blocks. Use `/hotkeys` to inspect the active shortcuts.
+Type a request and press `Enter` to send it. Use `Shift+Enter` to add a line, or press `Ctrl+G` to work on a longer prompt in your configured external editor.
 
-## Add input and context
+To include files or images:
 
-Type `@` to search for a project file and add it to your message. Tab completes paths. You can also paste images or drag them into a compatible terminal.
+- Type `@` to search for a file and add it to your prompt.
+- Press `Tab` to complete a path.
+- Paste an image or drag it into a compatible terminal.
 
-Use `Shift+Enter` for a new line. Press `Ctrl+G` to edit a longer prompt in the configured external editor.
+## Follow Pi's work
 
-Prefix a command with `!` to run it and include its output in the conversation. Use `!!` when you want to run the command without sending its output to the model.
+Pi shows each tool call and result while it works. Press `Ctrl+O` to expand or collapse tool output. Press `Ctrl+T` to show or hide thinking blocks.
 
-## Direct a running task
+The startup header lists the instructions and resources Pi loaded. The editor border indicates the current thinking level. The footer updates as the model uses context and reports usage.
 
-You do not need to wait for the current response to finish:
+Pi does not ask before every tool call. Review commands and changed files, and use a sandbox for untrusted or unattended work. See [Security](security.md).
 
-- Press `Enter` to queue a steering message. Pi delivers it after the current assistant turn and its tool calls finish.
-- Press `Alt+Enter` to queue a follow-up. Pi delivers it after the current run settles.
-- Press `Alt+Up` to return queued messages to the editor.
-- Press `Escape` to abort the current run and return queued messages to the editor.
+## Change direction
 
-Windows Terminal reserves some Alt shortcuts. See [Terminal Setup](terminal-setup.md) for platform-specific alternatives.
+You can send more input while Pi is working:
 
-## Use commands
+| What you want | Action |
+|---|---|
+| Adjust the current task | Type a message and press `Enter` |
+| Add work after the current task | Type a message and press `Alt+Enter` |
+| Return queued messages to the editor | Press `Alt+Up` |
+| Stop the current task | Press `Escape` |
 
-Type `/` to search available commands. Pi includes commands for models, sessions, settings, credentials, exports, and resource management. Extensions, skills, and prompt templates can add more.
+A message sent with `Enter` waits until the current response and its tool calls finish, then guides the next response. A follow-up sent with `Alt+Enter` waits until Pi finishes the current task. Aborting returns queued messages to the editor.
 
-The main paths from interactive mode are:
+Windows Terminal reserves some Alt shortcuts. See [Terminal Setup](terminal-setup.md) for the Windows alternatives.
 
-- `/model` and `/thinking` change the current model behavior. See [Models and Providers](models-and-providers.md).
-- `/resume`, `/tree`, `/fork`, and `/compact` manage conversation history. See [Sessions and Context](sessions-and-context.md).
-- `/settings` changes common preferences. See [Configuration](configuration.md).
-- `/reload` reloads extensions, skills, prompt templates, themes, keybindings, and context files.
+## Change the model or settings
 
-See [CLI and Modes](cli.md) for the complete command-line and slash-command reference.
+Type `/` to search the available commands. The commands you will use most often are:
 
-## Copy and export results
+- `/model` selects a model. Press `Ctrl+L` to open the same selector.
+- `/thinking` selects how much reasoning the current model uses. Press `Shift+Tab` to cycle through supported levels.
+- `/login` and `/logout` manage provider access.
+- `/settings` changes common preferences.
 
-Press `Ctrl+X` to copy the last assistant response. In the tree view it copies the selected message. In fullscreen mode, it copies the active text selection when automatic copy-on-select is disabled.
+Prompt templates, skills, and extensions can add more commands to the same menu. See [Models and Providers](models-and-providers.md), [Configuration](configuration.md), or the complete [CLI and Modes Reference](cli.md#interactive-slash-commands).
 
-Use `/export` to write the session as HTML or JSONL. Use `/share` to publish a private GitHub gist with a shareable viewer link. Review the session before sharing because it can contain prompts, tool output, file contents, and credentials exposed during the conversation.
+## Continue or start over
 
-## Choose a transcript mode
+Pi saves sessions automatically unless session persistence is disabled.
 
-Regular mode uses the terminal's normal scrollback. Fullscreen mode keeps the editor and status area fixed while the transcript scrolls inside the terminal viewport.
+- `/new` starts a new session.
+- `/resume` opens another saved session.
+- `/name` gives the current session a recognizable name.
+- `/session` shows its file, ID, message count, token usage, and cost.
 
-Set the mode through `/settings` or `--tui-mode`. Terminal support for mouse input, keyboard shortcuts, and inline images varies. See [Terminal Setup](terminal-setup.md) before changing terminal-specific settings.
+Use `/tree`, `/fork`, or `/clone` when you want to explore another approach without losing existing work. Use `/compact` to reduce the conversation history sent to the model. See [Sessions and Context](sessions-and-context.md) for these workflows.
 
-For every configurable shortcut, see [Keybindings](keybindings.md).
+After leaving Pi, run `pi --continue` from the same folder to resume its most recent session.
+
+## Run a terminal command
+
+Prefix a command with `!` to run it and include its output in the conversation:
+
+```text
+!git status
+```
+
+Use `!!` when you want to run a command without sending its output to the model.
+
+## Copy, export, or share results
+
+Press `Ctrl+X` or run `/copy` to copy the last assistant response. Use `/export` to save the session as HTML or JSONL.
+
+Use `/share` to upload the session and get a viewer link. With Radius authentication, the artifact is visible to your Radius organization. Otherwise, Pi creates a private GitHub gist through the GitHub CLI. Review the session first because it can contain prompts, tool output, file contents, and credentials exposed during the conversation.
+
+## Adjust the terminal
+
+Regular mode uses the terminal's normal scrollback. Fullscreen mode keeps the editor and status area fixed while the transcript scrolls within the terminal window. Choose a mode through `/settings` or `--tui-mode`.
+
+Terminal support for mouse input, keyboard shortcuts, and inline images varies. See [Terminal Setup](terminal-setup.md) for platform-specific configuration and [Keybindings](keybindings.md) for every configurable shortcut. Run `/hotkeys` to inspect the shortcuts active in your current session.

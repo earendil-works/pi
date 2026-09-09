@@ -36,6 +36,12 @@ This matters for clients:
 
 In particular, Node `readline` is not protocol-compliant for RPC mode because it also splits on `U+2028` and `U+2029`, which are valid inside JSON strings.
 
+### Process I/O
+
+Read stdout continuously. Pi applies backpressure while writing events, but a client that stops reading can still stall the agent. Write each command as a complete JSONL record and honor stdin backpressure.
+
+Closing stdin requests an orderly shutdown. Clients must still handle child-process errors, unexpected exits, stderr diagnostics, cancellation, and application-specific deadlines.
+
 ## Commands
 
 ### Prompting
@@ -213,7 +219,7 @@ Response:
 }
 ```
 
-The `model` field is a full [Model](#model) object or `null`. The `sessionName` field is the display name set via `set_session_name`, or omitted if not set.
+The `model` field is a full [Model](#model) object, or omitted when no model is selected. The `sessionName` field is the display name set via `set_session_name`, or omitted if not set.
 
 #### get_messages
 
@@ -659,7 +665,7 @@ If an extension cancelled the fork:
   "type": "response",
   "command": "fork",
   "success": true,
-  "data": {"text": "The original prompt text...", "cancelled": true}
+  "data": {"cancelled": true}
 }
 ```
 
@@ -790,7 +796,7 @@ Response:
 }
 ```
 
-Returns `{"text": null}` if no assistant messages exist.
+The response contains an empty `data` object if no assistant messages exist.
 
 #### set_session_name
 
@@ -829,9 +835,17 @@ Response:
   "success": true,
   "data": {
     "commands": [
-      {"name": "session-name", "description": "Set or clear session name", "source": "extension", "path": "/home/user/.pi/agent/extensions/session.ts"},
-      {"name": "fix-tests", "description": "Fix failing tests", "source": "prompt", "location": "project", "path": "/home/user/myproject/.pi/agent/prompts/fix-tests.md"},
-      {"name": "skill:brave-search", "description": "Web search via Brave API", "source": "skill", "location": "user", "path": "/home/user/.pi/agent/skills/brave-search/SKILL.md"}
+      {
+        "name": "fix-tests",
+        "description": "Fix failing tests",
+        "source": "prompt",
+        "sourceInfo": {
+          "path": "/home/user/myproject/.pi/agent/prompts/fix-tests.md",
+          "source": "local",
+          "scope": "project",
+          "origin": "top-level"
+        }
+      }
     ]
   }
 }
@@ -844,11 +858,12 @@ Each command has:
   - `"extension"`: Registered via `pi.registerCommand()` in an extension
   - `"prompt"`: Loaded from a prompt template `.md` file
   - `"skill"`: Loaded from a skill directory (name is prefixed with `skill:`)
-- `location`: Where it was loaded from (optional, not present for extensions):
-  - `"user"`: User-level (`~/.pi/agent/`)
-  - `"project"`: Project-level (`./.pi/agent/`)
-  - `"path"`: Explicit path via CLI or settings
-- `path`: Absolute file path to the command source (optional)
+- `sourceInfo`: Metadata for the resource that registered the command:
+  - `path`: Absolute path to the resource
+  - `source`: How Pi discovered it, such as `"local"`, `"auto"`, or `"cli"`
+  - `scope`: `"user"`, `"project"`, or `"temporary"`
+  - `origin`: `"top-level"` for a directly loaded resource or `"package"` for a package resource
+  - `baseDir`: Package base directory, when applicable
 
 **Note**: Built-in TUI commands (`/settings`, `/hotkeys`, etc.) are not included. They are handled only in interactive mode and would not execute if sent via `prompt`.
 
@@ -1102,9 +1117,9 @@ The `reason` field is `"manual"`, `"threshold"`, or `"overflow"`.
 
 If `reason` was `"overflow"` and compaction succeeds, `willRetry` is `true` and the agent will automatically retry the prompt.
 
-If compaction was aborted, `result` is `null` and `aborted` is `true`.
+If compaction was aborted, `result` is omitted and `aborted` is `true`.
 
-If compaction failed (e.g., API quota exceeded), `result` is `null`, `aborted` is `false`, and `errorMessage` contains the error description.
+If compaction failed (e.g., API quota exceeded), `result` is omitted, `aborted` is `false`, and `errorMessage` contains the error description.
 
 ### auto_retry_start / auto_retry_end
 
@@ -1434,8 +1449,7 @@ Source files:
 {
   "role": "user",
   "content": "Hello!",
-  "timestamp": 1733234567890,
-  "attachments": []
+  "timestamp": 1733234567890
 }
 ```
 
@@ -1459,6 +1473,7 @@ The `content` field can be a string or an array of `TextContent`/`ImageContent` 
     "output": 50,
     "cacheRead": 0,
     "cacheWrite": 0,
+    "totalTokens": 150,
     "cost": {"input": 0.0003, "output": 0.00075, "cacheRead": 0, "cacheWrite": 0, "total": 0.00105}
   },
   "stopReason": "stop",
@@ -1466,7 +1481,7 @@ The `content` field can be a string or an array of `TextContent`/`ImageContent` 
 }
 ```
 
-Stop reasons: `"stop"`, `"length"`, `"toolUse"`, `"error"`, `"aborted"`
+Stop reasons: `"pending"`, `"stop"`, `"length"`, `"toolUse"`, `"error"`, `"aborted"`, `"deferred"`
 
 ### ToolResultMessage
 
@@ -1503,23 +1518,7 @@ Created by the `bash` RPC command (not by LLM tool calls):
   "exitCode": 0,
   "cancelled": false,
   "truncated": false,
-  "fullOutputPath": null,
   "timestamp": 1733234567890
-}
-```
-
-### Attachment
-
-```json
-{
-  "id": "img1",
-  "type": "image",
-  "fileName": "photo.jpg",
-  "mimeType": "image/jpeg",
-  "size": 102400,
-  "content": "base64-encoded-data...",
-  "extractedText": null,
-  "preview": null
 }
 ```
 
@@ -1554,7 +1553,7 @@ for event in read_events():
         if delta.get("type") == "text_delta":
             print(delta["delta"], end="", flush=True)
     
-    if event.get("type") == "agent_end":
+    if event.get("type") == "agent_settled":
         print()
         break
 ```

@@ -66,22 +66,29 @@ Extended messages from [`packages/coding-agent/src/core/messages.ts`](https://gi
 
 ## Output Format
 
-Each line is a JSON object. The first line is the session header:
+JSON mode uses strict JSONL framing. Split records only on LF (`\n`) and strip an optional preceding carriage return. Unicode line and paragraph separators are valid inside JSON strings and are not record boundaries. Node.js `readline` recognizes those separators, so it is not suitable for parsing this stream.
+
+Read stdout continuously. A reader that stops consuming events can stall Pi when the pipe buffer fills.
+
+Each record is a JSON object. The first record is the session header:
 
 ```json
 {"type":"session","version":3,"id":"uuid","timestamp":"...","cwd":"/path"}
 ```
 
-Followed by events as they occur:
+Subsequent records contain events as they occur:
 
 ```json
 {"type":"agent_start"}
 {"type":"turn_start"}
+{"type":"message_start","message":{"role":"user","content":"Review this repository",...}}
+{"type":"message_end","message":{"role":"user","content":"Review this repository",...}}
 {"type":"message_start","message":{"role":"assistant","content":[],...}}
 {"type":"message_update","usage":{...},"assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"Hello"}}
 {"type":"message_end","message":{...}}
 {"type":"turn_end","message":{...},"toolResults":[]}
-{"type":"agent_end","messages":[...]}
+{"type":"agent_end","messages":[...],"willRetry":false}
+{"type":"agent_settled"}
 ```
 
 `message_update` records are delta-only. They omit both the cumulative `message` field and
