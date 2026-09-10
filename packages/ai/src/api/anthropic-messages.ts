@@ -37,6 +37,7 @@ import { appendAssistantMessageDiagnostic } from "../utils/diagnostics.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { parseJsonWithRepair, parseStreamingJson } from "../utils/json-parse.ts";
+import { createPendingToolCall, type PendingToolCall } from "../utils/pending-tool-call.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
@@ -530,6 +531,7 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 			timestamp: Date.now(),
 		};
 
+		const pendingCalls = new Map<ToolCall, PendingToolCall>();
 		try {
 			let client: Anthropic;
 			let isOAuth: boolean;
@@ -649,7 +651,7 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 						output.content.push(block);
 						stream.push({ type: "thinking_start", contentIndex: output.content.length - 1, partial: output });
 					} else if (event.content_block.type === "tool_use") {
-						const block: Block = {
+						const pending = createPendingToolCall({
 							type: "toolCall",
 							id: event.content_block.id,
 							name: isOAuth
@@ -658,7 +660,9 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 							arguments: (event.content_block.input as Record<string, any>) ?? {},
 							partialJson: "",
 							index: event.index,
-						};
+						});
+						const block: Block = pending.toolCall;
+						pendingCalls.set(block, pending);
 						output.content.push(block);
 						stream.push({ type: "toolcall_start", contentIndex: output.content.length - 1, partial: output });
 					}
@@ -692,7 +696,7 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 						const block = blocks[index];
 						if (block && block.type === "toolCall") {
 							block.partialJson += event.delta.partial_json;
-							block.arguments = parseStreamingJson(block.partialJson);
+							pendingCalls.get(block)!.setJson(block.partialJson);
 							stream.push({
 								type: "toolcall_delta",
 								contentIndex: index,
@@ -729,6 +733,8 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 							});
 						} else if (block.type === "toolCall") {
 							block.arguments = parseStreamingJson(block.partialJson);
+							pendingCalls.get(block)!.finish();
+							pendingCalls.delete(block);
 							// Finalize in-place and strip the scratch buffer so replay only
 							// carries parsed arguments.
 							delete (block as { partialJson?: string }).partialJson;
@@ -803,9 +809,13 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 				});
 			}
 
+			for (const pending of pendingCalls.values()) pending.finish();
+			pendingCalls.clear();
 			stream.push({ type: "done", reason: output.stopReason, message: output });
 			stream.end();
 		} catch (error) {
+			for (const pending of pendingCalls.values()) pending.finish();
+			pendingCalls.clear();
 			for (const block of output.content) {
 				delete (block as { index?: number }).index;
 				// partialJson is only a streaming scratch buffer; never persist it.
