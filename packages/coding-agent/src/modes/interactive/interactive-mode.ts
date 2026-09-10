@@ -1908,8 +1908,8 @@ export class InteractiveMode {
 				switchSession: async (sessionPath, options) => {
 					return this.handleResumeSession(sessionPath, options);
 				},
-				reload: async () => {
-					await this.handleReloadCommand();
+				reload: async (followUp) => {
+					await this.handleReloadCommand(followUp);
 				},
 			},
 			shutdownHandler: () => {
@@ -2052,6 +2052,9 @@ export class InteractiveMode {
 			hasPendingMessages: () => this.session.pendingMessageCount > 0,
 			shutdown: () => {
 				this.shutdownRequested = true;
+			},
+			requestReload: (options) => {
+				return this.session.extensionRunner.requestExtensionReload(options?.followUp);
 			},
 			getContextUsage: () => this.session.getContextUsage(),
 			compact: (options) => {
@@ -5967,7 +5970,7 @@ export class InteractiveMode {
 	// Command handlers
 	// =========================================================================
 
-	private async handleReloadCommand(): Promise<void> {
+	private async handleReloadCommand(followUp?: string): Promise<void> {
 		if (this.session.isStreaming) {
 			this.showWarning("Wait for the current response to finish before reloading.");
 			return;
@@ -6049,6 +6052,13 @@ export class InteractiveMode {
 			);
 			dismissReloadBox(this.editor as Component);
 			reloadBoxDismissed = true;
+			if (followUp) {
+				void this.session.prompt(followUp).catch((error) => {
+					this.showError(
+						`Follow-up after reload failed: ${error instanceof Error ? error.message : String(error)}`,
+					);
+				});
+			}
 		} catch (error) {
 			if (!reloadBoxDismissed) {
 				dismissReloadBox(previousEditor as Component);

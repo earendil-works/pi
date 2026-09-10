@@ -346,6 +346,16 @@ export interface ExtensionContext {
 	compact(options?: CompactOptions): void;
 	/** Get the current effective system prompt. */
 	getSystemPrompt(): string;
+	/**
+	 * Request an extension runtime reload. The reload is coalesced and runs
+	 * once the current agent run has fully settled (not immediately), so it is
+	 * safe to call from tools and event handlers. The reloaded runtime is
+	 * active from the next turn. Pass options.followUp to submit a user turn
+	 * immediately after a successful reload (no delay), e.g. to continue an
+	 * unattended task on the new runtime. Returns whether a real reload
+	 * handler is bound; false means the request is a no-op in this mode.
+	 */
+	requestReload(options?: { followUp?: string }): boolean;
 }
 
 /**
@@ -1752,7 +1762,7 @@ export interface ExtensionCommandContextActions {
 		sessionPath: string,
 		options?: { withSession?: (ctx: ReplacedSessionContext) => Promise<void> },
 	) => Promise<{ cancelled: boolean }>;
-	reload: () => Promise<void>;
+	reload: (followUp?: string) => Promise<void>;
 }
 
 /**

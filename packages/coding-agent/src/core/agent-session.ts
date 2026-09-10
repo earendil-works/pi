@@ -627,6 +627,15 @@ export class AgentSession {
 		try {
 			await this._extensionRunner.emit({ type: "agent_settled" });
 			this._emit({ type: "agent_settled" });
+			try {
+				await this._extensionRunner.consumePendingReload();
+			} catch (err) {
+				this._extensionRunner.emitError({
+					extensionPath: "runtime-reload",
+					event: "agent_settled",
+					error: err instanceof Error ? err.message : String(err),
+				});
+			}
 		} finally {
 			this._resolveIdleWaitIfIdle();
 		}

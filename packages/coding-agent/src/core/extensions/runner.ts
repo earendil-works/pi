@@ -182,7 +182,7 @@ export type SwitchSessionHandler = (
 	options?: { withSession?: (ctx: ReplacedSessionContext) => Promise<void> },
 ) => Promise<{ cancelled: boolean }>;
 
-export type ReloadHandler = () => Promise<void>;
+export type ReloadHandler = (followUp?: string) => Promise<void>;
 
 export type ShutdownHandler = () => void;
 
@@ -292,6 +292,9 @@ export class ExtensionRunner {
 	private navigateTreeHandler: NavigateTreeHandler = async () => ({ cancelled: false });
 	private switchSessionHandler: SwitchSessionHandler = async () => ({ cancelled: false });
 	private reloadHandler: ReloadHandler = async () => {};
+	private reloadBound = false;
+	private reloadRequested = false;
+	private reloadFollowUp: string | undefined;
 	private shutdownHandler: ShutdownHandler = () => {};
 	private shortcutDiagnostics: ResourceDiagnostic[] = [];
 	private commandDiagnostics: ResourceDiagnostic[] = [];
@@ -422,6 +425,7 @@ export class ExtensionRunner {
 			this.navigateTreeHandler = actions.navigateTree;
 			this.switchSessionHandler = actions.switchSession;
 			this.reloadHandler = actions.reload;
+			this.reloadBound = true;
 			return;
 		}
 
@@ -431,6 +435,7 @@ export class ExtensionRunner {
 		this.navigateTreeHandler = async () => ({ cancelled: false });
 		this.switchSessionHandler = async () => ({ cancelled: false });
 		this.reloadHandler = async () => {};
+		this.reloadBound = false;
 	}
 
 	setUIContext(uiContext?: ExtensionUIContext, mode: ExtensionMode = "print"): void {
@@ -605,6 +610,31 @@ export class ExtensionRunner {
 		}
 	}
 
+	/**
+	 * Request a deferred extension runtime reload. Repeated requests are
+	 * coalesced; the reload runs once the current agent run has settled
+	 * (see consumePendingReload), never mid-turn.
+	 * Returns whether a real reload handler is bound; false means the request
+	 * is a no-op in this mode (default handler) and callers should say so.
+	 */
+	requestExtensionReload(followUp?: string): boolean {
+		this.reloadRequested = true;
+		if (followUp?.trim()) this.reloadFollowUp = followUp.trim();
+		return this.reloadBound;
+	}
+
+	/**
+	 * Run the bound reload handler if a reload was requested. Called by the
+	 * session once per agent settle, when the session is idle.
+	 */
+	async consumePendingReload(): Promise<void> {
+		if (!this.reloadRequested) return;
+		this.reloadRequested = false;
+		const followUp = this.reloadFollowUp;
+		this.reloadFollowUp = undefined;
+		await this.reloadHandler(followUp);
+	}
+
 	onError(listener: ExtensionErrorListener): () => void {
 		this.errorListeners.add(listener);
 		return () => this.errorListeners.delete(listener);
@@ -776,6 +806,10 @@ export class ExtensionRunner {
 			abort: () => {
 				runner.assertActive();
 				runner.abortFn();
+			},
+			requestReload: (options) => {
+				runner.assertActive();
+				return runner.requestExtensionReload(options?.followUp);
 			},
 			hasPendingMessages: () => {
 				runner.assertActive();
