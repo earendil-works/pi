@@ -1,4 +1,4 @@
-# Models and Providers
+# Choose a Model
 
 For a built-in provider, start with `/login`, then choose a model with `/model`. Use custom model configuration only when Pi does not already include the provider or endpoint you need.
 
@@ -12,13 +12,13 @@ For a built-in provider, start with `/login`, then choose a model with `/model`.
 | An OpenAI-, Anthropic-, or Google-compatible endpoint | Add it to `models.json` |
 | A provider with a custom protocol or authentication flow | Build or install a provider extension |
 
-See [Provider Authentication](provider-reference.md) for supported subscriptions, credential names, cloud-provider requirements, and resolution order.
+See [Provider Setup](provider-reference.md) for supported subscriptions, credential names, cloud-provider requirements, and resolution order.
 
 ## Authenticate
 
 Run `/login` and select a provider. Pi stores credentials in `~/.pi/agent/auth.json`. Run `/logout` to remove stored credentials for a provider.
 
-You can instead provide an API key through the provider's environment variable. This is useful in CI and other environments where Pi should not write credentials. The [Provider Authentication](provider-reference.md) reference lists every supported variable and `auth.json` key.
+You can instead provide an API key through the provider's environment variable. This is useful in CI and other environments where Pi should not write credentials. [Provider Setup](provider-reference.md) lists every supported variable and `auth.json` key.
 
 Keep `auth.json` and any credential commands private. Project settings and extensions can execute inside the Pi process after you trust a project. Review [Security](security.md) before loading configuration from an untrusted directory.
 
@@ -46,7 +46,7 @@ Use `models.json` when the endpoint speaks a protocol Pi already supports. Use a
 
 See [Custom Providers](custom-provider.md) for the extension workflow and [Custom Models](models.md) for the configuration format.
 
-## Resolve common problems
+## Troubleshooting
 
 ### A model does not appear
 
@@ -58,7 +58,7 @@ Check whether the key came from an environment variable rather than `auth.json`.
 
 ### A subscription opens a browser on a remote machine
 
-Complete the provider's headless authentication flow when available. Some providers let you paste the final redirect URL or authorization code back into Pi. See the provider-specific instructions in [Provider Authentication](provider-reference.md#subscriptions).
+Complete the provider's headless authentication flow when available. Some providers let you paste the final redirect URL or authorization code back into Pi. See the provider-specific instructions in [Provider Setup](provider-reference.md#subscriptions).
 
 ### A compatible endpoint rejects requests
 

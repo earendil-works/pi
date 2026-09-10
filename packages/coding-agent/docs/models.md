@@ -1,6 +1,6 @@
 # Custom Models Reference
 
-This reference describes the `~/.pi/agent/models.json` format for compatible endpoints such as Ollama, vLLM, LM Studio, and proxies. For choosing and connecting to a model, see [Models and Providers](models-and-providers.md).
+This reference describes the `~/.pi/agent/models.json` format for compatible endpoints such as Ollama, vLLM, LM Studio, and proxies. For choosing and connecting to a model, see [Choose a Model](models-and-providers.md).
 
 ## Table of Contents
 

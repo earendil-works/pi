@@ -128,7 +128,7 @@ See the focused examples for [models](../examples/sdk/02-custom-model.ts), [tool
 
 ## Resources
 
-- [Models and Providers](models-and-providers.md) covers model selection and authentication; [Provider Authentication](provider-reference.md) and [Custom Models](models.md) provide exact configuration.
+- [Choose a Model](models-and-providers.md) covers model selection and authentication; [Provider Setup](provider-reference.md) and [Custom Models](models.md) provide exact configuration.
 - [Configuration](configuration.md) explains normal discovery and settings; [Settings](settings-reference.md) lists every setting.
 - [Sessions and Context](sessions-and-context.md) explains session behavior; [Session Format](session-format.md) defines persisted entries.
 - [Extensions](extensions.md), [Skills](skills.md), and [Prompt Templates](prompt-templates.md) document resources supplied through a `ResourceLoader`.

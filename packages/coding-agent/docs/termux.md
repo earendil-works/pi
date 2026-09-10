@@ -1,126 +1,117 @@
-# Termux (Android) Setup
+# Run Pi on Android with Termux
 
-Pi runs on Android via [Termux](https://termux.dev/), a terminal emulator and Linux environment for Android.
+Pi runs on Android through [Termux](https://termux.dev/), a terminal emulator and Linux environment. Text input, file tools, and shell commands are supported. Pi can copy text to the Android clipboard through Termux:API, but its clipboard-paste shortcut cannot read text or images from the Android clipboard.
 
-## Prerequisites
+## Before you begin
 
-1. Install [Termux](https://github.com/termux/termux-app#installation) from GitHub or F-Droid (not Google Play, that version is deprecated)
-2. Install [Termux:API](https://github.com/termux/termux-api#installation) from GitHub or F-Droid for clipboard and other device integrations
+Install Termux from [GitHub or F-Droid](https://github.com/termux/termux-app#installation). Do not use the deprecated Google Play build.
 
-## Installation
+[Termux:API](https://github.com/termux/termux-api#installation) is optional. Install it only when you want Pi to copy text to the Android clipboard or shell commands to use Android device APIs.
 
-```bash
-# Update packages
-pkg update && pkg upgrade
+## Install Pi
 
-# Install dependencies
-pkg install nodejs termux-api git
+1. Update Termux packages:
 
-# Install pi
-npm install -g --ignore-scripts @earendil-works/pi-coding-agent
+   ```bash
+   pkg update && pkg upgrade
+   ```
 
-# Create config directory
-mkdir -p ~/.pi/agent
+2. Install Node.js and Git:
 
-# Run pi
-pi
-```
+   ```bash
+   pkg install nodejs git
+   ```
 
-## Clipboard Support
+3. Install Pi:
 
-Clipboard operations use `termux-clipboard-set` and `termux-clipboard-get` when running in Termux. The Termux:API app must be installed for these to work.
+   ```bash
+   npm install -g --ignore-scripts @earendil-works/pi-coding-agent
+   ```
 
-Image clipboard is not supported on Termux (the `ctrl+v` image paste feature will not work).
+4. Verify the installation:
 
-## Example AGENTS.md for Termux
+   ```bash
+   pi --version
+   ```
 
-Create `~/.pi/agent/AGENTS.md` to help the agent understand the Termux environment:
+5. Open the folder you want to work in and start Pi:
 
-````markdown
-# Agent Environment: Termux on Android
+   ```bash
+   cd /path/to/working-folder
+   pi
+   ```
 
-## Location
-- **OS**: Android (Termux terminal emulator)
-- **Home**: `/data/data/com.termux/files/home`
-- **Prefix**: `/data/data/com.termux/files/usr`
-- **Shared storage**: `/storage/emulated/0` (Downloads, Documents, etc.)
+Continue with the main [Quickstart](quickstart.md#3-choose-a-model) to connect a model and run your first task.
 
-## Opening URLs
-```bash
-termux-open-url "https://example.com"
-```
+## Access Android shared storage
 
-## Opening Files
-```bash
-termux-open file.pdf          # Opens with default app
-termux-open --chooser image.jpg      # Choose app
-```
+Termux cannot access shared Android storage until you grant permission. Run this once:
 
-## Clipboard
-```bash
-termux-clipboard-set "text"   # Copy
-termux-clipboard-get          # Paste
-```
-
-## Notifications
-```bash
-termux-notification -t "Title" -c "Content"
-```
-
-## Device Info
-```bash
-termux-battery-status         # Battery info
-termux-wifi-connectioninfo    # WiFi info
-termux-telephony-deviceinfo   # Device info
-```
-
-## Sharing
-```bash
-termux-share -a send file.txt # Share file
-```
-
-## Other Useful Commands
-```bash
-termux-toast "message"        # Quick toast popup
-termux-vibrate                # Vibrate device
-termux-tts-speak "hello"      # Text to speech
-termux-camera-photo out.jpg   # Take photo
-```
-
-## Notes
-- Termux:API app must be installed for `termux-*` commands
-- Use `pkg install termux-api` for the command-line tools
-- Storage permission needed for `/storage/emulated/0` access
-````
-
-## Limitations
-
-- **No image clipboard**: Termux clipboard API only supports text
-- **Storage access**: To access files in `/storage/emulated/0` (Downloads, etc.), run `termux-setup-storage` once to grant permissions
-
-## Troubleshooting
-
-### Clipboard not working
-
-Ensure both apps are installed:
-1. Termux (from GitHub or F-Droid)
-2. Termux:API (from GitHub or F-Droid)
-
-Then install the CLI tools:
-```bash
-pkg install termux-api
-```
-
-### Permission denied for shared storage
-
-Run once to grant storage permissions:
 ```bash
 termux-setup-storage
 ```
 
-### Node.js installation issues
+After approval, Android shared storage is available under `/storage/emulated/0` and through the links Termux creates under `~/storage/`.
 
-If npm fails, try clearing the cache:
+Only grant this permission when Pi should be able to access those files. Commands and tools running in Termux use the same storage permissions as the Termux process.
+
+## Use clipboard commands
+
+Pi uses `termux-clipboard-set` when it copies text and `TERMUX_VERSION` is present. Shell commands can use both `termux-clipboard-get` and `termux-clipboard-set`. The Termux:API app and its command-line package must be installed:
+
 ```bash
-npm cache clean --force
+pkg install termux-api
 ```
+
+Verify the integration:
+
+```bash
+printf 'Pi clipboard test' | termux-clipboard-set
+termux-clipboard-get
+```
+
+The second command should print `Pi clipboard test`.
+
+The Termux clipboard API supports text only. Pi's clipboard-paste shortcut does not use `termux-clipboard-get`, so paste through the terminal or run the command explicitly when you need clipboard text in the editor.
+
+## Add Termux-specific instructions
+
+Pi detects that it is running in Termux, but it cannot infer how you want it to interact with Android. Add only the environment details relevant to your work to `~/.pi/agent/AGENTS.md`:
+
+````markdown
+# Termux environment
+
+- Pi runs in Termux on Android.
+- Shared Android storage is under `/storage/emulated/0`.
+- Open URLs with `termux-open-url "https://example.com"`.
+- Open files with `termux-open <path>`.
+- Do not access shared storage unless the task requires it.
+````
+
+Run `/reload` after changing the file during an active session.
+
+## Troubleshooting
+
+### Copying from Pi fails
+
+Confirm that you installed both components:
+
+1. The Termux:API Android app from the same source as Termux
+2. The `termux-api` command-line package
+
+Then run the clipboard verification commands above outside Pi. If they fail there, fix the Termux:API installation before retrying Pi's copy command.
+
+### Shared storage reports permission denied
+
+Run `termux-setup-storage`, approve the Android permission request, and retry the path under `~/storage/` or `/storage/emulated/0`.
+
+### Pi is not found after installation
+
+Open a new Termux shell and run:
+
+```bash
+npm prefix -g
+command -v pi
+```
+
+Confirm that the global npm binary directory is on `PATH`, then reinstall Pi if the package is missing.

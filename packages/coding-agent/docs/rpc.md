@@ -239,7 +239,7 @@ Response:
 }
 ```
 
-Messages are `AgentMessage` objects (see [Message Types](#message-types)).
+Messages are `AgentMessage` objects (see [Types](#types)).
 
 ### Model
 
@@ -1207,6 +1207,8 @@ There are two categories of extension UI methods:
 
 If a dialog method includes a `timeout` field, the agent-side will auto-resolve with a default value when the timeout expires. The client does not need to track timeouts.
 
+### RPC UI limitations
+
 Some `ExtensionUIContext` methods are not supported or degraded in RPC mode because they require direct TUI access:
 - `custom()` returns `undefined`
 - `setWorkingMessage()`, `setWorkingIndicator()`, `setFooter()`, `setHeader()`, `setEditorComponent()`, `setToolsExpanded()` are no-ops
@@ -1388,7 +1390,7 @@ Dismiss any dialog method. The extension receives `undefined` (for select/input/
 {"type": "extension_ui_response", "id": "uuid-3", "cancelled": true}
 ```
 
-## Error Handling
+## Command and parse errors
 
 Failed commands return a response with `success: false`:
 

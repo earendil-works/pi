@@ -1,53 +1,39 @@
-# Containerization
+# Run Pi in an isolated environment
 
-Pi runs with all permissions by default, but in some cases, you will want to have more control over what directories Pi can write to and which accesses it has.
+Use an isolated environment to limit the files, credentials, processes, and network services that generated commands can access or affect.
 
-There are two general options. You can either
-1. run the whole `pi` process inside an isolated environment, or
-2. run `pi` on the host and route tool execution into an isolated environment.
+You can isolate the complete Pi process or keep Pi on the host and route selected tools into an isolated environment.
 
-## Choose a pattern
+## Choose an isolation method
 
-| Pattern | What is isolated | Best for | Notes |
-| --- | --- | --- | --- |
-| Gondolin extension | Built-in tools and `!` commands | Local micro-VM isolation while keeping auth on host | See [`examples/extensions/gondolin/`](../examples/extensions/gondolin/). |
-| Plain Docker | Whole `pi` process in a local container | Simple local isolation | Provider API keys enter the container. |
-| OpenShell | Whole `pi` process in a policy-controlled sandbox | Local or remote managed sandbox | Requires an OpenShell gateway |
-| Docker Sandboxes | Whole `pi` process in a managed sandbox | Local isolation with provider keys kept on the host | Requires Docker Sandboxes (`sbx`). |
+| Method | Where Pi runs | What is isolated | Credential handling | Best for |
+|---|---|---|---|---|
+| Plain Docker | Container | Pi, built-in tools, `!` commands, and extensions | Credentials passed into the container | A straightforward local container boundary |
+| Docker Sandboxes | Managed sandbox | Pi, built-in tools, `!` commands, and extensions | Provider credentials remain on the host and are substituted by the proxy | Managed local isolation without exposing the real provider key |
+| OpenShell | Local or remote sandbox | Pi, built-in tools, `!` commands, and extensions | Policy-controlled credentials and inference routing | Filesystem, process, network, and credential policies |
+| Gondolin extension | Host | Built-in tools and `!` commands | Stored Pi credentials remain on the host, but commands inherit host environment variables | A local micro-VM for tool execution while retaining the host interface |
 
-Extensions run wherever the `pi` process runs. If you run host `pi` with a tool-routing extension, other custom extension tools still run on the host unless they also delegate their operations.
+The method changes where extensions run. When the complete Pi process runs inside an isolated environment, its extensions run there too. When host Pi delegates built-in tools through Gondolin, other extension tools still run on the host unless they also delegate their work.
 
-## Gondolin
+## Decide what Pi can access
 
-[Gondolin](https://github.com/earendil-works/gondolin) is a local Linux micro-VM.
-Use the [example extension](../examples/extensions/gondolin) when you want `pi` on the host but all built-in tools routed into the VM.
+An isolated process can still affect resources you expose to it:
 
-Setup:
+- A read-write host mount lets Pi modify those host files.
+- Mounting `~/.pi/agent` exposes your Pi credentials, settings, extensions, and sessions.
+- Environment variables passed into a container are available to processes inside it.
+- Network access may allow code or tool output to leave the environment.
+- Tool-only isolation does not constrain the host Pi process or extension tools that do not use the isolated backend.
 
-```bash
-cp -R packages/coding-agent/examples/extensions/gondolin ~/.pi/agent/extensions/gondolin
-cd ~/.pi/agent/extensions/gondolin
-npm install --ignore-scripts
-```
+Expose only the working folder, credentials, and network destinations needed for the task. Use read-only mounts or copy files into and out of the environment when you do not want writes to affect the host.
 
-Run from the project you want mounted:
+## Run Pi in plain Docker
 
-```bash
-cd /path/to/project
-pi -e ~/.pi/agent/extensions/gondolin
-```
+Plain Docker provides the simplest whole-process container boundary.
 
-The extension mounts the host cwd at `/workspace` in the VM and overrides `read`, `write`, `edit`, `bash`, `grep`, `find`, and `ls`.
-User `!` commands are routed into the VM, as well.
-File changes under `/workspace` write through to the host.
+### Build the image
 
-Requirements: Node.js >= 23.6.0 for `@earendil-works/gondolin`, plus QEMU (requires installation through your package manager).
-
-## Plain Docker
-
-Run the whole `pi` process in Docker when you want the simplest local container boundary.
-
-`Dockerfile.pi`:
+Create `Dockerfile.pi`:
 
 ```dockerfile
 FROM node:24-bookworm-slim
@@ -61,11 +47,17 @@ WORKDIR /workspace
 ENTRYPOINT ["pi"]
 ```
 
-Build and run:
+Build it from the directory containing the file:
 
 ```bash
 docker build -t pi-sandbox -f Dockerfile.pi .
+```
 
+### Start Pi
+
+From the working folder you want Pi to access, run:
+
+```bash
 docker run --rm -it \
   -e ANTHROPIC_API_KEY \
   -v "$PWD:/workspace" \
@@ -73,56 +65,29 @@ docker run --rm -it \
   pi-sandbox
 ```
 
-The `-v "$PWD:/workspace"` mounts your current directory into the container at /workspace such that reads and writes in `/workspace` inside Docker directly affect your host files, like in the Gondolin example.
+Replace `ANTHROPIC_API_KEY` with the credential required by your provider. The named `pi-agent-home` volume keeps container-local settings, credentials, and sessions between runs.
 
-Use a named volume for `/root/.pi/agent` if you want container-local settings and sessions. Mounting your host `~/.pi/agent` exposes host auth and session files to the container.
+Do not mount the host's `~/.pi/agent` unless the container should have access to your host Pi configuration and credentials.
 
-## OpenShell
+### Verify the workspace
 
-Use [NVIDIA OpenShell](https://docs.nvidia.com/openshell/about/overview) when you want a policy-controlled sandbox with filesystem, process, network, credential, and inference controls.
-OpenShell can run sandboxes through a local gateway backed by Docker, Podman, or a VM runtime, or through a remote Kubernetes gateway.
+Inside Pi, run:
 
-Every sandbox requires an active gateway.
-Register and select one before creating a sandbox:
-
-```bash
-openshell gateway add <gateway-url> --name <name>
-openshell gateway select <name>
+```text
+!pwd
 ```
 
-Launch `pi` inside an OpenShell sandbox:
+The command should report `/workspace`. Changes under `/workspace` write through to the mounted host folder. Remove the bind mount or use a read-only mount when that is not acceptable.
 
-```bash
-openshell sandbox create --name pi-sandbox --from pi -- pi
-```
+## Run Pi with Docker Sandboxes
 
-In this pattern, the whole `pi` process runs inside the sandbox.
-Built-in tools, `!` commands, and extension tools execute inside the OpenShell boundary.
+[Docker Sandboxes](https://docs.docker.com/ai/sandboxes/) runs the complete Pi process inside a managed sandbox. Its proxy can keep the real provider credential on the host and substitute it when requests leave the sandbox.
 
-If the gateway is remote, project files are not bind-mounted from the host, meaning writes in the sandbox are not reflected on your machine.
-Clone the repository inside the sandbox or use OpenShell file transfer commands:
+Configure credentials before creating the sandbox. Do not run `/login` inside the sandbox because that writes a real credential into it.
 
-```bash
-openshell sandbox upload pi-sandbox ./repo /workspace
-openshell sandbox download pi-sandbox /workspace/repo ./repo-out
-```
+### Use a Claude Pro or Max token
 
-OpenShell providers can keep raw model API keys outside the sandbox.
-When inference routing is configured, code inside the sandbox can call `https://inference.local`, and the gateway injects the configured provider credentials upstream.
-Configure Pi to use the corresponding OpenAI-compatible or Anthropic-compatible endpoint if you want model traffic to use this route.
-
-## Docker Sandboxes
-
-[Docker Sandboxes](https://docs.docker.com/ai/sandboxes/) is a managed sandbox runtime from Docker that runs the whole `pi` process inside a sandbox.
-It is one of the container boundaries [No Built-in Sandbox](security.md#no-built-in-sandbox) points to.
-
-Unlike the Plain Docker pattern above, the provider credential is not passed into the container.
-The sandbox receives a sentinel value instead, and the `sbx` proxy substitutes the real credential on egress to `api.anthropic.com`.
-Credentials are wired at creation time, so store yours on the host before you create the sandbox.
-
-For a Claude Pro/Max subscription, run `claude setup-token` on a machine with Claude Code, then store the result on the host.
-If an `anthropic` secret is already bound, remove it first: otherwise the proxy adds an `x-api-key` header alongside the Bearer token and Anthropic rejects the request.
-`sbx secret set-custom` reads the token from stdin, so it stays out of shell history.
+Generate the token with `claude setup-token` on a machine with Claude Code. If an `anthropic` secret is already configured, remove it first so the proxy does not add an API-key header alongside the bearer token:
 
 ```bash
 sbx secret rm anthropic
@@ -133,24 +98,86 @@ sbx secret set-custom \
   --placeholder 'sk-ant-oat01-{rand}'
 ```
 
-The sandbox gets an OAuth-shaped placeholder, not the real token, and the proxy swaps it on egress to that host; `ANTHROPIC_OAUTH_TOKEN` is a variable pi already reads and prefers over an API key, so no extra pi configuration is needed.
+`sbx secret set-custom` reads the real token from standard input. The sandbox receives an OAuth-shaped placeholder, which the proxy replaces only for requests to the configured host.
 
-For an API key, store it with `sbx secret set anthropic` instead. The kit wires it the same way, as a sentinel the proxy substitutes on egress.
+For an Anthropic API key, use `sbx secret set anthropic` instead.
 
-With the credential stored, launch `pi` from the project you want mounted:
+### Start Pi
+
+Run this from the working folder you want mounted:
 
 ```bash
 sbx run --kit "docker.io/sbx/pi-kit:latest" pi
 ```
 
-The kit pre-bakes `pi` into its image, so the sandbox starts without installing anything, and the current directory is the sandbox workspace.
-
-Do not authenticate from inside the sandbox: `/login` there writes a real token into the container and defeats the proxy model.
-
-Scripted use works the same way:
+For an existing sandbox, run Pi non-interactively with:
 
 ```bash
 sbx exec <sandbox-name> -- pi -p "list the failing tests"
 ```
 
-See the [kit documentation](https://github.com/docker/sbx-kits-contrib/tree/main/pi) for the full credential matrix, troubleshooting, and pinning.
+See the [Pi kit documentation](https://github.com/docker/sbx-kits-contrib/tree/main/pi) for other providers, troubleshooting, and image pinning.
+
+## Run Pi with OpenShell
+
+[NVIDIA OpenShell](https://docs.nvidia.com/openshell/about/overview) provides local or remote sandboxes with filesystem, process, network, credential, and inference policies.
+
+### Select a gateway
+
+Every sandbox requires an active gateway:
+
+```bash
+openshell gateway add <gateway-url> --name <name>
+openshell gateway select <name>
+```
+
+### Create the sandbox
+
+```bash
+openshell sandbox create --name pi-sandbox --from pi -- pi
+```
+
+Pi, its built-in tools, `!` commands, and extension tools run inside the OpenShell boundary.
+
+### Transfer files to a remote sandbox
+
+A remote gateway does not bind-mount your host working folder. Clone the repository inside the sandbox or transfer files explicitly:
+
+```bash
+openshell sandbox upload pi-sandbox ./working-folder /workspace
+openshell sandbox download pi-sandbox /workspace/working-folder ./working-folder-out
+```
+
+OpenShell inference routing can keep raw model credentials outside the sandbox. When configured, point Pi at the corresponding OpenAI-compatible or Anthropic-compatible endpoint exposed by the gateway.
+
+## Route tools through Gondolin
+
+[Gondolin](https://github.com/earendil-works/gondolin) is a local Linux micro-VM. Its example extension keeps the Pi process and file-based provider credentials on the host while routing the built-in tools and user `!` commands into the VM.
+
+Commands inside the VM inherit the host process environment. Provider keys supplied through environment variables can therefore be visible inside the VM. Do not use this pattern as a credential boundary unless you remove sensitive variables or change the extension's environment handling.
+
+Gondolin requires Node.js 23.6 or newer and QEMU installed through your operating-system package manager.
+
+### Install the extension
+
+From a Pi source checkout:
+
+```bash
+mkdir -p ~/.pi/agent/extensions
+cp -R packages/coding-agent/examples/extensions/gondolin ~/.pi/agent/extensions/gondolin
+cd ~/.pi/agent/extensions/gondolin
+npm install --ignore-scripts
+```
+
+### Start Pi
+
+Run Pi from the working folder you want mounted:
+
+```bash
+cd /path/to/working-folder
+pi -e ~/.pi/agent/extensions/gondolin
+```
+
+The extension mounts the host working folder at `/workspace` in the VM and overrides `read`, `write`, `edit`, `bash`, `grep`, `find`, and `ls`. File changes under `/workspace` write through to the host.
+
+Other extension tools still run on the host unless they explicitly delegate their operations. Review the [Gondolin example](../examples/extensions/gondolin/) before adding tools that could bypass the VM boundary.

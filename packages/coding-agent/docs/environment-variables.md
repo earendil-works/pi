@@ -6,7 +6,7 @@ Pi uses environment variables in three ways:
 - Pi sets process markers so child processes can identify Pi as the launching agent.
 - Commands run by the LLM-callable shell tools receive `PI_*` variables describing the current session.
 
-Provider API-key variables are documented separately in [Provider Authentication](provider-reference.md#environment-variables-or-auth-file).
+Provider API-key variables are documented separately in [Provider Setup](provider-reference.md#environment-variables-or-auth-file).
 
 ## Process Marker
 
@@ -95,6 +95,6 @@ These variables are read by Pi itself:
 | `VISUAL`, `EDITOR` | External editor fallback when `externalEditor` is unset |
 | `HTTP_PROXY`, `HTTPS_PROXY` | Proxy outbound HTTP requests |
 
-Provider credentials such as `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, and cloud-provider configuration are listed in [Provider Authentication](provider-reference.md#environment-variables-or-auth-file).
+Provider credentials such as `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, and cloud-provider configuration are listed in [Provider Setup](provider-reference.md#environment-variables-or-auth-file).
 
 `PI_SERVER_DIR` and `PI_SERVER_ID` apply only to the source-only [experimental remote harness](development.md#experimental-remote-harness), not distributed builds.

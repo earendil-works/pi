@@ -2,7 +2,7 @@
 
 Run `pi` from the folder you want to work in. Pi uses that folder to discover files, instructions, and configuration, and to group saved sessions. If you have not installed Pi or chosen a model yet, follow the [Quickstart](quickstart.md).
 
-Pi may ask whether you trust the working folder before loading its project resources. See [Project trust](security.md#project-trust).
+Pi may ask whether you trust the working folder before loading its project resources. See [Project trust](security.md#understand-project-trust).
 
 <p align="center"><img src="images/interactive-mode.png" alt="Pi interactive mode showing a conversation, editor, and status information" width="750"></p>
 
@@ -50,7 +50,7 @@ Type `/` to search the available commands. The commands you will use most often 
 - `/login` and `/logout` manage provider access.
 - `/settings` changes common preferences.
 
-Prompt templates, skills, and extensions can add more commands to the same menu. See [Models and Providers](models-and-providers.md), [Configuration](configuration.md), or the complete [CLI and Modes Reference](cli.md#interactive-slash-commands).
+Prompt templates, skills, and extensions can add more commands to the same menu. See [Choose a Model](models-and-providers.md), [Configuration](configuration.md), or the complete [Command Line reference](cli.md#interactive-slash-commands).
 
 ## Continue or start over
 

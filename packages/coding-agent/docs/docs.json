@@ -28,7 +28,7 @@
               "path": "interactive-use.md"
             },
             {
-              "title": "Models and Providers",
+              "title": "Choose a Model",
               "path": "models-and-providers.md"
             },
             {
@@ -42,6 +42,39 @@
             {
               "title": "Configuration",
               "path": "configuration.md"
+            }
+          ]
+        },
+        {
+          "title": "Running Pi",
+          "items": [
+            {
+              "title": "Run Pi Safely",
+              "path": "security.md"
+            },
+            {
+              "title": "Isolate Pi",
+              "path": "containerization.md"
+            },
+            {
+              "title": "Run Pi on Windows",
+              "path": "windows.md"
+            },
+            {
+              "title": "Run Pi on Android",
+              "path": "termux.md"
+            },
+            {
+              "title": "Configure Your Terminal",
+              "path": "terminal-setup.md"
+            },
+            {
+              "title": "Run Pi in tmux",
+              "path": "tmux.md"
+            },
+            {
+              "title": "Configure Shell Commands",
+              "path": "shell-aliases.md"
             }
           ]
         },
@@ -93,11 +126,11 @@
       "title": "Reference",
       "items": [
         {
-          "title": "CLI and Modes",
+          "title": "Command Line",
           "path": "cli.md"
         },
         {
-          "title": "Provider Authentication",
+          "title": "Provider Setup",
           "path": "provider-reference.md"
         },
         {
@@ -121,11 +154,11 @@
           "path": "themes.md"
         },
         {
-          "title": "Session Format",
+          "title": "Session File Format",
           "path": "session-format.md"
         },
         {
-          "title": "Compaction",
+          "title": "Compaction and Branch Summaries",
           "path": "compaction.md"
         },
         {
@@ -135,39 +168,6 @@
         {
           "title": "RPC Protocol",
           "path": "rpc.md"
-        }
-      ]
-    },
-    {
-      "title": "Operations and Platforms",
-      "items": [
-        {
-          "title": "Security",
-          "path": "security.md"
-        },
-        {
-          "title": "Containerization",
-          "path": "containerization.md"
-        },
-        {
-          "title": "Windows",
-          "path": "windows.md"
-        },
-        {
-          "title": "Termux on Android",
-          "path": "termux.md"
-        },
-        {
-          "title": "tmux",
-          "path": "tmux.md"
-        },
-        {
-          "title": "Terminal Setup",
-          "path": "terminal-setup.md"
-        },
-        {
-          "title": "Shell Aliases",
-          "path": "shell-aliases.md"
         }
       ]
     },

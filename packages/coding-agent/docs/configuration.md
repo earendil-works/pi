@@ -25,9 +25,9 @@ For options that are not available through `/settings`, edit one of these files:
 
 Project settings override global settings. Nested setting objects are merged. Paths in global settings resolve from `~/.pi/agent`; paths in project settings resolve from `.pi`.
 
-Use global settings for personal defaults. Use project settings only for behavior that should follow the repository. Project settings can load executable resources, so review [Project Trust](security.md#project-trust) before accepting them.
+Use global settings for personal defaults. Use project settings only for behavior that should follow the repository. Project settings can load executable resources, so review [Project trust](security.md#understand-project-trust) before accepting them.
 
-Model defaults use separate selectors. In `/model`, press `Ctrl+S` to save the selected startup model. In `/thinking`, press `Ctrl+S` to save the startup thinking level. See [Models and Providers](models-and-providers.md).
+Model defaults use separate selectors. In `/model`, press `Ctrl+S` to save the selected startup model. In `/thinking`, press `Ctrl+S` to save the startup thinking level. See [Choose a Model](models-and-providers.md).
 
 The complete setting names, types, defaults, and precedence rules are in [Settings](settings-reference.md).
 
@@ -78,7 +78,7 @@ Pi automatically watches only the active personal theme at `~/.pi/agent/themes/<
 
 Each resource guide covers its file format and discovery exceptions: [Extensions](extensions.md), [Skills](skills.md), [Prompt Templates](prompt-templates.md), [Themes](themes.md), and [Pi Packages](packages.md).
 
-## Verify a change
+## Verify configuration changes
 
 Use the interface that owns the configuration:
 

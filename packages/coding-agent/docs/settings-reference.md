@@ -11,7 +11,7 @@ Edit the files directly or use `/settings` for common options. To save startup m
 
 ## Project Trust
 
-Project settings load only after project trust is granted. See [Project Trust](security.md#project-trust) for the trust boundary, saved decisions, and command-line overrides.
+Most project settings load only after project trust is granted. Pi reads the project `sessionDir` setting before resolving trust so it can select or create a session. Declining trust skips the remaining project settings. See [Understand project trust](security.md#understand-project-trust) for the trust boundary, saved decisions, and command-line overrides.
 
 ## All Settings
 
@@ -112,7 +112,7 @@ Set `PI_SKIP_VERSION_CHECK=1` to disable the Pi version update check. Use `--off
 }
 ```
 
-### Warnings
+### Warning settings
 
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
@@ -236,7 +236,7 @@ Keep `retry.provider.maxRetries` at `0` unless provider-level retries are explic
 | `terminal.clearOnShrink` | boolean | `false` | Clear empty rows when content shrinks (can cause flicker) |
 | `terminal.showTerminalProgress` | boolean | `false` | Show an indeterminate OSC 9;4 progress indicator in the terminal tab while Pi is working |
 | `terminal.hyperlinks` | boolean or `"auto"` | `"auto"` | Override OSC 8 hyperlink support (advanced, JSON-only) |
-| `terminal.images` | string or boolean | `"auto"` | Override image protocol support with `"kitty"`, `"iterm2"`, `false`, or `"auto"` (advanced, JSON-only) |
+| `terminal.images` | string or `false` | `"auto"` | Override image protocol support with `"kitty"`, `"iterm2"`, `false`, or `"auto"` (advanced, JSON-only) |
 | `terminal.trueColor` | boolean or `"auto"` | `"auto"` | Override truecolor support (advanced, JSON-only) |
 | `images.autoResize` | boolean | `true` | Resize images to 2000x2000 max. Applies to `@file` attachments, `read`, and images returned by tools |
 | `images.blockImages` | boolean | `false` | Block all images from being sent to LLM |
@@ -397,9 +397,13 @@ See [packages.md](packages.md) for package management details.
 }
 ```
 
-## Project Overrides
+## Project overrides
 
-Project settings (`.pi/settings.json`) override global settings. Nested objects are merged:
+Most project settings in `.pi/settings.json` override global settings. Nested objects are merged.
+
+The resource arrays `packages`, `extensions`, `skills`, `prompts`, and `themes` are an exception. Pi processes their global and project values separately, so a project array does not replace or disable the corresponding global array.
+
+For other settings, the merge works as follows:
 
 ```json
 // ~/.pi/agent/settings.json (global)

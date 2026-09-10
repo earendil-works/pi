@@ -56,4 +56,4 @@ Place the template in your user or project prompt directory. Conventional prompt
 
 Settings and packages can select nested Markdown files; a package manifest can narrow discovery with explicit paths and globs. See [Loading resources](configuration.md#resources) for all supported locations and options.
 
-Project templates become commands in the editor after trust is granted. Review their content before trusting an unfamiliar project. See [Security](security.md#project-trust).
+Project templates become commands in the editor after trust is granted. Review their content before trusting an unfamiliar project. See [Security](security.md#understand-project-trust).

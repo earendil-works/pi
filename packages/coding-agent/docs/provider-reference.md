@@ -1,6 +1,6 @@
-# Provider Authentication Reference
+# Provider Setup Reference
 
-This reference lists provider authentication methods, credential keys, cloud-provider requirements, and credential resolution order. For the setup workflow, see [Models and Providers](models-and-providers.md).
+This reference lists provider authentication methods, credential keys, cloud-provider requirements, and credential resolution order. For choosing and connecting to a model, see [Choose a Model](models-and-providers.md).
 
 ## Table of Contents
 
@@ -316,9 +316,9 @@ See [llama.cpp](llama-cpp.md) for server setup, model directory layout, environm
 
 ## Custom Providers
 
-**Via models.json:** Add Ollama, LM Studio, vLLM, or any provider that speaks a supported API (OpenAI Completions, OpenAI Responses, Anthropic Messages, Google Generative AI). See [models.md](models.md).
+Configure the service in `models.json` when it speaks an API that Pi already supports, such as OpenAI Completions, OpenAI Responses, Anthropic Messages, or Google Generative AI. This is the usual choice for Ollama, LM Studio, vLLM, and compatible proxies. See the [Custom Models reference](models.md) for the configuration format.
 
-**Via extensions:** For providers that need custom API implementations or OAuth flows, create an extension. See [custom-provider.md](custom-provider.md) and [examples/extensions/custom-provider-gitlab-duo](../examples/extensions/custom-provider-gitlab-duo/).
+Create a provider extension only when the service needs custom authentication, model discovery, request handling, or streaming. Follow the [Custom Providers guide](custom-provider.md), then use the checked [GitLab Duo provider example](../examples/extensions/custom-provider-gitlab-duo/) as a working implementation.
 
 ## Resolution Order
 
