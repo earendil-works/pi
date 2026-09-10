@@ -1,137 +1,268 @@
-# CLI and Modes Reference
+<a id="cli-and-modes-reference"></a>
 
-```text
+# Command Line
+
+This page documents Pi's built-in command-line commands and options. Run `pi --help` or append `--help` to a command for the exact interface in your installed version. The top-level help also includes options registered by loaded extensions.
+
+```sh
 pi [options] [--] [@files...] [messages...]
+pi install <source> [options]
+pi remove <source> [options]
+pi uninstall <source> [options]
+pi update [target] [options]
+pi list
+pi config [options]
+pi auth <check|print-api-key|print-bearer-token> [options]
 ```
 
-When stdin and stdout are terminals, Pi starts interactive mode unless you select print, JSON, or RPC mode. Piped input selects print mode. Positional messages become prompts. Prefix a path with `@` to attach that file. Use `--` to stop option parsing when a prompt begins with a hyphen.
+<a id="modes"></a>
 
-## Modes
+## Invocation and output
+
+```sh
+pi
+pi --print "Summarize this repository"
+git diff | pi --print "Review this change"
+pi --mode json "Inspect this repository" > events.jsonl
+```
+
+With terminal stdin and stdout, Pi opens the terminal UI unless `--print`, `--mode json`, or `--mode rpc` selects another interface. When either stream is redirected and neither JSON nor RPC mode is selected, Pi uses print mode. See [CLI Integration](cli-integration.md) for choosing between interactive, print, JSON, RPC, and SDK integration.
+
+| Input | Behavior |
+|---|---|
+| `message` | Provide an initial prompt |
+| `@path` | Include a text file or image in the first prompt |
+| Piped stdin | Prepend its contents to the first prompt |
+| `--` | Stop option parsing so a prompt can begin with `-` |
+
+Pi resolves `@path` from the current working directory. The working directory also controls project configuration, resource discovery, and session grouping.
+
+`--print` controls whether Pi runs once and exits. `--mode` selects the output interface. `--mode text` does not force one-shot execution when stdin and stdout are terminals; use `--print` for that behavior.
 
 | Option | Behavior |
 |---|---|
-| No mode option | Use interactive mode on a terminal, or print mode with piped input or redirected output |
-| `-p`, `--print` | Process the prompt and print the final response |
-| `--mode text` | Select text output; remains interactive when stdin and stdout are terminals |
-| `--mode json` | Write agent events as JSON Lines |
-| `--mode rpc` | Accept JSON Lines commands on stdin and write responses and events to stdout |
-| `--export <input> [output]` | Export a session file to HTML and exit |
+| `-p`, `--print` | Run the supplied prompts, write the final assistant text to stdout, then exit |
+| `--mode text` | Select text output; still open the terminal UI when stdin and stdout are terminals |
+| `--mode json` | Run the supplied prompts, write JSONL events to stdout, then exit |
+| `--mode rpc` | Read JSONL commands from stdin and write responses and events to stdout until shutdown |
+| `--export <input> [output]` | Export a session file to HTML and exit; derive the destination when `output` is omitted |
 
-Print mode also reads piped stdin and adds it to the initial prompt. See [JSON Event Stream Mode](json.md) and [RPC Mode](rpc.md) for their protocols.
+RPC mode rejects `@file` arguments. JSON and RPC modes reserve stdout for protocol records. See [JSON Event Stream](json.md) and [RPC Protocol](rpc.md).
 
-## Model options
+<a id="model-options"></a>
 
-| Option | Description |
+## Models
+
+```sh
+pi --model sonnet:high
+```
+
+See [Choose a Model](models-and-providers.md) for model selection and [Provider Setup](provider-reference.md) for authentication.
+
+- `--provider <name>`<br>
+  Restricts `--model` lookup to one provider.
+- `--model <pattern>`<br>
+  Selects by exact ID or fuzzy ID/name match. It accepts `provider/id` and an optional `:<thinking>` suffix.
+- `--api-key <key>`<br>
+  Uses a non-persistent API-key override. It requires a model selected through `--model` or `--models`.
+- `--thinking <level>`<br>
+  Sets `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`. It overrides a `--model` suffix and is clamped to the model's capabilities.
+- `--models <patterns>`<br>
+  Sets a comma-separated scope for startup and cycling. It accepts exact IDs, fuzzy matches, case-insensitive globs, and optional `:<thinking>` suffixes.
+- `--list-models [search]`<br>
+  Lists available models, optionally filtered by a fuzzy search, then exits.
+
+<a id="session-options"></a>
+
+## Sessions
+
+```sh
+pi --continue
+```
+
+See [Sessions and Context](sessions-and-context.md) for resuming, forking, naming, and storing sessions.
+
+- `-c`, `--continue`<br>
+  Continues the most recent session for the current project.
+- `-r`, `--resume`<br>
+  Opens the session selector.
+- `--session <path|id>`<br>
+  Opens by file path, exact ID, or partial ID. Pi searches the current project first and offers to fork a cross-project match.
+- `--session-id <id>`<br>
+  Opens the exact project session ID or creates it if absent. IDs accept letters, numbers, `.`, `_`, and `-`.
+- `--fork <path|id>`<br>
+  Forks an existing session into a new session for the current project.
+- `--session-dir <dir>`<br>
+  Overrides storage and lookup. It takes precedence over `PI_CODING_AGENT_SESSION_DIR` and the `sessionDir` setting.
+- `--no-session`<br>
+  Uses an in-memory session that is not persisted.
+- `-n`, `--name <name>`<br>
+  Sets the session display name.
+
+Constraints:
+
+- Session IDs must start and end with a letter or number.
+- `--fork` cannot be combined with `--session`, `--continue`, `--resume`, or `--no-session`.
+- `--session-id` cannot be combined with `--session`, `--continue`, or `--resume`. Combine it with `--fork` to choose the new ID.
+
+<a id="tool-options"></a>
+
+## Tools
+
+```sh
+pi --tools read,grep,find,ls --print "Review this project"
+```
+
+See [Settings](settings-reference.md#tools) for configuring the default tool selection.
+
+- `-t`, `--tools <list>`<br>
+  Replaces the default selection with a comma-separated allowlist of built-in, extension, or custom tools.
+- `-xt`, `--exclude-tools <list>`<br>
+  Disables comma-separated tool names after all other selection options.
+- `-nbt`, `--no-builtin-tools`<br>
+  Disables default built-in tools while retaining extension and custom tools.
+- `-nt`, `--no-tools`<br>
+  Starts with all built-in, extension, and custom tools disabled.
+
+Default enabled tools are `read`, `bash`, `edit`, and `write`, unless `defaultTools` changes them.
+
+| Built-in | Purpose |
 |---|---|
-| `--provider <name>` | Select a provider |
-| `--model <pattern>` | Select a model ID or pattern; accepts `provider/id` and optional `:<thinking>` |
-| `--api-key <key>` | Override configured credentials for this run |
-| `--thinking <level>` | Set `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max` |
-| `--models <patterns>` | Set comma-separated patterns for model cycling |
-| `--list-models [search]` | List available models, optionally filtered |
+| `read` | Read text files and supported images |
+| `bash` | Run shell commands |
+| `powershell` | Run PowerShell commands on Windows |
+| `edit` | Apply exact text replacements to an existing file |
+| `write` | Create or overwrite a file |
+| `grep` | Search file contents |
+| `find` | Find paths using glob patterns |
+| `ls` | List directory contents |
 
-## Session options
+<a id="resource-options"></a>
 
-| Option | Description |
-|---|---|
-| `-c`, `--continue` | Continue the most recent session |
-| `-r`, `--resume` | Select a session to resume |
-| `--session <path\|id>` | Open a session by path or partial UUID |
-| `--session-id <id>` | Use an exact project session ID, creating it if missing |
-| `--fork <path\|id>` | Fork an existing session into a new session |
-| `--session-dir <dir>` | Override session storage and lookup location |
-| `--no-session` | Do not persist the session |
-| `-n`, `--name <name>` | Set the session display name |
+## Resources
 
-## Tool options
+```sh
+pi --extension ./review.ts
+```
 
-| Option | Description |
-|---|---|
-| `-t`, `--tools <list>` | Enable only the named built-in, extension, or custom tools |
-| `-xt`, `--exclude-tools <list>` | Disable the named tools |
-| `-nbt`, `--no-builtin-tools` | Disable built-in tools while retaining extension and custom tools |
-| `-nt`, `--no-tools` | Disable all tools |
+See [Configuration](configuration.md#resources) for discovery, settings, packages, project trust, and reload behavior.
 
-Built-in tool names are `read`, `bash`, `powershell`, `edit`, `write`, `grep`, `find`, and `ls`. `powershell` is available on Windows. The initial default set depends on the platform and configuration.
+- `-e`, `--extension <path>`<br>
+  Loads an extension file or directory and is repeatable.
+- `-ne`, `--no-extensions`<br>
+  Disables discovered and configured extensions. Explicit `-e` paths still load.
+- `--skill <path>`<br>
+  Loads a skill file or directory and is repeatable.
+- `-ns`, `--no-skills`<br>
+  Disables discovered and configured skills. Explicit `--skill` paths still load.
+- `--prompt-template <path>`<br>
+  Loads a prompt-template file or directory and is repeatable.
+- `-np`, `--no-prompt-templates`<br>
+  Disables discovered and configured templates. Explicit `--prompt-template` paths still load.
+- `--theme <path>`<br>
+  Loads a theme file or directory and is repeatable.
+- `--use-theme <name[/name]>`<br>
+  Selects the initial interactive theme for this run.
+- `--no-themes`<br>
+  Disables discovered and configured themes. Explicit `--theme` paths still load.
+- `-nc`, `--no-context-files`<br>
+  Disables `AGENTS.md` and `CLAUDE.md` discovery.
 
-## Resource options
+Resource paths apply only to the current process. Relative paths resolve from the current working directory.
 
-| Option | Description |
-|---|---|
-| `-e`, `--extension <path>` | Load an extension; repeatable |
-| `-ne`, `--no-extensions` | Disable extension discovery; explicit `-e` paths still load |
-| `--skill <path>` | Load a skill file or directory; repeatable |
-| `-ns`, `--no-skills` | Disable skill discovery and loading |
-| `--prompt-template <path>` | Load a prompt-template file or directory; repeatable |
-| `-np`, `--no-prompt-templates` | Disable prompt-template discovery and loading |
-| `--theme <path>` | Load a theme file or directory; repeatable |
-| `--use-theme <name[/name]>` | Select the initial interactive theme for this run |
-| `--no-themes` | Disable theme discovery and loading |
-| `-nc`, `--no-context-files` | Disable `AGENTS.md` and `CLAUDE.md` discovery |
+<a id="prompt-and-display-options"></a>
 
-## Prompt and display options
+## Prompts and process
 
-| Option | Description |
-|---|---|
-| `--system-prompt <text>` | Replace the default system prompt |
-| `--append-system-prompt <text>` | Append text or file contents to the system prompt; repeatable |
-| `--tui-mode <mode>` | Use `regular` or `fullscreen` terminal mode |
-| `--verbose` | Show verbose startup information |
-| `-a`, `--approve` | Trust project-local files for this run |
-| `-na`, `--no-approve` | Ignore project-local files for this run |
-| `--offline` | Disable startup network operations |
-| `-h`, `--help` | Show help |
-| `-v`, `--version` | Show the version |
+```sh
+pi --append-system-prompt ./instructions.md
+```
 
-Extensions can register additional long-form options.
+See [Configuration](configuration.md) for saved configuration, [Security](security.md#understand-project-trust) for project trust, and [Environment Variables](environment-variables.md) for process controls.
+
+- `--system-prompt <text|path>`<br>
+  Replaces the default system prompt with text or the contents of an existing file.
+- `--append-system-prompt <text|path>`<br>
+  Appends text or an existing file to the system prompt and is repeatable.
+- `--tui-mode <mode>`<br>
+  Uses `regular` or `fullscreen` terminal mode.
+- `--verbose`<br>
+  Shows verbose interactive startup information, overriding `quietStartup`.
+- `-a`, `--approve`<br>
+  Trusts project-local configuration and resources for this process.
+- `-na`, `--no-approve`<br>
+  Ignores trust-gated project-local configuration and resources for this process.
+- `--offline`<br>
+  Disables startup network operations, equivalent to `PI_OFFLINE=1`.
+- `-h`, `--help`<br>
+  Shows help, including flags registered by loaded extensions, then exits.
+- `-v`, `--version`<br>
+  Shows the Pi version, then exits.
+
+Extensions may register additional long-form options. Unknown short options are rejected.
 
 ## Package commands
 
-| Command | Description |
-|---|---|
-| `pi install <source> [-l]` | Install a package and add it to global or project settings |
-| `pi remove <source> [-l]` | Remove a package |
-| `pi uninstall <source> [-l]` | Alias for `remove` |
-| `pi update [source\|self\|pi]` | Update Pi or one package source |
-| `pi update --extensions` | Update installed packages |
-| `pi update --models` | Refresh model catalogs |
-| `pi update --all` | Update Pi and installed packages |
-| `pi update --extension <source>` | Update one package |
-| `pi list` | List installed packages |
-| `pi config [-l]` | Configure package resources interactively |
+```sh
+pi install npm:@scope/package
+```
 
-Package and configuration commands accept `--approve` and `--no-approve`. Install, remove, and config accept `-l` or `--local`. Update accepts `--force`. Run `pi <command> --help` for command-specific usage. See [Pi Packages](packages.md) for sources and installation behavior.
+See [Pi Packages](packages.md) for source formats, filtering, installation, and project scope.
+
+### Common tasks
+
+| Task | Command |
+|---|---|
+| Install a package | `pi install <source>` |
+| List configured packages | `pi list` |
+| Remove a package and its settings entry | `pi remove <source>` |
+| Configure which package resources load | `pi config` |
+
+Add `--local` or `-l` to `install`, `remove`, `uninstall`, or `config` to use project settings instead of global settings.
+
+### Update Pi or packages
+
+Running `pi update` without a target updates Pi itself.
+
+| Task | Command |
+|---|---|
+| Update Pi | `pi update` |
+| Update all installed packages | `pi update --extensions` |
+| Update one installed package | `pi update <source>` |
+| Refresh model catalogs | `pi update --models` |
+| Update Pi and all installed packages | `pi update --all` |
+
+Add `--force` to reinstall Pi when the selected update includes Pi.
+
+### Aliases and command options
+
+- `pi uninstall <source>` is an alias for `pi remove <source>`.
+- `pi update --self`, `pi update self`, and `pi update pi` are aliases for `pi update`.
+- `pi update --extension <source>` is an alias for `pi update <source>`.
+- `-a`, `--approve` trusts project-local files for one command. `-na`, `--no-approve` ignores trust-gated project-local files.
+- Append `-h` or `--help` to a command for its exact usage and option constraints.
 
 ## Credential commands
 
-| Command | Description |
-|---|---|
-| `pi auth check --provider <provider>` | Check whether provider credentials are ready |
-| `pi auth print-api-key --provider <provider>` | Print the resolved API key for another client |
-| `pi auth print-bearer-token --provider <provider>` | Print a resolved OAuth bearer token |
+```sh
+pi auth check --provider openai --json
+```
 
-Auth commands accept a model instead of a provider. `auth check` also supports `--json`, `--credentials`, and `--no-refresh`. `print-bearer-token` supports `--min-expiry <duration>` with `ms`, `s`, `m`, or `h` units.
-
-## Interactive slash commands
-
-Type `/` to search these commands. Extensions, skills, and prompt templates can add more.
+Authentication commands require `--provider <provider>` or `--model <model>`. See [Provider Setup](provider-reference.md) for supported authentication methods.
 
 | Command | Description |
 |---|---|
-| `/settings` | Open settings |
-| `/model [provider/model]` | Select a model |
-| `/thinking [level]` | Set the thinking level |
-| `/scoped-models` | Configure models used by cycling |
-| `/login [provider]`, `/logout` | Add or remove provider authentication |
-| `/llama` | Manage models on the configured llama.cpp router |
-| `/resume`, `/new` | Switch or start a session |
-| `/name`, `/session` | Name or inspect the current session |
-| `/tree`, `/fork`, `/clone` | Navigate or copy session history |
-| `/compact` | Compact session context |
-| `/export`, `/import`, `/share` | Export, import, or share a session |
-| `/copy` | Copy the last assistant message |
-| `/trust` | Save a project trust decision for a future process |
-| `/reload` | Reload keybindings, resources, themes, and context files |
-| `/hotkeys` | Show active keyboard shortcuts |
-| `/changelog` | Show changelog entries |
-| `/quit` | Quit Pi |
+| `pi auth check` | Print `ready`, `not_ready`, or `invalid`; exit with status `0`, `1`, or `2`, respectively |
+| `pi auth print-api-key` | Print the resolved API key |
+| `pi auth print-bearer-token` | Print a resolved OAuth bearer token |
+
+| Option | Applies to | Description |
+|---|---|---|
+| `--provider <provider>` | All | Resolve credentials for a provider |
+| `--model <model>` | All | Resolve credentials from a model; may be combined with `--provider` |
+| `--json` | `auth check` | Write the structured result as JSON |
+| `--credentials` | `auth check` | Emit the resolved credential when ready |
+| `--no-refresh` | `auth check` | Do not refresh expired OAuth credentials; refresh is the default |
+| `--min-expiry <duration>` | `print-bearer-token` | Require remaining token lifetime using `ms`, `s`, `m`, or `h`, such as `30m` |
+
+Credential-printing commands write secrets to stdout.

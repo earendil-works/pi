@@ -126,8 +126,12 @@
       "title": "Reference",
       "items": [
         {
-          "title": "Command Line",
+          "title": "CLI",
           "path": "cli.md"
+        },
+        {
+          "title": "Slash Commands",
+          "path": "slash-commands.md"
         },
         {
           "title": "Provider Setup",

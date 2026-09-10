@@ -50,7 +50,7 @@ Type `/` to search the available commands. The commands you will use most often 
 - `/login` and `/logout` manage provider access.
 - `/settings` changes common preferences.
 
-Prompt templates, skills, and extensions can add more commands to the same menu. See [Choose a Model](models-and-providers.md), [Configuration](configuration.md), or the complete [Command Line reference](cli.md#interactive-slash-commands).
+Prompt templates, skills, and extensions can add more commands to the same menu. See [Choose a Model](models-and-providers.md), [Configuration](configuration.md), or the complete [Slash Commands reference](slash-commands.md).
 
 ## Continue or start over
 

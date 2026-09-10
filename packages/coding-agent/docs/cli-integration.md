@@ -15,7 +15,7 @@ The SDK is not a CLI mode. It embeds the agent directly in a Node.js or Bun proc
 | JSON | JSONL events on stdout | One invocation | A process needs structured progress from a run |
 | RPC | JSONL commands, responses, and events | Long-lived | A process needs bidirectional control |
 
-CLI options still select the working directory, model, tools, resources, and session persistence independently of the mode. See [CLI and Modes](cli.md) for the complete startup options.
+CLI options still select the working directory, model, tools, resources, and session persistence independently of the mode. See [Command Line](cli.md) for the complete startup options.
 
 ## Print to stdout
 
@@ -83,7 +83,7 @@ If you are building a client without `RpcClient`, see [RPC Protocol](rpc.md) for
 
 - [RPC client](../examples/rpc-client.ts): typed Node.js integration
 - [RPC extension UI](../examples/rpc-extension-ui.ts): custom terminal client with extension dialogs
-- [CLI and Modes](cli.md): startup options and mode selection
+- [Command Line](cli.md): startup options and mode selection
 - [JSON Event Stream](json.md): JSON event reference
 - [RPC Protocol](rpc.md): RPC command and event reference
 - [SDK examples](../examples/sdk/): in-process TypeScript integrations
