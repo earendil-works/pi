@@ -821,7 +821,7 @@ The current session name is available via `get_state` in the `sessionName` field
 
 #### get_commands
 
-Get available commands (extension commands, prompt templates, and skills). These can be invoked via the `prompt` command by prefixing with `/`.
+Get available commands (extension commands, prompt templates, and skills). Run one through the `prompt` command by prefixing its name with `/`.
 
 ```json
 {"type": "get_commands"}
@@ -852,7 +852,7 @@ Response:
 ```
 
 Each command has:
-- `name`: Command name (invoke with `/name`)
+- `name`: Command name (use `/name`)
 - `description`: Human-readable description (optional for extension commands)
 - `source`: What kind of command:
   - `"extension"`: Registered via `pi.registerCommand()` in an extension

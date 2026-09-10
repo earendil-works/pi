@@ -50,25 +50,19 @@ Arguments after `/skill:name` are appended to the loaded instructions as a user 
 /skill:pdf-tools extract report.pdf
 ```
 
-Set `disable-model-invocation: true` in frontmatter when a skill should be available only through its explicit command. Skill commands can be enabled or disabled with `enableSkillCommands` in [Settings](settings-reference.md).
+Set `disable-model-invocation: true` in frontmatter when a skill should be available only through its explicit command. The `enableSkillCommands` [setting](settings-reference.md) controls whether skill commands appear in interactive command discovery; manually entered `/skill:name` commands still work.
 
-## Choose where it loads
+<a id="choose-where-it-loads"></a>
 
-Pi discovers skills from:
+## Add it to Pi
 
-- `~/.pi/agent/skills/` and `~/.agents/skills/` for personal skills
-- `.pi/skills/` and `.agents/skills/` after project trust is granted
-- `skills/` directories and `pi.skills` entries in Pi packages
-- additional paths in the `skills` setting
-- repeatable `--skill <path>` command-line options
+Place the skill in your user or project skills directory. Directories containing `SKILL.md` are discovered recursively.
 
-Project `.agents/skills/` directories are discovered from the working directory through its ancestors, stopping at the repository root when one exists.
+Pi also supports the Agent Skills locations `~/.agents/skills/` and `.agents/skills/`. Project `.agents/skills/` directories are discovered from the working directory through its ancestors, stopping at the repository root when one exists.
 
-Directories containing `SKILL.md` are discovered recursively. Pi also accepts some standalone Markdown skills, but a `SKILL.md` directory is the portable form and should be preferred.
+Pi accepts some standalone Markdown skills, but a directory containing `SKILL.md` is the portable form and should be preferred. See [Loading resources](configuration.md#resources) for all supported locations and options.
 
-Use `--no-skills` to disable normal discovery for one run. Explicit `--skill` paths still load.
-
-Project skills can instruct the model to run scripts or modify files. Pi loads them only after project trust is resolved. Review unfamiliar skills and their supporting files before use.
+Project skills can instruct the model to run scripts or modify files. Review unfamiliar skills and their supporting files before granting project trust.
 
 ## Write portable frontmatter
 
@@ -95,9 +89,5 @@ Malformed `SKILL.md` files and declared skills without descriptions are not load
 Run Pi from a location where the skill is discoverable, then inspect the startup diagnostics and `/skill:name` command. Run `/reload` after editing a skill during an active session.
 
 Use a [Pi package](packages.md) to distribute one or more skills through npm or git. Keep environment setup inside the skill and declare any required runtime dependencies in the package.
-
-Use a [prompt template](prompt-templates.md) instead when the entire workflow fits in one reusable prompt.
-
-Use an [extension](extensions.md) when the workflow needs executable hooks or tools that the model cannot invoke through ordinary files and commands.
 
 For examples, see the [Anthropic skills collection](https://github.com/anthropics/skills) and [Pi skills collection](https://github.com/badlogic/pi-skills).

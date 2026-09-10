@@ -90,7 +90,20 @@ Use `/resume` to choose another saved session. See [Continue or branch a session
 - [Use Pi interactively](interactive-use.md) to learn input, commands, shortcuts, and queued messages.
 - [Add instructions](configuration.md#instructions) that Pi should follow whenever it works in a folder.
 - [Choose a model and provider](models-and-providers.md).
-- [Customise Pi](index.md#customise-pi) with prompt templates, skills, extensions, or packages.
+
+### Choose how to customise Pi
+
+Start with the least powerful mechanism that meets your need:
+
+| Need | Start with |
+|---|---|
+| Give Pi persistent instructions for a folder | [`AGENTS.md`](configuration.md#instructions) |
+| Reuse a prompt from the `/` menu | [Prompt template](prompt-templates.md) |
+| Add task-specific instructions and supporting files | [Skill](skills.md) |
+| Add executable tools, commands, or event handlers | [Extension](extensions.md) |
+| Build a custom terminal component | [Terminal UI](tui.md) |
+| Connect an unsupported model service | [Custom provider](custom-provider.md) |
+| Install or distribute several resources | [Pi package](packages.md) |
 
 ## Uninstall Pi
 

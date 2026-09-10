@@ -4,24 +4,13 @@ Extensions are TypeScript modules that add executable behavior to Pi. Use one wh
 
 An extension runs inside the Pi process with the same operating-system permissions. It can inspect prompts, tool calls, files, credentials, and session history, so load extensions only from sources you trust.
 
-## Choose an extension when needed
-
-Start with the least powerful mechanism that solves the problem:
-
-| Need | Use |
-|---|---|
-| Reuse prompt text | [Prompt template](prompt-templates.md) |
-| Supply task-specific instructions and supporting files | [Skill](skills.md) |
-| Add executable behavior or intercept Pi | Extension |
-| Connect an unsupported model service | [Custom provider](custom-provider.md) |
-| Distribute several resources | [Pi package](packages.md) |
-
 Typical extensions add an agent tool, protect paths, confirm dangerous commands, react to session events, modify context, expose a command, or display persistent status.
 
 <a id="quick-start"></a>
 <a id="writing-an-extension"></a>
+<a id="create-an-extension"></a>
 
-## Create an extension
+## Create and load an extension
 
 An extension exports a default factory that receives `ExtensionAPI`. The factory registers capabilities for the current extension runtime.
 
@@ -50,46 +39,30 @@ Pi uses `jiti`, so local TypeScript extensions do not need a separate compilatio
 
 <a id="extension-locations"></a>
 <a id="available-imports"></a>
+<a id="choose-where-it-loads"></a>
 
-## Choose where it loads
+## Add it to Pi
 
-Pi discovers extension files and directory entry points from:
+Place the extension in your user or project extensions directory. Pi loads direct TypeScript or JavaScript files and subdirectories containing an `index.ts` or `index.js` entry point.
 
-| Scope | Location |
-|---|---|
-| Personal | `~/.pi/agent/extensions/*.ts` and `*/index.ts` |
-| Project | `.pi/extensions/*.ts` and `*/index.ts` after trust |
-| Package | An `extensions/` directory or `pi.extensions` manifest entry |
-| Settings | Paths in the `extensions` array |
-| One invocation | Repeatable `--extension` or `-e` options |
+Use a single file for a small extension and a directory for a multi-file implementation. Put npm dependencies in a nearby `package.json`. See [Loading resources](configuration.md#resources) for all supported locations and options.
 
-Use a single file for small extensions and an `index.ts` directory for multi-file implementations. Put an extension’s npm dependencies in a nearby `package.json`.
+Reload replaces the extension runtime, so code after `await ctx.reload()` must not reuse state from the old runtime. Only personal and explicit command-line extensions can participate in the `project_trust` event that runs before project extensions load.
 
-Run `/reload` after changing a discovered extension. A reload tears down the current extension runtime and creates a new one; code after `await ctx.reload()` still belongs to the old command invocation and must not reuse invalidated state.
+<a id="understand-the-lifecycle"></a>
 
-Project extensions load only after project trust is granted. Only personal and explicit command-line extensions can participate in the earlier `project_trust` event.
+## Respect the runtime lifecycle
 
-## Understand the lifecycle
+The factory can be synchronous or asynchronous. Pi waits for an asynchronous factory before startup continues, allowing it to fetch configuration or register providers needed during startup.
 
-The factory can be synchronous or asynchronous. Pi waits for an asynchronous factory before startup continues, which allows it to fetch configuration or register dynamically discovered providers.
+Do not start processes, sockets, watchers, or timers in the factory because some invocations load extensions without starting a session.
+Start long-lived resources from `session_start` or from the command or tool that needs them.
+Close session-scoped resources from an idempotent `session_shutdown` handler.
 
-Do not start processes, sockets, watchers, or timers in the factory. Some invocations load extensions without starting a session. Start long-lived resources from `session_start` or from the command or tool that needs them.
-
-Close session-scoped resources from an idempotent `session_shutdown` handler. Shutdown runs for exit, reload, new sessions, resumed sessions, and forks.
-
-A normal agent run progresses through these stages:
-
-1. Input is dispatched to extension commands or the `input` event.
-2. `before_agent_start` can add context or alter the system prompt.
-3. Agent and turn events surround each model request.
-4. Message events report streaming and finalized messages.
-5. Tool events surround validation, execution, updates, and results.
-6. `agent_end` closes one low-level run.
-7. Automatic retries, recovery, compaction, and queued work finish.
-8. `agent_before_settle` can append entries and request one continuation.
-9. `agent_settled` reports final, notification-only completion.
-
-Use `agent_settled`, not `agent_end`, when an integration needs to know that Pi will not continue automatically.
+A run proceeds from input and `before_agent_start`, through model, message, and tool events, to `agent_end`.
+Automatic retries, recovery, compaction, or queued work can continue afterward.
+`agent_before_settle` is the final actionable boundary: it can append entries and request one continuation.
+`agent_settled` is final and notification-only; use it when an integration needs to know Pi will not continue automatically.
 
 <a id="extensionapi-methods"></a>
 
@@ -110,22 +83,22 @@ Use `agent_settled`, not `agent_end`, when an integration needs to know that Pi 
 
 Use the exported declarations in [`extensions/types.ts`](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/src/core/extensions/types.ts) for exact event, context, tool, and result types.
 
-## Work with events
+## Follow the extension contracts
 
-Event handlers run in extension load and registration order. `pi.on()` returns a function that unsubscribes that registration; changes do not affect a dispatch already in progress. Some events are notifications; others can transform data, replace results, or cancel an operation. Use the event’s declared result type rather than assuming every return value has an effect.
+<a id="events"></a>
+<a id="work-with-events"></a>
 
-Important groups include:
+### Events and concurrency
 
-- Resource events add skill, prompt-template, and theme paths during startup or reload.
-- Session events surround replacement, fork, compaction, tree navigation, and shutdown.
-- Agent and message events expose prompts, turns, streaming updates, and final messages.
-- Provider events inspect or alter headers and request payloads, then observe response metadata.
-- Tool events can inspect, mutate, block, or replace tool execution and results.
-- Input events can continue, transform, or fully handle raw user input.
+Handlers run in extension load and registration order. `pi.on()` returns a function that unsubscribes that registration; changes do not affect a dispatch already in progress.
+Some events notify; others transform data, replace results, or cancel an operation.
+Use each event’s declared result type rather than assuming every return value has an effect.
+
+Events cover resource discovery, sessions, agent and message lifecycle, providers, tools, and raw input.
 
 `before_agent_start` exposes both the current prompt and its structured `systemPromptOptions`. Prefer changing prompt sections, selected tools, or guidelines so Pi can append a transcript delta. Returning `systemPrompt`, or setting `forceSystemPrompt`, replaces the whole prompt for that run while the transcript continues recording the structured sections. Providers receive the forced text as their leading system prompt.
 
-`message_end` can replace a finalized message while preserving its role. `tool_call` can mutate input before execution or block the call. `tool_result` handlers compose in load order, with each handler seeing prior changes.
+`message_end` can replace a finalized message while preserving its role. `tool_call` can mutate input or block execution. `tool_result` handlers compose, with each handler seeing prior changes.
 
 `context` transforms conversation messages without prompt and tool system messages; Pi restores that state afterward. Use `context_with_system` only when a request-local transformation must own the complete transcript, and keep a system message at index zero.
 
@@ -133,31 +106,28 @@ Important groups include:
 
 `cache_warming_decision` can override an idle prompt-cache refresh with `{ action: "warm" }` or `{ action: "stop" }`. The last handler that returns an action wins.
 
-Tool calls from one assistant message can execute in parallel. Do not assume one sibling tool has finished when another tool’s events run.
-
-Use `ctx.signal` for nested network, model, or process work started during an active turn. It is often undefined in commands and idle session events, where no agent operation owns cancellation.
+Tool calls from one assistant message can run in parallel.
+Do not assume a sibling call or result exists when another tool event runs.
+Use `ctx.signal` for nested work owned by an active turn; commands and idle session events often have no operation signal.
 
 A `user_bash` handler that returns `undefined` passes the command to the next handler and then to local execution if no handler handles it. Returning `operations` or `result` stops propagation. A handler failure blocks the command rather than falling through to local execution.
 
 <a id="custom-tools"></a>
+<a id="register-tools"></a>
 
-## Register tools
+### Tools
 
-A custom tool defines a name, model-facing description, TypeBox parameter schema, and `execute()` function. Its result contains content for the model and a required `details` field for rendering or state reconstruction.
+A custom tool defines a name, model-facing description, TypeBox parameter schema, and `execute()` function.
+Its result requires model-facing `content` and a `details` field for rendering or state reconstruction.
+Use `details: undefined` when there are no structured details.
 
-Use `details: undefined` when a tool has no structured details to return.
-
-Use `StringEnum` from `@earendil-works/pi-ai` for string choices that must work with Google APIs. Keep the public schema strict; use `prepareArguments` only to migrate stored calls from older sessions into the current shape.
-
-Throw from `execute()` to report a failed tool result. Returning an object never marks the result as an error.
-
+Throw from `execute()` to produce a failed tool result.
+Returning an object does not mark it as an error.
 Return `terminate: true` only when the agent should skip its automatic follow-up after every completed tool in that batch agrees to terminate.
 
-Models can call sibling tools concurrently. Use a sequential execution mode when shared in-memory state cannot be updated safely. File-mutating tools should use `withFileMutationQueue()` around the complete read-modify-write operation.
-
-Tool output enters model context. Truncate large results and tell the model where it can read the complete output. Pi exports head, tail, and line truncation helpers with the same 50 KB or 2,000-line default limits as built-in tools.
-
-Custom tools can provide compact call and result renderers. Keep model-facing content independent from display details so non-interactive modes still receive useful results.
+Use sequential execution when tools share mutable in-memory state.
+File-mutating tools should wrap the complete read-modify-write operation with `withFileMutationQueue()`.
+Truncate large model-facing results and tell the model where to read the complete output.
 
 See [`hello.ts`](../examples/extensions/hello.ts), [`todo.ts`](../examples/extensions/todo.ts), [`dynamic-tools.ts`](../examples/extensions/dynamic-tools.ts), and [`truncated-tool.ts`](../examples/extensions/truncated-tool.ts).
 
@@ -169,90 +139,71 @@ Pi records the initial prompt and tool set in the transcript's first system mess
 
 <a id="extensioncontext"></a>
 <a id="extensioncommandcontext"></a>
+<a id="use-extension-context"></a>
 
-## Use extension context
+### Context and session changes
 
-Event handlers and tools receive an `ExtensionContext`. It provides the current working directory, mode, UI, session manager, model runtime, abort signal, context usage, and controls for compaction and shutdown.
+`ExtensionContext` provides the working directory, mode, UI, session manager, model runtime, abort signal, context usage, and controls for compaction and shutdown.
+Use `ctx.modelRegistry.streamSimple()` for provider-neutral nested model calls, and report nested usage so session totals remain accurate.
 
-Read session state from `ctx.sessionManager`. During `tool_call`, it is synchronized through the current assistant tool-calling message, but sibling results from the same parallel batch might not exist yet.
+Command handlers receive `ExtensionCommandContext`, which adds operations for waiting until idle, reloading, tree navigation, and session replacement.
+These operations are command-only because calling them from lifecycle handlers can deadlock the runtime.
 
-Use `ctx.modelRegistry.streamSimple()` for provider-neutral nested model calls. It resolves configured credentials and providers, including providers registered by extensions.
-
-Return nested model usage from tools or tool-result handlers so session totals remain accurate.
-
-Command handlers receive `ExtensionCommandContext`. It adds operations that wait for idle, reload resources, navigate the tree, and replace the active session.
-
-Those operations are restricted to commands because calling them from lifecycle handlers can deadlock the runtime.
-
-Session replacement invalidates the previous context. The `withSession` callback receives a fresh context after the replacement starts. Capture only plain data before switching, then use the callback context for all session-bound work.
+Session replacement invalidates the old context. Capture only plain data before switching, then use the fresh context supplied to `withSession` for session-bound work.
 
 <a id="state-management"></a>
+<a id="persist-state"></a>
 
-## Persist state
+### State
 
-Choose storage based on how the state participates in the conversation:
+Choose storage based on how state participates in the conversation:
 
-- Store tool state in tool-result `details` when it should follow the active session branch.
-- Use `pi.appendEntry()` for durable extension data that should not enter model context.
-- Use `pi.sendMessage()` for custom content that should be stored and sent to the model.
-- Use external storage for state that belongs outside one session.
+| State | Storage |
+|---|---|
+| Tool state that follows the active branch | Tool-result `details` |
+| Durable data excluded from model context | `pi.appendEntry()` |
+| Custom content stored and sent to the model | `pi.sendMessage()` |
+| Data outside one session | External storage |
 
-Reconstruct branch-sensitive state from `ctx.sessionManager.getBranch()` during `session_start`. Do not rebuild it from every entry in the file because abandoned branches represent alternative histories.
-
-Pair custom entries with `pi.registerEntryRenderer()` when they should appear in the transcript. Pair custom messages with `pi.registerMessageRenderer()` when they participate in both display and model context.
-
-See [`todo.ts`](../examples/extensions/todo.ts), [`entry-renderer.ts`](../examples/extensions/entry-renderer.ts), and [`message-renderer.ts`](../examples/extensions/message-renderer.ts).
+Reconstruct branch-sensitive state from `ctx.sessionManager.getBranch()` during `session_start`.
+Do not rebuild it from every file entry because abandoned branches represent alternative histories.
+Register an entry or message renderer when custom stored content should appear in the transcript.
 
 <a id="custom-ui"></a>
-
-## Interact with the user
-
-`ctx.ui` provides selection, confirmation, text input, an editor, notifications, status text, widgets, titles, and editor content. These methods are enough for most extension interaction.
-
-Use `ctx.ui.custom()` only when the workflow needs a component with its own rendering and input. Extensions can also replace the header, footer, or editor and register renderers for tools, messages, and custom entries.
-
-Guard terminal-only features with `ctx.mode === "tui"`. Use `ctx.hasUI` for interactions that work in both interactive and RPC modes. See [Terminal UI](tui.md) for focus, overlays, component rendering, themes, and performance.
-
 <a id="mode-behavior"></a>
+<a id="interact-with-the-user"></a>
+<a id="account-for-each-mode"></a>
 
-## Account for each mode
+### UI and modes
 
-Extensions load in interactive, RPC, JSON, and print modes. Their available UI differs:
+`ctx.ui` provides dialogs, notifications, status text, widgets, titles, editor access, and custom components.
+Use `ctx.ui.custom()` only when the interaction needs its own rendering and input.
+See [Terminal UI](tui.md) for component, focus, overlay, theme, and performance guidance.
 
-| Mode | `ctx.mode` | `ctx.hasUI` | Behavior |
-|---|---|---:|---|
-| Interactive | `"tui"` | `true` | Complete terminal UI |
-| RPC | `"rpc"` | `true` | Supported dialogs and notifications use the RPC UI protocol |
-| JSON | `"json"` | `false` | UI calls are unavailable; events are written to stdout |
-| Print | `"print"` | `false` | UI calls are unavailable; the process exits after its prompts |
+Extensions load in interactive, RPC, JSON, and print modes.
+Interactive mode provides the complete terminal UI.
+RPC can forward supported dialogs and notifications, but not custom terminal components; JSON and print modes have no UI.
+Guard terminal-only behavior with `ctx.mode === "tui"` and use `ctx.hasUI` for interactions supported by interactive and RPC clients.
 
-Design tools and event handlers so their core behavior does not depend on terminal rendering. In RPC mode, custom terminal components are unavailable even though basic UI requests can be forwarded to the client.
+Keep tool and event behavior independent from rendering so non-interactive modes remain functional.
 
 <a id="error-handling"></a>
+<a id="handle-errors-and-shutdown"></a>
 
-## Handle errors and shutdown
+### Errors and cleanup
 
-Pi reports extension handler errors and continues where possible. A `tool_call` handler failure blocks the tool as a fail-safe. A tool execution failure becomes an error result for the model.
+Pi reports handler errors and continues where possible. A `tool_call` handler failure blocks the tool as a fail-safe; a tool execution failure becomes an error result for the model.
 
-Release resources in `session_shutdown`, even if the normal operation already attempted cleanup. Keep shutdown idempotent because cancellation, reload, session replacement, and process exit can converge on the same cleanup path.
-
-Use `ctx.shutdown()` to request an orderly process shutdown. Interactive and RPC modes wait for the appropriate idle boundary; print mode exits after its work normally.
+Release resources in `session_shutdown` even when normal operation attempted cleanup.
+Keep cleanup idempotent because cancellation, reload, session replacement, and process exit can converge on the same path.
+Use `ctx.shutdown()` to request an orderly process shutdown.
 
 <a id="examples-reference"></a>
+<a id="use-examples-as-the-implementation-reference"></a>
 
-## Use examples as the implementation reference
+## Examples and reference
 
-The [extension examples](../examples/extensions/) are checked with the repository and cover:
+The checked [extension examples](../examples/extensions/) cover tools, lifecycle events, commands, flags, shortcuts, state, rendering, providers, OAuth, remote execution, and terminal components.
+Start with the smallest example matching your integration point.
 
-- safety gates and lifecycle events
-- custom and dynamically loaded tools
-- commands, flags, shortcuts, and session control
-- persistent state and custom rendering
-- terminal components, overlays, headers, footers, and editors
-- remote and sandboxed tool execution
-- model providers and OAuth
-- compaction, system prompts, and inter-extension communication
-
-Start with the smallest example matching your integration point. Copying a focused checked example is safer than extracting fragments from several unrelated examples.
-
-Use [Custom Providers](custom-provider.md) for provider-specific design and testing. Use [Pi Packages](packages.md) when the extension should be installed or shared with other resources.
+Use [Custom Providers](custom-provider.md) for model-service integrations, [Terminal UI](tui.md) for custom components, and [Pi Packages](packages.md) to install or distribute extensions with other resources.

@@ -18,15 +18,8 @@ If Pi is already installed, choose what you want to do:
 
 ## Customise Pi
 
-Start with the least complex option that meets your need:
-
-| What you want | Use |
-|---|---|
-| Give Pi persistent instructions for a folder | [`AGENTS.md`](configuration.md#instructions) |
-| Reuse a prompt from the `/` menu | [Prompt template](prompt-templates.md) |
-| Add instructions and supporting files for a specialized task | [Skill](skills.md) |
-| Add tools, commands, event handlers, or terminal UI | [Extension](extensions.md) |
-| Install or share a collection of customizations | [Pi package](packages.md) |
+Pi can reuse prompts, load specialised instructions, add executable integrations, change its terminal interface, connect model services, and distribute these resources as packages.
+Use the [Quickstart customisation chooser](quickstart.md#choose-how-to-customise-pi) to select the smallest mechanism that meets your need.
 
 ## Automate or embed Pi
 

@@ -2,7 +2,7 @@
 
 Pi can configure saved preferences, model defaults, keybindings, themes, project instructions, and reusable resources. Start with `/settings` for common preferences. Edit configuration files for advanced options or behavior that should follow a project.
 
-Changes made through `/settings` apply immediately. During an active session, run `/reload` after manually editing settings, keybindings, instruction files, or resource configuration. An active custom theme reloads automatically when its file changes. Saved model defaults apply to new sessions, and a decision saved with `/trust` applies after you restart Pi.
+Changes made through `/settings` apply immediately. During an active session, run `/reload` after manually editing settings, keybindings, instruction files, or resource configuration. Saved model defaults apply to new sessions, and a decision saved with `/trust` applies after you restart Pi.
 
 ## Settings
 
@@ -41,9 +41,9 @@ Use `/hotkeys` to verify the active bindings. See [Keybindings](keybindings.md) 
 
 Select a theme through `/settings`. Use `--use-theme` to choose the initial theme for one run without changing the saved setting.
 
-Custom themes are JSON files. Put personal themes under `~/.pi/agent/themes/` or project themes under `.pi/themes/`. Start from a built-in theme, give it a unique name, and use the published JSON schema to validate its colors.
+Custom themes are JSON files. Start from a built-in theme, give it a unique name, and use the published JSON schema to validate its colors.
 
-See [Themes](themes.md) for discovery rules, the schema, color formats, required tokens, and built-in examples.
+See [Themes](themes.md) for the schema, color formats, required tokens, and built-in examples.
 
 ## Instructions
 
@@ -57,9 +57,26 @@ Disable context-file discovery for one run with `--no-context-files`.
 
 ## Resources
 
-Settings can load extensions, skills, prompt templates, themes, and Pi packages. Prefer each resource's conventional directory when possible. Explicit settings are useful for additional paths, glob filters, or package-level resource selection.
+Pi loads extensions, skills, prompt templates, and themes from the same kinds of sources. Start with the conventional personal or project directory, then use settings, packages, or explicit command-line paths when needed.
 
-Project-local resources load only after project trust is granted. See [Extensions](extensions.md), [Skills](skills.md), [Prompt Templates](prompt-templates.md), and [Pi Packages](packages.md) for their discovery and packaging rules.
+| Resource | Directory | Setting | Command-line path | Disable normal discovery |
+|---|---|---|---|---|
+| Extensions | `extensions/` | `extensions` | `--extension`, `-e` | `--no-extensions`, `-ne` |
+| Skills | `skills/` | `skills` | `--skill` | `--no-skills`, `-ns` |
+| Prompt templates | `prompts/` | `prompts` | `--prompt-template` | `--no-prompt-templates`, `-np` |
+| Themes | `themes/` | `themes` | `--theme` | `--no-themes` |
+
+Personal directories live under `~/.pi/agent/`. Project directories live under `.pi/` and load only after project trust is granted. Project settings and package declarations follow the same trust boundary.
+
+Settings add files, directories, or filtered paths. Paths in global settings resolve from `~/.pi/agent`; paths in project settings resolve from `.pi`. See [Settings](settings-reference.md#resources) for exact fields and filtering syntax.
+
+Pi packages can provide any combination of these resources. Explicit command-line paths apply to one invocation and remain active when the corresponding `--no-*` option disables normal discovery.
+
+Run `/reload` after changing discovered resources or their configuration in an active session. Reload replaces the extension runtime and refreshes skills, templates, and themes.
+
+Pi automatically watches only the active personal theme at `~/.pi/agent/themes/<name>.json`. Themes loaded from project directories, settings, packages, or command-line paths require `/reload` after editing.
+
+Each resource guide covers its file format and discovery exceptions: [Extensions](extensions.md), [Skills](skills.md), [Prompt Templates](prompt-templates.md), [Themes](themes.md), and [Pi Packages](packages.md).
 
 ## Verify a change
 

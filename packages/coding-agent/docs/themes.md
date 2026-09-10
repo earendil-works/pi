@@ -4,7 +4,7 @@ This reference describes theme discovery, selection, schema, color values, and T
 
 ## Table of Contents
 
-- [Locations](#locations)
+- [Add a Theme to Pi](#locations)
 - [Selecting a Theme](#selecting-a-theme)
 - [Creating a Custom Theme](#creating-a-custom-theme)
 - [Theme Format](#theme-format)
@@ -12,18 +12,13 @@ This reference describes theme discovery, selection, schema, color values, and T
 - [Color Values](#color-values)
 - [Tips](#tips)
 
-## Locations
+<a id="locations"></a>
 
-Pi loads themes from:
+## Add a Theme to Pi
 
-- Built-in: `dark`, `light`
-- Global: `~/.pi/agent/themes/*.json`
-- Project: `.pi/themes/*.json` (only after project trust is granted)
-- Packages: `themes/` directories or `pi.themes` entries in `package.json`
-- Settings: `themes` array with files or directories
-- CLI: `--theme <path>` (repeatable)
+Pi includes the `dark` and `light` themes. Place a custom theme in your user or project themes directory.
 
-Disable discovery with `--no-themes`.
+See [Loading resources](configuration.md#resources) for all supported locations and options.
 
 ## Selecting a Theme
 
@@ -136,7 +131,7 @@ vim ~/.pi/agent/themes/my-theme.json
 
 3. Select the theme via `/settings`.
 
-**Hot reload:** When you edit the currently active custom theme file, pi reloads it automatically for immediate visual feedback.
+**Hot reload:** Pi automatically watches the active personal theme at `~/.pi/agent/themes/<name>.json`. Themes loaded from other sources require `/reload` after editing.
 
 ## Theme Format
 
@@ -159,15 +154,15 @@ vim ~/.pi/agent/themes/my-theme.json
 
 - `name` is required, must be unique, and must not contain `/`.
 - `vars` is optional. Define reusable colors here, then reference them in `colors`.
-- `colors` must define all 53 required tokens. `thinkingMax` and the two search highlight tokens are optional and use the fallbacks listed below.
+- `colors` must define all 51 required tokens. Five optional tokens use the fallbacks listed below.
 
 The `$schema` field enables editor auto-completion and validation.
 
 ## Color Tokens
 
-Every theme must define all 53 required color tokens. The optional tokens preserve compatibility with existing themes: `thinkingMax` falls back to `thinkingXhigh`, `searchMatchBg` falls back to `selectedBg`, and `searchMatchText` falls back to `text`. Other search matches use `searchMatchText` on `searchMatchBg` with an underline; the current match reverses that foreground/background pair and uses bold text.
+Every theme must define all 51 required color tokens. The optional tokens preserve compatibility with existing themes: `scrollbarTrack` falls back to `muted`, `scrollbarThumb` falls back to `text`, `thinkingMax` falls back to `thinkingXhigh`, `searchMatchBg` falls back to `selectedBg`, and `searchMatchText` falls back to `text`. Other search matches use `searchMatchText` on `searchMatchBg` with an underline; the current match reverses that foreground/background pair and uses bold text.
 
-### Core UI (13 colors)
+### Core UI (11 required, 2 optional)
 
 | Token | Purpose |
 |-------|---------|
@@ -182,8 +177,8 @@ Every theme must define all 53 required color tokens. The optional tokens preser
 | `dim` | Tertiary text |
 | `text` | Default text (usually `""`) |
 | `thinkingText` | Thinking block text |
-| `scrollbarTrack` | Fullscreen scrollbar track foreground |
-| `scrollbarThumb` | Fullscreen scrollbar thumb foreground, shared by normal and expanded states |
+| `scrollbarTrack` | Fullscreen scrollbar track foreground; optional, falls back to `muted` |
+| `scrollbarThumb` | Fullscreen scrollbar thumb foreground; optional, falls back to `text` |
 
 ### Backgrounds & Content (11 required, 2 optional)
 

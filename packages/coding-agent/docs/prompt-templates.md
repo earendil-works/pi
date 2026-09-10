@@ -1,6 +1,6 @@
 # Prompt Templates
 
-Prompt templates turn Markdown files into reusable `/` commands. Use one when you want to invoke the same prompt repeatedly without adding executable behavior or a larger set of supporting instructions.
+Prompt templates turn Markdown files into reusable `/` commands. Use one when you want to reuse the same prompt without adding executable behavior or a larger set of supporting instructions.
 
 A template can accept arguments and appear in command completion. Pi can load templates from personal configuration, project configuration, an explicit path, or a Pi package. Project configuration loads only after project trust is granted.
 
@@ -22,7 +22,9 @@ The filename becomes the command name, so this template is available as `/review
 
 Run `/reload` after adding or changing a template in an active session.
 
-## Invoke a template
+<a id="invoke-a-template"></a>
+
+## Use a template
 
 Type the template command in the editor:
 
@@ -46,28 +48,12 @@ Templates support these substitutions:
 
 Arguments follow shell-like quoting, so `/review "API compatibility"` supplies one argument containing a space.
 
-## Choose where it loads
+<a id="choose-where-it-loads"></a>
 
-Pi discovers templates from these sources:
+## Add it to Pi
 
-| Source | Location or option |
-|---|---|
-| Personal | `~/.pi/agent/prompts/*.md` |
-| Project | `.pi/prompts/*.md` after project trust is granted |
-| Package | A `prompts/` directory or `pi.prompts` manifest entry |
-| Settings | The `prompts` array |
-| Command line | Repeatable `--prompt-template <path>` |
+Place the template in your user or project prompt directory. Conventional prompt directories load direct `.md` children only.
 
-Conventional personal and project prompt directories load direct `.md` children only. To load nested templates, select their path through settings or package them.
+Settings and packages can select nested Markdown files; a package manifest can narrow discovery with explicit paths and globs. See [Loading resources](configuration.md#resources) for all supported locations and options.
 
-Package and settings resource discovery can select nested Markdown files. A package manifest can narrow that discovery with explicit paths and globs.
-
-Use `--no-prompt-templates` to disable normal template discovery for one run. Explicit `--prompt-template` paths still load.
-
-Project templates become executable commands in the editor after trust is granted. Review their content before trusting an unfamiliar project. See [Security](security.md#project-trust).
-
-## Choose a different mechanism
-
-Use a [skill](skills.md) when the workflow needs detailed instructions, scripts, reference files, or assets that should load only when relevant.
-
-Use an [extension](extensions.md) when the workflow needs executable logic, tools, events, state, or terminal UI. Use a [Pi package](packages.md) to install or distribute templates with other resources.
+Project templates become commands in the editor after trust is granted. Review their content before trusting an unfamiliar project. See [Security](security.md#project-trust).

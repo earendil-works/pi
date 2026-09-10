@@ -27,7 +27,7 @@ pi --print "Summarize the changes in this repository"
 
 Use print mode when only the final text is needed, including command substitution, pipelines, and one-shot jobs. Intermediate events are not exposed.
 
-Errors are written to stderr. A failed or aborted model response produces a nonzero exit status.
+Print mode writes errors to stderr. A final assistant response with an `error` or `aborted` stop reason produces a nonzero exit status.
 
 When no mode is selected explicitly, non-TTY stdin or stdout also selects print mode. This allows piped input and output without adding `--print`.
 
@@ -42,6 +42,8 @@ pi --mode json "Review this repository" > events.jsonl
 This is structured event output, not a single JSON result or a constraint on the format of the model’s response.
 
 All prompts are supplied when the process starts. The process streams events for that run and then exits; it does not accept later commands.
+
+A failed or aborted assistant response appears in the event stream but does not by itself produce a nonzero exit status. Inspect the events when success or failure matters. Pi still exits nonzero if the invocation throws an error.
 
 Streaming `message_update` records contain deltas rather than a growing message snapshot. Assemble live output from the delta events, then replace it with the authoritative message from `message_end`.
 
