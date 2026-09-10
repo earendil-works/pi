@@ -1,0 +1,49 @@
+name: Crowdin Documentation
+
+on:
+  push:
+    branches:
+      - docs/refresh
+    paths:
+      - '.github/workflows/crowdin.yml'
+      - 'crowdin.yml'
+      - 'packages/coding-agent/docs/**/*.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: crowdin-documentation
+  cancel-in-progress: true
+
+jobs:
+  synchronize:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Synchronize documentation with Crowdin
+        uses: crowdin/github-action@0d5670f539973aea2f01abce61a8989934df0025 # v3.0.2
+        with:
+          upload_sources: true
+          upload_translations: false
+          download_translations: true
+          download_language: de
+          push_translations: false
+          create_pull_request: false
+          user: auto
+        env:
+          CROWDIN_PROJECT_ID: ${{ vars.CROWDIN_PROJECT_ID }}
+          CROWDIN_PERSONAL_TOKEN: ${{ secrets.CROWDIN_PERSONAL_TOKEN }}
+
+      - name: Upload German translations
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: pi-docs-de
+          path: packages/coding-agent/docs/de
+          if-no-files-found: error
+          retention-days: 14
