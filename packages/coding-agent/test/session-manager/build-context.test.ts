@@ -11,7 +11,13 @@ import {
 	type ThinkingLevelChangeEntry,
 } from "../../src/core/session-manager.ts";
 
-function msg(id: string, parentId: string | null, role: "user" | "assistant", text: string): SessionMessageEntry {
+function msg(
+	id: string,
+	parentId: string | null,
+	role: "user" | "assistant",
+	text: string,
+	assistantModel = { provider: "anthropic", modelId: "claude-test" },
+): SessionMessageEntry {
 	const base = { type: "message" as const, id, parentId, timestamp: "2025-01-01T00:00:00Z" };
 	if (role === "user") {
 		return { ...base, message: { role, content: text, timestamp: 1 } };
@@ -22,8 +28,8 @@ function msg(id: string, parentId: string | null, role: "user" | "assistant", te
 			role,
 			content: [{ type: "text", text }],
 			api: "anthropic-messages",
-			provider: "anthropic",
-			model: "claude-test",
+			provider: assistantModel.provider,
+			model: assistantModel.modelId,
 			usage: {
 				input: 1,
 				output: 1,
@@ -105,21 +111,39 @@ describe("buildSessionContext", () => {
 			expect(ctx.messages).toHaveLength(2);
 		});
 
-		it("tracks model from assistant message", () => {
-			const entries: SessionEntry[] = [msg("1", null, "user", "hello"), msg("2", "1", "assistant", "hi")];
-			const ctx = buildSessionContext(entries);
-			expect(ctx.model).toEqual({ provider: "anthropic", modelId: "claude-test" });
-		});
-
-		it("tracks model from model change entry", () => {
+		// Regression test for #9243.
+		it("tracks the latest assistant model when there is no model change entry", () => {
 			const entries: SessionEntry[] = [
 				msg("1", null, "user", "hello"),
-				modelChange("2", "1", "openai", "gpt-4"),
-				msg("3", "2", "assistant", "hi"),
+				msg("2", "1", "assistant", "first", { provider: "anthropic", modelId: "claude-test" }),
+				msg("3", "2", "user", "again"),
+				msg("4", "3", "assistant", "second", { provider: "relay", modelId: "echoed-model" }),
 			];
 			const ctx = buildSessionContext(entries);
-			// Assistant message overwrites model change
-			expect(ctx.model).toEqual({ provider: "anthropic", modelId: "claude-test" });
+			expect(ctx.model).toEqual({ provider: "relay", modelId: "echoed-model" });
+		});
+
+		// Regression test for #9243.
+		it("prefers the model change routing ID over an assistant echoed ID", () => {
+			const entries: SessionEntry[] = [
+				msg("1", null, "user", "hello"),
+				modelChange("2", "1", "relay", "anthropic/claude-opus-5"),
+				msg("3", "2", "assistant", "hi", { provider: "relay", modelId: "claude-opus-5" }),
+			];
+			const ctx = buildSessionContext(entries);
+			expect(ctx.model).toEqual({ provider: "relay", modelId: "anthropic/claude-opus-5" });
+		});
+
+		// Regression test for #9243.
+		it("uses the latest model change entry", () => {
+			const entries: SessionEntry[] = [
+				modelChange("1", null, "relay", "anthropic/claude-opus-5"),
+				msg("2", "1", "assistant", "first", { provider: "relay", modelId: "claude-opus-5" }),
+				modelChange("3", "2", "openai", "gpt-5.4"),
+				msg("4", "3", "assistant", "second", { provider: "openai", modelId: "gpt-5.4-echo" }),
+			];
+			const ctx = buildSessionContext(entries);
+			expect(ctx.model).toEqual({ provider: "openai", modelId: "gpt-5.4" });
 		});
 	});
 
@@ -193,17 +217,20 @@ describe("buildSessionContext", () => {
 			expect(ctx.messages.map((message) => message.role)).toEqual(["compactionSummary", "user", "assistant"]);
 		});
 
+		// Regression test for #9243.
 		it("keeps settings from the full path after compaction", () => {
 			const entries: SessionEntry[] = [
 				msg("1", null, "user", "first"),
 				thinkingLevel("2", "1", "high"),
-				msg("3", "2", "assistant", "response1"),
-				msg("4", "3", "user", "second"),
-				compaction("5", "4", "Summary", "4"),
+				modelChange("3", "2", "relay", "anthropic/claude-opus-5"),
+				msg("4", "3", "assistant", "response1", { provider: "relay", modelId: "claude-opus-5" }),
+				msg("5", "4", "user", "second"),
+				compaction("6", "5", "Summary", "5"),
 			];
 
 			const ctx = buildSessionContext(entries);
 			expect(ctx.thinkingLevel).toBe("high");
+			expect(ctx.model).toEqual({ provider: "relay", modelId: "anthropic/claude-opus-5" });
 			expect(ctx.messages.map((message) => message.role)).toEqual(["compactionSummary", "user"]);
 		});
 	});
@@ -227,6 +254,26 @@ describe("buildSessionContext", () => {
 			const ctxB = buildSessionContext(entries, "4");
 			expect(ctxB.messages).toHaveLength(3);
 			expect((ctxB.messages[2] as any).content).toBe("branch B");
+		});
+
+		// Regression test for #9243.
+		it("isolates explicit and fallback models to the selected branch", () => {
+			const entries: SessionEntry[] = [
+				msg("1", null, "user", "start"),
+				msg("2", "1", "assistant", "common", { provider: "anthropic", modelId: "common-model" }),
+				modelChange("3", "2", "relay", "anthropic/claude-opus-5"),
+				msg("4", "3", "assistant", "branch A", { provider: "relay", modelId: "claude-opus-5" }),
+				msg("5", "2", "assistant", "branch B", { provider: "vertex", modelId: "branch-fallback" }),
+			];
+
+			expect(buildSessionContext(entries, "4").model).toEqual({
+				provider: "relay",
+				modelId: "anthropic/claude-opus-5",
+			});
+			expect(buildSessionContext(entries, "5").model).toEqual({
+				provider: "vertex",
+				modelId: "branch-fallback",
+			});
 		});
 
 		it("includes branch summary in path", () => {
