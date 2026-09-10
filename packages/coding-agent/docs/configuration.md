@@ -59,7 +59,7 @@ Disable context-file discovery for one run with `--no-context-files`.
 
 Settings can load extensions, skills, prompt templates, themes, and Pi packages. Prefer each resource's conventional directory when possible. Explicit settings are useful for additional paths, glob filters, or package-level resource selection.
 
-Project-local resources load only after the project is trusted. See [Extensions](extensions.md), [Skills](skills.md), [Prompt Templates](prompt-templates.md), and [Pi Packages](packages.md) for their discovery and packaging rules.
+Project-local resources load only after project trust is granted. See [Extensions](extensions.md), [Skills](skills.md), [Prompt Templates](prompt-templates.md), and [Pi Packages](packages.md) for their discovery and packaging rules.
 
 ## Verify a change
 

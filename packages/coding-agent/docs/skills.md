@@ -57,7 +57,7 @@ Set `disable-model-invocation: true` in frontmatter when a skill should be avail
 Pi discovers skills from:
 
 - `~/.pi/agent/skills/` and `~/.agents/skills/` for personal skills
-- `.pi/skills/` and `.agents/skills/` for trusted projects
+- `.pi/skills/` and `.agents/skills/` after project trust is granted
 - `skills/` directories and `pi.skills` entries in Pi packages
 - additional paths in the `skills` setting
 - repeatable `--skill <path>` command-line options

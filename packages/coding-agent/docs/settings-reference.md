@@ -11,7 +11,7 @@ Edit the files directly or use `/settings` for common options. To save startup m
 
 ## Project Trust
 
-Project settings load only for trusted projects. See [Project Trust](security.md#project-trust) for the trust boundary, saved decisions, and command-line overrides.
+Project settings load only after project trust is granted. See [Project Trust](security.md#project-trust) for the trust boundary, saved decisions, and command-line overrides.
 
 ## All Settings
 

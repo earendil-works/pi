@@ -2,7 +2,7 @@
 
 Prompt templates turn Markdown files into reusable `/` commands. Use one when you want to invoke the same prompt repeatedly without adding executable behavior or a larger set of supporting instructions.
 
-A template can accept arguments, appear in command completion, and load from personal configuration, a trusted project, an explicit path, or a Pi package.
+A template can accept arguments and appear in command completion. Pi can load templates from personal configuration, project configuration, an explicit path, or a Pi package. Project configuration loads only after project trust is granted.
 
 ## Create a template
 
@@ -53,7 +53,7 @@ Pi discovers templates from these sources:
 | Source | Location or option |
 |---|---|
 | Personal | `~/.pi/agent/prompts/*.md` |
-| Project | `.pi/prompts/*.md` after the project is trusted |
+| Project | `.pi/prompts/*.md` after project trust is granted |
 | Package | A `prompts/` directory or `pi.prompts` manifest entry |
 | Settings | The `prompts` array |
 | Command line | Repeatable `--prompt-template <path>` |

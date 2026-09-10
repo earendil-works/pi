@@ -2,7 +2,7 @@
 
 Run `pi` from the folder you want to work in. Pi uses that folder to discover files, instructions, and configuration, and to group saved sessions. If you have not installed Pi or chosen a model yet, follow the [Quickstart](quickstart.md).
 
-Pi may ask whether to trust project resources before loading them. See [Project trust](security.md#project-trust).
+Pi may ask whether you trust the working folder before loading its project resources. See [Project trust](security.md#project-trust).
 
 <p align="center"><img src="images/interactive-mode.png" alt="Pi interactive mode showing a conversation, editor, and status information" width="750"></p>
 
