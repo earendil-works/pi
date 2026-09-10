@@ -67,7 +67,7 @@ Warming needs a known cache lifetime for the model and the retention tier the re
 
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
-| `theme` | string | `"dark"` | Theme name (`"dark"`, `"light"`, or custom) |
+| `theme` | string | Detected | Theme name (`"dark"`, `"light"`, or custom). When unset, Pi detects the terminal background and falls back to `"dark"` if it cannot detect a light background |
 | `externalEditor` | string | `$VISUAL`, then `$EDITOR`, then Notepad on Windows or `nano` elsewhere | Command for Ctrl+G external editor; takes precedence over environment variables |
 | `quietStartup` | boolean | `false` | Hide startup header |
 | `defaultProjectTrust` | string | `"ask"` | Fallback project trust behavior: `"ask"`, `"always"`, or `"never"`. Global setting only |
@@ -191,7 +191,7 @@ See [compaction.md](compaction.md) for trigger and summarization behavior.
 | `retry.maxRetries` | number | `3` | Maximum agent-level retry attempts |
 | `retry.baseDelayMs` | number | `2000` | Base delay for agent-level exponential backoff (2s, 4s, 8s) |
 | `retry.maxAgentDelayMs` | number | `60000` | Maximum agent-level retry delay (60s) |
-| `retry.provider.timeoutMs` | number | SDK default | Provider/SDK request timeout in milliseconds |
+| `retry.provider.timeoutMs` | number | `httpIdleTimeoutMs` (`300000`) | Override the provider/SDK request timeout in milliseconds |
 | `retry.provider.maxRetries` | number | `0` | Provider/SDK retry attempts |
 | `retry.provider.maxRetryDelayMs` | number | `60000` | Max server-requested delay before failing (60s) |
 
