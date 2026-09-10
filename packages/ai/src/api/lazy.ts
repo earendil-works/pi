@@ -28,6 +28,11 @@ function hasResult(
 	return typeof (source as { result?: unknown }).result === "function";
 }
 
+/** AbortError as a DOMException or pi-ai's synthetic createAbortError(). */
+function isAbortError(error: unknown): boolean {
+	return error instanceof Error && error.name === "AbortError";
+}
+
 async function forwardStream(
 	target: AssistantMessageEventStream,
 	source: AsyncIterable<AssistantMessageEvent>,
@@ -52,8 +57,15 @@ export function lazyStream(
 	setup()
 		.then((inner) => forwardStream(outer, inner))
 		.catch((error) => {
-			const message = createSetupErrorMessage(model, error);
-			outer.push({ type: "error", reason: "error", error: message });
+			// An abort during setup is a cancellation, not a failure: classify it
+			// as "aborted" so the UI renders it softly and auto-retry skips it.
+			const reason: "aborted" | "error" = isAbortError(error) ? "aborted" : "error";
+			const message = createSetupErrorMessage(
+				model,
+				reason === "aborted" ? new Error("Request was aborted") : error,
+			);
+			if (reason === "aborted") message.stopReason = "aborted";
+			outer.push({ type: "error", reason, error: message });
 			outer.end(message);
 		});
 
