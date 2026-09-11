@@ -114,16 +114,22 @@ jobs:
               return { entries, users };
             }
 
-            function stringifyApprovedUsers(entries) {
-              const normalizedEntries = [...entries];
+            function trimTrailingBlankEntries(entries) {
+              const trimmed = [...entries];
 
-              while (normalizedEntries.length > 0) {
-                const lastEntry = normalizedEntries[normalizedEntries.length - 1];
+              while (trimmed.length > 0) {
+                const lastEntry = trimmed[trimmed.length - 1];
                 if (lastEntry.type !== 'other' || lastEntry.line.trim() !== '') {
                   break;
                 }
-                normalizedEntries.pop();
+                trimmed.pop();
               }
+
+              return trimmed;
+            }
+
+            function stringifyApprovedUsers(entries) {
+              const normalizedEntries = trimTrailingBlankEntries(entries);
 
               return `${normalizedEntries
                 .map((entry) => (entry.type === 'user' ? `${entry.username} ${entry.capability}` : entry.line))
@@ -131,7 +137,8 @@ jobs:
             }
 
             const content = fs.readFileSync(APPROVED_FILE, 'utf8');
-            const { entries, users } = parseApprovedUsers(content);
+            const { entries: parsedEntries, users } = parseApprovedUsers(content);
+            const entries = trimTrailingBlankEntries(parsedEntries);
             const mentionedUsers = parseMentionedUsers(commentBody);
             const approvalTargets = mentionedUsers.length > 0 ? mentionedUsers : [issueAuthor];
             const changedTargets = [];
