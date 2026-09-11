@@ -6,6 +6,11 @@ not a package export. In snippets, `call` is the current `Call` (Chord Context, 
 asynchronous public/runtime operations; `runtime` is the task/tool capability object. Transaction
 builders do not take another Call.
 
+**Design status:** the tool/sink/preview interfaces and related examples remain provisional and need
+simplification before implementation. They preserve the capabilities to cover, not a final authoring
+surface. Storage, atomic publication, cancellation ownership and bounded-output requirements remain
+constraints on that redesign. The separate steps/returned-plans proposal has not been adopted.
+
 ## 1. Goals
 
 **Few concepts, replaceable behaviour.** A session is conversations, immutable entries, durable
@@ -1420,7 +1425,10 @@ records `terminated`; an abort of the run, or `abortInput` on a queued item, rec
 Foreground abort withdraws queued steer and followUp while preserving write and nextRun. Failure
 and terminate may place safe writes but do not consume queued inputs that require a successor.
 Exactly one live generation or `post_tools` owns an active group, and ownership transfers in the
-same commit that settles the previous owner.
+same commit that settles the previous owner. Input groups/results are built-in harness behavior,
+not payload fields the generic driver infers from arbitrary plugin tasks. These built-in kinds are
+registered at open; a compatible replacement retains their input-result responsibilities. A missing
+tool implementation is handled by the surviving tool task kind, not by orphaning the input owner.
 
 The list is stored as append/remove/clear operations, not as a rewritten array. Inbox watch events
 carry the same operations; an idle same-commit append/remove emits none. Memory and SQLite may
@@ -1685,7 +1693,9 @@ tool execute:
 ```
 
 The tool never touches context, siblings or queues. A throwing `before_tool` blocks the tool. An
-ordinary tool throw is an error result, not a cancellation.
+ordinary tool throw is an error result, not a cancellation. A missing executable tool is also an
+ordinary unavailable-tool result: the built-in `tool` kind remains registered and `post_tools` can
+continue or finish the input group. This differs from a genuinely missing task kind (§6.4).
 
 ```text
 recover:  replay only if the stored policy allows; else an interrupted result from the checkpoint
@@ -1928,6 +1938,11 @@ long as it likes (a human approval is a hook that waits); the task is still `pla
 and a crash simply asks again. A plugin kind declares its own points the same way, and a plugin
 that replaces a built-in kind keeps its hook names so existing handlers keep working. Commit
 listeners are not hooks: they observe, never decide, and never await a commit on the same line.
+
+Approval/question workflows and durable answer reuse belong to the workspace/plugin layer. Pico
+supplies task identity and existing storage capabilities, not a separate memo or approval subsystem.
+The exact hook access to task id and authorized scratch remains an integration question; no extra
+hook-payload fields or answer-replay protocol are established here.
 
 ## 9. API
 
@@ -2189,6 +2204,11 @@ code.
 
 ### 9.3 Task and tool integration
 
+**Provisional API:** the sink, tool runtime and output-state shapes below are the current sketch.
+Simplify them together with previews before implementing. Preserve streaming text/images, typed
+details, bounded capture/spill, diagnostics, usage, control outcomes, jobs and cooperative cleanup;
+this section does not settle the final division of responsibilities or arbitrary-work adoption.
+
 ```ts
 interface Tool<TParams, TDetails extends JsonValue> {
   readonly name: string; readonly description: string; readonly parameters: JsonSchema<TParams>;
@@ -2272,6 +2292,9 @@ and rendering. The transcript therefore records exactly the commentary the model
 copying the message into `data`.
 
 ### 9.4 Watch
+
+The tool-facing preview API below is provisional (§9.3). Delivery coalescing is deferred, not an
+initial implementation requirement; the current per-commit publication rules remain unchanged.
 
 The transport is the commit stream, gap-free and replayable. The interface is typed events derived
 from it by the harness, and a view the harness keeps current, so a client renders and never parses

@@ -4,7 +4,9 @@ Durable agent harness for pi: one session file, any number of conversations, eve
 recorded as a task that survives a crash, and a view any UI can render.
 
 **Note**: this guide is about using the harness. `pico-v3.md` is the design and the reference for
-why things are the way they are.
+why things are the way they are. Tool/sink/preview interfaces and their examples are provisional:
+we still need a simpler authoring surface before implementing them. Their required capabilities and
+storage/cancellation guarantees are retained; the separate steps proposal has not been adopted.
 
 ## Table of Contents
 
@@ -629,7 +631,10 @@ const answer = await c.prompt({ input: 'Inspect the parser' }, call);
 
 The pieces are available separately. `inputId` is always the id of the accepted `pi.inbox` list
 element, even when idle acceptance places and removes it in the same commit. Generation and
-`post_tools` carry input ids explicitly, so result lookup never scans the transcript:
+`post_tools` carry input ids explicitly, so result lookup never scans the transcript. This is built-in
+harness behavior; a replacement for these built-in kinds must retain their input-result responsibilities.
+Removing an executable tool does not remove its task kind or the input owner: the built-in tool task
+writes an unavailable-tool result and the turn continues through `post_tools`.
 
 ```typescript
 const { inputId } = await c.accept({ input: 'Inspect the parser', requestId: 'req-42' }, call);
@@ -765,6 +770,9 @@ Runtime scratch writes reject after cancellation too: await/catch them. Harness 
 drain their own scratch promises and drop late callbacks, never silently recreate retired scratch.
 
 ## Watching
+
+Tool-facing preview APIs remain provisional alongside the sink. Preview delivery coalescing is
+deferred; the current per-commit watch behavior is unchanged.
 
 ### The View
 
@@ -1089,6 +1097,10 @@ anywhere. A violating builder call throws before anything is persisted.
 
 ## Writing Tools
 
+**Provisional:** the sink, runtime and preview interfaces are preserved below for discussion, not as
+final implementation instructions. We will simplify them while retaining streaming output, bounded
+capture, diagnostics, typed details, usage, control outcomes and durable job/child cleanup.
+
 ### The Sink
 
 A tool's `execute` returns nothing. Everything it produces goes through a sink, so output streams
@@ -1257,6 +1269,11 @@ These failure policies exclude cancellation control errors, which propagate to u
 A handler receives the active Call as its final argument and must forward it to waits/effects. The
 harness awaits its actual return, not an abandoned raced promise. A handler may run again after a
 crash, so its external side effects need their own idempotence.
+
+Approval/question policy, presentation and durable answer reuse belong to workspace/plugins, using
+existing scratch or scoped values as appropriate. Pico does not add a separate memo subsystem. How
+hooks receive task identity and authorized scratch access is still an integration question; the
+examples do not establish a new hook-payload API.
 
 ## Writing Kinds
 
