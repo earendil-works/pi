@@ -5,24 +5,22 @@
 [`pico-simple-handoff.md`](pico-simple-handoff.md) is the sole normative implementation specification.
 Read it completely before implementation. Other Pico documents and prototypes are historical inputs only.
 
-Astra reviewer `e5771f` reviewed the complete rewritten specification through multiple iterations and
-returned explicit `APPROVED`. Keep the reviewer available for implementation follow-up.
+The original specification and WP1 received delegated review. Peer review then identified and resolved
+TaskOutput contract inconsistencies in JSONL replay, mutation failure handling, watch reconnection,
+kind replacement and generation partial state.
 
 ## Git state
 
 - Branch: `pico`
-- Branch base when created: `f3c672245`
-- No production implementation has started.
-- The documentation preservation commit includes the pre-implementation Pico design cleanups and the
-  approved simple handoff.
+- Branch base when created: `f3c672245`.
+- WP1 implements compile-time declarations under `packages/agent/src/harness/pico/` with focused compile
+  coverage.
 - Implement and commit one small work package at a time for user review.
 
 ## Next action
 
-Start WP1 from `pico-simple-handoff.md`: core types and kind witnesses under
-`packages/agent/src/harness/pico/`, including compile-time tests. Delegate implementation with provider
-`openai-codex`, model `gpt-5.6-sol`. Run the focused test and full `npm run check`, then use retained Astra
-for review. Commit only WP1 files after the package boundary is approved.
+Review the WP1 commit, then begin WP2 only after explicit user approval. WP2 is the mutation algebra and
+`MemoryStorage`; follow its prerequisites, acceptance criteria and one-commit boundary in the handoff.
 
 ## Adopted core
 
@@ -35,4 +33,5 @@ abort, then a restricted abort closure.
 manual collapse is background plus turn. Non-turn tasks use limited transactions and `accept`/`write`;
 turn tasks may append model-affecting entries directly. Every missing live kind becomes orphaned at open.
 Input groups belong to built-in generation/post_tools. V1 is job-first and excludes arbitrary unfinished
-promise adoption. Tool/job output sharing remains gated.
+promise adoption. Shared TaskOutput storage/runtime/watch foundations are settled; concrete tool/job
+payloads, bounded capture/spill policy and model projection remain gated.
