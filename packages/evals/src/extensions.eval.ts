@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect } from "vitest";
 import { createJudge, describeEval } from "vitest-evals";
-import { createPiCodingAgentHarness, type PiCodingAgentInput } from "./pi-harness.ts";
+import { createPiCodingAgentHarness, excludePiDocumentation, type PiCodingAgentInput } from "./pi-harness.ts";
 import { recordEvalSourceArtifact } from "./vitest-evals/artifacts.ts";
 import { evalHarnessTable } from "./vitest-evals/harness-table.ts";
 
@@ -19,14 +19,14 @@ function createExtensionAuthoringHarness(name: string, transformSystemPrompt?: (
 	return createPiCodingAgentHarness({
 		name,
 		...(transformSystemPrompt ? { transformSystemPrompt } : {}),
-		output: ({ response, session }) => {
+		output: ({ response, session, systemPrompt }) => {
 			const extensions = session.resourceLoader.getExtensions();
 			const extensionPath = join(session.sessionManager.getCwd(), ".pi", "extensions", "hello.ts");
 			const extensionSource = existsSync(extensionPath) ? readFileSync(extensionPath, "utf8") : null;
 			return {
 				response,
-				systemPromptHasGuidelines: session.systemPrompt.includes("\nGuidelines:\n"),
-				systemPromptHasPiDocs: session.systemPrompt.includes("\nPi documentation (read only"),
+				systemPromptHasGuidelines: systemPrompt.includes("\nGuidelines:\n"),
+				systemPromptHasPiDocs: systemPrompt.includes("\nPi documentation (read only"),
 				extensionErrors: extensions.errors,
 				loadedExtensions: extensions.extensions.map(({ path, tools }) => ({
 					path,
@@ -36,25 +36,6 @@ function createExtensionAuthoringHarness(name: string, transformSystemPrompt?: (
 			};
 		},
 	});
-}
-
-// This eval intentionally removes the documentation block using stable prompt markers instead of changing Pi's
-// production prompt builder. The isolated eval prompt has no project context or skills between these markers. If
-// that setup changes, this transform must be updated so the baseline and candidate still differ only by documentation.
-function excludeDocumentation(defaultPrompt: string): string {
-	const documentationStart = defaultPrompt.indexOf("\nPi documentation (read only");
-	if (documentationStart === -1) throw new Error("Default Pi system prompt has no Pi documentation section.");
-	const cwdStart = defaultPrompt.lastIndexOf("\nCurrent working directory: ");
-	if (cwdStart === -1) throw new Error("Default Pi system prompt has no working-directory section.");
-	return defaultPrompt.slice(0, documentationStart) + defaultPrompt.slice(cwdStart);
-}
-
-// systemPromptOverride is treated as a custom prompt during reload, which appends the cwd again. Remove the original
-// suffix so each treatment contains exactly one identical working-directory section.
-function prepareDefaultPromptOverride(defaultPrompt: string): string {
-	const cwdStart = defaultPrompt.lastIndexOf("\nCurrent working directory: ");
-	if (cwdStart === -1) throw new Error("Default Pi system prompt has no working-directory section.");
-	return defaultPrompt.slice(0, cwdStart);
 }
 
 const ExtensionAuthoringJudge = createJudge<PiCodingAgentInput, ExtensionAuthoringOutput>(
@@ -105,10 +86,8 @@ const ExtensionAuthoringJudge = createJudge<PiCodingAgentInput, ExtensionAuthori
 );
 
 const extensionHarnessTable = evalHarnessTable("Pi extension authoring system prompt", {
-	baseline: createExtensionAuthoringHarness("system-prompt-without-docs", (defaultPrompt) =>
-		prepareDefaultPromptOverride(excludeDocumentation(defaultPrompt)),
-	),
-	candidate: createExtensionAuthoringHarness("default-system-prompt", prepareDefaultPromptOverride),
+	baseline: createExtensionAuthoringHarness("system-prompt-without-docs", excludePiDocumentation),
+	candidate: createExtensionAuthoringHarness("default-system-prompt"),
 });
 
 describe.for(extensionHarnessTable)("$name", ({ harness }) => {
