@@ -13,7 +13,7 @@ import {
 	setCapabilities,
 	setCellDimensions,
 } from "../src/terminal-image.ts";
-import type { Component, TUI } from "../src/tui.ts";
+import { type Component, CURSOR_MARKER, type TUI } from "../src/tui.ts";
 import { TuiMainScreen } from "../src/tui-main-screen.ts";
 import { VirtualTerminal } from "./virtual-terminal.ts";
 
@@ -162,6 +162,22 @@ describe("TUI debug logging", () => {
 });
 
 describe("TUI bounded render output", () => {
+	it("does not write duplicate cursor markers to the terminal", () => {
+		const terminal = new BoundedWriteTerminal();
+		const tui = new TuiMainScreen(terminal);
+		const component = new TestComponent();
+		// Regression for #9257: terminals may render the payload of a leaked APC marker.
+		component.lines = [`\x1b[31m界🙂\x1b[0m${CURSOR_MARKER} world${CURSOR_MARKER}`];
+		tui.addChild(component);
+
+		tui.renderNow();
+
+		const output = terminal.writes.join("");
+		assert.ok(output.includes("\x1b[31m界🙂\x1b[0m world"), "visible styled text should be preserved");
+		assert.ok(!output.includes(CURSOR_MARKER), "internal cursor markers must not reach the terminal");
+		assert.ok(output.includes("\x1b[5G"), "the first marker should keep the cursor at visible column 4");
+	});
+
 	it("splits a large full render without changing its output", () => {
 		const terminal = new BoundedWriteTerminal();
 		const tui = new TuiMainScreen(terminal);

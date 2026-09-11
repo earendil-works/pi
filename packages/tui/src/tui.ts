@@ -1390,8 +1390,9 @@ export abstract class TuiBase extends Container implements TUI {
 				const beforeMarker = line.slice(0, markerIndex);
 				const col = visibleWidth(beforeMarker);
 
-				// Strip marker from the line
-				lines[row] = line.slice(0, markerIndex) + line.slice(markerIndex + CURSOR_MARKER.length);
+				// Strip all markers from the selected line. The first marker determines the
+				// hardware cursor position; any others are stale internal sentinels.
+				lines[row] = line.replaceAll(CURSOR_MARKER, "");
 
 				return { row, col };
 			}
