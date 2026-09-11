@@ -791,7 +791,6 @@ function createToolResultMessage(finalized: FinalizedToolCallOutcome): ToolResul
 		content: finalized.result.content ?? [],
 		details: finalized.result.details,
 		usage: finalized.result.usage,
-		...(finalized.result.addedToolNames?.length ? { addedToolNames: finalized.result.addedToolNames } : {}),
 		isError: finalized.isError,
 		timestamp: Date.now(),
 	};

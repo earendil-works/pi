@@ -19,11 +19,7 @@ const emptyUsage: Usage = {
 	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 };
 
-const compat: Omit<
-	Required<OpenAICompletionsCompat>,
-	"deferredToolsMode" | "thinkingTokenBudgetField" | "vllmPriority"
-> & {
-	deferredToolsMode?: OpenAICompletionsCompat["deferredToolsMode"];
+const compat: Omit<Required<OpenAICompletionsCompat>, "thinkingTokenBudgetField" | "vllmPriority"> & {
 	thinkingTokenBudgetField?: OpenAICompletionsCompat["thinkingTokenBudgetField"];
 } = {
 	supportsStore: true,

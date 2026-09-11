@@ -109,7 +109,6 @@ interface ToolResultMessage {
   content: (TextContent | ImageContent)[];
   details?: any;      // Tool-specific metadata
   usage?: Usage;      // Nested LLM work performed by the tool
-  addedToolNames?: string[];
   isError: boolean;
   timestamp: number;
 }

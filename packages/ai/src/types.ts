@@ -467,12 +467,6 @@ export interface ToolResultMessage<TDetails = any> {
 	details?: TDetails;
 	/** Usage from the tool execution itself, if available. Not part of main LLM context accounting. */
 	usage?: Usage;
-	/**
-	 * Names from `Context.tools` that became available after this result.
-	 * Providers with native deferred tool loading use this as the load point;
-	 * other providers ignore it and use `Context.tools` normally.
-	 */
-	addedToolNames?: string[];
 	isError: boolean;
 	timestamp: number; // Unix timestamp in milliseconds
 }
@@ -648,8 +642,6 @@ export interface OpenAICompletionsCompat {
 	cacheControlFormat?: "anthropic";
 	/** Whether to send session-affinity data from `options.sessionId`. Default: true for OpenRouter endpoints, false otherwise. */
 	sendSessionAffinityHeaders?: boolean;
-	/** Provider-specific deferred tool serialization mode. */
-	deferredToolsMode?: "kimi";
 	/** Session-affinity header format: `openai` sends `session_id`, `x-client-request-id`, and `x-session-affinity`; `openai-nosession` sends `x-client-request-id` and `x-session-affinity`; `openrouter` sends `x-session-id`. Does not affect the `prompt_cache_key` body param, which is governed by cache retention. Default: auto-detected. */
 	sessionAffinityFormat?: SessionAffinityFormat;
 	/** Whether the provider supports long prompt cache retention (`prompt_cache_retention: "24h"` or Anthropic-style `cache_control.ttl: "1h"`, depending on format). Default: true. */
@@ -675,10 +667,6 @@ export interface OpenAIResponsesCompat {
 	supportsStrictMode?: boolean;
 	/** Whether to emit OpenAI custom tools with Lark/regex grammar formats. When false, grammar-constrained tools fall back to normal function tools. Default: false; the generated model catalog enables it for capable models. */
 	supportsOpenAIGrammarTools?: boolean;
-	/** Whether the model supports message-anchored `additional_tools` input items. Default: false. */
-	supportsAdditionalTools?: boolean;
-	/** Whether the model supports client-executed tool search for deferred tools. Default: false. */
-	supportsToolSearch?: boolean;
 	/** Whether the model accepts `prompt_cache_options` (OpenAI GPT-5.6+ prompt caching). Older OpenAI models reject the parameter. Default: false. */
 	supportsExplicitPromptCacheMode?: boolean;
 	/** Whether the provider accepts the `max_output_tokens` parameter. Some Codex-protocol gateways reject it. Default: true. */
@@ -746,12 +734,6 @@ export interface AnthropicMessagesCompat {
 	 * with no permitted fallback targets.
 	 */
 	allowedFallbackModels?: AnthropicAllowedFallbackModel[];
-	/**
-	 * Whether the provider supports deferred tools loaded by `tool_reference`
-	 * blocks in tool results. Default: true for first-party Anthropic models
-	 * except Haiku and models older than Claude 4.5; false for other providers.
-	 */
-	supportsToolReferences?: boolean;
 }
 
 /** Compatibility settings for Amazon Bedrock models. */

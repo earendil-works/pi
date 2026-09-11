@@ -252,7 +252,7 @@ append.
 
 The harness still assembles `AgentToolResult` in process for the model, and
 `createToolResultMessage` still writes the settled `ToolResultMessage` to the
-transcript with `content`, `details`, `usage`, `addedToolNames`, `isError`.
+transcript with `content`, `details`, `usage`, `isError`.
 Neither is a wire event.
 
 ## 6. Lane reduction

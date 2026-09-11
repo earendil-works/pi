@@ -356,27 +356,6 @@ const ANT_LING_RING_THINKING_LEVEL_MAP = {
 
 const BEDROCK_INFERENCE_PROFILE_ONLY_MODEL_IDS = new Set(["anthropic.claude-opus-5"]);
 const MODELS_DEV_OPENAI_UNSUPPORTED_MODEL_IDS = new Set(["gpt-5.6"]);
-const OPENAI_TOOL_SEARCH_MODEL_IDS = new Set([
-	"gpt-5.4",
-	"gpt-5.4-mini",
-	"gpt-5.4-pro",
-	"gpt-5.5",
-	"gpt-5.6-sol",
-	"gpt-5.6-terra",
-	"gpt-5.6-luna",
-	"gpt-6-astra",
-]);
-// Public OpenAI documents additional_tools for applications that load tools
-// outside the normal tool-search flow. Codex currently uses the input item for
-// its Responses Lite GPT-5.6 models.
-// https://developers.openai.com/api/docs/guides/tools-tool-search#add-tools-at-a-specific-point-in-the-input
-const OPENAI_ADDITIONAL_TOOLS_MODEL_IDS = OPENAI_TOOL_SEARCH_MODEL_IDS;
-const OPENAI_CODEX_ADDITIONAL_TOOLS_MODEL_IDS = new Set([
-	"gpt-5.6-sol",
-	"gpt-5.6-terra",
-	"gpt-5.6-luna",
-	"gpt-6-astra",
-]);
 const OPENAI_LONG_CONTEXT_INPUT_THRESHOLD = 272000;
 const OPENAI_SHORT_CONTEXT_CAPPED_MODEL_IDS = new Set([
 	"gpt-5.4",
@@ -634,11 +613,10 @@ const OPENAI_COMPLETIONS_DEFAULT_COMPAT = {
 } satisfies Required<
 	Omit<
 		OpenAICompletionsCompat,
-		"cacheControlFormat" | "deferredToolsMode" | "supportsThinkingTokenBudget" | "thinkingTokenBudgetField"
+		"cacheControlFormat" | "supportsThinkingTokenBudget" | "thinkingTokenBudgetField"
 	>
 > & {
 	cacheControlFormat?: OpenAICompletionsCompat["cacheControlFormat"];
-	deferredToolsMode?: OpenAICompletionsCompat["deferredToolsMode"];
 };
 
 type OpenAICompletionsResolvedCompat = typeof OPENAI_COMPLETIONS_DEFAULT_COMPAT & {
@@ -845,20 +823,6 @@ function applyOpenAIGrammarToolCompatMetadata(model: Model<Api>): void {
 	const match = /^gpt-(\d+)/.exec(model.id);
 	if (!match || Number(match[1]) < 5) return;
 	model.compat = { ...(model.compat as OpenAIResponsesCompat | undefined), supportsOpenAIGrammarTools: true };
-}
-
-function applyOpenAIToolSearchMetadata(model: Model<Api>): void {
-	const isOpenAIResponses = model.provider === "openai" && model.api === "openai-responses";
-	const isOpenAICodex = model.provider === "openai-codex" && model.api === "openai-codex-responses";
-	if (!(isOpenAIResponses || isOpenAICodex) || !OPENAI_TOOL_SEARCH_MODEL_IDS.has(model.id)) return;
-	const supportsAdditionalTools =
-		(isOpenAIResponses && OPENAI_ADDITIONAL_TOOLS_MODEL_IDS.has(model.id)) ||
-		(isOpenAICodex && OPENAI_CODEX_ADDITIONAL_TOOLS_MODEL_IDS.has(model.id));
-	model.compat = {
-		...(model.compat as OpenAIResponsesCompat | undefined),
-		...(supportsAdditionalTools ? { supportsAdditionalTools: true } : {}),
-		supportsToolSearch: true,
-	};
 }
 
 // OpenAI charges prompt-cache writes starting with the GPT-5.6 family, and exactly
@@ -1436,8 +1400,6 @@ function processFireworksModels(provider: ModelsDevProvider | undefined): Model<
 	if (!provider?.models) return [];
 
 	const anthropicCompat: AnthropicMessagesCompat = {
-		// Arbitrary loader names work, but Fireworks only defers the prefix for ToolSearch/tool_search.
-		supportsToolReferences: true,
 		allowEmptySignature: true,
 		sendSessionAffinityHeaders: true,
 		supportsEagerToolInputStreaming: false,
@@ -1454,7 +1416,6 @@ function processFireworksModels(provider: ModelsDevProvider | undefined): Model<
 		...openAICompat,
 		requiresReasoningContentOnAssistantMessages: true,
 		thinkingFormat: "openai",
-		deferredToolsMode: "kimi",
 	};
 	const models: Model<Api>[] = [];
 
@@ -2312,7 +2273,6 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 				const compat = isKimiK3 ? { ...moonshotCompat } : moonshotCompat;
 				if (isKimiK3) {
 					compat.requiresReasoningContentOnAssistantMessages = true;
-					compat.deferredToolsMode = "kimi";
 					compat.thinkingFormat = "openai";
 					compat.supportsReasoningEffort = true;
 				}
@@ -2963,7 +2923,6 @@ async function generateModels() {
 		applyThinkingLevelMetadata(model);
 		applyStrictToolCompatMetadata(model);
 		applyOpenAIGrammarToolCompatMetadata(model);
-		applyOpenAIToolSearchMetadata(model);
 		applyOpenAIExplicitPromptCacheMetadata(model);
 	}
 	applyAnthropicAllowedFallbackModelMetadata(allModels.filter(isAnthropicFallbackMetadataModel));

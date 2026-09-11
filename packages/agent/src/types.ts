@@ -366,8 +366,6 @@ export interface AgentToolResult<T> {
 	details: T;
 	/** Usage from the final tool execution itself, if available. Not used for main LLM context accounting. */
 	usage?: Usage;
-	/** Names of tools introduced by this result and available from this transcript point onward. */
-	addedToolNames?: string[];
 	/**
 	 * Hint that the agent should stop after the current tool batch.
 	 * Early termination only happens when every finalized tool result in the batch sets this to true.

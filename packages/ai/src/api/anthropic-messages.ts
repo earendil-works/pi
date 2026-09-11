@@ -31,7 +31,6 @@ import type {
 	ToolCall,
 	ToolResultMessage,
 } from "../types.ts";
-import { splitDeferredTools } from "../utils/deferred-tools.ts";
 import { appendAssistantMessageDiagnostic } from "../utils/diagnostics.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
@@ -199,23 +198,8 @@ function getAnthropicCompat(model: Model<"anthropic-messages">) {
 		supportsTemperature: model.compat?.supportsTemperature ?? true,
 		allowEmptySignature: model.compat?.allowEmptySignature ?? false,
 		supportsStrictTools: model.compat?.supportsStrictTools ?? false,
-		supportsToolReferences: model.compat?.supportsToolReferences ?? defaultSupportsToolReferences(model),
 		supportsMidConvoSystemMessages: model.compat?.supportsMidConvoSystemMessages ?? false,
 	};
-}
-
-/**
- * Default for `supportsToolReferences`: first-party Anthropic models except
- * Haiku (rejects client-side tool_reference blocks) and models that predate
- * tool search (Claude 3.x, Opus/Sonnet 4.0, Opus 4.1).
- */
-function defaultSupportsToolReferences(model: Model<"anthropic-messages">): boolean {
-	if (model.provider !== "anthropic" || model.id.includes("haiku")) return false;
-	const version = model.id.match(/^claude-(?:opus|sonnet|fable)-(\d+)(?:-(\d+))?(?:-|$)/);
-	if (!version) return false;
-	const major = Number(version[1]);
-	const minor = version[2] && version[2].length < 8 ? Number(version[2]) : 0;
-	return major > 4 || (major === 4 && minor >= 5);
 }
 
 export interface AnthropicOptions extends StreamOptions {
@@ -1040,26 +1024,11 @@ function buildParams(
 	const initialSystemText = initialSystemMessage ? getSystemMessageText(initialSystemMessage) : "";
 	const transformedMessages = transformMessages(context.messages, model, normalizeToolCallId);
 	const conversationMessages = initialSystemMessage ? transformedMessages.slice(1) : transformedMessages;
-	const normalizeToolName = isOAuthToken ? toClaudeCodeName : (name: string) => name;
-	const toolPlacement = splitDeferredTools(
-		{ ...context, messages: transformedMessages },
-		compat.supportsToolReferences,
-		normalizeToolName,
-	);
-	let immediateTools = toolPlacement.immediate;
-	let deferredTools = [...toolPlacement.deferred.values()];
-	if (immediateTools.length === 0 && deferredTools.length > 0) {
-		immediateTools = deferredTools;
-		deferredTools = [];
-	}
-	const deferredToolNames = new Set(deferredTools.map((tool) => normalizeToolName(tool.name)));
 	const converted = convertMessages(
 		conversationMessages,
 		isOAuthToken,
 		cacheControl,
 		compat.allowEmptySignature,
-		deferredToolNames,
-		normalizeToolName,
 		model.compat?.supportsMidConvoEffort === true ? model.provider : undefined,
 		compat.supportsMidConvoSystemMessages,
 	);
@@ -1113,24 +1082,15 @@ function buildParams(
 		params.temperature = options.temperature;
 	}
 
-	if (immediateTools.length > 0 || deferredTools.length > 0) {
-		params.tools = [
-			...convertTools(
-				immediateTools,
-				isOAuthToken,
-				compat.supportsEagerToolInputStreaming,
-				compat.supportsStrictTools,
-				compat.supportsCacheControlOnTools ? cacheControl : undefined,
-			),
-			...convertTools(
-				deferredTools,
-				isOAuthToken,
-				compat.supportsEagerToolInputStreaming,
-				compat.supportsStrictTools,
-				undefined,
-				true,
-			),
-		];
+	const tools = getCurrentTools(context);
+	if (tools.length > 0) {
+		params.tools = convertTools(
+			tools,
+			isOAuthToken,
+			compat.supportsEagerToolInputStreaming,
+			compat.supportsStrictTools,
+			compat.supportsCacheControlOnTools ? cacheControl : undefined,
+		);
 	}
 
 	// Managed effort models always use adaptive thinking so prefix mismatches can
@@ -1194,38 +1154,12 @@ function normalizeToolCallId(id: string): string {
 	return id.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 64);
 }
 
-function convertToolResult(
-	msg: ToolResultMessage,
-	isOAuthToken: boolean,
-	deferredToolNames: ReadonlySet<string>,
-	loadedToolNames: Set<string>,
-	normalizeToolName: (name: string) => string,
-): { toolResult: ContentBlockParam; siblingContent: ContentBlockParam[] } {
-	const references: Array<{ type: "tool_reference"; tool_name: string }> = [];
-	for (const name of msg.addedToolNames ?? []) {
-		const normalizedName = normalizeToolName(name);
-		if (!deferredToolNames.has(normalizedName) || loadedToolNames.has(normalizedName)) continue;
-		loadedToolNames.add(normalizedName);
-		references.push({
-			type: "tool_reference",
-			tool_name: isOAuthToken ? toClaudeCodeName(name) : name,
-		});
-	}
-	const convertedContent = convertContentBlocks(msg.content);
-	// Anthropic rejects tool references mixed with ordinary tool-result content.
+function convertToolResult(msg: ToolResultMessage): ContentBlockParam {
 	return {
-		toolResult: {
-			type: "tool_result",
-			tool_use_id: msg.toolCallId,
-			content: references.length > 0 ? references : convertedContent,
-			is_error: msg.isError,
-		},
-		siblingContent:
-			references.length === 0
-				? []
-				: typeof convertedContent === "string"
-					? [{ type: "text", text: convertedContent }]
-					: convertedContent,
+		type: "tool_result",
+		tool_use_id: msg.toolCallId,
+		content: convertContentBlocks(msg.content),
+		is_error: msg.isError,
 	};
 }
 
@@ -1239,14 +1173,11 @@ function convertMessages(
 	isOAuthToken: boolean,
 	cacheControl?: CacheControlEphemeral,
 	allowEmptySignature = false,
-	deferredToolNames: ReadonlySet<string> = new Set(),
-	normalizeToolName: (name: string) => string = (name) => name,
 	managedProvider?: string,
 	supportsMidConvoSystemMessages = false,
 ): ConvertedAnthropicMessages {
 	const params: MessageParam[] = [];
 	const assistantLevels = new Map<number, AnthropicEffort>();
-	const loadedToolNames = new Set<string>();
 	const pendingSystemMessages: MessageParam[] = [];
 	const flushPendingSystemMessages = (): void => {
 		params.push(...pendingSystemMessages);
@@ -1380,28 +1311,18 @@ function convertMessages(
 		} else if (msg.role === "toolResult") {
 			// Collect all consecutive toolResult messages, needed for z.ai Anthropic endpoint.
 			const toolResults: ContentBlockParam[] = [];
-			const siblingContent: ContentBlockParam[] = [];
 			let j = i;
 			while (j < transformedMessages.length && transformedMessages[j].role === "toolResult") {
-				const converted = convertToolResult(
-					transformedMessages[j] as ToolResultMessage,
-					isOAuthToken,
-					deferredToolNames,
-					loadedToolNames,
-					normalizeToolName,
-				);
-				toolResults.push(converted.toolResult);
-				siblingContent.push(...converted.siblingContent);
+				toolResults.push(convertToolResult(transformedMessages[j] as ToolResultMessage));
 				j++;
 			}
 
 			// Skip the messages we've already processed.
 			i = j - 1;
 
-			// Displaced reference-bearing results must follow every tool_result block.
 			params.push({
 				role: "user",
-				content: [...toolResults, ...siblingContent],
+				content: toolResults,
 			});
 		}
 	}
@@ -1468,7 +1389,6 @@ function convertTools(
 	supportsEagerToolInputStreaming: boolean,
 	supportsStrictTools: boolean,
 	cacheControl?: CacheControlEphemeral,
-	deferLoading = false,
 ): BetaTool[] {
 	if (!tools) return [];
 
@@ -1495,7 +1415,6 @@ function convertTools(
 			...(supportsEagerToolInputStreaming ? { eager_input_streaming: true } : {}),
 			...(strict === true ? { strict: true } : {}),
 			input_schema: inputSchema,
-			...(deferLoading ? { defer_loading: true } : {}),
 			...(cacheControl && index === tools.length - 1 ? { cache_control: cacheControl } : {}),
 		};
 	});

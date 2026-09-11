@@ -1,5 +1,5 @@
 import type { AssistantMessage, Context, ImageContent, Message, TextContent, Usage } from "../types.ts";
-import { getInitialTools, normalizeContext } from "./normalize-context.ts";
+import { normalizeContext } from "./normalize-context.ts";
 import { getSystemMessageText } from "./text.ts";
 
 export interface ContextUsageEstimate {
@@ -123,25 +123,5 @@ function isMessageArray(value: Context | readonly Message[]): value is readonly 
 export function estimateContextTokens(context: Context | readonly Message[]): ContextUsageEstimate {
 	if (isMessageArray(context)) return estimateMessages(context);
 
-	const normalizedContext = normalizeContext(context);
-	const estimate = estimateMessages(normalizedContext.messages);
-	if (estimate.lastUsageIndex !== null) {
-		const addedNames = new Set(
-			normalizedContext.messages
-				.slice(estimate.lastUsageIndex + 1)
-				.filter((message) => message.role === "toolResult")
-				.flatMap((message) => message.addedToolNames ?? []),
-		);
-		const addedToolTokens = estimateToolsTokens(
-			getInitialTools(normalizedContext).filter((tool) => addedNames.has(tool.name)),
-		);
-		return {
-			tokens: estimate.tokens + addedToolTokens,
-			usageTokens: estimate.usageTokens,
-			trailingTokens: estimate.trailingTokens + addedToolTokens,
-			lastUsageIndex: estimate.lastUsageIndex,
-		};
-	}
-
-	return estimate;
+	return estimateMessages(normalizeContext(context).messages);
 }

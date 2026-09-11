@@ -196,7 +196,6 @@ describe("tool execution primitives", () => {
 			content: [{ type: "text", text: "original" }],
 			details: { original: true },
 			usage: originalUsage,
-			addedToolNames: ["new-tool"],
 		};
 
 		const finalized = finalizeToolCall(
@@ -218,7 +217,6 @@ describe("tool execution primitives", () => {
 			content: [{ type: "text", text: "patched" }],
 			details: { patched: true },
 			usage: replacementUsage,
-			addedToolNames: ["new-tool"],
 			terminate: true,
 		});
 		expect(message).toMatchObject({
@@ -228,7 +226,6 @@ describe("tool execution primitives", () => {
 			content: [{ type: "text", text: "patched" }],
 			details: { patched: true },
 			usage: replacementUsage,
-			addedToolNames: ["new-tool"],
 			isError: false,
 		});
 		expect(message.timestamp).toBeGreaterThanOrEqual(before);

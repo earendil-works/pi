@@ -104,7 +104,6 @@ const OpenAICompletionsCompatSchema = Type.Object({
 	supportsOpenAIGrammarTools: Type.Optional(Type.Boolean()),
 	supportsStrictMode: Type.Optional(Type.Boolean()),
 	sendSessionAffinityHeaders: Type.Optional(Type.Boolean()),
-	deferredToolsMode: Type.Optional(Type.Literal("kimi")),
 	sessionAffinityFormat: Type.Optional(
 		Type.Union([Type.Literal("openai"), Type.Literal("openai-nosession"), Type.Literal("openrouter")]),
 	),
@@ -120,8 +119,6 @@ const OpenAIResponsesCompatSchema = Type.Object({
 	supportsLongCacheRetention: Type.Optional(Type.Boolean()),
 	supportsStrictMode: Type.Optional(Type.Boolean()),
 	supportsOpenAIGrammarTools: Type.Optional(Type.Boolean()),
-	supportsAdditionalTools: Type.Optional(Type.Boolean()),
-	supportsToolSearch: Type.Optional(Type.Boolean()),
 	supportsMaxOutputTokens: Type.Optional(Type.Boolean()),
 });
 
@@ -150,7 +147,6 @@ const AnthropicMessagesCompatSchema = Type.Object({
 	allowEmptySignature: Type.Optional(Type.Boolean()),
 	supportsStrictTools: Type.Optional(Type.Boolean()),
 	supportsMidConvoEffort: Type.Optional(Type.Boolean()),
-	supportsToolReferences: Type.Optional(Type.Boolean()),
 	allowedFallbackModels: Type.Optional(
 		Type.Array(
 			Type.Object({

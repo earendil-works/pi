@@ -2370,42 +2370,13 @@ If a slot renderer is not defined or throws:
 
 ### Dynamic Tool Loading
 
-Extensions can register many tools while keeping only a small initial set active. A tool can then add more tools with `pi.setActiveTools()` during execution. Pi detects purely additive changes, records the newly available tool names on that tool result, and applies the updated active set before the next model request.
-
-This works with every model. Models with native deferred-loading support preserve the stable prompt prefix and load the new definitions at the tool-result position. Other models use the fallback described below.
+Extensions can register many tools while keeping only a small initial set active. A tool can then change the active set with `pi.setActiveTools()` during execution. Pi sends the complete updated tool list and system prompt on the next model request, which may invalidate the provider's cached prompt prefix.
 
 The lifecycle is:
 
 1. Register every tool with `pi.registerTool()` so it appears in `pi.getAllTools()`.
 2. Keep loader tools, such as `search_tools`, active and leave searchable tools inactive.
-3. During loader execution, call `pi.setActiveTools([...currentTools, ...matchingTools])`. The change must be additive: do not remove currently active tools in the same call.
-4. Pi records which tools were added on the loader's tool result.
-5. Before the next model response, Pi exposes the added definitions using native deferred loading when supported, or the normal active tool list otherwise.
-
-You do not need to return provider-specific tool references or mark the loader as a special search tool. The active-tool change is the signal. Names passed to `pi.setActiveTools()` must already be registered; unknown names are ignored.
-
-#### Models with native deferred loading
-
-- **Anthropic**
-  - **Models:** Sonnet, Opus, Fable version 4.5 or newer (without Haiku)
-  - **Native representation:** Deferred definitions use `defer_loading`; the load point uses `tool_reference` content.
-- **Fireworks Messages API**
-  - **Native representation:** Deferred definitions use `defer_loading`; the load point uses `tool_reference` content.
-  - **Loader names:** Use `ToolSearch` or `tool_search` for prefix deferral. Other loader names still work, but Fireworks includes the loaded schemas in the initial tool prefix, losing the cache benefit.
-  - This does not change API routing: Fireworks GLM models and Kimi K3 use Chat Completions, not Messages.
-- **OpenAI**
-  - **Models:** `gpt-5.4` and newer family
-  - **Native representation:** Pi adds completed client `tool_search_call` and `tool_search_output` items at the load point.
-
-For a verified custom model or proxy, native handling can be enabled with `compat.supportsToolReferences: true` for `anthropic-messages`, or `compat.supportsToolSearch: true` for `openai-responses` and `openai-codex-responses`. Leave these disabled unless the endpoint and model accept the corresponding native protocol.
-
-#### Fallback behavior
-
-For all other models and providers, dynamic activation still works: Pi sends the complete current active tool list normally on the next request. The model can call the newly activated tools, but adding their definitions may invalidate the provider's cached prompt prefix.
-
-Pi also uses this safe fallback when the active set is not purely additive, such as replacing one group of tools with another. Tool removals therefore work, but they do not use deferred loading.
-
-For the best cache behavior, keep the loader tool active for the whole session and add tools instead of replacing the active set. Also note that activating a tool with `promptSnippet` or `promptGuidelines` rebuilds the system prompt; that system-prompt change can invalidate the prefix even when the provider supports deferred schemas. Lazily loaded tools should usually rely on their tool `description` and omit active-only prompt metadata.
+3. During loader execution, call `pi.setActiveTools()` with the desired active tool names. Names must already be registered; unknown names are ignored.
 
 #### Search tool example
 
@@ -2507,7 +2478,7 @@ export default function (pi: ExtensionAPI) {
 }
 ```
 
-When `search_tools` adds a match, the model receives that definition on the immediately following request. On a native-capable model the definition is anchored after the search result without changing the initial tool-schema prefix. On other models it appears in the normal tool list on that same following request.
+When `search_tools` adds a match, the model receives the complete updated tool list on the immediately following request.
 
 ## Custom UI
 
