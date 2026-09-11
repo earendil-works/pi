@@ -555,6 +555,27 @@ describe("ModelRegistry", () => {
 			expect(compat?.supportsEagerToolInputStreaming).toBe(false);
 		});
 
+		test("custom models inherit and override prompt cache key mode independently of long retention", async () => {
+			const provider: ModelsJsonProvider = {
+				baseUrl: "https://proxy.example.com/v1",
+				api: "openai-completions",
+				compat: { promptCacheKeyMode: "enabled", supportsLongCacheRetention: false },
+				models: [{ id: "inherited" }, { id: "disabled", compat: { promptCacheKeyMode: "disabled" } }],
+			};
+			writeRawModelsJson({ demo: provider });
+
+			const registry = await createModelRegistry(authStorage, modelsJsonPath);
+			expect(registry.getError()).toBeUndefined();
+			expect(registry.find("demo", "inherited")?.compat).toMatchObject({
+				promptCacheKeyMode: "enabled",
+				supportsLongCacheRetention: false,
+			});
+			expect(registry.find("demo", "disabled")?.compat).toMatchObject({
+				promptCacheKeyMode: "disabled",
+				supportsLongCacheRetention: false,
+			});
+		});
+
 		test("compat schema accepts long cache retention flag", async () => {
 			writeRawModelsJson({
 				demo: {
@@ -786,6 +807,22 @@ describe("ModelRegistry", () => {
 
 			expect((sonnet?.compat as OpenAICompletionsCompat | undefined)?.supportsFinishReason).toBe(false);
 			expect((opus?.compat as OpenAICompletionsCompat | undefined)?.supportsFinishReason).toBe(true);
+		});
+
+		test("built-in models inherit prompt cache key support unless overridden", async () => {
+			const provider: ModelsJsonProvider = {
+				baseUrl: "https://proxy.example.com/v1",
+				compat: { promptCacheKeyMode: "enabled" },
+				modelOverrides: {
+					"gpt-4o-mini": { compat: { promptCacheKeyMode: "disabled" } },
+				},
+			};
+			writeRawModelsJson({ openai: provider });
+
+			const registry = await createModelRegistry(authStorage, modelsJsonPath);
+			expect(registry.getError()).toBeUndefined();
+			expect(registry.find("openai", "gpt-4o")?.compat).toMatchObject({ promptCacheKeyMode: "enabled" });
+			expect(registry.find("openai", "gpt-4o-mini")?.compat).toMatchObject({ promptCacheKeyMode: "disabled" });
 		});
 
 		test("model override deep merges compat settings", async () => {
