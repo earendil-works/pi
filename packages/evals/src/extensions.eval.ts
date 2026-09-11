@@ -38,12 +38,19 @@ function createExtensionAuthoringHarness(name: string, transformSystemPrompt?: (
 	});
 }
 
-function excludeGuidelinesAndDocumentation(defaultPrompt: string): string {
-	const guidelinesStart = defaultPrompt.indexOf("\nGuidelines:\n");
-	if (guidelinesStart === -1) throw new Error("Default Pi system prompt has no Guidelines section.");
-	return defaultPrompt.slice(0, guidelinesStart);
+// This eval intentionally removes the documentation block using stable prompt markers instead of changing Pi's
+// production prompt builder. The isolated eval prompt has no project context or skills between these markers. If
+// that setup changes, this transform must be updated so the baseline and candidate still differ only by documentation.
+function excludeDocumentation(defaultPrompt: string): string {
+	const documentationStart = defaultPrompt.indexOf("\nPi documentation (read only");
+	if (documentationStart === -1) throw new Error("Default Pi system prompt has no Pi documentation section.");
+	const cwdStart = defaultPrompt.lastIndexOf("\nCurrent working directory: ");
+	if (cwdStart === -1) throw new Error("Default Pi system prompt has no working-directory section.");
+	return defaultPrompt.slice(0, documentationStart) + defaultPrompt.slice(cwdStart);
 }
 
+// systemPromptOverride is treated as a custom prompt during reload, which appends the cwd again. Remove the original
+// suffix so each treatment contains exactly one identical working-directory section.
 function prepareDefaultPromptOverride(defaultPrompt: string): string {
 	const cwdStart = defaultPrompt.lastIndexOf("\nCurrent working directory: ");
 	if (cwdStart === -1) throw new Error("Default Pi system prompt has no working-directory section.");
@@ -98,7 +105,9 @@ const ExtensionAuthoringJudge = createJudge<PiCodingAgentInput, ExtensionAuthori
 );
 
 const extensionHarnessTable = evalHarnessTable("Pi extension authoring system prompt", {
-	baseline: createExtensionAuthoringHarness("system-prompt-without-docs", excludeGuidelinesAndDocumentation),
+	baseline: createExtensionAuthoringHarness("system-prompt-without-docs", (defaultPrompt) =>
+		prepareDefaultPromptOverride(excludeDocumentation(defaultPrompt)),
+	),
 	candidate: createExtensionAuthoringHarness("default-system-prompt", prepareDefaultPromptOverride),
 });
 
@@ -131,9 +140,8 @@ describe.for(extensionHarnessTable)("$name", ({ harness }) => {
 						bodyEncoding: "utf-8",
 					});
 				}
-				const expectsFullPrompt = harness.name === "default-system-prompt";
-				expect(result.output.systemPromptHasGuidelines).toBe(expectsFullPrompt);
-				expect(result.output.systemPromptHasPiDocs).toBe(expectsFullPrompt);
+				expect(result.output.systemPromptHasGuidelines).toBe(true);
+				expect(result.output.systemPromptHasPiDocs).toBe(harness.name === "default-system-prompt");
 			});
 		},
 	);
