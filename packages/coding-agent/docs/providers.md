@@ -20,6 +20,7 @@ Use `/login` in interactive mode, then select a provider:
 - Claude Pro/Max
 - GitHub Copilot
 - xAI (Grok/X subscription)
+- Meta (Muse subscription)
 - OpenRouter (OAuth-minted API key billed from OpenRouter credits)
 - Radius
 
@@ -43,6 +44,12 @@ Anthropic subscription auth is active for Claude Pro/Max accounts. Third-party h
 
 - Run `/login xai`, then select **Use a subscription**
 - `XAI_API_KEY` remains available through **Use an API key**
+
+### Meta (Muse subscription)
+
+- Run `/login meta`, then select **Sign in with Meta** to open the device authorization flow
+- The login mints a Model API key that is re-minted automatically about once a day
+- `META_API_KEY` remains available through **Use an API key**
 
 ### OpenRouter
 
@@ -94,6 +101,7 @@ pi
 | Together AI | `TOGETHER_API_KEY` | `together` |
 | Baseten | `BASETEN_API_KEY` | `baseten` |
 | Kimi For Coding | `KIMI_API_KEY` | `kimi-coding` |
+| Meta | `META_API_KEY` | `meta` |
 | MiniMax | `MINIMAX_API_KEY` | `minimax` |
 | MiniMax (China) | `MINIMAX_CN_API_KEY` | `minimax-cn` |
 | Qwen Token Plan (existing catalog) | `QWEN_TOKEN_PLAN_API_KEY` | `qwen-token-plan` |
