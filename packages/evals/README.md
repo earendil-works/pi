@@ -26,13 +26,56 @@ Additional arguments are forwarded to Vitest:
 
 ```bash
 npm run eval -- src/extensions.eval.ts
-npm run eval -- -t "creates, reloads, and uses"
+npm run eval -- -t "creates and uses the extension"
 npm run eval -- src/docs.eval.ts -t "session-format\.md"
 ```
 
-Each invocation prints an ignored `.eval/` artifact directory. `runs.jsonl` indexes completed harness runs and their
-native Pi session JSONL attachments under `sessions/`. These files may contain prompts, responses, source code, and tool
-output.
+Run all comparative customization evals five times in one invocation:
+
+```bash
+npm run eval -- \
+  src/extensions.eval.ts src/models.eval.ts src/providers.eval.ts \
+  --provider openai --model gpt-5.6-sol \
+  --repetitions 5
+```
+
+`--repetitions` applies to suites declared with `evalHarnessTable(...)`. An explicit `repetitions` value in a suite
+overrides the command-line default. `PI_EVAL_REPETITIONS=5` is equivalent to the command-line option. Use one repetition
+while developing an eval and five when reporting lift.
+
+## Reports and artifacts
+
+Each invocation prints a compound `Eval Comparisons` report after the Vitest results. When several comparative files run
+in the same invocation, this report contains one section for every eval set. For example, with illustrative values:
+
+```text
+Eval Comparisons
+  Add model to existing provider
+     Baseline  system-prompt-without-docs
+    Candidate  default-system-prompt (5/5 pairs)
+    Pass rate  +60.0 pp (candidate 80.0%, baseline 20.0%)
+       Tokens  +1200.0 (candidate 24000.0, baseline 22800.0)
+      Latency  -850.0ms (candidate 14000.0ms, baseline 14850.0ms)
+    Est. cost  +$0.0100 (candidate $0.1200, baseline $0.1100)
+
+  Add OpenAI-compatible provider
+    ...
+
+  Add custom streaming provider
+    ...
+```
+
+The runner prints the ignored `.eval/` artifact directory at startup. It contains:
+
+- `report.txt`: the terminal comparison report without color codes.
+- `report.json`: the same aggregate comparison data as structured JSON.
+- `runs.jsonl`: one record for every completed harness run.
+- `sessions/`: native Pi session JSONL attachments.
+- `sources/`: source attachments recorded by individual evals.
+
+The report covers comparative suites using `evalHarnessTable(...)`. Ordinary evals still appear in the Vitest summary and
+in `runs.jsonl`, but not in the baseline-versus-candidate comparison report. Artifacts may contain prompts, responses,
+source code, and tool output.
 
 ## Writing evals
 

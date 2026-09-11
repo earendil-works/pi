@@ -111,6 +111,17 @@ export function deriveEvalGroupKey(input: unknown, repetition: number): string {
 	return JSON.stringify([deriveInputKey(input), repetition]);
 }
 
+export function resolveEvalRepetitions(
+	explicit: number | undefined,
+	environmentValue: string | undefined = process.env.PI_EVAL_REPETITIONS,
+): number {
+	const repetitions = explicit ?? (environmentValue === undefined ? 1 : Number(environmentValue));
+	if (!Number.isSafeInteger(repetitions) || repetitions < 1) {
+		throw new TypeError("repetitions must be a positive integer.");
+	}
+	return repetitions;
+}
+
 function validateOptions<TInput, TOutput extends JsonValue | undefined>(
 	evalSet: string,
 	baseline: Harness<TInput, TOutput>,
@@ -166,7 +177,7 @@ export function evalHarnessTable<TInput, TOutput extends JsonValue | undefined>(
 	evalSet: string,
 	options: EvalHarnessTableOptions<TInput, TOutput>,
 ): EvalHarnessTableRow<TInput, TOutput>[] {
-	const repetitions = options.repetitions ?? 1;
+	const repetitions = resolveEvalRepetitions(options.repetitions);
 	const candidates = "candidate" in options ? [options.candidate] : options.candidates;
 	validateOptions(evalSet, options.baseline, candidates, repetitions);
 

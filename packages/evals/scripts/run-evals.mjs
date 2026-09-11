@@ -16,6 +16,7 @@ const artifactDirectory = process.env.PI_EVAL_ARTIFACT_DIR
 const args = process.argv.slice(2);
 let provider;
 let model;
+let repetitions;
 let hasCliModelSelection = false;
 const vitestArgs = [];
 
@@ -33,6 +34,16 @@ for (let index = 0; index < args.length; index += 1) {
 		index += 1;
 		continue;
 	}
+	if (arg === "--repetitions") {
+		const value = args[index + 1];
+		if (!value || value.startsWith("-")) {
+			console.error("Missing value for --repetitions");
+			process.exit(1);
+		}
+		repetitions = value;
+		index += 1;
+		continue;
+	}
 	if (arg.startsWith("--provider=")) {
 		provider = arg.slice("--provider=".length);
 		hasCliModelSelection = true;
@@ -43,11 +54,21 @@ for (let index = 0; index < args.length; index += 1) {
 		hasCliModelSelection = true;
 		continue;
 	}
+	if (arg.startsWith("--repetitions=")) {
+		repetitions = arg.slice("--repetitions=".length);
+		continue;
+	}
 	vitestArgs.push(arg);
 }
 
 provider = provider?.trim() || undefined;
 model = model?.trim() || undefined;
+const repetitionsText = (repetitions ?? process.env.PI_EVAL_REPETITIONS)?.trim();
+const repetitionCount = repetitionsText ? Number(repetitionsText) : 1;
+if (!Number.isSafeInteger(repetitionCount) || repetitionCount < 1) {
+	console.error("Repetitions must be a positive integer.");
+	process.exit(1);
+}
 if (hasCliModelSelection) {
 	if (!provider || !model) {
 		console.error("CLI model selection requires both --provider and --model.");
@@ -68,10 +89,12 @@ const vitestCliPath = resolve(dirname(vitestPackagePath), "vitest.mjs");
 
 mkdirSync(artifactDirectory, { recursive: true, mode: 0o700 });
 console.error(`[eval] default-model=${provider && model ? `${provider}/${model}` : "none"}`);
+console.error(`[eval] repetitions=${repetitionCount}`);
 console.error(`[eval] artifacts=${artifactDirectory}`);
 const childEnvironment = {
 	...process.env,
 	PI_EVAL_ARTIFACT_DIR: artifactDirectory,
+	PI_EVAL_REPETITIONS: String(repetitionCount),
 };
 if (provider && model) {
 	childEnvironment.PI_PROVIDER = provider;

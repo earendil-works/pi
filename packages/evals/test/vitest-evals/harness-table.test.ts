@@ -5,6 +5,7 @@ import {
 	EVAL_HARNESS_ITERATION_ARTIFACT,
 	evalHarnessTable,
 	parseEvalHarnessIterationArtifact,
+	resolveEvalRepetitions,
 } from "../../src/vitest-evals/harness-table.ts";
 
 describe("deriveEvalGroupKey", () => {
@@ -27,6 +28,18 @@ describe("deriveEvalGroupKey", () => {
 		expect(() => deriveEvalGroupKey(new Date(0), 1)).toThrow("only plain objects and arrays");
 		expect(() => deriveEvalGroupKey(Array(1), 1)).toThrow("must not be sparse");
 		expect(() => deriveEvalGroupKey(circular, 1)).toThrow("must not contain circular references");
+	});
+});
+
+describe("resolveEvalRepetitions", () => {
+	it("uses an explicit value before the environment default", () => {
+		expect(resolveEvalRepetitions(3, "5")).toBe(3);
+		expect(resolveEvalRepetitions(undefined, "5")).toBe(5);
+		expect(resolveEvalRepetitions(undefined, undefined)).toBe(1);
+	});
+
+	it.each(["0", "-1", "1.5", "nope"])("rejects invalid environment value %s", (value) => {
+		expect(() => resolveEvalRepetitions(undefined, value)).toThrow("positive integer");
 	});
 });
 

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { appendFile, mkdir } from "node:fs/promises";
+import { appendFile, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { stripVTControlCharacters } from "node:util";
 import type { Reporter, SerializedError, TestCase, TestModule, TestRunEndReason, Vitest } from "vitest/node";
 import { isHarnessRun } from "vitest-evals/harness";
 import { PI_SESSION_SNAPSHOT_ARTIFACT, persistEvalArtifactReferences } from "./artifacts.ts";
@@ -95,11 +96,11 @@ export default class EvalHarnessReporter implements Reporter {
 		await appendHarnessRunReport(test);
 	}
 
-	onTestRunEnd(
+	async onTestRunEnd(
 		modules: ReadonlyArray<TestModule>,
 		_errors: ReadonlyArray<SerializedError>,
 		reason: TestRunEndReason,
-	): void {
+	): Promise<void> {
 		if (reason === "interrupted") {
 			this.vitest?.logger.log("\nEval comparisons unavailable: test run interrupted.");
 			return;
@@ -107,5 +108,17 @@ export default class EvalHarnessReporter implements Reporter {
 		const report = summarizeHarnessComparisons(collectHarnessObservations(modules));
 		const formatted = formatHarnessComparisonReport(report);
 		if (formatted) this.vitest?.logger.log(`\n${formatted}`);
+		const artifactDirectory = process.env.PI_EVAL_ARTIFACT_DIR?.trim();
+		if (artifactDirectory) {
+			await mkdir(artifactDirectory, { recursive: true, mode: 0o700 });
+			await Promise.all([
+				writeFile(join(artifactDirectory, "report.json"), `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600 }),
+				writeFile(
+					join(artifactDirectory, "report.txt"),
+					formatted ? `${stripVTControlCharacters(formatted)}\n` : "",
+					{ mode: 0o600 },
+				),
+			]);
+		}
 	}
 }
