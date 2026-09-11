@@ -120,6 +120,9 @@ const OpenAIResponsesCompatSchema = Type.Object({
 	sessionAffinityFormat: Type.Optional(
 		Type.Union([Type.Literal("openai"), Type.Literal("openai-nosession"), Type.Literal("openrouter")]),
 	),
+	promptCacheKeyMode: Type.Optional(
+		Type.Union([Type.Literal("auto"), Type.Literal("enabled"), Type.Literal("disabled")]),
+	),
 	supportsLongCacheRetention: Type.Optional(Type.Boolean()),
 	supportsStrictMode: Type.Optional(Type.Boolean()),
 	supportsOpenAIGrammarTools: Type.Optional(Type.Boolean()),
