@@ -54,6 +54,7 @@ import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { providerHeadersToRecord } from "../utils/headers.ts";
 import { parseStreamingJson } from "../utils/json-parse.ts";
 import { resolveHttpProxyUrlForTarget } from "../utils/node-http-proxy.ts";
+import { createPendingToolCall, type PendingToolCall } from "../utils/pending-tool-call.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import { getJsonSchemaToolParameters, resolveJsonSchemaStrictSampling } from "./constrained-sampling.ts";
@@ -140,6 +141,7 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 		};
 
 		const blocks = output.content as Block[];
+		const pendingCalls = new Map<ToolCall, PendingToolCall>();
 
 		// A profile explicitly configured through pi's auth flow (the `profile`
 		// option or scoped `AWS_PROFILE` on the stored credential's env) must win
@@ -283,11 +285,11 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 					}
 					stream.push({ type: "start", partial: output });
 				} else if (item.contentBlockStart) {
-					handleContentBlockStart(item.contentBlockStart, blocks, output, stream);
+					handleContentBlockStart(item.contentBlockStart, blocks, output, stream, pendingCalls);
 				} else if (item.contentBlockDelta) {
-					handleContentBlockDelta(item.contentBlockDelta, blocks, output, stream);
+					handleContentBlockDelta(item.contentBlockDelta, blocks, output, stream, pendingCalls);
 				} else if (item.contentBlockStop) {
-					handleContentBlockStop(item.contentBlockStop, blocks, output, stream);
+					handleContentBlockStop(item.contentBlockStop, blocks, output, stream, pendingCalls);
 				} else if (item.messageStop) {
 					output.rawStopReason = item.messageStop.stopReason;
 					const { stopReason, errorMessage } = mapStopReason(item.messageStop.stopReason);
@@ -322,12 +324,12 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 			}
 
 			// A stream can settle without stopping every block, so finalize here too.
-			for (const block of output.content) finalizeStreamingBlock(block as Block);
+			for (const block of output.content) finalizeStreamingBlock(block as Block, pendingCalls);
 			stream.push({ type: "done", reason: output.stopReason, message: output });
 			stream.end();
 		} catch (error) {
 			for (const block of output.content) {
-				finalizeStreamingBlock(block as Block);
+				finalizeStreamingBlock(block as Block, pendingCalls);
 			}
 			output.stopReason = options.signal?.aborted ? "aborted" : "error";
 			output.errorMessage = formatBedrockError(error);
@@ -564,19 +566,22 @@ function handleContentBlockStart(
 	blocks: Block[],
 	output: AssistantMessage,
 	stream: AssistantMessageEventStream,
+	pendingCalls: Map<ToolCall, PendingToolCall>,
 ): void {
 	const index = event.contentBlockIndex!;
 	const start = event.start;
 
 	if (start?.toolUse) {
-		const block: Block = {
+		const pending = createPendingToolCall({
 			type: "toolCall",
 			id: start.toolUse.toolUseId || "",
 			name: start.toolUse.name || "",
 			arguments: {},
 			partialJson: "",
 			index,
-		};
+		});
+		const block: Block = pending.toolCall;
+		pendingCalls.set(block, pending);
 		output.content.push(block);
 		stream.push({ type: "toolcall_start", contentIndex: blocks.length - 1, partial: output });
 	}
@@ -587,6 +592,7 @@ function handleContentBlockDelta(
 	blocks: Block[],
 	output: AssistantMessage,
 	stream: AssistantMessageEventStream,
+	pendingCalls: Map<ToolCall, PendingToolCall>,
 ): void {
 	const contentBlockIndex = event.contentBlockIndex!;
 	const delta = event.delta;
@@ -608,7 +614,7 @@ function handleContentBlockDelta(
 		}
 	} else if (delta?.toolUse && block?.type === "toolCall") {
 		block.partialJson = (block.partialJson || "") + (delta.toolUse.input || "");
-		block.arguments = parseStreamingJson(block.partialJson);
+		pendingCalls.get(block)!.setJson(block.partialJson);
 		stream.push({ type: "toolcall_delta", contentIndex: index, delta: delta.toolUse.input || "", partial: output });
 	} else if (delta?.reasoningContent) {
 		let thinkingBlock = block;
@@ -675,7 +681,11 @@ function flushRedactedContent(block: Block): void {
  * Strips every streaming scratch field. Runs from the terminal paths as well as
  * `contentBlockStop`, because a stream can settle without stopping each block.
  */
-function finalizeStreamingBlock(block: Block): void {
+function finalizeStreamingBlock(block: Block, pendingCalls: Map<ToolCall, PendingToolCall>): void {
+	if (block.type === "toolCall") {
+		pendingCalls.get(block)?.finish();
+		pendingCalls.delete(block);
+	}
 	delete block.index;
 	// partialJson is only a streaming scratch buffer; never persist it.
 	delete block.partialJson;
@@ -702,6 +712,7 @@ function handleContentBlockStop(
 	blocks: Block[],
 	output: AssistantMessage,
 	stream: AssistantMessageEventStream,
+	pendingCalls: Map<ToolCall, PendingToolCall>,
 ): void {
 	const index = blocks.findIndex((b) => b.index === event.contentBlockIndex);
 	const block = blocks[index];
@@ -718,6 +729,8 @@ function handleContentBlockStop(
 			break;
 		case "toolCall":
 			block.arguments = parseStreamingJson(block.partialJson);
+			pendingCalls.get(block)!.finish();
+			pendingCalls.delete(block);
 			// Finalize in-place and strip the scratch buffer so replay only
 			// carries parsed arguments.
 			delete (block as Block).partialJson;
