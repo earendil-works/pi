@@ -174,15 +174,6 @@
           "path": "rpc.md"
         }
       ]
-    },
-    {
-      "title": "Development",
-      "items": [
-        {
-          "title": "Development",
-          "path": "development.md"
-        }
-      ]
     }
   ],
   "redirects": [

@@ -79,6 +79,21 @@ The client requires a path to a runnable Pi CLI. The repository example points a
 
 If you are building a client without `RpcClient`, see [RPC Protocol](rpc.md) for framing, process I/O, shutdown behavior, commands, and events.
 
+## Fork and rebrand Pi
+
+A source fork can change the CLI name and configuration directory through `package.json`:
+
+```json
+{
+  "piConfig": {
+    "name": "my-agent",
+    "configDir": ".my-agent"
+  }
+}
+```
+
+Change the top-level `bin` field to set the executable name. These settings affect the CLI banner, configuration paths, and derived environment variable names.
+
 ## Examples and references
 
 - [RPC client](../examples/rpc-client.ts): typed Node.js integration
