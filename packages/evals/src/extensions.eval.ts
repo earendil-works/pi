@@ -85,17 +85,17 @@ const ExtensionAuthoringJudge = createJudge<PiCodingAgentInput, ExtensionAuthori
 	},
 );
 
-const extensionHarnessTable = evalHarnessTable("Pi extension authoring system prompt", {
+const extensionHarnessTable = evalHarnessTable("Create and use a tool extension", {
 	baseline: createExtensionAuthoringHarness("system-prompt-without-docs", excludePiDocumentation),
 	candidate: createExtensionAuthoringHarness("default-system-prompt"),
 });
 
 describe.for(extensionHarnessTable)("$name", ({ harness }) => {
 	describeEval(
-		"Pi extension authoring system prompt",
+		"Create and use a tool extension",
 		{ harness, judges: [ExtensionAuthoringJudge], judgeThreshold: null },
 		(it) => {
-			it("creates, reloads, and uses a hello extension", async ({ run, task }) => {
+			it("creates and uses the extension", async ({ run, task }) => {
 				const result = await run([
 					{
 						type: "prompt",

@@ -43,7 +43,12 @@ type PiCodingAgentHarnessOptions = {
 };
 
 type PiCodingAgentHarnessWithOutput<TOutput extends JsonValue> = PiCodingAgentHarnessOptions & {
-	output: (args: { response: string; session: AgentSession; systemPrompt: string }) => TOutput | Promise<TOutput>;
+	output: (args: {
+		response: string;
+		session: AgentSession;
+		systemPrompt: string;
+		agentDir: string;
+	}) => TOutput | Promise<TOutput>;
 };
 
 // Comparative evals intentionally remove the documentation block using stable prompt markers instead of changing Pi's
@@ -135,7 +140,8 @@ async function runPiCodingAgent<TOutput extends JsonValue>(
 
 	const root = await mkdtemp(join(tmpdir(), "pi-eval-"));
 	const cwd = join(root, "workspace");
-	const agentDir = join(root, "agent");
+	const isolatedHome = join(root, "home");
+	const agentDir = join(isolatedHome, ".pi", "agent");
 	const transformSystemPrompt = options.transformSystemPrompt;
 	let evaluatedSystemPrompt: string | undefined;
 	const extensionFactories: InlineExtension[] = [];
@@ -155,12 +161,14 @@ async function runPiCodingAgent<TOutput extends JsonValue>(
 	let session: AgentSession | undefined;
 	let outcome: { success: true; result: SimpleHarnessResult<string | TOutput> } | { success: false; error: unknown };
 	try {
-		await Promise.all([mkdir(cwd), mkdir(agentDir)]);
+		await Promise.all([mkdir(cwd), mkdir(agentDir, { recursive: true })]);
 		const services = await createAgentSessionServices({
 			cwd,
 			agentDir,
 			modelRuntime,
-			settingsManager: SettingsManager.inMemory(),
+			settingsManager: SettingsManager.inMemory({
+				shellCommandPrefix: `export HOME=${JSON.stringify(isolatedHome)}; unset PI_CODING_AGENT_DIR PI_EVAL_ARTIFACT_DIR PI_MODEL PI_PROVIDER PI_REASONING_LEVEL PI_SESSION_FILE PI_SESSION_ID;`,
+			}),
 			...(extensionFactories.length > 0 ? { resourceLoaderOptions: { extensionFactories } } : {}),
 		});
 		signal?.throwIfAborted();
@@ -211,6 +219,7 @@ async function runPiCodingAgent<TOutput extends JsonValue>(
 							response,
 							session: evalSession,
 							systemPrompt: evaluatedSystemPrompt ?? evalSession.systemPrompt,
+							agentDir,
 						})
 					: response;
 			const stats = evalSession.getSessionStats();

@@ -43,7 +43,7 @@ const documentationAuditHarness = createPiCodingAgentHarness({
 	customTools: [submitDocumentationAuditTool],
 });
 
-describeEval("Coding agent documentation", { harness: documentationAuditHarness }, (it) => {
+describeEval("Audit documentation against implementation", { harness: documentationAuditHarness }, (it) => {
 	it.for(documentationPages)("$path matches the implementation", { timeout: 300_000 }, async ({ path }, { run }) => {
 		const documentationPath = resolve(docsRoot, path);
 		const result = await run(`Audit one Pi documentation page against the repository implementation.
