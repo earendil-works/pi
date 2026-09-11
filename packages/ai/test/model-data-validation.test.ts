@@ -2,6 +2,8 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { exportModelCatalog } from "../scripts/export-model-catalog.ts";
+import { hydrateModelCatalog } from "../scripts/hydrate-model-catalog.ts";
 import {
 	assertExactModelIds,
 	createModelDataManifest,
@@ -76,6 +78,88 @@ function writeFixtureData(
 	manifest.schemaVersion = manifestSchemaVersion;
 	writeFileSync(join(dataDir, MODEL_DATA_MANIFEST_FILE), `${JSON.stringify(manifest)}\n`);
 }
+
+describe("published model catalog hydration", () => {
+	it("hydrates a clean checkout deterministically without changing generated TypeScript", () => {
+		const { dataDir, packageRoot, structure, values } = createFixture();
+		const aggregatorPath = join(packageRoot, "src", "models.generated.ts");
+		const aggregator = readFileSync(aggregatorPath, "utf8");
+		const catalogPath = join(packageRoot, "catalog.json");
+		writeFileSync(catalogPath, JSON.stringify({ "test-provider": values, "extra-provider": values }));
+		rmSync(dataDir, { recursive: true });
+
+		hydrateModelCatalog(packageRoot, catalogPath);
+		expect(() => validateModelDataDirectory(structure, dataDir)).not.toThrow();
+		expect(readModelDataStructure(packageRoot)).toEqual(structure);
+		expect(readFileSync(aggregatorPath, "utf8")).toBe(aggregator);
+		const manifest = readFileSync(join(dataDir, MODEL_DATA_MANIFEST_FILE), "utf8");
+		const provider = readFileSync(join(dataDir, "test-provider.json"), "utf8");
+		hydrateModelCatalog(packageRoot, catalogPath);
+		expect(readFileSync(join(dataDir, MODEL_DATA_MANIFEST_FILE), "utf8")).toBe(manifest);
+		expect(readFileSync(join(dataDir, "test-provider.json"), "utf8")).toBe(provider);
+	});
+
+	it("groups models by API", () => {
+		const { packageRoot, values } = createFixture();
+		const catalogPath = join(packageRoot, "catalog.json");
+		const model = values["model-a"] as Record<string, unknown>;
+		writeFileSync(
+			catalogPath,
+			JSON.stringify({
+				"test-provider": { ...values, "model-b": { ...model, id: "model-b", api: "anthropic-messages" } },
+			}),
+		);
+		hydrateModelCatalog(packageRoot, catalogPath);
+		expect(readModelDataStructure(packageRoot)).toEqual({
+			"test-provider": { "model-a": "openai-completions", "model-b": "anthropic-messages" },
+		});
+	});
+
+	it.each([null, [], {}, { "test-provider": {} }])(
+		"rejects incomplete catalogs without replacing existing data: %j",
+		(catalog) => {
+			const { dataDir, packageRoot } = createFixture();
+			const catalogPath = join(packageRoot, "catalog.json");
+			const original = readFileSync(join(dataDir, MODEL_DATA_MANIFEST_FILE), "utf8");
+			writeFileSync(catalogPath, JSON.stringify(catalog));
+			expect(() => hydrateModelCatalog(packageRoot, catalogPath)).toThrow();
+			expect(readFileSync(join(dataDir, MODEL_DATA_MANIFEST_FILE), "utf8")).toBe(original);
+		},
+	);
+
+	it.each(["api", "provider", "cost"])("validates model %s before replacing existing data", (field) => {
+		const { dataDir, packageRoot, values } = createFixture();
+		const original = readFileSync(join(dataDir, "test-provider.json"), "utf8");
+		const model = values["model-a"] as Record<string, unknown>;
+		model[field] = null;
+		const catalogPath = join(packageRoot, "catalog.json");
+		writeFileSync(catalogPath, JSON.stringify({ "test-provider": values }));
+		expect(() => hydrateModelCatalog(packageRoot, catalogPath)).toThrow();
+		expect(readFileSync(join(dataDir, "test-provider.json"), "utf8")).toBe(original);
+	});
+});
+
+describe("release model catalog export", () => {
+	it("exports the existing model snapshot and round-trips through offline hydration", () => {
+		const { packageRoot, values } = createFixture();
+		const path = join(packageRoot, "models.json");
+		exportModelCatalog(packageRoot, path);
+		const bytes = readFileSync(path, "utf8");
+		expect(JSON.parse(bytes)).toEqual({ "test-provider": values });
+		hydrateModelCatalog(packageRoot, path);
+		exportModelCatalog(packageRoot, path);
+		expect(readFileSync(path, "utf8")).toBe(bytes);
+	});
+
+	it("rejects stale snapshot hashes without overwriting the export", () => {
+		const { packageRoot, dataDir } = createFixture();
+		const path = join(packageRoot, "models.json");
+		writeFileSync(path, "existing export");
+		writeFileSync(join(dataDir, "test-provider.json"), "{}");
+		expect(() => exportModelCatalog(packageRoot, path)).toThrow();
+		expect(readFileSync(path, "utf8")).toBe("existing export");
+	});
+});
 
 describe("generated model data validation", () => {
 	it("rejects a missing upstream model from an exact generated allowlist", () => {
