@@ -419,6 +419,34 @@ export interface DeferredHandle {
 	data?: JsonValue;
 }
 
+/**
+ * Operator instruction appended to the transcript after the conversation started.
+ *
+ * Providers with native mid-conversation system messages send it as one; others render
+ * it as a tagged user turn. Either way it is appended, never folded into the top-level
+ * system prompt, so the cached prefix and any provider conversation checks stay valid.
+ *
+ * Rendering of a persisted message must depend only on the fields stored on it and on
+ * the model. Adapters must never reinterpret existing fields, because a resumed session
+ * that renders history differently than it was sent invalidates the provider cache and,
+ * on models that bind thinking blocks to the conversation, every later thinking block.
+ * New behavior must arrive as new optional fields that older messages lack.
+ *
+ * Every system message keeps its transcript position, including one at index
+ * zero. If no `Context.systemPrompt` exists and the transport only has a
+ * top-level system channel, a leading message is serialized through that
+ * channel. Initial tools belong in `Context.tools`.
+ */
+export interface SystemMessage {
+	role: "system";
+	content: string | TextContent[];
+	/** Complete definitions of tools that become available at this point. */
+	toolsAdded?: Tool[];
+	/** Tools that stop being available at this point. Names identify removals. */
+	toolsRemoved?: Tool[];
+	timestamp: number; // Unix timestamp in milliseconds
+}
+
 export interface UserMessage {
 	role: "user";
 	content: string | (TextContent | ImageContent)[];
@@ -458,16 +486,17 @@ export interface ToolResultMessage<TDetails = any> {
 	/** Usage from the tool execution itself, if available. Not part of main LLM context accounting. */
 	usage?: Usage;
 	/**
-	 * Names from `Context.tools` that became available after this result.
-	 * Providers with native deferred tool loading use this as the load point;
-	 * other providers ignore it and use `Context.tools` normally.
+	 * Names of tools that became available after this result.
+	 * @deprecated Record new availability transitions with `SystemMessage.toolsAdded`.
+	 * Names are resolved best-effort against definitions in `Context.tools` and
+	 * `SystemMessage.toolsAdded`; unresolved names are ignored.
 	 */
 	addedToolNames?: string[];
 	isError: boolean;
 	timestamp: number; // Unix timestamp in milliseconds
 }
 
-export type Message = UserMessage | AssistantMessage | ToolResultMessage;
+export type Message = SystemMessage | UserMessage | AssistantMessage | ToolResultMessage;
 
 export type ImagesInputContent = TextContent | ImageContent;
 export type ImagesOutputContent = TextContent | ImageContent;
@@ -522,8 +551,10 @@ export interface Tool<TParameters extends TSchema = TSchema> {
 }
 
 export interface Context {
+	/** Explicit initial instructions, sent through the provider's top-level instruction field. */
 	systemPrompt?: string;
 	messages: Message[];
+	/** Initial provider-visible tool loadout. Later definitions live on `SystemMessage.toolsAdded`. */
 	tools?: Tool[];
 }
 
@@ -729,6 +760,19 @@ export interface AnthropicMessagesCompat {
 	 * except Haiku and models older than Claude 4.5; false for other providers.
 	 */
 	supportsToolReferences?: boolean;
+	/**
+	 * Whether the model accepts `role: "system"` messages inside `messages`.
+	 * Generated metadata enables this for verified first-party models. Default:
+	 * false. Unsupported models receive system messages as tagged user turns.
+	 */
+	supportsMidConvoSystemMessages?: boolean;
+	/**
+	 * Whether the model accepts `tool_addition` and `tool_removal` blocks in
+	 * mid-conversation system messages (beta). Generated metadata enables this
+	 * for verified first-party models. Default: false. Requires
+	 * `supportsMidConvoSystemMessages` as well.
+	 */
+	supportsMidConvoToolChanges?: boolean;
 }
 
 /** Compatibility settings for Amazon Bedrock models. */

@@ -134,6 +134,24 @@ describe("Agent", () => {
 		expect(agent.state.thinkingLevel).toBe("low");
 	});
 
+	it("passes system messages through the default LLM converter", async () => {
+		let roles: string[] = [];
+		const agent = new Agent({
+			streamFn: (_model, context) => {
+				roles = context.messages.map((message) => message.role);
+				const stream = new MockAssistantStream();
+				queueMicrotask(() => {
+					stream.push({ type: "done", reason: "stop", message: createAssistantMessage("ok") });
+				});
+				return stream;
+			},
+		});
+
+		await agent.prompt({ role: "system", content: "updated guidance", timestamp: Date.now() });
+
+		expect(roles).toEqual(["system"]);
+	});
+
 	it("should subscribe to events", () => {
 		const agent = new Agent({ streamFn: unusedStreamFunction });
 

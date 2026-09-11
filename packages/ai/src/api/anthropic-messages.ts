@@ -10,6 +10,7 @@ import type {
 	BetaRawMessageStreamEvent as RawMessageStreamEvent,
 	BetaRefusalStopDetails as RefusalStopDetails,
 } from "@anthropic-ai/sdk/resources/beta/messages/messages.js";
+import { Type } from "typebox";
 import { calculateCost } from "../models.ts";
 import type {
 	Api,
@@ -31,7 +32,7 @@ import type {
 	ToolCall,
 	ToolResultMessage,
 } from "../types.ts";
-import { splitDeferredTools } from "../utils/deferred-tools.ts";
+import { declaredTools, resolveToolHistory, splitDeferredTools, type ToolHistory } from "../utils/deferred-tools.ts";
 import { appendAssistantMessageDiagnostic } from "../utils/diagnostics.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
@@ -40,7 +41,12 @@ import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
-
+import {
+	extractInitialSystemPrompt,
+	getSystemMessageText,
+	renderSystemMessageAsUserText,
+	supportsMidConversationToolChanges,
+} from "../utils/system-messages.ts";
 import { getJsonSchemaToolParameters, resolveJsonSchemaStrictSampling } from "./constrained-sampling.ts";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.ts";
 import { adjustMaxTokensForThinking, buildBaseOptions, clampMaxTokensToContext } from "./simple-options.ts";
@@ -176,6 +182,20 @@ const INTERLEAVED_THINKING_BETA = "interleaved-thinking-2025-05-14";
 const SERVER_SIDE_FALLBACK_BETA = "server-side-fallback-2026-07-01";
 const MID_CONVERSATION_OUTPUT_CONFIG_BETA = "mid-conversation-output-config-2026-07-01";
 const THINKING_BINDING_CONTROLS_BETA = "thinking-binding-controls-2026-08-01";
+const MID_CONVERSATION_TOOL_CHANGES_BETA = "mid-conversation-tool-changes-2026-07-01";
+
+/**
+ * Deferred placeholder that enables transcript tool additions and references.
+ *
+ * Native tool changes keep real definitions as normal declarations. Legacy
+ * tool-result references can still defer their referenced definitions. This
+ * reserved placeholder is present exactly once when either mechanism needs it.
+ */
+const DEFERRED_TOOL_PLACEHOLDER: Tool = {
+	name: "__pi_deferred_tool_placeholder__",
+	description: "Reserved placeholder that keeps deferred tool loading active. Never call this tool.",
+	parameters: Type.Object({}),
+};
 
 function shouldUseServerSideFallbackBeta(model: Model<"anthropic-messages">): boolean {
 	return (model.compat?.allowedFallbackModels?.length ?? 0) > 0;
@@ -193,6 +213,8 @@ function getAnthropicCompat(model: Model<"anthropic-messages">) {
 		allowEmptySignature: model.compat?.allowEmptySignature ?? false,
 		supportsStrictTools: model.compat?.supportsStrictTools ?? false,
 		supportsToolReferences: model.compat?.supportsToolReferences ?? defaultSupportsToolReferences(model),
+		supportsMidConvoSystemMessages: model.compat?.supportsMidConvoSystemMessages ?? false,
+		supportsMidConvoToolChanges: model.compat?.supportsMidConvoToolChanges ?? false,
 	};
 }
 
@@ -563,6 +585,7 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 				client = created.client;
 				isOAuth = created.isOAuthToken;
 			}
+			const outputTools = declaredTools(context);
 			let params = buildParams(model, context, isOAuth, options);
 			const nextParams = await options?.onPayload?.(params, model);
 			if (nextParams !== undefined) {
@@ -650,7 +673,7 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 							type: "toolCall",
 							id: event.content_block.id,
 							name: isOAuth
-								? fromClaudeCodeName(event.content_block.name, context.tools)
+								? fromClaudeCodeName(event.content_block.name, outputTools)
 								: event.content_block.name,
 							arguments: (event.content_block.input as Record<string, any>) ?? {},
 							partialJson: "",
@@ -1015,6 +1038,11 @@ function getBetaFeatures(
 	if (model.compat?.supportsMidConvoEffort === true) {
 		features.push(MID_CONVERSATION_OUTPUT_CONFIG_BETA, THINKING_BINDING_CONTROLS_BETA);
 	}
+	// Sent whenever the model supports it rather than only when a request carries tool
+	// changes, so the beta set stays constant for the whole conversation.
+	if (supportsMidConversationToolChanges(model)) {
+		features.push(MID_CONVERSATION_TOOL_CHANGES_BETA);
+	}
 	return [...new Set(features)];
 }
 
@@ -1026,28 +1054,46 @@ function buildParams(
 ): MessageCreateParamsStreaming {
 	const { cacheControl } = getCacheControl(model, options?.cacheRetention, options?.env);
 	const compat = getAnthropicCompat(model);
+	if (!compat.supportsMidConvoSystemMessages) context = extractInitialSystemPrompt(context);
 	const transformedMessages = transformMessages(context.messages, model, normalizeToolCallId);
 	const normalizeToolName = isOAuthToken ? toClaudeCodeName : (name: string) => name;
-	const toolPlacement = splitDeferredTools(
-		{ ...context, messages: transformedMessages },
-		compat.supportsToolReferences,
-		normalizeToolName,
-	);
-	let immediateTools = toolPlacement.immediate;
-	let deferredTools = [...toolPlacement.deferred.values()];
-	if (immediateTools.length === 0 && deferredTools.length > 0) {
-		immediateTools = deferredTools;
+	const systemToolChanges = supportsMidConversationToolChanges(model);
+	const needsDeferredPlaceholder = systemToolChanges || compat.supportsToolReferences;
+	const historyContext = { ...context, messages: transformedMessages };
+	const history = resolveToolHistory(historyContext, normalizeToolName);
+	let normalTools: Tool[];
+	let deferredTools: Tool[];
+	if (systemToolChanges) {
+		normalTools = [...history.definitions.values()];
 		deferredTools = [];
+	} else {
+		const placement = splitDeferredTools(historyContext, {
+			toolResultMarkers: compat.supportsToolReferences,
+			systemMarkers: false,
+			normalizeName: normalizeToolName,
+		});
+		normalTools = placement.immediate;
+		deferredTools = [...placement.deferred.values()];
 	}
-	const deferredToolNames = new Set(deferredTools.map((tool) => normalizeToolName(tool.name)));
+	if (needsDeferredPlaceholder) deferredTools.unshift(DEFERRED_TOOL_PLACEHOLDER);
+	const reservedName = normalizeToolName(DEFERRED_TOOL_PLACEHOLDER.name);
+	normalTools = normalTools.filter(
+		(tool) => !needsDeferredPlaceholder || normalizeToolName(tool.name) !== reservedName,
+	);
+	deferredTools = deferredTools.filter((tool, index) => normalizeToolName(tool.name) !== reservedName || index === 0);
 	const converted = convertMessages(
 		transformedMessages,
 		isOAuthToken,
 		cacheControl,
 		compat.allowEmptySignature,
-		deferredToolNames,
 		normalizeToolName,
+		history,
 		model.compat?.supportsMidConvoEffort === true ? model.provider : undefined,
+		{
+			native: compat.supportsMidConvoSystemMessages,
+			toolChanges: systemToolChanges,
+			toolReferences: compat.supportsToolReferences,
+		},
 	);
 	const activeEffort = options?.effort ?? "high";
 	const betaFeatures = getBetaFeatures(model, context, isOAuthToken, options);
@@ -1099,14 +1145,14 @@ function buildParams(
 		params.temperature = options.temperature;
 	}
 
-	if (immediateTools.length > 0 || deferredTools.length > 0) {
+	if (normalTools.length > 0 || deferredTools.length > 0) {
 		params.tools = [
 			...convertTools(
-				immediateTools,
+				normalTools,
 				isOAuthToken,
 				compat.supportsEagerToolInputStreaming,
 				compat.supportsStrictTools,
-				compat.supportsCacheControlOnTools ? cacheControl : undefined,
+				!systemToolChanges && compat.supportsCacheControlOnTools ? cacheControl : undefined,
 			),
 			...convertTools(
 				deferredTools,
@@ -1182,20 +1228,17 @@ function normalizeToolCallId(id: string): string {
 
 function convertToolResult(
 	msg: ToolResultMessage,
-	isOAuthToken: boolean,
-	deferredToolNames: ReadonlySet<string>,
+	history: ToolHistory,
 	loadedToolNames: Set<string>,
 	normalizeToolName: (name: string) => string,
+	toolReferences: boolean,
 ): { toolResult: ContentBlockParam; siblingContent: ContentBlockParam[] } {
 	const references: Array<{ type: "tool_reference"; tool_name: string }> = [];
-	for (const name of msg.addedToolNames ?? []) {
-		const normalizedName = normalizeToolName(name);
-		if (!deferredToolNames.has(normalizedName) || loadedToolNames.has(normalizedName)) continue;
+	for (const tool of toolReferences ? (history.changes.get(msg)?.added ?? []) : []) {
+		const normalizedName = normalizeToolName(tool.name);
+		if (loadedToolNames.has(normalizedName)) continue;
 		loadedToolNames.add(normalizedName);
-		references.push({
-			type: "tool_reference",
-			tool_name: isOAuthToken ? toClaudeCodeName(name) : name,
-		});
+		references.push({ type: "tool_reference", tool_name: normalizedName });
 	}
 	const convertedContent = convertContentBlocks(msg.content);
 	// Anthropic rejects tool references mixed with ordinary tool-result content.
@@ -1220,22 +1263,70 @@ interface ConvertedAnthropicMessages {
 	assistantLevels: Map<number, AnthropicEffort>;
 }
 
+interface SystemMessageRendering {
+	/** Whether the model accepts `role: "system"` entries inside `messages`. Otherwise they render as user text. */
+	native: boolean;
+	/** Whether native system messages may carry `tool_addition` and `tool_removal` blocks. */
+	toolChanges: boolean;
+	/** Whether deprecated tool-result markers may emit tool references. */
+	toolReferences: boolean;
+}
+
 function convertMessages(
 	transformedMessages: Message[],
 	isOAuthToken: boolean,
 	cacheControl?: CacheControlEphemeral,
 	allowEmptySignature = false,
-	deferredToolNames: ReadonlySet<string> = new Set(),
 	normalizeToolName: (name: string) => string = (name) => name,
+	history: ToolHistory = resolveToolHistory({ messages: [] }, normalizeToolName),
 	managedProvider?: string,
+	systemMessages: SystemMessageRendering = { native: false, toolChanges: false, toolReferences: false },
 ): ConvertedAnthropicMessages {
 	const params: MessageParam[] = [];
 	const assistantLevels = new Map<number, AnthropicEffort>();
-	const loadedToolNames = new Set<string>();
+	const loadedToolNames = new Set(history.initial.map((tool) => normalizeToolName(tool.name)));
+	// Anthropic rejects a `role: "system"` message unless it directly precedes an assistant
+	// message or ends the array (verified against the API: "role 'system' must precede an
+	// 'assistant' message or end the array"). Dropping an aborted assistant turn leaves
+	// `[user, system, user]`, so native system messages are held back until the next
+	// assistant message or the end. No assistant turn lies in between, so the model sees
+	// the same content before it next acts, and the prefix up to the moved message is kept.
+	const pendingSystem: MessageParam[] = [];
+	const flushPendingSystem = (): void => {
+		params.push(...pendingSystem);
+		pendingSystem.length = 0;
+	};
 
 	for (let i = 0; i < transformedMessages.length; i++) {
 		const msg = transformedMessages[i];
 
+		if (msg.role === "system") {
+			if (!systemMessages.native) {
+				const text = renderSystemMessageAsUserText(msg);
+				if (text.length > 0)
+					params.push({ role: "user", content: [{ type: "text", text: sanitizeSurrogates(text) }] });
+				continue;
+			}
+			const blocks: ContentBlockParam[] = [];
+			const text = getSystemMessageText(msg);
+			if (text.length > 0) blocks.push({ type: "text", text: sanitizeSurrogates(text) });
+			if (systemMessages.toolChanges) {
+				const change = history.changes.get(msg);
+				// Withdraw before re-offering so a same-name pair nets out as offered.
+				for (const tool of change?.removed ?? []) {
+					const name = normalizeToolName(tool.name);
+					loadedToolNames.delete(name);
+					blocks.push({ type: "tool_removal", tool: { type: "tool_reference", name } });
+				}
+				for (const tool of change?.added ?? []) {
+					const name = normalizeToolName(tool.name);
+					loadedToolNames.add(name);
+					blocks.push({ type: "tool_addition", tool: { type: "tool_reference", name } });
+				}
+			}
+			if (blocks.length > 0) pendingSystem.push({ role: "system", content: blocks });
+			continue;
+		}
 		if (msg.role === "user") {
 			if (typeof msg.content === "string") {
 				if (msg.content.trim().length > 0) {
@@ -1329,6 +1420,7 @@ function convertMessages(
 				}
 			}
 			if (blocks.length === 0) continue;
+			flushPendingSystem();
 			const messageIndex = params.length;
 			params.push({
 				role: "assistant",
@@ -1350,10 +1442,10 @@ function convertMessages(
 			while (j < transformedMessages.length && transformedMessages[j].role === "toolResult") {
 				const converted = convertToolResult(
 					transformedMessages[j] as ToolResultMessage,
-					isOAuthToken,
-					deferredToolNames,
+					history,
 					loadedToolNames,
 					normalizeToolName,
+					systemMessages.toolReferences,
 				);
 				toolResults.push(converted.toolResult);
 				siblingContent.push(...converted.siblingContent);
@@ -1371,15 +1463,21 @@ function convertMessages(
 		}
 	}
 
-	// Add cache_control to the last user message to cache conversation history
+	flushPendingSystem();
+
+	// Add cache_control to the last user or system message to cache conversation history
 	if (cacheControl && params.length > 0) {
 		const lastMessage = params[params.length - 1];
-		if (lastMessage.role === "user") {
+		if (lastMessage.role === "user" || lastMessage.role === "system") {
 			if (Array.isArray(lastMessage.content)) {
 				const lastBlock = lastMessage.content[lastMessage.content.length - 1];
 				if (
 					lastBlock &&
-					(lastBlock.type === "text" || lastBlock.type === "image" || lastBlock.type === "tool_result")
+					(lastBlock.type === "text" ||
+						lastBlock.type === "image" ||
+						lastBlock.type === "tool_result" ||
+						lastBlock.type === "tool_addition" ||
+						lastBlock.type === "tool_removal")
 				) {
 					(lastBlock as any).cache_control = cacheControl;
 				}
@@ -1419,7 +1517,7 @@ function insertThinkingLevelMessages(
 }
 
 function shouldUseFineGrainedToolStreamingBeta(model: Model<"anthropic-messages">, context: Context): boolean {
-	return !!context.tools?.length && !getAnthropicCompat(model).supportsEagerToolInputStreaming;
+	return declaredTools(context).length > 0 && !getAnthropicCompat(model).supportsEagerToolInputStreaming;
 }
 
 function convertTools(

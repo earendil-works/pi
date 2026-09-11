@@ -15,7 +15,7 @@ import type {
 	StreamOptions,
 	Usage,
 } from "../types.ts";
-import { splitDeferredTools } from "../utils/deferred-tools.ts";
+import { declaredTools, splitDeferredTools } from "../utils/deferred-tools.ts";
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
@@ -147,7 +147,7 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 			const cacheSessionId = cacheRetention === "none" ? undefined : options?.sessionId;
 			const compat = getCompat(model);
 			const grammarToolInputProperties = createGrammarToolInputProperties(
-				context.tools,
+				declaredTools(context),
 				compat.supportsOpenAIGrammarTools,
 			);
 			const client = createClient(model, context, apiKey, options?.headers, options?.fetch, cacheSessionId);
@@ -278,7 +278,7 @@ function buildParams(
 	options: OpenAIResponsesOptions | undefined,
 	compat: Required<OpenAIResponsesCompat> = getCompat(model),
 	grammarToolInputProperties: ReadonlyMap<string, string> = createGrammarToolInputProperties(
-		context.tools,
+		declaredTools(context),
 		compat.supportsOpenAIGrammarTools,
 	),
 ) {
@@ -287,7 +287,10 @@ function buildParams(
 		: compat.supportsToolSearch
 			? "tool-search"
 			: undefined;
-	const toolPlacement = splitDeferredTools(context, deferredToolsMode !== undefined);
+	const toolPlacement = splitDeferredTools(context, {
+		toolResultMarkers: deferredToolsMode !== undefined,
+		systemMarkers: deferredToolsMode !== undefined,
+	});
 	const messages = convertResponsesMessages(model, context, OPENAI_TOOL_CALL_PROVIDERS, {
 		grammarToolInputProperties,
 		deferredTools: toolPlacement.deferred,
@@ -323,7 +326,7 @@ function buildParams(
 		params.service_tier = options.serviceTier;
 	}
 
-	if (toolPlacement.immediate.length > 0) {
+	if (deferredToolsMode !== "additional-tools" && toolPlacement.immediate.length > 0) {
 		params.tools = convertResponsesTools(toolPlacement.immediate, {
 			supportsStrictMode: compat.supportsStrictMode,
 			supportsOpenAIGrammarTools: compat.supportsOpenAIGrammarTools,

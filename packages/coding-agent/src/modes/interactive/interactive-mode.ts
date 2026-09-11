@@ -3620,6 +3620,10 @@ export class InteractiveMode {
 				this.chatContainer.addChild(component);
 				break;
 			}
+			case "system": {
+				// System updates are durable model context but remain hidden from the chat transcript.
+				break;
+			}
 			case "user": {
 				const textContent = this.getUserMessageText(message);
 				if (textContent) {

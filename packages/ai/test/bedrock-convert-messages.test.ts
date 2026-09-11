@@ -96,6 +96,33 @@ async function capturePayload(context: Context, model = baseModel): Promise<unkn
 	return capturedPayload;
 }
 
+describe("Bedrock leading system messages", () => {
+	it("uses the top-level system field and retains tool metadata", async () => {
+		const context: Context = {
+			messages: [
+				{
+					role: "system",
+					content: "initial instructions",
+					toolsAdded: [
+						{ name: "read", description: "Read a file", parameters: Type.Object({ path: Type.String() }) },
+					],
+					timestamp: 1,
+				},
+				{ role: "user", content: "hello", timestamp: 2 },
+			],
+		};
+		const payload = (await capturePayload(context)) as {
+			system?: Array<{ text?: string }>;
+			messages: Array<{ role?: string }>;
+			toolConfig?: { tools: Array<{ toolSpec?: { name?: string } }> };
+		};
+
+		expect(payload.system?.map((block) => block.text)).toEqual(["initial instructions"]);
+		expect(payload.messages.map((message) => message.role)).toEqual(["user"]);
+		expect(payload.toolConfig?.tools[0]?.toolSpec?.name).toBe("read");
+	});
+});
+
 describe("Bedrock constrained sampling", () => {
 	it("gates native strict tool use by model capability", async () => {
 		const context: Context = {

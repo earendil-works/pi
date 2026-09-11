@@ -13,12 +13,14 @@ import type {
 	Tool,
 	ToolCall,
 } from "../types.ts";
+import { declaredTools } from "../utils/deferred-tools.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { shortHash } from "../utils/hash.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { parseStreamingJson } from "../utils/json-parse.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
+import { getSystemMessageText } from "../utils/system-messages.ts";
 import { getJsonSchemaToolParameters, resolveJsonSchemaStrictSampling } from "./constrained-sampling.ts";
 import { buildBaseOptions } from "./simple-options.ts";
 import { transformMessages } from "./transform-messages.ts";
@@ -512,7 +514,8 @@ function buildChatPayload(
 		messages: toChatMessages(messages, model.input.includes("image")),
 	};
 
-	if (context.tools?.length) payload.tools = toFunctionTools(context.tools);
+	const tools = declaredTools(context);
+	if (tools.length) payload.tools = toFunctionTools(tools);
 	if (options?.temperature !== undefined) payload.temperature = options.temperature;
 	if (options?.maxTokens !== undefined) payload.maxTokens = options.maxTokens;
 	if (options?.toolChoice) payload.toolChoice = mapToolChoice(options.toolChoice);
@@ -785,6 +788,11 @@ function toChatMessages(messages: Message[], supportsImages: boolean): MistralCh
 	const result: MistralChatMessage[] = [];
 
 	for (const msg of messages) {
+		if (msg.role === "system") {
+			const text = getSystemMessageText(msg);
+			if (text.length > 0) result.push({ role: "system", content: sanitizeSurrogates(text) });
+			continue;
+		}
 		if (msg.role === "user") {
 			if (typeof msg.content === "string") {
 				result.push({ role: "user", content: sanitizeSurrogates(msg.content) });

@@ -21,7 +21,7 @@ import type {
 	Usage,
 } from "../types.ts";
 import { combineAbortSignals } from "../utils/abort-signals.ts";
-import { splitDeferredTools } from "../utils/deferred-tools.ts";
+import { declaredTools, splitDeferredTools } from "../utils/deferred-tools.ts";
 import {
 	appendAssistantMessageDiagnostic,
 	createAssistantMessageDiagnostic,
@@ -261,7 +261,7 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 
 			const accountId = extractAccountId(apiKey);
 			const grammarToolInputProperties = createGrammarToolInputProperties(
-				context.tools,
+				declaredTools(context),
 				model.compat?.supportsOpenAIGrammarTools ?? false,
 			);
 			const cacheSessionId = options?.cacheRetention === "none" ? undefined : options?.sessionId;
@@ -522,7 +522,7 @@ function buildRequestBody(
 	options: OpenAICodexResponsesOptions | undefined,
 	cacheSessionId: string | undefined,
 	grammarToolInputProperties: ReadonlyMap<string, string> = createGrammarToolInputProperties(
-		context.tools,
+		declaredTools(context),
 		model.compat?.supportsOpenAIGrammarTools ?? false,
 	),
 ): RequestBody {
@@ -533,7 +533,10 @@ function buildRequestBody(
 		: model.compat?.supportsToolSearch
 			? "tool-search"
 			: undefined;
-	const toolPlacement = splitDeferredTools(context, deferredToolsMode !== undefined);
+	const toolPlacement = splitDeferredTools(context, {
+		toolResultMarkers: deferredToolsMode !== undefined,
+		systemMarkers: deferredToolsMode !== undefined,
+	});
 	const messages = convertResponsesMessages(model, context, CODEX_TOOL_CALL_PROVIDERS, {
 		includeSystemPrompt: false,
 		grammarToolInputProperties,
@@ -567,7 +570,7 @@ function buildRequestBody(
 		body.service_tier = options.serviceTier;
 	}
 
-	if (toolPlacement.immediate.length > 0) {
+	if (deferredToolsMode !== "additional-tools" && toolPlacement.immediate.length > 0) {
 		body.tools = convertResponsesTools(toolPlacement.immediate, {
 			strict: null,
 			supportsStrictMode,

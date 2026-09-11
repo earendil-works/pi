@@ -9,7 +9,9 @@ type CapturedHeaders = Headers | string[][] | Record<string, string | readonly s
 interface CapturedResponsesPayload {
 	prompt_cache_key?: string;
 	session_id?: string;
+	tool_choice?: string;
 	tools?: Array<{ name?: string; strict?: boolean }>;
+	input?: Array<{ type?: string; tools?: Array<{ name?: string; strict?: boolean }> }>;
 }
 
 function getHeader(headers: CapturedHeaders, name: string): string | null {
@@ -148,10 +150,12 @@ describe("openai-responses provider defaults", () => {
 			if (event.type === "done" || event.type === "error") break;
 		}
 
-		expect(capturedPayload).toMatchObject({
-			tool_choice: "required",
-			tools: [expect.objectContaining({ name: "ping" })],
-		});
+		expect(capturedPayload).toMatchObject({ tool_choice: "required" });
+		const payload = capturedPayload as CapturedResponsesPayload;
+		expect(payload.tools).toBeUndefined();
+		expect(payload.input?.find((item) => item.type === "additional_tools")?.tools).toEqual([
+			expect.objectContaining({ name: "ping" }),
+		]);
 	});
 
 	it("sets strict mode explicitly for Cloudflare OpenAI Responses tools", async () => {
@@ -199,9 +203,10 @@ describe("openai-responses provider defaults", () => {
 		}
 
 		expect(model.compat?.supportsStrictMode).toBe(true);
+		// Declared tools are sorted by name so the order never depends on history.
 		expect(capturedPayload?.tools).toEqual([
-			expect.objectContaining({ name: "ordinary", strict: false }),
 			expect.objectContaining({ name: "constrained", strict: true }),
+			expect.objectContaining({ name: "ordinary", strict: false }),
 		]);
 	});
 

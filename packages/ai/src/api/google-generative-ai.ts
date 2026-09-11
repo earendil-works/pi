@@ -19,11 +19,13 @@ import type {
 	ThinkingContent,
 	ToolCall,
 } from "../types.ts";
+import { declaredTools } from "../utils/deferred-tools.ts";
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { providerHeadersToRecord } from "../utils/headers.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
+import { extractInitialSystemPrompt } from "../utils/system-messages.ts";
 import type { GoogleApiThinkingLevel, ResolvedGoogleThinkingLevel } from "./google-shared.ts";
 import {
 	convertMessages,
@@ -361,7 +363,9 @@ function buildParams(
 	context: Context,
 	options: GoogleOptions = {},
 ): GenerateContentParameters {
+	context = extractInitialSystemPrompt(context);
 	const contents = convertMessages(model, context);
+	const tools = declaredTools(context);
 
 	const generationConfig: GenerateContentConfig = {};
 	if (options.temperature !== undefined) {
@@ -372,16 +376,15 @@ function buildParams(
 	}
 
 	const supportsStrictMode = supportsGoogleStrictToolSampling(model.id);
-	const functionCallingMode = context.tools?.length
-		? resolveGoogleFunctionCallingMode(context.tools, options.toolChoice, supportsStrictMode)
+	const functionCallingMode = tools.length
+		? resolveGoogleFunctionCallingMode(tools, options.toolChoice, supportsStrictMode)
 		: undefined;
 	const config: GenerateContentConfig = {
 		...(Object.keys(generationConfig).length > 0 && generationConfig),
 		...(context.systemPrompt && { systemInstruction: sanitizeSurrogates(context.systemPrompt) }),
-		...(context.tools &&
-			context.tools.length > 0 && {
-				tools: convertTools(context.tools, false, supportsStrictMode),
-			}),
+		...(tools.length > 0 && {
+			tools: convertTools(tools, false, supportsStrictMode),
+		}),
 		...(functionCallingMode !== undefined && {
 			toolConfig: { functionCallingConfig: { mode: functionCallingMode } },
 		}),
