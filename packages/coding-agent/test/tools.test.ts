@@ -917,10 +917,10 @@ describe("tool cwd resolution", () => {
 		rmSync(testDir, { recursive: true, force: true });
 	});
 
-	it("read uses ctx.cwd when provided", async () => {
+	it("read uses ctx.cwd when no creation cwd is provided", async () => {
 		const testFile = join(testDir, "ctx-cwd-read.txt");
 		writeFileSync(testFile, "hello from ctx.cwd");
-		const tool = createReadToolDefinition("/");
+		const tool = createReadToolDefinition();
 		const result = await tool.execute(
 			"test-read-ctx-cwd",
 			{ path: "ctx-cwd-read.txt" },
@@ -932,8 +932,8 @@ describe("tool cwd resolution", () => {
 		expect(output).toContain("hello from ctx.cwd");
 	});
 
-	it("write uses ctx.cwd when provided", async () => {
-		const tool = createWriteToolDefinition("/");
+	it("write uses ctx.cwd when no creation cwd is provided", async () => {
+		const tool = createWriteToolDefinition();
 		await tool.execute(
 			"test-write-ctx-cwd",
 			{ path: "ctx-cwd-write.txt", content: "written via ctx.cwd" },
@@ -945,10 +945,10 @@ describe("tool cwd resolution", () => {
 		expect(content).toBe("written via ctx.cwd");
 	});
 
-	it("edit uses ctx.cwd when provided", async () => {
+	it("edit uses ctx.cwd when no creation cwd is provided", async () => {
 		const testFile = join(testDir, "ctx-cwd-edit.txt");
 		writeFileSync(testFile, "old text");
-		const tool = createEditToolDefinition("/");
+		const tool = createEditToolDefinition();
 		await tool.execute(
 			"test-edit-ctx-cwd",
 			{ path: "ctx-cwd-edit.txt", edits: [{ oldText: "old text", newText: "new text" }] },
@@ -960,10 +960,10 @@ describe("tool cwd resolution", () => {
 		expect(content).toBe("new text");
 	});
 
-	it("grep uses ctx.cwd when provided", async () => {
+	it("grep uses ctx.cwd when no creation cwd is provided", async () => {
 		const testFile = join(testDir, "ctx-cwd-grep.txt");
 		writeFileSync(testFile, "match in ctx.cwd");
-		const tool = createGrepToolDefinition("/");
+		const tool = createGrepToolDefinition();
 		const result = await tool.execute(
 			"test-grep-ctx-cwd",
 			{ pattern: "match" },
@@ -975,9 +975,9 @@ describe("tool cwd resolution", () => {
 		expect(output).toContain("ctx-cwd-grep.txt");
 	});
 
-	it("find uses ctx.cwd when provided", async () => {
+	it("find uses ctx.cwd when no creation cwd is provided", async () => {
 		writeFileSync(join(testDir, "ctx-cwd-find.txt"), "find me");
-		const tool = createFindToolDefinition("/");
+		const tool = createFindToolDefinition();
 		const result = await tool.execute(
 			"test-find-ctx-cwd",
 			{ pattern: "ctx-cwd-find.txt" },
@@ -989,16 +989,16 @@ describe("tool cwd resolution", () => {
 		expect(output).toContain("ctx-cwd-find.txt");
 	});
 
-	it("ls uses ctx.cwd when provided", async () => {
+	it("ls uses ctx.cwd when no creation cwd is provided", async () => {
 		writeFileSync(join(testDir, "ctx-cwd-ls.txt"), "list me");
-		const tool = createLsToolDefinition("/");
+		const tool = createLsToolDefinition();
 		const result = await tool.execute("test-ls-ctx-cwd", {}, undefined, undefined, fakeCtx(testDir));
 		const output = getTextOutput(result);
 		expect(output).toContain("ctx-cwd-ls.txt");
 	});
 
-	it("bash uses ctx.cwd when provided", async () => {
-		const tool = createBashToolDefinition("/", { exposeSessionEnvironment: false });
+	it("bash uses ctx.cwd when no creation cwd is provided", async () => {
+		const tool = createBashToolDefinition(undefined, { exposeSessionEnvironment: false });
 		const result = await tool.execute(
 			"test-bash-ctx-cwd",
 			{ command: "pwd" },

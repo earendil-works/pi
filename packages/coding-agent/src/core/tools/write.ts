@@ -42,7 +42,7 @@ export interface WriteToolOptions {
 }
 
 export function createWriteToolDefinition(
-	cwd: string,
+	customCwd?: string,
 	options?: WriteToolOptions,
 ): ToolDefinition<typeof writeSchema, undefined> {
 	const ops = options?.operations ?? defaultWriteOperations;
@@ -62,7 +62,7 @@ export function createWriteToolDefinition(
 			_onUpdate?,
 			ctx?: ExtensionContext,
 		) {
-			const absolutePath = resolveToCwd(path, ctx?.cwd || cwd);
+			const absolutePath = resolveToCwd(path, customCwd ?? ctx?.cwd ?? process.cwd());
 			const dir = dirname(absolutePath);
 			return withFileMutationQueue(absolutePath, async () => {
 				// Do not reject from an abort event listener here: that would release the
@@ -92,6 +92,6 @@ export function createWriteToolDefinition(
 	};
 }
 
-export function createWriteTool(cwd: string, options?: WriteToolOptions): AgentTool<typeof writeSchema> {
-	return wrapToolDefinition(createWriteToolDefinition(cwd, options));
+export function createWriteTool(customCwd?: string, options?: WriteToolOptions): AgentTool<typeof writeSchema> {
+	return wrapToolDefinition(createWriteToolDefinition(customCwd, options));
 }

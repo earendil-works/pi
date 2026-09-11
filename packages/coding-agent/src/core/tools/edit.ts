@@ -141,7 +141,7 @@ function validateEditInput(input: EditToolInput): { path: string; edits: Edit[] 
 }
 
 export function createEditToolDefinition(
-	cwd: string,
+	customCwd?: string,
 	options?: EditToolOptions,
 ): ToolDefinition<typeof editSchema, EditToolDetails | undefined, EditRenderState> {
 	const ops = options?.operations ?? defaultEditOperations;
@@ -158,7 +158,7 @@ export function createEditToolDefinition(
 		prepareArguments: prepareEditArguments,
 		async execute(_toolCallId, input: EditToolInput, signal?: AbortSignal, _onUpdate?, ctx?: ExtensionContext) {
 			const { path, edits } = validateEditInput(input);
-			const absolutePath = resolveToCwd(path, ctx?.cwd || cwd);
+			const absolutePath = resolveToCwd(path, customCwd ?? ctx?.cwd ?? process.cwd());
 
 			return withFileMutationQueue(absolutePath, async () => {
 				// Do not reject from an abort event listener here: that would release the
@@ -215,6 +215,6 @@ export function createEditToolDefinition(
 	};
 }
 
-export function createEditTool(cwd: string, options?: EditToolOptions): AgentTool<typeof editSchema> {
-	return wrapToolDefinition(createEditToolDefinition(cwd, options));
+export function createEditTool(customCwd?: string, options?: EditToolOptions): AgentTool<typeof editSchema> {
+	return wrapToolDefinition(createEditToolDefinition(customCwd, options));
 }

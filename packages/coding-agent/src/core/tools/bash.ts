@@ -220,7 +220,7 @@ export interface ShellToolConfig {
 }
 
 export function createShellToolDefinition(
-	cwd: string,
+	customCwd: string | undefined,
 	config: ShellToolConfig,
 	options?: BashToolOptions,
 ): ToolDefinition<typeof bashSchema, BashToolDetails | undefined, BashRenderState> {
@@ -246,7 +246,7 @@ export function createShellToolDefinition(
 			const resolvedCommand = commandPrefix ? `${commandPrefix}\n${command}` : command;
 			const spawnContext = resolveSpawnContext(
 				resolvedCommand,
-				ctx?.cwd || cwd,
+				customCwd ?? ctx?.cwd ?? process.cwd(),
 				spawnHook,
 				exposeSessionEnvironment,
 				ctx,
@@ -383,14 +383,14 @@ const bashToolConfig: ShellToolConfig = {
 };
 
 export function createBashToolDefinition(
-	cwd: string,
+	customCwd?: string,
 	options?: BashToolOptions,
 ): ToolDefinition<typeof bashSchema, BashToolDetails | undefined, BashRenderState> {
-	return createShellToolDefinition(cwd, bashToolConfig, options);
+	return createShellToolDefinition(customCwd, bashToolConfig, options);
 }
 
-export function createBashTool(cwd: string, options?: BashToolOptions): AgentTool<typeof bashSchema> {
-	const definition = createBashToolDefinition(cwd, options);
+export function createBashTool(customCwd?: string, options?: BashToolOptions): AgentTool<typeof bashSchema> {
+	const definition = createBashToolDefinition(customCwd, options);
 	const tool = wrapToolDefinition(definition);
 	Object.assign(tool, {
 		promptSnippet: definition.promptSnippet,

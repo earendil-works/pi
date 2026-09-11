@@ -62,7 +62,7 @@ function getNonVisionImageNote(model: Model<Api> | undefined): string | undefine
 }
 
 export function createReadToolDefinition(
-	cwd: string,
+	customCwd?: string,
 	options?: ReadToolOptions,
 ): ToolDefinition<typeof readSchema, ReadToolDetails | undefined> {
 	const autoResizeImages = options?.autoResizeImages ?? true;
@@ -97,7 +97,7 @@ export function createReadToolDefinition(
 
 					(async () => {
 						try {
-							const absolutePath = await resolveReadPathAsync(path, ctx?.cwd || cwd);
+							const absolutePath = await resolveReadPathAsync(path, customCwd ?? ctx?.cwd ?? process.cwd());
 							if (aborted) return;
 							// Check if file exists and is readable.
 							await ops.access(absolutePath);
@@ -192,6 +192,6 @@ export function createReadToolDefinition(
 	};
 }
 
-export function createReadTool(cwd: string, options?: ReadToolOptions): AgentTool<typeof readSchema> {
-	return wrapToolDefinition(createReadToolDefinition(cwd, options));
+export function createReadTool(customCwd?: string, options?: ReadToolOptions): AgentTool<typeof readSchema> {
+	return wrapToolDefinition(createReadToolDefinition(customCwd, options));
 }
