@@ -7,6 +7,8 @@ import type { Model } from "../src/types.ts";
 type CapturedHeaders = Headers | string[][] | Record<string, string | readonly string[]> | undefined;
 
 interface CapturedResponsesPayload {
+	instructions?: string;
+	input?: Array<{ role?: string; content?: unknown }>;
 	prompt_cache_key?: string;
 	session_id?: string;
 	tools?: Array<{ name?: string; strict?: boolean }>;
@@ -65,6 +67,46 @@ async function captureOpenAIResponseHeaders(
 	}
 
 	return captured;
+}
+
+async function captureOpenAIResponsesPayload(
+	model: Model<"openai-responses">,
+	systemPrompt: string | undefined,
+	options: Parameters<typeof streamOpenAIResponses>[2] = {},
+): Promise<CapturedResponsesPayload> {
+	let capturedPayload: CapturedResponsesPayload | undefined;
+	vi.spyOn(globalThis, "fetch").mockResolvedValue(
+		new Response("data: [DONE]\n\n", {
+			status: 200,
+			headers: { "content-type": "text/event-stream" },
+		}),
+	);
+
+	const stream = streamOpenAIResponses(
+		model,
+		{
+			systemPrompt,
+			messages: [{ role: "user", content: "hi", timestamp: Date.now() }],
+		},
+		{
+			apiKey: "test-key",
+			...options,
+			onPayload: (payload) => {
+				capturedPayload = payload as CapturedResponsesPayload;
+			},
+		},
+	);
+
+	for await (const event of stream) {
+		if (event.type === "done" || event.type === "error") break;
+	}
+
+	if (!capturedPayload) throw new Error("OpenAI Responses payload was not captured");
+	return capturedPayload;
+}
+
+function getSystemPromptItems(payload: CapturedResponsesPayload) {
+	return payload.input?.filter((item) => item.role === "developer" || item.role === "system") ?? [];
 }
 
 describe("openai-responses provider defaults", () => {
@@ -152,6 +194,64 @@ describe("openai-responses provider defaults", () => {
 			tool_choice: "required",
 			tools: [expect.objectContaining({ name: "ping" })],
 		});
+	});
+
+	it("keeps the system prompt in input by default", async () => {
+		const payload = await captureOpenAIResponsesPayload(getModel("openai", "gpt-5.4"), "dynamic system prompt");
+
+		expect(payload.instructions).toBeUndefined();
+		expect(getSystemPromptItems(payload)).toEqual([{ role: "developer", content: "dynamic system prompt" }]);
+	});
+
+	it("moves the system prompt to top-level instructions when configured", async () => {
+		const baseModel = getModel("openai", "gpt-5.4");
+		const model: Model<"openai-responses"> = {
+			...baseModel,
+			compat: { ...baseModel.compat, systemPromptFormat: "instructions" },
+		};
+		const payload = await captureOpenAIResponsesPayload(model, "dynamic system prompt");
+
+		expect(payload.instructions).toBe("dynamic system prompt");
+		expect(getSystemPromptItems(payload)).toEqual([]);
+	});
+
+	it("sanitizes unpaired surrogates in top-level instructions", async () => {
+		const baseModel = getModel("openai", "gpt-5.4");
+		const model: Model<"openai-responses"> = {
+			...baseModel,
+			compat: { ...baseModel.compat, systemPromptFormat: "instructions" },
+		};
+		const systemPrompt = `before ${String.fromCharCode(0xd83d)} after 🙈`;
+		const payload = await captureOpenAIResponsesPayload(model, systemPrompt);
+
+		expect(payload.instructions).toBe("before  after 🙈");
+		expect(getSystemPromptItems(payload)).toEqual([]);
+	});
+
+	it("omits instructions when the configured system prompt is empty", async () => {
+		const baseModel = getModel("openai", "gpt-5.4");
+		const model: Model<"openai-responses"> = {
+			...baseModel,
+			compat: { ...baseModel.compat, systemPromptFormat: "instructions" },
+		};
+		const payload = await captureOpenAIResponsesPayload(model, "");
+
+		expect(payload.instructions).toBeUndefined();
+		expect(getSystemPromptItems(payload)).toEqual([]);
+	});
+
+	it("lets samplingParams override top-level instructions", async () => {
+		const baseModel = getModel("openai", "gpt-5.4");
+		const model: Model<"openai-responses"> = {
+			...baseModel,
+			compat: { ...baseModel.compat, systemPromptFormat: "instructions" },
+		};
+		const payload = await captureOpenAIResponsesPayload(model, "dynamic system prompt", {
+			samplingParams: { instructions: "sampling override" },
+		});
+
+		expect(payload.instructions).toBe("sampling override");
+		expect(getSystemPromptItems(payload)).toEqual([]);
 	});
 
 	it("sets strict mode explicitly for Cloudflare OpenAI Responses tools", async () => {

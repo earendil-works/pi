@@ -22,6 +22,7 @@ import { headersToRecord } from "../utils/headers.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
+import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
@@ -68,6 +69,7 @@ function resolveCacheRetention(cacheRetention?: CacheRetention, env?: ProviderEn
 function getCompat(model: Model<"openai-responses">): Required<OpenAIResponsesCompat> {
 	return {
 		supportsDeveloperRole: model.compat?.supportsDeveloperRole ?? true,
+		systemPromptFormat: model.compat?.systemPromptFormat ?? "input",
 		sessionAffinityFormat: model.compat?.sessionAffinityFormat ?? detectSessionAffinityFormat(model),
 		supportsLongCacheRetention: model.compat?.supportsLongCacheRetention ?? true,
 		supportsStrictMode: model.compat?.supportsStrictMode ?? false,
@@ -289,6 +291,7 @@ function buildParams(
 			: undefined;
 	const toolPlacement = splitDeferredTools(context, deferredToolsMode !== undefined);
 	const messages = convertResponsesMessages(model, context, OPENAI_TOOL_CALL_PROVIDERS, {
+		includeSystemPrompt: compat.systemPromptFormat === "input",
 		grammarToolInputProperties,
 		deferredTools: toolPlacement.deferred,
 		deferredToolsMode,
@@ -311,6 +314,10 @@ function buildParams(
 		store: false,
 	};
 
+	if (compat.systemPromptFormat === "instructions" && context.systemPrompt) {
+		params.instructions = sanitizeSurrogates(context.systemPrompt);
+	}
+  
 	if (options?.maxTokens && compat.supportsMaxOutputTokens) {
 		params.max_output_tokens = Math.max(options.maxTokens, OPENAI_RESPONSES_MIN_OUTPUT_TOKENS);
 	}
