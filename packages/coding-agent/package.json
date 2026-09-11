@@ -49,6 +49,7 @@
 		"prepublishOnly": "npm run clean && npm run build && npm run shrinkwrap"
 	},
 	"dependencies": {
+		"@aws/bedrock-token-generator": "1.1.0",
 		"@earendil-works/chord": "^0.85.1",
 		"@earendil-works/pi-agent-core": "^0.85.1",
 		"@earendil-works/pi-ai": "^0.85.1",

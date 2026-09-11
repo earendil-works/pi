@@ -17,7 +17,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { complete, getModels } from "../src/compat.ts";
+import { complete, getModel, getModels } from "../src/compat.ts";
 import type { Context } from "../src/types.ts";
 import { hasBedrockCredentials } from "./bedrock-utils.ts";
 
@@ -34,8 +34,56 @@ describe("Amazon Bedrock Models", () => {
 		expect(models.some((model) => model.id === "anthropic.claude-opus-5")).toBe(false);
 	});
 
+	it("routes Bedrock Responses-compatible models through Mantle under the Bedrock provider", () => {
+		for (const id of [
+			"google.gemma-4-31b",
+			"google.gemma-4-26b-a4b",
+			"google.gemma-4-e2b",
+			"openai.gpt-5.6-sol",
+			"openai.gpt-5.6-terra",
+			"openai.gpt-5.6-luna",
+			"openai.gpt-5.6-cyber",
+			"openai.gpt-daybreak-blue-5.6-sol",
+			"openai.gpt-5.5",
+			"openai.gpt-5.4",
+			"xai.grok-4.3",
+			"xai.grok-4.6",
+		] as const) {
+			expect(getModel("amazon-bedrock", id)).toMatchObject({
+				api: "openai-responses",
+				provider: "amazon-bedrock",
+				baseUrl: "https://bedrock-mantle.us-east-1.api.aws/openai/v1",
+			});
+		}
+
+		for (const id of ["openai.gpt-oss-120b", "openai.gpt-oss-20b"] as const) {
+			expect(getModel("amazon-bedrock", id)).toMatchObject({
+				api: "openai-responses",
+				provider: "amazon-bedrock",
+				baseUrl: "https://bedrock-mantle.us-east-1.api.aws/v1",
+			});
+		}
+	});
+
+	it("keeps non-Mantle Bedrock Runtime models on Converse", () => {
+		for (const id of [
+			"us.anthropic.claude-opus-4-6-v1",
+			"openai.gpt-oss-120b-1:0",
+			"global.openai.gpt-5.6-sol",
+		] as const) {
+			expect(getModel("amazon-bedrock", id)).toMatchObject({
+				api: "bedrock-converse-stream",
+				provider: "amazon-bedrock",
+			});
+		}
+	});
+
 	if (hasBedrockCredentials() && process.env.BEDROCK_EXTENSIVE_MODEL_TEST) {
-		for (const model of models) {
+		const extensiveModels = process.env.BEDROCK_MANTLE_OPENAI_RESPONSES_TEST
+			? models
+			: models.filter((model) => model.api !== "openai-responses");
+
+		for (const model of extensiveModels) {
 			it(`should make a simple request with ${model.id}`, { timeout: 10_000 }, async () => {
 				const context: Context = {
 					systemPrompt: "You are a helpful assistant. Be extremely concise.",
