@@ -260,8 +260,23 @@ function estimateTextAndImageContentChars(content: string | Array<{ type: string
 }
 
 /**
+ * Upper bound on chars counted per message when estimating tokens.
+ *
+ * Machine-generated payloads (multi-MB tool results, `web_fetch` dumps) would
+ * otherwise dominate the chars/4 heuristic and misfire threshold compaction
+ * right after a compaction just finished (see #9476). The estimate stays
+ * conservative below the cap; only pathological sizes are clamped.
+ */
+export const MAX_ESTIMATED_CHARS_PER_MESSAGE = 100_000;
+
+function estimatedTokensForChars(chars: number): number {
+	return Math.ceil(Math.min(chars, MAX_ESTIMATED_CHARS_PER_MESSAGE) / 4);
+}
+
+/**
  * Estimate token count for a message using chars/4 heuristic.
- * This is conservative (overestimates tokens).
+ * This is conservative (overestimates tokens) up to
+ * MAX_ESTIMATED_CHARS_PER_MESSAGE chars per message.
  */
 export function estimateTokens(message: AgentMessage): number {
 	let chars = 0;
@@ -271,7 +286,7 @@ export function estimateTokens(message: AgentMessage): number {
 			chars = estimateTextAndImageContentChars(
 				(message as { content: string | Array<{ type: string; text?: string }> }).content,
 			);
-			return Math.ceil(chars / 4);
+			return estimatedTokensForChars(chars);
 		}
 		case "assistant": {
 			const assistant = message as AssistantMessage;
@@ -284,21 +299,21 @@ export function estimateTokens(message: AgentMessage): number {
 					chars += block.name.length + JSON.stringify(block.arguments).length;
 				}
 			}
-			return Math.ceil(chars / 4);
+			return estimatedTokensForChars(chars);
 		}
 		case "custom":
 		case "toolResult": {
 			chars = estimateTextAndImageContentChars(message.content);
-			return Math.ceil(chars / 4);
+			return estimatedTokensForChars(chars);
 		}
 		case "bashExecution": {
 			chars = message.command.length + message.output.length;
-			return Math.ceil(chars / 4);
+			return estimatedTokensForChars(chars);
 		}
 		case "branchSummary":
 		case "compactionSummary": {
 			chars = message.summary.length;
-			return Math.ceil(chars / 4);
+			return estimatedTokensForChars(chars);
 		}
 	}
 

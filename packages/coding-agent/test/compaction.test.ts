@@ -10,8 +10,10 @@ import {
 	compact,
 	DEFAULT_COMPACTION_SETTINGS,
 	estimateContextTokens,
+	estimateTokens,
 	findCutPoint,
 	getLastAssistantUsage,
+	MAX_ESTIMATED_CHARS_PER_MESSAGE,
 	prepareCompaction,
 	shouldCompact,
 } from "../src/core/compaction/index.ts";
@@ -268,6 +270,26 @@ describe("estimateContextTokens", () => {
 		expect(estimate.lastUsageIndex).toBe(1);
 		expect(estimate.trailingTokens).toBeGreaterThan(0);
 		expect(estimate.tokens).toBe(150 + estimate.trailingTokens);
+	});
+});
+
+describe("estimateTokens", () => {
+	it("caps huge tool results so they cannot misfire threshold compaction", () => {
+		// Regression test for #9476: a multi-MB tool result (e.g. a web_fetch
+		// API dump) must not dominate the chars/4 heuristic and trigger a
+		// second compaction minutes after one just finished.
+		const huge: AgentMessage = {
+			role: "toolResult",
+			content: [{ type: "text", text: "x".repeat(4_600_000) }],
+			timestamp: Date.now(),
+		} as AgentMessage;
+
+		expect(estimateTokens(huge)).toBe(Math.ceil(MAX_ESTIMATED_CHARS_PER_MESSAGE / 4));
+	});
+
+	it("leaves ordinary messages unclamped", () => {
+		const small = createUserMessage("Hello, world");
+		expect(estimateTokens(small)).toBe(Math.ceil("Hello, world".length / 4));
 	});
 });
 
