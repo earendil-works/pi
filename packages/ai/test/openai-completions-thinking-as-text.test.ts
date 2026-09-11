@@ -48,9 +48,10 @@ const compat = {
 	supportsLongCacheRetention: true,
 } satisfies Omit<
 	Required<OpenAICompletionsCompat>,
-	"cacheControlFormat" | "deferredToolsMode" | "thinkingTokenBudgetField" | "vllmPriority"
+	"cacheControlFormat" | "codexAttribution" | "deferredToolsMode" | "thinkingTokenBudgetField" | "vllmPriority"
 > & {
 	cacheControlFormat?: OpenAICompletionsCompat["cacheControlFormat"];
+	codexAttribution?: OpenAICompletionsCompat["codexAttribution"];
 	deferredToolsMode?: OpenAICompletionsCompat["deferredToolsMode"];
 	thinkingTokenBudgetField?: OpenAICompletionsCompat["thinkingTokenBudgetField"];
 };

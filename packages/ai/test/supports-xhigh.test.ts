@@ -82,8 +82,8 @@ describe("getSupportedThinkingLevels", () => {
 		expect(getSupportedThinkingLevels(model!)).toEqual(["medium", "high", "xhigh"]);
 	});
 
-	it("includes low/high/max plus off for DeepSeek V4 Flash on the DeepSeek provider", () => {
-		const model = getModel("deepseek", "deepseek-v4-flash");
+	it("includes low/high/max plus off for DeepSeek V4.1 Flash on the DeepSeek provider", () => {
+		const model = getModel("deepseek", "deepseek-flash");
 		expect(model).toBeDefined();
 		expect(getSupportedThinkingLevels(model!)).toEqual(["off", "low", "high", "max"]);
 	});

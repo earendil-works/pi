@@ -1941,6 +1941,7 @@ export class AgentSession {
 			this.settingsManager.getRetrySettings(),
 			this._summarizationRetryCallbacks({ source: "compaction", reason }),
 			undefined, // sessionId
+			this.agent.createRequestIdentity("compaction"),
 		);
 	}
 
@@ -3242,6 +3243,7 @@ export class AgentSession {
 					streamFn: this.agent.streamFunction,
 					retry: this.settingsManager.getRetrySettings(),
 					callbacks: this._summarizationRetryCallbacks({ source: "branchSummary" }),
+					requestIdentity: this.agent.createRequestIdentity("compaction"),
 				});
 				if (result.aborted) {
 					return { cancelled: true, aborted: true };
