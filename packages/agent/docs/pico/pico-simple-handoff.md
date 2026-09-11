@@ -35,8 +35,10 @@ Recoverability does not preserve a JavaScript stack and does not imply exactly-o
 A crash after an unkeyed external action but before recording its identity/result remains uncertain.
 
 Required exclusions: no imports from another harness implementation; no worker pool, polling scheduler,
-lease, effect gate, author-defined lifecycle graph, `patch`, `settle`, status epoch, workflow replay,
-generator DSL, returned step plan or specialized core verbs such as `startShell`.
+lease, effect gate, kernel-interpreted global author lifecycle graph, `patch`, `settle`, status epoch,
+workflow replay, generator DSL, one-plan-at-end restriction or specialized core verbs such as `startShell`.
+The optional per-kind state-indexed authoring adapter in section 5 is explicitly allowed; it compiles to an
+ordinary `TaskKind` and changes no kernel lifecycle or scheduler behavior.
 
 ## 2. Core data and identifiers
 
@@ -467,6 +469,279 @@ and open reject a mismatch before invocation. With no live instance, a future re
 capability for newly created tasks. Terminal history is not rewritten. Payload and checkpoint compatibility
 beyond these runtime-checkable properties is the replacement author's responsibility.
 
+### 5.1 Optional state-indexed task authoring
+
+`defineStateTask` is an optional authoring adapter for kinds with several durable recovery phases. It
+returns an ordinary `TaskKind`; `defineTask` remains available for simple or advanced kinds. The adapter
+makes one kind's checkpoint dispatch exhaustive without adding author phases to stored `Task.status` or to
+the scheduler.
+
+```ts
+type PhaseOf<C extends TaskCheckpoint> = C["phase"];
+type CheckpointAt<C extends TaskCheckpoint, P extends PhaseOf<C>> =
+  Extract<C, { readonly phase: P }>;
+type PhasePayload<C extends TaskCheckpoint, P extends PhaseOf<C>> =
+  Omit<CheckpointAt<C, P>, "phase">;
+
+type PhaseTask<I extends JsonValue, C extends TaskCheckpoint,
+               O extends object, P extends PhaseOf<C>> =
+  Omit<RunningTask<I, C, O>, "checkpoint"> & {
+    readonly checkpoint: CheckpointAt<C, P>;
+  };
+
+type InitialTask<I extends JsonValue, C extends TaskCheckpoint, O extends object> =
+  Omit<RunningTask<I, C, O>, "checkpoint"> & {
+    readonly checkpoint?: never;
+  };
+
+type StateTransitionTx<C extends TaskCheckpoint, T extends false | true> =
+  Omit<T extends true ? TurnTaskTx<C> : BaseTaskTx<C>, "checkpoint">;
+type StatePhaseTx<C extends TaskCheckpoint, P extends PhaseOf<C>, T extends false | true> =
+  StateTransitionTx<C, T> & {
+    checkpoint(value: CheckpointAt<C, P>): void;
+  };
+type InitialStateRuntime<I extends JsonValue, C extends TaskCheckpoint,
+                         O extends object, T extends false | true> =
+  Omit<RuntimeFor<I, C, O, T>, "commit">;
+type StateRuntimeFor<I extends JsonValue, C extends TaskCheckpoint,
+                     O extends object, T extends false | true, P extends PhaseOf<C>> =
+  Omit<RuntimeFor<I, C, O, T>, "commit"> & {
+    commit<V>(
+      build: (tx: StatePhaseTx<C, P, T>, current: PhaseTask<I, C, O, P>) => V | Promise<V>,
+      ctx: Context,
+    ): Promise<V>;
+  };
+
+interface PhaseTransition<I extends JsonValue, C extends TaskCheckpoint,
+                          O extends object, T extends false | true,
+                          P extends PhaseOf<C>> {
+  readonly type: "transition";
+  readonly phase: P;
+  readonly commit: (
+    tx: StateTransitionTx<C, T>,
+    current: RunningTask<I, C, O>,
+  ) => PhasePayload<C, P> | Promise<PhasePayload<C, P>>;
+}
+interface StateTerminal<I extends JsonValue, C extends TaskCheckpoint,
+                        R extends JsonValue, F extends JsonValue,
+                        O extends object, T extends false | true> {
+  readonly type: "terminal";
+  readonly closure: TerminalClosure<I, C, R, F, O, T>;
+}
+type StateResult<I extends JsonValue, C extends TaskCheckpoint,
+                 R extends JsonValue, F extends JsonValue,
+                 O extends object, T extends false | true> =
+  | PhaseTransition<I, C, O, T, PhaseOf<C>>
+  | StateTerminal<I, C, R, F, O, T>;
+
+type ExactPhasePayload<C extends TaskCheckpoint, P extends PhaseOf<C>,
+                       Actual extends PhasePayload<C, P>> =
+  NoExtra<PhasePayload<C, P>, Actual>;
+interface StateActions<I extends JsonValue, C extends TaskCheckpoint,
+                       R extends JsonValue, F extends JsonValue,
+                       O extends object, T extends false | true> {
+  transition<P extends PhaseOf<C>, Actual extends PhasePayload<C, P>>(
+    phase: P,
+    commit: (
+      tx: StateTransitionTx<C, T>,
+      current: RunningTask<I, C, O>,
+    ) => ExactPhasePayload<C, P, Actual> | Promise<ExactPhasePayload<C, P, Actual>>,
+  ): PhaseTransition<I, C, O, T, P>;
+  terminal(
+    closure: TerminalClosure<I, C, R, F, O, T>,
+  ): StateTerminal<I, C, R, F, O, T>;
+}
+
+type PhaseHandler<I extends JsonValue, C extends TaskCheckpoint,
+                  R extends JsonValue, F extends JsonValue,
+                  O extends object, T extends false | true,
+                  P extends PhaseOf<C>> =
+  | {
+      readonly role: "start";
+      readonly recover?: never;
+      run(
+        task: PhaseTask<I, C, O, P>,
+        runtime: StateRuntimeFor<I, C, O, T, P>,
+        actions: StateActions<I, C, R, F, O, T>,
+        ctx: Context,
+      ): Promise<StateResult<I, C, R, F, O, T>>;
+    }
+  | {
+      readonly role: "inflight";
+      run(
+        task: PhaseTask<I, C, O, P>,
+        runtime: StateRuntimeFor<I, C, O, T, P>,
+        actions: StateActions<I, C, R, F, O, T>,
+        ctx: Context,
+      ): Promise<StateResult<I, C, R, F, O, T>>;
+      recover(
+        task: PhaseTask<I, C, O, P>,
+        runtime: StateRuntimeFor<I, C, O, T, P>,
+        actions: StateActions<I, C, R, F, O, T>,
+        ctx: Context,
+      ): Promise<StateResult<I, C, R, F, O, T>>;
+    };
+
+type PhaseMap<I extends JsonValue, C extends TaskCheckpoint,
+              R extends JsonValue, F extends JsonValue,
+              O extends object, T extends false | true> = {
+  readonly [P in PhaseOf<C>]: PhaseHandler<I, C, R, F, O, T, P>;
+};
+type ExactPhaseHandler<Expected, Actual extends Expected> =
+  Actual extends { readonly role: infer Role }
+    ? Actual extends Extract<Expected, { readonly role: Role }>
+      ? NoExtra<Extract<Expected, { readonly role: Role }>, Actual>
+      : never
+    : never;
+type ExactPhaseMap<Expected, Actual extends Expected> =
+  Actual & Record<Exclude<keyof Actual, keyof Expected>, never> & {
+    readonly [P in keyof Expected]: ExactPhaseHandler<Expected[P], Actual[P]>;
+  };
+type LiteralCheckpoint<C extends TaskCheckpoint> =
+  string extends PhaseOf<C> ? never : C;
+
+type StateTaskDefinition<I extends JsonValue, C extends TaskCheckpoint,
+                         R extends JsonValue, F extends JsonValue,
+                         A extends JsonValue, O extends object,
+                         T extends false | true> = {
+  readonly kind: string;
+  readonly turn: T;
+  readonly initial: {
+    readonly role: "start";
+    run(
+      task: InitialTask<I, C, O>,
+      runtime: InitialStateRuntime<I, C, O, T>,
+      actions: StateActions<I, C, R, F, O, T>,
+      ctx: Context,
+    ): Promise<StateResult<I, C, R, F, O, T>>;
+  };
+  readonly phases: PhaseMap<I, C, R, F, O, T>;
+  abort(
+    task: RunningTask<I, C, O>,
+    runtime: AbortRuntimeFor<I, C, O, T>,
+    ctx: Context,
+  ): Promise<AbortClosure<I, C, A, O, T>>;
+} & TaskOutputDefinition<I, O>;
+
+type NonTurnStateTaskDefinition<I extends JsonValue, C extends TaskCheckpoint,
+                                R extends JsonValue, F extends JsonValue,
+                                A extends JsonValue, O extends object> =
+  Omit<StateTaskDefinition<I, C, R, F, A, O, false>, "turn"> & { readonly turn?: false };
+type TurnStateTaskDefinition<I extends JsonValue, C extends TaskCheckpoint,
+                             R extends JsonValue, F extends JsonValue,
+                             A extends JsonValue, O extends object> =
+  StateTaskDefinition<I, C, R, F, A, O, true>;
+
+type ExactStateTaskDefinition<Expected, Actual extends Expected> =
+  NoExtra<Expected, Actual> & {
+    readonly phases: ExactPhaseMap<Expected extends { readonly phases: infer P } ? P : never,
+                                   Actual extends { readonly phases: infer P } ? P : never>;
+  };
+
+interface StateTaskFactory<I extends JsonValue, C extends TaskCheckpoint,
+                           R extends JsonValue, F extends JsonValue,
+                           A extends JsonValue, O extends object> {
+  <D extends NonTurnStateTaskDefinition<I, C, R, F, A, O>>(
+    definition: [LiteralCheckpoint<C>] extends [never]
+      ? never
+      : ExactStateTaskDefinition<NonTurnStateTaskDefinition<I, C, R, F, A, O>, D>,
+  ): D & TaskKind<I, C, R, F, A, O, false>;
+  <D extends TurnStateTaskDefinition<I, C, R, F, A, O>>(
+    definition: [LiteralCheckpoint<C>] extends [never]
+      ? never
+      : ExactStateTaskDefinition<TurnStateTaskDefinition<I, C, R, F, A, O>, D>,
+  ): D & TaskKind<I, C, R, F, A, O, true>;
+}
+
+declare const commitStateTransition: unique symbol;
+interface StateAdapterRuntime<I extends JsonValue, C extends TaskCheckpoint,
+                              O extends object, T extends false | true> {
+  [commitStateTransition]<P extends PhaseOf<C>>(
+    expectedSource: PhaseOf<C> | undefined,
+    phase: P,
+    build: (
+      tx: StateTransitionTx<C, T>,
+      current: RunningTask<I, C, O>,
+    ) => PhasePayload<C, P> | Promise<PhasePayload<C, P>>,
+    ctx: Context,
+  ): Promise<PhaseTask<I, C, O, P>>;
+}
+
+// Curried generics and turn/output inference mirror defineTask.
+declare function defineStateTask<I extends JsonValue, C extends TaskCheckpoint,
+                                 R extends JsonValue, F extends JsonValue,
+                                 A extends JsonValue, O extends object = never>():
+  StateTaskFactory<I, C, R, F, A, O>;
+```
+
+`StateActions` is passed immediately before the final `ctx`; authors call `actions.transition(...)` and
+`actions.terminal(...)`. The factory's outer and nested exact helpers capture actual phase handlers and
+transition callback payloads. This declaration pattern was prototyped under the repository TypeScript
+compiler with the positive and negative cases below; WP8A moves those cases into maintained compile tests.
+Its compile contract is exact:
+
+- `C` is a finite discriminated union whose `phase` values are string literals; broad `string` rejects.
+- Every `C["phase"]` has exactly one handler and no extra phase key exists.
+- A handler's task contains the complete checkpoint variant for its phase.
+- `initial` receives a running task with no checkpoint. Task creation remains checkpoint-free.
+- A `start` phase has `run` and no `recover`; an `inflight` phase requires both.
+- The target passed to `transition` determines the complete target payload. Missing or visible extra fields
+  reject for literals, variables and spreads.
+- `terminal(closure)` preserves the existing typed `TerminalClosure`; terminal author phases do not exist.
+- Literal turn selection, output inference and fresh kind-level abort match `defineTask` exactly.
+
+The factory generates `TaskKind.execute` and `TaskKind.recover` around this internal loop:
+
+```text
+scheduler reserves pending -> running and calls generated execute once
+  no checkpoint -> assert current unmarked invocation; initial.run
+  handler returns actions.transition(P, commit)
+  call the module-private commitStateTransition capability
+  on the line: validate expected source and invocation, run commit(tx, fresh current),
+               write the complete P checkpoint, persist/apply, return applied PhaseTask<P>
+  assert current unmarked invocation; dispatch P.run within the same outer TaskKind invocation
+  repeat until a handler returns terminal(closure)
+generated execute returns closure to the existing terminal path
+
+reopen reserves the restored running task and calls generated recover once
+  no checkpoint -> fenced initial.run
+  start checkpoint P -> fenced P.run
+  inflight checkpoint P -> fenced P.recover
+  after any committed transition, entry becomes normal and the next fenced handler uses run
+```
+
+The scheduler never calls `execute` again for an internal transition. `commitStateTransition` is a
+module-private symbol implemented by the task-kernel runtime and consumed only by the generated adapter; it
+is not exported and grants no task-author capability. It performs one ordinary line transaction, then reads
+the already-applied live-task projection, including checkpoint and `owns`. There is no second empty commit
+and the adapter never fabricates a task from the stale handler argument. Transition callbacks run on the
+line against fresh current state, may perform transaction reads and compose same-batch entries/tasks/state,
+and cannot perform effects, waits, hooks, sleeps or nested commits.
+
+`InitialStateRuntime` has no commit method. With no durable phase, allowing initial to commit child work would
+let a crash rerun initial and duplicate them. Initial child/task/conversation creation therefore occurs in
+its first returned transition callback, atomically with the first complete checkpoint. The next phase
+resolves handles and waits only after that transition has committed.
+
+Checkpoint-backed handlers retain `runtime.commit` for durable bookkeeping that must precede a wait or
+effect. The wrapped transaction may replace only its complete current-phase variant; phase changes use
+returned transitions. A same-phase commit may atomically create a child task/conversation and record its
+ID/policy in the current checkpoint, then the handler waits after the commit resolves. The handler's later
+transition callback still receives fresh current state.
+
+`start` means the checkpoint does not represent an uncertain external effect, so reopen runs it normally.
+`inflight` means an effect may have started, so reopen requires its explicit recovery path. This is a small
+named state machine per task kind, not positional replay: only the latest complete checkpoint is durable.
+There is no workflow history, deterministic replay requirement, generator, returned-plan journal,
+one-commit-per-phase rule or global kernel lifecycle graph.
+
+Immediately before every internal handler call, the adapter synchronously validates the exact invocation
+object, Context, session phase, durable mark and abort signal. If transition persistence wins first, the next
+handler may be admitted and a later mark signals it normally. If the mark wins before the check, the next
+handler is never invoked; the ordinary cancellation unwind returns from the outer execute/recover, which is
+joined before fresh abort starts. This fence does not forcibly stop already-admitted third-party code;
+handlers remain cooperatively cancellable.
+
 ## 6. Mutation algebra and storage
 
 ### 6.1 Mutations
@@ -816,7 +1091,9 @@ type RuntimeFor<I extends JsonValue, C extends TaskCheckpoint, O extends object,
 `runtime.conversation`, `waitForTask` and `abortTask` accept only targets in the current task's ownership
 tree: its own conversation, its owned descendants, their tasks, and the task's own dependencies. An
 unrelated target rejects `ScopeViolation`. Host operations are unrestricted except for protected data and
-normal lifecycle validation.
+normal lifecycle validation. This generic rule does not let one task resolve a conversation owned by a
+sibling task. The future gated ordinary-tool descendant resolver required by section 14.3 is the narrow
+exception; it will not broaden `runtime.conversation` or `TaskConversation`.
 
 `TaskConversation` has no raw commit, direct entry, drive, close, shutdown, delete or host-wide registry
 methods. Task operations capture the expected invocation when the runtime/handle is constructed. Every
@@ -1306,9 +1583,10 @@ apply passive/direct turn writes + aborted outcome + scratch retirement atomical
 release abort invocation
 ```
 
-Fresh built-in cleanup marks live foreground tasks in owned child conversations and recorded non-detached
-jobs, using atomic mark-if-live; an already-terminal target counts as cleaned. It never invokes public child
-conversation abort and therefore preserves child queues. Local deadlines are not durable marks: their
+Fresh built-in `pi.tool` cleanup reads its durable child records. It marks each child task with
+`abortWithTool:true` and live foreground tasks in each owned child conversation with that flag, using atomic
+mark-if-live; an already-terminal target counts as cleaned. Children with `abortWithTool:false` are excluded.
+It never invokes public child conversation abort and therefore preserves child queues. Local deadlines are not durable marks: their
 in-band errors remain kind-specific domain outcomes. Cancellation classification uses Pico's identity and
 known reason, never error name alone.
 
@@ -1509,17 +1787,52 @@ a durable safe replay policy; otherwise it returns interrupted. Abort publishes 
 turn abort authority. A missing executable tool is handled by the built-in tool kind; it is not a missing
 task kind.
 
-A subagent is an owned conversation. Creation, selected initial values, accepted input, first generation,
-ownership links and parent checkpoint IDs commit atomically. Recovery reuses the child/input IDs. `send`
-uses a stable request key; `wait` uses an explicit input ID, never transcript-tail inference. Parent cleanup
-marks child foreground tasks only and preserves queues.
+The built-in `pi.tool` `TaskKind` owns `TaskRuntime.commit` and all transaction capabilities. An ordinary
+`ToolDefinition` receives neither. Its eventual adapter is a small `pi.tool`-mediated capability over the
+current invocation's `TaskOutput`, durable scoped memos and keyed child creation; exact public names and
+TypeScript types remain gated in section 18 and must not be inferred from generic task runtime.
 
-Jobs are job-first: the durable job owns execution/output from the first effect. Tool and job sharing or
-handoff of scratch/output must preserve one writer, bounded capture, cancellation join and terminal scratch
-retirement. Arbitrary unfinished promise adoption is not a v1 feature. A non-adoptable interrupted process
-is lost unless durable policy explicitly permits rerun. Recurring schedules use one task ID and phased
-checkpoint; no backlog is inferred after downtime. Terminal notices are passive writes and work in either
-notification-before-completion order.
+The later ordinary-tool bridge must preserve these requirements without exposing general commit:
+
+- Its invocation ID is the stable `pi.tool` task ID. Its output is the task's `TaskOutput`. Durable
+  strict-JSON memos are protected state scoped to that task and retire with it.
+- A keyed child-task operation, if included, uses one internal parent-tool transaction to create the child
+  and write its ID, kind, `abortWithTool: boolean` and optional shared-output ref into the complete parent
+  checkpoint before returning. Jobs remain tasks. The exact task-spawn API and checkpoint schema are gated.
+- A keyed subagent operation uses one internal parent-tool transaction to call `tx.createConversation`,
+  write the selected initial values, call `tx.accept` to create the first generation, and record the child
+  conversation ID, input ID, request key and `abortWithTool: boolean` in the complete parent checkpoint.
+  After commit, the adapter resolves the existing restricted conversation handle and waits outside the
+  line. A subagent is an owned conversation, never a subagent task.
+- `abortWithTool:false` means only that enclosing `pi.tool` abort does not mark that child. It is not a
+  generic detached-ownership abstraction. Parent normal completion cancels neither
+  value.
+- A repeated creation key must either be explicitly first-key-wins or compare a persisted canonical spec.
+  Exact-match replay must persist normalized parent position, input, request key, initial values, protected
+  seed profile/version and `abortWithTool`; it must not compare mutable current values. The final choice and
+  record types remain gated.
+- Returned task handles expose wait/abort, not commit. If local timeout is supported, wait accepts an
+  explicit timeout and returns `undefined` when observation times out without marking the child. Terminal,
+  timeout, caller cancellation, mark, close and fault races remove waiter/timer/listener state exactly once.
+  The exact handle type remains gated.
+- Returned conversation handles reuse the existing restricted `TaskConversation` capabilities as the
+  ceiling: scoped accept/write, explicit-input result/wait/abort, and no raw commit/direct entry/close/
+  shutdown/unrelated state. Any model-facing status/tail projection must be specified before adding it.
+- Later sibling tool calls need one narrow built-in resolver for strict owned descendants of their current
+  parent conversation, including ownership through terminal sibling tasks. Fork-only ancestry and unrelated
+  roots reject. This future resolver must not broaden generic `runtime.conversation`.
+
+The `pi.tool` adapter, not ordinary tool code, resolves timeout/background publication. An ordinary tool may
+return a child ID after local observation timeout, but the `pi.tool` terminal closure rereads that child on
+the commit line. A terminal child produces the normal final result; a live child produces the
+continues-in-background result while its task retains any shared output. No design may trust stale
+`Promise.race` state.
+
+Jobs are job-first: the durable job owns execution/output from the first effect. Ordinary tools will create
+them through the gated mediated task operation, not a specialized `startShell` verb and not by adopting an
+unfinished promise. A non-adoptable interrupted process is lost unless durable policy explicitly permits
+rerun. Recurring schedules use one task ID and named checkpoint phases; no backlog is inferred after
+downtime. Terminal notices are passive writes and work in either notification-before-completion order.
 
 #### Shared task output
 
@@ -1822,6 +2135,16 @@ Every race is tested in both orders with fake clocks/effects and storage barrier
 - Task-output delta versus watch capture/overflow: base or exact ordered delta, never gap/duplicate/mutable
   alias.
 - Shared sidecar after terminal/unlink failure: reopen ignores it; no resurrection.
+- State adapter live transitions through several phases: scheduler calls generated `execute` once; each next
+  handler receives the authoritative post-commit checkpoint/owns projection.
+- Initial child creation versus crash: no transition commit means initial reruns with no child; committed
+  child plus first checkpoint dispatches the next phase without duplication.
+- Crash after an inflight checkpoint versus a start checkpoint: generated `recover` dispatches required
+  inflight recovery versus normal start run, once per restored invocation.
+- Same-phase bookkeeping commit versus abort: child/reference and complete parent checkpoint both commit
+  before the wait or neither does; post-mark commit rejects.
+- State transition versus abort mark: transition-first may admit the next fenced handler; mark-first prevents
+  that handler call and unwinds the outer invocation before fresh abort.
 
 ## 17. Ready implementation packages
 
@@ -1983,6 +2306,32 @@ Accept:
 - initialization starts nothing; every missing live kind orphans, retires scratch and marks descendants;
 - failed reconciliation yields no usable driver; no history scan beyond live seed/required ancestry.
 
+### WP8A — State-indexed task authoring adapter
+
+Prerequisites: WP8.
+
+Deliver:
+- exact `defineStateTask` declarations, action constructors and compile tests from section 5.1;
+- generated ordinary `TaskKind.execute`/`recover` dispatch loop with no scheduler changes;
+- module-private transition commit bridge returning the authoritative applied task projection;
+- initial/start/inflight role dispatch, same-phase-only checkpoint-backed commits, and a cancellation fence
+  before every internal handler call;
+- no built-in generation/tool/provider implementation.
+
+Accept:
+- broad-string checkpoints reject; phase maps and handlers reject missing/extra literal, variable and spread
+  fields; each handler receives its narrowed complete checkpoint variant;
+- inflight requires recover; start forbids it; initial has no checkpoint and no commit;
+- transition payloads reject missing/extra literal, variable, spread and async-return fields while preserving
+  turn/output/terminal-closure typing;
+- initial child creation and first checkpoint are one transition batch in crash tests; checkpoint-backed
+  same-phase child creation commits before wait; direct intermediate phase change rejects;
+- one scheduler execute across multiple live transitions; reopen dispatch matrix for absent/start/inflight;
+- transition result includes checkpoint/owns from the applied projection with no fabricated task or empty
+  follow-up commit;
+- transition-versus-mark passes in both orders: a winning mark prevents the next handler call;
+- no workflow history, positional replay, generator, one-plan-at-end rule or specialized effect verbs.
+
 ### WP9 — Watch foundation
 
 Prerequisites: WP8.
@@ -2018,13 +2367,16 @@ Do not implement these until their listed decision is settled and appended to th
 - **Provider generation/system integration:** verify landed pi-ai messages-only behavior and define complete
   generation input/checkpoint/result/failure/abort schemas, retry/usage dedupe and deferred recovery table.
 - **Tool/post_tools:** define the complete built-in payload/checkpoint/outcome schemas, bounded/spill policy
-  and model-visible projection on the settled `TaskOutput` mechanism. Job-first only; no arbitrary promise
-  adoption.
+  and model-visible projection on settled `TaskOutput`. Specify and review the small ordinary-tool mediated
+  memo/task/conversation capabilities in section 14.3; `ToolDefinition` code never receives task commit
+  authority. Job-first only; no arbitrary promise adoption.
 - **Hooks:** define task identity and namespaced scratch capability, then confirm hook points/typed decisions.
 - **Collapse provider implementation:** define summarizer request/checkpoint/result schemas and retry budgets;
   the context/head/chain foundation above is ready.
-- **Jobs/subagents:** define exact job and child task payload schemas plus terminal notification protocol on
-  the settled output API; ownership/admission/wait foundation above is ready.
+- **Jobs/subagents:** define exact job task payloads and terminal notification protocol on the settled output
+  API. A subagent is an owned conversation, not a subagent task. Keyed creation, cancellable task waits and
+  later sibling-tool resolution remain part of the gated ordinary-tool capability design.
+  Ownership/admission/wait foundations are ready.
 - **Typed system sections:** define the concrete draft/persistence API and preparation staleness retry code
   after pi-ai verification; section 14.4 fixes required semantics.
 - **Client/rendering integration:** expose renderer projections over task-output watch state; delivery
