@@ -593,11 +593,21 @@ function handleMetadata(
 	output: AssistantMessage,
 ): void {
 	if (event.usage) {
-		output.usage.input = event.usage.inputTokens || 0;
+		const cacheRead = event.usage.cacheReadInputTokens || 0;
+		const cacheWrite = event.usage.cacheWriteInputTokens || 0;
+		const inputTokens = event.usage.inputTokens || 0;
+		// Anthropic models report inputTokens net of cache, but other Bedrock
+		// families (OpenAI-compatible, DeepSeek, Nova) report it gross: the
+		// count already includes cacheRead + cacheWrite. Copying it through
+		// makes cost and cache-miss math treat cached tokens twice. Normalize
+		// to the net convention pi expects everywhere else.
+		output.usage.input = isAnthropicClaudeModel(model)
+			? inputTokens
+			: Math.max(0, inputTokens - cacheRead - cacheWrite);
 		output.usage.output = event.usage.outputTokens || 0;
-		output.usage.cacheRead = event.usage.cacheReadInputTokens || 0;
-		output.usage.cacheWrite = event.usage.cacheWriteInputTokens || 0;
-		output.usage.totalTokens = event.usage.totalTokens || output.usage.input + output.usage.output;
+		output.usage.cacheRead = cacheRead;
+		output.usage.cacheWrite = cacheWrite;
+		output.usage.totalTokens = event.usage.totalTokens || inputTokens + output.usage.output;
 		calculateCost(model, output.usage);
 	}
 }
