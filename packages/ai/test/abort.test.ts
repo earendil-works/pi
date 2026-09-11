@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import { complete, getModel, stream } from "../src/compat.ts";
 import type { Api, Context, Model, StreamOptions } from "../src/types.ts";
 
@@ -6,6 +6,7 @@ type StreamOptionsWithExtras = StreamOptions & Record<string, unknown>;
 
 import { hasAzureOpenAICredentials, resolveAzureDeploymentName } from "./azure-utils.ts";
 import { hasBedrockCredentials } from "./bedrock-utils.ts";
+import { resolveLMStudioTestModel } from "./lm-studio-utils.ts";
 import { resolveApiKey } from "./oauth.ts";
 
 // Resolve OAuth tokens at module level (async, runs before tests)
@@ -346,6 +347,27 @@ describe("AI Providers Abort Tests", () => {
 
 		it("should handle abort then new message", { retry: 3 }, async () => {
 			await testAbortThenNewMessage(llm);
+		});
+	});
+
+	// LM Studio (local) - skipped unless LM_STUDIO_BASE_URL is configured
+	describe.skipIf(!process.env.LM_STUDIO_BASE_URL)("LM Studio Provider Abort", () => {
+		let llm: Model<"openai-responses">;
+
+		beforeAll(async () => {
+			llm = await resolveLMStudioTestModel();
+		});
+
+		it("should abort mid-stream", { retry: 3 }, async () => {
+			await testAbortSignal(llm, { apiKey: "nokey" });
+		});
+
+		it("should handle immediate abort", { retry: 3 }, async () => {
+			await testImmediateAbort(llm, { apiKey: "nokey" });
+		});
+
+		it("should handle abort then new message", { retry: 3 }, async () => {
+			await testAbortThenNewMessage(llm, { apiKey: "nokey" });
 		});
 	});
 });
