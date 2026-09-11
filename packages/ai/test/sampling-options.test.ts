@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { stream } from "../src/api/openai-completions.ts";
 import { streamSimple } from "../src/compat.ts";
-import type { Api, Context, Model, SimpleStreamOptions } from "../src/types.ts";
+import type { Api, Context, Model, SimpleStreamOptions, StreamOptions } from "../src/types.ts";
 
 interface SamplingPayload {
 	temperature?: number;
@@ -121,6 +122,57 @@ describe("sampling params", () => {
 		const payload = await capturePayload(makeAnthropicModel(), {
 			samplingParams: { top_p: 0.9, top_k: 40 },
 		});
+
+		expect(payload.top_p).toBeUndefined();
+		expect(payload.top_k).toBeUndefined();
+	});
+});
+
+// The tool-capable stream path must honor the same model-level samplingParams
+// contract as streamSimple (regression: it previously dropped them silently).
+async function captureStreamPayload(
+	model: Model<"openai-completions">,
+	options?: Partial<StreamOptions<"openai-completions">>,
+): Promise<SamplingPayload> {
+	let capturedPayload: SamplingPayload | undefined;
+
+	const s = stream(model, makeContext(), {
+		...options,
+		apiKey: "fake-key",
+		onPayload: (payload) => {
+			capturedPayload = payload as SamplingPayload;
+			throw new PayloadCaptured();
+		},
+	});
+
+	await s.result().catch(() => undefined);
+
+	if (!capturedPayload) {
+		throw new Error("Expected payload to be captured before request failure");
+	}
+
+	return capturedPayload;
+}
+
+describe("sampling params (stream path)", () => {
+	it("applies model-level sampling params", async () => {
+		const payload = await captureStreamPayload(makeCompletionsModel({ samplingParams: { top_p: 0.95, min_p: 0.05 } }));
+
+		expect(payload.top_p).toBe(0.95);
+		expect(payload.min_p).toBe(0.05);
+	});
+
+	it("merges stream-option keys over model-level keys", async () => {
+		const payload = await captureStreamPayload(makeCompletionsModel({ samplingParams: { top_p: 0.95, min_p: 0.05 } }), {
+			samplingParams: { top_p: 0.5 },
+		});
+
+		expect(payload.top_p).toBe(0.5);
+		expect(payload.min_p).toBe(0.05);
+	});
+
+	it("omits sampling params when neither options nor model set them", async () => {
+		const payload = await captureStreamPayload(makeCompletionsModel());
 
 		expect(payload.top_p).toBeUndefined();
 		expect(payload.top_k).toBeUndefined();
