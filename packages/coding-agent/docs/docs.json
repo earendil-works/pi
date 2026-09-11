@@ -126,52 +126,84 @@
       "title": "Reference",
       "items": [
         {
-          "title": "CLI",
-          "path": "cli.md"
+          "title": "Configuration",
+          "items": [
+            {
+              "title": "Settings",
+              "path": "settings-reference.md"
+            },
+            {
+              "title": "Environment Variables",
+              "path": "environment-variables.md"
+            },
+            {
+              "title": "Keybindings",
+              "path": "keybindings.md"
+            },
+            {
+              "title": "Themes",
+              "path": "themes.md"
+            }
+          ]
         },
         {
-          "title": "Slash Commands",
-          "path": "slash-commands.md"
+          "title": "Interfaces",
+          "items": [
+            {
+              "title": "CLI",
+              "path": "cli.md"
+            },
+            {
+              "title": "Slash Commands",
+              "path": "slash-commands.md"
+            },
+            {
+              "title": "JSON Event Stream",
+              "path": "json.md"
+            },
+            {
+              "title": "RPC Protocol",
+              "path": "rpc.md"
+            },
+            {
+              "title": "RPC Commands",
+              "path": "rpc-commands.md"
+            },
+            {
+              "title": "RPC Extension UI",
+              "path": "rpc-extension-ui.md"
+            },
+            {
+              "title": "Message Types",
+              "path": "message-types.md"
+            }
+          ]
         },
         {
-          "title": "Provider Setup",
-          "path": "provider-reference.md"
+          "title": "Models",
+          "items": [
+            {
+              "title": "Provider Setup",
+              "path": "provider-reference.md"
+            },
+            {
+              "title": "Custom Models",
+              "path": "models.md"
+            }
+          ]
         },
         {
-          "title": "Custom Models",
-          "path": "models.md"
-        },
-        {
-          "title": "Settings",
-          "path": "settings-reference.md"
-        },
-        {
-          "title": "Environment Variables",
-          "path": "environment-variables.md"
-        },
-        {
-          "title": "Keybindings",
-          "path": "keybindings.md"
-        },
-        {
-          "title": "Themes",
-          "path": "themes.md"
-        },
-        {
-          "title": "Session File Format",
-          "path": "session-format.md"
-        },
-        {
-          "title": "Compaction and Branch Summaries",
-          "path": "compaction.md"
-        },
-        {
-          "title": "JSON Event Stream",
-          "path": "json.md"
-        },
-        {
-          "title": "RPC Protocol",
-          "path": "rpc.md"
+          "title": "Sessions",
+          "items": [
+            {
+              "title": "Session File Format",
+              "path": "session-format.md"
+            },
+            {
+              "title": "Compaction and Branch Summaries",
+              "path": "compaction.md"
+            }
+          ]
         }
       ]
     }

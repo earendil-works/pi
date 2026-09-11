@@ -182,7 +182,7 @@ See [Terminal UI](tui.md) for component, focus, overlay, theme, and performance 
 
 Extensions load in interactive, RPC, JSON, and print modes.
 Interactive mode provides the complete terminal UI.
-RPC can forward supported dialogs and notifications, but not custom terminal components; JSON and print modes have no UI.
+RPC can forward supported dialogs and notifications through the [RPC Extension UI protocol](rpc-extension-ui.md), but not custom terminal components; JSON and print modes have no UI.
 Guard terminal-only behavior with `ctx.mode === "tui"` and use `ctx.hasUI` for interactions supported by interactive and RPC clients.
 
 Keep tool and event behavior independent from rendering so non-interactive modes remain functional.
