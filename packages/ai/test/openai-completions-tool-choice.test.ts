@@ -1483,10 +1483,7 @@ describe("openai-completions tool_choice", () => {
 			name: "Custom Uppercase DeepSeek Model",
 			baseUrl: "https://API.DeepSeek.COM",
 		} satisfies Model<"openai-completions">;
-		const nativeModels = [
-			getModel("deepseek", "deepseek-v4-flash")!,
-			getModel("deepseek", "deepseek-v4-pro")!,
-		] as const;
+		const nativeModels = [getModel("deepseek", "deepseek-flash")!, getModel("deepseek", "deepseek-v4-pro")!] as const;
 		const cases = [...nativeModels, customModel, customUppercaseModel] as const;
 
 		for (const model of nativeModels) {
