@@ -10,6 +10,7 @@ import { clampThinkingLevel } from "../models.ts";
 import { registerSessionResourceCleanup } from "../session-resources.ts";
 import type {
 	Api,
+	AgentRequestIdentity,
 	AssistantMessage,
 	Context,
 	Model,
@@ -34,6 +35,7 @@ import { resolveHttpProxyUrlForTarget } from "../utils/node-http-proxy.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { uuidv7 } from "../utils/uuid.ts";
 import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
+import { buildCodexRequestMetadata } from "./codex-request-metadata.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
 import { convertResponsesMessages, convertResponsesTools, processResponsesStream } from "./openai-responses-shared.ts";
 import { buildBaseOptions } from "./simple-options.ts";
@@ -95,6 +97,7 @@ interface RequestBody {
 	text?: { verbosity?: string };
 	include?: string[];
 	prompt_cache_key?: string;
+	client_metadata?: Record<string, string>;
 	[key: string]: unknown;
 }
 
@@ -271,14 +274,22 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 			if (nextBody !== undefined) {
 				body = nextBody as RequestBody;
 			}
-			const websocketRequestId = codexSessionId || uuidv7();
-			const sseHeaders = buildSSEHeaders(model.headers, options?.headers, accountId, apiKey, codexSessionId);
+			const websocketRequestId = options?.requestIdentity?.threadId || codexSessionId || uuidv7();
+			const sseHeaders = buildSSEHeaders(
+				model.headers,
+				options?.headers,
+				accountId,
+				apiKey,
+				codexSessionId,
+				options?.requestIdentity,
+			);
 			const websocketHeaders = buildWebSocketHeaders(
 				model.headers,
 				options?.headers,
 				accountId,
 				apiKey,
 				websocketRequestId,
+				options?.requestIdentity,
 			);
 			const bodyJson = JSON.stringify(body);
 			const httpTimeoutMs = normalizeTimeoutMs(options?.timeoutMs);
@@ -558,6 +569,8 @@ function buildRequestBody(
 		tool_choice: options?.toolChoice ?? "auto",
 		parallel_tool_calls: true,
 	};
+	const requestMetadata = buildCodexRequestMetadata(options?.requestIdentity);
+	if (requestMetadata) body.client_metadata = requestMetadata.clientMetadata;
 
 	if (options?.temperature !== undefined) {
 		body.temperature = options.temperature;
@@ -1602,8 +1615,11 @@ function buildBaseCodexHeaders(
 	additionalHeaders: ProviderHeaders | undefined,
 	accountId: string,
 	token: string,
+	requestIdentity?: AgentRequestIdentity,
 ): Headers {
 	const headers = new Headers(initHeaders);
+	const metadata = buildCodexRequestMetadata(requestIdentity);
+	for (const [key, value] of Object.entries(metadata?.headers ?? {})) headers.set(key, value);
 	for (const [key, value] of Object.entries(additionalHeaders || {})) {
 		if (value === null) {
 			headers.delete(key);
@@ -1624,13 +1640,14 @@ function buildSSEHeaders(
 	accountId: string,
 	token: string,
 	sessionId?: string,
+	requestIdentity?: AgentRequestIdentity,
 ): Headers {
-	const headers = buildBaseCodexHeaders(initHeaders, additionalHeaders, accountId, token);
+	const headers = buildBaseCodexHeaders(initHeaders, additionalHeaders, accountId, token, requestIdentity);
 	headers.set("OpenAI-Beta", "responses=experimental");
 	headers.set("accept", "text/event-stream");
 	headers.set("content-type", "application/json");
 
-	if (sessionId) {
+	if (sessionId && !requestIdentity) {
 		headers.set("session-id", sessionId);
 		headers.set("x-client-request-id", sessionId);
 	}
@@ -1644,14 +1661,17 @@ function buildWebSocketHeaders(
 	accountId: string,
 	token: string,
 	requestId: string,
+	requestIdentity?: AgentRequestIdentity,
 ): Headers {
-	const headers = buildBaseCodexHeaders(initHeaders, additionalHeaders, accountId, token);
+	const headers = buildBaseCodexHeaders(initHeaders, additionalHeaders, accountId, token, requestIdentity);
 	headers.delete("accept");
 	headers.delete("content-type");
 	headers.delete("OpenAI-Beta");
 	headers.delete("openai-beta");
 	headers.set("OpenAI-Beta", OPENAI_BETA_RESPONSES_WEBSOCKETS);
-	headers.set("x-client-request-id", requestId);
-	headers.set("session-id", requestId);
+	if (!requestIdentity) {
+		headers.set("x-client-request-id", requestId);
+		headers.set("session-id", requestId);
+	}
 	return headers;
 }

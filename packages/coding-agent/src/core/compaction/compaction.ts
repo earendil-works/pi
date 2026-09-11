@@ -6,7 +6,14 @@
  */
 
 import type { AgentMessage, StreamFn, ThinkingLevel } from "@earendil-works/pi-agent-core";
-import { contentText, type RetryCallbacks, type RetryPolicy, retryAssistantCall, uuidv7 } from "@earendil-works/pi-ai";
+import {
+	type AgentRequestIdentity,
+	contentText,
+	type RetryCallbacks,
+	type RetryPolicy,
+	retryAssistantCall,
+	uuidv7,
+} from "@earendil-works/pi-ai";
 import type { AssistantMessage, Context, Model, SimpleStreamOptions, Usage } from "@earendil-works/pi-ai/compat";
 import { completeSimple } from "@earendil-works/pi-ai/compat";
 import { convertToLlm } from "../messages.ts";
@@ -561,8 +568,9 @@ function createSummarizationOptions(
 	signal: AbortSignal | undefined,
 	thinkingLevel: ThinkingLevel | undefined,
 	sessionId: string | undefined,
+	requestIdentity?: AgentRequestIdentity,
 ): SimpleStreamOptions {
-	const options: SimpleStreamOptions = { maxTokens, signal, apiKey, headers, env, sessionId };
+	const options: SimpleStreamOptions = { maxTokens, signal, apiKey, headers, env, sessionId, requestIdentity };
 	if (model.reasoning && thinkingLevel && thinkingLevel !== "off") {
 		options.reasoning = thinkingLevel;
 	}
@@ -617,6 +625,7 @@ export async function generateSummary(
 	retry?: RetryPolicy,
 	callbacks?: RetryCallbacks,
 	sessionId?: string,
+	requestIdentity?: AgentRequestIdentity,
 ): Promise<string> {
 	return (
 		await generateSummaryWithUsage(
@@ -634,6 +643,7 @@ export async function generateSummary(
 			retry,
 			callbacks,
 			sessionId,
+			requestIdentity,
 		)
 	).text;
 }
@@ -668,6 +678,7 @@ export async function generateSummaryWithUsage(
 	retry?: RetryPolicy,
 	callbacks?: RetryCallbacks,
 	sessionId?: string,
+	requestIdentity?: AgentRequestIdentity,
 ): Promise<{ text: string; usage: Usage }> {
 	const maxTokens = Math.min(
 		Math.floor(0.8 * reserveTokens),
@@ -701,6 +712,7 @@ export async function generateSummaryWithUsage(
 		signal,
 		thinkingLevel,
 		sessionId,
+		requestIdentity,
 	);
 
 	const response = await completeSummarization(
@@ -868,6 +880,7 @@ export async function compact(
 	retry?: RetryPolicy,
 	callbacks?: RetryCallbacks,
 	sessionId?: string,
+	requestIdentity?: AgentRequestIdentity,
 ): Promise<CompactionResult> {
 	const {
 		firstKeptEntryId,
@@ -903,6 +916,7 @@ export async function compact(
 				retry,
 				callbacks,
 				sessionId,
+				requestIdentity,
 			);
 			historyText = historyResult.text;
 			historyUsage = historyResult.usage;
@@ -920,6 +934,7 @@ export async function compact(
 			retry,
 			callbacks,
 			sessionId,
+			requestIdentity,
 		);
 		// Merge into single summary
 		summary = `${historyText}\n\n---\n\n**Turn Context (split turn):**\n\n${turnPrefixResult.text}`;
@@ -941,6 +956,7 @@ export async function compact(
 			retry,
 			callbacks,
 			sessionId,
+			requestIdentity,
 		);
 		summary = result.text;
 		summaryUsage = result.usage;
@@ -979,6 +995,7 @@ async function generateTurnPrefixSummary(
 	retry?: RetryPolicy,
 	callbacks?: RetryCallbacks,
 	sessionId?: string,
+	requestIdentity?: AgentRequestIdentity,
 ): Promise<{ text: string; usage: Usage }> {
 	const maxTokens = Math.min(
 		Math.floor(0.5 * reserveTokens),
@@ -991,7 +1008,7 @@ async function generateTurnPrefixSummary(
 	const response = await completeSummarization(
 		model,
 		buildSummarizationContext(promptText),
-		createSummarizationOptions(model, maxTokens, apiKey, headers, env, signal, thinkingLevel, sessionId),
+		createSummarizationOptions(model, maxTokens, apiKey, headers, env, signal, thinkingLevel, sessionId, requestIdentity),
 		streamFn,
 		retry,
 		callbacks,
