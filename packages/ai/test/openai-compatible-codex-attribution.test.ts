@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { streamOpenAICompletions } from "../src/providers/openai-completions.ts";
-import { streamOpenAIResponses } from "../src/providers/openai-responses.ts";
+import { stream as streamOpenAICompletions } from "../src/api/openai-completions.ts";
+import { stream as streamOpenAIResponses } from "../src/api/openai-responses.ts";
 import type { AgentRequestIdentity, Context, Model } from "../src/types.ts";
 
 const identity: AgentRequestIdentity = {

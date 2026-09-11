@@ -1,8 +1,9 @@
+import { zstdDecompressSync } from "node:zlib";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-	streamOpenAICodexResponses,
-	streamSimpleOpenAICodexResponses,
-} from "../src/providers/openai-codex-responses.ts";
+	stream as streamOpenAICodexResponses,
+	streamSimple as streamSimpleOpenAICodexResponses,
+} from "../src/api/openai-codex-responses.ts";
 import type { AgentRequestIdentity, Context, Model } from "../src/types.ts";
 
 afterEach(() => {
@@ -66,6 +67,14 @@ function parseTurnMetadata(clientMetadata: Record<string, string>): Record<strin
 	return JSON.parse(clientMetadata["x-codex-turn-metadata"]);
 }
 
+function decodeRequestBody(body: RequestInit["body"] | undefined): Record<string, unknown> | undefined {
+	if (typeof body === "string") return JSON.parse(body) as Record<string, unknown>;
+	if (body instanceof Uint8Array) {
+		return JSON.parse(Buffer.from(zstdDecompressSync(body)).toString("utf8")) as Record<string, unknown>;
+	}
+	return undefined;
+}
+
 describe("OpenAI Codex attribution", () => {
 	it("sends canonical identity in SSE headers and client_metadata independently of caching", async () => {
 		let capturedHeaders: Headers | undefined;
@@ -77,7 +86,7 @@ describe("OpenAI Codex attribution", () => {
 			"fetch",
 			vi.fn(async (_url: string | URL, init?: RequestInit) => {
 				capturedHeaders = init?.headers as Headers;
-				capturedBody = JSON.parse(String(init?.body));
+				capturedBody = decodeRequestBody(init?.body);
 				return new Response(sse, { status: 200, headers: { "content-type": "text/event-stream" } });
 			}),
 		);

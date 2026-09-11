@@ -45,6 +45,7 @@ import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
+import { buildCodexRequestMetadata } from "./codex-request-metadata.ts";
 import {
 	appendGrammarToolInputJsonDelta,
 	createGrammarToolInputProperties,
@@ -54,7 +55,6 @@ import {
 	resolveGrammarConstrainedSampling,
 	resolveJsonSchemaStrictSampling,
 } from "./constrained-sampling.ts";
-import { buildCodexRequestMetadata } from "./codex-request-metadata.ts";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
 import { buildBaseOptions, clampThinkingBudgetToAnswerRoom, thinkingBudgetForLevel } from "./simple-options.ts";

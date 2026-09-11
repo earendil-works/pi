@@ -1008,7 +1008,17 @@ async function generateTurnPrefixSummary(
 	const response = await completeSummarization(
 		model,
 		buildSummarizationContext(promptText),
-		createSummarizationOptions(model, maxTokens, apiKey, headers, env, signal, thinkingLevel, sessionId, requestIdentity),
+		createSummarizationOptions(
+			model,
+			maxTokens,
+			apiKey,
+			headers,
+			env,
+			signal,
+			thinkingLevel,
+			sessionId,
+			requestIdentity,
+		),
 		streamFn,
 		retry,
 		callbacks,

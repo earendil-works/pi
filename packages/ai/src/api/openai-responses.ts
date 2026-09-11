@@ -22,8 +22,8 @@ import { headersToRecord } from "../utils/headers.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
-import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
 import { buildCodexRequestMetadata } from "./codex-request-metadata.ts";
+import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
 import { convertResponsesMessages, convertResponsesTools, processResponsesStream } from "./openai-responses-shared.ts";
@@ -95,7 +95,7 @@ function getPromptCacheRetention(
 }
 
 function getPromptCacheOptions(
-	compat: Required<OpenAIResponsesCompat>,
+	compat: ResolvedOpenAIResponsesCompat,
 	cacheRetention: CacheRetention,
 ): { mode?: "explicit"; ttl?: "30m" } | undefined {
 	if (!compat.supportsExplicitPromptCacheMode) return undefined;

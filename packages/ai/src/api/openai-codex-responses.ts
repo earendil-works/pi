@@ -9,8 +9,8 @@ import type {
 import { clampThinkingLevel } from "../models.ts";
 import { registerSessionResourceCleanup } from "../session-resources.ts";
 import type {
-	Api,
 	AgentRequestIdentity,
+	Api,
 	AssistantMessage,
 	Context,
 	Model,
@@ -34,8 +34,8 @@ import { headersToRecord } from "../utils/headers.ts";
 import { resolveHttpProxyUrlForTarget } from "../utils/node-http-proxy.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { uuidv7 } from "../utils/uuid.ts";
-import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
 import { buildCodexRequestMetadata } from "./codex-request-metadata.ts";
+import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
 import { convertResponsesMessages, convertResponsesTools, processResponsesStream } from "./openai-responses-shared.ts";
 import { buildBaseOptions } from "./simple-options.ts";
@@ -274,6 +274,8 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 			if (nextBody !== undefined) {
 				body = nextBody as RequestBody;
 			}
+			const requestMetadata = buildCodexRequestMetadata(options?.requestIdentity);
+			if (requestMetadata) body.client_metadata = requestMetadata.clientMetadata;
 			const websocketRequestId = options?.requestIdentity?.threadId || codexSessionId || uuidv7();
 			const sseHeaders = buildSSEHeaders(
 				model.headers,
@@ -569,9 +571,6 @@ function buildRequestBody(
 		tool_choice: options?.toolChoice ?? "auto",
 		parallel_tool_calls: true,
 	};
-	const requestMetadata = buildCodexRequestMetadata(options?.requestIdentity);
-	if (requestMetadata) body.client_metadata = requestMetadata.clientMetadata;
-
 	if (options?.temperature !== undefined) {
 		body.temperature = options.temperature;
 	}
@@ -1618,6 +1617,7 @@ function buildBaseCodexHeaders(
 	requestIdentity?: AgentRequestIdentity,
 ): Headers {
 	const headers = new Headers(initHeaders);
+	headers.set("originator", "pi");
 	const metadata = buildCodexRequestMetadata(requestIdentity);
 	for (const [key, value] of Object.entries(metadata?.headers ?? {})) headers.set(key, value);
 	for (const [key, value] of Object.entries(additionalHeaders || {})) {
@@ -1629,7 +1629,6 @@ function buildBaseCodexHeaders(
 	}
 	headers.set("Authorization", `Bearer ${token}`);
 	headers.set("chatgpt-account-id", accountId);
-	headers.set("originator", "pi");
 	headers.set("User-Agent", getPiUserAgent());
 	return headers;
 }
