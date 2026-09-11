@@ -803,6 +803,70 @@ describe("ExtensionRunner", () => {
 		});
 	});
 
+	describe("session_start", () => {
+		it("collects valid contributions in extension and handler order without chaining prompt state", async () => {
+			const seenPrompts: string[] = [];
+			const firstPath = path.join(extensionsDir, "session-start-1.ts");
+			const secondPath = path.join(extensionsDir, "session-start-2.ts");
+			fs.writeFileSync(
+				firstPath,
+				`export default function(pi) {
+	pi.on("session_start", (_event, ctx) => {
+		globalThis.__sessionStartSeenPrompts.push(ctx.getSystemPrompt());
+		return { systemPromptAppend: "  first  " };
+	});
+	pi.on("session_start", () => ({ systemPromptAppend: "   " }));
+	pi.on("session_start", () => ({ systemPromptAppend: 42 }));
+}`,
+			);
+			fs.writeFileSync(
+				secondPath,
+				`export default function(pi) {
+	pi.on("session_start", (_event, ctx) => {
+		globalThis.__sessionStartSeenPrompts.push(ctx.getSystemPrompt());
+		return { systemPromptAppend: "second\\n  line" };
+	});
+}`,
+			);
+
+			Object.assign(globalThis, { __sessionStartSeenPrompts: seenPrompts });
+			const result = await loadExtensions([firstPath, secondPath], tempDir);
+			expect(result.errors).toEqual([]);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			runner.bindCore(extensionActions, { ...extensionContextActions, getSystemPrompt: () => "base" });
+
+			const contributions = await runner.emitSessionStart({ type: "session_start", reason: "startup" });
+
+			expect(seenPrompts).toEqual(["base", "base"]);
+			expect(contributions).toEqual([
+				{ content: "first", sourceInfo: result.extensions[0].sourceInfo },
+				{ content: "second\n  line", sourceInfo: result.extensions[1].sourceInfo },
+			]);
+			Reflect.deleteProperty(globalThis, "__sessionStartSeenPrompts");
+		});
+
+		it("reports handler errors and continues collecting", async () => {
+			const extensionPath = path.join(extensionsDir, "session-start-errors.ts");
+			fs.writeFileSync(
+				extensionPath,
+				`export default function(pi) {
+	pi.on("session_start", () => { throw new Error("failed contribution"); });
+	pi.on("session_start", () => ({ systemPromptAppend: "survives" }));
+}`,
+			);
+
+			const result = await loadExtensions([extensionPath], tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			const errors: string[] = [];
+			runner.onError((error) => errors.push(error.error));
+
+			const contributions = await runner.emitSessionStart({ type: "session_start", reason: "startup" });
+
+			expect(errors).toEqual(["failed contribution"]);
+			expect(contributions).toEqual([{ content: "survives", sourceInfo: result.extensions[0].sourceInfo }]);
+		});
+	});
+
 	describe("tool_result chaining", () => {
 		it("chains content modifications across handlers", async () => {
 			const extCode1 = `

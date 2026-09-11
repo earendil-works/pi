@@ -256,10 +256,12 @@ describe("AgentSessionRuntime characterization", () => {
 			});
 			pi.on("session_start", (event) => {
 				events.push(event);
+				return { systemPromptAppend: `session:${event.reason}` };
 			});
 		});
 
 		expect(events).toEqual([{ type: "session_start", reason: "startup" }]);
+		expect(runtime.session.systemPrompt).toContain("session:startup");
 		events.length = 0;
 
 		await runtime.session.prompt("hello");
@@ -271,6 +273,7 @@ describe("AgentSessionRuntime characterization", () => {
 		await runtime.session.bindExtensions({});
 		expect(runtime.session).not.toBe(originalSession);
 		expect(runtime.session.messages).toEqual([]);
+		expect(runtime.session.systemPrompt).toContain("session:new");
 		const secondSessionFile = runtime.session.sessionFile;
 		expect(events).toEqual([
 			{ type: "session_before_switch", reason: "new", targetSessionFile: undefined },
@@ -283,6 +286,7 @@ describe("AgentSessionRuntime characterization", () => {
 		const switchResult = await runtime.switchSession(originalSessionFile!);
 		expect(switchResult.cancelled).toBe(false);
 		await runtime.session.bindExtensions({});
+		expect(runtime.session.systemPrompt).toContain("session:resume");
 		expect(events).toEqual([
 			{ type: "session_before_switch", reason: "resume", targetSessionFile: originalSessionFile },
 			{ type: "session_shutdown", reason: "resume", targetSessionFile: originalSessionFile },
@@ -302,6 +306,7 @@ describe("AgentSessionRuntime characterization", () => {
 			});
 			pi.on("session_start", (event) => {
 				events.push(event);
+				return { systemPromptAppend: `session:${event.reason}` };
 			});
 		});
 
@@ -341,6 +346,7 @@ describe("AgentSessionRuntime characterization", () => {
 			});
 			pi.on("session_start", (event) => {
 				events.push(event);
+				return { systemPromptAppend: `session:${event.reason}` };
 			});
 		});
 
@@ -353,6 +359,7 @@ describe("AgentSessionRuntime characterization", () => {
 		expect(successResult.cancelled).toBe(false);
 		expect(successResult.selectedText).toBe("hello");
 		await runtime.session.bindExtensions({});
+		expect(runtime.session.systemPrompt).toContain("session:fork");
 		expect(events).toEqual([
 			{ type: "session_before_fork", entryId: userMessage.entryId, position: "before" },
 			{ type: "session_shutdown", reason: "fork", targetSessionFile: runtime.session.sessionFile },

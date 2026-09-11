@@ -392,15 +392,38 @@ See [Session Format](session-format.md) for session storage internals and the Se
 
 #### session_start
 
-Fired when a session is started, loaded, or reloaded.
+Fired when a session is started, loaded, or reloaded. A handler may return `systemPromptAppend` to add stable,
+session-scoped instructions to Pi's base system prompt:
 
 ```typescript
 pi.on("session_start", async (event, ctx) => {
   // event.reason - "startup" | "reload" | "new" | "resume" | "fork"
   // event.previousSessionFile - present for "new", "resume", and "fork"
   ctx.ui.notify(`Session: ${ctx.sessionManager.getSessionFile() ?? "ephemeral"}`, "info");
+
+  return {
+    systemPromptAppend: await loadExtensionInstructions(ctx.cwd),
+  };
 });
 ```
+
+`systemPromptAppend` is append-only. It cannot replace Pi's default prompt, project instructions, or another
+extension's contribution. Use `before_agent_start` when a prompt replacement is needed for only the current agent
+run.
+
+Contributions are trimmed, empty or invalid values are ignored, and valid results are joined with a blank line in
+extension load order and handler registration order. Every `session_start` handler sees the same base prompt through
+`ctx.getSystemPrompt()`; earlier results are not chained into later handlers. If a handler throws, Pi reports the
+extension error and continues collecting from the remaining handlers. Async handlers run sequentially and delay
+session initialization, so extensions should apply their own timeouts to external I/O.
+
+Pi recomputes the contribution snapshot for `startup`, `new`, `resume`, `fork`, and `reload`. The snapshot is runtime
+state and is not written to session JSONL. Changing models does not rerun `session_start`; use `before_agent_start` for
+instructions that must change immediately with the active model.
+
+The complete base prompt order is: default or custom prompt, `APPEND_SYSTEM.md`, project context such as `AGENTS.md`,
+extension session contributions, skills, then the current working directory. Tool and resource rebuilds preserve the
+current contribution snapshot.
 
 #### session_info_changed
 
@@ -545,6 +568,7 @@ pi.on("before_agent_start", async (event, ctx) => {
   //   .appendSystemPrompt - text from --append-system-prompt flags
   //   .cwd - working directory
   //   .contextFiles - AGENTS.md files and other loaded context files
+  //   .extensionSystemPromptContributions - session_start content and source metadata
   //   .skills - loaded skills
 
   return {
@@ -1125,7 +1149,7 @@ const options = ctx.getSystemPromptOptions();
 const contextPaths = options.contextFiles?.map((file) => file.path) ?? [];
 ```
 
-This has the same shape and mutability as `before_agent_start` `event.systemPromptOptions`: custom prompt, active tools, tool snippets, prompt guidelines, appended system prompt text, cwd, loaded context files, and loaded skills. It may include full context file contents, so treat it as sensitive extension-local data and avoid exposing it through command lists, logs, or autocomplete metadata.
+This has the same shape and mutability as `before_agent_start` `event.systemPromptOptions`: custom prompt, active tools, tool snippets, prompt guidelines, appended system prompt text, cwd, loaded context files, extension system-prompt contributions with source metadata, and loaded skills. It may include full context file contents and extension instructions, so treat it as sensitive extension-local data and avoid exposing it through command lists, logs, or autocomplete metadata.
 
 This reports the current base prompt inputs. It does not include per-turn `before_agent_start` chained system-prompt changes, later `context` event message mutations, or `before_provider_request` payload rewrites.
 
