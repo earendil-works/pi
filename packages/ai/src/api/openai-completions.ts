@@ -54,6 +54,7 @@ import {
 	resolveGrammarConstrainedSampling,
 	resolveJsonSchemaStrictSampling,
 } from "./constrained-sampling.ts";
+import { buildCodexRequestMetadata } from "./codex-request-metadata.ts";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
 import { buildBaseOptions, clampThinkingBudgetToAnswerRoom, thinkingBudgetForLevel } from "./simple-options.ts";
@@ -179,12 +180,14 @@ interface OpenAICompatCacheControl {
 type ResolvedOpenAICompletionsCompat = Omit<
 	Required<OpenAICompletionsCompat>,
 	| "cacheControlFormat"
+	| "codexAttribution"
 	| "deferredToolsMode"
 	| "supportsThinkingTokenBudget"
 	| "thinkingTokenBudgetField"
 	| "vllmPriority"
 > & {
 	cacheControlFormat?: OpenAICompletionsCompat["cacheControlFormat"];
+	codexAttribution?: OpenAICompletionsCompat["codexAttribution"];
 	deferredToolsMode?: OpenAICompletionsCompat["deferredToolsMode"];
 	supportsThinkingTokenBudget?: OpenAICompletionsCompat["supportsThinkingTokenBudget"];
 	thinkingTokenBudgetField?: OpenAICompletionsCompat["thinkingTokenBudgetField"];
@@ -352,7 +355,16 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 			);
 			const cacheRetention = resolveCacheRetention(options?.cacheRetention, options?.env);
 			const cacheSessionId = cacheRetention === "none" ? undefined : options?.sessionId;
-			const client = createClient(model, context, apiKey, options?.headers, options?.fetch, cacheSessionId, compat);
+			const client = createClient(
+				model,
+				context,
+				apiKey,
+				options?.headers,
+				options?.fetch,
+				cacheSessionId,
+				compat,
+				options?.requestIdentity,
+			);
 			let params = buildParams(model, context, options, compat, cacheRetention, grammarToolInputProperties);
 			const nextParams = await options?.onPayload?.(params, model);
 			if (nextParams !== undefined) {
@@ -752,8 +764,11 @@ function createClient(
 	fetch?: typeof globalThis.fetch,
 	sessionId?: string,
 	compat: ResolvedOpenAICompletionsCompat = getCompat(model),
+	requestIdentity?: StreamOptions["requestIdentity"],
 ) {
-	const headers: ProviderHeaders = { "User-Agent": getPiUserAgent(), ...model.headers };
+	const codexMetadata =
+		compat.codexAttribution === "official" ? buildCodexRequestMetadata(requestIdentity) : undefined;
+	const headers: ProviderHeaders = { ...codexMetadata?.headers, "User-Agent": getPiUserAgent(), ...model.headers };
 	if (model.provider === "github-copilot") {
 		const hasImages = hasCopilotVisionInput(context.messages);
 		const copilotHeaders = buildCopilotDynamicHeaders({
@@ -767,10 +782,10 @@ function createClient(
 		if (compat.sessionAffinityFormat === "openrouter") {
 			headers["x-session-id"] = sessionId;
 		} else {
-			if (compat.sessionAffinityFormat === "openai") {
+			if (compat.sessionAffinityFormat === "openai" && !codexMetadata) {
 				headers.session_id = sessionId;
 			}
-			headers["x-client-request-id"] = sessionId;
+			if (!codexMetadata) headers["x-client-request-id"] = sessionId;
 			headers["x-session-affinity"] = sessionId;
 		}
 	}
@@ -1708,6 +1723,7 @@ function getCompat(model: Model<"openai-completions">): ResolvedOpenAICompletion
 		supportsStrictMode: model.compat.supportsStrictMode ?? detected.supportsStrictMode,
 		supportsOpenAIGrammarTools: model.compat.supportsOpenAIGrammarTools ?? detected.supportsOpenAIGrammarTools,
 		cacheControlFormat: model.compat.cacheControlFormat ?? detected.cacheControlFormat,
+		codexAttribution: model.compat.codexAttribution,
 		sendSessionAffinityHeaders: model.compat.sendSessionAffinityHeaders ?? detected.sendSessionAffinityHeaders,
 		deferredToolsMode: model.compat.deferredToolsMode ?? detected.deferredToolsMode,
 		sessionAffinityFormat: model.compat.sessionAffinityFormat ?? detected.sessionAffinityFormat,

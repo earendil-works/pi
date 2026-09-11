@@ -23,6 +23,7 @@ import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
 import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
+import { buildCodexRequestMetadata } from "./codex-request-metadata.ts";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
 import { convertResponsesMessages, convertResponsesTools, processResponsesStream } from "./openai-responses-shared.ts";
@@ -65,8 +66,13 @@ function resolveCacheRetention(cacheRetention?: CacheRetention, env?: ProviderEn
 	return "short";
 }
 
-function getCompat(model: Model<"openai-responses">): Required<OpenAIResponsesCompat> {
+type ResolvedOpenAIResponsesCompat = Omit<Required<OpenAIResponsesCompat>, "codexAttribution"> & {
+	codexAttribution?: OpenAIResponsesCompat["codexAttribution"];
+};
+
+function getCompat(model: Model<"openai-responses">): ResolvedOpenAIResponsesCompat {
 	return {
+		codexAttribution: model.compat?.codexAttribution,
 		supportsDeveloperRole: model.compat?.supportsDeveloperRole ?? true,
 		sessionAffinityFormat: model.compat?.sessionAffinityFormat ?? detectSessionAffinityFormat(model),
 		supportsLongCacheRetention: model.compat?.supportsLongCacheRetention ?? true,
@@ -80,7 +86,7 @@ function getCompat(model: Model<"openai-responses">): Required<OpenAIResponsesCo
 }
 
 function getPromptCacheRetention(
-	compat: Required<OpenAIResponsesCompat>,
+	compat: ResolvedOpenAIResponsesCompat,
 	cacheRetention: CacheRetention,
 ): "24h" | undefined {
 	return cacheRetention === "long" && compat.supportsLongCacheRetention && !compat.supportsExplicitPromptCacheMode
@@ -150,7 +156,15 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 				context.tools,
 				compat.supportsOpenAIGrammarTools,
 			);
-			const client = createClient(model, context, apiKey, options?.headers, options?.fetch, cacheSessionId);
+			const client = createClient(
+				model,
+				context,
+				apiKey,
+				options?.headers,
+				options?.fetch,
+				cacheSessionId,
+				options?.requestIdentity,
+			);
 			let params = buildParams(model, context, options, compat, grammarToolInputProperties);
 			const nextParams = await options?.onPayload?.(params, model);
 			if (nextParams !== undefined) {
@@ -235,9 +249,12 @@ function createClient(
 	optionsHeaders?: ProviderHeaders,
 	fetch?: typeof globalThis.fetch,
 	sessionId?: string,
+	requestIdentity?: StreamOptions["requestIdentity"],
 ) {
 	const compat = getCompat(model);
-	const headers: ProviderHeaders = { "User-Agent": getPiUserAgent(), ...model.headers };
+	const codexMetadata =
+		compat.codexAttribution === "official" ? buildCodexRequestMetadata(requestIdentity) : undefined;
+	const headers: ProviderHeaders = { ...codexMetadata?.headers, "User-Agent": getPiUserAgent(), ...model.headers };
 	if (model.provider === "github-copilot") {
 		const hasImages = hasCopilotVisionInput(context.messages);
 		const copilotHeaders = buildCopilotDynamicHeaders({
@@ -251,10 +268,10 @@ function createClient(
 		if (compat.sessionAffinityFormat === "openrouter") {
 			headers["x-session-id"] = sessionId;
 		} else {
-			if (compat.sessionAffinityFormat === "openai") {
+			if (compat.sessionAffinityFormat === "openai" && !codexMetadata) {
 				headers.session_id = sessionId;
 			}
-			headers["x-client-request-id"] = sessionId;
+			if (!codexMetadata) headers["x-client-request-id"] = sessionId;
 		}
 	}
 
@@ -276,7 +293,7 @@ function buildParams(
 	model: Model<"openai-responses">,
 	context: Context,
 	options: OpenAIResponsesOptions | undefined,
-	compat: Required<OpenAIResponsesCompat> = getCompat(model),
+	compat: ResolvedOpenAIResponsesCompat = getCompat(model),
 	grammarToolInputProperties: ReadonlyMap<string, string> = createGrammarToolInputProperties(
 		context.tools,
 		compat.supportsOpenAIGrammarTools,
@@ -299,8 +316,11 @@ function buildParams(
 	});
 
 	const cacheRetention = resolveCacheRetention(options?.cacheRetention, options?.env);
+	const codexMetadata =
+		compat.codexAttribution === "official" ? buildCodexRequestMetadata(options?.requestIdentity) : undefined;
 	const params: ResponseCreateParamsStreaming & {
 		prompt_cache_options?: { mode?: "explicit"; ttl?: "30m" };
+		client_metadata?: Record<string, string>;
 	} = {
 		model: model.id,
 		input: messages,
@@ -309,6 +329,7 @@ function buildParams(
 		prompt_cache_retention: getPromptCacheRetention(compat, cacheRetention),
 		prompt_cache_options: getPromptCacheOptions(compat, cacheRetention),
 		store: false,
+		client_metadata: codexMetadata?.clientMetadata,
 	};
 
 	if (options?.maxTokens && compat.supportsMaxOutputTokens) {
