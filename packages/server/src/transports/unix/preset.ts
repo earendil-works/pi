@@ -1,10 +1,14 @@
-import { PiServer } from "../../server.ts";
-import type { PiServerService } from "../../types.ts";
+import type { SessionMetadata } from "@earendil-works/pi-agent-core";
+import { Server } from "../../server.ts";
+import type { ServerHost } from "../../types.ts";
 import { createUnixListener } from "./listener.ts";
 import type { UnixServerOptions } from "./types.ts";
 
-/** Compose PiServer with one Unix-domain socket listener. */
-export function createUnixServer(service: PiServerService, options: UnixServerOptions): PiServer {
+/** Compose Server with one Unix-domain socket listener. */
+export function createUnixServer<TMetadata extends SessionMetadata>(
+	host: ServerHost<TMetadata>,
+	options: UnixServerOptions,
+): Server<TMetadata> {
 	const listener = createUnixListener({
 		path: options.path,
 		mode: options.mode,
@@ -13,10 +17,11 @@ export function createUnixServer(service: PiServerService, options: UnixServerOp
 		gracefulCloseTimeoutMs: options.gracefulCloseTimeoutMs,
 		onError: options.onError,
 	});
-	return new PiServer(service, {
+	return new Server(host, {
 		listeners: [listener],
 		maxFrameLength: options.maxFrameLength,
 		handshakeTimeoutMs: options.handshakeTimeoutMs,
+		onConnectionCountChanged: options.onConnectionCountChanged,
 		serverId: options.serverId,
 		onError: options.onError,
 	});

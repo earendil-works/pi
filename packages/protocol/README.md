@@ -1,69 +1,41 @@
 # @earendil-works/pi-protocol
 
-Runtime-neutral schemas, types, CBOR encoding, and byte-stream framing for the experimental pi protocol.
+Runtime-neutral routed envelopes, CBOR encoding, and byte-stream framing for the experimental Pi protocol.
 
-Protocol version `1` uses binary messages with this wire layout:
+Protocol version `8` defines:
 
-1. A four-byte unsigned big-endian payload length.
-2. One definite-length CBOR item containing the message.
+- a version handshake that identifies the logical `serverId`;
+- explicit server and Session request targets;
+- correlated requests and responses with opaque strict-JSON payloads;
+- request cancellation, opaque subscription updates, and out-of-band attachment changes;
+- non-empty opaque error codes and bounded transport messages.
 
-The first client message is always `hello`, containing `PROTOCOL_VERSION`. Subsequent messages use correlated request/response envelopes and server event envelopes. Session and server snapshots are authoritative. Progress events are transient UI hints and must not be reduced into authoritative state. Transports complete authentication before protocol bytes are exchanged.
+A server target contains `{ serverId }`; a Session target contains `{ serverId, sessionId, attachmentId }`. The combined route fences calls to one logical server, durable Session, and live presentation attachment. Management `attach()` and `detach()` return no routing identifiers; the server publishes the selected live route in an out-of-band `attachment` message. Disconnecting releases only that presentation's attachment after admitted calls settle.
 
-Session lists contain `SessionMetadata`, the normalized durable metadata available without acquiring a session runtime. Only `id` and `createdAt` are required; `updatedAt`, `parentSessionId`, `sessionName`, and `cwd` are included when supported by the backing store. Runtime state such as phase, model, thinking level, attachment, and locking appears only in an acquired `SessionSnapshot`.
+Chord owns the payload semantics carried inside these envelopes: `{ serviceId, instance?, member, args }` calls, the `$chord.service` control vocabulary, service catalogues, subscription snapshots and updates, service error codes, and the independent Delta path codecs for replicated states. `pi-protocol` validates that each opaque payload is strict JSON but does not validate or export its Chord grammar. Clients and servers parse those values through `@earendil-works/chord` at the service adapter boundary.
 
-## Validated message API
+Session-directory state, management results, transcripts, models, plugins, and all other application values remain opaque service data. The real `Session` and `AgentHarness` remain process-local. Server and Session calls route opaquely to their owning providers, where Chord and the application validate and invoke them.
 
-`encodeClientMessage()` and `encodeServerMessage()` validate a message and return a complete framed `Uint8Array`. The incremental decoders accept arbitrary fragmentation or coalescing, so they work with streams, sockets, and custom byte transports.
+Server and worker lifecycle is intentionally outside this public protocol. The experimental local coordinator is only an opaque message router; each replaceable server process owns the private lifecycle protocol.
+
+Each wire frame consists of a four-byte unsigned big-endian payload length followed by one definite-length CBOR item. `encodeClientMessage()` and `encodeServerMessage()` validate and encode complete frames. `ClientMessageDecoder` and `ServerMessageDecoder` accept arbitrary stream fragmentation and coalescing.
 
 ```ts
 import {
   PROTOCOL_VERSION,
-  createServerMessageDecoder,
   encodeClientMessage,
+  ServerMessageDecoder,
   type ClientHello,
 } from "@earendil-works/pi-protocol";
 
-const hello: ClientHello = {
-  type: "hello",
-  version: PROTOCOL_VERSION,
-};
-
+const hello: ClientHello = { type: "hello", version: PROTOCOL_VERSION };
 transport.send(encodeClientMessage(hello));
 
-const decoder = createServerMessageDecoder({ maxFrameLength: 1024 * 1024 });
-for (const message of decoder.push(incomingChunk)) {
-  handleServerMessage(message);
-}
-decoder.end(); // Call when the byte stream closes to detect truncation.
+const decoder = new ServerMessageDecoder({ maxFrameLength: 1024 * 1024 });
+for (const message of decoder.push(incomingChunk)) handleServerMessage(message);
+decoder.end();
 ```
 
-`ClientMessageDecoder` and `ServerMessageDecoder` are also available directly. Schema violations, malformed CBOR, and invalid framing throw `ProtocolValidationError`. Validation errors do not retain rejected payloads.
+All envelope schemas reject unknown object properties, and codecs recursively reject non-JSON opaque payloads, including non-finite numbers, byte arrays, `undefined`, prototypes, and cycles. Envelope violations, malformed CBOR, and invalid framing throw `ProtocolValidationError`. Payload-specific adapters must perform their own semantic validation after decoding. Transports must preserve byte order. Peer authentication and authenticated service contexts are not implemented by the experimental transport.
 
-`parseClientMessage()` and `parseServerMessage()` only validate already-decoded values. They do not parse JSON strings.
-
-## Transport support
-
-Every transport carries the same complete bytes: `[uint32-be CBOR length][CBOR payload]`. Transports may split or coalesce those bytes arbitrarily.
-
-This package does not bundle a transport. Consumers provide a byte-stream transport that preserves byte order and reports stream closure. Custom transports must handle arbitrary frame fragmentation and coalescing.
-
-All transports are untrusted. Configure matching frame limits and enforce access controls appropriate for the transport before exposing a connection to the protocol. Unix sockets can use filesystem permissions, while network transports can authenticate during connection establishment.
-
-## Encoding and framing
-
-`encodeCbor()` and `decodeCbor()` implement the protocol's strict RFC 8949 subset. `encodeFrame()` and `FrameDecoder` handle framing independently of schemas and CBOR.
-
-The CBOR subset supports:
-
-- `null` and booleans
-- finite numbers, with integers restricted to JavaScript's safe range and non-integers encoded as float64
-- UTF-8 strings
-- `Uint8Array` byte strings
-- definite-length arrays
-- definite-length maps represented by objects with unique string keys
-
-Undefined object properties are omitted. JSON-valued protocol fields reject CBOR byte strings and non-plain objects. Top-level undefined, undefined array entries, sparse arrays, non-finite or unsafe numbers, tags, indefinite-length items, malformed UTF-8, trailing data, excessive nesting, and oversized values are rejected.
-
-Default limits are 16 MiB per CBOR payload/frame, 1,000,000 array elements or map entries, and 64 nested item levels. Options can configure these limits. A frame decoder validates the declared length before buffering payload bytes.
-
-All schemas reject unknown object properties. The protocol is experimental and has no compatibility guarantees.
+Default limits are 16 MiB per CBOR payload/frame, 1,000,000 array elements or map entries, and 64 nested item levels. The protocol is experimental and has no compatibility guarantees.

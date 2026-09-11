@@ -76,4 +76,54 @@ describe("streamProxy", () => {
 			namespace: "dynamic_tools",
 		});
 	});
+
+	// Regression tests for https://github.com/earendil-works/pi/issues/8996
+	it("processes terminal metadata when the event is not newline-terminated", async () => {
+		const start = `data: ${JSON.stringify({ type: "start" })}\n\n`;
+		const done = `data: ${JSON.stringify({ type: "done", reason: "stop", usage, providerThinkingLevel: "high" })}`;
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () => new Response(start + done, { status: 200 })),
+		);
+
+		const stream = streamProxy(
+			model,
+			{ systemPrompt: "", messages: [] },
+			{
+				authToken: "test-token",
+				proxyUrl: "https://proxy.example.com",
+			},
+		);
+		const events: AssistantMessageEvent[] = [];
+		for await (const event of stream) events.push(event);
+		const result = await stream.result();
+
+		expect(events.map((event) => event.type)).toEqual(["start", "done"]);
+		expect(result.stopReason).toBe("stop");
+		expect(result.providerThinkingLevel).toBe("high");
+	});
+
+	it("emits an error instead of hanging when the stream ends without a terminal event", async () => {
+		const body = `data: ${JSON.stringify({ type: "start" })}\n\n`;
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () => new Response(body, { status: 200 })),
+		);
+
+		const stream = streamProxy(
+			model,
+			{ systemPrompt: "", messages: [] },
+			{
+				authToken: "test-token",
+				proxyUrl: "https://proxy.example.com",
+			},
+		);
+		const events: AssistantMessageEvent[] = [];
+		for await (const event of stream) events.push(event);
+		const result = await stream.result();
+
+		expect(events.map((event) => event.type)).toEqual(["start", "error"]);
+		expect(result.stopReason).toBe("error");
+		expect(result.errorMessage).toContain("Connection closed by proxy server");
+	});
 });

@@ -36,6 +36,7 @@ export * from "./models-store.ts";
 export * from "./providers/faux.ts";
 export * from "./session-resources.ts";
 export * from "./types.ts";
+export * from "./utils/assistant-message-frame.ts";
 export * from "./utils/diagnostics.ts";
 export * from "./utils/event-stream.ts";
 export * from "./utils/json-parse.ts";

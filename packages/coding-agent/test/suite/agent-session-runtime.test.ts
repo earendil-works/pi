@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, realpathSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, parse } from "node:path";
 import { fauxAssistantMessage, fauxToolCall, registerFauxProvider } from "@earendil-works/pi-ai/compat";
@@ -210,6 +210,39 @@ describe("AgentSessionRuntime characterization", () => {
 			"toolResult",
 			"assistant",
 		]);
+	});
+
+	it("preserves an existing session when importing a file with the same name", async () => {
+		const { runtime, tempDir } = await createRuntimeForTest(() => {});
+		const sessionDir = runtime.session.sessionManager.getSessionDir();
+		const importDir = join(tempDir, "import");
+		const filename = "collision.jsonl";
+		const storedPath = join(sessionDir, filename);
+		const importPath = join(importDir, filename);
+		const storedSession = `${JSON.stringify({
+			type: "session",
+			version: 3,
+			id: "stored",
+			timestamp: new Date().toISOString(),
+			cwd: tempDir,
+		})}\n`;
+		const importedSession = `${JSON.stringify({
+			type: "session",
+			version: 3,
+			id: "imported",
+			timestamp: new Date().toISOString(),
+			cwd: tempDir,
+		})}\n`;
+		mkdirSync(sessionDir, { recursive: true });
+		mkdirSync(importDir, { recursive: true });
+		writeFileSync(storedPath, storedSession);
+		writeFileSync(importPath, importedSession);
+
+		await runtime.importFromJsonl(importPath);
+
+		expect(readFileSync(storedPath, "utf8")).toBe(storedSession);
+		expect(runtime.session.sessionFile).not.toBe(storedPath);
+		expect(readFileSync(runtime.session.sessionFile!, "utf8")).toContain('"id":"imported"');
 	});
 
 	it("emits session_before_switch and session_start for new and resume flows", async () => {

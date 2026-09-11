@@ -27,6 +27,7 @@ Additional arguments are forwarded to Vitest:
 ```bash
 npm run eval -- src/extensions.eval.ts
 npm run eval -- -t "creates, reloads, and uses"
+npm run eval -- src/docs.eval.ts -t "session-format\.md"
 ```
 
 Each invocation prints an ignored `.eval/` artifact directory. `runs.jsonl` indexes completed harness runs and their
@@ -61,6 +62,8 @@ describeEval("Pi smoke", { harness }, (it) => {
 - `name`: stable harness identity used by reports and comparisons.
 - `model`: optional `{ provider, id }` selection. It overrides the runner's default model.
 - `noTools`: Pi's tool-disable configuration.
+- `tools`: optional allowlist of tool names available to the evaluated agent.
+- `customTools`: custom tool definitions to register for the evaluated agent.
 - `transformSystemPrompt`: transforms the complete default prompt before the eval starts.
 - `output`: transforms the final response and `AgentSession` into a JSON-safe domain result.
 

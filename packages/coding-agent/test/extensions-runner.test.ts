@@ -390,6 +390,32 @@ describe("ExtensionRunner", () => {
 			expect(tools.map((t) => t.definition.name).sort()).toEqual(["tool_a", "tool_b"]);
 		});
 
+		// Regression test for #9300.
+		it("rejects extension tools without a parameter schema", async () => {
+			const extensionPath = path.join(extensionsDir, "missing-parameters.js");
+			fs.writeFileSync(
+				extensionPath,
+				`export default function(pi) {
+	pi.registerTool({
+		name: "noop",
+		label: "No-op",
+		description: "Do nothing",
+		execute: async () => ({ content: [{ type: "text", text: "ok" }] }),
+	});
+}`,
+			);
+
+			const result = await loadExtensions([extensionPath], tempDir);
+
+			expect(result.extensions).toHaveLength(0);
+			expect(result.errors).toEqual([
+				{
+					path: extensionPath,
+					error: `Failed to load extension: Tool "noop" registered by extension "${extensionPath}" must define an object parameter schema.`,
+				},
+			]);
+		});
+
 		it("keeps first tool when two extensions register the same name", async () => {
 			const first = `
 				import { Type } from "typebox";

@@ -1,0 +1,13 @@
+{
+  "name": "facet-sandbox-ivm",
+  "private": true,
+  "type": "module",
+  "description": "Running pi facets in an isolated-vm isolate: full JIT, no ambient authority.",
+  "scripts": {
+    "demo": "node --experimental-strip-types src/demo-facet.ts",
+    "audit": "node --experimental-strip-types src/escape-audit.ts",
+    "bench": "node --experimental-strip-types src/bench.ts",
+    "test": "node --experimental-strip-types --expose-gc src/property-test.ts"
+  },
+  "dependencies": { "isolated-vm": "6.2.0" }
+}

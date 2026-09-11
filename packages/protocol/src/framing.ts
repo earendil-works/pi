@@ -38,20 +38,6 @@ export function encodeFrame(payload: Uint8Array): Uint8Array {
 	return frame;
 }
 
-/** Validates that bytes contain exactly one complete frame within the configured limit. */
-export function assertCompleteFrame(frame: Uint8Array, options?: FrameDecoderOptions): void {
-	if (!(frame instanceof Uint8Array)) throw new TypeError("Frame must be a Uint8Array");
-	if (frame.byteLength < FRAME_HEADER_LENGTH) throw new FrameError("Frame does not contain a complete length prefix");
-	const length = frame[0]! * 0x1_000_000 + frame[1]! * 0x1_0000 + frame[2]! * 0x100 + frame[3]!;
-	const maxFrameLength = resolveMaxFrameLength(options);
-	if (length > maxFrameLength) {
-		throw new FrameError(`Frame length ${length} exceeds configured limit of ${maxFrameLength}`);
-	}
-	if (frame.byteLength !== FRAME_HEADER_LENGTH + length) {
-		throw new FrameError("Frame must contain exactly one complete payload");
-	}
-}
-
 type DecoderState = "open" | "ended" | "failed";
 
 /** Incrementally splits arbitrary byte chunks into length-prefixed payloads. */

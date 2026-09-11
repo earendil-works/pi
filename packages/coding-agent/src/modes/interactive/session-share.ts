@@ -44,8 +44,9 @@ export function exportSessionForShare(filePath: string, session: AgentSession): 
 
 /** Share the current session through Radius, falling back to a private gist. */
 export async function shareSession(context: SessionShareContext): Promise<void> {
-	const jsonlFile = path.join(os.tmpdir(), "session.jsonl");
-	let htmlFile: string | null = null;
+	const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-share-"));
+	const jsonlFile = path.join(tempDir, "session.jsonl");
+	const htmlFile = path.join(tempDir, "session.html");
 
 	try {
 		try {
@@ -68,7 +69,6 @@ export async function shareSession(context: SessionShareContext): Promise<void> 
 		}
 
 		try {
-			htmlFile = path.join(os.tmpdir(), "session.html");
 			await context.session.exportToHtml(htmlFile, { themeName: theme.name });
 		} catch (error: unknown) {
 			context.showError(`Failed to export session: ${error instanceof Error ? error.message : "Unknown error"}`);
@@ -76,14 +76,10 @@ export async function shareSession(context: SessionShareContext): Promise<void> 
 		}
 		await shareViaGist(htmlFile, context);
 	} finally {
-		for (const tmpFile of [jsonlFile, htmlFile]) {
-			try {
-				if (tmpFile !== null) {
-					fs.unlinkSync(tmpFile);
-				}
-			} catch {
-				// Ignore cleanup errors
-			}
+		try {
+			fs.rmSync(tempDir, { recursive: true, force: true });
+		} catch {
+			// Ignore cleanup errors
 		}
 	}
 }

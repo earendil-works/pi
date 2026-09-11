@@ -42,6 +42,10 @@ agent.subscribe((event) => {
 await agent.prompt("Hello!");
 ```
 
+## Experimental facet services
+
+Transport-neutral facet-service primitives live in `@earendil-works/chord`. The agent core does not export the service runtime.
+
 ## Core Concepts
 
 ### AgentMessage vs LLM Message

@@ -6,7 +6,11 @@
 		"moduleResolution": "NodeNext",
 		"types": ["node", "vitest"],
 		"paths": {
-			"@earendil-works/pi-protocol": ["../protocol/src/index.ts"]
+			"@earendil-works/pi-agent-core": ["../agent/src/index.ts"],
+			"@earendil-works/pi-ai": ["../ai/src/index.ts"],
+			"@earendil-works/pi-ai/*": ["../ai/src/*.ts", "../ai/src/providers/*.ts"],
+			"@earendil-works/pi-protocol": ["../protocol/src/index.ts"],
+			"@earendil-works/pi-telemetry": ["../telemetry/src/index.ts"]
 		}
 	},
 	"include": ["src/**/*.ts", "test/**/*.ts"]

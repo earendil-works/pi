@@ -1431,34 +1431,6 @@ describe("Generate E2E Tests", () => {
 		});
 	});
 
-	describe("OpenAI Codex Provider (gpt-5.4)", () => {
-		const llm = getModel("openai-codex", "gpt-5.4");
-
-		it.skipIf(!openaiCodexToken)("should complete basic text generation", { retry: 3 }, async () => {
-			await basicTextGeneration(llm, { apiKey: openaiCodexToken });
-		});
-
-		it.skipIf(!openaiCodexToken)("should handle tool calling", { retry: 3 }, async () => {
-			await handleToolCall(llm, { apiKey: openaiCodexToken });
-		});
-
-		it.skipIf(!openaiCodexToken)("should handle streaming", { retry: 3 }, async () => {
-			await handleStreaming(llm, { apiKey: openaiCodexToken });
-		});
-
-		it.skipIf(!openaiCodexToken)("should handle thinking", { retry: 3 }, async () => {
-			await handleThinking(llm, { apiKey: openaiCodexToken, reasoningEffort: "high" });
-		});
-
-		it.skipIf(!openaiCodexToken)("should handle multi-turn with thinking and tools", { retry: 3 }, async () => {
-			await multiTurn(llm, { apiKey: openaiCodexToken });
-		});
-
-		it.skipIf(!openaiCodexToken)("should handle image input", { retry: 3 }, async () => {
-			await handleImage(llm, { apiKey: openaiCodexToken });
-		});
-	});
-
 	describe("OpenAI Codex Provider (gpt-5.5)", () => {
 		const llm = getModel("openai-codex", "gpt-5.5");
 

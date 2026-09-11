@@ -1,13 +1,23 @@
 import type { Component, Terminal, TUI } from "@earendil-works/pi-tui";
-import { Container, isViewportTUI, Text } from "@earendil-works/pi-tui";
+import { Container, getKeybindings, isViewportTUI, ScrollView, setKeybindings, Text } from "@earendil-works/pi-tui";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { VirtualTerminal } from "../../tui/test/virtual-terminal.ts";
+import { KeybindingsManager } from "../src/core/keybindings.ts";
 import type { FullscreenExitOutput, TuiMode } from "../src/core/settings-manager.ts";
+import {
+	BranchSummaryStatusIndicator,
+	CompactionStatusIndicator,
+	RetryStatusIndicator,
+	type StatusIndicator,
+	type StatusIndicatorKind,
+	WorkingStatusIndicator,
+} from "../src/modes/interactive/components/status-indicator.ts";
 import {
 	createInteractiveTui,
 	createInteractiveTuiReference,
 	InteractiveMode,
 } from "../src/modes/interactive/interactive-mode.ts";
+import { initTheme } from "../src/modes/interactive/theme/theme.ts";
 
 const clipboardMocks = vi.hoisted(() => ({
 	copyToClipboard: vi.fn<(text: string) => Promise<void>>(),
@@ -68,6 +78,35 @@ describe("createInteractiveTui", () => {
 		altTui.stop();
 	});
 
+	it("shows the configured jump-to-bottom shortcut while scrolled up", async () => {
+		initTheme("dark");
+		const previousKeybindings = getKeybindings();
+		setKeybindings(new KeybindingsManager({ "tui.altScreen.bottom": "ctrl+j" }));
+		const terminal = new RecordingTerminal(50, 4);
+		const ui = createInteractiveTui({
+			tuiMode: "fullscreen",
+			showHardwareCursor: false,
+			logDirectory: "/tmp",
+			terminal,
+		});
+		ui.setLayoutRoot(
+			new ScrollView(new Text(Array.from({ length: 8 }, (_, index) => `line ${index + 1}`).join("\n"), 0, 0), {
+				follow: "end",
+				primary: true,
+			}),
+		);
+		ui.start();
+		try {
+			await terminal.waitForRender();
+			terminal.sendInput("\x1b[<64;1;1M");
+			await terminal.waitForRender();
+			expect(terminal.getViewport()[3]).toContain("↓ Jump to latest message · Ctrl+J");
+		} finally {
+			ui.stop();
+			setKeybindings(previousKeybindings);
+		}
+	});
+
 	it("replaces the renderer and restores the previous screen for resume-hint exits", async () => {
 		const terminal = new RecordingTerminal(40, 8);
 		const renderer = createInteractiveTui({
@@ -87,6 +126,7 @@ describe("createInteractiveTui", () => {
 		renderer.setFocus(component);
 
 		type SwitchContext = {
+			runtimeHost: { session: { settingsManager: { getFullscreenCopyOnSelect: () => boolean } } };
 			renderer: ReturnType<typeof createInteractiveTui>;
 			ui: TUI;
 			fullscreenLayoutRoot: Component;
@@ -95,6 +135,7 @@ describe("createInteractiveTui", () => {
 			extensionTerminalInputSubscriptions: Set<never>;
 		};
 		const context = Object.assign(Object.create(InteractiveMode.prototype), {
+			runtimeHost: { session: { settingsManager: { getFullscreenCopyOnSelect: () => true } } },
 			renderer,
 			ui: undefined as unknown as TUI,
 			fullscreenLayoutRoot: component,
@@ -156,7 +197,7 @@ type CopyCommandContext = {
 	showError: (message: string) => void;
 };
 
-type CopyCommandOptions = { flashConfirmation?: boolean };
+type CopyCommandOptions = { flashConfirmation?: boolean; preferSelection?: boolean };
 
 type CopyCommandPrototype = {
 	handleCopyCommand(this: CopyCommandContext, options?: CopyCommandOptions): Promise<void>;
@@ -168,6 +209,91 @@ describe("InteractiveMode copy confirmation", () => {
 	beforeEach(() => {
 		clipboardMocks.copyToClipboard.mockReset();
 		clipboardMocks.copyToClipboard.mockResolvedValue(undefined);
+	});
+
+	it("copies an active fullscreen selection when copy-on-select is disabled", async () => {
+		const terminal = new RecordingTerminal(40, 4);
+		const ui = createInteractiveTui({
+			tuiMode: "fullscreen",
+			showHardwareCursor: false,
+			logDirectory: "/tmp",
+			terminal,
+			fullscreenCopyOnSelect: false,
+		});
+		const getLastAssistantText = vi.fn(() => "assistant response");
+		const showStatus = vi.fn();
+		const showError = vi.fn();
+		const context: CopyCommandContext = {
+			session: { getLastAssistantText },
+			ui,
+			showStatus,
+			showError,
+		};
+		ui.addChild(new Text("alpha\nbeta\ngamma\ndelta", 0, 0));
+
+		ui.start();
+		try {
+			await terminal.waitForRender();
+			terminal.sendInput("\x1b[<0;1;1M");
+			terminal.sendInput("\x1b[<32;4;2M");
+			terminal.sendInput("\x1b[<0;4;2m");
+			await terminal.waitForRender();
+			clipboardMocks.copyToClipboard.mockClear();
+
+			await copyCommandPrototype.handleCopyCommand.call(context, { flashConfirmation: true, preferSelection: true });
+			await terminal.waitForRender();
+
+			expect(clipboardMocks.copyToClipboard).toHaveBeenCalledOnce();
+			expect(clipboardMocks.copyToClipboard).toHaveBeenCalledWith("alpha\nbeta");
+			expect(getLastAssistantText).not.toHaveBeenCalled();
+			expect(showStatus).not.toHaveBeenCalled();
+			expect(showError).not.toHaveBeenCalled();
+			expect(terminal.getViewport().some((line) => line.includes("Copied!"))).toBe(true);
+		} finally {
+			ui.stop();
+		}
+	});
+
+	it("copies the last assistant message with an active fullscreen selection when copy-on-select is enabled", async () => {
+		const terminal = new RecordingTerminal(40, 4);
+		const ui = createInteractiveTui({
+			tuiMode: "fullscreen",
+			showHardwareCursor: false,
+			logDirectory: "/tmp",
+			terminal,
+		});
+		const getLastAssistantText = vi.fn(() => "assistant response");
+		const showStatus = vi.fn();
+		const showError = vi.fn();
+		const context: CopyCommandContext = {
+			session: { getLastAssistantText },
+			ui,
+			showStatus,
+			showError,
+		};
+		ui.addChild(new Text("alpha\nbeta\ngamma\ndelta", 0, 0));
+
+		ui.start();
+		try {
+			await terminal.waitForRender();
+			terminal.sendInput("\x1b[<0;1;1M");
+			terminal.sendInput("\x1b[<32;4;2M");
+			terminal.sendInput("\x1b[<0;4;2m");
+			await terminal.waitForRender();
+			clipboardMocks.copyToClipboard.mockClear();
+
+			await copyCommandPrototype.handleCopyCommand.call(context, { flashConfirmation: true, preferSelection: true });
+			await terminal.waitForRender();
+
+			expect(clipboardMocks.copyToClipboard).toHaveBeenCalledOnce();
+			expect(clipboardMocks.copyToClipboard).toHaveBeenCalledWith("assistant response");
+			expect(getLastAssistantText).toHaveBeenCalledOnce();
+			expect(showStatus).not.toHaveBeenCalled();
+			expect(showError).not.toHaveBeenCalled();
+			expect(terminal.getViewport().some((line) => line.includes("Copied!"))).toBe(true);
+		} finally {
+			ui.stop();
+		}
 	});
 
 	it("flashes Copied! for the copy shortcut in fullscreen mode", async () => {
@@ -190,7 +316,7 @@ describe("InteractiveMode copy confirmation", () => {
 		ui.start();
 		try {
 			await terminal.waitForRender();
-			await copyCommandPrototype.handleCopyCommand.call(context, { flashConfirmation: true });
+			await copyCommandPrototype.handleCopyCommand.call(context, { flashConfirmation: true, preferSelection: true });
 			await terminal.waitForRender();
 
 			expect(clipboardMocks.copyToClipboard).toHaveBeenCalledWith("assistant response");
@@ -218,45 +344,127 @@ describe("InteractiveMode copy confirmation", () => {
 			showError,
 		};
 
-		await copyCommandPrototype.handleCopyCommand.call(context, { flashConfirmation: true });
+		await copyCommandPrototype.handleCopyCommand.call(context, { flashConfirmation: true, preferSelection: true });
 
 		expect(showStatus).toHaveBeenCalledWith("Copied last agent message to clipboard");
 		expect(showError).not.toHaveBeenCalled();
 	});
 });
 
+type StatusEditor = {
+	embedWorkingStatus: boolean;
+	setWorkingStatusIndicator: (indicator: StatusIndicator | undefined) => void;
+};
+
 type ClearStatusContext = {
-	activeStatusIndicator: { kind: "working"; dispose: () => void } | undefined;
+	activeStatusIndicator: { kind: StatusIndicatorKind; dispose: () => void } | undefined;
+	activeWorkingIndicatorEmbedded: boolean;
 	statusContainer: Container;
+	defaultEditor: StatusEditor;
+	editor: Partial<StatusEditor>;
 	options: { tuiMode?: TuiMode };
 	ui: { getClearOnShrink: () => boolean };
 	idleStatus: Component;
+	setEditorWorkingStatusIndicator(indicator: StatusIndicator | undefined): boolean;
 };
 
 type InteractiveModePrototype = {
-	clearStatusIndicator(this: ClearStatusContext, kind?: "working"): void;
+	showStatusIndicator(this: ClearStatusContext, indicator: StatusIndicator): void;
+	clearStatusIndicator(this: ClearStatusContext, kind?: StatusIndicatorKind): void;
+	setEditorWorkingStatusIndicator(this: ClearStatusContext, indicator: StatusIndicator | undefined): boolean;
 };
 
 const interactiveModePrototype = InteractiveMode.prototype as unknown as InteractiveModePrototype;
 
 describe("clear-on-shrink status spacing", () => {
-	it("reserves status height only on the main-screen renderer", () => {
-		for (const [tuiMode, expectedChildren] of [
-			["regular", 1],
-			["fullscreen", 0],
-		] as const) {
+	it.each([true, false])("routes every status through the editor opt-in (%s)", (embedWorkingStatus) => {
+		initTheme("dark");
+		const tui = { requestRender: vi.fn() } as unknown as TUI;
+		const editor: StatusEditor = { embedWorkingStatus, setWorkingStatusIndicator: vi.fn() };
+		const context: ClearStatusContext = {
+			activeStatusIndicator: undefined,
+			activeWorkingIndicatorEmbedded: false,
+			statusContainer: new Container(),
+			defaultEditor: { embedWorkingStatus: true, setWorkingStatusIndicator: vi.fn() },
+			editor,
+			options: { tuiMode: "regular" },
+			ui: { getClearOnShrink: () => true },
+			idleStatus: new Text("", 0, 0),
+			setEditorWorkingStatusIndicator: interactiveModePrototype.setEditorWorkingStatusIndicator,
+		};
+		const indicators = [
+			new WorkingStatusIndicator(tui, "Working"),
+			new CompactionStatusIndicator(tui, "manual"),
+			new CompactionStatusIndicator(tui, "threshold"),
+			new CompactionStatusIndicator(tui, "overflow"),
+			new BranchSummaryStatusIndicator(tui),
+			new RetryStatusIndicator(tui, 1, 3, 1000),
+		];
+		try {
+			for (const indicator of indicators) {
+				interactiveModePrototype.showStatusIndicator.call(context, indicator);
+				expect(context.activeStatusIndicator).toBe(indicator);
+				expect(context.activeWorkingIndicatorEmbedded).toBe(embedWorkingStatus);
+				if (embedWorkingStatus) {
+					expect(editor.setWorkingStatusIndicator).toHaveBeenLastCalledWith(indicator);
+					expect(context.statusContainer.children).toHaveLength(0);
+				} else {
+					expect(context.statusContainer.children).toEqual([indicator]);
+				}
+			}
+		} finally {
+			for (const indicator of indicators) indicator.dispose();
+		}
+	});
+
+	it.each<StatusIndicatorKind>(["working", "compaction", "branchSummary", "retry"])(
+		"does not reserve separate status height for an embedded %s indicator",
+		(kind) => {
 			const dispose = vi.fn();
+			const editor: StatusEditor = { embedWorkingStatus: true, setWorkingStatusIndicator: vi.fn() };
 			const context: ClearStatusContext = {
-				activeStatusIndicator: { kind: "working", dispose },
+				activeStatusIndicator: { kind, dispose },
+				activeWorkingIndicatorEmbedded: true,
 				statusContainer: new Container(),
-				options: { tuiMode },
+				defaultEditor: editor,
+				editor,
+				options: { tuiMode: "regular" },
 				ui: { getClearOnShrink: () => true },
 				idleStatus: new Text("", 0, 0),
+				setEditorWorkingStatusIndicator: interactiveModePrototype.setEditorWorkingStatusIndicator,
 			};
 
 			interactiveModePrototype.clearStatusIndicator.call(context);
 
 			expect(dispose).toHaveBeenCalledOnce();
+			expect(editor.setWorkingStatusIndicator).toHaveBeenCalledWith(undefined);
+			expect(context.statusContainer.children).toHaveLength(0);
+		},
+	);
+
+	it("uses the standalone row for a custom editor that has not opted in", () => {
+		for (const [tuiMode, expectedChildren] of [
+			["regular", 1],
+			["fullscreen", 0],
+		] as const) {
+			const defaultEditor: StatusEditor = { embedWorkingStatus: true, setWorkingStatusIndicator: vi.fn() };
+			const customEditor = { embedWorkingStatus: false, setWorkingStatusIndicator: vi.fn() };
+			const context: ClearStatusContext = {
+				activeStatusIndicator: { kind: "working", dispose: vi.fn() },
+				activeWorkingIndicatorEmbedded: false,
+				statusContainer: new Container(),
+				defaultEditor,
+				editor: customEditor,
+				options: { tuiMode },
+				ui: { getClearOnShrink: () => true },
+				idleStatus: new Text("", 0, 0),
+				setEditorWorkingStatusIndicator: interactiveModePrototype.setEditorWorkingStatusIndicator,
+			};
+
+			interactiveModePrototype.clearStatusIndicator.call(context);
+
+			expect(defaultEditor.setWorkingStatusIndicator).toHaveBeenCalledWith(undefined);
+			expect(customEditor.setWorkingStatusIndicator).not.toHaveBeenCalled();
 			expect(context.statusContainer.children).toHaveLength(expectedChildren);
 		}
 	});

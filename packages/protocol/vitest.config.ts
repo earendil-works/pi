@@ -6,4 +6,6 @@ export default defineConfig({
 		environment: "node",
 		reporters: process.env.GITHUB_ACTIONS ? ["dot", "github-actions"] : ["dot"],
 	},
+	resolve: { conditions: ["source"] },
+	ssr: { resolve: { conditions: ["source"] } },
 });

@@ -314,6 +314,15 @@ c_n
 		assert.strictEqual(renderLatex(String.raw`A\not\subseteq B,\quad x\not\in X`), "A ⊈ B, x ∉ X");
 	});
 
+	it("renders relational algebra join operators", () => {
+		assert.strictEqual(renderLatex(String.raw`R\bowtie S,\quad R\Join S`), "R ⋈ S, R ⋈ S");
+		assert.strictEqual(renderLatex(String.raw`R\ltimes S,\quad R\rtimes S`), "R ⋉ S, R ⋊ S");
+		assert.strictEqual(
+			renderLatex(String.raw`R\leftouterjoin S,\quad R\rightouterjoin S,\quad R\fullouterjoin S`),
+			"R ⟕ S, R ⟖ S, R ⟗ S",
+		);
+	});
+
 	it("renders delimiter commands and invisible delimiters", () => {
 		assert.strictEqual(
 			renderLatex(String.raw`\lvert{x}\rvert+\lVert{v}\rVert+\left.\frac{dy}{dx}\right|_{x=0}`),

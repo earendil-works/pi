@@ -1,63 +1,72 @@
 # @earendil-works/pi-client
 
-Transport-neutral client for remote pi sessions. `PiClient` exchanges length-prefixed CBOR messages through a small `ByteTransport` interface. The package has no Node-specific imports.
+Transport-neutral client for the experimental Pi service protocol.
 
 ```ts
-import { PiClient, type ByteTransportFactory } from "@earendil-works/pi-client";
+import { Client, type ByteTransportFactory } from "@earendil-works/pi-client";
 
 const transportFactory: ByteTransportFactory = async (handlers) => {
   // Connect using WebSocket, Unix socket, or another ordered byte transport.
   return {
     async send(chunk) {
-      // Deliver chunks in invocation order and honor backpressure.
+      // Deliver bytes in invocation order and honor backpressure.
     },
     close() {},
   };
 };
 
-const client = new PiClient({ transportFactory });
-await client.connect();
-const session = await client.createSession({ cwd: "/workspace" });
-const unsubscribe = session.subscribe((snapshot) => render(snapshot));
-await session.prompt("Inspect this project");
-unsubscribe();
+const client = await Client.connect({
+  serverId: "01234567-89ab-4def-8123-456789abcdef",
+  transportFactory,
+});
+const result = await client.request(
+  { serverId: client.hello.serverId },
+  { serviceId: "example.service", member: "read", args: [] },
+);
 ```
 
-Call `handlers.onData(chunk)` for inbound bytes, `handlers.onClose()` for an orderly terminal close, and `handlers.onError(error)` for transport failures. A factory must create a fresh transport for every connection attempt and complete any transport-specific authentication before resolving. For example, a WebSocket factory can provide credentials in its upgrade request.
+The client verifies that the physical endpoint reports the expected logical `serverId`. Server-wide requests carry that ID, and every Session request carries the full live target `{ serverId, sessionId, attachmentId }`. The combined durable address prevents cross-server or cross-session misrouting; the server-generated attachment ID rejects delayed frames after switching or reattaching.
 
-`PiClient` does not reconnect automatically. Call `reconnect()` after disconnection. One connection can attach several sessions. Requests are correlated by ID. Server snapshots and successful response snapshots are authoritative, while progress events do not mutate snapshot state optimistically. Read cached session metadata from `client.snapshot?.sessions`; call `listSessions()` to request refreshed durable metadata from the server. Runtime state is available after acquiring a session.
+Typed server and Session APIs are provided by Chord service bindings owned by the application. `createClientServiceTransport()` adapts a lazily resolved server or Session route to a Chord transport; `request()` and `subscribeService()` remain its low-level primitives. The client uses Chord's service-control parsers and per-subscription state decoder; `pi-protocol` only validates the routed envelope and strict-JSON boundary. A service subscription returns a complete provider snapshot; the binding installs it and then calls `start()` to release updates buffered during hydration. `Client` applies ordered out-of-band attachment changes but deliberately does not construct typed service proxies or interpret application contracts.
 
-`acquireSession()` returns an independent `SessionLease`; leases cannot be constructed directly. Use `{ mode: "exclusive" }` for a lifecycle or mutation coordinator and `{ mode: "shared" }` when multiple low-level consumers intentionally share the session. Exclusive acquisition fails with `PiSessionOwnershipError` while any lease exists, and shared acquisition fails while an exclusive lease exists. `attachSession()` is a shared-acquisition convenience method. `createSession()` returns an exclusive lease for the newly created session.
+Application observation APIs such as the coding agent's `Transcript` are ordinary Chord services. The client does not interpret their snapshots or updates.
 
-Calling `dispose()` or `detach()` releases only that lease. A lease rejects commands as soon as release begins. The client sends the protocol detach request after the final lease is released. If explicit `detach()` fails, the lease becomes active again for retry. If cleanup-oriented `dispose()` fails, it reports the protocol error but relinquishes local ownership; `PiClient` reconciles the failed protocol cleanup before the next acquisition. A released lease becomes unavailable without affecting other shared leases. Server removal or disconnection invalidates every lease for the affected attachment, and disposing an invalidated lease is a no-op. Commands fail with `PiDisconnectedError` while the client is disconnected and `PiSessionDetachedError` when the client is connected but a lease is releasing, released, or invalidated. Leases implement `AsyncDisposable`.
+On disconnect or disposal, pending requests reject locally, but accepted work may still complete remotely before the attachment is released. The client clears its live attachment route. It never reconnects or replays requests automatically. After disconnection, call `reconnect()`, attach through the application's management service again, and explicitly repeat only operations known to be safe.
 
-`subscribe()` observes authoritative snapshots. `onEvent()` observes protocol events. Both return an unsubscribe function. Structured errors returned by the server are exposed as `PiServerError`.
+The experimental local coordinator only provides a stable endpoint and relays traffic. Replaceable server processes own Session and worker lifecycle outside the public client protocol.
 
-## Limits and security
+Call transport handlers as follows:
 
-`PiClientOptions.maxFrameLength` bounds inbound and outbound CBOR payloads. Configure matching limits on the client and server. Transports should separately bound queued outbound bytes and preserve send order.
+- `handlers.onData(chunk)` for inbound bytes;
+- `handlers.onClose()` for an orderly terminal close;
+- `handlers.onError(error)` for transport failures.
 
-Treat peers as untrusted. Use a secure transport with appropriate access controls and authenticate during transport establishment.
-
-Subscriber exceptions are isolated from protocol state. Set `onListenerError` in `PiClientOptions` to report them to application logging or diagnostics.
+A transport factory creates a fresh authenticated connection for each attempt. Requests are correlated by ID, and server failures are exposed as `ServerError`.
 
 ## Unix-domain sockets
 
-Node.js and Bun consumers can use the separately exported Unix-domain socket transport:
+Node.js and Bun consumers can use the separate Unix transport:
 
 ```ts
-import { PiClient } from "@earendil-works/pi-client";
+import { Client } from "@earendil-works/pi-client";
 import { createUnixTransportFactory } from "@earendil-works/pi-client/unix";
 
-const client = new PiClient({
-  transportFactory: createUnixTransportFactory({
-    path: "/tmp/pi.sock",
-  }),
+const client = new Client({
+  serverId: "01234567-89ab-4def-8123-456789abcdef",
+  transportFactory: createUnixTransportFactory({ path: "/tmp/pi.sock" }),
 });
-
 await client.connect();
 ```
 
-`maxPendingBytes` bounds queued outbound data. It defaults to four times the protocol frame limit. The transport preserves send order and waits for socket backpressure before resolving each send.
+Unix discovery scans an explicit physical-route directory, derives each expected server ID from its filename, and verifies it through the existing handshake:
 
-The `@earendil-works/pi-client` root remains transport- and runtime-neutral. Importing the Node-compatible transport requires the explicit `@earendil-works/pi-client/unix` subpath.
+```ts
+import { discoverUnixServers } from "@earendil-works/pi-client/unix";
+
+const routes = await discoverUnixServers({ directory: "/run/user/1000/pi" });
+// [{ serverId: "...", path: "/run/user/1000/pi/<serverId>.sock" }]
+```
+
+Malformed entries, non-sockets, stale or unresponsive endpoints, and server-ID mismatches are ignored. Discovery is read-only and probes at most 16 sockets concurrently. Unexpected filesystem and socket errors reject discovery. Pass `timeoutMs` to override the default probe timeout.
+
+`ClientOptions.maxFrameLength` bounds protocol payloads. `maxPendingBytes` bounds queued Unix transport output. Configure matching limits on both peers.

@@ -50,6 +50,60 @@ export function TaggedError<Tag extends string>(tag: Tag): TaggedErrorFactory<Ta
 	return TaggedErrorClass as unknown as TaggedErrorFactory<Tag>;
 }
 
+export class LaneBusy extends TaggedError("LaneBusy")<{
+	lane: string;
+	operationId: string;
+	operationKind: "run" | "compaction" | "navigation";
+	message: string;
+}> {}
+export class OperationMismatch extends TaggedError("OperationMismatch")<{
+	lane: string;
+	expectedOperationId: string;
+	currentOperationId?: string;
+	lastOperationId?: string;
+	message: string;
+}> {}
+export class NoActiveRun extends TaggedError("NoActiveRun")<{ lane: string; message: string }> {}
+export class NoActiveOperation extends TaggedError("NoActiveOperation")<{ lane: string; message: string }> {}
+export class NothingToResume extends TaggedError("NothingToResume")<{ lane: string; message: string }> {}
+export class NothingToCompact extends TaggedError("NothingToCompact")<{ lane: string; message: string }> {}
+export class InvalidMessage extends TaggedError("InvalidMessage")<{
+	lane: string;
+	reason: string;
+	message: string;
+}> {}
+export class InvalidNavigation extends TaggedError("InvalidNavigation")<{
+	lane: string;
+	reason: string;
+	message: string;
+}> {}
+export class UnknownSkill extends TaggedError("UnknownSkill")<{ name: string; message: string }> {}
+export class UnknownTemplate extends TaggedError("UnknownTemplate")<{ name: string; message: string }> {}
+export class UnknownTarget extends TaggedError("UnknownTarget")<{ targetId: string; message: string }> {}
+export class InvalidLane extends TaggedError("InvalidLane")<{
+	lane: string;
+	reason: string;
+	message: string;
+}> {}
+export class Closed extends TaggedError("Closed")<{ message: string }> {}
+
+export class HarnessFault extends Error {
+	readonly cause: unknown;
+
+	constructor(message: string, cause: unknown) {
+		super(message);
+		this.name = "HarnessFault";
+		this.cause = cause;
+	}
+}
+
+export class HarnessClosed extends Error {
+	constructor() {
+		super("AgentHarness was closed while the operation was active");
+		this.name = "HarnessClosed";
+	}
+}
+
 export type ErrorMatchers<TError extends TaggedErrorValue<string>, TValue> = {
 	[Tag in TError["_tag"]]: (error: Extract<TError, { _tag: Tag }>) => TValue;
 };

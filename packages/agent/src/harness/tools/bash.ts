@@ -1,12 +1,12 @@
 import { type Static, Type } from "typebox";
-import type { AgentHarnessTool } from "../types.ts";
-import { getOrThrow } from "../types.ts";
-import { executeShellWithCapture, type ShellCaptureProgress } from "../utils/shell-output.ts";
-import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize, type TruncationResult } from "../utils/truncate.ts";
+import type { Context } from "../context.ts";
+import type { AgentHarnessTool, ShellOutputTruncation, ShellOutputView } from "../types.ts";
+import { applyShellOutputUpdate } from "../utils/output-capture.ts";
+import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize } from "../utils/truncate.ts";
 import type { ExecutionToolContext } from "./tool-context.ts";
 
 const MAX_TIMEOUT_SECONDS = 2_147_483_647 / 1000;
-const BASH_UPDATE_THROTTLE_MS = 100;
+const BASH_CHECKPOINT_INTERVAL_MS = 2_000;
 
 const bashSchema = Type.Object({
 	command: Type.String({ description: "Bash command to execute" }),
@@ -16,7 +16,7 @@ const bashSchema = Type.Object({
 export type BashToolInput = Static<typeof bashSchema>;
 
 export interface BashToolDetails {
-	truncation?: TruncationResult;
+	truncation?: ShellOutputTruncation;
 	fullOutputPath?: string;
 }
 
@@ -29,8 +29,8 @@ export interface BashExecution {
 
 export type BashPrepare<TContext extends ExecutionToolContext = ExecutionToolContext> = (
 	execution: BashExecution,
-	context: TContext,
-	signal?: AbortSignal,
+	toolContext: TContext,
+	context: Context,
 ) => void | Promise<void>;
 
 export interface BashToolOptions<TContext extends ExecutionToolContext = ExecutionToolContext> {
@@ -54,108 +54,92 @@ export function createBashTool<TContext extends ExecutionToolContext = Execution
 	return {
 		name: "bash",
 		label: "bash",
-		description: `Execute a bash command in the current working directory. Returns stdout and stderr. Output is truncated to last ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). If truncated, full output is saved to a temp file. Optionally provide a timeout in seconds.`,
+		description: `Execute a bash command in the current working directory. Returns combined stdout and stderr. Output is truncated to last ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). If truncated, full output is saved to a temp file. Optionally provide a timeout in seconds.`,
 		parameters: bashSchema,
-		async execute(_toolCallId, { command, timeout }, signal, onUpdate, context) {
+		async execute(_toolCallId, { command, timeout }, onUpdate, toolContext, _invocation, context) {
 			validateTimeout(timeout);
-			const { env } = context;
+			const { env } = toolContext;
 			const execution: BashExecution = {
 				command: options?.commandPrefix ? `${options.commandPrefix}\n${command}` : command,
 				cwd: env.cwd,
 				env: {},
 				inheritEnv: true,
 			};
-			await options?.prepare?.(execution, context, signal);
-			let getLatestProgress: (() => ShellCaptureProgress) | undefined;
-			let updateTimer: ReturnType<typeof setTimeout> | undefined;
-			let updateDirty = false;
-			let lastUpdateAt = 0;
+			await options?.prepare?.(execution, toolContext, context);
+			let view: ShellOutputView | undefined;
+			let lastCheckpointAt = Date.now();
+			let lastCheckpoint: string | undefined;
+			let acceptingUpdates = true;
 
-			const emitOutputUpdate = (): void => {
-				if (!onUpdate || !updateDirty || !getLatestProgress) return;
-				updateDirty = false;
-				lastUpdateAt = Date.now();
-				const progress = getLatestProgress();
-				onUpdate({
-					content: [{ type: "text", text: progress.output }],
-					details: {
-						truncation: progress.truncation.truncated ? progress.truncation : undefined,
-						fullOutputPath: progress.fullOutputPath,
+			onUpdate({ content: [], details: undefined });
+			const result = await env.exec(
+				execution.command,
+				{
+					cwd: execution.cwd,
+					env: execution.env,
+					inheritEnv: execution.inheritEnv,
+					timeout,
+					capture: {
+						limits: { maxBytes: DEFAULT_MAX_BYTES, maxLines: DEFAULT_MAX_LINES, retain: "tail" },
+						spill: true,
 					},
-				});
-			};
-			const clearUpdateTimer = (): void => {
-				if (!updateTimer) return;
-				clearTimeout(updateTimer);
-				updateTimer = undefined;
-			};
-			const scheduleOutputUpdate = (): void => {
-				if (!onUpdate) return;
-				updateDirty = true;
-				const delay = BASH_UPDATE_THROTTLE_MS - (Date.now() - lastUpdateAt);
-				if (delay <= 0) {
-					clearUpdateTimer();
-					emitOutputUpdate();
-					return;
-				}
-				updateTimer ??= setTimeout(() => {
-					updateTimer = undefined;
-					emitOutputUpdate();
-				}, delay);
-			};
+					onUpdate: (update) => {
+						if (!acceptingUpdates) return;
+						view = applyShellOutputUpdate(view, update);
+						const snapshot = {
+							content: [{ type: "text" as const, text: view.text }],
+							details: {
+								truncation: view.truncation.truncated ? view.truncation : undefined,
+								fullOutputPath: view.spillPath,
+							},
+						};
+						const now = Date.now();
+						const encoded = JSON.stringify(snapshot);
+						const checkpoint =
+							now - lastCheckpointAt >= BASH_CHECKPOINT_INTERVAL_MS && encoded !== lastCheckpoint;
+						onUpdate(snapshot, checkpoint ? { checkpoint: true } : undefined);
+						if (checkpoint) {
+							lastCheckpointAt = now;
+							lastCheckpoint = encoded;
+						}
+					},
+				},
+				context,
+			);
+			acceptingUpdates = false;
 
-			onUpdate?.({ content: [], details: undefined });
-			try {
-				const capture = getOrThrow(
-					await executeShellWithCapture(env, execution.command, {
-						cwd: execution.cwd,
-						env: execution.env,
-						inheritEnv: execution.inheritEnv,
-						timeout,
-						abortSignal: signal,
-						returnExecutionErrors: true,
-						onChunk: (_chunk, getProgress) => {
-							getLatestProgress = getProgress;
-							scheduleOutputUpdate();
-						},
-					}),
-				);
-				clearUpdateTimer();
-				getLatestProgress = () => capture;
-				updateDirty = true;
-				emitOutputUpdate();
-
-				let outputText = capture.output;
-				let details: BashToolDetails | undefined;
-				if (capture.truncation.truncated) {
-					details = { truncation: capture.truncation, fullOutputPath: capture.fullOutputPath };
-					const startLine = capture.truncation.totalLines - capture.truncation.outputLines + 1;
-					const endLine = capture.truncation.totalLines;
-					if (capture.truncation.lastLinePartial) {
-						const lastLineSize = formatSize(capture.lastLineBytes);
-						outputText += `\n\n[Showing last ${formatSize(capture.truncation.outputBytes)} of line ${endLine} (line is ${lastLineSize}). Full output: ${capture.fullOutputPath}]`;
-					} else if (capture.truncation.truncatedBy === "lines") {
-						outputText += `\n\n[Showing lines ${startLine}-${endLine} of ${capture.truncation.totalLines}. Full output: ${capture.fullOutputPath}]`;
-					} else {
-						outputText += `\n\n[Showing lines ${startLine}-${endLine} of ${capture.truncation.totalLines} (${formatSize(DEFAULT_MAX_BYTES)} limit). Full output: ${capture.fullOutputPath}]`;
-					}
+			let outputText = view?.text ?? "";
+			const capture = result.ok ? { text: outputText, ...result.value } : view;
+			let details: BashToolDetails | undefined;
+			if (capture?.truncation.truncated) {
+				details = { truncation: capture.truncation, fullOutputPath: capture.spillPath };
+				const startLine = capture.truncation.totalLines - capture.truncation.outputLines + 1;
+				const endLine = capture.truncation.totalLines;
+				if (capture.truncation.lastLinePartial) {
+					const lastLineSize = formatSize(capture.lastLineBytes ?? capture.truncation.outputBytes);
+					outputText += `\n\n[Showing last ${formatSize(capture.truncation.outputBytes)} of line ${endLine} (line is ${lastLineSize}). Full output: ${capture.spillPath}]`;
+				} else if (capture.truncation.truncatedBy === "lines") {
+					outputText += `\n\n[Showing lines ${startLine}-${endLine} of ${capture.truncation.totalLines}. Full output: ${capture.spillPath}]`;
+				} else {
+					outputText += `\n\n[Showing lines ${startLine}-${endLine} of ${capture.truncation.totalLines} (${formatSize(DEFAULT_MAX_BYTES)} limit). Full output: ${capture.spillPath}]`;
 				}
-
-				const appendStatus = (status: string): string => `${outputText ? `${outputText}\n\n` : ""}${status}`;
-				if (capture.cancelled) throw new Error(appendStatus("Command aborted"));
-				if (capture.executionError?.code === "timeout") {
-					throw new Error(appendStatus(`Command timed out after ${timeout} seconds`), {
-						cause: capture.executionError,
-					});
-				}
-				if (capture.executionError) throw capture.executionError;
-				if (capture.exitCode !== 0 && capture.exitCode !== undefined) {
-					throw new Error(appendStatus(`Command exited with code ${capture.exitCode}`));
-				}
-				return { content: [{ type: "text", text: outputText || "(no output)" }], details };
-			} finally {
-				clearUpdateTimer();
 			}
+
+			if (!result.ok) {
+				const status =
+					result.error.code === "timeout"
+						? `Command timed out after ${timeout} seconds`
+						: result.error.code === "aborted"
+							? "Command aborted"
+							: result.error.message;
+				throw new Error(outputText ? `${outputText}\n\n${status}` : status, { cause: result.error });
+			}
+			if (result.value.exitCode !== 0) {
+				throw new Error(
+					`${outputText ? `${outputText}\n\n` : ""}Command exited with code ${result.value.exitCode}`,
+				);
+			}
+			return { content: [{ type: "text", text: outputText || "(no output)" }], details };
 		},
 	};
 }

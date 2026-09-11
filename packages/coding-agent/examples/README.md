@@ -18,6 +18,9 @@ Example extensions demonstrating:
 - External integrations (SSH, file watchers, system theme sync)
 - Custom providers (Anthropic with custom streaming, GitLab Duo)
 
+### [plugins/pi-example-plugin/](plugins/pi-example-plugin/)
+An experimental plugin package that Pi automatically builds into separate Session-worker and TUI Chord facets.
+
 ## Documentation
 
 - [SDK Reference](sdk/README.md)

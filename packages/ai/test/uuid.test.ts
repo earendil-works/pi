@@ -9,42 +9,49 @@ function parseTimestamp(uuid: string): number {
 }
 
 afterEach(() => {
+	vi.useRealTimers();
 	vi.unstubAllGlobals();
 });
 
 describe("uuidv7", () => {
-	it("uses the RFC 9562 layout and preserves monotonic order", () => {
-		const randomValues = [
-			new Uint8Array([0, 0, 0, 0, 0, 0, 0xff, 0xff, 0xff, 0xfe, 0x01, 0x11, 0x22, 0x33, 0x44, 0x55]),
-			new Uint8Array(16),
-			new Uint8Array(16),
-		];
-		const getRandomValues = vi.fn((bytes: Uint8Array) => {
-			bytes.set(randomValues.shift() ?? new Uint8Array(bytes.length));
-			return bytes;
+	it("generates ordered UUIDv7s while preserving follower timestamps", () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(TIMESTAMP);
+
+		const first = uuidv7();
+		const second = uuidv7();
+		vi.setSystemTime(TIMESTAMP - 1);
+		const afterRollback = uuidv7();
+		vi.setSystemTime(TIMESTAMP + 1);
+		const afterAdvance = uuidv7();
+		const ordinaryIds = [first, second, afterRollback, afterAdvance];
+		const followerTimestamp = TIMESTAMP - 1_000;
+		const followers = [uuidv7(followerTimestamp), uuidv7(followerTimestamp)];
+
+		for (const id of [...ordinaryIds, ...followers]) expect(id).toMatch(UUID_V7_RE);
+		expect(ordinaryIds).toEqual([...ordinaryIds].sort());
+		expect(new Set(ordinaryIds)).toHaveLength(ordinaryIds.length);
+		expect(ordinaryIds.map(parseTimestamp)).toEqual([TIMESTAMP, TIMESTAMP, TIMESTAMP, TIMESTAMP + 1]);
+		expect(followers.map(parseTimestamp)).toEqual([followerTimestamp, followerTimestamp]);
+		expect(new Set(followers)).toHaveLength(followers.length);
+	});
+
+	it("uses fresh randomness for every UUID tail", () => {
+		let randomByte = 0;
+		vi.stubGlobal("crypto", {
+			getRandomValues(bytes: Uint8Array) {
+				return bytes.fill(++randomByte);
+			},
 		});
-		vi.stubGlobal("crypto", { getRandomValues });
-		const dateNow = vi.spyOn(Date, "now").mockReturnValue(TIMESTAMP);
 
-		try {
-			const first = uuidv7();
-			const second = uuidv7();
-			const third = uuidv7();
+		expect([uuidv7(TIMESTAMP).slice(-8), uuidv7(TIMESTAMP).slice(-8)]).toEqual(["01010101", "02020202"]);
+	});
 
-			expect(first).toBe("01234567-89ab-7fff-bfff-f91122334455");
-			expect(second).toBe("01234567-89ab-7fff-bfff-fc0000000000");
-			expect(third).toBe("01234567-89ac-7000-8000-000000000000");
-			expect(first).toMatch(UUID_V7_RE);
-			expect(second).toMatch(UUID_V7_RE);
-			expect(third).toMatch(UUID_V7_RE);
-			expect(parseTimestamp(first)).toBe(TIMESTAMP);
-			expect(parseTimestamp(second)).toBe(TIMESTAMP);
-			expect(parseTimestamp(third)).toBe(TIMESTAMP + 1);
-			expect(first < second).toBe(true);
-			expect(second < third).toBe(true);
-			expect(getRandomValues).toHaveBeenCalledTimes(3);
-		} finally {
-			dateNow.mockRestore();
-		}
+	it.each([0, 2 ** 48 - 1])("accepts timestamp boundary %s", (timestamp) => {
+		expect(parseTimestamp(uuidv7(timestamp))).toBe(timestamp);
+	});
+
+	it.each([-1, 2 ** 48, 1.5, Number.NaN, Number.POSITIVE_INFINITY])("rejects invalid timestamp %s", (timestamp) => {
+		expect(() => uuidv7(timestamp)).toThrow(RangeError);
 	});
 });

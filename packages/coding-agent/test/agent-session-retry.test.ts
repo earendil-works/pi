@@ -71,10 +71,12 @@ describe("AgentSession retry", () => {
 	async function createSession(options?: {
 		failCount?: number;
 		maxRetries?: number;
+		maxAgentDelayMs?: number;
 		delayAssistantMessageEndMs?: number;
 	}) {
 		const failCount = options?.failCount ?? 1;
 		const maxRetries = options?.maxRetries ?? 3;
+		const maxAgentDelayMs = options?.maxAgentDelayMs ?? 60000;
 		const delayAssistantMessageEndMs = options?.delayAssistantMessageEndMs ?? 0;
 		let callCount = 0;
 
@@ -108,7 +110,7 @@ describe("AgentSession retry", () => {
 		const authStorage = AuthStorage.create(join(tempDir, "auth.json"));
 		const modelRegistry = await createModelRegistry(authStorage, tempDir);
 		await authStorage.modify("anthropic", async () => ({ type: "api_key", key: "test-key" }));
-		settingsManager.applyOverrides({ retry: { enabled: true, maxRetries, baseDelayMs: 1 } });
+		settingsManager.applyOverrides({ retry: { enabled: true, maxRetries, baseDelayMs: 1, maxAgentDelayMs } });
 
 		session = new AgentSession({
 			agent,
@@ -163,6 +165,19 @@ describe("AgentSession retry", () => {
 		expect(events).toContain("start:2");
 		expect(events).toContain("end:success=false");
 		expect(created.session.isRetrying).toBe(false);
+	});
+
+	it("caps agent retry delay", async () => {
+		// Regression for #8826.
+		const created = await createSession({ failCount: 4, maxRetries: 5, maxAgentDelayMs: 5 });
+		const delays: number[] = [];
+		created.session.subscribe((event) => {
+			if (event.type === "auto_retry_start") delays.push(event.delayMs);
+		});
+
+		await created.session.prompt("Test");
+
+		expect(delays).toEqual([1, 2, 4, 5]);
 	});
 
 	it("prompt waits for retry completion even when assistant message_end handling is delayed", async () => {

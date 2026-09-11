@@ -264,6 +264,42 @@ describe("CombinedAutocompleteProvider", () => {
 			assert.ok(!values?.includes("@../outside/nested/deeper/zzz.ts"));
 		});
 
+		test("ranks shallower same-score @ matches before deeper matches", async () => {
+			setupFolder(baseDir, {
+				dirs: ["scope/aaa/venv/lib/python3.12/site-packages/pkg/core/profile", "scope/projects"],
+			});
+
+			const provider = new CombinedAutocompleteProvider([], baseDir, requireFdPath());
+			const line = "@scope/pro";
+			const result = await getSuggestions(provider, [line], 0, line.length);
+
+			const values = result?.items.map((item) => item.value) ?? [];
+			assert.strictEqual(values[0], "@scope/projects/");
+			assert.ok(values.includes("@scope/aaa/venv/lib/python3.12/site-packages/pkg/core/profile/"));
+		});
+
+		test("includes scoped direct children when recursive @ matches are flooded", async () => {
+			const floodedDirs = Array.from(
+				{ length: 250 },
+				(_, index) =>
+					`scope/a${String(index + 1).padStart(3, "0")}/venv/lib/python3.12/site-packages/pkg/core/profile`,
+			);
+			setupFolder(baseDir, {
+				dirs: ["scope/projects", ...floodedDirs],
+			});
+
+			const provider = new CombinedAutocompleteProvider([], baseDir, requireFdPath());
+			const line = "@scope/pro";
+			const result = await getSuggestions(provider, [line], 0, line.length);
+
+			const values = result?.items.map((item) => item.value) ?? [];
+			assert.strictEqual(values[0], "@scope/projects/");
+			assert.ok(
+				values.some((value) => value.includes("/profile/")),
+				"Should keep deep fuzzy matches after direct children",
+			);
+		});
+
 		test("quotes paths with spaces for @ suggestions", async () => {
 			setupFolder(baseDir, {
 				dirs: ["my folder"],

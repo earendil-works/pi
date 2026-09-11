@@ -2,6 +2,137 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added `ctx.modelRegistry.stream()` and `streamSimple()` for extension model calls through configured providers with resolved authentication ([#8964](https://github.com/earendil-works/pi/issues/8964)).
+- Added per-model `reserveTokens` and `keepRecentTokens` settings through `compaction.modelOverrides`, with ordinary compaction settings as fallback ([#8133](https://github.com/earendil-works/pi-mono/issues/8133)).
+
+### Changed
+
+- Moved compaction, branch summarization, and retry spinners into the editor border alongside the working indicator. Custom editors use the same embedding opt-in for all status spinners.
+- Enabled strict-prefer JSON-schema sampling by default for built-in `read`, `bash`, `powershell`, `edit`, and `write` tools, without requiring `PI_EXPERIMENTAL`. Extensions can re-register tool definitions with `constrainedSampling: false`.
+
+### Fixed
+
+- Capped agent-level retry backoff at `retry.maxAgentDelayMs` (60s by default) so long retry runs stay responsive during prolonged transient outages ([#8826](https://github.com/earendil-works/pi/issues/8826)).
+- Fixed direct RPC `steer` and `follow_up` commands bypassing extension `input` handlers ([#8718](https://github.com/earendil-works/pi/issues/8718)).
+- Fixed premature missing-model errors after login by waiting for catalog discovery. Radius now defaults to `balanced`, falling back to the first available Radius model when needed.
+- Fixed fullscreen mode reserving a blank row for custom footers that render zero rows ([#8919](https://github.com/earendil-works/pi/issues/8919)).
+- Fixed extension tools without parameter schemas to be rejected during registration instead of breaking provider requests ([#9300](https://github.com/earendil-works/pi/issues/9300)).
+
+## [0.85.1] - 2026-09-05
+
+### New Features
+
+- **GPT-6 Astra** — Available through OpenAI API keys and OpenAI Codex subscriptions. See [API Keys](docs/providers.md#api-keys) and [OpenAI Codex](docs/providers.md#openai-codex).
+
+### Added
+
+- Added GPT-6 Astra for OpenAI API keys and OpenAI Codex subscriptions.
+- Added five-times-faster mouse wheel scrolling while holding Alt in fullscreen mode ([#9166](https://github.com/earendil-works/pi/pull/9166) by [@xl0](https://github.com/xl0)).
+
+### Fixed
+
+- Fixed configurable save keybindings in the model and thinking selectors ([#9149](https://github.com/earendil-works/pi/pull/9149) by [@rwachtler](https://github.com/rwachtler)).
+- Fixed SDK import failures caused by unintentionally publishing internal experimental code and dependencies in 0.85.0. The experimental `client` and `experimental/plugin` subpaths and server/client commands are now source-only through `pi-test.sh`; the supported local SDK and stdio RPC API are unchanged ([#9132](https://github.com/earendil-works/pi/issues/9132)).
+- Fixed mouse hover changing selection and recentering autocomplete and settings lists, causing clicks to target a different item.
+- Fixed long prompt-cache requests for GPT-5.6+ Responses models to use `prompt_cache_options.ttl: "30m"` instead of `prompt_cache_retention: "24h"`.
+
+## [0.85.0] - 2026-09-04
+
+### New Features
+
+- **Persistent Claude thinking effort** — Supported Anthropic transports preserve per-turn effort and recover safely from signed-thinking mismatches. See [Model Configuration](docs/models.md#model-configuration).
+- **Fullscreen transcript controls** — Jump to the latest message from a scrolled transcript and use the embedded working indicator. See [TUI Fullscreen Viewport](docs/keybindings.md#tui-fullscreen-viewport).
+- **Restorable in-memory sessions** — Resume externally stored session entries through the SDK. See [Session Management](docs/sdk.md#session-management).
+
+### Added
+
+- Added `SessionManager.inMemory()` support for restoring externally managed session entries ([#8980](https://github.com/earendil-works/pi/pull/8980) by [@y-nk](https://github.com/y-nk)).
+- Added inherited OpenAI-compatible `vllmPriority` and `supportsMaxOutputTokens` model settings for vLLM scheduler priority and OpenAI Responses output-token limits ([#9004](https://github.com/earendil-works/pi/pull/9004) by [@AppleDannyClegg](https://github.com/AppleDannyClegg), [#8941](https://github.com/earendil-works/pi/pull/8941) by [@scturtle](https://github.com/scturtle)).
+- Added inherited LaTeX rendering for relational algebra join symbols ([#9050](https://github.com/earendil-works/pi/pull/9050) by [@haoqixu](https://github.com/haoqixu)).
+- Added a clickable "Jump to latest message" label with the `tui.altScreen.bottom` shortcut to the fullscreen transcript while it is scrolled up ([#9080](https://github.com/earendil-works/pi/pull/9080) by [@rwachtler](https://github.com/rwachtler)).
+
+### Changed
+
+- Moved the streaming working indicator into the default editor border and matched its default spinner and label to the thinking-level border color. Custom editors retain the standalone indicator unless they opt in to embedding it ([#8799](https://github.com/earendil-works/pi/pull/8799) by [@cristinaponcela](https://github.com/cristinaponcela)).
+- Reduced inherited fullscreen transcript search latency on large transcripts by caching unchanged search results, indexing ASCII runs, and limiting highlight work to visible matches ([#8800](https://github.com/earendil-works/pi/pull/8800) by [@cristinaponcela](https://github.com/cristinaponcela)).
+
+### Fixed
+
+- Fixed managed `fd` and ripgrep downloads on Linux musl systems ([#9070](https://github.com/earendil-works/pi/pull/9070) by [@Charlie0113-T](https://github.com/Charlie0113-T)).
+- Removed the unavailable inherited Grok Build 0.1 model from `/model` ([#9093](https://github.com/earendil-works/pi/pull/9093) by [@Jaaneek](https://github.com/Jaaneek)).
+- Fixed inherited provider streams emitting incompatible event sequences and custom tool-call deltas.
+- Restored the `@earendil-works/pi-coding-agent/client` compatibility entry point.
+- Fixed the inherited Qwen Token Plan Individual catalog to include Qwen3.8 Flash ([#9021](https://github.com/earendil-works/pi/issues/9021)).
+- Fixed inherited OpenAI Codex SSE parsing to process terminal events that are not followed by a blank line ([#9047](https://github.com/earendil-works/pi/issues/9047)).
+- Fixed inherited GitHub Copilot Claude Fable 5 requests so selected reasoning levels are sent ([#8961](https://github.com/earendil-works/pi/issues/8961)).
+- Fixed inherited Baseten GLM-5.2 models incorrectly advertising image input support ([#8293](https://github.com/earendil-works/pi/pull/8293) by [@Panoplos](https://github.com/Panoplos)).
+- Fixed skills being unavailable when Bash is the only enabled tool ([#8552](https://github.com/earendil-works/pi/pull/8552) by [@xl0](https://github.com/xl0)).
+- Fixed concurrent session shares overwriting one another ([#8613](https://github.com/earendil-works/pi/pull/8613) by [@wutongyuonce](https://github.com/wutongyuonce)).
+- Fixed image orientation detection skipping EXIF data after non-EXIF APP1 segments ([#8616](https://github.com/earendil-works/pi/pull/8616) by [@wutongyuonce](https://github.com/wutongyuonce)).
+- Fixed imported sessions overwriting an existing session with the same filename ([#8985](https://github.com/earendil-works/pi/pull/8985) by [@wutongyuonce](https://github.com/wutongyuonce)).
+- Fixed session forks losing their compaction boundary ([#8990](https://github.com/earendil-works/pi/pull/8990) by [@acmerfight](https://github.com/acmerfight)).
+- Fixed in-memory session forks before an active turn settled ([#8937](https://github.com/earendil-works/pi/pull/8937) by [@acmerfight](https://github.com/acmerfight)).
+- Fixed inherited Fireworks GLM models using the wrong API adapter.
+- Fixed inherited `NO_PROXY` matching for root domains and subdomains ([#8737](https://github.com/earendil-works/pi/pull/8737) by [@MeiSiristhebest](https://github.com/MeiSiristhebest)).
+- Fixed `bash`, `edit`, `find`, `grep`, `ls`, `read`, and `write` tools ignoring `ctx.cwd` ([#8627](https://github.com/earendil-works/pi/pull/8627) by [@vmizg](https://github.com/vmizg)).
+- Fixed inherited terminal startup under restricted seccomp policies that reject the `SIGWINCH` self-signal ([#8898](https://github.com/earendil-works/pi/pull/8898) by [@bartlomiejkida](https://github.com/bartlomiejkida)).
+- Fixed inherited Zed terminal image capability detection ([#8828](https://github.com/earendil-works/pi/pull/8828) by [@Perlence](https://github.com/Perlence)).
+- Fixed drag selection continuing over the fullscreen editor.
+- Fixed managed `fd` and ripgrep downloads requiring the GitHub Releases API ([#8708](https://github.com/earendil-works/pi/pull/8708) by [@Terminator666666](https://github.com/Terminator666666)).
+- Fixed branch summaries failing when reasoning consumes the previous 2048-token output cap ([#8845](https://github.com/earendil-works/pi/issues/8845)).
+- Fixed the write tool reporting UTF-16 code-unit counts as byte counts by removing the misleading count ([#8979](https://github.com/earendil-works/pi/issues/8979)).
+- Fixed proxied plain-HTTP provider requests hanging after a tool call by tunneling them with CONNECT ([#8134](https://github.com/earendil-works/pi/issues/8134)).
+- Fixed RPC `abort` reporting success without cancelling an in-progress manual compaction ([#8920](https://github.com/earendil-works/pi/issues/8920)).
+
+## [0.84.4] - 2026-08-28
+
+### New Features
+
+- **Terminal capability overrides** — Override detected terminal hyperlink, image, and truecolor support. See [Capability Overrides](docs/terminal-setup.md#capability-overrides).
+- **Extension UI prompt events** — Integrations can distinguish active agent work from time spent waiting for `ctx.ui` prompts. See [Extension UI prompt events](docs/extensions.md#ui_prompt_start--ui_prompt_end).
+- **RPC queue clearing** — Retrieve and clear queued steering and follow-up messages with `clear_queue`. See [RPC `clear_queue`](docs/rpc.md#clear_queue).
+- **Fullscreen selection copy controls** — Disable automatic selection copying in fullscreen mode and use Ctrl+X to copy the active selection. See [UI & Display](docs/settings.md#ui--display).
+- **DeepSeek V4 Flash Vision (experimental)** — Use the vision-capable model through the built-in DeepSeek provider. See [API Keys](docs/providers.md#api-keys).
+
+### Added
+
+- Added `supportsMidConvoEffort` to custom Anthropic Messages model compatibility settings.
+- Added transcript notices for Anthropic thinking blocks dropped during provider recovery when cache miss notices are enabled.
+- Added `ui_prompt_start` and `ui_prompt_end` extension events so host integrations can distinguish active agent work from waiting on user-facing `ctx.ui` prompts ([#8355](https://github.com/earendil-works/pi/pull/8355) by [@cristinaponcela](https://github.com/cristinaponcela)).
+- Added `detectSupportedImageMimeTypeFromFile()` to the public library exports ([#8600](https://github.com/earendil-works/pi/pull/8600) by [@xl0](https://github.com/xl0)).
+- Added inherited experimental vision-capable `deepseek-v4-flash-vision-exp` model support.
+- Added transcript usage notices for compaction and branch summaries when cache miss notices are enabled.
+- Added RPC `clear_queue` to retrieve and remove queued steering and follow-up messages ([#8432](https://github.com/earendil-works/pi/issues/8432)).
+- Added environment variables and advanced settings for overriding auto-detected terminal hyperlink, image, and truecolor capabilities ([#8665](https://github.com/earendil-works/pi/issues/8665)).
+- Added `fullscreenCopyOnSelect` to disable automatic fullscreen selection copy; when disabled, `Ctrl+X` copies the active text selection before falling back to the last assistant message, while `/tree` still copies the selected message ([#7720](https://github.com/earendil-works/pi/issues/7720)).
+
+### Changed
+- Changed fullscreen scrollbars to reveal on pointer entry, support optional `scrollbarTrack` and `scrollbarThumb` theme colors with muted and text fallbacks, keep one thumb color across normal and expanded states, and support track-click jumping.
+- Changed fullscreen transcript search arrows to underline on hover and capitalized the search placeholder.
+- Changed selectors in `/thinking`, `/model`, `/scoped-models`, `/trust`, per-model thinking settings, and theme settings to keep active options marked while browsing. `/scoped-models` now uses consistent per-item toggles and strikes through unavailable models ([#8900](https://github.com/earendil-works/pi/pull/8900)).
+
+### Fixed
+
+- Fixed toggling thinking visibility clearing partial output from running Bash tools ([#8611](https://github.com/earendil-works/pi/issues/8611)).
+- Fixed Windows shell aborts crashing Pi when `taskkill.exe` is unavailable on `PATH` ([#6596](https://github.com/earendil-works/pi/issues/6596)).
+- Fixed resumed sessions corrupting the next appended entry when their JSONL file lacks a trailing newline ([#8345](https://github.com/earendil-works/pi/issues/8345)).
+- Fixed extension messages sent with `triggerTurn: false` while the agent is running being inserted between a tool call and its result, which made providers that validate message order reject the replayed history. They are now appended once the turn's tool results are in ([#8537](https://github.com/earendil-works/pi/issues/8537)).
+- Fixed compaction and branch summaries forcing `toolChoice: "none"` ([#8649](https://github.com/earendil-works/pi/issues/8649), [#8638](https://github.com/earendil-works/pi/issues/8638)).
+- Fixed large tool results crossing the auto-compaction threshold being sent to the provider before compaction. Pi now compacts between tool execution and the next assistant response in the same run, and restores interactive progress when that run resumes ([#6879](https://github.com/earendil-works/pi/issues/6879)).
+- Fixed Google Vertex requests failing with `HttpsProxyAgent is not a constructor` when the bundled Node.js runtime uses an HTTP(S) proxy ([#8610](https://github.com/earendil-works/pi/issues/8610)).
+- Fixed saving a default model from a non-empty model scope so it remains available in that scope.
+- Fixed inherited `@` file autocomplete ranking to prefer direct and shallower matches over similarly ranked nested paths ([#8669](https://github.com/earendil-works/pi/pull/8669)).
+- Fixed inherited OpenAI-compatible streams serializing thinking signatures repeatedly during streaming ([#8671](https://github.com/earendil-works/pi/pull/8671)).
+- Fixed inherited main-screen rendering crashing when image-heavy output exceeded V8's string length limit ([#8028](https://github.com/earendil-works/pi/issues/8028)).
+- Fixed inherited fullscreen double-click word selection splitting paths and kebab-case tokens on `/` and `-` ([#8676](https://github.com/earendil-works/pi/pull/8676)).
+- Fixed inherited Cloudflare AI Gateway catalogs omitting supported `workers-ai/*` passthrough models.
+- Fixed inherited OpenAI-compatible reasoning replay to merge consecutive streamed text and summary `reasoning_details` deltas.
+- Fixed inherited OpenRouter reasoning controls so reasoning-mandatory models do not receive `effort: "none"` ([#8614](https://github.com/earendil-works/pi/pull/8614) by [@davidbrai](https://github.com/davidbrai)).
+- Fixed inherited OpenAI-compatible Chat Completions ignoring an explicitly requested `toolChoice` when no tools are defined.
+- Fixed inherited fragmented Mistral tool calls splitting when continuation chunks omit the tool-call ID ([#8387](https://github.com/earendil-works/pi/issues/8387)).
+
 ## [0.84.3] - 2026-08-24
 
 ### New Features
@@ -69,7 +200,7 @@
 - Added `session_compact_failed` extension events so compaction failures and aborts expose their reason, retry state, source, and error message to handlers ([#8175](https://github.com/earendil-works/pi/issues/8175)).
 - Fixed truncated compaction and branch summaries being persisted when generation reaches its output token limit ([#7048](https://github.com/earendil-works/pi/issues/7048)).
 - Fixed npm package update checks treating older registry versions as available updates, preventing `pi update` from downgrading already-newer installed packages ([#8226](https://github.com/earendil-works/pi/issues/8226)).
-- Fixed built-in llama.cpp models disappearing from `/model` when `/llama` refreshed a configured server under `PI_OFFLINE`, and included idle-slept `sleeping` router models plus autoloadable unloaded presets in the selectable catalog ([#8167](https://github.com/earendil-works/pi/issues/8167)).
+- Fixed built-in llama.cpp models disappearing from `/model` when `/llama` refreshed a configured server under `PI_OFFLINE`, and included idle-slept `sleeping` router models plus autoloadable unloaded presets in the selectable catalog ([#8558](https://github.com/earendil-works/pi/pull/8558) by [@cristinaponcela](https://github.com/cristinaponcela)).
 - Fixed `pi.registerFlag()` accepting default values that do not match the declared flag type ([#8064](https://github.com/earendil-works/pi/issues/8064)).
 - Fixed Z.AI Coding Plan defaults referencing the removed GLM-5.1 model ([#8096](https://github.com/earendil-works/pi/issues/8096)).
 - Fixed repeated ambiguous truncated-response recovery being mislabeled as context overflow ([#8130](https://github.com/earendil-works/pi/issues/8130)).
@@ -93,6 +224,7 @@
 
 ### Added
 
+- Added per-block fullscreen mouse expansion for thinking sections and tool results, while preserving drag selection and link activation.
 - Added fullscreen transcript search with `Ctrl+Shift+F`, incremental match highlighting, configurable search match theme colors, and next/previous navigation with `Enter`/`Ctrl+G` and `Shift+Enter`/`Ctrl+Shift+G`.
 - Added experimental strict JSON-schema constrained sampling for the default `read`, `bash`, `edit`, and `write` tools under `PI_EXPERIMENTAL=1`.
 - Added a fullscreen exit output setting to choose between printing the final transcript and only a session resume hint.

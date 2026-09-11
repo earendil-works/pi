@@ -36,6 +36,8 @@ type PiCodingAgentHarnessOptions = {
 	name?: string;
 	model?: PiCodingAgentModelSelection;
 	noTools?: CreateAgentSessionOptions["noTools"];
+	tools?: CreateAgentSessionOptions["tools"];
+	customTools?: CreateAgentSessionOptions["customTools"];
 	transformSystemPrompt?: (defaultPrompt: string) => string;
 };
 
@@ -96,14 +98,14 @@ async function promptAgent(session: AgentSession, input: string, signal: AbortSi
 		.reverse()
 		.find((message) => message.role === "assistant");
 	if (!assistant) throw new Error("Agent run completed without an assistant message.");
-	if (assistant.stopReason !== "stop") {
+	if (assistant.stopReason !== "stop" && assistant.stopReason !== "toolUse") {
 		throw new Error(
 			assistant.errorMessage ?? `Agent run ended with unexpected stop reason: ${assistant.stopReason}.`,
 		);
 	}
 	const output = session.getLastAssistantText();
-	if (!output) throw new Error("Agent run produced no assistant text.");
-	return output;
+	if (!output && assistant.stopReason === "stop") throw new Error("Agent run produced no assistant text.");
+	return output ?? "";
 }
 
 async function runPiCodingAgent<TOutput extends JsonValue>(
@@ -146,7 +148,9 @@ async function runPiCodingAgent<TOutput extends JsonValue>(
 				sessionManager,
 				model,
 				thinkingLevel: "off",
+				tools: options.tools,
 				noTools: options.noTools,
+				customTools: options.customTools,
 			})
 		).session;
 

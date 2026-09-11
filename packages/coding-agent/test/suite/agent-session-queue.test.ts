@@ -1,6 +1,6 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, InputEvent } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
 import { createHarness, getAssistantTexts, getMessageText, getUserTexts, type Harness } from "./harness.ts";
@@ -153,6 +153,54 @@ describe("AgentSession queue characterization", () => {
 		expect(getUserTexts(harness)).toEqual(["start", "after current run"]);
 		expect(assistantSeenBeforeFollowUp).toContain("");
 		expect(getAssistantTexts(harness)).toContain("follow-up response");
+	});
+
+	// Regression test for #8718.
+	it("runs direct steering and follow-up messages through input handlers", async () => {
+		const inputEvents: Array<Pick<InputEvent, "text" | "source" | "streamingBehavior">> = [];
+		const waiting = await createWaitingHarness({
+			extensionFactories: [
+				(pi) => {
+					pi.on("input", (event) => {
+						inputEvents.push({
+							text: event.text,
+							source: event.source,
+							streamingBehavior: event.streamingBehavior,
+						});
+						if (event.text.startsWith("handle")) return { action: "handled" };
+						return { action: "transform", text: `transformed: ${event.text}` };
+					});
+				},
+			],
+		});
+		const { harness, waitForToolStart, promptPromise, releaseToolExecution } = waiting;
+		harnesses.push(harness);
+		harness.setResponses([
+			fauxAssistantMessage(fauxToolCall("wait", {}), { stopReason: "toolUse" }),
+			fauxAssistantMessage("steered"),
+			fauxAssistantMessage("followed up"),
+		]);
+
+		await waitForToolStart;
+		inputEvents.length = 0;
+		try {
+			await harness.session.steer("steer me", undefined, { source: "rpc" });
+			await harness.session.steer("handle steer", undefined, { source: "rpc" });
+			await harness.session.followUp("follow me", undefined, { source: "rpc" });
+			await harness.session.followUp("handle follow", undefined, { source: "rpc" });
+
+			expect(inputEvents).toEqual([
+				{ text: "steer me", source: "rpc", streamingBehavior: "steer" },
+				{ text: "handle steer", source: "rpc", streamingBehavior: "steer" },
+				{ text: "follow me", source: "rpc", streamingBehavior: "followUp" },
+				{ text: "handle follow", source: "rpc", streamingBehavior: "followUp" },
+			]);
+			expect(harness.session.getSteeringMessages()).toEqual(["transformed: steer me"]);
+			expect(harness.session.getFollowUpMessages()).toEqual(["transformed: follow me"]);
+		} finally {
+			releaseToolExecution();
+		}
+		await promptPromise;
 	});
 
 	it("delivers multiple steering messages in order in one-at-a-time mode", async () => {

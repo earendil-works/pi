@@ -1,223 +1,184 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { type ChildProcess, fork } from "node:child_process";
+import { once } from "node:events";
+import { lstat, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-	ClientMessageDecoder,
-	encodeServerMessage,
-	PROTOCOL_VERSION,
-	type ServerSnapshot,
-} from "@earendil-works/pi-protocol";
-import { describe, expect, test } from "vitest";
-import { PiClient } from "../src/index.ts";
-import { createUnixTransportFactory } from "../src/unix.ts";
+import { afterEach, describe, expect, test } from "vitest";
+import { Server as RuntimeServer } from "../../server/src/server.ts";
+import { createTestServerServices } from "../../server/src/testing/host.ts";
+import { createUnixListener } from "../../server/src/transports/unix/listener.ts";
+import { discoverUnixServers } from "../src/unix.ts";
 
-const serverSnapshot: ServerSnapshot = {
-	serverId: "unix-server",
-	protocolVersion: PROTOCOL_VERSION,
-	revision: 4,
-	sessions: [],
-	models: [],
-};
+const tempDirectories = new Set<string>();
+const servers = new Set<RuntimeServer>();
+const rawServers = new Set<Server>();
+const rawSockets = new Set<Socket>();
+const children = new Set<ChildProcess>();
 
-async function listen(server: Server, path: string): Promise<void> {
+async function makeDirectory(): Promise<string> {
+	const directory = await mkdtemp(join("/tmp", "pc-"));
+	tempDirectories.add(directory);
+	return directory;
+}
+
+function serverId(value: number): string {
+	return `00000000-0000-4000-8000-${value.toString(16).padStart(12, "0")}`;
+}
+
+async function startServer(
+	directory: string,
+	fileServerId: string,
+	reportedServerId = fileServerId,
+): Promise<RuntimeServer> {
+	const path = join(directory, `${fileServerId}.sock`);
+	const server = new RuntimeServer(
+		{
+			serverServices: createTestServerServices(),
+			resolveSession: async () => Promise.reject(new Error("unused")),
+			openSession: async () => Promise.reject(new Error("unused")),
+		},
+		{ listeners: [createUnixListener({ path })], serverId: reportedServerId },
+	);
+	servers.add(server);
+	await server.start();
+	return server;
+}
+
+async function startSilentSocket(
+	path: string,
+	connections?: { active: number; maximum: number; total: number },
+): Promise<void> {
+	const server = createServer((socket) => {
+		rawSockets.add(socket);
+		if (connections) {
+			connections.active += 1;
+			connections.maximum = Math.max(connections.maximum, connections.active);
+			connections.total += 1;
+		}
+		socket.once("close", () => {
+			rawSockets.delete(socket);
+			if (connections) connections.active -= 1;
+		});
+	});
+	rawServers.add(server);
 	await new Promise<void>((resolve, reject) => {
 		server.once("error", reject);
-		server.listen(path, () => {
-			server.off("error", reject);
-			resolve();
-		});
+		server.listen(path, resolve);
 	});
 }
 
-async function closeServer(server: Server, sockets: Set<Socket>): Promise<void> {
-	for (const socket of sockets) socket.destroy();
-	await new Promise<void>((resolve, reject) => {
-		server.close((error) => (error ? reject(error) : resolve()));
-	});
-}
-
-test("rejects invalid Unix transport options", () => {
-	expect(() => createUnixTransportFactory({ path: "" })).toThrow(/must not be empty/);
-	expect(() => createUnixTransportFactory({ path: `/tmp/${"x".repeat(512)}` })).toThrow(/too long/);
-	expect(() => createUnixTransportFactory({ path: "/tmp/pi.sock", maxPendingBytes: 0 })).toThrow(/positive/);
+afterEach(async () => {
+	for (const child of children) {
+		if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+	}
+	await Promise.all([...children].map((child) => (child.exitCode === null ? once(child, "exit") : undefined)));
+	children.clear();
+	await Promise.all([...servers].map((server) => server.close()));
+	servers.clear();
+	for (const socket of rawSockets) socket.destroy();
+	rawSockets.clear();
+	await Promise.all(
+		[...rawServers].map(
+			(server) =>
+				new Promise<void>((resolve) => {
+					server.close(() => resolve());
+				}),
+		),
+	);
+	rawServers.clear();
+	await Promise.all([...tempDirectories].map((directory) => rm(directory, { recursive: true, force: true })));
+	tempDirectories.clear();
 });
 
-describe.runIf(process.platform !== "win32")("Unix-domain sockets", () => {
-	test("PiClient exchanges fragmented framed messages over a real Unix socket", async () => {
-		const directory = await mkdtemp(join(tmpdir(), "pi-client-"));
-		const socketPath = join(directory, "pi.sock");
-		const sockets = new Set<Socket>();
-		const server = createServer((socket) => {
-			sockets.add(socket);
-			socket.once("close", () => sockets.delete(socket));
-			const decoder = new ClientMessageDecoder();
-			socket.on("data", (chunk) => {
-				for (const message of decoder.push(chunk)) {
-					if (message.type === "hello") {
-						const hello = encodeServerMessage({
-							type: "hello",
-							version: PROTOCOL_VERSION,
-							connectionId: "unix-connection",
-							snapshot: serverSnapshot,
-						});
-						for (const byte of hello) socket.write(new Uint8Array([byte]));
-					} else {
-						const response = encodeServerMessage({
-							type: "response",
-							id: message.id,
-							ok: true,
-							result: { command: "list", sessions: [] },
-						});
-						const split = Math.floor(response.byteLength / 2);
-						socket.write(response.subarray(0, split));
-						socket.write(response.subarray(split));
-					}
-				}
-			});
-		});
-		await listen(server, socketPath);
-		const client = new PiClient({
-			transportFactory: createUnixTransportFactory({ path: socketPath }),
-		});
-
-		try {
-			await expect(client.connect()).resolves.toEqual(serverSnapshot);
-			await expect(Promise.all([client.listSessions(), client.listSessions()])).resolves.toEqual([[], []]);
-		} finally {
-			client.disconnect();
-			await closeServer(server, sockets);
-			await rm(directory, { recursive: true, force: true });
-		}
+describe("discoverUnixServers", () => {
+	test("returns no routes when the server directory is missing", async () => {
+		const directory = join(await makeDirectory(), "missing");
+		await expect(discoverUnixServers({ directory })).resolves.toEqual([]);
 	});
 
-	test("bounds pending writes, preserves order, and reports remote end once", async () => {
-		const directory = await mkdtemp(join(tmpdir(), "pi-client-"));
-		const socketPath = join(directory, "pi.sock");
-		const sockets = new Set<Socket>();
-		const first = new Uint8Array(2 * 1024 * 1024).fill(1);
-		const second = new Uint8Array(2 * 1024 * 1024).fill(2);
-		const expectedLength = first.byteLength + second.byteLength;
-		let receivedLength = 0;
-		let invalidOrder = false;
-		let resolveReceived: (() => void) | undefined;
-		const received = new Promise<void>((resolve) => {
-			resolveReceived = resolve;
-		});
-		let resumeServer: (() => void) | undefined;
-		let resolveServerReady: (() => void) | undefined;
-		const serverReady = new Promise<void>((resolve) => {
-			resolveServerReady = resolve;
-		});
-		const server = createServer((socket) => {
-			sockets.add(socket);
-			socket.once("close", () => sockets.delete(socket));
-			socket.pause();
-			resumeServer = () => socket.resume();
-			resolveServerReady?.();
-			socket.on("data", (chunk) => {
-				for (let index = 0; index < chunk.byteLength; index++) {
-					const expected = receivedLength + index < first.byteLength ? 1 : 2;
-					if (chunk[index] !== expected) invalidOrder = true;
-				}
-				receivedLength += chunk.byteLength;
-				if (receivedLength === expectedLength) {
-					socket.end(new Uint8Array([9]));
-					resolveReceived?.();
-				}
-			});
-		});
-		await listen(server, socketPath);
-		const inbound: number[] = [];
-		const errors: Error[] = [];
-		let closeCount = 0;
-		let resolveClosed: (() => void) | undefined;
-		const closed = new Promise<void>((resolve) => {
-			resolveClosed = resolve;
-		});
-		const transport = await createUnixTransportFactory({ path: socketPath, maxPendingBytes: expectedLength })({
-			onData: (chunk) => inbound.push(...chunk),
-			onClose: () => {
-				closeCount += 1;
-				resolveClosed?.();
-			},
-			onError: (error) => errors.push(error),
-		});
+	test("discovers reachable servers in server ID order", async () => {
+		const directory = await makeDirectory();
+		const first = serverId(1);
+		const second = serverId(2);
+		await startServer(directory, second);
+		await startServer(directory, first);
 
-		try {
-			await serverReady;
-			const firstWrite = transport.send(first);
-			const secondWrite = transport.send(second);
-			await expect(transport.send(Uint8Array.of(3))).rejects.toThrow(/pending byte limit/);
-			resumeServer?.();
-			await Promise.all([firstWrite, secondWrite, received, closed]);
-			expect(receivedLength).toBe(expectedLength);
-			expect(invalidOrder).toBe(false);
-			expect(inbound).toEqual([9]);
-			expect(errors).toEqual([]);
-			await new Promise<void>((resolve) => setImmediate(resolve));
-			expect(closeCount).toBe(1);
-		} finally {
-			transport.close();
-			await closeServer(server, sockets);
-			await rm(directory, { recursive: true, force: true });
-		}
+		await expect(discoverUnixServers({ directory })).resolves.toEqual([
+			{ serverId: first, path: join(directory, `${first}.sock`) },
+			{ serverId: second, path: join(directory, `${second}.sock`) },
+		]);
 	});
 
-	test("PiClient rejects a truncated final frame from a real Unix socket", async () => {
-		const directory = await mkdtemp(join(tmpdir(), "pi-client-"));
-		const socketPath = join(directory, "pi.sock");
-		const sockets = new Set<Socket>();
-		const server = createServer((socket) => {
-			sockets.add(socket);
-			socket.once("close", () => sockets.delete(socket));
-			const decoder = new ClientMessageDecoder();
-			socket.on("data", (chunk) => {
-				for (const message of decoder.push(chunk)) {
-					if (message.type === "hello") {
-						socket.write(
-							encodeServerMessage({
-								type: "hello",
-								version: PROTOCOL_VERSION,
-								connectionId: "unix-truncated",
-								snapshot: serverSnapshot,
-							}),
-						);
-					} else {
-						socket.end(new Uint8Array([0, 0, 0, 2, 1]));
-					}
-				}
-			});
-		});
-		await listen(server, socketPath);
-		const client = new PiClient({
-			transportFactory: createUnixTransportFactory({ path: socketPath }),
-		});
+	test("ignores malformed entries, non-sockets, and mismatched servers", async () => {
+		const directory = await makeDirectory();
+		await writeFile(join(directory, `${serverId(1)}.sock`), "not a socket");
+		await writeFile(join(directory, "not-a-server.sock"), "ignored");
+		await mkdir(join(directory, `${serverId(2)}.sock`));
+		await startServer(directory, serverId(3), serverId(4));
 
-		try {
-			await client.connect();
-			await expect(client.listSessions()).rejects.toMatchObject({ name: "ProtocolValidationError" });
-			expect(client.connectionState).toBe("disconnected");
-		} finally {
-			client.disconnect();
-			await closeServer(server, sockets);
-			await rm(directory, { recursive: true, force: true });
-		}
+		await expect(discoverUnixServers({ directory })).resolves.toEqual([]);
 	});
 
-	test("rejects connection errors", async () => {
-		const directory = await mkdtemp(join(tmpdir(), "pi-client-"));
-		const missingPath = join(directory, "missing.sock");
-		try {
-			await expect(
-				createUnixTransportFactory({ path: missingPath })({
-					onData: () => {},
-					onClose: () => {},
-					onError: () => {},
-				}),
-			).rejects.toMatchObject({ code: "ENOENT" });
-		} finally {
-			await rm(directory, { recursive: true, force: true });
+	test("ignores stale sockets without deleting them", async () => {
+		const directory = await makeDirectory();
+		const id = serverId(1);
+		const path = join(directory, `${id}.sock`);
+		const child = fork(new URL("fixtures/stale-socket-server.mjs", import.meta.url), [path], {
+			stdio: ["ignore", "ignore", "inherit", "ipc"],
+		});
+		children.add(child);
+		await once(child, "message");
+		child.kill("SIGKILL");
+		await once(child, "exit");
+		children.delete(child);
+
+		await expect(discoverUnixServers({ directory })).resolves.toEqual([]);
+		expect((await lstat(path)).isSocket()).toBe(true);
+	});
+
+	test("times out an unresponsive socket without deleting it", async () => {
+		const directory = await makeDirectory();
+		const id = serverId(1);
+		const path = join(directory, `${id}.sock`);
+		await startSilentSocket(path);
+
+		await expect(discoverUnixServers({ directory, timeoutMs: 20 })).resolves.toEqual([]);
+		expect((await lstat(path)).isSocket()).toBe(true);
+	});
+
+	test("limits concurrent probes to 16", async () => {
+		const directory = await makeDirectory();
+		const connections = { active: 0, maximum: 0, total: 0 };
+		for (let index = 1; index <= 20; index++) {
+			await startSilentSocket(join(directory, `${serverId(index)}.sock`), connections);
 		}
+
+		const discovery = discoverUnixServers({ directory, timeoutMs: 100 });
+		await expect.poll(() => connections.active).toBe(16);
+		expect(connections.maximum).toBe(16);
+		await expect(discovery).resolves.toEqual([]);
+		expect(connections.total).toBe(20);
+	});
+
+	test("ignores an endpoint that closes before its handshake", async () => {
+		const directory = await makeDirectory();
+		const id = serverId(1);
+		const path = join(directory, `${id}.sock`);
+		const server = createServer((socket) => socket.destroy());
+		rawServers.add(server);
+		await new Promise<void>((resolve, reject) => {
+			server.once("error", reject);
+			server.listen(path, resolve);
+		});
+
+		await expect(discoverUnixServers({ directory })).resolves.toEqual([]);
+	});
+
+	test("propagates unexpected filesystem errors", async () => {
+		const directory = await makeDirectory();
+		const file = join(directory, "not-a-directory");
+		await writeFile(file, "content");
+
+		await expect(discoverUnixServers({ directory: file })).rejects.toMatchObject({ code: "ENOTDIR" });
 	});
 });

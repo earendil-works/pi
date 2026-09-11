@@ -65,7 +65,7 @@ if [[ "$use_stable" == true ]]; then
 	exec "$stable_pi" ${args[@]+"${args[@]}"}
 fi
 
-dev_pi="$repo_dir/packages/coding-agent/dist/cli.js"
+dev_pi="$repo_dir/packages/coding-agent/dist/bundle/cli.js"
 if [[ ! -x "$dev_pi" ]]; then
 	echo "error: development pi build not found; run \`npm run build\` in $repo_dir" >&2
 	exit 1

@@ -1,4 +1,4 @@
-import type { Component } from "../tui.ts";
+import { type Component, dispatchMouseEvent, type TuiMouseDispatchResult, type TuiMouseEvent } from "../tui.ts";
 import { applyBackgroundToLine, visibleWidth } from "../utils.ts";
 
 type RenderCache = {
@@ -19,6 +19,7 @@ export class Box implements Component {
 
 	// Cache for rendered output
 	private cache?: RenderCache;
+	private mouseLayout?: { width: number; children: Array<{ component: Component; height: number }> };
 
 	constructor(paddingX = 1, paddingY = 1, bgFn?: (text: string) => string) {
 		this.paddingX = paddingX;
@@ -71,6 +72,32 @@ export class Box implements Component {
 		}
 	}
 
+	handleMouse(event: TuiMouseEvent): TuiMouseDispatchResult | undefined {
+		const contentWidth = Math.max(1, event.width - this.paddingX * 2);
+		const contentY = event.y - this.paddingY;
+		const contentX = event.x - this.paddingX;
+		if (contentY < 0 || contentX < 0 || contentX >= contentWidth) return undefined;
+
+		const mouseChildren =
+			this.mouseLayout?.width === contentWidth
+				? this.mouseLayout.children
+				: this.children.map((component) => ({ component, height: component.render(contentWidth).length }));
+		let childY = 0;
+		for (const { component: child, height: childHeight } of mouseChildren) {
+			if (contentY >= childY && contentY < childY + childHeight) {
+				return dispatchMouseEvent(child, {
+					...event,
+					x: contentX,
+					y: contentY - childY,
+					width: contentWidth,
+					height: childHeight,
+				});
+			}
+			childY += childHeight;
+		}
+		return undefined;
+	}
+
 	render(width: number): string[] {
 		if (this.children.length === 0) {
 			return [];
@@ -81,12 +108,15 @@ export class Box implements Component {
 
 		// Render all children
 		const childLines: string[] = [];
+		const mouseChildren: Array<{ component: Component; height: number }> = [];
 		for (const child of this.children) {
 			const lines = child.render(contentWidth);
+			mouseChildren.push({ component: child, height: lines.length });
 			for (const line of lines) {
 				childLines.push(leftPad + line);
 			}
 		}
+		this.mouseLayout = { width: contentWidth, children: mouseChildren };
 
 		if (childLines.length === 0) {
 			return [];

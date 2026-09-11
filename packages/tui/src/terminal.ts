@@ -1,12 +1,9 @@
 import * as fs from "node:fs";
-import { createRequire } from "node:module";
 import * as path from "node:path";
 import { setKittyProtocolActive } from "./keys.ts";
 import { isNativeModifierPressed } from "./native-modifiers.ts";
-import { getNativeModuleCandidates } from "./native-module-path.ts";
+import { getNativePlatformHelper } from "./native-platform.ts";
 import { StdinBuffer } from "./stdin-buffer.ts";
-
-const cjsRequire = createRequire(import.meta.url);
 
 const TERMINAL_PROGRESS_KEEPALIVE_MS = 1000;
 const TERMINAL_PROGRESS_ACTIVE_SEQUENCE = "\x1b]9;4;3\x07";
@@ -39,6 +36,20 @@ function isKeyboardProtocolNegotiationSequencePrefix(sequence: string): boolean 
 
 export function isAppleTerminalSession(): boolean {
 	return process.platform === "darwin" && process.env.TERM_PROGRAM === "Apple_Terminal";
+}
+
+/**
+ * Refresh terminal dimensions on POSIX platforms by sending SIGWINCH to this process.
+ * Best-effort: some environments (restricted seccomp or LSM policies) return EACCES
+ * for `kill(2)`; in that case the dimensions refresh is skipped rather than crashing.
+ */
+export function refreshTerminalDimensions(): void {
+	if (process.platform === "win32" || process.pid <= 0) return;
+	try {
+		process.kill(process.pid, "SIGWINCH");
+	} catch {
+		// Signal delivery not permitted in this environment; ignore.
+	}
 }
 
 export function normalizeNativeShiftEnterInput(
@@ -177,10 +188,8 @@ export class ProcessTerminal implements Terminal {
 		process.stdout.on("resize", this.resizeHandler);
 
 		// Refresh terminal dimensions - they may be stale after suspend/resume
-		// (SIGWINCH is lost while process is stopped). Unix only.
-		if (process.platform !== "win32") {
-			process.kill(process.pid, "SIGWINCH");
-		}
+		// (SIGWINCH is lost while process is stopped). Unix only, best-effort.
+		refreshTerminalDimensions();
 
 		// On Windows, enable ENABLE_VIRTUAL_TERMINAL_INPUT so the console sends
 		// VT escape sequences (e.g. \x1b[Z for Shift+Tab) instead of raw console
@@ -366,22 +375,7 @@ export class ProcessTerminal implements Terminal {
 	private enableWindowsVTInput(): void {
 		if (process.platform !== "win32") return;
 		try {
-			const arch = process.arch;
-			if (arch !== "x64" && arch !== "arm64") return;
-
-			// Dynamic require so non-Windows and bundled/browser paths never load the
-			// native helper. Installed packages resolve it from pi-tui; standalone
-			// binaries resolve the copy next to the executable.
-			const nativePath = path.join("native", "win32", "prebuilds", `win32-${arch}`, "win32-console-mode.node");
-			for (const modulePath of getNativeModuleCandidates(nativePath)) {
-				try {
-					const helper = cjsRequire(modulePath) as { enableVirtualTerminalInput?: () => boolean };
-					helper.enableVirtualTerminalInput?.();
-					return;
-				} catch {
-					// Try the next possible packaging location.
-				}
-			}
+			getNativePlatformHelper()?.enableVirtualTerminalInput?.();
 		} catch {
 			// Native helper not available — Shift+Tab won't be distinguishable from Tab.
 		}

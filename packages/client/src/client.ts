@@ -1,77 +1,90 @@
 import {
-	type Command,
-	type CommandResult,
-	type EventEnvelope,
+	createServiceCatalogueCall,
+	createServiceStateDecoder,
+	createServiceSubscribeCall,
+	createServiceUnsubscribeCall,
+	type JsonValue,
+	parseServiceCall,
+	parseServiceCatalogue,
+	parseWireServiceProviderUpdate,
+	parseWireServiceSubscriptionSnapshot,
+	type RemoteServiceTransport,
+	type ServiceCall,
+	type ServiceCatalogueEntry,
+	type ServiceMode,
+	type ServiceProviderUpdate,
+	type ServiceStateDecoder,
+	type ServiceSubscriptionSnapshot,
+} from "@earendil-works/chord";
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
+import {
+	type AttachmentEnvelope,
 	encodeClientMessage,
+	isServerId,
 	ProtocolValidationError,
 	type ResponseEnvelope,
-	type ResultForCommand,
-	type ServerEvent,
-	type ServerSnapshot,
-	type SessionMetadata,
+	type RpcTarget,
+	type ServerHello,
+	type ServiceEventEnvelope,
+	type SessionTarget,
 } from "@earendil-works/pi-protocol";
 import { Connection } from "./connection.ts";
-import {
-	PiClientDisposedError,
-	PiDisconnectedError,
-	PiServerError,
-	PiSessionDetachedError,
-	PiSessionOwnershipError,
-	toError,
-} from "./errors.ts";
+import { ClientDisposedError, DisconnectedError, ServerError, toError } from "./errors.ts";
 import { createPromiseResolvers } from "./promise.ts";
-import {
-	type AcquireSessionOptions,
-	type PiSessionHandle,
-	SessionHandle,
-	type SessionHandleCallbacks,
-	type SessionLeaseMode,
-} from "./session-handle.ts";
-import { ClientState } from "./state.ts";
 import type {
+	AttachmentChangeListener,
+	ClientOptions,
 	ConnectionState,
 	ConnectionStateChange,
-	CreateSessionOptions,
-	PiClientOptions,
+	ServiceSubscription,
 	Unsubscribe,
 } from "./types.ts";
 
-type SessionLeaseState = "active" | "releasing" | "released" | "invalidated";
-
-interface SessionLeaseToken {
-	readonly mode: SessionLeaseMode;
-}
+type ServiceResult = JsonValue | undefined;
 
 interface PendingRequest {
-	command: Command;
-	resolve(result: CommandResult): void;
+	resolve(result: ServiceResult): void;
 	reject(error: Error): void;
+	cleanup(): void;
 }
 
-export class PiClient {
-	readonly #options: PiClientOptions;
+interface ActiveServiceListener {
+	readonly target: RpcTarget;
+	readonly listener: (update: ServiceProviderUpdate) => void | Promise<void>;
+	readonly decoder: ServiceStateDecoder;
+	readonly queuedWireUpdates: JsonValue[];
+	readonly queued: ServiceProviderUpdate[];
+	deliveryTail: Promise<void>;
+	hydrated: boolean;
+	ready: boolean;
+}
+
+export class Client {
+	readonly #options: ClientOptions;
 	readonly #connection: Connection;
-	readonly #state: ClientState;
 	readonly #pendingRequests = new Map<string, PendingRequest>();
-	readonly #sessionLeaseCounts = new Map<string, number>();
-	readonly #exclusiveSessionLeases = new Map<string, SessionLeaseToken>();
-	readonly #sessionLeaseGenerations = new Map<string, number>();
-	readonly #sessionAttachments = new Map<string, Promise<void>>();
-	readonly #sessionDetachments = new Map<string, Promise<void>>();
-	readonly #sessionCleanupRequired = new Set<string>();
-	readonly #sessionReconciliations = new Map<string, Promise<void>>();
 	readonly #connectionStateListeners = new Set<(change: ConnectionStateChange) => void>();
+	readonly #attachmentListeners = new Set<AttachmentChangeListener>();
+	readonly #serviceListeners = new Map<string, ActiveServiceListener>();
 	#requestSequence = 0;
+	#serviceSubscriptionSequence = 0;
+	#hello: ServerHello | undefined;
+	#attachment: SessionTarget | undefined;
 	#disposed = false;
 	#disposePromise: Promise<void> | undefined;
 
-	constructor(options: PiClientOptions) {
+	constructor(options: ClientOptions) {
+		if (!isServerId(options.serverId)) {
+			throw new TypeError("serverId must be a canonical lowercase UUIDv4");
+		}
 		this.#options = options;
-		this.#state = new ClientState(options.onListenerError);
 		this.#connection = new Connection({
 			transportFactory: options.transportFactory,
+			serverId: options.serverId,
 			maxFrameLength: options.maxFrameLength,
-			onHandshake: (snapshot) => this.#state.applyServerSnapshot(snapshot),
+			onHandshake: (hello) => {
+				this.#hello = hello;
+			},
 			onMessage: (message) => this.#handleMessage(message),
 			onStateChange: (change) => this.#handleConnectionStateChange(change),
 		});
@@ -89,12 +102,20 @@ export class PiClient {
 		return this.#connection.state === "connected";
 	}
 
-	get snapshot(): ServerSnapshot | undefined {
-		return this.#state.snapshot;
+	get serverId(): string {
+		return this.#options.serverId;
 	}
 
-	static async connect(options: PiClientOptions): Promise<PiClient> {
-		const client = new PiClient(options);
+	get hello(): ServerHello | undefined {
+		return this.#hello;
+	}
+
+	get attachment(): SessionTarget | undefined {
+		return this.#attachment;
+	}
+
+	static async connect(options: ClientOptions): Promise<Client> {
+		const client = new Client(options);
 		try {
 			await client.connect();
 			return client;
@@ -104,28 +125,18 @@ export class PiClient {
 		}
 	}
 
-	connect(): Promise<ServerSnapshot> {
-		if (this.#disposed) return Promise.reject(new PiClientDisposedError());
-		if (this.#connection.state === "disconnected") this.#state.reset();
+	connect(): Promise<ServerHello> {
+		if (this.#disposed) return Promise.reject(new ClientDisposedError());
+		this.#hello = undefined;
 		return this.#connection.connect();
 	}
 
-	reconnect(): Promise<ServerSnapshot> {
+	reconnect(): Promise<ServerHello> {
 		return this.connect();
 	}
 
 	disconnect(reason = "Client disconnected"): void {
 		this.#connection.disconnect(reason);
-	}
-
-	subscribe(listener: (snapshot: ServerSnapshot) => void): Unsubscribe {
-		this.#assertNotDisposed();
-		return this.#state.subscribe(listener);
-	}
-
-	onEvent(listener: (event: ServerEvent) => void): Unsubscribe {
-		this.#assertNotDisposed();
-		return this.#state.onEvent(listener);
 	}
 
 	onConnectionStateChange(listener: (change: ConnectionStateChange) => void): Unsubscribe {
@@ -134,167 +145,189 @@ export class PiClient {
 		return () => this.#connectionStateListeners.delete(listener);
 	}
 
-	async listSessions(): Promise<readonly SessionMetadata[]> {
-		return (await this.#request({ command: "list" })).sessions;
-	}
-
-	async createSession(options: CreateSessionOptions = {}): Promise<PiSessionHandle> {
-		const result = await this.#request({ command: "create", ...options });
-		const token = this.#reserveSessionLease(result.session.id, "exclusive");
-		return this.#createSessionLease(result.session.id, token);
-	}
-
-	async attachSession(sessionId: string): Promise<PiSessionHandle> {
-		return this.acquireSession(sessionId, { mode: "shared" });
-	}
-
-	async acquireSession(sessionId: string, options: AcquireSessionOptions): Promise<PiSessionHandle> {
+	onAttachmentChange(listener: AttachmentChangeListener): Unsubscribe {
 		this.#assertNotDisposed();
-		const token = this.#reserveSessionLease(sessionId, options.mode);
+		this.#attachmentListeners.add(listener);
+		return () => this.#attachmentListeners.delete(listener);
+	}
+
+	/** Invoke one low-level protocol call against an explicit routed target. */
+	request(target: RpcTarget, call: ServiceCall, signal?: AbortSignal): Promise<ServiceResult> {
+		return this.#request(target, call, signal);
+	}
+
+	async serviceCatalogue(target: RpcTarget, signal?: AbortSignal): Promise<readonly ServiceCatalogueEntry[]> {
+		const result = await this.#request(target, createServiceCatalogueCall(), signal);
 		try {
-			const detachment = this.#sessionDetachments.get(sessionId);
-			if (detachment) await detachment.catch(() => {});
-			const reconciled = this.#sessionCleanupRequired.has(sessionId)
-				? await this.#reconcileSessionCleanup(sessionId)
-				: false;
-			if (reconciled || !this.#state.isSessionAttached(sessionId)) {
-				let attachment = this.#sessionAttachments.get(sessionId);
-				if (!attachment) {
-					attachment = this.#attachSession(sessionId);
-					this.#sessionAttachments.set(sessionId, attachment);
-				}
+			return parseServiceCatalogue(result);
+		} catch (error) {
+			const validationError = new ProtocolValidationError(
+				error instanceof Error ? error.message : "Invalid service catalogue",
+			);
+			this.#connection.fail(validationError);
+			throw validationError;
+		}
+	}
+
+	async subscribeService(
+		target: RpcTarget,
+		serviceId: string,
+		mode: ServiceMode,
+		listener: (update: ServiceProviderUpdate) => void | Promise<void>,
+		signal?: AbortSignal,
+	): Promise<ServiceSubscription> {
+		const subscriptionId = `service-${++this.#serviceSubscriptionSequence}`;
+		const active: ActiveServiceListener = {
+			target,
+			listener,
+			decoder: createServiceStateDecoder(),
+			queuedWireUpdates: [],
+			queued: [],
+			deliveryTail: Promise.resolve(),
+			hydrated: false,
+			ready: false,
+		};
+		this.#serviceListeners.set(subscriptionId, active);
+		let snapshot: ServiceSubscriptionSnapshot;
+		try {
+			snapshot = await this.#request(
+				target,
+				createServiceSubscribeCall(subscriptionId, serviceId, mode),
+				signal,
+				(result) => {
+					const decoded = active.decoder.decodeSnapshot(parseWireServiceSubscriptionSnapshot(result));
+					active.hydrated = true;
+					for (const update of active.queuedWireUpdates.splice(0)) {
+						active.queued.push(active.decoder.decodeUpdate(parseWireServiceProviderUpdate(update)));
+					}
+					return decoded;
+				},
+			);
+		} catch (error) {
+			if (this.#serviceListeners.get(subscriptionId) === active) this.#serviceListeners.delete(subscriptionId);
+			throw error;
+		}
+		if (this.#serviceListeners.get(subscriptionId) !== active) throw new DisconnectedError();
+		let disposed = false;
+		return {
+			id: subscriptionId,
+			target,
+			snapshot,
+			start: () => {
+				if (disposed || active.ready) return;
+				active.ready = true;
+				for (const update of active.queued.splice(0)) this.#deliverServiceUpdate(active, update);
+			},
+			dispose: async () => {
+				if (disposed) return;
+				disposed = true;
+				if (this.#serviceListeners.get(subscriptionId) === active) this.#serviceListeners.delete(subscriptionId);
 				try {
-					await attachment;
+					if (this.connected && this.#targetIsCurrent(target)) {
+						await this.#request(target, createServiceUnsubscribeCall(subscriptionId));
+					}
+					await active.deliveryTail;
 				} finally {
-					if (this.#sessionAttachments.get(sessionId) === attachment) this.#sessionAttachments.delete(sessionId);
+					active.queuedWireUpdates.length = 0;
+					active.queued.length = 0;
 				}
-			}
-			return this.#createSessionLease(sessionId, token);
-		} catch (error) {
-			this.#releaseSessionLease(sessionId, token);
-			throw error;
-		}
+			},
+		};
 	}
 
-	async #attachSession(sessionId: string): Promise<void> {
-		const previous = this.#state.forgetSessionSnapshot(sessionId);
-		try {
-			await this.#request({ command: "attach", sessionId });
-		} catch (error) {
-			if (previous) this.#state.restoreSessionSnapshot(previous);
-			throw error;
-		}
-	}
-
-	#request<const TCommand extends Command>(command: TCommand): Promise<ResultForCommand<TCommand>> {
-		if (this.#disposed) return Promise.reject(new PiClientDisposedError());
-		if (!this.connected) return Promise.reject(new PiDisconnectedError());
+	#request<T = ServiceResult>(
+		target: RpcTarget,
+		call: ServiceCall,
+		signal?: AbortSignal,
+		transform?: (result: ServiceResult) => T,
+	): Promise<T> {
+		if (this.#disposed) return Promise.reject(new ClientDisposedError());
+		if (!this.connected) return Promise.reject(new DisconnectedError());
+		if (signal?.aborted) return Promise.reject(abortError(signal));
 		const id = `request-${++this.#requestSequence}`;
-		const { promise, resolve, reject } = createPromiseResolvers<CommandResult>();
-		this.#pendingRequests.set(id, { command, resolve, reject });
+		const { promise, resolve, reject } = createPromiseResolvers<T>();
+		let sent = false;
+		let aborted = false;
+		let onAbort: (() => void) | undefined;
+		const sendCancel = (): void => {
+			if (!sent || !this.connected) return;
+			try {
+				this.#connection.send(
+					encodeClientMessage({ type: "cancel", id, target }, { maxFrameLength: this.#connection.maxFrameLength }),
+				);
+			} catch (error) {
+				this.#connection.fail(toError(error));
+			}
+		};
+		if (signal !== undefined) {
+			onAbort = () => {
+				if (aborted) return;
+				aborted = true;
+				reject(abortError(signal));
+				sendCancel();
+			};
+			signal.addEventListener("abort", onAbort, { once: true });
+		}
+		this.#pendingRequests.set(id, {
+			resolve: (result) => {
+				try {
+					resolve(transform === undefined ? (result as T) : transform(result));
+				} catch (error) {
+					const validationError = new ProtocolValidationError(
+						error instanceof Error ? error.message : "Invalid service operation stream",
+					);
+					this.#connection.fail(validationError);
+					reject(validationError);
+				}
+			},
+			reject,
+			cleanup: () => {
+				if (signal !== undefined && onAbort !== undefined) signal.removeEventListener("abort", onAbort);
+			},
+		});
 		let frame: Uint8Array;
 		try {
 			frame = encodeClientMessage(
-				{ type: "request", id, request: command },
+				{ type: "request", id, target, call: parseServiceCall(call) as unknown as JsonValue },
 				{ maxFrameLength: this.#connection.maxFrameLength },
 			);
 		} catch (error) {
 			this.#takePendingRequest(id)?.reject(toError(error));
-			return promise as Promise<ResultForCommand<TCommand>>;
+			return promise;
 		}
 		this.#connection.send(frame);
-		return promise as Promise<ResultForCommand<TCommand>>;
+		sent = true;
+		if (aborted) sendCancel();
+		return promise;
 	}
 
-	#createSessionLease(sessionId: string, token: SessionLeaseToken): PiSessionHandle {
-		const generation = this.#sessionLeaseGenerations.get(sessionId) ?? 0;
-		this.#sessionLeaseGenerations.set(sessionId, generation);
-		let state: SessionLeaseState = "active";
-		let releasePromise: Promise<void> | undefined;
-		const refreshState = () => {
-			if (
-				(state === "active" || state === "releasing") &&
-				this.#sessionLeaseGenerations.get(sessionId) !== generation
-			) {
-				state = "invalidated";
+	#handleMessage(message: ResponseEnvelope | ServiceEventEnvelope | AttachmentEnvelope): void {
+		if (message.type === "attachment") {
+			if (message.attachment !== null && message.attachment.serverId !== this.#options.serverId) {
+				this.#connection.fail(new ProtocolValidationError("Attachment update belongs to another server"));
+				return;
 			}
-		};
-		const isActive = () => {
-			refreshState();
-			return state === "active" && this.#state.isSessionAttached(sessionId);
-		};
-		const assertActive = () => {
-			this.#assertNotDisposed();
-			if (!this.connected) throw new PiDisconnectedError();
-			if (!isActive()) throw new PiSessionDetachedError(sessionId);
-		};
-		const release = (relinquishOnFailure: boolean): Promise<void> => {
-			refreshState();
-			if (state === "released" || state === "invalidated") return Promise.resolve();
-			if (releasePromise) return releasePromise;
-			assertActive();
-			state = "releasing";
-			releasePromise = (async () => {
-				const count = this.#sessionLeaseCounts.get(sessionId) ?? 0;
-				if (count <= 1) {
-					const detachment = this.#request({ command: "detach", sessionId }).then(() => undefined);
-					this.#sessionDetachments.set(sessionId, detachment);
-					try {
-						await detachment;
-						this.#releaseSessionLease(sessionId, token);
-					} finally {
-						if (this.#sessionDetachments.get(sessionId) === detachment) {
-							this.#sessionDetachments.delete(sessionId);
-						}
-					}
-				} else {
-					this.#releaseSessionLease(sessionId, token);
-				}
-				state = "released";
-			})().catch((error: unknown) => {
-				refreshState();
-				if (state === "invalidated") return;
-				if (relinquishOnFailure) {
-					this.#releaseSessionLease(sessionId, token);
-					this.#sessionCleanupRequired.add(sessionId);
-					state = "released";
-				} else {
-					state = "active";
-					releasePromise = undefined;
-				}
-				throw error;
-			});
-			return releasePromise;
-		};
-		const callbacks: SessionHandleCallbacks = {
-			isAttached: isActive,
-			getSnapshot: () => (isActive() ? this.#state.getSessionSnapshot(sessionId) : undefined),
-			subscribe: (listener) => {
-				assertActive();
-				return this.#state.subscribeSession(sessionId, (snapshot) => {
-					if (isActive()) listener(snapshot);
-				});
-			},
-			onEvent: (listener) => {
-				assertActive();
-				return this.#state.onSessionEvent(sessionId, (event) => {
-					if (isActive() || event.type === "session_removed") listener(event);
-				});
-			},
-			detach: () => release(false),
-			dispose: () => release(true),
-			request: (command) => {
-				assertActive();
-				return this.#request(command);
-			},
-		};
-		return new SessionHandle(sessionId, callbacks);
-	}
-
-	#handleMessage(message: ResponseEnvelope | EventEnvelope): void {
-		if (message.type === "event") {
-			if (message.event.type === "session_removed") this.#invalidateSessionLeases(message.event.sessionId);
-			this.#state.applyEvent(message.event);
+			this.#setAttachment(message.attachment ?? undefined);
+			return;
+		}
+		if (message.type === "service_update") {
+			const active = this.#serviceListeners.get(message.subscriptionId);
+			if (active === undefined) return;
+			if (!active.hydrated) {
+				active.queuedWireUpdates.push(message.update);
+				return;
+			}
+			let update: ServiceProviderUpdate;
+			try {
+				update = active.decoder.decodeUpdate(parseWireServiceProviderUpdate(message.update));
+			} catch (error) {
+				this.#connection.fail(
+					new ProtocolValidationError(error instanceof Error ? error.message : "Invalid service operation stream"),
+				);
+				return;
+			}
+			if (active.ready) this.#deliverServiceUpdate(active, update);
+			else active.queued.push(update);
 			return;
 		}
 		const pending = this.#takePendingRequest(message.id);
@@ -303,115 +336,19 @@ export class PiClient {
 			return;
 		}
 		if (!message.ok) {
-			pending.reject(new PiServerError(message.error));
+			pending.reject(new ServerError(message.error));
 			return;
 		}
-		if (message.result.command !== pending.command.command) {
-			const error = new ProtocolValidationError(
-				`Response command ${message.result.command} does not match ${pending.command.command}`,
-			);
-			pending.reject(error);
-			this.#connection.fail(error);
-			return;
-		}
-		this.#state.applyResult(message.result);
 		pending.resolve(message.result);
 	}
 
 	#handleConnectionStateChange(change: ConnectionStateChange): void {
 		if (change.state === "disconnected") {
-			this.#state.clearAttachments();
-			this.#invalidateAllSessionLeases();
-			this.#rejectPendingRequests(change.error ?? new PiDisconnectedError());
+			this.#hello = undefined;
+			this.#setAttachment(undefined);
+			this.#rejectPendingRequests(change.error ?? new DisconnectedError());
+			this.#serviceListeners.clear();
 		}
-		this.#notifyConnectionStateListeners(change);
-	}
-
-	#takePendingRequest(id: string): PendingRequest | undefined {
-		const request = this.#pendingRequests.get(id);
-		if (request) this.#pendingRequests.delete(id);
-		return request;
-	}
-
-	#rejectPendingRequests(error: Error): void {
-		const requests = [...this.#pendingRequests.values()];
-		this.#pendingRequests.clear();
-		for (const request of requests) request.reject(error);
-	}
-
-	dispose(): Promise<void> {
-		if (this.#disposePromise) return this.#disposePromise;
-		this.#disposed = true;
-		this.#disposePromise = Promise.resolve();
-		const error = new PiClientDisposedError();
-		this.#rejectPendingRequests(error);
-		this.#connection.disconnect(error);
-		this.#state.dispose();
-		this.#invalidateAllSessionLeases();
-		this.#connectionStateListeners.clear();
-		return this.#disposePromise;
-	}
-
-	[Symbol.asyncDispose](): Promise<void> {
-		return this.dispose();
-	}
-
-	#assertNotDisposed(): void {
-		if (this.#disposed) throw new PiClientDisposedError();
-	}
-
-	async #reconcileSessionCleanup(sessionId: string): Promise<boolean> {
-		if (!this.#sessionCleanupRequired.has(sessionId)) return false;
-		let reconciliation = this.#sessionReconciliations.get(sessionId);
-		if (!reconciliation) {
-			reconciliation = this.#request({ command: "detach", sessionId })
-				.then(() => undefined)
-				.then(() => {
-					this.#sessionCleanupRequired.delete(sessionId);
-				})
-				.finally(() => {
-					this.#sessionReconciliations.delete(sessionId);
-				});
-			this.#sessionReconciliations.set(sessionId, reconciliation);
-		}
-		await reconciliation;
-		return true;
-	}
-
-	#reserveSessionLease(sessionId: string, mode: SessionLeaseMode): SessionLeaseToken {
-		const count = this.#sessionLeaseCounts.get(sessionId) ?? 0;
-		if (mode === "exclusive" && count > 0) {
-			throw new PiSessionOwnershipError(sessionId, `Session ${sessionId} already has an active lease`);
-		}
-		if (mode === "shared" && this.#exclusiveSessionLeases.has(sessionId)) {
-			throw new PiSessionOwnershipError(sessionId, `Session ${sessionId} has an exclusive lease`);
-		}
-		const token: SessionLeaseToken = { mode };
-		this.#sessionLeaseCounts.set(sessionId, count + 1);
-		if (mode === "exclusive") this.#exclusiveSessionLeases.set(sessionId, token);
-		return token;
-	}
-
-	#releaseSessionLease(sessionId: string, token: SessionLeaseToken): void {
-		const count = this.#sessionLeaseCounts.get(sessionId) ?? 0;
-		if (count <= 1) this.#sessionLeaseCounts.delete(sessionId);
-		else this.#sessionLeaseCounts.set(sessionId, count - 1);
-		if (this.#exclusiveSessionLeases.get(sessionId) === token) this.#exclusiveSessionLeases.delete(sessionId);
-	}
-
-	#invalidateSessionLeases(sessionId: string): void {
-		this.#sessionLeaseCounts.delete(sessionId);
-		this.#exclusiveSessionLeases.delete(sessionId);
-		this.#sessionCleanupRequired.delete(sessionId);
-		this.#sessionLeaseGenerations.set(sessionId, (this.#sessionLeaseGenerations.get(sessionId) ?? 0) + 1);
-	}
-
-	#invalidateAllSessionLeases(): void {
-		for (const sessionId of this.#sessionLeaseCounts.keys()) this.#invalidateSessionLeases(sessionId);
-		this.#sessionCleanupRequired.clear();
-	}
-
-	#notifyConnectionStateListeners(change: ConnectionStateChange): void {
 		for (const listener of this.#connectionStateListeners) {
 			try {
 				listener(change);
@@ -419,6 +356,82 @@ export class PiClient {
 				this.#reportListenerError(error);
 			}
 		}
+	}
+
+	#takePendingRequest(id: string): PendingRequest | undefined {
+		const request = this.#pendingRequests.get(id);
+		if (request) {
+			this.#pendingRequests.delete(id);
+			request.cleanup();
+		}
+		return request;
+	}
+
+	#rejectPendingRequests(error: Error): void {
+		const requests = [...this.#pendingRequests.values()];
+		this.#pendingRequests.clear();
+		for (const request of requests) {
+			request.cleanup();
+			request.reject(error);
+		}
+	}
+
+	dispose(): Promise<void> {
+		if (this.#disposePromise) return this.#disposePromise;
+		this.#disposed = true;
+		this.#disposePromise = Promise.resolve();
+		const error = new ClientDisposedError();
+		this.#rejectPendingRequests(error);
+		this.#connection.disconnect(error);
+		this.#hello = undefined;
+		this.#setAttachment(undefined);
+		this.#connectionStateListeners.clear();
+		this.#attachmentListeners.clear();
+		this.#serviceListeners.clear();
+		return this.#disposePromise;
+	}
+
+	[Symbol.asyncDispose](): Promise<void> {
+		return this.dispose();
+	}
+
+	#setAttachment(attachment: SessionTarget | undefined): void {
+		const previous = this.#attachment;
+		if (
+			previous?.serverId === attachment?.serverId &&
+			previous?.sessionId === attachment?.sessionId &&
+			previous?.attachmentId === attachment?.attachmentId
+		) {
+			return;
+		}
+		this.#attachment = attachment;
+		for (const listener of this.#attachmentListeners) {
+			try {
+				listener(attachment);
+			} catch (error) {
+				this.#reportListenerError(error);
+			}
+		}
+	}
+
+	#deliverServiceUpdate(active: ActiveServiceListener, update: ServiceProviderUpdate): void {
+		active.deliveryTail = active.deliveryTail
+			.then(() => active.listener(update))
+			.catch((error: unknown) => this.#reportListenerError(error));
+	}
+
+	#targetIsCurrent(target: RpcTarget): boolean {
+		if (!("sessionId" in target)) return this.#hello?.serverId === target.serverId;
+		const attachment = this.#attachment;
+		return (
+			attachment?.serverId === target.serverId &&
+			attachment.sessionId === target.sessionId &&
+			attachment.attachmentId === target.attachmentId
+		);
+	}
+
+	#assertNotDisposed(): void {
+		if (this.#disposed) throw new ClientDisposedError();
 	}
 
 	#reportListenerError(error: unknown): void {
@@ -429,4 +442,38 @@ export class PiClient {
 			// Diagnostics cannot affect protocol or transport state.
 		}
 	}
+}
+
+/** Adapts a lazily resolved routed client target to a Chord service transport. */
+export function createClientServiceTransport(
+	client: Client,
+	getTarget: () => RpcTarget | undefined,
+): RemoteServiceTransport {
+	const target = (): RpcTarget => {
+		const resolved = getTarget();
+		if (resolved === undefined) throw new Error("Remote service target is unavailable");
+		return resolved;
+	};
+	return {
+		invoke: async (call, context) => client.request(target(), call, context.abortSignal),
+		async subscribe(serviceId, mode, listener, context) {
+			const subscription = await client.subscribeService(
+				target(),
+				serviceId,
+				mode,
+				(update) => listener(update, BACKGROUND_CONTEXT),
+				context.abortSignal,
+			);
+			return {
+				snapshot: subscription.snapshot,
+				activate: () => subscription.start(),
+				close: () => subscription.dispose(),
+			};
+		},
+	};
+}
+
+function abortError(signal: AbortSignal): Error {
+	const reason: unknown = signal.reason;
+	return reason instanceof Error ? reason : new DOMException("The operation was aborted", "AbortError");
 }

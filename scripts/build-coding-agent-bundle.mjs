@@ -16,11 +16,18 @@ const banner = {
 	js: 'import { createRequire as __piCreateRequire } from "node:module"; const require = __piCreateRequire(import.meta.url);',
 };
 const allowedExternalPackages = new Set([
+	"@earendil-works/chord",
+	"@earendil-works/chord/bundler",
+	"@earendil-works/chord/context",
+	"@earendil-works/chord/delta",
+	"@earendil-works/chord/node",
 	"@silvia-odwyer/photon-node",
 	"jiti",
 	// Optional native accelerators. Their callers fall back to JavaScript when absent.
 	"bufferutil",
 	"utf-8-validate",
+	// Optional native proxy authentication. Its caller reports an install hint when absent.
+	"kerberos",
 	// Optional debug output coloring.
 	"supports-color",
 ]);
@@ -49,13 +56,37 @@ export function createJiti(...args) {
 	},
 };
 
+const httpsProxyAgentNamedExportPlugin = {
+	name: "https-proxy-agent-named-export",
+	setup(build) {
+		build.onResolve({ filter: /^https-proxy-agent$/ }, (args) => {
+			if (args.kind !== "dynamic-import") return undefined;
+			return {
+				namespace: "https-proxy-agent-named-export",
+				path: args.path,
+			};
+		});
+		build.onLoad(
+			{
+				filter: /^https-proxy-agent$/,
+				namespace: "https-proxy-agent-named-export",
+			},
+			() => ({
+				contents: 'export { HttpsProxyAgent } from "https-proxy-agent";',
+				loader: "js",
+				resolveDir: repoRoot,
+			}),
+		);
+	},
+};
+
 function commonBuildOptions() {
 	return {
 		absWorkingDir: repoRoot,
 		banner,
 		bundle: true,
 		define: { PI_BUNDLED_NODE: "true" },
-		external: ["@silvia-odwyer/photon-node"],
+		external: ["@earendil-works/chord", "@silvia-odwyer/photon-node"],
 		format: "esm",
 		legalComments: "none",
 		logLevel: "warning",
@@ -67,7 +98,7 @@ function commonBuildOptions() {
 		// package replaces it with a synchronous lazy require so jiti loads only
 		// when importing an extension; Babel remains deferred until a cache miss
 		// needs transformation.
-		plugins: [lazyJitiPlugin],
+		plugins: [lazyJitiPlugin, httpsProxyAgentNamedExportPlugin],
 		sourcemap: false,
 		target: "node22.19",
 		// Do not apply the monorepo's source-oriented path aliases while bundling
@@ -115,7 +146,6 @@ for (const entry of [
 	join(codingAgentDistDir, "cli.js"),
 	join(codingAgentDistDir, "index.js"),
 	join(codingAgentDistDir, "rpc-entry.js"),
-	join(codingAgentDistDir, "client", "index.js"),
 	join(codingAgentDistDir, "utils", "image-resize-worker.js"),
 	join(aiDistDir, "api", "bedrock-converse-stream.js"),
 	join(aiDistDir, "auth", "oauth", "anthropic.js"),
@@ -133,7 +163,6 @@ const mainResult = await build({
 	entryNames: "[name]",
 	entryPoints: {
 		cli: join(codingAgentDistDir, "cli.js"),
-		client: join(codingAgentDistDir, "client", "index.js"),
 		index: join(codingAgentDistDir, "index.js"),
 		"rpc-entry": join(codingAgentDistDir, "rpc-entry.js"),
 	},

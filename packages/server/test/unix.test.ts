@@ -1,26 +1,25 @@
 import { type ChildProcess, fork } from "node:child_process";
 import { once } from "node:events";
-import { lstat, mkdtemp, readFile, rm, unlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { lstat, mkdtemp, readdir, readFile, rm, unlink, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
-import type { PiServer } from "../src/index.ts";
-import { connectUnixTestClient, type ProtocolTestClient, TestServerService } from "../src/testing/index.ts";
-import { createUnixServer } from "../src/transports/unix/index.ts";
+import type { Server } from "../src/index.ts";
+import { connectUnixTestClient, type ProtocolTestClient, TestServerHost } from "../src/testing/index.ts";
+import { createUnixServer, getUnixSocketPath } from "../src/transports/unix/index.ts";
 
-const servers = new Set<PiServer>();
+const servers = new Set<Server>();
 const clients = new Set<ProtocolTestClient>();
 const children = new Set<ChildProcess>();
 const tempDirectories = new Set<string>();
 
 async function makeSocketPath(nested = false): Promise<string> {
-	const directory = await mkdtemp(join(tmpdir(), "ps-"));
+	const directory = await mkdtemp(join("/tmp", "ps-"));
 	tempDirectories.add(directory);
 	return nested ? join(directory, "p", "n", "server.sock") : join(directory, "server.sock");
 }
 
-function makeServer(path: string): PiServer {
-	const server = createUnixServer(new TestServerService(), { path });
+function makeServer(path: string): Server {
+	const server = createUnixServer(new TestServerHost(), { path, serverId: "00000000-0000-4000-8000-000000000001" });
 	servers.add(server);
 	return server;
 }
@@ -37,6 +36,32 @@ afterEach(async () => {
 	servers.clear();
 	await Promise.all([...tempDirectories].map((directory) => rm(directory, { recursive: true, force: true })));
 	tempDirectories.clear();
+});
+
+test("creates an in-memory server ID and derives its explicit Unix socket path", async () => {
+	const directory = await mkdtemp(join("/tmp", "pi-server-"));
+	tempDirectories.add(directory);
+	const serverId = "00000000-0000-4000-8000-000000000001";
+	const path = getUnixSocketPath(serverId, directory);
+
+	expect(path).toBe(join(directory, `${serverId}.sock`));
+	const first = createUnixServer(new TestServerHost(), { serverId, path });
+	servers.add(first);
+	await first.start();
+	const firstClient = await connectUnixTestClient(path);
+	clients.add(firstClient);
+	expect(await firstClient.hello()).toMatchObject({ serverId });
+	await firstClient.close();
+	clients.delete(firstClient);
+	await first.close();
+	servers.delete(first);
+
+	const replacement = createUnixServer(new TestServerHost(), { serverId, path });
+	servers.add(replacement);
+	await replacement.start();
+	const replacementClient = await connectUnixTestClient(path);
+	clients.add(replacementClient);
+	expect(await replacementClient.hello()).toMatchObject({ serverId });
 });
 
 describe("Unix listener filesystem lifecycle", () => {
@@ -75,6 +100,7 @@ describe("Unix listener filesystem lifecycle", () => {
 		const stats = await lstat(path);
 		expect(stats.isSocket()).toBe(true);
 		if (process.platform !== "win32") expect(stats.mode & 0o777).toBe(0o600);
+		expect(await readdir(dirname(path))).toEqual(["server.sock"]);
 
 		await server.close();
 		await expect(lstat(path)).rejects.toMatchObject({ code: "ENOENT" });

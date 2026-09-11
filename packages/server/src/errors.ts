@@ -1,58 +1,57 @@
-import type { JsonValue, ProtocolErrorCode } from "@earendil-works/pi-protocol";
+import type { RemoteServiceErrorCode } from "@earendil-works/chord";
 
-export type PiServerOperationErrorCode = Extract<
-	ProtocolErrorCode,
-	"busy" | "session_locked" | "not_found" | "invalid_request" | "not_implemented"
->;
+type ServerOperationErrorCode =
+	| RemoteServiceErrorCode
+	| "wrong_server"
+	| "session_not_found"
+	| "session_ambiguous"
+	| "session_not_attached"
+	| "server_draining";
 
 export const INTERNAL_SERVER_ERROR_MESSAGE = "Internal server error";
-export const NOT_IMPLEMENTED_MESSAGE = "Operation is not implemented";
 
-/** A service/runtime error that can safely cross the protocol boundary. */
-export class PiServerError extends Error {
-	readonly code: PiServerOperationErrorCode;
-	readonly details: JsonValue | undefined;
+/** A host or lifecycle error that can safely cross the protocol boundary. */
+export class ServerError extends Error {
+	readonly code: ServerOperationErrorCode;
 
-	constructor(code: PiServerOperationErrorCode, message: string, details?: JsonValue) {
+	constructor(code: ServerOperationErrorCode, message: string) {
 		super(message);
-		this.name = "PiServerError";
+		this.name = "ServerError";
 		this.code = code;
-		this.details = details;
 	}
 }
 
-export class SessionBusyError extends PiServerError {
-	constructor(message = "Session is busy", details?: JsonValue) {
-		super("busy", message, details);
-		this.name = "SessionBusyError";
+export class WrongServerError extends ServerError {
+	constructor() {
+		super("wrong_server", "Request was addressed to another server");
+		this.name = "WrongServerError";
 	}
 }
 
-export class SessionLockedError extends PiServerError {
-	constructor(message = "Session is locked", details?: JsonValue) {
-		super("session_locked", message, details);
-		this.name = "SessionLockedError";
-	}
-}
-
-export class SessionNotFoundError extends PiServerError {
-	constructor(message = "Session was not found", details?: JsonValue) {
-		super("not_found", message, details);
+export class SessionNotFoundError extends ServerError {
+	constructor(message = "Session was not found") {
+		super("session_not_found", message);
 		this.name = "SessionNotFoundError";
 	}
 }
 
-export class NotImplementedError extends PiServerError {
+export class SessionAmbiguousError extends ServerError {
 	constructor() {
-		super("not_implemented", NOT_IMPLEMENTED_MESSAGE);
-		this.name = "NotImplementedError";
+		super("session_ambiguous", "Session ID matches more than one session");
+		this.name = "SessionAmbiguousError";
 	}
 }
 
-/** An unsafe failure whose cause is retained for reporting but never serialized. */
-export class InternalServerError extends Error {
-	constructor(cause: unknown) {
-		super(INTERNAL_SERVER_ERROR_MESSAGE, { cause });
-		this.name = "InternalServerError";
+export class SessionNotAttachedError extends ServerError {
+	constructor() {
+		super("session_not_attached", "Session is not attached to this client");
+		this.name = "SessionNotAttachedError";
+	}
+}
+
+export class ServerDrainingError extends ServerError {
+	constructor() {
+		super("server_draining", "Server is draining");
+		this.name = "ServerDrainingError";
 	}
 }

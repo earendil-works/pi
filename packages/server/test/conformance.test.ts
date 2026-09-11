@@ -1,378 +1,502 @@
-import { lstat, mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { encodeClientMessage, encodeFrame, PROTOCOL_VERSION } from "@earendil-works/pi-protocol";
+import type { ServiceCall } from "@earendil-works/chord";
+import { BACKGROUND_CONTEXT, type SessionMetadata } from "@earendil-works/pi-agent-core";
 import { afterEach, describe, expect, test } from "vitest";
-import { InternalServerError, NotImplementedError, type PiServer, PiServerError } from "../src/index.ts";
-import { connectUnixTestClient, Deferred, type ProtocolTestClient, TestServerService } from "../src/testing/index.ts";
-import { createUnixServer, type UnixServerOptions } from "../src/transports/unix/index.ts";
+import type { ByteConnection, ByteConnectionHandler } from "../src/connection.ts";
+import { SessionAmbiguousError } from "../src/errors.ts";
+import { Server } from "../src/server.ts";
+import {
+	createTestServerServices,
+	Deferred,
+	ProtocolTestClient,
+	TestServerHost,
+	type WireChannel,
+} from "../src/testing/index.ts";
+import type { ServerHost } from "../src/types.ts";
 
-const servers = new Set<PiServer>();
-const clients = new Set<ProtocolTestClient>();
-const tempDirectories = new Set<string>();
+const serverId = "00000000-0000-4000-8000-000000000001";
+const servers = new Set<Server>();
 
-async function startServer(
-	service = new TestServerService(),
-	overrides: Partial<UnixServerOptions> = {},
-): Promise<{ server: PiServer; service: TestServerService }> {
-	const directory = await mkdtemp(join(tmpdir(), "pis-"));
-	tempDirectories.add(directory);
-	const server = createUnixServer(service, {
-		path: join(directory, "server.sock"),
-		...overrides,
-	});
+function createServer(host: ServerHost, id = serverId): Server {
+	const server = new Server(host, { listeners: [], serverId: id });
 	servers.add(server);
-	await server.start();
-	return { server, service };
+	return server;
 }
 
-async function connect(server: PiServer): Promise<ProtocolTestClient> {
-	const client = await connectUnixTestClient(server.addresses[0]!);
-	clients.add(client);
+function connect(server: Server): ProtocolTestClient {
+	let handler: ByteConnectionHandler;
+	let client: ProtocolTestClient;
+	let closed = false;
+	const connection: ByteConnection = {
+		get closed() {
+			return closed;
+		},
+		async send(chunk) {
+			client.receive(chunk);
+		},
+		close(finalChunk) {
+			if (finalChunk) client.receive(finalChunk);
+			closed = true;
+			client.markClosed();
+		},
+	};
+	const channel: WireChannel = {
+		async send(chunk) {
+			handler.onData(chunk);
+		},
+		async sendFragmented(chunk, splitAt) {
+			handler.onData(chunk.subarray(0, splitAt));
+			handler.onData(chunk.subarray(splitAt));
+		},
+		async close() {
+			if (closed) return;
+			closed = true;
+			handler.onClose();
+			client.markClosed();
+		},
+	};
+	client = new ProtocolTestClient(channel);
+	handler = server.accept(connection);
 	return client;
 }
 
+function sessionCall(member: string, args: ServiceCall["args"] = []): ServiceCall {
+	return { serviceId: "test.session", member, args };
+}
+
+function latestAttachmentId(client: ProtocolTestClient, sessionId: string): string {
+	for (const message of [...client.messages].reverse()) {
+		if (message.type === "attachment" && message.attachment?.sessionId === sessionId) {
+			return message.attachment.attachmentId;
+		}
+	}
+	throw new Error(`Missing attachment for ${sessionId}`);
+}
+
 afterEach(async () => {
-	await Promise.all([...clients].map((client) => client.close()));
-	clients.clear();
 	await Promise.all([...servers].map((server) => server.close()));
 	servers.clear();
-	await Promise.all([...tempDirectories].map((directory) => rm(directory, { recursive: true, force: true })));
-	tempDirectories.clear();
 });
 
-describe("Unix transport conformance", () => {
-	test("accepts a transport-fragmented framed-CBOR hello", async () => {
-		const { server } = await startServer();
-		const client = await connect(server);
-		const response = client.next((message) => message.type === "hello");
-		await client.sendFragmentedMessage({ type: "hello", version: PROTOCOL_VERSION }, 2);
-		expect(await response).toMatchObject({ type: "hello", version: PROTOCOL_VERSION });
+describe("Session protocol", () => {
+	test("handshake identifies the logical server without listing sessions", async () => {
+		const host = new TestServerHost();
+		await host.seed();
+		const client = connect(createServer(host));
+
+		expect(await client.hello()).toMatchObject({ type: "hello", serverId });
+		expect(host.harnesses.size).toBe(0);
 	});
 
-	test("enforces version and exactly one first-message hello", async () => {
-		const { server } = await startServer();
-
-		const badVersion = await connect(server);
-		expect(await badVersion.hello(PROTOCOL_VERSION + 1)).toMatchObject({
-			type: "hello_error",
-			error: { code: "version" },
+	test("rejects a semantically invalid service call after envelope decoding", async () => {
+		const host = new TestServerHost();
+		const client = connect(createServer(host));
+		await client.hello();
+		const response = client.next((message) => message.type === "response" && message.id === "invalid-call");
+		await client.sendMessage({
+			type: "request",
+			id: "invalid-call",
+			target: { serverId },
+			call: { arbitrary: true },
 		});
-		await badVersion.waitForClose();
-
-		const requestFirst = await connect(server);
-		const firstError = requestFirst.next((message) => message.type === "hello_error");
-		await requestFirst.sendMessage({ type: "request", id: "too-early", request: { command: "list" } });
-		expect(await firstError).toMatchObject({ type: "hello_error", error: { code: "invalid_request" } });
-		await requestFirst.waitForClose();
-
-		const duplicate = await connect(server);
-		expect(await duplicate.hello()).toMatchObject({ type: "hello" });
-		const duplicateError = duplicate.next((message) => message.type === "hello_error");
-		await duplicate.sendMessage({ type: "hello", version: PROTOCOL_VERSION });
-		expect(await duplicateError).toMatchObject({ type: "hello_error", error: { code: "invalid_request" } });
-		await duplicate.waitForClose();
+		expect(await response).toMatchObject({ ok: false, error: { code: "invalid_request" } });
 	});
 
-	test("closes connections that do not complete hello before the timeout", async () => {
-		const { server } = await startServer(new TestServerService(), { handshakeTimeoutMs: 20 });
-		const client = await connect(server);
-		await client.waitForClose();
-		expect(client.messages).toContainEqual(
-			expect.objectContaining({ type: "hello_error", error: expect.objectContaining({ code: "invalid_request" }) }),
-		);
-	});
-
-	test("keeps the handshake timeout active until the server hello is sent", async () => {
-		const service = new TestServerService();
-		const delay = service.delayNextList();
-		const { server } = await startServer(service, { handshakeTimeoutMs: 20 });
-		const client = await connect(server);
-		await client.sendMessage({ type: "hello", version: PROTOCOL_VERSION });
-		await delay.entered.promise;
-		await client.waitForClose();
-		delay.release.resolve(undefined);
-		expect(client.messages).toContainEqual(
-			expect.objectContaining({ type: "hello_error", error: expect.objectContaining({ code: "invalid_request" }) }),
-		);
-	});
-
-	test("bounds and closes malformed or oversized frames", async () => {
-		const malformedServer = await startServer();
-		const malformed = await connect(malformedServer.server);
-		const malformedError = malformed.next((message) => message.type === "hello_error");
-		await malformed.sendBytes(encodeFrame(Uint8Array.of(0xff)));
-		expect(await malformedError).toMatchObject({
-			type: "hello_error",
-			error: { code: "invalid_request" },
-		});
-		await malformed.waitForClose();
-
-		const boundedServer = await startServer(new TestServerService(), { maxFrameLength: 128 });
-		const oversized = await connect(boundedServer.server);
-		const frame = new Uint8Array(4 + 129);
-		frame[3] = 129;
-		await oversized.sendBytes(frame);
-		await oversized.waitForClose();
-		expect(oversized.messages.some((message) => message.type === "hello")).toBe(false);
-
-		const outboundServer = await startServer(new TestServerService(), { maxFrameLength: 128 });
-		const outbound = await connect(outboundServer.server);
-		await outbound.sendMessage({ type: "hello", version: PROTOCOL_VERSION });
-		await outbound.waitForClose();
-		expect(outbound.messages).toEqual([]);
-	});
-
-	test("catches up a handshaking client after a concurrent server change", async () => {
-		class RacingService extends TestServerService {
-			readonly entered = new Deferred<void>();
-			readonly release = new Deferred<void>();
-			race = false;
-
-			override async listSessions() {
-				const sessions = await super.listSessions();
-				if (!this.race) return sessions;
-				this.entered.resolve(undefined);
-				await this.release.promise;
-				return sessions;
-			}
-		}
-		const service = new RacingService();
-		service.seed("shared");
-		const { server } = await startServer(service);
-		const controller = await connect(server);
-		await controller.hello();
-		service.race = true;
-		const joining = await connect(server);
-		const hello = joining.hello();
-		await service.entered.promise;
-		await controller.request({ command: "attach", sessionId: "shared" });
-		service.release.resolve(undefined);
-		const handshake = await hello;
-		if (handshake.type !== "hello") throw new Error("Expected server hello");
-		const catchup = await joining.next(
-			(message) =>
-				message.type === "event" &&
-				message.event.type === "server_snapshot" &&
-				message.event.snapshot.revision > handshake.snapshot.revision,
-		);
-		expect(catchup).toMatchObject({
-			type: "event",
-			event: {
-				type: "server_snapshot",
-				snapshot: { sessions: [{ id: "shared", sessionName: "Session shared" }] },
-			},
-		});
-	});
-
-	test("shares request, event, attachment, and disconnect behavior", async () => {
-		const service = new TestServerService();
-		service.seed("first");
-		service.seed("second");
-		const { server } = await startServer(service);
-		const client = await connect(server);
-		expect(await client.hello()).toMatchObject({
-			type: "hello",
-			snapshot: { sessions: [{ id: "first" }, { id: "second" }] },
-		});
-
-		const listed = await client.request({ command: "list" });
-		expect(listed).toMatchObject({
-			ok: true,
-			result: { command: "list", sessions: [{ id: "first" }, { id: "second" }] },
-		});
-		expect(await client.request({ command: "attach", sessionId: "first" })).toMatchObject({
-			ok: true,
-			result: { command: "attach", session: { id: "first", attached: true } },
-		});
-		expect(await client.request({ command: "attach", sessionId: "second" })).toMatchObject({
-			ok: true,
-			result: { command: "attach", session: { id: "second", attached: true } },
-		});
-
-		const progress = {
-			type: "assistant_delta" as const,
-			messageId: "assistant-1",
-			contentIndex: 0,
-			kind: "text" as const,
-			delta: "hello",
+	test("attach passes concrete repository metadata to the Harness host", async () => {
+		type BackendMetadata = SessionMetadata & { path: string; modifiedAt: number };
+		const metadata: BackendMetadata = {
+			id: "session-1",
+			createdAt: 1,
+			storageVersion: 1,
+			cwd: "/workspace",
+			path: "/sessions/session-1.jsonl",
+			modifiedAt: 2,
 		};
-		const progressEvent = client.next(
-			(message) => message.type === "event" && message.event.type === "session_progress",
-		);
-		service.latestRuntime("first").emitProgress(progress);
-		expect(await progressEvent).toEqual({
-			type: "event",
-			event: { type: "session_progress", sessionId: "first", progress },
-		});
-
-		expect(await client.request({ command: "detach", sessionId: "first" })).toMatchObject({
-			ok: true,
-			result: { command: "detach", sessionId: "first" },
-		});
-		expect(service.latestRuntime("first").disposeCount).toBe(1);
-		expect(
-			await client.request({ command: "set_thinking", sessionId: "second", thinkingLevel: "high" }),
-		).toMatchObject({ ok: true, result: { session: { id: "second", thinkingLevel: "high" } } });
-
-		const secondRuntime = service.latestRuntime("second");
-		await client.close();
-		await secondRuntime.disposed.promise;
-		expect(secondRuntime.disposeCount).toBe(1);
-	});
-
-	test("disconnects attached clients when a runtime reports a terminal error", async () => {
-		const service = new TestServerService();
-		service.seed("terminal");
-		const errors: Error[] = [];
-		const { server } = await startServer(service, { onError: (error) => errors.push(error) });
-		const client = await connect(server);
-		await client.hello();
-		await client.request({ command: "attach", sessionId: "terminal" });
-		const runtime = service.latestRuntime("terminal");
-
-		runtime.setPhase("turn");
-		runtime.emitError(new PiServerError("session_locked", "lock ownership lost"));
-		await client.waitForClose();
-		await runtime.disposed.promise;
-		expect(runtime.disposeCount).toBe(1);
-		expect(service.locked.has("terminal")).toBe(false);
-		expect(errors).toContainEqual(expect.objectContaining({ code: "session_locked" }));
-
-		const nextClient = await connect(server);
-		await nextClient.hello();
-		expect(await nextClient.request({ command: "attach", sessionId: "terminal" })).toMatchObject({
-			ok: true,
-			result: { command: "attach", session: { id: "terminal" } },
-		});
-		expect(service.latestRuntime("terminal")).not.toBe(runtime);
-	});
-
-	test("does not expose unexpected service errors to clients", async () => {
-		class FailingService extends TestServerService {
-			private listCount = 0;
-
-			override async listSessions() {
-				this.listCount += 1;
-				if (this.listCount > 1) throw new Error("private service detail");
-				return super.listSessions();
-			}
-		}
-		const errors: Error[] = [];
-		const service = new FailingService();
-		const { server } = await startServer(service, {
-			onError: (error) => {
-				errors.push(error);
-				throw new Error("observer failure");
+		let received: BackendMetadata | undefined;
+		const host: ServerHost<BackendMetadata> = {
+			serverServices: createTestServerServices(),
+			resolveSession: async () => metadata,
+			openSession: async (candidate) => {
+				received = candidate;
+				return {
+					attachClient: () => ({ invokeService: async () => undefined, release() {} }),
+					close: async () => {},
+				};
 			},
-		});
-		const client = await connect(server);
+		};
+		const client = connect(createServer(host));
 		await client.hello();
-		expect(await client.request({ command: "list" })).toMatchObject({
-			ok: false,
-			error: { code: "internal_error", message: "Internal server error" },
-		});
-		expect(errors).toContainEqual(expect.objectContaining({ message: "private service detail" }));
+
+		await expect(client.attach(serverId, "session-1")).resolves.toMatchObject({ ok: true });
+		expect(received).toBe(metadata);
 	});
 
-	test("keeps not_implemented stable", async () => {
-		class IncompleteService extends TestServerService {
-			private listCount = 0;
-
-			override async listSessions() {
-				this.listCount += 1;
-				if (this.listCount > 1) throw new NotImplementedError();
-				return super.listSessions();
-			}
-		}
-		const { server } = await startServer(new IncompleteService());
-		const client = await connect(server);
+	test("routes opaque server services and publishes attachment changes out of band", async () => {
+		const backing = new TestServerHost();
+		await backing.seed("session-1");
+		let releaseCount = 0;
+		const host: ServerHost = {
+			resolveSession: (sessionId, context) => backing.resolveSession(sessionId, context),
+			openSession: (metadata, context) => backing.openSession(metadata, context),
+			serverServices: {
+				attachClient(presentation) {
+					return {
+						async invokeService(call, _publish, context) {
+							if (call.serviceId !== "pi.session-management") throw new Error("Unexpected service");
+							if (call.member === "attach" && typeof call.args[0] === "string") {
+								await presentation.attachSession(call.args[0], context);
+								return null;
+							}
+							if (call.member === "detach") {
+								await presentation.detachSession(context);
+								return null;
+							}
+							throw new Error("Unexpected service member");
+						},
+						release() {
+							releaseCount += 1;
+						},
+					};
+				},
+			},
+		};
+		const client = connect(createServer(host));
 		await client.hello();
-		expect(await client.request({ command: "list" })).toMatchObject({
-			ok: false,
-			error: { code: "not_implemented", message: "Operation is not implemented" },
+		const attached = client.next((message) => message.type === "attachment" && message.attachment !== null);
+		await expect(client.attach(serverId, "session-1")).resolves.toMatchObject({ ok: true });
+		await expect(attached).resolves.toMatchObject({
+			type: "attachment",
+			attachment: { sessionId: "session-1", attachmentId: expect.any(String) },
 		});
+		expect(backing.latestHarness("session-1").attachedClients).toBe(1);
+
+		const detached = client.next((message) => message.type === "attachment" && message.attachment === null);
+		await expect(
+			client.requestService({ serverId }, { serviceId: "pi.session-management", member: "detach", args: [] }),
+		).resolves.toMatchObject({ ok: true });
+		await expect(detached).resolves.toMatchObject({ type: "attachment", attachment: null });
+		expect(backing.latestHarness("session-1").attachedClients).toBe(0);
+		await client.close();
+		await expect.poll(() => releaseCount).toBe(1);
 	});
 
-	test("reports wrapped internal causes without exposing them", async () => {
-		const cause = new Error("private storage detail", { cause: new Error("private root cause") });
-		class WrappedFailureService extends TestServerService {
-			private listCount = 0;
+	test("permits multiple client attachments per Session", async () => {
+		const host = new TestServerHost();
+		await host.seed("session-1");
+		const server = createServer(host);
+		const first = connect(server);
+		const second = connect(server);
+		await Promise.all([first.hello(), second.hello()]);
 
-			override async listSessions() {
-				this.listCount += 1;
-				if (this.listCount > 1) throw new InternalServerError(cause);
-				return super.listSessions();
-			}
-		}
+		await expect(first.attach(serverId, "session-1")).resolves.toMatchObject({ ok: true });
+		await expect(first.attach(serverId, "session-1")).resolves.toMatchObject({ ok: true });
+		expect(host.latestHarness("session-1").attachedClients).toBe(1);
+		await expect(second.attach(serverId, "session-1")).resolves.toMatchObject({ ok: true });
+		expect(host.harnesses.get("session-1")).toHaveLength(1);
+		expect(host.latestHarness("session-1").attachedClients).toBe(2);
+
+		await first.close();
+		await expect.poll(() => host.latestHarness("session-1").attachedClients).toBe(1);
+		await expect(second.attach(serverId, "session-1")).resolves.toMatchObject({ ok: true });
+	});
+
+	test("clears connection ownership when attachment release fails", async () => {
+		const host = new TestServerHost();
+		await host.seed("session-1");
 		const errors: Error[] = [];
-		const { server } = await startServer(new WrappedFailureService(), { onError: (error) => errors.push(error) });
-		const client = await connect(server);
+		const server = new Server(host, { listeners: [], serverId, onError: (error) => errors.push(error) });
+		servers.add(server);
+		const first = connect(server);
+		const second = connect(server);
+		await Promise.all([first.hello(), second.hello()]);
+		await first.attach(serverId, "session-1");
+		const harness = host.latestHarness("session-1");
+		const releaseError = new Error("release failed");
+		harness.failAttachmentRelease = releaseError;
+
+		await first.close();
+		await expect.poll(() => harness.attachmentReleaseCount).toBe(1);
+		await expect.poll(() => errors).toContain(releaseError);
+		harness.failAttachmentRelease = undefined;
+		await expect(second.attach(serverId, "session-1")).resolves.toMatchObject({ ok: true });
+	});
+
+	test("requires the requesting client to hold the targeted Session attachment", async () => {
+		const host = new TestServerHost();
+		await Promise.all([host.seed("session-1"), host.seed("session-2")]);
+		const server = createServer(host);
+		const attached = connect(server);
+		const unattached = connect(server);
+		await Promise.all([attached.hello(), unattached.hello()]);
+
+		await expect(unattached.requestSessionService(serverId, "session-1", sessionCall("run"))).resolves.toMatchObject({
+			ok: false,
+			error: { code: "session_not_attached" },
+		});
+		await attached.attach(serverId, "session-1");
+		await expect(attached.requestSessionService(serverId, "session-2", sessionCall("run"))).resolves.toMatchObject({
+			ok: false,
+			error: { code: "session_not_attached" },
+		});
+		await expect(
+			attached.requestSessionService(serverId, "session-1", sessionCall("run", ["Hello"])),
+		).resolves.toMatchObject({ ok: true, result: { ok: true } });
+		expect(host.latestHarness("session-1").serviceCalls).toEqual([sessionCall("run", ["Hello"])]);
+	});
+
+	test("rejects a stale attachment route after switching Sessions", async () => {
+		const host = new TestServerHost();
+		await Promise.all([host.seed("session-1"), host.seed("session-2")]);
+		const client = connect(createServer(host));
 		await client.hello();
-		const response = await client.request({ command: "list" });
-		expect(response).toMatchObject({
+		await client.attach(serverId, "session-1");
+		const firstAttachmentId = latestAttachmentId(client, "session-1");
+		await client.attach(serverId, "session-2");
+
+		await expect(
+			client.requestService(
+				{ serverId, sessionId: "session-1", attachmentId: firstAttachmentId },
+				sessionCall("run", ["stale"]),
+			),
+		).resolves.toMatchObject({ ok: false, error: { code: "session_not_attached" } });
+		expect(host.latestHarness("session-1").serviceCalls).toEqual([]);
+	});
+
+	test("preserves opaque service results and bounds adapter defects", async () => {
+		const host = new TestServerHost();
+		await host.seed("session-1");
+		const client = connect(createServer(host));
+		await client.hello();
+		await client.attach(serverId, "session-1");
+		const harness = host.latestHarness("session-1");
+		harness.nextServiceResult = { accepted: false, reason: "closed" };
+		await expect(client.requestSessionService(serverId, "session-1", sessionCall("run"))).resolves.toMatchObject({
+			ok: true,
+			result: { accepted: false, reason: "closed" },
+		});
+
+		harness.nextServiceError = new Error("private adapter detail");
+		await expect(client.requestSessionService(serverId, "session-1", sessionCall("run"))).resolves.toMatchObject({
 			ok: false,
 			error: { code: "internal_error", message: "Internal server error" },
 		});
-		expect(JSON.stringify(response)).not.toContain("private");
-		expect(errors).toContain(cause);
-		expect(errors).not.toContainEqual(expect.objectContaining({ name: "InternalServerError" }));
 	});
 
-	test("can respond out of request order after the handshake", async () => {
-		const service = new TestServerService();
-		service.seed("first");
-		const { server } = await startServer(service);
-		const client = await connect(server);
+	test("admits concurrent service calls to the attached Session", async () => {
+		const host = new TestServerHost();
+		await host.seed("session-1");
+		const client = connect(createServer(host));
 		await client.hello();
+		await client.attach(serverId, "session-1");
+		const harness = host.latestHarness("session-1");
+		const gate = harness.gateNextServiceCall();
+		const first = client.requestSessionService(serverId, "session-1", sessionCall("run", ["first"]));
+		await gate.entered.promise;
+		const second = client.requestSessionService(serverId, "session-1", sessionCall("run", ["second"]));
 
-		const delay = service.delayNextList();
-		const slow = client.request({ command: "list" }, "slow");
-		await delay.entered.promise;
-		const fast = client.request({ command: "attach", sessionId: "first" }, "fast");
-		expect(await fast).toMatchObject({ ok: true, id: "fast", result: { command: "attach" } });
-		expect(client.messages.some((message) => message.type === "response" && message.id === "slow")).toBe(false);
-
-		delay.release.resolve(undefined);
-		expect(await slow).toMatchObject({ ok: true, id: "slow", result: { command: "list" } });
-		const responseIds = client.messages
-			.filter((message) => message.type === "response" && (message.id === "slow" || message.id === "fast"))
-			.map((message) => (message.type === "response" ? message.id : ""));
-		expect(responseIds).toEqual(["fast", "slow"]);
+		await expect(second).resolves.toMatchObject({ ok: true });
+		expect(harness.serviceCalls).toEqual([sessionCall("run", ["first"]), sessionCall("run", ["second"])]);
+		gate.release.resolve(undefined);
+		await expect(first).resolves.toMatchObject({ ok: true });
 	});
 
-	test("gracefully closes connections, sessions, and listener resources", async () => {
-		const service = new TestServerService();
-		service.seed("first");
-		const { server } = await startServer(service);
-		const socketPath = server.addresses[0];
-		const client = await connect(server);
+	test("keeps attachment demand until an accepted service call settles after disconnect", async () => {
+		const host = new TestServerHost();
+		await host.seed("session-1");
+		const client = connect(createServer(host));
 		await client.hello();
-		await client.request({ command: "attach", sessionId: "first" });
-		const runtime = service.latestRuntime("first");
-		const clientClosed = client.waitForClose();
+		await client.attach(serverId, "session-1");
+		const harness = host.latestHarness("session-1");
+		const gate = harness.gateNextServiceCall();
+		const calling = client.requestSessionService(serverId, "session-1", sessionCall("run"));
+		const disconnectedCall = expect(calling).rejects.toThrow(/closed/i);
+		await gate.entered.promise;
 
+		await client.close();
+		expect(harness.attachedClients).toBe(1);
+		gate.release.resolve(undefined);
+		await disconnectedCall;
+		await expect.poll(() => harness.attachedClients).toBe(0);
+	});
+
+	test("rejects requests addressed to another server before repository access", async () => {
+		const host = new TestServerHost();
+		await host.seed("session-1");
+		const client = connect(createServer(host));
+		await client.hello();
+
+		await expect(client.attach("00000000-0000-4000-8000-000000000002", "session-1")).resolves.toMatchObject({
+			ok: false,
+			error: { code: "wrong_server" },
+		});
+		expect(host.harnesses.size).toBe(0);
+	});
+
+	test("reports an unknown session without creating a Harness", async () => {
+		const host = new TestServerHost();
+		const client = connect(createServer(host));
+		await client.hello();
+
+		await expect(client.attach(serverId, "missing")).resolves.toMatchObject({
+			ok: false,
+			error: { code: "session_not_found" },
+		});
+		expect(host.harnesses.size).toBe(0);
+	});
+
+	test("rejects an ambiguous session ID without creating a Harness", async () => {
+		type BackendMetadata = SessionMetadata & { path: string };
+		const host: ServerHost<BackendMetadata> = {
+			serverServices: createTestServerServices(),
+			resolveSession: async () => {
+				throw new SessionAmbiguousError();
+			},
+			openSession: async () => {
+				throw new Error("must not create a Harness for an ambiguous session");
+			},
+		};
+		const client = connect(createServer(host));
+		await client.hello();
+
+		await expect(client.attach(serverId, "duplicate")).resolves.toMatchObject({
+			ok: false,
+			error: { code: "session_ambiguous" },
+		});
+	});
+
+	test("invalidates a terminated Harness handle and allows a later attach", async () => {
+		const host = new TestServerHost();
+		await host.seed("session-1");
+		const client = connect(createServer(host));
+		await client.hello();
+		await client.attach(serverId, "session-1");
+		const firstHarness = host.latestHarness("session-1");
+
+		await firstHarness.terminate(new Error("worker crashed"));
+		await firstHarness.terminated;
+		await expect.poll(() => firstHarness.attachedClients).toBe(0);
+		expect(firstHarness.attachmentReleaseCount).toBe(1);
+
+		await expect(client.attach(serverId, "session-1")).resolves.toMatchObject({ ok: true });
+		expect(host.harnesses.get("session-1")).toHaveLength(2);
+	});
+
+	test("connection loss releases its attachment, while server shutdown closes the Harness", async () => {
+		const host = new TestServerHost();
+		await host.seed("session-1");
+		const server = createServer(host);
+		const client = connect(server);
+		await client.hello();
+		await client.attach(serverId, "session-1");
+		const harness = host.latestHarness("session-1");
+
+		await client.close();
+		await expect.poll(() => harness.attachedClients).toBe(0);
+		expect(harness.closeCount).toBe(0);
 		await server.close();
-		await clientClosed;
-		expect(runtime.disposeCount).toBe(1);
-		expect(server.addresses).toEqual([]);
-		if (socketPath) await expect(lstat(socketPath)).rejects.toMatchObject({ code: "ENOENT" });
-		await server.close();
+		expect(harness.closeCount).toBe(1);
 	});
 });
 
-test("Unix socket decodes multiple framed requests from one raw chunk", async () => {
-	const { server } = await startServer();
-	const client = await connect(server);
-	await client.hello();
-	const first = encodeClientMessage({ type: "request", id: "first", request: { command: "list" } });
-	const second = encodeClientMessage({ type: "request", id: "second", request: { command: "list" } });
-	const combined = new Uint8Array(first.byteLength + second.byteLength);
-	combined.set(first);
-	combined.set(second, first.byteLength);
-	const firstResponse = client.next((message) => message.type === "response" && message.id === "first");
-	const secondResponse = client.next((message) => message.type === "response" && message.id === "second");
-	await client.sendBytes(combined);
-	expect(await firstResponse).toMatchObject({ type: "response", id: "first", ok: true });
-	expect(await secondResponse).toMatchObject({ type: "response", id: "second", ok: true });
+describe("routed Session acquisition failures", () => {
+	test("releases a lease acquired concurrently with Harness termination", async () => {
+		const metadata: SessionMetadata = { id: "session-1", createdAt: 1, storageVersion: 1 };
+		const acquiring = new Deferred<void>();
+		const continueAcquiring = new Deferred<void>();
+		const terminated = new Deferred<Error | undefined>();
+		let releaseCount = 0;
+		const host: ServerHost = {
+			serverServices: createTestServerServices(),
+			resolveSession: async () => metadata,
+			openSession: async () => ({
+				terminated: terminated.promise,
+				attachClient: async () => {
+					acquiring.resolve(undefined);
+					await continueAcquiring.promise;
+					return {
+						invokeService: async () => undefined,
+						release: () => {
+							releaseCount += 1;
+						},
+					};
+				},
+				close: async () => {},
+			}),
+		};
+		const client = connect(createServer(host));
+		await client.hello();
+		const attach = client.attach(serverId, "session-1");
+		await acquiring.promise;
+
+		terminated.resolve(new Error("worker crashed"));
+		continueAcquiring.resolve(undefined);
+		await expect(attach).resolves.toMatchObject({ ok: false, error: { code: "server_draining" } });
+		expect(releaseCount).toBe(1);
+	});
+
+	test("shares a Harness creation failure, releases the Session, and allows a later retry", async () => {
+		const host = new TestServerHost();
+		await host.seed("session-1");
+		host.nextOpenSessionError = new Error("Harness creation failed");
+		const server = createServer(host);
+		const first = connect(server);
+		const second = connect(server);
+		await Promise.all([first.hello(), second.hello()]);
+		const gate = host.gateNextOpenSession();
+
+		const firstAttach = first.attach(serverId, "session-1");
+		await gate.entered.promise;
+		const secondAttach = second.attach(serverId, "session-1");
+		gate.release.resolve(undefined);
+
+		await expect(Promise.all([firstAttach, secondAttach])).resolves.toMatchObject([
+			{ ok: false, error: { code: "internal_error" } },
+			{ ok: false, error: { code: "internal_error" } },
+		]);
+		expect(host.openSessionCount).toBe(1);
+
+		await expect(first.attach(serverId, "session-1")).resolves.toMatchObject({ ok: true });
+		expect(host.openSessionCount).toBe(2);
+		expect(host.harnesses.get("session-1")).toHaveLength(1);
+	});
+
+	test("closes a Harness acquired while server shutdown is in progress", async () => {
+		const host = new TestServerHost();
+		await host.seed("session-1");
+		const server = createServer(host);
+		const client = connect(server);
+		await client.hello();
+		const gate = host.gateNextOpenSession();
+		const attach = client.attach(serverId, "session-1");
+		await gate.entered.promise;
+		const closing = server.close();
+		gate.release.resolve(undefined);
+
+		await closing;
+		await expect(attach).rejects.toThrow(/closed/i);
+		expect(host.latestHarness("session-1").closeCount).toBe(1);
+	});
+
+	test("fails shutdown when an in-flight acquisition cannot release its Harness", async () => {
+		const host = new TestServerHost();
+		await host.seed("session-1");
+		const cleanupError = new Error("close failed");
+		host.nextHarnessCloseError = cleanupError;
+		const server = createServer(host);
+		const client = connect(server);
+		await client.hello();
+		const gate = host.gateNextOpenSession();
+		const attach = client.attach(serverId, "session-1");
+		await gate.entered.promise;
+
+		const closing = server.close();
+		gate.release.resolve(undefined);
+
+		await expect(closing).rejects.toThrow(/Failed to close routed Sessions/);
+		await expect(server.closed).rejects.toThrow(/Failed to close routed Sessions/);
+		await expect(attach).rejects.toThrow(/closed/i);
+		expect(host.latestHarness("session-1").closeCount).toBe(1);
+
+		servers.delete(server);
+		await host.latestHarness("session-1").close(BACKGROUND_CONTEXT);
+	});
 });

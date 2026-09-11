@@ -111,6 +111,8 @@ interface AgentSession {
 }
 ```
 
+`session.navigateTree()` rejects while an agent response, manual or automatic compaction, or another tree navigation is active, even with `summarize: false`. It does not queue navigation or return `{ cancelled: true }` for these conflicts. Wait for the active operation to finish (for example, with `await session.waitForIdle()`) and retry. Rejection leaves the active branch unchanged.
+
 Session replacement APIs such as new-session, resume, fork, and import live on `AgentSessionRuntime`, not on `AgentSession`.
 
 ### createAgentSessionRuntime() and AgentSessionRuntime
@@ -786,6 +788,11 @@ if (modelFallbackMessage) {
 // Open specific file
 const { session: opened } = await createAgentSession({
   sessionManager: SessionManager.open("/path/to/session.jsonl"),
+});
+
+// Resume a session kept outside the filesystem, e.g. in a database
+const { session: restored } = await createAgentSession({
+  sessionManager: SessionManager.inMemory(process.cwd(), { id: sessionId }, entries),
 });
 
 // List sessions

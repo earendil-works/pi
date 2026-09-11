@@ -44,7 +44,7 @@ function response(content: AssistantMessage["content"]): AssistantMessage {
 }
 
 describe("branch summarization", () => {
-	it("disables tools for branch summaries", async () => {
+	it("does not override tool choice for branch summaries", async () => {
 		let requestOptions: SimpleStreamOptions | undefined;
 		const streamFn: StreamFn = (_model, _context, options) => {
 			requestOptions = options;
@@ -61,7 +61,28 @@ describe("branch summarization", () => {
 			streamFn,
 		});
 
-		expect(requestOptions?.toolChoice).toBe("none");
+		expect(requestOptions?.maxTokens).toBe(4096);
+		expect(requestOptions?.toolChoice).toBeUndefined();
+	});
+
+	it("clamps the branch summary output cap to the model limit", async () => {
+		let requestOptions: SimpleStreamOptions | undefined;
+		const streamFn: StreamFn = (_model, _context, options) => {
+			requestOptions = options;
+			const stream = createAssistantMessageEventStream();
+			queueMicrotask(() =>
+				stream.push({ type: "done", reason: "stop", message: response([{ type: "text", text: "summary" }]) }),
+			);
+			return stream;
+		};
+
+		await generateBranchSummary(entries, {
+			model: { ...model, maxTokens: 1024 },
+			signal: new AbortController().signal,
+			streamFn,
+		});
+
+		expect(requestOptions?.maxTokens).toBe(1024);
 	});
 
 	it("rejects tool calls from branch summaries", async () => {

@@ -1,6 +1,7 @@
-import type { ClientMessageDecoder } from "@earendil-works/pi-protocol";
+import type { ServiceStateEncoder } from "@earendil-works/chord";
+import type { ClientMessageDecoder, RpcTarget } from "@earendil-works/pi-protocol";
 
-import type { MaybePromise } from "./types.ts";
+import type { MaybePromise, RoutedServerServiceAttachment } from "./types.ts";
 
 /** An established, authorized ordered byte connection. */
 export interface ByteConnection {
@@ -20,15 +21,15 @@ export type ByteConnectionAcceptor = (connection: ByteConnection) => ByteConnect
 export type ConnectionStage = "awaitingHello" | "handshaking" | "ready" | "closing" | "closed";
 
 export interface ConnectionState {
-	id: string;
 	connection: ByteConnection;
 	decoder: ClientMessageDecoder;
-	sessionIds: Set<string>;
+	serviceStateEncoders: Map<string, ServiceStateEncoder>;
 	stage: ConnectionStage;
 	disconnected: boolean;
-	handshakeComplete: boolean;
 	handshake?: Promise<void>;
 	handshakeTimeout: NodeJS.Timeout;
+	serverServices?: RoutedServerServiceAttachment;
+	activeRequests: Map<string, { controller: AbortController; target: RpcTarget }>;
 }
 
 export function isTerminalConnection(state: ConnectionState): boolean {

@@ -79,7 +79,7 @@ export interface GenerateBranchSummaryOptions {
 	customInstructions?: string;
 	/** If true, customInstructions replaces the default prompt instead of being appended */
 	replaceInstructions?: boolean;
-	/** Tokens reserved for prompt + LLM response (default 16384) */
+	/** Tokens reserved when selecting branch history (default 16384) */
 	reserveTokens?: number;
 	/** Optional session stream function. Used to preserve SDK request behavior without mutating agent state. */
 	streamFn?: StreamFn;
@@ -342,12 +342,14 @@ export async function generateBranchSummary(
 		},
 	];
 
+	const maxTokens = Math.min(4096, model.maxTokens > 0 ? model.maxTokens : Number.POSITIVE_INFINITY);
+
 	// Call LLM for summarization. Prefer the session stream function so SDK
 	// request behavior (timeouts, retries, attribution headers) stays consistent
 	// without running through agent state/events. Retried via completeSummarization
 	// so transient stream drops reuse the configured retry policy.
 	const context = { systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, messages: summarizationMessages };
-	const requestOptions: SimpleStreamOptions = { apiKey, headers, env, signal, maxTokens: 2048 };
+	const requestOptions: SimpleStreamOptions = { apiKey, headers, env, signal, maxTokens };
 	const response = await completeSummarization(model, context, requestOptions, streamFn, retry, callbacks);
 
 	// Check if aborted or errored

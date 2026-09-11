@@ -564,7 +564,7 @@ async function consumeChatStream(
 	let currentBlock: TextContent | ThinkingContent | null = null;
 	const blocks = output.content;
 	const blockIndex = () => blocks.length - 1;
-	const toolBlocksByKey = new Map<string, number>();
+	const toolBlocksByKey = new Map<string | number, number>();
 
 	const finishCurrentBlock = (block?: typeof currentBlock) => {
 		if (!block) return;
@@ -693,7 +693,7 @@ async function consumeChatStream(
 				toolCall.id && toolCall.id !== "null"
 					? toolCall.id
 					: deriveMistralToolCallId(`toolcall:${toolCall.index ?? 0}`, 0);
-			const key = `${callId}:${toolCall.index || 0}`;
+			const key = toolCall.index ?? callId;
 			const existingIndex = toolBlocksByKey.get(key);
 			let block: (ToolCall & { partialArgs?: string }) | undefined;
 
@@ -891,7 +891,12 @@ function buildToolResultText(text: string, hasImages: boolean, supportsImages: b
 }
 
 function usesReasoningEffort(model: Model<"mistral-conversations">): boolean {
-	return model.id === "mistral-small-2603" || model.id === "mistral-small-latest" || model.id === "mistral-medium-3.5";
+	return (
+		model.id === "mistral-small-2603" ||
+		model.id === "mistral-small-latest" ||
+		model.id.startsWith("mistral-medium-") ||
+		model.id === "zai-glm-5-2"
+	);
 }
 
 function usesPromptModeReasoning(model: Model<"mistral-conversations">): boolean {

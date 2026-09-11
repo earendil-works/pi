@@ -497,7 +497,7 @@ describe("deferred tools", () => {
 			makeCodexToken(),
 		);
 		const toolSearch = await capturePayload<OpenAIPayload>(
-			getModel("openai-codex", "gpt-5.4"),
+			getModel("openai-codex", "gpt-5.5"),
 			context,
 			makeCodexToken(),
 		);

@@ -1,277 +1,267 @@
-import { type SessionMutation, SessionState } from "../state.ts";
-import {
-	type BranchBounds,
-	type Entry,
-	type EntryQuery,
-	type ForkOptions,
-	type LanePointer,
-	type LaneRecord,
-	type LogItem,
-	type LogOptions,
-	type NewRecord,
-	type OperationStartedRecord,
-	type ProvisionedEntry,
-	type RecordQuery,
-	SessionError,
-	type SessionStats,
-	type SessionStorage,
+import { uuidv7 } from "@earendil-works/pi-ai/utils/uuid";
+import type { Context } from "../../context.ts";
+import type { FileSystem } from "../../types.ts";
+import { insertUsage } from "../commit.ts";
+import { type CommittedWrite, InMemoryStorageState } from "../in-memory-storage-state.ts";
+import type {
+	CommitResult,
+	Entry,
+	EntryScan,
+	EntryStructure,
+	SessionStats,
+	Storage,
+	StorageBranchScan,
+	UsageRow,
+	UsageScan,
+	Write,
 } from "../types.ts";
-import { encodeHeader, encodeMutation, metadataFromHeader, parseHeader, parseMutation } from "./codec.ts";
-import { fileResult, invalidFile, JsonlDecodeError } from "./errors.ts";
-import type { JsonlSessionMetadata, JsonlSessionRepoFileSystem, JsonlV4Header } from "./types.ts";
+import type { ListElement, ListReadOptions, StoredValue, Value, ValueList } from "../values.ts";
+import {
+	fileValue,
+	parseJsonlTransaction,
+	publishFileAtomically,
+	publishJsonl,
+	readJsonlHeader,
+	serializeJsonlTransaction,
+} from "./io.ts";
+import { LegacyV3Source } from "./legacy-v3.ts";
+import { JSONL_STORAGE_VERSION, type JsonlStorageHeader, type JsonlStorageOptions } from "./types.ts";
 
-/**
- * Build a complete sibling temporary file, then atomically rename it over the destination.
- * The populate callback must create or overwrite `tempPath` with the complete file. The
- * destination is untouched until the rename commits, so a process crash while populating
- * can leave only the ignored `.tmp` file behind.
- *
- * Rejects when population or rename fails. On rejection, temporary-file removal is
- * best-effort and the original error is preserved. Callers must serialize publications to
- * the same destination because they share its deterministic `.tmp` path.
- */
-async function publishFileAtomically(
-	fs: JsonlSessionRepoFileSystem,
-	destinationPath: string,
-	populate: (tempPath: string) => Promise<void>,
-): Promise<void> {
-	const tempPath = `${destinationPath}.tmp`;
-	try {
-		await populate(tempPath);
-		fileResult(await fs.renameFile(tempPath, destinationPath), `Failed to publish staged file ${destinationPath}`);
-	} catch (error) {
-		await fs.remove(tempPath, { force: true });
-		throw error;
-	}
+function splitCompleteLines(content: string): { lines: string[]; torn: boolean } {
+	if (content.endsWith("\n")) return { lines: content.slice(0, -1).split("\n"), torn: false };
+	const lastNewline = content.lastIndexOf("\n");
+	if (lastNewline === -1) return { lines: [], torn: true };
+	return { lines: content.slice(0, lastNewline).split("\n"), torn: true };
 }
 
-export class JsonlSessionStorage implements SessionStorage<JsonlSessionMetadata> {
-	private readonly fs: JsonlSessionRepoFileSystem;
-	private readonly metadata: JsonlSessionMetadata;
-	private readonly state = new SessionState();
-	private tail: Promise<void> = Promise.resolve();
+type JsonlBacking = { kind: "v4" } | { kind: "v3"; source: LegacyV3Source };
 
-	constructor(fs: JsonlSessionRepoFileSystem, metadata: JsonlSessionMetadata) {
-		this.fs = fs;
-		this.metadata = structuredClone(metadata);
+/** JSONL storage backed by an injected filesystem capability. */
+export class JsonlStorage implements Storage {
+	private readonly fileSystem: FileSystem;
+	private readonly path: string;
+	private readonly now: () => number;
+	readonly header: JsonlStorageHeader;
+	private backing: JsonlBacking;
+	private readonly storageState = new InMemoryStorageState();
+	private commitQueue: Promise<void> = Promise.resolve();
+	private state: "open" | "closing" | "closed" = "open";
+	private closePromise: Promise<void> | undefined;
+
+	private constructor(options: JsonlStorageOptions, header: JsonlStorageHeader, backing: JsonlBacking) {
+		this.fileSystem = options.fileSystem;
+		this.path = options.path;
+		this.now = options.now ?? Date.now;
+		this.header = header;
+		this.backing = backing;
 	}
 
 	static async create(
-		fs: JsonlSessionRepoFileSystem,
-		path: string,
-		header: JsonlV4Header,
-	): Promise<JsonlSessionStorage> {
-		fileResult(await fs.writeFile(path, encodeHeader(header)), `Failed to initialize session ${path}`);
-		const fileInfo = fileResult(await fs.fileInfo(path), `Failed to read session metadata ${path}`);
-		return new JsonlSessionStorage(fs, metadataFromHeader(header, path, fileInfo.mtimeMs));
+		options: JsonlStorageOptions,
+		header: JsonlStorageHeader,
+		initialWrites: Write[],
+		context: Context,
+	): Promise<JsonlStorage> {
+		const storage = new JsonlStorage(options, header, { kind: "v4" });
+		const prepared = storage.storageState.prepareCommit(initialWrites, storage.now());
+		await publishJsonl(options.fileSystem, options.path, header, context, async (append) => {
+			if (prepared.writes.length !== 0) await append(prepared.writes);
+		});
+		storage.storageState.applyValidated(prepared.writes);
+		return storage;
 	}
 
-	static async load(fs: JsonlSessionRepoFileSystem, path: string): Promise<JsonlSessionStorage> {
-		const content = fileResult(await fs.readTextFile(path), `Failed to read session ${path}`);
-		const physicalLines = content.split("\n");
-		if (physicalLines.at(-1) === "") physicalLines.pop();
-		if (physicalLines.length === 0 || !physicalLines[0]) {
-			throw invalidFile(path, 1, new JsonlDecodeError("schema", "is missing a header"));
+	static async open(options: JsonlStorageOptions, context: Context): Promise<JsonlStorage> {
+		const reader = fileValue(
+			await options.fileSystem.openTextLineReader(options.path, context),
+			`Failed to read JSONL storage ${options.path}`,
+		);
+		const parsed = await readJsonlHeader(reader, options.path, context).finally(() => reader.close(context));
+		return parsed.format === "v3-legacy"
+			? JsonlStorage.openLegacyV3(options, context)
+			: JsonlStorage.openV4(options, parsed.header, context);
+	}
+
+	private static async openV4(
+		options: JsonlStorageOptions,
+		header: JsonlStorageHeader,
+		context: Context,
+	): Promise<JsonlStorage> {
+		const content = fileValue(
+			await options.fileSystem.readTextFile(options.path, context),
+			`Failed to read JSONL storage ${options.path}`,
+		);
+		const { lines, torn } = splitCompleteLines(content);
+		if (header.storageVersion !== JSONL_STORAGE_VERSION) {
+			throw new Error(`Session ${header.id} uses unsupported storage version ${header.storageVersion}`);
 		}
-		const headerResult = parseHeader(physicalLines[0]);
-		if (!headerResult.ok) throw invalidFile(path, 1, headerResult.error);
-		const fileInfo = fileResult(await fs.fileInfo(path), `Failed to read session metadata ${path}`);
-		const storage = new JsonlSessionStorage(fs, metadataFromHeader(headerResult.value, path, fileInfo.mtimeMs));
-		for (let index = 1; index < physicalLines.length; index++) {
-			const line = physicalLines[index]!;
-			const mutationResult = parseMutation(line);
-			if (!mutationResult.ok) {
-				const isTornTail = index === physicalLines.length - 1 && mutationResult.error.kind === "syntax";
-				if (isTornTail) {
-					// Drop the unacknowledged partial append by atomically publishing the valid prefix.
-					const validPrefix = `${physicalLines.slice(0, index).join("\n")}\n`;
-					await publishFileAtomically(fs, path, async (tempPath) => {
-						fileResult(await fs.writeFile(tempPath, validPrefix), `Failed to stage torn-tail repair ${path}`);
-					});
-					return storage;
-				}
-				throw invalidFile(path, index + 1, mutationResult.error);
-			}
+		const storage = new JsonlStorage(options, header, { kind: "v4" });
+		for (let index = 1; index < lines.length; index++) {
+			const line = lines[index]!;
 			try {
-				storage.applyMutation(mutationResult.value);
+				storage.replayCommitted(parseJsonlTransaction(line));
 			} catch (error) {
-				if (error instanceof SessionError && error.code === "invalid_entry") {
-					throw invalidFile(path, index + 1, error);
-				}
-				throw error;
+				throw new Error(`Invalid JSONL storage ${options.path}: line ${index + 1}`, { cause: error });
 			}
 		}
-		if (!content.endsWith("\n")) {
-			fileResult(await fs.appendFile(path, "\n"), `Failed to repair unterminated session tail ${path}`);
+		if (header.nextSeq !== undefined) storage.storageState.advanceNextSeq(header.nextSeq);
+		if (torn) {
+			await publishFileAtomically(options.fileSystem, options.path, context, (append) =>
+				append(`${lines.join("\n")}\n`),
+			);
 		}
 		return storage;
 	}
 
-	async fork(path: string, header: JsonlV4Header, options: ForkOptions): Promise<JsonlSessionStorage> {
-		const mutations = this.state.createForkMutations(options);
-		await publishFileAtomically(this.fs, path, async (tempPath) => {
-			const targetStorage = await JsonlSessionStorage.create(this.fs, tempPath, header);
-			for (const mutation of mutations) {
-				await targetStorage.appendMutation(mutation);
-				targetStorage.applyMutation(mutation);
-			}
-		});
-		return JsonlSessionStorage.load(this.fs, path);
+	private static async openLegacyV3(options: JsonlStorageOptions, context: Context): Promise<JsonlStorage> {
+		const source = await LegacyV3Source.read(options.fileSystem, options.path, context);
+		const storage = new JsonlStorage(options, { ...source.header, nextSeq: source.nextSeq }, { kind: "v3", source });
+		for await (const write of source.writes(context)) storage.replayCommitted([write]);
+		return storage;
 	}
 
-	async drain(): Promise<void> {
-		await this.tail;
+	private replayCommitted(writes: readonly CommittedWrite[]): void {
+		this.storageState.validateCommitted(writes);
+		this.storageState.applyValidated(writes);
 	}
 
-	async getMetadata(): Promise<JsonlSessionMetadata> {
-		return structuredClone(this.metadata);
-	}
-
-	async getLanes(): Promise<LanePointer[]> {
-		return this.state.getLanes();
-	}
-
-	createLane(lane: string, at: string | null): Promise<void> {
-		return this.enqueue(async () => {
-			this.state.validateNewLane(lane);
-			this.state.validateTarget(at);
-			const mutation: SessionMutation = { kind: "lane", seq: this.state.nextSequence, lane, leafId: at };
-			await this.appendMutation(mutation);
-			this.applyMutation(mutation);
-		});
-	}
-
-	moveLane(lane: string, to: string | null): Promise<void> {
-		return this.enqueue(async () => {
-			this.state.requireLane(lane);
-			this.state.validateTarget(to);
-			const mutation: SessionMutation = { kind: "lane", seq: this.state.nextSequence, lane, leafId: to };
-			await this.appendMutation(mutation);
-			this.applyMutation(mutation);
-		});
-	}
-
-	appendEntry<TEntry extends Entry>(newEntry: ProvisionedEntry<TEntry>, lane: string): Promise<TEntry> {
-		return this.enqueue(async () => {
-			const parentId = this.state.requireLane(lane);
-			this.state.validateUnusedId(newEntry.id);
-			const entry = {
-				...structuredClone(newEntry),
-				parentId,
-				seq: this.state.nextSequence,
-				timestamp: Date.now(),
-			} as unknown as TEntry;
-			const mutation: SessionMutation = { kind: "entry", lane, entry };
-			await this.appendMutation(mutation);
-			this.applyMutation(mutation);
-			return structuredClone(entry);
-		});
-	}
-
-	appendRecord<TRecord extends LaneRecord>(newRecord: NewRecord<TRecord>): Promise<TRecord> {
-		return this.enqueue(async () => {
-			this.state.requireLane(newRecord.lane);
-			this.state.validateUnusedId(newRecord.id);
-			const currentOpenOperationId = this.state.findOpenOperations(newRecord.lane, { limit: 1 })[0]?.id;
-			if (newRecord.type === "operation_started" && currentOpenOperationId !== undefined) {
-				throw new SessionError(
-					"storage",
-					`Lane ${newRecord.lane} already has an open operation ${currentOpenOperationId}`,
-				);
-			}
-			const record = {
-				...structuredClone(newRecord),
-				seq: this.state.nextSequence,
-				timestamp: Date.now(),
-			} as unknown as TRecord;
-			const mutation: SessionMutation = { kind: "record", record };
-			await this.appendMutation(mutation);
-			this.applyMutation(mutation);
-			return structuredClone(record);
-		});
-	}
-
-	async getEntry(id: string): Promise<Entry | undefined> {
-		const entry = this.state.getEntry(id);
-		return entry === undefined ? undefined : structuredClone(entry);
-	}
-
-	async findEntries(query: EntryQuery = {}): Promise<Entry[]> {
-		return structuredClone(this.state.findEntries(query));
-	}
-
-	async findEntriesOnBranch(query: EntryQuery & BranchBounds & { start: string }): Promise<Entry[]> {
-		return structuredClone(this.state.findEntriesOnBranch(query));
-	}
-
-	async findRecords<K extends LaneRecord["type"]>(
-		query: RecordQuery & { type: K },
-	): Promise<Extract<LaneRecord, { type: K }>[]>;
-	async findRecords(query?: RecordQuery): Promise<LaneRecord[]>;
-	async findRecords(query: RecordQuery = {}): Promise<LaneRecord[]> {
-		return structuredClone(this.state.findRecords(query));
-	}
-
-	async findOpenOperations(lane: string, options?: { limit?: number }): Promise<OperationStartedRecord[]> {
-		return structuredClone(this.state.findOpenOperations(lane, options));
-	}
-
-	async getLog(options: LogOptions = {}): Promise<LogItem[]> {
-		return structuredClone(this.state.getLog(options));
-	}
-
-	async getName(): Promise<string | undefined> {
-		return this.state.getName();
-	}
-
-	setName(name: string | undefined): Promise<void> {
-		return this.enqueue(async () => {
-			const mutation: SessionMutation = { kind: "fact", seq: this.state.nextSequence, fact: "name", name };
-			await this.appendMutation(mutation);
-			this.applyMutation(mutation);
-		});
-	}
-
-	async getLabel(id: string): Promise<string | undefined> {
-		return this.state.getLabel(id);
-	}
-
-	setLabel(id: string, label: string | undefined): Promise<void> {
-		return this.enqueue(async () => {
-			this.state.validateTarget(id);
-			const mutation: SessionMutation = {
-				kind: "fact",
-				seq: this.state.nextSequence,
-				fact: "label",
-				targetId: id,
-				label,
-			};
-			await this.appendMutation(mutation);
-			this.applyMutation(mutation);
-		});
-	}
-
-	async getStats(): Promise<SessionStats> {
-		return structuredClone(this.state.getStats());
-	}
-
-	private enqueue<T>(operation: () => Promise<T>): Promise<T> {
-		const result = this.tail.then(operation);
-		this.tail = result.then(
+	async commit(writes: Write[], context: Context): Promise<CommitResult> {
+		if (this.state !== "open") throw new Error("JsonlStorage is closed");
+		const result = this.commitQueue.then(() => this.applyCommit(writes, context));
+		this.commitQueue = result.then(
 			() => undefined,
 			() => undefined,
 		);
 		return result;
 	}
 
-	private async appendMutation(mutation: SessionMutation): Promise<void> {
-		fileResult(
-			await this.fs.appendFile(this.metadata.path, encodeMutation(mutation)),
-			`Failed to append session ${this.metadata.path}`,
-		);
+	private async applyCommit(writes: Write[], context: Context): Promise<CommitResult> {
+		if (this.backing.kind === "v3" && writes.length !== 0) {
+			return this.upgradeLegacyV3ToV4(this.backing.source, writes, context);
+		}
+		const prepared = this.storageState.prepareCommit(writes, this.now());
+		if (prepared.writes.length !== 0) {
+			fileValue(
+				await this.fileSystem.appendFile(this.path, `${serializeJsonlTransaction(prepared.writes)}\n`, context),
+				`Failed to append JSONL storage ${this.path}`,
+			);
+		}
+		const stats = this.storageState.applyValidated(prepared.writes);
+		return { ...prepared.result, stats: this.withImportedUsage(stats) };
 	}
 
-	private applyMutation(mutation: SessionMutation): void {
-		this.state.applyMutation(mutation);
+	/** Atomically upgrade legacy v3 backing and preserve the first caller write as a v4 transaction. */
+	private async upgradeLegacyV3ToV4(
+		source: LegacyV3Source,
+		callerWrites: Write[],
+		context: Context,
+	): Promise<CommitResult> {
+		const timestamp = this.now();
+		const prepared = this.storageState.prepareCommit(
+			[
+				insertUsage({
+					id: uuidv7(timestamp),
+					usage: source.importedUsage,
+					adjustment: true,
+					details: { source: "v3-import" },
+				}),
+				...callerWrites,
+			],
+			timestamp,
+		);
+
+		const nextSeq = prepared.result.firstSeq + prepared.writes.length;
+		const upgradedHeader = { ...this.header, nextSeq };
+		await publishJsonl(this.fileSystem, this.path, upgradedHeader, context, async (append) => {
+			for await (const write of source.writes(context)) await append([write]);
+			await append(prepared.writes);
+		});
+
+		const stats = this.storageState.applyValidated(prepared.writes);
+		this.backing = { kind: "v4" };
+		// The first sequence belongs to the internal usage adjustment; return only caller-write sequences.
+		return {
+			...prepared.result,
+			firstSeq: prepared.result.firstSeq + 1,
+			seqs: prepared.result.seqs.slice(1),
+			stats,
+		};
+	}
+
+	getEntries(ids: string[], _context: Context): Promise<Map<string, Entry>> {
+		if (this.state !== "open") return Promise.reject(new Error("JsonlStorage is closed"));
+		return Promise.resolve(this.storageState.getEntries(ids));
+	}
+
+	getValue<T>(address: Value<T>, _context: Context): Promise<StoredValue<T> | undefined> {
+		if (this.state !== "open") return Promise.reject(new Error("JsonlStorage is closed"));
+		return Promise.resolve(this.storageState.getValue(address));
+	}
+
+	scanValues<T>(prefix: Value<T>, _context: Context): Promise<StoredValue<T>[]> {
+		if (this.state !== "open") return Promise.reject(new Error("JsonlStorage is closed"));
+		return Promise.resolve(this.storageState.scanValues(prefix));
+	}
+
+	async readList<T>(
+		address: ValueList<T>,
+		options: ListReadOptions | undefined,
+		_context: Context,
+	): Promise<ListElement<T>[]> {
+		if (this.state !== "open") throw new Error("JsonlStorage is closed");
+		return this.storageState.readList(address, options);
+	}
+
+	async scanBranch(query: StorageBranchScan, _context: Context): Promise<Entry[]> {
+		if (this.state !== "open") throw new Error("JsonlStorage is closed");
+		return this.storageState.scanBranch(query);
+	}
+
+	async scanBranchStructure(query: StorageBranchScan, _context: Context): Promise<EntryStructure[]> {
+		if (this.state !== "open") throw new Error("JsonlStorage is closed");
+		return this.storageState.scanBranchStructure(query);
+	}
+
+	scanEntries(query: EntryScan, _context: Context): Promise<Entry[]> {
+		if (this.state !== "open") return Promise.reject(new Error("JsonlStorage is closed"));
+		return Promise.resolve(this.storageState.scanEntries(query));
+	}
+
+	scanUsage(query: UsageScan, _context: Context): Promise<UsageRow[]> {
+		if (this.state !== "open") return Promise.reject(new Error("JsonlStorage is closed"));
+		return Promise.resolve(this.storageState.scanUsage(query));
+	}
+
+	getStats(_context: Context): Promise<SessionStats> {
+		if (this.state !== "open") return Promise.reject(new Error("JsonlStorage is closed"));
+		return Promise.resolve(this.withImportedUsage(this.storageState.getStats()));
+	}
+
+	private withImportedUsage(stats: SessionStats): SessionStats {
+		return this.backing.kind === "v4" ? stats : { ...stats, usage: this.backing.source.importedUsage };
+	}
+
+	isLegacyV3(): boolean {
+		return this.backing.kind === "v3";
+	}
+
+	/** Capture the first sequence a later source commit would use. */
+	captureForkNextSeq(_context: Context): Promise<number> {
+		if (this.state !== "open") return Promise.reject(new Error("JsonlStorage is closed"));
+		const result = this.commitQueue.then(() => this.storageState.getNextSeq());
+		this.commitQueue = result.then(
+			() => undefined,
+			() => undefined,
+		);
+		return result;
+	}
+
+	close(_context: Context): Promise<void> {
+		if (this.closePromise !== undefined) return this.closePromise;
+		this.state = "closing";
+		this.closePromise = this.commitQueue.then(() => {
+			this.state = "closed";
+		});
+		return this.closePromise;
 	}
 }

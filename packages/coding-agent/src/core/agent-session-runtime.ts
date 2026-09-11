@@ -1,5 +1,5 @@
-import { copyFileSync, existsSync, mkdirSync } from "node:fs";
-import { basename, join, resolve } from "node:path";
+import { constants, copyFileSync, existsSync, mkdirSync } from "node:fs";
+import { basename, join, parse, resolve } from "node:path";
 import { resolvePath } from "../utils/paths.ts";
 import type { AgentSession } from "./agent-session.ts";
 import type { AgentSessionRuntimeDiagnostic, AgentSessionServices } from "./agent-session-services.ts";
@@ -333,12 +333,12 @@ export class AgentSessionRuntime {
 		}
 
 		const sessionManager = this.session.sessionManager;
+		await this.teardownCurrent("fork", sessionManager.getSessionFile());
 		if (!targetLeafId) {
-			sessionManager.newSession({ parentSession: this.session.sessionFile });
+			sessionManager.newSession({ parentSession: previousSessionFile });
 		} else {
 			sessionManager.createBranchedSession(targetLeafId);
 		}
-		await this.teardownCurrent("fork", sessionManager.getSessionFile());
 		this.apply(
 			await this.createRuntime({
 				cwd: this.cwd,
@@ -369,15 +369,23 @@ export class AgentSessionRuntime {
 			mkdirSync(sessionDir, { recursive: true });
 		}
 
-		const destinationPath = join(sessionDir, basename(resolvedPath));
+		let destinationPath = join(sessionDir, basename(resolvedPath));
+		const sourceAlreadyStored = resolve(destinationPath) === resolvedPath;
+		if (!sourceAlreadyStored) {
+			const { name, ext } = parse(destinationPath);
+			let suffix = 1;
+			while (existsSync(destinationPath)) {
+				destinationPath = join(sessionDir, `${name}-${suffix++}${ext}`);
+			}
+		}
 		const beforeResult = await this.emitBeforeSwitch("resume", destinationPath);
 		if (beforeResult.cancelled) {
 			return beforeResult;
 		}
 
 		const previousSessionFile = this.session.sessionFile;
-		if (resolve(destinationPath) !== resolvedPath) {
-			copyFileSync(resolvedPath, destinationPath);
+		if (!sourceAlreadyStored) {
+			copyFileSync(resolvedPath, destinationPath, constants.COPYFILE_EXCL);
 		}
 
 		const sessionManager = SessionManager.open(destinationPath, sessionDir, cwdOverride);

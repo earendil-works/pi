@@ -1,53 +1,18 @@
 import type { AgentMessage } from "../../types.ts";
+import type { Context } from "../context.ts";
 import { createBranchSummaryMessage, createCompactionSummaryMessage } from "../messages.ts";
-import type { CompactionEntry, CustomEntry, Entry } from "./types.ts";
-
-export interface SessionContext {
-	messages: AgentMessage[];
-	thinkingLevel: string;
-	model: { provider: string; modelId: string } | null;
-	activeToolNames: string[] | null;
-}
-
-export type ContextEntryTransform = (entries: readonly Entry[]) => readonly Entry[];
-
-export type CustomEntryContextMessageProjector = (
-	entry: CustomEntry,
-	index: number,
-	entries: readonly Entry[],
-) => readonly AgentMessage[] | undefined;
+import type { CompactionEntry, Entry, EntryProjector } from "./types.ts";
 
 export interface SessionContextBuildOptions {
-	entryTransforms?: readonly ContextEntryTransform[];
-	entryProjectors?: Readonly<Record<string, CustomEntryContextMessageProjector>>;
+	entryProjectors?: Readonly<Record<string, EntryProjector>>;
 }
 
-function deriveSessionContextState(pathEntries: readonly Entry[]): Omit<SessionContext, "messages"> {
-	let thinkingLevel = "off";
-	let model: { provider: string; modelId: string } | null = null;
-	let activeToolNames: string[] | null = null;
-
-	for (const entry of pathEntries) {
-		if (entry.type === "thinking_level_change") {
-			thinkingLevel = entry.thinkingLevel;
-		} else if (entry.type === "model_change") {
-			model = { provider: entry.provider, modelId: entry.modelId };
-		} else if (entry.type === "message" && entry.message.role === "assistant") {
-			model = { provider: entry.message.provider, modelId: entry.message.model };
-		} else if (entry.type === "active_tools_change") {
-			activeToolNames = [...entry.activeToolNames];
-		}
-	}
-
-	return { thinkingLevel, model, activeToolNames };
-}
-
-export function defaultContextEntryTransform(pathEntries: readonly Entry[]): Entry[] {
+export function buildContextEntries(pathEntries: readonly Entry[]): Entry[] {
 	let compaction: CompactionEntry | undefined;
 	let compactionIndex = -1;
 	for (let index = pathEntries.length - 1; index >= 0; index--) {
-		const entry = pathEntries[index]!;
-		if (entry.type === "compaction") {
+		const entry = pathEntries[index];
+		if (entry?.type === "compaction") {
 			compaction = entry;
 			compactionIndex = index;
 			break;
@@ -56,45 +21,44 @@ export function defaultContextEntryTransform(pathEntries: readonly Entry[]): Ent
 	return compaction === undefined ? [...pathEntries] : [compaction, ...pathEntries.slice(compactionIndex + 1)];
 }
 
-export function buildContextEntries(pathEntries: readonly Entry[], options: SessionContextBuildOptions = {}): Entry[] {
-	let entries = defaultContextEntryTransform(pathEntries);
-	for (const transform of options.entryTransforms ?? []) entries = [...transform(entries)];
-	return entries;
-}
-
-export function sessionEntryToContextMessages(
-	entry: Entry,
-	index: number,
-	entries: readonly Entry[],
-	options: SessionContextBuildOptions = {},
-): AgentMessage[] {
-	if (entry.type === "message") {
-		if (entry.message.role === "assistant" && entry.message.stopReason === "deferred") return [];
-		return [entry.message];
-	}
-	if (entry.type === "compaction") {
-		return [
-			createCompactionSummaryMessage(entry.summary, entry.tokensBefore, entry.timestamp),
-			...entry.retainedTail,
-		];
-	}
-	if (entry.type === "branch_summary" && entry.summary) {
-		return [createBranchSummaryMessage(entry.summary, entry.fromId, entry.timestamp)];
-	}
-	if (entry.type === "custom") {
-		return [...(options.entryProjectors?.[entry.customType]?.(entry, index, entries) ?? [])];
-	}
-	return [];
-}
-
-export function buildSessionContext(
-	pathEntries: readonly Entry[],
-	options: SessionContextBuildOptions = {},
-): SessionContext {
-	const state = deriveSessionContextState(pathEntries);
-	const contextEntries = buildContextEntries(pathEntries, options);
-	const messages = contextEntries.flatMap((entry, index) =>
-		sessionEntryToContextMessages(entry, index, contextEntries, options),
+function isContextMessage(message: AgentMessage): boolean {
+	return (
+		message.role !== "assistant" ||
+		(message.stopReason !== "error" && message.stopReason !== "aborted" && message.stopReason !== "deferred")
 	);
-	return { ...state, messages };
+}
+
+export function sessionEntryToContextMessages(entry: Entry): AgentMessage[] {
+	switch (entry.type) {
+		case "message":
+			return isContextMessage(entry.message) ? [entry.message] : [];
+		case "compaction":
+			return [
+				createCompactionSummaryMessage(entry.summary, entry.tokensBefore, entry.timestamp),
+				...entry.retainedTail.filter(isContextMessage),
+			];
+		case "branch_summary":
+			return entry.summary ? [createBranchSummaryMessage(entry.summary, entry.fromId, entry.timestamp)] : [];
+		case "custom":
+			return [];
+	}
+}
+
+export async function buildSessionContext(
+	pathEntries: readonly Entry[],
+	options: SessionContextBuildOptions | undefined,
+	context: Context,
+): Promise<AgentMessage[]> {
+	options ??= {};
+	const entries = buildContextEntries(pathEntries);
+	const messages: AgentMessage[] = [];
+	for (const entry of entries) {
+		if (entry.type !== "custom") {
+			messages.push(...sessionEntryToContextMessages(entry));
+			continue;
+		}
+		const projector = options.entryProjectors?.[entry.customType];
+		if (projector !== undefined) messages.push(...((await projector(entry, context)) ?? []));
+	}
+	return messages;
 }

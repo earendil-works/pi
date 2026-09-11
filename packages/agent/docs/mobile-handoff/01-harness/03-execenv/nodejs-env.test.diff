@@ -1,0 +1,149 @@
+diff --git a/packages/agent/test/harness/nodejs-env.test.ts b/packages/agent/test/harness/nodejs-env.test.ts
+index 361040495..ee28ef506 100644
+--- a/packages/agent/test/harness/nodejs-env.test.ts
++++ b/packages/agent/test/harness/nodejs-env.test.ts
+@@ -8,7 +8,6 @@ import { afterEach, describe, expect, it } from "vitest";
+ import { BACKGROUND_CONTEXT, withAbortSignal } from "../../src/harness/context.ts";
+ import { NodeExecutionEnv } from "../../src/harness/env/nodejs.ts";
+ import { FileError, getOrThrow } from "../../src/harness/types.ts";
+-import { executeShellWithCapture } from "../../src/harness/utils/shell-output.ts";
+ import { createTempDir } from "./session-test-utils.ts";
+ 
+ const chmodRestorePaths: string[] = [];
+@@ -303,7 +302,8 @@ describe("NodeExecutionEnv", () => {
+ 				BACKGROUND_CONTEXT,
+ 			),
+ 		);
+-		expect(result).toEqual({ stdout: `${await realpath(root)}:ok`, stderr: "", exitCode: 0 });
++		expect(result.output.text).toContain(`${await realpath(root)}:ok`.trim());
++		expect(result.exitCode).toBe(0);
+ 	});
+ 
+ 	it.each([
+@@ -334,7 +334,7 @@ describe("NodeExecutionEnv", () => {
+ 				),
+ 			);
+ 
+-			expect(result.stdout).toBe(`${expectedSessionFile}|true|preserved`);
++			expect(result.output.text).toBe(`${expectedSessionFile}|true|preserved`);
+ 		},
+ 	);
+ 
+@@ -358,7 +358,7 @@ describe("NodeExecutionEnv", () => {
+ 				),
+ 			);
+ 
+-			expect(result.stdout).toBe("::explicit");
++			expect(result.output.text).toBe("::explicit");
+ 		} finally {
+ 			if (previousInherited === undefined) delete process.env[inheritedKey];
+ 			else process.env[inheritedKey] = previousInherited;
+@@ -396,7 +396,9 @@ describe("NodeExecutionEnv", () => {
+ 				await wslEnv.exec(`name='World'; echo "Hello, ${nameExpansion}!"`, undefined, BACKGROUND_CONTEXT),
+ 			);
+ 
+-			expect(result).toEqual({ stdout: "Hello, World!\n", stderr: "args:-s\n", exitCode: 0 });
++			expect(result.output.text).toContain("Hello, World!");
++			expect(result.output.text).toContain("args:-s");
++			expect(result.exitCode).toBe(0);
+ 		} finally {
+ 			process.chdir(originalCwd);
+ 			process.env.PATH = originalPath;
+@@ -425,7 +427,7 @@ describe("NodeExecutionEnv", () => {
+ 						() => controller.abort(),
+ 					),
+ 				);
+-				expect(result.stdout).toContain("child-exiting");
++				expect(result.output.text).toContain("child-exiting");
+ 			} finally {
+ 				controller.abort();
+ 				cleanupDetachedChild(pidFile);
+@@ -448,25 +450,30 @@ describe("NodeExecutionEnv", () => {
+ 	it("streams stdout and stderr chunks", async () => {
+ 		const root = createTempDir();
+ 		const env = new NodeExecutionEnv({ cwd: root });
+-		let stdout = "";
+-		let stderr = "";
++		// Streams are aggregated in arrival order now; `chunk` carries `stream` so a
++		// renderer can still colour stderr (`executionenv.md` §6).
++		let seen = "";
++		const streams: string[] = [];
+ 		const result = getOrThrow(
+ 			await env.exec(
+ 				"printf out; printf err >&2",
+ 				{
+-					onStdout: (chunk) => {
+-						stdout += chunk;
+-					},
+-					onStderr: (chunk) => {
+-						stderr += chunk;
++					onUpdate: (update) => {
++						if (update.kind !== "chunk") return;
++						seen += update.text;
++						streams.push(update.stream);
+ 					},
+ 				},
+ 				BACKGROUND_CONTEXT,
+ 			),
+ 		);
+-		expect(result).toEqual({ stdout: "out", stderr: "err", exitCode: 0 });
+-		expect(stdout).toBe("out");
+-		expect(stderr).toBe("err");
++		expect(result.exitCode).toBe(0);
++		expect(result.output.text).toContain("out");
++		expect(result.output.text).toContain("err");
++		expect(seen).toContain("out");
++		expect(seen).toContain("err");
++		expect(streams).toContain("stdout");
++		expect(streams).toContain("stderr");
+ 	});
+ 
+ 	it("reports a missing working directory before spawning", async () => {
+@@ -484,7 +491,8 @@ describe("NodeExecutionEnv", () => {
+ 		const root = createTempDir();
+ 		const env = new NodeExecutionEnv({ cwd: root });
+ 		const result = getOrThrow(await env.exec("exit 7", undefined, BACKGROUND_CONTEXT));
+-		expect(result).toEqual({ stdout: "", stderr: "", exitCode: 7 });
++		expect(result.output.text).toContain("".trim());
++		expect(result.exitCode).toBe(7);
+ 	});
+ 
+ 	it("returns timeout errors for commands exceeding the timeout", async () => {
+@@ -501,7 +509,7 @@ describe("NodeExecutionEnv", () => {
+ 		const result = await env.exec(
+ 			"printf out",
+ 			{
+-				onStdout: () => {
++				onUpdate: () => {
+ 					throw new Error("callback failed");
+ 				},
+ 			},
+@@ -542,12 +550,23 @@ describe("NodeExecutionEnv", () => {
+ 		const root = createTempDir();
+ 		const env = new NodeExecutionEnv({ cwd: root });
+ 		const result = getOrThrow(
+-			await executeShellWithCapture(env, "yes line | head -n 15000", undefined, BACKGROUND_CONTEXT),
++			await env.exec(
++				"yes line | head -n 15000",
++				{
++					capture: {
++						limits: { maxBytes: 50 * 1024, maxLines: 2000, retain: "tail" },
++						spill: true,
++					},
++				},
++				BACKGROUND_CONTEXT,
++			),
+ 		);
+-		expect(result.truncated).toBe(true);
+-		expect(result.fullOutputPath).toBeDefined();
+-		const fullOutput = getOrThrow(await env.readTextFile(result.fullOutputPath!, BACKGROUND_CONTEXT));
++		expect(result.output.truncation.truncated).toBe(true);
++		// The spill lives inside the exec env, on the machine the command ran on —
++		// which is where the model's own read and grep run (`executionenv.md` §1).
++		expect(result.output.spillPath).toBeDefined();
++		const fullOutput = getOrThrow(await env.readTextFile(result.output.spillPath!, BACKGROUND_CONTEXT));
+ 		expect(fullOutput.split("\n").length).toBeGreaterThan(10000);
+-		expect(result.output.length).toBeLessThan(fullOutput.length);
++		expect(result.output.text.length).toBeLessThan(fullOutput.length);
+ 	});
+ });

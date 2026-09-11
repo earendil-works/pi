@@ -48,12 +48,14 @@ export type ProxyAssistantMessageEvent =
 			type: "done";
 			reason: Extract<StopReason, "stop" | "length" | "toolUse">;
 			usage: AssistantMessage["usage"];
+			providerThinkingLevel?: string;
 	  }
 	| {
 			type: "error";
 			reason: Extract<StopReason, "aborted" | "error">;
 			errorMessage?: string;
 			usage: AssistantMessage["usage"];
+			providerThinkingLevel?: string;
 	  };
 
 type ProxySerializableStreamOptions = Pick<
@@ -181,6 +183,19 @@ export function streamProxy(model: Model<any>, context: Context, options: ProxyS
 			reader = response.body!.getReader();
 			const decoder = new TextDecoder();
 			let buffer = "";
+			let sawTerminalEvent = false;
+
+			const processLine = (line: string): void => {
+				if (!line.startsWith("data: ")) return;
+				const data = line.slice(6).trim();
+				if (!data) return;
+				const proxyEvent = JSON.parse(data) as ProxyAssistantMessageEvent;
+				const event = processProxyEvent(proxyEvent, partial);
+				if (event) {
+					if (event.type === "done" || event.type === "error") sawTerminalEvent = true;
+					stream.push(event);
+				}
+			};
 
 			while (true) {
 				const { done, value } = await reader.read();
@@ -195,21 +210,32 @@ export function streamProxy(model: Model<any>, context: Context, options: ProxyS
 				buffer = lines.pop() || "";
 
 				for (const line of lines) {
-					if (line.startsWith("data: ")) {
-						const data = line.slice(6).trim();
-						if (data) {
-							const proxyEvent = JSON.parse(data) as ProxyAssistantMessageEvent;
-							const event = processProxyEvent(proxyEvent, partial);
-							if (event) {
-								stream.push(event);
-							}
-						}
-					}
+					processLine(line);
 				}
 			}
 
 			if (options.signal?.aborted) {
 				throw new Error("Request aborted by user");
+			}
+
+			// The final event may not be newline-terminated; flush the decoder and
+			// process whatever is left in the buffer.
+			buffer += decoder.decode();
+			if (buffer) {
+				processLine(buffer);
+			}
+
+			if (!sawTerminalEvent) {
+				// A clean EOF without a done/error event means the server dropped the
+				// response mid-stream. Surface it as an error instead of leaving
+				// consumers waiting on a result that never arrives.
+				partial.stopReason = "error";
+				partial.errorMessage = "Connection closed by proxy server before the response completed";
+				stream.push({
+					type: "error",
+					reason: "error",
+					error: partial,
+				});
 			}
 
 			stream.end();
@@ -353,12 +379,18 @@ function processProxyEvent(
 		case "done":
 			partial.stopReason = proxyEvent.reason;
 			partial.usage = proxyEvent.usage;
+			if (proxyEvent.providerThinkingLevel !== undefined) {
+				partial.providerThinkingLevel = proxyEvent.providerThinkingLevel;
+			}
 			return { type: "done", reason: proxyEvent.reason, message: partial };
 
 		case "error":
 			partial.stopReason = proxyEvent.reason;
 			partial.errorMessage = proxyEvent.errorMessage;
 			partial.usage = proxyEvent.usage;
+			if (proxyEvent.providerThinkingLevel !== undefined) {
+				partial.providerThinkingLevel = proxyEvent.providerThinkingLevel;
+			}
 			return { type: "error", reason: proxyEvent.reason, error: partial };
 
 		default: {

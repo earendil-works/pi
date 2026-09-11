@@ -1,7 +1,16 @@
+import { Command } from "./command.ts";
 import { type ClientCommandContext, clientCommand } from "./commands/client.ts";
-import { type PiCommandContext, piCommand } from "./commands/pi.ts";
 import { type ServerCommandContext, serverCommand } from "./commands/server.ts";
 
-export type ExperimentalCliContext = PiCommandContext & ServerCommandContext & ClientCommandContext;
+interface ExperimentalCommandGroup {
+	readonly command: "experimental";
+}
 
-export const experimentalCli = piCommand.command(serverCommand).command(clientCommand);
+export type CliContext = ServerCommandContext & ClientCommandContext;
+
+const experimentalCommand = new Command<ExperimentalCommandGroup, CliContext>("experimental").build(() => ({
+	ok: false,
+	errors: ["Expected experimental command: server or client"],
+}));
+
+export const cli = experimentalCommand.command(serverCommand).command(clientCommand);

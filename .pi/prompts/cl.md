@@ -50,5 +50,5 @@ Sections (in order):
 - `### Removed` - Removed features
 
 Attribution:
-- Internal: `Fixed foo ([#123](https://github.com/earendil-works/pi-mono/issues/123))`
-- External: `Added bar ([#456](https://github.com/earendil-works/pi-mono/pull/456) by [@user](https://github.com/user))`
+- Internal: `Fixed foo ([#123](https://github.com/earendil-works/pi/issues/123))`
+- External: `Added bar ([#456](https://github.com/earendil-works/pi/pull/456) by [@user](https://github.com/user))`

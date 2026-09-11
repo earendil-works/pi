@@ -15,7 +15,7 @@ function selectedModelId(rendered: string): string | undefined {
 	const line = rendered.split("\n").find((l) => l.startsWith("→ "));
 	if (!line) return undefined;
 	const rest = line.replace(/^→\s*/, "");
-	const id = rest.split(" [")[0];
+	const id = rest.split(" [")[0]?.replace(/^✓\s*/, "");
 	return id?.trim() || undefined;
 }
 

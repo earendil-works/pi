@@ -5,6 +5,7 @@ import { openAIResponsesApi } from "../api/openai-responses.lazy.ts";
 import { envApiKeyAuth } from "../auth/helpers.ts";
 import { createProvider, type Provider } from "../models.ts";
 import { OPENCODE_MODELS } from "./opencode.models.ts";
+import { withOpenCodeSessionHeader } from "./opencode-headers.ts";
 
 export function opencodeProvider(): Provider<
 	"anthropic-messages" | "google-generative-ai" | "openai-completions" | "openai-responses"
@@ -15,10 +16,10 @@ export function opencodeProvider(): Provider<
 		auth: { apiKey: envApiKeyAuth("OpenCode API key", ["OPENCODE_API_KEY"]) },
 		models: Object.values(OPENCODE_MODELS),
 		api: {
-			"anthropic-messages": anthropicMessagesApi(),
-			"google-generative-ai": googleGenerativeAIApi(),
-			"openai-completions": openAICompletionsApi(),
-			"openai-responses": openAIResponsesApi(),
+			"anthropic-messages": withOpenCodeSessionHeader(anthropicMessagesApi()),
+			"google-generative-ai": withOpenCodeSessionHeader(googleGenerativeAIApi()),
+			"openai-completions": withOpenCodeSessionHeader(openAICompletionsApi()),
+			"openai-responses": withOpenCodeSessionHeader(openAIResponsesApi()),
 		},
 	});
 }
