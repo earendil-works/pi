@@ -156,7 +156,7 @@ describe("openai-completions prompt caching", () => {
 		async (cacheRetention) => {
 			const model = createModel({
 				baseUrl: "https://proxy.example.com/v1",
-				compat: { supportsPromptCacheKey: true, supportsLongCacheRetention: false },
+				compat: { promptCacheKeyMode: "enabled", supportsLongCacheRetention: false },
 			});
 			const options = { cacheRetention, sessionId: "session-proxy" };
 			const first = await captureRequest(options, model);
@@ -171,8 +171,11 @@ describe("openai-completions prompt caching", () => {
 		},
 	);
 
-	it("preserves default proxy behavior without an explicit cache-key capability", async () => {
-		const model = createModel({ baseUrl: "https://proxy.example.com/v1" });
+	it.each([undefined, "auto"] as const)("preserves default proxy behavior with mode %s", async (mode) => {
+		const model = createModel({
+			baseUrl: "https://proxy.example.com/v1",
+			compat: mode ? { promptCacheKeyMode: mode } : undefined,
+		});
 		const short = await captureRequest({ sessionId: "session-proxy" }, model);
 		const long = await captureRequest({ cacheRetention: "long", sessionId: "session-proxy" }, model);
 
@@ -185,7 +188,7 @@ describe("openai-completions prompt caching", () => {
 		process.env.PI_CACHE_RETENTION = "long";
 		const model = createModel({
 			baseUrl: "https://proxy.example.com/v1",
-			compat: { supportsPromptCacheKey: true },
+			compat: { promptCacheKeyMode: "enabled" },
 		});
 		const { payload } = await captureRequest({ cacheRetention: "none", sessionId: "session-proxy" }, model);
 
@@ -194,7 +197,7 @@ describe("openai-completions prompt caching", () => {
 	});
 
 	it.each(["short", "long"] as const)("allows disabling cache keys with %s retention", async (cacheRetention) => {
-		const model = createModel({ compat: { supportsPromptCacheKey: false } });
+		const model = createModel({ compat: { promptCacheKeyMode: "disabled" } });
 		const { payload } = await captureRequest({ cacheRetention, sessionId: "session-disabled" }, model);
 
 		expect(payload?.prompt_cache_key).toBeUndefined();
@@ -204,7 +207,7 @@ describe("openai-completions prompt caching", () => {
 	it("lets a proxy disable cache keys independently of long retention", async () => {
 		const model = createModel({
 			baseUrl: "https://proxy.example.com/v1",
-			compat: { supportsPromptCacheKey: false, supportsLongCacheRetention: true },
+			compat: { promptCacheKeyMode: "disabled", supportsLongCacheRetention: true },
 		});
 		const { payload } = await captureRequest({ cacheRetention: "long", sessionId: "session-proxy" }, model);
 
@@ -215,7 +218,7 @@ describe("openai-completions prompt caching", () => {
 	it("does not invent an identity for an opted-in proxy", async () => {
 		const model = createModel({
 			baseUrl: "https://proxy.example.com/v1",
-			compat: { supportsPromptCacheKey: true },
+			compat: { promptCacheKeyMode: "enabled" },
 		});
 		const { payload } = await captureRequest({}, model);
 
@@ -225,7 +228,7 @@ describe("openai-completions prompt caching", () => {
 	it("clamps proxy cache keys to 64 Unicode characters", async () => {
 		const model = createModel({
 			baseUrl: "https://proxy.example.com/v1",
-			compat: { supportsPromptCacheKey: true },
+			compat: { promptCacheKeyMode: "enabled" },
 		});
 		const { payload } = await captureRequest({ sessionId: "𐐀".repeat(67) }, model);
 

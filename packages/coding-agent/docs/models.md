@@ -482,7 +482,7 @@ For providers with partial OpenAI compatibility, use the `compat` field.
 | `supportsStrictMode` | Whether the provider accepts strict JSON-schema function tool definitions. Defaults depend on the API; built-in OpenAI models carry explicit capability metadata. |
 | `supportsOpenAIGrammarTools` | Whether OpenAI-compatible APIs emit custom Lark/regex grammar tools. When `false`, grammar-constrained tools fall back to normal function tools. Default: `false`; the built-in model catalog enables it for GPT-5+ models on OpenAI, OpenAI Codex, Azure OpenAI, GitHub Copilot, opencode, and Cloudflare AI Gateway. |
 | `deferredToolsMode` | Use provider-specific deferred tool serialization. Currently only `"kimi"` is supported for Kimi's OpenAI-compatible Chat Completions format. |
-| `supportsPromptCacheKey` | For `openai-completions`, send `prompt_cache_key` from the session id whenever caching is enabled, independently of long retention support. Set to `true` for compatible proxies or `false` to omit it. When unset, pi sends the key for direct OpenAI URLs or compatible long retention requests. |
+| `promptCacheKeyMode` | Controls `prompt_cache_key` for `openai-completions`: `auto` preserves URL/retention detection, `enabled` sends it whenever caching is active, and `disabled` omits it. Default: `auto`. |
 | `supportsLongCacheRetention` | Whether the provider accepts long cache retention when cache retention is `long`: `prompt_cache_options.ttl: "30m"` for GPT-5.6+ Responses models, `prompt_cache_retention: "24h"` for earlier OpenAI models, or `cache_control.ttl: "1h"` when `cacheControlFormat` is `anthropic`. Default: `true`. |
 | `openRouterRouting` | OpenRouter provider routing preferences. This object is sent as-is in the `provider` field of the [OpenRouter API request](https://openrouter.ai/docs/guides/routing/provider-selection). |
 | `vercelGatewayRouting` | Vercel AI Gateway routing config for provider selection (`only`, `order`) |
@@ -491,7 +491,7 @@ For providers with partial OpenAI compatibility, use the `compat` field.
 
 `thinkingTokenBudgetField` is independent of `thinkingFormat`. Do not enable it on the generated Qwen catalog: those models already send `reasoning_effort`, and DashScope rejects `thinking_budget` together with `reasoning_effort`.
 
-For a Chat Completions proxy that accepts `prompt_cache_key`, set `compat.supportsPromptCacheKey` to `true`. This forwards a stable session key with the default short cache retention; it does not require `PI_CACHE_RETENTION=long` or send `prompt_cache_retention: "24h"`. Set `supportsLongCacheRetention` to `false` if the proxy does not accept long retention. `cacheRetention: "none"` still omits the cache key, and session-affinity headers remain separately configured.
+For a Chat Completions proxy that accepts `prompt_cache_key`, set `compat.promptCacheKeyMode` to `enabled`. This forwards a stable session key with the default short cache retention; it does not require `PI_CACHE_RETENTION=long` or send `prompt_cache_retention: "24h"`. Set `supportsLongCacheRetention` to `false` if the proxy does not accept long retention. `cacheRetention: "none"` still omits the cache key, and session-affinity headers remain separately configured.
 
 `cacheControlFormat: "anthropic"` is for OpenAI-compatible providers that expose Anthropic-style prompt caching through `cache_control` markers on text content and tool definitions.
 

@@ -555,23 +555,23 @@ describe("ModelRegistry", () => {
 			expect(compat?.supportsEagerToolInputStreaming).toBe(false);
 		});
 
-		test("custom models inherit and override prompt cache key support independently of long retention", async () => {
+		test("custom models inherit and override prompt cache key mode independently of long retention", async () => {
 			const provider: ModelsJsonProvider = {
 				baseUrl: "https://proxy.example.com/v1",
 				api: "openai-completions",
-				compat: { supportsPromptCacheKey: true, supportsLongCacheRetention: false },
-				models: [{ id: "inherited" }, { id: "disabled", compat: { supportsPromptCacheKey: false } }],
+				compat: { promptCacheKeyMode: "enabled", supportsLongCacheRetention: false },
+				models: [{ id: "inherited" }, { id: "disabled", compat: { promptCacheKeyMode: "disabled" } }],
 			};
 			writeRawModelsJson({ demo: provider });
 
 			const registry = await createModelRegistry(authStorage, modelsJsonPath);
 			expect(registry.getError()).toBeUndefined();
 			expect(registry.find("demo", "inherited")?.compat).toMatchObject({
-				supportsPromptCacheKey: true,
+				promptCacheKeyMode: "enabled",
 				supportsLongCacheRetention: false,
 			});
 			expect(registry.find("demo", "disabled")?.compat).toMatchObject({
-				supportsPromptCacheKey: false,
+				promptCacheKeyMode: "disabled",
 				supportsLongCacheRetention: false,
 			});
 		});
@@ -812,17 +812,17 @@ describe("ModelRegistry", () => {
 		test("built-in models inherit prompt cache key support unless overridden", async () => {
 			const provider: ModelsJsonProvider = {
 				baseUrl: "https://proxy.example.com/v1",
-				compat: { supportsPromptCacheKey: true },
+				compat: { promptCacheKeyMode: "enabled" },
 				modelOverrides: {
-					"gpt-4o-mini": { compat: { supportsPromptCacheKey: false } },
+					"gpt-4o-mini": { compat: { promptCacheKeyMode: "disabled" } },
 				},
 			};
 			writeRawModelsJson({ openai: provider });
 
 			const registry = await createModelRegistry(authStorage, modelsJsonPath);
 			expect(registry.getError()).toBeUndefined();
-			expect(registry.find("openai", "gpt-4o")?.compat).toMatchObject({ supportsPromptCacheKey: true });
-			expect(registry.find("openai", "gpt-4o-mini")?.compat).toMatchObject({ supportsPromptCacheKey: false });
+			expect(registry.find("openai", "gpt-4o")?.compat).toMatchObject({ promptCacheKeyMode: "enabled" });
+			expect(registry.find("openai", "gpt-4o-mini")?.compat).toMatchObject({ promptCacheKeyMode: "disabled" });
 		});
 
 		test("model override deep merges compat settings", async () => {

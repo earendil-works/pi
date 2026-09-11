@@ -108,7 +108,9 @@ const OpenAICompletionsCompatSchema = Type.Object({
 	sessionAffinityFormat: Type.Optional(
 		Type.Union([Type.Literal("openai"), Type.Literal("openai-nosession"), Type.Literal("openrouter")]),
 	),
-	supportsPromptCacheKey: Type.Optional(Type.Boolean()),
+	promptCacheKeyMode: Type.Optional(
+		Type.Union([Type.Literal("auto"), Type.Literal("enabled"), Type.Literal("disabled")]),
+	),
 	supportsLongCacheRetention: Type.Optional(Type.Boolean()),
 	vllmPriority: Type.Optional(Type.Number()),
 });

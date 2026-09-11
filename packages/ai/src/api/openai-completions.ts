@@ -181,12 +181,12 @@ type ResolvedOpenAICompletionsCompat = Omit<
 	| "cacheControlFormat"
 	| "deferredToolsMode"
 	| "supportsThinkingTokenBudget"
-	| "supportsPromptCacheKey"
+	| "promptCacheKeyMode"
 	| "thinkingTokenBudgetField"
 	| "vllmPriority"
 > & {
 	cacheControlFormat?: OpenAICompletionsCompat["cacheControlFormat"];
-	supportsPromptCacheKey?: OpenAICompletionsCompat["supportsPromptCacheKey"];
+	promptCacheKeyMode?: OpenAICompletionsCompat["promptCacheKeyMode"];
 	deferredToolsMode?: OpenAICompletionsCompat["deferredToolsMode"];
 	supportsThinkingTokenBudget?: OpenAICompletionsCompat["supportsThinkingTokenBudget"];
 	thinkingTokenBudgetField?: OpenAICompletionsCompat["thinkingTokenBudgetField"];
@@ -804,9 +804,12 @@ function buildParams(
 ) {
 	const messages = convertMessages(model, context, compat, { grammarToolInputProperties });
 	const cacheControl = getCompatCacheControl(compat, cacheRetention);
+	const promptCacheKeyMode = compat.promptCacheKeyMode ?? "auto";
 	const supportsPromptCacheKey =
-		compat.supportsPromptCacheKey ??
-		(model.baseUrl.includes("api.openai.com") || (cacheRetention === "long" && compat.supportsLongCacheRetention));
+		promptCacheKeyMode === "enabled" ||
+		(promptCacheKeyMode === "auto" &&
+			(model.baseUrl.includes("api.openai.com") ||
+				(cacheRetention === "long" && compat.supportsLongCacheRetention)));
 
 	const params: OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming = {
 		model: model.id,
@@ -1716,7 +1719,7 @@ function getCompat(model: Model<"openai-completions">): ResolvedOpenAICompletion
 		deferredToolsMode: model.compat.deferredToolsMode ?? detected.deferredToolsMode,
 		sessionAffinityFormat: model.compat.sessionAffinityFormat ?? detected.sessionAffinityFormat,
 		supportsLongCacheRetention: model.compat.supportsLongCacheRetention ?? detected.supportsLongCacheRetention,
-		supportsPromptCacheKey: model.compat.supportsPromptCacheKey,
+		promptCacheKeyMode: model.compat.promptCacheKeyMode,
 		vllmPriority: model.compat.vllmPriority,
 	};
 }
