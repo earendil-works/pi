@@ -986,6 +986,12 @@ function buildParams(
 		}
 	}
 
+	// Model-level samplingParams (from models.json) apply first, so per-call
+	// options can still override individual keys — same merge order as
+	// buildBaseOptions uses for the streamSimple path.
+	if (model.samplingParams) {
+		Object.assign(params, model.samplingParams);
+	}
 	// Last so custom keys override the named request fields.
 	if (options?.samplingParams) {
 		Object.assign(params, options.samplingParams);
