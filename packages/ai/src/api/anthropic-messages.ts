@@ -36,10 +36,17 @@ import { appendAssistantMessageDiagnostic } from "../utils/diagnostics.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { parseJsonWithRepair, parseStreamingJson } from "../utils/json-parse.ts";
+import {
+	getCurrentTools,
+	getInitialSystemMessage,
+	normalizeContext,
+	type TranscriptContext,
+} from "../utils/normalize-context.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
+import { getSystemMessageText, renderSystemMessageAsUserText } from "../utils/text.ts";
 
 import { getJsonSchemaToolParameters, resolveJsonSchemaStrictSampling } from "./constrained-sampling.ts";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.ts";
@@ -193,6 +200,7 @@ function getAnthropicCompat(model: Model<"anthropic-messages">) {
 		allowEmptySignature: model.compat?.allowEmptySignature ?? false,
 		supportsStrictTools: model.compat?.supportsStrictTools ?? false,
 		supportsToolReferences: model.compat?.supportsToolReferences ?? defaultSupportsToolReferences(model),
+		supportsMidConvoSystemMessages: model.compat?.supportsMidConvoSystemMessages ?? false,
 	};
 }
 
@@ -505,6 +513,8 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 	options?: AnthropicOptions,
 ): AssistantMessageEventStream => {
 	const stream = new AssistantMessageEventStream();
+	const normalizedContext = normalizeContext(context);
+	const currentTools = getCurrentTools(normalizedContext);
 
 	(async () => {
 		const providerThinkingLevel = model.compat?.supportsMidConvoEffort ? (options?.effort ?? "high") : undefined;
@@ -542,9 +552,9 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 
 				let copilotDynamicHeaders: Record<string, string> | undefined;
 				if (model.provider === "github-copilot") {
-					const hasImages = hasCopilotVisionInput(context.messages);
+					const hasImages = hasCopilotVisionInput(normalizedContext.messages);
 					copilotDynamicHeaders = buildCopilotDynamicHeaders({
-						messages: context.messages,
+						messages: normalizedContext.messages,
 						hasImages,
 					});
 				}
@@ -563,7 +573,7 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 				client = created.client;
 				isOAuth = created.isOAuthToken;
 			}
-			let params = buildParams(model, context, isOAuth, options);
+			let params = buildParams(model, normalizedContext, isOAuth, options);
 			const nextParams = await options?.onPayload?.(params, model);
 			if (nextParams !== undefined) {
 				params = { ...(nextParams as MessageCreateParamsStreaming), stream: true };
@@ -650,7 +660,7 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 							type: "toolCall",
 							id: event.content_block.id,
 							name: isOAuth
-								? fromClaudeCodeName(event.content_block.name, context.tools)
+								? fromClaudeCodeName(event.content_block.name, currentTools)
 								: event.content_block.name,
 							arguments: (event.content_block.input as Record<string, any>) ?? {},
 							partialJson: "",
@@ -978,7 +988,7 @@ function createClient(
 
 function getBetaFeatures(
 	model: Model<"anthropic-messages">,
-	context: Context,
+	context: TranscriptContext,
 	isOAuthToken: boolean,
 	options?: AnthropicOptions,
 ): NonNullable<MessageCreateParamsStreaming["betas"]> {
@@ -1020,13 +1030,16 @@ function getBetaFeatures(
 
 function buildParams(
 	model: Model<"anthropic-messages">,
-	context: Context,
+	context: TranscriptContext,
 	isOAuthToken: boolean,
 	options?: AnthropicOptions,
 ): MessageCreateParamsStreaming {
 	const { cacheControl } = getCacheControl(model, options?.cacheRetention, options?.env);
 	const compat = getAnthropicCompat(model);
+	const initialSystemMessage = getInitialSystemMessage(context);
+	const initialSystemText = initialSystemMessage ? getSystemMessageText(initialSystemMessage) : "";
 	const transformedMessages = transformMessages(context.messages, model, normalizeToolCallId);
+	const conversationMessages = initialSystemMessage ? transformedMessages.slice(1) : transformedMessages;
 	const normalizeToolName = isOAuthToken ? toClaudeCodeName : (name: string) => name;
 	const toolPlacement = splitDeferredTools(
 		{ ...context, messages: transformedMessages },
@@ -1041,13 +1054,14 @@ function buildParams(
 	}
 	const deferredToolNames = new Set(deferredTools.map((tool) => normalizeToolName(tool.name)));
 	const converted = convertMessages(
-		transformedMessages,
+		conversationMessages,
 		isOAuthToken,
 		cacheControl,
 		compat.allowEmptySignature,
 		deferredToolNames,
 		normalizeToolName,
 		model.compat?.supportsMidConvoEffort === true ? model.provider : undefined,
+		compat.supportsMidConvoSystemMessages,
 	);
 	const activeEffort = options?.effort ?? "high";
 	const betaFeatures = getBetaFeatures(model, context, isOAuthToken, options);
@@ -1071,19 +1085,19 @@ function buildParams(
 				...(cacheControl ? { cache_control: cacheControl } : {}),
 			},
 		];
-		if (context.systemPrompt) {
+		if (initialSystemText) {
 			params.system.push({
 				type: "text",
-				text: sanitizeSurrogates(context.systemPrompt),
+				text: sanitizeSurrogates(initialSystemText),
 				...(cacheControl ? { cache_control: cacheControl } : {}),
 			});
 		}
-	} else if (context.systemPrompt) {
+	} else if (initialSystemText) {
 		// Add cache control to system prompt for non-OAuth tokens
 		params.system = [
 			{
 				type: "text",
-				text: sanitizeSurrogates(context.systemPrompt),
+				text: sanitizeSurrogates(initialSystemText),
 				...(cacheControl ? { cache_control: cacheControl } : {}),
 			},
 		];
@@ -1228,15 +1242,35 @@ function convertMessages(
 	deferredToolNames: ReadonlySet<string> = new Set(),
 	normalizeToolName: (name: string) => string = (name) => name,
 	managedProvider?: string,
+	supportsMidConvoSystemMessages = false,
 ): ConvertedAnthropicMessages {
 	const params: MessageParam[] = [];
 	const assistantLevels = new Map<number, AnthropicEffort>();
 	const loadedToolNames = new Set<string>();
+	const pendingSystemMessages: MessageParam[] = [];
+	const flushPendingSystemMessages = (): void => {
+		params.push(...pendingSystemMessages);
+		pendingSystemMessages.length = 0;
+	};
 
 	for (let i = 0; i < transformedMessages.length; i++) {
 		const msg = transformedMessages[i];
 
-		if (msg.role === "user") {
+		if (msg.role === "system") {
+			const text = getSystemMessageText(msg);
+			if (text.length === 0) continue;
+			if (supportsMidConvoSystemMessages) {
+				pendingSystemMessages.push({
+					role: "system",
+					content: [{ type: "text", text: sanitizeSurrogates(text) }],
+				});
+			} else {
+				params.push({
+					role: "user",
+					content: [{ type: "text", text: sanitizeSurrogates(renderSystemMessageAsUserText(msg)) }],
+				});
+			}
+		} else if (msg.role === "user") {
 			if (typeof msg.content === "string") {
 				if (msg.content.trim().length > 0) {
 					params.push({
@@ -1275,6 +1309,7 @@ function convertMessages(
 				});
 			}
 		} else if (msg.role === "assistant") {
+			flushPendingSystemMessages();
 			const blocks: ContentBlockParam[] = [];
 
 			for (const block of msg.content) {
@@ -1371,10 +1406,12 @@ function convertMessages(
 		}
 	}
 
-	// Add cache_control to the last user message to cache conversation history
+	flushPendingSystemMessages();
+
+	// Add cache_control to the last user or system message to cache conversation history
 	if (cacheControl && params.length > 0) {
 		const lastMessage = params[params.length - 1];
-		if (lastMessage.role === "user") {
+		if (lastMessage.role === "user" || lastMessage.role === "system") {
 			if (Array.isArray(lastMessage.content)) {
 				const lastBlock = lastMessage.content[lastMessage.content.length - 1];
 				if (
@@ -1418,8 +1455,11 @@ function insertThinkingLevelMessages(
 	return messages;
 }
 
-function shouldUseFineGrainedToolStreamingBeta(model: Model<"anthropic-messages">, context: Context): boolean {
-	return !!context.tools?.length && !getAnthropicCompat(model).supportsEagerToolInputStreaming;
+function shouldUseFineGrainedToolStreamingBeta(
+	model: Model<"anthropic-messages">,
+	context: TranscriptContext,
+): boolean {
+	return getCurrentTools(context).length > 0 && !getAnthropicCompat(model).supportsEagerToolInputStreaming;
 }
 
 function convertTools(

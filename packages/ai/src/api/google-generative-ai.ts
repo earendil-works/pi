@@ -22,8 +22,15 @@ import type {
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { providerHeadersToRecord } from "../utils/headers.ts";
+import {
+	getCurrentTools,
+	getInitialSystemMessage,
+	normalizeContext,
+	type TranscriptContext,
+} from "../utils/normalize-context.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
+import { getSystemMessageText } from "../utils/text.ts";
 import type { GoogleApiThinkingLevel, ResolvedGoogleThinkingLevel } from "./google-shared.ts";
 import {
 	convertMessages,
@@ -56,6 +63,7 @@ export const stream: StreamFunction<"google-generative-ai", GoogleOptions> = (
 	options?: GoogleOptions,
 ): AssistantMessageEventStream => {
 	const stream = new AssistantMessageEventStream();
+	const normalizedContext = normalizeContext(context);
 
 	(async () => {
 		const output: AssistantMessage = {
@@ -85,7 +93,7 @@ export const stream: StreamFunction<"google-generative-ai", GoogleOptions> = (
 				throw new Error(`No API key for provider: ${model.provider}`);
 			}
 			const client = createClient(model, apiKey, options?.headers);
-			let params = buildParams(model, context, options);
+			let params = buildParams(model, normalizedContext, options);
 			const nextParams = await options?.onPayload?.(params, model);
 			if (nextParams !== undefined) {
 				params = nextParams as GenerateContentParameters;
@@ -358,10 +366,12 @@ function createClient(
 
 function buildParams(
 	model: Model<"google-generative-ai">,
-	context: Context,
+	context: TranscriptContext,
 	options: GoogleOptions = {},
 ): GenerateContentParameters {
 	const contents = convertMessages(model, context);
+	const initialSystemMessage = getInitialSystemMessage(context);
+	const currentTools = getCurrentTools(context);
 
 	const generationConfig: GenerateContentConfig = {};
 	if (options.temperature !== undefined) {
@@ -372,16 +382,17 @@ function buildParams(
 	}
 
 	const supportsStrictMode = supportsGoogleStrictToolSampling(model.id);
-	const functionCallingMode = context.tools?.length
-		? resolveGoogleFunctionCallingMode(context.tools, options.toolChoice, supportsStrictMode)
-		: undefined;
+	const functionCallingMode =
+		currentTools.length > 0
+			? resolveGoogleFunctionCallingMode(currentTools, options.toolChoice, supportsStrictMode)
+			: undefined;
+	const systemInstruction = initialSystemMessage ? getSystemMessageText(initialSystemMessage) : "";
 	const config: GenerateContentConfig = {
 		...(Object.keys(generationConfig).length > 0 && generationConfig),
-		...(context.systemPrompt && { systemInstruction: sanitizeSurrogates(context.systemPrompt) }),
-		...(context.tools &&
-			context.tools.length > 0 && {
-				tools: convertTools(context.tools, false, supportsStrictMode),
-			}),
+		...(systemInstruction && { systemInstruction: sanitizeSurrogates(systemInstruction) }),
+		...(currentTools.length > 0 && {
+			tools: convertTools(currentTools, false, supportsStrictMode),
+		}),
 		...(functionCallingMode !== undefined && {
 			toolConfig: { functionCallingConfig: { mode: functionCallingMode } },
 		}),

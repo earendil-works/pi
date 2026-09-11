@@ -31,7 +31,14 @@ import { formatProviderError, normalizeProviderError } from "../utils/error-body
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { resolveHttpProxyUrlForTarget } from "../utils/node-http-proxy.ts";
+import {
+	getCurrentTools,
+	getInitialSystemMessage,
+	normalizeContext,
+	type TranscriptContext,
+} from "../utils/normalize-context.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
+import { getSystemMessageText } from "../utils/text.ts";
 import { uuidv7 } from "../utils/uuid.ts";
 import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
@@ -233,6 +240,7 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 	options?: OpenAICodexResponsesOptions,
 ): AssistantMessageEventStream => {
 	const stream = new AssistantMessageEventStream();
+	const normalizedContext = normalizeContext(context);
 
 	(async () => {
 		const output: AssistantMessage = {
@@ -261,12 +269,12 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 
 			const accountId = extractAccountId(apiKey);
 			const grammarToolInputProperties = createGrammarToolInputProperties(
-				context.tools,
+				getCurrentTools(normalizedContext),
 				model.compat?.supportsOpenAIGrammarTools ?? false,
 			);
 			const cacheSessionId = options?.cacheRetention === "none" ? undefined : options?.sessionId;
 			const codexSessionId = clampOpenAIPromptCacheKey(cacheSessionId);
-			let body = buildRequestBody(model, context, options, codexSessionId, grammarToolInputProperties);
+			let body = buildRequestBody(model, normalizedContext, options, codexSessionId, grammarToolInputProperties);
 			const nextBody = await options?.onPayload?.(body, model);
 			if (nextBody !== undefined) {
 				body = nextBody as RequestBody;
@@ -518,11 +526,11 @@ export const streamSimple: StreamFunction<"openai-codex-responses", SimpleStream
 
 function buildRequestBody(
 	model: Model<"openai-codex-responses">,
-	context: Context,
+	context: TranscriptContext,
 	options: OpenAICodexResponsesOptions | undefined,
 	cacheSessionId: string | undefined,
 	grammarToolInputProperties: ReadonlyMap<string, string> = createGrammarToolInputProperties(
-		context.tools,
+		getCurrentTools(context),
 		model.compat?.supportsOpenAIGrammarTools ?? false,
 	),
 ): RequestBody {
@@ -546,11 +554,13 @@ function buildRequestBody(
 		},
 	});
 
+	const initialSystemMessage = getInitialSystemMessage(context);
+	const instructions = initialSystemMessage ? getSystemMessageText(initialSystemMessage) : "";
 	const body: RequestBody = {
 		model: model.id,
 		store: false,
 		stream: true,
-		instructions: context.systemPrompt || "You are a helpful assistant.",
+		instructions: instructions || "You are a helpful assistant.",
 		input: messages,
 		text: { verbosity: options?.textVerbosity || "low" },
 		include: ["reasoning.encrypted_content"],

@@ -26,6 +26,7 @@ import { appendAssistantMessageDiagnostic, createAssistantMessageDiagnostic } fr
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord, providerHeadersToRecord } from "../utils/headers.ts";
 import { parseStreamingJson } from "../utils/json-parse.ts";
+import { normalizeContext } from "../utils/normalize-context.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 
 export interface PiMessagesOptions extends StreamOptions {
@@ -357,6 +358,7 @@ export const stream: StreamFunction<"pi-messages", PiMessagesOptions> = (
 ): AssistantMessageEventStream => {
 	const eventStream = new AssistantMessageEventStream();
 	const convertEvent = createEventConverter(model);
+	const normalizedContext = normalizeContext(context);
 
 	void (async () => {
 		try {
@@ -372,7 +374,7 @@ export const stream: StreamFunction<"pi-messages", PiMessagesOptions> = (
 
 			let payload: unknown = {
 				model: model.id,
-				context,
+				context: normalizedContext,
 				options: {
 					temperature: options?.temperature,
 					maxTokens: options?.maxTokens,

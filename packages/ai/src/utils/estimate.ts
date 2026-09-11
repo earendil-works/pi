@@ -1,4 +1,6 @@
-import type { AssistantMessage, Context, ImageContent, Message, TextContent, Tool, Usage } from "../types.ts";
+import type { AssistantMessage, Context, ImageContent, Message, TextContent, Usage } from "../types.ts";
+import { getInitialTools, normalizeContext } from "./normalize-context.ts";
+import { getSystemMessageText } from "./text.ts";
 
 export interface ContextUsageEstimate {
 	/** Estimated total context tokens. */
@@ -45,6 +47,13 @@ export function estimateTextAndImageContentTokens(content: string | Array<TextCo
 export function estimateMessageTokens(message: Message): number {
 	let chars = 0;
 
+	if (message.role === "system") {
+		return (
+			estimateTextTokens(getSystemMessageText(message)) +
+			estimateToolsTokens(message.toolsAdded) +
+			estimateToolsTokens(message.toolsRemoved)
+		);
+	}
 	if (message.role === "user") return estimateTextAndImageContentTokens(message.content);
 	if (message.role === "toolResult") return estimateTextAndImageContentTokens(message.content);
 
@@ -102,7 +111,7 @@ function estimateMessages(messages: readonly Message[]): ContextUsageEstimate {
 	return { tokens, usageTokens: 0, trailingTokens: tokens, lastUsageIndex: null };
 }
 
-function estimateToolsTokens(tools: readonly Tool[] | undefined): number {
+function estimateToolsTokens(tools: readonly unknown[] | undefined): number {
 	if (!tools || tools.length === 0) return 0;
 	return estimateTextTokens(safeJsonStringify(tools));
 }
@@ -114,15 +123,18 @@ function isMessageArray(value: Context | readonly Message[]): value is readonly 
 export function estimateContextTokens(context: Context | readonly Message[]): ContextUsageEstimate {
 	if (isMessageArray(context)) return estimateMessages(context);
 
-	const estimate = estimateMessages(context.messages);
+	const normalizedContext = normalizeContext(context);
+	const estimate = estimateMessages(normalizedContext.messages);
 	if (estimate.lastUsageIndex !== null) {
 		const addedNames = new Set(
-			context.messages
+			normalizedContext.messages
 				.slice(estimate.lastUsageIndex + 1)
 				.filter((message) => message.role === "toolResult")
 				.flatMap((message) => message.addedToolNames ?? []),
 		);
-		const addedToolTokens = estimateToolsTokens(context.tools?.filter((tool) => addedNames.has(tool.name)));
+		const addedToolTokens = estimateToolsTokens(
+			getInitialTools(normalizedContext).filter((tool) => addedNames.has(tool.name)),
+		);
 		return {
 			tokens: estimate.tokens + addedToolTokens,
 			usageTokens: estimate.usageTokens,
@@ -131,13 +143,5 @@ export function estimateContextTokens(context: Context | readonly Message[]): Co
 		};
 	}
 
-	const prefixTokens =
-		(context.systemPrompt ? estimateTextTokens(context.systemPrompt) : 0) + estimateToolsTokens(context.tools);
-
-	return {
-		tokens: estimate.tokens + prefixTokens,
-		usageTokens: estimate.usageTokens,
-		trailingTokens: estimate.trailingTokens + prefixTokens,
-		lastUsageIndex: estimate.lastUsageIndex,
-	};
+	return estimate;
 }

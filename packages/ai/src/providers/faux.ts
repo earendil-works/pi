@@ -19,6 +19,13 @@ import type {
 	Usage,
 } from "../types.ts";
 import { createAssistantMessageEventStream } from "../utils/event-stream.ts";
+import {
+	getCurrentTools,
+	getInitialSystemMessage,
+	normalizeContext,
+	type TranscriptContext,
+} from "../utils/normalize-context.ts";
+import { getSystemMessageText } from "../utils/text.ts";
 
 const DEFAULT_API = "faux";
 const DEFAULT_PROVIDER = "faux";
@@ -194,6 +201,15 @@ function toolResultToText(message: ToolResultMessage): string {
 }
 
 function messageToText(message: Message): string {
+	if (message.role === "system") {
+		return [
+			getSystemMessageText(message),
+			...(message.toolsRemoved?.map((tool) => `tool-:${JSON.stringify(tool)}`) ?? []),
+			...(message.toolsAdded?.map((tool) => `tool+:${JSON.stringify(tool)}`) ?? []),
+		]
+			.filter((part) => part.length > 0)
+			.join("\n");
+	}
 	if (message.role === "user") {
 		return contentToText(message.content);
 	}
@@ -203,17 +219,17 @@ function messageToText(message: Message): string {
 	return toolResultToText(message);
 }
 
-function serializeContext(context: Context): string {
+function serializeContext(context: TranscriptContext): string {
 	const parts: string[] = [];
-	if (context.systemPrompt) {
-		parts.push(`system:${context.systemPrompt}`);
+	const initialSystemMessage = getInitialSystemMessage(context);
+	if (initialSystemMessage) {
+		const text = getSystemMessageText(initialSystemMessage);
+		if (text.length > 0) parts.push(`system:${text}`);
 	}
-	for (const message of context.messages) {
-		parts.push(`${message.role}:${messageToText(message)}`);
-	}
-	if (context.tools?.length) {
-		parts.push(`tools:${JSON.stringify(context.tools)}`);
-	}
+	const messages = initialSystemMessage ? context.messages.slice(1) : context.messages;
+	for (const message of messages) parts.push(`${message.role}:${messageToText(message)}`);
+	const currentTools = getCurrentTools(context);
+	if (currentTools.length > 0) parts.push(`tools:${JSON.stringify(currentTools)}`);
 	return parts.join("\n\n");
 }
 
@@ -228,7 +244,7 @@ function commonPrefixLength(a: string, b: string): number {
 
 function withUsageEstimate(
 	message: AssistantMessage,
-	context: Context,
+	context: TranscriptContext,
 	options: StreamOptions | undefined,
 	promptCache: Map<string, string>,
 ): AssistantMessage {
@@ -451,6 +467,7 @@ export function createFauxCore(options: RegisterFauxProviderOptions) {
 			handle: DeferredHandle;
 			step: FauxResponseStep;
 			context: Context;
+			normalizedContext: TranscriptContext;
 			options: SimpleStreamOptions | undefined;
 			model: Model<string>;
 			pendingFetches: number;
@@ -488,19 +505,21 @@ export function createFauxCore(options: RegisterFauxProviderOptions) {
 	const resolveResponse = async (
 		step: FauxResponseStep,
 		context: Context,
+		normalizedContext: TranscriptContext,
 		streamOptions: SimpleStreamOptions | undefined,
 		requestModel: Model<string>,
 	): Promise<AssistantMessage> => {
 		const resolved = typeof step === "function" ? await step(context, streamOptions, state, requestModel) : step;
 		return withUsageEstimate(
 			cloneMessage(resolved, api, provider, requestModel.id),
-			context,
+			normalizedContext,
 			streamOptions,
 			promptCache,
 		);
 	};
 
 	const stream: StreamFunction<string, SimpleStreamOptions> = (requestModel, context, streamOptions) => {
+		const normalizedContext = normalizeContext(context);
 		const outer = createAssistantMessageEventStream();
 		const step = pendingResponses.shift();
 		state.callCount++;
@@ -515,7 +534,7 @@ export function createFauxCore(options: RegisterFauxProviderOptions) {
 						provider,
 						requestModel.id,
 					);
-					message = withUsageEstimate(message, context, streamOptions, promptCache);
+					message = withUsageEstimate(message, normalizedContext, streamOptions, promptCache);
 					outer.push({ type: "error", reason: "error", error: message });
 					outer.end(message);
 					return;
@@ -533,6 +552,7 @@ export function createFauxCore(options: RegisterFauxProviderOptions) {
 						handle,
 						step,
 						context,
+						normalizedContext,
 						options: streamOptions,
 						model: requestModel,
 						pendingFetches: Math.max(0, Math.floor(options.deferred?.pendingFetches ?? 0)),
@@ -549,7 +569,7 @@ export function createFauxCore(options: RegisterFauxProviderOptions) {
 					return;
 				}
 
-				const message = await resolveResponse(step, context, streamOptions, requestModel);
+				const message = await resolveResponse(step, context, normalizedContext, streamOptions, requestModel);
 				await streamWithDeltas(outer, message, minTokenSize, maxTokenSize, tokensPerSecond, streamOptions?.signal);
 			} catch (error) {
 				const message = createErrorMessage(error, api, provider, requestModel.id);
@@ -607,7 +627,13 @@ export function createFauxCore(options: RegisterFauxProviderOptions) {
 						...submissionOptions
 					} = entry.options ?? {};
 					try {
-						entry.final = await resolveResponse(entry.step, entry.context, submissionOptions, entry.model);
+						entry.final = await resolveResponse(
+							entry.step,
+							entry.context,
+							entry.normalizedContext,
+							submissionOptions,
+							entry.model,
+						);
 					} catch (error) {
 						entry.final = createErrorMessage(error, api, provider, entry.model.id);
 					}

@@ -53,9 +53,18 @@ import { normalizeProviderError } from "../utils/error-body.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { providerHeadersToRecord } from "../utils/headers.ts";
 import { parseStreamingJson } from "../utils/json-parse.ts";
+import { createUserTurnAppender } from "../utils/merge-adjacent-user-turns.ts";
 import { resolveHttpProxyUrlForTarget } from "../utils/node-http-proxy.ts";
+import {
+	getCurrentTools,
+	getInitialSystemMessage,
+	normalizeContext,
+	type TranscriptContext,
+	withoutInitialSystemMessage,
+} from "../utils/normalize-context.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
+import { getSystemMessageText, renderSystemMessageAsUserText } from "../utils/text.ts";
 import { getJsonSchemaToolParameters, resolveJsonSchemaStrictSampling } from "./constrained-sampling.ts";
 import {
 	adjustMaxTokensForThinking,
@@ -119,6 +128,7 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 	options: BedrockOptions = {},
 ): AssistantMessageEventStream => {
 	const stream = new AssistantMessageEventStream();
+	const normalizedContext = normalizeContext(context);
 
 	(async () => {
 		const output: AssistantMessage = {
@@ -248,15 +258,17 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 			}
 			const cacheRetention = resolveCacheRetention(options.cacheRetention, options.env);
 			const inferenceMaxTokens = options.maxTokens ?? (isAnthropicClaudeModel(model) ? model.maxTokens : undefined);
+			const initialSystemMessage = getInitialSystemMessage(normalizedContext);
+			const initialSystemPrompt = initialSystemMessage ? getSystemMessageText(initialSystemMessage) : undefined;
 			let commandInput = {
 				modelId: model.id,
-				messages: convertMessages(context, model, cacheRetention, options.env),
-				system: buildSystemPrompt(context.systemPrompt, model, cacheRetention, options.env),
+				messages: convertMessages(normalizedContext, model, cacheRetention, options.env),
+				system: buildSystemPrompt(initialSystemPrompt, model, cacheRetention, options.env),
 				inferenceConfig: {
 					...(inferenceMaxTokens !== undefined && { maxTokens: inferenceMaxTokens }),
 					...(options.temperature !== undefined && { temperature: options.temperature }),
 				},
-				toolConfig: convertToolConfig(context.tools, options.toolChoice, supportsStrictMode),
+				toolConfig: convertToolConfig(getCurrentTools(normalizedContext), options.toolChoice, supportsStrictMode),
 				additionalModelRequestFields: buildAdditionalModelRequestFields(model, options),
 				...(options.requestMetadata !== undefined && { requestMetadata: options.requestMetadata }),
 			};
@@ -930,18 +942,33 @@ function convertToolResultContent(content: (TextContent | ImageContent)[]): Tool
 }
 
 function convertMessages(
-	context: Context,
+	context: TranscriptContext,
 	model: Model<"bedrock-converse-stream">,
 	cacheRetention: CacheRetention,
 	env?: ProviderEnv,
 ): Message[] {
 	const result: Message[] = [];
-	const transformedMessages = transformMessages(context.messages, model, normalizeToolCallId);
+	const appendTurn = createUserTurnAppender(result, (message) => {
+		message.content ??= [];
+		return message.content;
+	});
+	const conversationContext = withoutInitialSystemMessage(context);
+	const transformedMessages = transformMessages(conversationContext.messages, model, normalizeToolCallId);
 
 	for (let i = 0; i < transformedMessages.length; i++) {
 		const m = transformedMessages[i];
 
 		switch (m.role) {
+			case "system": {
+				const text = renderSystemMessageAsUserText(m);
+				if (text.length > 0) {
+					appendTurn(
+						{ role: ConversationRole.USER, content: [createRequiredTextBlock(text)] },
+						{ mergeWithPrevious: true, mergeNext: true },
+					);
+				}
+				break;
+			}
 			case "user": {
 				const content: ContentBlock[] = [];
 				if (typeof m.content === "string") {
@@ -963,10 +990,7 @@ function convertMessages(
 					}
 					if (content.length === 0) content.push({ text: EMPTY_TEXT_PLACEHOLDER });
 				}
-				result.push({
-					role: ConversationRole.USER,
-					content,
-				});
+				appendTurn({ role: ConversationRole.USER, content });
 				break;
 			}
 			case "assistant": {
@@ -1039,7 +1063,7 @@ function convertMessages(
 				if (contentBlocks.length === 0) {
 					continue;
 				}
-				result.push({
+				appendTurn({
 					role: ConversationRole.ASSISTANT,
 					content: contentBlocks,
 				});
@@ -1076,10 +1100,7 @@ function convertMessages(
 				// Skip the messages we've already processed
 				i = j - 1;
 
-				result.push({
-					role: ConversationRole.USER,
-					content: toolResults,
-				});
+				appendTurn({ role: ConversationRole.USER, content: toolResults });
 				break;
 			}
 			default:

@@ -14,8 +14,11 @@ import type {
 	ThinkingLevel,
 	Tool,
 } from "../types.ts";
+import { createUserTurnAppender } from "../utils/merge-adjacent-user-turns.ts";
+import { normalizeContext, withoutInitialSystemMessage } from "../utils/normalize-context.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
+import { renderSystemMessageAsUserText } from "../utils/text.ts";
 import { getJsonSchemaToolParameters, resolveJsonSchemaStrictSampling } from "./constrained-sampling.ts";
 import { transformMessages } from "./transform-messages.ts";
 
@@ -129,18 +132,31 @@ function supportsMultimodalFunctionResponse(modelId: string): boolean {
  * Convert internal messages to Gemini Content[] format.
  */
 export function convertMessages<T extends GoogleApiType>(model: Model<T>, context: Context): Content[] {
+	const normalizedContext = withoutInitialSystemMessage(normalizeContext(context));
 	const contents: Content[] = [];
+	const appendTurn = createUserTurnAppender(contents, (message) => {
+		message.parts ??= [];
+		return message.parts;
+	});
 	const normalizeToolCallId = (id: string): string => {
 		if (!requiresToolCallId(model.id)) return id;
 		return id.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 64);
 	};
 
-	const transformedMessages = transformMessages(context.messages, model, normalizeToolCallId);
+	const transformedMessages = transformMessages(normalizedContext.messages, model, normalizeToolCallId);
 
 	for (const msg of transformedMessages) {
-		if (msg.role === "user") {
+		if (msg.role === "system") {
+			const text = renderSystemMessageAsUserText(msg);
+			if (text.length > 0) {
+				appendTurn(
+					{ role: "user", parts: [{ text: sanitizeSurrogates(text) }] },
+					{ mergeWithPrevious: true, mergeNext: true },
+				);
+			}
+		} else if (msg.role === "user") {
 			if (typeof msg.content === "string") {
-				contents.push({
+				appendTurn({
 					role: "user",
 					parts: [{ text: sanitizeSurrogates(msg.content) }],
 				});
@@ -158,7 +174,7 @@ export function convertMessages<T extends GoogleApiType>(model: Model<T>, contex
 					}
 				});
 				if (parts.length === 0) continue;
-				contents.push({
+				appendTurn({
 					role: "user",
 					parts,
 				});
@@ -215,7 +231,7 @@ export function convertMessages<T extends GoogleApiType>(model: Model<T>, contex
 			}
 
 			if (parts.length === 0) continue;
-			contents.push({
+			appendTurn({
 				role: "model",
 				parts,
 			});
@@ -258,18 +274,17 @@ export function convertMessages<T extends GoogleApiType>(model: Model<T>, contex
 			// Cloud Code Assist API requires all function responses to be in a single user turn.
 			// Check if the last content is already a user turn with function responses and merge.
 			const lastContent = contents[contents.length - 1];
-			if (lastContent?.role === "user" && lastContent.parts?.some((p) => p.functionResponse)) {
-				lastContent.parts.push(functionResponsePart);
-			} else {
-				contents.push({
+			appendTurn(
+				{
 					role: "user",
 					parts: [functionResponsePart],
-				});
-			}
+				},
+				{ mergeWithPrevious: lastContent?.role === "user" && lastContent.parts?.some((p) => p.functionResponse) },
+			);
 
 			// For Gemini < 3, add images in a separate user message
 			if (hasImages && !modelSupportsMultimodalFunctionResponse) {
-				contents.push({
+				appendTurn({
 					role: "user",
 					parts: [{ text: "Tool result image:" }, ...imageParts],
 				});

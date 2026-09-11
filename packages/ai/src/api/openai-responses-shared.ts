@@ -31,7 +31,9 @@ import type {
 import type { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { shortHash } from "../utils/hash.ts";
 import { parseStreamingJson } from "../utils/json-parse.ts";
+import { normalizeContext } from "../utils/normalize-context.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
+import { getSystemMessageText } from "../utils/text.ts";
 import {
 	appendGrammarToolInputJsonDelta,
 	type GrammarToolInputJsonBuffer,
@@ -141,6 +143,7 @@ export function convertResponsesMessages<TApi extends Api>(
 	allowedToolCallProviders: ReadonlySet<string>,
 	options?: ConvertResponsesMessagesOptions,
 ): ResponseInput {
+	const normalizedContext = normalizeContext(context);
 	const messages: ResponseInput = [];
 	const loadedToolNames = new Set<string>();
 
@@ -169,21 +172,23 @@ export function convertResponsesMessages<TApi extends Api>(
 		return `${normalizedCallId}|${normalizedItemId}`;
 	};
 
-	const transformedMessages = transformMessages(context.messages, model, normalizeToolCallId);
-
-	const includeSystemPrompt = options?.includeSystemPrompt ?? true;
-	if (includeSystemPrompt && context.systemPrompt) {
-		const compat = model.compat as { supportsDeveloperRole?: boolean } | undefined;
-		const role = model.reasoning && compat?.supportsDeveloperRole !== false ? "developer" : "system";
-		messages.push({
-			role,
-			content: sanitizeSurrogates(context.systemPrompt),
-		});
-	}
+	const transformedMessages = transformMessages(normalizedContext.messages, model, normalizeToolCallId);
+	const includeInitialSystemMessage = options?.includeSystemPrompt ?? true;
+	const compat = model.compat as { supportsDeveloperRole?: boolean } | undefined;
+	const instructionRole = model.reasoning && compat?.supportsDeveloperRole !== false ? "developer" : "system";
 
 	let msgIndex = 0;
+	let sourceIndex = 0;
 	for (const msg of transformedMessages) {
-		if (msg.role === "user") {
+		const isLeadingSystemMessage = sourceIndex++ === 0 && msg.role === "system";
+		if (msg.role === "system") {
+			if (!isLeadingSystemMessage || includeInitialSystemMessage) {
+				const text = getSystemMessageText(msg);
+				if (text.length > 0) {
+					messages.push({ role: instructionRole, content: sanitizeSurrogates(text) });
+				}
+			}
+		} else if (msg.role === "user") {
 			if (typeof msg.content === "string") {
 				messages.push({
 					role: "user",
@@ -346,7 +351,7 @@ export function convertResponsesMessages<TApi extends Api>(
 				} satisfies ResponseToolSearchOutputItemParam);
 			}
 		}
-		msgIndex++;
+		if (!isLeadingSystemMessage) msgIndex++;
 	}
 
 	return messages;

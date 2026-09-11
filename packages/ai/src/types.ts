@@ -419,6 +419,16 @@ export interface DeferredHandle {
 	data?: JsonValue;
 }
 
+export interface SystemMessage {
+	role: "system";
+	content: string | TextContent[];
+	/** Complete definitions of tools that become available at this point. */
+	toolsAdded?: Tool[];
+	/** Tools that stop being available at this point. */
+	toolsRemoved?: ToolReference[];
+	timestamp: number; // Unix timestamp in milliseconds
+}
+
 export interface UserMessage {
 	role: "user";
 	content: string | (TextContent | ImageContent)[];
@@ -467,7 +477,7 @@ export interface ToolResultMessage<TDetails = any> {
 	timestamp: number; // Unix timestamp in milliseconds
 }
 
-export type Message = UserMessage | AssistantMessage | ToolResultMessage;
+export type Message = SystemMessage | UserMessage | AssistantMessage | ToolResultMessage;
 
 export type ImagesInputContent = TextContent | ImageContent;
 export type ImagesOutputContent = TextContent | ImageContent;
@@ -521,11 +531,22 @@ export interface Tool<TParameters extends TSchema = TSchema> {
 	constrainedSampling?: false | ConstrainedSamplingConfig;
 }
 
+export interface ToolReference {
+	name: string;
+}
+
 export interface Context {
 	systemPrompt?: string;
 	messages: Message[];
 	tools?: Tool[];
 }
+
+declare const transcriptContextBrand: unique symbol;
+
+/** Provider-facing context with initial instructions and tools represented in the transcript. */
+export type TranscriptContext = Omit<Context, "systemPrompt" | "tools"> & {
+	readonly [transcriptContextBrand]: true;
+};
 
 /**
  * Event protocol for AssistantMessageEventStream.
@@ -716,6 +737,8 @@ export interface AnthropicMessagesCompat {
 	supportsStrictTools?: boolean;
 	/** Whether the exact model transport supports effort-only system messages and thinking binding controls. Default: false. */
 	supportsMidConvoEffort?: boolean;
+	/** Whether the exact model accepts system-role messages inside the conversation. Default: false. */
+	supportsMidConvoSystemMessages?: boolean;
 	/**
 	 * Models Anthropic accepts in `fallbacks` for server-side refusal fallback,
 	 * with local pricing metadata for returned fallback responses. When absent or

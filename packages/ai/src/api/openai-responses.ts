@@ -19,6 +19,7 @@ import { splitDeferredTools } from "../utils/deferred-tools.ts";
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
+import { getCurrentTools, normalizeContext, type TranscriptContext } from "../utils/normalize-context.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
@@ -115,6 +116,7 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 	options?: OpenAIResponsesOptions,
 ): AssistantMessageEventStream => {
 	const stream = new AssistantMessageEventStream();
+	const normalizedContext = normalizeContext(context);
 
 	// Start async processing
 	(async () => {
@@ -143,11 +145,18 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 			const cacheSessionId = cacheRetention === "none" ? undefined : options?.sessionId;
 			const compat = getCompat(model);
 			const grammarToolInputProperties = createGrammarToolInputProperties(
-				context.tools,
+				getCurrentTools(normalizedContext),
 				compat.supportsOpenAIGrammarTools,
 			);
-			const client = createClient(model, context, apiKey, options?.headers, options?.fetch, cacheSessionId);
-			let params = buildParams(model, context, options, compat, grammarToolInputProperties);
+			const client = createClient(
+				model,
+				normalizedContext,
+				apiKey,
+				options?.headers,
+				options?.fetch,
+				cacheSessionId,
+			);
+			let params = buildParams(model, normalizedContext, options, compat, grammarToolInputProperties);
 			const nextParams = await options?.onPayload?.(params, model);
 			if (nextParams !== undefined) {
 				params = nextParams as ResponseCreateParamsStreaming;
@@ -229,7 +238,7 @@ export const streamSimple: StreamFunction<"openai-responses", SimpleStreamOption
 
 function createClient(
 	model: Model<"openai-responses">,
-	context: Context,
+	context: TranscriptContext,
 	apiKey: string,
 	optionsHeaders?: ProviderHeaders,
 	fetch?: typeof globalThis.fetch,
@@ -273,11 +282,11 @@ function createClient(
 
 function buildParams(
 	model: Model<"openai-responses">,
-	context: Context,
+	context: TranscriptContext,
 	options: OpenAIResponsesOptions | undefined,
 	compat: Required<OpenAIResponsesCompat> = getCompat(model),
 	grammarToolInputProperties: ReadonlyMap<string, string> = createGrammarToolInputProperties(
-		context.tools,
+		getCurrentTools(context),
 		compat.supportsOpenAIGrammarTools,
 	),
 ) {

@@ -41,10 +41,12 @@ import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { shortHash } from "../utils/hash.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { parseStreamingJson } from "../utils/json-parse.ts";
+import { getCurrentTools, normalizeContext, type TranscriptContext } from "../utils/normalize-context.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
+import { getSystemMessageText } from "../utils/text.ts";
 import {
 	appendGrammarToolInputJsonDelta,
 	createGrammarToolInputProperties,
@@ -314,6 +316,7 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 	options?: OpenAICompletionsOptions,
 ): AssistantMessageEventStream => {
 	const stream = new AssistantMessageEventStream();
+	const normalizedContext = normalizeContext(context);
 
 	(async () => {
 		const output: AssistantMessage = {
@@ -347,13 +350,28 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 			const apiKey = getClientApiKey(model.provider, options?.apiKey, options?.headers);
 			const compat = getCompat(model);
 			const grammarToolInputProperties = createGrammarToolInputProperties(
-				context.tools,
+				getCurrentTools(normalizedContext),
 				compat.supportsOpenAIGrammarTools,
 			);
 			const cacheRetention = resolveCacheRetention(options?.cacheRetention, options?.env);
 			const cacheSessionId = cacheRetention === "none" ? undefined : options?.sessionId;
-			const client = createClient(model, context, apiKey, options?.headers, options?.fetch, cacheSessionId, compat);
-			let params = buildParams(model, context, options, compat, cacheRetention, grammarToolInputProperties);
+			const client = createClient(
+				model,
+				normalizedContext,
+				apiKey,
+				options?.headers,
+				options?.fetch,
+				cacheSessionId,
+				compat,
+			);
+			let params = buildParams(
+				model,
+				normalizedContext,
+				options,
+				compat,
+				cacheRetention,
+				grammarToolInputProperties,
+			);
 			const nextParams = await options?.onPayload?.(params, model);
 			if (nextParams !== undefined) {
 				params = nextParams as OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming;
@@ -746,7 +764,7 @@ export const streamSimple: StreamFunction<"openai-completions", SimpleStreamOpti
 
 function createClient(
 	model: Model<"openai-completions">,
-	context: Context,
+	context: TranscriptContext,
 	apiKey: string,
 	optionsHeaders?: ProviderHeaders,
 	fetch?: typeof globalThis.fetch,
@@ -791,12 +809,12 @@ function createClient(
 
 function buildParams(
 	model: Model<"openai-completions">,
-	context: Context,
+	context: TranscriptContext,
 	options?: OpenAICompletionsOptions,
 	compat: ResolvedOpenAICompletionsCompat = getCompat(model),
 	cacheRetention: CacheRetention = resolveCacheRetention(options?.cacheRetention, options?.env),
 	grammarToolInputProperties: ReadonlyMap<string, string> = createGrammarToolInputProperties(
-		context.tools,
+		getCurrentTools(context),
 		compat.supportsOpenAIGrammarTools,
 	),
 ) {
@@ -837,8 +855,8 @@ function buildParams(
 
 	const deferredToolNames =
 		compat.deferredToolsMode === "kimi" ? getDeferredToolNames(context.messages) : new Set<string>();
-	const activeTools = context.tools?.filter((tool) => !deferredToolNames.has(tool.name));
-	if (activeTools && activeTools.length > 0) {
+	const activeTools = getCurrentTools(context).filter((tool) => !deferredToolNames.has(tool.name));
+	if (activeTools.length > 0) {
 		params.tools = convertTools(activeTools, compat);
 		if (compat.zaiToolStream) {
 			(params as any).tool_stream = true;
@@ -1181,6 +1199,7 @@ export function convertMessages(
 	compat: ResolvedOpenAICompletionsCompat,
 	options?: ConvertCompletionsMessagesOptions,
 ): ChatCompletionMessageParam[] {
+	const normalizedContext = normalizeContext(context);
 	const params: ChatCompletionMessageParam[] = [];
 
 	const normalizeToolCallId = (id: string): string => {
@@ -1209,13 +1228,8 @@ export function convertMessages(
 		return id;
 	};
 
-	const transformedMessages = transformMessages(context.messages, model, (id) => normalizeToolCallId(id));
-
-	if (context.systemPrompt) {
-		const useDeveloperRole = model.reasoning && compat.supportsDeveloperRole;
-		const role = useDeveloperRole ? "developer" : "system";
-		params.push({ role: role, content: sanitizeSurrogates(context.systemPrompt) });
-	}
+	const transformedMessages = transformMessages(normalizedContext.messages, model, (id) => normalizeToolCallId(id));
+	const instructionRole = model.reasoning && compat.supportsDeveloperRole ? "developer" : "system";
 
 	let lastRole: string | null = null;
 
@@ -1230,7 +1244,12 @@ export function convertMessages(
 			});
 		}
 
-		if (msg.role === "user") {
+		if (msg.role === "system") {
+			const text = getSystemMessageText(msg);
+			if (text.length > 0) {
+				params.push({ role: instructionRole, content: sanitizeSurrogates(text) });
+			}
+		} else if (msg.role === "user") {
 			if (typeof msg.content === "string") {
 				params.push({
 					role: "user",
@@ -1448,7 +1467,7 @@ export function convertMessages(
 			}
 
 			if (deferredToolNames.size > 0) {
-				const deferredTools = getToolsByName(context.tools, deferredToolNames);
+				const deferredTools = getToolsByName(getCurrentTools(normalizedContext), deferredToolNames);
 				if (deferredTools.length > 0) {
 					const kimiToolMessage: KimiToolSystemMessageParam = {
 						role: "system",

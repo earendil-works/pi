@@ -13,6 +13,7 @@ import type {
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
+import { getCurrentTools, normalizeContext, type TranscriptContext } from "../utils/normalize-context.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
@@ -73,6 +74,7 @@ export const stream: StreamFunction<"azure-openai-responses", AzureOpenAIRespons
 	options?: AzureOpenAIResponsesOptions,
 ): AssistantMessageEventStream => {
 	const stream = new AssistantMessageEventStream();
+	const normalizedContext = normalizeContext(context);
 
 	// Start async processing
 	(async () => {
@@ -104,10 +106,10 @@ export const stream: StreamFunction<"azure-openai-responses", AzureOpenAIRespons
 			}
 			const client = createClient(model, apiKey, options);
 			const grammarToolInputProperties = createGrammarToolInputProperties(
-				context.tools,
+				getCurrentTools(normalizedContext),
 				model.compat?.supportsOpenAIGrammarTools ?? false,
 			);
-			let params = buildParams(model, context, options, deploymentName, grammarToolInputProperties);
+			let params = buildParams(model, normalizedContext, options, deploymentName, grammarToolInputProperties);
 			const nextParams = await options?.onPayload?.(params, model);
 			if (nextParams !== undefined) {
 				params = nextParams as ResponseCreateParamsStreaming;
@@ -274,11 +276,11 @@ function createClient(model: Model<"azure-openai-responses">, apiKey: string, op
 
 function buildParams(
 	model: Model<"azure-openai-responses">,
-	context: Context,
+	context: TranscriptContext,
 	options: AzureOpenAIResponsesOptions | undefined,
 	deploymentName: string,
 	grammarToolInputProperties: ReadonlyMap<string, string> = createGrammarToolInputProperties(
-		context.tools,
+		getCurrentTools(context),
 		model.compat?.supportsOpenAIGrammarTools ?? false,
 	),
 ) {
@@ -302,8 +304,9 @@ function buildParams(
 		params.temperature = options?.temperature;
 	}
 
-	if (context.tools && context.tools.length > 0) {
-		params.tools = convertResponsesTools(context.tools, {
+	const currentTools = getCurrentTools(context);
+	if (currentTools.length > 0) {
+		params.tools = convertResponsesTools(currentTools, {
 			supportsStrictMode: model.compat?.supportsStrictMode ?? true,
 			supportsOpenAIGrammarTools: model.compat?.supportsOpenAIGrammarTools ?? false,
 		});

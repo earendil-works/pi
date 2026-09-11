@@ -1,4 +1,5 @@
-import type { Context, Tool } from "../types.ts";
+import type { Tool } from "../types.ts";
+import { getCurrentTools, type TranscriptContext } from "./normalize-context.ts";
 
 type ToolNameNormalizer = (name: string) => string;
 
@@ -6,12 +7,12 @@ const identityToolName: ToolNameNormalizer = (name) => name;
 
 /** Split current tools into prefix and transcript-loaded definitions. */
 export function splitDeferredTools(
-	context: Context,
+	context: TranscriptContext,
 	enabled: boolean,
 	normalizeName: ToolNameNormalizer = identityToolName,
 ): { immediate: Tool[]; deferred: Map<string, Tool> } {
 	const uniqueTools = new Map<string, Tool>();
-	for (const tool of context.tools ?? []) uniqueTools.set(normalizeName(tool.name), tool);
+	for (const tool of getCurrentTools(context)) uniqueTools.set(normalizeName(tool.name), tool);
 	if (!enabled) return { immediate: [...uniqueTools.values()], deferred: new Map() };
 
 	const deferredNames = new Set<string>();
