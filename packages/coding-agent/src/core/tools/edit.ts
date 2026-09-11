@@ -15,7 +15,7 @@ import {
 } from "./edit-diff.ts";
 import { withFileMutationQueue } from "./file-mutation-queue.ts";
 import { resolveToCwd } from "./path-utils.ts";
-import { type EditRenderState, editRenderers } from "./renderers/edit.ts";
+import { createEditRenderers, type EditRenderState } from "./renderers/edit.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
 
 const replaceEditSchema = Type.Object(
@@ -81,7 +81,11 @@ export interface EditToolDetails {
  * Override these to delegate file editing to remote systems (for example SSH).
  */
 export interface EditOperations {
-	/** Read file contents as a Buffer */
+	/**
+	 * Read file contents as a Buffer. Also used for speculative previews before access(),
+	 * execute(), and tool_call hooks, potentially concurrently with execution. Must be safe
+	 * to call independently; preview reads receive no abort signal and may outlive the call.
+	 */
 	readFile: (absolutePath: string) => Promise<Buffer>;
 	/** Write content to a file */
 	writeFile: (absolutePath: string, content: string) => Promise<void>;
@@ -211,7 +215,7 @@ export function createEditToolDefinition(
 				};
 			});
 		},
-		...editRenderers,
+		...createEditRenderers(ops),
 	};
 }
 

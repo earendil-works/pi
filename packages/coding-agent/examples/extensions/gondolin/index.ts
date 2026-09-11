@@ -25,7 +25,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import {
 	type BashOperations,
 	createBashTool,
-	createEditTool,
+	createEditToolDefinition,
 	createFindTool,
 	createGrepTool,
 	createLsTool,
@@ -109,13 +109,15 @@ function createGondolinWriteOps(vm: VM, localCwd: string): WriteOperations {
 	};
 }
 
-function createGondolinEditOps(vm: VM, localCwd: string): EditOperations {
-	const readOps = createGondolinReadOps(vm, localCwd);
-	const writeOps = createGondolinWriteOps(vm, localCwd);
+function createGondolinEditOps(getVm: () => Promise<VM>, localCwd: string): EditOperations {
 	return {
-		readFile: readOps.readFile,
-		writeFile: writeOps.writeFile,
-		access: readOps.access,
+		readFile: async (filePath) => (await getVm()).fs.readFile(toGuestPath(localCwd, filePath)),
+		writeFile: async (filePath, content) => {
+			await (await getVm()).fs.writeFile(toGuestPath(localCwd, filePath), content, { encoding: "utf8" });
+		},
+		access: async (filePath) => {
+			await (await getVm()).fs.access(toGuestPath(localCwd, filePath));
+		},
 	};
 }
 
@@ -366,7 +368,6 @@ export default function (pi: ExtensionAPI) {
 	const localCwd = process.cwd();
 	const localRead = createReadTool(localCwd);
 	const localWrite = createWriteTool(localCwd);
-	const localEdit = createEditTool(localCwd);
 	const localBash = createBashTool(localCwd);
 	const localGrep = createGrepTool(localCwd);
 	const localFind = createFindTool(localCwd);
@@ -406,6 +407,10 @@ export default function (pi: ExtensionAPI) {
 		}
 		return vmStarting;
 	}
+
+	const editTool = createEditToolDefinition(GUEST_WORKSPACE, {
+		operations: createGondolinEditOps(() => ensureVm(), localCwd),
+	});
 
 	pi.on("session_start", async (_event, ctx) => {
 		await ensureVm(ctx);
@@ -462,14 +467,22 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
+	// Keep relative edit paths aligned with the guest cwd used by the other routed tools.
 	pi.registerTool({
-		...localEdit,
+		...editTool,
+		renderCall(args, theme, context) {
+			return editTool.renderCall!(args, theme, { ...context, cwd: GUEST_WORKSPACE });
+		},
+		renderResult(result, options, theme, context) {
+			return editTool.renderResult!(
+				result as Parameters<NonNullable<typeof editTool.renderResult>>[0],
+				options,
+				theme,
+				{ ...context, cwd: GUEST_WORKSPACE },
+			);
+		},
 		async execute(id, params, signal, onUpdate, ctx) {
-			const activeVm = await ensureVm(ctx);
-			const tool = createEditTool(GUEST_WORKSPACE, {
-				operations: createGondolinEditOps(activeVm, localCwd),
-			});
-			return tool.execute(id, params, signal, onUpdate);
+			return editTool.execute(id, params, signal, onUpdate, { ...ctx, cwd: GUEST_WORKSPACE });
 		},
 	});
 
