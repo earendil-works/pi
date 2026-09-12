@@ -3380,6 +3380,16 @@ export class InteractiveMode {
 				break;
 
 			case "agent_settled":
+				{
+					const text = this.session.getLastAssistantText();
+					if (text) {
+						try {
+							await copyToClipboard(text);
+						} catch (error) {
+							this.showError(error instanceof Error ? error.message : String(error));
+						}
+					}
+				}
 				await this.checkShutdownRequested();
 				break;
 

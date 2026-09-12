@@ -351,6 +351,66 @@ describe("InteractiveMode copy confirmation", () => {
 	});
 });
 
+type AgentSettledContext = {
+	isInitialized: boolean;
+	footer: { invalidate: () => void };
+	runtimeHost: { session: { getLastAssistantText: () => string | undefined } };
+	checkShutdownRequested: () => Promise<void>;
+	showError: (message: string) => void;
+};
+
+function createAgentSettledContext(text: string | undefined): AgentSettledContext {
+	return Object.assign(Object.create(InteractiveMode.prototype), {
+		isInitialized: true,
+		footer: { invalidate: vi.fn() },
+		runtimeHost: { session: { getLastAssistantText: () => text } },
+		checkShutdownRequested: vi.fn(async () => {}),
+		showError: vi.fn(),
+	}) as AgentSettledContext;
+}
+
+const agentSettledPrototype = InteractiveMode.prototype as unknown as {
+	handleEvent(this: AgentSettledContext, event: { type: "agent_settled" }): Promise<void>;
+};
+
+describe("InteractiveMode automatic copy", () => {
+	beforeEach(() => {
+		clipboardMocks.copyToClipboard.mockReset();
+		clipboardMocks.copyToClipboard.mockResolvedValue(undefined);
+	});
+
+	it("copies the latest assistant text when the agent settles", async () => {
+		const context = createAgentSettledContext("assistant response");
+
+		await agentSettledPrototype.handleEvent.call(context, { type: "agent_settled" });
+
+		expect(clipboardMocks.copyToClipboard).toHaveBeenCalledOnce();
+		expect(clipboardMocks.copyToClipboard).toHaveBeenCalledWith("assistant response");
+		expect(context.showError).not.toHaveBeenCalled();
+		expect(context.checkShutdownRequested).toHaveBeenCalledOnce();
+	});
+
+	it("does not copy when no assistant text exists", async () => {
+		const context = createAgentSettledContext(undefined);
+
+		await agentSettledPrototype.handleEvent.call(context, { type: "agent_settled" });
+
+		expect(clipboardMocks.copyToClipboard).not.toHaveBeenCalled();
+		expect(context.showError).not.toHaveBeenCalled();
+		expect(context.checkShutdownRequested).toHaveBeenCalledOnce();
+	});
+
+	it("reports clipboard failures without skipping shutdown checks", async () => {
+		clipboardMocks.copyToClipboard.mockRejectedValue(new Error("clipboard unavailable"));
+		const context = createAgentSettledContext("assistant response");
+
+		await agentSettledPrototype.handleEvent.call(context, { type: "agent_settled" });
+
+		expect(context.showError).toHaveBeenCalledWith("clipboard unavailable");
+		expect(context.checkShutdownRequested).toHaveBeenCalledOnce();
+	});
+});
+
 type StatusEditor = {
 	embedWorkingStatus: boolean;
 	setWorkingStatusIndicator: (indicator: StatusIndicator | undefined) => void;
