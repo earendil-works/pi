@@ -236,6 +236,14 @@ export class ToolExecutionComponent extends Container {
 		this.updateDisplay();
 	}
 
+	getToolName(): string {
+		return this.toolName;
+	}
+
+	isError(): boolean {
+		return this.result?.isError ?? false;
+	}
+
 	setShowImages(show: boolean): void {
 		this.showImages = show;
 		this.updateDisplay();

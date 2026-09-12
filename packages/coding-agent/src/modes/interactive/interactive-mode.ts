@@ -148,6 +148,7 @@ import {
 	WorkingStatusIndicator,
 } from "./components/status-indicator.ts";
 import { ThinkingSelectorComponent } from "./components/thinking-selector.ts";
+import { TOOL_CALL_GROUP_THRESHOLD, ToolCallGroupComponent } from "./components/tool-call-group.ts";
 import { ToolExecutionComponent } from "./components/tool-execution.ts";
 import { TreeSelectorComponent } from "./components/tree-selector.ts";
 import { TrustSelectorComponent } from "./components/trust-selector.ts";
@@ -429,6 +430,8 @@ export class InteractiveMode {
 
 	// Tool execution tracking: toolCallId -> component
 	private pendingTools = new Map<string, ToolExecutionComponent>();
+	private ungroupedToolRun: ToolExecutionComponent[] = [];
+	private activeToolCallGroup: ToolCallGroupComponent | undefined;
 
 	// Tool output expansion state
 	private toolOutputExpanded = false;
@@ -3226,6 +3229,7 @@ export class InteractiveMode {
 					this.updatePendingMessagesDisplay();
 					this.ui.requestRender();
 				} else if (event.message.role === "assistant") {
+					this.resetToolCallGrouping();
 					this.streamingComponent = new AssistantMessageComponent(
 						undefined,
 						this.hideThinkingBlock,
@@ -3262,7 +3266,7 @@ export class InteractiveMode {
 									this.sessionManager.getCwd(),
 								);
 								component.setExpanded(this.toolOutputExpanded);
-								this.chatContainer.addChild(component);
+								this.addToolToChat(component);
 								this.pendingTools.set(content.id, component);
 							} else {
 								const component = this.pendingTools.get(content.id);
@@ -3337,7 +3341,7 @@ export class InteractiveMode {
 						this.sessionManager.getCwd(),
 					);
 					component.setExpanded(this.toolOutputExpanded);
-					this.chatContainer.addChild(component);
+					this.addToolToChat(component);
 					this.pendingTools.set(event.toolCallId, component);
 				}
 				component.markExecutionStarted();
@@ -3554,6 +3558,30 @@ export class InteractiveMode {
 		this.ui.requestRender();
 	}
 
+	private resetToolCallGrouping(): void {
+		this.ungroupedToolRun = [];
+		this.activeToolCallGroup = undefined;
+	}
+
+	private addToolToChat(component: ToolExecutionComponent): void {
+		if (this.activeToolCallGroup) {
+			this.activeToolCallGroup.addTool(component);
+			return;
+		}
+
+		this.ungroupedToolRun.push(component);
+		this.chatContainer.addChild(component);
+		if (this.ungroupedToolRun.length < TOOL_CALL_GROUP_THRESHOLD) return;
+
+		const group = new ToolCallGroupComponent(this.ungroupedToolRun, this.ui, this.toolOutputExpanded);
+		for (const tool of this.ungroupedToolRun) {
+			this.chatContainer.removeChild(tool);
+		}
+		this.chatContainer.addChild(group);
+		this.ungroupedToolRun = [];
+		this.activeToolCallGroup = group;
+	}
+
 	private addCustomEntryToChat(entry: Extract<SessionEntry, { type: "custom" }>): void {
 		const renderer = this.session.extensionRunner.getEntryRenderer(entry.customType);
 		if (!renderer) {
@@ -3713,6 +3741,7 @@ export class InteractiveMode {
 			const message = item;
 			// Assistant messages need special handling for tool calls
 			if (message.role === "assistant") {
+				this.resetToolCallGrouping();
 				this.addMessageToChat(message);
 				// Render tool call components
 				for (const content of message.content) {
@@ -3730,7 +3759,7 @@ export class InteractiveMode {
 							this.sessionManager.getCwd(),
 						);
 						component.setExpanded(this.toolOutputExpanded);
-						this.chatContainer.addChild(component);
+						this.addToolToChat(component);
 
 						if (message.stopReason === "aborted" || message.stopReason === "error") {
 							let errorMessage: string;
