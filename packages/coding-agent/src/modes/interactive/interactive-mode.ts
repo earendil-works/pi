@@ -393,6 +393,8 @@ export class InteractiveMode {
 	private editorContainer: Container;
 	private activeSelectorToken?: object;
 	private activeSelectorDispose?: () => void;
+	/** Closes the waiting span of the selector on screen, so a status integration sees it end. */
+	private activeSelectorEndPrompt?: () => void;
 	private footer: FooterComponent;
 	private footerContainer: Container;
 	private footerDataProvider: FooterDataProvider;
@@ -4517,9 +4519,14 @@ export class InteractiveMode {
 
 	private disposeActiveSelector(): void {
 		const dispose = this.activeSelectorDispose;
+		const endPrompt = this.activeSelectorEndPrompt;
 		this.activeSelectorToken = undefined;
 		this.activeSelectorDispose = undefined;
+		this.activeSelectorEndPrompt = undefined;
 		dispose?.();
+		// A selector replaced by another one never reaches its own `done`, and its span would
+		// otherwise stay open for the rest of the session.
+		endPrompt?.();
 	}
 
 	/**
@@ -4531,11 +4538,17 @@ export class InteractiveMode {
 	): void {
 		const token = {};
 		let dispose: (() => void) | undefined;
+		// Pi is blocked on a person from here until the selector closes, exactly as it is for an
+		// extension's prompt. Same span, so the two cannot be told apart from outside - and they
+		// should not be.
+		const endPrompt = this.session.extensionRunner.beginUIPrompt("select");
 		const done = () => {
 			dispose?.();
+			endPrompt();
 			if (this.activeSelectorToken !== token) return;
 			this.activeSelectorToken = undefined;
 			this.activeSelectorDispose = undefined;
+			this.activeSelectorEndPrompt = undefined;
 			this.editorContainer.clear();
 			this.editorContainer.addChild(this.editor);
 			this.ui.setFocus(this.editor);
@@ -4545,6 +4558,7 @@ export class InteractiveMode {
 		this.disposeActiveSelector();
 		this.activeSelectorToken = token;
 		this.activeSelectorDispose = dispose;
+		this.activeSelectorEndPrompt = endPrompt;
 		this.editorContainer.clear();
 		this.editorContainer.addChild(created.component);
 		this.ui.setFocus(created.focus);

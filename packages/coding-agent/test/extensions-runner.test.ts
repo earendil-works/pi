@@ -1061,4 +1061,90 @@ describe("ExtensionRunner", () => {
 			expect(errors[0].error).toContain("header handler boom");
 		});
 	});
+	describe("beginUIPrompt", () => {
+		const writeRecordingExtension = () => {
+			fs.writeFileSync(
+				path.join(extensionsDir, "record-prompts.ts"),
+				`export default function (pi) {
+					pi.on("ui_prompt_start", (event) => {
+						globalThis.__uiPromptLog.push(["start", event.kind, event.title ?? ""]);
+					});
+					pi.on("ui_prompt_end", (event) => {
+						globalThis.__uiPromptLog.push(["end", event.kind, event.title ?? ""]);
+					});
+				}`,
+			);
+		};
+
+		const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+		beforeEach(() => {
+			(globalThis as Record<string, unknown>).__uiPromptLog = [];
+		});
+
+		it("reports a prompt Pi shows itself, not only an extension's", async () => {
+			// Pi's own selectors block a person exactly as an extension's prompt does. Before this
+			// span existed they were invisible, so a status integration reported "running" while
+			// somebody was staring at the model picker.
+			writeRecordingExtension();
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+
+			const end = runner.beginUIPrompt("select", "Model");
+			await flush();
+			expect((globalThis as Record<string, unknown>).__uiPromptLog).toEqual([["start", "select", "Model"]]);
+
+			end();
+			await flush();
+			expect((globalThis as Record<string, unknown>).__uiPromptLog).toEqual([
+				["start", "select", "Model"],
+				["end", "select", "Model"],
+			]);
+		});
+
+		it("closes the span once however often it is asked to", async () => {
+			// A selector can be dismissed and disposed, and both paths close the span. A second
+			// call must not unbalance the depth and swallow the next prompt's start.
+			writeRecordingExtension();
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+
+			const end = runner.beginUIPrompt("select");
+			end();
+			end();
+			await flush();
+
+			const second = runner.beginUIPrompt("confirm");
+			second();
+			await flush();
+
+			expect((globalThis as Record<string, unknown>).__uiPromptLog).toEqual([
+				["start", "select", ""],
+				["end", "select", ""],
+				["start", "confirm", ""],
+				["end", "confirm", ""],
+			]);
+		});
+
+		it("coalesces a nested prompt into the outer one", async () => {
+			// Documented behaviour of the existing span, kept here because a second entry point
+			// into it is where that would be lost.
+			writeRecordingExtension();
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+
+			const outer = runner.beginUIPrompt("select", "Outer");
+			const inner = runner.beginUIPrompt("confirm", "Inner");
+			inner();
+			await flush();
+			expect((globalThis as Record<string, unknown>).__uiPromptLog).toEqual([["start", "select", "Outer"]]);
+
+			outer();
+			await flush();
+			expect((globalThis as Record<string, unknown>).__uiPromptLog).toEqual([
+				["start", "select", "Outer"],
+				["end", "select", "Outer"],
+			]);
+		});
+	});
 });

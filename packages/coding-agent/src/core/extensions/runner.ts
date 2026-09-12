@@ -450,14 +450,28 @@ export class ExtensionRunner {
 		};
 	}
 
-	private withUIPrompt<T>(kind: UIPromptKind, title: string | undefined, run: () => Promise<T>): Promise<T> {
+	/**
+	 * Opens a waiting span for a blocking prompt Pi shows itself, and returns the function that
+	 * closes it.
+	 *
+	 * Extension prompts go through `withUIPrompt`, which uses this. Pi's own prompts - the model
+	 * picker, the settings selector, the session tree - block a person in exactly the same way and
+	 * had no span, so anything reporting "waiting for user" saw only half of them.
+	 *
+	 * The returned function is safe to call more than once: a selector can be dismissed and
+	 * disposed, and both paths lead here.
+	 */
+	beginUIPrompt(kind: UIPromptKind, title?: string): () => void {
 		const outerPrompt = this.uiPromptDepth++ === 0;
 		if (outerPrompt) {
 			this.activeUIPrompt = { kind, title };
 			this.emitUIPromptEvent({ type: "ui_prompt_start", reason: "ui_prompt", kind, ...(title ? { title } : {}) });
 		}
 
-		const finish = () => {
+		let ended = false;
+		return () => {
+			if (ended) return;
+			ended = true;
 			if (--this.uiPromptDepth > 0) return;
 			this.uiPromptDepth = 0;
 
@@ -470,6 +484,10 @@ export class ExtensionRunner {
 				...(prompt.title ? { title: prompt.title } : {}),
 			});
 		};
+	}
+
+	private withUIPrompt<T>(kind: UIPromptKind, title: string | undefined, run: () => Promise<T>): Promise<T> {
+		const finish = this.beginUIPrompt(kind, title);
 
 		try {
 			return run().finally(finish);
