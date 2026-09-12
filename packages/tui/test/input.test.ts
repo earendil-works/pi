@@ -1,6 +1,7 @@
 import assert from "node:assert";
 import { describe, it } from "node:test";
 import { Input } from "../src/components/input.ts";
+import { KeybindingsManager, setKeybindings, TUI_KEYBINDINGS } from "../src/keybindings.ts";
 import { visibleWidth } from "../src/utils.ts";
 
 describe("Input component", () => {
@@ -32,6 +33,25 @@ describe("Input component", () => {
 		input.handleInput("x");
 
 		assert.strictEqual(input.getValue(), "\\x");
+	});
+
+	it("submits only on the configured submit key after rebinding", () => {
+		setKeybindings(new KeybindingsManager(TUI_KEYBINDINGS, { "tui.input.submit": ["ctrl+m"] }));
+		try {
+			const input = new Input();
+			let submitted = false;
+			input.onSubmit = () => {
+				submitted = true;
+			};
+
+			input.setValue("hello");
+			input.handleInput("\n"); // raw newline must not bypass a rebound submit key
+			assert.strictEqual(submitted, false);
+			input.handleInput("\r"); // ctrl+m (0x0d) submits
+			assert.strictEqual(submitted, true);
+		} finally {
+			setKeybindings(new KeybindingsManager(TUI_KEYBINDINGS));
+		}
 	});
 
 	describe("render", () => {

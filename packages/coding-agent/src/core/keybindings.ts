@@ -44,6 +44,7 @@ export interface AppKeybindings {
 	"app.models.enableAll": true;
 	"app.models.clearAll": true;
 	"app.models.toggleProvider": true;
+	"app.models.clearSearchOrCancel": true;
 	"app.models.reorderUp": true;
 	"app.models.reorderDown": true;
 	"app.tree.filter.default": true;
@@ -167,6 +168,10 @@ export const KEYBINDINGS = {
 	"app.models.toggleProvider": {
 		defaultKeys: "ctrl+p",
 		description: "Toggle all models for provider",
+	},
+	"app.models.clearSearchOrCancel": {
+		defaultKeys: "ctrl+c",
+		description: "Clear search or cancel model selection",
 	},
 	"app.models.reorderUp": {
 		defaultKeys: "alt+up",

@@ -10,7 +10,6 @@ import {
 	type Focusable,
 	getKeybindings,
 	Input,
-	matchesKey,
 	Spacer,
 	truncateToWidth,
 	visibleWidth,
@@ -486,10 +485,6 @@ class ResourceList implements Component, Focusable {
 		}
 		if (kb.matches(data, "tui.select.cancel")) {
 			this.onCancel?.();
-			return;
-		}
-		if (matchesKey(data, "ctrl+c")) {
-			this.onExit?.();
 			return;
 		}
 		if (kb.matches(data, "tui.input.tab")) {

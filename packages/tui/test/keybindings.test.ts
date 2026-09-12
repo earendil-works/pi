@@ -20,6 +20,22 @@ describe("KeybindingsManager", () => {
 		assert.deepStrictEqual(keybindings.getKeys("tui.editor.pageDown"), ["pageDown", "ctrl+pageDown"]);
 	});
 
+	it("binds shift-modified deletion and space insertion through editor defaults", () => {
+		const keybindings = new KeybindingsManager(TUI_KEYBINDINGS);
+
+		assert.deepStrictEqual(keybindings.getKeys("tui.editor.deleteCharBackward"), ["backspace", "shift+backspace"]);
+		assert.deepStrictEqual(keybindings.getKeys("tui.editor.deleteCharForward"), ["delete", "ctrl+d", "shift+delete"]);
+		assert.deepStrictEqual(keybindings.getKeys("tui.editor.insertSpace"), ["shift+space"]);
+	});
+
+	it("allows removing shift-modified editor defaults via user bindings", () => {
+		const keybindings = new KeybindingsManager(TUI_KEYBINDINGS, {
+			"tui.editor.deleteCharBackward": ["backspace"],
+		});
+
+		assert.deepStrictEqual(keybindings.getKeys("tui.editor.deleteCharBackward"), ["backspace"]);
+	});
+
 	it("leaves dedicated prompt history navigation unbound by default", () => {
 		const keybindings = new KeybindingsManager(TUI_KEYBINDINGS);
 

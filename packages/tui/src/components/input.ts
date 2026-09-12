@@ -98,7 +98,7 @@ export class Input implements Component, Focusable {
 		}
 
 		// Submit
-		if (kb.matches(data, "tui.input.submit") || data === "\n") {
+		if (kb.matches(data, "tui.input.submit")) {
 			if (this.onSubmit) this.onSubmit(this.value);
 			return;
 		}

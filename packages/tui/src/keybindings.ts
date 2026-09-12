@@ -22,6 +22,7 @@ export interface Keybindings {
 	"tui.editor.pageDown": true;
 	"tui.editor.deleteCharBackward": true;
 	"tui.editor.deleteCharForward": true;
+	"tui.editor.insertSpace": true;
 	"tui.editor.deleteWordBackward": true;
 	"tui.editor.deleteWordForward": true;
 	"tui.editor.deleteToLineStart": true;
@@ -108,12 +109,16 @@ export const TUI_KEYBINDINGS = {
 	"tui.editor.pageUp": { defaultKeys: ["pageUp", "ctrl+pageUp"], description: "Page up" },
 	"tui.editor.pageDown": { defaultKeys: ["pageDown", "ctrl+pageDown"], description: "Page down" },
 	"tui.editor.deleteCharBackward": {
-		defaultKeys: "backspace",
+		defaultKeys: ["backspace", "shift+backspace"],
 		description: "Delete character backward",
 	},
 	"tui.editor.deleteCharForward": {
-		defaultKeys: ["delete", "ctrl+d"],
+		defaultKeys: ["delete", "ctrl+d", "shift+delete"],
 		description: "Delete character forward",
+	},
+	"tui.editor.insertSpace": {
+		defaultKeys: "shift+space",
+		description: "Insert regular space",
 	},
 	"tui.editor.deleteWordBackward": {
 		defaultKeys: ["ctrl+w", "alt+backspace"],
