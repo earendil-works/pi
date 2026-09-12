@@ -63,9 +63,13 @@ export async function getProviderCredential(
 	return getAuthCredential(await modelRuntime.getAuth(providerId));
 }
 
-export async function createAuthCheckModelRuntime(credentials: CredentialStore): Promise<ModelRuntime> {
+export async function createAuthCheckModelRuntime(
+	credentials: CredentialStore,
+	disabledProviders: readonly string[] = [],
+): Promise<ModelRuntime> {
 	return ModelRuntime.create({
 		credentials,
+		disabledProviders,
 		modelsStore: new InMemoryCodingAgentModelsStore(),
 		allowModelNetwork: false,
 		refreshOnCreate: false,

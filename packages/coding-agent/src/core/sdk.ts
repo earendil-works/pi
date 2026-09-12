@@ -174,12 +174,18 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	const cwd = resolvePath(options.cwd ?? options.sessionManager?.getCwd() ?? process.cwd());
 	const agentDir = options.agentDir ? resolvePath(options.agentDir) : getDefaultAgentDir();
 	let resourceLoader = options.resourceLoader;
+	const settingsManager = options.settingsManager ?? SettingsManager.create(cwd, agentDir);
 
 	const authPath = options.agentDir ? join(agentDir, "auth.json") : undefined;
 	const modelsPath = options.agentDir ? join(agentDir, "models.json") : undefined;
-	const modelRuntime = options.modelRuntime ?? (await ModelRuntime.create({ authPath, modelsPath }));
+	const modelRuntime =
+		options.modelRuntime ??
+		(await ModelRuntime.create({
+			authPath,
+			disabledProviders: settingsManager.getDisabledProviders(),
+			modelsPath,
+		}));
 
-	const settingsManager = options.settingsManager ?? SettingsManager.create(cwd, agentDir);
 	const sessionManager = options.sessionManager ?? SessionManager.create(cwd, getDefaultSessionDir(cwd, agentDir));
 
 	if (!resourceLoader) {

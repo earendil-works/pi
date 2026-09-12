@@ -158,9 +158,10 @@ async function runAuthCommand(args: string[]): Promise<boolean> {
 		if (parsed.diagnostics.length > 0) {
 			throw new AuthCommandError(parsed.diagnostics.map((diagnostic) => diagnostic.message).join("\n"));
 		}
+		const disabledProviders = SettingsManager.create(process.cwd(), getAgentDir()).getDisabledProviders();
 		if (command.kind !== "check") {
 			const signal = AbortSignal.timeout(15_000);
-			const modelRuntime = await ModelRuntime.create({ allowModelNetwork: false, signal });
+			const modelRuntime = await ModelRuntime.create({ allowModelNetwork: false, disabledProviders, signal });
 			const credential = await resolveCredentialForPrint(
 				parsed,
 				modelRuntime,
@@ -177,7 +178,7 @@ async function runAuthCommand(args: string[]): Promise<boolean> {
 		let credential: string | undefined;
 		try {
 			const credentials = command.noRefresh ? new ReadOnlyAuthStorage() : AuthStorage.create();
-			const modelRuntime = await createAuthCheckModelRuntime(credentials);
+			const modelRuntime = await createAuthCheckModelRuntime(credentials, disabledProviders);
 			result = await checkProviderAuth(parsed, modelRuntime, { refresh: !command.noRefresh });
 			if (command.credentials && result.status === "ready") {
 				credential = await getProviderCredential(result.provider, modelRuntime, credentials, {

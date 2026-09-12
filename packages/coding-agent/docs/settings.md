@@ -296,6 +296,7 @@ When multiple sources specify a session directory, precedence is `--session-dir`
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
 | `enabledModels` | string[] | - | Model patterns for Ctrl+P cycling (same format as `--models` CLI flag) |
+| `disabledProviders` | string[] | - | Provider IDs excluded from discovery, authentication, registration, and use |
 
 ```json
 {

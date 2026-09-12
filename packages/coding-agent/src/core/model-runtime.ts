@@ -75,6 +75,8 @@ export interface CreateModelRuntimeOptions {
 	/** Timeout for the create-time network model refresh. */
 	modelRefreshTimeoutMs?: number;
 	catalogBaseUrl?: string;
+	/** Provider IDs excluded from discovery, authentication, registration, and use. */
+	disabledProviders?: readonly string[];
 	/** Optional caller cancellation for initial cache restoration and availability checks. */
 	signal?: AbortSignal;
 	/** Skip initial catalog and availability refresh. Static models remain available. */
@@ -130,6 +132,7 @@ function mergeHeaders(
 export class ModelRuntime implements Models {
 	private readonly models: MutableModels;
 	private readonly credentials: RuntimeCredentials;
+	private readonly disabledProviders: ReadonlySet<string>;
 	private readonly defaultBuiltins: ReadonlyMap<string, Provider>;
 	private readonly builtins = new Map<string, Provider>();
 	private readonly nativeExtensionProviders = new Map<string, Provider>();
@@ -158,8 +161,10 @@ export class ModelRuntime implements Models {
 		modelsStore: ModelsStore,
 		providers: readonly Provider[],
 		modelNetworkEnabled: boolean,
+		disabledProviders: ReadonlySet<string>,
 	) {
 		this.credentials = credentials;
+		this.disabledProviders = disabledProviders;
 		this.config = config;
 		this.modelsPath = modelsPath;
 		this.modelNetworkEnabled = modelNetworkEnabled;
@@ -171,6 +176,9 @@ export class ModelRuntime implements Models {
 
 	static async create(options: CreateModelRuntimeOptions = {}): Promise<ModelRuntime> {
 		const credentials = new RuntimeCredentials(options.credentials ?? DefaultAuthStorage.create(options.authPath));
+		const disabledProviders = new Set(
+			options.disabledProviders?.map((providerId) => providerId.trim()).filter(Boolean),
+		);
 		const modelsPath =
 			options.modelsPath === null ? undefined : (options.modelsPath ?? join(getAgentDir(), "models.json"));
 		const config = await ModelConfig.load(modelsPath);
@@ -194,6 +202,7 @@ export class ModelRuntime implements Models {
 			modelsStore,
 			providers,
 			process.env.PI_OFFLINE === undefined,
+			disabledProviders,
 		);
 		runtime.configureRadiusProviders();
 		runtime.rebuildProviders();
@@ -234,15 +243,23 @@ export class ModelRuntime implements Models {
 	}
 
 	private providerIds(): Set<string> {
-		return new Set([
-			...this.builtins.keys(),
-			...this.nativeExtensionProviders.keys(),
-			...this.config.getProviderIds(),
-			...this.extensionProviders.keys(),
-		]);
+		return new Set(
+			[
+				...this.builtins.keys(),
+				...this.nativeExtensionProviders.keys(),
+				...this.config.getProviderIds(),
+				...this.extensionProviders.keys(),
+			].filter((providerId) => !this.disabledProviders.has(providerId)),
+		);
 	}
 
 	private recomposeProvider(providerId: string): void {
+		if (this.disabledProviders.has(providerId)) {
+			this.models.deleteProvider(providerId);
+			this.compositionErrors.delete(providerId);
+			return;
+		}
+
 		const base = this.nativeExtensionProviders.get(providerId) ?? this.builtins.get(providerId);
 		const extension = this.extensionProviders.get(providerId);
 		if (!base && !this.config.getProvider(providerId) && !extension) {
@@ -740,6 +757,8 @@ export class ModelRuntime implements Models {
 
 	registerNativeProvider(provider: Provider): void {
 		if (!provider.id.trim()) throw new Error("Provider id must not be empty.");
+		if (this.disabledProviders.has(provider.id))
+			throw new Error(`Provider "${provider.id}" is disabled by settings.`);
 		this.extensionProviders.delete(provider.id);
 		this.nativeExtensionProviders.set(provider.id, provider);
 		this.recomposeProvider(provider.id);
@@ -748,6 +767,7 @@ export class ModelRuntime implements Models {
 	}
 
 	registerProvider(providerId: string, config: ProviderConfigInput): void {
+		if (this.disabledProviders.has(providerId)) throw new Error(`Provider "${providerId}" is disabled by settings.`);
 		// Validate the incoming registration on its own, like the legacy registry:
 		// a broken re-registration must throw without touching the stored config.
 		validateExtensionProvider(providerId, this.builtins.get(providerId), this.config.getProvider(providerId), config);
