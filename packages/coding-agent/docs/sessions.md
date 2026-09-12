@@ -93,11 +93,16 @@ Example shape:
 | Ctrl+←/Ctrl+→ or Alt+←/Alt+→ | Fold/unfold or jump between branch segments |
 | Shift+L | Set or clear a label on the selected entry |
 | Shift+T | Toggle label timestamps |
+| Shift+D | Delete the selected branch and its descendants (permanent) |
 | Enter | Select entry |
 | Escape/Ctrl+C | Cancel |
 | Ctrl+O | Cycle filter mode |
 
 Filter modes are: default, no-tools, user-only, labeled-only, and all. Configure the default with `treeFilterMode` in [Settings](settings.md).
+
+### Deleting branches
+
+Put the cursor on a branch and press Shift+D, then confirm with Enter (Escape cancels). This permanently removes that entry and its whole subtree from the session file. The active path (root to current leaf) is protected and cannot be deleted. Use `/clone` when you want a non-destructive copy of the active branch into a new session instead.
 
 ### Selection Behavior
 

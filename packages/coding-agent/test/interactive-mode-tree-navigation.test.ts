@@ -142,3 +142,112 @@ describe("InteractiveMode tree navigation availability", () => {
 		expect(ui.session.navigateTree).not.toHaveBeenCalled();
 	});
 });
+
+describe("InteractiveMode tree branch deletion", () => {
+	function createDeleteUI() {
+		const sessionManager = SessionManager.inMemory();
+		sessionManager.appendMessage(userMsg("A"));
+		const b = sessionManager.appendMessage(assistantMsg("B"));
+		const d = sessionManager.appendMessage(userMsg("D"));
+		sessionManager.branch(b);
+		const e = sessionManager.appendMessage(userMsg("E"));
+		sessionManager.appendMessage(assistantMsg("F"));
+		sessionManager.branch(d);
+
+		let selector: TreeSelectorComponent | undefined;
+		const ui = {
+			sessionManager,
+			settingsManager: SettingsManager.inMemory(),
+			session: {
+				isStreaming: false,
+				isCompacting: false,
+				syncMessagesFromSession: vi.fn(),
+			},
+			defaultEditor: { onEscape: vi.fn() },
+			editor: { getText: () => "", setText: vi.fn() },
+			chatContainer: new Container(),
+			isInitialized: true,
+			footer: { invalidate: vi.fn() },
+			ui: { terminal: { rows: 24, setProgress: vi.fn() }, requestRender: vi.fn() },
+			showSelector: (
+				create: (done: () => void) => { component: TreeSelectorComponent; focus: TreeSelectorComponent },
+			) => {
+				selector = create(vi.fn()).component;
+			},
+			renderInitialMessages: vi.fn(),
+			showStatus: vi.fn(),
+			showError: vi.fn(),
+		};
+		const showTreeSelector = Reflect.get(InteractiveMode.prototype, "showTreeSelector") as (this: typeof ui) => void;
+		showTreeSelector.call(ui);
+		expect(selector).toBeDefined();
+		return { ui, selector: selector!, ids: { b, d, e } };
+	}
+
+	it("prunes the branch, syncs messages, refreshes the selector, and shows a status", () => {
+		const { ui, selector, ids } = createDeleteUI();
+
+		selector.onDeleteBranch!(ids.e);
+
+		expect(ui.sessionManager.getEntry(ids.e)).toBeUndefined();
+		expect(ui.session.syncMessagesFromSession).toHaveBeenCalledOnce();
+		expect(ui.showStatus).toHaveBeenCalledWith("Deleted branch (2 entries)");
+		expect(ui.showError).not.toHaveBeenCalled();
+		// No compaction window changed, so the chat is not re-rendered.
+		expect(ui.renderInitialMessages).not.toHaveBeenCalled();
+		// Selector stays mounted with the pruned tree and reselects the parent.
+		expect(selector.getTreeList().getSelectedNode()?.entry.id).toBe(ids.b);
+		expect(ui.ui.requestRender).toHaveBeenCalled();
+	});
+
+	it("re-renders the chat when the prune reports contextChanged", () => {
+		const { ui, selector } = createDeleteUI();
+		// Build an on-path compaction whose firstKept points at a label that will be dropped.
+		const mgr = ui.sessionManager;
+		const leaf = mgr.getLeafId()!;
+		mgr.branch(mgr.getEntries()[0].id);
+		const x = mgr.appendMessage(userMsg("X"));
+		mgr.branch(leaf);
+		const label = mgr.appendLabelChange(x, "mark");
+		mgr.appendMessage(userMsg("B2"));
+		mgr.appendCompaction("summary", label, 1000);
+		mgr.appendMessage(userMsg("tail"));
+
+		selector.onDeleteBranch!(x);
+
+		expect(ui.session.syncMessagesFromSession).toHaveBeenCalledOnce();
+		expect(ui.renderInitialMessages).toHaveBeenCalledOnce();
+		expect(ui.showStatus).toHaveBeenCalledWith(expect.stringContaining("Deleted branch"));
+	});
+
+	it.each(["streaming", "compacting"] as const)("blocks the prune while %s", (kind) => {
+		const { ui, selector, ids } = createDeleteUI();
+		if (kind === "streaming") ui.session.isStreaming = true;
+		else ui.session.isCompacting = true;
+
+		selector.onDeleteBranch!(ids.e);
+
+		expect(ui.sessionManager.getEntry(ids.e)).toBeDefined();
+		expect(ui.session.syncMessagesFromSession).not.toHaveBeenCalled();
+		expect(ui.renderInitialMessages).not.toHaveBeenCalled();
+		expect(ui.showStatus).toHaveBeenCalledWith("Wait for the current response to finish before deleting a branch");
+		expect(ui.showError).not.toHaveBeenCalled();
+	});
+
+	it("surfaces the active-path message from onDeleteBlocked", () => {
+		const { ui, selector } = createDeleteUI();
+
+		selector.onDeleteBlocked!("Cannot delete the branch you are currently on");
+
+		expect(ui.showStatus).toHaveBeenCalledWith("Cannot delete the branch you are currently on");
+	});
+
+	it("shows an error when pruning an active-path entry", () => {
+		const { ui, selector, ids } = createDeleteUI();
+
+		selector.onDeleteBranch!(ids.d);
+
+		expect(ui.showError).toHaveBeenCalledWith("Cannot delete the branch you are currently on");
+		expect(ui.session.syncMessagesFromSession).not.toHaveBeenCalled();
+	});
+});

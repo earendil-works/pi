@@ -155,6 +155,12 @@ export type SessionEntry =
 /** Raw file entry (includes header) */
 export type FileEntry = SessionHeader | SessionEntry;
 
+export interface PruneBranchResult {
+	removedEntryIds: string[];
+	/** True if a surviving on-path compaction's firstKeptEntryId was re-pointed. */
+	contextChanged: boolean;
+}
+
 /** Tree node for getTree() - defensive copy of session structure */
 export interface SessionTreeNode {
 	entry: SessionEntry;
@@ -843,12 +849,13 @@ async function listSessionsFromDir(
 }
 
 /**
- * Manages conversation sessions as append-only trees stored in JSONL files.
+ * Manages conversation sessions as trees stored in JSONL files.
  *
  * Each session entry has an id and parentId forming a tree structure. The "leaf"
  * pointer tracks the current position. Appending creates a child of the current leaf.
  * Branching moves the leaf to an earlier entry, allowing new branches without
- * modifying history.
+ * modifying history. pruneBranch() permanently removes an entry off the active
+ * path along with its whole subtree.
  *
  * Use buildSessionContext() to get the resolved message list for the LLM, which
  * handles compaction summaries and follows the path from root to current leaf.
@@ -1309,8 +1316,8 @@ export class SessionManager {
 
 	/**
 	 * Get all session entries (excludes header). Returns a shallow copy.
-	 * The session is append-only: use appendXXX() to add entries, branch() to
-	 * change the leaf pointer. Entries cannot be modified or deleted.
+	 * Use appendXXX() to add entries, branch() to change the leaf pointer,
+	 * and pruneBranch() to permanently remove an off-path subtree.
 	 */
 	getEntries(): SessionEntry[] {
 		return this.fileEntries.filter((e): e is SessionEntry => e.type !== "session");
@@ -1541,6 +1548,160 @@ export class SessionManager {
 		this.sessionId = newSessionId;
 		this._buildIndex();
 		return undefined;
+	}
+
+	/**
+	 * Count an entry and its whole descendant subtree (including the entry itself).
+	 * Returns 0 when the entry does not exist. Built from getEntries(), not from
+	 * presentation-ordered tree snapshots.
+	 */
+	countSubtree(entryId: string): number {
+		if (!this.byId.has(entryId)) return 0;
+		const childrenByParent = new Map<string | null, SessionEntry[]>();
+		for (const entry of this.byId.values()) {
+			const list = childrenByParent.get(entry.parentId);
+			if (list) list.push(entry);
+			else childrenByParent.set(entry.parentId, [entry]);
+		}
+		let count = 0;
+		const stack: string[] = [entryId];
+		while (stack.length > 0) {
+			const id = stack.pop()!;
+			count++;
+			for (const child of childrenByParent.get(id) ?? []) {
+				stack.push(child.id);
+			}
+		}
+		return count;
+	}
+
+	/**
+	 * Permanently remove an entry and its whole descendant subtree from the session.
+	 * Rejected when the entry is on the active path (leaf or ancestor of the leaf).
+	 * Does not move the leaf pointer; survivors keep ids/timestamps, and parent links
+	 * are preserved except for re-parented children of dropped labels. A surviving
+	 * compaction whose firstKeptEntryId pointed at a dropped label is re-pointed to
+	 * the first surviving entry at/after it on the root-to-compaction path (or to the
+	 * compaction itself), and branch_summary.fromId references are left as-is
+	 * (informational only, never resolved).
+	 */
+	pruneBranch(entryId: string): PruneBranchResult {
+		const target = this.byId.get(entryId);
+		if (!target) {
+			throw new Error(`Entry ${entryId} not found`);
+		}
+
+		// Active-path guard: walk leaf -> root.
+		const activePathIds = new Set<string>();
+		let cursor: SessionEntry | undefined = this.leafId ? this.byId.get(this.leafId) : undefined;
+		while (cursor) {
+			activePathIds.add(cursor.id);
+			cursor = cursor.parentId ? this.byId.get(cursor.parentId) : undefined;
+		}
+		if (activePathIds.has(entryId)) {
+			throw new Error("Cannot delete the branch you are currently on");
+		}
+
+		// Collect entryId plus all descendants.
+		const childrenByParent = new Map<string | null, SessionEntry[]>();
+		for (const entry of this.byId.values()) {
+			const list = childrenByParent.get(entry.parentId);
+			if (list) list.push(entry);
+			else childrenByParent.set(entry.parentId, [entry]);
+		}
+		const removedIds = new Set<string>();
+		{
+			const stack: string[] = [entryId];
+			while (stack.length > 0) {
+				const id = stack.pop()!;
+				if (removedIds.has(id)) continue;
+				removedIds.add(id);
+				for (const child of childrenByParent.get(id) ?? []) {
+					stack.push(child.id);
+				}
+			}
+		}
+
+		// Labels outside the removed set whose target was removed are dead bookmarks
+		// that may still be structural ancestors of surviving branches. Drop the label
+		// and re-parent its surviving children to the nearest surviving ancestor.
+		const droppedLabelIds = new Set<string>();
+		for (const entry of this.byId.values()) {
+			// Never drop the leaf label: removedIds is disjoint from the active path,
+			// but this extra removal could otherwise delete the leaf itself and leave
+			// leafId dangling. A kept label with a removed target is harmless (labels
+			// contribute no context messages and resolve per-node).
+			if (
+				entry.type === "label" &&
+				!removedIds.has(entry.id) &&
+				removedIds.has(entry.targetId) &&
+				entry.id !== this.leafId
+			) {
+				droppedLabelIds.add(entry.id);
+			}
+		}
+
+		const nearestSurvivingAncestor = (labelId: string): string | null => {
+			let parentId: string | null = this.byId.get(labelId)?.parentId ?? null;
+			while (parentId !== null && (removedIds.has(parentId) || droppedLabelIds.has(parentId))) {
+				parentId = this.byId.get(parentId)?.parentId ?? null;
+			}
+			return parentId;
+		};
+
+		// Re-point surviving compactions whose firstKeptEntryId pointed at a dropped label.
+		let contextChanged = false;
+		for (const entry of this.byId.values()) {
+			if (entry.type !== "compaction" || removedIds.has(entry.id) || droppedLabelIds.has(entry.id)) continue;
+			if (!droppedLabelIds.has(entry.firstKeptEntryId)) continue;
+			// Build the root -> compaction path from pre-prune parent links.
+			const path: SessionEntry[] = [];
+			let node: SessionEntry | undefined = entry;
+			while (node) {
+				path.push(node);
+				node = node.parentId ? this.byId.get(node.parentId) : undefined;
+			}
+			path.reverse();
+			const keptIndex = path.findIndex((e) => e.id === entry.firstKeptEntryId);
+			let replacement: string | null = null;
+			if (keptIndex >= 0) {
+				for (let i = keptIndex; i < path.length; i++) {
+					const candidate = path[i];
+					if (candidate.id === entry.id) continue;
+					if (!removedIds.has(candidate.id) && !droppedLabelIds.has(candidate.id)) {
+						replacement = candidate.id;
+						break;
+					}
+				}
+			}
+			entry.firstKeptEntryId = replacement ?? entry.id;
+			if (activePathIds.has(entry.id)) {
+				contextChanged = true;
+			}
+		}
+
+		// Re-parent surviving children of dropped labels.
+		for (const entry of this.byId.values()) {
+			if (removedIds.has(entry.id) || droppedLabelIds.has(entry.id)) continue;
+			if (entry.parentId !== null && droppedLabelIds.has(entry.parentId)) {
+				entry.parentId = nearestSurvivingAncestor(entry.parentId);
+			}
+		}
+
+		const removedEntryIds = [...removedIds, ...droppedLabelIds];
+		const doomed = new Set(removedEntryIds);
+		const header = this.fileEntries.find((e) => e.type === "session");
+		const survivors = this.fileEntries.filter((e) => e.type === "session" || !doomed.has((e as SessionEntry).id));
+		const leaf = this.leafId;
+		this.fileEntries = header ? [header, ...survivors.filter((e) => e.type !== "session")] : survivors;
+		this._buildIndex();
+		this.leafId = leaf;
+
+		if (this.flushed) {
+			this._rewriteFile();
+		}
+
+		return { removedEntryIds, contextChanged };
 	}
 
 	/**

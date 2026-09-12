@@ -242,6 +242,7 @@ export {
 	type ModelChangeEntry,
 	migrateSessionEntries,
 	type NewSessionOptions,
+	type PruneBranchResult,
 	parseSessionEntries,
 	type SessionContext,
 	type SessionEntry,

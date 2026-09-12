@@ -173,6 +173,7 @@ This routing remains configurable through the ordinary action bindings. For exam
 | `app.tree.unfoldOrDown` | `ctrl+right`, `alt+right` | Unfold current branch segment, or jump to the next segment start or branch end |
 | `app.tree.editLabel` | `shift+l` | Edit the label on the selected tree node |
 | `app.tree.toggleLabelTimestamp` | `shift+t` | Toggle label timestamps in the tree |
+| `app.tree.deleteBranch` | `shift+d` | Delete the selected branch and its descendants |
 | `app.tree.filter.default` | `ctrl+d` | Set tree filter to default view |
 | `app.tree.filter.noTools` | `ctrl+t` | Toggle tree filter that hides tool results |
 | `app.tree.filter.userOnly` | `ctrl+u` | Toggle tree filter that shows only user messages |

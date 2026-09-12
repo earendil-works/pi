@@ -124,6 +124,10 @@ class TreeList implements Component {
 	public onCancel?: () => void;
 	public onCopy?: (text: string | undefined) => void;
 	public onLabelEdit?: (entryId: string, currentLabel: string | undefined) => void;
+	public onDeleteBranch?: (entryId: string) => void;
+	public onDeleteBlocked?: (reason: string) => void;
+	public getSubtreeCount?: (entryId: string) => number;
+	private confirmingDeleteId: string | null = null;
 
 	constructor(
 		tree: SessionTreeNode[],
@@ -664,6 +668,11 @@ class TreeList implements Component {
 	render(width: number): string[] {
 		const lines: string[] = [];
 
+		const confirmText = this.getDeleteConfirmText();
+		if (confirmText) {
+			lines.push(truncateToWidth(theme.fg("error", `  ${confirmText}`), width));
+		}
+
 		if (this.filteredNodes.length === 0) {
 			lines.push(truncateToWidth(theme.fg("muted", "  No entries found"), width));
 			lines.push(truncateToWidth(theme.fg("muted", `  (0/0)${this.getStatusLabels()}`), width));
@@ -993,8 +1002,104 @@ class TreeList implements Component {
 		}
 	}
 
+	getConfirmingDeleteId(): string | null {
+		return this.confirmingDeleteId;
+	}
+
+	isConfirmingDelete(): boolean {
+		return this.confirmingDeleteId !== null;
+	}
+
+	isOnActivePath(entryId: string): boolean {
+		return this.activePathIds.has(entryId);
+	}
+
+	/** Number of entries in the subtree rooted at entryId (including itself). */
+	countSubtree(entryId: string): number {
+		if (this.getSubtreeCount) return this.getSubtreeCount(entryId);
+		const entryMap = new Map<string, FlatNode>();
+		for (const flatNode of this.flatNodes) {
+			entryMap.set(flatNode.node.entry.id, flatNode);
+		}
+		if (!entryMap.has(entryId)) return 0;
+		const childrenByParent = new Map<string | null, string[]>();
+		for (const flatNode of this.flatNodes) {
+			const parentId = flatNode.node.entry.parentId ?? null;
+			const list = childrenByParent.get(parentId);
+			if (list) list.push(flatNode.node.entry.id);
+			else childrenByParent.set(parentId, [flatNode.node.entry.id]);
+		}
+		let count = 0;
+		const stack: string[] = [entryId];
+		while (stack.length > 0) {
+			const id = stack.pop()!;
+			count++;
+			for (const childId of childrenByParent.get(id) ?? []) stack.push(childId);
+		}
+		return count;
+	}
+
+	getDeleteConfirmText(): string | null {
+		if (!this.confirmingDeleteId) return null;
+		const count = this.countSubtree(this.confirmingDeleteId);
+		const preview = this.getDeletePreview(this.confirmingDeleteId);
+		return `Delete branch "${preview}" and ${count} ${count === 1 ? "entry" : "entries"}? enter=confirm · esc=cancel`;
+	}
+
+	private getDeletePreview(entryId: string): string {
+		for (const flatNode of this.flatNodes) {
+			if (flatNode.node.entry.id !== entryId) continue;
+			if (flatNode.node.label) return flatNode.node.label.slice(0, 60);
+			const text = this.getSearchableText(flatNode.node).replace(/\s+/g, " ").trim().slice(0, 60);
+			return text || entryId.slice(0, 8);
+		}
+		return entryId.slice(0, 8);
+	}
+
+	/** Replace the tree snapshot after a prune and reselect near the removed node. */
+	setTree(roots: SessionTreeNode[], reselectId?: string | null): void {
+		this.confirmingDeleteId = null;
+		this.flatNodes = this.flattenTree(roots);
+		this.multipleRoots = roots.length > 1;
+		this.buildActivePath();
+		const liveIds = new Set(this.flatNodes.map((n) => n.node.entry.id));
+		for (const id of [...this.foldedNodes]) {
+			if (!liveIds.has(id)) this.foldedNodes.delete(id);
+		}
+		this.filteredNodes = [];
+		this.lastSelectedId = reselectId ?? null;
+		this.selectedIndex = 0;
+		this.applyFilter();
+		if (this.filteredNodes.length > 0) {
+			this.selectedIndex = Math.min(this.selectedIndex, this.filteredNodes.length - 1);
+			this.lastSelectedId = this.filteredNodes[this.selectedIndex]?.node.entry.id ?? null;
+		}
+	}
+
 	handleInput(keyData: string): void {
 		const kb = getKeybindings();
+		if (this.confirmingDeleteId !== null) {
+			if (kb.matches(keyData, "tui.select.confirm")) {
+				const id = this.confirmingDeleteId;
+				this.confirmingDeleteId = null;
+				this.onDeleteBranch?.(id);
+			} else if (kb.matches(keyData, "tui.select.cancel")) {
+				this.confirmingDeleteId = null;
+			}
+			return;
+		}
+		if (kb.matches(keyData, "app.tree.deleteBranch")) {
+			const selected = this.filteredNodes[this.selectedIndex];
+			if (selected) {
+				const id = selected.node.entry.id;
+				if (this.activePathIds.has(id)) {
+					this.onDeleteBlocked?.("Cannot delete the branch you are currently on");
+				} else {
+					this.confirmingDeleteId = id;
+				}
+			}
+			return;
+		}
 		if (kb.matches(keyData, "tui.select.up")) {
 			this.selectedIndex = this.selectedIndex === 0 ? this.filteredNodes.length - 1 : this.selectedIndex - 1;
 		} else if (kb.matches(keyData, "tui.select.down")) {
@@ -1221,6 +1326,7 @@ const TREE_HELP_ITEMS: Array<{ keys: Keybinding[]; label: string; labelFirst?: b
 	{ keys: ["app.message.copy"], label: "copy" },
 	{ keys: ["app.tree.editLabel"], label: "label" },
 	{ keys: ["app.tree.toggleLabelTimestamp"], label: "label time" },
+	{ keys: ["app.tree.deleteBranch"], label: "delete" },
 	{
 		keys: [
 			"app.tree.filter.default",
@@ -1332,6 +1438,8 @@ export class TreeSelectorComponent extends Container implements Focusable {
 	private treeContainer: Container;
 	private onLabelChangeCallback?: (entryId: string, label: string | undefined) => void;
 	public onCopy?: (text: string | undefined) => void;
+	public onDeleteBranch?: (entryId: string) => void;
+	public onDeleteBlocked?: (reason: string) => void;
 
 	// Focusable implementation - propagate to labelInput when active for IME cursor positioning
 	private _focused = false;
@@ -1366,6 +1474,8 @@ export class TreeSelectorComponent extends Container implements Focusable {
 		this.treeList.onCancel = onCancel;
 		this.treeList.onCopy = (text) => this.onCopy?.(text);
 		this.treeList.onLabelEdit = (entryId, currentLabel) => this.showLabelInput(entryId, currentLabel);
+		this.treeList.onDeleteBranch = (entryId) => this.onDeleteBranch?.(entryId);
+		this.treeList.onDeleteBlocked = (reason) => this.onDeleteBlocked?.(reason);
 
 		this.treeContainer = new Container();
 		this.treeContainer.addChild(this.treeList);
@@ -1411,6 +1521,15 @@ export class TreeSelectorComponent extends Container implements Focusable {
 		this.labelInputContainer.clear();
 		this.treeContainer.clear();
 		this.treeContainer.addChild(this.treeList);
+	}
+
+	/** Refresh the tree snapshot in place after a prune. */
+	refresh(tree: SessionTreeNode[], reselectId?: string | null): void {
+		this.treeList.setTree(tree, reselectId);
+	}
+
+	setSubtreeCounter(fn: (entryId: string) => number): void {
+		this.treeList.getSubtreeCount = fn;
 	}
 
 	handleInput(keyData: string): void {

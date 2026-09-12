@@ -5347,6 +5347,31 @@ export class InteractiveMode {
 					this.showError(error instanceof Error ? error.message : String(error));
 				}
 			};
+			selector.setSubtreeCounter((entryId) => this.sessionManager.countSubtree(entryId));
+			selector.onDeleteBlocked = (reason) => {
+				this.showStatus(reason);
+			};
+			selector.onDeleteBranch = (entryId) => {
+				if (this.session.isStreaming || this.session.isCompacting) {
+					this.showStatus("Wait for the current response to finish before deleting a branch");
+					return;
+				}
+				try {
+					const deletedParentId = this.sessionManager.getEntry(entryId)?.parentId ?? null;
+					const result = this.sessionManager.pruneBranch(entryId);
+					this.session.syncMessagesFromSession();
+					selector.refresh(this.sessionManager.getTree(), deletedParentId);
+					this.ui.requestRender();
+					const count = result.removedEntryIds.length;
+					this.showStatus(`Deleted branch (${count} ${count === 1 ? "entry" : "entries"})`);
+					if (result.contextChanged) {
+						this.chatContainer.clear();
+						this.renderInitialMessages();
+					}
+				} catch (error) {
+					this.showError(error instanceof Error ? error.message : String(error));
+				}
+			};
 			return { component: selector, focus: selector };
 		});
 	}

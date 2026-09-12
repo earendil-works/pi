@@ -700,3 +700,136 @@ describe("TreeSelectorComponent", () => {
 		});
 	});
 });
+
+describe("TreeSelectorComponent branch deletion", () => {
+	function buildDeletionTree() {
+		const entries: SessionEntry[] = [
+			userMessage("user-1", null, "first message"),
+			assistantMessage("asst-1", "user-1", "response 1"),
+			userMessage("user-2", "asst-1", "second message"),
+			assistantMessage("asst-2", "user-2", "response 2"),
+			// Active branch (leaf asst-4a)
+			userMessage("user-3a", "asst-2", "branch A start"),
+			assistantMessage("asst-4a", "user-3a", "branch A leaf"),
+			// Side branch (3 entries)
+			userMessage("user-3b", "asst-2", "branch B start"),
+			assistantMessage("asst-3b", "user-3b", "branch B response"),
+			userMessage("user-4b", "asst-3b", "branch B deep"),
+		];
+		return { entries, tree: buildTree(entries) };
+	}
+
+	function selectSideBranch(onSelect: () => void = () => {}) {
+		const { tree } = buildDeletionTree();
+		const selector = new TreeSelectorComponent(tree, "asst-4a", 24, onSelect, () => {}, undefined, "user-3b");
+		const list = selector.getTreeList();
+		expect(list.getSelectedNode()?.entry.id).toBe("user-3b");
+		return { selector, list };
+	}
+
+	test("delete key enters confirm state; enter fires onDeleteBranch with the selected id", () => {
+		const { selector, list } = selectSideBranch();
+		const deleted: string[] = [];
+		const blocked: string[] = [];
+		list.onDeleteBranch = (id) => deleted.push(id);
+		list.onDeleteBlocked = (reason) => blocked.push(reason);
+
+		selector.handleInput("D"); // shift+d
+		expect(list.isConfirmingDelete()).toBe(true);
+		expect(deleted).toEqual([]);
+
+		selector.handleInput("\r"); // enter
+		expect(deleted).toEqual(["user-3b"]);
+		expect(blocked).toEqual([]);
+		expect(list.isConfirmingDelete()).toBe(false);
+	});
+
+	test("esc cancels the confirm state without deleting", () => {
+		const { selector, list } = selectSideBranch();
+		const deleted: string[] = [];
+		list.onDeleteBranch = (id) => deleted.push(id);
+
+		selector.handleInput("D");
+		expect(list.isConfirmingDelete()).toBe(true);
+
+		selector.handleInput("\x1b"); // esc
+		expect(list.isConfirmingDelete()).toBe(false);
+		expect(deleted).toEqual([]);
+
+		// Enter now selects instead of deleting.
+		let selected: string | undefined;
+		list.onSelect = (id) => {
+			selected = id;
+		};
+		selector.handleInput("\r");
+		expect(selected).toBe("user-3b");
+		expect(deleted).toEqual([]);
+	});
+
+	test("other keys are ignored while confirming", () => {
+		const { selector, list } = selectSideBranch();
+		const deleted: string[] = [];
+		list.onDeleteBranch = (id) => deleted.push(id);
+
+		selector.handleInput("D");
+		expect(list.isConfirmingDelete()).toBe(true);
+
+		selector.handleInput("\x1b[B"); // down (ignored)
+		selector.handleInput("x"); // search char (ignored)
+		expect(list.isConfirmingDelete()).toBe(true);
+		expect(list.getSelectedNode()?.entry.id).toBe("user-3b");
+		expect(list.getSearchQuery()).toBe("");
+		expect(deleted).toEqual([]);
+
+		selector.handleInput("\r");
+		expect(deleted).toEqual(["user-3b"]);
+	});
+
+	test("active-path selection triggers onDeleteBlocked and does not confirm", () => {
+		const { tree } = buildDeletionTree();
+		const selector = new TreeSelectorComponent(
+			tree,
+			"asst-4a",
+			24,
+			() => {},
+			() => {},
+			undefined,
+			"asst-2",
+		);
+		const list = selector.getTreeList();
+		expect(list.getSelectedNode()?.entry.id).toBe("asst-2");
+		const deleted: string[] = [];
+		const blocked: string[] = [];
+		list.onDeleteBranch = (id) => deleted.push(id);
+		list.onDeleteBlocked = (reason) => blocked.push(reason);
+
+		selector.handleInput("D");
+		expect(blocked).toEqual(["Cannot delete the branch you are currently on"]);
+		expect(list.isConfirmingDelete()).toBe(false);
+		expect(deleted).toEqual([]);
+	});
+
+	test("confirmation hint renders the removed count", () => {
+		const { selector, list } = selectSideBranch();
+		list.onDeleteBranch = () => {};
+
+		selector.handleInput("D");
+		const rendered = stripVTControlCharacters(list.render(120).join("\n"));
+		expect(rendered).toContain("Delete branch");
+		expect(rendered).toContain("3 entries");
+	});
+
+	test("setTree reselects the nearest surviving visible ancestor", () => {
+		const { entries } = buildDeletionTree();
+		const { list } = selectSideBranch();
+
+		// Simulate the prune: drop the side branch, reselect its parent.
+		const survivors = entries.filter((e) => e.id !== "user-3b" && e.id !== "asst-3b" && e.id !== "user-4b");
+		list.setTree(buildTree(survivors), "asst-2");
+
+		expect(list.getSelectedNode()?.entry.id).toBe("asst-2");
+		expect(list.isConfirmingDelete()).toBe(false);
+		const rendered = stripVTControlCharacters(list.render(120).join("\n"));
+		expect(rendered).not.toContain("user-3b");
+	});
+});

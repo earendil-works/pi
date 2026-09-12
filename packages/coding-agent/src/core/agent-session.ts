@@ -994,6 +994,11 @@ export class AgentSession {
 		return this.agent.state.messages;
 	}
 
+	/** Rebuild agent messages from the session manager (e.g. after pruning a branch). */
+	syncMessagesFromSession(): void {
+		this.agent.state.messages = this.sessionManager.buildSessionContext().messages;
+	}
+
 	/** Current steering mode */
 	get steeringMode(): "all" | "one-at-a-time" {
 		return this.agent.steeringMode;

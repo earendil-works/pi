@@ -434,6 +434,8 @@ Key methods for working with sessions programmatically.
 - `getChildren(parentId)` - Get direct children
 - `getLabel(id)` - Get label for entry
 - `branch(entryId)` - Move leaf to earlier entry
+- `pruneBranch(entryId)` - Permanently delete an off-path entry and its subtree; returns `{ removedEntryIds, contextChanged }`
+- `countSubtree(entryId)` - Count an entry plus its descendants
 - `resetLeaf()` - Reset leaf to null (before any entries)
 - `branchWithSummary(entryId, summary, details?, fromHook?, usage?)` - Branch with context summary; `entryId` may be `null` to branch from the root
 
@@ -441,6 +443,10 @@ Key methods for working with sessions programmatically.
 - `buildContextEntries()` - Get active branch entries with compaction applied
 - `buildSessionContext()` - Get messages, thinkingLevel, and model for LLM
 - `getEntries()` - All entries (excluding header)
+
+### Deleting branches
+
+`pruneBranch(entryId)` removes the entry and all of its descendants from the session and rewrites the file in place. It never moves the leaf pointer and rejects entries on the active path (the leaf or its ancestors). Labels whose target was removed are dropped (surviving children are re-parented past them); a surviving compaction whose `firstKeptEntryId` pointed at a dropped label is re-pointed, and `contextChanged` reports whether that compaction is on the active path. `branch_summary.fromId` is informational only and may dangle after a prune. Note that `getSessionStats()` aggregates over all entries as a billing ledger, so pruning discards billed-token evidence from the deleted branch.
 - `getHeader()` - Session header metadata
 - `getSessionName()` - Get display name from latest session_info entry
 - `getCwd()` - Working directory
