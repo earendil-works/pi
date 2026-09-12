@@ -11,6 +11,7 @@
  */
 
 export * from "./api/anthropic-messages.lazy.ts";
+export * from "./api/antigravity.lazy.ts";
 export * from "./api/azure-openai-responses.lazy.ts";
 export * from "./api/bedrock-converse-stream.lazy.ts";
 export * from "./api/google-generative-ai.lazy.ts";
@@ -29,6 +30,7 @@ export * from "./legacy-api-aliases.ts";
 export * from "./providers/images/register-builtins.ts";
 
 import { anthropicMessagesApi } from "./api/anthropic-messages.lazy.ts";
+import { antigravityApi } from "./api/antigravity.lazy.ts";
 import { azureOpenAIResponsesApi } from "./api/azure-openai-responses.lazy.ts";
 import { bedrockConverseStreamApi } from "./api/bedrock-converse-stream.lazy.ts";
 import { googleGenerativeAIApi } from "./api/google-generative-ai.lazy.ts";
@@ -183,6 +185,7 @@ const BUILTIN_APIS: [Api, ProviderStreams][] = [
 	["azure-openai-responses", azureOpenAIResponsesApi()],
 	["google-generative-ai", googleGenerativeAIApi()],
 	["google-vertex", googleVertexApi()],
+	["antigravity", antigravityApi()],
 	["mistral-conversations", mistralConversationsApi()],
 	["bedrock-converse-stream", bedrockConverseStreamApi()],
 	["pi-messages", piMessagesApi()],

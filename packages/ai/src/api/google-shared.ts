@@ -19,7 +19,7 @@ import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import { getJsonSchemaToolParameters, resolveJsonSchemaStrictSampling } from "./constrained-sampling.ts";
 import { transformMessages } from "./transform-messages.ts";
 
-type GoogleApiType = "google-generative-ai" | "google-vertex";
+type GoogleApiType = "google-generative-ai" | "google-vertex" | "antigravity";
 
 /**
  * Thinking level for Gemini 3 models.
@@ -396,6 +396,7 @@ export function mapStopReason(reason: FinishReason): StopReason {
 		case FinishReason.LANGUAGE:
 		case FinishReason.MALFORMED_FUNCTION_CALL:
 		case FinishReason.UNEXPECTED_TOOL_CALL:
+		case FinishReason.TOO_MANY_TOOL_CALLS:
 		case FinishReason.NO_IMAGE:
 			return "error";
 		default: {

@@ -1,5 +1,6 @@
 import type { TelemetryContext } from "@earendil-works/pi-telemetry";
 import type { AnthropicOptions } from "./api/anthropic-messages.ts";
+import type { AntigravityOptions } from "./api/antigravity.ts";
 import type { AzureOpenAIResponsesOptions } from "./api/azure-openai-responses.ts";
 import type { BedrockOptions } from "./api/bedrock-converse-stream.ts";
 import type { GoogleOptions } from "./api/google-generative-ai.ts";
@@ -24,6 +25,7 @@ export type KnownApi =
 	| "bedrock-converse-stream"
 	| "google-generative-ai"
 	| "google-vertex"
+	| "antigravity"
 	| "pi-messages";
 
 export type Api = KnownApi | (string & {});
@@ -72,7 +74,9 @@ export type KnownProvider =
 	| "xiaomi"
 	| "xiaomi-token-plan-cn"
 	| "xiaomi-token-plan-ams"
-	| "xiaomi-token-plan-sgp";
+	| "xiaomi-token-plan-sgp"
+	| "antigravity"
+	| "cursor";
 export type ProviderId = KnownProvider | string;
 
 export type KnownImagesProvider = "openrouter";
@@ -250,6 +254,7 @@ export interface ApiOptionsMap {
 	"google-vertex": GoogleVertexOptions;
 	"mistral-conversations": MistralOptions;
 	"bedrock-converse-stream": BedrockOptions;
+	antigravity: AntigravityOptions;
 	"pi-messages": PiMessagesOptions;
 }
 

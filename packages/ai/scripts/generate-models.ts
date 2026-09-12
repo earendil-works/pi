@@ -559,7 +559,7 @@ function supportsOpenAiMax(model: Model<Api>): boolean {
 }
 
 function isGoogleThinkingApi(model: Model<any>): boolean {
-	return model.api === "google-generative-ai" || model.api === "google-vertex";
+	return model.api === "google-generative-ai" || model.api === "google-vertex" || model.api === "antigravity";
 }
 
 const VERIFIED_ANTHROPIC_MID_CONVO_EFFORT_PROVIDERS = new Set(["anthropic", "openrouter"]);
@@ -2845,6 +2845,134 @@ async function generateModels() {
 		},
 	];
 	allModels.push(...codexModels);
+
+	const antigravityModels: Model<"antigravity">[] = [
+		{
+			id: "gemini-3.6-flash-high",
+			name: "Gemini 3.6 Flash",
+			api: "antigravity",
+			provider: "antigravity",
+			baseUrl: "https://daily-cloudcode-pa.googleapis.com",
+			reasoning: true,
+			input: ["text", "image"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 1048576,
+			maxTokens: 65536,
+		},
+		{
+			id: "gemini-3.6-flash-medium",
+			name: "Gemini 3.6 Flash Medium",
+			api: "antigravity",
+			provider: "antigravity",
+			baseUrl: "https://daily-cloudcode-pa.googleapis.com",
+			reasoning: true,
+			input: ["text", "image"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 1048576,
+			maxTokens: 65536,
+		},
+		{
+			id: "gemini-3.1-pro-low",
+			name: "Gemini 3.1 Pro",
+			api: "antigravity",
+			provider: "antigravity",
+			baseUrl: "https://daily-cloudcode-pa.googleapis.com",
+			reasoning: true,
+			input: ["text", "image"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 2097152,
+			maxTokens: 65536,
+		},
+		{
+			id: "claude-sonnet-4-6",
+			name: "Claude Sonnet 4.6",
+			api: "antigravity",
+			provider: "antigravity",
+			baseUrl: "https://daily-cloudcode-pa.googleapis.com",
+			reasoning: true,
+			input: ["text", "image"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 200000,
+			maxTokens: 64000,
+		},
+		{
+			id: "claude-opus-4-6-thinking",
+			name: "Claude Opus 4.6 Thinking",
+			api: "antigravity",
+			provider: "antigravity",
+			baseUrl: "https://daily-cloudcode-pa.googleapis.com",
+			reasoning: true,
+			input: ["text", "image"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 200000,
+			maxTokens: 64000,
+		},
+		{
+			id: "gemini-3.5-flash-lite",
+			name: "Gemini 3.5 Flash Lite",
+			api: "antigravity",
+			provider: "antigravity",
+			baseUrl: "https://daily-cloudcode-pa.googleapis.com",
+			reasoning: true,
+			input: ["text", "image"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 1048576,
+			maxTokens: 65536,
+		},
+	];
+	allModels.push(...antigravityModels);
+
+	const cursorModels: Model<"openai-completions">[] = [
+		{
+			id: "cursor-fast",
+			name: "Cursor Fast",
+			api: "openai-completions",
+			provider: "cursor",
+			baseUrl: "https://api2.cursor.sh",
+			reasoning: false,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 128000,
+			maxTokens: 8192,
+		},
+		{
+			id: "claude-3.7-sonnet",
+			name: "Claude 3.7 Sonnet",
+			api: "openai-completions",
+			provider: "cursor",
+			baseUrl: "https://api2.cursor.sh",
+			reasoning: true,
+			input: ["text", "image"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 200000,
+			maxTokens: 8192,
+		},
+		{
+			id: "claude-3.5-sonnet",
+			name: "Claude 3.5 Sonnet",
+			api: "openai-completions",
+			provider: "cursor",
+			baseUrl: "https://api2.cursor.sh",
+			reasoning: false,
+			input: ["text", "image"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 200000,
+			maxTokens: 8192,
+		},
+		{
+			id: "gpt-4o",
+			name: "GPT-4o",
+			api: "openai-completions",
+			provider: "cursor",
+			baseUrl: "https://api2.cursor.sh",
+			reasoning: false,
+			input: ["text", "image"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 128000,
+			maxTokens: 4096,
+		},
+	];
+	allModels.push(...cursorModels);
 
 	// Add missing Mistral Medium 3.5 model until models.dev includes it
 	if (!allModels.some(m => m.provider === "mistral" && m.id === "mistral-medium-3.5")) {
