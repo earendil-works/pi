@@ -16,6 +16,7 @@ import { createHarness, getUserTexts, type Harness } from "./harness.ts";
 type SessionWithCompactionInternals = {
 	_checkCompaction: (assistantMessage: AssistantMessage, skipAbortedCheck?: boolean) => Promise<boolean>;
 	_runAutoCompaction: (reason: "overflow" | "threshold", willRetry: boolean) => Promise<boolean>;
+	_compactBeforeNextAssistantResponse: (context: Context) => Promise<Context>;
 };
 
 function createUsage(totalTokens: number) {
