@@ -1,4 +1,4 @@
-import type { AssistantMessage } from "@earendil-works/pi-ai";
+import { type AssistantMessage, isContextOverflow } from "@earendil-works/pi-ai";
 import { Container, Markdown, type MarkdownTheme, MouseRegion, Spacer, Text } from "@earendil-works/pi-tui";
 import type { MarkdownTransformer } from "../../../core/extensions/types.ts";
 import { getMarkdownTheme, theme } from "../theme/theme.ts";
@@ -195,7 +195,10 @@ export class AssistantMessageComponent extends Container {
 			} else if (message.stopReason === "error") {
 				const errorMsg = message.errorMessage || "Unknown error";
 				this.contentContainer.addChild(new Spacer(1));
-				this.contentContainer.addChild(new Text(theme.fg("error", `Error: ${errorMsg}`), this.outputPad, 0));
+				const displayMessage = isContextOverflow(message)
+					? theme.fg("dim", "Context overflow, compacting…")
+					: theme.fg("error", `Error: ${errorMsg}`);
+				this.contentContainer.addChild(new Text(displayMessage, this.outputPad, 0));
 			}
 		}
 	}

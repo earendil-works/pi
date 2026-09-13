@@ -187,6 +187,17 @@ export interface ContextUsageEstimate {
 	lastUsageIndex: number | null;
 }
 
+const CHARS_PER_TOKEN = 4;
+
+function estimateTextTokens(text: string): number {
+	return Math.ceil(text.length / CHARS_PER_TOKEN);
+}
+
+function estimateToolsTokens(tools: readonly unknown[] | undefined): number {
+	if (!tools || tools.length === 0) return 0;
+	return estimateTextTokens(JSON.stringify(tools));
+}
+
 function getLastAssistantUsageInfo(messages: AgentMessage[]): { usage: Usage; index: number } | undefined {
 	for (let i = messages.length - 1; i >= 0; i--) {
 		const usage = getAssistantUsage(messages[i]);
@@ -226,6 +237,25 @@ export function estimateContextTokens(messages: AgentMessage[]): ContextUsageEst
 		usageTokens,
 		trailingTokens,
 		lastUsageIndex: usageInfo.index,
+	};
+}
+
+/**
+ * Estimate context tokens including the request prefix attached by the provider.
+ * Message usage does not consistently include the system prompt or tool schemas,
+ * so account for both with the same chars/4 heuristic as estimateTokens().
+ */
+export function estimateContextTokensWithOverhead(
+	messages: AgentMessage[],
+	systemPrompt: string | undefined,
+	tools: readonly unknown[] | undefined,
+): ContextUsageEstimate {
+	const estimate = estimateContextTokens(messages);
+	const overheadTokens = (systemPrompt ? estimateTextTokens(systemPrompt) : 0) + estimateToolsTokens(tools);
+	return {
+		...estimate,
+		tokens: estimate.tokens + overheadTokens,
+		trailingTokens: estimate.trailingTokens + overheadTokens,
 	};
 }
 
@@ -271,7 +301,7 @@ export function estimateTokens(message: AgentMessage): number {
 			chars = estimateTextAndImageContentChars(
 				(message as { content: string | Array<{ type: string; text?: string }> }).content,
 			);
-			return Math.ceil(chars / 4);
+			return Math.ceil(chars / CHARS_PER_TOKEN);
 		}
 		case "assistant": {
 			const assistant = message as AssistantMessage;
@@ -284,21 +314,21 @@ export function estimateTokens(message: AgentMessage): number {
 					chars += block.name.length + JSON.stringify(block.arguments).length;
 				}
 			}
-			return Math.ceil(chars / 4);
+			return Math.ceil(chars / CHARS_PER_TOKEN);
 		}
 		case "custom":
 		case "toolResult": {
 			chars = estimateTextAndImageContentChars(message.content);
-			return Math.ceil(chars / 4);
+			return Math.ceil(chars / CHARS_PER_TOKEN);
 		}
 		case "bashExecution": {
 			chars = message.command.length + message.output.length;
-			return Math.ceil(chars / 4);
+			return Math.ceil(chars / CHARS_PER_TOKEN);
 		}
 		case "branchSummary":
 		case "compactionSummary": {
 			chars = message.summary.length;
-			return Math.ceil(chars / 4);
+			return Math.ceil(chars / CHARS_PER_TOKEN);
 		}
 	}
 

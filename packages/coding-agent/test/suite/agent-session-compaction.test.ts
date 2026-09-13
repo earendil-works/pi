@@ -10,7 +10,7 @@ import {
 } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { estimateTokens } from "../../src/core/compaction/index.ts";
+import { estimateContextTokens, estimateTokens } from "../../src/core/compaction/index.ts";
 import { createHarness, getUserTexts, type Harness } from "./harness.ts";
 
 type SessionWithCompactionInternals = {
@@ -339,6 +339,45 @@ describe("AgentSession compaction characterization", () => {
 		expect(compactionEntries).toHaveLength(1);
 		expect(compactionEnd?.result?.estimatedTokensAfter).toBeGreaterThan(0);
 		expect(getStreamCallCount()).toBe(1);
+	});
+
+	it("compacts before the next assistant response when system prompt and tools cross the threshold", async () => {
+		const tool: AgentTool = {
+			name: "large_schema_tool",
+			label: "Large schema tool",
+			description: "d".repeat(600),
+			parameters: Type.Object({}),
+			execute: async () => ({ content: [{ type: "text", text: "small result" }], details: {} }),
+		};
+		const harness = await createHarness({
+			models: [{ id: "faux-1", contextWindow: 1200, maxTokens: 100 }],
+			settings: { compaction: { reserveTokens: 100, keepRecentTokens: 1 } },
+			tools: [tool],
+		});
+		harnesses.push(harness);
+		const assistant = createAssistant(harness, { stopReason: "stop", totalTokens: 300 });
+		assistant.content = [{ type: "text", text: "previous response" }];
+		const messages: AgentMessage[] = [
+			{ role: "user", content: [{ type: "text", text: "previous prompt" }], timestamp: Date.now() - 1000 },
+			assistant,
+		];
+		harness.session.agent.state.messages = messages;
+
+		const sessionInternals = harness.session as unknown as SessionWithCompactionInternals;
+		const runAutoCompactionSpy = vi.spyOn(sessionInternals, "_runAutoCompaction").mockResolvedValue(false);
+		const context: Context = {
+			systemPrompt: "s".repeat(2800),
+			messages,
+			tools: [tool],
+		};
+
+		await sessionInternals._compactBeforeNextAssistantResponse(context);
+
+		expect(estimateContextTokens(messages).tokens).toBe(300);
+		expect(estimateContextTokens(messages).tokens + Math.ceil(context.systemPrompt.length / 4)).toBeLessThanOrEqual(
+			1100,
+		);
+		expect(runAutoCompactionSpy).toHaveBeenCalledWith("threshold", false);
 	});
 
 	it("notifies extensions when auto-compaction fails", async () => {

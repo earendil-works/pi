@@ -12,7 +12,7 @@ const OSC133_ZONE_FINAL = "\x1b]133;C\x07";
 
 function createAssistantMessage(
 	content: AssistantMessage["content"],
-	overrides: Partial<Pick<AssistantMessage, "stopReason">> = {},
+	overrides: Partial<Pick<AssistantMessage, "stopReason" | "errorMessage">> = {},
 ): AssistantMessage {
 	return {
 		role: "assistant",
@@ -29,11 +29,37 @@ function createAssistantMessage(
 			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 		},
 		stopReason: overrides.stopReason ?? "stop",
+		...(overrides.errorMessage === undefined ? {} : { errorMessage: overrides.errorMessage }),
 		timestamp: Date.now(),
 	};
 }
 
 describe("AssistantMessageComponent", () => {
+	test("renders context overflow errors without exposing the provider error", () => {
+		initTheme("dark");
+
+		const component = new AssistantMessageComponent(
+			createAssistantMessage([], {
+				stopReason: "error",
+				errorMessage: "OpenAI API error (400): This model's maximum prompt length is 500000",
+			}),
+		);
+		const rendered = stripAnsi(component.render(80).join("\n"));
+
+		expect(rendered).toContain("Context overflow, compacting…");
+		expect(rendered).not.toContain("Error: OpenAI API error");
+	});
+
+	test("still renders non-overflow assistant errors", () => {
+		initTheme("dark");
+
+		const component = new AssistantMessageComponent(
+			createAssistantMessage([], { stopReason: "error", errorMessage: "Service unavailable" }),
+		);
+		const rendered = stripAnsi(component.render(80).join("\n"));
+
+		expect(rendered).toContain("Error: Service unavailable");
+	});
 	test("adds OSC 133 zone markers to assistant messages without tool calls", () => {
 		initTheme("dark");
 

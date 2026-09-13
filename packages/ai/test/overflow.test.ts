@@ -35,6 +35,13 @@ describe("isContextOverflow", () => {
 		expect(isContextOverflow(message, 32768)).toBe(true);
 	});
 
+	it("detects xAI maximum prompt length errors", () => {
+		const message = createErrorMessage(
+			'OpenAI API error (400): 400 \\"This model\'s maximum prompt length is 500000 but the request contains 554742 tokens.\\"',
+		);
+		expect(isContextOverflow(message, 500000)).toBe(true);
+	});
+
 	it("detects Together AI context length errors", () => {
 		const message = createErrorMessage(
 			"400 The input (516368 tokens) is longer than the model's context length (262144 tokens).",

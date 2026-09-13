@@ -60,6 +60,7 @@ import {
 	collectEntriesForBranchSummary,
 	compact,
 	estimateContextTokens,
+	estimateContextTokensWithOverhead,
 	estimateTokens,
 	generateBranchSummary,
 	prepareCompaction,
@@ -538,12 +539,13 @@ export class AgentSession {
 	private async _compactBeforeNextAssistantResponse(context: AgentContext): Promise<AgentContext> {
 		const model = this.model;
 		const settings = this.settingsManager.getCompactionSettings(model);
+		const contextEstimate = estimateContextTokensWithOverhead(
+			context.messages,
+			context.systemPrompt ?? this._systemPromptOverride ?? this._baseSystemPrompt,
+			context.tools ?? this.agent.state.tools,
+		);
 
-		if (
-			!model ||
-			model.contextWindow <= 0 ||
-			!shouldCompact(estimateContextTokens(context.messages).tokens, model.contextWindow, settings)
-		) {
+		if (!model || model.contextWindow <= 0 || !shouldCompact(contextEstimate.tokens, model.contextWindow, settings)) {
 			return context;
 		}
 
