@@ -861,6 +861,21 @@ export interface Model<TApi extends Api> {
 	/** Default sampling parameters for this model. See {@link StreamOptions.samplingParams}; per-request keys override these. */
 	samplingParams?: Record<string, unknown>;
 	headers?: Record<string, string>;
+	/**
+	 * Raw API-native tool entries appended verbatim to the request's tools array,
+	 * alongside pi's serialized client tools. Used for provider built-in tools
+	 * that execute server-side, e.g. OpenAI Responses `{"type":"web_search"}`
+	 * (also honored by Zhipu's GLM coding-plan Responses proxy at
+	 * api.z.ai/api/v1) or Anthropic Messages
+	 * `{"type":"web_search_20250305","name":"web_search"}`.
+	 *
+	 * These tools never round-trip as client tool calls: their output arrives
+	 * as API-specific server output items (web_search_call / server_tool_use),
+	 * which the transports ignore, with results folded into the final text.
+	 * Billing follows the provider's server-tool pricing (part of the plan for
+	 * Zhipu's coding endpoints; per-search for Anthropic API keys).
+	 */
+	serverTools?: Record<string, unknown>[];
 	/** Compatibility overrides for OpenAI-compatible APIs. If not set, auto-detected from baseUrl. */
 	compat?: TApi extends "openai-completions"
 		? OpenAICompletionsCompat

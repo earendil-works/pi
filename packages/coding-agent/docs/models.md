@@ -207,6 +207,7 @@ If your command is slow, expensive, rate-limited, or should keep using a previou
 | `contextWindow` | No | `128000` | Context window size in tokens |
 | `maxTokens` | No | `16384` | Maximum output tokens |
 | `samplingParams` | No | omitted | Sampling parameters merged verbatim into every request body (see below) |
+| `serverTools` | No | omitted | Raw API-native tool entries appended verbatim to the request's tools array — provider built-in tools that execute server-side, e.g. `{"type": "web_search"}` (see below) |
 | `cost` | No | all zeros | Per-million-token rates with optional request-wide input pricing tiers |
 | `compat` | No | provider `compat` | Provider compatibility overrides. Merged with provider-level `compat` when both are set. |
 
@@ -255,6 +256,45 @@ Current behavior:
 Only OpenAI-compatible APIs apply it (`openai-completions`, `openai-responses`, `azure-openai-responses`); other APIs ignore it. Keys override pi's named request fields (for example a `temperature` key here beats the request-level temperature), so prefer it as the single source of sampling truth for a model. In `modelOverrides`, `samplingParams` merges per key with the base model's value.
 
 A constant thinking-token cap can go here too, but it will not follow `thinkingBudgets` or leave room for the answer. Prefer `compat.thinkingTokenBudgetField` (or the `supportsThinkingTokenBudget` alias) for that.
+
+### Server Tools
+
+`serverTools` is an array of raw, API-native tool entries appended verbatim to the request's `tools` array, next to pi's serialized client tools. Use it for provider built-in tools that execute **server-side**: the model decides per-question to invoke them, the provider runs them, and the results come back folded into the final text (their server-side output items, like `web_search_call` / `server_tool_use`, are ignored by the transports).
+
+Supported on `openai-responses` (including `azure-openai-responses` via the shared path) and `anthropic-messages`; other APIs ignore it.
+
+Two providers where this unlocks real capability today:
+
+**Zhipu GLM coding plan** — the native coding endpoint (`api.z.ai/api/coding/paas/v4`, what pi's built-in `zai` provider uses) ignores every server-side search trigger, but Zhipu's **OpenAI-Responses proxy** (`https://api.z.ai/api/v1`) executes the Responses built-in `web_search` tool — the same path Codex uses. Search is billed within the coding plan:
+
+```json
+{
+  "providers": {
+    "zai-web": {
+      "baseUrl": "https://api.z.ai/api/v1",
+      "api": "openai-responses",
+      "apiKey": "$ZAI_API_KEY",
+      "models": [
+        {
+          "id": "glm-5.3",
+          "serverTools": [{ "type": "web_search" }],
+          "contextWindow": 1000000,
+          "maxTokens": 131072,
+          "reasoning": true
+        }
+      ]
+    }
+  }
+}
+```
+
+**Anthropic Messages API** — the API-native web search tool (per-search pricing on API keys):
+
+```json
+"serverTools": [{ "type": "web_search_20250305", "name": "web_search", "max_uses": 5 }]
+```
+
+In `modelOverrides`, `serverTools` replaces the base model's value wholesale (no per-key merge).
 
 ### Thinking Level Map
 

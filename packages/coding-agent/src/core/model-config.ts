@@ -172,6 +172,7 @@ const ModelDefinitionSchema = Type.Object({
 	maxTokens: Type.Optional(Type.Number()),
 	samplingParams: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
 	headers: Type.Optional(Type.Record(Type.String(), Type.String())),
+	serverTools: Type.Optional(Type.Array(Type.Record(Type.String(), Type.Unknown()))),
 	compat: Type.Optional(ProviderCompatSchema),
 });
 
@@ -193,6 +194,7 @@ const ModelOverrideSchema = Type.Object({
 	maxTokens: Type.Optional(Type.Number()),
 	samplingParams: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
 	headers: Type.Optional(Type.Record(Type.String(), Type.String())),
+	serverTools: Type.Optional(Type.Array(Type.Record(Type.String(), Type.Unknown()))),
 	compat: Type.Optional(ProviderCompatSchema),
 });
 

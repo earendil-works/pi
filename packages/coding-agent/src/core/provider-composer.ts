@@ -123,6 +123,7 @@ function applyModelOverride(model: Model<Api>, override: ModelsJsonModelOverride
 		samplingParams: override.samplingParams
 			? { ...model.samplingParams, ...override.samplingParams }
 			: model.samplingParams,
+		serverTools: override.serverTools ?? model.serverTools,
 		compat: mergeCompat(model.compat, override.compat),
 	};
 }
@@ -161,6 +162,7 @@ function modelFromJson(
 		maxTokens: definition.maxTokens ?? 16384,
 		samplingParams: definition.samplingParams,
 		headers: undefined,
+		serverTools: definition.serverTools,
 		compat: mergeCompat(providerConfig.compat, definition.compat),
 	};
 }

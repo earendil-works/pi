@@ -3,6 +3,7 @@ import type {
 	BetaStopReason,
 	BetaThinkingDroppedInputTransformation,
 	BetaTool,
+	BetaToolUnion,
 	BetaCacheControlEphemeral as CacheControlEphemeral,
 	BetaContentBlockParam as ContentBlockParam,
 	MessageCreateParamsStreaming,
@@ -1099,7 +1100,7 @@ function buildParams(
 		params.temperature = options.temperature;
 	}
 
-	if (immediateTools.length > 0 || deferredTools.length > 0) {
+	if (immediateTools.length > 0 || deferredTools.length > 0 || (model.serverTools?.length ?? 0) > 0) {
 		params.tools = [
 			...convertTools(
 				immediateTools,
@@ -1116,6 +1117,7 @@ function buildParams(
 				undefined,
 				true,
 			),
+			...((model.serverTools as unknown as BetaToolUnion[]) ?? []),
 		];
 	}
 

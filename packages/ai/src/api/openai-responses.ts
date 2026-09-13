@@ -1,5 +1,5 @@
 import OpenAI from "openai";
-import type { ResponseCreateParamsStreaming } from "openai/resources/responses/responses.js";
+import type { Tool as OpenAITool, ResponseCreateParamsStreaming } from "openai/resources/responses/responses.js";
 import { clampThinkingLevel } from "../models.ts";
 import type {
 	Api,
@@ -328,6 +328,10 @@ function buildParams(
 			supportsStrictMode: compat.supportsStrictMode,
 			supportsOpenAIGrammarTools: compat.supportsOpenAIGrammarTools,
 		});
+	}
+
+	if ((model.serverTools?.length ?? 0) > 0) {
+		params.tools = [...(params.tools ?? []), ...((model.serverTools as unknown as OpenAITool[]) ?? [])];
 	}
 
 	if (options?.toolChoice !== undefined) {
