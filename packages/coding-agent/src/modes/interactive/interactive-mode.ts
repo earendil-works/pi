@@ -5060,6 +5060,7 @@ export class InteractiveMode {
 					allModels: availableModels,
 					enabledModelIds: currentEnabledIds,
 					refreshStatus: "Refreshing model catalogs…",
+					providerDisplayName: (provider) => this.session.modelRuntime.getProvider(provider)?.name ?? provider,
 				},
 				{
 					onChange: (enabledIds) => {

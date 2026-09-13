@@ -75,6 +75,7 @@ export interface ModelsConfig {
 	allModels: Model<any>[];
 	enabledModelIds: string[] | null;
 	refreshStatus?: string;
+	providerDisplayName?: (provider: string) => string;
 }
 
 export interface ModelsCallbacks {
@@ -112,10 +113,12 @@ export class ScopedModelsSelectorComponent extends Container implements Focusabl
 	private maxVisible = 8;
 	private isDirty = false;
 	private refreshStatusText?: Text;
+	private providerDisplayName: (provider: string) => string;
 
 	constructor(config: ModelsConfig, callbacks: ModelsCallbacks) {
 		super();
 		this.callbacks = callbacks;
+		this.providerDisplayName = config.providerDisplayName ?? ((provider) => provider);
 
 		for (const model of config.allModels) {
 			const fullId = `${model.provider}/${model.id}`;
@@ -246,9 +249,12 @@ export class ScopedModelsSelectorComponent extends Container implements Focusabl
 			const item = this.filteredItems[i]!;
 			const isSelected = i === this.selectedIndex;
 			const prefix = isSelected ? theme.fg("accent", "→ ") : "  ";
-			const id = item.model?.id ?? item.fullId;
-			const modelText = isSelected ? theme.fg("accent", id) : id;
-			const providerBadge = theme.fg("muted", item.model ? ` [${item.model.provider}]` : " [unavailable]");
+			const label = item.model ? item.model.name || item.model.id : item.fullId;
+			const modelText = isSelected ? theme.fg("accent", label) : label;
+			const providerBadge = theme.fg(
+				"muted",
+				item.model ? ` [${this.providerDisplayName(item.model.provider)}]` : " [unavailable]",
+			);
 			const status = item.model
 				? allEnabled
 					? ""
@@ -263,18 +269,6 @@ export class ScopedModelsSelectorComponent extends Container implements Focusabl
 		if (startIndex > 0 || endIndex < this.filteredItems.length) {
 			this.listContainer.addChild(
 				new Text(theme.fg("muted", `  (${this.selectedIndex + 1}/${this.filteredItems.length})`), 0, 0),
-			);
-		}
-
-		if (this.filteredItems.length > 0) {
-			const selected = this.filteredItems[this.selectedIndex];
-			this.listContainer.addChild(new Spacer(1));
-			this.listContainer.addChild(
-				new Text(
-					theme.fg("muted", `  ${selected.model ? `Model Name: ${selected.model.name}` : "Model unavailable"}`),
-					0,
-					0,
-				),
 			);
 		}
 	}

@@ -315,17 +315,19 @@ export class ModelSelectorComponent extends Container implements Focusable {
 			const isCurrent = modelsAreEqual(this.currentModel, item.model);
 			const isDefault = this.isDefaultModel(item.model);
 			const defaultBadge = isDefault ? theme.fg("muted", " · default") : "";
+			const modelName = item.model.name || item.id;
+			const providerName = this.modelRuntime.getProvider(item.provider)?.name ?? item.provider;
 
 			let line = "";
 			if (isSelected) {
 				const prefix = theme.fg("accent", "→ ");
-				const modelText = `${item.id}`;
-				const providerBadge = theme.fg("muted", `[${item.provider}]`);
+				const modelText = modelName;
+				const providerBadge = theme.fg("muted", `[${providerName}]`);
 				const checkmark = isCurrent ? theme.fg("success", " ✓") : "";
 				line = `${prefix + theme.fg("accent", modelText)} ${providerBadge}${defaultBadge}${checkmark}`;
 			} else {
-				const modelText = `  ${item.id}`;
-				const providerBadge = theme.fg("muted", `[${item.provider}]`);
+				const modelText = `  ${modelName}`;
+				const providerBadge = theme.fg("muted", `[${providerName}]`);
 				const checkmark = isCurrent ? theme.fg("success", " ✓") : "";
 				line = `${modelText} ${providerBadge}${defaultBadge}${checkmark}`;
 			}
@@ -348,10 +350,6 @@ export class ModelSelectorComponent extends Container implements Focusable {
 			}
 		} else if (this.filteredModels.length === 0) {
 			this.listContainer.addChild(new Text(theme.fg("muted", "  No matching models"), 0, 0));
-		} else {
-			const selected = this.filteredModels[this.selectedIndex];
-			this.listContainer.addChild(new Spacer(1));
-			this.listContainer.addChild(new Text(theme.fg("muted", `  Model Name: ${selected.model.name}`), 0, 0));
 		}
 		if (this.refreshStatusMessage) {
 			this.listContainer.addChild(new Spacer(1));
