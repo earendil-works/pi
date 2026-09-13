@@ -12,7 +12,6 @@ import type { ModelRegistry } from "../model-registry.ts";
 import type { ScopedModel } from "../model-resolver.ts";
 import type { SessionManager } from "../session-manager.ts";
 import {
-	type BuildSystemPromptInput,
 	type BuildSystemPromptOptions,
 	buildSystemPrompt,
 	type NormalizedBuildSystemPromptOptions,
@@ -1139,7 +1138,7 @@ export class ExtensionRunner {
 	async emitBeforeAgentStart(
 		prompt: string,
 		images: ImageContent[] | undefined,
-		systemPromptOptions: BuildSystemPromptInput,
+		systemPromptOptions: BuildSystemPromptOptions,
 	): Promise<BeforeAgentStartCombinedResult> {
 		const currentOptions = normalizeBuildSystemPromptOptions(systemPromptOptions);
 		const renderCurrentSystemPrompt = (): string => buildSystemPrompt(currentOptions);
@@ -1174,15 +1173,7 @@ export class ExtensionRunner {
 						const result = handlerResult as BeforeAgentStartEventResult;
 						if (result.message) messages.push(result.message);
 						if (result.systemPrompt !== undefined) {
-							const currentSystemPrompt = renderCurrentSystemPrompt();
-							if (
-								currentOptions.forceSystemPrompt === undefined &&
-								result.systemPrompt.startsWith(currentSystemPrompt)
-							) {
-								currentOptions.promptTail += result.systemPrompt.slice(currentSystemPrompt.length);
-							} else {
-								currentOptions.forceSystemPrompt = result.systemPrompt;
-							}
+							currentOptions.forceSystemPrompt = result.systemPrompt;
 						}
 					}
 				} catch (err) {

@@ -87,7 +87,7 @@ describe("regression #2835: tool allowlists filter extension tools", () => {
 
 		expect(session.getAllTools()).toEqual([]);
 		expect(session.getActiveToolNames()).toEqual([]);
-		expect(session.systemPrompt).toContain("Available tools:\n(none)");
+		expect(session.systemPrompt).toContain("<tools>\n(none)\n");
 		expect(session.systemPrompt).not.toContain("dynamic_tool");
 		session.dispose();
 	});

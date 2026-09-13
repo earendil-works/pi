@@ -2,13 +2,15 @@
  * System prompt construction and project context loading
  */
 
+import { isDeepStrictEqual } from "node:util";
+import type { SystemMessage, Tool, ToolReference, TranscriptCapabilities } from "@earendil-works/pi-ai";
 import { getDocsPath, getExamplesPath, getReadmePath } from "../config.ts";
 import { formatSkillsForPrompt, type Skill } from "./skills.ts";
 
 export interface BuildSystemPromptOptions {
-	/** Custom system prompt (replaces default). */
+	/** Custom system prompt (replaces the default prefix). */
 	customPrompt?: string;
-	/** Full prompt replacement set by a before_agent_start handler. */
+	/** Exact full prompt replacement set by a before_agent_start handler. */
 	forceSystemPrompt?: string;
 	/** Tools to include in prompt. Default: [read, bash, edit, write]. */
 	selectedTools?: string[];
@@ -16,12 +18,10 @@ export interface BuildSystemPromptOptions {
 	toolSnippets?: Record<string, string>;
 	/** Guideline bullets contributed by each tool, keyed by tool name. */
 	toolGuidelines?: Record<string, string[]>;
-	/** Additional guideline bullets appended to the default system prompt guidelines. */
+	/** Additional guideline bullets appended to the default system prompt rules. */
 	promptGuidelines?: string[];
 	/** Text appended from user configuration before project context, skills, and cwd. */
 	appendSystemPrompt?: string;
-	/** Text appended at the absolute end of the rendered prompt. */
-	promptTail?: string;
 	/** Additional XML-wrapped prompt sections keyed by tag name. */
 	sections?: Record<string, string>;
 	/** Working directory. */
@@ -32,33 +32,25 @@ export interface BuildSystemPromptOptions {
 	skills?: Skill[];
 }
 
-export type BuildSystemPromptInput = BuildSystemPromptOptions;
-
 export type NormalizedBuildSystemPromptOptions = BuildSystemPromptOptions & {
 	selectedTools: string[];
 	toolSnippets: Record<string, string>;
 	toolGuidelines: Record<string, string[]>;
 	promptGuidelines: string[];
 	appendSystemPrompt: string;
-	promptTail: string;
 	sections: Record<string, string>;
 	contextFiles: Array<{ path: string; content: string }>;
 	skills: Skill[];
 };
 
-/** Stable prompt structure interleaved with keyed values that can change independently. */
-export type SystemPromptPiece = { type: "literal"; text: string } | { type: "value"; key: string; text: string };
+/** A normal prompt has an exact prefix followed by independently replaceable sections. */
+export type SystemPromptDefinition =
+	| { type: "structured"; prefix: string; sections: Record<string, string> }
+	| { type: "override"; text: string };
 
 const SYSTEM_PROMPT_SECTION_NAME = /^[a-z][a-z0-9_-]*$/;
-const SYSTEM_PROMPT_VALUE_SUBJECTS: Record<string, string> = {
-	projectContext: "project-specific instructions",
-	skills: "skill guidance",
-	tools: "available tool guidance",
-	guidelines: "operating guidelines",
-};
-
 /** Normalize prompt input into the mutable, collection-complete shape exposed to extensions. */
-export function normalizeBuildSystemPromptOptions(input: BuildSystemPromptInput): NormalizedBuildSystemPromptOptions {
+export function normalizeBuildSystemPromptOptions(input: BuildSystemPromptOptions): NormalizedBuildSystemPromptOptions {
 	return {
 		customPrompt: input.customPrompt,
 		forceSystemPrompt: input.forceSystemPrompt,
@@ -69,7 +61,6 @@ export function normalizeBuildSystemPromptOptions(input: BuildSystemPromptInput)
 		),
 		promptGuidelines: [...(input.promptGuidelines ?? [])],
 		appendSystemPrompt: input.appendSystemPrompt ?? "",
-		promptTail: input.promptTail ?? "",
 		sections: { ...(input.sections ?? {}) },
 		cwd: input.cwd,
 		contextFiles: (input.contextFiles ?? []).map((file) => ({ ...file })),
@@ -77,98 +68,37 @@ export function normalizeBuildSystemPromptOptions(input: BuildSystemPromptInput)
 	};
 }
 
-export function renderSystemPrompt(pieces: readonly SystemPromptPiece[]): string {
-	return pieces.map((piece) => piece.text).join("");
+function renderSection(name: string, content: string): string {
+	return `<${name}>\n${content}\n</${name}>`;
+}
+
+export function renderSystemPrompt(prompt: SystemPromptDefinition): string {
+	if (prompt.type === "override") return prompt.text;
+	const sections = Object.entries(prompt.sections).map(([name, content]) => renderSection(name, content));
+	return prompt.prefix ? [prompt.prefix, ...sections].join("\n\n") : sections.join("\n\n");
 }
 
 function renderProjectContext(contextFiles: Array<{ path: string; content: string }>): string {
-	if (contextFiles.length === 0) return "";
-	let context = "\n\n<project_context>\n\nProject-specific instructions and guidelines:\n\n";
-	for (const { path: filePath, content } of contextFiles) {
-		context += `<project_instructions path="${filePath}">\n${content}\n</project_instructions>\n\n`;
-	}
-	return `${context}</project_context>\n`;
+	return [
+		"Project-specific instructions and guidelines:",
+		...contextFiles.map(
+			({ path, content }) => `<project_instructions path="${path}">\n${content}\n</project_instructions>`,
+		),
+	].join("\n\n");
 }
 
-function appendCustomSectionPieces(
-	pieces: SystemPromptPiece[],
-	sections: Record<string, string>,
-	separator: string,
-	suffix: string,
-): void {
-	for (const [name, content] of Object.entries(sections)) {
-		if (!SYSTEM_PROMPT_SECTION_NAME.test(name)) {
-			throw new Error(`Invalid system prompt section name: ${name}`);
-		}
-		if (content.length === 0) continue;
-		pieces.push({
-			type: "value",
-			key: `section:${name}`,
-			text: `${separator}<${name}>\n${content}\n</${name}>${suffix}`,
-		});
-	}
-}
-
-/** Build the system prompt as immutable literals interleaved with keyed dynamic values. */
-export function buildSystemPromptPieces(input: BuildSystemPromptInput): SystemPromptPiece[] {
-	const options = normalizeBuildSystemPromptOptions(input);
-	const {
-		customPrompt,
-		forceSystemPrompt,
-		selectedTools,
-		toolSnippets,
-		toolGuidelines,
-		promptGuidelines,
-		appendSystemPrompt,
-		promptTail,
-		sections,
-		cwd,
-		contextFiles,
-		skills,
-	} = options;
-
-	if (forceSystemPrompt !== undefined) {
-		return [{ type: "value", key: "forceSystemPrompt", text: forceSystemPrompt }];
-	}
-
-	const promptCwd = cwd.replace(/\\/g, "/");
-	const appendSection = appendSystemPrompt ? `\n\n${appendSystemPrompt}` : "";
-	const projectContext = renderProjectContext(contextFiles);
-	const skillFileReadTool = (["read", "bash"] as const).find((tool) => selectedTools.includes(tool));
-
-	if (customPrompt) {
-		const pieces: SystemPromptPiece[] = [
-			{ type: "value", key: "customPrompt", text: customPrompt },
-			{ type: "value", key: "appendSystemPrompt", text: appendSection },
-			{ type: "value", key: "projectContext", text: projectContext },
-			{
-				type: "value",
-				key: "skills",
-				text: skillFileReadTool && skills.length > 0 ? formatSkillsForPrompt(skills, skillFileReadTool) : "",
-			},
-			{ type: "literal", text: "\nCurrent working directory: " },
-			{ type: "value", key: "cwd", text: promptCwd },
-			{ type: "literal", text: "\n" },
-		];
-		appendCustomSectionPieces(pieces, sections, "\n", "\n");
-		pieces.push({ type: "value", key: "promptTail", text: promptTail });
-		return pieces;
-	}
-
-	const readmePath = getReadmePath();
-	const docsPath = getDocsPath();
-	const examplesPath = getExamplesPath();
-
-	const visibleTools = selectedTools.filter((name) => !!toolSnippets[name]);
-	const toolsList =
-		visibleTools.length > 0 ? visibleTools.map((name) => `- ${name}: ${toolSnippets[name]}`).join("\n") : "(none)";
-
-	const guidelinesList: string[] = [];
-	const guidelinesSet = new Set<string>();
-	const addGuideline = (guideline: string): void => {
-		if (guidelinesSet.has(guideline)) return;
-		guidelinesSet.add(guideline);
-		guidelinesList.push(guideline);
+function buildRules(
+	selectedTools: string[],
+	toolGuidelines: Record<string, string[]>,
+	promptGuidelines: string[],
+): string {
+	const rules: string[] = [];
+	const seen = new Set<string>();
+	const addRule = (rule: string): void => {
+		const normalized = rule.trim();
+		if (!normalized || seen.has(normalized)) return;
+		seen.add(normalized);
+		rules.push(normalized);
 	};
 
 	const hasBash = selectedTools.includes("bash");
@@ -179,127 +109,202 @@ export function buildSystemPromptPieces(input: BuildSystemPromptInput): SystemPr
 
 	if ((hasBash || hasPowerShell) && !hasGrep && !hasFind && !hasLs) {
 		if (hasBash && hasPowerShell) {
-			addGuideline("Use bash or PowerShell for file operations like listing, searching, and finding files");
+			addRule("Use bash or PowerShell for file operations like listing, searching, and finding files");
 		} else if (hasPowerShell) {
-			addGuideline("Use PowerShell for file operations like listing, searching, and finding files");
+			addRule("Use PowerShell for file operations like listing, searching, and finding files");
 		} else {
-			addGuideline("Use bash for file operations like ls, rg, find");
+			addRule("Use bash for file operations like ls, rg, find");
 		}
 	}
 
 	for (const name of selectedTools) {
-		for (const guideline of toolGuidelines[name] ?? []) addGuideline(guideline);
+		for (const rule of toolGuidelines[name] ?? []) addRule(rule);
 	}
-	for (const guideline of promptGuidelines) {
-		const normalized = guideline.trim();
-		if (normalized.length > 0) addGuideline(normalized);
+	for (const rule of promptGuidelines) addRule(rule);
+	addRule("Be concise in your responses");
+	addRule("Show file paths clearly when working with files");
+	return rules.map((rule) => `- ${rule}`).join("\n");
+}
+
+/** Build the exact prefix and independently replaceable sections of the system prompt. */
+export function buildSystemPromptDefinition(input: BuildSystemPromptOptions): SystemPromptDefinition {
+	const options = normalizeBuildSystemPromptOptions(input);
+	const {
+		customPrompt,
+		forceSystemPrompt,
+		selectedTools,
+		toolSnippets,
+		toolGuidelines,
+		promptGuidelines,
+		appendSystemPrompt,
+		sections: customSections,
+		cwd,
+		contextFiles,
+		skills,
+	} = options;
+
+	if (forceSystemPrompt !== undefined) {
+		return { type: "override", text: forceSystemPrompt };
 	}
 
-	addGuideline("Be concise in your responses");
-	addGuideline("Show file paths clearly when working with files");
+	for (const name of Object.keys(customSections)) {
+		if (!SYSTEM_PROMPT_SECTION_NAME.test(name)) {
+			throw new Error(`Invalid system prompt section name: ${name}`);
+		}
+	}
 
-	const guidelines = guidelinesList.map((guideline) => `- ${guideline}`).join("\n");
-	const pieces: SystemPromptPiece[] = [
-		{
-			type: "literal",
-			text: "You are an expert coding assistant operating inside pi, a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.\n\nAvailable tools:\n",
-		},
-		{ type: "value", key: "tools", text: toolsList },
-		{
-			type: "literal",
-			text: "\n\nIn addition to the tools above, you may have access to other custom tools depending on the project.\n\nGuidelines:\n",
-		},
-		{ type: "value", key: "guidelines", text: guidelines },
-		{
-			type: "literal",
-			text: `\n\nPi documentation (read only when the user asks about pi itself, its SDK, extensions, themes, skills, or TUI):
-- Main documentation: ${readmePath}
-- Additional docs: ${docsPath}
-- Examples: ${examplesPath} (extensions, custom tools, SDK)
+	const promptSections: Record<string, string> = {};
+	let prefix: string;
+	if (customPrompt) {
+		prefix = customPrompt;
+	} else {
+		prefix =
+			"You are an expert coding assistant operating inside pi, a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.";
+		const visibleTools = selectedTools.filter((name) => !!toolSnippets[name]);
+		const tools =
+			visibleTools.length > 0 ? visibleTools.map((name) => `- ${name}: ${toolSnippets[name]}`).join("\n") : "(none)";
+		promptSections.tools = `${tools}\n\nIn addition to the tools above, you may have access to other custom tools depending on the project.`;
+		promptSections.rules = buildRules(selectedTools, toolGuidelines, promptGuidelines);
+		promptSections.docs = `Pi documentation (read only when the user asks about pi itself, its SDK, extensions, themes, skills, or TUI):
+- Main documentation: ${getReadmePath()}
+- Additional docs: ${getDocsPath()}
+- Examples: ${getExamplesPath()} (extensions, custom tools, SDK)
 - When reading pi docs or examples, resolve docs/... under Additional docs and examples/... under Examples, not the current working directory
 - When asked about: extensions (docs/extensions.md, examples/extensions/), themes (docs/themes.md), skills (docs/skills.md), prompt templates (docs/prompt-templates.md), TUI components (docs/tui.md), keybindings (docs/keybindings.md), SDK integrations (docs/sdk.md), custom providers (docs/custom-provider.md), adding models (docs/models.md), pi packages (docs/packages.md), environment variables (docs/environment-variables.md)
 - When working on pi topics, read the docs and examples, and follow .md cross-references before implementing
-- Always read pi .md files completely and follow links to related docs (e.g., tui.md for TUI API details)`,
-		},
-		{ type: "value", key: "appendSystemPrompt", text: appendSection },
-		{ type: "value", key: "projectContext", text: projectContext },
-		{
-			type: "value",
-			key: "skills",
-			text: skillFileReadTool && skills.length > 0 ? formatSkillsForPrompt(skills, skillFileReadTool) : "",
-		},
-		{ type: "literal", text: "\nCurrent working directory: " },
-		{ type: "value", key: "cwd", text: promptCwd },
-	];
-	appendCustomSectionPieces(pieces, sections, "\n\n", "");
-	pieces.push({ type: "value", key: "promptTail", text: promptTail });
-	return pieces;
+- Always read pi .md files completely and follow links to related docs (e.g., tui.md for TUI API details)`;
+	}
+
+	if (appendSystemPrompt) promptSections.addendum = appendSystemPrompt;
+	if (contextFiles.length > 0) promptSections.project_context = renderProjectContext(contextFiles);
+	const skillFileReadTool = (["read", "bash"] as const).find((tool) => selectedTools.includes(tool));
+	if (skillFileReadTool && skills.length > 0) {
+		const skillsPrompt = formatSkillsForPrompt(skills, skillFileReadTool).trim();
+		if (skillsPrompt) promptSections.skills = skillsPrompt;
+	}
+	promptSections.cwd = cwd.replace(/\\/g, "/");
+	for (const [name, content] of Object.entries(customSections)) {
+		if (content) promptSections[name] = content;
+	}
+
+	return { type: "structured", prefix, sections: promptSections };
 }
 
-/** Build the system prompt with tools, guidelines, and context. */
-export function buildSystemPrompt(input: BuildSystemPromptInput): string {
-	return renderSystemPrompt(buildSystemPromptPieces(input));
+/** Build the system prompt with tools, rules, and context. */
+export function buildSystemPrompt(input: BuildSystemPromptOptions): string {
+	return renderSystemPrompt(buildSystemPromptDefinition(input));
 }
 
 export type SystemPromptDiff = { type: "unchanged" } | { type: "update"; text: string } | { type: "replace" };
 
-const APPEND_ONLY_TEXT_KEYS: Record<string, string> = {
-	customPrompt: "The following additional base system instructions now apply:",
-	appendSystemPrompt: "The following additional system instructions now apply:",
-};
+/** Compare structured prompt sections. Prefix or opaque override changes require a complete replacement. */
+export function diffSystemPrompts(previous: SystemPromptDefinition, current: SystemPromptDefinition): SystemPromptDiff {
+	if (previous.type === "override" || current.type === "override") {
+		return renderSystemPrompt(previous) === renderSystemPrompt(current) ? { type: "unchanged" } : { type: "replace" };
+	}
+	if (previous.prefix !== current.prefix) return { type: "replace" };
 
-/** Compare separately keyed prompt sections and render an instruction that supersedes changed values. */
-export function diffSystemPrompts(
-	previous: readonly SystemPromptPiece[],
-	current: readonly SystemPromptPiece[],
-): SystemPromptDiff {
-	const literals = (pieces: readonly SystemPromptPiece[]): string =>
-		JSON.stringify(pieces.flatMap((piece) => (piece.type === "literal" ? [piece.text] : [])));
-	if (literals(previous) !== literals(current)) return { type: "replace" };
-
-	const values = (pieces: readonly SystemPromptPiece[]): Map<string, string> =>
-		new Map(pieces.flatMap((piece) => (piece.type === "value" ? [[piece.key, piece.text] as const] : [])));
-	const previousValues = values(previous);
-	const currentValues = values(current);
 	const updates: string[] = [];
-	for (const key of new Set([...previousValues.keys(), ...currentValues.keys()])) {
-		const oldValue = (previousValues.get(key) ?? "").trim();
-		const newValue = (currentValues.get(key) ?? "").trim();
-		if (oldValue === newValue) continue;
-		if (key === "forceSystemPrompt") return { type: "replace" };
-		const headline = APPEND_ONLY_TEXT_KEYS[key];
-		if (headline !== undefined) {
-			const addition = strictLineSuffixAddition(oldValue, newValue);
-			if (addition === undefined) return { type: "replace" };
-			updates.push(`${headline}\n\n${addition}`);
-			continue;
-		}
-		updates.push(renderSystemPromptValueUpdate(key, oldValue, newValue));
+	for (const [name, content] of Object.entries(current.sections)) {
+		if (previous.sections[name] !== content) updates.push(renderSection(name, content));
 	}
-	if (updates.length === 0) return { type: "unchanged" };
-	return { type: "update", text: updates.join("\n\n") };
+	const removed = Object.keys(previous.sections).filter((name) => current.sections[name] === undefined);
+	if (removed.length > 0) {
+		updates.push(`Removed system prompt sections: ${removed.map((name) => `<${name}>`).join(", ")}.`);
+	}
+	return updates.length > 0 ? { type: "update", text: updates.join("\n\n") } : { type: "unchanged" };
 }
 
-function strictLineSuffixAddition(previous: string, current: string): string | undefined {
-	if (previous.length === 0) return current;
-	const prefix = `${previous}\n`;
-	if (!current.startsWith(prefix)) return undefined;
-	const addition = current.slice(prefix.length).trim();
-	return addition.length > 0 ? addition : undefined;
+export interface ModelContextState {
+	prompt: SystemPromptDefinition;
+	tools: Map<string, Tool>;
+	modelKey: string;
 }
 
-function renderSystemPromptValueUpdate(key: string, previous: string, current: string): string {
-	if (key === "cwd") return `The current working directory is now: ${current}`;
-	const subject =
-		SYSTEM_PROMPT_VALUE_SUBJECTS[key] ??
-		(key.startsWith("section:") ? `<${key.slice("section:".length)}> system guidance` : undefined);
-	if (subject !== undefined) {
-		if (!current) return `The previous ${subject} no longer applies.`;
-		if (!previous) return `The following ${subject} now applies:\n\n${current}`;
-		return `The ${subject} has changed. The following supersedes the previous ${subject}:\n\n${current}`;
+/** Prepare one coherent prompt and tool transition for the next provider request. */
+export function prepareModelContextUpdate(input: {
+	options: NormalizedBuildSystemPromptOptions;
+	tools: Map<string, Tool>;
+	previous?: ModelContextState;
+	capabilities: TranscriptCapabilities;
+	modelKey: string;
+}): { state: ModelContextState; message?: SystemMessage } {
+	const { options, tools, previous, capabilities, modelKey } = input;
+	const prompt = buildSystemPromptDefinition(options);
+	const currentPrompt = renderSystemPrompt(prompt);
+	const state: ModelContextState = { prompt, tools, modelKey };
+	if (!previous) {
+		return {
+			state,
+			message: {
+				role: "system",
+				content: currentPrompt,
+				toolsAdded: [...tools.values()],
+				timestamp: Date.now(),
+			},
+		};
 	}
-	const parts: string[] = [];
-	if (previous) parts.push(`The following system guidance no longer applies:\n\n${previous}`);
-	if (current) parts.push(`The following system guidance now applies:\n\n${current}`);
-	return parts.join("\n\n");
+
+	const promptDiff = diffSystemPrompts(previous.prompt, prompt);
+	const toolsAdded = [...tools]
+		.filter(([name, tool]) => {
+			const oldTool = previous.tools.get(name);
+			return oldTool === undefined || !isDeepStrictEqual(oldTool, tool);
+		})
+		.map(([, tool]) => tool);
+	const toolsRemoved: ToolReference[] = [...previous.tools]
+		.filter(([name, tool]) => {
+			const newTool = tools.get(name);
+			return newTool === undefined || !isDeepStrictEqual(tool, newTool);
+		})
+		.map(([name]) => ({ name }));
+	const toolDefinitionsChanged = toolsAdded.some((tool) => previous.tools.has(tool.name));
+
+	if (
+		previous.modelKey === modelKey &&
+		promptDiff.type === "unchanged" &&
+		toolsAdded.length === 0 &&
+		toolsRemoved.length === 0
+	) {
+		return { state };
+	}
+
+	const canUpdatePrompt = promptDiff.type === "unchanged" || capabilities.midConversationSystemMessages;
+	const canAddTools = toolsAdded.length === 0 || capabilities.midConversationToolAdditions;
+	const canRemoveTools = toolsRemoved.length === 0 || capabilities.midConversationToolRemovals;
+	const requiresReplacement =
+		previous.modelKey !== modelKey ||
+		toolDefinitionsChanged ||
+		promptDiff.type === "replace" ||
+		!canUpdatePrompt ||
+		!canAddTools ||
+		!canRemoveTools;
+	const content: string[] = [];
+	if (requiresReplacement) {
+		content.push(
+			`The following is the complete current system prompt. It supersedes all earlier system prompt updates:\n\n${currentPrompt}`,
+		);
+	} else if (promptDiff.type === "update") {
+		content.push(promptDiff.text);
+	}
+	if (toolsAdded.length > 0) {
+		content.push(
+			`The following tools are now available and may be used: ${toolsAdded.map((tool) => tool.name).join(", ")}.`,
+		);
+	}
+	if (toolsRemoved.length > 0) {
+		content.push(
+			`The following tools are no longer available. Do not call them; such calls will be rejected: ${toolsRemoved.map((tool) => tool.name).join(", ")}.`,
+		);
+	}
+	return {
+		state,
+		message: {
+			role: "system",
+			content: content.join("\n\n"),
+			toolsAdded: toolsAdded.length > 0 ? toolsAdded : undefined,
+			toolsRemoved: toolsRemoved.length > 0 ? toolsRemoved : undefined,
+			timestamp: Date.now(),
+		},
+	};
 }

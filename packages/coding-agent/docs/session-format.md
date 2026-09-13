@@ -235,10 +235,10 @@ A message in the conversation. The `message` field contains an `AgentMessage`. A
 
 ### SystemPromptEntry
 
-Internal state used to resume section-level system-prompt and tool diffs without changing the initial transcript message. It does not itself become an LLM message. `prompt` contains the current keyed prompt pieces, `baseline` is the stable initial prompt, `tools` is the current tool set, and `initialTools` is the declaration set from the initial system message.
+Internal state used to resume section-level system-prompt and tool diffs without changing the initial transcript message. It does not itself become an LLM message. A structured `prompt` stores its exact prefix and current keyed sections; an opaque override stores its exact text. `tools` is the current tool set.
 
 ```json
-{"type":"system_prompt","id":"d4e5f6g7","parentId":"c3d4e5f6","timestamp":"2024-12-03T14:04:00.000Z","prompt":[{"type":"value","key":"customPrompt","text":"You are a coding assistant."}],"baseline":"You are a coding assistant.","tools":[],"initialTools":[],"hasTranscriptUpdates":false,"modelKey":"anthropic:anthropic-messages:claude-opus-5"}
+{"type":"system_prompt","id":"d4e5f6g7","parentId":"c3d4e5f6","timestamp":"2024-12-03T14:04:00.000Z","prompt":{"type":"structured","prefix":"You are a coding assistant.","sections":{"cwd":"/project"}},"tools":[],"modelKey":"anthropic:anthropic-messages:claude-opus-5"}
 ```
 
 ### ModelChangeEntry

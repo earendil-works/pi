@@ -109,15 +109,12 @@ import type { SlashCommandInfo } from "./slash-commands.ts";
 import { createSyntheticSourceInfo, type SourceInfo } from "./source-info.ts";
 import {
 	buildSystemPrompt,
+	type ModelContextState,
 	type NormalizedBuildSystemPromptOptions,
 	normalizeBuildSystemPromptOptions,
-} from "./system-prompt.ts";
-import {
-	createSystemPromptUpdateMessage,
-	type ModelContextState,
 	prepareModelContextUpdate,
-	systemPromptTool,
-} from "./system-prompt-updates.ts";
+	renderSystemPrompt,
+} from "./system-prompt.ts";
 import { type BashOperations, createLocalBashOperations } from "./tools/bash.ts";
 import { createAllToolDefinitions } from "./tools/index.ts";
 import { createToolDefinitionFromAgentTool } from "./tools/tool-definition-wrapper.ts";
@@ -1133,28 +1130,34 @@ export class AgentSession {
 		const model = this.model;
 		if (!model) return undefined;
 		const modelKey = `${model.provider}:${model.api}:${model.id}`;
+		const toolDeclarations = new Map(
+			selectedTools.map(({ name, description, parameters, constrainedSampling }) => [
+				name,
+				{
+					name,
+					description,
+					parameters,
+					// Session JSON drops undefined properties. Omit this optional field now so
+					// in-memory declarations compare identically after a session round-trip.
+					...(constrainedSampling === undefined ? {} : { constrainedSampling }),
+				},
+			]),
+		);
 		const update = prepareModelContextUpdate({
 			options,
-			tools: new Map(selectedTools.map((tool) => [tool.name, systemPromptTool(tool)])),
+			tools: toolDeclarations,
 			previous: this._modelContextState,
 			capabilities: getTranscriptCapabilities(model),
 			modelKey,
 		});
-		const message = update.type === "unchanged" ? undefined : createSystemPromptUpdateMessage(update);
-		if (update.type !== "unchanged") {
-			this.sessionManager.appendSystemPromptState(
-				update.state.prompt,
-				[...update.state.tools.values()],
-				update.state.initialTools,
-				update.state.hasTranscriptUpdates,
-				modelKey,
-			);
+		if (update.message) {
+			this.sessionManager.appendSystemPromptState(update.state.prompt, [...update.state.tools.values()], modelKey);
 		}
 
 		this.agent.state.tools = selectedTools;
 		this._modelContextState = update.state;
-		this.agent.state.systemPrompt = update.state.prompt.baseline;
-		return message;
+		this.agent.state.systemPrompt = renderSystemPrompt(update.state.prompt);
+		return update.message;
 	}
 
 	private _restoreModelContextState(restoreTools = this._initialActiveToolNames === undefined): void {
@@ -1165,13 +1168,11 @@ export class AgentSession {
 			return;
 		}
 		this._modelContextState = {
-			prompt: { pieces: stored.prompt, baseline: stored.baseline },
+			prompt: stored.prompt,
 			tools: new Map(stored.tools.map((tool) => [tool.name, tool])),
-			initialTools: stored.initialTools,
-			hasTranscriptUpdates: stored.hasTranscriptUpdates,
 			modelKey: stored.modelKey,
 		};
-		this.agent.state.systemPrompt = stored.baseline;
+		this.agent.state.systemPrompt = renderSystemPrompt(stored.prompt);
 		if (restoreTools) {
 			const restoredToolNames = stored.tools.map((tool) => tool.name).filter((name) => this._toolRegistry.has(name));
 			this.agent.state.tools = restoredToolNames.flatMap((name) => {

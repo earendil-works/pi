@@ -34,7 +34,7 @@ import {
 	createCompactionSummaryMessage,
 	createCustomMessage,
 } from "./messages.ts";
-import { renderSystemPrompt, type SystemPromptPiece } from "./system-prompt.ts";
+import { renderSystemPrompt, type SystemPromptDefinition } from "./system-prompt.ts";
 
 export const CURRENT_SESSION_VERSION = 3;
 
@@ -67,11 +67,8 @@ export interface SessionMessageEntry extends SessionEntryBase {
 /** Durable state needed to continue diffing prompt sections after a restart. */
 export interface SystemPromptEntry extends SessionEntryBase {
 	type: "system_prompt";
-	prompt: SystemPromptPiece[];
-	baseline: string;
+	prompt: SystemPromptDefinition;
 	tools: Tool[];
-	initialTools: Tool[];
-	hasTranscriptUpdates: boolean;
 	modelKey: string;
 }
 
@@ -1107,23 +1104,14 @@ export class SessionManager {
 	}
 
 	/** Append the complete prompt-diff state as session metadata. */
-	appendSystemPromptState(
-		prompt: { pieces: SystemPromptPiece[]; baseline: string },
-		tools: Tool[],
-		initialTools: Tool[],
-		hasTranscriptUpdates: boolean,
-		modelKey: string,
-	): string {
+	appendSystemPromptState(prompt: SystemPromptDefinition, tools: Tool[], modelKey: string): string {
 		const entry: SystemPromptEntry = {
 			type: "system_prompt",
 			id: generateId(this.byId),
 			parentId: this.leafId,
 			timestamp: new Date().toISOString(),
-			prompt: prompt.pieces,
-			baseline: prompt.baseline,
+			prompt,
 			tools,
-			initialTools,
-			hasTranscriptUpdates,
 			modelKey,
 		};
 		this._appendEntry(entry);

@@ -1,15 +1,20 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fauxAssistantMessage, type TranscriptCapabilities } from "@earendil-works/pi-ai";
+import type { AgentTool } from "@earendil-works/pi-agent-core";
+import { fauxAssistantMessage, type Tool, type TranscriptCapabilities } from "@earendil-works/pi-ai";
 import { getModel } from "@earendil-works/pi-ai/compat";
 import { Type } from "typebox";
 import { describe, expect, test } from "vitest";
 import { createAgentSession } from "../src/core/sdk.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
-import { buildSystemPromptPieces, diffSystemPrompts } from "../src/core/system-prompt.ts";
-import { prepareModelContextUpdate } from "../src/core/system-prompt-updates.ts";
+import {
+	buildSystemPromptDefinition,
+	diffSystemPrompts,
+	normalizeBuildSystemPromptOptions,
+	prepareModelContextUpdate,
+} from "../src/core/system-prompt.ts";
 import type { ExtensionFactory } from "../src/index.ts";
 import { createHarness } from "./suite/harness.ts";
 
@@ -93,13 +98,19 @@ describe("system prompt updates", () => {
 		}
 	});
 
-	test("diffs independently keyed XML sections", () => {
-		const previous = buildSystemPromptPieces({ cwd: "/tmp", sections: { plan_mode: "Plan only." } });
-		const current = buildSystemPromptPieces({ cwd: "/tmp", sections: { plan_mode: "Implementation allowed." } });
+	test("diffs independently keyed XML sections without an update wrapper", () => {
+		const previous = buildSystemPromptDefinition({ cwd: "/tmp", sections: { plan_mode: "Plan only." } });
+		const current = buildSystemPromptDefinition({ cwd: "/tmp", sections: { plan_mode: "Implementation allowed." } });
 		expect(diffSystemPrompts(previous, current)).toEqual({
 			type: "update",
-			text: "The <plan_mode> system guidance has changed. The following supersedes the previous <plan_mode> system guidance:\n\n<plan_mode>\nImplementation allowed.\n</plan_mode>",
+			text: "<plan_mode>\nImplementation allowed.\n</plan_mode>",
 		});
+	});
+
+	test("requires replacement when the exact prefix changes", () => {
+		const previous = buildSystemPromptDefinition({ customPrompt: "You are A.", cwd: "/tmp" });
+		const current = buildSystemPromptDefinition({ customPrompt: "You are B.", cwd: "/tmp" });
+		expect(diffSystemPrompts(previous, current)).toEqual({ type: "replace" });
 	});
 
 	test("setActiveTools emits tool and prompt changes before the next request", async () => {
@@ -149,7 +160,50 @@ describe("system prompt updates", () => {
 				.filter((entry) => entry.type === "system_prompt")
 				.at(-1);
 			expect(state?.tools.map((value) => value.name)).toEqual(["second"]);
-			expect(state?.initialTools.map((value) => value.name)).toContain("first");
+			expect(state?.prompt.type).toBe("structured");
+		} finally {
+			harness.cleanup();
+		}
+	});
+
+	test("keeps tool declarations stable across a session JSON round-trip", async () => {
+		const executableTool: AgentTool = {
+			name: "plain",
+			label: "Plain",
+			description: "Plain tool",
+			parameters: Type.Object({}),
+			execute: async () => ({ content: [], details: {} }),
+		};
+		const harness = await createHarness({ tools: [executableTool], initialActiveToolNames: ["plain"] });
+		try {
+			const state = harness.sessionManager
+				.getEntries()
+				.filter((entry) => entry.type === "system_prompt")
+				.at(-1);
+			if (!state) throw new Error("expected system prompt state");
+			const declaration = state.tools[0];
+			if (!declaration) throw new Error("expected tool declaration");
+			expect(Object.hasOwn(declaration, "constrainedSampling")).toBe(false);
+
+			const persistedTools = JSON.parse(JSON.stringify(state.tools)) as Tool[];
+			const previous = {
+				prompt: state.prompt,
+				tools: new Map(persistedTools.map((persisted) => [persisted.name, persisted])),
+				modelKey: state.modelKey,
+			};
+			const options = normalizeBuildSystemPromptOptions(
+				harness.session.extensionRunner.createCommandContext().getSystemPromptOptions(),
+			);
+
+			expect(
+				prepareModelContextUpdate({
+					options,
+					tools: new Map([[declaration.name, declaration]]),
+					previous,
+					capabilities: nativeCapabilities,
+					modelKey: state.modelKey,
+				}).message,
+			).toBeUndefined();
 		} finally {
 			harness.cleanup();
 		}
@@ -163,7 +217,6 @@ describe("system prompt updates", () => {
 			toolGuidelines: {},
 			promptGuidelines: [],
 			appendSystemPrompt: "",
-			promptTail: "",
 			sections: {},
 			contextFiles: [],
 			skills: [],
@@ -186,8 +239,9 @@ describe("system prompt updates", () => {
 			capabilities: nativeCapabilities,
 			modelKey: "model",
 		});
-		expect(addition).toMatchObject({ type: "incremental", toolsAdded: [second], toolsRemoved: [] });
-		if (addition.type !== "incremental") throw new Error("expected incremental update");
+		expect(addition.message).toMatchObject({ toolsAdded: [second] });
+		expect(addition.message?.toolsRemoved).toBeUndefined();
+		expect(addition.message?.content).not.toContain("complete current system prompt");
 
 		const removal = prepareModelContextUpdate({
 			options,
@@ -196,7 +250,8 @@ describe("system prompt updates", () => {
 			capabilities: nativeCapabilities,
 			modelKey: "model",
 		});
-		expect(removal).toMatchObject({ type: "incremental", toolsAdded: [], toolsRemoved: [{ name: "first" }] });
+		expect(removal.message).toMatchObject({ toolsRemoved: [{ name: "first" }] });
+		expect(removal.message?.toolsAdded).toBeUndefined();
 
 		const replacement = prepareModelContextUpdate({
 			options,
@@ -205,12 +260,8 @@ describe("system prompt updates", () => {
 			capabilities: noCapabilities,
 			modelKey: "model",
 		});
-		expect(replacement).toMatchObject({
-			type: "replacement",
-			toolsAdded: [],
-			toolsRemoved: [{ name: "second" }],
-		});
-		if (replacement.type !== "replacement") throw new Error("expected replacement");
-		expect(replacement.promptText).toContain("complete current system prompt");
+		expect(replacement.message).toMatchObject({ toolsRemoved: [{ name: "second" }] });
+		expect(replacement.message?.toolsAdded).toBeUndefined();
+		expect(replacement.message?.content).toContain("complete current system prompt");
 	});
 });
