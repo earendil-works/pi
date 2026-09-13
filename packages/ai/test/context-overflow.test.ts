@@ -17,7 +17,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { complete, getModel, getModels } from "../src/compat.ts";
 import type { AssistantMessage, Context, Model, Usage } from "../src/types.ts";
 import { isContextOverflow } from "../src/utils/overflow.ts";
-import { hasAzureOpenAICredentials } from "./azure-utils.ts";
+import { hasAzureAnthropicFoundryCredentials, hasAzureOpenAICredentials } from "./azure-utils.ts";
 import { hasBedrockCredentials } from "./bedrock-utils.ts";
 import { resolveApiKey } from "./oauth.ts";
 
@@ -101,6 +101,18 @@ describe("Context overflow error handling", () => {
 
 			expect(result.stopReason).toBe("error");
 			expect(result.errorMessage).toMatch(/prompt is too long/i);
+			expect(isContextOverflow(result.response, model.contextWindow)).toBe(true);
+		}, 120000);
+	});
+
+	describe.skipIf(!hasAzureAnthropicFoundryCredentials())("Azure AI Foundry Anthropic", () => {
+		it("claude-haiku-4-5 - should detect overflow via isContextOverflow", async () => {
+			const model = getModel("azure-anthropic-foundry", "claude-haiku-4-5");
+			const result = await testContextOverflow(model, process.env.ANTHROPIC_FOUNDRY_API_KEY!);
+			logResult(result);
+
+			expect(result.stopReason).toBe("error");
+			expect(result.errorMessage).toMatch(/prompt is too long|context|maximum|input/i);
 			expect(isContextOverflow(result.response, model.contextWindow)).toBe(true);
 		}, 120000);
 	});

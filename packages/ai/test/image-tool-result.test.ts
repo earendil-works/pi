@@ -8,7 +8,11 @@ import type { StreamOptions } from "../src/types.ts";
 
 type StreamOptionsWithExtras = StreamOptions & Record<string, unknown>;
 
-import { hasAzureOpenAICredentials, resolveAzureDeploymentName } from "./azure-utils.ts";
+import {
+	hasAzureAnthropicFoundryCredentials,
+	hasAzureOpenAICredentials,
+	resolveAzureDeploymentName,
+} from "./azure-utils.ts";
 import { hasBedrockCredentials } from "./bedrock-utils.ts";
 import { resolveApiKey } from "./oauth.ts";
 
@@ -273,6 +277,21 @@ describe("Tool Results with Images", () => {
 			await handleToolWithTextAndImageResult(model);
 		});
 	});
+
+	describe.skipIf(!hasAzureAnthropicFoundryCredentials())(
+		"Azure AI Foundry Anthropic Provider (claude-haiku-4-5)",
+		() => {
+			const model = getModel("azure-anthropic-foundry", "claude-haiku-4-5");
+
+			it("should handle tool result with only image", { retry: 3, timeout: 30000 }, async () => {
+				await handleToolWithImageResult(model);
+			});
+
+			it("should handle tool result with text and image", { retry: 3, timeout: 30000 }, async () => {
+				await handleToolWithTextAndImageResult(model);
+			});
+		},
+	);
 
 	describe.skipIf(!process.env.OPENROUTER_API_KEY)("OpenRouter Provider (glm-4.5v)", () => {
 		const llm = getModel("openrouter", "z-ai/glm-4.5v");

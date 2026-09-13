@@ -4,7 +4,11 @@ import type { Api, Context, Model, StreamOptions } from "../src/types.ts";
 
 type StreamOptionsWithExtras = StreamOptions & Record<string, unknown>;
 
-import { hasAzureOpenAICredentials, resolveAzureDeploymentName } from "./azure-utils.ts";
+import {
+	hasAzureAnthropicFoundryCredentials,
+	hasAzureOpenAICredentials,
+	resolveAzureDeploymentName,
+} from "./azure-utils.ts";
 import { hasBedrockCredentials } from "./bedrock-utils.ts";
 import { hasCloudflareAiGatewayCredentials, hasCloudflareWorkersAICredentials } from "./cloudflare-utils.ts";
 import { resolveApiKey } from "./oauth.ts";
@@ -125,6 +129,14 @@ describe("Token Statistics on Abort", () => {
 
 	describe.skipIf(!process.env.ANTHROPIC_API_KEY)("Anthropic Provider", () => {
 		const llm = getModel("anthropic", "claude-sonnet-4-6");
+
+		it("should include token stats when aborted mid-stream", { retry: 3, timeout: 30000 }, async () => {
+			await testTokensOnAbort(llm);
+		});
+	});
+
+	describe.skipIf(!hasAzureAnthropicFoundryCredentials())("Azure AI Foundry Anthropic Provider", () => {
+		const llm = getModel("azure-anthropic-foundry", "claude-haiku-4-5");
 
 		it("should include token stats when aborted mid-stream", { retry: 3, timeout: 30000 }, async () => {
 			await testTokensOnAbort(llm);

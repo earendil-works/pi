@@ -5,7 +5,11 @@ import type { Api, Context, Model, StreamOptions, Tool } from "../src/types.ts";
 
 type StreamOptionsWithExtras = StreamOptions & Record<string, unknown>;
 
-import { hasAzureOpenAICredentials, resolveAzureDeploymentName } from "./azure-utils.ts";
+import {
+	hasAzureAnthropicFoundryCredentials,
+	hasAzureOpenAICredentials,
+	resolveAzureDeploymentName,
+} from "./azure-utils.ts";
 import { hasBedrockCredentials } from "./bedrock-utils.ts";
 import { hasCloudflareAiGatewayCredentials, hasCloudflareWorkersAICredentials } from "./cloudflare-utils.ts";
 import { resolveApiKey } from "./oauth.ts";
@@ -136,6 +140,14 @@ describe("Tool Call Without Result Tests", () => {
 
 	describe.skipIf(!process.env.ANTHROPIC_API_KEY)("Anthropic Provider", () => {
 		const model = getModel("anthropic", "claude-haiku-4-5");
+
+		it("should filter out tool calls without corresponding tool results", { retry: 3, timeout: 30000 }, async () => {
+			await testToolCallWithoutResult(model);
+		});
+	});
+
+	describe.skipIf(!hasAzureAnthropicFoundryCredentials())("Azure AI Foundry Anthropic Provider", () => {
+		const model = getModel("azure-anthropic-foundry", "claude-haiku-4-5");
 
 		it("should filter out tool calls without corresponding tool results", { retry: 3, timeout: 30000 }, async () => {
 			await testToolCallWithoutResult(model);

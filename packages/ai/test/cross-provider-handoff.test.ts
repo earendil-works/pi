@@ -27,7 +27,7 @@ import { Type } from "typebox";
 import { beforeAll, describe, expect, it } from "vitest";
 import { completeSimple, getEnvApiKey, getModel } from "../src/compat.ts";
 import type { Api, AssistantMessage, Message, Model, Tool, ToolResultMessage } from "../src/types.ts";
-import { hasAzureOpenAICredentials } from "./azure-utils.ts";
+import { hasAzureAnthropicFoundryCredentials, hasAzureOpenAICredentials } from "./azure-utils.ts";
 import { hasCloudflareAiGatewayCredentials, hasCloudflareWorkersAICredentials } from "./cloudflare-utils.ts";
 import { resolveApiKey } from "./oauth.ts";
 
@@ -54,6 +54,7 @@ interface ProviderModelPair {
 const PROVIDER_MODEL_PAIRS: ProviderModelPair[] = [
 	// Anthropic
 	{ provider: "anthropic", model: "claude-sonnet-4-5", label: "anthropic-claude-sonnet-4-5" },
+	{ provider: "azure-anthropic-foundry", model: "claude-haiku-4-5", label: "azure-foundry-claude-haiku-4-5" },
 	// Google
 	{ provider: "google", model: "gemini-3-flash-preview", label: "google-gemini-3-flash-preview" },
 	// OpenAI
@@ -166,6 +167,9 @@ interface CachedContext {
  * Get API key for provider - checks OAuth storage first, then env vars
  */
 async function getApiKey(provider: string): Promise<string | undefined> {
+	if (provider === "azure-anthropic-foundry") {
+		return process.env.ANTHROPIC_FOUNDRY_API_KEY;
+	}
 	const oauthKey = await resolveApiKey(provider);
 	if (oauthKey) return oauthKey;
 	return getEnvApiKey(provider);
@@ -177,6 +181,9 @@ async function getApiKey(provider: string): Promise<string | undefined> {
 function hasApiKey(pair: ProviderModelPair): boolean {
 	if (pair.provider === "azure-openai-responses") {
 		return hasAzureOpenAICredentials();
+	}
+	if (pair.provider === "azure-anthropic-foundry") {
+		return hasAzureAnthropicFoundryCredentials();
 	}
 	if (pair.provider === "cloudflare-workers-ai") {
 		return hasCloudflareWorkersAICredentials();

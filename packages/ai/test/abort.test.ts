@@ -4,7 +4,11 @@ import type { Api, Context, Model, StreamOptions } from "../src/types.ts";
 
 type StreamOptionsWithExtras = StreamOptions & Record<string, unknown>;
 
-import { hasAzureOpenAICredentials, resolveAzureDeploymentName } from "./azure-utils.ts";
+import {
+	hasAzureAnthropicFoundryCredentials,
+	hasAzureOpenAICredentials,
+	resolveAzureDeploymentName,
+} from "./azure-utils.ts";
 import { hasBedrockCredentials } from "./bedrock-utils.ts";
 import { resolveApiKey } from "./oauth.ts";
 
@@ -162,6 +166,19 @@ describe("AI Providers Abort Tests", () => {
 
 		it("should handle immediate abort", { retry: 3 }, async () => {
 			await testImmediateAbort(llm, { thinkingEnabled: true, thinkingBudgetTokens: 2048 });
+		});
+	});
+
+	describe.skipIf(!hasAzureAnthropicFoundryCredentials())("Azure AI Foundry Anthropic Provider Abort", () => {
+		const llm = getModel("azure-anthropic-foundry", "claude-haiku-4-5");
+		const options = { thinkingEnabled: true, thinkingBudgetTokens: 2048 } satisfies StreamOptionsWithExtras;
+
+		it("should abort mid-stream", { retry: 3 }, async () => {
+			await testAbortSignal(llm, options);
+		});
+
+		it("should handle immediate abort", { retry: 3 }, async () => {
+			await testImmediateAbort(llm, options);
 		});
 	});
 

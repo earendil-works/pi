@@ -21,6 +21,12 @@ export function hasAzureOpenAICredentials(): boolean {
 	return hasKey && hasBaseUrl;
 }
 
+export function hasAzureAnthropicFoundryCredentials(): boolean {
+	const hasKey = !!process.env.ANTHROPIC_FOUNDRY_API_KEY;
+	const hasEndpoint = !!(process.env.ANTHROPIC_FOUNDRY_BASE_URL || process.env.ANTHROPIC_FOUNDRY_RESOURCE);
+	return hasKey && hasEndpoint;
+}
+
 export function resolveAzureDeploymentName(modelId: string): string | undefined {
 	const mapValue = process.env.AZURE_OPENAI_DEPLOYMENT_NAME_MAP;
 	if (!mapValue) return undefined;

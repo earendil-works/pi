@@ -10,7 +10,11 @@ import type { Api, Context, ImageContent, Model, StreamOptions, Tool, ToolResult
 type StreamOptionsWithExtras = StreamOptions & Record<string, unknown>;
 
 import { StringEnum } from "../src/utils/typebox-helpers.ts";
-import { hasAzureOpenAICredentials, resolveAzureDeploymentName } from "./azure-utils.ts";
+import {
+	hasAzureAnthropicFoundryCredentials,
+	hasAzureOpenAICredentials,
+	resolveAzureDeploymentName,
+} from "./azure-utils.ts";
 import { hasBedrockCredentials } from "./bedrock-utils.ts";
 import { hasCloudflareAiGatewayCredentials, hasCloudflareWorkersAICredentials } from "./cloudflare-utils.ts";
 import { resolveApiKey } from "./oauth.ts";
@@ -516,6 +520,29 @@ describe("Generate E2E Tests", () => {
 			await handleImage(model);
 		});
 	});
+
+	describe.skipIf(!hasAzureAnthropicFoundryCredentials())(
+		"Azure AI Foundry Anthropic Provider (claude-haiku-4-5)",
+		() => {
+			const model = getModel("azure-anthropic-foundry", "claude-haiku-4-5");
+
+			it("should complete basic text generation", { retry: 3 }, async () => {
+				await basicTextGeneration(model, { thinkingEnabled: true });
+			});
+
+			it("should handle tool calling", { retry: 3 }, async () => {
+				await handleToolCall(model);
+			});
+
+			it("should handle streaming", { retry: 3 }, async () => {
+				await handleStreaming(model);
+			});
+
+			it("should handle image input", { retry: 3 }, async () => {
+				await handleImage(model);
+			});
+		},
+	);
 
 	describe.skipIf(!hasAzureOpenAICredentials())("Azure OpenAI Responses Provider (gpt-4o-mini)", () => {
 		const llm = getModel("azure-openai-responses", "gpt-4o-mini");
