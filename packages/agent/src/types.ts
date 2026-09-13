@@ -138,6 +138,8 @@ export interface ShouldStopAfterTurnContext {
 export interface AgentLoopTurnUpdate {
 	/** Context for the next provider request. */
 	context?: AgentContext;
+	/** Messages to append before the next provider request, with normal lifecycle events. */
+	messages?: AgentMessage[];
 	/** Model for the next provider request. */
 	model?: Model<any>;
 	/** Thinking level for the next provider request. */
@@ -152,7 +154,7 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 	/**
 	 * Converts AgentMessage[] to LLM-compatible Message[] before each LLM call.
 	 *
-	 * Each AgentMessage must be converted to a UserMessage, AssistantMessage, or ToolResultMessage
+	 * Each AgentMessage must be converted to a SystemMessage, UserMessage, AssistantMessage, or ToolResultMessage
 	 * that the LLM can understand. AgentMessages that cannot be converted (e.g., UI-only notifications,
 	 * status messages) should be filtered out.
 	 *
@@ -224,7 +226,7 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 
 	/**
 	 * Called after `turn_end` when the loop will continue, immediately before the next turn starts.
-	 * Return replacement context/model/thinking state to affect that turn.
+	 * Return replacement context/model/thinking state or messages to append to affect that turn.
 	 * Return undefined to keep using the current context/config.
 	 */
 	prepareNextTurn?: (
@@ -338,7 +340,7 @@ export interface AgentState {
 	model: Model<any>;
 	/** Requested reasoning level for future turns. */
 	thinkingLevel: ThinkingLevel;
-	/** Available tools. Assigning a new array copies the top-level array. */
+	/** Available executable tools. Assigning a new array copies the top-level array. */
 	set tools(tools: AgentTool<any>[]);
 	get tools(): AgentTool<any>[];
 	/** Conversation transcript. Assigning a new array copies the top-level array. */
@@ -411,11 +413,9 @@ export interface AgentTool<TParameters extends TSchema = TSchema, TDetails = any
 
 /** Context snapshot passed into the low-level agent loop. */
 export interface AgentContext {
-	/** System prompt included with the request. */
-	systemPrompt: string;
 	/** Transcript visible to the model. */
 	messages: AgentMessage[];
-	/** Tools available for this run. */
+	/** Tools available for execution in this run. */
 	tools?: AgentTool<any>[];
 }
 
@@ -433,7 +433,7 @@ export type AgentEvent =
 	// Turn lifecycle - a turn is one assistant response + any tool calls/results
 	| { type: "turn_start" }
 	| { type: "turn_end"; message: AgentMessage; toolResults: ToolResultMessage[] }
-	// Message lifecycle - emitted for user, assistant, and toolResult messages
+	// Message lifecycle - emitted for system, user, assistant, and toolResult messages
 	| { type: "message_start"; message: AgentMessage }
 	// Only emitted for assistant messages during streaming
 	| { type: "message_update"; message: AgentMessage; assistantMessageEvent: AssistantMessageEvent }

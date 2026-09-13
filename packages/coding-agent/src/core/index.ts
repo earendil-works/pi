@@ -59,6 +59,7 @@ export {
 	type InlineExtension,
 	type LoadExtensionsResult,
 	type MessageRenderer,
+	type NormalizedBuildSystemPromptOptions,
 	type RegisteredCommand,
 	type SessionBeforeCompactEvent,
 	type SessionBeforeForkEvent,

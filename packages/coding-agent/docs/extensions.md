@@ -541,8 +541,11 @@ pi.on("before_agent_start", async (event, ctx) => {
   //   .customPrompt - any custom system prompt (from --system-prompt, SYSTEM.md, or custom templates)
   //   .selectedTools - tools currently active in the prompt
   //   .toolSnippets - one-line descriptions for each tool
-  //   .promptGuidelines - custom guideline bullets
+  //   .toolGuidelines - guideline bullets keyed by tool name
+  //   .promptGuidelines - additional custom guideline bullets
+  //   .sections - custom XML-wrapped sections keyed by tag name
   //   .appendSystemPrompt - text from --append-system-prompt flags
+  //   .promptTail - per-run text rendered at the absolute end
   //   .cwd - working directory
   //   .contextFiles - AGENTS.md files and other loaded context files
   //   .skills - loaded skills
@@ -560,7 +563,7 @@ pi.on("before_agent_start", async (event, ctx) => {
 });
 ```
 
-The `systemPromptOptions` field gives extensions access to the same structured data Pi uses to build the system prompt. This lets you inspect what Pi has loaded — custom prompts, guidelines, tool snippets, context files, skills — without re-discovering resources or re-parsing flags. Use it when your extension needs to make deep, informed changes to the system prompt while respecting user-provided configuration.
+The `systemPromptOptions` field gives extensions access to the same structured data Pi uses to build the system prompt. Collections are mutable. Prefer changing `sections`, `selectedTools`, `promptGuidelines`, or `promptTail` instead of returning an opaque replacement string. Pi can diff those values and, when the model supports it, append a native system message while keeping the initial cached prompt stable. Tool selection changes update both the prompt contributions and executable provider tools. Models without the required native system/tool transition support receive a complete replacement, causing an intentional cache miss.
 
 Inside `before_agent_start`, `event.systemPrompt` and `ctx.getSystemPrompt()` both reflect the chained system prompt as of the current handler. Later `before_agent_start` handlers can still modify it again.
 
@@ -1125,7 +1128,7 @@ const options = ctx.getSystemPromptOptions();
 const contextPaths = options.contextFiles?.map((file) => file.path) ?? [];
 ```
 
-This has the same shape and mutability as `before_agent_start` `event.systemPromptOptions`: custom prompt, active tools, tool snippets, prompt guidelines, appended system prompt text, cwd, loaded context files, and loaded skills. It may include full context file contents, so treat it as sensitive extension-local data and avoid exposing it through command lists, logs, or autocomplete metadata.
+This has the same shape and mutability as `before_agent_start` `event.systemPromptOptions`: custom prompt, active tools, tool snippets, per-tool and custom guidelines, custom sections, appended and tail prompt text, cwd, loaded context files, and loaded skills. It may include full context file contents, so treat it as sensitive extension-local data and avoid exposing it through command lists, logs, or autocomplete metadata.
 
 This reports the current base prompt inputs. It does not include per-turn `before_agent_start` chained system-prompt changes, later `context` event message mutations, or `before_provider_request` payload rewrites.
 
@@ -2370,7 +2373,7 @@ If a slot renderer is not defined or throws:
 
 ### Dynamic Tool Loading
 
-Extensions can register many tools while keeping only a small initial set active. A tool can then change the active set with `pi.setActiveTools()` during execution. Pi sends the complete updated tool list and system prompt on the next model request, which may invalidate the provider's cached prompt prefix.
+Extensions can register many tools while keeping only a small initial set active. A tool can then change the active set with `pi.setActiveTools()` during execution. Pi stores the initial prompt and tool loadout in the transcript's first system message, then appends tool and prompt deltas before the next model request. Providers that cannot represent a transition receive a complete transcript checkpoint, which may invalidate the cached prefix.
 
 The lifecycle is:
 

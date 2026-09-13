@@ -42,6 +42,7 @@ const compat = {
 	thinkingTokenBudgetField: undefined,
 	supportsStrictMode: true,
 	supportsOpenAIGrammarTools: false,
+	supportsMidConvoToolAdditions: false,
 	cacheControlFormat: undefined,
 	sendSessionAffinityHeaders: false,
 	sessionAffinityFormat: "openai",

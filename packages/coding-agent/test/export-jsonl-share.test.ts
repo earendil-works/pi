@@ -111,6 +111,7 @@ describe("JSONL share export", () => {
 			const imported = SessionManager.open(sharePath);
 			expect(imported.getLeafId()).toBe(shareEntry.id);
 			expect(imported.buildSessionContext().messages.map((message) => message.role)).toEqual([
+				"system",
 				"user",
 				"assistant",
 				"toolResult",

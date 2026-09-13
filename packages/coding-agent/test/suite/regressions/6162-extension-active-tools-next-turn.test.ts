@@ -1,10 +1,21 @@
-import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
+import { type Context, fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
 import type { ExtensionFactory } from "../../../src/index.ts";
 import { createHarness } from "../harness.ts";
 
+function getProviderToolNames(context: Context): string[] {
+	const tools = new Map((context.tools ?? []).map((tool) => [tool.name, tool]));
+	for (const message of context.messages) {
+		if (message.role !== "system") continue;
+		for (const removed of message.toolsRemoved ?? []) tools.delete(removed.name);
+		for (const added of message.toolsAdded ?? []) tools.set(added.name, added);
+	}
+	return [...tools.keys()].sort();
+}
+
 describe("extension active tools next-turn refresh", () => {
+	// Regression #6162
 	it("applies pi.setActiveTools before the next provider request in the same run", async () => {
 		const extensionFactories: ExtensionFactory[] = [
 			(pi) => {
@@ -46,11 +57,11 @@ describe("extension active tools next-turn refresh", () => {
 			const providerToolNames: string[][] = [];
 			harness.setResponses([
 				(context) => {
-					providerToolNames.push((context.tools ?? []).map((tool) => tool.name).sort());
+					providerToolNames.push(getProviderToolNames(context));
 					return fauxAssistantMessage(fauxToolCall("switch_tools", {}), { stopReason: "toolUse" });
 				},
 				(context) => {
-					providerToolNames.push((context.tools ?? []).map((tool) => tool.name).sort());
+					providerToolNames.push(getProviderToolNames(context));
 					return fauxAssistantMessage("done");
 				},
 			]);
@@ -110,15 +121,23 @@ describe("extension active tools next-turn refresh", () => {
 
 			const providerSystemPrompts: string[] = [];
 			const providerToolNames: string[][] = [];
+			const captureSystemPrompt = (context: Context): void => {
+				providerSystemPrompts.push(
+					context.messages
+						.filter((message) => message.role === "system")
+						.map((message) => (typeof message.content === "string" ? message.content : ""))
+						.join("\n"),
+				);
+			};
 			harness.setResponses([
 				(context) => {
-					providerSystemPrompts.push(context.systemPrompt ?? "");
-					providerToolNames.push((context.tools ?? []).map((tool) => tool.name).sort());
+					captureSystemPrompt(context);
+					providerToolNames.push(getProviderToolNames(context));
 					return fauxAssistantMessage(fauxToolCall("switch_tools", {}), { stopReason: "toolUse" });
 				},
 				(context) => {
-					providerSystemPrompts.push(context.systemPrompt ?? "");
-					providerToolNames.push((context.tools ?? []).map((tool) => tool.name).sort());
+					captureSystemPrompt(context);
+					providerToolNames.push(getProviderToolNames(context));
 					return fauxAssistantMessage("done");
 				},
 			]);

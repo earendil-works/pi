@@ -1,11 +1,12 @@
-import type {
-	ImageContent,
-	Message,
-	Model,
-	SimpleStreamOptions,
-	TextContent,
-	ThinkingBudgets,
-	Transport,
+import {
+	type ImageContent,
+	type Message,
+	type Model,
+	normalizeContext,
+	type SimpleStreamOptions,
+	type TextContent,
+	type ThinkingBudgets,
+	type Transport,
 } from "@earendil-works/pi-ai";
 import { runAgentLoop, runAgentLoopContinue } from "./agent-loop.ts";
 import { getDefaultStreamFn } from "./stream-fn.ts";
@@ -74,6 +75,12 @@ function createMutableAgentState(
 ): MutableAgentState {
 	let tools = initialState?.tools?.slice() ?? [];
 	let messages = initialState?.messages?.slice() ?? [];
+	const [initialMessage] = normalizeContext({
+		systemPrompt: initialState?.systemPrompt,
+		tools,
+		messages: [],
+	}).messages;
+	if (messages[0]?.role !== "system" && initialMessage) messages.unshift(initialMessage);
 
 	return {
 		systemPrompt: initialState?.systemPrompt ?? "",
@@ -333,13 +340,17 @@ export class Agent {
 		return this.activeRun?.promise ?? Promise.resolve();
 	}
 
-	/** Clear transcript state, runtime state, and queued messages. */
+	/** Clear conversation state and queues while retaining the current prompt/tool baseline. */
 	reset(): void {
 		if (this.activeRun) {
 			throw new Error("Agent is already processing. Wait for completion before resetting.");
 		}
 
-		this._state.messages = [];
+		this._state.messages = normalizeContext({
+			systemPrompt: this._state.systemPrompt,
+			tools: this._state.tools,
+			messages: [],
+		}).messages;
 		this._state.isStreaming = false;
 		this._state.streamingMessage = undefined;
 		this._state.pendingToolCalls = new Set<string>();
@@ -368,7 +379,7 @@ export class Agent {
 		}
 
 		const lastMessage = this._state.messages[this._state.messages.length - 1];
-		if (!lastMessage) {
+		if (!lastMessage || this._state.messages.every((message) => message.role === "system")) {
 			throw new Error("No messages to continue from");
 		}
 
@@ -440,7 +451,6 @@ export class Agent {
 
 	private createContextSnapshot(): AgentContext {
 		return {
-			systemPrompt: this._state.systemPrompt,
 			messages: this._state.messages.slice(),
 			tools: this._state.tools.slice(),
 		};

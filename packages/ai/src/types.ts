@@ -636,6 +636,8 @@ export interface OpenAICompletionsCompat {
 	supportsThinkingTokenBudget?: boolean;
 	/** Whether the provider supports OpenAI custom tools with Lark/regex grammar formats. When false, grammar-constrained tools fall back to normal function tools. Default: false; the generated model catalog enables it for capable models. */
 	supportsOpenAIGrammarTools?: boolean;
+	/** Whether system messages can introduce additional tools mid-conversation. Default: false; the generated model catalog enables it for capable models. */
+	supportsMidConvoToolAdditions?: boolean;
 	/** Whether the provider supports the `strict` field in tool definitions. Default: true. */
 	supportsStrictMode?: boolean;
 	/** Cache control convention for prompt caching. "anthropic" applies Anthropic-style `cache_control` markers to the system prompt, last tool definition, and last user, assistant, or tool-result text content. */
@@ -667,6 +669,10 @@ export interface OpenAIResponsesCompat {
 	supportsStrictMode?: boolean;
 	/** Whether to emit OpenAI custom tools with Lark/regex grammar formats. When false, grammar-constrained tools fall back to normal function tools. Default: false; the generated model catalog enables it for capable models. */
 	supportsOpenAIGrammarTools?: boolean;
+	/** Whether the model supports message-anchored `additional_tools` input items. Default: false. */
+	supportsAdditionalTools?: boolean;
+	/** Whether the model supports client-executed tool search for transcript-anchored additions. Default: false. */
+	supportsToolSearch?: boolean;
 	/** Whether the model accepts `prompt_cache_options` (OpenAI GPT-5.6+ prompt caching). Older OpenAI models reject the parameter. Default: false. */
 	supportsExplicitPromptCacheMode?: boolean;
 	/** Whether the provider accepts the `max_output_tokens` parameter. Some Codex-protocol gateways reject it. Default: true. */
@@ -727,6 +733,8 @@ export interface AnthropicMessagesCompat {
 	supportsMidConvoEffort?: boolean;
 	/** Whether the exact model accepts system-role messages inside the conversation. Default: false. */
 	supportsMidConvoSystemMessages?: boolean;
+	/** Whether the exact model accepts mid-conversation `tool_addition` and `tool_removal` blocks. Default: false. */
+	supportsMidConvoToolChanges?: boolean;
 	/**
 	 * Models Anthropic accepts in `fallbacks` for server-side refusal fallback,
 	 * with local pricing metadata for returned fallback responses. When absent or

@@ -41,12 +41,13 @@ import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { shortHash } from "../utils/hash.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { parseStreamingJson } from "../utils/json-parse.ts";
-import { getCurrentTools, normalizeContext, type TranscriptContext } from "../utils/normalize-context.ts";
+import { normalizeContext, type TranscriptContext } from "../utils/normalize-context.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import { getSystemMessageText } from "../utils/text.ts";
+import { getDeclaredTools, resolveTranscriptTools } from "../utils/transcript-state.ts";
 import {
 	appendGrammarToolInputJsonDelta,
 	createGrammarToolInputProperties,
@@ -160,17 +161,27 @@ interface OpenAICompatCacheControl {
 
 type ResolvedOpenAICompletionsCompat = Omit<
 	Required<OpenAICompletionsCompat>,
-	"cacheControlFormat" | "supportsThinkingTokenBudget" | "thinkingTokenBudgetField" | "vllmPriority"
+	| "cacheControlFormat"
+	| "supportsThinkingTokenBudget"
+	| "thinkingTokenBudgetField"
+	| "supportsMidConvoToolAdditions"
+	| "vllmPriority"
 > & {
 	cacheControlFormat?: OpenAICompletionsCompat["cacheControlFormat"];
 	supportsThinkingTokenBudget?: OpenAICompletionsCompat["supportsThinkingTokenBudget"];
 	thinkingTokenBudgetField?: OpenAICompletionsCompat["thinkingTokenBudgetField"];
+	supportsMidConvoToolAdditions?: OpenAICompletionsCompat["supportsMidConvoToolAdditions"];
 	vllmPriority?: OpenAICompletionsCompat["vllmPriority"];
 };
 
 type ResolvedChatTemplateKwargValue = string | number | boolean | null;
 
 type ChatCompletionInstructionMessageParam = ChatCompletionDeveloperMessageParam | ChatCompletionSystemMessageParam;
+
+type KimiToolSystemMessageParam = {
+	role: "system";
+	tools: OpenAI.Chat.Completions.ChatCompletionTool[];
+};
 
 type OpenAIReasoningDetailBase = Record<string, JsonValue> & {
 	id?: string | null;
@@ -320,7 +331,7 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 			const apiKey = getClientApiKey(model.provider, options?.apiKey, options?.headers);
 			const compat = getCompat(model);
 			const grammarToolInputProperties = createGrammarToolInputProperties(
-				getCurrentTools(normalizedContext),
+				getDeclaredTools(normalizedContext),
 				compat.supportsOpenAIGrammarTools,
 			);
 			const cacheRetention = resolveCacheRetention(options?.cacheRetention, options?.env);
@@ -784,11 +795,14 @@ function buildParams(
 	compat: ResolvedOpenAICompletionsCompat = getCompat(model),
 	cacheRetention: CacheRetention = resolveCacheRetention(options?.cacheRetention, options?.env),
 	grammarToolInputProperties: ReadonlyMap<string, string> = createGrammarToolInputProperties(
-		getCurrentTools(context),
+		getDeclaredTools(context),
 		compat.supportsOpenAIGrammarTools,
 	),
 ) {
-	const messages = convertMessages(model, context, compat, { grammarToolInputProperties });
+	const transcriptTools = resolveTranscriptTools(context, compat.supportsMidConvoToolAdditions === true);
+	const messages = convertMessages(model, context, compat, {
+		grammarToolInputProperties,
+	});
 	const cacheControl = getCompatCacheControl(compat, cacheRetention);
 
 	const params: OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming = {
@@ -823,9 +837,8 @@ function buildParams(
 		params.temperature = options.temperature;
 	}
 
-	const tools = getCurrentTools(context);
-	if (tools.length > 0) {
-		params.tools = convertTools(tools, compat);
+	if (transcriptTools.requestTools.length > 0) {
+		params.tools = convertTools(transcriptTools.requestTools, compat);
 		if (compat.zaiToolStream) {
 			(params as any).tool_stream = true;
 		}
@@ -1197,6 +1210,7 @@ export function convertMessages(
 	};
 
 	const transformedMessages = transformMessages(normalizedContext.messages, model, (id) => normalizeToolCallId(id));
+	const transcriptTools = resolveTranscriptTools(normalizedContext, compat.supportsMidConvoToolAdditions === true);
 	const instructionRole = model.reasoning && compat.supportsDeveloperRole ? "developer" : "system";
 
 	let lastRole: string | null = null;
@@ -1213,6 +1227,14 @@ export function convertMessages(
 		}
 
 		if (msg.role === "system") {
+			const addedTools = transcriptTools.getAdditions(msg);
+			if (addedTools.length > 0) {
+				const kimiToolMessage: KimiToolSystemMessageParam = {
+					role: "system",
+					tools: convertTools(addedTools, compat),
+				};
+				params.push(kimiToolMessage as unknown as ChatCompletionMessageParam);
+			}
 			const text = getSystemMessageText(msg);
 			if (text.length > 0) {
 				params.push({ role: instructionRole, content: sanitizeSurrogates(text) });
@@ -1630,6 +1652,7 @@ function detectCompat(model: Model<"openai-completions">): ResolvedOpenAIComplet
 		thinkingTokenBudgetField: undefined,
 		supportsStrictMode: !isMoonshot && !isTogether && !isCloudflareAiGateway && !isNvidia,
 		supportsOpenAIGrammarTools: false,
+		supportsMidConvoToolAdditions: false,
 		cacheControlFormat,
 		sendSessionAffinityHeaders: isOpenRouter,
 		sessionAffinityFormat: isOpenRouter ? "openrouter" : "openai",
@@ -1675,6 +1698,8 @@ function getCompat(model: Model<"openai-completions">): ResolvedOpenAICompletion
 		thinkingTokenBudgetField: model.compat.thinkingTokenBudgetField ?? detected.thinkingTokenBudgetField,
 		supportsStrictMode: model.compat.supportsStrictMode ?? detected.supportsStrictMode,
 		supportsOpenAIGrammarTools: model.compat.supportsOpenAIGrammarTools ?? detected.supportsOpenAIGrammarTools,
+		supportsMidConvoToolAdditions:
+			model.compat.supportsMidConvoToolAdditions ?? detected.supportsMidConvoToolAdditions,
 		cacheControlFormat: model.compat.cacheControlFormat ?? detected.cacheControlFormat,
 		sendSessionAffinityHeaders: model.compat.sendSessionAffinityHeaders ?? detected.sendSessionAffinityHeaders,
 		sessionAffinityFormat: model.compat.sessionAffinityFormat ?? detected.sessionAffinityFormat,

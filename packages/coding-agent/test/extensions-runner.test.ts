@@ -20,6 +20,7 @@ import { KeybindingsManager, type KeyId } from "../src/core/keybindings.ts";
 import type { ModelRegistry } from "../src/core/model-registry.ts";
 import type { ScopedModel } from "../src/core/model-resolver.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
+import { buildSystemPrompt } from "../src/core/system-prompt.ts";
 
 describe("ExtensionRunner", () => {
 	let tempDir: string;
@@ -790,16 +791,14 @@ describe("ExtensionRunner", () => {
 			runner.onError((error) => errors.push(error.error));
 			runner.bindCore(extensionActions, extensionContextActions);
 
-			const chained = await runner.emitBeforeAgentStart("hello", undefined, "base", {
+			const chained = await runner.emitBeforeAgentStart("hello", undefined, {
 				cwd: tempDir,
+				customPrompt: "base",
 			});
 
 			expect(errors).toEqual([]);
-
-			expect(chained).toEqual({
-				messages: undefined,
-				systemPrompt: "base\nfirst\nsecond",
-			});
+			expect(chained.messages).toEqual([]);
+			expect(buildSystemPrompt(chained.systemPromptOptions)).toMatch(/base[\s\S]*\nfirst\nsecond$/);
 		});
 	});
 

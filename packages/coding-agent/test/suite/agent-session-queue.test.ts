@@ -86,7 +86,7 @@ describe("AgentSession queue characterization", () => {
 
 		expect(commandRuns).toEqual(["hello world"]);
 		expect(harness.getPendingResponseCount()).toBe(0);
-		expect(harness.session.messages).toEqual([]);
+		expect(harness.session.messages.map((message) => message.role)).toEqual(["system"]);
 	});
 
 	it("delivers extension-origin steering messages before the next LLM call", async () => {
@@ -398,7 +398,12 @@ describe("AgentSession queue characterization", () => {
 		await harness.session.prompt("normal prompt");
 
 		expect(sawCustomMessage).toBe(true);
-		expect(harness.session.messages.map((message) => message.role)).toEqual(["user", "custom", "assistant"]);
+		expect(harness.session.messages.map((message) => message.role)).toEqual([
+			"system",
+			"user",
+			"custom",
+			"assistant",
+		]);
 	});
 
 	it("updates pendingMessageCount and removes queued text before message_start is emitted", async () => {

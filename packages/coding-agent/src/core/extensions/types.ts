@@ -65,7 +65,7 @@ import type {
 } from "../session-manager.ts";
 import type { SlashCommandInfo } from "../slash-commands.ts";
 import type { SourceInfo } from "../source-info.ts";
-import type { BuildSystemPromptOptions } from "../system-prompt.ts";
+import type { BuildSystemPromptOptions, NormalizedBuildSystemPromptOptions } from "../system-prompt.ts";
 import type { BashOperations } from "../tools/bash.ts";
 import type { EditToolDetails } from "../tools/edit.ts";
 import type {
@@ -86,7 +86,7 @@ import type {
 } from "../tools/index.ts";
 
 export type { ExecOptions, ExecResult } from "../exec.ts";
-export type { BuildSystemPromptOptions } from "../system-prompt.ts";
+export type { BuildSystemPromptOptions, NormalizedBuildSystemPromptOptions } from "../system-prompt.ts";
 export type { AgentToolResult, AgentToolUpdateCallback, ToolExecutionMode };
 export type { AppKeybinding, KeybindingsManager } from "../keybindings.ts";
 
@@ -720,10 +720,10 @@ export interface BeforeAgentStartEvent {
 	prompt: string;
 	/** Images attached to the user prompt, if any. */
 	images?: ImageContent[];
-	/** The fully assembled system prompt string. */
-	systemPrompt: string;
-	/** Structured options used to build the system prompt. Extensions can inspect this to understand what Pi loaded without re-discovering resources. */
-	systemPromptOptions: BuildSystemPromptOptions;
+	/** The current system prompt, rendered from systemPromptOptions and earlier handler changes. */
+	readonly systemPrompt: string;
+	/** Mutable prompt sections. Later handlers observe mutations made by earlier handlers. */
+	systemPromptOptions: NormalizedBuildSystemPromptOptions;
 }
 
 /** Fired when an agent loop starts */

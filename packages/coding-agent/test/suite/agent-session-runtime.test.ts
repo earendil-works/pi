@@ -205,6 +205,7 @@ describe("AgentSessionRuntime characterization", () => {
 			.getEntries()
 			.filter((entry) => entry.type === "message");
 		expect(outgoingEntries.map((entry) => entry.message.role)).toEqual([
+			"system",
 			"user",
 			"assistant",
 			"toolResult",
@@ -270,7 +271,7 @@ describe("AgentSessionRuntime characterization", () => {
 		expect(newSessionResult.cancelled).toBe(false);
 		await runtime.session.bindExtensions({});
 		expect(runtime.session).not.toBe(originalSession);
-		expect(runtime.session.messages).toEqual([]);
+		expect(runtime.session.messages.map((message) => message.role)).toEqual(["system"]);
 		const secondSessionFile = runtime.session.sessionFile;
 		expect(events).toEqual([
 			{ type: "session_before_switch", reason: "new", targetSessionFile: undefined },

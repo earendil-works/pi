@@ -30,14 +30,10 @@ import { formatProviderError, normalizeProviderError } from "../utils/error-body
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { resolveHttpProxyUrlForTarget } from "../utils/node-http-proxy.ts";
-import {
-	getCurrentTools,
-	getInitialSystemMessage,
-	normalizeContext,
-	type TranscriptContext,
-} from "../utils/normalize-context.ts";
+import { getInitialSystemMessage, normalizeContext, type TranscriptContext } from "../utils/normalize-context.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { getSystemMessageText } from "../utils/text.ts";
+import { getDeclaredTools, resolveTranscriptTools } from "../utils/transcript-state.ts";
 import { uuidv7 } from "../utils/uuid.ts";
 import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
@@ -268,7 +264,7 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 
 			const accountId = extractAccountId(apiKey);
 			const grammarToolInputProperties = createGrammarToolInputProperties(
-				getCurrentTools(normalizedContext),
+				getDeclaredTools(normalizedContext),
 				model.compat?.supportsOpenAIGrammarTools ?? false,
 			);
 			const cacheSessionId = options?.cacheRetention === "none" ? undefined : options?.sessionId;
@@ -529,15 +525,21 @@ function buildRequestBody(
 	options: OpenAICodexResponsesOptions | undefined,
 	cacheSessionId: string | undefined,
 	grammarToolInputProperties: ReadonlyMap<string, string> = createGrammarToolInputProperties(
-		getCurrentTools(context),
+		getDeclaredTools(context),
 		model.compat?.supportsOpenAIGrammarTools ?? false,
 	),
 ): RequestBody {
 	const supportsStrictMode = model.compat?.supportsStrictMode ?? true;
 	const supportsOpenAIGrammarTools = model.compat?.supportsOpenAIGrammarTools ?? false;
+	const supportsAdditionalTools = model.compat?.supportsAdditionalTools ?? false;
+	const supportsToolSearch = model.compat?.supportsToolSearch ?? false;
+	const transcriptTools = resolveTranscriptTools(context, supportsAdditionalTools || supportsToolSearch);
 	const messages = convertResponsesMessages(model, context, CODEX_TOOL_CALL_PROVIDERS, {
 		includeSystemPrompt: false,
 		grammarToolInputProperties,
+		supportsAdditionalTools,
+		supportsToolSearch,
+		toolOptions: { strict: null, supportsStrictMode, supportsOpenAIGrammarTools },
 	});
 
 	const initialSystemMessage = getInitialSystemMessage(context);
@@ -563,9 +565,8 @@ function buildRequestBody(
 		body.service_tier = options.serviceTier;
 	}
 
-	const tools = getCurrentTools(context);
-	if (tools.length > 0) {
-		body.tools = convertResponsesTools(tools, {
+	if (transcriptTools.requestTools.length > 0) {
+		body.tools = convertResponsesTools(transcriptTools.requestTools, {
 			strict: null,
 			supportsStrictMode,
 			supportsOpenAIGrammarTools,

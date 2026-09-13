@@ -48,7 +48,14 @@ describe("#8537 custom messages injected during tool execution", () => {
 
 		await harness.session.prompt("hi");
 
-		expect(roles(harness.session.messages)).toEqual(["user", "assistant", "toolResult", "custom", "assistant"]);
+		expect(roles(harness.session.messages)).toEqual([
+			"system",
+			"user",
+			"assistant",
+			"toolResult",
+			"custom",
+			"assistant",
+		]);
 	});
 
 	it("keeps session entries and message events in the same order as agent state", async () => {
@@ -84,7 +91,7 @@ describe("#8537 custom messages injected during tool execution", () => {
 			.flatMap((entry) =>
 				entry.type === "message" ? [entry.message.role] : entry.type === "custom_message" ? ["custom"] : [],
 			);
-		expect(entryKinds).toEqual(["user", "assistant", "toolResult", "custom", "assistant"]);
+		expect(entryKinds).toEqual(["system", "user", "assistant", "toolResult", "custom", "assistant"]);
 
 		// message events must never describe a message the session tree does not contain yet
 		const messageStarts = harness.events.flatMap((event) =>

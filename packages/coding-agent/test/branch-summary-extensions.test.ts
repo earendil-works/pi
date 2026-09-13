@@ -44,7 +44,10 @@ describe("Branch summary extensions", () => {
 		const summaryEntry = result.summaryEntry;
 
 		expect(summaryEntry?.type).toBe("branch_summary");
-		expect(summaryEntry?.parentId).toBeNull();
+		const initialMessageEntry = harness.sessionManager
+			.getEntries()
+			.find((entry) => entry.type === "message" && entry.message.role === "system");
+		expect(summaryEntry?.parentId).toBe(initialMessageEntry?.id);
 		expect(summaryEntry?.fromId).toBe(sourceId);
 		expect(summaryEntry?.fromHook).toBe(true);
 		expect(summaryEntry?.summary).toBe("Summary provided by extension");

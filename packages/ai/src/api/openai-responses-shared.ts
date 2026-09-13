@@ -5,11 +5,13 @@ import type {
 	ResponseInput,
 	ResponseInputContent,
 	ResponseInputImage,
+	ResponseInputItem,
 	ResponseInputText,
 	ResponseOutputItem,
 	ResponseOutputMessage,
 	ResponseReasoningItem,
 	ResponseStreamEvent,
+	ResponseToolSearchOutputItemParam,
 } from "openai/resources/responses/responses.js";
 import { calculateCost } from "../models.ts";
 import type {
@@ -19,6 +21,7 @@ import type {
 	ImageContent,
 	Model,
 	StopReason,
+	SystemMessage,
 	TextContent,
 	TextSignatureV1,
 	ThinkingContent,
@@ -32,6 +35,7 @@ import { parseStreamingJson } from "../utils/json-parse.ts";
 import { normalizeContext } from "../utils/normalize-context.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import { getSystemMessageText } from "../utils/text.ts";
+import { resolveTranscriptTools } from "../utils/transcript-state.ts";
 import {
 	appendGrammarToolInputJsonDelta,
 	type GrammarToolInputJsonBuffer,
@@ -119,12 +123,16 @@ export interface OpenAIResponsesStreamOptions {
 export interface ConvertResponsesMessagesOptions {
 	includeSystemPrompt?: boolean;
 	grammarToolInputProperties?: ReadonlyMap<string, string>;
+	supportsAdditionalTools?: boolean;
+	supportsToolSearch?: boolean;
+	toolOptions?: ConvertResponsesToolsOptions;
 }
 
 export interface ConvertResponsesToolsOptions {
 	strict?: boolean | null;
 	supportsStrictMode?: boolean;
 	supportsOpenAIGrammarTools?: boolean;
+	toolSearchResult?: boolean;
 }
 
 // =============================================================================
@@ -166,6 +174,39 @@ export function convertResponsesMessages<TApi extends Api>(
 	};
 
 	const transformedMessages = transformMessages(normalizedContext.messages, model, normalizeToolCallId);
+	const transcriptTools = resolveTranscriptTools(
+		normalizedContext,
+		(options?.supportsAdditionalTools ?? false) || (options?.supportsToolSearch ?? false),
+	);
+	const appendSystemToolAdditions = (message: SystemMessage, seed: string): void => {
+		const tools = transcriptTools.getAdditions(message);
+		if (tools.length === 0) return;
+		if (options?.supportsAdditionalTools) {
+			messages.push({
+				type: "additional_tools",
+				role: "developer",
+				tools: convertResponsesTools(tools, options.toolOptions),
+			} satisfies ResponseInputItem);
+			return;
+		}
+		if (!options?.supportsToolSearch) return;
+		const names = tools.map((tool) => tool.name);
+		const callId = `pi_tool_load_${shortHash(`${seed}:${names.join(",")}`)}`;
+		messages.push({
+			type: "tool_search_call",
+			call_id: callId,
+			execution: "client",
+			status: "completed",
+			arguments: { query: names.join(" "), limit: names.length },
+		} satisfies ResponseInputItem);
+		messages.push({
+			type: "tool_search_output",
+			call_id: callId,
+			execution: "client",
+			status: "completed",
+			tools: convertResponsesTools(tools, { ...options.toolOptions, toolSearchResult: true }),
+		} satisfies ResponseToolSearchOutputItemParam);
+	};
 	const includeInitialSystemMessage = options?.includeSystemPrompt ?? true;
 	const compat = model.compat as { supportsDeveloperRole?: boolean } | undefined;
 	const instructionRole = model.reasoning && compat?.supportsDeveloperRole !== false ? "developer" : "system";
@@ -175,6 +216,7 @@ export function convertResponsesMessages<TApi extends Api>(
 	for (const msg of transformedMessages) {
 		const isLeadingSystemMessage = sourceIndex++ === 0 && msg.role === "system";
 		if (msg.role === "system") {
+			if (!isLeadingSystemMessage) appendSystemToolAdditions(msg, `system:${msgIndex}`);
 			if (!isLeadingSystemMessage || includeInitialSystemMessage) {
 				const text = getSystemMessageText(msg);
 				if (text.length > 0) {
@@ -330,6 +372,7 @@ export function convertResponsesTools(tools: readonly Tool[], options?: ConvertR
 					syntax: grammar.format,
 					definition: grammar.definition,
 				},
+				...(options?.toolSearchResult ? { defer_loading: true } : {}),
 			} satisfies OpenAITool;
 		}
 
@@ -342,6 +385,7 @@ export function convertResponsesTools(tools: readonly Tool[], options?: ConvertR
 			name: tool.name,
 			description: tool.description,
 			parameters: getJsonSchemaToolParameters(tool, strict === true) as Record<string, unknown>,
+			...(options?.toolSearchResult ? { defer_loading: true } : {}),
 		};
 		if (supportsStrictMode) {
 			functionTool.strict = strict;

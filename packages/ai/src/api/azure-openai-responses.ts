@@ -13,10 +13,11 @@ import type {
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
-import { getCurrentTools, normalizeContext, type TranscriptContext } from "../utils/normalize-context.ts";
+import { normalizeContext, type TranscriptContext } from "../utils/normalize-context.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
+import { getDeclaredTools, resolveTranscriptTools } from "../utils/transcript-state.ts";
 import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
 import { convertResponsesMessages, convertResponsesTools, processResponsesStream } from "./openai-responses-shared.ts";
@@ -106,7 +107,7 @@ export const stream: StreamFunction<"azure-openai-responses", AzureOpenAIRespons
 			}
 			const client = createClient(model, apiKey, options);
 			const grammarToolInputProperties = createGrammarToolInputProperties(
-				getCurrentTools(normalizedContext),
+				getDeclaredTools(normalizedContext),
 				model.compat?.supportsOpenAIGrammarTools ?? false,
 			);
 			let params = buildParams(model, normalizedContext, options, deploymentName, grammarToolInputProperties);
@@ -280,12 +281,21 @@ function buildParams(
 	options: AzureOpenAIResponsesOptions | undefined,
 	deploymentName: string,
 	grammarToolInputProperties: ReadonlyMap<string, string> = createGrammarToolInputProperties(
-		getCurrentTools(context),
+		getDeclaredTools(context),
 		model.compat?.supportsOpenAIGrammarTools ?? false,
 	),
 ) {
+	const supportsAdditionalTools = model.compat?.supportsAdditionalTools ?? false;
+	const supportsToolSearch = model.compat?.supportsToolSearch ?? false;
+	const transcriptTools = resolveTranscriptTools(context, supportsAdditionalTools || supportsToolSearch);
 	const messages = convertResponsesMessages(model, context, AZURE_TOOL_CALL_PROVIDERS, {
 		grammarToolInputProperties,
+		supportsAdditionalTools,
+		supportsToolSearch,
+		toolOptions: {
+			supportsStrictMode: model.compat?.supportsStrictMode ?? true,
+			supportsOpenAIGrammarTools: model.compat?.supportsOpenAIGrammarTools ?? false,
+		},
 	});
 
 	const params: ResponseCreateParamsStreaming = {
@@ -304,9 +314,8 @@ function buildParams(
 		params.temperature = options?.temperature;
 	}
 
-	const currentTools = getCurrentTools(context);
-	if (currentTools.length > 0) {
-		params.tools = convertResponsesTools(currentTools, {
+	if (transcriptTools.requestTools.length > 0) {
+		params.tools = convertResponsesTools(transcriptTools.requestTools, {
 			supportsStrictMode: model.compat?.supportsStrictMode ?? true,
 			supportsOpenAIGrammarTools: model.compat?.supportsOpenAIGrammarTools ?? false,
 		});

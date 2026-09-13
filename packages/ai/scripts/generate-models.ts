@@ -356,6 +356,23 @@ const ANT_LING_RING_THINKING_LEVEL_MAP = {
 
 const BEDROCK_INFERENCE_PROFILE_ONLY_MODEL_IDS = new Set(["anthropic.claude-opus-5"]);
 const MODELS_DEV_OPENAI_UNSUPPORTED_MODEL_IDS = new Set(["gpt-5.6"]);
+const OPENAI_TOOL_SEARCH_MODEL_IDS = new Set([
+	"gpt-5.4",
+	"gpt-5.4-mini",
+	"gpt-5.4-pro",
+	"gpt-5.5",
+	"gpt-5.6-sol",
+	"gpt-5.6-terra",
+	"gpt-5.6-luna",
+	"gpt-6-astra",
+]);
+const OPENAI_ADDITIONAL_TOOLS_MODEL_IDS = OPENAI_TOOL_SEARCH_MODEL_IDS;
+const OPENAI_CODEX_ADDITIONAL_TOOLS_MODEL_IDS = new Set([
+	"gpt-5.6-sol",
+	"gpt-5.6-terra",
+	"gpt-5.6-luna",
+	"gpt-6-astra",
+]);
 const OPENAI_LONG_CONTEXT_INPUT_THRESHOLD = 272000;
 const OPENAI_SHORT_CONTEXT_CAPPED_MODEL_IDS = new Set([
 	"gpt-5.4",
@@ -825,6 +842,29 @@ function applyOpenAIGrammarToolCompatMetadata(model: Model<Api>): void {
 	model.compat = { ...(model.compat as OpenAIResponsesCompat | undefined), supportsOpenAIGrammarTools: true };
 }
 
+function applyOpenAIToolSearchMetadata(model: Model<Api>): void {
+	const isOpenAIResponses = model.provider === "openai" && model.api === "openai-responses";
+	const isOpenAICodex = model.provider === "openai-codex" && model.api === "openai-codex-responses";
+	if (!(isOpenAIResponses || isOpenAICodex) || !OPENAI_TOOL_SEARCH_MODEL_IDS.has(model.id)) return;
+	const supportsAdditionalTools =
+		(isOpenAIResponses && OPENAI_ADDITIONAL_TOOLS_MODEL_IDS.has(model.id)) ||
+		(isOpenAICodex && OPENAI_CODEX_ADDITIONAL_TOOLS_MODEL_IDS.has(model.id));
+	model.compat = {
+		...(model.compat as OpenAIResponsesCompat | undefined),
+		...(supportsAdditionalTools ? { supportsAdditionalTools: true } : {}),
+		supportsToolSearch: true,
+	};
+}
+
+function applyOpenAICompletionsTranscriptMetadata(model: Model<Api>): void {
+	if (model.api !== "openai-completions" || !model.id.toLowerCase().includes("kimi")) return;
+	if (!(model.provider.startsWith("moonshot") || model.provider === "fireworks")) return;
+	model.compat = {
+		...(model.compat as OpenAICompletionsCompat | undefined),
+		supportsMidConvoToolAdditions: true,
+	};
+}
+
 // OpenAI charges prompt-cache writes starting with the GPT-5.6 family, and exactly
 // those models accept `prompt_cache_options`; older models reject the parameter.
 // https://developers.openai.com/api/docs/guides/prompt-caching
@@ -1041,6 +1081,7 @@ function getAnthropicMessagesCompat(provider: string, modelId: string): Anthropi
 	}
 	if (provider === "anthropic" && supportsAnthropicMidConvoSystemMessages(modelId)) {
 		compat.supportsMidConvoSystemMessages = true;
+		compat.supportsMidConvoToolChanges = true;
 	}
 	if (EAGER_TOOL_INPUT_STREAMING_UNSUPPORTED_ANTHROPIC_MODELS.has(`${provider}:${modelId}`)) {
 		compat.supportsEagerToolInputStreaming = false;
@@ -2923,6 +2964,8 @@ async function generateModels() {
 		applyThinkingLevelMetadata(model);
 		applyStrictToolCompatMetadata(model);
 		applyOpenAIGrammarToolCompatMetadata(model);
+		applyOpenAIToolSearchMetadata(model);
+		applyOpenAICompletionsTranscriptMetadata(model);
 		applyOpenAIExplicitPromptCacheMetadata(model);
 	}
 	applyAnthropicAllowedFallbackModelMetadata(allModels.filter(isAnthropicFallbackMetadataModel));

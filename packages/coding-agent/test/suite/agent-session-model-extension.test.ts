@@ -474,7 +474,10 @@ describe("AgentSession model and extension characterization", () => {
 		let sawInjectedUserMessage = false;
 		harness.setResponses([
 			(context) => {
-				providerSystemPrompt = context.systemPrompt ?? "";
+				providerSystemPrompt = context.messages
+					.filter((message) => message.role === "system")
+					.map((message) => (typeof message.content === "string" ? message.content : ""))
+					.join("\n");
 				sawInjectedUserMessage = context.messages.some(
 					(message) =>
 						message.role === "user" &&

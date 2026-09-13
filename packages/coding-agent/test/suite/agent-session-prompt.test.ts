@@ -35,8 +35,8 @@ describe("AgentSession prompt characterization", () => {
 
 		await harness.session.prompt("hi");
 
-		expect(harness.session.messages.map((message) => message.role)).toEqual(["user", "assistant"]);
-		expect(getMessageText(harness.session.messages[0]!)).toBe("hi");
+		expect(harness.session.messages.map((message) => message.role)).toEqual(["system", "user", "assistant"]);
+		expect(getMessageText(harness.session.messages[1]!)).toBe("hi");
 		expect(harness.getPendingResponseCount()).toBe(0);
 	});
 
@@ -68,13 +68,14 @@ describe("AgentSession prompt characterization", () => {
 
 		expect(toolRuns).toEqual(["hello"]);
 		expect(harness.session.messages.map((message) => message.role)).toEqual([
+			"system",
 			"user",
 			"assistant",
 			"toolResult",
 			"assistant",
 		]);
-		expect(harness.session.messages[2]?.role).toBe("toolResult");
-		expect(harness.session.messages[3]?.role).toBe("assistant");
+		expect(harness.session.messages[3]?.role).toBe("toolResult");
+		expect(harness.session.messages[4]?.role).toBe("assistant");
 	});
 
 	it("executes multiple tool calls from one response and continues with a single follow-up response", async () => {
@@ -277,7 +278,7 @@ describe("AgentSession prompt characterization", () => {
 		await harness.session.prompt("/testcmd hello world");
 
 		expect(commandRuns).toEqual(["hello world"]);
-		expect(harness.session.messages).toEqual([]);
+		expect(harness.session.messages.map((message) => message.role)).toEqual(["system"]);
 		expect(harness.getPendingResponseCount()).toBe(1);
 	});
 
@@ -306,7 +307,7 @@ describe("AgentSession prompt characterization", () => {
 		extensionApi?.sendUserMessage("/testcmd hello world", { expandPromptTemplates: true });
 
 		await expect(commandRun).resolves.toBe("hello world");
-		expect(harness.session.messages).toEqual([]);
+		expect(harness.session.messages.map((message) => message.role)).toEqual(["system"]);
 		expect(harness.getPendingResponseCount()).toBe(0);
 	});
 
@@ -318,8 +319,8 @@ describe("AgentSession prompt characterization", () => {
 
 		await harness.session.sendUserMessage("from extension");
 
-		expect(harness.session.messages.map((message) => message.role)).toEqual(["user", "assistant"]);
-		expect(getMessageText(harness.session.messages[0]!)).toBe("from extension");
+		expect(harness.session.messages.map((message) => message.role)).toEqual(["system", "user", "assistant"]);
+		expect(getMessageText(harness.session.messages[1]!)).toBe("from extension");
 	});
 
 	it("does not report streamingBehavior to input handlers while idle", async () => {

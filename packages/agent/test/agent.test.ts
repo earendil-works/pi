@@ -134,6 +134,53 @@ describe("Agent", () => {
 		expect(agent.state.thinkingLevel).toBe("low");
 	});
 
+	it("converts initial prompt and tools into transcript state", () => {
+		const tool: AgentTool = {
+			name: "echo",
+			label: "Echo",
+			description: "Echo input",
+			parameters: Type.Object({}),
+			execute: async () => ({ content: [{ type: "text", text: "echo" }], details: {} }),
+		};
+		const agent = new Agent({
+			initialState: { systemPrompt: "You are helpful.", tools: [tool] },
+			streamFn: unusedStreamFunction,
+		});
+
+		const initial = agent.state.messages[0];
+		expect(initial?.role).toBe("system");
+		if (initial?.role !== "system") throw new Error("expected initial system message");
+		expect(initial.content).toBe("You are helpful.");
+		expect(initial.toolsAdded?.map((value) => value.name)).toEqual(["echo"]);
+	});
+
+	it("restores the transcript baseline when reset", () => {
+		const tool: AgentTool = {
+			name: "echo",
+			label: "Echo",
+			description: "Echo input",
+			parameters: Type.Object({}),
+			execute: async () => ({ content: [{ type: "text", text: "echo" }], details: {} }),
+		};
+		const agent = new Agent({
+			initialState: {
+				systemPrompt: "You are helpful.",
+				tools: [tool],
+				messages: [{ role: "user", content: "old", timestamp: 1 }],
+			},
+			streamFn: unusedStreamFunction,
+		});
+
+		agent.reset();
+
+		expect(agent.state.messages).toHaveLength(1);
+		const initial = agent.state.messages[0];
+		expect(initial?.role).toBe("system");
+		if (initial?.role !== "system") throw new Error("expected initial system message");
+		expect(initial.content).toBe("You are helpful.");
+		expect(initial.toolsAdded?.map((value) => value.name)).toEqual(["echo"]);
+	});
+
 	it("should subscribe to events", () => {
 		const agent = new Agent({ streamFn: unusedStreamFunction });
 
@@ -779,7 +826,7 @@ describe("Agent", () => {
 
 		expect(requestCount).toBe(1);
 		expect(sawAbortSignal).toBe(true);
-		expect(callbackContextRoles).toEqual(["user", "assistant", "toolResult"]);
+		expect(callbackContextRoles).toEqual(["system", "user", "assistant", "toolResult"]);
 	});
 
 	it("forwards sessionId to streamFunction options", async () => {

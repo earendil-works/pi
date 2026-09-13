@@ -46,6 +46,7 @@ import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import { getSystemMessageText, renderSystemMessageAsUserText } from "../utils/text.ts";
+import { getDeclaredTools } from "../utils/transcript-state.ts";
 
 import { getJsonSchemaToolParameters, resolveJsonSchemaStrictSampling } from "./constrained-sampling.ts";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.ts";
@@ -182,6 +183,7 @@ const INTERLEAVED_THINKING_BETA = "interleaved-thinking-2025-05-14";
 const SERVER_SIDE_FALLBACK_BETA = "server-side-fallback-2026-07-01";
 const MID_CONVERSATION_OUTPUT_CONFIG_BETA = "mid-conversation-output-config-2026-07-01";
 const THINKING_BINDING_CONTROLS_BETA = "thinking-binding-controls-2026-08-01";
+const MID_CONVERSATION_TOOL_CHANGES_BETA = "mid-conversation-tool-changes-2026-07-01";
 
 function shouldUseServerSideFallbackBeta(model: Model<"anthropic-messages">): boolean {
 	return (model.compat?.allowedFallbackModels?.length ?? 0) > 0;
@@ -199,6 +201,7 @@ function getAnthropicCompat(model: Model<"anthropic-messages">) {
 		allowEmptySignature: model.compat?.allowEmptySignature ?? false,
 		supportsStrictTools: model.compat?.supportsStrictTools ?? false,
 		supportsMidConvoSystemMessages: model.compat?.supportsMidConvoSystemMessages ?? false,
+		supportsMidConvoToolChanges: model.compat?.supportsMidConvoToolChanges ?? false,
 	};
 }
 
@@ -1009,6 +1012,9 @@ function getBetaFeatures(
 	if (model.compat?.supportsMidConvoEffort === true) {
 		features.push(MID_CONVERSATION_OUTPUT_CONFIG_BETA, THINKING_BINDING_CONTROLS_BETA);
 	}
+	if (model.compat?.supportsMidConvoSystemMessages && model.compat.supportsMidConvoToolChanges) {
+		features.push(MID_CONVERSATION_TOOL_CHANGES_BETA);
+	}
 	return [...new Set(features)];
 }
 
@@ -1031,6 +1037,7 @@ function buildParams(
 		compat.allowEmptySignature,
 		model.compat?.supportsMidConvoEffort === true ? model.provider : undefined,
 		compat.supportsMidConvoSystemMessages,
+		compat.supportsMidConvoToolChanges,
 	);
 	const activeEffort = options?.effort ?? "high";
 	const betaFeatures = getBetaFeatures(model, context, isOAuthToken, options);
@@ -1082,7 +1089,7 @@ function buildParams(
 		params.temperature = options.temperature;
 	}
 
-	const tools = getCurrentTools(context);
+	const tools = compat.supportsMidConvoToolChanges ? getDeclaredTools(context) : getCurrentTools(context);
 	if (tools.length > 0) {
 		params.tools = convertTools(
 			tools,
@@ -1175,6 +1182,7 @@ function convertMessages(
 	allowEmptySignature = false,
 	managedProvider?: string,
 	supportsMidConvoSystemMessages = false,
+	supportsMidConvoToolChanges = false,
 ): ConvertedAnthropicMessages {
 	const params: MessageParam[] = [];
 	const assistantLevels = new Map<number, AnthropicEffort>();
@@ -1189,13 +1197,25 @@ function convertMessages(
 
 		if (msg.role === "system") {
 			const text = getSystemMessageText(msg);
-			if (text.length === 0) continue;
 			if (supportsMidConvoSystemMessages) {
-				pendingSystemMessages.push({
-					role: "system",
-					content: [{ type: "text", text: sanitizeSurrogates(text) }],
-				});
-			} else {
+				const blocks: ContentBlockParam[] = [];
+				if (text.length > 0) blocks.push({ type: "text", text: sanitizeSurrogates(text) });
+				if (supportsMidConvoToolChanges) {
+					for (const tool of msg.toolsRemoved ?? []) {
+						blocks.push({
+							type: "tool_removal",
+							tool: { type: "tool_reference", name: isOAuthToken ? toClaudeCodeName(tool.name) : tool.name },
+						});
+					}
+					for (const tool of msg.toolsAdded ?? []) {
+						blocks.push({
+							type: "tool_addition",
+							tool: { type: "tool_reference", name: isOAuthToken ? toClaudeCodeName(tool.name) : tool.name },
+						});
+					}
+				}
+				if (blocks.length > 0) pendingSystemMessages.push({ role: "system", content: blocks });
+			} else if (text.length > 0) {
 				params.push({
 					role: "user",
 					content: [{ type: "text", text: sanitizeSurrogates(renderSystemMessageAsUserText(msg)) }],
@@ -1337,7 +1357,11 @@ function convertMessages(
 				const lastBlock = lastMessage.content[lastMessage.content.length - 1];
 				if (
 					lastBlock &&
-					(lastBlock.type === "text" || lastBlock.type === "image" || lastBlock.type === "tool_result")
+					(lastBlock.type === "text" ||
+						lastBlock.type === "image" ||
+						lastBlock.type === "tool_result" ||
+						lastBlock.type === "tool_addition" ||
+						lastBlock.type === "tool_removal")
 				) {
 					(lastBlock as any).cache_control = cacheControl;
 				}
