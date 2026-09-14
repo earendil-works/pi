@@ -1716,7 +1716,8 @@ export class AgentSession {
 	 * Cycle to next/previous model.
 	 * Uses scoped models (from --models flag) if available, otherwise all available models.
 	 * @param direction - "forward" (default) or "backward"
-	 * @returns The new model info, or undefined if only one model available
+	 * @returns The new model info, or undefined if there is nothing to cycle to
+	 *   (no models available, or the only model in scope is already active)
 	 */
 	async cycleModel(
 		direction: "forward" | "backward" = "forward",
@@ -1738,10 +1739,15 @@ export class AgentSession {
 		const scopedModels = this._scopedModels.filter((scoped) =>
 			availableIds.has(`${scoped.model.provider}\0${scoped.model.id}`),
 		);
-		if (scopedModels.length <= 1) return undefined;
+		if (scopedModels.length === 0) return undefined;
 
 		const currentModel = this.model;
 		let currentIndex = scopedModels.findIndex((sm) => modelsAreEqual(sm.model, currentModel));
+
+		// A single model in scope has nothing to cycle between, so it is a no-op only when
+		// it is already the active model. If a different model is active, fall through and
+		// select the single scoped model instead of reporting "only one model in scope".
+		if (scopedModels.length === 1 && currentIndex === 0) return undefined;
 
 		if (currentIndex === -1) currentIndex = 0;
 		const len = scopedModels.length;
@@ -1774,10 +1780,14 @@ export class AgentSession {
 		options: ModelMutationOptions,
 	): Promise<ModelCycleResult | undefined> {
 		const availableModels = this._modelRuntime.getAvailableSnapshot();
-		if (availableModels.length <= 1) return undefined;
+		if (availableModels.length === 0) return undefined;
 
 		const currentModel = this.model;
 		let currentIndex = availableModels.findIndex((m) => modelsAreEqual(m, currentModel));
+
+		// Same as the scoped case: a single available model is a no-op only when it is
+		// already active; otherwise switch to it.
+		if (availableModels.length === 1 && currentIndex === 0) return undefined;
 
 		if (currentIndex === -1) currentIndex = 0;
 		const len = availableModels.length;

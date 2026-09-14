@@ -257,7 +257,8 @@ Response contains the full [Model](#model) object:
 
 #### cycle_model
 
-Cycle to the next available model. Returns `null` data if only one model available.
+Cycle to the next available model. Returns `null` data if there is nothing to cycle
+to (no models available, or the only model in scope is already active).
 
 ```json
 {"type": "cycle_model"}
