@@ -186,6 +186,7 @@ export function convertResponsesMessages<TApi extends Api>(
 		if (msg.role === "user") {
 			if (typeof msg.content === "string") {
 				messages.push({
+					type: "message",
 					role: "user",
 					content: [{ type: "input_text", text: sanitizeSurrogates(msg.content) }],
 				});
@@ -205,6 +206,7 @@ export function convertResponsesMessages<TApi extends Api>(
 				});
 				if (content.length === 0) continue;
 				messages.push({
+					type: "message",
 					role: "user",
 					content,
 				});
