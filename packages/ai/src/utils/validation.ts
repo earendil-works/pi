@@ -191,6 +191,27 @@ function coerceWithUnionSchema(value: unknown, schemas: JsonSchemaObject[]): unk
 	return value;
 }
 
+function parseStructuredString(value: unknown, schemaTypes: string[]): unknown {
+	if (typeof value !== "string") {
+		return value;
+	}
+	const alreadyMatches = schemaTypes.some((schemaType) => matchesJsonType(value, schemaType));
+	const wantsStructure = schemaTypes.includes("object") || schemaTypes.includes("array");
+	if (alreadyMatches || !wantsStructure) {
+		return value;
+	}
+	const trimmed = value.trim();
+	if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) {
+		return value;
+	}
+	try {
+		const parsed: unknown = JSON.parse(trimmed);
+		return schemaTypes.some((schemaType) => matchesJsonType(parsed, schemaType)) ? parsed : value;
+	} catch {
+		return value;
+	}
+}
+
 function coerceWithJsonSchema(value: unknown, schema: JsonSchemaObject): unknown {
 	let nextValue = value;
 
@@ -220,6 +241,8 @@ function coerceWithJsonSchema(value: unknown, schema: JsonSchemaObject): unknown
 			}
 		}
 	}
+
+	nextValue = parseStructuredString(nextValue, schemaTypes);
 
 	if (
 		schemaTypes.includes("object") &&

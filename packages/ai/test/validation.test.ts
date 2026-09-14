@@ -191,6 +191,75 @@ describe("validateToolArguments", () => {
 		expect(validateToolArguments(tool, toolCall)).toEqual({ value: null });
 	});
 
+	it("coerces a JSON-encoded string into the array or object its schema asks for", () => {
+		const cases: Array<{ schema: Tool["parameters"]; input: unknown; expected: unknown }> = [
+			{
+				schema: { type: "array", items: { type: "string" } } as Tool["parameters"],
+				input: '["a","b"]',
+				expected: ["a", "b"],
+			},
+			{
+				schema: { type: "array", items: { type: "number" } } as Tool["parameters"],
+				input: '["1","2"]',
+				expected: [1, 2],
+			},
+			{
+				schema: {
+					type: "object",
+					properties: { name: { type: "string" }, count: { type: "number" } },
+					required: ["name", "count"],
+				} as Tool["parameters"],
+				input: '{"name":"a","count":"2"}',
+				expected: { name: "a", count: 2 },
+			},
+			{
+				schema: {
+					oneOf: [
+						{ type: "object", properties: { kind: { const: "a" } }, required: ["kind"] },
+						{ type: "object", properties: { kind: { const: "b" } }, required: ["kind"] },
+					],
+				} as Tool["parameters"],
+				input: '{"kind":"b"}',
+				expected: { kind: "b" },
+			},
+		];
+
+		for (const testCase of cases) {
+			const { tool, toolCall } = createToolCallWithPlainSchema(testCase.schema, testCase.input);
+			expect(validateToolArguments(tool, toolCall)).toEqual({ value: testCase.expected });
+		}
+	});
+
+	it("keeps a JSON-looking string when the schema also accepts a string", () => {
+		const { tool, toolCall } = createToolCallWithPlainSchema(
+			{ type: ["string", "object"] } as Tool["parameters"],
+			'{"a":1}',
+		);
+
+		expect(validateToolArguments(tool, toolCall)).toEqual({ value: '{"a":1}' });
+	});
+
+	it("leaves a value alone when the string is not the JSON type the schema asks for", () => {
+		const failingCases: Array<{ schema: Tool["parameters"]; input: unknown }> = [
+			{ schema: { type: "object", properties: {} } as Tool["parameters"], input: "not json" },
+			{ schema: { type: "array", items: { type: "string" } } as Tool["parameters"], input: '{"a":1}' },
+			{ schema: { type: "object", properties: {} } as Tool["parameters"], input: "[1,2]" },
+			{
+				schema: {
+					type: "object",
+					properties: { name: { type: "string" } },
+					required: ["name"],
+				} as Tool["parameters"],
+				input: '{"other":1}',
+			},
+		];
+
+		for (const testCase of failingCases) {
+			const { tool, toolCall } = createToolCallWithPlainSchema(testCase.schema, testCase.input);
+			expect(() => validateToolArguments(tool, toolCall)).toThrow("Validation failed");
+		}
+	});
+
 	it("rejects invalid coercions for serialized plain JSON schemas", () => {
 		const failingCases: Array<{
 			schema: Tool["parameters"];
