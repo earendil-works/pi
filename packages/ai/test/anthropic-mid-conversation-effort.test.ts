@@ -207,6 +207,8 @@ describe("Anthropic mid-conversation effort", () => {
 		expect(openRouter.baseUrl).toBe("https://openrouter.ai/api");
 		expect(openRouter.compat?.supportsMidConvoEffort).toBe(true);
 		expect(unsupported.compat?.supportsMidConvoEffort).toBeUndefined();
+		// OpenRouter rejects configuration_update on Opus 5 but accepts it on Fable 5.1.
+		expect(getModel("openrouter", "anthropic/claude-opus-5").compat?.supportsMidConvoEffort).toBeUndefined();
 		expect(getModel("anthropic", "claude-opus-5").compat?.allowedFallbackModels).toBeUndefined();
 	});
 });

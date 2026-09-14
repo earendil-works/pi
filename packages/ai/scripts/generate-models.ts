@@ -560,6 +560,10 @@ function isGoogleThinkingApi(model: Model<any>): boolean {
 }
 
 const VERIFIED_ANTHROPIC_MID_CONVO_EFFORT_PROVIDERS = new Set(["anthropic", "openrouter"]);
+// OpenRouter rejects `configuration_update` system messages on Opus 5 ("Mid-conversation
+// reasoning effort (configuration_update) is not supported on anthropic/claude-opus-5-20260723")
+// while accepting them on Fable 5.1, so gate that model there.
+const MID_CONVO_EFFORT_UNSUPPORTED_ANTHROPIC_MODELS = new Set(["openrouter:anthropic/claude-opus-5"]);
 
 function supportsAnthropicMidConvoEffort(modelId: string): boolean {
 	const id = modelId.toLowerCase().replace(/^~?anthropic\//, "");
@@ -1097,7 +1101,8 @@ function getAnthropicMessagesCompat(provider: string, modelId: string): Anthropi
 	const compat: AnthropicMessagesCompat = {};
 	if (
 		VERIFIED_ANTHROPIC_MID_CONVO_EFFORT_PROVIDERS.has(provider) &&
-		supportsAnthropicMidConvoEffort(modelId)
+		supportsAnthropicMidConvoEffort(modelId) &&
+		!MID_CONVO_EFFORT_UNSUPPORTED_ANTHROPIC_MODELS.has(`${provider}:${modelId}`)
 	) {
 		compat.supportsMidConvoEffort = true;
 	}
