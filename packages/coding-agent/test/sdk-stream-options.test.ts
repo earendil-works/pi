@@ -170,6 +170,24 @@ describe("createAgentSession stream options", () => {
 		expect(options?.maxRetryDelayMs).toBe(3000);
 	});
 
+	it("uses before_provider_request for direct session stream calls that omit onPayload", async () => {
+		const api: Api = "openai-completions";
+		const options = await captureStreamOptions(
+			api,
+			{},
+			{},
+			`export default function (pi) {
+				pi.on("before_provider_request", (event) => ({
+					...event.payload,
+					fromExtension: true,
+				}));
+			}`,
+		);
+
+		expect(options?.onPayload).toBeTypeOf("function");
+		const transformed = await options?.onPayload?.({ original: true }, createModel(api));
+		expect(transformed).toEqual({ original: true, fromExtension: true });
+	});
 	it("runs before_provider_headers on assembled headers without forwarding the transform", async () => {
 		const options = await captureStreamOptions(
 			"openai-completions",
