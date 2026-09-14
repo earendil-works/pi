@@ -2417,6 +2417,14 @@ export class AgentSession {
 				if (lastMsg?.role === "assistant" && (lastMsg.stopReason === "error" || lastMsg.stopReason === "length")) {
 					this.agent.state.messages = messages.slice(0, -1);
 				}
+				// session_compact handlers may have published passive custom messages
+				// (sendCustomMessage with triggerTurn:false defers while a run is
+				// active). The immediate overflow retry must see that restored context,
+				// so flush the deferred messages into state and session history before
+				// the interrupted turn continues. Ordering is safe here: the retriable
+				// assistant response above was just removed, so no tool-call/result
+				// pair can be split by the append.
+				this._flushPendingCustomMessages();
 				return true;
 			}
 
