@@ -1,79 +1,48 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AgentTool } from "@earendil-works/pi-agent-core";
-import { fauxAssistantMessage, type Tool, type TranscriptCapabilities } from "@earendil-works/pi-ai";
+import { type AgentTool, getTranscriptSystemMessage } from "@earendil-works/pi-agent-core";
+import { type Context, fauxAssistantMessage, fauxToolCall, getSystemMessageText } from "@earendil-works/pi-ai";
 import { getModel } from "@earendil-works/pi-ai/compat";
 import { Type } from "typebox";
 import { describe, expect, test } from "vitest";
 import { createAgentSession } from "../src/core/sdk.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
-import {
-	buildSystemPromptDefinition,
-	diffSystemPrompts,
-	normalizeBuildSystemPromptOptions,
-	prepareModelContextUpdate,
-} from "../src/core/system-prompt.ts";
+import { buildSystemPromptSections, diffSystemPromptSections } from "../src/core/system-prompt.ts";
 import type { ExtensionFactory } from "../src/index.ts";
 import { createHarness } from "./suite/harness.ts";
 
-const nativeCapabilities: TranscriptCapabilities = {
-	midConversationSystemMessages: true,
-	midConversationToolAdditions: true,
-	midConversationToolRemovals: true,
-};
-
-const noCapabilities: TranscriptCapabilities = {
-	midConversationSystemMessages: false,
-	midConversationToolAdditions: false,
-	midConversationToolRemovals: false,
-};
-
-const tool = (name: string) => ({ name, description: name, parameters: Type.Object({}) });
-
 describe("system prompt updates", () => {
-	test("persists one initial system message across resume", async () => {
-		const tempDir = mkdtempSync(join(tmpdir(), "pi-system-prompt-resume-"));
+	test("declares the prompt and tools once and reuses them across resume", async () => {
+		const harness = await createHarness();
 		try {
-			const sessionManager = SessionManager.create(tempDir, join(tempDir, "sessions"));
-			const first = await createAgentSession({
-				cwd: tempDir,
-				agentDir: join(tempDir, "agent"),
-				model: getModel("anthropic", "claude-sonnet-4-5")!,
-				settingsManager: SettingsManager.inMemory(),
-				sessionManager,
-				noTools: "all",
-			});
-			const sessionFile = first.session.sessionFile!;
-			expect(first.session.messages.map((message) => message.role)).toEqual(["system"]);
-			first.session.dispose();
-
-			const resumedManager = SessionManager.open(sessionFile);
-			const resumed = await createAgentSession({
-				cwd: tempDir,
-				agentDir: join(tempDir, "agent"),
-				model: getModel("anthropic", "claude-sonnet-4-5")!,
-				settingsManager: SettingsManager.inMemory(),
-				sessionManager: resumedManager,
-				noTools: "all",
-			});
-			try {
-				expect(resumed.session.messages.map((message) => message.role)).toEqual(["system"]);
-				expect(
-					resumedManager
-						.getEntries()
-						.filter((entry) => entry.type === "message" && entry.message.role === "system"),
-				).toHaveLength(1);
-			} finally {
-				resumed.session.dispose();
-			}
+			harness.setResponses([fauxAssistantMessage("first"), fauxAssistantMessage("second")]);
+			await harness.session.prompt("one");
+			await harness.session.prompt("two");
+			const systemEntries = harness.sessionManager
+				.getEntries()
+				.filter((entry) => entry.type === "message" && entry.message.role === "system");
+			expect(systemEntries).toHaveLength(1);
+			expect(harness.session.messages.map((message) => message.role)).toEqual([
+				"system",
+				"user",
+				"assistant",
+				"user",
+				"assistant",
+			]);
+			const head = harness.session.messages[0];
+			if (head?.role !== "system") throw new Error("expected system message");
+			expect(head.content).toBe("");
+			expect(Object.keys(head.sections ?? {})).toEqual(["preamble", "tools", "rules", "docs", "cwd"]);
+			expect(head.toolsAdded?.map((tool) => tool.name)).toEqual(["read", "bash", "edit", "write"]);
+			expect(getSystemMessageText(head)).toBe(harness.session.systemPrompt);
 		} finally {
-			rmSync(tempDir, { recursive: true, force: true });
+			harness.cleanup();
 		}
 	});
 
-	test("appends a checkpoint when opening a transcript without prompt metadata", async () => {
+	test("opens a transcript without a system message and declares the prompt on the first request", async () => {
 		const tempDir = mkdtempSync(join(tmpdir(), "pi-system-prompt-migration-"));
 		try {
 			const sessionManager = SessionManager.inMemory(tempDir);
@@ -87,9 +56,10 @@ describe("system prompt updates", () => {
 				noTools: "all",
 			});
 			try {
-				const roles = ["user", "system"];
-				expect(created.session.messages.map((message) => message.role)).toEqual(roles);
-				expect(sessionManager.buildSessionContext().messages.map((message) => message.role)).toEqual(roles);
+				// Nothing is synthesized or persisted until a request needs it.
+				expect(created.session.messages.map((message) => message.role)).toEqual(["user"]);
+				expect(sessionManager.buildSessionContext().messages.map((message) => message.role)).toEqual(["user"]);
+				expect(getTranscriptSystemMessage(created.session.messages)).toBeUndefined();
 			} finally {
 				created.session.dispose();
 			}
@@ -98,22 +68,33 @@ describe("system prompt updates", () => {
 		}
 	});
 
-	test("diffs independently keyed XML sections without an update wrapper", () => {
-		const previous = buildSystemPromptDefinition({ cwd: "/tmp", sections: { plan_mode: "Plan only." } });
-		const current = buildSystemPromptDefinition({ cwd: "/tmp", sections: { plan_mode: "Implementation allowed." } });
-		expect(diffSystemPrompts(previous, current)).toEqual({
-			type: "update",
-			text: "<plan_mode>\nImplementation allowed.\n</plan_mode>",
+	test("diffs sections into a patch", () => {
+		const previous = buildSystemPromptSections({ cwd: "/tmp", sections: { plan_mode: "Plan only." } });
+		const current = buildSystemPromptSections({ cwd: "/tmp", sections: { plan_mode: "Implementation allowed." } });
+		expect(diffSystemPromptSections(previous, current)).toEqual({
+			plan_mode: "<plan_mode>\nImplementation allowed.\n</plan_mode>",
+		});
+		expect(diffSystemPromptSections(previous, previous)).toBeUndefined();
+		expect(diffSystemPromptSections(previous, buildSystemPromptSections({ cwd: "/tmp" }))).toEqual({
+			plan_mode: null,
 		});
 	});
 
-	test("requires replacement when the exact prefix changes", () => {
-		const previous = buildSystemPromptDefinition({ customPrompt: "You are A.", cwd: "/tmp" });
-		const current = buildSystemPromptDefinition({ customPrompt: "You are B.", cwd: "/tmp" });
-		expect(diffSystemPrompts(previous, current)).toEqual({ type: "replace" });
+	test("keeps the preamble untagged and replaces it like any section", () => {
+		const previous = buildSystemPromptSections({ customPrompt: "You are A.", cwd: "/tmp" });
+		const current = buildSystemPromptSections({ customPrompt: "You are B.", cwd: "/tmp" });
+		expect(previous.preamble).toBe("You are A.");
+		expect(diffSystemPromptSections(previous, current)).toEqual({ preamble: "You are B." });
+
+		const override = buildSystemPromptSections({ forceSystemPrompt: "Exact prompt.", cwd: "/tmp" });
+		expect(override).toEqual({ preamble: "Exact prompt." });
+		expect(diffSystemPromptSections(current, override)).toEqual({ preamble: "Exact prompt.", cwd: null });
+		expect(() => buildSystemPromptSections({ cwd: "/tmp", sections: { preamble: "x" } })).toThrow(
+			"Invalid system prompt section name",
+		);
 	});
 
-	test("setActiveTools emits tool and prompt changes before the next request", async () => {
+	test("setActiveTools emits prompt sections and tool changes before the next request", async () => {
 		const extension: ExtensionFactory = (pi) => {
 			for (const name of ["first", "second"]) {
 				pi.registerTool({
@@ -129,38 +110,92 @@ describe("system prompt updates", () => {
 		};
 		const harness = await createHarness({ extensionFactories: [extension], initialActiveToolNames: ["first"] });
 		try {
+			// Faux response callbacks swallow thrown assertions, so capture and assert afterwards.
+			const requests: Context[] = [];
 			harness.setResponses([
 				(providerContext) => {
-					expect(providerContext.systemPrompt).toBeUndefined();
-					expect(providerContext.tools).toBeUndefined();
-					const initial = providerContext.messages[0];
-					expect(initial?.role).toBe("system");
-					if (initial?.role !== "system") throw new Error("expected initial system message");
-					expect(initial.toolsAdded?.map((value) => value.name)).toContain("first");
-					expect(initial.content).toContain("first prompt snippet");
+					requests.push(providerContext);
 					return fauxAssistantMessage("first");
 				},
 				(providerContext) => {
-					expect(providerContext.systemPrompt).toBeUndefined();
-					expect(providerContext.tools).toBeUndefined();
-					expect(providerContext.messages[0]?.role).toBe("system");
-					const update = providerContext.messages.filter((message) => message.role === "system").at(-1);
-					expect(update?.toolsAdded?.map((value) => value.name)).toEqual(["second"]);
-					expect(update?.toolsRemoved).toEqual([{ name: "first" }]);
-					expect(update?.content).toContain("second prompt snippet");
-					expect(update?.content).toContain("Use second carefully.");
+					requests.push(providerContext);
+					return fauxAssistantMessage([fauxToolCall("first", {})], { stopReason: "toolUse" });
+				},
+				(providerContext) => {
+					requests.push(providerContext);
 					return fauxAssistantMessage("second");
 				},
 			]);
 			await harness.session.prompt("first");
 			harness.session.setActiveToolsByName(["second"]);
 			await harness.session.prompt("second");
-			const state = harness.sessionManager
-				.getEntries()
-				.filter((entry) => entry.type === "system_prompt")
-				.at(-1);
-			expect(state?.tools.map((value) => value.name)).toEqual(["second"]);
-			expect(state?.prompt.type).toBe("structured");
+			expect(requests).toHaveLength(3);
+
+			expect(requests[0]?.systemPrompt).toBeUndefined();
+			expect(requests[0]?.tools).toBeUndefined();
+			const initial = requests[0]?.messages[0];
+			if (initial?.role !== "system") throw new Error("expected initial system message");
+			expect(initial.toolsAdded?.map((value) => value.name)).toEqual(["first", "second"]);
+			expect(initial.sections?.tools).toContain("first prompt snippet");
+
+			const update = requests[1]?.messages.filter((message) => message.role === "system").at(-1);
+			expect(update).toEqual({
+				role: "system",
+				content: "",
+				sections: { tools: expect.stringContaining("second prompt snippet"), rules: expect.any(String) },
+				toolsRemoved: [{ name: "first" }],
+				timestamp: expect.any(Number),
+			});
+			expect(update?.sections?.tools).not.toContain("first prompt snippet");
+			expect(update?.sections?.rules).not.toContain("Use first carefully.");
+
+			const result = requests[2]?.messages.filter((message) => message.role === "toolResult").at(-1);
+			expect(result).toMatchObject({ role: "toolResult", toolName: "first", isError: true });
+
+			const current = getTranscriptSystemMessage(harness.session.messages);
+			expect(current?.toolsAdded?.map((value) => value.name)).toEqual(["second"]);
+			expect(getSystemMessageText(current!)).toBe(harness.session.systemPrompt);
+		} finally {
+			harness.cleanup();
+		}
+	});
+
+	test("setActiveTools in before_agent_start controls the same request", async () => {
+		const extension: ExtensionFactory = (pi) => {
+			for (const name of ["first", "second"]) {
+				pi.registerTool({
+					name,
+					label: name,
+					description: `${name} description`,
+					parameters: Type.Object({}),
+					execute: async () => ({ content: [{ type: "text", text: name }], details: {} }),
+				});
+			}
+			let turn = 0;
+			pi.on("before_agent_start", () => {
+				if (turn++ === 1) pi.setActiveTools(["second"]);
+			});
+		};
+		const harness = await createHarness({ extensionFactories: [extension], initialActiveToolNames: ["first"] });
+		try {
+			const requests: Context[] = [];
+			harness.setResponses([
+				(providerContext) => {
+					requests.push(providerContext);
+					return fauxAssistantMessage("first");
+				},
+				(providerContext) => {
+					requests.push(providerContext);
+					return fauxAssistantMessage("second");
+				},
+			]);
+			await harness.session.prompt("first");
+			await harness.session.prompt("second");
+			expect(requests).toHaveLength(2);
+			const update = requests[1]?.messages.filter((message) => message.role === "system").at(-1);
+			expect(update?.toolsRemoved).toEqual([{ name: "first" }]);
+			expect(update?.toolsAdded).toBeUndefined();
+			expect(harness.session.getActiveToolNames()).toEqual(["second"]);
 		} finally {
 			harness.cleanup();
 		}
@@ -176,92 +211,21 @@ describe("system prompt updates", () => {
 		};
 		const harness = await createHarness({ tools: [executableTool], initialActiveToolNames: ["plain"] });
 		try {
-			const state = harness.sessionManager
-				.getEntries()
-				.filter((entry) => entry.type === "system_prompt")
-				.at(-1);
-			if (!state) throw new Error("expected system prompt state");
-			const declaration = state.tools[0];
+			harness.setResponses([fauxAssistantMessage("first"), fauxAssistantMessage("second")]);
+			await harness.session.prompt("one");
+			const head = harness.session.messages[0];
+			if (head?.role !== "system") throw new Error("expected system message");
+			const declaration = head.toolsAdded?.[0];
 			if (!declaration) throw new Error("expected tool declaration");
 			expect(Object.hasOwn(declaration, "constrainedSampling")).toBe(false);
+			expect(Object.hasOwn(declaration, "execute")).toBe(false);
 
-			const persistedTools = JSON.parse(JSON.stringify(state.tools)) as Tool[];
-			const previous = {
-				prompt: state.prompt,
-				tools: new Map(persistedTools.map((persisted) => [persisted.name, persisted])),
-				modelKey: state.modelKey,
-			};
-			const options = normalizeBuildSystemPromptOptions(
-				harness.session.extensionRunner.createCommandContext().getSystemPromptOptions(),
-			);
-
-			expect(
-				prepareModelContextUpdate({
-					options,
-					tools: new Map([[declaration.name, declaration]]),
-					previous,
-					capabilities: nativeCapabilities,
-					modelKey: state.modelKey,
-				}).message,
-			).toBeUndefined();
+			// Simulate a resume: the persisted JSON must replay to the same declarations.
+			harness.session.agent.state.messages = JSON.parse(JSON.stringify(harness.session.messages));
+			await harness.session.prompt("two");
+			expect(harness.session.messages.filter((message) => message.role === "system")).toHaveLength(1);
 		} finally {
 			harness.cleanup();
 		}
-	});
-
-	test("emits ordered tool deltas only when the transport can represent them", () => {
-		const options = {
-			cwd: "/tmp",
-			selectedTools: [],
-			toolSnippets: {},
-			toolGuidelines: {},
-			promptGuidelines: [],
-			appendSystemPrompt: "",
-			sections: {},
-			contextFiles: [],
-			skills: [],
-		};
-		const first = tool("first");
-		const second = tool("second");
-		const initial = prepareModelContextUpdate({
-			options,
-			tools: new Map([[first.name, first]]),
-			capabilities: nativeCapabilities,
-			modelKey: "model",
-		});
-		const addition = prepareModelContextUpdate({
-			options,
-			tools: new Map([
-				[first.name, first],
-				[second.name, second],
-			]),
-			previous: initial.state,
-			capabilities: nativeCapabilities,
-			modelKey: "model",
-		});
-		expect(addition.message).toMatchObject({ toolsAdded: [second] });
-		expect(addition.message?.toolsRemoved).toBeUndefined();
-		expect(addition.message?.content).not.toContain("complete current system prompt");
-
-		const removal = prepareModelContextUpdate({
-			options,
-			tools: new Map([[second.name, second]]),
-			previous: addition.state,
-			capabilities: nativeCapabilities,
-			modelKey: "model",
-		});
-		expect(removal.message).toMatchObject({ toolsRemoved: [{ name: "first" }] });
-		expect(removal.message?.toolsAdded).toBeUndefined();
-
-		const replacement = prepareModelContextUpdate({
-			options,
-			tools: new Map([[first.name, first]]),
-			previous: addition.state,
-			capabilities: noCapabilities,
-			modelKey: "model",
-		});
-		expect(replacement.message).toMatchObject({ toolsRemoved: [{ name: "second" }] });
-		expect(replacement.message?.toolsAdded).toBeUndefined();
-		expect(replacement.message?.content).toContain("complete current system prompt");
 	});
 });

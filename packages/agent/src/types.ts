@@ -334,16 +334,30 @@ export type AgentMessage = Message | CustomAgentMessages[keyof CustomAgentMessag
  * assigned arrays before storing them.
  */
 export interface AgentState {
-	/** System prompt sent with each model request. */
-	systemPrompt: string;
+	/**
+	 * Current system prompt, replayed from the transcript's system messages.
+	 *
+	 * Read-only: to change the prompt, append a system message with `content` or `sections`.
+	 * In `initialState`, this seeds the leading system message.
+	 */
+	readonly systemPrompt: string;
 	/** Active model used for future turns. */
 	model: Model<any>;
 	/** Requested reasoning level for future turns. */
 	thinkingLevel: ThinkingLevel;
-	/** Available executable tools. Assigning a new array copies the top-level array. */
+	/**
+	 * Executable tools. Assigning a new array copies the top-level array.
+	 *
+	 * Differences from the tools declared in the transcript are announced to the model
+	 * with a system message before the next request.
+	 */
 	set tools(tools: AgentTool<any>[]);
 	get tools(): AgentTool<any>[];
-	/** Conversation transcript. Assigning a new array copies the top-level array. */
+	/**
+	 * Conversation transcript. Assigning a new array copies the top-level array.
+	 *
+	 * System messages in the transcript carry the prompt and tool declarations.
+	 */
 	set messages(messages: AgentMessage[]);
 	get messages(): AgentMessage[];
 	/**

@@ -1,4 +1,5 @@
 import type { Context, SystemMessage, Tool, TranscriptContext } from "../types.ts";
+import { contentText, getSystemMessageText } from "./text.ts";
 
 export type { TranscriptContext } from "../types.ts";
 
@@ -55,4 +56,50 @@ export function getCurrentTools(context: TranscriptContext): Tool[] {
 /** Return a context without its leading system message. */
 export function withoutInitialSystemMessage(context: TranscriptContext): TranscriptContext {
 	return getInitialSystemMessage(context) ? ({ messages: context.messages.slice(1) } as TranscriptContext) : context;
+}
+
+/**
+ * Replay every system message into one leading system message holding the current
+ * prompt and tools. Later `content` is appended to the base prompt, `sections` are
+ * patched by name, and tools are resolved with {@link getCurrentTools}.
+ */
+export function getCurrentSystemMessage(context: TranscriptContext): SystemMessage | undefined {
+	const content: string[] = [];
+	const sections = new Map<string, string>();
+	let timestamp: number | undefined;
+	for (const message of context.messages) {
+		if (message.role !== "system") continue;
+		timestamp ??= message.timestamp;
+		const text = contentText(message.content);
+		if (text.length > 0) content.push(text);
+		for (const [name, value] of Object.entries(message.sections ?? {})) {
+			if (value === null) sections.delete(name);
+			else sections.set(name, value);
+		}
+	}
+	const tools = getCurrentTools(context);
+	if (timestamp === undefined && tools.length === 0) return undefined;
+	return {
+		role: "system",
+		content: content.join("\n\n"),
+		...(sections.size > 0 ? { sections: Object.fromEntries(sections) } : {}),
+		...(tools.length > 0 ? { toolsAdded: tools } : {}),
+		timestamp: timestamp ?? 0,
+	};
+}
+
+/** Render the current system prompt text after replaying every system message. */
+export function getCurrentSystemPrompt(context: TranscriptContext): string {
+	const message = getCurrentSystemMessage(context);
+	return message ? getSystemMessageText(message) : "";
+}
+
+/**
+ * Rebuild the transcript for APIs without mid-conversation system messages: the replayed
+ * system message leads, and every later system message is dropped.
+ */
+export function collapseSystemMessages(context: TranscriptContext): TranscriptContext {
+	const head = getCurrentSystemMessage(context);
+	const messages = context.messages.filter((message) => message.role !== "system");
+	return { messages: head ? [head, ...messages] : messages } as TranscriptContext;
 }

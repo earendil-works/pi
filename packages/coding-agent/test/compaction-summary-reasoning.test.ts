@@ -128,19 +128,22 @@ describe("generateSummary reasoning options", () => {
 		});
 	});
 
-	it("preserves the standalone split-turn summary prompt", async () => {
+	it("preserves the previous summary without an empty history request for a split turn", async () => {
 		const preparation: CompactionPreparation = {
 			firstKeptEntryId: "entry-keep",
 			messagesToSummarize: [],
 			turnPrefixMessages: messages,
 			isSplitTurn: true,
 			tokensBefore: 100,
+			previousSummary: "previous checkpoint",
 			fileOps: { read: new Set(), written: new Set(), edited: new Set() },
 			settings: { enabled: true, reserveTokens: 2000, keepRecentTokens: 20 },
 		};
 
-		await compact(preparation, createModel(false), "test-key");
+		const result = await compact(preparation, createModel(false), "test-key");
 
+		expect(completeSimpleMock).toHaveBeenCalledTimes(1);
+		expect(result.summary).toContain("previous checkpoint");
 		const requestContext = completeSimpleMock.mock.calls[0][1] as Context;
 		const prompt = JSON.stringify(requestContext.messages);
 		expect(prompt).toContain("This is the PREFIX of a turn that was too large to keep");

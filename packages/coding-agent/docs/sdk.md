@@ -246,8 +246,8 @@ const state = session.agent.state;
 // state.messages: AgentMessage[] - conversation history
 // state.model: Model - current model
 // state.thinkingLevel: ThinkingLevel - current thinking level
-// state.systemPrompt: string - system prompt
-// state.tools: AgentTool[] - available tools
+// state.systemPrompt: string - read-only, replayed from the transcript's system messages
+// state.tools: AgentTool[] - executable tools; changes are declared to the model before the next request
 // state.streamingMessage?: AgentMessage - current partial assistant message
 // state.errorMessage?: string - latest assistant error
 

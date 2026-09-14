@@ -1,3 +1,4 @@
+import { getTranscriptSystemPrompt } from "@earendil-works/pi-agent-core";
 import { type Context, fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
@@ -122,12 +123,7 @@ describe("extension active tools next-turn refresh", () => {
 			const providerSystemPrompts: string[] = [];
 			const providerToolNames: string[][] = [];
 			const captureSystemPrompt = (context: Context): void => {
-				providerSystemPrompts.push(
-					context.messages
-						.filter((message) => message.role === "system")
-						.map((message) => (typeof message.content === "string" ? message.content : ""))
-						.join("\n"),
-				);
+				providerSystemPrompts.push(getTranscriptSystemPrompt(context.messages));
 			};
 			harness.setResponses([
 				(context) => {

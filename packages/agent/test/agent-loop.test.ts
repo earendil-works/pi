@@ -1215,11 +1215,14 @@ describe("agentLoop with AgentMessage", () => {
 		expect(steeringPolls).toBe(1);
 		expect(followUpPolls).toBe(0);
 		expect(callbackToolResultIds).toEqual(["tool-1"]);
-		expect(callbackContextRoles).toEqual(["user", "assistant", "toolResult"]);
-		expect(messages.map((message) => message.role)).toEqual(["user", "assistant", "toolResult"]);
+		expect(callbackContextRoles).toEqual(["system", "user", "assistant", "toolResult"]);
+		// The context declares no tools, so the loop announces the loadout with a system message.
+		expect(messages.map((message) => message.role)).toEqual(["system", "user", "assistant", "toolResult"]);
 		expect(events.map((event) => event.type)).toEqual([
 			"agent_start",
 			"turn_start",
+			"message_start",
+			"message_end",
 			"message_start",
 			"message_end",
 			"message_start",
@@ -1280,7 +1283,7 @@ describe("agentLoop with AgentMessage", () => {
 
 		const messages = await stream.result();
 		expect(llmCalls).toBe(1);
-		expect(messages.map((message) => message.role)).toEqual(["user", "assistant", "toolResult"]);
+		expect(messages.map((message) => message.role)).toEqual(["system", "user", "assistant", "toolResult"]);
 		expect(events.filter((event) => event.type === "turn_end")).toHaveLength(1);
 	});
 
@@ -1456,6 +1459,7 @@ describe("agentLoop with AgentMessage", () => {
 		const messages = await stream.result();
 		expect(callIndex).toBe(2);
 		expect(messages.map((message) => message.role)).toEqual([
+			"system",
 			"user",
 			"assistant",
 			"toolResult",

@@ -17,10 +17,15 @@ import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { shortHash } from "../utils/hash.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { parseStreamingJson } from "../utils/json-parse.ts";
-import { getCurrentTools, normalizeContext, type TranscriptContext } from "../utils/normalize-context.ts";
+import {
+	collapseSystemMessages,
+	getCurrentTools,
+	normalizeContext,
+	type TranscriptContext,
+} from "../utils/normalize-context.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
-import { getSystemMessageText } from "../utils/text.ts";
+import { getSystemMessageText, renderSystemMessageUpdate } from "../utils/text.ts";
 import { getJsonSchemaToolParameters, resolveJsonSchemaStrictSampling } from "./constrained-sampling.ts";
 import { buildBaseOptions } from "./simple-options.ts";
 import { transformMessages } from "./transform-messages.ts";
@@ -127,7 +132,9 @@ export const stream: StreamFunction<"mistral-conversations", MistralOptions> = (
 	options?: MistralOptions,
 ): AssistantMessageEventStream => {
 	const stream = new AssistantMessageEventStream();
-	const normalizedContext = normalizeContext(context);
+	const normalizedContext = model.compat?.supportsMidConvoSystemMessages
+		? normalizeContext(context)
+		: collapseSystemMessages(normalizeContext(context));
 
 	(async () => {
 		const output = createOutput(model);
@@ -783,9 +790,9 @@ function stripSymbolKeys(value: unknown): unknown {
 function toChatMessages(messages: Message[], supportsImages: boolean): MistralChatMessage[] {
 	const result: MistralChatMessage[] = [];
 
-	for (const msg of messages) {
+	for (const [index, msg] of messages.entries()) {
 		if (msg.role === "system") {
-			const text = getSystemMessageText(msg);
+			const text = index === 0 ? getSystemMessageText(msg) : renderSystemMessageUpdate(msg);
 			if (text.length > 0) result.push({ role: "system", content: sanitizeSurrogates(text) });
 			continue;
 		}

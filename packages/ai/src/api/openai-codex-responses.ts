@@ -30,14 +30,19 @@ import { formatProviderError, normalizeProviderError } from "../utils/error-body
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { resolveHttpProxyUrlForTarget } from "../utils/node-http-proxy.ts";
-import { getInitialSystemMessage, normalizeContext, type TranscriptContext } from "../utils/normalize-context.ts";
+import { getInitialSystemMessage, type TranscriptContext } from "../utils/normalize-context.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { getSystemMessageText } from "../utils/text.ts";
 import { getDeclaredTools, resolveTranscriptTools } from "../utils/transcript-state.ts";
 import { uuidv7 } from "../utils/uuid.ts";
 import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
-import { convertResponsesMessages, convertResponsesTools, processResponsesStream } from "./openai-responses-shared.ts";
+import {
+	convertResponsesMessages,
+	convertResponsesTools,
+	processResponsesStream,
+	resolveResponsesTranscript,
+} from "./openai-responses-shared.ts";
 import { buildBaseOptions } from "./simple-options.ts";
 
 // ============================================================================
@@ -235,7 +240,7 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 	options?: OpenAICodexResponsesOptions,
 ): AssistantMessageEventStream => {
 	const stream = new AssistantMessageEventStream();
-	const normalizedContext = normalizeContext(context);
+	const normalizedContext = resolveResponsesTranscript(context, model.compat?.supportsMidConvoSystemMessages ?? false);
 
 	(async () => {
 		const output: AssistantMessage = {
@@ -537,6 +542,7 @@ function buildRequestBody(
 	const messages = convertResponsesMessages(model, context, CODEX_TOOL_CALL_PROVIDERS, {
 		includeSystemPrompt: false,
 		grammarToolInputProperties,
+		supportsMidConvoSystemMessages: model.compat?.supportsMidConvoSystemMessages ?? false,
 		supportsAdditionalTools,
 		supportsToolSearch,
 		toolOptions: { strict: null, supportsStrictMode, supportsOpenAIGrammarTools },

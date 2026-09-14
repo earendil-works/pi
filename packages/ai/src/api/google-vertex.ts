@@ -27,6 +27,7 @@ import { formatProviderError, normalizeProviderError } from "../utils/error-body
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { providerHeadersToRecord } from "../utils/headers.ts";
 import {
+	collapseSystemMessages,
 	getCurrentTools,
 	getInitialSystemMessage,
 	normalizeContext,
@@ -81,7 +82,7 @@ export const stream: StreamFunction<"google-vertex", GoogleVertexOptions> = (
 	options?: GoogleVertexOptions,
 ): AssistantMessageEventStream => {
 	const stream = new AssistantMessageEventStream();
-	const normalizedContext = normalizeContext(context);
+	const normalizedContext = collapseSystemMessages(normalizeContext(context));
 
 	(async () => {
 		const output: AssistantMessage = {

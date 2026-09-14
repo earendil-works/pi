@@ -271,7 +271,7 @@ describe("AgentSessionRuntime characterization", () => {
 		expect(newSessionResult.cancelled).toBe(false);
 		await runtime.session.bindExtensions({});
 		expect(runtime.session).not.toBe(originalSession);
-		expect(runtime.session.messages.map((message) => message.role)).toEqual(["system"]);
+		expect(runtime.session.messages).toEqual([]);
 		const secondSessionFile = runtime.session.sessionFile;
 		expect(events).toEqual([
 			{ type: "session_before_switch", reason: "new", targetSessionFile: undefined },

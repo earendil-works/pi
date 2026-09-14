@@ -41,12 +41,12 @@ import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { shortHash } from "../utils/hash.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { parseStreamingJson } from "../utils/json-parse.ts";
-import { normalizeContext, type TranscriptContext } from "../utils/normalize-context.ts";
+import { collapseSystemMessages, normalizeContext, type TranscriptContext } from "../utils/normalize-context.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
-import { getSystemMessageText } from "../utils/text.ts";
+import { getSystemMessageText, renderSystemMessageUpdate } from "../utils/text.ts";
 import { getDeclaredTools, resolveTranscriptTools } from "../utils/transcript-state.ts";
 import {
 	appendGrammarToolInputJsonDelta,
@@ -164,12 +164,14 @@ type ResolvedOpenAICompletionsCompat = Omit<
 	| "cacheControlFormat"
 	| "supportsThinkingTokenBudget"
 	| "thinkingTokenBudgetField"
+	| "supportsMidConvoSystemMessages"
 	| "supportsMidConvoToolAdditions"
 	| "vllmPriority"
 > & {
 	cacheControlFormat?: OpenAICompletionsCompat["cacheControlFormat"];
 	supportsThinkingTokenBudget?: OpenAICompletionsCompat["supportsThinkingTokenBudget"];
 	thinkingTokenBudgetField?: OpenAICompletionsCompat["thinkingTokenBudgetField"];
+	supportsMidConvoSystemMessages?: OpenAICompletionsCompat["supportsMidConvoSystemMessages"];
 	supportsMidConvoToolAdditions?: OpenAICompletionsCompat["supportsMidConvoToolAdditions"];
 	vllmPriority?: OpenAICompletionsCompat["vllmPriority"];
 };
@@ -297,7 +299,7 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 	options?: OpenAICompletionsOptions,
 ): AssistantMessageEventStream => {
 	const stream = new AssistantMessageEventStream();
-	const normalizedContext = normalizeContext(context);
+	const normalizedContext = resolveTranscript(context, getCompat(model));
 
 	(async () => {
 		const output: AssistantMessage = {
@@ -799,7 +801,10 @@ function buildParams(
 		compat.supportsOpenAIGrammarTools,
 	),
 ) {
-	const transcriptTools = resolveTranscriptTools(context, compat.supportsMidConvoToolAdditions === true);
+	const transcriptTools = resolveTranscriptTools(
+		context,
+		compat.supportsMidConvoSystemMessages === true && compat.supportsMidConvoToolAdditions === true,
+	);
 	const messages = convertMessages(model, context, compat, {
 		grammarToolInputProperties,
 	});
@@ -1174,13 +1179,19 @@ function addCacheControlToTextContent(
 	return false;
 }
 
+/** Fold later system messages into the leading prompt unless the model accepts them natively. */
+function resolveTranscript(context: Context, compat: ResolvedOpenAICompletionsCompat): TranscriptContext {
+	const normalizedContext = normalizeContext(context);
+	return compat.supportsMidConvoSystemMessages ? normalizedContext : collapseSystemMessages(normalizedContext);
+}
+
 export function convertMessages(
 	model: Model<"openai-completions">,
 	context: Context,
 	compat: ResolvedOpenAICompletionsCompat,
 	options?: ConvertCompletionsMessagesOptions,
 ): ChatCompletionMessageParam[] {
-	const normalizedContext = normalizeContext(context);
+	const normalizedContext = resolveTranscript(context, compat);
 	const params: ChatCompletionMessageParam[] = [];
 
 	const normalizeToolCallId = (id: string): string => {
@@ -1210,7 +1221,10 @@ export function convertMessages(
 	};
 
 	const transformedMessages = transformMessages(normalizedContext.messages, model, (id) => normalizeToolCallId(id));
-	const transcriptTools = resolveTranscriptTools(normalizedContext, compat.supportsMidConvoToolAdditions === true);
+	const transcriptTools = resolveTranscriptTools(
+		normalizedContext,
+		compat.supportsMidConvoSystemMessages === true && compat.supportsMidConvoToolAdditions === true,
+	);
 	const instructionRole = model.reasoning && compat.supportsDeveloperRole ? "developer" : "system";
 
 	let lastRole: string | null = null;
@@ -1235,7 +1249,7 @@ export function convertMessages(
 				};
 				params.push(kimiToolMessage as unknown as ChatCompletionMessageParam);
 			}
-			const text = getSystemMessageText(msg);
+			const text = i === 0 ? getSystemMessageText(msg) : renderSystemMessageUpdate(msg);
 			if (text.length > 0) {
 				params.push({ role: instructionRole, content: sanitizeSurrogates(text) });
 			}
@@ -1652,6 +1666,7 @@ function detectCompat(model: Model<"openai-completions">): ResolvedOpenAIComplet
 		thinkingTokenBudgetField: undefined,
 		supportsStrictMode: !isMoonshot && !isTogether && !isCloudflareAiGateway && !isNvidia,
 		supportsOpenAIGrammarTools: false,
+		supportsMidConvoSystemMessages: false,
 		supportsMidConvoToolAdditions: false,
 		cacheControlFormat,
 		sendSessionAffinityHeaders: isOpenRouter,
@@ -1698,6 +1713,8 @@ function getCompat(model: Model<"openai-completions">): ResolvedOpenAICompletion
 		thinkingTokenBudgetField: model.compat.thinkingTokenBudgetField ?? detected.thinkingTokenBudgetField,
 		supportsStrictMode: model.compat.supportsStrictMode ?? detected.supportsStrictMode,
 		supportsOpenAIGrammarTools: model.compat.supportsOpenAIGrammarTools ?? detected.supportsOpenAIGrammarTools,
+		supportsMidConvoSystemMessages:
+			model.compat.supportsMidConvoSystemMessages ?? detected.supportsMidConvoSystemMessages,
 		supportsMidConvoToolAdditions:
 			model.compat.supportsMidConvoToolAdditions ?? detected.supportsMidConvoToolAdditions,
 		cacheControlFormat: model.compat.cacheControlFormat ?? detected.cacheControlFormat,

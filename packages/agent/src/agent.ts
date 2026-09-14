@@ -7,8 +7,14 @@ import {
 	type TextContent,
 	type ThinkingBudgets,
 	type Transport,
+	toToolDeclaration,
 } from "@earendil-works/pi-ai";
-import { runAgentLoop, runAgentLoopContinue } from "./agent-loop.ts";
+import {
+	getTranscriptSystemMessage,
+	getTranscriptSystemPrompt,
+	runAgentLoop,
+	runAgentLoopContinue,
+} from "./agent-loop.ts";
 import { getDefaultStreamFn } from "./stream-fn.ts";
 import type {
 	AfterToolCallContext,
@@ -70,20 +76,25 @@ type MutableAgentState = Omit<AgentState, "isStreaming" | "streamingMessage" | "
 	errorMessage?: string;
 };
 
-function createMutableAgentState(
-	initialState?: Partial<Omit<AgentState, "pendingToolCalls" | "isStreaming" | "streamingMessage" | "errorMessage">>,
-): MutableAgentState {
+/** Initial state for {@link Agent}. `systemPrompt` and `tools` become the leading system message unless `messages` already starts with one. */
+export type AgentInitialState = Partial<
+	Omit<AgentState, "pendingToolCalls" | "isStreaming" | "streamingMessage" | "errorMessage">
+>;
+
+function createMutableAgentState(initialState?: AgentInitialState): MutableAgentState {
 	let tools = initialState?.tools?.slice() ?? [];
 	let messages = initialState?.messages?.slice() ?? [];
 	const [initialMessage] = normalizeContext({
 		systemPrompt: initialState?.systemPrompt,
-		tools,
+		tools: tools.map(toToolDeclaration),
 		messages: [],
 	}).messages;
 	if (messages[0]?.role !== "system" && initialMessage) messages.unshift(initialMessage);
 
 	return {
-		systemPrompt: initialState?.systemPrompt ?? "",
+		get systemPrompt() {
+			return getTranscriptSystemPrompt(messages);
+		},
 		model: initialState?.model ?? DEFAULT_MODEL,
 		thinkingLevel: initialState?.thinkingLevel ?? "off",
 		get tools() {
@@ -107,7 +118,7 @@ function createMutableAgentState(
 
 /** Options for constructing an {@link Agent}. */
 export interface AgentOptions {
-	initialState?: Partial<Omit<AgentState, "pendingToolCalls" | "isStreaming" | "streamingMessage" | "errorMessage">>;
+	initialState?: AgentInitialState;
 	convertToLlm?: (messages: AgentMessage[]) => Message[] | Promise<Message[]>;
 	transformContext?: (messages: AgentMessage[], signal?: AbortSignal) => Promise<AgentMessage[]>;
 	streamFn: StreamFn;
@@ -340,17 +351,14 @@ export class Agent {
 		return this.activeRun?.promise ?? Promise.resolve();
 	}
 
-	/** Clear conversation state and queues while retaining the current prompt/tool baseline. */
+	/** Clear conversation state and queues while retaining the replayed prompt/tool baseline. */
 	reset(): void {
 		if (this.activeRun) {
 			throw new Error("Agent is already processing. Wait for completion before resetting.");
 		}
 
-		this._state.messages = normalizeContext({
-			systemPrompt: this._state.systemPrompt,
-			tools: this._state.tools,
-			messages: [],
-		}).messages;
+		const baseline = getTranscriptSystemMessage(this._state.messages);
+		this._state.messages = baseline ? [baseline] : [];
 		this._state.isStreaming = false;
 		this._state.streamingMessage = undefined;
 		this._state.pendingToolCalls = new Set<string>();

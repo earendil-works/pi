@@ -15,23 +15,25 @@
 
 import { readFileSync } from "node:fs";
 import { basename, dirname } from "node:path";
-import type {
-	Agent,
-	AgentContext,
-	AgentEvent,
-	AgentMessage,
-	AgentState,
-	AgentTool,
-	PrepareNextTurnContext,
-	ThinkingLevel,
+import {
+	type Agent,
+	type AgentContext,
+	type AgentEvent,
+	type AgentMessage,
+	type AgentState,
+	type AgentTool,
+	getTranscriptSystemMessage,
+	type PrepareNextTurnContext,
+	type ThinkingLevel,
 } from "@earendil-works/pi-agent-core";
-import { contentText, getTranscriptCapabilities, retryDelayMs } from "@earendil-works/pi-ai";
+import { contentText, retryDelayMs } from "@earendil-works/pi-ai";
 import type {
 	AssistantMessage,
 	AuthResult,
 	ImageContent,
 	Model,
 	ProviderHeaders,
+	SystemMessage,
 	TextContent,
 	Usage,
 } from "@earendil-works/pi-ai/compat";
@@ -109,11 +111,10 @@ import type { SlashCommandInfo } from "./slash-commands.ts";
 import { createSyntheticSourceInfo, type SourceInfo } from "./source-info.ts";
 import {
 	buildSystemPrompt,
-	type ModelContextState,
+	buildSystemPromptSections,
+	diffSystemPromptSections,
 	type NormalizedBuildSystemPromptOptions,
 	normalizeBuildSystemPromptOptions,
-	prepareModelContextUpdate,
-	renderSystemPrompt,
 } from "./system-prompt.ts";
 import { type BashOperations, createLocalBashOperations } from "./tools/bash.ts";
 import { createAllToolDefinitions } from "./tools/index.ts";
@@ -382,7 +383,6 @@ export class AgentSession {
 	private _baseSystemPromptOptions!: NormalizedBuildSystemPromptOptions;
 	/** Prompt options after before_agent_start mutations for the active run. */
 	private _runSystemPromptOptions?: NormalizedBuildSystemPromptOptions;
-	private _modelContextState?: ModelContextState;
 
 	constructor(config: AgentSessionConfig) {
 		this.agent = config.agent;
@@ -410,25 +410,7 @@ export class AgentSession {
 			activeToolNames: this._initialActiveToolNames,
 			includeAllExtensionTools: true,
 		});
-		this._restoreModelContextState();
-		if (!this._modelContextState) {
-			const persistedMessages = this.sessionManager.buildSessionContext().messages;
-			const initialMessage = this._preparePromptAndToolLoadout(this._baseSystemPromptOptions);
-			if (initialMessage) {
-				if (persistedMessages.length > 0) {
-					// Existing sessions without prompt metadata cannot insert a new root entry.
-					// Append a complete checkpoint so in-memory and persisted chronology agree.
-					this.agent.state.messages = [...persistedMessages, initialMessage];
-				} else {
-					const messages = this.agent.state.messages;
-					this.agent.state.messages = [
-						initialMessage,
-						...(messages[0]?.role === "system" ? messages.slice(1) : messages),
-					];
-				}
-				this.sessionManager.appendMessage(initialMessage);
-			}
-		}
+		if (this._initialActiveToolNames === undefined) this._restoreToolsFromTranscript();
 	}
 
 	get modelRuntime(): ModelRuntime {
@@ -597,7 +579,7 @@ export class AgentSession {
 				toolSnippets: { ...this._baseSystemPromptOptions.toolSnippets, ...runOptions.toolSnippets },
 				toolGuidelines: { ...this._baseSystemPromptOptions.toolGuidelines, ...runOptions.toolGuidelines },
 			});
-			const updateMessage = this._preparePromptAndToolLoadout(options);
+			const updateMessage = this._preparePromptAndToolLoadout(options, nextContext.messages);
 
 			return {
 				...previousSnapshot,
@@ -1011,9 +993,7 @@ export class AgentSession {
 			}
 		}
 		this.agent.state.tools = tools;
-
-		const systemPrompt = this._rebuildSystemPrompt(validToolNames);
-		if (!this._modelContextState) this.agent.state.systemPrompt = systemPrompt;
+		this._rebuildSystemPrompt(validToolNames);
 	}
 
 	/** Whether compaction or branch summarization is currently running */
@@ -1094,7 +1074,7 @@ export class AgentSession {
 		return Array.from(unique);
 	}
 
-	private _rebuildSystemPrompt(toolNames: string[]): string {
+	private _rebuildSystemPrompt(toolNames: string[]): void {
 		const validToolNames = toolNames.filter((name) => this._toolRegistry.has(name));
 		const toolSnippets: Record<string, string> = {};
 		for (const name of this._toolRegistry.keys()) {
@@ -1118,69 +1098,44 @@ export class AgentSession {
 			toolSnippets,
 			toolGuidelines: Object.fromEntries(this._toolPromptGuidelines),
 		});
-		return buildSystemPrompt(this._baseSystemPromptOptions);
 	}
 
-	private _preparePromptAndToolLoadout(options: NormalizedBuildSystemPromptOptions) {
+	/**
+	 * Apply a prompt and tool loadout for the next request. Sets the executable tools and
+	 * returns a system message patching the prompt sections the model currently has (replayed
+	 * from `messages`), or undefined when the prompt is unchanged. Tool changes are declared by
+	 * the agent loop before the request.
+	 */
+	private _preparePromptAndToolLoadout(
+		options: NormalizedBuildSystemPromptOptions,
+		messages: AgentMessage[] = this.agent.state.messages,
+	): SystemMessage | undefined {
 		options.selectedTools = [...new Set(options.selectedTools)].filter((name) => this._toolRegistry.has(name));
-		const selectedTools = options.selectedTools.flatMap((name) => {
+		this.agent.state.tools = options.selectedTools.flatMap((name) => {
 			const tool = this._toolRegistry.get(name);
 			return tool ? [tool] : [];
 		});
-		const model = this.model;
-		if (!model) return undefined;
-		const modelKey = `${model.provider}:${model.api}:${model.id}`;
-		const toolDeclarations = new Map(
-			selectedTools.map(({ name, description, parameters, constrainedSampling }) => [
-				name,
-				{
-					name,
-					description,
-					parameters,
-					// Session JSON drops undefined properties. Omit this optional field now so
-					// in-memory declarations compare identically after a session round-trip.
-					...(constrainedSampling === undefined ? {} : { constrainedSampling }),
-				},
-			]),
-		);
-		const update = prepareModelContextUpdate({
-			options,
-			tools: toolDeclarations,
-			previous: this._modelContextState,
-			capabilities: getTranscriptCapabilities(model),
-			modelKey,
-		});
-		if (update.message) {
-			this.sessionManager.appendSystemPromptState(update.state.prompt, [...update.state.tools.values()], modelKey);
+		const current = getTranscriptSystemMessage(messages);
+		const currentSections: Record<string, string> = {};
+		for (const [name, text] of Object.entries(current?.sections ?? {})) {
+			if (text !== null) currentSections[name] = text;
 		}
-
-		this.agent.state.tools = selectedTools;
-		this._modelContextState = update.state;
-		this.agent.state.systemPrompt = renderSystemPrompt(update.state.prompt);
-		return update.message;
+		const sections = diffSystemPromptSections(currentSections, buildSystemPromptSections(options));
+		return sections ? { role: "system", content: "", sections, timestamp: Date.now() } : undefined;
 	}
 
-	private _restoreModelContextState(restoreTools = this._initialActiveToolNames === undefined): void {
-		const stored = this.sessionManager.getSystemPromptState();
-		if (!stored) {
-			this._modelContextState = undefined;
-			this.agent.state.systemPrompt = buildSystemPrompt(this._baseSystemPromptOptions);
-			return;
-		}
-		this._modelContextState = {
-			prompt: stored.prompt,
-			tools: new Map(stored.tools.map((tool) => [tool.name, tool])),
-			modelKey: stored.modelKey,
-		};
-		this.agent.state.systemPrompt = renderSystemPrompt(stored.prompt);
-		if (restoreTools) {
-			const restoredToolNames = stored.tools.map((tool) => tool.name).filter((name) => this._toolRegistry.has(name));
-			this.agent.state.tools = restoredToolNames.flatMap((name) => {
-				const registered = this._toolRegistry.get(name);
-				return registered ? [registered] : [];
-			});
-			this._rebuildSystemPrompt(restoredToolNames);
-		}
+	/** Restore the active tool loadout declared by the session transcript, if it declares one. */
+	private _restoreToolsFromTranscript(): void {
+		const current = this.sessionManager.getCurrentSystemMessage();
+		if (!current) return;
+		const toolNames = (current.toolsAdded ?? [])
+			.map((tool) => tool.name)
+			.filter((name) => this._toolRegistry.has(name));
+		this.agent.state.tools = toolNames.flatMap((name) => {
+			const registered = this._toolRegistry.get(name);
+			return registered ? [registered] : [];
+		});
+		this._rebuildSystemPrompt(toolNames);
 	}
 
 	// =========================================================================
@@ -1372,11 +1327,19 @@ export class AgentSession {
 			this._pendingNextTurnMessages = [];
 
 			// Emit before_agent_start extension event
+			const selectedToolsBefore = this._baseSystemPromptOptions.selectedTools;
 			const result = (await this._extensionRunner.emitBeforeAgentStart(
 				expandedText,
 				currentImages,
 				this._baseSystemPromptOptions,
 			)) ?? { messages: [], systemPromptOptions: this._baseSystemPromptOptions };
+			// Handlers may edit event.systemPromptOptions.selectedTools or call setActiveTools(),
+			// which updates the live loadout instead. An explicit edit wins; otherwise the live
+			// loadout is authoritative, so a setActiveTools() call is not undone here.
+			const handlerEditedTools =
+				result.systemPromptOptions.selectedTools.length !== selectedToolsBefore.length ||
+				result.systemPromptOptions.selectedTools.some((name, index) => name !== selectedToolsBefore[index]);
+			if (!handlerEditedTools) result.systemPromptOptions.selectedTools = this.getActiveToolNames();
 			for (const msg of result.messages) {
 				messages.push({
 					role: "custom",
@@ -2590,8 +2553,7 @@ export class AgentSession {
 		};
 
 		this._resourceLoader.extendResources(extensionPaths);
-		const systemPrompt = this._rebuildSystemPrompt(this.getActiveToolNames());
-		if (!this._modelContextState) this.agent.state.systemPrompt = systemPrompt;
+		this._rebuildSystemPrompt(this.getActiveToolNames());
 	}
 
 	private buildExtensionResourcePaths(entries: Array<{ path: string; extensionPath: string }>): Array<{
@@ -3391,7 +3353,7 @@ export class AgentSession {
 			// Update agent state
 			const sessionContext = this.sessionManager.buildSessionContext();
 			this.agent.state.messages = sessionContext.messages;
-			this._restoreModelContextState(true);
+			this._restoreToolsFromTranscript();
 
 			// Emit session_tree event
 			await this._extensionRunner.emit({

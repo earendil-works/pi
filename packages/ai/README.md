@@ -44,6 +44,7 @@ Unified LLM API with provider collections, automatic auth resolution, token and 
   - [OpenAI Compatibility Settings](#openai-compatibility-settings)
 - [Faux Provider for Tests](#faux-provider-for-tests)
 - [Cross-Provider Handoffs](#cross-provider-handoffs)
+- [System Messages](#system-messages)
 - [Context Serialization](#context-serialization)
 - [Browser Usage](#browser-usage)
 - [Bundling and Tree Shaking](#bundling-and-tree-shaking)
@@ -1208,6 +1209,8 @@ interface OpenAICompletionsCompat {
   supportsUsageInStreaming?: boolean; // Whether provider supports `stream_options: { include_usage: true }` (default: true)
   supportsStrictMode?: boolean;      // Whether provider supports `strict` in tool definitions (default: true)
   supportsOpenAIGrammarTools?: boolean; // Whether to emit OpenAI custom Lark/regex grammar tools; false falls back to normal function tools (default: false; the generated catalog enables it for capable models)
+  supportsMidConvoSystemMessages?: boolean; // Whether the model accepts system messages after the conversation started; false folds them into the leading prompt (default: false; the generated catalog enables it for verified models)
+  supportsMidConvoToolAdditions?: boolean; // Whether system messages can add tools mid-conversation via Kimi-style `tools` system messages; requires supportsMidConvoSystemMessages (default: false)
   sendSessionAffinityHeaders?: boolean; // Send session-affinity data from `sessionId` (default: true for OpenRouter, false otherwise)
   sessionAffinityFormat?: 'openai' | 'openai-nosession' | 'openrouter'; // Format for session affinity: 'openai' uses `prompt_cache_key`, `session_id`, `x-client-request-id`, and `x-session-affinity`; 'openai-nosession' uses `prompt_cache_key`, `x-client-request-id`, and `x-session-affinity`; 'openrouter' uses `x-session-id` (default: auto-detected)
   maxTokensField?: 'max_completion_tokens' | 'max_tokens';  // Which field name to use (default: max_completion_tokens)
@@ -1370,6 +1373,39 @@ const geminiResponse = await models.complete(gemini, context);
 ```
 
 All providers can handle messages from other providers — text, tool calls and results (including images), thinking blocks (transformed to tagged text), and aborted messages with partial content. This enables flexible workflows: start with a fast model, switch to a more capable one for complex reasoning, or maintain continuity across provider outages.
+
+## System Messages
+
+`Context.systemPrompt` and `Context.tools` are shorthand for a leading system message; `normalizeContext()` turns them into one. The transcript can also carry system messages later in the conversation to change the prompt or the tool set without rewriting the history:
+
+```typescript
+interface SystemMessage {
+  role: "system";
+  content: string | TextContent[];             // leading: base prompt; later: added instructions
+  sections?: Record<string, string | null>;    // named prompt sections; later messages patch by name, null removes
+  toolsAdded?: Tool[];                         // tools that become available here
+  toolsRemoved?: ToolReference[];              // tools that stop being available here
+  timestamp: number;
+}
+```
+
+Sections are opaque text rendered verbatim after `content`, joined by blank lines. Keep each one self-delimiting (a tag, a heading) so the model can relate an update to the original. Replaying every system message in order yields the current prompt and tools:
+
+```typescript
+import { getCurrentSystemPrompt, getCurrentTools, normalizeContext } from "@earendil-works/pi-ai";
+
+const transcript = normalizeContext({
+  messages: [
+    { role: "system", content: "You are helpful.", sections: { rules: "<rules>Be brief.</rules>" }, toolsAdded: [readTool], timestamp: 1 },
+    { role: "user", content: "hi", timestamp: 2 },
+    { role: "system", content: "", sections: { rules: "<rules>Be thorough.</rules>" }, toolsRemoved: [{ name: "read" }], timestamp: 3 },
+  ],
+});
+getCurrentSystemPrompt(transcript); // "You are helpful.\n\n<rules>Be thorough.</rules>"
+getCurrentTools(transcript);        // []
+```
+
+Models that accept system messages mid-conversation (`supportsMidConvoSystemMessages` in the model's compat settings, set by the generated catalog for verified models) receive each later system message in place, so the cached prefix stays intact; section changes are framed by name for the model. Every other model receives `collapseSystemMessages(transcript)`: the replayed prompt and current tools as the leading system message, with later system messages dropped. Anthropic models that also set `supportsMidConvoToolChanges` send tool changes as native blocks; OpenAI Responses models with `supportsAdditionalTools` or `supportsToolSearch` anchor additive tool changes at their message; everything else sends the current tool list at the top level.
 
 ## Context Serialization
 

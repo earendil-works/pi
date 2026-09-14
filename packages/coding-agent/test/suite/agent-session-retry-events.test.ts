@@ -225,6 +225,10 @@ describe("AgentSession retry and event characterization", () => {
 		await harness.session.prompt("hi");
 
 		expect(order).toEqual([
+			"extension:message_start:system",
+			"public:message_start:system",
+			"extension:message_end:system",
+			"public:message_end:system",
 			"extension:message_start:user",
 			"public:message_start:user",
 			"extension:message_end:user",
@@ -246,6 +250,8 @@ describe("AgentSession retry and event characterization", () => {
 		expect(normalizeEventOrder(harness.events)).toEqual([
 			"agent_start",
 			"turn_start",
+			"message_start:system",
+			"message_end:system",
 			"message_start:user",
 			"message_end:user",
 			"message_start:assistant",
@@ -283,6 +289,8 @@ describe("AgentSession retry and event characterization", () => {
 		expect(normalizeEventOrder(harness.events)).toEqual([
 			"agent_start",
 			"turn_start",
+			"message_start:system",
+			"message_end:system",
 			"message_start:user",
 			"message_end:user",
 			"message_start:assistant",

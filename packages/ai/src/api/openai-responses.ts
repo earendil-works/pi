@@ -18,7 +18,7 @@ import type {
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
-import { normalizeContext, type TranscriptContext } from "../utils/normalize-context.ts";
+import type { TranscriptContext } from "../utils/normalize-context.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
@@ -26,7 +26,12 @@ import { getDeclaredTools, resolveTranscriptTools } from "../utils/transcript-st
 import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
-import { convertResponsesMessages, convertResponsesTools, processResponsesStream } from "./openai-responses-shared.ts";
+import {
+	convertResponsesMessages,
+	convertResponsesTools,
+	processResponsesStream,
+	resolveResponsesTranscript,
+} from "./openai-responses-shared.ts";
 import { buildBaseOptions } from "./simple-options.ts";
 
 const OPENAI_TOOL_CALL_PROVIDERS = new Set(["openai", "openai-codex", "opencode"]);
@@ -69,6 +74,7 @@ function resolveCacheRetention(cacheRetention?: CacheRetention, env?: ProviderEn
 function getCompat(model: Model<"openai-responses">): Required<OpenAIResponsesCompat> {
 	return {
 		supportsDeveloperRole: model.compat?.supportsDeveloperRole ?? true,
+		supportsMidConvoSystemMessages: model.compat?.supportsMidConvoSystemMessages ?? false,
 		sessionAffinityFormat: model.compat?.sessionAffinityFormat ?? detectSessionAffinityFormat(model),
 		supportsLongCacheRetention: model.compat?.supportsLongCacheRetention ?? true,
 		supportsStrictMode: model.compat?.supportsStrictMode ?? false,
@@ -116,7 +122,7 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 	options?: OpenAIResponsesOptions,
 ): AssistantMessageEventStream => {
 	const stream = new AssistantMessageEventStream();
-	const normalizedContext = normalizeContext(context);
+	const normalizedContext = resolveResponsesTranscript(context, getCompat(model).supportsMidConvoSystemMessages);
 
 	// Start async processing
 	(async () => {
@@ -293,6 +299,7 @@ function buildParams(
 	const transcriptTools = resolveTranscriptTools(context, compat.supportsAdditionalTools || compat.supportsToolSearch);
 	const messages = convertResponsesMessages(model, context, OPENAI_TOOL_CALL_PROVIDERS, {
 		grammarToolInputProperties,
+		supportsMidConvoSystemMessages: compat.supportsMidConvoSystemMessages,
 		supportsAdditionalTools: compat.supportsAdditionalTools,
 		supportsToolSearch: compat.supportsToolSearch,
 		toolOptions: {

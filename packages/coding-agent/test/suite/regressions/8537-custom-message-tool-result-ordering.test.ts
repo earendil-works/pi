@@ -97,7 +97,7 @@ describe("#8537 custom messages injected during tool execution", () => {
 		const messageStarts = harness.events.flatMap((event) =>
 			event.type === "message_start" ? [event.message.role] : [],
 		);
-		expect(messageStarts).toEqual(["user", "assistant", "toolResult", "custom", "assistant"]);
+		expect(messageStarts).toEqual(["system", "user", "assistant", "toolResult", "custom", "assistant"]);
 	});
 
 	it("produces an llm history where every tool result follows its tool call", async () => {

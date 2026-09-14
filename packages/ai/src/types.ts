@@ -419,9 +419,27 @@ export interface DeferredHandle {
 	data?: JsonValue;
 }
 
+/**
+ * System instructions and tool declarations at one point in the transcript.
+ *
+ * The leading system message is the system prompt. Later system messages change it:
+ * `content` adds instructions from that point on, `sections` replace or remove named
+ * prompt sections, and `toolsAdded`/`toolsRemoved` change the tool set. Replaying
+ * every system message in order yields the current prompt and tools. Providers that
+ * accept system messages mid-conversation send each one in place; other providers
+ * rebuild the leading system message from the replayed state.
+ */
 export interface SystemMessage {
 	role: "system";
+	/** Instruction text. On the leading message this is the base prompt; later, additional instructions. */
 	content: string | TextContent[];
+	/**
+	 * Named, ordered prompt sections rendered verbatim after `content`. The leading message
+	 * declares them; later messages replace sections by name, and `null` removes one. Keep
+	 * each section self-delimiting (a tag, a heading) so the model can relate an update to
+	 * the original. Avoid integer-like names; JSON objects reorder those.
+	 */
+	sections?: Record<string, string | null>;
 	/** Complete definitions of tools that become available at this point. */
 	toolsAdded?: Tool[];
 	/** Tools that stop being available at this point. */
@@ -636,7 +654,9 @@ export interface OpenAICompletionsCompat {
 	supportsThinkingTokenBudget?: boolean;
 	/** Whether the provider supports OpenAI custom tools with Lark/regex grammar formats. When false, grammar-constrained tools fall back to normal function tools. Default: false; the generated model catalog enables it for capable models. */
 	supportsOpenAIGrammarTools?: boolean;
-	/** Whether system messages can introduce additional tools mid-conversation. Default: false; the generated model catalog enables it for capable models. */
+	/** Whether the exact model accepts system or developer messages after the conversation has started. When false, later system messages are folded into the leading system message. Default: false; the generated model catalog enables it for verified models. */
+	supportsMidConvoSystemMessages?: boolean;
+	/** Whether system messages can introduce additional tools mid-conversation. Requires `supportsMidConvoSystemMessages`. Default: false; the generated model catalog enables it for capable models. */
 	supportsMidConvoToolAdditions?: boolean;
 	/** Whether the provider supports the `strict` field in tool definitions. Default: true. */
 	supportsStrictMode?: boolean;
@@ -661,6 +681,8 @@ export interface OpenAICompletionsCompat {
 export interface OpenAIResponsesCompat {
 	/** Whether the provider supports the `developer` role (vs `system`). Default: true. */
 	supportsDeveloperRole?: boolean;
+	/** Whether the exact model accepts developer or system messages after the conversation has started. When false, later system messages are folded into the leading system message. Default: false; the generated model catalog enables it for verified models. */
+	supportsMidConvoSystemMessages?: boolean;
 	/** Session-affinity header format: `openai` sends `session_id` and `x-client-request-id`; `openai-nosession` sends `x-client-request-id`; `openrouter` sends `x-session-id`. Does not affect the `prompt_cache_key` body param, which is governed by cache retention. Default: auto-detected. */
 	sessionAffinityFormat?: SessionAffinityFormat;
 	/** Whether the provider supports long prompt cache retention. This uses `prompt_cache_options.ttl: "30m"` on GPT-5.6+ and `prompt_cache_retention: "24h"` on earlier models. Default: true. */
@@ -731,9 +753,9 @@ export interface AnthropicMessagesCompat {
 	supportsStrictTools?: boolean;
 	/** Whether the exact model transport supports effort-only system messages and thinking binding controls. Default: false. */
 	supportsMidConvoEffort?: boolean;
-	/** Whether the exact model accepts system-role messages inside the conversation. Default: false. */
+	/** Whether the exact model accepts system-role messages inside the conversation. When false, later system messages are folded into the top-level system prompt. Default: false. */
 	supportsMidConvoSystemMessages?: boolean;
-	/** Whether the exact model accepts mid-conversation `tool_addition` and `tool_removal` blocks. Default: false. */
+	/** Whether the exact model accepts mid-conversation `tool_addition` and `tool_removal` blocks. Requires `supportsMidConvoSystemMessages`. Default: false. */
 	supportsMidConvoToolChanges?: boolean;
 	/**
 	 * Models Anthropic accepts in `fallbacks` for server-side refusal fallback,
@@ -748,6 +770,12 @@ export interface AnthropicMessagesCompat {
 export interface BedrockCompat {
 	/** Whether the model supports Bedrock strict tool schemas. Default: false. */
 	supportsStrictMode?: boolean;
+}
+
+/** Compatibility settings for the Mistral chat API. */
+export interface MistralConversationsCompat {
+	/** Whether the exact model accepts system messages after the conversation has started. When false, later system messages are folded into the leading system message. Default: false. */
+	supportsMidConvoSystemMessages?: boolean;
 }
 
 /**
@@ -883,7 +911,9 @@ export interface Model<TApi extends Api> {
 				? AnthropicMessagesCompat
 				: TApi extends "bedrock-converse-stream"
 					? BedrockCompat
-					: never;
+					: TApi extends "mistral-conversations"
+						? MistralConversationsCompat
+						: never;
 }
 
 export interface ImagesModel<TApi extends ImagesApi>

@@ -66,6 +66,41 @@ describe("builtin providers", () => {
 		expect(getBuiltinModel("anthropic", "claude-haiku-4-5").compat?.supportsStrictTools).toBe(true);
 	});
 
+	it("enables mid-conversation system messages only for verified models", () => {
+		const models = builtinModels();
+		const supported = [
+			["moonshotai", "kimi-k3"],
+			["moonshotai-cn", "kimi-k3"],
+			["fireworks", "accounts/fireworks/models/kimi-k3"],
+			["fireworks", "accounts/fireworks/routers/kimi-k3-fast"],
+			["openai", "gpt-5.4"],
+			["openai", "gpt-5.5"],
+			["openai", "gpt-6-astra"],
+			["openai-codex", "gpt-5.5"],
+			["anthropic", "claude-opus-5"],
+		] as const;
+		const unsupported = [
+			["moonshotai", "kimi-k2.6"],
+			["moonshotai", "kimi-k2.7-code"],
+			["fireworks", "accounts/fireworks/models/kimi-k2p6"],
+			["openai", "gpt-4.1"],
+			["openai", "gpt-5.2"],
+			["anthropic", "claude-sonnet-4-5"],
+			["google", "gemini-2.5-pro"],
+		] as const;
+		for (const [provider, modelId] of supported) {
+			expect(models.getModel(provider, modelId), `${provider}/${modelId}`).toHaveProperty(
+				"compat.supportsMidConvoSystemMessages",
+				true,
+			);
+		}
+		for (const [provider, modelId] of unsupported) {
+			expect(models.getModel(provider, modelId), `${provider}/${modelId}`).not.toHaveProperty(
+				"compat.supportsMidConvoSystemMessages",
+			);
+		}
+	});
+
 	it("uses official Kimi K3 pricing for Moonshot providers", () => {
 		const models = builtinModels();
 		for (const provider of ["moonshotai", "moonshotai-cn"]) {

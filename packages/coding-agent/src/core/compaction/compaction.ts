@@ -81,7 +81,9 @@ function getMessageFromEntryForCompaction(entry: SessionEntry): AgentMessage | u
 	if (entry.type === "compaction") {
 		return undefined;
 	}
-	return sessionEntryToContextMessages(entry)[0];
+	// System messages are prompt state, not conversation; the compaction entry carries their replay.
+	const message = sessionEntryToContextMessages(entry)[0];
+	return message?.role === "system" ? undefined : message;
 }
 
 /** Result from compact() - SessionManager adds uuid/parentUuid when saving */
@@ -885,7 +887,7 @@ export async function compact(
 	let summaryUsage: Usage;
 
 	if (isSplitTurn && turnPrefixMessages.length > 0) {
-		let historyText = "No prior history.";
+		let historyText = previousSummary ?? "No prior history.";
 		let historyUsage: Usage | undefined;
 		if (messagesToSummarize.length > 0) {
 			const historyResult = await generateSummaryWithUsage(

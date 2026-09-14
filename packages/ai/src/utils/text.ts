@@ -11,13 +11,30 @@ export function contentText(content: string | readonly Content[], separator = "\
 		.join(separator);
 }
 
-/** Extract the instruction text carried by a system message. */
+/** Render a system message as a complete prompt: its content followed by its sections. */
 export function getSystemMessageText(message: SystemMessage): string {
-	return contentText(message.content);
+	const parts = [contentText(message.content)];
+	for (const text of Object.values(message.sections ?? {})) {
+		if (text !== null) parts.push(text);
+	}
+	return parts.filter((part) => part.length > 0).join("\n\n");
 }
 
-/** Render a later system message for APIs without a native system role. */
-export function renderSystemMessageAsUserText(message: SystemMessage): string {
-	const text = getSystemMessageText(message);
-	return text ? `<system_reminder>\n${text}\n</system_reminder>` : "";
+/**
+ * Render a later system message for APIs that accept system messages mid-conversation.
+ * Section changes are framed by name so the model can relate them to the leading prompt.
+ * This framing is request-time only and may change between versions.
+ */
+export function renderSystemMessageUpdate(message: SystemMessage): string {
+	const parts: string[] = [];
+	const text = contentText(message.content);
+	if (text.length > 0) parts.push(text);
+	for (const [name, value] of Object.entries(message.sections ?? {})) {
+		parts.push(
+			value === null
+				? `Removed system prompt section "${name}".`
+				: `Updated system prompt section "${name}":\n\n${value}`,
+		);
+	}
+	return parts.join("\n\n");
 }

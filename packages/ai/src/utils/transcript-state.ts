@@ -1,49 +1,47 @@
-import type { Api, Model, SystemMessage, Tool, TranscriptContext } from "../types.ts";
-import { getCurrentTools, getInitialSystemMessage, getInitialTools } from "./normalize-context.ts";
-
-export interface TranscriptCapabilities {
-	midConversationSystemMessages: boolean;
-	midConversationToolAdditions: boolean;
-	midConversationToolRemovals: boolean;
-}
+import type { SystemMessage, Tool, ToolReference, TranscriptContext } from "../types.ts";
+import { getCurrentTools, getInitialTools } from "./normalize-context.ts";
 
 export interface ResolvedTranscriptTools {
 	requestTools: Tool[];
 	getAdditions(message: SystemMessage): Tool[];
 }
 
-type TranscriptCompat = {
-	supportsAdditionalTools?: boolean;
-	supportsToolSearch?: boolean;
-	supportsMidConvoSystemMessages?: boolean;
-	supportsMidConvoToolChanges?: boolean;
-	supportsMidConvoToolAdditions?: boolean;
-};
+export interface ToolStateChanges {
+	toolsAdded: Tool[];
+	toolsRemoved: ToolReference[];
+}
 
-const RESPONSES_APIS = new Set<Api>(["openai-responses", "azure-openai-responses", "openai-codex-responses"]);
-
-/** Capabilities that preserve transcript position without rewriting the initial provider state. */
-export function getTranscriptCapabilities(model: Model<Api>): TranscriptCapabilities {
-	const compat = model.compat as TranscriptCompat | undefined;
-	const nativeTranscript = model.api === "pi-messages" || model.api.startsWith("faux:");
-	const anthropicSystem = model.api === "anthropic-messages" && compat?.supportsMidConvoSystemMessages === true;
-	const anthropicTools = anthropicSystem && compat?.supportsMidConvoToolChanges === true;
-	const responses = RESPONSES_APIS.has(model.api);
-	const completionsTools = model.api === "openai-completions" && compat?.supportsMidConvoToolAdditions === true;
-
+/** Strip executable and display-only fields from a tool before transcript comparison or persistence. */
+export function toToolDeclaration(tool: Tool): Tool {
 	return {
-		midConversationSystemMessages:
-			nativeTranscript ||
-			responses ||
-			anthropicSystem ||
-			model.api === "openai-completions" ||
-			model.api === "mistral-conversations",
-		midConversationToolAdditions:
-			nativeTranscript ||
-			anthropicTools ||
-			completionsTools ||
-			(responses && (compat?.supportsAdditionalTools === true || compat?.supportsToolSearch === true)),
-		midConversationToolRemovals: nativeTranscript || anthropicTools,
+		name: tool.name,
+		description: tool.description,
+		parameters: JSON.parse(JSON.stringify(tool.parameters)) as Tool["parameters"],
+		...(tool.constrainedSampling === undefined ? {} : { constrainedSampling: tool.constrainedSampling }),
+	};
+}
+
+function declarationsEqual(left: Tool, right: Tool): boolean {
+	return JSON.stringify(toToolDeclaration(left)) === JSON.stringify(toToolDeclaration(right));
+}
+
+/** Compare two complete tool states. A changed definition is a removal followed by an addition. */
+export function getToolStateChanges(previous: readonly Tool[], current: readonly Tool[]): ToolStateChanges {
+	const previousTools = new Map(previous.map((tool) => [tool.name, tool]));
+	const currentTools = new Map(current.map((tool) => [tool.name, tool]));
+	return {
+		toolsAdded: current
+			.filter((tool) => {
+				const previousTool = previousTools.get(tool.name);
+				return previousTool === undefined || !declarationsEqual(previousTool, tool);
+			})
+			.map(toToolDeclaration),
+		toolsRemoved: previous
+			.filter((tool) => {
+				const currentTool = currentTools.get(tool.name);
+				return currentTool === undefined || !declarationsEqual(tool, currentTool);
+			})
+			.map((tool) => ({ name: tool.name })),
 	};
 }
 
@@ -57,12 +55,18 @@ export function getDeclaredTools(context: TranscriptContext): Tool[] {
 	return [...definitions.values()];
 }
 
-/** Whether the transcript contains a tool removal after its initial declaration. */
-export function hasMidConversationToolRemovals(context: TranscriptContext): boolean {
-	const initial = getInitialSystemMessage(context);
-	return context.messages.some(
-		(message) => message.role === "system" && message !== initial && (message.toolsRemoved?.length ?? 0) > 0,
-	);
+/** Whether tool history contains a removal or same-name redeclaration that an addition-only transport cannot replay. */
+export function hasNonAdditiveToolChanges(context: TranscriptContext): boolean {
+	const declared = new Set<string>();
+	for (const message of context.messages) {
+		if (message.role !== "system") continue;
+		if ((message.toolsRemoved?.length ?? 0) > 0) return true;
+		for (const tool of message.toolsAdded ?? []) {
+			if (declared.has(tool.name)) return true;
+			declared.add(tool.name);
+		}
+	}
+	return false;
 }
 
 /** Resolve top-level declarations and native additions directly from transcript system messages. */
@@ -70,7 +74,7 @@ export function resolveTranscriptTools(
 	context: TranscriptContext,
 	supportsToolAdditions: boolean,
 ): ResolvedTranscriptTools {
-	if (!supportsToolAdditions || hasMidConversationToolRemovals(context)) {
+	if (!supportsToolAdditions || hasNonAdditiveToolChanges(context)) {
 		return { requestTools: getCurrentTools(context), getAdditions: () => [] };
 	}
 

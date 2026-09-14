@@ -2,8 +2,6 @@
  * System prompt construction and project context loading
  */
 
-import { isDeepStrictEqual } from "node:util";
-import type { SystemMessage, Tool, ToolReference, TranscriptCapabilities } from "@earendil-works/pi-ai";
 import { getDocsPath, getExamplesPath, getReadmePath } from "../config.ts";
 import { formatSkillsForPrompt, type Skill } from "./skills.ts";
 
@@ -43,10 +41,12 @@ export type NormalizedBuildSystemPromptOptions = BuildSystemPromptOptions & {
 	skills: Skill[];
 };
 
-/** A normal prompt has an exact prefix followed by independently replaceable sections. */
-export type SystemPromptDefinition =
-	| { type: "structured"; prefix: string; sections: Record<string, string> }
-	| { type: "override"; text: string };
+/**
+ * Ordered system prompt sections, keyed by name. `preamble` is untagged text; every other
+ * section is wrapped in a tag of the same name so the model can match later updates to it.
+ * These become `SystemMessage.sections` in the transcript.
+ */
+export type SystemPromptSections = Record<string, string>;
 
 const SYSTEM_PROMPT_SECTION_NAME = /^[a-z][a-z0-9_-]*$/;
 /** Normalize prompt input into the mutable, collection-complete shape exposed to extensions. */
@@ -72,10 +72,11 @@ function renderSection(name: string, content: string): string {
 	return `<${name}>\n${content}\n</${name}>`;
 }
 
-export function renderSystemPrompt(prompt: SystemPromptDefinition): string {
-	if (prompt.type === "override") return prompt.text;
-	const sections = Object.entries(prompt.sections).map(([name, content]) => renderSection(name, content));
-	return prompt.prefix ? [prompt.prefix, ...sections].join("\n\n") : sections.join("\n\n");
+/** Render ordered sections into the complete prompt text. */
+export function renderSystemPromptSections(sections: Record<string, string>): string {
+	return Object.values(sections)
+		.filter((text) => text.length > 0)
+		.join("\n\n");
 }
 
 function renderProjectContext(contextFiles: Array<{ path: string; content: string }>): string {
@@ -126,8 +127,8 @@ function buildRules(
 	return rules.map((rule) => `- ${rule}`).join("\n");
 }
 
-/** Build the exact prefix and independently replaceable sections of the system prompt. */
-export function buildSystemPromptDefinition(input: BuildSystemPromptOptions): SystemPromptDefinition {
+/** Build the ordered, independently replaceable sections of the system prompt. */
+export function buildSystemPromptSections(input: BuildSystemPromptOptions): SystemPromptSections {
 	const options = normalizeBuildSystemPromptOptions(input);
 	const {
 		customPrompt,
@@ -144,21 +145,20 @@ export function buildSystemPromptDefinition(input: BuildSystemPromptOptions): Sy
 	} = options;
 
 	if (forceSystemPrompt !== undefined) {
-		return { type: "override", text: forceSystemPrompt };
+		return { preamble: forceSystemPrompt };
 	}
 
 	for (const name of Object.keys(customSections)) {
-		if (!SYSTEM_PROMPT_SECTION_NAME.test(name)) {
+		if (!SYSTEM_PROMPT_SECTION_NAME.test(name) || name === "preamble") {
 			throw new Error(`Invalid system prompt section name: ${name}`);
 		}
 	}
 
 	const promptSections: Record<string, string> = {};
-	let prefix: string;
 	if (customPrompt) {
-		prefix = customPrompt;
+		promptSections.preamble = customPrompt;
 	} else {
-		prefix =
+		promptSections.preamble =
 			"You are an expert coding assistant operating inside pi, a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.";
 		const visibleTools = selectedTools.filter((name) => !!toolSnippets[name]);
 		const tools =
@@ -187,124 +187,32 @@ export function buildSystemPromptDefinition(input: BuildSystemPromptOptions): Sy
 		if (content) promptSections[name] = content;
 	}
 
-	return { type: "structured", prefix, sections: promptSections };
+	const sections: SystemPromptSections = { preamble: promptSections.preamble };
+	for (const [name, content] of Object.entries(promptSections)) {
+		if (name !== "preamble") sections[name] = renderSection(name, content);
+	}
+	return sections;
 }
 
 /** Build the system prompt with tools, rules, and context. */
 export function buildSystemPrompt(input: BuildSystemPromptOptions): string {
-	return renderSystemPrompt(buildSystemPromptDefinition(input));
+	return renderSystemPromptSections(buildSystemPromptSections(input));
 }
 
-export type SystemPromptDiff = { type: "unchanged" } | { type: "update"; text: string } | { type: "replace" };
-
-/** Compare structured prompt sections. Prefix or opaque override changes require a complete replacement. */
-export function diffSystemPrompts(previous: SystemPromptDefinition, current: SystemPromptDefinition): SystemPromptDiff {
-	if (previous.type === "override" || current.type === "override") {
-		return renderSystemPrompt(previous) === renderSystemPrompt(current) ? { type: "unchanged" } : { type: "replace" };
+/**
+ * Diff the sections the model currently has (replayed from the transcript) against the
+ * desired ones. Returns a `SystemMessage.sections` patch, or undefined when nothing changed.
+ */
+export function diffSystemPromptSections(
+	previous: Record<string, string>,
+	current: SystemPromptSections,
+): Record<string, string | null> | undefined {
+	const patch: Record<string, string | null> = {};
+	for (const [name, text] of Object.entries(current)) {
+		if (previous[name] !== text) patch[name] = text;
 	}
-	if (previous.prefix !== current.prefix) return { type: "replace" };
-
-	const updates: string[] = [];
-	for (const [name, content] of Object.entries(current.sections)) {
-		if (previous.sections[name] !== content) updates.push(renderSection(name, content));
+	for (const name of Object.keys(previous)) {
+		if (current[name] === undefined) patch[name] = null;
 	}
-	const removed = Object.keys(previous.sections).filter((name) => current.sections[name] === undefined);
-	if (removed.length > 0) {
-		updates.push(`Removed system prompt sections: ${removed.map((name) => `<${name}>`).join(", ")}.`);
-	}
-	return updates.length > 0 ? { type: "update", text: updates.join("\n\n") } : { type: "unchanged" };
-}
-
-export interface ModelContextState {
-	prompt: SystemPromptDefinition;
-	tools: Map<string, Tool>;
-	modelKey: string;
-}
-
-/** Prepare one coherent prompt and tool transition for the next provider request. */
-export function prepareModelContextUpdate(input: {
-	options: NormalizedBuildSystemPromptOptions;
-	tools: Map<string, Tool>;
-	previous?: ModelContextState;
-	capabilities: TranscriptCapabilities;
-	modelKey: string;
-}): { state: ModelContextState; message?: SystemMessage } {
-	const { options, tools, previous, capabilities, modelKey } = input;
-	const prompt = buildSystemPromptDefinition(options);
-	const currentPrompt = renderSystemPrompt(prompt);
-	const state: ModelContextState = { prompt, tools, modelKey };
-	if (!previous) {
-		return {
-			state,
-			message: {
-				role: "system",
-				content: currentPrompt,
-				toolsAdded: [...tools.values()],
-				timestamp: Date.now(),
-			},
-		};
-	}
-
-	const promptDiff = diffSystemPrompts(previous.prompt, prompt);
-	const toolsAdded = [...tools]
-		.filter(([name, tool]) => {
-			const oldTool = previous.tools.get(name);
-			return oldTool === undefined || !isDeepStrictEqual(oldTool, tool);
-		})
-		.map(([, tool]) => tool);
-	const toolsRemoved: ToolReference[] = [...previous.tools]
-		.filter(([name, tool]) => {
-			const newTool = tools.get(name);
-			return newTool === undefined || !isDeepStrictEqual(tool, newTool);
-		})
-		.map(([name]) => ({ name }));
-	const toolDefinitionsChanged = toolsAdded.some((tool) => previous.tools.has(tool.name));
-
-	if (
-		previous.modelKey === modelKey &&
-		promptDiff.type === "unchanged" &&
-		toolsAdded.length === 0 &&
-		toolsRemoved.length === 0
-	) {
-		return { state };
-	}
-
-	const canUpdatePrompt = promptDiff.type === "unchanged" || capabilities.midConversationSystemMessages;
-	const canAddTools = toolsAdded.length === 0 || capabilities.midConversationToolAdditions;
-	const canRemoveTools = toolsRemoved.length === 0 || capabilities.midConversationToolRemovals;
-	const requiresReplacement =
-		previous.modelKey !== modelKey ||
-		toolDefinitionsChanged ||
-		promptDiff.type === "replace" ||
-		!canUpdatePrompt ||
-		!canAddTools ||
-		!canRemoveTools;
-	const content: string[] = [];
-	if (requiresReplacement) {
-		content.push(
-			`The following is the complete current system prompt. It supersedes all earlier system prompt updates:\n\n${currentPrompt}`,
-		);
-	} else if (promptDiff.type === "update") {
-		content.push(promptDiff.text);
-	}
-	if (toolsAdded.length > 0) {
-		content.push(
-			`The following tools are now available and may be used: ${toolsAdded.map((tool) => tool.name).join(", ")}.`,
-		);
-	}
-	if (toolsRemoved.length > 0) {
-		content.push(
-			`The following tools are no longer available. Do not call them; such calls will be rejected: ${toolsRemoved.map((tool) => tool.name).join(", ")}.`,
-		);
-	}
-	return {
-		state,
-		message: {
-			role: "system",
-			content: content.join("\n\n"),
-			toolsAdded: toolsAdded.length > 0 ? toolsAdded : undefined,
-			toolsRemoved: toolsRemoved.length > 0 ? toolsRemoved : undefined,
-			timestamp: Date.now(),
-		},
-	};
+	return Object.keys(patch).length > 0 ? patch : undefined;
 }

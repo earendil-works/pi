@@ -32,9 +32,9 @@ import type {
 import type { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { shortHash } from "../utils/hash.ts";
 import { parseStreamingJson } from "../utils/json-parse.ts";
-import { normalizeContext } from "../utils/normalize-context.ts";
+import { collapseSystemMessages, normalizeContext, type TranscriptContext } from "../utils/normalize-context.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
-import { getSystemMessageText } from "../utils/text.ts";
+import { getSystemMessageText, renderSystemMessageUpdate } from "../utils/text.ts";
 import { resolveTranscriptTools } from "../utils/transcript-state.ts";
 import {
 	appendGrammarToolInputJsonDelta,
@@ -123,9 +123,20 @@ export interface OpenAIResponsesStreamOptions {
 export interface ConvertResponsesMessagesOptions {
 	includeSystemPrompt?: boolean;
 	grammarToolInputProperties?: ReadonlyMap<string, string>;
+	/** Whether later system messages are sent in place; otherwise they are folded into the leading prompt. */
+	supportsMidConvoSystemMessages?: boolean;
 	supportsAdditionalTools?: boolean;
 	supportsToolSearch?: boolean;
 	toolOptions?: ConvertResponsesToolsOptions;
+}
+
+/** Fold later system messages into the leading prompt unless the model accepts them natively. */
+export function resolveResponsesTranscript(
+	context: Context,
+	supportsMidConvoSystemMessages: boolean,
+): TranscriptContext {
+	const normalizedContext = normalizeContext(context);
+	return supportsMidConvoSystemMessages ? normalizedContext : collapseSystemMessages(normalizedContext);
 }
 
 export interface ConvertResponsesToolsOptions {
@@ -145,7 +156,7 @@ export function convertResponsesMessages<TApi extends Api>(
 	allowedToolCallProviders: ReadonlySet<string>,
 	options?: ConvertResponsesMessagesOptions,
 ): ResponseInput {
-	const normalizedContext = normalizeContext(context);
+	const normalizedContext = resolveResponsesTranscript(context, options?.supportsMidConvoSystemMessages ?? false);
 	const messages: ResponseInput = [];
 
 	const normalizeIdPart = (part: string): string => {
@@ -218,7 +229,7 @@ export function convertResponsesMessages<TApi extends Api>(
 		if (msg.role === "system") {
 			if (!isLeadingSystemMessage) appendSystemToolAdditions(msg, `system:${msgIndex}`);
 			if (!isLeadingSystemMessage || includeInitialSystemMessage) {
-				const text = getSystemMessageText(msg);
+				const text = isLeadingSystemMessage ? getSystemMessageText(msg) : renderSystemMessageUpdate(msg);
 				if (text.length > 0) {
 					messages.push({ role: instructionRole, content: sanitizeSurrogates(text) });
 				}

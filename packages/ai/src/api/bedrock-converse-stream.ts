@@ -56,6 +56,7 @@ import { parseStreamingJson } from "../utils/json-parse.ts";
 import { createUserTurnAppender } from "../utils/merge-adjacent-user-turns.ts";
 import { resolveHttpProxyUrlForTarget } from "../utils/node-http-proxy.ts";
 import {
+	collapseSystemMessages,
 	getCurrentTools,
 	getInitialSystemMessage,
 	normalizeContext,
@@ -64,7 +65,7 @@ import {
 } from "../utils/normalize-context.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
-import { getSystemMessageText, renderSystemMessageAsUserText } from "../utils/text.ts";
+import { getSystemMessageText } from "../utils/text.ts";
 import { getJsonSchemaToolParameters, resolveJsonSchemaStrictSampling } from "./constrained-sampling.ts";
 import {
 	adjustMaxTokensForThinking,
@@ -128,7 +129,8 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 	options: BedrockOptions = {},
 ): AssistantMessageEventStream => {
 	const stream = new AssistantMessageEventStream();
-	const normalizedContext = normalizeContext(context);
+	// Bedrock has no mid-conversation system messages; fold them into the leading prompt.
+	const normalizedContext = collapseSystemMessages(normalizeContext(context));
 
 	(async () => {
 		const output: AssistantMessage = {
@@ -959,16 +961,6 @@ function convertMessages(
 		const m = transformedMessages[i];
 
 		switch (m.role) {
-			case "system": {
-				const text = renderSystemMessageAsUserText(m);
-				if (text.length > 0) {
-					appendTurn(
-						{ role: ConversationRole.USER, content: [createRequiredTextBlock(text)] },
-						{ mergeWithPrevious: true, mergeNext: true },
-					);
-				}
-				break;
-			}
 			case "user": {
 				const content: ContentBlock[] = [];
 				if (typeof m.content === "string") {

@@ -13,14 +13,19 @@ import type {
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
-import { normalizeContext, type TranscriptContext } from "../utils/normalize-context.ts";
+import type { TranscriptContext } from "../utils/normalize-context.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
 import { getDeclaredTools, resolveTranscriptTools } from "../utils/transcript-state.ts";
 import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
-import { convertResponsesMessages, convertResponsesTools, processResponsesStream } from "./openai-responses-shared.ts";
+import {
+	convertResponsesMessages,
+	convertResponsesTools,
+	processResponsesStream,
+	resolveResponsesTranscript,
+} from "./openai-responses-shared.ts";
 import { buildBaseOptions } from "./simple-options.ts";
 
 const DEFAULT_AZURE_API_VERSION = "v1";
@@ -75,7 +80,7 @@ export const stream: StreamFunction<"azure-openai-responses", AzureOpenAIRespons
 	options?: AzureOpenAIResponsesOptions,
 ): AssistantMessageEventStream => {
 	const stream = new AssistantMessageEventStream();
-	const normalizedContext = normalizeContext(context);
+	const normalizedContext = resolveResponsesTranscript(context, model.compat?.supportsMidConvoSystemMessages ?? false);
 
 	// Start async processing
 	(async () => {
@@ -290,6 +295,7 @@ function buildParams(
 	const transcriptTools = resolveTranscriptTools(context, supportsAdditionalTools || supportsToolSearch);
 	const messages = convertResponsesMessages(model, context, AZURE_TOOL_CALL_PROVIDERS, {
 		grammarToolInputProperties,
+		supportsMidConvoSystemMessages: model.compat?.supportsMidConvoSystemMessages ?? false,
 		supportsAdditionalTools,
 		supportsToolSearch,
 		toolOptions: {

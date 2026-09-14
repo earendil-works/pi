@@ -367,6 +367,7 @@ const OPENAI_TOOL_SEARCH_MODEL_IDS = new Set([
 	"gpt-6-astra",
 ]);
 const OPENAI_ADDITIONAL_TOOLS_MODEL_IDS = OPENAI_TOOL_SEARCH_MODEL_IDS;
+const OPENAI_MID_CONVO_SYSTEM_MESSAGE_MODEL_IDS = OPENAI_TOOL_SEARCH_MODEL_IDS;
 const OPENAI_CODEX_ADDITIONAL_TOOLS_MODEL_IDS = new Set([
 	"gpt-5.6-sol",
 	"gpt-5.6-terra",
@@ -625,6 +626,8 @@ const OPENAI_COMPLETIONS_DEFAULT_COMPAT = {
 	zaiToolStream: false,
 	supportsStrictMode: true,
 	supportsOpenAIGrammarTools: false,
+	supportsMidConvoSystemMessages: false,
+	supportsMidConvoToolAdditions: false,
 	sendSessionAffinityHeaders: false,
 	supportsLongCacheRetention: true,
 } satisfies Required<
@@ -727,6 +730,8 @@ function detectOpenAICompletionsCompat(model: Model<"openai-completions">): Open
 		zaiToolStream: false,
 		supportsStrictMode: !isMoonshot && !isTogether && !isCloudflareAiGateway && !isNvidia,
 		supportsOpenAIGrammarTools: false,
+		supportsMidConvoSystemMessages: false,
+		supportsMidConvoToolAdditions: false,
 		...(cacheControlFormat ? { cacheControlFormat } : {}),
 		sendSessionAffinityHeaders: isOpenRouter,
 		supportsLongCacheRetention: !(
@@ -856,12 +861,29 @@ function applyOpenAIToolSearchMetadata(model: Model<Api>): void {
 	};
 }
 
+// Only Kimi K3 is verified to accept system messages (including tool-bearing ones)
+// after the conversation has started.
 function applyOpenAICompletionsTranscriptMetadata(model: Model<Api>): void {
-	if (model.api !== "openai-completions" || !model.id.toLowerCase().includes("kimi")) return;
-	if (!(model.provider.startsWith("moonshot") || model.provider === "fireworks")) return;
+	if (model.api !== "openai-completions") return;
+	const isKimiK3 =
+		(model.provider.startsWith("moonshot") && model.id === "kimi-k3") ||
+		(model.provider === "fireworks" && model.id.includes("kimi-k3"));
+	if (!isKimiK3) return;
 	model.compat = {
 		...(model.compat as OpenAICompletionsCompat | undefined),
+		supportsMidConvoSystemMessages: true,
 		supportsMidConvoToolAdditions: true,
+	};
+}
+
+// Newer OpenAI Responses models accept developer messages after the conversation has started.
+function applyOpenAIResponsesTranscriptMetadata(model: Model<Api>): void {
+	const isOpenAIResponses = model.provider === "openai" && model.api === "openai-responses";
+	const isOpenAICodex = model.provider === "openai-codex" && model.api === "openai-codex-responses";
+	if (!(isOpenAIResponses || isOpenAICodex) || !OPENAI_MID_CONVO_SYSTEM_MESSAGE_MODEL_IDS.has(model.id)) return;
+	model.compat = {
+		...(model.compat as OpenAIResponsesCompat | undefined),
+		supportsMidConvoSystemMessages: true,
 	};
 }
 
@@ -2966,6 +2988,7 @@ async function generateModels() {
 		applyOpenAIGrammarToolCompatMetadata(model);
 		applyOpenAIToolSearchMetadata(model);
 		applyOpenAICompletionsTranscriptMetadata(model);
+		applyOpenAIResponsesTranscriptMetadata(model);
 		applyOpenAIExplicitPromptCacheMetadata(model);
 	}
 	applyAnthropicAllowedFallbackModelMetadata(allModels.filter(isAnthropicFallbackMetadataModel));

@@ -1,10 +1,9 @@
-import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import { type AgentMessage, getTranscriptSystemMessage } from "@earendil-works/pi-agent-core";
 import {
 	type ImageContent,
 	type Message,
 	type SystemMessage,
 	type TextContent,
-	type Tool,
 	type Usage,
 	uuidv7,
 } from "@earendil-works/pi-ai";
@@ -34,8 +33,6 @@ import {
 	createCompactionSummaryMessage,
 	createCustomMessage,
 } from "./messages.ts";
-import { renderSystemPrompt, type SystemPromptDefinition } from "./system-prompt.ts";
-
 export const CURRENT_SESSION_VERSION = 3;
 
 export interface SessionHeader {
@@ -62,14 +59,6 @@ export interface SessionEntryBase {
 export interface SessionMessageEntry extends SessionEntryBase {
 	type: "message";
 	message: AgentMessage;
-}
-
-/** Durable state needed to continue diffing prompt sections after a restart. */
-export interface SystemPromptEntry extends SessionEntryBase {
-	type: "system_prompt";
-	prompt: SystemPromptDefinition;
-	tools: Tool[];
-	modelKey: string;
 }
 
 export interface ThinkingLevelChangeEntry extends SessionEntryBase {
@@ -162,7 +151,6 @@ export interface CustomMessageEntry<T = unknown> extends SessionEntryBase {
 /** Session entry - has id/parentId for tree structure (returned by "read" methods in SessionManager) */
 export type SessionEntry =
 	| SessionMessageEntry
-	| SystemPromptEntry
 	| ThinkingLevelChangeEntry
 	| ModelChangeEntry
 	| CompactionEntry
@@ -223,7 +211,6 @@ export type ReadonlySessionManager = Pick<
 	| "getEntries"
 	| "getTree"
 	| "getSessionName"
-	| "getSystemPromptState"
 >;
 
 function createSessionId(): string {
@@ -1103,21 +1090,6 @@ export class SessionManager {
 		return entry.id;
 	}
 
-	/** Append the complete prompt-diff state as session metadata. */
-	appendSystemPromptState(prompt: SystemPromptDefinition, tools: Tool[], modelKey: string): string {
-		const entry: SystemPromptEntry = {
-			type: "system_prompt",
-			id: generateId(this.byId),
-			parentId: this.leafId,
-			timestamp: new Date().toISOString(),
-			prompt,
-			tools,
-			modelKey,
-		};
-		this._appendEntry(entry);
-		return entry.id;
-	}
-
 	/** Append a thinking level change as child of current leaf, then advance leaf. Returns entry id. */
 	appendThinkingLevelChange(thinkingLevel: string): string {
 		const entry: ThinkingLevelChangeEntry = {
@@ -1155,7 +1127,7 @@ export class SessionManager {
 		usage?: Usage,
 	): string {
 		const timestamp = new Date().toISOString();
-		const promptState = this.getSystemPromptState();
+		const systemMessage = this.getCurrentSystemMessage();
 		const entry: CompactionEntry<T> = {
 			type: "compaction",
 			id: generateId(this.byId),
@@ -1167,16 +1139,7 @@ export class SessionManager {
 			details,
 			usage,
 			fromHook,
-			...(promptState
-				? {
-						systemMessage: {
-							role: "system",
-							content: renderSystemPrompt(promptState.prompt),
-							toolsAdded: promptState.tools,
-							timestamp: new Date(timestamp).getTime(),
-						},
-					}
-				: {}),
+			...(systemMessage ? { systemMessage: { ...systemMessage, timestamp: new Date(timestamp).getTime() } } : {}),
 		};
 		this._appendEntry(entry);
 		return entry.id;
@@ -1210,14 +1173,9 @@ export class SessionManager {
 		return entry.id;
 	}
 
-	/** Get the latest prompt-diff state on the active branch. */
-	getSystemPromptState(): SystemPromptEntry | undefined {
-		const branch = this.getBranch();
-		for (let i = branch.length - 1; i >= 0; i--) {
-			const entry = branch[i];
-			if (entry.type === "system_prompt") return entry;
-		}
-		return undefined;
+	/** Replay the active context's system messages into the current prompt and tool state. */
+	getCurrentSystemMessage(): SystemMessage | undefined {
+		return getTranscriptSystemMessage(this.buildSessionContext().messages);
 	}
 
 	/** Get the current session name from the latest session_info entry, if any. */

@@ -7,7 +7,13 @@ import {
 	type AssistantMessage,
 	type Context,
 	EventStream,
+	getCurrentSystemMessage,
+	getSystemMessageText,
+	getToolStateChanges,
+	normalizeContext,
+	type SystemMessage,
 	type ToolResultMessage,
+	toToolDeclaration,
 	validateToolArguments,
 } from "@earendil-works/pi-ai";
 import { getDefaultStreamFn } from "./stream-fn.ts";
@@ -24,6 +30,18 @@ import type {
 } from "./types.ts";
 
 export type AgentEventSink = (event: AgentEvent) => Promise<void> | void;
+
+/** Replay the system messages of an agent transcript into the current prompt and tool state. */
+export function getTranscriptSystemMessage(messages: readonly AgentMessage[]): SystemMessage | undefined {
+	const systemMessages = messages.filter((message): message is SystemMessage => message.role === "system");
+	return getCurrentSystemMessage(normalizeContext({ messages: systemMessages }));
+}
+
+/** Render the current system prompt of an agent transcript. */
+export function getTranscriptSystemPrompt(messages: readonly AgentMessage[]): string {
+	const message = getTranscriptSystemMessage(messages);
+	return message ? getSystemMessageText(message) : "";
+}
 
 /**
  * Start an agent loop with a new prompt message.
@@ -101,17 +119,18 @@ export async function runAgentLoop(
 	signal: AbortSignal | undefined,
 	streamFn: StreamFn,
 ): Promise<AgentMessage[]> {
-	const newMessages: AgentMessage[] = [...prompts];
+	const initialMessages = declareToolChanges(context, prompts);
+	const newMessages: AgentMessage[] = [...initialMessages];
 	const currentContext: AgentContext = {
 		...context,
-		messages: [...context.messages, ...prompts],
+		messages: [...context.messages, ...initialMessages],
 	};
 
 	await emit({ type: "agent_start" });
 	await emit({ type: "turn_start" });
-	for (const prompt of prompts) {
-		await emit({ type: "message_start", message: prompt });
-		await emit({ type: "message_end", message: prompt });
+	for (const message of initialMessages) {
+		await emit({ type: "message_start", message });
+		await emit({ type: "message_end", message });
 	}
 
 	await runLoop(currentContext, newMessages, config, signal, emit, streamFn ?? getDefaultStreamFn());
@@ -200,7 +219,7 @@ async function runLoop(
 			}
 
 			// Process prepared and queued messages before the next assistant response.
-			for (const message of [...preparedMessages, ...pendingMessages]) {
+			for (const message of declareToolChanges(currentContext, [...preparedMessages, ...pendingMessages])) {
 				await emit({ type: "message_start", message });
 				await emit({ type: "message_end", message });
 				currentContext.messages.push(message);
@@ -270,6 +289,52 @@ async function runLoop(
 	}
 
 	await emit({ type: "agent_end", messages: newMessages });
+}
+
+/**
+ * Declare tool loadout changes to the model.
+ *
+ * `context.tools` is what the runtime can execute; the transcript's system messages declare
+ * what the model may call. Any difference becomes a system message with `toolsAdded` and
+ * `toolsRemoved` before the next request: merged into the last pending system message when
+ * there is one, otherwise inserted before the first non-system pending message.
+ */
+function declareToolChanges(context: AgentContext, pendingMessages: AgentMessage[]): AgentMessage[] {
+	const declaredTools = getTranscriptSystemMessage([...context.messages, ...pendingMessages])?.toolsAdded ?? [];
+	const { toolsAdded, toolsRemoved } = getToolStateChanges(
+		declaredTools,
+		(context.tools ?? []).map(toToolDeclaration),
+	);
+	if (toolsAdded.length === 0 && toolsRemoved.length === 0) return pendingMessages;
+
+	let systemIndex = -1;
+	for (let i = pendingMessages.length - 1; i >= 0; i--) {
+		if (pendingMessages[i].role === "system") {
+			systemIndex = i;
+			break;
+		}
+	}
+	if (systemIndex !== -1) {
+		const existing = pendingMessages[systemIndex] as SystemMessage;
+		const mergedAdded = [...(existing.toolsAdded ?? []), ...toolsAdded];
+		const mergedRemoved = [...(existing.toolsRemoved ?? []), ...toolsRemoved];
+		const merged: SystemMessage = {
+			...existing,
+			...(mergedAdded.length > 0 ? { toolsAdded: mergedAdded } : {}),
+			...(mergedRemoved.length > 0 ? { toolsRemoved: mergedRemoved } : {}),
+		};
+		return pendingMessages.map((message, index) => (index === systemIndex ? merged : message));
+	}
+	const update: SystemMessage = {
+		role: "system",
+		content: "",
+		...(toolsAdded.length > 0 ? { toolsAdded } : {}),
+		...(toolsRemoved.length > 0 ? { toolsRemoved } : {}),
+		timestamp: Date.now(),
+	};
+	const insertIndex = pendingMessages.findIndex((message) => message.role !== "system");
+	const index = insertIndex === -1 ? pendingMessages.length : insertIndex;
+	return [...pendingMessages.slice(0, index), update, ...pendingMessages.slice(index)];
 }
 
 /**

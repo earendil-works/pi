@@ -278,7 +278,7 @@ describe("AgentSession prompt characterization", () => {
 		await harness.session.prompt("/testcmd hello world");
 
 		expect(commandRuns).toEqual(["hello world"]);
-		expect(harness.session.messages.map((message) => message.role)).toEqual(["system"]);
+		expect(harness.session.messages).toEqual([]);
 		expect(harness.getPendingResponseCount()).toBe(1);
 	});
 
@@ -307,7 +307,7 @@ describe("AgentSession prompt characterization", () => {
 		extensionApi?.sendUserMessage("/testcmd hello world", { expandPromptTemplates: true });
 
 		await expect(commandRun).resolves.toBe("hello world");
-		expect(harness.session.messages.map((message) => message.role)).toEqual(["system"]);
+		expect(harness.session.messages).toEqual([]);
 		expect(harness.getPendingResponseCount()).toBe(0);
 	});
 

@@ -15,10 +15,9 @@ import type {
 	Tool,
 } from "../types.ts";
 import { createUserTurnAppender } from "../utils/merge-adjacent-user-turns.ts";
-import { normalizeContext, withoutInitialSystemMessage } from "../utils/normalize-context.ts";
+import { collapseSystemMessages, normalizeContext, withoutInitialSystemMessage } from "../utils/normalize-context.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
-import { renderSystemMessageAsUserText } from "../utils/text.ts";
 import { getJsonSchemaToolParameters, resolveJsonSchemaStrictSampling } from "./constrained-sampling.ts";
 import { transformMessages } from "./transform-messages.ts";
 
@@ -132,7 +131,8 @@ function supportsMultimodalFunctionResponse(modelId: string): boolean {
  * Convert internal messages to Gemini Content[] format.
  */
 export function convertMessages<T extends GoogleApiType>(model: Model<T>, context: Context): Content[] {
-	const normalizedContext = withoutInitialSystemMessage(normalizeContext(context));
+	// Gemini has no mid-conversation system messages; the leading prompt is sent as systemInstruction.
+	const normalizedContext = withoutInitialSystemMessage(collapseSystemMessages(normalizeContext(context)));
 	const contents: Content[] = [];
 	const appendTurn = createUserTurnAppender(contents, (message) => {
 		message.parts ??= [];
@@ -146,15 +146,7 @@ export function convertMessages<T extends GoogleApiType>(model: Model<T>, contex
 	const transformedMessages = transformMessages(normalizedContext.messages, model, normalizeToolCallId);
 
 	for (const msg of transformedMessages) {
-		if (msg.role === "system") {
-			const text = renderSystemMessageAsUserText(msg);
-			if (text.length > 0) {
-				appendTurn(
-					{ role: "user", parts: [{ text: sanitizeSurrogates(text) }] },
-					{ mergeWithPrevious: true, mergeNext: true },
-				);
-			}
-		} else if (msg.role === "user") {
+		if (msg.role === "user") {
 			if (typeof msg.content === "string") {
 				appendTurn({
 					role: "user",

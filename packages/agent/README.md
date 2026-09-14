@@ -181,7 +181,8 @@ The last message in context must be `user` or `toolResult` (not `assistant`).
 
 ```typescript
 const agent = new Agent({
-  // Initial state
+  // Initial state. systemPrompt and tools become the leading system message
+  // unless messages already starts with one.
   initialState: {
     systemPrompt: string,
     model: Model<any>,
@@ -250,7 +251,6 @@ const agent = new Agent({
 
 ```typescript
 interface AgentState {
-  systemPrompt: string;
   model: Model<any>;
   thinkingLevel: ThinkingLevel;
   tools: AgentTool<any>[];
@@ -265,6 +265,17 @@ interface AgentState {
 Access state via `agent.state`.
 
 Assigning `agent.state.tools = [...]` or `agent.state.messages = [...]` copies the top-level array before storing it. Mutating the returned array mutates the current agent state.
+
+The transcript owns the system prompt and tool declarations: the leading system message is the prompt, later system messages patch it (see `SystemMessage` in pi-ai). `agent.state.systemPrompt` is read-only and replays the transcript. `agent.state.tools` is the executable loadout; before every request the loop diffs it against the tools the transcript declares and, if they differ, announces the change in a system message (merged into a pending system message when one exists). `getTranscriptSystemMessage(messages)` returns the replayed head, including declared tools, for any message array.
+
+To change the prompt mid-conversation, append a system message with `content` (added instructions) or `sections` (named replacements):
+
+```typescript
+await agent.prompt([
+  { role: "system", content: "", sections: { skills: "<skills>...</skills>" }, timestamp: Date.now() },
+  { role: "user", content: "Continue", timestamp: Date.now() },
+]);
+```
 
 During streaming, `agent.state.streamingMessage` contains the current partial assistant message.
 
@@ -293,7 +304,6 @@ await agent.continue();
 ### State Management
 
 ```typescript
-agent.state.systemPrompt = "New prompt";
 agent.state.model = getModel("openai", "gpt-4o");
 agent.state.thinkingLevel = "medium";
 agent.state.tools = [myTool];
@@ -484,8 +494,7 @@ For direct control without the Agent class:
 import { agentLoop, agentLoopContinue } from "@earendil-works/pi-agent-core";
 
 const context: AgentContext = {
-  systemPrompt: "You are helpful.",
-  messages: [],
+  messages: [{ role: "system", content: "You are helpful.", timestamp: Date.now() }],
   tools: [],
 };
 

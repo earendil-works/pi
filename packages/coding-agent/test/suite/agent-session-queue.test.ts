@@ -86,7 +86,7 @@ describe("AgentSession queue characterization", () => {
 
 		expect(commandRuns).toEqual(["hello world"]);
 		expect(harness.getPendingResponseCount()).toBe(0);
-		expect(harness.session.messages.map((message) => message.role)).toEqual(["system"]);
+		expect(harness.session.messages).toEqual([]);
 	});
 
 	it("delivers extension-origin steering messages before the next LLM call", async () => {

@@ -184,9 +184,14 @@ describe("AgentSession compaction characterization", () => {
 		expect(harness.session.messages[1]?.role).toBe("compactionSummary");
 	});
 
-	it("checkpoints current system state and removes retained system patches", async () => {
+	it("checkpoints the replayed system state and folds retained system patches into it", async () => {
 		const harness = await createHarness();
 		harnesses.push(harness);
+		harness.setResponses([fauxAssistantMessage("declared")]);
+		await harness.session.prompt("declare the prompt");
+		const declared = harness.session.messages[0];
+		if (declared?.role !== "system") throw new Error("expected declared system message");
+
 		const firstKeptEntryId = harness.sessionManager.appendMessage({
 			role: "user",
 			content: [{ type: "text", text: "kept before patch" }],
@@ -194,7 +199,8 @@ describe("AgentSession compaction characterization", () => {
 		});
 		harness.sessionManager.appendMessage({
 			role: "system",
-			content: "stale retained patch",
+			content: "retained instruction",
+			sections: { extra: "<extra>late</extra>" },
 			toolsRemoved: [{ name: "read" }],
 			timestamp: Date.now(),
 		});
@@ -208,12 +214,12 @@ describe("AgentSession compaction characterization", () => {
 		const messages = harness.sessionManager.buildSessionContext().messages;
 		expect(messages.map((message) => message.role)).toEqual(["system", "compactionSummary", "user", "user"]);
 		const checkpoint = messages[0];
-		expect(checkpoint?.role).toBe("system");
-		if (checkpoint?.role === "system") {
-			expect(checkpoint.content).toBe(harness.session.systemPrompt);
-			expect(checkpoint.toolsAdded?.map((tool) => tool.name)).toEqual(harness.session.getActiveToolNames());
-		}
-		expect(JSON.stringify(messages)).not.toContain("stale retained patch");
+		if (checkpoint?.role !== "system") throw new Error("expected checkpoint system message");
+		expect(checkpoint.content).toBe("retained instruction");
+		expect(checkpoint.sections).toEqual({ ...declared.sections, extra: "<extra>late</extra>" });
+		expect(checkpoint.toolsAdded?.map((tool) => tool.name)).toEqual(
+			harness.session.getActiveToolNames().filter((name) => name !== "read"),
+		);
 	});
 
 	it("allows a queued prompt to start when manual compaction ends", async () => {
@@ -276,7 +282,7 @@ describe("AgentSession compaction characterization", () => {
 		const result = await harness.session.compact();
 
 		expect(result.summary).toContain("summary from custom stream");
-		expect(getStreamCallCount()).toBe(2);
+		expect(getStreamCallCount()).toBe(1);
 	});
 
 	it("manually compacts with provider-resolved bearer auth", async () => {
@@ -305,12 +311,12 @@ describe("AgentSession compaction characterization", () => {
 			expect(options?.headers).toEqual({ Authorization: "Bearer ambient-token" });
 			return fauxAssistantMessage("summary with bearer auth");
 		};
-		harness.setResponses([summaryResponse, summaryResponse]);
+		harness.setResponses([summaryResponse]);
 
 		const result = await harness.session.compact();
 
 		expect(result.summary).toContain("summary with bearer auth");
-		expect(harness.faux.state.callCount).toBe(2);
+		expect(harness.faux.state.callCount).toBe(1);
 	});
 
 	it("uses the standalone compaction request context", async () => {
@@ -350,10 +356,10 @@ describe("AgentSession compaction characterization", () => {
 		const result = await harness.session.compact();
 
 		const compactionEntries = harness.sessionManager.getEntries().filter((entry) => entry.type === "compaction");
-		expect(result.usage).toEqual(createUsage(20));
+		expect(result.usage).toEqual(createUsage(10));
 		expect(compactionEntries).toHaveLength(1);
 		expect(compactionEntries[0]?.type === "compaction" ? compactionEntries[0].usage : undefined).toEqual(
-			createUsage(20),
+			createUsage(10),
 		);
 	});
 
@@ -370,7 +376,7 @@ describe("AgentSession compaction characterization", () => {
 		const compactionEnd = harness.eventsOfType("compaction_end").at(-1);
 		expect(compactionEntries).toHaveLength(1);
 		expect(compactionEnd?.result?.estimatedTokensAfter).toBeGreaterThan(0);
-		expect(getStreamCallCount()).toBe(2);
+		expect(getStreamCallCount()).toBe(1);
 	});
 
 	it("notifies extensions when auto-compaction fails", async () => {

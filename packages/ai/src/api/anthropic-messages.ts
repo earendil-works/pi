@@ -36,6 +36,7 @@ import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { parseJsonWithRepair, parseStreamingJson } from "../utils/json-parse.ts";
 import {
+	collapseSystemMessages,
 	getCurrentTools,
 	getInitialSystemMessage,
 	normalizeContext,
@@ -45,7 +46,7 @@ import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
-import { getSystemMessageText, renderSystemMessageAsUserText } from "../utils/text.ts";
+import { getSystemMessageText, renderSystemMessageUpdate } from "../utils/text.ts";
 import { getDeclaredTools } from "../utils/transcript-state.ts";
 
 import { getJsonSchemaToolParameters, resolveJsonSchemaStrictSampling } from "./constrained-sampling.ts";
@@ -500,7 +501,9 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 	options?: AnthropicOptions,
 ): AssistantMessageEventStream => {
 	const stream = new AssistantMessageEventStream();
-	const normalizedContext = normalizeContext(context);
+	const normalizedContext = getAnthropicCompat(model).supportsMidConvoSystemMessages
+		? normalizeContext(context)
+		: collapseSystemMessages(normalizeContext(context));
 	const currentTools = getCurrentTools(normalizedContext);
 
 	(async () => {
@@ -1030,14 +1033,14 @@ function buildParams(
 	const initialSystemText = initialSystemMessage ? getSystemMessageText(initialSystemMessage) : "";
 	const transformedMessages = transformMessages(context.messages, model, normalizeToolCallId);
 	const conversationMessages = initialSystemMessage ? transformedMessages.slice(1) : transformedMessages;
+	const supportsMidConvoToolChanges = compat.supportsMidConvoSystemMessages && compat.supportsMidConvoToolChanges;
 	const converted = convertMessages(
 		conversationMessages,
 		isOAuthToken,
 		cacheControl,
 		compat.allowEmptySignature,
 		model.compat?.supportsMidConvoEffort === true ? model.provider : undefined,
-		compat.supportsMidConvoSystemMessages,
-		compat.supportsMidConvoToolChanges,
+		supportsMidConvoToolChanges,
 	);
 	const activeEffort = options?.effort ?? "high";
 	const betaFeatures = getBetaFeatures(model, context, isOAuthToken, options);
@@ -1089,7 +1092,7 @@ function buildParams(
 		params.temperature = options.temperature;
 	}
 
-	const tools = compat.supportsMidConvoToolChanges ? getDeclaredTools(context) : getCurrentTools(context);
+	const tools = supportsMidConvoToolChanges ? getDeclaredTools(context) : getCurrentTools(context);
 	if (tools.length > 0) {
 		params.tools = convertTools(
 			tools,
@@ -1181,7 +1184,6 @@ function convertMessages(
 	cacheControl?: CacheControlEphemeral,
 	allowEmptySignature = false,
 	managedProvider?: string,
-	supportsMidConvoSystemMessages = false,
 	supportsMidConvoToolChanges = false,
 ): ConvertedAnthropicMessages {
 	const params: MessageParam[] = [];
@@ -1196,31 +1198,26 @@ function convertMessages(
 		const msg = transformedMessages[i];
 
 		if (msg.role === "system") {
-			const text = getSystemMessageText(msg);
-			if (supportsMidConvoSystemMessages) {
-				const blocks: ContentBlockParam[] = [];
-				if (text.length > 0) blocks.push({ type: "text", text: sanitizeSurrogates(text) });
-				if (supportsMidConvoToolChanges) {
-					for (const tool of msg.toolsRemoved ?? []) {
-						blocks.push({
-							type: "tool_removal",
-							tool: { type: "tool_reference", name: isOAuthToken ? toClaudeCodeName(tool.name) : tool.name },
-						});
-					}
-					for (const tool of msg.toolsAdded ?? []) {
-						blocks.push({
-							type: "tool_addition",
-							tool: { type: "tool_reference", name: isOAuthToken ? toClaudeCodeName(tool.name) : tool.name },
-						});
-					}
+			// Later system messages only reach this point when the model accepts them natively;
+			// otherwise the transcript was collapsed into the leading message before conversion.
+			const text = renderSystemMessageUpdate(msg);
+			const blocks: ContentBlockParam[] = [];
+			if (text.length > 0) blocks.push({ type: "text", text: sanitizeSurrogates(text) });
+			if (supportsMidConvoToolChanges) {
+				for (const tool of msg.toolsRemoved ?? []) {
+					blocks.push({
+						type: "tool_removal",
+						tool: { type: "tool_reference", name: isOAuthToken ? toClaudeCodeName(tool.name) : tool.name },
+					});
 				}
-				if (blocks.length > 0) pendingSystemMessages.push({ role: "system", content: blocks });
-			} else if (text.length > 0) {
-				params.push({
-					role: "user",
-					content: [{ type: "text", text: sanitizeSurrogates(renderSystemMessageAsUserText(msg)) }],
-				});
+				for (const tool of msg.toolsAdded ?? []) {
+					blocks.push({
+						type: "tool_addition",
+						tool: { type: "tool_reference", name: isOAuthToken ? toClaudeCodeName(tool.name) : tool.name },
+					});
+				}
 			}
+			if (blocks.length > 0) pendingSystemMessages.push({ role: "system", content: blocks });
 		} else if (msg.role === "user") {
 			if (typeof msg.content === "string") {
 				if (msg.content.trim().length > 0) {
