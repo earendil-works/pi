@@ -53,6 +53,42 @@ describe("provider retry classification", () => {
 		).toBe(true);
 	});
 
+	it("matches HTTP/2 mid-stream transport drops from OpenRouter upstreams", () => {
+		// Observed live: OpenRouter routing to Together, during DeepSeek V4.1 Flash and
+		// GLM 5.3 Flash sessions (stream died mid-turn, no retry was attempted).
+		expect(
+			isRetryableAssistantError(
+				fauxAssistantMessage("", {
+					stopReason: "error",
+					errorMessage:
+						"Upstream error from Together: Stream error: h2 protocol error: error reading a body from connection",
+				}),
+			),
+		).toBe(true);
+		for (const errorMessage of [
+			"Stream error: h2 protocol error: error reading a body from connection",
+			"h2 protocol error: error reading a body from connection",
+			"stream error: connection reset",
+		]) {
+			expect(isRetryableAssistantError(fauxAssistantMessage("", { stopReason: "error", errorMessage }))).toBe(true);
+		}
+	});
+
+	it("retries a nonstandard terminal finish_reason of error", () => {
+		// Providers can terminate a stream with finish_reason "error" (observed live on
+		// z-ai/glm-5.3-flash); that is transient, unlike content_filter.
+		expect(
+			isRetryableAssistantError(
+				fauxAssistantMessage("", { stopReason: "error", errorMessage: "Provider finish_reason: error" }),
+			),
+		).toBe(true);
+		expect(
+			isRetryableAssistantError(
+				fauxAssistantMessage("", { stopReason: "error", errorMessage: "Provider finish_reason: content_filter" }),
+			),
+		).toBe(false);
+	});
+
 	it.each([
 		wrappedDnsLookupError,
 		"connect ENOTFOUND api.example.com",

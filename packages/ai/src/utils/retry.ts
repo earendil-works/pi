@@ -61,6 +61,20 @@ const RETRYABLE_PROVIDER_ERROR_PATTERN = buildProviderErrorPattern([
 	"reset before headers",
 	"socket hang up",
 
+	// HTTP/2 transport drops mid-stream. undici reports these when an upstream
+	// (e.g. OpenRouter routing to Together) tears down the h2 connection while the
+	// body is streaming: "Stream error: h2 protocol error: error reading a body
+	// from connection". Bedrock/Smithy have their own http2 wording below (#3594).
+	"h2 protocol error",
+	"error reading a body from connection",
+	"stream error",
+
+	// Nonstandard terminal finish reasons. Providers (notably DeepSeek/Z.ai on
+	// OpenRouter) can end a stream with `finish_reason: "error"` after degrading;
+	// that is a transient upstream failure, unlike the explicitly non-transient
+	// `content_filter` reason, which this pattern deliberately does not match.
+	"finish_reason: error",
+
 	// Undici transport-level abort ("This/The operation was aborted"). A genuine
 	// connection drop surfaces here as an error when no local abort signal fired;
 	// user- or locally-cancelled requests are mapped to stopReason "aborted" before
