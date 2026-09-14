@@ -68,6 +68,13 @@ export interface BashOperations {
 		cwd: string,
 		options: {
 			onData: (data: Buffer) => void;
+			/**
+			 * Called once with the process id of the shell, as soon as it exists.
+			 * Observation only: hosts that account for the processes they start
+			 * (a headless server, a desktop app measuring its own tree) otherwise
+			 * have no way to tell which process a command is.
+			 */
+			onSpawn?: (pid: number) => void;
 			signal?: AbortSignal;
 			timeout?: number;
 			env?: NodeJS.ProcessEnv;
@@ -78,7 +85,7 @@ export interface BashOperations {
 /** Shared process execution used by the built-in shell tools. */
 export function createLocalShellOperations(shellName: string, resolveShellConfig: () => ShellConfig): BashOperations {
 	return {
-		exec: async (command, cwd, { onData, signal, timeout, env }) => {
+		exec: async (command, cwd, { onData, onSpawn, signal, timeout, env }) => {
 			const timeoutMs = resolveTimeoutMs(timeout);
 			if (signal?.aborted) {
 				throw new Error("aborted");
@@ -103,6 +110,14 @@ export function createLocalShellOperations(shellName: string, resolveShellConfig
 				child.stdin?.end(command);
 			}
 			if (child.pid) trackDetachedChildPid(child.pid);
+			if (child.pid && onSpawn) {
+				// A failing observer must not change how the command runs.
+				try {
+					onSpawn(child.pid);
+				} catch {
+					// Ignored on purpose.
+				}
+			}
 			let timedOut = false;
 			let timeoutHandle: NodeJS.Timeout | undefined;
 			const onAbort = () => {
