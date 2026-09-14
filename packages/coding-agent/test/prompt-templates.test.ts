@@ -13,6 +13,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { afterAll, describe, expect, test } from "vitest";
 import { getAgentDir } from "../src/config.ts";
+import type { ResourceDiagnostic } from "../src/core/diagnostics.ts";
 import {
 	expandPromptTemplate,
 	loadPromptTemplates,
@@ -620,5 +621,45 @@ Analyze GitHub issue(s): $ARGUMENTS`,
 		try {
 			rmSync(testDir, { recursive: true, force: true });
 		} catch {}
+	});
+});
+
+// loadPromptTemplates - invalid frontmatter diagnostics
+// ============================================================================
+
+describe("loadPromptTemplates - invalid frontmatter", () => {
+	const testDir = join(tmpdir(), `pi-test-prompts-invalid-${Date.now()}`);
+
+	afterAll(() => {
+		try {
+			rmSync(testDir, { recursive: true, force: true });
+		} catch {}
+	});
+
+	// #9354
+	test("warns instead of silently dropping a template with invalid YAML frontmatter", () => {
+		mkdirSync(testDir, { recursive: true });
+		writeFileSync(
+			join(testDir, "foo.md"),
+			`---\ndescription: [unclosed\n---\nDo something.\n`,
+		);
+
+		const diagnostics: ResourceDiagnostic[] = [];
+		const templates = loadPromptTemplates({
+			cwd: process.cwd(),
+			agentDir: getAgentDir(),
+			promptPaths: [testDir],
+			includeDefaults: false,
+			diagnostics,
+		});
+
+		expect(templates.find((t) => t.name === "foo")).toBeUndefined();
+		expect(diagnostics).toEqual([
+			expect.objectContaining({
+				type: "warning",
+				path: join(testDir, "foo.md"),
+			}),
+		]);
+		expect(diagnostics[0]?.message.length).toBeGreaterThan(0);
 	});
 });
