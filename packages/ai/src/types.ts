@@ -229,6 +229,14 @@ export interface StreamOptions extends ProviderRequestOptions<Model<Api>> {
 	 */
 	websocketConnectTimeoutMs?: number;
 	/**
+	 * Idle budget in milliseconds for streamed responses: the longest gap tolerated
+	 * between two streamed chunks before the attempt is aborted with a retryable
+	 * timeout error. Guards against providers that accept a request and then stop
+	 * sending data mid-stream (observed with very large contexts).
+	 * Default: 180000 (3 minutes).
+	 */
+	streamIdleTimeoutMs?: number;
+	/**
 	 * Optional metadata to include in API requests.
 	 * Providers extract the fields they understand and ignore the rest.
 	 * For example, Anthropic uses `user_id` for abuse tracking and rate limiting.

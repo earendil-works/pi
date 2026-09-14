@@ -313,6 +313,56 @@ function resolveCacheRetention(cacheRetention?: CacheRetention, env?: ProviderEn
 	return "short";
 }
 
+/**
+ * Default idle budget for a streaming response, in milliseconds.
+ *
+ * A provider can accept the request and then stop sending data entirely. This shows up
+ * with very large contexts: throughput degrades to a few tokens per second, the
+ * connection goes quiet, and no terminal error arrives. Without a guard the turn blocks
+ * until the transport itself gives up; exceeding this budget aborts the attempt with a
+ * retryable "timed out" error instead, so the auto-retry policy can recover it.
+ */
+export const DEFAULT_STREAM_IDLE_TIMEOUT_MS = 180_000;
+
+function normalizeStreamIdleTimeout(value: number | undefined): number {
+	if (value === undefined) return DEFAULT_STREAM_IDLE_TIMEOUT_MS;
+	if (!Number.isFinite(value) || value <= 0) {
+		throw new Error(`Invalid streamIdleTimeoutMs: ${String(value)}`);
+	}
+	return value;
+}
+
+/**
+ * Reject when no item arrives from `source` within `idleTimeoutMs`, so a silent provider
+ * stream surfaces as a retryable error instead of blocking the turn indefinitely.
+ */
+async function* withIdleTimeout<T>(source: AsyncIterable<T>, idleTimeoutMs: number): AsyncGenerator<T> {
+	const iterator = source[Symbol.asyncIterator]();
+	try {
+		for (;;) {
+			let timer: ReturnType<typeof setTimeout> | undefined;
+			const idle = new Promise<never>((_resolve, reject) => {
+				timer = setTimeout(() => {
+					reject(new Error(`Provider stream timed out: no data received for ${idleTimeoutMs}ms`));
+				}, idleTimeoutMs);
+			});
+			try {
+				const next = await Promise.race([iterator.next(), idle]);
+				if (next.done) return;
+				yield next.value;
+			} finally {
+				if (timer !== undefined) clearTimeout(timer);
+			}
+		}
+	} finally {
+		// Abandoning a silent stream must close it. A suspended generator can keep the
+		// pending await forever, so cleanup is deliberately fire-and-forget: the timeout
+		// error is what the caller needs, not a second hang on teardown.
+		const cleanup = iterator.return?.();
+		if (cleanup) void cleanup.catch(() => {});
+	}
+}
+
 export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptions> = (
 	model: Model<"openai-completions">,
 	context: TranscriptContext,
@@ -574,7 +624,8 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 				return block;
 			};
 
-			for await (const chunk of openaiStream) {
+			const streamIdleTimeoutMs = normalizeStreamIdleTimeout(options?.streamIdleTimeoutMs);
+			for await (const chunk of withIdleTimeout(openaiStream, streamIdleTimeoutMs)) {
 				await options?.onProviderStreamEvent?.(chunk, model);
 				if (!chunk || typeof chunk !== "object") continue;
 
