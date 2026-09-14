@@ -217,6 +217,14 @@ describe("Token Statistics on Abort", () => {
 		});
 	});
 
+	describe.skipIf(!process.env.GMI_API_KEY)("GMI Cloud Provider", () => {
+		const llm = getModel("gmi", "Qwen/Qwen3.8-Flash");
+
+		it("should include token stats when aborted mid-stream", { retry: 3, timeout: 30000 }, async () => {
+			await testTokensOnAbort(llm, { reasoningEffort: "high" });
+		});
+	});
+
 	describe.skipIf(!process.env.MINIMAX_API_KEY)("MiniMax Provider", () => {
 		const llm = getModel("minimax", "MiniMax-M2.7");
 

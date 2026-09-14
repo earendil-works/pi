@@ -4,6 +4,8 @@
 
 ### Added
 
+- Added GMI Cloud as a built-in OpenAI-compatible provider (`gmi`, `GMI_API_KEY`/`GMICLOUD_API_KEY`) with an 80-model catalog spanning Anthropic, OpenAI, Google, Qwen, DeepSeek, GLM, Kimi and MiniMax.
+
 - Enabled native deferred tool loading for Fireworks Messages models. Use `ToolSearch` or `tool_search` as the loader name for prompt-prefix deferral ([#9323](https://github.com/earendil-works/pi/issues/9323)).
 
 ### Fixed

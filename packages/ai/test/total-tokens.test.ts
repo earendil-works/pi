@@ -417,6 +417,28 @@ describe("totalTokens field", () => {
 		});
 	});
 
+	describe.skipIf(!process.env.GMI_API_KEY)("GMI Cloud", () => {
+		it(
+			"Qwen3.8 Flash - should return totalTokens equal to sum of components",
+			{ retry: 3, timeout: 60000 },
+			async () => {
+				const llm = getModel("gmi", "Qwen/Qwen3.8-Flash");
+
+				console.log(`\nGMI Cloud / ${llm.id}:`);
+				const { first, second } = await testTotalTokensWithCache(llm, {
+					apiKey: process.env.GMI_API_KEY,
+					reasoningEffort: "high",
+				});
+
+				logUsage("First request", first);
+				logUsage("Second request", second);
+
+				assertTotalTokensEqualsComponents(first);
+				assertTotalTokensEqualsComponents(second);
+			},
+		);
+	});
+
 	// =========================================================================
 	// z.ai
 	// =========================================================================

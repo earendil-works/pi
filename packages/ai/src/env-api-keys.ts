@@ -76,6 +76,14 @@ function getApiKeyEnvVars(provider: string): readonly string[] | undefined {
 		return [ANTHROPIC_AUTH_TOKEN_ENV, ANTHROPIC_OAUTH_TOKEN_ENV, ANTHROPIC_API_KEY_ENV];
 	}
 
+	// GMI_API_KEY follows the repo's <PROVIDER>_API_KEY convention; GMICLOUD_API_KEY is
+	// the variable GMI Cloud publishes in its own docs. Keep both here in the same order
+	// as gmiProvider()'s envApiKeyAuth() list so discovery/status and credential
+	// resolution never disagree.
+	if (provider === "gmi") {
+		return ["GMI_API_KEY", "GMICLOUD_API_KEY"];
+	}
+
 	const envMap: Record<string, string> = {
 		"ant-ling": "ANT_LING_API_KEY",
 		"qwen-token-plan": "QWEN_TOKEN_PLAN_API_KEY",

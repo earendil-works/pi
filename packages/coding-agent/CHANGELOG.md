@@ -4,6 +4,8 @@
 
 ### Added
 
+- Added GMI Cloud as a built-in provider. Set `GMI_API_KEY` (or `GMICLOUD_API_KEY`) or run `/login gmi`; the default model is `Qwen/Qwen3.8-Flash`.
+
 - Added `ctx.modelRegistry.stream()` and `streamSimple()` for extension model calls through configured providers with resolved authentication ([#8964](https://github.com/earendil-works/pi/issues/8964)).
 - Added per-model `reserveTokens` and `keepRecentTokens` settings through `compaction.modelOverrides`, with ordinary compaction settings as fallback ([#8133](https://github.com/earendil-works/pi-mono/issues/8133)).
 

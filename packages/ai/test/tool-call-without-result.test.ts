@@ -222,6 +222,14 @@ describe("Tool Call Without Result Tests", () => {
 		});
 	});
 
+	describe.skipIf(!process.env.GMI_API_KEY)("GMI Cloud Provider", () => {
+		const model = getModel("gmi", "Qwen/Qwen3.8-Flash");
+
+		it("should filter out tool calls without corresponding tool results", { retry: 3, timeout: 30000 }, async () => {
+			await testToolCallWithoutResult(model, { reasoningEffort: "high" });
+		});
+	});
+
 	describe.skipIf(!process.env.MINIMAX_API_KEY)("MiniMax Provider", () => {
 		const model = getModel("minimax", "MiniMax-M2.7");
 

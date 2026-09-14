@@ -808,6 +808,31 @@ describe("Generate E2E Tests", () => {
 		});
 	});
 
+	describe.skipIf(!process.env.GMI_API_KEY)("GMI Cloud Provider (Qwen3.8 Flash via OpenAI Completions)", () => {
+		const llm = getModel("gmi", "Qwen/Qwen3.8-Flash");
+		const options = { reasoningEffort: "high" } satisfies StreamOptionsWithExtras;
+
+		it("should complete basic text generation", { retry: 3 }, async () => {
+			await basicTextGeneration(llm, options);
+		});
+
+		it("should handle tool calling", { retry: 3 }, async () => {
+			await handleToolCall(llm, options);
+		});
+
+		it("should handle streaming", { retry: 3 }, async () => {
+			await handleStreaming(llm, options);
+		});
+
+		it("should handle thinking mode", { retry: 3 }, async () => {
+			await handleThinking(llm, options);
+		});
+
+		it("should handle multi-turn with thinking and tools", { retry: 3 }, async () => {
+			await multiTurn(llm, options);
+		});
+	});
+
 	describe.skipIf(!process.env.NVIDIA_API_KEY)("NVIDIA NIM Provider (Nemotron 3 Super via OpenAI Completions)", () => {
 		const llm = getModel("nvidia", "nvidia/nemotron-3-super-120b-a12b");
 

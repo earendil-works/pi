@@ -110,6 +110,10 @@ const PROVIDER_MODEL_PAIRS: ProviderModelPair[] = [
 	{ provider: "together", model: "moonshotai/Kimi-K2.6", label: "together-kimi-k2.6" },
 	// Baseten
 	{ provider: "baseten", model: "zai-org/GLM-5.2", label: "baseten-glm-5.2" },
+	// GMI Cloud
+	{ provider: "gmi", model: "Qwen/Qwen3.8-Flash", label: "gmi-qwen3.8-flash" },
+	{ provider: "gmi", model: "anthropic/claude-sonnet-5", label: "gmi-claude-sonnet-5" },
+	{ provider: "gmi", model: "openai/gpt-5.5", label: "gmi-gpt-5.5" },
 	// Kimi For Coding
 	{ provider: "kimi-coding", model: "kimi-for-coding", label: "kimi-for-coding" },
 	// Mistral

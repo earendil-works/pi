@@ -407,6 +407,27 @@ describe("AI Providers Empty Message Tests", () => {
 		});
 	});
 
+	describe.skipIf(!process.env.GMI_API_KEY)("GMI Cloud Provider Empty Messages", () => {
+		const llm = getModel("gmi", "Qwen/Qwen3.8-Flash");
+		const options = { reasoningEffort: "high" } satisfies StreamOptionsWithExtras;
+
+		it("should handle empty content array", { retry: 3, timeout: 30000 }, async () => {
+			await testEmptyMessage(llm, options);
+		});
+
+		it("should handle empty string content", { retry: 3, timeout: 30000 }, async () => {
+			await testEmptyStringMessage(llm, options);
+		});
+
+		it("should handle whitespace-only content", { retry: 3, timeout: 30000 }, async () => {
+			await testWhitespaceOnlyMessage(llm, options);
+		});
+
+		it("should handle empty assistant message in conversation", { retry: 3, timeout: 30000 }, async () => {
+			await testEmptyAssistantMessage(llm, options);
+		});
+	});
+
 	describe.skipIf(!process.env.ZAI_API_KEY)("zAI Provider Empty Messages", () => {
 		const llm = getModel("zai", "glm-5.2");
 

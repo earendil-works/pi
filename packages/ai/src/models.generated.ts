@@ -12,6 +12,7 @@ import { CLOUDFLARE_WORKERS_AI_MODELS } from "./providers/cloudflare-workers-ai.
 import { DEEPSEEK_MODELS } from "./providers/deepseek.models.ts";
 import { FIREWORKS_MODELS } from "./providers/fireworks.models.ts";
 import { GITHUB_COPILOT_MODELS } from "./providers/github-copilot.models.ts";
+import { GMI_MODELS } from "./providers/gmi.models.ts";
 import { GOOGLE_MODELS } from "./providers/google.models.ts";
 import { GOOGLE_VERTEX_MODELS } from "./providers/google-vertex.models.ts";
 import { GROQ_MODELS } from "./providers/groq.models.ts";
@@ -53,6 +54,7 @@ export const MODELS: {
 	readonly "deepseek": typeof DEEPSEEK_MODELS;
 	readonly "fireworks": typeof FIREWORKS_MODELS;
 	readonly "github-copilot": typeof GITHUB_COPILOT_MODELS;
+	readonly "gmi": typeof GMI_MODELS;
 	readonly "google": typeof GOOGLE_MODELS;
 	readonly "google-vertex": typeof GOOGLE_VERTEX_MODELS;
 	readonly "groq": typeof GROQ_MODELS;
@@ -93,6 +95,7 @@ export const MODELS: {
 	"deepseek": DEEPSEEK_MODELS,
 	"fireworks": FIREWORKS_MODELS,
 	"github-copilot": GITHUB_COPILOT_MODELS,
+	"gmi": GMI_MODELS,
 	"google": GOOGLE_MODELS,
 	"google-vertex": GOOGLE_VERTEX_MODELS,
 	"groq": GROQ_MODELS,
