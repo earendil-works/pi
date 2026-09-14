@@ -107,36 +107,48 @@ function loadTemplateFromFile(
 	sourceInfo: SourceInfo,
 	diagnostics?: ResourceDiagnostic[],
 ): PromptTemplate | null {
+	let rawContent: string;
 	try {
-		const rawContent = readFileSync(filePath, "utf-8");
-		const { frontmatter, body } = parseFrontmatter<Record<string, string>>(rawContent);
+		rawContent = readFileSync(filePath, "utf-8");
+	} catch (error) {
+		const message = error instanceof Error ? error.message : "failed to read prompt template file";
+		diagnostics?.push({ type: "warning", message, path: filePath });
+		return null;
+	}
 
-		const name = basename(filePath).replace(/\.md$/, "");
-
-		// Get description from frontmatter or first non-empty line
-		let description = frontmatter.description || "";
-		if (!description) {
-			const firstLine = body.split("\n").find((line) => line.trim());
-			if (firstLine) {
-				// Truncate if too long
-				description = firstLine.slice(0, 60);
-				if (firstLine.length > 60) description += "...";
-			}
-		}
-
-		return {
-			name,
-			description,
-			...(frontmatter["argument-hint"] && { argumentHint: frontmatter["argument-hint"] }),
-			content: body,
-			sourceInfo,
-			filePath,
-		};
+	let frontmatter: Record<string, string>;
+	let body: string;
+	try {
+		({ frontmatter, body } = parseFrontmatter<Record<string, string>>(rawContent));
 	} catch (error) {
 		const message = error instanceof Error ? error.message : "failed to parse prompt template file";
 		diagnostics?.push({ type: "warning", message, path: filePath });
 		return null;
 	}
+
+	const name = basename(filePath).replace(/\.md$/, "");
+
+	// Get description from frontmatter or first non-empty line
+	let description = typeof frontmatter.description === "string" ? frontmatter.description : "";
+	if (!description) {
+		const firstLine = body.split("\n").find((line) => line.trim());
+		if (firstLine) {
+			// Truncate if too long
+			description = firstLine.slice(0, 60);
+			if (firstLine.length > 60) description += "...";
+		}
+	}
+
+	const argumentHint = typeof frontmatter["argument-hint"] === "string" ? frontmatter["argument-hint"] : undefined;
+
+	return {
+		name,
+		description,
+		...(argumentHint && { argumentHint }),
+		content: body,
+		sourceInfo,
+		filePath,
+	};
 }
 
 /**

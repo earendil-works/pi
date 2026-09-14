@@ -639,10 +639,7 @@ describe("loadPromptTemplates - invalid frontmatter", () => {
 	// #9354
 	test("warns instead of silently dropping a template with invalid YAML frontmatter", () => {
 		mkdirSync(testDir, { recursive: true });
-		writeFileSync(
-			join(testDir, "foo.md"),
-			`---\ndescription: [unclosed\n---\nDo something.\n`,
-		);
+		writeFileSync(join(testDir, "foo.md"), `---\ndescription: [unclosed\n---\nDo something.\n`);
 
 		const diagnostics: ResourceDiagnostic[] = [];
 		const templates = loadPromptTemplates({
@@ -661,5 +658,24 @@ describe("loadPromptTemplates - invalid frontmatter", () => {
 			}),
 		]);
 		expect(diagnostics[0]?.message.length).toBeGreaterThan(0);
+	});
+
+	test("still loads valid templates in the same directory", () => {
+		mkdirSync(testDir, { recursive: true });
+		writeFileSync(join(testDir, "foo.md"), `---\ndescription: [unclosed\n---\nDo something.\n`);
+		writeFileSync(join(testDir, "ok.md"), `---\ndescription: A working template\n---\nDo the thing.\n`);
+
+		const diagnostics: ResourceDiagnostic[] = [];
+		const templates = loadPromptTemplates({
+			cwd: process.cwd(),
+			agentDir: getAgentDir(),
+			promptPaths: [testDir],
+			includeDefaults: false,
+			diagnostics,
+		});
+
+		expect(templates.map((t) => t.name).sort()).toEqual(["ok"]);
+		expect(diagnostics).toHaveLength(1);
+		expect(diagnostics[0]?.path).toBe(join(testDir, "foo.md"));
 	});
 });
