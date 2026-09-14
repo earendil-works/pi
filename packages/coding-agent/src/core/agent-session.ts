@@ -580,6 +580,8 @@ export class AgentSession {
 				toolGuidelines: { ...this._baseSystemPromptOptions.toolGuidelines, ...runOptions.toolGuidelines },
 			});
 			const updateMessage = this._preparePromptAndToolLoadout(options, nextContext.messages);
+			// Keep session.systemPrompt and ctx.getSystemPrompt() in step with what the provider sees.
+			this._runSystemPromptOptions = options;
 
 			return {
 				...previousSnapshot,

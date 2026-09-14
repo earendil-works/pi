@@ -1,4 +1,10 @@
-import { type AssistantMessage, type AssistantMessageEvent, EventStream, getModel } from "@earendil-works/pi-ai/compat";
+import {
+	type AssistantMessage,
+	type AssistantMessageEvent,
+	EventStream,
+	getModel,
+	toToolDeclaration,
+} from "@earendil-works/pi-ai/compat";
 import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
 import {
@@ -6,6 +12,7 @@ import {
 	type AgentEvent,
 	type AgentTool,
 	type AgentToolUpdateCallback,
+	getTranscriptSystemMessage,
 	type StreamFn,
 	setDefaultStreamFn,
 } from "../src/index.ts";
@@ -45,6 +52,16 @@ function createAssistantMessage(text: string): AssistantMessage {
 }
 
 type ToolCallContent = Extract<AssistantMessage["content"][number], { type: "toolCall" }>;
+
+function createTool(name: string): AgentTool {
+	return {
+		name,
+		label: name,
+		description: `${name} tool`,
+		parameters: Type.Object({}),
+		execute: async () => ({ content: [{ type: "text", text: name }], details: {} }),
+	};
+}
 
 function createAssistantToolUseMessage(content: ToolCallContent[]): AssistantMessage {
 	return {
@@ -154,13 +171,6 @@ describe("Agent", () => {
 	});
 
 	it("declares tool loadout changes to the model before the next request", async () => {
-		const createTool = (name: string): AgentTool => ({
-			name,
-			label: name,
-			description: `${name} tool`,
-			parameters: Type.Object({}),
-			execute: async () => ({ content: [{ type: "text", text: name }], details: {} }),
-		});
 		const first = createTool("first");
 		const second = createTool("second");
 		const requests: string[][] = [];
@@ -241,6 +251,41 @@ describe("Agent", () => {
 			toolsAdded: [{ name: "echo", description: "Echo input", parameters: Type.Object({}) }],
 			timestamp: 1,
 		});
+	});
+
+	it("rewrites pending tool declarations to match the executable set", async () => {
+		const agent = new Agent({
+			initialState: { systemPrompt: "You are helpful.", tools: [createTool("first")] },
+			streamFn: () => {
+				const stream = new MockAssistantStream();
+				queueMicrotask(() => {
+					stream.push({ type: "done", reason: "stop", message: createAssistantMessage("done") });
+				});
+				return stream;
+			},
+		});
+
+		// The pending message claims to add `second` and remove `first`, but the executable
+		// set still has `first` and lacks `second`: the executable set wins.
+		await agent.prompt([
+			{
+				role: "system",
+				content: "",
+				sections: { note: "<note>x</note>" },
+				toolsAdded: [toToolDeclaration(createTool("second"))],
+				toolsRemoved: [{ name: "first" }],
+				timestamp: 1,
+			},
+			{ role: "user", content: "hi", timestamp: 2 },
+		]);
+
+		expect(agent.state.messages[1]).toEqual({
+			role: "system",
+			content: "",
+			sections: { note: "<note>x</note>" },
+			timestamp: 1,
+		});
+		expect(getTranscriptSystemMessage(agent.state.messages)?.toolsAdded?.map((tool) => tool.name)).toEqual(["first"]);
 	});
 
 	it("restores the transcript baseline when reset", () => {

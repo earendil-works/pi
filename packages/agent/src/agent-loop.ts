@@ -295,18 +295,13 @@ async function runLoop(
  * Declare tool loadout changes to the model.
  *
  * `context.tools` is what the runtime can execute; the transcript's system messages declare
- * what the model may call. Any difference becomes a system message with `toolsAdded` and
- * `toolsRemoved` before the next request: merged into the last pending system message when
- * there is one, otherwise inserted before the first non-system pending message.
+ * what the model may call. Before each request the difference becomes `toolsAdded` and
+ * `toolsRemoved` on a system message. When a pending system message exists, its tool fields
+ * are treated as intent and replaced with the delta between the committed transcript and
+ * the executable set, so replay always yields exactly `context.tools`. Otherwise a new
+ * system message is inserted before the first non-system pending message.
  */
 function declareToolChanges(context: AgentContext, pendingMessages: AgentMessage[]): AgentMessage[] {
-	const declaredTools = getTranscriptSystemMessage([...context.messages, ...pendingMessages])?.toolsAdded ?? [];
-	const { toolsAdded, toolsRemoved } = getToolStateChanges(
-		declaredTools,
-		(context.tools ?? []).map(toToolDeclaration),
-	);
-	if (toolsAdded.length === 0 && toolsRemoved.length === 0) return pendingMessages;
-
 	let systemIndex = -1;
 	for (let i = pendingMessages.length - 1; i >= 0; i--) {
 		if (pendingMessages[i].role === "system") {
@@ -314,24 +309,31 @@ function declareToolChanges(context: AgentContext, pendingMessages: AgentMessage
 			break;
 		}
 	}
-	if (systemIndex !== -1) {
-		const existing = pendingMessages[systemIndex] as SystemMessage;
-		const mergedAdded = [...(existing.toolsAdded ?? []), ...toolsAdded];
-		const mergedRemoved = [...(existing.toolsRemoved ?? []), ...toolsRemoved];
-		const merged: SystemMessage = {
-			...existing,
-			...(mergedAdded.length > 0 ? { toolsAdded: mergedAdded } : {}),
-			...(mergedRemoved.length > 0 ? { toolsRemoved: mergedRemoved } : {}),
-		};
-		return pendingMessages.map((message, index) => (index === systemIndex ? merged : message));
-	}
-	const update: SystemMessage = {
-		role: "system",
-		content: "",
+	const pending = pendingMessages[systemIndex] as SystemMessage | undefined;
+	const baseline = pendingMessages.map((message, index) =>
+		index === systemIndex && pending ? { ...pending, toolsAdded: undefined, toolsRemoved: undefined } : message,
+	);
+	const declaredTools = getTranscriptSystemMessage([...context.messages, ...baseline])?.toolsAdded ?? [];
+	const { toolsAdded, toolsRemoved } = getToolStateChanges(
+		declaredTools,
+		(context.tools ?? []).map(toToolDeclaration),
+	);
+	const changes = {
 		...(toolsAdded.length > 0 ? { toolsAdded } : {}),
 		...(toolsRemoved.length > 0 ? { toolsRemoved } : {}),
-		timestamp: Date.now(),
 	};
+
+	if (pending) {
+		const merged: SystemMessage = { ...pending, ...changes };
+		if (toolsAdded.length === 0) delete merged.toolsAdded;
+		if (toolsRemoved.length === 0) delete merged.toolsRemoved;
+		const unchanged =
+			JSON.stringify(merged.toolsAdded ?? []) === JSON.stringify(pending.toolsAdded ?? []) &&
+			JSON.stringify(merged.toolsRemoved ?? []) === JSON.stringify(pending.toolsRemoved ?? []);
+		return unchanged ? pendingMessages : baseline.map((message, index) => (index === systemIndex ? merged : message));
+	}
+	if (toolsAdded.length === 0 && toolsRemoved.length === 0) return pendingMessages;
+	const update: SystemMessage = { role: "system", content: "", ...changes, timestamp: Date.now() };
 	const insertIndex = pendingMessages.findIndex((message) => message.role !== "system");
 	const index = insertIndex === -1 ? pendingMessages.length : insertIndex;
 	return [...pendingMessages.slice(0, index), update, ...pendingMessages.slice(index)];

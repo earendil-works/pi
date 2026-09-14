@@ -2,7 +2,7 @@ import { getTranscriptSystemPrompt } from "@earendil-works/pi-agent-core";
 import { type Context, fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
-import type { ExtensionFactory } from "../../../src/index.ts";
+import type { ExtensionAPI, ExtensionFactory } from "../../../src/index.ts";
 import { createHarness } from "../harness.ts";
 
 function getProviderToolNames(context: Context): string[] {
@@ -15,42 +15,33 @@ function getProviderToolNames(context: Context): string[] {
 	return [...tools.keys()].sort();
 }
 
+/** Register `switch_tools`, which swaps the active set to `after_switch` when executed. */
+function registerSwitchTools(pi: ExtensionAPI): void {
+	pi.registerTool({
+		name: "switch_tools",
+		label: "Switch Tools",
+		description: "Switch the active extension tool set",
+		promptSnippet: "Switch to the next extension tool",
+		parameters: Type.Object({}),
+		execute: async () => {
+			pi.setActiveTools(["after_switch"]);
+			return { content: [{ type: "text", text: "switched" }], details: {} };
+		},
+	});
+	pi.registerTool({
+		name: "after_switch",
+		label: "After Switch",
+		description: "Tool that should be available after switching",
+		promptSnippet: "Run after the active tool set changes",
+		parameters: Type.Object({}),
+		execute: async () => ({ content: [{ type: "text", text: "after" }], details: {} }),
+	});
+}
+
 describe("extension active tools next-turn refresh", () => {
 	// Regression #6162
 	it("applies pi.setActiveTools before the next provider request in the same run", async () => {
-		const extensionFactories: ExtensionFactory[] = [
-			(pi) => {
-				pi.registerTool({
-					name: "switch_tools",
-					label: "Switch Tools",
-					description: "Switch the active extension tool set",
-					promptSnippet: "Switch to the next extension tool",
-					parameters: Type.Object({}),
-					execute: async () => {
-						pi.setActiveTools(["after_switch"]);
-						return {
-							content: [{ type: "text", text: "switched" }],
-							details: {},
-						};
-					},
-				});
-
-				pi.registerTool({
-					name: "after_switch",
-					label: "After Switch",
-					description: "Tool that should be available after switching",
-					promptSnippet: "Run after the active tool set changes",
-					parameters: Type.Object({}),
-					execute: async () => ({
-						content: [{ type: "text", text: "after" }],
-						details: {},
-					}),
-				});
-			},
-		];
-		const harness = await createHarness({
-			extensionFactories,
-		});
+		const harness = await createHarness({ extensionFactories: [registerSwitchTools] });
 
 		try {
 			harness.session.setActiveToolsByName(["switch_tools"]);
@@ -78,6 +69,35 @@ describe("extension active tools next-turn refresh", () => {
 		}
 	});
 
+	it("reports the refreshed system prompt during the run", async () => {
+		const harness = await createHarness({ extensionFactories: [registerSwitchTools] });
+		try {
+			harness.session.setActiveToolsByName(["switch_tools"]);
+			const providerPrompts: string[] = [];
+			const sessionPrompts: string[] = [];
+			harness.setResponses([
+				(context) => {
+					providerPrompts.push(getTranscriptSystemPrompt(context.messages));
+					sessionPrompts.push(harness.session.systemPrompt);
+					return fauxAssistantMessage(fauxToolCall("switch_tools", {}), { stopReason: "toolUse" });
+				},
+				(context) => {
+					providerPrompts.push(getTranscriptSystemPrompt(context.messages));
+					sessionPrompts.push(harness.session.systemPrompt);
+					return fauxAssistantMessage("done");
+				},
+			]);
+
+			await harness.session.prompt("start");
+
+			expect(providerPrompts).toHaveLength(2);
+			expect(providerPrompts[0]).not.toBe(providerPrompts[1]);
+			expect(sessionPrompts).toEqual(providerPrompts);
+		} finally {
+			harness.cleanup();
+		}
+	});
+
 	it("preserves before_agent_start system prompt overrides when tools change mid-run", async () => {
 		const extensionFactories: ExtensionFactory[] = [
 			(pi) => {
@@ -85,32 +105,7 @@ describe("extension active tools next-turn refresh", () => {
 					systemPrompt: `${event.systemPrompt}\n\nkeep this run override`,
 				}));
 
-				pi.registerTool({
-					name: "switch_tools",
-					label: "Switch Tools",
-					description: "Switch the active extension tool set",
-					promptSnippet: "Switch to the next extension tool",
-					parameters: Type.Object({}),
-					execute: async () => {
-						pi.setActiveTools(["after_switch"]);
-						return {
-							content: [{ type: "text", text: "switched" }],
-							details: {},
-						};
-					},
-				});
-
-				pi.registerTool({
-					name: "after_switch",
-					label: "After Switch",
-					description: "Tool that should be available after switching",
-					promptSnippet: "Run after the active tool set changes",
-					parameters: Type.Object({}),
-					execute: async () => ({
-						content: [{ type: "text", text: "after" }],
-						details: {},
-					}),
-				});
+				registerSwitchTools(pi);
 			},
 		];
 		const harness = await createHarness({
