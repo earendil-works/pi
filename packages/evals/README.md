@@ -1,199 +1,129 @@
 # Pi evals
 
-Pi evals are behavioral, model-backed checks for Pi workflows. They adapt a real `AgentSession` to `vitest-evals`, run
-it in isolated temporary project and agent directories, and attach native Pi session artifacts.
-Use them to measure end-to-end behavior and compare prompts, tools, skills, models, or other harness configurations.
+Behavioral evals for Pi's coding agent, built with `vitest-evals`.
 
-## Running evals
+## File conventions
 
-Run from the repository root with a default provider and model:
+Eval definitions are flat under `evals/`:
 
-```bash
-npm run eval -- --provider openai --model gpt-5.6-sol
-```
+- `*.docs.eval.ts` is a documentation-lift eval. `eval:docs` runs each case in isolated `without_docs` and `with_docs` containers and reports lift.
+- Other `*.eval.ts` files are host evals. `eval:host` runs them with Vitest on this machine. They are ordinary vitest-evals suites, not paired comparisons.
 
-The equivalent environment variables are:
+Runner code lives in `src/`:
 
-```bash
-PI_PROVIDER=openai PI_MODEL=gpt-5.6-sol npm run eval
-```
+- `cli.ts` orchestrates a comparison
+- `docker.ts` builds the two images, discovers cases, and runs one isolated arm
+- `plan.ts` expands cases into `(case, variant, repetition)` tasks
+- `report.ts` reads Vitest JSON, pairs arms, and computes lift
+- `harness.ts` is the vitest-evals adapter
 
-CLI values take precedence and become defaults for harnesses that do not select a model explicitly. Provider and model must be supplied together. The runner also allows no default when every executed harness configures its own model.
-Authentication comes from Pi's normal `ModelRuntime`, including Pi subscription credentials and provider API-key
-environment variables.
+Eval suites and their fixtures live under `evals/`. Image build files live in `docker/`.
 
-Additional arguments are forwarded to Vitest:
+## Run evals
 
-```bash
-npm run eval -- src/extensions.eval.ts
-npm run eval -- -t "creates and uses the extension"
-npm run eval -- src/docs.eval.ts -t "session-format\.md"
-```
-
-Run all comparative customization evals five times in one invocation:
+Host evals (smoke, documentation audit) and documentation-lift evals need `PI_PROVIDER` and `PI_MODEL`.
 
 ```bash
-npm run eval -- \
-  src/extensions.eval.ts src/models.eval.ts src/providers.eval.ts \
-  --provider openai --model gpt-5.6-sol \
-  --repetitions 5
+PI_PROVIDER=openai-codex PI_MODEL=gpt-5.6-sol npm run eval -w packages/evals
 ```
 
-`--repetitions` applies to suites declared with `evalHarnessTable(...)`. An explicit `repetitions` value in a suite
-overrides the command-line default. `PI_EVAL_REPETITIONS=5` is equivalent to the command-line option. Use one repetition
-while developing an eval and five when reporting lift.
+That runs host evals, then the documentation comparison. Extra CLI flags after `--` go to `eval:docs` only.
 
-## Reports and artifacts
+Host only:
 
-Each invocation prints a compound `Eval Comparisons` report after the Vitest results. When several comparative files run
-in the same invocation, this report contains one section for every eval set. For example, with illustrative values:
-
-```text
-Eval Comparisons
-  Add model to existing provider
-     Baseline  system-prompt-without-docs
-    Candidate  default-system-prompt (5/5 pairs)
-    Pass rate  +60.0 pp (candidate 80.0%, baseline 20.0%)
-       Tokens  +1200.0 (candidate 24000.0, baseline 22800.0)
-      Latency  -850.0ms (candidate 14000.0ms, baseline 14850.0ms)
-    Est. cost  +$0.0100 (candidate $0.1200, baseline $0.1100)
-
-  Add OpenAI-compatible provider
-    ...
-
-  Add custom streaming provider
-    ...
+```bash
+PI_PROVIDER=openai-codex PI_MODEL=gpt-5.6-sol npm run eval:host -w packages/evals
 ```
 
-The runner prints the ignored `.eval/` artifact directory at startup. It contains:
+One host suite:
 
-- `report.txt`: the terminal comparison report without color codes.
-- `report.json`: the same aggregate comparison data as structured JSON.
-- `runs.jsonl`: one record for every completed harness run.
-- `sessions/`: native Pi session JSONL attachments.
-- `sources/`: source attachments recorded by individual evals.
+```bash
+PI_PROVIDER=openai-codex PI_MODEL=gpt-5.6-sol \
+  npm run eval:host -w packages/evals -- evals/documentation-audit.eval.ts
+```
 
-The report covers comparative suites using `evalHarnessTable(...)`. Ordinary evals still appear in the Vitest summary and
-in `runs.jsonl`, but not in the baseline-versus-candidate comparison report. Artifacts may contain prompts, responses,
-source code, and tool output.
+## Run documentation comparisons
 
-## Writing evals
+From the repository root:
 
-Follow [`vitest-evals`](https://github.com/getsentry/vitest-evals) for general suite, judge, assertion, and normalized
-trace guidance. Pi-specific evals use `createPiCodingAgentHarness(...)` from `src/pi-harness.ts`, with one harness bound
-to each `describeEval(...)` suite:
+```bash
+npm run eval:docs -w packages/evals -- \
+  --provider openai-codex \
+  --model gpt-5.6-sol
+```
+
+`PI_PROVIDER` and `PI_MODEL` provide the same defaults. Both values are required.
+
+The default is one run per variant. Increase repetitions explicitly when measuring stability:
+
+```bash
+npm run eval:docs -w packages/evals -- \
+  evals/extensions.docs.eval.ts \
+  --runs-per-variant 5
+```
+
+`PI_EVAL_RUNS_PER_VARIANT=5` is equivalent. Vitest filters are applied during discovery:
+
+```bash
+npm run eval:docs -w packages/evals -- -t "adds the model"
+```
+
+The runner:
+
+1. Mounts the repository ephemerally for a Docker build, packs the current workspace packages using the repository's consumer-install machinery, then creates separate `without_docs` and `with_docs` images from the staged runtime.
+2. Discovers the selected cases in both images and requires identical cohorts.
+3. Plans every `(case, variant, model, runNumber)` arm before execution.
+4. Runs each arm in a fresh container. A failed or missing arm is recorded and the planned cohort continues.
+5. Reads native Vitest JSON through `@vitest-evals/core/node` when a report exists.
+6. Pairs exact arms and writes the comparison report. Blocked pairs withhold headline lift; the process exits nonzero.
+
+Repetition order alternates by run number to reduce order bias.
+
+## Documentation variants
+
+`without_docs` omits the coding-agent `README.md`, `CHANGELOG.md`, `docs/`, and `examples/`, then removes the Pi documentation-routing section from the default system prompt.
+
+`with_docs` includes those files and uses the unchanged default prompt.
+
+Both variants install the same local workspace tarballs. Existing npm overrides ensure coding-agent's internal Pi dependencies also come from the current repository rather than the registry. Documentation and source files from internal dependency packages are removed symmetrically so they cannot act as alternate instructions. Startup validates the image allowlist and verifies that the installed coding-agent package resolves from `dist/`. Eval definitions, evaluator helpers, fixtures, and Vitest configuration are root-owned and unreadable after the harness permanently drops to an unprivileged UID. Each run receives a new home, agent directory, workspace, session directory, and container filesystem.
+
+Documentation evals allow only `read`, `write`, `edit`, `grep`, `find`, and `ls` by default. They do not expose shell or web-search tools. Provider traffic still requires container network access, so Docker alone cannot prove that arbitrary code written by an agent never uses the network.
+
+## Results
+
+Each invocation creates an ignored `.eval/<timestamp>_<id>/` directory containing:
+
+- `protocol.json`: model, image IDs, cases, tasks, and protocol digest.
+- `expected-runs.json`: the complete planned cohort.
+- `observations.jsonl`: normalized outcomes and telemetry.
+- `tasks/*/vitest.json`: native JSON for each isolated arm.
+- `<variant>/sessions/*/session.jsonl`: native Pi sessions.
+- `report.json` and `report.txt`: paired comparisons.
+
+A pair contributes to pass-rate lift only when both arms produce exactly one score. Missing, duplicate, skipped, pending, unscored, or errored arms block the pair. If any pair in an eval set is blocked, headline pass rates are withheld. Missing telemetry remains unavailable rather than being treated as zero.
+
+The report flags no lift, negative deltas, saturated controls or treatments, and observed flakiness. One repetition cannot establish stability.
+
+Artifacts may contain prompts, responses, generated code, and tool output.
+
+## Write an eval
+
+Use one ordinary `describeEval(...)` suite and one explicit `run(...)` call per case:
 
 ```ts
-import { expect } from "vitest";
-import { describeEval } from "vitest-evals";
-import { createPiCodingAgentHarness } from "./pi-harness.ts";
+import { describeEval, StructuredOutputJudge } from "vitest-evals";
+import { createPiDocumentationEvalHarness } from "../src/harness.ts";
 
-const harness = createPiCodingAgentHarness({ noTools: "all" });
+const harness = createPiDocumentationEvalHarness();
+const judge = StructuredOutputJudge({ expected: { ok: true }, match: "strict", allowExtras: false });
 
-describeEval("Pi smoke", { harness }, (it) => {
-	it("answers a factual question", async ({ run }) => {
-		const result = await run("What is the capital of France? Reply with only the city name.");
-		expect(result.output).toBe("Paris");
-	});
+describeEval("Target workflow", { harness, judges: [judge], judgeThreshold: null }, (it) => {
+  it("completes the task", async ({ run }) => {
+    await run("Complete the target task.");
+  });
 });
 ```
 
-### Configuring the Pi harness
+The outer runner owns variants, repetitions, isolation, identity, persistence, and reporting. Eval files should contain only scenario setup, the model task, and deterministic grading.
 
-`createPiCodingAgentHarness(...)` accepts:
-
-- `name`: stable harness identity used by reports and comparisons.
-- `model`: optional `{ provider, id }` selection. It overrides the runner's default model.
-- `noTools`: Pi's tool-disable configuration.
-- `tools`: optional allowlist of tool names available to the evaluated agent.
-- `customTools`: custom tool definitions to register for the evaluated agent.
-- `transformSystemPrompt`: transforms the complete default prompt before the eval starts.
-- `output`: transforms the final response and `AgentSession` into a JSON-safe domain result.
-
-An explicitly selected model makes model-comparison harnesses independent of the runner default:
-
-```ts
-const harness = createPiCodingAgentHarness({
-	name: "claude-opus-4-6",
-	model: { provider: "anthropic", id: "claude-opus-4-6" },
-});
-```
-
-A run accepts either one prompt or a sequence of prompt and reload steps. Reload steps are useful when the preceding
-prompt creates or changes Pi resources:
-
-```ts
-const result = await run([
-	{ type: "prompt", content: "Create a Pi extension." },
-	{ type: "reload" },
-	{ type: "prompt", content: "Use the extension." },
-]);
-```
-
-### Transforming harness output
-
-Use `output` to expose scenario-specific, JSON-safe behavior without adding that behavior to the generic Pi adapter:
-
-```ts
-const harness = createPiCodingAgentHarness({
-	output: ({ response, session }) => ({
-		response,
-		activeTools: session.getActiveToolNames(),
-		extensionErrors: session.resourceLoader.getExtensions().errors,
-	}),
-});
-```
-
-Assert application behavior on `result.output`. Assert model and tool traces on `result.session`, using
-`vitest-evals` helpers such as `toolCalls(...)`.
-
-### Writing comparative eval sets
-
-Use `evalHarnessTable(...)` with Vitest's native `describe.for(...)` to run the same inputs against multiple harnesses.
-Harnesses may differ by prompt, tools, skills, model, or any other Pi configuration:
-
-```ts
-import { describe } from "vitest";
-import { createJudge, describeEval } from "vitest-evals";
-import { evalHarnessTable } from "./vitest-evals/harness-table.ts";
-
-const TargetTaskJudge = createJudge<string, string>("TargetTaskJudge", ({ output }) => ({
-	score: output === "expected result" ? 1 : 0,
-}));
-
-const harnessTable = evalHarnessTable(
-	"target skill effectiveness",
-	{
-		baseline: withoutTargetSkillHarness,
-		candidate: withTargetSkillHarness,
-		repetitions: 6,
-	},
-);
-
-describe.for(harnessTable)("$name repetition $repetition", ({ harness }) => {
-	describeEval("target skill effectiveness", { harness, judges: [TargetTaskJudge], judgeThreshold: null }, (it) => {
-		it("completes the target task", async ({ run }) => {
-			await run("Complete the target task.");
-		});
-	});
-});
-```
-
-Comparative suites should record correctness with deterministic or model-backed judges and set `judgeThreshold: null`.
-This keeps a low score as an observation instead of making the Vitest invocation fail. Use hard assertions only for
-suite invariants and infrastructure contracts. `expect.soft(...)` still fails the test and is not a scoring mechanism.
-
-The Pi harness snapshots native session JSONL before deleting its temporary workspace. An eval-only `afterEach` hook
-registers that snapshot against the explicit Vitest test task before reporters run.
-
-Harness names must be stable and unique within an eval set. The grouping key combines repetition with a non-empty string
-`input.id` when available, otherwise with a SHA-256 hash of strict canonical JSON input. Use `candidate` for one treatment
-or `candidates` for multiple treatments. Each candidate is compared only with the declared baseline. For each matched
-input and repetition, the reporter computes pass-rate lift from each run's recorded average judge score, treating a score
-of at least `1` as passing. Lift is the candidate pass rate minus the baseline pass rate, in percentage points. Missing
-judge scores are reported as incomplete observations. Tokens, latency, and estimated cost remain separate
-candidate-minus-baseline paired deltas; missing telemetry remains unavailable. If execution-order randomization becomes
-necessary, use Vitest's built-in sequence shuffling.
-
-See the [`skill-eval-harness`](https://github.com/adewale/skill-eval-harness/) guidance for comparative-eval methodology,
-repetition strategy, trustworthy judges, and telemetry interpretation.
+Use `judgeThreshold: null` for comparative scoring. A low score is data, not an infrastructure failure. Reserve Vitest assertions for broken suite invariants.
