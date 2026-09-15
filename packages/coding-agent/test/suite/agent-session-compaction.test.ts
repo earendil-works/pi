@@ -186,7 +186,7 @@ describe("AgentSession compaction characterization", () => {
 		expect(harness.session.messages[1]?.role).toBe("compactionSummary");
 	});
 
-	it("checkpoints the replayed system state and folds retained system patches into it", async () => {
+	it("checkpoints the replayed system state and folds summarized and retained system patches into it", async () => {
 		const harness = await createHarness();
 		harnesses.push(harness);
 		harness.setResponses([fauxAssistantMessage("declared")]);
@@ -194,6 +194,13 @@ describe("AgentSession compaction characterization", () => {
 		const declared = harness.session.messages[0];
 		if (declared?.role !== "system") throw new Error("expected declared system message");
 
+		harness.sessionManager.appendMessage({
+			role: "system",
+			content: "summarized instruction",
+			sections: { early: "<early>1</early>" },
+			toolsRemoved: [{ name: "bash" }],
+			timestamp: Date.now(),
+		});
 		const firstKeptEntryId = harness.sessionManager.appendMessage({
 			role: "user",
 			content: [{ type: "text", text: "kept before patch" }],
@@ -217,10 +224,14 @@ describe("AgentSession compaction characterization", () => {
 		expect(messages.map((message) => message.role)).toEqual(["system", "compactionSummary", "user", "user"]);
 		const checkpoint = messages[0];
 		if (checkpoint?.role !== "system") throw new Error("expected checkpoint system message");
-		expect(checkpoint.content).toBe("retained instruction");
-		expect(checkpoint.sections).toEqual({ ...declared.sections, extra: "<extra>late</extra>" });
+		expect(checkpoint.content).toBe("summarized instruction\n\nretained instruction");
+		expect(checkpoint.sections).toEqual({
+			...declared.sections,
+			early: "<early>1</early>",
+			extra: "<extra>late</extra>",
+		});
 		expect(checkpoint.toolsAdded?.map((tool) => tool.name)).toEqual(
-			harness.session.getActiveToolNames().filter((name) => name !== "read"),
+			harness.session.getActiveToolNames().filter((name) => name !== "read" && name !== "bash"),
 		);
 	});
 

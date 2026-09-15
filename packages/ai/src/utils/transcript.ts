@@ -176,6 +176,23 @@ export function getDeclaredTools(messages: TranscriptMessages): Tool[] {
 	return [...definitions.values()];
 }
 
+/**
+ * Whether a tool name was declared twice with different definitions. Transports that
+ * reference tools by name (Anthropic `tool_addition`/`tool_removal`) cannot express that.
+ */
+export function hasToolRedefinitions(messages: TranscriptMessages): boolean {
+	const declared = new Map<string, Tool>();
+	for (const message of messages) {
+		if (!isSystemMessage(message)) continue;
+		for (const tool of message.toolsAdded ?? []) {
+			const previous = declared.get(tool.name);
+			if (previous !== undefined && !declarationsEqual(previous, tool)) return true;
+			declared.set(tool.name, tool);
+		}
+	}
+	return false;
+}
+
 /** Whether tool history contains a removal or same-name redeclaration that an addition-only transport cannot replay. */
 export function hasNonAdditiveToolChanges(messages: TranscriptMessages): boolean {
 	const declared = new Set<string>();

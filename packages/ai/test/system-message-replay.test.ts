@@ -9,6 +9,7 @@ import {
 	getCurrentSystemPrompt,
 	getToolStateChanges,
 	hasNonAdditiveToolChanges,
+	hasToolRedefinitions,
 	normalizeContext,
 } from "../src/utils/transcript.ts";
 
@@ -122,8 +123,9 @@ describe("system message replay", () => {
 		expect(getToolStateChanges([tool("a")], [tool("a")])).toEqual({ toolsAdded: [], toolsRemoved: [] });
 	});
 
-	test("detects non-additive tool history", () => {
+	test("detects non-additive tool history and redefinitions", () => {
 		expect(hasNonAdditiveToolChanges(transcript.messages)).toBe(true);
+		expect(hasToolRedefinitions(transcript.messages)).toBe(false);
 		const additive = normalizeContext({
 			messages: [
 				{ role: "system", content: "", toolsAdded: [tool("a")], timestamp: 1 },
@@ -138,5 +140,6 @@ describe("system message replay", () => {
 			],
 		});
 		expect(hasNonAdditiveToolChanges(redeclared.messages)).toBe(true);
+		expect(hasToolRedefinitions(redeclared.messages)).toBe(true);
 	});
 });

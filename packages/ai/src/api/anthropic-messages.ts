@@ -43,6 +43,7 @@ import {
 	getCurrentTools,
 	getDeclaredTools,
 	getInitialSystemMessage,
+	hasToolRedefinitions,
 	resolveTranscript,
 	type TranscriptContext,
 } from "../utils/transcript.ts";
@@ -183,6 +184,20 @@ const SERVER_SIDE_FALLBACK_BETA = "server-side-fallback-2026-07-01";
 const MID_CONVERSATION_OUTPUT_CONFIG_BETA = "mid-conversation-output-config-2026-07-01";
 const THINKING_BINDING_CONTROLS_BETA = "thinking-binding-controls-2026-08-01";
 const MID_CONVERSATION_TOOL_CHANGES_BETA = "mid-conversation-tool-changes-2026-07-01";
+
+/**
+ * Stable deferred tool declared whenever native tool changes are in use. Anthropic adds
+ * hidden prompt scaffolding as soon as any tool has `defer_loading`; declaring this
+ * placeholder from the first request keeps that scaffolding in the cached prefix, so the
+ * first real late tool does not invalidate the cache (measured: full miss without it).
+ * It is never activated and the model cannot see it.
+ */
+const DEFERRED_TOOL_PLACEHOLDER: BetaTool = {
+	name: "__pi_deferred_placeholder__",
+	description: "Reserved placeholder. Never available. Never call this.",
+	input_schema: { type: "object", properties: {}, required: [] },
+	defer_loading: true,
+};
 
 function shouldUseServerSideFallbackBeta(model: Model<"anthropic-messages">): boolean {
 	return (model.compat?.allowedFallbackModels?.length ?? 0) > 0;
@@ -976,6 +991,7 @@ function getBetaFeatures(
 	model: Model<"anthropic-messages">,
 	context: TranscriptContext,
 	isOAuthToken: boolean,
+	nativeToolChanges: boolean,
 	options?: AnthropicOptions,
 ): NonNullable<MessageCreateParamsStreaming["betas"]> {
 	let configuredFeatures: string | null | undefined;
@@ -1011,9 +1027,7 @@ function getBetaFeatures(
 	if (model.compat?.supportsMidConvoEffort === true) {
 		features.push(MID_CONVERSATION_OUTPUT_CONFIG_BETA, THINKING_BINDING_CONTROLS_BETA);
 	}
-	if (model.compat?.supportsMidConvoSystemMessages && model.compat.supportsMidConvoToolChanges) {
-		features.push(MID_CONVERSATION_TOOL_CHANGES_BETA);
-	}
+	if (nativeToolChanges) features.push(MID_CONVERSATION_TOOL_CHANGES_BETA);
 	return [...new Set(features)];
 }
 
@@ -1029,17 +1043,25 @@ function buildParams(
 	const initialSystemText = initialSystemMessage ? getSystemMessageText(initialSystemMessage) : "";
 	const transformedMessages = transformMessages(context.messages, model, normalizeToolCallId);
 	const conversationMessages = initialSystemMessage ? transformedMessages.slice(1) : transformedMessages;
-	const supportsMidConvoToolChanges = compat.supportsMidConvoSystemMessages && compat.supportsMidConvoToolChanges;
+	// Native tool changes reference tools by name, so a redefined name cannot be expressed,
+	// and Anthropic rejects a tool list where every tool is deferred, so there must be an
+	// initial active tool to anchor the deferred ones. Otherwise the current tool list is sent.
+	const initialTools = initialSystemMessage?.toolsAdded ?? [];
+	const nativeToolChanges =
+		compat.supportsMidConvoSystemMessages &&
+		compat.supportsMidConvoToolChanges &&
+		initialTools.length > 0 &&
+		!hasToolRedefinitions(context.messages);
 	const converted = convertMessages(
 		conversationMessages,
 		isOAuthToken,
 		cacheControl,
 		compat.allowEmptySignature,
 		model.compat?.supportsMidConvoEffort === true ? model.provider : undefined,
-		supportsMidConvoToolChanges,
+		nativeToolChanges,
 	);
 	const activeEffort = options?.effort ?? "high";
-	const betaFeatures = getBetaFeatures(model, context, isOAuthToken, options);
+	const betaFeatures = getBetaFeatures(model, context, isOAuthToken, nativeToolChanges, options);
 	const params: MessageCreateParamsStreaming = {
 		model: model.id,
 		messages:
@@ -1088,15 +1110,41 @@ function buildParams(
 		params.temperature = options.temperature;
 	}
 
-	const tools = supportsMidConvoToolChanges ? getDeclaredTools(context.messages) : getCurrentTools(context.messages);
-	if (tools.length > 0) {
-		params.tools = convertTools(
-			tools,
-			isOAuthToken,
-			compat.supportsEagerToolInputStreaming,
-			compat.supportsStrictTools,
-			compat.supportsCacheControlOnTools ? cacheControl : undefined,
-		);
+	const toolCacheControl = compat.supportsCacheControlOnTools ? cacheControl : undefined;
+	if (nativeToolChanges) {
+		// Initial tools stay active with the cache breakpoint on the last one. Every later
+		// declaration is deferred and only surfaced by its `tool_addition` block; removed
+		// tools stay declared and are withdrawn by `tool_removal`. The request-level list
+		// therefore only grows, keeping the cached prefix intact across tool changes.
+		const initialNames = new Set(initialTools.map((tool) => tool.name));
+		const laterTools = getDeclaredTools(context.messages).filter((tool) => !initialNames.has(tool.name));
+		params.tools = [
+			...convertTools(
+				initialTools,
+				isOAuthToken,
+				compat.supportsEagerToolInputStreaming,
+				compat.supportsStrictTools,
+				toolCacheControl,
+			),
+			DEFERRED_TOOL_PLACEHOLDER,
+			...convertTools(
+				laterTools,
+				isOAuthToken,
+				compat.supportsEagerToolInputStreaming,
+				compat.supportsStrictTools,
+			).map((tool) => ({ ...tool, defer_loading: true })),
+		];
+	} else {
+		const tools = getCurrentTools(context.messages);
+		if (tools.length > 0) {
+			params.tools = convertTools(
+				tools,
+				isOAuthToken,
+				compat.supportsEagerToolInputStreaming,
+				compat.supportsStrictTools,
+				toolCacheControl,
+			);
+		}
 	}
 
 	// Managed effort models always use adaptive thinking so prefix mismatches can
@@ -1180,7 +1228,7 @@ function convertMessages(
 	cacheControl?: CacheControlEphemeral,
 	allowEmptySignature = false,
 	managedProvider?: string,
-	supportsMidConvoToolChanges = false,
+	nativeToolChanges = false,
 ): ConvertedAnthropicMessages {
 	const params: MessageParam[] = [];
 	const assistantLevels = new Map<number, AnthropicEffort>();
@@ -1204,7 +1252,7 @@ function convertMessages(
 			const text = renderSystemMessageUpdate(msg);
 			const blocks: ContentBlockParam[] = [];
 			if (text.length > 0) blocks.push({ type: "text", text: sanitizeSurrogates(text) });
-			if (supportsMidConvoToolChanges) {
+			if (nativeToolChanges) {
 				for (const tool of msg.toolsRemoved ?? []) {
 					blocks.push({
 						type: "tool_removal",
