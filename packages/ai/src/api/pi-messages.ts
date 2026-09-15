@@ -13,7 +13,6 @@ import type {
 	AssistantMessage,
 	AssistantMessageEvent,
 	CacheRetention,
-	Context,
 	Model,
 	ProviderEnv,
 	SimpleStreamOptions,
@@ -21,6 +20,7 @@ import type {
 	StreamOptions,
 	ThinkingLevel,
 	ToolCall,
+	TranscriptContext,
 } from "../types.ts";
 import { appendAssistantMessageDiagnostic, createAssistantMessageDiagnostic } from "../utils/diagnostics.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
@@ -352,7 +352,7 @@ function resolveCacheRetention(cacheRetention?: CacheRetention, env?: ProviderEn
 
 export const stream: StreamFunction<"pi-messages", PiMessagesOptions> = (
 	model: Model<"pi-messages">,
-	context: Context,
+	context: TranscriptContext,
 	options?: PiMessagesOptions,
 ): AssistantMessageEventStream => {
 	const eventStream = new AssistantMessageEventStream();
@@ -428,7 +428,7 @@ export const stream: StreamFunction<"pi-messages", PiMessagesOptions> = (
 
 export const streamSimple: StreamFunction<"pi-messages", SimpleStreamOptions> = (
 	model: Model<"pi-messages">,
-	context: Context,
+	context: TranscriptContext,
 	options?: SimpleStreamOptions,
 ): AssistantMessageEventStream => {
 	const extra = options as PiMessagesOptions | undefined;

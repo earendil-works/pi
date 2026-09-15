@@ -1,4 +1,5 @@
 import type { AssistantMessage, AssistantMessageEvent, Model } from "@earendil-works/pi-ai";
+import { normalizeContext } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { type ProxyAssistantMessageEvent, streamProxy } from "../src/proxy.ts";
 
@@ -53,14 +54,10 @@ describe("streamProxy", () => {
 			vi.fn(async () => new Response(body, { status: 200 })),
 		);
 
-		const stream = streamProxy(
-			model,
-			{ systemPrompt: "", messages: [] },
-			{
-				authToken: "test-token",
-				proxyUrl: "https://proxy.example.com",
-			},
-		);
+		const stream = streamProxy(model, normalizeContext({ systemPrompt: "", messages: [] }), {
+			authToken: "test-token",
+			proxyUrl: "https://proxy.example.com",
+		});
 		const events: AssistantMessageEvent[] = [];
 		for await (const event of stream) events.push(event);
 		const result = await stream.result();
@@ -86,14 +83,10 @@ describe("streamProxy", () => {
 			vi.fn(async () => new Response(start + done, { status: 200 })),
 		);
 
-		const stream = streamProxy(
-			model,
-			{ systemPrompt: "", messages: [] },
-			{
-				authToken: "test-token",
-				proxyUrl: "https://proxy.example.com",
-			},
-		);
+		const stream = streamProxy(model, normalizeContext({ systemPrompt: "", messages: [] }), {
+			authToken: "test-token",
+			proxyUrl: "https://proxy.example.com",
+		});
 		const events: AssistantMessageEvent[] = [];
 		for await (const event of stream) events.push(event);
 		const result = await stream.result();
@@ -110,14 +103,10 @@ describe("streamProxy", () => {
 			vi.fn(async () => new Response(body, { status: 200 })),
 		);
 
-		const stream = streamProxy(
-			model,
-			{ systemPrompt: "", messages: [] },
-			{
-				authToken: "test-token",
-				proxyUrl: "https://proxy.example.com",
-			},
-		);
+		const stream = streamProxy(model, normalizeContext({ systemPrompt: "", messages: [] }), {
+			authToken: "test-token",
+			proxyUrl: "https://proxy.example.com",
+		});
 		const events: AssistantMessageEvent[] = [];
 		for await (const event of stream) events.push(event);
 		const result = await stream.result();

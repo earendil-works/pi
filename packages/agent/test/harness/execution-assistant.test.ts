@@ -6,6 +6,7 @@ import {
 	fauxProvider,
 	type Message,
 	type Model,
+	normalizeContext,
 	type SimpleStreamOptions,
 	type UserMessage,
 } from "@earendil-works/pi-ai";
@@ -219,7 +220,7 @@ describe("streamHarnessAssistant", () => {
 				toProviderMessages,
 				request: (context, options) => {
 					seenContext = context.messages;
-					return faux.provider.streamSimple(faux.getModel(), context, options);
+					return faux.provider.streamSimple(faux.getModel(), normalizeContext(context), options);
 				},
 				observer: {
 					start() {

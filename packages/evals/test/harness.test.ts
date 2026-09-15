@@ -73,14 +73,14 @@ describe("documentation variant", () => {
 			cwd: "/workspace",
 			selectedTools: [...DOCUMENTATION_EVAL_TOOLS],
 		});
-		expect(prompt).toContain("\nPi documentation (read only");
-		expect(prompt).toContain("\nGuidelines:\n");
-		expect(prompt).toContain("\nCurrent working directory: /workspace");
+		expect(prompt).toContain("\n<docs>\nPi documentation (read only");
+		expect(prompt).toContain("\n<rules>\n");
+		expect(prompt).toContain("\n<cwd>\n/workspace\n</cwd>");
 		expect(prompt).toContain("docs/models.md");
 
 		const stripped = excludePiDocumentation(prompt);
-		expect(stripped).toContain("\nGuidelines:\n");
-		expect(stripped).toContain("\nCurrent working directory: /workspace");
+		expect(stripped).toContain("\n<rules>\n");
+		expect(stripped).toContain("\n<cwd>\n/workspace\n</cwd>");
 		expect(stripped).not.toContain("Pi documentation");
 		expect(stripped).not.toContain("docs/models.md");
 		expect(stripped).not.toContain(getReadmePath());
@@ -90,7 +90,9 @@ describe("documentation variant", () => {
 
 	it("fails closed when prompt markers are missing", () => {
 		expect(() => excludePiDocumentation("Instructions")).toThrow("no Pi documentation section");
-		expect(() => excludePiDocumentation("\nPi documentation (read only\n")).toThrow("no working-directory section");
+		expect(() => excludePiDocumentation("Instructions\n\n<docs>\ndocumentation\n</docs>\n\n")).toThrow(
+			"no working-directory section",
+		);
 	});
 
 	it("rejects documentation harnesses outside the container sandbox", () => {

@@ -6,6 +6,7 @@ import {
 	type AssistantMessage,
 	createAssistantMessageEventStream,
 	type Model,
+	normalizeContext,
 	type SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -13,7 +14,6 @@ import { AuthStorage } from "../src/core/auth-storage.ts";
 import { createAgentSession } from "../src/core/sdk.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 import { type Settings, SettingsManager } from "../src/core/settings-manager.ts";
-
 import { createModelRegistry, getModelRuntime } from "./model-runtime-test-utils.ts";
 
 describe("createAgentSession stream options", () => {
@@ -114,7 +114,7 @@ describe("createAgentSession stream options", () => {
 		});
 
 		try {
-			const stream = await session.agent.streamFunction(model, { messages: [] }, requestOptions);
+			const stream = await session.agent.streamFunction(model, normalizeContext({ messages: [] }), requestOptions);
 			await stream.result();
 			return capturedOptions;
 		} finally {

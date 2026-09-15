@@ -51,13 +51,12 @@ vi.mock("@aws-sdk/client-bedrock-runtime", () => {
 });
 
 import { stream as streamBedrock } from "../src/api/bedrock-converse-stream.ts";
-import { getModel } from "../src/compat.ts";
-import type { Context } from "../src/types.ts";
+import { getModel, normalizeContext } from "../src/compat.ts";
 
 const model = getModel("amazon-bedrock", "us.anthropic.claude-opus-4-8");
-const context: Context = {
+const context = normalizeContext({
 	messages: [{ role: "user", content: "hello", timestamp: Date.now() }],
-};
+});
 
 describe("Bedrock raw stop reasons", () => {
 	it("preserves raw Bedrock stop reasons for successful stops", async () => {

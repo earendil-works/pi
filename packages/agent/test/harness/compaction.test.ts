@@ -516,7 +516,8 @@ describe("harness compaction", () => {
 		const { faux, model } = createFauxModel(false);
 		faux.setResponses([
 			(context) => {
-				const message = context.messages[0];
+				// The transcript leads with the summarization system prompt; the request is the first user message.
+				const message = context.messages.find((entry) => entry.role === "user");
 				const content = message?.role === "user" ? message.content : [];
 				promptText = Array.isArray(content) && content[0]?.type === "text" ? content[0].text : "";
 				return fauxAssistantMessage("## Goal\nTest summary");

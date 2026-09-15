@@ -461,6 +461,29 @@ describe("buildSessionContext", () => {
 	});
 });
 
+describe("prepareCompaction", () => {
+	it("does not treat system messages as conversation history", () => {
+		const system = createMessageEntry({
+			role: "system",
+			content: "",
+			sections: { preamble: "current prompt" },
+			timestamp: Date.now(),
+		});
+		const user = createMessageEntry(createUserMessage("one long turn"));
+		const assistant = createMessageEntry(createAssistantMessage("assistant suffix"));
+		const preparation = prepareCompaction([system, user, assistant], {
+			...DEFAULT_COMPACTION_SETTINGS,
+			keepRecentTokens: 1,
+		});
+
+		expect(preparation).toBeDefined();
+		expect(preparation?.firstKeptEntryId).toBe(assistant.id);
+		expect(preparation?.isSplitTurn).toBe(true);
+		expect(preparation?.messagesToSummarize).toEqual([]);
+		expect(preparation?.turnPrefixMessages).toEqual([user.message]);
+	});
+});
+
 describe("prepareCompaction with previous compaction", () => {
 	it("should skip repeated compactions when kept messages still fit", () => {
 		const u1 = createMessageEntry(createUserMessage("user msg 1 (summarized by compaction1)"));

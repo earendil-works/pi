@@ -1,8 +1,8 @@
 import type { ResponseOutputMessage } from "openai/resources/responses/responses.js";
 import { describe, expect, it } from "vitest";
 import { convertResponsesMessages } from "../src/api/openai-responses-shared.ts";
-import { getModel } from "../src/compat.ts";
-import type { AssistantMessage, Context, Usage } from "../src/types.ts";
+import { getModel, normalizeContext } from "../src/compat.ts";
+import type { AssistantMessage, Usage } from "../src/types.ts";
 
 const usage: Usage = {
 	input: 0,
@@ -29,10 +29,10 @@ describe("OpenAI Responses message ID conversion", () => {
 			stopReason: "stop",
 			timestamp: Date.now() - 1000,
 		};
-		const context: Context = {
+		const context = normalizeContext({
 			systemPrompt: "You are concise.",
 			messages: [{ role: "user", content: "hello", timestamp: Date.now() - 2000 }, assistant],
-		};
+		});
 
 		const input = convertResponsesMessages(model, context, new Set(["openai", "openai-codex", "opencode"]));
 		const messageIds = input

@@ -5,18 +5,12 @@ import { generateImages } from "../src/images.ts";
 import { registerImagesApiProvider } from "../src/images-api-registry.ts";
 import { createImagesModels, createImagesProvider } from "../src/images-models.ts";
 import { createModels, createProvider } from "../src/models.ts";
-import type {
-	Context,
-	DeferredHandle,
-	ImagesContext,
-	ImagesModel,
-	Model,
-	ProviderRequestOptions,
-} from "../src/types.ts";
+import type { DeferredHandle, ImagesContext, ImagesModel, Model, ProviderRequestOptions } from "../src/types.ts";
 import { AssistantMessageEventStream } from "../src/utils/event-stream.ts";
+import { normalizeContext } from "../src/utils/transcript.ts";
 
 const telemetryContext: TelemetryContext = NOOP_TELEMETRY_CONTEXT;
-const context: Context = { messages: [] };
+const context = normalizeContext({ messages: [] });
 const imagesContext: ImagesContext = { input: [{ type: "text", text: "circle" }] };
 
 const model: Model<"telemetry-test"> = {

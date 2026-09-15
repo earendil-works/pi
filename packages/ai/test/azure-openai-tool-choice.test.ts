@@ -2,6 +2,7 @@ import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
 import { stream, streamSimple } from "../src/api/azure-openai-responses.ts";
 import type { Model } from "../src/types.ts";
+import { normalizeContext } from "../src/utils/transcript.ts";
 
 const model: Model<"azure-openai-responses"> = {
 	id: "test-deployment",
@@ -21,7 +22,7 @@ describe("Azure OpenAI tool choice", () => {
 		let payload: unknown;
 		const result = stream(
 			model,
-			{
+			normalizeContext({
 				messages: [{ role: "user", content: "Summarize this", timestamp: 1 }],
 				tools: [
 					{
@@ -30,7 +31,7 @@ describe("Azure OpenAI tool choice", () => {
 						parameters: Type.Object({ path: Type.String() }),
 					},
 				],
-			},
+			}),
 			{
 				apiKey: "test-key",
 				toolChoice: "required",
@@ -51,7 +52,7 @@ describe("Azure OpenAI tool choice", () => {
 		let payload: unknown;
 		const result = streamSimple(
 			model,
-			{
+			normalizeContext({
 				messages: [{ role: "user", content: "Summarize this", timestamp: 1 }],
 				tools: [
 					{
@@ -60,7 +61,7 @@ describe("Azure OpenAI tool choice", () => {
 						parameters: Type.Object({ path: Type.String() }),
 					},
 				],
-			},
+			}),
 			{
 				apiKey: "test-key",
 				toolChoice: "none",

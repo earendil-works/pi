@@ -44,6 +44,7 @@ describe("Branch summary extensions", () => {
 		const summaryEntry = result.summaryEntry;
 
 		expect(summaryEntry?.type).toBe("branch_summary");
+		// The target is the root entry, so the summary attaches to the root's parent.
 		expect(summaryEntry?.parentId).toBeNull();
 		expect(summaryEntry?.fromId).toBe(sourceId);
 		expect(summaryEntry?.fromHook).toBe(true);

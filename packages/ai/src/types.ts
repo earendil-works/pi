@@ -270,8 +270,12 @@ export type ApiStreamOptions<TApi extends Api> = TApi extends keyof ApiOptionsMa
  * `Provider.stream()` via `ApiStreamOptions`.
  */
 export interface ProviderStreams {
-	stream(model: Model<Api>, context: Context, options?: StreamOptions): AssistantMessageEventStream;
-	streamSimple(model: Model<Api>, context: Context, options?: SimpleStreamOptions): AssistantMessageEventStream;
+	stream(model: Model<Api>, context: TranscriptContext, options?: StreamOptions): AssistantMessageEventStream;
+	streamSimple(
+		model: Model<Api>,
+		context: TranscriptContext,
+		options?: SimpleStreamOptions,
+	): AssistantMessageEventStream;
 	fetchDeferred?(
 		model: Model<Api>,
 		handle: DeferredHandle,
@@ -324,6 +328,8 @@ export interface SimpleStreamOptions extends StreamOptions {
 // Generic StreamFunction with typed options.
 //
 // Contract:
+// - Receives a normalized transcript: the system prompt and tools live in the
+//   leading system message, never on the context itself.
 // - Must return an AssistantMessageEventStream.
 // - Direct streamSimple() calls may throw synchronously when request auth is
 //   missing. Once a stream is returned, request/model/runtime failures should
@@ -332,7 +338,7 @@ export interface SimpleStreamOptions extends StreamOptions {
 //   "error" or "aborted" and errorMessage, emitted via the stream protocol.
 export type StreamFunction<TApi extends Api = Api, TOptions extends StreamOptions = StreamOptions> = (
 	model: Model<TApi>,
-	context: Context,
+	context: TranscriptContext,
 	options?: TOptions,
 ) => AssistantMessageEventStream;
 
@@ -419,6 +425,34 @@ export interface DeferredHandle {
 	data?: JsonValue;
 }
 
+/**
+ * System instructions and tool declarations at one point in the transcript.
+ *
+ * The leading system message is the system prompt. Later system messages change it:
+ * `content` adds instructions from that point on, `sections` replace or remove named
+ * prompt sections, and `toolsAdded`/`toolsRemoved` change the tool set. Replaying
+ * every system message in order yields the current prompt and tools. Providers that
+ * accept system messages mid-conversation send each one in place; other providers
+ * rebuild the leading system message from the replayed state.
+ */
+export interface SystemMessage {
+	role: "system";
+	/** Instruction text. On the leading message this is the base prompt; later, additional instructions. */
+	content: string | TextContent[];
+	/**
+	 * Named, ordered prompt sections rendered verbatim after `content`. The leading message
+	 * declares them; later messages replace sections by name, and `null` removes one. Keep
+	 * each section self-delimiting (a tag, a heading) so the model can relate an update to
+	 * the original. Avoid integer-like names; JSON objects reorder those.
+	 */
+	sections?: Record<string, string | null>;
+	/** Complete definitions of tools that become available at this point. */
+	toolsAdded?: Tool[];
+	/** Tools that stop being available at this point. */
+	toolsRemoved?: ToolReference[];
+	timestamp: number; // Unix timestamp in milliseconds
+}
+
 export interface UserMessage {
 	role: "user";
 	content: string | (TextContent | ImageContent)[];
@@ -457,17 +491,11 @@ export interface ToolResultMessage<TDetails = any> {
 	details?: TDetails;
 	/** Usage from the tool execution itself, if available. Not part of main LLM context accounting. */
 	usage?: Usage;
-	/**
-	 * Names from `Context.tools` that became available after this result.
-	 * Providers with native deferred tool loading use this as the load point;
-	 * other providers ignore it and use `Context.tools` normally.
-	 */
-	addedToolNames?: string[];
 	isError: boolean;
 	timestamp: number; // Unix timestamp in milliseconds
 }
 
-export type Message = UserMessage | AssistantMessage | ToolResultMessage;
+export type Message = SystemMessage | UserMessage | AssistantMessage | ToolResultMessage;
 
 export type ImagesInputContent = TextContent | ImageContent;
 export type ImagesOutputContent = TextContent | ImageContent;
@@ -521,11 +549,34 @@ export interface Tool<TParameters extends TSchema = TSchema> {
 	constrainedSampling?: false | ConstrainedSamplingConfig;
 }
 
+export interface ToolReference {
+	name: string;
+}
+
+/**
+ * Request input accepted by the public stream entry points (`Models.stream()`,
+ * `streamSimple()`, ...). `systemPrompt` and `tools` are shorthand for a leading
+ * system message; `normalizeContext()` folds them into one before the request
+ * reaches a provider.
+ */
 export interface Context {
 	systemPrompt?: string;
 	messages: Message[];
 	tools?: Tool[];
 }
+
+declare const transcriptContextBrand: unique symbol;
+
+/**
+ * Normalized request context passed to providers and API implementations. The
+ * prompt and tool declarations are carried by the transcript's system messages.
+ * Only `normalizeContext()` produces this type, so a raw `Context` cannot reach
+ * provider code by accident.
+ */
+export type TranscriptContext = {
+	messages: Message[];
+	readonly [transcriptContextBrand]: true;
+};
 
 /**
  * Event protocol for AssistantMessageEventStream.
@@ -621,14 +672,16 @@ export interface OpenAICompletionsCompat {
 	supportsThinkingTokenBudget?: boolean;
 	/** Whether the provider supports OpenAI custom tools with Lark/regex grammar formats. When false, grammar-constrained tools fall back to normal function tools. Default: false; the generated model catalog enables it for capable models. */
 	supportsOpenAIGrammarTools?: boolean;
+	/** Whether the exact model accepts system or developer messages after the conversation has started. When false, later system messages are folded into the leading system message. Default: false; the generated model catalog enables it for verified models. */
+	supportsMidConvoSystemMessages?: boolean;
+	/** Whether system messages can introduce additional tools mid-conversation. Requires `supportsMidConvoSystemMessages`. Default: false; the generated model catalog enables it for capable models. */
+	supportsMidConvoToolAdditions?: boolean;
 	/** Whether the provider supports the `strict` field in tool definitions. Default: true. */
 	supportsStrictMode?: boolean;
 	/** Cache control convention for prompt caching. "anthropic" applies Anthropic-style `cache_control` markers to the system prompt, last tool definition, and last user, assistant, or tool-result text content. */
 	cacheControlFormat?: "anthropic";
 	/** Whether to send session-affinity data from `options.sessionId`. Default: true for OpenRouter endpoints, false otherwise. */
 	sendSessionAffinityHeaders?: boolean;
-	/** Provider-specific deferred tool serialization mode. */
-	deferredToolsMode?: "kimi";
 	/** Session-affinity header format: `openai` sends `session_id`, `x-client-request-id`, and `x-session-affinity`; `openai-nosession` sends `x-client-request-id` and `x-session-affinity`; `openrouter` sends `x-session-id`. Does not affect the `prompt_cache_key` body param, which is governed by cache retention. Default: auto-detected. */
 	sessionAffinityFormat?: SessionAffinityFormat;
 	/** Whether the provider supports long prompt cache retention (`prompt_cache_retention: "24h"` or Anthropic-style `cache_control.ttl: "1h"`, depending on format). Default: true. */
@@ -646,6 +699,8 @@ export interface OpenAICompletionsCompat {
 export interface OpenAIResponsesCompat {
 	/** Whether the provider supports the `developer` role (vs `system`). Default: true. */
 	supportsDeveloperRole?: boolean;
+	/** Whether the exact model accepts developer or system messages after the conversation has started. When false, later system messages are folded into the leading system message. Default: false; the generated model catalog enables it for verified models. */
+	supportsMidConvoSystemMessages?: boolean;
 	/** Session-affinity header format: `openai` sends `session_id` and `x-client-request-id`; `openai-nosession` sends `x-client-request-id`; `openrouter` sends `x-session-id`. Does not affect the `prompt_cache_key` body param, which is governed by cache retention. Default: auto-detected. */
 	sessionAffinityFormat?: SessionAffinityFormat;
 	/** Whether the provider supports long prompt cache retention. This uses `prompt_cache_options.ttl: "30m"` on GPT-5.6+ and `prompt_cache_retention: "24h"` on earlier models. Default: true. */
@@ -656,7 +711,7 @@ export interface OpenAIResponsesCompat {
 	supportsOpenAIGrammarTools?: boolean;
 	/** Whether the model supports message-anchored `additional_tools` input items. Default: false. */
 	supportsAdditionalTools?: boolean;
-	/** Whether the model supports client-executed tool search for deferred tools. Default: false. */
+	/** Whether the model supports client-executed tool search for transcript-anchored additions. Default: false. */
 	supportsToolSearch?: boolean;
 	/** Whether the model accepts `prompt_cache_options` (OpenAI GPT-5.6+ prompt caching). Older OpenAI models reject the parameter. Default: false. */
 	supportsExplicitPromptCacheMode?: boolean;
@@ -716,6 +771,10 @@ export interface AnthropicMessagesCompat {
 	supportsStrictTools?: boolean;
 	/** Whether the exact model transport supports effort-only system messages and thinking binding controls. Default: false. */
 	supportsMidConvoEffort?: boolean;
+	/** Whether the exact model accepts system-role messages inside the conversation. When false, later system messages are folded into the top-level system prompt. Default: false. */
+	supportsMidConvoSystemMessages?: boolean;
+	/** Whether the exact model accepts mid-conversation `tool_addition` and `tool_removal` blocks. Requires `supportsMidConvoSystemMessages`. Default: false. */
+	supportsMidConvoToolChanges?: boolean;
 	/**
 	 * Models Anthropic accepts in `fallbacks` for server-side refusal fallback,
 	 * with local pricing metadata for returned fallback responses. When absent or
@@ -723,18 +782,18 @@ export interface AnthropicMessagesCompat {
 	 * with no permitted fallback targets.
 	 */
 	allowedFallbackModels?: AnthropicAllowedFallbackModel[];
-	/**
-	 * Whether the provider supports deferred tools loaded by `tool_reference`
-	 * blocks in tool results. Default: true for first-party Anthropic models
-	 * except Haiku and models older than Claude 4.5; false for other providers.
-	 */
-	supportsToolReferences?: boolean;
 }
 
 /** Compatibility settings for Amazon Bedrock models. */
 export interface BedrockCompat {
 	/** Whether the model supports Bedrock strict tool schemas. Default: false. */
 	supportsStrictMode?: boolean;
+}
+
+/** Compatibility settings for the Mistral chat API. */
+export interface MistralConversationsCompat {
+	/** Whether the exact model accepts system messages after the conversation has started. When false, later system messages are folded into the leading system message. Default: false. */
+	supportsMidConvoSystemMessages?: boolean;
 }
 
 /**
@@ -870,7 +929,9 @@ export interface Model<TApi extends Api> {
 				? AnthropicMessagesCompat
 				: TApi extends "bedrock-converse-stream"
 					? BedrockCompat
-					: never;
+					: TApi extends "mistral-conversations"
+						? MistralConversationsCompat
+						: never;
 }
 
 export interface ImagesModel<TApi extends ImagesApi>

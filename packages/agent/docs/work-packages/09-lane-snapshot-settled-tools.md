@@ -229,7 +229,7 @@ Skip. Its `toolResult` entry must already be in the captured transcript.
 - Reconstruct the canonical `AgentToolResult` from the staged `ToolResultMessage` and the durable call termination flag as needed.
 - Project `status: "settled"`, `result`, and `isError`.
 
-The event and capture representations must normalize the final result identically so folding through `tool_end` equals a later authoritative snapshot. Pay attention to optional `details`, `usage`, `addedToolNames`, and `terminate`; do not rely on incidental object-property presence differences.
+The event and capture representations must normalize the final result identically so folding through `tool_end` equals a later authoritative snapshot. Pay attention to optional `details`, `usage`, and `terminate`; do not rely on incidental object-property presence differences.
 
 A missing or mismatched staged result for `outcome_ready` is presentation corruption and must fault snapshot capture.
 

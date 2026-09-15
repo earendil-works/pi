@@ -6,6 +6,7 @@ import {
 	type AssistantMessage,
 	createAssistantMessageEventStream,
 	type Model,
+	normalizeContext,
 	type ProviderHeaders,
 	type SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
@@ -14,7 +15,6 @@ import { AuthStorage } from "../src/core/auth-storage.ts";
 import { createAgentSession } from "../src/core/sdk.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
-
 import { createInMemoryModelRegistry, getModelRuntime } from "./model-runtime-test-utils.ts";
 
 describe("createAgentSession provider attribution headers", () => {
@@ -127,14 +127,10 @@ describe("createAgentSession provider attribution headers", () => {
 		});
 
 		try {
-			const stream = await session.agent.streamFunction(
-				model,
-				{ messages: [] },
-				{
-					sessionId: session.sessionId,
-					...(options.requestHeaders ? { headers: options.requestHeaders } : {}),
-				},
-			);
+			const stream = await session.agent.streamFunction(model, normalizeContext({ messages: [] }), {
+				sessionId: session.sessionId,
+				...(options.requestHeaders ? { headers: options.requestHeaders } : {}),
+			});
 			await stream.result();
 			return capturedOptions?.headers;
 		} finally {

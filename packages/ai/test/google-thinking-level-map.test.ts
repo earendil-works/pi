@@ -3,18 +3,12 @@ import { describe, expect, it } from "vitest";
 import { streamSimple as streamSimpleGoogle } from "../src/api/google-generative-ai.ts";
 import { resolveGoogleThinkingLevel } from "../src/api/google-shared.ts";
 import { streamSimple as streamSimpleVertex } from "../src/api/google-vertex.ts";
-import type {
-	Context,
-	Model,
-	ModelThinkingLevel,
-	ThinkingBudgets,
-	ThinkingLevel,
-	ThinkingLevelMap,
-} from "../src/types.ts";
+import type { Model, ModelThinkingLevel, ThinkingBudgets, ThinkingLevel, ThinkingLevelMap } from "../src/types.ts";
+import { normalizeContext } from "../src/utils/transcript.ts";
 
-const context: Context = {
+const context = normalizeContext({
 	messages: [{ role: "user", content: "Hello", timestamp: 0 }],
-};
+});
 
 function googleModel(id: string, thinkingLevelMap: ThinkingLevelMap): Model<"google-generative-ai"> {
 	return {

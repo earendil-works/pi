@@ -2,8 +2,8 @@ import { arch, platform, release } from "node:os";
 import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
 import { stream as streamMistral } from "../src/api/mistral-conversations.ts";
-import { getModel } from "../src/compat.ts";
-import type { Context, FetchFunction, ProviderResponse } from "../src/types.ts";
+import { getModel, normalizeContext } from "../src/compat.ts";
+import type { FetchFunction, ProviderResponse } from "../src/types.ts";
 
 const PI_USER_AGENT = `pi (${platform()} ${release()}; ${arch()})`;
 
@@ -39,7 +39,7 @@ function createTerminalEvent(finishReason = "stop") {
 describe("Mistral HTTP transport", () => {
 	it("serializes SDK-style payloads to the Mistral wire format", async () => {
 		const model = getModel("mistral", "mistral-large-latest");
-		const context: Context = {
+		const context = normalizeContext({
 			systemPrompt: "Be precise",
 			messages: [
 				{
@@ -58,7 +58,7 @@ describe("Mistral HTTP transport", () => {
 					parameters: Type.Object({ query: Type.String() }),
 				},
 			],
-		};
+		});
 		let requestUrl: string | undefined;
 		let requestInit: RequestInit | undefined;
 		let callbackPayload: Record<string, unknown> | undefined;
@@ -160,7 +160,7 @@ describe("Mistral HTTP transport", () => {
 
 	it("serializes assistant thinking, tool calls, and tool results for replay", async () => {
 		const model = getModel("mistral", "mistral-large-latest");
-		const context: Context = {
+		const context = normalizeContext({
 			messages: [
 				{
 					role: "assistant",
@@ -195,7 +195,7 @@ describe("Mistral HTTP transport", () => {
 					timestamp: 2,
 				},
 			],
-		};
+		});
 		let requestInit: RequestInit | undefined;
 		const fetch: FetchFunction = async (_input, init) => {
 			requestInit = init;
@@ -237,9 +237,9 @@ describe("Mistral HTTP transport", () => {
 
 	it("parses native thinking, text, fragmented tool calls, and cached-token usage", async () => {
 		const model = getModel("mistral", "mistral-large-latest");
-		const context: Context = {
+		const context = normalizeContext({
 			messages: [{ role: "user", content: "hello", timestamp: 1 }],
-		};
+		});
 		const events = [
 			{
 				id: "response-1",
@@ -324,9 +324,9 @@ describe("Mistral HTTP transport", () => {
 
 	it("parses SSE and UTF-8 sequences split across transport chunks", async () => {
 		const model = getModel("mistral", "mistral-large-latest");
-		const context: Context = {
+		const context = normalizeContext({
 			messages: [{ role: "user", content: "hello", timestamp: 1 }],
-		};
+		});
 		const fetch: FetchFunction = async () =>
 			createBytewiseSseResponse({
 				id: "response-bytewise",
@@ -346,9 +346,9 @@ describe("Mistral HTTP transport", () => {
 			...getModel("mistral", "mistral-large-latest"),
 			headers: { Authorization: "Bearer model-key", "X-Affinity": "model-affinity" },
 		};
-		const context: Context = {
+		const context = normalizeContext({
 			messages: [{ role: "user", content: "hello", timestamp: 1 }],
-		};
+		});
 		let requestHeaders: Headers | undefined;
 		const fetch: FetchFunction = async (_input, init) => {
 			requestHeaders = new Headers(init?.headers);
@@ -369,9 +369,9 @@ describe("Mistral HTTP transport", () => {
 
 	it("aborts while waiting for an SSE chunk", async () => {
 		const model = getModel("mistral", "mistral-large-latest");
-		const context: Context = {
+		const context = normalizeContext({
 			messages: [{ role: "user", content: "hello", timestamp: 1 }],
-		};
+		});
 		const controller = new AbortController();
 		const fetch: FetchFunction = async () =>
 			new Response(
@@ -394,9 +394,9 @@ describe("Mistral HTTP transport", () => {
 
 	it("applies the request timeout while waiting for an SSE chunk", async () => {
 		const model = getModel("mistral", "mistral-large-latest");
-		const context: Context = {
+		const context = normalizeContext({
 			messages: [{ role: "user", content: "hello", timestamp: 1 }],
-		};
+		});
 		const fetch: FetchFunction = async () =>
 			new Response(
 				new ReadableStream({
@@ -417,9 +417,9 @@ describe("Mistral HTTP transport", () => {
 
 	it("preserves HTTP status and response bodies in errors", async () => {
 		const model = getModel("mistral", "mistral-large-latest");
-		const context: Context = {
+		const context = normalizeContext({
 			messages: [{ role: "user", content: "hello", timestamp: 1 }],
-		};
+		});
 		const fetch: FetchFunction = async () =>
 			new Response('{"message":"blocked by gateway"}', { status: 403, statusText: "Forbidden" });
 

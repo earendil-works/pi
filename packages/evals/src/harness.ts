@@ -246,10 +246,10 @@ async function promptAgent(session: AgentSession, input: string, signal: AbortSi
 
 function verifySystemPrompt(systemPrompt: string, options: PiCodingAgentHarnessOptions): void {
 	if (options.expectedPiDocumentation === undefined) return;
-	if (!systemPrompt.includes("\nGuidelines:\n")) {
-		throw new Error(`Pi system prompt lost its guidelines in the ${options.name} eval variant.`);
+	if (!systemPrompt.includes("\n<rules>\n")) {
+		throw new Error(`Pi system prompt lost its rules in the ${options.name} eval variant.`);
 	}
-	const hasDocumentation = systemPrompt.includes("\nPi documentation (read only");
+	const hasDocumentation = systemPrompt.includes("\n<docs>\n");
 	if (hasDocumentation !== options.expectedPiDocumentation) {
 		throw new Error(`Pi system prompt does not match the ${options.name} eval variant.`);
 	}
@@ -459,11 +459,22 @@ export function resolveDocumentationVariant(
 }
 
 export function excludePiDocumentation(defaultPrompt: string): string {
-	const documentationStart = defaultPrompt.indexOf("\nPi documentation (read only");
+	const documentationStartMarker = "\n\n<docs>\n";
+	const documentationEndMarker = "\n</docs>\n\n";
+	const documentationStart = defaultPrompt.indexOf(documentationStartMarker);
 	if (documentationStart === -1) throw new Error("Default Pi system prompt has no Pi documentation section.");
-	const cwdStart = defaultPrompt.lastIndexOf("\nCurrent working directory: ");
+	const documentationEnd = defaultPrompt.indexOf(
+		documentationEndMarker,
+		documentationStart + documentationStartMarker.length,
+	);
+	if (documentationEnd === -1) throw new Error("Default Pi system prompt has no closing Pi documentation section.");
+	const cwdStart = defaultPrompt.indexOf("<cwd>\n", documentationEnd + documentationEndMarker.length);
 	if (cwdStart === -1) throw new Error("Default Pi system prompt has no working-directory section.");
-	return defaultPrompt.slice(0, documentationStart) + defaultPrompt.slice(cwdStart);
+	return (
+		defaultPrompt.slice(0, documentationStart) +
+		"\n\n" +
+		defaultPrompt.slice(documentationEnd + documentationEndMarker.length)
+	);
 }
 
 type DocumentationHarnessOptions = Omit<

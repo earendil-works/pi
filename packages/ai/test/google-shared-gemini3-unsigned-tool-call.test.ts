@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { convertMessages, requiresToolCallId } from "../src/api/google-shared.ts";
 import type { Context, Model } from "../src/types.ts";
+import { normalizeContext } from "../src/utils/transcript.ts";
 
 function makeGemini3Model<TApi extends "google-generative-ai" | "google-vertex">(
 	api: TApi,
@@ -84,7 +85,7 @@ describe("google-shared convertMessages — Gemini 3 unsigned tool calls", () =>
 		makeGemini3Model("google-vertex", "google-vertex"),
 	])("preserves tool call IDs for $id via $api history", (model) => {
 		const context = makeContext(model);
-		const contents = convertMessages(model, context);
+		const contents = convertMessages(model, normalizeContext(context));
 		const functionCallIds = contents
 			.flatMap((content) => content.parts ?? [])
 			.flatMap((part) => (part.functionCall?.id ? [part.functionCall.id] : []));
@@ -98,7 +99,7 @@ describe("google-shared convertMessages — Gemini 3 unsigned tool calls", () =>
 
 	it("does not add skip_thought_signature_validator for unsigned Google Gen AI tool calls", () => {
 		const model = makeGemini3Model("google-generative-ai", "google");
-		const contents = convertMessages(model, makeContext({ ...model, id: "other-model" }));
+		const contents = convertMessages(model, normalizeContext(makeContext({ ...model, id: "other-model" })));
 
 		const modelTurn = contents.find((c) => c.role === "model");
 		expect(modelTurn).toBeTruthy();
@@ -116,7 +117,7 @@ describe("google-shared convertMessages — Gemini 3 unsigned tool calls", () =>
 
 	it("does not add skip_thought_signature_validator for unsigned Vertex tool calls", () => {
 		const model = makeGemini3Model("google-vertex", "google-vertex");
-		const contents = convertMessages(model, makeContext(model));
+		const contents = convertMessages(model, normalizeContext(makeContext(model)));
 		const modelTurn = contents.find((c) => c.role === "model");
 		const functionCallParts = modelTurn?.parts?.filter((p) => p.functionCall !== undefined) ?? [];
 
@@ -129,7 +130,7 @@ describe("google-shared convertMessages — Gemini 3 unsigned tool calls", () =>
 	it("preserves valid thoughtSignature when present for the same provider and model", () => {
 		const model = makeGemini3Model("google-generative-ai", "google");
 		const validSig = "AAAAAAAAAAAAAAAAAAAAAA==";
-		const contents = convertMessages(model, makeContext(model, validSig));
+		const contents = convertMessages(model, normalizeContext(makeContext(model, validSig)));
 		const modelTurn = contents.find((c) => c.role === "model");
 		const functionCallParts = modelTurn?.parts?.filter((p) => p.functionCall !== undefined) ?? [];
 
@@ -140,7 +141,7 @@ describe("google-shared convertMessages — Gemini 3 unsigned tool calls", () =>
 
 	it("does not add a thoughtSignature for non-Gemini-3 models", () => {
 		const model = makeGemini3Model("google-generative-ai", "google", "gemini-2.5-flash");
-		const contents = convertMessages(model, makeContext({ ...model, id: "other-model" }));
+		const contents = convertMessages(model, normalizeContext(makeContext({ ...model, id: "other-model" })));
 		const modelTurn = contents.find((c) => c.role === "model");
 		const functionCallParts = modelTurn?.parts?.filter((part) => part.functionCall !== undefined) ?? [];
 		const functionResponseParts = contents

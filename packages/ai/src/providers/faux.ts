@@ -2,7 +2,6 @@ import { createProvider, type Provider } from "../models.ts";
 import type {
 	AssistantMessage,
 	AssistantMessageEventStream,
-	Context,
 	DeferredCancelOptions,
 	DeferredFetchOptions,
 	DeferredHandle,
@@ -16,9 +15,11 @@ import type {
 	ThinkingContent,
 	ToolCall,
 	ToolResultMessage,
+	TranscriptContext,
 	Usage,
 } from "../types.ts";
 import { createAssistantMessageEventStream } from "../utils/event-stream.ts";
+import { getSystemMessageText } from "../utils/text.ts";
 
 const DEFAULT_API = "faux";
 const DEFAULT_PROVIDER = "faux";
@@ -105,7 +106,7 @@ export interface FauxProviderState {
 }
 
 export type FauxResponseFactory = (
-	context: Context,
+	context: TranscriptContext,
 	options: SimpleStreamOptions | undefined,
 	state: FauxProviderState,
 	model: Model<string>,
@@ -194,6 +195,15 @@ function toolResultToText(message: ToolResultMessage): string {
 }
 
 function messageToText(message: Message): string {
+	if (message.role === "system") {
+		return [
+			getSystemMessageText(message),
+			...(message.toolsRemoved?.map((tool) => `tool-:${JSON.stringify(tool)}`) ?? []),
+			...(message.toolsAdded?.map((tool) => `tool+:${JSON.stringify(tool)}`) ?? []),
+		]
+			.filter((part) => part.length > 0)
+			.join("\n");
+	}
 	if (message.role === "user") {
 		return contentToText(message.content);
 	}
@@ -203,18 +213,8 @@ function messageToText(message: Message): string {
 	return toolResultToText(message);
 }
 
-function serializeContext(context: Context): string {
-	const parts: string[] = [];
-	if (context.systemPrompt) {
-		parts.push(`system:${context.systemPrompt}`);
-	}
-	for (const message of context.messages) {
-		parts.push(`${message.role}:${messageToText(message)}`);
-	}
-	if (context.tools?.length) {
-		parts.push(`tools:${JSON.stringify(context.tools)}`);
-	}
-	return parts.join("\n\n");
+function serializeContext(context: TranscriptContext): string {
+	return context.messages.map((message) => `${message.role}:${messageToText(message)}`).join("\n\n");
 }
 
 function commonPrefixLength(a: string, b: string): number {
@@ -228,7 +228,7 @@ function commonPrefixLength(a: string, b: string): number {
 
 function withUsageEstimate(
 	message: AssistantMessage,
-	context: Context,
+	context: TranscriptContext,
 	options: StreamOptions | undefined,
 	promptCache: Map<string, string>,
 ): AssistantMessage {
@@ -450,7 +450,7 @@ export function createFauxCore(options: RegisterFauxProviderOptions) {
 		{
 			handle: DeferredHandle;
 			step: FauxResponseStep;
-			context: Context;
+			context: TranscriptContext;
 			options: SimpleStreamOptions | undefined;
 			model: Model<string>;
 			pendingFetches: number;
@@ -487,7 +487,7 @@ export function createFauxCore(options: RegisterFauxProviderOptions) {
 
 	const resolveResponse = async (
 		step: FauxResponseStep,
-		context: Context,
+		context: TranscriptContext,
 		streamOptions: SimpleStreamOptions | undefined,
 		requestModel: Model<string>,
 	): Promise<AssistantMessage> => {
