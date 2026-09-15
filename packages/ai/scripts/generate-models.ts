@@ -655,6 +655,7 @@ function detectOpenAICompletionsCompat(model: Model<"openai-completions">): Open
 		provider === "together" || baseUrl.includes("api.together.ai") || baseUrl.includes("api.together.xyz");
 	const isMoonshot = provider === "moonshotai" || provider === "moonshotai-cn" || baseUrl.includes("api.moonshot.");
 	const isOpenRouter = provider === "openrouter" || baseUrl.includes("openrouter.ai");
+	const isBaseten = provider === "baseten" || baseUrl.includes("baseten.co");
 	const isCloudflareWorkersAI = provider === "cloudflare-workers-ai" || baseUrl.includes("api.cloudflare.com");
 	const isCloudflareAiGateway = provider === "cloudflare-ai-gateway" || baseUrl.includes("gateway.ai.cloudflare.com");
 	const isNvidia = provider === "nvidia" || baseUrl.includes("integrate.api.nvidia.com");
@@ -726,13 +727,14 @@ function detectOpenAICompletionsCompat(model: Model<"openai-completions">): Open
 		supportsStrictMode: !isMoonshot && !isTogether && !isCloudflareAiGateway && !isNvidia,
 		supportsOpenAIGrammarTools: false,
 		...(cacheControlFormat ? { cacheControlFormat } : {}),
-		sendSessionAffinityHeaders: isOpenRouter,
+		sendSessionAffinityHeaders: isOpenRouter || isBaseten,
 		supportsLongCacheRetention: !(
 			isTogether ||
 			isCloudflareWorkersAI ||
 			isCloudflareAiGateway ||
 			isNvidia ||
-			isAntLing
+			isAntLing ||
+			isBaseten
 		),
 	};
 }
@@ -1333,6 +1335,10 @@ function processBasetenModels(provider: ModelsDevProvider | undefined): Model<Ap
 		supportsUsageInStreaming: true,
 		maxTokensField: "max_tokens",
 		supportsStrictMode: true,
+		// Baseten automatic prompt caching needs session affinity so related
+		// requests land on the same replica. See:
+		// https://docs.baseten.co/inference/model-apis/pricing-and-limits
+		sendSessionAffinityHeaders: true,
 		supportsLongCacheRetention: false,
 	};
 	const reasoningEffortCompat: OpenAICompletionsCompat = {

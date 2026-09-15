@@ -181,6 +181,26 @@ describe("openai-completions prompt caching", () => {
 		},
 	);
 
+	it("sends Baseten session affinity headers by provider and base URL detection", async () => {
+		const model = createModel({
+			provider: "baseten",
+			baseUrl: "https://inference.baseten.co/v1",
+		});
+		const { headers } = await captureRequest({ sessionId: "baseten-session" }, model);
+
+		expect(headers["x-session-affinity"]).toBe("baseten-session");
+		expect(headers["x-client-request-id"]).toBe("baseten-session");
+		expect(headers.session_id).toBe("baseten-session");
+	});
+
+	it("sends Baseten session affinity for built-in catalog models", async () => {
+		const model = getModel("baseten", "zai-org/GLM-5.2");
+		const { headers } = await captureRequest({ sessionId: "baseten-catalog-session" }, model);
+
+		expect(headers["x-session-affinity"]).toBe("baseten-catalog-session");
+		expect(headers["x-client-request-id"]).toBe("baseten-catalog-session");
+	});
+
 	it("uses OpenAI no-session format when configured", async () => {
 		const model = createModel({
 			compat: { sendSessionAffinityHeaders: true, sessionAffinityFormat: "openai-nosession" },
