@@ -361,19 +361,21 @@ function buildSessionPath(
 
 function getSessionContextSettings(path: SessionEntry[]): Pick<SessionContext, "thinkingLevel" | "model"> {
 	let thinkingLevel = "off";
-	let model: { provider: string; modelId: string } | null = null;
+	let modelChange: { provider: string; modelId: string } | null = null;
+	let assistantModel: { provider: string; modelId: string } | null = null;
 
 	for (const entry of path) {
 		if (entry.type === "thinking_level_change") {
 			thinkingLevel = entry.thinkingLevel;
 		} else if (entry.type === "model_change") {
-			model = { provider: entry.provider, modelId: entry.modelId };
+			modelChange = { provider: entry.provider, modelId: entry.modelId };
 		} else if (entry.type === "message" && entry.message.role === "assistant") {
-			model = { provider: entry.message.provider, modelId: entry.message.model };
+			assistantModel = { provider: entry.message.provider, modelId: entry.message.model };
 		}
 	}
 
-	return { thinkingLevel, model };
+	// Normal sessions record model_change, but some paths may lack it, e.g. those started after resetLeaf().
+	return { thinkingLevel, model: modelChange ?? assistantModel };
 }
 
 /**

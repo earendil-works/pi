@@ -455,8 +455,8 @@ describe("buildSessionContext", () => {
 		];
 
 		const loaded = buildSessionContext(entries);
-		// model_change is later overwritten by assistant message's model info
-		expect(loaded.model).toEqual({ provider: "anthropic", modelId: "claude-sonnet-4-5" });
+		// Regression test for #9243: model_change is authoritative over provider response metadata.
+		expect(loaded.model).toEqual({ provider: "openai", modelId: "gpt-4" });
 		expect(loaded.thinkingLevel).toBe("high");
 	});
 });
