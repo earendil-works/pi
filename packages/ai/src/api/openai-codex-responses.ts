@@ -9,6 +9,7 @@ import type {
 import { clampThinkingLevel } from "../models.ts";
 import { registerSessionResourceCleanup } from "../session-resources.ts";
 import type {
+	AgentRequestIdentity,
 	Api,
 	AssistantMessage,
 	Context,
@@ -33,6 +34,7 @@ import { headersToRecord } from "../utils/headers.ts";
 import { resolveHttpProxyUrlForTarget } from "../utils/node-http-proxy.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { uuidv7 } from "../utils/uuid.ts";
+import { buildCodexRequestMetadata } from "./codex-request-metadata.ts";
 import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
 import { convertResponsesMessages, convertResponsesTools, processResponsesStream } from "./openai-responses-shared.ts";
@@ -55,6 +57,70 @@ const CODEX_TOOL_CALL_PROVIDERS = new Set(["openai", "openai-codex", "opencode"]
 const WEBSOCKET_MESSAGE_TOO_BIG_CLOSE_CODE = 1009;
 const WEBSOCKET_CONNECTION_LIMIT_REACHED_CODE = "websocket_connection_limit_reached";
 const PREVIOUS_RESPONSE_NOT_FOUND_CODE = "previous_response_not_found";
+const TURN_STATE_HEADER = "x-codex-turn-state";
+
+interface CodexTurnState {
+	sessionId: string;
+	accountId: string;
+	url: string;
+	turnId: string;
+	value?: string;
+}
+
+// Keep only the current foreground and compaction turns per session/thread.
+// Compaction must not displace a foreground turn that will resume afterward.
+// Low-level callers must release session resources when done, just like socket users.
+const codexTurnStates = new Map<string, CodexTurnState>();
+
+function getCodexTurnState(
+	identity: AgentRequestIdentity | undefined,
+	accountId: string,
+	url: string,
+): CodexTurnState | undefined {
+	if (!identity) return undefined;
+	for (const [key, state] of codexTurnStates) {
+		if (state.sessionId === identity.sessionId && (state.accountId !== accountId || state.url !== url)) {
+			codexTurnStates.delete(key);
+		}
+	}
+	const key = JSON.stringify([identity.sessionId, identity.threadId, identity.requestKind]);
+	const previous = codexTurnStates.get(key);
+	const state =
+		previous?.turnId === identity.turnId
+			? previous
+			: { sessionId: identity.sessionId, accountId, url, turnId: identity.turnId };
+	codexTurnStates.set(key, state);
+	return state;
+}
+
+function captureCodexTurnState(state: CodexTurnState | undefined, value: unknown): void {
+	// The server's first value is opaque and must be replayed unchanged, never logged.
+	if (state && state.value === undefined && typeof value === "string" && /^[\x21-\x7e]+$/.test(value)) {
+		state.value = value;
+	}
+}
+
+function applyCodexTurnState(
+	headers: Headers,
+	state: CodexTurnState | undefined,
+	modelHeaders: Record<string, string> | undefined,
+	callerHeaders: ProviderHeaders | undefined,
+): void {
+	let value: string | null | undefined = state?.value;
+	for (const source of [modelHeaders, callerHeaders]) {
+		for (const [key, override] of Object.entries(source ?? {})) {
+			if (key.toLowerCase() === TURN_STATE_HEADER) value = override;
+		}
+	}
+	if (value != null) headers.set(TURN_STATE_HEADER, value);
+	else headers.delete(TURN_STATE_HEADER);
+}
+
+registerSessionResourceCleanup((sessionId) => {
+	for (const [key, state] of codexTurnStates) {
+		if (sessionId === undefined || state.sessionId === sessionId) codexTurnStates.delete(key);
+	}
+});
 
 const CODEX_RESPONSE_STATUSES = new Set<CodexResponseStatus>([
 	"completed",
@@ -95,6 +161,7 @@ interface RequestBody {
 	text?: { verbosity?: string };
 	include?: string[];
 	prompt_cache_key?: string;
+	client_metadata?: Record<string, string>;
 	[key: string]: unknown;
 }
 
@@ -260,6 +327,17 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 			}
 
 			const accountId = extractAccountId(apiKey);
+			const socketSessionId = options?.sessionId ?? options?.requestIdentity?.sessionId;
+			const socketOwner = socketSessionId ? websocketSessionCache.get(socketSessionId) : undefined;
+			if (
+				socketSessionId &&
+				socketOwner &&
+				(socketOwner.accountId !== accountId || socketOwner.url !== resolveCodexWebSocketUrl(model.baseUrl))
+			) {
+				// A temporary SSE request can also change ownership of an existing socket.
+				closeOpenAICodexWebSocketSessions(socketSessionId);
+			}
+			const turnState = getCodexTurnState(options?.requestIdentity, accountId, resolveCodexUrl(model.baseUrl));
 			const grammarToolInputProperties = createGrammarToolInputProperties(
 				context.tools,
 				model.compat?.supportsOpenAIGrammarTools ?? false,
@@ -271,14 +349,24 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 			if (nextBody !== undefined) {
 				body = nextBody as RequestBody;
 			}
-			const websocketRequestId = codexSessionId || uuidv7();
-			const sseHeaders = buildSSEHeaders(model.headers, options?.headers, accountId, apiKey, codexSessionId);
+			const requestMetadata = buildCodexRequestMetadata(options?.requestIdentity);
+			if (requestMetadata) body.client_metadata = requestMetadata.clientMetadata;
+			const websocketRequestId = options?.requestIdentity?.threadId || codexSessionId || uuidv7();
+			const sseHeaders = buildSSEHeaders(
+				model.headers,
+				options?.headers,
+				accountId,
+				apiKey,
+				codexSessionId,
+				options?.requestIdentity,
+			);
 			const websocketHeaders = buildWebSocketHeaders(
 				model.headers,
 				options?.headers,
 				accountId,
 				apiKey,
 				websocketRequestId,
+				options?.requestIdentity,
 			);
 			const bodyJson = JSON.stringify(body);
 			const httpTimeoutMs = normalizeTimeoutMs(options?.timeoutMs);
@@ -316,6 +404,7 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 							cacheSessionId,
 							accountId,
 							grammarToolInputProperties,
+							turnState,
 							options,
 						);
 
@@ -385,6 +474,7 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 				}
 
 				try {
+					applyCodexTurnState(sseHeaders, turnState, model.headers, options?.headers);
 					const headerTimeoutSignal =
 						httpTimeoutMs !== undefined && httpTimeoutMs > 0 ? AbortSignal.timeout(httpTimeoutMs) : undefined;
 					const combinedSignal = combineAbortSignals([options?.signal, headerTimeoutSignal]);
@@ -403,6 +493,7 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 					} finally {
 						combinedSignal.cleanup();
 					}
+					captureCodexTurnState(turnState, response.headers.get(TURN_STATE_HEADER));
 					await options?.onResponse?.(
 						{ status: response.status, headers: headersToRecord(response.headers) },
 						model,
@@ -464,7 +555,7 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 				startEmitted = true;
 				stream.push({ type: "start", partial: output });
 			}
-			await processStream(response, output, stream, model, grammarToolInputProperties, options);
+			await processStream(response, output, stream, model, grammarToolInputProperties, turnState, options);
 
 			if (options?.signal?.aborted) {
 				throw new Error("Request was aborted");
@@ -558,7 +649,6 @@ function buildRequestBody(
 		tool_choice: options?.toolChoice ?? "auto",
 		parallel_tool_calls: true,
 	};
-
 	if (options?.temperature !== undefined) {
 		body.temperature = options.temperature;
 	}
@@ -659,14 +749,21 @@ async function processStream(
 	stream: AssistantMessageEventStream,
 	model: Model<"openai-codex-responses">,
 	grammarToolInputProperties: ReadonlyMap<string, string>,
+	turnState: CodexTurnState | undefined,
 	options?: OpenAICodexResponsesOptions,
 ): Promise<void> {
-	await processResponsesStream(mapCodexEvents(parseSSE(response, options?.signal), output), output, stream, model, {
-		serviceTier: options?.serviceTier,
-		grammarToolInputProperties,
-		resolveServiceTier: resolveCodexServiceTier,
-		applyServiceTierPricing: (usage, serviceTier) => applyServiceTierPricing(usage, serviceTier, model),
-	});
+	await processResponsesStream(
+		mapCodexEvents(parseSSE(response, options?.signal), output, turnState),
+		output,
+		stream,
+		model,
+		{
+			serviceTier: options?.serviceTier,
+			grammarToolInputProperties,
+			resolveServiceTier: resolveCodexServiceTier,
+			applyServiceTierPricing: (usage, serviceTier) => applyServiceTierPricing(usage, serviceTier, model),
+		},
+	);
 }
 
 class CodexApiError extends Error {
@@ -693,8 +790,12 @@ class CodexProtocolError extends Error {
 	}
 }
 
+class CodexSessionChangedError extends Error {}
+
 function isCodexNonTransportError(error: unknown): boolean {
-	return error instanceof CodexApiError || error instanceof CodexProtocolError;
+	return (
+		error instanceof CodexApiError || error instanceof CodexProtocolError || error instanceof CodexSessionChangedError
+	);
 }
 
 function isWebSocketConnectionLimitReachedError(error: unknown): boolean {
@@ -721,10 +822,17 @@ function extractCodexEventError(event: Record<string, unknown>): { code?: string
 async function* mapCodexEvents(
 	events: AsyncIterable<Record<string, unknown>>,
 	output: AssistantMessage,
+	turnState: CodexTurnState | undefined,
 ): AsyncGenerator<ResponseStreamEvent> {
 	for await (const event of events) {
 		const type = typeof event.type === "string" ? event.type : undefined;
 		if (!type) continue;
+		if (type === "codex.response.metadata" || type === "response.metadata") {
+			if (event.headers && typeof event.headers === "object") {
+				captureCodexTurnState(turnState, (event.headers as Record<string, unknown>)[TURN_STATE_HEADER]);
+			}
+			continue;
+		}
 
 		if (type === "error") {
 			const { code, message } = extractCodexEventError(event);
@@ -877,7 +985,14 @@ export interface OpenAICodexWebSocketDebugStats {
 	lastWebSocketError?: string;
 }
 
-const websocketSessionCache = new Map<string, Map<string, CachedWebSocketConnection>>();
+interface WebSocketSession {
+	accountId: string;
+	url: string;
+	connection?: CachedWebSocketConnection;
+}
+
+// Record ownership before awaiting the handshake so late connections cannot restore old state.
+const websocketSessionCache = new Map<string, WebSocketSession>();
 const websocketDebugStats = new Map<string, OpenAICodexWebSocketDebugStats>();
 const websocketSseFallbackSessions = new Set<string>();
 
@@ -922,12 +1037,13 @@ export function closeOpenAICodexWebSocketSessions(sessionId?: string): void {
 		closeWebSocketSilently(entry.socket, 1000, "debug_close");
 	};
 	if (sessionId) {
-		for (const entry of websocketSessionCache.get(sessionId)?.values() ?? []) closeEntry(entry);
+		const entry = websocketSessionCache.get(sessionId)?.connection;
+		if (entry) closeEntry(entry);
 		websocketSessionCache.delete(sessionId);
 		return;
 	}
-	for (const accountEntries of websocketSessionCache.values()) {
-		for (const entry of accountEntries.values()) closeEntry(entry);
+	for (const session of websocketSessionCache.values()) {
+		if (session.connection) closeEntry(session.connection);
 	}
 	websocketSessionCache.clear();
 }
@@ -1029,16 +1145,14 @@ function closeWebSocketSilently(socket: WebSocketLike, code = 1000, reason = "do
 	} catch {}
 }
 
-function scheduleSessionWebSocketExpiry(sessionId: string, accountId: string, entry: CachedWebSocketConnection): void {
+function scheduleSessionWebSocketExpiry(session: WebSocketSession, entry: CachedWebSocketConnection): void {
 	if (entry.idleTimer) {
 		clearTimeout(entry.idleTimer);
 	}
 	entry.idleTimer = setTimeout(() => {
 		if (entry.busy) return;
 		closeWebSocketSilently(entry.socket, 1000, "idle_timeout");
-		const accountEntries = websocketSessionCache.get(sessionId);
-		if (accountEntries?.get(accountId) === entry) accountEntries.delete(accountId);
-		if (accountEntries?.size === 0) websocketSessionCache.delete(sessionId);
+		if (session.connection === entry) session.connection = undefined;
 	}, SESSION_WEBSOCKET_CACHE_TTL_MS);
 }
 
@@ -1143,8 +1257,14 @@ async function acquireWebSocket(
 		};
 	}
 
-	let accountEntries = websocketSessionCache.get(sessionId);
-	const cached = accountEntries?.get(accountId);
+	let session = websocketSessionCache.get(sessionId);
+	if (!session || session.accountId !== accountId || session.url !== url) {
+		closeOpenAICodexWebSocketSessions(sessionId);
+		session = { accountId, url };
+		websocketSessionCache.set(sessionId, session);
+	}
+	const cached = session.connection;
+	let entry: CachedWebSocketConnection | undefined;
 	if (cached) {
 		if (cached.idleTimer) {
 			clearTimeout(cached.idleTimer);
@@ -1152,67 +1272,54 @@ async function acquireWebSocket(
 		}
 		if (!cached.busy && isWebSocketSessionExpired(cached)) {
 			closeWebSocketSilently(cached.socket, 1000, "connection_age_limit");
-			accountEntries?.delete(accountId);
-			if (accountEntries?.size === 0) websocketSessionCache.delete(sessionId);
+			session.connection = undefined;
 		} else if (!cached.busy && isWebSocketReusable(cached.socket)) {
-			cached.busy = true;
-			return {
-				socket: cached.socket,
-				entry: cached,
-				reused: true,
-				release: ({ keep } = {}) => {
-					if (!keep || !isWebSocketReusable(cached.socket)) {
-						closeWebSocketSilently(cached.socket);
-						const currentEntries = websocketSessionCache.get(sessionId);
-						if (currentEntries?.get(accountId) === cached) currentEntries.delete(accountId);
-						if (currentEntries?.size === 0) websocketSessionCache.delete(sessionId);
-						return;
-					}
-					cached.busy = false;
-					scheduleSessionWebSocketExpiry(sessionId, accountId, cached);
-				},
-			};
-		}
-		if (cached.busy) {
-			const socket = await connectWebSocket(url, headers, signal, connectTimeoutMs, env);
-			return {
-				socket,
-				reused: false,
-				release: () => {
-					closeWebSocketSilently(socket);
-				},
-			};
-		}
-		if (!isWebSocketReusable(cached.socket)) {
+			entry = cached;
+		} else if (!cached.busy && !isWebSocketReusable(cached.socket)) {
 			closeWebSocketSilently(cached.socket);
-			accountEntries?.delete(accountId);
-			if (accountEntries?.size === 0) websocketSessionCache.delete(sessionId);
+			session.connection = undefined;
 		}
 	}
 
-	const socket = await connectWebSocket(url, headers, signal, connectTimeoutMs, env);
-	const entry: CachedWebSocketConnection = { socket, busy: true, createdAt: Date.now() };
-	accountEntries = websocketSessionCache.get(sessionId);
-	if (!accountEntries) {
-		accountEntries = new Map();
-		websocketSessionCache.set(sessionId, accountEntries);
+	const reused = entry !== undefined;
+	if (!entry) {
+		let socket: WebSocketLike;
+		try {
+			socket = await connectWebSocket(url, headers, signal, connectTimeoutMs, env);
+		} catch (error) {
+			// A stale failure must not disable WebSockets or trigger SSE for the new owner.
+			if (websocketSessionCache.get(sessionId) !== session) {
+				throw new CodexSessionChangedError("WebSocket session changed during connection");
+			}
+			throw error;
+		}
+		if (websocketSessionCache.get(sessionId) !== session) {
+			closeWebSocketSilently(socket);
+			throw new CodexSessionChangedError("WebSocket session changed during connection");
+		}
+		// Another request may already own the cached connection, including one
+		// whose handshake completed while this request was connecting.
+		if (session.connection) {
+			return { socket, reused: false, release: () => closeWebSocketSilently(socket) };
+		}
+		entry = { socket, busy: true, createdAt: Date.now() };
+		session.connection = entry;
 	}
-	accountEntries.set(accountId, entry);
+	const connection = entry;
+	connection.busy = true;
 	return {
-		socket,
-		entry,
-		reused: false,
+		socket: connection.socket,
+		entry: connection,
+		reused,
 		release: ({ keep } = {}) => {
-			if (!keep || !isWebSocketReusable(entry.socket)) {
-				closeWebSocketSilently(entry.socket);
-				if (entry.idleTimer) clearTimeout(entry.idleTimer);
-				const currentEntries = websocketSessionCache.get(sessionId);
-				if (currentEntries?.get(accountId) === entry) currentEntries.delete(accountId);
-				if (currentEntries?.size === 0) websocketSessionCache.delete(sessionId);
+			if (!keep || websocketSessionCache.get(sessionId) !== session || !isWebSocketReusable(connection.socket)) {
+				closeWebSocketSilently(connection.socket);
+				if (connection.idleTimer) clearTimeout(connection.idleTimer);
+				if (session.connection === connection) session.connection = undefined;
 				return;
 			}
-			entry.busy = false;
-			scheduleSessionWebSocketExpiry(sessionId, accountId, entry);
+			connection.busy = false;
+			scheduleSessionWebSocketExpiry(session, connection);
 		},
 	};
 }
@@ -1392,8 +1499,10 @@ async function* parseWebSocket(
 	}
 }
 
-function requestBodyWithoutInput(body: RequestBody): RequestBody {
-	const { input: _input, previous_response_id: _previousResponseId, ...rest } = body;
+function requestBodyForComparison(body: RequestBody): RequestBody {
+	// Attribution describes this request, not the context referenced by previous_response_id.
+	// Compare without it, but keep the current metadata on every response.create frame.
+	const { input: _input, previous_response_id: _previousResponseId, client_metadata: _clientMetadata, ...rest } = body;
 	return rest;
 }
 
@@ -1401,15 +1510,14 @@ function responseInputsEqual(a: ResponseInput | undefined, b: ResponseInput | un
 	return JSON.stringify(a ?? []) === JSON.stringify(b ?? []);
 }
 
-function requestBodiesMatchExceptInput(a: RequestBody, b: RequestBody): boolean {
-	return JSON.stringify(requestBodyWithoutInput(a)) === JSON.stringify(requestBodyWithoutInput(b));
-}
-
 function getCachedWebSocketInputDelta(
 	body: RequestBody,
 	continuation: CachedWebSocketContinuationState,
 ): ResponseInput | undefined {
-	if (!requestBodiesMatchExceptInput(body, continuation.lastRequestBody)) {
+	if (
+		JSON.stringify(requestBodyForComparison(body)) !==
+		JSON.stringify(requestBodyForComparison(continuation.lastRequestBody))
+	) {
 		return undefined;
 	}
 
@@ -1473,6 +1581,7 @@ async function processWebSocketStream(
 	cacheSessionId: string | undefined,
 	accountId: string,
 	grammarToolInputProperties: ReadonlyMap<string, string>,
+	turnState: CodexTurnState | undefined,
 	options?: OpenAICodexResponsesOptions,
 ): Promise<void> {
 	const { socket, entry, reused, release } = await acquireWebSocket(
@@ -1509,10 +1618,23 @@ async function processWebSocketStream(
 		}
 	}
 	try {
-		socket.send(JSON.stringify({ type: "response.create", ...requestBody }));
+		// A socket can span turns. Keep automatic routing out of its handshake;
+		// otherwise the handshake's old state can leak into later request frames.
+		const requestHeaders = new Headers(headers);
+		applyCodexTurnState(requestHeaders, turnState, model.headers, options?.headers);
+		const routingState = requestHeaders.get(TURN_STATE_HEADER);
+		socket.send(
+			JSON.stringify({
+				type: "response.create",
+				...requestBody,
+				...(routingState
+					? { client_metadata: { ...requestBody.client_metadata, [TURN_STATE_HEADER]: routingState } }
+					: {}),
+			}),
+		);
 		await processResponsesStream(
 			startWebSocketOutputOnFirstEvent(
-				mapCodexEvents(parseWebSocket(socket, options?.signal, idleTimeoutMs), output),
+				mapCodexEvents(parseWebSocket(socket, options?.signal, idleTimeoutMs), output, turnState),
 				onStart,
 			),
 			output,
@@ -1602,8 +1724,12 @@ function buildBaseCodexHeaders(
 	additionalHeaders: ProviderHeaders | undefined,
 	accountId: string,
 	token: string,
+	requestIdentity?: AgentRequestIdentity,
 ): Headers {
 	const headers = new Headers(initHeaders);
+	headers.set("originator", "pi");
+	const metadata = buildCodexRequestMetadata(requestIdentity);
+	for (const [key, value] of Object.entries(metadata?.headers ?? {})) headers.set(key, value);
 	for (const [key, value] of Object.entries(additionalHeaders || {})) {
 		if (value === null) {
 			headers.delete(key);
@@ -1613,7 +1739,6 @@ function buildBaseCodexHeaders(
 	}
 	headers.set("Authorization", `Bearer ${token}`);
 	headers.set("chatgpt-account-id", accountId);
-	headers.set("originator", "pi");
 	headers.set("User-Agent", getPiUserAgent());
 	return headers;
 }
@@ -1624,13 +1749,14 @@ function buildSSEHeaders(
 	accountId: string,
 	token: string,
 	sessionId?: string,
+	requestIdentity?: AgentRequestIdentity,
 ): Headers {
-	const headers = buildBaseCodexHeaders(initHeaders, additionalHeaders, accountId, token);
+	const headers = buildBaseCodexHeaders(initHeaders, additionalHeaders, accountId, token, requestIdentity);
 	headers.set("OpenAI-Beta", "responses=experimental");
 	headers.set("accept", "text/event-stream");
 	headers.set("content-type", "application/json");
 
-	if (sessionId) {
+	if (sessionId && !requestIdentity) {
 		headers.set("session-id", sessionId);
 		headers.set("x-client-request-id", sessionId);
 	}
@@ -1644,14 +1770,17 @@ function buildWebSocketHeaders(
 	accountId: string,
 	token: string,
 	requestId: string,
+	requestIdentity?: AgentRequestIdentity,
 ): Headers {
-	const headers = buildBaseCodexHeaders(initHeaders, additionalHeaders, accountId, token);
+	const headers = buildBaseCodexHeaders(initHeaders, additionalHeaders, accountId, token, requestIdentity);
 	headers.delete("accept");
 	headers.delete("content-type");
 	headers.delete("OpenAI-Beta");
 	headers.delete("openai-beta");
 	headers.set("OpenAI-Beta", OPENAI_BETA_RESPONSES_WEBSOCKETS);
-	headers.set("x-client-request-id", requestId);
-	headers.set("session-id", requestId);
+	if (!requestIdentity) {
+		headers.set("x-client-request-id", requestId);
+		headers.set("session-id", requestId);
+	}
 	return headers;
 }

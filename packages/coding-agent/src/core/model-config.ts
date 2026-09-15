@@ -71,6 +71,7 @@ const ChatTemplateKwargVariableSchema = Type.Object({
 const ChatTemplateKwargSchema = Type.Union([ChatTemplateKwargScalarSchema, ChatTemplateKwargVariableSchema]);
 
 const OpenAICompletionsCompatSchema = Type.Object({
+	codexAttribution: Type.Optional(Type.Literal("official")),
 	supportsStore: Type.Optional(Type.Boolean()),
 	supportsDeveloperRole: Type.Optional(Type.Boolean()),
 	supportsReasoningEffort: Type.Optional(Type.Boolean()),
@@ -113,6 +114,7 @@ const OpenAICompletionsCompatSchema = Type.Object({
 });
 
 const OpenAIResponsesCompatSchema = Type.Object({
+	codexAttribution: Type.Optional(Type.Literal("official")),
 	supportsDeveloperRole: Type.Optional(Type.Boolean()),
 	sessionAffinityFormat: Type.Optional(
 		Type.Union([Type.Literal("openai"), Type.Literal("openai-nosession"), Type.Literal("openrouter")]),

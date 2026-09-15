@@ -1451,15 +1451,21 @@ describe("openai-codex streaming", () => {
 		await streamOpenAICodexResponses(model, context, { ...options, apiKey: mockToken("account-b") }).result();
 		await streamOpenAICodexResponses(model, context, { ...options, apiKey: mockToken("account-a") }).result();
 
-		expect(connectedHeaders.map((headers) => headers["chatgpt-account-id"])).toEqual(["account-a", "account-b"]);
+		// #9481: returning to an account starts with fresh routing and continuation state.
+		expect(connectedHeaders.map((headers) => headers["chatgpt-account-id"])).toEqual([
+			"account-a",
+			"account-b",
+			"account-a",
+		]);
 		expect(connectedHeaders.map((headers) => headers.authorization)).toEqual([
 			`Bearer ${mockToken("account-a")}`,
 			`Bearer ${mockToken("account-b")}`,
+			`Bearer ${mockToken("account-a")}`,
 		]);
 		expect(global.fetch).not.toHaveBeenCalled();
 		expect(getOpenAICodexWebSocketDebugStats("shared-session")).toMatchObject({
-			connectionsCreated: 2,
-			connectionsReused: 1,
+			connectionsCreated: 3,
+			connectionsReused: 0,
 		});
 	});
 

@@ -321,8 +321,17 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			const websocketConnectTimeoutMs =
 				options?.websocketConnectTimeoutMs ?? settingsManager.getWebSocketConnectTimeoutMs();
 			const headerRunner = extensionRunnerRef.current;
+			// Derive the window from committed history so retries, resume, and tree navigation
+			// use the active branch's context without a separate persistent counter.
+			const requestIdentity = options?.requestIdentity
+				? {
+						...options.requestIdentity,
+						windowId: `${options.requestIdentity.threadId}:${sessionManager.getBranch().filter((entry) => entry.type === "compaction").length}`,
+					}
+				: undefined;
 			return modelRuntime.streamSimple(model, context, {
 				...options,
+				requestIdentity,
 				timeoutMs,
 				websocketConnectTimeoutMs,
 				maxRetries: options?.maxRetries ?? providerRetrySettings.maxRetries,

@@ -461,6 +461,7 @@ For providers with partial OpenAI compatibility, use the `compat` field.
 
 | Field | Description |
 |-------|-------------|
+| `codexAttribution` | Set to `official` to emit official Codex request-attribution headers. Responses-compatible endpoints also receive `client_metadata`. |
 | `supportsStore` | Provider supports `store` field |
 | `supportsDeveloperRole` | Use `developer` vs `system` role |
 | `supportsReasoningEffort` | Support for `reasoning_effort` parameter |

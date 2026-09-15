@@ -2070,11 +2070,15 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					baseUrl = `${variant.basePath}/v1`;
 				}
 
-				if (variant.provider === "opencode" && modelId === "grok-build-0.1") {
+				if (api === "openai-completions" && variant.provider === "opencode" && modelId === "grok-build-0.1") {
 					compat = { ...(compat ?? {}), supportsReasoningEffort: false };
 				}
 
-				if ((variant.provider === "opencode" || variant.provider === "opencode-go") && modelId === "kimi-k2.6") {
+				if (
+					api === "openai-completions" &&
+					(variant.provider === "opencode" || variant.provider === "opencode-go") &&
+					modelId === "kimi-k2.6"
+				) {
 					// OpenCode Kimi K2.6 accepts Anthropic-style thinking objects
 					// and rejects string thinking values or combined reasoning_effort.
 					compat = { ...(compat ?? {}), thinkingFormat: "deepseek", supportsReasoningEffort: false };
