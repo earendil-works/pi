@@ -62,7 +62,11 @@ import { stream as streamBedrock } from "../src/api/bedrock-converse-stream.ts";
 import { getModel } from "../src/compat.ts";
 import type { Context } from "../src/types.ts";
 
-const model = getModel("amazon-bedrock", "us.anthropic.claude-opus-4-8");
+const model = {
+	...getModel("amazon-bedrock", "us.anthropic.claude-opus-4-8"),
+	// Keep this pricing-math regression independent of live catalog updates.
+	cost: { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
+};
 const context: Context = { messages: [{ role: "user", content: "hi", timestamp: Date.now() }] };
 
 describe("Bedrock 1h cache write cost", () => {
