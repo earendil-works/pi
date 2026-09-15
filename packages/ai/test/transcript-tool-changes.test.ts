@@ -301,6 +301,27 @@ describe("transcript system messages", () => {
 		);
 	});
 
+	test("keeps Kimi K2 system text inline without dynamic tool messages", async () => {
+		const model: Model<"openai-completions"> = {
+			...modelBase,
+			id: "kimi-k2.7-code",
+			name: "Kimi K2.7 Code",
+			api: "openai-completions",
+			provider: "moonshotai",
+			compat: { supportsMidConvoSystemMessages: true },
+		};
+		const payload = await capturePayload<{
+			tools?: Array<{ function?: { name: string } }>;
+			messages: Array<{ role: string; content?: string; tools?: Array<{ function?: { name: string } }> }>;
+		}>(model, additionContext);
+
+		expect(payload.tools?.map((value) => value.function?.name)).toEqual(["base_tool", "late_tool"]);
+		expect(payload.messages.some((message) => message.tools !== undefined)).toBe(false);
+		expect(payload.messages.filter((message) => message.role === "system").map((message) => message.content)).toEqual(
+			["base prompt", "updated guidance"],
+		);
+	});
+
 	test("folds OpenAI-compatible updates into the system prompt without native support", async () => {
 		const model: Model<"openai-completions"> = {
 			...modelBase,
