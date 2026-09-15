@@ -6641,11 +6641,14 @@ export class InteractiveMode {
 			this.renderInitialMessages();
 			void this.flushCompactionQueue({ willRetry: false });
 
+			const roleDetail = Object.entries(result.removedByRole)
+				.map(([role, n]) => `${n} ${role}${n === 1 ? "" : "s"}`)
+				.join(", ");
 			const scope = result.hard
 				? "the session file and the model context"
 				: "the model context (removed turns stay in the file; /tree can navigate back)";
 			this.showStatus(
-				`Removed ${result.removedMessages} message(s) (~${result.removedTokensApprox.toLocaleString()} tokens) from ${scope}.`,
+				`Removed ${result.removedMessages} message(s) (${roleDetail}, ~${result.removedTokensApprox.toLocaleString()} tokens) from ${scope}.`,
 			);
 		} catch (error) {
 			this.showError(error instanceof Error ? error.message : String(error));

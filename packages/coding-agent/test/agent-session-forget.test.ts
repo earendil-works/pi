@@ -71,6 +71,65 @@ describe("AgentSession.forgetMessages", () => {
 		}
 	});
 
+	it("counts tool-call traffic inside a turn (user + toolCall + toolResult + final answer)", async () => {
+		const ctx = await createTestSession();
+		try {
+			const { session, sessionManager } = ctx;
+			sessionManager.appendMessage(userMsg("setup"));
+			sessionManager.appendMessage(assistantMsg("S1"));
+
+			// A turn where the assistant calls a tool before answering
+			sessionManager.appendMessage(userMsg("how many C's are in catacomb"));
+			sessionManager.appendMessage({
+				role: "assistant" as const,
+				content: [
+					{
+						type: "toolCall" as const,
+						id: "tc1",
+						name: "bash",
+						arguments: { command: "echo -n catacomb | grep -o c | wc -l" },
+					},
+				],
+				api: "anthropic-messages" as const,
+				provider: "anthropic",
+				model: "test",
+				usage: {
+					input: 1,
+					output: 1,
+					cacheRead: 0,
+					cacheWrite: 0,
+					totalTokens: 2,
+					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+				},
+				stopReason: "toolUse" as const,
+				timestamp: Date.now(),
+			});
+			sessionManager.appendMessage({
+				role: "toolResult" as const,
+				toolCallId: "tc1",
+				toolName: "bash",
+				content: [{ type: "text" as const, text: "2" }],
+				isError: false,
+				timestamp: Date.now(),
+			});
+			sessionManager.appendMessage(assistantMsg("two C's"));
+
+			const result = await session.forgetMessages(1);
+
+			expect(result.removedUserTurns).toBe(1);
+			expect(result.removedMessages).toBe(4);
+			expect(result.removedByRole).toEqual({ user: 1, assistant: 2, toolResult: 1 });
+
+			// Context is rebuilt to the setup turn; no dangling tool traffic remains
+			const texts = contextTexts(session);
+			expect(texts).toContain("setup");
+			expect(texts).not.toContain("catacomb");
+			expect(texts).not.toContain("toolResult");
+		} finally {
+			ctx.cleanup();
+		}
+	});
+
 	it("hard: rewrites the file to the retained path and writes no backup", async () => {
 		const ctx = await createTestSession();
 		try {

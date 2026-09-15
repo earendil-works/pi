@@ -307,6 +307,8 @@ export interface ForgetResult {
 	removedUserTurns: number;
 	/** Total number of message entries removed from the active path. */
 	removedMessages: number;
+	/** Removed message entries grouped by role (e.g. { user: 1, assistant: 2, toolResult: 1 }). */
+	removedByRole: Record<string, number>;
 	/** Approximate token count of removed messages. */
 	removedTokensApprox: number;
 	/** Entry id the leaf was moved to (null = root). */
@@ -3406,9 +3408,15 @@ export class AgentSession {
 		});
 
 		const removedMessages = removedEntries.filter((e) => e.type === "message");
+		const removedByRole: Record<string, number> = {};
+		for (const e of removedMessages) {
+			const role = e.message.role;
+			removedByRole[role] = (removedByRole[role] ?? 0) + 1;
+		}
 		return {
 			removedUserTurns: count,
 			removedMessages: removedMessages.length,
+			removedByRole,
 			removedTokensApprox: removedMessages.reduce((sum, e) => sum + estimateTokens(e.message), 0),
 			targetId,
 			hard: options.hard ?? false,
