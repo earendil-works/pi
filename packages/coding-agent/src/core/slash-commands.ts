@@ -20,6 +20,11 @@ export const BUILTIN_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 	{ name: "settings", description: "Open settings menu" },
 	{ name: "model", description: "Select model (opens selector UI)", argumentHint: "<provider/model>" },
 	{ name: "tree", description: "Navigate session tree (switch branches)" },
+	{
+		name: "forget",
+		description: "Remove the last N user turns from context; --hard also removes them from the session file",
+		argumentHint: "[N] [--hard]",
+	},
 	{ name: "thinking", description: "Set thinking level", argumentHint: "<level>" },
 	{ name: "scoped-models", description: "Enable/disable models for Ctrl+P cycling" },
 	{ name: "export", description: "Export session (HTML default, or specify path: .html/.jsonl)" },

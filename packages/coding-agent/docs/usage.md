@@ -47,6 +47,7 @@ Type `/` in the editor to open command completion. Extensions can register custo
 | `/name <name>` | Set session display name |
 | `/session` | Show session file, ID, messages, tokens, and cost |
 | `/tree` | Jump to any point in the session and continue from there |
+| `/forget [N] [--hard]` | Remove the last N user turns from context; `--hard` also removes them from the session file |
 | `/trust` | Save project trust decision for future sessions |
 | `/fork` | Create a new session from a previous user message |
 | `/clone` | Duplicate the current active branch into a new session |

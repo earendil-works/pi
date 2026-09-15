@@ -3044,6 +3044,11 @@ export class InteractiveMode {
 				this.editor.setText("");
 				return;
 			}
+			if (text === "/forget" || text.startsWith("/forget ")) {
+				this.editor.setText("");
+				await this.handleForgetCommand(text);
+				return;
+			}
 			if (text === "/trust") {
 				this.showTrustSelector();
 				this.editor.setText("");
@@ -6595,6 +6600,55 @@ export class InteractiveMode {
 			await this.session.compact(customInstructions);
 		} catch {
 			// Ignore, will be emitted as an event
+		}
+	}
+
+	private async handleForgetCommand(text: string): Promise<void> {
+		const args = text.startsWith("/forget ") ? text.slice(8).trim() : "";
+		let count = 1;
+		let hard = false;
+		for (const token of args.split(/\s+/).filter(Boolean)) {
+			if (token === "--hard") {
+				hard = true;
+			} else if (/^\d+$/.test(token)) {
+				count = Number.parseInt(token, 10);
+			} else {
+				this.showError("Usage: /forget [N] [--hard]");
+				return;
+			}
+		}
+		if (count < 1) {
+			this.showError("Usage: /forget [N] [--hard]");
+			return;
+		}
+
+		try {
+			if (hard) {
+				const confirmed = await this.showExtensionConfirm(
+					"Forget session turns",
+					`Remove the last ${count} user turn(s) from the session file and the model context?\n\nThe session file will be rewritten. No backup will be written. This cannot be undone.`,
+				);
+				if (!confirmed) {
+					this.showStatus("Cancelled");
+					return;
+				}
+			}
+
+			const result = await this.session.forgetMessages(count, { hard });
+
+			// Update UI to the retained path
+			this.chatContainer.clear();
+			this.renderInitialMessages();
+			void this.flushCompactionQueue({ willRetry: false });
+
+			const scope = result.hard
+				? "the session file and the model context"
+				: "the model context (removed turns stay in the file; /tree can navigate back)";
+			this.showStatus(
+				`Removed ${result.removedMessages} message(s) (~${result.removedTokensApprox.toLocaleString()} tokens) from ${scope}.`,
+			);
+		} catch (error) {
+			this.showError(error instanceof Error ? error.message : String(error));
 		}
 	}
 

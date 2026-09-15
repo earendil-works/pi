@@ -28,6 +28,7 @@ For the JSONL file format and SessionManager API, see [Session Format](session-f
 | `/name <name>` | Set the current session display name |
 | `/session` | Show session info |
 | `/tree` | Navigate the current session tree |
+| `/forget [N] [--hard]` | Remove the last N user turns from context; `--hard` also removes them from the session file |
 | `/fork` | Create a new session from a previous user message |
 | `/clone` | Duplicate the current active branch into a new session |
 | `/compact [prompt]` | Summarize older context; see [Compaction](compaction.md) |
@@ -125,6 +126,17 @@ Selecting the root user message resets the leaf to an empty conversation and pla
 | Summary | Optional branch summary | None | None |
 
 Use `/tree` when you want to keep alternatives together. Use `/fork` or `/clone` when you want a separate session file.
+
+## Forgetting turns with `/forget`
+
+`/forget [N] [--hard]` removes the last N user turns (default 1) so the model no longer sees them. A user turn is a user message plus everything after it up to the next user message; the cut always lands on a user-message boundary.
+
+- **Soft (default):** the leaf moves back. The removed turns leave the model context but stay in the session file, so `/tree` can navigate back to them.
+- **`--hard`:** the session file is rewritten to contain only the retained path. The removed turns are permanently deleted from the file. **No backup is written and this cannot be undone** — pi asks for confirmation first.
+
+No branch summary is created, so the model has no awareness of the removed turns: the next response is generated from exactly the retained messages. `/forget` is refused while a response, compaction, or tree navigation is in progress.
+
+`/forget` does not erase out-of-band state: files written, memory entries, or tool state created during the removed turns are unaffected.
 
 ## Branch Summaries
 

@@ -299,6 +299,22 @@ function estimateMessagesTokens(messages: AgentMessage[]): number {
 	return tokens;
 }
 
+/**
+ * Result of a /forget operation.
+ */
+export interface ForgetResult {
+	/** Number of user turns removed (user messages on the cut suffix). */
+	removedUserTurns: number;
+	/** Total number of message entries removed from the active path. */
+	removedMessages: number;
+	/** Approximate token count of removed messages. */
+	removedTokensApprox: number;
+	/** Entry id the leaf was moved to (null = root). */
+	targetId: string | null;
+	/** True if the session file was rewritten (hard mode). */
+	hard: boolean;
+}
+
 // ============================================================================
 // AgentSession Class
 // ============================================================================
@@ -3329,6 +3345,74 @@ export class AgentSession {
 			this._branchSummaryAbortController = undefined;
 			this._resolveIdleWaitIfIdle();
 		}
+	}
+
+	/**
+	 * Remove the last `count` user turns from the session.
+	 *
+	 * A user turn is a user message entry plus everything after it up to the
+	 * next user message (or the leaf). The cut always lands on a user-message
+	 * boundary: the retained path ends just before the Nth-last user message.
+	 *
+	 * - soft (default): moves the leaf back. Removed entries stay in the
+	 *   session file (recoverable via /tree) but leave the model context.
+	 * - hard: rewrites the session file to contain only the retained path.
+	 *   Removed entries are permanently deleted from the file. No backup is
+	 *   written.
+	 *
+	 * No branch summary is created, so the model has no awareness of the
+	 * removed turns. Out-of-band state (files, memory, tool state) is not
+	 * erased by this operation.
+	 */
+	async forgetMessages(count: number, options: { hard?: boolean } = {}): Promise<ForgetResult> {
+		if (!Number.isInteger(count) || count < 1) {
+			throw new Error("Count must be a positive integer");
+		}
+		if (this.isStreaming) {
+			throw new Error("Wait for the current response to finish before using /forget.");
+		}
+		if (this.isCompacting) {
+			throw new Error("Wait for the current compaction or tree navigation to finish before using /forget.");
+		}
+
+		const path = this.sessionManager.getBranch();
+		const userEntries = path.filter((e) => e.type === "message" && e.message.role === "user");
+		if (count > userEntries.length) {
+			throw new Error(`Session has only ${userEntries.length} user message(s); cannot forget ${count}.`);
+		}
+
+		// The Nth-last user message; the cut lands just before it.
+		const cutEntry = userEntries[userEntries.length - count];
+		const targetId = cutEntry.parentId;
+		const removedEntries = path.slice(path.indexOf(cutEntry));
+
+		const oldLeafId = this.sessionManager.getLeafId();
+		if (options.hard) {
+			this.sessionManager.truncateTo(targetId);
+		} else if (targetId === null) {
+			this.sessionManager.resetLeaf();
+		} else {
+			this.sessionManager.branch(targetId);
+		}
+
+		// Rebuild in-memory context from the retained path
+		const sessionContext = this.sessionManager.buildSessionContext();
+		this.agent.state.messages = sessionContext.messages;
+
+		await this._extensionRunner.emit({
+			type: "session_tree",
+			newLeafId: this.sessionManager.getLeafId(),
+			oldLeafId,
+		});
+
+		const removedMessages = removedEntries.filter((e) => e.type === "message");
+		return {
+			removedUserTurns: count,
+			removedMessages: removedMessages.length,
+			removedTokensApprox: removedMessages.reduce((sum, e) => sum + estimateTokens(e.message), 0),
+			targetId,
+			hard: options.hard ?? false,
+		};
 	}
 
 	/**

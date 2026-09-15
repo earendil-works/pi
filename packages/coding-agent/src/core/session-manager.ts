@@ -1420,6 +1420,94 @@ export class SessionManager {
 	}
 
 	/**
+	 * Truncate the session to the path from root to the specified entry.
+	 *
+	 * Moves the leaf pointer to the entry (like branch()) and rewrites the
+	 * session file so it contains only the header and the retained path.
+	 * Entries not on the path - abandoned branches and the suffix after the
+	 * entry - are permanently removed from the file. No backup is written.
+	 *
+	 * Pass null to truncate to the root (header only). The entry must not be
+	 * a label entry.
+	 */
+	truncateTo(entryId: string | null): void {
+		if (entryId !== null) {
+			const entry = this.byId.get(entryId);
+			if (!entry) {
+				throw new Error(`Entry ${entryId} not found`);
+			}
+			if (entry.type === "label") {
+				throw new Error("Cannot truncate to a label entry");
+			}
+		}
+
+		const path = entryId ? this.getBranch(entryId) : [];
+
+		// Filter out LabelEntry from path - we'll recreate them from the resolved map.
+		// Because labels are real tree entries, later entries can be children of labels;
+		// removing labels requires re-chaining the retained path to avoid orphaned subtrees.
+		const pathWithoutLabels: SessionEntry[] = [];
+		const replacementByLabelId = new Map<string, string>();
+		const pendingLabelIds: string[] = [];
+		let pathParentId: string | null = null;
+		for (const entry of path) {
+			if (entry.type === "label") {
+				pendingLabelIds.push(entry.id);
+				continue;
+			}
+			for (const labelId of pendingLabelIds) {
+				replacementByLabelId.set(labelId, entry.id);
+			}
+			pendingLabelIds.length = 0;
+			pathWithoutLabels.push(
+				entry.type === "compaction"
+					? {
+							...entry,
+							parentId: pathParentId,
+							firstKeptEntryId: replacementByLabelId.get(entry.firstKeptEntryId) ?? entry.firstKeptEntryId,
+						}
+					: { ...entry, parentId: pathParentId },
+			);
+			pathParentId = entry.id;
+		}
+
+		// Rebuild label entries for targets that survive on the retained path.
+		const pathEntryIds = new Set(pathWithoutLabels.map((e) => e.id));
+		const labelEntries: LabelEntry[] = [];
+		let labelParentId = pathWithoutLabels[pathWithoutLabels.length - 1]?.id ?? null;
+		for (const [targetId, label] of this.labelsById) {
+			if (!pathEntryIds.has(targetId)) continue;
+			const labelEntry: LabelEntry = {
+				type: "label",
+				id: generateId(new Set([...pathEntryIds, ...labelEntries.map((e) => e.id)])),
+				parentId: labelParentId,
+				timestamp: this.labelTimestampsById.get(targetId)!,
+				targetId,
+				label,
+			};
+			pathEntryIds.add(labelEntry.id);
+			labelEntries.push(labelEntry);
+			labelParentId = labelEntry.id;
+		}
+
+		const header = this.getHeader();
+		if (!header) {
+			throw new Error("Session has no header; cannot truncate");
+		}
+		this.fileEntries = [header, ...pathWithoutLabels, ...labelEntries];
+		this._buildIndex();
+		this.leafId = entryId;
+
+		// Rewrite the file only if it exists. Sessions without an assistant
+		// message defer file creation to the first assistant response, so an
+		// existing file means the session was already flushed.
+		if (this.persist && this.sessionFile && existsSync(this.sessionFile)) {
+			this._rewriteFile();
+			this.flushed = true;
+		}
+	}
+
+	/**
 	 * Create a new session file containing only the path from root to the specified leaf.
 	 * Useful for extracting a single conversation path from a branched session.
 	 * Returns the new session file path, or undefined if not persisting.
