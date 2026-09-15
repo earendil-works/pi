@@ -23,6 +23,7 @@ const WORKSPACE = {
 	"@earendil-works/pi-ai": "packages/ai/src",
 	"@earendil-works/pi-durable": "packages/durable/src",
 	"@earendil-works/pi-agent-core": "packages/agent/src",
+	"@earendil-works/pi-codemode": "packages/codemode/src",
 	"@earendil-works/pi-telemetry": "packages/telemetry/src",
 	"@earendil-works/pi-tui": "packages/tui/src",
 };
