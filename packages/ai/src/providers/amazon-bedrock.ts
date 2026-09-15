@@ -1,4 +1,5 @@
 import { bedrockConverseStreamApi } from "../api/bedrock-converse-stream.lazy.ts";
+import { bedrockMantleOpenAIResponsesApi } from "../api/bedrock-mantle-openai-responses.lazy.ts";
 import type { ApiKeyAuth } from "../auth/types.ts";
 import { createProvider, type Provider } from "../models.ts";
 import { AMAZON_BEDROCK_MODELS } from "./amazon-bedrock.models.ts";
@@ -8,7 +9,7 @@ import { AMAZON_BEDROCK_MODELS } from "./amazon-bedrock.models.ts";
  * The login flow can store a token/profile choice; resolve also detects ambient
  * AWS credentials without copying them into pi's credential store.
  */
-const bedrockAuth: ApiKeyAuth = {
+export const bedrockAuth: ApiKeyAuth = {
 	name: "AWS credentials or bearer token",
 	login: async (interaction) => {
 		interaction.signal.throwIfAborted();
@@ -79,12 +80,15 @@ const bedrockAuth: ApiKeyAuth = {
 	},
 };
 
-export function amazonBedrockProvider(): Provider<"bedrock-converse-stream"> {
-	return createProvider({
+export function amazonBedrockProvider(): Provider<"bedrock-converse-stream" | "openai-responses"> {
+	return createProvider<"bedrock-converse-stream" | "openai-responses">({
 		id: "amazon-bedrock",
 		name: "Amazon Bedrock",
 		auth: { apiKey: bedrockAuth },
 		models: Object.values(AMAZON_BEDROCK_MODELS),
-		api: bedrockConverseStreamApi(),
+		api: {
+			"bedrock-converse-stream": bedrockConverseStreamApi(),
+			"openai-responses": bedrockMantleOpenAIResponsesApi(),
+		},
 	});
 }

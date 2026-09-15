@@ -13,6 +13,7 @@ import type { AssistantMessage } from "../types.ts";
  * - OpenAI: "Your input exceeds the context window of this model"
  * - OpenAI/LiteLLM: "Requested token count exceeds the model's maximum context length of 131072 tokens"
  * - OpenAI-compatible: "Input length (265330) exceeds model's maximum context length (262144)."
+ * - Amazon Bedrock Mantle (OpenAI Responses): "invalid_prompt: prompt tokens (330095) exceed model maximum (278528) for base model ..."
  * - Google: "The input token count (1196265) exceeds the maximum number of tokens allowed (1048575)"
  * - xAI: "This model's maximum prompt length is 131072 but the request contains 537812 tokens"
  * - Groq: "Please reduce the length of the messages or completion"
@@ -40,6 +41,7 @@ const OVERFLOW_PATTERNS = [
 	/input is too long for requested model/i, // Amazon Bedrock
 	/exceeds the context window/i, // OpenAI (Completions & Responses API)
 	/exceeds (?:the )?(?:model'?s )?maximum context length(?: of [\d,]+ tokens?|\s*\([\d,]+\))/i, // OpenAI-compatible proxies (LiteLLM)
+	/prompt tokens \([\d,]+\) exceed model maximum/i, // Amazon Bedrock Mantle (OpenAI Responses observed error; exact text is not documented by AWS)
 	/input token count.*exceeds the maximum/i, // Google (Gemini)
 	/maximum prompt length is \d+/i, // xAI (Grok)
 	/reduce the length of the messages/i, // Groq
@@ -93,6 +95,7 @@ const NON_OVERFLOW_PATTERNS = [
  * **Reliable detection (returns error with detectable message):**
  * - Anthropic: "prompt is too long: X tokens > Y maximum" or "request_too_large"
  * - OpenAI (Completions & Responses): "exceeds the context window", "exceeds the model's maximum context length of X tokens", or "exceeds model's maximum context length (X)"
+ * - Amazon Bedrock Mantle (OpenAI Responses): "invalid_prompt: prompt tokens (X) exceed model maximum (Y) for base model ..."
  * - Google Gemini: "input token count exceeds the maximum"
  * - xAI (Grok): "maximum prompt length is X but request contains Y"
  * - Groq: "reduce the length of the messages"
