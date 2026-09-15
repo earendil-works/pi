@@ -4,6 +4,12 @@
 
 import { getDocsPath, getExamplesPath, getReadmePath } from "../config.ts";
 import { formatSkillsForPrompt, type Skill } from "./skills.ts";
+import type { SourceInfo } from "./source-info.ts";
+
+export interface ExtensionSystemPromptContribution {
+	readonly content: string;
+	readonly sourceInfo: SourceInfo;
+}
 
 export interface BuildSystemPromptOptions {
 	/** Custom system prompt (replaces default). */
@@ -16,6 +22,8 @@ export interface BuildSystemPromptOptions {
 	promptGuidelines?: string[];
 	/** Text to append to system prompt. */
 	appendSystemPrompt?: string;
+	/** Stable session instructions contributed by extensions. */
+	readonly extensionSystemPromptContributions?: readonly ExtensionSystemPromptContribution[];
 	/** Working directory. */
 	cwd: string;
 	/** Pre-loaded context files. */
@@ -32,6 +40,7 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 		toolSnippets,
 		promptGuidelines,
 		appendSystemPrompt,
+		extensionSystemPromptContributions,
 		cwd,
 		contextFiles: providedContextFiles,
 		skills: providedSkills,
@@ -39,6 +48,9 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 	const promptCwd = cwd.replace(/\\/g, "/");
 
 	const appendSection = appendSystemPrompt ? `\n\n${appendSystemPrompt}` : "";
+	const extensionSection = extensionSystemPromptContributions?.length
+		? `\n\n${extensionSystemPromptContributions.map((contribution) => contribution.content).join("\n\n")}`
+		: "";
 
 	const contextFiles = providedContextFiles ?? [];
 	const skills = providedSkills ?? [];
@@ -61,6 +73,8 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 			}
 			prompt += "</project_context>\n";
 		}
+
+		prompt += extensionSection;
 
 		// Append skills when a tool capable of reading their files is available.
 		if (skillFileReadTool && skills.length > 0) {
@@ -156,6 +170,8 @@ Pi documentation (read only when the user asks about pi itself, its SDK, extensi
 		}
 		prompt += "</project_context>\n";
 	}
+
+	prompt += extensionSection;
 
 	// Append skills when a tool capable of reading their files is available.
 	if (skillFileReadTool && skills.length > 0) {

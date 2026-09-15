@@ -11,7 +11,7 @@ import type { KeybindingsConfig } from "../keybindings.ts";
 import type { ModelRegistry } from "../model-registry.ts";
 import type { ScopedModel } from "../model-resolver.ts";
 import type { SessionManager } from "../session-manager.ts";
-import type { BuildSystemPromptOptions } from "../system-prompt.ts";
+import type { BuildSystemPromptOptions, ExtensionSystemPromptContribution } from "../system-prompt.ts";
 import type {
 	BeforeAgentStartEvent,
 	BeforeAgentStartEventResult,
@@ -58,6 +58,7 @@ import type {
 	SessionBeforeSwitchResult,
 	SessionBeforeTreeResult,
 	SessionShutdownEvent,
+	SessionStartEvent,
 	ToolCallEvent,
 	ToolCallEventResult,
 	ToolResultEvent,
@@ -136,6 +137,7 @@ type RunnerEmitEvent = Exclude<
 	| MessageEndEvent
 	| ResourcesDiscoverEvent
 	| InputEvent
+	| SessionStartEvent
 >;
 
 type SessionBeforeEvent = Extract<
@@ -880,6 +882,47 @@ export class ExtensionRunner {
 		}
 
 		return result as RunnerEmitResult<TEvent>;
+	}
+
+	async emitSessionStart(
+		event: SessionStartEvent,
+		systemPrompt = this.getSystemPromptFn(),
+	): Promise<ExtensionSystemPromptContribution[]> {
+		const ctx = Object.defineProperties(
+			{},
+			Object.getOwnPropertyDescriptors(this.createContext()),
+		) as ExtensionContext;
+		ctx.getSystemPrompt = () => {
+			this.assertActive();
+			return systemPrompt;
+		};
+		const contributions: ExtensionSystemPromptContribution[] = [];
+
+		for (const ext of this.extensions) {
+			for (const handler of ext.handlers.get("session_start") ?? []) {
+				try {
+					const handlerResult: unknown = await handler(event, ctx);
+					if (typeof handlerResult !== "object" || handlerResult === null) continue;
+
+					const systemPromptAppend = Reflect.get(handlerResult, "systemPromptAppend");
+					if (typeof systemPromptAppend !== "string") continue;
+
+					const content = systemPromptAppend.trim();
+					if (content.length === 0) continue;
+
+					contributions.push({ content, sourceInfo: ext.sourceInfo });
+				} catch (err) {
+					this.emitError({
+						extensionPath: ext.path,
+						event: event.type,
+						error: err instanceof Error ? err.message : String(err),
+						stack: err instanceof Error ? err.stack : undefined,
+					});
+				}
+			}
+		}
+
+		return contributions;
 	}
 
 	async emitMessageEnd(event: MessageEndEvent): Promise<AgentMessage | undefined> {

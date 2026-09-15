@@ -1,3 +1,5 @@
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import type { AgentTool, ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, fauxToolCall, type Model, type Usage } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
@@ -492,6 +494,99 @@ describe("AgentSession model and extension characterization", () => {
 		expect(
 			harness.session.messages.some((message) => message.role === "custom" && message.customType === "before-start"),
 		).toBe(true);
+	});
+
+	it("keeps session_start contributions in the base prompt across turns, tool rebuilds, and reload", async () => {
+		let sessionStartCount = 0;
+		let beforeAgentStartCount = 0;
+		const seenOptions: BuildSystemPromptOptions[] = [];
+		const providerPrompts: string[] = [];
+		const harness = await createHarness({
+			models: [
+				{ id: "faux-1", name: "One", reasoning: true },
+				{ id: "faux-2", name: "Two", reasoning: true },
+			],
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_start", (event) => ({
+						systemPromptAppend: ` session:${event.reason}:${++sessionStartCount} `,
+					}));
+					pi.on("before_agent_start", (event) => {
+						seenOptions.push(event.systemPromptOptions);
+						beforeAgentStartCount++;
+						return beforeAgentStartCount === 1 ? { systemPrompt: `${event.systemPrompt}\n\nper-run` } : undefined;
+					});
+					pi.on("resources_discover", (_event, ctx) => {
+						const skillDir = join(ctx.cwd, "extension-skill");
+						mkdirSync(skillDir, { recursive: true });
+						writeFileSync(
+							join(skillDir, "SKILL.md"),
+							"---\nname: extension-skill\ndescription: Test resource rebuild\n---\n",
+						);
+						return { skillPaths: [skillDir] };
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+
+		await harness.session.bindExtensions({});
+		expect(harness.session.systemPrompt).toContain("session:startup:1");
+
+		harness.session.setActiveToolsByName(harness.session.getActiveToolNames());
+		expect(harness.session.systemPrompt).toContain("session:startup:1");
+
+		await harness.session.setModel(harness.getModel("faux-2")!);
+		expect(sessionStartCount).toBe(1);
+
+		harness.setResponses([
+			(context) => {
+				providerPrompts.push(context.systemPrompt ?? "");
+				return fauxAssistantMessage("first");
+			},
+			(context) => {
+				providerPrompts.push(context.systemPrompt ?? "");
+				return fauxAssistantMessage("second");
+			},
+		]);
+		await harness.session.prompt("first");
+		await harness.session.prompt("second");
+
+		expect(providerPrompts[0]).toContain("session:startup:1");
+		expect(providerPrompts[0]).toContain("per-run");
+		expect(providerPrompts[1]).toContain("session:startup:1");
+		expect(providerPrompts[1]).not.toContain("per-run");
+		expect(seenOptions).toHaveLength(2);
+		expect(seenOptions[0]?.extensionSystemPromptContributions).toHaveLength(1);
+		expect(seenOptions[0]?.extensionSystemPromptContributions?.[0]?.content).toBe("session:startup:1");
+		expect(seenOptions[0]?.extensionSystemPromptContributions?.[0]?.sourceInfo.source).toBe("inline");
+
+		await harness.session.reload();
+
+		expect(sessionStartCount).toBe(2);
+		expect(harness.session.systemPrompt).toContain("session:reload:2");
+		expect(harness.session.systemPrompt).not.toContain("session:startup:1");
+	});
+
+	// #9432: reload must not opt a pure SDK session into extension lifecycle events.
+	it("does not emit session_start on reload before extensions are bound", async () => {
+		let sessionStartCount = 0;
+		const harness = await createHarness({
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_start", () => {
+						sessionStartCount++;
+						return { systemPromptAppend: "session instructions" };
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+
+		await harness.session.reload();
+
+		expect(sessionStartCount).toBe(0);
+		expect(harness.session.systemPrompt).not.toContain("session instructions");
 	});
 
 	it("bindExtensions emits session_start and reload emits session_shutdown then session_start", async () => {

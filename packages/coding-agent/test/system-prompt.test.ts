@@ -13,6 +13,46 @@ const testSkill: Skill = {
 };
 
 describe("buildSystemPrompt", () => {
+	describe("extension system prompt contributions", () => {
+		test.each([
+			{ name: "default prompt", customPrompt: undefined },
+			{ name: "custom prompt", customPrompt: "Custom system prompt" },
+		])("places contributions after project context and before skills in the $name", ({ customPrompt }) => {
+			const options = {
+				customPrompt,
+				selectedTools: ["read"],
+				contextFiles: [{ path: "/project/AGENTS.md", content: "Project instructions" }],
+				extensionSystemPromptContributions: [
+					{
+						content: "Extension instructions",
+						sourceInfo: createSyntheticSourceInfo("/extensions/example.ts", { source: "test" }),
+					},
+				],
+				skills: [testSkill],
+				cwd: "/project",
+			};
+
+			const prompt = buildSystemPrompt(options);
+
+			expect(prompt.indexOf("Project instructions")).toBeLessThan(prompt.indexOf("Extension instructions"));
+			expect(prompt.indexOf("Extension instructions")).toBeLessThan(prompt.indexOf("<available_skills>"));
+			expect(prompt.indexOf("Extension instructions")).toBeLessThan(prompt.indexOf("Current working directory"));
+		});
+
+		test("keeps output unchanged when contributions are omitted or empty", () => {
+			const options = {
+				selectedTools: ["read"],
+				contextFiles: [{ path: "/project/AGENTS.md", content: "Project instructions" }],
+				skills: [testSkill],
+				cwd: "/project",
+			};
+
+			expect(buildSystemPrompt({ ...options, extensionSystemPromptContributions: [] })).toBe(
+				buildSystemPrompt(options),
+			);
+		});
+	});
+
 	describe("empty tools", () => {
 		test("shows (none) for empty tools list", () => {
 			const prompt = buildSystemPrompt({
