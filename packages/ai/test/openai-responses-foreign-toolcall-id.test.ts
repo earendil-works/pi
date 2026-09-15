@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { convertResponsesMessages } from "../src/api/openai-responses-shared.ts";
-import { getModel } from "../src/compat.ts";
-import type { AssistantMessage, Context, ToolResultMessage, Usage } from "../src/types.ts";
+import { getModel, normalizeContext } from "../src/compat.ts";
+import type { AssistantMessage, ToolResultMessage, Usage } from "../src/types.ts";
 import { shortHash } from "../src/utils/hash.ts";
 
 const COPILOT_RAW_TOOL_CALL_ID =
@@ -44,10 +44,10 @@ describe("OpenAI Responses foreign tool call ID normalization", () => {
 			isError: false,
 			timestamp: Date.now() - 1000,
 		};
-		const context: Context = {
+		const context = normalizeContext({
 			systemPrompt: "You are concise.",
 			messages: [{ role: "user", content: "Use the tool.", timestamp: Date.now() - 3000 }, assistant, toolResult],
-		};
+		});
 
 		const input = convertResponsesMessages(model, context, new Set(["openai", "openai-codex", "opencode"]));
 		const functionCall = input.find((item) => item.type === "function_call");

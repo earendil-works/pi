@@ -27,9 +27,11 @@ import {
 	type Api,
 	type AssistantMessage,
 	type AssistantMessageEventStream,
-	type Context,
 	calculateCost,
+	collapseSystemMessages,
 	createAssistantMessageEventStream,
+	getCurrentSystemPrompt,
+	getCurrentTools,
 	type ImageContent,
 	type Message,
 	type Model,
@@ -42,6 +44,7 @@ import {
 	type Tool,
 	type ToolCall,
 	type ToolResultMessage,
+	type TranscriptContext,
 } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
@@ -334,10 +337,15 @@ function mapStopReason(reason: string): StopReason {
 
 function streamCustomAnthropic(
 	model: Model<Api>,
-	context: Context,
+	context: TranscriptContext,
 	options?: SimpleStreamOptions,
 ): AssistantMessageEventStream {
 	const stream = createAssistantMessageEventStream();
+	// The transcript carries the prompt and tools in its system messages. This provider sends
+	// one top-level system prompt, so fold later system messages into the leading one first.
+	const transcript = collapseSystemMessages(context);
+	const systemPrompt = getCurrentSystemPrompt(transcript.messages);
+	const tools = getCurrentTools(transcript.messages);
 
 	(async () => {
 		const output: AssistantMessage = {
@@ -393,7 +401,7 @@ function streamCustomAnthropic(
 			// Build request params
 			const params: MessageCreateParamsStreaming = {
 				model: model.id,
-				messages: convertMessages(context.messages, isOAuth, context.tools),
+				messages: convertMessages(transcript.messages, isOAuth, tools),
 				max_tokens: options?.maxTokens || Math.floor(model.maxTokens / 3),
 				stream: true,
 			};
@@ -407,25 +415,25 @@ function streamCustomAnthropic(
 						cache_control: { type: "ephemeral" },
 					},
 				];
-				if (context.systemPrompt) {
+				if (systemPrompt) {
 					params.system.push({
 						type: "text",
-						text: sanitizeSurrogates(context.systemPrompt),
+						text: sanitizeSurrogates(systemPrompt),
 						cache_control: { type: "ephemeral" },
 					});
 				}
-			} else if (context.systemPrompt) {
+			} else if (systemPrompt) {
 				params.system = [
 					{
 						type: "text",
-						text: sanitizeSurrogates(context.systemPrompt),
+						text: sanitizeSurrogates(systemPrompt),
 						cache_control: { type: "ephemeral" },
 					},
 				];
 			}
 
-			if (context.tools) {
-				params.tools = convertTools(context.tools, isOAuth);
+			if (tools.length > 0) {
+				params.tools = convertTools(tools, isOAuth);
 			}
 
 			// Handle thinking/reasoning
@@ -474,9 +482,7 @@ function streamCustomAnthropic(
 						output.content.push({
 							type: "toolCall",
 							id: event.content_block.id,
-							name: isOAuth
-								? fromClaudeCodeName(event.content_block.name, context.tools)
-								: event.content_block.name,
+							name: isOAuth ? fromClaudeCodeName(event.content_block.name, tools) : event.content_block.name,
 							arguments: {},
 							partialJson: "",
 							index: event.index,

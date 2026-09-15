@@ -5,14 +5,13 @@
 
 import {
 	type AssistantMessage,
-	type Context,
 	EventStream,
-	getCurrentSystemMessage,
-	getSystemMessageText,
+	getCurrentTools,
 	getToolStateChanges,
 	normalizeContext,
 	type SystemMessage,
 	type ToolResultMessage,
+	type ToolStateChanges,
 	toToolDeclaration,
 	validateToolArguments,
 } from "@earendil-works/pi-ai";
@@ -30,18 +29,6 @@ import type {
 } from "./types.ts";
 
 export type AgentEventSink = (event: AgentEvent) => Promise<void> | void;
-
-/** Replay the system messages of an agent transcript into the current prompt and tool state. */
-export function getTranscriptSystemMessage(messages: readonly AgentMessage[]): SystemMessage | undefined {
-	const systemMessages = messages.filter((message): message is SystemMessage => message.role === "system");
-	return getCurrentSystemMessage(normalizeContext({ messages: systemMessages }));
-}
-
-/** Render the current system prompt of an agent transcript. */
-export function getTranscriptSystemPrompt(messages: readonly AgentMessage[]): string {
-	const message = getTranscriptSystemMessage(messages);
-	return message ? getSystemMessageText(message) : "";
-}
 
 /**
  * Start an agent loop with a new prompt message.
@@ -310,33 +297,39 @@ function declareToolChanges(context: AgentContext, pendingMessages: AgentMessage
 		}
 	}
 	const pending = pendingMessages[systemIndex] as SystemMessage | undefined;
-	const baseline = pendingMessages.map((message, index) =>
-		index === systemIndex && pending ? { ...pending, toolsAdded: undefined, toolsRemoved: undefined } : message,
-	);
-	const declaredTools = getTranscriptSystemMessage([...context.messages, ...baseline])?.toolsAdded ?? [];
-	const { toolsAdded, toolsRemoved } = getToolStateChanges(
-		declaredTools,
+	const baseline = pending
+		? pendingMessages.map((message, index) =>
+				index === systemIndex ? withToolChanges(pending, NO_CHANGES) : message,
+			)
+		: pendingMessages;
+	const changes = getToolStateChanges(
+		getCurrentTools([...context.messages, ...baseline]),
 		(context.tools ?? []).map(toToolDeclaration),
 	);
-	const changes = {
-		...(toolsAdded.length > 0 ? { toolsAdded } : {}),
-		...(toolsRemoved.length > 0 ? { toolsRemoved } : {}),
-	};
+	const unchanged = changes.toolsAdded.length === 0 && changes.toolsRemoved.length === 0;
 
 	if (pending) {
-		const merged: SystemMessage = { ...pending, ...changes };
-		if (toolsAdded.length === 0) delete merged.toolsAdded;
-		if (toolsRemoved.length === 0) delete merged.toolsRemoved;
-		const unchanged =
-			JSON.stringify(merged.toolsAdded ?? []) === JSON.stringify(pending.toolsAdded ?? []) &&
-			JSON.stringify(merged.toolsRemoved ?? []) === JSON.stringify(pending.toolsRemoved ?? []);
-		return unchanged ? pendingMessages : baseline.map((message, index) => (index === systemIndex ? merged : message));
+		// Keep the caller's message object when it already declares no tool changes.
+		if (unchanged && !pending.toolsAdded?.length && !pending.toolsRemoved?.length) return pendingMessages;
+		return baseline.map((message, index) => (index === systemIndex ? withToolChanges(pending, changes) : message));
 	}
-	if (toolsAdded.length === 0 && toolsRemoved.length === 0) return pendingMessages;
-	const update: SystemMessage = { role: "system", content: "", ...changes, timestamp: Date.now() };
+	if (unchanged) return pendingMessages;
+	const update = withToolChanges({ role: "system", content: "", timestamp: Date.now() }, changes);
 	const insertIndex = pendingMessages.findIndex((message) => message.role !== "system");
 	const index = insertIndex === -1 ? pendingMessages.length : insertIndex;
 	return [...pendingMessages.slice(0, index), update, ...pendingMessages.slice(index)];
+}
+
+const NO_CHANGES: ToolStateChanges = { toolsAdded: [], toolsRemoved: [] };
+
+/** Copy a system message with its tool fields replaced by `changes`; empty lists omit the field. */
+function withToolChanges(message: SystemMessage, { toolsAdded, toolsRemoved }: ToolStateChanges): SystemMessage {
+	const { toolsAdded: _added, toolsRemoved: _removed, ...rest } = message;
+	return {
+		...rest,
+		...(toolsAdded.length > 0 ? { toolsAdded } : {}),
+		...(toolsRemoved.length > 0 ? { toolsRemoved } : {}),
+	};
 }
 
 /**
@@ -359,7 +352,7 @@ async function streamAssistantResponse(
 	// Convert to LLM-compatible messages (AgentMessage[] → Message[])
 	const llmMessages = await config.convertToLlm(messages);
 
-	const llmContext: Context = { messages: llmMessages };
+	const llmContext = normalizeContext({ messages: llmMessages });
 
 	// Resolve API key (important for expiring tokens)
 	const resolvedApiKey =

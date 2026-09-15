@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { fauxAssistantMessage } from "../src/providers/faux.ts";
 import { withOpenCodeSessionHeader } from "../src/providers/opencode-headers.ts";
-import type { Api, Context, Model, ProviderStreams, StreamOptions } from "../src/types.ts";
+import type { Api, Model, ProviderStreams, StreamOptions } from "../src/types.ts";
 import { AssistantMessageEventStream } from "../src/utils/event-stream.ts";
+import { normalizeContext } from "../src/utils/transcript.ts";
 
 const model: Model<Api> = {
 	id: "test-model",
@@ -16,7 +17,7 @@ const model: Model<Api> = {
 	contextWindow: 1000,
 	maxTokens: 100,
 };
-const context: Context = { messages: [{ role: "user", content: "hi", timestamp: 0 }] };
+const context = normalizeContext({ messages: [{ role: "user", content: "hi", timestamp: 0 }] });
 
 function completedStream(): AssistantMessageEventStream {
 	const stream = new AssistantMessageEventStream();

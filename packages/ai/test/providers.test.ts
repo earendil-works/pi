@@ -13,7 +13,6 @@ import { fauxAssistantMessage, fauxProvider } from "../src/providers/faux.ts";
 import { googleVertexProvider } from "../src/providers/google-vertex.ts";
 import type {
 	Api,
-	Context,
 	DeferredCancelOptions,
 	DeferredFetchOptions,
 	DeferredHandle,
@@ -21,6 +20,7 @@ import type {
 	ProviderStreams,
 } from "../src/types.ts";
 import { AssistantMessageEventStream } from "../src/utils/event-stream.ts";
+import { normalizeContext } from "../src/utils/transcript.ts";
 
 function fakeAuthContext(env: Record<string, string>, files: string[] = []): AuthContext {
 	return {
@@ -31,7 +31,7 @@ function fakeAuthContext(env: Record<string, string>, files: string[] = []): Aut
 
 const neverAbortedSignal = new AbortController().signal;
 
-const context: Context = { messages: [{ role: "user", content: "hi", timestamp: Date.now() }] };
+const context = normalizeContext({ messages: [{ role: "user", content: "hi", timestamp: Date.now() }] });
 
 describe("builtin providers", () => {
 	it("builtinModels registers every builtin provider with models", async () => {

@@ -2,8 +2,9 @@ import type { ResponseStreamEvent } from "openai/resources/responses/responses.j
 import { describe, expect, it, vi } from "vitest";
 import { stream as streamOpenAIResponses } from "../src/api/openai-responses.ts";
 import { processResponsesStream } from "../src/api/openai-responses-shared.ts";
-import type { AssistantMessage, AssistantMessageEvent, Context, Model } from "../src/types.ts";
+import type { AssistantMessage, AssistantMessageEvent, Model } from "../src/types.ts";
 import { AssistantMessageEventStream } from "../src/utils/event-stream.ts";
+import { normalizeContext } from "../src/utils/transcript.ts";
 
 vi.mock("openai", () => {
 	async function* createMockResponsesStream(): AsyncIterable<ResponseStreamEvent> {
@@ -216,11 +217,11 @@ describe("OpenAI Responses terminal event handling", () => {
 
 	it("emits an error final result when the wrapper stream ends before a terminal response event", async () => {
 		const model = createModel();
-		const context: Context = {
+		const context = normalizeContext({
 			systemPrompt: "",
 			messages: [{ role: "user", content: [{ type: "text", text: "hi" }], timestamp: 0 }],
 			tools: [],
-		};
+		});
 		const stream = streamOpenAIResponses(model, context, { apiKey: "test" });
 		const events: AssistantMessageEvent[] = [];
 		let initialStopReason: AssistantMessage["stopReason"] | undefined;

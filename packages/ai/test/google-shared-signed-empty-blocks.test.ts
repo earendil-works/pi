@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { convertMessages } from "../src/api/google-shared.ts";
 import type { AssistantMessage, Context, Model } from "../src/types.ts";
+import { normalizeContext } from "../src/utils/transcript.ts";
 
 // Gemini can attach `thoughtSignature` to a response part whose visible text is empty (e.g. a
 // thought burst preceding a function call) and requires the signature echoed back on the next
@@ -59,10 +60,12 @@ describe("google-shared convertMessages — signed empty blocks", () => {
 		const model = makeModel();
 		const contents = convertMessages(
 			model,
-			makeContext(model, [
-				{ type: "thinking", thinking: "", thinkingSignature: VALID_SIG },
-				{ type: "toolCall", id: "call_1", name: "bash", arguments: { command: "ls" } },
-			]),
+			normalizeContext(
+				makeContext(model, [
+					{ type: "thinking", thinking: "", thinkingSignature: VALID_SIG },
+					{ type: "toolCall", id: "call_1", name: "bash", arguments: { command: "ls" } },
+				]),
+			),
 		);
 		const modelTurn = contents.find((c) => c.role === "model");
 		const signed = modelTurn?.parts?.filter((p) => p.thoughtSignature === VALID_SIG) ?? [];
@@ -74,10 +77,12 @@ describe("google-shared convertMessages — signed empty blocks", () => {
 		const model = makeModel();
 		const contents = convertMessages(
 			model,
-			makeContext(model, [
-				{ type: "text", text: "", textSignature: VALID_SIG },
-				{ type: "toolCall", id: "call_1", name: "bash", arguments: { command: "ls" } },
-			]),
+			normalizeContext(
+				makeContext(model, [
+					{ type: "text", text: "", textSignature: VALID_SIG },
+					{ type: "toolCall", id: "call_1", name: "bash", arguments: { command: "ls" } },
+				]),
+			),
 		);
 		const modelTurn = contents.find((c) => c.role === "model");
 		const signed = modelTurn?.parts?.filter((p) => p.thoughtSignature === VALID_SIG) ?? [];
@@ -88,11 +93,13 @@ describe("google-shared convertMessages — signed empty blocks", () => {
 		const model = makeModel();
 		const contents = convertMessages(
 			model,
-			makeContext(model, [
-				{ type: "thinking", thinking: "" },
-				{ type: "text", text: "   " },
-				{ type: "toolCall", id: "call_1", name: "bash", arguments: { command: "ls" } },
-			]),
+			normalizeContext(
+				makeContext(model, [
+					{ type: "thinking", thinking: "" },
+					{ type: "text", text: "   " },
+					{ type: "toolCall", id: "call_1", name: "bash", arguments: { command: "ls" } },
+				]),
+			),
 		);
 		const modelTurn = contents.find((c) => c.role === "model");
 		expect(modelTurn?.parts).toHaveLength(1);
@@ -103,11 +110,13 @@ describe("google-shared convertMessages — signed empty blocks", () => {
 		const model = makeModel();
 		const contents = convertMessages(
 			model,
-			makeContext({ ...model, id: "other-model" }, [
-				{ type: "thinking", thinking: "", thinkingSignature: VALID_SIG },
-				{ type: "text", text: "", textSignature: VALID_SIG },
-				{ type: "toolCall", id: "call_1", name: "bash", arguments: { command: "ls" } },
-			]),
+			normalizeContext(
+				makeContext({ ...model, id: "other-model" }, [
+					{ type: "thinking", thinking: "", thinkingSignature: VALID_SIG },
+					{ type: "text", text: "", textSignature: VALID_SIG },
+					{ type: "toolCall", id: "call_1", name: "bash", arguments: { command: "ls" } },
+				]),
+			),
 		);
 		const modelTurn = contents.find((c) => c.role === "model");
 		expect(modelTurn?.parts).toHaveLength(1);

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { stream as streamOpenAICompletions } from "../src/api/openai-completions.ts";
-import { getModel } from "../src/compat.ts";
+import { getModel, normalizeContext } from "../src/compat.ts";
 import type { Model } from "../src/types.ts";
 
 interface CapturedCompletionsPayload {
@@ -62,10 +62,10 @@ function createModel(overrides: Partial<Model<"openai-completions">> = {}): Mode
 async function captureRequest(model: Model<"openai-completions">) {
 	await streamOpenAICompletions(
 		model,
-		{
+		normalizeContext({
 			systemPrompt: "sys",
 			messages: [{ role: "user", content: "hi", timestamp: Date.now() }],
-		},
+		}),
 		{ apiKey: "test-key" },
 	).result();
 

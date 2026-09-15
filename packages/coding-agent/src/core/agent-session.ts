@@ -15,18 +15,17 @@
 
 import { readFileSync } from "node:fs";
 import { basename, dirname } from "node:path";
-import {
-	type Agent,
-	type AgentContext,
-	type AgentEvent,
-	type AgentMessage,
-	type AgentState,
-	type AgentTool,
-	getTranscriptSystemMessage,
-	type PrepareNextTurnContext,
-	type ThinkingLevel,
+import type {
+	Agent,
+	AgentContext,
+	AgentEvent,
+	AgentMessage,
+	AgentState,
+	AgentTool,
+	PrepareNextTurnContext,
+	ThinkingLevel,
 } from "@earendil-works/pi-agent-core";
-import { contentText, retryDelayMs } from "@earendil-works/pi-ai";
+import { contentText, getCurrentSystemMessage, retryDelayMs } from "@earendil-works/pi-ai";
 import type {
 	AssistantMessage,
 	AuthResult,
@@ -1117,18 +1116,16 @@ export class AgentSession {
 			const tool = this._toolRegistry.get(name);
 			return tool ? [tool] : [];
 		});
-		const current = getTranscriptSystemMessage(messages);
-		const currentSections: Record<string, string> = {};
-		for (const [name, text] of Object.entries(current?.sections ?? {})) {
-			if (text !== null) currentSections[name] = text;
-		}
-		const sections = diffSystemPromptSections(currentSections, buildSystemPromptSections(options));
+		const sections = diffSystemPromptSections(
+			getCurrentSystemMessage(messages)?.sections ?? {},
+			buildSystemPromptSections(options),
+		);
 		return sections ? { role: "system", content: "", sections, timestamp: Date.now() } : undefined;
 	}
 
 	/** Restore the active tool loadout declared by the session transcript, if it declares one. */
 	private _restoreToolsFromTranscript(): void {
-		const current = this.sessionManager.getCurrentSystemMessage();
+		const current = getCurrentSystemMessage(this.sessionManager.buildSessionContext().messages);
 		if (!current) return;
 		const toolNames = (current.toolsAdded ?? [])
 			.map((tool) => tool.name)
@@ -1330,11 +1327,11 @@ export class AgentSession {
 
 			// Emit before_agent_start extension event
 			const selectedToolsBefore = this._baseSystemPromptOptions.selectedTools;
-			const result = (await this._extensionRunner.emitBeforeAgentStart(
+			const result = await this._extensionRunner.emitBeforeAgentStart(
 				expandedText,
 				currentImages,
 				this._baseSystemPromptOptions,
-			)) ?? { messages: [], systemPromptOptions: this._baseSystemPromptOptions };
+			);
 			// Handlers may edit event.systemPromptOptions.selectedTools or call setActiveTools(),
 			// which updates the live loadout instead. An explicit edit wins; otherwise the live
 			// loadout is authoritative, so a setActiveTools() call is not undone here.

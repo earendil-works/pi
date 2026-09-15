@@ -2,6 +2,7 @@ import {
 	type AssistantMessage,
 	type AssistantMessageEvent,
 	EventStream,
+	getCurrentSystemMessage,
 	getModel,
 	toToolDeclaration,
 } from "@earendil-works/pi-ai/compat";
@@ -12,7 +13,6 @@ import {
 	type AgentEvent,
 	type AgentTool,
 	type AgentToolUpdateCallback,
-	getTranscriptSystemMessage,
 	type StreamFn,
 	setDefaultStreamFn,
 } from "../src/index.ts";
@@ -285,7 +285,7 @@ describe("Agent", () => {
 			sections: { note: "<note>x</note>" },
 			timestamp: 1,
 		});
-		expect(getTranscriptSystemMessage(agent.state.messages)?.toolsAdded?.map((tool) => tool.name)).toEqual(["first"]);
+		expect(getCurrentSystemMessage(agent.state.messages)?.toolsAdded?.map((tool) => tool.name)).toEqual(["first"]);
 	});
 
 	it("restores the transcript baseline when reset", () => {

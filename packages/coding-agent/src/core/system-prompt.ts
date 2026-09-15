@@ -2,6 +2,7 @@
  * System prompt construction and project context loading
  */
 
+import { getSystemMessageText } from "@earendil-works/pi-ai";
 import { getDocsPath, getExamplesPath, getReadmePath } from "../config.ts";
 import { formatSkillsForPrompt, type Skill } from "./skills.ts";
 
@@ -66,17 +67,6 @@ export function normalizeBuildSystemPromptOptions(input: BuildSystemPromptOption
 		contextFiles: (input.contextFiles ?? []).map((file) => ({ ...file })),
 		skills: (input.skills ?? []).map((skill) => ({ ...skill })),
 	};
-}
-
-function renderSection(name: string, content: string): string {
-	return `<${name}>\n${content}\n</${name}>`;
-}
-
-/** Render ordered sections into the complete prompt text. */
-export function renderSystemPromptSections(sections: Record<string, string>): string {
-	return Object.values(sections)
-		.filter((text) => text.length > 0)
-		.join("\n\n");
 }
 
 function renderProjectContext(contextFiles: Array<{ path: string; content: string }>): string {
@@ -189,22 +179,28 @@ export function buildSystemPromptSections(input: BuildSystemPromptOptions): Syst
 
 	const sections: SystemPromptSections = { preamble: promptSections.preamble };
 	for (const [name, content] of Object.entries(promptSections)) {
-		if (name !== "preamble") sections[name] = renderSection(name, content);
+		if (name !== "preamble") sections[name] = `<${name}>\n${content}\n</${name}>`;
 	}
 	return sections;
 }
 
-/** Build the system prompt with tools, rules, and context. */
+/** Build the system prompt text, rendered exactly as the transcript's system message replays it. */
 export function buildSystemPrompt(input: BuildSystemPromptOptions): string {
-	return renderSystemPromptSections(buildSystemPromptSections(input));
+	return getSystemMessageText({
+		role: "system",
+		content: "",
+		sections: buildSystemPromptSections(input),
+		timestamp: 0,
+	});
 }
 
 /**
- * Diff the sections the model currently has (replayed from the transcript) against the
- * desired ones. Returns a `SystemMessage.sections` patch, or undefined when nothing changed.
+ * Diff the sections the model currently has (replayed from the transcript, so never null)
+ * against the desired ones. Returns a `SystemMessage.sections` patch, or undefined when
+ * nothing changed.
  */
 export function diffSystemPromptSections(
-	previous: Record<string, string>,
+	previous: Record<string, string | null>,
 	current: SystemPromptSections,
 ): Record<string, string | null> | undefined {
 	const patch: Record<string, string | null> = {};

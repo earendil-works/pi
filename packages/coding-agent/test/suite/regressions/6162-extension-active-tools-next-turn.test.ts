@@ -1,18 +1,19 @@
-import { getTranscriptSystemPrompt } from "@earendil-works/pi-agent-core";
-import { type Context, fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
+import {
+	fauxAssistantMessage,
+	fauxToolCall,
+	getCurrentSystemPrompt,
+	getCurrentTools,
+	type TranscriptContext,
+} from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
 import type { ExtensionAPI, ExtensionFactory } from "../../../src/index.ts";
 import { createHarness } from "../harness.ts";
 
-function getProviderToolNames(context: Context): string[] {
-	const tools = new Map((context.tools ?? []).map((tool) => [tool.name, tool]));
-	for (const message of context.messages) {
-		if (message.role !== "system") continue;
-		for (const removed of message.toolsRemoved ?? []) tools.delete(removed.name);
-		for (const added of message.toolsAdded ?? []) tools.set(added.name, added);
-	}
-	return [...tools.keys()].sort();
+function getProviderToolNames(context: TranscriptContext): string[] {
+	return getCurrentTools(context.messages)
+		.map((tool) => tool.name)
+		.sort();
 }
 
 /** Register `switch_tools`, which swaps the active set to `after_switch` when executed. */
@@ -77,12 +78,12 @@ describe("extension active tools next-turn refresh", () => {
 			const sessionPrompts: string[] = [];
 			harness.setResponses([
 				(context) => {
-					providerPrompts.push(getTranscriptSystemPrompt(context.messages));
+					providerPrompts.push(getCurrentSystemPrompt(context.messages));
 					sessionPrompts.push(harness.session.systemPrompt);
 					return fauxAssistantMessage(fauxToolCall("switch_tools", {}), { stopReason: "toolUse" });
 				},
 				(context) => {
-					providerPrompts.push(getTranscriptSystemPrompt(context.messages));
+					providerPrompts.push(getCurrentSystemPrompt(context.messages));
 					sessionPrompts.push(harness.session.systemPrompt);
 					return fauxAssistantMessage("done");
 				},
@@ -117,8 +118,8 @@ describe("extension active tools next-turn refresh", () => {
 
 			const providerSystemPrompts: string[] = [];
 			const providerToolNames: string[][] = [];
-			const captureSystemPrompt = (context: Context): void => {
-				providerSystemPrompts.push(getTranscriptSystemPrompt(context.messages));
+			const captureSystemPrompt = (context: TranscriptContext): void => {
+				providerSystemPrompts.push(getCurrentSystemPrompt(context.messages));
 			};
 			harness.setResponses([
 				(context) => {

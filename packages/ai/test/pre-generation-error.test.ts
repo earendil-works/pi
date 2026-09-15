@@ -7,6 +7,7 @@ import { streamSimple as streamCodex } from "../src/api/openai-codex-responses.t
 import { streamSimple as streamOpenAICompletions } from "../src/api/openai-completions.ts";
 import { streamSimple as streamOpenAIResponses } from "../src/api/openai-responses.ts";
 import type { Api, AssistantMessageEventStream, Model } from "../src/types.ts";
+import { normalizeContext } from "../src/utils/transcript.ts";
 
 function model<TApi extends Api>(api: TApi): Model<TApi> {
 	return {
@@ -29,12 +30,13 @@ function expectMissingAuthThrows(create: () => AssistantMessageEventStream): voi
 
 describe("direct API authentication", () => {
 	it("throws synchronously when auth is missing", () => {
-		expectMissingAuthThrows(() => streamAnthropic(model("anthropic-messages"), { messages: [] }, {}));
-		expectMissingAuthThrows(() => streamAzure(model("azure-openai-responses"), { messages: [] }, {}));
-		expectMissingAuthThrows(() => streamGoogle(model("google-generative-ai"), { messages: [] }, {}));
-		expectMissingAuthThrows(() => streamMistral(model("mistral-conversations"), { messages: [] }, {}));
-		expectMissingAuthThrows(() => streamCodex(model("openai-codex-responses"), { messages: [] }, {}));
-		expectMissingAuthThrows(() => streamOpenAICompletions(model("openai-completions"), { messages: [] }, {}));
-		expectMissingAuthThrows(() => streamOpenAIResponses(model("openai-responses"), { messages: [] }, {}));
+		const context = normalizeContext({ messages: [] });
+		expectMissingAuthThrows(() => streamAnthropic(model("anthropic-messages"), context, {}));
+		expectMissingAuthThrows(() => streamAzure(model("azure-openai-responses"), context, {}));
+		expectMissingAuthThrows(() => streamGoogle(model("google-generative-ai"), context, {}));
+		expectMissingAuthThrows(() => streamMistral(model("mistral-conversations"), context, {}));
+		expectMissingAuthThrows(() => streamCodex(model("openai-codex-responses"), context, {}));
+		expectMissingAuthThrows(() => streamOpenAICompletions(model("openai-completions"), context, {}));
+		expectMissingAuthThrows(() => streamOpenAIResponses(model("openai-responses"), context, {}));
 	});
 });

@@ -1,8 +1,9 @@
 import type { ResponseReasoningItem, ResponseStreamEvent } from "openai/resources/responses/responses.js";
 import { describe, expect, it } from "vitest";
 import { convertResponsesMessages, processResponsesStream } from "../src/api/openai-responses-shared.ts";
-import type { AssistantMessage, Context, Model } from "../src/types.ts";
+import type { AssistantMessage, Model } from "../src/types.ts";
 import { AssistantMessageEventStream } from "../src/utils/event-stream.ts";
+import { normalizeContext } from "../src/utils/transcript.ts";
 
 function createModel(): Model<"azure-openai-responses"> {
 	return {
@@ -67,13 +68,13 @@ async function* createEvents(
 }
 
 function getReplayedReasoning(model: Model<"azure-openai-responses">, assistant: AssistantMessage) {
-	const context: Context = {
+	const context = normalizeContext({
 		messages: [
 			{ role: "user", content: "first", timestamp: Date.now() - 1 },
 			assistant,
 			{ role: "user", content: "follow-up", timestamp: Date.now() },
 		],
-	};
+	});
 	const input = convertResponsesMessages(model, context, new Set(["azure-openai-responses"]));
 	return input.find((item) => item.type === "reasoning");
 }

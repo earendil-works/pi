@@ -1,5 +1,5 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import type { AssistantMessage, Context, Model } from "@earendil-works/pi-ai";
+import { type AssistantMessage, type Model, normalizeContext, type TranscriptContext } from "@earendil-works/pi-ai";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	type CompactionPreparation,
@@ -115,11 +115,11 @@ describe("generateSummary reasoning options", () => {
 	});
 
 	it("honors caller-supplied routing session and tool choice without prompt caching", async () => {
-		await completeSummarization(
-			createModel(false),
-			{ systemPrompt: "Summarize", messages: [] },
-			{ sessionId: "current-routing-session", cacheRetention: "long", toolChoice: "auto" },
-		);
+		await completeSummarization(createModel(false), normalizeContext({ systemPrompt: "Summarize", messages: [] }), {
+			sessionId: "current-routing-session",
+			cacheRetention: "long",
+			toolChoice: "auto",
+		});
 
 		expect(completeSimpleMock.mock.calls[0][2]).toMatchObject({
 			sessionId: "current-routing-session",
@@ -144,7 +144,7 @@ describe("generateSummary reasoning options", () => {
 
 		expect(completeSimpleMock).toHaveBeenCalledTimes(1);
 		expect(result.summary).toContain("previous checkpoint");
-		const requestContext = completeSimpleMock.mock.calls[0][1] as Context;
+		const requestContext = completeSimpleMock.mock.calls[0][1] as TranscriptContext;
 		const prompt = JSON.stringify(requestContext.messages);
 		expect(prompt).toContain("This is the PREFIX of a turn that was too large to keep");
 		expect(prompt).toContain("<conversation>");

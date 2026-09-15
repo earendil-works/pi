@@ -2,8 +2,8 @@ import type Anthropic from "@anthropic-ai/sdk";
 import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
 import { stream as streamAnthropic } from "../src/api/anthropic-messages.ts";
-import { getModel } from "../src/compat.ts";
-import type { Context, ToolCall } from "../src/types.ts";
+import { getModel, normalizeContext } from "../src/compat.ts";
+import type { ToolCall } from "../src/types.ts";
 
 function createSseResponse(events: Array<{ event: string; data: string }>): Response {
 	const body = events.map(({ event, data }) => `event: ${event}\ndata: ${data}\n`).join("\n");
@@ -120,7 +120,7 @@ describe("Anthropic raw SSE parsing", () => {
 
 		const result = await streamAnthropic(
 			model,
-			{ messages: [{ role: "user", content: "Hello", timestamp: 1 }] },
+			normalizeContext({ messages: [{ role: "user", content: "Hello", timestamp: 1 }] }),
 			{ client: createFakeAnthropicClient(response) },
 		).result();
 
@@ -143,7 +143,7 @@ describe("Anthropic raw SSE parsing", () => {
 
 		await streamAnthropic(
 			getModel("anthropic", "claude-fable-5-1"),
-			{ messages: [{ role: "user", content: "Hello", timestamp: 1 }] },
+			normalizeContext({ messages: [{ role: "user", content: "Hello", timestamp: 1 }] }),
 			{
 				client,
 				onPayload: (payload) => ({ ...(payload as Record<string, unknown>), stream: false }),
@@ -168,7 +168,7 @@ describe("Anthropic raw SSE parsing", () => {
 
 		await streamAnthropic(
 			getModel("openrouter", "anthropic/claude-3-haiku"),
-			{ messages: [{ role: "user", content: "Hello", timestamp: 1 }] },
+			normalizeContext({ messages: [{ role: "user", content: "Hello", timestamp: 1 }] }),
 			{ client, thinkingEnabled: false },
 		).result();
 
@@ -190,7 +190,7 @@ describe("Anthropic raw SSE parsing", () => {
 
 		const result = await streamAnthropic(
 			getModel("anthropic", "claude-fable-5-1"),
-			{ messages: [{ role: "user", content: "Hello", timestamp: 1 }] },
+			normalizeContext({ messages: [{ role: "user", content: "Hello", timestamp: 1 }] }),
 			{ client },
 		).result();
 
@@ -220,7 +220,7 @@ describe("Anthropic raw SSE parsing", () => {
 
 		const result = await streamAnthropic(
 			getModel("anthropic", "claude-fable-5-1"),
-			{ messages: [{ role: "user", content: "Hello", timestamp: 1 }] },
+			normalizeContext({ messages: [{ role: "user", content: "Hello", timestamp: 1 }] }),
 			{ client: createFakeAnthropicClient(createSseResponse(events)) },
 		).result();
 
@@ -242,7 +242,7 @@ describe("Anthropic raw SSE parsing", () => {
 	});
 	it("repairs malformed SSE JSON and malformed streamed tool JSON", async () => {
 		const model = getModel("anthropic", "claude-haiku-4-5");
-		const context: Context = {
+		const context = normalizeContext({
 			messages: [{ role: "user", content: "Use the edit tool.", timestamp: Date.now() }],
 			tools: [
 				{
@@ -254,7 +254,7 @@ describe("Anthropic raw SSE parsing", () => {
 					}),
 				},
 			],
-		};
+		});
 
 		const malformedToolJsonDelta = String.raw`{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"path\":\"A\H\",\"text\":\"col1	col2\"}"}}`;
 
@@ -329,9 +329,9 @@ describe("Anthropic raw SSE parsing", () => {
 
 	it("preserves content from content_block_start events", async () => {
 		const model = getModel("anthropic", "claude-haiku-4-5");
-		const context: Context = {
+		const context = normalizeContext({
 			messages: [{ role: "user", content: "Say hello.", timestamp: Date.now() }],
-		};
+		});
 		const response = createSseResponse([
 			{
 				event: "message_start",
@@ -427,9 +427,9 @@ describe("Anthropic raw SSE parsing", () => {
 
 	it("preserves refusal stop details from message_delta", async () => {
 		const model = getModel("anthropic", "claude-fable-5");
-		const context: Context = {
+		const context = normalizeContext({
 			messages: [{ role: "user", content: "blocked request", timestamp: Date.now() }],
-		};
+		});
 		const explanation =
 			"This request triggered restrictions on violative cyber content and was blocked under Anthropic's Usage Policy. To learn more, provide feedback, or request an exemption based on how you use Claude, visit our help center: https://support.claude.com/en/articles/14604842-real-time-cyber-safeguards-on-claude.";
 		const response = createSseResponse([
@@ -486,9 +486,9 @@ describe("Anthropic raw SSE parsing", () => {
 
 	it("preserves sensitive stop reasons with a descriptive error message", async () => {
 		const model = getModel("anthropic", "claude-haiku-4-5");
-		const context: Context = {
+		const context = normalizeContext({
 			messages: [{ role: "user", content: "blocked request", timestamp: Date.now() }],
-		};
+		});
 		const response = createSseResponse([
 			{
 				event: "message_start",
@@ -536,9 +536,9 @@ describe("Anthropic raw SSE parsing", () => {
 
 	it("treats message_delta without usage as a no-op for usage accumulation", async () => {
 		const model = getModel("anthropic", "claude-haiku-4-5");
-		const context: Context = {
+		const context = normalizeContext({
 			messages: [{ role: "user", content: "Say hello.", timestamp: Date.now() }],
-		};
+		});
 		const response = createSseResponse(
 			minimalAnthropicEvents.map((event) =>
 				event.event === "message_delta"
@@ -564,9 +564,9 @@ describe("Anthropic raw SSE parsing", () => {
 
 	it("ignores unknown SSE events after message_stop", async () => {
 		const model = getModel("anthropic", "claude-haiku-4-5");
-		const context: Context = {
+		const context = normalizeContext({
 			messages: [{ role: "user", content: "Say hello.", timestamp: Date.now() }],
-		};
+		});
 		const response = createSseResponse([
 			...minimalAnthropicEvents,
 			{ event: "done", data: "[DONE]" },

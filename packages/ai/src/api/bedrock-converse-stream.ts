@@ -31,7 +31,6 @@ import type {
 	Api,
 	AssistantMessage,
 	CacheRetention,
-	Context,
 	ImageContent,
 	Model,
 	ProviderEnv,
@@ -53,19 +52,17 @@ import { normalizeProviderError } from "../utils/error-body.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { providerHeadersToRecord } from "../utils/headers.ts";
 import { parseStreamingJson } from "../utils/json-parse.ts";
-import { createUserTurnAppender } from "../utils/merge-adjacent-user-turns.ts";
 import { resolveHttpProxyUrlForTarget } from "../utils/node-http-proxy.ts";
+import { getProviderEnvValue } from "../utils/provider-env.ts";
+import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
+import { getSystemMessageText } from "../utils/text.ts";
 import {
 	collapseSystemMessages,
 	getCurrentTools,
 	getInitialSystemMessage,
-	normalizeContext,
 	type TranscriptContext,
 	withoutInitialSystemMessage,
-} from "../utils/normalize-context.ts";
-import { getProviderEnvValue } from "../utils/provider-env.ts";
-import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
-import { getSystemMessageText } from "../utils/text.ts";
+} from "../utils/transcript.ts";
 import { getJsonSchemaToolParameters, resolveJsonSchemaStrictSampling } from "./constrained-sampling.ts";
 import {
 	adjustMaxTokensForThinking,
@@ -125,12 +122,12 @@ const REDACTED_THINKING_PLACEHOLDER = "[Reasoning redacted]";
 
 export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> = (
 	model: Model<"bedrock-converse-stream">,
-	context: Context,
+	context: TranscriptContext,
 	options: BedrockOptions = {},
 ): AssistantMessageEventStream => {
 	const stream = new AssistantMessageEventStream();
 	// Bedrock has no mid-conversation system messages; fold them into the leading prompt.
-	const normalizedContext = collapseSystemMessages(normalizeContext(context));
+	const normalizedContext = collapseSystemMessages(context);
 
 	(async () => {
 		const output: AssistantMessage = {
@@ -260,7 +257,7 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 			}
 			const cacheRetention = resolveCacheRetention(options.cacheRetention, options.env);
 			const inferenceMaxTokens = options.maxTokens ?? (isAnthropicClaudeModel(model) ? model.maxTokens : undefined);
-			const initialSystemMessage = getInitialSystemMessage(normalizedContext);
+			const initialSystemMessage = getInitialSystemMessage(normalizedContext.messages);
 			const initialSystemPrompt = initialSystemMessage ? getSystemMessageText(initialSystemMessage) : undefined;
 			let commandInput = {
 				modelId: model.id,
@@ -270,7 +267,11 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 					...(inferenceMaxTokens !== undefined && { maxTokens: inferenceMaxTokens }),
 					...(options.temperature !== undefined && { temperature: options.temperature }),
 				},
-				toolConfig: convertToolConfig(getCurrentTools(normalizedContext), options.toolChoice, supportsStrictMode),
+				toolConfig: convertToolConfig(
+					getCurrentTools(normalizedContext.messages),
+					options.toolChoice,
+					supportsStrictMode,
+				),
 				additionalModelRequestFields: buildAdditionalModelRequestFields(model, options),
 				...(options.requestMetadata !== undefined && { requestMetadata: options.requestMetadata }),
 			};
@@ -524,7 +525,7 @@ function addResponseHeadersMiddleware(
 
 export const streamSimple: StreamFunction<"bedrock-converse-stream", SimpleStreamOptions> = (
 	model: Model<"bedrock-converse-stream">,
-	context: Context,
+	context: TranscriptContext,
 	options?: SimpleStreamOptions,
 ): AssistantMessageEventStream => {
 	const base = {
@@ -950,12 +951,11 @@ function convertMessages(
 	env?: ProviderEnv,
 ): Message[] {
 	const result: Message[] = [];
-	const appendTurn = createUserTurnAppender(result, (message) => {
-		message.content ??= [];
-		return message.content;
-	});
-	const conversationContext = withoutInitialSystemMessage(context);
-	const transformedMessages = transformMessages(conversationContext.messages, model, normalizeToolCallId);
+	const transformedMessages = transformMessages(
+		withoutInitialSystemMessage(context.messages),
+		model,
+		normalizeToolCallId,
+	);
 
 	for (let i = 0; i < transformedMessages.length; i++) {
 		const m = transformedMessages[i];
@@ -982,7 +982,7 @@ function convertMessages(
 					}
 					if (content.length === 0) content.push({ text: EMPTY_TEXT_PLACEHOLDER });
 				}
-				appendTurn({ role: ConversationRole.USER, content });
+				result.push({ role: ConversationRole.USER, content });
 				break;
 			}
 			case "assistant": {
@@ -1055,7 +1055,7 @@ function convertMessages(
 				if (contentBlocks.length === 0) {
 					continue;
 				}
-				appendTurn({
+				result.push({
 					role: ConversationRole.ASSISTANT,
 					content: contentBlocks,
 				});
@@ -1092,7 +1092,7 @@ function convertMessages(
 				// Skip the messages we've already processed
 				i = j - 1;
 
-				appendTurn({ role: ConversationRole.USER, content: toolResults });
+				result.push({ role: ConversationRole.USER, content: toolResults });
 				break;
 			}
 			default:

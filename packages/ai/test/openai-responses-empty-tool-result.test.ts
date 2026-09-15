@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { convertResponsesMessages } from "../src/api/openai-responses-shared.ts";
-import { getModel } from "../src/compat.ts";
-import type { AssistantMessage, Context, ToolResultMessage, Usage } from "../src/types.ts";
+import { getModel, normalizeContext } from "../src/compat.ts";
+import type { AssistantMessage, ToolResultMessage, Usage } from "../src/types.ts";
 
 const usage: Usage = {
 	input: 0,
@@ -38,13 +38,13 @@ describe("OpenAI Responses convertResponsesMessages empty tool result", () => {
 			timestamp: now,
 		};
 
-		const context: Context = {
+		const context = normalizeContext({
 			messages: [
 				{ role: "user", content: "Run the command", timestamp: now - 1 },
 				assistant,
 				buildEmptyToolResult("tool-1", now + 1),
 			],
-		};
+		});
 
 		const input = convertResponsesMessages(model, context, new Set(["openai", "openai-codex", "opencode"]));
 		const functionCallOutput = input.find((item) => item.type === "function_call_output") as

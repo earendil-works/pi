@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { stream as streamOpenAICompletions } from "../src/api/openai-completions.ts";
-import type { Context, Model } from "../src/types.ts";
+import type { Model } from "../src/types.ts";
+import { normalizeContext } from "../src/utils/transcript.ts";
 
 const mockState = vi.hoisted(() => ({
 	requestOptions: [] as unknown[],
@@ -60,11 +61,11 @@ const model: Model<"openai-completions"> = {
 	maxTokens: 100,
 };
 
-const context: Context = {
+const context = normalizeContext({
 	systemPrompt: "",
 	messages: [{ role: "user", content: [{ type: "text", text: "hi" }], timestamp: 0 }],
 	tools: [],
-};
+});
 
 async function consume(options?: { maxRetries?: number; maxRetryDelayMs?: number }) {
 	const stream = streamOpenAICompletions(model, context, { apiKey: "test", ...options });

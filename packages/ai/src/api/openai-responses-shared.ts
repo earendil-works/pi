@@ -17,7 +17,6 @@ import { calculateCost } from "../models.ts";
 import type {
 	Api,
 	AssistantMessage,
-	Context,
 	ImageContent,
 	Model,
 	StopReason,
@@ -27,15 +26,15 @@ import type {
 	ThinkingContent,
 	Tool,
 	ToolCall,
+	TranscriptContext,
 	Usage,
 } from "../types.ts";
 import type { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { shortHash } from "../utils/hash.ts";
 import { parseStreamingJson } from "../utils/json-parse.ts";
-import { collapseSystemMessages, normalizeContext, type TranscriptContext } from "../utils/normalize-context.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import { getSystemMessageText, renderSystemMessageUpdate } from "../utils/text.ts";
-import { resolveTranscriptTools } from "../utils/transcript-state.ts";
+import { resolveTranscript, resolveTranscriptTools } from "../utils/transcript.ts";
 import {
 	appendGrammarToolInputJsonDelta,
 	type GrammarToolInputJsonBuffer,
@@ -130,15 +129,6 @@ export interface ConvertResponsesMessagesOptions {
 	toolOptions?: ConvertResponsesToolsOptions;
 }
 
-/** Fold later system messages into the leading prompt unless the model accepts them natively. */
-export function resolveResponsesTranscript(
-	context: Context,
-	supportsMidConvoSystemMessages: boolean,
-): TranscriptContext {
-	const normalizedContext = normalizeContext(context);
-	return supportsMidConvoSystemMessages ? normalizedContext : collapseSystemMessages(normalizedContext);
-}
-
 export interface ConvertResponsesToolsOptions {
 	strict?: boolean | null;
 	supportsStrictMode?: boolean;
@@ -152,11 +142,11 @@ export interface ConvertResponsesToolsOptions {
 
 export function convertResponsesMessages<TApi extends Api>(
 	model: Model<TApi>,
-	context: Context,
+	context: TranscriptContext,
 	allowedToolCallProviders: ReadonlySet<string>,
 	options?: ConvertResponsesMessagesOptions,
 ): ResponseInput {
-	const normalizedContext = resolveResponsesTranscript(context, options?.supportsMidConvoSystemMessages ?? false);
+	const normalizedContext = resolveTranscript(context, options?.supportsMidConvoSystemMessages);
 	const messages: ResponseInput = [];
 
 	const normalizeIdPart = (part: string): string => {
@@ -186,11 +176,11 @@ export function convertResponsesMessages<TApi extends Api>(
 
 	const transformedMessages = transformMessages(normalizedContext.messages, model, normalizeToolCallId);
 	const transcriptTools = resolveTranscriptTools(
-		normalizedContext,
+		normalizedContext.messages,
 		(options?.supportsAdditionalTools ?? false) || (options?.supportsToolSearch ?? false),
 	);
 	const appendSystemToolAdditions = (message: SystemMessage, seed: string): void => {
-		const tools = transcriptTools.getAdditions(message);
+		const tools = transcriptTools.anchorsAdditions ? (message.toolsAdded ?? []) : [];
 		if (tools.length === 0) return;
 		if (options?.supportsAdditionalTools) {
 			messages.push({

@@ -1,5 +1,4 @@
-import type { AssistantMessage, Context, ImageContent, Message, TextContent, Usage } from "../types.ts";
-import { normalizeContext } from "./normalize-context.ts";
+import type { AssistantMessage, ImageContent, Message, TextContent, TranscriptContext, Usage } from "../types.ts";
 import { getSystemMessageText } from "./text.ts";
 
 export interface ContextUsageEstimate {
@@ -95,7 +94,8 @@ function getLastAssistantUsageInfo(messages: readonly Message[]): { usage: Usage
 	return usageInfo;
 }
 
-function estimateMessages(messages: readonly Message[]): ContextUsageEstimate {
+export function estimateContextTokens(context: TranscriptContext | readonly Message[]): ContextUsageEstimate {
+	const messages = "messages" in context ? context.messages : context;
 	const usageInfo = getLastAssistantUsageInfo(messages);
 	if (usageInfo) {
 		const usageTokens = calculateContextTokens(usageInfo.usage);
@@ -114,14 +114,4 @@ function estimateMessages(messages: readonly Message[]): ContextUsageEstimate {
 function estimateToolsTokens(tools: readonly unknown[] | undefined): number {
 	if (!tools || tools.length === 0) return 0;
 	return estimateTextTokens(safeJsonStringify(tools));
-}
-
-function isMessageArray(value: Context | readonly Message[]): value is readonly Message[] {
-	return Array.isArray(value);
-}
-
-export function estimateContextTokens(context: Context | readonly Message[]): ContextUsageEstimate {
-	if (isMessageArray(context)) return estimateMessages(context);
-
-	return estimateMessages(normalizeContext(context).messages);
 }

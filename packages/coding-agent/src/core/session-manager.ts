@@ -1,5 +1,6 @@
-import { type AgentMessage, getTranscriptSystemMessage } from "@earendil-works/pi-agent-core";
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import {
+	getCurrentSystemMessage,
 	type ImageContent,
 	type Message,
 	type SystemMessage,
@@ -1127,7 +1128,7 @@ export class SessionManager {
 		usage?: Usage,
 	): string {
 		const timestamp = new Date().toISOString();
-		const systemMessage = this.getCurrentSystemMessage();
+		const systemMessage = getCurrentSystemMessage(this.buildSessionContext().messages);
 		const entry: CompactionEntry<T> = {
 			type: "compaction",
 			id: generateId(this.byId),
@@ -1171,11 +1172,6 @@ export class SessionManager {
 		};
 		this._appendEntry(entry);
 		return entry.id;
-	}
-
-	/** Replay the active context's system messages into the current prompt and tool state. */
-	getCurrentSystemMessage(): SystemMessage | undefined {
-		return getTranscriptSystemMessage(this.buildSessionContext().messages);
 	}
 
 	/** Get the current session name from the latest session_info entry, if any. */

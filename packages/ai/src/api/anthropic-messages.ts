@@ -15,7 +15,6 @@ import type {
 	Api,
 	AssistantMessage,
 	CacheRetention,
-	Context,
 	ImageContent,
 	Message,
 	Model,
@@ -35,19 +34,18 @@ import { appendAssistantMessageDiagnostic } from "../utils/diagnostics.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { parseJsonWithRepair, parseStreamingJson } from "../utils/json-parse.ts";
-import {
-	collapseSystemMessages,
-	getCurrentTools,
-	getInitialSystemMessage,
-	normalizeContext,
-	type TranscriptContext,
-} from "../utils/normalize-context.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import { getSystemMessageText, renderSystemMessageUpdate } from "../utils/text.ts";
-import { getDeclaredTools } from "../utils/transcript-state.ts";
+import {
+	getCurrentTools,
+	getDeclaredTools,
+	getInitialSystemMessage,
+	resolveTranscript,
+	type TranscriptContext,
+} from "../utils/transcript.ts";
 
 import { getJsonSchemaToolParameters, resolveJsonSchemaStrictSampling } from "./constrained-sampling.ts";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.ts";
@@ -497,14 +495,12 @@ async function* iterateAnthropicEvents(
 
 export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 	model: Model<"anthropic-messages">,
-	context: Context,
+	context: TranscriptContext,
 	options?: AnthropicOptions,
 ): AssistantMessageEventStream => {
 	const stream = new AssistantMessageEventStream();
-	const normalizedContext = getAnthropicCompat(model).supportsMidConvoSystemMessages
-		? normalizeContext(context)
-		: collapseSystemMessages(normalizeContext(context));
-	const currentTools = getCurrentTools(normalizedContext);
+	const normalizedContext = resolveTranscript(context, getAnthropicCompat(model).supportsMidConvoSystemMessages);
+	const currentTools = getCurrentTools(normalizedContext.messages);
 
 	(async () => {
 		const providerThinkingLevel = model.compat?.supportsMidConvoEffort ? (options?.effort ?? "high") : undefined;
@@ -845,7 +841,7 @@ function mapThinkingLevelToEffort(
 
 export const streamSimple: StreamFunction<"anthropic-messages", SimpleStreamOptions> = (
 	model: Model<"anthropic-messages">,
-	context: Context,
+	context: TranscriptContext,
 	options?: SimpleStreamOptions,
 ): AssistantMessageEventStream => {
 	assertRequestAuth(model.provider, options?.apiKey, options?.headers);
@@ -1029,7 +1025,7 @@ function buildParams(
 ): MessageCreateParamsStreaming {
 	const { cacheControl } = getCacheControl(model, options?.cacheRetention, options?.env);
 	const compat = getAnthropicCompat(model);
-	const initialSystemMessage = getInitialSystemMessage(context);
+	const initialSystemMessage = getInitialSystemMessage(context.messages);
 	const initialSystemText = initialSystemMessage ? getSystemMessageText(initialSystemMessage) : "";
 	const transformedMessages = transformMessages(context.messages, model, normalizeToolCallId);
 	const conversationMessages = initialSystemMessage ? transformedMessages.slice(1) : transformedMessages;
@@ -1092,7 +1088,7 @@ function buildParams(
 		params.temperature = options.temperature;
 	}
 
-	const tools = supportsMidConvoToolChanges ? getDeclaredTools(context) : getCurrentTools(context);
+	const tools = supportsMidConvoToolChanges ? getDeclaredTools(context.messages) : getCurrentTools(context.messages);
 	if (tools.length > 0) {
 		params.tools = convertTools(
 			tools,
@@ -1406,7 +1402,7 @@ function shouldUseFineGrainedToolStreamingBeta(
 	model: Model<"anthropic-messages">,
 	context: TranscriptContext,
 ): boolean {
-	return getCurrentTools(context).length > 0 && !getAnthropicCompat(model).supportsEagerToolInputStreaming;
+	return getCurrentTools(context.messages).length > 0 && !getAnthropicCompat(model).supportsEagerToolInputStreaming;
 }
 
 function convertTools(

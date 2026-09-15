@@ -185,8 +185,8 @@ describe("agentLoop with AgentMessage", () => {
 			config,
 			undefined,
 			(_model, providerContext) => {
-				expect(providerContext.systemPrompt).toBeUndefined();
-				expect(providerContext.tools).toBeUndefined();
+				// The provider receives a transcript: no top-level prompt or tool fields.
+				expect(Object.keys(providerContext)).toEqual(["messages"]);
 				expect(providerContext.messages[0]).toBe(initialSystem);
 				const response = new MockAssistantStream();
 				queueMicrotask(() => {
@@ -1075,7 +1075,6 @@ describe("agentLoop with AgentMessage", () => {
 			messages: [],
 			tools: [tool],
 		};
-		let convertedSecondTurnSystemPrompt = "";
 		let convertedSecondTurnHasUpdate = false;
 		let prepareCalls = 0;
 		let prepared = false;
@@ -1100,7 +1099,6 @@ describe("agentLoop with AgentMessage", () => {
 		const stream = agentLoop([createUserMessage("echo something")], context, config, undefined, (_model, ctx) => {
 			llmCalls++;
 			if (llmCalls === 2) {
-				convertedSecondTurnSystemPrompt = ctx.systemPrompt ?? "";
 				convertedSecondTurnHasUpdate = ctx.messages.some(
 					(message) => message.role === "system" && message.content === "updated guidance",
 				);
@@ -1133,7 +1131,6 @@ describe("agentLoop with AgentMessage", () => {
 
 		expect(llmCalls).toBe(2);
 		expect(prepareCalls).toBe(1);
-		expect(convertedSecondTurnSystemPrompt).toBe("");
 		expect(convertedSecondTurnHasUpdate).toBe(true);
 	});
 

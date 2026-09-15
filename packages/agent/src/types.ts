@@ -3,7 +3,6 @@ import type {
 	AssistantMessage,
 	AssistantMessageEvent,
 	AssistantMessageEventStream,
-	Context,
 	ImageContent,
 	Message,
 	Model,
@@ -11,6 +10,7 @@ import type {
 	TextContent,
 	Tool,
 	ToolResultMessage,
+	TranscriptContext,
 	Usage,
 } from "@earendil-works/pi-ai";
 import type { Static, TSchema } from "typebox";
@@ -18,6 +18,10 @@ import type { Static, TSchema } from "typebox";
 /**
  * Stream function used by the agent loop. `Models.streamSimple` satisfies
  * this shape.
+ *
+ * The loop passes a normalized transcript: the system prompt and tool
+ * declarations are carried by the transcript's system messages, never by
+ * `context.systemPrompt` or `context.tools`.
  *
  * Contract:
  * - Must not throw or return a rejected promise for request/model/runtime failures.
@@ -27,7 +31,7 @@ import type { Static, TSchema } from "typebox";
  */
 export type StreamFn = (
 	model: Model<Api>,
-	context: Context,
+	context: TranscriptContext,
 	options?: SimpleStreamOptions,
 ) => AssistantMessageEventStream | Promise<AssistantMessageEventStream>;
 

@@ -5,7 +5,6 @@ import {
 	type AuthContext,
 	type AuthInteraction,
 	type AuthResult,
-	type Context,
 	type Credential,
 	lazyStream,
 	type Model,
@@ -18,6 +17,7 @@ import {
 	type RefreshModelsContext,
 	type SimpleStreamOptions,
 	type StreamOptions,
+	type TranscriptContext,
 } from "@earendil-works/pi-ai";
 import { getApiProvider } from "@earendil-works/pi-ai/compat";
 import type { ModelConfig, ModelsJsonModel, ModelsJsonModelOverride, ModelsJsonProvider } from "./model-config.ts";
@@ -48,7 +48,11 @@ export interface ProviderConfigInput {
 	baseUrl?: string;
 	apiKey?: string;
 	api?: Api;
-	streamSimple?: (model: Model<Api>, context: Context, options?: SimpleStreamOptions) => AssistantMessageEventStream;
+	streamSimple?: (
+		model: Model<Api>,
+		context: TranscriptContext,
+		options?: SimpleStreamOptions,
+	) => AssistantMessageEventStream;
 	headers?: Record<string, string>;
 	authHeader?: boolean;
 	oauth?: ExtensionOAuthConfig;
@@ -462,7 +466,7 @@ export function composeModelProvider(
 	const supportsBaseApi = (model: Model<Api>) => base?.getModels().some((entry) => entry.api === model.api) ?? false;
 	const streamWith = (
 		model: Model<Api>,
-		context: Context,
+		context: TranscriptContext,
 		options: StreamOptions | undefined,
 		simple: boolean,
 	): AssistantMessageEventStream =>

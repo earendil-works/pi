@@ -1,8 +1,14 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type AgentTool, getTranscriptSystemMessage } from "@earendil-works/pi-agent-core";
-import { type Context, fauxAssistantMessage, fauxToolCall, getSystemMessageText } from "@earendil-works/pi-ai";
+import type { AgentTool } from "@earendil-works/pi-agent-core";
+import {
+	fauxAssistantMessage,
+	fauxToolCall,
+	getCurrentSystemMessage,
+	getSystemMessageText,
+	type TranscriptContext,
+} from "@earendil-works/pi-ai";
 import { getModel } from "@earendil-works/pi-ai/compat";
 import { Type } from "typebox";
 import { describe, expect, test } from "vitest";
@@ -59,7 +65,7 @@ describe("system prompt updates", () => {
 				// Nothing is synthesized or persisted until a request needs it.
 				expect(created.session.messages.map((message) => message.role)).toEqual(["user"]);
 				expect(sessionManager.buildSessionContext().messages.map((message) => message.role)).toEqual(["user"]);
-				expect(getTranscriptSystemMessage(created.session.messages)).toBeUndefined();
+				expect(getCurrentSystemMessage(created.session.messages)).toBeUndefined();
 			} finally {
 				created.session.dispose();
 			}
@@ -111,7 +117,7 @@ describe("system prompt updates", () => {
 		const harness = await createHarness({ extensionFactories: [extension], initialActiveToolNames: ["first"] });
 		try {
 			// Faux response callbacks swallow thrown assertions, so capture and assert afterwards.
-			const requests: Context[] = [];
+			const requests: TranscriptContext[] = [];
 			harness.setResponses([
 				(providerContext) => {
 					requests.push(providerContext);
@@ -131,8 +137,7 @@ describe("system prompt updates", () => {
 			await harness.session.prompt("second");
 			expect(requests).toHaveLength(3);
 
-			expect(requests[0]?.systemPrompt).toBeUndefined();
-			expect(requests[0]?.tools).toBeUndefined();
+			expect(Object.keys(requests[0] ?? {})).toEqual(["messages"]);
 			const initial = requests[0]?.messages[0];
 			if (initial?.role !== "system") throw new Error("expected initial system message");
 			expect(initial.toolsAdded?.map((value) => value.name)).toEqual(["first", "second"]);
@@ -152,7 +157,7 @@ describe("system prompt updates", () => {
 			const result = requests[2]?.messages.filter((message) => message.role === "toolResult").at(-1);
 			expect(result).toMatchObject({ role: "toolResult", toolName: "first", isError: true });
 
-			const current = getTranscriptSystemMessage(harness.session.messages);
+			const current = getCurrentSystemMessage(harness.session.messages);
 			expect(current?.toolsAdded?.map((value) => value.name)).toEqual(["second"]);
 			expect(getSystemMessageText(current!)).toBe(harness.session.systemPrompt);
 		} finally {
@@ -178,7 +183,7 @@ describe("system prompt updates", () => {
 		};
 		const harness = await createHarness({ extensionFactories: [extension], initialActiveToolNames: ["first"] });
 		try {
-			const requests: Context[] = [];
+			const requests: TranscriptContext[] = [];
 			harness.setResponses([
 				(providerContext) => {
 					requests.push(providerContext);

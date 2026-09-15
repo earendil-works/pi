@@ -1,20 +1,17 @@
 import {
+	createInitialSystemMessage,
+	getCurrentSystemMessage,
+	getCurrentSystemPrompt,
 	type ImageContent,
 	type Message,
 	type Model,
-	normalizeContext,
 	type SimpleStreamOptions,
 	type TextContent,
 	type ThinkingBudgets,
 	type Transport,
 	toToolDeclaration,
 } from "@earendil-works/pi-ai";
-import {
-	getTranscriptSystemMessage,
-	getTranscriptSystemPrompt,
-	runAgentLoop,
-	runAgentLoopContinue,
-} from "./agent-loop.ts";
+import { runAgentLoop, runAgentLoopContinue } from "./agent-loop.ts";
 import { getDefaultStreamFn } from "./stream-fn.ts";
 import type {
 	AfterToolCallContext,
@@ -84,16 +81,12 @@ export type AgentInitialState = Partial<
 function createMutableAgentState(initialState?: AgentInitialState): MutableAgentState {
 	let tools = initialState?.tools?.slice() ?? [];
 	let messages = initialState?.messages?.slice() ?? [];
-	const [initialMessage] = normalizeContext({
-		systemPrompt: initialState?.systemPrompt,
-		tools: tools.map(toToolDeclaration),
-		messages: [],
-	}).messages;
+	const initialMessage = createInitialSystemMessage(initialState?.systemPrompt, tools.map(toToolDeclaration));
 	if (messages[0]?.role !== "system" && initialMessage) messages.unshift(initialMessage);
 
 	return {
 		get systemPrompt() {
-			return getTranscriptSystemPrompt(messages);
+			return getCurrentSystemPrompt(messages);
 		},
 		model: initialState?.model ?? DEFAULT_MODEL,
 		thinkingLevel: initialState?.thinkingLevel ?? "off",
@@ -357,7 +350,7 @@ export class Agent {
 			throw new Error("Agent is already processing. Wait for completion before resetting.");
 		}
 
-		const baseline = getTranscriptSystemMessage(this._state.messages);
+		const baseline = getCurrentSystemMessage(this._state.messages);
 		this._state.messages = baseline ? [baseline] : [];
 		this._state.isStreaming = false;
 		this._state.streamingMessage = undefined;

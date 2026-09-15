@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { type BedrockOptions, stream as streamBedrock } from "../src/api/bedrock-converse-stream.ts";
-import { getModel } from "../src/compat.ts";
+import { getModel, normalizeContext } from "../src/compat.ts";
 import type { Context, Model } from "../src/types.ts";
 import { hasBedrockCredentials } from "./bedrock-utils.ts";
 
@@ -30,7 +30,7 @@ async function capturePayload(
 	options?: BedrockOptions,
 ): Promise<BedrockThinkingPayload> {
 	let capturedPayload: BedrockThinkingPayload | undefined;
-	const s = streamBedrock(model, makeContext(), {
+	const s = streamBedrock(model, normalizeContext(makeContext()), {
 		...options,
 		reasoning: options?.reasoning ?? "high",
 		onPayload: (payload) => {
@@ -175,7 +175,7 @@ describe.skipIf(!hasBedrockCredentials())("Bedrock Claude max tokens E2E", () =>
 
 			const response = await streamBedrock(
 				model,
-				{
+				normalizeContext({
 					systemPrompt: "You are a deterministic text generator. Follow the requested output format exactly.",
 					messages: [
 						{
@@ -185,7 +185,7 @@ describe.skipIf(!hasBedrockCredentials())("Bedrock Claude max tokens E2E", () =>
 							timestamp: Date.now(),
 						},
 					],
-				},
+				}),
 				{ reasoning: "low" },
 			).result();
 
@@ -221,10 +221,10 @@ describe("Application inference profile support", () => {
 		let capturedPayload: any;
 		const s = streamBedrock(
 			model,
-			{
+			normalizeContext({
 				systemPrompt: "You are helpful.",
 				messages: [{ role: "user", content: "Hello", timestamp: Date.now() }],
-			},
+			}),
 			{
 				onPayload: (payload) => {
 					capturedPayload = payload;

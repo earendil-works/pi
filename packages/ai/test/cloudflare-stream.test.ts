@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { cloudflareStreams } from "../src/providers/cloudflare-stream.ts";
-import type { Api, Context, Model } from "../src/types.ts";
+import type { Api, Model } from "../src/types.ts";
 import { AssistantMessageEventStream } from "../src/utils/event-stream.ts";
+import { normalizeContext } from "../src/utils/transcript.ts";
 
 const model: Model<Api> = {
 	id: "model",
@@ -16,7 +17,7 @@ const model: Model<Api> = {
 	maxTokens: 100,
 };
 
-const context: Context = { messages: [] };
+const context = normalizeContext({ messages: [] });
 
 describe("Cloudflare provider streams", () => {
 	it("materializes the model endpoint before dispatch", () => {

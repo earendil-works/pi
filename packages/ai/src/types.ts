@@ -270,8 +270,12 @@ export type ApiStreamOptions<TApi extends Api> = TApi extends keyof ApiOptionsMa
  * `Provider.stream()` via `ApiStreamOptions`.
  */
 export interface ProviderStreams {
-	stream(model: Model<Api>, context: Context, options?: StreamOptions): AssistantMessageEventStream;
-	streamSimple(model: Model<Api>, context: Context, options?: SimpleStreamOptions): AssistantMessageEventStream;
+	stream(model: Model<Api>, context: TranscriptContext, options?: StreamOptions): AssistantMessageEventStream;
+	streamSimple(
+		model: Model<Api>,
+		context: TranscriptContext,
+		options?: SimpleStreamOptions,
+	): AssistantMessageEventStream;
 	fetchDeferred?(
 		model: Model<Api>,
 		handle: DeferredHandle,
@@ -324,6 +328,8 @@ export interface SimpleStreamOptions extends StreamOptions {
 // Generic StreamFunction with typed options.
 //
 // Contract:
+// - Receives a normalized transcript: the system prompt and tools live in the
+//   leading system message, never on the context itself.
 // - Must return an AssistantMessageEventStream.
 // - Direct streamSimple() calls may throw synchronously when request auth is
 //   missing. Once a stream is returned, request/model/runtime failures should
@@ -332,7 +338,7 @@ export interface SimpleStreamOptions extends StreamOptions {
 //   "error" or "aborted" and errorMessage, emitted via the stream protocol.
 export type StreamFunction<TApi extends Api = Api, TOptions extends StreamOptions = StreamOptions> = (
 	model: Model<TApi>,
-	context: Context,
+	context: TranscriptContext,
 	options?: TOptions,
 ) => AssistantMessageEventStream;
 
@@ -547,6 +553,12 @@ export interface ToolReference {
 	name: string;
 }
 
+/**
+ * Request input accepted by the public stream entry points (`Models.stream()`,
+ * `streamSimple()`, ...). `systemPrompt` and `tools` are shorthand for a leading
+ * system message; `normalizeContext()` folds them into one before the request
+ * reaches a provider.
+ */
 export interface Context {
 	systemPrompt?: string;
 	messages: Message[];
@@ -555,8 +567,14 @@ export interface Context {
 
 declare const transcriptContextBrand: unique symbol;
 
-/** Provider-facing context with initial instructions and tools represented in the transcript. */
-export type TranscriptContext = Omit<Context, "systemPrompt" | "tools"> & {
+/**
+ * Normalized request context passed to providers and API implementations. The
+ * prompt and tool declarations are carried by the transcript's system messages.
+ * Only `normalizeContext()` produces this type, so a raw `Context` cannot reach
+ * provider code by accident.
+ */
+export type TranscriptContext = {
+	messages: Message[];
 	readonly [transcriptContextBrand]: true;
 };
 
