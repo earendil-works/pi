@@ -134,7 +134,7 @@ Use `/tree` when you want to keep alternatives together. Use `/fork` or `/clone`
 - **Soft (default):** the leaf moves back. The removed turns leave the model context but stay in the session file, so `/tree` can navigate back to them.
 - **`--hard`:** the session file is rewritten to contain only the retained path. The removed turns are permanently deleted from the file. **No backup is written and this cannot be undone** — pi asks for confirmation first.
 
-No branch summary is created, so the model has no awareness of the removed turns: the next response is generated from exactly the retained messages. `/forget` is refused while a response, compaction, or tree navigation is in progress.
+No branch summary is created, so the model has no awareness of the removed turns: the next response is generated from exactly the retained messages. Note that this guarantee is conditional on later `/tree` use: a soft `/forget` leaves the removed turns as an abandoned branch, and if you navigate away from that branch and accept a branch summary, a summary of the removed content is attached to the context. Choose "no summary" to preserve the guarantee. `/forget` is refused while a response, compaction, or tree navigation is in progress.
 
 `/forget` does not erase out-of-band state: files written, memory entries, or tool state created during the removed turns are unaffected.
 

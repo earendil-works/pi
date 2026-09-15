@@ -6624,9 +6624,17 @@ export class InteractiveMode {
 
 		try {
 			if (hard) {
+				// Entries not on the active path: hard mode rewrites the file to the
+				// retained path, so these are deleted as collateral.
+				const sm = this.session.sessionManager;
+				const abandonedEntries = sm.getEntries().length - sm.getBranch().length;
+				const branchWarning =
+					abandonedEntries > 0
+						? `\n\n${abandonedEntries} ${abandonedEntries === 1 ? "entry" : "entries"} on abandoned branches will also be deleted.`
+						: "";
 				const confirmed = await this.showExtensionConfirm(
 					"Forget session turns",
-					`Remove the last ${count} user turn(s) from the session file and the model context?\n\nThe session file will be rewritten. No backup will be written. This cannot be undone.`,
+					`Remove the last ${count} user turn(s) from the session file and the model context?\n\nThe session file will be rewritten. No backup will be written. This cannot be undone.${branchWarning}`,
 				);
 				if (!confirmed) {
 					this.showStatus("Cancelled");
