@@ -362,6 +362,8 @@ interface OAuthLoginCallbacks {
   onDeviceCode(params: {
     userCode: string;
     verificationUri: string;
+    openBrowserOnConfirm?: boolean;
+    copyCodeOnConfirm?: boolean;
     intervalSeconds?: number;
     expiresInSeconds?: number;
   }): void;
@@ -379,6 +381,8 @@ interface OAuthLoginCallbacks {
   }): Promise<string | undefined>;
 }
 ```
+
+Device-code login offers browser opening and code copying on Enter (`tui.select.confirm`) by default. Set `openBrowserOnConfirm` or `copyCodeOnConfirm` to `false` to disable either action. Native `AuthEvent` notifications support the same flags.
 
 ### OAuthCredentials
 
