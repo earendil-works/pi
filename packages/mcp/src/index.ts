@@ -1,3 +1,4 @@
+export type { AuthProvider, UnauthorizedContext } from "./auth-provider.ts";
 export { McpClient, type McpClientOptions, type McpRequestOptions } from "./client.ts";
 export type {
 	AudioContent,

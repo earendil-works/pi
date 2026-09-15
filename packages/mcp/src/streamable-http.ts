@@ -1,3 +1,4 @@
+import type { AuthProvider } from "./auth-provider.ts";
 import { type JsonRpcMessage, McpConnectionClosedError, parseJsonRpcMessage } from "./protocol/jsonrpc.ts";
 import { consumeSseStream } from "./sse.ts";
 import type { McpTransport } from "./transport.ts";
@@ -14,6 +15,7 @@ export interface StreamableHttpTransportOptions {
 	fetch?: McpFetch;
 	openGetStream?: boolean;
 	maxMessageBytes?: number;
+	authProvider?: AuthProvider;
 }
 
 export class McpHttpError extends Error {
@@ -85,16 +87,45 @@ export class StreamableHttpTransport extends TransportEvents implements McpTrans
 	}
 
 	async send(message: JsonRpcMessage): Promise<void> {
+		await this.sendRequest(message, false);
+	}
+
+	async close(): Promise<void> {
+		if (this.closed) return;
+		this.closed = true;
+		this.controller.abort();
+		if (this.started && this.sessionIdValue) {
+			const controller = new AbortController();
+			const timeout = setTimeout(() => controller.abort(), 1_000);
+			await this.fetch(this.url, {
+				method: "DELETE",
+				headers: await this.headers(),
+				signal: controller.signal,
+			}).catch(() => undefined);
+			clearTimeout(timeout);
+		}
+		this.emitCloseOnce();
+	}
+
+	private async sendRequest(message: JsonRpcMessage, retriedAuth: boolean): Promise<void> {
 		if (!this.started || this.closed) throw new McpConnectionClosedError();
 		const response = await this.fetch(this.url, {
 			method: "POST",
-			headers: this.headers({
+			headers: await this.headers({
 				accept: "application/json, text/event-stream",
 				"content-type": "application/json",
 			}),
 			body: JSON.stringify(message),
 			signal: this.controller.signal,
 		});
+		if (response.status === 401 && !retriedAuth && this.options.authProvider?.onUnauthorized) {
+			try {
+				await this.options.authProvider.onUnauthorized({ response, serverUrl: this.url, fetch: this.fetch });
+			} finally {
+				await response.body?.cancel().catch(() => {});
+			}
+			return this.sendRequest(message, true);
+		}
 		await this.checkResponse(response);
 		this.captureSession(response);
 		if (response.status === 202 || response.status === 204) return;
@@ -111,29 +142,14 @@ export class StreamableHttpTransport extends TransportEvents implements McpTrans
 		throw new McpHttpError(response.status, `Unsupported MCP response content type: ${contentType ?? "missing"}`);
 	}
 
-	async close(): Promise<void> {
-		if (this.closed) return;
-		this.closed = true;
-		this.controller.abort();
-		if (this.started && this.sessionIdValue) {
-			const controller = new AbortController();
-			const timeout = setTimeout(() => controller.abort(), 1_000);
-			await this.fetch(this.url, {
-				method: "DELETE",
-				headers: this.headers(),
-				signal: controller.signal,
-			}).catch(() => undefined);
-			clearTimeout(timeout);
-		}
-		this.emitCloseOnce();
-	}
-
-	private headers(extra: Record<string, string> = {}): Headers {
+	private async headers(extra: Record<string, string> = {}): Promise<Headers> {
 		const headers = new Headers(this.options.headers);
 		for (const [name, value] of Object.entries(extra)) headers.set(name, value);
 		if (this.sessionIdValue) headers.set("Mcp-Session-Id", this.sessionIdValue);
 		if (this.protocolVersion) headers.set("MCP-Protocol-Version", this.protocolVersion);
 		if (this.lastEventId) headers.set("Last-Event-ID", this.lastEventId);
+		const token = await this.options.authProvider?.token();
+		if (token) headers.set("Authorization", `Bearer ${token}`);
 		return headers;
 	}
 
@@ -166,7 +182,7 @@ export class StreamableHttpTransport extends TransportEvents implements McpTrans
 		try {
 			const response = await this.fetch(this.url, {
 				method: "GET",
-				headers: this.headers({ accept: "text/event-stream" }),
+				headers: await this.headers({ accept: "text/event-stream" }),
 				signal: this.controller.signal,
 			});
 			if (response.status === 405) return;

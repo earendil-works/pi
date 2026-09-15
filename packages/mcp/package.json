@@ -11,6 +11,11 @@
 			"types": "./dist/index.d.ts",
 			"import": "./dist/index.js"
 		},
+		"./oauth": {
+			"source": "./src/oauth/index.ts",
+			"types": "./dist/oauth/index.d.ts",
+			"import": "./dist/oauth/index.js"
+		},
 		"./testing": {
 			"source": "./src/testing/index.ts",
 			"types": "./dist/testing/index.d.ts",
@@ -21,7 +26,8 @@
 	"files": [
 		"dist",
 		"README.md",
-		"CHANGELOG.md"
+		"CHANGELOG.md",
+		"LICENSES"
 	],
 	"scripts": {
 		"clean": "shx rm -rf dist",
