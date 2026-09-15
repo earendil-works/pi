@@ -865,17 +865,22 @@ function applyOpenAIToolSearchMetadata(model: Model<Api>): void {
 	};
 }
 
-// Kimi K3 accepts system messages (including tool-bearing ones) after the conversation
-// has started; Moonshot, Fireworks, and OpenCode pass the tool-bearing form through.
-// GitHub Copilot forwards the text but silently drops the tool-bearing message, and
-// DeepSeek V4 Pro and OpenAI models behind OpenRouter accept plain system text in place.
+// Moonshot Kimi K2.6/K2.7 accept system text after the conversation starts but reject
+// tool-bearing system messages. Kimi K3 accepts both forms; Fireworks and OpenCode pass
+// its tool-bearing form through. GitHub Copilot forwards K3 text but silently drops its
+// tool-bearing message. DeepSeek V4 Pro and OpenAI models behind OpenRouter also accept
+// plain system text in place.
 function applyOpenAICompletionsTranscriptMetadata(model: Model<Api>): void {
 	if (model.api !== "openai-completions") return;
 	const isKimiK3 =
 		(model.provider.startsWith("moonshot") && model.id === "kimi-k3") ||
 		(model.provider === "fireworks" && model.id.includes("kimi-k3")) ||
 		((model.provider === "opencode" || model.provider === "opencode-go") && model.id === "kimi-k3");
+	const isMoonshotKimiK2 =
+		model.provider.startsWith("moonshot") &&
+		(model.id === "kimi-k2.6" || model.id === "kimi-k2.7-code" || model.id === "kimi-k2.7-code-highspeed");
 	const isTextOnly =
+		isMoonshotKimiK2 ||
 		(model.provider === "github-copilot" && model.id === "kimi-k3") ||
 		(model.provider === "deepseek" && model.id === "deepseek-v4-pro") ||
 		(model.provider === "openrouter" &&

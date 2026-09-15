@@ -69,7 +69,13 @@ describe("builtin providers", () => {
 	it("enables mid-conversation system messages only for verified models", () => {
 		const models = builtinModels();
 		const supported = [
+			["moonshotai", "kimi-k2.6"],
+			["moonshotai", "kimi-k2.7-code"],
+			["moonshotai", "kimi-k2.7-code-highspeed"],
 			["moonshotai", "kimi-k3"],
+			["moonshotai-cn", "kimi-k2.6"],
+			["moonshotai-cn", "kimi-k2.7-code"],
+			["moonshotai-cn", "kimi-k2.7-code-highspeed"],
 			["moonshotai-cn", "kimi-k3"],
 			["fireworks", "accounts/fireworks/models/kimi-k3"],
 			["fireworks", "accounts/fireworks/routers/kimi-k3-fast"],
@@ -93,8 +99,6 @@ describe("builtin providers", () => {
 			["openrouter", "openai/gpt-5.6-terra"],
 		] as const;
 		const unsupported = [
-			["moonshotai", "kimi-k2.6"],
-			["moonshotai", "kimi-k2.7-code"],
 			["fireworks", "accounts/fireworks/models/kimi-k2p6"],
 			["openai", "gpt-4.1"],
 			["openai", "gpt-5.2"],
@@ -145,10 +149,17 @@ describe("builtin providers", () => {
 			supportsMidConvoToolChanges: true,
 		});
 		// Kimi-style tool-bearing system messages survive Moonshot and OpenCode but not Copilot.
-		for (const provider of ["moonshotai", "opencode", "opencode-go"] as const) {
+		for (const provider of ["moonshotai", "moonshotai-cn", "opencode", "opencode-go"] as const) {
 			expect(models.getModel(provider, "kimi-k3")?.compat, provider).toMatchObject({
 				supportsMidConvoToolAdditions: true,
 			});
+		}
+		for (const provider of ["moonshotai", "moonshotai-cn"] as const) {
+			for (const modelId of ["kimi-k2.6", "kimi-k2.7-code", "kimi-k2.7-code-highspeed"] as const) {
+				expect(models.getModel(provider, modelId)?.compat, `${provider}/${modelId}`).not.toHaveProperty(
+					"supportsMidConvoToolAdditions",
+				);
+			}
 		}
 		expect(models.getModel("github-copilot", "kimi-k3")?.compat).not.toHaveProperty("supportsMidConvoToolAdditions");
 		expect(models.getModel("openrouter", "openai/gpt-5.6-terra")?.compat).not.toHaveProperty(
