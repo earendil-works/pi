@@ -1226,7 +1226,8 @@ export function sliceWithWidth(
 		const ansi = extractAnsiCode(line, i);
 		if (ansi) {
 			if (currentCol >= startCol && currentCol < endCol) result += ansi.code;
-			else if (currentCol < startCol) pendingAnsi += ansi.code;
+			// APC sequences are positional one-shot commands, not persistent style state.
+			else if (currentCol < startCol && !ansi.code.startsWith("\x1b_")) pendingAnsi += ansi.code;
 			i += ansi.length;
 			continue;
 		}
