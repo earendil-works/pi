@@ -6,5 +6,5 @@
 		"moduleResolution": "NodeNext",
 		"types": ["node", "vitest"]
 	},
-	"include": ["src/**/*.ts"]
+	"include": ["src/**/*.ts", "evals/**/*.ts", "docker/**/*.ts", "test/**/*.ts", "*.config.ts"]
 }
