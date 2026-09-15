@@ -1,7 +1,12 @@
 import { join, resolve } from "node:path";
-import { Text, type TUI, type TuiMouseEvent } from "@earendil-works/pi-tui";
+import { resetCapabilitiesCache, setCapabilities, Text, type TUI, type TuiMouseEvent } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
-import { beforeAll, describe, expect, test } from "vitest";
+import { afterEach, beforeAll, describe, expect, test, vi } from "vitest";
+
+const imageConvertMocks = vi.hoisted(() => ({ convertToPng: vi.fn() }));
+
+vi.mock("../src/utils/image-convert.ts", () => imageConvertMocks);
+
 import { getReadmePath } from "../src/config.ts";
 import type { ToolDefinition } from "../src/core/extensions/types.ts";
 import { type BashOperations, createBashToolDefinition } from "../src/core/tools/bash.ts";
@@ -34,6 +39,45 @@ function createFakeTui(): TUI {
 describe("ToolExecutionComponent parity", () => {
 	beforeAll(() => {
 		initTheme("dark");
+	});
+	afterEach(() => {
+		resetCapabilitiesCache();
+		imageConvertMocks.convertToPng.mockReset();
+	});
+
+	test("keeps the final tool image when a partial image conversion finishes late", async () => {
+		setCapabilities({ images: "kitty", trueColor: true, hyperlinks: true });
+		let finishConversion!: (result: { data: string; mimeType: string }) => void;
+		const conversion = new Promise<{ data: string; mimeType: string }>((resolve) => {
+			finishConversion = resolve;
+		});
+		imageConvertMocks.convertToPng.mockReturnValue(conversion);
+		const component = new ToolExecutionComponent(
+			"custom_tool",
+			"tool-image-race",
+			{},
+			{},
+			undefined,
+			createFakeTui(),
+			process.cwd(),
+		);
+
+		component.updateResult(
+			{ content: [{ type: "image", data: "partial-jpeg", mimeType: "image/jpeg" }], isError: false },
+			true,
+		);
+		component.updateResult({
+			content: [{ type: "image", data: "final-png", mimeType: "image/png" }],
+			isError: false,
+		});
+		expect(component.render(120).join("\n")).toContain("final-png");
+
+		finishConversion({ data: "converted-partial", mimeType: "image/png" });
+		await conversion;
+
+		const rendered = component.render(120).join("\n");
+		expect(rendered).toContain("final-png");
+		expect(rendered).not.toContain("converted-partial");
 	});
 
 	test("stacks custom call and result renderers like the old implementation", () => {
