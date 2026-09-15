@@ -18,6 +18,12 @@ export interface ApiKeyCredential {
 	type: "api_key";
 	key?: string;
 	env?: ProviderEnv;
+	/**
+	 * Set when the provider rejected this credential with an authentication
+	 * failure. The credential stays stored but unusable until a new login
+	 * replaces it; see `markCredentialRejected`.
+	 */
+	needsReauth?: boolean;
 }
 
 /** OAuth token data returned by extension compatibility flows. */
@@ -31,6 +37,13 @@ export interface OAuthCredentials {
 /** Stored canonical OAuth credential. */
 export interface OAuthCredential extends OAuthCredentials {
 	type: "oauth";
+	/**
+	 * Set when the provider rejected this credential with an authentication
+	 * failure. A durable key grant (for example OrcaRouter) is reused until the
+	 * provider revokes it, so this marks a reauthentication requirement rather
+	 * than a refresh.
+	 */
+	needsReauth?: boolean;
 }
 
 /** One type-tagged credential per provider — the shape of today's auth.json. */

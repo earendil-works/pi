@@ -4,6 +4,8 @@
 
 ### Added
 
+- Added OrcaRouter as a built-in provider with API-key and OAuth PKCE login, live workspace model discovery, and capability-filtered model selection.
+
 - Enabled native deferred tool loading for Fireworks Messages models. Use `ToolSearch` or `tool_search` as the loader name for prompt-prefix deferral ([#9323](https://github.com/earendil-works/pi/issues/9323)).
 
 ### Fixed

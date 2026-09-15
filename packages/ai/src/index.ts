@@ -21,6 +21,7 @@ export type { PiMessagesEvent, PiMessagesOptions, PiMessagesRewriteImpact } from
 export * from "./auth/context.ts";
 export * from "./auth/credential-store.ts";
 export * from "./auth/helpers.ts";
+export * from "./auth/reauth.ts";
 export * from "./auth/types.ts";
 export type {
 	OAuthAuthInfo,

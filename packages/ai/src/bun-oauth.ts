@@ -4,6 +4,7 @@ import { kimiCodingOAuth } from "./auth/oauth/kimi-coding.ts";
 import { registerBundledOAuthFlowLoaders } from "./auth/oauth/load.ts";
 import { openaiCodexOAuth } from "./auth/oauth/openai-codex.ts";
 import { openRouterOAuth } from "./auth/oauth/openrouter.ts";
+import { orcaRouterOAuth } from "./auth/oauth/orcarouter.ts";
 import { createRadiusOAuth } from "./auth/oauth/radius.ts";
 import { xaiOAuth } from "./auth/oauth/xai.ts";
 
@@ -14,6 +15,7 @@ export function registerBunOAuthFlows(): void {
 		openaiCodex: () => openaiCodexOAuth,
 		githubCopilot: () => githubCopilotOAuth,
 		openrouter: () => openRouterOAuth,
+		orcarouter: () => orcaRouterOAuth,
 		kimiCoding: () => kimiCodingOAuth,
 		xai: () => xaiOAuth,
 		radius: createRadiusOAuth,

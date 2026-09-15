@@ -11,6 +11,7 @@ import { convertToLlm } from "./messages.ts";
 import { findInitialModel } from "./model-resolver.ts";
 import { ModelRuntime } from "./model-runtime.ts";
 import { mergeProviderAttributionHeaders } from "./provider-attribution.ts";
+import { markProviderCredentialRejected } from "./provider-reauth.ts";
 import type { ResourceLoader } from "./resource-loader.ts";
 import { DefaultResourceLoader } from "./resource-loader.ts";
 import { getDefaultSessionDir, SessionManager } from "./session-manager.ts";
@@ -347,7 +348,17 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			}
 			return runner.emitBeforeProviderRequest(payload);
 		},
-		onResponse: async (response, _model) => {
+		onResponse: async (response, responseModel) => {
+			// Terminal reauthentication: a credential the provider rejected must
+			// stop being used, without being deleted. The credential that made the
+			// request is captured here, so a late 401 can only ever mark the exact
+			// generation that was rejected.
+			if (response.status === 401) {
+				void markProviderCredentialRejected(
+					{ credentialStore: () => modelRuntime.credentialStore() },
+					responseModel.provider,
+				);
+			}
 			const runner = extensionRunnerRef.current;
 			if (!runner?.hasHandlers("after_provider_response")) {
 				return;

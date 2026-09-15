@@ -51,6 +51,19 @@ Anthropic subscription auth is active for Claude Pro/Max accounts. Third-party h
 - On remote/headless machines (e.g. over SSH) the browser cannot reach the loopback callback; paste the final redirect URL (or the authorization code) into the login prompt instead
 - `OPENROUTER_API_KEY` remains available through **Use an API key**
 
+### OrcaRouter
+
+OrcaRouter is an OpenAI-compatible gateway for both models and agents. It is available as two explicit login choices, both producing one ordinary OrcaRouter API key that belongs to your own account:
+
+- **OrcaRouter - API key**: run `/login orcarouter` and select **Use an API key**, or set `ORCAROUTER_API_KEY`. Chat models come from `GET https://api.orcarouter.ai/v1/models?capability=chat`.
+- **Sign in with OrcaRouter**: run `/login orcarouter` and select it to open the OrcaRouter PKCE authorization flow. No client secret or pre-registered redirect URI is required.
+
+The integration uses two different origins: sign-in and code exchange happen on `https://www.orcarouter.ai` (`/auth`, `/api/v1/auth/keys`), while inference and model discovery use `https://api.orcarouter.ai/v1`. Self-hosted deployments can set `ORCA_BASE_URL` as a shared base, or `ORCA_AUTH_BASE_URL` / `ORCA_API_BASE_URL` to separate them; the explicit overrides win.
+
+On remote/headless machines (e.g. over SSH) the browser cannot reach the loopback callback; paste the authorization code or the final redirect URL into the login prompt instead.
+
+The issued key is durable, not a refresh token: it is reused until you revoke it at `https://www.orcarouter.ai/console/authorized-apps`. A `401` from the relay marks that exact credential as needing reauthentication instead of retrying or silently deleting it.
+
 ### Radius
 
 Radius is a dynamic `pi-messages` gateway. `/login radius` stores OAuth tokens in `auth.json`; the gateway catalog is refreshed independently and cached in `models-store.json`. Custom Radius gateways can be declared in `models.json` with `"oauth": "radius"` and a gateway `baseUrl`.
@@ -83,6 +96,7 @@ pi
 | Cloudflare Workers AI | `CLOUDFLARE_API_KEY` (+ `CLOUDFLARE_ACCOUNT_ID`) | `cloudflare-workers-ai` |
 | xAI | `XAI_API_KEY` | `xai` |
 | OpenRouter | `OPENROUTER_API_KEY` | `openrouter` |
+| OrcaRouter | `ORCAROUTER_API_KEY` | `orcarouter` |
 | Vercel AI Gateway | `AI_GATEWAY_API_KEY` | `vercel-ai-gateway` |
 | ZAI Coding Plan (Global) | `ZAI_API_KEY` | `zai` |
 | ZAI Coding Plan (China) | `ZAI_CODING_CN_API_KEY` | `zai-coding-cn` |

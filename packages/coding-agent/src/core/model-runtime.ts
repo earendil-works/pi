@@ -558,6 +558,14 @@ export class ModelRuntime implements Models {
 		return this.credentials.list(options);
 	}
 
+	/**
+	 * The credential store backing this runtime, including non-persistent
+	 * runtime overrides. Used by terminal reauthentication bookkeeping.
+	 */
+	credentialStore(): CredentialStore {
+		return this.credentials;
+	}
+
 	getProviderAuthStatus(providerId: string): AuthStatus {
 		if (this.credentials.hasRuntimeApiKey(providerId)) return { configured: true, source: "runtime" };
 		if (this.snapshot.storedProviders.has(providerId)) return { configured: true, source: "stored" };

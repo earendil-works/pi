@@ -155,6 +155,7 @@ import { UserMessageComponent } from "./components/user-message.ts";
 import { UserMessageSelectorComponent } from "./components/user-message-selector.ts";
 import { editInExternalEditor } from "./external-editor.ts";
 import { refreshModelCatalogs } from "./model-catalog-refresh.ts";
+import { modelAcceptsImage, textRequiresImageInput } from "./model-modality.ts";
 import { getModelSearchText } from "./model-search.ts";
 import { shareSession } from "./session-share.ts";
 import {
@@ -4843,6 +4844,15 @@ export class InteractiveMode {
 
 		const model = await this.findExactModelMatch(searchTerm);
 		if (model) {
+			// A named model that cannot accept the pending attachment would fail on
+			// send; say so instead of silently keeping an incompatible selection.
+			const pendingText = this.editor.getExpandedText?.() ?? this.editor.getText();
+			if ((await textRequiresImageInput(pendingText, { cwd: process.cwd() })) && !modelAcceptsImage(model)) {
+				this.showError(
+					`${model.provider}/${model.id} does not accept image input. Choose a model that does, or remove the attachment.`,
+				);
+				return;
+			}
 			try {
 				await this.session.setModel(model, { persist: false });
 				this.footer.invalidate();
@@ -4984,7 +4994,12 @@ export class InteractiveMode {
 		});
 	}
 
-	private showModelSelector(initialSearchInput?: string): void {
+	private async showModelSelector(initialSearchInput?: string): Promise<void> {
+		// The pending prompt can already carry an image attachment (clipboard paste
+		// inserts an image file path). Narrow the selector to models that declare
+		// image input before the user picks, rather than rejecting the send later.
+		const pendingText = this.editor.getExpandedText?.() ?? this.editor.getText();
+		const requiresImage = await textRequiresImageInput(pendingText, { cwd: process.cwd() });
 		this.showSelector((done) => {
 			const selectModel = async (model: Model<any>, persist: boolean) => {
 				try {
@@ -5016,6 +5031,7 @@ export class InteractiveMode {
 				initialSearchInput,
 				(model) => selectModel(model, true),
 				defaultProvider && defaultModel ? { provider: defaultProvider, id: defaultModel } : undefined,
+				requiresImage ? "image" : undefined,
 			);
 			return { component: selector, focus: selector, dispose: () => selector.dispose() };
 		});

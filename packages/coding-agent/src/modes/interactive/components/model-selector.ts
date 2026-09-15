@@ -11,6 +11,7 @@ import {
 } from "@earendil-works/pi-tui";
 import type { ModelRuntime } from "../../../core/model-runtime.ts";
 import { refreshModelCatalogs } from "../model-catalog-refresh.ts";
+import { modelAcceptsImage } from "../model-modality.ts";
 import { getModelSelectorSearchText } from "../model-search.ts";
 import { theme } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
@@ -72,6 +73,8 @@ export class ModelSelectorComponent extends Container implements Focusable {
 	private readonly refreshAbortController = new AbortController();
 	private refreshTimeout?: ReturnType<typeof setTimeout>;
 	private closed = false;
+	/** When set, only models declaring this input modality are selectable. */
+	private readonly requiredInput?: "image";
 
 	constructor(
 		tui: TUI,
@@ -83,6 +86,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
 		initialSearchInput?: string,
 		onSelectAsDefault?: (model: Model<any>) => void,
 		defaultModel?: DefaultModelReference,
+		requiredInput?: "image",
 	) {
 		super();
 
@@ -91,6 +95,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
 		this.modelRuntime = modelRuntime;
 		this.scopedModels = scopedModels;
 		this.defaultModel = defaultModel;
+		this.requiredInput = requiredInput;
 		this.scope = scopedModels.length > 0 ? "scoped" : "all";
 		this.onSelectCallback = onSelect;
 		this.onSelectAsDefaultCallback = onSelectAsDefault;
@@ -109,6 +114,15 @@ export class ModelSelectorComponent extends Container implements Focusable {
 		} else {
 			const hintText = "Only showing models from configured providers. Use /login to add providers.";
 			this.addChild(new Text(theme.fg("warning", hintText), 0, 0));
+		}
+		if (requiredInput) {
+			this.addChild(
+				new Text(
+					theme.fg("warning", `Only showing models that accept ${requiredInput} input (pending attachment).`),
+					0,
+					0,
+				),
+			);
 		}
 		this.addChild(new Spacer(1));
 
@@ -164,21 +178,38 @@ export class ModelSelectorComponent extends Container implements Focusable {
 			id: model.id,
 			model,
 		}));
-		this.allModels = this.sortModels(models);
+		this.allModels = this.applyRequiredInput(this.sortModels(models));
 		this.scopedModels = this.scopedModels.map((scoped) => {
 			const refreshed = this.modelRuntime.getModel(scoped.model.provider, scoped.model.id);
 			return refreshed ? { ...scoped, model: refreshed } : scoped;
 		});
-		this.scopedModelItems = this.scopedModels.map((scoped) => ({
-			provider: scoped.model.provider,
-			id: scoped.model.id,
-			model: scoped.model,
-		}));
+		this.scopedModelItems = this.applyRequiredInput(
+			this.scopedModels.map((scoped) => ({
+				provider: scoped.model.provider,
+				id: scoped.model.id,
+				model: scoped.model,
+			})),
+		);
 		this.activeModels = this.scope === "scoped" ? this.scopedModelItems : this.allModels;
 		this.filteredModels = this.activeModels;
 		const currentIndex = this.filteredModels.findIndex((item) => modelsAreEqual(this.currentModel, item.model));
 		this.selectedIndex =
 			currentIndex >= 0 ? currentIndex : Math.min(this.selectedIndex, Math.max(0, this.filteredModels.length - 1));
+	}
+
+	/**
+	 * Narrow the selector to models that support the modality the pending prompt
+	 * needs. Filtering happens on the options handed to the selector, so an
+	 * incompatible model cannot be picked — this is not merely a send-time guard.
+	 */
+	private applyRequiredInput(items: ModelItem[]): ModelItem[] {
+		if (!this.requiredInput) return items;
+		return items.filter((item) => modelAcceptsImage(item.model));
+	}
+
+	/** Model ids currently offered by the selector, in display order. */
+	getVisibleModelIds(): string[] {
+		return this.filteredModels.map((item) => `${item.provider}/${item.id}`);
 	}
 
 	private async refreshModels(): Promise<void> {
@@ -345,7 +376,18 @@ export class ModelSelectorComponent extends Container implements Focusable {
 				this.listContainer.addChild(new Text(theme.fg("error", line), 0, 0));
 			}
 		} else if (this.filteredModels.length === 0) {
-			this.listContainer.addChild(new Text(theme.fg("muted", "  No matching models"), 0, 0));
+			this.listContainer.addChild(
+				new Text(
+					theme.fg(
+						"muted",
+						this.requiredInput
+							? `  No models accept ${this.requiredInput} input. Remove the attachment or add a provider that supports it.`
+							: "  No matching models",
+					),
+					0,
+					0,
+				),
+			);
 		} else {
 			const selected = this.filteredModels[this.selectedIndex];
 			this.listContainer.addChild(new Spacer(1));

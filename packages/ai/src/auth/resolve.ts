@@ -1,6 +1,7 @@
 import type { ProviderEnv } from "../types.ts";
 import { operationSignal, raceWithAbortSignal } from "../utils/abort.ts";
 import { formatThrownValue } from "../utils/diagnostics.ts";
+import { isNeedsReauth } from "./reauth.ts";
 import type {
 	ApiKeyAuth,
 	ApiKeyCredential,
@@ -86,6 +87,10 @@ async function resolveProviderAuthWithSignal(
 
 	const stored = await readCredential(credentials, provider.id, signal);
 	if (stored) {
+		// A credential the provider already rejected stays unusable until a new
+		// login replaces it. Falling back to ambient env here would silently
+		// route requests to a different account than the one the user selected.
+		if (isNeedsReauth(stored)) return undefined;
 		if (stored.type === "oauth" && provider.auth.oauth) {
 			return resolveStoredOAuth(
 				credentials,
