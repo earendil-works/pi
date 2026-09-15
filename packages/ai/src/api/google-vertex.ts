@@ -33,6 +33,7 @@ import type { GoogleApiThinkingLevel, ResolvedGoogleThinkingLevel } from "./goog
 import {
 	convertMessages,
 	convertTools,
+	dropsMinimalThinking,
 	isThinkingPart,
 	mapStopReason,
 	resolveGoogleFunctionCallingMode,
@@ -532,7 +533,8 @@ function getDisabledThinkingConfig(model: Model<"google-vertex">): ThinkingConfi
 		return { thinkingLevel: ThinkingLevel.LOW };
 	}
 	if (isGemini3FlashModel(geminiModel)) {
-		return { thinkingLevel: ThinkingLevel.MINIMAL };
+		// See the note in google-generative-ai.ts: gemini-3.7-flash 400s on MINIMAL.
+		return { thinkingLevel: dropsMinimalThinking(model.id) ? ThinkingLevel.LOW : ThinkingLevel.MINIMAL };
 	}
 
 	// Gemini 2.x supports disabling via thinkingBudget = 0.

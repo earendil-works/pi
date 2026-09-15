@@ -28,6 +28,15 @@ type GoogleApiType = "google-generative-ai" | "google-vertex";
 export type GoogleApiThinkingLevel = "THINKING_LEVEL_UNSPECIFIED" | "MINIMAL" | "LOW" | "MEDIUM" | "HIGH";
 export type ResolvedGoogleThinkingLevel = Exclude<ThinkingLevel, "xhigh" | "max">;
 
+/**
+ * Gemini flash versions that have dropped MINIMAL: sending it returns 400 INVALID_ARGUMENT, so
+ * they take LOW as their lowest level instead. Listed per version, not by family regex —
+ * gemini-3.6-flash still accepts MINIMAL, and guessing wrong fails every call to the model.
+ */
+export function dropsMinimalThinking(modelId: string): boolean {
+	return /gemini-3\.[78]-flash/.test(modelId.toLowerCase());
+}
+
 /** Resolve a supported pi level or model-specific Google mapping to a standard Google level. */
 export function resolveGoogleThinkingLevel<T extends GoogleApiType>(
 	model: Model<T>,

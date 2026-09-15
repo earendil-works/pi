@@ -28,6 +28,7 @@ import type { GoogleApiThinkingLevel, ResolvedGoogleThinkingLevel } from "./goog
 import {
 	convertMessages,
 	convertTools,
+	dropsMinimalThinking,
 	isThinkingPart,
 	mapStopReason,
 	resolveGoogleFunctionCallingMode,
@@ -437,7 +438,11 @@ function getDisabledThinkingConfig(model: Model<"google-generative-ai">): Thinki
 		return { thinkingLevel: "LOW" as any };
 	}
 	if (isGemini3FlashModel(model)) {
-		return { thinkingLevel: "MINIMAL" as any };
+		// Verified against generativelanguage.googleapis.com on 2026-08-19: gemini-3.7-flash
+		// rejects MINIMAL with 400 INVALID_ARGUMENT "Thinking level MINIMAL is not supported for
+		// this model", while LOW/MEDIUM/HIGH are accepted. gemini-3.6-flash still takes MINIMAL,
+		// so this is per-version rather than a change to the whole flash family.
+		return { thinkingLevel: (dropsMinimalThinking(model.id) ? "LOW" : "MINIMAL") as any };
 	}
 	if (isGemma4Model(model)) {
 		return { thinkingLevel: "MINIMAL" as any };
