@@ -163,4 +163,34 @@ describe("Anthropic eager tool input streaming compatibility", () => {
 			title: "StrictLookupInput",
 		});
 	});
+
+	// Regression for #9134: root combinators are rejected by Anthropic, but must not vanish silently.
+	it("moves root schema combinators into the legacy tool description", async () => {
+		const anyOf = [
+			{ properties: { kind: { const: "file" }, action: { enum: ["read", "write"] } } },
+			{ properties: { kind: { const: "url" }, action: { const: "fetch" } } },
+		];
+		const combinedTool: Tool = {
+			...tool,
+			parameters: Type.Unsafe({
+				type: "object",
+				properties: {
+					kind: { type: "string", enum: ["file", "url"] },
+					action: { type: "string", enum: ["read", "write", "fetch"] },
+				},
+				required: ["kind", "action"],
+				anyOf,
+			}),
+		};
+
+		const request = await captureAnthropicRequest(undefined, createContext([combinedTool]));
+		const sentTool = getFirstTool(request.body);
+		expect(sentTool.input_schema).not.toHaveProperty("anyOf");
+		expect(sentTool.description).toBe(
+			`Look up a value\n\nThe input must also satisfy this JSON Schema constraint: ${JSON.stringify({ anyOf })}`,
+		);
+
+		const plainRequest = await captureAnthropicRequest(undefined, createContext([tool]));
+		expect(getFirstTool(plainRequest.body).description).toBe("Look up a value");
+	});
 });

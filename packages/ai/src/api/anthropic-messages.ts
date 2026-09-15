@@ -1422,6 +1422,21 @@ function shouldUseFineGrainedToolStreamingBeta(model: Model<"anthropic-messages"
 	return !!context.tools?.length && !getAnthropicCompat(model).supportsEagerToolInputStreaming;
 }
 
+const ROOT_SCHEMA_COMBINATORS = ["anyOf", "oneOf", "allOf"] as const;
+
+/**
+ * Anthropic rejects anyOf/oneOf/allOf at the root of input_schema, so the legacy schema drops them.
+ * Append them to the description so the model still sees constraints such as valid property combinations.
+ */
+function describeRootSchemaCombinators(description: string, parameters: Tool["parameters"]): string {
+	const schema = parameters as Record<string, unknown>;
+	const combinators = Object.fromEntries(
+		ROOT_SCHEMA_COMBINATORS.filter((key) => schema[key] !== undefined).map((key) => [key, schema[key]]),
+	);
+	if (Object.keys(combinators).length === 0) return description;
+	return `${description}\n\nThe input must also satisfy this JSON Schema constraint: ${JSON.stringify(combinators)}`;
+}
+
 function convertTools(
 	tools: Tool[],
 	isOAuthToken: boolean,
@@ -1451,7 +1466,7 @@ function convertTools(
 
 		return {
 			name: isOAuthToken ? toClaudeCodeName(tool.name) : tool.name,
-			description: tool.description,
+			description: strict === true ? tool.description : describeRootSchemaCombinators(tool.description, parameters),
 			...(supportsEagerToolInputStreaming ? { eager_input_streaming: true } : {}),
 			...(strict === true ? { strict: true } : {}),
 			input_schema: inputSchema,
