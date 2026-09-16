@@ -1562,6 +1562,42 @@ describe("TuiAltScreen", () => {
 		tui.stop();
 	});
 
+	it("keeps an in-progress selection drag away from a mouse-handling excluded overlay", async () => {
+		const terminal = new RecordingTerminal(20, 2);
+		const copied: string[] = [];
+		const overlayEvents: string[] = [];
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			copySelection: async (text) => {
+				copied.push(text);
+				return true;
+			},
+		});
+		tui.setLayoutRoot(new ScrollView(new Text("abcdefghijklmnopqrst", 0, 0), { primary: true }));
+		tui.showOverlay(
+			new MouseRegion(new Text("SECRET", 0, 0), (event) => {
+				overlayEvents.push(event.type);
+				return { handled: true };
+			}),
+			{ row: 0, col: 5, width: 6, margin: 0, nonCapturing: true, selection: "exclude" },
+		);
+		tui.start();
+		await terminal.waitForRender();
+
+		terminal.sendInput("\x1b[<0;1;1M");
+		terminal.sendInput("\x1b[<32;7;1M");
+		terminal.sendInput("\x1b[<0;7;1m");
+		await terminal.waitForRender();
+		assert.deepStrictEqual(copied, ["abcde"]);
+		assert.deepStrictEqual(overlayEvents, []);
+
+		terminal.sendInput("\x1b[<0;7;1M");
+		terminal.sendInput("\x1b[<0;7;1m");
+		await terminal.waitForRender();
+		assert.deepStrictEqual(overlayEvents, ["press", "release", "click"]);
+		assert.deepStrictEqual(copied, ["abcde"]);
+		tui.stop();
+	});
+
 	it("does not repaint idle or zero-width selections on focus loss", async () => {
 		const terminal = new RecordingTerminal(20, 4);
 		const tui = new TuiAltScreen(terminal);

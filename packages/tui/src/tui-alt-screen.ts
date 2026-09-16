@@ -910,6 +910,20 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 
 		if (this.handleSearchMouseEvent(raw)) return;
 
+		// A selection drag that is already in progress keeps the pointer, the same way a component
+		// that received the press owns the whole gesture. Without this, an overlay that handles mouse
+		// events swallows the motion and the release, and the drag dies at its edge.
+		if (
+			type !== "press" &&
+			((raw.button & 3) === 0 || ((raw.button & 3) === 3 && type === "release")) &&
+			this.selectionPressActive &&
+			!this.mouseCapture &&
+			!this.mousePressTarget
+		) {
+			this.handleSelectionMouseEvent(raw);
+			return;
+		}
+
 		const overlay = this.dispatchMouseToOverlay(event);
 		if (!overlay.hit) {
 			if (this.handleScrollToEndIndicatorMouseEvent(raw)) return;
