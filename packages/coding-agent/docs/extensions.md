@@ -909,7 +909,7 @@ pi.on("user_bash", (event, ctx) => {
 });
 ```
 
-Return `undefined`, `{ operations: BashOperations }`, or `{ result: BashResult }`. `undefined` continues to the next handler, then local execution if none handles the event. The first object result stops propagation: `operations` executes the command through that backend, while `result` records the completed command without executing it. The object forms are mutually exclusive.
+Returning `undefined` continues to the next handler, then local execution if none handles the event. A valid result stops propagation: `operations` executes the command through the supplied backend, while `result` records the completed command without executing it.
 
 ### Input Events
 
