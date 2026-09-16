@@ -17,6 +17,23 @@ describe("clipboard commands", () => {
 			Buffer.alloc(0),
 		);
 	});
+	test("passes an explicit environment to the command", async () => {
+		const marker = "PI_CLIPBOARD_TEST_MARKER";
+		const script = `process.stdout.write(process.env.${marker} ?? 'unset')`;
+		const previous = process.env[marker];
+		process.env[marker] = "ambient";
+		try {
+			expect(
+				await runClipboardCommand(process.execPath, ["-e", script], {
+					env: { ...process.env, [marker]: "override" },
+				}),
+			).toEqual(Buffer.from("override"));
+			expect(await runClipboardCommand(process.execPath, ["-e", script])).toEqual(Buffer.from("ambient"));
+		} finally {
+			if (previous === undefined) delete process.env[marker];
+			else process.env[marker] = previous;
+		}
+	});
 	test("times out without blocking the event loop", async () => {
 		let ticks = 0;
 		const timer = setInterval(() => ticks++, 10);

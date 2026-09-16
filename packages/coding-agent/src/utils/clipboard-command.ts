@@ -4,12 +4,13 @@ import { spawn } from "node:child_process";
 export function runClipboardCommand(
 	command: string,
 	args: readonly string[],
-	options?: { input?: string; timeoutMs?: number; maxBufferBytes?: number },
+	options?: { input?: string; timeoutMs?: number; maxBufferBytes?: number; env?: NodeJS.ProcessEnv },
 ): Promise<Buffer | undefined> {
 	return new Promise((resolve) => {
 		// Clipboard writers can daemonize. Do not give them output pipes to retain.
 		const child = spawn(command, args, {
 			stdio: ["pipe", options?.input === undefined ? "pipe" : "ignore", "ignore"],
+			env: options?.env,
 			windowsHide: true,
 		});
 		const chunks: Buffer[] = [];

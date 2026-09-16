@@ -1,6 +1,6 @@
 import type { NativeClipboard } from "@earendil-works/pi-tui";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { copyToClipboard, readClipboardText } from "../src/utils/clipboard.ts";
+import { clipboardCommandEnv, copyToClipboard, readClipboardText } from "../src/utils/clipboard.ts";
 
 const mocks = vi.hoisted(() => ({
 	clipboard: {
@@ -14,7 +14,7 @@ const mocks = vi.hoisted(() => ({
 			(
 				command: string,
 				args: readonly string[],
-				options?: { input?: string; timeoutMs?: number },
+				options?: { input?: string; timeoutMs?: number; env?: NodeJS.ProcessEnv },
 			) => Promise<Buffer | undefined>
 		>(),
 	platform: vi.fn<() => NodeJS.Platform>(),
@@ -117,6 +117,7 @@ describe("copyToClipboard", () => {
 		expect(mocks.command).toHaveBeenCalledWith("xclip", ["-selection", "clipboard"], {
 			input: "hello",
 			timeoutMs: 5000,
+			env: undefined,
 		});
 	});
 	test("waits for the native write before emitting remote OSC 52", async () => {
@@ -135,10 +136,32 @@ describe("copyToClipboard", () => {
 		expect(mocks.command).not.toHaveBeenCalled();
 	});
 	test("a rejected native write falls back to pbcopy", async () => {
+		vi.stubEnv("LC_ALL", "C");
 		mocks.clipboard.setText.mockRejectedValue(new Error("native failed"));
 		await copyToClipboard("hello");
-		expect(mocks.command).toHaveBeenCalledWith("pbcopy", [], { input: "hello", timeoutMs: 5000 });
+		const [command, args, options] = mocks.command.mock.calls[0] as [string, string[], { env?: NodeJS.ProcessEnv }];
+		expect(command).toBe("pbcopy");
+		expect(args).toEqual([]);
+		expect(options).toMatchObject({ input: "hello", timeoutMs: 5000 });
+		// pbcopy converts through the locale encoding, so a non-UTF-8 locale must be
+		// replaced or "—" is written to the pasteboard as byte 0xD1.
+		expect(options.env?.LC_ALL).toBe("en_US.UTF-8");
 		expect(osc52Writes).toHaveLength(0);
+	});
+	test("keeps the ambient environment for pbcopy when the locale is already UTF-8", async () => {
+		vi.stubEnv("LC_ALL", "en_US.UTF-8");
+		mocks.clipboard.setText.mockRejectedValue(new Error("native failed"));
+		await copyToClipboard("hello");
+		const [, , options] = mocks.command.mock.calls[0] as [string, string[], { env?: NodeJS.ProcessEnv }];
+		expect(options.env).toBeUndefined();
+	});
+	test("fills in a UTF-8 locale when only LANG is set", () => {
+		expect(clipboardCommandEnv({ LANG: "en_US.UTF-8" })).toBeUndefined();
+		expect(clipboardCommandEnv({ LANG: "C" })?.LC_ALL).toBe("en_US.UTF-8");
+		expect(clipboardCommandEnv({})?.LC_ALL).toBe("en_US.UTF-8");
+		// LC_CTYPE is what pbcopy actually consults, and LC_ALL outranks it.
+		expect(clipboardCommandEnv({ LC_CTYPE: "C", LANG: "en_US.UTF-8" })?.LC_ALL).toBe("en_US.UTF-8");
+		expect(clipboardCommandEnv({ LC_ALL: "pt_BR.UTF-8" })).toBeUndefined();
 	});
 	test("a read-only native clipboard uses the command writer", async () => {
 		mocks.getNativeClipboard.mockReturnValue({
