@@ -21,7 +21,7 @@ const emptyUsage: Usage = {
 
 const compat: Omit<
 	Required<OpenAICompletionsCompat>,
-	"deferredToolsMode" | "thinkingTokenBudgetField" | "vllmPriority"
+	"deferredToolsMode" | "promptCacheKeyMode" | "thinkingTokenBudgetField" | "vllmPriority"
 > & {
 	deferredToolsMode?: OpenAICompletionsCompat["deferredToolsMode"];
 	thinkingTokenBudgetField?: OpenAICompletionsCompat["thinkingTokenBudgetField"];
