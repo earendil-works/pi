@@ -1,0 +1,50 @@
+name: Ollama portability
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ollama-init]
+  pull_request:
+    paths:
+      - "packages/ai/src/api/ollama-chat.ts"
+      - "packages/ai/src/providers/ollama.ts"
+      - "packages/ai/test/ollama.test.ts"
+      - "packages/coding-agent/src/core/agent-session.ts"
+      - "packages/coding-agent/src/core/initialize-extension-providers.ts"
+      - "packages/coding-agent/src/core/sdk.ts"
+      - "packages/coding-agent/src/core/agent-session-services.ts"
+      - "packages/coding-agent/src/extensions/ollama/**"
+      - "packages/coding-agent/test/suite/agent-session-context-shrink.test.ts"
+      - "packages/coding-agent/test/agent-session-concurrent.test.ts"
+      - "packages/coding-agent/test/agent-session-dynamic-provider.test.ts"
+      - ".github/workflows/ollama.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  protocol-and-session:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    env:
+      PI_OFFLINE: "1"
+      PI_TELEMETRY: "0"
+      PI_NO_LOCAL_LLM: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run hydrate:model-data
+      - name: Native protocol and discovery fixtures
+        working-directory: packages/ai
+        run: node ../../node_modules/vitest/dist/cli.js --run test/ollama.test.ts test/overflow.test.ts
+      - name: Context switching and compaction fixtures
+        working-directory: packages/coding-agent
+        run: node ../../node_modules/vitest/dist/cli.js --run test/suite/agent-session-context-shrink.test.ts test/suite/agent-session-compaction-model-overrides.test.ts test/suite/agent-session-model-extension.test.ts test/agent-session-concurrent.test.ts test/agent-session-dynamic-provider.test.ts

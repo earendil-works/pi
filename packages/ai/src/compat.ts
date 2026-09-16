@@ -34,6 +34,7 @@ import { bedrockConverseStreamApi } from "./api/bedrock-converse-stream.lazy.ts"
 import { googleGenerativeAIApi } from "./api/google-generative-ai.lazy.ts";
 import { googleVertexApi } from "./api/google-vertex.lazy.ts";
 import { mistralConversationsApi } from "./api/mistral-conversations.lazy.ts";
+import * as ollamaChatApi from "./api/ollama-chat.ts";
 import { openAICodexResponsesApi } from "./api/openai-codex-responses.lazy.ts";
 import { openAICompletionsApi } from "./api/openai-completions.lazy.ts";
 import { openAIResponsesApi } from "./api/openai-responses.lazy.ts";
@@ -178,6 +179,7 @@ export function registerFauxProvider(options: RegisterFauxProviderOptions = {}):
 }
 
 const BUILTIN_APIS: [Api, ProviderStreams][] = [
+	["ollama-chat", ollamaChatApi],
 	["anthropic-messages", anthropicMessagesApi()],
 	["openai-completions", openAICompletionsApi()],
 	["openai-responses", openAIResponsesApi()],

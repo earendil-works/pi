@@ -9,6 +9,7 @@ Pi supports subscription-based providers via OAuth and API key providers via env
 - [Auth File](#auth-file)
 - [Cloud Providers](#cloud-providers)
 - [llama.cpp](#llamacpp)
+- [Ollama](#ollama)
 - [Custom Providers](#custom-providers)
 - [Resolution Order](#resolution-order)
 
@@ -301,9 +302,15 @@ Pi supports the llama.cpp router server. Configure it with `/login llama.cpp`, m
 
 See [llama.cpp](llama-cpp.md) for server setup, model directory layout, environment variables, and command usage.
 
+## Ollama
+
+Pi supports local Ollama through its native chat API. Configure a running server with `/login ollama`, leave the API key empty, and select an installed model with `/model`. Use `/ollama` to refresh the catalog after installing or removing models.
+
+For headless use, set `OLLAMA_BASE_URL=http://127.0.0.1:11434`, then run `pi --provider ollama --model <installed-model>`. See [Ollama](ollama.md) for context limits, configuration, and platform examples.
+
 ## Custom Providers
 
-**Via models.json:** Add Ollama, LM Studio, vLLM, or any provider that speaks a supported API (OpenAI Completions, OpenAI Responses, Anthropic Messages, Google Generative AI). See [models.md](models.md).
+**Via models.json:** Add LM Studio, vLLM, or any provider that speaks a supported API (OpenAI Completions, OpenAI Responses, Anthropic Messages, Google Generative AI, Ollama Chat). See [models.md](models.md).
 
 **Via extensions:** For providers that need custom API implementations or OAuth flows, create an extension. See [custom-provider.md](custom-provider.md) and [examples/extensions/custom-provider-gitlab-duo](../examples/extensions/custom-provider-gitlab-duo/).
 

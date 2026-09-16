@@ -46,6 +46,8 @@ export interface ModelsPublication {
 }
 
 export interface RefreshModelsContext {
+	/** Side-effect-free environment access, including during cache restoration. */
+	authContext?: AuthContext;
 	/** Effective configured credential. OAuth credentials are refreshed before network access. */
 	credential?: Credential;
 	/** Immutable provider-scoped catalog snapshot captured before this refresh phase. */
@@ -386,6 +388,7 @@ class ModelsImpl implements MutableModels {
 	): Promise<void> {
 		const stored = await this.modelsStore.read(provider.id, { signal });
 		await provider.refreshModels({
+			authContext: this.authContext,
 			credential,
 			stored: stored ? structuredClone(stored) : undefined,
 			publish: (publication) => this.publishProviderModels(provider.id, generation, signal, publication),

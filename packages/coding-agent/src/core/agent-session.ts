@@ -104,7 +104,7 @@ import { expandPromptTemplate, type PromptTemplate } from "./prompt-templates.ts
 import type { ResourceExtensionPaths, ResourceLoader } from "./resource-loader.ts";
 import { exportSessionToJsonl } from "./session-export.ts";
 import type { BranchSummaryEntry, CompactionEntry, SessionEntry, SessionManager } from "./session-manager.ts";
-import { getLatestCompactionEntry } from "./session-manager.ts";
+import { buildSessionContext, getLatestCompactionEntry } from "./session-manager.ts";
 import type { SettingsManager } from "./settings-manager.ts";
 import type { SlashCommandInfo } from "./slash-commands.ts";
 import { createSyntheticSourceInfo, type SourceInfo } from "./source-info.ts";
@@ -337,6 +337,7 @@ export class AgentSession {
 	private _compactionAbortController: AbortController | undefined = undefined;
 	private _autoCompactionAbortController: AbortController | undefined = undefined;
 	private _overflowRecoveryAttempted = false;
+	private _modelChangeInProgress = false;
 
 	// Branch summarization state
 	private _branchSummaryAbortController: AbortController | undefined = undefined;
@@ -432,7 +433,7 @@ export class AgentSession {
 			}
 			throw error;
 		}
-		if (result && (result.auth.apiKey || result.auth.headers)) {
+		if (result) {
 			const requestModel = result.auth.baseUrl ? { ...model, baseUrl: result.auth.baseUrl } : model;
 			return {
 				model: requestModel,
@@ -544,13 +545,18 @@ export class AgentSession {
 
 	private async _compactBeforeNextAssistantResponse(context: AgentContext): Promise<AgentContext> {
 		const model = this.model;
-		const settings = this.settingsManager.getCompactionSettings(model);
+		const settings = this._getCompactionSettings(model);
+		const estimate = estimateContextTokens(context.messages);
+		const source = estimate.lastUsageIndex === null ? undefined : context.messages[estimate.lastUsageIndex];
+		const boundary = getLatestCompactionEntry(this.sessionManager.getBranch());
+		const stale =
+			source?.role === "assistant" &&
+			(source.model !== model?.id ||
+				source.provider !== model?.provider ||
+				(boundary && source.timestamp <= new Date(boundary.timestamp).getTime()));
+		const tokens = stale ? estimateMessagesTokens(context.messages) : estimate.tokens;
 
-		if (
-			!model ||
-			model.contextWindow <= 0 ||
-			!shouldCompact(estimateContextTokens(context.messages).tokens, model.contextWindow, settings)
-		) {
+		if (!model || model.contextWindow <= 0 || !shouldCompact(tokens, model.contextWindow, settings)) {
 			return context;
 		}
 
@@ -1232,7 +1238,7 @@ export class AgentSession {
 				}
 			}
 
-			if (this._compactionAbortController !== undefined) {
+			if (this._compactionAbortController !== undefined || this._modelChangeInProgress) {
 				throw new Error(
 					"Cannot submit a prompt while compaction is in progress. Wait for compaction to finish and retry.",
 				);
@@ -1718,11 +1724,27 @@ export class AgentSession {
 	 * @throws Error if no auth is configured for the model
 	 */
 	async setModel(model: Model<any>, options: ModelMutationOptions = {}): Promise<void> {
+		return this._withModelChange(() => this._setModel(model, options));
+	}
+
+	private async _withModelChange<T>(change: () => Promise<T>): Promise<T> {
+		if (this._modelChangeInProgress) throw new Error("A model change is already in progress.");
+		this._modelChangeInProgress = true;
+		try {
+			return await change();
+		} finally {
+			this._modelChangeInProgress = false;
+		}
+	}
+
+	private async _setModel(model: Model<any>, options: ModelMutationOptions): Promise<void> {
+		if (this.isCompacting) throw new Error("Wait for compaction to finish before changing models.");
 		if (!(await this._modelRuntime.checkAuth(model.provider))) {
 			throw new Error(`No API key for ${model.provider}/${model.id}`);
 		}
 
 		const previousModel = this.model;
+		await this._prepareForSmallerModel(model);
 		const thinkingLevel = this._getThinkingLevelForModelSwitch(model);
 		this.agent.state.model = model;
 		this.sessionManager.appendModelChange(model.provider, model.id);
@@ -1763,10 +1785,11 @@ export class AgentSession {
 		direction: "forward" | "backward" = "forward",
 		options: ModelMutationOptions = {},
 	): Promise<ModelCycleResult | undefined> {
-		if (this._scopedModels.length > 0) {
-			return this._cycleScopedModel(direction, options);
-		}
-		return this._cycleAvailableModel(direction, options);
+		return this._withModelChange(() =>
+			this._scopedModels.length > 0
+				? this._cycleScopedModel(direction, options)
+				: this._cycleAvailableModel(direction, options),
+		);
 	}
 
 	private async _cycleScopedModel(
@@ -1788,6 +1811,7 @@ export class AgentSession {
 		const len = scopedModels.length;
 		const nextIndex = direction === "forward" ? (currentIndex + 1) % len : (currentIndex - 1 + len) % len;
 		const next = scopedModels[nextIndex];
+		await this._prepareForSmallerModel(next.model);
 		const thinkingLevel = this._getThinkingLevelForModelSwitch(next.model, next.thinkingLevel);
 
 		// Apply model
@@ -1824,6 +1848,7 @@ export class AgentSession {
 		const len = availableModels.length;
 		const nextIndex = direction === "forward" ? (currentIndex + 1) % len : (currentIndex - 1 + len) % len;
 		const nextModel = availableModels[nextIndex];
+		await this._prepareForSmallerModel(nextModel);
 
 		const thinkingLevel = this._getThinkingLevelForModelSwitch(nextModel);
 		this.agent.state.model = nextModel;
@@ -1958,6 +1983,53 @@ export class AgentSession {
 	// Compaction
 	// =========================================================================
 
+	private _getCompactionSettings(model = this.model) {
+		const settings = this.settingsManager.getCompactionSettings(model);
+		if (
+			!model ||
+			model.contextWindow <= 0 ||
+			settings.reserveTokens + settings.keepRecentTokens < model.contextWindow
+		)
+			return settings;
+		// Leave room for history and generation on local models with small windows.
+		const limit = Math.max(1, Math.floor(model.contextWindow / 4));
+		return {
+			...settings,
+			reserveTokens: Math.min(settings.reserveTokens, limit),
+			keepRecentTokens: Math.min(settings.keepRecentTokens, limit),
+		};
+	}
+
+	private _modelInputBudget(model: Model<string>): number {
+		const fixed = Math.ceil(
+			(this.systemPrompt.length +
+				JSON.stringify(
+					this.agent.state.tools.map(({ name, description, parameters }) => ({ name, description, parameters })),
+				).length) /
+				3,
+		);
+		return model.contextWindow - fixed - this._getCompactionSettings(model).reserveTokens - 256;
+	}
+
+	private async _prepareForSmallerModel(model: Model<string>): Promise<void> {
+		if (this.isCompacting) throw new Error("Wait for compaction to finish before changing models.");
+		if (!this.model || model.contextWindow >= this.model.contextWindow || this.messages.length === 0) return;
+		const budget = this._modelInputBudget(model);
+		if (Math.ceil((estimateMessagesTokens(this.messages) * 4) / 3) <= budget) return;
+		if (this.isStreaming)
+			throw new Error("Wait for the current response to finish before switching to a smaller context window.");
+		if (budget <= 0)
+			throw new Error(
+				"The selected model's context window is too small for the system prompt and tools. Increase its contextWindow or use fewer tools.",
+			);
+		// Summarize with the current model, which can still read the whole history.
+		// The target model and transcript change only after a fitting checkpoint exists.
+		await this._compact(
+			`Prepare a concise checkpoint for a model with a ${model.contextWindow}-token context window. Preserve user constraints, pending work, and exact identifiers.`,
+			model,
+		);
+	}
+
 	/** Generate Pi's built-in compaction summary for manual and automatic compaction. */
 	private async _runDefaultCompaction(
 		preparation: CompactionPreparation,
@@ -2006,6 +2078,10 @@ export class AgentSession {
 	 * @param customInstructions Optional instructions for the compaction summary
 	 */
 	async compact(customInstructions?: string): Promise<CompactionResult> {
+		return this._compact(customInstructions);
+	}
+
+	private async _compact(customInstructions?: string, targetModel?: Model<string>): Promise<CompactionResult> {
 		await this.abort();
 		this._compactionAbortController = new AbortController();
 		this._emit({ type: "compaction_start", reason: "manual" });
@@ -2017,12 +2093,31 @@ export class AgentSession {
 				throw new Error(formatNoModelSelectedMessage());
 			}
 
-			const settings = this.settingsManager.getCompactionSettings(model);
+			const settings = this._getCompactionSettings(targetModel ?? model);
 			const { model: requestModel, apiKey, headers, env } = await this._getSummarizationRequestAuth(model);
 
 			const pathEntries = this.sessionManager.getBranch();
 
-			const preparation = prepareCompaction(pathEntries, settings);
+			let preparation = prepareCompaction(pathEntries, settings);
+			if (targetModel) {
+				let keepRecentTokens = settings.keepRecentTokens;
+				while (preparation && keepRecentTokens > 1) {
+					const preview: CompactionEntry = {
+						type: "compaction",
+						id: "pending-model-switch",
+						parentId: this.sessionManager.getLeafId(),
+						timestamp: new Date().toISOString(),
+						summary: "",
+						firstKeptEntryId: preparation.firstKeptEntryId,
+						tokensBefore: preparation.tokensBefore,
+					};
+					const retained = buildSessionContext([...pathEntries, preview], preview.id).messages;
+					if (Math.ceil((estimateMessagesTokens(retained) * 4) / 3) < this._modelInputBudget(targetModel) / 2)
+						break;
+					keepRecentTokens = Math.max(1, Math.floor(keepRecentTokens / 4));
+					preparation = prepareCompaction(pathEntries, { ...settings, keepRecentTokens });
+				}
+			}
 			if (!preparation) {
 				// Check why we can't compact
 				const lastEntry = pathEntries[pathEntries.length - 1];
@@ -2089,6 +2184,23 @@ export class AgentSession {
 
 			if (this._compactionAbortController.signal.aborted) {
 				throw new Error("Compaction cancelled");
+			}
+			if (targetModel) {
+				const candidate: CompactionEntry = {
+					type: "compaction",
+					id: "pending-model-switch",
+					parentId: this.sessionManager.getLeafId(),
+					timestamp: new Date().toISOString(),
+					summary,
+					firstKeptEntryId,
+					tokensBefore,
+				};
+				const projected = buildSessionContext([...pathEntries, candidate], candidate.id);
+				if (Math.ceil((estimateMessagesTokens(projected.messages) * 4) / 3) > this._modelInputBudget(targetModel)) {
+					throw new Error(
+						"The compacted conversation still exceeds the selected model's context window. The current model and history were kept. Increase the target contextWindow or start a new session.",
+					);
+				}
 			}
 
 			this.sessionManager.appendCompaction(summary, firstKeptEntryId, tokensBefore, details, fromExtension, usage);
@@ -2193,7 +2305,7 @@ export class AgentSession {
 	 * @returns Whether the post-run loop should call `agent.continue()` for overflow recovery or queued messages
 	 */
 	private async _checkCompaction(assistantMessage: AssistantMessage, skipAbortedCheck = true): Promise<boolean> {
-		const settings = this.settingsManager.getCompactionSettings(this.model);
+		const settings = this._getCompactionSettings();
 		if (!settings.enabled) return false;
 
 		// Skip if message was aborted (user cancelled) - unless skipAbortedCheck is false
@@ -2310,7 +2422,7 @@ export class AgentSession {
 	 */
 	private async _runAutoCompaction(reason: "overflow" | "threshold", willRetry: boolean): Promise<boolean> {
 		const model = this.model;
-		const settings = this.settingsManager.getCompactionSettings(model);
+		const settings = this._getCompactionSettings(model);
 		let started = false;
 		let fromExtension = false;
 

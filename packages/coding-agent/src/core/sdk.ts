@@ -2,11 +2,16 @@ import { join } from "node:path";
 import { Agent, type AgentMessage, setDefaultStreamFn, type ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { clampThinkingLevel, type Message, type Model, streamSimple } from "@earendil-works/pi-ai/compat";
 import { getAgentDir } from "../config.ts";
+import { builtInExtensions } from "../extensions/index.ts";
 import { resolvePath } from "../utils/paths.ts";
 import { AgentSession } from "./agent-session.ts";
 import { formatNoModelsAvailableMessage } from "./auth-guidance.ts";
 import { DEFAULT_THINKING_LEVEL } from "./defaults.ts";
 import type { ExtensionRunner, LoadExtensionsResult, SessionStartEvent, ToolDefinition } from "./extensions/index.ts";
+import {
+	initializeExtensionProviders,
+	type ProviderInitializationDiagnostic,
+} from "./initialize-extension-providers.ts";
 import { convertToLlm } from "./messages.ts";
 import { findInitialModel } from "./model-resolver.ts";
 import { ModelRuntime } from "./model-runtime.ts";
@@ -89,6 +94,8 @@ export interface CreateAgentSessionOptions {
 
 /** Result from createAgentSession */
 export interface CreateAgentSessionResult {
+	/** Non-fatal extension provider registration/discovery diagnostics. */
+	providerDiagnostics?: ProviderInitializationDiagnostic[];
 	/** The created session */
 	session: AgentSession;
 	/** Extensions result (for UI context setup in interactive mode) */
@@ -183,17 +190,35 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	const sessionManager = options.sessionManager ?? SessionManager.create(cwd, getDefaultSessionDir(cwd, agentDir));
 
 	if (!resourceLoader) {
-		resourceLoader = new DefaultResourceLoader({ cwd, agentDir, settingsManager });
+		resourceLoader = new DefaultResourceLoader({
+			cwd,
+			agentDir,
+			settingsManager,
+			extensionFactories: builtInExtensions,
+		});
 		await resourceLoader.reload();
 		time("resourceLoader.reload");
 	}
 
 	// Check if session has existing data to restore
+	const extensionsResult = resourceLoader.getExtensions();
+	const registeredProviderIds = new Set([
+		...extensionsResult.runtime.pendingProviderRegistrations.map(({ name }) => name),
+		...extensionsResult.runtime.pendingNativeProviderRegistrations.map(({ provider }) => provider.id),
+	]);
+	const providerDiagnostics =
+		extensionsResult.runtime.pendingProviderRegistrations.length ||
+		extensionsResult.runtime.pendingNativeProviderRegistrations.length
+			? await initializeExtensionProviders(extensionsResult, modelRuntime)
+			: [];
 	const existingSession = sessionManager.buildSessionContext();
 	const hasExistingSession = existingSession.messages.length > 0;
 	const hasThinkingEntry = sessionManager.getBranch().some((entry) => entry.type === "thinking_level_change");
 
 	let model = options.model;
+	if (model && registeredProviderIds.has(model.provider)) {
+		model = modelRuntime.getModel(model.provider, model.id) ?? model;
+	}
 	let modelFallbackMessage: string | undefined;
 
 	// If session has data, try to restore model from it
@@ -400,11 +425,10 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		extensionRunnerRef,
 		sessionStartEvent: options.sessionStartEvent,
 	});
-	const extensionsResult = resourceLoader.getExtensions();
-
 	return {
 		session,
 		extensionsResult,
 		modelFallbackMessage,
+		...(providerDiagnostics.length ? { providerDiagnostics } : {}),
 	};
 }

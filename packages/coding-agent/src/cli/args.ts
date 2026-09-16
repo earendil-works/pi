@@ -397,6 +397,9 @@ ${chalk.bold("Environment Variables:")}
   AZURE_OPENAI_DEPLOYMENT_NAME_MAP - Azure OpenAI model=deployment map (comma-separated)
   DEEPSEEK_API_KEY                 - DeepSeek API key
   NVIDIA_API_KEY                   - NVIDIA NIM API key
+  OLLAMA_BASE_URL                  - Local Ollama server URL (e.g. http://127.0.0.1:11434)
+  OLLAMA_HOST                      - Alternative Ollama server URL
+  OLLAMA_API_KEY                   - Optional key for an authenticated Ollama proxy
   GEMINI_API_KEY                   - Google Gemini API key
   GROQ_API_KEY                     - Groq API key
   CEREBRAS_API_KEY                 - Cerebras API key
