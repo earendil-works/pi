@@ -349,6 +349,9 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		this.clearComponentMouseGesture();
 		this.lastComponentClick = undefined;
 		this.resetRenderState();
+	}
+
+	protected override afterTerminalStart(): void {
 		const term = process.env.TERM?.toLowerCase() ?? "";
 		// Multiplexers can lag when every pointer movement is forwarded. Button-motion
 		// tracking preserves clicks, wheel events, selections, and scrollbar dragging.
