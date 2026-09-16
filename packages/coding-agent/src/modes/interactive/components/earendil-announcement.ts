@@ -25,14 +25,22 @@ function loadImageBase64(): string | undefined {
 }
 
 export class EarendilAnnouncementComponent extends Container {
+	private readonly title: Text;
+	private readonly description: Text;
+	private readonly link: Text;
+
 	constructor() {
 		super();
 
+		this.title = new Text("", 1, 0);
+		this.description = new Text("", 1, 0);
+		this.link = new Text("", 1, 0);
+
 		this.addChild(new DynamicBorder((text) => theme.fg("accent", text)));
-		this.addChild(new Text(theme.bold(theme.fg("accent", "pi has joined Earendil")), 1, 0));
+		this.addChild(this.title);
 		this.addChild(new Spacer(1));
-		this.addChild(new Text(theme.fg("muted", "Read the blog post:"), 1, 0));
-		this.addChild(new Text(theme.fg("mdLink", BLOG_URL), 1, 0));
+		this.addChild(this.description);
+		this.addChild(this.link);
 		this.addChild(new Spacer(1));
 
 		const imageBase64 = loadImageBase64();
@@ -49,5 +57,17 @@ export class EarendilAnnouncementComponent extends Container {
 		}
 
 		this.addChild(new DynamicBorder((text) => theme.fg("accent", text)));
+		this.refreshText();
+	}
+
+	override invalidate(): void {
+		super.invalidate();
+		this.refreshText();
+	}
+
+	private refreshText(): void {
+		this.title.setText(theme.bold(theme.fg("accent", "pi has joined Earendil")));
+		this.description.setText(theme.fg("muted", "Read the blog post:"));
+		this.link.setText(theme.fg("mdLink", BLOG_URL));
 	}
 }
