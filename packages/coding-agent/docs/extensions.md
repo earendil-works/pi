@@ -909,7 +909,7 @@ pi.on("user_bash", (event, ctx) => {
 });
 ```
 
-A defined return must contain exactly one of `operations` or `result`. Returning `undefined` allows normal local execution. If a handler throws or returns an invalid value such as `{}`, the command is not executed; catch errors and return `undefined` only when local fallback is intentional.
+Return `undefined`, `{ operations: BashOperations }`, or `{ result: BashResult }`. `undefined` continues to the next handler, then local execution if none handles the event. The first object result stops propagation: `operations` executes the command through that backend, while `result` records the completed command without executing it. The object forms are mutually exclusive.
 
 ### Input Events
 
