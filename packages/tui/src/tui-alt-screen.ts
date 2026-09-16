@@ -1142,11 +1142,18 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		);
 	}
 
-	private getSelectionPoint(event: SgrMouseEvent, scrollView?: ScrollView): SelectionPoint | undefined {
+	private getSelectionPoint(
+		event: SgrMouseEvent,
+		scrollView?: ScrollView,
+		reference?: SelectionPoint,
+	): SelectionPoint | undefined {
 		const exclusion = this.getSelectionExclusionAt(event.x, event.y);
 		if (exclusion) {
 			if (!scrollView) return undefined;
-			const boundaryX = event.x < exclusion.col ? exclusion.col - 1 : exclusion.col + exclusion.width;
+			// Unlike a press, a drag may cross the excluded region: it has to snap to the
+			// edge the pointer came from, not always to the same one.
+			if (!reference) return undefined;
+			const boundaryX = reference.col > event.x ? exclusion.col + exclusion.width : exclusion.col - 1;
 			const point = this.getScrollSelectionPoint(scrollView, boundaryX, event.y);
 			if (point) return point;
 		}
@@ -1317,7 +1324,14 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		const button = event.button & 3;
 		if (button !== 0 && !(event.release && button === 3)) return;
 		const anchorScrollView = this.selectionAnchor?.scrollView;
-		const point = this.getSelectionPoint(event, anchorScrollView);
+		// Motion and release continue an in-progress drag; a bare press starts a new one and
+		// must not start inside an excluded overlay.
+		const continuing = event.release || (event.button & 32) !== 0;
+		const point = this.getSelectionPoint(
+			event,
+			anchorScrollView,
+			continuing ? (this.selectionFocus ?? this.selectionAnchor) : undefined,
+		);
 		if (!point) {
 			this.selectionPressActive = false;
 			this.stopSelectionAutoScroll();

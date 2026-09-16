@@ -1492,6 +1492,76 @@ describe("TuiAltScreen", () => {
 		tui.stop();
 	});
 
+	it("snaps an excluded overlay drag to the edge the pointer came from", async () => {
+		const terminal = new RecordingTerminal(20, 2);
+		const copied: string[] = [];
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			copySelection: async (text) => {
+				copied.push(text);
+				return true;
+			},
+		});
+		tui.setLayoutRoot(new ScrollView(new Text("abcdefghijklmnopqrst", 0, 0), { primary: true }));
+		tui.showOverlay(new Text("SECRET", 0, 0), {
+			row: 0,
+			col: 5,
+			width: 6,
+			margin: 0,
+			nonCapturing: true,
+			selection: "exclude",
+		});
+		tui.start();
+		await terminal.waitForRender();
+
+		terminal.sendInput("\x1b[<0;1;1M");
+		terminal.sendInput("\x1b[<32;7;1M");
+		terminal.sendInput("\x1b[<0;7;1m");
+		await terminal.waitForRender();
+		assert.deepStrictEqual(copied, ["abcde"]);
+
+		terminal.sendInput("\x1b[<0;14;1M");
+		terminal.sendInput("\x1b[<32;7;1M");
+		terminal.sendInput("\x1b[<0;7;1m");
+		await terminal.waitForRender();
+		assert.deepStrictEqual(copied, ["abcde", "lmn"]);
+		tui.stop();
+	});
+
+	it("does not start a selection inside an excluded overlay while a selection exists", async () => {
+		const terminal = new RecordingTerminal(20, 2);
+		const copied: string[] = [];
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			copySelection: async (text) => {
+				copied.push(text);
+				return true;
+			},
+		});
+		tui.setLayoutRoot(new ScrollView(new Text("abcdefghijklmnopqrst", 0, 0), { primary: true }));
+		tui.showOverlay(new Text("SECRET", 0, 0), {
+			row: 0,
+			col: 5,
+			width: 6,
+			margin: 0,
+			nonCapturing: true,
+			selection: "exclude",
+		});
+		tui.start();
+		await terminal.waitForRender();
+
+		terminal.sendInput("\x1b[<0;1;1M");
+		terminal.sendInput("\x1b[<32;4;1M");
+		terminal.sendInput("\x1b[<0;4;1m");
+		await terminal.waitForRender();
+		assert.deepStrictEqual(copied, ["abcd"]);
+
+		terminal.sendInput("\x1b[<0;8;1M");
+		terminal.sendInput("\x1b[<32;3;1M");
+		terminal.sendInput("\x1b[<0;3;1m");
+		await terminal.waitForRender();
+		assert.deepStrictEqual(copied, ["abcd"]);
+		tui.stop();
+	});
+
 	it("does not repaint idle or zero-width selections on focus loss", async () => {
 		const terminal = new RecordingTerminal(20, 4);
 		const tui = new TuiAltScreen(terminal);
