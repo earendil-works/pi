@@ -1,4 +1,6 @@
-import type { JsonRpcMessage } from "../protocol/jsonrpc.ts";
+import { type JsonRpcMessage, toError } from "../protocol/jsonrpc.ts";
+
+export const DEFAULT_MAX_MESSAGE_BYTES = 16 * 1024 * 1024;
 
 export type McpTransportMessageListener = (message: JsonRpcMessage) => void;
 export type McpTransportErrorListener = (error: Error) => void;
@@ -14,10 +16,12 @@ export interface McpTransport {
 	setProtocolVersion?(version: string): void;
 }
 
+/** Listener bookkeeping shared by transports. `emitClose` fires at most once per transport. */
 export abstract class TransportEvents {
 	private messageListeners = new Set<McpTransportMessageListener>();
 	private errorListeners = new Set<McpTransportErrorListener>();
 	private closeListeners = new Set<McpTransportCloseListener>();
+	private closeEmitted = false;
 
 	onMessage(listener: McpTransportMessageListener): () => void {
 		this.messageListeners.add(listener);
@@ -38,11 +42,14 @@ export abstract class TransportEvents {
 		for (const listener of this.messageListeners) listener(message);
 	}
 
-	protected emitError(error: Error): void {
-		for (const listener of this.errorListeners) listener(error);
+	protected emitError(error: unknown): void {
+		const normalized = toError(error);
+		for (const listener of this.errorListeners) listener(normalized);
 	}
 
 	protected emitClose(): void {
+		if (this.closeEmitted) return;
+		this.closeEmitted = true;
 		for (const listener of this.closeListeners) listener();
 	}
 }

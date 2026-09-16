@@ -4,6 +4,8 @@
  * Modified to use dependency-free structural validation.
  */
 
+import { isObject } from "../protocol/jsonrpc.ts";
+
 export interface OAuthProtectedResourceMetadata {
 	resource: string;
 	authorization_servers?: string[];
@@ -84,8 +86,13 @@ export interface OAuthChallenge {
 }
 
 function object(value: unknown, name: string): Record<string, unknown> {
-	if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error(`Invalid ${name}`);
-	return value as Record<string, unknown>;
+	if (!isObject(value)) throw new Error(`Invalid ${name}`);
+	return value;
+}
+
+/** Drops `undefined` values so optional fields are absent rather than present-but-undefined. */
+function compact<T extends object>(value: T): T {
+	return Object.fromEntries(Object.entries(value).filter(([, item]) => item !== undefined)) as T;
 }
 
 function requiredString(value: unknown, name: string): string {
@@ -111,31 +118,32 @@ function safeUrl(value: unknown, name: string): string {
 	return text;
 }
 
+function optionalUrl(value: unknown, name: string): string | undefined {
+	return value === undefined ? undefined : safeUrl(value, name);
+}
+
 export function parseProtectedResourceMetadata(value: unknown): OAuthProtectedResourceMetadata {
 	const input = object(value, "OAuth protected resource metadata");
-	return {
+	return compact({
 		...input,
 		resource: safeUrl(input.resource, "OAuth protected resource metadata resource"),
 		authorization_servers: optionalStrings(input.authorization_servers, "authorization_servers")?.map((url) =>
 			safeUrl(url, "authorization server URL"),
 		),
 		scopes_supported: optionalStrings(input.scopes_supported, "scopes_supported"),
-	};
+	});
 }
 
 export function parseAuthorizationServerMetadata(value: unknown): AuthorizationServerMetadata {
 	const input = object(value, "authorization server metadata");
 	const responseTypes = optionalStrings(input.response_types_supported, "response_types_supported");
 	if (!responseTypes) throw new Error("Invalid response_types_supported");
-	return {
+	return compact({
 		...input,
 		issuer: safeUrl(input.issuer, "authorization server issuer"),
 		authorization_endpoint: safeUrl(input.authorization_endpoint, "authorization endpoint"),
 		token_endpoint: safeUrl(input.token_endpoint, "token endpoint"),
-		registration_endpoint:
-			input.registration_endpoint === undefined
-				? undefined
-				: safeUrl(input.registration_endpoint, "registration endpoint"),
+		registration_endpoint: optionalUrl(input.registration_endpoint, "registration endpoint"),
 		scopes_supported: optionalStrings(input.scopes_supported, "scopes_supported"),
 		response_types_supported: responseTypes,
 		grant_types_supported: optionalStrings(input.grant_types_supported, "grant_types_supported"),
@@ -151,38 +159,32 @@ export function parseAuthorizationServerMetadata(value: unknown): AuthorizationS
 			typeof input.client_id_metadata_document_supported === "boolean"
 				? input.client_id_metadata_document_supported
 				: undefined,
-	};
+	});
 }
 
 export function parseOAuthTokens(value: unknown): OAuthTokens {
 	const input = object(value, "OAuth token response");
 	const expires = input.expires_in === undefined ? undefined : Number(input.expires_in);
 	if (expires !== undefined && !Number.isFinite(expires)) throw new Error("Invalid expires_in");
-	return {
+	return compact({
 		access_token: requiredString(input.access_token, "access_token"),
 		token_type: requiredString(input.token_type, "token_type"),
-		...(expires === undefined ? {} : { expires_in: expires }),
-		...(optionalString(input.scope, "scope") === undefined ? {} : { scope: input.scope as string }),
-		...(optionalString(input.refresh_token, "refresh_token") === undefined
-			? {}
-			: { refresh_token: input.refresh_token as string }),
-		...(optionalString(input.id_token, "id_token") === undefined ? {} : { id_token: input.id_token as string }),
-	};
+		expires_in: expires,
+		scope: optionalString(input.scope, "scope"),
+		refresh_token: optionalString(input.refresh_token, "refresh_token"),
+		id_token: optionalString(input.id_token, "id_token"),
+	});
 }
 
 export function parseClientInformation(value: unknown): OAuthClientInformationFull {
 	const input = object(value, "OAuth client registration response");
-	const redirectUris = optionalStrings(input.redirect_uris, "redirect_uris") ?? [];
-	return {
+	return compact({
 		...(input as unknown as OAuthClientMetadata),
 		client_id: requiredString(input.client_id, "client_id"),
-		...(optionalString(input.client_secret, "client_secret") === undefined
-			? {}
-			: { client_secret: input.client_secret as string }),
-		...(typeof input.client_id_issued_at === "number" ? { client_id_issued_at: input.client_id_issued_at } : {}),
-		...(typeof input.client_secret_expires_at === "number"
-			? { client_secret_expires_at: input.client_secret_expires_at }
-			: {}),
-		redirect_uris: redirectUris,
-	};
+		client_secret: optionalString(input.client_secret, "client_secret"),
+		client_id_issued_at: typeof input.client_id_issued_at === "number" ? input.client_id_issued_at : undefined,
+		client_secret_expires_at:
+			typeof input.client_secret_expires_at === "number" ? input.client_secret_expires_at : undefined,
+		redirect_uris: optionalStrings(input.redirect_uris, "redirect_uris") ?? [],
+	});
 }

@@ -13,6 +13,10 @@ export interface OAuthCallbackServerOptions {
 	timeoutMs?: number;
 }
 
+function reply(response: ServerResponse, status: number, text: string): void {
+	response.writeHead(status, { "content-type": "text/plain; charset=utf-8" }).end(text);
+}
+
 export class OAuthCallbackServer {
 	readonly redirectUrl: string;
 	private server: Server;
@@ -82,39 +86,31 @@ export class OAuthCallbackServer {
 	private handle(rawUrl: string, response: ServerResponse): void {
 		const url = new URL(rawUrl, this.redirectUrl);
 		if (url.pathname !== this.path) {
-			response.writeHead(404).end("Not found");
+			reply(response, 404, "Not found");
 			return;
 		}
 		const state = url.searchParams.get("state");
 		const pending = state ? this.pending.get(state) : undefined;
 		if (!state || !pending) {
-			response.writeHead(400, { "content-type": "text/plain; charset=utf-8" }).end("Invalid or expired OAuth state");
+			reply(response, 400, "Invalid or expired OAuth state");
 			return;
 		}
 		clearTimeout(pending.timer);
 		this.pending.delete(state);
 		const error = url.searchParams.get("error");
 		if (error) {
-			const message = url.searchParams.get("error_description") ?? error;
-			pending.reject(new Error(message));
-			response
-				.writeHead(200, { "content-type": "text/plain; charset=utf-8" })
-				.end("Authorization failed. You may close this window.");
+			pending.reject(new Error(url.searchParams.get("error_description") ?? error));
+			reply(response, 200, "Authorization failed. You may close this window.");
 			return;
 		}
 		const code = url.searchParams.get("code");
 		if (!code) {
 			pending.reject(new Error("OAuth callback did not include an authorization code"));
-			response.writeHead(400, { "content-type": "text/plain; charset=utf-8" }).end("Missing authorization code");
+			reply(response, 400, "Missing authorization code");
 			return;
 		}
-		pending.resolve({
-			code,
-			state,
-			...(url.searchParams.get("iss") ? { iss: url.searchParams.get("iss") as string } : {}),
-		});
-		response
-			.writeHead(200, { "content-type": "text/plain; charset=utf-8" })
-			.end("Authorization complete. You may close this window.");
+		const iss = url.searchParams.get("iss");
+		pending.resolve({ code, state, ...(iss ? { iss } : {}) });
+		reply(response, 200, "Authorization complete. You may close this window.");
 	}
 }

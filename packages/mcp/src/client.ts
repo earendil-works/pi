@@ -1,7 +1,10 @@
+import type { CallToolResult } from "./protocol/content.ts";
 import {
+	isJsonRpcId,
 	isJsonRpcNotification,
 	isJsonRpcRequest,
 	isJsonRpcResponse,
+	isObject,
 	JSON_RPC_ERROR_CODES,
 	type JsonRpcId,
 	type JsonRpcMessage,
@@ -11,9 +14,9 @@ import {
 	McpConnectionClosedError,
 	McpError,
 	McpTimeoutError,
+	toError,
 } from "./protocol/jsonrpc.ts";
 import {
-	type CallToolResult,
 	type ClientCapabilities,
 	type Implementation,
 	type InitializeResult,
@@ -23,6 +26,7 @@ import {
 	type Root,
 	type ServerCapabilities,
 	SUPPORTED_PROTOCOL_VERSIONS,
+	type SupportedProtocolVersion,
 	type Tool,
 } from "./protocol/types.ts";
 import type { McpTransport } from "./transports/transport.ts";
@@ -37,7 +41,7 @@ type RequestHandler = (params: unknown, context: { signal: AbortSignal }) => unk
 
 export interface McpClientOptions extends Implementation {
 	capabilities?: ClientCapabilities;
-	protocolVersion?: (typeof SUPPORTED_PROTOCOL_VERSIONS)[number];
+	protocolVersion?: SupportedProtocolVersion;
 	requestTimeoutMs?: number;
 	roots?: readonly Root[] | (() => readonly Root[] | Promise<readonly Root[]>);
 }
@@ -54,17 +58,9 @@ interface PendingRequest {
 	timeoutMs: number;
 	timer: ReturnType<typeof setTimeout> | undefined;
 	signal: AbortSignal | undefined;
-	onAbort: (() => void) | undefined;
+	onAbort: () => void;
 	onProgress: ((progress: ProgressNotification) => void) | undefined;
-	progressToken: string | number | undefined;
-}
-
-function isObject(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function errorFrom(value: unknown): Error {
-	return value instanceof Error ? value : new Error(String(value));
+	progressToken: JsonRpcId | undefined;
 }
 
 function validateInitializeResult(value: unknown): InitializeResult {
@@ -114,7 +110,7 @@ export class McpClient {
 	private instructionsValue: string | undefined;
 	private protocolVersionValue: string | undefined;
 	private pending = new Map<JsonRpcId, PendingRequest>();
-	private progressRequests = new Map<string | number, JsonRpcId>();
+	private progressRequests = new Map<JsonRpcId, JsonRpcId>();
 	private incoming = new Map<JsonRpcId, AbortController>();
 	private requestHandlers = new Map<string, RequestHandler>();
 	private notificationListeners = new Map<string, Set<NotificationListener>>();
@@ -124,9 +120,10 @@ export class McpClient {
 	constructor(options: McpClientOptions) {
 		this.options = Object.freeze({ ...options });
 		this.requestHandlers.set("ping", () => ({}));
-		if (options.roots) {
+		const roots = options.roots;
+		if (roots) {
 			this.requestHandlers.set("roots/list", async () => ({
-				roots: [...(typeof options.roots === "function" ? await options.roots() : (options.roots ?? []))],
+				roots: [...(typeof roots === "function" ? await roots() : roots)],
 			}));
 		}
 	}
@@ -193,10 +190,7 @@ export class McpClient {
 			this.state = "connected";
 			return result;
 		} catch (error) {
-			this.rejectPending(error);
-			this.state = "closed";
-			await transport.close().catch(() => {});
-			this.disposeTransportListeners();
+			await this.close().catch(() => {});
 			throw error;
 		}
 	}
@@ -221,15 +215,12 @@ export class McpClient {
 	}
 
 	onNotification(method: string, listener: NotificationListener): () => void {
-		let listeners = this.notificationListeners.get(method);
-		if (!listeners) {
-			listeners = new Set();
-			this.notificationListeners.set(method, listeners);
-		}
+		const listeners = this.notificationListeners.get(method) ?? new Set<NotificationListener>();
+		this.notificationListeners.set(method, listeners);
 		listeners.add(listener);
 		return () => {
-			listeners?.delete(listener);
-			if (listeners?.size === 0) this.notificationListeners.delete(method);
+			listeners.delete(listener);
+			if (listeners.size === 0) this.notificationListeners.delete(method);
 		};
 	}
 
@@ -271,14 +262,10 @@ export class McpClient {
 	}
 
 	async close(): Promise<void> {
-		if (this.state === "closed") return;
-		this.state = "closed";
-		this.rejectPending(new McpConnectionClosedError());
-		for (const controller of this.incoming.values()) controller.abort(new McpConnectionClosedError());
-		this.incoming.clear();
 		const transport = this.transport;
 		this.transport = undefined;
 		this.disposeTransportListeners();
+		this.markClosed(new McpConnectionClosedError());
 		await transport?.close();
 	}
 
@@ -288,7 +275,7 @@ export class McpClient {
 		options: McpRequestOptions,
 		allowConnecting: boolean,
 	): Promise<unknown> {
-		this.requireTransport(allowConnecting);
+		const transport = this.requireTransport(allowConnecting);
 		if (options.signal?.aborted) throw new McpAbortError();
 		const id = this.nextRequestId++;
 		const progressToken = options.onProgress ? id : undefined;
@@ -302,36 +289,24 @@ export class McpClient {
 			method,
 			...(requestParams === undefined ? {} : { params: requestParams }),
 		};
-		const timeoutMs = options.timeoutMs ?? this.options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
-		let pendingPromiseResolve: (value: unknown) => void = () => {};
-		let pendingPromiseReject: (reason: unknown) => void = () => {};
-		const result = new Promise<unknown>((resolve, reject) => {
-			pendingPromiseResolve = resolve;
-			pendingPromiseReject = reject;
+		return new Promise<unknown>((resolve, reject) => {
+			const entry: PendingRequest = {
+				resolve,
+				reject,
+				timeoutMs: options.timeoutMs ?? this.options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
+				timer: undefined,
+				signal: options.signal,
+				onAbort: () =>
+					this.cancelPending(id, new McpAbortError(), true, String(options.signal?.reason ?? "Aborted")),
+				onProgress: options.onProgress,
+				progressToken,
+			};
+			this.pending.set(id, entry);
+			if (progressToken !== undefined) this.progressRequests.set(progressToken, id);
+			options.signal?.addEventListener("abort", entry.onAbort, { once: true });
+			this.armTimeout(id, entry);
+			transport.send(message).catch((error) => this.cancelPending(id, error, false));
 		});
-		const entry: PendingRequest = {
-			resolve: pendingPromiseResolve,
-			reject: pendingPromiseReject,
-			timeoutMs,
-			timer: undefined,
-			signal: options.signal,
-			onAbort: undefined,
-			onProgress: options.onProgress,
-			progressToken,
-		};
-		entry.onAbort = () =>
-			this.cancelPending(id, new McpAbortError(), true, String(options.signal?.reason ?? "Aborted"));
-		this.pending.set(id, entry);
-		if (progressToken !== undefined) this.progressRequests.set(progressToken, id);
-		options.signal?.addEventListener("abort", entry.onAbort, { once: true });
-		this.armTimeout(id, entry);
-
-		try {
-			await this.transport?.send(message);
-		} catch (error) {
-			this.cancelPending(id, errorFrom(error), false);
-		}
-		return result;
 	}
 
 	private async notifyInternal(
@@ -339,14 +314,18 @@ export class McpClient {
 		params: Record<string, unknown> | undefined,
 		allowConnecting: boolean,
 	): Promise<void> {
-		this.requireTransport(allowConnecting);
-		await this.transport?.send({ jsonrpc: "2.0", method, ...(params === undefined ? {} : { params }) });
+		await this.requireTransport(allowConnecting).send({
+			jsonrpc: "2.0",
+			method,
+			...(params === undefined ? {} : { params }),
+		});
 	}
 
-	private requireTransport(allowConnecting: boolean): void {
-		if (!this.transport || (this.state !== "connected" && !(allowConnecting && this.state === "connecting"))) {
-			throw new McpConnectionClosedError(`MCP client is ${this.state}`);
+	private requireTransport(allowConnecting: boolean): McpTransport {
+		if (this.transport && (this.state === "connected" || (allowConnecting && this.state === "connecting"))) {
+			return this.transport;
 		}
+		throw new McpConnectionClosedError(`MCP client is ${this.state}`);
 	}
 
 	private handleMessage(message: JsonRpcMessage): void {
@@ -387,7 +366,7 @@ export class McpClient {
 					id: message.id,
 					error: { code: JSON_RPC_ERROR_CODES.methodNotFound, message: `Method not found: ${message.method}` },
 				})
-				.catch((error) => this.emitError(errorFrom(error)));
+				.catch((error) => this.emitError(error));
 			return;
 		}
 		const controller = new AbortController();
@@ -399,43 +378,42 @@ export class McpClient {
 			const responseError =
 				error instanceof McpError
 					? { code: error.code, message: error.message, data: error.data }
-					: { code: JSON_RPC_ERROR_CODES.internalError, message: errorFrom(error).message };
+					: { code: JSON_RPC_ERROR_CODES.internalError, message: toError(error).message };
 			await transport
 				.send({ jsonrpc: "2.0", id: message.id, error: responseError })
-				.catch((sendError) => this.emitError(errorFrom(sendError)));
+				.catch((sendError) => this.emitError(sendError));
 		} finally {
 			this.incoming.delete(message.id);
 		}
 	}
 
 	private handleNotification(method: string, params: unknown): void {
-		if (method === "notifications/progress" && isObject(params)) {
-			const token = params.progressToken;
-			if ((typeof token === "string" || typeof token === "number") && typeof params.progress === "number") {
-				const requestId = this.progressRequests.get(token);
-				const entry = requestId === undefined ? undefined : this.pending.get(requestId);
-				if (requestId !== undefined && entry) {
-					this.armTimeout(requestId, entry);
-					try {
-						entry.onProgress?.(params as unknown as ProgressNotification);
-					} catch (error) {
-						this.emitError(errorFrom(error));
-					}
-				}
-			}
-		} else if (method === "notifications/cancelled" && isObject(params)) {
-			const requestId = params.requestId;
-			if (typeof requestId === "string" || typeof requestId === "number") {
-				this.incoming.get(requestId)?.abort(params.reason);
-			}
-		}
+		if (method === "notifications/progress") this.handleProgress(params);
+		else if (method === "notifications/cancelled") this.handleCancelled(params);
 		for (const listener of this.notificationListeners.get(method) ?? []) {
 			try {
 				listener(params);
 			} catch (error) {
-				this.emitError(errorFrom(error));
+				this.emitError(error);
 			}
 		}
+	}
+
+	private handleProgress(params: unknown): void {
+		if (!isObject(params) || !isJsonRpcId(params.progressToken) || typeof params.progress !== "number") return;
+		const requestId = this.progressRequests.get(params.progressToken);
+		const entry = requestId === undefined ? undefined : this.pending.get(requestId);
+		if (requestId === undefined || !entry) return;
+		this.armTimeout(requestId, entry);
+		try {
+			entry.onProgress?.(params as unknown as ProgressNotification);
+		} catch (error) {
+			this.emitError(error);
+		}
+	}
+
+	private handleCancelled(params: unknown): void {
+		if (isObject(params) && isJsonRpcId(params.requestId)) this.incoming.get(params.requestId)?.abort(params.reason);
 	}
 
 	private armTimeout(id: JsonRpcId, entry: PendingRequest): void {
@@ -458,7 +436,7 @@ export class McpClient {
 					method: "notifications/cancelled",
 					params: { requestId: id, ...(reason ? { reason } : {}) },
 				})
-				.catch((sendError) => this.emitError(errorFrom(sendError)));
+				.catch((sendError) => this.emitError(sendError));
 		}
 	}
 
@@ -466,7 +444,7 @@ export class McpClient {
 		this.pending.delete(id);
 		if (entry.timer) clearTimeout(entry.timer);
 		if (entry.progressToken !== undefined) this.progressRequests.delete(entry.progressToken);
-		if (entry.signal && entry.onAbort) entry.signal.removeEventListener("abort", entry.onAbort);
+		entry.signal?.removeEventListener("abort", entry.onAbort);
 	}
 
 	private rejectPending(error: unknown): void {
@@ -482,15 +460,20 @@ export class McpClient {
 	}
 
 	private handleTransportClose(): void {
-		if (this.state === "closed") return;
+		this.markClosed(new McpConnectionClosedError());
+	}
+
+	/** Idempotent: rejects in-flight requests, aborts server requests we are serving, and flips the state. */
+	private markClosed(error: Error): void {
 		this.state = "closed";
-		this.rejectPending(new McpConnectionClosedError());
-		for (const controller of this.incoming.values()) controller.abort(new McpConnectionClosedError());
+		this.rejectPending(error);
+		for (const controller of this.incoming.values()) controller.abort(error);
 		this.incoming.clear();
 	}
 
-	private emitError(error: Error): void {
-		for (const listener of this.errorListeners) listener(error);
+	private emitError(error: unknown): void {
+		const normalized = toError(error);
+		for (const listener of this.errorListeners) listener(normalized);
 	}
 
 	private disposeTransportListeners(): void {

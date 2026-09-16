@@ -1,4 +1,3 @@
-import type { CallToolResult } from "./content.ts";
 import type { JsonRpcId } from "./jsonrpc.ts";
 
 export const LATEST_PROTOCOL_VERSION = "2025-06-18";
@@ -85,5 +84,3 @@ export interface ListToolsResult {
 	nextCursor?: string;
 	_meta?: Record<string, unknown>;
 }
-
-export type { CallToolResult };

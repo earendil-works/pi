@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto";
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { afterEach, describe, expect, it } from "vitest";
 import { McpClient, StreamableHttpTransport } from "../src/index.ts";
 import {
@@ -16,38 +15,7 @@ import {
 	OAuthIssuerMismatchError,
 	type OAuthTokens,
 } from "../src/oauth/index.ts";
-
-const closeServers: (() => Promise<void>)[] = [];
-
-async function body(request: IncomingMessage): Promise<string> {
-	const chunks: Buffer[] = [];
-	for await (const chunk of request) chunks.push(Buffer.from(chunk));
-	return Buffer.concat(chunks).toString("utf8");
-}
-
-async function listen(
-	handler: (request: IncomingMessage, response: ServerResponse, origin: string) => Promise<void>,
-): Promise<string> {
-	let origin = "";
-	const server = createServer((request, response) => {
-		void handler(request, response, origin).catch((error) => {
-			response.statusCode = 500;
-			response.end(String(error));
-		});
-	});
-	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-	const address = server.address();
-	if (!address || typeof address === "string") throw new Error("OAuth test server did not bind to TCP");
-	origin = `http://127.0.0.1:${address.port}`;
-	closeServers.push(
-		() =>
-			new Promise<void>((resolve, reject) => {
-				server.closeAllConnections();
-				server.close((error) => (error ? reject(error) : resolve()));
-			}),
-	);
-	return origin;
-}
+import { closeServers, listen, readBody } from "./helpers.ts";
 
 class TestOAuthProvider implements OAuthClientProvider {
 	readonly redirectUrl: string;
@@ -118,9 +86,7 @@ class TestOAuthProvider implements OAuthClientProvider {
 	}
 }
 
-afterEach(async () => {
-	await Promise.all(closeServers.splice(0).map((close) => close()));
-});
+afterEach(closeServers);
 
 describe("MCP OAuth", () => {
 	it("discovers, registers, authorizes with PKCE, and refreshes on 401", async () => {
@@ -156,7 +122,7 @@ describe("MCP OAuth", () => {
 				return;
 			}
 			if (url.pathname === "/register") {
-				const metadata = JSON.parse(await body(request)) as Record<string, unknown>;
+				const metadata = JSON.parse(await readBody(request)) as Record<string, unknown>;
 				response.writeHead(201, { "content-type": "application/json" });
 				response.end(JSON.stringify({ ...metadata, client_id: "test-client" }));
 				return;
@@ -170,7 +136,7 @@ describe("MCP OAuth", () => {
 				return;
 			}
 			if (url.pathname === "/token") {
-				const params = new URLSearchParams(await body(request));
+				const params = new URLSearchParams(await readBody(request));
 				if (params.get("grant_type") === "refresh_token") {
 					refreshes++;
 					response.setHeader("content-type", "application/json");
@@ -208,14 +174,14 @@ describe("MCP OAuth", () => {
 			}
 			const token = request.headers.authorization;
 			if (token !== "Bearer first-token" && token !== "Bearer refreshed-token") {
-				await body(request);
+				await readBody(request);
 				response.writeHead(401, {
 					"www-authenticate": `Bearer resource_metadata="${serverOrigin}/.well-known/oauth-protected-resource/mcp", scope="org:read"`,
 				});
 				response.end("Unauthorized");
 				return;
 			}
-			const message = JSON.parse(await body(request)) as Record<string, unknown>;
+			const message = JSON.parse(await readBody(request)) as Record<string, unknown>;
 			if (!("id" in message)) {
 				response.statusCode = 202;
 				response.end();

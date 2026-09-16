@@ -26,6 +26,7 @@ export {
 	refreshAuthorization,
 	registerClient,
 	startAuthorization,
+	type TokenRequestOptions,
 } from "./flow.ts";
 export {
 	McpOAuthProvider,

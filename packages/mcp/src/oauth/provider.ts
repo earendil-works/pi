@@ -126,17 +126,18 @@ export class McpOAuthProvider implements OAuthClientProvider {
 
 	private async load(): Promise<McpOAuthState> {
 		await this.writes;
-		const state = await this.store.load();
-		if (!state || state.serverUrl !== this.serverUrl) return { serverUrl: this.serverUrl };
-		return state;
+		return this.own(await this.store.load());
 	}
 
 	private async update(update: (state: McpOAuthState) => McpOAuthState): Promise<void> {
 		this.writes = this.writes.then(async () => {
-			const current = await this.store.load();
-			const state = !current || current.serverUrl !== this.serverUrl ? { serverUrl: this.serverUrl } : current;
-			await this.store.save(update(state));
+			await this.store.save(update(this.own(await this.store.load())));
 		});
 		await this.writes;
+	}
+
+	/** Stored state for another server URL is ignored so credentials never leak across servers. */
+	private own(state: McpOAuthState | undefined): McpOAuthState {
+		return state?.serverUrl === this.serverUrl ? state : { serverUrl: this.serverUrl };
 	}
 }

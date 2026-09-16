@@ -78,16 +78,22 @@ export class McpAbortError extends Error {
 	}
 }
 
-function isObject(value: unknown): value is Record<string, unknown> {
+export function isObject(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function isId(value: unknown): value is JsonRpcId {
+export function toError(value: unknown): Error {
+	return value instanceof Error ? value : new Error(String(value));
+}
+
+export function isJsonRpcId(value: unknown): value is JsonRpcId {
 	return typeof value === "string" || (typeof value === "number" && Number.isFinite(value));
 }
 
 export function isJsonRpcRequest(message: unknown): message is JsonRpcRequest {
-	return isObject(message) && message.jsonrpc === "2.0" && isId(message.id) && typeof message.method === "string";
+	return (
+		isObject(message) && message.jsonrpc === "2.0" && isJsonRpcId(message.id) && typeof message.method === "string"
+	);
 }
 
 export function isJsonRpcNotification(message: unknown): message is JsonRpcNotification {
@@ -95,7 +101,7 @@ export function isJsonRpcNotification(message: unknown): message is JsonRpcNotif
 }
 
 export function isJsonRpcResponse(message: unknown): message is JsonRpcResponse {
-	if (!isObject(message) || message.jsonrpc !== "2.0" || !isId(message.id)) return false;
+	if (!isObject(message) || message.jsonrpc !== "2.0" || !isJsonRpcId(message.id)) return false;
 	if ("result" in message) return !("error" in message);
 	if (!("error" in message) || !isObject(message.error)) return false;
 	return typeof message.error.code === "number" && typeof message.error.message === "string";

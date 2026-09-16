@@ -1,8 +1,7 @@
-import type { AuthProvider } from "../auth-provider.ts";
+import type { AuthProvider, McpFetch } from "../auth-provider.ts";
 import { type JsonRpcMessage, McpConnectionClosedError, parseJsonRpcMessage } from "../protocol/jsonrpc.ts";
-import { type McpTransport, TransportEvents } from "./transport.ts";
+import { DEFAULT_MAX_MESSAGE_BYTES, type McpTransport, TransportEvents } from "./transport.ts";
 
-const DEFAULT_MAX_MESSAGE_BYTES = 16 * 1024 * 1024;
 const MAX_ERROR_BODY_BYTES = 8 * 1024;
 
 export interface SseEvent {
@@ -77,8 +76,6 @@ export async function consumeSseStream(stream: ReadableStream<Uint8Array>, optio
 	}
 }
 
-export type McpFetch = (input: string | URL, init?: RequestInit) => Promise<Response>;
-
 export interface StreamableHttpTransportOptions {
 	url: string | URL;
 	headers?: Record<string, string>;
@@ -117,8 +114,8 @@ export class McpSessionExpiredError extends McpHttpError {
 	}
 }
 
-function toError(value: unknown): Error {
-	return value instanceof Error ? value : new Error(String(value));
+function contentType(response: Response): string | undefined {
+	return response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
 }
 
 export class StreamableHttpTransport extends TransportEvents implements McpTransport {
@@ -128,7 +125,6 @@ export class StreamableHttpTransport extends TransportEvents implements McpTrans
 	private controller = new AbortController();
 	private started = false;
 	private closed = false;
-	private closeEmitted = false;
 	private sessionIdValue: string | undefined;
 	private protocolVersion: string | undefined;
 	private lastEventId: string | undefined;
@@ -174,7 +170,7 @@ export class StreamableHttpTransport extends TransportEvents implements McpTrans
 			}).catch(() => undefined);
 			clearTimeout(timeout);
 		}
-		this.emitCloseOnce();
+		this.emitClose();
 	}
 
 	private async sendRequest(message: JsonRpcMessage, retriedAuth: boolean): Promise<void> {
@@ -199,17 +195,17 @@ export class StreamableHttpTransport extends TransportEvents implements McpTrans
 		await this.checkResponse(response);
 		this.captureSession(response);
 		if (response.status === 202 || response.status === 204) return;
-		const contentType = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
-		if (contentType === "application/json") {
+		const type = contentType(response);
+		if (type === "application/json") {
 			this.emitMessage(parseJsonRpcMessage(await response.json()));
 			return;
 		}
-		if (contentType === "text/event-stream" && response.body) {
-			void this.consumeSse(response.body).catch((error) => this.emitError(toError(error)));
+		if (type === "text/event-stream" && response.body) {
+			void this.consumeSse(response.body).catch((error) => this.emitError(error));
 			return;
 		}
 		if (response.headers.get("content-length") === "0") return;
-		throw new McpHttpError(response.status, `Unsupported MCP response content type: ${contentType ?? "missing"}`);
+		throw new McpHttpError(response.status, `Unsupported MCP response content type: ${type ?? "missing"}`);
 	}
 
 	private async headers(extra: Record<string, string> = {}): Promise<Headers> {
@@ -258,22 +254,13 @@ export class StreamableHttpTransport extends TransportEvents implements McpTrans
 			if (response.status === 405) return;
 			await this.checkResponse(response);
 			this.captureSession(response);
-			const contentType = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
-			if (contentType !== "text/event-stream" || !response.body) {
-				throw new McpHttpError(
-					response.status,
-					`Unsupported MCP GET response content type: ${contentType ?? "missing"}`,
-				);
+			const type = contentType(response);
+			if (type !== "text/event-stream" || !response.body) {
+				throw new McpHttpError(response.status, `Unsupported MCP GET response content type: ${type ?? "missing"}`);
 			}
 			await this.consumeSse(response.body);
 		} catch (error) {
-			if (!this.closed) this.emitError(toError(error));
+			if (!this.closed) this.emitError(error);
 		}
-	}
-
-	private emitCloseOnce(): void {
-		if (this.closeEmitted) return;
-		this.closeEmitted = true;
-		this.emitClose();
 	}
 }

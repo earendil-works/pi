@@ -4,8 +4,8 @@
  * Modified to remove SDK/Zod dependencies and use WebCrypto for PKCE.
  */
 
-import type { AuthProvider, UnauthorizedContext } from "../auth-provider.ts";
-import type { McpFetch } from "../transports/streamable-http.ts";
+import type { AuthProvider, McpFetch, UnauthorizedContext } from "../auth-provider.ts";
+import { isObject } from "../protocol/jsonrpc.ts";
 import {
 	discoverAuthorizationServerMetadata,
 	discoverOAuthServerInfo,
@@ -67,6 +67,14 @@ export interface OAuthFlowOptions {
 export type OAuthFlowResult = "AUTHORIZED" | "REDIRECT";
 type ClientAuthMethod = "client_secret_basic" | "client_secret_post" | "none";
 
+export interface TokenRequestOptions {
+	metadata?: AuthorizationServerMetadata;
+	clientInformation: OAuthClientInformationMixed;
+	resource?: string;
+	addClientAuthentication?: AddClientAuthentication;
+	fetch?: McpFetch;
+}
+
 function loopback(hostname: string): boolean {
 	return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]" || hostname === "::1";
 }
@@ -112,21 +120,6 @@ function applyClientAuthentication(
 	}
 }
 
-async function oauthError(response: Response): Promise<OAuthError> {
-	const body = await response.text();
-	try {
-		const value = JSON.parse(body) as Record<string, unknown>;
-		if (typeof value.error === "string") {
-			return new OAuthError(
-				value.error,
-				typeof value.error_description === "string" ? value.error_description : value.error,
-				typeof value.error_uri === "string" ? value.error_uri : undefined,
-			);
-		}
-	} catch {}
-	return new OAuthError("server_error", `HTTP ${response.status}: ${body}`);
-}
-
 async function pkce(): Promise<{ verifier: string; challenge: string }> {
 	const bytes = crypto.getRandomValues(new Uint8Array(32));
 	const verifier = Buffer.from(bytes).toString("base64url");
@@ -168,20 +161,14 @@ export async function startAuthorization(
 
 async function tokenRequest(
 	authorizationServerUrl: string | URL,
-	options: {
-		metadata?: AuthorizationServerMetadata;
-		params: URLSearchParams;
-		clientInformation: OAuthClientInformationMixed;
-		resource?: string;
-		addClientAuthentication?: AddClientAuthentication;
-		fetch?: McpFetch;
-	},
+	options: TokenRequestOptions,
+	params: URLSearchParams,
 ): Promise<OAuthTokens> {
 	const url = secureEndpoint(options.metadata?.token_endpoint ?? new URL("/token", authorizationServerUrl));
 	const headers = new Headers({ Accept: "application/json", "content-type": "application/x-www-form-urlencoded" });
-	if (options.resource) options.params.set("resource", options.resource);
+	if (options.resource) params.set("resource", options.resource);
 	if (options.addClientAuthentication) {
-		await options.addClientAuthentication(headers, options.params, url, options.metadata);
+		await options.addClientAuthentication(headers, params, url, options.metadata);
 	} else {
 		applyClientAuthentication(
 			selectClientAuthMethod(
@@ -190,24 +177,25 @@ async function tokenRequest(
 			),
 			options.clientInformation,
 			headers,
-			options.params,
+			params,
 		);
 	}
-	const response = await (options.fetch ?? globalThis.fetch)(url, { method: "POST", headers, body: options.params });
-	if (!response.ok) throw await oauthError(response);
-	const value = await response.json();
+	const response = await (options.fetch ?? globalThis.fetch)(url, { method: "POST", headers, body: params });
+	const text = await response.text();
+	let value: unknown;
 	try {
-		return parseOAuthTokens(value);
-	} catch (error) {
-		if (typeof value === "object" && value !== null && "error" in value) {
-			const oauthResponse = value as Record<string, unknown>;
-			throw new OAuthError(
-				String(oauthResponse.error),
-				String(oauthResponse.error_description ?? oauthResponse.error),
-			);
-		}
-		throw error;
+		value = JSON.parse(text);
+	} catch {}
+	// Servers may report OAuth errors with any status, so check the body before the status.
+	if (isObject(value) && typeof value.error === "string") {
+		throw new OAuthError(
+			value.error,
+			typeof value.error_description === "string" ? value.error_description : value.error,
+			typeof value.error_uri === "string" ? value.error_uri : undefined,
+		);
 	}
+	if (!response.ok) throw new OAuthError("server_error", `HTTP ${response.status}: ${text}`);
+	return parseOAuthTokens(value);
 }
 
 export async function registerClient(
@@ -236,51 +224,29 @@ export async function registerClient(
 
 export async function exchangeAuthorizationCode(
 	authorizationServerUrl: string | URL,
-	options: {
-		metadata?: AuthorizationServerMetadata;
-		clientInformation: OAuthClientInformationMixed;
-		code: string;
-		codeVerifier: string;
-		redirectUrl: string | URL;
-		resource?: string;
-		addClientAuthentication?: AddClientAuthentication;
-		fetch?: McpFetch;
-	},
+	options: TokenRequestOptions & { code: string; codeVerifier: string; redirectUrl: string | URL },
 ): Promise<OAuthTokens> {
-	return tokenRequest(authorizationServerUrl, {
-		metadata: options.metadata,
-		clientInformation: options.clientInformation,
-		params: new URLSearchParams({
+	return tokenRequest(
+		authorizationServerUrl,
+		options,
+		new URLSearchParams({
 			grant_type: "authorization_code",
 			code: options.code,
 			code_verifier: options.codeVerifier,
 			redirect_uri: String(options.redirectUrl),
 		}),
-		resource: options.resource,
-		addClientAuthentication: options.addClientAuthentication,
-		fetch: options.fetch,
-	});
+	);
 }
 
 export async function refreshAuthorization(
 	authorizationServerUrl: string | URL,
-	options: {
-		metadata?: AuthorizationServerMetadata;
-		clientInformation: OAuthClientInformationMixed;
-		refreshToken: string;
-		resource?: string;
-		addClientAuthentication?: AddClientAuthentication;
-		fetch?: McpFetch;
-	},
+	options: TokenRequestOptions & { refreshToken: string },
 ): Promise<OAuthTokens> {
-	const tokens = await tokenRequest(authorizationServerUrl, {
-		metadata: options.metadata,
-		clientInformation: options.clientInformation,
-		params: new URLSearchParams({ grant_type: "refresh_token", refresh_token: options.refreshToken }),
-		resource: options.resource,
-		addClientAuthentication: options.addClientAuthentication,
-		fetch: options.fetch,
-	});
+	const tokens = await tokenRequest(
+		authorizationServerUrl,
+		options,
+		new URLSearchParams({ grant_type: "refresh_token", refresh_token: options.refreshToken }),
+	);
 	return { refresh_token: options.refreshToken, ...tokens };
 }
 
@@ -329,16 +295,19 @@ async function runFlow(provider: OAuthClientProvider, options: OAuthFlowOptions)
 			await provider.saveClientInformation(client);
 		}
 	}
+	const tokenOptions: TokenRequestOptions = {
+		metadata,
+		clientInformation: client,
+		resource,
+		addClientAuthentication: provider.addClientAuthentication,
+		fetch: options.fetch,
+	};
 	if (options.authorizationCode) {
 		const tokens = await exchangeAuthorizationCode(discovered.authorizationServerUrl, {
-			metadata,
-			clientInformation: client,
+			...tokenOptions,
 			code: options.authorizationCode,
 			codeVerifier: await provider.codeVerifier(),
 			redirectUrl: provider.redirectUrl,
-			resource,
-			addClientAuthentication: provider.addClientAuthentication,
-			fetch: options.fetch,
 		});
 		await provider.saveTokens(tokens);
 		return "AUTHORIZED";
@@ -347,12 +316,8 @@ async function runFlow(provider: OAuthClientProvider, options: OAuthFlowOptions)
 	if (existing?.refresh_token) {
 		try {
 			const tokens = await refreshAuthorization(discovered.authorizationServerUrl, {
-				metadata,
-				clientInformation: client,
+				...tokenOptions,
 				refreshToken: existing.refresh_token,
-				resource,
-				addClientAuthentication: provider.addClientAuthentication,
-				fetch: options.fetch,
 			});
 			await provider.saveTokens(tokens);
 			return "AUTHORIZED";

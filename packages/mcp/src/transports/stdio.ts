@@ -2,9 +2,8 @@ import type { ChildProcess } from "node:child_process";
 import process from "node:process";
 import crossSpawn from "cross-spawn";
 import { type JsonRpcMessage, McpConnectionClosedError, parseJsonRpcMessage } from "../protocol/jsonrpc.ts";
-import { type McpTransport, TransportEvents } from "./transport.ts";
+import { DEFAULT_MAX_MESSAGE_BYTES, type McpTransport, TransportEvents } from "./transport.ts";
 
-const DEFAULT_MAX_MESSAGE_BYTES = 16 * 1024 * 1024;
 const DEFAULT_MAX_STDERR_BYTES = 64 * 1024;
 const DEFAULT_CLOSE_TIMEOUT_MS = 2_000;
 
@@ -21,10 +20,6 @@ export interface StdioTransportOptions {
 	closeTimeoutMs?: number;
 }
 
-function toError(value: unknown): Error {
-	return value instanceof Error ? value : new Error(String(value));
-}
-
 export class StdioTransport extends TransportEvents implements McpTransport {
 	readonly options: Readonly<StdioTransportOptions>;
 	private child: ChildProcess | undefined;
@@ -32,7 +27,6 @@ export class StdioTransport extends TransportEvents implements McpTransport {
 	private stderrBuffer = Buffer.alloc(0);
 	private started = false;
 	private closed = false;
-	private closeEmitted = false;
 
 	constructor(options: StdioTransportOptions) {
 		super();
@@ -60,19 +54,19 @@ export class StdioTransport extends TransportEvents implements McpTransport {
 		});
 		this.child = child;
 		child.stdout?.on("data", (chunk: Buffer | string) => this.handleStdout(chunk));
-		child.stdout?.on("error", (error) => this.emitError(toError(error)));
+		child.stdout?.on("error", (error) => this.emitError(error));
 		child.stdin?.on("error", (error) => {
-			if (!this.closed) this.emitError(toError(error));
+			if (!this.closed) this.emitError(error);
 		});
 		child.stderr?.on("data", (chunk: Buffer | string) => this.handleStderr(chunk));
-		child.stderr?.on("error", (error) => this.emitError(toError(error)));
+		child.stderr?.on("error", (error) => this.emitError(error));
 		child.on("close", () => {
 			this.child = undefined;
 			if (this.stdoutBuffer.toString("utf8").trim()) {
 				this.emitError(new Error("MCP stdio server closed with an incomplete JSON-RPC message"));
 			}
 			this.stdoutBuffer = Buffer.alloc(0);
-			this.emitCloseOnce();
+			this.emitClose();
 		});
 
 		await new Promise<void>((resolve, reject) => {
@@ -88,7 +82,7 @@ export class StdioTransport extends TransportEvents implements McpTransport {
 			child.once("error", onError);
 		});
 		child.on("error", (error) => {
-			if (!this.closed) this.emitError(toError(error));
+			if (!this.closed) this.emitError(error);
 		});
 	}
 
@@ -106,7 +100,7 @@ export class StdioTransport extends TransportEvents implements McpTransport {
 		this.closed = true;
 		const child = this.child;
 		if (!child) {
-			this.emitCloseOnce();
+			this.emitClose();
 			return;
 		}
 		child.stdin?.end();
@@ -146,7 +140,7 @@ export class StdioTransport extends TransportEvents implements McpTransport {
 			try {
 				this.emitMessage(parseJsonRpcMessage(JSON.parse(text)));
 			} catch (error) {
-				this.emitError(toError(error));
+				this.emitError(error);
 			}
 		}
 	}
@@ -157,11 +151,5 @@ export class StdioTransport extends TransportEvents implements McpTransport {
 		this.stderrBuffer = Buffer.concat([this.stderrBuffer, buffer]);
 		if (this.stderrBuffer.length > maxStderrBytes) this.stderrBuffer = this.stderrBuffer.subarray(-maxStderrBytes);
 		this.options.onStderr?.(buffer.toString("utf8"));
-	}
-
-	private emitCloseOnce(): void {
-		if (this.closeEmitted) return;
-		this.closeEmitted = true;
-		this.emitClose();
 	}
 }

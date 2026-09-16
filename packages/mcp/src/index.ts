@@ -1,4 +1,4 @@
-export type { AuthProvider, UnauthorizedContext } from "./auth-provider.ts";
+export type { AuthProvider, McpFetch, UnauthorizedContext } from "./auth-provider.ts";
 export { McpClient, type McpClientOptions, type McpRequestOptions } from "./client.ts";
 export type {
 	AudioContent,
@@ -51,7 +51,6 @@ export {
 export { StdioTransport, type StdioTransportOptions } from "./transports/stdio.ts";
 export {
 	McpAuthRequiredError,
-	type McpFetch,
 	McpHttpError,
 	McpSessionExpiredError,
 	StreamableHttpTransport,

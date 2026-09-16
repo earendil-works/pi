@@ -1,4 +1,4 @@
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import type { IncomingMessage, ServerResponse } from "node:http";
 import { afterEach, describe, expect, it } from "vitest";
 import {
 	LATEST_PROTOCOL_VERSION,
@@ -7,6 +7,8 @@ import {
 	McpSessionExpiredError,
 	StreamableHttpTransport,
 } from "../src/index.ts";
+import { consumeSseStream, type SseEvent } from "../src/transports/streamable-http.ts";
+import { closeServers, listen, readBody } from "./helpers.ts";
 
 interface RecordedRequest {
 	method: string;
@@ -14,35 +16,12 @@ interface RecordedRequest {
 	message?: Record<string, unknown>;
 }
 
-const closeServers: (() => Promise<void>)[] = [];
-
-async function body(request: IncomingMessage): Promise<string> {
-	const chunks: Buffer[] = [];
-	for await (const chunk of request) chunks.push(Buffer.from(chunk));
-	return Buffer.concat(chunks).toString("utf8");
-}
-
 async function startServer(
 	handler: (request: IncomingMessage, response: ServerResponse, requests: RecordedRequest[]) => Promise<void>,
 ): Promise<{ url: string; requests: RecordedRequest[] }> {
 	const requests: RecordedRequest[] = [];
-	const server = createServer((request, response) => {
-		void handler(request, response, requests).catch((error) => {
-			response.statusCode = 500;
-			response.end(String(error));
-		});
-	});
-	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-	const address = server.address();
-	if (!address || typeof address === "string") throw new Error("HTTP test server did not bind to TCP");
-	closeServers.push(
-		() =>
-			new Promise<void>((resolve, reject) => {
-				server.closeAllConnections();
-				server.close((error) => (error ? reject(error) : resolve()));
-			}),
-	);
-	return { url: `http://127.0.0.1:${address.port}/mcp`, requests };
+	const origin = await listen((request, response) => handler(request, response, requests));
+	return { url: `${origin}/mcp`, requests };
 }
 
 async function protocolHandler(
@@ -62,8 +41,7 @@ async function protocolHandler(
 		response.end();
 		return;
 	}
-	const text = await body(request);
-	const message = JSON.parse(text) as Record<string, unknown>;
+	const message = JSON.parse(await readBody(request)) as Record<string, unknown>;
 	requests.push({ method: request.method ?? "", headers: request.headers, message });
 	if (!("id" in message)) {
 		response.statusCode = 202;
@@ -106,8 +84,22 @@ async function protocolHandler(
 	);
 }
 
-afterEach(async () => {
-	await Promise.all(closeServers.splice(0).map((close) => close()));
+afterEach(closeServers);
+
+describe("consumeSseStream", () => {
+	it("parses chunked CRLF events, comments, IDs, and multiline data", async () => {
+		const encoder = new TextEncoder();
+		const chunks = [': keepalive\r\nid: 7\r\ndata: {"one":\r\n', "data: 1}\r\n\r\n"];
+		const stream = new ReadableStream<Uint8Array>({
+			start(controller) {
+				for (const chunk of chunks) controller.enqueue(encoder.encode(chunk));
+				controller.close();
+			},
+		});
+		const events: SseEvent[] = [];
+		await consumeSseStream(stream, { onEvent: (event) => events.push(event) });
+		expect(events).toEqual([{ id: "7", data: '{"one":\n1}' }]);
+	});
 });
 
 describe("StreamableHttpTransport", () => {
@@ -132,7 +124,7 @@ describe("StreamableHttpTransport", () => {
 
 	it("classifies authentication failures", async () => {
 		const { url } = await startServer(async (request, response) => {
-			await body(request);
+			await readBody(request);
 			response.writeHead(401, { "www-authenticate": 'Bearer resource_metadata="https://example.com/meta"' });
 			response.end("login required");
 		});
@@ -149,7 +141,7 @@ describe("StreamableHttpTransport", () => {
 		let posts = 0;
 		const { url } = await startServer(async (request, response, requests) => {
 			if (request.method === "POST" && posts++ >= 2) {
-				await body(request);
+				await readBody(request);
 				response.statusCode = 404;
 				response.end("gone");
 				return;

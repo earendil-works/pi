@@ -28,22 +28,17 @@ export class InMemoryTransport extends TransportEvents implements McpTransport {
 		if (this.closed) return;
 		this.closed = true;
 		this.emitClose();
-		this.peer?.closeFromPeer();
+		await this.peer?.close();
 	}
 
-	override emitError(error: Error): void {
+	/** Exposed so tests can simulate transport-level failures. */
+	override emitError(error: unknown): void {
 		super.emitError(error);
 	}
 
 	private deliver(message: JsonRpcMessage): void {
 		if (this.closed) return;
 		this.emitMessage(message);
-	}
-
-	private closeFromPeer(): void {
-		if (this.closed) return;
-		this.closed = true;
-		this.emitClose();
 	}
 }
 

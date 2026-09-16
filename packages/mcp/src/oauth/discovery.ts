@@ -4,8 +4,8 @@
  * Modified to remove Zod/CORS shims and enforce authorization-server issuer validation.
  */
 
+import type { McpFetch } from "../auth-provider.ts";
 import { LATEST_PROTOCOL_VERSION } from "../protocol/types.ts";
-import type { McpFetch } from "../transports/streamable-http.ts";
 import { OAuthIssuerMismatchError } from "./errors.ts";
 import {
 	type AuthorizationServerMetadata,
@@ -18,6 +18,16 @@ import {
 
 function discard(response: Response | undefined): void {
 	void response?.body?.cancel().catch(() => {});
+}
+
+/** 4xx and 502 mean "not here", so discovery tries the next candidate URL. */
+function isDiscoveryMiss(status: number): boolean {
+	return (status >= 400 && status < 500) || status === 502;
+}
+
+/** Path suffix for `/.well-known/<kind><path>`; empty for the root path. */
+function pathSuffix(pathname: string): string {
+	return pathname.endsWith("/") ? pathname.slice(0, -1) : pathname;
 }
 
 function field(header: string, name: string): string | undefined {
@@ -44,11 +54,6 @@ export function parseWwwAuthenticate(header: string | null): OAuthChallenge {
 	};
 }
 
-function metadataPath(kind: "oauth-protected-resource" | "oauth-authorization-server", pathname: string): string {
-	const path = pathname.endsWith("/") ? pathname.slice(0, -1) : pathname;
-	return `/.well-known/${kind}${path}`;
-}
-
 async function fetchMetadata(url: URL, fetch: McpFetch, protocolVersion: string): Promise<Response> {
 	return fetch(url, {
 		headers: { Accept: "application/json", "MCP-Protocol-Version": protocolVersion },
@@ -65,15 +70,11 @@ export async function discoverProtectedResourceMetadata(
 	let response = await fetchMetadata(
 		options.resourceMetadataUrl
 			? new URL(options.resourceMetadataUrl)
-			: new URL(metadataPath("oauth-protected-resource", server.pathname), server.origin),
+			: new URL(`/.well-known/oauth-protected-resource${pathSuffix(server.pathname)}`, server.origin),
 		fetch,
 		version,
 	);
-	if (
-		!options.resourceMetadataUrl &&
-		server.pathname !== "/" &&
-		((response.status >= 400 && response.status < 500) || response.status === 502)
-	) {
+	if (!options.resourceMetadataUrl && server.pathname !== "/" && isDiscoveryMiss(response.status)) {
 		discard(response);
 		response = await fetchMetadata(new URL("/.well-known/oauth-protected-resource", server.origin), fetch, version);
 	}
@@ -88,18 +89,13 @@ export function buildAuthorizationServerDiscoveryUrls(
 	authorizationServerUrl: string | URL,
 ): { url: URL; type: "oauth" | "oidc" }[] {
 	const issuer = new URL(authorizationServerUrl);
-	if (issuer.pathname === "/") {
-		return [
-			{ url: new URL("/.well-known/oauth-authorization-server", issuer.origin), type: "oauth" },
-			{ url: new URL("/.well-known/openid-configuration", issuer.origin), type: "oidc" },
-		];
-	}
-	const path = issuer.pathname.endsWith("/") ? issuer.pathname.slice(0, -1) : issuer.pathname;
-	return [
+	const path = pathSuffix(issuer.pathname);
+	const urls: { url: URL; type: "oauth" | "oidc" }[] = [
 		{ url: new URL(`/.well-known/oauth-authorization-server${path}`, issuer.origin), type: "oauth" },
 		{ url: new URL(`/.well-known/openid-configuration${path}`, issuer.origin), type: "oidc" },
-		{ url: new URL(`${path}/.well-known/openid-configuration`, issuer.origin), type: "oidc" },
 	];
+	if (path) urls.push({ url: new URL(`${path}/.well-known/openid-configuration`, issuer.origin), type: "oidc" });
+	return urls;
 }
 
 export async function discoverAuthorizationServerMetadata(
@@ -111,7 +107,7 @@ export async function discoverAuthorizationServerMetadata(
 		const response = await fetchMetadata(url, fetch, options.protocolVersion ?? LATEST_PROTOCOL_VERSION);
 		if (!response.ok) {
 			discard(response);
-			if ((response.status >= 400 && response.status < 500) || response.status === 502) continue;
+			if (isDiscoveryMiss(response.status)) continue;
 			throw new Error(`HTTP ${response.status} loading authorization server metadata from ${url}`);
 		}
 		const metadata = parseAuthorizationServerMetadata(await response.json());
