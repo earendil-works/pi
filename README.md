@@ -23,6 +23,20 @@ To learn more about Pi:
 * [Visit pi.dev](https://pi.dev), the project website with demos
 * [Read the documentation](https://pi.dev/docs/latest), but you can also ask the agent to explain itself
 
+## Run with Nix
+
+```bash
+nix run github:earendil-works/pi
+```
+
+Supports ARM64 and x86-64 on Linux and macOS. Use `nix build .` or `nix run .` to build or run your checkout. Model data is pinned in `nix/model-catalog.json`.
+
+After a successful release, update the model baseline with:
+
+```bash
+npm run update:model-catalog-pin -- --release X.Y.Z
+```
+
 ## All Packages
 
 | Package | Description |
