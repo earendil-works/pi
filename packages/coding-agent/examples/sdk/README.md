@@ -32,7 +32,6 @@ npx tsx examples/sdk/01-minimal.ts
 ## Quick Reference
 
 ```typescript
-import { getModel } from "@earendil-works/pi-ai";
 import {
   createAgentSession,
   DefaultResourceLoader,
@@ -47,7 +46,7 @@ const modelRuntime = await ModelRuntime.create();
 const { session } = await createAgentSession({ modelRuntime });
 
 // Custom model
-const model = getModel("anthropic", "claude-opus-4-5");
+const model = modelRuntime.getModel("anthropic", "claude-opus-4-5");
 const { session } = await createAgentSession({ model, thinkingLevel: "high", modelRuntime });
 
 // Modify prompt
