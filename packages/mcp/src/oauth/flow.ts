@@ -5,7 +5,7 @@
  */
 
 import type { AuthProvider, UnauthorizedContext } from "../auth-provider.ts";
-import type { McpFetch } from "../streamable-http.ts";
+import type { McpFetch } from "../transports/streamable-http.ts";
 import {
 	discoverAuthorizationServerMetadata,
 	discoverOAuthServerInfo,

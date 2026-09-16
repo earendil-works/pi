@@ -25,7 +25,7 @@ import {
 	SUPPORTED_PROTOCOL_VERSIONS,
 	type Tool,
 } from "./protocol/types.ts";
-import type { McpTransport } from "./transport.ts";
+import type { McpTransport } from "./transports/transport.ts";
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 const MAX_LIST_PAGES = 1_000;

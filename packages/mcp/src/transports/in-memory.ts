@@ -1,18 +1,10 @@
 import { type JsonRpcMessage, McpConnectionClosedError } from "../protocol/jsonrpc.ts";
-import type {
-	McpTransport,
-	McpTransportCloseListener,
-	McpTransportErrorListener,
-	McpTransportMessageListener,
-} from "../transport.ts";
+import { type McpTransport, TransportEvents } from "./transport.ts";
 
-export class InMemoryTransport implements McpTransport {
+export class InMemoryTransport extends TransportEvents implements McpTransport {
 	private peer: InMemoryTransport | undefined;
 	private started = false;
 	private closed = false;
-	private messageListeners = new Set<McpTransportMessageListener>();
-	private errorListeners = new Set<McpTransportErrorListener>();
-	private closeListeners = new Set<McpTransportCloseListener>();
 
 	connectPeer(peer: InMemoryTransport): void {
 		if (this.peer) throw new Error("In-memory MCP transport already has a peer");
@@ -39,38 +31,19 @@ export class InMemoryTransport implements McpTransport {
 		this.peer?.closeFromPeer();
 	}
 
-	onMessage(listener: McpTransportMessageListener): () => void {
-		this.messageListeners.add(listener);
-		return () => this.messageListeners.delete(listener);
-	}
-
-	onError(listener: McpTransportErrorListener): () => void {
-		this.errorListeners.add(listener);
-		return () => this.errorListeners.delete(listener);
-	}
-
-	onClose(listener: McpTransportCloseListener): () => void {
-		this.closeListeners.add(listener);
-		return () => this.closeListeners.delete(listener);
-	}
-
-	emitError(error: Error): void {
-		for (const listener of this.errorListeners) listener(error);
+	override emitError(error: Error): void {
+		super.emitError(error);
 	}
 
 	private deliver(message: JsonRpcMessage): void {
 		if (this.closed) return;
-		for (const listener of this.messageListeners) listener(message);
+		this.emitMessage(message);
 	}
 
 	private closeFromPeer(): void {
 		if (this.closed) return;
 		this.closed = true;
 		this.emitClose();
-	}
-
-	private emitClose(): void {
-		for (const listener of this.closeListeners) listener();
 	}
 }
 

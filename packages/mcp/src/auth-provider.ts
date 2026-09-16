@@ -1,4 +1,4 @@
-import type { McpFetch } from "./streamable-http.ts";
+import type { McpFetch } from "./transports/streamable-http.ts";
 
 export interface UnauthorizedContext {
 	response: Response;

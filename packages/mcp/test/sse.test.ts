@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { consumeSseStream, type SseEvent } from "../src/sse.ts";
+import { consumeSseStream, type SseEvent } from "../src/transports/streamable-http.ts";
 
 describe("consumeSseStream", () => {
 	it("parses chunked CRLF events, comments, IDs, and multiline data", async () => {

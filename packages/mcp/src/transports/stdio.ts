@@ -1,9 +1,8 @@
 import type { ChildProcess } from "node:child_process";
 import process from "node:process";
 import crossSpawn from "cross-spawn";
-import { type JsonRpcMessage, McpConnectionClosedError, parseJsonRpcMessage } from "./protocol/jsonrpc.ts";
-import type { McpTransport } from "./transport.ts";
-import { TransportEvents } from "./transport-events.ts";
+import { type JsonRpcMessage, McpConnectionClosedError, parseJsonRpcMessage } from "../protocol/jsonrpc.ts";
+import { type McpTransport, TransportEvents } from "./transport.ts";
 
 const DEFAULT_MAX_MESSAGE_BYTES = 16 * 1024 * 1024;
 const DEFAULT_MAX_STDERR_BYTES = 64 * 1024;

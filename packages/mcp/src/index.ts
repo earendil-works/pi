@@ -48,7 +48,7 @@ export {
 	type ToolAnnotations,
 	type ToolExecution,
 } from "./protocol/types.ts";
-export { StdioTransport, type StdioTransportOptions } from "./stdio.ts";
+export { StdioTransport, type StdioTransportOptions } from "./transports/stdio.ts";
 export {
 	McpAuthRequiredError,
 	type McpFetch,
@@ -56,10 +56,10 @@ export {
 	McpSessionExpiredError,
 	StreamableHttpTransport,
 	type StreamableHttpTransportOptions,
-} from "./streamable-http.ts";
+} from "./transports/streamable-http.ts";
 export type {
 	McpTransport,
 	McpTransportCloseListener,
 	McpTransportErrorListener,
 	McpTransportMessageListener,
-} from "./transport.ts";
+} from "./transports/transport.ts";

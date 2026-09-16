@@ -1,1 +1,1 @@
-export { createInMemoryTransportPair, InMemoryTransport } from "./in-memory-transport.ts";
+export { createInMemoryTransportPair, InMemoryTransport } from "../transports/in-memory.ts";

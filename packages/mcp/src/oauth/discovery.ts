@@ -5,7 +5,7 @@
  */
 
 import { LATEST_PROTOCOL_VERSION } from "../protocol/types.ts";
-import type { McpFetch } from "../streamable-http.ts";
+import type { McpFetch } from "../transports/streamable-http.ts";
 import { OAuthIssuerMismatchError } from "./errors.ts";
 import {
 	type AuthorizationServerMetadata,
