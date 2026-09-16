@@ -31,6 +31,7 @@ import type {
 import type { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { shortHash } from "../utils/hash.ts";
 import { parseStreamingJson } from "../utils/json-parse.ts";
+import { createPendingToolCall, type PendingToolCall } from "../utils/pending-tool-call.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import {
 	appendGrammarToolInputJsonDelta,
@@ -425,7 +426,7 @@ function appendCustomToolCallInput(block: StreamingToolCall, nextInput: string, 
 type ResponsesOutputSlot =
 	| { type: "thinking"; block: ThinkingContent; contentIndex: number }
 	| { type: "text"; block: TextContent; contentIndex: number }
-	| { type: "toolCall"; block: StreamingToolCall; contentIndex: number };
+	| { type: "toolCall"; block: StreamingToolCall; pending: PendingToolCall; contentIndex: number };
 
 type ToolCallOutputSlot = Extract<ResponsesOutputSlot, { type: "toolCall" }>;
 
@@ -483,18 +484,20 @@ export async function processResponsesStream<TApi extends Api>(
 			return slot;
 		}
 		if (item.type === "function_call") {
-			const block: StreamingToolCall = {
+			const pending = createPendingToolCall<StreamingToolCall>({
 				type: "toolCall",
 				id: `${item.call_id}|${item.id}`,
 				name: item.name,
 				arguments: {},
 				...(item.namespace !== undefined ? { namespace: item.namespace } : {}),
 				partialJson: item.arguments || "",
-			};
+			});
+			const block = pending.toolCall;
 			output.content.push(block);
 			const slot = {
 				type: "toolCall",
 				block,
+				pending,
 				contentIndex: output.content.length - 1,
 			} satisfies ResponsesOutputSlot;
 			outputSlots.set(outputIndex, slot);
@@ -504,7 +507,7 @@ export async function processResponsesStream<TApi extends Api>(
 		if (item.type === "custom_tool_call") {
 			const inputProperty = options?.grammarToolInputProperties?.get(item.name) ?? "input";
 			const input = item.input || "";
-			const block: StreamingToolCall = {
+			const pending = createPendingToolCall<StreamingToolCall>({
 				type: "toolCall",
 				id: `${item.call_id}|${item.id}`,
 				name: item.name,
@@ -514,11 +517,13 @@ export async function processResponsesStream<TApi extends Api>(
 					property: inputProperty,
 					jsonBuffer: { input: "", started: false, closed: false },
 				},
-			};
+			});
+			const block = pending.toolCall;
 			output.content.push(block);
 			const slot = {
 				type: "toolCall",
 				block,
+				pending,
 				contentIndex: output.content.length - 1,
 			} satisfies ResponsesOutputSlot;
 			outputSlots.set(outputIndex, slot);
@@ -595,168 +600,178 @@ export async function processResponsesStream<TApi extends Api>(
 		}
 	};
 
-	for await (const event of openaiStream) {
-		if (event.type === "response.created") {
-			output.responseId = event.response.id;
-		} else if (event.type === "response.output_item.added") {
-			createSlot(event.output_index, event.item);
-		} else if (event.type === "response.reasoning_summary_text.delta") {
-			const slot = getSlot(event.output_index, "thinking");
-			if (!slot) continue;
-			slot.block.thinking += event.delta;
-			stream.push({
-				type: "thinking_delta",
-				contentIndex: slot.contentIndex,
-				delta: event.delta,
-				partial: output,
-			});
-		} else if (event.type === "response.reasoning_summary_part.done") {
-			const slot = getSlot(event.output_index, "thinking");
-			if (!slot) continue;
-			slot.block.thinking += "\n\n";
-			stream.push({
-				type: "thinking_delta",
-				contentIndex: slot.contentIndex,
-				delta: "\n\n",
-				partial: output,
-			});
-		} else if (event.type === "response.reasoning_text.delta") {
-			const slot = getSlot(event.output_index, "thinking");
-			if (!slot) continue;
-			slot.block.thinking += event.delta;
-			stream.push({
-				type: "thinking_delta",
-				contentIndex: slot.contentIndex,
-				delta: event.delta,
-				partial: output,
-			});
-		} else if (event.type === "response.output_text.delta") {
-			const slot = getSlot(event.output_index, "text");
-			if (!slot) continue;
-			slot.block.text += event.delta;
-			stream.push({
-				type: "text_delta",
-				contentIndex: slot.contentIndex,
-				delta: event.delta,
-				partial: output,
-			});
-		} else if (event.type === "response.refusal.delta") {
-			const slot = getSlot(event.output_index, "text");
-			if (!slot) continue;
-			slot.block.text += event.delta;
-			stream.push({
-				type: "text_delta",
-				contentIndex: slot.contentIndex,
-				delta: event.delta,
-				partial: output,
-			});
-		} else if (event.type === "response.function_call_arguments.delta") {
-			const slot = getSlot(event.output_index, "toolCall");
-			if (!slot || slot.block.partialJson === undefined) continue;
-			slot.block.partialJson += event.delta;
-			slot.block.arguments = parseStreamingJson(slot.block.partialJson);
-			pushToolCallDelta(slot, event.delta);
-		} else if (event.type === "response.function_call_arguments.done") {
-			const slot = getSlot(event.output_index, "toolCall");
-			if (!slot || slot.block.partialJson === undefined) continue;
-			const previousPartialJson = slot.block.partialJson;
-			slot.block.partialJson = event.arguments;
-			slot.block.arguments = parseStreamingJson(slot.block.partialJson);
+	try {
+		for await (const event of openaiStream) {
+			if (event.type === "response.created") {
+				output.responseId = event.response.id;
+			} else if (event.type === "response.output_item.added") {
+				createSlot(event.output_index, event.item);
+			} else if (event.type === "response.reasoning_summary_text.delta") {
+				const slot = getSlot(event.output_index, "thinking");
+				if (!slot) continue;
+				slot.block.thinking += event.delta;
+				stream.push({
+					type: "thinking_delta",
+					contentIndex: slot.contentIndex,
+					delta: event.delta,
+					partial: output,
+				});
+			} else if (event.type === "response.reasoning_summary_part.done") {
+				const slot = getSlot(event.output_index, "thinking");
+				if (!slot) continue;
+				slot.block.thinking += "\n\n";
+				stream.push({
+					type: "thinking_delta",
+					contentIndex: slot.contentIndex,
+					delta: "\n\n",
+					partial: output,
+				});
+			} else if (event.type === "response.reasoning_text.delta") {
+				const slot = getSlot(event.output_index, "thinking");
+				if (!slot) continue;
+				slot.block.thinking += event.delta;
+				stream.push({
+					type: "thinking_delta",
+					contentIndex: slot.contentIndex,
+					delta: event.delta,
+					partial: output,
+				});
+			} else if (event.type === "response.output_text.delta") {
+				const slot = getSlot(event.output_index, "text");
+				if (!slot) continue;
+				slot.block.text += event.delta;
+				stream.push({
+					type: "text_delta",
+					contentIndex: slot.contentIndex,
+					delta: event.delta,
+					partial: output,
+				});
+			} else if (event.type === "response.refusal.delta") {
+				const slot = getSlot(event.output_index, "text");
+				if (!slot) continue;
+				slot.block.text += event.delta;
+				stream.push({
+					type: "text_delta",
+					contentIndex: slot.contentIndex,
+					delta: event.delta,
+					partial: output,
+				});
+			} else if (event.type === "response.function_call_arguments.delta") {
+				const slot = getSlot(event.output_index, "toolCall");
+				if (!slot || slot.block.partialJson === undefined) continue;
+				slot.block.partialJson += event.delta;
+				slot.pending.setJson(slot.block.partialJson);
+				pushToolCallDelta(slot, event.delta);
+			} else if (event.type === "response.function_call_arguments.done") {
+				const slot = getSlot(event.output_index, "toolCall");
+				if (!slot || slot.block.partialJson === undefined) continue;
+				const previousPartialJson = slot.block.partialJson;
+				slot.block.partialJson = event.arguments;
+				slot.block.arguments = parseStreamingJson(slot.block.partialJson);
 
-			if (event.arguments.startsWith(previousPartialJson)) {
-				const delta = event.arguments.slice(previousPartialJson.length);
-				if (delta.length > 0) pushToolCallDelta(slot, delta);
-			}
-		} else if (event.type === "response.custom_tool_call_input.delta") {
-			const slot = getSlot(event.output_index, "toolCall");
-			if (!slot || !slot.block.customInput) continue;
-			pushToolCallDelta(
-				slot,
-				appendCustomToolCallInput(slot.block, getCustomToolCallInput(slot.block) + event.delta, false),
-			);
-		} else if (event.type === "response.custom_tool_call_input.done") {
-			const slot = getSlot(event.output_index, "toolCall");
-			if (!slot || !slot.block.customInput) continue;
-			pushToolCallDelta(slot, appendCustomToolCallInput(slot.block, event.input, true));
-		} else if (event.type === "response.output_item.done") {
-			const item = event.item;
-			applyMessagePhaseStopReason(item);
-			const slot = getOrCreateSlot(event.output_index, item);
-
-			if (item.type === "reasoning" && slot?.type === "thinking") {
-				const summaryText = item.summary?.map((s) => s.text).join("\n\n") || "";
-				const contentText = item.content?.map((c) => c.text).join("\n\n") || "";
-				slot.block.thinking = summaryText || contentText || slot.block.thinking;
-				slot.block.thinkingSignature = JSON.stringify(item);
-				reasoningBlocksById.set(item.id, slot.block);
-				stream.push({
-					type: "thinking_end",
-					contentIndex: slot.contentIndex,
-					content: slot.block.thinking,
-					partial: output,
-				});
-				outputSlots.delete(event.output_index);
-			} else if (item.type === "message" && slot?.type === "text") {
-				slot.block.text = item.content?.map((c) => (c.type === "output_text" ? c.text : c.refusal)).join("") || "";
-				slot.block.textSignature = encodeTextSignatureV1(item.id, item.phase ?? undefined);
-				stream.push({
-					type: "text_end",
-					contentIndex: slot.contentIndex,
-					content: slot.block.text,
-					partial: output,
-				});
-				outputSlots.delete(event.output_index);
-			} else if (
-				item.type === "function_call" &&
-				slot?.type === "toolCall" &&
-				slot.block.partialJson !== undefined
-			) {
-				slot.block.arguments = parseStreamingJson(item.arguments || slot.block.partialJson || "{}");
-				if (item.namespace !== undefined) slot.block.namespace = item.namespace;
-				// Finalize in-place and strip the scratch buffer so replay only
-				// carries parsed arguments.
-				delete slot.block.partialJson;
-				stream.push({
-					type: "toolcall_end",
-					contentIndex: slot.contentIndex,
-					toolCall: slot.block,
-					partial: output,
-				});
-				outputSlots.delete(event.output_index);
-			} else if (item.type === "custom_tool_call" && slot?.type === "toolCall" && slot.block.customInput) {
+				if (event.arguments.startsWith(previousPartialJson)) {
+					const delta = event.arguments.slice(previousPartialJson.length);
+					if (delta.length > 0) pushToolCallDelta(slot, delta);
+				}
+			} else if (event.type === "response.custom_tool_call_input.delta") {
+				const slot = getSlot(event.output_index, "toolCall");
+				if (!slot || !slot.block.customInput) continue;
 				pushToolCallDelta(
 					slot,
-					appendCustomToolCallInput(slot.block, item.input ?? getCustomToolCallInput(slot.block), true),
+					appendCustomToolCallInput(slot.block, getCustomToolCallInput(slot.block) + event.delta, false),
 				);
-				if (item.namespace !== undefined) slot.block.namespace = item.namespace;
-				delete slot.block.customInput;
-				stream.push({
-					type: "toolcall_end",
-					contentIndex: slot.contentIndex,
-					toolCall: slot.block,
-					partial: output,
-				});
-				outputSlots.delete(event.output_index);
+			} else if (event.type === "response.custom_tool_call_input.done") {
+				const slot = getSlot(event.output_index, "toolCall");
+				if (!slot || !slot.block.customInput) continue;
+				pushToolCallDelta(slot, appendCustomToolCallInput(slot.block, event.input, true));
+			} else if (event.type === "response.output_item.done") {
+				const item = event.item;
+				applyMessagePhaseStopReason(item);
+				const slot = getOrCreateSlot(event.output_index, item);
+
+				if (item.type === "reasoning" && slot?.type === "thinking") {
+					const summaryText = item.summary?.map((s) => s.text).join("\n\n") || "";
+					const contentText = item.content?.map((c) => c.text).join("\n\n") || "";
+					slot.block.thinking = summaryText || contentText || slot.block.thinking;
+					slot.block.thinkingSignature = JSON.stringify(item);
+					reasoningBlocksById.set(item.id, slot.block);
+					stream.push({
+						type: "thinking_end",
+						contentIndex: slot.contentIndex,
+						content: slot.block.thinking,
+						partial: output,
+					});
+					outputSlots.delete(event.output_index);
+				} else if (item.type === "message" && slot?.type === "text") {
+					slot.block.text =
+						item.content?.map((c) => (c.type === "output_text" ? c.text : c.refusal)).join("") || "";
+					slot.block.textSignature = encodeTextSignatureV1(item.id, item.phase ?? undefined);
+					stream.push({
+						type: "text_end",
+						contentIndex: slot.contentIndex,
+						content: slot.block.text,
+						partial: output,
+					});
+					outputSlots.delete(event.output_index);
+				} else if (
+					item.type === "function_call" &&
+					slot?.type === "toolCall" &&
+					slot.block.partialJson !== undefined
+				) {
+					slot.block.arguments = parseStreamingJson(item.arguments || slot.block.partialJson || "{}");
+					if (item.namespace !== undefined) slot.block.namespace = item.namespace;
+					// Finalize in-place and strip the scratch buffer so replay only
+					// carries parsed arguments.
+					delete slot.block.partialJson;
+					slot.pending.finish();
+					stream.push({
+						type: "toolcall_end",
+						contentIndex: slot.contentIndex,
+						toolCall: slot.block,
+						partial: output,
+					});
+					outputSlots.delete(event.output_index);
+				} else if (item.type === "custom_tool_call" && slot?.type === "toolCall" && slot.block.customInput) {
+					pushToolCallDelta(
+						slot,
+						appendCustomToolCallInput(slot.block, item.input ?? getCustomToolCallInput(slot.block), true),
+					);
+					if (item.namespace !== undefined) slot.block.namespace = item.namespace;
+					delete slot.block.customInput;
+					slot.pending.finish();
+					stream.push({
+						type: "toolcall_end",
+						contentIndex: slot.contentIndex,
+						toolCall: slot.block,
+						partial: output,
+					});
+					outputSlots.delete(event.output_index);
+				}
+			} else if (event.type === "response.completed" || event.type === "response.incomplete") {
+				finalizeResponse(event.response);
+			} else if (event.type === "error") {
+				throw new Error(`Error Code ${event.code}: ${event.message}` || "Unknown error");
+			} else if (event.type === "response.failed") {
+				sawTerminalResponseEvent = true;
+				output.rawStopReason = event.response?.status;
+				const error = event.response?.error;
+				const details = event.response?.incomplete_details;
+				const msg = error
+					? `${error.code || "unknown"}: ${error.message || "no message"}`
+					: details?.reason
+						? `incomplete: ${details.reason}`
+						: "Unknown error (no error details in response)";
+				throw new Error(msg);
 			}
-		} else if (event.type === "response.completed" || event.type === "response.incomplete") {
-			finalizeResponse(event.response);
-		} else if (event.type === "error") {
-			throw new Error(`Error Code ${event.code}: ${event.message}` || "Unknown error");
-		} else if (event.type === "response.failed") {
-			sawTerminalResponseEvent = true;
-			output.rawStopReason = event.response?.status;
-			const error = event.response?.error;
-			const details = event.response?.incomplete_details;
-			const msg = error
-				? `${error.code || "unknown"}: ${error.message || "no message"}`
-				: details?.reason
-					? `incomplete: ${details.reason}`
-					: "Unknown error (no error details in response)";
-			throw new Error(msg);
 		}
-	}
-	if (!sawTerminalResponseEvent) {
-		throw new Error("OpenAI Responses stream ended before a terminal response event");
+		if (!sawTerminalResponseEvent) {
+			throw new Error("OpenAI Responses stream ended before a terminal response event");
+		}
+	} finally {
+		// Covers normal completion and errors from every Responses transport.
+		for (const slot of outputSlots.values()) {
+			if (slot.type === "toolCall") slot.pending.finish();
+		}
 	}
 }
 

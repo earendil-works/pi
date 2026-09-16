@@ -574,7 +574,9 @@ context.messages.push({
 
 ### Streaming Tool Calls with Partial JSON
 
-During streaming, tool call arguments are progressively parsed as they arrive. This enables real-time UI updates before the complete arguments are available:
+During streaming, tool call arguments are parsed on demand when `arguments` is read, and cached until the next argument delta. This enables real-time UI updates before the complete arguments are available without reparsing growing JSON for delta-only consumers. Read partial arguments only when needed; reading them after every delta still reparses each growing prefix. Terminal messages materialize any unread arguments, including on errors and aborts.
+
+For example:
 
 ```typescript
 const s = models.stream(model, context);

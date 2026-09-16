@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
  * OpenAI models served through Bedrock Converse (e.g. `global.openai.gpt-5.6-terra`)
@@ -125,6 +125,40 @@ async function capturePayload(context: Context): Promise<BedrockRequestPayload> 
 	}
 	return capturedPayload;
 }
+
+// #9265: include the Converse adapter and its interrupted-block cleanup path.
+describe("Bedrock lazy tool arguments", () => {
+	afterEach(() => vi.restoreAllMocks());
+
+	it.each([true, false])("defers argument parsing and settles unread arguments (complete: %s)", async (complete) => {
+		const content = "a".repeat(32 * 512);
+		const deltas = ['{"content":"', ...Array<string>(32).fill("a".repeat(512))];
+		if (complete) deltas.push('"}');
+		bedrockMock.streamEvents = [
+			{ messageStart: { role: "assistant" } },
+			{ contentBlockStart: { contentBlockIndex: 0, start: { toolUse: { toolUseId: "call_test", name: "write" } } } },
+			...deltas.map((delta) => ({
+				contentBlockDelta: { contentBlockIndex: 0, delta: { toolUse: { input: delta } } },
+			})),
+			...(complete
+				? [{ contentBlockStop: { contentBlockIndex: 0 } }, { messageStop: { stopReason: "tool_use" } }]
+				: []),
+		];
+		const parse = vi.spyOn(JSON, "parse");
+		const result = await streamBedrock(gptModel, { messages: [] }).result();
+		expect(result.stopReason, result.errorMessage).toBe(complete ? "toolUse" : "error");
+		if (complete) {
+			expect(parse.mock.calls.filter(([text]) => text.startsWith('{"content":')).map(([text]) => text)).toEqual([
+				deltas.join(""),
+			]);
+		}
+		expect(Object.getOwnPropertyDescriptor(result.content[0], "arguments")).toMatchObject({
+			value: { content },
+			writable: true,
+		});
+		expect(result.content[0]).not.toHaveProperty("partialJson");
+	});
+});
 
 describe("Bedrock redacted reasoning", () => {
 	beforeEach(() => {

@@ -17,6 +17,7 @@ import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { shortHash } from "../utils/hash.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { parseStreamingJson } from "../utils/json-parse.ts";
+import { createPendingToolCall, type PendingToolCall } from "../utils/pending-tool-call.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import { getJsonSchemaToolParameters, resolveJsonSchemaStrictSampling } from "./constrained-sampling.ts";
@@ -128,6 +129,7 @@ export const stream: StreamFunction<"mistral-conversations", MistralOptions> = (
 
 	(async () => {
 		const output = createOutput(model);
+		const pendingCalls = new Map<ToolCall, PendingToolCall>();
 
 		try {
 			const apiKey = options?.apiKey;
@@ -145,7 +147,7 @@ export const stream: StreamFunction<"mistral-conversations", MistralOptions> = (
 			}
 			const mistralStream = await requestMistralStream(model, payload, apiKey, options);
 			stream.push({ type: "start", partial: output });
-			await consumeChatStream(model, output, stream, mistralStream);
+			await consumeChatStream(model, output, stream, mistralStream, pendingCalls);
 
 			if (options?.signal?.aborted) {
 				throw new Error("Request was aborted");
@@ -161,6 +163,8 @@ export const stream: StreamFunction<"mistral-conversations", MistralOptions> = (
 			stream.push({ type: "done", reason: output.stopReason, message: output });
 			stream.end();
 		} catch (error) {
+			for (const pending of pendingCalls.values()) pending.finish();
+			pendingCalls.clear();
 			for (const block of output.content) {
 				// partialArgs is only a streaming scratch buffer; never persist it.
 				delete (block as { partialArgs?: string }).partialArgs;
@@ -560,6 +564,7 @@ async function consumeChatStream(
 	output: AssistantMessage,
 	stream: AssistantMessageEventStream,
 	mistralStream: AsyncIterable<MistralCompletionEvent>,
+	pendingCalls: Map<ToolCall, PendingToolCall>,
 ): Promise<void> {
 	let currentBlock: TextContent | ThinkingContent | null = null;
 	const blocks = output.content;
@@ -705,13 +710,15 @@ async function consumeChatStream(
 			}
 
 			if (!block) {
-				block = {
+				const pending = createPendingToolCall({
 					type: "toolCall",
 					id: callId,
 					name: toolCall.function.name,
 					arguments: {},
 					partialArgs: "",
-				};
+				});
+				block = pending.toolCall;
+				pendingCalls.set(block, pending);
 				output.content.push(block);
 				toolBlocksByKey.set(key, output.content.length - 1);
 				stream.push({ type: "toolcall_start", contentIndex: output.content.length - 1, partial: output });
@@ -722,7 +729,7 @@ async function consumeChatStream(
 					? toolCall.function.arguments
 					: JSON.stringify(toolCall.function.arguments || {});
 			block.partialArgs = (block.partialArgs || "") + argsDelta;
-			block.arguments = parseStreamingJson<Record<string, unknown>>(block.partialArgs);
+			pendingCalls.get(block)!.setJson(block.partialArgs);
 			stream.push({
 				type: "toolcall_delta",
 				contentIndex: toolBlocksByKey.get(key)!,
@@ -738,6 +745,8 @@ async function consumeChatStream(
 		if (block.type !== "toolCall") continue;
 		const toolBlock = block as ToolCall & { partialArgs?: string };
 		toolBlock.arguments = parseStreamingJson<Record<string, unknown>>(toolBlock.partialArgs);
+		pendingCalls.get(block)!.finish();
+		pendingCalls.delete(block);
 		// Finalize in-place and strip the scratch buffer so replay only
 		// carries parsed arguments.
 		delete toolBlock.partialArgs;

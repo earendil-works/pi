@@ -25,7 +25,7 @@ import type {
 import { appendAssistantMessageDiagnostic, createAssistantMessageDiagnostic } from "../utils/diagnostics.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord, providerHeadersToRecord } from "../utils/headers.ts";
-import { parseStreamingJson } from "../utils/json-parse.ts";
+import { createPendingToolCall, type PendingToolCall } from "../utils/pending-tool-call.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 
 export interface PiMessagesOptions extends StreamOptions {
@@ -175,7 +175,7 @@ function appendRewriteDiagnostic(message: AssistantMessage, rewrite: PiMessagesR
 	});
 }
 
-function createEventConverter(model: Model<"pi-messages">) {
+function createEventConverter(model: Model<"pi-messages">, pendingCalls: Map<ToolCall, PendingToolCall>) {
 	const partial: AssistantMessage = {
 		role: "assistant",
 		content: [],
@@ -240,31 +240,37 @@ function createEventConverter(model: Model<"pi-messages">) {
 					redacted: event.redacted,
 				});
 				break;
-			case "toolcall_start":
-				partial.content[event.contentIndex] = {
+			case "toolcall_start": {
+				const pending = createPendingToolCall({
 					type: "toolCall",
 					id: event.id,
 					name: event.toolName,
 					arguments: {},
-				};
+				});
+				partial.content[event.contentIndex] = pending.toolCall;
+				pendingCalls.set(pending.toolCall, pending);
 				toolJson.set(event.contentIndex, "");
 				break;
+			}
 			case "toolcall_delta": {
 				const json = `${toolJson.get(event.contentIndex) ?? ""}${event.delta}`;
 				toolJson.set(event.contentIndex, json);
-				(partial.content[event.contentIndex] as ToolCall).arguments =
-					parseStreamingJson<ToolCall["arguments"]>(json);
+				pendingCalls.get(partial.content[event.contentIndex] as ToolCall)!.setJson(json);
 				break;
 			}
-			case "toolcall_end":
-				Object.assign(partial.content[event.contentIndex]!, event.toolCall);
+			case "toolcall_end": {
+				const block = partial.content[event.contentIndex] as ToolCall;
+				Object.assign(block, event.toolCall);
+				pendingCalls.get(block)!.finish();
+				pendingCalls.delete(block);
 				toolJson.delete(event.contentIndex);
 				return {
 					type: "toolcall_end",
 					contentIndex: event.contentIndex,
-					toolCall: partial.content[event.contentIndex] as ToolCall,
+					toolCall: block,
 					partial,
 				};
+			}
 		}
 
 		return { ...event, partial } as AssistantMessageEvent;
@@ -356,7 +362,12 @@ export const stream: StreamFunction<"pi-messages", PiMessagesOptions> = (
 	options?: PiMessagesOptions,
 ): AssistantMessageEventStream => {
 	const eventStream = new AssistantMessageEventStream();
-	const convertEvent = createEventConverter(model);
+	const pendingCalls = new Map<ToolCall, PendingToolCall>();
+	const convertEvent = createEventConverter(model, pendingCalls);
+	const finishPendingCalls = () => {
+		for (const pending of pendingCalls.values()) pending.finish();
+		pendingCalls.clear();
+	};
 
 	void (async () => {
 		try {
@@ -411,6 +422,7 @@ export const stream: StreamFunction<"pi-messages", PiMessagesOptions> = (
 
 			for await (const piEvent of readPiMessagesEvents(response.body)) {
 				const event = convertEvent(piEvent);
+				if (event.type === "done" || event.type === "error") finishPendingCalls();
 				eventStream.push(event);
 				if (event.type === "done" || event.type === "error") {
 					return;
@@ -419,6 +431,7 @@ export const stream: StreamFunction<"pi-messages", PiMessagesOptions> = (
 
 			throw new Error(`${model.provider} stream ended without a terminal event`);
 		} catch (error) {
+			finishPendingCalls();
 			eventStream.push(createErrorEvent(model, error, options?.signal?.aborted ?? false));
 		}
 	})();
