@@ -2,9 +2,11 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Container, type Terminal, Text, type TUI, TuiMainScreen } from "@earendil-works/pi-tui";
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
-import { createEditToolDefinition } from "../src/core/tools/edit.ts";
-import { computeEditsDiff, type Edit } from "../src/core/tools/edit-diff.ts";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import type { ToolDefinition } from "../src/core/extensions/types.ts";
+import { createEditToolDefinition, type EditOperations } from "../src/core/tools/edit.ts";
+import * as editDiff from "../src/core/tools/edit-diff.ts";
+import { withBuiltInRenderers } from "../src/core/tools/renderers/index.ts";
 import { ToolExecutionComponent } from "../src/modes/interactive/components/tool-execution.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
 
@@ -57,7 +59,7 @@ async function waitForRenderedText(
 	throw new Error(`Timed out waiting for render to include "${expectedText}". Last render:\n${lastRender}`);
 }
 
-function createLargeEdits(lines: string[]): Edit[] {
+function createLargeEdits(lines: string[]): editDiff.Edit[] {
 	const targets = [50, 150, 250, 350, 450, 550, 650, 750, 850, 950];
 	return targets.map((lineNumber) => ({
 		oldText: `${lines[lineNumber - 1]}\n${lines[lineNumber]}\n${lines[lineNumber + 1]}`,
@@ -73,6 +75,7 @@ describe("edit tool TUI rendering", () => {
 	});
 
 	afterEach(async () => {
+		vi.restoreAllMocks();
 		await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 	});
 
@@ -88,7 +91,7 @@ describe("edit tool TUI rendering", () => {
 		);
 		const lines = (await readFile(filePath, "utf8")).trimEnd().split("\n");
 		const edits = createLargeEdits(lines);
-		const diff = await computeEditsDiff(filePath, edits, process.cwd());
+		const diff = await editDiff.computeEditsDiff(filePath, edits, process.cwd());
 		if ("error" in diff) {
 			throw new Error(diff.error);
 		}
@@ -161,7 +164,7 @@ describe("edit tool TUI rendering", () => {
 		);
 		const lines = (await readFile(filePath, "utf8")).trimEnd().split("\n");
 		const edits = createLargeEdits(lines).slice(0, 2);
-		const diff = await computeEditsDiff(filePath, edits, process.cwd());
+		const diff = await editDiff.computeEditsDiff(filePath, edits, process.cwd());
 		if ("error" in diff) {
 			throw new Error(diff.error);
 		}
@@ -196,6 +199,146 @@ describe("edit tool TUI rendering", () => {
 		const rendered = component.render(80).join("\n");
 		expect(rendered).toContain("line 50 changed");
 		expect(rendered).toContain("line 150 changed");
+	});
+
+	it("uses injected edit operations for the call preview", async () => {
+		const filePath = "/remote/workspace/file.txt";
+		const accessedPaths: string[] = [];
+		const readPaths: string[] = [];
+		const operations: EditOperations = {
+			access: async (path) => {
+				accessedPaths.push(path);
+			},
+			readFile: async (path) => {
+				readPaths.push(path);
+				return Buffer.from("before\n");
+			},
+			writeFile: async () => {},
+		};
+		const component = new ToolExecutionComponent(
+			"edit",
+			"tool-call-remote-preview",
+			{ path: filePath, edits: [{ oldText: "before", newText: "after" }] },
+			{},
+			createEditToolDefinition(process.cwd(), { operations }),
+			{ requestRender: () => {} } as unknown as TUI,
+			process.cwd(),
+		);
+		component.setArgsComplete();
+		await vi.waitFor(() => expect(component.render(80).join("\n")).toContain("after"));
+
+		expect(accessedPaths).toEqual([]);
+		expect(readPaths).toEqual([filePath]);
+		expect(component.render(80).join("\n")).not.toContain("Could not edit file");
+	});
+
+	it.each([
+		{ customResult: false, isError: false },
+		{ customResult: false, isError: true },
+		{ customResult: true, isError: false },
+		{ customResult: true, isError: true },
+	])(
+		"ignores late previews after settlement (customResult=$customResult, isError=$isError)",
+		async ({ customResult, isError }) => {
+			const filePath = "/remote/workspace/slow.txt";
+			let resolveRead!: (content: Buffer) => void;
+			const pendingRead = new Promise<Buffer>((resolve) => {
+				resolveRead = resolve;
+			});
+			const readFile = vi.fn(() => pendingRead);
+			const operations: EditOperations = {
+				access: async () => {},
+				readFile,
+				writeFile: async () => {},
+			};
+			const definition = createEditToolDefinition(process.cwd(), { operations });
+			if (customResult) definition.renderResult = () => new Text("Custom result", 0, 0);
+			const component = new ToolExecutionComponent(
+				"edit",
+				"tool-call-late-preview",
+				{ path: filePath, edits: [{ oldText: "before", newText: "after" }] },
+				{},
+				definition,
+				{ requestRender: () => {} } as unknown as TUI,
+				process.cwd(),
+			);
+			component.setArgsComplete();
+			expect(readFile).toHaveBeenCalledOnce();
+			component.updateResult(
+				{
+					content: [{ type: "text", text: isError ? "Operation aborted" : "Successfully replaced 1 block." }],
+					details: isError
+						? undefined
+						: { ...editDiff.generateDiffString("settled before\n", "settled after\n"), patch: "" },
+					isError,
+				},
+				false,
+			);
+			component.setExpanded(true);
+			component.setExpanded(false);
+			resolveRead(Buffer.from("preview-only context\nbefore\n"));
+			await waitForRender();
+
+			const rendered = component.render(80).join("\n");
+			expect(readFile).toHaveBeenCalledOnce();
+			expect(rendered).toContain(customResult ? "Custom result" : isError ? "Operation aborted" : "settled after");
+			expect(rendered).not.toContain("preview-only context");
+		},
+	);
+
+	it("does not start a preview for a settled row with a custom result renderer", () => {
+		const readFile = vi.fn(async () => Buffer.from("before\n"));
+		const definition = createEditToolDefinition(process.cwd(), {
+			operations: { readFile, access: async () => {}, writeFile: async () => {} },
+		});
+		definition.renderResult = () => new Text("Custom result", 0, 0);
+		const component = new ToolExecutionComponent(
+			"edit",
+			"tool-call-already-settled",
+			{ path: "file.txt", edits: [{ oldText: "before", newText: "after" }] },
+			{},
+			definition,
+			{ requestRender: () => {} } as unknown as TUI,
+			process.cwd(),
+		);
+		component.updateResult({ content: [], isError: true });
+		component.setArgsComplete();
+		component.setExpanded(true);
+		expect(readFile).not.toHaveBeenCalled();
+		expect(component.render(80).join("\n")).toContain("Custom result");
+	});
+
+	it("does not read files when an edit definition opts out of call previews", () => {
+		const preview = vi.spyOn(editDiff, "computeEditsDiff");
+		const readFile = vi.fn(async () => Buffer.from("before\n"));
+		const definition = createEditToolDefinition(process.cwd(), {
+			operations: { readFile, access: async () => {}, writeFile: async () => {} },
+		});
+		const filePath = "/remote-only/missing.txt";
+		const component = new ToolExecutionComponent(
+			"edit",
+			"tool-call-renderer-only",
+			{ path: filePath, edits: [{ oldText: "before", newText: "after" }] },
+			{},
+			withBuiltInRenderers("edit", { ...definition, renderCall: undefined } as ToolDefinition),
+			{ requestRender: () => {} } as unknown as TUI,
+			process.cwd(),
+		);
+
+		component.setArgsComplete();
+		expect(preview).not.toHaveBeenCalled();
+		expect(readFile).not.toHaveBeenCalled();
+
+		const diff = editDiff.generateDiffString("before\n", "after\n");
+		component.updateResult({
+			content: [{ type: "text", text: "Successfully replaced 1 block." }],
+			details: { ...diff, patch: "" },
+			isError: false,
+		});
+		component.setExpanded(true);
+		expect(component.render(80).join("\n")).toContain("after");
+		expect(preview).not.toHaveBeenCalled();
+		expect(readFile).not.toHaveBeenCalled();
 	});
 
 	it("shows a preflight error without rendering a diff when the edits do not apply", async () => {

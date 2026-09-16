@@ -2121,7 +2121,12 @@ Built-in tool implementations:
 Built-in tools support pluggable operations for delegating to remote systems (SSH, containers, etc.):
 
 ```typescript
-import { createReadTool, createBashTool, type ReadOperations } from "@earendil-works/pi-coding-agent";
+import {
+  createBashTool,
+  createEditToolDefinition,
+  createReadTool,
+  type ReadOperations,
+} from "@earendil-works/pi-coding-agent";
 
 // Create tool with custom operations
 const remoteRead = createReadTool(cwd, {
@@ -2146,6 +2151,19 @@ pi.registerTool({
 ```
 
 **Operations interfaces:** `ReadOperations`, `WriteOperations`, `EditOperations`, `BashOperations`, `PowerShellOperations`, `LsOperations`, `GrepOperations`, `FindOperations`
+
+To retain pre-execution diffs for remote edits, use a `ToolDefinition` whose renderer reads through the same operations used for execution:
+
+```typescript
+const remoteEdit = createEditToolDefinition(cwd, { operations: remoteEditOperations });
+pi.registerTool(remoteEdit);
+```
+
+Preview reads are speculative: `readFile` may run before `access`, `execute`, and `tool_call` permission hooks, including for calls that are later blocked. It must be safe to call independently and concurrently with execution. Preview reads receive no abort signal and may outlive a cancelled call; late previews cannot replace a settled result. Previews do not invoke `access` or `writeFile`, and execution does not wait for them.
+
+`createEditTool()` returns an agent-runtime tool without renderer metadata. Registering that tool remains valid and opts out of pre-execution previews: renderer-only fallbacks perform no filesystem reads and display the authoritative result diff instead. When wrapping a definition, set `renderCall: undefined` to opt out while retaining its other metadata and result renderer. Use this when reads must wait for authorization or depend on execution-time setup.
+
+When selecting local or remote execution dynamically, delegate `renderCall` and `execute` to definitions backed by the corresponding operations. Keep their cwd resolution consistent with the operations' path mapping; the render context and execution context may have a different cwd from `process.cwd()`. See [examples/extensions/ssh.ts](../examples/extensions/ssh.ts) and [examples/extensions/gondolin/index.ts](../examples/extensions/gondolin/index.ts).
 
 For `user_bash`, extensions can reuse pi's local shell backend via `createLocalBashOperations()` instead of reimplementing local process spawning, shell resolution, and process-tree termination.
 
