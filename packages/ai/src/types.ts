@@ -582,6 +582,8 @@ export interface OpenAICompletionsCompat {
 	requiresToolResultName?: boolean;
 	/** Whether a user message after tool results requires an assistant message in between. Default: auto-detected from URL. */
 	requiresAssistantAfterToolResult?: boolean;
+	/** Whether replayed assistant messages with no text (e.g. tool-call-only messages) must send `""` instead of `null` content. Default: false. */
+	requiresNonNullAssistantContent?: boolean;
 	/** Whether thinking blocks must be converted to text blocks with <thinking> delimiters. Default: auto-detected from URL. */
 	requiresThinkingAsText?: boolean;
 	/** Whether all replayed assistant messages must include an empty reasoning_content field when reasoning is enabled. Default: auto-detected from URL. */

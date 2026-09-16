@@ -1329,6 +1329,7 @@ describe("openai-completions tool_choice", () => {
 				maxTokensField: "max_completion_tokens",
 				requiresToolResultName: false,
 				requiresAssistantAfterToolResult: false,
+				requiresNonNullAssistantContent: false,
 				requiresThinkingAsText: false,
 				requiresReasoningContentOnAssistantMessages: false,
 				thinkingFormat: "openai",
