@@ -909,6 +909,8 @@ pi.on("user_bash", (event, ctx) => {
 });
 ```
 
+Returning `undefined` allows normal local execution. If a handler throws, the command is not executed; catch the error and return `undefined` only when local fallback is intentional.
+
 ### Input Events
 
 #### input

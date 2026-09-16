@@ -617,6 +617,28 @@ describe("ExtensionRunner", () => {
 			expect(errors[0].error).toContain("Handler error!");
 			expect(errors[0].event).toBe("context");
 		});
+
+		// Regression test for #9068.
+		it("fails closed when a user_bash handler throws", async () => {
+			const extCode = `
+				export default function(pi) {
+					pi.on("user_bash", async () => {
+						throw new Error("Routing failed");
+					});
+				}
+			`;
+			fs.writeFileSync(path.join(extensionsDir, "throws.ts"), extCode);
+
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			const errors: Array<{ event: string; error: string }> = [];
+			runner.onError((error) => errors.push(error));
+
+			await expect(
+				runner.emitUserBash({ type: "user_bash", command: "pwd", excludeFromContext: false, cwd: tempDir }),
+			).rejects.toThrow("Routing failed");
+			expect(errors).toMatchObject([{ event: "user_bash", error: "Routing failed" }]);
+		});
 	});
 
 	describe("message and entry renderers", () => {

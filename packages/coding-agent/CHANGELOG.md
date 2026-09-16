@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- `user_bash` handler errors now fail `!`, `!!`, and RPC `bash` commands instead of falling back to local execution, preventing unintended host execution when remote or sandbox routing fails. Extensions that intentionally allow local fallback must catch errors and return `undefined` ([#9068](https://github.com/earendil-works/pi/issues/9068)).
+
 ### Added
 
 - Added `ctx.modelRegistry.stream()` and `streamSimple()` for extension model calls through configured providers with resolved authentication ([#8964](https://github.com/earendil-works/pi/issues/8964)).
