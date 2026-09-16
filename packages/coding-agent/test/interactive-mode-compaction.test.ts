@@ -233,7 +233,10 @@ describe("InteractiveMode compaction events", () => {
 			compactionQueuedMessages: [{ text: "change direction", mode: "steer" as const }],
 			session: {
 				clearQueue: vi.fn(),
-				prompt: vi.fn().mockResolvedValue(undefined),
+				prompt: vi.fn((_text: string, options?: { preflightResult?: (success: boolean) => void }) => {
+					options?.preflightResult?.(true);
+					return Promise.resolve();
+				}),
 				steer: vi.fn().mockResolvedValue(undefined),
 				followUp: vi.fn().mockResolvedValue(undefined),
 			},
@@ -249,8 +252,179 @@ describe("InteractiveMode compaction events", () => {
 
 		await flushCompactionQueue.call(fakeThis, { willRetry: false });
 
-		expect(fakeThis.session.prompt).toHaveBeenCalledWith("change direction", { streamingBehavior: "steer" });
+		expect(fakeThis.session.prompt).toHaveBeenCalledWith(
+			"change direction",
+			expect.objectContaining({ streamingBehavior: "steer" }),
+		);
 		expect(fakeThis.compactionQueuedMessages).toEqual([]);
 		expect(fakeThis.showError).not.toHaveBeenCalled();
+	});
+
+	// Regressions for https://github.com/earendil-works/pi/issues/5886: flushCompactionQueue's
+	// rollback used to wait for the whole agent-run lifecycle (not just preflight acceptance)
+	// and restored the entire pre-flush snapshot via session.clearQueue(), which could replay an
+	// already-persisted first prompt and destroy unrelated messages queued in the meantime.
+	describe("flushCompactionQueue rollback (#5886)", () => {
+		test("does not restore an accepted first prompt when its lifecycle rejects later", async () => {
+			let rejectFirstPromptRun!: (error: unknown) => void;
+			const fakeThis = {
+				compactionQueuedMessages: [
+					{ text: "A", mode: "steer" as const },
+					{ text: "B", mode: "followUp" as const },
+				],
+				session: {
+					clearQueue: vi.fn(),
+					prompt: vi.fn((_text: string, options?: { preflightResult?: (success: boolean) => void }) => {
+						// Accept synchronously, then leave the run's own promise pending so its
+						// eventual rejection arrives long after acceptance and after the remainder
+						// has already been queued.
+						options?.preflightResult?.(true);
+						return new Promise<void>((_resolve, reject) => {
+							rejectFirstPromptRun = reject;
+						});
+					}),
+					steer: vi.fn().mockResolvedValue(undefined),
+					followUp: vi.fn().mockResolvedValue(undefined),
+				},
+				isExtensionCommand: vi.fn().mockReturnValue(false),
+				updatePendingMessagesDisplay: vi.fn(),
+				showError: vi.fn(),
+			};
+
+			const flushCompactionQueue = Reflect.get(InteractiveMode.prototype, "flushCompactionQueue") as (
+				this: typeof fakeThis,
+				options?: { willRetry?: boolean },
+			) => Promise<void>;
+
+			await flushCompactionQueue.call(fakeThis, {});
+
+			// The remainder (B) is dispatched without waiting for A's whole run to settle.
+			expect(fakeThis.session.followUp).toHaveBeenCalledWith("B");
+			expect(fakeThis.compactionQueuedMessages).toEqual([]);
+
+			// A's underlying agent run rejects much later.
+			rejectFirstPromptRun(new Error("run failed"));
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			// A must not reappear in the queue, and B must not be duplicated.
+			expect(fakeThis.compactionQueuedMessages).toEqual([]);
+			expect(fakeThis.showError).not.toHaveBeenCalled();
+			expect(fakeThis.session.followUp).toHaveBeenCalledTimes(1);
+		});
+
+		test("restores both queued messages exactly once when the first prompt is rejected before acceptance", async () => {
+			const fakeThis = {
+				compactionQueuedMessages: [
+					{ text: "A", mode: "steer" as const },
+					{ text: "B", mode: "followUp" as const },
+				],
+				session: {
+					clearQueue: vi.fn(),
+					prompt: vi.fn((_text: string, options?: { preflightResult?: (success: boolean) => void }) => {
+						options?.preflightResult?.(false);
+						return Promise.reject(new Error("preflight failed"));
+					}),
+					steer: vi.fn().mockResolvedValue(undefined),
+					followUp: vi.fn().mockResolvedValue(undefined),
+				},
+				isExtensionCommand: vi.fn().mockReturnValue(false),
+				updatePendingMessagesDisplay: vi.fn(),
+				showError: vi.fn(),
+			};
+
+			const flushCompactionQueue = Reflect.get(InteractiveMode.prototype, "flushCompactionQueue") as (
+				this: typeof fakeThis,
+				options?: { willRetry?: boolean },
+			) => Promise<void>;
+
+			await flushCompactionQueue.call(fakeThis, {});
+
+			expect(fakeThis.session.followUp).not.toHaveBeenCalled();
+			expect(fakeThis.session.clearQueue).not.toHaveBeenCalled();
+			expect(fakeThis.compactionQueuedMessages).toEqual([
+				{ text: "A", mode: "steer" },
+				{ text: "B", mode: "followUp" },
+			]);
+			expect(fakeThis.showError).toHaveBeenCalledTimes(1);
+		});
+
+		test("restores only the undispatched suffix when a later dispatch fails", async () => {
+			const fakeThis = {
+				compactionQueuedMessages: [
+					{ text: "A", mode: "steer" as const },
+					{ text: "B", mode: "followUp" as const },
+					{ text: "C", mode: "followUp" as const },
+				],
+				session: {
+					clearQueue: vi.fn(),
+					prompt: vi.fn((_text: string, options?: { preflightResult?: (success: boolean) => void }) => {
+						options?.preflightResult?.(true);
+						return Promise.resolve();
+					}),
+					steer: vi.fn().mockResolvedValue(undefined),
+					followUp: vi.fn((text: string) => {
+						if (text === "C") return Promise.reject(new Error("dispatch failed"));
+						return Promise.resolve();
+					}),
+				},
+				isExtensionCommand: vi.fn().mockReturnValue(false),
+				updatePendingMessagesDisplay: vi.fn(),
+				showError: vi.fn(),
+			};
+
+			const flushCompactionQueue = Reflect.get(InteractiveMode.prototype, "flushCompactionQueue") as (
+				this: typeof fakeThis,
+				options?: { willRetry?: boolean },
+			) => Promise<void>;
+
+			await flushCompactionQueue.call(fakeThis, {});
+
+			expect(fakeThis.session.followUp).toHaveBeenNthCalledWith(1, "B");
+			expect(fakeThis.session.followUp).toHaveBeenCalledTimes(2);
+			// B already reached the session; only the undispatched C is restored, exactly once.
+			expect(fakeThis.compactionQueuedMessages).toEqual([{ text: "C", mode: "followUp" }]);
+		});
+
+		test("keeps a concurrently queued message in order when rollback prepends the failed suffix", async () => {
+			const fakeThis = {
+				compactionQueuedMessages: [
+					{ text: "A", mode: "steer" as const },
+					{ text: "B", mode: "followUp" as const },
+					{ text: "C", mode: "followUp" as const },
+				],
+				session: {
+					clearQueue: vi.fn(),
+					prompt: vi.fn((_text: string, options?: { preflightResult?: (success: boolean) => void }) => {
+						options?.preflightResult?.(true);
+						return Promise.resolve();
+					}),
+					steer: vi.fn().mockResolvedValue(undefined),
+					followUp: vi.fn((text: string) => {
+						if (text === "C") {
+							// A new compaction-triggered message is queued while this dispatch is in flight.
+							fakeThis.compactionQueuedMessages.push({ text: "D", mode: "followUp" });
+							return Promise.reject(new Error("dispatch failed"));
+						}
+						return Promise.resolve();
+					}),
+				},
+				isExtensionCommand: vi.fn().mockReturnValue(false),
+				updatePendingMessagesDisplay: vi.fn(),
+				showError: vi.fn(),
+			};
+
+			const flushCompactionQueue = Reflect.get(InteractiveMode.prototype, "flushCompactionQueue") as (
+				this: typeof fakeThis,
+				options?: { willRetry?: boolean },
+			) => Promise<void>;
+
+			await flushCompactionQueue.call(fakeThis, {});
+
+			// Restored C is prepended ahead of the concurrently queued D, preserving order.
+			expect(fakeThis.compactionQueuedMessages).toEqual([
+				{ text: "C", mode: "followUp" },
+				{ text: "D", mode: "followUp" },
+			]);
+		});
 	});
 });

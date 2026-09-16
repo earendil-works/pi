@@ -4434,29 +4434,53 @@ export class InteractiveMode {
 		const queuedMessages = [...this.compactionQueuedMessages];
 		this.compactionQueuedMessages = [];
 		this.updatePendingMessagesDisplay();
+		let nextMessageIndex = 0;
 
 		const restoreQueue = (error: unknown) => {
-			this.session.clearQueue();
-			this.compactionQueuedMessages = queuedMessages;
+			const undispatchedMessages = queuedMessages.slice(nextMessageIndex);
+			this.compactionQueuedMessages = [...undispatchedMessages, ...this.compactionQueuedMessages];
 			this.updatePendingMessagesDisplay();
 			this.showError(
-				`Failed to send queued message${queuedMessages.length > 1 ? "s" : ""}: ${
+				`Failed to send queued message${undispatchedMessages.length > 1 ? "s" : ""}: ${
 					error instanceof Error ? error.message : String(error)
 				}`,
 			);
 		};
+		const promptUntilAccepted = (
+			message: CompactionQueuedMessage,
+			streamingBehavior?: "steer" | "followUp",
+		): Promise<void> =>
+			new Promise((resolve, reject) => {
+				let accepted = false;
+				void this.session
+					.prompt(message.text, {
+						streamingBehavior,
+						preflightResult: (success) => {
+							if (success) {
+								accepted = true;
+								resolve();
+							}
+						},
+					})
+					.catch((error) => {
+						if (!accepted) {
+							reject(error);
+						}
+					});
+			});
 
 		try {
 			if (options?.willRetry) {
 				// When retry is pending, queue messages for the retry turn
 				for (const message of queuedMessages) {
 					if (this.isExtensionCommand(message.text)) {
-						await this.session.prompt(message.text);
+						await promptUntilAccepted(message);
 					} else if (message.mode === "followUp") {
 						await this.session.followUp(message.text);
 					} else {
 						await this.session.steer(message.text);
 					}
+					nextMessageIndex += 1;
 				}
 				this.updatePendingMessagesDisplay();
 				return;
@@ -4467,39 +4491,35 @@ export class InteractiveMode {
 			if (firstPromptIndex === -1) {
 				// All extension commands - execute them all
 				for (const message of queuedMessages) {
-					await this.session.prompt(message.text);
+					await promptUntilAccepted(message);
+					nextMessageIndex += 1;
 				}
 				return;
 			}
 
 			// Execute any extension commands before the first prompt
-			const preCommands = queuedMessages.slice(0, firstPromptIndex);
-			const firstPrompt = queuedMessages[firstPromptIndex];
-			const rest = queuedMessages.slice(firstPromptIndex + 1);
-
-			for (const message of preCommands) {
-				await this.session.prompt(message.text);
+			for (const message of queuedMessages.slice(0, firstPromptIndex)) {
+				await promptUntilAccepted(message);
+				nextMessageIndex += 1;
 			}
 
-			// Start a prompt when idle, or queue it into a run still finishing compaction.
-			const promptPromise = this.session
-				.prompt(firstPrompt.text, { streamingBehavior: firstPrompt.mode })
-				.catch((error) => {
-					restoreQueue(error);
-				});
+			// Wait only for prompt preflight, not the agent run, before queueing the remainder.
+			const firstPrompt = queuedMessages[firstPromptIndex];
+			await promptUntilAccepted(firstPrompt, firstPrompt.mode);
+			nextMessageIndex += 1;
 
 			// Queue remaining messages
-			for (const message of rest) {
+			for (const message of queuedMessages.slice(firstPromptIndex + 1)) {
 				if (this.isExtensionCommand(message.text)) {
-					await this.session.prompt(message.text);
+					await promptUntilAccepted(message);
 				} else if (message.mode === "followUp") {
 					await this.session.followUp(message.text);
 				} else {
 					await this.session.steer(message.text);
 				}
+				nextMessageIndex += 1;
 			}
 			this.updatePendingMessagesDisplay();
-			void promptPromise;
 		} catch (error) {
 			restoreQueue(error);
 		}

@@ -19,6 +19,7 @@
 
 ### Fixed
 
+- Fixed compaction-queued messages being replayed or lost: an already-accepted prompt could reappear in the queue, and unrelated newer messages queued during flush could be destroyed, if the prompt's agent run rejected later ([#5886](https://github.com/earendil-works/pi/issues/5886)).
 - Fixed local clipboard failures reporting success when the terminal ignored the fallback OSC 52 write, and added platform-specific setup guidance when no clipboard backend works ([#9618](https://github.com/earendil-works/pi/issues/9618)).
 - Capped agent-level retry backoff at `retry.maxAgentDelayMs` (60s by default) so long retry runs stay responsive during prolonged transient outages ([#8826](https://github.com/earendil-works/pi/issues/8826)).
 - Fixed direct RPC `steer` and `follow_up` commands bypassing extension `input` handlers ([#8718](https://github.com/earendil-works/pi/issues/8718)).
