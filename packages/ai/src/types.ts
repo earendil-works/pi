@@ -120,6 +120,17 @@ export interface ProviderResponse {
 	headers: Record<string, string>;
 }
 
+/** Logical identity for one top-level agent request and its provider continuations. */
+export interface AgentRequestIdentity {
+	sessionId: string;
+	threadId: string;
+	turnId: string;
+	requestKind: "turn" | "compaction";
+	startedAt: number;
+	installationId?: string;
+	windowId?: string;
+}
+
 /** Authentication, HTTP transport, and lifecycle callbacks shared by provider requests. */
 export interface ProviderRequestOptions<TModel = Model<Api>> {
 	signal?: AbortSignal;
@@ -208,6 +219,8 @@ export interface StreamOptions extends ProviderRequestOptions<Model<Api>> {
 	 * session-aware features. Ignored by providers that don't support it.
 	 */
 	sessionId?: string;
+	/** Logical request identity for provider attribution, independent of cache identity. */
+	requestIdentity?: AgentRequestIdentity;
 	/**
 	 * WebSocket connect timeout in milliseconds for providers that support
 	 * WebSocket transports. This covers the connection/open handshake only;
@@ -566,6 +579,8 @@ export type AssistantMessageEvent =
  * Use this to override URL-based auto-detection for custom providers.
  */
 export interface OpenAICompletionsCompat {
+	/** Emit official Codex attribution headers from `requestIdentity`. Disabled when unset. */
+	codexAttribution?: "official";
 	/** Whether the provider supports the `store` field. Default: auto-detected from URL. */
 	supportsStore?: boolean;
 	/** Whether the provider supports the `developer` role (vs `system`). Default: auto-detected from URL. */
@@ -644,6 +659,8 @@ export interface OpenAICompletionsCompat {
 
 /** Compatibility settings for OpenAI Responses APIs. */
 export interface OpenAIResponsesCompat {
+	/** Emit official Codex attribution headers and client metadata from `requestIdentity`. Disabled when unset. */
+	codexAttribution?: "official";
 	/** Whether the provider supports the `developer` role (vs `system`). Default: true. */
 	supportsDeveloperRole?: boolean;
 	/** Session-affinity header format: `openai` sends `session_id` and `x-client-request-id`; `openai-nosession` sends `x-client-request-id`; `openrouter` sends `x-session-id`. Does not affect the `prompt_cache_key` body param, which is governed by cache retention. Default: auto-detected. */

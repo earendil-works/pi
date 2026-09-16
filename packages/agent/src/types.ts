@@ -1,4 +1,5 @@
 import type {
+	AgentRequestIdentity,
 	Api,
 	AssistantMessage,
 	AssistantMessageEvent,
@@ -148,6 +149,8 @@ export interface PrepareNextTurnContext extends ShouldStopAfterTurnContext {}
 
 export interface AgentLoopConfig extends SimpleStreamOptions {
 	model: Model<any>;
+	/** Creates a new logical identity when the loop consumes independent follow-up work. */
+	createRequestIdentity?: () => AgentRequestIdentity;
 
 	/**
 	 * Converts AgentMessage[] to LLM-compatible Message[] before each LLM call.

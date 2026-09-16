@@ -1,4 +1,5 @@
 import type {
+	AgentRequestIdentity,
 	ImageContent,
 	Message,
 	Model,
@@ -7,6 +8,7 @@ import type {
 	ThinkingBudgets,
 	Transport,
 } from "@earendil-works/pi-ai";
+import { uuidv7 } from "@earendil-works/pi-ai";
 import { runAgentLoop, runAgentLoopContinue } from "./agent-loop.ts";
 import { getDefaultStreamFn } from "./stream-fn.ts";
 import type {
@@ -29,6 +31,20 @@ import type {
 } from "./types.ts";
 
 export type { QueueMode } from "./types.ts";
+
+export function createAgentRequestIdentity(
+	sessionId: string,
+	requestKind: AgentRequestIdentity["requestKind"] = "turn",
+): AgentRequestIdentity {
+	return {
+		sessionId,
+		threadId: sessionId,
+		turnId: uuidv7(),
+		requestKind,
+		startedAt: Date.now(),
+		windowId: `${sessionId}:0`,
+	};
+}
 
 function defaultConvertToLlm(messages: AgentMessage[]): Message[] {
 	return messages.filter(
@@ -202,6 +218,8 @@ export class Agent {
 		signal?: AbortSignal,
 	) => Promise<AgentLoopTurnUpdate | undefined> | AgentLoopTurnUpdate | undefined;
 	private activeRun?: ActiveRun;
+	private readonly attributionSessionId: string;
+	private activeRequestIdentity?: AgentRequestIdentity;
 	/** Session identifier forwarded to providers for cache-aware backends. */
 	public sessionId?: string;
 	/** Optional per-level thinking token budgets forwarded to the stream function. */
@@ -231,6 +249,7 @@ export class Agent {
 		this.steeringQueue = new PendingMessageQueue(runtimeOptions.steeringMode ?? "one-at-a-time");
 		this.followUpQueue = new PendingMessageQueue(runtimeOptions.followUpMode ?? "one-at-a-time");
 		this.sessionId = runtimeOptions.sessionId;
+		this.attributionSessionId = runtimeOptions.sessionId ?? uuidv7();
 		this.thinkingBudgets = runtimeOptions.thinkingBudgets;
 		this.transport = runtimeOptions.transport ?? "auto";
 		this.maxRetryDelayMs = runtimeOptions.maxRetryDelayMs;
@@ -342,6 +361,7 @@ export class Agent {
 		this._state.errorMessage = undefined;
 		this.clearFollowUpQueue();
 		this.clearSteeringQueue();
+		this.activeRequestIdentity = undefined;
 	}
 
 	/** Start a new prompt from text, a single message, or a batch of messages. */
@@ -410,6 +430,7 @@ export class Agent {
 		messages: AgentMessage[],
 		options: { skipInitialSteeringPoll?: boolean } = {},
 	): Promise<void> {
+		this.activeRequestIdentity = this.createRequestIdentity();
 		await this.runWithLifecycle(async (signal) => {
 			await runAgentLoop(
 				messages,
@@ -423,6 +444,7 @@ export class Agent {
 	}
 
 	private async runContinuation(): Promise<void> {
+		this.activeRequestIdentity ??= this.createRequestIdentity();
 		await this.runWithLifecycle(async (signal) => {
 			await runAgentLoopContinue(
 				this.createContextSnapshot(),
@@ -447,6 +469,11 @@ export class Agent {
 		const shouldStopAfterTurn = this.shouldStopAfterTurn;
 		return {
 			model: this._state.model,
+			requestIdentity: this.activeRequestIdentity,
+			createRequestIdentity: () => {
+				this.activeRequestIdentity = this.createRequestIdentity();
+				return this.activeRequestIdentity;
+			},
 			reasoning: this._state.thinkingLevel === "off" ? undefined : this._state.thinkingLevel,
 			sessionId: this.sessionId,
 			onPayload: this.onPayload,
@@ -481,6 +508,11 @@ export class Agent {
 			},
 			getFollowUpMessages: async () => this.followUpQueue.drain(),
 		};
+	}
+
+	/** Create a provider-neutral identity without changing the active foreground turn. */
+	createRequestIdentity(requestKind: AgentRequestIdentity["requestKind"] = "turn"): AgentRequestIdentity {
+		return createAgentRequestIdentity(this.sessionId ?? this.attributionSessionId, requestKind);
 	}
 
 	private async runWithLifecycle(executor: (signal: AbortSignal) => Promise<void>): Promise<void> {

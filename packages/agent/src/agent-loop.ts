@@ -260,6 +260,10 @@ async function runLoop(
 		// Agent would stop here. Check for follow-up messages.
 		const followUpMessages = (await config.getFollowUpMessages?.()) || [];
 		if (followUpMessages.length > 0) {
+			const requestIdentity = config.createRequestIdentity?.();
+			if (requestIdentity) {
+				config = { ...config, requestIdentity };
+			}
 			// Set as pending so inner loop processes them
 			pendingMessages = followUpMessages;
 			continue;

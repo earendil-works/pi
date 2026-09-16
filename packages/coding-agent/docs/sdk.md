@@ -756,6 +756,10 @@ const { session } = await createAgentSession({ resourceLoader: loader });
 
 Sessions use a tree structure with `id`/`parentId` linking, enabling in-place branching.
 
+For requests made through `createAgentSession()`, `requestIdentity.windowId` is `<threadId>:<compaction-count>`, using committed compaction entries on the active branch. A fresh conversation starts at `:0`. Summary requests use the current window; successful compaction advances the next request's window once, even when several summary requests were needed. Failed or cancelled compaction does not advance it. The logical turn ID and start time remain unchanged when compaction recovers an active turn.
+
+The count is reconstructed from session history on every request, including after resume or tree navigation. Forks inherit the selected history's count under their new thread ID. This is a branch-relative compaction count, not a unique branch identifier; branch summaries and arbitrary context edits do not increment it. Direct low-level `Agent` users must supply their own context-window tracking.
+
 ```typescript
 import {
   type CreateAgentSessionRuntimeFactory,
