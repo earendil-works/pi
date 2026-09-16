@@ -641,13 +641,23 @@ describe("ExtensionRunner", () => {
 		});
 
 		// Regression test for #9068.
-		it("fails closed when a user_bash handler returns an empty result", async () => {
+		it.each([
+			["an empty object", "{}"],
+			["null operations", "{ operations: null }"],
+			["operations without exec", "{ operations: {} }"],
+			["a null result", "{ result: null }"],
+			["an incomplete result", '{ result: { output: "handled" } }'],
+			[
+				"operations and a result",
+				'{ operations: { exec: async () => ({ exitCode: 0 }) }, result: { output: "handled", exitCode: 0, cancelled: false, truncated: false } }',
+			],
+		])("fails closed when a user_bash handler returns %s", async (_description, handlerResult) => {
 			const extCode = `
 				export default function(pi) {
-					pi.on("user_bash", async () => ({}));
+					pi.on("user_bash", async () => (${handlerResult}));
 				}
 			`;
-			fs.writeFileSync(path.join(extensionsDir, "empty-result.ts"), extCode);
+			fs.writeFileSync(path.join(extensionsDir, "invalid-result.ts"), extCode);
 
 			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
 			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
