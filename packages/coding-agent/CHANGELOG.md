@@ -4,7 +4,7 @@
 
 ### Breaking Changes
 
-- `user_bash` handler errors now fail `!`, `!!`, and RPC `bash` commands instead of falling back to local execution, preventing unintended host execution when remote or sandbox routing fails. Extensions that intentionally allow local fallback must catch errors and return `undefined` ([#9068](https://github.com/earendil-works/pi/issues/9068)).
+- `user_bash` handler errors and invalid defined results now fail `!`, `!!`, and RPC `bash` commands instead of falling back to local execution, preventing unintended host execution when remote or sandbox routing fails. Handlers must return exactly one of `operations` or `result`; extensions that intentionally allow local fallback must catch errors and return `undefined` ([#9068](https://github.com/earendil-works/pi/issues/9068)).
 
 ### Added
 

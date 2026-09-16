@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import type { AgentSessionRuntime } from "../../../src/core/agent-session-runtime.ts";
-import type { ExtensionAPI } from "../../../src/core/extensions/types.ts";
+import type { ExtensionAPI, UserBashEventResult } from "../../../src/core/extensions/types.ts";
+import { InteractiveMode } from "../../../src/modes/interactive/interactive-mode.ts";
 import { runRpcMode } from "../../../src/modes/rpc/rpc-mode.ts";
 import { createHarness, type Harness } from "../harness.ts";
 
@@ -87,6 +88,21 @@ async function startRpcHarness(extension: (pi: ExtensionAPI) => void): Promise<{
 	return { harness, listenerSnapshot };
 }
 
+type InteractiveBashContext = {
+	defaultEditor: { onSubmit?: (text: string) => Promise<void> | void };
+	editor: { addToHistory?: (text: string) => void };
+	session: Harness["session"];
+	sessionManager: Harness["sessionManager"];
+	isBashMode: boolean;
+	handleBashCommand(command: string, excludeFromContext?: boolean): Promise<void>;
+	updateEditorBorderColor(): void;
+};
+
+const interactiveModePrototype = InteractiveMode.prototype as unknown as {
+	setupEditorSubmitHandler(this: InteractiveBashContext): void;
+	handleBashCommand(this: InteractiveBashContext, command: string, excludeFromContext?: boolean): Promise<void>;
+};
+
 describe("RPC user_bash failure handling (#9068)", () => {
 	afterEach(() => {
 		rpcIo.outputLines = [];
@@ -135,6 +151,46 @@ describe("RPC user_bash failure handling (#9068)", () => {
 		}
 	});
 
+	test("fails the request without executing bash when a handler returns an empty result", async () => {
+		const { harness, listenerSnapshot } = await startRpcHarness((pi) => {
+			pi.on("user_bash", async () => ({}) as unknown as UserBashEventResult);
+		});
+		const executeBash = vi.spyOn(harness.session, "executeBash").mockResolvedValue({
+			output: "unexpected execution",
+			exitCode: 0,
+			cancelled: false,
+			truncated: false,
+		});
+
+		try {
+			rpcIo.lineHandler?.(JSON.stringify({ id: "empty-handler", type: "bash", command: "pwd" }));
+
+			await vi.waitFor(() => {
+				expect(parseOutputLines()).toEqual(
+					expect.arrayContaining([
+						expect.objectContaining({
+							type: "extension_error",
+							event: "user_bash",
+							error: expect.stringContaining("Invalid user_bash handler result"),
+						}),
+						expect.objectContaining({
+							id: "empty-handler",
+							type: "response",
+							command: "bash",
+							success: false,
+							error: expect.stringContaining("Invalid user_bash handler result"),
+						}),
+					]),
+				);
+			});
+			expect(executeBash).not.toHaveBeenCalled();
+		} finally {
+			executeBash.mockRestore();
+			harness.cleanup();
+			restoreListeners(listenerSnapshot);
+		}
+	});
+
 	test("executes bash normally when a handler returns undefined", async () => {
 		const { harness, listenerSnapshot } = await startRpcHarness((pi) => {
 			pi.on("user_bash", async () => undefined);
@@ -168,6 +224,47 @@ describe("RPC user_bash failure handling (#9068)", () => {
 			executeBash.mockRestore();
 			harness.cleanup();
 			restoreListeners(listenerSnapshot);
+		}
+	});
+});
+
+describe("Interactive user_bash failure handling (#9068)", () => {
+	test.each([
+		["!pwd", false],
+		["!!pwd", true],
+	])("fails closed for %s when a handler returns an empty result", async (input, excludeFromContext) => {
+		const harness = await createHarness({
+			extensionFactories: [
+				(pi) => {
+					pi.on("user_bash", async () => ({}) as unknown as UserBashEventResult);
+				},
+			],
+		});
+		const executeBash = vi.spyOn(harness.session, "executeBash");
+		const emitUserBash = vi.spyOn(harness.session.extensionRunner, "emitUserBash");
+		const context: InteractiveBashContext = {
+			defaultEditor: {},
+			editor: { addToHistory: vi.fn() },
+			session: harness.session,
+			sessionManager: harness.sessionManager,
+			isBashMode: true,
+			handleBashCommand: interactiveModePrototype.handleBashCommand,
+			updateEditorBorderColor: vi.fn(),
+		};
+		interactiveModePrototype.setupEditorSubmitHandler.call(context);
+
+		try {
+			await context.defaultEditor.onSubmit?.(input);
+
+			expect(emitUserBash).toHaveBeenCalledWith({
+				type: "user_bash",
+				command: "pwd",
+				excludeFromContext,
+				cwd: harness.sessionManager.getCwd(),
+			});
+			expect(executeBash).not.toHaveBeenCalled();
+		} finally {
+			harness.cleanup();
 		}
 	});
 });
