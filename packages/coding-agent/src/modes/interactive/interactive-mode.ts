@@ -35,6 +35,7 @@ import {
 	Spacer,
 	setCapabilityOverrides,
 	setKeybindings,
+	type Terminal,
 	Text,
 	TruncatedText,
 	type TUI,
@@ -371,6 +372,8 @@ export interface InteractiveModeOptions {
 	tuiMode?: TuiMode;
 	/** Initial interactive theme setting for this invocation. */
 	initialThemeSetting?: string;
+	/** Terminal implementation. Defaults to the current process terminal. */
+	terminal?: Terminal;
 }
 
 export class InteractiveMode {
@@ -536,6 +539,7 @@ export class InteractiveMode {
 			tuiMode,
 			showHardwareCursor: this.settingsManager.getShowHardwareCursor(),
 			logDirectory: getAgentDir(),
+			terminal: options.terminal,
 			onRightClickPaste: this.onRightClickPaste,
 			fullscreenCopyOnSelect: this.settingsManager.getFullscreenCopyOnSelect(),
 		});

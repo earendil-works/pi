@@ -11,6 +11,7 @@
 		"test": "vitest run --config vitest.test.config.ts"
 	},
 	"devDependencies": {
+		"autoevals": "0.3.0",
 		"@earendil-works/pi-ai": "^0.85.1",
 		"@earendil-works/pi-coding-agent": "^0.85.1",
 		"@types/node": "22.19.19",
