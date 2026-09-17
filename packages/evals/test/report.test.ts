@@ -123,6 +123,33 @@ describe("readTaskObservation", () => {
 		expect(observation).toMatchObject({ outcome: "pending" });
 	});
 
+	it("preserves metrics from a failed eval with a partial harness run", async () => {
+		const { directory, observation } = await readObservation({
+			status: "failed",
+			meta: scoredMeta({ errors: [{ message: "Prompt verification failed" }] }),
+		});
+		expect(observation).toEqual({
+			evalSet: task.evalSet,
+			caseId: task.caseId,
+			variant: task.variant,
+			model: task.model,
+			runNumber: task.runNumber,
+			outcome: "errored",
+			inputTokens: 10,
+			outputTokens: 5,
+			cacheReadTokens: 2,
+			cacheWriteTokens: 3,
+			totalTokens: 15,
+			toolCalls: 1,
+			totalMs: 1234,
+			estimatedCostUsd: 0.01,
+		});
+		const hashes = await readdir(join(directory, task.variant, "sessions"));
+		await expect(
+			readFile(join(directory, task.variant, "sessions", hashes[0], "session.jsonl"), "utf8"),
+		).resolves.toBe(SESSION);
+	});
+
 	it("records an errored outcome when a passed eval has no harness run", async () => {
 		const { observation } = await readObservation({ status: "passed" });
 		expect(observation).toMatchObject({ outcome: "errored" });

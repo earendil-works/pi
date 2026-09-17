@@ -150,7 +150,7 @@ export async function readTaskObservation(
 	const assertion = assertions[0];
 	if (assertion.fullName !== reportedFullName) return { ...identity, outcome: "errored" };
 	const statusOutcome = classifyCaseStatus(assertion.status);
-	if (statusOutcome) return { ...identity, outcome: statusOutcome };
+	if (statusOutcome === "skipped" || statusOutcome === "pending") return { ...identity, outcome: statusOutcome };
 	if (workspace.cases.length !== 1) return { ...identity, outcome: "errored" };
 	const caseResult = workspace.cases[0];
 	if (caseResult.fullName !== reportedFullName) return { ...identity, outcome: "errored" };
@@ -175,7 +175,9 @@ export async function readTaskObservation(
 	} catch {
 		return { ...identity, outcome: "errored" };
 	}
-	if (run.errors.length > 0) return { ...identity, ...metrics, outcome: "errored" };
+	if (statusOutcome === "errored" || run.errors.length > 0) {
+		return { ...identity, ...metrics, outcome: "errored" };
+	}
 	let score: number | undefined;
 	try {
 		score = validateScore(caseResult.eval?.avgScore);
