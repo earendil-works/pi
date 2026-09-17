@@ -510,7 +510,8 @@ function supportsDirectReasoningEffort(model: Model<Api>): boolean {
 
 function applyModelsDevReasoningOptionMetadata(model: Model<Api>): void {
 	const reasoningOptions = modelsDevReasoningOptions.get(getModelKey(model));
-	if (!reasoningOptions || !supportsDirectReasoningEffort(model)) return;
+	if (!reasoningOptions) return;
+	if (!supportsDirectReasoningEffort(model) && model.api !== "mistral-conversations") return;
 	const thinkingLevelMap = getEffortThinkingLevelMap(reasoningOptions);
 	if (thinkingLevelMap) mergeThinkingLevelMap(model, thinkingLevelMap);
 }
@@ -1110,6 +1111,42 @@ function applyThinkingLevelMetadata(model: Model<any>): void {
 		const override = GITHUB_COPILOT_THINKING_LEVEL_OVERRIDES[model.id];
 		if (override) {
 			mergeThinkingLevelMap(model, override);
+		}
+	}
+	if (model.provider === "mistral" && model.api === "mistral-conversations" && model.reasoning) {
+		// zai-glm-5-2 accepts all seven effort values (verified against api.mistral.ai);
+		// models.dev only declares high/max, so override with the identity map.
+		if (model.id === "zai-glm-5-2") {
+			mergeThinkingLevelMap(model, {
+				off: "none",
+				minimal: "minimal",
+				low: "low",
+				medium: "medium",
+				high: "high",
+				xhigh: "xhigh",
+				max: "max",
+			});
+		}
+		// zai-glm-5-3 cannot disable thinking (lowest accepted is "low").
+		// off:null follows the cannot-disable convention: "off" is not selectable,
+		// and a programmatic "off" request clamps up to "low" via clampThinkingLevel.
+		if (model.id === "zai-glm-5-3") {
+			mergeThinkingLevelMap(model, {
+				off: null,
+				minimal: "low",
+				low: "low",
+				medium: "high",
+				high: "high",
+				xhigh: "max",
+				max: "max",
+			});
+		}
+		// mistral-medium-3.5 is hand-injected (not in models.dev); give it the same none/high map
+		// the data-driven path assigns to its models.dev-sourced aliases.
+		if (model.id === "mistral-medium-3.5") {
+			mergeThinkingLevelMap(model, getEffortThinkingLevelMap([
+				{ type: "effort", values: ["none", "high"] },
+			]) ?? {});
 		}
 	}
 }
@@ -2938,6 +2975,27 @@ async function generateModels() {
 			},
 			contextWindow: 262144, // 256k tokens
 			maxTokens: 262144,
+		});
+	}
+
+	// Add missing zai-glm-5-3 model until models.dev includes it
+	if (!allModels.some(m => m.provider === "mistral" && m.id === "zai-glm-5-3")) {
+		allModels.push({
+			id: "zai-glm-5-3",
+			name: "GLM-5.3",
+			api: "mistral-conversations",
+			provider: "mistral",
+			baseUrl: "https://api.mistral.ai",
+			reasoning: true,
+			input: ["text"],
+			cost: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+			},
+			contextWindow: 1000000,
+			maxTokens: 131072,
 		});
 	}
 
