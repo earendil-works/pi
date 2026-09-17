@@ -2943,11 +2943,15 @@ export class AgentSession {
 
 	/**
 	 * Check if an error is retryable (overloaded, rate limit, server errors).
-	 * Context overflow errors are NOT retryable (handled by compaction instead).
+	 * Context overflow errors are NOT retryable (handled by compaction instead),
+	 * except the ambiguous no-body 4xx class: a bare "400 status code (no body)"
+	 * is indistinguishable between a transient gateway refusal and a
+	 * Cerebras-style overflow, and the retryable classifier matches it, so a
+	 * bounded retry is preferred. Descriptive overflow messages ("prompt is too
+	 * long", ...) never match the retryable pattern and still fall through to
+	 * compaction, which runs at a separate call site.
 	 */
 	private _isRetryableError(message: AssistantMessage): boolean {
-		// Context overflow is handled by compaction, not retry.
-		if (isContextOverflow(message, this.model?.contextWindow ?? 0)) return false;
 		return isRetryableAssistantError(message);
 	}
 

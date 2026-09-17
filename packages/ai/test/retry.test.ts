@@ -102,6 +102,29 @@ describe("provider retry classification", () => {
 		).toBe(true);
 		expect(isRetryableAssistantError(fauxAssistantMessage("not an error"))).toBe(false);
 	});
+
+	it("treats opaque no-body 4xx gateway errors as retryable", () => {
+		// An opaque 4xx with no diagnostic body is indistinguishable from a
+		// transient gateway refusal, so it retries instead of failing fast.
+		for (const errorMessage of [
+			"400 status code (no body)",
+			"403 status code (no body)",
+			"408 status code (no body)",
+			"413 status code (no body)",
+		]) {
+			expect(isRetryableAssistantError(fauxAssistantMessage("", { stopReason: "error", errorMessage }))).toBe(true);
+		}
+	});
+
+	it("keeps body-carrying 4xx errors non-retryable as client bugs", () => {
+		// A 4xx that carries a body is a definitive client-side rejection
+		// (e.g. unknown model, malformed request), so it still fails fast.
+		expect(
+			isRetryableAssistantError(
+				fauxAssistantMessage("", { stopReason: "error", errorMessage: '400 {"detail":"Model not found"}' }),
+			),
+		).toBe(false);
+	});
 });
 
 describe("retryDelayMs", () => {

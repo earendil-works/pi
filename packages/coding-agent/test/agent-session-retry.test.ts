@@ -73,11 +73,13 @@ describe("AgentSession retry", () => {
 		maxRetries?: number;
 		maxAgentDelayMs?: number;
 		delayAssistantMessageEndMs?: number;
+		errorMessage?: string;
 	}) {
 		const failCount = options?.failCount ?? 1;
 		const maxRetries = options?.maxRetries ?? 3;
 		const maxAgentDelayMs = options?.maxAgentDelayMs ?? 60000;
 		const delayAssistantMessageEndMs = options?.delayAssistantMessageEndMs ?? 0;
+		const errorMessage = options?.errorMessage ?? "overloaded_error";
 		let callCount = 0;
 
 		const model = getModel("anthropic", "claude-sonnet-4-5")!;
@@ -91,7 +93,7 @@ describe("AgentSession retry", () => {
 					if (callCount <= failCount) {
 						const msg = createAssistantMessage("", {
 							stopReason: "error",
-							errorMessage: "overloaded_error",
+							errorMessage,
 						});
 						stream.push({ type: "start", partial: msg });
 						stream.push({ type: "error", reason: "error", error: msg });
@@ -137,6 +139,24 @@ describe("AgentSession retry", () => {
 
 	it("retries after a transient error and succeeds", async () => {
 		const created = await createSession({ failCount: 1 });
+		const events: string[] = [];
+		created.session.subscribe((event) => {
+			if (event.type === "auto_retry_start") events.push(`start:${event.attempt}`);
+			if (event.type === "auto_retry_end") events.push(`end:success=${event.success}`);
+		});
+
+		await created.session.prompt("Test");
+
+		expect(created.getCallCount()).toBe(2);
+		expect(events).toEqual(["start:1", "end:success=true"]);
+		expect(created.session.isRetrying).toBe(false);
+	});
+
+	it("retries an opaque no-body 400 gateway error and succeeds", async () => {
+		// Regression: a bare "400 status code (no body)" from a flaky gateway was
+		// previously diverted to the overflow path (the string matches the Cerebras
+		// overflow pattern) and never retried. It should now retry and succeed.
+		const created = await createSession({ failCount: 1, errorMessage: "400 status code (no body)" });
 		const events: string[] = [];
 		created.session.subscribe((event) => {
 			if (event.type === "auto_retry_start") events.push(`start:${event.attempt}`);

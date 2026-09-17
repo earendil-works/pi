@@ -36,6 +36,13 @@ const RETRYABLE_PROVIDER_ERROR_PATTERN = buildProviderErrorPattern([
 	"504",
 	"520",
 	"524",
+	// Opaque gateway 4xx with no diagnostic body (e.g. OpenAI SDK
+	// BadRequestError: "400 status code (no body)"). A gateway that refuses a
+	// request and returns no body is indistinguishable from a transient
+	// upstream failure, so a bounded retry is safer than failing fast.
+	// Body-carrying 4xx (e.g. "400 {\"detail\":\"Model not found\"}") do NOT
+	// match and still fail fast, preserving fast failure for real client bugs.
+	"4\\d{2} status code \\(no body\\)",
 	"service.?unavailable",
 	"server.?error",
 	"internal.?error",
