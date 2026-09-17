@@ -41,9 +41,9 @@ Project configuration loads after project trust is granted.
 
 Context files are separate from project `.pi` configuration. Pi loads one context file from the agent directory, followed by one from each directory between the filesystem root and the working directory. This means an `AGENTS.md` in a repository root also applies when Pi runs from a nested directory.
 
-Within each directory, Pi uses the first available file in this order: `AGENTS.override.md`, `AGENTS.md`, `AGENTS.MD`, `CLAUDE.md`, then `CLAUDE.MD`. An `AGENTS.override.md` replaces other context files only in the same directory. It does not suppress files from the agent directory or other directories.
+An `AGENTS.override.md` replaces `AGENTS.md` or `CLAUDE.md` only in the same directory. It does not suppress context files from the agent directory or other directories.
 
-Context-file discovery does not require project trust. Disable it for one run with `--no-context-files`.
+Context-file discovery does not require project trust.
 
 ## Related documentation
 
