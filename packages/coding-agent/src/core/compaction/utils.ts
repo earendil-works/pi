@@ -88,14 +88,18 @@ export function formatFileOperations(readFiles: string[], modifiedFiles: string[
 /** Maximum characters for a tool result in serialized summaries. */
 const TOOL_RESULT_MAX_CHARS = 2000;
 
+const THINKING_ONLY_SIDE_CHARS = 1000;
+
 /**
  * Truncate text to a maximum character length for summarization.
- * Keeps the beginning and appends a truncation marker.
+ * Keeps the requested head and optional tail around a truncation marker.
  */
-function truncateForSummary(text: string, maxChars: number): string {
+function truncateForSummary(text: string, headChars: number, tailChars = 0): string {
+	const maxChars = headChars + tailChars;
 	if (text.length <= maxChars) return text;
 	const truncatedChars = text.length - maxChars;
-	return `${text.slice(0, maxChars)}\n\n[... ${truncatedChars} more characters truncated]`;
+	const tail = tailChars > 0 ? `\n\n${text.slice(-tailChars)}` : "";
+	return `${text.slice(0, headChars)}\n\n[... ${truncatedChars} more characters truncated]${tail}`;
 }
 
 /**
@@ -130,7 +134,12 @@ export function serializeConversation(messages: Message[]): string {
 			}
 
 			if (thinkingParts.length > 0) {
-				parts.push(`[Assistant thinking]: ${thinkingParts.join("\n")}`);
+				let thinking = thinkingParts.join("\n");
+				const hasText = msg.content.some((block) => block.type === "text" && block.text.trim().length > 0);
+				if (!hasText && toolCalls.length === 0) {
+					thinking = truncateForSummary(thinking, THINKING_ONLY_SIDE_CHARS, THINKING_ONLY_SIDE_CHARS);
+				}
+				parts.push(`[Assistant thinking]: ${thinking}`);
 			}
 			if (msg.content.some((block) => block.type === "text")) {
 				parts.push(`[Assistant]: ${contentText(msg.content)}`);
