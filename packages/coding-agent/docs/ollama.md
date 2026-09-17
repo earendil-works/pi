@@ -11,7 +11,7 @@ For a terminal on macOS or Linux:
 ```bash
 export OLLAMA_BASE_URL=http://127.0.0.1:11434
 pi --list-models ollama
-pi --provider ollama --model qwen3.5:4b --thinking off
+pi --provider ollama --model qwen3.5:4b
 ```
 
 In Windows PowerShell:
@@ -19,7 +19,7 @@ In Windows PowerShell:
 ```powershell
 $env:OLLAMA_BASE_URL = "http://127.0.0.1:11434"
 pi --list-models ollama
-pi --provider ollama --model qwen3.5:4b --thinking off
+pi --provider ollama --model qwen3.5:4b
 ```
 
 Replace the model name with one installed on your server. These commands use the same native provider on each platform; model speed and available memory depend on the host running Ollama.
@@ -40,6 +40,8 @@ The model's trained maximum is often much larger than an appropriate runtime all
 
 Every request sends Pi's selected `contextWindow` as `options.num_ctx` and the output limit as `options.num_predict`. Ollama's server-wide context default is therefore superseded for Pi requests. Increasing context consumes more memory; choose a larger value appropriate for your model and machine when working with larger repositories.
 
+8192 is a conservative allocation, not a recommended size for every repository. System instructions, tools, retained history, and generation all share that window. Use a larger explicit context for substantial file reads when your server has enough memory. A remote server's `OLLAMA_CONTEXT_LENGTH` cannot be read from the client's environment; configure the intended window in Pi or save `num_ctx` on the Ollama model.
+
 Override a discovered model in `~/.pi/agent/models.json`:
 
 ```json
@@ -58,13 +60,23 @@ Check Ollama's actual allocation with `ollama ps`. Pi requests `truncate: false`
 
 When switching a large conversation to a smaller window, Pi first summarizes with the current model. It checks the estimated size of the checkpoint, retained history, system prompt, and tools before committing the switch. A failed or oversized summary keeps the current model and history. Estimates are not a tokenizer guarantee; actual overflow remains an explicit error handled by Pi's bounded compaction recovery. A very small window or one oversized retained turn may require a larger context or a new session.
 
+If compaction's configured reserve plus retained-history budget does not fit the selected window, each is capped at one quarter of that window. With the default settings and an 8192-token window, both become 2048. History summaries then receive up to 1638 output tokens and turn-prefix summaries up to 1024, further limited by `maxTokens`. Increasing only `maxTokens` does not increase those text budgets.
+
 ## Thinking and tools
 
 `--thinking off` sends `think: false` to models that support reasoning. Other supported Pi levels enable thinking. Models such as GPT-OSS use effort values and cannot disable reasoning; their advertised thinking levels reflect that limitation. Thinking and the final answer share the output budget.
 
+Pi's built-in Ollama summaries use a separate thinking policy. Thinking is disabled when the model permits it. For models that require thinking, Pi selects the lowest supported level and allows up to 2048 additional generation tokens, bounded by the model output limit and estimated remaining context. This applies to compaction, smaller-window switching, and branch summaries. Ordinary conversation keeps the selected thinking level. There is no separate hard reasoning-token limit in this API; an incomplete summary still fails safely.
+
 Pi preserves native thinking, text, parallel tool calls, tool results, and images across turns. A truncated or failed stream ends as an error, so its tool calls do not execute. Incomplete summaries are not saved as checkpoints.
 
 Discovery does not certify coding ability. Use a tool-capable model and validate its edits and commands; small models and mixed-model histories can produce different results even with identical transport settings.
+
+Check the model's capabilities with `ollama show MODEL` and look for `tools` before using Pi's coding tools. Discovery also exposes completion models without tool support for library chat and `--no-tools` sessions.
+
+## SDK initialization
+
+`createAgentSession()` includes the built-in Ollama and llama.cpp extensions when it creates its default resource loader. This registers their providers and commands before initial model selection. Supplying a custom `resourceLoader` gives the embedder control over its extension factories. Only configured dynamic providers with an empty cached catalog need startup discovery; `--offline` / `PI_OFFLINE` disables that discovery.
 
 ## Library use
 

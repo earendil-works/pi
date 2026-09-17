@@ -97,6 +97,34 @@ describe("native Ollama transport", () => {
 		expect(headers?.get("x-test")).toBe("yes");
 	});
 
+	it("uses the lazy provider transport with a factory-supplied fetch", async () => {
+		const fetch = vi.fn<FetchFunction>(async () => ndjson([{ message: { content: "local reply" } }, terminal]));
+		const provider = ollamaProvider({ baseUrl: model.baseUrl, fetch });
+		expect(fetch).not.toHaveBeenCalled();
+		const response = await provider.streamSimple(model, context, { reasoning: "medium" }).result();
+		expect(response.stopReason).toBe("stop");
+		expect(response.content).toEqual([{ type: "text", text: "local reply" }]);
+		expect(JSON.parse(String(fetch.mock.calls[0][1]?.body))).toMatchObject({ think: true });
+	});
+
+	it("maps required thinking to an effort value even when reasoning is omitted", async () => {
+		const payloads: unknown[] = [];
+		const required: Model<"ollama-chat"> = {
+			...model,
+			thinkingLevelMap: { off: null, minimal: "low", low: "low", medium: "medium", high: "high" },
+		};
+		for (const reasoning of [undefined, "minimal", "medium"] as const) {
+			await streamSimple(required, context, {
+				reasoning,
+				fetch: async (_url, init) => {
+					payloads.push(JSON.parse(String(init?.body)));
+					return ndjson([terminal]);
+				},
+			}).result();
+		}
+		expect(payloads).toMatchObject([{ think: "low" }, { think: "low" }, { think: "medium" }]);
+	});
+
 	it("replays parallel tool calls, results, images, and same-model thinking", async () => {
 		const call = { function: { name: "read", arguments: { path: "file" } } };
 		const first = await stream(model, context, {

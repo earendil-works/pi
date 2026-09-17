@@ -1,4 +1,4 @@
-import { stream, streamSimple } from "../api/ollama-chat.ts";
+import { ollamaChatApi } from "../api/ollama-chat.lazy.ts";
 import { defaultProviderAuthContext } from "../auth/context.ts";
 import type { ApiKeyCredential, AuthContext } from "../auth/types.ts";
 import type { Provider } from "../models.ts";
@@ -17,7 +17,7 @@ export function normalizeOllamaUrl(value: string): string {
 }
 
 export interface OllamaProviderOptions {
-	/** Explicitly configure a server. Otherwise use stored OLLAMA_BASE_URL, OLLAMA_BASE_URL, or OLLAMA_HOST. */
+	/** Explicit server, then stored OLLAMA_BASE_URL, then environment OLLAMA_BASE_URL or OLLAMA_HOST. */
 	baseUrl?: string;
 	fetch?: FetchFunction;
 }
@@ -66,6 +66,7 @@ function toModel(tag: OllamaTag, info: OllamaShow, baseUrl: string): Model<"olla
 
 /** Local Ollama catalog and native transport; importing this factory never probes a server. */
 export function ollamaProvider(options: OllamaProviderOptions = {}): Provider<"ollama-chat"> {
+	const api = ollamaChatApi();
 	let models: readonly Model<"ollama-chat">[] = [];
 	const defaultContext = defaultProviderAuthContext();
 	const endpoint = async (ctx: AuthContext, credential?: ApiKeyCredential): Promise<string | undefined> => {
@@ -174,7 +175,7 @@ export function ollamaProvider(options: OllamaProviderOptions = {}): Provider<"o
 				},
 			});
 		},
-		stream: (model, context, opts) => stream(model, context, { fetch: options.fetch, ...opts }),
-		streamSimple: (model, context, opts) => streamSimple(model, context, { fetch: options.fetch, ...opts }),
+		stream: (model, context, opts) => api.stream(model, context, { fetch: options.fetch, ...opts }),
+		streamSimple: (model, context, opts) => api.streamSimple(model, context, { fetch: options.fetch, ...opts }),
 	};
 }

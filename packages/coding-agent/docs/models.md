@@ -16,7 +16,9 @@ Add custom providers and models (Ollama, vLLM, LM Studio, proxies) via `~/.pi/ag
 
 ## Minimal Example
 
-For local models (Ollama, LM Studio, vLLM), only `id` is required per model:
+For native Ollama, use `/login ollama` or `OLLAMA_BASE_URL` to discover installed models without a dummy key. See [Ollama](ollama.md) for setup and context overrides. The native API uses the server root, such as `http://localhost:11434`, and requires Ollama 0.20 or newer.
+
+For an OpenAI-compatible local endpoint (Ollama's compatibility API, LM Studio, vLLM), only `id` is required per model:
 
 ```json
 {
@@ -34,7 +36,7 @@ For local models (Ollama, LM Studio, vLLM), only `id` is required per model:
 }
 ```
 
-The `apiKey` value is a placeholder because Ollama ignores it. pi still treats models as requiring auth before they appear in `/model`, so keyless local servers should keep a dummy value, save a key for that provider with `/login`, or pass `--api-key` when selecting the model.
+The `apiKey` value in this OpenAI-compatible example is a placeholder because Ollama ignores it. Custom providers need configured auth before they appear in `/model`, so keep this dummy value, save a key for that provider with `/login`, or pass `--api-key` when selecting the model. Native Ollama discovery does not need this placeholder.
 
 Some OpenAI-compatible servers do not understand the `developer` role used for reasoning-capable models. For those providers, set `compat.supportsDeveloperRole` to `false` so pi sends the system prompt as a `system` message instead. If the server also does not support `reasoning_effort`, set `compat.supportsReasoningEffort` to `false` too.
 
@@ -126,6 +128,7 @@ The `baseUrl` is required when adding custom models to the `google-generative-ai
 | `openai-responses` | OpenAI Responses API |
 | `anthropic-messages` | Anthropic Messages API |
 | `google-generative-ai` | Google Generative AI |
+| `ollama-chat` | Native Ollama Chat (0.20+, server root URL without `/api` or `/v1`) |
 
 Set `api` at provider level (default for all models) or model level (override per model).
 
@@ -252,7 +255,9 @@ Current behavior:
 }
 ```
 
-Only OpenAI-compatible APIs apply it (`openai-completions`, `openai-responses`, `azure-openai-responses`); other APIs ignore it. Keys override pi's named request fields (for example a `temperature` key here beats the request-level temperature), so prefer it as the single source of sampling truth for a model. In `modelOverrides`, `samplingParams` merges per key with the base model's value.
+OpenAI-compatible APIs apply it (`openai-completions`, `openai-responses`, `azure-openai-responses`). Keys override pi's named request fields (for example a `temperature` key here beats the request-level temperature), so prefer it as the single source of sampling truth for a model. In `modelOverrides`, `samplingParams` merges per key with the base model's value.
+
+Native `ollama-chat` also accepts `samplingParams`, inside Ollama's `options` object. Its precedence differs: request-level `temperature`, selected `contextWindow` (`num_ctx`), and output budget (`num_predict`) take precedence over sampling overrides.
 
 A constant thinking-token cap can go here too, but it will not follow `thinkingBudgets` or leave room for the answer. Prefer `compat.thinkingTokenBudgetField` (or the `supportsThinkingTokenBudget` alias) for that.
 

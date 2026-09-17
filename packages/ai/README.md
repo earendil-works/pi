@@ -2,7 +2,7 @@
 
 Unified LLM API with provider collections, automatic auth resolution, token and cost tracking, and simple context persistence and hand-off to other models mid-session.
 
-**Note**: This library only includes models that support tool calling (function calling), as this is essential for agentic workflows.
+**Note**: The generated catalog focuses on models that support tool calling (function calling). Dynamic local providers can also discover chat-only models; select a tool-capable model for agentic workflows.
 
 ## Table of Contents
 
@@ -68,6 +68,7 @@ Unified LLM API with provider collections, automatic auth resolution, token and 
 - **Google**
 - **Vertex AI** (Gemini via Vertex AI)
 - **Mistral**
+- **Ollama** (native local API, installed-model discovery; register `ollamaProvider()` explicitly)
 - **Groq**
 - **Cerebras**
 - **Cloudflare AI Gateway**
@@ -323,6 +324,25 @@ const fresh = models.getModel('llamacpp', 'qwen3-30b');
 
 Static built-in providers are no-ops for `refresh()`. See [createProvider()](#createprovider) for building a dynamic provider.
 
+For Ollama 0.20 or newer, register the native provider and discover installed local models:
+
+```typescript
+import { createModels } from '@earendil-works/pi-ai';
+import { ollamaProvider } from '@earendil-works/pi-ai/providers/ollama';
+
+const models = createModels();
+models.setProvider(ollamaProvider({ baseUrl: 'http://127.0.0.1:11434' }));
+const refresh = await models.refresh();
+if (refresh.errors.size) throw refresh.errors.get('ollama');
+const model = models.getModel('ollama', 'qwen3.5:4b');
+if (!model) throw new Error('Install the model in Ollama first');
+const response = await models.completeSimple(model, {
+  messages: [{ role: 'user', content: 'Hello', timestamp: Date.now() }]
+});
+```
+
+Discovery requires a configured endpoint and does not load model weights. Local servers need no API key. The native `ollama-chat` API preserves thinking and reports context overflow explicitly. It requests the model's saved `num_ctx`, or 8192 when absent, bounded by its trained context limit. Pi sends that value on each request, superseding the server's default. See the [Ollama guide](../coding-agent/docs/ollama.md) for context overrides, thinking, and coding-agent setup.
+
 ## Auth
 
 Every provider owns its auth: how API keys resolve (stored credentials, environment variables, ambient sources like AWS profiles or gcloud ADC) and, where supported, OAuth login/refresh flows.
@@ -423,6 +443,7 @@ Built-in providers resolve these env vars (Node.js; in browsers pass `apiKey` ex
 | Google | `GEMINI_API_KEY` |
 | Vertex AI | `GOOGLE_CLOUD_API_KEY` or `GOOGLE_CLOUD_PROJECT` (or `GCLOUD_PROJECT`) + `GOOGLE_CLOUD_LOCATION` + ADC |
 | Mistral | `MISTRAL_API_KEY` |
+| Ollama | `OLLAMA_BASE_URL` or `OLLAMA_HOST`; optional `OLLAMA_API_KEY` for authenticated proxies |
 | Groq | `GROQ_API_KEY` |
 | Cerebras | `CEREBRAS_API_KEY` |
 | Cloudflare AI Gateway | `CLOUDFLARE_API_KEY` + `CLOUDFLARE_ACCOUNT_ID` + `CLOUDFLARE_GATEWAY_ID` |
@@ -1194,6 +1215,7 @@ Built-in API implementations live under `./api/<api-id>`:
 | `google-generative-ai` | `GoogleOptions` |
 | `google-vertex` | `GoogleVertexOptions` |
 | `mistral-conversations` | `MistralOptions` |
+| `ollama-chat` | `OllamaOptions` |
 | `bedrock-converse-stream` | `BedrockOptions` |
 
 Importing an implementation module loads its SDK. The `./api/<id>.lazy` wrappers (used by the provider factories) defer that load to the first request when the runtime or bundler supports dynamic import chunking. Legacy raw API subpaths from older releases (`./anthropic`, `./google`, `./mistral`, `./openai-completions`, ...) were removed; use `@earendil-works/pi-ai/api/<api-id>`.
