@@ -7,14 +7,18 @@ on:
   pull_request:
     paths:
       - "packages/ai/src/api/ollama-chat.ts"
+      - "packages/ai/src/api/ollama-chat.lazy.ts"
+      - "packages/ai/src/compat.ts"
       - "packages/ai/src/providers/ollama.ts"
       - "packages/ai/test/ollama.test.ts"
       - "packages/coding-agent/src/core/agent-session.ts"
+      - "packages/coding-agent/src/core/compaction/**"
       - "packages/coding-agent/src/core/initialize-extension-providers.ts"
       - "packages/coding-agent/src/core/sdk.ts"
       - "packages/coding-agent/src/core/agent-session-services.ts"
       - "packages/coding-agent/src/extensions/ollama/**"
       - "packages/coding-agent/test/suite/agent-session-context-shrink.test.ts"
+      - "packages/coding-agent/test/suite/agent-session-ollama-compaction.test.ts"
       - "packages/coding-agent/test/agent-session-concurrent.test.ts"
       - "packages/coding-agent/test/agent-session-dynamic-provider.test.ts"
       - ".github/workflows/ollama.yml"
@@ -47,4 +51,4 @@ jobs:
         run: node ../../node_modules/vitest/dist/cli.js --run test/ollama.test.ts test/overflow.test.ts
       - name: Context switching and compaction fixtures
         working-directory: packages/coding-agent
-        run: node ../../node_modules/vitest/dist/cli.js --run test/suite/agent-session-context-shrink.test.ts test/suite/agent-session-compaction-model-overrides.test.ts test/suite/agent-session-model-extension.test.ts test/agent-session-concurrent.test.ts test/agent-session-dynamic-provider.test.ts
+        run: node ../../node_modules/vitest/dist/cli.js --run test/suite/agent-session-ollama-compaction.test.ts test/compaction-summary-reasoning.test.ts test/suite/agent-session-context-shrink.test.ts test/suite/agent-session-compaction-model-overrides.test.ts test/suite/agent-session-model-extension.test.ts test/agent-session-concurrent.test.ts test/agent-session-dynamic-provider.test.ts

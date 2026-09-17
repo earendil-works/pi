@@ -7,6 +7,7 @@
 
 import type { AgentMessage, StreamFn, ThinkingLevel } from "@earendil-works/pi-agent-core";
 import {
+	clampThinkingLevel,
 	contentText,
 	normalizeContext,
 	type RetryCallbacks,
@@ -22,6 +23,7 @@ import type {
 	Usage,
 } from "@earendil-works/pi-ai/compat";
 import { completeSimple } from "@earendil-works/pi-ai/compat";
+import { estimateContextTokens as estimateTranscriptTokens } from "@earendil-works/pi-ai/utils/estimate";
 import { convertToLlm } from "../messages.ts";
 import {
 	buildSessionContext,
@@ -606,6 +608,24 @@ export async function completeSummarization(
 		cacheRetention: "none",
 		sessionId: options.sessionId ?? uuidv7(),
 	};
+	if (model.api === "ollama-chat" && model.reasoning) {
+		// Small summary budgets must not be consumed by the conversation's thinking
+		// level. Models such as GPT-OSS cannot turn thinking off; use their lowest
+		// supported level and leave additional generation room for reasoning.
+		const level = clampThinkingLevel(model, "off");
+		requestOptions.reasoning = level === "off" ? undefined : level;
+		if (level !== "off") {
+			const available =
+				model.contextWindow > 0
+					? Math.max(1, model.contextWindow - Math.ceil((estimateTranscriptTokens(context).tokens * 4) / 3) - 256)
+					: Number.POSITIVE_INFINITY;
+			requestOptions.maxTokens = Math.min(
+				(options.maxTokens ?? model.maxTokens) + 2048,
+				model.maxTokens > 0 ? model.maxTokens : Number.POSITIVE_INFINITY,
+				available,
+			);
+		}
+	}
 	const produce = async (): Promise<AssistantMessage> =>
 		streamFn
 			? (await streamFn(model, context, requestOptions)).result()
