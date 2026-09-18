@@ -17,12 +17,14 @@ import {
 	mkdirSync,
 	openSync,
 	readdirSync,
+	readFileSync,
 	readSync,
+	realpathSync,
 	statSync,
 	writeFileSync,
 } from "fs";
 import { readdir, stat } from "fs/promises";
-import { join, resolve } from "path";
+import { dirname, join, resolve, sep } from "path";
 import { createInterface } from "readline";
 import { StringDecoder } from "string_decoder";
 import { APP_NAME, getAgentDir as getDefaultAgentDir, getSessionsDir } from "../config.ts";
@@ -639,8 +641,133 @@ function getSessionHeaderCwd(header: SessionHeader): string | undefined {
 	return typeof cwd === "string" ? cwd : undefined;
 }
 
+/**
+ * Compare two directory paths for equivalence, resolving symlinks on both sides.
+ * A `--session-dir` that is a symlink alias of the default session dir for the cwd
+ * (same directory, different path string) must not be treated as a custom dir.
+ * Falls back to plain lexical resolution when either path does not exist yet
+ * (realpath throws on missing paths).
+ */
+function isSameDirectoryPath(a: string, b: string): boolean {
+	const resolvedA = resolvePath(a);
+	const resolvedB = resolvePath(b);
+	if (resolvedA === resolvedB) {
+		return true;
+	}
+	try {
+		return realpathSync(resolvedA) === realpathSync(resolvedB);
+	} catch {
+		// At least one path does not exist; the lexical compare above already
+		// decided they differ.
+		return false;
+	}
+}
+
+const gitCommonDirCache = new Map<string, string | null>();
+const GIT_COMMON_DIR_CACHE_MAX = 512;
+
+function realpathOrNull(path: string): string | null {
+	try {
+		return realpathSync(path);
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * Resolve the shared git common dir for a directory inside a git repository.
+ *
+ * Walks up from `dir` looking for `.git`. A `.git` DIRECTORY is the common dir
+ * itself (normal checkout). A `.git` FILE is a linked-worktree/submodule pointer
+ * (`gitdir: <path>`): for linked worktrees the pointer targets
+ * `<common>/worktrees/<name>`, and the repository identity is the shared
+ * `<common>` prefix (stripping the trailing `/worktrees/<name>`), so every
+ * worktree of one repository resolves to the SAME common dir. Submodule gitdirs
+ * (`.git/modules/<name>`) are already repository-unique and pass through
+ * unchanged. Returns null when no `.git` is found (not a repository).
+ */
+function computeGitCommonDir(resolvedDir: string): string | null {
+	let current: string = resolvedDir;
+	while (true) {
+		const dotGit = join(current, ".git");
+		let info: ReturnType<typeof statSync> | undefined;
+		try {
+			info = statSync(dotGit);
+		} catch {
+			info = undefined;
+		}
+		if (info) {
+			if (info.isDirectory()) {
+				// Anchor on the .git directory itself so the main checkout and its
+				// linked worktrees (whose pointers strip to <common>/) compare equal.
+				return realpathOrNull(dotGit);
+			}
+			try {
+				const content = readFileSync(dotGit, "utf8");
+				const match = content.match(/^gitdir:\s*(\S+)/m);
+				if (match) {
+					let gitdir = resolve(dirname(dotGit), match[1]);
+					// Linked worktree: <common>/worktrees/<name> -> repository identity is <common>.
+					// Strip only when the marker tail is a single path segment (the worktree
+					// name), so paths that merely CONTAIN "/worktrees/" pass through unchanged.
+					const marker = `${sep}worktrees${sep}`;
+					const markerIndex = gitdir.lastIndexOf(marker);
+					if (markerIndex !== -1) {
+						const tail = gitdir.slice(markerIndex + marker.length);
+						if (tail !== "" && !tail.includes(sep) && !tail.includes("/")) {
+							gitdir = gitdir.slice(0, markerIndex);
+						}
+					}
+					return realpathOrNull(gitdir);
+				}
+			} catch {
+				// Unreadable .git file: keep walking up.
+			}
+		}
+		const parent = dirname(current);
+		if (parent === current) {
+			return null;
+		}
+		current = parent;
+	}
+}
+
+function getGitCommonDir(dir: string): string | null {
+	const resolved = resolvePath(dir);
+	const cached = gitCommonDirCache.get(resolved);
+	if (cached !== undefined) {
+		return cached;
+	}
+	const result = computeGitCommonDir(resolved);
+	if (gitCommonDirCache.size >= GIT_COMMON_DIR_CACHE_MAX) {
+		gitCommonDirCache.clear();
+	}
+	gitCommonDirCache.set(resolved, result);
+	return result;
+}
+
+/** True when both directories belong to the same git repository (any worktree or the main checkout). */
+function sameRepository(a: string, b: string): boolean {
+	const commonA = getGitCommonDir(a);
+	if (commonA === null) {
+		return false;
+	}
+	const commonB = getGitCommonDir(b);
+	return commonB !== null && commonA === commonB;
+}
+
 function sessionCwdMatches(cwd: string | undefined, resolvedCwd: string): boolean {
-	return cwd !== undefined && cwd !== "" && resolvePath(cwd) === resolvedCwd;
+	if (cwd === undefined || cwd === "") {
+		return false;
+	}
+	const sessionCwd = resolvePath(cwd);
+	if (sessionCwd === resolvedCwd) {
+		return true;
+	}
+	// Sessions born in another worktree (or the main checkout) of the SAME git
+	// repository belong to the same project: match them as local so resuming
+	// across worktrees of one repository is not treated as a cross-project resume.
+	return sameRepository(sessionCwd, resolvedCwd);
 }
 
 /** Exported for testing */
@@ -1026,7 +1153,8 @@ export class SessionManager {
 	}
 
 	usesDefaultSessionDir(): boolean {
-		return this.sessionDir === getDefaultSessionDirPath(this.cwd);
+		// Symlink-resolved: an alias of the default dir (same inode) is still the default dir.
+		return isSameDirectoryPath(this.sessionDir, getDefaultSessionDirPath(this.cwd));
 	}
 
 	getSessionId(): string {
@@ -1602,7 +1730,7 @@ export class SessionManager {
 	 */
 	static continueRecent(cwd: string, sessionDir?: string): SessionManager {
 		const dir = sessionDir ? normalizePath(sessionDir) : getDefaultSessionDir(cwd);
-		const filterCwd = sessionDir !== undefined && dir !== getDefaultSessionDirPath(cwd);
+		const filterCwd = sessionDir !== undefined && !isSameDirectoryPath(dir, getDefaultSessionDirPath(cwd));
 		const mostRecent = findMostRecentSession(dir, filterCwd ? cwd : undefined);
 		if (mostRecent) {
 			return new SessionManager(cwd, dir, mostRecent, true);
@@ -1709,7 +1837,10 @@ export class SessionManager {
 	 */
 	static async list(cwd: string, sessionDir?: string, onProgress?: SessionListProgress): Promise<SessionInfo[]> {
 		const dir = sessionDir ? normalizePath(sessionDir) : getDefaultSessionDir(cwd);
-		const filterCwd = sessionDir !== undefined && dir !== getDefaultSessionDirPath(cwd);
+		// Symlink-resolved: passing a symlink ALIAS of the default dir (same
+		// directory, different path string) must not arm the cwd filter — the
+		// lexical compare used to demote otherwise-local matches to global.
+		const filterCwd = sessionDir !== undefined && !isSameDirectoryPath(dir, getDefaultSessionDirPath(cwd));
 		const resolvedCwd = resolvePath(cwd);
 		const sessions = (await listSessionsFromDir(dir, onProgress)).filter(
 			(session) => !filterCwd || sessionCwdMatches(session.cwd, resolvedCwd),
