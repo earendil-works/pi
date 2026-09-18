@@ -43,10 +43,12 @@ const TEXT_MODELS = [
 	"MiniMax-M2.5",
 	"deepseek-v3.2",
 	"deepseek-v4-flash",
+	"deepseek-v4.1-flash",
 	"deepseek-v4-pro",
 	"glm-5",
 	"glm-5.1",
 	"glm-5.2",
+	"glm-5.3",
 	"kimi-k2.5",
 	"kimi-k2.6",
 	"kimi-k2.7-code",
@@ -75,10 +77,12 @@ const IMAGE_MODELS = ["qwen-image-2.0", "qwen-image-2.0-pro", "wan2.7-image", "w
 const QWEN_THINKING_MODELS = [
 	"deepseek-v3.2",
 	"deepseek-v4-flash",
+	"deepseek-v4.1-flash",
 	"deepseek-v4-pro",
 	"glm-5",
 	"glm-5.1",
 	"glm-5.2",
+	"glm-5.3",
 	"kimi-k2.5",
 	"kimi-k2.6",
 	"kimi-k2.7-code",
@@ -100,7 +104,7 @@ const QWEN_THINKING_MODEL_CASES: QwenTokenPlanModelCase[] = [
 	...INDIVIDUAL_TEXT_MODELS.map((modelId) => ({ provider: "qwen-token-plan-individual" as const, modelId })),
 ];
 
-const QWEN_REASONING_EFFORT_MODELS = ["deepseek-v4-flash", "deepseek-v4-pro", "glm-5", "glm-5.1", "glm-5.2"] as const;
+const QWEN_REASONING_EFFORT_MODELS = ["deepseek-v4-flash", "deepseek-v4.1-flash", "deepseek-v4-pro", "glm-5", "glm-5.1", "glm-5.2"] as const;
 const QWEN38_MODELS = ["qwen3.8-flash", "qwen3.8-max"] as const;
 
 const QWEN_REASONING_EFFORT_MODEL_CASES: QwenTokenPlanModelCase[] = [
@@ -116,6 +120,15 @@ const QWEN_REASONING_EFFORT_MODEL_CASES: QwenTokenPlanModelCase[] = [
 const QWEN38_MODEL_CASES: QwenTokenPlanModelCase[] = (
 	["qwen-token-plan", "qwen-token-plan-cn", "qwen-token-plan-individual"] as const
 ).flatMap((provider) => QWEN38_MODELS.map((modelId) => ({ provider, modelId })));
+
+// glm-5.3 exposes a low/high/max effort ladder (models.dev verified reasoning_options).
+const QWEN_LOW_HIGH_MAX_EFFORT_MODELS = ["glm-5.3"] as const;
+
+const QWEN_LOW_HIGH_MAX_EFFORT_MODEL_CASES: QwenTokenPlanModelCase[] = (
+	["qwen-token-plan", "qwen-token-plan-cn"] as const
+).flatMap((provider) =>
+	QWEN_LOW_HIGH_MAX_EFFORT_MODELS.map((modelId) => ({ provider, modelId })),
+);
 
 describe("Qwen Token Plan models", () => {
 	// #9021
@@ -214,6 +227,58 @@ describe("Qwen Token Plan models", () => {
 				xhigh: "xhigh",
 				max: null,
 			});
+		},
+	);
+
+	it.each(QWEN_LOW_HIGH_MAX_EFFORT_MODEL_CASES)(
+		"exposes low/high/max reasoning_effort levels for $provider/$modelId",
+		({ provider, modelId }) => {
+			const model = getModels(provider).find((candidate) => candidate.id === modelId);
+			expect(model).toBeDefined();
+			if (!model) throw new Error(`Missing model: ${provider}/${modelId}`);
+
+			expect(model.thinkingLevelMap).toMatchObject({
+				minimal: null,
+				low: "low",
+				medium: null,
+				high: "high",
+				xhigh: null,
+				max: "max",
+			});
+		},
+	);
+
+	it.each(QWEN_LOW_HIGH_MAX_EFFORT_MODEL_CASES)(
+		"sends low reasoning_effort for $provider/$modelId",
+		async ({ provider, modelId }) => {
+			const model = getModels(provider).find((candidate) => candidate.id === modelId);
+			expect(model).toBeDefined();
+			if (!model) throw new Error(`Missing model: ${provider}/${modelId}`);
+
+			let payload: unknown;
+			await streamSimple(
+				model,
+				{
+					messages: [
+						{
+							role: "user",
+							content: "Hi",
+							timestamp: Date.now(),
+						},
+					],
+				},
+				{
+					apiKey: "test",
+					reasoning: "low",
+					onPayload: (params) => {
+						payload = params;
+					},
+				},
+			).result();
+
+			expect(payload).toHaveProperty("enable_thinking", true);
+			expect(payload).toHaveProperty("reasoning_effort", "low");
+			expect(payload).not.toHaveProperty("thinking");
 		},
 	);
 
