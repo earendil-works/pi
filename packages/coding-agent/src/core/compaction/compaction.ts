@@ -608,9 +608,9 @@ export async function completeSummarization(
 		cacheRetention: "none",
 		sessionId: options.sessionId ?? uuidv7(),
 	};
-	if (model.api === "ollama-chat" && model.reasoning) {
+	if (model.thinkingBudgetMode === "shared" && model.reasoning) {
 		// Small summary budgets must not be consumed by the conversation's thinking
-		// level. Models such as GPT-OSS cannot turn thinking off; use their lowest
+		// level. Models that cannot turn thinking off use their lowest
 		// supported level and leave additional generation room for reasoning.
 		const level = clampThinkingLevel(model, "off");
 		requestOptions.reasoning = level === "off" ? undefined : level;

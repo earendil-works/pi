@@ -309,6 +309,7 @@ describe("Ollama discovery", () => {
 			["saved", 16384],
 		]);
 		expect(await models.getAvailable()).toHaveLength(2);
+		expect(models.getModels().every((entry) => entry.thinkingBudgetMode === "shared")).toBe(true);
 	});
 	it("restores only the configured endpoint's cache without fetching", async () => {
 		const modelsStore = new InMemoryModelsStore();
@@ -318,10 +319,14 @@ describe("Ollama discovery", () => {
 		const fetch = catalogFetch();
 		models.setProvider(ollamaProvider({ fetch }));
 		await models.refresh();
+		const stored = (await modelsStore.read("ollama"))!;
+		for (const entry of stored.models) delete entry.thinkingBudgetMode;
+		await modelsStore.write("ollama", stored);
 		vi.mocked(fetch).mockClear();
 		models.setProvider(ollamaProvider({ fetch }));
 		await models.refresh({ allowNetwork: false });
 		expect(models.getModels()).toHaveLength(2);
+		expect(models.getModels().every((entry) => entry.thinkingBudgetMode === "shared")).toBe(true);
 		await credentials.modify("ollama", async () => ({
 			type: "api_key",
 			env: { OLLAMA_BASE_URL: "http://different:11434" },

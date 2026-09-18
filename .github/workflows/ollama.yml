@@ -18,7 +18,15 @@ on:
       - "packages/coding-agent/src/core/agent-session-services.ts"
       - "packages/coding-agent/src/extensions/ollama/**"
       - "packages/coding-agent/test/suite/agent-session-context-shrink.test.ts"
-      - "packages/coding-agent/test/suite/agent-session-ollama-compaction.test.ts"
+      - "packages/ai/src/types.ts"
+      - "packages/coding-agent/src/core/model-config.ts"
+      - "packages/coding-agent/src/core/provider-composer.ts"
+      - "packages/coding-agent/src/core/extensions/types.ts"
+      - "packages/coding-agent/src/extensions/llama/provider.ts"
+      - "packages/coding-agent/test/suite/agent-session-summary-budget.test.ts"
+      - "packages/coding-agent/test/summary-budget-payload.test.ts"
+      - "packages/coding-agent/test/model-thinking-budget.test.ts"
+      - "packages/coding-agent/test/llama-extension.test.ts"
       - "packages/coding-agent/test/agent-session-concurrent.test.ts"
       - "packages/coding-agent/test/agent-session-dynamic-provider.test.ts"
       - ".github/workflows/ollama.yml"
@@ -51,4 +59,4 @@ jobs:
         run: node ../../node_modules/vitest/dist/cli.js --run test/ollama.test.ts test/overflow.test.ts
       - name: Context switching and compaction fixtures
         working-directory: packages/coding-agent
-        run: node ../../node_modules/vitest/dist/cli.js --run test/suite/agent-session-ollama-compaction.test.ts test/compaction-summary-reasoning.test.ts test/suite/agent-session-context-shrink.test.ts test/suite/agent-session-compaction-model-overrides.test.ts test/suite/agent-session-model-extension.test.ts test/agent-session-concurrent.test.ts test/agent-session-dynamic-provider.test.ts
+        run: node ../../node_modules/vitest/dist/cli.js --run test/suite/agent-session-summary-budget.test.ts test/summary-budget-payload.test.ts test/model-thinking-budget.test.ts test/llama-extension.test.ts test/compaction-summary-reasoning.test.ts test/suite/agent-session-context-shrink.test.ts test/suite/agent-session-compaction-model-overrides.test.ts test/suite/agent-session-model-extension.test.ts test/agent-session-concurrent.test.ts test/agent-session-dynamic-provider.test.ts

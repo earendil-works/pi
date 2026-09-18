@@ -81,6 +81,8 @@ describe("llama.cpp extension", () => {
 				id: "loaded",
 				baseUrl: "http://localhost:8080/v1",
 				contextWindow: 65536,
+				thinkingBudgetMode: "shared",
+				reasoning: false,
 				maxTokens: 65536,
 				input: ["text", "image"],
 			}),
@@ -125,6 +127,8 @@ describe("llama.cpp extension", () => {
 		expect(cachedEntry?.models.map((model) => model.id)).toEqual(["loaded", "sleeping"]);
 
 		const second = createLlamaProvider();
+		// Simulate a catalog persisted before the budget capability was introduced.
+		for (const model of cachedEntry?.models ?? []) delete model.thinkingBudgetMode;
 		await second.provider.refreshModels?.({
 			credential: { type: "api_key", key: "local", env: { LLAMA_BASE_URL: url } },
 			stored: cachedEntry,
@@ -133,7 +137,12 @@ describe("llama.cpp extension", () => {
 			signal: new AbortController().signal,
 		});
 		expect(second.provider.getModels()).toEqual([
-			expect.objectContaining({ id: "loaded", baseUrl: `${url}/v1`, contextWindow: 32768 }),
+			expect.objectContaining({
+				id: "loaded",
+				baseUrl: `${url}/v1`,
+				contextWindow: 32768,
+				thinkingBudgetMode: "shared",
+			}),
 			expect.objectContaining({ id: "sleeping", baseUrl: `${url}/v1`, contextWindow: 32768 }),
 		]);
 	});

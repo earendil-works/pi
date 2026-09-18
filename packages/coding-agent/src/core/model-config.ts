@@ -53,6 +53,7 @@ const VercelGatewayRoutingSchema = Type.Object({
 });
 
 const ThinkingLevelMapValueSchema = Type.Union([Type.String(), Type.Null()]);
+const ThinkingBudgetModeSchema = Type.Union([Type.Literal("shared"), Type.Literal("adapter")]);
 const ThinkingLevelMapSchema = Type.Object({
 	off: Type.Optional(ThinkingLevelMapValueSchema),
 	minimal: Type.Optional(ThinkingLevelMapValueSchema),
@@ -171,6 +172,7 @@ const ModelDefinitionSchema = Type.Object({
 	api: Type.Optional(Type.String({ minLength: 1 })),
 	baseUrl: Type.Optional(Type.String({ minLength: 1 })),
 	reasoning: Type.Optional(Type.Boolean()),
+	thinkingBudgetMode: Type.Optional(ThinkingBudgetModeSchema),
 	thinkingLevelMap: Type.Optional(ThinkingLevelMapSchema),
 	input: Type.Optional(Type.Array(Type.Union([Type.Literal("text"), Type.Literal("image")]))),
 	cost: Type.Optional(ModelCostSchema),
@@ -184,6 +186,7 @@ const ModelDefinitionSchema = Type.Object({
 const ModelOverrideSchema = Type.Object({
 	name: Type.Optional(Type.String({ minLength: 1 })),
 	reasoning: Type.Optional(Type.Boolean()),
+	thinkingBudgetMode: Type.Optional(ThinkingBudgetModeSchema),
 	thinkingLevelMap: Type.Optional(ThinkingLevelMapSchema),
 	input: Type.Optional(Type.Array(Type.Union([Type.Literal("text"), Type.Literal("image")]))),
 	cost: Type.Optional(

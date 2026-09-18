@@ -912,6 +912,13 @@ export interface Model<TApi extends Api> {
 	baseUrl: string;
 	reasoning: boolean;
 	/**
+	 * Thinking allocation at the streamSimple boundary. "shared" means maxTokens
+	 * covers thinking and the answer without an allowance added by the adapter.
+	 * "adapter" delegates allocation to the adapter. Omit when unknown.
+	 * This does not enable thinking or declare which thinking levels are supported.
+	 */
+	thinkingBudgetMode?: "shared" | "adapter";
+	/**
 	 * Maps pi thinking levels to provider/model-specific values.
 	 * Missing keys use provider defaults. null marks a level as unsupported.
 	 */

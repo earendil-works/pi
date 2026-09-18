@@ -56,6 +56,7 @@ function toPiModel(model: LlamaModelInfo, serverUrl: string): Model<"openai-comp
 		provider: LLAMA_PROVIDER_ID,
 		baseUrl: llamaInferenceUrl(serverUrl),
 		reasoning: false,
+		thinkingBudgetMode: "shared",
 		input: model.architecture?.input_modalities?.includes("image") ? ["text", "image"] : ["text"],
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 		contextWindow,
@@ -146,7 +147,7 @@ export function createLlamaProvider(): LlamaProviderController {
 				if (
 					!(await context.publish({
 						update: () => {
-							models = restored;
+							models = restored.map((model) => ({ ...model, thinkingBudgetMode: "shared" }));
 						},
 					}))
 				) {

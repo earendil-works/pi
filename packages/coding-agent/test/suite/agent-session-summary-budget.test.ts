@@ -9,7 +9,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { completeSummarization } from "../../src/core/compaction/index.ts";
 import { createHarness, type Harness } from "./harness.ts";
 
-describe("Ollama summary thinking", () => {
+describe("Shared summary thinking budget", () => {
 	let harness: Harness;
 	afterEach(() => harness?.cleanup());
 
@@ -18,14 +18,9 @@ describe("Ollama summary thinking", () => {
 			models: [{ id: "local", reasoning: true, contextWindow, maxTokens: 4096 }],
 			tools: [],
 		});
-		// Exercise the native model's summary policy through the session, with every
-		// request still served by the faux provider. No Ollama server is contacted.
-		const stream = harness.session.agent.streamFunction;
-		harness.session.agent.streamFunction = (model, context, options) =>
-			stream({ ...model, api: harness.faux.api }, context, options);
 		const model: Model<string> = {
 			...harness.getModel(),
-			api: "ollama-chat",
+			thinkingBudgetMode: "shared",
 			...(requiresThinking
 				? { thinkingLevelMap: { off: null, minimal: "low", low: "low", medium: "medium", high: "high" } }
 				: {}),
@@ -84,7 +79,7 @@ describe("Ollama summary thinking", () => {
 			harness.setResponses([
 				fauxAssistantMessage("", {
 					stopReason: "error",
-					errorMessage: "Ollama 400: the input length exceeds the context length",
+					errorMessage: "maximum context length exceeded",
 				}),
 				summary,
 				(context, options) => {

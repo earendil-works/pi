@@ -102,6 +102,16 @@ describe("generateSummary reasoning options", () => {
 		);
 	});
 
+	it("leaves non-reasoning models unchanged even when the generation budget is shared", async () => {
+		await completeSummarization(
+			{ ...createModel(false), thinkingBudgetMode: "shared" },
+			normalizeContext({ messages: [] }),
+			{ maxTokens: 1024 },
+		);
+		expect(completeSimpleMock.mock.calls[0][2].maxTokens).toBe(1024);
+		expect(completeSimpleMock.mock.calls[0][2]).not.toHaveProperty("reasoning");
+	});
+
 	it("uses fresh routing sessions without prompt caching", async () => {
 		await generateSummary(messages, createModel(false), 2000, "test-key");
 		await generateSummary(messages, createModel(false), 2000, "test-key");

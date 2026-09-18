@@ -54,6 +54,7 @@ function toModel(tag: OllamaTag, info: OllamaShow, baseUrl: string): Model<"olla
 		provider: "ollama",
 		baseUrl,
 		reasoning: info.capabilities.includes("thinking"),
+		thinkingBudgetMode: "shared",
 		...(effort
 			? { thinkingLevelMap: { off: null, minimal: "low", low: "low", medium: "medium", high: "high" } }
 			: {}),
@@ -141,7 +142,7 @@ export function ollamaProvider(options: OllamaProviderOptions = {}): Provider<"o
 			if (
 				!(await context.publish({
 					update: () => {
-						models = restored;
+						models = restored.map((model) => ({ ...model, thinkingBudgetMode: "shared" }));
 					},
 				}))
 			)

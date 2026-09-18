@@ -205,6 +205,7 @@ If your command is slow, expensive, rate-limited, or should keep using a previou
 | `name` | No | `id` | Human-readable model label. Used for matching (`--model` patterns) and shown as secondary model detail text. |
 | `api` | No | provider's `api` | Override provider's API for this model |
 | `reasoning` | No | `false` | Supports extended thinking |
+| `thinkingBudgetMode` | No | omitted | `"shared"` when thinking and the answer share `maxTokens` without an adapter-added allowance; `"adapter"` leaves allocation to the adapter |
 | `thinkingLevelMap` | No | omitted | Maps pi thinking levels to provider values and marks unsupported levels (see below) |
 | `input` | No | `["text"]` | Input types: `["text"]` or `["text", "image"]` |
 | `contextWindow` | No | `128000` | Context window size in tokens |
@@ -304,6 +305,38 @@ Example for a model where thinking cannot be disabled:
 
 Migration: older configs that used `compat.reasoningEffortMap` should move that mapping to model-level `thinkingLevelMap`. Use `null` for levels that should not appear in the UI.
 
+### Thinking Budgets for Summaries
+
+`thinkingBudgetMode` describes the model's adapter at the `streamSimple` boundary. Use `"shared"` when its `maxTokens` budget includes both thinking and the answer and the adapter does not add a thinking allowance. Summaries then disable thinking when supported. If `thinkingLevelMap.off` is `null`, summaries select the lowest supported level and add up to 2048 generation tokens, bounded by the model limit and estimated remaining context. This is an allowance, not a guarantee that a reasoning model will finish within the budget. Ordinary chat keeps the selected thinking level.
+
+Omit the field when the behavior is unknown, or use `"adapter"` when the adapter manages the allocation. Both preserve the caller's summary options. For example, the Anthropic adapter already adds its own allowance for budget-based thinking; declaring that model `"shared"` would apply the wrong summary policy.
+
+Discovered Ollama and llama.cpp models declare `"shared"`. llama.cpp discovery does not enable reasoning automatically: configure the model's supported controls separately. For a model whose chat template supports `enable_thinking`, this override enables Pi's thinking toggle and lets summaries disable it:
+
+```json
+{
+  "providers": {
+    "llama.cpp": {
+      "modelOverrides": {
+        "your-model-id": {
+          "reasoning": true,
+          "thinkingBudgetMode": "shared",
+          "compat": {
+            "supportsReasoningEffort": false,
+            "thinkingFormat": "chat-template",
+            "chatTemplateKwargs": {
+              "enable_thinking": { "$var": "thinking.enabled" }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+Use the actual server model ID and verify its template supports this toggle. Models that require thinking need `thinkingLevelMap.off: null` and their supported effort controls instead. See the [llama.cpp server documentation](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md). Avoid hard-coded thinking controls in `samplingParams`, which can override Pi's request fields.
+
 ## Overriding Built-in Providers
 
 Route a built-in provider through a proxy without redefining models:
@@ -364,7 +397,7 @@ Use `modelOverrides` to customize built-in models and matching extension-registe
 }
 ```
 
-`modelOverrides` supports these fields per model: `name`, `reasoning`, `thinkingLevelMap`, `input`, `cost` (partial), `contextWindow`, `maxTokens`, `samplingParams` (merged per key), `headers`, `compat`.
+`modelOverrides` supports these fields per model: `name`, `reasoning`, `thinkingBudgetMode`, `thinkingLevelMap`, `input`, `cost` (partial), `contextWindow`, `maxTokens`, `samplingParams` (merged per key), `headers`, `compat`.
 
 Direct OpenAI GPT-5.6 Sol, Terra, and Luna default to a `272000` context window so requests remain within OpenAI's short-context pricing tier. To opt into OpenAI's 1.05M context window, increase it for each model you use:
 

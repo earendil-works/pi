@@ -1579,6 +1579,8 @@ export interface ProviderModelConfig {
 	baseUrl?: string;
 	/** Whether the model supports extended thinking. */
 	reasoning: boolean;
+	/** Whether thinking shares maxTokens or its allocation is managed by the adapter. */
+	thinkingBudgetMode?: Model<Api>["thinkingBudgetMode"];
 	/** Maps pi thinking levels to provider/model-specific values; null marks a level unsupported. */
 	thinkingLevelMap?: Model<Api>["thinkingLevelMap"];
 	/** Supported input types. */
