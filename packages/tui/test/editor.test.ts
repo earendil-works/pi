@@ -1,4 +1,7 @@
 import assert from "node:assert";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, it } from "node:test";
 import { stripVTControlCharacters } from "node:util";
 import { type AutocompleteProvider, CombinedAutocompleteProvider } from "../src/autocomplete.ts";
@@ -2129,6 +2132,209 @@ describe("Editor component", () => {
 	});
 
 	describe("Autocomplete", () => {
+		it("triggers and debounces symbol completion after CJK punctuation", async (t) => {
+			t.mock.timers.enable({ apis: ["setTimeout"] });
+			for (const before of ["查看，", "\u3000", ..."，．：；！？（）［］｛｝“”‘’…—。、「」『』《》【】"]) {
+				for (const trigger of ["@", "#", "$", "-"]) {
+					const editor = new Editor(createTestTUI(), defaultEditorTheme);
+					const requests: string[] = [];
+					editor.setAutocompleteProvider({
+						triggerCharacters: ["$", "-"],
+						getSuggestions: async (lines, cursorLine, cursorCol) => {
+							requests.push(lines[cursorLine]!.slice(0, cursorCol));
+							return null;
+						},
+						applyCompletion,
+					});
+					editor.setText(before);
+					editor.handleInput(trigger);
+					t.mock.timers.tick(19);
+					await flushAutocomplete();
+					assert.deepStrictEqual(requests, []);
+					t.mock.timers.tick(1);
+					await flushAutocomplete();
+					assert.deepStrictEqual(requests, [before + trigger]);
+
+					editor.handleInput("r");
+					editor.handleInput("e");
+					t.mock.timers.tick(19);
+					await flushAutocomplete();
+					assert.strictEqual(requests.length, 1);
+					t.mock.timers.tick(1);
+					await flushAutocomplete();
+					assert.deepStrictEqual(requests, [before + trigger, `${before}${trigger}re`]);
+				}
+			}
+		});
+
+		it("does not auto-trigger after CJK letters or for unprefixed paths", async (t) => {
+			t.mock.timers.enable({ apis: ["setTimeout"] });
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			let requests = 0;
+			editor.setAutocompleteProvider({
+				getSuggestions: async () => {
+					requests++;
+					return null;
+				},
+				applyCompletion,
+			});
+			for (const text of [
+				"user@example.com",
+				"张三@example.com",
+				"查看@src",
+				"あ@src",
+				"カ@src",
+				"한@src",
+				"ㄅ@src",
+				"𠮷@src",
+				"か\u3099@src",
+				"禰\u{e0100}@src",
+				"々@src",
+				"Ａ@src",
+				"文档@备份",
+				"prefix#123",
+				"问题#123",
+				"查看，/path/",
+				"查看，./文档/",
+				"src/index.ts",
+				"./文档/说明.md",
+				"文档/说明.md",
+				"查看src/index.ts",
+			]) {
+				editor.setText("");
+				for (const char of text) editor.handleInput(char);
+				t.mock.timers.tick(20);
+				await flushAutocomplete();
+				assert.strictEqual(requests, 0, text);
+			}
+		});
+
+		it("requests path completion after CJK punctuation only on Tab", async (t) => {
+			t.mock.timers.enable({ apis: ["setTimeout"] });
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			const requests: Array<{ text: string; force: boolean | undefined }> = [];
+			editor.setAutocompleteProvider({
+				getSuggestions: async (lines, cursorLine, cursorCol, options) => {
+					requests.push({ text: lines[cursorLine]!.slice(0, cursorCol), force: options.force });
+					return null;
+				},
+				applyCompletion,
+			});
+			const text = "查看，/path/";
+			for (const char of text) editor.handleInput(char);
+			t.mock.timers.tick(20);
+			await flushAutocomplete();
+			assert.deepStrictEqual(requests, []);
+			editor.handleInput("\t");
+			await flushAutocomplete();
+			assert.deepStrictEqual(requests, [{ text, force: true }]);
+		});
+
+		it("completes Chinese path prefixes after whitespace or CJK punctuation with Tab", async (t) => {
+			const baseDir = mkdtempSync(join(tmpdir(), "pi-editor-autocomplete-"));
+			t.after(() => rmSync(baseDir, { recursive: true, force: true }));
+			mkdirSync(join(baseDir, "文档"));
+			writeFileSync(join(baseDir, "文档", "说明.md"), "text");
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			editor.setAutocompleteProvider(new CombinedAutocompleteProvider([], baseDir));
+			for (const separator of [" ", "\t", "\u3000", "\u00a0", "，", "。"]) {
+				editor.setText(`查看${separator}`);
+				const before = editor.getText();
+				editor.handleInput("文");
+				editor.handleInput("\t");
+				await flushAutocomplete();
+				assert.strictEqual(editor.getText(), `${before}文档/`);
+				editor.handleInput("说");
+				editor.handleInput("\t");
+				await flushAutocomplete();
+				assert.strictEqual(editor.getText(), `${before}文档/说明.md`);
+				assert.deepStrictEqual(editor.getCursor(), { line: 0, col: editor.getText().length });
+			}
+		});
+
+		it("ends unquoted trigger and debounce contexts at whitespace or CJK punctuation", async (t) => {
+			t.mock.timers.enable({ apis: ["setTimeout"] });
+			for (const separator of [" ", "\u3000", "，", "。"]) {
+				for (const trigger of ["@", "#", "$"]) {
+					const editor = new Editor(createTestTUI(), defaultEditorTheme);
+					const requests: string[] = [];
+					const prefix = `${trigger}src`;
+					editor.setAutocompleteProvider({
+						triggerCharacters: ["$"],
+						getSuggestions: async (lines, cursorLine, cursorCol) => {
+							const text = lines[cursorLine]!.slice(0, cursorCol);
+							requests.push(text);
+							return text === prefix ? { prefix, items: [{ value: `${prefix}/`, label: "src/" }] } : null;
+						},
+						applyCompletion,
+					});
+					editor.setText(`${trigger}sr`);
+					editor.handleInput("c");
+					t.mock.timers.tick(20);
+					await flushAutocomplete();
+					assert.strictEqual(editor.isShowingAutocomplete(), true);
+					editor.handleInput(separator);
+					await flushAutocomplete();
+					assert.deepStrictEqual(requests, [prefix, prefix + separator]);
+					assert.strictEqual(editor.isShowingAutocomplete(), false);
+					editor.handleInput("文");
+					t.mock.timers.tick(20);
+					await flushAutocomplete();
+					assert.deepStrictEqual(requests, [prefix, prefix + separator]);
+				}
+			}
+		});
+
+		it("re-triggers CJK path completion after accepting directories and deleting", async (t) => {
+			t.mock.timers.enable({ apis: ["setTimeout"] });
+			const provider = new CombinedAutocompleteProvider([], process.cwd());
+			for (const directory of ["文档", "我的 文档", "资料，归档"]) {
+				const quoted = directory !== "文档";
+				const initial = quoted ? `@"${directory.slice(0, 2)}` : "@文";
+				const directoryValue = quoted ? `@"${directory}/"` : `@${directory}/`;
+				const fileValue = quoted ? `@"${directory}/说明.md"` : `@${directory}/说明.md`;
+				const filePrefix = quoted ? `@"${directory}/说` : `@${directory}/说`;
+				const editor = new Editor(createTestTUI(), defaultEditorTheme);
+				editor.setAutocompleteProvider({
+					getSuggestions: async (lines, cursorLine, cursorCol) => {
+						const before = lines[cursorLine]!.slice(0, cursorCol);
+						const prefix = before.slice(before.indexOf("@"));
+						if (prefix === initial) {
+							return { prefix, items: [{ value: directoryValue, label: `${directory}/` }] };
+						}
+						return prefix === filePrefix ? { prefix, items: [{ value: fileValue, label: "说明.md" }] } : null;
+					},
+					applyCompletion: (...args) => provider.applyCompletion(...args),
+				});
+				editor.setText(`查看：${initial}`);
+				editor.handleInput("\t");
+				await flushAutocomplete();
+				assert.strictEqual(editor.getText(), `查看：${directoryValue}`);
+				assert.strictEqual(editor.isShowingAutocomplete(), false);
+
+				editor.handleInput("说");
+				t.mock.timers.tick(20);
+				await flushAutocomplete();
+				assert.strictEqual(editor.isShowingAutocomplete(), true);
+
+				for (const deletion of ["\x7f", "\x1b[3~"]) {
+					editor.handleInput("错");
+					t.mock.timers.tick(20);
+					await flushAutocomplete();
+					assert.strictEqual(editor.isShowingAutocomplete(), false);
+					if (deletion === "\x1b[3~") editor.handleInput("\x1b[D");
+					editor.handleInput(deletion);
+					t.mock.timers.tick(20);
+					await flushAutocomplete();
+					assert.strictEqual(editor.isShowingAutocomplete(), true);
+				}
+
+				editor.handleInput("\t");
+				assert.strictEqual(editor.getText(), `查看：${fileValue} `);
+				assert.deepStrictEqual(editor.getCursor(), { line: 0, col: editor.getText().length });
+			}
+		});
+
 		it("auto-applies single force-file suggestion without showing menu", async () => {
 			const editor = new Editor(createTestTUI(), defaultEditorTheme);
 
