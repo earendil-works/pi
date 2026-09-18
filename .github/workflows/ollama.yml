@@ -30,6 +30,7 @@ on:
       - "packages/coding-agent/test/agent-session-concurrent.test.ts"
       - "packages/coding-agent/test/agent-session-dynamic-provider.test.ts"
       - ".github/workflows/ollama.yml"
+      - "scripts/prepare-ollama-test-catalog.mjs"
 
 permissions:
   contents: read
@@ -53,7 +54,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci --ignore-scripts
-      - run: npm run hydrate:model-data
+      - name: Restore pinned catalog for offline fixtures
+        run: node scripts/prepare-ollama-test-catalog.mjs
       - name: Native protocol and discovery fixtures
         working-directory: packages/ai
         run: node ../../node_modules/vitest/dist/cli.js --run test/ollama.test.ts test/overflow.test.ts
