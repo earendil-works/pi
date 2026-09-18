@@ -61,6 +61,8 @@ Close session-scoped resources from an idempotent `session_shutdown` handler.
 
 A run proceeds from input and `before_agent_start`, through model, message, and tool events, to `agent_end`.
 Automatic retries, recovery, compaction, or queued work can continue afterward.
+<a id="agent_start--agent_end--agent_before_settle--agent_settled"></a>
+
 `agent_before_settle` is the final actionable boundary: it can append entries and request one continuation.
 `agent_settled` is final and notification-only; use it when an integration needs to know Pi will not continue automatically.
 
@@ -100,9 +102,13 @@ Events cover resource discovery, sessions, agent and message lifecycle, provider
 
 `message_end` can replace a finalized message while preserving its role. `tool_call` can mutate input or block execution. `tool_result` handlers compose, with each handler seeing prior changes.
 
+<a id="context_with_system"></a>
+
 `context` transforms conversation messages without prompt and tool system messages; Pi restores that state afterward. Use `context_with_system` only when a request-local transformation must own the complete transcript, and keep a system message at index zero.
 
 `turn_end` and `agent_before_settle` are actionable boundaries. Their handlers can chain proposed `custom`, `custom_message`, `context_edit`, or `compaction` entries and return `continue: true` for one next model request. Guard continuation conditions because an unconditional continuation can loop. Use the exported event declarations for the complete validation and ordering contract.
+
+<a id="cache_warming_decision"></a>
 
 `cache_warming_decision` can override an idle prompt-cache refresh with `{ action: "warm" }` or `{ action: "stop" }`. The last handler that returns an action wins.
 
