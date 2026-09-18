@@ -10,6 +10,9 @@ const nvidiaNIMResourceExhaustedMessage = "ResourceExhausted: Worker local total
 const bunFetchSocketClosedMessage =
 	"The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()";
 const openAIResponsesEarlyEofMessage = "OpenAI Responses stream ended before a terminal response event";
+const cliProxyApiTruncatedStreamMessage =
+	"litellm.APIError: stream error: stream disconnected before completion: stream closed before response.completed";
+const anthropicEarlyEofMessage = "Anthropic stream ended before message_stop";
 const wrappedDnsLookupError =
 	"The pending stream has been canceled (caused by: getaddrinfo ENOTFOUND bedrock-runtime.us-east-1.amazonaws.com)";
 
@@ -60,12 +63,13 @@ describe("provider retry classification", () => {
 		expect(isRetryableAssistantError(fauxAssistantMessage("", { stopReason: "error", errorMessage }))).toBe(true);
 	});
 
-	it("matches OpenAI Responses streams that end before terminal events", () => {
-		expect(
-			isRetryableAssistantError(
-				fauxAssistantMessage("", { stopReason: "error", errorMessage: openAIResponsesEarlyEofMessage }),
-			),
-		).toBe(true);
+	it.each([
+		openAIResponsesEarlyEofMessage,
+		anthropicEarlyEofMessage,
+		cliProxyApiTruncatedStreamMessage,
+		"stream ended without a terminal event",
+	])("matches a stream that ended before its terminal event: %s", (errorMessage) => {
+		expect(isRetryableAssistantError(fauxAssistantMessage("", { stopReason: "error", errorMessage }))).toBe(true);
 	});
 
 	it("keeps provider limit errors non-retryable", () => {

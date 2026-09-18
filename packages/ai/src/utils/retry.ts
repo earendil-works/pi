@@ -67,12 +67,21 @@ const RETRYABLE_PROVIDER_ERROR_PATTERN = buildProviderErrorPattern([
 	"websocket.?closed",
 	"websocket.?error",
 
-	// Premature stream endings from SDKs and transports. Anthropic can throw
-	// "stream ended without ..." and "Anthropic stream ended before message_stop"
-	// (#4433); Bedrock/Smithy can throw an HTTP/2 no-response error (#3594).
+	// Premature stream endings from SDKs, transports, gateways and proxies.
+	//
+	// A stream that stops before its terminal event is one condition, not one
+	// condition per vendor, so match the condition rather than each vendor's
+	// sentence. Enumerating spellings meant every new SDK or proxy that worded it
+	// differently needed another entry here, and users hit a hard failure until
+	// that landed (#9735). This covers Anthropic's "stream ended before
+	// message_stop" (#4433), this package's own "OpenAI Responses stream ended
+	// before a terminal response event", and CLIProxyAPI's "stream disconnected
+	// before completion: stream closed before response.completed" as surfaced
+	// through LiteLLM.
 	"ended without",
-	"stream ended before message_stop",
-	"stream ended before a terminal response event",
+	"stream (?:ended|closed|disconnected|dropped|cut) before",
+
+	// Bedrock/Smithy can throw an HTTP/2 no-response error (#3594).
 	"http2 request did not get a response",
 
 	// Provider-requested retry delay cap failures should flow through the outer
