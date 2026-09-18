@@ -1,6 +1,6 @@
 # Settings Reference
 
-This reference lists user-configurable settings, their types, defaults, and purposes. When the same setting appears in both places, the project value wins. Pi reads a project's `sessionDir` before resolving project trust. See [Configuration](configuration.md) for file locations and trust behavior.
+This reference lists user-configurable settings, their types, defaults, and purposes. Project settings override agent-directory settings. Resource lists are combined. See [Configuration](configuration.md) for file locations and trust behavior.
 
 ## Model and thinking
 
@@ -37,7 +37,7 @@ See [Choose a Model](models-and-providers.md) for model selection and thinking c
 
 | Setting | Type | Default | Description |
 |---|---|---|---|
-| `defaultTools` | `string[]` | Standard tool set | Built-in tools enabled at startup. An empty array disables all built-in tools but not extension or SDK tools. |
+| `defaultTools` | `string[]` | `read`, `bash`, `edit`, `write` | Built-in tools enabled at startup. An empty array disables all built-in tools but not extension or SDK tools. |
 
 Available built-in tools are `read`, `bash`, `powershell`, `edit`, `write`, `grep`, `find`, and `ls`. CLI tool options override this setting for one invocation. See [Command Line](cli.md#tools).
 
@@ -45,7 +45,7 @@ Available built-in tools are `read`, `bash`, `powershell`, `edit`, `write`, `gre
 
 | Setting | Type | Default | Description |
 |---|---|---|---|
-| `sessionDir` | string | Agent session directory | Session storage directory. Accepts absolute paths, relative paths, and `~`. Lower priority than `PI_CODING_AGENT_SESSION_DIR` and `--session-dir`. |
+| `sessionDir` | string | Agent session directory | Session storage directory. Relative paths resolve from the working directory. `PI_CODING_AGENT_SESSION_DIR` and `--session-dir` override this setting. |
 
 ### Compaction
 

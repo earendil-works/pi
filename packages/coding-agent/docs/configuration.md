@@ -1,6 +1,6 @@
 # Configuration
 
-Pi supports user-level and project configuration. User-level configuration lives in the agent directory, which defaults to `~/.pi/agent`. Project configuration lives in `.pi` under the working directory and loads after [project trust](security.md#understand-project-trust) is granted.
+Pi supports user-level and project configuration. User-level configuration lives in the agent directory, which defaults to `~/.pi/agent`. Project configuration lives in `.pi` under the working directory. Most project configuration loads after [project trust](security.md#understand-project-trust) is granted, but Pi reads the project `sessionDir` setting before resolving trust so it can locate sessions.
 
 In interactive mode, use `/settings` to change common preferences. For other options, ask Pi to update the configuration or edit the relevant files directly. Run `/reload` after manually changing settings, keybindings, instructions, or resources.
 
@@ -21,7 +21,6 @@ The agent directory is shown as `<agent-dir>` below. Set its location with the `
 | `<agent-dir>/skills/` | User [skills](skills.md) and supporting files. |
 | `<agent-dir>/prompts/` | User [prompt templates](prompt-templates.md) exposed as slash commands. |
 | `<agent-dir>/themes/` | User [theme](themes.md) files. |
-| `<agent-dir>/sessions/` | Persistent sessions grouped by working directory. The session directory can be changed. |
 
 ## Project `.pi` directory
 
@@ -35,9 +34,11 @@ The agent directory is shown as `<agent-dir>` below. Set its location with the `
 | `.pi/prompts/` | Project prompt templates exposed as slash commands. |
 | `.pi/themes/` | Project theme files. |
 
+For `SYSTEM.md` and `APPEND_SYSTEM.md`, the trusted project file takes precedence over the corresponding agent-directory file. Files with the same name are not combined.
+
 ## Context files
 
-Context files are separate from project `.pi` configuration. Pi loads one context file from the agent directory, followed by one from each directory between the filesystem root and the working directory. This means an `AGENTS.md` in a repository root also applies when Pi runs from a nested directory.
+Context files are separate from project `.pi` configuration. Pi loads them from the agent directory, the working directory, and its parent directories. A context file applies whenever Pi runs in its directory or anywhere below it.
 
 An `AGENTS.override.md` replaces `AGENTS.md` or `CLAUDE.md` only in the same directory. It does not suppress context files from the agent directory or other directories.
 
