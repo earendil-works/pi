@@ -72,6 +72,24 @@ describe("ToolExecutionComponent parity", () => {
 		expect(rendered).toContain("custom result");
 	});
 
+	test("does not throw when a tool result lacks a content array", () => {
+		// Regression test for #9761: an extension tool returning a non-conforming result object
+		// (e.g. { output: "..." } instead of { content: [...] }) crashed the TUI with
+		// "Cannot read properties of undefined (reading 'filter')".
+		const component = new ToolExecutionComponent(
+			"custom_tool",
+			"tool-no-content",
+			{},
+			{},
+			createBaseToolDefinition(),
+			createFakeTui(),
+			process.cwd(),
+		);
+
+		expect(() => component.updateResult({ output: "not an AgentToolResult" } as any, false)).not.toThrow();
+		expect(() => component.render(120)).not.toThrow();
+	});
+
 	test("self-rendered empty tool rows take no layout space", () => {
 		const toolDefinition: ToolDefinition = {
 			...createBaseToolDefinition(),
