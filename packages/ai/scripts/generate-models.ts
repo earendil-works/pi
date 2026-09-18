@@ -312,15 +312,19 @@ const QWEN_TOKEN_PLAN_PROVIDER_IDS = new Set<string>([
 	"qwen-token-plan",
 	"qwen-token-plan-cn",
 	"qwen-token-plan-individual",
+	"qwen-token-plan-individual-cn",
 ]);
-// QwenCloud Token Plan Individual text-model allowlist, verified 2026-09-03.
+// QwenCloud Token Plan Individual text-model allowlist, verified 2026-09-18.
 // Retired models remain excluded above even if the public catalog lags.
 // https://docs.qwencloud.com/token-plan/personal/token-plan-personal-overview
+// https://help.aliyun.com/zh/model-studio/token-plan-personal-overview
 const QWEN_TOKEN_PLAN_INDIVIDUAL_MODEL_IDS = new Set<string>([
 	"deepseek-v4-flash-0731",
 	"deepseek-v4-pro",
 	"deepseek-v4-pro-0813",
+	"deepseek-v4.1-flash",
 	"glm-5.2",
+	"glm-5.3",
 	"qwen3.6-flash",
 	"qwen3.7-max",
 	"qwen3.7-plus",
@@ -2491,6 +2495,12 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 				provider: "qwen-token-plan-cn",
 				baseUrl: "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
 				modelIds: undefined,
+			},
+			{
+				source: "alibaba-token-plan-cn",
+				provider: "qwen-token-plan-individual-cn",
+				baseUrl: "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+				modelIds: QWEN_TOKEN_PLAN_INDIVIDUAL_MODEL_IDS,
 			},
 		] as const;
 
