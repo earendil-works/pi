@@ -1,6 +1,6 @@
 # Themes Reference
 
-This reference describes theme discovery, selection, schema, color values, and TUI color tokens. For the setup workflow, see [Configuration](configuration.md#themes).
+This reference describes theme discovery, selection, schema, color values, and TUI color tokens. For configuration locations, see [Configuration](configuration.md).
 
 ## Table of Contents
 
@@ -18,7 +18,7 @@ This reference describes theme discovery, selection, schema, color values, and T
 
 Pi includes the `dark` and `light` themes. Place a custom theme in your user or project themes directory.
 
-See [Loading resources](configuration.md#resources) for all supported locations and options.
+See [Settings](settings-reference.md#resources) and [Pi Packages](packages.md) for additional locations.
 
 ## Selecting a Theme
 

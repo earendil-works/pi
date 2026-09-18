@@ -60,7 +60,7 @@ Place the skill in your user or project skills directory. Directories containing
 
 Pi also supports the Agent Skills locations `~/.agents/skills/` and `.agents/skills/`. Project `.agents/skills/` directories are discovered from the working directory through its ancestors, stopping at the repository root when one exists.
 
-Pi accepts some standalone Markdown skills, but a directory containing `SKILL.md` is the portable form and should be preferred. See [Loading resources](configuration.md#resources) for all supported locations and options.
+Pi accepts some standalone Markdown skills, but a directory containing `SKILL.md` is the portable form and should be preferred. See [Settings](settings-reference.md#resources) and [Pi Packages](packages.md) for additional locations.
 
 Project skills can instruct the model to run scripts or modify files. Review unfamiliar skills and their supporting files before granting project trust.
 

@@ -145,7 +145,7 @@ Default enabled tools are `read`, `bash`, `edit`, and `write`, unless `defaultTo
 pi --extension ./review.ts
 ```
 
-See [Configuration](configuration.md#resources) for discovery, settings, packages, project trust, and reload behavior.
+See [Configuration](configuration.md) for conventional directories and project trust, [Settings](settings-reference.md#resources) for configured paths, and [Pi Packages](packages.md) for package sources.
 
 - `-e`, `--extension <path>`<br>
   Loads an extension file or directory and is repeatable.

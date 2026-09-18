@@ -1,6 +1,6 @@
 # Keybindings Reference
 
-This reference lists the key syntax, configurable action identifiers, defaults, and configuration format. For the setup workflow, see [Configuration](configuration.md#keybindings).
+This reference lists the key syntax, configurable action identifiers, defaults, and configuration format. For the user configuration location, see [Agent directory](configuration.md#agent-directory).
 
 The config file uses the same namespaced keybinding ids that pi uses internally and that extension authors use in `keyHint()` and injected `keybindings` managers.
 

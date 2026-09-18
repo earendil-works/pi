@@ -54,6 +54,6 @@ Arguments follow shell-like quoting, so `/review "API compatibility"` supplies o
 
 Place the template in your user or project prompt directory. Conventional prompt directories load direct `.md` children only.
 
-Settings and packages can select nested Markdown files; a package manifest can narrow discovery with explicit paths and globs. See [Loading resources](configuration.md#resources) for all supported locations and options.
+Settings and packages can select nested Markdown files; a package manifest can narrow discovery with explicit paths and globs. See [Settings](settings-reference.md#resources) and [Pi Packages](packages.md) for these options.
 
 Project templates become commands in the editor after trust is granted. Review their content before trusting an unfamiliar project. See [Security](security.md#understand-project-trust).
