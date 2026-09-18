@@ -229,10 +229,11 @@ async function prepareInitialMessage(
 }
 
 /** Result from resolving a session argument */
-type ResolvedSession =
+export type ResolvedSession =
 	| { type: "path"; path: string } // Direct file path
 	| { type: "local"; path: string } // Found in current project
 	| { type: "global"; path: string; cwd: string } // Found in different project
+	| { type: "ambiguous"; arg: string; matches: { id: string; path: string }[] } // Prefix matches multiple sessions
 	| { type: "not_found"; arg: string }; // Not found anywhere
 
 /**
@@ -248,7 +249,11 @@ function findLocalSessionByExactId(
 	return path ? { type: "local", path } : undefined;
 }
 
-async function resolveSessionPath(sessionArg: string, cwd: string, sessionDir?: string): Promise<ResolvedSession> {
+export async function resolveSessionPath(
+	sessionArg: string,
+	cwd: string,
+	sessionDir?: string,
+): Promise<ResolvedSession> {
 	// If it looks like a file path, resolve it before handing it to the session manager.
 	if (sessionArg.includes("/") || sessionArg.includes("\\") || sessionArg.endsWith(".jsonl")) {
 		return { type: "path", path: resolvePath(sessionArg, cwd) };
@@ -256,24 +261,54 @@ async function resolveSessionPath(sessionArg: string, cwd: string, sessionDir?: 
 
 	// Try to match as session ID in current project first
 	const localSessions = await SessionManager.list(cwd, sessionDir);
-	const localMatch =
-		localSessions.find((s) => s.id === sessionArg) ?? localSessions.find((s) => s.id.startsWith(sessionArg));
-
-	if (localMatch) {
-		return { type: "local", path: localMatch.path };
+	const localExact = localSessions.find((s) => s.id === sessionArg);
+	if (localExact) {
+		return { type: "local", path: localExact.path };
+	}
+	// An exact ID always wins; a prefix matching several sessions is ambiguous
+	// (session IDs are time-ordered, so short prefixes collide easily).
+	const localMatches = localSessions.filter((s) => s.id.startsWith(sessionArg));
+	if (localMatches.length === 1) {
+		return { type: "local", path: localMatches[0].path };
+	}
+	if (localMatches.length > 1) {
+		return {
+			type: "ambiguous",
+			arg: sessionArg,
+			matches: localMatches.map((s) => ({ id: s.id, path: s.path })),
+		};
 	}
 
 	// Try global search across all projects
 	const allSessions = await SessionManager.listAll(sessionDir);
-	const globalMatch =
-		allSessions.find((s) => s.id === sessionArg) ?? allSessions.find((s) => s.id.startsWith(sessionArg));
-
-	if (globalMatch) {
-		return { type: "global", path: globalMatch.path, cwd: globalMatch.cwd };
+	const globalExact = allSessions.find((s) => s.id === sessionArg);
+	if (globalExact) {
+		return { type: "global", path: globalExact.path, cwd: globalExact.cwd };
+	}
+	const globalMatches = allSessions.filter((s) => s.id.startsWith(sessionArg));
+	if (globalMatches.length === 1) {
+		return { type: "global", path: globalMatches[0].path, cwd: globalMatches[0].cwd };
+	}
+	if (globalMatches.length > 1) {
+		return {
+			type: "ambiguous",
+			arg: sessionArg,
+			matches: globalMatches.map((s) => ({ id: s.id, path: s.path })),
+		};
 	}
 
 	// Not found anywhere
 	return { type: "not_found", arg: sessionArg };
+}
+
+/** Report an ambiguous session prefix and stop instead of opening the wrong session. */
+function exitOnAmbiguousSession(resolved: Extract<ResolvedSession, { type: "ambiguous" }>): never {
+	console.error(chalk.red(`Error: session '${resolved.arg}' is ambiguous; it matches multiple sessions.`));
+	for (const match of resolved.matches) {
+		console.error(chalk.dim(`  ${match.id}  ${match.path}`));
+	}
+	console.error(chalk.dim("Use a longer session ID prefix."));
+	process.exit(1);
 }
 
 /** Prompt user for yes/no confirmation */
@@ -376,6 +411,10 @@ export async function createSessionManager(
 			case "global":
 				return forkSessionOrExit(resolved.path, cwd, sessionDir, parsed.sessionId);
 
+			case "ambiguous":
+				exitOnAmbiguousSession(resolved);
+				break;
+
 			case "not_found":
 				console.error(chalk.red(`No session found matching '${resolved.arg}'`));
 				process.exit(1);
@@ -399,6 +438,10 @@ export async function createSessionManager(
 				}
 				return forkSessionOrExit(resolved.path, cwd, sessionDir);
 			}
+
+			case "ambiguous":
+				exitOnAmbiguousSession(resolved);
+				break;
 
 			case "not_found":
 				console.error(chalk.red(`No session found matching '${resolved.arg}'`));
