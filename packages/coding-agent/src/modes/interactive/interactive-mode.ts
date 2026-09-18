@@ -3076,6 +3076,11 @@ export class InteractiveMode {
 				await this.handleCompactCommand(customInstructions);
 				return;
 			}
+			if (text === "/retry") {
+				this.editor.setText("");
+				await this.handleRetryCommand();
+				return;
+			}
 			if (text === "/reload") {
 				this.editor.setText("");
 				await this.handleReloadCommand();
@@ -6623,6 +6628,16 @@ export class InteractiveMode {
 			await this.session.compact(customInstructions);
 		} catch {
 			// Ignore, will be emitted as an event
+		}
+	}
+
+	private async handleRetryCommand(): Promise<void> {
+		this.clearStatusIndicator();
+
+		try {
+			await this.session.retryFailedRun();
+		} catch (error) {
+			this.showError(error instanceof Error ? error.message : String(error));
 		}
 	}
 

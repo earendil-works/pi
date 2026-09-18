@@ -1174,9 +1174,44 @@ export class AgentSession {
 	// =========================================================================
 
 	private async _runAgentPrompt(messages: AgentMessage | AgentMessage[]): Promise<void> {
+		await this._runAgentLoop(() => this.agent.prompt(messages));
+	}
+
+	/**
+	 * Retry the last run after it failed with a retryable provider/connection
+	 * error (for example after auto-retries were exhausted and the agent
+	 * abandoned the turn). Removes the failed assistant message from agent
+	 * state and continues the run from the last user or tool-result message.
+	 * @throws Error when the session is busy or there is nothing retryable to continue from.
+	 */
+	async retryFailedRun(): Promise<void> {
+		if (this._isAgentRunActive || this.isRetrying) {
+			throw new Error("The agent is already processing. Wait for it to finish before retrying.");
+		}
+		if (this.isCompacting) {
+			throw new Error("Cannot retry while compaction is in progress.");
+		}
+		const messages = this.agent.state.messages;
+		const lastMessage = messages[messages.length - 1];
+		if (lastMessage?.role !== "assistant") {
+			throw new Error("Nothing to retry. Send a prompt first.");
+		}
+		const lastAssistant = lastMessage as AssistantMessage;
+		if (lastAssistant.stopReason !== "error" || !this._isRetryableError(lastAssistant)) {
+			throw new Error("The last response did not fail with a retryable connection error. Nothing to retry.");
+		}
+		// Remove the failed assistant message so the run continues from the last
+		// user or tool-result message (same approach as auto-retry). The entry
+		// stays in the session history.
+		this.agent.state.messages = messages.slice(0, -1);
+		await this._runAgentLoop(() => this.agent.continue());
+	}
+
+	/** Run an agent loop: start with the first step, then continue while post-run handling requests it. */
+	private async _runAgentLoop(firstStep: () => Promise<void>): Promise<void> {
 		this._isAgentRunActive = true;
 		try {
-			await this.agent.prompt(messages);
+			await firstStep();
 			while (await this._handlePostAgentRun()) {
 				await this.agent.continue();
 			}

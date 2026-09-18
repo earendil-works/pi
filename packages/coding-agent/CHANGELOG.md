@@ -12,6 +12,7 @@
 - Added per-model `reserveTokens` and `keepRecentTokens` settings through `compaction.modelOverrides`, with ordinary compaction settings as fallback ([#8133](https://github.com/earendil-works/pi-mono/issues/8133)).
 - Added `compat.allowedFallbackModels` configuration for overriding or disabling Anthropic server-side fallback models ([#9294](https://github.com/earendil-works/pi/issues/9294)).
 - Added an unsubscribe function from `pi.on()` so extensions can drop event handlers. Handlers added or removed during a dispatch apply to later dispatches, not the current one ([#8967](https://github.com/earendil-works/pi/issues/8967)).
+- Added `/retry` (and `AgentSession.retryFailedRun()`) to resume the last turn after it failed with a retryable connection error, for example after auto-retries were exhausted. The failed assistant message stays in the session history; only the in-memory run state is rewound.
 
 ### Changed
 

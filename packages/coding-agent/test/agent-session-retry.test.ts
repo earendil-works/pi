@@ -73,11 +73,13 @@ describe("AgentSession retry", () => {
 		maxRetries?: number;
 		maxAgentDelayMs?: number;
 		delayAssistantMessageEndMs?: number;
+		retryEnabled?: boolean;
 	}) {
 		const failCount = options?.failCount ?? 1;
 		const maxRetries = options?.maxRetries ?? 3;
 		const maxAgentDelayMs = options?.maxAgentDelayMs ?? 60000;
 		const delayAssistantMessageEndMs = options?.delayAssistantMessageEndMs ?? 0;
+		const retryEnabled = options?.retryEnabled ?? true;
 		let callCount = 0;
 
 		const model = getModel("anthropic", "claude-sonnet-4-5")!;
@@ -110,7 +112,9 @@ describe("AgentSession retry", () => {
 		const authStorage = AuthStorage.create(join(tempDir, "auth.json"));
 		const modelRegistry = await createModelRegistry(authStorage, tempDir);
 		await authStorage.modify("anthropic", async () => ({ type: "api_key", key: "test-key" }));
-		settingsManager.applyOverrides({ retry: { enabled: true, maxRetries, baseDelayMs: 1, maxAgentDelayMs } });
+		settingsManager.applyOverrides({
+			retry: { enabled: retryEnabled, maxRetries, baseDelayMs: 1, maxAgentDelayMs },
+		});
 
 		session = new AgentSession({
 			agent,
@@ -245,6 +249,166 @@ describe("AgentSession retry", () => {
 
 		expect(callCount).toBe(2);
 		expect(events).toEqual(["start:1", "end:success=true"]);
+	});
+
+	async function waitFor(predicate: () => boolean): Promise<void> {
+		while (!predicate()) {
+			await new Promise((resolve) => setTimeout(resolve, 1));
+		}
+	}
+
+	it("retryFailedRun() resumes a turn abandoned after exhausted auto-retries", async () => {
+		const created = await createSession({ failCount: 3, maxRetries: 2 });
+		const events: string[] = [];
+		created.session.subscribe((event) => {
+			if (event.type === "auto_retry_start") events.push(`start:${event.attempt}`);
+			if (event.type === "auto_retry_end") events.push(`end:success=${event.success}`);
+		});
+
+		await created.session.prompt("Test");
+
+		// Initial call + 2 auto-retries, all failed; the agent abandoned the turn.
+		expect(created.getCallCount()).toBe(3);
+		expect(events).toEqual(["start:1", "start:2", "end:success=false"]);
+
+		// Manual retry: the next call succeeds.
+		await created.session.retryFailedRun();
+
+		expect(created.getCallCount()).toBe(4);
+		expect(created.session.isStreaming).toBe(false);
+		const last = created.session.state.messages[created.session.state.messages.length - 1];
+		expect(last.role).toBe("assistant");
+		if (last.role === "assistant") {
+			expect(last.stopReason).toBe("stop");
+		}
+	});
+
+	it("retryFailedRun() retries when auto-retry is disabled", async () => {
+		const created = await createSession({ failCount: 1, retryEnabled: false });
+
+		// Single failed call, no auto-retry.
+		await created.session.prompt("Test");
+		expect(created.getCallCount()).toBe(1);
+
+		await created.session.retryFailedRun();
+
+		expect(created.getCallCount()).toBe(2);
+		expect(created.session.isStreaming).toBe(false);
+	});
+
+	it("retryFailedRun() throws when there is no failed run to retry", async () => {
+		const created = await createSession({ failCount: 0 });
+
+		await expect(created.session.retryFailedRun()).rejects.toThrow("Nothing to retry. Send a prompt first.");
+
+		await created.session.prompt("Test");
+		await expect(created.session.retryFailedRun()).rejects.toThrow("did not fail with a retryable connection error");
+		expect(created.getCallCount()).toBe(1);
+	});
+
+	it("retryFailedRun() throws when the last error is not retryable", async () => {
+		const created = await createSession({ failCount: 0 });
+		let callCount = 0;
+		const streamFn = () => {
+			callCount++;
+			const stream = new MockAssistantStream();
+			queueMicrotask(() => {
+				if (callCount === 1) {
+					const msg = createAssistantMessage("", {
+						stopReason: "error",
+						errorMessage: "insufficient_quota: upgrade to continue",
+					});
+					stream.push({ type: "start", partial: msg });
+					stream.push({ type: "error", reason: "error", error: msg });
+					return;
+				}
+				const msg = createAssistantMessage("Recovered");
+				stream.push({ type: "start", partial: msg });
+				stream.push({ type: "done", reason: "stop", message: msg });
+			});
+			return stream;
+		};
+		created.session.dispose();
+
+		const model = getModel("anthropic", "claude-sonnet-4-5")!;
+		const agent = new Agent({
+			getApiKey: () => "test-key",
+			initialState: { model, systemPrompt: "Test", tools: [] },
+			streamFn,
+		});
+		const sessionManager = SessionManager.inMemory();
+		const settingsManager = SettingsManager.create(tempDir, tempDir);
+		const authStorage = AuthStorage.create(join(tempDir, "auth.json"));
+		const modelRegistry = await createModelRegistry(authStorage, tempDir);
+		await authStorage.modify("anthropic", async () => ({ type: "api_key", key: "test-key" }));
+		settingsManager.applyOverrides({ retry: { enabled: true, maxRetries: 3, baseDelayMs: 1 } });
+		session = new AgentSession({
+			agent,
+			sessionManager,
+			settingsManager,
+			cwd: tempDir,
+			modelRuntime: getModelRuntime(modelRegistry),
+			resourceLoader: createTestResourceLoader(),
+		});
+
+		// Non-retryable quota error ends the run without auto-retry.
+		await session.prompt("Test");
+		expect(callCount).toBe(1);
+
+		await expect(session.retryFailedRun()).rejects.toThrow("did not fail with a retryable connection error");
+		expect(callCount).toBe(1);
+	});
+
+	it("retryFailedRun() throws while a run is active", async () => {
+		const created = await createSession({ failCount: 0 });
+		created.session.dispose();
+
+		const model = getModel("anthropic", "claude-sonnet-4-5")!;
+		const agent = new Agent({
+			getApiKey: () => "test-key",
+			initialState: { model, systemPrompt: "Test", tools: [] },
+			streamFn: (_model, _context, options) => {
+				const stream = new MockAssistantStream();
+				queueMicrotask(() => {
+					// Open the stream but never finish it, so the run stays active.
+					stream.push({ type: "start", partial: createAssistantMessage("Working") });
+					options?.signal?.addEventListener(
+						"abort",
+						() => {
+							stream.push({
+								type: "error",
+								reason: "aborted",
+								error: createAssistantMessage("", { stopReason: "aborted" }),
+							});
+						},
+						{ once: true },
+					);
+				});
+				return stream;
+			},
+		});
+		const sessionManager = SessionManager.inMemory();
+		const settingsManager = SettingsManager.create(tempDir, tempDir);
+		const authStorage = AuthStorage.create(join(tempDir, "auth.json"));
+		const modelRegistry = await createModelRegistry(authStorage, tempDir);
+		await authStorage.modify("anthropic", async () => ({ type: "api_key", key: "test-key" }));
+		settingsManager.applyOverrides({ retry: { enabled: true, maxRetries: 3, baseDelayMs: 1 } });
+		session = new AgentSession({
+			agent,
+			sessionManager,
+			settingsManager,
+			cwd: tempDir,
+			modelRuntime: getModelRuntime(modelRegistry),
+			resourceLoader: createTestResourceLoader(),
+		});
+
+		const promptPromise = session.prompt("Test");
+		await waitFor(() => session.isStreaming);
+
+		await expect(session.retryFailedRun()).rejects.toThrow("already processing");
+
+		session.abort();
+		await promptPromise;
 	});
 
 	it("prompt waits for full agent loop when retry produces tool calls", async () => {
