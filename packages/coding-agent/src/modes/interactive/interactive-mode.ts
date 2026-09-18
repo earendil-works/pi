@@ -372,6 +372,8 @@ export interface InteractiveModeOptions {
 	tuiMode?: TuiMode;
 	/** Initial interactive theme setting for this invocation. */
 	initialThemeSetting?: string;
+	/** Optional command shown after exit to resume the active persisted session. */
+	formatResumeCommand?: (sessionManager: SessionManager) => string | undefined;
 	/** Terminal implementation. Defaults to the current process terminal. */
 	terminal?: Terminal;
 }
@@ -4005,7 +4007,7 @@ export class InteractiveMode {
 		this.stop();
 		await this.runtimeHost.dispose();
 
-		const resumeCommand = formatResumeCommand(this.sessionManager);
+		const resumeCommand = this.options.formatResumeCommand?.(this.sessionManager) ?? formatResumeCommand(this.sessionManager);
 		if (resumeCommand) {
 			process.stdout.write(`${chalk.dim("To resume this session:")} ${resumeCommand}\n`);
 		}
