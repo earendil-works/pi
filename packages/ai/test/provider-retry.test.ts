@@ -62,6 +62,41 @@ describe("provider request retries", () => {
 		expect(request).toHaveBeenCalledTimes(2);
 	});
 
+	it("honors a retry-after HTTP-date", async () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+		const request = vi
+			.fn<() => Promise<string>>()
+			.mockRejectedValueOnce(providerError(429, { "retry-after": "Thu, 01 Jan 2026 00:00:02 GMT" }))
+			.mockResolvedValue("ok");
+
+		const result = retryProviderRequest(request, { maxRetries: 1 });
+		await vi.advanceTimersByTimeAsync(1999);
+		expect(request).toHaveBeenCalledTimes(1);
+		await vi.advanceTimersByTimeAsync(1);
+
+		await expect(result).resolves.toBe("ok");
+		expect(request).toHaveBeenCalledTimes(2);
+	});
+
+	it("uses exponential backoff for a malformed retry-after HTTP-date", async () => {
+		// #9571
+		vi.useFakeTimers();
+		const request = vi
+			.fn<() => Promise<string>>()
+			.mockRejectedValueOnce(providerError(429, { "retry-after": "not-a-date" }))
+			.mockResolvedValue("ok");
+
+		const result = retryProviderRequest(request, { maxRetries: 1 });
+		await vi.advanceTimersByTimeAsync(0);
+		expect(request).toHaveBeenCalledTimes(1);
+		expect(vi.getTimerCount()).toBe(1);
+
+		await vi.advanceTimersByTimeAsync(500);
+		await expect(result).resolves.toBe("ok");
+		expect(request).toHaveBeenCalledTimes(2);
+	});
+
 	it("aborts a provider-requested retry delay", async () => {
 		vi.useFakeTimers();
 		const controller = new AbortController();
