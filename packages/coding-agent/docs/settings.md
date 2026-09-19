@@ -50,7 +50,7 @@ Providers drop a prompt cache entry after a period of inactivity, so the first r
 }
 ```
 
-A refresh is sent only when the expected avoided cache-miss cost, minus the cost of refreshes already sent and of this one, leaves at least $0.05 of expected savings. Active agent runs use 100% continuation probability. `/session` shows the next decision, continuation probability, expected savings, threshold, and estimated costs. When cache miss notices are enabled, each successful refresh appears in the transcript with its cost; notices identify extension overrides.
+A refresh is sent only when the expected avoided cache-miss cost, minus the cost of the refresh, leaves at least $0.05 of expected savings. Active agent runs use 100% continuation probability. `/session` shows the next decision, continuation probability, expected savings, threshold, and estimated costs. When cache miss notices are enabled, each successful refresh appears in the transcript with its cost; notices identify extension overrides.
 
 Warming stops when the context changes (model switch, compaction, branch navigation). Idle warming stops no later than 30 minutes after the last real provider request; warming during an active agent run stops after 60 minutes. Extensions can override each decision through the [`cache_warming_decision`](extensions.md#cache_warming_decision) event.
 

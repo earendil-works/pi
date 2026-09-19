@@ -17,13 +17,13 @@ const MAX_WARMING_AGE_MS = 60 * 60_000;
 /** Idle warming uses a shorter horizon because continuation estimates become less reliable with age. */
 const MAX_IDLE_WARMING_AGE_MS = 30 * 60_000;
 /** A refresh is sent only when it is expected to save at least this many dollars. */
-export const CACHE_WARMING_MINIMUM_EXPECTED_SAVINGS = 0.05;
+const CACHE_WARMING_MINIMUM_EXPECTED_SAVINGS = 0.05;
 /**
  * Chance that a real request arrives before the cache entry expires while the
  * agent sits idle. Measured from our own usage; per-session estimates were not
  * better than this constant.
  */
-export const IDLE_CONTINUATION_PROBABILITY = 0.15;
+const IDLE_CONTINUATION_PROBABILITY = 0.15;
 
 /** Refresh at 90% of the TTL while preserving at least ten seconds of margin. */
 export function getCacheWarmingDelayMs(ttlMs: number): number | undefined {
@@ -95,11 +95,9 @@ export interface CacheWarmingDecision {
 	warmCost: number;
 	/** Extra price of the next real request if the cache entry is lost. */
 	missCost: number;
-	/** Price of the refreshes already sent for this entry. */
-	spentCost: number;
 	/** Estimated chance that a real request arrives before the entry expires. */
 	continuationProbability: number;
-	/** `continuationProbability * missCost - spentCost - warmCost`. */
+	/** `continuationProbability * missCost - warmCost`. */
 	expectedSavings: number;
 	/** False when the prompt size or the model's prices are unknown. */
 	economicsAvailable: boolean;
@@ -112,7 +110,7 @@ export interface CacheWarmingDecision {
  * extension might want (model, idle state, context size) is on the context.
  */
 export interface CacheWarmingDecisionEvent
-	extends Pick<CacheWarmingDecision, "warmCost" | "missCost" | "spentCost" | "continuationProbability" | "action"> {
+	extends Pick<CacheWarmingDecision, "warmCost" | "missCost" | "continuationProbability" | "action"> {
 	type: "cache_warming_decision";
 }
 
@@ -147,7 +145,6 @@ interface ActiveRun extends CacheWarmRequest {
 	startedAt: number;
 	controller: AbortController;
 	phase: "streaming" | "idle";
-	spentCost: number;
 	nextWarmAt: number;
 	/** Set while a refresh that an extension forced is in flight. */
 	extensionOverride: boolean;
@@ -175,13 +172,12 @@ export class CacheWarmer {
 		sessionManager: Pick<SessionManager, "appendUsage" | "getBranch">,
 		getMode: () => CacheWarmingMode,
 		decide: (event: CacheWarmingDecisionEvent) => Promise<CacheWarmingAction> = async (event) => event.action,
-		initialInactiveReason = "waiting for first request",
 	) {
 		this.models = models;
 		this.sessionManager = sessionManager;
 		this.getMode = getMode;
 		this.decide = decide;
-		this.inactive = { state: "inactive", reason: initialInactiveReason };
+		this.inactive = { state: "inactive", reason: "waiting for first request" };
 	}
 
 	get status(): CacheWarmingStatus {
@@ -203,11 +199,7 @@ export class CacheWarmer {
 	}
 
 	/** Keep the prompt cache entry written by `request` warm while `isCurrent` holds. */
-	start(
-		request: CacheWarmRequest,
-		isCurrent: () => boolean,
-		restored?: { lastActivityAt: number; startedAt: number; spentCost: number },
-	): void {
+	start(request: CacheWarmRequest, isCurrent: () => boolean): void {
 		this.clearRun();
 		const mode = this.getMode();
 		if (mode === "off") {
@@ -232,26 +224,17 @@ export class CacheWarmer {
 			this.stop("cache lifetime unavailable");
 			return;
 		}
-		if (restored && restored.lastActivityAt + ttlMs <= Date.now()) {
-			this.stop("cache expired before startup");
-			return;
-		}
-		if (restored && mode === "streaming") {
-			this.stop("streaming run ended before restart");
-			return;
-		}
 		this.run = {
 			...request,
 			isCurrent,
 			delayMs,
-			startedAt: restored?.startedAt ?? Date.now(),
+			startedAt: Date.now(),
 			controller: new AbortController(),
-			phase: restored ? "idle" : "streaming",
-			spentCost: restored?.spentCost ?? 0,
+			phase: "streaming",
 			nextWarmAt: 0,
 			extensionOverride: false,
 		};
-		this.schedule(this.run, restored?.lastActivityAt);
+		this.schedule(this.run);
 	}
 
 	onAgentSettled(): void {
@@ -293,9 +276,9 @@ export class CacheWarmer {
 		this.inactive = { state: "inactive", reason, ...stopped };
 	}
 
-	private schedule(run: ActiveRun, lastActivityAt = Date.now()): void {
+	private schedule(run: ActiveRun): void {
 		run.extensionOverride = false;
-		run.nextWarmAt = lastActivityAt + run.delayMs;
+		run.nextWarmAt = Date.now() + run.delayMs;
 		const deadline = run.startedAt + (run.phase === "idle" ? MAX_IDLE_WARMING_AGE_MS : MAX_WARMING_AGE_MS);
 		if (run.nextWarmAt > deadline || Date.now() >= deadline) {
 			this.stop(run.phase === "idle" ? "30-minute idle safety limit reached" : "one-hour safety limit reached");
@@ -307,32 +290,22 @@ export class CacheWarmer {
 
 	private async refresh(run: ActiveRun): Promise<void> {
 		run.timer = undefined;
-		const modeStopReason = this.getModeStopReason(run);
-		if (modeStopReason || !run.isCurrent()) {
-			this.stop(modeStopReason ?? "conversation context changed");
-			return;
-		}
+		if (!this.validateRun(run)) return;
 		const decision = this.evaluate(run);
-		const { warmCost, missCost, spentCost, continuationProbability } = decision;
+		const { warmCost, missCost, continuationProbability } = decision;
 		let action = decision.action;
 		try {
 			action = await this.decide({
 				type: "cache_warming_decision",
 				warmCost,
 				missCost,
-				spentCost,
 				continuationProbability,
 				action,
 			});
 		} catch {
 			// Extension failures fall back to pi's own decision.
 		}
-		if (this.run !== run) return;
-		const modeStopReasonAfterDecision = this.getModeStopReason(run);
-		if (modeStopReasonAfterDecision || !run.isCurrent()) {
-			this.stop(modeStopReasonAfterDecision ?? "conversation context changed");
-			return;
-		}
+		if (!this.validateRun(run)) return;
 		const extensionOverride = action !== decision.action;
 		if (action === "stop") {
 			const reason = extensionOverride
@@ -354,14 +327,8 @@ export class CacheWarmer {
 					signal: run.controller.signal,
 				})
 				.result();
-			if (this.run !== run) return;
-			const modeStopReasonAfterRefresh = this.getModeStopReason(run);
-			if (modeStopReasonAfterRefresh || !run.isCurrent()) {
-				this.stop(modeStopReasonAfterRefresh ?? "conversation context changed");
-				return;
-			}
+			if (!this.validateRun(run)) return;
 			if (message.stopReason !== "error" && message.stopReason !== "aborted") {
-				run.spentCost += message.usage.cost.total;
 				const entry = this.sessionManager.appendUsage(
 					"cache_warm",
 					message.provider,
@@ -375,6 +342,14 @@ export class CacheWarmer {
 			// Cache warming is best-effort and must not affect the active agent run.
 		}
 		if (this.run === run) this.schedule(run);
+	}
+
+	private validateRun(run: ActiveRun): boolean {
+		if (this.run !== run) return false;
+		const reason = this.getModeStopReason(run) ?? (!run.isCurrent() ? "conversation context changed" : undefined);
+		if (!reason) return true;
+		this.stop(reason);
+		return false;
 	}
 
 	private getModeStopReason(run: ActiveRun): string | undefined {
@@ -396,12 +371,11 @@ export class CacheWarmer {
 		const missCost = Math.max(0, cacheMissCost - cacheHitCost);
 		const continuationProbability = run.phase === "idle" ? IDLE_CONTINUATION_PROBABILITY : 1;
 		const economicsAvailable = promptTokens > 0 && (cacheHitCost > 0 || cacheMissCost > 0);
-		const expectedSavings = continuationProbability * missCost - run.spentCost - warmCost;
+		const expectedSavings = continuationProbability * missCost - warmCost;
 		return {
 			phase: run.phase,
 			warmCost,
 			missCost,
-			spentCost: run.spentCost,
 			continuationProbability,
 			expectedSavings,
 			economicsAvailable,

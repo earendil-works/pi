@@ -180,28 +180,20 @@ describe("createAgentSession stream options", () => {
 		}
 	});
 
-	it("restores cache warming from persisted successful warming usage", async () => {
-		const usage = {
-			input: 0,
-			output: 1,
-			cacheRead: 100_000,
-			cacheWrite: 0,
-			totalTokens: 100_001,
-			cost: { input: 0, output: 0, cacheRead: 0.025, cacheWrite: 0, total: 0.025 },
-		};
+	it("waits for the next request instead of restoring cache warming", async () => {
 		const fixture = await createCacheWarmingSession((manager, model) => {
 			manager.appendModelChange(model.provider, model.id);
 			manager.appendThinkingLevelChange("off");
 			manager.appendMessage({ role: "user", content: "test", timestamp: Date.now() - 60_000 });
-			manager.appendMessage({ ...createDoneMessage(model.api, 100_000), usage, timestamp: Date.now() - 59_000 });
-			manager.appendUsage("cache_warm", model.provider, model.id, usage);
-			manager.appendUsage("cache_warm", model.provider, model.id, usage);
+			const assistant = { ...createDoneMessage(model.api, 100_000), timestamp: Date.now() - 59_000 };
+			manager.appendMessage(assistant);
+			manager.appendUsage("cache_warm", model.provider, model.id, assistant.usage);
 		});
 		try {
 			expect(fixture.providerCalls()).toBe(0);
-			expect(fixture.session.cacheWarmingStatus).toMatchObject({
-				state: "scheduled",
-				decision: { phase: "idle", spentCost: 0.05 },
+			expect(fixture.session.cacheWarmingStatus).toEqual({
+				state: "inactive",
+				reason: "waiting for first request",
 			});
 		} finally {
 			fixture.dispose();

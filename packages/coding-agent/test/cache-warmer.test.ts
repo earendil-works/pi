@@ -144,7 +144,7 @@ describe("cache warming", () => {
 		]).toEqual([false, true, true, true]);
 	});
 
-	it("replays profitable requests, preserves options, and accounts for repeated refreshes", async () => {
+	it("replays profitable requests and preserves options across repeated refreshes", async () => {
 		vi.useFakeTimers();
 		const { warmer, calls, events, appendUsage, warmedEntries } = fakeRuntime();
 		const signal = new AbortController().signal;
@@ -160,7 +160,6 @@ describe("cache warming", () => {
 		expect(calls[0].options?.signal).not.toBe(signal);
 		expect(events[0]).toMatchObject({
 			type: "cache_warming_decision",
-			spentCost: 0,
 			continuationProbability: 1,
 			action: "warm",
 		});
@@ -177,7 +176,6 @@ describe("cache warming", () => {
 
 		await vi.advanceTimersByTimeAsync(270_000);
 		expect(calls).toHaveLength(2);
-		expect(events.map((event) => event.spentCost)).toEqual([0, 0.01]);
 		warmer.cancel();
 	});
 
@@ -276,7 +274,6 @@ describe("cache warming", () => {
 			phase: "idle",
 			warmCost: 0.013,
 			missCost: 0.621,
-			spentCost: 0,
 			continuationProbability: 0.6,
 			expectedSavings: 0.36,
 			economicsAvailable: true,
@@ -322,7 +319,6 @@ describe("ExtensionRunner.emitCacheWarmingDecision", () => {
 			type: "cache_warming_decision",
 			warmCost: 0.05,
 			missCost: 0.5,
-			spentCost: 0,
 			continuationProbability: 0.15,
 			action: "warm",
 		};

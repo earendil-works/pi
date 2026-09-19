@@ -746,7 +746,6 @@ Fired before each prompt-cache refresh with pi's decision filled in. The event c
 pi.on("cache_warming_decision", (event, ctx) => {
   // event.warmCost: price of this refresh
   // event.missCost: extra price of the next request if the entry is lost
-  // event.spentCost: refreshes already sent for this entry
   // event.continuationProbability: pi's estimate that a request arrives in time
   // event.action: "warm" | "stop", pi's decision
 

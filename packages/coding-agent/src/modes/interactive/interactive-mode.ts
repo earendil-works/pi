@@ -6387,9 +6387,6 @@ export class InteractiveMode {
 		if (decision?.economicsAvailable) {
 			info += `${theme.fg("dim", "Cache miss penalty:")} $${decision.missCost.toFixed(3)}\n`;
 			info += `${theme.fg("dim", "Refresh cost:")} $${decision.warmCost.toFixed(3)}\n`;
-			if (decision.spentCost > 0) {
-				info += `${theme.fg("dim", "Already spent:")} $${decision.spentCost.toFixed(3)}\n`;
-			}
 		}
 
 		if (stats.cost > 0 || cacheWaste.missedTokens > 0) {

@@ -922,8 +922,8 @@ export class ExtensionRunner {
 		const ctx = this.createContext();
 		let action = event.action;
 
-		for (const ext of this.extensions) {
-			for (const handler of ext.handlers.get("cache_warming_decision") ?? []) {
+		for (const { ext, handlers } of snapshotEventHandlers(this.extensions, event.type)) {
+			for (const handler of handlers) {
 				try {
 					const result = (await handler(event, ctx)) as CacheWarmingDecisionEventResult | undefined;
 					if (result?.action !== undefined) action = result.action;

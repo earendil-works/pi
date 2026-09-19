@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { Agent, type AgentMessage, setDefaultStreamFn, type ThinkingLevel } from "@earendil-works/pi-agent-core";
-import { type ModelsSimpleStreamOptions, normalizeContext } from "@earendil-works/pi-ai";
+import type { ModelsSimpleStreamOptions } from "@earendil-works/pi-ai";
 import { clampThinkingLevel, type Message, type Model, streamSimple } from "@earendil-works/pi-ai/compat";
 import { getAgentDir } from "../config.ts";
 import { resolvePath } from "../utils/paths.ts";
@@ -15,7 +15,7 @@ import { ModelRuntime } from "./model-runtime.ts";
 import { mergeProviderAttributionHeaders } from "./provider-attribution.ts";
 import type { ResourceLoader } from "./resource-loader.ts";
 import { DefaultResourceLoader } from "./resource-loader.ts";
-import { buildSessionContext, getDefaultSessionDir, type SessionEntry, SessionManager } from "./session-manager.ts";
+import { getDefaultSessionDir, SessionManager } from "./session-manager.ts";
 import { SettingsManager } from "./settings-manager.ts";
 import { time } from "./timings.ts";
 import {
@@ -135,38 +135,6 @@ export {
 
 function getDefaultAgentDir(): string {
 	return getAgentDir();
-}
-
-/**
- * The last successful cache refresh on the branch and the assistant message
- * whose request it kept warm. Undefined once anything else was appended, since
- * the next real request will start warming from scratch anyway.
- */
-function findRestorableCacheWarm(branch: SessionEntry[], provider: string | undefined) {
-	let lastActivityAt: number | undefined;
-	let spentCost = 0;
-	for (let i = branch.length - 1; i >= 0; i--) {
-		const entry = branch[i];
-		if (entry.type === "usage" && entry.kind === "cache_warm") {
-			lastActivityAt ??= Date.parse(entry.timestamp);
-			if (entry.provider === provider) spentCost += entry.usage.cost.total;
-			continue;
-		}
-		if (lastActivityAt === undefined) {
-			if (entry.type !== "usage" && entry.type !== "label" && entry.type !== "session_info") return undefined;
-			continue;
-		}
-		if (
-			entry.type === "message" &&
-			entry.message.role === "assistant" &&
-			entry.message.stopReason !== "error" &&
-			entry.message.stopReason !== "aborted"
-		) {
-			return { lastActivityAt, source: entry, message: entry.message, spentCost };
-		}
-		if (entry.type !== "usage" && entry.type !== "label" && entry.type !== "session_info") return undefined;
-	}
-	return undefined;
 }
 
 /**
@@ -341,7 +309,6 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		sessionManager,
 		() => settingsManager.getCacheWarmingMode(),
 		async (event) => extensionRunnerRef.current?.emitCacheWarmingDecision(event) ?? event.action,
-		hasExistingSession ? "session restored, warming starts after next request" : "waiting for first request",
 	);
 	const buildRequestOptions = (
 		requestModel: Model<any>,
@@ -463,47 +430,6 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		extensionRunnerRef,
 		sessionStartEvent: options.sessionStartEvent,
 	});
-
-	// Resume warming after a restart when the last thing that happened on the
-	// branch was a successful refresh. The request is rebuilt through the same
-	// pipeline streamFn uses so the replay hits the entry the refresh kept alive.
-	const restored = hasExistingSession
-		? findRestorableCacheWarm(sessionManager.getBranch(), model?.provider)
-		: undefined;
-	const lastActivityAt = restored?.lastActivityAt ?? Number.NaN;
-	if (
-		restored &&
-		model &&
-		Number.isFinite(lastActivityAt) &&
-		model.provider === restored.message.provider &&
-		model.id === restored.message.model
-	) {
-		try {
-			const restoredContext = buildSessionContext(sessionManager.getEntries(), restored.source.parentId);
-			const messages = agent.transformContext
-				? await agent.transformContext(restoredContext.messages)
-				: restoredContext.messages;
-			const reasoning = clampThinkingLevel(model, (restoredContext.thinkingLevel ?? "off") as ThinkingLevel);
-			cacheWarmer.start(
-				{
-					model,
-					context: normalizeContext({ messages: await agent.convertToLlm(messages) }),
-					options: buildRequestOptions(model, {
-						reasoning: reasoning === "off" ? undefined : reasoning,
-						sessionId: agent.sessionId,
-						transport: agent.transport,
-						thinkingBudgets: agent.thinkingBudgets,
-						onPayload: agent.onPayload,
-						onResponse: agent.onResponse,
-					}),
-				},
-				cacheContextIsCurrent(model),
-				{ lastActivityAt, startedAt: restored.message.timestamp, spentCost: restored.spentCost },
-			);
-		} catch {
-			// Restoring cache warming is best-effort and must not prevent session startup.
-		}
-	}
 
 	const extensionsResult = resourceLoader.getExtensions();
 

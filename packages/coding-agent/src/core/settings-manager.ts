@@ -74,8 +74,8 @@ export interface ThinkingBudgetsSettings {
 export type MermaidRenderingMode = "off" | "final" | "streaming";
 
 /** Cache-warming profile. "idle" also warms between agent runs. */
-export type CacheWarmingMode = "off" | "streaming" | "idle";
-export const CACHE_WARMING_MODES: readonly CacheWarmingMode[] = ["off", "streaming", "idle"];
+export const CACHE_WARMING_MODES = ["off", "streaming", "idle"] as const;
+export type CacheWarmingMode = (typeof CACHE_WARMING_MODES)[number];
 
 export interface MarkdownSettings {
 	codeBlockIndent?: string; // default: "  "
