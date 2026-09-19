@@ -1,6 +1,6 @@
 import assert from "node:assert";
 import { describe, it } from "node:test";
-import type { Component, TUI } from "../src/tui.ts";
+import { type Component, CURSOR_MARKER, type TUI } from "../src/tui.ts";
 import { TuiMainScreen } from "../src/tui-main-screen.ts";
 import { extractSegments, normalizeTerminalOutput, sliceWithWidth, visibleWidth } from "../src/utils.ts";
 import { VirtualTerminal } from "./virtual-terminal.ts";
@@ -42,6 +42,21 @@ describe("tab width accounting", () => {
 		assert.strictEqual(slice.text, "out 192M");
 		assert.strictEqual(slice.width, 8);
 		assert.strictEqual(visibleWidth(slice.text), slice.width);
+	});
+
+	it("does not carry cursor markers into later slices", () => {
+		// Regression for #9332: APC markers are positional metadata, not persistent style.
+		const line = `ab${CURSOR_MARKER}cdefghij`;
+
+		assert.deepStrictEqual(sliceWithWidth(line, 4, 2, true), { text: "ef", width: 2 });
+		assert.deepStrictEqual(sliceWithWidth(line, 6, 4, true), { text: "ghij", width: 4 });
+	});
+
+	it("continues to carry persistent styling into later slices", () => {
+		// Regression for #9332: excluding APC must not disable persistent SGR styling.
+		const line = "\x1b[31mabcdefghij\x1b[0m";
+
+		assert.deepStrictEqual(sliceWithWidth(line, 4, 2, true), { text: "\x1b[31mef", width: 2 });
 	});
 
 	it("keeps overlay segment widths consistent with visible width", () => {

@@ -1355,7 +1355,8 @@ export abstract class TuiBase extends Container implements TUI {
 		for (let i = 0; i < lines.length; i++) {
 			const line = lines[i];
 			if (!isImageLine(line)) {
-				lines[i] = normalizeTerminalOutput(line) + reset;
+				// Cursor markers are internal render metadata and must never reach terminal output.
+				lines[i] = normalizeTerminalOutput(line.replaceAll(CURSOR_MARKER, "")) + reset;
 			}
 		}
 		return lines;
@@ -1390,8 +1391,9 @@ export abstract class TuiBase extends Container implements TUI {
 				const beforeMarker = line.slice(0, markerIndex);
 				const col = visibleWidth(beforeMarker);
 
-				// Strip marker from the line
-				lines[row] = line.slice(0, markerIndex) + line.slice(markerIndex + CURSOR_MARKER.length);
+				// Strip all markers from the selected line. The first marker determines the
+				// hardware cursor position; any others are stale internal sentinels.
+				lines[row] = line.replaceAll(CURSOR_MARKER, "");
 
 				return { row, col };
 			}
