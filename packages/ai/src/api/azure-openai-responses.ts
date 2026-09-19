@@ -341,7 +341,10 @@ function buildParams(
 		}
 	}
 
-	// Last so custom keys override the named request fields.
+	if (model.samplingParams) {
+		Object.assign(params, model.samplingParams);
+	}
+	// Last so request sampling parameters override model parameters and named request fields.
 	if (options?.samplingParams) {
 		Object.assign(params, options.samplingParams);
 	}
