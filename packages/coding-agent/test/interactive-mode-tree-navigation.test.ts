@@ -123,6 +123,20 @@ describe("InteractiveMode tree navigation availability", () => {
 		expect(ui.showError).not.toHaveBeenCalled();
 	});
 
+	// #9340 control: tree Escape must remain operation-specific.
+	it("Given tree summarization, When Escape is pressed, Then only the branch summary is cancelled", async () => {
+		const { ui, onEscape, select } = createTreeUI();
+		ui.showExtensionSelector.mockResolvedValue("Summarize");
+		ui.session.navigateTree.mockImplementation(async () => {
+			ui.defaultEditor.onEscape();
+			return { cancelled: true };
+		});
+		await select();
+		expect(ui.session.abortBranchSummary).toHaveBeenCalledOnce();
+		expect(ui.session.abort).not.toHaveBeenCalled();
+		expect(ui.defaultEditor.onEscape).toBe(onEscape);
+	});
+
 	it("rechecks availability after the response abort settles", async () => {
 		const { ui, onEscape, select } = createTreeUI();
 		ui.session.isStreaming = true;

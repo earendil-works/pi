@@ -292,7 +292,12 @@ describe("AgentSession concurrent prompt guard", () => {
 		await session.abort();
 		await firstPrompt.catch(() => {});
 
+		// #9340: stop preserves unaccepted input; only an explicit fresh prompt delivers it.
+		expect(sawSteeringMessage).toBe(false);
+		expect(session.pendingMessageCount).toBe(1);
+		await session.prompt("Explicit fresh prompt");
 		expect(sawSteeringMessage).toBe(true);
+		expect(session.pendingMessageCount).toBe(0);
 	});
 
 	it("should allow prompt() after previous completes", async () => {

@@ -204,13 +204,14 @@ describe("AgentSessionRuntime characterization", () => {
 		const outgoingEntries = SessionManager.open(outgoingSession.sessionFile!)
 			.getEntries()
 			.filter((entry) => entry.type === "message");
-		expect(outgoingEntries.map((entry) => entry.message.role)).toEqual([
-			"system",
-			"user",
-			"assistant",
-			"toolResult",
-			"assistant",
-		]);
+		expect(outgoingEntries.map((entry) => entry.message.role)).toEqual(["system", "user", "assistant", "toolResult"]);
+		// #9340: stop settles the interrupted tool, not a new synthetic assistant turn.
+		expect(faux.state.callCount).toBe(2); // Greeting plus the outgoing tool-call request.
+		expect(outgoingEntries.at(-1)?.message).toMatchObject({
+			role: "toolResult",
+			toolName: "block",
+			content: [{ type: "text", text: "tool aborted" }],
+		});
 	});
 
 	it("preserves an existing session when importing a file with the same name", async () => {

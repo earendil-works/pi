@@ -3452,7 +3452,13 @@ export class InteractiveMode {
 				// Keep editor active; submissions are queued during compaction.
 				this.autoCompactionEscapeHandler = this.defaultEditor.onEscape;
 				this.defaultEditor.onEscape = () => {
-					this.session.abortCompaction();
+					if (event.reason === "manual") {
+						this.session.abortCompaction();
+					} else {
+						void this.session.abort().catch((error: unknown) => {
+							this.showError(error instanceof Error ? error.message : String(error));
+						});
+					}
 				};
 				this.showStatusIndicator(new CompactionStatusIndicator(this.ui, event.reason));
 				this.ui.requestRender();

@@ -139,6 +139,8 @@ export interface AgentOptions {
 
 class PendingMessageQueue {
 	private messages: AgentMessage[] = [];
+	/** Drained messages remain owned here until message_start accepts them. */
+	private inFlight: { message: AgentMessage; pending: boolean }[] = [];
 	public mode: QueueMode;
 
 	constructor(mode: QueueMode) {
@@ -150,13 +152,14 @@ class PendingMessageQueue {
 	}
 
 	hasItems(): boolean {
-		return this.messages.length > 0;
+		return this.messages.length > 0 || this.inFlight.some((entry) => entry.pending);
 	}
 
 	drain(): AgentMessage[] {
 		if (this.mode === "all") {
 			const drained = this.messages.slice();
 			this.messages = [];
+			this.inFlight.push(...drained.map((message) => ({ message, pending: true })));
 			return drained;
 		}
 
@@ -165,11 +168,28 @@ class PendingMessageQueue {
 			return [];
 		}
 		this.messages = this.messages.slice(1);
+		this.inFlight.push({ message: first, pending: true });
 		return [first];
+	}
+
+	accept(message: AgentMessage): boolean | undefined {
+		const index = this.inFlight.findIndex((entry) => entry.message === message);
+		if (index === -1) return undefined;
+		return this.inFlight.splice(index, 1)[0].pending;
+	}
+
+	restoreUnaccepted(): void {
+		this.messages = [
+			...this.inFlight.filter((entry) => entry.pending).map((entry) => entry.message),
+			...this.messages,
+		];
+		this.inFlight = [];
 	}
 
 	clear(): void {
 		this.messages = [];
+		// Keep cancelled reservations until the loop rejects them or the run settles.
+		for (const entry of this.inFlight) entry.pending = false;
 	}
 }
 
@@ -431,7 +451,7 @@ export class Agent {
 				messages,
 				this.createContextSnapshot(),
 				this.createLoopConfig(options),
-				(event) => this.processEvents(event),
+				this.createEventSink(),
 				signal,
 				this.streamFunction,
 			);
@@ -443,10 +463,19 @@ export class Agent {
 			await runAgentLoopContinue(
 				this.createContextSnapshot(),
 				this.createLoopConfig(),
-				(event) => this.processEvents(event),
+				this.createEventSink(),
 				signal,
 				this.streamFunction,
 			);
+		});
+	}
+
+	private createEventSink() {
+		// Private handoff to the loop: acceptance uses the original before normalization.
+		// No new AgentLoopConfig field, event field, or package export.
+		return Object.assign((event: AgentEvent) => this.processEvents(event), {
+			acceptQueuedMessage: (message: AgentMessage) =>
+				this.steeringQueue.accept(message) ?? this.followUpQueue.accept(message) ?? true,
 		});
 	}
 
@@ -542,6 +571,8 @@ export class Agent {
 	}
 
 	private finishRun(): void {
+		this.steeringQueue.restoreUnaccepted();
+		this.followUpQueue.restoreUnaccepted();
 		this._state.isStreaming = false;
 		this._state.streamingMessage = undefined;
 		this._state.pendingToolCalls = new Set<string>();
