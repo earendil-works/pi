@@ -75,6 +75,20 @@ describe("isContextOverflow", () => {
 		expect(isContextOverflow(commaMessage, 256000)).toBe(true);
 	});
 
+	it("detects LLM Gateway configured context size errors", () => {
+		const message = createErrorMessage(
+			"Request requires ~250000 tokens which exceeds the configured context size (200000) for model 'glm-4.5'.",
+		);
+		expect(isContextOverflow(message, 200000)).toBe(true);
+	});
+
+	it("does not treat LLM Gateway max_tokens limit errors as overflow", () => {
+		const message = createErrorMessage(
+			"The requested max_tokens (32000) exceeds the maximum output tokens allowed for model 'glm-4.5' (16000)",
+		);
+		expect(isContextOverflow(message, 200000)).toBe(false);
+	});
+
 	it("does not treat generic non-overflow Ollama errors as overflow", () => {
 		const message = createErrorMessage("500 `model runner crashed unexpectedly`");
 		expect(isContextOverflow(message, 32768)).toBe(false);

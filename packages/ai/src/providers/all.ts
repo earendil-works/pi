@@ -19,6 +19,8 @@ import { googleVertexProvider } from "./google-vertex.ts";
 import { groqProvider } from "./groq.ts";
 import { huggingfaceProvider } from "./huggingface.ts";
 import { kimiCodingProvider } from "./kimi-coding.ts";
+import { llmgatewayProvider } from "./llmgateway.ts";
+import { llmgatewayDevpassProvider } from "./llmgateway-devpass.ts";
 import { minimaxProvider } from "./minimax.ts";
 import { minimaxCnProvider } from "./minimax-cn.ts";
 import { mistralProvider } from "./mistral.ts";
@@ -104,6 +106,8 @@ export function builtinProviders(): Provider[] {
 		groqProvider(),
 		huggingfaceProvider(),
 		kimiCodingProvider(),
+		llmgatewayProvider(),
+		llmgatewayDevpassProvider(),
 		minimaxProvider(),
 		minimaxCnProvider(),
 		mistralProvider(),
