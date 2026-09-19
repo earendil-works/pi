@@ -283,3 +283,5 @@ run(`git push origin v${version}`);
 console.log();
 
 console.log(`=== Prepared release v${version}; CI publication and pi.dev announcement start after the tag push ===`);
+console.log(`After the complete release workflow succeeds, run: npm run update:model-catalog-pin -- --release ${version}`);
+console.log("Then validate the Nix build and commit the model baseline update on main without changing the release tag.");
