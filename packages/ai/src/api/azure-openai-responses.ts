@@ -20,7 +20,7 @@ import { getDeclaredTools, resolveTranscript, resolveTranscriptTools } from "../
 import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
 import { convertResponsesMessages, convertResponsesTools, processResponsesStream } from "./openai-responses-shared.ts";
-import { buildBaseOptions } from "./simple-options.ts";
+import { buildBaseOptions, resolveSamplingParams } from "./simple-options.ts";
 
 const DEFAULT_AZURE_API_VERSION = "v1";
 const AZURE_TOOL_CALL_PROVIDERS = new Set(["openai", "openai-codex", "opencode", "azure-openai-responses"]);
@@ -324,11 +324,12 @@ function buildParams(
 		params.tool_choice = options.toolChoice;
 	}
 
+	const reasoningEffort = options?.reasoningEffort ?? (options?.reasoningSummary ? "medium" : undefined);
 	if (model.reasoning) {
-		if (options?.reasoningEffort || options?.reasoningSummary) {
+		if (reasoningEffort) {
 			const effort = options?.reasoningEffort
 				? (model.thinkingLevelMap?.[options.reasoningEffort] ?? options.reasoningEffort)
-				: "medium";
+				: reasoningEffort;
 			params.reasoning = {
 				effort: effort as NonNullable<typeof params.reasoning>["effort"],
 				summary: options?.reasoningSummary || "auto",
@@ -341,9 +342,10 @@ function buildParams(
 		}
 	}
 
-	// Last so custom keys override the named request fields.
-	if (options?.samplingParams) {
-		Object.assign(params, options.samplingParams);
+	// Last so model and request sampling parameters override named request fields.
+	const samplingParams = resolveSamplingParams(model, reasoningEffort ?? "off", options?.samplingParams);
+	if (samplingParams) {
+		Object.assign(params, samplingParams);
 	}
 
 	return params;

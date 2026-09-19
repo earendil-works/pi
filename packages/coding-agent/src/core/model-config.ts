@@ -63,6 +63,17 @@ const ThinkingLevelMapSchema = Type.Object({
 	max: Type.Optional(ThinkingLevelMapValueSchema),
 });
 
+const SamplingParamsSchema = Type.Record(Type.String(), Type.Unknown());
+const SamplingParamsByThinkingLevelSchema = Type.Object({
+	off: Type.Optional(SamplingParamsSchema),
+	minimal: Type.Optional(SamplingParamsSchema),
+	low: Type.Optional(SamplingParamsSchema),
+	medium: Type.Optional(SamplingParamsSchema),
+	high: Type.Optional(SamplingParamsSchema),
+	xhigh: Type.Optional(SamplingParamsSchema),
+	max: Type.Optional(SamplingParamsSchema),
+});
+
 const ChatTemplateKwargScalarSchema = Type.Union([Type.String(), Type.Number(), Type.Boolean(), Type.Null()]);
 const ChatTemplateKwargVariableSchema = Type.Object({
 	$var: Type.Union([Type.Literal("thinking.enabled"), Type.Literal("thinking.effort")]),
@@ -176,7 +187,8 @@ const ModelDefinitionSchema = Type.Object({
 	cost: Type.Optional(ModelCostSchema),
 	contextWindow: Type.Optional(Type.Number()),
 	maxTokens: Type.Optional(Type.Number()),
-	samplingParams: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+	samplingParams: Type.Optional(SamplingParamsSchema),
+	samplingParamsByThinkingLevel: Type.Optional(SamplingParamsByThinkingLevelSchema),
 	headers: Type.Optional(Type.Record(Type.String(), Type.String())),
 	compat: Type.Optional(ProviderCompatSchema),
 });
@@ -197,7 +209,8 @@ const ModelOverrideSchema = Type.Object({
 	),
 	contextWindow: Type.Optional(Type.Number()),
 	maxTokens: Type.Optional(Type.Number()),
-	samplingParams: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+	samplingParams: Type.Optional(SamplingParamsSchema),
+	samplingParamsByThinkingLevel: Type.Optional(SamplingParamsByThinkingLevelSchema),
 	headers: Type.Optional(Type.Record(Type.String(), Type.String())),
 	compat: Type.Optional(ProviderCompatSchema),
 });

@@ -83,6 +83,8 @@ export type ToolChoice = "auto" | "none";
 export type ThinkingLevel = "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 export type ModelThinkingLevel = "off" | ThinkingLevel;
 export type ThinkingLevelMap = Partial<Record<ModelThinkingLevel, string | null>>;
+export type SamplingParams = Record<string, unknown>;
+export type SamplingParamsByThinkingLevel = Partial<Record<ModelThinkingLevel, SamplingParams>>;
 export type ChatTemplateKwargValue =
 	| string
 	| number
@@ -190,7 +192,7 @@ export interface StreamOptions extends ProviderRequestOptions<Model<Api>> {
 	 * `repetition_penalty`. Merged over `Model.samplingParams` per key. Only applied by
 	 * OpenAI-compatible adapters (completions, responses, Azure responses); other APIs ignore it.
 	 */
-	samplingParams?: Record<string, unknown>;
+	samplingParams?: SamplingParams;
 	maxTokens?: number;
 	/**
 	 * Preferred transport for providers that support multiple transports.
@@ -966,7 +968,9 @@ export interface Model<TApi extends Api> {
 	contextWindow: number;
 	maxTokens: number;
 	/** Default sampling parameters for this model. See {@link StreamOptions.samplingParams}; per-request keys override these. */
-	samplingParams?: Record<string, unknown>;
+	samplingParams?: SamplingParams;
+	/** Sampling parameter overrides selected by the effective pi thinking level. */
+	samplingParamsByThinkingLevel?: SamplingParamsByThinkingLevel;
 	headers?: Record<string, string>;
 	/** Compatibility overrides for OpenAI-compatible APIs. If not set, auto-detected from baseUrl. */
 	compat?: TApi extends "openai-completions"

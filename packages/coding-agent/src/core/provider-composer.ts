@@ -67,7 +67,8 @@ export interface ProviderConfigInput {
 		cost: Model<Api>["cost"];
 		contextWindow: number;
 		maxTokens: number;
-		samplingParams?: Record<string, unknown>;
+		samplingParams?: Model<Api>["samplingParams"];
+		samplingParamsByThinkingLevel?: Model<Api>["samplingParamsByThinkingLevel"];
 		headers?: Record<string, string>;
 		compat?: Model<Api>["compat"];
 	}>;
@@ -104,6 +105,19 @@ function mergeCompat(
 	return merged;
 }
 
+function mergeSamplingParamsByThinkingLevel(
+	base: Model<Api>["samplingParamsByThinkingLevel"],
+	override: Model<Api>["samplingParamsByThinkingLevel"],
+): Model<Api>["samplingParamsByThinkingLevel"] {
+	if (!override) return base;
+	const merged = { ...base };
+	for (const level of ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const) {
+		const params = override[level];
+		if (params) merged[level] = { ...base?.[level], ...params };
+	}
+	return merged;
+}
+
 function applyModelOverride(model: Model<Api>, override: ModelsJsonModelOverride): Model<Api> {
 	return {
 		...model,
@@ -127,6 +141,10 @@ function applyModelOverride(model: Model<Api>, override: ModelsJsonModelOverride
 		samplingParams: override.samplingParams
 			? { ...model.samplingParams, ...override.samplingParams }
 			: model.samplingParams,
+		samplingParamsByThinkingLevel: mergeSamplingParamsByThinkingLevel(
+			model.samplingParamsByThinkingLevel,
+			override.samplingParamsByThinkingLevel,
+		),
 		compat: mergeCompat(model.compat, override.compat),
 	};
 }
@@ -164,6 +182,7 @@ function modelFromJson(
 		contextWindow: definition.contextWindow ?? 128000,
 		maxTokens: definition.maxTokens ?? 16384,
 		samplingParams: definition.samplingParams,
+		samplingParamsByThinkingLevel: definition.samplingParamsByThinkingLevel,
 		headers: undefined,
 		compat: mergeCompat(providerConfig.compat, definition.compat),
 	};
