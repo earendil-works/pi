@@ -207,6 +207,7 @@ If your command is slow, expensive, rate-limited, or should keep using a previou
 | `contextWindow` | No | `128000` | Context window size in tokens |
 | `maxTokens` | No | `16384` | Maximum output tokens |
 | `samplingParams` | No | omitted | Sampling parameters merged verbatim into every request body (see below) |
+| `samplingParamsByThinkingLevel` | No | omitted | Sampling parameter overrides selected by the effective pi thinking level (see below) |
 | `cost` | No | all zeros | Per-million-token rates with optional request-wide input pricing tiers |
 | `compat` | No | provider `compat` | Provider compatibility overrides. Merged with provider-level `compat` when both are set. |
 
@@ -254,6 +255,64 @@ Current behavior:
 
 Only OpenAI-compatible APIs apply it (`openai-completions`, `openai-responses`, `azure-openai-responses`); other APIs ignore it. Keys override pi's named request fields (for example a `temperature` key here beats the request-level temperature), so prefer it as the single source of sampling truth for a model. In `modelOverrides`, `samplingParams` merges per key with the base model's value.
 
+Use `samplingParamsByThinkingLevel` for per-level overrides. Its keys are pi thinking levels, not the values sent through `thinkingLevelMap`. The effective level is selected after unsupported levels are clamped. Missing levels inherit `samplingParams` unchanged.
+
+For example, Qwen3.8-27B recommends one sampling profile for thinking mode and another for instruct (non-thinking) mode. Set the thinking profile as the model default and override `off` with the instruct profile:
+
+```json
+{
+  "id": "RadixArk/Qwen3.8-27B-NVFP4-BF16-LMHead",
+  "name": "Qwen3.8-27B",
+  "reasoning": true,
+  "input": ["text", "image"],
+  "thinkingLevelMap": {
+    "off": "none",
+    "minimal": null,
+    "low": "low",
+    "medium": "medium",
+    "high": null,
+    "xhigh": "xhigh",
+    "max": null
+  },
+  "contextWindow": 262144,
+  "maxTokens": 32768,
+  "cost": {
+    "input": 0,
+    "output": 0,
+    "cacheRead": 0,
+    "cacheWrite": 0
+  },
+  "compat": {
+    "supportsDeveloperRole": false,
+    "supportsReasoningEffort": true,
+    "thinkingFormat": "openai",
+    "maxTokensField": "max_tokens"
+  },
+  "samplingParams": {
+    "temperature": 1.0,
+    "top_p": 0.95,
+    "top_k": 20,
+    "min_p": 0.0,
+    "presence_penalty": 0.0,
+    "repetition_penalty": 1.0
+  },
+  "samplingParamsByThinkingLevel": {
+    "off": {
+      "temperature": 0.7,
+      "top_p": 0.8,
+      "top_k": 20,
+      "min_p": 0.0,
+      "presence_penalty": 1.5,
+      "repetition_penalty": 1.0
+    }
+  }
+}
+```
+
+Sampling parameter support varies by inference framework; omit fields that your server does not support. The `null` thinking-level entries hide aliases from interactive selection; explicit CLI levels still work and are clamped to the nearest supported level.
+
+Parameters merge in this order: model `samplingParams`, the effective level's `samplingParamsByThinkingLevel` entry, then request-level `samplingParams`. Later values win per key. In `modelOverrides`, per-level entries also merge per key with the base model's values.
+
 A constant thinking-token cap can go here too, but it will not follow `thinkingBudgets` or leave room for the answer. Prefer `compat.thinkingTokenBudgetField` (or the `supportsThinkingTokenBudget` alias) for that.
 
 ### Thinking Level Map
@@ -267,6 +326,8 @@ Values are tristate:
 | omitted | Standard levels through `high` use the provider's default mapping; extended `xhigh` and `max` levels are unsupported |
 | string | Level is supported and this value is sent to the provider |
 | `null` | Level is unsupported and hidden/skipped/clamped away |
+
+In `modelOverrides`, omitting a level preserves the base model's mapping, while setting it to `null` explicitly disables that inherited level.
 
 Example for a model that only supports off, high, and max reasoning:
 
@@ -359,7 +420,7 @@ Use `modelOverrides` to customize built-in models and matching extension-registe
 }
 ```
 
-`modelOverrides` supports these fields per model: `name`, `reasoning`, `thinkingLevelMap`, `input`, `cost` (partial), `contextWindow`, `maxTokens`, `samplingParams` (merged per key), `headers`, `compat`.
+`modelOverrides` supports these fields per model: `name`, `reasoning`, `thinkingLevelMap`, `input`, `cost` (partial), `contextWindow`, `maxTokens`, `samplingParams` (merged per key), `samplingParamsByThinkingLevel` (merged per level and key), `headers`, `compat`.
 
 Direct OpenAI GPT-5.6 Sol, Terra, and Luna default to a `272000` context window so requests remain within OpenAI's short-context pricing tier. To opt into OpenAI's 1.05M context window, increase it for each model you use:
 

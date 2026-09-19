@@ -14,6 +14,7 @@ interface SamplingPayload {
 	top_p?: number;
 	top_k?: number;
 	min_p?: number;
+	reasoning?: { effort?: string };
 }
 
 class PayloadCaptured extends Error {
@@ -140,6 +141,30 @@ describe("sampling params", () => {
 		expect(payload.top_p).toBe(0.95);
 	});
 
+	it("applies sampling params for the effective thinking level over model defaults", async () => {
+		const payload = await capturePayload(
+			makeCompletionsModel({
+				reasoning: true,
+				thinkingLevelMap: { low: null, medium: null },
+				samplingParams: { temperature: 1, top_p: 0.95 },
+				samplingParamsByThinkingLevel: { high: { temperature: 0.8, top_k: 64 } },
+			}),
+			{ reasoning: "low" },
+		);
+
+		expect(payload.temperature).toBe(0.8);
+		expect(payload.top_p).toBe(0.95);
+		expect(payload.top_k).toBe(64);
+	});
+
+	it("applies off sampling params when reasoning is disabled", async () => {
+		const payload = await capturePayload(
+			makeCompletionsModel({ samplingParamsByThinkingLevel: { off: { temperature: 0.7 } } }),
+		);
+
+		expect(payload.temperature).toBe(0.7);
+	});
+
 	it("merges stream-option keys over model-level keys", async () => {
 		const payload = await capturePayload(makeCompletionsModel({ samplingParams: { top_p: 0.95, min_p: 0.05 } }), {
 			samplingParams: { top_p: 0.5 },
@@ -147,6 +172,19 @@ describe("sampling params", () => {
 
 		expect(payload.top_p).toBe(0.5);
 		expect(payload.min_p).toBe(0.05);
+	});
+
+	it("merges stream-option keys over thinking-level keys", async () => {
+		const payload = await capturePayload(
+			makeCompletionsModel({
+				reasoning: true,
+				samplingParamsByThinkingLevel: { low: { temperature: 0.6, top_p: 0.95 } },
+			}),
+			{ reasoning: "low", samplingParams: { top_p: 0.5 } },
+		);
+
+		expect(payload.temperature).toBe(0.6);
+		expect(payload.top_p).toBe(0.5);
 	});
 
 	it("overrides named request fields", async () => {
@@ -262,24 +300,77 @@ describe("sampling params (stream path)", () => {
 		expect(payload.min_p).toBe(0.05);
 	});
 
-	it("applies and overrides model-level params on the OpenAI Responses stream path", async () => {
-		const payload = await captureResponsesStreamPayload(
-			makeResponsesModel({ samplingParams: { temperature: 1, top_p: 0.95 } }),
-			{ samplingParams: { top_p: 0.5 } },
+	it("applies thinking-level params between model and request params for Chat Completions", async () => {
+		const payload = await captureCompletionsStreamPayload(
+			makeCompletionsModel({
+				reasoning: true,
+				samplingParams: { temperature: 1, top_p: 0.95 },
+				samplingParamsByThinkingLevel: { low: { temperature: 0.6, top_k: 64 } },
+			}),
+			{ reasoningEffort: "low", samplingParams: { top_p: 0.5 } },
 		);
 
-		expect(payload.temperature).toBe(1);
+		expect(payload.temperature).toBe(0.6);
 		expect(payload.top_p).toBe(0.5);
+		expect(payload.top_k).toBe(64);
 	});
 
-	it("applies and overrides model-level params on the Azure Responses stream path", async () => {
-		const payload = await captureAzureResponsesStreamPayload(
-			makeAzureResponsesModel({ samplingParams: { temperature: 1, top_p: 0.95 } }),
-			{ samplingParams: { top_p: 0.5 } },
+	it("applies thinking-level params on the OpenAI Responses stream path", async () => {
+		const payload = await captureResponsesStreamPayload(
+			makeResponsesModel({
+				samplingParams: { temperature: 1, top_p: 0.95 },
+				samplingParamsByThinkingLevel: { low: { temperature: 0.6, top_k: 64 } },
+			}),
+			{ reasoningEffort: "low", samplingParams: { top_p: 0.5 } },
 		);
 
-		expect(payload.temperature).toBe(1);
+		expect(payload.temperature).toBe(0.6);
 		expect(payload.top_p).toBe(0.5);
+		expect(payload.top_k).toBe(64);
+	});
+
+	it("applies thinking-level params on the Azure Responses stream path", async () => {
+		const payload = await captureAzureResponsesStreamPayload(
+			makeAzureResponsesModel({
+				samplingParams: { temperature: 1, top_p: 0.95 },
+				samplingParamsByThinkingLevel: { low: { temperature: 0.6, top_k: 64 } },
+			}),
+			{ reasoningEffort: "low", samplingParams: { top_p: 0.5 } },
+		);
+
+		expect(payload.temperature).toBe(0.6);
+		expect(payload.top_p).toBe(0.5);
+		expect(payload.top_k).toBe(64);
+	});
+
+	it("uses medium sampling params for summary-only OpenAI Responses requests", async () => {
+		const payload = await captureResponsesStreamPayload(
+			makeResponsesModel({
+				samplingParamsByThinkingLevel: {
+					off: { temperature: 0.7 },
+					medium: { temperature: 0.8 },
+				},
+			}),
+			{ reasoningSummary: "auto" },
+		);
+
+		expect(payload.reasoning?.effort).toBe("medium");
+		expect(payload.temperature).toBe(0.8);
+	});
+
+	it("uses medium sampling params for summary-only Azure Responses requests", async () => {
+		const payload = await captureAzureResponsesStreamPayload(
+			makeAzureResponsesModel({
+				samplingParamsByThinkingLevel: {
+					off: { temperature: 0.7 },
+					medium: { temperature: 0.8 },
+				},
+			}),
+			{ reasoningSummary: "auto" },
+		);
+
+		expect(payload.reasoning?.effort).toBe("medium");
+		expect(payload.temperature).toBe(0.8);
 	});
 
 	it("omits sampling params when neither options nor model set them", async () => {

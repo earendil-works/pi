@@ -1,6 +1,9 @@
+import { clampThinkingLevel } from "../models.ts";
 import type {
 	Api,
 	Model,
+	ModelThinkingLevel,
+	SamplingParams,
 	SimpleStreamOptions,
 	StreamOptions,
 	ThinkingBudgets,
@@ -18,16 +21,25 @@ export function clampMaxTokensToContext(model: Model<Api>, context: TranscriptCo
 	return Math.min(maxTokens, Math.max(MIN_MAX_TOKENS, available));
 }
 
+export function resolveSamplingParams(
+	model: Model<Api>,
+	thinkingLevel: ModelThinkingLevel,
+	requestParams?: SamplingParams,
+): SamplingParams | undefined {
+	const effectiveThinkingLevel = clampThinkingLevel(model, thinkingLevel);
+	const thinkingLevelParams = model.samplingParamsByThinkingLevel?.[effectiveThinkingLevel];
+	return model.samplingParams || thinkingLevelParams || requestParams
+		? { ...model.samplingParams, ...thinkingLevelParams, ...requestParams }
+		: undefined;
+}
+
 export function buildBaseOptions(
 	model: Model<Api>,
 	context: TranscriptContext,
 	options?: SimpleStreamOptions,
 	apiKey?: string,
 ): StreamOptions {
-	const samplingParams =
-		model.samplingParams || options?.samplingParams
-			? { ...model.samplingParams, ...options?.samplingParams }
-			: undefined;
+	const samplingParams = resolveSamplingParams(model, options?.reasoning ?? "off", options?.samplingParams);
 	return {
 		temperature: options?.temperature,
 		samplingParams,
