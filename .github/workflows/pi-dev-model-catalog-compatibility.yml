@@ -1,0 +1,148 @@
+name: pi.dev model catalog compatibility
+
+on:
+  pull_request_target:
+    branches: [main]
+    types: [opened, reopened, synchronize, ready_for_review]
+
+permissions: {}
+
+concurrency:
+  group: pi-dev-model-catalog-compatibility-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  authorize:
+    name: Authorize contributor
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      approved: ${{ steps.authorize.outputs.approved }}
+    steps:
+      - name: Check contributor approval
+        id: authorize
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const trustedBots = new Set(['dependabot[bot]', 'sentry[bot]', 'claude[bot]']);
+            const author = context.payload.pull_request.user.login;
+            let approved = trustedBots.has(author);
+
+            if (!approved && !author.endsWith('[bot]')) {
+              try {
+                const { data } = await github.rest.repos.getCollaboratorPermissionLevel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  username: author,
+                });
+                approved = ['admin', 'maintain', 'write'].includes(data.permission);
+              } catch {
+                approved = false;
+              }
+            }
+
+            if (!approved && !author.endsWith('[bot]')) {
+              const { data } = await github.rest.repos.getContent({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                path: '.github/APPROVED_CONTRIBUTORS',
+                ref: context.payload.repository.default_branch,
+              });
+              if (!('content' in data) || typeof data.content !== 'string') {
+                throw new Error('Expected .github/APPROVED_CONTRIBUTORS to be a file');
+              }
+              const capabilities = new Map();
+              for (const rawLine of Buffer.from(data.content, 'base64').toString('utf8').split('\n')) {
+                const line = rawLine.trim();
+                if (!line || line.startsWith('#')) continue;
+
+                const parts = line.split(/\s+/);
+                if (parts.length !== 2) continue;
+
+                const [username, capability] = parts;
+                const normalizedCapability = capability.toLowerCase();
+                if (normalizedCapability === 'issue' || normalizedCapability === 'pr') {
+                  capabilities.set(username.toLowerCase(), normalizedCapability);
+                }
+              }
+              approved = capabilities.get(author.toLowerCase()) === 'pr';
+            }
+
+            core.setOutput('approved', String(approved));
+
+  dispatch:
+    if: ${{ needs.authorize.outputs.approved == 'true' && !github.event.pull_request.draft }}
+    name: Dispatch private compatibility tests
+    needs: authorize
+    runs-on: ubuntu-latest
+    permissions:
+      statuses: write
+    steps:
+      - name: Set pending status
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          PI_SHA: ${{ github.event.pull_request.head.sha }}
+          SOURCE_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: process.env.PI_SHA,
+              state: 'pending',
+              context: 'pi.dev / model catalog compatibility',
+              description: 'Waiting for private pi.dev compatibility tests',
+              target_url: process.env.SOURCE_RUN_URL,
+            });
+
+      - name: Dispatch tests
+        id: dispatch
+        continue-on-error: true
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          PI_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          PI_SHA: ${{ github.event.pull_request.head.sha }}
+          PI_PR_NUMBER: ${{ github.event.pull_request.number }}
+        with:
+          github-token: ${{ secrets.PI_DEV_DISPATCH_TOKEN }}
+          script: |
+            const sha = process.env.PI_SHA;
+            const [headOwner, headRepo, ...extraParts] = process.env.PI_REPOSITORY.split('/');
+
+            if (!headOwner || !headRepo || extraParts.length > 0 || !/^[0-9a-f]{40}$/.test(sha)) {
+              core.setFailed('Invalid pull request repository or commit SHA');
+              return;
+            }
+
+            await github.rest.repos.createDispatchEvent({
+              owner: 'earendil-works',
+              repo: 'pi.dev',
+              event_type: 'pi-model-catalog-compatibility',
+              client_payload: {
+                repository: `${headOwner}/${headRepo}`,
+                sha,
+                pr_number: Number(process.env.PI_PR_NUMBER),
+              },
+            });
+
+      - name: Report dispatch failure
+        if: steps.dispatch.outcome == 'failure'
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          PI_SHA: ${{ github.event.pull_request.head.sha }}
+          SOURCE_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: process.env.PI_SHA,
+              state: 'error',
+              context: 'pi.dev / model catalog compatibility',
+              description: 'Could not dispatch pi.dev compatibility tests',
+              target_url: process.env.SOURCE_RUN_URL,
+            });
+            core.setFailed('Could not dispatch pi.dev compatibility tests');
