@@ -179,7 +179,7 @@ describe("TUI bounded render output", () => {
 		);
 		assert.strictEqual(
 			terminal.writes.join(""),
-			`\x1b[?2026h${kittyLine}\r\n${kittyLine}\x1b[?2026l`,
+			`\x1b[?2026h\x1b[?7l${kittyLine}\r\n${kittyLine}\x1b[?7h\x1b[?2026l`,
 			"chunking must preserve the synchronized render output",
 		);
 	});
@@ -502,6 +502,87 @@ describe("TUI Kitty image cleanup", () => {
 		assert.ok(clearIndex >= 0, "full redraw should clear the screen");
 		assert.ok(deleteIndex < clearIndex, "old image should be deleted before the screen is cleared");
 
+		tui.stop();
+	});
+});
+
+describe("TUI main-screen autowrap guard", () => {
+	// ConPTY wraps full-width lines eagerly, which drifts the renderer's cursor
+	// tracking and eventually paints the loader line at the top of the screen.
+	// Every render path must paint with autowrap disabled (see DISABLE_AUTOWRAP).
+	it("disables autowrap for the duration of full renders", async () => {
+		const terminal = new LoggingVirtualTerminal(40, 10);
+		const tui: TUI = new TuiMainScreen(terminal);
+		const component = new TestComponent();
+		tui.addChild(component);
+		component.lines = ["line", "x".repeat(40), "line"];
+		tui.start();
+		await terminal.waitForRender();
+
+		const output = terminal.getWrites();
+		assert.ok(
+			output.includes("\x1b[?2026h\x1b[?7l"),
+			"full render should disable autowrap after synchronized output begins",
+		);
+		assert.ok(
+			output.includes("\x1b[?7h\x1b[?2026l"),
+			"full render should re-enable autowrap before synchronized output ends",
+		);
+		tui.stop();
+	});
+
+	it("disables autowrap for the duration of differential renders", async () => {
+		const terminal = new LoggingVirtualTerminal(40, 10);
+		const tui: TUI = new TuiMainScreen(terminal);
+		const component = new TestComponent();
+		tui.addChild(component);
+		component.lines = ["before"];
+		tui.start();
+		await terminal.waitForRender();
+		terminal.clearWrites();
+
+		component.lines = ["before", "x".repeat(40), "after"];
+		tui.requestRender();
+		await terminal.waitForRender();
+
+		const output = terminal.getWrites();
+		assert.ok(!output.includes("\x1b[2J"), "the update should stay on the differential render path");
+		assert.ok(
+			output.includes("\x1b[?2026h\x1b[?7l"),
+			"differential render should disable autowrap after synchronized output begins",
+		);
+		assert.ok(
+			output.includes("\x1b[?7h\x1b[?2026l"),
+			"differential render should re-enable autowrap before synchronized output ends",
+		);
+		tui.stop();
+	});
+
+	it("disables autowrap when clearing deleted lines", async () => {
+		const terminal = new LoggingVirtualTerminal(40, 10);
+		const tui: TUI = new TuiMainScreen(terminal);
+		const component = new TestComponent();
+		tui.addChild(component);
+		component.lines = Array.from({ length: 8 }, (_, i) => `Line ${i}`);
+		tui.start();
+		await terminal.waitForRender();
+		terminal.clearWrites();
+
+		// Shrinking only deletes trailing lines without changing earlier ones.
+		component.lines = Array.from({ length: 3 }, (_, i) => `Line ${i}`);
+		tui.requestRender();
+		await terminal.waitForRender();
+
+		const output = terminal.getWrites();
+		assert.ok(!output.includes("\x1b[2J"), "deleted-line cleanup should stay on the incremental path");
+		assert.ok(
+			output.includes("\x1b[?2026h\x1b[?7l"),
+			"deleted-line cleanup should disable autowrap after synchronized output begins",
+		);
+		assert.ok(
+			output.includes("\x1b[?7h\x1b[?2026l"),
+			"deleted-line cleanup should re-enable autowrap before synchronized output ends",
+		);
 		tui.stop();
 	});
 });

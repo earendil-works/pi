@@ -8,6 +8,16 @@ import { visibleWidth } from "./utils.ts";
 const KITTY_SEQUENCE_PREFIX = "\x1b_G";
 const MAX_RENDER_WRITE_CHARS = 1024 * 1024;
 
+// ConPTY (Windows Terminal, pwsh) commits line wraps eagerly instead of holding
+// xterm's deferred "pending wrap" state. A painted line that exactly fills the
+// terminal width then moves the real cursor one row below the renderer's tracked
+// position. The drift accumulates and eventually clamps relative cursor moves at
+// the top of the screen, which paints the loader line at the top. Renders already
+// truncate lines to the terminal width, so painting with autowrap disabled makes
+// every terminal behave identically and keeps cursor tracking exact.
+const DISABLE_AUTOWRAP = "\x1b[?7l";
+const ENABLE_AUTOWRAP = "\x1b[?7h";
+
 /**
  * Streams terminal output in 1 MiB chunks so a full render never forms one string large enough to exceed V8's limit.
  *
@@ -278,6 +288,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
 			this.fullRedrawCount += 1;
 			const output = new BoundedTerminalWriter((data) => this.terminal.write(data));
 			output.append("\x1b[?2026h"); // Begin synchronized output
+			output.append(DISABLE_AUTOWRAP);
 			if (clear) {
 				output.append(this.deleteKittyImages(this.previousKittyImageIds));
 				output.append("\x1b[2J\x1b[H\x1b[3J"); // Clear screen, home, then clear scrollback
@@ -299,6 +310,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
 				}
 				output.append(line);
 			}
+			output.append(ENABLE_AUTOWRAP);
 			output.append("\x1b[?2026l"); // End synchronized output
 			output.flush();
 			this.cursorRow = Math.max(0, newLines.length - 1);
@@ -401,6 +413,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
 			if (this.previousLines.length > newLines.length) {
 				const output = new BoundedTerminalWriter((data) => this.terminal.write(data));
 				output.append("\x1b[?2026h");
+				output.append(DISABLE_AUTOWRAP);
 				output.append(this.deleteChangedKittyImages(firstChanged, lastChanged));
 				// Move to end of new content (clamp to 0 for empty content)
 				const targetRow = Math.max(0, newLines.length - 1);
@@ -432,6 +445,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
 				if (moveBack > 0) {
 					output.append(`\x1b[${moveBack}A`);
 				}
+				output.append(ENABLE_AUTOWRAP);
 				output.append("\x1b[?2026l");
 				output.flush();
 				this.cursorRow = targetRow;
@@ -458,6 +472,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
 		// Keep updates wrapped in synchronized output while writing bounded chunks.
 		const output = new BoundedTerminalWriter((data) => this.terminal.write(data));
 		output.append("\x1b[?2026h"); // Begin synchronized output
+		output.append(DISABLE_AUTOWRAP);
 		output.append(this.deleteChangedKittyImages(firstChanged, lastChanged));
 		const prevViewportBottom = prevViewportTop + height - 1;
 		const moveTargetRow = appendStart ? firstChanged - 1 : firstChanged;
@@ -564,6 +579,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
 			output.append(`\x1b[${extraLines}A`);
 		}
 
+		output.append(ENABLE_AUTOWRAP);
 		output.append("\x1b[?2026l"); // End synchronized output
 
 		if (process.env.PI_TUI_DEBUG === "1") {
