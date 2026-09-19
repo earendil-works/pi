@@ -18,6 +18,10 @@
 			"types": "./dist/harness/context.d.ts",
 			"import": "./dist/harness/context.js"
 		},
+		"./experimental/pico3": {
+			"types": "./dist/harness/pico3/index.d.ts",
+			"import": "./dist/harness/pico3/index.js"
+		},
 		"./harness/env/nodejs": {
 			"types": "./dist/harness/env/nodejs.d.ts",
 			"import": "./dist/harness/env/nodejs.js"

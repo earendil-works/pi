@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added bundled asynchronous native clipboard readers for macOS, Windows, and X11 through the exported `getNativeClipboard()` API, replacing the external native clipboard dependency in consumers ([#9163](https://github.com/earendil-works/pi/pull/9163)).
+
+### Changed
+
+- Reduced fuzzy search latency for long texts by using native substring search instead of scanning each character in JavaScript ([#9267](https://github.com/earendil-works/pi/issues/9267)).
+
 ### Fixed
 
 - Fixed fullscreen clipboard failures hiding actionable backend error messages behind a generic notice, and extended failure notices to five seconds ([#9618](https://github.com/earendil-works/pi/issues/9618)).

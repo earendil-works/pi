@@ -111,6 +111,20 @@ describe("remote services", () => {
 		unsubscribe();
 	});
 
+	test("publishes a redundant update when tracked mutations restore the prior value", () => {
+		const state = replicatedState({ value: 1 });
+		const deliveries: Array<{ kind: string; sequence: number }> = [];
+		state.subscribe((_value, _context, delivery) => deliveries.push(delivery));
+		state.state.value = 2;
+		state.state.value = 1;
+		state.publish(BACKGROUND_CONTEXT);
+		expect(state.value).toEqual({ value: 1 });
+		expect(deliveries).toEqual([
+			{ kind: "hydrate", sequence: 0 },
+			{ kind: "update", sequence: 1 },
+		]);
+	});
+
 	test("flushes pending mutations before hydrating a new state subscriber", () => {
 		const state = replicatedState({ entries: [{ id: "one" }] });
 		const first: { entries: { id: string }[] }[] = [];

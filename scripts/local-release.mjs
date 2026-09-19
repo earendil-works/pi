@@ -10,6 +10,7 @@ const packages = [
 	{ directory: "packages/chord", name: "@earendil-works/chord" },
 	{ directory: "packages/telemetry", name: "@earendil-works/pi-telemetry" },
 	{ directory: "packages/ai", name: "@earendil-works/pi-ai" },
+	{ directory: "packages/durable", name: "@earendil-works/pi-durable" },
 	{ directory: "packages/tui", name: "@earendil-works/pi-tui" },
 	{ directory: "packages/agent", name: "@earendil-works/pi-agent-core" },
 	{ directory: "packages/protocol", name: "@earendil-works/pi-protocol" },

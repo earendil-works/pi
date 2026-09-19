@@ -36,7 +36,7 @@ import {
 } from "./tool-placement.ts";
 
 type ToolCallTask = { completion: Promise<void> };
-type ToolOutcome = { toolCall: AgentToolCall; message: ToolResultMessage<unknown>; terminate: boolean };
+type ToolOutcome = { toolCall: AgentToolCall; message: ToolResultMessage; terminate: boolean };
 type PreparedToolInvocation<TContext extends object | undefined> =
 	| { kind: "ready"; cleared: ClearedToolCall<TContext> }
 	| { kind: "outcome"; outcome: ToolOutcome };
@@ -134,13 +134,13 @@ function syntheticMessage(
 	toolCall: AgentToolCall,
 	content: AgentToolResult<unknown>["content"],
 	options: { details?: unknown; usage?: AgentToolResult<unknown>["usage"] } = {},
-): ToolResultMessage<unknown> {
+): ToolResultMessage {
 	return {
 		role: "toolResult",
 		toolCallId: toolCall.id,
 		toolName: toolCall.name,
 		content,
-		...(options.details === undefined ? {} : { details: options.details }),
+		...(options.details === undefined ? {} : { details: options.details as JsonValue }),
 		...(options.usage === undefined ? {} : { usage: options.usage }),
 		isError: true,
 		timestamp: Date.now(),

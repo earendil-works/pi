@@ -471,10 +471,11 @@ describe("AgentSession compaction characterization", () => {
 	});
 
 	// Regression coverage for #8133: model overrides must also apply between assistant turns.
+	// Regression coverage for #9740: an oversized trailing tool result must still produce a cut point.
 	it.each([false, true])(
-		"compacts after a tool result in the same run (model override: %s)",
+		"compacts after an oversized tool result in the same run (model override: %s)",
 		async (modelOverride) => {
-			const toolResult = `large-tool-result:${"x".repeat(6800)}`;
+			const toolResult = `large-tool-result:${"x".repeat(8000)}`;
 			const largeTool: AgentTool = {
 				name: "large_result",
 				label: "Large result",
@@ -532,8 +533,8 @@ describe("AgentSession compaction characterization", () => {
 			const agentStartsBefore = harness.eventsOfType("agent_start").length;
 			await harness.session.prompt("run the large tool");
 
-			expect(order).toEqual(["compaction", "provider"]);
-			expect(observedSettings).toEqual([{ enabled: true, reserveTokens: 400, keepRecentTokens: 1750 }]);
+			expect(order.slice(0, 2)).toEqual(["compaction", "provider"]);
+			expect(observedSettings[0]).toEqual({ enabled: true, reserveTokens: 400, keepRecentTokens: 1750 });
 			expect(harness.eventsOfType("agent_start")).toHaveLength(agentStartsBefore + 1);
 			expect(harness.eventsOfType("compaction_start").at(-1)).toEqual({
 				type: "compaction_start",

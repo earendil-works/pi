@@ -11,6 +11,12 @@ completed dependency audit. After the remaining conceptual blockers are settled,
 whole-document review and final work-package decomposition described below. `pico-v3.md` is the
 reference design; `pico-usage-guide.md` shows the intended surface.
 
+Next design discussions: evaluate status-indexed task authoring and returned plans separately, then
+simplify the tool/sink/preview contract. The steps proposal has not been adopted. Groups 10, 14 and 15
+preserve capability/test coverage, but their current API sketches are not ready-to-implement contracts.
+Preview delivery coalescing is deferred. Approval/question workflows and durable answer reuse belong
+to workspace/plugins; only their access to existing task identity/scratch is a Pico integration question.
+
 ## 1. Types and ids
 
 `Id`, `EntryIdentity`, `EntryBase`, the composable `EntryData` / `ModelProjection` /
@@ -345,6 +351,9 @@ Tests:
 
 ## 10. Tools, post_tools, exchanges
 
+**API redesign pending:** retain the capabilities and behavioral tests below; simplify the tool,
+sink and preview authoring interfaces together before implementing them.
+
 The tool kind with the sink (`ToolOutput`, `ToolOutputState`, limits enforced by the sink, `diag`,
 `delegate`, `handoff`, `addTools`, `terminate`), tool-result entries with structured data plus their
 materialized model message, `before_tool` (fail-closed) and `after_tool`,
@@ -361,7 +370,9 @@ before any handoff/user entry in the settlement commit and appears in the next t
 a throwing tool → error result, `terminate` still honoured; truncation diag from the sink; a lost
 accept response is recovered through `acceptance(requestId)`; a duplicate create reports the first
 receipt without comparing payloads or modes; results remain point-readable after further turns.
-post_tools handles orphaned tool tasks by writing unavailable-tool results from their common fields.
+A missing tool implementation produces an ordinary error result through the registered tool task kind;
+the generation/post_tools input owner remains present. Separately, post_tools handles orphaned tool
+tasks by writing unavailable-tool results from their common fields.
 Turn-task entry appends remain immediate; outside-turn model-visible writes queue while inTurn is
 nonempty and land at post_tools/final boundaries. Data-only entries are never blocked.
 
@@ -371,7 +382,9 @@ nonempty and land at post_tools/final boundaries. Data-only entries are never bl
 user content or a write's entry draft and optional request id; append/remove/clear watch operations;
 queued/placed/done/unanswered result variants; the three placement points; carried generation/post_tools
 input groups; `queueInput` and `abortInput`; abort draining steer and followUp while preserving write
-and nextRun. A write reaches done without an answer in its placement commit.
+and nextRun. A write reaches done without an answer in its placement commit. Input-group ownership
+and results are built-in harness behavior, implemented by generation/post_tools; compatible replacements
+retain that contract. No generic plugin-payload inference or new input-owner protocol is needed.
 
 Tests: idle append/remove is one commit and emits no inbox event; busy image payload is one append
 operation; the modes table; steer joins at post_tools but starts a group after a final answer;
@@ -403,6 +416,10 @@ cleanup tolerates already-terminal child/job; `stop`; nested children; child's o
 
 ## 14. Jobs and the budget
 
+**Authoring API provisional:** job-first execution remains the initial supported approach. How tool
+code starts, observes and delegates work is part of the tool/sink/preview simplification; the current
+helper/sink signatures are not final.
+
 `jobKind` on `ExecutionEnv.exec` with output into its scratch, `waitForTask` / `jobOutput`, `bash`
 delegating first and waiting with the budget, `notify` and the `notice` entry, the `job` tool,
 schedules.
@@ -416,9 +433,14 @@ ignores background recurrence; recover → lost or safe rerun; abort kills non-d
 
 Remaining integration design: arbitrary-promise budget adoption must explicitly transfer effect and
 sink ownership before the tool invocation releases. A raced, abandoned promise is not permitted.
-Preserve the capability (crash outcome lost), but implement job-first execution until transfer is settled.
+Preserve the capability (crash outcome lost), but do not turn arbitrary-work adoption into an
+implementation package until the simpler tool contract and ownership transfer are settled.
 
 ## 15. Previews
+
+**API redesign pending:** retain incremental live output and reconstruction from durable scratch.
+The tracker/sink-facing API below is a sketch to simplify, not a separate framework to implement first.
+Delivery coalescing is deferred; do not add a frame scheduler or delay scratch durability for it.
 
 `runtime.preview` as a Chord tracker per task; the generation applies stream events to a partial
 message, the tool's preview is its sink state, the job's the same; `preview.init` on attach and
@@ -549,10 +571,11 @@ global; a kind that changes its shape bumps its own version, which is also the m
 
 Needed when a client is not JavaScript. Not part of the gate.
 
-Not packages: permissions and approval policy are plugin territory (`before_tool` can block or
-rewrite args and may wait for a person, scratch holds the durable memo, values hold whatever the
-plugin remembers, and a keyed service instance shows the question to every attached presentation),
-and session migration is a non-issue while this is experimental.
+Not Pico packages: approval/question policy, presentation, durable answers and their replay are
+workspace/plugin responsibilities. `before_tool` may block, rewrite args or wait; existing scratch
+and scoped values provide persistence. The workspace/plugin layer chooses answer keys and lifetimes;
+Pico's remaining integration question is authorized hook access to task identity/scratch, not a new
+memo protocol. Session migration remains outside this experimental scope.
 
 ## What comes from the lane harness, and how
 
@@ -566,7 +589,7 @@ Copy (under `packages/agent/src/harness/` unless noted):
 |---|---|---|---|
 | `ExecutionEnv` / `FileSystem` / `Shell` types, the Node env, capture and spill | `types.ts`, `env/`, `tools/tool-context.ts` (03-execenv) | `pico/env/` | 10, 14 |
 | shell output limits, `applyShellOutputUpdate`, truncation totals | `utils/` | `pico/env/output.ts` | 10 |
-| the built-in tools (`read`, `write`, `edit`, `bash`, `image`) | `tools/*.ts` | `pico/tools/`, rewritten to the sink signature | 10, 14 |
+| the built-in tools (`read`, `write`, `edit`, `bash`, `image`) | `tools/*.ts` | `pico/tools/`, adapted after the tool/output interface is simplified | 10, 14 |
 | system prompt helpers, skills, context files, templates | `system-prompt.ts`, `skills.ts`, `prompt-templates.ts` | host handlers refresh typed base payloads; pure section renderers format them, without a source-read framework | 9, 20 |
 | telemetry span helpers | `telemetry.ts` | `pico/telemetry.ts` | 19 |
 

@@ -3,8 +3,10 @@
 Durable agent harness for pi: one session file, any number of conversations, every piece of work
 recorded as a task that survives a crash, and a view any UI can render.
 
-**Note**: this guide is about using the harness. `pico-v3.md` is the design and the reference for
-why things are the way they are.
+**Note**: this guide is about using the harness. `pico-simple-handoff.md` is the sole normative
+implementation specification and the reference for why things are the way they are. Provider/system, hook, ordinary-tool, job and subagent facades remain gated
+where marked; their examples show intended behavior, not permission to guess unsettled APIs. Required task output,
+storage and cancellation guarantees are retained; the separate steps proposal has not been adopted.
 
 ## Table of Contents
 
@@ -16,8 +18,9 @@ why things are the way they are.
   - [Opening](#opening)
   - [What Happens on Reopen](#what-happens-on-reopen)
   - [Closing](#closing)
+  - [Cloudflare Durable Objects](#cloudflare-durable-objects)
 - [Configuration](#configuration)
-  - [Settings Declared by Kinds](#settings-declared-by-kinds)
+  - [Settings Exported Alongside Kinds](#settings-exported-alongside-kinds)
   - [Reading and Writing](#reading-and-writing)
   - [What Is Rewindable](#what-is-rewindable)
 - [System Prompt and Tool Loadout](#system-prompt-and-tool-loadout)
@@ -27,8 +30,8 @@ why things are the way they are.
   - [Sections from Plugins](#sections-from-plugins)
   - [Subagents Have Their Own](#subagents-have-their-own)
   - [Compaction, Forks and Restarts](#compaction-forks-and-restarts)
-- [Prompting](#prompting)
-  - [prompt, accept, drive](#prompt-accept-drive)
+- [Sending Input](#sending-input)
+  - [send and InputHandle](#send-and-inputhandle)
   - [Input While Busy](#input-while-busy)
   - [Aborting](#aborting)
 - [Watching](#watching)
@@ -64,9 +67,9 @@ conversation has three things:
   tool results, summaries, system instructions, and anything a plugin wants to record. Entries are
   never edited or reordered.
 - **tasks**: the units of work. Generating a response is a task, running a tool is a task, so is
-  compacting, running a background process, or anything a plugin wants done. A task has a status
-  that changes as it runs and is written to storage at every step, which is what makes a crash
-  recoverable.
+  compacting, running a background process, or anything a plugin wants done. A task has immutable input,
+  pending/running/terminal lifecycle, optional complete checkpoints and optional task output. Those durable
+  boundaries make a crash recoverable.
 - **state**: keyed **values** and **lists**, for the model in use, plan mode, a game board, whatever
   a plugin needs to remember.
 
@@ -76,18 +79,28 @@ prepends the newest head, reads forward from its stored boundary, folds retained
 request-local tool and provider normalization. Compaction appends a head; tool-result pruning
 appends an edit. Forks, compaction and reset never mutate old entries.
 
-Every id is a session sequence number, minted when the write is built and never changed:
+Object identity and write order are separate:
 
 ```typescript
-type Id = number;
+type Id = number;   // Storage-minted stable identity for committed conversations, entries, tasks and list elements
+type Seq = number;  // storage-assigned committed write order
 ```
 
-All writes happen through **commits**: a closure that runs on the session's single write line,
-where everything inside it lands together or not at all. Tasks run concurrently; writes never do.
+Creation and list-append builders synchronously call `Storage.nextId()` while holding the Session line. A
+failed callback discards its writes but burns those IDs in the current open binding. They become valid object
+identities only after commit succeeds. Reopen initializes after the greatest committed creation/list-append
+ID and may therefore reuse IDs that were minted but never committed by an earlier process; committed IDs are
+never reused. `commit` receives no allocator argument. Each write receives a `Seq`. Historical entry-ID
+lookup resolves that entry's sequence internally. Watch barriers and commit envelopes use `Seq`, never
+object IDs.
 
-Nothing runs by itself. Opening a session starts nothing. **Driving** a conversation is what makes
-its tasks execute, and a `prompt` is just accept + drive + read the answer. A UI **watches** a
-conversation and gets a **view** it can render from directly.
+All main writes happen through **commits**: a closure that runs on the Session's single mutation line, where
+everything inside it lands together or not at all. Tasks run concurrently; mutations never do.
+
+Opening is inert. `resume()` activates one scheduler for every eligible task in every conversation. It stays
+active while the Harness is open, and every successful main commit coalesces a scheduler kick. Foreground and
+background tasks both execute; foreground only controls idle and ordinary abort reach. A UI **watches** a
+conversation and gets one authoritative **view** it can render directly.
 
 ## Calls and cancellation
 
@@ -102,7 +115,8 @@ import { BACKGROUND_CONTEXT, withCancel } from '@earendil-works/chord/context';
 
 const call: Call = BACKGROUND_CONTEXT; // host call, without cancellation
 const { context: waitingCall, cancel } = withCancel(call);
-const waiting = conversation.drive(waitingCall);
+const input = await conversation.send({ content: 'Inspect the parser' }, call);
+const waiting = input.wait(waitingCall);
 cancel();                            // removes this waiter; does not abort durable work
 await waiting;                       // rejects with cancellation
 ```
@@ -110,7 +124,7 @@ await waiting;                       // rejects with cancellation
 Tasks receive `(task, runtime: TaskRuntime, call: Call)` and forward `call`. Tools receive
 `(toolCallId, params, out, runtime: ToolRuntime, call: Call)`. Environment/provider/hook operations
 interpret the signal; custom handlers must cooperate. Derive a Call for nested telemetry or a tighter
-deadline and pass it onward. The driver does not inherit a drive caller's signal into task execution.
+deadline and pass it onward. The scheduler does not inherit a waiter caller's signal into task execution.
 
 The line reads task identity through a private `createContextKey<Invocation>`; Chord returns the
 correct type from `call.value(key)`. Derived calls preserve that exact object. Stale task writes
@@ -135,7 +149,7 @@ import { builtinModels } from '@earendil-works/pi-ai/providers/all';
 
 const call: Call = BACKGROUND_CONTEXT;
 
-// One file per session. Reopening the same file resumes it.
+// One file per Session. Reopening restores it inert; send/wait/resume activates recovery.
 const storage = await JsonlStorage.open('./session.jsonl');
 
 // The built-in kinds (generation, tool, post_tools, collapse, job; the entry kinds) and the
@@ -161,24 +175,33 @@ c.hooks.on(generationKind, 'system_instructions', ({ sections, config }, call) =
   return { tools: h.tools.select(config.selectedTools) }; // complete tool definitions
 }, { subtree: true });
 
-// Watch the conversation. `view` is a plain object a UI renders from; attach whenever you like,
-// the view is complete as of the moment you attach and events follow from there.
+// Watch the conversation. `view` is a plain object a UI renders from; subscribe whenever you like.
+// The view is complete as of capture and commit envelopes follow from its Seq barrier.
 const w = await h.watch(c.id, { tail: 100 }, call);
-w.start(event => {
-  if (event.type === 'task_output') {
-    // the generation's preview is the partial assistant message; a tool's is its output so far
-    const preview = w.view.previews.get(event.task);
-    process.stdout.write(renderPreview(preview));
+w.start(delivery => {
+  if (delivery.type !== 'commit') return;
+  for (const event of delivery.commit.events) {
+    if (event.type === 'task_output') {
+      const output = w.view.taskOutputs.find(value => value.id === event.id);
+      process.stdout.write(renderTaskOutput(output));
+    }
+    if (event.type === 'entry') console.log(`\n[entry ${event.entry.id} ${event.entry.kind}]`);
   }
-  if (event.type === 'entry') console.log(`\n[entry ${event.entry.id} ${event.entry.kind}]`);
 });
 
-// accept the input, drive the conversation until it is idle, return the answer to that input
-const answer = await c.prompt({ input: 'Inspect the parser and list the public API' }, call);
-console.log(answer?.model[0]?.content);
+// Admission is durable and resumes the whole Session; waiting observes this input's explicit result.
+const input = await c.send({
+  requestId: 'cli-1',
+  content: 'Inspect the parser and list the public API',
+}, call);
+const result = await input.wait(call);
+const answer = result.status === 'done' && result.answer
+  ? await h.getEntry(result.answer, call)
+  : undefined;
+console.log(answer?.model?.[0]?.content);
 
 w.unsubscribe();
-await h.close(call);   // cancels nothing durable; reopening the file continues exactly here
+await h.close(call);   // cancels nothing durable; reopen restores here, then send/wait/resume continues
 ```
 
 Run it, kill it in the middle, run it again: the second run recovers whatever was in flight
@@ -198,8 +221,7 @@ as `undefined` when unused. A task or hook always forwards its supplied Call, no
 |---|---|
 | `models` | a pi-ai `Models` collection |
 | `tools` | what the model may call, besides the built-in `subagent` and `job` tools; a `ToolRegistry` or an array |
-| `kinds` | plugin entry and task kinds, added to the built-ins |
-| `replace` | a built-in kind swapped by name (`{ generation: myGenerationKind }`); it must keep the statuses and hook names |
+| `kinds` | ordinary plugin entry and task kinds, added beside the fixed built-ins; protected `pi.*` names reject |
 | `rootValues` | explicit initial root configuration, applied only in the fresh root's creation commit |
 | `sections` | initial custom typed section definitions, in addition to built-ins |
 
@@ -209,8 +231,9 @@ configure the fresh conversation before generation. On reopen, `rootValues` is i
 configuration wins. Children inherit the values selected by their spawn policy; forks inherit
 rewindable configuration at the fork point. Missing required generation configuration is an error.
 
-The built-in kinds are registered by `open` itself, because `accept`, `prompt`, `steer` and
-`collapse` cannot work without them. Refer to whatever is registered through `h.kinds`:
+The built-in kinds are fixed and installed by `open` itself because `send`, safe-boundary admission and
+`collapse` cannot work without them. They cannot be registered, replaced or removed. Their readonly
+witnesses remain available through `h.kinds` for hooks and inspection:
 
 ```typescript
 h.kinds.generation   // config: model, thinking, selectedTools, ...; hooks: system_instructions, before_request, on_yield
@@ -219,40 +242,37 @@ h.kinds.collapse     // hooks: before_collapse
 h.kinds.job
 ```
 
-A replacement is usually a wrapper that delegates to the original for everything it doesn't
-change:
-
-```typescript
-import { generationKind } from '@earendil-works/pi-agent/kinds';
-const h = await Harness.open(storage, { models, tools, replace: {
-  generation: { ...generationKind, async execute(task, runtime, call) { await audit(task); return generationKind.execute(task, runtime, call); } },
-}}, call);
-```
+Plugins extend these operations through their typed hooks and may register ordinary durable task kinds for
+side work. They cannot supply an alternative generation/tool/post_tools graph or obtain the core transcript
+transaction surface.
 
 Open checks the recorded kind strings without scanning the transcript and reports live work, but
 starts nothing. An unregistered historical entry kind is reported, not rejected: its stored
 `model`, `head` and `edits` still build context, while its typed data and custom renderer are
-unavailable. Missing live task kinds are handled according to foreground/background status:
+unavailable. Open reconciles missing live task kinds before returning:
 
 ```typescript
-const { start, inflight, orphaned, parked } = await h.inspect(call);
-// start: tasks that never began or must begin again (a planned tool, a retry, a scheduled job)
-// inflight: tasks the last process was running when it stopped; recover() will handle them
-// orphaned: foreground tasks whose kind is missing (a plugin was uninstalled); settled at open
-// parked:   background tasks whose kind is missing; they resume when it is registered again
+const { pending, running, orphaned, unknownEntryKinds } = await h.inspect(call);
+// pending:  tasks whose effects never began
+// running:  tasks the prior process left in flight; recover() handles them after resume
+// orphaned: live tasks whose kind was missing and was terminalized during open
+// unknownEntryKinds: stored entries that retain generic facets but lack typed plugin narrowing
 ```
 
 ### What Happens on Reopen
 
-Nothing, until something drives a conversation. `h.drive()` starts and recovers eligible foreground
-and background work across the session; `c.drive()` does the same for one conversation's ownership
-scope. Each promise resolves when its scope has no live foreground task. Its attached background
-work remains served afterwards. A UI usually attaches a watch to what it shows and drives that.
+Nothing runs during open. Resume once to start or recover every eligible foreground and background task in
+every conversation. Activation is idempotent and returns after initial dispatch scheduling, not after idle:
 
 ```typescript
 const h = await Harness.open(storage, opts, call);
-void h.drive(call).catch(error => console.error(error)); // resume; report session faults
+await h.resume(call);
 ```
+
+`send`, `InputHandle.wait`, `collapse`, task/input abort and foreground-idle waits also ensure this
+session-wide resume.
+Use explicit `resume()` when restored work must progress and no new progress-seeking command will be issued.
+A read, inspection, fork without input, value lookup or watch capture does not activate recovery.
 
 ### Closing
 
@@ -270,18 +290,31 @@ An uncooperative task can delay it indefinitely.
 result records remain stored, including in idle conversations. Fresh abort handlers resolve their
 already-running input groups and finish cleanup. Built-in child cleanup marks tasks only, never drains
 child queues, including after a crash and reopen. Shutdown waits for both live tasks and running calls
-to disappear before closing. Preserved queues create no work by inference on reopen/drive.
+to disappear before closing. Preserved queues create no work merely from reopen or resume; a later explicit
+idle send consumes queued writes/follow-ups/steering according to the normal boundary policy.
 
 Once admitted, caller cancellation does not abandon shutdown. Repeated lifecycle calls share
 completion; explicit close interrupting shutdown makes shutdown reject. Task calls cannot invoke
 host lifecycle methods.
 
+### Cloudflare Durable Objects
+
+Use one Durable Object per Pico Session: one open Harness, one session scheduler, and any number of root,
+forked and owned conversations. A request that calls `send` activates the scheduler. An alarm or one logical
+Cloudflare Task wake should open Pico and call `resume`, which recovers all eligible Session work.
+
+Platform wake-up is not Pico effect recovery. Do not create one Cloudflare lane/task per conversation, and
+do not use Cloudflare replay as a second authority for provider/tool effects. If durable Pico admission and
+the platform wake cannot share a transaction, add an ordered handoff or idempotent retry so acknowledged
+work can always cause another wake. Pico checkpoints and `recover()` remain authoritative across process
+and platform invocation limits.
+
 ## Configuration
 
-### Settings Declared by Kinds
+### Settings Exported Alongside Kinds
 
-There is no settings object. A task kind declares the values it reads, typed, and that declaration
-is the only place the address is spelled:
+There is no generic settings object and generic `TaskKind` does not capture configuration. Built-in/product
+packages export typed address bundles alongside their kinds, so each address is still spelled once:
 
 ```typescript
 generationKind.config
@@ -294,8 +327,8 @@ generationKind.config
 // }
 ```
 
-A UI can list what a conversation is configured with by walking the registered kinds' `config`;
-a plugin declares its own values the same way (see [Task Kinds](#task-kinds)).
+A UI can list built-in configuration from these exported bundles. A plugin defines and exports its own
+addresses the same way; those values remain conversation state and are never copied wholesale into a task.
 
 ### Reading and Writing
 
@@ -324,7 +357,11 @@ thinking and selected tools are rewindable: forking at yesterday's answer gets y
 Something like `ui.expanded` is sticky.
 
 Children created by `spawn` don't inherit history; they are initialized explicitly (see
-[Subagents](#subagents)).
+[Subagents](#subagents)). Generation tasks do not copy this generic configuration into their durable input.
+They carry only minimal built-in effect-recovery evidence such as input IDs, context cutoff, selected model
+identity, attempt/deferred IDs and offered tool-name/version evidence when required. A plugin needing exact
+recovery persists its own compact key/version. Fork configuration remains built-in fork-aware conversation
+state, so a fork sees the values in force at its selected entry and local overrides do not affect the parent.
 
 ## System Prompt and Tool Loadout
 
@@ -437,7 +474,7 @@ Skills discovery can remain in the hook owner's closure or a host service. Watch
 a remote source at a bounded interval; hook calls read the cached snapshot. Failed refresh is not
 removal: retain the last successful snapshot. The base hook explicitly deletes its section when the
 source really disappears. If a handler fails and is skipped, discard its draft mutations/wrappers,
-not earlier handlers' changes; a half-finished refresh must not remove instructions. No discovery callback or private cache state is attached to stored sections.
+not earlier handlers' changes; a half-finished refresh must not remove instructions. No discovery callback or private cache state is stored with sections.
 
 ### Changing the Loadout
 
@@ -522,7 +559,8 @@ is best-effort; a fallback user message does not have native system priority.
 
 ### Subagents Have Their Own
 
-Children explicitly choose their durable configuration. Subtree handlers supply defaults, and inner
+The exact spawn helper is gated; this example fixes the required configuration semantics. Children
+explicitly choose their durable configuration. Subtree handlers supply defaults, and inner
 hooks can replace built-in payloads or add sections:
 
 ```typescript
@@ -540,10 +578,11 @@ Definitions can be supplied initially through `Harness.open(..., { sections: [..
 later through `h.sections.register/replace/remove`. Registration is mutable process state, serialized
 on the line; an in-flight preparation retains its definition snapshot. `register` rejects duplicate
 keys; `replace` is explicit and compatible; `remove` unregisters code without erasing stored sections.
-Entry/task registries follow the parallel `h.entryKinds`/`h.taskKinds` API. Task-kind removal rejects
-while live tasks of that kind exist. Missing kinds at open orphan foreground tasks and park background
-tasks, as described under [Opening](#opening); registration restores recovery for parked work in an
-attached scope, never resurrects terminal tasks.
+Entry/task registries follow the parallel `h.entryKinds`/`h.taskKinds` API. Replacing or removing an
+ordinary task kind rejects while live tasks of that kind exist; after they are terminal, replacement affects
+future tasks only. At open, every live task with a missing kind is terminalized as
+`orphaned`, regardless of foreground/background; registered descendants selected by cleanup policy are
+marked. Later registration never resurrects terminal tasks.
 
 ### Compaction, Forks and Restarts
 
@@ -557,7 +596,7 @@ removed its original baseline from model context. Untouched unknown sections als
 fresh baseline. Re-registering a compatible definition restores typed editing; explicit deletion is
 how the host removes an abandoned section.
 
-Every generation stores `state.requestThrough`, an inclusive transcript cutoff. It captures canonical
+Every generation checkpoints `requestThrough`, an inclusive transcript cutoff. It captures canonical
 section state and definitions before running hooks/renderers outside the line. Preparation then checks
 on the line that no managed section write changed its seed; if one did, repeat preparation. A head-only
 change does not stale the section data, but may require a baseline rather than a delta.
@@ -607,7 +646,8 @@ produce a new prepared update, but never re-render old model messages.
 // Fork the earlier loadout example at 120: baseline 110 selected read/write, before the grep change.
 const b = await c.fork({ at: 120 }, call);
 await b.settings.set({ selectedTools: ['read'] }, call);
-await b.prompt({ input: '...' }, call); // toolsRemoved=[write]; 110 remains the visible baseline
+const forkInput = await b.send({ content: '...' }, call); // toolsRemoved=[write]; 110 stays visible
+await forkInput.wait(call);
 ```
 
 `before_request` may transform a private request copy, which must remain messages-only. These changes
@@ -615,156 +655,177 @@ do not mutate stored section state. The transcript is not an exact audit of arbi
 requests without optional separate capture. Tool-call validation uses the actual offered definitions
 after transformation, plus normal implementation and permission checks.
 
-## Prompting
+## Sending Input
 
-### prompt, accept, drive
+### send and InputHandle
 
-`prompt` is three things: accept the input, drive the conversation until it is idle, read the
-explicit result for that input.
-
-```typescript
-const answer = await c.prompt({ input: 'Inspect the parser' }, call);
-// AssistantEntry | undefined (the run ended without an answer)
-```
-
-The pieces are available separately. `inputId` is always the id of the accepted `pi.inbox` list
-element, even when idle acceptance places and removes it in the same commit. Generation and
-`post_tools` carry input ids explicitly, so result lookup never scans the transcript:
+`send` is the application-facing admission operation. It first durably accepts or deduplicates content, then
+non-abandoningly ensures the one Session scheduler is resumed, and returns an `InputHandle`; it does not wait
+for a model answer. Caller cancellation after admission cannot strand the accepted input.
 
 ```typescript
-const { inputId } = await c.accept({ input: 'Inspect the parser', requestId: 'req-42' }, call);
-const outcome = await c.drive(call);                          // 'idle' | 'closed'
-const result = await c.result(inputId, call);                 // one sticky-value point read
-const answer = result?.status === 'done' && result.answer
+const input = await c.send({
+  requestId: 'req-42',
+  content: 'Inspect the parser',
+}, call);
+
+const result = await input.wait(call); // done | unanswered
+const answer = result.status === 'done' && result.answer
   ? await h.getEntry(assistantKind, result.answer, call)
   : undefined;
 ```
 
-A result moves from `queued` to `placed` (its entry is in the transcript), then to `done` or
-`unanswered`. `done` carries the answering entry when one was owed; a context-only `write` is
-`done` with no answer, in the commit that placed it. `unanswered` names the cause:
+`input.id` is the stable ID of the protected inbox element allocated for acceptance, even when idle
+admission appends and removes that element in one commit. `pi.inbox` is a conversation-scoped sticky,
+non-rewindable list and is not inherited by forks. Ascending element IDs preserve Session admission order.
+Generation and `post_tools` carry input IDs explicitly. Results are direct protected values keyed by input ID,
+and request receipts are direct protected values keyed by the Session-wide request key; neither lookup scans
+the transcript or inbox. `input.result(call)` is a point read and does not activate work.
+`input.wait(call)` ensures resume, returns an existing terminal result immediately or installs one cancellable
+observation waiter. Cancelling that Call removes only that waiter; it neither aborts the input nor changes
+scheduler scope. Several waiters may join the same result.
 
-```typescript
-switch (result.status) {
-  case 'queued':     return 'waiting to start';
-  case 'placed':     return 'working';
-  case 'done':       return result.answer ? render(result.answer) : 'noted';
-  case 'unanswered':
-    return result.reason === 'terminated' ? 'the run stopped itself'
-         : result.reason === 'aborted'    ? 'cancelled'
-         : 'the model could not be reached';
-}
-```
+Inbox reads return one complete current materialized ordered collection. Memory retains that collection
+in process, JSONL replays operations once at open and then maintains it, and SQLite reads all current indexed
+rows in element-ID order and may physically remove them on remove/clear. No inbox read replays history from
+the last clear; rewindable list history is unrelated. An
+admission or boundary decision commits its inbox removal together with result/receipt changes, entry
+placement and successor task creation in one main transaction.
 
+A result moves `queued -> placed -> done | unanswered`. Idle send may collapse absent directly to placed.
+`done` names the answering entry when one was owed; an internal passive write is done with no answer.
 Terminal results never change.
 
-`accept` is "the user hit enter": idle, it places the entry and creates a generation in one commit;
-busy, it queues, as `followUp` by default. Pass `whenBusy: 'steer'` to interrupt the running turn
-instead, or `whenBusy: 'reject'` if the caller insists on knowing. Either way you get an `inputId`
-and `result(inputId)` tells you which happened, so a caller never has to check whether a run is in
-progress first.
-
-A request key names one acceptance for the life of the session. A caller that lost the response
-retries with the same key and gets the same `inputId` back; nothing is written twice and nothing is
-compared:
+A request key is Session-wide and first-key-wins for the Session lifetime. Lookup happens before conversation,
+busy mode or payload comparison. A retry through any conversation returns a handle bound to the original
+conversation/input and writes nothing:
 
 ```typescript
-const { inputId } = await c.accept({ input, requestId: 'req-42' }, call);   // safe to repeat
-const existing = await h.acceptance('req-42', call);                        // or look it up explicitly
+const first = await c.send({ requestId: 'req-42', content }, call);
+const same = await anotherConversation.send({ requestId: 'req-42', content: 'different' }, call);
+console.assert(first.id === same.id && first.conversationId === same.conversationId);
+const existing = await h.input('req-42', call);
 ```
 
-`c.drive(call)` resolves when the conversation's foreground set is idle: no generation, tool or
-automatic collapse in that ownership chain is live. `h.drive(call)` resolves when no foreground task
-is live anywhere in the session. Both start eligible background work and keep serving it after they
-resolve. A separate full-quiescence wait may intentionally never return while a recurring schedule
-is live.
+Use `c.waitForIdle(call)` to observe that conversation's foreground cancellation closure, or
+`h.waitForIdle(call)` for all foreground tasks in the Session. These waits ensure resume but do not wait for
+background work. Background jobs/collapse still execute after foreground idle.
 
 ### Input While Busy
 
-`accept` covers the common case. `queueInput` is the explicit form when the caller wants a specific
-mode, and it is one method taking a tagged union rather than four methods:
+A conversation is admission-busy while a live generation/tool/`post_tools` turn task owns transcript
+progress. A speculative background collapse has model-entry authority but is not admission-busy.
 
 ```typescript
-const steer  = await c.queueInput({ mode: 'steer', input: 'Focus on the tokenizer first' }, call);
-const follow = await c.queueInput({ mode: 'followUp', input: 'Then write the tests' }, call);
-const next   = await c.queueInput({ mode: 'nextRun', input: 'Remind me to commit' }, call);
-const note   = await c.queueInput({ mode: 'write', kind: noteKind,
-                                    entry: { data: { text: 'user stepped away' } } }, call);
+const follow = await c.send({ content: 'Then write the tests' }, call); // default while busy
+const steer = await c.send({
+  content: 'Focus on the tokenizer first',
+  whenBusy: 'steer',
+}, call);
 ```
 
 | mode | lands | asks for |
 |---|---|---|
-| `steer` | next post_tools, or a final answer | joins the running group at post_tools; starts the next one after an answer |
-| `followUp` | after a final answer | starts the next group |
-| `nextRun` | the next idle `accept` | joins that acceptance's group |
-| `write` | next safe boundary | nothing; `done` with no answer |
+| `steer` | next complete post_tools boundary, or final boundary | joins the active input group when safe |
+| `followUp` | after the final assistant answer | starts the successor input group |
+| `write` | next safe boundary | passive transcript content; no generation |
 
-When a generation emits calls, its settlement creates every tool plus exactly one `post_tools`
-carrying the current input ids. That task places writes and steering, extends the ids and creates
-the continuation generation. A final-answer generation resolves its current group, then places
-steer/followUp items into a new group. `nextRun` remains queued until a later idle `accept`.
+`followUp` is the busy-send default. While idle, `whenBusy` is irrelevant: send starts one current input
+group. `whenBusy:'reject'` throws without recording a request receipt. `steer` never mutates a provider
+request already snapshotted or in flight. `write` is a protected agent/plugin admission mode rather than a
+common public conversation method; built-ins compose it through internal transaction helpers when it must
+land atomically with other state. An idle write appends and becomes done with no task. Applications needing
+speculative staged context for a later explicit turn can keep it in their own sticky conversation list and
+fold it into that later `send`; Pico does not standardize that application policy.
 
-The queue exposes complete entry drafts so a UI can render text and images directly. Durable and
-watch updates are append/remove/clear operations, not whole-array replacements. Any item can be
-withdrawn until it lands:
+Safe chronology is preserved in full:
+
+```text
+send A while idle
+TX[ user A; generation G1(inputs:[A]); result A=placed ]
+kick -> G1
+
+G1 returns calls X,Y
+TX[ assistant calls; tool X; tool Y;
+    post_tools P1(after:[X,Y],inputs:[A]); terminal G1 ]
+kick -> X and Y concurrently
+
+send B while busy -> TX[followUp B; result B=queued]
+send S with steer -> TX[steer S; result S=queued]
+internal write W  -> TX[write W; result W=queued]
+
+X and Y finish in either order
+TX[tool result X; terminal X]
+TX[tool result Y; terminal Y]
+model projection restores assistant call order
+
+P1 terminal boundary
+TX[write W; user steer S; generation G2(inputs:[A,S]); terminal P1]
+kick -> G2
+
+G2 final answer E2
+TX[assistant E2; A/S=done(answer:E2); user followUp B; B=placed;
+   generation G3(inputs:[B]); terminal G2]
+kick -> G3
+```
+
+`steeringMode` and `followUpMode` independently use `"all" | "one-at-a-time"` and default to
+`"one-at-a-time"`, matching the old lane harness. At each boundary, `"all"` selects every queued item of
+that tag and `"one-at-a-time"` selects only its oldest item. All writes are selected. Selected tags are
+merged in global inbox order; unselected items retain their relative order. Pico imposes no queue-size or
+drain-size bound in v1. No giant turn task and no task-per-send dependency chain exists. A logical turn remains generation -> parallel tools -> post_tools -> continuation generation, with input
+ownership transferred atomically at each stage. Each tool appends its own result entry atomically with
+terminalization. Transcript chronology may reflect parallel completion; model projection restores the
+assistant's call order before the continuation request.
+
+The inbox exposes complete entry drafts to the authoritative conversation view. Any queued input can be
+withdrawn until placement wins:
 
 ```typescript
-await c.abortInput(steer.inputId, call);              // 'aborted' | 'not_found'
+const status = await follow.abort(call); // aborted | already_placed | not_found
 ```
+
+Withdrawal and placement serialize. If withdrawal wins, only that element is removed and becomes
+`unanswered/aborted`; later items retain order. If placement wins, abort returns `already_placed`. No task
+dependency is rewired.
 
 ### Aborting
 
 ```typescript
-await c.abort(call);          // every live foreground task of this conversation, and of conversations they own
-await h.abortTask(id, call);    // one background task: a job, a schedule
+await c.abort(call);          // active foreground graph in this cancellation ownership closure
+await h.abortTask(id, call);  // one task, including a background job or schedule
 ```
 
-An abort mark is a durable request, not terminal settlement:
+Both operations first commit their durable mark/withdrawal, then non-abandoningly ensure the Session scheduler
+is resumed so fresh cleanup can progress. An abort mark is a durable request, not terminal settlement:
 
 ```text
-100 generation streaming, execute invocation A running
-110 abort=true commits; A can no longer write main state or scratch
+100 generation execute invocation A running
+110 abort=true commits; A loses main/scratch/output write authority
     line releases; A's signal fires; provider exits; A returns
-    driver removes A and starts abort invocation B with a fresh Call
-120 B commits optional display-only partial, cancelled input results, terminal aborted status
-    scratch is retired; B returns
+    scheduler releases A and reserves fresh abort invocation B
+120 B commits display/result cleanup + full terminal aborted snapshot atomically
 ```
 
-There is no mark/signal branch in normal settlement. If the mark wins, `runtime.commit` rejects
-`TaskCancelled` before its closure runs; execute unwinds and the kind's `abort()` writes the durable
-cancellation result. If normal settlement wins first, the task is already terminal. Standard effects
-observe the signal cooperatively; no effect gate exists, so an operation may start before the signal
-is delivered and then cancel. Cancellation does not undo external effects.
+If normal settlement wins first, the task is terminal. If the mark wins, normal writes reject, the old
+invocation is joined, and only fresh `abort()` performs durable cleanup. Cancellation does not undo external
+effects.
 
-`abortTask` marks exactly one task; if not owned or attached, cleanup awaits a later drive. Conversation
-abort marks the current foreground ownership closure. Fresh parent cleanup explicitly cancels its
-foreground children and recorded non-detached jobs. Queued `steer`/`followUp` are removed and marked
-cancelled; `write`/`nextRun` remain. This is the explicit conversation-abort policy. Shutdown and
-built-in task abort cleanup mark tasks only and preserve all queued items and their queued results.
+Conversation abort marks its foreground cancellation closure, withdraws queued `steer`/`followUp` as
+`unanswered/aborted`, and preserves `write`. Task abort preserves all queued future input unless a specific
+built-in cleanup policy says otherwise. Abort terminalization never runs a normal final-answer
+boundary, so it cannot accidentally start a queued successor. Shutdown marks all live tasks but preserves all
+queued items/results.
 
-A generation's abort handler updates its explicit input group in the same commit as settlement.
-Here `inputResult(id)` is the sticky value address holding that input's result:
-
-```typescript
-async abort(task, runtime, call) {
-  await runtime.commit(async tx => {
-    for (const id of task.state.inputs) {
-      const address = inputResult(id);
-      const r = await tx.value(address).get();
-      if (r?.status !== 'placed') throw new Error(`Invalid active input ${id}`);
-      tx.value(address).set({ status: 'unanswered', requestId: r.requestId, entry: r.entry, reason: 'aborted' });
-    }
-    tx.settle(task, 'aborted', { inputs: task.state.inputs });
-  }, call);
-}
-```
-
-The driver never resolves input results itself. Tool and generation kinds own their respective
-outcomes. They can recover only committed scratch; missing final usage is unknown, not zero.
-Runtime scratch writes reject after cancellation too: await/catch them. Harness sinks handle and
-drain their own scratch promises and drop late callbacks, never silently recreate retired scratch.
+Tool and generation kinds, not waiters or the scheduler, own their durable outcomes and input-result updates.
+They recover only committed checkpoint/scratch evidence; missing final usage is unknown, not zero. Runtime
+scratch writes reject after cancellation too: await or catch them. Harness producers drain their own pending
+writes and never recreate retired scratch.
 
 ## Watching
+
+Tool-facing convenience APIs remain provisional alongside the sink. Durable task output and per-commit watch
+delivery are normative; delivery coalescing is deferred.
 
 ### The View
 
@@ -775,27 +836,28 @@ JSON object the harness keeps current, plus typed events that say what changed.
 const w = await h.watch(c.id, { tail: 100, values: [myPlugin.config.mode] }, call);
 w.view    // ConversationView, captured atomically with the subscription
 w.start(listener);
-w.resnapshot(call);     // fresh capture, same subscription (if the client fell behind)
 w.unsubscribe();
+// After overflow/failure, open a new watch and replace the client view atomically.
 ```
 
 ```typescript
 interface ConversationView {
   conversation: Conversation;
-  entries: Entry[];                        // the last `tail` entries; page older ones with h.entries(id, { before })
-  context: Id[];                           // what the model currently sees, as entry ids
-  tasks: Task[];                           // live tasks, typed by kind
-  inbox: Element<QueuedInput>[];           // queued input
-  values: Map<Address, JsonValue>;         // every value the registered kinds declare, plus the ones you asked for
-  previews: Map<Id, JsonValue>;            // per live task: what it is producing right now
-  faulted: boolean;
-  readAt: Id;
+  tail: number;
+  entries: Entry[];                         // newest logical fork-visible tail
+  context: Id[];                            // model-visible entry IDs
+  tasks: Task[];                            // live tasks directly in this conversation
+  taskOutputs: WatchedTaskOutput[];         // shared live generation/tool/job/collapse output
+  inbox: Element<QueuedInput>[];            // queued followUp/steer/write
+  values: WatchedValue[];                   // exactly the requested values
+  readAt: Seq;                              // coherent storage sequence barrier
 }
 ```
 
-`previews` is where streaming lives. Each task kind defines what its preview is: the generation's
-is the partial `AssistantMessage`, a tool's is its `ToolOutputState` so far, a job's is the same
-shape for its process output.
+Task output is where streaming lives. A generation output contains its partial assistant message; tool and
+job outputs contain their current output state. The same output ID may be referenced by more than one live
+task during durable handoff. Entries, tasks, task outputs, inbox and values are captured and updated as one
+authoritative replicated view.
 
 ### Events
 
@@ -810,25 +872,29 @@ type ConversationEvent =
   | { type: 'task_start';  task: Task }
   | { type: 'task_update'; task: Task; previous: Task }
   | { type: 'task_end';    task: Task }
-  | { type: 'task_output'; task: Id; ops: DeltaOp[] }      // already applied to view.previews
-  | { type: 'value';       addr: Address; value: JsonValue | undefined }
+  | { type: 'task_output'; id: Id; kind: string; delta: Op[] }
+  | { type: 'value';       value: WatchedValue }
   | { type: 'inbox';       ops: InboxOp[] }
-  | { type: 'context';     ids: Id[] }                      // a head or edit changed derived context
-  | { type: 'fault';       error: unknown }
-  | { type: 'closed' };
+  | { type: 'context';     ids: Id[] };
+
+interface CommitEnvelope {
+  first: Seq;
+  last: Seq;
+  events: ConversationEvent[];
+}
 ```
 
 The view is authoritative and the event is a wake-up: when the listener runs, `w.view` has already
-been folded. Inbox operations are combined per commit; an idle acceptance's append and immediate
-remove emits no inbox event. A renderer may ignore the event payload entirely and be correct.
+been folded. Deliveries are whole commit envelopes ordered after `view.readAt`. Inbox operations are
+combined per commit; an idle send's append and immediate remove emits no inbox event. A renderer may ignore the event payload entirely and be correct.
 Because every piece
 of work is a task of a known kind, four task events cover what used to need a name per case:
 
 | you want to know | look at |
 |---|---|
-| a turn started / ended | `task_start` / `task_end` where `generationKind.is(task)` |
-| a retry is scheduled | `task_update`, status `retry_wait`, `state.attempt`, `state.notBefore` |
-| the response is streaming | `task_output` on the generation; `view.previews.get(task)` |
+| currently in a turn | `view.tasks` contains a fixed generation/tool/post_tools task after folding the whole commit; a continuation generation is not a new logical turn |
+| a retry is scheduled | `task_update`, checkpoint phase `retry_wait`, attempt and `notBefore` |
+| the response is streaming | `task_output` on the generation's output ID; `view.taskOutputs` |
 | a tool is running / its output | `task_start` / `task_output` / `task_end` on the tool task |
 | compaction started / ended | `task_start` / `task_end` where `collapseKind.is(task)` |
 | the model changed | `value` with `addr === generationKind.config.model` |
@@ -844,44 +910,55 @@ by id and only appended; live things are keyed by task id, and a tool block keep
 task settles and its result entry appears, so nothing is torn down and rebuilt:
 
 ```typescript
-function render(view: ConversationView, event?: ConversationEvent) {
+function render(view: ConversationView) {
   transcript.sync(view.entries);
+  const outputById = new Map(view.taskOutputs.map(output => [output.id, output.value]));
+  const valueByAddress = new Map(view.values.map(value => [value.address, value.value]));
 
   const gen = view.tasks.find(t => generationKind.is(t));
-  streaming.set(gen ? view.previews.get(gen.id) as AssistantMessage : undefined);
+  streaming.set(gen?.output ? outputById.get(gen.output.id) as AssistantMessage : undefined);
   status.set(
-    gen?.state.status === 'retry_wait' ? `retrying (${gen.state.attempt}/${gen.state.maxAttempts})` :
-    gen?.state.status === 'deferred'   ? 'waiting for provider' :
+    gen?.checkpoint?.phase === 'retry_wait' ? `retrying (attempt ${gen.checkpoint.attempt})` :
+    gen?.checkpoint?.phase === 'deferred'   ? 'waiting for provider' :
     view.tasks.some(collapseKind.is) ? 'compacting…' : undefined);
 
   for (const t of view.tasks.filter(toolKind.is))
-    toolBlocks.upsert(t.id, { call: t.state.call, phase: t.state.status, output: view.previews.get(t.id) as ToolOutputState });
+    toolBlocks.upsert(t.id, { call: t.input.call, phase: t.checkpoint?.phase ?? t.status,
+      output: t.output ? outputById.get(t.output.id) as ToolOutputState : undefined });
 
   for (const t of view.tasks.filter(jobKind.is))
-    jobBlocks.upsert(t.id, { tool: t.state.origin?.tool ?? 'job', output: view.previews.get(t.id) as ToolOutputState });
+    jobBlocks.upsert(t.id, { tool: t.input.origin?.tool ?? 'job',
+      output: t.output ? outputById.get(t.output.id) as ToolOutputState : undefined });
 
   queue.set(view.inbox.map(i => i.value));
   working.set(view.tasks.some(t => !t.background));
-  statusLine.set({ model: view.values.get(generationKind.config.model) });
+  statusLine.set({ model: valueByAddress.get(generationKind.config.model) });
 }
 ```
 
 Tool components are registered once per tool name and fed one shape, `ToolOutputState`, whether it
-comes from a live tool task's preview, a settled `tool_result` entry, or a job the tool started
-(`state.origin.tool` says which component).
+comes from a live tool task's output, a settled `tool_result` entry, or a job the tool started
+(`input.origin.tool` says which component).
 
 ### Remote Clients
 
 The view is plain JSON and every event is proportional to its change, so a process without a
-harness (mini's TUI, a phone) runs the same fold on the same events. `applyEvent(view, event)` is
-exported and needs no kinds; preview ops are Chord delta ops, which the client applies with the
-same module.
+Harness (mini's TUI, a phone) runs the same fold over complete commit envelopes.
+`applyConversationCommit(view, commit)` is exported and needs no kinds; task-output ops are Chord delta ops,
+which the client applies with the same
+module. Keep the original atomic watch subscribed. Do not snapshot, unsubscribe and invent a separate stream
+cursor; reconnect after overflow with a fresh atomic watch and replace the client view.
 
 ```typescript
-// worker (has the harness)                            // ui process
-const w = await h.watch(c.id, { tail: 100 }, call);          on('view',  m => { view = m.view; render(view); });
+// worker                                               // UI process
+const w = await h.watch(c.id, { tail: 100 }, call);     on('view', m => { view = m.view; render(view); });
 send({ type: 'view', view: w.view });
-w.start(e => send({ type: 'event', event: e }));       on('event', m => { applyEvent(view, m.event); render(view, m.event); });
+w.start(delivery => send({ type: 'delivery', delivery }));
+                                                       on('delivery', m => {
+                                                         if (m.delivery.type === 'commit')
+                                                           view = applyConversationCommit(view, m.delivery.commit);
+                                                         render(view);
+                                                       });
 ```
 
 ### Session Watch
@@ -891,11 +968,11 @@ reports (a hook threw, a task kind misbehaved and was stopped).
 
 ```typescript
 const sw = await h.watch(call);
-sw.view.conversations;  sw.view.values;  sw.view.faulted;
-sw.start(e => {
-  if (e.type === 'usage')  status.setCost(e.totals);
-  if (e.type === 'report') log.warn(e.kind, e.task, e.error);
-  if (e.type === 'conversation') tree.refresh();
+sw.view.conversations; sw.view.values; sw.view.readAt;
+sw.start(delivery => {
+  if (delivery.type !== 'commit') return;
+  for (const event of delivery.commit.events)
+    if (event.type === 'conversation') tree.refresh();
 });
 ```
 
@@ -907,8 +984,9 @@ and rewindable values visible at that entry. Its next preparation may append cha
 host sources; it does not rewrite inherited messages.
 
 ```typescript
-const alt = await c.fork({ at: answer.id }, call);                           // the source keeps running, untouched
-await alt.prompt({ input: 'Try a different implementation' }, call);
+const alt = await c.fork({ at: answer.id }, call); // source work keeps running independently
+const altInput = await alt.send({ content: 'Try a different implementation' }, call);
+await altInput.wait(call);
 
 const back = await c.fork({ at: earlier.id, abort: true }, call); // "go back": aborts the source's foreground first
 ```
@@ -920,15 +998,16 @@ exchange without inheriting or executing the source tasks. Which conversation a 
 
 ```typescript
 const all = await h.conversations(undefined, call);
-const independent = all.items.filter(x => x.owner === undefined);   // root and forks: their own drive scopes
+const independent = all.items.filter(x => x.owner === undefined);   // root and forks; same Session scheduler
 const children = await h.conversations({ parent: c.id }, call);           // forks of c; owned children use ownedFrom
 ```
 
 ## Compaction and Reset
 
-Compaction appends a summary entry with its model message and first retained entry id stored on the
-entry. The context becomes the summary followed by the transcript from that boundary. It runs as a
-background task and may run while the model keeps working: ordinary entries landing meanwhile
+Compaction appends a summary entry with its model message and first retained entry ID stored on the
+entry. The context becomes the summary followed by the transcript from that boundary. Manual speculative
+compaction is background; threshold/overflow compaction is foreground. Either executes automatically, and
+speculative compaction may run while the model keeps working: ordinary entries landing meanwhile
 remain after the prepared boundary. Only a competing head makes the summary stale; edit entries do
 not.
 
@@ -949,7 +1028,8 @@ The transcript keeps everything either way; only the context changes.
 
 ## Subagents
 
-A subagent is a conversation. There is no separate object to talk to: the model gets one tool with
+**Gated:** exact model-tool commands and owned-conversation helper types below are illustrative until the
+ordinary-tool capability design is settled. A subagent is a conversation. There is no separate object to talk to: the model gets one tool with
 a `command` argument, and the API gets a conversation handle.
 
 ```typescript
@@ -967,21 +1047,22 @@ subagent({ command: 'stop',   id: 88 })
 const childId = await c.spawn({ prompt: 'Profile the build', context: 'fresh',
                                 values: { inherit: [generationKind.config.model] } }, call);
 const child = await h.conversation(childId, call);
-await child.accept({ input: 'also check CI' }, call);
-await child.drive(call);          // or let h.drive() / the parent's drive carry it
+const childInput = await child.send({ content: 'also check CI' }, call);
+await childInput.wait(call);
 await child.abort(call);
 ```
 
-`run` keeps the calling tool inflight while it drives the child, so the child is part of the
-parent's foreground: aborting the parent reaches it. `spawn` settles the tool at once; the child is
-detached, runs while the parent goes on, and only `child.abort()` (or the `stop` command) ends it.
-Either way the child is driven by whatever drives the parent's tree, and it survives a restart like
-any conversation.
+`run` keeps the calling tool in flight while it waits for the child's `InputHandle`, so ownership makes the
+child part of the parent's foreground cancellation reach. `spawn` settles the tool at once; the child is
+excluded from that cleanup policy, runs while the parent goes on, and only `child.abort()` (or `stop`) ends
+it. The one Session scheduler executes either child automatically, concurrently with unrelated
+conversations. Both survive restart like any other durable work.
 
 ## Jobs and Schedules
 
-A job is a background task that runs a process: durable, recoverable, killable, with its output
-streamed into its preview. The model normally gets one from `bash` (asked to background, or run
+**Gated:** exact job payloads and convenience methods remain unsettled; the scheduler/task-output behavior
+here is required. A job is a background task that runs a process: durable, recoverable, killable, with its task output
+streamed through the authoritative view. The model normally gets one from `bash` (asked to background, or run
 past its budget) and controls it through the `job` tool:
 
 ```typescript
@@ -995,18 +1076,18 @@ From the API a job is a task; a schedule is a job with `every`:
 
 ```typescript
 const dev = await c.commit(tx => tx.task(jobKind, { background: true,
-  state: { status: 'planned', cmd: 'npm run dev', cwd } }), call);
+  input: { cmd: 'npm run dev', cwd } }), call);
 
 const nightly = await c.commit(tx => tx.task(jobKind, { background: true,
-  state: { status: 'planned', cmd: 'npm test', cwd, every: 24 * 3600_000, notBefore: tonightAt(2) } }), call);
+  input: { cmd: 'npm test', cwd, every: 24 * 3600_000, notBefore: tonightAt(2) } }), call);
 
 await h.abortTask(nightly, call);          // ends the schedule wherever it is
 ```
 
-A schedule is one task looping `planned → running → planned`; there is no trail of run ids to
-chase. A job whose starting call returned early appends a `notice` entry when it finishes, so the
-model learns of it on its next turn without polling. Its output stays in the task (preview while
-live, terminal state after), not in the transcript.
+A schedule is one running task updating its kind-defined named checkpoint phases across occurrences; there
+is no trail of run IDs to chase. A job whose starting call returned early appends a `notice` entry when it finishes, so the
+model learns of it on its next turn without polling. Live output stays in shared task-output state; the job
+materializes terminal data into its outcome/notice before the final output reference retires.
 
 ## Plugin State
 
@@ -1026,7 +1107,8 @@ const on = await c.value(planMode).get(call);
 const then = await c.value(planMode).get(entryId, call);            // as of an entry: rewindable only
 
 const elementId = await c.list(moves).append({ x: 1, y: 2 }, call);
-const page = await c.list(moves).read({ limit: 50 }, call);
+const currentMoves = await c.list(moves).read(call);
+const movesAtEntry = await c.list(moves).read(entryId, call); // rewindable only
 await c.list(moves).remove(elementId, call);
 await c.list(moves).clear(call);
 
@@ -1041,7 +1123,8 @@ a fork before plan mode was turned on doesn't have it on. Nothing to register, n
 Anything that must land together goes in one commit: a closure on the session's write line. Reads
 inside it are asynchronous and see committed state; await them in an async builder. Writes are
 synchronous and ids are final when returned; a throw discards everything. Awaiting storage reads does
-not release the line. Never await external effects, driver waits or another commit inside a builder.
+not release the line. Never await external effects, task/input/idle waits or another commit inside a builder.
+Known nested Pico line operations reject before queueing instead of deadlocking.
 
 ```typescript
 const entry = await c.commit(tx => {
@@ -1049,7 +1132,7 @@ const entry = await c.commit(tx => {
   const id = tx.entry(myPlugin.noteKind, { data: { text: 'plan accepted' } });
   tx.value(expanded).set(true);                                           // sticky state may follow
   tx.task(myPlugin.reminderKind, { background: true,                      // tasks anywhere
-    state: { status: 'scheduled', about: id, at: Date.now() + 3600_000 } });
+    input: { about: id, at: Date.now() + 3600_000 } });
   return id;
 }, call);
 ```
@@ -1059,24 +1142,22 @@ const entry = await c.commit(tx => {
 `tx.entry` appends immediately and returns the entry id. Use it for entries that are part of what
 your task is doing, and for entries the model never sees (`data` only, no `model`).
 
-For an entry the model *will* read, written from outside a turn, use `tx.write` (or `c.write`):
-
-```typescript
-await c.write(noteKind, { data: { text: 'user stepped away' },
-                          model: [noteMessage('user stepped away')] }, call);
-```
-
-It appends immediately when no turn task is live in the conversation, and otherwise queues and lands
-at the next post_tools or final-answer boundary. That is not a style preference: appending a
+For model-visible passive content written while a turn may be busy, trusted built-ins use the protected
+transaction `write` helper. It appends immediately when admission is idle and otherwise queues for the next
+complete post_tools or final-answer boundary. It is intentionally not a public conversation method;
+application user input goes through `send`. That is not a style preference: appending a
 model-visible entry between an assistant's tool calls and their results changes the prefix the next
 request replays, which providers reject and which invalidates Anthropic thinking signatures.
 `tx.entry` rejects that one case rather than corrupting the next request, and the error points here.
 
-A kind that drives its own turn declares `turn: true`, which puts it in that check alongside the
-built-in generation, tool, post_tools and collapse kinds.
+Only the fixed generation, tool, post_tools and collapse definitions receive the internal
+`CoreTaskRuntime`, whose commits provide direct model-entry and protected admission authority. Ordinary
+`defineTask` kinds receive `TaskRuntime`/`BaseTaskTx` without those methods. Generation, tool and post_tools
+are the fixed turn-task set used for admission; speculative collapse is privileged but outside that set, so
+it does not block an idle send.
 
 Two more things when writing entries directly: appending a `user` entry is not the same as asking
-for an answer (nothing runs by inference; use `accept`), and a head entry may only narrow context,
+for an answer (use `send`), and a head entry may only narrow context,
 never widen it, and may not split an exchange.
 
 ### Write Order
@@ -1088,6 +1169,11 @@ reconstruct their history; they may therefore reference a new entry id. Tasks ma
 anywhere. A violating builder call throws before anything is persisted.
 
 ## Writing Tools
+
+**Gated:** exact sink and ordinary-tool runtime names below are illustrative, not implementation
+instructions. Durable task output and the required streaming, bounded capture, diagnostics, typed details,
+usage, control outcomes and job/child cleanup semantics are normative. Do not implement this package until
+the final mediated tool API is appended to the normative handoff.
 
 ### The Sink
 
@@ -1138,9 +1224,10 @@ The sink:
 | `delegate(jobId)` | this call's work continues as that job |
 | `diag(severity, message, code?)` | commentary about the call, kept out of the data |
 
-A tool never touches the transcript, its siblings or the queue. What it may do is create things in
-its own conversation through `runtime.commit(..., call)`: a job, a child conversation. The runtime
-provides conversation lookup, reads and cancellation methods, not a raw host-lifecycle Harness.
+A tool never touches the transcript, its siblings or the inbox. Ordinary tool code receives no task or host
+commit authority. The built-in `pi.tool` adapter may eventually expose narrow keyed memo, child-task and
+owned-conversation operations. Those mediated operations atomically update the parent checkpoint internally;
+exact names and types remain gated.
 
 ### Diagnostics
 
@@ -1160,56 +1247,30 @@ entry `data`. A UI combines the two and renders diagnostics as callouts by sever
 
 ### Long-Running Tools
 
-A call may not block a turn forever. Tools that run processes create a job first and wait on it
-with the budget from config; if the budget runs out, the call settles with what it has and the work
-goes on:
+A process-running tool is job-first; Pico never adopts an arbitrary unfinished tool promise. The required
+trace is:
 
-```typescript
-async execute(toolCallId, params, out, runtime, call) {
-  const job = await runtime.commit(async tx => {
-    const task = await tx.getTask(toolKind, runtime.taskId);
-    if (task?.state.status !== 'running') throw new Error('Expected a running tool');
-    const { status, ...payload } = task.state;
-    const id = tx.task(jobKind, { background: true,
-      state: { status: 'planned', cmd: params.cmd, cwd: params.cwd ?? runtime.env.cwd,
-               origin: { tool: 'bash', task: runtime.taskId, callId: toolCallId } } });
-    tx.patch(task, status, { ...payload, jobId: id, cancelJobOnAbort: !params.background });
-    return id;
-  }, call);
-
-  if (params.background) { out.delegate(job); out.write(`started job ${job}`); return; }
-
-  const done = await runtime.waitForTask(job, { budgetMs: runtime.budgetMs }, call);
-  const output = await runtime.jobOutput(job, call);
-  out.replace(output.text); out.capture(output.truncation);
-  if (done) {
-    out.details.exitCode = output.exitCode;
-    if (output.exitCode) out.diag('warn', `exit code ${output.exitCode}`, 'exit');
-  } else {
-    out.delegate(job);
-    out.diag('info', `still running as job ${job}; use job wait / status / stop`, 'budget');
-  }
-}
+```text
+pi.tool task T owns task output O
+internal TX[create background job B sharing O; checkpoint T with B + abortWithTool policy]
+kick -> Session scheduler runs B automatically
+ordinary tool observes B for its local budget
+adapter terminal closure rereads B on the line
+  B terminal -> materialize normal result from O
+  B live     -> materialize continues-as-B result; terminalize T while B retains O
+B eventually materializes final O, terminalizes its last ref, and emits any passive notice atomically
 ```
 
-The job owns its output from the first byte; the tool copies a snapshot. Creation stores the cleanup
-reference on the tool atomically. A durable abort rejects execute mutations, including catch-handler
-writes, so the fresh tool-kind abort handler reads that reference and cancels the non-detached job.
-Already-terminal jobs count as successful cleanup; check-and-mark must be atomic or handle that result.
-
-The tool kind's successful delegation settlement marks the job detached and requests a notice through
-a separate sticky notification record keyed by job id. Job completion consumes it atomically; if the
-job is already terminal when delegation commits, delegation places the notice itself. Apply this
-protocol to exited, killed and lost outcomes, including abort and recovery. The parent never patches
-a running job's state. This covers either completion/delegation order.
-
-A UI renders the job's output with `bash`'s component. Adopting an arbitrary unfinished tool promise
-after budget expiry is still an open integration design: it requires an explicit effect/sink ownership
-transfer. The initial job-first path above does not race or abandon any invocation.
+Never trust stale timeout or `Promise.race` state. Creation records cleanup policy before returning a child
+handle. Fresh tool abort reads that durable record and atomically marks a non-detached live job; an already
+terminal job counts as cleaned. The scheduler already runs the job, so waits only observe. The same shared
+task output lets the UI keep one `bash` component across tool-to-job handoff without copying a second live
+output stream. Exact ordinary-tool handle methods remain gated.
 
 ## Hooks
 
-Hooks belong to the kind that runs them. A kind declares its points and their types; you register
+**Gated:** exact hook names, task identity and namespaced scratch capability remain unsettled. The examples
+show required semantics, not a final API. Hooks belong to the kind that runs them. A kind declares its points and their types; you register
 handlers per kind and point, harness-wide or scoped to a conversation. Handlers run outside the
 write line and their decisions are re-validated inside a commit, so they may take as long as they
 like (a human approval is a hook that waits).
@@ -1257,6 +1318,11 @@ These failure policies exclude cancellation control errors, which propagate to u
 A handler receives the active Call as its final argument and must forward it to waits/effects. The
 harness awaits its actual return, not an abandoned raced promise. A handler may run again after a
 crash, so its external side effects need their own idempotence.
+
+Approval/question policy, presentation and durable answer reuse belong to workspace/plugins, using
+existing scratch or scoped values as appropriate. Pico does not add a separate memo subsystem. How
+hooks receive task identity and authorized scratch access is still an integration question; the
+examples do not establish a new hook-payload API.
 
 ## Writing Kinds
 
@@ -1334,112 +1400,118 @@ entry's model messages, head and edits are stored independently of the kind.
 
 ### Task Kinds
 
-A task kind declares its statuses and their roles, its config, its hooks, and three functions. Task
-writes materialize the mapped role on the durable task row; storage and the driver read that field
-without running kind code. Status graphs may contain cycles because one task is one logical
-operation: retries, deferred polls and recurring schedules keep their stable task id. Recovery uses
-only the current status, state, role and scratch.
+An ordinary task kind declares immutable input, a complete optional checkpoint union,
+completed/failed/aborted payloads, optional task-output state and three methods. The generic scheduler
+interprets only pending/running/terminal, dependencies, background, abort mark and checkpoint presence. A
+checkpoint's `phase` belongs to the kind; it is not a global workflow step.
 
 Here is a reminder that fires once:
 
 ```typescript
-type ReminderStates =
-  | { status: 'scheduled'; about: Id; at: number }
-  | { status: 'firing';    about: Id; at: number }
-  | { status: 'done';      about: Id; at: number; fired: boolean }
-  | { status: 'aborted';   about: Id; at: number };
+type ReminderInput = { readonly about: Id; readonly at: number };
+type ReminderCheckpoint = { readonly phase: 'firing'; readonly effectKey: string };
 
-export const reminderKind = defineTaskKind<ReminderStates>()({
+export const reminderKind = defineTask<
+  ReminderInput,
+  ReminderCheckpoint,
+  { readonly fired: boolean },
+  { readonly message: string },
+  { readonly cleaned: boolean }
+>()({
   kind: 'myplugin.reminder',
-  initialStatus: 'scheduled',
-  roles: { scheduled: 'start', firing: 'inflight', done: 'terminal', aborted: 'terminal' },
-  config: { intervalMs: conversationValue<number>('myplugin.reminder.interval', { rewind: false }) },
-  hooks: { before_fire: { failClosed: false } },
 
   async execute(task, runtime, call) {
-    if (task.state.at > runtime.now()) await runtime.sleep(task.state.at, call);        // throws on cancellation
-    await runtime.commit(tx => tx.patch(task, 'firing', common(task)), call);   // intent before any effect
-    const { skip } = await runtime.hooks(reminderKind).run('before_fire', { about: task.state.about }, call);
+    if (task.input.at > runtime.now()) await runtime.sleep(task.input.at, call);
     await runtime.commit(tx => {
-      if (!skip) tx.write(noticeKind, { model: [noticeMessage(`Reminder: see entry ${task.state.about}`)] });
-      tx.settle(task, 'done', { ...common(task), fired: !skip });               // a marked task's commit rejects
-    }, call);
+      tx.checkpoint({ phase: 'firing', effectKey: `reminder:${task.id}` });
+    }, call); // durable intent before the external effect
+
+    await notifications.fire(task.input.about, `reminder:${task.id}`, call);
+    return () => ({ status: 'completed', result: { fired: true } });
   },
 
-  async recover(task, runtime, call) { return this.execute(task, runtime, call); },      // safe to redo
-  async abort(task, runtime, call)   {
-    await runtime.commit(tx => tx.settle(task, 'aborted', common(task)), call);
+  async recover(task, runtime, call) {
+    if (!task.checkpoint) return reminderKind.execute(task, runtime, call);
+    const fired = await notifications.recover(task.checkpoint.effectKey, call);
+    return () => ({ status: 'completed', result: { fired } });
   },
 
-  // no preview: nothing to show while sleeping
+  async abort() {
+    return () => ({ cleaned: true });
+  },
 });
-
-const common = (t: Task<ReminderStates>) => ({ about: t.state.about, at: t.state.at });
 ```
 
-`defineTaskKind<ReminderStates>()` binds the declared union; the following call infers the literal
-role map. Keep that inferred kind type so the compiler knows which statuses patch and settle accept.
-Kind definition rejects missing/extra role entries, a non-start initial status, a declared `orphaned`
-status, and inconsistent types or optionality for fields shared by every variant.
+The scheduler reserves pending as running before `execute`, and reserves a restored running task for
+`recover`, including one with no checkpoint. Methods perform effects outside the line and return a terminal
+closure. The Harness invokes that closure once on the line and atomically commits its buffered writes, full
+terminal task snapshot and scratch/output retirement. A throwing closure commits nothing and faults the
+Session.
 
-State is a tagged union over status. **Both `patch` and `settle` take a status and its complete
-payload, without a second status inside it.** Patch accepts nonterminal targets; settle accepts
-terminal targets. There is no status-free partial patch or implicit merge with the old state:
+Pico's fixed privileged definitions use its internal `defineCoreTask` factory instead. Their callbacks
+receive `CoreTaskRuntime`, so `runtime.commit` supplies `CoreTaskTx`. That transaction uses the same
+`tx.task(...)` spelling but accepts both ordinary and fixed core tokens:
 
 ```typescript
-tx.patch(task, 'firing', { about: task.state.about, at: later });
-tx.settle(task, 'done', { about: task.state.about, at: task.state.at, fired: true });
-// Rejected: missing fired, extra fields, wrong field types, or using done with patch.
+const generationKind = defineCoreTask<GenerationInput, GenerationCheckpoint,
+  GenerationResult, GenerationFailure, GenerationAbort, GenerationOutput>()({
+  kind: 'pi.generation',
+
+  async execute(task, runtime, call) {
+    // ...provider effect...
+    return (tx, current) => {
+      const toolTaskIds = completedAssistant.toolCalls.map(call =>
+        tx.task(toolKind, { input: makeToolInput(current, call) }));
+      tx.task(postToolsKind, {
+        input: makePostToolsInput(current),
+        after: toolTaskIds,
+      });
+      return { status: 'completed', result: generationResult };
+    };
+  },
+
+  recover,
+  abort,
+});
 ```
 
-For a same-status update, narrow the state, destructure out `status`, and spread the remaining
-payload with your changes. A transition must supply the target variant's fields, not spread the
-previous variant's unrelated fields. Stored state becomes `{ ...payload, status }`. Task snapshots
-remain immutable; read the task again if a later write needs state committed since that snapshot.
+An ordinary `BaseTaskTx.task(...)` accepts only ordinary `defineTask` tokens. `defineCoreTask` is not a
+plugin API; fixed core definitions cannot be registered, replaced or removed. The fixed dispatcher supplies
+the core runtime implementation. The kernel does not inspect core input/checkpoint schemas.
 
-Typed tasks retain a compiler-only witness for the full state union and role map; no field or
-callback is added to storage. Given only an id, read through its kind before patching or settling.
-The type checks reject visible extra top-level keys even on variables/spreads and preserve correlation
-between status and payload. They cannot detect fields erased by casts or a narrower static type;
-wire validation and on-line invocation/liveness checks still apply.
+Use `defineStateTask` when one ordinary kind has several named durable recovery phases. It compiles to the same
+ordinary `TaskKind`; the scheduler still invokes one outer execute/recover operation and never interprets
+those phases. Do not create a giant turn task: built-in conversation work remains generation -> parallel
+individual tools -> post_tools -> continuation generation, plus independent collapse and job tasks.
 
-The harness adds `orphaned` with fields common to every variant: for this reminder, `about` and `at`,
-not `fired`. Common optional fields remain optional. This uses common keys (`keyof` on the union),
-not a literal TypeScript intersection of incompatible statuses. Typed reads include orphaned; kind
-execution methods receive only declared variants. You never write orphaned through patch/settle;
-a dependent handles it in the same switch as the other terminal outcomes.
+Rules for task authors:
 
-The rules an execution follows, and the driver enforces:
+1. Commit a complete checkpoint before an uncertain external effect. Recovery uses immutable input and the
+   latest committed checkpoint; it does not recover a JavaScript stack.
+2. Effects, hooks, sleeps and waits happen outside transaction callbacks. Inside `runtime.commit`, perform
+   explicit committed reads before the first buffered write and use only the supplied `tx` afterwards.
+3. Return a terminal closure only after effects and producers finish. Cancellation may discard an uncommitted
+   normal closure; fresh `abort` owns cleanup.
+4. Prefer immutable `after` dependencies for task prerequisites. Task waits only observe and ensure Session
+   resume. Direct self-wait and dependency cycles reject; never race away unfinished work.
+5. Keep generic configuration in scoped values, not task snapshots. Persist only compact evidence required
+   to recover this kind's effect.
 
-1. Commit an inflight status before any external effect. A crash before that re-runs `execute`; a
-   crash after goes through `recover`.
-2. You may block on the world: a provider stream, a process, a child conversation, a sleep. The
-   driver runs executions concurrently; a blocked one holds up nothing.
-3. Make a committed status transition or settle before returning, except cancellation/close unwind.
-   The live task's epoch counts actual transitions, so `planned → running → planned` is valid.
-   Same-status/state-only patches and abort marks do not count. An abort handler must settle.
-4. Prefer `after` for prerequisites; drive children or use the bounded job-wait API. Forward Call
-   to every wait. Known self/dependency waits reject; never race away an unfinished task/tool/hook.
+The one scheduler keeps the complete Session live/dependency index on the mutation line and invokes task
+methods outside it. Every successful main commit kicks it; scratch/task-output-only commits need not. It
+reserves all eligible tasks in every conversation, runs distinct IDs concurrently, and allows at most one
+invocation per task ID. Foreground and background both run. Foreground controls idle and ordinary abort
+reach only.
 
-A foreground task waiting on `after` is live, so its conversation stays busy until the dependency
-settles. Depending on a background job is fine when the job ends; depending on a recurring schedule
-keeps the conversation busy forever, so wait inside your own execute instead.
+A kind may declare task output with `TaskOutputSpec.initial(input)`. Runtime mutates the one authoritative
+Chord-tracked output; each nonempty delta persists and appears as `task_output`. Shared refs let a tool hand
+output to a background job without copying it. The last live reference materializes final data and retires
+the output atomically. Task output is not scratch and there is no separate live-output subsystem.
 
-The scheduler runs on the commit line, keeps live-task/dependency indexes updated from whole committed
-batches, and starts effects outside the line. It scans storage once at open, not after every call.
-Only one invocation owns each task, but different tasks run concurrently. Repeated drives share an
-attachment and create only temporary waiters. Historical completed children are never traversed.
-
-An unexpected error escaping a task kind or an unchanged return faults the session: pending drives
-reject immediately, admission stops, running invocations are signalled and joined, then storage closes.
-Domain tool/provider errors must be settled by their kinds. Reopen starts nothing; inspect and mark
-work before driving, or install a replacement kind that can settle a broken persisted task.
-
-A kind with a `preview` decides what a UI sees while the task runs: `preview.init(scratch)` builds
-it once on attach or reopen, and after that the kind mutates `runtime.preview.state` in place (the
-generation applies stream events to a partial message; a tool's preview is its sink). The harness
-flushes the Chord delta tracker after each scratch commit into `task_output` ops, so a token costs
-one append op, not a diff of the whole object.
+An unexpected task-contract error faults the Session: observation waits reject, admission stops, running
+invocations are signalled and joined, and the binding closes. Domain tool/provider failures must be returned
+as typed outcomes. Supply every required ordinary kind during open; a missing live kind is already orphaned
+before `inspect` returns and later registration cannot resurrect it. Fixed core kinds are never replaced.
 
 ## Recovery
 
@@ -1447,16 +1519,16 @@ There is nothing to write. After a crash:
 
 ```typescript
 const h = await Harness.open(storage, opts, call);
-await h.drive(call);
+await h.resume(call);
 ```
 
 | what was running | what happens |
 |---|---|
-| a generation, streaming | its frames were in scratch: the partial is published, then retry within budget or fail |
+| a generation, streaming | its task output contains the partial assistant state; recovery publishes it, then retries within budget or fails |
 | a generation, between retries | it sleeps out the remaining backoff and tries again |
 | a tool with `replay: 'safe'` | runs again |
 | any other tool | an "interrupted" error result; the turn continues |
-| a `run` subagent tool | finds its child and drives it again |
+| a `run` subagent tool | finds its child and waits on the existing input result again |
 | a job | reruns if it said so, otherwise records `lost` |
 | a scheduled job | sleeps until its time |
 
@@ -1469,24 +1541,27 @@ startable.
 | backend | loads | good for |
 |---|---|---|
 | `MemoryStorage` | everything | tests, ephemeral sessions |
-| `JsonlStorage` | everything, from one append-only file plus a scratch file per live task | local sessions; the default |
+| `JsonlStorage` | main log plus live scratch/task-output sidecars | local Sessions; the default |
 | `SqliteStorage` | only what queries return | long sessions, many sessions in one file, servers |
 
-All three answer the same queries with the same results. Entries are immutable and read whole;
-indexed queries select the relevant entries before decoding. Values are stored whole on every set;
-lists store append/remove/clear operations. There is no automatic value diffing or Chord storage codec.
-Chord deltas are only for preview/watch delivery. Streaming scratch appends compact assistant frames
-or explicit output operations, not raw provider events with repeated growing partial snapshots.
+All three answer the same queries with the same results. Entries are immutable and read whole; indexed
+queries select the relevant entries before decoding. Values are stored whole on every set. Lists store
+append/remove/clear operations and return one complete coherent logical list in ascending element-ID order;
+v1 has no paged list scan. There is no automatic value diffing or Chord storage codec.
+Chord deltas are used for task-output/watch delivery. Streaming task output appends compact operations, not
+raw provider events with repeated growing partial snapshots.
 
-JSONL reopens by replaying complete main batches, then scratch for surviving live tasks. Per-file
-sequence gaps are expected; the next id follows the maximum complete batch endpoint across both.
-Retired scratch is ignored even if unlink failed; its later main settlement already covers its ids.
+JSONL reopens by replaying complete main commits, then sidecars for surviving live scratch and shared task
+outputs. Per-file `Seq` gaps are expected. Reopen initializes `Storage.nextId()` after the greatest
+conversation, entry, task or list-element ID in retained complete canonical writes, and separately restores
+the last applied sequence from the greatest retained complete record endpoint. Retired sidecars are
+ignored even if unlink failed; their later main settlement already proves retirement.
 Only unterminated final lines are discarded and removed before further appends; malformed complete
 main/live-scratch batches fail open.
 
 ```text
-main ends at 100; live scratch ends at 150 → reopen lastSeq=150, next write=151
-main settles task at 151; scratch unlink fails → ignore retired scratch, lastSeq=151
+main through Seq 100; live scratch through Seq 150 -> reopen applied Seq 150 and initializes nextId
+main settles at Seq 151; unlink fails -> ignore retired scratch; applied Seq remains 151
 ```
 
 The conformance suite compares one mutation stream across all backends. A repeated whole-value set

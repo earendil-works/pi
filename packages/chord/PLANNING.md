@@ -560,7 +560,7 @@ The following must remain outside Chord:
 | slash-command, model, account, transcript, TUI, and agent-controller services | application contracts and plugin implementations |
 | `source-resolver.ts` and Pi internal process entrypoints | Pi source execution and process policy |
 
-`packages/agent/docs/plugins.md`, `packages/agent/docs/rpc.md`, the experimental service tests, and the remote plugin fixture are behavioral input. They are not normative Chord APIs. Once migration finishes, generic semantics should be documented in Chord and Pi documents should cover only their host-specific contracts and adapters.
+The Pico5 Chord usage guide, experimental service tests, and remote plugin fixture are behavioral input. They are not normative Chord APIs. Once migration finishes, generic semantics should be documented in Chord and Pi documents should cover only their host-specific contracts and adapters.
 
 Migration should happen only after Chord passes its standalone conformance suite:
 

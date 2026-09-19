@@ -21,9 +21,13 @@ interface SessionShareContext {
 	showError: (message: string) => void;
 }
 
-/** Export the current branch with presentation metadata for Radius. */
-export function exportSessionForShare(filePath: string, session: AgentSession): void {
-	exportSessionToJsonl(session.sessionManager, filePath, (parentId, timestamp) => [
+/** Trailing `pi.share` entry carrying the system prompt and tool schemas for the session viewer. */
+export function createShareTrailingEntries(
+	session: AgentSession,
+	parentId: string | null,
+	timestamp: string,
+): object[] {
+	return [
 		{
 			type: "custom",
 			customType: "pi.share",
@@ -39,7 +43,14 @@ export function exportSessionForShare(filePath: string, session: AgentSession): 
 				})),
 			},
 		},
-	]);
+	];
+}
+
+/** Export the current branch with presentation metadata for Radius. */
+export function exportSessionForShare(filePath: string, session: AgentSession): void {
+	exportSessionToJsonl(session.sessionManager, filePath, (parentId, timestamp) =>
+		createShareTrailingEntries(session, parentId, timestamp),
+	);
 }
 
 /** Share the current session through Radius, falling back to a private gist. */

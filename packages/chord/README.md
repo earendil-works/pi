@@ -38,10 +38,10 @@ The design has a few connected pieces:
   stream owns independent path-codec state. Replicas become unready on disconnect
   or replacement until they are rehydrated.
 
-- **Delta tracking** derives compact operations from tracked plain JSON at
-  flush time. It preserves string append/front-truncation and array-append
-  behavior without retaining mutation history, supports durable base batches,
-  and validates untrusted operations as they are applied.
+- **Delta tracking** records and coalesces operations over tracked plain JSON.
+  It preserves common string and array operations, supports durable base
+  batches, and validates untrusted operations as they are applied. Batches
+  guarantee convergence but are not canonical or necessarily minimal.
 
 - **Remote service sources** advertise services available outside a facet host
   and open bindings for the services its facets require. Bindings carry logical
@@ -193,10 +193,10 @@ receiving host.
 
 To reload, load a candidate, pass its facets to `FacetHost.reload()`, dispose the
 candidate on failure, and dispose the retired `LoadedFacets` only after a
-successful cutover. The host activates and validates the candidate while the old
-providers remain routed, then replaces each singleton directly without an
-unavailable interval. Stable service handles therefore do not become disconnected
-during an ordinary reload. Keyed instances
+successful cutover. The host activates and validates the candidate while the
+currently active providers remain routed, then replaces each singleton directly
+without an unavailable interval. Stable service handles therefore do not become
+disconnected during an ordinary reload. Keyed instances
 remain incarnation-specific and replacements receive fresh generations. The
 bundler writes a complete temporary directory before replacing the previous
 output, so loaders do not observe partially built generations.

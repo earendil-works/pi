@@ -9,6 +9,9 @@
 # Shell scripts should keep LF
 *.sh text eol=lf
 
+# Archived patch artifacts preserve whitespace exactly
+packages/agent/docs/**/*.diff -whitespace
+
 # Common binary assets
 *.png binary
 *.jpg binary

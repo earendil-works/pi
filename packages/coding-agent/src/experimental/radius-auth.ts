@@ -1,11 +1,12 @@
 import { readFile } from "node:fs/promises";
-import { DEFAULT_RADIUS_GATEWAY, normalizeRadiusGatewayUrl } from "@earendil-works/pi-ai/providers/radius-config";
+import { normalizeRadiusGatewayUrl } from "@earendil-works/pi-ai/providers/radius-config";
 import { getAuthCredential } from "../cli/auth-command.ts";
 import type { AuthInput } from "../cli/experimental/command-options.ts";
 import { ModelRuntime } from "../core/model-runtime.ts";
+import { getRadiusGatewayUrl } from "../core/radius.ts";
 import { resolvePath } from "../utils/paths.ts";
 
-export const ENV_RADIUS_GATEWAY = "PI_RADIUS_GATEWAY";
+export { ENV_RADIUS_GATEWAY } from "../core/radius.ts";
 
 export interface RadiusRelayAuth {
 	readonly gateway: string;
@@ -18,7 +19,7 @@ export class RadiusRelayAuthResolver {
 	readonly #gateway: string;
 	#modelRuntime: Promise<ModelRuntime> | undefined;
 
-	constructor(input?: AuthInput, gateway = process.env[ENV_RADIUS_GATEWAY] ?? DEFAULT_RADIUS_GATEWAY) {
+	constructor(input?: AuthInput, gateway = getRadiusGatewayUrl()) {
 		this.#input = input;
 		this.#gateway = normalizeRadiusGatewayUrl(gateway);
 	}

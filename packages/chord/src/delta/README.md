@@ -19,8 +19,10 @@ replica = apply(replica, tracker.flush());
 ```
 
 The first `flush()` returns one operation containing the complete value. Each
-later flush returns the operations needed to transform the previously published
-value into the current value. It returns `[]` when the value has not changed.
+later flush returns operations whose application transforms the previously
+published value into the current value. It returns `[]` when no tracked mutation
+is pending, but a mutation window that restores its starting value may still
+produce a redundant batch.
 
 `applyImmutable()` copies only containers along changed paths and shares
 unchanged subtrees. It does not mutate, clone, or freeze either complete input.
@@ -151,7 +153,7 @@ tracker.state.messages.push(message);
 delete tracker.state.retry;
 ```
 
-Only the value at flush time is published:
+Operations are coalesced within a flush window when doing so is cheap and safe:
 
 ```ts
 tracker.state.status = "starting";
@@ -159,8 +161,12 @@ tracker.state.status = "running";
 tracker.flush(); // one set to "running"
 ```
 
+The operation sequence is not canonical. Equivalent changes may use different
+verbs, and mutations that cancel can still produce a nonempty batch. Consumers
+must depend on the resulting value, not the exact tuples or their minimality.
+
 Replacing an object or array is valid. Delta compares its properties and elements
-with the previously published value:
+with the outgoing value at assignment time:
 
 ```ts
 tracker.state.settings = {
@@ -180,8 +186,8 @@ Appending text produces an `a` operation:
 tracker.state.output += "next line\n";
 ```
 
-Moving a bounded text window forward produces `t` followed by `a` when the old
-suffix matches the new prefix:
+Moving a bounded text window forward produces `t` followed by `a` when the
+previous suffix matches the new prefix:
 
 ```ts
 tracker.state.output = tracker.state.output.slice(200) + nextChunk;
@@ -199,29 +205,77 @@ tracker.state.messages.push(second);
 tracker.state.messages.splice(3, 1, replacement);
 ```
 
-All `push()` calls before one flush produce one tail `p`. Changes to older
-elements remain separate, regardless of whether they happen before or after the
-pushes. Changes to newly pushed elements are included in the pushed values.
+Adjacent `push()` calls are normally coalesced into one tail `p`. Intervening
+operations may keep them separate to preserve ordering. Changes to older
+elements remain separate, and changes to newly pushed elements may be folded
+into the pushed values when no structural operation intervenes.
 
-Front or middle insertion, removal, sorting, reversing, `fill()`, and
-`copyWithin()` are supported. A structural change combined with edits to elements
-whose indices moved may compare and publish the retained suffix positionally:
-
-```ts
-tracker.state.items.shift();
-tracker.state.items[0].status = "changed";
-// A shift followed by push in the same flush has the same issue.
-```
-
-The emitted data can then scale with the retained suffix, or with the complete
-array, rather than only the changed element. When batching is under your control,
-flush the structural change before editing elements at their new indices.
+Front or middle insertion and removal are recorded directly. Edits before and
+after an index-changing operation remain ordered against the array generation
+they addressed. Sorting, reversing, `fill()`, and `copyWithin()` emit a snapshot
+of the affected array; repeated whole-array mutators can therefore produce a
+redundant snapshot even when their combined result restores the prior value.
 
 Sparse arrays are unsupported. Writing beyond the next index throws. Increasing
 `length` creates explicit `null` elements; decreasing it removes elements.
 
-`fill()` and `copyWithin()` keep normal JavaScript reference semantics. Do not use
-them to place one mutable object at multiple live paths.
+`fill()` and `copyWithin()` keep normal JavaScript reference semantics; an object
+they place at several indices is published at each.
+
+### Large mutation windows
+
+#### Build once, assign once
+
+Every object or array assignment is diffed immediately. Do not repeatedly assign
+large intermediate values before one flush:
+
+```ts
+// Avoid: traverses every intermediate tree.
+for (const frame of frames) tracker.state.view = render(frame);
+
+// Prefer: only the final tree crosses the tracked boundary.
+const nextView = frames.reduce((view, frame) => renderInto(view, frame), initialView);
+tracker.state.view = nextView;
+```
+
+For a few changes, mutate the leaves directly:
+
+```ts
+for (const update of updates) {
+	tracker.state.view.rows[update.index]!.status = update.status;
+}
+```
+
+#### Do not cancel whole-array mutators
+
+`sort()`, `reverse()`, `fill()`, and `copyWithin()` record snapshots. Cancelling
+them still publishes the final snapshot:
+
+```ts
+// Avoid: final value is unchanged, but a snapshot may still be sent.
+tracker.state.items.reverse();
+tracker.state.items.reverse();
+
+// Prefer: decide before mutating tracked state.
+if (needsReverse) tracker.state.items.reverse();
+```
+
+#### Publish large inserts and edit sets in chunks
+
+Pending inserted values are cloned for replica ownership. Very large unflushed
+pushes therefore temporarily retain both the live values and their operation
+payloads. Long operation/path histories may also collapse to a complete base
+batch, increasing snapshot and wire cost.
+
+```ts
+for (const chunk of chunks(items, 1_000)) {
+	tracker.state.items.push(...chunk);
+	replica = apply(replica, tracker.flush()); // send each batch in a real producer
+}
+```
+
+Use the same pattern for large sets of unrelated edits: apply a bounded chunk,
+publish it, then continue.
 
 ### Optional properties
 
@@ -243,42 +297,65 @@ array position or explicit empty value must remain present.
 
 ## State ownership
 
-The object passed to `track()` becomes tracker-owned. The same applies to objects
-later assigned into state or inserted into arrays.
-
-After insertion, a retained reference may be read but must not be mutated or
-inserted at another live location. The tracker relies on this ownership rule; it
-does not recursively validate values or detect aliases:
+The object passed to `track()` becomes tracker-owned, as does any object later
+assigned into state or inserted into an array. Mutate through `tracker.state`:
 
 ```ts
 const item = { status: "new" };
 tracker.state.item = item;
 
-tracker.state.item.status = "ready"; // supported: tracked mutation
-item.status = "broken"; // unsupported: bypasses tracking
-tracker.state.other = item; // unsupported: one object at two live paths
+tracker.state.item.status = "ready"; // tracked
+item.status = "broken"; // NOT tracked: silently diverges from the replica
 ```
 
-The same restriction applies across separate array calls:
+A reference retained from `tracker.state` stays correct across operations that
+renumber it, and across the removal of the element it points at:
 
 ```ts
-tracker.state.items.push(item);
-tracker.state.items.push(item); // unsupported alias
+const held = tracker.state.items[2];
+tracker.state.items.unshift(other);
+held.name = "edited"; // publishes items[3].name
+
+tracker.state.items.splice(3, 1);
+held.name = "gone"; // element is no longer in the tree: mutated, nothing published
 ```
 
-Use distinct objects when values must appear at multiple paths. Perform
-mutations through `tracker.state`; do not put a proxy read from `tracker.state`
-back into tracked state.
+One object may occupy several paths. Each live path is published:
+
+```ts
+tracker.state.a = tracker.state.items[0];
+tracker.state.items[0].k = 1; // publishes both a.k and items[0].k
+```
 
 Tracked state must be a mutable JSON tree:
 
 - strings, booleans, finite numbers, `null`, arrays, and plain objects;
-- no cycles or one mutable object stored at multiple locations;
+- no cycles;
 - no sparse arrays, accessors, frozen objects, symbols, classes, functions,
   `Map`, or `Set`.
 
-Do not keep a child proxy across an array operation that changes indices. Read
-the child again from its new index.
+## Proxy lifetime and large reads
+
+Proxy caches are weak. Reading a subtree does not permanently retain its proxies
+just because the underlying plain objects remain in the document. A proxy still
+held by application code keeps its identity; held descendants retain the ancestor
+tracking metadata needed to follow array reindexing. Explicit alias locations are
+remembered separately from the lifetime of their public proxies.
+
+Collection is automatic, not a `flush()` side effect. JavaScript keeps newly
+created or dereferenced `WeakRef` targets alive until the current job ends, and
+finalizer cleanup can run later. A synchronous traversal can therefore still have
+a substantial allocation peak. Retained-memory measurements must allow event-loop
+turns as well as GC; a synchronous `gc()` immediately after the traversal is not
+sufficient to measure weak-cache reclamation.
+
+This does not eliminate proxy construction/trap costs or full comparisons on
+container assignment. `tracker.target` is available for read-only bulk inspection
+without creating proxies. Never mutate through it; all tracked mutations must go
+through `tracker.state` or a proxy obtained from it.
+
+See the [delta investigation findings](../../../durable/docs/chord-delta-findings.md)
+for the full-traversal regression, measured trade-offs, and reproduction commands.
 
 ## Tracker lifecycle
 
@@ -291,6 +368,14 @@ tracker.state = replacement; // replace the root; next flush is complete
 
 `discard()` intentionally prevents current changes from reaching existing
 replicas. Use it only when those replicas do not need the discarded changes.
+
+`flush()` guarantees convergence, not a minimal or canonical diff. Any nonempty
+batch advances replicated-state sequence numbers and notifies subscribers, even
+if applying it leaves the value deeply equal to the previous revision. To bound
+pending operation and path history, a sufficiently long mutation window may
+collapse to a complete base batch automatically. This bounds accumulated log
+metadata, not payload bytes or peak allocation, and trades one full-value
+snapshot for an additional recovery point.
 
 `apply()` adopts object and array payloads from its input batch. Do not freeze a
 batch before applying it, and do not apply one in-memory batch to multiple
@@ -308,8 +393,8 @@ changed the replica.
 - Delta assumes one authoritative writer and ordered delivery. Sequence numbers,
   gap detection, retries, and persistence policy belong to the surrounding
   protocol or storage format.
-- Object identity is not replicated. Tracked mutable state must be a tree;
-  immutable inputs may share references, but replicas need not preserve them.
+- Object identity is not replicated. One object at several paths publishes each
+  path separately, and a replica holds a distinct value at each.
 - Object key insertion order is not replicated. Do not compare or hash replicas
   using serialized key order.
 - Array operations that change indices may publish a wider array region, as
