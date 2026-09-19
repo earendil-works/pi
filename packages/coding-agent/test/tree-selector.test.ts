@@ -1,5 +1,5 @@
 import { stripVTControlCharacters } from "node:util";
-import { setKeybindings, visibleWidth } from "@earendil-works/pi-tui";
+import { CURSOR_MARKER, setKeybindings, visibleWidth } from "@earendil-works/pi-tui";
 import { beforeAll, beforeEach, describe, expect, test } from "vitest";
 import { KeybindingsManager } from "../src/core/keybindings.ts";
 import type {
@@ -270,6 +270,73 @@ describe("TreeSelectorComponent", () => {
 			expect(plain).toContain("label time");
 			expect(plain).not.toContain("...");
 			expect(plainLines.every((line) => visibleWidth(line) <= 30)).toBe(true);
+		});
+	});
+
+	describe("search cursor", () => {
+		test("renders the cursor only while the selector is focused", () => {
+			const tree = buildTree([userMessage("user-1", null, "hello")]);
+			const selector = new TreeSelectorComponent(
+				tree,
+				"user-1",
+				24,
+				() => {},
+				() => {},
+			);
+
+			expect(selector.render(80).join("\n")).not.toContain(CURSOR_MARKER);
+
+			selector.focused = true;
+			const focusedLines = selector.render(80);
+			const cursorLines = focusedLines.filter((line) => line.includes(CURSOR_MARKER));
+			expect(cursorLines).toHaveLength(1);
+			expect(stripVTControlCharacters(cursorLines[0]!.replace(CURSOR_MARKER, ""))).toBe("  Type to search:  ");
+			expect(cursorLines[0]).toContain(`${CURSOR_MARKER}\x1b[7m \x1b[27m`);
+
+			selector.focused = false;
+			expect(selector.render(80).join("\n")).not.toContain(CURSOR_MARKER);
+		});
+
+		test("moves focus to the label input and restores it after cancellation", () => {
+			const tree = buildTree([userMessage("user-1", null, "hello")]);
+			const selector = new TreeSelectorComponent(
+				tree,
+				"user-1",
+				24,
+				() => {},
+				() => {},
+			);
+			selector.focused = true;
+
+			selector.handleInput("L");
+			let rendered = selector.render(80);
+			let cursorLineIndex = rendered.findIndex((line) => line.includes(CURSOR_MARKER));
+			expect(cursorLineIndex).toBeGreaterThan(0);
+			expect(stripVTControlCharacters(rendered[cursorLineIndex - 1]!)).toContain("Label (empty to remove):");
+			expect(rendered.filter((line) => line.includes(CURSOR_MARKER))).toHaveLength(1);
+
+			selector.handleInput("\x1b");
+			rendered = selector.render(80);
+			cursorLineIndex = rendered.findIndex((line) => line.includes(CURSOR_MARKER));
+			expect(stripVTControlCharacters(rendered[cursorLineIndex]!)).toContain("Type to search:");
+			expect(rendered.filter((line) => line.includes(CURSOR_MARKER))).toHaveLength(1);
+		});
+
+		test("keeps the cursor within narrow terminal widths", () => {
+			const tree = buildTree([userMessage("user-1", null, "hello")]);
+			const selector = new TreeSelectorComponent(
+				tree,
+				"user-1",
+				24,
+				() => {},
+				() => {},
+			);
+			selector.focused = true;
+			selector.handleInput("a long search query");
+
+			const cursorLine = selector.render(10).find((line) => line.includes(CURSOR_MARKER));
+			expect(cursorLine).toBeDefined();
+			expect(visibleWidth(cursorLine!)).toBeLessThanOrEqual(10);
 		});
 	});
 
