@@ -248,6 +248,19 @@ export interface OverlayOptions {
 	visible?: (termWidth: number, termHeight: number) => boolean;
 	/** If true, don't capture keyboard focus when shown */
 	nonCapturing?: boolean;
+	/**
+	 * Control whether fullscreen text selection includes this overlay.
+	 * Defaults to "normal" to preserve existing behavior.
+	 */
+	selection?: "normal" | "exclude";
+}
+
+/** Screen region occupied by an overlay excluded from fullscreen text selection. */
+export interface OverlaySelectionRegion {
+	row: number;
+	col: number;
+	width: number;
+	height: number;
 }
 
 /** Options for {@link OverlayHandle.unfocus}. */
@@ -489,6 +502,7 @@ export abstract class TuiBase extends Container implements TUI {
 	// Overlay stack for modal components rendered on top of base content
 	private focusOrderCounter = 0;
 	private overlayStack: OverlayStackEntry[] = [];
+	private overlaySelectionExclusions: OverlaySelectionRegion[] = [];
 	private renderedOverlayLayouts: RenderedOverlayLayout[] = [];
 
 	get hasOverlayEntries(): boolean {
@@ -800,6 +814,16 @@ export abstract class TuiBase extends Container implements TUI {
 	/** Check if there are any visible overlays */
 	hasOverlay(): boolean {
 		return this.overlayStack.some((o) => this.isOverlayVisible(o));
+	}
+
+	/** Check whether a visible overlay should block fullscreen text selection. */
+	protected hasSelectionBlockingOverlay(): boolean {
+		return this.overlayStack.some((entry) => this.isOverlayVisible(entry) && entry.options?.selection !== "exclude");
+	}
+
+	/** Get the screen regions occupied by overlays excluded from text selection. */
+	protected getOverlaySelectionExclusions(): readonly OverlaySelectionRegion[] {
+		return this.overlaySelectionExclusions;
 	}
 
 	/** Check if the focused component is a visible overlay */
@@ -1278,6 +1302,7 @@ export abstract class TuiBase extends Container implements TUI {
 	/** Composite all overlays into content lines (sorted by focusOrder, higher = on top). */
 	protected compositeOverlays(lines: string[], termWidth: number, termHeight: number): string[] {
 		if (this.overlayStack.length === 0) {
+			this.overlaySelectionExclusions = [];
 			this.renderedOverlayLayouts = [];
 			return lines;
 		}
@@ -1286,7 +1311,14 @@ export abstract class TuiBase extends Container implements TUI {
 		for (const entry of this.overlayStack) entry.bounds = undefined;
 
 		// Pre-render all visible overlays and calculate positions
-		const rendered: { entry: OverlayStackEntry; overlayLines: string[]; row: number; col: number; w: number }[] = [];
+		const rendered: {
+			entry: OverlayStackEntry;
+			overlayLines: string[];
+			row: number;
+			col: number;
+			w: number;
+			selection: OverlayOptions["selection"];
+		}[] = [];
 		let minLinesNeeded = result.length;
 
 		const visibleEntries = this.overlayStack.filter((e) => this.isOverlayVisible(e));
@@ -1310,7 +1342,14 @@ export abstract class TuiBase extends Container implements TUI {
 			const { row, col } = this.resolveOverlayLayout(options, overlayLines.length, termWidth, termHeight);
 			entry.bounds = { row, col, width, height: overlayLines.length };
 
-			rendered.push({ entry, overlayLines, row, col, w: width });
+			rendered.push({
+				entry,
+				overlayLines,
+				row,
+				col,
+				w: width,
+				selection: options?.selection,
+			});
 			minLinesNeeded = Math.max(minLinesNeeded, row + overlayLines.length);
 		}
 		this.renderedOverlayLayouts = rendered.map(({ entry, row, col, w, overlayLines }) => ({
@@ -1332,6 +1371,14 @@ export abstract class TuiBase extends Container implements TUI {
 		}
 
 		const viewportStart = Math.max(0, workingHeight - termHeight);
+		this.overlaySelectionExclusions = rendered
+			.filter(({ selection }) => selection === "exclude")
+			.map(({ row, col, w, overlayLines }) => ({
+				row,
+				col,
+				width: w,
+				height: overlayLines.length,
+			}));
 
 		// Composite each overlay
 		for (const { overlayLines, row, col, w } of rendered) {
