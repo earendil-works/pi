@@ -49,6 +49,7 @@ import {
 	streamSimple,
 } from "@earendil-works/pi-ai/compat";
 import { getThemeByName, theme } from "../modes/interactive/theme/theme.ts";
+import { raceWithAbortSignal } from "../utils/abort.ts";
 import { stripFrontmatter } from "../utils/frontmatter.ts";
 import { sleep } from "../utils/sleep.ts";
 import { normalizeToolResultImages } from "../utils/tool-result-images.ts";
@@ -417,7 +418,10 @@ export class AgentSession {
 		return this._modelRuntime;
 	}
 
-	private async _getRequiredRequestAuth(model: Model<any>): Promise<{
+	private async _getRequiredRequestAuth(
+		model: Model<any>,
+		signal?: AbortSignal,
+	): Promise<{
 		model: Model<any>;
 		apiKey?: string;
 		headers?: Record<string, string>;
@@ -425,7 +429,7 @@ export class AgentSession {
 	}> {
 		let result: AuthResult | undefined;
 		try {
-			result = await this._modelRuntime.getAuth(model);
+			result = await this._modelRuntime.getAuth(model, { signal });
 		} catch (error) {
 			const cause = error instanceof Error ? error.cause : undefined;
 			if (cause instanceof Error && cause.message === "authHeader requires a resolved API key") {
@@ -454,18 +458,21 @@ export class AgentSession {
 		throw new Error(formatNoApiKeyFoundMessage(model.provider));
 	}
 
-	private async _getSummarizationRequestAuth(model: Model<any>): Promise<{
+	private async _getSummarizationRequestAuth(
+		model: Model<any>,
+		signal?: AbortSignal,
+	): Promise<{
 		model: Model<any>;
 		apiKey?: string;
 		headers?: Record<string, string>;
 		env?: Record<string, string>;
 	}> {
 		if (this.agent.streamFunction === streamSimple) {
-			return this._getRequiredRequestAuth(model);
+			return this._getRequiredRequestAuth(model, signal);
 		}
 
 		try {
-			const result = await this._modelRuntime.getAuth(model);
+			const result = await this._modelRuntime.getAuth(model, { signal });
 			if (!result) return { model };
 			const requestModel = result.auth.baseUrl ? { ...model, baseUrl: result.auth.baseUrl } : model;
 			return {
@@ -2351,8 +2358,6 @@ export class AgentSession {
 				return false;
 			}
 
-			const { model: requestModel, apiKey, headers, env } = await this._getSummarizationRequestAuth(model);
-
 			const pathEntries = this.sessionManager.getBranch();
 
 			const preparation = prepareCompaction(pathEntries, settings);
@@ -2360,9 +2365,19 @@ export class AgentSession {
 				return false;
 			}
 
-			this._emit({ type: "compaction_start", reason });
 			this._autoCompactionAbortController = new AbortController();
+			const signal = this._autoCompactionAbortController.signal;
 			started = true;
+			this._emit({ type: "compaction_start", reason });
+			signal.throwIfAborted();
+
+			const {
+				model: requestModel,
+				apiKey,
+				headers,
+				env,
+			} = await raceWithAbortSignal(this._getSummarizationRequestAuth(model, signal), signal);
+			signal.throwIfAborted();
 
 			let extensionCompaction: CompactionResult | undefined;
 
@@ -2499,22 +2514,24 @@ export class AgentSession {
 		} catch (error) {
 			const errorMessage = error instanceof Error ? error.message : "compaction failed";
 			if (started) {
-				const formattedErrorMessage =
-					reason === "overflow"
+				const aborted = this._autoCompactionAbortController?.signal.aborted ?? false;
+				const formattedErrorMessage = aborted
+					? undefined
+					: reason === "overflow"
 						? `Context overflow recovery failed: ${errorMessage}`
 						: `Auto-compaction failed: ${errorMessage}`;
 				this._emit({
 					type: "compaction_end",
 					reason,
 					result: undefined,
-					aborted: false,
+					aborted,
 					willRetry: false,
 					errorMessage: formattedErrorMessage,
 				});
 				await this._emitSessionCompactFailed({
 					reason,
 					errorMessage: formattedErrorMessage,
-					aborted: false,
+					aborted,
 					willRetry: false,
 					fromExtension,
 				});
