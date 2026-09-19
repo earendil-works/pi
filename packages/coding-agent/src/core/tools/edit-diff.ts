@@ -3,8 +3,7 @@
  */
 
 import * as Diff from "diff";
-import { constants } from "fs";
-import { access, readFile } from "fs/promises";
+import { readFile } from "fs/promises";
 import { splitBom } from "../../utils/text.ts";
 import { resolveToCwd } from "./path-utils.ts";
 
@@ -192,6 +191,15 @@ export interface Edit {
 	oldText: string;
 	newText: string;
 }
+
+export interface EditPreviewOperations {
+	/** Read the content used to compute a non-mutating preview. */
+	readFile: (absolutePath: string) => Promise<Buffer>;
+}
+
+const defaultEditPreviewOperations: EditPreviewOperations = {
+	readFile: (path) => readFile(path),
+};
 
 export interface AppliedEditsResult {
 	baseContent: string;
@@ -515,20 +523,18 @@ export async function computeEditsDiff(
 	path: string,
 	edits: Edit[],
 	cwd: string,
+	operations: EditPreviewOperations = defaultEditPreviewOperations,
 ): Promise<EditDiffResult | EditDiffError> {
 	const absolutePath = resolveToCwd(path, cwd);
 
 	try {
-		// Check if file exists and is readable
+		let rawContent: string;
 		try {
-			await access(absolutePath, constants.R_OK);
+			rawContent = (await operations.readFile(absolutePath)).toString("utf-8");
 		} catch (error: unknown) {
 			const errorMessage = error instanceof Error && "code" in error ? `Error code: ${error.code}` : String(error);
 			return { error: `Could not edit file: ${path}. ${errorMessage}.` };
 		}
-
-		// Read the file
-		const rawContent = await readFile(absolutePath, "utf-8");
 
 		// Strip BOM before matching (LLM won't include invisible BOM in oldText)
 		const { text: content } = splitBom(rawContent);
