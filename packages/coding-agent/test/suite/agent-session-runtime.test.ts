@@ -205,6 +205,7 @@ describe("AgentSessionRuntime characterization", () => {
 			.getEntries()
 			.filter((entry) => entry.type === "message");
 		expect(outgoingEntries.map((entry) => entry.message.role)).toEqual([
+			"system",
 			"user",
 			"assistant",
 			"toolResult",

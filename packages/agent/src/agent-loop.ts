@@ -5,9 +5,14 @@
 
 import {
 	type AssistantMessage,
-	type Context,
 	EventStream,
+	getCurrentTools,
+	getToolStateChanges,
+	normalizeContext,
+	type SystemMessage,
 	type ToolResultMessage,
+	type ToolStateChanges,
+	toToolDeclaration,
 	validateToolArguments,
 } from "@earendil-works/pi-ai";
 import { getDefaultStreamFn } from "./stream-fn.ts";
@@ -101,17 +106,18 @@ export async function runAgentLoop(
 	signal: AbortSignal | undefined,
 	streamFn: StreamFn,
 ): Promise<AgentMessage[]> {
-	const newMessages: AgentMessage[] = [...prompts];
+	const initialMessages = declareToolChanges(context, prompts);
+	const newMessages: AgentMessage[] = [...initialMessages];
 	const currentContext: AgentContext = {
 		...context,
-		messages: [...context.messages, ...prompts],
+		messages: [...context.messages, ...initialMessages],
 	};
 
 	await emit({ type: "agent_start" });
 	await emit({ type: "turn_start" });
-	for (const prompt of prompts) {
-		await emit({ type: "message_start", message: prompt });
-		await emit({ type: "message_end", message: prompt });
+	for (const message of initialMessages) {
+		await emit({ type: "message_start", message });
+		await emit({ type: "message_end", message });
 	}
 
 	await runLoop(currentContext, newMessages, config, signal, emit, streamFn ?? getDefaultStreamFn());
@@ -173,10 +179,12 @@ async function runLoop(
 
 		// Inner loop: process tool calls and steering messages
 		while (hasMoreToolCalls || pendingMessages.length > 0) {
+			let preparedMessages: AgentMessage[] = [];
 			if (lastCompletedTurn) {
 				const nextTurnSnapshot = await config.prepareNextTurn?.(lastCompletedTurn);
 				if (nextTurnSnapshot) {
 					currentContext = nextTurnSnapshot.context ?? currentContext;
+					preparedMessages = nextTurnSnapshot.messages ?? [];
 					config = {
 						...config,
 						model: nextTurnSnapshot.model ?? config.model,
@@ -197,16 +205,14 @@ async function runLoop(
 				await emit({ type: "turn_start" });
 			}
 
-			// Process pending messages (inject before next assistant response)
-			if (pendingMessages.length > 0) {
-				for (const message of pendingMessages) {
-					await emit({ type: "message_start", message });
-					await emit({ type: "message_end", message });
-					currentContext.messages.push(message);
-					newMessages.push(message);
-				}
-				pendingMessages = [];
+			// Process prepared and queued messages before the next assistant response.
+			for (const message of declareToolChanges(currentContext, [...preparedMessages, ...pendingMessages])) {
+				await emit({ type: "message_start", message });
+				await emit({ type: "message_end", message });
+				currentContext.messages.push(message);
+				newMessages.push(message);
 			}
+			pendingMessages = [];
 
 			// Stream assistant response
 			const message = await streamAssistantResponse(currentContext, config, signal, emit, streamFunction);
@@ -273,6 +279,60 @@ async function runLoop(
 }
 
 /**
+ * Declare tool loadout changes to the model.
+ *
+ * `context.tools` is what the runtime can execute; the transcript's system messages declare
+ * what the model may call. Before each request the difference becomes `toolsAdded` and
+ * `toolsRemoved` on a system message. When a pending system message exists, its tool fields
+ * are treated as intent and replaced with the delta between the committed transcript and
+ * the executable set, so replay always yields exactly `context.tools`. Otherwise a new
+ * system message is inserted before the first non-system pending message.
+ */
+function declareToolChanges(context: AgentContext, pendingMessages: AgentMessage[]): AgentMessage[] {
+	let systemIndex = -1;
+	for (let i = pendingMessages.length - 1; i >= 0; i--) {
+		if (pendingMessages[i].role === "system") {
+			systemIndex = i;
+			break;
+		}
+	}
+	const pending = pendingMessages[systemIndex] as SystemMessage | undefined;
+	const baseline = pending
+		? pendingMessages.map((message, index) =>
+				index === systemIndex ? withToolChanges(pending, NO_CHANGES) : message,
+			)
+		: pendingMessages;
+	const changes = getToolStateChanges(
+		getCurrentTools([...context.messages, ...baseline]),
+		(context.tools ?? []).map(toToolDeclaration),
+	);
+	const unchanged = changes.toolsAdded.length === 0 && changes.toolsRemoved.length === 0;
+
+	if (pending) {
+		// Keep the caller's message object when it already declares no tool changes.
+		if (unchanged && !pending.toolsAdded?.length && !pending.toolsRemoved?.length) return pendingMessages;
+		return baseline.map((message, index) => (index === systemIndex ? withToolChanges(pending, changes) : message));
+	}
+	if (unchanged) return pendingMessages;
+	const update = withToolChanges({ role: "system", content: "", timestamp: Date.now() }, changes);
+	const insertIndex = pendingMessages.findIndex((message) => message.role !== "system");
+	const index = insertIndex === -1 ? pendingMessages.length : insertIndex;
+	return [...pendingMessages.slice(0, index), update, ...pendingMessages.slice(index)];
+}
+
+const NO_CHANGES: ToolStateChanges = { toolsAdded: [], toolsRemoved: [] };
+
+/** Copy a system message with its tool fields replaced by `changes`; empty lists omit the field. */
+function withToolChanges(message: SystemMessage, { toolsAdded, toolsRemoved }: ToolStateChanges): SystemMessage {
+	const { toolsAdded: _added, toolsRemoved: _removed, ...rest } = message;
+	return {
+		...rest,
+		...(toolsAdded.length > 0 ? { toolsAdded } : {}),
+		...(toolsRemoved.length > 0 ? { toolsRemoved } : {}),
+	};
+}
+
+/**
  * Stream an assistant response from the LLM.
  * This is where AgentMessage[] gets transformed to Message[] for the LLM.
  */
@@ -292,12 +352,7 @@ async function streamAssistantResponse(
 	// Convert to LLM-compatible messages (AgentMessage[] → Message[])
 	const llmMessages = await config.convertToLlm(messages);
 
-	// Build LLM context
-	const llmContext: Context = {
-		systemPrompt: context.systemPrompt,
-		messages: llmMessages,
-		tools: context.tools,
-	};
+	const llmContext = normalizeContext({ messages: llmMessages });
 
 	// Resolve API key (important for expiring tokens)
 	const resolvedApiKey =
@@ -791,7 +846,6 @@ function createToolResultMessage(finalized: FinalizedToolCallOutcome): ToolResul
 		content: finalized.result.content ?? [],
 		details: finalized.result.details,
 		usage: finalized.result.usage,
-		...(finalized.result.addedToolNames?.length ? { addedToolNames: finalized.result.addedToolNames } : {}),
 		isError: finalized.isError,
 		timestamp: Date.now(),
 	};

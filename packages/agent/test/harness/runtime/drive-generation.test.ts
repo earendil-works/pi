@@ -217,7 +217,7 @@ describe("runtime generation checkpoint", () => {
 		expect(run.generationContext).toMatchObject({
 			configuration: fixture.lane.state.configuration,
 			streamOptions: {},
-			retryPolicy: { maxAttempts: 4, baseDelayMs: 1 },
+			retryPolicy: { maxAttempts: 4, baseDelayMs: 1, maxAgentDelayMs: 60_000 },
 			overflowRecoveryUsed: false,
 		});
 		await expectProjectionRestores(fixture);
@@ -632,7 +632,10 @@ describe("runtime assistant generation", () => {
 		const pending: AssistantEffectPendingOperation = {
 			...operationScopeOf(ready),
 			at: "assistant.effect_pending",
-			generationContext: { ...ready.generationContext, retryPolicy: { maxAttempts: 2, baseDelayMs: 1 } },
+			generationContext: {
+				...ready.generationContext,
+				retryPolicy: { maxAttempts: 2, baseDelayMs: 1, maxAgentDelayMs: 30_000 },
+			},
 			attempt: 1,
 			responseEntryId,
 			usageId,
@@ -681,7 +684,10 @@ describe("runtime assistant generation", () => {
 		const pending: AssistantEffectPendingOperation = {
 			...operationScopeOf(ready),
 			at: "assistant.effect_pending",
-			generationContext: { ...ready.generationContext, retryPolicy: { maxAttempts: 1, baseDelayMs: 1 } },
+			generationContext: {
+				...ready.generationContext,
+				retryPolicy: { maxAttempts: 1, baseDelayMs: 1, maxAgentDelayMs: 30_000 },
+			},
 			attempt: 1,
 			responseEntryId,
 			usageId,

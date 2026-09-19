@@ -44,6 +44,7 @@ Unified LLM API with provider collections, automatic auth resolution, token and 
   - [OpenAI Compatibility Settings](#openai-compatibility-settings)
 - [Faux Provider for Tests](#faux-provider-for-tests)
 - [Cross-Provider Handoffs](#cross-provider-handoffs)
+- [System Messages](#system-messages)
 - [Context Serialization](#context-serialization)
 - [Browser Usage](#browser-usage)
 - [Bundling and Tree Shaking](#bundling-and-tree-shaking)
@@ -61,6 +62,7 @@ Unified LLM API with provider collections, automatic auth resolution, token and 
 - **Ant Ling**
 - **Azure OpenAI (Responses)**
 - **OpenAI Codex** (ChatGPT Plus/Pro subscription, requires OAuth, see below)
+- **Radius** (API key or OAuth, with a dynamically refreshed gateway catalog)
 - **DeepSeek**
 - **NVIDIA NIM**
 - **Anthropic**
@@ -305,6 +307,7 @@ For tooling that wants the generated built-in catalog with full literal typing (
 import { getBuiltinModel, getBuiltinModels, getBuiltinProviders } from '@earendil-works/pi-ai/providers/all';
 
 const model = getBuiltinModel('openai', 'gpt-4o-mini'); // typed Model<'openai-responses'>
+const radius = getBuiltinModel('radius', 'balanced');     // typed Model<'pi-messages'>
 const providers = getBuiltinProviders();
 const anthropic = getBuiltinModels('anthropic');
 ```
@@ -320,7 +323,7 @@ await models.refresh();                            // refresh all providers conc
 const fresh = models.getModel('llamacpp', 'qwen3-30b');
 ```
 
-Static built-in providers are no-ops for `refresh()`. See [createProvider()](#createprovider) for building a dynamic provider.
+Static built-in providers are no-ops for `refresh()`. Radius is both static and dynamic: it ships the public `radius.pi.dev` catalog for synchronous API lookup, then overlays cached and freshly fetched `/v1/config` models when refreshed with configured auth. See [createProvider()](#createprovider) for building a dynamic provider.
 
 ## Auth
 
@@ -417,6 +420,7 @@ Built-in providers resolve these env vars (Node.js; in browsers pass `apiKey` ex
 | Ant Ling | `ANT_LING_API_KEY` |
 | Azure OpenAI | `AZURE_OPENAI_API_KEY` + `AZURE_OPENAI_BASE_URL` (e.g. `https://{resource}.ai.azure.com`) or `AZURE_OPENAI_RESOURCE_NAME`. Supports `*.openai.azure.com`, `*.cognitiveservices.azure.com` and `*.ai.azure.com`; root endpoints auto-normalize to `/openai/v1`. Optional: `AZURE_OPENAI_API_VERSION` (default `v1`), `AZURE_OPENAI_DEPLOYMENT_NAME_MAP`. |
 | Anthropic | `ANTHROPIC_API_KEY` or `ANTHROPIC_OAUTH_TOKEN` |
+| Radius | `RADIUS_API_KEY` |
 | DeepSeek | `DEEPSEEK_API_KEY` |
 | NVIDIA NIM | `NVIDIA_API_KEY` |
 | Google | `GEMINI_API_KEY` |
@@ -652,9 +656,9 @@ for await (const event of s) {
 
 ### Complete Event Reference
 
-Successful generation follows `start → updates* → done`. A failure after generation starts follows `start → updates* → error`. Request setup may fail before generation starts, in which case the stream contains only `error`; `done` and update events are invalid before `start`.
+Successful generation follows `start → updates* → done`. A failure after generation starts follows `start → updates* → error`. Request setup may fail before generation starts, in which case the stream contains only `error`; `done` and update events are invalid before `start`. Direct API `streamSimple()` calls throw synchronously when request auth is missing.
 
-Every non-terminal event's `partial` is the shared live response-so-far helper. It is intentionally not an event-time snapshot: providers may mutate the same message and content blocks as generation advances, including while older events wait in the stream queue. Inspect it when handling an event instead of retaining it as historical state. Text and ordinary thinking blocks are empty when their `*_start` event is emitted and grow only through matching `*_delta` events until the authoritative `*_end`; redacted thinking may be complete at start and emit no deltas. A streaming tool call starts with empty arguments and emits its full raw JSON through `toolcall_delta`. A provider that starts with complete arguments must emit a cumulative delta prefix that parses to those arguments at an event boundary before later argument deltas.
+Every non-terminal event's `partial` is the shared live response-so-far helper. It is intentionally not an event-time snapshot: providers may mutate the same message and content blocks as generation advances, including while older events wait in the stream queue. Inspect it when handling an event instead of retaining it as historical state. Text and ordinary thinking blocks are empty when their `*_start` event is emitted and grow only through matching `*_delta` events until the authoritative `*_end`; redacted thinking may be complete at start and emit no deltas. Tool-call arguments at `toolcall_start` are provider-specific; `toolcall_delta` carries subsequent JSON updates.
 
 All streaming events emitted during assistant message generation:
 
@@ -927,7 +931,7 @@ Every `AssistantMessage` includes a `stopReason` field that indicates how the ge
 
 ## Error Handling
 
-Request failures never throw out of the stream functions: when a request ends with an error (including aborts and tool call validation errors), the streaming API emits an error event and the final message carries the details. Setup failures may emit `error` without `start`; failures after generation begins emit `start`, any observed updates, then `error`:
+Request failures after a stream is returned never throw: when a request ends with an error (including aborts and tool call validation errors), the streaming API emits an error event and the final message carries the details. Setup failures may emit `error` without `start`; failures after generation begins emit `start`, any observed updates, then `error`. Direct API `streamSimple()` calls throw synchronously when request auth is missing:
 
 ```typescript
 // In streaming
@@ -949,7 +953,7 @@ if (message.stopReason === 'error' || message.stopReason === 'aborted') {
 }
 ```
 
-Auth failures (no key configured, OAuth refresh failed, unknown provider) surface the same way: as a stream error with `stopReason: "error"`.
+When using a provider collection, auth failures (OAuth refresh failed, unknown provider) surface as a stream error with `stopReason: "error"`. Direct API `streamSimple()` calls instead throw synchronously when their required auth is absent.
 
 ### Aborting Requests
 
@@ -1168,12 +1172,13 @@ const ollamaReasoningModel: Model<'openai-completions'> = {
 
 ### Calling API Implementations Directly
 
-The API implementations are importable on their own. Each module exports exactly `stream` and `streamSimple` with that API's full option typing. Direct calls bypass provider auth — pass `apiKey` explicitly:
+The API implementations are importable on their own. Each module exports exactly `stream` and `streamSimple` with that API's full option typing. Direct calls bypass provider auth and context normalization — pass `apiKey` explicitly and wrap the context in `normalizeContext()`:
 
 ```typescript
+import { normalizeContext } from '@earendil-works/pi-ai';
 import { stream } from '@earendil-works/pi-ai/api/anthropic-messages';
 
-const s = stream(claudeModel, context, {
+const s = stream(claudeModel, normalizeContext(context), {
   apiKey: process.env.ANTHROPIC_API_KEY,
   thinkingEnabled: true,
   thinkingBudgetTokens: 2048,
@@ -1208,7 +1213,9 @@ interface OpenAICompletionsCompat {
   supportsUsageInStreaming?: boolean; // Whether provider supports `stream_options: { include_usage: true }` (default: true)
   supportsStrictMode?: boolean;      // Whether provider supports `strict` in tool definitions (default: true)
   supportsOpenAIGrammarTools?: boolean; // Whether to emit OpenAI custom Lark/regex grammar tools; false falls back to normal function tools (default: false; the generated catalog enables it for capable models)
-  sendSessionAffinityHeaders?: boolean; // Send session-affinity data from `sessionId` (default: false)
+  supportsMidConvoSystemMessages?: boolean; // Whether the model accepts system messages after the conversation started; false folds them into the leading prompt (default: false; the generated catalog enables it for verified models)
+  supportsMidConvoToolAdditions?: boolean; // Whether system messages can add tools mid-conversation via Kimi-style `tools` system messages; requires supportsMidConvoSystemMessages (default: false)
+  sendSessionAffinityHeaders?: boolean; // Send session-affinity data from `sessionId` (default: true for OpenRouter, false otherwise)
   sessionAffinityFormat?: 'openai' | 'openai-nosession' | 'openrouter'; // Format for session affinity: 'openai' uses `prompt_cache_key`, `session_id`, `x-client-request-id`, and `x-session-affinity`; 'openai-nosession' uses `prompt_cache_key`, `x-client-request-id`, and `x-session-affinity`; 'openrouter' uses `x-session-id` (default: auto-detected)
   maxTokensField?: 'max_completion_tokens' | 'max_tokens';  // Which field name to use (default: max_completion_tokens)
   requiresToolResultName?: boolean;  // Whether tool results require the `name` field (default: false)
@@ -1233,6 +1240,8 @@ interface OpenAIResponsesCompat {
   supportsOpenAIGrammarTools?: boolean; // Whether to emit OpenAI custom Lark/regex grammar tools; false falls back to normal function tools (default: false; the generated catalog enables it for capable models)
 }
 ```
+
+OpenRouter requests send `x-session-id` from `sessionId` when prompt caching is enabled. Chat Completions and Anthropic Messages both auto-detect OpenRouter endpoints unless `sendSessionAffinityHeaders` is explicitly false. On Anthropic-compatible models, `sessionAffinityFormat: "openrouter"` selects `x-session-id`; when unset, the existing `x-session-affinity` format is used. Explicit request headers take precedence over generated headers.
 
 If `compat` is not set, the library falls back to URL-based detection. If `compat` is partially set, unspecified fields use the detected defaults. This is useful for:
 
@@ -1368,6 +1377,39 @@ const geminiResponse = await models.complete(gemini, context);
 ```
 
 All providers can handle messages from other providers — text, tool calls and results (including images), thinking blocks (transformed to tagged text), and aborted messages with partial content. This enables flexible workflows: start with a fast model, switch to a more capable one for complex reasoning, or maintain continuity across provider outages.
+
+## System Messages
+
+`Context.systemPrompt` and `Context.tools` are shorthand for a leading system message. The public entry points (`Models.stream()`, `streamSimple()`, `complete()`, `completeSimple()`) accept a `Context` and call `normalizeContext()` once; everything below them, including `Provider.stream()`, `ProviderStreams`, and the API implementation modules, receives the resulting `TranscriptContext`, which only has `messages`. The transcript can also carry system messages later in the conversation to change the prompt or the tool set without rewriting the history:
+
+```typescript
+interface SystemMessage {
+  role: "system";
+  content: string | TextContent[];             // leading: base prompt; later: added instructions
+  sections?: Record<string, string | null>;    // named prompt sections; later messages patch by name, null removes
+  toolsAdded?: Tool[];                         // tools that become available here
+  toolsRemoved?: ToolReference[];              // tools that stop being available here
+  timestamp: number;
+}
+```
+
+Sections are opaque text rendered verbatim after `content`, joined by blank lines. Keep each one self-delimiting (a tag, a heading) so the model can relate an update to the original. Replaying every system message in order yields the current prompt and tools; the replay helpers take the message list:
+
+```typescript
+import { getCurrentSystemPrompt, getCurrentTools } from "@earendil-works/pi-ai";
+
+const messages: Message[] = [
+  { role: "system", content: "You are helpful.", sections: { rules: "<rules>Be brief.</rules>" }, toolsAdded: [readTool], timestamp: 1 },
+  { role: "user", content: "hi", timestamp: 2 },
+  { role: "system", content: "", sections: { rules: "<rules>Be thorough.</rules>" }, toolsRemoved: [{ name: "read" }], timestamp: 3 },
+];
+getCurrentSystemPrompt(messages); // "You are helpful.\n\n<rules>Be thorough.</rules>"
+getCurrentTools(messages);        // []
+```
+
+A custom `Provider` or `ProviderStreams` implementation reads the prompt and tools the same way from `context.messages`; `context.systemPrompt` and `context.tools` do not exist at that layer.
+
+Models that accept system messages mid-conversation (`supportsMidConvoSystemMessages` in the model's compat settings, set by the generated catalog for verified models) receive each later system message in place, so the cached prefix stays intact; section changes are framed by name for the model. Every other model receives `collapseSystemMessages(transcript)`: the replayed prompt and current tools as the leading system message, with later system messages dropped. Anthropic models that also set `supportsMidConvoToolChanges` send tool changes as native `tool_addition`/`tool_removal` blocks: the initial tools stay active at the top level, every later declaration is sent with `defer_loading` (plus a stable deferred placeholder from the first request, which keeps Anthropic's deferred-tool scaffolding in the cached prefix), and removed tools stay declared, so tool changes do not invalidate the prompt cache. That needs at least one initial tool and no same-name redefinition; otherwise the current tool list is sent at the top level with the system text only. OpenAI Responses models with `supportsAdditionalTools` or `supportsToolSearch` anchor additive tool changes at their message; everything else sends the current tool list at the top level.
 
 ## Context Serialization
 
@@ -1589,7 +1631,7 @@ Built-in login and refresh flows are private provider implementations. Use provi
 
 Provider notes:
 
-**OpenAI Codex**: Requires a ChatGPT Plus or Pro subscription. Provides access to GPT-5.x Codex models with extended context windows and reasoning capabilities. The library automatically handles session-based prompt caching when `sessionId` is provided in stream options unless `cacheRetention` is `"none"`. You can set `transport` in stream options to `"sse"`, `"websocket"`, or `"auto"` for Codex Responses transport selection. When using WebSocket with a `sessionId` and cache retention enabled, connections are reused per session and expire after 5 minutes of inactivity.
+**OpenAI Codex**: Requires a ChatGPT Plus or Pro subscription. Provides access to GPT-5.x Codex models with extended context windows and reasoning capabilities. The library automatically handles session-based prompt caching when `sessionId` is provided in stream options unless `cacheRetention` is `"none"`. You can set `transport` in stream options to `"sse"`, `"websocket"`, or `"auto"` for Codex Responses transport selection. When using WebSocket with a `sessionId` and cache retention enabled, connections are reused per session and expire after 5 minutes of inactivity. Call `cleanupSessionResources(sessionId)` when finished so the pooled connection does not keep the process alive.
 
 **Azure OpenAI (Responses)**: Uses the Responses API only. Set `AZURE_OPENAI_API_KEY` and either `AZURE_OPENAI_BASE_URL` or `AZURE_OPENAI_RESOURCE_NAME`. `AZURE_OPENAI_BASE_URL` supports both `https://<resource>.openai.azure.com` and `https://<resource>.cognitiveservices.azure.com`; root endpoints are normalized to `.../openai/v1` automatically. Use `AZURE_OPENAI_API_VERSION` (defaults to `v1`) to override the API version if needed. Deployment names are treated as model IDs by default, override with `azureDeploymentName` or `AZURE_OPENAI_DEPLOYMENT_NAME_MAP` using comma-separated `model-id=deployment` pairs (for example `gpt-4o-mini=my-deployment,gpt-4o=prod`). Legacy deployment-based URLs are intentionally unsupported.
 
@@ -1636,7 +1678,7 @@ Adding a new LLM provider requires changes across multiple files. The layered la
 Create a new API implementation file (for example `bedrock-converse-stream.ts`) that exports exactly `stream` and `streamSimple`, plus:
 
 - An options interface extending `StreamOptions` (for example `BedrockOptions`)
-- Message conversion functions to transform `Context` to provider format
+- Message conversion functions to transform the `TranscriptContext` messages to provider format; read the prompt and tools from the transcript with `getInitialSystemMessage()`, `getCurrentTools()`, and `resolveTranscript()`
 - Tool conversion if the provider supports tools
 - Response parsing to emit standardized events (`text`, `tool_call`, `thinking`, `usage`, `stop`)
 

@@ -15,14 +15,7 @@ import {
 	type UsageRow,
 	type Write,
 } from "../../session/types.ts";
-import {
-	branchTip,
-	deleteValue,
-	laneConfig,
-	operationToolArgsPrefix,
-	pendingEntry,
-	setValue,
-} from "../../session/values.ts";
+import { branchTip, deleteValue, operationToolArgsPrefix, pendingEntry, setValue } from "../../session/values.ts";
 import type { Lane } from "../lane.ts";
 import type { Drive } from "../types.ts";
 
@@ -57,15 +50,15 @@ export async function readToolBatchSource<TContext extends object | undefined>(
 
 type PlacementItem = {
 	call: Extract<ToolCall, { status: "outcome_ready" }>;
-	message: ToolResultMessage<unknown>;
+	message: ToolResultMessage;
 };
 
 type PlacementRead = {
 	items: PlacementItem[];
-	turnResults?: ToolResultMessage<unknown>[];
+	turnResults?: ToolResultMessage[];
 };
 
-function isToolResultMessage(value: unknown): value is ToolResultMessage<unknown> {
+function isToolResultMessage(value: unknown): value is ToolResultMessage {
 	return typeof value === "object" && value !== null && "role" in value && value.role === "toolResult";
 }
 
@@ -114,7 +107,7 @@ async function readPlacement<TContext extends object | undefined>(
 			items.push({ call, message: stored.value.payload });
 		}
 
-		let turnResults: ToolResultMessage<unknown>[] | undefined;
+		let turnResults: ToolResultMessage[] | undefined;
 		if (first === current.calls.length) {
 			const placedIds = current.calls
 				.filter((call) => call.status === "completed")
@@ -198,22 +191,6 @@ async function commitPlacement<TContext extends object | undefined>(
 						};
 			});
 			const complete = completedCalls.every((call) => call.status === "completed");
-			let nextConfiguration = state.configuration;
-			const addedNames: string[] = [];
-			for (const item of read.items) {
-				for (const name of item.message.addedToolNames ?? []) {
-					if (!nextConfiguration.activeToolNames.includes(name) && !addedNames.includes(name)) {
-						addedNames.push(name);
-					}
-				}
-			}
-			if (addedNames.length !== 0) {
-				nextConfiguration = {
-					...nextConfiguration,
-					activeToolNames: [...nextConfiguration.activeToolNames, ...addedNames],
-				};
-				writes.push(setValue(laneConfig(lane.name), nextConfiguration));
-			}
 			writes.push(setValue(branchTip(lane.name), parentId));
 
 			let nextRun: OperationState;
@@ -240,7 +217,7 @@ async function commitPlacement<TContext extends object | undefined>(
 				kind: "commit",
 				writes,
 				operationState: nextRun,
-				lane: { tipId: parentId, configuration: nextConfiguration },
+				lane: { tipId: parentId, configuration: state.configuration },
 				materialize: () => complete,
 				events: (commit) => {
 					const events: HarnessEvent[] = [];
@@ -259,15 +236,6 @@ async function commitPlacement<TContext extends object | undefined>(
 								totals: commit.stats.usage,
 							});
 						}
-					}
-					if (addedNames.length !== 0) {
-						events.push({
-							type: "config_update",
-							lane: lane.name,
-							property: "activeTools",
-							previous: state.configuration.activeToolNames,
-							value: nextConfiguration.activeToolNames,
-						});
 					}
 					return events;
 				},

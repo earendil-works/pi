@@ -33,7 +33,7 @@ export interface UsageCostBreakdownEntry {
 	tokens: number;
 }
 
-/** Group attributable assistant usage by model and all other usage into a separate bucket. */
+/** Group model-attributed usage by model and all other usage into a separate bucket. */
 export function getUsageCostBreakdown(entries: SessionEntry[]): UsageCostBreakdownEntry[] {
 	const totalsByKey = new Map<string, UsageTotals>();
 
@@ -43,6 +43,9 @@ export function getUsageCostBreakdown(entries: SessionEntry[]): UsageCostBreakdo
 		if (entry.type === "message" && entry.message.role === "assistant") {
 			key = `${entry.message.provider}/${entry.message.responseModel ?? entry.message.model}`;
 			usage = entry.message.usage;
+		} else if (entry.type === "usage") {
+			key = `${entry.provider}/${entry.model}`;
+			usage = entry.usage;
 		} else if (entry.type === "message" && entry.message.role === "toolResult" && entry.message.usage) {
 			key = "Tools/summaries";
 			usage = entry.message.usage;

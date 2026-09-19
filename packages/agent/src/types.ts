@@ -3,14 +3,15 @@ import type {
 	AssistantMessage,
 	AssistantMessageEvent,
 	AssistantMessageEventStream,
-	Context,
 	ImageContent,
+	JsonValue,
 	Message,
 	Model,
 	SimpleStreamOptions,
 	TextContent,
 	Tool,
 	ToolResultMessage,
+	TranscriptContext,
 	Usage,
 } from "@earendil-works/pi-ai";
 import type { Static, TSchema } from "typebox";
@@ -18,6 +19,10 @@ import type { Static, TSchema } from "typebox";
 /**
  * Stream function used by the agent loop. `Models.streamSimple` satisfies
  * this shape.
+ *
+ * The loop passes a normalized transcript: the system prompt and tool
+ * declarations are carried by the transcript's system messages, never by
+ * `context.systemPrompt` or `context.tools`.
  *
  * Contract:
  * - Must not throw or return a rejected promise for request/model/runtime failures.
@@ -27,7 +32,7 @@ import type { Static, TSchema } from "typebox";
  */
 export type StreamFn = (
 	model: Model<Api>,
-	context: Context,
+	context: TranscriptContext,
 	options?: SimpleStreamOptions,
 ) => AssistantMessageEventStream | Promise<AssistantMessageEventStream>;
 
@@ -138,6 +143,8 @@ export interface ShouldStopAfterTurnContext {
 export interface AgentLoopTurnUpdate {
 	/** Context for the next provider request. */
 	context?: AgentContext;
+	/** Messages to append before the next provider request, with normal lifecycle events. */
+	messages?: AgentMessage[];
 	/** Model for the next provider request. */
 	model?: Model<any>;
 	/** Thinking level for the next provider request. */
@@ -152,7 +159,7 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 	/**
 	 * Converts AgentMessage[] to LLM-compatible Message[] before each LLM call.
 	 *
-	 * Each AgentMessage must be converted to a UserMessage, AssistantMessage, or ToolResultMessage
+	 * Each AgentMessage must be converted to a SystemMessage, UserMessage, AssistantMessage, or ToolResultMessage
 	 * that the LLM can understand. AgentMessages that cannot be converted (e.g., UI-only notifications,
 	 * status messages) should be filtered out.
 	 *
@@ -224,7 +231,7 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 
 	/**
 	 * Called after `turn_end` when the loop will continue, immediately before the next turn starts.
-	 * Return replacement context/model/thinking state to affect that turn.
+	 * Return replacement context/model/thinking state or messages to append to affect that turn.
 	 * Return undefined to keep using the current context/config.
 	 */
 	prepareNextTurn?: (
@@ -332,16 +339,30 @@ export type AgentMessage = Message | CustomAgentMessages[keyof CustomAgentMessag
  * assigned arrays before storing them.
  */
 export interface AgentState {
-	/** System prompt sent with each model request. */
-	systemPrompt: string;
+	/**
+	 * Current system prompt, replayed from the transcript's system messages.
+	 *
+	 * Read-only: to change the prompt, append a system message with `content` or `sections`.
+	 * In `initialState`, this seeds the leading system message.
+	 */
+	readonly systemPrompt: string;
 	/** Active model used for future turns. */
 	model: Model<any>;
 	/** Requested reasoning level for future turns. */
 	thinkingLevel: ThinkingLevel;
-	/** Available tools. Assigning a new array copies the top-level array. */
+	/**
+	 * Executable tools. Assigning a new array copies the top-level array.
+	 *
+	 * Differences from the tools declared in the transcript are announced to the model
+	 * with a system message before the next request.
+	 */
 	set tools(tools: AgentTool<any>[]);
 	get tools(): AgentTool<any>[];
-	/** Conversation transcript. Assigning a new array copies the top-level array. */
+	/**
+	 * Conversation transcript. Assigning a new array copies the top-level array.
+	 *
+	 * System messages in the transcript carry the prompt and tool declarations.
+	 */
 	set messages(messages: AgentMessage[]);
 	get messages(): AgentMessage[];
 	/**
@@ -359,15 +380,13 @@ export interface AgentState {
 }
 
 /** Final or partial result produced by a tool. */
-export interface AgentToolResult<T> {
+export interface AgentToolResult<T = JsonValue | undefined> {
 	/** Text or image content returned to the model. */
 	content: (TextContent | ImageContent)[];
 	/** Arbitrary structured details for logs or UI rendering. */
 	details: T;
 	/** Usage from the final tool execution itself, if available. Not used for main LLM context accounting. */
 	usage?: Usage;
-	/** Names of tools introduced by this result and available from this transcript point onward. */
-	addedToolNames?: string[];
 	/**
 	 * Hint that the agent should stop after the current tool batch.
 	 * Early termination only happens when every finalized tool result in the batch sets this to true.
@@ -413,11 +432,9 @@ export interface AgentTool<TParameters extends TSchema = TSchema, TDetails = any
 
 /** Context snapshot passed into the low-level agent loop. */
 export interface AgentContext {
-	/** System prompt included with the request. */
-	systemPrompt: string;
 	/** Transcript visible to the model. */
 	messages: AgentMessage[];
-	/** Tools available for this run. */
+	/** Tools available for execution in this run. */
 	tools?: AgentTool<any>[];
 }
 
@@ -435,7 +452,7 @@ export type AgentEvent =
 	// Turn lifecycle - a turn is one assistant response + any tool calls/results
 	| { type: "turn_start" }
 	| { type: "turn_end"; message: AgentMessage; toolResults: ToolResultMessage[] }
-	// Message lifecycle - emitted for user, assistant, and toolResult messages
+	// Message lifecycle - emitted for system, user, assistant, and toolResult messages
 	| { type: "message_start"; message: AgentMessage }
 	// Only emitted for assistant messages during streaming
 	| { type: "message_update"; message: AgentMessage; assistantMessageEvent: AssistantMessageEvent }

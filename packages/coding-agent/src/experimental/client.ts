@@ -81,6 +81,8 @@ export async function runClient(command: ClientCommand, options: RunClientOption
 
 		const agent = match.agent;
 		const completedText = new Map<string, string>();
+		const operationBoundaries = new Set<string>();
+		const boundaryWaiters = new Map<string, () => void>();
 		let deliveryTail = Promise.resolve();
 		const unsubscribe = match.transcript.state.subscribe((value, _context, delivery) => {
 			if (delivery.kind !== "update" || value.event === null) return;
@@ -91,6 +93,11 @@ export async function runClient(command: ClientCommand, options: RunClientOption
 				}
 				await options.onEvent?.(event);
 			});
+			if (event.type === "run_end" || event.type === "run_suspend") {
+				operationBoundaries.add(event.runId);
+				boundaryWaiters.get(event.runId)?.();
+				boundaryWaiters.delete(event.runId);
+			}
 		});
 		if (match.transcript.state.value?.snapshot === null || match.transcript.state.value?.snapshot === undefined) {
 			unsubscribe();
@@ -99,6 +106,14 @@ export async function runClient(command: ClientCommand, options: RunClientOption
 		let response: AgentOperationResponse;
 		try {
 			response = await agent.prompt({ message: command.prompt, images: null }, BACKGROUND_CONTEXT);
+			// The operation response and transcript updates use independent protocol
+			// messages, so the response can arrive before its terminal event.
+			if (response.accepted) {
+				const operationId = response.operationId;
+				if (!operationBoundaries.has(operationId)) {
+					await new Promise<void>((resolve) => boundaryWaiters.set(operationId, resolve));
+				}
+			}
 		} finally {
 			unsubscribe();
 			await deliveryTail;

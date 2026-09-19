@@ -12,12 +12,14 @@ import {
 	Text,
 } from "@earendil-works/pi-tui";
 import { formatHttpIdleTimeoutMs, HTTP_IDLE_TIMEOUT_CHOICES } from "../../../core/http-dispatcher.ts";
-import type {
-	DefaultProjectTrust,
-	FullscreenExitOutput,
-	MermaidRenderingMode,
-	TuiMode,
-	WarningSettings,
+import {
+	CACHE_WARMING_MODES,
+	type CacheWarmingMode,
+	type DefaultProjectTrust,
+	type FullscreenExitOutput,
+	type MermaidRenderingMode,
+	type TuiMode,
+	type WarningSettings,
 } from "../../../core/settings-manager.ts";
 import { getSettingsListTheme, parseAutoThemeSetting, type TerminalTheme, theme } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
@@ -60,6 +62,7 @@ export interface SettingsConfig {
 	followUpMode: "all" | "one-at-a-time";
 	transport: Transport;
 	httpIdleTimeoutMs: number;
+	cacheWarmingMode: CacheWarmingMode;
 	thinkingLevel: ThinkingLevel;
 	availableThinkingLevels: ThinkingLevel[];
 	modelThinkingLevels: Record<string, ThinkingLevel>;
@@ -99,6 +102,7 @@ export interface SettingsCallbacks {
 	onFollowUpModeChange: (mode: "all" | "one-at-a-time") => void;
 	onTransportChange: (transport: Transport) => void;
 	onHttpIdleTimeoutMsChange: (timeoutMs: number) => void;
+	onCacheWarmingModeChange: (mode: CacheWarmingMode) => void;
 	onModelThinkingLevelChange: (provider: string, modelId: string, level: ThinkingLevel) => void;
 	onModelThinkingLevelRemove: (provider: string, modelId: string) => void;
 	onThemeChange: (theme: string) => void;
@@ -496,6 +500,14 @@ export class SettingsSelectorComponent extends Container {
 				values: HTTP_IDLE_TIMEOUT_CHOICES.map((choice) => choice.label),
 			},
 			{
+				id: "cache-warming-mode",
+				label: "Cache warming",
+				description:
+					"off; streaming while the agent runs; idle also between runs while continuation stays profitable",
+				currentValue: config.cacheWarmingMode,
+				values: [...CACHE_WARMING_MODES],
+			},
+			{
 				id: "hide-thinking",
 				label: "Hide thinking",
 				description: "Hide thinking blocks in assistant responses",
@@ -863,6 +875,9 @@ export class SettingsSelectorComponent extends Container {
 						}
 						break;
 					}
+					case "cache-warming-mode":
+						callbacks.onCacheWarmingModeChange(newValue as CacheWarmingMode);
+						break;
 					case "hide-thinking":
 						callbacks.onHideThinkingBlockChange(newValue === "true");
 						break;

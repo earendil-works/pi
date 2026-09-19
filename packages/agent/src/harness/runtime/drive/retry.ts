@@ -1,10 +1,11 @@
-export function retryDelay(baseDelayMs: number, attempt: number): number {
-	const delay = baseDelayMs * 2 ** Math.max(0, attempt - 1);
-	return Number.isSafeInteger(delay) ? delay : Number.MAX_SAFE_INTEGER;
-}
+import { type RetryPolicy, retryDelayMs } from "@earendil-works/pi-ai";
 
-export function retryNotBefore(baseDelayMs: number, attempt: number, now = Date.now()): number {
-	const sum = now + retryDelay(baseDelayMs, attempt);
+export function retryNotBefore(
+	policy: Pick<RetryPolicy, "baseDelayMs" | "maxAgentDelayMs">,
+	attempt: number,
+	now = Date.now(),
+): number {
+	const sum = now + retryDelayMs(policy, attempt);
 	return Number.isSafeInteger(sum) ? sum : Number.MAX_SAFE_INTEGER;
 }
 

@@ -83,6 +83,7 @@ function cloneStartMessage(message: AssistantMessage): AssistantMessage {
 		model: message.model,
 		...(message.responseModel === undefined ? {} : { responseModel: message.responseModel }),
 		...(message.responseId === undefined ? {} : { responseId: message.responseId }),
+		...(message.providerThinkingLevel === undefined ? {} : { providerThinkingLevel: message.providerThinkingLevel }),
 		...(message.diagnostics === undefined ? {} : { diagnostics: structuredClone(message.diagnostics) }),
 		usage: structuredClone(message.usage),
 		stopReason: "pending",
@@ -112,6 +113,23 @@ function serializedArguments(argumentsValue: ToolCall["arguments"]): string {
 }
 
 const EMPTY_PARSED_TOOL_ARGUMENTS = serializedArguments(parseStreamingJson<ToolCall["arguments"]>(""));
+
+function isJsonPrefix(snapshot: unknown, current: unknown): boolean {
+	if (typeof snapshot === "string") return typeof current === "string" && current.startsWith(snapshot);
+	if (Array.isArray(snapshot)) {
+		return (
+			Array.isArray(current) &&
+			snapshot.length <= current.length &&
+			snapshot.every((value, index) => isJsonPrefix(value, current[index]))
+		);
+	}
+	if (typeof snapshot !== "object" || snapshot === null) return Object.is(snapshot, current);
+	if (typeof current !== "object" || current === null || Array.isArray(current)) return false;
+	const currentRecord = current as Record<string, unknown>;
+	return Object.entries(snapshot).every(
+		([key, value]) => Object.hasOwn(currentRecord, key) && isJsonPrefix(value, currentRecord[key]),
+	);
+}
 
 /**
  * Encodes one assistant stream. `partial` remains a shared live accumulator;
@@ -226,11 +244,13 @@ export class AssistantMessageFrameEncoder {
 						: { type: "toolcall_delta", contentIndex: event.contentIndex, delta: event.delta };
 				}
 				state.catchupJson += event.delta;
-				if (
-					serializedArguments(parseStreamingJson<ToolCall["arguments"]>(state.catchupJson)) !==
-					state.snapshotArguments
-				) {
-					return undefined;
+				const argumentsValue = parseStreamingJson<ToolCall["arguments"]>(state.catchupJson);
+				if (serializedArguments(argumentsValue) !== state.snapshotArguments) {
+					// Legacy grammar calls include the initial input in toolcall_start, but their
+					// JSON delta stream still begins at an empty input. Its parsed arguments can
+					// therefore extend, rather than exactly reproduce, the start snapshot.
+					const snapshotArguments = parseStreamingJson<ToolCall["arguments"]>(state.snapshotArguments);
+					if (!isJsonPrefix(snapshotArguments, argumentsValue)) return undefined;
 				}
 				state.caughtUp = true;
 				state.snapshotArguments = "";

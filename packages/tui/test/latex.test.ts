@@ -53,7 +53,7 @@ describe("renderLatex", () => {
 			[String.raw`\ge 2`, "≥ 2"],
 			[String.raw`\ge 3`, "≥ 3"],
 			["1", "1"],
-			[String.raw`\mathrm{diag}(-1/2,1,1)`, "diag(-1/2,1,1)"],
+			[String.raw`\mathrm{diag}(-1/2,1,1),\quad F_{\rm intrinsic}(\lambda)`, "diag(-1/2,1,1), F_intrinsic(λ)"],
 			["4+3xy", "4+3xy"],
 		]);
 	});
@@ -230,7 +230,7 @@ c_n
 \Psi^\ast\Psi, & 0<x<L,\\
 0, & \text{otherwise}.
 \end{cases}`,
-				"Ψ(x,t) = ∑ₙ₌₁^∞ cₙ √(2/L) sin((nπ x)/L)_(spatial eigenmode) exp(-(iℏ n²π²)/(2mL²)t), |Ψ(x,t)|² = ⎧ Ψ^∗Ψ if 0 < x < L,\n⎩ 0 otherwise.",
+				`${" ".repeat(97)}⎧ Ψ^∗Ψ if 0 < x < L,\nΨ(x,t) = ∑ₙ₌₁^∞ cₙ √(2/L) sin((nπ x)/L)_(spatial eigenmode) exp(-(iℏ n²π²)/(2mL²)t), |Ψ(x,t)|² = ⎨\n${" ".repeat(97)}⎩ 0    otherwise.`,
 			],
 			[String.raw`x=\frac{-b\pm\sqrt{b^2-4ac}}{2a}`, "x = (-b±√(b²-4ac))/(2a)"],
 			[String.raw`\int_0^\infty e^{-x^2}\,dx=\frac{\sqrt{\pi}}{2}`, "∫₀^∞ e^(-x²) dx = (√π)/2"],
@@ -346,7 +346,12 @@ c_n
 			renderLatex(String.raw`\acute{x}+\grave{y}+\widehat{xyz}+\overrightarrow{AB}`),
 			"x́+ỳ+widehat(xyz)+overrightarrow(AB)",
 		);
-		assert.strictEqual(renderLatex(String.raw`\textnormal{hello}+\mbox{world}+\boldsymbol{x}`), "hello+world+x");
+		assert.strictEqual(
+			renderLatex(
+				String.raw`\textnormal{hello}+\mbox{world}+\boldsymbol{x}+{\rm roman}+{\bf bold}+{\it italic}+{\sf sans}+{\tt mono}+{\cal calligraphic}+{\sl slanted}`,
+			),
+			"hello+world+x+roman+bold+italic+sans+mono+calligraphic+slanted",
+		);
 	});
 
 	it("renders additional display environments", () => {
@@ -362,8 +367,8 @@ c_n
 
 	it("uses natural case conditions and aligns matrix columns", () => {
 		assert.strictEqual(
-			renderLatex(String.raw`\begin{cases}a & x<0 \\ b & \text{if }x=0 \\ c & \text{otherwise}\end{cases}`),
-			"⎧ a if x < 0\n⎨ b if x = 0\n⎩ c otherwise",
+			renderLatex(String.raw`f(x)=\begin{cases}a & x<0 \\ b & \text{if }x=0 \\ c & \text{otherwise}\end{cases}`),
+			"       ⎧ a if x < 0\nf(x) = ⎨ b if x = 0\n       ⎩ c otherwise",
 		);
 		assert.strictEqual(
 			renderLatex(String.raw`\begin{pmatrix}1&200\\3000&4\end{pmatrix}`),
@@ -449,10 +454,10 @@ R\left(\frac{\pi}{4}\right)
 		assert.strictEqual(renderLatex(String.raw`\int\limits_0^1 f(x)\,dx`, { display: true }), "1\n∫ f(x) dx\n0");
 	});
 
-	it("uses the middle brace for intermediate case rows", () => {
+	it("centers even case rows around a middle brace", () => {
 		assert.strictEqual(
-			renderLatex(String.raw`\begin{cases}a & x<0 \\ b & x=0 \\ c & x>0\end{cases}`),
-			"⎧ a if x < 0\n⎨ b if x = 0\n⎩ c if x > 0",
+			renderLatex(String.raw`f(x) = \begin{cases} x^{2} & x \geq 0 \\ -x & x < 0 \end{cases}`),
+			"       ⎧ x² if x ≥ 0\nf(x) = ⎨\n       ⎩ -x if x < 0",
 		);
 	});
 
@@ -487,9 +492,14 @@ R\left(\frac{\pi}{4}\right)
 		}
 	});
 
-	it("keeps fractions linear in scripts and text-style fractions", () => {
-		assert.strictEqual(renderLatex(String.raw`e^{\frac{1}{2}}`, { display: true }), "e^(1/2)");
-		assert.strictEqual(renderLatex(String.raw`\tfrac{1}{2}`, { display: true }), "1/2");
+	it("lays out unsupported and nested scripts while keeping script fractions linear", () => {
+		assert.strictEqual(
+			renderLatex(String.raw`\partial_tU_2(t,0)=Aj_*(1-t)^{-A-1}.\qquad x^{n^2}+x_{i_j}`, {
+				display: true,
+			}),
+			"                            2\n                    -A-1   n\n∂ₜU₂(t,0) = Aj (1-t)    . x  +x\n              *                i\n                                j",
+		);
+		assert.strictEqual(renderLatex(String.raw`e^{\frac{1}{2}}+\tfrac{1}{2}`, { display: true }), "e^(1/2)+1/2");
 	});
 
 	it("returns undefined for unsupported commands", () => {

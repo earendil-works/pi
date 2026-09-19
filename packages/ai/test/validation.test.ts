@@ -1,7 +1,7 @@
 import { Type } from "typebox";
 import { Compile } from "typebox/compile";
 import { describe, expect, it } from "vitest";
-import type { Tool, ToolCall } from "../src/types.ts";
+import type { JsonValue, Tool, ToolCall } from "../src/types.ts";
 import { validateToolArguments } from "../src/utils/validation.ts";
 
 function createToolCallWithPlainSchema(
@@ -27,7 +27,7 @@ function createToolCallWithPlainSchema(
 		type: "toolCall",
 		id: "tool-1",
 		name: "echo",
-		arguments: { value },
+		arguments: { value: value as JsonValue },
 	};
 
 	return { tool, toolCall };

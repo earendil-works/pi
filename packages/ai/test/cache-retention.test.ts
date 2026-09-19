@@ -2,9 +2,9 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { stream as streamAnthropic } from "../src/api/anthropic-messages.ts";
 import { stream as streamOpenAICompletions } from "../src/api/openai-completions.ts";
 import { stream as streamOpenAIResponses } from "../src/api/openai-responses.ts";
-import { getModel, stream } from "../src/compat.ts";
+import { getModel, normalizeContext, stream } from "../src/compat.ts";
 import { MODELS } from "../src/models.generated.ts";
-import type { Context, Model } from "../src/types.ts";
+import type { Model } from "../src/types.ts";
 
 class PayloadCaptured extends Error {
 	constructor() {
@@ -19,7 +19,7 @@ interface OpenAICompletionsCachePayload {
 }
 
 interface OpenAIResponsesCachePayload extends OpenAICompletionsCachePayload {
-	prompt_cache_options?: { mode: "explicit" };
+	prompt_cache_options?: { mode?: "explicit"; ttl?: "30m" };
 }
 
 function stopAfterPayload<TPayload>(capture: (payload: TPayload) => void): (payload: unknown) => never {
@@ -44,10 +44,10 @@ describe("Cache Retention (PI_CACHE_RETENTION)", () => {
 		}
 	});
 
-	const context: Context = {
+	const context = normalizeContext({
 		systemPrompt: "You are a helpful assistant.",
 		messages: [{ role: "user", content: "Hello", timestamp: Date.now() }],
-	};
+	});
 
 	describe("Anthropic Provider", () => {
 		it.skipIf(!process.env.ANTHROPIC_API_KEY)(
@@ -240,6 +240,13 @@ describe("Cache Retention (PI_CACHE_RETENTION)", () => {
 	});
 
 	describe("OpenAI Responses Provider", () => {
+		it.each(["gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-6-astra"] as const)(
+			"does not enable cache warming from the documented TTL alone for %s",
+			(modelId) => {
+				expect(getModel("openai", modelId).promptCache).toBeUndefined();
+			},
+		);
+
 		it.skipIf(!process.env.OPENAI_API_KEY)(
 			"should not set prompt_cache_retention when PI_CACHE_RETENTION is not set",
 			async () => {
@@ -398,16 +405,19 @@ describe("Cache Retention (PI_CACHE_RETENTION)", () => {
 			expect(capturedPayload?.prompt_cache_options).toBeUndefined();
 		});
 
-		it("should set prompt_cache_retention when cacheRetention is long", async () => {
-			const model = getModel("openai", "gpt-4o-mini");
-			let capturedPayload: any = null;
+		it.each([
+			["gpt-4o-mini", "24h", undefined],
+			["gpt-6-astra", undefined, { ttl: "30m" }],
+		] as const)("should use the supported long cache field for %s", async (modelId, retention, cacheOptions) => {
+			const model = getModel("openai", modelId);
+			let capturedPayload: OpenAIResponsesCachePayload | undefined;
 
 			try {
 				const s = streamOpenAIResponses(model, context, {
 					apiKey: "fake-key",
 					cacheRetention: "long",
 					sessionId: "session-2",
-					onPayload: stopAfterPayload((payload) => {
+					onPayload: stopAfterPayload<OpenAIResponsesCachePayload>((payload) => {
 						capturedPayload = payload;
 					}),
 				});
@@ -419,9 +429,9 @@ describe("Cache Retention (PI_CACHE_RETENTION)", () => {
 				// Expected to fail
 			}
 
-			expect(capturedPayload).not.toBeNull();
-			expect(capturedPayload.prompt_cache_key).toBe("session-2");
-			expect(capturedPayload.prompt_cache_retention).toBe("24h");
+			expect(capturedPayload?.prompt_cache_key).toBe("session-2");
+			expect(capturedPayload?.prompt_cache_retention).toBe(retention);
+			expect(capturedPayload?.prompt_cache_options).toEqual(cacheOptions);
 		});
 	});
 

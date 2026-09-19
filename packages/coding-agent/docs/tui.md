@@ -4,7 +4,7 @@
 
 Extensions and custom tools can render custom TUI components for interactive user interfaces. This page covers the component system and available building blocks.
 
-**Source:** [`@earendil-works/pi-tui`](https://github.com/earendil-works/pi-mono/tree/main/packages/tui)
+**Source:** [`@earendil-works/pi-tui`](https://github.com/earendil-works/pi/tree/main/packages/tui)
 
 ## Component Interface
 
@@ -930,6 +930,7 @@ export default function (pi: ExtensionAPI) {
 
 - **Extend `CustomEditor`** (not base `Editor`) to get app keybindings (escape to abort, ctrl+d to exit, model switching, etc.)
 - **Call `super.handleInput(data)`** for keys you don't handle
+- **Status spinners**: custom editors keep standalone status rows by default. Pass `{ embedWorkingStatus: true }` as the fourth `CustomEditor` constructor argument to embed working, compaction, branch summarization, and retry spinners in the editor border instead.
 - **Factory pattern**: `setEditorComponent` receives a factory function that gets `tui`, `theme`, and `keybindings`
 - **Pass `undefined`** to restore the default editor: `ctx.ui.setEditorComponent(undefined)`
 

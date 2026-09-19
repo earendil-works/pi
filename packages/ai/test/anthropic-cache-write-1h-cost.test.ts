@@ -1,8 +1,7 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import { describe, expect, it } from "vitest";
 import { stream as streamAnthropic } from "../src/api/anthropic-messages.ts";
-import { getModel } from "../src/compat.ts";
-import type { Context } from "../src/types.ts";
+import { getModel, normalizeContext } from "../src/compat.ts";
 
 function createSseResponse(events: Array<{ event: string; data: string }>): Response {
 	const body = events.map(({ event, data }) => `event: ${event}\ndata: ${data}\n`).join("\n");
@@ -57,7 +56,7 @@ function eventsWithCacheCreation(
 }
 
 // claude-opus-4-8: input 5, cacheWrite (5m) 6.25 per Mtok. 1h write = 2x input = 10.
-const context: Context = { messages: [{ role: "user", content: "hi", timestamp: Date.now() }] };
+const context = normalizeContext({ messages: [{ role: "user", content: "hi", timestamp: Date.now() }] });
 
 describe("Anthropic 1h cache write cost", () => {
 	it("prices the 1h portion at 2x input and the rest at the 5m rate", async () => {
@@ -65,7 +64,9 @@ describe("Anthropic 1h cache write cost", () => {
 		const response = createSseResponse(
 			eventsWithCacheCreation({ ephemeral_5m_input_tokens: 600_000, ephemeral_1h_input_tokens: 400_000 }),
 		);
-		const result = await streamAnthropic(model, context, { client: createFakeAnthropicClient(response) }).result();
+		const result = await streamAnthropic(model, context, {
+			client: createFakeAnthropicClient(response),
+		}).result();
 
 		expect(result.usage.cacheWrite).toBe(1_000_000);
 		expect(result.usage.cacheWrite1h).toBe(400_000);
@@ -76,7 +77,9 @@ describe("Anthropic 1h cache write cost", () => {
 	it("falls back to the 5m rate when no breakdown is reported", async () => {
 		const model = getModel("anthropic", "claude-opus-4-8");
 		const response = createSseResponse(eventsWithCacheCreation(undefined));
-		const result = await streamAnthropic(model, context, { client: createFakeAnthropicClient(response) }).result();
+		const result = await streamAnthropic(model, context, {
+			client: createFakeAnthropicClient(response),
+		}).result();
 
 		expect(result.usage.cacheWrite).toBe(1_000_000);
 		expect(result.usage.cacheWrite1h ?? 0).toBe(0);

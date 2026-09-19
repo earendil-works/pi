@@ -75,7 +75,7 @@ const configuration = {
 	activeToolNames: ["read"],
 } satisfies LaneConfiguration;
 
-const retryPolicy = { maxAttempts: 3, baseDelayMs: 100 } as const;
+const retryPolicy = { maxAttempts: 3, baseDelayMs: 100, maxAgentDelayMs: 30_000 } as const;
 const generationContext = {
 	stepId: "step",
 	triggerEntryId: "trigger",

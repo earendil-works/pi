@@ -86,9 +86,11 @@ The dedicated history actions always change history entries, regardless of the c
 
 ### TUI Fullscreen Viewport
 
-These actions apply when interactive mode uses `--tui-mode fullscreen` and target the primary transcript scroll region. Two-finger trackpad and mouse-wheel input scroll the region under the pointer, falling back to the transcript over the fixed editor/status/footer dock. Clicking an OSC 8 hyperlink opens it in the default handler. Dragging with the primary mouse button selects text and copies it to the clipboard; holding at the transcript's top or bottom edge auto-scrolls into off-screen content. See [Terminal setup](terminal-setup.md) for terminal-specific mouse and trackpad behavior.
+These actions apply when interactive mode uses `--tui-mode fullscreen` and target the primary transcript scroll region. Two-finger trackpad and mouse-wheel input scroll the region under the pointer, falling back to the transcript over the fixed editor/status/footer dock. Clicking an OSC 8 hyperlink opens it in the default handler. Dragging with the primary mouse button selects text and copies it to the clipboard; holding at the transcript's top or bottom edge auto-scrolls into off-screen content. While the transcript is scrolled up, a clickable "Jump to latest message" label on its bottom row shows the `tui.altScreen.bottom` shortcut. See [Terminal setup](terminal-setup.md) for terminal-specific mouse and trackpad behavior.
 
 Fullscreen transcript bindings take precedence over editor bindings. The default unmodified navigation keys therefore control the transcript in fullscreen mode, while their `ctrl` variants continue to control the editor. Outside fullscreen mode, both variants control the editor.
+
+The transcript search panel shows the configured previous/next shortcuts and clickable arrow controls. Press `tui.altScreen.search` again, or use `tui.altScreen.searchClose`, to close it.
 
 | Key | Default mode | Fullscreen mode |
 |-----|--------------|-----------------|
@@ -149,7 +151,9 @@ This routing remains configurable through the ordinary action bindings. For exam
 | `app.model.select` | `ctrl+l` | Open model selector |
 | `app.model.cycleForward` | `ctrl+p` | Cycle to next model |
 | `app.model.cycleBackward` | `shift+ctrl+p` (`alt+p` on Windows and WSL) | Cycle to previous model |
+| `app.models.save` | `ctrl+s` | Save the selected default model or scoped model configuration to settings |
 | `app.thinking.cycle` | `shift+tab` | Cycle thinking level |
+| `app.thinking.save` | `ctrl+s` | Save current thinking level to settings |
 | `app.thinking.toggle` | `ctrl+t` | Collapse or expand thinking blocks |
 
 ### Display and Message Queue
@@ -183,7 +187,6 @@ Used inside the scoped models selector (opened via `/scoped-models`).
 
 | Keybinding id | Default | Description |
 |--------|---------|-------------|
-| `app.models.save` | `ctrl+s` | Save current model selection to settings |
 | `app.models.enableAll` | `ctrl+a` | Enable all models (or all matching the current search) |
 | `app.models.clearAll` | `ctrl+x` | Clear all models (or all matching the current search) |
 | `app.models.toggleProvider` | `ctrl+p` | Toggle all models for the current provider |

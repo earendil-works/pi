@@ -6,6 +6,7 @@ import { MemoryStorage } from "../../src/harness/session/memory.ts";
 import {
 	type ConformanceCase,
 	createSessionRepoConformance,
+	createSessionRepoStreamingForkConformance,
 	createStorageConformance,
 	type StorageFixture,
 } from "../../src/harness/session/testing/index.ts";
@@ -82,13 +83,19 @@ describe("MemoryStorage commit statistics", () => {
 });
 
 let memoryRepo: MemorySessionRepo;
-registerConformance(
-	"MemorySessionRepo conformance",
-	createSessionRepoConformance(
+registerConformance("MemorySessionRepo conformance", [
+	...createSessionRepoConformance(
 		() => {
 			memoryRepo = new MemorySessionRepo({ now: () => NOW });
 			return Promise.resolve(memoryRepo);
 		},
 		() => memoryRepo.close(BACKGROUND_CONTEXT),
 	),
-);
+	...createSessionRepoStreamingForkConformance(
+		() => {
+			memoryRepo = new MemorySessionRepo({ now: () => NOW });
+			return Promise.resolve(memoryRepo);
+		},
+		() => memoryRepo.close(BACKGROUND_CONTEXT),
+	),
+]);

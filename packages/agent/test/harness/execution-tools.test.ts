@@ -1,3 +1,4 @@
+import type { JsonObject } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { describe, expect, it, vi } from "vitest";
 import { BACKGROUND_CONTEXT } from "../../src/harness/context.ts";
@@ -14,7 +15,7 @@ import type { AgentToolCall, AgentToolResult } from "../../src/types.ts";
 
 const parameters = Type.Object({ value: Type.String() });
 
-function call(arguments_: Record<string, unknown> = { value: "input" }): AgentToolCall {
+function call(arguments_: JsonObject = { value: "input" }): AgentToolCall {
 	return { type: "toolCall", id: "call-1", name: "echo", arguments: arguments_ };
 }
 
@@ -196,7 +197,6 @@ describe("tool execution primitives", () => {
 			content: [{ type: "text", text: "original" }],
 			details: { original: true },
 			usage: originalUsage,
-			addedToolNames: ["new-tool"],
 		};
 
 		const finalized = finalizeToolCall(
@@ -218,7 +218,6 @@ describe("tool execution primitives", () => {
 			content: [{ type: "text", text: "patched" }],
 			details: { patched: true },
 			usage: replacementUsage,
-			addedToolNames: ["new-tool"],
 			terminate: true,
 		});
 		expect(message).toMatchObject({
@@ -228,10 +227,19 @@ describe("tool execution primitives", () => {
 			content: [{ type: "text", text: "patched" }],
 			details: { patched: true },
 			usage: replacementUsage,
-			addedToolNames: ["new-tool"],
 			isError: false,
 		});
 		expect(message.timestamp).toBeGreaterThanOrEqual(before);
+	});
+
+	it("preserves unusual JSON object keys in tool-result details", () => {
+		const cleared = clearPrepared(prepareToolCall(call(), [tool()]));
+		const details = JSON.parse('{"__proto__":{"preserved":true}}') as Record<string, unknown>;
+		const finalized = finalizeToolCall(cleared, { result: { content: [], details }, isError: false }, undefined);
+
+		const message = createToolResultMessage(finalized);
+		expect(Object.hasOwn(message.details as object, "__proto__")).toBe(true);
+		expect(message.details).toEqual(details);
 	});
 
 	it("normalizes missing content from untyped tools", () => {

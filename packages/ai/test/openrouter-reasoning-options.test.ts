@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { getOpenRouterThinkingLevelMap } from "../scripts/openrouter-reasoning-options.ts";
 import { streamSimple } from "../src/api/openai-completions.ts";
-import type { Context, Model, ThinkingLevelMap } from "../src/types.ts";
+import type { Model, ThinkingLevelMap } from "../src/types.ts";
+import { normalizeContext } from "../src/utils/transcript.ts";
 
-const context: Context = {
+const context = normalizeContext({
 	messages: [{ role: "user", content: "Hello", timestamp: 0 }],
-};
+});
 
 function openRouterModel(thinkingLevelMap?: ThinkingLevelMap): Model<"openai-completions"> {
 	return {

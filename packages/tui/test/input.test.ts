@@ -1,7 +1,7 @@
 import assert from "node:assert";
 import { describe, it } from "node:test";
 import { Input } from "../src/components/input.ts";
-import { visibleWidth } from "../src/utils.ts";
+import { stripTerminalSequences, visibleWidth } from "../src/utils.ts";
 
 describe("Input component", () => {
 	it("submits value including backslash on Enter", () => {
@@ -35,6 +35,23 @@ describe("Input component", () => {
 	});
 
 	describe("render", () => {
+		it("supports a custom prompt and styled placeholder", () => {
+			const input = new Input({
+				prompt: "",
+				placeholder: "Find transcript",
+				placeholderStyle: (text) => `\x1b[2m${text}\x1b[22m`,
+			});
+			input.focused = true;
+
+			const [empty] = input.render(20);
+			assert.ok(empty?.includes("\x1b[2m"));
+			assert.strictEqual(stripTerminalSequences(empty ?? "").trimEnd(), "Find transcript");
+
+			input.handleInput("n");
+			const [populated] = input.render(20);
+			assert.strictEqual(stripTerminalSequences(populated ?? "").trimEnd(), "n");
+		});
+
 		it("does not overflow with wide CJK and fullwidth text", () => {
 			const width = 93;
 			const cases = [

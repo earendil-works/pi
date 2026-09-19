@@ -1,4 +1,4 @@
-import { Box, Markdown, type MarkdownTheme, Spacer, Text } from "@earendil-works/pi-tui";
+import { Box, Container, Markdown, type MarkdownTheme, MouseRegion, Spacer, Text } from "@earendil-works/pi-tui";
 import type { BranchSummaryMessage } from "../../../core/messages.ts";
 import { getMarkdownTheme, theme } from "../theme/theme.ts";
 import { keyText } from "./keybinding-hints.ts";
@@ -31,20 +31,21 @@ export class BranchSummaryMessageComponent extends Box {
 
 	private updateDisplay(): void {
 		this.clear();
+		const content = new Container();
 
 		const label = theme.fg("customMessageLabel", `\x1b[1m[branch]\x1b[22m`);
-		this.addChild(new Text(label, 0, 0));
-		this.addChild(new Spacer(1));
+		content.addChild(new Text(label, 0, 0));
+		content.addChild(new Spacer(1));
 
 		if (this.expanded) {
 			const header = "**Branch Summary**\n\n";
-			this.addChild(
+			content.addChild(
 				new Markdown(header + this.message.summary, 0, 0, this.markdownTheme, {
 					color: (text: string) => theme.fg("customMessageText", text),
 				}),
 			);
 		} else {
-			this.addChild(
+			content.addChild(
 				new Text(
 					theme.fg("customMessageText", "Branch summary (") +
 						theme.fg("dim", keyText("app.tools.expand")) +
@@ -54,5 +55,13 @@ export class BranchSummaryMessageComponent extends Box {
 				),
 			);
 		}
+
+		this.addChild(
+			new MouseRegion(content, (event) => {
+				if (event.type !== "click" || event.button !== "left") return undefined;
+				this.setExpanded(!this.expanded);
+				return { handled: true };
+			}),
+		);
 	}
 }

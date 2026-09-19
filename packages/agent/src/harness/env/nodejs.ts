@@ -1,12 +1,13 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { constants, createReadStream, createWriteStream, type WriteStream } from "node:fs";
+import { constants, createWriteStream, type WriteStream } from "node:fs";
 import {
 	access,
 	appendFile,
 	lstat,
 	mkdir,
 	mkdtemp,
+	open as openFile,
 	readdir,
 	readFile,
 	realpath,
@@ -14,9 +15,8 @@ import {
 	rm,
 	writeFile,
 } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
+import { homedir, constants as osConstants, tmpdir } from "node:os";
 import { basename, isAbsolute, join, resolve } from "node:path";
-import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import type { Context } from "../context.ts";
 import {
@@ -30,6 +30,8 @@ import {
 	type Result,
 	type ShellExecOptions,
 	type ShellExecResult,
+	type TextLine,
+	type TextLineReader,
 	toError,
 } from "../types.ts";
 import { OutputCapture } from "../utils/output-capture.ts";
@@ -287,11 +289,15 @@ function killProcessTree(pid: number): void {
 	}
 }
 
-function waitForChildProcess(child: ChildProcess, spillIsDraining: () => boolean): Promise<number | null> {
+function waitForChildProcess(
+	child: ChildProcess,
+	spillIsDraining: () => boolean,
+): Promise<{ code: number | null; signal: NodeJS.Signals | null }> {
 	return new Promise((resolvePromise, reject) => {
 		let settled = false;
 		let exited = false;
 		let exitCode: number | null = null;
+		let exitSignal: NodeJS.Signals | null = null;
 		let postExitTimer: ReturnType<typeof setTimeout> | undefined;
 		let stdoutEnded = child.stdout === null;
 		let stderrEnded = child.stderr === null;
@@ -306,22 +312,22 @@ function waitForChildProcess(child: ChildProcess, spillIsDraining: () => boolean
 			child.stdout?.removeListener("data", onData);
 			child.stderr?.removeListener("data", onData);
 		};
-		const finalize = (code: number | null): void => {
+		const finalize = (): void => {
 			if (settled) return;
 			settled = true;
 			cleanup();
 			child.stdout?.destroy();
 			child.stderr?.destroy();
-			resolvePromise(code);
+			resolvePromise({ code: exitCode, signal: exitSignal });
 		};
 		const maybeFinalizeAfterExit = (): void => {
-			if (exited && stdoutEnded && stderrEnded) finalize(exitCode);
+			if (exited && stdoutEnded && stderrEnded) finalize();
 		};
 		const armIdleTimer = (): void => {
 			if (postExitTimer) clearTimeout(postExitTimer);
 			postExitTimer = setTimeout(() => {
 				if (spillIsDraining()) armIdleTimer();
-				else finalize(exitCode);
+				else finalize();
 			}, EXIT_STDIO_GRACE_MS);
 		};
 		const onData = (): void => {
@@ -341,13 +347,18 @@ function waitForChildProcess(child: ChildProcess, spillIsDraining: () => boolean
 			cleanup();
 			reject(error);
 		};
-		const onExit = (code: number | null): void => {
+		const onExit = (code: number | null, signal: NodeJS.Signals | null): void => {
 			exited = true;
 			exitCode = code;
+			exitSignal = signal;
 			maybeFinalizeAfterExit();
 			if (!settled) armIdleTimer();
 		};
-		const onClose = (code: number | null): void => finalize(code);
+		const onClose = (code: number | null, signal: NodeJS.Signals | null): void => {
+			exitCode = code;
+			exitSignal = signal;
+			finalize();
+		};
 
 		child.stdout?.once("end", onStdoutEnd);
 		child.stderr?.once("end", onStderrEnd);
@@ -357,6 +368,71 @@ function waitForChildProcess(child: ChildProcess, spillIsDraining: () => boolean
 		child.once("exit", onExit);
 		child.once("close", onClose);
 	});
+}
+
+/** Strict LF reader; Node readline does not report whether its final line was newline-terminated. */
+class NodeTextLineReader implements TextLineReader {
+	private readonly file: Awaited<ReturnType<typeof openFile>>;
+	private readonly path: string;
+	private readonly decoder = new TextDecoder();
+	private readonly chunk = new Uint8Array(64 * 1024);
+	private byteOffset = 0;
+	private buffered = "";
+	private ended = false;
+	private closed = false;
+
+	constructor(file: Awaited<ReturnType<typeof openFile>>, path: string) {
+		this.file = file;
+		this.path = path;
+	}
+
+	async readLine(context: Context): Promise<Result<TextLine | undefined, FileError>> {
+		const aborted = abortResult<TextLine | undefined>(context.abortSignal, this.path);
+		if (aborted) return aborted;
+		if (this.closed) return err(new FileError("invalid", "Text line reader is closed", this.path));
+
+		try {
+			while (true) {
+				const newline = this.buffered.indexOf("\n");
+				if (newline !== -1) {
+					const text = this.buffered.slice(0, newline);
+					this.buffered = this.buffered.slice(newline + 1);
+					return ok({ text, terminated: true });
+				}
+				if (this.ended) {
+					if (this.buffered.length === 0) return ok(undefined);
+					const text = this.buffered;
+					this.buffered = "";
+					return ok({ text, terminated: false });
+				}
+
+				// Explicit positions allow an aborted read to be retried without skipping bytes.
+				const { bytesRead } = await this.file.read(this.chunk, 0, this.chunk.length, this.byteOffset);
+				const afterReadAbort = abortResult<TextLine | undefined>(context.abortSignal, this.path);
+				if (afterReadAbort) return afterReadAbort;
+				this.byteOffset += bytesRead;
+				if (bytesRead === 0) {
+					this.buffered += this.decoder.decode();
+					this.ended = true;
+				} else {
+					this.buffered += this.decoder.decode(this.chunk.subarray(0, bytesRead), { stream: true });
+				}
+			}
+		} catch (error) {
+			return err(toFileError(error, this.path));
+		}
+	}
+
+	async close(_context: Context): Promise<void> {
+		if (this.closed) return;
+		this.closed = true;
+		this.buffered = "";
+		try {
+			await this.file.close();
+		} catch {
+			// Closing is best-effort, including after cancellation or an earlier I/O failure.
+		}
+	}
 }
 
 export class NodeExecutionEnv implements ExecutionEnv {
@@ -577,7 +653,7 @@ export class NodeExecutionEnv implements ExecutionEnv {
 					spillStart !== undefined &&
 					(spillStream === undefined || spillBackpressured),
 			).then(
-				async (code) => {
+				async ({ code, signal: exitSignal }) => {
 					await finishSpill();
 					try {
 						capture.finish();
@@ -602,9 +678,13 @@ export class NodeExecutionEnv implements ExecutionEnv {
 						return;
 					}
 					const output = capture.snapshot();
+					// A process killed by a signal (e.g. OOM killer) has no exit code; map it
+					// to the conventional 128 + signal number so callers do not mistake it
+					// for a successful exit.
+					const exitCode = code ?? (exitSignal ? 128 + (osConstants.signals[exitSignal] ?? 0) : 1);
 					settle(
 						ok({
-							exitCode: code ?? 0,
+							exitCode,
 							truncation: output.truncation,
 							...(output.spillPath === undefined ? {} : { spillPath: output.spillPath }),
 							...(output.lastLineBytes === undefined ? {} : { lastLineBytes: output.lastLineBytes }),
@@ -614,6 +694,23 @@ export class NodeExecutionEnv implements ExecutionEnv {
 				(error: Error) => settle(err(new ExecutionError("spawn_error", error.message, error))),
 			);
 		});
+	}
+
+	async openTextLineReader(path: string, context: Context): Promise<Result<TextLineReader, FileError>> {
+		const resolved = resolvePath(this.cwd, path);
+		const aborted = abortResult<TextLineReader>(context.abortSignal, resolved);
+		if (aborted) return aborted;
+		try {
+			const file = await openFile(resolved, "r");
+			const afterOpenAbort = abortResult<TextLineReader>(context.abortSignal, resolved);
+			if (afterOpenAbort) {
+				await file.close().catch(() => undefined);
+				return afterOpenAbort;
+			}
+			return ok(new NodeTextLineReader(file, resolved));
+		} catch (error) {
+			return err(toFileError(error, resolved));
+		}
 	}
 
 	async readTextFile(path: string, context: Context): Promise<Result<string, FileError>> {
@@ -633,31 +730,20 @@ export class NodeExecutionEnv implements ExecutionEnv {
 		options: { maxLines?: number } | undefined,
 		context: Context,
 	): Promise<Result<string[], FileError>> {
-		const resolved = resolvePath(this.cwd, path);
-		const signal = context.abortSignal;
-		const aborted = abortResult<string[]>(signal, resolved);
-		if (aborted) return aborted;
 		if (options?.maxLines !== undefined && options.maxLines <= 0) return ok([]);
-		let stream: ReturnType<typeof createReadStream> | undefined;
-		let lineReader: ReturnType<typeof createInterface> | undefined;
+		const opened = await this.openTextLineReader(path, context);
+		if (!opened.ok) return opened;
+		const lines: string[] = [];
 		try {
-			stream = createReadStream(resolved, { encoding: "utf8", signal });
-			lineReader = createInterface({ input: stream, crlfDelay: Infinity });
-			const lines: string[] = [];
-			for await (const line of lineReader) {
-				const loopAbort = abortResult<string[]>(signal, resolved);
-				if (loopAbort) return loopAbort;
-				lines.push(line);
-				if (options?.maxLines !== undefined && lines.length >= options.maxLines) break;
+			while (options?.maxLines === undefined || lines.length < options.maxLines) {
+				const line = await opened.value.readLine(context);
+				if (!line.ok) return line;
+				if (line.value === undefined) break;
+				lines.push(line.value.text);
 			}
-			const afterReadAbort = abortResult<string[]>(signal, resolved);
-			if (afterReadAbort) return afterReadAbort;
 			return ok(lines);
-		} catch (error) {
-			return err(toFileError(error, resolved));
 		} finally {
-			lineReader?.close();
-			stream?.destroy();
+			await opened.value.close(context);
 		}
 	}
 

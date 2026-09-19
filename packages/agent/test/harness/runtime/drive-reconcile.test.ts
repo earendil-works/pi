@@ -92,7 +92,7 @@ function summaryContext(configuration: LaneConfiguration): SummaryContext {
 		resultEntryId: "summary-entry",
 		configuration,
 		streamOptions: {},
-		retryPolicy: { maxAttempts: 2, baseDelayMs: 10 },
+		retryPolicy: { maxAttempts: 2, baseDelayMs: 10, maxAgentDelayMs: 30_000 },
 	};
 }
 
@@ -242,7 +242,7 @@ function cases(fixture: Fixture): InstalledOperation[] {
 		triggerEntryId: "tip",
 		configuration: fixture.configuration,
 		streamOptions: {},
-		retryPolicy: { maxAttempts: 2, baseDelayMs: 10 },
+		retryPolicy: { maxAttempts: 2, baseDelayMs: 10, maxAgentDelayMs: 30_000 },
 		overflowRecoveryUsed: false,
 	};
 	const runTask: SummaryTask = {
@@ -606,7 +606,7 @@ describe("runtime cancellation reconciliation", () => {
 			triggerEntryId: "tip",
 			configuration: fixture.configuration,
 			streamOptions: {},
-			retryPolicy: { maxAttempts: 2, baseDelayMs: 10 },
+			retryPolicy: { maxAttempts: 2, baseDelayMs: 10, maxAgentDelayMs: 30_000 },
 			overflowRecoveryUsed: false,
 		};
 		await installOperation(fixture, {

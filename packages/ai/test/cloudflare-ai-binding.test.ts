@@ -6,6 +6,7 @@ import {
 } from "../src/api/cloudflare-ai-binding.ts";
 import { streamSimple as streamOpenAICompletions } from "../src/api/openai-completions.ts";
 import type { Model } from "../src/types.ts";
+import { normalizeContext } from "../src/utils/transcript.ts";
 
 const BINDING_PREFIX = "https://workers-binding.ai/ai-gateway/gateways/my-gateway";
 
@@ -88,7 +89,7 @@ describe("createAiBindingFetch", () => {
 
 		const result = await streamOpenAICompletions(
 			model,
-			{ messages: [{ role: "user", content: "hello", timestamp: 1 }] },
+			normalizeContext({ messages: [{ role: "user", content: "hello", timestamp: 1 }] }),
 			{
 				headers: {
 					"cf-aig-authorization": `Bearer ${CLOUDFLARE_GATEWAY_BINDING_AUTH_SENTINEL}`,

@@ -1,7 +1,12 @@
-import type { RetryPolicy } from "@earendil-works/pi-ai";
+import { DEFAULT_MAX_AGENT_RETRY_DELAY_MS, type RetryPolicy } from "@earendil-works/pi-ai";
 import type { CompactionSettings } from "./compaction/compaction.ts";
 
-export const DEFAULT_RETRY_POLICY: RetryPolicy = { enabled: true, maxRetries: 3, baseDelayMs: 1_000 };
+export const DEFAULT_RETRY_POLICY: RetryPolicy = {
+	enabled: true,
+	maxRetries: 3,
+	baseDelayMs: 1_000,
+	maxAgentDelayMs: DEFAULT_MAX_AGENT_RETRY_DELAY_MS,
+};
 
 export function validateToolNames(tools: readonly { name: string }[]): void {
 	const names = new Set<string>();
@@ -17,7 +22,9 @@ export function validateRetryPolicy(policy: RetryPolicy): void {
 		policy.maxRetries < 0 ||
 		policy.maxRetries === Number.MAX_SAFE_INTEGER ||
 		!Number.isSafeInteger(policy.baseDelayMs) ||
-		policy.baseDelayMs < 0
+		policy.baseDelayMs < 0 ||
+		(policy.maxAgentDelayMs !== undefined &&
+			(!Number.isSafeInteger(policy.maxAgentDelayMs) || policy.maxAgentDelayMs < 0))
 	) {
 		throw new RangeError("Retry policy values must be finite non-negative safe integers");
 	}

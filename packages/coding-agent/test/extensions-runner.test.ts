@@ -8,11 +8,18 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
-import { createExtensionRuntime, discoverAndLoadExtensions, loadExtensions } from "../src/core/extensions/loader.ts";
+import { createEventBus } from "../src/core/event-bus.ts";
+import {
+	createExtensionRuntime,
+	discoverAndLoadExtensions,
+	loadExtensionFromFactory,
+	loadExtensions,
+} from "../src/core/extensions/loader.ts";
 import { ExtensionRunner, emitProjectTrustEvent } from "../src/core/extensions/runner.ts";
 import type {
 	ExtensionActions,
 	ExtensionContextActions,
+	ExtensionFactory,
 	ExtensionUIContext,
 	ProviderConfig,
 } from "../src/core/extensions/types.ts";
@@ -20,6 +27,7 @@ import { KeybindingsManager, type KeyId } from "../src/core/keybindings.ts";
 import type { ModelRegistry } from "../src/core/model-registry.ts";
 import type { ScopedModel } from "../src/core/model-resolver.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
+import { buildSystemPrompt } from "../src/core/system-prompt.ts";
 
 describe("ExtensionRunner", () => {
 	let tempDir: string;
@@ -390,6 +398,32 @@ describe("ExtensionRunner", () => {
 			expect(tools.map((t) => t.definition.name).sort()).toEqual(["tool_a", "tool_b"]);
 		});
 
+		// Regression test for #9300.
+		it("rejects extension tools without a parameter schema", async () => {
+			const extensionPath = path.join(extensionsDir, "missing-parameters.js");
+			fs.writeFileSync(
+				extensionPath,
+				`export default function(pi) {
+	pi.registerTool({
+		name: "noop",
+		label: "No-op",
+		description: "Do nothing",
+		execute: async () => ({ content: [{ type: "text", text: "ok" }] }),
+	});
+}`,
+			);
+
+			const result = await loadExtensions([extensionPath], tempDir);
+
+			expect(result.extensions).toHaveLength(0);
+			expect(result.errors).toEqual([
+				{
+					path: extensionPath,
+					error: `Failed to load extension: Tool "noop" registered by extension "${extensionPath}" must define an object parameter schema.`,
+				},
+			]);
+		});
+
 		it("keeps first tool when two extensions register the same name", async () => {
 			const first = `
 				import { Type } from "typebox";
@@ -590,6 +624,84 @@ describe("ExtensionRunner", () => {
 			expect(errors[0].error).toContain("Handler error!");
 			expect(errors[0].event).toBe("context");
 		});
+
+		// Regression test for #9068.
+		it("fails closed when a user_bash handler throws", async () => {
+			const extCode = `
+				export default function(pi) {
+					pi.on("user_bash", async () => {
+						throw new Error("Routing failed");
+					});
+				}
+			`;
+			fs.writeFileSync(path.join(extensionsDir, "throws.ts"), extCode);
+
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			const errors: Array<{ event: string; error: string }> = [];
+			runner.onError((error) => errors.push(error));
+
+			await expect(
+				runner.emitUserBash({ type: "user_bash", command: "pwd", excludeFromContext: false, cwd: tempDir }),
+			).rejects.toThrow("Routing failed");
+			expect(errors).toMatchObject([{ event: "user_bash", error: "Routing failed" }]);
+		});
+
+		// Regression test for #9068.
+		it.each([
+			["an empty object", "{}"],
+			["null operations", "{ operations: null }"],
+			["operations without exec", "{ operations: {} }"],
+			["a null result", "{ result: null }"],
+			["an incomplete result", '{ result: { output: "handled" } }'],
+			[
+				"operations and a result",
+				'{ operations: { exec: async () => ({ exitCode: 0 }) }, result: { output: "handled", exitCode: 0, cancelled: false, truncated: false } }',
+			],
+		])("fails closed when a user_bash handler returns %s", async (_description, handlerResult) => {
+			const extCode = `
+				export default function(pi) {
+					pi.on("user_bash", async () => (${handlerResult}));
+				}
+			`;
+			fs.writeFileSync(path.join(extensionsDir, "invalid-result.ts"), extCode);
+
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			const errors: Array<{ event: string; error: string }> = [];
+			runner.onError((error) => errors.push(error));
+
+			await expect(
+				runner.emitUserBash({ type: "user_bash", command: "pwd", excludeFromContext: false, cwd: tempDir }),
+			).rejects.toThrow("Invalid user_bash handler result");
+			expect(errors).toMatchObject([
+				{ event: "user_bash", error: expect.stringContaining("Invalid user_bash handler result") },
+			]);
+		});
+
+		it("accepts valid user_bash operations and result overrides", async () => {
+			const extCode = `
+				export default function(pi) {
+					pi.on("user_bash", async (event) => {
+						if (event.command === "operations") {
+							return { operations: { exec: async () => ({ exitCode: 0 }) } };
+						}
+						return { result: { output: "handled", exitCode: 0, cancelled: false, truncated: false } };
+					});
+				}
+			`;
+			fs.writeFileSync(path.join(extensionsDir, "valid-results.ts"), extCode);
+
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			const event = { type: "user_bash" as const, excludeFromContext: false, cwd: tempDir };
+
+			const operations = await runner.emitUserBash({ ...event, command: "operations" });
+			expect(operations).toEqual({ operations: { exec: expect.any(Function) } });
+			await expect(runner.emitUserBash({ ...event, command: "result" })).resolves.toEqual({
+				result: { output: "handled", exitCode: 0, cancelled: false, truncated: false },
+			});
+		});
 	});
 
 	describe("message and entry renderers", () => {
@@ -764,16 +876,14 @@ describe("ExtensionRunner", () => {
 			runner.onError((error) => errors.push(error.error));
 			runner.bindCore(extensionActions, extensionContextActions);
 
-			const chained = await runner.emitBeforeAgentStart("hello", undefined, "base", {
+			const chained = await runner.emitBeforeAgentStart("hello", undefined, {
 				cwd: tempDir,
+				customPrompt: "base",
 			});
 
 			expect(errors).toEqual([]);
-
-			expect(chained).toEqual({
-				messages: undefined,
-				systemPrompt: "base\nfirst\nsecond",
-			});
+			expect(chained.messages).toEqual([]);
+			expect(buildSystemPrompt(chained.systemPromptOptions)).toMatch(/base[\s\S]*\nfirst\nsecond$/);
 		});
 	});
 
@@ -962,6 +1072,127 @@ describe("ExtensionRunner", () => {
 
 			await commandContext.fork("entry-2", { position: "at" });
 			expect(fork).toHaveBeenLastCalledWith("entry-2", { position: "at" });
+		});
+	});
+
+	// #8967: event handler unsubscription must not disturb other registrations.
+	describe("event subscriptions", () => {
+		async function loadSubscriptionExtension(factory: ExtensionFactory) {
+			const runtime = createExtensionRuntime();
+			const extension = await loadExtensionFromFactory(factory, tempDir, createEventBus(), runtime);
+			const runner = new ExtensionRunner([extension], runtime, tempDir, sessionManager, modelRegistry);
+			return { extension, runner };
+		}
+
+		it("allows self-removal without skipping neighboring handlers", async () => {
+			const calls: string[] = [];
+			const { runner } = await loadSubscriptionExtension((pi) => {
+				const unsubscribe = pi.on("agent_end", () => {
+					calls.push("A");
+					unsubscribe();
+				});
+				pi.on("agent_end", () => {
+					calls.push("B");
+				});
+			});
+
+			await runner.emit({ type: "agent_end", messages: [] });
+			expect(calls).toEqual(["A", "B"]);
+
+			await runner.emit({ type: "agent_end", messages: [] });
+			expect(calls).toEqual(["A", "B", "B"]);
+		});
+
+		it("removes duplicate registrations independently and cleans up the last handler", async () => {
+			const calls: string[] = [];
+			const unsubscribers: Array<() => void> = [];
+			const { extension, runner } = await loadSubscriptionExtension((pi) => {
+				const shared = () => {
+					calls.push("shared");
+				};
+				unsubscribers.push(pi.on("agent_end", shared));
+				unsubscribers.push(
+					pi.on("agent_end", () => {
+						calls.push("B");
+					}),
+				);
+				unsubscribers.push(pi.on("agent_end", shared));
+			});
+			const [stopFirst, stopB, stopSecond] = unsubscribers;
+
+			stopSecond();
+			stopSecond();
+			await runner.emit({ type: "agent_end", messages: [] });
+			expect(calls).toEqual(["shared", "B"]);
+
+			stopFirst();
+			await runner.emit({ type: "agent_end", messages: [] });
+			expect(calls).toEqual(["shared", "B", "B"]);
+
+			stopB();
+			expect(extension.handlers.has("agent_end")).toBe(false);
+		});
+
+		it("keeps removed pending handlers in the current dispatch", async () => {
+			const calls: string[] = [];
+			const { runner } = await loadSubscriptionExtension((pi) => {
+				pi.on("agent_end", () => {
+					calls.push("A");
+					stopB();
+				});
+				const stopB = pi.on("agent_end", () => {
+					calls.push("B");
+				});
+				pi.on("agent_end", () => {
+					calls.push("C");
+				});
+			});
+
+			await runner.emit({ type: "agent_end", messages: [] });
+			expect(calls).toEqual(["A", "B", "C"]);
+			await runner.emit({ type: "agent_end", messages: [] });
+			expect(calls).toEqual(["A", "B", "C", "A", "C"]);
+		});
+
+		it("defers registrations made during dispatch until the next dispatch", async () => {
+			const calls: string[] = [];
+			const { runner } = await loadSubscriptionExtension((pi) => {
+				pi.on("agent_end", () => {
+					calls.push("A");
+					pi.on("agent_end", () => {
+						calls.push("C");
+					});
+				});
+				pi.on("agent_end", () => {
+					calls.push("B");
+				});
+			});
+
+			await runner.emit({ type: "agent_end", messages: [] });
+			expect(calls).toEqual(["A", "B"]);
+			await runner.emit({ type: "agent_end", messages: [] });
+			expect(calls).toEqual(["A", "B", "A", "B", "C"]);
+		});
+
+		it("uses a fresh handler list for nested dispatches", async () => {
+			const calls: string[] = [];
+			const { runner } = await loadSubscriptionExtension((pi) => {
+				const stopA = pi.on("agent_end", async () => {
+					calls.push("A");
+					stopA();
+					stopB();
+					pi.on("agent_end", () => {
+						calls.push("C");
+					});
+					await runner.emit({ type: "agent_end", messages: [] });
+				});
+				const stopB = pi.on("agent_end", () => {
+					calls.push("B");
+				});
+			});
+
+			await runner.emit({ type: "agent_end", messages: [] });
+			expect(calls).toEqual(["A", "C", "B"]);
 		});
 	});
 

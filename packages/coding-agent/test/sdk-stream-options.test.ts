@@ -6,6 +6,7 @@ import {
 	type AssistantMessage,
 	createAssistantMessageEventStream,
 	type Model,
+	normalizeContext,
 	type SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -13,7 +14,6 @@ import { AuthStorage } from "../src/core/auth-storage.ts";
 import { createAgentSession } from "../src/core/sdk.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 import { type Settings, SettingsManager } from "../src/core/settings-manager.ts";
-
 import { createModelRegistry, getModelRuntime } from "./model-runtime-test-utils.ts";
 
 describe("createAgentSession stream options", () => {
@@ -51,9 +51,8 @@ describe("createAgentSession stream options", () => {
 		};
 	}
 
-	function createDoneStream(api: Api) {
-		const stream = createAssistantMessageEventStream();
-		const message: AssistantMessage = {
+	function createDoneMessage(api: Api, promptTokens = 0): AssistantMessage {
+		return {
 			role: "assistant",
 			content: [{ type: "text", text: "ok" }],
 			api,
@@ -62,15 +61,19 @@ describe("createAgentSession stream options", () => {
 			usage: {
 				input: 0,
 				output: 0,
-				cacheRead: 0,
+				cacheRead: promptTokens,
 				cacheWrite: 0,
-				totalTokens: 0,
+				totalTokens: promptTokens,
 				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 			},
 			stopReason: "stop",
 			timestamp: Date.now(),
 		};
-		stream.end(message);
+	}
+
+	function createDoneStream(api: Api, promptTokens = 0) {
+		const stream = createAssistantMessageEventStream();
+		stream.end(createDoneMessage(api, promptTokens));
 		return stream;
 	}
 
@@ -114,7 +117,7 @@ describe("createAgentSession stream options", () => {
 		});
 
 		try {
-			const stream = await session.agent.streamFunction(model, { messages: [] }, requestOptions);
+			const stream = await session.agent.streamFunction(model, normalizeContext({ messages: [] }), requestOptions);
 			await stream.result();
 			return capturedOptions;
 		} finally {
@@ -122,6 +125,80 @@ describe("createAgentSession stream options", () => {
 			modelRegistry.unregisterProvider(model.provider);
 		}
 	}
+
+	async function createCacheWarmingSession(populate?: (manager: SessionManager, model: Model<Api>) => void) {
+		const model: Model<Api> = {
+			...createModel("anthropic-messages"),
+			cost: { input: 10, output: 50, cacheRead: 0.25, cacheWrite: 12.5 },
+			promptCache: { short: 300 },
+		};
+		const authStorage = AuthStorage.create(join(agentDir, "auth.json"));
+		await authStorage.modify(model.provider, async () => ({ type: "api_key", key: "test-api-key" }));
+		const modelRegistry = await createModelRegistry(authStorage, join(agentDir, "models.json"));
+		let providerCalls = 0;
+		modelRegistry.registerProvider(model.provider, {
+			api: model.api,
+			streamSimple: () => {
+				providerCalls++;
+				return createDoneStream(model.api, 100_000);
+			},
+		});
+		const sessionManager = SessionManager.inMemory(cwd);
+		populate?.(sessionManager, model);
+		const { session } = await createAgentSession({
+			cwd,
+			agentDir,
+			model,
+			modelRuntime: getModelRuntime(modelRegistry),
+			settingsManager: SettingsManager.inMemory({ cacheWarming: "idle" }),
+			sessionManager,
+		});
+		return {
+			session,
+			providerCalls: () => providerCalls,
+			dispose: () => {
+				session.dispose();
+				modelRegistry.unregisterProvider(model.provider);
+			},
+		};
+	}
+
+	it("schedules cache warming after a completed session request", async () => {
+		const fixture = await createCacheWarmingSession();
+		try {
+			await fixture.session.prompt("test");
+			expect(fixture.session.cacheWarmingStatus?.nextWarmAt).toBeGreaterThan(Date.now());
+
+			// Equivalent shallow copies remain current, but removing the request prefix does not.
+			fixture.session.agent.state.messages = [...fixture.session.agent.state.messages];
+			fixture.session.agent.state.model = { ...fixture.session.agent.state.model };
+			expect(fixture.session.cacheWarmingStatus?.nextWarmAt).toBeGreaterThan(Date.now());
+			fixture.session.agent.state.messages = fixture.session.agent.state.messages.slice(1);
+			expect(fixture.session.cacheWarmingStatus?.reason).toBe("conversation context changed");
+		} finally {
+			fixture.dispose();
+		}
+	});
+
+	it("waits for the next request instead of restoring cache warming", async () => {
+		const fixture = await createCacheWarmingSession((manager, model) => {
+			manager.appendModelChange(model.provider, model.id);
+			manager.appendThinkingLevelChange("off");
+			manager.appendMessage({ role: "user", content: "test", timestamp: Date.now() - 60_000 });
+			const assistant = { ...createDoneMessage(model.api, 100_000), timestamp: Date.now() - 59_000 };
+			manager.appendMessage(assistant);
+			manager.appendUsage("cache_warm", model.provider, model.id, assistant.usage);
+		});
+		try {
+			expect(fixture.providerCalls()).toBe(0);
+			expect(fixture.session.cacheWarmingStatus).toEqual({
+				state: "inactive",
+				reason: "waiting for first request",
+			});
+		} finally {
+			fixture.dispose();
+		}
+	});
 
 	it("forwards httpIdleTimeoutMs as timeoutMs for OpenAI Codex", async () => {
 		const options = await captureStreamOptions("openai-codex-responses", { httpIdleTimeoutMs: 1234 });

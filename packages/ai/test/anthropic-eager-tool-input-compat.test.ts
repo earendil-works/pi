@@ -4,6 +4,7 @@ import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
 import { stream as streamAnthropic } from "../src/api/anthropic-messages.ts";
 import type { Context, Model, Tool } from "../src/types.ts";
+import { normalizeContext } from "../src/utils/transcript.ts";
 
 interface CapturedRequest {
 	headers: IncomingMessage["headers"];
@@ -84,10 +85,14 @@ async function captureAnthropicRequest(
 	const address = server.address() as AddressInfo;
 
 	try {
-		const stream = streamAnthropic(createModel(`http://127.0.0.1:${address.port}`, compat), context, {
-			apiKey: "test-key",
-			cacheRetention: "none",
-		});
+		const stream = streamAnthropic(
+			createModel(`http://127.0.0.1:${address.port}`, compat),
+			normalizeContext(context),
+			{
+				apiKey: "test-key",
+				cacheRetention: "none",
+			},
+		);
 
 		for await (const event of stream) {
 			if (event.type === "done" || event.type === "error") break;

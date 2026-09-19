@@ -5,10 +5,10 @@ Sessions are stored as JSONL (JSON Lines) files. Each line is a JSON object with
 ## File Location
 
 ```
-~/.pi/agent/sessions/--<path>--/<timestamp>_<uuid>.jsonl
+~/.pi/agent/sessions/--<path>--/<timestamp>_<session-id>.jsonl
 ```
 
-Where `<path>` is the working directory with `/` replaced by `-`.
+By default, `<session-id>` is a UUID. Callers can supply a custom ID through the SDK or `--session-id`. For `<path>`, Pi removes the leading path separator and replaces `/`, `\\`, and `:` with `-`.
 
 ## Deleting Sessions
 
@@ -28,11 +28,11 @@ Existing sessions are automatically migrated to the current version (v3) when lo
 
 ## Source Files
 
-Source on GitHub ([pi-mono](https://github.com/earendil-works/pi-mono)):
-- [`packages/coding-agent/src/core/session-manager.ts`](https://github.com/earendil-works/pi-mono/blob/main/packages/coding-agent/src/core/session-manager.ts) - Session entry types and SessionManager
-- [`packages/coding-agent/src/core/messages.ts`](https://github.com/earendil-works/pi-mono/blob/main/packages/coding-agent/src/core/messages.ts) - Extended message types (BashExecutionMessage, CustomMessage, etc.)
-- [`packages/ai/src/types.ts`](https://github.com/earendil-works/pi-mono/blob/main/packages/ai/src/types.ts) - Base message types (UserMessage, AssistantMessage, ToolResultMessage)
-- [`packages/agent/src/types.ts`](https://github.com/earendil-works/pi-mono/blob/main/packages/agent/src/types.ts) - AgentMessage union type
+Source on GitHub ([pi](https://github.com/earendil-works/pi)):
+- [`packages/coding-agent/src/core/session-manager.ts`](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/src/core/session-manager.ts) - Session entry types and SessionManager
+- [`packages/coding-agent/src/core/messages.ts`](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/src/core/messages.ts) - Extended message types (BashExecutionMessage, CustomMessage, etc.)
+- [`packages/ai/src/types.ts`](https://github.com/earendil-works/pi/blob/main/packages/ai/src/types.ts) - Base message types (UserMessage, AssistantMessage, ToolResultMessage)
+- [`packages/agent/src/types.ts`](https://github.com/earendil-works/pi/blob/main/packages/agent/src/types.ts) - AgentMessage union type
 
 For TypeScript definitions in your project, inspect `node_modules/@earendil-works/pi-coding-agent/dist/` and `node_modules/@earendil-works/pi-ai/dist/`.
 
@@ -48,6 +48,7 @@ Messages contain arrays of typed content blocks:
 interface TextContent {
   type: "text";
   text: string;
+  textSignature?: string;
 }
 
 interface ImageContent {
@@ -59,6 +60,8 @@ interface ImageContent {
 interface ThinkingContent {
   type: "thinking";
   thinking: string;
+  thinkingSignature?: string;
+  redacted?: boolean;
 }
 
 interface ToolCall {
@@ -66,12 +69,22 @@ interface ToolCall {
   id: string;
   name: string;
   arguments: Record<string, any>;
+  thoughtSignature?: string;
+  namespace?: string;
 }
 ```
 
 ### Base Message Types (from pi-ai)
 
 ```typescript
+interface SystemMessage {
+  role: "system";
+  content: string | TextContent[];
+  toolsAdded?: Tool[];
+  toolsRemoved?: Array<{ name: string }>;
+  timestamp: number;  // Unix ms
+}
+
 interface UserMessage {
   role: "user";
   content: string | (TextContent | ImageContent)[];
@@ -84,9 +97,16 @@ interface AssistantMessage {
   api: string;
   provider: string;
   model: string;
+  responseModel?: string;
+  responseId?: string;
+  providerThinkingLevel?: string;
+  diagnostics?: AssistantMessageDiagnostic[];
   usage: Usage;
-  stopReason: "stop" | "length" | "toolUse" | "error" | "aborted";
+  stopReason: "pending" | "stop" | "length" | "toolUse" | "error" | "aborted" | "deferred";
+  deferred?: DeferredHandle;
   errorMessage?: string;
+  rawStopReason?: string;
+  endTurn?: boolean;
   timestamp: number;
 }
 
@@ -106,6 +126,8 @@ interface Usage {
   output: number;
   cacheRead: number;
   cacheWrite: number;
+  cacheWrite1h?: number;
+  reasoning?: number;
   totalTokens: number;
   cost: {
     input: number;
@@ -117,7 +139,7 @@ interface Usage {
 }
 ```
 
-The exported pi-ai `StopReason` type also includes `"pending"`, but that value is reserved for partial messages in streaming events. Terminal `done`/`error` messages replace it with a completion reason before pi persists the assistant message, so `"pending"` should never appear in session JSONL.
+`"pending"` is reserved for partial messages in streaming events. Terminal events replace it with a completion reason before Pi persists the assistant message, so `"pending"` should never appear in session JSONL. `"deferred"` is a terminal reason for a provider response that will complete later; its `deferred` handle contains the provider data needed to retrieve that response.
 
 ### Extended Message Types (from pi-coding-agent)
 
@@ -146,7 +168,7 @@ interface CustomMessage {
 interface BranchSummaryMessage {
   role: "branchSummary";
   summary: string;
-  fromId: string;                // Entry we branched from
+  fromId: string | null;         // Previous leaf whose abandoned path was summarized
   timestamp: number;
 }
 
@@ -162,6 +184,7 @@ interface CompactionSummaryMessage {
 
 ```typescript
 type AgentMessage =
+  | SystemMessage
   | UserMessage
   | AssistantMessage
   | ToolResultMessage
@@ -178,8 +201,8 @@ All entries (except `SessionHeader`) extend `SessionEntryBase`:
 ```typescript
 interface SessionEntryBase {
   type: string;
-  id: string;           // 8-char hex ID
-  parentId: string | null;  // Parent entry ID (null for first entry)
+  id: string;           // Usually an 8-char hex ID; may fall back to a full UUID
+  parentId: string | null;  // Parent entry ID (null for a root entry)
   timestamp: string;    // ISO timestamp
 }
 ```
@@ -202,12 +225,19 @@ For sessions with a parent (created via `/fork`, `/clone`, or `newSession({ pare
 
 ### SessionMessageEntry
 
-A message in the conversation. The `message` field contains an `AgentMessage`.
+A message in the conversation. The `message` field contains an `AgentMessage`. System messages carry the prompt and tool loadout: the first request of a session persists one with every prompt section and tool declaration, and later changes persist as system messages that patch `sections` by name (`null` removes one) and list `toolsAdded`/`toolsRemoved`. Replaying them in order yields the current prompt and tools; there is no separate prompt state entry.
 
 ```json
-{"type":"message","id":"a1b2c3d4","parentId":"prev1234","timestamp":"2024-12-03T14:00:01.000Z","message":{"role":"user","content":"Hello"}}
-{"type":"message","id":"b2c3d4e5","parentId":"a1b2c3d4","timestamp":"2024-12-03T14:00:02.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Hi!"}],"provider":"anthropic","model":"claude-sonnet-4-5","usage":{...},"stopReason":"stop"}}
-{"type":"message","id":"c3d4e5f6","parentId":"b2c3d4e5","timestamp":"2024-12-03T14:00:03.000Z","message":{"role":"toolResult","toolCallId":"call_123","toolName":"bash","content":[{"type":"text","text":"output"}],"isError":false}}
+{"type":"message","id":"a0b1c2d3","parentId":null,"timestamp":"2024-12-03T14:00:00.000Z","message":{"role":"system","content":"","sections":{"preamble":"You are an expert coding assistant...","tools":"<tools>\n- read: ...\n</tools>","cwd":"/project"},"toolsAdded":[{"name":"read","description":"...","parameters":{}}],"timestamp":1733234400000}}
+{"type":"message","id":"d4e5f6g7","parentId":"c3d4e5f6","timestamp":"2024-12-03T14:04:00.000Z","message":{"role":"system","content":"","sections":{"skills":"<skills>...</skills>"},"toolsRemoved":[{"name":"write"}],"timestamp":1733234640000}}
+```
+
+Sessions created before system messages existed have no leading system message; the first request declares the current prompt as a later system message, which replays the same way.
+
+```json
+{"type":"message","id":"a1b2c3d4","parentId":"prev1234","timestamp":"2024-12-03T14:00:01.000Z","message":{"role":"user","content":"Hello","timestamp":1733234401000}}
+{"type":"message","id":"b2c3d4e5","parentId":"a1b2c3d4","timestamp":"2024-12-03T14:00:02.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Hi!"}],"api":"anthropic-messages","provider":"anthropic","model":"claude-sonnet-4-5","usage":{...},"stopReason":"stop","timestamp":1733234402000}}
+{"type":"message","id":"c3d4e5f6","parentId":"b2c3d4e5","timestamp":"2024-12-03T14:00:03.000Z","message":{"role":"toolResult","toolCallId":"call_123","toolName":"bash","content":[{"type":"text","text":"output"}],"isError":false,"timestamp":1733234403000}}
 ```
 
 ### ModelChangeEntry
@@ -226,26 +256,31 @@ Emitted when the user changes the thinking/reasoning level.
 {"type":"thinking_level_change","id":"e5f6g7h8","parentId":"d4e5f6g7","timestamp":"2024-12-03T14:06:00.000Z","thinkingLevel":"high"}
 ```
 
+### UsageEntry
+
+Records model-attributed usage that is not an assistant message and does not participate in LLM context. `kind` is an arbitrary string identifying the operation; for example, cache warming uses `"cache_warm"`.
+
+```json
+{"type":"usage","id":"f6g7h8i9","parentId":"e5f6g7h8","timestamp":"2024-12-03T14:08:00.000Z","kind":"cache_warm","provider":"anthropic","model":"claude-sonnet-4-5","usage":{"input":0,"output":0,"cacheRead":50000,"cacheWrite":0,"totalTokens":50000,"cost":{"input":0,"output":0,"cacheRead":0.015,"cacheWrite":0,"total":0.015}}}
+```
+
+Usage entries contribute to session token and cost totals. Pi hides them from the conversation tree. Consumers should treat unknown `kind` values as normal usage rather than rejecting them.
+
 ### CompactionEntry
 
-Created when context is compacted. Stores a summary of earlier messages.
+Created when context is compacted. Stores a summary of earlier messages and a complete system prompt/tool checkpoint.
 
 ```json
-{"type":"compaction","id":"f6g7h8i9","parentId":"e5f6g7h8","timestamp":"2024-12-03T14:10:00.000Z","summary":"User discussed X, Y, Z...","firstKeptEntryId":"c3d4e5f6","tokensBefore":50000}
+{"type":"compaction","id":"f6g7h8i9","parentId":"e5f6g7h8","timestamp":"2024-12-03T14:10:00.000Z","summary":"User discussed X, Y, Z...","firstKeptEntryId":"c3d4e5f6","tokensBefore":50000,"systemMessage":{"role":"system","content":"You are a coding assistant.","toolsAdded":[],"timestamp":1733235000000}}
 ```
 
-Newer harness-generated compactions embed the retained post-compaction context directly on the entry, instead of `firstKeptEntryId`:
-
-```json
-{"type":"compaction","id":"f6g7h8i9","parentId":"e5f6g7h8","timestamp":"2024-12-03T14:10:00.000Z","summary":"User discussed X, Y, Z...","tokensBefore":50000,"retainedTail":[{"role":"user","content":"latest request"},{"role":"assistant","content":[{"type":"text","text":"latest reply"}],"provider":"anthropic","model":"claude-sonnet-4-5","usage":{...},"stopReason":"stop"}]}
-```
+`firstKeptEntryId` is required. It identifies the first entry retained from before the compaction entry. When rebuilding context, Pi replaces older summarized entries with the compaction summary and keeps the range beginning at this entry.
 
 Optional fields:
+- `systemMessage`: The replayed prompt sections and tool declarations at the compaction boundary; it becomes the leading system message of the compacted context, and system messages among the kept entries are dropped in its favor. It is absent on older session entries.
 - `usage`: LLM usage from generating the summary; included in session token and cost totals
-- `retainedTail`: Materialized `AgentMessage[]` kept after compaction. This is optional only for backward compatibility with older sessions. Newer harness-generated compactions include it so we can rebuild context from this checkpoint without walking older entries before the compaction entry.
 - `details`: Implementation-specific data (e.g., `{ readFiles: string[], modifiedFiles: string[] }` for default, or custom data for extensions)
 - `fromHook`: `true` if generated by an extension, `false`/`undefined` if pi-generated (legacy field name)
-- `firstKeptEntryId`: for compatibility with old entry format.
 
 ### BranchSummaryEntry
 
@@ -254,6 +289,8 @@ Created when switching branches via `/tree` with an LLM generated summary of the
 ```json
 {"type":"branch_summary","id":"g7h8i9j0","parentId":"a1b2c3d4","timestamp":"2024-12-03T14:15:00.000Z","fromId":"f6g7h8i9","summary":"Branch explored approach A..."}
 ```
+
+`parentId` is the entry from which the new branch continues. `fromId` is the previous leaf whose abandoned path was summarized.
 
 Optional fields:
 - `usage`: LLM usage from generating the summary; included in session token and cost totals
@@ -305,11 +342,12 @@ The session name is displayed in the session selector (`/resume`) instead of the
 
 ## Tree Structure
 
-Entries form a tree:
-- First entry has `parentId: null`
-- Each subsequent entry points to its parent via `parentId`
+Entries normally form one tree, but navigation APIs can create multiple roots:
+- A root entry has `parentId: null`; the first entry is initially the root
+- Each non-root entry points to its parent via `parentId`
 - Branching creates new children from an earlier entry
 - The "leaf" is the current position in the tree
+- Calling `resetLeaf()` or `branchWithSummary(null, ...)` allows a later entry to become another root
 
 ```
 [user msg] ─── [assistant] ─── [user msg] ─── [assistant] ─┬─ [user msg] ← current leaf
@@ -322,11 +360,10 @@ Entries form a tree:
 `buildContextEntries()` walks from the current leaf to the root, producing the active entry list while honoring compaction:
 
 1. Collects all entries on the path
-2. If a `CompactionEntry` is on the path:
+2. If one or more `CompactionEntry` values are on the path, uses the latest one:
    - Includes the compaction entry first
-   - If `retainedTail` is present, it acts as a self-contained checkpoint and entries after the compaction are included
-   - Otherwise entries from `firstKeptEntryId` to the compaction are included
-   - Then entries after compaction are included
+   - Includes non-system entries from `firstKeptEntryId` up to, but not including, the compaction entry
+   - Includes entries after the compaction entry
 3. Preserves non-message entries in the selected range so interactive mode can render them
 
 `buildSessionContext()` builds on that entry list to produce the message list for the LLM:
@@ -334,12 +371,12 @@ Entries form a tree:
 1. Extracts current model and thinking level settings from the full path
 2. Converts selected entries to messages:
    - `message` -> stored `AgentMessage`
-   - `compaction` -> `compactionSummary` plus `retainedTail` when present
+   - `compaction` -> complete system checkpoint followed by `compactionSummary`
    - `branch_summary` -> `branchSummary`
    - `custom_message` -> `CustomMessage`
-   - `custom` -> no context message
+   - `usage` and `custom` -> no context message
 
-This makes newer compactions act like self-contained checkpoints. `retainedTail` is optional only so older sessions that only store `firstKeptEntryId` continue to load correctly.
+The compaction summary replaces entries before `firstKeptEntryId`. Pre-compaction system messages are folded into the complete checkpoint rather than replayed from the retained range. Retained non-system entries and all entries after the compaction remain available to the LLM.
 
 ## Parsing Example
 
@@ -363,6 +400,9 @@ for (const line of lines) {
       break;
     case "branch_summary":
       console.log(`[${entry.id}] Branch from ${entry.fromId}`);
+      break;
+    case "usage":
+      console.log(`[${entry.id}] Usage (${entry.kind}): ${entry.usage.totalTokens} tokens`);
       break;
     case "custom":
       console.log(`[${entry.id}] Custom (${entry.customType}): ${JSON.stringify(entry.data)}`);
@@ -388,18 +428,19 @@ for (const line of lines) {
 Key methods for working with sessions programmatically.
 
 ### Static Creation Methods
-- `SessionManager.create(cwd, sessionDir?)` - New session
-- `SessionManager.open(path, sessionDir?)` - Open existing session file
+- `SessionManager.create(cwd, sessionDir?, options?)` - New session; `options` can set `id` and `parentSession`
+- `SessionManager.open(path, sessionDir?, cwdOverride?)` - Open existing session file
 - `SessionManager.continueRecent(cwd, sessionDir?)` - Continue most recent or create new
-- `SessionManager.inMemory(cwd?)` - No file persistence
-- `SessionManager.forkFrom(sourcePath, targetCwd, sessionDir?)` - Fork session from another project
+- `SessionManager.inMemory(cwd?, options?, entries?)` - No file persistence, optionally initialized from entries
+- `SessionManager.forkFrom(sourcePath, targetCwd, sessionDir?, options?)` - Fork session from another project
 
 ### Static Listing Methods
 - `SessionManager.list(cwd, sessionDir?, onProgress?)` - List sessions for a directory
 - `SessionManager.listAll(onProgress?)` - List all sessions across all projects
+- `SessionManager.listAll(sessionDir?, onProgress?)` - List sessions from a custom session root
 
 ### Instance Methods - Session Management
-- `newSession(options?)` - Start a new session (options: `{ parentSession?: string }`)
+- `newSession(options?)` - Start a new session (options: `{ id?: string, parentSession?: string }`)
 - `setSessionFile(path)` - Switch to a different session file
 - `createBranchedSession(leafId)` - Extract branch to new session file
 
@@ -407,7 +448,8 @@ Key methods for working with sessions programmatically.
 - `appendMessage(message)` - Add message
 - `appendThinkingLevelChange(level)` - Record thinking change
 - `appendModelChange(provider, modelId)` - Record model change
-- `appendCompaction(summary, firstKeptEntryId, tokensBefore, details?, fromHook?)` - Add compaction
+- `appendUsage(kind, provider, model, usage)` - Record model-attributed usage outside the conversation
+- `appendCompaction(summary, firstKeptEntryId, tokensBefore, details?, fromHook?, usage?)` - Add compaction
 - `appendCustomEntry(customType, data?)` - Extension state (not in context)
 - `appendSessionInfo(name)` - Set session display name
 - `appendCustomMessageEntry(customType, content, display, details?)` - Extension message (in context)
@@ -423,7 +465,7 @@ Key methods for working with sessions programmatically.
 - `getLabel(id)` - Get label for entry
 - `branch(entryId)` - Move leaf to earlier entry
 - `resetLeaf()` - Reset leaf to null (before any entries)
-- `branchWithSummary(entryId, summary, details?, fromHook?)` - Branch with context summary
+- `branchWithSummary(entryId, summary, details?, fromHook?, usage?)` - Branch with context summary; `entryId` may be `null` to branch from the root
 
 ### Instance Methods - Context & Info
 - `buildContextEntries()` - Get active branch entries with compaction applied

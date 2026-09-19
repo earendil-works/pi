@@ -122,7 +122,6 @@ function tool(
 		content: Array<{ type: "text"; text: string }>;
 		details: { value?: string };
 		usage?: ToolResultMessage["usage"];
-		addedToolNames?: string[];
 		terminate?: boolean;
 	}>,
 	replay: "never" | "safe" = "never",
@@ -301,7 +300,6 @@ describe("durable tool batch", () => {
 		const second = tool("second", async (value) => ({
 			content: [{ type: "text", text: value }],
 			details: { value },
-			addedToolNames: ["introduced"],
 		}));
 		const fixture = await createFixture({
 			calls: [{ name: "first" }, { name: "second" }],
@@ -340,7 +338,7 @@ describe("durable tool batch", () => {
 			at: "checkpoint",
 			continuation: { kind: "need_assistant" },
 		});
-		expect(fixture.lane.state.configuration.activeToolNames).toEqual(["first", "second", "introduced"]);
+		expect(fixture.lane.state.configuration.activeToolNames).toEqual(["first", "second"]);
 		expect(
 			await fixture.session.scanValues(
 				storedValues.operationToolArgsPrefix(fixture.operationId),
@@ -539,7 +537,6 @@ describe("durable tool batch", () => {
 			toolCallId: "call-0",
 			toolName: "ready",
 			content: [{ type: "text", text: "already done" }],
-			addedToolNames: ["later"],
 			isError: false,
 			timestamp: 30,
 		};
@@ -563,7 +560,7 @@ describe("durable tool batch", () => {
 			at: "checkpoint",
 			continuation: { kind: "may_finish", includeFinalAssistant: false },
 		});
-		expect(fixture.lane.state.configuration.activeToolNames).toEqual(["ready", "later"]);
+		expect(fixture.lane.state.configuration.activeToolNames).toEqual(["ready"]);
 		expect(fixture.events[0]).toMatchObject({ type: "turn_start", turnId: "turn-1", recovery: true });
 		expect(fixture.events.at(-1)).toMatchObject({ type: "turn_end", turnId: "turn-1", recovery: true });
 	});

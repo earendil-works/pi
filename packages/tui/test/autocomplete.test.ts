@@ -147,6 +147,79 @@ describe("CombinedAutocompleteProvider", () => {
 			assert.deepStrictEqual(values, ["@README.md", "@src/"].sort());
 		});
 
+		test("recognizes @ after CJK punctuation without consuming the preceding text", async () => {
+			setupFolder(baseDir, { files: { "README.md": "readme" } });
+			const provider = new CombinedAutocompleteProvider([], baseDir, requireFdPath());
+			for (const before of ["查看，", "\u3000", ..."，．：；！？（）［］｛｝“”‘’…—。、「」『』《》【】"]) {
+				for (const force of [false, true]) {
+					const line = `${before}@REA`;
+					const result = await getSuggestions(provider, [line], 0, line.length, force);
+					assert.ok(result, line);
+					assert.strictEqual(result.prefix, "@REA");
+					assert.deepStrictEqual(
+						result.items.map((item) => item.value),
+						["@README.md"],
+					);
+					const applied = provider.applyCompletion([line], 0, line.length, result.items[0]!, result.prefix);
+					assert.strictEqual(applied.lines[0], `${before}@README.md `);
+					assert.strictEqual(applied.cursorCol, applied.lines[0]!.length);
+				}
+			}
+		});
+
+		test("preserves CJK characters and embedded @ in attachment paths", async () => {
+			setupFolder(baseDir, {
+				files: { "文档/说明.md": "text", "文档@备份/说明.md": "backup" },
+			});
+			const provider = new CombinedAutocompleteProvider([], baseDir, requireFdPath());
+			for (const before of ["", "查看，"]) {
+				for (const directory of ["文档", "文档@备份"]) {
+					const prefix = `@${directory}/说`;
+					const line = before + prefix;
+					const result = await getSuggestions(provider, [line], 0, line.length);
+					assert.ok(result, line);
+					assert.strictEqual(result.prefix, prefix);
+					assert.deepStrictEqual(
+						result.items.map((item) => item.value),
+						[`@${directory}/说明.md`],
+					);
+				}
+			}
+		});
+
+		test("completes quoted CJK attachments after prose without losing path segments or quotes", async () => {
+			const provider = new CombinedAutocompleteProvider([], baseDir, requireFdPath());
+			for (const separator of [" ", "\u3000", "，", "。"]) {
+				const directory = `我的${separator}文档`;
+				setupFolder(baseDir, {
+					files: { [`${directory}/说明.md`]: "text", "文档/说明.md": "not the quoted path" },
+				});
+				const line = `查看：@"${directory}/说"后文`;
+				const cursorCol = line.indexOf('"后文');
+				const result = await getSuggestions(provider, [line], 0, cursorCol);
+				assert.ok(result);
+				assert.strictEqual(result.prefix, `@"${directory}/说`);
+				assert.deepStrictEqual(
+					result.items.map((item) => item.value),
+					[`@"${directory}/说明.md"`],
+				);
+				const applied = provider.applyCompletion([line], 0, cursorCol, result.items[0]!, result.prefix);
+				assert.strictEqual(applied.lines[0], `查看：@"${directory}/说明.md" 后文`);
+				assert.strictEqual(applied.cursorCol, `查看：@"${directory}/说明.md" `.length);
+			}
+		});
+
+		test("does not interpret email addresses or @ after ASCII or CJK letters as attachment prefixes", async () => {
+			setupFolder(baseDir, { files: { "README.md": "readme", "example.com": "text" } });
+			const provider = new CombinedAutocompleteProvider([], baseDir, requireFdPath());
+			for (const before of ["user", "查看", "あ", "カ", "한", "ㄅ", "𠮷", "か\u3099", "禰\u{e0100}", "々", "Ａ"]) {
+				for (const name of ["REA", "example.com"]) {
+					const line = `${before}@${name}`;
+					assert.strictEqual(await getSuggestions(provider, [line], 0, line.length), null, line);
+				}
+			}
+		});
+
 		test("matches file with extension in query", async () => {
 			setupFolder(baseDir, {
 				files: {
@@ -300,20 +373,21 @@ describe("CombinedAutocompleteProvider", () => {
 			);
 		});
 
-		test("quotes paths with spaces for @ suggestions", async () => {
-			setupFolder(baseDir, {
-				dirs: ["my folder"],
-				files: {
-					"my folder/test.txt": "content",
-				},
-			});
-
+		test("quotes paths containing whitespace or CJK punctuation for @ suggestions", async () => {
 			const provider = new CombinedAutocompleteProvider([], baseDir, requireFdPath());
-			const line = "@my";
-			const result = await getSuggestions(provider, [line], 0, line.length);
-
-			const values = result?.items.map((item) => item.value);
-			assert.ok(values?.includes('@"my folder/"'));
+			for (const separator of [" ", "\u3000", "，", "。"]) {
+				const directory = `my${separator}folder`;
+				setupFolder(baseDir, { files: { [`${directory}/test.txt`]: "content" } });
+				const line = "@my";
+				const result = await getSuggestions(provider, [line], 0, line.length);
+				assert.ok(result);
+				const item = result.items.find((entry) => entry.value === `@"${directory}/"`);
+				assert.ok(item, directory);
+				const applied = provider.applyCompletion([line], 0, line.length, item, result.prefix);
+				const continued = await getSuggestions(provider, applied.lines, 0, applied.cursorCol);
+				assert.strictEqual(continued?.prefix, `@"${directory}/`);
+				assert.ok(continued?.items.some((entry) => entry.value === `@"${directory}/test.txt"`));
+			}
 		});
 
 		test("includes hidden paths but excludes .git", async () => {
@@ -474,6 +548,100 @@ describe("CombinedAutocompleteProvider", () => {
 			rmSync(baseDir, { recursive: true, force: true });
 		});
 
+		test("completes Chinese path prefixes after whitespace or CJK punctuation on Tab", async () => {
+			setupFolder(baseDir, { files: { "说明.md": "file", "文档/说明.md": "nested file" } });
+			const provider = new CombinedAutocompleteProvider([], baseDir);
+			const completions = [
+				{ prefix: "说", value: "说明.md" },
+				{ prefix: "文", value: "文档/" },
+				{ prefix: "文档/说", value: "文档/说明.md" },
+				{ prefix: "./文档/说", value: "./文档/说明.md" },
+			];
+			if (process.platform !== "win32") {
+				completions.push({ prefix: `${baseDir}/文档/说`, value: `${baseDir}/文档/说明.md` });
+			}
+			for (const separator of " \t\u3000\u00a0，：；。！？（「《") {
+				for (const { prefix, value } of completions) {
+					const before = `查看𠮷${separator}`;
+					const line = `${before}${prefix} 后文`;
+					const cursorCol = before.length + prefix.length;
+					const result = await getSuggestions(provider, [line], 0, cursorCol, true);
+					assert.ok(result, line);
+					assert.strictEqual(result.prefix, prefix);
+					assert.deepStrictEqual(
+						result.items.map((item) => item.value),
+						[value],
+					);
+					const applied = provider.applyCompletion([line], 0, cursorCol, result.items[0]!, result.prefix);
+					assert.strictEqual(applied.lines[0], `${before}${value} 后文`);
+					assert.strictEqual(applied.cursorCol, before.length + value.length);
+				}
+			}
+		});
+
+		test("treats unquoted separators as boundaries even when a matching literal path exists", async () => {
+			setupFolder(baseDir, { files: { "归档/说明.md": "other" } });
+			const provider = new CombinedAutocompleteProvider([], baseDir);
+			for (const separator of [" ", "\u3000", "，", "。"]) {
+				const directory = `资料${separator}归档`;
+				setupFolder(baseDir, { files: { [`${directory}/说明.md`]: "archive" } });
+				for (const marker of ["", "@"]) {
+					const line = `${marker}${directory}/说`;
+					const result = await getSuggestions(provider, [line], 0, line.length, true);
+					assert.ok(result, line);
+					assert.strictEqual(result.prefix, "归档/说");
+					assert.deepStrictEqual(
+						result.items.map((item) => item.value),
+						["归档/说明.md"],
+					);
+				}
+				const quoted = `查看，"${directory}/说"后文`;
+				const cursorCol = quoted.indexOf('"后文');
+				const result = await getSuggestions(provider, [quoted], 0, cursorCol, true);
+				assert.ok(result);
+				assert.strictEqual(result.prefix, `"${directory}/说`);
+				assert.deepStrictEqual(
+					result.items.map((item) => item.value),
+					[`"${directory}/说明.md"`],
+				);
+				const applied = provider.applyCompletion([quoted], 0, cursorCol, result.items[0]!, result.prefix);
+				assert.strictEqual(applied.lines[0], `查看，"${directory}/说明.md"后文`);
+				const missing = `查看，"不存在${separator}归档/说`;
+				assert.strictEqual(await getSuggestions(provider, [missing], 0, missing.length, true), null);
+			}
+		});
+
+		test("handles an empty prefix after whitespace or CJK punctuation consistently", async () => {
+			setupFolder(baseDir, { files: { "说明.md": "text" } });
+			const provider = new CombinedAutocompleteProvider([], baseDir);
+			for (const separator of [" ", "\t", "\u3000", "，", "。"]) {
+				for (const force of [false, true]) {
+					const line = `查看${separator}`;
+					const result = await getSuggestions(provider, [line], 0, line.length, force);
+					assert.ok(result, line);
+					assert.strictEqual(result.prefix, "");
+					assert.deepStrictEqual(
+						result.items.map((item) => item.value),
+						["说明.md"],
+					);
+				}
+			}
+			assert.strictEqual(await getSuggestions(provider, [""], 0, 0), null);
+		});
+
+		test("preserves CJK characters in unprefixed Tab completions", async () => {
+			setupFolder(baseDir, { files: { "文档/说明.md": "text" } });
+			const provider = new CombinedAutocompleteProvider([], baseDir);
+			const line = "文档/说";
+			const result = await getSuggestions(provider, [line], 0, line.length, true);
+			assert.ok(result);
+			assert.strictEqual(result.prefix, line);
+			assert.deepStrictEqual(
+				result.items.map((item) => item.value),
+				["文档/说明.md"],
+			);
+		});
+
 		test("preserves ./ prefix when completing paths", async () => {
 			setupFolder(baseDir, {
 				files: {
@@ -520,21 +688,35 @@ describe("CombinedAutocompleteProvider", () => {
 			rmSync(baseDir, { recursive: true, force: true });
 		});
 
-		test("quotes paths with spaces for direct completion", async () => {
-			setupFolder(baseDir, {
-				dirs: ["my folder"],
-				files: {
-					"my folder/test.txt": "content",
-				},
-			});
-
+		test("quotes paths containing whitespace or CJK punctuation for direct completion", async () => {
 			const provider = new CombinedAutocompleteProvider([], baseDir);
-			const line = "my";
-			const result = await getSuggestions(provider, [line], 0, line.length, true);
+			for (const separator of [" ", "\u3000", "，", "。"]) {
+				const directory = `my${separator}folder`;
+				setupFolder(baseDir, { files: { [`${directory}/test.txt`]: "content" } });
+				const line = "my";
+				const result = await getSuggestions(provider, [line], 0, line.length, true);
+				assert.ok(result);
+				const item = result.items.find((entry) => entry.value === `"${directory}/"`);
+				assert.ok(item, directory);
+				const applied = provider.applyCompletion([line], 0, line.length, item, result.prefix);
+				const continued = await getSuggestions(provider, applied.lines, 0, applied.cursorCol, true);
+				assert.strictEqual(continued?.prefix, `"${directory}/`);
+				assert.deepStrictEqual(
+					continued?.items.map((entry) => entry.value),
+					[`"${directory}/test.txt"`],
+				);
+			}
+		});
 
-			assert.notEqual(result, null, "Should return suggestions for path completion");
-			const values = result?.items.map((item) => item.value);
-			assert.ok(values?.includes('"my folder/"'));
+		test("keeps quoted directories before files", async () => {
+			setupFolder(baseDir, { dirs: ["z folder", "z，folder"], files: { "a.txt": "text" } });
+			const provider = new CombinedAutocompleteProvider([], baseDir);
+			const result = await getSuggestions(provider, [""], 0, 0, true);
+			assert.ok(result);
+			assert.deepStrictEqual(
+				result.items.map((item) => item.label.endsWith("/")),
+				[true, true, false],
+			);
 		});
 
 		test("continues completion inside quoted paths", async () => {

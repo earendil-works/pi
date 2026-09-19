@@ -12,6 +12,8 @@ import {
 } from "../tui.ts";
 import { UndoStack } from "../undo-stack.ts";
 import {
+	autocompleteBoundaryRegex,
+	autocompleteSeparatorRegex,
 	cjkBreakRegex,
 	getGraphemeSegmenter,
 	getWordSegmenter,
@@ -249,22 +251,37 @@ const SLASH_COMMAND_SELECT_LIST_LAYOUT: SelectListLayoutOptions = {
 
 const ATTACHMENT_AUTOCOMPLETE_DEBOUNCE_MS = 20;
 const DEFAULT_AUTOCOMPLETE_TRIGGER_CHARACTERS = ["@", "#"];
+// Unquoted completions end at whitespace or CJK punctuation; quoted paths may contain either.
+const unquotedAutocompleteSuffixRegex = new RegExp(`(?:(?!${autocompleteSeparatorRegex.source}).)*`, "u");
 
 function escapeCharacterClass(value: string): string {
 	return value.replace(/[\\^$.*+?()[\]{}|-]/g, "\\$&");
 }
 
 function buildTriggerPattern(triggerCharacters: string[]): RegExp {
-	return new RegExp(`(?:^|[\\s])[${triggerCharacters.map(escapeCharacterClass).join("")}][^\\s]*$`);
+	return new RegExp(
+		`${autocompleteBoundaryRegex.source}(?:@"[^"]*|[${triggerCharacters.map(escapeCharacterClass).join("")}]${unquotedAutocompleteSuffixRegex.source})$`,
+		"u",
+	);
 }
 
 function buildDebouncePattern(triggerCharacters: string[]): RegExp {
 	const escapedWithoutAt = triggerCharacters.filter((character) => character !== "@").map(escapeCharacterClass);
-	return new RegExp(`(?:^|[ \\t])(?:@(?:"[^"]*|[^\\s]*)|[${escapedWithoutAt.join("")}][^\\s]*)$`);
+	return new RegExp(
+		`${autocompleteBoundaryRegex.source}(?:@(?:"[^"]*|${unquotedAutocompleteSuffixRegex.source})|[${escapedWithoutAt.join("")}]${unquotedAutocompleteSuffixRegex.source})$`,
+		"u",
+	);
 }
 
 function createScrollBorder(direction: "↑" | "↓", hiddenLineCount: number, width: number): string {
 	const availableWidth = Math.max(0, width);
+	const label = ` ${direction} ${hiddenLineCount} more `;
+	const labelWidth = visibleWidth(label);
+	if (labelWidth + 2 <= availableWidth) {
+		const leftWidth = Math.floor((availableWidth - labelWidth) / 2);
+		return "─".repeat(leftWidth) + label + "─".repeat(availableWidth - leftWidth - labelWidth);
+	}
+
 	const indicator = `─── ${direction} ${hiddenLineCount} more `;
 	const remaining = availableWidth - visibleWidth(indicator);
 	if (remaining >= 0) return indicator + "─".repeat(remaining);
@@ -488,6 +505,16 @@ export class Editor implements Component, Focusable {
 		// No cached state to invalidate currently
 	}
 
+	protected renderTopBorder(width: number, hiddenLineCount: number): string {
+		const border = hiddenLineCount > 0 ? createScrollBorder("↑", hiddenLineCount, width) : "─".repeat(width);
+		return this.borderColor(border);
+	}
+
+	protected renderBottomBorder(width: number, hiddenLineCount: number): string {
+		const border = hiddenLineCount > 0 ? createScrollBorder("↓", hiddenLineCount, width) : "─".repeat(width);
+		return this.borderColor(border);
+	}
+
 	render(width: number): string[] {
 		const maxPadding = Math.max(0, Math.floor((width - 1) / 2));
 		const paddingX = Math.min(this.paddingX, maxPadding);
@@ -499,8 +526,6 @@ export class Editor implements Component, Focusable {
 
 		// Store for cursor navigation (must match wrapping width)
 		this.lastWidth = layoutWidth;
-
-		const horizontal = this.borderColor("─");
 
 		// Layout the text
 		const layoutLines = this.layoutText(layoutWidth);
@@ -533,12 +558,7 @@ export class Editor implements Component, Focusable {
 		const rightPadding = leftPadding;
 
 		// Render top border (with scroll indicator if scrolled down)
-		if (this.scrollOffset > 0) {
-			const border = createScrollBorder("↑", this.scrollOffset, width);
-			result.push(this.borderColor(border));
-		} else {
-			result.push(horizontal.repeat(width));
-		}
+		result.push(this.renderTopBorder(width, this.scrollOffset));
 
 		// Render each visible layout line
 		// Emit hardware cursor marker when focused so TUI can position the
@@ -590,12 +610,7 @@ export class Editor implements Component, Focusable {
 
 		// Render bottom border (with scroll indicator if more content below)
 		const linesBelow = layoutLines.length - (this.scrollOffset + visibleLines.length);
-		if (linesBelow > 0) {
-			const border = createScrollBorder("↓", linesBelow, width);
-			result.push(this.borderColor(border));
-		} else {
-			result.push(horizontal.repeat(width));
-		}
+		result.push(this.renderBottomBorder(width, linesBelow));
 
 		// Add autocomplete list if active
 		this.renderedAutocompleteHeight = 0;
@@ -1217,13 +1232,12 @@ export class Editor implements Component, Focusable {
 			else if (this.autocompleteTriggerCharacters.includes(char)) {
 				const currentLine = this.state.lines[this.state.cursorLine] || "";
 				const textBeforeCursor = currentLine.slice(0, this.state.cursorCol);
-				const charBeforeSymbol = textBeforeCursor[textBeforeCursor.length - 2];
-				if (textBeforeCursor.length === 1 || charBeforeSymbol === " " || charBeforeSymbol === "\t") {
+				if (this.autocompleteTriggerPattern.test(textBeforeCursor)) {
 					this.tryTriggerAutocomplete();
 				}
 			}
 			// Also auto-trigger when typing letters in a slash command or symbol completion context
-			else if (/[a-zA-Z0-9.\-_]/.test(char)) {
+			else if (/[a-zA-Z0-9.\-_]/.test(char) || cjkBreakRegex.test(char)) {
 				const currentLine = this.state.lines[this.state.cursorLine] || "";
 				const textBeforeCursor = currentLine.slice(0, this.state.cursorCol);
 				// Check if we're in a slash command (with or without space for arguments)

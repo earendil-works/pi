@@ -7,6 +7,7 @@ import { streamSimple as streamCodex } from "../src/api/openai-codex-responses.t
 import { streamSimple as streamOpenAICompletions } from "../src/api/openai-completions.ts";
 import { streamSimple as streamOpenAIResponses } from "../src/api/openai-responses.ts";
 import type { Api, AssistantMessageEventStream, Model } from "../src/types.ts";
+import { normalizeContext } from "../src/utils/transcript.ts";
 
 function model<TApi extends Api>(api: TApi): Model<TApi> {
 	return {
@@ -23,22 +24,19 @@ function model<TApi extends Api>(api: TApi): Model<TApi> {
 	};
 }
 
-async function expectPreGenerationError(create: () => AssistantMessageEventStream): Promise<void> {
-	const stream = create();
-	const events = [];
-	for await (const event of stream) events.push(event);
-	expect(events.map((event) => event.type)).toEqual(["error"]);
-	expect(await stream.result()).toMatchObject({ stopReason: "error", content: [] });
+function expectMissingAuthThrows(create: () => AssistantMessageEventStream): void {
+	expect(create).toThrow("No API key for provider: test-provider");
 }
 
-describe("direct API pre-generation errors", () => {
-	it("return an error stream instead of throwing synchronously when auth is missing", async () => {
-		await expectPreGenerationError(() => streamAnthropic(model("anthropic-messages"), { messages: [] }, {}));
-		await expectPreGenerationError(() => streamAzure(model("azure-openai-responses"), { messages: [] }, {}));
-		await expectPreGenerationError(() => streamGoogle(model("google-generative-ai"), { messages: [] }, {}));
-		await expectPreGenerationError(() => streamMistral(model("mistral-conversations"), { messages: [] }, {}));
-		await expectPreGenerationError(() => streamCodex(model("openai-codex-responses"), { messages: [] }, {}));
-		await expectPreGenerationError(() => streamOpenAICompletions(model("openai-completions"), { messages: [] }, {}));
-		await expectPreGenerationError(() => streamOpenAIResponses(model("openai-responses"), { messages: [] }, {}));
+describe("direct API authentication", () => {
+	it("throws synchronously when auth is missing", () => {
+		const context = normalizeContext({ messages: [] });
+		expectMissingAuthThrows(() => streamAnthropic(model("anthropic-messages"), context, {}));
+		expectMissingAuthThrows(() => streamAzure(model("azure-openai-responses"), context, {}));
+		expectMissingAuthThrows(() => streamGoogle(model("google-generative-ai"), context, {}));
+		expectMissingAuthThrows(() => streamMistral(model("mistral-conversations"), context, {}));
+		expectMissingAuthThrows(() => streamCodex(model("openai-codex-responses"), context, {}));
+		expectMissingAuthThrows(() => streamOpenAICompletions(model("openai-completions"), context, {}));
+		expectMissingAuthThrows(() => streamOpenAIResponses(model("openai-responses"), context, {}));
 	});
 });

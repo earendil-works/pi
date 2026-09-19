@@ -57,6 +57,7 @@ vi.mock("@aws-sdk/client-bedrock-runtime", () => {
 
 import { stream as streamBedrock } from "../src/api/bedrock-converse-stream.ts";
 import type { Context, Message, Model } from "../src/types.ts";
+import { normalizeContext } from "../src/utils/transcript.ts";
 
 const baseModel: Model<"bedrock-converse-stream"> = {
 	id: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
@@ -82,7 +83,7 @@ const novaModel: Model<"bedrock-converse-stream"> = {
 
 async function capturePayload(context: Context, model = baseModel): Promise<unknown> {
 	let capturedPayload: unknown;
-	const s = streamBedrock(model, context, {
+	const s = streamBedrock(model, normalizeContext(context), {
 		cacheRetention: "none",
 		signal: AbortSignal.abort(),
 		onPayload: (payload) => {
@@ -151,7 +152,7 @@ describe("Bedrock tool arguments", () => {
 		try {
 			const message = await streamBedrock(
 				baseModel,
-				{ messages: [{ role: "user", content: "Use the tool", timestamp: Date.now() }] },
+				normalizeContext({ messages: [{ role: "user", content: "Use the tool", timestamp: Date.now() }] }),
 				{ cacheRetention: "none" },
 			).result();
 
@@ -351,7 +352,7 @@ describe("bedrock convertMessages skips unknown content types", () => {
 	});
 
 	it("removes empty property names only from replayed Bedrock input", async () => {
-		const toolArguments = {
+		const toolArguments: { path: string; edits: Array<Record<string, string>> } = {
 			path: "/workspace/foobar/file.js",
 			edits: [
 				{ oldText: "first", newText: "updated first" },

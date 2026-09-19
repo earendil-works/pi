@@ -5,7 +5,6 @@ import {
 	fuzzyFilter,
 	getKeybindings,
 	Input,
-	matchesKey,
 	type SelectItem,
 	SelectList,
 	type SelectListLayoutOptions,
@@ -91,7 +90,16 @@ export class ThinkingSelectorComponent extends Container implements Focusable {
 		this.selectListChildIndex = this.children.length;
 		this.addChild(this.selectList);
 		this.addChild(new Spacer(1));
-		this.addChild(new Text(theme.fg("dim", "  Enter to select · Ctrl+S to set as default · Esc to cancel"), 0, 0));
+		this.addChild(
+			new Text(
+				theme.fg(
+					"dim",
+					`  ${keyDisplayText("tui.select.confirm")} to select · ${keyDisplayText("app.thinking.save")} to set as default · ${keyDisplayText("tui.select.cancel")} to cancel`,
+				),
+				0,
+				0,
+			),
+		);
 
 		// Add bottom border
 		this.addChild(new DynamicBorder());
@@ -119,13 +127,13 @@ export class ThinkingSelectorComponent extends Container implements Focusable {
 	}
 
 	handleInput(keyData: string): void {
-		if (matchesKey(keyData, "ctrl+s") && this.onSelectAsDefault) {
+		const kb = getKeybindings();
+		if (kb.matches(keyData, "app.thinking.save") && this.onSelectAsDefault) {
 			const item = this.selectList.getSelectedItem();
 			if (item) this.onSelectAsDefault(item.value as ThinkingLevel);
 			return;
 		}
 
-		const kb = getKeybindings();
 		const isNav =
 			kb.matches(keyData, "tui.select.up") ||
 			kb.matches(keyData, "tui.select.down") ||

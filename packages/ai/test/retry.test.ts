@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { fauxAssistantMessage } from "../src/providers/faux.ts";
-import { isRetryableAssistantError, type RetryPolicy, retryAssistantCall } from "../src/utils/retry.ts";
+import { isRetryableAssistantError, type RetryPolicy, retryAssistantCall, retryDelayMs } from "../src/utils/retry.ts";
 
 const openAIExplicitRetryMessage =
 	"An error occurred while processing your request. You can retry your request, or contact us through our help center at help.openai.com if the error persists. Please include the request ID req_******** in your message.";
@@ -12,6 +12,8 @@ const bunFetchSocketClosedMessage =
 const openAIResponsesEarlyEofMessage = "OpenAI Responses stream ended before a terminal response event";
 const wrappedDnsLookupError =
 	"The pending stream has been canceled (caused by: getaddrinfo ENOTFOUND bedrock-runtime.us-east-1.amazonaws.com)";
+const azurePeakLoadError =
+	"The system is currently experiencing high demand and cannot process your request. Your request exceeds the maximum usage size allowed during peak load. For improved capacity reliability, consider switching to Provisioned Throughput.";
 
 describe("provider retry classification", () => {
 	it("matches explicit provider retry guidance", () => {
@@ -68,6 +70,13 @@ describe("provider retry classification", () => {
 		).toBe(true);
 	});
 
+	it("matches Azure peak-load capacity errors", () => {
+		// Regression for #9669.
+		expect(
+			isRetryableAssistantError(fauxAssistantMessage("", { stopReason: "error", errorMessage: azurePeakLoadError })),
+		).toBe(true);
+	});
+
 	it("keeps provider limit errors non-retryable", () => {
 		expect(
 			isRetryableAssistantError(
@@ -80,12 +89,27 @@ describe("provider retry classification", () => {
 		expect(
 			isRetryableAssistantError(fauxAssistantMessage("", { stopReason: "error", errorMessage: "overloaded_error" })),
 		).toBe(true);
+		// Regression for #9627.
+		expect(
+			isRetryableAssistantError(
+				fauxAssistantMessage("", { stopReason: "error", errorMessage: "520 status code (no body)" }),
+			),
+		).toBe(true);
 		expect(
 			isRetryableAssistantError(
 				fauxAssistantMessage("", { stopReason: "error", errorMessage: "524 status code (no body)" }),
 			),
 		).toBe(true);
 		expect(isRetryableAssistantError(fauxAssistantMessage("not an error"))).toBe(false);
+	});
+});
+
+describe("retryDelayMs", () => {
+	it("caps agent retry delay", () => {
+		// Regression for #8826.
+		expect(retryDelayMs({ baseDelayMs: 2000 }, 6)).toBe(60000);
+		expect(retryDelayMs({ baseDelayMs: 2000, maxAgentDelayMs: 5000 }, 5)).toBe(5000);
+		expect(retryDelayMs({ baseDelayMs: 2000, maxAgentDelayMs: 0 }, 5)).toBe(0);
 	});
 });
 
@@ -131,6 +155,23 @@ describe("retryAssistantCall", () => {
 		expect(produce).toHaveBeenCalledTimes(4); // 1 initial + 3 retries
 		expect(onRetryScheduled).toHaveBeenCalledTimes(3);
 		expect(onRetryFinished).toHaveBeenCalledWith(false, 3, "terminated");
+	});
+
+	it("reports capped retry delays", async () => {
+		// Regression for #8826.
+		let n = 0;
+		const policy: RetryPolicy = { enabled: true, maxRetries: 4, baseDelayMs: 10, maxAgentDelayMs: 15 };
+		const produce = vi.fn(async () => {
+			n++;
+			return n < 5
+				? fauxAssistantMessage("", { stopReason: "error", errorMessage: "terminated" })
+				: fauxAssistantMessage("recovered");
+		});
+		const onRetryScheduled = vi.fn();
+
+		await retryAssistantCall(produce, policy, undefined, { onRetryScheduled });
+
+		expect(onRetryScheduled.mock.calls.map((call) => call[2])).toEqual([10, 15, 15, 15]);
 	});
 
 	it("stops retrying once a call succeeds", async () => {

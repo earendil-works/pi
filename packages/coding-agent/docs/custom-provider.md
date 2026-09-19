@@ -397,34 +397,40 @@ interface OAuthCredentials {
 For providers with non-standard APIs, implement `streamSimple`. Study the existing API implementations before writing your own:
 
 **Reference implementations:**
-- [anthropic-messages.ts](https://github.com/earendil-works/pi-mono/blob/main/packages/ai/src/api/anthropic-messages.ts) - Anthropic Messages API
-- [mistral-conversations.ts](https://github.com/earendil-works/pi-mono/blob/main/packages/ai/src/api/mistral-conversations.ts) - Mistral Conversations API
-- [openai-completions.ts](https://github.com/earendil-works/pi-mono/blob/main/packages/ai/src/api/openai-completions.ts) - OpenAI Chat Completions
-- [openai-responses.ts](https://github.com/earendil-works/pi-mono/blob/main/packages/ai/src/api/openai-responses.ts) - OpenAI Responses API
-- [google-generative-ai.ts](https://github.com/earendil-works/pi-mono/blob/main/packages/ai/src/api/google-generative-ai.ts) - Google Generative AI
-- [bedrock-converse-stream.ts](https://github.com/earendil-works/pi-mono/blob/main/packages/ai/src/api/bedrock-converse-stream.ts) - AWS Bedrock
+- [anthropic-messages.ts](https://github.com/earendil-works/pi/blob/main/packages/ai/src/api/anthropic-messages.ts) - Anthropic Messages API
+- [mistral-conversations.ts](https://github.com/earendil-works/pi/blob/main/packages/ai/src/api/mistral-conversations.ts) - Mistral Conversations API
+- [openai-completions.ts](https://github.com/earendil-works/pi/blob/main/packages/ai/src/api/openai-completions.ts) - OpenAI Chat Completions
+- [openai-responses.ts](https://github.com/earendil-works/pi/blob/main/packages/ai/src/api/openai-responses.ts) - OpenAI Responses API
+- [google-generative-ai.ts](https://github.com/earendil-works/pi/blob/main/packages/ai/src/api/google-generative-ai.ts) - Google Generative AI
+- [bedrock-converse-stream.ts](https://github.com/earendil-works/pi/blob/main/packages/ai/src/api/bedrock-converse-stream.ts) - AWS Bedrock
 
 ### Stream Pattern
 
-All providers follow the same pattern:
+All providers follow the same pattern. The context is a normalized transcript: the system prompt and tool declarations live in its system messages, so read them with `getCurrentSystemPrompt(context.messages)` and `getCurrentTools(context.messages)` rather than expecting `context.systemPrompt` or `context.tools`. Models that accept system messages mid-conversation can send them in place; otherwise call `collapseSystemMessages(context)` first to fold later system messages into the leading one.
 
 ```typescript
 import {
   type AssistantMessage,
   type AssistantMessageEventStream,
-  type Context,
   type Model,
   type SimpleStreamOptions,
+  type TranscriptContext,
   calculateCost,
+  collapseSystemMessages,
   createAssistantMessageEventStream,
+  getCurrentSystemPrompt,
+  getCurrentTools,
 } from "@earendil-works/pi-ai";
 
 function streamMyProvider(
   model: Model<any>,
-  context: Context,
+  context: TranscriptContext,
   options?: SimpleStreamOptions
 ): AssistantMessageEventStream {
   const stream = createAssistantMessageEventStream();
+  const transcript = collapseSystemMessages(context);
+  const systemPrompt = getCurrentSystemPrompt(transcript.messages);
+  const tools = getCurrentTools(transcript.messages);
 
   (async () => {
     // Initialize output message
@@ -571,7 +577,7 @@ When a request exceeds the model's context window, pi can recover automatically 
 Detection runs on the finalized assistant message:
 
 - `stopReason === "error"`
-- `errorMessage` matches one of pi's known overflow patterns (see [`packages/ai/src/utils/overflow.ts`](https://github.com/earendil-works/pi-mono/blob/main/packages/ai/src/utils/overflow.ts))
+- `errorMessage` matches one of pi's known overflow patterns (see [`packages/ai/src/utils/overflow.ts`](https://github.com/earendil-works/pi/blob/main/packages/ai/src/utils/overflow.ts))
 
 If your provider returns overflow errors with a message pi does not recognize, normalize the error from the same extension that registers the provider. Use a `message_end` handler to rewrite the assistant message so its `errorMessage` starts with a phrase pi recognizes. The generic fallback `context_length_exceeded` is the safest choice.
 
@@ -634,7 +640,7 @@ pi.registerProvider("my-provider", {
 
 ## Testing Your Implementation
 
-Test your provider against the same test suites used by built-in providers. Copy and adapt these test files from [packages/ai/test/](https://github.com/earendil-works/pi-mono/tree/main/packages/ai/test):
+Test your provider against the same test suites used by built-in providers. Copy and adapt these test files from [packages/ai/test/](https://github.com/earendil-works/pi/tree/main/packages/ai/test):
 
 | Test | Purpose |
 |------|---------|
@@ -668,10 +674,10 @@ interface ProviderConfig {
   /** API type for streaming. Required at provider or model level when defining models. */
   api?: Api;
 
-  /** Custom streaming implementation for non-standard APIs. */
+  /** Custom streaming implementation for non-standard APIs. Receives a normalized transcript. */
   streamSimple?: (
     model: Model<Api>,
-    context: Context,
+    context: TranscriptContext,
     options?: SimpleStreamOptions
   ) => AssistantMessageEventStream;
 
@@ -726,6 +732,9 @@ interface ProviderModelConfig {
     cacheRead: number;
     cacheWrite: number;
   };
+
+  /** Best-effort prompt cache lifetime in seconds per retention tier. Unset disables cache warming. */
+  promptCache?: { short?: number; long?: number };
 
   /** Maximum context window size in tokens. */
   contextWindow: number;

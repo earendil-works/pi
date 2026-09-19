@@ -293,7 +293,7 @@ The staged message contains the final:
 - added tool names;
 - timestamp.
 
-`terminate` remains orchestration state because it controls the batch continuation and is copied to the immutable entry's `terminate` field at placement. Staged `addedToolNames` do not affect the active tool set until that result materializes in the transcript.
+`terminate` remains orchestration state because it controls the batch continuation and is copied to the immutable entry's `terminate` field at placement.
 
 ## Source-ordered materialization
 
@@ -384,7 +384,7 @@ Example final text suffix:
 Rules:
 
 - do not run `after_tool` for this synthetic result;
-- preserve checkpoint `usage` when present, but ignore checkpoint `addedToolNames` and `terminate` because progress never has final-result authority;
+- preserve checkpoint `usage` when present, but ignore checkpoint `terminate` because progress never has final-result authority;
 - set `terminate: false` and add no tools;
 - an absent checkpoint value is also valid and yields only the interruption result;
 - never infer completion from an apparent success line in partial output;

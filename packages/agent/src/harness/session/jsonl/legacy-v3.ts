@@ -3,12 +3,13 @@ import { uuidv7 } from "@earendil-works/pi-ai/utils/uuid";
 import type { AgentMessage, ThinkingLevel } from "../../../types.ts";
 import type { Context } from "../../context.ts";
 import { createBranchSummaryMessage, createCompactionSummaryMessage } from "../../messages.ts";
-import type { FileSystem } from "../../types.ts";
+import type { FileSystem, TextLineReader } from "../../types.ts";
 import { addUsage, emptyUsage } from "../../utils/usage.ts";
-import type { CommittedEntryWrite, CommittedValueSetWrite, CommittedWrite } from "../commit.ts";
+import type { CommittedEntryWrite, CommittedValueSetWrite } from "../commit.ts";
 import type { JsonValue, LaneConfiguration } from "../types.ts";
-import { branchTip, entryLabel, laneConfig, laneState, sessionName } from "../values.ts";
+import { branchTip, entryLabel, laneConfig, laneState, sessionName, setValue } from "../values.ts";
 import { type LegacyV3SessionHeader, parseJsonlSessionHeader } from "./codec.ts";
+import { fileValue, readJsonlHeader } from "./io.ts";
 import {
 	JSONL_FORMAT_VERSION,
 	JSONL_STORAGE_VERSION,
@@ -69,7 +70,7 @@ interface LegacyV3ModelChangeEntry extends LegacyV3EntryBase {
 
 interface LegacyV3ThinkingLevelChangeEntry extends LegacyV3EntryBase {
 	type: "thinking_level_change";
-	thinkingLevel: string;
+	thinkingLevel: ThinkingLevel;
 }
 
 interface LegacyV3ActiveToolsChangeEntry extends LegacyV3EntryBase {
@@ -113,9 +114,38 @@ type DiscardedLegacyV3Entry =
 
 type LegacyV3Entry = RetainedLegacyV3Entry | DiscardedLegacyV3Entry;
 
-export interface NormalizedLegacyV3Records {
-	writes: CommittedWrite[];
+interface LegacyV3IndexBase {
+	id: string;
+	parentId: string | null;
+	/** This node's new ID, or its parent's mapped ID when the node is discarded. */
+	mappedId: string | null;
+}
+
+type RetainedLegacyV3IndexEntry = LegacyV3IndexBase & { mappedId: string; seq: number } & (
+		| { type: "message" | "custom" | "custom_message" }
+		| { type: "branch_summary"; fromId: string }
+		| { type: "compaction"; firstKeptEntryId: string }
+	);
+
+/** Keep structure, labels, and configuration changes, but not conversation payloads. */
+type LegacyV3IndexEntry =
+	| RetainedLegacyV3IndexEntry
+	| (LegacyV3IndexBase &
+			(
+				| Pick<LegacyV3LabelEntry, "type" | "targetId" | "label">
+				| Pick<LegacyV3ModelChangeEntry, "type" | "provider" | "modelId">
+				| Pick<LegacyV3ThinkingLevelChangeEntry, "type" | "thinkingLevel">
+				| Pick<LegacyV3ActiveToolsChangeEntry, "type" | "activeToolNames">
+				| { type: "session_info" }
+			));
+
+type LegacyV3CompactionIndexEntry = Extract<RetainedLegacyV3IndexEntry, { type: "compaction" }>;
+
+interface LegacyV3Inventory {
+	entries: ReadonlyMap<string, LegacyV3IndexEntry>;
 	importedUsage: Usage;
+	name: string | undefined;
+	finalId: string | null;
 	nextSeq: number;
 }
 
@@ -163,14 +193,14 @@ export async function normalizeLegacyV3Header(
 	};
 }
 
-function parseLegacyV3Entry(line: string, lineNumber: number): LegacyV3Entry {
+function parseLegacyV3Entry(line: string): LegacyV3Entry {
 	let entry: LegacyV3Entry;
 	try {
 		entry = JSON.parse(line) as LegacyV3Entry;
 	} catch (error) {
-		throw new Error(`Invalid legacy v3 JSONL record at line ${lineNumber}: not valid JSON`, { cause: error });
+		throw new Error("Invalid legacy v3 JSONL record: not valid JSON", { cause: error });
 	}
-	const recordType: unknown = entry.type;
+	const recordType: unknown = entry?.type;
 	if (
 		recordType !== "message" &&
 		recordType !== "custom" &&
@@ -183,7 +213,7 @@ function parseLegacyV3Entry(line: string, lineNumber: number): LegacyV3Entry {
 		recordType !== "session_info" &&
 		recordType !== "label"
 	) {
-		throw new Error(`Unsupported legacy v3 record type at line ${lineNumber}: ${String(recordType)}`);
+		throw new Error(`Unsupported legacy v3 record type: ${String(recordType)}`);
 	}
 	return entry;
 }
@@ -201,7 +231,9 @@ function importedCustomMessage(entry: LegacyV3CustomMessageEntry): AgentMessage 
 	return message as unknown as AgentMessage;
 }
 
-function isRetainedEntry(entry: LegacyV3Entry): entry is RetainedLegacyV3Entry {
+function isRetainedEntry<T extends LegacyV3Entry | LegacyV3IndexEntry>(
+	entry: T,
+): entry is Extract<T, { type: RetainedLegacyV3Entry["type"] }> {
 	return (
 		entry.type !== "model_change" &&
 		entry.type !== "thinking_level_change" &&
@@ -211,110 +243,64 @@ function isRetainedEntry(entry: LegacyV3Entry): entry is RetainedLegacyV3Entry {
 	);
 }
 
-class RetainedIdResolver {
-	/** Caches the reminted ID of each discarded legacy node's nearest retained ancestor, or null. */
-	private resolvedIds = new Map<string, string | null>();
-	private entriesById: Map<string, LegacyV3Entry>;
-	private remintedIds: Map<string, string>;
+/**
+ * Resolve a legacy ID to its imported ID. Discarded records resolve to the minted ID of their
+ * nearest retained ancestor.
+ */
+type ResolveLegacyId = (legacyId: string | null) => string | null;
 
-	/**
-	 * @param entriesById Complete inventory of legacy physical nodes, including discarded nodes.
-	 * @param remintedIds Legacy-to-current ID map containing retained nodes only.
-	 */
-	constructor(entriesById: Map<string, LegacyV3Entry>, remintedIds: Map<string, string>) {
-		this.entriesById = entriesById;
-		this.remintedIds = remintedIds;
-	}
-
-	/**
-	 * Resolve a legacy node to its reminted ID, or to its nearest retained ancestor when discarded.
-	 * Returns null when the reference is null or no retained ancestor exists.
-	 */
-	resolve(legacyId: string | null): string | null {
-		const traversedIds: string[] = [];
-		const visitedIds = new Set<string>();
-		let currentId = legacyId;
-		let resolvedId: string | null = null;
-
-		while (currentId !== null) {
-			const remintedId = this.remintedIds.get(currentId);
-			if (remintedId !== undefined) {
-				resolvedId = remintedId;
-				break;
-			}
-			if (this.resolvedIds.has(currentId)) {
-				resolvedId = this.resolvedIds.get(currentId) ?? null;
-				break;
-			}
-			if (visitedIds.has(currentId)) throw new Error(`Cycle in legacy v3 parent chain at entry: ${currentId}`);
-			visitedIds.add(currentId);
-			const entry = this.entriesById.get(currentId);
-			if (entry === undefined) throw new Error(`Missing legacy v3 entry reference: ${currentId}`);
-			traversedIds.push(currentId);
-			currentId = entry.parentId;
-		}
-
-		for (const traversedId of traversedIds) this.resolvedIds.set(traversedId, resolvedId);
-		return resolvedId;
-	}
+/** Parent mappings are already folded during the scan; later references need only a lookup. */
+function createLegacyIdResolver(entries: ReadonlyMap<string, LegacyV3IndexEntry>): ResolveLegacyId {
+	return (legacyId) => {
+		if (legacyId === null) return null;
+		const mappedId = entries.get(legacyId)?.mappedId;
+		if (mappedId === undefined) throw new Error(`Missing legacy v3 entry reference: ${legacyId}`);
+		return mappedId;
+	};
 }
 
-function requireRetainedId(resolver: RetainedIdResolver, legacyId: string): string {
-	const importedId = resolver.resolve(legacyId);
-	if (importedId === null) throw new Error(`Legacy v3 entry reference has no retained ancestor: ${legacyId}`);
-	return importedId;
-}
-
-function resolveBranchSummaryFromId(resolver: RetainedIdResolver, legacyFromId: string): string | null {
+function resolveBranchSummaryFromId(resolveLegacyId: ResolveLegacyId, legacyFromId: string): string | null {
 	// Legacy branchWithSummary() encoded a root source as the "root" sentinel instead of null.
-	return legacyFromId === "root" ? null : resolver.resolve(legacyFromId);
+	return legacyFromId === "root" ? null : resolveLegacyId(legacyFromId);
 }
 
-function projectContextMessages(entry: LegacyV3Entry, resolver: RetainedIdResolver): AgentMessage[] {
+function projectContextMessage(entry: LegacyV3Entry, resolveLegacyId: ResolveLegacyId): AgentMessage | undefined {
 	switch (entry.type) {
 		case "message":
-			return [entry.message];
+			return entry.message;
 		case "custom_message":
-			return [importedCustomMessage(entry)];
+			return importedCustomMessage(entry);
 		case "branch_summary":
 			return entry.summary
-				? [
-						createBranchSummaryMessage(
-							entry.summary,
-							resolveBranchSummaryFromId(resolver, entry.fromId),
-							entry.timestamp,
-						),
-					]
-				: [];
+				? createBranchSummaryMessage(
+						entry.summary,
+						resolveBranchSummaryFromId(resolveLegacyId, entry.fromId),
+						entry.timestamp,
+					)
+				: undefined;
 		case "compaction":
-			return [createCompactionSummaryMessage(entry.summary, entry.tokensBefore, entry.timestamp)];
+			return createCompactionSummaryMessage(entry.summary, entry.tokensBefore, entry.timestamp);
 		case "custom":
 		case "model_change":
 		case "thinking_level_change":
 		case "active_tools_change":
 		case "session_info":
 		case "label":
-			return [];
+			return undefined;
 	}
 }
 
-function materializeRetainedTail(
-	compaction: LegacyV3CompactionEntry,
-	entriesById: ReadonlyMap<string, LegacyV3Entry>,
-	resolver: RetainedIdResolver,
-): AgentMessage[] {
-	const reversedTail: LegacyV3Entry[] = [];
-	const visited = new Set<string>();
+/** Walk physical ancestry, including discarded nodes and the exact kept boundary. */
+function* retainedTailStructure(
+	compaction: LegacyV3CompactionIndexEntry,
+	entriesById: ReadonlyMap<string, LegacyV3IndexEntry>,
+): Iterable<LegacyV3IndexEntry> {
 	let currentId = compaction.parentId;
 	while (currentId !== null) {
-		if (visited.has(currentId)) throw new Error(`Cycle in legacy v3 parent chain at entry: ${currentId}`);
-		visited.add(currentId);
-		const entry = entriesById.get(currentId);
-		if (entry === undefined) throw new Error(`Missing legacy v3 parent entry: ${currentId}`);
-		reversedTail.push(entry);
-		if (currentId === compaction.firstKeptEntryId) {
-			return reversedTail.reverse().flatMap((tailEntry) => projectContextMessages(tailEntry, resolver));
-		}
+		// The scan guarantees that every parent exists earlier in the file, so cycles are impossible.
+		const entry = entriesById.get(currentId)!;
+		yield entry;
+		if (currentId === compaction.firstKeptEntryId) return;
 		currentId = entry.parentId;
 	}
 	throw new Error(
@@ -324,15 +310,15 @@ function materializeRetainedTail(
 
 function normalizeRetainedEntry(
 	entry: RetainedLegacyV3Entry,
-	seq: number,
-	entriesById: ReadonlyMap<string, LegacyV3Entry>,
-	resolver: RetainedIdResolver,
+	indexed: RetainedLegacyV3IndexEntry,
+	retainedTail: AgentMessage[],
+	resolveLegacyId: ResolveLegacyId,
 ): CommittedEntryWrite {
 	const committedBase = {
 		kind: "entry" as const,
-		id: requireRetainedId(resolver, entry.id),
-		parentId: resolver.resolve(entry.parentId),
-		seq,
+		id: indexed.mappedId,
+		parentId: resolveLegacyId(indexed.parentId),
+		seq: indexed.seq,
 		timestamp: Date.parse(entry.timestamp),
 	};
 	if (entry.type === "message") {
@@ -349,7 +335,7 @@ function normalizeRetainedEntry(
 		return {
 			...committedBase,
 			type: "branch_summary",
-			fromId: resolveBranchSummaryFromId(resolver, entry.fromId),
+			fromId: resolveBranchSummaryFromId(resolveLegacyId, entry.fromId),
 			summary: entry.summary,
 			details: entry.details,
 			usage: entry.usage,
@@ -361,7 +347,7 @@ function normalizeRetainedEntry(
 			...committedBase,
 			type: "compaction",
 			summary: entry.summary,
-			retainedTail: materializeRetainedTail(entry, entriesById, resolver),
+			retainedTail,
 			tokensBefore: entry.tokensBefore,
 			details: entry.details,
 			usage: entry.usage,
@@ -376,44 +362,33 @@ function normalizeRetainedEntry(
 	};
 }
 
-const THINKING_LEVELS = new Set<ThinkingLevel>(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
-
 function selectedConfiguration(
-	entriesById: ReadonlyMap<string, LegacyV3Entry>,
+	entriesById: ReadonlyMap<string, LegacyV3IndexEntry>,
 	selectedId: string | null,
 ): LaneConfiguration | undefined {
+	const remaining = new Set<LegacyV3IndexEntry["type"]>([
+		"model_change",
+		"thinking_level_change",
+		"active_tools_change",
+	]);
 	let model: LaneConfiguration["model"] | undefined;
 	let thinkingLevel: ThinkingLevel | undefined;
 	let activeToolNames: string[] | undefined;
-	let sawModel = false;
-	let sawThinkingLevel = false;
-	let sawActiveToolNames = false;
-	const visited = new Set<string>();
 	let currentId = selectedId;
-	while (currentId !== null && (!sawModel || !sawThinkingLevel || !sawActiveToolNames)) {
-		if (visited.has(currentId)) throw new Error(`Cycle in legacy v3 parent chain at entry: ${currentId}`);
-		visited.add(currentId);
-		const entry = entriesById.get(currentId);
-		if (entry === undefined) throw new Error(`Missing legacy v3 entry reference: ${currentId}`);
-		if (entry.type === "model_change" && !sawModel) {
-			sawModel = true;
-			if (
-				typeof entry.provider === "string" &&
-				entry.provider.length !== 0 &&
-				typeof entry.modelId === "string" &&
-				entry.modelId.length !== 0
-			) {
-				model = { provider: entry.provider, modelId: entry.modelId };
-			}
-		} else if (entry.type === "thinking_level_change" && !sawThinkingLevel) {
-			sawThinkingLevel = true;
-			if (typeof entry.thinkingLevel === "string" && THINKING_LEVELS.has(entry.thinkingLevel as ThinkingLevel)) {
-				thinkingLevel = entry.thinkingLevel as ThinkingLevel;
-			}
-		} else if (entry.type === "active_tools_change" && !sawActiveToolNames) {
-			sawActiveToolNames = true;
-			if (Array.isArray(entry.activeToolNames) && entry.activeToolNames.every((name) => typeof name === "string")) {
-				activeToolNames = [...entry.activeToolNames];
+	while (currentId !== null && remaining.size !== 0) {
+		const entry = entriesById.get(currentId)!;
+		// Consume the nearest change even when invalid: older values must not become fallbacks.
+		if (remaining.delete(entry.type)) {
+			switch (entry.type) {
+				case "model_change":
+					model = { provider: entry.provider, modelId: entry.modelId };
+					break;
+				case "thinking_level_change":
+					thinkingLevel = entry.thinkingLevel;
+					break;
+				case "active_tools_change":
+					activeToolNames = [...entry.activeToolNames];
+					break;
 			}
 		}
 		currentId = entry.parentId;
@@ -422,118 +397,285 @@ function selectedConfiguration(
 	return { model, thinkingLevel, activeToolNames: activeToolNames ?? [] };
 }
 
-function normalizeLegacyV3Values(
-	entries: readonly LegacyV3Entry[],
-	entriesById: ReadonlyMap<string, LegacyV3Entry>,
-	resolver: RetainedIdResolver,
-	firstSeq: number,
-): CommittedValueSetWrite[] {
-	const writes: CommittedValueSetWrite[] = [];
-	let latestSessionInfo: LegacyV3SessionInfoEntry | undefined;
-	for (const entry of entries) {
-		if (entry.type === "session_info") latestSessionInfo = entry;
+function indexLegacyV3Entry(
+	entry: LegacyV3Entry,
+	lineNumber: number,
+	seq: number,
+	entries: ReadonlyMap<string, LegacyV3IndexEntry>,
+): LegacyV3IndexEntry {
+	// SessionManager appends after an existing leaf and writes extracted branches in parent order.
+	const mappedParentId = entry.parentId === null ? null : entries.get(entry.parentId)?.mappedId;
+	if (mappedParentId === undefined) {
+		throw new Error(
+			`Legacy v3 entry ${entry.id} has a missing or forward parent at line ${lineNumber}: ${entry.parentId}`,
+		);
 	}
-	if (latestSessionInfo?.name) {
-		writes.push({
-			kind: "value",
-			op: "set",
-			seq: firstSeq + writes.length,
-			namespace: sessionName.namespace,
-			key: sessionName.key,
-			value: latestSessionInfo.name,
-		});
+	const structure: LegacyV3IndexBase = {
+		id: entry.id,
+		parentId: entry.parentId,
+		mappedId: mappedParentId,
+	};
+	if (!isRetainedEntry(entry)) {
+		switch (entry.type) {
+			case "label":
+				return { ...structure, type: entry.type, targetId: entry.targetId, label: entry.label };
+			case "model_change":
+				return { ...structure, type: entry.type, provider: entry.provider, modelId: entry.modelId };
+			case "thinking_level_change":
+				return { ...structure, type: entry.type, thinkingLevel: entry.thinkingLevel };
+			case "active_tools_change":
+				return { ...structure, type: entry.type, activeToolNames: entry.activeToolNames };
+			case "session_info":
+				return { ...structure, type: entry.type };
+		}
 	}
+	// Null denotes the root, not a retained node identity that can be reminted.
+	if (entry.id === null) throw new Error("Legacy v3 entry reference has no retained ancestor: null");
+	const retained = {
+		...structure,
+		mappedId: uuidv7(Date.parse(entry.timestamp)),
+		seq,
+	};
+	switch (entry.type) {
+		case "branch_summary":
+			return { ...retained, type: entry.type, fromId: entry.fromId };
+		case "compaction":
+			return { ...retained, type: entry.type, firstKeptEntryId: entry.firstKeptEntryId };
+		default:
+			return { ...retained, type: entry.type };
+	}
+}
 
+function legacyEntryUsage(entry: LegacyV3Entry): Usage | undefined {
+	switch (entry.type) {
+		case "message":
+			return entry.message.role === "assistant" || entry.message.role === "toolResult"
+				? entry.message.usage
+				: undefined;
+		case "compaction":
+		case "branch_summary":
+			return entry.usage;
+		default:
+			return undefined;
+	}
+}
+
+async function readLegacyV3Inventory(reader: TextLineReader, context: Context): Promise<LegacyV3Inventory> {
+	const entries = new Map<string, LegacyV3IndexEntry>();
+	let nextSeq = 1;
+	let importedUsage = emptyUsage();
+	let name: string | undefined;
+	let finalId: string | null = null;
+	while (true) {
+		const line = fileValue(await reader.readLine(context), "Failed to read legacy v3 source");
+		if (line === undefined || !line.terminated) break;
+		const lineNumber = entries.size + 2;
+		const entry = parseLegacyV3Entry(line.text);
+		if (entries.has(entry.id)) throw new Error(`Duplicate legacy v3 entry id: ${entry.id}`);
+		const indexed = indexLegacyV3Entry(entry, lineNumber, nextSeq, entries);
+		entries.set(entry.id, indexed);
+		if (isRetainedEntry(indexed)) nextSeq++;
+		finalId = entry.id;
+		if (entry.type === "session_info") name = entry.name;
+		const usage = legacyEntryUsage(entry);
+		if (usage !== undefined) importedUsage = addUsage(importedUsage, usage);
+	}
+	return { entries, nextSeq, importedUsage, name, finalId };
+}
+
+function normalizeLegacyV3Values(inventory: LegacyV3Inventory): CommittedValueSetWrite[] {
+	const { entries, name, finalId } = inventory;
+	const resolveLegacyId = createLegacyIdResolver(entries);
+	let nextSeq = inventory.nextSeq;
+	const values: CommittedValueSetWrite[] = [];
+
+	// session name
+	if (name) values.push({ ...setValue(sessionName, name), seq: nextSeq++ });
+
+	// labels
 	const labels = new Map<string, string>();
-	for (const entry of entries) {
+	for (const entry of entries.values()) {
 		if (entry.type !== "label") continue;
-		const targetId = resolver.resolve(entry.targetId);
-		// Labels have no current address when their target has no retained ancestor.
+		const targetId = resolveLegacyId(entry.targetId);
 		if (targetId === null) continue;
-		// Legacy v3 treated both undefined and the empty string as clearing a label.
 		if (entry.label) labels.set(targetId, entry.label);
 		else labels.delete(targetId);
 	}
 	for (const [targetId, label] of labels) {
-		const address = entryLabel(targetId);
-		writes.push({
-			kind: "value",
-			op: "set",
-			seq: firstSeq + writes.length,
-			namespace: address.namespace,
-			key: address.key,
-			value: label,
-		});
+		values.push({ ...setValue(entryLabel(targetId), label), seq: nextSeq++ });
 	}
 
-	const finalEntry = entries.at(-1);
-	const tipAddress = branchTip("main");
-	writes.push({
-		kind: "value",
-		op: "set",
-		seq: firstSeq + writes.length,
-		namespace: tipAddress.namespace,
-		key: tipAddress.key,
-		value: finalEntry === undefined ? null : resolver.resolve(finalEntry.id),
-	});
-	const configuration = selectedConfiguration(entriesById, finalEntry?.id ?? null);
+	// branch tip
+	values.push({ ...setValue(branchTip("main"), resolveLegacyId(finalId)), seq: nextSeq++ });
+
+	// configuration
+	const configuration = selectedConfiguration(entries, finalId);
 	if (configuration !== undefined) {
-		const configAddress = laneConfig("main");
-		writes.push({
-			kind: "value",
-			op: "set",
-			seq: firstSeq + writes.length,
-			namespace: configAddress.namespace,
-			key: configAddress.key,
-			value: configuration,
-		});
-		const stateAddress = laneState("main");
-		writes.push({
-			kind: "value",
-			op: "set",
-			seq: firstSeq + writes.length,
-			namespace: stateAddress.namespace,
-			key: stateAddress.key,
-			value: { currentOperationId: null, lastOperationId: null, inbox: [] },
+		values.push({ ...setValue(laneConfig("main"), configuration), seq: nextSeq++ });
+		values.push({
+			...setValue(laneState("main"), { currentOperationId: null, lastOperationId: null, inbox: [] }),
+			seq: nextSeq++,
 		});
 	}
-	return writes;
+	return values;
 }
 
-function aggregateImportedUsage(entries: readonly LegacyV3Entry[]): Usage {
-	let aggregate = emptyUsage();
-	for (const entry of entries) {
-		let usage: Usage | undefined;
-		if (entry.type === "message") {
-			if (entry.message.role === "assistant") usage = entry.message.usage;
-			else if (entry.message.role === "toolResult") usage = entry.message.usage;
-		} else if (entry.type === "compaction" || entry.type === "branch_summary") {
-			usage = entry.usage;
+/**
+ * A captured legacy file exposed as repeatable logical v4 writes.
+ * Each pass reopens the path; callers must not replace or edit the source between passes.
+ * Structural indexes, label/configuration metadata, and derived current values survive between scans.
+ */
+export class LegacyV3Source {
+	readonly header: JsonlStorageHeader;
+	readonly importedUsage: Usage;
+	readonly nextSeq: number;
+	readonly values: readonly CommittedValueSetWrite[];
+	private readonly fileSystem: FileSystem;
+	private readonly path: string;
+	private readonly entries: ReadonlyMap<string, LegacyV3IndexEntry>;
+	private readonly resolveLegacyId: ResolveLegacyId;
+
+	private constructor(
+		fileSystem: FileSystem,
+		path: string,
+		header: JsonlStorageHeader,
+		entries: ReadonlyMap<string, LegacyV3IndexEntry>,
+		importedUsage: Usage,
+		values: readonly CommittedValueSetWrite[],
+		nextSeq: number,
+	) {
+		this.fileSystem = fileSystem;
+		this.path = path;
+		this.header = header;
+		this.entries = entries;
+		this.resolveLegacyId = createLegacyIdResolver(entries);
+		this.importedUsage = importedUsage;
+		this.values = values;
+		this.nextSeq = nextSeq;
+	}
+
+	/**
+	 * Scan complete v3 records without modifying the file, ignoring an unterminated final line.
+	 * Build parent mappings, assign IDs stable for this source instance, and derive current values
+	 * and imported usage. Retain metadata, not conversation payloads or an open reader. writes()
+	 * reopens the path to materialize captured records and resolve their payload-specific references.
+	 */
+	static async read(fileSystem: FileSystem, path: string, context: Context): Promise<LegacyV3Source> {
+		const reader = fileValue(
+			await fileSystem.openTextLineReader(path, context),
+			`Failed to open legacy v3 source ${path}`,
+		);
+		try {
+			const parsed = await readJsonlHeader(reader, path, context);
+			if (parsed.format !== "v3-legacy") {
+				throw new Error(`Invalid legacy v3 JSONL storage ${path}: expected format 3 header`);
+			}
+			const inventory = await readLegacyV3Inventory(reader, context);
+			const values = normalizeLegacyV3Values(inventory);
+			return new LegacyV3Source(
+				fileSystem,
+				path,
+				await normalizeLegacyV3Header(fileSystem, parsed.header, context),
+				inventory.entries,
+				inventory.importedUsage,
+				values,
+				inventory.nextSeq + values.length,
+			);
+		} finally {
+			await reader.close(context);
 		}
-		if (usage !== undefined) aggregate = addUsage(aggregate, usage);
 	}
-	return aggregate;
-}
 
-/** Normalize the currently supported v3 records without touching their source file. */
-export function normalizeLegacyV3Records(recordLines: readonly string[]): NormalizedLegacyV3Records {
-	const entries = recordLines.map((line, index) => parseLegacyV3Entry(line, index + 2));
-	const entriesById = new Map<string, LegacyV3Entry>();
-	for (const entry of entries) {
-		if (entriesById.has(entry.id)) throw new Error(`Duplicate legacy v3 entry id: ${entry.id}`);
-		entriesById.set(entry.id, entry);
+	*entryStructures(): Iterable<Pick<CommittedEntryWrite, "id" | "parentId" | "seq">> {
+		for (const entry of this.entries.values()) {
+			if (!isRetainedEntry(entry)) continue;
+			yield { id: entry.mappedId, parentId: this.resolveLegacyId(entry.parentId), seq: entry.seq };
+		}
 	}
-	const retainedEntries = entries.filter(isRetainedEntry);
-	const remintedIds = new Map(retainedEntries.map((entry) => [entry.id, uuidv7(Date.parse(entry.timestamp))]));
-	const resolver = new RetainedIdResolver(entriesById, remintedIds);
-	const entryWrites = retainedEntries.map((entry, index) =>
-		normalizeRetainedEntry(entry, index + 1, entriesById, resolver),
-	);
-	const valueWrites = normalizeLegacyV3Values(entries, entriesById, resolver, entryWrites.length + 1);
-	const writes: CommittedWrite[] = [...entryWrites, ...valueWrites];
-	return {
-		writes,
-		importedUsage: aggregateImportedUsage(entries),
-		nextSeq: writes.length + 1,
-	};
+
+	translateForkEntryId(legacyId: string): string {
+		const entry = this.entries.get(legacyId);
+		if (entry === undefined) throw new Error(`Legacy v3 fork entry does not exist: ${legacyId}`);
+		if (!isRetainedEntry(entry)) throw new Error(`Legacy v3 fork entry is not a retained entry: ${legacyId}`);
+		return entry.mappedId;
+	}
+
+	private collectRequiredTailMessageIds(isEntrySelected?: (id: string) => boolean): Set<string> {
+		const requiredIds = new Set<string>();
+		for (const entry of this.entries.values()) {
+			if (entry.type !== "compaction") continue;
+			const compactionIsSelected = isEntrySelected === undefined || isEntrySelected(entry.mappedId);
+			if (!compactionIsSelected) continue;
+
+			// Walk from the compaction's parent through firstKeptEntryId, inclusive.
+			for (const tailEntry of retainedTailStructure(entry, this.entries)) {
+				const canProduceContextMessage = isRetainedEntry(tailEntry) && tailEntry.type !== "custom";
+				if (canProduceContextMessage) requiredIds.add(tailEntry.id);
+			}
+		}
+		return requiredIds;
+	}
+
+	/**
+	 * Stream normalized v4 entries, optionally filtered by reminted ID, followed by derived current values.
+	 * Each pass owns its reader and message cache, sharing only the captured IDs and metadata.
+	 */
+	async *writes(
+		context: Context,
+		isEntrySelected?: (id: string) => boolean,
+	): AsyncIterable<CommittedEntryWrite | CommittedValueSetWrite> {
+		const requiredTailMessageIds = this.collectRequiredTailMessageIds(isEntrySelected);
+		// Keep needed context messages for this entire pass; tails may revisit old or shared branches.
+		const tailMessagesByLegacyId = new Map<string, AgentMessage>();
+		for await (const { entry, indexed } of this.readCapturedEntries(context)) {
+			if (requiredTailMessageIds.has(entry.id)) {
+				const message = projectContextMessage(entry, this.resolveLegacyId);
+				if (message !== undefined) tailMessagesByLegacyId.set(entry.id, message);
+			}
+			if (!isRetainedEntry(indexed) || !isRetainedEntry(entry)) continue;
+			if (isEntrySelected !== undefined && !isEntrySelected(indexed.mappedId)) continue;
+			const retainedTail: AgentMessage[] = [];
+			if (indexed.type === "compaction") {
+				for (const ancestor of retainedTailStructure(indexed, this.entries)) {
+					const message = tailMessagesByLegacyId.get(ancestor.id);
+					if (message !== undefined) retainedTail.push(message);
+				}
+				retainedTail.reverse();
+			}
+			yield normalizeRetainedEntry(entry, indexed, retainedTail, this.resolveLegacyId);
+		}
+		yield* this.values;
+	}
+
+	/** Replay only the captured prefix and verify its physical identities before materialization. */
+	private async *readCapturedEntries(
+		context: Context,
+	): AsyncIterable<{ entry: LegacyV3Entry; indexed: LegacyV3IndexEntry }> {
+		const reader = fileValue(
+			await this.fileSystem.openTextLineReader(this.path, context),
+			`Failed to reopen legacy v3 source ${this.path}`,
+		);
+		try {
+			const parsed = await readJsonlHeader(reader, this.path, context);
+			if (
+				parsed.format !== "v3-legacy" ||
+				parsed.header.id !== this.header.id ||
+				parsed.header.cwd !== this.header.cwd
+			) {
+				throw new Error("Legacy v3 source header changed");
+			}
+			for (const indexed of this.entries.values()) {
+				const line = fileValue(await reader.readLine(context), "Failed to reread legacy v3 source");
+				if (line === undefined || !line.terminated)
+					throw new Error("Legacy v3 source ended before captured entries");
+				const entry = parseLegacyV3Entry(line.text);
+				if (entry.id !== indexed.id || entry.type !== indexed.type) {
+					throw new Error("Legacy v3 source changed");
+				}
+				yield { entry, indexed };
+			}
+		} finally {
+			await reader.close(context);
+		}
+	}
 }

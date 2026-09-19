@@ -30,7 +30,15 @@ class BashResultRenderComponent extends Container {
 	};
 }
 function formatDuration(ms: number): string {
-	return `${(ms / 1000).toFixed(1)}s`;
+	const seconds = ms / 1000;
+	if (seconds < 60) return `${seconds.toFixed(1)}s`;
+
+	const totalSeconds = Math.floor(seconds);
+	const minutes = Math.floor(totalSeconds / 60);
+	const remainder = totalSeconds % 60;
+	if (minutes < 60) return `${minutes}m ${remainder}s`;
+
+	return `${Math.floor(minutes / 60)}h ${minutes % 60}m ${remainder}s`;
 }
 function formatShellCall(args: { command?: string; timeout?: number } | undefined, prompt: string): string {
 	const command = str(args?.command);

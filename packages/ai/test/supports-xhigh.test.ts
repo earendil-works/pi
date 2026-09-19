@@ -52,7 +52,7 @@ describe("getSupportedThinkingLevels", () => {
 		expect(getSupportedThinkingLevels(model!)).not.toContain("max");
 	});
 
-	it.each(["gpt-5.4", "gpt-5.5", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"] as const)(
+	it.each(["gpt-5.5", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-6-astra"] as const)(
 		"includes xhigh for openai-codex %s models",
 		(modelId) => {
 			const model = getModel("openai-codex", modelId);
@@ -82,8 +82,8 @@ describe("getSupportedThinkingLevels", () => {
 		expect(getSupportedThinkingLevels(model!)).toEqual(["medium", "high", "xhigh"]);
 	});
 
-	it("includes low/high/max plus off for DeepSeek V4 Flash on the DeepSeek provider", () => {
-		const model = getModel("deepseek", "deepseek-v4-flash");
+	it("includes low/high/max plus off for DeepSeek V4.1 Flash on the DeepSeek provider", () => {
+		const model = getModel("deepseek", "deepseek-flash");
 		expect(model).toBeDefined();
 		expect(getSupportedThinkingLevels(model!)).toEqual(["off", "low", "high", "max"]);
 	});
@@ -92,6 +92,18 @@ describe("getSupportedThinkingLevels", () => {
 		const model = getModel("opencode-go", "deepseek-v4-flash");
 		expect(model).toBeDefined();
 		expect(getSupportedThinkingLevels(model!)).toEqual(["off", "low", "high", "max"]);
+	});
+
+	it("preserves low/high/max metadata for DeepSeek V4.1 Flash on OpenRouter", () => {
+		const model = getModel("openrouter", "deepseek/deepseek-v4.1-flash");
+		expect(model).toBeDefined();
+		expect(getSupportedThinkingLevels(model!)).toEqual(["off", "low", "high", "max"]);
+	});
+
+	it("preserves low/high/max metadata for DeepSeek V4.1 Flash on opencode-go", () => {
+		const model = getModel("opencode-go", "deepseek-v4.1-flash");
+		expect(model).toBeDefined();
+		expect(getSupportedThinkingLevels(model!)).toEqual(["low", "high", "max"]);
 	});
 
 	it("includes only high plus off for OpenCode Go Kimi K2.6", () => {

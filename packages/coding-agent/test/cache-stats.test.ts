@@ -46,6 +46,26 @@ function entry(message: AssistantMessage): SessionEntry {
 	return { type: "message", id: "x", parentId: null, timestamp: "", message } as SessionEntry;
 }
 
+function usageEntry(kind: string, timestamp: number): SessionEntry {
+	return {
+		type: "usage",
+		id: `usage-${kind}`,
+		parentId: null,
+		timestamp: new Date(timestamp).toISOString(),
+		kind,
+		provider: "test",
+		model: "test-model",
+		usage: {
+			input: 0,
+			output: 0,
+			cacheRead: 100_000,
+			cacheWrite: 0,
+			totalTokens: 100_000,
+			cost: zeroCost,
+		},
+	};
+}
+
 // Turn 1: fresh 100k cache write at $3.75/M
 const turn1 = assistant({ cacheWrite: 100_000, cost: { cacheWrite: 0.375 }, timestamp: 0 });
 // Turn 2: healthy, everything read back at $0.30/M
@@ -125,6 +145,20 @@ describe("detectCacheMiss", () => {
 		const miss = detectCacheMiss([entry(turn1), entry(turn2)], otherModel, models);
 		expect(miss?.missedTokens).toBe(105_000);
 		expect(miss?.modelChanged).toBe(true);
+	});
+
+	it("uses only cache-warm usage entries as cache refreshes", () => {
+		const missMessage = assistant({ cacheWrite: 110_000, cost: { cacheWrite: 0.4125 }, timestamp: 600_000 });
+
+		const afterCacheWarm = detectCacheMiss([entry(turn1), usageEntry("cache_warm", 500_000)], missMessage, models);
+		const afterOtherUsage = detectCacheMiss(
+			[entry(turn1), usageEntry("custom_operation", 500_000)],
+			missMessage,
+			models,
+		);
+
+		expect(afterCacheWarm?.idleMs).toBe(100_000);
+		expect(afterOtherUsage?.idleMs).toBe(600_000);
 	});
 
 	it("returns undefined for healthy turns", () => {

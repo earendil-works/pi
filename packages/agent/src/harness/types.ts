@@ -249,6 +249,20 @@ export interface FileInfo {
 	mtimeMs: number;
 }
 
+/** One UTF-8 line read from a text file. */
+export interface TextLine {
+	text: string;
+	/** Whether the line ended with `\n`; callers use this to discard a torn final record. */
+	terminated: boolean;
+}
+
+/** Pull-based UTF-8 line reader that preserves final-line termination. */
+export interface TextLineReader {
+	readLine(context: Context): Promise<Result<TextLine | undefined, FileError>>;
+	/** Release the open file. Must be best-effort and must not throw or reject. */
+	close(context: Context): Promise<void>;
+}
+
 /**
  * Filesystem capability used by the harness.
  *
@@ -268,6 +282,8 @@ export interface FileSystem {
 	joinPath(parts: string[], context: Context): Promise<Result<string, FileError>>;
 	/** Read a UTF-8 text file. */
 	readTextFile(path: string, context: Context): Promise<Result<string, FileError>>;
+	/** Open a UTF-8 text file for pull-based line reading. */
+	openTextLineReader(path: string, context: Context): Promise<Result<TextLineReader, FileError>>;
 	/** Read UTF-8 text lines. Implementations should stop once `maxLines` lines have been read. */
 	readTextLines(
 		path: string,

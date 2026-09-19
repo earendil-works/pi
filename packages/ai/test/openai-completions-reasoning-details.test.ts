@@ -2,6 +2,7 @@ import { Type } from "typebox";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { stream as streamOpenAICompletions } from "../src/api/openai-completions.ts";
 import type { AssistantMessage, Model, Tool } from "../src/types.ts";
+import { normalizeContext } from "../src/utils/transcript.ts";
 
 const mockState = vi.hoisted(() => ({
 	chunkSets: [] as unknown[][],
@@ -96,7 +97,9 @@ function toolCallChunk(): unknown {
 }
 
 async function runOpenAICompletionsStream(messages: AssistantMessage[] = []): Promise<AssistantMessage> {
-	return await streamOpenAICompletions(model(), { messages, tools: [readTool] }, { apiKey: "test" }).result();
+	return await streamOpenAICompletions(model(), normalizeContext({ messages, tools: [readTool] }), {
+		apiKey: "test",
+	}).result();
 }
 
 function getAssistantPayload(payload: unknown): { reasoning?: unknown; reasoning_details?: unknown } | undefined {

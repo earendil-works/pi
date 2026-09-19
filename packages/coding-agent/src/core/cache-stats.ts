@@ -117,7 +117,17 @@ function scan(
 			prev = undefined;
 			continue;
 		}
-		if (entry.type === "message" && entry.message.role === "assistant") {
+		if (entry.type === "usage" && entry.kind === "cache_warm") {
+			const promptTokens = entry.usage.input + entry.usage.cacheRead + entry.usage.cacheWrite;
+			if (promptTokens > 0) {
+				prev = {
+					promptTokens,
+					modelKey: `${entry.provider}/${entry.model}`,
+					timestamp: Date.parse(entry.timestamp),
+					reportedCache: true,
+				};
+			}
+		} else if (entry.type === "message" && entry.message.role === "assistant") {
 			const miss = detectMiss(prev, entry.message, models);
 			if (miss) {
 				totals.missedTokens += miss.missedTokens;

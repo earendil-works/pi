@@ -20,7 +20,7 @@ const ThemeJsonSchema = Type.Object({
 	name: Type.String(),
 	vars: Type.Optional(Type.Record(Type.String(), ColorValueSchema)),
 	colors: Type.Object({
-		// Core UI (10 colors)
+		// Core UI (11 colors)
 		accent: ColorValueSchema,
 		border: ColorValueSchema,
 		borderAccent: ColorValueSchema,
@@ -32,9 +32,11 @@ const ThemeJsonSchema = Type.Object({
 		dim: ColorValueSchema,
 		text: ColorValueSchema,
 		thinkingText: ColorValueSchema,
-		// Backgrounds & Content Text (11 required, 3 optional)
-		selectedBg: ColorValueSchema,
+		// Scrollbar (2 optional colors)
+		scrollbarTrack: Type.Optional(ColorValueSchema),
 		scrollbarThumb: Type.Optional(ColorValueSchema),
+		// Backgrounds & Content Text (11 required, 2 optional)
+		selectedBg: ColorValueSchema,
 		searchMatchBg: Type.Optional(ColorValueSchema),
 		searchMatchText: Type.Optional(ColorValueSchema),
 		userMessageBg: ColorValueSchema,

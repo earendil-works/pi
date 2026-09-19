@@ -106,7 +106,7 @@ describe("runtime terminal cleanup mechanics", () => {
 				triggerEntryId: "trigger",
 				configuration,
 				streamOptions: {},
-				retryPolicy: { maxAttempts: 2, baseDelayMs: 1 },
+				retryPolicy: { maxAttempts: 2, baseDelayMs: 1, maxAgentDelayMs: 30_000 },
 				overflowRecoveryUsed: false,
 			},
 			attempt: 1,

@@ -1,5 +1,13 @@
 import { addUsage, emptyUsage } from "../utils/usage.ts";
-import { type CommittedWrite, type PreparedCommit, prepareStorageCommit, validateCommittedWrites } from "./commit.ts";
+import {
+	type CommittedListAppendWrite,
+	type CommittedValueSetWrite,
+	type CommittedWrite,
+	type PreparedCommit,
+	prepareStorageCommit,
+	validateCommittedWrites,
+} from "./commit.ts";
+import { projectForkCurrentStateWrite, selectBranchFork } from "./fork-policy.ts";
 
 export type {
 	CommittedEntryWrite,
@@ -16,6 +24,7 @@ import type {
 	Entry,
 	EntryScan,
 	EntryStructure,
+	ForkOptions,
 	SessionStats,
 	StorageBranchScan,
 	UsageRow,
@@ -23,8 +32,11 @@ import type {
 	Write,
 } from "./types.ts";
 import {
+	branchTip,
 	type ListElement,
 	type ListReadOptions,
+	laneConfig,
+	laneState,
 	list,
 	resolveListReadOptions,
 	type StoredValue,
@@ -37,6 +49,10 @@ interface StoredListSnapshot {
 	address: ValueList<unknown>;
 	elements: ListElement<unknown>[];
 }
+
+type MemoryForkPlan =
+	| { scope: "tree" }
+	| { scope: "branch"; branch: string; destinationTip: string | null; entryIds: Set<string> };
 
 function physicalKey(namespace: string, key: string): string {
 	return `${namespace}\u0000${key}`;
@@ -108,41 +124,113 @@ export class InMemoryStorageState {
 					this.stats = { ...this.stats, usage: addUsage(this.stats.usage, row.usage) };
 					break;
 				}
-				case "value": {
-					const key = physicalKey(write.namespace, write.key);
-					if (write.op === "delete") {
-						this.scalarValues.delete(key);
-					} else {
-						this.scalarValues.set(key, {
-							address: value<unknown>(write.namespace, write.key),
-							value: write.value,
-							seq: write.seq,
-						});
-					}
+				case "value":
+					if (write.op === "delete") this.scalarValues.delete(physicalKey(write.namespace, write.key));
+					else this.applyValueSetOrListAppend(write);
 					break;
-				}
-				case "list": {
-					const key = physicalKey(write.namespace, write.key);
-					if (write.op === "delete") {
-						this.listValues.delete(key);
-					} else {
-						const stored = this.listValues.get(key);
-						const element = { seq: write.seq, value: write.value };
-						if (stored === undefined) {
-							this.listValues.set(key, {
-								address: list<unknown>(write.namespace, write.key),
-								elements: [element],
-							});
-						} else {
-							stored.elements.push(element);
-						}
-					}
+				case "list":
+					if (write.op === "delete") this.listValues.delete(physicalKey(write.namespace, write.key));
+					else this.applyValueSetOrListAppend(write);
 					break;
-				}
 			}
 			this.nextSeq = write.seq + 1;
 		}
 		return this.stats;
+	}
+
+	createFork(options: ForkOptions): InMemoryStorageState {
+		const plan = this.selectForkPlan(options);
+
+		const isEntryCopied = (entryId: string): boolean => {
+			if (plan.scope === "tree") return true;
+			return plan.entryIds.has(entryId);
+		};
+		const destination = new InMemoryStorageState();
+		let messageCount = 0;
+		for (const entry of this.entriesBySeq) {
+			if (!isEntryCopied(entry.id)) continue;
+			destination.entries.set(entry.id, entry);
+			destination.entriesBySeq.push(entry);
+			if (entry.type === "message") messageCount++;
+		}
+		destination.stats = { ...destination.stats, messageCount };
+
+		for (const stored of this.scalarValues.values()) {
+			const projected = projectForkCurrentStateWrite(
+				{
+					kind: "value",
+					op: "set",
+					seq: stored.seq,
+					namespace: stored.address.namespace,
+					key: stored.address.key,
+					value: stored.value,
+				},
+				plan,
+				isEntryCopied,
+			);
+			if (projected !== undefined) destination.applyValueSetOrListAppend(projected);
+		}
+
+		for (const stored of this.listValues.values()) {
+			for (const element of stored.elements) {
+				const projected = projectForkCurrentStateWrite(
+					{
+						kind: "list",
+						op: "append",
+						seq: element.seq,
+						namespace: stored.address.namespace,
+						key: stored.address.key,
+						value: element.value,
+					},
+					plan,
+					isEntryCopied,
+				);
+				if (projected !== undefined) destination.applyValueSetOrListAppend(projected);
+			}
+		}
+		destination.nextSeq = this.nextSeq;
+		return destination;
+	}
+
+	private selectForkPlan(options: ForkOptions): MemoryForkPlan {
+		if (options.scope === "tree") return { scope: "tree" };
+
+		const entryIds = new Set<string>();
+		const plan = selectBranchFork(options, {
+			tip: this.getValue(branchTip(options.branch))?.value,
+			getParent: (entryId) => this.entries.get(entryId)?.parentId,
+			selectEntry: (entryId) => entryIds.add(entryId),
+		});
+		if (
+			this.getValue(laneConfig(options.branch)) === undefined ||
+			this.getValue(laneState(options.branch)) === undefined
+		) {
+			throw new Error(`Source branch ${JSON.stringify(options.branch)} is not a configured AgentLane`);
+		}
+		return { ...plan, entryIds };
+	}
+
+	private applyValueSetOrListAppend(write: CommittedValueSetWrite | CommittedListAppendWrite): void {
+		const key = physicalKey(write.namespace, write.key);
+		if (write.kind === "value") {
+			this.scalarValues.set(key, {
+				address: value<unknown>(write.namespace, write.key),
+				value: write.value,
+				seq: write.seq,
+			});
+			return;
+		}
+
+		const element = { seq: write.seq, value: write.value };
+		const stored = this.listValues.get(key);
+		if (stored === undefined) {
+			this.listValues.set(key, {
+				address: list<unknown>(write.namespace, write.key),
+				elements: [element],
+			});
+		} else {
+			stored.elements.push(element);
+		}
 	}
 
 	advanceNextSeq(nextSeq: number): void {
@@ -255,10 +343,7 @@ export class InMemoryStorageState {
 		return this.stats;
 	}
 
-	snapshotEntriesAndValues(): { entries: Entry[]; scalarValues: StoredValue<unknown>[] } {
-		return {
-			entries: [...this.entries.values()].sort((left, right) => left.seq - right.seq),
-			scalarValues: [...this.scalarValues.values()],
-		};
+	getNextSeq(): number {
+		return this.nextSeq;
 	}
 }

@@ -136,6 +136,7 @@ export interface InboxItem {
 export interface NormalizedRetryPolicy {
 	maxAttempts: number;
 	baseDelayMs: number;
+	maxAgentDelayMs: number;
 }
 
 export interface GenerationContext {

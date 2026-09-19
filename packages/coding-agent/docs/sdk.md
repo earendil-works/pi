@@ -111,6 +111,8 @@ interface AgentSession {
 }
 ```
 
+`session.navigateTree()` rejects while an agent response, manual or automatic compaction, or another tree navigation is active, even with `summarize: false`. It does not queue navigation or return `{ cancelled: true }` for these conflicts. Wait for the active operation to finish (for example, with `await session.waitForIdle()`) and retry. Rejection leaves the active branch unchanged.
+
 Session replacement APIs such as new-session, resume, fork, and import live on `AgentSessionRuntime`, not on `AgentSession`.
 
 ### createAgentSessionRuntime() and AgentSessionRuntime
@@ -244,8 +246,8 @@ const state = session.agent.state;
 // state.messages: AgentMessage[] - conversation history
 // state.model: Model - current model
 // state.thinkingLevel: ThinkingLevel - current thinking level
-// state.systemPrompt: string - system prompt
-// state.tools: AgentTool[] - available tools
+// state.systemPrompt: string - read-only, replayed from the transcript's system messages
+// state.tools: AgentTool[] - executable tools; changes are declared to the model before the next request
 // state.streamingMessage?: AgentMessage - current partial assistant message
 // state.errorMessage?: string - latest assistant error
 

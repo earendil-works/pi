@@ -87,14 +87,13 @@ vi.mock("@google/genai", () => {
 
 import { stream as streamGoogleGenerativeAi } from "../src/api/google-generative-ai.ts";
 import { stream as streamGoogleVertex } from "../src/api/google-vertex.ts";
-import { getModel } from "../src/compat.ts";
-import type { Context } from "../src/types.ts";
+import { getModel, normalizeContext } from "../src/compat.ts";
 
 const PI_USER_AGENT = `pi (${platform()} ${release()}; ${arch()})`;
 
-const context: Context = {
+const context = normalizeContext({
 	messages: [{ role: "user", content: "hello", timestamp: Date.now() }],
-};
+});
 
 async function captureGoogleHeaders(headers?: Record<string, string>): Promise<Record<string, string>> {
 	googleGenAiMock.constructorCalls.length = 0;

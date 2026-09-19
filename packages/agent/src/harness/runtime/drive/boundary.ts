@@ -1,3 +1,4 @@
+import { DEFAULT_MAX_AGENT_RETRY_DELAY_MS } from "@earendil-works/pi-ai";
 import type { HarnessEvent, LaneQueuedItem } from "../../agent-harness.ts";
 import { insertEntry } from "../../session/commit.ts";
 import { SessionInvariantError } from "../../session/session.ts";
@@ -44,9 +45,11 @@ export function normalizedRetryPolicy<TContext extends object | undefined>(
 	lane: Lane<TContext>,
 ): NormalizedRetryPolicy {
 	const retry = lane.readConfig().retryPolicy;
-	return retry.enabled
-		? { maxAttempts: retry.maxRetries + 1, baseDelayMs: retry.baseDelayMs }
-		: { maxAttempts: 1, baseDelayMs: retry.baseDelayMs };
+	return {
+		maxAttempts: retry.enabled ? retry.maxRetries + 1 : 1,
+		baseDelayMs: retry.baseDelayMs,
+		maxAgentDelayMs: retry.maxAgentDelayMs ?? DEFAULT_MAX_AGENT_RETRY_DELAY_MS,
+	};
 }
 
 export function assistantReadyAtBoundary<TContext extends object | undefined>(

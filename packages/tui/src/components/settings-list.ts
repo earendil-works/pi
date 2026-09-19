@@ -198,21 +198,17 @@ export class SettingsList implements Component {
 			this.selectedIndex = Math.max(0, Math.min(displayItems.length - 1, this.selectedIndex + delta));
 			return { handled: true, render: this.selectedIndex !== previousIndex };
 		}
-		if (event.type !== "move" && event.button !== "left") return undefined;
+		// Hover must not change selection: the visible range is centered on it.
+		if (event.button !== "left" || (event.type !== "press" && event.type !== "click")) return undefined;
 
 		const rowOffset = this.searchEnabled ? 2 : 0;
 		const { startIndex, endIndex } = this.getVisibleRange(displayItems);
 		const itemIndex = startIndex + event.y - rowOffset;
 		if (itemIndex < startIndex || itemIndex >= endIndex) return undefined;
-		if (event.type === "move" || event.type === "press") {
-			if (event.type === "press") this.mousePressedIndex = itemIndex;
-			const changed = this.selectedIndex !== itemIndex;
+		if (event.type === "press") {
+			this.mousePressedIndex = itemIndex;
 			this.selectedIndex = itemIndex;
-			return {
-				handled: true,
-				focus: event.type === "press",
-				...(event.type === "move" ? { render: changed } : {}),
-			};
+			return { handled: true, focus: true };
 		}
 		if (event.type === "click") {
 			this.selectedIndex = this.mousePressedIndex ?? itemIndex;

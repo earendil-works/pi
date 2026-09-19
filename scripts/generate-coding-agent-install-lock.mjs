@@ -15,9 +15,9 @@ const internalPackagePrefix = "@earendil-works/pi-";
 const internalPackageNames = new Set(["@earendil-works/chord"]);
 const installPackageName = "@earendil-works/pi-coding-agent-install";
 const allowedInstallScriptPackages = new Map([
-	["@google/genai@1.52.0", "preinstall is a no-op in the published package"],
-	["esbuild@0.28.1", "postinstall selects and verifies the platform-specific esbuild binary"],
-	["protobufjs@7.6.5", "postinstall only warns about protobufjs version scheme mismatches"],
+	["@google/genai@2.21.0", "preinstall is a no-op in the published package"],
+	["esbuild@0.28.2", "postinstall selects and verifies the platform-specific esbuild binary"],
+	["protobufjs@7.6.6", "postinstall only warns about protobufjs version scheme mismatches"],
 ]);
 
 const args = new Set(process.argv.slice(2));
@@ -211,22 +211,36 @@ function addInternalWorkspace(installLockPackages, addedPaths, queue, name, work
 	addedPaths.add(outputPath);
 
 	for (const dependencyName of Object.keys(packageDependencies(packageJson))) {
-		queue.push({ name: dependencyName, from: outputPath });
+		queue.push({
+			name: dependencyName,
+			sourceFrom: workspace.lockPath,
+			sourceBase: workspace.lockPath,
+			outputBase: outputPath,
+		});
 	}
 }
 
-function addExternalPackage(lockPackages, installLockPackages, addedPaths, queue, name, from) {
-	const lockPath = resolveExternalDependency(lockPackages, name, from);
-	if (addedPaths.has(lockPath)) {
+function addExternalPackage(lockPackages, installLockPackages, addedPaths, queue, item) {
+	const sourceLockPath = resolveExternalDependency(lockPackages, item.name, item.sourceFrom);
+	const outputLockPath =
+		item.sourceBase && sourceLockPath.startsWith(`${item.sourceBase}/`)
+			? [item.outputBase, sourceLockPath.slice(item.sourceBase.length + 1)].filter(Boolean).join("/")
+			: sourceLockPath;
+	if (addedPaths.has(outputLockPath)) {
 		return;
 	}
 
-	const entry = lockPackages[lockPath];
-	installLockPackages[lockPath] = copyLockEntry(entry);
-	addedPaths.add(lockPath);
+	const entry = lockPackages[sourceLockPath];
+	installLockPackages[outputLockPath] = copyLockEntry(entry);
+	addedPaths.add(outputLockPath);
 
 	for (const dependencyName of Object.keys(packageDependencies(entry))) {
-		queue.push({ name: dependencyName, from: lockPath });
+		queue.push({
+			name: dependencyName,
+			sourceFrom: sourceLockPath,
+			sourceBase: item.sourceBase,
+			outputBase: item.outputBase,
+		});
 	}
 }
 
@@ -376,7 +390,10 @@ function generateInstallLock() {
 	};
 	const addedPaths = new Set([""]);
 	const internalNames = new Set();
-	const queue = Object.keys(packageDependencies(installerPackageJson)).map((name) => ({ name, from: "" }));
+	const queue = Object.keys(packageDependencies(installerPackageJson)).map((name) => ({
+		name,
+		sourceFrom: "",
+	}));
 
 	while (queue.length > 0) {
 		const item = queue.shift();
@@ -394,7 +411,7 @@ function generateInstallLock() {
 			continue;
 		}
 
-		addExternalPackage(lockPackages, installLockPackages, addedPaths, queue, item.name, item.from);
+		addExternalPackage(lockPackages, installLockPackages, addedPaths, queue, item);
 	}
 
 	const installLock = {

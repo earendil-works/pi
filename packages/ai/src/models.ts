@@ -30,9 +30,11 @@ import type {
 	ProviderRequestOptions,
 	ProviderStreams,
 	SimpleStreamOptions,
+	TranscriptContext,
 	Usage,
 } from "./types.ts";
 import { operationSignal, raceWithAbortSignal } from "./utils/abort.ts";
+import { normalizeContext } from "./utils/transcript.ts";
 
 export { ModelsError, type ModelsErrorCode } from "./auth/resolve.ts";
 
@@ -133,13 +135,18 @@ export interface Provider<TApi extends Api = Api> {
 	 */
 	filterModels?(models: readonly Model<TApi>[], credential: Credential | undefined): readonly Model<TApi>[];
 
+	/** Stream a normalized transcript. `Models` normalizes the caller's `Context` before dispatching here. */
 	stream<T extends TApi>(
 		model: Model<T>,
-		context: Context,
+		context: TranscriptContext,
 		options?: ApiStreamOptions<T>,
 	): AssistantMessageEventStream;
 
-	streamSimple(model: Model<TApi>, context: Context, options?: SimpleStreamOptions): AssistantMessageEventStream;
+	streamSimple(
+		model: Model<TApi>,
+		context: TranscriptContext,
+		options?: SimpleStreamOptions,
+	): AssistantMessageEventStream;
 	fetchDeferred?(
 		model: Model<TApi>,
 		handle: DeferredHandle,
@@ -674,13 +681,14 @@ class ModelsImpl implements MutableModels {
 		context: Context,
 		options?: ModelsApiStreamOptions<TApi>,
 	): AssistantMessageEventStream {
+		const transcript = normalizeContext(context);
 		return lazyStream(model, async () => {
 			const provider = this.requireProvider(model);
 			const { requestModel, requestOptions } = await this.applyAuth(
 				model,
 				options as ModelsApiStreamOptions<Api> | undefined,
 			);
-			return provider.stream(requestModel as Model<TApi>, context, requestOptions as ApiStreamOptions<TApi>);
+			return provider.stream(requestModel as Model<TApi>, transcript, requestOptions as ApiStreamOptions<TApi>);
 		});
 	}
 
@@ -693,10 +701,11 @@ class ModelsImpl implements MutableModels {
 	}
 
 	streamSimple(model: Model<Api>, context: Context, options?: ModelsSimpleStreamOptions): AssistantMessageEventStream {
+		const transcript = normalizeContext(context);
 		return lazyStream(model, async () => {
 			const provider = this.requireProvider(model);
 			const { requestModel, requestOptions } = await this.applyAuth(model, options);
-			return provider.streamSimple(requestModel, context, requestOptions as SimpleStreamOptions);
+			return provider.streamSimple(requestModel, transcript, requestOptions as SimpleStreamOptions);
 		});
 	}
 

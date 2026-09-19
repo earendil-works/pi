@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { stream } from "../src/api/anthropic-messages.ts";
-import { getModel } from "../src/compat.ts";
+import { getModel, normalizeContext } from "../src/compat.ts";
 import type { AssistantMessage, Context, Model } from "../src/types.ts";
 
 interface WireMessage {
@@ -67,7 +67,7 @@ async function capture(
 	effort?: "low" | "medium" | "high" | "xhigh" | "max",
 ): Promise<{ payload: CapturedPayload; message: AssistantMessage }> {
 	let payload: CapturedPayload | undefined;
-	const result = stream(model, context, {
+	const result = stream(model, normalizeContext(context), {
 		apiKey: "test-key",
 		cacheRetention: "none",
 		thinkingEnabled: true,
@@ -182,15 +182,11 @@ describe("Anthropic mid-conversation effort", () => {
 			betaHeader = request.headers.get("anthropic-beta");
 			return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
 		};
-		const result = await stream(
-			managedModel(),
-			{ messages: [user("one", 1)] },
-			{
-				apiKey: "test-key",
-				cacheRetention: "none",
-				fetch: fetchImpl,
-			},
-		).result();
+		const result = await stream(managedModel(), normalizeContext({ messages: [user("one", 1)] }), {
+			apiKey: "test-key",
+			cacheRetention: "none",
+			fetch: fetchImpl,
+		}).result();
 
 		expect(result.stopReason).toBe("stop");
 		expect(betaHeader).toContain("mid-conversation-output-config-2026-07-01");
@@ -207,6 +203,8 @@ describe("Anthropic mid-conversation effort", () => {
 		expect(openRouter.baseUrl).toBe("https://openrouter.ai/api");
 		expect(openRouter.compat?.supportsMidConvoEffort).toBe(true);
 		expect(unsupported.compat?.supportsMidConvoEffort).toBeUndefined();
+		// OpenRouter rejects configuration_update on Opus 5 but accepts it on Fable 5.1.
+		expect(getModel("openrouter", "anthropic/claude-opus-5").compat?.supportsMidConvoEffort).toBeUndefined();
 		expect(getModel("anthropic", "claude-opus-5").compat?.allowedFallbackModels).toBeUndefined();
 	});
 });

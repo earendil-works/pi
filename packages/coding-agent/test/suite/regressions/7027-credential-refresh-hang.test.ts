@@ -1,9 +1,18 @@
 import type { Api, Model, Provider } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AuthStorage } from "../../../src/core/auth-storage.ts";
+import { defaultModelPerProvider } from "../../../src/core/model-resolver.ts";
 import { ModelRuntime } from "../../../src/core/model-runtime.ts";
 import { InteractiveMode } from "../../../src/modes/interactive/interactive-mode.ts";
 import { createHarness, type Harness } from "../harness.ts";
+
+const complete = Reflect.get(InteractiveMode.prototype, "completeProviderAuthentication") as (
+	this: object,
+	providerId: string,
+	providerName: string,
+	authType: "oauth" | "api_key",
+	previousModel: Model<Api>,
+) => Promise<void>;
 
 const dynamicModel: Model<"openai-completions"> = {
 	id: "dynamic",
@@ -102,14 +111,6 @@ describe("issues #7027 and #7113 credential refresh hang", () => {
 			checkDaxnutsEasterEgg: vi.fn(),
 			ui: { requestRender: vi.fn() },
 		};
-		const complete = Reflect.get(InteractiveMode.prototype, "completeProviderAuthentication") as (
-			this: object,
-			providerId: string,
-			providerName: string,
-			authType: "oauth" | "api_key",
-			previousModel: Model<Api>,
-		) => Promise<void>;
-
 		await complete.call(context, dynamicModel.provider, "Stalled Login", "api_key", harness.getModel());
 		expect(runtime.refresh).toHaveBeenCalledWith({
 			providers: [dynamicModel.provider],
@@ -121,5 +122,98 @@ describe("issues #7027 and #7113 credential refresh hang", () => {
 		expect(showWarning).toHaveBeenCalledWith(
 			"Saved API key for Stalled Login, but its model catalog refresh timed out; using cached models.",
 		);
+	});
+});
+
+describe("post-login model discovery", () => {
+	let harness: Harness | undefined;
+	afterEach(() => {
+		vi.useRealTimers();
+		harness?.cleanup();
+		vi.restoreAllMocks();
+	});
+
+	async function startLogin() {
+		harness = await createHarness();
+		vi.useFakeTimers();
+		const session = harness.session;
+		const model = harness.getModel();
+		const unknownModel = { ...model, id: "unknown", provider: "unknown", api: "unknown" };
+		const currentModel = vi.spyOn(session, "model", "get").mockReturnValue(unknownModel);
+		const availableModels = vi.spyOn(session.modelRuntime, "getAvailableSnapshot").mockReturnValue([]);
+		let finishRefresh = () => {};
+		vi.spyOn(session.modelRuntime, "refresh").mockImplementation(
+			(options) =>
+				new Promise((resolve) => {
+					finishRefresh = () => resolve({ aborted: false, errors: new Map() });
+					options?.signal?.addEventListener("abort", () => resolve({ aborted: true, errors: new Map() }), {
+						once: true,
+					});
+				}),
+		);
+		const setModel = vi.spyOn(session, "setModel").mockResolvedValue();
+		const context = {
+			session,
+			updateAvailableProviderCount: vi.fn(),
+			footer: { invalidate: vi.fn() },
+			updateEditorBorderColor: vi.fn(),
+			showStatus: vi.fn(),
+			showError: vi.fn(),
+			showWarning: vi.fn(),
+			maybeWarnAboutAnthropicSubscriptionAuth: vi.fn(),
+			checkDaxnutsEasterEgg: vi.fn(),
+			ui: { requestRender: vi.fn() },
+		};
+		await complete.call(context, "radius", "Radius", "oauth", unknownModel);
+		expect(context.showStatus).toHaveBeenCalledWith(expect.stringContaining("Credentials saved"));
+		expect(context.showError).not.toHaveBeenCalled();
+		expect(setModel).not.toHaveBeenCalled();
+
+		return {
+			...context,
+			setModel,
+			currentModel,
+			async discover(ids: string[]) {
+				availableModels.mockReturnValue(ids.map((id) => ({ ...model, provider: "radius", id })));
+				finishRefresh();
+				await vi.advanceTimersByTimeAsync(0);
+			},
+		};
+	}
+
+	it.each([
+		{ models: ["fast", "balanced"], selected: "balanced" },
+		{ models: ["fast", "powerful"], selected: "fast" },
+	])("selects $selected from the refreshed catalog $models", async ({ models, selected }) => {
+		expect(defaultModelPerProvider.radius).toBe("balanced");
+		const login = await startLogin();
+		await login.discover(models);
+		expect(login.setModel).toHaveBeenCalledWith(expect.objectContaining({ provider: "radius", id: selected }), {
+			persist: true,
+		});
+		expect(login.showError).not.toHaveBeenCalled();
+	});
+
+	it("reports an empty catalog only after refresh", async () => {
+		const login = await startLogin();
+		await login.discover([]);
+		expect(login.setModel).not.toHaveBeenCalled();
+		expect(login.showError).toHaveBeenCalledWith(expect.stringContaining("no models are available"));
+	});
+
+	it("preserves a model selected during refresh", async () => {
+		const login = await startLogin();
+		login.currentModel.mockReturnValue(harness!.getModel());
+		await login.discover(["fast", "balanced"]);
+		expect(login.setModel).not.toHaveBeenCalled();
+		expect(login.showError).not.toHaveBeenCalled();
+	});
+
+	it("bounds refresh to 15 seconds", async () => {
+		const login = await startLogin();
+		await vi.advanceTimersByTimeAsync(15_000);
+		expect(login.showWarning).toHaveBeenCalledWith(expect.stringContaining("timed out"));
+		expect(login.showError).toHaveBeenCalledWith(expect.stringContaining("no models are available"));
+		expect(login.setModel).not.toHaveBeenCalled();
 	});
 });

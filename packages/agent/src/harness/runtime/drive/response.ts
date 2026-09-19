@@ -4,6 +4,7 @@ import {
 	isContextOverflow,
 	isRecoverableLength,
 	isRetryableAssistantError,
+	retryDelayMs,
 } from "@earendil-works/pi-ai";
 import type { HarnessEvent } from "../../agent-harness.ts";
 import type { Context } from "../../context.ts";
@@ -28,7 +29,7 @@ import { branchTip, deleteList, operationPreparation, pendingAssistantFrames, se
 import type { Lane } from "../lane.ts";
 import { openFrameProgress } from "../progress.ts";
 import type { Drive, ProcedureResult } from "../types.ts";
-import { retryDelay, retryNotBefore } from "./retry.ts";
+import { retryNotBefore } from "./retry.ts";
 import { prepareOverflowCompaction } from "./structural.ts";
 import { operationCleanupWrites, operationResultRecord } from "./terminal.ts";
 
@@ -283,7 +284,7 @@ export async function publishResponse<TContext extends object | undefined>(
 						at: "assistant.retry_wait",
 						generationContext: current.generationContext,
 						nextAttempt: current.attempt + 1,
-						notBefore: retryNotBefore(current.generationContext.retryPolicy.baseDelayMs, current.attempt),
+						notBefore: retryNotBefore(current.generationContext.retryPolicy, current.attempt),
 						errorMessage: response.errorMessage ?? "Assistant request failed",
 					};
 				} else {
@@ -395,7 +396,7 @@ export async function publishResponse<TContext extends object | undefined>(
 							step: turnId,
 							attempt: settled.nextAttempt,
 							maxAttempts: settled.generationContext.retryPolicy.maxAttempts,
-							delayMs: retryDelay(current.generationContext.retryPolicy.baseDelayMs, current.attempt),
+							delayMs: retryDelayMs(current.generationContext.retryPolicy, current.attempt),
 							notBefore: settled.notBefore,
 							errorMessage: settled.errorMessage,
 						});

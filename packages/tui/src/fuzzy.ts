@@ -27,33 +27,34 @@ export function fuzzyMatch(query: string, text: string): FuzzyMatch {
 		let lastMatchIndex = -1;
 		let consecutiveMatches = 0;
 
-		for (let i = 0; i < textLower.length && queryIndex < normalizedQuery.length; i++) {
-			if (textLower[i] === normalizedQuery[queryIndex]) {
-				const isWordBoundary = i === 0 || /[\s\-_./:]/.test(textLower[i - 1]!);
+		while (queryIndex < normalizedQuery.length) {
+			const i = textLower.indexOf(normalizedQuery[queryIndex]!, lastMatchIndex + 1);
+			if (i === -1) break;
 
-				// Reward consecutive matches
-				if (lastMatchIndex === i - 1) {
-					consecutiveMatches++;
-					score -= consecutiveMatches * 5;
-				} else {
-					consecutiveMatches = 0;
-					// Penalize gaps
-					if (lastMatchIndex >= 0) {
-						score += (i - lastMatchIndex - 1) * 2;
-					}
+			const isWordBoundary = i === 0 || /[\s\-_./:]/.test(textLower[i - 1]!);
+
+			// Reward consecutive matches
+			if (lastMatchIndex === i - 1) {
+				consecutiveMatches++;
+				score -= consecutiveMatches * 5;
+			} else {
+				consecutiveMatches = 0;
+				// Penalize gaps
+				if (lastMatchIndex >= 0) {
+					score += (i - lastMatchIndex - 1) * 2;
 				}
-
-				// Reward word boundary matches
-				if (isWordBoundary) {
-					score -= 10;
-				}
-
-				// Slight penalty for later matches
-				score += i * 0.1;
-
-				lastMatchIndex = i;
-				queryIndex++;
 			}
+
+			// Reward word boundary matches
+			if (isWordBoundary) {
+				score -= 10;
+			}
+
+			// Slight penalty for later matches
+			score += i * 0.1;
+
+			lastMatchIndex = i;
+			queryIndex++;
 		}
 
 		if (queryIndex < normalizedQuery.length) {

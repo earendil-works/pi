@@ -101,7 +101,7 @@ function summaryReady(
 	scope: OperationScope,
 	task: SummaryTask,
 	configuration: LaneConfiguration,
-	retryPolicy = { maxAttempts: 2, baseDelayMs: 10 },
+	retryPolicy = { maxAttempts: 2, baseDelayMs: 10, maxAgentDelayMs: 30_000 },
 ): SummaryReadyOperation {
 	return {
 		...scope,
@@ -700,7 +700,7 @@ describe("runtime structural drive", () => {
 				triggerEntryId: "tip",
 				configuration: fixture.configuration,
 				streamOptions: {},
-				retryPolicy: { maxAttempts: 2, baseDelayMs: 10 },
+				retryPolicy: { maxAttempts: 2, baseDelayMs: 10, maxAgentDelayMs: 30_000 },
 				overflowRecoveryUsed: false,
 			},
 			nextAttempt: 1,
@@ -1055,6 +1055,7 @@ describe("runtime structural drive", () => {
 		const ready = summaryReady(runScope(), standaloneCompactionTask(), fixture.configuration, {
 			maxAttempts: 2,
 			baseDelayMs: 10,
+			maxAgentDelayMs: 30_000,
 		});
 		await installOperation(
 			fixture,
@@ -1105,6 +1106,7 @@ describe("runtime structural drive", () => {
 		const ready = summaryReady(runScope(), standaloneCompactionTask(), fixture.configuration, {
 			maxAttempts: 2,
 			baseDelayMs: 10,
+			maxAgentDelayMs: 30_000,
 		});
 		await installOperation(
 			fixture,
@@ -1143,6 +1145,7 @@ describe("runtime structural drive", () => {
 		const ready = summaryReady(runScope(), standaloneCompactionTask(), fixture.configuration, {
 			maxAttempts: 1,
 			baseDelayMs: 10,
+			maxAgentDelayMs: 30_000,
 		});
 		await installOperation(
 			fixture,
@@ -1356,7 +1359,7 @@ describe("runtime structural drive", () => {
 				resultEntryId: "summary-entry",
 				configuration: fixture.configuration,
 				streamOptions: {},
-				retryPolicy: { maxAttempts: 2, baseDelayMs: 10 },
+				retryPolicy: { maxAttempts: 2, baseDelayMs: 10, maxAgentDelayMs: 30_000 },
 			},
 			attempt: 1,
 			request: { index: 1, usageId: "abandoned-usage" },
@@ -1400,7 +1403,7 @@ describe("runtime structural drive", () => {
 				resultEntryId: "summary-entry",
 				configuration: fixture.configuration,
 				streamOptions: {},
-				retryPolicy: { maxAttempts: 1, baseDelayMs: 10 },
+				retryPolicy: { maxAttempts: 1, baseDelayMs: 10, maxAgentDelayMs: 30_000 },
 			},
 			attempt: 1,
 			request: { index: 0, usageId: "abandoned-usage" },

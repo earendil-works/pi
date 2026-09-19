@@ -335,6 +335,9 @@ jobs:
       - name: Test
         run: npm test
 
+      - name: Smoke-test packed npm consumer
+        run: npm run check:package-install
+
       - name: Upgrade npm for trusted publishing
         run: |
           npm install -g npm@11.16.0 --ignore-scripts

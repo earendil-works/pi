@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { stream } from "../src/api/anthropic-messages.ts";
-import { getModel } from "../src/compat.ts";
+import { getModel, normalizeContext } from "../src/compat.ts";
 import type { AssistantMessage, Context } from "../src/types.ts";
 
 const enabled = Boolean(process.env.ANTHROPIC_API_KEY);
@@ -20,7 +20,7 @@ function strictBinding(payload: unknown): unknown {
 }
 
 async function request(context: Context, effort: "low" | "high"): Promise<AssistantMessage> {
-	return stream(model, context, {
+	return stream(model, normalizeContext(context), {
 		apiKey: process.env.ANTHROPIC_API_KEY,
 		cacheRetention: "none",
 		maxTokens: 1536,

@@ -1,11 +1,5 @@
 import { uuidv7 } from "@earendil-works/pi-ai/utils/uuid";
 import type { Context } from "../context.ts";
-import {
-	createForkSnapshot,
-	type ForkDestinationSnapshot,
-	type ForkSourceSnapshot,
-	forkSnapshotWrites,
-} from "./fork.ts";
 import { InMemoryStorageState } from "./in-memory-storage-state.ts";
 import { StorageBackedSession } from "./session.ts";
 import type {
@@ -114,10 +108,14 @@ export class MemoryStorage implements Storage {
 		return Promise.resolve(this.storageState.getStats());
 	}
 
-	/** Capture the state needed to fork at one serialized boundary between commits. */
-	captureForkSource(_context: Context): Promise<ForkSourceSnapshot> {
+	/** Construct a destination storage at one serialized boundary between source commits. */
+	fork(options: ForkOptions): Promise<MemoryStorage> {
 		if (this.state !== "open") return Promise.reject(new Error("MemoryStorage is closed"));
-		const result = this.commitQueue.then(() => this.storageState.snapshotEntriesAndValues());
+		const result = this.commitQueue.then(() => {
+			const destination = new MemoryStorage({ now: this.now });
+			destination.storageState = this.storageState.createFork(options);
+			return destination;
+		});
 		this.commitQueue = result.then(
 			() => undefined,
 			() => undefined,
@@ -132,14 +130,6 @@ export class MemoryStorage implements Storage {
 			this.state = "closed";
 		});
 		return this.closePromise;
-	}
-
-	static fromSnapshot(options: MemoryStorageOptions, snapshot: ForkDestinationSnapshot): MemoryStorage {
-		const storage = new MemoryStorage(options);
-		const writes = forkSnapshotWrites(snapshot);
-		storage.storageState.validateCommitted(writes);
-		storage.storageState.applyValidated(writes);
-		return storage;
 	}
 }
 
@@ -407,7 +397,7 @@ export class MemorySessionRepo implements SessionRepo {
 		this.sessions.delete(metadata.id);
 	}
 
-	async fork(source: SessionMetadata, options: ForkOptions, context: Context): Promise<Session> {
+	async fork(source: SessionMetadata, options: ForkOptions, _context: Context): Promise<Session> {
 		this.assertOpen();
 		const sourceRecord = this.sessions.get(source.id);
 		if (sourceRecord === undefined) throw new Error(`Unknown session: ${source.id}`);
@@ -416,8 +406,7 @@ export class MemorySessionRepo implements SessionRepo {
 		this.reserveId(id);
 
 		try {
-			const snapshot = createForkSnapshot(await sourceRecord.storage.captureForkSource(context), options);
-			const storage = MemoryStorage.fromSnapshot({ now: this.now }, snapshot);
+			const storage = await sourceRecord.storage.fork(options);
 			const metadata: SessionMetadata = {
 				id,
 				createdAt,

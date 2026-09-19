@@ -785,7 +785,7 @@ describe("Markdown component", () => {
 	describe("LaTeX math", () => {
 		it("renders inline dollar and parenthesis delimiters", () => {
 			const markdown = new Markdown(
-				String.raw`A map $\mathbb{C}^3 \to \mathbb{C}^3$, $xy$, $x-y$, $-x$, $\frac{1}{2}$, and \(s \to \infty\).`,
+				String.raw`A map $\mathbb{C}^3 \to \mathbb{C}^3$, $xy$, $x-y$, $-x$, $\frac{1}{2}$, $\rightarrow$, and \(s \to \infty\).`,
 				0,
 				0,
 				defaultMarkdownTheme,
@@ -793,7 +793,7 @@ describe("Markdown component", () => {
 
 			const lines = markdown.render(80).map((line) => stripAnsi(line).trimEnd());
 
-			assert.deepStrictEqual(lines, ["A map ℂ³ → ℂ³, xy, x-y, -x, 1/2, and s → ∞."]);
+			assert.deepStrictEqual(lines, ["A map ℂ³ → ℂ³, xy, x-y, -x, 1/2, →, and s → ∞."]);
 		});
 
 		it("renders display dollar delimiters without Markdown escape corruption", () => {
@@ -936,7 +936,13 @@ A=
 
 		it("allows LaTeX rendering to be disabled", () => {
 			const markdown = new Markdown(
-				String.raw`Map $\mathbb{C}^3 \to \mathbb{C}^3$`,
+				String.raw`$$
+\widetilde Y_{sf}
+=
+(1-w_{sf})\mu_{sf}^{\mathrm{MAR}}
+$$
+
+Inline \(A_{sf}\)`,
 				0,
 				0,
 				defaultMarkdownTheme,
@@ -948,7 +954,15 @@ A=
 
 			assert.deepStrictEqual(
 				markdown.render(80).map((line) => stripAnsi(line).trimEnd()),
-				[String.raw`Map $\mathbb{C}^3 \to \mathbb{C}^3$`],
+				[
+					"$$",
+					String.raw`\widetilde Y_{sf}`,
+					"=",
+					String.raw`(1-w_{sf})\mu_{sf}^{\mathrm{MAR}}`,
+					"$$",
+					"",
+					String.raw`Inline \(A_{sf}\)`,
+				],
 			);
 		});
 

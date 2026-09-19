@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { streamSimple as streamSimpleOpenAICodexResponses } from "../src/api/openai-codex-responses.ts";
-import { clampThinkingLevel, getModel, getSupportedThinkingLevels } from "../src/compat.ts";
-import type { Context, Model } from "../src/types.ts";
+import { clampThinkingLevel, getModel, getSupportedThinkingLevels, normalizeContext } from "../src/compat.ts";
+import type { Model } from "../src/types.ts";
 
 function mockToken(): string {
 	const payload = Buffer.from(
@@ -67,12 +67,12 @@ describe("max thinking level", () => {
 		expect(clampThinkingLevel(model, "xhigh")).toBe("max");
 	});
 
-	it("sends max to the Codex Responses API", async () => {
-		const model = getModel("openai-codex", "gpt-5.6-sol")!;
-		const context: Context = {
+	it.each(["gpt-5.6-sol", "gpt-6-astra"] as const)("sends max to the Codex Responses API for %s", async (modelId) => {
+		const model = getModel("openai-codex", modelId)!;
+		const context = normalizeContext({
 			systemPrompt: "You are a helpful assistant.",
 			messages: [{ role: "user", content: "Hello", timestamp: Date.now() }],
-		};
+		});
 		let payload: unknown;
 
 		await streamSimpleOpenAICodexResponses(model, context, {

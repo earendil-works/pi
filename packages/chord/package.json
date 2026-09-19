@@ -1,6 +1,6 @@
 {
 	"name": "@earendil-works/chord",
-	"version": "0.84.4",
+	"version": "0.85.1",
 	"description": "Application composition runtime for services, replicated state, RPC, and plugins",
 	"type": "module",
 	"main": "./dist/index.js",
@@ -63,7 +63,7 @@
 		"node": ">=22.19.0"
 	},
 	"dependencies": {
-		"esbuild": "0.28.1"
+		"esbuild": "0.28.2"
 	},
 	"devDependencies": {
 		"shx": "0.4.0",

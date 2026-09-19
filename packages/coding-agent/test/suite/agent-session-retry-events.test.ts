@@ -73,6 +73,32 @@ describe("AgentSession retry and event characterization", () => {
 		expect(harness.faux.state.callCount).toBe(3);
 	});
 
+	// Regression test for #9340.
+	it("finalizes retry state when abort is requested after a retry attempt fails", async () => {
+		const harness = await createHarness({ settings: { retry: { enabled: true, maxRetries: 3, baseDelayMs: 0 } } });
+		harnesses.push(harness);
+		harness.setResponses([
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: "overloaded_error" }),
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: "overloaded_error" }),
+		]);
+
+		let errorCount = 0;
+		harness.session.subscribe((event) => {
+			if (event.type !== "message_end" || event.message.role !== "assistant") return;
+			if (event.message.stopReason === "error" && ++errorCount === 2) void harness.session.abort();
+		});
+
+		await harness.session.prompt("test");
+
+		expect(harness.session.retryAttempt).toBe(0);
+		expect(harness.eventsOfType("agent_end").at(-1)?.willRetry).toBe(false);
+		expect(harness.eventsOfType("auto_retry_end").at(-1)).toMatchObject({
+			success: false,
+			attempt: 1,
+			finalError: "Retry cancelled",
+		});
+	});
+
 	it("exhausts max retries and emits a failure event", async () => {
 		const harness = await createHarness({ settings: { retry: { enabled: true, maxRetries: 2, baseDelayMs: 1 } } });
 		harnesses.push(harness);
@@ -225,6 +251,10 @@ describe("AgentSession retry and event characterization", () => {
 		await harness.session.prompt("hi");
 
 		expect(order).toEqual([
+			"extension:message_start:system",
+			"public:message_start:system",
+			"extension:message_end:system",
+			"public:message_end:system",
 			"extension:message_start:user",
 			"public:message_start:user",
 			"extension:message_end:user",
@@ -246,6 +276,8 @@ describe("AgentSession retry and event characterization", () => {
 		expect(normalizeEventOrder(harness.events)).toEqual([
 			"agent_start",
 			"turn_start",
+			"message_start:system",
+			"message_end:system",
 			"message_start:user",
 			"message_end:user",
 			"message_start:assistant",
@@ -283,6 +315,8 @@ describe("AgentSession retry and event characterization", () => {
 		expect(normalizeEventOrder(harness.events)).toEqual([
 			"agent_start",
 			"turn_start",
+			"message_start:system",
+			"message_end:system",
 			"message_start:user",
 			"message_end:user",
 			"message_start:assistant",

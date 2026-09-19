@@ -9,6 +9,7 @@ Add custom providers and models (Ollama, vLLM, LM Studio, proxies) via `~/.pi/ag
 - [Supported APIs](#supported-apis)
 - [Provider Configuration](#provider-configuration)
 - [Model Configuration](#model-configuration)
+- [Prompt Cache Lifetimes](#prompt-cache-lifetimes)
 - [Overriding Built-in Providers](#overriding-built-in-providers)
 - [Per-model Overrides](#per-model-overrides)
 - [Anthropic Messages Compatibility](#anthropic-messages-compatibility)
@@ -208,6 +209,7 @@ If your command is slow, expensive, rate-limited, or should keep using a previou
 | `maxTokens` | No | `16384` | Maximum output tokens |
 | `samplingParams` | No | omitted | Sampling parameters merged verbatim into every request body (see below) |
 | `cost` | No | all zeros | Per-million-token rates with optional request-wide input pricing tiers |
+| `promptCache` | No | omitted | Best-effort prompt cache lifetime in seconds per retention tier (see below) |
 | `compat` | No | provider `compat` | Provider compatibility overrides. Merged with provider-level `compat` when both are set. |
 
 A cost tier supplies a complete alternate rate set and applies to the full request when total input usage (`input + cacheRead + cacheWrite`) exceeds `inputTokensAbove`. When multiple tiers match, the highest threshold wins.
@@ -235,6 +237,19 @@ A cost tier supplies a complete alternate rate set and applies to the full reque
 Current behavior:
 - `/model`, `--list-models`, and the interactive footer display entries by model `id`.
 - The configured `name` is used for model matching and secondary model detail text. It does not replace the footer/status-bar model id.
+
+### Prompt Cache Lifetimes
+
+`promptCache` states how long the provider keeps a prompt cache entry alive for each retention tier pi can request (`short` is the default tier; `long` is used when `PI_CACHE_RETENTION=long`). Values are seconds and are estimates: providers publish ranges, so pick the conservative end.
+
+```json
+{
+  "id": "claude-sonnet-5",
+  "promptCache": { "short": 300, "long": 3600 }
+}
+```
+
+The built-in catalog fills this in for direct Anthropic (5 min / 1 h). Other providers, including direct OpenAI, have no built-in lifetime until their cache-expiry and replay behavior has been validated for warming. A model without a value for the tier a request used is never warmed; custom models and provider overrides can opt in when the backing cache behavior is known. See [Cache Warming](settings.md#cache-warming).
 
 ### Sampling Parameters
 
@@ -359,7 +374,23 @@ Use `modelOverrides` to customize built-in models and matching extension-registe
 }
 ```
 
-`modelOverrides` supports these fields per model: `name`, `reasoning`, `thinkingLevelMap`, `input`, `cost` (partial), `contextWindow`, `maxTokens`, `samplingParams` (merged per key), `headers`, `compat`.
+`modelOverrides` supports these fields per model: `name`, `reasoning`, `thinkingLevelMap`, `input`, `cost` (partial), `promptCache` (merged per tier), `contextWindow`, `maxTokens`, `samplingParams` (merged per key), `headers`, `compat`.
+
+Use a `promptCache` override to enable cache warming through a proxy whose backing cache you know, for example OpenRouter routed to Anthropic:
+
+```json
+{
+  "providers": {
+    "openrouter": {
+      "modelOverrides": {
+        "anthropic/claude-sonnet-4": {
+          "promptCache": { "short": 300 }
+        }
+      }
+    }
+  }
+}
+```
 
 Direct OpenAI GPT-5.6 Sol, Terra, and Luna default to a `272000` context window so requests remain within OpenAI's short-context pricing tier. To opt into OpenAI's 1.05M context window, increase it for each model you use:
 
@@ -435,6 +466,7 @@ Built-in Anthropic models enable `supportsStrictTools` in their model metadata. 
 | `supportsMidConvoEffort` | Whether the exact Claude model transport supports per-turn effort system messages and thinking binding controls. Pi persists native effort levels and always sends `drop_block` when enabled. Default: `false`. |
 | `allowEmptySignature` | Whether to replay empty thinking signatures as `signature: ""` instead of converting thinking to text. Default: `false`. |
 | `supportsStrictTools` | Whether the provider accepts strict JSON-schema tool definitions. Default: `false`; built-in Anthropic models enable it in generated metadata. |
+| `allowedFallbackModels` | Up to three server-side fallback models, each with `provider`, `model`, and complete `cost` metadata. An empty array disables fallback. |
 
 ## OpenAI Compatibility
 
@@ -481,8 +513,7 @@ For providers with partial OpenAI compatibility, use the `compat` field.
 | `sessionAffinityFormat` | For `openai-completions` and `openai-responses`, the session-affinity header format: `openai` sends `session_id`/`x-client-request-id` (completions also `x-session-affinity`), `openai-nosession` omits the underscore-containing `session_id` header, `openrouter` sends `x-session-id`. Does not affect the `prompt_cache_key` body param. Default: auto-detected. |
 | `supportsStrictMode` | Whether the provider accepts strict JSON-schema function tool definitions. Defaults depend on the API; built-in OpenAI models carry explicit capability metadata. |
 | `supportsOpenAIGrammarTools` | Whether OpenAI-compatible APIs emit custom Lark/regex grammar tools. When `false`, grammar-constrained tools fall back to normal function tools. Default: `false`; the built-in model catalog enables it for GPT-5+ models on OpenAI, OpenAI Codex, Azure OpenAI, GitHub Copilot, opencode, and Cloudflare AI Gateway. |
-| `deferredToolsMode` | Use provider-specific deferred tool serialization. Currently only `"kimi"` is supported for Kimi's OpenAI-compatible Chat Completions format. |
-| `supportsLongCacheRetention` | Whether the provider accepts long cache retention when cache retention is `long`: `prompt_cache_retention: "24h"` for OpenAI prompt caching, or `cache_control.ttl: "1h"` when `cacheControlFormat` is `anthropic`. Default: `true`. |
+| `supportsLongCacheRetention` | Whether the provider accepts long cache retention when cache retention is `long`: `prompt_cache_options.ttl: "30m"` for GPT-5.6+ Responses models, `prompt_cache_retention: "24h"` for earlier OpenAI models, or `cache_control.ttl: "1h"` when `cacheControlFormat` is `anthropic`. Default: `true`. |
 | `openRouterRouting` | OpenRouter provider routing preferences. This object is sent as-is in the `provider` field of the [OpenRouter API request](https://openrouter.ai/docs/guides/routing/provider-selection). |
 | `vercelGatewayRouting` | Vercel AI Gateway routing config for provider selection (`only`, `order`) |
 
