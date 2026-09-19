@@ -63,6 +63,23 @@ describe("Markdown component", () => {
 			assert.deepStrictEqual(calls.at(-1), { source: "updated", availableWidth: 56 });
 			assert.strictEqual(calls.length, 4);
 		});
+
+		it("recomputes the default style prefix after invalidation", () => {
+			const oldColor = "\x1b[38;2;205;214;244m";
+			const newColor = "\x1b[38;2;101;123;131m";
+			let activeColor = oldColor;
+			const markdown = new Markdown("before `code` after", 0, 0, defaultMarkdownTheme, {
+				color: (text) => `${activeColor}${text}\x1b[39m`,
+			});
+
+			markdown.render(80);
+			activeColor = newColor;
+			markdown.invalidate();
+			const rendered = markdown.render(80).join("\n");
+
+			assert.ok(rendered.includes(newColor), "expected the current presentation color");
+			assert.ok(!rendered.includes(oldColor), "expected the previous presentation color to be discarded");
+		});
 	});
 
 	describe("Lists", () => {
