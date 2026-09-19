@@ -3270,14 +3270,12 @@ export class InteractiveMode {
 				this.ui.requestRender();
 				break;
 
-			case "custom":
-				this.addCustomEntryToChat(event);
-				this.ui.requestRender();
-				break;
-
-			case "usage":
-				if (event.kind === "cache_warm") {
-					this.addCacheWarmingUsage(event);
+			case "entry_appended":
+				if (event.entry.type === "custom") {
+					this.addCustomEntryToChat(event.entry);
+					this.ui.requestRender();
+				} else if (event.entry.type === "usage" && event.entry.kind === "cache_warm") {
+					this.addCacheWarmingUsage(event.entry);
 					this.ui.requestRender();
 				}
 				break;
@@ -4755,7 +4753,7 @@ export class InteractiveMode {
 						this.showStatus(`HTTP idle timeout: ${formatHttpIdleTimeoutMs(timeoutMs)}`);
 					},
 					onCacheWarmingModeChange: (mode) => {
-						this.settingsManager.setCacheWarmingMode(mode);
+						this.session.setCacheWarmingMode(mode);
 						this.showStatus(`Cache warming: ${mode}`);
 					},
 					onModelThinkingLevelChange: (provider, modelId, level) => {

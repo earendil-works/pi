@@ -268,6 +268,14 @@ export class CacheWarmer {
 		}
 	}
 
+	/** Reconcile an active run after the persisted warming mode changes. */
+	onModeChanged(): void {
+		const run = this.run;
+		if (!run) return;
+		const reason = this.getModeStopReason(run);
+		if (reason) this.stop(reason);
+	}
+
 	cancel(): void {
 		this.stop("inactive");
 	}
@@ -299,9 +307,9 @@ export class CacheWarmer {
 
 	private async refresh(run: ActiveRun): Promise<void> {
 		run.timer = undefined;
-		const mode = this.getMode();
-		if (mode === "off" || !run.isCurrent()) {
-			this.stop(mode === "off" ? "cache warming disabled" : "conversation context changed");
+		const modeStopReason = this.getModeStopReason(run);
+		if (modeStopReason || !run.isCurrent()) {
+			this.stop(modeStopReason ?? "conversation context changed");
 			return;
 		}
 		const decision = this.evaluate(run);
@@ -341,6 +349,7 @@ export class CacheWarmer {
 					signal: run.controller.signal,
 				})
 				.result();
+			if (this.run !== run) return;
 			if (message.stopReason !== "error" && message.stopReason !== "aborted") {
 				run.spentCost += message.usage.cost.total;
 				const entry = this.sessionManager.appendUsage(
@@ -356,6 +365,13 @@ export class CacheWarmer {
 			// Cache warming is best-effort and must not affect the active agent run.
 		}
 		if (this.run === run) this.schedule(run);
+	}
+
+	private getModeStopReason(run: ActiveRun): string | undefined {
+		const mode = this.getMode();
+		if (mode === "off") return "cache warming disabled";
+		if (mode === "streaming" && run.phase === "idle") return "agent run settled";
+		return undefined;
 	}
 
 	private evaluate(run: ActiveRun): CacheWarmingDecision {
