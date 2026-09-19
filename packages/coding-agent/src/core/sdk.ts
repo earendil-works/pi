@@ -164,6 +164,7 @@ function findRestorableCacheWarm(branch: SessionEntry[], provider: string | unde
 		) {
 			return { lastActivityAt, source: entry, message: entry.message, spentCost };
 		}
+		if (entry.type !== "usage" && entry.type !== "label" && entry.type !== "session_info") return undefined;
 	}
 	return undefined;
 }

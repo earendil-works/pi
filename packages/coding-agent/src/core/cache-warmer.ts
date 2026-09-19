@@ -328,6 +328,11 @@ export class CacheWarmer {
 			// Extension failures fall back to pi's own decision.
 		}
 		if (this.run !== run) return;
+		const modeStopReasonAfterDecision = this.getModeStopReason(run);
+		if (modeStopReasonAfterDecision || !run.isCurrent()) {
+			this.stop(modeStopReasonAfterDecision ?? "conversation context changed");
+			return;
+		}
 		const extensionOverride = action !== decision.action;
 		if (action === "stop") {
 			const reason = extensionOverride
@@ -350,6 +355,11 @@ export class CacheWarmer {
 				})
 				.result();
 			if (this.run !== run) return;
+			const modeStopReasonAfterRefresh = this.getModeStopReason(run);
+			if (modeStopReasonAfterRefresh || !run.isCurrent()) {
+				this.stop(modeStopReasonAfterRefresh ?? "conversation context changed");
+				return;
+			}
 			if (message.stopReason !== "error" && message.stopReason !== "aborted") {
 				run.spentCost += message.usage.cost.total;
 				const entry = this.sessionManager.appendUsage(

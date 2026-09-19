@@ -1294,7 +1294,7 @@ export interface ExtensionAPI {
 	on(
 		event: "cache_warming_decision",
 		handler: ExtensionHandler<CacheWarmingDecisionEvent, CacheWarmingDecisionEventResult>,
-	): void;
+	): () => void;
 	on(
 		event: "before_provider_request",
 		handler: ExtensionHandler<BeforeProviderRequestEvent, BeforeProviderRequestEventResult>,
