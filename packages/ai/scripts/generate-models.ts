@@ -670,13 +670,13 @@ function detectOpenAICompletionsCompat(model: Model<"openai-completions">): Open
 	const isCloudflareAiGateway = provider === "cloudflare-ai-gateway" || baseUrl.includes("gateway.ai.cloudflare.com");
 	const isNvidia = provider === "nvidia" || baseUrl.includes("integrate.api.nvidia.com");
 	const isAntLing = provider === "ant-ling" || baseUrl.includes("api.ant-ling.com");
+	const isCerebras = provider === "cerebras" || baseUrl.includes("cerebras.ai");
 	const isTogetherReasoningOnly = isTogether && TOGETHER_REASONING_ONLY_MODELS.has(model.id);
 	const isDeepSeek = provider === "deepseek" || baseUrl.toLowerCase().includes("deepseek.com");
 
 	const isNonStandard =
 		isNvidia ||
-		provider === "cerebras" ||
-		baseUrl.includes("cerebras.ai") ||
+		isCerebras ||
 		provider === "xai" ||
 		baseUrl.includes("api.x.ai") ||
 		isTogether ||
@@ -734,7 +734,7 @@ function detectOpenAICompletionsCompat(model: Model<"openai-completions">): Open
 		chatTemplateKwargs: {},
 		chatTemplateArgs: {},
 		zaiToolStream: false,
-		supportsStrictMode: !isMoonshot && !isTogether && !isCloudflareAiGateway && !isNvidia,
+		supportsStrictMode: !isMoonshot && !isTogether && !isCloudflareAiGateway && !isNvidia && !isCerebras,
 		supportsOpenAIGrammarTools: false,
 		supportsMidConvoSystemMessages: false,
 		supportsMidConvoToolAdditions: false,

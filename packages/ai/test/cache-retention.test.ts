@@ -535,5 +535,70 @@ describe("Cache Retention (PI_CACHE_RETENTION)", () => {
 			expect(capturedPayload?.prompt_cache_key).toBeUndefined();
 			expect(capturedPayload?.prompt_cache_retention).toBeUndefined();
 		});
+
+		it.each([MODELS.cerebras["gpt-oss-120b"], MODELS.cerebras["qwen-3.8-27b"]] as const)(
+			"should omit strict field on tools for cerebras/$id",
+			async (metadata) => {
+				const model = metadata as Model<"openai-completions">;
+
+				const contextWithTools = {
+					messages: [
+						{
+							role: "system" as const,
+							content: "test",
+							toolsAdded: [
+								{
+									name: "t1",
+									description: "strict tool",
+									parameters: {
+										type: "object" as const,
+										properties: { x: { type: "string" } },
+										required: ["x"],
+									},
+									constrainedSampling: { type: "json_schema" as const },
+								},
+								{
+									name: "t2",
+									description: "non-strict tool",
+									parameters: {
+										type: "object" as const,
+										properties: { y: { type: "string" } },
+										required: ["y"],
+									},
+								},
+							],
+							timestamp: 0,
+						},
+						{ role: "user" as const, content: "hello", timestamp: 1 },
+					],
+				};
+
+				let capturedPayload: any;
+
+				try {
+					const s = streamOpenAICompletions(model, contextWithTools as any, {
+						apiKey: "fake-key",
+						sessionId: "test",
+						onPayload: stopAfterPayload((payload: any) => {
+							capturedPayload = payload;
+						}),
+					});
+
+					for await (const event of s) {
+						if (event.type === "error") break;
+					}
+				} catch {
+					// Expected to fail
+				}
+
+				expect(model.compat?.supportsStrictMode).toBe(false);
+				expect(capturedPayload).toBeDefined();
+				const tools = capturedPayload?.tools as any[] | undefined;
+				expect(tools).toBeDefined();
+				for (const tool of tools!) {
+					expect(tool.function).not.toHaveProperty("strict");
+				}
+			},
+		);
 	});
 });
