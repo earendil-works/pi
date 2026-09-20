@@ -52,9 +52,14 @@ export function agentLoop(
 		},
 		signal,
 		streamFn,
-	).then((messages) => {
-		stream.end(messages);
-	});
+	).then(
+		(messages) => {
+			stream.end(messages);
+		},
+		(error) => {
+			pushFailureEvents(stream, config, error, signal?.aborted ?? false);
+		},
+	);
 
 	return stream;
 }
@@ -91,9 +96,14 @@ export function agentLoopContinue(
 		},
 		signal,
 		streamFn,
-	).then((messages) => {
-		stream.end(messages);
-	});
+	).then(
+		(messages) => {
+			stream.end(messages);
+		},
+		(error) => {
+			pushFailureEvents(stream, config, error, signal?.aborted ?? false);
+		},
+	);
 
 	return stream;
 }
@@ -154,6 +164,44 @@ function createAgentStream(): EventStream<AgentEvent, AgentMessage[]> {
 		(event: AgentEvent) => event.type === "agent_end",
 		(event: AgentEvent) => (event.type === "agent_end" ? event.messages : []),
 	);
+}
+
+const EMPTY_USAGE = {
+	input: 0,
+	output: 0,
+	cacheRead: 0,
+	cacheWrite: 0,
+	totalTokens: 0,
+	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+};
+
+/**
+ * Terminate the stream after an unrecoverable loop failure. Mirrors
+ * Agent.handleRunFailure: the failure becomes an assistant message with
+ * stopReason "error" (or "aborted") so consumers always see a terminal
+ * agent_end instead of a stream that never completes.
+ */
+function pushFailureEvents(
+	stream: EventStream<AgentEvent, AgentMessage[]>,
+	config: AgentLoopConfig,
+	error: unknown,
+	aborted: boolean,
+): void {
+	const failureMessage = {
+		role: "assistant",
+		content: [{ type: "text", text: "" }],
+		api: config.model.api,
+		provider: config.model.provider,
+		model: config.model.id,
+		usage: EMPTY_USAGE,
+		stopReason: aborted ? "aborted" : "error",
+		errorMessage: error instanceof Error ? error.message : String(error),
+		timestamp: Date.now(),
+	} satisfies AgentMessage;
+	stream.push({ type: "message_start", message: failureMessage });
+	stream.push({ type: "message_end", message: failureMessage });
+	stream.push({ type: "turn_end", message: failureMessage, toolResults: [] });
+	stream.push({ type: "agent_end", messages: [failureMessage] });
 }
 
 /**

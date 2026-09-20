@@ -1633,3 +1633,55 @@ describe("agentLoopContinue with AgentMessage", () => {
 		expect(messages[0].role).toBe("assistant");
 	});
 });
+
+describe("agent loop failure handling", () => {
+	it("emits a terminal agent_end with an error message when the stream function throws", async () => {
+		const context: AgentContext = { messages: [], tools: [] };
+		const config: AgentLoopConfig = { model: createModel(), convertToLlm: identityConverter };
+		const streamFn = () => {
+			throw new Error("stream setup failed");
+		};
+
+		const events: AgentEvent[] = [];
+		const stream = agentLoop([createUserMessage("Hello")], context, config, undefined, streamFn);
+		for await (const event of stream) {
+			events.push(event);
+		}
+
+		const endEvent = events[events.length - 1];
+		expect(endEvent.type).toBe("agent_end");
+
+		const messages = await stream.result();
+		expect(messages.length).toBe(1);
+		const failure = messages[0];
+		expect(failure.role).toBe("assistant");
+		if (failure.role === "assistant") {
+			expect(failure.stopReason).toBe("error");
+			expect(failure.errorMessage).toBe("stream setup failed");
+			expect(failure.model).toBe("mock");
+		}
+	});
+
+	it("emits a terminal agent_end with an error message when agentLoopContinue fails", async () => {
+		const context: AgentContext = { messages: [createUserMessage("Hello")], tools: [] };
+		const config: AgentLoopConfig = { model: createModel(), convertToLlm: identityConverter };
+		const streamFn = () => {
+			throw new Error("provider unreachable");
+		};
+
+		const events: AgentEvent[] = [];
+		const stream = agentLoopContinue(context, config, undefined, streamFn);
+		for await (const event of stream) {
+			events.push(event);
+		}
+
+		expect(events[events.length - 1].type).toBe("agent_end");
+		const messages = await stream.result();
+		expect(messages.length).toBe(1);
+		expect(messages[0].role).toBe("assistant");
+		if (messages[0].role === "assistant") {
+			expect(messages[0].stopReason).toBe("error");
+			expect(messages[0].errorMessage).toBe("provider unreachable");
+		}
+	});
+});
