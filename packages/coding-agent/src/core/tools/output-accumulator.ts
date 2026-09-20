@@ -53,6 +53,7 @@ export class OutputAccumulator {
 
 	private tempFilePath: string | undefined;
 	private tempFileStream: WriteStream | undefined;
+	private tempFileError: Error | undefined;
 
 	constructor(options: OutputAccumulatorOptions = {}) {
 		this.maxLines = options.maxLines ?? DEFAULT_MAX_LINES;
@@ -209,13 +210,29 @@ export class OutputAccumulator {
 	}
 
 	private ensureTempFile(): void {
-		if (this.tempFilePath) {
+		if (this.tempFilePath || this.tempFileError) {
 			return;
 		}
-		this.tempFilePath = defaultTempFilePath(this.tempFilePrefix);
-		this.tempFileStream = createWriteStream(this.tempFilePath);
+		const path = defaultTempFilePath(this.tempFilePrefix);
+		const stream = createWriteStream(path);
+		// A WriteStream without an error listener rethrows failures (ENOSPC,
+		// EMFILE, unwritable tmpdir) as uncaught exceptions, killing the
+		// process. Record the failure and drop the temp file instead; the
+		// truncated snapshot remains available.
+		stream.on("error", (error) => {
+			this.tempFileError = error;
+			if (this.tempFileStream === stream) {
+				this.tempFileStream = undefined;
+			}
+			if (this.tempFilePath === path) {
+				this.tempFilePath = undefined;
+			}
+			stream.destroy();
+		});
+		this.tempFilePath = path;
+		this.tempFileStream = stream;
 		for (const chunk of this.rawChunks) {
-			this.tempFileStream.write(chunk);
+			stream.write(chunk);
 		}
 		this.rawChunks = [];
 	}

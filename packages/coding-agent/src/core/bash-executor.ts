@@ -59,17 +59,34 @@ export async function executeBashWithOperations(
 
 	let tempFilePath: string | undefined;
 	let tempFileStream: WriteStream | undefined;
+	let tempFileError: Error | undefined;
 	let totalBytes = 0;
 
 	const ensureTempFile = () => {
-		if (tempFilePath) {
+		if (tempFilePath || tempFileError) {
 			return;
 		}
 		const id = randomBytes(8).toString("hex");
-		tempFilePath = join(tmpdir(), `pi-bash-${id}.log`);
-		tempFileStream = createWriteStream(tempFilePath);
+		const path = join(tmpdir(), `pi-bash-${id}.log`);
+		const stream = createWriteStream(path);
+		// A WriteStream without an error listener rethrows failures (ENOSPC,
+		// EMFILE, unwritable tmpdir) as uncaught exceptions, killing the
+		// process. Record the failure and drop the temp file instead; the
+		// truncated in-memory output is still returned.
+		stream.on("error", (error) => {
+			tempFileError = error;
+			if (tempFileStream === stream) {
+				tempFileStream = undefined;
+			}
+			if (tempFilePath === path) {
+				tempFilePath = undefined;
+			}
+			stream.destroy();
+		});
+		tempFilePath = path;
+		tempFileStream = stream;
 		for (const chunk of outputChunks) {
-			tempFileStream.write(chunk);
+			stream.write(chunk);
 		}
 	};
 
