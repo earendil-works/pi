@@ -1,8 +1,9 @@
 import assert from "node:assert";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { syncBuiltinESMExports } from "node:module";
+import os, { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, it } from "node:test";
+import { afterEach, beforeEach, describe, it, mock } from "node:test";
 import type { Terminal as XtermTerminalType } from "@xterm/headless";
 import { Image } from "../src/components/image.ts";
 import type { Terminal } from "../src/terminal.ts";
@@ -16,6 +17,17 @@ import {
 import type { Component, TUI } from "../src/tui.ts";
 import { TuiMainScreen } from "../src/tui-main-screen.ts";
 import { VirtualTerminal } from "./virtual-terminal.ts";
+
+// Exercise the differential renderer independently of the test host's OS version.
+// The platform-specific suite below explicitly selects Windows 10 when needed.
+beforeEach(() => {
+	mock.method(os, "release", () => "10.0.22621");
+	syncBuiltinESMExports();
+});
+afterEach(() => {
+	mock.restoreAll();
+	syncBuiltinESMExports();
+});
 
 class TestComponent implements Component {
 	lines: string[] = [];
@@ -179,7 +191,7 @@ describe("TUI bounded render output", () => {
 		);
 		assert.strictEqual(
 			terminal.writes.join(""),
-			`\x1b[?2026h${kittyLine}\r\n${kittyLine}\x1b[?2026l`,
+			`\x1b[?2026h\x1b[?7l${kittyLine}\r\n${kittyLine}\x1b[?7h\x1b[?2026l`,
 			"chunking must preserve the synchronized render output",
 		);
 	});
@@ -383,6 +395,60 @@ describe("TUI Kitty image cleanup", () => {
 		}
 	});
 
+	it("retains off-screen snapshot image ids for a later forced redraw", async () => {
+		const terminal = new LoggingVirtualTerminal(40, 3);
+		const tui: TUI = new TuiMainScreen(terminal);
+		const component = new TestComponent();
+		tui.addChild(component);
+
+		const image = encodeKitty("AAAA", { columns: 2, rows: 1, imageId: 90, moveCursor: false });
+		component.lines = [image, "Line 1", "Line 2", "Line 3"];
+		tui.start();
+		await terminal.waitForRender();
+		const redrawsBeforeChange = tui.fullRedraws;
+		terminal.clearWrites();
+
+		component.lines = ["historical snapshot", "Line 1", "Line 2", "Line 3"];
+		tui.requestRender();
+		await terminal.waitForRender();
+
+		assert.strictEqual(tui.fullRedraws, redrawsBeforeChange);
+		assert.ok(!terminal.getWrites().includes(deleteKittyImage(90)), "the off-screen snapshot should remain intact");
+		terminal.clearWrites();
+
+		tui.requestRender(true);
+		await terminal.waitForRender();
+
+		assert.ok(
+			terminal.getWrites().includes(deleteKittyImage(90)),
+			"a forced redraw should delete the snapshot image",
+		);
+		tui.stop();
+	});
+
+	it("keeps the full-redraw fallback when an image straddles the viewport", async () => {
+		const terminal = new LoggingVirtualTerminal(40, 3);
+		const tui: TUI = new TuiMainScreen(terminal);
+		const component = new TestComponent();
+		tui.addChild(component);
+
+		const image = encodeKitty("AAAA", { columns: 2, rows: 3, imageId: 91, moveCursor: false });
+		component.lines = [image, "", "", "after"];
+		tui.start();
+		await terminal.waitForRender();
+		const redrawsBeforeChange = tui.fullRedraws;
+		terminal.clearWrites();
+
+		component.lines = ["removed", "", "", "after"];
+		tui.requestRender();
+		await terminal.waitForRender();
+
+		assert.ok(tui.fullRedraws > redrawsBeforeChange, "a straddling image should force a full redraw");
+		assert.ok(terminal.getWrites().includes("\x1b[2J"), "the fallback should clear the viewport");
+
+		tui.stop();
+	});
+
 	it("does not use cursor-up placement for Kitty images taller than the viewport", async () => {
 		setCapabilities({ images: "kitty", trueColor: true, hyperlinks: true });
 		setCellDimensions({ widthPx: 10, heightPx: 10 });
@@ -500,10 +566,146 @@ describe("TUI Kitty image cleanup", () => {
 		const clearIndex = writes.indexOf("\x1b[2J");
 		assert.ok(deleteIndex >= 0, "previous image should be deleted during full redraw");
 		assert.ok(clearIndex >= 0, "full redraw should clear the screen");
+		assert.ok(!writes.includes("\x1b[3J"), "full redraw should preserve scrollback outside Windows 10");
 		assert.ok(deleteIndex < clearIndex, "old image should be deleted before the screen is cleared");
 
 		tui.stop();
 	});
+});
+
+describe("TUI main-screen autowrap guard", () => {
+	// ConPTY wraps full-width lines eagerly, which drifts the renderer's cursor
+	// tracking and eventually paints the loader line at the top of the screen.
+	// Every render path must paint with autowrap disabled (see DISABLE_AUTOWRAP).
+	it("disables autowrap for the duration of full renders", async () => {
+		const terminal = new LoggingVirtualTerminal(40, 10);
+		const tui: TUI = new TuiMainScreen(terminal);
+		const component = new TestComponent();
+		tui.addChild(component);
+		component.lines = ["line", "x".repeat(40), "line"];
+		tui.start();
+		await terminal.waitForRender();
+
+		const output = terminal.getWrites();
+		assert.ok(
+			output.includes("\x1b[?2026h\x1b[?7l"),
+			"full render should disable autowrap after synchronized output begins",
+		);
+		assert.ok(
+			output.includes("\x1b[?7h\x1b[?2026l"),
+			"full render should re-enable autowrap before synchronized output ends",
+		);
+		tui.stop();
+	});
+
+	it("disables autowrap for the duration of differential renders", async () => {
+		const terminal = new LoggingVirtualTerminal(40, 10);
+		const tui: TUI = new TuiMainScreen(terminal);
+		const component = new TestComponent();
+		tui.addChild(component);
+		component.lines = ["before"];
+		tui.start();
+		await terminal.waitForRender();
+		terminal.clearWrites();
+
+		component.lines = ["before", "x".repeat(40), "after"];
+		tui.requestRender();
+		await terminal.waitForRender();
+
+		const output = terminal.getWrites();
+		assert.ok(!output.includes("\x1b[2J"), "the update should stay on the differential render path");
+		assert.ok(
+			output.includes("\x1b[?2026h\x1b[?7l"),
+			"differential render should disable autowrap after synchronized output begins",
+		);
+		assert.ok(
+			output.includes("\x1b[?7h\x1b[?2026l"),
+			"differential render should re-enable autowrap before synchronized output ends",
+		);
+		tui.stop();
+	});
+
+	it("disables autowrap when clearing deleted lines", async () => {
+		const terminal = new LoggingVirtualTerminal(40, 10);
+		const tui: TUI = new TuiMainScreen(terminal);
+		const component = new TestComponent();
+		tui.addChild(component);
+		component.lines = Array.from({ length: 8 }, (_, i) => `Line ${i}`);
+		tui.start();
+		await terminal.waitForRender();
+		terminal.clearWrites();
+
+		// Shrinking only deletes trailing lines without changing earlier ones.
+		component.lines = Array.from({ length: 3 }, (_, i) => `Line ${i}`);
+		tui.requestRender();
+		await terminal.waitForRender();
+
+		const output = terminal.getWrites();
+		assert.ok(!output.includes("\x1b[2J"), "deleted-line cleanup should stay on the incremental path");
+		assert.ok(
+			output.includes("\x1b[?2026h\x1b[?7l"),
+			"deleted-line cleanup should disable autowrap after synchronized output begins",
+		);
+		assert.ok(
+			output.includes("\x1b[?7h\x1b[?2026l"),
+			"deleted-line cleanup should re-enable autowrap before synchronized output ends",
+		);
+		tui.stop();
+	});
+});
+
+describe("TUI platform rendering policy", () => {
+	for (const [platform, release, fullRepaint] of [
+		["win32", "10.0.19045", true],
+		["win32", "10.0.22000", false],
+		["win32", "10.0.26100", false],
+		["darwin", "24.0.0", false],
+		["linux", "6.8.0", false],
+	] as const) {
+		it(`${platform} ${release} uses the expected repaint policy`, async (t) => {
+			const descriptor = Object.getOwnPropertyDescriptor(process, "platform");
+			assert.ok(descriptor);
+			t.after(() => Object.defineProperty(process, "platform", descriptor));
+			Object.defineProperty(process, "platform", { configurable: true, value: platform });
+			os.release = () => release;
+			syncBuiltinESMExports();
+
+			const terminal = new LoggingVirtualTerminal(120, 30);
+			const tui = new TuiMainScreen(terminal);
+			t.after(() => tui.stop());
+			const component = new TestComponent();
+			const header = Array.from({ length: 14 }, (_, i) => `header-${i}`);
+			component.lines = [...header, "border", "", "border", "path", "status"];
+			tui.addChild(component);
+			tui.start();
+			await terminal.waitForRender();
+
+			// Input is row 16, not the last row: reproduce the captured startup layout.
+			for (const tail of [
+				["border", "a", "border", "path", "status"],
+				["border", "/", "border", "→ model", "  settings", "(1/52)", "path", "status"],
+				["border", "/", "border", "  model", "→ settings", "(2/52)", "path", "status"],
+				["border", "/mo", "border", "→ model", "path", "status"],
+				["border", "", "border", "path", "status"],
+			]) {
+				terminal.clearWrites();
+				component.lines = [...header, ...tail];
+				tui.requestRender();
+				await terminal.waitForRender();
+				assert.equal(terminal.getWrites().includes("\x1b[2J"), fullRepaint);
+				assert.equal(terminal.getWrites().includes("\x1b[3J"), fullRepaint);
+				assert.deepStrictEqual(terminal.getViewport(), [
+					...component.lines,
+					...Array(30 - component.lines.length).fill(""),
+				]);
+			}
+
+			terminal.clearWrites();
+			tui.requestRender();
+			await terminal.waitForRender();
+			assert.equal(terminal.getWrites(), "", "unchanged content must not repaint");
+		});
+	}
 });
 
 describe("TUI resize handling", () => {
@@ -668,6 +870,91 @@ describe("TUI content shrinkage", () => {
 });
 
 describe("TUI differential rendering", () => {
+	it("keeps an off-screen-only change as a scrollback snapshot", async () => {
+		const terminal = new LoggingVirtualTerminal(20, 5);
+		const tui: TUI = new TuiMainScreen(terminal);
+		const component = new TestComponent();
+		tui.addChild(component);
+
+		component.lines = Array.from({ length: 10 }, (_, i) => `Line ${i}`);
+		tui.start();
+		await terminal.waitForRender();
+		const redrawsAfterInitialRender = tui.fullRedraws;
+		terminal.clearWrites();
+
+		component.lines = Array.from({ length: 10 }, (_, i) => (i === 2 ? "CHANGED OFFSCREEN" : `Line ${i}`));
+		tui.requestRender();
+		await terminal.waitForRender();
+
+		assert.strictEqual(tui.fullRedraws, redrawsAfterInitialRender);
+		assert.ok(!terminal.getWrites().includes("\x1b[2J"), "off-screen changes must not clear the viewport");
+		assert.ok(!terminal.getWrites().includes("\x1b[3J"), "off-screen changes must not clear scrollback");
+		assert.deepStrictEqual(terminal.getViewport(), ["Line 5", "Line 6", "Line 7", "Line 8", "Line 9"]);
+		assert.ok(
+			terminal.getScrollBuffer().some((line) => line.includes("Line 2")),
+			"native scrollback should retain the original historical snapshot",
+		);
+
+		tui.stop();
+	});
+
+	it("clamps changes spanning scrollback and the visible viewport", async () => {
+		const terminal = new LoggingVirtualTerminal(20, 5);
+		const tui: TUI = new TuiMainScreen(terminal);
+		const component = new TestComponent();
+		tui.addChild(component);
+
+		component.lines = Array.from({ length: 10 }, (_, i) => `Line ${i}`);
+		tui.start();
+		await terminal.waitForRender();
+		const redrawsAfterInitialRender = tui.fullRedraws;
+		terminal.clearWrites();
+
+		component.lines = Array.from({ length: 10 }, (_, i) => {
+			if (i === 2) return "CHANGED OFFSCREEN";
+			if (i === 8) return "CHANGED VISIBLE";
+			return `Line ${i}`;
+		});
+		tui.requestRender();
+		await terminal.waitForRender();
+
+		assert.strictEqual(tui.fullRedraws, redrawsAfterInitialRender);
+		assert.ok(!terminal.getWrites().includes("\x1b[2J"), "spanning changes must not clear the viewport");
+		assert.ok(!terminal.getWrites().includes("\x1b[3J"), "spanning changes must not clear scrollback");
+		assert.deepStrictEqual(terminal.getViewport(), ["Line 5", "Line 6", "Line 7", "CHANGED VISIBLE", "Line 9"]);
+
+		tui.stop();
+	});
+
+	it("keeps following appended output when an earlier line reflows above the viewport", async () => {
+		const terminal = new LoggingVirtualTerminal(20, 5);
+		const tui: TUI = new TuiMainScreen(terminal);
+		const component = new TestComponent();
+		tui.addChild(component);
+
+		component.lines = Array.from({ length: 10 }, (_, i) => `Line ${i}`);
+		tui.start();
+		await terminal.waitForRender();
+		const redrawsAfterInitialRender = tui.fullRedraws;
+		terminal.clearWrites();
+
+		component.lines = [
+			...Array.from({ length: 10 }, (_, i) => (i === 2 ? "REFLOWED OFFSCREEN" : `Line ${i}`)),
+			"Line 10",
+			"Line 11",
+			"Line 12",
+		];
+		tui.requestRender();
+		await terminal.waitForRender();
+
+		assert.strictEqual(tui.fullRedraws, redrawsAfterInitialRender);
+		assert.ok(!terminal.getWrites().includes("\x1b[2J"), "streaming reflow must not clear the viewport");
+		assert.ok(!terminal.getWrites().includes("\x1b[3J"), "streaming reflow must not clear scrollback");
+		assert.deepStrictEqual(terminal.getViewport(), ["Line 8", "Line 9", "Line 10", "Line 11", "Line 12"]);
+
+		tui.stop();
+	});
+
 	it("tracks cursor correctly when content shrinks with unchanged remaining lines", async () => {
 		const terminal = new VirtualTerminal(40, 10);
 		const tui: TUI = new TuiMainScreen(terminal);

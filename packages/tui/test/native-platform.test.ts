@@ -55,6 +55,21 @@ test(
 	},
 );
 
+test(
+	"exposes Windows console output mode controls",
+	{ skip: process.platform !== "win32" || !["arm64", "x64"].includes(process.arch) },
+	() => {
+		const helper = getNativePlatformHelper();
+		assert.equal(typeof helper?.enableVirtualTerminalOutput, "function");
+		assert.equal(typeof helper?.restoreVirtualTerminalOutput, "function");
+		const enabled = helper?.enableVirtualTerminalOutput?.();
+		const restored = helper?.restoreVirtualTerminalOutput?.();
+		assert.equal(typeof enabled, "boolean");
+		assert.equal(typeof restored, "boolean");
+		if (enabled) assert.equal(restored, true);
+	},
+);
+
 test("Linux loads X11 lazily and rechecks DISPLAY", { skip: !["arm64", "x64"].includes(process.arch) }, async (t) => {
 	const require = createRequire(import.meta.url);
 	const platform = Object.getOwnPropertyDescriptor(process, "platform")!;

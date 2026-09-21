@@ -181,6 +181,10 @@ export class ProcessTerminal implements Terminal {
 		process.stdin.setEncoding("utf8");
 		process.stdin.resume();
 
+		// On Windows, keep the console from performing its own end-of-line
+		// return while the TUI is positioning and repainting cells.
+		this.enableWindowsVTOutput();
+
 		// Enable bracketed paste mode - terminal will wrap pastes in \x1b[200~ ... \x1b[201~
 		process.stdout.write("\x1b[?2004h");
 
@@ -381,6 +385,24 @@ export class ProcessTerminal implements Terminal {
 		}
 	}
 
+	private enableWindowsVTOutput(): void {
+		if (process.platform !== "win32") return;
+		try {
+			getNativePlatformHelper()?.enableVirtualTerminalOutput?.();
+		} catch {
+			// Native helper not available — retain the console's existing output mode.
+		}
+	}
+
+	private restoreWindowsVTOutput(): void {
+		if (process.platform !== "win32") return;
+		try {
+			getNativePlatformHelper()?.restoreVirtualTerminalOutput?.();
+		} catch {
+			// Native helper not available — there is no output mode to restore.
+		}
+	}
+
 	async drainInput(maxMs = 1000, idleMs = 50): Promise<void> {
 		const shouldDisableKittyProtocol = this.keyboardProtocolPushed || this._kittyProtocolActive;
 		this.clearKeyboardProtocolNegotiationBuffer();
@@ -438,6 +460,7 @@ export class ProcessTerminal implements Terminal {
 			setKittyProtocolActive(false);
 		}
 		this.disableModifyOtherKeys();
+		this.restoreWindowsVTOutput();
 
 		// Clean up StdinBuffer
 		if (this.stdinBuffer) {

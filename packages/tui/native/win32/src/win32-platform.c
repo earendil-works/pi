@@ -1,6 +1,10 @@
 #define PI_CLIPBOARD_WRITE
 #include "../../clipboard.h"
 
+#ifndef DISABLE_NEWLINE_AUTO_RETURN
+#define DISABLE_NEWLINE_AUTO_RETURN 0x0008
+#endif
+
 #ifndef BI_ALPHABITFIELDS
 #define BI_ALPHABITFIELDS 6
 #endif
@@ -9,6 +13,9 @@
 #define OPEN_CLIPBOARD_ATTEMPTS 10
 #define OPEN_CLIPBOARD_RETRY_MS 5
 #define BITMAP_FILE_HEADER_SIZE 14
+
+static DWORD saved_output_mode = 0;
+static bool saved_output_mode_valid = false;
 
 static int string_equals(const char* left, const char* right) {
     while (*left && *right && *left == *right) {
@@ -43,6 +50,47 @@ static napi_value __cdecl enable_virtual_terminal_input(napi_env env, napi_callb
     napi_value result = 0;
     if (!napi_get_boolean || napi_get_boolean(env, enabled, &result) != 0) {
         return fail(env, "Could not configure console input");
+    }
+    return result;
+}
+
+static napi_value __cdecl enable_virtual_terminal_output(napi_env env, napi_callback_info info) {
+    (void)info;
+
+    HANDLE handle = GetStdHandle(STD_OUTPUT_HANDLE);
+    DWORD mode = 0;
+    bool enabled = false;
+    if (handle != INVALID_HANDLE_VALUE && GetConsoleMode(handle, &mode)) {
+        if (!saved_output_mode_valid) {
+            saved_output_mode = mode;
+            saved_output_mode_valid = true;
+        }
+        enabled = SetConsoleMode(handle, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING | DISABLE_NEWLINE_AUTO_RETURN);
+        if (!enabled) saved_output_mode_valid = false;
+    }
+
+    napi_get_boolean_fn napi_get_boolean = (napi_get_boolean_fn)node_symbol("napi_get_boolean");
+    napi_value result = 0;
+    if (!napi_get_boolean || napi_get_boolean(env, enabled, &result) != 0) {
+        return fail(env, "Could not configure console output");
+    }
+    return result;
+}
+
+static napi_value __cdecl restore_virtual_terminal_output(napi_env env, napi_callback_info info) {
+    (void)info;
+
+    HANDLE handle = GetStdHandle(STD_OUTPUT_HANDLE);
+    bool restored = !saved_output_mode_valid;
+    if (saved_output_mode_valid) {
+        restored = handle != INVALID_HANDLE_VALUE && SetConsoleMode(handle, saved_output_mode);
+        saved_output_mode_valid = false;
+    }
+
+    napi_get_boolean_fn napi_get_boolean = (napi_get_boolean_fn)node_symbol("napi_get_boolean");
+    napi_value result = 0;
+    if (!napi_get_boolean || napi_get_boolean(env, restored, &result) != 0) {
+        return fail(env, "Could not restore console output");
     }
     return result;
 }
@@ -233,6 +281,8 @@ BOOL WINAPI _DllMainCRTStartup(HINSTANCE instance, DWORD reason, LPVOID reserved
 
 PI_NAPI_EXPORT napi_value PI_NAPI_CALL napi_register_module_v1(napi_env env, napi_value exports) {
     set_function_export(env, exports, "enableVirtualTerminalInput", enable_virtual_terminal_input);
+    set_function_export(env, exports, "enableVirtualTerminalOutput", enable_virtual_terminal_output);
+    set_function_export(env, exports, "restoreVirtualTerminalOutput", restore_virtual_terminal_output);
     set_function_export(env, exports, "isModifierPressed", is_modifier_pressed);
     set_function_export(env, exports, "getText", get_clipboard_text);
     set_function_export(env, exports, "setText", set_clipboard_text);

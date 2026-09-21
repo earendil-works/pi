@@ -1,6 +1,6 @@
 # Windows native prebuilds
 
-Provides console input setup, modifier-key state, and asynchronous text/image clipboard access. Links to `kernel32` and `user32`; no Node headers are required.
+Provides console input/output setup, modifier-key state, and asynchronous text/image clipboard access. Links to `kernel32` and `user32`; no Node headers are required.
 
 ## Building
 

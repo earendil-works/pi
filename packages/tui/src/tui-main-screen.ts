@@ -8,6 +8,10 @@ import { visibleWidth } from "./utils.ts";
 const KITTY_SEQUENCE_PREFIX = "\x1b_G";
 const MAX_RENDER_WRITE_CHARS = 1024 * 1024;
 
+// Keep full-width lines from wrapping while the renderer positions the cursor.
+const DISABLE_AUTOWRAP = "\x1b[?7l";
+const ENABLE_AUTOWRAP = "\x1b[?7h";
+
 /**
  * Streams terminal output in 1 MiB chunks so a full render never forms one string large enough to exceed V8's limit.
  *
@@ -110,6 +114,12 @@ function isTermuxSession(): boolean {
 	return Boolean(process.env.TERMUX_VERSION);
 }
 
+function isWindows10Host(): boolean {
+	if (process.platform !== "win32") return false;
+	const build = Number(os.release().split(".").at(-1));
+	return Number.isFinite(build) && build >= 10240 && build < 22000;
+}
+
 export interface TuiMainScreenRenderState {
 	previousLines: string[];
 	previousWidth: number;
@@ -185,6 +195,20 @@ export class TuiMainScreen extends TuiBase implements TUI {
 		return ids;
 	}
 
+	private usesAbsoluteCursorPositioning(): boolean {
+		return process.platform === "win32";
+	}
+
+	private appendAbsoluteCursorPosition(
+		output: BoundedTerminalWriter,
+		row: number,
+		viewportTop: number,
+		height: number,
+	): void {
+		const screenRow = Math.max(0, Math.min(height - 1, row - viewportTop));
+		output.append(`\x1b[${screenRow + 1};1H`);
+	}
+
 	private deleteKittyImages(ids: Iterable<number>): string {
 		let buffer = "";
 		for (const id of ids) {
@@ -205,6 +229,14 @@ export class TuiMainScreen extends TuiBase implements TUI {
 			reservedRows++;
 		}
 		return reservedRows;
+	}
+
+	private hasKittyImageStraddlingViewport(lines: string[], viewportTop: number): boolean {
+		for (let i = 0; i < viewportTop && i < lines.length; i++) {
+			if (extractKittyImageIds(lines[i] ?? "").length === 0) continue;
+			if (i + this.getKittyImageReservedRows(lines, i) > viewportTop) return true;
+		}
+		return false;
 	}
 
 	private expandChangedRangeForKittyImages(
@@ -278,9 +310,14 @@ export class TuiMainScreen extends TuiBase implements TUI {
 			this.fullRedrawCount += 1;
 			const output = new BoundedTerminalWriter((data) => this.terminal.write(data));
 			output.append("\x1b[?2026h"); // Begin synchronized output
+			output.append(DISABLE_AUTOWRAP);
 			if (clear) {
 				output.append(this.deleteKittyImages(this.previousKittyImageIds));
-				output.append("\x1b[2J\x1b[H\x1b[3J"); // Clear screen, home, then clear scrollback
+				output.append("\x1b[2J\x1b[H");
+				if (isWindows10Host()) {
+					// Win10 conhost can leave replaced candidate rows in the visible scrollback.
+					output.append("\x1b[3J");
+				}
 			}
 			for (let i = 0; i < newLines.length; i++) {
 				if (i > 0) output.append("\r\n");
@@ -299,6 +336,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
 				}
 				output.append(line);
 			}
+			output.append(ENABLE_AUTOWRAP);
 			output.append("\x1b[?2026l"); // End synchronized output
 			output.flush();
 			this.cursorRow = Math.max(0, newLines.length - 1);
@@ -386,6 +424,15 @@ export class TuiMainScreen extends TuiBase implements TUI {
 			firstChanged = expandedRange.firstChanged;
 			lastChanged = expandedRange.lastChanged;
 		}
+
+		// Win10 conhost cannot reliably apply differential cursor updates in the
+		// regular screen. Repaint the complete frame for every content change.
+		if (firstChanged !== -1 && isWindows10Host()) {
+			logRedraw("Windows 10 full repaint");
+			fullRender(true);
+			return;
+		}
+
 		const appendStart = appendedLines && firstChanged === this.previousLines.length && firstChanged > 0;
 
 		// No changes - but still need to update hardware cursor position if it moved
@@ -401,6 +448,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
 			if (this.previousLines.length > newLines.length) {
 				const output = new BoundedTerminalWriter((data) => this.terminal.write(data));
 				output.append("\x1b[?2026h");
+				output.append(DISABLE_AUTOWRAP);
 				output.append(this.deleteChangedKittyImages(firstChanged, lastChanged));
 				// Move to end of new content (clamp to 0 for empty content)
 				const targetRow = Math.max(0, newLines.length - 1);
@@ -409,10 +457,14 @@ export class TuiMainScreen extends TuiBase implements TUI {
 					fullRender(true);
 					return;
 				}
-				const lineDiff = computeLineDiff(targetRow);
-				if (lineDiff > 0) output.append(`\x1b[${lineDiff}B`);
-				else if (lineDiff < 0) output.append(`\x1b[${-lineDiff}A`);
-				output.append("\r");
+				if (this.usesAbsoluteCursorPositioning()) {
+					this.appendAbsoluteCursorPosition(output, targetRow, prevViewportTop, height);
+				} else {
+					const lineDiff = computeLineDiff(targetRow);
+					if (lineDiff > 0) output.append(`\x1b[${lineDiff}B`);
+					else if (lineDiff < 0) output.append(`\x1b[${-lineDiff}A`);
+					output.append("\r");
+				}
 				// Clear extra lines without scrolling
 				const extraLines = this.previousLines.length - newLines.length;
 				if (extraLines > height) {
@@ -428,10 +480,15 @@ export class TuiMainScreen extends TuiBase implements TUI {
 					output.append("\r\x1b[2K");
 					if (i < extraLines - 1) output.append("\x1b[1B");
 				}
-				const moveBack = Math.max(0, extraLines - 1 + clearStartOffset);
-				if (moveBack > 0) {
-					output.append(`\x1b[${moveBack}A`);
+				if (this.usesAbsoluteCursorPositioning()) {
+					this.appendAbsoluteCursorPosition(output, targetRow, prevViewportTop, height);
+				} else {
+					const moveBack = Math.max(0, extraLines - 1 + clearStartOffset);
+					if (moveBack > 0) {
+						output.append(`\x1b[${moveBack}A`);
+					}
 				}
+				output.append(ENABLE_AUTOWRAP);
 				output.append("\x1b[?2026l");
 				output.flush();
 				this.cursorRow = targetRow;
@@ -446,18 +503,47 @@ export class TuiMainScreen extends TuiBase implements TUI {
 			return;
 		}
 
-		// Differential rendering can only touch what was actually visible.
-		// If the first changed line is above the previous viewport, we need a full redraw.
+		// Lines above the viewport have already become terminal scrollback and cannot be
+		// updated in place. Keep those lines as historical snapshots instead of clearing
+		// scrollback and replaying the entire document. If the change reaches the visible
+		// viewport, clamp the differential update to its first visible row.
+		let preservePreviousKittyImageIds = false;
 		if (firstChanged < prevViewportTop) {
-			logRedraw(`firstChanged < viewportTop (${firstChanged} < ${prevViewportTop})`);
-			fullRender(true);
-			return;
+			// A transient component may have made the terminal working area taller than
+			// the current document. In that case clamping would leave stale rows behind.
+			if (this.maxLinesRendered > newLines.length) {
+				logRedraw(`above-viewport change with stale rows (max=${this.maxLinesRendered}, new=${newLines.length})`);
+				fullRender(true);
+				return;
+			}
+			const kittyImageStraddlesViewport =
+				this.hasKittyImageStraddlingViewport(this.previousLines, prevViewportTop) ||
+				this.hasKittyImageStraddlingViewport(newLines, prevViewportTop);
+			if (kittyImageStraddlesViewport) {
+				logRedraw(`kitty image straddles viewport (${firstChanged} < ${prevViewportTop})`);
+				fullRender(true);
+				return;
+			}
+			preservePreviousKittyImageIds = true;
+			if (lastChanged < prevViewportTop) {
+				this.positionHardwareCursor(cursorPos, newLines.length);
+				this.previousLines = newLines;
+				const nextKittyImageIds = this.collectKittyImageIds(newLines);
+				for (const id of this.previousKittyImageIds) nextKittyImageIds.add(id);
+				this.previousKittyImageIds = nextKittyImageIds;
+				this.previousWidth = width;
+				this.previousHeight = height;
+				this.previousViewportTop = prevViewportTop;
+				return;
+			}
+			firstChanged = prevViewportTop;
 		}
 
 		// Render from first changed line to end
 		// Keep updates wrapped in synchronized output while writing bounded chunks.
 		const output = new BoundedTerminalWriter((data) => this.terminal.write(data));
 		output.append("\x1b[?2026h"); // Begin synchronized output
+		output.append(DISABLE_AUTOWRAP);
 		output.append(this.deleteChangedKittyImages(firstChanged, lastChanged));
 		const prevViewportBottom = prevViewportTop + height - 1;
 		const moveTargetRow = appendStart ? firstChanged - 1 : firstChanged;
@@ -476,13 +562,21 @@ export class TuiMainScreen extends TuiBase implements TUI {
 
 		// Move cursor to first changed line (use hardwareCursorRow for actual position)
 		const lineDiff = computeLineDiff(moveTargetRow);
-		if (lineDiff > 0) {
-			output.append(`\x1b[${lineDiff}B`); // Move down
-		} else if (lineDiff < 0) {
-			output.append(`\x1b[${-lineDiff}A`); // Move up
+		if (this.usesAbsoluteCursorPositioning()) {
+			if (appendStart) {
+				this.appendAbsoluteCursorPosition(output, moveTargetRow, viewportTop, height);
+				output.append("\r\n");
+			} else {
+				this.appendAbsoluteCursorPosition(output, moveTargetRow, viewportTop, height);
+			}
+		} else {
+			if (lineDiff > 0) {
+				output.append(`\x1b[${lineDiff}B`); // Move down
+			} else if (lineDiff < 0) {
+				output.append(`\x1b[${-lineDiff}A`); // Move up
+			}
+			output.append(appendStart ? "\r\n" : "\r"); // Move to column 0
 		}
-
-		output.append(appendStart ? "\r\n" : "\r"); // Move to column 0
 
 		// Only render changed lines (firstChanged to lastChanged), not all lines to end
 		// This reduces flicker when only a single line changes (e.g., spinner animation)
@@ -561,9 +655,14 @@ export class TuiMainScreen extends TuiBase implements TUI {
 				output.append("\r\n\x1b[2K");
 			}
 			// Move cursor back to end of new content
-			output.append(`\x1b[${extraLines}A`);
+			if (this.usesAbsoluteCursorPositioning()) {
+				this.appendAbsoluteCursorPosition(output, newLines.length - 1, viewportTop, height);
+			} else {
+				output.append(`\x1b[${extraLines}A`);
+			}
 		}
 
+		output.append(ENABLE_AUTOWRAP);
 		output.append("\x1b[?2026l"); // End synchronized output
 
 		if (process.env.PI_TUI_DEBUG === "1") {
@@ -610,7 +709,11 @@ export class TuiMainScreen extends TuiBase implements TUI {
 		this.positionHardwareCursor(cursorPos, newLines.length);
 
 		this.previousLines = newLines;
-		this.previousKittyImageIds = this.collectKittyImageIds(newLines);
+		const nextKittyImageIds = this.collectKittyImageIds(newLines);
+		if (preservePreviousKittyImageIds) {
+			for (const id of this.previousKittyImageIds) nextKittyImageIds.add(id);
+		}
+		this.previousKittyImageIds = nextKittyImageIds;
 		this.previousWidth = width;
 		this.previousHeight = height;
 	}
@@ -630,16 +733,20 @@ export class TuiMainScreen extends TuiBase implements TUI {
 		const targetRow = Math.max(0, Math.min(cursorPos.row, totalLines - 1));
 		const targetCol = Math.max(0, cursorPos.col);
 
-		// Move cursor from current position to target
-		const rowDelta = targetRow - this.hardwareCursorRow;
 		let buffer = "";
-		if (rowDelta > 0) {
-			buffer += `\x1b[${rowDelta}B`; // Move down
-		} else if (rowDelta < 0) {
-			buffer += `\x1b[${-rowDelta}A`; // Move up
+		if (this.usesAbsoluteCursorPositioning()) {
+			const screenRow = Math.max(0, Math.min(this.terminal.rows - 1, targetRow - this.previousViewportTop));
+			buffer += `\x1b[${screenRow + 1};${targetCol + 1}H`;
+		} else {
+			const rowDelta = targetRow - this.hardwareCursorRow;
+			if (rowDelta > 0) {
+				buffer += `\x1b[${rowDelta}B`; // Move down
+			} else if (rowDelta < 0) {
+				buffer += `\x1b[${-rowDelta}A`; // Move up
+			}
+			// Move to absolute column (1-indexed)
+			buffer += `\x1b[${targetCol + 1}G`;
 		}
-		// Move to absolute column (1-indexed)
-		buffer += `\x1b[${targetCol + 1}G`;
 
 		if (buffer) {
 			this.terminal.write(buffer);

@@ -17,6 +17,8 @@ export interface NativeClipboard {
 
 type NativePlatformHelper = NativeClipboard & {
 	enableVirtualTerminalInput?: () => boolean;
+	enableVirtualTerminalOutput?: () => boolean;
+	restoreVirtualTerminalOutput?: () => boolean;
 	isModifierPressed?: (name: ModifierKey) => boolean;
 };
 
