@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Changed the default xAI model to Grok 4.7.
+
 ## [0.87.0] - 2026-09-21
 
 ### New Features

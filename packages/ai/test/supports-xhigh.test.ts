@@ -165,6 +165,12 @@ describe("getSupportedThinkingLevels", () => {
 		expect(getSupportedThinkingLevels(model!)).toEqual(["low", "medium", "high", "xhigh"]);
 	});
 
+	it("includes xhigh but not off or max for xAI Grok 4.7", () => {
+		const model = getModel("xai", "grok-4.7");
+		expect(model).toBeDefined();
+		expect(getSupportedThinkingLevels(model!)).toEqual(["low", "medium", "high", "xhigh"]);
+	});
+
 	it("includes xhigh and max but not off for Bedrock Claude Fable 5", () => {
 		const model = getModel("amazon-bedrock", "global.anthropic.claude-fable-5");
 		expect(model).toBeDefined();

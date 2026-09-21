@@ -735,7 +735,7 @@ describe("default model selection", () => {
 	});
 
 	test("xai default tracks current model", () => {
-		expect(defaultModelPerProvider.xai).toBe("grok-4.6");
+		expect(defaultModelPerProvider.xai).toBe("grok-4.7");
 	});
 
 	test("qwen token plan individual default tracks current model", () => {

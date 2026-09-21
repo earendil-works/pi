@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added Grok 4.7 (`grok-4.7`) to the xAI catalog, including its 500k context window and long-context pricing above 200k input tokens.
+
 ### Fixed
 
 - Fixed image-only user messages being rejected by some OpenAI-compatible providers because they included an empty text part ([#9797](https://github.com/earendil-works/pi/issues/9797))
