@@ -122,11 +122,47 @@ export interface OpenAIResponsesStreamOptions {
 export interface ConvertResponsesMessagesOptions {
 	includeSystemPrompt?: boolean;
 	grammarToolInputProperties?: ReadonlyMap<string, string>;
+	/** Drop whitespace-only signed assistant text blocks when the turn contains other output. */
+	omitEmptyNativeAssistantMessages?: boolean;
 	/** Whether later system messages are sent in place; otherwise they are folded into the leading prompt. */
 	supportsMidConvoSystemMessages?: boolean;
 	supportsAdditionalTools?: boolean;
 	supportsToolSearch?: boolean;
 	toolOptions?: ConvertResponsesToolsOptions;
+}
+
+function omitEmptyNativeAssistantMessages(content: AssistantMessage["content"]): AssistantMessage["content"] {
+	const isEmptyNativeText = (block: AssistantMessage["content"][number]): boolean =>
+		block.type === "text" && block.textSignature !== undefined && block.text.trim().length === 0;
+	const hasReplayableOutput = content.some(
+		(block) => block.type === "toolCall" || (block.type === "text" && block.text.trim().length > 0),
+	);
+	if (!hasReplayableOutput || !content.some(isEmptyNativeText)) return content;
+
+	const kept: AssistantMessage["content"] = [];
+	// Defer reasoning until a surviving output proves it did not only introduce a removed message.
+	let pendingThinking: AssistantMessage["content"] = [];
+	let removedEmptyText = false;
+	const flushThinking = (): void => {
+		kept.push(...pendingThinking);
+		pendingThinking = [];
+	};
+
+	for (const block of content) {
+		if (block.type === "thinking") {
+			if (removedEmptyText) pendingThinking = [];
+			removedEmptyText = false;
+			pendingThinking.push(block);
+		} else if (isEmptyNativeText(block)) {
+			removedEmptyText = true;
+		} else {
+			flushThinking();
+			removedEmptyText = false;
+			kept.push(block);
+		}
+	}
+	if (!removedEmptyText) flushThinking();
+	return kept;
 }
 
 export interface ConvertResponsesToolsOptions {
@@ -256,9 +292,12 @@ export function convertResponsesMessages<TApi extends Api>(
 			const isSameProviderAndApi = assistantMsg.provider === model.provider && assistantMsg.api === model.api;
 			const isSameModel = isSameProviderAndApi && assistantMsg.model === model.id;
 			const isDifferentModel = isSameProviderAndApi && assistantMsg.model !== model.id;
+			const content = options?.omitEmptyNativeAssistantMessages
+				? omitEmptyNativeAssistantMessages(assistantMsg.content)
+				: assistantMsg.content;
 			let textBlockIndex = 0;
 
-			for (const block of msg.content) {
+			for (const block of content) {
 				if (block.type === "thinking") {
 					if (block.thinkingSignature) {
 						const reasoningItem = JSON.parse(block.thinkingSignature) as ResponseReasoningItem;

@@ -11,7 +11,8 @@ import {
 	stream as streamOpenAICodexResponses,
 	streamSimple as streamSimpleOpenAICodexResponses,
 } from "../src/api/openai-codex-responses.ts";
-import type { Context, Model } from "../src/types.ts";
+import { convertResponsesMessages } from "../src/api/openai-responses-shared.ts";
+import type { AssistantMessage, Context, Model } from "../src/types.ts";
 import { normalizeContext } from "../src/utils/transcript.ts";
 
 const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
@@ -97,7 +98,99 @@ function buildSSEPayload({
 	return `${events.join("\n\n")}\n\n`;
 }
 
+const codexReplayModel: Model<"openai-codex-responses"> = {
+	id: "gpt-5.6-sol",
+	name: "GPT-5.6 Sol",
+	api: "openai-codex-responses",
+	provider: "openai-codex",
+	baseUrl: "https://chatgpt.com/backend-api",
+	reasoning: true,
+	input: ["text"],
+	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+	contextWindow: 272000,
+	maxTokens: 128000,
+};
+
+function convertCodexReplay(content: AssistantMessage["content"]) {
+	const assistant: AssistantMessage = {
+		role: "assistant",
+		content,
+		api: "openai-codex-responses",
+		provider: "openai-codex",
+		model: codexReplayModel.id,
+		usage: {
+			input: 0,
+			output: 0,
+			cacheRead: 0,
+			cacheWrite: 0,
+			totalTokens: 0,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+		},
+		stopReason: "stop",
+		timestamp: 1,
+	};
+	return convertResponsesMessages(
+		codexReplayModel,
+		normalizeContext({ messages: [assistant] }),
+		new Set(["openai-codex"]),
+		{
+			includeSystemPrompt: false,
+			omitEmptyNativeAssistantMessages: true,
+		},
+	);
+}
+
+function replayReasoning(id: string) {
+	return {
+		type: "thinking" as const,
+		thinking: "",
+		thinkingSignature: JSON.stringify({ type: "reasoning", id, encrypted_content: `enc_${id}`, summary: [] }),
+	};
+}
+
+function replayText(id: string, phase: "commentary" | "final_answer", text: string) {
+	return {
+		type: "text" as const,
+		text,
+		textSignature: JSON.stringify({ v: 1, id, phase }),
+	};
+}
+
 describe("openai-codex streaming", () => {
+	// Regression test for https://github.com/can1357/oh-my-pi/pull/11904
+	it("omits a GPT-5.6 empty final answer and its orphaned reasoning from replay", () => {
+		const input = convertCodexReplay([
+			replayReasoning("rs_commentary"),
+			replayText("msg_commentary", "commentary", "Waiting."),
+			replayReasoning("rs_final"),
+			replayText("msg_final", "final_answer", " \n"),
+		]);
+
+		expect(input).toContainEqual(expect.objectContaining({ type: "reasoning", id: "rs_commentary" }));
+		expect(input).toContainEqual(expect.objectContaining({ type: "message", id: "msg_commentary" }));
+		expect(input).not.toContainEqual(expect.objectContaining({ id: "rs_final" }));
+		expect(input).not.toContainEqual(expect.objectContaining({ id: "msg_final" }));
+	});
+
+	it("preserves a turn whose only output is an empty native message", () => {
+		const input = convertCodexReplay([replayReasoning("rs_empty"), replayText("msg_empty", "final_answer", "")]);
+
+		expect(input).toContainEqual(expect.objectContaining({ type: "reasoning", id: "rs_empty" }));
+		expect(input).toContainEqual(expect.objectContaining({ type: "message", id: "msg_empty" }));
+	});
+
+	it("keeps reasoning shared by a tool call when omitting an empty native message", () => {
+		const input = convertCodexReplay([
+			replayReasoning("rs_tool"),
+			replayText("msg_empty", "commentary", ""),
+			{ type: "toolCall", id: "call_read|fc_read", name: "read", arguments: { path: "README.md" } },
+		]);
+
+		expect(input).toContainEqual(expect.objectContaining({ type: "reasoning", id: "rs_tool" }));
+		expect(input).toContainEqual(expect.objectContaining({ type: "function_call", call_id: "call_read" }));
+		expect(input).not.toContainEqual(expect.objectContaining({ type: "message", id: "msg_empty" }));
+	});
+
 	it("streams SSE responses into AssistantMessageEventStream", async () => {
 		const tempDir = mkdtempSync(join(tmpdir(), "pi-codex-stream-"));
 		process.env.PI_CODING_AGENT_DIR = tempDir;
@@ -2183,6 +2276,80 @@ describe("openai-codex streaming", () => {
 			lastDeltaInputItems: 2,
 			lastPreviousResponseId: "resp_1",
 		});
+	});
+
+	it("breaks cached websocket continuation when replay drops an empty final answer", async () => {
+		const sentBodies: Array<{ input: unknown[]; previous_response_id?: string }> = [];
+		const responseItems = [
+			{
+				type: "message",
+				id: "msg_commentary",
+				role: "assistant",
+				status: "completed",
+				phase: "commentary",
+				content: [{ type: "output_text", text: "Waiting." }],
+			},
+			{ type: "reasoning", id: "rs_final", encrypted_content: "enc_final", summary: [] },
+			{
+				type: "message",
+				id: "msg_final",
+				role: "assistant",
+				status: "completed",
+				phase: "final_answer",
+				content: [{ type: "output_text", text: "" }],
+			},
+		];
+
+		class MockWebSocket extends EventTarget {
+			static OPEN = 1;
+			readyState = MockWebSocket.OPEN;
+
+			constructor() {
+				super();
+				queueMicrotask(() => this.dispatchEvent(new Event("open")));
+			}
+
+			send(data: string): void {
+				sentBodies.push(JSON.parse(data) as { input: unknown[]; previous_response_id?: string });
+				const id = `resp_${sentBodies.length}`;
+				const output = sentBodies.length === 1 ? responseItems : [];
+				const events = [
+					{ type: "response.created", response: { id } },
+					...output.map((item, output_index) => ({ type: "response.output_item.done", output_index, item })),
+					{
+						type: "response.completed",
+						response: { id, status: "completed", usage: { input_tokens: 5, output_tokens: 3, total_tokens: 8 } },
+					},
+				];
+				queueMicrotask(() => {
+					for (const event of events) {
+						this.dispatchEvent(Object.assign(new Event("message"), { data: JSON.stringify(event) }));
+					}
+				});
+			}
+
+			close(): void {
+				this.readyState = 3;
+			}
+		}
+
+		vi.stubGlobal("WebSocket", MockWebSocket);
+		const firstContext = normalizeContext({ messages: [{ role: "user", content: "start", timestamp: 1 }] });
+		const options = { apiKey: mockToken(), sessionId: "empty-final", transport: "websocket-cached" as const };
+		const first = await streamOpenAICodexResponses(codexReplayModel, firstContext, options).result();
+		await streamOpenAICodexResponses(
+			codexReplayModel,
+			normalizeContext({
+				messages: [...firstContext.messages, first, { role: "user", content: "continue", timestamp: 2 }],
+			}),
+			options,
+		).result();
+
+		const replay = sentBodies[1];
+		expect(replay.previous_response_id).toBeUndefined();
+		expect(replay.input).toContainEqual(expect.objectContaining({ id: "msg_commentary" }));
+		expect(replay.input).not.toContainEqual(expect.objectContaining({ id: "rs_final" }));
+		expect(replay.input).not.toContainEqual(expect.objectContaining({ id: "msg_final" }));
 	});
 
 	it.each(["websocket", "sse"] as const)(

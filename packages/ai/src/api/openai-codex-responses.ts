@@ -542,6 +542,7 @@ function buildRequestBody(
 	const messages = convertResponsesMessages(model, context, CODEX_TOOL_CALL_PROVIDERS, {
 		includeSystemPrompt: false,
 		grammarToolInputProperties,
+		omitEmptyNativeAssistantMessages: true,
 		supportsMidConvoSystemMessages: model.compat?.supportsMidConvoSystemMessages ?? false,
 		supportsAdditionalTools,
 		supportsToolSearch,
@@ -1532,20 +1533,26 @@ async function processWebSocketStream(
 		if (options?.signal?.aborted) {
 			keepConnection = false;
 		} else if (useCachedContext && entry && output.responseId) {
-			const responseItems = convertResponsesMessages(
+			const responseContext = normalizeContext({ messages: [output] });
+			const conversionOptions = { includeSystemPrompt: false, grammarToolInputProperties };
+			const rawResponseItems = convertResponsesMessages(
 				model,
-				normalizeContext({ messages: [output] }),
+				responseContext,
 				CODEX_TOOL_CALL_PROVIDERS,
-				{
-					includeSystemPrompt: false,
-					grammarToolInputProperties,
-				},
+				conversionOptions,
 			).filter((item) => item.type !== "function_call_output" && item.type !== "custom_tool_call_output");
-			entry.continuation = {
-				lastRequestBody: fullBody,
-				lastResponseId: output.responseId,
-				lastResponseItems: responseItems,
-			};
+			const responseItems = convertResponsesMessages(model, responseContext, CODEX_TOOL_CALL_PROVIDERS, {
+				...conversionOptions,
+				omitEmptyNativeAssistantMessages: true,
+			}).filter((item) => item.type !== "function_call_output" && item.type !== "custom_tool_call_output");
+			entry.continuation =
+				responseItems.length === rawResponseItems.length
+					? {
+							lastRequestBody: fullBody,
+							lastResponseId: output.responseId,
+							lastResponseItems: responseItems,
+						}
+					: undefined;
 		}
 	} catch (error) {
 		if (entry) {
