@@ -29,9 +29,10 @@ describe("Amazon Bedrock Models", () => {
 		console.log(`Found ${models.length} Bedrock models`);
 	});
 
-	it("exposes Claude Opus 5 through an inference profile only", () => {
+	it("exposes Claude models through inference profiles only (no bare IDs)", () => {
 		expect(models.some((model) => model.id === "global.anthropic.claude-opus-5")).toBe(true);
-		expect(models.some((model) => model.id === "anthropic.claude-opus-5")).toBe(false);
+		const bareAnthropicIds = models.filter((m) => m.id.startsWith("anthropic."));
+		expect(bareAnthropicIds.map((m) => m.id)).toEqual([]);
 	});
 
 	if (hasBedrockCredentials() && process.env.BEDROCK_EXTENSIVE_MODEL_TEST) {
