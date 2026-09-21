@@ -98,6 +98,28 @@ Prompt content.`,
 			expect(prompts.some((p) => p.name === "test-prompt")).toBe(true);
 		});
 
+		// Regression test for #9354.
+		it("should report invalid prompt frontmatter while loading valid siblings", async () => {
+			const promptsDir = join(agentDir, "prompts");
+			const invalidPromptPath = join(promptsDir, "invalid.md");
+			mkdirSync(promptsDir, { recursive: true });
+			writeFileSync(invalidPromptPath, "---\ndescription: Broken: unquoted colon\n---\nDo something.\n");
+			writeFileSync(join(promptsDir, "valid.md"), "Valid prompt content.");
+
+			const loader = new DefaultResourceLoader({ cwd, agentDir });
+			await loader.reload();
+
+			const { prompts, diagnostics } = loader.getPrompts();
+			expect(prompts.map((prompt) => prompt.name)).toEqual(["valid"]);
+			expect(diagnostics).toEqual([
+				expect.objectContaining({
+					type: "warning",
+					path: invalidPromptPath,
+					message: expect.stringContaining("line 1, column 14"),
+				}),
+			]);
+		});
+
 		it("should prefer project resources over user on name collisions", async () => {
 			const userPromptsDir = join(agentDir, "prompts");
 			const projectPromptsDir = join(cwd, ".pi", "prompts");

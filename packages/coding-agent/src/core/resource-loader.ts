@@ -697,13 +697,17 @@ export class DefaultResourceLoader implements ResourceLoader {
 		if (this.noPromptTemplates && promptPaths.length === 0) {
 			promptsResult = { prompts: [], diagnostics: [] };
 		} else {
-			const allPrompts = loadPromptTemplates({
+			const loaded = loadPromptTemplates({
 				cwd: this.cwd,
 				agentDir: this.agentDir,
 				promptPaths,
 				includeDefaults: false,
 			});
-			promptsResult = this.dedupePrompts(allPrompts);
+			const deduped = this.dedupePrompts(loaded.templates);
+			promptsResult = {
+				prompts: deduped.prompts,
+				diagnostics: [...loaded.diagnostics, ...deduped.diagnostics],
+			};
 		}
 		const resolvedPrompts = this.promptsOverride ? this.promptsOverride(promptsResult) : promptsResult;
 		this.prompts = resolvedPrompts.prompts.map((prompt) => ({
