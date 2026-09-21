@@ -19,8 +19,10 @@ export {
 	type AgentSessionEventListener,
 	type ModelCycleResult,
 	type ParsedSkillBlock,
+	type PromptInputResult,
 	type PromptOptions,
 	parseSkillBlock,
+	type QueuedInputResult,
 	type SessionStats,
 } from "./core/agent-session.ts";
 export { readStoredCredential } from "./core/auth-storage.ts";
@@ -378,6 +380,8 @@ export {
 	type RpcEventListener,
 	type RpcExtensionUIRequest,
 	type RpcExtensionUIResponse,
+	type RpcPromptInputResult,
+	type RpcQueuedInputResult,
 	type RpcResponse,
 	type RpcSessionState,
 	runPrintMode,

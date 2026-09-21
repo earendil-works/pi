@@ -13,7 +13,14 @@ import type { CompactionResult } from "../../core/compaction/index.ts";
 import type { SessionEntry, SessionTreeNode } from "../../core/session-manager.ts";
 import type { JsonAgentSessionEvent } from "../json-event.ts";
 import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.ts";
-import type { RpcCommand, RpcResponse, RpcSessionState, RpcSlashCommand } from "./rpc-types.ts";
+import type {
+	RpcCommand,
+	RpcPromptInputResult,
+	RpcQueuedInputResult,
+	RpcResponse,
+	RpcSessionState,
+	RpcSlashCommand,
+} from "./rpc-types.ts";
 
 // ============================================================================
 // Types
@@ -195,22 +202,22 @@ export class RpcClient {
 	 * Returns immediately after sending; use onEvent() to receive streaming events.
 	 * Use waitForIdle() to wait for completion.
 	 */
-	async prompt(message: string, images?: ImageContent[]): Promise<void> {
-		await this.send({ type: "prompt", message, images });
+	async prompt(message: string, images?: ImageContent[]): Promise<RpcPromptInputResult> {
+		return this.getData(await this.send({ type: "prompt", message, images }));
 	}
 
 	/**
 	 * Queue a steering message to interrupt the agent mid-run.
 	 */
-	async steer(message: string, images?: ImageContent[]): Promise<void> {
-		await this.send({ type: "steer", message, images });
+	async steer(message: string, images?: ImageContent[]): Promise<RpcQueuedInputResult> {
+		return this.getData(await this.send({ type: "steer", message, images }));
 	}
 
 	/**
 	 * Queue a follow-up message to be processed after the agent finishes.
 	 */
-	async followUp(message: string, images?: ImageContent[]): Promise<void> {
-		await this.send({ type: "follow_up", message, images });
+	async followUp(message: string, images?: ImageContent[]): Promise<RpcQueuedInputResult> {
+		return this.getData(await this.send({ type: "follow_up", message, images }));
 	}
 
 	/**
@@ -481,22 +488,31 @@ export class RpcClient {
 	/**
 	 * Collect events until agent becomes idle.
 	 */
-	collectEvents(timeout = 60000): Promise<JsonAgentSessionEvent[]> {
+	collectEvents(timeout = 60000, signal?: AbortSignal): Promise<JsonAgentSessionEvent[]> {
 		return new Promise((resolve, reject) => {
 			const events: JsonAgentSessionEvent[] = [];
-			const timer = setTimeout(() => {
-				unsubscribe();
-				reject(new Error(`Timeout collecting events. Stderr: ${this.stderr}`));
-			}, timeout);
-
 			const unsubscribe = this.onEvent((event) => {
 				events.push(event);
 				if (event.type === "agent_settled") {
-					clearTimeout(timer);
-					unsubscribe();
+					cleanup();
 					resolve(events);
 				}
 			});
+			const timer = setTimeout(() => {
+				cleanup();
+				reject(new Error(`Timeout collecting events. Stderr: ${this.stderr}`));
+			}, timeout);
+			const onAbort = () => {
+				cleanup();
+				reject(new Error("Event collection aborted"));
+			};
+			const cleanup = () => {
+				clearTimeout(timer);
+				unsubscribe();
+				signal?.removeEventListener("abort", onAbort);
+			};
+			signal?.addEventListener("abort", onAbort, { once: true });
+			if (signal?.aborted) onAbort();
 		});
 	}
 
@@ -504,9 +520,14 @@ export class RpcClient {
 	 * Send prompt and wait for completion, returning all events.
 	 */
 	async promptAndWait(message: string, images?: ImageContent[], timeout = 60000): Promise<JsonAgentSessionEvent[]> {
-		const eventsPromise = this.collectEvents(timeout);
-		await this.prompt(message, images);
-		return eventsPromise;
+		const controller = new AbortController();
+		const eventsPromise = this.collectEvents(timeout, controller.signal);
+		try {
+			const [, events] = await Promise.all([this.prompt(message, images), eventsPromise]);
+			return events;
+		} finally {
+			controller.abort();
+		}
 	}
 
 	// =========================================================================

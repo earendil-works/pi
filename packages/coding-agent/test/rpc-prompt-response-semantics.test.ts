@@ -13,11 +13,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { AgentSession } from "../src/core/agent-session.ts";
 import type { AgentSessionRuntime } from "../src/core/agent-session-runtime.ts";
 import { AuthStorage } from "../src/core/auth-storage.ts";
+import type { InlineExtension } from "../src/core/extensions/index.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
 import { runRpcMode } from "../src/modes/rpc/rpc-mode.ts";
 import { createInMemoryModelRegistry, getModelRuntime } from "./model-runtime-test-utils.ts";
-import { createTestResourceLoader } from "./utilities.ts";
+import { createTestExtensionsResult, createTestResourceLoader } from "./utilities.ts";
 
 const rpcIo = vi.hoisted(() => ({
 	outputLines: [] as string[],
@@ -85,17 +86,28 @@ function parseOutputLines(outputLines: string[]): ParsedOutputLine[] {
 		.map((line) => JSON.parse(line) as ParsedOutputLine);
 }
 
-function getPromptResponses(outputLines: string[], id: string): ParsedOutputLine[] {
+function getResponses(outputLines: string[], id: string, command: string): ParsedOutputLine[] {
 	return parseOutputLines(outputLines).filter(
-		(record) => record.id === id && record.type === "response" && record.command === "prompt",
+		(record) => record.id === id && record.type === "response" && record.command === command,
 	);
+}
+
+function getPromptResponses(outputLines: string[], id: string): ParsedOutputLine[] {
+	return getResponses(outputLines, id, "prompt");
 }
 
 function sleep(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function createRuntimeHost(options: { withAuth: boolean; responseDelayMs: number; model?: Model<any> }): Promise<{
+interface RuntimeOptions {
+	withAuth: boolean;
+	responseDelayMs: number;
+	model?: Model<any>;
+	extensionFactories?: InlineExtension[];
+}
+
+async function createRuntimeHost(options: RuntimeOptions): Promise<{
 	runtimeHost: AgentSessionRuntime;
 	cleanup: () => Promise<void>;
 }> {
@@ -134,13 +146,16 @@ async function createRuntimeHost(options: { withAuth: boolean; responseDelayMs: 
 		await authStorage.modify("anthropic", async () => ({ type: "api_key", key: "test-key" }));
 	}
 
+	const extensionsResult = options.extensionFactories
+		? await createTestExtensionsResult(options.extensionFactories, tempDir)
+		: undefined;
 	const session = new AgentSession({
 		agent,
 		sessionManager,
 		settingsManager,
 		cwd: tempDir,
 		modelRuntime: getModelRuntime(modelRegistry),
-		resourceLoader: createTestResourceLoader(),
+		resourceLoader: createTestResourceLoader(extensionsResult ? { extensionsResult } : undefined),
 	});
 
 	const runtimeHost = {
@@ -168,7 +183,7 @@ async function createRuntimeHost(options: { withAuth: boolean; responseDelayMs: 
 	};
 }
 
-async function startRpcMode(options: { withAuth: boolean; responseDelayMs: number; model?: Model<any> }): Promise<{
+async function startRpcMode(options: RuntimeOptions): Promise<{
 	lineHandler: (line: string) => void;
 	cleanup: () => Promise<void>;
 }> {
@@ -241,6 +256,7 @@ describe("RPC prompt response semantics", () => {
 					type: "response",
 					command: "prompt",
 					success: true,
+					data: { disposition: "accepted", text: "Hello" },
 				});
 			});
 		} finally {
@@ -275,11 +291,190 @@ describe("RPC prompt response semantics", () => {
 					type: "response",
 					command: "prompt",
 					success: true,
+					data: { disposition: "queued", inputId: expect.any(String), text: "Queue this" },
 				});
+				const inputId = (responses[0].data as { inputId: string }).inputId;
+				expect(parseOutputLines(rpcIo.outputLines)).toContainEqual(
+					expect.objectContaining({
+						type: "queue_update",
+						followUp: ["Queue this"],
+						followUpIds: [inputId],
+					}),
+				);
 			});
 
 			await sleep(150);
 		} finally {
+			await cleanup();
+		}
+	});
+
+	// Regression test for #9803.
+	it("distinguishes handled RPC input from independent extension queueing", async () => {
+		const { lineHandler, cleanup } = await startRpcMode({
+			withAuth: true,
+			responseDelayMs: 500,
+			extensionFactories: [
+				(pi) => {
+					pi.on("input", (event) => {
+						if (event.text === "A") {
+							pi.sendUserMessage("B", { deliverAs: "steer" });
+							return { action: "handled" };
+						}
+						if (event.text === "C") return { action: "transform", text: "B" };
+						if (event.text === "handled-follow") return { action: "handled" };
+						return { action: "continue" };
+					});
+				},
+			],
+		});
+
+		try {
+			lineHandler(JSON.stringify({ id: "start", type: "prompt", message: "Start" }));
+			await vi.waitFor(() => expect(getPromptResponses(rpcIo.outputLines, "start")).toHaveLength(1));
+
+			lineHandler(JSON.stringify({ id: "A", type: "steer", message: "A" }));
+			await vi.waitFor(() => {
+				expect(getResponses(rpcIo.outputLines, "A", "steer")).toEqual([
+					{ id: "A", type: "response", command: "steer", success: true, data: { disposition: "handled" } },
+				]);
+				expect(parseOutputLines(rpcIo.outputLines)).toContainEqual(
+					expect.objectContaining({ type: "queue_update", steering: ["B"], steeringIds: [expect.any(String)] }),
+				);
+			});
+			const injectedUpdate = parseOutputLines(rpcIo.outputLines).find(
+				(record) => record.type === "queue_update" && JSON.stringify(record.steering) === '["B"]',
+			);
+			const injectedId = (injectedUpdate?.steeringIds as string[])[0];
+
+			lineHandler(JSON.stringify({ id: "C", type: "steer", message: "C" }));
+			await vi.waitFor(() => {
+				const response = getResponses(rpcIo.outputLines, "C", "steer");
+				expect(response).toHaveLength(1);
+				expect(response[0]).toMatchObject({
+					data: { disposition: "queued", inputId: expect.any(String), text: "B" },
+				});
+				const inputId = (response[0].data as { inputId: string }).inputId;
+				expect(inputId).not.toBe(injectedId);
+				expect(parseOutputLines(rpcIo.outputLines)).toContainEqual(
+					expect.objectContaining({
+						type: "queue_update",
+						steering: ["B", "B"],
+						steeringIds: [injectedId, inputId],
+					}),
+				);
+			});
+
+			lineHandler(JSON.stringify({ id: "follow", type: "follow_up", message: "D" }));
+			await vi.waitFor(() => {
+				expect(getResponses(rpcIo.outputLines, "follow", "follow_up")[0]).toMatchObject({
+					data: { disposition: "queued", inputId: expect.any(String), text: "D" },
+				});
+			});
+			lineHandler(JSON.stringify({ id: "handled-follow", type: "follow_up", message: "handled-follow" }));
+			await vi.waitFor(() => {
+				expect(getResponses(rpcIo.outputLines, "handled-follow", "follow_up")[0]).toMatchObject({
+					data: { disposition: "handled" },
+				});
+			});
+		} finally {
+			await cleanup();
+		}
+	});
+
+	// Regression test for #9803.
+	it("reports handled prompts without starting a run", async () => {
+		const { lineHandler, cleanup } = await startRpcMode({
+			withAuth: false,
+			responseDelayMs: 0,
+			extensionFactories: [
+				(pi) => {
+					pi.on("input", () => ({ action: "handled" }));
+				},
+			],
+		});
+		try {
+			lineHandler(JSON.stringify({ id: "handled-prompt", type: "prompt", message: "A" }));
+			await vi.waitFor(() => {
+				expect(getPromptResponses(rpcIo.outputLines, "handled-prompt")).toEqual([
+					{
+						id: "handled-prompt",
+						type: "response",
+						command: "prompt",
+						success: true,
+						data: { disposition: "handled" },
+					},
+				]);
+			});
+			expect(parseOutputLines(rpcIo.outputLines).filter((record) => record.type === "agent_start")).toEqual([]);
+		} finally {
+			await cleanup();
+		}
+	});
+
+	// Regression test for #9803.
+	it("keeps direct steering and follow-up queued while idle", async () => {
+		const { lineHandler, cleanup } = await startRpcMode({ withAuth: false, responseDelayMs: 0 });
+		try {
+			lineHandler(JSON.stringify({ id: "idle-steer", type: "steer", message: "steer" }));
+			lineHandler(JSON.stringify({ id: "idle-follow", type: "follow_up", message: "follow" }));
+			await vi.waitFor(() => {
+				const steer = getResponses(rpcIo.outputLines, "idle-steer", "steer")[0];
+				const follow = getResponses(rpcIo.outputLines, "idle-follow", "follow_up")[0];
+				expect(steer).toMatchObject({ data: { disposition: "queued", text: "steer" } });
+				expect(follow).toMatchObject({ data: { disposition: "queued", text: "follow" } });
+				expect(parseOutputLines(rpcIo.outputLines)).toContainEqual(
+					expect.objectContaining({
+						type: "queue_update",
+						steering: ["steer"],
+						steeringIds: [(steer.data as { inputId: string }).inputId],
+						followUp: ["follow"],
+						followUpIds: [(follow.data as { inputId: string }).inputId],
+					}),
+				);
+			});
+			expect(parseOutputLines(rpcIo.outputLines).filter((record) => record.type === "agent_start")).toEqual([]);
+		} finally {
+			await cleanup();
+		}
+	});
+
+	// Regression test for #9803.
+	it("correlates overlapping RPC commands when handlers finish out of order", async () => {
+		let releaseSlow: (() => void) | undefined;
+		const slowGate = new Promise<void>((resolve) => {
+			releaseSlow = resolve;
+		});
+		const { lineHandler, cleanup } = await startRpcMode({
+			withAuth: true,
+			responseDelayMs: 500,
+			extensionFactories: [
+				(pi) => {
+					pi.on("input", async (event) => {
+						if (event.text === "slow") await slowGate;
+						return { action: "continue" };
+					});
+				},
+			],
+		});
+
+		try {
+			lineHandler(JSON.stringify({ id: "start", type: "prompt", message: "Start" }));
+			await vi.waitFor(() => expect(getPromptResponses(rpcIo.outputLines, "start")).toHaveLength(1));
+			lineHandler(JSON.stringify({ id: "slow", type: "steer", message: "slow" }));
+			lineHandler(JSON.stringify({ id: "fast", type: "steer", message: "fast" }));
+			await vi.waitFor(() => expect(getResponses(rpcIo.outputLines, "fast", "steer")).toHaveLength(1));
+			expect(getResponses(rpcIo.outputLines, "slow", "steer")).toHaveLength(0);
+			releaseSlow?.();
+			await vi.waitFor(() => {
+				const slow = getResponses(rpcIo.outputLines, "slow", "steer")[0];
+				const fast = getResponses(rpcIo.outputLines, "fast", "steer")[0];
+				expect(slow).toMatchObject({ data: { disposition: "queued", text: "slow" } });
+				expect(fast).toMatchObject({ data: { disposition: "queued", text: "fast" } });
+				expect((slow.data as { inputId: string }).inputId).not.toBe((fast.data as { inputId: string }).inputId);
+			});
+		} finally {
+			releaseSlow?.();
 			await cleanup();
 		}
 	});

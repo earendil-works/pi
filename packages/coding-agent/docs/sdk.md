@@ -73,8 +73,8 @@ interface AgentSession {
   prompt(text: string, options?: PromptOptions): Promise<void>;
 
   // Queue messages during streaming
-  steer(text: string): Promise<void>;
-  followUp(text: string): Promise<void>;
+  steer(text: string): Promise<QueuedInputResult>;
+  followUp(text: string): Promise<QueuedInputResult>;
 
   // Subscribe to events (returns unsubscribe function)
   subscribe(listener: (event: AgentSessionEvent) => void): () => void;
@@ -189,13 +189,15 @@ interface PromptOptions {
   images?: ImageContent[];
   streamingBehavior?: "steer" | "followUp";
   source?: InputSource;
-  preflightResult?: (success: boolean) => void;
+  preflightResult?: (success: boolean, result?: PromptInputResult) => void;
 }
 ```
 
 `preflightResult` is called once per `prompt()` invocation:
 
-- `true` when the prompt was accepted, queued, or handled immediately
+- `true` with `{ disposition: "accepted", text }` when a new run was accepted
+- `true` with `{ disposition: "queued", inputId, text }` when the input was queued
+- `true` with `{ disposition: "handled" }` when an extension command or input handler consumed it
 - `false` when prompt preflight rejected before acceptance
 
 It fires before `prompt()` resolves. `prompt()` still resolves only after the full accepted run finishes, including retries. Failures after acceptance are reported through the normal event and message stream, not through `preflightResult(false)`.
@@ -220,7 +222,7 @@ await session.prompt("After you're done, also check X", { streamingBehavior: "fo
 - **Extension commands** (e.g., `/mycommand`): Execute immediately, even during streaming. They manage their own LLM interaction via `pi.sendMessage()`.
 - **File-based prompt templates** (from `.md` files): Expanded to their content before sending or queueing.
 - **During streaming without `streamingBehavior`**: Throws an error. Use `steer()` or `followUp()` directly, or specify the option.
-- **`preflightResult(true)`**: Means the prompt was accepted, queued, or handled immediately.
+- **`preflightResult(true, result)`**: Reports accepted, queued, or handled input immediately.
 - **`preflightResult(false)`**: Means preflight rejected before acceptance.
 
 For explicit queueing during streaming:
@@ -233,7 +235,7 @@ await session.steer("New instruction");
 await session.followUp("After you're done, also do this");
 ```
 
-Both `steer()` and `followUp()` expand file-based prompt templates but error on extension commands (extension commands cannot be queued).
+Both `steer()` and `followUp()` expand file-based prompt templates but error on extension commands (extension commands cannot be queued). They return `{ disposition: "handled" }` when an input handler consumes the command; otherwise `{ disposition: "queued", inputId, text }`. The `inputId` identifies the entry in `queue_update.steeringIds` or `followUpIds` at the same index as its text. It confirms enqueueing, not delivery.
 
 ### Agent and AgentState
 

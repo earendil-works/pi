@@ -2,7 +2,7 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, InputEvent } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createHarness, getAssistantTexts, getMessageText, getUserTexts, type Harness } from "./harness.ts";
 
 async function createWaitingHarness(
@@ -201,6 +201,143 @@ describe("AgentSession queue characterization", () => {
 			releaseToolExecution();
 		}
 		await promptPromise;
+	});
+
+	// Regression test for #9803.
+	it("correlates transformed duplicate inputs through queue snapshots", async () => {
+		const waiting = await createWaitingHarness({
+			extensionFactories: [
+				(pi) => {
+					pi.on("input", (event) =>
+						event.source === "rpc" ? { action: "transform", text: "same text" } : { action: "continue" },
+					);
+				},
+			],
+		});
+		const { harness, waitForToolStart, promptPromise, releaseToolExecution } = waiting;
+		harnesses.push(harness);
+		harness.setResponses([
+			fauxAssistantMessage(fauxToolCall("wait", {}), { stopReason: "toolUse" }),
+			fauxAssistantMessage("first"),
+			fauxAssistantMessage("second"),
+		]);
+
+		await waitForToolStart;
+		let inputIds: string[] = [];
+		try {
+			const first = await harness.session.steer("first input", undefined, { source: "rpc" });
+			const second = await harness.session.steer("second input", undefined, { source: "rpc" });
+			expect(first.disposition).toBe("queued");
+			expect(second.disposition).toBe("queued");
+			if (first.disposition !== "queued" || second.disposition !== "queued")
+				throw new Error("Expected queued inputs");
+			expect(first.inputId).not.toBe(second.inputId);
+			expect(first.text).toBe("same text");
+			expect(second.text).toBe("same text");
+			inputIds = [first.inputId, second.inputId];
+			expect(harness.eventsOfType("queue_update").at(-1)).toMatchObject({
+				steering: ["same text", "same text"],
+				steeringIds: inputIds,
+			});
+		} finally {
+			releaseToolExecution();
+		}
+		await promptPromise;
+
+		expect(harness.eventsOfType("queue_update").map((event) => event.steeringIds)).toEqual([
+			[inputIds[0]],
+			inputIds,
+			[inputIds[1]],
+			[],
+		]);
+		expect(getUserTexts(harness)).toEqual(["start", "same text", "same text"]);
+	});
+
+	// Regression test for #9803.
+	it("does not remove a queued ID for an unrelated prompt with the same text", async () => {
+		const harness = await createHarness();
+		harnesses.push(harness);
+		harness.setResponses([fauxAssistantMessage("prompt reply"), fauxAssistantMessage("steer reply")]);
+
+		const queued = await harness.session.steer("same text");
+		if (queued.disposition !== "queued") throw new Error("Expected queued input");
+		const idsAtUserMessageStart: Array<readonly string[]> = [];
+		harness.session.subscribe((event) => {
+			if (event.type === "message_start" && event.message.role === "user") {
+				idsAtUserMessageStart.push(harness.eventsOfType("queue_update").at(-1)?.steeringIds ?? []);
+			}
+		});
+
+		await harness.session.prompt("same text");
+
+		expect(idsAtUserMessageStart).toEqual([[queued.inputId], []]);
+		expect(getUserTexts(harness)).toEqual(["same text", "same text"]);
+	});
+
+	// Regression test for #9803.
+	it("removes image-only inputs by queue identity", async () => {
+		const waiting = await createWaitingHarness();
+		const { harness, waitForToolStart, promptPromise, releaseToolExecution } = waiting;
+		harnesses.push(harness);
+		harness.setResponses([
+			fauxAssistantMessage(fauxToolCall("wait", {}), { stopReason: "toolUse" }),
+			fauxAssistantMessage("image received"),
+		]);
+
+		await waitForToolStart;
+		let inputId: string | undefined;
+		try {
+			const queued = await harness.session.steer("", [
+				{ type: "image", data: Buffer.from("image").toString("base64"), mimeType: "image/png" },
+			]);
+			if (queued.disposition !== "queued") throw new Error("Expected queued input");
+			inputId = queued.inputId;
+			expect(harness.eventsOfType("queue_update").at(-1)).toMatchObject({
+				steering: [""],
+				steeringIds: [inputId],
+			});
+		} finally {
+			releaseToolExecution();
+		}
+		await promptPromise;
+
+		expect(harness.eventsOfType("queue_update").map((event) => event.steeringIds)).toEqual([[inputId], []]);
+		expect(harness.session.pendingMessageCount).toBe(0);
+	});
+
+	// Regression test for #9803.
+	it("reports handled input separately from an extension-injected steer", async () => {
+		const waiting = await createWaitingHarness({
+			extensionFactories: [
+				(pi) => {
+					pi.on("input", (event) => {
+						if (event.text !== "A") return { action: "continue" };
+						pi.sendUserMessage("B", { deliverAs: "steer" });
+						return { action: "handled" };
+					});
+				},
+			],
+		});
+		const { harness, waitForToolStart, promptPromise, releaseToolExecution } = waiting;
+		harnesses.push(harness);
+		harness.setResponses([
+			fauxAssistantMessage(fauxToolCall("wait", {}), { stopReason: "toolUse" }),
+			fauxAssistantMessage("done"),
+		]);
+
+		await waitForToolStart;
+		try {
+			expect(await harness.session.steer("A", undefined, { source: "rpc" })).toEqual({ disposition: "handled" });
+			await vi.waitFor(() => expect(harness.session.getSteeringMessages()).toEqual(["B"]));
+			expect(harness.eventsOfType("queue_update").at(-1)).toMatchObject({
+				steering: ["B"],
+				steeringIds: [expect.any(String)],
+			});
+		} finally {
+			releaseToolExecution();
+		}
+		await promptPromise;
+		expect(getUserTexts(harness)).toEqual(["start", "B"]);
 	});
 
 	it("delivers multiple steering messages in order in one-at-a-time mode", async () => {

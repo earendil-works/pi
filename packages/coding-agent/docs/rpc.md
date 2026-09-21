@@ -70,10 +70,10 @@ If the agent is streaming and no `streamingBehavior` is specified, the command r
 
 Response:
 ```json
-{"id": "req-1", "type": "response", "command": "prompt", "success": true}
+{"id": "req-1", "type": "response", "command": "prompt", "success": true, "data": {"disposition": "accepted", "text": "Hello, world!"}}
 ```
 
-`success: true` means the prompt was accepted, queued, or handled immediately. `success: false` means the prompt was rejected before acceptance. Failures after acceptance are reported through the normal event and message stream, not as a second `response` for the same request id.
+`data.disposition` is `"accepted"` for a new run, `"queued"` for a streaming prompt, or `"handled"` when an extension command or input handler consumes it. Queued responses also include `inputId` and the effective `text` after input handling and expansion. Accepted responses include the effective text. `success: false` means the prompt was rejected before acceptance. Failures after acceptance are reported through the normal event and message stream, not as a second `response` for the same request id.
 
 The `images` field is optional. Each image uses `ImageContent` format: `{"type": "image", "data": "base64-encoded-data", "mimeType": "image/png"}`.
 
@@ -94,8 +94,10 @@ The `images` field is optional. Each image uses `ImageContent` format (same as `
 
 Response:
 ```json
-{"type": "response", "command": "steer", "success": true}
+{"type": "response", "command": "steer", "success": true, "data": {"disposition": "queued", "inputId": "generated-id", "text": "Stop and do this instead"}}
 ```
+
+An input handler can instead return `"handled"`; then the response data is `{"disposition":"handled"}` and this command queues nothing. Side effects of that handler, including messages it queues independently, are separate inputs. Direct `steer` while idle still queues without starting a run.
 
 See [set_steering_mode](#set_steering_mode) for controlling how steering messages are processed.
 
@@ -116,8 +118,10 @@ The `images` field is optional. Each image uses `ImageContent` format (same as `
 
 Response:
 ```json
-{"type": "response", "command": "follow_up", "success": true}
+{"type": "response", "command": "follow_up", "success": true, "data": {"disposition": "queued", "inputId": "generated-id", "text": "After you're done, also do this"}}
 ```
+
+As with `steer`, an input handler may return `"handled"` instead. Direct `follow_up` while idle still queues without starting a run.
 
 See [set_follow_up_mode](#set_follow_up_mode) for controlling how follow-up messages are processed.
 
@@ -1062,9 +1066,13 @@ Emitted whenever the pending steering or follow-up queue changes.
 {
   "type": "queue_update",
   "steering": ["Focus on error handling"],
-  "followUp": ["After that, summarize the result"]
+  "steeringIds": ["steering-id"],
+  "followUp": ["After that, summarize the result"],
+  "followUpIds": ["follow-up-id"]
 }
 ```
+
+`steeringIds[i]` identifies `steering[i]`, and `followUpIds[i]` identifies `followUp[i]`. A queued response's `inputId` matches its queue entry, even when another input has identical text. Queue updates can arrive before their command responses, and an entry may be consumed before its response arrives. `"queued"` confirms enqueueing, not eventual delivery; disappearance from a snapshot can also mean `clear_queue` removed it.
 
 ### compaction_start / compaction_end
 

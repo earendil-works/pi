@@ -43,6 +43,8 @@ export type {
 	RpcCommand,
 	RpcExtensionUIRequest,
 	RpcExtensionUIResponse,
+	RpcPromptInputResult,
+	RpcQueuedInputResult,
 	RpcResponse,
 	RpcSessionState,
 } from "./rpc-types.ts";
@@ -400,10 +402,11 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 						images: command.images,
 						streamingBehavior: command.streamingBehavior,
 						source: "rpc",
-						preflightResult: (didSucceed) => {
+						preflightResult: (didSucceed, result) => {
 							if (didSucceed) {
+								if (!result) throw new Error("Prompt preflight succeeded without a result");
 								preflightSucceeded = true;
-								output(success(id, "prompt"));
+								output(success(id, "prompt", result));
 							}
 						},
 					})
@@ -416,13 +419,13 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 			}
 
 			case "steer": {
-				await session.steer(command.message, command.images, { source: "rpc" });
-				return success(id, "steer");
+				const result = await session.steer(command.message, command.images, { source: "rpc" });
+				return success(id, "steer", result);
 			}
 
 			case "follow_up": {
-				await session.followUp(command.message, command.images, { source: "rpc" });
-				return success(id, "follow_up");
+				const result = await session.followUp(command.message, command.images, { source: "rpc" });
+				return success(id, "follow_up", result);
 			}
 
 			case "abort": {

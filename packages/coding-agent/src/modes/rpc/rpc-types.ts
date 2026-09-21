@@ -7,7 +7,7 @@
 
 import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { ImageContent, Model } from "@earendil-works/pi-ai";
-import type { SessionStats } from "../../core/agent-session.ts";
+import type { PromptInputResult, QueuedInputResult, SessionStats } from "../../core/agent-session.ts";
 import type { BashResult } from "../../core/bash-executor.ts";
 import type { CompactionResult } from "../../core/compaction/index.ts";
 import type { SessionEntry, SessionTreeNode } from "../../core/session-manager.ts";
@@ -73,6 +73,9 @@ export type RpcCommand =
 	// Commands (available for invocation via prompt)
 	| { id?: string; type: "get_commands" };
 
+export type RpcQueuedInputResult = QueuedInputResult;
+export type RpcPromptInputResult = PromptInputResult;
+
 // ============================================================================
 // RPC Slash Command (for get_commands response)
 // ============================================================================
@@ -115,9 +118,9 @@ export interface RpcSessionState {
 // Success responses with data
 export type RpcResponse =
 	// Prompting (async - events follow)
-	| { id?: string; type: "response"; command: "prompt"; success: true }
-	| { id?: string; type: "response"; command: "steer"; success: true }
-	| { id?: string; type: "response"; command: "follow_up"; success: true }
+	| { id?: string; type: "response"; command: "prompt"; success: true; data: RpcPromptInputResult }
+	| { id?: string; type: "response"; command: "steer"; success: true; data: RpcQueuedInputResult }
+	| { id?: string; type: "response"; command: "follow_up"; success: true; data: RpcQueuedInputResult }
 	| { id?: string; type: "response"; command: "abort"; success: true }
 	| {
 			id?: string;

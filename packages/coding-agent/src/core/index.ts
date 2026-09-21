@@ -8,7 +8,9 @@ export {
 	type AgentSessionEvent,
 	type AgentSessionEventListener,
 	type ModelCycleResult,
+	type PromptInputResult,
 	type PromptOptions,
+	type QueuedInputResult,
 	type SessionStats,
 } from "./agent-session.ts";
 export {

@@ -28,7 +28,7 @@ type JsonAgentSessionEvent =
     };
 ```
 
-`queue_update` emits the full pending steering and follow-up queues whenever they change. `compaction_start` and `compaction_end` cover both manual and automatic compaction.
+`queue_update` emits the full pending steering and follow-up text arrays whenever they change. The aligned `steeringIds` and `followUpIds` arrays identify individual queue entries, including duplicate text. `compaction_start` and `compaction_end` cover both manual and automatic compaction.
 
 Other base events come from
 [`AgentEvent`](https://github.com/earendil-works/pi/blob/main/packages/agent/src/types.ts):
