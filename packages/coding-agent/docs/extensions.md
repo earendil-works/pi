@@ -294,7 +294,8 @@ user sends prompt ────────────────────�
   │   ┌─── turn (repeats while LLM calls tools) ───┐       │
   │   │                                            │       │
   │   ├─► turn_start                               │       │
-  │   ├─► context (can modify messages)            │       │
+  │   ├─► context (can modify conversation messages)   │
+  │   ├─► context_with_system (can modify the full transcript)
   │   ├─► before_provider_headers (can mutate headers)     |
   │   ├─► before_provider_request (can inspect or replace payload)
   │   ├─► after_provider_response (status + headers, before stream consume)
@@ -725,11 +726,30 @@ Fired before each LLM call. Modify messages non-destructively. See [Session Form
 
 ```typescript
 pi.on("context", async (event, ctx) => {
-  // event.messages - deep copy, safe to modify
+  // event.messages - deep copy without system messages, safe to modify
   const filtered = event.messages.filter(m => !shouldPrune(m));
   return { messages: filtered };
 });
 ```
+
+`event.messages` holds the conversation without system messages. The prompt and tool declarations belong to Pi and are not part of this hook: when the handler returns a changed list, Pi replays the current prompt sections and tool declarations into one leading system message ahead of the returned messages. Filtering, windowing, or slicing from a compaction summary therefore cannot drop the prompt or the tools. An unchanged list keeps mid-conversation system messages in place, so models that accept them retain their cached prefix. System messages a handler adds are kept after Pi's head. To change the prompt or the tool set durably, use [`before_agent_start`](#before_agent_start) or `pi.setActiveTools()`; to edit system messages for one request, use [`context_with_system`](#context_with_system).
+
+#### context_with_system
+
+Fired before each LLM call, after every `context` handler has run and Pi has restored the prompt and tool state. `event.messages` is the full transcript, including the leading system message and any mid-conversation prompt or tool patches (see [Session Format](session-format.md#sessionmessageentry)). The returned messages are sent as they are: this hook owns the prompt and tool declarations for the request.
+
+```typescript
+import { getCurrentSystemMessage } from "@earendil-works/pi-ai";
+
+pi.on("context_with_system", async (event, ctx) => {
+  const cut = findCutIndex(event.messages);
+  // Fold the dropped prefix so its prompt and tool state survives as the new head.
+  const head = getCurrentSystemMessage(event.messages.slice(0, cut));
+  return { messages: head ? [head, ...event.messages.slice(cut)] : event.messages.slice(cut) };
+});
+```
+
+Rules: keep a system message at index 0 (providers read the prompt and initial tool declarations there; Pi reports an error if a handler drops it). Removing a system message removes the tool declarations and section patches it carries. Check your output with `getCurrentSystemPrompt()` and `getCurrentTools()` from `@earendil-works/pi-ai`. Handlers run in extension load order; a `systemPrompt` forced from `before_agent_start` is still projected onto the request afterwards.
 
 #### before_provider_headers
 
