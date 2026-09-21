@@ -153,6 +153,10 @@ The [package gallery](https://pi.dev/packages) displays packages tagged with `pi
 
 If both are set, video takes precedence.
 
+### External packages
+
+Community packages published outside the pi repository are discoverable through the [package gallery](https://pi.dev/packages) and [npm search](https://www.npmjs.com/search?q=keywords%3Api-package). For example, [any-a2a](https://github.com/mrone0/any-a2a) provides a Pi extension for remote A2A subagent delegation, with the A2A transport in a standalone Rust CLI.
+
 ## Package Structure
 
 ### Convention Directories
