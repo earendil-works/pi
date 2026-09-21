@@ -16,6 +16,8 @@ import { collapseSystemMessages, getCurrentTools } from "../utils/transcript.ts"
 import { transformMessages } from "./transform-messages.ts";
 
 export interface OllamaOptions extends StreamOptions {
+	/** Maximum wait for response headers or the next non-empty body chunk, in milliseconds. */
+	timeoutMs?: number;
 	think?: boolean | "low" | "medium" | "high" | "max";
 	keepAlive?: string | number;
 	toolChoice?: "auto" | "none";
@@ -100,6 +102,16 @@ export const stream: StreamFunction<"ollama-chat", OllamaOptions> = (model, cont
 	};
 	void (async () => {
 		let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+		let idleTimer: ReturnType<typeof setTimeout> | undefined;
+		const timeoutController = options.timeoutMs === undefined ? undefined : new AbortController();
+		const resetIdleTimeout = () => {
+			if (!timeoutController || options.timeoutMs === undefined) return;
+			clearTimeout(idleTimer);
+			idleTimer = setTimeout(
+				() => timeoutController.abort(new Error(`Ollama request idle timeout after ${options.timeoutMs}ms`)),
+				options.timeoutMs,
+			);
+		};
 		let active: number | undefined;
 		const endBlock = () => {
 			if (active === undefined) return;
@@ -138,10 +150,15 @@ export const stream: StreamFunction<"ollama-chat", OllamaOptions> = (model, cont
 			) {
 				throw new Error("Ollama contextWindow and maxTokens must be positive integers (contextWindow >= 2)");
 			}
-			const signal =
-				options.timeoutMs === undefined
-					? options.signal
-					: AbortSignal.any([...(options.signal ? [options.signal] : []), AbortSignal.timeout(options.timeoutMs)]);
+			if (
+				options.timeoutMs !== undefined &&
+				(!Number.isSafeInteger(options.timeoutMs) || options.timeoutMs < 0 || options.timeoutMs > 2147483647)
+			) {
+				throw new Error("Ollama timeoutMs must be an integer between 0 and 2147483647");
+			}
+			const signal = timeoutController
+				? AbortSignal.any([...(options.signal ? [options.signal] : []), timeoutController.signal])
+				: options.signal;
 			signal?.throwIfAborted();
 			const headers = new Headers({ "content-type": "application/json" });
 			if (options.apiKey) headers.set("authorization", `Bearer ${options.apiKey}`);
@@ -178,13 +195,17 @@ export const stream: StreamFunction<"ollama-chat", OllamaOptions> = (model, cont
 			};
 			payload = (await options.onPayload?.(payload, model)) ?? payload;
 			signal?.throwIfAborted();
-			const response = await (options.fetch ?? fetch)(`${model.baseUrl.replace(/\/+$/, "")}/api/chat`, {
+			const baseUrl = options.env?.OLLAMA_BASE_URL ?? model.baseUrl;
+			resetIdleTimeout();
+			const response = await (options.fetch ?? fetch)(`${baseUrl.replace(/\/+$/, "")}/api/chat`, {
 				method: "POST",
 				headers,
 				body: JSON.stringify(payload),
 				signal,
 			});
 			try {
+				signal?.throwIfAborted();
+				resetIdleTimeout();
 				await options.onResponse?.({ status: response.status, headers: headersToRecord(response.headers) }, model);
 				if (!response.ok) throw new Error(`Ollama ${response.status}: ${await response.text()}`);
 			} catch (error) {
@@ -258,6 +279,7 @@ export const stream: StreamFunction<"ollama-chat", OllamaOptions> = (model, cont
 			while (!done) {
 				signal?.throwIfAborted();
 				const chunk = await (signal ? raceWithAbortSignal(reader.read(), signal) : reader.read());
+				if (!chunk.done && chunk.value.byteLength > 0) resetIdleTimeout();
 				buffer += chunk.done ? decoder.decode() : decoder.decode(chunk.value, { stream: true });
 				let newline = buffer.indexOf("\n");
 				while (!done && newline >= 0) {
@@ -279,6 +301,7 @@ export const stream: StreamFunction<"ollama-chat", OllamaOptions> = (model, cont
 			message.errorMessage = error instanceof Error ? error.message : String(error);
 			events.push({ type: "error", reason: message.stopReason, error: message });
 		} finally {
+			clearTimeout(idleTimer);
 			if (reader) {
 				await reader.cancel().catch(() => {});
 				reader.releaseLock();

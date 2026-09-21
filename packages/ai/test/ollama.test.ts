@@ -303,13 +303,44 @@ describe("Ollama discovery", () => {
 		const models = createModels({ authContext });
 		models.setProvider(ollamaProvider({ baseUrl: model.baseUrl, fetch: catalogFetch() }));
 		expect((await models.refresh()).errors.size).toBe(0);
-		expect((await models.getAuth("ollama"))?.auth).toEqual({ baseUrl: model.baseUrl, apiKey: undefined });
+		expect(await models.getAuth("ollama")).toMatchObject({
+			auth: { apiKey: undefined },
+			env: { OLLAMA_BASE_URL: model.baseUrl },
+		});
+		expect((await models.getAuth("ollama"))?.auth).not.toHaveProperty("baseUrl");
 		expect(models.getModels().map((entry) => [entry.id, entry.contextWindow])).toEqual([
 			["chat", 8192],
 			["saved", 16384],
 		]);
 		expect(await models.getAvailable()).toHaveLength(2);
 		expect(models.getModels().every((entry) => entry.thinkingBudgetMode === "shared")).toBe(true);
+	});
+	it("keeps key-only credentials usable without enabling native discovery", async () => {
+		const credentials = new InMemoryCredentialStore();
+		await credentials.modify("ollama", async () => ({ type: "api_key", key: "configured-key" }));
+		const fetch = catalogFetch();
+		const models = createModels({ authContext, credentials });
+		models.setProvider(ollamaProvider({ fetch }));
+		expect((await models.refresh()).errors.size).toBe(0);
+		expect((await models.getAuth("ollama"))?.auth).toEqual({ apiKey: "configured-key" });
+		expect(fetch).not.toHaveBeenCalled();
+	});
+	it("uses the current native endpoint for a previously selected model without adding an auth header", async () => {
+		let endpoint = "http://old:11434";
+		const fetch = catalogFetch();
+		const models = createModels({
+			authContext: { ...authContext, env: async (key) => (key === "OLLAMA_BASE_URL" ? endpoint : undefined) },
+		});
+		models.setProvider(ollamaProvider({ fetch }));
+		await models.refresh();
+		const selected = models.getModels()[0];
+		endpoint = "http://new:11434";
+		vi.mocked(fetch).mockImplementation(async (url, init) => {
+			expect(String(url)).toBe(`${endpoint}/api/chat`);
+			expect(new Headers(init?.headers).has("authorization")).toBe(false);
+			return ndjson([terminal]);
+		});
+		expect((await models.completeSimple(selected, context)).stopReason).toBe("stop");
 	});
 	it("restores only the configured endpoint's cache without fetching", async () => {
 		const modelsStore = new InMemoryModelsStore();

@@ -119,14 +119,21 @@ export function ollamaProvider(options: OllamaProviderOptions = {}): Provider<"o
 					return { type: "api_key", key, env: { OLLAMA_BASE_URL: baseUrl } };
 				},
 				check: async ({ ctx, credential }) =>
-					(await endpoint(ctx, credential)) ? { type: "api_key", source: "Ollama server" } : undefined,
+					credential?.key || (await endpoint(ctx, credential)) || (await ctx.env("OLLAMA_API_KEY"))
+						? { type: "api_key", source: "Ollama" }
+						: undefined,
 				resolve: async ({ ctx, credential }) => {
 					const baseUrl = await endpoint(ctx, credential);
-					if (!baseUrl) return undefined;
+					const apiKey = credential?.key ?? (await ctx.env("OLLAMA_API_KEY"));
+					// Explicit models.json entries can use the compatibility API with a
+					// configured key and their own URL, without native discovery setup.
+					if (!baseUrl && !apiKey) return undefined;
 					return {
-						auth: { baseUrl, apiKey: credential?.key ?? (await ctx.env("OLLAMA_API_KEY")) },
-						env: { ...credential?.env, OLLAMA_BASE_URL: baseUrl },
-						source: "Ollama server",
+						auth: { apiKey },
+						// Only the native adapter consumes this endpoint. A provider-wide
+						// auth.baseUrl would overwrite compatibility models' /v1 paths.
+						env: { ...credential?.env, ...(baseUrl ? { OLLAMA_BASE_URL: baseUrl } : {}) },
+						source: "Ollama",
 					};
 				},
 			},
