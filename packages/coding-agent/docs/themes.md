@@ -1,315 +1,110 @@
-# Themes Reference
+# Customise Pi with themes
 
-This reference describes theme discovery, selection, schema, color values, and TUI color tokens. For configuration locations, see [Configuration](configuration.md).
+Themes control the colors Pi uses in interactive mode and HTML exports. Pi includes `dark` and `light` themes. You can select one theme, follow your terminal's light or dark appearance, or create your own palette.
 
-## Table of Contents
+<a id="selecting-a-theme"></a>
 
-- [Add a Theme to Pi](#locations)
-- [Selecting a Theme](#selecting-a-theme)
-- [Creating a Custom Theme](#creating-a-custom-theme)
-- [Theme Format](#theme-format)
-- [Color Tokens](#color-tokens)
-- [Color Values](#color-values)
-- [Tips](#tips)
+## Choose a theme
 
-<a id="locations"></a>
+Open `/settings` and select **Theme**. You can use one theme for every terminal appearance or choose separate themes for light and dark terminals.
 
-## Add a Theme to Pi
-
-Pi includes the `dark` and `light` themes. Place a custom theme in your user or project themes directory.
-
-See [Settings](settings-reference.md#resources) and [Pi Packages](packages.md) for additional locations.
-
-## Selecting a Theme
-
-Select a theme via `/settings` or in `settings.json`:
+The selection is saved as the `theme` [setting](settings-reference.md#ui--display):
 
 ```json
 {
-  "theme": "my-theme"
+  "theme": "dark"
 }
 ```
 
-On first run, pi detects your terminal background and defaults to `dark` or `light`.
+Automatic mode stores the light theme first and the dark theme second:
 
-### Initial Theme
+```json
+{
+  "theme": "light/dark"
+}
+```
 
-Start an interactive run with a theme without changing the saved setting:
+When automatic mode is active, Pi changes themes when the terminal reports an appearance change. Theme names cannot contain `/` because Pi reserves it for this setting format.
+
+Use `--use-theme` to choose the initial theme for one invocation without changing the saved setting:
 
 ```bash
 pi --use-theme light
-```
-
-To follow terminal appearance, use `lightTheme/darkTheme` syntax:
-
-```bash
 pi --use-theme light/dark
 ```
 
-The CLI value is the initial theme for that run. Choosing another theme later in `/settings` applies it immediately
-and saves it normally.
+See [CLI resources](cli.md#resources) for the command-line option.
 
-## Creating a Custom Theme
+## Create a custom theme
 
-1. Create a theme file:
+Copy one of the [built-in themes](https://github.com/earendil-works/pi/tree/main/packages/coding-agent/src/modes/interactive/theme) or create a new JSON file conforming to the [schema](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/src/modes/interactive/theme/theme-schema.json).
 
-```bash
-mkdir -p ~/.pi/agent/themes
-vim ~/.pi/agent/themes/my-theme.json
-```
+1. Save the file as `<agent-dir>/themes/my-theme.json`. The agent directory defaults to `~/.pi/agent`.
+2. Set its `name` to `my-theme`.
+3. Change values in `vars` and `colors`.
+4. Select `my-theme` through `/settings`.
 
-2. Define the theme with all required colors (see [Color Tokens](#color-tokens)):
+Use the theme name as the filename. Pi hot-reloads the active user theme only from `<agent-dir>/themes/<name>.json`. Run `/reload` after adding or changing a theme from any other source.
 
-```json
-{
-  "$schema": "https://raw.githubusercontent.com/earendil-works/pi/main/packages/coding-agent/src/modes/interactive/theme/theme-schema.json",
-  "name": "my-theme",
-  "vars": {
-    "primary": "#00aaff",
-    "secondary": 242
-  },
-  "colors": {
-    "accent": "primary",
-    "border": "primary",
-    "borderAccent": "#00ffff",
-    "borderMuted": "secondary",
-    "success": "#00ff00",
-    "error": "#ff0000",
-    "warning": "#ffff00",
-    "muted": "secondary",
-    "dim": 240,
-    "text": "",
-    "thinkingText": "secondary",
-    "selectedBg": "#2d2d30",
-    "scrollbarTrack": "secondary",
-    "scrollbarThumb": "",
-    "searchMatchBg": "#2d2d30",
-    "searchMatchText": "",
-    "userMessageBg": "#2d2d30",
-    "userMessageText": "",
-    "customMessageBg": "#2d2d30",
-    "customMessageText": "",
-    "customMessageLabel": "primary",
-    "toolPendingBg": "#1e1e2e",
-    "toolSuccessBg": "#1e2e1e",
-    "toolErrorBg": "#2e1e1e",
-    "toolTitle": "primary",
-    "toolOutput": "",
-    "mdHeading": "#ffaa00",
-    "mdLink": "primary",
-    "mdLinkUrl": "secondary",
-    "mdCode": "#00ffff",
-    "mdCodeBlock": "",
-    "mdCodeBlockBorder": "secondary",
-    "mdQuote": "secondary",
-    "mdQuoteBorder": "secondary",
-    "mdHr": "secondary",
-    "mdListBullet": "#00ffff",
-    "toolDiffAdded": "#00ff00",
-    "toolDiffRemoved": "#ff0000",
-    "toolDiffContext": "secondary",
-    "syntaxComment": "secondary",
-    "syntaxKeyword": "primary",
-    "syntaxFunction": "#00aaff",
-    "syntaxVariable": "#ffaa00",
-    "syntaxString": "#00ff00",
-    "syntaxNumber": "#ff00ff",
-    "syntaxType": "#00aaff",
-    "syntaxOperator": "primary",
-    "syntaxPunctuation": "secondary",
-    "thinkingOff": "secondary",
-    "thinkingMinimal": "primary",
-    "thinkingLow": "#00aaff",
-    "thinkingMedium": "#00ffff",
-    "thinkingHigh": "#ff00ff",
-    "thinkingXhigh": "#ff0000",
-    "thinkingMax": "#ff0088",
-    "bashMode": "#ffaa00"
-  }
-}
-```
+## Understand the theme file
 
-3. Select the theme via `/settings`.
+| Property | Required | Responsibility |
+|---|---|---|
+| `$schema` | No | Enables editor validation and completion against Pi's published schema. |
+| `name` | Yes | Identifies the theme in selectors and settings. It must be unique and cannot contain `/`. |
+| `vars` | No | Defines reusable color values. Variables can reference other variables. |
+| `colors` | Yes | Assigns colors to terminal UI roles. The schema identifies required and optional roles. |
+| `export` | No | Overrides page and panel backgrounds in HTML exports. |
 
-**Hot reload:** Pi automatically watches the active personal theme at `~/.pi/agent/themes/<name>.json`. Themes loaded from other sources require `/reload` after editing.
+A color can be written in four forms:
 
-## Theme Format
+| Form | Example | Meaning |
+|---|---|---|
+| RGB hexadecimal | `"#00aaff"` | A six-digit RGB color. |
+| 256-color index | `39` | An ANSI palette index from `0` through `255`. |
+| Variable reference | `"primary"` | The value of an entry in `vars`. |
+| Terminal default | `""` | The terminal's default foreground or background color. |
 
-```json
-{
-  "$schema": "https://raw.githubusercontent.com/earendil-works/pi/main/packages/coding-agent/src/modes/interactive/theme/theme-schema.json",
-  "name": "my-theme",
-  "vars": {
-    "blue": "#0066cc",
-    "gray": 242
-  },
-  "colors": {
-    "accent": "blue",
-    "muted": "gray",
-    "text": "",
-    ...
-  }
-}
-```
+Pi resolves chained variable references. A missing variable or circular reference makes the theme invalid. Hexadecimal colors use truecolor when supported and are approximated in terminals limited to 256 colors. If colors differ from their hexadecimal values, check your terminal's truecolor detection and contrast settings. See [Configure Your Terminal](terminal-setup.md#override-detected-capabilities).
 
-- `name` is required, must be unique, and must not contain `/`.
-- `vars` is optional. Define reusable colors here, then reference them in `colors`.
-- `colors` must define all 51 required tokens. Five optional tokens use the fallbacks listed below.
+Use the [theme JSON schema](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/src/modes/interactive/theme/theme-schema.json) for the exact properties, required colors, and accepted value types.
 
-The `$schema` field enables editor auto-completion and validation.
+Pi reports invalid theme files during startup and `/reload`.
 
-## Color Tokens
+## Find the color to change
 
-Every theme must define all 51 required color tokens. The optional tokens preserve compatibility with existing themes: `scrollbarTrack` falls back to `muted`, `scrollbarThumb` falls back to `text`, `thinkingMax` falls back to `thinkingXhigh`, `searchMatchBg` falls back to `selectedBg`, and `searchMatchText` falls back to `text`. Other search matches use `searchMatchText` on `searchMatchBg` with an underline; the current match reverses that foreground/background pair and uses bold text.
+Theme colors describe interface roles rather than individual components. Use these groups to find the relevant part of the schema:
 
-### Core UI (11 required, 2 optional)
+| Area | Color names |
+|---|---|
+| General interface | `accent`, `border*`, `text`, `muted`, `dim`, `success`, `error`, `warning` |
+| Selection and fullscreen | `selectedBg`, `searchMatch*`, `scrollbar*` |
+| Messages | `userMessage*`, `customMessage*`, `thinkingText` |
+| Tool execution | `toolPendingBg`, `toolSuccessBg`, `toolErrorBg`, `toolTitle`, `toolOutput` |
+| Markdown | `md*` |
+| Tool diffs | `toolDiff*` |
+| Syntax highlighting | `syntax*` |
+| Editor modes | `thinking*`, `bashMode` |
+| HTML export | `export.pageBg`, `export.cardBg`, `export.infoBg` |
 
-| Token | Purpose |
-|-------|---------|
-| `accent` | Primary accent (logo, selected items, cursor) |
-| `border` | Normal borders |
-| `borderAccent` | Highlighted borders |
-| `borderMuted` | Subtle borders (editor) |
-| `success` | Success states |
-| `error` | Error states |
-| `warning` | Warning states |
-| `muted` | Secondary text |
-| `dim` | Tertiary text |
-| `text` | Default text (usually `""`) |
-| `thinkingText` | Thinking block text |
-| `scrollbarTrack` | Fullscreen scrollbar track foreground; optional, falls back to `muted` |
-| `scrollbarThumb` | Fullscreen scrollbar thumb foreground; optional, falls back to `text` |
+The schema is the format reference. The built-in themes provide complete values that you can copy and adjust.
 
-### Backgrounds & Content (11 required, 2 optional)
+Five colors are optional and inherit another color when omitted:
 
-| Token | Purpose |
-|-------|---------|
-| `selectedBg` | Selected line background |
-| `searchMatchBg` | Transcript search match background and current-match text; optional, falls back to `selectedBg` |
-| `searchMatchText` | Transcript search match text and current-match background; optional, falls back to `text` |
-| `userMessageBg` | User message background |
-| `userMessageText` | User message text |
-| `customMessageBg` | Extension message background |
-| `customMessageText` | Extension message text |
-| `customMessageLabel` | Extension message label |
-| `toolPendingBg` | Tool box (pending) |
-| `toolSuccessBg` | Tool box (success) |
-| `toolErrorBg` | Tool box (error) |
-| `toolTitle` | Tool title |
-| `toolOutput` | Tool output text |
+| Optional color | Fallback |
+|---|---|
+| `scrollbarTrack` | `muted` |
+| `scrollbarThumb` | `text` |
+| `searchMatchBg` | `selectedBg` |
+| `searchMatchText` | `text` |
+| `thinkingMax` | `thinkingXhigh` |
 
-### Markdown (10 colors)
+If `export` colors are omitted, Pi derives HTML page and panel backgrounds from `userMessageBg`.
 
-| Token | Purpose |
-|-------|---------|
-| `mdHeading` | Headings |
-| `mdLink` | Link text |
-| `mdLinkUrl` | Link URL |
-| `mdCode` | Inline code |
-| `mdCodeBlock` | Code block content |
-| `mdCodeBlockBorder` | Code block fences |
-| `mdQuote` | Blockquote text |
-| `mdQuoteBorder` | Blockquote border |
-| `mdHr` | Horizontal rule |
-| `mdListBullet` | List bullets |
+## Load a theme from a project or package
 
-### Tool Diffs (3 colors)
+Place a project theme in `.pi/themes/`. Project themes load only after [project trust](security.md#understand-project-trust) is granted.
 
-| Token | Purpose |
-|-------|---------|
-| `toolDiffAdded` | Added lines |
-| `toolDiffRemoved` | Removed lines |
-| `toolDiffContext` | Context lines |
+You can also load theme files and directories through the `themes` setting or distribute them in a Pi package. See [Configuration](configuration.md), [Settings](settings-reference.md#resources), and [Pi Packages](packages.md).
 
-### Syntax Highlighting (9 colors)
-
-| Token | Purpose |
-|-------|---------|
-| `syntaxComment` | Comments |
-| `syntaxKeyword` | Keywords |
-| `syntaxFunction` | Function names |
-| `syntaxVariable` | Variables |
-| `syntaxString` | Strings |
-| `syntaxNumber` | Numbers |
-| `syntaxType` | Types |
-| `syntaxOperator` | Operators |
-| `syntaxPunctuation` | Punctuation |
-
-### Thinking Level Borders (6 required, 1 optional)
-
-Editor border colors indicating thinking level (visual hierarchy from subtle to prominent):
-
-| Token | Purpose |
-|-------|---------|
-| `thinkingOff` | Thinking off |
-| `thinkingMinimal` | Minimal thinking |
-| `thinkingLow` | Low thinking |
-| `thinkingMedium` | Medium thinking |
-| `thinkingHigh` | High thinking |
-| `thinkingXhigh` | Extra high thinking |
-| `thinkingMax` | Maximum thinking; optional, falls back to `thinkingXhigh` |
-
-### Bash Mode (1 color)
-
-| Token | Purpose |
-|-------|---------|
-| `bashMode` | Editor border in bash mode (`!` prefix) |
-
-### HTML Export (optional)
-
-The `export` section controls colors for `/export` HTML output. If omitted, colors are derived from `userMessageBg`.
-
-```json
-{
-  "export": {
-    "pageBg": "#18181e",
-    "cardBg": "#1e1e24",
-    "infoBg": "#3c3728"
-  }
-}
-```
-
-## Color Values
-
-Four formats are supported:
-
-| Format | Example | Description |
-|--------|---------|-------------|
-| Hex | `"#ff0000"` | 6-digit hex RGB |
-| 256-color | `39` | xterm 256-color palette index (0-255) |
-| Variable | `"primary"` | Reference to a `vars` entry |
-| Default | `""` | Terminal's default color |
-
-### 256-Color Palette
-
-- `0-15`: Basic ANSI colors (terminal-dependent)
-- `16-231`: 6×6×6 RGB cube (`16 + 36×R + 6×G + B` where R,G,B are 0-5)
-- `232-255`: Grayscale ramp
-
-### Terminal Compatibility
-
-Pi uses 24-bit RGB colors. Most modern terminals support this (iTerm2, Kitty, WezTerm, Windows Terminal, VS Code). For older terminals with only 256-color support, pi falls back to the nearest approximation.
-
-Check truecolor support:
-
-```bash
-echo $COLORTERM  # Should output "truecolor" or "24bit"
-```
-
-## Tips
-
-**Dark terminals:** Use bright, saturated colors with higher contrast.
-
-**Light terminals:** Use darker, muted colors with lower contrast.
-
-**Color harmony:** Start with a base palette (Nord, Gruvbox, Tokyo Night), define it in `vars`, and reference consistently.
-
-**Testing:** Check your theme with different message types, tool states, markdown content, and long wrapped text.
-
-**VS Code:** Set `terminal.integrated.minimumContrastRatio` to `1` for accurate colors.
-
-## Examples
-
-See the built-in themes:
-- [dark.json](../src/modes/interactive/theme/dark.json)
-- [light.json](../src/modes/interactive/theme/light.json)
+Each loaded theme must have a unique name. Pi reports duplicate names as resource collisions.

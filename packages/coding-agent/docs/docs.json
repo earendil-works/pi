@@ -94,6 +94,10 @@
               "path": "extensions.md"
             },
             {
+              "title": "Themes",
+              "path": "themes.md"
+            },
+            {
               "title": "Terminal UI",
               "path": "tui.md"
             },
@@ -139,10 +143,6 @@
             {
               "title": "Keybindings",
               "path": "keybindings.md"
-            },
-            {
-              "title": "Themes",
-              "path": "themes.md"
             }
           ]
         },
