@@ -213,7 +213,7 @@ interface Component {
   render(width: number): string[];
   handleInput?(data: string): void;
   handleMouse?(event: TuiMouseEvent): TuiMouseEventResult | undefined;
-  invalidate?(): void;
+  invalidate(): void;
 }
 ```
 
@@ -222,7 +222,7 @@ interface Component {
 | `render(width)` | Returns an array of strings, one per line. Each line **must not exceed `width`** or the TUI will error. Use `truncateToWidth()` or manual wrapping to ensure this. |
 | `handleInput?(data)` | Called when the component has focus and receives keyboard input. The `data` string contains raw terminal input (may include ANSI escape sequences). |
 | `handleMouse?(event)` | Called by `TuiAltScreen` for normalized pointer input targeted at the component. |
-| `invalidate?()` | Called to clear any cached render state. Components should re-render from scratch on the next `render()` call. |
+| `invalidate()` | Required. Called to clear any cached render state. Components should re-render from scratch on the next `render()` call. Components without cached state can use an empty implementation (`invalidate(): void {}`). |
 
 The TUI appends a full SGR reset and OSC 8 reset at the end of each rendered line. Styles do not carry across lines. If you emit multi-line text with styling, reapply styles per line or use `wrapTextWithAnsi()` so styles are preserved for each wrapped line.
 
@@ -274,7 +274,9 @@ import { CURSOR_MARKER, type Component, type Focusable } from "@earendil-works/p
 
 class MyInput implements Component, Focusable {
   focused: boolean = false;  // Set by TUI when focus changes
-  
+
+  invalidate(): void {}
+
   render(width: number): string[] {
     const marker = this.focused ? CURSOR_MARKER : "";
     // Emit marker right before the fake cursor
@@ -768,9 +770,11 @@ import type { Component } from "@earendil-works/pi-tui";
 class MyInteractiveComponent implements Component {
   private selectedIndex = 0;
   private items = ["Option 1", "Option 2", "Option 3"];
-  
+
   public onSelect?: (index: number) => void;
   public onCancel?: () => void;
+
+  invalidate(): void {}
 
   handleInput(data: string): void {
     if (matchesKey(data, Key.up)) {
@@ -807,6 +811,8 @@ class MyComponent implements Component {
   constructor(text: string) {
     this.text = text;
   }
+
+  invalidate(): void {}
 
   render(width: number): string[] {
     // Option 1: Truncate long lines
