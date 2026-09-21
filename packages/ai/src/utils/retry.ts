@@ -116,6 +116,40 @@ export function retryDelayMs(policy: Pick<RetryPolicy, "baseDelayMs" | "maxAgent
 	return Math.min(safeDelay, policy.maxAgentDelayMs ?? DEFAULT_MAX_AGENT_RETRY_DELAY_MS);
 }
 
+/**
+ * Extract the provider-requested retry delay in ms from an error message that
+ * carries explicit retry guidance. Google's per-window rate-limit 429s
+ * (RESOURCE_EXHAUSTED) embed it twice: "Please retry in 52.03s." in the text
+ * and `"retryDelay": "52s"` in the details JSON. Returns undefined when the
+ * message carries no usable delay.
+ */
+export function serverRetryDelayMs(errorMessage: string): number | undefined {
+	const match =
+		errorMessage.match(/please retry in (\d+(?:\.\d+)?)s/i) ??
+		errorMessage.match(/"retryDelay"\s*:\s*"(\d+(?:\.\d+)?)s"/i);
+	const seconds = match ? Number.parseFloat(match[1]) : NaN;
+	return Number.isFinite(seconds) && seconds >= 0 ? seconds * 1000 : undefined;
+}
+
+/**
+ * Delay before the next retry attempt: the exponential backoff extended to the
+ * provider-requested delay when the error carries explicit retry guidance, capped
+ * at `maxAgentDelayMs` so a provider asking for a long reset (hours) cannot block
+ * the agent indefinitely.
+ */
+export function effectiveRetryDelayMs(
+	policy: Pick<RetryPolicy, "baseDelayMs" | "maxAgentDelayMs">,
+	attempt: number,
+	errorMessage: string | undefined,
+): number {
+	const server = errorMessage !== undefined ? serverRetryDelayMs(errorMessage) : undefined;
+	if (server === undefined) return retryDelayMs(policy, attempt);
+	return Math.min(
+		Math.max(retryDelayMs(policy, attempt), server),
+		policy.maxAgentDelayMs ?? DEFAULT_MAX_AGENT_RETRY_DELAY_MS,
+	);
+}
+
 /** Optional callbacks emitted by {@link retryAssistantCall} around each retry. */
 export interface RetryCallbacks {
 	/** Emitted before the backoff sleep of each retry attempt (1-indexed). */
@@ -206,7 +240,7 @@ export async function retryAssistantCall(
 
 		attempt++;
 		lastRetry = { attempt, errorMessage: response.errorMessage || "Unknown error" };
-		const delayMs = retryDelayMs(policy!, attempt);
+		const delayMs = effectiveRetryDelayMs(policy!, attempt, response.errorMessage);
 		await callbacks?.onRetryScheduled?.(attempt, maxAttempts, delayMs, lastRetry.errorMessage);
 
 		// Normalize aborts during retry backoff to the same AssistantMessage shape as
@@ -237,6 +271,10 @@ export async function retryAssistantCall(
 export function isRetryableAssistantError(message: AssistantMessage): boolean {
 	if (message.stopReason !== "error" || !message.errorMessage) return false;
 	const errorMessage = message.errorMessage;
+	// A provider that states exactly when to retry is transiently throttling,
+	// not exhausted: Google's per-minute 429s read "Quota exceeded" yet carry
+	// "Please retry in 52s", so the limit pattern below must not win.
+	if (serverRetryDelayMs(errorMessage) !== undefined) return true;
 	if (NON_RETRYABLE_PROVIDER_LIMIT_ERROR_PATTERN.test(errorMessage)) return false;
 	return RETRYABLE_PROVIDER_ERROR_PATTERN.test(errorMessage);
 }

@@ -180,6 +180,70 @@ describe("AgentSession retry", () => {
 		expect(delays).toEqual([1, 2, 4, 5]);
 	});
 
+	it("retries Google per-minute rate limit 429s after the provider-requested delay", async () => {
+		// "Quota exceeded" wording alone would mark this non-retryable; the
+		// explicit "Please retry in" guidance must win and set the backoff.
+		let callCount = 0;
+		const streamFn = () => {
+			callCount++;
+			const stream = new MockAssistantStream();
+			queueMicrotask(() => {
+				if (callCount === 1) {
+					const msg = createAssistantMessage("", {
+						stopReason: "error",
+						errorMessage:
+							"You exceeded your current quota, please check your plan and billing details. * Quota exceeded for metric: generate_content_paid_tier_input_token_count Please retry in 0.01s.",
+					});
+					stream.push({ type: "start", partial: msg });
+					stream.push({ type: "error", reason: "error", error: msg });
+					return;
+				}
+
+				const msg = createAssistantMessage("Recovered after retry");
+				stream.push({ type: "start", partial: msg });
+				stream.push({ type: "done", reason: "stop", message: msg });
+			});
+			return stream;
+		};
+		const created = await createSession({ failCount: 0 });
+		created.session.dispose();
+
+		const model = getModel("anthropic", "claude-sonnet-4-5")!;
+		const agent = new Agent({
+			getApiKey: () => "test-key",
+			initialState: { model, systemPrompt: "Test", tools: [] },
+			streamFn,
+		});
+		const sessionManager = SessionManager.inMemory();
+		const settingsManager = SettingsManager.create(tempDir, tempDir);
+		const authStorage = AuthStorage.create(join(tempDir, "auth.json"));
+		const modelRegistry = await createModelRegistry(authStorage, tempDir);
+		await authStorage.modify("anthropic", async () => ({ type: "api_key", key: "test-key" }));
+		settingsManager.applyOverrides({ retry: { enabled: true, maxRetries: 3, baseDelayMs: 1 } });
+		session = new AgentSession({
+			agent,
+			sessionManager,
+			settingsManager,
+			cwd: tempDir,
+			modelRuntime: getModelRuntime(modelRegistry),
+			resourceLoader: createTestResourceLoader(),
+		});
+
+		const delays: number[] = [];
+		const events: string[] = [];
+		session.subscribe((event) => {
+			if (event.type === "auto_retry_start") delays.push(event.delayMs);
+			if (event.type === "auto_retry_end") events.push(`end:success=${event.success}`);
+		});
+
+		await session.prompt("Test");
+
+		expect(callCount).toBe(2);
+		// Server-requested 0.01s delay, not the 1ms exponential backoff.
+		expect(delays).toEqual([10]);
+		expect(events).toEqual(["end:success=true"]);
+	});
+
 	it("prompt waits for retry completion even when assistant message_end handling is delayed", async () => {
 		const created = await createSession({ failCount: 1, delayAssistantMessageEndMs: 40 });
 

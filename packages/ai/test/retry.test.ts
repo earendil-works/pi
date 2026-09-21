@@ -1,6 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 import { fauxAssistantMessage } from "../src/providers/faux.ts";
-import { isRetryableAssistantError, type RetryPolicy, retryAssistantCall, retryDelayMs } from "../src/utils/retry.ts";
+import {
+	effectiveRetryDelayMs,
+	isRetryableAssistantError,
+	type RetryPolicy,
+	retryAssistantCall,
+	retryDelayMs,
+	serverRetryDelayMs,
+} from "../src/utils/retry.ts";
 
 const openAIExplicitRetryMessage =
 	"An error occurred while processing your request. You can retry your request, or contact us through our help center at help.openai.com if the error persists. Please include the request ID req_******** in your message.";
@@ -14,6 +21,10 @@ const wrappedDnsLookupError =
 	"The pending stream has been canceled (caused by: getaddrinfo ENOTFOUND bedrock-runtime.us-east-1.amazonaws.com)";
 const azurePeakLoadError =
 	"The system is currently experiencing high demand and cannot process your request. Your request exceeds the maximum usage size allowed during peak load. For improved capacity reliability, consider switching to Provisioned Throughput.";
+// Real-world Google per-minute rate limit 429 (RESOURCE_EXHAUSTED); the message
+// embeds the retry delay both in the text and in the details JSON.
+const googlePerMinuteRateLimitError =
+	'You exceeded your current quota, please check your plan and billing details. * Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_paid_tier_input_token_count, limit: 2000000, model: gemini-3.8-flash Please retry in 52.034842833s. "retryDelay": "52s"';
 
 describe("provider retry classification", () => {
 	it("matches explicit provider retry guidance", () => {
@@ -77,6 +88,14 @@ describe("provider retry classification", () => {
 		).toBe(true);
 	});
 
+	it("retries Google per-minute rate limit 429s carrying explicit retry guidance", () => {
+		expect(
+			isRetryableAssistantError(
+				fauxAssistantMessage("", { stopReason: "error", errorMessage: googlePerMinuteRateLimitError }),
+			),
+		).toBe(true);
+	});
+
 	it("keeps provider limit errors non-retryable", () => {
 		expect(
 			isRetryableAssistantError(
@@ -110,6 +129,46 @@ describe("retryDelayMs", () => {
 		expect(retryDelayMs({ baseDelayMs: 2000 }, 6)).toBe(60000);
 		expect(retryDelayMs({ baseDelayMs: 2000, maxAgentDelayMs: 5000 }, 5)).toBe(5000);
 		expect(retryDelayMs({ baseDelayMs: 2000, maxAgentDelayMs: 0 }, 5)).toBe(0);
+	});
+});
+
+describe("serverRetryDelayMs", () => {
+	it("parses the delay from Google's please-retry wording", () => {
+		expect(serverRetryDelayMs("Please retry in 52.034842833s.")).toBeCloseTo(52034.842833, 3);
+		expect(serverRetryDelayMs("please retry in 5s")).toBe(5000);
+	});
+
+	it("falls back to the details JSON retryDelay", () => {
+		expect(
+			serverRetryDelayMs('{"details":[{"@type":"type.googleapis.com/google.rpc.RetryInfo","retryDelay": "52s"}]}'),
+		).toBe(52000);
+	});
+
+	it("returns undefined without explicit retry guidance", () => {
+		expect(serverRetryDelayMs("429 quota exceeded")).toBeUndefined();
+		expect(serverRetryDelayMs("Please retry in 5h")).toBeUndefined();
+		expect(serverRetryDelayMs("")).toBeUndefined();
+	});
+});
+
+describe("effectiveRetryDelayMs", () => {
+	it("uses the exponential backoff when the error carries no server delay", () => {
+		expect(effectiveRetryDelayMs({ baseDelayMs: 2000 }, 1, "terminated")).toBe(2000);
+		expect(effectiveRetryDelayMs({ baseDelayMs: 2000 }, 2, undefined)).toBe(4000);
+	});
+
+	it("extends the backoff to the provider-requested delay", () => {
+		expect(effectiveRetryDelayMs({ baseDelayMs: 2000 }, 1, googlePerMinuteRateLimitError)).toBeCloseTo(
+			52034.842833,
+			3,
+		);
+	});
+
+	it("caps the provider-requested delay at maxAgentDelayMs", () => {
+		// A provider asking to wait an hour must not block the agent past the cap.
+		expect(effectiveRetryDelayMs({ baseDelayMs: 2000, maxAgentDelayMs: 60000 }, 1, "Please retry in 3600s")).toBe(
+			60000,
+		);
 	});
 });
 
@@ -172,6 +231,23 @@ describe("retryAssistantCall", () => {
 		await retryAssistantCall(produce, policy, undefined, { onRetryScheduled });
 
 		expect(onRetryScheduled.mock.calls.map((call) => call[2])).toEqual([10, 15, 15, 15]);
+	});
+
+	it("retries Google per-minute rate limit 429s after the provider-requested delay", async () => {
+		const policy: RetryPolicy = { enabled: true, maxRetries: 2, baseDelayMs: 0 };
+		const produce = vi.fn(async () =>
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: googlePerMinuteRateLimitError }),
+		);
+		const controller = new AbortController();
+		const onRetryScheduled = vi.fn((_attempt: number, _maxAttempts: number, _delayMs: number) => controller.abort());
+
+		// Abort during the first backoff so the test does not sleep the full delay.
+		const res = await retryAssistantCall(produce, policy, controller.signal, { onRetryScheduled });
+
+		expect(res.stopReason).toBe("aborted");
+		expect(produce).toHaveBeenCalledTimes(1);
+		expect(onRetryScheduled).toHaveBeenCalledTimes(1);
+		expect(onRetryScheduled.mock.calls[0]![2]).toBeCloseTo(52034.842833, 3);
 	});
 
 	it("stops retrying once a call succeeds", async () => {

@@ -25,7 +25,7 @@ import type {
 	PrepareNextTurnContext,
 	ThinkingLevel,
 } from "@earendil-works/pi-agent-core";
-import { contentText, getCurrentSystemMessage, retryDelayMs } from "@earendil-works/pi-ai";
+import { contentText, effectiveRetryDelayMs, getCurrentSystemMessage } from "@earendil-works/pi-ai";
 import type {
 	AssistantMessage,
 	AuthResult,
@@ -3390,7 +3390,7 @@ export class AgentSession {
 			return false;
 		}
 
-		const delayMs = retryDelayMs(settings, this._retryAttempt);
+		const delayMs = effectiveRetryDelayMs(settings, this._retryAttempt, message.errorMessage);
 
 		this._emit({
 			type: "auto_retry_start",
