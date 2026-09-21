@@ -34,6 +34,8 @@ Replace the model name with one installed on your server. These commands use the
 - `--offline` disables discovery, including local discovery. Previously cached models and explicitly configured models remain usable for inference. It does not make inference offline from a configured server.
 - Discovery preserves the previous catalog on a failed refresh. A changed endpoint never restores another endpoint's cached models.
 
+Existing `models.json` entries using `api: "openai-completions"` under the `ollama` provider keep their configured API key and URL, including the `/v1` prefix. They work without native discovery setup. `OLLAMA_BASE_URL`, `OLLAMA_HOST`, and the endpoint stored by `/login ollama` select the native server; they do not replace compatibility models' URLs. Stored credentials retain their normal precedence over `models.json` keys.
+
 ## Context and output limits
 
 The model's trained maximum is often much larger than an appropriate runtime allocation. Pi uses the model's saved `num_ctx` parameter when present, otherwise **8192 tokens**, bounded by its trained maximum when reported. The default output cap is the smaller of 4096 and half the context window.
@@ -95,4 +97,4 @@ const reply = await models.completeSimple(model, {
 });
 ```
 
-The API identifier is `ollama-chat`. Full API options additionally support `think` and `keepAlive`. Request hooks, custom fetch, cancellation, and HTTP timeouts are supported. The adapter does not automatically replay failed HTTP requests; Pi owns its bounded retry policy.
+The API identifier is `ollama-chat`. Full API options additionally support `think` and `keepAlive`. Request hooks, custom fetch, cancellation, and HTTP timeouts are supported. `timeoutMs` is an inactivity limit: it bounds the wait for response headers and resets whenever non-empty response data arrives. An active generation can run longer than this limit. Pi supplies its `httpIdleTimeoutMs` setting (five minutes by default); callers can use an abort signal to impose a total deadline. The adapter does not automatically replay failed HTTP requests; Pi owns its bounded retry policy.
