@@ -91,7 +91,7 @@ Use `/resume` to choose another saved session. See [Continue or branch a session
 - [Add instructions](configuration.md#context-files) that Pi should follow whenever it works in a folder.
 - [Choose a model and provider](models.md).
 
-### Choose how to customise Pi
+### Choose how to customize Pi
 
 Start with the least powerful mechanism that meets your need:
 

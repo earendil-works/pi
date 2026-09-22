@@ -1,7 +1,7 @@
 {
   "navigation": [
     {
-      "title": "Getting Started",
+      "title": "Get Started",
       "items": [
         {
           "title": "Overview",
@@ -21,10 +21,10 @@
       "title": "Guides",
       "items": [
         {
-          "title": "Using Pi",
+          "title": "Run Pi",
           "items": [
             {
-              "title": "Pi in the Terminal",
+              "title": "Use Pi in the Terminal",
               "path": "usage.md"
             },
             {
@@ -32,22 +32,9 @@
               "path": "models.md"
             },
             {
-              "title": "Local Models with llama.cpp",
-              "path": "llama-cpp.md"
-            },
-            {
-              "title": "Sessions and Context",
+              "title": "Manage Sessions and Context",
               "path": "sessions.md"
             },
-            {
-              "title": "Configuration",
-              "path": "configuration.md"
-            }
-          ]
-        },
-        {
-          "title": "Running Pi",
-          "items": [
             {
               "title": "Run Pi Safely",
               "path": "security.md"
@@ -57,69 +44,77 @@
               "path": "containerization.md"
             },
             {
-              "title": "Run Pi on Windows",
-              "path": "windows.md"
-            },
-            {
-              "title": "Run Pi on Android",
-              "path": "termux.md"
+              "title": "Run Local Models",
+              "path": "llama-cpp.md"
             },
             {
               "title": "Configure Your Terminal",
               "path": "terminal-setup.md"
             },
             {
+              "title": "Configure Shell Commands",
+              "path": "shell-aliases.md"
+            },
+            {
               "title": "Run Pi in tmux",
               "path": "tmux.md"
             },
             {
-              "title": "Configure Shell Commands",
-              "path": "shell-aliases.md"
+              "title": "Run Pi on Windows",
+              "path": "windows.md"
+            },
+            {
+              "title": "Run Pi on Android",
+              "path": "termux.md"
             }
           ]
         },
         {
-          "title": "Customising Pi",
+          "title": "Customize Pi",
           "items": [
             {
-              "title": "Prompt Templates",
+              "title": "Configure Pi",
+              "path": "configuration.md"
+            },
+            {
+              "title": "Create Prompt Templates",
               "path": "prompt-templates.md"
             },
             {
-              "title": "Skills",
+              "title": "Add Skills",
               "path": "skills.md"
             },
             {
-              "title": "Extensions",
-              "path": "extensions.md"
-            },
-            {
-              "title": "Themes",
+              "title": "Create Themes",
               "path": "themes.md"
             },
             {
-              "title": "Terminal UI",
-              "path": "tui.md"
-            },
-            {
-              "title": "Custom Providers",
-              "path": "custom-provider.md"
-            },
-            {
-              "title": "Pi Packages",
+              "title": "Use Pi Packages",
               "path": "packages.md"
             }
           ]
         },
         {
-          "title": "Building with Pi",
+          "title": "Build on Pi",
           "items": [
             {
-              "title": "CLI Integration",
+              "title": "Build Extensions",
+              "path": "extensions.md"
+            },
+            {
+              "title": "Add Custom Providers",
+              "path": "custom-provider.md"
+            },
+            {
+              "title": "Build Terminal UI Components",
+              "path": "tui.md"
+            },
+            {
+              "title": "Integrate with the CLI",
               "path": "cli-integration.md"
             },
             {
-              "title": "SDK",
+              "title": "Use the SDK",
               "path": "sdk.md"
             }
           ]
@@ -130,76 +125,56 @@
       "title": "Reference",
       "items": [
         {
-          "title": "Configuration",
-          "items": [
-            {
-              "title": "Settings",
-              "path": "settings.md"
-            },
-            {
-              "title": "Environment Variables",
-              "path": "environment-variables.md"
-            },
-            {
-              "title": "Keybindings",
-              "path": "keybindings.md"
-            }
-          ]
+          "title": "CLI",
+          "path": "cli.md"
         },
         {
-          "title": "Interfaces",
-          "items": [
-            {
-              "title": "CLI",
-              "path": "cli.md"
-            },
-            {
-              "title": "Slash Commands",
-              "path": "slash-commands.md"
-            },
-            {
-              "title": "JSON Event Stream",
-              "path": "json.md"
-            },
-            {
-              "title": "RPC Protocol",
-              "path": "rpc.md"
-            },
-            {
-              "title": "RPC Commands",
-              "path": "rpc-commands.md"
-            },
-            {
-              "title": "RPC Extension UI",
-              "path": "rpc-extension-ui.md"
-            },
-            {
-              "title": "Message Types",
-              "path": "message-types.md"
-            }
-          ]
+          "title": "Slash Commands",
+          "path": "slash-commands.md"
         },
         {
-          "title": "Models",
-          "items": [
-            {
-              "title": "Provider Authentication",
-              "path": "providers.md"
-            }
-          ]
+          "title": "Settings",
+          "path": "settings.md"
         },
         {
-          "title": "Sessions",
-          "items": [
-            {
-              "title": "Session File Format",
-              "path": "session-format.md"
-            },
-            {
-              "title": "Compaction and Branch Summaries",
-              "path": "compaction.md"
-            }
-          ]
+          "title": "Environment Variables",
+          "path": "environment-variables.md"
+        },
+        {
+          "title": "Keybindings",
+          "path": "keybindings.md"
+        },
+        {
+          "title": "Provider Authentication",
+          "path": "providers.md"
+        },
+        {
+          "title": "Session File Format",
+          "path": "session-format.md"
+        },
+        {
+          "title": "Compaction and Branch Summaries",
+          "path": "compaction.md"
+        },
+        {
+          "title": "JSON Event Stream",
+          "path": "json.md"
+        },
+        {
+          "title": "RPC Protocol",
+          "path": "rpc.md"
+        },
+        {
+          "title": "RPC Commands",
+          "path": "rpc-commands.md"
+        },
+        {
+          "title": "RPC Extension UI",
+          "path": "rpc-extension-ui.md"
+        },
+        {
+          "title": "Message Types",
+          "path": "message-types.md"
         }
       ]
     }

@@ -1,4 +1,4 @@
-# Customise Pi with themes
+# Customize Pi with themes
 
 Themes control the colors Pi uses in interactive mode and HTML exports. Pi includes `dark` and `light` themes. You can select one theme, follow your terminal's light or dark appearance, or create your own palette.
 

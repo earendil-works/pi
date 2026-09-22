@@ -123,7 +123,7 @@ To implement interactive Esc behavior, send `clear_queue` before `abort`, then r
 
 ### new_session
 
-Start a fresh session. Can be cancelled by a `session_before_switch` extension event handler.
+Start a fresh session. Can be canceled by a `session_before_switch` extension event handler.
 
 ```json
 {"type": "new_session"}
@@ -139,7 +139,7 @@ Response:
 {"type": "response", "command": "new_session", "success": true, "data": {"cancelled": false}}
 ```
 
-If an extension cancelled:
+If an extension canceled:
 ```json
 {"type": "response", "command": "new_session", "success": true, "data": {"cancelled": true}}
 ```
@@ -585,7 +585,7 @@ Response:
 
 ### switch_session
 
-Load a different session file. Can be cancelled by a `session_before_switch` extension event handler.
+Load a different session file. Can be canceled by a `session_before_switch` extension event handler.
 
 ```json
 {"type": "switch_session", "sessionPath": "/path/to/session.jsonl"}
@@ -596,14 +596,14 @@ Response:
 {"type": "response", "command": "switch_session", "success": true, "data": {"cancelled": false}}
 ```
 
-If an extension cancelled the switch:
+If an extension canceled the switch:
 ```json
 {"type": "response", "command": "switch_session", "success": true, "data": {"cancelled": true}}
 ```
 
 ### fork
 
-Create a new fork from a previous user message on the active branch. Can be cancelled by a `session_before_fork` extension event handler. Returns the text of the message being forked from.
+Create a new fork from a previous user message on the active branch. Can be canceled by a `session_before_fork` extension event handler. Returns the text of the message being forked from.
 
 ```json
 {"type": "fork", "entryId": "abc123"}
@@ -619,7 +619,7 @@ Response:
 }
 ```
 
-If an extension cancelled the fork:
+If an extension canceled the fork:
 ```json
 {
   "type": "response",
@@ -631,7 +631,7 @@ If an extension cancelled the fork:
 
 ### clone
 
-Duplicate the current active branch into a new session at the current position. Can be cancelled by a `session_before_fork` extension event handler.
+Duplicate the current active branch into a new session at the current position. Can be canceled by a `session_before_fork` extension event handler.
 
 ```json
 {"type": "clone"}
@@ -647,7 +647,7 @@ Response:
 }
 ```
 
-If an extension cancelled the clone:
+If an extension canceled the clone:
 ```json
 {
   "type": "response",
