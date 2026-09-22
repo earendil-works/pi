@@ -678,7 +678,10 @@ export class InteractiveMode {
 
 	private createBaseAutocompleteProvider(): AutocompleteProvider {
 		// Define commands for autocomplete
-		const slashCommands: SlashCommand[] = BUILTIN_SLASH_COMMANDS.map((command) => ({
+		const enableShareCommand = this.settingsManager.getEnableShareCommand();
+		const slashCommands: SlashCommand[] = BUILTIN_SLASH_COMMANDS.filter(
+			(command) => command.name !== "share" || enableShareCommand,
+		).map((command) => ({
 			name: command.name,
 			description: command.description,
 			...(command.argumentHint && { argumentHint: command.argumentHint }),
@@ -3113,8 +3116,12 @@ export class InteractiveMode {
 				return;
 			}
 			if (text === "/share") {
-				await this.handleShareCommand();
 				this.editor.setText("");
+				if (!this.settingsManager.getEnableShareCommand()) {
+					this.showError("/share is disabled by the enableShareCommand setting");
+					return;
+				}
+				await this.handleShareCommand();
 				return;
 			}
 			if (text === "/bug" || text.startsWith("/bug ")) {

@@ -32,6 +32,7 @@ See [Choose a Model](models.md) for model selection and thinking controls.
 | `doubleEscapeAction` | `"tree" \| "fork" \| "none"` | `"tree"` | Action for double Escape with an empty editor. |
 | `treeFilterMode` | `"default" \| "no-tools" \| "user-only" \| "labeled-only" \| "all"` | `"default"` | Initial filter used by `/tree`. |
 | `defaultProjectTrust` | `"ask" \| "always" \| "never"` | `"ask"` | Fallback project-trust behavior. **Can only be set in agent-directory settings.** |
+| `enableShareCommand` | boolean | `true` | Allow the `/share` command. Set to `false` in project settings to disable session sharing for a directory. |
 
 ## Tools
 

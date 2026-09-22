@@ -143,6 +143,7 @@ export interface Settings {
 	enabledModels?: string[]; // Model patterns for cycling (same format as --models CLI flag)
 	defaultTools?: string[]; // Initial built-in tool selection
 	doubleEscapeAction?: "fork" | "tree" | "none"; // Action for double-escape with empty editor (default: "tree")
+	enableShareCommand?: boolean; // default: true - allow the /share command
 	treeFilterMode?: "default" | "no-tools" | "user-only" | "labeled-only" | "all"; // Default filter when opening /tree
 	thinkingBudgets?: ThinkingBudgetsSettings; // Custom token budgets for thinking levels
 	editorPaddingX?: number; // Horizontal padding for input editor (default: 0)
@@ -1352,6 +1353,10 @@ export class SettingsManager {
 		this.globalSettings.doubleEscapeAction = action;
 		this.markModified("doubleEscapeAction");
 		this.save();
+	}
+
+	getEnableShareCommand(): boolean {
+		return this.settings.enableShareCommand ?? true;
 	}
 
 	getTreeFilterMode(): "default" | "no-tools" | "user-only" | "labeled-only" | "all" {

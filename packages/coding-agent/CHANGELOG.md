@@ -5,6 +5,7 @@
 ### Added
 
 - Added inherited Claude Opus 5.5 support for Anthropic with adaptive thinking and a 1M context window.
+- Added an `enableShareCommand` setting to disable the `/share` command, settable per-project.
 
 ### Changed
 
