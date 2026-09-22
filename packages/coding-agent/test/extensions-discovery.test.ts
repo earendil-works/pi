@@ -316,6 +316,58 @@ describe("extensions discovery", () => {
 		expect(result.extensions[0].path).toContain("exists.ts");
 	});
 
+	it("supports globs and exclusions in package.json pi extensions", async () => {
+		const subdir = path.join(extensionsDir, "glob-package");
+		const sourceDir = path.join(subdir, "extensions");
+		fs.mkdirSync(sourceDir, { recursive: true });
+		fs.writeFileSync(path.join(sourceDir, "main.ts"), extensionCode);
+		fs.writeFileSync(path.join(sourceDir, "main.test.ts"), extensionCode);
+		fs.writeFileSync(
+			path.join(subdir, "package.json"),
+			JSON.stringify({
+				name: "glob-package",
+				pi: {
+					extensions: ["./extensions/*.ts", "!./extensions/*.test.ts"],
+				},
+			}),
+		);
+
+		const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+
+		const loadedPaths = [
+			...result.extensions.map((extension) => extension.path),
+			...result.errors.map((error) => error.path),
+		];
+		expect(loadedPaths).toHaveLength(1);
+		expect(path.basename(loadedPaths[0])).toBe("main.ts");
+	});
+
+	it("applies exclusions to directory entries in package.json pi extensions", async () => {
+		const subdir = path.join(extensionsDir, "directory-package");
+		const sourceDir = path.join(subdir, "extensions");
+		fs.mkdirSync(sourceDir, { recursive: true });
+		fs.writeFileSync(path.join(sourceDir, "main.ts"), extensionCode);
+		fs.writeFileSync(path.join(sourceDir, "main.test.ts"), extensionCode);
+		fs.writeFileSync(
+			path.join(subdir, "package.json"),
+			JSON.stringify({
+				name: "directory-package",
+				pi: {
+					extensions: ["./extensions", "!./extensions/*.test.ts"],
+				},
+			}),
+		);
+
+		const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+
+		const loadedPaths = [
+			...result.extensions.map((extension) => extension.path),
+			...result.errors.map((error) => error.path),
+		];
+		expect(loadedPaths).toHaveLength(1);
+		expect(path.basename(loadedPaths[0])).toBe("main.ts");
+	});
+
 	it("loads extensions and registers commands", async () => {
 		fs.writeFileSync(path.join(extensionsDir, "with-command.ts"), extensionCode);
 

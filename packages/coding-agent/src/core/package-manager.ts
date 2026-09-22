@@ -559,15 +559,30 @@ function resolveExtensionEntries(dir: string): string[] | null {
 	if (existsSync(packageJsonPath)) {
 		const manifest = readPiManifest(packageJsonPath);
 		if (manifest?.extensions?.length) {
-			const entries: string[] = [];
-			for (const extPath of manifest.extensions) {
-				const resolvedExtPath = resolve(dir, extPath);
-				if (existsSync(resolvedExtPath)) {
-					entries.push(resolvedExtPath);
+			const { plain, patterns } = splitPatterns(manifest.extensions);
+			const includePatterns = patterns.filter((pattern) => !pattern.startsWith("!"));
+			const entries = new Set<string>();
+
+			for (const extPath of [...plain, ...includePatterns]) {
+				const candidates = hasGlobPattern(extPath) ? expandPackageGlob(extPath, dir) : [resolve(dir, extPath)];
+
+				for (const candidate of candidates) {
+					if (!existsSync(candidate)) continue;
+					if (statSync(candidate).isDirectory()) {
+						for (const expandedEntry of collectAutoExtensionEntries(candidate)) {
+							entries.add(expandedEntry);
+						}
+					} else {
+						entries.add(candidate);
+					}
 				}
 			}
-			if (entries.length > 0) {
-				return entries;
+
+			const filtered = [...entries]
+				.filter((entry) => isEnabledByOverrides(entry, manifest.extensions, dir))
+				.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+			if (filtered.length > 0) {
+				return filtered;
 			}
 		}
 	}
