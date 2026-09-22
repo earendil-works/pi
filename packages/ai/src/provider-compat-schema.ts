@@ -554,15 +554,51 @@ export const MistralConversationsCompatSchema = Type.Object(
 	{ description: "Compatibility settings for the Mistral chat API.", additionalProperties: true },
 );
 
-export const ProviderCompatSchema = Type.Union(
-	[
-		OpenAICompletionsCompatSchema,
-		OpenAIResponsesCompatSchema,
-		AnthropicMessagesCompatSchema,
-		BedrockCompatSchema,
-		MistralConversationsCompatSchema,
-	],
-	{ description: "Provider and model compatibility overrides." },
+export const ProviderCompatSchema = Type.Object(
+	{
+		...OpenAICompletionsCompatSchema.properties,
+		...OpenAIResponsesCompatSchema.properties,
+		...AnthropicMessagesCompatSchema.properties,
+		...BedrockCompatSchema.properties,
+		...MistralConversationsCompatSchema.properties,
+		supportsDeveloperRole: Type.Optional(
+			Type.Boolean({
+				description:
+					"Whether the provider supports the developer role instead of system. Defaults are API-specific.",
+			}),
+		),
+		supportsMidConvoSystemMessages: Type.Optional(
+			Type.Boolean({
+				description:
+					"Whether the exact model accepts system or developer messages after the conversation has started. When false, later system messages are folded into the leading system message.",
+				default: false,
+			}),
+		),
+		sessionAffinityFormat: Type.Optional(
+			Type.Union([Type.Literal("openai"), Type.Literal("openai-nosession"), Type.Literal("openrouter")], {
+				description: "Session-affinity header format. Defaults are API-specific or auto-detected.",
+			}),
+		),
+		supportsLongCacheRetention: Type.Optional(
+			Type.Boolean({ description: "Whether the provider supports long prompt cache retention.", default: true }),
+		),
+		supportsStrictMode: Type.Optional(
+			Type.Boolean({ description: "Whether the provider supports strict tool schemas. Defaults are API-specific." }),
+		),
+		supportsOpenAIGrammarTools: Type.Optional(
+			Type.Boolean({
+				description:
+					"Whether the provider supports OpenAI custom tools with Lark or regex grammar formats. When false, grammar-constrained tools fall back to normal function tools.",
+				default: false,
+			}),
+		),
+		sendSessionAffinityHeaders: Type.Optional(
+			Type.Boolean({
+				description: "Whether to send session-affinity data from options.sessionId. Defaults are API-specific.",
+			}),
+		),
+	},
+	{ description: "Provider and model compatibility overrides.", additionalProperties: true },
 );
 
 export type ChatTemplateKwargValue = Static<typeof ChatTemplateKwargValueSchema>;
@@ -570,19 +606,19 @@ export type ChatTemplateKwargValue = Static<typeof ChatTemplateKwargValueSchema>
 export type ThinkingTokenBudgetField = Static<typeof ThinkingTokenBudgetFieldSchema>;
 export type SessionAffinityFormat = Static<typeof SessionAffinityFormatSchema>;
 /** OpenRouter provider routing preferences. */
-export type OpenRouterRouting = Static<typeof OpenRouterRoutingSchema>;
+export interface OpenRouterRouting extends Static<typeof OpenRouterRoutingSchema> {}
 /** Vercel AI Gateway routing preferences. */
-export type VercelGatewayRouting = Static<typeof VercelGatewayRoutingSchema>;
+export interface VercelGatewayRouting extends Static<typeof VercelGatewayRoutingSchema> {}
 /** An Anthropic server-side refusal fallback model with local pricing metadata. */
-export type AnthropicAllowedFallbackModel = Static<typeof AnthropicAllowedFallbackModelSchema>;
+export interface AnthropicAllowedFallbackModel extends Static<typeof AnthropicAllowedFallbackModelSchema> {}
 
 /** Compatibility settings for OpenAI-compatible completions APIs. */
-export type OpenAICompletionsCompat = Static<typeof OpenAICompletionsCompatSchema>;
+export interface OpenAICompletionsCompat extends Static<typeof OpenAICompletionsCompatSchema> {}
 /** Compatibility settings for OpenAI Responses APIs. */
-export type OpenAIResponsesCompat = Static<typeof OpenAIResponsesCompatSchema>;
+export interface OpenAIResponsesCompat extends Static<typeof OpenAIResponsesCompatSchema> {}
 /** Compatibility settings for Anthropic Messages-compatible APIs. */
-export type AnthropicMessagesCompat = Static<typeof AnthropicMessagesCompatSchema>;
+export interface AnthropicMessagesCompat extends Static<typeof AnthropicMessagesCompatSchema> {}
 /** Compatibility settings for Amazon Bedrock models. */
-export type BedrockCompat = Static<typeof BedrockCompatSchema>;
+export interface BedrockCompat extends Static<typeof BedrockCompatSchema> {}
 /** Compatibility settings for the Mistral chat API. */
-export type MistralConversationsCompat = Static<typeof MistralConversationsCompatSchema>;
+export interface MistralConversationsCompat extends Static<typeof MistralConversationsCompatSchema> {}

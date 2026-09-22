@@ -353,26 +353,26 @@ export const SettingsSchema = Type.Object(
 
 type SettingsInput = Static<typeof SettingsSchema>;
 
-export type CompactionModelOverride = Static<typeof CompactionModelOverrideSchema>;
-export type CompactionSettings = Static<typeof CompactionSettingsSchema>;
-export type BranchSummarySettings = Static<typeof BranchSummarySettingsSchema>;
-export type ProviderRetrySettings = Static<typeof ProviderRetrySettingsSchema>;
-export type RetrySettings = Omit<Static<typeof RetrySettingsSchema>, "maxDelayMs">;
-export type TerminalSettings = Static<typeof TerminalSettingsSchema>;
-export type ImageSettings = Static<typeof ImageSettingsSchema>;
-export type ThinkingBudgetsSettings = Static<typeof ThinkingBudgetsSettingsSchema>;
+export interface CompactionModelOverride extends Static<typeof CompactionModelOverrideSchema> {}
+export interface CompactionSettings extends Static<typeof CompactionSettingsSchema> {}
+export interface BranchSummarySettings extends Static<typeof BranchSummarySettingsSchema> {}
+export interface ProviderRetrySettings extends Static<typeof ProviderRetrySettingsSchema> {}
+export interface RetrySettings extends Omit<Static<typeof RetrySettingsSchema>, "maxDelayMs"> {}
+export interface TerminalSettings extends Static<typeof TerminalSettingsSchema> {}
+export interface ImageSettings extends Static<typeof ImageSettingsSchema> {}
+export interface ThinkingBudgetsSettings extends Static<typeof ThinkingBudgetsSettingsSchema> {}
 export type MermaidRenderingMode = NonNullable<Static<typeof MarkdownSettingsSchema>["mermaid"]>;
-export type MarkdownSettings = Static<typeof MarkdownSettingsSchema>;
-export type WarningSettings = Static<typeof WarningSettingsSchema>;
+export interface MarkdownSettings extends Static<typeof MarkdownSettingsSchema> {}
+export interface WarningSettings extends Static<typeof WarningSettingsSchema> {}
 export type CodemodeMode = Static<typeof CodemodeModeSchema>;
-export type CodemodeSettings = Static<typeof CodemodeSettingsSchema>;
+export interface CodemodeSettings extends Static<typeof CodemodeSettingsSchema> {}
 export type DefaultProjectTrust = NonNullable<SettingsInput["defaultProjectTrust"]>;
 export type TransportSetting = NonNullable<SettingsInput["transport"]>;
 export type PackageSource = Static<typeof PackageSourceSchema>;
 export type FullscreenExitOutput = NonNullable<SettingsInput["fullscreenExitOutput"]>;
 export type TuiMode = NonNullable<SettingsInput["tuiMode"]>;
 export type CacheWarmingMode = NonNullable<SettingsInput["cacheWarming"]>;
-export type Settings = Omit<SettingsInput, "queueMode" | "retry" | "skills" | "websockets"> & {
+export interface Settings extends Omit<SettingsInput, "queueMode" | "retry" | "skills" | "websockets"> {
 	retry?: RetrySettings;
 	skills?: string[];
-};
+}

@@ -119,7 +119,7 @@ describe("generated configuration schemas", () => {
 		expect(validator.Check(invalid)).toBe(false);
 	});
 
-	it("preserves permissive compatibility settings", async () => {
+	it("accepts custom compatibility settings and rejects malformed known fields", async () => {
 		const directory = createTemporaryDirectory();
 		const path = join(directory, "models.json");
 		const compat = {
@@ -132,6 +132,9 @@ describe("generated configuration schemas", () => {
 		const config = await ModelConfig.load(path);
 		expect(config.getError()).toBeUndefined();
 		expect(config.getProvider("demo")?.compat).toEqual(compat);
+
+		writeFileSync(path, JSON.stringify({ providers: { demo: { compat: { supportsLongCacheRetention: "yes" } } } }));
+		expect((await ModelConfig.load(path)).getError()).toContain("Invalid models.json schema");
 	});
 
 	it("accepts $schema in models.json without changing model validation", async () => {
