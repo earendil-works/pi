@@ -78,4 +78,22 @@ describe("provider request retries", () => {
 		expect(request).toHaveBeenCalledTimes(1);
 		expect(vi.getTimerCount()).toBe(0);
 	});
+
+	it("falls back to exponential backoff for a malformed retry-after HTTP-date", async () => {
+		vi.useFakeTimers();
+		const request = vi
+			.fn<() => Promise<string>>()
+			.mockRejectedValueOnce(providerError(429, { "retry-after": "not-a-date" }))
+			.mockResolvedValue("ok");
+
+		const result = retryProviderRequest(request, { maxRetries: 1 });
+		// Exponential backoff for retryIndex=0: 500ms * (1 - random*0.25) = 375-500ms.
+		// A NaN delay would fire immediately (0ms).
+		await vi.advanceTimersByTimeAsync(374);
+		expect(request).toHaveBeenCalledTimes(1);
+		await vi.advanceTimersByTimeAsync(126);
+
+		await expect(result).resolves.toBe("ok");
+		expect(request).toHaveBeenCalledTimes(2);
+	});
 });
