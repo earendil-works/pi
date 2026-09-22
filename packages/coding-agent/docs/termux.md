@@ -1,12 +1,12 @@
 # Run Pi on Android with Termux
 
-Pi runs on Android through [Termux](https://termux.dev/), a terminal emulator and Linux environment. Text input, file tools, and shell commands are supported. Pi can copy text to the Android clipboard through Termux:API, but its clipboard-paste shortcut cannot read text or images from the Android clipboard.
+Pi runs on Android through [Termux](https://termux.dev/), a terminal emulator and Linux environment. Text input, file tools, and shell commands are supported. Pi can copy and paste text through the Android clipboard with Termux:API. Clipboard image paste is not supported.
 
 ## Before you begin
 
 Install Termux from [GitHub or F-Droid](https://github.com/termux/termux-app#installation). Do not use the deprecated Google Play build.
 
-[Termux:API](https://github.com/termux/termux-api#installation) is optional. Install it only when you want Pi to copy text to the Android clipboard or shell commands to use Android device APIs.
+[Termux:API](https://github.com/termux/termux-api#installation) is optional. Install it only when you want Pi to copy or paste Android clipboard text, or when shell commands need Android device APIs.
 
 ## Install Pi
 
@@ -57,7 +57,7 @@ Only grant this permission when Pi should be able to access those files. Command
 
 ## Use clipboard commands
 
-Pi uses `termux-clipboard-set` when it copies text and `TERMUX_VERSION` is present. Shell commands can use both `termux-clipboard-get` and `termux-clipboard-set`. The Termux:API app and its command-line package must be installed:
+Pi uses `termux-clipboard-set` to copy text and `termux-clipboard-get` for its clipboard-paste shortcut. Shell commands can use both commands directly. Install the Termux:API app and its command-line package:
 
 ```bash
 pkg install termux-api
@@ -72,7 +72,7 @@ termux-clipboard-get
 
 The second command should print `Pi clipboard test`.
 
-The Termux clipboard API supports text only. Pi's clipboard-paste shortcut does not use `termux-clipboard-get`, so paste through the terminal or run the command explicitly when you need clipboard text in the editor.
+The Termux clipboard API supports text only. Pi's clipboard-paste shortcut inserts that text into the editor but cannot attach clipboard images.
 
 ## Add Termux-specific instructions
 
@@ -92,7 +92,7 @@ Run `/reload` after changing the file during an active session.
 
 ## Troubleshooting
 
-### Copying from Pi fails
+### Clipboard integration fails
 
 Confirm that you installed both components:
 

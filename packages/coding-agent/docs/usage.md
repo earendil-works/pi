@@ -89,6 +89,6 @@ Terminal support for mouse input, keyboard shortcuts, and inline images varies. 
 
 ## Collect diagnostic information
 
-When troubleshooting terminal rendering or conversation state, run `/debug`. Pi writes the rendered terminal lines and the messages sent to the model to `~/.pi/agent/pi-debug.log`.
+When troubleshooting terminal rendering or conversation state, run `/debug`. Pi writes the rendered terminal lines and current session messages to `pi-debug.log` in your [agent directory](configuration.md#agent-directory).
 
 Review this file before sharing it. It can contain prompts, model responses, tool output, file contents, and terminal data.

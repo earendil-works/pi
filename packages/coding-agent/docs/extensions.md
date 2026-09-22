@@ -125,7 +125,7 @@ A `user_bash` handler that returns `undefined` passes the command to the next ha
 
 A custom tool defines a name, model-facing description, TypeBox parameter schema, and `execute()` function.
 Its result requires model-facing `content` and a `details` field for rendering or state reconstruction.
-Use `details: undefined` when there are no structured details.
+Use `details: undefined` when there are no structured details. If the tool makes nested model calls, include their `usage` in the result so session totals remain accurate.
 
 Throw from `execute()` to produce a failed tool result.
 Returning an object does not mark it as an error.
@@ -150,7 +150,7 @@ Pi records the initial prompt and tool set in the transcript's first system mess
 ### Context and session changes
 
 `ExtensionContext` provides the working directory, mode, UI, session manager, model runtime, abort signal, context usage, and controls for compaction and shutdown.
-Use `ctx.modelRegistry.streamSimple()` for provider-neutral nested model calls, and report nested usage so session totals remain accurate.
+Use `ctx.modelRegistry.streamSimple()` for provider-neutral nested model calls.
 
 Command handlers receive `ExtensionCommandContext`, which adds operations for waiting until idle, reloading, tree navigation, and session replacement.
 These operations are command-only because calling them from lifecycle handlers can deadlock the runtime.

@@ -164,7 +164,13 @@ The account ID can also be stored in the credential's `env` object.
 
 ### Google Vertex AI
 
-Vertex AI requires a project and location with every authentication method:
+Use a Google Cloud API key:
+
+```bash
+export GOOGLE_CLOUD_API_KEY=...
+```
+
+To use Application Default Credentials, configure a project and location:
 
 ```bash
 export GOOGLE_CLOUD_PROJECT=your-project
@@ -172,16 +178,10 @@ export GOOGLE_CLOUD_PROJECT=your-project
 export GOOGLE_CLOUD_LOCATION=us-central1
 ```
 
-Use a Google Cloud API key:
-
-```bash
-export GOOGLE_CLOUD_API_KEY=...
-```
-
-Or configure Application Default Credentials:
+Then authenticate:
 
 ```bash
 gcloud auth application-default login
 ```
 
-To use a service-account key file, set `GOOGLE_APPLICATION_CREDENTIALS`.
+To use a service-account key file instead, set `GOOGLE_APPLICATION_CREDENTIALS` along with the project and location.

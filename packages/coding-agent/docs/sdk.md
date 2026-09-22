@@ -29,7 +29,7 @@ The [complete minimal example](../examples/sdk/01-minimal.ts) also streams text 
 
 Read current state through `session.messages`, `session.model`, `session.thinkingLevel`, `session.systemPrompt`, and `session.getActiveToolNames()`.
 
-`session.systemPrompt` is read-only and is replayed from the transcript's system messages. Tool changes are declared to the model before the next request.
+`session.systemPrompt` is read-only and returns the current effective system prompt, including changes that have not yet been sent to the model. Tool changes are declared to the model before the next request.
 
 <a id="sessionmanager-api"></a>
 
