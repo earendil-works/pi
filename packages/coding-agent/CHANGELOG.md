@@ -6,6 +6,10 @@
 
 - Changed the default xAI model to Grok 4.7.
 
+### Fixed
+
+- Fixed missing or invalid `--mode` values being silently ignored instead of reporting an error and exiting with a nonzero status ([#9045](https://github.com/earendil-works/pi/issues/9045)).
+
 ## [0.87.0] - 2026-09-21
 
 ### New Features
