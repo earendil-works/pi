@@ -416,7 +416,7 @@ describe("durable tool batch", () => {
 		await expectProjectionRestores(fixture);
 	});
 
-	it("safe-replays persisted arguments and memos while interrupting unsafe effects", async () => {
+	it.each(["sequential", "parallel"] as const)("safe-replays %s calls with saved arguments", async (mode) => {
 		const safeExecute = vi.fn(async (_value: string, _onUpdate: unknown, invocation: AgentHarnessToolInvocation) => {
 			expect(invocation.invocationId).toBeDefined();
 			expect(await invocation.getMemo("step/a")).toEqual({ complete: true });
@@ -429,6 +429,7 @@ describe("durable tool batch", () => {
 		const fixture = await createFixture({
 			calls: [{ name: "safe" }, { name: "unsafe" }],
 			tools: [tool("safe", safeExecute, "safe"), tool("unsafe", unsafeExecute, "never")],
+			mode,
 			callStates: (ids) => [
 				{ status: "effect_pending", sourceIndex: 0, resultEntryId: ids[0]!, replay: "safe" },
 				{ status: "effect_pending", sourceIndex: 1, resultEntryId: ids[1]!, replay: "never" },
@@ -478,6 +479,72 @@ describe("durable tool batch", () => {
 			recovery: true,
 			isError: true,
 		});
+	});
+
+	it.each(
+		(["sequential", "parallel"] as const).flatMap((mode) => [
+			{ mode, change: "narrowed value", parameter: Type.Literal("current"), value: "legacy" },
+			{ mode, change: "coercible type", parameter: Type.Number(), value: "42" },
+		]),
+	)("interrupts $mode replay after a $change schema change", async ({ mode, parameter, value }) => {
+		const execute = vi.fn(async () => ({ content: [], details: {} }));
+		const prepareArguments = vi.fn(() => ({ value: "current" }));
+		const fixture = await createFixture({
+			calls: [{ name: "changed", value: "current" }],
+			tools: [
+				{
+					...tool("changed", execute, "safe"),
+					parameters: Type.Object({ value: parameter }),
+					prepareArguments,
+				},
+			],
+			mode,
+			callStates: (ids) => [{ status: "effect_pending", sourceIndex: 0, resultEntryId: ids[0]!, replay: "safe" }],
+			extraWrites: ({ operationId, resultEntryIds }) => [
+				// These arguments were valid under the original string schema before the tool changed.
+				storedValues.setValue(storedValues.operationToolArgs(operationId, "turn-1", 0), { value }),
+				storedValues.setValue(storedValues.pendingToolOutput(operationId, resultEntryIds[0]!), {
+					content: [{ type: "text", text: "durable partial" }],
+					details: { progress: "kept" },
+				}),
+				storedValues.setValue(storedValues.operationToolMemo(operationId, resultEntryIds[0]!, "step"), true),
+			],
+		});
+		const beforeTool = vi.fn(() => undefined);
+		const afterTool = vi.fn(() => undefined);
+		fixture.hooks.on("before_tool", beforeTool);
+		fixture.hooks.on("after_tool", afterTool);
+
+		await driveTools(fixture);
+
+		expect(execute).not.toHaveBeenCalled();
+		expect(prepareArguments).not.toHaveBeenCalled();
+		expect(beforeTool).not.toHaveBeenCalled();
+		expect(afterTool).not.toHaveBeenCalled();
+		const entry = await fixture.session.getEntry(fixture.resultEntryIds[0]!, BACKGROUND_CONTEXT);
+		expect(entry?.type === "message" ? entry.message : undefined).toMatchObject({
+			role: "toolResult",
+			isError: true,
+			content: [
+				{ type: "text", text: "durable partial" },
+				{ type: "text", text: expect.stringContaining("external outcome is unknown") },
+			],
+			details: { progress: "kept" },
+		});
+		expect(fixture.events.some(({ type }) => type === "tool_start")).toBe(false);
+		expect(
+			await fixture.session.scanValues(
+				storedValues.operationToolMemoPrefix(fixture.operationId),
+				BACKGROUND_CONTEXT,
+			),
+		).toEqual([]);
+		expect(
+			await fixture.session.getValue(
+				storedValues.pendingToolOutput(fixture.operationId, fixture.resultEntryIds[0]!),
+				BACKGROUND_CONTEXT,
+			),
+		).toBeUndefined();
+		await expectProjectionRestores(fixture);
 	});
 
 	it("reconciles a restored cancelled batch without hooks, context, or effects", async () => {

@@ -1,4 +1,6 @@
 import type { ToolResultMessage } from "@earendil-works/pi-ai";
+import type { TSchema } from "typebox";
+import { Check } from "typebox/value";
 import type { AgentToolCall, AgentToolResult } from "../../../types.ts";
 import { AbortRequested } from "../../execution/effect-gate.ts";
 import {
@@ -298,8 +300,9 @@ async function clearReplayCheckpoint<TContext extends object | undefined>(
 	batch: ToolBatch,
 	call: Extract<ToolCall, { status: "effect_pending" }>,
 	toolCall: AgentToolCall,
-): Promise<Record<string, JsonValue>> {
-	return lane.command(async (state, reader) => {
+	parameters: TSchema,
+): Promise<Record<string, JsonValue> | undefined> {
+	return lane.command<Record<string, JsonValue> | undefined>(async (state, reader) => {
 		const stored = await reader.getValue(
 			operationToolArgs(drive.operationId, batch.turnId, call.sourceIndex),
 			drive.context,
@@ -307,6 +310,8 @@ async function clearReplayCheckpoint<TContext extends object | undefined>(
 		if (stored === undefined) {
 			throw new SessionInvariantError(`Tool call ${call.resultEntryId} is missing persisted arguments`);
 		}
+		// Replay the saved invocation exactly; do not prepare or coerce arguments under a changed schema.
+		if (!Check(parameters, stored.value)) return { kind: "return", result: undefined };
 		return {
 			kind: "commit",
 			writes: [deleteValue(pendingToolOutput(drive.operationId, call.resultEntryId))],
@@ -525,13 +530,15 @@ async function recoverToolInvocation<TContext extends object | undefined>(
 	const toolCall = toolCallFor(sources, call);
 	const tool = toolsByName.get(toolCall.name);
 	if (!cancelled && call.replay === "safe" && tool?.replay === "safe") {
-		const args = await clearReplayCheckpoint(lane, drive, run.batch, call, toolCall);
-		const cleared: ClearedToolCall<TContext> = { toolCall, tool, args };
-		return {
-			completion: performToolInvocation(lane, drive, run.batch, call, cleared, toolContext, true).then((outcome) =>
-				publishToolOutcome(lane, drive, run, call, outcome, true),
-			),
-		};
+		const args = await clearReplayCheckpoint(lane, drive, run.batch, call, toolCall, tool.parameters);
+		if (args !== undefined) {
+			const cleared: ClearedToolCall<TContext> = { toolCall, tool, args };
+			return {
+				completion: performToolInvocation(lane, drive, run.batch, call, cleared, toolContext, true).then(
+					(outcome) => publishToolOutcome(lane, drive, run, call, outcome, true),
+				),
+			};
+		}
 	}
 	const checkpoint = await readCheckpoint(lane, drive, call);
 	return {
