@@ -1,0 +1,996 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/earendil-works/pi/main/packages/coding-agent/schemas/theme.schema.json",
+  "$comment": "This file is generated from TypeScript source. Do not edit it manually; run npm run generate:schemas.",
+  "type": "object",
+  "required": [
+    "name",
+    "colors"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "JSON schema reference"
+    },
+    "name": {
+      "type": "string",
+      "pattern": "^[^/]+$",
+      "description": "Theme name. Must not contain '/' because it is reserved for automatic light/dark theme settings."
+    },
+    "vars": {
+      "type": "object",
+      "patternProperties": {
+        "^.*$": {
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+            },
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255,
+              "description": "256-color palette index (0-255)"
+            }
+          ]
+        }
+      },
+      "description": "Reusable color variables"
+    },
+    "colors": {
+      "type": "object",
+      "required": [
+        "accent",
+        "border",
+        "borderAccent",
+        "borderMuted",
+        "success",
+        "error",
+        "warning",
+        "muted",
+        "dim",
+        "text",
+        "thinkingText",
+        "selectedBg",
+        "userMessageBg",
+        "userMessageText",
+        "customMessageBg",
+        "customMessageText",
+        "customMessageLabel",
+        "toolPendingBg",
+        "toolSuccessBg",
+        "toolErrorBg",
+        "toolTitle",
+        "toolOutput",
+        "mdHeading",
+        "mdLink",
+        "mdLinkUrl",
+        "mdCode",
+        "mdCodeBlock",
+        "mdCodeBlockBorder",
+        "mdQuote",
+        "mdQuoteBorder",
+        "mdHr",
+        "mdListBullet",
+        "toolDiffAdded",
+        "toolDiffRemoved",
+        "toolDiffContext",
+        "syntaxComment",
+        "syntaxKeyword",
+        "syntaxFunction",
+        "syntaxVariable",
+        "syntaxString",
+        "syntaxNumber",
+        "syntaxType",
+        "syntaxOperator",
+        "syntaxPunctuation",
+        "thinkingOff",
+        "thinkingMinimal",
+        "thinkingLow",
+        "thinkingMedium",
+        "thinkingHigh",
+        "thinkingXhigh",
+        "bashMode"
+      ],
+      "properties": {
+        "accent": {
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+            },
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255,
+              "description": "256-color palette index (0-255)"
+            }
+          ],
+          "description": "Primary accent color (logo, selected items, cursor)"
+        },
+        "border": {
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+            },
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255,
+              "description": "256-color palette index (0-255)"
+            }
+          ],
+          "description": "Normal borders"
+        },
+        "borderAccent": {
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+            },
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255,
+              "description": "256-color palette index (0-255)"
+            }
+          ],
+          "description": "Highlighted borders"
+        },
+        "borderMuted": {
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+            },
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255,
+              "description": "256-color palette index (0-255)"
+            }
+          ],
+          "description": "Subtle borders"
+        },
+        "success": {
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+            },
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255,
+              "description": "256-color palette index (0-255)"
+            }
+          ],
+          "description": "Success states"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+            },
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255,
+              "description": "256-color palette index (0-255)"
+            }
+          ],
+          "description": "Error states"
+        },
+        "warning": {
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+            },
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255,
+              "description": "256-color palette index (0-255)"
+            }
+          ],
+          "description": "Warning states"
+        },
+        "muted": {
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+            },
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255,
+              "description": "256-color palette index (0-255)"
+            }
+          ],
+          "description": "Secondary/dimmed text"
+        },
+        "dim": {
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+            },
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255,
+              "description": "256-color palette index (0-255)"
+            }
+          ],
+          "description": "Very dimmed text (more subtle than muted)"
+        },
+        "text": {
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+            },
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255,
+              "description": "256-color palette index (0-255)"
+            }
+          ],
+          "description": "Default text color (usually empty string)"
+        },
+        "thinkingText": {
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+            },
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255,
+              "description": "256-color palette index (0-255)"
+            }
+          ],
+          "description": "Thinking block text color"
+        },
+        "scrollbarTrack": {
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+            },
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255,
+              "description": "256-color palette index (0-255)"
+            }
+          ],
+          "description": "Fullscreen scrollbar track foreground (falls back to muted when omitted)"
+        },
+        "scrollbarThumb": {
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+            },
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255,
+              "description": "256-color palette index (0-255)"
+            }
+          ],
+          "description": "Fullscreen scrollbar thumb foreground (falls back to text when omitted)"
+        },
+        "selectedBg": {
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+            },
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255,
+              "description": "256-color palette index (0-255)"
+            }
+          ],
+          "description": "Selected item background"
+        },
+        "searchMatchBg": {
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+            },
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255,
+              "description": "256-color palette index (0-255)"
+            }
+          ],
+          "description": "Transcript search match background and current-match text (falls back to selectedBg when omitted)"
+        },
+        "searchMatchText": {
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+            },
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255,
+              "description": "256-color palette index (0-255)"
+            }
+          ],
+          "description": "Transcript search match text and current-match background (falls back to text when omitted)"
+        },
+        "userMessageBg": {
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+            },
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255,
+              "description": "256-color palette index (0-255)"
+            }
+          ],
+          "description": "User message background"
+        },
+        "userMessageText": {
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+            },
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255,
+              "description": "256-color palette index (0-255)"
+            }
+          ],
+          "description": "User message text color"
+        },
+        "customMessageBg": {
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+            },
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255,
+              "description": "256-color palette index (0-255)"
+            }
+          ],
+          "description": "Custom message background (hook-injected messages)"
+        },
+        "customMessageText": {
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+            },
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255,
+              "description": "256-color palette index (0-255)"
+            }
+          ],
+          "description": "Custom message text color"
+        },
+        "customMessageLabel": {
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+            },
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255,
+              "description": "256-color palette index (0-255)"
+            }
+          ],
+          "description": "Custom message type label color"
+        },
+        "toolPendingBg": {
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+            },
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255,
+              "description": "256-color palette index (0-255)"
+            }
+          ],
+          "description": "Tool execution box (pending state)"
+        },
+        "toolSuccessBg": {
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+            },
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255,
+              "description": "256-color palette index (0-255)"
+            }
+          ],
+          "description": "Tool execution box (success state)"
+        },
+        "toolErrorBg": {
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+            },
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255,
+              "description": "256-color palette index (0-255)"
+            }
+          ],
+          "description": "Tool execution box (error state)"
+        },
+        "toolTitle": {
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+            },
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255,
+              "description": "256-color palette index (0-255)"
+            }
+          ],
+          "description": "Tool execution box title color"
+        },
+        "toolOutput": {
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+            },
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255,
+              "description": "256-color palette index (0-255)"
+            }
+          ],
+          "description": "Tool execution box output text color"
+        },
+        "mdHeading": {
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+            },
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255,
+              "description": "256-color palette index (0-255)"
+            }
+          ],
+          "description": "Markdown heading text"
+        },
+        "mdLink": {
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+            },
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255,
+              "description": "256-color palette index (0-255)"
+            }
+          ],
+          "description": "Markdown link text"
+        },
+        "mdLinkUrl": {
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+            },
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255,
+              "description": "256-color palette index (0-255)"
+            }
+          ],
+          "description": "Markdown link URL"
+        },
+        "mdCode": {
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+            },
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255,
+              "description": "256-color palette index (0-255)"
+            }
+          ],
+          "description": "Markdown inline code"
+        },
+        "mdCodeBlock": {
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+            },
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255,
+              "description": "256-color palette index (0-255)"
+            }
+          ],
+          "description": "Markdown code block content"
+        },
+        "mdCodeBlockBorder": {
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+            },
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255,
+              "description": "256-color palette index (0-255)"
+            }
+          ],
+          "description": "Markdown code block fences"
+        },
+        "mdQuote": {
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+            },
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255,
+              "description": "256-color palette index (0-255)"
+            }
+          ],
+          "description": "Markdown blockquote text"
+        },
+        "mdQuoteBorder": {
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+            },
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255,
+              "description": "256-color palette index (0-255)"
+            }
+          ],
+          "description": "Markdown blockquote border"
+        },
+        "mdHr": {
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+            },
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255,
+              "description": "256-color palette index (0-255)"
+            }
+          ],
+          "description": "Markdown horizontal rule"
+        },
+        "mdListBullet": {
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+            },
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255,
+              "description": "256-color palette index (0-255)"
+            }
+          ],
+          "description": "Markdown list bullets/numbers"
+        },
+        "toolDiffAdded": {
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+            },
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255,
+              "description": "256-color palette index (0-255)"
+            }
+          ],
+          "description": "Added lines in tool diffs"
+        },
+        "toolDiffRemoved": {
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+            },
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255,
+              "description": "256-color palette index (0-255)"
+            }
+          ],
+          "description": "Removed lines in tool diffs"
+        },
+        "toolDiffContext": {
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+            },
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255,
+              "description": "256-color palette index (0-255)"
+            }
+          ],
+          "description": "Context lines in tool diffs"
+        },
+        "syntaxComment": {
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+            },
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255,
+              "description": "256-color palette index (0-255)"
+            }
+          ],
+          "description": "Syntax highlighting: comments"
+        },
+        "syntaxKeyword": {
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+            },
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255,
+              "description": "256-color palette index (0-255)"
+            }
+          ],
+          "description": "Syntax highlighting: keywords"
+        },
+        "syntaxFunction": {
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+            },
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255,
+              "description": "256-color palette index (0-255)"
+            }
+          ],
+          "description": "Syntax highlighting: function names"
+        },
+        "syntaxVariable": {
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+            },
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255,
+              "description": "256-color palette index (0-255)"
+            }
+          ],
+          "description": "Syntax highlighting: variable names"
+        },
+        "syntaxString": {
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+            },
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255,
+              "description": "256-color palette index (0-255)"
+            }
+          ],
+          "description": "Syntax highlighting: string literals"
+        },
+        "syntaxNumber": {
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+            },
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255,
+              "description": "256-color palette index (0-255)"
+            }
+          ],
+          "description": "Syntax highlighting: number literals"
+        },
+        "syntaxType": {
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+            },
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255,
+              "description": "256-color palette index (0-255)"
+            }
+          ],
+          "description": "Syntax highlighting: type names"
+        },
+        "syntaxOperator": {
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+            },
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255,
+              "description": "256-color palette index (0-255)"
+            }
+          ],
+          "description": "Syntax highlighting: operators"
+        },
+        "syntaxPunctuation": {
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+            },
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255,
+              "description": "256-color palette index (0-255)"
+            }
+          ],
+          "description": "Syntax highlighting: punctuation"
+        },
+        "thinkingOff": {
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+            },
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255,
+              "description": "256-color palette index (0-255)"
+            }
+          ],
+          "description": "Thinking level border: off"
+        },
+        "thinkingMinimal": {
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+            },
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255,
+              "description": "256-color palette index (0-255)"
+            }
+          ],
+          "description": "Thinking level border: minimal"
+        },
+        "thinkingLow": {
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+            },
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255,
+              "description": "256-color palette index (0-255)"
+            }
+          ],
+          "description": "Thinking level border: low"
+        },
+        "thinkingMedium": {
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+            },
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255,
+              "description": "256-color palette index (0-255)"
+            }
+          ],
+          "description": "Thinking level border: medium"
+        },
+        "thinkingHigh": {
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+            },
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255,
+              "description": "256-color palette index (0-255)"
+            }
+          ],
+          "description": "Thinking level border: high"
+        },
+        "thinkingXhigh": {
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+            },
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255,
+              "description": "256-color palette index (0-255)"
+            }
+          ],
+          "description": "Thinking level border: xhigh"
+        },
+        "thinkingMax": {
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+            },
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255,
+              "description": "256-color palette index (0-255)"
+            }
+          ],
+          "description": "Thinking level border: max (falls back to thinkingXhigh when omitted)"
+        },
+        "bashMode": {
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+            },
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255,
+              "description": "256-color palette index (0-255)"
+            }
+          ],
+          "description": "Editor border color in bash mode"
+        }
+      },
+      "description": "Theme color definitions (scrollbar, thinkingMax, and search highlight colors are optional and use compatible fallbacks)",
+      "additionalProperties": false
+    },
+    "export": {
+      "type": "object",
+      "properties": {
+        "pageBg": {
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+            },
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255,
+              "description": "256-color palette index (0-255)"
+            }
+          ],
+          "description": "Page background color"
+        },
+        "cardBg": {
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+            },
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255,
+              "description": "256-color palette index (0-255)"
+            }
+          ],
+          "description": "Card/container background color"
+        },
+        "infoBg": {
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+            },
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255,
+              "description": "256-color palette index (0-255)"
+            }
+          ],
+          "description": "Info sections background (system prompt, notices)"
+        }
+      },
+      "description": "Optional colors for HTML export (defaults derived from userMessageBg if not specified)",
+      "additionalProperties": false
+    }
+  },
+  "title": "Pi Coding Agent Theme",
+  "description": "Theme schema for Pi coding agent",
+  "additionalProperties": false
+}

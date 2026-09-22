@@ -20,10 +20,10 @@ import { stripBom } from "../../../utils/text.ts";
 // Types & Schema
 // ============================================================================
 
-/** The schema that validates this shape lives in `theme-json.ts`; importing the type is free. */
-import type { ThemeColorValue as ColorValue, ValidatedThemeJson as ThemeJson } from "./theme-json.ts";
+/** The schema that validates this shape lives in `theme-schema.ts`; importing the type is free. */
+import type { ThemeColorValue as ColorValue, ValidatedThemeJson as ThemeJson } from "./theme-schema.ts";
 
-export type { ValidatedThemeJson as ThemeJson } from "./theme-json.ts";
+export type { ValidatedThemeJson as ThemeJson } from "./theme-schema.ts";
 
 export type ThemeJsonValidator = (label: string, json: unknown) => ThemeJson;
 

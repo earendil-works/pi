@@ -9,9 +9,29 @@ import type { OpenAICodexResponsesOptions } from "./api/openai-codex-responses.t
 import type { OpenAICompletionsOptions } from "./api/openai-completions.ts";
 import type { OpenAIResponsesOptions } from "./api/openai-responses.ts";
 import type { PiMessagesOptions } from "./api/pi-messages.ts";
+import type {
+	AnthropicMessagesCompat,
+	BedrockCompat,
+	MistralConversationsCompat,
+	OpenAICompletionsCompat,
+	OpenAIResponsesCompat,
+} from "./providers/compat-schema.ts";
 import type { AssistantMessageDiagnostic } from "./utils/diagnostics.ts";
 import type { AssistantMessageEventStream } from "./utils/event-stream.ts";
 
+export type {
+	AnthropicAllowedFallbackModel,
+	AnthropicMessagesCompat,
+	BedrockCompat,
+	ChatTemplateKwargValue,
+	MistralConversationsCompat,
+	OpenAICompletionsCompat,
+	OpenAIResponsesCompat,
+	OpenRouterRouting,
+	SessionAffinityFormat,
+	ThinkingTokenBudgetField,
+	VercelGatewayRouting,
+} from "./providers/compat-schema.ts";
 export type { AssistantMessageEventStream } from "./utils/event-stream.ts";
 
 export type KnownApi =
@@ -84,19 +104,6 @@ export type ToolChoice = "auto" | "none";
 export type ThinkingLevel = "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 export type ModelThinkingLevel = "off" | ThinkingLevel;
 export type ThinkingLevelMap = Partial<Record<ModelThinkingLevel, string | null>>;
-export type ChatTemplateKwargValue =
-	| string
-	| number
-	| boolean
-	| null
-	| {
-			$var: "thinking.enabled" | "thinking.effort" | "thinking.budget";
-			omitWhenOff?: boolean;
-	  };
-
-/** Top-level request field used to cap reasoning tokens on OpenAI-compatible servers. */
-export type ThinkingTokenBudgetField = "thinking_token_budget" | "thinking_budget" | "thinking_budget_tokens";
-
 /** Token budgets for each thinking level (token-based providers only) */
 export interface ThinkingBudgets {
 	minimal?: number;
@@ -120,7 +127,6 @@ export type Transport = "sse" | "websocket" | "websocket-cached" | "auto";
 export type ProviderEnv = Record<string, string>;
 export type ProviderHeaders = Record<string, string | null>;
 export type FetchFunction = typeof globalThis.fetch;
-export type SessionAffinityFormat = "openai" | "openai-nosession" | "openrouter";
 
 export interface ProviderResponse {
 	status: number;
@@ -314,12 +320,6 @@ export interface ImagesOptions extends ProviderRequestOptions<ImagesModel<Images
 }
 
 export type ProviderImagesOptions = ImagesOptions & Record<string, unknown>;
-
-export interface AnthropicAllowedFallbackModel {
-	provider: ProviderId;
-	model: string;
-	cost: ModelCost;
-}
 
 // Unified options with reasoning passed to streamSimple() and completeSimple()
 export interface SimpleStreamOptions extends StreamOptions {
@@ -666,277 +666,6 @@ export type AssistantMessageEvent =
 			message: AssistantMessage;
 	  }
 	| { type: "error"; reason: Extract<StopReason, "aborted" | "error">; error: AssistantMessage };
-
-/**
- * Compatibility settings for OpenAI-compatible completions APIs.
- * Use this to override URL-based auto-detection for custom providers.
- */
-export interface OpenAICompletionsCompat {
-	/** Whether the provider supports the `store` field. Default: auto-detected from URL. */
-	supportsStore?: boolean;
-	/** Whether the provider supports the `developer` role (vs `system`). Default: auto-detected from URL. */
-	supportsDeveloperRole?: boolean;
-	/** Whether the provider supports `reasoning_effort`. Default: auto-detected from URL. */
-	supportsReasoningEffort?: boolean;
-	/** Whether the provider supports `stream_options: { include_usage: true }` for token usage in streaming responses. Default: true. */
-	supportsUsageInStreaming?: boolean;
-	/** Whether streamed responses include `finish_reason`. When false, pi infers `stop` or `toolUse` when the stream ends. Default: true. */
-	supportsFinishReason?: boolean;
-	/** Which field to use for max tokens. Default: auto-detected from URL. */
-	maxTokensField?: "max_completion_tokens" | "max_tokens";
-	/** Whether tool results require the `name` field. Default: auto-detected from URL. */
-	requiresToolResultName?: boolean;
-	/** Whether a user message after tool results requires an assistant message in between. Default: auto-detected from URL. */
-	requiresAssistantAfterToolResult?: boolean;
-	/** Whether thinking blocks must be converted to text blocks with <thinking> delimiters. Default: auto-detected from URL. */
-	requiresThinkingAsText?: boolean;
-	/** Whether all replayed assistant messages must include an empty reasoning_content field when reasoning is enabled. Default: auto-detected from URL. */
-	requiresReasoningContentOnAssistantMessages?: boolean;
-	/** Format for reasoning/thinking parameter. "openai" uses reasoning_effort, "openrouter" uses reasoning: { effort }, "deepseek" uses thinking: { type } plus reasoning_effort when supported, "together" uses reasoning: { enabled } plus reasoning_effort when supported, "baseten" uses configurable chat_template_args plus reasoning_effort when supported, "zai" uses thinking: { type }, "qwen" uses top-level enable_thinking: boolean, "qwen-chat-template" uses chat_template_kwargs.enable_thinking and preserve_thinking, "chat-template" uses configurable chat_template_kwargs, "string-thinking" uses top-level thinking: string, and "ant-ling" uses reasoning: { effort } only when the mapped effort is non-null. Default: "openai". */
-	thinkingFormat?:
-		| "openai"
-		| "openrouter"
-		| "deepseek"
-		| "together"
-		| "baseten"
-		| "zai"
-		| "qwen"
-		| "chat-template"
-		| "qwen-chat-template"
-		| "string-thinking"
-		| "ant-ling";
-	/** Kwargs to send as `chat_template_kwargs` when `thinkingFormat` is `chat-template`. Use `{ "$var": "thinking.enabled" }`, `{ "$var": "thinking.effort" }`, or `{ "$var": "thinking.budget" }` for pi-controlled thinking values. */
-	chatTemplateKwargs?: Record<string, ChatTemplateKwargValue>;
-	/** Arguments to send as `chat_template_args` when `thinkingFormat` is `baseten`. Use `{ "$var": "thinking.enabled" }`, `{ "$var": "thinking.effort" }`, or `{ "$var": "thinking.budget" }` for pi-controlled thinking values. */
-	chatTemplateArgs?: Record<string, ChatTemplateKwargValue>;
-	/** OpenRouter-compatible routing preferences sent as the `provider` request field. */
-	openRouterRouting?: OpenRouterRouting;
-	/** Vercel AI Gateway routing preferences. Only used when baseUrl points to Vercel AI Gateway. */
-	vercelGatewayRouting?: VercelGatewayRouting;
-	/** Whether z.ai supports top-level `tool_stream: true` for streaming tool call deltas. Default: false. */
-	zaiToolStream?: boolean;
-	/**
-	 * Top-level request field used to cap reasoning tokens from `thinkingBudgets`.
-	 * Reasoning and the answer share `max_tokens` on these endpoints, so without a budget a
-	 * reasoning-heavy turn can consume the whole response and emit no answer.
-	 * `"thinking_token_budget"` is vLLM, `"thinking_budget"` is Qwen/DashScope/SGLang,
-	 * `"thinking_budget_tokens"` is llama.cpp. Off by default; not set on the generated catalog.
-	 */
-	thinkingTokenBudgetField?: ThinkingTokenBudgetField;
-	/** Alias for `thinkingTokenBudgetField: "thinking_token_budget"` (vLLM). Prefer `thinkingTokenBudgetField`. Default: false. */
-	supportsThinkingTokenBudget?: boolean;
-	/** Whether the provider supports OpenAI custom tools with Lark/regex grammar formats. When false, grammar-constrained tools fall back to normal function tools. Default: false; the generated model catalog enables it for capable models. */
-	supportsOpenAIGrammarTools?: boolean;
-	/** Whether the exact model accepts system or developer messages after the conversation has started. When false, later system messages are folded into the leading system message. Default: false; the generated model catalog enables it for verified models. */
-	supportsMidConvoSystemMessages?: boolean;
-	/** Whether system messages can introduce additional tools mid-conversation. Requires `supportsMidConvoSystemMessages`. Default: false; the generated model catalog enables it for capable models. */
-	supportsMidConvoToolAdditions?: boolean;
-	/** Whether the provider supports the `strict` field in tool definitions. Default: false; generated capable models enable it explicitly. */
-	supportsStrictMode?: boolean;
-	/** Cache control convention for prompt caching. "anthropic" applies Anthropic-style `cache_control` markers to the system prompt, last tool definition, and last user, assistant, or tool-result text content. */
-	cacheControlFormat?: "anthropic";
-	/** Whether to send session-affinity data from `options.sessionId`. Default: true for OpenRouter endpoints, false otherwise. */
-	sendSessionAffinityHeaders?: boolean;
-	/** Session-affinity header format: `openai` sends `session_id`, `x-client-request-id`, and `x-session-affinity`; `openai-nosession` sends `x-client-request-id` and `x-session-affinity`; `openrouter` sends `x-session-id`. Does not affect the `prompt_cache_key` body param, which is governed by cache retention. Default: auto-detected. */
-	sessionAffinityFormat?: SessionAffinityFormat;
-	/** Whether the provider supports long prompt cache retention (`prompt_cache_retention: "24h"` or Anthropic-style `cache_control.ttl: "1h"`, depending on format). Default: true. */
-	supportsLongCacheRetention?: boolean;
-	/**
-	 * vLLM scheduler priority sent as the top-level `priority` request field (lower values are
-	 * handled earlier; server default 0). Only meaningful when vLLM runs with
-	 * `--scheduling-policy priority`; useful for keeping background/batch work from stalling
-	 * interactive sessions. Off by default; not set on the generated catalog.
-	 */
-	vllmPriority?: number;
-}
-
-/** Compatibility settings for OpenAI Responses APIs. */
-export interface OpenAIResponsesCompat {
-	/** Whether the provider supports the `developer` role (vs `system`). Default: true. */
-	supportsDeveloperRole?: boolean;
-	/** Whether the exact model accepts developer or system messages after the conversation has started. When false, later system messages are folded into the leading system message. Default: false; the generated model catalog enables it for verified models. */
-	supportsMidConvoSystemMessages?: boolean;
-	/** Session-affinity header format: `openai` sends `session_id` and `x-client-request-id`; `openai-nosession` sends `x-client-request-id`; `openrouter` sends `x-session-id`. Does not affect the `prompt_cache_key` body param, which is governed by cache retention. Default: auto-detected. */
-	sessionAffinityFormat?: SessionAffinityFormat;
-	/** Whether the provider supports long prompt cache retention. This uses `prompt_cache_options.ttl: "30m"` on GPT-5.6+ and `prompt_cache_retention: "24h"` on earlier models. Default: true. */
-	supportsLongCacheRetention?: boolean;
-	/** Whether the provider supports strict JSON-schema function tools. Defaults are API-specific; generated OpenAI models enable it explicitly. */
-	supportsStrictMode?: boolean;
-	/** Whether to emit OpenAI custom tools with Lark/regex grammar formats. When false, grammar-constrained tools fall back to normal function tools. Default: false; the generated model catalog enables it for capable models. */
-	supportsOpenAIGrammarTools?: boolean;
-	/** Whether the model supports message-anchored `additional_tools` input items. Default: false. */
-	supportsAdditionalTools?: boolean;
-	/** Whether the model supports client-executed tool search for transcript-anchored additions. Default: false. */
-	supportsToolSearch?: boolean;
-	/** Whether the model accepts `prompt_cache_options` (OpenAI GPT-5.6+ prompt caching). Older OpenAI models reject the parameter. Default: false. */
-	supportsExplicitPromptCacheMode?: boolean;
-	/** Whether the provider accepts the `max_output_tokens` parameter. Some Codex-protocol gateways reject it. Default: true. */
-	supportsMaxOutputTokens?: boolean;
-}
-
-/** Compatibility settings for Anthropic Messages-compatible APIs. */
-export interface AnthropicMessagesCompat {
-	/**
-	 * Whether the provider accepts per-tool `eager_input_streaming`.
-	 * When false, the Anthropic provider omits `tools[].eager_input_streaming`
-	 * and sends the legacy `fine-grained-tool-streaming-2025-05-14` beta header
-	 * for tool-enabled requests.
-	 * Default: true.
-	 */
-	supportsEagerToolInputStreaming?: boolean;
-	/** Whether the provider supports Anthropic long cache retention (`cache_control.ttl: "1h"`). Default: true. */
-	supportsLongCacheRetention?: boolean;
-	/**
-	 * Whether to send the `x-session-affinity` header from `options.sessionId`
-	 * when caching is enabled. Required for providers like Fireworks that use
-	 * session affinity for prompt cache routing (requests to the same replica
-	 * maximize cache hits).
-	 * Default: false.
-	 */
-	sendSessionAffinityHeaders?: boolean;
-	/** Session-affinity format. `"openrouter"` sends `x-session-id`; when unset, sends `x-session-affinity`. */
-	sessionAffinityFormat?: "openrouter";
-	/**
-	 * Whether the provider supports Anthropic-style `cache_control` markers on
-	 * tool definitions. When false, `cache_control` is omitted from tool params.
-	 * Some Anthropic-compatible providers (e.g., Fireworks) do not support this
-	 * field on tools and may reject or ignore it.
-	 * Default: true.
-	 */
-	supportsCacheControlOnTools?: boolean;
-	/**
-	 * Whether the model accepts the Anthropic `temperature` request field.
-	 * Claude Opus 4.7+ rejects non-default temperature values.
-	 * Default: true.
-	 */
-	supportsTemperature?: boolean;
-	/**
-	 * Whether to force adaptive thinking (`thinking.type: "adaptive"` plus
-	 * `output_config.effort`) regardless of the model id. Built-in models that
-	 * require adaptive thinking set this in generated metadata. Custom
-	 * Anthropic-compatible providers can set this to `true` for any model whose
-	 * upstream requires the adaptive format. Set to `false` to
-	 * opt out on overridden built-in models.
-	 * Default: false.
-	 */
-	forceAdaptiveThinking?: boolean;
-	/** Whether to replay empty thinking signatures as `signature: ""` instead of converting thinking to text. Default: false. */
-	allowEmptySignature?: boolean;
-	/** Whether the provider supports Anthropic strict tool schemas. Default: false; generated Anthropic models enable it explicitly. */
-	supportsStrictTools?: boolean;
-	/** Whether the exact model transport supports effort-only system messages and thinking binding controls. Default: false. */
-	supportsMidConvoEffort?: boolean;
-	/** Whether the exact model accepts system-role messages inside the conversation. When false, later system messages are folded into the top-level system prompt. Default: false. */
-	supportsMidConvoSystemMessages?: boolean;
-	/** Whether the exact model accepts mid-conversation `tool_addition` and `tool_removal` blocks. Requires `supportsMidConvoSystemMessages`. Default: false. */
-	supportsMidConvoToolChanges?: boolean;
-	/**
-	 * Models Anthropic accepts in `fallbacks` for server-side refusal fallback,
-	 * with local pricing metadata for returned fallback responses. When absent or
-	 * empty, callers must omit `fallbacks`; Anthropic rejects the field for models
-	 * with no permitted fallback targets.
-	 */
-	allowedFallbackModels?: AnthropicAllowedFallbackModel[];
-}
-
-/** Compatibility settings for Amazon Bedrock models. */
-export interface BedrockCompat {
-	/** Whether the model supports Bedrock strict tool schemas. Default: false. */
-	supportsStrictMode?: boolean;
-}
-
-/** Compatibility settings for the Mistral chat API. */
-export interface MistralConversationsCompat {
-	/** Whether the exact model accepts system messages after the conversation has started. When false, later system messages are folded into the leading system message. Default: false. */
-	supportsMidConvoSystemMessages?: boolean;
-}
-
-/**
- * OpenRouter provider routing preferences.
- * Controls which upstream providers OpenRouter routes requests to.
- * Sent as the `provider` field in the OpenRouter API request body.
- * @see https://openrouter.ai/docs/guides/routing/provider-selection
- */
-export interface OpenRouterRouting {
-	/** Whether to allow backup providers to serve requests. Default: true. */
-	allow_fallbacks?: boolean;
-	/** Whether to filter providers to only those that support all parameters in the request. Default: false. */
-	require_parameters?: boolean;
-	/** Data collection setting. "allow" (default): allow providers that may store/train on data. "deny": only use providers that don't collect user data. */
-	data_collection?: "deny" | "allow";
-	/** Whether to restrict routing to only ZDR (Zero Data Retention) endpoints. */
-	zdr?: boolean;
-	/** Whether to restrict routing to only models that allow text distillation. */
-	enforce_distillable_text?: boolean;
-	/** An ordered list of provider names/slugs to try in sequence, falling back to the next if unavailable. */
-	order?: string[];
-	/** List of provider names/slugs to exclusively allow for this request. */
-	only?: string[];
-	/** List of provider names/slugs to skip for this request. */
-	ignore?: string[];
-	/** A list of quantization levels to filter providers by (e.g., ["fp16", "bf16", "fp8", "fp6", "int8", "int4", "fp4", "fp32"]). */
-	quantizations?: string[];
-	/** Sorting strategy. Can be a string (e.g., "price", "throughput", "latency") or an object with `by` and `partition`. */
-	sort?:
-		| string
-		| {
-				/** The sorting metric: "price", "throughput", "latency". */
-				by?: string;
-				/** Partitioning strategy: "model" (default) or "none". */
-				partition?: string | null;
-		  };
-	/** Maximum price per million tokens (USD). */
-	max_price?: {
-		/** Price per million prompt tokens. */
-		prompt?: number | string;
-		/** Price per million completion tokens. */
-		completion?: number | string;
-		/** Price per image. */
-		image?: number | string;
-		/** Price per audio unit. */
-		audio?: number | string;
-		/** Price per request. */
-		request?: number | string;
-	};
-	/** Preferred minimum throughput (tokens/second). Can be a number (applies to p50) or an object with percentile-specific cutoffs. */
-	preferred_min_throughput?:
-		| number
-		| {
-				/** Minimum tokens/second at the 50th percentile. */
-				p50?: number;
-				/** Minimum tokens/second at the 75th percentile. */
-				p75?: number;
-				/** Minimum tokens/second at the 90th percentile. */
-				p90?: number;
-				/** Minimum tokens/second at the 99th percentile. */
-				p99?: number;
-		  };
-	/** Preferred maximum latency (seconds). Can be a number (applies to p50) or an object with percentile-specific cutoffs. */
-	preferred_max_latency?:
-		| number
-		| {
-				/** Maximum latency in seconds at the 50th percentile. */
-				p50?: number;
-				/** Maximum latency in seconds at the 75th percentile. */
-				p75?: number;
-				/** Maximum latency in seconds at the 90th percentile. */
-				p90?: number;
-				/** Maximum latency in seconds at the 99th percentile. */
-				p99?: number;
-		  };
-}
-
-/**
- * Vercel AI Gateway routing preferences.
- * Controls which upstream providers the gateway routes requests to.
- * @see https://vercel.com/docs/ai-gateway/models-and-providers/provider-options
- */
-export interface VercelGatewayRouting {
-	/** List of provider slugs to exclusively use for this request (e.g., ["bedrock", "anthropic"]). */
-	only?: string[];
-	/** List of provider slugs to try in order (e.g., ["anthropic", "openai"]). */
-	order?: string[];
-}
 
 export interface ModelCostRates {
 	input: number; // $/million tokens

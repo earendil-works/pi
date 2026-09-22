@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { loadThemeFromPath, setThemeJsonValidator } from "../src/modes/interactive/theme/theme.ts";
-import { validateThemeJson } from "../src/modes/interactive/theme/theme-json.ts";
+import { validateThemeJson } from "../src/modes/interactive/theme/theme-schema.ts";
 
 setThemeJsonValidator(validateThemeJson);
 

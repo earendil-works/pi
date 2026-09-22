@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- Moved the published theme JSON Schema to `schemas/theme.schema.json`. Update existing theme `$schema` references to the new path.
+
 ### Changed
 
 - Changed the default xAI model to Grok 4.7.

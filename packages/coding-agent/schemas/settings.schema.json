@@ -1,0 +1,727 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/earendil-works/pi/main/packages/coding-agent/schemas/settings.schema.json",
+  "$comment": "This file is generated from TypeScript source. Do not edit it manually; run npm run generate:schemas.",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "JSON Schema reference."
+    },
+    "lastChangelogVersion": {
+      "type": "string"
+    },
+    "defaultProvider": {
+      "type": "string"
+    },
+    "defaultModel": {
+      "type": "string"
+    },
+    "defaultThinkingLevel": {
+      "anyOf": [
+        {
+          "type": "string",
+          "const": "off"
+        },
+        {
+          "type": "string",
+          "const": "minimal"
+        },
+        {
+          "type": "string",
+          "const": "low"
+        },
+        {
+          "type": "string",
+          "const": "medium"
+        },
+        {
+          "type": "string",
+          "const": "high"
+        },
+        {
+          "type": "string",
+          "const": "xhigh"
+        },
+        {
+          "type": "string",
+          "const": "max"
+        }
+      ]
+    },
+    "modelThinkingLevels": {
+      "type": "object",
+      "patternProperties": {
+        "^.*$": {
+          "anyOf": [
+            {
+              "type": "string",
+              "const": "off"
+            },
+            {
+              "type": "string",
+              "const": "minimal"
+            },
+            {
+              "type": "string",
+              "const": "low"
+            },
+            {
+              "type": "string",
+              "const": "medium"
+            },
+            {
+              "type": "string",
+              "const": "high"
+            },
+            {
+              "type": "string",
+              "const": "xhigh"
+            },
+            {
+              "type": "string",
+              "const": "max"
+            }
+          ]
+        }
+      },
+      "description": "Per-model default thinking level overrides keyed by \"provider/modelId\"."
+    },
+    "transport": {
+      "anyOf": [
+        {
+          "type": "string",
+          "const": "auto"
+        },
+        {
+          "type": "string",
+          "const": "sse"
+        },
+        {
+          "type": "string",
+          "const": "websocket"
+        },
+        {
+          "type": "string",
+          "const": "websocket-cached"
+        }
+      ],
+      "default": "auto"
+    },
+    "steeringMode": {
+      "anyOf": [
+        {
+          "type": "string",
+          "const": "all"
+        },
+        {
+          "type": "string",
+          "const": "one-at-a-time"
+        }
+      ]
+    },
+    "followUpMode": {
+      "anyOf": [
+        {
+          "type": "string",
+          "const": "all"
+        },
+        {
+          "type": "string",
+          "const": "one-at-a-time"
+        }
+      ]
+    },
+    "theme": {
+      "type": "string"
+    },
+    "compaction": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "reserveTokens": {
+          "type": "number",
+          "default": 16384
+        },
+        "keepRecentTokens": {
+          "type": "number",
+          "default": 20000
+        },
+        "modelOverrides": {
+          "type": "object",
+          "patternProperties": {
+            "^.*$": {
+              "type": "object",
+              "properties": {
+                "reserveTokens": {
+                  "type": "number"
+                },
+                "keepRecentTokens": {
+                  "type": "number"
+                }
+              }
+            }
+          },
+          "description": "Per-model overrides keyed by exact \"provider/modelId\" strings."
+        }
+      }
+    },
+    "branchSummary": {
+      "type": "object",
+      "properties": {
+        "reserveTokens": {
+          "type": "number",
+          "description": "Tokens reserved for the prompt and LLM response.",
+          "default": 16384
+        },
+        "skipPrompt": {
+          "type": "boolean",
+          "description": "When true, skips the \"Summarize branch?\" prompt and defaults to no summary.",
+          "default": false
+        }
+      }
+    },
+    "retry": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "maxRetries": {
+          "type": "number",
+          "default": 3
+        },
+        "baseDelayMs": {
+          "type": "number",
+          "description": "Exponential backoff base delay in milliseconds: 2s, 4s, 8s.",
+          "default": 2000
+        },
+        "maxAgentDelayMs": {
+          "type": "number",
+          "default": 60000
+        },
+        "provider": {
+          "type": "object",
+          "properties": {
+            "timeoutMs": {
+              "type": "number",
+              "description": "SDK or provider request timeout in milliseconds."
+            },
+            "maxRetries": {
+              "type": "number",
+              "description": "SDK or provider retry attempts."
+            },
+            "maxRetryDelayMs": {
+              "type": "number",
+              "description": "Maximum server-requested delay before failing.",
+              "default": 60000
+            }
+          }
+        },
+        "maxDelayMs": {
+          "type": "number",
+          "description": "Legacy retry delay setting. Use maxAgentDelayMs instead.",
+          "deprecated": true
+        }
+      }
+    },
+    "hideThinkingBlock": {
+      "type": "boolean"
+    },
+    "showCacheMissNotices": {
+      "type": "boolean",
+      "description": "Show cache cost and provider recovery notices.",
+      "default": false
+    },
+    "externalEditor": {
+      "type": "string",
+      "description": "Command for Ctrl+G external editor; takes precedence over VISUAL and EDITOR."
+    },
+    "shellPath": {
+      "type": "string",
+      "description": "Custom shell path, with support for leading ~ expansion."
+    },
+    "quietStartup": {
+      "type": "boolean"
+    },
+    "defaultProjectTrust": {
+      "anyOf": [
+        {
+          "type": "string",
+          "const": "ask"
+        },
+        {
+          "type": "string",
+          "const": "always"
+        },
+        {
+          "type": "string",
+          "const": "never"
+        }
+      ],
+      "description": "Global setting only.",
+      "default": "ask"
+    },
+    "shellCommandPrefix": {
+      "type": "string",
+      "description": "Prefix prepended to every bash command, for example to enable shell aliases."
+    },
+    "npmCommand": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Command used for npm package lookup and installation, in argv form such as [\"mise\", \"exec\", \"node@20\", \"--\", \"npm\"]."
+    },
+    "collapseChangelog": {
+      "type": "boolean",
+      "description": "Show the condensed changelog after update; use /changelog for the full changelog."
+    },
+    "enableInstallTelemetry": {
+      "type": "boolean",
+      "description": "Send an anonymous version and update ping after changelog-detected updates.",
+      "default": true
+    },
+    "enableAnalytics": {
+      "type": "boolean",
+      "description": "Opt in to analytics data sharing.",
+      "default": false
+    },
+    "trackingId": {
+      "type": "string",
+      "description": "Analytics tracking identifier, generated when analytics is enabled."
+    },
+    "packages": {
+      "type": "array",
+      "items": {
+        "anyOf": [
+          {
+            "type": "string",
+            "description": "Load all resources from the package."
+          },
+          {
+            "type": "object",
+            "required": [
+              "source"
+            ],
+            "properties": {
+              "source": {
+                "type": "string"
+              },
+              "autoload": {
+                "type": "boolean",
+                "description": "When false, start empty and only apply explicit resource patterns."
+              },
+              "extensions": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "skills": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "prompts": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "themes": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        ],
+        "description": "Package source for npm or git packages. Use the string form to load all resources or the object form to filter resources."
+      },
+      "description": "npm or git package sources, as strings or objects with resource filtering."
+    },
+    "extensions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Local extension file paths or directories."
+    },
+    "skills": {
+      "anyOf": [
+        {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "enableSkillCommands": {
+              "type": "boolean"
+            },
+            "customDirectories": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "deprecated": true
+        }
+      ],
+      "description": "Local skill file paths or directories."
+    },
+    "prompts": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Local prompt template file paths or directories."
+    },
+    "themes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Local theme file paths or directories."
+    },
+    "enableSkillCommands": {
+      "type": "boolean",
+      "description": "Register skills as /skill:name commands.",
+      "default": true
+    },
+    "terminal": {
+      "type": "object",
+      "properties": {
+        "showImages": {
+          "type": "boolean",
+          "description": "Show images when the terminal supports them.",
+          "default": true
+        },
+        "imageWidthCells": {
+          "type": "number",
+          "description": "Preferred inline image width in terminal cells.",
+          "default": 60
+        },
+        "clearOnShrink": {
+          "type": "boolean",
+          "description": "Clear empty rows when content shrinks.",
+          "default": false
+        },
+        "showTerminalProgress": {
+          "type": "boolean",
+          "description": "Show OSC 9;4 terminal progress indicators.",
+          "default": false
+        },
+        "hyperlinks": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "string",
+              "const": "auto"
+            }
+          ]
+        },
+        "images": {
+          "anyOf": [
+            {
+              "type": "string",
+              "const": "kitty"
+            },
+            {
+              "type": "string",
+              "const": "iterm2"
+            },
+            {
+              "type": "string",
+              "const": "auto"
+            },
+            {
+              "type": "boolean",
+              "const": false
+            }
+          ]
+        },
+        "trueColor": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "string",
+              "const": "auto"
+            }
+          ]
+        }
+      }
+    },
+    "images": {
+      "type": "object",
+      "properties": {
+        "autoResize": {
+          "type": "boolean",
+          "description": "Resize images to 2000x2000 maximum for better model compatibility.",
+          "default": true
+        },
+        "blockImages": {
+          "type": "boolean",
+          "description": "When true, prevents all images from being sent to LLM providers.",
+          "default": false
+        }
+      }
+    },
+    "enabledModels": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Model patterns for cycling, in the same format as the --models CLI flag."
+    },
+    "defaultTools": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Initial built-in tool selection."
+    },
+    "doubleEscapeAction": {
+      "anyOf": [
+        {
+          "type": "string",
+          "const": "fork"
+        },
+        {
+          "type": "string",
+          "const": "tree"
+        },
+        {
+          "type": "string",
+          "const": "none"
+        }
+      ],
+      "description": "Action for double-escape with an empty editor.",
+      "default": "tree"
+    },
+    "treeFilterMode": {
+      "anyOf": [
+        {
+          "type": "string",
+          "const": "default"
+        },
+        {
+          "type": "string",
+          "const": "no-tools"
+        },
+        {
+          "type": "string",
+          "const": "user-only"
+        },
+        {
+          "type": "string",
+          "const": "labeled-only"
+        },
+        {
+          "type": "string",
+          "const": "all"
+        }
+      ],
+      "description": "Default filter when opening /tree."
+    },
+    "thinkingBudgets": {
+      "type": "object",
+      "properties": {
+        "minimal": {
+          "type": "number"
+        },
+        "low": {
+          "type": "number"
+        },
+        "medium": {
+          "type": "number"
+        },
+        "high": {
+          "type": "number"
+        }
+      },
+      "description": "Custom token budgets for thinking levels."
+    },
+    "editorPaddingX": {
+      "type": "number",
+      "description": "Horizontal padding for the input editor.",
+      "default": 0
+    },
+    "outputPad": {
+      "anyOf": [
+        {
+          "type": "number",
+          "const": 0
+        },
+        {
+          "type": "number",
+          "const": 1
+        }
+      ],
+      "description": "Horizontal padding for chat message output.",
+      "default": 1
+    },
+    "autocompleteMaxVisible": {
+      "type": "number",
+      "description": "Maximum visible items in the autocomplete dropdown.",
+      "default": 5
+    },
+    "showHardwareCursor": {
+      "type": "boolean",
+      "description": "Show the terminal cursor while still positioning it for IME."
+    },
+    "markdown": {
+      "type": "object",
+      "properties": {
+        "codeBlockIndent": {
+          "type": "string",
+          "default": "  "
+        },
+        "mermaid": {
+          "anyOf": [
+            {
+              "type": "string",
+              "const": "off"
+            },
+            {
+              "type": "string",
+              "const": "final"
+            },
+            {
+              "type": "string",
+              "const": "streaming"
+            }
+          ],
+          "default": "streaming"
+        }
+      }
+    },
+    "warnings": {
+      "type": "object",
+      "properties": {
+        "anthropicExtraUsage": {
+          "type": "boolean",
+          "default": true
+        }
+      }
+    },
+    "sessionDir": {
+      "type": "string",
+      "description": "Custom session storage directory, in the same format as the --session-dir CLI flag."
+    },
+    "httpProxy": {
+      "type": "string",
+      "description": "Proxy URL applied as HTTP_PROXY and HTTPS_PROXY for Pi-managed HTTP clients."
+    },
+    "httpIdleTimeoutMs": {
+      "type": "number",
+      "description": "HTTP header or body idle timeout in milliseconds; 0 disables it."
+    },
+    "cacheWarming": {
+      "anyOf": [
+        {
+          "type": "string",
+          "const": "off"
+        },
+        {
+          "type": "string",
+          "const": "streaming"
+        },
+        {
+          "type": "string",
+          "const": "idle"
+        }
+      ],
+      "description": "Cache-warming profile. \"idle\" also warms between agent runs. Global only because each refresh costs money.",
+      "default": "streaming"
+    },
+    "websocketConnectTimeoutMs": {
+      "type": "number",
+      "description": "WebSocket connect or open handshake timeout in milliseconds; 0 disables it."
+    },
+    "tuiMode": {
+      "anyOf": [
+        {
+          "type": "string",
+          "const": "regular"
+        },
+        {
+          "type": "string",
+          "const": "fullscreen"
+        }
+      ],
+      "default": "regular"
+    },
+    "fullscreenExitOutput": {
+      "anyOf": [
+        {
+          "type": "string",
+          "const": "transcript"
+        },
+        {
+          "type": "string",
+          "const": "resume-hint"
+        }
+      ],
+      "description": "No effect in regular TUI mode.",
+      "default": "transcript"
+    },
+    "fullscreenScrollbar": {
+      "anyOf": [
+        {
+          "type": "string",
+          "const": "auto"
+        },
+        {
+          "type": "string",
+          "const": "always"
+        },
+        {
+          "type": "string",
+          "const": "hidden"
+        }
+      ],
+      "description": "No effect in regular TUI mode.",
+      "default": "auto"
+    },
+    "fullscreenCopyOnSelect": {
+      "type": "boolean",
+      "description": "No effect in regular TUI mode.",
+      "default": true
+    },
+    "queueMode": {
+      "anyOf": [
+        {
+          "type": "string",
+          "const": "all"
+        },
+        {
+          "type": "string",
+          "const": "one-at-a-time"
+        }
+      ],
+      "description": "Legacy setting migrated to steeringMode and followUpMode.",
+      "deprecated": true
+    },
+    "websockets": {
+      "type": "boolean",
+      "description": "Legacy setting migrated to transport.",
+      "deprecated": true
+    }
+  },
+  "additionalProperties": true
+}
