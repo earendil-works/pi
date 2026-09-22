@@ -306,6 +306,7 @@ function isLegacyKeybindingName(key: string): key is keyof typeof KEYBINDING_NAM
 function toKeybindingsConfig(value: Record<string, unknown>): KeybindingsConfig {
 	const config: KeybindingsConfig = {};
 	for (const [key, binding] of Object.entries(value)) {
+		if (key === "$schema") continue;
 		if (typeof binding === "string") {
 			config[key] = binding as KeyId;
 			continue;

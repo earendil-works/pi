@@ -1,0 +1,639 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/earendil-works/pi/main/packages/coding-agent/schemas/settings.schema.json",
+  "$comment": "This file is generated from TypeScript source. Do not edit it manually; run npm run generate:schemas.",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "lastChangelogVersion": {
+      "type": "string"
+    },
+    "defaultProvider": {
+      "type": "string"
+    },
+    "defaultModel": {
+      "type": "string"
+    },
+    "defaultThinkingLevel": {
+      "anyOf": [
+        {
+          "type": "string",
+          "const": "off"
+        },
+        {
+          "type": "string",
+          "const": "minimal"
+        },
+        {
+          "type": "string",
+          "const": "low"
+        },
+        {
+          "type": "string",
+          "const": "medium"
+        },
+        {
+          "type": "string",
+          "const": "high"
+        },
+        {
+          "type": "string",
+          "const": "xhigh"
+        },
+        {
+          "type": "string",
+          "const": "max"
+        }
+      ]
+    },
+    "modelThinkingLevels": {
+      "type": "object",
+      "patternProperties": {
+        "^.*$": {
+          "anyOf": [
+            {
+              "type": "string",
+              "const": "off"
+            },
+            {
+              "type": "string",
+              "const": "minimal"
+            },
+            {
+              "type": "string",
+              "const": "low"
+            },
+            {
+              "type": "string",
+              "const": "medium"
+            },
+            {
+              "type": "string",
+              "const": "high"
+            },
+            {
+              "type": "string",
+              "const": "xhigh"
+            },
+            {
+              "type": "string",
+              "const": "max"
+            }
+          ]
+        }
+      }
+    },
+    "transport": {
+      "anyOf": [
+        {
+          "type": "string",
+          "const": "auto"
+        },
+        {
+          "type": "string",
+          "const": "sse"
+        },
+        {
+          "type": "string",
+          "const": "websocket"
+        },
+        {
+          "type": "string",
+          "const": "websocket-cached"
+        }
+      ]
+    },
+    "steeringMode": {
+      "anyOf": [
+        {
+          "type": "string",
+          "const": "all"
+        },
+        {
+          "type": "string",
+          "const": "one-at-a-time"
+        }
+      ]
+    },
+    "followUpMode": {
+      "anyOf": [
+        {
+          "type": "string",
+          "const": "all"
+        },
+        {
+          "type": "string",
+          "const": "one-at-a-time"
+        }
+      ]
+    },
+    "theme": {
+      "type": "string"
+    },
+    "compaction": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "reserveTokens": {
+          "type": "number"
+        },
+        "keepRecentTokens": {
+          "type": "number"
+        },
+        "modelOverrides": {
+          "type": "object",
+          "patternProperties": {
+            "^.*$": {
+              "type": "object",
+              "properties": {
+                "reserveTokens": {
+                  "type": "number"
+                },
+                "keepRecentTokens": {
+                  "type": "number"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "branchSummary": {
+      "type": "object",
+      "properties": {
+        "reserveTokens": {
+          "type": "number"
+        },
+        "skipPrompt": {
+          "type": "boolean"
+        }
+      }
+    },
+    "retry": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "maxRetries": {
+          "type": "number"
+        },
+        "baseDelayMs": {
+          "type": "number"
+        },
+        "maxAgentDelayMs": {
+          "type": "number"
+        },
+        "provider": {
+          "type": "object",
+          "properties": {
+            "timeoutMs": {
+              "type": "number"
+            },
+            "maxRetries": {
+              "type": "number"
+            },
+            "maxRetryDelayMs": {
+              "type": "number"
+            }
+          }
+        },
+        "maxDelayMs": {
+          "type": "number",
+          "deprecated": true
+        }
+      }
+    },
+    "hideThinkingBlock": {
+      "type": "boolean"
+    },
+    "showCacheMissNotices": {
+      "type": "boolean"
+    },
+    "externalEditor": {
+      "type": "string"
+    },
+    "shellPath": {
+      "type": "string"
+    },
+    "quietStartup": {
+      "type": "boolean"
+    },
+    "defaultProjectTrust": {
+      "anyOf": [
+        {
+          "type": "string",
+          "const": "ask"
+        },
+        {
+          "type": "string",
+          "const": "always"
+        },
+        {
+          "type": "string",
+          "const": "never"
+        }
+      ]
+    },
+    "shellCommandPrefix": {
+      "type": "string"
+    },
+    "npmCommand": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "collapseChangelog": {
+      "type": "boolean"
+    },
+    "enableInstallTelemetry": {
+      "type": "boolean"
+    },
+    "enableAnalytics": {
+      "type": "boolean"
+    },
+    "trackingId": {
+      "type": "string"
+    },
+    "packages": {
+      "type": "array",
+      "items": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "object",
+            "required": [
+              "source"
+            ],
+            "properties": {
+              "source": {
+                "type": "string"
+              },
+              "autoload": {
+                "type": "boolean"
+              },
+              "extensions": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "skills": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "prompts": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "themes": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    "extensions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "skills": {
+      "anyOf": [
+        {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "enableSkillCommands": {
+              "type": "boolean"
+            },
+            "customDirectories": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "deprecated": true
+        }
+      ]
+    },
+    "prompts": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "themes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "enableSkillCommands": {
+      "type": "boolean"
+    },
+    "terminal": {
+      "type": "object",
+      "properties": {
+        "showImages": {
+          "type": "boolean"
+        },
+        "imageWidthCells": {
+          "type": "number"
+        },
+        "clearOnShrink": {
+          "type": "boolean"
+        },
+        "showTerminalProgress": {
+          "type": "boolean"
+        },
+        "hyperlinks": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "string",
+              "const": "auto"
+            }
+          ]
+        },
+        "images": {
+          "anyOf": [
+            {
+              "type": "string",
+              "const": "kitty"
+            },
+            {
+              "type": "string",
+              "const": "iterm2"
+            },
+            {
+              "type": "string",
+              "const": "auto"
+            },
+            {
+              "type": "boolean",
+              "const": false
+            }
+          ]
+        },
+        "trueColor": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "string",
+              "const": "auto"
+            }
+          ]
+        }
+      }
+    },
+    "images": {
+      "type": "object",
+      "properties": {
+        "autoResize": {
+          "type": "boolean"
+        },
+        "blockImages": {
+          "type": "boolean"
+        }
+      }
+    },
+    "enabledModels": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "defaultTools": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "doubleEscapeAction": {
+      "anyOf": [
+        {
+          "type": "string",
+          "const": "fork"
+        },
+        {
+          "type": "string",
+          "const": "tree"
+        },
+        {
+          "type": "string",
+          "const": "none"
+        }
+      ]
+    },
+    "treeFilterMode": {
+      "anyOf": [
+        {
+          "type": "string",
+          "const": "default"
+        },
+        {
+          "type": "string",
+          "const": "no-tools"
+        },
+        {
+          "type": "string",
+          "const": "user-only"
+        },
+        {
+          "type": "string",
+          "const": "labeled-only"
+        },
+        {
+          "type": "string",
+          "const": "all"
+        }
+      ]
+    },
+    "thinkingBudgets": {
+      "type": "object",
+      "properties": {
+        "minimal": {
+          "type": "number"
+        },
+        "low": {
+          "type": "number"
+        },
+        "medium": {
+          "type": "number"
+        },
+        "high": {
+          "type": "number"
+        }
+      }
+    },
+    "editorPaddingX": {
+      "type": "number"
+    },
+    "outputPad": {
+      "anyOf": [
+        {
+          "type": "number",
+          "const": 0
+        },
+        {
+          "type": "number",
+          "const": 1
+        }
+      ]
+    },
+    "autocompleteMaxVisible": {
+      "type": "number"
+    },
+    "showHardwareCursor": {
+      "type": "boolean"
+    },
+    "markdown": {
+      "type": "object",
+      "properties": {
+        "codeBlockIndent": {
+          "type": "string"
+        },
+        "mermaid": {
+          "anyOf": [
+            {
+              "type": "string",
+              "const": "off"
+            },
+            {
+              "type": "string",
+              "const": "final"
+            },
+            {
+              "type": "string",
+              "const": "streaming"
+            }
+          ]
+        }
+      }
+    },
+    "warnings": {
+      "type": "object",
+      "properties": {
+        "anthropicExtraUsage": {
+          "type": "boolean"
+        }
+      }
+    },
+    "sessionDir": {
+      "type": "string"
+    },
+    "httpProxy": {
+      "type": "string"
+    },
+    "httpIdleTimeoutMs": {
+      "type": "number"
+    },
+    "cacheWarming": {
+      "anyOf": [
+        {
+          "type": "string",
+          "const": "off"
+        },
+        {
+          "type": "string",
+          "const": "streaming"
+        },
+        {
+          "type": "string",
+          "const": "idle"
+        }
+      ]
+    },
+    "websocketConnectTimeoutMs": {
+      "type": "number"
+    },
+    "tuiMode": {
+      "anyOf": [
+        {
+          "type": "string",
+          "const": "regular"
+        },
+        {
+          "type": "string",
+          "const": "fullscreen"
+        }
+      ]
+    },
+    "fullscreenExitOutput": {
+      "anyOf": [
+        {
+          "type": "string",
+          "const": "transcript"
+        },
+        {
+          "type": "string",
+          "const": "resume-hint"
+        }
+      ]
+    },
+    "fullscreenScrollbar": {
+      "anyOf": [
+        {
+          "type": "string",
+          "const": "auto"
+        },
+        {
+          "type": "string",
+          "const": "always"
+        },
+        {
+          "type": "string",
+          "const": "hidden"
+        }
+      ]
+    },
+    "fullscreenCopyOnSelect": {
+      "type": "boolean"
+    },
+    "queueMode": {
+      "anyOf": [
+        {
+          "type": "string",
+          "const": "all"
+        },
+        {
+          "type": "string",
+          "const": "one-at-a-time"
+        }
+      ],
+      "deprecated": true
+    },
+    "websockets": {
+      "type": "boolean",
+      "deprecated": true
+    }
+  },
+  "additionalProperties": true
+}
