@@ -111,7 +111,7 @@ describe("AgentSession model and extension characterization", () => {
 		expect(harness.settingsManager.getDefaultThinkingLevel()).toBe("low");
 	});
 
-	it("applies per-model thinking level override on model switch", async () => {
+	it("inherits the current level after leaving a model with a thinking override", async () => {
 		const harness = await createHarness({
 			models: [
 				{ id: "faux-1", name: "One", reasoning: true },
@@ -124,7 +124,7 @@ describe("AgentSession model and extension characterization", () => {
 		// Set a per-model override for faux-2
 		harness.settingsManager.setModelThinkingLevel("faux", "faux-2", "low");
 
-		// Session starts on faux-1 with default thinking
+		// Manually select high on faux-1; the global startup default remains medium.
 		harness.session.setThinkingLevel("high");
 		expect(harness.session.thinkingLevel).toBe("high");
 
@@ -133,10 +133,11 @@ describe("AgentSession model and extension characterization", () => {
 		await harness.session.setModel(model2);
 		expect(harness.session.thinkingLevel).toBe("low");
 
-		// Switch back to faux-1 → no per-model override, uses global default
+		// faux-1 has no override, so it inherits faux-2's low, not the earlier high or startup medium.
 		const model1 = harness.getModel("faux-1")!;
 		await harness.session.setModel(model1);
-		expect(harness.session.thinkingLevel).toBe("medium");
+		expect(harness.session.thinkingLevel).toBe("low");
+		expect(harness.settingsManager.getDefaultThinkingLevel()).toBe("medium");
 	});
 
 	it("falls back to current session thinking level when no per-model or global default is configured", async () => {

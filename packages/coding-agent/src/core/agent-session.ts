@@ -69,7 +69,7 @@ import {
 	prepareCompaction,
 	shouldCompact,
 } from "./compaction/index.ts";
-import { DEFAULT_THINKING_LEVEL, THINKING_LEVEL_OPTIONS } from "./defaults.ts";
+import { THINKING_LEVEL_OPTIONS } from "./defaults.ts";
 import { exportSessionToHtml, type ToolHtmlRenderer } from "./export-html/index.ts";
 import { createToolHtmlRenderer } from "./export-html/tool-renderer.ts";
 import {
@@ -321,6 +321,8 @@ export class AgentSession {
 	readonly settingsManager: SettingsManager;
 
 	private _scopedModels: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel }>;
+	/** Thinking level to restore after a capability clamp; not persisted. */
+	private _thinkingLevelBeforeClamp: ThinkingLevel | undefined;
 
 	// Event subscription state
 	private _unsubscribeAgent?: () => void;
@@ -1840,7 +1842,7 @@ export class AgentSession {
 		}
 
 		// Apply thinking level for the new model.
-		// Per-model thinking level overrides take priority over the global default.
+		// Per-model thinking level overrides take priority over the cached pre-clamp or current level.
 		// Model persistence does not implicitly rewrite the global thinking default.
 		this.setThinkingLevel(thinkingLevel);
 
@@ -1907,8 +1909,8 @@ export class AgentSession {
 		}
 
 		// Apply thinking level for the new model.
-		// - Explicit scoped model thinking level overrides defaults
-		// - Per-model thinking level overrides take priority over the global default
+		// - Explicit scoped model thinking level overrides per-model defaults
+		// - Per-model thinking level overrides take priority over the cached pre-clamp or current level
 		// setThinkingLevel clamps to model capabilities.
 		// Model persistence does not implicitly rewrite the global thinking default.
 		this.setThinkingLevel(thinkingLevel);
@@ -1958,7 +1960,7 @@ export class AgentSession {
 	 * Set thinking level.
 	 * Clamps to model capabilities based on available thinking levels.
 	 * Saves the clamped level to the session transcript only if the level actually changes.
-	 * Persists the requested level to global defaults only when options.persist is true.
+	 * Persists the supplied level to global defaults only when options.persist is true.
 	 */
 	setThinkingLevel(level: ThinkingLevel, options: ModelMutationOptions = {}): void {
 		const availableLevels = this.getAvailableThinkingLevels();
@@ -1968,6 +1970,10 @@ export class AgentSession {
 		const previousLevel = this.agent.state.thinkingLevel;
 		const isChanging = effectiveLevel !== previousLevel;
 
+		// Remember only values lost to clamping. Reapplying the current level is a no-op.
+		if (isChanging || effectiveLevel !== level) {
+			this._thinkingLevelBeforeClamp = effectiveLevel !== level ? level : undefined;
+		}
 		this.agent.state.thinkingLevel = effectiveLevel;
 
 		if (options.persist) {
@@ -2019,16 +2025,19 @@ export class AgentSession {
 
 	private _getThinkingLevelForModelSwitch(targetModel?: Model<any>, explicitLevel?: ThinkingLevel): ThinkingLevel {
 		if (explicitLevel !== undefined) {
+			// Overrides replace the inherited level, including any pending clamp restoration.
+			this._thinkingLevelBeforeClamp = undefined;
 			return explicitLevel;
 		}
 		// Per-model default takes priority when switching to a model that has one
 		if (targetModel) {
 			const perModel = this.settingsManager.getModelThinkingLevel(targetModel.provider, targetModel.id);
 			if (perModel !== undefined) {
+				this._thinkingLevelBeforeClamp = undefined;
 				return perModel;
 			}
 		}
-		return this.settingsManager.getDefaultThinkingLevel() ?? this.thinkingLevel ?? DEFAULT_THINKING_LEVEL;
+		return this._thinkingLevelBeforeClamp ?? this.thinkingLevel;
 	}
 
 	private _clampThinkingLevel(level: ThinkingLevel, _availableLevels: ThinkingLevel[]): ThinkingLevel {
