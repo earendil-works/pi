@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import type { Provider } from "@earendil-works/pi-ai";
 import type { KeyId } from "@earendil-works/pi-tui";
 import type { createJiti } from "jiti";
+import { minimatch } from "minimatch";
 import { CONFIG_DIR_NAME, getAgentDir, isBunBinary, isBundledNode } from "../../config.ts";
 import { resolvePath } from "../../utils/paths.ts";
 import { createEventBus, type EventBus } from "../event-bus.ts";
@@ -667,21 +668,49 @@ function isExtensionFile(name: string): boolean {
  *
  * Returns resolved paths or null if no entry points found.
  */
+function isExtensionGlob(entry: string): boolean {
+	return entry.includes("*") || entry.includes("?");
+}
+
+function isExcludedExtension(entryPath: string, dir: string, excludes: string[]): boolean {
+	const relativePath = path.relative(dir, entryPath).split(path.sep).join("/");
+	return excludes.some((exclude) => minimatch(relativePath, exclude));
+}
+
 function resolveExtensionEntries(dir: string): string[] | null {
 	// Check for package.json with "pi" field first
 	const packageJsonPath = path.join(dir, "package.json");
 	if (fs.existsSync(packageJsonPath)) {
 		const manifest = readPiManifest(packageJsonPath);
 		if (manifest?.extensions?.length) {
-			const entries: string[] = [];
-			for (const extPath of manifest.extensions) {
-				const resolvedExtPath = path.resolve(dir, extPath);
-				if (fs.existsSync(resolvedExtPath)) {
-					entries.push(resolvedExtPath);
+			const includes = manifest.extensions.filter((entry) => !entry.startsWith("!"));
+			const excludes = manifest.extensions
+				.filter((entry) => entry.startsWith("!"))
+				.map((entry) => entry.slice(1).replace(/^\.\//, ""));
+			const entries = new Set<string>();
+
+			for (const extPath of includes) {
+				const candidates = isExtensionGlob(extPath)
+					? (fs.globSync(extPath, { cwd: dir }) ?? []).map((match) => path.resolve(dir, match))
+					: [path.resolve(dir, extPath)];
+
+				for (const candidate of candidates) {
+					if (!fs.existsSync(candidate)) continue;
+					if (fs.statSync(candidate).isDirectory()) {
+						for (const expandedEntry of discoverExtensionsInDir(candidate)) {
+							entries.add(expandedEntry);
+						}
+					} else {
+						entries.add(candidate);
+					}
 				}
 			}
-			if (entries.length > 0) {
-				return entries;
+
+			const filtered = [...entries]
+				.filter((entry) => !isExcludedExtension(entry, dir, excludes))
+				.sort((a, b) => a.localeCompare(b));
+			if (filtered.length > 0) {
+				return filtered;
 			}
 		}
 	}
