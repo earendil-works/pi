@@ -30,11 +30,24 @@ Use `/trust` in interactive mode to save a project trust decision for future ses
 | `defaultProvider` | string | - | Startup provider (e.g., `"anthropic"`, `"openai"`; saved with Ctrl+S in `/model`, or edited manually) |
 | `defaultModel` | string | - | Startup model ID (saved with Ctrl+S in `/model`, or edited manually) |
 | `defaultThinkingLevel` | string | - | Startup thinking level (saved with Ctrl+S in `/thinking`, or edited manually): `"off"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"` |
-| `modelThinkingLevels` | object | - | Per-model startup thinking levels keyed by `"provider/modelId"`; configure from `/settings` → Default thinking level per model or edit manually |
+| `modelThinkingLevels` | object | - | Per-model thinking defaults applied at startup and on model switches, keyed by `"provider/modelId"`; configure from `/settings` → Default thinking level per model or edit manually |
 | `hideThinkingBlock` | boolean | `false` | Hide thinking blocks in output |
 | `showCacheMissNotices` | boolean | `false` | Show transcript notices for significant prompt-cache misses, successful cache-warming usage, compaction or branch-summary usage, and provider recovery diagnostics such as dropped Anthropic thinking blocks |
 | `thinkingBudgets` | object | - | Custom token budgets per thinking level. Anthropic, Google, and Bedrock use these natively. OpenAI-compatible models use them when `compat.thinkingTokenBudgetField` (or `supportsThinkingTokenBudget`) is set. |
 | `cacheWarming` | string | `"streaming"` | Prompt cache-warming mode: `"off"`, `"streaming"`, or `"idle"`. Global setting only. |
+
+#### Thinking Level on Model Switches
+
+Switching models normally keeps your current thinking level rather than resetting it to `defaultThinkingLevel`. A `modelThinkingLevels` entry for the target model takes precedence. When cycling models, an explicit `:<thinking>` suffix in `--models` or `enabledModels` takes precedence over that entry.
+
+If you switch to a model that cannot use the current level, Pi uses a supported level instead. Switching to a capable model restores the earlier level, unless you choose a different supported level or switch to a model with an override. For example:
+
+- Without overrides: `high` → a model without thinking (`off`) → a model supporting `high` (`high`).
+- With an override: `high` → a model configured to use `low` → another model without an override (`low`).
+
+Selecting the level already displayed leaves this behavior unchanged. In particular, selecting `off` while thinking is automatically disabled does not prevent the earlier level from returning on a capable model.
+
+Reopening or forking a session resumes with the level used at the saved point. If that level was `off`, later model switches inherit `off`, not an earlier `high`.
 
 #### Cache Warming
 
