@@ -8,7 +8,7 @@ Themes control the colors Pi uses in interactive mode and HTML exports. Pi inclu
 
 Open `/settings` and select **Theme**. You can use one theme for every terminal appearance or choose separate themes for light and dark terminals.
 
-The selection is saved as the `theme` [setting](settings-reference.md#ui--display):
+The selection is saved as the `theme` [setting](settings.md#ui--display):
 
 ```json
 {
@@ -105,6 +105,6 @@ If `export` colors are omitted, Pi derives HTML page and panel backgrounds from 
 
 Place a project theme in `.pi/themes/`. Project themes load only after [project trust](security.md#understand-project-trust) is granted.
 
-You can also load theme files and directories through the `themes` setting or distribute them in a Pi package. See [Configuration](configuration.md), [Settings](settings-reference.md#resources), and [Pi Packages](packages.md).
+You can also load theme files and directories through the `themes` setting or distribute them in a Pi package. See [Configuration](configuration.md), [Settings](settings.md#resources), and [Pi Packages](packages.md).
 
 Each loaded theme must have a unique name. Pi reports duplicate names as resource collisions.

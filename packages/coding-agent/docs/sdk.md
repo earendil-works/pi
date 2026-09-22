@@ -135,8 +135,8 @@ See the focused examples for [models](../examples/sdk/02-custom-model.ts), [tool
 
 ## Resources
 
-- [Choose a Model](models-and-providers.md) covers model selection and compatible endpoints; [Provider Authentication](provider-reference.md) covers credentials and cloud-provider setup.
-- [Configuration](configuration.md) explains normal discovery and settings; [Settings](settings-reference.md) lists every setting.
-- [Sessions and Context](sessions-and-context.md) explains session behavior; [Session Format](session-format.md) defines persisted entries; [Message Types](message-types.md) defines shared transcript values.
+- [Choose a Model](models.md) covers model selection and compatible endpoints; [Provider Authentication](providers.md) covers credentials and cloud-provider setup.
+- [Configuration](configuration.md) explains normal discovery and settings; [Settings](settings.md) lists every setting.
+- [Sessions and Context](sessions.md) explains session behavior; [Session Format](session-format.md) defines persisted entries; [Message Types](message-types.md) defines shared transcript values.
 - [Extensions](extensions.md), [Skills](skills.md), and [Prompt Templates](prompt-templates.md) document resources supplied through a `ResourceLoader`.
 - [CLI Integration](cli-integration.md) covers print, JSON, and RPC alternatives to an in-process SDK integration.

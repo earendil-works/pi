@@ -57,7 +57,7 @@ RPC mode rejects `@file` arguments. JSON and RPC modes reserve stdout for protoc
 pi --model sonnet:high
 ```
 
-See [Choose a Model](models-and-providers.md) for model selection and [Provider Authentication](provider-reference.md) for credentials.
+See [Choose a Model](models.md) for model selection and [Provider Authentication](providers.md) for credentials.
 
 - `--provider <name>`<br>
   Restricts `--model` lookup to one provider.
@@ -80,7 +80,7 @@ See [Choose a Model](models-and-providers.md) for model selection and [Provider 
 pi --continue
 ```
 
-See [Sessions and Context](sessions-and-context.md) for resuming, forking, naming, and storing sessions.
+See [Sessions and Context](sessions.md) for resuming, forking, naming, and storing sessions.
 
 - `-c`, `--continue`<br>
   Continues the most recent session for the current project.
@@ -113,7 +113,7 @@ Constraints:
 pi --tools read,grep,find,ls --print "Review this project"
 ```
 
-See [Settings](settings-reference.md#tools) for configuring the default tool selection.
+See [Settings](settings.md#tools) for configuring the default tool selection.
 
 - `-t`, `--tools <list>`<br>
   Replaces the default selection with a comma-separated allowlist of built-in, extension, or custom tools.
@@ -145,7 +145,7 @@ Default enabled tools are `read`, `bash`, `edit`, and `write`, unless `defaultTo
 pi --extension ./review.ts
 ```
 
-See [Configuration](configuration.md) for conventional directories and project trust, [Settings](settings-reference.md#resources) for configured paths, and [Pi Packages](packages.md) for package sources.
+See [Configuration](configuration.md) for conventional directories and project trust, [Settings](settings.md#resources) for configured paths, and [Pi Packages](packages.md) for package sources.
 
 - `-e`, `--extension <path>`<br>
   Loads an extension file or directory and is repeatable.
@@ -248,7 +248,7 @@ Add `--force` to reinstall Pi when the selected update includes Pi.
 pi auth check --provider openai --json
 ```
 
-Authentication commands require `--provider <provider>` or `--model <model>`. See [Provider Authentication](provider-reference.md) for supported methods.
+Authentication commands require `--provider <provider>` or `--model <model>`. See [Provider Authentication](providers.md) for supported methods.
 
 | Command | Description |
 |---|---|

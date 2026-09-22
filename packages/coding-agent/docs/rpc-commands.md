@@ -851,4 +851,4 @@ Model commands return the complete configured model definition. Costs are in US 
 }
 ```
 
-For model configuration, see [Configure a compatible endpoint](models-and-providers.md#configure-a-compatible-endpoint). For TypeScript, use the exported `Model` type from `@earendil-works/pi-ai`.
+For model configuration, see [Configure a compatible endpoint](models.md#configure-a-compatible-endpoint). For TypeScript, use the exported `Model` type from `@earendil-works/pi-ai`.

@@ -25,11 +25,11 @@
           "items": [
             {
               "title": "Pi in the Terminal",
-              "path": "interactive-use.md"
+              "path": "usage.md"
             },
             {
               "title": "Choose a Model",
-              "path": "models-and-providers.md"
+              "path": "models.md"
             },
             {
               "title": "Local Models with llama.cpp",
@@ -37,7 +37,7 @@
             },
             {
               "title": "Sessions and Context",
-              "path": "sessions-and-context.md"
+              "path": "sessions.md"
             },
             {
               "title": "Configuration",
@@ -134,7 +134,7 @@
           "items": [
             {
               "title": "Settings",
-              "path": "settings-reference.md"
+              "path": "settings.md"
             },
             {
               "title": "Environment Variables",
@@ -184,7 +184,7 @@
           "items": [
             {
               "title": "Provider Authentication",
-              "path": "provider-reference.md"
+              "path": "providers.md"
             }
           ]
         },
@@ -206,24 +206,8 @@
   ],
   "redirects": [
     {
-      "from": "usage.md",
-      "to": "interactive-use.md"
-    },
-    {
-      "from": "providers.md",
-      "to": "provider-reference.md"
-    },
-    {
-      "from": "models.md",
-      "to": "models-and-providers.md"
-    },
-    {
-      "from": "settings.md",
-      "to": "settings-reference.md"
-    },
-    {
-      "from": "sessions.md",
-      "to": "sessions-and-context.md"
+      "from": "development.md",
+      "to": "index.md"
     },
     {
       "from": "session.md",
@@ -231,7 +215,7 @@
     },
     {
       "from": "tree.md",
-      "to": "sessions-and-context.md"
+      "to": "sessions.md"
     },
     {
       "from": "process-integration.md",

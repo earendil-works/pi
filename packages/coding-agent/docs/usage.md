@@ -50,7 +50,7 @@ Type `/` to search the available commands. The commands you will use most often 
 - `/login` and `/logout` manage provider access.
 - `/settings` changes common preferences.
 
-Prompt templates, skills, and extensions can add more commands to the same menu. See [Choose a Model](models-and-providers.md), [Configuration](configuration.md), or the complete [Slash Commands reference](slash-commands.md).
+Prompt templates, skills, and extensions can add more commands to the same menu. See [Choose a Model](models.md), [Configuration](configuration.md), or the complete [Slash Commands reference](slash-commands.md).
 
 ## Continue or start over
 
@@ -61,7 +61,7 @@ Pi saves sessions automatically unless session persistence is disabled.
 - `/name` gives the current session a recognizable name.
 - `/session` shows its file, ID, message count, token usage, and cost.
 
-Use `/tree`, `/fork`, or `/clone` when you want to explore another approach without losing existing work. Use `/compact` to reduce the conversation history sent to the model. See [Sessions and Context](sessions-and-context.md) for these workflows.
+Use `/tree`, `/fork`, or `/clone` when you want to explore another approach without losing existing work. Use `/compact` to reduce the conversation history sent to the model. See [Sessions and Context](sessions.md) for these workflows.
 
 After leaving Pi, run `pi --continue` from the same folder to resume its most recent session.
 

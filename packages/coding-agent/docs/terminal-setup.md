@@ -216,4 +216,4 @@ Pi automatically detects OSC 8 hyperlinks, inline image protocols, and truecolor
 
 Settings take precedence over environment variables. An unset value or `auto` preserves automatic detection.
 
-Only force a capability supported by the complete terminal path. Unsupported escape sequences can corrupt rendering. See [Environment Variables](environment-variables.md#pi-process-configuration) and [Settings](settings-reference.md) for the canonical value definitions.
+Only force a capability supported by the complete terminal path. Unsupported escape sequences can corrupt rendering. See [Environment Variables](environment-variables.md#pi-process-configuration) and [Settings](settings.md) for the canonical value definitions.

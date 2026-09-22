@@ -18,7 +18,7 @@ Browse the [model catalog](https://pi.dev/models) for current providers, model I
 
 Run `/login` and select a provider. Pi stores credentials in [`auth.json`](configuration.md#agent-directory). Run `/logout` to remove stored credentials for a provider.
 
-You can instead provide an API key through the provider's environment variable. This is useful in CI and other environments where Pi should not write credentials. [Provider Authentication](provider-reference.md) lists the variables and cloud-provider setup.
+You can instead provide an API key through the provider's environment variable. This is useful in CI and other environments where Pi should not write credentials. [Provider Authentication](providers.md) lists the variables and cloud-provider setup.
 
 When several credential sources are configured, Pi uses a runtime `--api-key` first, then a stored `auth.json` credential, an `apiKey` from `models.json`, and finally the provider's environment variables or ambient cloud credentials. Provider extensions can define their own authentication behavior.
 
@@ -30,7 +30,7 @@ Run `/model` to search available models. The picker shows models whose providers
 
 Run `/thinking` to select the thinking level for the current model. Press `Ctrl+S` there to save the startup level. Pi limits the choices to levels supported by the selected model.
 
-`Ctrl+P` cycles through available models. Use `/scoped-models` to control that cycle and save the selection, or configure model patterns through [Settings](settings-reference.md#model-cycling).
+`Ctrl+P` cycles through available models. Use `/scoped-models` to control that cycle and save the selection, or configure model patterns through [Settings](settings.md#model-cycling).
 
 A session records model and thinking-level changes. Resuming the session restores them without changing defaults for new sessions.
 
@@ -116,7 +116,7 @@ Check whether the key came from an environment variable rather than `auth.json`.
 
 ### Sign-in opens a browser on a remote machine
 
-Complete the provider's headless authentication flow when available. Some providers let you paste the final redirect URL or authorization code back into Pi. See [Authenticate interactively](provider-reference.md#authenticate-interactively).
+Complete the provider's headless authentication flow when available. Some providers let you paste the final redirect URL or authorization code back into Pi. See [Authenticate interactively](providers.md#authenticate-interactively).
 
 ### A compatible endpoint rejects requests
 

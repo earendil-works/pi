@@ -10,9 +10,9 @@ New to Pi? Follow the [Quickstart](quickstart.md) to install Pi, connect a model
 
 If Pi is already installed, choose what you want to do:
 
-- [Use Pi interactively](interactive-use.md) to add files, run commands, direct ongoing work, and export results.
-- [Choose a model](models-and-providers.md) or connect a subscription, API key, local model, or compatible endpoint.
-- [Continue or branch a session](sessions-and-context.md) to resume work or explore another approach without losing history.
+- [Use Pi interactively](usage.md) to add files, run commands, direct ongoing work, and export results.
+- [Choose a model](models.md) or connect a subscription, API key, local model, or compatible endpoint.
+- [Continue or branch a session](sessions.md) to resume work or explore another approach without losing history.
 - [Configure Pi](configuration.md) for your preferences, working folders, instructions, and reusable resources.
 - [Understand how Pi works](how-pi-works.md), including tools, context, sessions, and the agent loop.
 
@@ -30,7 +30,7 @@ Use the [Quickstart customisation chooser](quickstart.md#choose-how-to-customise
 
 ## Find reference and setup information
 
-Use the reference pages to look up [CLI options](cli.md), [settings](settings-reference.md), [provider authentication](provider-reference.md), [keybindings](keybindings.md), and [environment variables](environment-variables.md).
+Use the reference pages to look up [CLI options](cli.md), [settings](settings.md), [provider authentication](providers.md), [keybindings](keybindings.md), and [environment variables](environment-variables.md).
 
 For platform-specific help, see [Terminal Setup](terminal-setup.md), [Windows](windows.md), [tmux](tmux.md), [Termux on Android](termux.md), or [Containerization](containerization.md).
 
