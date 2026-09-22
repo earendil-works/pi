@@ -58,8 +58,16 @@ function getRetryDelayMs(error: ProviderError, retryIndex: number, maxRetryDelay
 	const retryAfter = error.headers?.get("retry-after");
 	if (retryAfter) {
 		const seconds = Number.parseFloat(retryAfter);
-		const delayMs = Number.isNaN(seconds) ? Date.parse(retryAfter) - Date.now() : seconds * 1000;
-		return validateServerRetryDelayMs(delayMs, maxRetryDelayMs, error.message);
+		let delayMs = seconds * 1000;
+		if (Number.isNaN(delayMs)) {
+			const parsedDateMs = Date.parse(retryAfter) - Date.now();
+			// A malformed HTTP date should fall back to exponential backoff instead of
+			// leaking NaN into setTimeout and retrying immediately.
+			delayMs = Number.isNaN(parsedDateMs) ? Number.POSITIVE_INFINITY : parsedDateMs;
+		}
+		if (Number.isFinite(delayMs)) {
+			return validateServerRetryDelayMs(delayMs, maxRetryDelayMs, error.message);
+		}
 	}
 
 	const exponentialDelay = Math.min(0.5 * 2 ** retryIndex, 8) * 1000;
