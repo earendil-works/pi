@@ -230,6 +230,62 @@ describe("validateToolArguments", () => {
 		}
 	});
 
+	it("coerces a JSON-encoded string for native TypeBox array and object schemas", () => {
+		const tool: Tool = {
+			name: "echo",
+			description: "Echo tool",
+			parameters: Type.Object({
+				tags: Type.Array(Type.String()),
+				target: Type.Object({ name: Type.String(), count: Type.Number() }),
+			}),
+		};
+		const toolCall: ToolCall = {
+			type: "toolCall",
+			id: "tool-1",
+			name: "echo",
+			arguments: { tags: '["a","b"]', target: '{"name":"x","count":"2"}' },
+		};
+
+		expect(validateToolArguments(tool, toolCall)).toEqual({ tags: ["a", "b"], target: { name: "x", count: 2 } });
+	});
+
+	it("normalizes optional nulls in a JSON-encoded structure like in a native one", () => {
+		const tool: Tool = {
+			name: "echo",
+			description: "Echo tool",
+			parameters: Type.Object({
+				value: Type.Object({
+					enabled: Type.Optional(Type.Boolean()),
+					count: Type.Optional(Type.Number()),
+					metadata: Type.Optional(Type.Object({ name: Type.String() })),
+					nullable: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
+				}),
+				items: Type.Array(Type.Object({ enabled: Type.Optional(Type.Boolean()) })),
+			}),
+		};
+		const expected = { value: { nullable: null }, items: [{}] };
+		const native: ToolCall = {
+			type: "toolCall",
+			id: "tool-1",
+			name: "echo",
+			arguments: {
+				value: { enabled: null, count: null, metadata: null, nullable: null },
+				items: [{ enabled: null }],
+			},
+		};
+		const encoded: ToolCall = {
+			...native,
+			arguments: {
+				value: '{"enabled":null,"count":null,"metadata":null,"nullable":null}',
+				items: '[{"enabled":null}]',
+			},
+		};
+
+		expect(validateToolArguments(tool, native)).toEqual(expected);
+		expect(validateToolArguments(tool, encoded)).toEqual(expected);
+	});
+
+	// A union with a string arm keeps a JSON-encoded object as the string it already is.
 	it("keeps a JSON-looking string when the schema also accepts a string", () => {
 		const { tool, toolCall } = createToolCallWithPlainSchema(
 			{ type: ["string", "object"] } as Tool["parameters"],
