@@ -192,7 +192,8 @@ export class FooterComponent implements Component {
 		// Prepend the provider in parentheses if there are multiple providers and there's enough room
 		let rightSide = rightSideWithoutProvider;
 		if (this.footerData.getAvailableProviderCount() > 1 && state.model) {
-			rightSide = `(${state.model!.provider}) ${rightSideWithoutProvider}`;
+			const providerName = this.session.modelRuntime.getProviderDisplayName(state.model.provider);
+			rightSide = `(${providerName}) ${rightSideWithoutProvider}`;
 			if (statsLeftWidth + minPadding + visibleWidth(rightSide) > width) {
 				// Too wide, fall back
 				rightSide = rightSideWithoutProvider;

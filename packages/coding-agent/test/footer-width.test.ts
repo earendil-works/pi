@@ -18,6 +18,7 @@ function createSession(options: {
 	sessionName: string;
 	modelId?: string;
 	provider?: string;
+	providerDisplayName?: string;
 	reasoning?: boolean;
 	thinkingLevel?: string;
 	usage?: AssistantUsage;
@@ -81,6 +82,7 @@ function createSession(options: {
 		getContextUsage: () => ({ contextWindow: 200_000, percent: 12.3 }),
 		modelRuntime: {
 			isUsingSubscription: () => options.usingSubscription ?? false,
+			getProviderDisplayName: () => options.providerDisplayName ?? options.provider ?? "test",
 		},
 	};
 
@@ -126,6 +128,18 @@ describe("FooterComponent width handling", () => {
 		for (const line of lines) {
 			expect(visibleWidth(line)).toBeLessThanOrEqual(width);
 		}
+	});
+
+	it("shows a custom provider name alongside the provider ID", () => {
+		const session = createSession({
+			sessionName: "",
+			provider: "openai",
+			providerDisplayName: "openai foobar",
+			modelId: "test-model",
+		});
+		const footer = new FooterComponent(session, createFooterData(2));
+
+		expect(stripAnsi(footer.render(120)[1])).toContain("(openai foobar) test-model");
 	});
 
 	it("keeps stats line within width for wide model and provider names", () => {

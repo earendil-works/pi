@@ -390,6 +390,11 @@ export class ModelRuntime implements Models {
 		return this.models.getProvider(providerId);
 	}
 
+	getProviderDisplayName(providerId: string): string {
+		const customName = this.config.getProvider(providerId)?.name;
+		return customName ? `${providerId} ${customName}` : providerId;
+	}
+
 	getModels(providerId?: string): readonly Model<Api>[] {
 		return this.models.getModels(providerId);
 	}

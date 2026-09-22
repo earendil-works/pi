@@ -219,6 +219,7 @@ function applyModelsJson(
 		!config.baseUrl &&
 		!config.headers &&
 		!config.compat &&
+		!config.name &&
 		!hasOverrides &&
 		!config.apiKey &&
 		!config.oauth &&

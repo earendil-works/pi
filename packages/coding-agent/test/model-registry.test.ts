@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import type { ModelsJsonProvider } from "../src/core/model-config.ts";
 import { clearApiKeyCache, type ModelRegistry, type ProviderConfigInput } from "../src/core/model-registry.ts";
-import { createModelRegistry } from "./model-runtime-test-utils.ts";
+import { createModelRegistry, getModelRuntime } from "./model-runtime-test-utils.ts";
 
 describe("ModelRegistry", () => {
 	let tempDir: string;
@@ -1104,6 +1104,17 @@ describe("ModelRegistry", () => {
 	});
 
 	describe("dynamic provider lifecycle", () => {
+		test("models.json can name a built-in provider for the status bar", async () => {
+			writeRawModelsJson({ openai: { name: "foobar" } });
+
+			const registry = await createModelRegistry(authStorage, modelsJsonPath);
+			const runtime = getModelRuntime(registry);
+
+			expect(registry.getError()).toBeUndefined();
+			expect(registry.getProvider("openai")?.name).toBe("foobar");
+			expect(runtime.getProviderDisplayName("openai")).toBe("openai foobar");
+		});
+
 		test("getProviderDisplayName resolves registered, OAuth, built-in, and fallback names", async () => {
 			const registry = await createModelRegistry(authStorage, modelsJsonPath);
 
