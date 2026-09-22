@@ -62,6 +62,23 @@ describe("provider request retries", () => {
 		expect(request).toHaveBeenCalledTimes(2);
 	});
 
+	it("falls back to exponential backoff for malformed retry-after dates", async () => {
+		vi.useFakeTimers();
+		vi.spyOn(Math, "random").mockReturnValue(0);
+		const request = vi
+			.fn<() => Promise<string>>()
+			.mockRejectedValueOnce(providerError(429, { "retry-after": "not-a-date" }))
+			.mockResolvedValue("ok");
+
+		const result = retryProviderRequest(request, { maxRetries: 1 });
+		await vi.advanceTimersByTimeAsync(499);
+		expect(request).toHaveBeenCalledTimes(1);
+		await vi.advanceTimersByTimeAsync(1);
+
+		await expect(result).resolves.toBe("ok");
+		expect(request).toHaveBeenCalledTimes(2);
+	});
+
 	it("aborts a provider-requested retry delay", async () => {
 		vi.useFakeTimers();
 		const controller = new AbortController();
