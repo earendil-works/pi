@@ -8,7 +8,7 @@ Themes control the colors Pi uses in interactive mode and HTML exports. Pi inclu
 
 Open `/settings` and select **Theme**. You can use one theme for every terminal appearance or choose separate themes for light and dark terminals.
 
-The selection is saved as the `theme` [setting](settings.md#ui--display):
+The selection is saved as the `theme` [setting](settings.md#terminal-and-display):
 
 ```json
 {
