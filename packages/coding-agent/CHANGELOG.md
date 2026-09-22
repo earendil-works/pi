@@ -8,6 +8,7 @@
 
 ### Fixed
 
+- Fixed split-turn compaction summaries being refused by Claude Fable 5.1 by clearly separating the conversation and using continuation-oriented instructions ([#9652](https://github.com/earendil-works/pi/issues/9652)).
 - Fixed missing or invalid `--mode` values being silently ignored instead of reporting an error and exiting with a nonzero status ([#9045](https://github.com/earendil-works/pi/issues/9045)).
 
 ## [0.87.0] - 2026-09-21
