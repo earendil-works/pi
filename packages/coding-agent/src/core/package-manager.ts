@@ -857,7 +857,9 @@ export class DefaultPackageManager implements PackageManager {
 		const currentSettings =
 			scope === "project" ? this.settingsManager.getProjectSettings() : this.settingsManager.getGlobalSettings();
 		const currentPackages = currentSettings.packages ?? [];
-		const nextPackages = currentPackages.filter((existing) => !this.packageSourcesMatch(existing, source, scope));
+		const nextPackages = currentPackages.filter(
+			(existing) => !this.packageSourceMatchesForRemoval(existing, source, scope),
+		);
 		const changed = nextPackages.length !== currentPackages.length;
 		if (!changed) {
 			return false;
@@ -1052,6 +1054,11 @@ export class DefaultPackageManager implements PackageManager {
 	}
 
 	async removeAndPersist(source: string, options?: { local?: boolean }): Promise<boolean> {
+		// Verify the settings entry first: remove() deletes the installed files, so a
+		// later mismatch would leave the files gone while the entry stays in settings.
+		if (!this.hasConfiguredPackage(source, options)) {
+			return false;
+		}
 		await this.remove(source, options);
 		return this.removeSourceFromSettings(source, options);
 	}
@@ -1430,6 +1437,30 @@ export class DefaultPackageManager implements PackageManager {
 		const left = this.getSourceMatchKeyForSettings(this.getPackageSourceString(existing), scope);
 		const right = this.getSourceMatchKeyForInput(inputSource);
 		return left === right;
+	}
+
+	/**
+	 * Match a configured package against a removal source.
+	 *
+	 * A literal string match is checked first: entries stored as relative local paths
+	 * are relative to the settings base dir, while getSourceMatchKeyForInput() resolves
+	 * the input against the process cwd. Without the literal check such an entry could
+	 * only be removed when the cwd happened to be the settings base dir.
+	 */
+	private packageSourceMatchesForRemoval(existing: PackageSource, inputSource: string, scope: SourceScope): boolean {
+		if (this.getPackageSourceString(existing).trim() === inputSource.trim()) {
+			return true;
+		}
+		return this.packageSourcesMatch(existing, inputSource, scope);
+	}
+
+	private hasConfiguredPackage(source: string, options?: { local?: boolean }): boolean {
+		const scope: SourceScope = options?.local ? "project" : "user";
+		const currentSettings =
+			scope === "project" ? this.settingsManager.getProjectSettings() : this.settingsManager.getGlobalSettings();
+		return (currentSettings.packages ?? []).some((existing) =>
+			this.packageSourceMatchesForRemoval(existing, source, scope),
+		);
 	}
 
 	private normalizePackageSourceForSettings(source: string, scope: SourceScope): string {

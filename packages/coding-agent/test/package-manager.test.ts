@@ -1341,6 +1341,28 @@ Content`,
 			expect(settingsManager.getGlobalSettings().packages ?? []).toHaveLength(0);
 		});
 
+		it("should remove a stored relative entry without resolving the input against the process cwd", () => {
+			settingsManager.setPackages(["git/github.com/user/repo"]);
+
+			const removed = packageManager.removeSourceFromSettings("git/github.com/user/repo");
+
+			expect(removed).toBe(true);
+			expect(settingsManager.getGlobalSettings().packages ?? []).toHaveLength(0);
+		});
+
+		it("should not delete installed files when the settings entry cannot be matched", async () => {
+			settingsManager.setPackages(["git/github.com/user/repo"]);
+			const installDir = join(agentDir, "git", "github.com", "user", "repo");
+			mkdirSync(join(installDir, "extensions"), { recursive: true });
+			writeFileSync(join(installDir, "extensions", "index.ts"), "export default function() {}");
+
+			const removed = await packageManager.removeAndPersist("git:github.com/user/repo");
+
+			expect(removed).toBe(false);
+			expect(existsSync(installDir)).toBe(true);
+			expect(settingsManager.getGlobalSettings().packages).toEqual(["git/github.com/user/repo"]);
+		});
+
 		it("should return false when adding the same git source with the same ref", () => {
 			const first = packageManager.addSourceToSettings("git:github.com/user/repo@v1");
 			expect(first).toBe(true);
