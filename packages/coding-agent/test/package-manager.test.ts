@@ -1557,6 +1557,20 @@ Content`,
 			expect(result.skills.some((r) => isDisabled(r, "bad-skill", "includes"))).toBe(true);
 		});
 
+		it("should filter skills with glob exclusions", async () => {
+			const skillsDir = join(agentDir, "skills");
+			mkdirSync(join(skillsDir, "vue-good"), { recursive: true });
+			mkdirSync(join(skillsDir, "vue-skip"), { recursive: true });
+			writeFileSync(join(skillsDir, "vue-good", "SKILL.md"), "---\nname: vue-good\ndescription: Good\n---\nContent");
+			writeFileSync(join(skillsDir, "vue-skip", "SKILL.md"), "---\nname: vue-skip\ndescription: Skip\n---\nContent");
+
+			settingsManager.setSkillPaths(["skills", "-vue-skip"]);
+
+			const result = await packageManager.resolve();
+			expect(result.skills.some((r) => isEnabled(r, "vue-good", "includes"))).toBe(true);
+			expect(result.skills.some((r) => pathEndsWith(r.path, "vue-skip"))).toBe(false);
+		});
+
 		it("should work without patterns (backward compatible)", async () => {
 			const extDir = join(agentDir, "extensions");
 			mkdirSync(extDir, { recursive: true });
