@@ -18,7 +18,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
 	type BashOperations,
 	createBashTool,
-	createEditTool,
+	createEditToolDefinition,
 	createReadTool,
 	createWriteTool,
 	type EditOperations,
@@ -117,11 +117,12 @@ export default function (pi: ExtensionAPI) {
 	const localCwd = process.cwd();
 	const localRead = createReadTool(localCwd);
 	const localWrite = createWriteTool(localCwd);
-	const localEdit = createEditTool(localCwd);
+	const localEdit = createEditToolDefinition(localCwd);
 	const localBash = createBashTool(localCwd);
 
 	// Resolved lazily on session_start (CLI flags not available during factory)
 	let resolvedSsh: { remote: string; remoteCwd: string } | null = null;
+	let remoteEdit: typeof localEdit | undefined;
 
 	const getSsh = () => resolvedSsh;
 
@@ -153,19 +154,20 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
-	pi.registerTool({
+	// Resolve edit paths from the same cwd used by the other tools and the remote path mapping.
+	const editTool: typeof localEdit = {
 		...localEdit,
-		async execute(id, params, signal, onUpdate, _ctx) {
-			const ssh = getSsh();
-			if (ssh) {
-				const tool = createEditTool(localCwd, {
-					operations: createRemoteEditOps(ssh.remote, ssh.remoteCwd, localCwd),
-				});
-				return tool.execute(id, params, signal, onUpdate);
-			}
-			return localEdit.execute(id, params, signal, onUpdate);
+		renderCall(args, theme, context) {
+			return (remoteEdit ?? localEdit).renderCall!(args, theme, { ...context, cwd: localCwd });
 		},
-	});
+		renderResult(result, options, theme, context) {
+			return localEdit.renderResult!(result, options, theme, { ...context, cwd: localCwd });
+		},
+		async execute(id, params, signal, onUpdate, ctx) {
+			return (remoteEdit ?? localEdit).execute(id, params, signal, onUpdate, { ...ctx, cwd: localCwd });
+		},
+	};
+	pi.registerTool(editTool);
 
 	pi.registerTool({
 		...localBash,
@@ -194,6 +196,9 @@ export default function (pi: ExtensionAPI) {
 				const pwd = (await sshExec(remote, "pwd")).toString().trim();
 				resolvedSsh = { remote, remoteCwd: pwd };
 			}
+			remoteEdit = createEditToolDefinition(localCwd, {
+				operations: createRemoteEditOps(resolvedSsh.remote, resolvedSsh.remoteCwd, localCwd),
+			});
 			ctx.ui.setStatus("ssh", ctx.ui.theme.fg("accent", `SSH: ${resolvedSsh.remote}:${resolvedSsh.remoteCwd}`));
 			ctx.ui.notify(`SSH mode: ${resolvedSsh.remote}:${resolvedSsh.remoteCwd}`, "info");
 		}
