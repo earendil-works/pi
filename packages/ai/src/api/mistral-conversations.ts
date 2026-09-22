@@ -624,6 +624,10 @@ async function consumeChatStream(
 			for (const item of contentItems) {
 				if (typeof item === "string") {
 					const textDelta = sanitizeSurrogates(item);
+					// Some models (notably GLM through Mistral) send an empty content
+					// delta alongside every tool-call fragment. Do not open an empty
+					// text block for those.
+					if (!textDelta) continue;
 					if (!currentBlock || currentBlock.type !== "text") {
 						finishCurrentBlock(currentBlock);
 						currentBlock = { type: "text", text: "" };
