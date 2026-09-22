@@ -2090,6 +2090,12 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					contextWindow: m.limit?.context || 4096,
 					maxTokens: m.limit?.output || 4096,
 				});
+				if (modelId.startsWith("zai-glm-")) {
+					models[models.length - 1].thinkingLevelMap = {
+						off: "none",
+						high: "high",
+					};
+				}
 				recordModelsDevReasoningOptions("mistral", modelId, m);
 			}
 		}
@@ -3043,6 +3049,36 @@ async function generateModels() {
 			},
 			contextWindow: 262144, // 256k tokens
 			maxTokens: 262144,
+		});
+	}
+
+	// Add Mistral-hosted GLM variants until models.dev includes them
+	const mistralGlmVariants = [
+		{ id: "zai-glm-5", name: "GLM-5" },
+		{ id: "zai-glm-latest", name: "GLM-5 (latest)" },
+	];
+	for (const variant of mistralGlmVariants) {
+		if (allModels.some(m => m.provider === "mistral" && m.id === variant.id)) continue;
+		allModels.push({
+			id: variant.id,
+			name: variant.name,
+			api: "mistral-conversations",
+			provider: "mistral",
+			baseUrl: "https://api.mistral.ai",
+			reasoning: true,
+			input: ["text"],
+			cost: {
+				input: 1.4,
+				output: 4.4,
+				cacheRead: 0.14,
+				cacheWrite: 0,
+			},
+			contextWindow: 1000000,
+			maxTokens: 131072,
+			thinkingLevelMap: {
+				off: "none",
+				high: "high",
+			},
 		});
 	}
 

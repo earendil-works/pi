@@ -904,7 +904,8 @@ function usesReasoningEffort(model: Model<"mistral-conversations">): boolean {
 		model.id === "mistral-small-2603" ||
 		model.id === "mistral-small-latest" ||
 		model.id.startsWith("mistral-medium-") ||
-		model.id === "zai-glm-5-2"
+		model.id.startsWith("zai-glm-") ||
+		model.thinkingLevelMap !== undefined
 	);
 }
 
