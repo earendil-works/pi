@@ -1,7 +1,7 @@
 /** Immutable, credential-blind models.json snapshot. */
 
 import { readFile } from "node:fs/promises";
-import { ModelCompatSchema } from "@earendil-works/pi-ai";
+import { ProviderCompatSchema } from "@earendil-works/pi-ai";
 import { type Static, Type } from "typebox";
 import { Compile } from "typebox/compile";
 import type { TLocalizedValidationError } from "typebox/error";
@@ -81,7 +81,7 @@ const ModelDefinitionSchema = Type.Object({
 	samplingParams: Type.Optional(SamplingParamsSchema),
 	samplingParamsByThinkingLevel: Type.Optional(SamplingParamsByThinkingLevelSchema),
 	headers: Type.Optional(Type.Record(Type.String(), Type.String())),
-	compat: Type.Optional(ModelCompatSchema),
+	compat: Type.Optional(ProviderCompatSchema),
 });
 
 const ModelOverrideSchema = Type.Object({
@@ -105,7 +105,7 @@ const ModelOverrideSchema = Type.Object({
 	samplingParams: Type.Optional(SamplingParamsSchema),
 	samplingParamsByThinkingLevel: Type.Optional(SamplingParamsByThinkingLevelSchema),
 	headers: Type.Optional(Type.Record(Type.String(), Type.String())),
-	compat: Type.Optional(ModelCompatSchema),
+	compat: Type.Optional(ProviderCompatSchema),
 });
 
 const ProviderConfigSchema = Type.Object({
@@ -115,7 +115,7 @@ const ProviderConfigSchema = Type.Object({
 	api: Type.Optional(Type.String({ minLength: 1 })),
 	oauth: Type.Optional(Type.Literal("radius")),
 	headers: Type.Optional(Type.Record(Type.String(), Type.String())),
-	compat: Type.Optional(ModelCompatSchema),
+	compat: Type.Optional(ProviderCompatSchema),
 	authHeader: Type.Optional(Type.Boolean()),
 	models: Type.Optional(Type.Array(ModelDefinitionSchema)),
 	modelOverrides: Type.Optional(Type.Record(Type.String(), ModelOverrideSchema)),

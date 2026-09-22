@@ -15,7 +15,7 @@ import type {
 	MistralConversationsCompat,
 	OpenAICompletionsCompat,
 	OpenAIResponsesCompat,
-} from "./model-compat-schema.ts";
+} from "./provider-compat-schema.ts";
 import type { AssistantMessageDiagnostic } from "./utils/diagnostics.ts";
 import type { AssistantMessageEventStream } from "./utils/event-stream.ts";
 
@@ -31,7 +31,7 @@ export type {
 	SessionAffinityFormat,
 	ThinkingTokenBudgetField,
 	VercelGatewayRouting,
-} from "./model-compat-schema.ts";
+} from "./provider-compat-schema.ts";
 export type { AssistantMessageEventStream } from "./utils/event-stream.ts";
 
 export type KnownApi =

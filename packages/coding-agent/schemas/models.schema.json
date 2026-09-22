@@ -50,19 +50,26 @@
                   "type": "object",
                   "properties": {
                     "supportsStore": {
-                      "type": "boolean"
+                      "type": "boolean",
+                      "description": "Whether the provider supports the store field. Default: auto-detected from URL."
                     },
                     "supportsDeveloperRole": {
-                      "type": "boolean"
+                      "type": "boolean",
+                      "description": "Whether the provider supports the developer role instead of system. Default: auto-detected from URL."
                     },
                     "supportsReasoningEffort": {
-                      "type": "boolean"
+                      "type": "boolean",
+                      "description": "Whether the provider supports reasoning_effort. Default: auto-detected from URL."
                     },
                     "supportsUsageInStreaming": {
-                      "type": "boolean"
+                      "type": "boolean",
+                      "description": "Whether the provider supports stream_options.include_usage for token usage in streaming responses.",
+                      "default": true
                     },
                     "supportsFinishReason": {
-                      "type": "boolean"
+                      "type": "boolean",
+                      "description": "Whether streamed responses include finish_reason. When false, pi infers stop or toolUse when the stream ends.",
+                      "default": true
                     },
                     "maxTokensField": {
                       "anyOf": [
@@ -74,19 +81,24 @@
                           "type": "string",
                           "const": "max_tokens"
                         }
-                      ]
+                      ],
+                      "description": "Which field to use for max tokens. Default: auto-detected from URL."
                     },
                     "requiresToolResultName": {
-                      "type": "boolean"
+                      "type": "boolean",
+                      "description": "Whether tool results require the name field. Default: auto-detected from URL."
                     },
                     "requiresAssistantAfterToolResult": {
-                      "type": "boolean"
+                      "type": "boolean",
+                      "description": "Whether a user message after tool results requires an assistant message in between. Default: auto-detected from URL."
                     },
                     "requiresThinkingAsText": {
-                      "type": "boolean"
+                      "type": "boolean",
+                      "description": "Whether thinking blocks must be converted to text blocks with <thinking> delimiters. Default: auto-detected from URL."
                     },
                     "requiresReasoningContentOnAssistantMessages": {
-                      "type": "boolean"
+                      "type": "boolean",
+                      "description": "Whether all replayed assistant messages must include an empty reasoning_content field when reasoning is enabled. Default: auto-detected from URL."
                     },
                     "thinkingFormat": {
                       "anyOf": [
@@ -134,7 +146,9 @@
                           "type": "string",
                           "const": "ant-ling"
                         }
-                      ]
+                      ],
+                      "description": "Format for reasoning or thinking parameters. \"openai\" uses reasoning_effort, \"openrouter\" uses reasoning.effort, \"deepseek\" uses thinking.type plus reasoning_effort when supported, \"together\" uses reasoning.enabled plus reasoning_effort when supported, \"baseten\" uses configurable chat_template_args plus reasoning_effort when supported, \"zai\" uses thinking.type, \"qwen\" uses top-level enable_thinking, \"qwen-chat-template\" uses chat_template_kwargs.enable_thinking and preserve_thinking, \"chat-template\" uses configurable chat_template_kwargs, \"string-thinking\" uses top-level thinking, and \"ant-ling\" uses reasoning.effort only when the mapped effort is non-null.",
+                      "default": "openai"
                     },
                     "chatTemplateKwargs": {
                       "type": "object",
@@ -182,7 +196,8 @@
                             }
                           ]
                         }
-                      }
+                      },
+                      "description": "Kwargs sent as chat_template_kwargs when thinkingFormat is \"chat-template\". Use $var with \"thinking.enabled\", \"thinking.effort\", or \"thinking.budget\" for pi-controlled values."
                     },
                     "chatTemplateArgs": {
                       "type": "object",
@@ -230,16 +245,21 @@
                             }
                           ]
                         }
-                      }
+                      },
+                      "description": "Arguments sent as chat_template_args when thinkingFormat is \"baseten\". Use $var with \"thinking.enabled\", \"thinking.effort\", or \"thinking.budget\" for pi-controlled values."
                     },
                     "openRouterRouting": {
                       "type": "object",
                       "properties": {
                         "allow_fallbacks": {
-                          "type": "boolean"
+                          "type": "boolean",
+                          "description": "Whether to allow backup providers to serve requests.",
+                          "default": true
                         },
                         "require_parameters": {
-                          "type": "boolean"
+                          "type": "boolean",
+                          "description": "Whether to filter providers to only those that support all parameters in the request.",
+                          "default": false
                         },
                         "data_collection": {
                           "anyOf": [
@@ -251,37 +271,45 @@
                               "type": "string",
                               "const": "allow"
                             }
-                          ]
+                          ],
+                          "description": "Data collection setting. \"allow\": allow providers that may store or train on data. \"deny\": only use providers that do not collect user data.",
+                          "default": "allow"
                         },
                         "zdr": {
-                          "type": "boolean"
+                          "type": "boolean",
+                          "description": "Whether to restrict routing to only ZDR (Zero Data Retention) endpoints."
                         },
                         "enforce_distillable_text": {
-                          "type": "boolean"
+                          "type": "boolean",
+                          "description": "Whether to restrict routing to only models that allow text distillation."
                         },
                         "order": {
                           "type": "array",
                           "items": {
                             "type": "string"
-                          }
+                          },
+                          "description": "An ordered list of provider names or slugs to try in sequence, falling back to the next if unavailable."
                         },
                         "only": {
                           "type": "array",
                           "items": {
                             "type": "string"
-                          }
+                          },
+                          "description": "List of provider names or slugs to exclusively allow for this request."
                         },
                         "ignore": {
                           "type": "array",
                           "items": {
                             "type": "string"
-                          }
+                          },
+                          "description": "List of provider names or slugs to skip for this request."
                         },
                         "quantizations": {
                           "type": "array",
                           "items": {
                             "type": "string"
-                          }
+                          },
+                          "description": "A list of quantization levels to filter providers by, for example [\"fp16\", \"bf16\", \"fp8\", \"fp6\", \"int8\", \"int4\", \"fp4\", \"fp32\"]."
                         },
                         "sort": {
                           "anyOf": [
@@ -292,7 +320,8 @@
                               "type": "object",
                               "properties": {
                                 "by": {
-                                  "type": "string"
+                                  "type": "string",
+                                  "description": "The sorting metric, such as \"price\", \"throughput\", or \"latency\"."
                                 },
                                 "partition": {
                                   "anyOf": [
@@ -302,11 +331,14 @@
                                     {
                                       "type": "null"
                                     }
-                                  ]
+                                  ],
+                                  "description": "Partitioning strategy: \"model\" or \"none\".",
+                                  "default": "model"
                                 }
                               }
                             }
-                          ]
+                          ],
+                          "description": "Sorting strategy. Can be a string such as \"price\", \"throughput\", or \"latency\", or an object."
                         },
                         "max_price": {
                           "type": "object",
@@ -319,7 +351,8 @@
                                 {
                                   "type": "string"
                                 }
-                              ]
+                              ],
+                              "description": "Price per million prompt tokens."
                             },
                             "completion": {
                               "anyOf": [
@@ -329,7 +362,8 @@
                                 {
                                   "type": "string"
                                 }
-                              ]
+                              ],
+                              "description": "Price per million completion tokens."
                             },
                             "image": {
                               "anyOf": [
@@ -339,7 +373,8 @@
                                 {
                                   "type": "string"
                                 }
-                              ]
+                              ],
+                              "description": "Price per image."
                             },
                             "audio": {
                               "anyOf": [
@@ -349,7 +384,8 @@
                                 {
                                   "type": "string"
                                 }
-                              ]
+                              ],
+                              "description": "Price per audio unit."
                             },
                             "request": {
                               "anyOf": [
@@ -359,9 +395,11 @@
                                 {
                                   "type": "string"
                                 }
-                              ]
+                              ],
+                              "description": "Price per request."
                             }
-                          }
+                          },
+                          "description": "Maximum price per million tokens in USD."
                         },
                         "preferred_min_throughput": {
                           "anyOf": [
@@ -372,20 +410,25 @@
                               "type": "object",
                               "properties": {
                                 "p50": {
-                                  "type": "number"
+                                  "type": "number",
+                                  "description": "Cutoff at the 50th percentile."
                                 },
                                 "p75": {
-                                  "type": "number"
+                                  "type": "number",
+                                  "description": "Cutoff at the 75th percentile."
                                 },
                                 "p90": {
-                                  "type": "number"
+                                  "type": "number",
+                                  "description": "Cutoff at the 90th percentile."
                                 },
                                 "p99": {
-                                  "type": "number"
+                                  "type": "number",
+                                  "description": "Cutoff at the 99th percentile."
                                 }
                               }
                             }
-                          ]
+                          ],
+                          "description": "Preferred minimum throughput in tokens per second. A number applies to p50."
                         },
                         "preferred_max_latency": {
                           "anyOf": [
@@ -396,22 +439,28 @@
                               "type": "object",
                               "properties": {
                                 "p50": {
-                                  "type": "number"
+                                  "type": "number",
+                                  "description": "Cutoff at the 50th percentile."
                                 },
                                 "p75": {
-                                  "type": "number"
+                                  "type": "number",
+                                  "description": "Cutoff at the 75th percentile."
                                 },
                                 "p90": {
-                                  "type": "number"
+                                  "type": "number",
+                                  "description": "Cutoff at the 90th percentile."
                                 },
                                 "p99": {
-                                  "type": "number"
+                                  "type": "number",
+                                  "description": "Cutoff at the 99th percentile."
                                 }
                               }
                             }
-                          ]
+                          ],
+                          "description": "Preferred maximum latency in seconds. A number applies to p50."
                         }
-                      }
+                      },
+                      "description": "OpenRouter provider routing preferences. Controls which upstream providers OpenRouter routes requests to. Sent as the provider field in the OpenRouter API request body. See https://openrouter.ai/docs/guides/routing/provider-selection."
                     },
                     "vercelGatewayRouting": {
                       "type": "object",
@@ -420,18 +469,23 @@
                           "type": "array",
                           "items": {
                             "type": "string"
-                          }
+                          },
+                          "description": "List of provider slugs to exclusively use for this request, for example [\"bedrock\", \"anthropic\"]."
                         },
                         "order": {
                           "type": "array",
                           "items": {
                             "type": "string"
-                          }
+                          },
+                          "description": "List of provider slugs to try in order, for example [\"anthropic\", \"openai\"]."
                         }
-                      }
+                      },
+                      "description": "Vercel AI Gateway routing preferences. Controls which upstream providers the gateway routes requests to. See https://vercel.com/docs/ai-gateway/models-and-providers/provider-options."
                     },
                     "zaiToolStream": {
-                      "type": "boolean"
+                      "type": "boolean",
+                      "description": "Whether z.ai supports top-level tool_stream for streaming tool call deltas.",
+                      "default": false
                     },
                     "thinkingTokenBudgetField": {
                       "anyOf": [
@@ -447,29 +501,42 @@
                           "type": "string",
                           "const": "thinking_budget_tokens"
                         }
-                      ]
+                      ],
+                      "description": "Top-level request field used to cap reasoning tokens from thinkingBudgets. Reasoning and the answer share max_tokens on these endpoints. \"thinking_token_budget\" is vLLM, \"thinking_budget\" is Qwen, DashScope, or SGLang, and \"thinking_budget_tokens\" is llama.cpp. Off by default and not set on the generated catalog."
                     },
                     "supportsThinkingTokenBudget": {
-                      "type": "boolean"
+                      "type": "boolean",
+                      "description": "Alias for thinkingTokenBudgetField: \"thinking_token_budget\" (vLLM). Prefer thinkingTokenBudgetField.",
+                      "default": false
                     },
                     "supportsOpenAIGrammarTools": {
-                      "type": "boolean"
+                      "type": "boolean",
+                      "description": "Whether the provider supports OpenAI custom tools with Lark or regex grammar formats. When false, grammar-constrained tools fall back to normal function tools. The generated catalog enables this for capable models.",
+                      "default": false
                     },
                     "supportsMidConvoSystemMessages": {
-                      "type": "boolean"
+                      "type": "boolean",
+                      "description": "Whether the exact model accepts system or developer messages after the conversation has started. When false, later system messages are folded into the leading system message. The generated catalog enables this for verified models.",
+                      "default": false
                     },
                     "supportsMidConvoToolAdditions": {
-                      "type": "boolean"
+                      "type": "boolean",
+                      "description": "Whether system messages can introduce additional tools mid-conversation. Requires supportsMidConvoSystemMessages. The generated catalog enables this for capable models.",
+                      "default": false
                     },
                     "supportsStrictMode": {
-                      "type": "boolean"
+                      "type": "boolean",
+                      "description": "Whether the provider supports the strict field in tool definitions. Generated capable models enable it explicitly.",
+                      "default": false
                     },
                     "cacheControlFormat": {
                       "type": "string",
-                      "const": "anthropic"
+                      "const": "anthropic",
+                      "description": "Cache control convention for prompt caching. Anthropic applies cache_control markers to the system prompt, last tool definition, and last user, assistant, or tool-result text content."
                     },
                     "sendSessionAffinityHeaders": {
-                      "type": "boolean"
+                      "type": "boolean",
+                      "description": "Whether to send session-affinity data from options.sessionId. Default: true for OpenRouter endpoints, false otherwise."
                     },
                     "sessionAffinityFormat": {
                       "anyOf": [
@@ -485,25 +552,34 @@
                           "type": "string",
                           "const": "openrouter"
                         }
-                      ]
+                      ],
+                      "description": "Session-affinity header format. openai sends session_id, x-client-request-id, and x-session-affinity; openai-nosession sends x-client-request-id and x-session-affinity; openrouter sends x-session-id. Does not affect prompt_cache_key. Default: auto-detected."
                     },
                     "supportsLongCacheRetention": {
-                      "type": "boolean"
+                      "type": "boolean",
+                      "description": "Whether the provider supports long prompt cache retention (prompt_cache_retention: \"24h\" or Anthropic-style cache_control.ttl: \"1h\", depending on format).",
+                      "default": true
                     },
                     "vllmPriority": {
-                      "type": "number"
+                      "type": "number",
+                      "description": "vLLM scheduler priority sent as the top-level priority request field. Lower values are handled earlier and the server default is 0. Only meaningful with --scheduling-policy priority. Off by default and not set on the generated catalog."
                     }
                   },
+                  "description": "Compatibility settings for OpenAI-compatible completions APIs. Use this to override URL-based auto-detection for custom providers.",
                   "additionalProperties": true
                 },
                 {
                   "type": "object",
                   "properties": {
                     "supportsDeveloperRole": {
-                      "type": "boolean"
+                      "type": "boolean",
+                      "description": "Whether the provider supports the developer role instead of system.",
+                      "default": true
                     },
                     "supportsMidConvoSystemMessages": {
-                      "type": "boolean"
+                      "type": "boolean",
+                      "description": "Whether the exact model accepts developer or system messages after the conversation has started. When false, later system messages are folded into the leading system message. The generated catalog enables this for verified models.",
+                      "default": false
                     },
                     "sessionAffinityFormat": {
                       "anyOf": [
@@ -519,71 +595,109 @@
                           "type": "string",
                           "const": "openrouter"
                         }
-                      ]
+                      ],
+                      "description": "Session-affinity header format. openai sends session_id and x-client-request-id; openai-nosession sends x-client-request-id; openrouter sends x-session-id. Does not affect prompt_cache_key. Default: auto-detected."
                     },
                     "supportsLongCacheRetention": {
-                      "type": "boolean"
+                      "type": "boolean",
+                      "description": "Whether the provider supports long prompt cache retention. This uses prompt_cache_options.ttl: \"30m\" on GPT-5.6+ and prompt_cache_retention: \"24h\" on earlier models.",
+                      "default": true
                     },
                     "supportsStrictMode": {
-                      "type": "boolean"
+                      "type": "boolean",
+                      "description": "Whether the provider supports strict JSON-schema function tools. Defaults are API-specific; generated OpenAI models enable it explicitly."
                     },
                     "supportsOpenAIGrammarTools": {
-                      "type": "boolean"
+                      "type": "boolean",
+                      "description": "Whether to emit OpenAI custom tools with Lark or regex grammar formats. When false, grammar-constrained tools fall back to normal function tools. The generated catalog enables this for capable models.",
+                      "default": false
                     },
                     "supportsAdditionalTools": {
-                      "type": "boolean"
+                      "type": "boolean",
+                      "description": "Whether the model supports message-anchored additional_tools input items.",
+                      "default": false
                     },
                     "supportsToolSearch": {
-                      "type": "boolean"
+                      "type": "boolean",
+                      "description": "Whether the model supports client-executed tool search for transcript-anchored additions.",
+                      "default": false
                     },
                     "supportsExplicitPromptCacheMode": {
-                      "type": "boolean"
+                      "type": "boolean",
+                      "description": "Whether the model accepts prompt_cache_options. Older OpenAI models reject the parameter.",
+                      "default": false
                     },
                     "supportsMaxOutputTokens": {
-                      "type": "boolean"
+                      "type": "boolean",
+                      "description": "Whether the provider accepts max_output_tokens. Some Codex-protocol gateways reject it.",
+                      "default": true
                     }
                   },
+                  "description": "Compatibility settings for OpenAI Responses APIs.",
                   "additionalProperties": true
                 },
                 {
                   "type": "object",
                   "properties": {
                     "supportsEagerToolInputStreaming": {
-                      "type": "boolean"
+                      "type": "boolean",
+                      "description": "Whether the provider accepts per-tool eager_input_streaming. When false, the Anthropic provider omits tools[].eager_input_streaming and sends the legacy fine-grained-tool-streaming-2025-05-14 beta header for tool-enabled requests.",
+                      "default": true
                     },
                     "supportsLongCacheRetention": {
-                      "type": "boolean"
+                      "type": "boolean",
+                      "description": "Whether the provider supports Anthropic long cache retention through cache_control.ttl.",
+                      "default": true
                     },
                     "sendSessionAffinityHeaders": {
-                      "type": "boolean"
+                      "type": "boolean",
+                      "description": "Whether to send x-session-affinity from options.sessionId when caching is enabled. Required for providers like Fireworks that use session affinity for prompt cache routing; requests to the same replica maximize cache hits.",
+                      "default": false
                     },
                     "sessionAffinityFormat": {
                       "type": "string",
-                      "const": "openrouter"
+                      "const": "openrouter",
+                      "description": "Session-affinity format. openrouter sends x-session-id; when unset, sends x-session-affinity."
                     },
                     "supportsCacheControlOnTools": {
-                      "type": "boolean"
+                      "type": "boolean",
+                      "description": "Whether the provider supports Anthropic-style cache_control markers on tool definitions. When false, cache_control is omitted from tool parameters. Some Anthropic-compatible providers, such as Fireworks, do not support this field on tools and may reject or ignore it.",
+                      "default": true
                     },
                     "supportsTemperature": {
-                      "type": "boolean"
+                      "type": "boolean",
+                      "description": "Whether the model accepts the Anthropic temperature request field. Claude Opus 4.7+ rejects non-default values.",
+                      "default": true
                     },
                     "forceAdaptiveThinking": {
-                      "type": "boolean"
+                      "type": "boolean",
+                      "description": "Whether to force adaptive thinking (thinking.type: adaptive plus output_config.effort) regardless of model ID. Built-in models that require adaptive thinking set this in generated metadata. Custom Anthropic-compatible providers can set this to true for any model whose upstream requires the adaptive format. Set false to opt out on overridden built-in models.",
+                      "default": false
                     },
                     "allowEmptySignature": {
-                      "type": "boolean"
+                      "type": "boolean",
+                      "description": "Whether to replay empty thinking signatures instead of converting thinking to text.",
+                      "default": false
                     },
                     "supportsStrictTools": {
-                      "type": "boolean"
+                      "type": "boolean",
+                      "description": "Whether the provider supports Anthropic strict tool schemas. Generated Anthropic models enable it explicitly.",
+                      "default": false
                     },
                     "supportsMidConvoEffort": {
-                      "type": "boolean"
+                      "type": "boolean",
+                      "description": "Whether the exact model transport supports effort-only system messages and thinking binding controls.",
+                      "default": false
                     },
                     "supportsMidConvoSystemMessages": {
-                      "type": "boolean"
+                      "type": "boolean",
+                      "description": "Whether the exact model accepts system-role messages inside the conversation. When false, later system messages are folded into the top-level system prompt.",
+                      "default": false
                     },
                     "supportsMidConvoToolChanges": {
-                      "type": "boolean"
+                      "type": "boolean",
+                      "description": "Whether the exact model accepts mid-conversation tool_addition and tool_removal blocks. Requires supportsMidConvoSystemMessages.",
+                      "default": false
                     },
                     "allowedFallbackModels": {
                       "type": "array",
@@ -656,32 +770,42 @@
                               }
                             }
                           }
-                        }
+                        },
+                        "description": "An Anthropic server-side refusal fallback model with local pricing metadata."
                       },
-                      "maxItems": 3
+                      "maxItems": 3,
+                      "description": "Models Anthropic accepts for server-side refusal fallback, with local pricing metadata for returned fallback responses. When absent or empty, callers must omit fallbacks; Anthropic rejects the field for models with no permitted fallback targets."
                     }
                   },
+                  "description": "Compatibility settings for Anthropic Messages-compatible APIs.",
                   "additionalProperties": true
                 },
                 {
                   "type": "object",
                   "properties": {
                     "supportsStrictMode": {
-                      "type": "boolean"
+                      "type": "boolean",
+                      "description": "Whether the model supports Bedrock strict tool schemas.",
+                      "default": false
                     }
                   },
+                  "description": "Compatibility settings for Amazon Bedrock models.",
                   "additionalProperties": true
                 },
                 {
                   "type": "object",
                   "properties": {
                     "supportsMidConvoSystemMessages": {
-                      "type": "boolean"
+                      "type": "boolean",
+                      "description": "Whether the exact model accepts system messages after the conversation has started. When false, later system messages are folded into the leading system message.",
+                      "default": false
                     }
                   },
+                  "description": "Compatibility settings for the Mistral chat API.",
                   "additionalProperties": true
                 }
-              ]
+              ],
+              "description": "Provider and model compatibility overrides."
             },
             "authHeader": {
               "type": "boolean"
@@ -939,19 +1063,26 @@
                         "type": "object",
                         "properties": {
                           "supportsStore": {
-                            "type": "boolean"
+                            "type": "boolean",
+                            "description": "Whether the provider supports the store field. Default: auto-detected from URL."
                           },
                           "supportsDeveloperRole": {
-                            "type": "boolean"
+                            "type": "boolean",
+                            "description": "Whether the provider supports the developer role instead of system. Default: auto-detected from URL."
                           },
                           "supportsReasoningEffort": {
-                            "type": "boolean"
+                            "type": "boolean",
+                            "description": "Whether the provider supports reasoning_effort. Default: auto-detected from URL."
                           },
                           "supportsUsageInStreaming": {
-                            "type": "boolean"
+                            "type": "boolean",
+                            "description": "Whether the provider supports stream_options.include_usage for token usage in streaming responses.",
+                            "default": true
                           },
                           "supportsFinishReason": {
-                            "type": "boolean"
+                            "type": "boolean",
+                            "description": "Whether streamed responses include finish_reason. When false, pi infers stop or toolUse when the stream ends.",
+                            "default": true
                           },
                           "maxTokensField": {
                             "anyOf": [
@@ -963,19 +1094,24 @@
                                 "type": "string",
                                 "const": "max_tokens"
                               }
-                            ]
+                            ],
+                            "description": "Which field to use for max tokens. Default: auto-detected from URL."
                           },
                           "requiresToolResultName": {
-                            "type": "boolean"
+                            "type": "boolean",
+                            "description": "Whether tool results require the name field. Default: auto-detected from URL."
                           },
                           "requiresAssistantAfterToolResult": {
-                            "type": "boolean"
+                            "type": "boolean",
+                            "description": "Whether a user message after tool results requires an assistant message in between. Default: auto-detected from URL."
                           },
                           "requiresThinkingAsText": {
-                            "type": "boolean"
+                            "type": "boolean",
+                            "description": "Whether thinking blocks must be converted to text blocks with <thinking> delimiters. Default: auto-detected from URL."
                           },
                           "requiresReasoningContentOnAssistantMessages": {
-                            "type": "boolean"
+                            "type": "boolean",
+                            "description": "Whether all replayed assistant messages must include an empty reasoning_content field when reasoning is enabled. Default: auto-detected from URL."
                           },
                           "thinkingFormat": {
                             "anyOf": [
@@ -1023,7 +1159,9 @@
                                 "type": "string",
                                 "const": "ant-ling"
                               }
-                            ]
+                            ],
+                            "description": "Format for reasoning or thinking parameters. \"openai\" uses reasoning_effort, \"openrouter\" uses reasoning.effort, \"deepseek\" uses thinking.type plus reasoning_effort when supported, \"together\" uses reasoning.enabled plus reasoning_effort when supported, \"baseten\" uses configurable chat_template_args plus reasoning_effort when supported, \"zai\" uses thinking.type, \"qwen\" uses top-level enable_thinking, \"qwen-chat-template\" uses chat_template_kwargs.enable_thinking and preserve_thinking, \"chat-template\" uses configurable chat_template_kwargs, \"string-thinking\" uses top-level thinking, and \"ant-ling\" uses reasoning.effort only when the mapped effort is non-null.",
+                            "default": "openai"
                           },
                           "chatTemplateKwargs": {
                             "type": "object",
@@ -1071,7 +1209,8 @@
                                   }
                                 ]
                               }
-                            }
+                            },
+                            "description": "Kwargs sent as chat_template_kwargs when thinkingFormat is \"chat-template\". Use $var with \"thinking.enabled\", \"thinking.effort\", or \"thinking.budget\" for pi-controlled values."
                           },
                           "chatTemplateArgs": {
                             "type": "object",
@@ -1119,16 +1258,21 @@
                                   }
                                 ]
                               }
-                            }
+                            },
+                            "description": "Arguments sent as chat_template_args when thinkingFormat is \"baseten\". Use $var with \"thinking.enabled\", \"thinking.effort\", or \"thinking.budget\" for pi-controlled values."
                           },
                           "openRouterRouting": {
                             "type": "object",
                             "properties": {
                               "allow_fallbacks": {
-                                "type": "boolean"
+                                "type": "boolean",
+                                "description": "Whether to allow backup providers to serve requests.",
+                                "default": true
                               },
                               "require_parameters": {
-                                "type": "boolean"
+                                "type": "boolean",
+                                "description": "Whether to filter providers to only those that support all parameters in the request.",
+                                "default": false
                               },
                               "data_collection": {
                                 "anyOf": [
@@ -1140,37 +1284,45 @@
                                     "type": "string",
                                     "const": "allow"
                                   }
-                                ]
+                                ],
+                                "description": "Data collection setting. \"allow\": allow providers that may store or train on data. \"deny\": only use providers that do not collect user data.",
+                                "default": "allow"
                               },
                               "zdr": {
-                                "type": "boolean"
+                                "type": "boolean",
+                                "description": "Whether to restrict routing to only ZDR (Zero Data Retention) endpoints."
                               },
                               "enforce_distillable_text": {
-                                "type": "boolean"
+                                "type": "boolean",
+                                "description": "Whether to restrict routing to only models that allow text distillation."
                               },
                               "order": {
                                 "type": "array",
                                 "items": {
                                   "type": "string"
-                                }
+                                },
+                                "description": "An ordered list of provider names or slugs to try in sequence, falling back to the next if unavailable."
                               },
                               "only": {
                                 "type": "array",
                                 "items": {
                                   "type": "string"
-                                }
+                                },
+                                "description": "List of provider names or slugs to exclusively allow for this request."
                               },
                               "ignore": {
                                 "type": "array",
                                 "items": {
                                   "type": "string"
-                                }
+                                },
+                                "description": "List of provider names or slugs to skip for this request."
                               },
                               "quantizations": {
                                 "type": "array",
                                 "items": {
                                   "type": "string"
-                                }
+                                },
+                                "description": "A list of quantization levels to filter providers by, for example [\"fp16\", \"bf16\", \"fp8\", \"fp6\", \"int8\", \"int4\", \"fp4\", \"fp32\"]."
                               },
                               "sort": {
                                 "anyOf": [
@@ -1181,7 +1333,8 @@
                                     "type": "object",
                                     "properties": {
                                       "by": {
-                                        "type": "string"
+                                        "type": "string",
+                                        "description": "The sorting metric, such as \"price\", \"throughput\", or \"latency\"."
                                       },
                                       "partition": {
                                         "anyOf": [
@@ -1191,11 +1344,14 @@
                                           {
                                             "type": "null"
                                           }
-                                        ]
+                                        ],
+                                        "description": "Partitioning strategy: \"model\" or \"none\".",
+                                        "default": "model"
                                       }
                                     }
                                   }
-                                ]
+                                ],
+                                "description": "Sorting strategy. Can be a string such as \"price\", \"throughput\", or \"latency\", or an object."
                               },
                               "max_price": {
                                 "type": "object",
@@ -1208,7 +1364,8 @@
                                       {
                                         "type": "string"
                                       }
-                                    ]
+                                    ],
+                                    "description": "Price per million prompt tokens."
                                   },
                                   "completion": {
                                     "anyOf": [
@@ -1218,7 +1375,8 @@
                                       {
                                         "type": "string"
                                       }
-                                    ]
+                                    ],
+                                    "description": "Price per million completion tokens."
                                   },
                                   "image": {
                                     "anyOf": [
@@ -1228,7 +1386,8 @@
                                       {
                                         "type": "string"
                                       }
-                                    ]
+                                    ],
+                                    "description": "Price per image."
                                   },
                                   "audio": {
                                     "anyOf": [
@@ -1238,7 +1397,8 @@
                                       {
                                         "type": "string"
                                       }
-                                    ]
+                                    ],
+                                    "description": "Price per audio unit."
                                   },
                                   "request": {
                                     "anyOf": [
@@ -1248,9 +1408,11 @@
                                       {
                                         "type": "string"
                                       }
-                                    ]
+                                    ],
+                                    "description": "Price per request."
                                   }
-                                }
+                                },
+                                "description": "Maximum price per million tokens in USD."
                               },
                               "preferred_min_throughput": {
                                 "anyOf": [
@@ -1261,20 +1423,25 @@
                                     "type": "object",
                                     "properties": {
                                       "p50": {
-                                        "type": "number"
+                                        "type": "number",
+                                        "description": "Cutoff at the 50th percentile."
                                       },
                                       "p75": {
-                                        "type": "number"
+                                        "type": "number",
+                                        "description": "Cutoff at the 75th percentile."
                                       },
                                       "p90": {
-                                        "type": "number"
+                                        "type": "number",
+                                        "description": "Cutoff at the 90th percentile."
                                       },
                                       "p99": {
-                                        "type": "number"
+                                        "type": "number",
+                                        "description": "Cutoff at the 99th percentile."
                                       }
                                     }
                                   }
-                                ]
+                                ],
+                                "description": "Preferred minimum throughput in tokens per second. A number applies to p50."
                               },
                               "preferred_max_latency": {
                                 "anyOf": [
@@ -1285,22 +1452,28 @@
                                     "type": "object",
                                     "properties": {
                                       "p50": {
-                                        "type": "number"
+                                        "type": "number",
+                                        "description": "Cutoff at the 50th percentile."
                                       },
                                       "p75": {
-                                        "type": "number"
+                                        "type": "number",
+                                        "description": "Cutoff at the 75th percentile."
                                       },
                                       "p90": {
-                                        "type": "number"
+                                        "type": "number",
+                                        "description": "Cutoff at the 90th percentile."
                                       },
                                       "p99": {
-                                        "type": "number"
+                                        "type": "number",
+                                        "description": "Cutoff at the 99th percentile."
                                       }
                                     }
                                   }
-                                ]
+                                ],
+                                "description": "Preferred maximum latency in seconds. A number applies to p50."
                               }
-                            }
+                            },
+                            "description": "OpenRouter provider routing preferences. Controls which upstream providers OpenRouter routes requests to. Sent as the provider field in the OpenRouter API request body. See https://openrouter.ai/docs/guides/routing/provider-selection."
                           },
                           "vercelGatewayRouting": {
                             "type": "object",
@@ -1309,18 +1482,23 @@
                                 "type": "array",
                                 "items": {
                                   "type": "string"
-                                }
+                                },
+                                "description": "List of provider slugs to exclusively use for this request, for example [\"bedrock\", \"anthropic\"]."
                               },
                               "order": {
                                 "type": "array",
                                 "items": {
                                   "type": "string"
-                                }
+                                },
+                                "description": "List of provider slugs to try in order, for example [\"anthropic\", \"openai\"]."
                               }
-                            }
+                            },
+                            "description": "Vercel AI Gateway routing preferences. Controls which upstream providers the gateway routes requests to. See https://vercel.com/docs/ai-gateway/models-and-providers/provider-options."
                           },
                           "zaiToolStream": {
-                            "type": "boolean"
+                            "type": "boolean",
+                            "description": "Whether z.ai supports top-level tool_stream for streaming tool call deltas.",
+                            "default": false
                           },
                           "thinkingTokenBudgetField": {
                             "anyOf": [
@@ -1336,29 +1514,42 @@
                                 "type": "string",
                                 "const": "thinking_budget_tokens"
                               }
-                            ]
+                            ],
+                            "description": "Top-level request field used to cap reasoning tokens from thinkingBudgets. Reasoning and the answer share max_tokens on these endpoints. \"thinking_token_budget\" is vLLM, \"thinking_budget\" is Qwen, DashScope, or SGLang, and \"thinking_budget_tokens\" is llama.cpp. Off by default and not set on the generated catalog."
                           },
                           "supportsThinkingTokenBudget": {
-                            "type": "boolean"
+                            "type": "boolean",
+                            "description": "Alias for thinkingTokenBudgetField: \"thinking_token_budget\" (vLLM). Prefer thinkingTokenBudgetField.",
+                            "default": false
                           },
                           "supportsOpenAIGrammarTools": {
-                            "type": "boolean"
+                            "type": "boolean",
+                            "description": "Whether the provider supports OpenAI custom tools with Lark or regex grammar formats. When false, grammar-constrained tools fall back to normal function tools. The generated catalog enables this for capable models.",
+                            "default": false
                           },
                           "supportsMidConvoSystemMessages": {
-                            "type": "boolean"
+                            "type": "boolean",
+                            "description": "Whether the exact model accepts system or developer messages after the conversation has started. When false, later system messages are folded into the leading system message. The generated catalog enables this for verified models.",
+                            "default": false
                           },
                           "supportsMidConvoToolAdditions": {
-                            "type": "boolean"
+                            "type": "boolean",
+                            "description": "Whether system messages can introduce additional tools mid-conversation. Requires supportsMidConvoSystemMessages. The generated catalog enables this for capable models.",
+                            "default": false
                           },
                           "supportsStrictMode": {
-                            "type": "boolean"
+                            "type": "boolean",
+                            "description": "Whether the provider supports the strict field in tool definitions. Generated capable models enable it explicitly.",
+                            "default": false
                           },
                           "cacheControlFormat": {
                             "type": "string",
-                            "const": "anthropic"
+                            "const": "anthropic",
+                            "description": "Cache control convention for prompt caching. Anthropic applies cache_control markers to the system prompt, last tool definition, and last user, assistant, or tool-result text content."
                           },
                           "sendSessionAffinityHeaders": {
-                            "type": "boolean"
+                            "type": "boolean",
+                            "description": "Whether to send session-affinity data from options.sessionId. Default: true for OpenRouter endpoints, false otherwise."
                           },
                           "sessionAffinityFormat": {
                             "anyOf": [
@@ -1374,25 +1565,34 @@
                                 "type": "string",
                                 "const": "openrouter"
                               }
-                            ]
+                            ],
+                            "description": "Session-affinity header format. openai sends session_id, x-client-request-id, and x-session-affinity; openai-nosession sends x-client-request-id and x-session-affinity; openrouter sends x-session-id. Does not affect prompt_cache_key. Default: auto-detected."
                           },
                           "supportsLongCacheRetention": {
-                            "type": "boolean"
+                            "type": "boolean",
+                            "description": "Whether the provider supports long prompt cache retention (prompt_cache_retention: \"24h\" or Anthropic-style cache_control.ttl: \"1h\", depending on format).",
+                            "default": true
                           },
                           "vllmPriority": {
-                            "type": "number"
+                            "type": "number",
+                            "description": "vLLM scheduler priority sent as the top-level priority request field. Lower values are handled earlier and the server default is 0. Only meaningful with --scheduling-policy priority. Off by default and not set on the generated catalog."
                           }
                         },
+                        "description": "Compatibility settings for OpenAI-compatible completions APIs. Use this to override URL-based auto-detection for custom providers.",
                         "additionalProperties": true
                       },
                       {
                         "type": "object",
                         "properties": {
                           "supportsDeveloperRole": {
-                            "type": "boolean"
+                            "type": "boolean",
+                            "description": "Whether the provider supports the developer role instead of system.",
+                            "default": true
                           },
                           "supportsMidConvoSystemMessages": {
-                            "type": "boolean"
+                            "type": "boolean",
+                            "description": "Whether the exact model accepts developer or system messages after the conversation has started. When false, later system messages are folded into the leading system message. The generated catalog enables this for verified models.",
+                            "default": false
                           },
                           "sessionAffinityFormat": {
                             "anyOf": [
@@ -1408,71 +1608,109 @@
                                 "type": "string",
                                 "const": "openrouter"
                               }
-                            ]
+                            ],
+                            "description": "Session-affinity header format. openai sends session_id and x-client-request-id; openai-nosession sends x-client-request-id; openrouter sends x-session-id. Does not affect prompt_cache_key. Default: auto-detected."
                           },
                           "supportsLongCacheRetention": {
-                            "type": "boolean"
+                            "type": "boolean",
+                            "description": "Whether the provider supports long prompt cache retention. This uses prompt_cache_options.ttl: \"30m\" on GPT-5.6+ and prompt_cache_retention: \"24h\" on earlier models.",
+                            "default": true
                           },
                           "supportsStrictMode": {
-                            "type": "boolean"
+                            "type": "boolean",
+                            "description": "Whether the provider supports strict JSON-schema function tools. Defaults are API-specific; generated OpenAI models enable it explicitly."
                           },
                           "supportsOpenAIGrammarTools": {
-                            "type": "boolean"
+                            "type": "boolean",
+                            "description": "Whether to emit OpenAI custom tools with Lark or regex grammar formats. When false, grammar-constrained tools fall back to normal function tools. The generated catalog enables this for capable models.",
+                            "default": false
                           },
                           "supportsAdditionalTools": {
-                            "type": "boolean"
+                            "type": "boolean",
+                            "description": "Whether the model supports message-anchored additional_tools input items.",
+                            "default": false
                           },
                           "supportsToolSearch": {
-                            "type": "boolean"
+                            "type": "boolean",
+                            "description": "Whether the model supports client-executed tool search for transcript-anchored additions.",
+                            "default": false
                           },
                           "supportsExplicitPromptCacheMode": {
-                            "type": "boolean"
+                            "type": "boolean",
+                            "description": "Whether the model accepts prompt_cache_options. Older OpenAI models reject the parameter.",
+                            "default": false
                           },
                           "supportsMaxOutputTokens": {
-                            "type": "boolean"
+                            "type": "boolean",
+                            "description": "Whether the provider accepts max_output_tokens. Some Codex-protocol gateways reject it.",
+                            "default": true
                           }
                         },
+                        "description": "Compatibility settings for OpenAI Responses APIs.",
                         "additionalProperties": true
                       },
                       {
                         "type": "object",
                         "properties": {
                           "supportsEagerToolInputStreaming": {
-                            "type": "boolean"
+                            "type": "boolean",
+                            "description": "Whether the provider accepts per-tool eager_input_streaming. When false, the Anthropic provider omits tools[].eager_input_streaming and sends the legacy fine-grained-tool-streaming-2025-05-14 beta header for tool-enabled requests.",
+                            "default": true
                           },
                           "supportsLongCacheRetention": {
-                            "type": "boolean"
+                            "type": "boolean",
+                            "description": "Whether the provider supports Anthropic long cache retention through cache_control.ttl.",
+                            "default": true
                           },
                           "sendSessionAffinityHeaders": {
-                            "type": "boolean"
+                            "type": "boolean",
+                            "description": "Whether to send x-session-affinity from options.sessionId when caching is enabled. Required for providers like Fireworks that use session affinity for prompt cache routing; requests to the same replica maximize cache hits.",
+                            "default": false
                           },
                           "sessionAffinityFormat": {
                             "type": "string",
-                            "const": "openrouter"
+                            "const": "openrouter",
+                            "description": "Session-affinity format. openrouter sends x-session-id; when unset, sends x-session-affinity."
                           },
                           "supportsCacheControlOnTools": {
-                            "type": "boolean"
+                            "type": "boolean",
+                            "description": "Whether the provider supports Anthropic-style cache_control markers on tool definitions. When false, cache_control is omitted from tool parameters. Some Anthropic-compatible providers, such as Fireworks, do not support this field on tools and may reject or ignore it.",
+                            "default": true
                           },
                           "supportsTemperature": {
-                            "type": "boolean"
+                            "type": "boolean",
+                            "description": "Whether the model accepts the Anthropic temperature request field. Claude Opus 4.7+ rejects non-default values.",
+                            "default": true
                           },
                           "forceAdaptiveThinking": {
-                            "type": "boolean"
+                            "type": "boolean",
+                            "description": "Whether to force adaptive thinking (thinking.type: adaptive plus output_config.effort) regardless of model ID. Built-in models that require adaptive thinking set this in generated metadata. Custom Anthropic-compatible providers can set this to true for any model whose upstream requires the adaptive format. Set false to opt out on overridden built-in models.",
+                            "default": false
                           },
                           "allowEmptySignature": {
-                            "type": "boolean"
+                            "type": "boolean",
+                            "description": "Whether to replay empty thinking signatures instead of converting thinking to text.",
+                            "default": false
                           },
                           "supportsStrictTools": {
-                            "type": "boolean"
+                            "type": "boolean",
+                            "description": "Whether the provider supports Anthropic strict tool schemas. Generated Anthropic models enable it explicitly.",
+                            "default": false
                           },
                           "supportsMidConvoEffort": {
-                            "type": "boolean"
+                            "type": "boolean",
+                            "description": "Whether the exact model transport supports effort-only system messages and thinking binding controls.",
+                            "default": false
                           },
                           "supportsMidConvoSystemMessages": {
-                            "type": "boolean"
+                            "type": "boolean",
+                            "description": "Whether the exact model accepts system-role messages inside the conversation. When false, later system messages are folded into the top-level system prompt.",
+                            "default": false
                           },
                           "supportsMidConvoToolChanges": {
-                            "type": "boolean"
+                            "type": "boolean",
+                            "description": "Whether the exact model accepts mid-conversation tool_addition and tool_removal blocks. Requires supportsMidConvoSystemMessages.",
+                            "default": false
                           },
                           "allowedFallbackModels": {
                             "type": "array",
@@ -1545,32 +1783,42 @@
                                     }
                                   }
                                 }
-                              }
+                              },
+                              "description": "An Anthropic server-side refusal fallback model with local pricing metadata."
                             },
-                            "maxItems": 3
+                            "maxItems": 3,
+                            "description": "Models Anthropic accepts for server-side refusal fallback, with local pricing metadata for returned fallback responses. When absent or empty, callers must omit fallbacks; Anthropic rejects the field for models with no permitted fallback targets."
                           }
                         },
+                        "description": "Compatibility settings for Anthropic Messages-compatible APIs.",
                         "additionalProperties": true
                       },
                       {
                         "type": "object",
                         "properties": {
                           "supportsStrictMode": {
-                            "type": "boolean"
+                            "type": "boolean",
+                            "description": "Whether the model supports Bedrock strict tool schemas.",
+                            "default": false
                           }
                         },
+                        "description": "Compatibility settings for Amazon Bedrock models.",
                         "additionalProperties": true
                       },
                       {
                         "type": "object",
                         "properties": {
                           "supportsMidConvoSystemMessages": {
-                            "type": "boolean"
+                            "type": "boolean",
+                            "description": "Whether the exact model accepts system messages after the conversation has started. When false, later system messages are folded into the leading system message.",
+                            "default": false
                           }
                         },
+                        "description": "Compatibility settings for the Mistral chat API.",
                         "additionalProperties": true
                       }
-                    ]
+                    ],
+                    "description": "Provider and model compatibility overrides."
                   }
                 }
               }
@@ -1808,19 +2056,26 @@
                           "type": "object",
                           "properties": {
                             "supportsStore": {
-                              "type": "boolean"
+                              "type": "boolean",
+                              "description": "Whether the provider supports the store field. Default: auto-detected from URL."
                             },
                             "supportsDeveloperRole": {
-                              "type": "boolean"
+                              "type": "boolean",
+                              "description": "Whether the provider supports the developer role instead of system. Default: auto-detected from URL."
                             },
                             "supportsReasoningEffort": {
-                              "type": "boolean"
+                              "type": "boolean",
+                              "description": "Whether the provider supports reasoning_effort. Default: auto-detected from URL."
                             },
                             "supportsUsageInStreaming": {
-                              "type": "boolean"
+                              "type": "boolean",
+                              "description": "Whether the provider supports stream_options.include_usage for token usage in streaming responses.",
+                              "default": true
                             },
                             "supportsFinishReason": {
-                              "type": "boolean"
+                              "type": "boolean",
+                              "description": "Whether streamed responses include finish_reason. When false, pi infers stop or toolUse when the stream ends.",
+                              "default": true
                             },
                             "maxTokensField": {
                               "anyOf": [
@@ -1832,19 +2087,24 @@
                                   "type": "string",
                                   "const": "max_tokens"
                                 }
-                              ]
+                              ],
+                              "description": "Which field to use for max tokens. Default: auto-detected from URL."
                             },
                             "requiresToolResultName": {
-                              "type": "boolean"
+                              "type": "boolean",
+                              "description": "Whether tool results require the name field. Default: auto-detected from URL."
                             },
                             "requiresAssistantAfterToolResult": {
-                              "type": "boolean"
+                              "type": "boolean",
+                              "description": "Whether a user message after tool results requires an assistant message in between. Default: auto-detected from URL."
                             },
                             "requiresThinkingAsText": {
-                              "type": "boolean"
+                              "type": "boolean",
+                              "description": "Whether thinking blocks must be converted to text blocks with <thinking> delimiters. Default: auto-detected from URL."
                             },
                             "requiresReasoningContentOnAssistantMessages": {
-                              "type": "boolean"
+                              "type": "boolean",
+                              "description": "Whether all replayed assistant messages must include an empty reasoning_content field when reasoning is enabled. Default: auto-detected from URL."
                             },
                             "thinkingFormat": {
                               "anyOf": [
@@ -1892,7 +2152,9 @@
                                   "type": "string",
                                   "const": "ant-ling"
                                 }
-                              ]
+                              ],
+                              "description": "Format for reasoning or thinking parameters. \"openai\" uses reasoning_effort, \"openrouter\" uses reasoning.effort, \"deepseek\" uses thinking.type plus reasoning_effort when supported, \"together\" uses reasoning.enabled plus reasoning_effort when supported, \"baseten\" uses configurable chat_template_args plus reasoning_effort when supported, \"zai\" uses thinking.type, \"qwen\" uses top-level enable_thinking, \"qwen-chat-template\" uses chat_template_kwargs.enable_thinking and preserve_thinking, \"chat-template\" uses configurable chat_template_kwargs, \"string-thinking\" uses top-level thinking, and \"ant-ling\" uses reasoning.effort only when the mapped effort is non-null.",
+                              "default": "openai"
                             },
                             "chatTemplateKwargs": {
                               "type": "object",
@@ -1940,7 +2202,8 @@
                                     }
                                   ]
                                 }
-                              }
+                              },
+                              "description": "Kwargs sent as chat_template_kwargs when thinkingFormat is \"chat-template\". Use $var with \"thinking.enabled\", \"thinking.effort\", or \"thinking.budget\" for pi-controlled values."
                             },
                             "chatTemplateArgs": {
                               "type": "object",
@@ -1988,16 +2251,21 @@
                                     }
                                   ]
                                 }
-                              }
+                              },
+                              "description": "Arguments sent as chat_template_args when thinkingFormat is \"baseten\". Use $var with \"thinking.enabled\", \"thinking.effort\", or \"thinking.budget\" for pi-controlled values."
                             },
                             "openRouterRouting": {
                               "type": "object",
                               "properties": {
                                 "allow_fallbacks": {
-                                  "type": "boolean"
+                                  "type": "boolean",
+                                  "description": "Whether to allow backup providers to serve requests.",
+                                  "default": true
                                 },
                                 "require_parameters": {
-                                  "type": "boolean"
+                                  "type": "boolean",
+                                  "description": "Whether to filter providers to only those that support all parameters in the request.",
+                                  "default": false
                                 },
                                 "data_collection": {
                                   "anyOf": [
@@ -2009,37 +2277,45 @@
                                       "type": "string",
                                       "const": "allow"
                                     }
-                                  ]
+                                  ],
+                                  "description": "Data collection setting. \"allow\": allow providers that may store or train on data. \"deny\": only use providers that do not collect user data.",
+                                  "default": "allow"
                                 },
                                 "zdr": {
-                                  "type": "boolean"
+                                  "type": "boolean",
+                                  "description": "Whether to restrict routing to only ZDR (Zero Data Retention) endpoints."
                                 },
                                 "enforce_distillable_text": {
-                                  "type": "boolean"
+                                  "type": "boolean",
+                                  "description": "Whether to restrict routing to only models that allow text distillation."
                                 },
                                 "order": {
                                   "type": "array",
                                   "items": {
                                     "type": "string"
-                                  }
+                                  },
+                                  "description": "An ordered list of provider names or slugs to try in sequence, falling back to the next if unavailable."
                                 },
                                 "only": {
                                   "type": "array",
                                   "items": {
                                     "type": "string"
-                                  }
+                                  },
+                                  "description": "List of provider names or slugs to exclusively allow for this request."
                                 },
                                 "ignore": {
                                   "type": "array",
                                   "items": {
                                     "type": "string"
-                                  }
+                                  },
+                                  "description": "List of provider names or slugs to skip for this request."
                                 },
                                 "quantizations": {
                                   "type": "array",
                                   "items": {
                                     "type": "string"
-                                  }
+                                  },
+                                  "description": "A list of quantization levels to filter providers by, for example [\"fp16\", \"bf16\", \"fp8\", \"fp6\", \"int8\", \"int4\", \"fp4\", \"fp32\"]."
                                 },
                                 "sort": {
                                   "anyOf": [
@@ -2050,7 +2326,8 @@
                                       "type": "object",
                                       "properties": {
                                         "by": {
-                                          "type": "string"
+                                          "type": "string",
+                                          "description": "The sorting metric, such as \"price\", \"throughput\", or \"latency\"."
                                         },
                                         "partition": {
                                           "anyOf": [
@@ -2060,11 +2337,14 @@
                                             {
                                               "type": "null"
                                             }
-                                          ]
+                                          ],
+                                          "description": "Partitioning strategy: \"model\" or \"none\".",
+                                          "default": "model"
                                         }
                                       }
                                     }
-                                  ]
+                                  ],
+                                  "description": "Sorting strategy. Can be a string such as \"price\", \"throughput\", or \"latency\", or an object."
                                 },
                                 "max_price": {
                                   "type": "object",
@@ -2077,7 +2357,8 @@
                                         {
                                           "type": "string"
                                         }
-                                      ]
+                                      ],
+                                      "description": "Price per million prompt tokens."
                                     },
                                     "completion": {
                                       "anyOf": [
@@ -2087,7 +2368,8 @@
                                         {
                                           "type": "string"
                                         }
-                                      ]
+                                      ],
+                                      "description": "Price per million completion tokens."
                                     },
                                     "image": {
                                       "anyOf": [
@@ -2097,7 +2379,8 @@
                                         {
                                           "type": "string"
                                         }
-                                      ]
+                                      ],
+                                      "description": "Price per image."
                                     },
                                     "audio": {
                                       "anyOf": [
@@ -2107,7 +2390,8 @@
                                         {
                                           "type": "string"
                                         }
-                                      ]
+                                      ],
+                                      "description": "Price per audio unit."
                                     },
                                     "request": {
                                       "anyOf": [
@@ -2117,9 +2401,11 @@
                                         {
                                           "type": "string"
                                         }
-                                      ]
+                                      ],
+                                      "description": "Price per request."
                                     }
-                                  }
+                                  },
+                                  "description": "Maximum price per million tokens in USD."
                                 },
                                 "preferred_min_throughput": {
                                   "anyOf": [
@@ -2130,20 +2416,25 @@
                                       "type": "object",
                                       "properties": {
                                         "p50": {
-                                          "type": "number"
+                                          "type": "number",
+                                          "description": "Cutoff at the 50th percentile."
                                         },
                                         "p75": {
-                                          "type": "number"
+                                          "type": "number",
+                                          "description": "Cutoff at the 75th percentile."
                                         },
                                         "p90": {
-                                          "type": "number"
+                                          "type": "number",
+                                          "description": "Cutoff at the 90th percentile."
                                         },
                                         "p99": {
-                                          "type": "number"
+                                          "type": "number",
+                                          "description": "Cutoff at the 99th percentile."
                                         }
                                       }
                                     }
-                                  ]
+                                  ],
+                                  "description": "Preferred minimum throughput in tokens per second. A number applies to p50."
                                 },
                                 "preferred_max_latency": {
                                   "anyOf": [
@@ -2154,22 +2445,28 @@
                                       "type": "object",
                                       "properties": {
                                         "p50": {
-                                          "type": "number"
+                                          "type": "number",
+                                          "description": "Cutoff at the 50th percentile."
                                         },
                                         "p75": {
-                                          "type": "number"
+                                          "type": "number",
+                                          "description": "Cutoff at the 75th percentile."
                                         },
                                         "p90": {
-                                          "type": "number"
+                                          "type": "number",
+                                          "description": "Cutoff at the 90th percentile."
                                         },
                                         "p99": {
-                                          "type": "number"
+                                          "type": "number",
+                                          "description": "Cutoff at the 99th percentile."
                                         }
                                       }
                                     }
-                                  ]
+                                  ],
+                                  "description": "Preferred maximum latency in seconds. A number applies to p50."
                                 }
-                              }
+                              },
+                              "description": "OpenRouter provider routing preferences. Controls which upstream providers OpenRouter routes requests to. Sent as the provider field in the OpenRouter API request body. See https://openrouter.ai/docs/guides/routing/provider-selection."
                             },
                             "vercelGatewayRouting": {
                               "type": "object",
@@ -2178,18 +2475,23 @@
                                   "type": "array",
                                   "items": {
                                     "type": "string"
-                                  }
+                                  },
+                                  "description": "List of provider slugs to exclusively use for this request, for example [\"bedrock\", \"anthropic\"]."
                                 },
                                 "order": {
                                   "type": "array",
                                   "items": {
                                     "type": "string"
-                                  }
+                                  },
+                                  "description": "List of provider slugs to try in order, for example [\"anthropic\", \"openai\"]."
                                 }
-                              }
+                              },
+                              "description": "Vercel AI Gateway routing preferences. Controls which upstream providers the gateway routes requests to. See https://vercel.com/docs/ai-gateway/models-and-providers/provider-options."
                             },
                             "zaiToolStream": {
-                              "type": "boolean"
+                              "type": "boolean",
+                              "description": "Whether z.ai supports top-level tool_stream for streaming tool call deltas.",
+                              "default": false
                             },
                             "thinkingTokenBudgetField": {
                               "anyOf": [
@@ -2205,29 +2507,42 @@
                                   "type": "string",
                                   "const": "thinking_budget_tokens"
                                 }
-                              ]
+                              ],
+                              "description": "Top-level request field used to cap reasoning tokens from thinkingBudgets. Reasoning and the answer share max_tokens on these endpoints. \"thinking_token_budget\" is vLLM, \"thinking_budget\" is Qwen, DashScope, or SGLang, and \"thinking_budget_tokens\" is llama.cpp. Off by default and not set on the generated catalog."
                             },
                             "supportsThinkingTokenBudget": {
-                              "type": "boolean"
+                              "type": "boolean",
+                              "description": "Alias for thinkingTokenBudgetField: \"thinking_token_budget\" (vLLM). Prefer thinkingTokenBudgetField.",
+                              "default": false
                             },
                             "supportsOpenAIGrammarTools": {
-                              "type": "boolean"
+                              "type": "boolean",
+                              "description": "Whether the provider supports OpenAI custom tools with Lark or regex grammar formats. When false, grammar-constrained tools fall back to normal function tools. The generated catalog enables this for capable models.",
+                              "default": false
                             },
                             "supportsMidConvoSystemMessages": {
-                              "type": "boolean"
+                              "type": "boolean",
+                              "description": "Whether the exact model accepts system or developer messages after the conversation has started. When false, later system messages are folded into the leading system message. The generated catalog enables this for verified models.",
+                              "default": false
                             },
                             "supportsMidConvoToolAdditions": {
-                              "type": "boolean"
+                              "type": "boolean",
+                              "description": "Whether system messages can introduce additional tools mid-conversation. Requires supportsMidConvoSystemMessages. The generated catalog enables this for capable models.",
+                              "default": false
                             },
                             "supportsStrictMode": {
-                              "type": "boolean"
+                              "type": "boolean",
+                              "description": "Whether the provider supports the strict field in tool definitions. Generated capable models enable it explicitly.",
+                              "default": false
                             },
                             "cacheControlFormat": {
                               "type": "string",
-                              "const": "anthropic"
+                              "const": "anthropic",
+                              "description": "Cache control convention for prompt caching. Anthropic applies cache_control markers to the system prompt, last tool definition, and last user, assistant, or tool-result text content."
                             },
                             "sendSessionAffinityHeaders": {
-                              "type": "boolean"
+                              "type": "boolean",
+                              "description": "Whether to send session-affinity data from options.sessionId. Default: true for OpenRouter endpoints, false otherwise."
                             },
                             "sessionAffinityFormat": {
                               "anyOf": [
@@ -2243,25 +2558,34 @@
                                   "type": "string",
                                   "const": "openrouter"
                                 }
-                              ]
+                              ],
+                              "description": "Session-affinity header format. openai sends session_id, x-client-request-id, and x-session-affinity; openai-nosession sends x-client-request-id and x-session-affinity; openrouter sends x-session-id. Does not affect prompt_cache_key. Default: auto-detected."
                             },
                             "supportsLongCacheRetention": {
-                              "type": "boolean"
+                              "type": "boolean",
+                              "description": "Whether the provider supports long prompt cache retention (prompt_cache_retention: \"24h\" or Anthropic-style cache_control.ttl: \"1h\", depending on format).",
+                              "default": true
                             },
                             "vllmPriority": {
-                              "type": "number"
+                              "type": "number",
+                              "description": "vLLM scheduler priority sent as the top-level priority request field. Lower values are handled earlier and the server default is 0. Only meaningful with --scheduling-policy priority. Off by default and not set on the generated catalog."
                             }
                           },
+                          "description": "Compatibility settings for OpenAI-compatible completions APIs. Use this to override URL-based auto-detection for custom providers.",
                           "additionalProperties": true
                         },
                         {
                           "type": "object",
                           "properties": {
                             "supportsDeveloperRole": {
-                              "type": "boolean"
+                              "type": "boolean",
+                              "description": "Whether the provider supports the developer role instead of system.",
+                              "default": true
                             },
                             "supportsMidConvoSystemMessages": {
-                              "type": "boolean"
+                              "type": "boolean",
+                              "description": "Whether the exact model accepts developer or system messages after the conversation has started. When false, later system messages are folded into the leading system message. The generated catalog enables this for verified models.",
+                              "default": false
                             },
                             "sessionAffinityFormat": {
                               "anyOf": [
@@ -2277,71 +2601,109 @@
                                   "type": "string",
                                   "const": "openrouter"
                                 }
-                              ]
+                              ],
+                              "description": "Session-affinity header format. openai sends session_id and x-client-request-id; openai-nosession sends x-client-request-id; openrouter sends x-session-id. Does not affect prompt_cache_key. Default: auto-detected."
                             },
                             "supportsLongCacheRetention": {
-                              "type": "boolean"
+                              "type": "boolean",
+                              "description": "Whether the provider supports long prompt cache retention. This uses prompt_cache_options.ttl: \"30m\" on GPT-5.6+ and prompt_cache_retention: \"24h\" on earlier models.",
+                              "default": true
                             },
                             "supportsStrictMode": {
-                              "type": "boolean"
+                              "type": "boolean",
+                              "description": "Whether the provider supports strict JSON-schema function tools. Defaults are API-specific; generated OpenAI models enable it explicitly."
                             },
                             "supportsOpenAIGrammarTools": {
-                              "type": "boolean"
+                              "type": "boolean",
+                              "description": "Whether to emit OpenAI custom tools with Lark or regex grammar formats. When false, grammar-constrained tools fall back to normal function tools. The generated catalog enables this for capable models.",
+                              "default": false
                             },
                             "supportsAdditionalTools": {
-                              "type": "boolean"
+                              "type": "boolean",
+                              "description": "Whether the model supports message-anchored additional_tools input items.",
+                              "default": false
                             },
                             "supportsToolSearch": {
-                              "type": "boolean"
+                              "type": "boolean",
+                              "description": "Whether the model supports client-executed tool search for transcript-anchored additions.",
+                              "default": false
                             },
                             "supportsExplicitPromptCacheMode": {
-                              "type": "boolean"
+                              "type": "boolean",
+                              "description": "Whether the model accepts prompt_cache_options. Older OpenAI models reject the parameter.",
+                              "default": false
                             },
                             "supportsMaxOutputTokens": {
-                              "type": "boolean"
+                              "type": "boolean",
+                              "description": "Whether the provider accepts max_output_tokens. Some Codex-protocol gateways reject it.",
+                              "default": true
                             }
                           },
+                          "description": "Compatibility settings for OpenAI Responses APIs.",
                           "additionalProperties": true
                         },
                         {
                           "type": "object",
                           "properties": {
                             "supportsEagerToolInputStreaming": {
-                              "type": "boolean"
+                              "type": "boolean",
+                              "description": "Whether the provider accepts per-tool eager_input_streaming. When false, the Anthropic provider omits tools[].eager_input_streaming and sends the legacy fine-grained-tool-streaming-2025-05-14 beta header for tool-enabled requests.",
+                              "default": true
                             },
                             "supportsLongCacheRetention": {
-                              "type": "boolean"
+                              "type": "boolean",
+                              "description": "Whether the provider supports Anthropic long cache retention through cache_control.ttl.",
+                              "default": true
                             },
                             "sendSessionAffinityHeaders": {
-                              "type": "boolean"
+                              "type": "boolean",
+                              "description": "Whether to send x-session-affinity from options.sessionId when caching is enabled. Required for providers like Fireworks that use session affinity for prompt cache routing; requests to the same replica maximize cache hits.",
+                              "default": false
                             },
                             "sessionAffinityFormat": {
                               "type": "string",
-                              "const": "openrouter"
+                              "const": "openrouter",
+                              "description": "Session-affinity format. openrouter sends x-session-id; when unset, sends x-session-affinity."
                             },
                             "supportsCacheControlOnTools": {
-                              "type": "boolean"
+                              "type": "boolean",
+                              "description": "Whether the provider supports Anthropic-style cache_control markers on tool definitions. When false, cache_control is omitted from tool parameters. Some Anthropic-compatible providers, such as Fireworks, do not support this field on tools and may reject or ignore it.",
+                              "default": true
                             },
                             "supportsTemperature": {
-                              "type": "boolean"
+                              "type": "boolean",
+                              "description": "Whether the model accepts the Anthropic temperature request field. Claude Opus 4.7+ rejects non-default values.",
+                              "default": true
                             },
                             "forceAdaptiveThinking": {
-                              "type": "boolean"
+                              "type": "boolean",
+                              "description": "Whether to force adaptive thinking (thinking.type: adaptive plus output_config.effort) regardless of model ID. Built-in models that require adaptive thinking set this in generated metadata. Custom Anthropic-compatible providers can set this to true for any model whose upstream requires the adaptive format. Set false to opt out on overridden built-in models.",
+                              "default": false
                             },
                             "allowEmptySignature": {
-                              "type": "boolean"
+                              "type": "boolean",
+                              "description": "Whether to replay empty thinking signatures instead of converting thinking to text.",
+                              "default": false
                             },
                             "supportsStrictTools": {
-                              "type": "boolean"
+                              "type": "boolean",
+                              "description": "Whether the provider supports Anthropic strict tool schemas. Generated Anthropic models enable it explicitly.",
+                              "default": false
                             },
                             "supportsMidConvoEffort": {
-                              "type": "boolean"
+                              "type": "boolean",
+                              "description": "Whether the exact model transport supports effort-only system messages and thinking binding controls.",
+                              "default": false
                             },
                             "supportsMidConvoSystemMessages": {
-                              "type": "boolean"
+                              "type": "boolean",
+                              "description": "Whether the exact model accepts system-role messages inside the conversation. When false, later system messages are folded into the top-level system prompt.",
+                              "default": false
                             },
                             "supportsMidConvoToolChanges": {
-                              "type": "boolean"
+                              "type": "boolean",
+                              "description": "Whether the exact model accepts mid-conversation tool_addition and tool_removal blocks. Requires supportsMidConvoSystemMessages.",
+                              "default": false
                             },
                             "allowedFallbackModels": {
                               "type": "array",
@@ -2414,32 +2776,42 @@
                                       }
                                     }
                                   }
-                                }
+                                },
+                                "description": "An Anthropic server-side refusal fallback model with local pricing metadata."
                               },
-                              "maxItems": 3
+                              "maxItems": 3,
+                              "description": "Models Anthropic accepts for server-side refusal fallback, with local pricing metadata for returned fallback responses. When absent or empty, callers must omit fallbacks; Anthropic rejects the field for models with no permitted fallback targets."
                             }
                           },
+                          "description": "Compatibility settings for Anthropic Messages-compatible APIs.",
                           "additionalProperties": true
                         },
                         {
                           "type": "object",
                           "properties": {
                             "supportsStrictMode": {
-                              "type": "boolean"
+                              "type": "boolean",
+                              "description": "Whether the model supports Bedrock strict tool schemas.",
+                              "default": false
                             }
                           },
+                          "description": "Compatibility settings for Amazon Bedrock models.",
                           "additionalProperties": true
                         },
                         {
                           "type": "object",
                           "properties": {
                             "supportsMidConvoSystemMessages": {
-                              "type": "boolean"
+                              "type": "boolean",
+                              "description": "Whether the exact model accepts system messages after the conversation has started. When false, later system messages are folded into the leading system message.",
+                              "default": false
                             }
                           },
+                          "description": "Compatibility settings for the Mistral chat API.",
                           "additionalProperties": true
                         }
-                      ]
+                      ],
+                      "description": "Provider and model compatibility overrides."
                     }
                   }
                 }
