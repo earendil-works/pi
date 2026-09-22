@@ -57,7 +57,7 @@ RPC mode rejects `@file` arguments. JSON and RPC modes reserve stdout for protoc
 pi --model sonnet:high
 ```
 
-See [Choose a Model](models-and-providers.md) for model selection and [Provider Setup](provider-reference.md) for authentication.
+See [Choose a Model](models-and-providers.md) for model selection and [Provider Authentication](provider-reference.md) for credentials.
 
 - `--provider <name>`<br>
   Restricts `--model` lookup to one provider.
@@ -248,7 +248,7 @@ Add `--force` to reinstall Pi when the selected update includes Pi.
 pi auth check --provider openai --json
 ```
 
-Authentication commands require `--provider <provider>` or `--model <model>`. See [Provider Setup](provider-reference.md) for supported authentication methods.
+Authentication commands require `--provider <provider>` or `--model <model>`. See [Provider Authentication](provider-reference.md) for supported methods.
 
 | Command | Description |
 |---|---|

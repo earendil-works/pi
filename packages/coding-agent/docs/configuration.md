@@ -12,7 +12,7 @@ The agent directory is shown as `<agent-dir>` below. Set its location with the `
 |---|---|
 | `<agent-dir>/settings.json` | User-level [settings](settings-reference.md), including preferences, defaults, resource paths, and Pi package declarations. |
 | `<agent-dir>/keybindings.json` | Custom terminal UI and application [keybindings](keybindings.md). |
-| `<agent-dir>/models.json` | [Custom AI providers, endpoints, models, and model overrides](models.md). |
+| `<agent-dir>/models.json` | [Compatible endpoints, models, and model overrides](models-and-providers.md#configure-a-compatible-endpoint). |
 | `<agent-dir>/auth.json` | Saved API keys and OAuth credentials. |
 | `<agent-dir>/AGENTS.override.md`, `AGENTS.md`, `AGENTS.MD`, `CLAUDE.md`, or `CLAUDE.MD` | User instructions applied across working directories. |
 | `<agent-dir>/SYSTEM.md` | Replaces Pi’s default system prompt. |

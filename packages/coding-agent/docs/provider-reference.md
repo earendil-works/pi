@@ -1,330 +1,187 @@
-# Provider Setup Reference
+# Provider Authentication
 
-This reference lists provider authentication methods, credential keys, cloud-provider requirements, and credential resolution order. For choosing and connecting to a model, see [Choose a Model](models-and-providers.md).
+Most hosted providers support one or both of these authentication methods:
 
-## Table of Contents
+- Sign in through a browser or device flow backed by OAuth.
+- Provide an API key.
 
-- [Subscriptions](#subscriptions)
-- [API Keys](#api-keys)
-- [Auth File](#auth-file)
-- [Cloud Providers](#cloud-providers)
-- [llama.cpp](#llamacpp)
-- [Custom Providers](#custom-providers)
-- [Resolution Order](#resolution-order)
+Use `/login [provider]` to see the methods supported by a provider. Amazon Bedrock and Google Vertex AI can also use ambient cloud credentials.
 
-## Subscriptions
+## Authenticate interactively
 
-Use `/login` in interactive mode, then select a provider:
+Run `/login` and select a provider. Pi guides you through its OAuth or API-key flow and saves the resulting credential in [`auth.json`](configuration.md#agent-directory).
 
-- ChatGPT Plus/Pro (Codex)
-- Claude Pro/Max
-- GitHub Copilot
-- xAI (Grok/X subscription)
-- Meta (Muse subscription)
-- OpenRouter (OAuth-minted API key billed from OpenRouter credits)
-- Radius
+On a remote or headless machine, an OAuth callback may not reach the local process. When prompted, paste the final redirect URL or authorization code back into Pi.
 
-Use `/logout` to clear credentials. Tokens are stored in `~/.pi/agent/auth.json` and auto-refresh when expired. OpenRouter instead mints a user-controlled API key that does not expire automatically.
+Run `/logout` and select a provider to remove its stored credential. This does not unset environment variables, remove authentication from `models.json`, or revoke the credential at the provider.
 
-### OpenAI Codex
+`auth.json` can contain API keys and OAuth tokens. Keep it private and do not commit it.
 
-- Requires ChatGPT Plus or Pro subscription
-- Officially endorsed by OpenAI: [Codex for OSS](https://developers.openai.com/community/codex-for-oss)
+Radius authentication uses its gateway catalog and caches refreshed model metadata for later offline startup. A custom Radius gateway configured in `models.json` uses its own catalog rather than inheriting the public `radius.pi.dev` catalog.
 
-### Claude Pro/Max
+## Use an API key from the environment
 
-Anthropic subscription auth is active for Claude Pro/Max accounts. Third-party harness usage draws from [extra usage](https://claude.ai/settings/usage) and is billed per token, not against Claude plan limits.
-
-### GitHub Copilot
-
-- Press Enter for github.com, or enter your GitHub Enterprise Server domain
-- If you get "model not supported", enable it in VS Code: Copilot Chat → model selector → select model → "Enable"
-
-### xAI (Grok/X subscription)
-
-- Run `/login xai`, then select **Use a subscription**
-- `XAI_API_KEY` remains available through **Use an API key**
-
-### Meta (Muse subscription)
-
-- Run `/login meta`, then select **Sign in with Meta** to open the device authorization flow
-- The login mints a Model API key that is re-minted automatically about once a day
-- `META_API_KEY` remains available through **Use an API key**
-
-### OpenRouter
-
-- Run `/login openrouter`, then select **Sign in with OpenRouter** to open the OpenRouter PKCE authorization flow
-- The authorization creates a user-controlled OpenRouter API key billed from your OpenRouter credits
-- On remote/headless machines (e.g. over SSH) the browser cannot reach the loopback callback; paste the final redirect URL (or the authorization code) into the login prompt instead
-- `OPENROUTER_API_KEY` remains available through **Use an API key**
-
-### Radius
-
-Radius is a `pi-messages` gateway. Pi ships the public Radius model catalog for immediate and offline model lookup, then overlays it with the effective gateway catalog after authentication. `/login radius` stores OAuth tokens in `auth.json`; refreshed catalogs are cached in `models-store.json`. Custom Radius gateways can be declared in `models.json` with `"oauth": "radius"` and a gateway `baseUrl`; they do not inherit the public `radius.pi.dev` catalog.
-
-## API Keys
-
-### Environment Variables or Auth File
-
-Use `/login` in interactive mode and select a provider to store an API key in `auth.json`, or set credentials via environment variable:
+Environment variables are useful in CI and anywhere Pi should not store the key. Set the variable before starting Pi:
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...
 pi
 ```
 
-| Provider | Environment Variable | `auth.json` key |
-|----------|----------------------|------------------|
-| Anthropic | `ANTHROPIC_API_KEY` | `anthropic` |
-| Ant Ling | `ANT_LING_API_KEY` | `ant-ling` |
-| Azure OpenAI Responses | `AZURE_OPENAI_API_KEY` | `azure-openai-responses` |
-| OpenAI | `OPENAI_API_KEY` | `openai` |
-| DeepSeek | `DEEPSEEK_API_KEY` | `deepseek` |
-| NVIDIA NIM | `NVIDIA_API_KEY` | `nvidia` |
-| Google Gemini | `GEMINI_API_KEY` | `google` |
-| Google Vertex AI | `GOOGLE_CLOUD_API_KEY` | `google-vertex` |
-| Amazon Bedrock | `AWS_BEARER_TOKEN_BEDROCK` | `amazon-bedrock` |
-| Mistral | `MISTRAL_API_KEY` | `mistral` |
-| Groq | `GROQ_API_KEY` | `groq` |
-| Cerebras | `CEREBRAS_API_KEY` | `cerebras` |
-| Cloudflare AI Gateway | `CLOUDFLARE_API_KEY` (+ `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_GATEWAY_ID`) | `cloudflare-ai-gateway` |
-| Cloudflare Workers AI | `CLOUDFLARE_API_KEY` (+ `CLOUDFLARE_ACCOUNT_ID`) | `cloudflare-workers-ai` |
-| xAI | `XAI_API_KEY` | `xai` |
-| OpenRouter | `OPENROUTER_API_KEY` | `openrouter` |
-| Vercel AI Gateway | `AI_GATEWAY_API_KEY` | `vercel-ai-gateway` |
-| ZAI Coding Plan (Global) | `ZAI_API_KEY` | `zai` |
-| ZAI Coding Plan (China) | `ZAI_CODING_CN_API_KEY` | `zai-coding-cn` |
-| OpenCode Zen | `OPENCODE_API_KEY` | `opencode` |
-| OpenCode Go | `OPENCODE_API_KEY` | `opencode-go` |
-| Radius | `RADIUS_API_KEY` | `radius` |
-| Hugging Face | `HF_TOKEN` | `huggingface` |
-| Fireworks | `FIREWORKS_API_KEY` | `fireworks` |
-| Together AI | `TOGETHER_API_KEY` | `together` |
-| Baseten | `BASETEN_API_KEY` | `baseten` |
-| Kimi For Coding | `KIMI_API_KEY` | `kimi-coding` |
-| Meta | `META_API_KEY` | `meta` |
-| MiniMax | `MINIMAX_API_KEY` | `minimax` |
-| MiniMax (China) | `MINIMAX_CN_API_KEY` | `minimax-cn` |
-| Moonshot AI | `MOONSHOT_API_KEY` | `moonshotai` |
-| Moonshot AI (China) | `MOONSHOT_API_KEY` | `moonshotai-cn` |
-| Qwen Token Plan (existing catalog) | `QWEN_TOKEN_PLAN_API_KEY` | `qwen-token-plan` |
-| Qwen Token Plan (Individual) | `QWEN_TOKEN_PLAN_API_KEY` | `qwen-token-plan-individual` |
-| Qwen Token Plan (China) | `QWEN_TOKEN_PLAN_CN_API_KEY` | `qwen-token-plan-cn` |
-| Xiaomi MiMo | `XIAOMI_API_KEY` | `xiaomi` |
-| Xiaomi MiMo Token Plan (China) | `XIAOMI_TOKEN_PLAN_CN_API_KEY` | `xiaomi-token-plan-cn` |
-| Xiaomi MiMo Token Plan (Amsterdam) | `XIAOMI_TOKEN_PLAN_AMS_API_KEY` | `xiaomi-token-plan-ams` |
-| Xiaomi MiMo Token Plan (Singapore) | `XIAOMI_TOKEN_PLAN_SGP_API_KEY` | `xiaomi-token-plan-sgp` |
+This table covers providers with a single primary API-key variable. Providers that need additional configuration or support ambient credentials are covered under [Cloud providers](#cloud-providers).
+
+| Provider | Environment variable |
+|---|---|
+| Anthropic | `ANTHROPIC_API_KEY` |
+| Ant Ling | `ANT_LING_API_KEY` |
+| OpenAI | `OPENAI_API_KEY` |
+| DeepSeek | `DEEPSEEK_API_KEY` |
+| NVIDIA NIM | `NVIDIA_API_KEY` |
+| Google Gemini | `GEMINI_API_KEY` |
+| GitHub Copilot | `COPILOT_GITHUB_TOKEN` |
+| Mistral | `MISTRAL_API_KEY` |
+| Groq | `GROQ_API_KEY` |
+| Cerebras | `CEREBRAS_API_KEY` |
+| xAI | `XAI_API_KEY` |
+| OpenRouter | `OPENROUTER_API_KEY` |
+| Vercel AI Gateway | `AI_GATEWAY_API_KEY` |
+| ZAI Coding Plan (Global) | `ZAI_API_KEY` |
+| ZAI Coding Plan (China) | `ZAI_CODING_CN_API_KEY` |
+| OpenCode Zen and Go | `OPENCODE_API_KEY` |
+| Radius | `RADIUS_API_KEY` |
+| Hugging Face | `HF_TOKEN` |
+| Fireworks | `FIREWORKS_API_KEY` |
+| Together AI | `TOGETHER_API_KEY` |
+| Baseten | `BASETEN_API_KEY` |
+| Kimi For Coding | `KIMI_API_KEY` |
+| Meta | `META_API_KEY` |
+| MiniMax | `MINIMAX_API_KEY` |
+| MiniMax (China) | `MINIMAX_CN_API_KEY` |
+| Moonshot AI (Global and China) | `MOONSHOT_API_KEY` |
+| Qwen Token Plan and Individual | `QWEN_TOKEN_PLAN_API_KEY` |
+| Qwen Token Plan (China) | `QWEN_TOKEN_PLAN_CN_API_KEY` |
+| Xiaomi MiMo | `XIAOMI_API_KEY` |
+| Xiaomi MiMo Token Plan (China) | `XIAOMI_TOKEN_PLAN_CN_API_KEY` |
+| Xiaomi MiMo Token Plan (Amsterdam) | `XIAOMI_TOKEN_PLAN_AMS_API_KEY` |
+| Xiaomi MiMo Token Plan (Singapore) | `XIAOMI_TOKEN_PLAN_SGP_API_KEY` |
 
 Anthropic also recognizes `ANTHROPIC_OAUTH_TOKEN` as an API credential and `ANTHROPIC_AUTH_TOKEN` as bearer authentication.
 
-Reference for environment variables and `auth.json` keys: [`const envMap`](https://github.com/earendil-works/pi/blob/main/packages/ai/src/env-api-keys.ts) in [`packages/ai/src/env-api-keys.ts`](https://github.com/earendil-works/pi/blob/main/packages/ai/src/env-api-keys.ts).
+## Load an API key from a command
 
-#### Auth File
-
-Store credentials in `~/.pi/agent/auth.json`:
+To use a secret manager without writing the resolved key to disk, set a provider's `key` in `auth.json` to a command prefixed with `!`:
 
 ```json
 {
-  "anthropic": { "type": "api_key", "key": "sk-ant-..." },
-  "ant-ling": { "type": "api_key", "key": "..." },
-  "openai": { "type": "api_key", "key": "sk-..." },
-  "deepseek": { "type": "api_key", "key": "sk-..." },
-  "nvidia": { "type": "api_key", "key": "nvapi-..." },
-  "google": { "type": "api_key", "key": "..." },
-  "opencode": { "type": "api_key", "key": "..." },
-  "opencode-go": { "type": "api_key", "key": "..." },
-  "together": { "type": "api_key", "key": "..." },
-  "qwen-token-plan":  { "type": "api_key", "key": "sk-sp-..." },
-  "qwen-token-plan-individual": { "type": "api_key", "key": "sk-sp-..." },
-  "qwen-token-plan-cn": { "type": "api_key", "key": "sk-sp-..." },
-  "xiaomi": { "type": "api_key", "key": "..." },
-  "xiaomi-token-plan-cn":  { "type": "api_key", "key": "..." },
-  "xiaomi-token-plan-ams": { "type": "api_key", "key": "..." },
-  "xiaomi-token-plan-sgp": { "type": "api_key", "key": "..." }
+  "anthropic": {
+    "type": "api_key",
+    "key": "!security find-generic-password -ws 'anthropic'"
+  }
 }
 ```
 
-`qwen-token-plan-individual` uses the same international endpoint and `QWEN_TOKEN_PLAN_API_KEY` as
-`qwen-token-plan`, but limits the picker to the models documented for Individual subscriptions. The existing
-provider keeps its broader catalog for backward compatibility. When using `auth.json`, store the
-credential under the provider you select; an environment variable is shared by both international providers.
+Pi runs the command when the key is first needed and caches its standard output for the process lifetime. Empty output, a timeout, or a nonzero exit leaves the key unresolved until Pi restarts.
 
-The file is created with `0600` permissions (user read/write only). Auth file credentials take priority over environment variables.
+## Cloud Providers
 
-API key credentials can also include provider-scoped environment values. These values are used before process environment variables when resolving the credential key, provider/model headers, and provider configuration such as Cloudflare account IDs, Azure OpenAI settings, Vertex project/location, Bedrock settings, `PI_CACHE_RETENTION`, and `HTTP_PROXY`/`HTTPS_PROXY`.
+The providers below need additional settings or can use credentials supplied by their cloud platform.
+
+A stored API-key credential can include an `env` object. Its values take priority over the process environment for that provider:
 
 ```json
 {
-  "cloudflare-ai-gateway": {
+  "cloudflare-workers-ai": {
     "type": "api_key",
-    "key": "$CLOUDFLARE_API_KEY",
+    "key": "...",
     "env": {
-      "CLOUDFLARE_API_KEY": "...",
-      "CLOUDFLARE_ACCOUNT_ID": "account-id",
-      "CLOUDFLARE_GATEWAY_ID": "gateway-id"
+      "CLOUDFLARE_ACCOUNT_ID": "account-id"
     }
   }
 }
 ```
 
-Use this when pi should use different provider settings than the project shell environment.
-
-### Key Resolution
-
-The `key` field supports command execution, environment interpolation, and literals:
-
-- **Shell command:** `"!command"` at the start executes the whole value as a command and uses stdout (cached for process lifetime)
-  ```json
-  { "type": "api_key", "key": "!security find-generic-password -ws 'anthropic'" }
-  { "type": "api_key", "key": "!op read 'op://vault/item/credential'" }
-  ```
-- **Environment interpolation:** `"$ENV_VAR"` or `"${ENV_VAR}"` uses the value of the named variable. Interpolation works inside larger literals.
-  ```json
-  { "type": "api_key", "key": "$MY_ANTHROPIC_KEY" }
-  { "type": "api_key", "key": "${KEY_PREFIX}_${KEY_SUFFIX}" }
-  ```
-  `$FOO_BAR` is the variable `FOO_BAR`; use `${FOO}_BAR` when `BAR` is literal text. Missing environment variables make the value unresolved.
-- **Escapes:** `"$$"` emits a literal `"$"`; `"$!"` emits a literal `"!"` without triggering command execution.
-  ```json
-  { "type": "api_key", "key": "$$literal-dollar-prefix" }
-  { "type": "api_key", "key": "$!literal-bang-prefix" }
-  ```
-- **Literal value:** Used directly. Plain uppercase strings such as `MY_API_KEY` are literals; use `$MY_API_KEY` for environment variables.
-  ```json
-  { "type": "api_key", "key": "sk-ant-..." }
-  { "type": "api_key", "key": "public" }
-  ```
-
-OAuth credentials are also stored here after `/login` and managed automatically.
-
-## Cloud Providers
-
 ### Azure OpenAI
+
+Set an API key plus either a base URL or resource name:
 
 ```bash
 export AZURE_OPENAI_API_KEY=...
 export AZURE_OPENAI_BASE_URL=https://your-resource.ai.azure.com
-# also supported: https://your-resource.cognitiveservices.azure.com
-# also supported: https://your-resource.openai.azure.com
-# root endpoints are auto-normalized to /openai/v1
-# or use resource name instead of base URL
+# Or:
 export AZURE_OPENAI_RESOURCE_NAME=your-resource
-
-# Optional
-export AZURE_OPENAI_API_VERSION=2024-02-01
-export AZURE_OPENAI_DEPLOYMENT_NAME_MAP=gpt-4=my-gpt4,gpt-4o=my-gpt4o
 ```
+
+Resource root URLs under `ai.azure.com`, `cognitiveservices.azure.com`, and `openai.azure.com` are normalized to the OpenAI API path.
 
 ### Amazon Bedrock
 
-Use `/login amazon-bedrock` to store a Bedrock API key, or configure one of the ambient AWS credential sources below:
+Bedrock can use a bearer token or an ambient AWS credential source:
 
 ```bash
-# Option 1: AWS Profile
+# Named profile
 export AWS_PROFILE=your-profile
 
-# Option 2: IAM Keys
+# IAM keys
 export AWS_ACCESS_KEY_ID=AKIA...
 export AWS_SECRET_ACCESS_KEY=...
+# Required for temporary credentials
+export AWS_SESSION_TOKEN=...
 
-# Option 3: Bearer Token
+# Bedrock bearer token
 export AWS_BEARER_TOKEN_BEDROCK=...
 
-# Optional region (defaults to us-east-1)
+# Region, when not supplied by the profile or AWS SDK configuration
 export AWS_REGION=us-west-2
+# AWS_DEFAULT_REGION is also supported
 ```
 
-Also supports ECS task roles (`AWS_CONTAINER_CREDENTIALS_*`) and IRSA (`AWS_WEB_IDENTITY_TOKEN_FILE`).
-
-```bash
-pi --provider amazon-bedrock --model us.anthropic.claude-sonnet-4-20250514-v1:0
-```
-
-Prompt caching is enabled automatically for Claude models whose ID contains a recognizable model name (base models and system-defined inference profiles). For application inference profiles (whose ARNs don't contain the model name), set `AWS_BEDROCK_FORCE_CACHE=1` to enable cache points:
-
-```bash
-export AWS_BEDROCK_FORCE_CACHE=1
-pi --provider amazon-bedrock --model arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/abc123
-```
-
-If you are connecting to a Bedrock API proxy, the following environment variables can be used:
-
-```bash
-# Set the URL for the Bedrock proxy (standard AWS SDK env var)
-export AWS_ENDPOINT_URL_BEDROCK_RUNTIME=https://my.corp.proxy/bedrock
-
-# Set if your proxy does not require authentication
-export AWS_BEDROCK_SKIP_AUTH=1
-
-# Set if your proxy only supports HTTP/1.1
-export AWS_BEDROCK_FORCE_HTTP1=1
-```
+Pi also supports ECS task credentials and IRSA through the standard `AWS_CONTAINER_CREDENTIALS_*` and `AWS_WEB_IDENTITY_TOKEN_FILE` variables.
 
 ### Cloudflare AI Gateway
 
-`CLOUDFLARE_API_KEY` can be set via `/login`. The account ID and gateway slug can be set as environment variables or in the API key credential's `env` object in `auth.json`.
+The gateway requires a token, account ID, and gateway ID:
 
 ```bash
-export CLOUDFLARE_API_KEY=...           # or use /login
+export CLOUDFLARE_API_KEY=...
 export CLOUDFLARE_ACCOUNT_ID=...
-export CLOUDFLARE_GATEWAY_ID=...        # create at dash.cloudflare.com → AI → AI Gateway
-pi --provider cloudflare-ai-gateway --model "claude-sonnet-4-5"
+export CLOUDFLARE_GATEWAY_ID=...
 ```
 
-Routes to OpenAI, Anthropic, and Workers AI through Cloudflare AI Gateway. Workers AI uses the Unified API (`/compat`) and prefixed model IDs (`workers-ai/@cf/...`). OpenAI uses the OpenAI passthrough route (`/openai`) with native OpenAI model IDs such as `gpt-5.1`. Anthropic uses the Anthropic passthrough route (`/anthropic`) with native Anthropic model IDs such as `claude-sonnet-4-5`.
+The account and gateway IDs can come from the process environment or the credential's `env` object in `auth.json`.
 
-AI Gateway authentication uses `CLOUDFLARE_API_KEY` as `cf-aig-authorization`. Upstream authentication can be one of:
-
-| Mode | Request auth | Upstream auth |
-|------|--------------|---------------|
-| Workers AI | Cloudflare token only | Cloudflare-native |
-| Unified billing | Cloudflare token only | Cloudflare handles upstream auth and deducts credits |
-| Stored BYOK | Cloudflare token only | Cloudflare injects provider keys stored in the AI Gateway dashboard |
-| Inline BYOK | Cloudflare token plus upstream `Authorization` header | The request supplies the upstream provider key |
-
-For normal pi usage, prefer unified billing or stored BYOK. Inline BYOK requires configuring an additional upstream `Authorization` header for the Cloudflare AI Gateway provider, for example via a `models.json` provider/model override.
+`CLOUDFLARE_API_KEY` authenticates Pi to the gateway. Upstream access can use Cloudflare unified billing, credentials stored in the gateway, or an `Authorization` header configured for the provider in `models.json`.
 
 ### Cloudflare Workers AI
 
-`CLOUDFLARE_API_KEY` can be set via `/login`. `CLOUDFLARE_ACCOUNT_ID` can be set as an environment variable or in the API key credential's `env` object in `auth.json`.
+Workers AI requires a token and account ID:
 
 ```bash
-export CLOUDFLARE_API_KEY=...           # or use /login
+export CLOUDFLARE_API_KEY=...
 export CLOUDFLARE_ACCOUNT_ID=...
-pi --provider cloudflare-workers-ai --model "@cf/moonshotai/kimi-k2.6"
 ```
 
-Pi automatically sets `x-session-affinity` for [prefix caching](https://developers.cloudflare.com/workers-ai/features/prompt-caching/) discounts.
+The account ID can also be stored in the credential's `env` object.
 
 ### Google Vertex AI
 
-Use `GOOGLE_CLOUD_API_KEY` for API-key authentication, or use Application Default Credentials:
+Vertex AI requires a project and location with every authentication method:
 
 ```bash
-gcloud auth application-default login
 export GOOGLE_CLOUD_PROJECT=your-project
+# GCLOUD_PROJECT is also supported
 export GOOGLE_CLOUD_LOCATION=us-central1
 ```
 
-Or set `GOOGLE_APPLICATION_CREDENTIALS` to a service account key file.
+Use a Google Cloud API key:
 
-## llama.cpp
+```bash
+export GOOGLE_CLOUD_API_KEY=...
+```
 
-Pi supports the llama.cpp router server. Configure it with `/login llama.cpp`, manage loaded models with `/llama`, and select a loaded model with `/model`.
+Or configure Application Default Credentials:
 
-See [llama.cpp](llama-cpp.md) for server setup, model directory layout, environment variables, and command usage.
+```bash
+gcloud auth application-default login
+```
 
-## Custom Providers
-
-Configure the service in `models.json` when it speaks an API that Pi already supports, such as OpenAI Completions, OpenAI Responses, Anthropic Messages, or Google Generative AI. This is the usual choice for Ollama, LM Studio, vLLM, and compatible proxies. See the [Custom Models reference](models.md) for the configuration format.
-
-Create a provider extension only when the service needs custom authentication, model discovery, request handling, or streaming. Follow the [Custom Providers guide](custom-provider.md), then use the checked [GitLab Duo provider example](../examples/extensions/custom-provider-gitlab-duo/) as a working implementation.
-
-## Resolution Order
-
-When resolving credentials for a provider:
-
-1. CLI `--api-key` flag
-2. `auth.json` entry (API key or OAuth token)
-3. Environment variable
-4. Custom provider keys from `models.json`
+To use a service-account key file, set `GOOGLE_APPLICATION_CREDENTIALS`.

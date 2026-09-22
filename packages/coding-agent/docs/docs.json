@@ -183,12 +183,8 @@
           "title": "Models",
           "items": [
             {
-              "title": "Provider Setup",
+              "title": "Provider Authentication",
               "path": "provider-reference.md"
-            },
-            {
-              "title": "Custom Models",
-              "path": "models.md"
             }
           ]
         },
@@ -216,6 +212,10 @@
     {
       "from": "providers.md",
       "to": "provider-reference.md"
+    },
+    {
+      "from": "models.md",
+      "to": "models-and-providers.md"
     },
     {
       "from": "settings.md",
