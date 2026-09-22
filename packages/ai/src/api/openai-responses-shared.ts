@@ -77,6 +77,27 @@ function parseTextSignature(
 
 type ToolResultOutputContent = Array<ResponseInputText | ResponseInputImage>;
 
+function normalizeToolName(name: string): string {
+	return name
+		.replace(/[^a-zA-Z0-9_-]/g, "_")
+		.slice(0, 64)
+		.replace(/_+$/, "");
+}
+
+export function createToolNameMaps(tools: readonly Tool[]): {
+	forward: Map<string, string>;
+	reverse: Map<string, string>;
+} {
+	const forward = new Map<string, string>();
+	const reverse = new Map<string, string>();
+	for (const tool of tools) {
+		const normalized = normalizeToolName(tool.name);
+		forward.set(tool.name, normalized);
+		reverse.set(normalized, tool.name);
+	}
+	return { forward, reverse };
+}
+
 function convertToolResultOutput<TApi extends Api>(
 	model: Model<TApi>,
 	content: readonly (TextContent | ImageContent)[],
@@ -108,6 +129,8 @@ function convertToolResultOutput<TApi extends Api>(
 
 export interface OpenAIResponsesStreamOptions {
 	serviceTier?: ResponseCreateParamsStreaming["service_tier"];
+	/** Maps sanitized outgoing tool names back to their original names. */
+	toolNameMap?: ReadonlyMap<string, string>;
 	grammarToolInputProperties?: ReadonlyMap<string, string>;
 	resolveServiceTier?: (
 		responseServiceTier: ResponseCreateParamsStreaming["service_tier"] | undefined,
@@ -179,6 +202,7 @@ export function convertResponsesMessages<TApi extends Api>(
 		normalizedContext.messages,
 		(options?.supportsAdditionalTools ?? false) || (options?.supportsToolSearch ?? false),
 	);
+	const { forward: forwardToolNames } = createToolNameMaps(transcriptTools.requestTools);
 	const appendSystemToolAdditions = (message: SystemMessage, seed: string): void => {
 		const tools = transcriptTools.anchorsAdditions ? (message.toolsAdded ?? []) : [];
 		if (tools.length === 0) return;
@@ -308,7 +332,7 @@ export function convertResponsesMessages<TApi extends Api>(
 							type: "custom_tool_call",
 							id: itemId,
 							call_id: callId,
-							name: toolCall.name,
+							name: forwardToolNames.get(toolCall.name) ?? normalizeToolName(toolCall.name),
 							input: sanitizeSurrogates(
 								getGrammarToolInput(toolCall.name, toolCall.arguments, customInputProperty),
 							),
@@ -319,7 +343,7 @@ export function convertResponsesMessages<TApi extends Api>(
 							type: "function_call",
 							id: itemId,
 							call_id: callId,
-							name: toolCall.name,
+							name: forwardToolNames.get(toolCall.name) ?? normalizeToolName(toolCall.name),
 							arguments: JSON.stringify(toolCall.arguments),
 							...(isSameModel && toolCall.namespace !== undefined ? { namespace: toolCall.namespace } : {}),
 						});
@@ -366,7 +390,7 @@ export function convertResponsesTools(tools: readonly Tool[], options?: ConvertR
 		if (grammar) {
 			return {
 				type: "custom",
-				name: tool.name,
+				name: normalizeToolName(tool.name),
 				description: tool.description,
 				format: {
 					type: "grammar",
@@ -383,7 +407,7 @@ export function convertResponsesTools(tools: readonly Tool[], options?: ConvertR
 			strict?: Extract<OpenAITool, { type: "function" }>["strict"];
 		} = {
 			type: "function",
-			name: tool.name,
+			name: normalizeToolName(tool.name),
 			description: tool.description,
 			parameters: getJsonSchemaToolParameters(tool, strict === true) as Record<string, unknown>,
 			...(options?.toolSearchResult ? { defer_loading: true } : {}),
@@ -483,10 +507,11 @@ export async function processResponsesStream<TApi extends Api>(
 			return slot;
 		}
 		if (item.type === "function_call") {
+			const name = options?.toolNameMap?.get(item.name) ?? item.name;
 			const block: StreamingToolCall = {
 				type: "toolCall",
 				id: `${item.call_id}|${item.id}`,
-				name: item.name,
+				name,
 				arguments: {},
 				...(item.namespace !== undefined ? { namespace: item.namespace } : {}),
 				partialJson: item.arguments || "",
@@ -502,12 +527,13 @@ export async function processResponsesStream<TApi extends Api>(
 			return slot;
 		}
 		if (item.type === "custom_tool_call") {
-			const inputProperty = options?.grammarToolInputProperties?.get(item.name) ?? "input";
+			const name = options?.toolNameMap?.get(item.name) ?? item.name;
+			const inputProperty = options?.grammarToolInputProperties?.get(name) ?? "input";
 			const input = item.input || "";
 			const block: StreamingToolCall = {
 				type: "toolCall",
 				id: `${item.call_id}|${item.id}`,
-				name: item.name,
+				name,
 				arguments: { [inputProperty]: input },
 				...(item.namespace !== undefined ? { namespace: item.namespace } : {}),
 				customInput: {

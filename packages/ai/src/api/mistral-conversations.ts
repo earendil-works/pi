@@ -624,6 +624,10 @@ async function consumeChatStream(
 			for (const item of contentItems) {
 				if (typeof item === "string") {
 					const textDelta = sanitizeSurrogates(item);
+					// Some models (notably GLM through Mistral) send an empty content
+					// delta alongside every tool-call fragment. Do not open an empty
+					// text block for those.
+					if (!textDelta) continue;
 					if (!currentBlock || currentBlock.type !== "text") {
 						finishCurrentBlock(currentBlock);
 						currentBlock = { type: "text", text: "" };
@@ -900,7 +904,8 @@ function usesReasoningEffort(model: Model<"mistral-conversations">): boolean {
 		model.id === "mistral-small-2603" ||
 		model.id === "mistral-small-latest" ||
 		model.id.startsWith("mistral-medium-") ||
-		model.id === "zai-glm-5-2"
+		model.id.startsWith("zai-glm-") ||
+		model.thinkingLevelMap !== undefined
 	);
 }
 
