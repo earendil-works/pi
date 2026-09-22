@@ -122,6 +122,7 @@ export {
 	Container,
 	CURSOR_MARKER,
 	compositeTuiLine,
+	FAKE_CURSOR_SGR,
 	type Focusable,
 	isFocusable,
 	isViewportTUI,

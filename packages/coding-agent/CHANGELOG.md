@@ -18,6 +18,7 @@
 ### Changed
 
 - Changed the default xAI model to Grok 4.7.
+- `showHardwareCursor` (or `PI_HARDWARE_CURSOR=1`) now shows the hardware cursor instead of the fake cursor rather than both. IME positioning and the default (`false`) are unchanged.
 
 ### Fixed
 

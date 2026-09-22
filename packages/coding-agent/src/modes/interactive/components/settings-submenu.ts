@@ -1,9 +1,11 @@
 import {
 	type Component,
 	Container,
+	type Focusable,
 	fuzzyFilter,
 	getKeybindings,
 	Input,
+	isFocusable,
 	type SelectItem,
 	SelectList,
 	type SelectListLayoutOptions,
@@ -28,12 +30,13 @@ export interface SelectSubmenuOptions {
  * Single-step submenu that shows a titled select list.
  * With `searchable: true`, typing filters the list using fuzzy matching.
  */
-export class SelectSubmenu extends Container {
+export class SelectSubmenu extends Container implements Focusable {
 	private selectList: SelectList;
 	private listChildIndex: number;
 	private allOptions: SelectItem[];
 	private listLayout: SelectListLayoutOptions;
 	private searchInput: Input | undefined;
+	private _focused = false;
 	private onSelectCb: (value: string) => void;
 	private onCancelCb: () => void;
 	private onSelectionChangeCb?: (value: string) => void;
@@ -89,6 +92,15 @@ export class SelectSubmenu extends Container {
 			? "  Type to filter \u00b7 Enter to select \u00b7 Esc to go back"
 			: "  Enter to select \u00b7 Esc to go back";
 		this.addChild(new Text(theme.fg("dim", hint), 0, 0));
+	}
+
+	get focused(): boolean {
+		return this._focused;
+	}
+
+	set focused(value: boolean) {
+		this._focused = value;
+		if (this.searchInput) this.searchInput.focused = value;
 	}
 
 	private buildSelectList(options: SelectItem[], preselect: string): SelectList {
@@ -175,13 +187,14 @@ interface SteppedSubmenuOptions {
  * Esc goes back one step; Esc at step 0 cancels.
  * With `loop: true`, completing the final step invokes `onComplete` then returns to step 0.
  */
-export class SteppedSubmenu extends Container {
+export class SteppedSubmenu extends Container implements Focusable {
 	private readonly steps: SteppedSubmenuStep[];
 	private readonly onComplete: (context: Record<string, string>) => void;
 	private readonly onCancel: () => void;
 	private readonly opts: SteppedSubmenuOptions;
 	private activeComponent: Component;
 	private context: Record<string, string>;
+	private _focused = false;
 
 	constructor(
 		steps: SteppedSubmenuStep[],
@@ -196,6 +209,21 @@ export class SteppedSubmenu extends Container {
 		this.opts = opts;
 		this.context = { ...(opts.initialContext ?? {}) };
 		this.activeComponent = this.buildStep(opts.startAtStep ?? 0);
+	}
+
+	get focused(): boolean {
+		return this._focused;
+	}
+
+	set focused(value: boolean) {
+		this._focused = value;
+		if (isFocusable(this.activeComponent)) this.activeComponent.focused = value;
+	}
+
+	private setActiveComponent(component: Component): void {
+		if (isFocusable(this.activeComponent)) this.activeComponent.focused = false;
+		this.activeComponent = component;
+		if (isFocusable(this.activeComponent)) this.activeComponent.focused = this._focused;
 	}
 
 	private buildStep(stepIndex: number): Component {
@@ -218,14 +246,14 @@ export class SteppedSubmenu extends Container {
 
 				if (stepIndex < total - 1) {
 					// Advance to next step
-					this.activeComponent = this.buildStep(stepIndex + 1);
+					this.setActiveComponent(this.buildStep(stepIndex + 1));
 				} else {
 					// Final step \u2014 deliver result
 					this.onComplete({ ...this.context });
 
 					if (this.opts.loop) {
 						this.context = {};
-						this.activeComponent = this.buildStep(0);
+						this.setActiveComponent(this.buildStep(0));
 					} else {
 						this.onCancel();
 					}
@@ -234,7 +262,7 @@ export class SteppedSubmenu extends Container {
 			() => {
 				if (stepIndex > 0) {
 					delete this.context[step.key];
-					this.activeComponent = this.buildStep(stepIndex - 1);
+					this.setActiveComponent(this.buildStep(stepIndex - 1));
 				} else {
 					this.onCancel();
 				}

@@ -148,6 +148,8 @@ type PendingOsc11BackgroundQuery = {
  * When focused, the component should emit CURSOR_MARKER at the cursor position
  * in its render output. TUI will find this marker and position the hardware
  * cursor there for proper IME candidate window positioning.
+ * To draw a fake cursor, emit FAKE_CURSOR_SGR directly after CURSOR_MARKER so TUI
+ * can strip it when the hardware cursor is shown.
  */
 export interface Focusable {
 	/** Set by TUI when focus changes. Component should emit CURSOR_MARKER when true. */
@@ -166,6 +168,13 @@ export function isFocusable(component: Component | null): component is Component
  * TUI finds and strips this marker, then positions the hardware cursor there.
  */
 export const CURSOR_MARKER = "\x1b_pi:c\x07";
+
+/**
+ * Reverse video SGR (ESC[7m) that draws the fake cursor.
+ * Components emit this directly after CURSOR_MARKER. TUI strips it when the
+ * hardware cursor is shown, so the fake cursor is not drawn as well.
+ */
+export const FAKE_CURSOR_SGR = "\x1b[7m";
 
 export { visibleWidth };
 
@@ -1374,6 +1383,8 @@ export abstract class TuiBase extends Container implements TUI {
 	/**
 	 * Find and extract cursor position from rendered lines.
 	 * Searches for CURSOR_MARKER, calculates its position, and strips it from the output.
+	 * When the hardware cursor is shown, also strips FAKE_CURSOR_SGR after the marker
+	 * so the fake cursor is not drawn as well.
 	 * Only scans the bottom terminal height lines (visible viewport).
 	 * @param lines - Rendered lines to search
 	 * @param height - Terminal height (visible viewport size)
@@ -1391,7 +1402,11 @@ export abstract class TuiBase extends Container implements TUI {
 				const col = visibleWidth(beforeMarker);
 
 				// Strip marker from the line
-				lines[row] = line.slice(0, markerIndex) + line.slice(markerIndex + CURSOR_MARKER.length);
+				let afterMarker = line.slice(markerIndex + CURSOR_MARKER.length);
+				if (this.showHardwareCursor && afterMarker.startsWith(FAKE_CURSOR_SGR)) {
+					afterMarker = afterMarker.slice(FAKE_CURSOR_SGR.length);
+				}
+				lines[row] = beforeMarker + afterMarker;
 
 				return { row, col };
 			}

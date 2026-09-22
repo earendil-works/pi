@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added `FAKE_CURSOR_SGR`. Focusable components emit it directly after `CURSOR_MARKER` so TUI can strip the fake cursor when `showHardwareCursor` is enabled.
+
+### Changed
+
+- `showHardwareCursor` now shows the hardware cursor instead of the fake cursor rather than both. Hidden by default as before.
+
 ## [0.87.1] - 2026-09-22
 
 ## [0.87.0] - 2026-09-21

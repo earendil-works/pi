@@ -3,6 +3,7 @@ import { getSupportedThinkingLevels, type Model, type Transport } from "@earendi
 import {
 	type Component,
 	Container,
+	type Focusable,
 	getCapabilities,
 	type ScrollViewScrollbar,
 	type SelectItem,
@@ -444,8 +445,9 @@ class ThemeSubmenu extends Container {
 /**
  * Main settings selector component.
  */
-export class SettingsSelectorComponent extends Container {
+export class SettingsSelectorComponent extends Container implements Focusable {
 	private settingsList: SettingsList;
+	private _focused = false;
 
 	constructor(config: SettingsConfig, callbacks: SettingsCallbacks) {
 		super();
@@ -777,7 +779,7 @@ export class SettingsSelectorComponent extends Container {
 		items.splice(skillCommandsIndex + 1, 0, {
 			id: "show-hardware-cursor",
 			label: "Show hardware cursor",
-			description: "Show the terminal cursor while still positioning it for IME support",
+			description: "Show the hardware cursor instead of the fake cursor while still positioning it for IME support",
 			currentValue: config.showHardwareCursor ? "true" : "false",
 			values: ["true", "false"],
 		});
@@ -952,6 +954,15 @@ export class SettingsSelectorComponent extends Container {
 
 		this.addChild(this.settingsList);
 		this.addChild(new DynamicBorder());
+	}
+
+	get focused(): boolean {
+		return this._focused;
+	}
+
+	set focused(value: boolean) {
+		this._focused = value;
+		this.settingsList.focused = value;
 	}
 
 	getSettingsList(): SettingsList {
