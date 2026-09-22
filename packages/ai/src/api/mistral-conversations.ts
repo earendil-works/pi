@@ -554,6 +554,12 @@ function getMistralCachedPromptTokens(usage: unknown, promptTokens: number): num
 	return Math.min(promptTokens, Math.max(0, cachedTokens));
 }
 
+
+/** String delta that must not open/append a text block. Arrays are handled elsewhere. */
+function isSkippableEmptyStringContent(content: string): boolean {
+	return content.length === 0;
+}
+
 async function consumeChatStream(
 	model: Model<"mistral-conversations">,
 	output: AssistantMessage,
@@ -623,6 +629,7 @@ async function consumeChatStream(
 			const contentItems = typeof delta.content === "string" ? [delta.content] : delta.content;
 			for (const item of contentItems) {
 				if (typeof item === "string") {
+					if (isSkippableEmptyStringContent(item)) continue;
 					const textDelta = sanitizeSurrogates(item);
 					if (!currentBlock || currentBlock.type !== "text") {
 						finishCurrentBlock(currentBlock);
@@ -664,6 +671,7 @@ async function consumeChatStream(
 				}
 
 				if (item.type === "text") {
+					if (isSkippableEmptyStringContent(item.text ?? "")) continue;
 					const textDelta = sanitizeSurrogates(item.text ?? "");
 					if (!currentBlock || currentBlock.type !== "text") {
 						finishCurrentBlock(currentBlock);

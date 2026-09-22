@@ -8,6 +8,7 @@
 
 ### Fixed
 
+- Fixed Mistral Conversations stream parsing treating empty string `content` deltas as text blocks, which could spam empty text around tool calls and split thinking into multiple blocks that fail replay ([#9674](https://github.com/earendil-works/pi/issues/9674)).
 - Fixed image-only user messages being rejected by some OpenAI-compatible providers because they included an empty text part ([#9797](https://github.com/earendil-works/pi/issues/9797))
 
 ## [0.87.0] - 2026-09-21
