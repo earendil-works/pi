@@ -56,6 +56,21 @@ describe("model selector", () => {
 		selector.dispose();
 	});
 
+	it("uses custom provider display names in model badges", async () => {
+		harness = await createHarness({ modelsJson: { providers: { faux: { name: "foobar" } } } });
+		const selector = new ModelSelectorComponent(
+			createFakeTui(),
+			harness.getModel(),
+			harness.session.modelRuntime,
+			[],
+			() => {},
+			() => {},
+		);
+
+		expect(stripAnsi(selector.render(120).join("\n"))).toContain(`[faux foobar]`);
+		selector.dispose();
+	});
+
 	it("uses the configured save binding", async () => {
 		setKeybindings(new KeybindingsManager({ "app.models.save": "ctrl+r" }));
 		harness = await createHarness();
