@@ -702,6 +702,8 @@ function normalizeExactPattern(pattern: string): string {
 
 function matchesAnyExactPattern(filePath: string, patterns: string[], baseDir: string): boolean {
 	if (patterns.length === 0) return false;
+	// Exact overrides may still use glob syntax, especially for `-vue*` style filters.
+	if (matchesAnyPattern(filePath, patterns, baseDir)) return true;
 	const rel = toPosixPath(relative(baseDir, filePath));
 	const name = basename(filePath);
 	const filePathPosix = toPosixPath(filePath);
