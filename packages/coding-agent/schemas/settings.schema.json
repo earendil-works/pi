@@ -143,11 +143,15 @@
           "default": true
         },
         "reserveTokens": {
-          "type": "number",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991,
           "default": 16384
         },
         "keepRecentTokens": {
-          "type": "number",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991,
           "default": 20000
         },
         "modelOverrides": {
@@ -157,10 +161,14 @@
               "type": "object",
               "properties": {
                 "reserveTokens": {
-                  "type": "number"
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
                 },
                 "keepRecentTokens": {
-                  "type": "number"
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
                 }
               }
             }
@@ -224,7 +232,7 @@
         },
         "maxDelayMs": {
           "type": "number",
-          "description": "Legacy retry delay setting. Use maxAgentDelayMs instead.",
+          "description": "Legacy retry delay setting. Use provider.maxRetryDelayMs instead.",
           "deprecated": true
         }
       }
@@ -629,6 +637,7 @@
     },
     "httpIdleTimeoutMs": {
       "type": "number",
+      "minimum": 0,
       "description": "HTTP header or body idle timeout in milliseconds; 0 disables it."
     },
     "cacheWarming": {
@@ -651,6 +660,7 @@
     },
     "websocketConnectTimeoutMs": {
       "type": "number",
+      "minimum": 0,
       "description": "WebSocket connect or open handshake timeout in milliseconds; 0 disables it."
     },
     "tuiMode": {
@@ -714,7 +724,7 @@
           "const": "one-at-a-time"
         }
       ],
-      "description": "Legacy setting migrated to steeringMode and followUpMode.",
+      "description": "Legacy setting migrated to steeringMode.",
       "deprecated": true
     },
     "websockets": {

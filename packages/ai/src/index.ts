@@ -32,7 +32,6 @@ export type {
 } from "./compat/extension-oauth-types.ts";
 export * from "./models.ts";
 export * from "./models-store.ts";
-export { ProviderCompatSchema } from "./providers/compat-schema.ts";
 export * from "./providers/faux.ts";
 export * from "./session-resources.ts";
 export * from "./types.ts";

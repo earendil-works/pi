@@ -1,5 +1,9 @@
 import { type Static, Type } from "typebox";
 
+function nonNegativeSafeInteger(options: { default?: number } = {}) {
+	return Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER, ...options });
+}
+
 const ThinkingLevelSchema = Type.Union([
 	Type.Literal("off"),
 	Type.Literal("minimal"),
@@ -11,14 +15,14 @@ const ThinkingLevelSchema = Type.Union([
 ]);
 
 const CompactionModelOverrideSchema = Type.Object({
-	reserveTokens: Type.Optional(Type.Number()),
-	keepRecentTokens: Type.Optional(Type.Number()),
+	reserveTokens: Type.Optional(nonNegativeSafeInteger()),
+	keepRecentTokens: Type.Optional(nonNegativeSafeInteger()),
 });
 
 const CompactionSettingsSchema = Type.Object({
 	enabled: Type.Optional(Type.Boolean({ default: true })),
-	reserveTokens: Type.Optional(Type.Number({ default: 16384 })),
-	keepRecentTokens: Type.Optional(Type.Number({ default: 20000 })),
+	reserveTokens: Type.Optional(nonNegativeSafeInteger({ default: 16384 })),
+	keepRecentTokens: Type.Optional(nonNegativeSafeInteger({ default: 20000 })),
 	modelOverrides: Type.Optional(
 		Type.Record(Type.String(), CompactionModelOverrideSchema, {
 			description: 'Per-model overrides keyed by exact "provider/modelId" strings.',
@@ -55,7 +59,10 @@ const RetrySettingsSchema = Type.Object({
 	maxAgentDelayMs: Type.Optional(Type.Number({ default: 60000 })),
 	provider: Type.Optional(ProviderRetrySettingsSchema),
 	maxDelayMs: Type.Optional(
-		Type.Number({ description: "Legacy retry delay setting. Use maxAgentDelayMs instead.", deprecated: true }),
+		Type.Number({
+			description: "Legacy retry delay setting. Use provider.maxRetryDelayMs instead.",
+			deprecated: true,
+		}),
 	),
 });
 
@@ -304,7 +311,10 @@ export const SettingsSchema = Type.Object(
 			Type.String({ description: "Proxy URL applied as HTTP_PROXY and HTTPS_PROXY for Pi-managed HTTP clients." }),
 		),
 		httpIdleTimeoutMs: Type.Optional(
-			Type.Number({ description: "HTTP header or body idle timeout in milliseconds; 0 disables it." }),
+			Type.Number({
+				minimum: 0,
+				description: "HTTP header or body idle timeout in milliseconds; 0 disables it.",
+			}),
 		),
 		cacheWarming: Type.Optional(
 			Type.Union([Type.Literal("off"), Type.Literal("streaming"), Type.Literal("idle")], {
@@ -314,7 +324,10 @@ export const SettingsSchema = Type.Object(
 			}),
 		),
 		websocketConnectTimeoutMs: Type.Optional(
-			Type.Number({ description: "WebSocket connect or open handshake timeout in milliseconds; 0 disables it." }),
+			Type.Number({
+				minimum: 0,
+				description: "WebSocket connect or open handshake timeout in milliseconds; 0 disables it.",
+			}),
 		),
 		tuiMode: Type.Optional(Type.Union([Type.Literal("regular"), Type.Literal("fullscreen")], { default: "regular" })),
 		fullscreenExitOutput: Type.Optional(
@@ -340,7 +353,7 @@ export const SettingsSchema = Type.Object(
 		),
 		queueMode: Type.Optional(
 			Type.Union([Type.Literal("all"), Type.Literal("one-at-a-time")], {
-				description: "Legacy setting migrated to steeringMode and followUpMode.",
+				description: "Legacy setting migrated to steeringMode.",
 				deprecated: true,
 			}),
 		),

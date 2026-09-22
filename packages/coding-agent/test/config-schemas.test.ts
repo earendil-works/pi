@@ -119,6 +119,45 @@ describe("generated configuration schemas", () => {
 		expect(validator.Check(invalid)).toBe(false);
 	});
 
+	it("rejects settings values that runtime accessors reject", () => {
+		const validator = Compile(SettingsSchema);
+		for (const invalid of [
+			{ compaction: { reserveTokens: -1 } },
+			{ compaction: { keepRecentTokens: 1.5 } },
+			{
+				compaction: {
+					modelOverrides: { "provider/model": { reserveTokens: Number.MAX_SAFE_INTEGER + 1 } },
+				},
+			},
+			{ httpIdleTimeoutMs: -1 },
+			{ websocketConnectTimeoutMs: -1 },
+		]) {
+			expect(validator.Check(invalid)).toBe(false);
+		}
+		expect(
+			validator.Check({
+				compaction: {
+					reserveTokens: 0,
+					keepRecentTokens: Number.MAX_SAFE_INTEGER,
+					modelOverrides: { "provider/model": { reserveTokens: 0 } },
+				},
+				httpIdleTimeoutMs: 0,
+				websocketConnectTimeoutMs: 0,
+			}),
+		).toBe(true);
+	});
+
+	it("describes legacy settings migrations accurately", () => {
+		const schema = JSON.parse(renderConfigSchemas().get("schemas/settings.schema.json") ?? "") as {
+			properties: {
+				queueMode: { description: string };
+				retry: { properties: { maxDelayMs: { description: string } } };
+			};
+		};
+		expect(schema.properties.retry.properties.maxDelayMs.description).toContain("provider.maxRetryDelayMs");
+		expect(schema.properties.queueMode.description).toBe("Legacy setting migrated to steeringMode.");
+	});
+
 	it("accepts custom compatibility settings and rejects malformed known fields", async () => {
 		const directory = createTemporaryDirectory();
 		const path = join(directory, "models.json");

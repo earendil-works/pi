@@ -8,7 +8,10 @@ export const SessionAffinityFormatSchema = Type.Union([
 
 export const ThinkingTokenBudgetFieldSchema = Type.Union(
 	[Type.Literal("thinking_token_budget"), Type.Literal("thinking_budget"), Type.Literal("thinking_budget_tokens")],
-	{ description: "Top-level request field used to cap reasoning tokens on OpenAI-compatible servers." },
+	{
+		description:
+			'Top-level request field name used by OpenAI-compatible endpoints to cap reasoning tokens. "thinking_token_budget" is used by vLLM, "thinking_budget" by Qwen, DashScope, or SGLang, and "thinking_budget_tokens" by llama.cpp.',
+	},
 );
 
 export const ChatTemplateKwargValueSchema = Type.Union([
@@ -283,17 +286,10 @@ export const OpenAICompletionsCompatSchema = Type.Object(
 			}),
 		),
 		thinkingTokenBudgetField: Type.Optional(
-			Type.Union(
-				[
-					Type.Literal("thinking_token_budget"),
-					Type.Literal("thinking_budget"),
-					Type.Literal("thinking_budget_tokens"),
-				],
-				{
-					description:
-						'Top-level request field used to cap reasoning tokens from thinkingBudgets. Reasoning and the answer share max_tokens on these endpoints. "thinking_token_budget" is vLLM, "thinking_budget" is Qwen, DashScope, or SGLang, and "thinking_budget_tokens" is llama.cpp. Off by default and not set on the generated catalog.',
-				},
-			),
+			Type.Union([...ThinkingTokenBudgetFieldSchema.anyOf], {
+				description:
+					'Top-level request field used to cap reasoning tokens from thinkingBudgets. Reasoning and the answer share max_tokens on these endpoints. "thinking_token_budget" is vLLM, "thinking_budget" is Qwen, DashScope, or SGLang, and "thinking_budget_tokens" is llama.cpp. Off by default and not set on the generated catalog.',
+			}),
 		),
 		supportsThinkingTokenBudget: Type.Optional(
 			Type.Boolean({
