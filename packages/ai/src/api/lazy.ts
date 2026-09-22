@@ -22,6 +22,17 @@ function createSetupErrorMessage(model: Model<Api>, error: unknown): AssistantMe
 	};
 }
 
+/**
+ * Assistant message for a setup call that was cancelled instead of failing.
+ * Mirrors the aborted-response shape produced by the provider stream path.
+ */
+function createAbortedSetupMessage(model: Model<Api>): AssistantMessage {
+	return {
+		...createSetupErrorMessage(model, new Error("Request was aborted")),
+		stopReason: "aborted",
+	};
+}
+
 function hasResult(
 	source: AsyncIterable<AssistantMessageEvent>,
 ): source is AsyncIterable<AssistantMessageEvent> & { result(): Promise<AssistantMessage> } {
@@ -41,17 +52,28 @@ async function forwardStream(
 /**
  * Returns a stream synchronously while running async setup (auth resolution,
  * lazy module loading) behind it. Setup failures terminate the stream with an
- * error event.
+ * error event; a cancelled `signal` terminates it as an aborted response, so an
+ * internal cancellation is not reported as a provider failure.
  */
 export function lazyStream(
 	model: Model<Api>,
 	setup: () => Promise<AsyncIterable<AssistantMessageEvent>>,
+	signal?: AbortSignal,
 ): AssistantMessageEventStream {
 	const outer = new AssistantMessageEventStream();
 
 	setup()
 		.then((inner) => forwardStream(outer, inner))
 		.catch((error) => {
+			// Setup performs signal-aware work (credential/auth resolution), so aborting a run can
+			// reject here. Aborted responses skip retries, compaction, and error reporting, unlike
+			// errors, so classify the cancellation before building a failure message.
+			if (signal?.aborted) {
+				const aborted = createAbortedSetupMessage(model);
+				outer.push({ type: "error", reason: "aborted", error: aborted });
+				outer.end(aborted);
+				return;
+			}
 			const message = createSetupErrorMessage(model, error);
 			outer.push({ type: "error", reason: "error", error: message });
 			outer.end(message);
@@ -73,18 +95,22 @@ export interface LazyApiCapabilities {
 export function lazyApi(load: () => Promise<ProviderStreams>, capabilities?: LazyApiCapabilities): ProviderStreams {
 	const api: ProviderStreams = {
 		stream: (model, context, options) =>
-			lazyStream(model, async () => (await load()).stream(model, context, options)),
+			lazyStream(model, async () => (await load()).stream(model, context, options), options?.signal),
 		streamSimple: (model, context, options) =>
-			lazyStream(model, async () => (await load()).streamSimple(model, context, options)),
+			lazyStream(model, async () => (await load()).streamSimple(model, context, options), options?.signal),
 	};
 
 	if (capabilities?.fetchDeferred) {
 		api.fetchDeferred = (model, handle, options) =>
-			lazyStream(model, async () => {
-				const implementation = await load();
-				if (!implementation.fetchDeferred) throw new Error("API does not support deferred responses");
-				return implementation.fetchDeferred(model, handle, options);
-			});
+			lazyStream(
+				model,
+				async () => {
+					const implementation = await load();
+					if (!implementation.fetchDeferred) throw new Error("API does not support deferred responses");
+					return implementation.fetchDeferred(model, handle, options);
+				},
+				options?.signal,
+			);
 	}
 	if (capabilities?.cancelDeferred) {
 		api.cancelDeferred = async (model, handle, options) => {
