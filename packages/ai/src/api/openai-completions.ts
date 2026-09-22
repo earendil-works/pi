@@ -1190,6 +1190,7 @@ export function convertMessages(
 ): ChatCompletionMessageParam[] {
 	const normalizedContext = resolveTranscript(context, compat.supportsMidConvoSystemMessages);
 	const params: ChatCompletionMessageParam[] = [];
+	const droppedToolCallIds = new Set<string>();
 
 	const normalizeToolCallId = (id: string): string => {
 		// Handle pipe-separated IDs from OpenAI Responses API
@@ -1349,8 +1350,13 @@ export function convertMessages(
 				assistantMsg.content = assistantText;
 			}
 
-			if (toolCalls.length > 0) {
-				assistantMsg.tool_calls = toolCalls.map((tc): ChatCompletionMessageToolCall => {
+			const namedToolCalls = toolCalls.filter((tc) => {
+				if (typeof tc.name === "string" && tc.name.trim().length > 0) return true;
+				if (tc.id.length > 0) droppedToolCallIds.add(tc.id);
+				return false;
+			});
+			if (namedToolCalls.length > 0) {
+				assistantMsg.tool_calls = namedToolCalls.map((tc): ChatCompletionMessageToolCall => {
 					const customInputProperty = options?.grammarToolInputProperties?.get(tc.name);
 					if (customInputProperty !== undefined) {
 						return {
@@ -1401,6 +1407,7 @@ export function convertMessages(
 
 			for (; j < transformedMessages.length && transformedMessages[j].role === "toolResult"; j++) {
 				const toolMsg = transformedMessages[j] as ToolResultMessage;
+				if (droppedToolCallIds.has(toolMsg.toolCallId)) continue;
 
 				// Extract text and image content
 				const textResult = toolMsg.content

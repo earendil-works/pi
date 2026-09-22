@@ -144,10 +144,12 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 			const cacheRetention = resolveCacheRetention(options?.cacheRetention, options?.env);
 			const cacheSessionId = cacheRetention === "none" ? undefined : options?.sessionId;
 			const compat = getCompat(model);
+			const declaredTools = getDeclaredTools(normalizedContext.messages);
 			const grammarToolInputProperties = createGrammarToolInputProperties(
-				getDeclaredTools(normalizedContext.messages),
+				declaredTools,
 				compat.supportsOpenAIGrammarTools,
 			);
+			const toolNames = new Set(declaredTools.flatMap((tool) => (tool.name.length > 0 ? [tool.name] : [])));
 			const client = createClient(
 				model,
 				normalizedContext,
@@ -180,6 +182,7 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 			await processResponsesStream(openaiStream, output, stream, model, {
 				serviceTier: options?.serviceTier,
 				grammarToolInputProperties,
+				toolNames,
 				applyServiceTierPricing: (usage, serviceTier) => applyServiceTierPricing(usage, serviceTier, model),
 			});
 

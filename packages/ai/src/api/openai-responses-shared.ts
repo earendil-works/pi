@@ -109,6 +109,8 @@ function convertToolResultOutput<TApi extends Api>(
 export interface OpenAIResponsesStreamOptions {
 	serviceTier?: ResponseCreateParamsStreaming["service_tier"];
 	grammarToolInputProperties?: ReadonlyMap<string, string>;
+	/** Names declared on this request. A blank function call may take one of these from `<function=name` text. */
+	toolNames?: ReadonlySet<string>;
 	resolveServiceTier?: (
 		responseServiceTier: ResponseCreateParamsStreaming["service_tier"] | undefined,
 		requestServiceTier: ResponseCreateParamsStreaming["service_tier"] | undefined,
@@ -136,6 +138,65 @@ export interface ConvertResponsesToolsOptions {
 	toolSearchResult?: boolean;
 }
 
+// A blank function name is illegal to send back. MiMo-style `<function=name` text can
+// fill it when that name is one of the tools on the request; otherwise the call is dropped.
+const MIMO_FUNCTION_NAME = /<function=([A-Za-z0-9_-]+)/g;
+
+function isBlankToolName(name: string): boolean {
+	return name.trim().length === 0;
+}
+
+function recoverMiMoFunctionName(
+	output: AssistantMessage,
+	toolNames: ReadonlySet<string> | undefined,
+): string | undefined {
+	if (toolNames === undefined || toolNames.size === 0) return undefined;
+	const found = new Set<string>();
+	for (const block of output.content) {
+		if (block.type !== "text") continue;
+		for (const match of block.text.matchAll(MIMO_FUNCTION_NAME)) {
+			const name = match[1];
+			if (name !== undefined && toolNames.has(name)) found.add(name);
+		}
+	}
+	if (found.size !== 1) return undefined;
+	return found.values().next().value;
+}
+
+function dropBlankToolCalls(output: AssistantMessage, toolNames: ReadonlySet<string> | undefined): void {
+	const blankIndexes: number[] = [];
+	for (let index = 0; index < output.content.length; index++) {
+		const block = output.content[index];
+		if (block?.type === "toolCall" && isBlankToolName(block.name)) blankIndexes.push(index);
+	}
+	if (blankIndexes.length === 0) return;
+	const onlyBlank = blankIndexes.length === 1 ? blankIndexes[0] : undefined;
+	const recovered = onlyBlank === undefined ? undefined : recoverMiMoFunctionName(output, toolNames);
+	if (onlyBlank !== undefined && recovered !== undefined) {
+		const block = output.content[onlyBlank];
+		if (block?.type === "toolCall") block.name = recovered;
+		return;
+	}
+	for (let index = blankIndexes.length - 1; index >= 0; index--) {
+		const blankIndex = blankIndexes[index];
+		if (blankIndex !== undefined) output.content.splice(blankIndex, 1);
+	}
+}
+
+function rememberDroppedToolCall(droppedToolCallIds: Set<string>, id: string): void {
+	if (id.length === 0) return;
+	droppedToolCallIds.add(id);
+	const pipe = id.indexOf("|");
+	if (pipe !== -1) droppedToolCallIds.add(id.slice(0, pipe));
+}
+
+function isDroppedToolResult(droppedToolCallIds: Set<string>, id: string): boolean {
+	if (id.length === 0) return false;
+	if (droppedToolCallIds.has(id)) return true;
+	const pipe = id.indexOf("|");
+	return pipe !== -1 && droppedToolCallIds.has(id.slice(0, pipe));
+}
+
 // =============================================================================
 // Message conversion
 // =============================================================================
@@ -148,6 +209,7 @@ export function convertResponsesMessages<TApi extends Api>(
 ): ResponseInput {
 	const normalizedContext = resolveTranscript(context, options?.supportsMidConvoSystemMessages);
 	const messages: ResponseInput = [];
+	const droppedToolCallIds = new Set<string>();
 
 	const normalizeIdPart = (part: string): string => {
 		const sanitized = part.replace(/[^a-zA-Z0-9_-]/g, "_");
@@ -287,6 +349,10 @@ export function convertResponsesMessages<TApi extends Api>(
 					} satisfies ResponseOutputMessage);
 				} else if (block.type === "toolCall") {
 					const toolCall = block as ToolCall;
+					if (isBlankToolName(toolCall.name)) {
+						rememberDroppedToolCall(droppedToolCallIds, toolCall.id);
+						continue;
+					}
 					const [callId, itemIdRaw] = toolCall.id.split("|");
 					const customInputProperty = options?.grammarToolInputProperties?.get(toolCall.name);
 					let itemId: string | undefined = itemIdRaw;
@@ -330,20 +396,25 @@ export function convertResponsesMessages<TApi extends Api>(
 			messages.push(...output);
 		} else if (msg.role === "toolResult") {
 			const [callId] = msg.toolCallId.split("|");
-			const output = convertToolResultOutput(model, msg.content);
+			const dropped =
+				isDroppedToolResult(droppedToolCallIds, msg.toolCallId) ||
+				isDroppedToolResult(droppedToolCallIds, callId ?? "");
+			if (!dropped && callId !== undefined) {
+				const output = convertToolResultOutput(model, msg.content);
 
-			if (options?.grammarToolInputProperties?.has(msg.toolName)) {
-				messages.push({
-					type: "custom_tool_call_output",
-					call_id: callId,
-					output,
-				});
-			} else {
-				messages.push({
-					type: "function_call_output",
-					call_id: callId,
-					output,
-				});
+				if (options?.grammarToolInputProperties?.has(msg.toolName)) {
+					messages.push({
+						type: "custom_tool_call_output",
+						call_id: callId,
+						output,
+					});
+				} else {
+					messages.push({
+						type: "function_call_output",
+						call_id: callId,
+						output,
+					});
+				}
 			}
 		}
 		if (!isLeadingSystemMessage) msgIndex++;
@@ -590,6 +661,7 @@ export async function processResponsesStream<TApi extends Api>(
 		output.stopReason = mappedStop.stopReason;
 		if (mappedStop.errorMessage === undefined) delete output.errorMessage;
 		else output.errorMessage = mappedStop.errorMessage;
+		dropBlankToolCalls(output, options?.toolNames);
 		if (output.content.some((b) => b.type === "toolCall") && output.stopReason === "stop") {
 			output.stopReason = "toolUse";
 		}
@@ -711,17 +783,29 @@ export async function processResponsesStream<TApi extends Api>(
 				slot?.type === "toolCall" &&
 				slot.block.partialJson !== undefined
 			) {
+				if (isBlankToolName(slot.block.name) && !isBlankToolName(item.name)) {
+					slot.block.name = item.name;
+				}
+				if (isBlankToolName(slot.block.name)) {
+					const recovered = recoverMiMoFunctionName(output, options?.toolNames);
+					if (recovered !== undefined) slot.block.name = recovered;
+				}
 				slot.block.arguments = parseStreamingJson(item.arguments || slot.block.partialJson || "{}");
 				if (item.namespace !== undefined) slot.block.namespace = item.namespace;
 				// Finalize in-place and strip the scratch buffer so replay only
 				// carries parsed arguments.
 				delete slot.block.partialJson;
-				stream.push({
-					type: "toolcall_end",
-					contentIndex: slot.contentIndex,
-					toolCall: slot.block,
-					partial: output,
-				});
+				if (isBlankToolName(slot.block.name)) {
+					const index = output.content.indexOf(slot.block);
+					if (index !== -1) output.content.splice(index, 1);
+				} else {
+					stream.push({
+						type: "toolcall_end",
+						contentIndex: slot.contentIndex,
+						toolCall: slot.block,
+						partial: output,
+					});
+				}
 				outputSlots.delete(event.output_index);
 			} else if (item.type === "custom_tool_call" && slot?.type === "toolCall" && slot.block.customInput) {
 				pushToolCallDelta(

@@ -105,10 +105,12 @@ export const stream: StreamFunction<"azure-openai-responses", AzureOpenAIRespons
 				throw new Error(`No API key for provider: ${model.provider}`);
 			}
 			const client = createClient(model, apiKey, options);
+			const declaredTools = getDeclaredTools(normalizedContext.messages);
 			const grammarToolInputProperties = createGrammarToolInputProperties(
-				getDeclaredTools(normalizedContext.messages),
+				declaredTools,
 				model.compat?.supportsOpenAIGrammarTools ?? false,
 			);
+			const toolNames = new Set(declaredTools.flatMap((tool) => (tool.name.length > 0 ? [tool.name] : [])));
 			let params = buildParams(model, normalizedContext, options, deploymentName, grammarToolInputProperties);
 			const nextParams = await options?.onPayload?.(params, model);
 			if (nextParams !== undefined) {
@@ -130,7 +132,7 @@ export const stream: StreamFunction<"azure-openai-responses", AzureOpenAIRespons
 			await options?.onResponse?.({ status: response.status, headers: headersToRecord(response.headers) }, model);
 			stream.push({ type: "start", partial: output });
 
-			await processResponsesStream(openaiStream, output, stream, model, { grammarToolInputProperties });
+			await processResponsesStream(openaiStream, output, stream, model, { grammarToolInputProperties, toolNames });
 
 			if (options?.signal?.aborted) {
 				throw new Error("Request was aborted");
