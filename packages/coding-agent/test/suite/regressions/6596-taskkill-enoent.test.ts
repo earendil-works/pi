@@ -1,4 +1,4 @@
-import type { ChildProcess } from "node:child_process";
+import type * as ChildProcess from "node:child_process";
 import { EventEmitter } from "node:events";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const { spawnMock } = vi.hoisted(() => ({ spawnMock: vi.fn() }));
 
 vi.mock("child_process", async (importOriginal) => {
-	const actual = await importOriginal<typeof import("child_process")>();
+	const actual = await importOriginal<typeof ChildProcess>();
 	return { ...actual, spawn: spawnMock };
 });
 
@@ -24,26 +24,26 @@ function withWindowsPlatform(test: () => void): void {
 
 afterEach(() => {
 	spawnMock.mockReset();
+	vi.unstubAllEnvs();
 });
 
 describe("issue #6596 taskkill spawn failures", () => {
-	it("uses System32 taskkill and consumes its asynchronous spawn error", () => {
-		const child = new EventEmitter() as ChildProcess;
-		const previousSystemRoot = process.env.SystemRoot;
-		process.env.SystemRoot = "C:\\CustomWindows";
+	// #9490: missing or empty SystemRoot must retain an absolute taskkill fallback.
+	it.each([
+		["D:\\CustomWindows", "D:\\CustomWindows"],
+		[undefined, "C:\\Windows"],
+		["", "C:\\Windows"],
+	] as const)("uses System32 taskkill and consumes its spawn error with SystemRoot=%j", (systemRoot, expectedRoot) => {
+		const child = new EventEmitter();
+		vi.stubEnv("SystemRoot", systemRoot);
 		spawnMock.mockReturnValue(child);
 
-		try {
-			withWindowsPlatform(() => {
-				killProcessTree(1234);
-			});
-		} finally {
-			if (previousSystemRoot === undefined) delete process.env.SystemRoot;
-			else process.env.SystemRoot = previousSystemRoot;
-		}
+		withWindowsPlatform(() => {
+			killProcessTree(1234);
+		});
 
 		expect(spawnMock).toHaveBeenCalledWith(
-			join("C:\\CustomWindows", "System32", "taskkill.exe"),
+			join(expectedRoot, "System32", "taskkill.exe"),
 			["/F", "/T", "/PID", "1234"],
 			{ detached: true, stdio: "ignore", windowsHide: true },
 		);

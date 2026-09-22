@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { delimiter, join } from "node:path";
+import { delimiter, join, win32 } from "node:path";
 import { spawn, spawnSync } from "child_process";
 import { getBinDir } from "../config.ts";
 
@@ -9,11 +9,17 @@ export interface ShellConfig {
 	commandTransport?: "argv" | "stdin";
 }
 
-/**
- * Find bash executable on PATH (cross-platform)
- */
+// Keep in sync with packages/agent/src/harness/env/nodejs.ts.
 function isLegacyWslBashPath(path: string): boolean {
-	const normalized = path.replace(/\//g, "\\").toLowerCase();
+	const normalized = win32.normalize(path).toLowerCase();
+	const systemRoot = process.env.SystemRoot;
+	if (systemRoot) {
+		if (!/^[a-z]:[\\/]/i.test(systemRoot)) return false;
+		return ["System32", "Sysnative"].some(
+			(directory) => normalized === win32.join(systemRoot, directory, "bash.exe").toLowerCase(),
+		);
+	}
+	// Fall back to conventional launcher paths only when the Windows directory is unknown.
 	return /^[a-z]:\\windows\\(?:system32|sysnative)\\bash\.exe$/.test(normalized);
 }
 
@@ -127,7 +133,21 @@ export function getPowerShellConfig(): ShellConfig {
 		throw new Error("The powershell tool is only available on Windows.");
 	}
 
-	const shell = findExecutableOnPath("pwsh.exe") ?? findExecutableOnPath("powershell.exe");
+	let shell = findExecutableOnPath("pwsh.exe");
+	// Installation directories may be on any drive and need not be on PATH.
+	const programFiles = process.env.ProgramFiles;
+	if (!shell && programFiles) {
+		const pwsh7 = win32.join(programFiles, "PowerShell", "7", "pwsh.exe");
+		if (existsSync(pwsh7)) shell = pwsh7;
+	}
+
+	shell ??= findExecutableOnPath("powershell.exe");
+	const systemRoot = process.env.SystemRoot;
+	if (!shell && systemRoot) {
+		const windowsPowerShell = win32.join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+		if (existsSync(windowsPowerShell)) shell = windowsPowerShell;
+	}
+
 	if (!shell) {
 		throw new Error("No PowerShell executable found. Install PowerShell or add powershell.exe/pwsh.exe to PATH.");
 	}
@@ -218,7 +238,7 @@ export function killProcessTree(pid: number): void {
 		// Use the trusted System32 executable so cleanup does not depend on PATH.
 		try {
 			const child = spawn(
-				join(process.env.SystemRoot ?? "C:\\Windows", "System32", "taskkill.exe"),
+				join(process.env.SystemRoot || "C:\\Windows", "System32", "taskkill.exe"),
 				["/F", "/T", "/PID", String(pid)],
 				{
 					stdio: "ignore",
