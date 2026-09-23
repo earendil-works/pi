@@ -367,8 +367,7 @@ describe("Models with image models", () => {
 		expect(models.getModelOfType("image", "dyn", "listed")).toBeDefined();
 		expect(models.getModel("dyn", "chat")).toBeDefined();
 		const stored = await modelsStore.read("dyn");
-		expect(stored?.models.map((model) => model.id)).toEqual(["chat"]);
-		expect(stored?.otherModels?.map((model) => model.id)).toEqual(["listed"]);
+		expect(stored?.models.map((model) => model.id)).toEqual(["listed", "chat"]);
 	});
 
 	it("keeps existing built-in and compat model reads chat-only", () => {

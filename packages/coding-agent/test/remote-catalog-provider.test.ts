@@ -141,8 +141,7 @@ describe("remote catalog provider", () => {
 		expect(models.getModelOfType("classifier", "test-provider", "jev")?.type).toBe("classifier");
 		expect(models.getModel("test-provider", "flux")).toBeUndefined();
 		const stored = await store.read(provider.id);
-		expect(stored?.models.map((entry) => entry.id)).toEqual(["chat"]);
-		expect(stored?.otherModels?.map((entry) => entry.id)).toEqual(["flux", "jev"]);
+		expect(stored?.models.map((entry) => entry.id)).toEqual(["chat", "flux", "jev"]);
 	});
 
 	it("prefers the newer of the generated and remote catalogs", async () => {

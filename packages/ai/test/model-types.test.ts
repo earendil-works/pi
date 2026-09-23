@@ -105,11 +105,11 @@ describe("stored and fetched models of unknown types", () => {
 	it("are dropped instead of failing the refresh", async () => {
 		const modelsStore = new InMemoryModelsStore();
 		const stored = {
-			models: [chatModel("dyn", "stored-chat"), { ...chatModel("dyn", "future-in-chat"), type: "embedding" }],
-			otherModels: [
+			models: [
+				chatModel("dyn", "stored-chat"),
 				imageModel("dyn", "stored-image"),
+				{ ...chatModel("dyn", "future-embedding"), type: "embedding" },
 				{ ...imageModel("dyn", "future-video"), type: "video" },
-				chatModel("dyn", "misfiled-chat"),
 			],
 		} as unknown as ModelsStoreEntry;
 		await modelsStore.write("dyn", stored);
@@ -135,6 +135,5 @@ describe("stored and fetched models of unknown types", () => {
 		expect(refreshed.errors.size).toBe(0);
 		expect(models.getAllModels("dyn").map((model) => model.id)).toEqual(["fetched-chat"]);
 		expect(await modelsStore.read("dyn")).toMatchObject({ models: [{ id: "fetched-chat" }] });
-		expect((await modelsStore.read("dyn"))?.otherModels).toBeUndefined();
 	});
 });

@@ -121,22 +121,9 @@ function hasKnownModelType(model: AnyModel): boolean {
 	return Object.hasOwn(KNOWN_MODEL_TYPES, getModelType(model));
 }
 
-/** Splits models into the chat list read by every store reader and the list of other types. */
-function modelsStoreEntry(models: readonly AnyModel[]): ModelsStoreEntry {
-	const chatModels: Model<Api>[] = [];
-	const otherModels: (ImageModel<ImageApi> | ClassifierModel<ClassifierApi>)[] = [];
-	for (const model of models) {
-		if (isModelType(model, "chat")) chatModels.push(model);
-		else otherModels.push(model);
-	}
-	return otherModels.length > 0 ? { models: chatModels, otherModels } : { models: chatModels };
-}
-
-/** Drops stored models whose type this version does not know or that sit in the wrong list. */
+/** Drops stored models whose type this version does not know. */
 function withKnownModelTypes(entry: ModelsStoreEntry): ModelsStoreEntry {
-	const models = entry.models.filter((model) => isModelType(model, "chat"));
-	const otherModels = entry.otherModels?.filter((model) => !isModelType(model, "chat") && hasKnownModelType(model));
-	return otherModels ? { ...entry, models, otherModels } : { ...entry, models };
+	return { ...entry, models: entry.models.filter(hasKnownModelType) };
 }
 
 /** Any model a provider with chat APIs `TApi` can list. */
@@ -1093,7 +1080,7 @@ export function createProvider<TApi extends Api = Api>(input: CreateProviderOpti
 		refreshModels: fetchModels
 			? async (context) => {
 					if (context.stored) {
-						const restored = [...context.stored.models, ...(context.stored.otherModels ?? [])]
+						const restored = context.stored.models
 							.filter((model) => model.provider === input.id)
 							.map((model) => model as ProviderModel<TApi>);
 						if (
@@ -1111,7 +1098,7 @@ export function createProvider<TApi extends Api = Api>(input: CreateProviderOpti
 					if (context.signal.aborted) return;
 					const refreshed = fetched.filter(hasKnownModelType);
 					await context.publish({
-						persist: { ...modelsStoreEntry(refreshed), checkedAt: Date.now() },
+						persist: { models: refreshed, checkedAt: Date.now() },
 						update: () => {
 							dynamicModels = refreshed;
 						},

@@ -58,7 +58,7 @@ function remoteModels(entry: ModelsStoreEntry | undefined, localGeneratedAt: num
 	if (localGeneratedAt !== undefined && (entry.lastModified === undefined || entry.lastModified <= localGeneratedAt)) {
 		return [];
 	}
-	return [...entry.models, ...(entry.otherModels ?? [])];
+	return entry.models;
 }
 
 /** Add a persisted pi.dev catalog overlay to a static built-in provider. */
@@ -101,8 +101,7 @@ export function withRemoteCatalog(
 
 			// Only revalidate when a cached body backs the validator, so a 304 can never
 			// leave the overlay empty.
-			const validator =
-				stored && (stored.models.length > 0 || (stored.otherModels?.length ?? 0) > 0) ? stored.etag : undefined;
+			const validator = stored && stored.models.length > 0 ? stored.etag : undefined;
 			const url = new URL(`/api/models/providers/${encodeURIComponent(provider.id)}`, catalogBaseUrl);
 			url.searchParams.set("types", REMOTE_CATALOG_MODEL_TYPES.join(","));
 			const response = await fetchWithRetry(
@@ -145,10 +144,8 @@ export function withRemoteCatalog(
 			const refreshed = parseCatalog(provider.id, await response.json());
 			const lastModified = Date.parse(response.headers.get("last-modified") ?? "");
 			if (context.signal.aborted) return;
-			const otherModels = refreshed.filter((model) => !isModelType(model, "chat"));
 			const entry: ModelsStoreEntry = {
-				models: refreshed.filter((model) => isModelType(model, "chat")),
-				...(otherModels.length > 0 ? { otherModels } : {}),
+				models: refreshed,
 				checkedAt,
 				lastModified: Number.isNaN(lastModified) ? 0 : lastModified,
 				etag: response.headers.get("etag") ?? undefined,
