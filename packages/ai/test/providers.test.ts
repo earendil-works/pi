@@ -76,6 +76,21 @@ describe("builtin providers", () => {
 		});
 	});
 
+	it("publishes active Kimi API models and official GPT-6 limits", () => {
+		expect(
+			getBuiltinModels("moonshotai")
+				.map((model) => model.id)
+				.sort(),
+		).toEqual(["kimi-k2.6", "kimi-k2.7-code", "kimi-k2.7-code-highspeed", "kimi-k3"]);
+
+		for (const id of ["gpt-6-astra", "gpt-6-sol", "gpt-6-luna"] as const) {
+			expect(getBuiltinModel("openai", id)).toMatchObject({
+				contextWindow: 1050000,
+				maxTokens: 128000,
+			});
+		}
+	});
+
 	it("returns empty results for unknown provider ids", () => {
 		const unknownProvider = "not-a-provider" as never;
 		const unknownModel = "x" as never;

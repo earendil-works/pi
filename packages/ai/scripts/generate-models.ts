@@ -376,15 +376,14 @@ const OPENAI_CODEX_ADDITIONAL_TOOLS_MODEL_IDS = new Set([
 	"gpt-6-luna",
 ]);
 const OPENAI_LONG_CONTEXT_INPUT_THRESHOLD = 272000;
+const OPENAI_GPT_6_CONTEXT_WINDOW = 1050000;
+const OPENAI_GPT_6_MODEL_IDS = new Set(["gpt-6-astra", "gpt-6-sol", "gpt-6-luna"]);
 const OPENAI_SHORT_CONTEXT_CAPPED_MODEL_IDS = new Set([
 	"gpt-5.4",
 	"gpt-5.5",
 	"gpt-5.6-sol",
 	"gpt-5.6-terra",
 	"gpt-5.6-luna",
-	"gpt-6-astra",
-	"gpt-6-sol",
-	"gpt-6-luna",
 ]);
 const OPENAI_LONG_CONTEXT_PRICING_MODEL_IDS = new Set([
 	"gpt-5.4",
@@ -2781,10 +2780,14 @@ async function generateModels() {
 			candidate.contextWindow = 272000;
 			candidate.maxTokens = 128000;
 		}
-		// Keep direct OpenAI requests in the short-context pricing tier by default. Users can opt into the
-		// larger context through model overrides, so retain long-context cost metadata on the capped models.
+		// GPT-5.x stays capped to the 272K input tier by default. GPT-6 supports 1.05M context;
+		// its separate long-context price tier remains recorded below.
 		if (candidate.provider === "openai" && OPENAI_SHORT_CONTEXT_CAPPED_MODEL_IDS.has(candidate.id)) {
 			candidate.contextWindow = OPENAI_LONG_CONTEXT_INPUT_THRESHOLD;
+			candidate.maxTokens = 128000;
+		}
+		if (candidate.provider === "openai" && OPENAI_GPT_6_MODEL_IDS.has(candidate.id)) {
+			candidate.contextWindow = OPENAI_GPT_6_CONTEXT_WINDOW;
 			candidate.maxTokens = 128000;
 		}
 		if (candidate.provider === "openai" && OPENAI_LONG_CONTEXT_PRICING_MODEL_IDS.has(candidate.id)) {
@@ -2840,7 +2843,7 @@ async function generateModels() {
 			reasoning: true,
 			input: ["text", "image"],
 			cost: withOpenAiLongContextPricing(OPENAI_STANDARD_COSTS["gpt-6-astra"]),
-			contextWindow: OPENAI_LONG_CONTEXT_INPUT_THRESHOLD,
+			contextWindow: OPENAI_GPT_6_CONTEXT_WINDOW,
 			maxTokens: 128000,
 		},
 		{
@@ -2852,7 +2855,7 @@ async function generateModels() {
 			reasoning: true,
 			input: ["text", "image"],
 			cost: withOpenAiLongContextPricing(OPENAI_STANDARD_COSTS["gpt-6-sol"]),
-			contextWindow: OPENAI_LONG_CONTEXT_INPUT_THRESHOLD,
+			contextWindow: OPENAI_GPT_6_CONTEXT_WINDOW,
 			maxTokens: 128000,
 		},
 		{
@@ -2864,7 +2867,7 @@ async function generateModels() {
 			reasoning: true,
 			input: ["text", "image"],
 			cost: withOpenAiLongContextPricing(OPENAI_STANDARD_COSTS["gpt-6-luna"]),
-			contextWindow: OPENAI_LONG_CONTEXT_INPUT_THRESHOLD,
+			contextWindow: OPENAI_GPT_6_CONTEXT_WINDOW,
 			maxTokens: 128000,
 		},
 		{
