@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added `onProviderStreamEvent` to observe parsed provider stream events before normalization, including provider-specific fields not retained in assistant messages ([#9784](https://github.com/earendil-works/pi/issues/9784)).
+
 ## [0.87.1] - 2026-09-22
 
 ### Added
