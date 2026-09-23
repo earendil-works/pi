@@ -215,24 +215,35 @@ function isExpandable(obj: unknown): obj is Expandable {
 	return typeof obj === "object" && obj !== null && "setExpanded" in obj && typeof obj.setExpanded === "function";
 }
 
+type ExpandableTextContent = string | ((width: number) => string);
+
 class ExpandableText extends Text implements Expandable {
-	private readonly getCollapsedText: () => string;
-	private readonly getExpandedText: () => string;
+	private readonly getCollapsedText: () => ExpandableTextContent;
+	private readonly getExpandedText: () => ExpandableTextContent;
+	private expanded: boolean;
 
 	constructor(
-		getCollapsedText: () => string,
-		getExpandedText: () => string,
+		getCollapsedText: () => ExpandableTextContent,
+		getExpandedText: () => ExpandableTextContent,
 		expanded = false,
 		paddingX = 0,
 		paddingY = 0,
 	) {
-		super(expanded ? getExpandedText() : getCollapsedText(), paddingX, paddingY);
+		super("", paddingX, paddingY);
 		this.getCollapsedText = getCollapsedText;
 		this.getExpandedText = getExpandedText;
+		this.expanded = expanded;
 	}
 
 	setExpanded(expanded: boolean): void {
-		this.setText(expanded ? this.getExpandedText() : this.getCollapsedText());
+		this.expanded = expanded;
+		this.invalidate();
+	}
+
+	render(width: number): string[] {
+		const content = (this.expanded ? this.getExpandedText : this.getCollapsedText)();
+		this.setText(typeof content === "function" ? content(width) : content);
+		return super.render(width);
 	}
 }
 
@@ -1716,13 +1727,17 @@ export class InteractiveMode {
 		};
 		const addLoadedSection = (
 			name: string,
-			collapsedBody: string,
-			expandedBody = collapsedBody,
+			collapsedBody: ExpandableTextContent,
+			expandedBody: ExpandableTextContent = collapsedBody,
 			color: ThemeColor = "mdHeading",
 		): void => {
+			const withHeader = (body: ExpandableTextContent): ExpandableTextContent =>
+				typeof body === "function"
+					? (width) => `${sectionHeader(name, color)}\n${body(width)}`
+					: `${sectionHeader(name, color)}\n${body}`;
 			const section = new ExpandableText(
-				() => `${sectionHeader(name, color)}\n${collapsedBody}`,
-				() => `${sectionHeader(name, color)}\n${expandedBody}`,
+				() => withHeader(collapsedBody),
+				() => withHeader(expandedBody),
 				this.getStartupExpansionState(),
 				0,
 				0,
@@ -1731,6 +1746,23 @@ export class InteractiveMode {
 			this.loadedResourcesContainer.addChild(new Spacer(1));
 		};
 
+		const formatCompactGrid = (items: string[], width: number): string => {
+			const labels = items
+				.map((item) => item.trim())
+				.filter((item) => item.length > 0)
+				.sort((a, b) => a.localeCompare(b));
+			const labelWidth = Math.max(...labels.map((label) => visibleWidth(label)));
+			const columnGap = 2;
+			const columns = Math.max(1, Math.floor(Math.max(1, width - 2 + columnGap) / (labelWidth + columnGap)));
+			const lines = Array.from({ length: Math.ceil(labels.length / columns) }, (_, row) => {
+				const cells = labels.slice(row * columns, (row + 1) * columns);
+				return `  ${cells
+					.map((label) => label + " ".repeat(labelWidth - visibleWidth(label)))
+					.join(" ".repeat(columnGap))
+					.trimEnd()}`;
+			});
+			return theme.fg("dim", lines.join("\n"));
+		};
 		const skillsResult = this.session.resourceLoader.getSkills();
 		const promptsResult = this.session.resourceLoader.getPrompts();
 		const themesResult = this.session.resourceLoader.getThemes();
@@ -1824,7 +1856,8 @@ export class InteractiveMode {
 					formatPackagePath: (item) =>
 						this.formatExtensionDisplayPath(this.getShortPath(item.path, item.sourceInfo)),
 				});
-				const extensionCompactList = formatCompactList(this.getCompactExtensionLabels(extensions));
+				const extensionCompactList = (width: number) =>
+					formatCompactGrid(this.getCompactExtensionLabels(extensions), width);
 				addLoadedSection("Extensions", extensionCompactList, extList, "mdHeading");
 			}
 

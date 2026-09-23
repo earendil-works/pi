@@ -762,8 +762,29 @@ describe("InteractiveMode.showLoadedResources", () => {
 
 		const output = renderAll(fakeThis.loadedResourcesContainer);
 		expect(output).toContain("[Extensions]");
-		expect(output).toContain("answer.ts, btw.ts");
+		expect(output).toContain("answer.ts  btw.ts");
 		expect(output).not.toContain("extensions/answer.ts");
+	});
+
+	test("lays out compact extensions in a width-aware grid", () => {
+		const fakeThis = createShowLoadedResourcesThis({
+			quietStartup: false,
+			extensions: [
+				{ path: "/tmp/extensions/a.ts" },
+				{ path: "/tmp/extensions/medium-name.ts" },
+				{ path: "/tmp/extensions/very-long-extension-name.ts" },
+				{ path: "/tmp/extensions/z.ts" },
+			],
+		});
+
+		(InteractiveMode as any).prototype.showLoadedResources.call(fakeThis, { force: false });
+
+		const output = normalizeRenderedOutput(fakeThis.loadedResourcesContainer, 64);
+		expect(output).toMatchInlineSnapshot(`
+"[Extensions]
+  a.ts                         medium-name.ts
+  very-long-extension-name.ts  z.ts"
+`);
 	});
 
 	test("captures mixed extension layouts in compact output", () => {
@@ -778,8 +799,10 @@ describe("InteractiveMode.showLoadedResources", () => {
 		});
 
 		expect(normalizeRenderedOutput(fakeThis.loadedResourcesContainer)).toMatchInlineSnapshot(`
-"[Extensions]
-  @scope/pi-scoped, answer.ts, cli-extension.ts, HazAT/pi-interactive-subagents, HazAT/pi-interactive-subagents:subagents, local-index, pi-markdown-preview, user-index"`);
+			"[Extensions]
+			  @scope/pi-scoped                          answer.ts                                 cli-extension.ts                          HazAT/pi-interactive-subagents            HazAT/pi-interactive-subagents:subagents
+			  local-index                               pi-markdown-preview                       user-index"
+		`);
 	});
 
 	test("adds more parent folders until local extension labels are unique", () => {
@@ -824,8 +847,9 @@ describe("InteractiveMode.showLoadedResources", () => {
 		});
 
 		expect(normalizeRenderedOutput(fakeThis.loadedResourcesContainer)).toMatchInlineSnapshot(`
-"[Extensions]
-  alpha/one, beta/one, gamma/one"`);
+			"[Extensions]
+			  alpha/one  beta/one   gamma/one"
+		`);
 	});
 
 	test("strips index.ts from local extension label, showing parent dir", () => {
@@ -917,8 +941,9 @@ describe("InteractiveMode.showLoadedResources", () => {
 		});
 
 		expect(normalizeRenderedOutput(fakeThis.loadedResourcesContainer)).toMatchInlineSnapshot(`
-"[Extensions]
-  plan-mode, webfetch.ts"`);
+			"[Extensions]
+			  plan-mode    webfetch.ts"
+		`);
 	});
 
 	test("multiple index.ts with unique parent dirs need no disambiguation", () => {
@@ -954,8 +979,9 @@ describe("InteractiveMode.showLoadedResources", () => {
 		});
 
 		expect(normalizeRenderedOutput(fakeThis.loadedResourcesContainer)).toMatchInlineSnapshot(`
-"[Extensions]
-  bar, foo"`);
+			"[Extensions]
+			  bar  foo"
+		`);
 	});
 
 	test("multiple index.ts with same parent dir name disambiguated with grandparent", () => {
@@ -991,8 +1017,9 @@ describe("InteractiveMode.showLoadedResources", () => {
 		});
 
 		expect(normalizeRenderedOutput(fakeThis.loadedResourcesContainer)).toMatchInlineSnapshot(`
-"[Extensions]
-  alpha/tools, beta/tools"`);
+			"[Extensions]
+			  alpha/tools  beta/tools"
+		`);
 	});
 
 	test("non-index file in subdirectory stays as filename", () => {
@@ -1084,8 +1111,9 @@ describe("InteractiveMode.showLoadedResources", () => {
 		});
 
 		expect(normalizeRenderedOutput(fakeThis.loadedResourcesContainer)).toMatchInlineSnapshot(`
-"[Extensions]
-  primary-package, primary-package:../sibling-package"`);
+			"[Extensions]
+			  primary-package                     primary-package:../sibling-package"
+		`);
 	});
 
 	test("labels Windows npm sibling extensions relative to the declaring package", () => {
@@ -1124,8 +1152,9 @@ describe("InteractiveMode.showLoadedResources", () => {
 		});
 
 		expect(normalizeRenderedOutput(fakeThis.loadedResourcesContainer)).toMatchInlineSnapshot(`
-"[Extensions]
-  primary-package, primary-package:../sibling-package"`);
+			"[Extensions]
+			  primary-package                     primary-package:../sibling-package"
+		`);
 	});
 
 	test("captures mixed extension layouts in expanded output", () => {
