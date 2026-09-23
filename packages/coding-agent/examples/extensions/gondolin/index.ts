@@ -17,6 +17,12 @@
  * Requirements:
  *   - Node.js >= 23.6.0 for @earendil-works/gondolin
  *   - QEMU installed (for example, `brew install qemu` on macOS)
+ *
+ * Local patch — guest clock sync. See syncGuestClock() below. The guest clock is
+ * frozen while the VM is paused between requests and nothing re-syncs it on
+ * resume, which breaks TLS after enough idle time. The host is the time
+ * authority, so the extension pushes host time into the guest on start and
+ * periodically after.
  */
 
 import path from "node:path";
@@ -46,6 +52,111 @@ import {
 
 const GUEST_WORKSPACE = "/workspace";
 const DEFAULT_GREP_LIMIT = 100;
+
+/** How often to re-check the guest clock during a session. */
+const CLOCK_SYNC_MIN_INTERVAL_MS = 60_000;
+/** Drift within this is left alone — setting the clock is not free. */
+const CLOCK_DRIFT_TOLERANCE_SECONDS = 2;
+
+/** Host wall-clock ms of the last guest clock check. Drives the throttle. */
+let clockSyncedAtHostMs = 0;
+
+/**
+ * Result of one guest clock check.
+ *
+ * `driftSeconds` is host minus guest, measured before any correction: positive
+ * means the guest is behind, which is the normal direction here because the guest
+ * clock only freezes while the VM is paused.
+ */
+type GuestClockSync = {
+	driftSeconds: number;
+	/** True only when the step was issued *and* read back at the host value. */
+	applied: boolean;
+};
+
+/** Guest-clock wording for a host-minus-guest offset in seconds. */
+function describeDrift(driftSeconds: number): string {
+	const direction = driftSeconds > 0 ? "behind" : "ahead";
+	return `${direction} by ${Math.abs(driftSeconds)}s`;
+}
+
+/**
+ * Push the host clock into the guest.
+ *
+ * The guest clock is frozen while the VM is paused between requests and is never
+ * re-synced on resume, so the offset grows with accumulated idle time. Measured:
+ * the rate is exactly 100.0% of real time while the VM is active, but the offset
+ * reached ~16 minutes behind across one working session.
+ *
+ * That breaks TLS. Gondolin's egress proxy mints TLS leaf certs with `notBefore`
+ * only minutes behind its own now, so a guest more than a few minutes behind sees
+ * every freshly minted cert as CERT_NOT_YET_VALID (curl exit 60). Hosts whose
+ * certs are already cached keep working, which makes the failure look
+ * intermittent and host-specific rather than like a clock.
+ *
+ * The host is the time authority: it runs the proxy, and its clock was verified
+ * against registry.npmjs.org to the second. So there is nothing to fetch — read
+ * it here, write it there. NTP is not usable inside the guest: BusyBox ntpd has
+ * no step-once mode (it exits 0 having done nothing) and UDP/123 does not
+ * traverse the bridge.
+ *
+ * `date -u -s @<epoch>` is deliberate. BusyBox date rejects
+ * "YYYY-MM-DD HH:MM:SS UTC" as `invalid date` but accepts the `@` form.
+ *
+ * Returns the measured drift and whether it was actually corrected, or undefined
+ * if the guest clock could not be read at all.
+ *
+ * `applied` is never inferred from an exit status alone. BusyBox ntpd already
+ * demonstrated that a guest time command can exit 0 having changed nothing, so
+ * the only evidence that counts is reading the clock back after the step.
+ */
+async function syncGuestClock(target: VM): Promise<GuestClockSync | undefined> {
+	const hostEpochSeconds = Math.floor(Date.now() / 1000);
+
+	try {
+		const probe = await target.exec(["/bin/sh", "-lc", "date +%s"]);
+		const guestEpochSeconds = Number.parseInt(probe.stdout.trim(), 10);
+		if (!Number.isFinite(guestEpochSeconds)) return undefined;
+
+		const driftSeconds = hostEpochSeconds - guestEpochSeconds;
+		clockSyncedAtHostMs = Date.now();
+
+		if (Math.abs(driftSeconds) <= CLOCK_DRIFT_TOLERANCE_SECONDS) {
+			return { driftSeconds, applied: false };
+		}
+
+		const stepped = await target.exec(["/bin/sh", "-lc", `date -u -s @${hostEpochSeconds}`]);
+		if (stepped.exitCode !== 0) {
+			console.warn(`[gondolin] guest clock sync failed (exit ${stepped.exitCode})`);
+			return { driftSeconds, applied: false };
+		}
+
+		const verify = await target.exec(["/bin/sh", "-lc", "date +%s"]);
+		const verifiedSeconds = Number.parseInt(verify.stdout.trim(), 10);
+		if (
+			!Number.isFinite(verifiedSeconds) ||
+			Math.abs(hostEpochSeconds - verifiedSeconds) > CLOCK_DRIFT_TOLERANCE_SECONDS
+		) {
+			console.warn(
+				`[gondolin] guest clock unchanged after sync (host ${hostEpochSeconds}, guest ${verify.stdout.trim()})`,
+			);
+			return { driftSeconds, applied: false };
+		}
+
+		return { driftSeconds, applied: true };
+	} catch (error) {
+		// A failed sync must not take down VM startup: the session still runs, it
+		// just keeps whatever drift it had.
+		console.warn("[gondolin] guest clock sync failed:", error);
+		return undefined;
+	}
+}
+
+/** Sync only if the last check is older than CLOCK_SYNC_MIN_INTERVAL_MS. */
+async function maybeSyncGuestClock(target: VM): Promise<void> {
+	if (Date.now() - clockSyncedAtHostMs < CLOCK_SYNC_MIN_INTERVAL_MS) return;
+	await syncGuestClock(target);
+}
 
 type TextToolResult<TDetails> = {
 	content: Array<{ type: "text"; text: string }>;
@@ -386,6 +497,18 @@ export default function (pi: ExtensionAPI) {
 				},
 			},
 		});
+		// Before anything that could open a socket: a stale guest clock turns every
+		// freshly minted cert into CERT_NOT_YET_VALID.
+		const clock = await syncGuestClock(created);
+		if (clock && Math.abs(clock.driftSeconds) > CLOCK_DRIFT_TOLERANCE_SECONDS) {
+			const summary = `Gondolin guest clock was ${describeDrift(clock.driftSeconds)}`;
+			ctx?.ui.notify(
+				clock.applied
+					? `${summary} — corrected from host.`
+					: `${summary} — correction failed, TLS in the guest may still fail.`,
+				clock.applied ? "info" : "warning",
+			);
+		}
 		const bashProbe = await created.exec(["/bin/sh", "-lc", "command -v bash || true"]);
 		shellPath = bashProbe.stdout.trim() || "/bin/sh";
 		vm = created;
@@ -428,12 +551,22 @@ export default function (pi: ExtensionAPI) {
 		description: "Show Gondolin VM status",
 		handler: async (_args, ctx) => {
 			const activeVm = await ensureVm(ctx);
+			const clock = await syncGuestClock(activeVm);
+			let driftLabel = "unknown";
+			if (clock) {
+				driftLabel =
+					clock.driftSeconds === 0 ? "in sync with host" : `${describeDrift(clock.driftSeconds)} before this sync`;
+				if (Math.abs(clock.driftSeconds) > CLOCK_DRIFT_TOLERANCE_SECONDS) {
+					driftLabel += clock.applied ? " (corrected)" : " (correction failed)";
+				}
+			}
 			ctx.ui.notify(
 				[
 					`Gondolin VM: ${activeVm.id}`,
 					`Host workspace: ${localCwd}`,
 					`Guest workspace: ${GUEST_WORKSPACE}`,
 					`Shell: ${shellPath}`,
+					`Guest clock: ${driftLabel}`,
 				].join("\n"),
 				"info",
 			);
@@ -516,11 +649,19 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("user_bash", async (_event, ctx) => {
 		const activeVm = await ensureVm(ctx);
+		// `!cmd` runs without an agent turn, so before_agent_start never fires for it.
+		// Without this, a bash command issued after a long idle still sees
+		// CERT_NOT_YET_VALID on freshly minted proxy certs.
+		await maybeSyncGuestClock(activeVm);
 		return { operations: createGondolinBashOps(activeVm, localCwd, shellPath) };
 	});
 
 	pi.on("before_agent_start", async (event, ctx) => {
-		await ensureVm(ctx);
+		const activeVm = await ensureVm(ctx);
+		// One sync only covers the stretch that follows it — every pause re-arms the
+		// drift, and session_start fires only once. Throttled so this costs at most
+		// one exec per minute rather than one per turn.
+		await maybeSyncGuestClock(activeVm);
 		const localLine = `Current working directory: ${localCwd}`;
 		const guestLine = `Current working directory: ${GUEST_WORKSPACE} (Gondolin VM; host workspace mounted from ${localCwd})`;
 		const systemPrompt = event.systemPrompt.includes(localLine)
