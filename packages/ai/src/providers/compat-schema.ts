@@ -1,10 +1,9 @@
 import { type Static, Type } from "typebox";
 
-export const SessionAffinityFormatSchema = Type.Union([
-	Type.Literal("openai"),
-	Type.Literal("openai-nosession"),
-	Type.Literal("openrouter"),
-]);
+export const SessionAffinityFormatSchema = Type.Union(
+	[Type.Literal("openai"), Type.Literal("openai-nosession"), Type.Literal("openrouter")],
+	{ description: "Session-affinity header format used to route related requests consistently." },
+);
 
 export const ThinkingTokenBudgetFieldSchema = Type.Union(
 	[Type.Literal("thinking_token_budget"), Type.Literal("thinking_budget"), Type.Literal("thinking_budget_tokens")],
@@ -339,7 +338,7 @@ export const OpenAICompletionsCompatSchema = Type.Object(
 			}),
 		),
 		sessionAffinityFormat: Type.Optional(
-			Type.Union([Type.Literal("openai"), Type.Literal("openai-nosession"), Type.Literal("openrouter")], {
+			Type.Union([...SessionAffinityFormatSchema.anyOf], {
 				description:
 					"Session-affinity header format. openai sends session_id, x-client-request-id, and x-session-affinity; openai-nosession sends x-client-request-id and x-session-affinity; openrouter sends x-session-id. Does not affect prompt_cache_key. Default: auto-detected.",
 			}),
@@ -381,7 +380,7 @@ export const OpenAIResponsesCompatSchema = Type.Object(
 			}),
 		),
 		sessionAffinityFormat: Type.Optional(
-			Type.Union([Type.Literal("openai"), Type.Literal("openai-nosession"), Type.Literal("openrouter")], {
+			Type.Union([...SessionAffinityFormatSchema.anyOf], {
 				description:
 					"Session-affinity header format. openai sends session_id and x-client-request-id; openai-nosession sends x-client-request-id; openrouter sends x-session-id. Does not affect prompt_cache_key. Default: auto-detected.",
 			}),
@@ -571,7 +570,7 @@ export const ProviderCompatSchema = Type.Object(
 			}),
 		),
 		sessionAffinityFormat: Type.Optional(
-			Type.Union([Type.Literal("openai"), Type.Literal("openai-nosession"), Type.Literal("openrouter")], {
+			Type.Union([...SessionAffinityFormatSchema.anyOf], {
 				description: "Session-affinity header format. Defaults are API-specific or auto-detected.",
 			}),
 		),
