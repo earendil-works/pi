@@ -4,12 +4,12 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { JsonValue } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { afterEach, describe, expect, it, onTestFinished } from "vitest";
+import { registerStorageConformance } from "@earendil-works/pi-durable/testing";
+import { afterEach, describe, expect, it } from "vitest";
 import type { SqliteStorage } from "../src/storage/sqlite/index.ts";
 import { type NodeSqliteStorageOptions, openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";
 import type { DocumentCreate, EntryRecord, Seq, Storage, StorageWrite, TaskRecord } from "../src/types.ts";
 import { ROOT_CONVERSATION_ID } from "../src/types.ts";
-import { registerStorageConformance } from "./storage-conformance.ts";
 
 const context = BACKGROUND_CONTEXT;
 const openStorages = new Set<SqliteStorage>();
@@ -81,19 +81,22 @@ class ReopeningStorage implements Storage {
 	}
 }
 
-registerStorageConformance("Pico SqliteStorage conformance", async () => (await createSqliteStorage()).storage);
+registerStorageConformance({ describe, expect, it }, "Pico SqliteStorage conformance", async (use) =>
+	use((await createSqliteStorage()).storage),
+);
 
-registerStorageConformance("Pico SqliteStorage conformance across reopen", async () => {
+registerStorageConformance({ describe, expect, it }, "Pico SqliteStorage conformance across reopen", async (use) => {
 	const directory = await mkdtemp(join(tmpdir(), "pi-durable-sqlite-conformance-"));
 	const path = join(directory, "storage.sqlite");
 	const created = await openNodeSqliteStorage(path);
 	await created.close(context);
 	const storage = new ReopeningStorage(await openNodeSqliteStorage(path), path);
-	onTestFinished(async () => {
+	try {
+		await use(storage);
+	} finally {
 		await storage.close(context);
 		await rm(directory, { recursive: true, force: true });
-	});
-	return storage;
+	}
 });
 
 function entry(id: number, conversationId: number, data?: JsonValue): EntryRecord {
