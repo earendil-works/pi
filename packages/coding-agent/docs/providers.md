@@ -19,6 +19,8 @@ Run `/logout` and select a provider to remove its stored credential. This does n
 
 Radius authentication uses its gateway catalog and caches refreshed model metadata for later offline startup. A custom Radius gateway configured in `models.json` uses its own catalog rather than inheriting the public `radius.pi.dev` catalog.
 
+Yolo-Auto authentication uses its subscription gateway. `/model` lists the bundled routes until a refresh reaches the gateway's plan-bounded `/v1/models` listing, which reports the models the key's plan can use and the context window it enforces. Cached listings remain available for offline startup.
+
 ## Use an API key from the environment
 
 Environment variables are useful in CI and anywhere Pi should not store the key. Set the variable before starting Pi:
@@ -53,6 +55,7 @@ This table covers providers with a single primary API-key variable. Providers th
 | Fireworks | `FIREWORKS_API_KEY` |
 | Together AI | `TOGETHER_API_KEY` |
 | Baseten | `BASETEN_API_KEY` |
+| Yolo-Auto | `YOLO_AUTO_API_KEY` |
 | Kimi For Coding | `KIMI_API_KEY` |
 | Meta | `META_API_KEY` |
 | MiniMax | `MINIMAX_API_KEY` |

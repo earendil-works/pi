@@ -40,6 +40,7 @@ import { XIAOMI_MODELS } from "./providers/xiaomi.models.ts";
 import { XIAOMI_TOKEN_PLAN_AMS_MODELS } from "./providers/xiaomi-token-plan-ams.models.ts";
 import { XIAOMI_TOKEN_PLAN_CN_MODELS } from "./providers/xiaomi-token-plan-cn.models.ts";
 import { XIAOMI_TOKEN_PLAN_SGP_MODELS } from "./providers/xiaomi-token-plan-sgp.models.ts";
+import { YOLO_AUTO_MODELS } from "./providers/yolo-auto.models.ts";
 import { ZAI_MODELS } from "./providers/zai.models.ts";
 import { ZAI_CODING_CN_MODELS } from "./providers/zai-coding-cn.models.ts";
 
@@ -83,6 +84,7 @@ export const MODELS: {
 	readonly "xiaomi-token-plan-ams": typeof XIAOMI_TOKEN_PLAN_AMS_MODELS;
 	readonly "xiaomi-token-plan-cn": typeof XIAOMI_TOKEN_PLAN_CN_MODELS;
 	readonly "xiaomi-token-plan-sgp": typeof XIAOMI_TOKEN_PLAN_SGP_MODELS;
+	readonly "yolo-auto": typeof YOLO_AUTO_MODELS;
 	readonly "zai": typeof ZAI_MODELS;
 	readonly "zai-coding-cn": typeof ZAI_CODING_CN_MODELS;
 } = {
@@ -125,6 +127,7 @@ export const MODELS: {
 	"xiaomi-token-plan-ams": XIAOMI_TOKEN_PLAN_AMS_MODELS,
 	"xiaomi-token-plan-cn": XIAOMI_TOKEN_PLAN_CN_MODELS,
 	"xiaomi-token-plan-sgp": XIAOMI_TOKEN_PLAN_SGP_MODELS,
+	"yolo-auto": YOLO_AUTO_MODELS,
 	"zai": ZAI_MODELS,
 	"zai-coding-cn": ZAI_CODING_CN_MODELS,
 };

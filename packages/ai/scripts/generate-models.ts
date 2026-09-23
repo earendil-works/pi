@@ -3051,6 +3051,85 @@ async function generateModels() {
 	];
 	allModels.push(...codexModels);
 
+	// Yolo-Auto is a subscription gateway whose public routes change independently of
+	// models.dev. The provider additionally fetches a plan-bounded /v1/models overlay at
+	// runtime; this static baseline covers offline use and keys whose listing never lands.
+	const yoloAutoCompat = {
+		supportsStore: false,
+		supportsDeveloperRole: false,
+	};
+	// The proxy's request path accepts minimal/low/medium/high/xhigh plus off/none; pi's
+	// `max` has no distinct tier upstream, so it stays unsupported and keeps the offered
+	// levels aligned with the `thinking` array in the /v1/models listing.
+	const yoloAutoThinkingLevelMap = {
+		off: "off",
+		minimal: "minimal",
+		low: "low",
+		medium: "medium",
+		high: "high",
+		xhigh: "xhigh",
+		max: null,
+	} as const;
+	const yoloAutoModels: Model<"openai-completions">[] = [
+		{
+			id: "qwen3.8-flash",
+			name: "Qwen3.8 Flash",
+			api: "openai-completions",
+			provider: "yolo-auto",
+			baseUrl: "https://yolo-auto.com/v1",
+			reasoning: true,
+			thinkingLevelMap: yoloAutoThinkingLevelMap,
+			input: ["text", "image"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 131072,
+			maxTokens: 32768,
+			compat: yoloAutoCompat,
+		},
+		{
+			id: "yolo",
+			name: "Yolo",
+			api: "openai-completions",
+			provider: "yolo-auto",
+			baseUrl: "https://yolo-auto.com/v1",
+			reasoning: true,
+			thinkingLevelMap: yoloAutoThinkingLevelMap,
+			input: ["text", "image"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 131072,
+			maxTokens: 32768,
+			compat: yoloAutoCompat,
+		},
+		{
+			id: "qwen3.8-27b",
+			name: "Qwen3.8 27B",
+			api: "openai-completions",
+			provider: "yolo-auto",
+			baseUrl: "https://yolo-auto.com/v1",
+			reasoning: true,
+			thinkingLevelMap: yoloAutoThinkingLevelMap,
+			input: ["text", "image"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 131072,
+			maxTokens: 32768,
+			compat: yoloAutoCompat,
+		},
+		{
+			// NVIDIA Nemotron 3.5 Lightning: the proxy strips reasoning knobs for this route.
+			id: "yolo-small",
+			name: "Yolo Small",
+			api: "openai-completions",
+			provider: "yolo-auto",
+			baseUrl: "https://yolo-auto.com/v1",
+			reasoning: false,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 131072,
+			maxTokens: 32768,
+			compat: yoloAutoCompat,
+		},
+	];
+	allModels.push(...yoloAutoModels);
+
 	// Add missing Mistral Medium 3.5 model until models.dev includes it
 	if (!allModels.some(m => m.provider === "mistral" && m.id === "mistral-medium-3.5")) {
 		allModels.push({

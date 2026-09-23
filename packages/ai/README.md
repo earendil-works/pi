@@ -63,6 +63,7 @@ Unified LLM API with provider collections, automatic auth resolution, token and 
 - **Azure OpenAI (Responses)**
 - **OpenAI Codex** (ChatGPT Plus/Pro subscription, requires OAuth, see below)
 - **Radius** (API key or OAuth, with a dynamically refreshed gateway catalog)
+- **Yolo-Auto** (API key, subscription gateway with a plan-bounded `/v1/models` listing)
 - **DeepSeek**
 - **NVIDIA NIM**
 - **Anthropic**
@@ -324,7 +325,7 @@ await models.refresh();                            // refresh all providers conc
 const fresh = models.getModel('llamacpp', 'qwen3-30b');
 ```
 
-Static built-in providers are no-ops for `refresh()`. Radius is both static and dynamic: it ships the public `radius.pi.dev` catalog for synchronous API lookup, then overlays cached and freshly fetched `/v1/config` models when refreshed with configured auth. See [createProvider()](#createprovider) for building a dynamic provider.
+Static built-in providers are no-ops for `refresh()`. Radius is both static and dynamic: it ships the public `radius.pi.dev` catalog for synchronous API lookup, then overlays cached and freshly fetched `/v1/config` models when refreshed with configured auth. Yolo-Auto follows the same pattern against its gateway's plan-bounded `/v1/models` listing, which reports the models the key's plan can use and the context window it enforces. See [createProvider()](#createprovider) for building a dynamic provider.
 
 ## Auth
 
@@ -435,6 +436,7 @@ Built-in providers resolve these env vars (Node.js; in browsers pass `apiKey` ex
 | Fireworks | `FIREWORKS_API_KEY` |
 | Together AI | `TOGETHER_API_KEY` |
 | Baseten | `BASETEN_API_KEY` |
+| Yolo-Auto | `YOLO_AUTO_API_KEY` |
 | OpenRouter | `OPENROUTER_API_KEY` |
 | Vercel AI Gateway | `AI_GATEWAY_API_KEY` |
 | ZAI Coding Plan (Global) | `ZAI_API_KEY` |
