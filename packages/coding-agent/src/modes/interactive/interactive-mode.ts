@@ -442,6 +442,8 @@ export class InteractiveMode {
 	private isInitialized = false;
 	private onInputCallback?: (text: string) => void;
 	private pendingUserInputs: string[] = [];
+	/** Set after Enter paints a user bubble before session.prompt preflight finishes. */
+	private optimisticUserMessageText: string | undefined;
 	private activeStatusIndicator: StatusIndicator | undefined = undefined;
 	private activeWorkingIndicatorEmbedded = false;
 	private readonly idleStatus = new IdleStatus();
@@ -1189,6 +1191,9 @@ export class InteractiveMode {
 			} catch (error: unknown) {
 				const errorMessage = error instanceof Error ? error.message : "Unknown error occurred";
 				this.showError(errorMessage);
+			} finally {
+				// Extension-handled / early-return prompts never emit message_start.
+				this.clearOptimisticUserMessageIfPending();
 			}
 		}
 	}
@@ -3266,6 +3271,10 @@ export class InteractiveMode {
 			// First, move any pending bash components to chat
 			this.flushPendingBashComponents();
 
+			// Paint-first: show the user message before session.prompt() preflight awaits
+			// (input handlers, auth, compaction, before_agent_start, extension message_start).
+			this.paintOptimisticUserMessage(text);
+
 			if (this.onInputCallback) {
 				this.onInputCallback(text);
 			} else {
@@ -3379,7 +3388,7 @@ export class InteractiveMode {
 					this.addMessageToChat(event.message);
 					this.ui.requestRender();
 				} else if (event.message.role === "user") {
-					this.addMessageToChat(event.message);
+					this.reconcileOptimisticUserMessage(event.message);
 					this.updatePendingMessagesDisplay();
 					this.ui.requestRender();
 				} else if (event.message.role === "assistant") {
@@ -3732,6 +3741,58 @@ export class InteractiveMode {
 		}
 
 		this.chatContainer.addChild(component);
+	}
+
+	/**
+	 * Show the submitted user text in the transcript immediately on Enter.
+	 * session.prompt() still owns the canonical message; message_start reconciles.
+	 */
+	private paintOptimisticUserMessage(text: string): void {
+		this.clearOptimisticUserMessageIfPending();
+		this.addMessageToChat({
+			role: "user",
+			content: [{ type: "text", text }],
+			timestamp: Date.now(),
+		});
+		this.optimisticUserMessageText = text;
+		this.ui.requestRender();
+	}
+
+	/** Replace or confirm the optimistic bubble when the real user message_start arrives. */
+	private reconcileOptimisticUserMessage(message: AgentMessage): void {
+		const optimisticText = this.optimisticUserMessageText;
+		if (optimisticText === undefined) {
+			this.addMessageToChat(message);
+			return;
+		}
+		this.optimisticUserMessageText = undefined;
+		const finalText = this.getUserMessageText(message as Message);
+		if (optimisticText === finalText) {
+			// Already painted the same text; keep the bubble.
+			return;
+		}
+		this.removeTrailingOptimisticUserPaint();
+		this.addMessageToChat(message);
+	}
+
+	/** Drop an unconfirmed optimistic bubble (handled prompt, error, or supersede). */
+	private clearOptimisticUserMessageIfPending(): void {
+		if (this.optimisticUserMessageText === undefined) return;
+		this.optimisticUserMessageText = undefined;
+		this.removeTrailingOptimisticUserPaint();
+		this.ui.requestRender();
+	}
+
+	private removeTrailingOptimisticUserPaint(): void {
+		const children = this.chatContainer.children;
+		const last = children[children.length - 1];
+		if (last instanceof UserMessageComponent || last instanceof SkillInvocationMessageComponent) {
+			this.chatContainer.removeChild(last);
+		}
+		const maybeSpacer = children[children.length - 1];
+		if (maybeSpacer instanceof Spacer) {
+			this.chatContainer.removeChild(maybeSpacer);
+		}
 	}
 
 	private addMessageToChat(message: AgentMessage, options?: { populateHistory?: boolean }): void {
