@@ -1,7 +1,7 @@
 import { EventEmitter } from "node:events";
 import { existsSync, mkdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, relative } from "node:path";
+import { basename, join, relative } from "node:path";
 import { PassThrough } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DefaultPackageManager, type ProgressEvent, type ResolvedResource } from "../src/core/package-manager.ts";
@@ -151,6 +151,41 @@ describe("DefaultPackageManager", () => {
 				["builtin:mcp", false, "builtin", "user"],
 				["builtin:llama.cpp", true, "builtin", "user"],
 			]);
+		});
+
+		it("should auto-discover extension manifest globs and exclusions", async () => {
+			// Regression test for #9788.
+			const extensionDir = join(agentDir, "extensions", "manifest-extension");
+			const extensionPath = join(extensionDir, "main.ts");
+			mkdirSync(extensionDir, { recursive: true });
+			writeFileSync(extensionPath, "export default function() {}");
+			writeFileSync(join(extensionDir, "main.test.ts"), "export default function() {}");
+			writeFileSync(
+				join(extensionDir, "package.json"),
+				JSON.stringify({ pi: { extensions: ["./*.ts", "!./*.test.ts"] } }),
+			);
+
+			const result = await packageManager.resolve();
+
+			expect(result.extensions.map((extension) => extension.path)).toEqual([extensionPath]);
+		});
+
+		it.each([
+			["force-exclude", ["./*.ts", "-./dangerous.ts"], ["main.ts"]],
+			["force-include", ["./*.ts", "!./*.ts", "+./main.ts"], ["main.ts"]],
+		] as const)("should apply %s manifest overrides consistently", async (kind, manifestEntries, expectedNames) => {
+			const extensionDir = join(agentDir, "extensions", `manifest-overrides-${kind}`);
+			mkdirSync(extensionDir, { recursive: true });
+			writeFileSync(join(extensionDir, "main.ts"), "export default function() {}");
+			writeFileSync(join(extensionDir, "dangerous.ts"), "export default function() {}");
+			writeFileSync(join(extensionDir, "package.json"), JSON.stringify({ pi: { extensions: manifestEntries } }));
+
+			const autoDiscovered = await packageManager.resolve();
+			const explicitlyResolved = await packageManager.resolveExtensionSources([extensionDir]);
+			const names = (resources: ResolvedResource[]) => resources.map((resource) => basename(resource.path)).sort();
+
+			expect(names(autoDiscovered.extensions)).toEqual(expectedNames);
+			expect(names(explicitlyResolved.extensions)).toEqual(expectedNames);
 		});
 
 		it("should resolve skill paths from settings", async () => {

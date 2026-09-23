@@ -11,7 +11,6 @@ import type { Provider } from "@earendil-works/pi-ai";
 import { mcpNamespace } from "@earendil-works/pi-mcp";
 import type { KeyId } from "@earendil-works/pi-tui";
 import type { createJiti } from "jiti";
-import { minimatch } from "minimatch";
 import { CONFIG_DIR_NAME, getAgentDir, isBunBinary, isBundledNode } from "../../config.ts";
 import { pathsEqual, resolvePath } from "../../utils/paths.ts";
 import { createEventBus, type EventBus } from "../event-bus.ts";
@@ -22,6 +21,7 @@ import { readPiManifest } from "../pi-manifest.ts";
 import { createSyntheticSourceInfo, getSyntheticPathSource, isSyntheticPath } from "../source-info.ts";
 import { time } from "../timings.ts";
 import type { ModelRouteRequest, VirtualModelDefinition } from "../virtual-models.ts";
+import { resolveExtensionManifestEntries } from "./manifest.ts";
 import type {
 	EntryRenderer,
 	Extension,
@@ -759,44 +759,12 @@ function isExtensionFile(name: string): boolean {
  *
  * Returns resolved paths or null if no entry points found.
  */
-function normalizeManifestPattern(pattern: string): string {
-	const normalized = pattern.startsWith("./") || pattern.startsWith(".\\") ? pattern.slice(2) : pattern;
-	return normalized.split(path.sep).join("/");
-}
-
-function resolveManifestExtensionEntries(dir: string, manifestEntries: string[]): string[] {
-	const sourceEntries = manifestEntries.filter((entry) => !entry.startsWith("!"));
-	const exclusions = manifestEntries
-		.filter((entry) => entry.startsWith("!"))
-		.map((entry) => normalizeManifestPattern(entry.slice(1)));
-	const resolvedEntries = sourceEntries.flatMap((entry) => {
-		if (!entry.includes("*") && !entry.includes("?")) {
-			return [path.resolve(dir, entry)];
-		}
-		return fs
-			.globSync(entry, { cwd: dir })
-			.map((match) => path.resolve(dir, match))
-			.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
-	});
-
-	return resolvedEntries.filter((entry) => {
-		if (!fs.existsSync(entry)) return false;
-		const relativePath = path.relative(dir, entry).split(path.sep).join("/");
-		return !exclusions.some((pattern) => minimatch(relativePath, pattern));
-	});
-}
-
 function resolveExtensionEntries(dir: string): string[] | null {
 	// Check for package.json with "pi" field first
 	const packageJsonPath = path.join(dir, "package.json");
 	if (fs.existsSync(packageJsonPath)) {
 		const manifest = readPiManifest(packageJsonPath);
-		if (manifest?.extensions?.length) {
-			const entries = resolveManifestExtensionEntries(dir, manifest.extensions);
-			if (entries.length > 0) {
-				return entries;
-			}
-		}
+		if (manifest?.extensions !== undefined) return resolveExtensionManifestEntries(dir, manifest.extensions);
 	}
 
 	// Check for index.ts or index.js

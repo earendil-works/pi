@@ -262,6 +262,21 @@ describe("extensions discovery", () => {
 		expect(result.extensions.map((extension) => extension.path)).toEqual([path.join(subdir, "main.ts")]);
 	});
 
+	it("does not fall back to index.ts when manifest exclusions remove every entry", async () => {
+		const subdir = path.join(extensionsDir, "excluded-manifest-package");
+		fs.mkdirSync(subdir);
+		fs.writeFileSync(path.join(subdir, "index.ts"), extensionCode);
+		fs.writeFileSync(
+			path.join(subdir, "package.json"),
+			JSON.stringify({ pi: { extensions: ["./*.ts", "!./*.ts"] } }),
+		);
+
+		const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+
+		expect(result.errors).toEqual([]);
+		expect(result.extensions).toEqual([]);
+	});
+
 	it("package.json with pi field takes precedence over index.ts", async () => {
 		const subdir = path.join(extensionsDir, "my-package");
 		fs.mkdirSync(subdir);
