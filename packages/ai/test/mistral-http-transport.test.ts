@@ -3,7 +3,7 @@ import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
 import { stream as streamMistral } from "../src/api/mistral-conversations.ts";
 import { getModel, normalizeContext } from "../src/compat.ts";
-import type { FetchFunction, ProviderResponse } from "../src/types.ts";
+import type { Api, FetchFunction, Model, ProviderResponse } from "../src/types.ts";
 
 const PI_USER_AGENT = `pi (${platform()} ${release()}; ${arch()})`;
 
@@ -320,6 +320,41 @@ describe("Mistral HTTP transport", () => {
 			{ type: "toolCall", id: "abc123456", name: "lookup", arguments: { query: "pi" } },
 		]);
 		expect(message.usage).toMatchObject({ input: 7, output: 4, cacheRead: 3, cacheWrite: 0, totalTokens: 14 });
+	});
+
+	it("forwards each parsed SSE payload before normalizing it", async () => {
+		const model = getModel("mistral", "mistral-large-latest");
+		const context = normalizeContext({
+			messages: [{ role: "user", content: "hello", timestamp: 1 }],
+		});
+		const events = [
+			{
+				id: "response-1",
+				provider_metadata: { request: "test" },
+				choices: [{ index: 0, finish_reason: null, delta: { content: "hello" } }],
+			},
+			{
+				id: "response-1",
+				choices: [{ index: 0, finish_reason: "stop", delta: {} }],
+				usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+			},
+		];
+		const received: unknown[] = [];
+		const eventModels: Model<Api>[] = [];
+		const result = await streamMistral(model, context, {
+			apiKey: "test",
+			fetch: async () => createSseResponse(events),
+			onProviderStreamEvent: async (event, eventModel) => {
+				await Promise.resolve();
+				received.push(event);
+				eventModels.push(eventModel);
+			},
+		}).result();
+
+		expect(received).toEqual(events);
+		expect(eventModels).toEqual([model, model]);
+		expect(result.stopReason).toBe("stop");
+		expect(result.content).toEqual([{ type: "text", text: "hello" }]);
 	});
 
 	it("parses SSE and UTF-8 sequences split across transport chunks", async () => {

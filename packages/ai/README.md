@@ -39,6 +39,7 @@ Unified LLM API with provider collections, automatic auth resolution, token and 
   - [Aborting Requests](#aborting-requests)
   - [Continuing After Abort](#continuing-after-abort)
   - [Debugging Provider Payloads](#debugging-provider-payloads)
+  - [Observing Provider Stream Events](#observing-provider-stream-events)
 - [Custom Providers](#custom-providers)
   - [createProvider()](#createprovider)
   - [Calling API Implementations Directly](#calling-api-implementations-directly)
@@ -1145,6 +1146,25 @@ const response = await models.complete(model, context, {
 ```
 
 The callback is supported by `stream`, `complete`, `streamSimple`, and `completeSimple`.
+
+### Observing Provider Stream Events
+
+Use `onProviderStreamEvent` to inspect provider-specific fields that Pi does not include in `AssistantMessage`. The callback receives the parsed event available to the adapter before Pi normalizes it. Treat the event as read-only because mutations can affect normalization. This is not guaranteed to be the original HTTP bytes or SSE frame.
+
+```typescript
+const openRouterModel = models.getModel('openrouter', 'openrouter/auto')!;
+const response = await models.complete(openRouterModel, context, {
+  headers: { "X-OpenRouter-Metadata": "enabled" },
+  onProviderStreamEvent: (data) => {
+    const chunk = data as Record<string, unknown>;
+    if (chunk.openrouter_metadata) {
+      console.log(chunk.openrouter_metadata);
+    }
+  },
+});
+```
+
+Callbacks are awaited in stream order, so slow callbacks delay stream consumption and thrown errors fail the request. SDK-backed adapters can expose only fields retained by their SDK.
 
 ## Custom Providers
 

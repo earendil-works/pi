@@ -412,6 +412,7 @@ export const stream: StreamFunction<"pi-messages", PiMessagesOptions> = (
 			}
 
 			for await (const piEvent of readPiMessagesEvents(response.body)) {
+				await options?.onProviderStreamEvent?.(piEvent, model);
 				const event = convertEvent(piEvent);
 				eventStream.push(event);
 				if (event.type === "done" || event.type === "error") {

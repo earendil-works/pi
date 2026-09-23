@@ -551,6 +551,7 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 			};
 
 			for await (const chunk of openaiStream) {
+				await options?.onProviderStreamEvent?.(chunk, model);
 				if (!chunk || typeof chunk !== "object") continue;
 
 				// OpenAI documents ChatCompletionChunk.id as the unique chat completion identifier,

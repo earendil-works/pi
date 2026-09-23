@@ -190,6 +190,12 @@ export interface StreamOptions extends ProviderRequestOptions<Model<Api>> {
 	 * its body stream is consumed.
 	 */
 	onResponse?: (response: ProviderResponse, model: Model<Api>) => void | Promise<void>;
+	/**
+	 * Optional observer for each parsed provider stream event before Pi normalization.
+	 * Event data is adapter-owned and must be treated as read-only.
+	 * Adapter support is explicit; unsupported adapters do not invoke it.
+	 */
+	onProviderStreamEvent?: (data: unknown, model: Model<Api>) => void | Promise<void>;
 	temperature?: number;
 	/**
 	 * Arbitrary sampling parameters merged into the request body as-is, after the named request

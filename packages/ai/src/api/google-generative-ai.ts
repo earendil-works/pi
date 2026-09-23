@@ -104,6 +104,7 @@ export const stream: StreamFunction<"google-generative-ai", GoogleOptions> = (
 			const blocks = output.content;
 			const blockIndex = () => blocks.length - 1;
 			for await (const chunk of googleStream) {
+				await options?.onProviderStreamEvent?.(chunk, model);
 				// @google/genai documents GenerateContentResponse.responseId as an output-only field
 				// used to identify each response. Keep the first non-empty one from the stream.
 				output.responseId ||= chunk.responseId;

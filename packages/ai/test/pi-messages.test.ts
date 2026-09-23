@@ -165,6 +165,34 @@ describe("pi-messages", () => {
 		});
 	});
 
+	it("forwards parsed wire events in order before converting them", async () => {
+		const wireEvents = [
+			{ type: "start" },
+			{ type: "text_start", contentIndex: 0 },
+			{ type: "text_delta", contentIndex: 0, delta: "Hello", gatewayField: "upstream-value" },
+			{ type: "text_end", contentIndex: 0, content: "Hello" },
+			{ type: "done", reason: "stop", usage, responseId: "resp_1" },
+		];
+		const { baseUrl } = await startServer({ events: wireEvents });
+		const model = createModel(baseUrl);
+		const received: unknown[] = [];
+		const eventModels: Model<Api>[] = [];
+		const message = await streamSimple(model, normalizeContext(context), {
+			apiKey: "test-key",
+			onProviderStreamEvent: async (event, eventModel) => {
+				await Promise.resolve();
+				received.push(event);
+				eventModels.push(eventModel);
+			},
+		}).result();
+
+		expect(received).toEqual(wireEvents);
+		expect(eventModels).toEqual(wireEvents.map(() => model));
+		expect(message.stopReason).toBe("stop");
+		expect(message.responseId).toBe("resp_1");
+		expect(message.content).toEqual([{ type: "text", text: "Hello", textSignature: undefined }]);
+	});
+
 	it("appends debug=1 and reports response headers via onResponse", async () => {
 		const { baseUrl, requests } = await startServer({
 			headers: { "x-pi-gateway-upstream-provider": "anthropic" },
