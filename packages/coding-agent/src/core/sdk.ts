@@ -7,6 +7,7 @@ import { resolvePath } from "../utils/paths.ts";
 import { AgentSession } from "./agent-session.ts";
 import { formatNoModelsAvailableMessage } from "./auth-guidance.ts";
 import { CacheWarmer } from "./cache-warmer.ts";
+import { getRequestIdentityMetadata, setRequestIdentityMetadata } from "./compaction/request-metadata.ts";
 import { DEFAULT_THINKING_LEVEL } from "./defaults.ts";
 import type { ExtensionRunner, LoadExtensionsResult, SessionStartEvent, ToolDefinition } from "./extensions/index.ts";
 import { convertToLlm } from "./messages.ts";
@@ -316,8 +317,24 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		const httpIdleTimeoutMs = settingsManager.getHttpIdleTimeoutMs();
 		const effectiveTimeoutMs = httpIdleTimeoutMs === 0 ? 2147483647 : httpIdleTimeoutMs;
 		const headerRunner = extensionRunnerRef.current;
+		const requestIdentity = getRequestIdentityMetadata(options.metadata);
+		const compactions = requestIdentity
+			? sessionManager.getBranch().filter((entry) => entry.type === "compaction")
+			: [];
+		const sessionId = sessionManager.getSessionId();
+		const metadata = requestIdentity
+			? setRequestIdentityMetadata(options.metadata, {
+					...requestIdentity,
+					sessionId,
+					threadId: sessionId,
+					windowId: `${sessionId}:${compactions.length}`,
+					windowNumber: compactions.length,
+					contextWindowId: compactions.at(-1)?.id ?? sessionId,
+				})
+			: options.metadata;
 		return {
 			...options,
+			metadata,
 			timeoutMs: options.timeoutMs ?? providerRetrySettings.timeoutMs ?? effectiveTimeoutMs,
 			websocketConnectTimeoutMs: options.websocketConnectTimeoutMs ?? settingsManager.getWebSocketConnectTimeoutMs(),
 			maxRetries: options.maxRetries ?? providerRetrySettings.maxRetries,

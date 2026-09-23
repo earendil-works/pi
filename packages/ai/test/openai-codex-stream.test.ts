@@ -1383,7 +1383,7 @@ describe("openai-codex streaming", () => {
 		});
 	});
 
-	it("scopes cached websockets to the authenticated account", async () => {
+	it("scopes cached websockets to the authenticated account without one-shot ownership claims", async () => {
 		// Regression for #7284: rotating accounts must not reuse a socket authenticated by another account.
 		const connectedHeaders: Record<string, string>[] = [];
 		let responseId = 0;
@@ -1438,10 +1438,14 @@ describe("openai-codex streaming", () => {
 		}
 
 		vi.stubGlobal("WebSocket", MockWebSocket);
-		vi.stubGlobal(
-			"fetch",
-			vi.fn(async () => new Response("unexpected fetch", { status: 500 })),
+		const fetchMock = vi.fn(
+			async () =>
+				new Response(buildSSEPayload({ status: "completed" }), {
+					status: 200,
+					headers: { "content-type": "text/event-stream" },
+				}),
 		);
+		vi.stubGlobal("fetch", fetchMock);
 
 		const model: Model<"openai-codex-responses"> = {
 			id: "gpt-5.1-codex",
@@ -1465,22 +1469,286 @@ describe("openai-codex streaming", () => {
 		await streamOpenAICodexResponses(model, context, {
 			...options,
 			apiKey: mockToken("account-b"),
+			transport: "sse",
+		}).result();
+		await streamOpenAICodexResponses(model, context, {
+			...options,
+			apiKey: mockToken("account-b"),
+			cacheRetention: "none",
+			transport: "auto",
+		}).result();
+		await streamOpenAICodexResponses(model, context, {
+			...options,
+			apiKey: mockToken("account-a"),
+		}).result();
+		await streamOpenAICodexResponses(model, context, {
+			...options,
+			apiKey: mockToken("account-b"),
 		}).result();
 		await streamOpenAICodexResponses(model, context, {
 			...options,
 			apiKey: mockToken("account-a"),
 		}).result();
 
-		expect(connectedHeaders.map((headers) => headers["chatgpt-account-id"])).toEqual(["account-a", "account-b"]);
+		expect(connectedHeaders.map((headers) => headers["chatgpt-account-id"])).toEqual([
+			"account-a",
+			"account-b",
+			"account-b",
+			"account-a",
+		]);
 		expect(connectedHeaders.map((headers) => headers.authorization)).toEqual([
 			`Bearer ${mockToken("account-a")}`,
 			`Bearer ${mockToken("account-b")}`,
+			`Bearer ${mockToken("account-b")}`,
+			`Bearer ${mockToken("account-a")}`,
 		]);
-		expect(global.fetch).not.toHaveBeenCalled();
+		expect(fetchMock).toHaveBeenCalledTimes(1);
 		expect(getOpenAICodexWebSocketDebugStats("shared-session")).toMatchObject({
-			connectionsCreated: 2,
+			connectionsCreated: 3,
 			connectionsReused: 1,
 		});
+	});
+
+	it("lets an active socket finish when account ownership changes", async () => {
+		class MockWebSocket extends EventTarget {
+			static readonly instances: MockWebSocket[] = [];
+			readyState = 1;
+			readonly accountId: string;
+			closed = 0;
+			sent = false;
+
+			constructor(_url: string, protocols?: string | string[] | { headers?: Record<string, string> }) {
+				super();
+				this.accountId =
+					protocols && typeof protocols === "object" && !Array.isArray(protocols)
+						? (protocols.headers?.["chatgpt-account-id"] ?? "")
+						: "";
+				MockWebSocket.instances.push(this);
+				queueMicrotask(() => this.dispatchEvent(new Event("open")));
+			}
+
+			send(): void {
+				this.sent = true;
+			}
+
+			complete(): void {
+				this.dispatchEvent(
+					Object.assign(new Event("message"), {
+						data: JSON.stringify({
+							type: "response.completed",
+							response: {
+								id: `${this.accountId}-response`,
+								status: "completed",
+								usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+							},
+						}),
+					}),
+				);
+			}
+
+			close(): void {
+				this.closed++;
+				this.readyState = 3;
+			}
+		}
+		vi.stubGlobal("WebSocket", MockWebSocket);
+		const model: Model<"openai-codex-responses"> = {
+			id: "gpt-5.1-codex",
+			name: "GPT-5.1 Codex",
+			api: "openai-codex-responses",
+			provider: "openai-codex",
+			baseUrl: "https://chatgpt.com/backend-api",
+			reasoning: true,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 400000,
+			maxTokens: 128000,
+		};
+		const context = normalizeContext({ systemPrompt: "", messages: [] });
+		const request = (accountId: string) =>
+			streamOpenAICodexResponses(model, context, {
+				apiKey: mockToken(accountId),
+				sessionId: "active-owner",
+				transport: "websocket-cached",
+			}).result();
+		const waitForSentSocket = async (index: number) => {
+			while (!MockWebSocket.instances[index]?.sent) await new Promise((resolve) => setTimeout(resolve, 0));
+		};
+
+		const first = request("account-a");
+		await waitForSentSocket(0);
+		const second = request("account-b");
+		await waitForSentSocket(1);
+
+		expect(MockWebSocket.instances[0].closed).toBe(0);
+		MockWebSocket.instances[1].complete();
+		await second;
+		MockWebSocket.instances[0].complete();
+		await first;
+		expect(MockWebSocket.instances[0].closed).toBe(1);
+	});
+
+	it("keeps transport fallback sticky when socket ownership changes", async () => {
+		const connectedAccounts: string[] = [];
+		class MockWebSocket extends EventTarget {
+			readonly accountId: string;
+
+			constructor(_url: string, protocols?: string | string[] | { headers?: Record<string, string> }) {
+				super();
+				this.accountId =
+					protocols && typeof protocols === "object" && !Array.isArray(protocols)
+						? (protocols.headers?.["chatgpt-account-id"] ?? "")
+						: "";
+				connectedAccounts.push(this.accountId);
+				queueMicrotask(() => this.dispatchEvent(new Event("open")));
+			}
+
+			send(): void {
+				queueMicrotask(() => {
+					if (this.accountId === "account-a") {
+						this.dispatchEvent(Object.assign(new Event("error"), { message: "account-a websocket failed" }));
+						return;
+					}
+					this.dispatchEvent(
+						Object.assign(new Event("message"), {
+							data: JSON.stringify({
+								type: "response.completed",
+								response: {
+									id: "account-b-response",
+									status: "completed",
+									usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+								},
+							}),
+						}),
+					);
+				});
+			}
+
+			close(): void {}
+		}
+		vi.stubGlobal("WebSocket", MockWebSocket);
+		const fetchMock = vi.fn(
+			async () =>
+				new Response(buildSSEPayload({ status: "completed" }), {
+					status: 200,
+					headers: { "content-type": "text/event-stream" },
+				}),
+		);
+		vi.stubGlobal("fetch", fetchMock);
+		const model: Model<"openai-codex-responses"> = {
+			id: "gpt-5.1-codex",
+			name: "GPT-5.1 Codex",
+			api: "openai-codex-responses",
+			provider: "openai-codex",
+			baseUrl: "https://chatgpt.com/backend-api",
+			reasoning: true,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 400000,
+			maxTokens: 128000,
+		};
+		const context = normalizeContext({ systemPrompt: "", messages: [] });
+		const request = async (accountId: string) =>
+			streamOpenAICodexResponses(model, context, {
+				apiKey: mockToken(accountId),
+				sessionId: "fallback-owner",
+				transport: "auto",
+			}).result();
+
+		await request("account-a");
+		await request("account-b");
+		await request("account-a");
+
+		expect(connectedAccounts).toEqual(["account-a"]);
+		expect(fetchMock).toHaveBeenCalledTimes(3);
+	});
+
+	it("does not let a stale handshake replace newer socket ownership", async () => {
+		class MockWebSocket extends EventTarget {
+			static readonly instances: MockWebSocket[] = [];
+			readyState = 1;
+			readonly accountId: string;
+			sends = 0;
+
+			constructor(_url: string, protocols?: string | string[] | { headers?: Record<string, string> }) {
+				super();
+				this.accountId =
+					protocols && typeof protocols === "object" && !Array.isArray(protocols)
+						? (protocols.headers?.["chatgpt-account-id"] ?? "")
+						: "";
+				MockWebSocket.instances.push(this);
+			}
+
+			open(): void {
+				this.dispatchEvent(new Event("open"));
+			}
+
+			send(): void {
+				this.sends++;
+				queueMicrotask(() => {
+					this.dispatchEvent(
+						Object.assign(new Event("message"), {
+							data: JSON.stringify({
+								type: "response.completed",
+								response: {
+									id: `${this.accountId}-${this.sends}`,
+									status: "completed",
+									usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+								},
+							}),
+						}),
+					);
+				});
+			}
+
+			close(): void {
+				this.readyState = 3;
+			}
+		}
+		vi.stubGlobal("WebSocket", MockWebSocket);
+		const model: Model<"openai-codex-responses"> = {
+			id: "gpt-5.1-codex",
+			name: "GPT-5.1 Codex",
+			api: "openai-codex-responses",
+			provider: "openai-codex",
+			baseUrl: "https://chatgpt.com/backend-api",
+			reasoning: true,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 400000,
+			maxTokens: 128000,
+		};
+		const context = normalizeContext({ systemPrompt: "", messages: [] });
+		const options = { sessionId: "stale-owner", transport: "websocket-cached" as const };
+		const waitForConnections = async (count: number) => {
+			while (MockWebSocket.instances.length < count) await new Promise((resolve) => setTimeout(resolve, 0));
+		};
+
+		const first = streamOpenAICodexResponses(model, context, {
+			...options,
+			apiKey: mockToken("account-a"),
+		}).result();
+		await waitForConnections(1);
+		const second = streamOpenAICodexResponses(model, context, {
+			...options,
+			apiKey: mockToken("account-b"),
+		}).result();
+		await waitForConnections(2);
+
+		MockWebSocket.instances[1].open();
+		await second;
+		MockWebSocket.instances[0].open();
+		await first;
+		await streamOpenAICodexResponses(model, context, {
+			...options,
+			apiKey: mockToken("account-b"),
+		}).result();
+
+		expect(MockWebSocket.instances).toHaveLength(2);
+		expect(MockWebSocket.instances.map((socket) => [socket.accountId, socket.sends])).toEqual([
+			["account-a", 1],
+			["account-b", 2],
+		]);
 	});
 
 	it("closes one-shot websockets when cacheRetention is none", async () => {

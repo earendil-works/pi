@@ -33,6 +33,7 @@ import {
 	type SessionProjection,
 	sessionEntryToContextMessages,
 } from "../session-manager.ts";
+import { withCompactionRequestMetadata } from "./request-metadata.ts";
 import {
 	computeFileLists,
 	createFileOps,
@@ -998,6 +999,7 @@ export async function compact(
 	callbacks?: RetryCallbacks,
 	sessionId?: string,
 ): Promise<CompactionResult> {
+	const attributedStreamFn = withCompactionRequestMetadata(streamFn);
 	const {
 		firstKeptEntryId,
 		messagesToSummarize,
@@ -1027,7 +1029,7 @@ export async function compact(
 				customInstructions,
 				previousSummary,
 				thinkingLevel,
-				streamFn,
+				attributedStreamFn,
 				env,
 				retry,
 				callbacks,
@@ -1045,7 +1047,7 @@ export async function compact(
 			env,
 			signal,
 			thinkingLevel,
-			streamFn,
+			attributedStreamFn,
 			retry,
 			callbacks,
 			sessionId,
@@ -1065,7 +1067,7 @@ export async function compact(
 			customInstructions,
 			previousSummary,
 			thinkingLevel,
-			streamFn,
+			attributedStreamFn,
 			env,
 			retry,
 			callbacks,

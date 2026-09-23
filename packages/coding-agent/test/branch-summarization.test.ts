@@ -8,6 +8,7 @@ import {
 } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 import { generateBranchSummary } from "../src/core/compaction/index.ts";
+import { getRequestIdentityMetadata } from "../src/core/compaction/request-metadata.ts";
 import type { SessionEntry } from "../src/core/session-manager.ts";
 
 const model: Model<"anthropic-messages"> = {
@@ -63,6 +64,7 @@ describe("branch summarization", () => {
 
 		expect(requestOptions?.maxTokens).toBe(4096);
 		expect(requestOptions?.toolChoice).toBeUndefined();
+		expect(getRequestIdentityMetadata(requestOptions?.metadata)?.requestKind).toBe("compaction");
 	});
 
 	it("clamps the branch summary output cap to the model limit", async () => {

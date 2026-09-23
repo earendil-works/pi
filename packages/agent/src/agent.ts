@@ -10,8 +10,10 @@ import {
 	type ThinkingBudgets,
 	type Transport,
 	toToolDeclaration,
+	uuidv7,
 } from "@earendil-works/pi-ai";
 import { runAgentLoop, runAgentLoopContinue } from "./agent-loop.ts";
+import { createAgentRequestMetadata } from "./request-metadata.ts";
 import { getDefaultStreamFn } from "./stream-fn.ts";
 import type {
 	AfterToolCallContext,
@@ -214,6 +216,8 @@ export class Agent {
 		signal?: AbortSignal,
 	) => Promise<AgentLoopTurnUpdate | undefined> | AgentLoopTurnUpdate | undefined;
 	private activeRun?: ActiveRun;
+	private readonly attributionSessionId: string;
+	private activeRequestMetadata?: Record<string, unknown>;
 	/** Session identifier forwarded to providers for cache-aware backends. */
 	public sessionId?: string;
 	/** Optional per-level thinking token budgets forwarded to the stream function. */
@@ -244,6 +248,7 @@ export class Agent {
 		this.steeringQueue = new PendingMessageQueue(runtimeOptions.steeringMode ?? "one-at-a-time");
 		this.followUpQueue = new PendingMessageQueue(runtimeOptions.followUpMode ?? "one-at-a-time");
 		this.sessionId = runtimeOptions.sessionId;
+		this.attributionSessionId = runtimeOptions.sessionId ?? uuidv7();
 		this.thinkingBudgets = runtimeOptions.thinkingBudgets;
 		this.transport = runtimeOptions.transport ?? "auto";
 		this.maxRetryDelayMs = runtimeOptions.maxRetryDelayMs;
@@ -362,6 +367,7 @@ export class Agent {
 		this._state.errorMessage = undefined;
 		this.clearFollowUpQueue();
 		this.clearSteeringQueue();
+		this.activeRequestMetadata = undefined;
 	}
 
 	/** Start a new prompt from text, a single message, or a batch of messages. */
@@ -430,6 +436,7 @@ export class Agent {
 		messages: AgentMessage[],
 		options: { skipInitialSteeringPoll?: boolean } = {},
 	): Promise<void> {
+		this.activeRequestMetadata = createAgentRequestMetadata(this.attributionSessionId);
 		await this.runWithLifecycle(async (signal) => {
 			await runAgentLoop(
 				messages,
@@ -443,6 +450,7 @@ export class Agent {
 	}
 
 	private async runContinuation(): Promise<void> {
+		this.activeRequestMetadata ??= createAgentRequestMetadata(this.attributionSessionId);
 		await this.runWithLifecycle(async (signal) => {
 			await runAgentLoopContinue(
 				this.createContextSnapshot(),
@@ -465,6 +473,7 @@ export class Agent {
 		let skipInitialSteeringPoll = options.skipInitialSteeringPoll === true;
 		return {
 			model: this._state.model,
+			metadata: this.activeRequestMetadata,
 			reasoning: this._state.thinkingLevel === "off" ? undefined : this._state.thinkingLevel,
 			sessionId: this.sessionId,
 			onPayload: this.onPayload,

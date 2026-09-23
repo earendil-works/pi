@@ -11,6 +11,7 @@ import {
 } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
+import { getRequestIdentityMetadata, setRequestIdentityMetadata } from "../src/core/compaction/request-metadata.ts";
 import { createAgentSession } from "../src/core/sdk.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 import { type Settings, SettingsManager } from "../src/core/settings-manager.ts";
@@ -198,6 +199,33 @@ describe("createAgentSession stream options", () => {
 		} finally {
 			fixture.dispose();
 		}
+	});
+
+	it("does not synthesize a Codex identity for side requests", async () => {
+		const options = await captureStreamOptions("openai-codex-responses", {});
+
+		expect(getRequestIdentityMetadata(options?.metadata)).toBeUndefined();
+	});
+
+	it("adds session window data to Codex request identity metadata", async () => {
+		const options = await captureStreamOptions(
+			"openai-codex-responses",
+			{},
+			{
+				metadata: setRequestIdentityMetadata(undefined, {
+					sessionId: "placeholder",
+					threadId: "placeholder",
+					turnId: "turn",
+					requestKind: "turn",
+					startedAt: 123,
+				}),
+			},
+		);
+
+		const identity = getRequestIdentityMetadata(options?.metadata);
+		expect(identity).toMatchObject({ turnId: "turn", windowNumber: 0, contextWindowId: identity?.threadId });
+		expect(identity?.sessionId).toBe(identity?.threadId);
+		expect(identity?.windowId).toBe(`${identity?.threadId}:0`);
 	});
 
 	it("forwards httpIdleTimeoutMs as timeoutMs for OpenAI Codex", async () => {

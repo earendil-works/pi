@@ -1,6 +1,6 @@
-import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import type { AgentMessage, StreamFn } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage, Usage } from "@earendil-works/pi-ai/compat";
-import { getModel } from "@earendil-works/pi-ai/compat";
+import { createAssistantMessageEventStream, fauxAssistantMessage, getModel } from "@earendil-works/pi-ai/compat";
 import { readFileSync } from "fs";
 import { join } from "path";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -15,6 +15,7 @@ import {
 	prepareCompaction,
 	shouldCompact,
 } from "../src/core/compaction/index.ts";
+import { getRequestIdentityMetadata, type InternalRequestIdentity } from "../src/core/compaction/request-metadata.ts";
 import {
 	buildSessionContext,
 	type CompactionEntry,
@@ -517,6 +518,55 @@ describe("prepareCompaction", () => {
 		expect(preparation?.isSplitTurn).toBe(true);
 		expect(preparation?.messagesToSummarize).toEqual([]);
 		expect(preparation?.turnPrefixMessages).toEqual([user.message]);
+	});
+
+	it("reuses one request identity across split summaries", async () => {
+		const entries = [
+			createMessageEntry(createUserMessage("old request")),
+			createMessageEntry(createAssistantMessage("old response")),
+			createMessageEntry(createUserMessage("current request")),
+			createMessageEntry(createAssistantMessage("current response")),
+		];
+		const preparation = prepareCompaction(entries, {
+			...DEFAULT_COMPACTION_SETTINGS,
+			keepRecentTokens: 1,
+		});
+		expect(preparation?.messagesToSummarize.length).toBeGreaterThan(0);
+		expect(preparation?.turnPrefixMessages.length).toBeGreaterThan(0);
+
+		const identities: Array<InternalRequestIdentity | undefined> = [];
+		const streamFn: StreamFn = (requestModel, _context, options) => {
+			identities.push(getRequestIdentityMetadata(options?.metadata));
+			const stream = createAssistantMessageEventStream();
+			queueMicrotask(() => {
+				const message = {
+					...fauxAssistantMessage(`summary-${identities.length}`),
+					api: requestModel.api,
+					provider: requestModel.provider,
+					model: requestModel.id,
+				};
+				stream.push({ type: "done", reason: "stop", message });
+			});
+			return stream;
+		};
+		await compact(
+			preparation!,
+			getModel("anthropic", "claude-sonnet-4-5")!,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			streamFn,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+		);
+
+		expect(identities[0]).toBeDefined();
+		expect(identities[0]?.requestKind).toBe("compaction");
+		expect(identities[1]).toBe(identities[0]);
 	});
 });
 
