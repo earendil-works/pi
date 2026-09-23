@@ -81,11 +81,11 @@ class ReopeningStorage implements Storage {
 	}
 }
 
-registerStorageConformance({ describe, expect, it }, "Pico SqliteStorage conformance", async (use) =>
+registerStorageConformance({ describe, expect, it }, "SqliteStorage", async (use) =>
 	use((await createSqliteStorage()).storage),
 );
 
-registerStorageConformance({ describe, expect, it }, "Pico SqliteStorage conformance across reopen", async (use) => {
+registerStorageConformance({ describe, expect, it }, "SqliteStorage across reopen", async (use) => {
 	const directory = await mkdtemp(join(tmpdir(), "pi-durable-sqlite-conformance-"));
 	const path = join(directory, "storage.sqlite");
 	const created = await openNodeSqliteStorage(path);

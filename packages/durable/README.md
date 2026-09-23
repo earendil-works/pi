@@ -39,8 +39,8 @@ Storage adapters can register the runner-independent conformance cases through t
 import { registerStorageConformance } from "@earendil-works/pi-durable/testing";
 import { describe, expect, it } from "vitest";
 
-registerStorageConformance({ describe, expect, it }, "Adapter name", async (use) => {
-	const storage = await openIsolatedStorage();
+registerStorageConformance({ describe, expect, it }, "Some Custom Storage", async (use) => {
+	const storage = await openCustomStorage();
 	try {
 		await use(storage);
 	} finally {

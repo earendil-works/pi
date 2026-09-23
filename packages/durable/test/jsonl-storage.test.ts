@@ -92,11 +92,9 @@ class ReopeningStorage implements Storage {
 	}
 }
 
-registerStorageConformance({ describe, expect, it }, "Pico JsonlStorage conformance", async (use) =>
-	use(await createStorage()),
-);
+registerStorageConformance({ describe, expect, it }, "JsonlStorage", async (use) => use(await createStorage()));
 
-registerStorageConformance({ describe, expect, it }, "Pico JsonlStorage conformance across reopen", async (use) => {
+registerStorageConformance({ describe, expect, it }, "JsonlStorage across reopen", async (use) => {
 	const directory = await tempDirectory("pi-durable-jsonl-conformance-");
 	const current = await JsonlStorage.open(directory, new NodeExecutionEnv({ cwd: directory }), context);
 	const storage = new ReopeningStorage(current, directory);

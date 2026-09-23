@@ -4,9 +4,7 @@ import { describe, expect, it } from "vitest";
 import { MemoryStorage } from "../src/storage/memory.ts";
 import { ROOT_CONVERSATION_ID } from "../src/types.ts";
 
-registerStorageConformance({ describe, expect, it }, "Pico MemoryStorage conformance", (use) =>
-	use(new MemoryStorage()),
-);
+registerStorageConformance({ describe, expect, it }, "MemoryStorage", (use) => use(new MemoryStorage()));
 
 it("does not expose retained state through a prepared commit", async () => {
 	const storage = new MemoryStorage();
