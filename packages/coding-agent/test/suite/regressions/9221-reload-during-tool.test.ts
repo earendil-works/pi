@@ -22,78 +22,93 @@ describe("reload during an active session operation", () => {
 		vi.restoreAllMocks();
 	});
 
-	it("rejects a reload command without changing a successful tool result", async () => {
-		const started = deferred();
-		const released = deferred();
-		const shutdown = vi.fn();
-		const errors: string[] = [];
-		let providerResults: ToolResultMessage[] = [];
-		const h = await createHarness({
-			extensionFactories: [
-				(pi) => {
-					pi.on("session_shutdown", shutdown);
-					pi.registerCommand("reload-runtime", {
-						description: "Reload extensions",
-						handler: async (_args, ctx) => ctx.reload(),
-					});
-					pi.registerTool({
-						name: "wait_then_succeed",
-						label: "Wait then succeed",
-						description: "Wait before returning a successful result",
-						parameters: Type.Object({}),
-						execute: async () => {
-							started.resolve();
-							await released.promise;
-							return { content: [{ type: "text", text: "tool succeeded" }], details: {} };
-						},
-					});
+	it.each(["command", "direct"] as const)(
+		"rejects %s reload without invalidating an active tool's context",
+		async (source) => {
+			const started = deferred();
+			const released = deferred();
+			const shutdown = vi.fn();
+			const errors: string[] = [];
+			let providerResults: ToolResultMessage[] = [];
+			const h = await createHarness({
+				extensionFactories: [
+					(pi) => {
+						pi.on("session_shutdown", shutdown);
+						pi.registerCommand("reload-runtime", {
+							description: "Reload extensions",
+							handler: async (_args, ctx) => ctx.reload(),
+						});
+						pi.registerTool({
+							name: "wait_then_succeed",
+							label: "Wait then succeed",
+							description: "Use the tool context after waiting",
+							parameters: Type.Object({}),
+							execute: async (_id, _params, _signal, _update, ctx) => {
+								started.resolve();
+								await released.promise;
+								// #9221: the tool itself can still use ctx after an async operation.
+								ctx.getSystemPrompt();
+								return { content: [{ type: "text", text: "tool succeeded" }], details: {} };
+							},
+						});
+					},
+				],
+			});
+			harness = h;
+			await h.session.bindExtensions({
+				mode: "rpc",
+				onError: (error) => errors.push(error.error),
+				commandContextActions: {
+					waitForIdle: () => h.session.waitForIdle(),
+					newSession: async () => ({ cancelled: true }),
+					fork: async () => ({ cancelled: true }),
+					navigateTree: (targetId, options) => h.session.navigateTree(targetId, options),
+					switchSession: async () => ({ cancelled: true }),
+					// Match RPC's ctx.reload binding to the core reload entry point.
+					reload: () => h.session.reload(),
 				},
-			],
-		});
-		harness = h;
-		await h.session.bindExtensions({
-			mode: "rpc",
-			onError: (error) => errors.push(error.error),
-			commandContextActions: {
-				waitForIdle: () => h.session.waitForIdle(),
-				newSession: async () => ({ cancelled: true }),
-				fork: async () => ({ cancelled: true }),
-				navigateTree: (targetId, options) => h.session.navigateTree(targetId, options),
-				switchSession: async () => ({ cancelled: true }),
-				// Match RPC's ctx.reload binding to the core reload entry point.
-				reload: () => h.session.reload(),
-			},
-		});
-		const runner = h.session.extensionRunner;
-		h.setResponses([
-			fauxAssistantMessage(fauxToolCall("wait_then_succeed", {}), { stopReason: "toolUse" }),
-			(context) => {
-				providerResults = context.messages.filter((message) => message.role === "toolResult");
-				return fauxAssistantMessage("done");
-			},
-		]);
+			});
+			const runner = h.session.extensionRunner;
+			h.setResponses([
+				fauxAssistantMessage(fauxToolCall("wait_then_succeed", {}), { stopReason: "toolUse" }),
+				(context) => {
+					providerResults = context.messages.filter((message) => message.role === "toolResult");
+					return fauxAssistantMessage("done");
+				},
+			]);
 
-		const prompt = h.session.prompt("run the tool");
-		await started.promise;
-		try {
-			await h.session.prompt("/reload-runtime", { source: "rpc" });
-		} finally {
-			released.resolve();
-			await prompt;
-		}
+			const prompt = h.session.prompt("run the tool");
+			await started.promise;
+			try {
+				if (source === "command") {
+					await h.session.prompt("/reload-runtime", { source: "rpc" });
+				} else {
+					await expect(h.session.reload()).rejects.toThrow(
+						"Wait for the current response to finish before reloading.",
+					);
+				}
+			} finally {
+				released.resolve();
+				await prompt;
+			}
 
-		const persistedResults = h.sessionManager
-			.getEntries()
-			.flatMap((entry) => (entry.type === "message" && entry.message.role === "toolResult" ? [entry.message] : []));
-		expect(persistedResults).toHaveLength(1);
-		expect(persistedResults[0]).toMatchObject({ isError: false });
-		expect(getMessageText(persistedResults[0])).toBe("tool succeeded");
-		expect(providerResults).toEqual(persistedResults);
-		expect(errors).toEqual(["Wait for the current response to finish before reloading."]);
-		expect(shutdown).not.toHaveBeenCalled();
-		expect(h.session.extensionRunner).toBe(runner);
-		expect(runner.getActiveTools()).toContain("wait_then_succeed");
-	});
+			const persistedResults = h.sessionManager
+				.getEntries()
+				.flatMap((entry) =>
+					entry.type === "message" && entry.message.role === "toolResult" ? [entry.message] : [],
+				);
+			expect(persistedResults).toHaveLength(1);
+			expect(persistedResults[0]).toMatchObject({ isError: false });
+			expect(getMessageText(persistedResults[0])).toBe("tool succeeded");
+			expect(providerResults).toEqual(persistedResults);
+			expect(errors).toEqual(
+				source === "command" ? ["Wait for the current response to finish before reloading."] : [],
+			);
+			expect(shutdown).not.toHaveBeenCalled();
+			expect(h.session.extensionRunner).toBe(runner);
+			expect(runner.getActiveTools()).toContain("wait_then_succeed");
+		},
+	);
 
 	it.each(["compaction", "tree navigation"] as const)("rejects reload during %s", async (operation) => {
 		const started = deferred();
