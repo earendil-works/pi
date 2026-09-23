@@ -1651,19 +1651,25 @@ export class AgentSession {
 			}
 
 			// If streaming, queue via steer() or followUp() based on option
-			if (this.isStreaming) {
-				if (!options?.streamingBehavior) {
-					throw new Error(
-						"Agent is already processing. Specify streamingBehavior ('steer' or 'followUp') to queue the message.",
-					);
-				}
-				if (options.streamingBehavior === "followUp") {
-					await this._queueFollowUp(expandedText, currentImages);
-				} else {
-					await this._queueSteer(expandedText, currentImages);
-				}
+			if (this.isStreaming && !this.agent.signal?.aborted) {
+				const behavior = this._requireStreamingBehavior(options);
+				await this._queueByStreamingBehavior(behavior, expandedText, currentImages);
 				preflightResult?.(true);
 				return;
+			}
+			if (this.isStreaming) {
+				const behavior = this._requireStreamingBehavior(options);
+				// The remaining case is a run unwinding from a user abort: it never drains its
+				// queues, so a steer queued now would sit silently while the UI reports the
+				// abort. Wait for the session to settle and fall through to a fresh prompt
+				// instead (unless another caller restarted the agent first, in which case queue
+				// behind that run normally).
+				await this.waitForIdle();
+				if (this.isStreaming) {
+					await this._queueByStreamingBehavior(behavior, expandedText, currentImages);
+					preflightResult?.(true);
+					return;
+				}
 			}
 
 			// Flush any pending bash and custom messages before the new prompt
@@ -1871,6 +1877,27 @@ export class AgentSession {
 	 */
 	async followUp(text: string, images?: ImageContent[], options?: { source?: InputSource }): Promise<void> {
 		await this._queueUserInput(text, images, "followUp", options?.source ?? "interactive");
+	}
+
+	private _requireStreamingBehavior(options?: PromptOptions): "steer" | "followUp" {
+		if (!options?.streamingBehavior) {
+			throw new Error(
+				"Agent is already processing. Specify streamingBehavior ('steer' or 'followUp') to queue the message.",
+			);
+		}
+		return options.streamingBehavior;
+	}
+
+	private async _queueByStreamingBehavior(
+		behavior: "steer" | "followUp",
+		text: string,
+		images?: ImageContent[],
+	): Promise<void> {
+		if (behavior === "followUp") {
+			await this._queueFollowUp(text, images);
+		} else {
+			await this._queueSteer(text, images);
+		}
 	}
 
 	/**
