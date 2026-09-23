@@ -332,11 +332,16 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 					};
 				});
 
-				const filtered = fuzzyFilter(commandItems, prefix, (item) =>
-					!prefix.startsWith("skill:") && item.name.startsWith("skill:")
-						? item.name.slice("skill:".length)
-						: item.name,
-				).map((item) => ({
+				const bareNameMatches = fuzzyFilter(commandItems, prefix, (item) =>
+					item.name.startsWith("skill:") ? item.name.slice("skill:".length) : item.name,
+				);
+				const bareNameMatchSet = new Set(bareNameMatches);
+				const fullNameOnlyMatches = fuzzyFilter(
+					commandItems.filter((item) => item.name.startsWith("skill:") && !bareNameMatchSet.has(item)),
+					prefix,
+					(item) => item.name,
+				);
+				const filtered = [...bareNameMatches, ...fullNameOnlyMatches].map((item) => ({
 					value: item.name,
 					label: item.label,
 					...(item.description && { description: item.description }),
