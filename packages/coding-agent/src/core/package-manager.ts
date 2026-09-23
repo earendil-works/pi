@@ -728,6 +728,11 @@ function resolvePackageChangelogPath(packageRoot: string, manifest: PiManifest |
 	}
 }
 
+function normalizePattern(pattern: string): string {
+	const normalized = pattern.startsWith("./") || pattern.startsWith(".\\") ? pattern.slice(2) : pattern;
+	return toPosixPath(normalizePath(normalized));
+}
+
 function matchesAnyPattern(filePath: string, patterns: string[], baseDir: string): boolean {
 	const rel = toPosixPath(relative(baseDir, filePath));
 	const name = basename(filePath);
@@ -739,7 +744,7 @@ function matchesAnyPattern(filePath: string, patterns: string[], baseDir: string
 	const parentDirPosix = isSkillFile ? toPosixPath(parentDir!) : undefined;
 
 	return patterns.some((pattern) => {
-		const normalizedPattern = toPosixPath(normalizePath(pattern));
+		const normalizedPattern = normalizePattern(pattern);
 		if (
 			minimatch(rel, normalizedPattern) ||
 			minimatch(name, normalizedPattern) ||
@@ -756,11 +761,6 @@ function matchesAnyPattern(filePath: string, patterns: string[], baseDir: string
 	});
 }
 
-function normalizeExactPattern(pattern: string): string {
-	const normalized = pattern.startsWith("./") || pattern.startsWith(".\\") ? pattern.slice(2) : pattern;
-	return toPosixPath(normalizePath(normalized));
-}
-
 function matchesAnyExactPattern(filePath: string, patterns: string[], baseDir: string): boolean {
 	if (patterns.length === 0) return false;
 	const rel = toPosixPath(relative(baseDir, filePath));
@@ -772,7 +772,7 @@ function matchesAnyExactPattern(filePath: string, patterns: string[], baseDir: s
 	const parentDirPosix = isSkillFile ? toPosixPath(parentDir!) : undefined;
 
 	return patterns.some((pattern) => {
-		const normalized = normalizeExactPattern(pattern);
+		const normalized = normalizePattern(pattern);
 		if (normalized === rel || normalized === filePathPosix) {
 			return true;
 		}
