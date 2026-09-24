@@ -126,4 +126,13 @@ describe("Models with classifier models", () => {
 		expect(models.getModel("typesafe", "jev-latest")).toBeUndefined();
 		expect(models.getModelOfType("classifier", "typesafe", "jev-latest")).toEqual(jev);
 	});
+
+	it("routes OpenRouter classifier models through the System One API", () => {
+		const models = builtinModels();
+		for (const model of getBuiltinClassifierModels("openrouter")) {
+			expect(model).toMatchObject({ api: "typesafe-system-one", baseUrl: "https://openrouter.ai/api/v1" });
+			expect(models.getModel("openrouter", model.id)).toBeUndefined();
+			expect(models.getModelOfType("classifier", "openrouter", model.id)).toEqual(model);
+		}
+	});
 });

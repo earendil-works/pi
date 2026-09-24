@@ -31,6 +31,26 @@ The portable SQLite core, minimal database facade, and ordered schema migrations
 
 The Node adapter uses WAL mode with `synchronous = NORMAL` and checkpoints the WAL on close. Acknowledged commits survive process crashes, but the newest commits may be lost after a power or host failure. One `SqliteStorage` owner must serialize writes to a database file; cross-process ID allocation is not supported.
 
+## Storage conformance
+
+Storage adapters can register the runner-independent conformance cases through the testing entry. The convenience adapter accepts Vitest/Jest-compatible runner functions without importing either package:
+
+```ts
+import { registerStorageConformance } from "@earendil-works/pi-durable/testing";
+import { describe, expect, it } from "vitest";
+
+registerStorageConformance({ describe, expect, it }, "Some Custom Storage", async (use) => {
+	const storage = await openCustomStorage();
+	try {
+		await use(storage);
+	} finally {
+		await closeStorage(storage);
+	}
+});
+```
+
+The provider must call and await `use` exactly once with isolated storage. Other runners can use `createStorageConformance` with their own `StorageConformanceAssertions` implementation.
+
 ## Storage benchmarks
 
 From this package directory:

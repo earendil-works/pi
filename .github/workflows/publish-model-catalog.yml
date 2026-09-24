@@ -12,6 +12,7 @@ on:
       - '.gitignore'
       - 'package.json'
       - 'packages/ai/**'
+      - 'scripts/model-catalog-protocol.ts'
       - 'scripts/publish-model-catalog.mjs'
   # GitHub schedules use UTC. Run hourly candidates across the CET/CEST
   # boundaries; the publish job only uploads at 10:17, 12:17, and 14:17

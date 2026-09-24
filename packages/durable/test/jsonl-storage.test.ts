@@ -3,14 +3,14 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import type { Context, JsonValue } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { afterEach, describe, expect, it, onTestFinished } from "vitest";
+import { registerStorageConformance } from "@earendil-works/pi-durable/testing";
+import { afterEach, describe, expect, it } from "vitest";
 import { err, FileError, type FileSystem, type Result } from "../src/env/index.ts";
 import { NodeExecutionEnv } from "../src/env/node.ts";
 import { JsonlStorage } from "../src/storage/jsonl/index.ts";
 import { openNodeJsonlStorage } from "../src/storage/jsonl/node.ts";
 import type { DocumentCreate, Seq, Storage, StorageWrite, TaskRecord } from "../src/types.ts";
 import { ROOT_CONVERSATION_ID } from "../src/types.ts";
-import { registerStorageConformance } from "./storage-conformance.ts";
 
 const context = BACKGROUND_CONTEXT;
 type StoredTask = TaskRecord<JsonValue, JsonValue, JsonValue>;
@@ -92,14 +92,17 @@ class ReopeningStorage implements Storage {
 	}
 }
 
-registerStorageConformance("Pico JsonlStorage conformance", createStorage);
+registerStorageConformance({ describe, expect, it }, "JsonlStorage", async (use) => use(await createStorage()));
 
-registerStorageConformance("Pico JsonlStorage conformance across reopen", async () => {
+registerStorageConformance({ describe, expect, it }, "JsonlStorage across reopen", async (use) => {
 	const directory = await tempDirectory("pi-durable-jsonl-conformance-");
 	const current = await JsonlStorage.open(directory, new NodeExecutionEnv({ cwd: directory }), context);
 	const storage = new ReopeningStorage(current, directory);
-	onTestFinished(() => storage.close(context));
-	return storage;
+	try {
+		await use(storage);
+	} finally {
+		await storage.close(context);
+	}
 });
 
 function pendingTask(id: number, phase = "ready"): StoredTask {

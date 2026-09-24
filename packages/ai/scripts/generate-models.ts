@@ -10,6 +10,7 @@ import {
 	CLOUDFLARE_AI_GATEWAY_COMPAT_BASE_URL,
 	CLOUDFLARE_AI_GATEWAY_OPENAI_BASE_URL,
 	CLOUDFLARE_WORKERS_AI_BASE_URL,
+	CLOUDFLARE_WORKERS_AI_REST_BASE_URL,
 } from "../src/api/cloudflare.ts";
 import type {
 	AnthropicMessagesCompat,
@@ -1284,12 +1285,15 @@ async function fetchOpenRouterList(query: string): Promise<OpenRouterModelListIt
 async function fetchOpenRouterModels(): Promise<OpenRouterCatalog> {
 	try {
 		console.log("Fetching models from OpenRouter API...");
-		const [listed, imageListed] = await Promise.all([
+		const [listed, imageListed, decisionListed] = await Promise.all([
 			fetchOpenRouterList(""),
 			fetchOpenRouterList("?output_modalities=image"),
+			fetchOpenRouterList("?output_modalities=decisions"),
 		]);
-		const catalog = buildOpenRouterCatalog(listed, imageListed);
-		console.log(`Fetched ${catalog.chat.length} tool-capable and ${catalog.images.length} image models from OpenRouter`);
+		const catalog = buildOpenRouterCatalog(listed, imageListed, decisionListed);
+		console.log(
+			`Fetched ${catalog.chat.length} tool-capable, ${catalog.images.length} image, and ${catalog.classifiers.length} classifier models from OpenRouter`,
+		);
 		if (generatorOptions.strict && catalog.images.length === 0) {
 			throw new Error("OpenRouter API returned no usable image models");
 		}
@@ -1297,7 +1301,7 @@ async function fetchOpenRouterModels(): Promise<OpenRouterCatalog> {
 	} catch (error) {
 		console.error("Failed to fetch OpenRouter models:", error);
 		if (generatorOptions.strict) throw error;
-		return { chat: [], images: [] };
+		return { chat: [], images: [], classifiers: [] };
 	}
 }
 
@@ -2646,6 +2650,23 @@ async function loadModelsDevClassifierModels(): Promise<ClassifierModel<"typesaf
 	}
 }
 
+// Workers AI has no unauthenticated catalog and models.dev does not list its
+// System One models yet. Cloudflare publishes pricing only in the dashboard.
+// https://developers.cloudflare.com/ai/models/typesafe/jev/
+const CLOUDFLARE_WORKERS_AI_CLASSIFIER_MODELS: ClassifierModel<"cloudflare-workers-ai-system-one">[] = [
+	{
+		type: "classifier",
+		id: "typesafe/jev",
+		name: "Jev",
+		api: "cloudflare-workers-ai-system-one",
+		provider: "cloudflare-workers-ai",
+		baseUrl: CLOUDFLARE_WORKERS_AI_REST_BASE_URL,
+		input: ["text"],
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		contextWindow: 32000,
+	},
+];
+
 async function generateModels() {
 	// Fetch models from all upstream catalogs.
 	// models.dev: Anthropic, Google, OpenAI, Groq, Cerebras, and others
@@ -2653,7 +2674,7 @@ async function generateModels() {
 	// AI Gateway: OpenAI-compatible catalog with tool-capable models
 	// Radius: its unauthenticated public catalog; authenticated clients overlay it at runtime
 	const modelsDevModels = await loadModelsDevData();
-	const classifierModels = await loadModelsDevClassifierModels();
+	const modelsDevClassifierModels = await loadModelsDevClassifierModels();
 	const openRouterCatalog = await fetchOpenRouterModels();
 	const aiGatewayModels = await fetchAiGatewayModels();
 	const radiusModels = await fetchRadiusModels();
@@ -3293,6 +3314,11 @@ async function generateModels() {
 		providers[model.provider] ??= { chat: {}, image: {}, classifier: {} };
 		providers[model.provider].image[model.id] ??= model;
 	}
+	const classifierModels: ClassifierModel<ClassifierApi>[] = [
+		...modelsDevClassifierModels,
+		...openRouterCatalog.classifiers,
+		...CLOUDFLARE_WORKERS_AI_CLASSIFIER_MODELS,
+	];
 	for (const model of classifierModels) {
 		providers[model.provider] ??= { chat: {}, image: {}, classifier: {} };
 		providers[model.provider].classifier[model.id] ??= model;

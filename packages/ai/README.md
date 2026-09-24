@@ -890,7 +890,13 @@ console.log(model.output); // ['image'] or ['image', 'text']
 
 ## Classification
 
-Classifier models consume structured JSON state and answer one or more typed questions. They do not use chat or image-generation APIs. The built-in TypeSafe provider exposes models.dev's `jev-latest` model and reads `TYPESAFE_API_KEY`.
+Classifier models consume structured JSON state and answer one or more typed questions. They do not use chat or image-generation APIs. TypeSafe's Jev model is available from these built-in providers:
+
+| Provider | Model IDs | Auth |
+| --- | --- | --- |
+| `typesafe` | `jev-latest` | `TYPESAFE_API_KEY` |
+| `openrouter` | `typesafe/jev-1.13`, `~typesafe/jev-latest` | `OPENROUTER_API_KEY` or OpenRouter OAuth |
+| `cloudflare-workers-ai` | `typesafe/jev` | `CLOUDFLARE_API_KEY` and `CLOUDFLARE_ACCOUNT_ID` |
 
 ```typescript
 import { builtinModels } from '@earendil-works/pi-ai/providers/all';

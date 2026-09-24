@@ -25,6 +25,8 @@
 	},
 	"files": {
 		"includes": [
+			"scripts/model-catalog-protocol.ts",
+			"scripts/model-catalog-protocol.test.ts",
 			"packages/*/src/**/*.ts",
 			"packages/*/test/**/*.ts",
 			"packages/session-backends/*/src/**/*.ts",

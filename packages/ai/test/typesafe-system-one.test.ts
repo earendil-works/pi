@@ -71,6 +71,37 @@ describe("TypeSafe System One", () => {
 		expect(result.answers.satisfaction).toEqual({ type: "score", score: 2, confidence: 0.7 });
 	});
 
+	it("posts OpenRouter System One requests to its TypeSafe-compatible endpoint", async () => {
+		const fetch = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+			expect(JSON.parse(String(init?.body))).toMatchObject({ model: "typesafe/jev-1.13", state: context.state });
+			return Response.json({ id: "gen-dec-1", provider: "TypeSafe", answers: wireAnswers, usage: { cost: 0.1 } });
+		});
+		const openRouterModel = {
+			...model,
+			id: "typesafe/jev-1.13",
+			provider: "openrouter",
+			baseUrl: "https://openrouter.ai/api/v1",
+		};
+
+		const result = await classify(openRouterModel, context, { apiKey: "secret", fetch });
+
+		expect(String(fetch.mock.calls[0]?.[0])).toBe("https://openrouter.ai/api/v1/systemone");
+		expect(result.stopReason).toBe("stop");
+		expect(result.answers.approved).toEqual({ type: "bool", probability: 0.95 });
+	});
+
+	it("rejects models for other classifier APIs", async () => {
+		const fetch = vi.fn(async () => Response.json({ answers: wireAnswers }));
+		const result = await classify({ ...model, api: "cloudflare-workers-ai-system-one" }, context, {
+			apiKey: "secret",
+			fetch,
+		});
+
+		expect(fetch).not.toHaveBeenCalled();
+		expect(result.stopReason).toBe("error");
+		expect(result.errorMessage).toContain("Unsupported classifier API: cloudflare-workers-ai-system-one");
+	});
+
 	it("merges headers case-insensitively and supports null suppression", async () => {
 		const requests: Array<Record<string, string>> = [];
 		const fetch = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
