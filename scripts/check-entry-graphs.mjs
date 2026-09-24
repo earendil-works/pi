@@ -24,6 +24,7 @@ const WORKSPACE = {
 	"@earendil-works/pi-durable": "packages/durable/src",
 	"@earendil-works/pi-agent-core": "packages/agent/src",
 	"@earendil-works/pi-telemetry": "packages/telemetry/src",
+	"@earendil-works/pi-otel": "packages/pi-otel/src",
 	"@earendil-works/pi-tui": "packages/tui/src",
 };
 

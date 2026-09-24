@@ -96,3 +96,21 @@ These variables are read by Pi itself:
 | `HTTP_PROXY`, `HTTPS_PROXY` | Proxy outbound HTTP requests |
 
 Provider credentials such as `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, and cloud-provider configuration are listed in [Provider Authentication](providers.md#use-an-api-key-from-the-environment).
+
+## OpenTelemetry (OTEL_*)
+
+Pi itself does not read `OTEL_*` variables — `PI_TELEMETRY` above only covers the install/update ping. Tracing out of a pi-based process is done by host code through `@earendil-works/pi-otel`, whose `createOtlpTelemetryContextFromEnv(env)` reads the standard variables below and returns `undefined` when tracing is not enabled. Pi's harness receives the context caller-side via `withTelemetryContext()`; there is no pi-level `OTEL_*` wiring and no `telemetry` option on pi's APIs.
+
+| Variable | Description |
+|----------|-------------|
+| `OTEL_ENABLED` | Set to `false`, `0`, `no`, or `off` to disable tracing regardless of other settings |
+| `OTEL_TRACES_EXPORTER` | Must be `otlp` (or `otlp/http`) for pi-otel to activate; `none` or any other exporter disables it |
+| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | Traces endpoint; takes precedence over the general endpoint |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | General endpoint; used when the traces endpoint is unset. A base URL gets `/v1/traces` appended |
+| `OTEL_EXPORTER_OTLP_TRACES_HEADERS` | Comma-separated `key=value` request headers; take precedence over the general headers |
+| `OTEL_EXPORTER_OTLP_HEADERS` | Comma-separated `key=value` request headers |
+| `OTEL_SERVICE_NAME` | The resource `service.name`; default `pi` |
+| `OTEL_RESOURCE_ATTRIBUTES` | Comma-separated `key=value` resource attributes |
+| `OTEL_BSP_SCHEDULE_DELAY` | Flush interval in milliseconds; default `5000` |
+| `OTEL_BSP_MAX_QUEUE_SIZE` | Bound on unexported spans; oldest are dropped and counted; default `16384` |
+| `OTEL_BSP_MAX_EXPORT_BATCH_SIZE` | Spans per export request; default `512` |

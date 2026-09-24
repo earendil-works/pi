@@ -249,3 +249,23 @@ Current tests cover immutable typed-value layering and shadowing, distinct empty
 - trace-carrier adapter ownership and shape;
 - which context values, if any, may cross an RPC boundary;
 - exact span names/outcome attributes for RPC calls and drive join waits.
+
+## Exporting spans (pi-otel)
+
+The telemetry contract is transport-agnostic: nothing in pi ships an exporter, and the default is `NOOP_TELEMETRY_CONTEXT`. `@earendil-works/pi-otel` provides an OTLP/HTTP `TelemetryContext` for hosts that send spans to an endpoint. The seam is caller-side, matching the design above — there is deliberately no pi-level telemetry option, so each invocation region passes its own context:
+
+```ts
+import { withTelemetryContext } from "@earendil-works/pi-agent-core";
+import { OtlpTelemetryContext } from "@earendil-works/pi-otel";
+
+const otlp = new OtlpTelemetryContext({
+  endpoint: "http://collector:4318",
+  serviceName: "my-host",
+  resourceAttributes: { run_id: run.id, component: "worker" },
+});
+const ctx = withTelemetryContext(otlp, context);
+await harness.run(ctx, drive); // spans started under `ctx` go to the endpoint
+await otlp.close(); // final flush; loss is counted, never raised
+```
+
+The exporter is best-effort by design: it never blocks or delays a span's work, retries network failures and 408/429/5xx with a bounded backoff, stops (with one stderr diagnostic) on 401/403, and reports drops through `getDroppedSpanCount()`. `createOtlpTelemetryContextFromEnv(env)` builds the same context from standard `OTEL_*` variables and returns `undefined` when telemetry is not configured, so hosts can fall back to the no-op context. Which spans a harness emits is orthogonal to the transport and tracked with the telemetry design above.
