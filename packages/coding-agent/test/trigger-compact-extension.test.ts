@@ -14,6 +14,7 @@ function createContext(tokens: number | null, compact = vi.fn()): ExtensionConte
 		scopedModels: [],
 		isIdle: () => true,
 		isProjectTrusted: () => true,
+		getBashToolOptions: () => ({}),
 		signal: undefined,
 		abort: vi.fn(),
 		hasPendingMessages: () => false,

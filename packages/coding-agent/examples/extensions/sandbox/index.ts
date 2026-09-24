@@ -214,9 +214,10 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool({
 		...localBash,
 		label: "bash (sandboxed)",
-		async execute(id, params, signal, onUpdate, _ctx) {
+		async execute(id, params, signal, onUpdate, ctx) {
 			if (!sandboxEnabled || !sandboxInitialized) {
-				return localBash.execute(id, params, signal, onUpdate);
+				const bash = createBashTool(ctx.cwd, ctx.getBashToolOptions());
+				return bash.execute(id, params, signal, onUpdate);
 			}
 
 			const sandboxedBash = createBashTool(localCwd, {

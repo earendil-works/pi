@@ -2246,6 +2246,7 @@ export class InteractiveMode {
 			thinkingLevel: this.session.thinkingLevel,
 			isIdle: () => this.session.isIdle,
 			isProjectTrusted: () => this.settingsManager.isProjectTrusted(),
+			getBashToolOptions: () => extensionRunner.createContext().getBashToolOptions(),
 			signal: this.session.agent.signal,
 			abort: () => {
 				this.restoreQueuedMessagesToEditor({ abort: true });

@@ -169,7 +169,7 @@ export default function (pi: ExtensionAPI) {
 
 	pi.registerTool({
 		...localBash,
-		async execute(id, params, signal, onUpdate, _ctx) {
+		async execute(id, params, signal, onUpdate, ctx) {
 			const ssh = getSsh();
 			if (ssh) {
 				const tool = createBashTool(localCwd, {
@@ -177,7 +177,8 @@ export default function (pi: ExtensionAPI) {
 				});
 				return tool.execute(id, params, signal, onUpdate);
 			}
-			return localBash.execute(id, params, signal, onUpdate);
+			const bash = createBashTool(ctx.cwd, ctx.getBashToolOptions());
+			return bash.execute(id, params, signal, onUpdate);
 		},
 	});
 

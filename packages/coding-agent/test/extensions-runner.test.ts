@@ -101,6 +101,7 @@ describe("ExtensionRunner", () => {
 		getModel: () => undefined,
 		isIdle: () => true,
 		isProjectTrusted: () => true,
+		getBashToolOptions: () => ({}),
 		getSignal: () => undefined,
 		abort: () => {},
 		hasPendingMessages: () => false,

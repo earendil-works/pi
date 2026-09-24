@@ -14,6 +14,7 @@ import {
 	untrackDetachedChildPid,
 } from "../../utils/shell.ts";
 import type { ExtensionContext, ToolDefinition } from "../extensions/types.ts";
+import { bashToolOptionsContext } from "./bash-tool-options-context.ts";
 import { OutputAccumulator } from "./output-accumulator.ts";
 import { BASH_UPDATE_THROTTLE_MS, createShellRenderers } from "./renderers/bash.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
@@ -172,7 +173,9 @@ export function createLocalShellOperations(shellName: string, resolveShellConfig
  * standard local shell behavior while wrapping or rewriting commands.
  */
 export function createLocalBashOperations(options?: { shellPath?: string }): BashOperations {
-	return createLocalShellOperations("bash", () => getShellConfig(options?.shellPath));
+	return createLocalShellOperations("bash", () =>
+		getShellConfig(options?.shellPath ?? bashToolOptionsContext.getStore()?.().shellPath),
+	);
 }
 
 export interface BashSpawnContext {
@@ -214,9 +217,9 @@ function resolveSpawnContext(
 export interface BashToolOptions {
 	/** Custom operations for command execution. Default: local shell */
 	operations?: BashOperations;
-	/** Command prefix prepended to every command (for example shell setup commands) */
+	/** Command prefix prepended to every command. Defaults to the executing session's settings for local bash. */
 	commandPrefix?: string;
-	/** Optional explicit shell path from settings */
+	/** Explicit shell path. Defaults to the executing session's settings, then platform discovery. */
 	shellPath?: string;
 	/** Expose current Pi session metadata as PI_* environment variables. Default: true */
 	exposeSessionEnvironment?: boolean;
@@ -246,7 +249,6 @@ export function createShellToolDefinition(
 	options?: BashToolOptions,
 ): ToolDefinition<typeof bashSchema, BashToolDetails | undefined, BashRenderState> {
 	const ops = options?.operations ?? createLocalBashOperations({ shellPath: options?.shellPath });
-	const commandPrefix = options?.commandPrefix;
 	const exposeSessionEnvironment = options?.exposeSessionEnvironment ?? true;
 	const spawnHook = options?.spawnHook;
 	return {
@@ -265,6 +267,9 @@ export function createShellToolDefinition(
 			onUpdate?,
 			ctx?: ExtensionContext,
 		) {
+			const commandPrefix =
+				options?.commandPrefix ??
+				(options?.operations ? undefined : bashToolOptionsContext.getStore()?.().commandPrefix);
 			const resolvedCommand = commandPrefix ? `${commandPrefix}\n${command}` : command;
 			const spawnContext = resolveSpawnContext(
 				resolvedCommand,

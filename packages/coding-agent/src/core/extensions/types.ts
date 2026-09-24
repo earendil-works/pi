@@ -81,7 +81,7 @@ import type { Settings } from "../settings-manager.ts";
 import type { SlashCommandInfo } from "../slash-commands.ts";
 import type { SourceInfo } from "../source-info.ts";
 import type { BuildSystemPromptOptions, NormalizedBuildSystemPromptOptions } from "../system-prompt.ts";
-import type { BashOperations } from "../tools/bash.ts";
+import type { BashOperations, BashToolOptions } from "../tools/bash.ts";
 import type { EditToolDetails } from "../tools/edit.ts";
 import type {
 	BashToolDetails,
@@ -348,6 +348,16 @@ export interface ExtensionContext {
 	isIdle(): boolean;
 	/** Whether project-local trust is active for this context. */
 	isProjectTrusted(): boolean;
+	/**
+	 * Snapshot of this session's effective local bash settings, including project trust and SDK overrides.
+	 * Pass to createBashTool(ctx.cwd, ctx.getBashToolOptions()) when wrapping local bash execution.
+	 * Read at execution time to pick up settings changes. Remote backends may need different options.
+	 *
+	 * Tools created without explicit shell options inherit these settings when they execute as
+	 * registered tools. Executed outside the tool-call path (event handlers, commands, standalone
+	 * execution), they fall back to platform shell discovery.
+	 */
+	getBashToolOptions(): Pick<BashToolOptions, "shellPath" | "commandPrefix">;
 	/** The current abort signal, or undefined when the agent is not streaming. */
 	signal: AbortSignal | undefined;
 	/** Abort the current agent operation */
@@ -2171,6 +2181,7 @@ export interface ExtensionContextActions {
 	getScopedModels: () => readonly ScopedModel[];
 	isIdle: () => boolean;
 	isProjectTrusted: () => boolean;
+	getBashToolOptions: ExtensionContext["getBashToolOptions"];
 	getSignal: () => AbortSignal | undefined;
 	abort: () => void;
 	hasPendingMessages: () => boolean;

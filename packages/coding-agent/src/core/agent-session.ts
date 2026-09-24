@@ -3424,6 +3424,10 @@ export class AgentSession {
 				getScopedModels: () => this._scopedModels,
 				isIdle: () => this.isIdle,
 				isProjectTrusted: () => this.settingsManager.isProjectTrusted(),
+				getBashToolOptions: () => ({
+					shellPath: this.settingsManager.getShellPath(),
+					commandPrefix: this.settingsManager.getShellCommandPrefix(),
+				}),
 				getSignal: () => this.agent.signal,
 				abort: () => {
 					if (this._extensionAbortHandler) {
@@ -3595,8 +3599,6 @@ export class AgentSession {
 		includeAllExtensionTools?: boolean;
 	}): void {
 		const autoResizeImages = this.settingsManager.getImageAutoResize();
-		const shellCommandPrefix = this.settingsManager.getShellCommandPrefix();
-		const shellPath = this.settingsManager.getShellPath();
 		const baseToolDefinitions = this._baseToolsOverride
 			? Object.fromEntries(
 					Object.entries(this._baseToolsOverride).map(([name, tool]) => [
@@ -3606,7 +3608,8 @@ export class AgentSession {
 				)
 			: createAllToolDefinitions(this._cwd, {
 					read: { autoResizeImages },
-					bash: { commandPrefix: shellCommandPrefix, shellPath },
+					// Bash options resolve per execution via ctx.getBashToolOptions() so settings
+					// changes apply without a session reload.
 				});
 
 		this._baseToolDefinitions = new Map(
