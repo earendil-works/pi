@@ -14,6 +14,7 @@ import { InMemoryModelsStore } from "../src/models-store.ts";
 import {
 	builtinModels,
 	getAllBuiltinModels,
+	getBuiltinClassifierModels,
 	getBuiltinImageModel,
 	getBuiltinImageModels,
 	getBuiltinModels,
@@ -381,7 +382,7 @@ describe("Models with image models", () => {
 		expect(all.some((model) => isModelType(model, "image"))).toBe(true);
 		expect(compat).toEqual(chat);
 		expect(chat.every((model) => model.contextWindow > 0)).toBe(true);
-		expect(chat.length + images.length).toBe(all.length);
+		expect(chat.length + images.length + getBuiltinClassifierModels("openrouter").length).toBe(all.length);
 		expect(getBuiltinImageModel("openrouter", "black-forest-labs/flux.2-pro").type).toBe("image");
 	});
 

@@ -98,7 +98,10 @@ describe("ModelRuntime image generation", () => {
 		expect(runtime.getModelOfType("image", "openrouter", images[0].id)).toBe(images[0]);
 		expect(runtime.getModel("openrouter", "google/gemini-3-pro-image")?.api).toBe("openai-completions");
 		expect(runtime.getModelOfType("image", "openrouter", "google/gemini-3-pro-image")?.type).toBe("image");
-		expect(runtime.getAllModels("openrouter").length).toBe(runtime.getModels("openrouter").length + images.length);
+		const classifiers = runtime.getModelsOfType("classifier", "openrouter");
+		expect(runtime.getAllModels("openrouter").length).toBe(
+			runtime.getModels("openrouter").length + images.length + classifiers.length,
+		);
 	});
 
 	it("extension model lists replace undeclared models of every operation", async () => {
