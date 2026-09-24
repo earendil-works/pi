@@ -32,7 +32,7 @@ export const ANTHROPIC_API_KEY_ENV = "ANTHROPIC_API_KEY";
 
 let cachedVertexAdcCredentialsExists: boolean | null = null;
 
-function hasVertexAdcCredentials(env?: ProviderEnv): boolean {
+export function hasVertexAdcCredentials(env?: ProviderEnv): boolean {
 	const explicitCredentialsPath = env?.GOOGLE_APPLICATION_CREDENTIALS;
 	if (explicitCredentialsPath) {
 		return _existsSync ? _existsSync(explicitCredentialsPath) : false;

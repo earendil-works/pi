@@ -164,6 +164,8 @@ The account ID can also be stored in the credential's `env` object.
 
 ### Google Vertex AI
 
+Google Vertex AI provides access to both Google Gemini models and Anthropic Claude models (such as Claude Opus, Claude Sonnet, and Claude Haiku) available via Vertex AI Model Garden.
+
 Use a Google Cloud API key:
 
 ```bash

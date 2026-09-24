@@ -1572,13 +1572,37 @@ function processGoogleModels(data: ModelsDevCatalog): Model<Api>[] {
 		}
 	}
 
-	// The google-vertex models.dev catalog also includes Claude, OpenAI, and other
-	// MaaS models that do not use the @google/genai Gemini streaming path.
+	// The google-vertex models.dev catalog includes Gemini models (using the @google/genai
+	// streaming path) and Anthropic Claude models (using the Vertex Anthropic streaming path).
 	const vertexModels = data["google-vertex"]?.models;
 	if (vertexModels) {
 		for (const [modelId, model] of Object.entries(vertexModels)) {
-			if (model.tool_call !== true || !modelId.startsWith("gemini-")) continue;
+			if (model.tool_call !== true) continue;
 			if (modelId === "gemini-3.1-flash-lite-preview") continue;
+
+			if (modelId.startsWith("claude-")) {
+				models.push({
+					id: modelId,
+					name: model.name || modelId,
+					api: "anthropic-messages",
+					provider: "google-vertex",
+					baseUrl: VERTEX_BASE_URL,
+					reasoning: model.reasoning === true,
+					input: model.modalities?.input?.includes("image") ? ["text", "image"] : ["text"],
+					cost: {
+						input: model.cost?.input || 0,
+						output: model.cost?.output || 0,
+						cacheRead: model.cost?.cache_read || 0,
+						cacheWrite: model.cost?.cache_write || 0,
+					},
+					contextWindow: model.limit?.context || 4096,
+					maxTokens: model.limit?.output || 4096,
+				});
+				recordModelsDevReasoningOptions("google-vertex", modelId, model);
+				continue;
+			}
+
+			if (!modelId.startsWith("gemini-")) continue;
 			const source =
 				modelId === "gemini-flash-latest"
 					? (vertexModels["gemini-3.5-flash"] ?? model)

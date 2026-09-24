@@ -1,4 +1,5 @@
 import { googleVertexApi } from "../api/google-vertex.lazy.ts";
+import { vertexAnthropicApi } from "../api/vertex-anthropic.lazy.ts";
 import type { ApiKeyAuth } from "../auth/types.ts";
 import { createProvider, type Provider } from "../models.ts";
 import { GOOGLE_VERTEX_MODELS } from "./google-vertex.models.ts";
@@ -89,12 +90,15 @@ const vertexAuth: ApiKeyAuth = {
 	},
 };
 
-export function googleVertexProvider(): Provider<"google-vertex"> {
-	return createProvider({
+export function googleVertexProvider(): Provider<"google-vertex" | "anthropic-messages"> {
+	return createProvider<"google-vertex" | "anthropic-messages">({
 		id: "google-vertex",
 		name: "Google Vertex AI",
 		auth: { apiKey: vertexAuth },
 		models: Object.values(GOOGLE_VERTEX_MODELS),
-		api: googleVertexApi(),
+		api: {
+			"google-vertex": googleVertexApi(),
+			"anthropic-messages": vertexAnthropicApi(),
+		},
 	});
 }

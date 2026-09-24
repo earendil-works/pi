@@ -70,7 +70,7 @@ Unified LLM API with provider collections, automatic auth resolution, token and 
 - **NVIDIA NIM**
 - **Anthropic**
 - **Google**
-- **Vertex AI** (Gemini via Vertex AI)
+- **Vertex AI** (Gemini and Anthropic Claude via Vertex AI)
 - **Mistral**
 - **Groq**
 - **Cerebras**
@@ -1731,7 +1731,7 @@ await models.logout('anthropic');
 
 ### Vertex AI
 
-Vertex AI models support either a Google Cloud API key or Application Default Credentials (ADC). Its provider-owned API-key login flow can configure either method:
+Vertex AI models support either a Google Cloud API key or Application Default Credentials (ADC), giving access to both Google Gemini models and Anthropic Claude models (e.g. Claude Opus, Sonnet, Haiku) deployed in Vertex AI Model Garden. Its provider-owned API-key login flow can configure either method:
 
 - **API key**: Set `GOOGLE_CLOUD_API_KEY` or pass `apiKey` in the call options.
 - **Local development (ADC)**: Run `gcloud auth application-default login`
