@@ -20,7 +20,7 @@ Pi resolves Bash in this order:
 
 1. `shellPath` from `~/.pi/agent/settings.json`
 2. Git Bash under `Program Files` or `Program Files (x86)`
-3. `bash.exe` on `PATH`, including Cygwin, MSYS2, or legacy WSL Bash
+3. `bash.exe` on `PATH` (Cygwin, MSYS2, etc.). The WSL launchers under `System32` and `Sysnative` are skipped because they run commands inside a Linux distribution; configure `shellPath` to use WSL Bash explicitly.
 
 Start Pi and enter this command to verify the shell:
 
@@ -28,7 +28,7 @@ Start Pi and enter this command to verify the shell:
 !printf 'Bash is working\n'
 ```
 
-If Pi cannot find Bash, it reports the locations it checked. Install Git for Windows, put another Bash executable on `PATH`, or configure `shellPath`.
+If Pi cannot find Bash, it reports the locations it checked, including any WSL launchers it skipped. Install Git for Windows, put another Bash executable on `PATH`, or configure `shellPath`.
 
 ## Let the model use PowerShell
 

@@ -2,20 +2,23 @@
 
 ## [Unreleased]
 
-## [1.0.4] - 2026-10-05
+### Breaking Changes
 
-### New Features
-
-- **Tool patterns and `--no-mcp`**: `--tools` and `--exclude-tools` accept `*` patterns, for example `--tools read,codemode,'mcp__radius__*'` keeps only one MCP server's tools. `--tools` now keeps MCP tools unless an entry starts with `mcp__`, and `--no-mcp` turns off MCP for one run. See [Tools](docs/cli.md#tools) and [MCP tools](docs/cli.md#mcp-tools).
-- **Codemode persists images**: `tools.read()` on an image file now gives back an image block that `image()` can show. See [Call tools](docs/codemode.md#call-tools).
+- `ExtensionContext` and `ExtensionContextActions` now require `getBashToolOptions()`, which exposes the session's effective `shellPath` and `shellCommandPrefix`. `ExtensionRunner.bindCore()` callers must provide it ([#9361](https://github.com/earendil-works/pi/issues/9361)).
 
 ### Added
 
 - Added `*` patterns to `--tools` and `--exclude-tools`, for example `--tools read,codemode,'mcp__radius__*'`
 - Added `--no-mcp` to disable the built-in MCP support for one run
 
+### Changed
+
+- Bash tools created without explicit shell options inherit the session's `shellPath` and `shellCommandPrefix`, including tools registered by extensions that replace the built-in bash tool. Settings are read at execution time, so changes apply without reloading the session ([#9361](https://github.com/earendil-works/pi/issues/9361)).
+- Windows Bash discovery no longer resolves WSL launchers (`System32`/`Sysnative` `bash.exe`) from `PATH`. Set `shellPath` in `settings.json` to use WSL Bash; when discovery fails, the error lists skipped WSL launchers ([#9361](https://github.com/earendil-works/pi/issues/9361)).
+
 ### Fixed
 
+- Fixed extension-replaced bash tools silently ignoring `shellPath` and `shellCommandPrefix` from settings; shell start failures now report the selected shell path ([#9361](https://github.com/earendil-works/pi/issues/9361)).
 - Fixed syntax highlighting losing colors after the first line of multiline strings and comments in fenced code blocks ([#10143](https://github.com/earendil-works/pi/issues/10143))
 - Fixed codemode scripts not receiving images from `read`: `tools.read()` now resolves to an image block for image files, which `image()` shows ([#10251](https://github.com/earendil-works/pi/issues/10251))
 - Fixed MCP OAuth sign-in failing with `invalid_redirect_uri` on servers with OpenID Connect client registration, such as `mcp.modem.dev`: pi now registers as a native client ([#10493](https://github.com/earendil-works/pi/issues/10493))
@@ -24,6 +27,13 @@
 - Fixed system prompt rules and the skills hint naming tools hidden by `prepareLoadout`. Hidden tools are left out of the rules, the skills hint names no tool when the file reader is hidden, and `codemode` shows each tool's prompt guidelines with its declaration; `ToolLoadout` gains `getPromptGuidelines()` ([#10343](https://github.com/earendil-works/pi/issues/10343))
 - Fixed Bedrock requests that fail with `The pending stream has been canceled` after a stalled HTTP/2 connection not being retried automatically ([#10379](https://github.com/earendil-works/pi/issues/10379))
 - Fixed codemode scripts that patch built-ins (for example `Array.prototype.toJSON = ...`) crashing pi and leaving the tool call unsettled. Built-ins are now frozen before the script runs, so such patches have no effect ([#10444](https://github.com/earendil-works/pi/issues/10444))
+
+## [1.0.4] - 2026-10-05
+
+### New Features
+
+- **Tool patterns and `--no-mcp`**: `--tools` and `--exclude-tools` accept `*` patterns, for example `--tools read,codemode,'mcp__radius__*'` keeps only one MCP server's tools. `--tools` now keeps MCP tools unless an entry starts with `mcp__`, and `--no-mcp` turns off MCP for one run. See [Tools](docs/cli.md#tools) and [MCP tools](docs/cli.md#mcp-tools).
+- **Codemode persists images**: `tools.read()` on an image file now gives back an image block that `image()` can show. See [Call tools](docs/codemode.md#call-tools).
 
 ## [1.0.3] - 2026-10-05
 
