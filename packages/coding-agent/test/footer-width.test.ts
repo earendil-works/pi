@@ -25,6 +25,7 @@ function createSession(options: {
 	compactionUsage?: AssistantUsage;
 	toolUsage?: AssistantUsage;
 	usingSubscription?: boolean;
+	routedModel?: { model: { id: string }; thinkingLevel?: string };
 }): AgentSession {
 	const usage = options.usage;
 	const entries: Array<Record<string, unknown>> = [];
@@ -79,6 +80,7 @@ function createSession(options: {
 			getCwd: () => "/tmp/project",
 		},
 		getContextUsage: () => ({ contextWindow: 200_000, percent: 12.3 }),
+		routedModel: options.routedModel,
 		modelRuntime: {
 			isUsingSubscription: () => options.usingSubscription ?? false,
 		},
@@ -150,6 +152,21 @@ describe("FooterComponent width handling", () => {
 		for (const line of lines) {
 			expect(visibleWidth(line)).toBeLessThanOrEqual(width);
 		}
+	});
+
+	it("shows the physical model a virtual model routed to", () => {
+		const session = createSession({
+			sessionName: "",
+			modelId: "auto",
+			reasoning: true,
+			thinkingLevel: "high",
+			routedModel: { model: { id: "gpt-5.6-luna" }, thinkingLevel: "medium" },
+		});
+		const footer = new FooterComponent(session, createFooterData(1));
+
+		const statsLine = stripAnsi(footer.render(120)[1]);
+
+		expect(statsLine).toContain("auto \u2022 high \u2192 gpt-5.6-luna \u2022 medium");
 	});
 
 	it("includes summary and tool result usage in the total cost", () => {

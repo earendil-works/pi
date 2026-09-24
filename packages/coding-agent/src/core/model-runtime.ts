@@ -20,6 +20,7 @@ import {
 	type Credential,
 	type CredentialInfo,
 	type CredentialStore,
+	clampThinkingLevel,
 	createModels,
 	type DeferredCancelOptions,
 	type DeferredFetchOptions,
@@ -29,6 +30,7 @@ import {
 	type ImagesContext,
 	type ImagesOptions,
 	lazyStream,
+	type Message,
 	type Model,
 	type Models,
 	type ModelsApiStreamOptions,
@@ -42,6 +44,7 @@ import {
 	type ModelsRequestTransforms,
 	type ModelsSimpleStreamOptions,
 	type ModelsStore,
+	type ModelThinkingLevel,
 	type ModelType,
 	type ModelTypeMap,
 	type MutableModels,
@@ -77,6 +80,7 @@ import {
 } from "./provider-composer.ts";
 import { withRemoteCatalog } from "./remote-catalog-provider.ts";
 import { RuntimeCredentials } from "./runtime-credentials.ts";
+import { isVirtualProvider, type ModelRoute, type ModelRouteReason, withThinkingLevel } from "./virtual-models.ts";
 
 interface ModelRuntimeSnapshot {
 	all: readonly Model<Api>[];
@@ -688,10 +692,30 @@ export class ModelRuntime implements Models {
 
 	streamSimple(model: Model<Api>, context: Context, options?: ModelsSimpleStreamOptions): AssistantMessageEventStream {
 		const transcript = normalizeContext(context);
+		if (this.isVirtualModel(model)) {
+			// Requests outside the agent loop are routed here. Callers sized them before routing, so
+			// cap the output budget to the routed model.
+			return lazyStream(model, async () => {
+				const route = await this.resolveModel(model, transcript.messages, {
+					reason: "direct",
+					thinkingLevel: options?.reasoning ?? "off",
+					signal: options?.signal,
+				});
+				const limit = route.model.maxTokens;
+				const maxTokens =
+					options?.maxTokens !== undefined && limit > 0 ? Math.min(options.maxTokens, limit) : options?.maxTokens;
+				const reasoning = route.thinkingLevel === "off" ? undefined : route.thinkingLevel;
+				return this.streamSimple(route.model, context, { ...options, maxTokens, reasoning });
+			});
+		}
+		const thinkingLevel = clampThinkingLevel(model, options?.reasoning ?? "off");
 		return lazyStream(model, async () => {
 			assertChatModel(model);
 			const prepared = await this.prepareRequest(model, options);
-			return prepared.provider.streamSimple(prepared.model, transcript, prepared.options as SimpleStreamOptions);
+			return withThinkingLevel(
+				prepared.provider.streamSimple(prepared.model, transcript, prepared.options as SimpleStreamOptions),
+				thinkingLevel,
+			);
 		});
 	}
 
@@ -882,5 +906,57 @@ export class ModelRuntime implements Models {
 		this.recomposeProvider(providerId);
 		this.updateModelSnapshot();
 		void this.refresh({ allowNetwork: false });
+	}
+
+	/** True when the model belongs to a provider built by `createVirtualProvider()`. */
+	isVirtualModel(model: Model<Api>): boolean {
+		return isVirtualProvider(this.models.getProvider(model.provider));
+	}
+
+	/**
+	 * Resolve the model and thinking level for one request. Physical models pass through unchanged.
+	 * A virtual model asks its router, which must return a physical catalog model whose provider has
+	 * credentials; the thinking level is clamped to that model. Throws when routing fails.
+	 */
+	async resolveModel(
+		model: Model<Api>,
+		messages: readonly Message[],
+		options: { reason: ModelRouteReason; thinkingLevel: ModelThinkingLevel; signal?: AbortSignal },
+	): Promise<ModelRoute> {
+		const provider = this.models.getProvider(model.provider);
+		if (!isVirtualProvider(provider)) return { model, thinkingLevel: options.thinkingLevel };
+		let latest: AssistantMessage | undefined;
+		for (let i = messages.length - 1; i >= 0 && !latest; i--) {
+			const message = messages[i];
+			if (message.role === "assistant" && message.stopReason !== "error" && message.stopReason !== "aborted") {
+				latest = message;
+			}
+		}
+		const previousModel = latest && this.getPhysicalModel(latest.provider, latest.model);
+		const route = await provider.route({
+			model,
+			thinkingLevel: options.thinkingLevel,
+			reason: options.reason,
+			previous: previousModel && { model: previousModel, thinkingLevel: latest?.thinkingLevel },
+			messages,
+			signal: options.signal,
+		});
+		const target = this.getPhysicalModel(route.model.provider, route.model.id);
+		const name = `${route.model.provider}/${route.model.id}`;
+		if (!target) {
+			throw new Error(
+				`Virtual model ${model.provider}/${model.id} routed to ${name}, which is not a physical model.`,
+			);
+		}
+		if (!this.hasConfiguredAuth(target.provider)) {
+			throw new Error(`Virtual model ${model.provider}/${model.id} routed to ${name}, which has no credentials.`);
+		}
+		return { model: target, thinkingLevel: clampThinkingLevel(target, route.thinkingLevel) };
+	}
+
+	/** A catalog chat model that is not virtual. */
+	getPhysicalModel(providerId: string, modelId: string): Model<Api> | undefined {
+		const model = this.models.getModel(providerId, modelId);
+		return model && !this.isVirtualModel(model) ? model : undefined;
 	}
 }

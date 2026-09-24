@@ -106,6 +106,10 @@
               "path": "custom-provider.md"
             },
             {
+              "title": "Route with Virtual Models",
+              "path": "virtual-models.md"
+            },
+            {
               "title": "Build Terminal UI Components",
               "path": "tui.md"
             },
