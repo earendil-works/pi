@@ -2243,3 +2243,74 @@ describe("nested tool calls", () => {
 		expect(seen).toEqual([undefined, { secret: 2 }]);
 	});
 });
+
+describe("nestedOnly tools", () => {
+	it("hides nested-only tools from the model but lets other tools call them", async () => {
+		const schema = Type.Object({});
+		const hidden: AgentTool<typeof schema> = {
+			name: "hidden",
+			label: "Hidden",
+			description: "Only reachable from other tools",
+			parameters: schema,
+			nestedOnly: true,
+			async execute() {
+				return { content: [{ type: "text", text: "secret" }], details: {} };
+			},
+		};
+		let nestedText = "";
+		const runner: AgentTool<typeof schema> = {
+			name: "runner",
+			label: "Runner",
+			description: "Runs other tools",
+			parameters: schema,
+			async execute(_id, _params, _signal, _onUpdate, context) {
+				const outcome = await context?.executeTool("hidden", {});
+				nestedText = outcome?.result.content[0]?.type === "text" ? outcome.result.content[0].text : "";
+				return { content: [], details: {} };
+			},
+		};
+
+		const declaredTools: string[][] = [];
+		let callIndex = 0;
+		const streamFn = (_model: Model<any>, context: { messages: Message[] }) => {
+			for (const message of context.messages) {
+				if (message.role === "system" && message.toolsAdded) {
+					declaredTools.push(message.toolsAdded.map((tool) => tool.name));
+				}
+			}
+			const stream = new MockAssistantStream();
+			queueMicrotask(() => {
+				const content: AssistantMessage["content"] =
+					callIndex === 0
+						? [
+								{ type: "toolCall", id: "direct", name: "hidden", arguments: {} },
+								{ type: "toolCall", id: "nested", name: "runner", arguments: {} },
+							]
+						: [{ type: "text", text: "done" }];
+				const stopReason = callIndex === 0 ? "toolUse" : "stop";
+				stream.push({ type: "done", reason: stopReason, message: createAssistantMessage(content, stopReason) });
+				callIndex++;
+			});
+			return stream;
+		};
+
+		const events: AgentEvent[] = [];
+		const stream = agentLoop(
+			[createUserMessage("go")],
+			{ messages: [], tools: [hidden, runner] },
+			{ model: createModel(), convertToLlm: identityConverter },
+			undefined,
+			streamFn,
+		);
+		for await (const event of stream) events.push(event);
+
+		expect(declaredTools[0]).toEqual(["runner"]);
+		expect(nestedText).toBe("secret");
+		const directEnd = events.find(
+			(event): event is Extract<AgentEvent, { type: "tool_execution_end" }> =>
+				event.type === "tool_execution_end" && event.toolCallId === "direct",
+		);
+		expect(directEnd?.isError).toBe(true);
+		expect(directEnd?.result.content[0].text).toBe("Tool hidden not found");
+	});
+});

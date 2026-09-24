@@ -326,10 +326,11 @@ async function runLoop(
  * Declare tool loadout changes to the model.
  *
  * `context.tools` is what the runtime can execute; the transcript's system messages declare
- * what the model may call. Before each request the difference becomes `toolsAdded` and
- * `toolsRemoved` on a system message. When a pending system message exists, its tool fields
- * are treated as intent and replaced with the delta between the committed transcript and
- * the executable set, so replay always yields exactly `context.tools`. Otherwise a new
+ * what the model may call, which is every tool except those marked `nestedOnly`. Before each
+ * request the difference becomes `toolsAdded` and `toolsRemoved` on a system message. When a
+ * pending system message exists, its tool fields are treated as intent and replaced with the
+ * delta between the committed transcript and the declared set, so replay always yields exactly
+ * the declared tools. Otherwise a new
  * system message is inserted before the first non-system pending message.
  */
 function declareToolChanges(context: AgentContext, pendingMessages: AgentMessage[]): AgentMessage[] {
@@ -348,7 +349,7 @@ function declareToolChanges(context: AgentContext, pendingMessages: AgentMessage
 		: pendingMessages;
 	const changes = getToolStateChanges(
 		getCurrentTools([...context.messages, ...baseline]),
-		(context.tools ?? []).map(toToolDeclaration),
+		(context.tools ?? []).filter((tool) => !tool.nestedOnly).map(toToolDeclaration),
 	);
 	const unchanged = changes.toolsAdded.length === 0 && changes.toolsRemoved.length === 0;
 
@@ -724,7 +725,7 @@ async function prepareToolCall(
 	parentToolCall?: AgentToolCall,
 ): Promise<PreparedToolCall | ImmediateToolCallOutcome> {
 	const tool = currentContext.tools?.find((t) => t.name === toolCall.name);
-	if (!tool) {
+	if (!tool || (tool.nestedOnly && !parentToolCall)) {
 		return {
 			kind: "immediate",
 			result: createErrorToolResult(`Tool ${toolCall.name} not found`),

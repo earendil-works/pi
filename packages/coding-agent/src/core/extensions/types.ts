@@ -498,6 +498,12 @@ export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = un
 	outputSchema?: TSchema;
 
 	/**
+	 * Only callable from other tools (for example codemode scripts) through `ctx.executeTool()`.
+	 * The tool is not declared to the model and is left out of the system prompt.
+	 */
+	nestedOnly?: boolean;
+
+	/**
 	 * Per-tool execution mode override.
 	 * - "sequential": this tool must execute one at a time with other tool calls.
 	 * - "parallel": this tool can execute concurrently with other tool calls.

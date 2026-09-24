@@ -1395,10 +1395,12 @@ export class AgentSession {
 
 	private _rebuildSystemPrompt(toolNames: string[]): void {
 		const validToolNames = toolNames.filter((name) => this._toolRegistry.has(name));
+		// Nested-only tools are not declared to the model, so the prompt does not describe them.
+		const isNestedOnly = (name: string) => this._toolRegistry.get(name)?.nestedOnly === true;
 		const toolSnippets: Record<string, string> = {};
 		for (const name of this._toolRegistry.keys()) {
 			const snippet = this._toolPromptSnippets.get(name);
-			if (snippet) toolSnippets[name] = snippet;
+			if (snippet && !isNestedOnly(name)) toolSnippets[name] = snippet;
 		}
 
 		const loaderSystemPrompt = this._resourceLoader.getSystemPrompt();
@@ -1415,7 +1417,7 @@ export class AgentSession {
 			appendSystemPrompt,
 			selectedTools: validToolNames,
 			toolSnippets,
-			toolGuidelines: Object.fromEntries(this._toolPromptGuidelines),
+			toolGuidelines: Object.fromEntries([...this._toolPromptGuidelines].filter(([name]) => !isNestedOnly(name))),
 		});
 	}
 

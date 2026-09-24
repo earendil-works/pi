@@ -1,6 +1,6 @@
 {
 	"name": "@earendil-works/pi-mcp",
-	"version": "0.85.1",
+	"version": "0.87.1",
 	"description": "Standalone Model Context Protocol client for pi and other applications",
 	"type": "module",
 	"main": "./dist/index.js",

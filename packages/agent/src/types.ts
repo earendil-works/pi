@@ -518,6 +518,12 @@ export interface AgentTool<TParameters extends TSchema = TSchema, TDetails = any
 	/** Recovery policy for an effect whose durable intent exists but whose outcome is unknown. */
 	replay?: "never" | "safe";
 	/**
+	 * Only callable by other tools through {@link AgentToolContext.executeTool}. The tool is not
+	 * declared to the model, and a model-issued call to it fails as an unknown tool. Use it for
+	 * tools that should only be reached through an orchestrating tool such as codemode.
+	 */
+	nestedOnly?: boolean;
+	/**
 	 * Per-tool execution mode override.
 	 * - "sequential": this tool must execute one at a time with other tool calls.
 	 * - "parallel": this tool can execute concurrently with other tool calls.
@@ -531,7 +537,7 @@ export interface AgentTool<TParameters extends TSchema = TSchema, TDetails = any
 export interface AgentContext {
 	/** Transcript visible to the model. */
 	messages: AgentMessage[];
-	/** Tools available for execution in this run. */
+	/** Tools available for execution in this run. Tools marked `nestedOnly` are not declared to the model. */
 	tools?: AgentTool<any>[];
 }
 

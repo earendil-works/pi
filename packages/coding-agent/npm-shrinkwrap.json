@@ -13,6 +13,7 @@
 				"@earendil-works/pi-agent-core": "^0.87.1",
 				"@earendil-works/pi-ai": "^0.87.1",
 				"@earendil-works/pi-codemode": "^0.87.1",
+				"@earendil-works/pi-mcp": "^0.87.1",
 				"@earendil-works/pi-tui": "^0.87.1",
 				"@silvia-odwyer/photon-node": "0.3.4",
 				"chalk": "6.0.0",
@@ -486,6 +487,17 @@
 			"version": "0.87.1",
 			"resolved": "https://registry.npmjs.org/@earendil-works/pi-codemode/-/pi-codemode-0.87.1.tgz",
 			"license": "MIT",
+			"engines": {
+				"node": ">=22.19.0"
+			}
+		},
+		"node_modules/@earendil-works/pi-mcp": {
+			"version": "0.87.1",
+			"resolved": "https://registry.npmjs.org/@earendil-works/pi-mcp/-/pi-mcp-0.87.1.tgz",
+			"license": "MIT",
+			"dependencies": {
+				"cross-spawn": "7.0.6"
+			},
 			"engines": {
 				"node": ">=22.19.0"
 			}
