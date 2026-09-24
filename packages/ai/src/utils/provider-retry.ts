@@ -39,6 +39,9 @@ function validateServerRetryDelayMs(
 	maxRetryDelayMs: number | undefined,
 	providerErrorMessage: string,
 ): number {
+	if (!Number.isFinite(delayMs)) {
+		throw new Error(`Server requested an invalid retry delay. ${providerErrorMessage}`);
+	}
 	const maxDelayMs = maxRetryDelayMs ?? DEFAULT_MAX_RETRY_DELAY_MS;
 	if (maxDelayMs > 0 && delayMs > maxDelayMs) {
 		throw new Error(
@@ -58,8 +61,13 @@ function getRetryDelayMs(error: ProviderError, retryIndex: number, maxRetryDelay
 	const retryAfter = error.headers?.get("retry-after");
 	if (retryAfter) {
 		const seconds = Number.parseFloat(retryAfter);
-		const delayMs = Number.isNaN(seconds) ? Date.parse(retryAfter) - Date.now() : seconds * 1000;
-		return validateServerRetryDelayMs(delayMs, maxRetryDelayMs, error.message);
+		if (!Number.isNaN(seconds)) {
+			return validateServerRetryDelayMs(seconds * 1000, maxRetryDelayMs, error.message);
+		}
+		const retryAtMs = Date.parse(retryAfter);
+		if (!Number.isNaN(retryAtMs)) {
+			return validateServerRetryDelayMs(retryAtMs - Date.now(), maxRetryDelayMs, error.message);
+		}
 	}
 
 	const exponentialDelay = Math.min(0.5 * 2 ** retryIndex, 8) * 1000;
@@ -88,7 +96,7 @@ function abortableSleep(ms: number, signal?: AbortSignal): Promise<void> {
 				signal?.removeEventListener("abort", onAbort);
 				resolve();
 			},
-			Math.max(0, ms),
+			Number.isFinite(ms) ? Math.max(0, ms) : 0,
 		);
 		signal?.addEventListener("abort", onAbort, { once: true });
 	});
