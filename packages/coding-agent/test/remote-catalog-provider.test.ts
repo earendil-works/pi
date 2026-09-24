@@ -9,7 +9,7 @@ import {
 } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { VERSION } from "../src/config.ts";
-import { withRemoteCatalog } from "../src/core/remote-catalog-provider.ts";
+import { REMOTE_CATALOG_MODEL_TYPES, withRemoteCatalog } from "../src/core/remote-catalog-provider.ts";
 
 const neverAbortedSignal = new AbortController().signal;
 
@@ -92,6 +92,56 @@ describe("remote catalog provider", () => {
 		expect(fetchSpy.mock.calls[0]?.[1]?.headers).toMatchObject({
 			"User-Agent": expect.stringContaining(`pi/${VERSION}`),
 		});
+		const requested = new URL(String(fetchSpy.mock.calls[0]?.[0]));
+		expect(requested.pathname).toBe("/api/models/providers/test-provider");
+		expect(requested.searchParams.get("types")).toBe(REMOTE_CATALOG_MODEL_TYPES.join(","));
+	});
+
+	it("overlays image and classifier models and drops unknown model types", async () => {
+		vi.spyOn(globalThis, "fetch").mockImplementation(
+			async () =>
+				new Response(
+					JSON.stringify({
+						chat: { ...model("chat"), type: "chat" },
+						flux: {
+							type: "image",
+							id: "flux",
+							name: "FLUX",
+							api: "openrouter-images",
+							provider: "test-provider",
+							baseUrl: "https://example.test/v1",
+							input: ["text"],
+							output: ["image"],
+							cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+						},
+						jev: {
+							type: "classifier",
+							id: "jev",
+							name: "Jev",
+							api: "typesafe-system-one",
+							provider: "test-provider",
+							baseUrl: "https://example.test/v1",
+							input: ["text"],
+							cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+							contextWindow: 64000,
+						},
+						clip: { ...model("clip"), type: "video" },
+					}),
+					{ status: 200, headers: { "content-type": "application/json" } },
+				),
+		);
+		const provider = testProvider();
+		const store = new InMemoryModelsStore();
+		await refreshProvider(provider, store);
+
+		const models = createModels({ modelsStore: store });
+		models.setProvider(provider);
+		expect(models.getAllModels("test-provider").map((entry) => entry.id)).toEqual(["static", "chat", "flux", "jev"]);
+		expect(models.getModelOfType("image", "test-provider", "flux")?.type).toBe("image");
+		expect(models.getModelOfType("classifier", "test-provider", "jev")?.type).toBe("classifier");
+		expect(models.getModel("test-provider", "flux")).toBeUndefined();
+		const stored = await store.read(provider.id);
+		expect(stored?.models.map((entry) => entry.id)).toEqual(["chat", "flux", "jev"]);
 	});
 
 	it("prefers the newer of the generated and remote catalogs", async () => {

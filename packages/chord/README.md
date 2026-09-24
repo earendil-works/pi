@@ -32,12 +32,12 @@ The design has a few connected pieces:
   stable facade while a provider disconnects or is replaced.
 
 - **Replicated state** exposes authoritative state to local and remote
-  connected consumers. Producers publish atomic copy-on-write transactions with
+  connected consumers. Producers publish atomic overlay transactions with
   `change(context, callback)`; consumers receive complete immutable values. Draft
-  proxies exist only during the callback and are revoked afterward. Chord compares
-  the previous and next immutable revisions to produce one decoded operation batch,
-  while each remote client/state stream owns independent path-codec state. Replicas
-  become unready on disconnect or replacement until they are rehydrated.
+  proxies exist only during the callback and become unusable afterward. Preparation
+  materializes a structurally shared immutable candidate and one exact decoded
+  operation batch, while each remote client/state stream owns independent path-codec
+  state. Replicas become unready on disconnect or replacement until rehydrated.
 
 - **Delta tracking** records and coalesces operations over tracked plain JSON.
   It preserves common string and array operations, supports durable base
@@ -89,26 +89,41 @@ outer protocol.
 
 ## Tracking JSON deltas
 
-Import the standalone delta primitive from `@earendil-works/chord/delta`:
+Import the standalone transactional tracker from `@earendil-works/chord/delta`:
 
 ```ts
-import { apply, track } from "@earendil-works/chord/delta";
+import { applyImmutable, track } from "@earendil-works/chord/delta";
 
-const changes = track({ output: "", count: 0 });
-changes.flush(); // opening base batch
-changes.state.output += "done\n";
-changes.state.count += 1;
+const tracker = track({ output: "", count: 0 });
+const change = tracker.beginChange();
+change.state.output += "done\n";
+change.state.count += 1;
+const prepared = change.prepare();
 
-const ops = changes.flush();
-const replica = apply({ output: "", count: 0 }, ops);
+tracker.adopt(prepared);
+const replica = applyImmutable(prepared.base, prepared.ops);
 ```
 
-The first flush is always a complete base batch. Later flushes contain path-based
-changes. `applyImmutable()` applies those batches while preserving prior replica
-revisions. Replicated state instead uses transaction-scoped copy-on-write drafts:
+`tracker.value` is always the latest adopted immutable revision. Preparation does
+not change authority; adoption validates the preparation and swaps the root pointer.
+Assigned containers are copied by value and unchanged subtrees may be shared between
+revisions.
+
+The tracker uses trusted immutable ownership rather than defensive copying or
+freezing. `track(initial)`, `prepareReplace(value)`, `replicatedState(initial)`, and
+`replace(context, value)` take ownership of alias-free strict-JSON roots without
+walking them. Callers must not mutate transferred or published data. Values placed
+through drafts are already copied, so that walk also rejects non-strict JSON before
+the draft changes. Published values are not frozen. In-process loopback consumers
+may share their containers with the provider; mutating a consumed value violates
+the contract and can corrupt authority. Clone or serialize at any mutable trust
+boundary.
+
+Replicated state provides the same model through a callback:
 
 ```ts
-const status = env.replicatedState({ output: "", count: 0 });
+const initial = { output: "", count: 0 };
+const status = env.replicatedState(initial); // transfers ownership of initial
 status.change(context, (draft) => {
 	draft.output += "done\n";
 	draft.count += 1;
@@ -116,16 +131,14 @@ status.change(context, (draft) => {
 ```
 
 A successful `change()` publishes exactly one atomic revision. If its callback
-throws, the original value and sequence remain unchanged. Draft handles are revoked
-when the callback returns and assigned containers are copied by value. Unchanged
-subtrees are shared between immutable revisions. Chord derives string append and
-front-truncate operations, array splices and permutations, sets, and deletes from
-the two revisions; a large delta falls back to a complete snapshot. Remote
-connection plumbing encodes each batch independently for every client/state
-pairing. `replace(context, value)` publishes a detached complete value directly.
+throws, the original value and sequence remain unchanged. Draft handles become
+unusable when the callback returns. Chord emits string append and front-truncate
+operations, array splices and permutations, sets, and deletes; large edit sets may
+fold into a complete replacement. Remote connection plumbing encodes each batch
+independently for every client/state pairing.
 
-The standalone [Delta guide](src/delta/README.md) documents the lower-level mutable
-tracker, which remains available separately from replicated state.
+The standalone [Delta guide](src/delta/README.md) defines the complete ownership,
+lifecycle, operation, and replica contracts.
 
 ## Bundling and loading facets
 

@@ -99,8 +99,7 @@ describe("remote services", () => {
 			delivered = value;
 			deliveries.push(delivery.kind);
 		});
-		expect(state.value).toEqual(initial);
-		expect(state.value).not.toBe(initial);
+		expect(state.value).toBe(initial);
 		expect(delivered).toBe(state.value);
 		const hydrated = delivered;
 

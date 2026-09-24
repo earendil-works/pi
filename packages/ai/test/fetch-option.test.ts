@@ -9,7 +9,7 @@ import { streamSimple as streamOpenAICompletions } from "../src/api/openai-compl
 import { streamSimple as streamOpenAIResponses } from "../src/api/openai-responses.ts";
 import { generateImages } from "../src/api/openrouter-images.ts";
 import { streamSimple as streamPiMessages } from "../src/api/pi-messages.ts";
-import type { Api, FetchFunction, ImagesModel, Model } from "../src/types.ts";
+import type { Api, FetchFunction, ImageModel, Model } from "../src/types.ts";
 import { normalizeContext } from "../src/utils/transcript.ts";
 
 const context = normalizeContext({
@@ -160,8 +160,9 @@ describe("fetch stream option", () => {
 
 	it("uses fetch for image generation", async () => {
 		const { custom, fallback } = mockFetches();
-		const model: ImagesModel<"openrouter-images"> = {
+		const model: ImageModel<"openrouter-images"> = {
 			...createModel("openrouter-images"),
+			type: "image",
 			provider: "openrouter",
 			output: ["image"],
 		};

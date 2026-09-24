@@ -1,4 +1,4 @@
-import type { TUI } from "@earendil-works/pi-tui";
+import type { RgbColor, TUI } from "@earendil-works/pi-tui";
 import type { SettingsManager } from "../../../core/settings-manager.ts";
 import {
 	detectTerminalBackgroundFromEnv,
@@ -7,6 +7,7 @@ import {
 	initTheme,
 	parseAutoThemeSetting,
 	resolveThemeSetting,
+	setTerminalDefaultColors,
 	setTheme,
 	setThemeInstance,
 	type TerminalTheme,
@@ -15,6 +16,12 @@ import {
 
 type ThemeResult = { success: boolean; error?: string };
 
+const TERMINAL_QUERY_TIMEOUT_MS = 100;
+
+function sameRgb(a: RgbColor | undefined, b: RgbColor | undefined): boolean {
+	return a === b || (a !== undefined && b !== undefined && a.r === b.r && a.g === b.g && a.b === b.b);
+}
+
 export class InteractiveThemeController {
 	private readonly ui: TUI;
 	private readonly getSettingsManager: () => SettingsManager;
@@ -22,6 +29,8 @@ export class InteractiveThemeController {
 	private readonly onChanged: () => void;
 	private currentThemeSetting: string | undefined;
 	private terminalTheme: TerminalTheme = detectTerminalBackgroundFromEnv().theme;
+	// Last reported default colors; a query that times out keeps them instead of erasing them.
+	private terminalColors: { foreground?: RgbColor; background?: RgbColor } = {};
 	private activeThemeName: string | undefined;
 	private autoSyncEnabled = false;
 	private terminalColorSchemeUnsubscribe: (() => void) | undefined;
@@ -58,8 +67,14 @@ export class InteractiveThemeController {
 		const settingsManager = this.getSettingsManager();
 		const themeSetting = this.currentThemeSetting ?? settingsManager.getThemeSetting();
 		const autoTheme = parseAutoThemeSetting(themeSetting);
+		// Theme detection reuses the background reply of the default color query.
+		const background = this.queryTerminalDefaultColors();
+		const detector = {
+			queryTerminalBackgroundColor: () => background,
+			queryTerminalColorScheme: (options: { timeoutMs: number }) => this.ui.queryTerminalColorScheme(options),
+		};
 		if (autoTheme) {
-			this.terminalTheme = await detectTerminalThemeForAuto({ ui: this.ui, timeoutMs: 100 });
+			this.terminalTheme = await detectTerminalThemeForAuto({ ui: detector, timeoutMs: TERMINAL_QUERY_TIMEOUT_MS });
 			this.setAutoSync(true);
 			this.applyThemeName(this.terminalTheme === "light" ? autoTheme.lightTheme : autoTheme.darkTheme, true);
 			return;
@@ -71,7 +86,7 @@ export class InteractiveThemeController {
 			return;
 		}
 
-		const detection = await detectTerminalBackgroundTheme({ ui: this.ui, timeoutMs: 100 });
+		const detection = await detectTerminalBackgroundTheme({ ui: detector, timeoutMs: TERMINAL_QUERY_TIMEOUT_MS });
 		this.terminalTheme = detection.theme;
 		if (!this.applyThemeName(detection.theme).success) return;
 		if (detection.confidence === "high") {
@@ -139,6 +154,30 @@ export class InteractiveThemeController {
 		return result;
 	}
 
+	/**
+	 * Query the terminal's default colors, which themes use for tokens set to "". Startup does not
+	 * wait for the replies; the UI re-renders when they arrive. Returns the background reply.
+	 */
+	private queryTerminalDefaultColors(): Promise<RgbColor | undefined> {
+		const timeoutMs = TERMINAL_QUERY_TIMEOUT_MS;
+		const foreground = this.ui.queryTerminalForegroundColor({ timeoutMs });
+		const background = this.ui.queryTerminalBackgroundColor({ timeoutMs });
+		void Promise.all([foreground, background]).then(([foregroundColor, backgroundColor]) => {
+			const previous = this.terminalColors;
+			const next = {
+				foreground: foregroundColor ?? previous.foreground,
+				background: backgroundColor ?? previous.background,
+			};
+			// Re-rendering rebuilds every component, so skip it when nothing changed (including timeouts).
+			if (sameRgb(next.foreground, previous.foreground) && sameRgb(next.background, previous.background)) return;
+			this.terminalColors = next;
+			setTerminalDefaultColors(next);
+			this.ui.invalidate();
+			this.ui.requestRender();
+		});
+		return background;
+	}
+
 	private notifyChanged(): void {
 		this.ui.invalidate();
 		this.onChanged();
@@ -159,6 +198,8 @@ export class InteractiveThemeController {
 	private applyTerminalTheme(terminalTheme: TerminalTheme): void {
 		if (!this.autoSyncEnabled) return;
 		this.terminalTheme = terminalTheme;
+		// Switching light/dark changes the terminal's default colors too.
+		void this.queryTerminalDefaultColors();
 		const autoTheme = parseAutoThemeSetting(this.currentThemeSetting ?? this.getSettingsManager().getThemeSetting());
 		if (!autoTheme) {
 			this.setAutoSync(false);

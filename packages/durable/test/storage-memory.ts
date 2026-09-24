@@ -6,19 +6,20 @@ import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
+import {
+	STORAGE_MEMORY_SCALES,
+	STORAGE_READ_BENCHMARKS,
+	type StorageBenchmarkScale,
+	seedStorageBenchmark,
+	storageBenchmarkPrimaryRecordCount,
+} from "@earendil-works/pi-durable/testing";
 import { openNodeJsonlStorage } from "../src/storage/jsonl/node.ts";
 import { MemoryStorage } from "../src/storage/memory.ts";
 import { openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";
 import type { Storage } from "../src/types.ts";
-import {
-	STORAGE_BENCHMARK_BACKENDS,
-	STORAGE_MEMORY_SCALES,
-	STORAGE_READ_BENCHMARKS,
-	type StorageBenchmarkBackend,
-	type StorageBenchmarkScale,
-	seedStorageBenchmark,
-	storageBenchmarkPrimaryRecordCount,
-} from "./storage-benchmark.ts";
+
+const STORAGE_BENCHMARK_BACKENDS = ["memory", "sqlite", "jsonl"] as const;
+type StorageBenchmarkBackend = (typeof STORAGE_BENCHMARK_BACKENDS)[number];
 
 type MemorySnapshot = {
 	readonly heapUsed: number;

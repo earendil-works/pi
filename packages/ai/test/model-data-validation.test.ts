@@ -32,20 +32,21 @@ function createFixture(): {
 	mkdirSync(dataDir, { recursive: true });
 	writeFileSync(
 		join(packageRoot, "src", "models.generated.ts"),
-		'import { TEST_PROVIDER_MODELS } from "./providers/test-provider.models.ts";\n',
+		'import { TEST_PROVIDER_CLASSIFIER_MODELS, TEST_PROVIDER_IMAGE_MODELS, TEST_PROVIDER_MODELS } from "./providers/test-provider.models.ts";\n',
 	);
 	writeFileSync(
 		join(providersDir, "test-provider.models.ts"),
-		'import values from "./data/test-provider.json" with { type: "json" };\nimport { flattenModelCatalog, type ModelCatalog } from "../model-catalog.ts";\n\nexport const TEST_PROVIDER_MODELS: ModelCatalog<typeof values, "test-provider"> =\n\tflattenModelCatalog("test-provider", values);\n',
+		'import values from "./data/test-provider.json" with { type: "json" };\n',
 	);
 
 	const structure: ModelDataStructure = {
 		"test-provider": {
-			"model-a": "openai-completions",
+			"chat:model-a": "openai-completions",
 		},
 	};
 	const values: Record<string, unknown> = {
-		"model-a": {
+		"chat:model-a": {
+			type: "chat",
 			id: "model-a",
 			name: "Model A",
 			api: "openai-completions",
@@ -108,10 +109,88 @@ describe("generated model data validation", () => {
 		["api", "anthropic-messages", "has api"],
 	] as const)("rejects a wrong model %s", (field, value, expectedMessage) => {
 		const fixture = createFixture();
-		const model = fixture.values["model-a"] as Record<string, unknown>;
+		const model = fixture.values["chat:model-a"] as Record<string, unknown>;
 		model[field] = value;
 		writeFixtureData(fixture.dataDir, fixture.structure, fixture.values);
 		expect(() => validateModelDataDirectory(fixture.structure, fixture.dataDir)).toThrow(expectedMessage);
+	});
+
+	it("rejects a model without a known type", () => {
+		const fixture = createFixture();
+		const model = fixture.values["chat:model-a"] as Record<string, unknown>;
+		delete model.type;
+		writeFixtureData(fixture.dataDir, fixture.structure, fixture.values);
+		expect(() => validateModelDataDirectory(fixture.structure, fixture.dataDir)).toThrow(
+			'expected "chat", "image", or "classifier"',
+		);
+	});
+
+	it("validates image models with output modalities and without chat limits", () => {
+		const fixture = createFixture();
+		const structure: ModelDataStructure = { "test-provider": { "image:image-a": "test-images" } };
+		const image: Record<string, unknown> = {
+			type: "image",
+			id: "image-a",
+			name: "Image A",
+			api: "test-images",
+			provider: "test-provider",
+			baseUrl: "https://example.test/v1",
+			input: ["text"],
+			output: ["image", "text"],
+			cost: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0 },
+		};
+		const validate = () => {
+			writeFixtureData(
+				fixture.dataDir,
+				structure,
+				{ "image:image-a": image },
+				MODEL_DATA_SCHEMA_VERSION,
+				"test-images",
+			);
+			validateModelDataDirectory(structure, fixture.dataDir);
+		};
+		expect(validate).not.toThrow();
+
+		delete image.output;
+		expect(validate).toThrow("invalid output modalities");
+		image.output = ["text"];
+		expect(validate).toThrow("invalid output modalities");
+	});
+
+	it("rejects output modalities on chat models", () => {
+		const fixture = createFixture();
+		const model = fixture.values["chat:model-a"] as Record<string, unknown>;
+		model.output = ["text"];
+		writeFixtureData(fixture.dataDir, fixture.structure, fixture.values);
+		expect(() => validateModelDataDirectory(fixture.structure, fixture.dataDir)).toThrow(
+			"unsupported output modalities",
+		);
+	});
+
+	it("validates classifier models without chat output limits", () => {
+		const fixture = createFixture();
+		const structure: ModelDataStructure = {
+			"test-provider": { "classifier:classifier-a": "test-classifier" },
+		};
+		const classifier = {
+			type: "classifier",
+			id: "classifier-a",
+			name: "Classifier A",
+			api: "test-classifier",
+			provider: "test-provider",
+			baseUrl: "https://example.test/v1",
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 1000,
+		};
+		writeFixtureData(
+			fixture.dataDir,
+			structure,
+			{ "classifier:classifier-a": classifier },
+			MODEL_DATA_SCHEMA_VERSION,
+			"test-classifier",
+		);
+		expect(() => validateModelDataDirectory(structure, fixture.dataDir)).not.toThrow();
 	});
 
 	it("rejects a model in the wrong API group", () => {
@@ -170,7 +249,7 @@ describe("generated model data validation", () => {
 		const { packageRoot } = createFixture();
 		writeFileSync(
 			join(packageRoot, "src", "models.generated.ts"),
-			'import { TEST_PROVIDER_MODELS } from "./providers/test-provider.models.ts";\nimport { MISSING_MODELS } from "./providers/missing.models.ts";\n',
+			'import { TEST_PROVIDER_CLASSIFIER_MODELS, TEST_PROVIDER_IMAGE_MODELS, TEST_PROVIDER_MODELS } from "./providers/test-provider.models.ts";\nimport { MISSING_CLASSIFIER_MODELS, MISSING_IMAGE_MODELS, MISSING_MODELS } from "./providers/missing.models.ts";\n',
 		);
 		expect(() => readModelDataStructure(packageRoot)).toThrow("aggregator and provider shards do not match");
 	});

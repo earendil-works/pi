@@ -3,18 +3,20 @@ import { copyFile, cp, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
+import {
+	STORAGE_READ_BENCHMARKS,
+	STORAGE_WRITE_BENCHMARKS,
+	seedStorageBenchmark,
+	seedStorageWriteBenchmark,
+} from "@earendil-works/pi-durable/testing";
 import { afterAll, bench, describe } from "vitest";
 import { openNodeJsonlStorage } from "../src/storage/jsonl/node.ts";
 import { MemoryStorage } from "../src/storage/memory.ts";
 import { openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";
 import type { Storage } from "../src/types.ts";
-import {
-	STORAGE_BENCHMARK_BACKENDS,
-	STORAGE_READ_BENCHMARKS,
-	STORAGE_WRITE_BENCHMARKS,
-	type StorageBenchmarkBackend,
-	seedStorageBenchmark,
-} from "./storage-benchmark.ts";
+
+const STORAGE_BENCHMARK_BACKENDS = ["memory", "sqlite", "jsonl"] as const;
+type StorageBenchmarkBackend = (typeof STORAGE_BENCHMARK_BACKENDS)[number];
 
 const READ_OPTIONS = { time: 300, iterations: 10, warmupTime: 75, warmupIterations: 3 } as const;
 const WRITE_OPTIONS = { time: 0, iterations: 20, warmupTime: 0, warmupIterations: 5 } as const;
@@ -80,21 +82,7 @@ for (const scenario of STORAGE_READ_BENCHMARKS) {
 
 async function createWriteFixture(backend: StorageBenchmarkBackend): Promise<Fixture> {
 	const fixture = await createFixture(backend);
-	await fixture.storage.commit([{ type: "conversation", value: { id: 1 } }], BACKGROUND_CONTEXT);
-	await fixture.storage.commit(
-		await Promise.all(
-			Array.from({ length: 100 }, async (_, index) => ({
-				type: "entry" as const,
-				value: {
-					id: await fixture.storage.mintId(),
-					conversationId: 1,
-					kind: "benchmark.baseline",
-					data: { index },
-				},
-			})),
-		),
-		BACKGROUND_CONTEXT,
-	);
+	await seedStorageWriteBenchmark(fixture.storage);
 	return fixture;
 }
 

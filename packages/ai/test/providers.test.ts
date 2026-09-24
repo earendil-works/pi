@@ -2,11 +2,17 @@ import { describe, expect, it } from "vitest";
 import { lazyApi } from "../src/api/lazy.ts";
 import { envApiKeyAuth } from "../src/auth/helpers.ts";
 import type { AuthContext, AuthEvent } from "../src/auth/types.ts";
+import { getModel as getCompatModel, getModels as getCompatModels } from "../src/compat.ts";
 import { createModels, createProvider, getSupportedThinkingLevels } from "../src/models.ts";
 import { InMemoryModelsStore } from "../src/models-store.ts";
 import {
 	builtinModels,
 	builtinProviders,
+	getAllBuiltinModels,
+	getBuiltinClassifierModel,
+	getBuiltinClassifierModels,
+	getBuiltinImageModel,
+	getBuiltinImageModels,
 	getBuiltinModel,
 	getBuiltinModels,
 	getBuiltinProviders,
@@ -60,7 +66,7 @@ describe("builtin providers", () => {
 		expect(all.length).toBeGreaterThan(500);
 
 		for (const provider of providers) {
-			const list = models.getModels(provider.id);
+			const list = models.getAllModels(provider.id);
 			expect(list.length).toBeGreaterThan(0);
 			expect(list.every((m) => m.provider === provider.id)).toBe(true);
 		}
@@ -68,6 +74,21 @@ describe("builtin providers", () => {
 			api: "pi-messages",
 			provider: "radius",
 		});
+	});
+
+	it("returns empty results for unknown provider ids", () => {
+		const unknownProvider = "not-a-provider" as never;
+		const unknownModel = "x" as never;
+
+		expect(getBuiltinModel(unknownProvider, unknownModel)).toBeUndefined();
+		expect(getBuiltinImageModel(unknownProvider, unknownModel)).toBeUndefined();
+		expect(getBuiltinClassifierModel(unknownProvider, unknownModel)).toBeUndefined();
+		expect(getBuiltinModels(unknownProvider)).toEqual([]);
+		expect(getBuiltinImageModels(unknownProvider)).toEqual([]);
+		expect(getBuiltinClassifierModels(unknownProvider)).toEqual([]);
+		expect(getAllBuiltinModels(unknownProvider)).toEqual([]);
+		expect(getCompatModel(unknownProvider, unknownModel)).toBeUndefined();
+		expect(getCompatModels(unknownProvider)).toEqual([]);
 	});
 
 	it("stores native constrained-sampling capabilities in model metadata", () => {

@@ -720,11 +720,16 @@ describe("default model selection", () => {
 		expect(defaultModelPerProvider["ant-ling"]).toBe("Ring-2.6-1T");
 	});
 
-	test("built-in defaults exist in generated provider catalogs", () => {
+	test("built-in chat providers have defaults in their generated catalogs", () => {
 		for (const provider of getBuiltinProviders()) {
+			const chatModels = getBuiltinModels(provider);
 			const defaultId = defaultModelPerProvider[provider];
+			if (chatModels.length === 0) {
+				expect(defaultId, `${provider} has no chat models and should have no chat default`).toBeUndefined();
+				continue;
+			}
 			expect(
-				getBuiltinModels(provider).some((model) => model.id === defaultId),
+				chatModels.some((model) => model.id === defaultId),
 				`${provider} default ${defaultId} should exist in its generated catalog`,
 			).toBe(true);
 		}

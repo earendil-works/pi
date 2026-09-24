@@ -92,6 +92,10 @@ export function replicatedState<T>(
 	source: ReplicatedStateSource<T>,
 	options?: ReplicatedStateSourceOptions,
 ): AttachedReplicatedState<T>;
+/**
+ * Create authoritative state by taking immutable ownership of an alias-free strict-JSON root.
+ * The caller must not mutate `initial` after this call.
+ */
 export function replicatedState<T extends object>(initial: T): MutableReplicatedState<T>;
 export function replicatedState(
 	initialOrSource: object | ReplicatedStateSource<unknown>,

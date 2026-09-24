@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import { isDeepStrictEqual } from "node:util";
 import type { Context } from "@earendil-works/chord";
+import { apply } from "@earendil-works/chord/delta";
 import type { AssistantMessage, AssistantMessageEvent } from "@earendil-works/pi-ai";
 import { onTestFinished, test } from "vitest";
 import type { ConversationHandle } from "../../../src/harness/pico3/harness.ts";
@@ -175,23 +177,20 @@ test("a self-head commit rewrites one transcript entry with matching entry/head 
 	onTestFinished(() => env.close());
 	await env.root.write({ kind: "before" }, ctx);
 	const watch = await specWatch(env.root);
+	const before = structuredClone(watch.view);
 	let envelope: Envelope | undefined;
 	watch.start((next) => {
 		envelope = next;
 	});
 	await env.root.reset("fresh", ctx);
 	assert.ok(envelope);
-	const entryOps = envelope.ops.filter((op) => op[0] !== "r" && op[1][0] === "entries");
-	assert.deepEqual(
-		entryOps
-			.map((op) => {
-				if (op[0] !== "s") throw new Error(`Unexpected transcript operation ${op[0]}`);
-				assert.equal(op[1][1], 0);
-				return op[1][2];
-			})
-			.sort(),
-		["head", "id", "kind", "model"],
-	);
+	const after = apply(before, envelope.ops);
+	const previousEntry = watch.view.entries[0] as unknown as Record<string, unknown>;
+	const nextEntry = after.entries[0] as unknown as Record<string, unknown>;
+	const changedKeys = [...new Set([...Object.keys(previousEntry), ...Object.keys(nextEntry)])]
+		.filter((key) => !isDeepStrictEqual(previousEntry[key], nextEntry[key]))
+		.sort();
+	assert.deepEqual(changedKeys, ["head", "id", "kind", "model"]);
 	assert.deepEqual(
 		envelope.events.map((event) => event.type),
 		["head.moved", "entry.added"],

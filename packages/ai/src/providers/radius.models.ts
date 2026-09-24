@@ -2,7 +2,13 @@
 // Do not edit manually - run 'npm run generate-models' to update
 
 import values from "./data/radius.json" with { type: "json" };
-import { flattenModelCatalog, type ModelCatalog } from "../model-catalog.ts";
+import { flattenChatModelCatalog, flattenClassifierModelCatalog, flattenImageModelCatalog, type ChatModelCatalog, type ClassifierModelCatalog, type ImageModelCatalog } from "../model-catalog.ts";
 
-export const RADIUS_MODELS: ModelCatalog<typeof values, "radius"> =
-	flattenModelCatalog("radius", values);
+export const RADIUS_MODELS: ChatModelCatalog<typeof values, "radius"> =
+	flattenChatModelCatalog("radius", values);
+
+export const RADIUS_IMAGE_MODELS: ImageModelCatalog<typeof values, "radius"> =
+	flattenImageModelCatalog("radius", values);
+
+export const RADIUS_CLASSIFIER_MODELS: ClassifierModelCatalog<typeof values, "radius"> =
+	flattenClassifierModelCatalog("radius", values);

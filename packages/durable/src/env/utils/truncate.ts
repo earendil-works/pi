@@ -190,10 +190,8 @@ export function truncateHead(content: string, options: TruncationOptions = {}): 
 		outputBytesCount += lineBytes;
 	}
 
-	// If we exited due to line limit
-	if (outputLinesArr.length >= maxLines && outputBytesCount <= maxBytes) {
-		truncatedBy = "lines";
-	}
+	// Without a byte break, only omitted lines prove the line limit was reached; otherwise a trailing newline exceeded bytes.
+	if (truncatedBy !== "bytes") truncatedBy = outputLinesArr.length < totalLines ? "lines" : "bytes";
 
 	const outputContent = outputLinesArr.join("\n");
 	const finalOutputBytes = utf8ByteLength(outputContent);
@@ -271,10 +269,8 @@ export function truncateTail(content: string, options: TruncationOptions = {}): 
 		outputBytesCount += lineBytes;
 	}
 
-	// If we exited due to line limit
-	if (outputLinesArr.length >= maxLines && outputBytesCount <= maxBytes) {
-		truncatedBy = "lines";
-	}
+	// Without a byte break, only omitted lines prove the line limit was reached; otherwise a trailing newline exceeded bytes.
+	if (truncatedBy !== "bytes") truncatedBy = outputLinesArr.length < totalLines ? "lines" : "bytes";
 
 	const outputContent = outputLinesArr.join("\n");
 	const finalOutputBytes = utf8ByteLength(outputContent);

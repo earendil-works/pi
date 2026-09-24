@@ -14,6 +14,11 @@
 			"pattern": "^[^/]+$",
 			"description": "Theme name. Must not contain '/' because it is reserved for automatic light/dark theme settings."
 		},
+		"appearance": {
+			"type": "string",
+			"enum": ["dark", "light"],
+			"description": "Background the theme is designed for. Detected from the theme colors when omitted."
+		},
 		"vars": {
 			"type": "object",
 			"description": "Reusable color variables",
@@ -21,7 +26,7 @@
 				"oneOf": [
 					{
 						"type": "string",
-						"description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+						"description": "Hex color (#RGB or #RRGGBB), OKLCH color, variable reference, or empty string for terminal default"
 					},
 					{
 						"type": "integer",
@@ -342,7 +347,7 @@
 			"oneOf": [
 				{
 					"type": "string",
-					"description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+					"description": "Hex color (#RGB or #RRGGBB), OKLCH color, variable reference, or empty string for terminal default"
 				},
 				{
 					"type": "integer",

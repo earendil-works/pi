@@ -37,6 +37,7 @@ export class OutputCapture {
 	#newlines = 0;
 	#endsWithNewline = true;
 	#currentLineBytes = 0;
+	#lastTerminatedLineBytes = 0;
 	#spillPath: string | undefined;
 	#disposed = false;
 	readonly #publisher: AdaptivePublisher<ShellOutputView, ShellOutputUpdate>;
@@ -98,17 +99,26 @@ export class OutputCapture {
 		const totalLines = this.#totalLines();
 		const truncated = this.truncated;
 		const { content, ...truncation } = retained;
+		// The working buffer preserves the retained edge, so its truncation decision reports the first limit reached.
+		const truncatedBy = !truncated
+			? null
+			: retained.truncated
+				? retained.truncatedBy
+				: totalLines > this.#maxLines
+					? "lines"
+					: "bytes";
+		const lastLineBytes = this.#endsWithNewline ? this.#lastTerminatedLineBytes : this.#currentLineBytes;
 		return {
 			text: sanitizeShellOutput(content),
 			truncation: {
 				...truncation,
 				truncated,
-				truncatedBy: truncated ? (totalLines > this.#maxLines ? "lines" : "bytes") : null,
+				truncatedBy,
 				totalBytes: this.#totalBytes,
 				totalLines,
 			},
 			...(this.#spillPath === undefined ? {} : { spillPath: this.#spillPath }),
-			...(retained.lastLinePartial ? { lastLineBytes: this.#currentLineBytes } : {}),
+			...(retained.lastLinePartial ? { lastLineBytes } : {}),
 		};
 	}
 
@@ -129,12 +139,22 @@ export class OutputCapture {
 		this.#newlines += countNewlines(text);
 		this.#endsWithNewline = text.endsWith("\n");
 		const lastNewline = text.lastIndexOf("\n");
-		this.#currentLineBytes =
-			lastNewline === -1 ? this.#currentLineBytes + textBytes : utf8ByteLength(text.slice(lastNewline + 1));
+		if (lastNewline === -1) {
+			this.#currentLineBytes += textBytes;
+		} else {
+			const previousNewline = lastNewline === 0 ? -1 : text.lastIndexOf("\n", lastNewline - 1);
+			this.#lastTerminatedLineBytes =
+				previousNewline === -1
+					? this.#currentLineBytes + utf8ByteLength(text.slice(0, lastNewline))
+					: utf8ByteLength(text.slice(previousNewline + 1, lastNewline));
+			this.#currentLineBytes = utf8ByteLength(text.slice(lastNewline + 1));
+		}
 		this.#buffer += text;
 		this.#bufferBytes += textBytes;
 
-		const guard = this.#maxBytes * 2;
+		// Trimming stops at a UTF-8 character boundary. The four-byte allowance keeps at least twice the byte limit,
+		// preserving the evidence for limits and partial lines even when an edge character is multi-byte.
+		const guard = this.#maxBytes * 2 + 4;
 		if (this.#bufferBytes > guard * 2) {
 			this.#buffer =
 				this.#retain === "tail"

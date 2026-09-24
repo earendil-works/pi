@@ -2,7 +2,13 @@
 // Do not edit manually - run 'npm run generate-models' to update
 
 import values from "./data/azure-openai-responses.json" with { type: "json" };
-import { flattenModelCatalog, type ModelCatalog } from "../model-catalog.ts";
+import { flattenChatModelCatalog, flattenClassifierModelCatalog, flattenImageModelCatalog, type ChatModelCatalog, type ClassifierModelCatalog, type ImageModelCatalog } from "../model-catalog.ts";
 
-export const AZURE_OPENAI_RESPONSES_MODELS: ModelCatalog<typeof values, "azure-openai-responses"> =
-	flattenModelCatalog("azure-openai-responses", values);
+export const AZURE_OPENAI_RESPONSES_MODELS: ChatModelCatalog<typeof values, "azure-openai-responses"> =
+	flattenChatModelCatalog("azure-openai-responses", values);
+
+export const AZURE_OPENAI_RESPONSES_IMAGE_MODELS: ImageModelCatalog<typeof values, "azure-openai-responses"> =
+	flattenImageModelCatalog("azure-openai-responses", values);
+
+export const AZURE_OPENAI_RESPONSES_CLASSIFIER_MODELS: ClassifierModelCatalog<typeof values, "azure-openai-responses"> =
+	flattenClassifierModelCatalog("azure-openai-responses", values);

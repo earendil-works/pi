@@ -1,6 +1,6 @@
 import { BACKGROUND_CONTEXT } from "../context/index.ts";
 import { applyImmutable, isBase, type Op, type Prepared, type Tracker, track } from "../delta/index.ts";
-import { JsonRevisionStore } from "../delta/value.ts";
+import { JsonRevisionValidator } from "../delta/revision-validator.ts";
 import type {
 	AttachedReplicatedState,
 	Context,
@@ -265,7 +265,7 @@ export function attachReplicatedStateSource<T>(
 export class ReplicatedStateReplica<T extends JsonValue = JsonValue> implements ReplicatedState<T> {
 	readonly #listeners = new Set<StateListener<T>>();
 	readonly #reportError: (error: Error) => void;
-	readonly #store = new JsonRevisionStore();
+	readonly #validator = new JsonRevisionValidator();
 	#value: T | undefined;
 	#sequence: number | undefined;
 
@@ -292,7 +292,7 @@ export class ReplicatedStateReplica<T extends JsonValue = JsonValue> implements 
 		let next: T;
 		try {
 			if (!isBase(ops)) throw new Error("Replicated state snapshot is not a base operation batch");
-			next = this.#store.adopt(applyImmutable<T>(undefined, ops));
+			next = this.#validator.validate(applyImmutable<T>(undefined, ops));
 		} catch (error) {
 			this.clear();
 			throw error;
@@ -312,7 +312,7 @@ export class ReplicatedStateReplica<T extends JsonValue = JsonValue> implements 
 		}
 		let next: T;
 		try {
-			next = this.#store.adopt(applyImmutable(this.#value, ops));
+			next = this.#validator.validate(applyImmutable(this.#value, ops));
 		} catch (error) {
 			this.clear();
 			throw error;

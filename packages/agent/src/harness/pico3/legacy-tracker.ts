@@ -19,7 +19,6 @@ export interface Tracker<T extends object> {
 class LegacyTracker<T extends object> implements Tracker<T> {
 	private readonly tracker: ChordTracker<T>;
 	private change: Change<T> | undefined;
-	private wrappers = new WeakMap<object, object>();
 	private forceBase = true;
 
 	constructor(initial: T) {
@@ -28,7 +27,7 @@ class LegacyTracker<T extends object> implements Tracker<T> {
 
 	get state(): T {
 		this.change ??= this.tracker.beginChange();
-		return this.wrap(this.change.state as T);
+		return this.change.state as T;
 	}
 
 	get target(): T {
@@ -44,7 +43,6 @@ class LegacyTracker<T extends object> implements Tracker<T> {
 		if (this.change !== undefined) {
 			const change = this.change;
 			this.change = undefined;
-			this.wrappers = new WeakMap();
 			prepared = change.prepare();
 			// Pico3 adopts before storage. A storage failure faults the owning Session.
 			this.tracker.adopt(prepared);
@@ -58,30 +56,6 @@ class LegacyTracker<T extends object> implements Tracker<T> {
 
 	rebase(): void {
 		this.forceBase = true;
-	}
-
-	private wrap<V extends object>(draft: V): V {
-		const cached = this.wrappers.get(draft);
-		if (cached !== undefined) return cached as V;
-		const tracker = this;
-		const proxy = new Proxy(draft, {
-			get(target, key, receiver) {
-				const value = Reflect.get(target, key, receiver);
-				if (typeof value === "function") {
-					return (...args: unknown[]) => {
-						const result = Reflect.apply(value, target, args);
-						return typeof result === "object" && result !== null ? tracker.wrap(result) : result;
-					};
-				}
-				return typeof value === "object" && value !== null ? tracker.wrap(value) : value;
-			},
-			set(target, key, value, receiver) {
-				if (value === undefined && !Array.isArray(target)) return Reflect.deleteProperty(target, key);
-				return Reflect.set(target, key, value, receiver);
-			},
-		});
-		this.wrappers.set(draft, proxy);
-		return proxy;
 	}
 }
 

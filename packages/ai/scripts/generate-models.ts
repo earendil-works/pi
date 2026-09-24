@@ -4,19 +4,22 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSy
 import { dirname, join, resolve } from "path";
 import { fileURLToPath } from "url";
 import { getEffortThinkingLevelMap, type ModelsDevReasoningOption } from "./models-dev-reasoning-options.ts";
-import {
-	getOpenRouterThinkingLevelMap,
-	type OpenRouterReasoningMetadata,
-} from "./openrouter-reasoning-options.ts";
+import { buildOpenRouterCatalog, type OpenRouterCatalog, type OpenRouterModelListItem } from "./openrouter-catalog.ts";
 import {
 	CLOUDFLARE_AI_GATEWAY_ANTHROPIC_BASE_URL,
 	CLOUDFLARE_AI_GATEWAY_COMPAT_BASE_URL,
 	CLOUDFLARE_AI_GATEWAY_OPENAI_BASE_URL,
 	CLOUDFLARE_WORKERS_AI_BASE_URL,
+	CLOUDFLARE_WORKERS_AI_REST_BASE_URL,
 } from "../src/api/cloudflare.ts";
 import type {
 	AnthropicMessagesCompat,
+	AnyModel,
 	Api,
+	ClassifierApi,
+	ClassifierModel,
+	ImageApi,
+	ImageModel,
 	KnownProvider,
 	Model,
 	ModelCost,
@@ -131,29 +134,18 @@ interface ModelsDevProvider {
 	models?: Record<string, ModelsDevModel>;
 }
 
+interface ModelsDevMetadata {
+	id: string;
+	type?: string;
+	name: string;
+	limit?: { context?: number };
+	modalities?: { input?: string[] };
+}
+
 type ModelsDevCatalog = Record<string, ModelsDevProvider>;
 
 interface NvidiaNimModelListItem {
 	id: string;
-}
-
-interface OpenRouterModelListItem {
-	id: string;
-	name: string;
-	supported_parameters?: string[];
-	architecture?: { modality?: string };
-	pricing?: {
-		prompt?: string;
-		completion?: string;
-		input_cache_read?: string;
-		input_cache_write?: string;
-	};
-	top_provider?: {
-		context_length?: number;
-		max_completion_tokens?: number;
-	};
-	context_length?: number;
-	reasoning?: OpenRouterReasoningMetadata;
 }
 
 interface AiGatewayModel {
@@ -976,14 +968,14 @@ function applyPromptCacheMetadata(model: Model<Api>): void {
 	// behavior; a documented TTL alone does not establish full cache loss.
 }
 
-function applyImageInputMetadata(model: Model<Api>): void {
+function applyImageInputMetadata(model: AnyModel): void {
 	if (!model.input.includes("image")) return;
 
-	const providerLimits: Model<Api>["inputLimits"] =
+	const providerLimits: AnyModel["inputLimits"] =
 		model.provider === "anthropic"
 			? {
 					maxRequestBytes: 32 * 1024 * 1024,
-					images: { maxPerRequest: model.contextWindow === 200000 ? 100 : 600 },
+					images: { maxPerRequest: model.type !== "image" && model.contextWindow === 200000 ? 100 : 600 },
 				}
 			: model.provider === "amazon-bedrock"
 				? { images: { maxPerMessage: 20 } }
@@ -1283,68 +1275,33 @@ async function fetchNvidiaNimModelIds(): Promise<Map<string, string>> {
 	}
 }
 
-async function fetchOpenRouterModels(): Promise<Model<any>[]> {
+async function fetchOpenRouterList(query: string): Promise<OpenRouterModelListItem[]> {
+	const response = await fetch(`https://openrouter.ai/api/v1/models${query}`);
+	if (!response.ok) throw new Error(`OpenRouter API returned ${response.status}`);
+	const data = (await response.json()) as { data?: OpenRouterModelListItem[] };
+	return data.data ?? [];
+}
+
+async function fetchOpenRouterModels(): Promise<OpenRouterCatalog> {
 	try {
 		console.log("Fetching models from OpenRouter API...");
-		const response = await fetch("https://openrouter.ai/api/v1/models");
-		if (!response.ok) throw new Error(`OpenRouter API returned ${response.status}`);
-		const data = (await response.json()) as { data?: OpenRouterModelListItem[] };
-
-		const models: Model<any>[] = [];
-
-		for (const model of data.data ?? []) {
-			// Only include models that support tools
-			if (!model.supported_parameters?.includes("tools")) continue;
-
-			// Parse provider from model ID
-			let provider: KnownProvider = "openrouter";
-			let modelKey = model.id;
-
-			modelKey = model.id; // Keep full ID for OpenRouter
-
-			// Parse input modalities
-			const input: ("text" | "image")[] = ["text"];
-			if (model.architecture?.modality?.includes("image")) {
-				input.push("image");
-			}
-
-			// Convert pricing from $/token to $/million tokens
-			const inputCost = roundCost(parseFloat(model.pricing?.prompt || "0") * 1_000_000);
-			const outputCost = roundCost(parseFloat(model.pricing?.completion || "0") * 1_000_000);
-			const cacheReadCost = roundCost(parseFloat(model.pricing?.input_cache_read || "0") * 1_000_000);
-			const cacheWriteCost = roundCost(parseFloat(model.pricing?.input_cache_write || "0") * 1_000_000);
-
-			const contextWindow = model.top_provider?.context_length || model.context_length || 4096;
-			const thinkingLevelMap = getOpenRouterThinkingLevelMap(model.reasoning);
-
-			const useAnthropicMessages = /^anthropic\//.test(modelKey) && !modelKey.endsWith(":batch");
-			const normalizedModel: Model<any> = {
-				id: modelKey,
-				name: model.name,
-				api: useAnthropicMessages ? "anthropic-messages" : "openai-completions",
-				baseUrl: useAnthropicMessages ? "https://openrouter.ai/api" : "https://openrouter.ai/api/v1",
-				provider,
-				reasoning: model.supported_parameters?.includes("reasoning") || false,
-				...(thinkingLevelMap && { thinkingLevelMap }),
-				input,
-				cost: {
-					input: inputCost,
-					output: outputCost,
-					cacheRead: cacheReadCost,
-					cacheWrite: cacheWriteCost,
-				},
-				contextWindow,
-				maxTokens: model.top_provider?.max_completion_tokens || 4096,
-			};
-			models.push(normalizedModel);
+		const [listed, imageListed, decisionListed] = await Promise.all([
+			fetchOpenRouterList(""),
+			fetchOpenRouterList("?output_modalities=image"),
+			fetchOpenRouterList("?output_modalities=decisions"),
+		]);
+		const catalog = buildOpenRouterCatalog(listed, imageListed, decisionListed);
+		console.log(
+			`Fetched ${catalog.chat.length} tool-capable, ${catalog.images.length} image, and ${catalog.classifiers.length} classifier models from OpenRouter`,
+		);
+		if (generatorOptions.strict && catalog.images.length === 0) {
+			throw new Error("OpenRouter API returned no usable image models");
 		}
-
-		console.log(`Fetched ${models.length} tool-capable models from OpenRouter`);
-		return models;
+		return catalog;
 	} catch (error) {
 		console.error("Failed to fetch OpenRouter models:", error);
 		if (generatorOptions.strict) throw error;
-		return [];
+		return { chat: [], images: [], classifiers: [] };
 	}
 }
 
@@ -2662,6 +2619,54 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 	}
 }
 
+async function loadModelsDevClassifierModels(): Promise<ClassifierModel<"typesafe-system-one">[]> {
+	try {
+		console.log("Fetching classifier models from models.dev API...");
+		const response = await fetch("https://models.dev/models.json?type=decision");
+		if (!response.ok) throw new Error(`models.dev classifier API returned ${response.status}`);
+		const data = (await response.json()) as Record<string, ModelsDevMetadata>;
+		const metadata = data["typesafe/jev-latest"];
+		if (!metadata || metadata.type !== "decision") {
+			throw new Error("models.dev did not return decision model typesafe/jev-latest");
+		}
+		return [
+			{
+				type: "classifier",
+				id: "jev-latest",
+				name: metadata.name,
+				api: "typesafe-system-one",
+				provider: "typesafe",
+				baseUrl: "https://api.typesafe.ai/v1/",
+				input: metadata.modalities?.input?.includes("image") ? ["text", "image"] : ["text"],
+				// The canonical models.dev entry has no direct-provider pricing and System One reports no token usage.
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+				contextWindow: metadata.limit?.context || 64000,
+			},
+		];
+	} catch (error) {
+		console.error("Failed to load models.dev classifier data:", error);
+		if (generatorOptions.strict) throw error;
+		return [];
+	}
+}
+
+// Workers AI has no unauthenticated catalog and models.dev does not list its
+// System One models yet. Cloudflare publishes pricing only in the dashboard.
+// https://developers.cloudflare.com/ai/models/typesafe/jev/
+const CLOUDFLARE_WORKERS_AI_CLASSIFIER_MODELS: ClassifierModel<"cloudflare-workers-ai-system-one">[] = [
+	{
+		type: "classifier",
+		id: "typesafe/jev",
+		name: "Jev",
+		api: "cloudflare-workers-ai-system-one",
+		provider: "cloudflare-workers-ai",
+		baseUrl: CLOUDFLARE_WORKERS_AI_REST_BASE_URL,
+		input: ["text"],
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		contextWindow: 32000,
+	},
+];
+
 async function generateModels() {
 	// Fetch models from all upstream catalogs.
 	// models.dev: Anthropic, Google, OpenAI, Groq, Cerebras, and others
@@ -2669,12 +2674,13 @@ async function generateModels() {
 	// AI Gateway: OpenAI-compatible catalog with tool-capable models
 	// Radius: its unauthenticated public catalog; authenticated clients overlay it at runtime
 	const modelsDevModels = await loadModelsDevData();
-	const openRouterModels = await fetchOpenRouterModels();
+	const modelsDevClassifierModels = await loadModelsDevClassifierModels();
+	const openRouterCatalog = await fetchOpenRouterModels();
 	const aiGatewayModels = await fetchAiGatewayModels();
 	const radiusModels = await fetchRadiusModels();
 
-	// Combine models (models.dev has priority where sources overlap).
-	const allModels = [...modelsDevModels, ...openRouterModels, ...aiGatewayModels, ...radiusModels].filter(
+	// Combine chat models (models.dev has priority where sources overlap).
+	const allModels = [...modelsDevModels, ...openRouterCatalog.chat, ...aiGatewayModels, ...radiusModels].filter(
 		(model) =>
 			!(model.provider === "xai" && XAI_BUILTIN_EXCLUDED_MODEL_IDS.has(model.id)) &&
 			!((model.provider === "opencode" || model.provider === "opencode-go") && model.id === "gpt-5.3-codex-spark"),
@@ -3290,26 +3296,54 @@ async function generateModels() {
 	}
 	applyAnthropicAllowedFallbackModelMetadata(allModels.filter(isAnthropicFallbackMetadataModel));
 
-	// Group by provider and deduplicate by model ID
-	const providers: Record<string, Record<string, Model<any>>> = {};
+	// Keep chat and image catalogs separate so one upstream ID can expose both
+	// operations with different API implementations.
+	type ProviderCatalog = {
+		chat: Record<string, Model<Api>>;
+		image: Record<string, ImageModel<ImageApi>>;
+		classifier: Record<string, ClassifierModel<ClassifierApi>>;
+	};
+	const providers: Record<string, ProviderCatalog> = {};
 	for (const model of allModels) {
-		if (!providers[model.provider]) {
-			providers[model.provider] = {};
-		}
-		// Use model ID as key to automatically deduplicate
-		// Only add if not already present (models.dev takes priority over OpenRouter)
-		if (!providers[model.provider][model.id]) {
-			providers[model.provider][model.id] = model;
-		}
+		providers[model.provider] ??= { chat: {}, image: {}, classifier: {} };
+		// Only add if not already present (models.dev takes priority over OpenRouter).
+		providers[model.provider].chat[model.id] ??= { ...model, type: "chat" };
+	}
+	for (const model of openRouterCatalog.images) {
+		applyImageInputMetadata(model);
+		providers[model.provider] ??= { chat: {}, image: {}, classifier: {} };
+		providers[model.provider].image[model.id] ??= model;
+	}
+	const classifierModels: ClassifierModel<ClassifierApi>[] = [
+		...modelsDevClassifierModels,
+		...openRouterCatalog.classifiers,
+		...CLOUDFLARE_WORKERS_AI_CLASSIFIER_MODELS,
+	];
+	for (const model of classifierModels) {
+		providers[model.provider] ??= { chat: {}, image: {}, classifier: {} };
+		providers[model.provider].classifier[model.id] ??= model;
 	}
 
 	const sortedProviderIds = Object.keys(providers).sort();
-	const jsonProviders: Record<string, Record<string, Model<any>>> = {};
+	const jsonChatProviders: Record<string, Record<string, Model<Api>>> = {};
+	const jsonImageProviders: Record<string, Record<string, ImageModel<ImageApi>>> = {};
+	const jsonClassifierProviders: Record<string, Record<string, ClassifierModel<ClassifierApi>>> = {};
+	const jsonAllProviders: Record<string, AnyModel[]> = {};
 	for (const providerId of sortedProviderIds) {
-		jsonProviders[providerId] = {};
-		for (const modelId of Object.keys(providers[providerId]).sort()) {
-			jsonProviders[providerId][modelId] = providers[providerId][modelId];
-		}
+		jsonChatProviders[providerId] = Object.fromEntries(
+			Object.entries(providers[providerId].chat).sort(([left], [right]) => left.localeCompare(right)),
+		);
+		jsonImageProviders[providerId] = Object.fromEntries(
+			Object.entries(providers[providerId].image).sort(([left], [right]) => left.localeCompare(right)),
+		);
+		jsonClassifierProviders[providerId] = Object.fromEntries(
+			Object.entries(providers[providerId].classifier).sort(([left], [right]) => left.localeCompare(right)),
+		);
+		jsonAllProviders[providerId] = [
+			...Object.values(jsonChatProviders[providerId]),
+			...Object.values(jsonImageProviders[providerId]),
+			...Object.values(jsonClassifierProviders[providerId]),
+		];
 	}
 
 	const serializeJson = (value: unknown) => `${JSON.stringify(value, null, generatorOptions.pretty ? 2 : undefined)}\n`;
@@ -3317,25 +3351,29 @@ async function generateModels() {
 	const generatedDataProviderIds = generatorOptions.dataOnly
 		? readModelDataProviderIds(packageRoot)
 		: sortedProviderIds;
-	const missingProviderIds = generatedDataProviderIds.filter((providerId) => !jsonProviders[providerId]);
+	const missingProviderIds = generatedDataProviderIds.filter((providerId) => !jsonAllProviders[providerId]);
 	if (missingProviderIds.length > 0) {
 		throw new Error(`Cannot hydrate missing providers: ${missingProviderIds.join(", ")}`);
 	}
 
-	// Only the ignored internal data is grouped by API for type derivation. Public JSON catalog output stays flat.
-	const generatedDataProviders: Record<string, Record<string, Record<string, Model<Api>>>> = {};
+	// Only the ignored internal data is grouped by API for type derivation.
+	const generatedDataProviders: Record<string, Record<string, Record<string, AnyModel>>> = {};
 	const modelDataStructure: ModelDataStructure = {};
 	for (const providerId of generatedDataProviderIds) {
-		const models = jsonProviders[providerId];
+		const models = jsonAllProviders[providerId];
 		generatedDataProviders[providerId] = {};
 		modelDataStructure[providerId] = {};
-		const apiIds = Array.from(new Set(Object.values(models).map((model) => model.api))).sort();
+		const apiIds = Array.from(new Set(models.map((model) => model.api))).sort();
 		for (const api of apiIds) {
 			generatedDataProviders[providerId][api] = {};
-			for (const [modelId, model] of Object.entries(models)) {
+			for (const model of models) {
 				if (model.api !== api) continue;
-				generatedDataProviders[providerId][api][modelId] = model;
-				modelDataStructure[providerId][modelId] = api;
+				const identity = `${model.type}:${model.id}`;
+				if (generatedDataProviders[providerId][api][identity]) {
+					throw new Error(`${providerId}/${identity} has duplicate ${api} catalog entries`);
+				}
+				generatedDataProviders[providerId][api][identity] = model;
+				modelDataStructure[providerId][identity] = api;
 			}
 		}
 	}
@@ -3389,13 +3427,21 @@ async function generateModels() {
 `;
 				const catalogConstName = (providerId: string) =>
 					`${providerId.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}_MODELS`;
+				const imageCatalogConstName = (providerId: string) =>
+					`${providerId.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}_IMAGE_MODELS`;
+				const classifierCatalogConstName = (providerId: string) =>
+					`${providerId.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}_CLASSIFIER_MODELS`;
 				const generatedShardFiles = new Set<string>();
 				for (const providerId of sortedProviderIds) {
 					let output = generatedHeader;
 					output += `import values from "./data/${providerId}.json" with { type: "json" };\n`;
-					output += `import { flattenModelCatalog, type ModelCatalog } from "../model-catalog.ts";\n\n`;
-					output += `export const ${catalogConstName(providerId)}: ModelCatalog<typeof values, ${JSON.stringify(providerId)}> =\n`;
-					output += `\tflattenModelCatalog(${JSON.stringify(providerId)}, values);\n`;
+					output += `import { flattenChatModelCatalog, flattenClassifierModelCatalog, flattenImageModelCatalog, type ChatModelCatalog, type ClassifierModelCatalog, type ImageModelCatalog } from "../model-catalog.ts";\n\n`;
+					output += `export const ${catalogConstName(providerId)}: ChatModelCatalog<typeof values, ${JSON.stringify(providerId)}> =\n`;
+					output += `\tflattenChatModelCatalog(${JSON.stringify(providerId)}, values);\n\n`;
+					output += `export const ${imageCatalogConstName(providerId)}: ImageModelCatalog<typeof values, ${JSON.stringify(providerId)}> =\n`;
+					output += `\tflattenImageModelCatalog(${JSON.stringify(providerId)}, values);\n\n`;
+					output += `export const ${classifierCatalogConstName(providerId)}: ClassifierModelCatalog<typeof values, ${JSON.stringify(providerId)}> =\n`;
+					output += `\tflattenClassifierModelCatalog(${JSON.stringify(providerId)}, values);\n`;
 					const filename = `${providerId}.models.ts`;
 					generatedShardFiles.add(filename);
 					writeFileSync(join(providersDir, filename), output);
@@ -3406,7 +3452,7 @@ async function generateModels() {
 
 				let output = generatedHeader;
 				for (const providerId of sortedProviderIds) {
-					output += `import { ${catalogConstName(providerId)} } from "./providers/${providerId}.models.ts";\n`;
+					output += `import { ${classifierCatalogConstName(providerId)}, ${imageCatalogConstName(providerId)}, ${catalogConstName(providerId)} } from "./providers/${providerId}.models.ts";\n`;
 				}
 				output += `\nexport const MODELS: {\n`;
 				for (const providerId of sortedProviderIds) {
@@ -3415,6 +3461,22 @@ async function generateModels() {
 				output += `} = {\n`;
 				for (const providerId of sortedProviderIds) {
 					output += `\t${JSON.stringify(providerId)}: ${catalogConstName(providerId)},\n`;
+				}
+				output += `};\n\nexport const IMAGE_MODELS: {\n`;
+				for (const providerId of sortedProviderIds) {
+					output += `\treadonly ${JSON.stringify(providerId)}: typeof ${imageCatalogConstName(providerId)};\n`;
+				}
+				output += `} = {\n`;
+				for (const providerId of sortedProviderIds) {
+					output += `\t${JSON.stringify(providerId)}: ${imageCatalogConstName(providerId)},\n`;
+				}
+				output += `};\n\nexport const CLASSIFIER_MODELS: {\n`;
+				for (const providerId of sortedProviderIds) {
+					output += `\treadonly ${JSON.stringify(providerId)}: typeof ${classifierCatalogConstName(providerId)};\n`;
+				}
+				output += `} = {\n`;
+				for (const providerId of sortedProviderIds) {
+					output += `\t${JSON.stringify(providerId)}: ${classifierCatalogConstName(providerId)},\n`;
 				}
 				output += `};\n`;
 				writeFileSync(aggregatorPath, output);
@@ -3446,27 +3508,33 @@ async function generateModels() {
 	}
 
 	if (generatorOptions.jsonOutputDir) {
+		// `models.json` and `providers/{id}.json` retain the legacy keyed chat catalog.
+		// The `.all` variants are arrays so the same upstream id can appear once per type.
 		const providerOutputDir = join(generatorOptions.jsonOutputDir, "providers");
 		rmSync(generatorOptions.jsonOutputDir, { recursive: true, force: true });
 		mkdirSync(providerOutputDir, { recursive: true });
-		writeJson(join(generatorOptions.jsonOutputDir, "models.json"), jsonProviders);
+		writeJson(join(generatorOptions.jsonOutputDir, "models.json"), jsonChatProviders);
+		writeJson(join(generatorOptions.jsonOutputDir, "models.all.json"), jsonAllProviders);
 		writeJson(join(generatorOptions.jsonOutputDir, "providers.json"), sortedProviderIds);
 		for (const providerId of sortedProviderIds) {
-			writeJson(join(providerOutputDir, `${providerId}.json`), jsonProviders[providerId]);
+			writeJson(join(providerOutputDir, `${providerId}.json`), jsonChatProviders[providerId]);
+			writeJson(join(providerOutputDir, `${providerId}.all.json`), jsonAllProviders[providerId]);
 		}
 		console.log(`Generated JSON model catalog under ${generatorOptions.jsonOutputDir}`);
 	}
 
 	// Print statistics
 	const totalModels = allModels.length;
-	const reasoningModels = allModels.filter(m => m.reasoning).length;
+	const reasoningModels = allModels.filter((model) => model.reasoning).length;
 
 	console.log(`\nModel Statistics:`);
 	console.log(`  Total tool-capable models: ${totalModels}`);
 	console.log(`  Reasoning-capable models: ${reasoningModels}`);
 
 	for (const [provider, models] of Object.entries(providers)) {
-		console.log(`  ${provider}: ${Object.keys(models).length} models`);
+		console.log(
+			`  ${provider}: ${Object.keys(models.chat).length} chat models, ${Object.keys(models.image).length} image models, ${Object.keys(models.classifier).length} classifier models`,
+		);
 	}
 }
 

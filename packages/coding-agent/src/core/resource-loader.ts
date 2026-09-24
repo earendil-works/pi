@@ -37,6 +37,61 @@ export interface ResourceLoaderReloadOptions {
 	resolveProjectTrust?: (input: { extensionsResult: LoadExtensionsResult }) => Promise<boolean>;
 }
 
+const HOST_PROVIDED_EXTENSION_PACKAGES = new Set([
+	"@earendil-works/pi-agent-core",
+	"@earendil-works/pi-ai",
+	"@earendil-works/pi-coding-agent",
+	"@earendil-works/pi-tui",
+	"@mariozechner/pi-agent-core",
+	"@mariozechner/pi-ai",
+	"@mariozechner/pi-coding-agent",
+	"@mariozechner/pi-tui",
+	"@sinclair/typebox",
+	"typebox",
+]);
+
+function collectExtensionPackageWarnings(
+	extensionPaths: string[],
+	metadataByPath: Map<string, PathMetadata>,
+): Array<{ path: string; warning: string }> {
+	const warnings: Array<{ path: string; warning: string }> = [];
+	const packageRoots = new Set(
+		extensionPaths
+			.map((extensionPath) => metadataByPath.get(extensionPath)?.packageRoot)
+			.filter((packageRoot): packageRoot is string => packageRoot !== undefined),
+	);
+	for (const packageRoot of packageRoots) {
+		const packageJsonPath = join(packageRoot, "package.json");
+		if (!existsSync(packageJsonPath)) continue;
+		const manifest = JSON.parse(stripBom(readFileSync(packageJsonPath, "utf-8"))) as { dependencies?: unknown };
+		if (
+			typeof manifest.dependencies !== "object" ||
+			manifest.dependencies === null ||
+			Array.isArray(manifest.dependencies)
+		) {
+			continue;
+		}
+		const hostDependencies = Object.keys(manifest.dependencies)
+			.filter((name) => HOST_PROVIDED_EXTENSION_PACKAGES.has(name))
+			.sort();
+		if (hostDependencies.length === 0) continue;
+		warnings.push({
+			path: packageJsonPath,
+			warning: `Host-provided extension packages must be declared in peerDependencies with a "*" range, not dependencies: ${hostDependencies.join(", ")}. Installed copies can bypass the extension loader and create duplicate runtime modules.`,
+		});
+	}
+	return warnings;
+}
+
+function mergeExtensionWarnings(
+	result: LoadExtensionsResult,
+	warnings: Array<{ path: string; warning: string }>,
+): void {
+	result.warnings = [
+		...new Map([...(result.warnings ?? []), ...warnings].map((warning) => [warning.path, warning])).values(),
+	];
+}
+
 export interface ResourceLoader {
 	getExtensions(): LoadExtensionsResult;
 	getSkills(): { skills: Skill[]; diagnostics: ResourceDiagnostic[] };
@@ -453,7 +508,9 @@ export class DefaultResourceLoader implements ResourceLoader {
 			? cliEnabledExtensions
 			: this.mergePaths(cliEnabledExtensions, enabledExtensions);
 
+		const packageWarnings = collectExtensionPackageWarnings(extensionPaths, metadataByPath);
 		const extensionsResult = await this.loadFinalExtensionSet(extensionPaths, preTrustExtensions);
+		mergeExtensionWarnings(extensionsResult, packageWarnings);
 		for (const p of this.additionalExtensionPaths) {
 			if (isLocalPath(p)) {
 				const resolved = this.resolveResourcePath(p);
@@ -556,7 +613,15 @@ export class DefaultResourceLoader implements ResourceLoader {
 		const extensionPaths = this.noExtensions
 			? cliEnabledExtensions
 			: this.mergePaths(cliEnabledExtensions, enabledExtensions);
+		const metadataByPath = new Map(
+			[...resolvedPaths.extensions, ...cliExtensionPaths.extensions].map((resource) => [
+				resource.path,
+				resource.metadata,
+			]),
+		);
+		const packageWarnings = collectExtensionPackageWarnings(extensionPaths, metadataByPath);
 		const extensionsResult = await loadExtensionsCached(extensionPaths, this.cwd, this.eventBus);
+		mergeExtensionWarnings(extensionsResult, packageWarnings);
 		if (!options.includeInlineFactories) {
 			return extensionsResult;
 		}
@@ -618,6 +683,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 		const extensionsResult: LoadExtensionsResult = {
 			extensions: orderedExtensions,
 			errors: [...preTrustExtensions.errors, ...remainingExtensions.errors],
+			warnings: [...(preTrustExtensions.warnings ?? []), ...(remainingExtensions.warnings ?? [])],
 			runtime: preTrustExtensions.runtime,
 		};
 		this.addExtensionConflictDiagnostics(extensionsResult);

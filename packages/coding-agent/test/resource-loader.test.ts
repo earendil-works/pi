@@ -40,6 +40,66 @@ describe("DefaultResourceLoader", () => {
 			expect(loader.getThemes().themes).toEqual([]);
 		});
 
+		it("should not treat a project manifest as the owner of a project extension", async () => {
+			const extensionsDir = join(cwd, ".pi", "extensions");
+			mkdirSync(extensionsDir, { recursive: true });
+			writeFileSync(
+				join(cwd, "package.json"),
+				JSON.stringify({ dependencies: { "@earendil-works/pi-coding-agent": "1.0.0" } }),
+			);
+			writeFileSync(join(extensionsDir, "project-extension.ts"), "export default function() {}");
+
+			const loader = new DefaultResourceLoader({ cwd, agentDir });
+			await loader.reload();
+
+			expect(loader.getExtensions().extensions).toHaveLength(1);
+			expect(loader.getExtensions().warnings).toEqual([]);
+		});
+
+		it("should warn about host dependencies in an extension package manifest", async () => {
+			// Regression for #9863.
+			const packageRoot = join(tempDir, "extension-package");
+			const extensionsDir = join(packageRoot, "extensions");
+			mkdirSync(extensionsDir, { recursive: true });
+			writeFileSync(
+				join(packageRoot, "package.json"),
+				JSON.stringify({ dependencies: { "@earendil-works/pi-coding-agent": "1.0.0" } }),
+			);
+			writeFileSync(join(extensionsDir, "package-extension.ts"), "export default function() {}");
+
+			const loader = new DefaultResourceLoader({
+				cwd,
+				agentDir,
+				settingsManager: SettingsManager.inMemory({ packages: [packageRoot] }),
+			});
+			await loader.reload();
+
+			expect(loader.getExtensions().extensions).toHaveLength(1);
+			expect(loader.getExtensions().warnings).toEqual([
+				{
+					path: join(packageRoot, "package.json"),
+					warning:
+						'Host-provided extension packages must be declared in peerDependencies with a "*" range, not dependencies: @earendil-works/pi-coding-agent. Installed copies can bypass the extension loader and create duplicate runtime modules.',
+				},
+			]);
+		});
+
+		it("should fail when an extension package manifest cannot be parsed", async () => {
+			const packageRoot = join(tempDir, "invalid-extension-package");
+			const extensionsDir = join(packageRoot, "extensions");
+			mkdirSync(extensionsDir, { recursive: true });
+			writeFileSync(join(packageRoot, "package.json"), "{");
+			writeFileSync(join(extensionsDir, "package-extension.ts"), "export default function() {}");
+
+			const loader = new DefaultResourceLoader({
+				cwd,
+				agentDir,
+				settingsManager: SettingsManager.inMemory({ packages: [packageRoot] }),
+			});
+
+			await expect(loader.reload()).rejects.toThrow(SyntaxError);
+		});
+
 		it("should discover skills from agentDir", async () => {
 			const skillsDir = join(agentDir, "skills");
 			mkdirSync(skillsDir, { recursive: true });

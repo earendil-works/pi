@@ -19,10 +19,9 @@ describe("immutable tracker lifecycle", () => {
 	it("keeps a draft alive across await and adopts only a prepared change", async () => {
 		const input = { count: 1, nested: { text: "a" }, values: [1] };
 		const tracker = track(input);
-		expect(tracker.value).toEqual(input);
-		expect(tracker.value).not.toBe(input);
-		expect(Object.isFrozen(tracker.value)).toBe(true);
-		expect(Object.isFrozen(tracker.value.nested)).toBe(true);
+		expect(tracker.value).toBe(input);
+		expect(Object.isFrozen(tracker.value)).toBe(false);
+		expect(Object.isFrozen(tracker.value.nested)).toBe(false);
 
 		const change = tracker.beginChange();
 		change.state.count = 2;
@@ -60,16 +59,14 @@ describe("immutable tracker lifecycle", () => {
 		next.abort();
 	});
 
-	it("releases the tracker and revokes drafts when preparation fails", () => {
-		const tracker = track({ values: [1, 2] });
+	it("grows arrays with explicit nulls and revokes drafts after preparation", () => {
+		const tracker = track({ values: [1, 2] as Array<number | null> });
 		const change = tracker.beginChange();
 		change.state.values.length = 4;
-		expect(() => change.prepare()).toThrow(/dense|holes/);
+		const prepared = change.prepare();
+		expect(prepared.value.values).toEqual([1, 2, null, null]);
 		expect(() => change.state.values).toThrow(TypeError);
-		expect(() => change.abort()).not.toThrow();
-		expect(() => change.prepare()).toThrow(/settled/);
-		const next = tracker.beginChange();
-		next.abort();
+		tracker.adopt(prepared);
 	});
 
 	it("normalizes a deep no-op to exact previous identity", () => {
@@ -83,13 +80,12 @@ describe("immutable tracker lifecycle", () => {
 		expect(tracker.value).toBe(prepared.base);
 	});
 
-	it("copies replacement input and applies the same no-op normalization", () => {
+	it("takes immutable ownership of replacement input and applies no-op normalization", () => {
 		const tracker = track({ nested: { value: 1 } });
 		const replacement = { nested: { value: 2 } };
 		const prepared = tracker.prepareReplace(replacement);
-		replacement.nested.value = 9;
-		expect(prepared.value.nested.value).toBe(2);
-		expect(Object.isFrozen(prepared.value.nested)).toBe(true);
+		expect(prepared.value).toBe(replacement);
+		expect(prepared.ops).toEqual([["r", replacement]]);
 		tracker.adopt(prepared);
 
 		const noOp = tracker.prepareReplace({ nested: { value: 2 } });
@@ -97,31 +93,31 @@ describe("immutable tracker lifecycle", () => {
 		expect(noOp.ops).toEqual([]);
 	});
 
-	it("deeply freezes prepared metadata", () => {
+	it("shares immutable operation placements with the prepared candidate", () => {
 		const tracker = track({ rows: [] as { id: number }[] });
 		const change = tracker.beginChange();
 		change.state.rows.push({ id: 1 });
 		const prepared = change.prepare();
-		expect(Object.isFrozen(prepared)).toBe(true);
-		expect(Object.isFrozen(prepared.ops)).toBe(true);
 		const splice = prepared.ops[0]!;
-		expect(Object.isFrozen(splice)).toBe(true);
 		if (splice[0] !== "p") throw new Error("expected splice");
-		expect(Object.isFrozen(splice[1])).toBe(true);
-		expect(Object.isFrozen(splice[4])).toBe(true);
-		expect(Object.isFrozen(splice[4][0])).toBe(true);
+		expect(splice[4][0]).toBe(prepared.value.rows[0]);
+		expect(Object.isFrozen(prepared)).toBe(false);
+		expect(Object.isFrozen(prepared.ops)).toBe(false);
 	});
 
-	it("rejects foreign, stale, repeated, and overlapping changes", () => {
+	it("rejects foreign, stale, and repeated preparations while allowing competing changes", () => {
 		const first = track({ value: 0 });
 		const second = track({ value: 0 });
 		const change = first.beginChange();
-		expect(() => first.beginChange()).toThrow(/active/);
+		const competing = first.beginChange();
 		change.state.value = 1;
+		competing.state.value = 2;
 		const prepared = change.prepare();
+		const competingPrepared = competing.prepare();
 		expect(() => second.adopt(prepared)).toThrow(/different tracker/);
 		first.adopt(prepared);
 		expect(() => first.adopt(prepared)).toThrow(/already been used/);
+		expect(() => first.adopt(competingPrepared)).toThrow(/stale/);
 
 		const stale = first.prepareReplace({ value: 2 });
 		const winner = first.prepareReplace({ value: 3 });
@@ -151,14 +147,14 @@ describe("immutable tracker lifecycle", () => {
 		expect(() => tracker.adopt(competing)).toThrow(/stale/);
 	});
 
-	it("keeps large prepareReplace array edits narrow", () => {
+	it("emits an owned root replacement without traversing large replacement input", () => {
 		const rows = Array.from({ length: 10_000 }, (_, value) => ({ value, stable: { value } }));
 		const tracker = track({ rows });
-		const replacement = tracker.value.rows.slice();
-		replacement[5_000] = { value: -1, stable: replacement[5_000]!.stable };
-		const prepared = tracker.prepareReplace({ rows: replacement });
-		expect(prepared.ops).toEqual([["s", ["rows", 5_000, "value"], -1]]);
-		expect(JSON.stringify(prepared.ops).length).toBeLessThan(100);
+		const replacement = { rows: tracker.value.rows.slice() };
+		replacement.rows[5_000] = { value: -1, stable: replacement.rows[5_000]!.stable };
+		const prepared = tracker.prepareReplace(replacement);
+		expect(prepared.value).toBe(replacement);
+		expect(prepared.ops).toEqual([["r", replacement]]);
 		expect(applyImmutable(prepared.base, prepared.ops)).toEqual(prepared.value);
 	});
 });

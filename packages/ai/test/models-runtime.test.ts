@@ -198,6 +198,20 @@ describe("Models runtime", () => {
 		}
 	});
 
+	it("keeps chat reads independent from the all-model catalog", async () => {
+		const provider = testProvider({ id: "chat-only" });
+		provider.getAllModels = () => {
+			throw new Error("all models unavailable");
+		};
+		const models = createModels();
+		models.setProvider(provider);
+
+		expect(models.getModels("chat-only").map((model) => model.id)).toEqual(["model-a"]);
+		expect(models.getModel("chat-only", "model-a")?.id).toBe("model-a");
+		expect((await models.getAvailable("chat-only")).map((model) => model.id)).toEqual(["model-a"]);
+		expect(models.getAllModels("chat-only")).toEqual([]);
+	});
+
 	it("swallows provider source failures for both all-provider and single-provider listing", () => {
 		const models = createModels();
 		models.setProvider(

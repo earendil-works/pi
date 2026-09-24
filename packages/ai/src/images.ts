@@ -1,9 +1,9 @@
 import "./providers/images/register-builtins.ts";
 
 import { getImagesApiProvider } from "./images-api-registry.ts";
-import type { AssistantImages, ImagesApi, ImagesContext, ImagesModel, ProviderImagesOptions } from "./types.ts";
+import type { AssistantImages, ImageApi, ImageModel, ImagesContext, ProviderImagesOptions } from "./types.ts";
 
-function resolveImagesApiProvider(api: ImagesApi) {
+function resolveImagesApiProvider(api: ImageApi) {
 	const provider = getImagesApiProvider(api);
 	if (!provider) {
 		throw new Error(`No API provider registered for api: ${api}`);
@@ -11,8 +11,13 @@ function resolveImagesApiProvider(api: ImagesApi) {
 	return provider;
 }
 
-export async function generateImages<TApi extends ImagesApi>(
-	model: ImagesModel<TApi>,
+/**
+ * Global image generation dispatched on `model.api` through the images api
+ * registry. Auth must be passed explicitly via `options.apiKey`; prefer
+ * `Models.generateImages()`, which resolves provider auth.
+ */
+export async function generateImages(
+	model: ImageModel<ImageApi>,
 	context: ImagesContext,
 	options?: ProviderImagesOptions,
 ): Promise<AssistantImages> {

@@ -74,6 +74,41 @@ describe("Anthropic 1h cache write cost", () => {
 		expect(result.usage.cost.cacheWrite).toBeCloseTo(7.75, 10);
 	});
 
+	// Regression for #9210: Vercel AI Gateway sends cache usage in message_delta, not message_start.
+	it("prices 1h cache writes reported only in message_delta", async () => {
+		const model = getModel("vercel-ai-gateway", "anthropic/claude-haiku-4.5");
+		const response = createSseResponse([
+			{
+				event: "message_start",
+				data: JSON.stringify({
+					type: "message_start",
+					message: { id: "msg_test", usage: { input_tokens: 0, output_tokens: 0 } },
+				}),
+			},
+			{
+				event: "message_delta",
+				data: JSON.stringify({
+					type: "message_delta",
+					delta: { stop_reason: "end_turn" },
+					usage: {
+						input_tokens: 3,
+						output_tokens: 4,
+						cache_creation_input_tokens: 6535,
+						cache_creation: { ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 6535 },
+					},
+				}),
+			},
+			{ event: "message_stop", data: JSON.stringify({ type: "message_stop" }) },
+		]);
+		const result = await streamAnthropic(model, context, {
+			client: createFakeAnthropicClient(response),
+		}).result();
+
+		expect(result.usage.cacheWrite).toBe(6535);
+		expect(result.usage.cacheWrite1h).toBe(6535);
+		expect(result.usage.cost.cacheWrite).toBeCloseTo((6535 * model.cost.input * 2) / 1_000_000, 10);
+	});
+
 	it("falls back to the 5m rate when no breakdown is reported", async () => {
 		const model = getModel("anthropic", "claude-opus-4-8");
 		const response = createSseResponse(eventsWithCacheCreation(undefined));

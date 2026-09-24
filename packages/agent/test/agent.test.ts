@@ -1166,6 +1166,28 @@ describe("Agent", () => {
 		expect(agent.peekQueuedMessages()).toEqual([followUp]);
 	});
 
+	it("forwards provider stream event observers through AgentOptions", async () => {
+		const providerEvents: unknown[] = [];
+		const agent = new Agent({
+			onProviderStreamEvent: (data) => {
+				providerEvents.push(data);
+			},
+			streamFn: (model, _context, options) => {
+				const stream = new MockAssistantStream();
+				queueMicrotask(async () => {
+					await options?.onProviderStreamEvent?.({ request_cost: 0.01 }, model);
+					const message = createAssistantMessage("ok");
+					stream.push({ type: "done", reason: "stop", message });
+				});
+				return stream;
+			},
+		});
+
+		await agent.prompt("hello");
+
+		expect(providerEvents).toEqual([{ request_cost: 0.01 }]);
+	});
+
 	it("forwards sessionId to streamFunction options", async () => {
 		let receivedSessionId: string | undefined;
 		const agent = new Agent({

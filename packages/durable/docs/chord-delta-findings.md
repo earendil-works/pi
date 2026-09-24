@@ -323,7 +323,7 @@ implementation or reproduces the historical graph/mutation comparison.
 Targeted tests from `packages/chord`:
 
 ```sh
-node ../../node_modules/vitest/dist/cli.js --run test/delta.test.ts test/delta-clone.test.ts test/delta-retention.test.ts test/services.test.ts test/service-wire.test.ts test/facets.test.ts
+node ../../node_modules/vitest/dist/cli.js --run test/delta.test.ts test/delta-clone.test.ts test/delta-tracker/retention.test.ts test/services.test.ts test/service-wire.test.ts test/facets.test.ts
 ```
 
 Historical source identifiers:

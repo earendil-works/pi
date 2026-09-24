@@ -223,6 +223,29 @@ describe("TUI.queryTerminalBackgroundColor", () => {
 		}
 	});
 
+	it("queries the foreground with OSC 10 without mixing up OSC 11 replies", async () => {
+		const terminal = new TestTerminal();
+		const tui: TUI = new TuiMainScreen(terminal);
+		const component = new InputRecorder();
+		tui.addChild(component);
+		tui.setFocus(component);
+		tui.start();
+		try {
+			const foreground = tui.queryTerminalForegroundColor({ timeoutMs: 1000 });
+			const background = tui.queryTerminalBackgroundColor({ timeoutMs: 1000 });
+			assert.ok(terminal.writes.includes("\x1b]10;?\x07"));
+
+			terminal.sendInput("\x1b]11;rgb:0000/0000/0000\x07");
+			terminal.sendInput("\x1b]10;rgb:ffff/ffff/ffff\x07");
+
+			assert.deepStrictEqual(await foreground, { r: 255, g: 255, b: 255 });
+			assert.deepStrictEqual(await background, { r: 0, g: 0, b: 0 });
+			assert.deepStrictEqual(component.inputs, []);
+		} finally {
+			tui.stop();
+		}
+	});
+
 	it("keeps consuming a late OSC 11 reply after timeout", async () => {
 		const terminal = new TestTerminal();
 		const tui: TUI = new TuiMainScreen(terminal);

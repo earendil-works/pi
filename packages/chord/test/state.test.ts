@@ -27,7 +27,7 @@ describe("transactional replicated state", () => {
 		expect(state.value).not.toBe(previous);
 		expect(state.value.changed).not.toBe(previous.changed);
 		expect(state.value.retained).toBe(previous.retained);
-		expect(Object.isFrozen(state.value)).toBe(true);
+		expect(Object.isFrozen(state.value)).toBe(false);
 		expect(deliveries).toEqual([0, 1]);
 	});
 
@@ -140,25 +140,16 @@ describe("transactional replicated state", () => {
 		expect(state.value.left).not.toBe(state.value.right);
 	});
 
-	it("expands reused owned subtrees into independent placements", () => {
+	it("takes immutable ownership of alias-free replacements", () => {
 		const state = replicatedState({ left: { value: 1 }, right: { value: 2 } });
-		state.replace(BACKGROUND_CONTEXT, { left: state.value.left, right: state.value.left });
+		const replacement = { left: { ...state.value.left }, right: { ...state.value.left } };
+		state.replace(BACKGROUND_CONTEXT, replacement);
+		expect(state.value).toBe(replacement);
 		expect(state.value.left).not.toBe(state.value.right);
 		state.change(BACKGROUND_CONTEXT, (draft) => {
 			draft.left.value = 9;
 		});
 		expect(state.value).toEqual({ left: { value: 9 }, right: { value: 1 } });
-
-		const overlapping = replicatedState({ parent: { child: { value: 1 } }, other: { value: 2 } });
-		overlapping.replace(BACKGROUND_CONTEXT, {
-			parent: overlapping.value.parent,
-			other: overlapping.value.parent.child,
-		});
-		expect(overlapping.value.parent.child).not.toBe(overlapping.value.other);
-		overlapping.change(BACKGROUND_CONTEXT, (draft) => {
-			draft.other.value = 9;
-		});
-		expect(overlapping.value).toEqual({ parent: { child: { value: 1 } }, other: { value: 9 } });
 	});
 
 	it("preserves compact string, splice, and permutation operations", () => {
@@ -185,6 +176,24 @@ describe("transactional replicated state", () => {
 		]);
 	});
 
+	it("validates replica revisions without freezing shared immutable payloads", () => {
+		const replica = new ReplicatedStateReplica<{ rows: { value: number }[] }>(() => {});
+		const initial = { rows: [{ value: 1 }] };
+		replica.hydrate(0, [["r", initial]], BACKGROUND_CONTEXT);
+		expect(replica.value).toBe(initial);
+		expect(Object.isFrozen(initial)).toBe(false);
+		expect(Object.isFrozen(initial.rows[0])).toBe(false);
+
+		const inserted = { value: 2 };
+		replica.update(1, [["p", ["rows"], 1, 0, [inserted]]], BACKGROUND_CONTEXT);
+		expect(replica.value).not.toBe(initial);
+		expect(replica.value?.rows).toEqual([{ value: 1 }, { value: 2 }]);
+		expect(replica.value?.rows[0]).toBe(initial.rows[0]);
+		expect(replica.value?.rows[1]).toBe(inserted);
+		expect(initial.rows).toHaveLength(1);
+		expect(Object.isFrozen(inserted)).toBe(false);
+	});
+
 	it("clears a replica when an adopted update is invalid", () => {
 		const errors: Error[] = [];
 		const replica = new ReplicatedStateReplica<{ value: number }>((error) => errors.push(error));
@@ -207,7 +216,7 @@ describe("transactional replicated state", () => {
 		expect(state.value).toBe(previous);
 		state.replace(BACKGROUND_CONTEXT, { ...state.value, value: { nested: 2 } });
 		expect(state.value).toEqual({ value: { nested: 2 }, retained: { nested: 2 } });
-		expect(state.value.retained).not.toBe(previous.retained);
+		expect(state.value.retained).toBe(previous.retained);
 	});
 });
 

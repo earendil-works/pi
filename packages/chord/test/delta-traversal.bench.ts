@@ -94,7 +94,9 @@ function sources() {
 			"../src/delta/tracker.ts",
 			"../src/delta/draft.ts",
 			"../src/delta/diff.ts",
-			"../src/delta/value.ts",
+			"../src/delta/revision-validator.ts",
+			"../src/delta/apply-immutable-batch.ts",
+			"../src/delta/apply-immutable-trusted.ts",
 			"./delta-traversal.bench.ts",
 		].map((path) => [
 			path,

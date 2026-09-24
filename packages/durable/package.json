@@ -46,6 +46,11 @@
 			"types": "./dist/storage/sqlite/node.d.ts",
 			"import": "./dist/storage/sqlite/node.js"
 		},
+		"./testing": {
+			"source": "./src/testing/index.ts",
+			"types": "./dist/testing/index.d.ts",
+			"import": "./dist/testing/index.js"
+		},
 		"./package.json": "./package.json"
 	},
 	"sideEffects": false,

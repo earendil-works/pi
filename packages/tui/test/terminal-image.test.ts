@@ -442,6 +442,12 @@ describe("detectCapabilities", () => {
 			assert.strictEqual(caps.images, null);
 		});
 	});
+
+	it("detects truecolor from direct-color TERM values", () => {
+		withEnv({ TERM: "xterm-direct" }, () => {
+			assert.strictEqual(detectCapabilities(() => false).trueColor, true);
+		});
+	});
 });
 
 describe("iTerm2 image encoding", () => {

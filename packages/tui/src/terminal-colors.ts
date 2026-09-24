@@ -25,20 +25,31 @@ function parseOscHexChannel(channel: string): number | undefined {
 	return Math.round((parseInt(channel, 16) / max) * 255);
 }
 
-const OSC11_BACKGROUND_COLOR_RESPONSE_PATTERN = /^\x1b\]11;([^\x07\x1b]*)(?:\x07|\x1b\\)$/i;
+/** OSC color slots: 10 is the terminal's default foreground, 11 its default background. */
+export type OscColorSlot = 10 | 11;
+
+const OSC_COLOR_RESPONSE_PATTERN = /^\x1b\](1[01]);([^\x07\x1b]*)(?:\x07|\x1b\\)$/i;
 const COLOR_SCHEME_REPORT_PATTERN = /^(?:\x1b\[\?997;(1|2)n)+$/;
 
-export function isOsc11BackgroundColorResponse(data: string): boolean {
-	return OSC11_BACKGROUND_COLOR_RESPONSE_PATTERN.test(data);
-}
-
-export function parseOsc11BackgroundColor(data: string): RgbColor | undefined {
-	const match = data.match(OSC11_BACKGROUND_COLOR_RESPONSE_PATTERN);
+/**
+ * Parse an OSC 10/11 color reply. Returns undefined when `data` is not such a reply;
+ * `rgb` is undefined when it is a reply with an unparseable color.
+ */
+export function parseOscColorResponse(data: string): { slot: OscColorSlot; rgb: RgbColor | undefined } | undefined {
+	const match = data.match(OSC_COLOR_RESPONSE_PATTERN);
 	if (!match) {
 		return undefined;
 	}
+	return { slot: match[1] === "10" ? 10 : 11, rgb: parseOscColorValue(match[2]) };
+}
 
-	const value = match[1].trim();
+export function parseOsc11BackgroundColor(data: string): RgbColor | undefined {
+	const response = parseOscColorResponse(data);
+	return response?.slot === 11 ? response.rgb : undefined;
+}
+
+function parseOscColorValue(rawValue: string): RgbColor | undefined {
+	const value = rawValue.trim();
 	if (value.startsWith("#")) {
 		const hex = value.slice(1);
 		if (/^[0-9a-f]{6}$/i.test(hex)) {

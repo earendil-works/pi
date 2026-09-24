@@ -1,11 +1,17 @@
 import type { TUI } from "@earendil-works/pi-tui";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SettingsManager } from "../src/core/settings-manager.ts";
-import { initTheme, type TerminalTheme, theme } from "../src/modes/interactive/theme/theme.ts";
+import {
+	initTheme,
+	setTerminalDefaultColors,
+	type TerminalTheme,
+	theme,
+} from "../src/modes/interactive/theme/theme.ts";
 import { InteractiveThemeController } from "../src/modes/interactive/theme/theme-controller.ts";
 
 function createUi() {
 	const queryTerminalBackgroundColor = vi.fn();
+	const queryTerminalForegroundColor = vi.fn();
 	const queryTerminalColorScheme = vi.fn();
 	const setTerminalColorSchemeNotifications = vi.fn();
 	let terminalColorSchemeListener: ((terminalTheme: TerminalTheme) => void) | undefined;
@@ -19,11 +25,13 @@ function createUi() {
 			return unsubscribeTerminalColorScheme;
 		}),
 		queryTerminalBackgroundColor,
+		queryTerminalForegroundColor,
 		queryTerminalColorScheme,
 	} as unknown as TUI;
 	return {
 		ui,
 		queryTerminalBackgroundColor,
+		queryTerminalForegroundColor,
 		queryTerminalColorScheme,
 		setTerminalColorSchemeNotifications,
 		unsubscribeTerminalColorScheme,
@@ -42,6 +50,7 @@ function createController(ui: TUI, getSettingsManager: () => SettingsManager, in
 
 afterEach(() => {
 	initTheme("dark");
+	setTerminalDefaultColors({});
 	vi.unstubAllEnvs();
 });
 
@@ -57,7 +66,7 @@ describe("InteractiveThemeController", () => {
 		expect(controller.getThemeSelection()).toBe("light");
 		await controller.applyFromSettings();
 
-		expect(queryTerminalBackgroundColor).not.toHaveBeenCalled();
+		expect(queryTerminalBackgroundColor).toHaveBeenCalledOnce();
 		expect(setTheme).not.toHaveBeenCalled();
 		expect(flush).not.toHaveBeenCalled();
 	});
@@ -76,6 +85,33 @@ describe("InteractiveThemeController", () => {
 
 		emitTerminalColorScheme("dark");
 		expect(theme.name).toBe("dark");
+	});
+
+	it("detects the theme from the default color query without querying twice", async () => {
+		vi.stubEnv("COLORFGBG", "");
+		const { ui, queryTerminalBackgroundColor } = createUi();
+		queryTerminalBackgroundColor.mockResolvedValue({ r: 250, g: 250, b: 250 });
+		await createController(ui, () => SettingsManager.inMemory()).applyFromSettings();
+
+		expect(theme.name).toBe("light");
+		expect(queryTerminalBackgroundColor).toHaveBeenCalledOnce();
+	});
+
+	it("re-renders only when the reported default colors change", async () => {
+		const { ui, queryTerminalForegroundColor, queryTerminalBackgroundColor } = createUi();
+		const controller = createController(ui, () => SettingsManager.inMemory({ theme: "dark" }));
+		const query = async (foreground?: object, background?: object) => {
+			queryTerminalForegroundColor.mockResolvedValue(foreground);
+			queryTerminalBackgroundColor.mockResolvedValue(background);
+			await controller.applyFromSettings();
+			await new Promise((resolve) => setTimeout(resolve, 0));
+		};
+
+		await query({ r: 200, g: 210, b: 220 }, { r: 10, g: 20, b: 30 });
+		// A timeout keeps the known colors; erasing them would count as a change and re-render.
+		await query(undefined, undefined);
+		await query({ r: 200, g: 210, b: 220 }, { r: 10, g: 20, b: 30 });
+		expect(ui.requestRender).toHaveBeenCalledOnce();
 	});
 
 	it("disables terminal appearance updates when disposed", async () => {

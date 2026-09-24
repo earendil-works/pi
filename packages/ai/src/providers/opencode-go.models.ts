@@ -2,7 +2,13 @@
 // Do not edit manually - run 'npm run generate-models' to update
 
 import values from "./data/opencode-go.json" with { type: "json" };
-import { flattenModelCatalog, type ModelCatalog } from "../model-catalog.ts";
+import { flattenChatModelCatalog, flattenClassifierModelCatalog, flattenImageModelCatalog, type ChatModelCatalog, type ClassifierModelCatalog, type ImageModelCatalog } from "../model-catalog.ts";
 
-export const OPENCODE_GO_MODELS: ModelCatalog<typeof values, "opencode-go"> =
-	flattenModelCatalog("opencode-go", values);
+export const OPENCODE_GO_MODELS: ChatModelCatalog<typeof values, "opencode-go"> =
+	flattenChatModelCatalog("opencode-go", values);
+
+export const OPENCODE_GO_IMAGE_MODELS: ImageModelCatalog<typeof values, "opencode-go"> =
+	flattenImageModelCatalog("opencode-go", values);
+
+export const OPENCODE_GO_CLASSIFIER_MODELS: ClassifierModelCatalog<typeof values, "opencode-go"> =
+	flattenClassifierModelCatalog("opencode-go", values);

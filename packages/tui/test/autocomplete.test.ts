@@ -167,6 +167,21 @@ describe("CombinedAutocompleteProvider", () => {
 			}
 		});
 
+		test("recognizes @ after opening wrappers like ( and backticks", async () => {
+			setupFolder(baseDir, { files: { "README.md": "readme" } });
+			const provider = new CombinedAutocompleteProvider([], baseDir, requireFdPath());
+			for (const before of ["(", "see (", "[", "`", "<", "{"]) {
+				const line = `${before}@REA`;
+				const result = await getSuggestions(provider, [line], 0, line.length);
+				assert.ok(result, line);
+				assert.strictEqual(result.prefix, "@REA");
+				const applied = provider.applyCompletion([line], 0, line.length, result.items[0]!, result.prefix);
+				assert.strictEqual(applied.lines[0], `${before}@README.md `);
+			}
+			const embedded = "foo(@REA";
+			assert.strictEqual(await getSuggestions(provider, [embedded], 0, embedded.length), null);
+		});
+
 		test("preserves CJK characters and embedded @ in attachment paths", async () => {
 			setupFolder(baseDir, {
 				files: { "文档/说明.md": "text", "文档@备份/说明.md": "backup" },
@@ -627,6 +642,59 @@ describe("CombinedAutocompleteProvider", () => {
 				}
 			}
 			assert.strictEqual(await getSuggestions(provider, [""], 0, 0), null);
+		});
+
+		test("completes paths after opening wrappers like ( [ { < and backticks", async () => {
+			setupFolder(baseDir, { files: { "src/main.ts": "x" } });
+			const provider = new CombinedAutocompleteProvider([], baseDir);
+			for (const wrapper of ["(", "[", "{", "<", "`", "((", "(`"]) {
+				for (const prefix of ["src/ma", "./src/ma"]) {
+					const before = `see ${wrapper}`;
+					const line = `${before}${prefix}`;
+					const result = await getSuggestions(provider, [line], 0, line.length, true);
+					assert.ok(result, line);
+					assert.strictEqual(result.prefix, prefix);
+					const value = prefix.replace("src/ma", "src/main.ts");
+					assert.deepStrictEqual(
+						result.items.map((item) => item.value),
+						[value],
+					);
+					const applied = provider.applyCompletion([line], 0, line.length, result.items[0]!, result.prefix);
+					assert.strictEqual(applied.lines[0], `${before}${value}`);
+				}
+			}
+		});
+
+		test("completes quoted paths after opening wrappers", async () => {
+			setupFolder(baseDir, { files: { "my dir/main.ts": "x" } });
+			const provider = new CombinedAutocompleteProvider([], baseDir);
+			const line = 'see ("my dir/ma';
+			const result = await getSuggestions(provider, [line], 0, line.length, true);
+			assert.ok(result);
+			assert.strictEqual(result.prefix, '"my dir/ma');
+			assert.deepStrictEqual(
+				result.items.map((item) => item.value),
+				['"my dir/main.ts"'],
+			);
+		});
+
+		test("keeps wrappers that are closed inside the path", async () => {
+			setupFolder(baseDir, { files: { "[slug]/page.tsx": "x", "(group)/layout.tsx": "x" } });
+			const provider = new CombinedAutocompleteProvider([], baseDir);
+			for (const [prefix, value] of [
+				["[slug]/pa", "[slug]/page.tsx"],
+				["(group)/la", "(group)/layout.tsx"],
+				["./[slug]/pa", "./[slug]/page.tsx"],
+			]) {
+				const line = `see ${prefix}`;
+				const result = await getSuggestions(provider, [line], 0, line.length, true);
+				assert.ok(result, line);
+				assert.strictEqual(result.prefix, prefix);
+				assert.deepStrictEqual(
+					result.items.map((item) => item.value),
+					[value],
+				);
+			}
 		});
 
 		test("preserves CJK characters in unprefixed Tab completions", async () => {

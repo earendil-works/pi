@@ -8,10 +8,11 @@ import type {
 } from "openai/resources/chat/completions.js";
 import type {
 	AssistantImages,
+	ImageApi,
 	ImageContent,
+	ImageModel,
 	ImagesContext,
 	ImagesFunction,
-	ImagesModel,
 	ImagesOptions,
 	ProviderHeaders,
 	TextContent,
@@ -37,8 +38,9 @@ type OpenRouterImageGenerationResponse = ChatCompletion & {
 	choices: OpenRouterImageGenerationChoice[];
 };
 
-export const generateImages: ImagesFunction<"openrouter-images", ImagesOptions> = async (
-	model: ImagesModel<"openrouter-images">,
+/** Image generation over OpenRouter's chat completions endpoint. */
+export const generateImages: ImagesFunction<ImagesOptions> = async (
+	model: ImageModel<ImageApi>,
 	context: ImagesContext,
 	options?: ImagesOptions,
 ) => {
@@ -115,7 +117,7 @@ export const generateImages: ImagesFunction<"openrouter-images", ImagesOptions> 
 };
 
 function createClient(
-	model: ImagesModel<"openrouter-images">,
+	model: ImageModel<ImageApi>,
 	apiKey: string,
 	optionsHeaders?: ProviderHeaders,
 	fetch?: typeof globalThis.fetch,
@@ -133,7 +135,7 @@ type OpenRouterImagesCreateParams = Omit<ChatCompletionCreateParamsNonStreaming,
 	modalities: Array<"image" | "text">;
 };
 
-function buildParams(model: ImagesModel<"openrouter-images">, context: ImagesContext): OpenRouterImagesCreateParams {
+function buildParams(model: ImageModel<ImageApi>, context: ImagesContext): OpenRouterImagesCreateParams {
 	const content: ChatCompletionContentPart[] = context.input.map((item): ChatCompletionContentPart => {
 		if (item.type === "text") {
 			return {
@@ -168,7 +170,7 @@ function parseUsage(
 		completion_tokens?: number;
 		prompt_tokens_details?: { cached_tokens?: number; cache_write_tokens?: number };
 	},
-	model: ImagesModel<"openrouter-images">,
+	model: ImageModel<ImageApi>,
 ) {
 	const promptTokens = rawUsage.prompt_tokens || 0;
 	const reportedCachedTokens = rawUsage.prompt_tokens_details?.cached_tokens || 0;

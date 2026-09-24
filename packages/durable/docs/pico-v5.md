@@ -10,7 +10,7 @@ import type {
   JsonValue,
   ReplicatedState,
 } from "@earendil-works/chord";
-import { applyImmutable, type Op } from "@earendil-works/chord/delta";
+import type { Op } from "@earendil-works/chord/delta";
 import type {
   Message,
   Models,
@@ -55,8 +55,9 @@ Required invariants:
 3. All visible progress is durable. There is no volatile publication path.
 4. External effects do not run inside the Session mutation transaction.
 5. Entries and IDs are immutable and never reused after a committed write.
-6. Document drafts are revoked when their transaction callback settles. Values
-   assigned into a draft are copied by value.
+6. Document drafts are fully revoked when their transaction callback settles:
+   the Session synchronously prepares or aborts every open change at that point.
+   Values assigned into a draft are copied by value and must be strict JSON.
 7. The mutation line remains held through storage settlement and committed-state
    adoption. Listener callbacks run later, off the line.
 8. An uncertain storage failure is fatal to the open Session. It publishes
@@ -479,7 +480,7 @@ is `"off"`. It is rewindable with `fork: "asOf"`, so a child starts from the
 configuration visible at its selected entry unless explicit creation seeds
 override it. Conversation creation eagerly
 creates it, so `getModel()`, `getThinkingLevel()`, `getActiveTools()`, and
-`getSection()` return detached committed snapshots without a get-or-create
+`getSection()` return immutable committed snapshots without a get-or-create
 write. Each setter performs one ordinary Session commit against that document;
 `setSection(section, undefined)` removes the value. A setter does not start
 generation or append a system entry. Request preparation later compares the
@@ -558,10 +559,11 @@ the terminal receipt. Aborting an already terminal task returns `terminal`; an
 unknown ID rejects. Explicit task abort includes a background task. Cancelling a
 task or idle wait does not abort work.
 
-`Conversation.watch()` atomically captures an immutable structural view and
-registers for later complete Session commits. Its `WatchHandle` uses the same
-serialized asynchronous update and reset-compaction contract as `watchDoc()` in
-section 9.2. It carries no semantic events and owns no second tracker.
+`Conversation.watch()` atomically captures its current immutable structural
+revision and registers for later complete Session commits. Its `WatchHandle`
+uses the same serialized asynchronous, latest-revision delivery contract as
+`watchDoc()` in section 9.2. It carries no semantic events and owns no second
+persistence authority.
 
 `close()` is equivalent to `suspend()` for v1. It seals mutation admission and
 task reservation, signals invocations, and stops watches. Outside the Session
@@ -858,9 +860,11 @@ registered and ordinary documents are not scanned at open.
 - A terminal candidate rejects later task-document access. Terminal settlement
   retires both existing task documents and task documents created earlier in the
   same transaction.
-- `snapshot()` returns a detached JSON copy.
+- `snapshot()` returns the current shareable immutable revision. Mutation of it
+  or any retained descendant is unsupported; callers that need mutable ownership
+  must copy it first.
 - `documentSource()` returns an opaque source bound to one committed incarnation.
-- `tx.doc()` returns one revocable copy-on-write `Draft<T>` for the transaction.
+- `tx.doc()` returns one revocable Astra overlay `Draft<T>` for the transaction.
 - Historical reads never create documents in the past.
 
 `snapshotAsOf()` is available only for rewindable conversation documents. It
@@ -877,13 +881,15 @@ alive at the target commit.
 
 ### 3.4 Mutation ownership
 
-Pico uses Chord Delta's transaction shape directly:
+Pico uses Chord Delta's Astra-immutable transaction shape directly:
 
 ```ts
 interface Prepared<T extends object> {
   readonly base: T;
   readonly value: T;
   readonly ops: readonly Op[];
+  readonly baseRevision: number;
+  abort(): void;
 }
 interface Change<T extends object> {
   readonly state: Draft<T>;
@@ -892,64 +898,91 @@ interface Change<T extends object> {
 }
 interface Tracker<T extends object> {
   readonly value: T;
+  readonly revision: number;
   beginChange(): Change<T>;
   prepareReplace(value: T): Prepared<T>;
   adopt(prepared: Prepared<T>): void;
 }
 ```
 
-One tracker has at most one open change. `prepare()` revokes the draft and returns
-an inert branded result without changing `tracker.value`; `abort()` is
-idempotent. `adopt()` accepts only a result from that tracker whose `base` is
-still current. `ops.length === 0` implies `value === base`. Pico's Session line
-ensures no tracker becomes stale between preparation, Storage settlement, and
-adoption.
+Each loaded document owns one tracker whose `value` is its current immutable
+revision. Immutability is a trusted ownership contract, not runtime freezing:
+a revision and its descendants must never be mutated after transfer to the
+tracker. `prepare()` revokes the draft, emits detached self-contained
+operations, and computes `value` with the optimized immutable applier before
+Storage admission. Unchanged subtrees are structurally shared with `base`.
+Operation placement payloads may also be shared with `value`; mutating either a
+prepared operation or an immutable revision is unsupported. Astra preserves an
+empty operation batch for changes it proves are no-ops, but Pico performs no
+additional whole-value equality pass for nonempty structural batches.
 
-Each loaded document owns one tracker. The first `tx.doc()` acquisition calls
-`tracker.beginChange()` and memoizes that change's draft for the rest of the
-possibly async Session callback.
+`abort()` is idempotent. `adopt()` accepts only a prepared result from that
+tracker at its current revision, then performs only a synchronous pointer swap
+to the already-computed immutable `value`. It performs no diffing, application,
+allocation, or callback. The Session line permits at most one open change per
+tracker and ensures no result becomes stale between preparation, Storage
+settlement, and adoption.
+
+The first `tx.doc()` acquisition calls `tracker.beginChange()` and memoizes that
+change's draft for the rest of the possibly async Session callback.
 
 Transaction behavior:
 
 ```text
 begin transaction
   acquire and memoize document changes by logical address
-  mutate revocable copy-on-write drafts
+  mutate revocable Astra overlay drafts
 callback settles
-  seal Tx and synchronously reject further draft/Tx use
+  seal Tx; synchronously prepare or abort every open change, revoking every draft
   if any acquisition is pending: abort open changes, reject, then drain and abort it
 callback fails with no pending acquisition
   abort every open change; persist and publish nothing
 callback succeeds with no pending acquisition
-  prepare every open change -> immutable candidate + frozen Chord Op[]
-  normalize deep no-ops to the previous value + []
+  prepare every open change -> immutable next revision + self-contained Chord Op[]
   Session evaluates each required/ordinary document write exactly once
+  prepare every affected loaded conversation mount revision
   Storage.commit persists the atomic batch while the Session line remains held
 storage succeeds
-  adopt every prepared change and enqueue candidate/ops publication
+  adopt every prepared change by pointer swap and enqueue immutable revision/ops publication
   release the line; invoke listeners later
 storage fails
-  poison Session and publish nothing
+  abort every prepared change, poison Session, and publish nothing
 ```
 
 A pending acquisition that resolves after sealing never exposes a draft; its
 change is aborted and its promise rejects. The Session observes every such
-settlement before releasing the line.
+settlement before releasing the line. Initializer, migration, and replacement
+roots come from caller code: the Session copies each one into exclusive kernel
+ownership, rejecting any value that is not strict JSON, before it becomes an
+immutable tracker revision. Loaded and fork-copy roots are already detached
+strict JSON from Storage and enter the tracker without another copy. Chord's
+`track()` and `prepareReplace()` take ownership in O(1) without traversal, so
+every root they receive must come from one of these sources. Migration callbacks
+never receive a live tracker revision.
 
-`prepare()` performs all JSON, ownership, diff, and freezing work. Preparation or
-checkpoint failure occurs before Storage admission and rolls back normally.
-Adoption performs no diffing, allocation, or callback. The prepared candidate
-itself becomes the immutable published value; Pico does not replay its operations
-to construct another copy. An unchanged existing current-version document writes
-and publishes nothing. Creation and required version transitions still write a
-base when their prepared operation batch is empty; an equal-value version base
-does not emit a watch update.
+Preparation, validation, checkpoint, or mounted-view preparation failure occurs
+before Storage admission and rolls back normally. The Session performs no
+strict-JSON walk of prepared operations or selected bases: roots are checked on
+entry and Chord checks every draft placement, so every revision, operation
+payload, and base is strict JSON by construction. Tracker branding and `baseRevision` enforce ownership and staleness; the
+Session never substitutes caller-created prepared values. The prepared immutable
+candidate itself becomes the adopted and published value. Storage receives that complete value only when the
+Session selects a base; otherwise it receives only the prepared operation batch.
+An existing current-version document with an empty batch writes and publishes
+nothing. A nonempty structural batch whose final value is deeply equal to its
+base remains a valid durable change and publication. Creation and required
+version transitions still write a base when their prepared batch is empty; an
+equal-value version base does not emit a watch update.
 
-Values assigned into a draft are copied immediately by value. Repeated placements
-are independent. Chord may structurally share unchanged immutable subtrees across
-revisions. Operation tuples, paths, splice payload arrays, permutations, and the
-outer batch are frozen before checkpoint code, Storage, or listeners can observe
-them.
+Values assigned into a draft are copied immediately by value. Repeated
+placements are independent. Chord checks each placement while copying it and
+throws at the offending assignment, before the draft changes, when the value is
+not strict JSON: `undefined` array elements or nested object values, non-finite
+numbers, functions, symbols, bigints, accessors, symbol keys, sparse arrays, or
+objects whose prototype is neither `Object.prototype` nor `null`. Assigning
+`undefined` directly to an object property deletes that property. Draft reads, draft writes, and all `Tx` operations
+reject after the callback settles. The prepared immutable value remains readable
+by Session-owned checkpoint and Storage preparation.
 
 ```ts
 let escaped: Draft<LiveState>;
@@ -960,8 +993,7 @@ escaped.message = message; // throws: the draft was revoked
 ```
 
 Fire-and-forget work that mutates a draft before the owner callback settles may
-silently enter that transaction and is unsupported. After settlement, draft and
-`Tx` operations reject.
+silently enter that transaction and is unsupported.
 
 ### 3.5 Bases and checkpoints
 
@@ -1021,7 +1053,10 @@ access-driven: `tx.doc()`, `snapshot()`, `snapshotAsOf()`, `documentSource()`, a
 `watchDoc()` reconstruct and migrate through the token supplied to that call.
 Harness open does not sweep ordinary documents.
 
-- Read-only access migrates only its returned in-memory value and never writes.
+- Read-only access migrates only in memory and never writes. It may cache a
+  tracker over that migrated immutable revision together with the older stored
+  version marker; the next successful `tx.doc()` access still writes the required
+  current-version base. Migration always starts from a detached stored value.
   `tx.doc()` stages migration in its enclosing transaction; callback failure
   persists nothing, and later draft edits coalesce into one final required base.
 - Rewindable history is not rewritten. Current and historical reconstructed
@@ -1368,8 +1403,8 @@ never trigger generation by themselves. A final boundary without continuation
 or user triggers leaves the conversation idle.
 
 Selected and stale items are removed positionally while retained item order is
-preserved. Chord's revision differ must express scattered removals without
-carrying retained values; IDs are not substituted for positional inbox
+preserved. Chord's Astra operation generator must express scattered removals
+without carrying retained values; IDs are not substituted for positional inbox
 semantics.
 
 ## 7. Hooks, tools, and system sections
@@ -1456,14 +1491,20 @@ type ToolRegistration = Tool & {
 };
 ```
 
-Omitted `replay` is `unsafe`. Omitted output bounds are 64 KiB, 200 lines, and
-`retain: "head"`. `stream()` synchronously accepts UTF-8 output into that
+Omitted `replay` is `unsafe`. Omitted output bounds are 50 KiB, 2,000 lines,
+and `retain: "head"`. `stream()` synchronously accepts UTF-8 output into that
 invocation-owned bounded buffer and throws after invocation end. Throttled
 commits publish the retained output and dropped byte/line counts in the tool
 presentation document. If `execute()` omits `content`, the final retained stream
 becomes one text content item; no stream becomes an empty content list. Explicit
 text in explicit result content is bounded by the same limits before transcript
 persistence; non-text content is retained as declared by its pi-ai type.
+
+`stream()` never spills complete output to a file because spilling requires a
+filesystem, which may be remote or unavailable. A tool that must preserve
+complete output spills through the `ExecutionEnv` or `FileSystem` it was given,
+such as shell execution with spill capture, and reports the resulting path in its
+result details or progress.
 
 `progress(value)` replaces the invocation's complete JSON `progress` payload; it
 does not merge keys. Its promise resolves after the corresponding or coalesced
@@ -1678,7 +1719,7 @@ does not delete transcript history.
 
 ### 9.1 Document source
 
-Chord exposes this source-adoption contract from its replicated-state layer:
+Chord's existing replicated-state layer exposes this source-adoption contract:
 
 ```ts
 interface ReplicatedStateSourceFrame<T> {
@@ -1723,10 +1764,10 @@ interface DocumentSource<T extends JsonObject>
 
 type WatchEnd =
   | { readonly reason: "stopped" | "cancelled" | "session_closed" | "retired" }
-  | { readonly reason: "listener_error"; readonly error: Error };
+  | { readonly reason: "listener_error" | "diff_error"; readonly error: Error };
 
 interface WatchHandle<T> {
-  /** Immutable acquisition snapshot. This reference never changes. */
+  /** Acquisition revision before start; latest delivered immutable revision afterward. */
   readonly value: T;
   /** Installs the sole serialized asynchronous listener. */
   start(listener: (ops: readonly Op[], context: Context) => Promise<void>): void;
@@ -1749,13 +1790,15 @@ interface DocumentObserver {
 ```
 
 `DocumentSource` is an opaque Chord-recognized `ReplicatedStateSource`. A Chord
-replicated state adopts it directly and forwards its committed immutable value
-and operations without another tracker or re-diff. `attach()` is one synchronous
-boundary: `snapshot.value` includes every commit through `snapshot.cursor`, and
-the attachment buffers only later frames. `activate()` installs the sole listener
-and synchronously drains those frames in contiguous cursor order before returning.
-An operation already covered by the snapshot is never redelivered. Source-backed
-state is publication-only and Pico remains its sole mutator.
+replicated state adopts Pico's shareable committed immutable revisions directly,
+without another tracker or a value copy. `attach()` is one synchronous boundary:
+`snapshot.value` includes every commit through `snapshot.cursor`, and the
+attachment buffers only later frames. `activate()` installs the sole listener
+and synchronously drains those frames in contiguous cursor order before
+returning. An operation already covered by the snapshot is never redelivered.
+Source-backed state is publication-only and Pico remains its sole mutator.
+Source revisions and operation placement payloads may share trusted immutable
+containers.
 
 Source and watch acquisition never create; absent lookup returns `undefined`.
 Successful acquisition binds one concrete incarnation. Retirement publishes a
@@ -1777,20 +1820,18 @@ has a token and owner/key. There is no additional subtree permission system insi
 Session code.
 
 `watchDoc()` is available on task, hook, and tool APIs. On the Session line,
-acquisition resolves one existing concrete incarnation, captures its immutable
-committed value, and registers the handle for every later committed operation
-batch. It returns `undefined` when absent. `watch.value` is that fixed acquisition snapshot and
-never changes.
+acquisition resolves one existing concrete incarnation, captures its current
+immutable tracker revision in O(1), and registers the handle for later current
+revisions. It returns `undefined` when absent. Before `start()`,
+`watch.value` remains the acquisition revision even when newer revisions commit.
 
 ```ts
 const watch = await api.watchDoc(JobOutputDoc, producerTaskId, context);
 if (watch === undefined) return;
-let value = watch.value;
 try {
-  await initializeConsumer(value, context);
-  watch.start(async (ops, deliveryContext) => {
-    value = applyImmutable(value, ops);
-    await consume(value, deliveryContext);
+  await initializeConsumer(watch.value, context);
+  watch.start(async (_ops, deliveryContext) => {
+    await consume(watch.value, deliveryContext);
   });
 } catch (error) {
   watch.stop();
@@ -1799,59 +1840,50 @@ try {
 }
 ```
 
-The caller initializes from `value` before `start()`. `start()` synchronously
-installs the sole listener, changes the prepared handle to active, and schedules
-delivery; it never invokes the listener inline. A second `start()`, or `start()`
-after stop, throws.
+The caller initializes from the acquisition revision before `start()`.
+`start()` synchronously installs the sole listener, changes the prepared handle
+to active, and schedules delivery; it never invokes the listener inline. A
+second `start()`, or `start()` after stop, throws.
 
-One per-watch delivery line awaits each callback before starting the next, so
-callbacks never overlap. Commits never wait for callback settlement: while one
-batch is in flight, later batches append to the pending queue. Empty operation
-batches are discarded before enqueueing and cannot consume queue bookkeeping. An
-update accepted between acquisition and return, or between return and `start()`,
-is therefore not lost. The listener's promise covers all work the watch
-serializes; fire-and-forget work started by the listener is outside that
-guarantee.
+Each watch retains only its last delivered immutable revision and the newest
+committed immutable revision. It retains no operation queue and never constructs
+reset frames. Before each callback, off the Session line, it computes
+`diffRevisions(lastDelivered, newest)` and advances `watch.value` to that exact
+newest revision. An empty derived batch advances the value silently without
+invoking the listener. A nonempty batch is delivered with a watch-owned Context
+that carries values from the newest coalesced commit's Context while its
+cancellation lifetime belongs to the watch. If a newer revision arrives while a callback
+is in flight, the delivery line repeats after that callback settles. Callbacks
+never overlap, and commits never wait for callback settlement.
 
-The pending queue is bounded only by the total number of operations in its
-undelivered batches. It never estimates serialized size or calls
-`JSON.stringify()` to make a compaction decision. When the operation-count limit
-is exceeded, the handle leaves the in-flight batch untouched and replaces the
-entire pending suffix with one newly allocated root replacement batch:
+An update accepted between acquisition and return, or between return and
+`start()`, is therefore not lost. Slow or unstarted watches converge directly to
+the latest committed state with memory bounded by immutable revision references,
+not queued operation count. Intermediate commits and redundant nonempty batches
+may be coalesced away when their net revision diff is empty. Code that must audit
+every transition must persist each fact as an immutable entry or in its own
+journal. The listener's promise covers all work the watch serializes;
+fire-and-forget work started by the listener is outside that guarantee.
 
-```ts
-[["r", latestImmutablePublishedValue]]
-```
+`watch.value` and every previously returned revision remain stable forever under
+the trusted immutability contract. Consumers must not mutate them or any retained
+descendant. A consumer needing mutable ownership must copy first.
 
-The reset counts as one pending operation regardless of the document's in-memory
-size. Later deltas append behind it. If the operation-count limit is exceeded
-again, the whole pending suffix is replaced with a newer reset rather than
-accumulating an unbounded operation list. This bounds delta bookkeeping, not the
-document value itself. This watch observes convergent committed state, not every
-intermediate transition.
+A watch remains bound to its original incarnation. Retirement sets its newest
+revision to `null`. Before start, `value` remains the acquisition revision;
+after start, the terminal diff advances `watch.value` to `null`, invokes the
+listener, and closes as `retired`. Recreation requires another watch.
 
-The replacement value is the prepared immutable candidate corresponding exactly
-to the last batch compacted into it. Pico adopts and publishes that candidate
-after storage succeeds; it never exposes a draft or borrowed storage value.
-Watches may share the immutable candidate and frozen operation payloads. A
-mutable consumer must detach them before using mutable `apply()` or `track()`.
-
-A watch remains bound to its original incarnation. Retirement replaces the
-pending suffix with `[["r", null]]`. Before start, `value` remains the original
-snapshot and the terminal reset becomes the first delivered batch. While active,
-the reset follows any in-flight callback. Successful terminal delivery closes as
-`retired`; recreation requires another watch.
-
-`stop()` is idempotent, unregisters the handle, discards pending batches,
-prevents another callback from starting, and signals the watch delivery context.
-An in-flight callback is allowed to settle; `closed` resolves only afterward.
-The acquisition `Context` governs the watch lifetime. Cancellation during
-acquisition cleans up any registration before rejecting. Cancellation immediately
-after successful acquisition may return an already-stopped handle,
+`stop()` is idempotent, unregisters the handle, discards its pending latest
+revision, prevents another callback from starting, and signals the watch-owned
+delivery Context. An in-flight callback is allowed to settle; `closed` resolves only
+afterward. The acquisition `Context` governs the watch lifetime. Cancellation
+during acquisition cleans up any registration before rejecting. Cancellation
+immediately after successful acquisition may return an already-stopped handle,
 whose `start()` throws and whose `closed` reports `cancelled`. Invocation
-termination and Session close stop owned watches similarly. Listener rejection
-is reported, discards pending work, and closes only that watch as
-`listener_error`. The first termination reason wins, and every late rejection is
+termination and Session close stop owned watches similarly. Diff or listener
+failure is reported, discards pending work, and closes only that watch as
+`diff_error` or `listener_error`, respectively. The first termination reason wins, and every late rejection is
 observed.
 
 ### 9.3 Conversation view
@@ -1878,26 +1910,31 @@ document op ["s", ["message"], value]
 ```
 
 Entry appends/head changes and every changed mounted document are included in
-the same publication. The mount owns no document revision producer and performs no semantic
-projection. It materializes one immutable published view per batch with
-`applyImmutable(previousView, mountedOps)` so every conversation watch can share
-that value for reset compaction. A Chord adapter assigns a contiguous in-memory
-delivery sequence per view source lifetime.
+the same publication. Before Storage admission, the Session derives the mounted
+operation batch and prepares each affected loaded mount's next immutable revision
+with the optimized immutable applier. Failure rolls back normally. After Storage
+success, finalization only installs the prepared mount pointers/cursors and
+enqueues publication. Mounted document revisions may be structurally shared
+because they obey the same trusted immutability contract. The mount performs no
+semantic projection and owns no second persistence authority. A Chord adapter
+assigns a contiguous in-memory delivery sequence per view source lifetime.
 
-`Conversation.watch()` exposes that mount through the same immutable acquisition
-snapshot, serialized asynchronous listener, and reset-compacted pending queue as
-`watchDoc()`. Each non-empty operation batch represents one complete Session
-commit; a commit that does not change the mounted view emits no watch batch. Chord
-Session facets may forward the captured value and committed operations through
-services, but that product wiring is not part of the Harness facade and must not
-add another tracker or semantic event envelope.
+`Conversation.watch()` exposes that mount through the same O(1) immutable
+acquisition, serialized asynchronous listener, and latest-revision coalescing as
+`watchDoc()`. An empty mounted operation batch creates no revision; a redundant
+nonempty batch may create a distinct but deeply equal revision. A slow watch may
+skip intermediate revisions and receives a derived diff from its last delivered
+revision directly to the newest one. Chord Session facets may
+forward the captured revision and committed operations through services, but
+that product wiring is not part of the Harness facade and must not add another
+tracker or semantic event envelope.
 
 ### 9.4 Agent-mode notifications
 
 The Session kernel and Chord structural sources do not maintain a semantic event
 journal. Coding-agent JSON/RPC compatibility uses a thin agent-mode adapter
-derived from each uncoalesced committed publication before per-watch queue
-compaction. It owns no tracker or persistence and emits notifications only after
+derived from each uncoalesced committed publication before per-watch
+latest-revision coalescing. It owns no tracker or persistence and emits notifications only after
 the commit that makes them true.
 
 The adapter protocol covers run start/settlement, committed assistant progress,
@@ -1920,7 +1957,7 @@ these rules:
   adapter.
 
 This adapter is allowed even though a public Session-kernel semantic stream is a
-non-goal. It must not derive notifications from a lossy, reset-compacted watch
+non-goal. It must not derive notifications from a lossy, latest-revision watch
 when complete subscribed lifecycle delivery is promised.
 
 ## 10. Storage contract
@@ -2150,9 +2187,10 @@ initial implementation.
 
 These are contracts, not invitations to add defensive machinery:
 
-- **Detached draft work:** drafts and bound array methods are revoked after the
-  Session callback settles. Fire-and-forget work that runs before settlement can
-  still mutate the active transaction and is unsupported.
+- **Detached draft work:** draft reads, draft writes, and all `Tx` operations
+  reject after the Session callback settles. Fire-and-forget work that runs
+  before callback settlement can still mutate the active transaction and is
+  unsupported.
 - **Read after write:** read every required table row before the first table
   write. Document drafts remain usable afterward; table reads do not.
 - **Long transactions:** an async commit callback holds the Session mutation
@@ -2173,13 +2211,17 @@ These are contracts, not invitations to add defensive machinery:
   change requires explicit copy and retirement. Passing incompatible definition
   tokens that claim the same kind is unsupported caller misuse; Session does not
   maintain a document-definition registry to detect it.
-- **Watch activation:** `watch.value` is the immutable acquisition snapshot.
-  Initialize the consumer from it before `start()`; queued operations are based
-  on exactly that value.
-- **Coalesced watches:** slow or unstarted watches may replace an undelivered
-  suffix with a complete reset, omitting intermediate committed states. A facet
-  that must audit every transition must persist each fact as an immutable entry
-  or in its own journal and scan that history explicitly.
+- **Trusted immutable revisions:** `snapshot()`, source values, watch values, and
+  their descendants may share tracker-owned containers. Never mutate them; copy
+  first when mutable ownership is required. Runtime freezing is not provided.
+- **Watch activation:** before `start()`, `watch.value` remains the immutable
+  acquisition revision. Initialize the consumer from it first. After start, the
+  property advances to the newest delivered immutable revision before each
+  callback; every earlier reference remains stable.
+- **Coalesced watches:** slow or unstarted watches retain only their last
+  delivered and newest revisions. Intermediate committed states may be omitted.
+  A facet that must audit every transition must persist each fact as an immutable
+  entry or in its own journal and scan that history explicitly.
 - **Watch self-join:** a listener may call `stop()`, but must not await its own
   `closed` promise or a Session close that joins that listener.
 - **Durable progress cadence:** clients see only committed progress. A crash may

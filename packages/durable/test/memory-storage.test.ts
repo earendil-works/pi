@@ -1,10 +1,10 @@
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { expect, it } from "vitest";
+import { registerStorageConformance } from "@earendil-works/pi-durable/testing";
+import { describe, expect, it } from "vitest";
 import { MemoryStorage } from "../src/storage/memory.ts";
 import { ROOT_CONVERSATION_ID } from "../src/types.ts";
-import { registerStorageConformance } from "./storage-conformance.ts";
 
-registerStorageConformance("Pico MemoryStorage", () => new MemoryStorage());
+registerStorageConformance({ describe, expect, it }, "MemoryStorage", (use) => use(new MemoryStorage()));
 
 it("does not expose retained state through a prepared commit", async () => {
 	const storage = new MemoryStorage();
