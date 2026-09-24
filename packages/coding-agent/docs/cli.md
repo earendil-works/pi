@@ -136,6 +136,7 @@ Default enabled tools are `read`, `bash`, `edit`, and `write`, unless `defaultTo
 | `grep` | Search file contents |
 | `find` | Find paths using glob patterns |
 | `ls` | List directory contents |
+| `codemode` | Run JavaScript that calls the other active tools, for example in parallel with `Promise.all`; only the script's return value and console output reach the model |
 
 <a id="resource-options"></a>
 

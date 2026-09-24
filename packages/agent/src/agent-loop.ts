@@ -23,7 +23,10 @@ import type {
 	AgentMessage,
 	AgentTool,
 	AgentToolCall,
+	AgentToolCallOutcome,
+	AgentToolContext,
 	AgentToolResult,
+	AgentToolUpdateCallback,
 	PrepareNextTurnContext,
 	StreamFn,
 } from "./types.ts";
@@ -552,7 +555,14 @@ async function executeToolCallsSequential(
 				isError: preparation.isError,
 			};
 		} else {
-			const executed = await executePreparedToolCall(preparation, signal, emit);
+			const executed = await executePreparedToolCall(
+				currentContext,
+				assistantMessage,
+				config,
+				preparation,
+				signal,
+				emitToolExecutionUpdate(preparation.toolCall, emit),
+			);
 			finalized = await finalizeExecutedToolCall(
 				currentContext,
 				assistantMessage,
@@ -623,7 +633,14 @@ async function executeToolCallsParallel(
 				await emitToolExecutionEnd(finalized, emit);
 				return finalized;
 			}
-			const executed = await executePreparedToolCall(preparation, signal, emit);
+			const executed = await executePreparedToolCall(
+				currentContext,
+				assistantMessage,
+				config,
+				preparation,
+				signal,
+				emitToolExecutionUpdate(preparation.toolCall, emit),
+			);
 			const finalized = await finalizeExecutedToolCall(
 				currentContext,
 				assistantMessage,
@@ -674,11 +691,9 @@ type ExecutedToolCallOutcome = {
 	isError: boolean;
 };
 
-type FinalizedToolCallOutcome = {
-	toolCall: AgentToolCall;
-	result: AgentToolResult<any>;
-	isError: boolean;
-};
+type FinalizedToolCallOutcome = AgentToolCallOutcome;
+
+type ToolUpdateSink = (partialResult: AgentToolResult<any>) => Promise<void> | void;
 
 type FinalizedToolCallEntry = FinalizedToolCallOutcome | (() => Promise<FinalizedToolCallOutcome>);
 
@@ -706,6 +721,7 @@ async function prepareToolCall(
 	toolCall: AgentToolCall,
 	config: AgentLoopConfig,
 	signal: AbortSignal | undefined,
+	parentToolCall?: AgentToolCall,
 ): Promise<PreparedToolCall | ImmediateToolCallOutcome> {
 	const tool = currentContext.tools?.find((t) => t.name === toolCall.name);
 	if (!tool) {
@@ -726,6 +742,7 @@ async function prepareToolCall(
 					toolCall,
 					args: validatedArgs,
 					context: currentContext,
+					...(parentToolCall ? { parentToolCall } : {}),
 				},
 				signal,
 			);
@@ -770,10 +787,96 @@ async function prepareToolCall(
 	}
 }
 
+function emitToolExecutionUpdate(toolCall: AgentToolCall, emit: AgentEventSink): ToolUpdateSink {
+	return (partialResult) =>
+		emit({
+			type: "tool_execution_update",
+			toolCallId: toolCall.id,
+			toolName: toolCall.name,
+			args: toolCall.arguments,
+			partialResult,
+		});
+}
+
+/**
+ * Services handed to a tool while it runs. Nested calls get ids `<parent id>/<n>` and run through
+ * the same prepare, execute, and finalize steps as model-issued calls, without emitting events.
+ */
+function createToolContext(
+	currentContext: AgentContext,
+	assistantMessage: AssistantMessage,
+	config: AgentLoopConfig,
+	toolCall: AgentToolCall,
+	signal: AbortSignal | undefined,
+): AgentToolContext {
+	let nextNestedId = 1;
+	return {
+		toolCall,
+		tools: currentContext.tools ?? [],
+		executeTool: (name, args, options) =>
+			executeNestedToolCall(
+				currentContext,
+				assistantMessage,
+				config,
+				toolCall,
+				{
+					type: "toolCall",
+					id: `${toolCall.id}/${nextNestedId++}`,
+					name,
+					arguments: (args ?? {}) as Record<string, any>,
+				},
+				options?.signal ?? signal,
+				options?.onUpdate,
+			),
+	};
+}
+
+async function executeNestedToolCall(
+	currentContext: AgentContext,
+	assistantMessage: AssistantMessage,
+	config: AgentLoopConfig,
+	parentToolCall: AgentToolCall,
+	toolCall: AgentToolCall,
+	signal: AbortSignal | undefined,
+	onUpdate: AgentToolUpdateCallback | undefined,
+): Promise<AgentToolCallOutcome> {
+	const preparation = await prepareToolCall(
+		currentContext,
+		assistantMessage,
+		toolCall,
+		config,
+		signal,
+		parentToolCall,
+	);
+	if (preparation.kind === "immediate") {
+		return { toolCall, result: preparation.result, isError: preparation.isError };
+	}
+	const executed = await executePreparedToolCall(
+		currentContext,
+		assistantMessage,
+		config,
+		preparation,
+		signal,
+		(partialResult) => onUpdate?.(partialResult),
+	);
+	return finalizeExecutedToolCall(
+		currentContext,
+		assistantMessage,
+		preparation,
+		executed,
+		config,
+		signal,
+		parentToolCall,
+	);
+}
+
 async function executePreparedToolCall(
+	currentContext: AgentContext,
+	assistantMessage: AssistantMessage,
+	config: AgentLoopConfig,
 	prepared: PreparedToolCall,
 	signal: AbortSignal | undefined,
-	emit: AgentEventSink,
+	onUpdate: ToolUpdateSink,
 ): Promise<ExecutedToolCallOutcome> {
 	const updateEvents: Promise<void>[] = [];
 	let acceptingUpdates = true;
@@ -785,18 +888,9 @@ async function executePreparedToolCall(
 			signal,
 			(partialResult) => {
 				if (!acceptingUpdates) return;
-				updateEvents.push(
-					Promise.resolve(
-						emit({
-							type: "tool_execution_update",
-							toolCallId: prepared.toolCall.id,
-							toolName: prepared.toolCall.name,
-							args: prepared.toolCall.arguments,
-							partialResult,
-						}),
-					),
-				);
+				updateEvents.push(Promise.resolve(onUpdate(partialResult)));
 			},
+			createToolContext(currentContext, assistantMessage, config, prepared.toolCall, signal),
 		);
 		acceptingUpdates = false;
 		await Promise.all(updateEvents);
@@ -820,6 +914,7 @@ async function finalizeExecutedToolCall(
 	executed: ExecutedToolCallOutcome,
 	config: AgentLoopConfig,
 	signal: AbortSignal | undefined,
+	parentToolCall?: AgentToolCall,
 ): Promise<FinalizedToolCallOutcome> {
 	let result = executed.result;
 	let isError = executed.isError;
@@ -834,6 +929,7 @@ async function finalizeExecutedToolCall(
 					result,
 					isError,
 					context: currentContext,
+					...(parentToolCall ? { parentToolCall } : {}),
 				},
 				signal,
 			);
@@ -842,6 +938,8 @@ async function finalizeExecutedToolCall(
 					...result,
 					content: afterResult.content ?? result.content,
 					details: afterResult.details ?? result.details,
+					structuredContent:
+						"structuredContent" in afterResult ? afterResult.structuredContent : result.structuredContent,
 					usage: afterResult.usage ?? result.usage,
 					terminate: afterResult.terminate ?? result.terminate,
 				};

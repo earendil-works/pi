@@ -6,9 +6,21 @@ export interface CodemodeToolContext {
 	signal: AbortSignal;
 }
 
+/** A JSON Schema document. Only used to render declarations; values are not validated against it. */
+export type CodemodeJsonSchema = { [key: string]: unknown } | boolean;
+
 export interface CodemodeTool {
-	/** The script calls this as `tools.<name>(args)`. */
+	/**
+	 * The script calls this as `tools.<name>(args)` (or `tools["<name>"](args)` for names that are
+	 * not identifiers). Globals are called as `<name>(args)` and must be identifiers.
+	 */
 	name: string;
+	/** Shown as a doc comment in {@link renderDeclarations}. */
+	description?: string;
+	/** Schema of the single argument. Rendered as the parameter type; `unknown` when omitted. */
+	inputSchema?: CodemodeJsonSchema;
+	/** Schema of the resolved value. Rendered as the promise type; `unknown` when omitted. */
+	outputSchema?: CodemodeJsonSchema;
 	/**
 	 * `args` is whatever the script passed, after a JSON round trip. The return
 	 * value must be JSON-serializable; a thrown error surfaces in the script as
@@ -55,7 +67,18 @@ export type CodemodeResult =
 
 export interface CodemodeSandboxOptions {
 	tools?: CodemodeTool[];
-	/** Overall deadline per execution, including time spent in tools. Default: 300000. */
+	/**
+	 * Functions exposed as top-level identifiers instead of on `tools`, for host helpers such as
+	 * attaching an image to the result. They behave like tools (JSON round trip, promise result)
+	 * but are not recorded in `result.calls`. Names must be identifiers and may not shadow
+	 * `tools` or `console`.
+	 */
+	globals?: CodemodeTool[];
+	/**
+	 * Overall deadline per execution, including time spent in tools. `Infinity` disables the
+	 * deadline; the execution then only ends when the script settles or is aborted.
+	 * Default: 300000.
+	 */
 	timeoutMs?: number;
 	/** Worker heap limit. Enforced on Node; Bun ignores it. Default: runtime default. */
 	maxOldGenerationSizeMb?: number;

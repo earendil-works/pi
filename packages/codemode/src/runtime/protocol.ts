@@ -7,6 +7,7 @@
 export interface WorkerData {
 	code: string;
 	toolNames: string[];
+	globalNames: string[];
 	prelude: string;
 }
 
@@ -14,7 +15,7 @@ export interface WorkerData {
 export type ScriptErrorJson = string;
 
 export type WorkerToHostMessage =
-	| { type: "call"; id: number; name: string; args: string | undefined }
+	| { type: "call"; id: number; target: "tool" | "global"; name: string; args: string | undefined }
 	| { type: "log"; level: string; message: string }
 	| { type: "done"; ok: true; value: string | undefined }
 	| { type: "done"; ok: false; error: ScriptErrorJson };

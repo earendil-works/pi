@@ -2,7 +2,7 @@
 
 Runs model-written JavaScript in a locked-down sandbox where the only capability is calling injected tools. Nested tool calls never enter the LLM context; only the script's return value and logs do.
 
-Status: spike. Not wired into the coding agent yet.
+The coding agent uses it for its built-in `codemode` tool. It has no pi dependencies and can be used on its own to expose any functions (remote APIs, MCP servers, application services) to model-written scripts.
 
 ## Usage
 
@@ -38,7 +38,26 @@ await sandbox.close();
 
 - `tools.<name>(args)` returns a promise. Arguments and results make a JSON round trip. A tool that throws rejects with an `Error` carrying the same message.
 - `console.log/info/warn/error/debug` are captured into `result.logs`.
+- `globals` passed to the sandbox are called as top-level functions, for example a host helper `image(ref)`. They behave like tools but are not recorded in `result.calls`.
 - Nothing else: no timers, `fetch`, `process`, `require`, `import()`, `eval`, `Function`, or `WebAssembly`.
+
+`timeoutMs: Infinity` disables the deadline; the script then runs until it settles or `signal` aborts it.
+
+## Declarations for the model
+
+Tools and globals can carry `description`, `inputSchema`, and `outputSchema` (JSON Schema). `renderDeclarations()` turns them into TypeScript declarations for a model-facing tool description:
+
+```ts
+renderDeclarations({ tools: sandbox.tools, globals: sandbox.globals });
+// declare const tools: {
+//   /** Read a file */
+//   read(args: {
+//     path: string;
+//   }): Promise<string>;
+// };
+```
+
+Schemas only shape the declarations; values are not validated against them.
 
 `execute()` never rejects for script failures. `result.error.kind` is one of:
 

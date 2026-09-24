@@ -11,11 +11,11 @@
  * created here, in the context realm. Tool arguments and results cross as JSON
  * strings and are parsed on this side.
  *
- * Evaluates to a function `(bridge, toolNamesJson) => { settle, run }`.
- * `bridge(kind, a, b, c)` with kind "call" (id, name, argsJson), "log"
- * (level, message) or "done" (ok, valueJsonOrErrorJson).
+ * Evaluates to a function `(bridge, toolNamesJson, globalNamesJson) => { settle, run }`.
+ * `bridge(kind, a, b, c)` with kind "call" or "global" (id, name, argsJson),
+ * "log" (level, message) or "done" (ok, valueJsonOrErrorJson).
  */
-export const PRELUDE_SOURCE: string = `(function (bridge, toolNamesJson) {
+export const PRELUDE_SOURCE: string = `(function (bridge, toolNamesJson, globalNamesJson) {
 	"use strict";
 	// Works on Node. Bun's vm global re-materializes these, so the script
 	// wrapper additionally shadows them with parameters. Wasm compilation is
@@ -53,9 +53,8 @@ export const PRELUDE_SOURCE: string = `(function (bridge, toolNamesJson) {
 		return stringify({ message: format(error) });
 	}
 
-	const tools = Object.create(null);
-	for (const name of parse(toolNamesJson)) {
-		tools[name] = (args) =>
+	function caller(kind, name) {
+		return (args) =>
 			new Promise((resolve, reject) => {
 				let json;
 				try {
@@ -66,10 +65,19 @@ export const PRELUDE_SOURCE: string = `(function (bridge, toolNamesJson) {
 				}
 				const id = nextId++;
 				pending.set(id, { resolve, reject });
-				bridge("call", id, name, json);
+				bridge(kind, id, name, json);
 			});
 	}
+
+	const tools = Object.create(null);
+	for (const name of parse(toolNamesJson)) {
+		tools[name] = caller("call", name);
+	}
 	Object.freeze(tools);
+
+	for (const name of parse(globalNamesJson)) {
+		Object.defineProperty(globalThis, name, { value: caller("global", name), enumerable: true });
+	}
 
 	const console = {};
 	for (const level of ["log", "info", "warn", "error", "debug"]) {

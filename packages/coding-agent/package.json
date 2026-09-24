@@ -52,6 +52,7 @@
 		"@earendil-works/chord": "^0.87.1",
 		"@earendil-works/pi-agent-core": "^0.87.1",
 		"@earendil-works/pi-ai": "^0.87.1",
+		"@earendil-works/pi-codemode": "^0.87.1",
 		"@earendil-works/pi-tui": "^0.87.1",
 		"@silvia-odwyer/photon-node": "0.3.4",
 		"chalk": "6.0.0",

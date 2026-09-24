@@ -12,7 +12,7 @@ export const WORKER_SOURCE: string = String.raw`
 const { parentPort, workerData } = require("node:worker_threads");
 const vm = require("node:vm");
 
-const { code, toolNames, prelude } = workerData;
+const { code, toolNames, globalNames, prelude } = workerData;
 
 function post(message) {
 	parentPort.postMessage(message);
@@ -21,8 +21,8 @@ function post(message) {
 // Called from the context with primitives only. Must return undefined so no
 // worker-realm value flows back into the context.
 function bridge(kind, a, b, c) {
-	if (kind === "call") {
-		post({ type: "call", id: a, name: b, args: c });
+	if (kind === "call" || kind === "global") {
+		post({ type: "call", id: a, target: kind === "call" ? "tool" : "global", name: b, args: c });
 	} else if (kind === "log") {
 		post({ type: "log", level: a, message: b });
 	} else if (kind === "done") {
@@ -34,7 +34,11 @@ function bridge(kind, a, b, c) {
 const context = vm.createContext(vm.constants.DONT_CONTEXTIFY, {
 	codeGeneration: { strings: false, wasm: false },
 });
-const api = vm.runInContext(prelude, context, { filename: "codemode-prelude.js" })(bridge, JSON.stringify(toolNames));
+const api = vm.runInContext(prelude, context, { filename: "codemode-prelude.js" })(
+	bridge,
+	JSON.stringify(toolNames),
+	JSON.stringify(globalNames),
+);
 
 parentPort.on("message", (message) => {
 	if (message && message.type === "result") {

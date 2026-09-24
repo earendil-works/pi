@@ -141,6 +141,10 @@ Use sequential execution when tools share mutable in-memory state.
 File-mutating tools should wrap the complete read-modify-write operation with `withFileMutationQueue()`.
 Truncate large model-facing results and tell the model where to read the complete output.
 
+Declare `outputSchema` and return a matching `structuredContent` when the result is data. The model still receives `content`; programmatic callers such as the `codemode` tool receive `structuredContent` instead of the text. Tools without `outputSchema` are passed to codemode scripts as their text content.
+
+A tool can run other tools with `ctx.executeTool(name, args, { signal, onUpdate })`. Nested calls go through argument validation and the `tool_call` and `tool_result` handlers like model-issued calls; their events carry `parentToolCallId`. They do not emit `tool_execution_*` events or add transcript entries, so the calling tool reports them itself, for example through `onUpdate` and `details`. `ctx.tools` lists the tools active for the run. `tool_result` handlers that redact `content` should also replace `structuredContent`; replacing only `content` drops it.
+
 See [`hello.ts`](../examples/extensions/hello.ts), [`todo.ts`](../examples/extensions/todo.ts), [`dynamic-tools.ts`](../examples/extensions/dynamic-tools.ts), and [`truncated-tool.ts`](../examples/extensions/truncated-tool.ts).
 
 ### Activate tools dynamically

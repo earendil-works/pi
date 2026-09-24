@@ -21,13 +21,15 @@ import { WORKER_SOURCE } from "./worker-source.ts";
 
 const DEFAULT_TIMEOUT_MS = 300_000;
 const LOG_LEVELS: ReadonlySet<string> = new Set<CodemodeLogLevel>(["log", "info", "warn", "error", "debug"]);
+const IDENTIFIER = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
+const RESERVED_GLOBALS: ReadonlySet<string> = new Set(["tools", "console", "globalThis"]);
 
 function errorMessage(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
 }
 
 interface PendingCall {
-	record: CodemodeCall;
+	record: CodemodeCall | undefined;
 	startedAt: number;
 	controller: AbortController;
 }
@@ -35,6 +37,7 @@ interface PendingCall {
 interface ExecutionOptions {
 	code: string;
 	tools: ReadonlyMap<string, CodemodeTool>;
+	globals: ReadonlyMap<string, CodemodeTool>;
 	timeoutMs: number;
 	signal: AbortSignal | undefined;
 	maxOldGenerationSizeMb: number | undefined;
@@ -51,8 +54,9 @@ class Execution {
 	private resolveResult!: (result: CodemodeResult) => void;
 	private readonly worker: Worker;
 	private readonly tools: ReadonlyMap<string, CodemodeTool>;
+	private readonly globals: ReadonlyMap<string, CodemodeTool>;
 	private readonly signal: AbortSignal | undefined;
-	private readonly timer: NodeJS.Timeout;
+	private readonly timer: NodeJS.Timeout | undefined;
 	private readonly logs: CodemodeLog[] = [];
 	private readonly calls: CodemodeCall[] = [];
 	private readonly pending = new Map<number, PendingCall>();
@@ -63,11 +67,13 @@ class Execution {
 			this.resolveResult = resolve;
 		});
 		this.tools = options.tools;
+		this.globals = options.globals;
 		this.signal = options.signal;
 
 		const workerData: WorkerData = {
 			code: options.code,
 			toolNames: [...options.tools.keys()],
+			globalNames: [...options.globals.keys()],
 			prelude: PRELUDE_SOURCE,
 		};
 		this.worker = new Worker(WORKER_SOURCE, {
@@ -90,9 +96,11 @@ class Execution {
 			this.finish({ kind: "sandbox", message: `Worker exited with code ${code} before the script settled` });
 		});
 
-		this.timer = setTimeout(() => {
-			this.finish({ kind: "timeout", message: `Execution timed out after ${options.timeoutMs} ms` });
-		}, options.timeoutMs);
+		if (Number.isFinite(options.timeoutMs)) {
+			this.timer = setTimeout(() => {
+				this.finish({ kind: "timeout", message: `Execution timed out after ${options.timeoutMs} ms` });
+			}, options.timeoutMs);
+		}
 
 		if (options.signal) {
 			if (options.signal.aborted) {
@@ -146,16 +154,17 @@ class Execution {
 
 	private async handleCall(message: Extract<WorkerToHostMessage, { type: "call" }>): Promise<void> {
 		const { id, name } = message;
-		const record: CodemodeCall = { name, status: "cancelled", durationMs: 0 };
-		this.calls.push(record);
+		const isTool = message.target === "tool";
+		const record: CodemodeCall | undefined = isTool ? { name, status: "cancelled", durationMs: 0 } : undefined;
+		if (record) this.calls.push(record);
 		const pending: PendingCall = { record, startedAt: performance.now(), controller: new AbortController() };
 		this.pending.set(id, pending);
 
 		let status: CodemodeCallStatus;
 		let reply: HostToWorkerMessage;
 		try {
-			const tool = this.tools.get(name);
-			if (!tool) throw new Error(`Unknown tool "${name}"`);
+			const tool = (isTool ? this.tools : this.globals).get(name);
+			if (!tool) throw new Error(`Unknown ${isTool ? "tool" : "global"} "${name}"`);
 			const args: unknown = message.args === undefined ? undefined : JSON.parse(message.args);
 			const value = await tool.execute(args, { signal: pending.controller.signal });
 			reply = { type: "result", id, ok: true, payload: value === undefined ? undefined : JSON.stringify(value) };
@@ -168,8 +177,10 @@ class Execution {
 		// Already cancelled by finish(): the record keeps "cancelled" and the
 		// worker is gone or going.
 		if (!this.pending.delete(id)) return;
-		record.status = status;
-		record.durationMs = performance.now() - pending.startedAt;
+		if (record) {
+			record.status = status;
+			record.durationMs = performance.now() - pending.startedAt;
+		}
 		this.post(reply);
 	}
 
@@ -181,7 +192,7 @@ class Execution {
 
 		const now = performance.now();
 		for (const pending of this.pending.values()) {
-			pending.record.durationMs = now - pending.startedAt;
+			if (pending.record) pending.record.durationMs = now - pending.startedAt;
 			pending.controller.abort();
 		}
 		this.pending.clear();
@@ -209,6 +220,7 @@ class Execution {
  */
 export class CodemodeSandbox {
 	private readonly toolsByName = new Map<string, CodemodeTool>();
+	private readonly globalsByName = new Map<string, CodemodeTool>();
 	private readonly timeoutMs: number;
 	private readonly maxOldGenerationSizeMb: number | undefined;
 	private readonly running = new Set<Execution>();
@@ -218,6 +230,13 @@ export class CodemodeSandbox {
 		this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 		this.maxOldGenerationSizeMb = options.maxOldGenerationSizeMb;
 		for (const tool of options.tools ?? []) this.registerTool(tool);
+		for (const global of options.globals ?? []) {
+			if (!IDENTIFIER.test(global.name) || RESERVED_GLOBALS.has(global.name)) {
+				throw new Error(`Invalid global name "${global.name}"`);
+			}
+			if (this.globalsByName.has(global.name)) throw new Error(`Global "${global.name}" is already registered`);
+			this.globalsByName.set(global.name, global);
+		}
 	}
 
 	/** Throws if a tool with the same name is already registered. */
@@ -234,6 +253,10 @@ export class CodemodeSandbox {
 		return [...this.toolsByName.values()];
 	}
 
+	get globals(): CodemodeTool[] {
+		return [...this.globalsByName.values()];
+	}
+
 	/**
 	 * `code` is an async function body: `return` and top-level `await` work.
 	 * Never rejects for script failures; those come back as `{ ok: false }`.
@@ -243,6 +266,7 @@ export class CodemodeSandbox {
 		const execution = new Execution({
 			code,
 			tools: new Map(this.toolsByName),
+			globals: this.globalsByName,
 			timeoutMs: options.timeoutMs ?? this.timeoutMs,
 			signal: options.signal,
 			maxOldGenerationSizeMb: this.maxOldGenerationSizeMb,

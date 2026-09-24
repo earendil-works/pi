@@ -197,6 +197,33 @@ describe("tools", () => {
 	});
 });
 
+describe("globals", () => {
+	it("exposes globals as top-level functions without recording them as calls", async () => {
+		const seen: unknown[] = [];
+		const sandbox = new CodemodeSandbox({
+			tools: [echo],
+			globals: [{ name: "attach", execute: (args) => void seen.push(args) }],
+		});
+		sandboxes.push(sandbox);
+		const result = await sandbox.execute(`
+			await attach({ ref: 1 });
+			attach("not awaited");
+			return [typeof attach, typeof globalThis.attach, await tools.echo(2)];
+		`);
+		expect(result).toMatchObject({ ok: true, value: ["function", "function", 2] });
+		expect(result.calls.map((call) => call.name)).toEqual(["echo"]);
+		// Messages are handled in order, so an unawaited global still runs before the script settles.
+		expect(seen).toEqual([{ ref: 1 }, "not awaited"]);
+	});
+
+	it("rejects invalid and reserved global names", () => {
+		const execute = () => undefined;
+		expect(() => new CodemodeSandbox({ globals: [{ name: "not-valid", execute }] })).toThrow(/Invalid global/);
+		expect(() => new CodemodeSandbox({ globals: [{ name: "tools", execute }] })).toThrow(/Invalid global/);
+		expect(() => new CodemodeSandbox({ globals: [{ name: "console", execute }] })).toThrow(/Invalid global/);
+	});
+});
+
 describe("limits and lifetime", () => {
 	it("terminates a synchronous infinite loop on timeout", async () => {
 		const sandbox = createSandbox();
@@ -204,6 +231,14 @@ describe("limits and lifetime", () => {
 		const result = await sandbox.execute("while (true) {}", { timeoutMs: 200 });
 		expect(result).toMatchObject({ ok: false, error: { kind: "timeout" } });
 		expect(performance.now() - started).toBeLessThan(5_000);
+	});
+
+	it("runs without a deadline when timeoutMs is Infinity", async () => {
+		const sandbox = createSandbox([
+			{ name: "wait", execute: () => new Promise((r) => setTimeout(() => r("late"), 50)) },
+		]);
+		const result = await sandbox.execute("return await tools.wait()", { timeoutMs: Number.POSITIVE_INFINITY });
+		expect(result).toMatchObject({ ok: true, value: "late" });
 	});
 
 	it("terminates a microtask-spinning loop on timeout", async () => {

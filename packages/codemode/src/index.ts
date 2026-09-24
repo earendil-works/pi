@@ -1,3 +1,4 @@
+export { type RenderDeclarationsOptions, renderDeclarations, schemaToType } from "./declarations.ts";
 export { CodemodeSandbox } from "./runtime/host.ts";
 export type {
 	CodemodeCall,
@@ -5,6 +6,7 @@ export type {
 	CodemodeError,
 	CodemodeErrorKind,
 	CodemodeExecuteOptions,
+	CodemodeJsonSchema,
 	CodemodeLog,
 	CodemodeLogLevel,
 	CodemodeResult,
