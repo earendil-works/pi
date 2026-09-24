@@ -437,7 +437,7 @@ export function calculateImageCellSize(
 	maxWidthCells: number,
 	maxHeightCells?: number,
 	cellDimensions: CellDimensions = { widthPx: 9, heightPx: 18 },
-	rowRounding: "ceil" | "round" = "ceil",
+	optimizeAspectRatio = false,
 ): ImageCellSize {
 	const maxWidth = Math.max(1, Math.floor(maxWidthCells));
 	const maxHeight = maxHeightCells === undefined ? undefined : Math.max(1, Math.floor(maxHeightCells));
@@ -450,14 +450,25 @@ export function calculateImageCellSize(
 
 	const scaledWidthPx = imageWidth * scale;
 	const scaledHeightPx = imageHeight * scale;
-	const columns = Math.ceil(scaledWidthPx / cellDimensions.widthPx);
+	const columns = Math.max(1, Math.min(maxWidth, Math.ceil(scaledWidthPx / cellDimensions.widthPx)));
 	const heightRows = scaledHeightPx / cellDimensions.heightPx;
-	const rows = rowRounding === "round" ? Math.round(heightRows) : Math.ceil(heightRows);
+	let rows = Math.max(1, Math.ceil(heightRows));
+	if (maxHeight !== undefined) {
+		rows = Math.min(maxHeight, rows);
+	}
 
-	return {
-		columns: Math.max(1, Math.min(maxWidth, columns)),
-		rows: Math.max(1, maxHeight === undefined ? rows : Math.min(maxHeight, rows)),
-	};
+	if (optimizeAspectRatio && rows > 1) {
+		// Compare proportions at the actual cell-aligned width, not just height error.
+		const idealRows = (columns * cellDimensions.widthPx * imageHeight) / (imageWidth * cellDimensions.heightPx);
+		const lowerRows = rows - 1;
+		const currentDistortion = Math.max(rows / idealRows, idealRows / rows);
+		const lowerDistortion = Math.max(lowerRows / idealRows, idealRows / lowerRows);
+		if (lowerDistortion < currentDistortion) {
+			rows = lowerRows;
+		}
+	}
+
+	return { columns, rows };
 }
 
 export function calculateImageRows(
@@ -621,13 +632,13 @@ export function renderImage(
 	}
 
 	const maxWidth = options.maxWidthCells ?? 80;
-	// Round Kitty's cell-aligned height to reduce stretching.
+	// Reduce Kitty's cell-aligned distortion without shrinking iTerm2 reservations.
 	const size = calculateImageCellSize(
 		imageDimensions,
 		maxWidth,
 		options.maxHeightCells,
 		getCellDimensions(),
-		caps.images === "kitty" ? "round" : "ceil",
+		caps.images === "kitty",
 	);
 
 	if (caps.images === "kitty") {

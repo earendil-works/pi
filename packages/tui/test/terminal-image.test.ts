@@ -622,8 +622,8 @@ describe("Kitty image cursor movement", () => {
 	});
 });
 
-// #8938: round Kitty placements without shrinking iTerm2 reservations.
-describe("image row rounding", () => {
+// #8938: reduce Kitty placement distortion without shrinking iTerm2 reservations.
+describe("image row sizing", () => {
 	it("reserves at least one Kitty row for thin images", () => {
 		setCapabilities({ images: "kitty", trueColor: true, hyperlinks: true });
 		setCellDimensions({ widthPx: 9, heightPx: 18 });
@@ -670,6 +670,20 @@ describe("image row rounding", () => {
 			assert.strictEqual(narrowerLines.length, 2);
 			assert.ok(narrowerLines[0].includes(",c=30,r=2,i=8938;"));
 			assert.strictEqual(getKittyImageMetadata(narrowerLines[0])?.rows, 2);
+		} finally {
+			resetCapabilitiesCache();
+			setCellDimensions({ widthPx: 9, heightPx: 18 });
+		}
+	});
+
+	it("keeps the ceiling placement when rounding down would increase distortion", () => {
+		setCapabilities({ images: "kitty", trueColor: true, hyperlinks: true });
+		setCellDimensions({ widthPx: 15, heightPx: 28 });
+		try {
+			const result = renderImage("AAAA", { widthPx: 615, heightPx: 86 }, { maxWidthCells: 60 });
+			assert.ok(result);
+			assert.strictEqual(result.rows, 5);
+			assert.ok(result.sequence.includes(",c=60,r=5;"));
 		} finally {
 			resetCapabilitiesCache();
 			setCellDimensions({ widthPx: 9, heightPx: 18 });
