@@ -205,6 +205,16 @@ describe("bash replacement example settings", () => {
 		expect(result.content).toEqual([{ type: "text", text: "explicit" }]);
 	});
 
+	it.each([
+		["built-in", undefined],
+		["legacy wrapper", legacyWrapper],
+	] as const)("%s reports an existing shell path that cannot be started", async (_name, extension) => {
+		const invalidShell = join(root, "invalid-bash.exe");
+		writeFileSync(invalidShell, "This is not an executable.", "utf8");
+		const tool = await start(extension, true, SettingsManager.inMemory({ shellPath: invalidShell }));
+		await expect(tool.execute("invalid-shell", { command: "printf fallback" })).rejects.toThrow(invalidShell);
+	});
+
 	it("does not leak extension defaults into standalone tool execution", async () => {
 		const tool = await start(legacyWrapper);
 		expect((await tool.execute("inside", { command: "printf '%s' \"$PI9361_PREFIX\"" })).content).toEqual([

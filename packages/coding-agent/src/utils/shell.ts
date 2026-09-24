@@ -9,19 +9,24 @@ export interface ShellConfig {
 	commandTransport?: "argv" | "stdin";
 }
 
-/**
- * Find bash executable on PATH (cross-platform)
- */
 function isLegacyWslBashPath(path: string): boolean {
 	const normalized = path.replace(/\//g, "\\").toLowerCase();
-	return /^[a-z]:\\windows\\(?:system32|sysnative)\\bash\.exe$/.test(normalized);
+	const systemRoot = (process.env.SystemRoot ?? process.env.WINDIR)
+		?.replace(/\//g, "\\")
+		.replace(/\\+$/, "")
+		.toLowerCase();
+	return (
+		/^[a-z]:\\windows\\(?:system32|sysnative)\\bash\.exe$/.test(normalized) ||
+		(systemRoot !== undefined &&
+			[`${systemRoot}\\system32\\bash.exe`, `${systemRoot}\\sysnative\\bash.exe`].includes(normalized))
+	);
 }
 
 function getBashShellConfig(shell: string): ShellConfig {
 	return isLegacyWslBashPath(shell) ? { shell, args: ["-s"], commandTransport: "stdin" } : { shell, args: ["-c"] };
 }
 
-function findExecutableOnPath(executable: string): string | null {
+function findExecutableOnPath(executable: string, onSkippedWslLauncher?: (path: string) => void): string | null {
 	if (process.platform === "win32") {
 		// Windows: Use 'where' and verify file exists (where can return non-existent paths)
 		try {
@@ -31,9 +36,16 @@ function findExecutableOnPath(executable: string): string | null {
 				windowsHide: true,
 			});
 			if (result.status === 0 && result.stdout) {
-				const firstMatch = result.stdout.trim().split(/\r?\n/)[0];
-				if (firstMatch && existsSync(firstMatch)) {
-					return firstMatch;
+				for (const match of result.stdout.trim().split(/\r?\n/)) {
+					if (!match || !existsSync(match)) {
+						continue;
+					}
+					if (executable === "bash.exe" && isLegacyWslBashPath(match)) {
+						// WSL launchers run commands inside a Linux distribution, not the local shell.
+						onSkippedWslLauncher?.(match);
+						continue;
+					}
+					return match;
 				}
 			}
 		} catch {
@@ -61,7 +73,7 @@ function findExecutableOnPath(executable: string): string | null {
  * Resolve shell configuration based on platform and an optional explicit shell path.
  * Resolution order:
  * 1. User-specified shellPath
- * 2. On Windows: Git Bash in known locations, then bash on PATH
+ * 2. On Windows: Git Bash in known locations, then native bash on PATH (WSL requires an explicit path)
  * 3. On Unix: /bin/bash, then bash on PATH, then fallback to sh
  */
 export function getShellConfig(customShellPath?: string): ShellConfig {
@@ -91,18 +103,25 @@ export function getShellConfig(customShellPath?: string): ShellConfig {
 			}
 		}
 
-		// 3. Fallback: search bash.exe on PATH (Cygwin, MSYS2, WSL, etc.)
-		const bashOnPath = findExecutableOnPath("bash.exe");
+		// 3. Search native bash.exe on PATH (Cygwin, MSYS2, etc.). WSL must be explicitly configured.
+		const skippedWslLaunchers: string[] = [];
+		const bashOnPath = findExecutableOnPath("bash.exe", (launcher) => skippedWslLaunchers.push(launcher));
 		if (bashOnPath) {
 			return getBashShellConfig(bashOnPath);
 		}
 
+		const skippedWslList =
+			skippedWslLaunchers.length > 0
+				? "\nSkipped WSL launchers (set shellPath in settings.json to use WSL bash):\n" +
+					skippedWslLaunchers.map((p) => `  ${p}`).join("\n")
+				: "";
 		throw new Error(
 			`No bash shell found. Options:\n` +
 				`  1. Install Git for Windows: https://git-scm.com/download/win\n` +
 				`  2. Add your bash to PATH (Cygwin, MSYS2, etc.)\n` +
 				"  3. Set shellPath in settings.json\n\n" +
-				`Searched Git Bash in:\n${paths.map((p) => `  ${p}`).join("\n")}`,
+				`Searched Git Bash in:\n${paths.map((p) => `  ${p}`).join("\n")}` +
+				skippedWslList,
 		);
 	}
 
