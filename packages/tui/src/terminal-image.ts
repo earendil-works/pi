@@ -432,6 +432,15 @@ export function cropKittyImageLine(line: string, hiddenRows: number, visibleRows
 	return `${line.slice(0, match.index)}\x1b_G${controls.join(",")};${line.slice(match.index + match[0].length)}`;
 }
 
+function chooseLessDistortedCellCount(upperCount: number, idealCount: number): number {
+	if (upperCount <= 1) return upperCount;
+
+	const lowerCount = upperCount - 1;
+	const upperDistortion = Math.max(upperCount / idealCount, idealCount / upperCount);
+	const lowerDistortion = Math.max(lowerCount / idealCount, idealCount / lowerCount);
+	return lowerDistortion < upperDistortion ? lowerCount : upperCount;
+}
+
 export function calculateImageCellSize(
 	imageDimensions: ImageDimensions,
 	maxWidthCells: number,
@@ -457,25 +466,16 @@ export function calculateImageCellSize(
 		rows = Math.min(maxHeight, rows);
 	}
 
-	if (optimizeAspectRatio) {
-		// Keep the limiting dimension; compare rounding the other dimension by proportions.
-		const widthLimited = widthScale <= heightScale;
-		const cells = widthLimited ? rows : columns;
-		if (cells > 1) {
-			const idealCells = widthLimited
-				? (columns * cellDimensions.widthPx * imageHeight) / (imageWidth * cellDimensions.heightPx)
-				: (rows * cellDimensions.heightPx * imageWidth) / (imageHeight * cellDimensions.widthPx);
-			const lowerCells = cells - 1;
-			const currentDistortion = Math.max(cells / idealCells, idealCells / cells);
-			const lowerDistortion = Math.max(lowerCells / idealCells, idealCells / lowerCells);
-			if (lowerDistortion < currentDistortion) {
-				if (widthLimited) {
-					rows = lowerCells;
-				} else {
-					columns = lowerCells;
-				}
-			}
-		}
+	if (!optimizeAspectRatio) {
+		return { columns, rows };
+	}
+
+	if (widthScale <= heightScale) {
+		const idealRows = (columns * cellDimensions.widthPx * imageHeight) / (imageWidth * cellDimensions.heightPx);
+		rows = chooseLessDistortedCellCount(rows, idealRows);
+	} else {
+		const idealColumns = (rows * cellDimensions.heightPx * imageWidth) / (imageHeight * cellDimensions.widthPx);
+		columns = chooseLessDistortedCellCount(columns, idealColumns);
 	}
 
 	return { columns, rows };
