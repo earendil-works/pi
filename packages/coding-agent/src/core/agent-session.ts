@@ -348,6 +348,14 @@ export class AgentSession {
 	private _pendingNextTurnMessages: CustomMessage[] = [];
 	/** Context-only custom messages queued during a run, flushed once the current turn's tool results are in. */
 	private _pendingCustomMessages: CustomMessage[] = [];
+	/**
+	 * Follow-up sent with an explicit wake (deliverAs "followUp" + triggerTurn) while a
+	 * run is active. Tracks that the queued message must reach a turn even if the run
+	 * ends via abort/error, which skips the low-level loop's queue drain. Cleared when
+	 * the queue drains (delivered), when clearQueue drops it (user abort), or when the
+	 * aborted run resumes to deliver it.
+	 */
+	private _pendingWakeFollowUp: CustomMessage | undefined;
 
 	// Compaction state
 	private _compactionAbortController: AbortController | undefined = undefined;
@@ -1470,7 +1478,7 @@ export class AgentSession {
 		this._isAgentRunActive = true;
 		try {
 			await this.agent.prompt(messages);
-			while (!this._agentRunAbortRequested) {
+			while (!this._agentRunAbortRequested || this._consumeWakeAbort()) {
 				if (await this._handlePostAgentRun()) {
 					if (this._agentRunAbortRequested) break;
 					await this.agent.continue();
@@ -1489,11 +1497,32 @@ export class AgentSession {
 		}
 	}
 
+	/**
+	 * Consume an abort that is superseded by a queued wake follow-up. A follow-up
+	 * sent with an explicit wake (deliverAs "followUp" + triggerTurn) mid-run must
+	 * reach a turn, but an aborted run exits before the low-level loop drains the
+	 * follow-up queue. User aborts clear the queue first (clearQueue drops the wake),
+	 * so a queued wake here means a programmatic abort that the wake supersedes.
+	 * Consuming the flag lets _runAgentPrompt continue; the existing queue drain in
+	 * _handlePostAgentRun/agent.continue delivers the message.
+	 */
+	private _consumeWakeAbort(): boolean {
+		if (!this._pendingWakeFollowUp || !this.agent.hasQueuedMessages()) return false;
+		this._pendingWakeFollowUp = undefined;
+		this._agentRunAbortRequested = false;
+		this._finishCancelledRetry();
+		return true;
+	}
+
 	private async _handlePostAgentRun(): Promise<boolean> {
 		const message = this._lastAssistantMessage;
 		const toolResults = this._lastAssistantToolResults;
 		this._lastAssistantMessage = undefined;
 		this._lastAssistantToolResults = [];
+		// A queued wake drained by the low-level loop was delivered; drop the intent.
+		if (this._pendingWakeFollowUp && !this.agent.hasQueuedMessages()) {
+			this._pendingWakeFollowUp = undefined;
+		}
 		if (this._agentRunAbortRequested) {
 			this._finishCancelledRetry();
 			return false;
@@ -1948,6 +1977,12 @@ export class AgentSession {
 			this._pendingNextTurnMessages.push(appMessage);
 		} else if (this.isStreaming && options?.triggerTurn !== false) {
 			if (options?.deliverAs === "followUp") {
+				if (options.triggerTurn === true) {
+					// Explicit wake. An aborted or errored run exits before the low-level loop
+					// drains the follow-up queue, so the queued message needs a resume to reach
+					// a turn (see _handlePostAgentRun).
+					this._pendingWakeFollowUp = appMessage;
+				}
 				this.agent.followUp(appMessage);
 			} else {
 				this.agent.steer(appMessage);
@@ -2046,6 +2081,8 @@ export class AgentSession {
 		this._steeringMessages = [];
 		this._followUpMessages = [];
 		this.agent.clearAllQueues();
+		// The queue was the wake's only delivery path; dropping it cancels the wake.
+		this._pendingWakeFollowUp = undefined;
 		this._emitQueueUpdate();
 		return { steering, followUp };
 	}
