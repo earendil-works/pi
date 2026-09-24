@@ -590,7 +590,8 @@ async function executeToolCallsParallel(
 ): Promise<ExecutedToolCallBatch> {
 	const finalizedCalls: FinalizedToolCallEntry[] = [];
 
-	for (const toolCall of toolCalls) {
+	for (let i = 0; i < toolCalls.length; i++) {
+		const toolCall = toolCalls[i];
 		await emit({
 			type: "tool_execution_start",
 			toolCallId: toolCall.id,
@@ -608,6 +609,7 @@ async function executeToolCallsParallel(
 			await emitToolExecutionEnd(finalized, emit);
 			finalizedCalls.push(finalized);
 			if (signal?.aborted) {
+				await pushAbortedToolCallResults(toolCalls.slice(i + 1), finalizedCalls, emit);
 				break;
 			}
 			continue;
@@ -636,6 +638,7 @@ async function executeToolCallsParallel(
 			return finalized;
 		});
 		if (signal?.aborted) {
+			await pushAbortedToolCallResults(toolCalls.slice(i + 1), finalizedCalls, emit);
 			break;
 		}
 	}
@@ -681,6 +684,32 @@ type FinalizedToolCallOutcome = {
 };
 
 type FinalizedToolCallEntry = FinalizedToolCallOutcome | (() => Promise<FinalizedToolCallOutcome>);
+
+/**
+ * Give every tool call the loop never reached a synthetic aborted result, so each
+ * `tool_use` block in the assistant message still gets a matching `tool_result`.
+ */
+async function pushAbortedToolCallResults(
+	remaining: AgentToolCall[],
+	finalizedCalls: FinalizedToolCallEntry[],
+	emit: AgentEventSink,
+): Promise<void> {
+	for (const toolCall of remaining) {
+		await emit({
+			type: "tool_execution_start",
+			toolCallId: toolCall.id,
+			toolName: toolCall.name,
+			args: toolCall.arguments,
+		});
+		const finalized = {
+			toolCall,
+			result: createErrorToolResult("Operation aborted"),
+			isError: true,
+		} satisfies FinalizedToolCallOutcome;
+		await emitToolExecutionEnd(finalized, emit);
+		finalizedCalls.push(finalized);
+	}
+}
 
 function shouldTerminateToolBatch(finalizedCalls: FinalizedToolCallOutcome[]): boolean {
 	return finalizedCalls.length > 0 && finalizedCalls.every((finalized) => finalized.result.terminate === true);

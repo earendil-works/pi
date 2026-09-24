@@ -1848,6 +1848,89 @@ describe("agentLoop with AgentMessage", () => {
 		expect(llmCalls).toBe(2);
 	});
 
+	it("gives every parallel tool call a tool_result when abort fires before the loop reaches it", async () => {
+		const abortController = new AbortController();
+		const started: string[] = [];
+		const toolSchema = Type.Object({ id: Type.String() });
+		const tool: AgentTool<typeof toolSchema, { id: string }> = {
+			name: "echo",
+			label: "Echo",
+			description: "Echo tool",
+			parameters: toolSchema,
+			async execute(_toolCallId, params) {
+				started.push(params.id);
+				return {
+					content: [{ type: "text", text: `echoed: ${params.id}` }],
+					details: { id: params.id },
+				};
+			},
+		};
+
+		const context: AgentContext = {
+			messages: [],
+			tools: [tool],
+		};
+
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+			toolExecution: "parallel",
+			// Abort right after call-1 is prepared, while executeToolCallsParallel's
+			// for-loop is still iterating (it hasn't reached call-2/call-3 yet). This
+			// mirrors a real abort landing mid-batch, before the loop finishes queuing
+			// every tool call's execution.
+			async beforeToolCall(ctx) {
+				if (ctx.toolCall.id === "call-1") {
+					abortController.abort();
+				}
+				return undefined;
+			},
+		};
+
+		let callIndex = 0;
+		const stream = agentLoop([createUserMessage("echo all")], context, config, abortController.signal, () => {
+			const mockStream = new MockAssistantStream();
+			queueMicrotask(() => {
+				if (callIndex === 0) {
+					const message = createAssistantMessage(
+						[
+							{ type: "toolCall", id: "call-1", name: "echo", arguments: { id: "call-1" } },
+							{ type: "toolCall", id: "call-2", name: "echo", arguments: { id: "call-2" } },
+							{ type: "toolCall", id: "call-3", name: "echo", arguments: { id: "call-3" } },
+						],
+						"toolUse",
+					);
+					mockStream.push({ type: "done", reason: "toolUse", message });
+				} else {
+					const message = createAssistantMessage([{ type: "text", text: "done" }]);
+					mockStream.push({ type: "done", reason: "stop", message });
+				}
+				callIndex++;
+			});
+			return mockStream;
+		});
+
+		for await (const _event of stream) {
+			// consume
+		}
+
+		const messages = await stream.result();
+		// beforeToolCall aborts right after call-1 is prepared. prepareToolCall then
+		// sees signal.aborted for call-1 itself and returns an immediate aborted
+		// result without ever calling execute(). call-2/call-3 are never reached by
+		// the for-loop at all (that's the bug this test guards against) — but every
+		// tool_use must still get a matching tool_result.
+		expect(started).toEqual([]);
+		const toolResultMessages = messages.filter((message) => message.role === "toolResult");
+		expect(toolResultMessages).toHaveLength(3);
+		expect(
+			toolResultMessages.map((message) => (message.role === "toolResult" ? message.toolCallId : undefined)),
+		).toEqual(["call-1", "call-2", "call-3"]);
+		expect(
+			toolResultMessages.map((message) => (message.role === "toolResult" ? message.isError : undefined)),
+		).toEqual([true, true, true]);
+	});
+
 	it("should continue after parallel tool calls when not all tool results terminate", async () => {
 		const toolSchema = Type.Object({ value: Type.String() });
 		const tool: AgentTool<typeof toolSchema, { value: string }> = {
