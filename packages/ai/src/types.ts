@@ -43,7 +43,7 @@ export type KnownProvider =
 	| "google"
 	| "google-vertex"
 	| "openai"
-	| "azure-openai-responses"
+	| "azure"
 	| "openai-codex"
 	| "radius"
 	| "typesafe"
