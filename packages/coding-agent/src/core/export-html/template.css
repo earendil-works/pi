@@ -300,6 +300,12 @@
       border-color: var(--borderAccent);
     }
 
+    .header-toggle-btn[aria-pressed="true"] {
+      color: var(--accent);
+      border-color: var(--accent);
+      font-weight: bold;
+    }
+
     /* Header */
     .header {
       background: var(--container-bg);
@@ -784,6 +790,10 @@
       color: var(--customMessageText);
       padding: var(--line-height);
       border-radius: 4px;
+    }
+
+    body:not(.show-hidden-messages) .hook-message-hidden {
+      display: none;
     }
 
     .hook-type {

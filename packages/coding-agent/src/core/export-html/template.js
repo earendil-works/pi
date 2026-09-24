@@ -1311,9 +1311,10 @@
           </div>`;
         }
 
-        if (entry.type === 'custom_message' && entry.display) {
-          return `<div class="hook-message" id="${entryDomId}">${tsHtml}
-            <div class="hook-type">[${escapeHtml(entry.customType)}]</div>
+        if (entry.type === 'custom_message') {
+          const hidden = entry.display === false;
+          return `<div class="hook-message${hidden ? ' hook-message-hidden' : ''}" id="${entryDomId}">${tsHtml}
+            <div class="hook-type">[${escapeHtml(entry.customType)}]${hidden ? ' · Hidden in terminal' : ''}</div>
             <div class="markdown-content">${safeMarkedParse(typeof entry.content === 'string' ? entry.content : JSON.stringify(entry.content))}</div>
           </div>`;
         }
@@ -1389,10 +1390,11 @@
           <div class="header">
             <h1>Session: ${escapeHtml(header?.id || 'unknown')}</h1>
             <div class="help-bar">
-              <span class="help-hint">T toggle thinking · O toggle tools</span>
+              <span class="help-hint">T toggle thinking · O toggle tools · H toggle hidden messages</span>
               <div class="help-actions">
-                <button type="button" class="header-toggle-btn" data-action="toggle-thinking" title="Toggle thinking (T)">Toggle thinking</button>
-                <button type="button" class="header-toggle-btn" data-action="toggle-tools" title="Toggle tools (O)">Toggle tools</button>
+                <button type="button" class="header-toggle-btn" data-action="toggle-thinking" aria-pressed="${thinkingExpanded}" title="Toggle thinking (T)">Toggle thinking</button>
+                <button type="button" class="header-toggle-btn" data-action="toggle-tools" aria-pressed="${toolOutputsExpanded}" title="Toggle tools (O)">Toggle tools</button>
+                <button type="button" class="header-toggle-btn" data-action="toggle-hidden-messages" aria-pressed="${showHiddenMessages}" title="Show custom messages marked as hidden in the terminal (H).">${showHiddenMessages ? 'Hide hidden messages' : 'Show hidden messages'}</button>
                 <button type="button" class="download-json-btn" onclick="downloadSessionJson()" title="Download session as JSONL">↓ JSONL</button>
               </div>
             </div>
@@ -1500,6 +1502,10 @@
       function navigateTo(targetId, scrollMode = 'target', scrollToEntryId = null) {
         currentLeafId = targetId;
         currentTargetId = scrollToEntryId || targetId;
+        const targetEntry = byId.get(currentTargetId);
+        if (scrollMode === 'target' && targetEntry?.type === 'custom_message' && targetEntry.display === false) {
+          setHiddenMessagesVisible(true);
+        }
         const path = getPath(targetId);
 
         renderTree();
@@ -1520,6 +1526,10 @@
 
         messagesEl.innerHTML = '';
         messagesEl.appendChild(fragment);
+
+        // Cached nodes contain their initial presentation; reapply the viewer's toggle states.
+        setThinkingExpanded(thinkingExpanded);
+        setToolOutputsExpanded(toolOutputsExpanded);
 
         // Attach click handlers for copy-link buttons
         messagesEl.querySelectorAll('.copy-link-btn').forEach(btn => {
@@ -1793,19 +1803,32 @@
       // Toggle states
       let thinkingExpanded = true;
       let toolOutputsExpanded = false;
+      let showHiddenMessages = false;
 
-      const toggleThinking = () => {
-        thinkingExpanded = !thinkingExpanded;
+      function setHiddenMessagesVisible(visible) {
+        showHiddenMessages = visible;
+        document.body.classList.toggle('show-hidden-messages', visible);
+        const button = document.querySelector('[data-action="toggle-hidden-messages"]');
+        if (button) {
+          button.setAttribute('aria-pressed', String(visible));
+          button.textContent = visible ? 'Hide hidden messages' : 'Show hidden messages';
+        }
+      }
+
+      function setThinkingExpanded(expanded) {
+        thinkingExpanded = expanded;
+        document.querySelector('[data-action="toggle-thinking"]')?.setAttribute('aria-pressed', String(expanded));
         document.querySelectorAll('.thinking-text').forEach(el => {
           el.style.display = thinkingExpanded ? '' : 'none';
         });
         document.querySelectorAll('.thinking-collapsed').forEach(el => {
           el.style.display = thinkingExpanded ? 'none' : 'block';
         });
-      };
+      }
 
-      const toggleToolOutputs = () => {
-        toolOutputsExpanded = !toolOutputsExpanded;
+      function setToolOutputsExpanded(expanded) {
+        toolOutputsExpanded = expanded;
+        document.querySelector('[data-action="toggle-tools"]')?.setAttribute('aria-pressed', String(expanded));
         document.querySelectorAll('.tool-output.expandable').forEach(el => {
           el.classList.toggle('expanded', toolOutputsExpanded);
         });
@@ -1815,11 +1838,18 @@
         document.querySelectorAll('.skill-invocation').forEach(el => {
           el.classList.toggle('expanded', toolOutputsExpanded);
         });
-      };
+      }
 
       const attachHeaderHandlers = () => {
-        document.querySelector('[data-action="toggle-thinking"]')?.addEventListener('click', toggleThinking);
-        document.querySelector('[data-action="toggle-tools"]')?.addEventListener('click', toggleToolOutputs);
+        document.querySelector('[data-action="toggle-thinking"]')?.addEventListener('click', () => {
+          setThinkingExpanded(!thinkingExpanded);
+        });
+        document.querySelector('[data-action="toggle-tools"]')?.addEventListener('click', () => {
+          setToolOutputsExpanded(!toolOutputsExpanded);
+        });
+        document.querySelector('[data-action="toggle-hidden-messages"]')?.addEventListener('click', () => {
+          setHiddenMessagesVisible(!showHiddenMessages);
+        });
       };
 
       const isEditableTarget = (element) => {
@@ -1839,17 +1869,20 @@
           navigateTo(leafId, 'bottom');
         }
 
-        if (isEditableTarget(document.activeElement)) {
+        if (e.ctrlKey || e.metaKey || e.altKey || isEditableTarget(document.activeElement)) {
           return;
         }
 
         const key = e.key.toLowerCase();
         if (key === 't') {
           e.preventDefault();
-          toggleThinking();
+          setThinkingExpanded(!thinkingExpanded);
         } else if (key === 'o') {
           e.preventDefault();
-          toggleToolOutputs();
+          setToolOutputsExpanded(!toolOutputsExpanded);
+        } else if (key === 'h') {
+          e.preventDefault();
+          setHiddenMessagesVisible(!showHiddenMessages);
         }
       });
 
