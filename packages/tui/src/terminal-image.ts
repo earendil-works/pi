@@ -450,21 +450,31 @@ export function calculateImageCellSize(
 
 	const scaledWidthPx = imageWidth * scale;
 	const scaledHeightPx = imageHeight * scale;
-	const columns = Math.max(1, Math.min(maxWidth, Math.ceil(scaledWidthPx / cellDimensions.widthPx)));
+	let columns = Math.max(1, Math.min(maxWidth, Math.ceil(scaledWidthPx / cellDimensions.widthPx)));
 	const heightRows = scaledHeightPx / cellDimensions.heightPx;
 	let rows = Math.max(1, Math.ceil(heightRows));
 	if (maxHeight !== undefined) {
 		rows = Math.min(maxHeight, rows);
 	}
 
-	if (optimizeAspectRatio && rows > 1) {
-		// Compare proportions at the actual cell-aligned width, not just height error.
-		const idealRows = (columns * cellDimensions.widthPx * imageHeight) / (imageWidth * cellDimensions.heightPx);
-		const lowerRows = rows - 1;
-		const currentDistortion = Math.max(rows / idealRows, idealRows / rows);
-		const lowerDistortion = Math.max(lowerRows / idealRows, idealRows / lowerRows);
-		if (lowerDistortion < currentDistortion) {
-			rows = lowerRows;
+	if (optimizeAspectRatio) {
+		// Keep the limiting dimension; compare rounding the other dimension by proportions.
+		const widthLimited = widthScale <= heightScale;
+		const cells = widthLimited ? rows : columns;
+		if (cells > 1) {
+			const idealCells = widthLimited
+				? (columns * cellDimensions.widthPx * imageHeight) / (imageWidth * cellDimensions.heightPx)
+				: (rows * cellDimensions.heightPx * imageWidth) / (imageHeight * cellDimensions.widthPx);
+			const lowerCells = cells - 1;
+			const currentDistortion = Math.max(cells / idealCells, idealCells / cells);
+			const lowerDistortion = Math.max(lowerCells / idealCells, idealCells / lowerCells);
+			if (lowerDistortion < currentDistortion) {
+				if (widthLimited) {
+					rows = lowerCells;
+				} else {
+					columns = lowerCells;
+				}
+			}
 		}
 	}
 

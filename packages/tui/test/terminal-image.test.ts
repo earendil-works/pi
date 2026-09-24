@@ -623,7 +623,7 @@ describe("Kitty image cursor movement", () => {
 });
 
 // #8938: reduce Kitty placement distortion without shrinking iTerm2 reservations.
-describe("image row sizing", () => {
+describe("image cell sizing", () => {
 	it("reserves at least one Kitty row for thin images", () => {
 		setCapabilities({ images: "kitty", trueColor: true, hyperlinks: true });
 		setCellDimensions({ widthPx: 9, heightPx: 18 });
@@ -684,6 +684,76 @@ describe("image row sizing", () => {
 			assert.ok(result);
 			assert.strictEqual(result.rows, 5);
 			assert.ok(result.sequence.includes(",c=60,r=5;"));
+		} finally {
+			resetCapabilitiesCache();
+			setCellDimensions({ widthPx: 9, heightPx: 18 });
+		}
+	});
+
+	it("keeps height-limited Kitty columns, reservations, and crop metadata consistent", () => {
+		setCapabilities({ images: "kitty", trueColor: true, hyperlinks: true });
+		setCellDimensions({ widthPx: 14, heightPx: 28 });
+		try {
+			const image = new Image(
+				"AAAA",
+				"image/png",
+				{ fallbackColor: (value) => value },
+				{ maxWidthCells: 30, imageId: 8938 },
+				{ widthPx: 400, heightPx: 900 },
+			);
+			const lines = image.render(32);
+			assert.strictEqual(lines.length, 15);
+			assert.ok(lines[0].includes(",c=13,r=15,i=8938;"));
+			assert.deepStrictEqual(getKittyImageMetadata(lines[0]), {
+				imageId: 8938,
+				columns: 13,
+				rows: 15,
+				widthPx: 400,
+				heightPx: 900,
+			});
+			assert.strictEqual(
+				getKittyImagePlacement(cropKittyImageLine(lines[0], 1, 2))?.sequence,
+				"\x1b_Ga=p,q=2,C=1,c=13,i=8938,y=60,h=120,r=2\x1b\\",
+			);
+			const narrowerLines = image.render(22);
+			assert.strictEqual(narrowerLines.length, 10);
+			assert.ok(narrowerLines[0].includes(",c=9,r=10,i=8938;"));
+		} finally {
+			resetCapabilitiesCache();
+			setCellDimensions({ widthPx: 9, heightPx: 18 });
+		}
+	});
+
+	it("chooses thin Kitty widths by proportions while keeping at least one column", () => {
+		setCapabilities({ images: "kitty", trueColor: true, hyperlinks: true });
+		setCellDimensions({ widthPx: 1, heightPx: 1 });
+		try {
+			for (const [widthPx, columns] of [
+				[1, 1],
+				[140, 1],
+				[149, 2],
+			]) {
+				const result = renderImage("AAAA", { widthPx, heightPx: 1000 }, { maxWidthCells: 30, maxHeightCells: 10 });
+				assert.ok(result);
+				assert.strictEqual(result.columns, columns);
+				assert.strictEqual(result.rows, 10);
+				assert.ok(result.sequence.includes(`,c=${columns},r=10;`));
+			}
+		} finally {
+			resetCapabilitiesCache();
+			setCellDimensions({ widthPx: 9, heightPx: 18 });
+		}
+	});
+
+	it("keeps iTerm2's ceiling width when height-limited", () => {
+		setCapabilities({ images: "iterm2", trueColor: true, hyperlinks: true });
+		setCellDimensions({ widthPx: 14, heightPx: 28 });
+		try {
+			const result = renderImage("AAAA", { widthPx: 400, heightPx: 900 }, { maxWidthCells: 30, maxHeightCells: 15 });
+			assert.ok(result);
+			assert.strictEqual(result.columns, 14);
+			assert.strictEqual(result.rows, 15);
+			assert.strictEqual(result.sequence, "\x1b]1337;File=inline=1;size=3;width=14;height=auto:AAAA\x07");
 		} finally {
 			resetCapabilitiesCache();
 			setCellDimensions({ widthPx: 9, heightPx: 18 });
