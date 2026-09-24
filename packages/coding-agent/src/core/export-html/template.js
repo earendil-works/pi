@@ -579,8 +579,8 @@
             const limit = args.limit;
             let display = path;
             if (offset !== undefined || limit !== undefined) {
-              const start = offset ?? 1;
-              const end = limit !== undefined ? start + limit - 1 : '';
+              const start = Number(offset ?? 1);
+              const end = limit !== undefined ? start + Number(limit) - 1 : '';
               display += `:${start}${end ? `-${end}` : ''}`;
             }
             return `[read: ${display}]`;
@@ -955,8 +955,8 @@
 
             let pathHtml = filePath === null ? invalidArg : escapeHtml(shortenPath(filePath || ''));
             if (filePath !== null && (offset !== undefined || limit !== undefined)) {
-              const startLine = offset ?? 1;
-              const endLine = limit !== undefined ? startLine + limit - 1 : '';
+              const startLine = Number(offset ?? 1);
+              const endLine = limit !== undefined ? startLine + Number(limit) - 1 : '';
               pathHtml += `<span class="line-numbers">:${startLine}${endLine ? '-' + endLine : ''}</span>`;
             }
 
