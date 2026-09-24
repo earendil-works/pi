@@ -5,6 +5,7 @@
  * Everything below the routing step only sees physical models: providers stream them and
  * assistant messages record them. A virtual model never reaches a provider.
  */
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import {
 	type Api,
 	type AssistantMessage,
@@ -66,20 +67,31 @@ export interface VirtualModelDefinition {
 	maxTokens?: number;
 	/** Input types accepted for selection. Defaults to text and images; routed models without image support get placeholders. */
 	input?: ("text" | "image")[];
-	/**
-	 * Pick the physical model and thinking level for one request. The model must be a physical
-	 * catalog model whose provider has credentials.
-	 */
+	/** Pick the physical model, which must have credentials, and thinking level for one request. */
 	route(request: ModelRouteRequest): ModelRoute | Promise<ModelRoute>;
 }
 
 /** A keyless provider whose single model routes each request through `route`. */
-export interface VirtualProvider extends Provider {
-	route(request: ModelRouteRequest): ModelRoute | Promise<ModelRoute>;
-}
+export type VirtualProvider = Provider & Pick<VirtualModelDefinition, "route">;
 
 export function isVirtualProvider(provider: Provider | undefined): provider is VirtualProvider {
 	return typeof (provider as Partial<VirtualProvider> | undefined)?.route === "function";
+}
+
+/** Whether a model or message names a virtual model. Failed routing leaves the virtual model on its message. */
+export function isVirtualModel(model: { api: string }): boolean {
+	return model.api === VIRTUAL_MODEL_API;
+}
+
+/** Latest successful response. Its model is physical: failed or aborted requests, including failed routing, are skipped. */
+export function findLatestResponse(messages: readonly AgentMessage[]): AssistantMessage | undefined {
+	for (let i = messages.length - 1; i >= 0; i--) {
+		const message = messages[i];
+		if (message.role === "assistant" && message.stopReason !== "error" && message.stopReason !== "aborted") {
+			return message;
+		}
+	}
+	return undefined;
 }
 
 /** Build the provider for a virtual model. Register it like any native provider. */
@@ -121,19 +133,14 @@ export function withThinkingLevel(
 	stream: AssistantMessageEventStream,
 	thinkingLevel: ModelThinkingLevel,
 ): AsyncIterable<AssistantMessageEvent> & { result(): Promise<AssistantMessage> } {
+	const stamp = (message: AssistantMessage) => Object.assign(message, { thinkingLevel });
 	return {
 		async *[Symbol.asyncIterator]() {
 			for await (const event of stream) {
-				const message =
-					event.type === "done" ? event.message : event.type === "error" ? event.error : event.partial;
-				message.thinkingLevel = thinkingLevel;
+				stamp(event.type === "done" ? event.message : event.type === "error" ? event.error : event.partial);
 				yield event;
 			}
 		},
-		async result() {
-			const message = await stream.result();
-			message.thinkingLevel = thinkingLevel;
-			return message;
-		},
+		result: async () => stamp(await stream.result()),
 	};
 }

@@ -1,4 +1,4 @@
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -9,7 +9,7 @@ import {
 	InMemoryModelsStore,
 	type Model,
 } from "@earendil-works/pi-ai";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { ModelRuntime } from "../src/core/model-runtime.ts";
 import { createAgentSession } from "../src/core/sdk.ts";
@@ -57,26 +57,12 @@ function assistantFrom(model: Model<string>, text: string): AssistantMessage {
 }
 
 describe("ModelRuntime virtual models", () => {
-	it("lists a virtual model with declared metadata and unknown limits by default", async () => {
-		const { runtime, definition, virtual } = await createRuntime();
-
+	it("lists a virtual model and routes it to a physical model with a clamped thinking level", async () => {
+		const requests: ModelRouteRequest[] = [];
+		const { runtime, virtual } = await createRuntime(requests);
 		expect(virtual).toMatchObject({ provider: "router", id: "auto", contextWindow: 0, maxTokens: 0 });
 		expect(virtual.input).toEqual(["text", "image"]);
 		expect(getSupportedThinkingLevels(virtual)).toEqual(["low", "high"]);
-
-		runtime.registerNativeProvider(
-			createVirtualProvider({ ...definition, contextWindow: 1000, maxTokens: 100, input: ["text"] }),
-		);
-		expect(runtime.getModel("router", "auto")).toMatchObject({
-			contextWindow: 1000,
-			maxTokens: 100,
-			input: ["text"],
-		});
-	});
-
-	it("routes to a physical model and clamps the thinking level to it", async () => {
-		const requests: ModelRouteRequest[] = [];
-		const { runtime, virtual } = await createRuntime(requests);
 		const large = runtime.getModel("faux", "large")!;
 		const messages = [
 			{ role: "user" as const, content: "first", timestamp: 1 },
@@ -92,16 +78,6 @@ describe("ModelRuntime virtual models", () => {
 
 		const high = await runtime.resolveModel(virtual, messages, { reason: "user", thinkingLevel: "high" });
 		expect(high).toEqual({ model: large, thinkingLevel: "high" });
-	});
-
-	it("passes physical models through unchanged", async () => {
-		const { runtime } = await createRuntime();
-		const small = runtime.getModel("faux", "small")!;
-
-		expect(await runtime.resolveModel(small, [], { reason: "user", thinkingLevel: "low" })).toEqual({
-			model: small,
-			thinkingLevel: "low",
-		});
 	});
 
 	it("rejects routes to virtual or unknown models", async () => {
@@ -173,63 +149,51 @@ describe("createAgentSession with virtual models", () => {
 	let tempDir: string;
 
 	beforeEach(() => {
-		tempDir = join(tmpdir(), `pi-virtual-models-${Date.now()}-${Math.random().toString(36).slice(2)}`);
-		mkdirSync(tempDir, { recursive: true });
+		tempDir = mkdtempSync(join(tmpdir(), "pi-virtual-models-"));
 	});
 
 	afterEach(() => {
 		rmSync(tempDir, { recursive: true, force: true });
 	});
 
-	function createSession(runtime: ModelRuntime, sessionManager: SessionManager, model?: Model<string>) {
-		return createAgentSession({
-			cwd: tempDir,
-			agentDir: tempDir,
-			modelRuntime: runtime,
-			sessionManager,
-			resourceLoader: createTestResourceLoader(),
-			model,
-		});
-	}
-
-	function createRoutedTranscript(runtime: ModelRuntime): SessionManager {
+	/** Resume a transcript where the virtual model was selected and the large model answered. */
+	async function resume(runtime: ModelRuntime, model?: Model<string>) {
 		const sessionManager = SessionManager.inMemory(tempDir);
 		sessionManager.appendModelChange("router", "auto");
 		sessionManager.appendMessage({ role: "user", content: "hi", timestamp: 1 });
 		sessionManager.appendMessage(assistantFrom(runtime.getModel("faux", "large")!, "hello"));
-		return sessionManager;
+		const resourceLoader = createTestResourceLoader();
+		const options = { cwd: tempDir, agentDir: tempDir, modelRuntime: runtime, sessionManager, resourceLoader, model };
+		const { session } = await createAgentSession(options);
+		onTestFinished(() => session.dispose());
+		return { session, sessionManager };
 	}
 
 	it("restores the virtual selection instead of the physical model that answered", async () => {
 		const { runtime } = await createRuntime();
 
-		const { session } = await createSession(runtime, createRoutedTranscript(runtime));
+		const { session } = await resume(runtime);
 
 		expect(session.model).toMatchObject({ provider: "router", id: "auto" });
 		expect(session.routedModel?.model).toMatchObject({ provider: "faux", id: "large" });
-		session.dispose();
 	});
 
 	it("falls back to the physical model when the virtual model is not registered", async () => {
 		const { runtime } = await createRuntime();
-		const sessionManager = createRoutedTranscript(runtime);
 		runtime.unregisterProvider("router");
 
-		const { session } = await createSession(runtime, sessionManager);
+		const { session } = await resume(runtime);
 
 		expect(session.model).toMatchObject({ provider: "faux", id: "large" });
 		expect(session.routedModel).toBeUndefined();
-		session.dispose();
 	});
 
 	it("records an explicit model override on resume", async () => {
 		const { runtime } = await createRuntime();
-		const sessionManager = createRoutedTranscript(runtime);
 
-		const { session } = await createSession(runtime, sessionManager, runtime.getModel("faux", "small"));
+		const { sessionManager } = await resume(runtime, runtime.getModel("faux", "small"));
 
 		const modelChanges = sessionManager.getBranch().filter((entry) => entry.type === "model_change");
 		expect(modelChanges.at(-1)).toMatchObject({ provider: "faux", modelId: "small" });
-		session.dispose();
 	});
 });

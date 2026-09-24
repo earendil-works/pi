@@ -24,7 +24,7 @@ Pi keeps the two pairs apart:
 
 Providers only receive physical models. Assistant messages name the physical model, so replaying a conversation across different physical models works the same as after a manual model switch. Resuming a session restores the virtual selection from its latest `model_change` entry. If the virtual model is no longer registered, Pi falls back to the physical model that answered last.
 
-In interactive mode, the footer shows the routed model next to the selection, for example `auto • high → gpt-5.6-luna • medium`. The chat shows a notice such as `Model: openai-codex/gpt-5.6-sol → openai-codex/gpt-5.6-luna • medium` before each response that comes from a different model than the previous one, and before the first routed response as `Model: openai-codex/gpt-5.6-sol • high`. `/session` lists the selected and routed models and the cost for each physical model.
+In interactive mode, the footer shows the routed model next to the selection, for example `auto • high → gpt-5.6-luna • medium`. The chat shows a notice such as `Model: openai-codex/gpt-5.6-sol → openai-codex/gpt-5.6-luna • medium` before each response that comes from a different model than the previous one, and before the first routed response as `Model: openai-codex/gpt-5.6-sol • high`. `/session` lists the cost for each physical model.
 
 Compaction and context usage use the limits of the physical model that produced the latest response, even if that response came before switching to the virtual model. Without such a response, they use the limits declared on the virtual model, if any.
 

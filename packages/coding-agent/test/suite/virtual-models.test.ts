@@ -1,10 +1,5 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import {
-	type AssistantMessage,
-	type FauxResponseStep,
-	fauxAssistantMessage,
-	fauxToolCall,
-} from "@earendil-works/pi-ai";
+import { type FauxResponseStep, fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ExtensionContext } from "../../src/core/extensions/index.ts";
@@ -23,14 +18,14 @@ type Route = (request: ModelRouteRequest, ctx: ExtensionContext) => ModelRoute;
 
 /** Router used by these tests: new user turns pick by thinking level, everything else stays put. */
 const defaultRoute: Route = (request, ctx) => {
-	const small = ctx.modelRegistry.find("faux", "small")!;
-	if (request.reason === "direct") return { model: ctx.modelRegistry.find("faux", "large")!, thinkingLevel: "low" };
+	const find = (id: string) => ctx.modelRegistry.find("faux", id)!;
+	if (request.reason === "direct") return { model: find("large"), thinkingLevel: "low" };
 	if (request.reason !== "user" && request.previous) {
 		return { model: request.previous.model, thinkingLevel: request.previous.thinkingLevel ?? "high" };
 	}
 	return request.thinkingLevel === "high"
-		? { model: ctx.modelRegistry.find("faux", "large")!, thinkingLevel: "high" }
-		: { model: small, thinkingLevel: "off" };
+		? { model: find("large"), thinkingLevel: "high" }
+		: { model: find("small"), thinkingLevel: "off" };
 };
 
 describe("AgentSession virtual models", () => {
@@ -40,11 +35,8 @@ describe("AgentSession virtual models", () => {
 		for (const harness of harnesses.splice(0)) harness.cleanup();
 	});
 
-	async function createRoutedHarness(
-		requests: ModelRouteRequest[],
-		route: Route = defaultRoute,
-		options: HarnessOptions = {},
-	): Promise<{ harness: Harness; dispatched: string[] }> {
+	async function createRoutedHarness(route: Route = defaultRoute, options: HarnessOptions = {}) {
+		const requests: ModelRouteRequest[] = [];
 		const harness = await createHarness({
 			...options,
 			models: [
@@ -70,43 +62,43 @@ describe("AgentSession virtual models", () => {
 			],
 		});
 		harnesses.push(harness);
-		await harness.session.setModel(harness.session.modelRuntime.getModel("router", "auto")!);
+		// Stream through the runtime, which records the thinking level on responses.
+		const runtime = harness.session.modelRuntime;
+		harness.session.agent.streamFunction = (model, context, options) => runtime.streamSimple(model, context, options);
+		await harness.session.setModel(runtime.getModel("router", "auto")!);
 		harness.session.setThinkingLevel("high");
-		return { harness, dispatched: [] };
+		const reasons = () => requests.map((request) => request.reason);
+		/** Physical model and thinking level recorded on each response. */
+		const dispatched = () =>
+			harness.session.messages.flatMap((message) =>
+				message.role === "assistant" ? [`${message.provider}/${message.model}:${message.thinkingLevel}`] : [],
+			);
+		return { harness, requests, reasons, dispatched };
 	}
 
-	/** Faux response that records which model and thinking level the request reached. */
-	function respond(dispatched: string[], message: AssistantMessage): FauxResponseStep {
-		return (_context, options, _state, model) => {
-			dispatched.push(`${model.id}:${options?.reasoning ?? "off"}`);
-			return message;
-		};
-	}
-
-	it("routes each request while the selection stays virtual", async () => {
-		const requests: ModelRouteRequest[] = [];
-		const { harness, dispatched } = await createRoutedHarness(requests);
+	it("routes each request, including retries, while the selection stays virtual", async () => {
+		const { harness, requests, reasons, dispatched } = await createRoutedHarness(defaultRoute, {
+			settings: { retry: { enabled: true, maxRetries: 3, baseDelayMs: 1 } },
+		});
 		harness.setResponses([
-			respond(dispatched, fauxAssistantMessage(fauxToolCall("echo", { text: "hi" }), { stopReason: "toolUse" })),
-			respond(dispatched, fauxAssistantMessage("done")),
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: "overloaded_error" }),
+			fauxAssistantMessage(fauxToolCall("echo", { text: "hi" }), { stopReason: "toolUse" }),
+			fauxAssistantMessage("done"),
 		]);
 
 		await harness.session.prompt("hello");
 
-		expect(requests.map((request) => request.reason)).toEqual(["user", "continuation"]);
-		expect(requests[1].previous?.model.id).toBe("large");
-		expect(dispatched).toEqual(["large:high", "large:high"]);
+		expect(reasons()).toEqual(["user", "retry", "continuation"]);
+		expect(requests[2].previous?.model.id).toBe("large");
+		expect(dispatched()).toEqual(["faux/large:high", "faux/large:high"]);
 		expect(harness.session.model).toMatchObject({ provider: "router", id: "auto" });
 		expect(harness.session.thinkingLevel).toBe("high");
-		const assistants = harness.session.messages.filter((message) => message.role === "assistant");
-		expect(assistants.map((message) => `${message.provider}/${message.model}`)).toEqual(["faux/large", "faux/large"]);
 		// Limits come from the physical model that produced the latest response, not the virtual model.
 		expect(harness.session.getContextUsage()?.contextWindow).toBe(50_000);
 	});
 
 	it("routes requests after extension messages as continuations", async () => {
-		const requests: ModelRouteRequest[] = [];
-		const { harness } = await createRoutedHarness(requests, defaultRoute, {
+		const { harness, reasons } = await createRoutedHarness(defaultRoute, {
 			extensionFactories: [
 				(pi) => {
 					let continued = false;
@@ -126,112 +118,59 @@ describe("AgentSession virtual models", () => {
 		await harness.session.prompt("hello");
 
 		// The hidden custom message becomes a user message for the model, but the user did not write it.
-		expect(requests.map((request) => request.reason)).toEqual(["user", "continuation"]);
+		expect(reasons()).toEqual(["user", "continuation"]);
 	});
 
-	it("routes automatic retries with the retry reason", async () => {
-		const requests: ModelRouteRequest[] = [];
-		const { harness, dispatched } = await createRoutedHarness(requests, defaultRoute, {
-			settings: { retry: { enabled: true, maxRetries: 3, baseDelayMs: 1 } },
-		});
-		harness.setResponses([
-			respond(dispatched, fauxAssistantMessage("", { stopReason: "error", errorMessage: "overloaded_error" })),
-			respond(dispatched, fauxAssistantMessage("recovered")),
-		]);
-
-		await harness.session.prompt("hello");
-
-		expect(requests.map((request) => request.reason)).toEqual(["user", "retry"]);
-		expect(dispatched).toEqual(["large:high", "large:high"]);
-	});
-
-	it("ends the run with an error response when routing fails", async () => {
-		const requests: ModelRouteRequest[] = [];
-		const { harness } = await createRoutedHarness(requests, () => {
-			throw new Error("router unavailable");
-		});
-
-		await harness.session.prompt("hello");
-
-		const last = harness.session.messages.at(-1);
-		expect(last).toMatchObject({ role: "assistant", provider: "router", model: "auto", stopReason: "error" });
-		expect(last?.role === "assistant" ? last.errorMessage : undefined).toContain("router unavailable");
-		expect(harness.faux.state.callCount).toBe(0);
-	});
-
-	it("keeps the limits of the last physical response after failed routing", async () => {
+	it("ends the run with an error response when routing fails and keeps the last physical limits", async () => {
 		let fail = false;
-		const { harness, dispatched } = await createRoutedHarness([], (request, ctx) => {
+		const { harness } = await createRoutedHarness((request, ctx) => {
 			if (fail) throw new Error("router unavailable");
 			return defaultRoute(request, ctx);
 		});
-		harness.setResponses([respond(dispatched, fauxAssistantMessage("answer"))]);
+		harness.setResponses([fauxAssistantMessage("answer")]);
 		await harness.session.prompt("hello");
 
 		fail = true;
 		await harness.session.prompt("again");
 
+		expect(harness.session.messages.at(-1)).toMatchObject({
+			role: "assistant",
+			provider: "router",
+			model: "auto",
+			stopReason: "error",
+			errorMessage: expect.stringContaining("router unavailable"),
+		});
+		expect(harness.faux.state.callCount).toBe(1);
 		// The failed attempt names the virtual model, whose declared window is 1k; the large model's 50k applies.
-		expect(harness.session.messages.at(-1)).toMatchObject({ provider: "router", stopReason: "error" });
 		expect(harness.session.getContextUsage()?.contextWindow).toBe(50_000);
 	});
 
 	it("checks compaction against the physical model that produced the response", async () => {
-		const { harness } = await createRoutedHarness([], defaultRoute, {
-			settings: { compaction: { keepRecentTokens: 1 } },
-		});
-		const large = harness.getModel("large")!;
-		const usage = {
-			input: 20_000,
-			output: 0,
-			cacheRead: 0,
-			cacheWrite: 0,
-			totalTokens: 20_000,
-			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-		};
-		const assistant: AssistantMessage = {
-			...fauxAssistantMessage("long answer"),
-			api: large.api,
-			provider: large.provider,
-			model: large.id,
-			usage,
-		};
-		harness.sessionManager.appendMessage({ role: "user", content: "question", timestamp: Date.now() });
-		harness.sessionManager.appendMessage(assistant);
-		harness.session.agent.state.messages = harness.sessionManager.buildSessionContext().messages;
-		const session = harness.session as unknown as {
-			_checkCompaction(message: AssistantMessage): Promise<boolean>;
-		};
+		const { harness } = await createRoutedHarness();
+		harness.setResponses([fauxAssistantMessage("short answer"), fauxAssistantMessage("long answer")]);
+		await harness.session.prompt("hello");
 
-		// 20k tokens exceed the virtual model's declared 1k window but fit the large model's 50k.
-		await session._checkCompaction(assistant);
+		// About 20k tokens exceed the virtual model's declared 1k window but fit the large model's 50k.
+		await harness.session.prompt("x".repeat(80_000));
 
 		expect(harness.eventsOfType("compaction_start")).toHaveLength(0);
 	});
 
 	it("does not route compactions that an extension supplies", async () => {
-		const requests: ModelRouteRequest[] = [];
-		const { harness } = await createRoutedHarness(
-			requests,
-			(request, ctx) => {
-				if (request.reason === "direct") throw new Error("router unavailable");
-				return defaultRoute(request, ctx);
-			},
-			{
-				settings: { compaction: { keepRecentTokens: 1 } },
-				extensionFactories: [
-					(pi) => {
-						pi.on("session_before_compact", async (event) => ({
-							compaction: {
-								summary: "extension summary",
-								firstKeptEntryId: event.preparation.firstKeptEntryId,
-								tokensBefore: event.preparation.tokensBefore,
-							},
-						}));
-					},
-				],
-			},
-		);
+		const route: Route = (request, ctx) => {
+			if (request.reason === "direct") throw new Error("router unavailable");
+			return defaultRoute(request, ctx);
+		};
+		const { harness, reasons } = await createRoutedHarness(route, {
+			settings: { compaction: { keepRecentTokens: 1 } },
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_before_compact", async ({ preparation: { firstKeptEntryId, tokensBefore } }) => ({
+						compaction: { summary: "extension summary", firstKeptEntryId, tokensBefore },
+					}));
+				},
+			],
+		});
 		harness.setResponses([fauxAssistantMessage("first answer"), fauxAssistantMessage("second answer")]);
 		await harness.session.prompt("first");
 		await harness.session.prompt("second");
@@ -239,23 +178,22 @@ describe("AgentSession virtual models", () => {
 		const result = await harness.session.compact();
 
 		expect(result.summary).toBe("extension summary");
-		expect(requests.map((request) => request.reason)).toEqual(["user", "user"]);
+		expect(reasons()).toEqual(["user", "user"]);
 	});
 
 	it("routes compaction summaries before sizing them", async () => {
-		const requests: ModelRouteRequest[] = [];
 		const summaries: string[] = [];
-		const { harness, dispatched } = await createRoutedHarness(requests, defaultRoute, {
+		const { harness, reasons } = await createRoutedHarness(defaultRoute, {
 			settings: { compaction: { keepRecentTokens: 1 } },
 		});
 		const summary: FauxResponseStep = (_context, options, _state, model) => {
 			summaries.push(`${model.id}:${options?.reasoning ?? "off"}:${options?.maxTokens}`);
 			return fauxAssistantMessage("summary");
 		};
+		// Compaction summarizes the history and the split turn prefix with one routed model.
 		harness.setResponses([
-			respond(dispatched, fauxAssistantMessage("first answer")),
-			respond(dispatched, fauxAssistantMessage("second answer")),
-			// Compaction summarizes the history and the split turn prefix with one routed model.
+			fauxAssistantMessage("first answer"),
+			fauxAssistantMessage("second answer"),
 			summary,
 			summary,
 		]);
@@ -265,7 +203,7 @@ describe("AgentSession virtual models", () => {
 		const result = await harness.session.compact();
 
 		expect(result.summary).toContain("summary");
-		expect(requests.map((request) => request.reason)).toEqual(["user", "user", "direct"]);
+		expect(reasons()).toEqual(["user", "user", "direct"]);
 		// The router's thinking level applies, and the output budget respects the large model's 4000 tokens.
 		expect(summaries).toEqual(["large:low:4000", "large:low:4000"]);
 	});

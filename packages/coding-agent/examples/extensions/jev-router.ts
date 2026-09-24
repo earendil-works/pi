@@ -15,12 +15,6 @@
  * compaction. The selected thinking level passes through as the reasoning effort of the chosen
  * model. Requests outside the agent loop, such as compaction summaries, go to Luna.
  *
- * State machine, per branch (the latest `jev-route` entry):
- *
- *   (none)        --first request, Jev rates complexity-->  planning (Sol or Terra)
- *   planning      --turn ends with a successful edit/write-->  implementing (Luna)
- *   implementing  terminal
- *
  * Requires TypeSafe credentials (TYPESAFE_API_KEY) and an OpenAI Codex login.
  * Usage: pi -e ./jev-router.ts --model jev/auto
  */
@@ -58,13 +52,9 @@ function routeTo(request: ModelRouteRequest, ctx: ExtensionContext, id: string):
 }
 
 function lastUserText(messages: readonly Message[]): string {
-	for (let i = messages.length - 1; i >= 0; i--) {
-		const message = messages[i];
-		if (message.role !== "user") continue;
-		if (typeof message.content === "string") return message.content;
-		return message.content.flatMap((block) => (block.type === "text" ? [block.text] : [])).join("\n");
-	}
-	return "";
+	const content = messages.filter((message) => message.role === "user").at(-1)?.content ?? "";
+	if (typeof content === "string") return content;
+	return content.flatMap((block) => (block.type === "text" ? [block.text] : [])).join("\n");
 }
 
 /** Planning model for a new session: Sol for complex work, Terra otherwise or when Jev is unavailable. */
@@ -106,12 +96,11 @@ export default function (pi: ExtensionAPI) {
 		contextWindow: 272_000,
 		maxTokens: 128_000,
 		async route(request, ctx) {
-			if (request.reason === "direct") return routeTo(request, ctx, LUNA);
-			const route = latestRoute(ctx);
-			if (route) return routeTo(request, ctx, route.model);
-
-			const model = await choosePlanningModel(request, ctx);
-			pi.appendEntry<JevRoute>("jev-route", { phase: "planning", model });
+			let model = request.reason === "direct" ? LUNA : latestRoute(ctx)?.model;
+			if (!model) {
+				model = await choosePlanningModel(request, ctx);
+				pi.appendEntry<JevRoute>("jev-route", { phase: "planning", model });
+			}
 			return routeTo(request, ctx, model);
 		},
 	});

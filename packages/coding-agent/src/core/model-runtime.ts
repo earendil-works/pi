@@ -80,7 +80,14 @@ import {
 } from "./provider-composer.ts";
 import { withRemoteCatalog } from "./remote-catalog-provider.ts";
 import { RuntimeCredentials } from "./runtime-credentials.ts";
-import { isVirtualProvider, type ModelRoute, type ModelRouteReason, withThinkingLevel } from "./virtual-models.ts";
+import {
+	findLatestResponse,
+	isVirtualModel,
+	isVirtualProvider,
+	type ModelRoute,
+	type ModelRouteReason,
+	withThinkingLevel,
+} from "./virtual-models.ts";
 
 interface ModelRuntimeSnapshot {
 	all: readonly Model<Api>[];
@@ -692,7 +699,7 @@ export class ModelRuntime implements Models {
 
 	streamSimple(model: Model<Api>, context: Context, options?: ModelsSimpleStreamOptions): AssistantMessageEventStream {
 		const transcript = normalizeContext(context);
-		if (this.isVirtualModel(model)) {
+		if (isVirtualModel(model)) {
 			// Requests outside the agent loop are routed here. Callers sized them before routing, so
 			// cap the output budget to the routed model.
 			return lazyStream(model, async () => {
@@ -701,9 +708,8 @@ export class ModelRuntime implements Models {
 					thinkingLevel: options?.reasoning ?? "off",
 					signal: options?.signal,
 				});
-				const limit = route.model.maxTokens;
-				const maxTokens =
-					options?.maxTokens !== undefined && limit > 0 ? Math.min(options.maxTokens, limit) : options?.maxTokens;
+				const { maxTokens: limit } = route.model;
+				const maxTokens = options?.maxTokens && limit > 0 ? Math.min(options.maxTokens, limit) : options?.maxTokens;
 				const reasoning = route.thinkingLevel === "off" ? undefined : route.thinkingLevel;
 				return this.streamSimple(route.model, context, { ...options, maxTokens, reasoning });
 			});
@@ -908,55 +914,37 @@ export class ModelRuntime implements Models {
 		void this.refresh({ allowNetwork: false });
 	}
 
-	/** True when the model belongs to a provider built by `createVirtualProvider()`. */
-	isVirtualModel(model: Model<Api>): boolean {
-		return isVirtualProvider(this.models.getProvider(model.provider));
-	}
-
 	/**
-	 * Resolve the model and thinking level for one request. Physical models pass through unchanged.
-	 * A virtual model asks its router, which must return a physical catalog model whose provider has
-	 * credentials; the thinking level is clamped to that model. Throws when routing fails.
+	 * Ask a virtual model's router for the model and thinking level of one request. The router must
+	 * return a physical catalog model whose provider has credentials; the thinking level is clamped
+	 * to that model. Throws when routing fails.
 	 */
 	async resolveModel(
 		model: Model<Api>,
 		messages: readonly Message[],
 		options: { reason: ModelRouteReason; thinkingLevel: ModelThinkingLevel; signal?: AbortSignal },
 	): Promise<ModelRoute> {
+		const name = `Virtual model ${model.provider}/${model.id}`;
 		const provider = this.models.getProvider(model.provider);
-		if (!isVirtualProvider(provider)) return { model, thinkingLevel: options.thinkingLevel };
-		let latest: AssistantMessage | undefined;
-		for (let i = messages.length - 1; i >= 0 && !latest; i--) {
-			const message = messages[i];
-			if (message.role === "assistant" && message.stopReason !== "error" && message.stopReason !== "aborted") {
-				latest = message;
-			}
-		}
+		if (!isVirtualProvider(provider)) throw new Error(`${name} is not registered.`);
+		const latest = findLatestResponse(messages);
 		const previousModel = latest && this.getPhysicalModel(latest.provider, latest.model);
 		const route = await provider.route({
+			...options,
 			model,
-			thinkingLevel: options.thinkingLevel,
-			reason: options.reason,
 			previous: previousModel && { model: previousModel, thinkingLevel: latest?.thinkingLevel },
 			messages,
-			signal: options.signal,
 		});
 		const target = this.getPhysicalModel(route.model.provider, route.model.id);
-		const name = `${route.model.provider}/${route.model.id}`;
-		if (!target) {
-			throw new Error(
-				`Virtual model ${model.provider}/${model.id} routed to ${name}, which is not a physical model.`,
-			);
-		}
-		if (!this.hasConfiguredAuth(target.provider)) {
-			throw new Error(`Virtual model ${model.provider}/${model.id} routed to ${name}, which has no credentials.`);
-		}
+		const routed = `${name} routed to ${route.model.provider}/${route.model.id}`;
+		if (!target) throw new Error(`${routed}, which is not a physical model.`);
+		if (!this.hasConfiguredAuth(target.provider)) throw new Error(`${routed}, which has no credentials.`);
 		return { model: target, thinkingLevel: clampThinkingLevel(target, route.thinkingLevel) };
 	}
 
 	/** A catalog chat model that is not virtual. */
 	getPhysicalModel(providerId: string, modelId: string): Model<Api> | undefined {
 		const model = this.models.getModel(providerId, modelId);
-		return model && !this.isVirtualModel(model) ? model : undefined;
+		return model && !isVirtualModel(model) ? model : undefined;
 	}
 }

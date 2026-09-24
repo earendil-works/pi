@@ -32,6 +32,7 @@ import {
 	type ToolName,
 	withFileMutationQueue,
 } from "./tools/index.ts";
+import { isVirtualModel } from "./virtual-models.ts";
 
 // Preserve the pre-0.81 fallback for extensions that construct Agent instances
 // or invoke low-level agent loops without supplying streamFn. Agent core remains
@@ -198,18 +199,17 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	let model = options.model;
 	let modelFallbackMessage: string | undefined;
 
-	// The session's model is the latest model_change or assistant message. Assistant messages name
-	// the physical model that answered, so a virtual selection is only recorded by model_change
-	// entries and wins when it is still registered. Old transcripts restore exactly as before.
-	let sessionModel = existingSession.model;
-	let lastModelChange: { provider: string; modelId: string } | undefined;
-	for (const entry of sessionManager.getBranch()) {
-		if (entry.type === "model_change") lastModelChange = entry;
-	}
-	const selectedModel = lastModelChange && modelRuntime.getModel(lastModelChange.provider, lastModelChange.modelId);
-	if (selectedModel && modelRuntime.isVirtualModel(selectedModel)) {
-		sessionModel = { provider: selectedModel.provider, modelId: selectedModel.id };
-	}
+	// Assistant messages name the physical model that answered, so a virtual selection is only in
+	// model_change entries. It wins over later assistant messages while it is still registered.
+	const lastChange = sessionManager
+		.getBranch()
+		.filter((entry) => entry.type === "model_change")
+		.at(-1);
+	const selectedModel = lastChange && modelRuntime.getModel(lastChange.provider, lastChange.modelId);
+	const sessionModel =
+		selectedModel && isVirtualModel(selectedModel)
+			? { provider: selectedModel.provider, modelId: selectedModel.id }
+			: existingSession.model;
 
 	// If session has data, try to restore model from it
 	if (!model && hasExistingSession && sessionModel) {
@@ -436,11 +436,9 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		}
 		// Record an explicit model override so the next resume restores it. Otherwise only the
 		// following assistant message would record it, which names a physical model.
-		if (
-			options.model &&
-			(options.model.provider !== sessionModel?.provider || options.model.id !== sessionModel.modelId)
-		) {
-			sessionManager.appendModelChange(options.model.provider, options.model.id);
+		const override = options.model;
+		if (override && (override.provider !== sessionModel?.provider || override.id !== sessionModel.modelId)) {
+			sessionManager.appendModelChange(override.provider, override.id);
 		}
 	} else {
 		// Save initial model and thinking level for new sessions so they can be restored on resume

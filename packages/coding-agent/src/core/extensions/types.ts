@@ -1643,22 +1643,7 @@ export interface ExtensionAPI {
 	 * messages record the physical model and thinking level the router picked.
 	 *
 	 * The virtual model is the only model of a provider named `provider`, registered like
-	 * `registerProvider(provider)`. Remove it with `unregisterProvider(provider)`.
-	 *
-	 * @example
-	 * pi.registerVirtualModel({
-	 *   provider: "router",
-	 *   id: "auto",
-	 *   name: "Auto",
-	 *   thinkingLevels: ["low", "high"],
-	 *   route(request, ctx) {
-	 *     if (request.reason !== "user" && request.previous) {
-	 *       return { model: request.previous.model, thinkingLevel: request.previous.thinkingLevel ?? "medium" };
-	 *     }
-	 *     const id = request.thinkingLevel === "high" ? "claude-opus-4-5" : "claude-sonnet-4-5";
-	 *     return { model: ctx.modelRegistry.find("anthropic", id)!, thinkingLevel: "medium" };
-	 *   },
-	 * });
+	 * `registerProvider(provider)`. Remove it with `unregisterProvider(provider)`. See docs/virtual-models.md.
 	 */
 	registerVirtualModel(model: ExtensionVirtualModel): void;
 
@@ -1672,10 +1657,7 @@ export interface ExtensionAPI {
 
 /** Virtual model registered via pi.registerVirtualModel(). */
 export interface ExtensionVirtualModel extends Omit<VirtualModelDefinition, "route"> {
-	/**
-	 * Pick the physical model and thinking level for one request. The model must be a physical
-	 * catalog model whose provider has credentials.
-	 */
+	/** Like `VirtualModelDefinition.route`, with an extension context. */
 	route(request: ModelRouteRequest, ctx: ExtensionContext): ModelRoute | Promise<ModelRoute>;
 }
 

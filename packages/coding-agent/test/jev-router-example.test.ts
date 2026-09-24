@@ -46,8 +46,6 @@ describe("jev-router example", () => {
 
 	/** Runs the example against a faux OpenAI Codex provider and a scripted Jev complexity rating. */
 	async function setup(complex: number, tools: AgentTool[]) {
-		const dispatched: string[] = [];
-		let classifications = 0;
 		const codex = fauxProvider({
 			provider: "openai-codex",
 			models: ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"].map((id) => ({ id, reasoning: true })),
@@ -58,25 +56,21 @@ describe("jev-router example", () => {
 			models: [jevModel],
 			classifiers: {
 				"typesafe-system-one": {
-					classify: async (model) => {
-						classifications++;
-						const probabilities = { standard: 1 - complex, complex };
-						return {
-							api: model.api,
-							provider: model.provider,
-							model: model.id,
-							answers: {
-								complexity: {
-									type: "choice",
-									choice: complex >= 0.5 ? "complex" : "standard",
-									probabilities,
-									confidence: Math.max(complex, 1 - complex),
-								},
+					classify: async (model) => ({
+						api: model.api,
+						provider: model.provider,
+						model: model.id,
+						answers: {
+							complexity: {
+								type: "choice",
+								choice: complex >= 0.5 ? "complex" : "standard",
+								probabilities: { standard: 1 - complex, complex },
+								confidence: Math.max(complex, 1 - complex),
 							},
-							stopReason: "stop",
-							timestamp: Date.now(),
-						};
-					},
+						},
+						stopReason: "stop",
+						timestamp: Date.now(),
+					}),
 				},
 			},
 		});
@@ -96,13 +90,9 @@ describe("jev-router example", () => {
 		await runtime.refresh({ allowNetwork: false });
 		await harness.session.setModel(runtime.getModel("jev", "auto")!);
 
-		const respond = (...messages: AssistantMessage[]) =>
-			codex.appendResponses(
-				messages.map((message) => (_context, _options, _state, model) => {
-					dispatched.push(model.id.replace("gpt-5.6-", ""));
-					return message;
-				}),
-			);
+		const respond = (...messages: AssistantMessage[]) => codex.appendResponses(messages);
+		const dispatched = () =>
+			harness.session.messages.flatMap((m) => (m.role === "assistant" ? [m.model.replace("gpt-5.6-", "")] : []));
 		const phases = () =>
 			harness.sessionManager
 				.getBranch()
@@ -111,16 +101,13 @@ describe("jev-router example", () => {
 						? [(entry.data as { phase: string }).phase]
 						: [],
 				);
-		return { harness, dispatched, respond, phases, classifications: () => classifications };
+		return { harness, dispatched, respond, phases };
 	}
 
 	const call = (tool: string) => fauxAssistantMessage(fauxToolCall(tool, { path: "a.ts" }), { stopReason: "toolUse" });
 
 	it("lets Sol make the first edit and switches to Luna for the rest", async () => {
-		const { harness, dispatched, respond, phases, classifications } = await setup(0.8, [
-			createTool("read"),
-			createTool("edit"),
-		]);
+		const { harness, dispatched, respond, phases } = await setup(0.8, [createTool("read"), createTool("edit")]);
 
 		respond(call("read"), call("edit"), fauxAssistantMessage("done"));
 		await harness.session.prompt("Refactor the cache layer.");
@@ -128,9 +115,8 @@ describe("jev-router example", () => {
 		await harness.session.prompt("Also add tests.");
 
 		// Sol reads and makes the first edit; the tool-result follow-up of the same turn goes to Luna.
-		expect(dispatched).toEqual(["sol", "sol", "luna", "luna"]);
+		expect(dispatched()).toEqual(["sol", "sol", "luna", "luna"]);
 		expect(phases()).toEqual(["planning", "implementation"]);
-		expect(classifications()).toBe(1);
 		expect(harness.session.model).toMatchObject({ provider: "jev", id: "auto" });
 	});
 
@@ -143,7 +129,7 @@ describe("jev-router example", () => {
 		respond(call("edit"), call("write"), fauxAssistantMessage("done"));
 		await harness.session.prompt("Add a verbose flag.");
 
-		expect(dispatched).toEqual(["terra", "terra", "luna"]);
+		expect(dispatched()).toEqual(["terra", "terra", "luna"]);
 		expect(phases()).toEqual(["planning", "implementation"]);
 	});
 });

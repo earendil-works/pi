@@ -132,7 +132,7 @@ import { type BashOperations, createLocalBashOperations } from "./tools/bash.ts"
 import { createAllToolDefinitions } from "./tools/index.ts";
 import { createToolDefinitionFromAgentTool } from "./tools/tool-definition-wrapper.ts";
 import { addUsageToTotals, createUsageTotals } from "./usage-totals.ts";
-import type { ModelRouteReason } from "./virtual-models.ts";
+import { findLatestResponse, isVirtualModel, type ModelRouteReason } from "./virtual-models.ts";
 
 // ============================================================================
 // Skill Block Parsing
@@ -504,13 +504,13 @@ export class AgentSession {
 		thinkingLevel: ThinkingLevel;
 	}> {
 		// Route a virtual model first: summaries size their input and output from the model they get.
-		const { model, thinkingLevel } = this._modelRuntime.isVirtualModel(selectedModel)
-			? await this._modelRuntime.resolveModel(selectedModel, convertToLlm(this.messages), {
-					reason: "direct",
-					thinkingLevel: this.thinkingLevel,
-					signal,
-				})
-			: { model: selectedModel, thinkingLevel: this.thinkingLevel };
+		const { model, thinkingLevel } = await this._route(
+			selectedModel,
+			this.thinkingLevel,
+			this.messages,
+			"direct",
+			signal,
+		);
 		if (this.agent.streamFunction === streamSimple) {
 			return { ...(await this._getRequiredRequestAuth(model, signal)), thinkingLevel };
 		}
@@ -532,36 +532,39 @@ export class AgentSession {
 		}
 	}
 
+	/** Resolve a virtual model to the physical model for one request. Physical models pass through. */
+	private async _route(
+		model: Model<any>,
+		thinkingLevel: ThinkingLevel,
+		messages: AgentMessage[],
+		reason: ModelRouteReason,
+		signal?: AbortSignal,
+	): Promise<{ model: Model<any>; thinkingLevel: ThinkingLevel }> {
+		if (!isVirtualModel(model)) return { model, thinkingLevel };
+		return this._modelRuntime.resolveModel(model, convertToLlm(messages), { reason, thinkingLevel, signal });
+	}
+
 	/**
 	 * Only messages the user wrote start a new turn. Extension custom messages would look like user
 	 * messages after conversion, so the reason comes from agent messages.
 	 */
 	private _routeReason(messages: readonly AgentMessage[]): ModelRouteReason {
 		if (this._retryAttempt > 0) return "retry";
-		for (let i = messages.length - 1; i >= 0; i--) {
-			const role = messages[i].role;
-			if (role !== "system") return role === "user" ? "user" : "continuation";
-		}
-		return "user";
+		const last = messages.filter((message) => message.role !== "system").at(-1);
+		return !last || last.role === "user" ? "user" : "continuation";
 	}
 
 	/**
 	 * The model whose limits apply to `message`, or undefined when the message came from another
-	 * model. A virtual selection routes to any physical model, so its limits are the producer's.
+	 * model. Under a virtual selection, that is the physical model that produced it.
 	 */
 	private _modelForMessage(message: AssistantMessage): Model<any> | undefined {
 		const model = this.model;
-		if (!model) return undefined;
-		if (this._modelRuntime.isVirtualModel(model)) {
-			return this._modelRuntime.getPhysicalModel(message.provider, message.model);
-		}
-		return message.provider === model.provider && message.model === model.id ? model : undefined;
+		if (model && isVirtualModel(model)) return this._modelRuntime.getPhysicalModel(message.provider, message.model);
+		return model?.provider === message.provider && model.id === message.model ? model : undefined;
 	}
 
-	/**
-	 * The model whose limits apply to the conversation: the selected model, or for a virtual
-	 * selection the physical model of the latest successful response.
-	 */
+	/** The model whose limits apply to the conversation. */
 	private _limitsModel(): Model<any> | undefined {
 		return this.routedModel?.model ?? this.model;
 	}
@@ -672,18 +675,16 @@ export class AgentSession {
 				signal,
 			);
 			const context = previous?.context ?? canonicalContext;
-			const model = previous?.model ?? this.agent.state.model;
-			const thinkingLevel = previous?.thinkingLevel ?? this.agent.state.thinkingLevel;
-			if (!this._modelRuntime.isVirtualModel(model)) return { ...previous, context, model, thinkingLevel };
-
-			// Route a virtual selection. The selection stays in agent state; only this request uses the
-			// physical model. A routing failure rejects, which ends the run with an error response.
-			const route = await this._modelRuntime.resolveModel(model, convertToLlm(context.messages), {
-				reason: this._routeReason(context.messages),
-				thinkingLevel,
+			// The selection stays in agent state; only this request uses the routed model. A routing
+			// failure rejects, which ends the run with an error response.
+			const route = await this._route(
+				previous?.model ?? this.agent.state.model,
+				previous?.thinkingLevel ?? this.agent.state.thinkingLevel,
+				context.messages,
+				this._routeReason(context.messages),
 				signal,
-			});
-			return { ...previous, context, model: route.model, thinkingLevel: route.thinkingLevel };
+			);
+			return { ...previous, context, ...route };
 		};
 	}
 
@@ -1280,23 +1281,12 @@ export class AgentSession {
 		return this.agent.state.thinkingLevel;
 	}
 
-	/**
-	 * Physical model and thinking level of the latest successful response when the current model is
-	 * virtual. Undefined for physical selections and before any physical response. Failed routing
-	 * leaves the virtual model on its message, so such messages are skipped.
-	 */
+	/** Under a virtual selection, the physical model and thinking level of the latest successful response. */
 	get routedModel(): { model: Model<any>; thinkingLevel?: ThinkingLevel } | undefined {
-		if (!this.model || !this._modelRuntime.isVirtualModel(this.model)) return undefined;
-		const messages = this.agent.state.messages;
-		for (let i = messages.length - 1; i >= 0; i--) {
-			const message = messages[i];
-			if (message.role !== "assistant" || message.stopReason === "error" || message.stopReason === "aborted") {
-				continue;
-			}
-			const model = this._modelRuntime.getPhysicalModel(message.provider, message.model);
-			if (model) return { model, thinkingLevel: message.thinkingLevel };
-		}
-		return undefined;
+		if (!this.model || !isVirtualModel(this.model)) return undefined;
+		const latest = findLatestResponse(this.agent.state.messages);
+		const model = latest && this._modelRuntime.getPhysicalModel(latest.provider, latest.model);
+		return model && { model, thinkingLevel: latest?.thinkingLevel };
 	}
 
 	/** Whether the session is currently processing an agent run or post-run continuation. */
@@ -3721,20 +3711,11 @@ export class AgentSession {
 			let summaryDetails: unknown;
 			let summaryUsage: Usage | undefined;
 			if (options.summarize && entriesToSummarize.length > 0 && !extensionSummary) {
-				const model = this.model!;
-				const {
-					model: requestModel,
-					apiKey,
-					headers,
-					env,
-				} = await this._getSummarizationRequestAuth(model, this._branchSummaryAbortController.signal);
+				const signal = this._branchSummaryAbortController.signal;
 				const branchSummarySettings = this.settingsManager.getBranchSummarySettings();
 				const result = await generateBranchSummary(entriesToSummarize, {
-					model: requestModel,
-					apiKey,
-					headers,
-					env,
-					signal: this._branchSummaryAbortController.signal,
+					...(await this._getSummarizationRequestAuth(this.model!, signal)),
+					signal,
 					customInstructions,
 					replaceInstructions,
 					reserveTokens: branchSummarySettings.reserveTokens,
@@ -3998,22 +3979,11 @@ export class AgentSession {
 		if (!model) {
 			throw new Error("No model selected");
 		}
-		const {
-			model: requestModel,
-			apiKey,
-			headers,
-			env,
-			thinkingLevel,
-		} = await this._getSummarizationRequestAuth(model, options.signal);
 		return generateBugReportSummary({
+			...(await this._getSummarizationRequestAuth(model, options.signal)),
 			messages: this.messages,
 			hint: options.hint,
-			model: requestModel,
-			apiKey,
-			headers,
-			env,
 			signal: options.signal,
-			thinkingLevel,
 			streamFn: this.agent.streamFunction,
 			retry: this.settingsManager.getRetrySettings(),
 			sessionId: this.sessionId,
