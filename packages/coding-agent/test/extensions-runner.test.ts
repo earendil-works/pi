@@ -104,11 +104,73 @@ describe("ExtensionRunner", () => {
 		abort: () => {},
 		hasPendingMessages: () => false,
 		shutdown: () => {},
+		requestReload: () => {},
+		onOperationComplete: async () => {},
 		getContextUsage: () => undefined,
 		compact: () => {},
 		getSystemPrompt: () => "",
 		getScopedModels: () => [],
 	};
+
+	describe("extension operations", () => {
+		it("completes cache warming decisions after their handlers settle", async () => {
+			const runtime = createExtensionRuntime();
+			const extension = await loadExtensionFromFactory(
+				(pi) => {
+					pi.on("cache_warming_decision", (_event, ctx) => {
+						ctx.requestReload();
+					});
+				},
+				tempDir,
+				createEventBus(),
+				runtime,
+			);
+			const runner = new ExtensionRunner([extension], runtime, tempDir, sessionManager, modelRegistry);
+			const calls: string[] = [];
+			runner.bindCore(extensionActions, {
+				...extensionContextActions,
+				requestReload: () => calls.push("request"),
+				onOperationComplete: async () => {
+					calls.push("complete");
+				},
+			});
+
+			await runner.emitCacheWarmingDecision({
+				type: "cache_warming_decision",
+				warmCost: 0.01,
+				missCost: 0.1,
+				continuationProbability: 0.5,
+				action: "warm",
+			});
+
+			expect(calls).toEqual(["request", "complete"]);
+		});
+
+		it("preserves callback and completion failures", async () => {
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			const callbackError = new Error("callback failed");
+			const completionError = new Error("completion failed");
+			runner.bindCore(extensionActions, {
+				...extensionContextActions,
+				onOperationComplete: async () => {
+					throw completionError;
+				},
+			});
+
+			let thrown: unknown;
+			try {
+				await runner.runExtensionOperation(async () => {
+					throw callbackError;
+				});
+			} catch (error) {
+				thrown = error;
+			}
+
+			expect(thrown).toBeInstanceOf(AggregateError);
+			expect((thrown as AggregateError).errors).toEqual([callbackError, completionError]);
+		});
+	});
 
 	describe("scopedModels", () => {
 		it("reflects the getScopedModels context action on ctx.scopedModels", async () => {
@@ -1206,7 +1268,6 @@ describe("ExtensionRunner", () => {
 				fork,
 				navigateTree: async () => ({ cancelled: false }),
 				switchSession: async () => ({ cancelled: false }),
-				reload: async () => {},
 			});
 
 			const commandContext = runner.createCommandContext();

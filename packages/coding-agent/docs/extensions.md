@@ -47,7 +47,7 @@ Place the extension in your user or project extensions directory. Pi loads direc
 
 Use a single file for a small extension and a directory for a multi-file implementation. Put npm dependencies in a nearby `package.json`. See [Configuration](configuration.md) for conventional locations and [Settings](settings.md#resources) for additional paths.
 
-Reload replaces the extension runtime, so code after `await ctx.reload()` must not reuse state from the old runtime. Only personal and explicit command-line extensions can participate in the `project_trust` event that runs before project extensions load.
+Reload replaces the extension runtime, so call `ctx.requestReload()` last and return without reusing the old context. Only personal and explicit command-line extensions can participate in the `project_trust` event that runs before project extensions load.
 
 <a id="understand-the-lifecycle"></a>
 
@@ -155,10 +155,12 @@ Pi records the initial prompt and tool set in the transcript's first system mess
 
 ### Context and session changes
 
-`ExtensionContext` provides the working directory, mode, UI, session manager, model runtime, abort signal, context usage, and controls for compaction and shutdown.
+`ExtensionContext` provides the working directory, mode, UI, session manager, model runtime, abort signal, context usage, and controls for compaction, runtime reload, and shutdown.
 Use `ctx.modelRegistry.streamSimple()` for provider-neutral nested model calls.
 
-Command handlers receive `ExtensionCommandContext`, which adds operations for waiting until idle, reloading, tree navigation, and session replacement.
+Call `ctx.requestReload()` from a command, tool, event handler, or shortcut to schedule the same runtime reload as `/reload` after the current operation and agent work settle. The request is fire-and-forget. Concurrent requests are coalesced, requests during reload are ignored, and teardown discards pending requests. TUI and RPC modes support reload requests; print and JSON modes ignore them.
+
+Command handlers receive `ExtensionCommandContext`, which adds operations for waiting until idle, tree navigation, and session replacement.
 These operations are command-only because calling them from lifecycle handlers can deadlock the runtime.
 
 Session replacement invalidates the old context. Capture only plain data before switching, then use the fresh context supplied to `withSession` for session-bound work.
