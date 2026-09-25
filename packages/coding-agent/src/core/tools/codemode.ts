@@ -21,9 +21,11 @@ import {
 	type CodemodeResult,
 	CodemodeSandbox,
 	type CodemodeTool,
+	loadQuickJSWasm,
 	renderDeclarations,
 } from "@earendil-works/pi-codemode";
 import { type Static, Type } from "typebox";
+import { getCodemodeWorkerUrl, getQuickJSWasmPath } from "../../config.ts";
 import type { ExtensionToolContext, ToolDefinition } from "../extensions/types.ts";
 import { codemodeRenderers } from "./renderers/codemode.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
@@ -274,6 +276,8 @@ async function executeCodemode(
 			},
 		],
 		timeoutMs,
+		wasm: loadQuickJSWasm(getQuickJSWasmPath()),
+		workerUrl: getCodemodeWorkerUrl(),
 	});
 
 	let result: CodemodeResult;

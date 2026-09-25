@@ -13,6 +13,7 @@
 			"@earendil-works/pi-telemetry": ["./packages/telemetry/src/index.ts"],
 			"@earendil-works/pi-telemetry/testing": ["./packages/telemetry/src/testing/index.ts"],
 			"@earendil-works/pi-codemode": ["./packages/codemode/src/index.ts"],
+			"@earendil-works/pi-codemode/worker": ["./packages/codemode/src/runtime/worker.ts"],
 			"@earendil-works/pi-mcp": ["./packages/mcp/src/index.ts"],
 			"@earendil-works/pi-mcp/oauth": ["./packages/mcp/src/oauth/index.ts"],
 			"@earendil-works/pi-mcp/testing": ["./packages/mcp/src/testing/index.ts"],

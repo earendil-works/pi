@@ -10,14 +10,13 @@ import type {
 	CodemodeSandboxOptions,
 	CodemodeTool,
 } from "../types.ts";
-import { PRELUDE_SOURCE } from "./prelude-source.ts";
+import { type CodemodeWasmModule, loadQuickJSWasm } from "../wasm.ts";
 import {
 	type HostToWorkerMessage,
 	isWorkerToHostMessage,
 	type WorkerData,
 	type WorkerToHostMessage,
 } from "./protocol.ts";
-import { WORKER_SOURCE } from "./worker-source.ts";
 
 const DEFAULT_TIMEOUT_MS = 300_000;
 const LOG_LEVELS: ReadonlySet<string> = new Set<CodemodeLogLevel>(["log", "info", "warn", "error", "debug"]);
@@ -26,6 +25,11 @@ const RESERVED_GLOBALS: ReadonlySet<string> = new Set(["tools", "console", "glob
 
 function errorMessage(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
+}
+
+function defaultWorkerUrl(): URL {
+	// `.ts` when running from source (tests, tsx), `.js` from the published dist.
+	return new URL(import.meta.url.endsWith(".ts") ? "./worker.ts" : "./worker.js", import.meta.url);
 }
 
 interface PendingCall {
@@ -40,19 +44,21 @@ interface ExecutionOptions {
 	globals: ReadonlyMap<string, CodemodeTool>;
 	timeoutMs: number;
 	signal: AbortSignal | undefined;
-	maxOldGenerationSizeMb: number | undefined;
+	memoryLimitBytes: number | undefined;
+	wasm: Promise<CodemodeWasmModule>;
+	workerUrl: URL;
 }
 
 /**
- * One script run in its own worker. A fresh worker per run (about 10 ms to
- * start) keeps termination simple: a runaway script, including one that only
- * spins the microtask queue, is killed with `terminate()` and cannot poison a
- * later run.
+ * One script run in its own worker and QuickJS VM. A fresh worker per run keeps
+ * termination simple: a runaway script, including one that only spins the
+ * microtask queue, is killed with `terminate()` and cannot poison a later run.
  */
 class Execution {
 	readonly promise: Promise<CodemodeResult>;
 	private resolveResult!: (result: CodemodeResult) => void;
-	private readonly worker: Worker;
+	private worker: Worker | undefined;
+	private readonly interrupt = new SharedArrayBuffer(4);
 	private readonly tools: ReadonlyMap<string, CodemodeTool>;
 	private readonly globals: ReadonlyMap<string, CodemodeTool>;
 	private readonly signal: AbortSignal | undefined;
@@ -70,32 +76,6 @@ class Execution {
 		this.globals = options.globals;
 		this.signal = options.signal;
 
-		const workerData: WorkerData = {
-			code: options.code,
-			toolNames: [...options.tools.keys()],
-			globalNames: [...options.globals.keys()],
-			prelude: PRELUDE_SOURCE,
-		};
-		this.worker = new Worker(WORKER_SOURCE, {
-			eval: true,
-			workerData,
-			resourceLimits:
-				options.maxOldGenerationSizeMb === undefined
-					? undefined
-					: { maxOldGenerationSizeMb: options.maxOldGenerationSizeMb },
-		});
-		this.worker.on("message", (message: unknown) => this.handleMessage(message));
-		this.worker.on("error", (error: unknown) => {
-			this.finish({
-				kind: "sandbox",
-				name: error instanceof Error ? error.name : undefined,
-				message: errorMessage(error),
-			});
-		});
-		this.worker.on("exit", (code) => {
-			this.finish({ kind: "sandbox", message: `Worker exited with code ${code} before the script settled` });
-		});
-
 		if (Number.isFinite(options.timeoutMs)) {
 			this.timer = setTimeout(() => {
 				this.finish({ kind: "timeout", message: `Execution timed out after ${options.timeoutMs} ms` });
@@ -109,11 +89,49 @@ class Execution {
 				options.signal.addEventListener("abort", this.onAbort, { once: true });
 			}
 		}
+
+		options.wasm.then(
+			(wasm) => this.start(options, wasm),
+			(error: unknown) => {
+				this.finish({ kind: "sandbox", message: `Failed to load QuickJS: ${errorMessage(error)}` });
+			},
+		);
 	}
 
 	abort(message: string): Promise<CodemodeResult> {
 		this.finish({ kind: "aborted", message });
 		return this.promise;
+	}
+
+	private start(options: ExecutionOptions, wasm: CodemodeWasmModule): void {
+		if (this.finished) return;
+		const workerData: WorkerData = {
+			code: options.code,
+			toolNames: [...options.tools.keys()],
+			globalNames: [...options.globals.keys()],
+			wasm,
+			memoryLimitBytes: options.memoryLimitBytes,
+			interrupt: this.interrupt,
+		};
+		let worker: Worker;
+		try {
+			worker = new Worker(options.workerUrl, { workerData });
+		} catch (error) {
+			this.finish({ kind: "sandbox", message: `Failed to start worker: ${errorMessage(error)}` });
+			return;
+		}
+		this.worker = worker;
+		worker.on("message", (message: unknown) => this.handleMessage(message));
+		worker.on("error", (error: unknown) => {
+			this.finish({
+				kind: "sandbox",
+				name: error instanceof Error ? error.name : undefined,
+				message: errorMessage(error),
+			});
+		});
+		worker.on("exit", (code) => {
+			this.finish({ kind: "sandbox", message: `Worker exited with code ${code} before the script settled` });
+		});
 	}
 
 	private readonly onAbort = (): void => {
@@ -122,7 +140,7 @@ class Execution {
 	};
 
 	private post(message: HostToWorkerMessage): void {
-		this.worker.postMessage(message);
+		this.worker?.postMessage(message);
 	}
 
 	private handleMessage(message: unknown): void {
@@ -139,6 +157,9 @@ class Execution {
 				break;
 			case "done":
 				this.handleDone(message);
+				break;
+			case "crash":
+				this.finish({ kind: "sandbox", message: message.message });
 				break;
 		}
 	}
@@ -200,6 +221,11 @@ class Execution {
 		const result: CodemodeResult = error
 			? { ok: false, error, logs: this.logs, calls: this.calls }
 			: { ok: true, value, logs: this.logs, calls: this.calls };
+		if (!this.worker) {
+			this.resolveResult(result);
+			return;
+		}
+		Atomics.store(new Int32Array(this.interrupt), 0, 1);
 		this.worker
 			.terminate()
 			.catch(() => undefined)
@@ -208,27 +234,28 @@ class Execution {
 }
 
 /**
- * Runs JavaScript in a locked-down `node:vm` context inside a worker thread.
- * The script sees `tools.<name>(args)` for every registered tool and
- * `console.*`; nothing else (no timers, `fetch`, `process`, `require`, `eval`).
+ * Runs JavaScript in a QuickJS VM (a separate wasm instance) inside a worker
+ * thread. The script sees `tools.<name>(args)` for every registered tool and
+ * `console.*`; nothing else (no timers, `fetch`, `process`, `require`, modules).
  *
- * Each `execute()` gets its own worker and context; the sandbox only holds the
- * tool table and defaults. `close()` aborts in-flight executions.
- *
- * `node:vm` is not a security boundary against a hostile author. The goal is
- * that every capability goes through a registered tool.
+ * Each `execute()` gets its own worker and VM; the sandbox only holds the tool
+ * table and defaults. `close()` aborts in-flight executions.
  */
 export class CodemodeSandbox {
 	private readonly toolsByName = new Map<string, CodemodeTool>();
 	private readonly globalsByName = new Map<string, CodemodeTool>();
 	private readonly timeoutMs: number;
-	private readonly maxOldGenerationSizeMb: number | undefined;
+	private readonly memoryLimitBytes: number | undefined;
+	private readonly wasm: CodemodeWasmModule | Promise<CodemodeWasmModule> | undefined;
+	private readonly workerUrl: URL;
 	private readonly running = new Set<Execution>();
 	private closed = false;
 
 	constructor(options: CodemodeSandboxOptions = {}) {
 		this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-		this.maxOldGenerationSizeMb = options.maxOldGenerationSizeMb;
+		this.memoryLimitBytes = options.memoryLimitBytes;
+		this.wasm = options.wasm;
+		this.workerUrl = options.workerUrl ?? defaultWorkerUrl();
 		for (const tool of options.tools ?? []) this.registerTool(tool);
 		for (const global of options.globals ?? []) {
 			if (!IDENTIFIER.test(global.name) || RESERVED_GLOBALS.has(global.name)) {
@@ -269,7 +296,9 @@ export class CodemodeSandbox {
 			globals: this.globalsByName,
 			timeoutMs: options.timeoutMs ?? this.timeoutMs,
 			signal: options.signal,
-			maxOldGenerationSizeMb: this.maxOldGenerationSizeMb,
+			memoryLimitBytes: this.memoryLimitBytes,
+			wasm: this.wasm === undefined ? loadQuickJSWasm() : Promise.resolve(this.wasm),
+			workerUrl: this.workerUrl,
 		});
 		this.running.add(execution);
 		return execution.promise.finally(() => this.running.delete(execution));

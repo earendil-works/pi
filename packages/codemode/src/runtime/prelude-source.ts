@@ -1,15 +1,10 @@
 /**
- * JavaScript evaluated inside the vm context before the script runs.
+ * JavaScript evaluated inside the QuickJS VM before the script runs.
  *
- * Boundary rule: nothing from the worker realm may become reachable from the
- * script, because a worker-realm function's `constructor` is a `Function`
- * that is not subject to the context's code-generation ban and can reach
- * `process`. The single crossing is `bridge`, which this prelude keeps in a
- * closure. It is only ever called with primitives and returns undefined.
- *
- * Everything the script can touch (`tools`, `console`, promises, errors) is
- * created here, in the context realm. Tool arguments and results cross as JSON
- * strings and are parsed on this side.
+ * The VM is its own wasm instance, so nothing here guards a realm boundary.
+ * The prelude keeps the host bridge in a closure so the script cannot call it
+ * directly, and builds `tools`, `console`, and globals on top of it. Tool
+ * arguments and results cross as JSON strings and are parsed on this side.
  *
  * Evaluates to a function `(bridge, toolNamesJson, globalNamesJson) => { settle, run }`.
  * `bridge(kind, a, b, c)` with kind "call" or "global" (id, name, argsJson),
@@ -17,13 +12,6 @@
  */
 export const PRELUDE_SOURCE: string = `(function (bridge, toolNamesJson, globalNamesJson) {
 	"use strict";
-	// Works on Node. Bun's vm global re-materializes these, so the script
-	// wrapper additionally shadows them with parameters. Wasm compilation is
-	// blocked by codeGeneration.wasm on both runtimes regardless.
-	delete globalThis.WebAssembly;
-	delete globalThis.SharedArrayBuffer;
-	delete globalThis.Atomics;
-
 	const stringify = JSON.stringify;
 	const parse = JSON.parse;
 	const promiseThen = Promise.prototype.then;
@@ -35,9 +23,20 @@ export const PRELUDE_SOURCE: string = `(function (bridge, toolNamesJson, globalN
 		return value === undefined ? undefined : stringify(value);
 	}
 
+	// QuickJS stacks list frames only. Prefix "Name: message" like V8 so the
+	// text reads the same as a Node error, and drop this prelude's frames.
+	function errorText(error) {
+		const head = error.message ? error.name + ": " + error.message : String(error.name);
+		const frames =
+			typeof error.stack === "string"
+				? error.stack.split("\\n").filter((line) => line.trim() && !line.includes("codemode-prelude.js"))
+				: [];
+		return [head, ...frames].join("\\n");
+	}
+
 	function format(value) {
 		if (typeof value === "string") return value;
-		if (value instanceof ErrorCtor) return value.stack || String(value);
+		if (value instanceof ErrorCtor) return errorText(value);
 		try {
 			const json = stringify(value);
 			return json === undefined ? String(value) : json;
@@ -48,7 +47,7 @@ export const PRELUDE_SOURCE: string = `(function (bridge, toolNamesJson, globalN
 
 	function describeError(error) {
 		if (error instanceof ErrorCtor) {
-			return stringify({ name: error.name, message: error.message, stack: error.stack });
+			return stringify({ name: error.name, message: error.message, stack: errorText(error) });
 		}
 		return stringify({ message: format(error) });
 	}
@@ -87,9 +86,8 @@ export const PRELUDE_SOURCE: string = `(function (bridge, toolNamesJson, globalN
 	}
 	Object.freeze(console);
 
-	// console is only bound as a parameter of the script wrapper: Bun's vm
-	// global has a lazily installed no-op console that ignores every override.
 	Object.defineProperty(globalThis, "tools", { value: tools, enumerable: true });
+	Object.defineProperty(globalThis, "console", { value: console, enumerable: true });
 
 	return {
 		settle(id, ok, payload) {

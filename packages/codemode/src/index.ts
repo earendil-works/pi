@@ -14,3 +14,4 @@ export type {
 	CodemodeTool,
 	CodemodeToolContext,
 } from "./types.ts";
+export { type CodemodeWasmModule, loadQuickJSWasm } from "./wasm.ts";

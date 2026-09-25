@@ -2,7 +2,6 @@ import vm from "node:vm";
 import { afterEach, describe, expect, it } from "vitest";
 import { CodemodeSandbox, type CodemodeTool } from "../src/index.ts";
 import { PRELUDE_SOURCE } from "../src/runtime/prelude-source.ts";
-import { WORKER_SOURCE } from "../src/runtime/worker-source.ts";
 
 const sandboxes: CodemodeSandbox[] = [];
 
@@ -21,7 +20,6 @@ const echo: CodemodeTool = { name: "echo", execute: (args) => args };
 describe("embedded sources", () => {
 	it("parse as JavaScript", () => {
 		expect(() => new vm.Script(PRELUDE_SOURCE, { filename: "prelude.js" })).not.toThrow();
-		expect(() => new vm.Script(WORKER_SOURCE, { filename: "worker.js" })).not.toThrow();
 	});
 });
 
@@ -76,6 +74,17 @@ describe("script execution", () => {
 		if (result.ok) return;
 		expect(result.error).toMatchObject({ kind: "script", name: "TypeError", message: "boom 1" });
 		expect(result.error.stack).toMatch(/codemode\.js:2/);
+	});
+
+	it("formats stacks like V8 without prelude frames", async () => {
+		const sandbox = createSandbox();
+		const result = await sandbox.execute("console.log(new Error('inner'));\nthrow new RangeError('outer')");
+		expect(result.ok).toBe(false);
+		if (result.ok) return;
+		expect(result.error.stack).toMatch(/^RangeError: outer\n {4}at .*codemode\.js:2/);
+		expect(result.error.stack).not.toContain("codemode-prelude.js");
+		expect(result.logs[0].message).toMatch(/^Error: inner\n {4}at .*codemode\.js:1/);
+		expect(result.logs[0].message).not.toContain("codemode-prelude.js");
 	});
 
 	it("reports non-Error throws", async () => {
@@ -295,15 +304,37 @@ describe("limits and lifetime", () => {
 		expect(results.map((result) => (result.ok ? result.value : result.error))).toEqual(["a", "b", "undefined"]);
 	});
 
-	it.skipIf(typeof process.versions.bun === "string")(
-		"reports an out-of-memory worker as a sandbox error",
-		async () => {
-			const sandbox = new CodemodeSandbox({ timeoutMs: 20_000, maxOldGenerationSizeMb: 32 });
-			sandboxes.push(sandbox);
-			const result = await sandbox.execute("const a = []; while (true) a.push(new Array(1e5).fill('x'))");
-			expect(result).toMatchObject({ ok: false, error: { kind: "sandbox" } });
-		},
-	);
+	it("turns deep recursion into a catchable RangeError", async () => {
+		const sandbox = createSandbox();
+		const result = await sandbox.execute(`
+			let depth = 0;
+			function dive() { depth++; dive(); }
+			try { dive(); } catch (error) { return [error.name, depth > 1000]; }
+		`);
+		expect(result).toMatchObject({ ok: true, value: ["RangeError", true] });
+	});
+
+	it("enforces the memory limit inside the script", async () => {
+		const sandbox = new CodemodeSandbox({ timeoutMs: 20_000, memoryLimitBytes: 32 * 1024 * 1024 });
+		sandboxes.push(sandbox);
+		const result = await sandbox.execute("const a = []; while (true) a.push(new Array(1e5).fill('x'))");
+		expect(result).toMatchObject({ ok: false, error: { kind: "script", name: "InternalError" } });
+	});
+
+	it("reports a missing worker file as a sandbox error", async () => {
+		const sandbox = new CodemodeSandbox({ workerUrl: new URL("./does-not-exist.js", import.meta.url) });
+		sandboxes.push(sandbox);
+		expect(await sandbox.execute("return 1")).toMatchObject({ ok: false, error: { kind: "sandbox" } });
+	});
+
+	it("reports a failing wasm module as a sandbox error", async () => {
+		const sandbox = new CodemodeSandbox({ wasm: Promise.reject(new Error("no wasm")) });
+		sandboxes.push(sandbox);
+		expect(await sandbox.execute("return 1")).toMatchObject({
+			ok: false,
+			error: { kind: "sandbox", message: "Failed to load QuickJS: no wasm" },
+		});
+	});
 });
 
 describe("escape hatches", () => {
@@ -312,7 +343,7 @@ describe("escape hatches", () => {
 		const result = await sandbox.execute(`
 			return [
 				typeof process, typeof require, typeof module, typeof setTimeout, typeof fetch,
-				typeof WebAssembly, typeof SharedArrayBuffer, typeof Atomics, typeof globalThis.constructor,
+				typeof WebAssembly, typeof std, typeof os, typeof globalThis.constructor,
 			]
 		`);
 		expect(result).toMatchObject({
@@ -331,67 +362,28 @@ describe("escape hatches", () => {
 		});
 	});
 
-	it("blocks code generation from strings and dynamic import", async () => {
+	it("keeps eval and Function inside the VM", async () => {
+		// Code generation is allowed: it can only produce more code in the same wasm instance.
 		const sandbox = createSandbox([echo]);
 		const result = await sandbox.execute(`
-			const attempts = [
-				() => eval("1"),
-				() => new Function("return process")(),
-				() => this.constructor.constructor("return process")(),
-				() => tools.echo.constructor("return process")(),
-				() => (async () => {}).constructor("return process")(),
-				() => Object.getPrototypeOf(async function () {}).constructor("return process")(),
+			return [
+				eval("typeof process"),
+				new Function("return typeof process")(),
+				tools.echo.constructor("return typeof require")(),
+				(async () => {}).constructor("return typeof setTimeout")() instanceof Promise,
 			];
-			const outcomes = [];
-			for (const attempt of attempts) {
-				try { outcomes.push(typeof attempt()); } catch (error) { outcomes.push(error.constructor.name); }
-			}
-			try { await import("node:fs"); outcomes.push("imported"); } catch (error) { outcomes.push(error.constructor.name); }
-			return outcomes;
 		`);
-		expect(result.ok).toBe(true);
-		if (!result.ok) return;
-		const outcomes = result.value as string[];
-		expect(outcomes.slice(0, 6).every((outcome) => outcome === "EvalError" || outcome === "TypeError")).toBe(true);
-		expect(outcomes[6]).not.toBe("imported");
+		expect(result).toMatchObject({ ok: true, value: ["undefined", "undefined", "undefined", true] });
 	});
 
-	it("blocks WebAssembly even through globalThis", async () => {
-		// Bun's vm global re-materializes WebAssembly after deletion, so the
-		// embedder flag is the real barrier.
+	it("rejects dynamic import", async () => {
 		const sandbox = createSandbox();
 		const result = await sandbox.execute(`
-			if (typeof globalThis.WebAssembly === "undefined") return "absent";
-			try {
-				new globalThis.WebAssembly.Module(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]));
-				return "compiled";
-			} catch (error) {
-				return error.constructor.name;
-			}
+			try { await import("node:fs"); return "imported"; } catch (error) { return error.constructor.name; }
 		`);
 		expect(result.ok).toBe(true);
 		if (!result.ok) return;
-		expect(["absent", "CompileError"]).toContain(result.value);
-	});
-
-	it("never hands worker-realm functions to a patched Promise.prototype.then", async () => {
-		// If the worker ever awaited a context promise directly, the patched
-		// `then` would receive worker-realm callbacks whose `constructor` is not
-		// subject to the context's code-generation ban. Exiting the worker makes
-		// that observable here as a sandbox error.
-		const sandbox = createSandbox([echo]);
-		const result = await sandbox.execute(`
-			const originalThen = Promise.prototype.then;
-			Promise.prototype.then = function (onFulfilled, onRejected) {
-				for (const callback of [onFulfilled, onRejected]) {
-					try { callback.constructor("return process")().exit(42); } catch {}
-				}
-				return originalThen.call(this, onFulfilled, onRejected);
-			};
-			await tools.echo(1);
-			return "clean";
-		`);
-		expect(result).toMatchObject({ ok: true, value: "clean" });
+		expect(result.value).not.toBe("imported");
 	});
 
 	it("keeps tools and console frozen", async () => {

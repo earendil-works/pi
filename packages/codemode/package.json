@@ -7,8 +7,14 @@
 	"types": "./dist/index.d.ts",
 	"exports": {
 		".": {
+			"source": "./src/index.ts",
 			"types": "./dist/index.d.ts",
 			"import": "./dist/index.js"
+		},
+		"./worker": {
+			"source": "./src/runtime/worker.ts",
+			"types": "./dist/runtime/worker.d.ts",
+			"import": "./dist/runtime/worker.js"
 		}
 	},
 	"files": [
@@ -25,8 +31,8 @@
 		"pi",
 		"codemode",
 		"sandbox",
-		"vm",
-		"worker"
+		"quickjs",
+		"wasm"
 	],
 	"author": "Earendil Works",
 	"license": "MIT",
@@ -37,6 +43,9 @@
 	},
 	"engines": {
 		"node": ">=22.19.0"
+	},
+	"dependencies": {
+		"quickjs-wasi": "3.6.2"
 	},
 	"devDependencies": {
 		"shx": "0.4.0",

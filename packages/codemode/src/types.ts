@@ -1,3 +1,5 @@
+import type { CodemodeWasmModule } from "./wasm.ts";
+
 export interface CodemodeToolContext {
 	/**
 	 * Aborted when the script finishes (including unawaited calls), the
@@ -51,7 +53,7 @@ export type CodemodeErrorKind =
 	| "timeout"
 	/** The caller's signal fired or the sandbox was closed. The worker was terminated. */
 	| "aborted"
-	/** The worker died on its own (for example out of memory). */
+	/** The worker or VM failed outside the script's control (for example a wasm trap or a missing worker file). */
 	| "sandbox";
 
 export interface CodemodeError {
@@ -80,8 +82,23 @@ export interface CodemodeSandboxOptions {
 	 * Default: 300000.
 	 */
 	timeoutMs?: number;
-	/** Worker heap limit. Enforced on Node; Bun ignores it. Default: runtime default. */
-	maxOldGenerationSizeMb?: number;
+	/**
+	 * Maximum memory the QuickJS VM may allocate. Allocations beyond it fail inside the script as
+	 * `InternalError: out of memory`. Default: no limit beyond wasm32's 4 GiB address space.
+	 */
+	memoryLimitBytes?: number;
+	/**
+	 * Compiled `quickjs-wasi/quickjs.wasm`, usually from {@link loadQuickJSWasm}. Default:
+	 * `loadQuickJSWasm()`, the file in the installed `quickjs-wasi` package. Pass it when that file
+	 * is not on disk, for example in a Bun compiled executable.
+	 */
+	wasm?: CodemodeWasmModule | Promise<CodemodeWasmModule>;
+	/**
+	 * Worker entry that imports `@earendil-works/pi-codemode/worker`. Default: this package's own
+	 * worker file. Pass it when this package is bundled, since the default is resolved relative to
+	 * the module that creates the sandbox.
+	 */
+	workerUrl?: URL;
 }
 
 export interface CodemodeExecuteOptions {
