@@ -110,6 +110,28 @@ describe("InteractiveThemeController", () => {
 		expect(theme.name).toBe("light");
 	});
 
+	it("lets startup wait for the terminal colors", async () => {
+		const { ui, queryTerminalColors } = createUi();
+		let answer: ((colors: TerminalColors) => void) | undefined;
+		queryTerminalColors.mockReturnValue(
+			new Promise<TerminalColors>((resolve) => {
+				answer = resolve;
+			}),
+		);
+		const controller = createController(ui, () => SettingsManager.inMemory());
+		controller.applyFromSettings();
+		let waited = false;
+		const wait = controller.waitForTerminalColors().then(() => {
+			waited = true;
+		});
+		await flush();
+		expect(waited).toBe(false);
+
+		answer?.(DARK_COLORS);
+		await wait;
+		expect(theme.getFgAnsi("error")).not.toBe("\x1b[39m");
+	});
+
 	it("resolves a theme pair from the terminal colors and follows appearance changes", async () => {
 		vi.stubEnv("COLORFGBG", "15;0");
 		const { ui, queryTerminalColors, setTerminalColorSchemeNotifications, emitTerminalColorScheme } = createUi();

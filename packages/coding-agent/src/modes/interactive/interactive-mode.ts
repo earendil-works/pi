@@ -953,6 +953,9 @@ export class InteractiveMode {
 		this.isInitialized = true;
 
 		this.themeController.applyFromSettings();
+		// The header and startup notices bake theme colors into their text, so build them once the terminal
+		// reported its colors. This ends at the terminal's DA1 reply, or after 100 ms if it answers nothing.
+		await this.themeController.waitForTerminalColors();
 
 		// Add header with keybindings from config (unless silenced)
 		if (this.options.verbose || !this.settingsManager.getQuietStartup()) {

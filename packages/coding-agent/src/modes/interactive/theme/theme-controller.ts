@@ -36,9 +36,9 @@ function sameTerminalColors(a: TerminalColors, b: TerminalColors): boolean {
 }
 
 /**
- * Applies the theme setting and keeps it in sync with the terminal. Startup never waits for the terminal:
- * the theme applies immediately, and the terminal's colors update it when they arrive. The system theme
- * renders in grayscale until then.
+ * Applies the theme setting and keeps it in sync with the terminal. The theme applies immediately, and the
+ * terminal's colors update it when they arrive; the system theme renders in grayscale until then. Callers
+ * that bake theme colors into content can wait for the colors with `waitForTerminalColors()`.
  */
 export class InteractiveThemeController {
 	private readonly ui: TUI;
@@ -52,6 +52,8 @@ export class InteractiveThemeController {
 	private activeThemeName: string | undefined;
 	private autoSyncEnabled = false;
 	private terminalColorSchemeUnsubscribe: (() => void) | undefined;
+	// Settles when the latest color query completed or timed out, and its colors applied.
+	private terminalColorQuery: Promise<void> = Promise.resolve();
 
 	constructor(
 		ui: TUI,
@@ -84,6 +86,15 @@ export class InteractiveThemeController {
 	applyFromSettings(): void {
 		this.applySetting(true);
 		this.queryTerminalColors();
+	}
+
+	/**
+	 * Wait until the latest color query completed or timed out. Content that bakes theme colors into
+	 * strings, such as the startup header, should be built after this. Terminals answer the DA1 request
+	 * right after the color replies, so this only takes the full timeout when a terminal answers nothing.
+	 */
+	waitForTerminalColors(): Promise<void> {
+		return this.terminalColorQuery;
 	}
 
 	getThemeSelection(): string | undefined {
@@ -175,7 +186,7 @@ export class InteractiveThemeController {
 			// Treat a failed query like a terminal that does not report colors.
 			query = Promise.resolve({});
 		}
-		void query.then(apply, () => apply({}));
+		this.terminalColorQuery = query.then(apply, () => apply({}));
 	}
 
 	/**

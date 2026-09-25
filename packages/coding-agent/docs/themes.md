@@ -19,7 +19,7 @@ The theme adapts to what the terminal reports:
 | Background only | Pi's own hues, placed for the actual background. |
 | Nothing | ANSI color indices and the terminal's default colors, which the terminal renders itself. Secondary text is faint, and panels have no background color. |
 
-Startup never waits for the terminal. Pi starts in grayscale and adds color when the terminal answers, which usually takes a few milliseconds. If the terminal does not answer within 100 ms, Pi uses the ANSI color fallback, and it still applies the colors if they arrive later, for example over a slow SSH connection. `system` is a reserved name: a custom theme with that name is ignored.
+Pi asks the terminal for its colors when it starts. Terminals usually answer within a few milliseconds, and Pi waits at most 100 ms before showing the startup header. If the terminal does not answer in time, Pi uses the ANSI color fallback, and it still applies the colors if they arrive later, for example over a slow SSH connection. `system` is a reserved name: a custom theme with that name is ignored.
 
 <a id="selecting-a-theme"></a>
 
