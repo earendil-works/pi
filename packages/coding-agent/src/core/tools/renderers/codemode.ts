@@ -93,7 +93,13 @@ export const codemodeRenderers: Pick<
 			const color = context.isError ? "error" : "toolOutput";
 			const lines = replaceTabs(output).split("\n");
 			const shown = options.expanded ? lines : lines.slice(0, OUTPUT_PREVIEW_LINES);
-			let text = shown.map((line) => theme.fg(color, line)).join("\n");
+			// Highlighting only the visible slice is safe for JSON: no token spans a newline.
+			const jsonCount = context.isError ? 0 : Math.min(result.details?.jsonLines ?? 0, shown.length);
+			const styled = [
+				...(jsonCount > 0 ? highlightCode(shown.slice(0, jsonCount).join("\n"), "json") : []),
+				...shown.slice(jsonCount).map((line) => theme.fg(color, line)),
+			];
+			let text = styled.join("\n");
 			if (shown.length < lines.length) text += `\n${expandHint(theme, lines.length - shown.length, "lines")}`;
 			sections.push(text);
 		}

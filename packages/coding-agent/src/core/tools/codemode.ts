@@ -62,6 +62,8 @@ export interface CodemodeNestedCall {
 export interface CodemodeToolDetails {
 	calls: CodemodeNestedCall[];
 	logs: CodemodeLog[];
+	/** Number of leading output lines holding the JSON-serialized return value, if the value was not a string. */
+	jsonLines?: number;
 }
 
 export const codemodeToolSystemPromptContribution = {
@@ -179,9 +181,8 @@ function formatFailure(result: Extract<CodemodeResult, { ok: false }>, calls: re
 	return parts.join("\n\n");
 }
 
-function formatOutput(value: unknown, logs: readonly CodemodeLog[]): string {
+function formatOutput(text: string, logs: readonly CodemodeLog[]): string {
 	const parts: string[] = [];
-	const text = formatValue(value);
 	if (text) parts.push(text);
 	if (logs.length > 0) parts.push(`Console:\n${formatLogs(logs)}`);
 	if (parts.length === 0) return "(no return value)";
@@ -291,11 +292,14 @@ async function executeCodemode(
 		throw new Error(formatFailure(result, calls));
 	}
 
-	const content: (TextContent | ImageContent)[] = [{ type: "text", text: formatOutput(result.value, result.logs) }];
+	const valueText = formatValue(result.value);
+	const content: (TextContent | ImageContent)[] = [{ type: "text", text: formatOutput(valueText, result.logs) }];
 	for (const index of [...attached].sort((a, b) => a - b)) {
 		content.push(images[index - 1]);
 	}
-	return { content, details: snapshot() };
+	const details = snapshot();
+	if (valueText && typeof result.value !== "string") details.jsonLines = valueText.split("\n").length;
+	return { content, details };
 }
 
 export function createCodemodeToolDefinition(): ToolDefinition<typeof codemodeSchema, CodemodeToolDetails | undefined> {
