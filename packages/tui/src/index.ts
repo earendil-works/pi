@@ -108,7 +108,6 @@ export { StdinBuffer, type StdinBufferEventMap, type StdinBufferOptions } from "
 export { ProcessTerminal, type Terminal } from "./terminal.ts";
 // Terminal colors
 export {
-	parseOsc11BackgroundColor,
 	parseTerminalColorSchemeReport,
 	type RgbColor,
 	type TerminalColorScheme,

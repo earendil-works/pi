@@ -1,7 +1,6 @@
 import type { RgbColor, TerminalColors, TUI } from "@earendil-works/pi-tui";
 import type { SettingsManager } from "../../../core/settings-manager.ts";
 import {
-	detectTerminalBackgroundFromEnv,
 	detectTerminalTheme,
 	initTheme,
 	markTerminalColorsPending,
@@ -46,7 +45,7 @@ export class InteractiveThemeController {
 	private readonly showError: (message: string) => void;
 	private readonly onChanged: () => void;
 	private currentThemeSetting: string | undefined;
-	private terminalTheme: TerminalTheme = detectTerminalBackgroundFromEnv().theme;
+	private terminalTheme: TerminalTheme = detectTerminalTheme();
 	// Last reported colors; a query that times out keeps them instead of erasing them.
 	private terminalColors: TerminalColors | undefined;
 	private activeThemeName: string | undefined;
@@ -204,7 +203,7 @@ export class InteractiveThemeController {
 		if (previous && sameTerminalColors(previous, next)) return;
 		this.terminalColors = next;
 		setTerminalColors(next);
-		if (next.background) this.terminalTheme = detectTerminalTheme(next).theme;
+		if (next.background) this.terminalTheme = detectTerminalTheme(next);
 		this.reapplyForTerminal();
 		this.ui.invalidate();
 		this.ui.requestRender();

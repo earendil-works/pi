@@ -610,11 +610,10 @@ function createTheme(themeJson: ThemeJson, mode?: TerminalColorMode, sourcePath?
 
 /** Generate the system theme from the terminal's reported colors (grayscale while they are pending). */
 function createSystemTheme(mode?: TerminalColorMode): Theme {
-	const environment = detectTerminalBackgroundFromEnv();
 	const generated = generateSystemThemeColors({
 		...terminalColors,
 		saturation: terminalColorsPending ? 0 : 1,
-		appearanceHint: environment.source === "COLORFGBG" ? environment.theme : undefined,
+		appearanceHint: detectColorFgBgTheme(),
 	});
 	const { fgColors, bgColors } = splitThemeColors(generated.colors);
 	return new Theme(fgColors, bgColors, mode ?? getTerminalColorMode(), {
@@ -681,17 +680,6 @@ export function resolveThemeSetting(
 	return undefined;
 }
 
-export interface TerminalThemeDetection {
-	theme: TerminalTheme;
-	source: "terminal colors" | "COLORFGBG" | "fallback";
-	detail: string;
-	confidence: "high" | "low";
-}
-
-export interface TerminalThemeDetectionOptions {
-	env?: NodeJS.ProcessEnv;
-}
-
 function getColorFgBgBackgroundIndex(colorfgbg: string): number | undefined {
 	const parts = colorfgbg.split(";");
 	for (let i = parts.length - 1; i >= 0; i--) {
@@ -711,54 +699,21 @@ function getRgbColorLuminance({ r, g, b }: RgbColor): number {
 	return 0.2126 * toLinear(r) + 0.7152 * toLinear(g) + 0.0722 * toLinear(b);
 }
 
-function getAnsiColorLuminance(index: number): number {
-	return getRgbColorLuminance(colorToRgb(indexedColor(index)));
-}
-
-export function detectTerminalBackgroundFromEnv(options: TerminalThemeDetectionOptions = {}): TerminalThemeDetection {
-	const env = options.env ?? process.env;
-	const colorfgbg = env.COLORFGBG || "";
-	const bg = getColorFgBgBackgroundIndex(colorfgbg);
-	if (bg !== undefined) {
-		return {
-			theme: getAnsiColorLuminance(bg) >= 0.5 ? "light" : "dark",
-			source: "COLORFGBG",
-			detail: `background color index ${bg}`,
-			confidence: "high",
-		};
-	}
-
-	return {
-		theme: "dark",
-		source: "fallback",
-		detail: "no terminal background hint found",
-		confidence: "low",
-	};
+/** Dark or light from the `COLORFGBG` environment variable some terminals set, or undefined without it. */
+export function detectColorFgBgTheme(env: NodeJS.ProcessEnv = process.env): TerminalTheme | undefined {
+	const bg = getColorFgBgBackgroundIndex(env.COLORFGBG || "");
+	if (bg === undefined) return undefined;
+	return getRgbColorLuminance(colorToRgb(indexedColor(bg))) >= 0.5 ? "light" : "dark";
 }
 
 /**
- * Detect whether the terminal is dark or light from its reported colors, the same way the system theme
- * does, falling back to COLORFGBG and then dark.
+ * Whether the terminal is dark or light: from its reported colors the same way the system theme decides,
+ * then from COLORFGBG, then dark.
  */
-export function detectTerminalTheme(
-	colors: TerminalColors,
-	options: TerminalThemeDetectionOptions = {},
-): TerminalThemeDetection {
+export function detectTerminalTheme(colors: TerminalColors = {}, env: NodeJS.ProcessEnv = process.env): TerminalTheme {
 	const { background, foreground } = colors;
-	if (background) {
-		const rgb = `rgb(${background.r}, ${background.g}, ${background.b})`;
-		return {
-			theme: terminalAppearance(background, foreground),
-			source: "terminal colors",
-			detail: `background ${rgb}`,
-			confidence: "high",
-		};
-	}
-	return detectTerminalBackgroundFromEnv(options);
-}
-
-export function getDefaultTheme(): string {
-	return SYSTEM_THEME_NAME;
+	if (background) return terminalAppearance(background, foreground);
+	return detectColorFgBgTheme(env) ?? "dark";
 }
 
 // ============================================================================
@@ -801,7 +756,7 @@ export function setRegisteredThemes(themes: Theme[]): void {
 }
 
 export function initTheme(themeName?: string, enableWatcher: boolean = false): void {
-	const name = themeName ?? getDefaultTheme();
+	const name = themeName ?? SYSTEM_THEME_NAME;
 	currentThemeName = name;
 	try {
 		setGlobalTheme(loadTheme(name));
@@ -948,7 +903,7 @@ export function stopThemeWatcher(): void {
  * Used by HTML export to generate CSS custom properties.
  */
 export function getResolvedThemeColors(themeName?: string): Record<string, string> {
-	const colors = loadTheme(themeName ?? currentThemeName ?? getDefaultTheme()).colors;
+	const colors = loadTheme(themeName ?? currentThemeName ?? SYSTEM_THEME_NAME).colors;
 	return Object.fromEntries(Object.entries(colors).map(([token, color]) => [token, colorToHex(color)]));
 }
 
@@ -956,7 +911,7 @@ export function getResolvedThemeColors(themeName?: string): Record<string, strin
  * Check if a theme is a "light" theme (for CSS that needs light/dark variants).
  */
 export function isLightTheme(themeName?: string): boolean {
-	return loadTheme(themeName ?? currentThemeName ?? getDefaultTheme()).appearance === "light";
+	return loadTheme(themeName ?? currentThemeName ?? SYSTEM_THEME_NAME).appearance === "light";
 }
 
 /**
@@ -968,7 +923,7 @@ export function getThemeExportColors(themeName?: string): {
 	cardBg?: string;
 	infoBg?: string;
 } {
-	const name = themeName ?? currentThemeName ?? getDefaultTheme();
+	const name = themeName ?? currentThemeName ?? SYSTEM_THEME_NAME;
 	if (name === SYSTEM_THEME_NAME) return {};
 	try {
 		const themeJson = loadThemeJson(name);

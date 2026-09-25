@@ -1,7 +1,7 @@
 import { resetCapabilitiesCache, setCapabilities } from "@earendil-works/pi-tui";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-	detectTerminalBackgroundFromEnv,
+	detectColorFgBgTheme,
 	detectTerminalTheme,
 	getThemeByName,
 	parseAutoThemeSetting,
@@ -12,61 +12,35 @@ afterEach(() => {
 	resetCapabilitiesCache();
 });
 
-describe("detectTerminalBackgroundFromEnv", () => {
-	it("uses the COLORFGBG background color index", () => {
-		expect(detectTerminalBackgroundFromEnv({ env: { COLORFGBG: "0;15" } })).toMatchObject({
-			theme: "light",
-			source: "COLORFGBG",
-			confidence: "high",
-		});
-		expect(detectTerminalBackgroundFromEnv({ env: { COLORFGBG: "15;0" } })).toMatchObject({
-			theme: "dark",
-			source: "COLORFGBG",
-			confidence: "high",
-		});
-	});
-
-	it("uses the last COLORFGBG field as the background", () => {
-		expect(detectTerminalBackgroundFromEnv({ env: { COLORFGBG: "0;7;15" } }).theme).toBe("light");
-	});
-
-	it("defaults to dark without terminal background hints", () => {
-		expect(detectTerminalBackgroundFromEnv({ env: {} })).toMatchObject({
-			theme: "dark",
-			source: "fallback",
-			confidence: "low",
-		});
+describe("detectColorFgBgTheme", () => {
+	it("uses the last COLORFGBG field as the background color index", () => {
+		expect(detectColorFgBgTheme({ COLORFGBG: "0;15" })).toBe("light");
+		expect(detectColorFgBgTheme({ COLORFGBG: "15;0" })).toBe("dark");
+		expect(detectColorFgBgTheme({ COLORFGBG: "0;7;15" })).toBe("light");
+		expect(detectColorFgBgTheme({})).toBeUndefined();
 	});
 });
 
 describe("detectTerminalTheme", () => {
-	it("uses the reported background before environment hints", () => {
-		expect(
-			detectTerminalTheme({ background: { r: 250, g: 250, b: 250 } }, { env: { COLORFGBG: "15;0" } }),
-		).toMatchObject({ theme: "light", source: "terminal colors", confidence: "high" });
-		expect(detectTerminalTheme({ background: { r: 8, g: 8, b: 8 } })).toMatchObject({ theme: "dark" });
+	it("uses the reported background before COLORFGBG", () => {
+		expect(detectTerminalTheme({ background: { r: 250, g: 250, b: 250 } }, { COLORFGBG: "15;0" })).toBe("light");
+		expect(detectTerminalTheme({ background: { r: 8, g: 8, b: 8 } }, { COLORFGBG: "0;15" })).toBe("dark");
 	});
 
 	it("follows the terminal foreground when text is readable that way", () => {
 		// Black text has more contrast on this gray, but white text still reaches 4.5:1, so the foreground decides.
 		const background = { r: 118, g: 118, b: 118 };
-		expect(detectTerminalTheme({ background }).theme).toBe("light");
-		expect(detectTerminalTheme({ background, foreground: { r: 255, g: 255, b: 255 } }).theme).toBe("dark");
+		expect(detectTerminalTheme({ background })).toBe("light");
+		expect(detectTerminalTheme({ background, foreground: { r: 255, g: 255, b: 255 } })).toBe("dark");
 		// White text cannot reach 4.5:1 on mid-gray, so the theme uses dark text instead.
 		expect(
-			detectTerminalTheme({ background: { r: 128, g: 128, b: 128 }, foreground: { r: 255, g: 255, b: 255 } }).theme,
+			detectTerminalTheme({ background: { r: 128, g: 128, b: 128 }, foreground: { r: 255, g: 255, b: 255 } }),
 		).toBe("light");
 	});
 
-	it("falls back to environment hints without a reported background", () => {
-		expect(detectTerminalTheme({}, { env: { COLORFGBG: "0;15" } })).toMatchObject({
-			theme: "light",
-			source: "COLORFGBG",
-		});
-		expect(detectTerminalTheme({ foreground: { r: 0, g: 0, b: 0 } }, { env: {} })).toMatchObject({
-			theme: "dark",
-			source: "fallback",
-		});
+	it("falls back to COLORFGBG, then dark", () => {
+		expect(detectTerminalTheme({}, { COLORFGBG: "0;15" })).toBe("light");
+		expect(detectTerminalTheme({ foreground: { r: 0, g: 0, b: 0 } }, {})).toBe("dark");
 	});
 });
 

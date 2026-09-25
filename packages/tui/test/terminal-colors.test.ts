@@ -2,7 +2,6 @@ import assert from "node:assert";
 import { describe, it } from "node:test";
 import {
 	type Component,
-	parseOsc11BackgroundColor,
 	parseTerminalColorSchemeReport,
 	type RgbColor,
 	type Terminal,
@@ -92,27 +91,6 @@ class InputRecorder implements Component {
 }
 
 const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
-
-describe("parseOsc11BackgroundColor", () => {
-	it("parses 16-bit OSC 11 rgb responses", () => {
-		assert.deepStrictEqual(parseOsc11BackgroundColor("\x1b]11;rgb:0000/8000/ffff\x07"), {
-			r: 0,
-			g: 128,
-			b: 255,
-		});
-	});
-
-	it("parses OSC 11 hex responses", () => {
-		assert.deepStrictEqual(parseOsc11BackgroundColor("\x1b]11;#ffffff\x1b\\"), { r: 255, g: 255, b: 255 });
-		assert.deepStrictEqual(parseOsc11BackgroundColor("\x1b]11;#000000\x07"), { r: 0, g: 0, b: 0 });
-	});
-
-	it("rejects non-strict OSC 11 responses", () => {
-		assert.strictEqual(parseOsc11BackgroundColor(`x\x1b]11;#ffffff\x07`), undefined);
-		assert.strictEqual(parseOsc11BackgroundColor("\x1b]10;#ffffff\x07"), undefined);
-		assert.strictEqual(parseOsc11BackgroundColor("\x1b]11;#ffffff\x07x"), undefined);
-	});
-});
 
 describe("parseTerminalColorSchemeReport", () => {
 	it("parses color scheme reports", () => {
@@ -307,23 +285,6 @@ describe("TUI.queryTerminalColors", () => {
 			assert.deepStrictEqual((await query).background, { r: 0, g: 0, b: 0 });
 			await wait(5);
 			assert.deepStrictEqual(late, []);
-		} finally {
-			tui.stop();
-		}
-	});
-
-	it("keeps the background and foreground helpers working", async () => {
-		const { terminal, tui } = setup();
-		try {
-			const background = tui.queryTerminalBackgroundColor({ timeoutMs: 1000 });
-			terminal.sendInput("\x1b]11;#ffffff\x07");
-			terminal.sendInput("\x1b[?1;2c");
-			assert.deepStrictEqual(await background, { r: 255, g: 255, b: 255 });
-
-			const foreground = tui.queryTerminalForegroundColor({ timeoutMs: 1000 });
-			terminal.sendInput("\x1b]10;not-a-color\x07");
-			terminal.sendInput("\x1b[?1;2c");
-			assert.strictEqual(await foreground, undefined);
 		} finally {
 			tui.stop();
 		}

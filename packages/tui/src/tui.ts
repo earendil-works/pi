@@ -480,9 +480,6 @@ export interface TUI extends Component {
 		timeoutMs: number;
 		onLateReply?: (colors: TerminalColors) => void;
 	}): Promise<TerminalColors>;
-	queryTerminalBackgroundColor(options: { timeoutMs: number }): Promise<RgbColor | undefined>;
-	queryTerminalForegroundColor(options: { timeoutMs: number }): Promise<RgbColor | undefined>;
-	queryTerminalColorScheme(options: { timeoutMs: number }): Promise<TerminalColorScheme | undefined>;
 }
 
 export const VIEWPORT_TUI = Symbol.for("@earendil-works/pi-tui/viewport");
@@ -1509,51 +1506,6 @@ export abstract class TuiBase extends Container implements TUI {
 			query.timer = setTimeout(() => this.timeOutTerminalColorQuery(query), timeoutMs);
 			this.pendingTerminalColorQueries.push(query);
 			this.terminal.write(TERMINAL_COLOR_QUERY);
-		});
-	}
-
-	/**
-	 * Query the terminal's default background color. Sends the full `queryTerminalColors()` query.
-	 * @param timeoutMs Query timeout in milliseconds.
-	 * @returns Promise containing the parsed RGB color, or undefined if it times out or fails to parse.
-	 */
-	async queryTerminalBackgroundColor({ timeoutMs }: { timeoutMs: number }): Promise<RgbColor | undefined> {
-		return (await this.queryTerminalColors({ timeoutMs })).background;
-	}
-
-	/**
-	 * Query the terminal's default foreground color. Sends the full `queryTerminalColors()` query.
-	 * @param timeoutMs Query timeout in milliseconds.
-	 * @returns Promise containing the parsed RGB color, or undefined if it times out or fails to parse.
-	 */
-	async queryTerminalForegroundColor({ timeoutMs }: { timeoutMs: number }): Promise<RgbColor | undefined> {
-		return (await this.queryTerminalColors({ timeoutMs })).foreground;
-	}
-
-	/**
-	 * Query the terminal's color-scheme preference with DSR (`CSI ? 996 n`).
-	 * Terminals that support the color palette notification protocol reply with
-	 * `CSI ? 997 ; 1 n` for dark or `CSI ? 997 ; 2 n` for light.
-	 */
-	queryTerminalColorScheme({ timeoutMs }: { timeoutMs: number }): Promise<TerminalColorScheme | undefined> {
-		return new Promise((resolve) => {
-			let settled = false;
-			let timer: NodeJS.Timeout | undefined;
-			let unsubscribe: () => void = () => {};
-			const settle = (scheme: TerminalColorScheme | undefined) => {
-				if (settled) return;
-				settled = true;
-				if (timer) {
-					clearTimeout(timer);
-					timer = undefined;
-				}
-				unsubscribe();
-				resolve(scheme);
-			};
-
-			unsubscribe = this.onTerminalColorSchemeChange(settle);
-			timer = setTimeout(() => settle(undefined), timeoutMs);
-			this.terminal.write("\x1b[?996n");
 		});
 	}
 }

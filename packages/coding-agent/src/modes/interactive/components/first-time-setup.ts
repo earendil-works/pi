@@ -1,7 +1,7 @@
 import { Container, getKeybindings, Spacer, Text } from "@earendil-works/pi-tui";
 import { APP_NAME } from "../../../config.ts";
 import { SYSTEM_THEME_NAME } from "../theme/system-theme.ts";
-import { type TerminalTheme, theme } from "../theme/theme.ts";
+import { theme } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
 import { keyHint, rawKeyHint } from "./keybinding-hints.ts";
 
@@ -11,7 +11,6 @@ export interface FirstTimeSetupResult {
 }
 
 export interface FirstTimeSetupOptions {
-	detectedTheme: TerminalTheme;
 	onThemePreview: (themeName: string) => void;
 	onSubmit: (result: FirstTimeSetupResult) => void;
 	onCancel: () => void;
@@ -36,20 +35,18 @@ export class FirstTimeSetupComponent extends Container {
 	private themeIndex: number;
 	private analyticsIndex = 0;
 	private readonly options: FirstTimeSetupOptions;
-	private detectedTheme: TerminalTheme;
 
 	constructor(options: FirstTimeSetupOptions) {
 		super();
 		this.options = options;
-		this.detectedTheme = options.detectedTheme;
 		this.themeIndex = 0;
 		this.update();
 	}
 
-	/** Update the detected appearance once the terminal reports its colors. */
-	setDetectedTheme(detectedTheme: TerminalTheme): void {
-		this.detectedTheme = detectedTheme;
+	/** Rebuild on theme changes, e.g. when the system theme receives the terminal's colors. */
+	override invalidate(): void {
 		this.update();
+		super.invalidate();
 	}
 
 	// Rebuild the whole dialog on every change so theme previews recolor all text.
@@ -66,7 +63,6 @@ export class FirstTimeSetupComponent extends Container {
 
 		if (this.step === "theme") {
 			this.addChild(new Text(theme.fg("text", "Pick a theme."), 1, 0));
-			this.addChild(new Text(theme.fg("muted", `Detected system appearance: ${this.detectedTheme}`), 1, 0));
 			this.addChild(new Spacer(1));
 			this.addOptionList(
 				THEME_OPTIONS.map((option) => option.label),

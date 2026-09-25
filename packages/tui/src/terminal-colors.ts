@@ -55,11 +55,6 @@ export function parseOscColorResponse(data: string): { target: OscColorTarget; r
 	return { target, rgb: parseOscColorValue(match[3]) };
 }
 
-export function parseOsc11BackgroundColor(data: string): RgbColor | undefined {
-	const response = parseOscColorResponse(data);
-	return response?.target === "background" ? response.rgb : undefined;
-}
-
 function parseOscColorValue(rawValue: string): RgbColor | undefined {
 	const value = rawValue.trim();
 	if (value.startsWith("#")) {
