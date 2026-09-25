@@ -187,6 +187,21 @@ describe("ProcessTerminal Kitty keyboard protocol negotiation", () => {
 		}
 	});
 
+	it("forwards device attributes replies that answer other queries", () => {
+		const harness = setupNegotiation();
+		try {
+			harness.send("\x1b[?7u");
+			harness.send("\x1b[?62;4;52c");
+			assert.equal(harness.getInput(), undefined);
+
+			// The TUI's color query uses DA1 as its own sentinel.
+			harness.send("\x1b[?62;4;52c");
+			assert.equal(harness.getInput(), "\x1b[?62;4;52c");
+		} finally {
+			harness.cleanup();
+		}
+	});
+
 	it("forwards normal input while waiting for Kitty response", () => {
 		const harness = setupNegotiation();
 		try {

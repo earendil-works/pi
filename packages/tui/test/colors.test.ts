@@ -1,6 +1,15 @@
 import assert from "node:assert";
 import { describe, it } from "node:test";
-import { colorToRgb, indexedColor, oklchColor, parseColor, rgbColor, styleText } from "../src/index.ts";
+import {
+	colorToOklch,
+	colorToRgb,
+	indexedColor,
+	maxOklchChroma,
+	oklchColor,
+	parseColor,
+	rgbColor,
+	styleText,
+} from "../src/index.ts";
 
 describe("colors", () => {
 	it("parses hex and OKLCH colors and rejects everything else", () => {
@@ -14,6 +23,21 @@ describe("colors", () => {
 		assert.deepStrictEqual(colorToRgb(oklchColor(0.627955, 0.257683, 29.2339)), { r: 255, g: 0, b: 0 });
 		assert.deepStrictEqual(colorToRgb(oklchColor(1, 0.3, 150)), { r: 255, g: 255, b: 255 });
 		assert.deepStrictEqual(colorToRgb(oklchColor(0, 0.3, 150)), { r: 0, g: 0, b: 0 });
+	});
+
+	it("finds the largest in-gamut OKLCH chroma for a lightness and hue", () => {
+		// Pure sRGB red sits on the gamut boundary.
+		const red = colorToOklch(rgbColor(255, 0, 0));
+		assert.ok(Math.abs(maxOklchChroma(red.l, red.h) - red.c) < 0.002);
+		// The gamut narrows toward black and white, and differs by hue.
+		assert.strictEqual(maxOklchChroma(0, 90), 0);
+		assert.strictEqual(maxOklchChroma(1, 90), 0);
+		assert.ok(maxOklchChroma(0.9, 110) > maxOklchChroma(0.9, 265));
+		assert.ok(maxOklchChroma(0.4, 265) > maxOklchChroma(0.4, 110));
+		// Gamut mapping an out-of-gamut color lands on the same maximum.
+		const chroma = maxOklchChroma(0.7, 150);
+		const { r, g, b } = colorToRgb(oklchColor(0.7, chroma * 2, 150));
+		assert.ok(Math.abs(colorToOklch(rgbColor(r, g, b)).c - chroma) < 0.01);
 	});
 
 	it("styles text and closes sequences in reverse order", () => {

@@ -783,7 +783,7 @@ export async function runClientTui(command: ClientCommand, options: RunClientTui
 		tui.setFocus(component);
 		tuiStarted = true;
 		tui.start();
-		await themeController.applyFromSettings();
+		themeController.applyFromSettings();
 		await finished;
 	} finally {
 		themeController.dispose();

@@ -6,6 +6,16 @@ export interface RgbColor {
 
 export type TerminalColorScheme = "dark" | "light";
 
+/** Colors the terminal reports for its current theme. */
+export interface TerminalColors {
+	/** Default foreground (OSC 10). */
+	foreground?: RgbColor;
+	/** Default background (OSC 11). */
+	background?: RgbColor;
+	/** ANSI colors 0-15 (OSC 4). Only set when the terminal reported all 16. */
+	palette?: RgbColor[];
+}
+
 function hexToRgb(hex: string): RgbColor {
 	const normalized = hex.startsWith("#") ? hex.slice(1) : hex;
 	const r = parseInt(normalized.slice(0, 2), 16);
@@ -25,27 +35,29 @@ function parseOscHexChannel(channel: string): number | undefined {
 	return Math.round((parseInt(channel, 16) / max) * 255);
 }
 
-/** OSC color slots: 10 is the terminal's default foreground, 11 its default background. */
-export type OscColorSlot = 10 | 11;
+/** What an OSC color reply reports: the default foreground (OSC 10), background (OSC 11), or a palette index (OSC 4). */
+export type OscColorTarget = "foreground" | "background" | number;
 
-const OSC_COLOR_RESPONSE_PATTERN = /^\x1b\](1[01]);([^\x07\x1b]*)(?:\x07|\x1b\\)$/i;
+const OSC_COLOR_RESPONSE_PATTERN = /^\x1b\](?:(1[01])|4;(\d{1,3}));([^\x07\x1b]*)(?:\x07|\x1b\\)$/i;
 const COLOR_SCHEME_REPORT_PATTERN = /^(?:\x1b\[\?997;(1|2)n)+$/;
 
 /**
- * Parse an OSC 10/11 color reply. Returns undefined when `data` is not such a reply;
+ * Parse an OSC 10, 11, or 4 color reply. Returns undefined when `data` is not such a reply;
  * `rgb` is undefined when it is a reply with an unparseable color.
  */
-export function parseOscColorResponse(data: string): { slot: OscColorSlot; rgb: RgbColor | undefined } | undefined {
+export function parseOscColorResponse(data: string): { target: OscColorTarget; rgb: RgbColor | undefined } | undefined {
 	const match = data.match(OSC_COLOR_RESPONSE_PATTERN);
 	if (!match) {
 		return undefined;
 	}
-	return { slot: match[1] === "10" ? 10 : 11, rgb: parseOscColorValue(match[2]) };
+	const target: OscColorTarget =
+		match[1] === "10" ? "foreground" : match[1] === "11" ? "background" : Number.parseInt(match[2], 10);
+	return { target, rgb: parseOscColorValue(match[3]) };
 }
 
 export function parseOsc11BackgroundColor(data: string): RgbColor | undefined {
 	const response = parseOscColorResponse(data);
-	return response?.slot === 11 ? response.rgb : undefined;
+	return response?.target === "background" ? response.rgb : undefined;
 }
 
 function parseOscColorValue(rawValue: string): RgbColor | undefined {

@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { colorToHex, styleText } from "@earendil-works/pi-tui";
 import { afterEach, describe, expect, it } from "vitest";
-import { loadThemeFromPath, setTerminalDefaultColors } from "../src/modes/interactive/theme/theme.ts";
+import { loadThemeFromPath, setTerminalColors } from "../src/modes/interactive/theme/theme.ts";
 
 const tempDirs: string[] = [];
 
@@ -23,7 +23,7 @@ function loadTheme(base: "dark" | "light", edit: (theme: ThemeFile) => void = ()
 }
 
 afterEach(() => {
-	setTerminalDefaultColors({});
+	setTerminalColors({});
 	for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
@@ -63,7 +63,7 @@ describe("theme styles", () => {
 			for (const key of Object.keys(json.colors)) json.colors[key] = key.endsWith("Bg") ? 0 : 7;
 		});
 		expect(paletteOnly.appearance).toBe("dark");
-		setTerminalDefaultColors({ background: { r: 250, g: 250, b: 250 } });
+		setTerminalColors({ background: { r: 250, g: 250, b: 250 } });
 		expect(paletteOnly.appearance).toBe("light");
 	});
 
@@ -77,7 +77,7 @@ describe("theme styles", () => {
 		expect(colorToHex(theme.colors.text)).toBe("#e5e5e7");
 		expect(colorToHex(theme.colors.userMessageBg)).toBe("#000000");
 
-		setTerminalDefaultColors({ foreground: { r: 200, g: 210, b: 220 }, background: { r: 10, g: 20, b: 30 } });
+		setTerminalColors({ foreground: { r: 200, g: 210, b: 220 }, background: { r: 10, g: 20, b: 30 } });
 		expect(colorToHex(theme.colors.text)).toBe("#c8d2dc");
 		expect(colorToHex(theme.colors.userMessageBg)).toBe("#0a141e");
 	});

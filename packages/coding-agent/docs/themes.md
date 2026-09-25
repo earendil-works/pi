@@ -1,6 +1,25 @@
 # Customize Pi with themes
 
-Themes control the colors Pi uses in interactive mode and HTML exports. Pi includes `dark` and `light` themes. You can select one theme, follow your terminal's light or dark appearance, or create your own palette.
+Themes control the colors Pi uses in interactive mode and HTML exports. Pi includes the `system`, `dark`, and `light` themes. You can select one theme, follow your terminal's light or dark appearance, or create your own palette.
+
+## Use your terminal's colors
+
+The `system` theme is the default. It builds Pi's colors from your terminal's theme, so Pi matches the terminal instead of bringing its own palette:
+
+- Pi queries the terminal's default foreground and background colors and its 16 ANSI colors.
+- Each Pi color takes its hue from one ANSI color, for example errors from red and links from blue.
+- Pi sets each color's lightness so that it stands out from the background by a minimum contrast. Body text keeps at least a 4.5:1 WCAG contrast ratio on the background and every panel.
+- When the terminal switches between light and dark, Pi queries the colors again and rebuilds the theme.
+
+The theme adapts to what the terminal reports:
+
+| Terminal reports | Result |
+|---|---|
+| Background and ANSI colors | Colors from the terminal palette, placed for the actual background. |
+| Background only | Pi's own hues, placed for the actual background. |
+| Nothing | ANSI color indices and the terminal's default colors, which the terminal renders itself. Secondary text is faint, and panels have no background color. |
+
+Startup never waits for the terminal. Pi starts in grayscale and adds color when the terminal answers, which usually takes a few milliseconds. If the terminal does not answer within 100 ms, Pi uses the ANSI color fallback, and it still applies the colors if they arrive later, for example over a slow SSH connection. `system` is a reserved name: a custom theme with that name is ignored.
 
 <a id="selecting-a-theme"></a>
 
@@ -16,6 +35,8 @@ The selection is saved as the `theme` [setting](settings.md#terminal-and-display
 }
 ```
 
+Without a `theme` setting, Pi uses `system`.
+
 Automatic mode stores the light theme first and the dark theme second:
 
 ```json
@@ -24,7 +45,7 @@ Automatic mode stores the light theme first and the dark theme second:
 }
 ```
 
-When automatic mode is active, Pi changes themes when the terminal reports an appearance change. Theme names cannot contain `/` because Pi reserves it for this setting format.
+Pi decides whether the terminal is light or dark from its reported background and foreground colors, falling back to the `COLORFGBG` environment variable. When automatic mode is active, Pi changes themes when the terminal reports an appearance change. Theme names cannot contain `/` because Pi reserves it for this setting format.
 
 Use `--use-theme` to choose the initial theme for one invocation without changing the saved setting:
 
@@ -51,7 +72,7 @@ Use the theme name as the filename. Pi hot-reloads the active user theme only fr
 | Property | Required | Responsibility |
 |---|---|---|
 | `$schema` | No | Enables editor validation and completion against Pi's published schema. |
-| `name` | Yes | Identifies the theme in selectors and settings. It must be unique and cannot contain `/`. |
+| `name` | Yes | Identifies the theme in selectors and settings. It must be unique, cannot contain `/`, and cannot be `system`. |
 | `appearance` | No | `"dark"` or `"light"`: the background the theme is designed for. Pi detects it from the theme colors when omitted. |
 | `vars` | No | Defines reusable color values. Variables can reference other variables. |
 | `colors` | Yes | Assigns colors to terminal UI roles. The schema identifies required and optional roles. |

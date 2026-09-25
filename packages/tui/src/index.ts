@@ -20,6 +20,7 @@ export {
 	foregroundAnsi,
 	type IndexedColor,
 	indexedColor,
+	maxOklchChroma,
 	mixColors,
 	type OklchChannels,
 	type OklchColorValue,
@@ -111,6 +112,7 @@ export {
 	parseTerminalColorSchemeReport,
 	type RgbColor,
 	type TerminalColorScheme,
+	type TerminalColors,
 } from "./terminal-colors.ts";
 // Terminal image support
 export {

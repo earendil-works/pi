@@ -21,7 +21,13 @@ import {
 	type TuiMode,
 	type WarningSettings,
 } from "../../../core/settings-manager.ts";
-import { getSettingsListTheme, parseAutoThemeSetting, type TerminalTheme, theme } from "../theme/theme.ts";
+import {
+	getSettingsListTheme,
+	parseAutoThemeSetting,
+	SYSTEM_THEME_NAME,
+	type TerminalTheme,
+	theme,
+} from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
 import { keyDisplayText } from "./keybinding-hints.ts";
 import { SelectSubmenu, SteppedSubmenu, type SteppedSubmenuStep } from "./settings-submenu.ts";
@@ -229,7 +235,7 @@ function defaultAutomaticThemes(
 	if (autoTheme) return autoTheme;
 
 	const currentFixedTheme = currentThemeSetting.includes("/") ? undefined : currentThemeSetting;
-	const themeName = preferredTheme(availableThemes, currentFixedTheme, "dark");
+	const themeName = preferredTheme(availableThemes, currentFixedTheme, SYSTEM_THEME_NAME);
 	return { lightTheme: themeName, darkTheme: themeName };
 }
 
@@ -267,7 +273,7 @@ class ThemeSubmenu extends Container {
 		this.singleTheme = preferredTheme(
 			availableThemes,
 			fixedTheme ?? (autoTheme ? this.getActiveAutomaticTheme() : undefined),
-			"dark",
+			SYSTEM_THEME_NAME,
 		);
 
 		if (this.mode === "automatic") {
