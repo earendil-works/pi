@@ -106,6 +106,7 @@ export type {
 	ExtensionShortcut,
 	ExtensionUIContext,
 	ExtensionUIDialogOptions,
+	ExtensionVirtualModel,
 	ExtensionWidgetOptions,
 	FindToolCallEvent,
 	GrepToolCallEvent,
@@ -382,6 +383,14 @@ export {
 	type ProjectTrustStoreEntry,
 	type ProjectTrustUpdate,
 } from "./core/trust-manager.ts";
+export {
+	createVirtualProvider,
+	type ModelRoute,
+	type ModelRouteReason,
+	type ModelRouteRequest,
+	type VirtualModelDefinition,
+	type VirtualProvider,
+} from "./core/virtual-models.ts";
 // Main entry point
 export { type MainOptions, main } from "./main.ts";
 // Run modes for programmatic SDK usage

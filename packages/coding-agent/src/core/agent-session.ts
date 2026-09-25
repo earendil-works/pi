@@ -132,6 +132,7 @@ import { type BashOperations, createLocalBashOperations } from "./tools/bash.ts"
 import { createAllToolDefinitions } from "./tools/index.ts";
 import { createToolDefinitionFromAgentTool } from "./tools/tool-definition-wrapper.ts";
 import { addUsageToTotals, createUsageTotals } from "./usage-totals.ts";
+import { findLatestResponse, isVirtualModel, type ModelRouteReason } from "./virtual-models.ts";
 
 // ============================================================================
 // Skill Block Parsing
@@ -490,32 +491,79 @@ export class AgentSession {
 	}
 
 	private async _getSummarizationRequestAuth(
-		model: Model<any>,
+		selectedModel: Model<any>,
 		signal?: AbortSignal,
 	): Promise<{
 		model: Model<any>;
 		apiKey?: string;
 		headers?: Record<string, string>;
 		env?: Record<string, string>;
+		thinkingLevel: ThinkingLevel;
 	}> {
+		// Route a virtual model first: summaries size their input and output from the model they get.
+		const { model, thinkingLevel } = await this._route(
+			selectedModel,
+			this.thinkingLevel,
+			this.messages,
+			"direct",
+			signal,
+		);
 		if (this.agent.streamFunction === streamSimple) {
-			return this._getRequiredRequestAuth(model, signal);
+			return { ...(await this._getRequiredRequestAuth(model, signal)), thinkingLevel };
 		}
 
 		try {
 			const result = await this._modelRuntime.getAuth(model, { signal });
-			if (!result) return { model };
+			if (!result) return { model, thinkingLevel };
 			const requestModel = result.auth.baseUrl ? { ...model, baseUrl: result.auth.baseUrl } : model;
 			return {
 				model: requestModel,
 				apiKey: result.auth.apiKey,
 				headers: withoutDeletedHeaders(result.auth.headers),
 				env: result.env,
+				thinkingLevel,
 			};
 		} catch (error) {
 			if (signal?.aborted) throw error;
-			return { model };
+			return { model, thinkingLevel };
 		}
+	}
+
+	/** Resolve a virtual model to the physical model for one request. Physical models pass through. */
+	private async _route(
+		model: Model<any>,
+		thinkingLevel: ThinkingLevel,
+		messages: AgentMessage[],
+		reason: ModelRouteReason,
+		signal?: AbortSignal,
+	): Promise<{ model: Model<any>; thinkingLevel: ThinkingLevel }> {
+		if (!isVirtualModel(model)) return { model, thinkingLevel };
+		return this._modelRuntime.resolveModel(model, convertToLlm(messages), { reason, thinkingLevel, signal });
+	}
+
+	/**
+	 * Only messages the user wrote start a new turn. Extension custom messages would look like user
+	 * messages after conversion, so the reason comes from agent messages.
+	 */
+	private _routeReason(messages: readonly AgentMessage[]): ModelRouteReason {
+		if (this._retryAttempt > 0) return "retry";
+		const last = messages.filter((message) => message.role !== "system").at(-1);
+		return !last || last.role === "user" ? "user" : "continuation";
+	}
+
+	/**
+	 * The model whose limits apply to `message`, or undefined when the message came from another
+	 * model. Under a virtual selection, that is the physical model that produced it.
+	 */
+	private _modelForMessage(message: AssistantMessage): Model<any> | undefined {
+		const model = this.model;
+		if (model && isVirtualModel(model)) return this._modelRuntime.getPhysicalModel(message.provider, message.model);
+		return model?.provider === message.provider && model.id === message.model ? model : undefined;
+	}
+
+	/** The model whose limits apply to the conversation. */
+	private _limitsModel(): Model<any> | undefined {
+		return this.routedModel?.model ?? this.model;
 	}
 
 	/**
@@ -565,7 +613,7 @@ export class AgentSession {
 
 			const content = hookResult?.content ?? result.content ?? [];
 			// Runs after the extension hook so images injected or replaced by extensions are normalized too.
-			const resizeOptions = this.model?.inputLimits?.images?.resize;
+			const resizeOptions = this._limitsModel()?.inputLimits?.images?.resize;
 			const normalizedContent = await normalizeToolResultImages(content, {
 				autoResizeImages: this.settingsManager.getImageAutoResize(),
 				...(resizeOptions ? { resizeOptions } : {}),
@@ -585,8 +633,8 @@ export class AgentSession {
 	}
 
 	private async _compactBeforeNextAssistantResponse(context: AgentContext): Promise<AgentContext> {
-		const model = this.model;
-		const settings = this.settingsManager.getCompactionSettings(model);
+		const settings = this.settingsManager.getCompactionSettings(this.model);
+		const model = this._limitsModel();
 		const projection = this.sessionManager.buildSessionProjection();
 
 		if (
@@ -623,12 +671,17 @@ export class AgentSession {
 				},
 				signal,
 			);
-			return {
-				...previous,
-				context: previous?.context ?? canonicalContext,
-				model: previous?.model ?? this.agent.state.model,
-				thinkingLevel: previous?.thinkingLevel ?? this.agent.state.thinkingLevel,
-			};
+			const context = previous?.context ?? canonicalContext;
+			// The selection stays in agent state; only this request uses the routed model. A routing
+			// failure rejects, which ends the run with an error response.
+			const route = await this._route(
+				previous?.model ?? this.agent.state.model,
+				previous?.thinkingLevel ?? this.agent.state.thinkingLevel,
+				context.messages,
+				this._routeReason(context.messages),
+				signal,
+			);
+			return { ...previous, context, ...route };
 		};
 	}
 
@@ -1225,6 +1278,14 @@ export class AgentSession {
 		return this.agent.state.thinkingLevel;
 	}
 
+	/** Under a virtual selection, the physical model and thinking level of the latest successful response. */
+	get routedModel(): { model: Model<any>; thinkingLevel?: ThinkingLevel } | undefined {
+		if (!this.model || !isVirtualModel(this.model)) return undefined;
+		const latest = findLatestResponse(this.agent.state.messages);
+		const model = latest && this._modelRuntime.getPhysicalModel(latest.provider, latest.model);
+		return model && { model, thinkingLevel: latest?.thinkingLevel };
+	}
+
 	/** Whether the session is currently processing an agent run or post-run continuation. */
 	get isStreaming(): boolean {
 		return this._isAgentRunActive;
@@ -1582,7 +1643,7 @@ export class AgentSession {
 		for (const image of images) {
 			const processed = await processImage(Buffer.from(image.data, "base64"), image.mimeType, {
 				autoResizeImages: this.settingsManager.getImageAutoResize(),
-				resizeOptions: this.model?.inputLimits?.images?.resize,
+				resizeOptions: this._limitsModel()?.inputLimits?.images?.resize,
 			});
 			if (!processed.ok) {
 				hints.push(processed.message);
@@ -2359,24 +2420,23 @@ export class AgentSession {
 	/** Generate Pi's built-in compaction summary for manual and automatic compaction. */
 	private async _runDefaultCompaction(
 		preparation: CompactionPreparation,
-		requestModel: Model<any>,
-		apiKey: string | undefined,
-		headers: Record<string, string> | undefined,
+		model: Model<any>,
 		customInstructions: string | undefined,
 		signal: AbortSignal,
-		env: Record<string, string> | undefined,
 		reason: "manual" | "threshold" | "overflow",
 	): Promise<CompactionResult> {
+		// Resolve the request only when Pi summarizes itself: routing may call models or fail.
+		const request = await this._getSummarizationRequestAuth(model, signal);
 		return compact(
 			preparation,
-			requestModel,
-			apiKey,
-			headers,
+			request.model,
+			request.apiKey,
+			request.headers,
 			customInstructions,
 			signal,
-			this.thinkingLevel,
+			request.thinkingLevel,
 			this.agent.streamFunction,
-			env,
+			request.env,
 			this.settingsManager.getRetrySettings(),
 			this._summarizationRetryCallbacks({ source: "compaction", reason }),
 			undefined, // sessionId
@@ -2417,13 +2477,6 @@ export class AgentSession {
 			}
 
 			const settings = this.settingsManager.getCompactionSettings(model);
-			const {
-				model: requestModel,
-				apiKey,
-				headers,
-				env,
-			} = await this._getSummarizationRequestAuth(model, this._compactionAbortController.signal);
-
 			const pathEntries = this.sessionManager.getBranch();
 
 			const preparation = prepareCompaction(pathEntries, settings);
@@ -2477,12 +2530,9 @@ export class AgentSession {
 				// Shared default summary generator, also used by automatic compaction.
 				const result = await this._runDefaultCompaction(
 					preparation,
-					requestModel,
-					apiKey,
-					headers,
+					model,
 					customInstructions,
 					this._compactionAbortController.signal,
-					env,
 					"manual",
 				);
 				summary = result.summary;
@@ -2607,14 +2657,14 @@ export class AgentSession {
 		// Skip if message was aborted (user cancelled) - unless skipAbortedCheck is false
 		if (skipAbortedCheck && assistantMessage.stopReason === "aborted") return false;
 
-		const contextWindow = this.model?.contextWindow ?? 0;
-
 		// Skip overflow check if the message came from a different model.
 		// This handles the case where user switched from a smaller-context model (e.g. opus)
 		// to a larger-context model (e.g. codex) - the overflow error from the old model
-		// shouldn't trigger compaction for the new model.
-		const sameModel =
-			this.model && assistantMessage.provider === this.model.provider && assistantMessage.model === this.model.id;
+		// shouldn't trigger compaction for the new model. Under a virtual selection, the
+		// physical model that produced the message supplies the limits.
+		const messageModel = this._modelForMessage(assistantMessage);
+		const sameModel = messageModel !== undefined;
+		const contextWindow = (messageModel ?? this.model)?.contextWindow ?? 0;
 
 		// Skip compaction checks if this assistant message is older than the latest
 		// compaction boundary. This prevents a stale pre-compaction usage/error
@@ -2658,7 +2708,7 @@ export class AgentSession {
 			((explicitOverflow && assistantRetainedForExplicitRecovery) ||
 				(assistantUsageMatchesProjection && isContextOverflow(assistantMessage, contextWindow)));
 		const recoverableLength =
-			sameModel && assistantIsProjected && isRecoverableLength(assistantMessage, this.model?.maxTokens ?? 0);
+			sameModel && assistantIsProjected && isRecoverableLength(assistantMessage, messageModel.maxTokens);
 		if (contextOverflow || recoverableLength) {
 			const willRetry = assistantMessage.stopReason !== "stop";
 
@@ -2769,14 +2819,6 @@ export class AgentSession {
 			this._emit({ type: "compaction_start", reason });
 			abortController.signal.throwIfAborted();
 
-			const {
-				model: requestModel,
-				apiKey,
-				headers,
-				env,
-			} = await this._getSummarizationRequestAuth(model, abortController.signal);
-			abortController.signal.throwIfAborted();
-
 			let extensionCompaction: CompactionResult | undefined;
 
 			if (this._extensionRunner.hasHandlers("session_before_compact")) {
@@ -2819,12 +2861,9 @@ export class AgentSession {
 				// Shared default summary generator, also used by manual compaction.
 				const compactResult = await this._runDefaultCompaction(
 					preparation,
-					requestModel,
-					apiKey,
-					headers,
+					model,
 					undefined,
 					abortController.signal,
-					env,
 					reason,
 				);
 				summary = compactResult.summary;
@@ -3325,7 +3364,7 @@ export class AgentSession {
 	 */
 	private _isRetryableError(message: AssistantMessage): boolean {
 		// Context overflow is handled by compaction, not retry.
-		if (isContextOverflow(message, this.model?.contextWindow ?? 0)) return false;
+		if (isContextOverflow(message, (this._modelForMessage(message) ?? this.model)?.contextWindow ?? 0)) return false;
 		return isRetryableAssistantError(message);
 	}
 
@@ -3672,15 +3711,11 @@ export class AgentSession {
 			let summaryDetails: unknown;
 			let summaryUsage: Usage | undefined;
 			if (options.summarize && entriesToSummarize.length > 0 && !extensionSummary) {
-				const model = this.model!;
-				const { model: requestModel, apiKey, headers, env } = await this._getSummarizationRequestAuth(model);
+				const signal = this._branchSummaryAbortController.signal;
 				const branchSummarySettings = this.settingsManager.getBranchSummarySettings();
 				const result = await generateBranchSummary(entriesToSummarize, {
-					model: requestModel,
-					apiKey,
-					headers,
-					env,
-					signal: this._branchSummaryAbortController.signal,
+					...(await this._getSummarizationRequestAuth(this.model!, signal)),
+					signal,
 					customInstructions,
 					replaceInstructions,
 					reserveTokens: branchSummarySettings.reserveTokens,
@@ -3856,7 +3891,7 @@ export class AgentSession {
 	}
 
 	getContextUsage(): ContextUsage | undefined {
-		const model = this.model;
+		const model = this._limitsModel();
 		if (!model) return undefined;
 
 		const contextWindow = model.contextWindow ?? 0;
@@ -3944,16 +3979,11 @@ export class AgentSession {
 		if (!model) {
 			throw new Error("No model selected");
 		}
-		const { model: requestModel, apiKey, headers, env } = await this._getSummarizationRequestAuth(model);
 		return generateBugReportSummary({
+			...(await this._getSummarizationRequestAuth(model, options.signal)),
 			messages: this.messages,
 			hint: options.hint,
-			model: requestModel,
-			apiKey,
-			headers,
-			env,
 			signal: options.signal,
-			thinkingLevel: this.thinkingLevel,
 			streamFn: this.agent.streamFunction,
 			retry: this.settingsManager.getRetrySettings(),
 			sessionId: this.sessionId,

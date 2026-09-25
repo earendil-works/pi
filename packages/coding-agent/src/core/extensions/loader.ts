@@ -18,12 +18,14 @@ import { execCommand } from "../exec.ts";
 import { readPiManifest } from "../pi-manifest.ts";
 import { createSyntheticSourceInfo } from "../source-info.ts";
 import { time } from "../timings.ts";
+import { createVirtualProvider } from "../virtual-models.ts";
 import type {
 	EntryRenderer,
 	Extension,
 	ExtensionAPI,
 	ExtensionFactory,
 	ExtensionRuntime,
+	ExtensionVirtualModel,
 	LoadExtensionsResult,
 	MarkdownTransformer,
 	MessageRenderer,
@@ -181,6 +183,7 @@ export function createExtensionRuntime(): ExtensionRuntime {
 		flagValues: new Map(),
 		pendingProviderRegistrations: [],
 		pendingNativeProviderRegistrations: [],
+		createContext: notInitialized,
 		assertActive,
 		invalidate: (message) => {
 			if (state.staleMessage) return;
@@ -431,6 +434,16 @@ function createExtensionAPI(
 		unregisterProvider(name: string) {
 			assertActive();
 			applyRuntimeChange(() => runtime.unregisterProvider(name, extension.path));
+		},
+
+		registerVirtualModel(model: ExtensionVirtualModel) {
+			assertActive();
+			// Routing runs after the runner binds, so the context is created per request.
+			const provider = createVirtualProvider({
+				...model,
+				route: (request) => model.route(request, runtime.createContext()),
+			});
+			applyRuntimeChange(() => runtime.registerNativeProvider(provider, extension.path));
 		},
 
 		events: {

@@ -188,6 +188,12 @@ export class FooterComponent implements Component {
 			rightSideWithoutProvider =
 				thinkingLevel === "off" ? `${modelName} • thinking off` : `${modelName} • ${thinkingLevel}`;
 		}
+		// A virtual model routes each request; show where the latest response went.
+		const routed = this.session.routedModel;
+		if (routed) {
+			const level = routed.thinkingLevel ? ` • ${routed.thinkingLevel}` : "";
+			rightSideWithoutProvider += ` → ${routed.model.id}${level}`;
+		}
 
 		// Prepend the provider in parentheses if there are multiple providers and there's enough room
 		let rightSide = rightSideWithoutProvider;

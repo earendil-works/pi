@@ -32,6 +32,7 @@ import {
 	type ToolName,
 	withFileMutationQueue,
 } from "./tools/index.ts";
+import { isVirtualModel } from "./virtual-models.ts";
 
 // Preserve the pre-0.81 fallback for extensions that construct Agent instances
 // or invoke low-level agent loops without supplying streamFn. Agent core remains
@@ -198,14 +199,26 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	let model = options.model;
 	let modelFallbackMessage: string | undefined;
 
+	// Assistant messages name the physical model that answered, so a virtual selection is only in
+	// model_change entries. It wins over later assistant messages while it is still registered.
+	const lastChange = sessionManager
+		.getBranch()
+		.filter((entry) => entry.type === "model_change")
+		.at(-1);
+	const selectedModel = lastChange && modelRuntime.getModel(lastChange.provider, lastChange.modelId);
+	const sessionModel =
+		selectedModel && isVirtualModel(selectedModel)
+			? { provider: selectedModel.provider, modelId: selectedModel.id }
+			: existingSession.model;
+
 	// If session has data, try to restore model from it
-	if (!model && hasExistingSession && existingSession.model) {
-		const restoredModel = modelRuntime.getModel(existingSession.model.provider, existingSession.model.modelId);
+	if (!model && hasExistingSession && sessionModel) {
+		const restoredModel = modelRuntime.getModel(sessionModel.provider, sessionModel.modelId);
 		if (restoredModel && modelRuntime.hasConfiguredAuth(restoredModel.provider)) {
 			model = restoredModel;
 		}
 		if (!model) {
-			modelFallbackMessage = `Could not restore model ${existingSession.model.provider}/${existingSession.model.modelId}`;
+			modelFallbackMessage = `Could not restore model ${sessionModel.provider}/${sessionModel.modelId}`;
 		}
 	}
 
@@ -335,14 +348,16 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			},
 		};
 	};
-	const cacheContextIsCurrent = (requestModel: Model<any>) => {
+	// Compare selections, not request models: a virtual selection sends physical models here.
+	const cacheContextIsCurrent = () => {
 		const messages = agent.state.messages;
+		const selectedModel = agent.state.model;
 		return () => {
 			const currentModel = agent.state.model;
 			const currentMessages = agent.state.messages;
 			return (
-				currentModel.provider === requestModel.provider &&
-				currentModel.id === requestModel.id &&
+				currentModel.provider === selectedModel.provider &&
+				currentModel.id === selectedModel.id &&
 				messages.length <= currentMessages.length &&
 				messages.every((message, index) => currentMessages[index] === message)
 			);
@@ -394,7 +409,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			// shallow-copy the messages array or refresh the model object without changing
 			// the provider request, so top-level object identity is not a valid cache key.
 			if (options?.sessionId === sessionManager.getSessionId()) {
-				cacheWarmer.start({ model, context, options: requestOptions }, cacheContextIsCurrent(model));
+				cacheWarmer.start({ model, context, options: requestOptions }, cacheContextIsCurrent());
 			}
 			return modelRuntime.streamSimple(model, context, requestOptions);
 		},
@@ -418,6 +433,12 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	if (hasExistingSession) {
 		if (!hasThinkingEntry) {
 			sessionManager.appendThinkingLevelChange(thinkingLevel);
+		}
+		// Record an explicit model override so the next resume restores it. Otherwise only the
+		// following assistant message would record it, which names a physical model.
+		const override = options.model;
+		if (override && (override.provider !== sessionModel?.provider || override.id !== sessionModel.modelId)) {
+			sessionManager.appendModelChange(override.provider, override.id);
 		}
 	} else {
 		// Save initial model and thinking level for new sessions so they can be restored on resume

@@ -94,6 +94,7 @@ import type {
 	ReadToolInput,
 	WriteToolInput,
 } from "../tools/index.ts";
+import type { ModelRoute, ModelRouteRequest, VirtualModelDefinition } from "../virtual-models.ts";
 
 export type { ExecOptions, ExecResult } from "../exec.ts";
 export type { BuildSystemPromptOptions, NormalizedBuildSystemPromptOptions } from "../system-prompt.ts";
@@ -1636,6 +1637,16 @@ export interface ExtensionAPI {
 	 */
 	unregisterProvider(name: string): void;
 
+	/**
+	 * Register a virtual model: a selectable catalog entry that routes each request to a physical
+	 * model. The selection (`ctx.model`, `model_change` entries) names the virtual model; assistant
+	 * messages record the physical model and thinking level the router picked.
+	 *
+	 * The virtual model is the only model of a provider named `provider`, registered like
+	 * `registerProvider(provider)`. Remove it with `unregisterProvider(provider)`. See docs/virtual-models.md.
+	 */
+	registerVirtualModel(model: ExtensionVirtualModel): void;
+
 	/** Shared event bus for extension communication. */
 	events: EventBus;
 }
@@ -1643,6 +1654,12 @@ export interface ExtensionAPI {
 // ============================================================================
 // Provider Registration Types
 // ============================================================================
+
+/** Virtual model registered via pi.registerVirtualModel(). */
+export interface ExtensionVirtualModel extends Omit<VirtualModelDefinition, "route"> {
+	/** Like `VirtualModelDefinition.route`, with an extension context. */
+	route(request: ModelRouteRequest, ctx: ExtensionContext): ModelRoute | Promise<ModelRoute>;
+}
 
 /** Configuration for registering a provider via pi.registerProvider(). */
 export interface ProviderConfig {
@@ -1846,6 +1863,8 @@ export interface ExtensionRuntimeState {
 	pendingProviderRegistrations: Array<{ name: string; config: ProviderConfig; extensionPath: string }>;
 	/** Native pi-ai provider registrations queued during extension loading, processed when runner binds. */
 	pendingNativeProviderRegistrations: Array<{ provider: Provider; extensionPath: string }>;
+	/** Create an extension context. Throws before the runner binds. */
+	createContext: () => ExtensionContext;
 	/** Throws when this extension instance is stale after runtime replacement. */
 	assertActive: () => void;
 	/** Marks this extension instance as stale after runtime replacement or reload. */

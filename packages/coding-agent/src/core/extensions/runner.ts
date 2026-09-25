@@ -423,6 +423,7 @@ export class ExtensionRunner {
 		this.runtime.setModel = actions.setModel;
 		this.runtime.getThinkingLevel = actions.getThinkingLevel;
 		this.runtime.setThinkingLevel = actions.setThinkingLevel;
+		this.runtime.createContext = () => this.createContext();
 
 		// Context actions (required)
 		this.getModel = contextActions.getModel;
