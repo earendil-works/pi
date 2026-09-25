@@ -92,7 +92,7 @@ function getPromptCacheRetention(
 function getPromptCacheOptions(
 	compat: Required<OpenAIResponsesCompat>,
 	cacheRetention: CacheRetention,
-): { mode?: "explicit"; ttl?: "30m" } | undefined {
+): ResponseCreateParamsStreaming["prompt_cache_options"] {
 	if (!compat.supportsExplicitPromptCacheMode) return undefined;
 	if (cacheRetention === "none") return { mode: "explicit" };
 	if (cacheRetention === "long" && compat.supportsLongCacheRetention) return { ttl: "30m" };
@@ -307,9 +307,7 @@ function buildParams(
 	});
 
 	const cacheRetention = resolveCacheRetention(options?.cacheRetention, options?.env);
-	const params: ResponseCreateParamsStreaming & {
-		prompt_cache_options?: { mode?: "explicit"; ttl?: "30m" };
-	} = {
+	const params: ResponseCreateParamsStreaming = {
 		model: model.id,
 		input: messages,
 		stream: true,
