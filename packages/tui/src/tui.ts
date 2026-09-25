@@ -81,7 +81,13 @@ export interface TuiMouseDispatchResult extends TuiMouseEventResult {
 export function dispatchMouseEvent(component: Component, event: TuiMouseEvent): TuiMouseDispatchResult | undefined {
 	const result = component.handleMouse?.(event);
 	if (!result) return undefined;
-	if ("target" in result) return result as TuiMouseDispatchResult;
+	if ("target" in result) {
+		// The component forwarded the event to a child it hosts. Like a delegating container, it routes
+		// keys to that child itself, so it keeps keyboard focus. Focusing the child directly would leave
+		// focus on a detached component once the host removes it, e.g. a closed settings submenu.
+		const forwarded = result as TuiMouseDispatchResult;
+		return forwarded.focus && component.handleInput ? { ...forwarded, focusTarget: component } : forwarded;
+	}
 	if (!result.handled && !result.capture && !result.focus) return undefined;
 	return {
 		...result,
