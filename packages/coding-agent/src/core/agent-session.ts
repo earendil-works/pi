@@ -1316,9 +1316,11 @@ export class AgentSession {
 		});
 		const codemodeIndex = tools.findIndex((tool) => tool.name === CODEMODE_TOOL_NAME);
 		// Extension tools named codemode are left alone; built-in slots (including SDK base tool
-		// overrides) named codemode are assumed to be the codemode tool.
+		// overrides) named codemode are assumed to be the codemode tool. Only the session's own
+		// codemode tool has model access, so overrides do not declare `models`.
 		if (codemodeIndex !== -1 && this._toolDefinitions.get(CODEMODE_TOOL_NAME)?.sourceInfo.source === "builtin") {
-			tools[codemodeIndex] = { ...tools[codemodeIndex], description: createCodemodeDescription(tools) };
+			const description = createCodemodeDescription(tools, { models: this._baseToolsOverride === undefined });
+			tools[codemodeIndex] = { ...tools[codemodeIndex], description };
 		}
 		return tools;
 	}
@@ -3272,7 +3274,10 @@ export class AgentSession {
 			: createAllToolDefinitions(this._cwd, {
 					read: { autoResizeImages },
 					bash: { commandPrefix: shellCommandPrefix, shellPath },
-					codemode: { appendEntry: (customType, data) => this._appendCustomEntry(customType, data) },
+					codemode: {
+						appendEntry: (customType, data) => this._appendCustomEntry(customType, data),
+						models: this._modelRuntime,
+					},
 				});
 
 		this._baseToolDefinitions = new Map(

@@ -4,7 +4,7 @@
  */
 
 import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
-import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
+import type { AnyModel, ClassifierContext, ImageContent, ModelType, TextContent } from "@earendil-works/pi-ai";
 import {
 	type CodemodeLog,
 	type CodemodeResult,
@@ -18,17 +18,22 @@ import type { ExtensionToolContext } from "../extensions/types.ts";
 import type { SessionEntry } from "../session-manager.ts";
 import {
 	CODEMODE_STORE_ENTRY_TYPE,
+	type CodemodeModelRuntime,
 	type CodemodeNestedCall,
 	type CodemodeStoreEntryData,
 	type CodemodeToolDetails,
 	type CodemodeToolInput,
 	type CodemodeToolOptions,
 	getCodemodeCallableTools,
+	MODEL_GLOBAL_DECLARATIONS,
 } from "./codemode.ts";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize, truncateHead } from "./truncate.ts";
 
 const ARGS_PREVIEW_CHARS = 200;
 const ERROR_PREVIEW_CHARS = 500;
+/** Classifier calls one script may have in flight; `Promise.all` over many items queues the rest. */
+const MAX_CONCURRENT_MODEL_CALLS = 4;
+const MODEL_TYPES: ReadonlySet<string> = new Set<ModelType>(["chat", "image", "classifier"]);
 
 function truncateText(text: string, maxChars: number): string {
 	return text.length > maxChars ? `${text.slice(0, maxChars - 3)}...` : text;
@@ -48,6 +53,40 @@ function textOf(result: AgentToolResult<unknown>): string {
 		.filter((block): block is TextContent => block.type === "text")
 		.map((block) => block.text)
 		.join("\n");
+}
+
+function toModelType(value: unknown): ModelType {
+	if (typeof value === "string" && MODEL_TYPES.has(value)) return value as ModelType;
+	throw new Error(`Unknown model type ${JSON.stringify(value)}. Use "chat", "image", or "classifier".`);
+}
+
+function toProvider(value: unknown): string | undefined {
+	if (value === undefined || value === null) return undefined;
+	if (typeof value !== "string") throw new Error("provider must be a string");
+	return value;
+}
+
+/** Catalog entry for scripts. `headers` is dropped because models.json headers can carry credentials. */
+function toModelInfo(model: AnyModel): Record<string, unknown> {
+	const info: Record<string, unknown> = { ...model };
+	delete info.headers;
+	return info;
+}
+
+/** Runs at most `limit` calls at once, in call order. */
+function createLimiter(limit: number): <T>(run: () => Promise<T>) => Promise<T> {
+	let active = 0;
+	const waiting: (() => void)[] = [];
+	return async (run) => {
+		if (active >= limit) await new Promise<void>((resolve) => waiting.push(resolve));
+		active++;
+		try {
+			return await run();
+		} finally {
+			active--;
+			waiting.shift()?.();
+		}
+	};
 }
 
 function isStoreEntryData(data: unknown): data is CodemodeStoreEntryData {
@@ -179,9 +218,12 @@ export async function executeCodemode(
 		},
 	}));
 
+	const modelGlobals = options.models ? createModelGlobals(options.models, toolCallId, calls, publish) : [];
+
 	const sandbox = new CodemodeSandbox({
 		tools: sandboxTools,
 		globals: [
+			...modelGlobals,
 			{
 				name: "image",
 				execute: (ref) => {
@@ -231,4 +273,75 @@ export async function executeCodemode(
 	const details = snapshot();
 	if (valueText && typeof result.value !== "string") details.jsonLines = valueText.split("\n").length;
 	return { content, details };
+}
+
+/**
+ * `models.*` for scripts: the `ModelRuntime` methods declared in {@link MODEL_GLOBAL_DECLARATIONS}.
+ * Classifier calls appear as nested call rows so the renderer shows them.
+ */
+function createModelGlobals(
+	models: CodemodeModelRuntime,
+	toolCallId: string,
+	calls: CodemodeNestedCall[],
+	publish: () => void,
+): CodemodeTool[] {
+	const limit = createLimiter(MAX_CONCURRENT_MODEL_CALLS);
+	let classifyCount = 0;
+	const implementations: Record<string, CodemodeTool["execute"]> = {
+		"models.getModelsOfType": (args) => {
+			const [type, provider] = args as unknown[];
+			return models.getModelsOfType(toModelType(type), toProvider(provider)).map(toModelInfo);
+		},
+		"models.getAvailableOfType": async (args, { signal }) => {
+			const [type, provider] = args as unknown[];
+			const available = await models.getAvailableOfType(toModelType(type), toProvider(provider), { signal });
+			return available.map(toModelInfo);
+		},
+		"models.getModelOfType": (args) => {
+			const [type, provider, id] = args as unknown[];
+			if (typeof provider !== "string" || typeof id !== "string") {
+				throw new Error("models.getModelOfType() expects a type, a provider, and an id");
+			}
+			const model = models.getModelOfType(toModelType(type), provider, id);
+			return model === undefined ? undefined : toModelInfo(model);
+		},
+		"models.classify": async (args, { signal }) => {
+			const [model, context] = args as unknown[];
+			const ref = model as { provider?: unknown; id?: unknown } | null;
+			if (
+				typeof ref !== "object" ||
+				ref === null ||
+				typeof ref.provider !== "string" ||
+				typeof ref.id !== "string"
+			) {
+				throw new Error(
+					"models.classify() expects a model from models.getModelOfType() or models.getAvailableOfType()",
+				);
+			}
+			// Only provider and id count. A script-supplied baseUrl or headers must never receive the credentials.
+			const resolved = models.getModelOfType("classifier", ref.provider, ref.id);
+			if (!resolved) throw new Error(`Unknown classifier model "${ref.provider}/${ref.id}"`);
+
+			const record: CodemodeNestedCall = {
+				id: `${toolCallId}/models.classify/${++classifyCount}`,
+				name: "models.classify",
+				args: `${resolved.provider}/${resolved.id}`,
+				status: "running",
+			};
+			calls.push(record);
+			publish();
+			const startedAt = performance.now();
+			const result = await limit(() => models.classify(resolved, context as ClassifierContext, { signal }));
+			record.durationMs = performance.now() - startedAt;
+			record.status = result.stopReason === "stop" ? "ok" : result.stopReason === "aborted" ? "cancelled" : "error";
+			if (result.errorMessage) record.error = truncateText(result.errorMessage, ERROR_PREVIEW_CHARS);
+			publish();
+			return result;
+		},
+	};
+	return MODEL_GLOBAL_DECLARATIONS.map((declaration) => ({
+		name: declaration.name,
+		spread: true,
+		execute: implementations[declaration.name],
+	}));
 }

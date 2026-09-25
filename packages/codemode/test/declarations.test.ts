@@ -82,6 +82,32 @@ describe("renderDeclarations", () => {
 		);
 	});
 
+	it("renders namespaced globals and explicit signatures", () => {
+		const text = renderDeclarations({
+			globals: [
+				{
+					name: "models.list",
+					description: "List models.",
+					signature: "(type: string): Promise<string[]>",
+					execute,
+				},
+				{ name: "models.get", inputSchema: { type: "string" }, execute },
+				{ name: "plain", signature: "(): void", execute },
+			],
+		});
+		expect(text).toBe(
+			[
+				"declare function plain(): void;",
+				"",
+				"declare const models: {",
+				"  /** List models. */",
+				"  list(type: string): Promise<string[]>;",
+				"  get(args: string): Promise<unknown>;",
+				"};",
+			].join("\n"),
+		);
+	});
+
 	it("escapes comment terminators in descriptions", () => {
 		const text = renderDeclarations({ tools: [{ name: "x", description: "a */ b", execute }] });
 		expect(text).toContain("/** a *\\/ b */");

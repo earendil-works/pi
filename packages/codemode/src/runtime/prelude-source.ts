@@ -10,14 +10,15 @@
  * JSON text passed in as `storeJson`, and the keys the script wrote are reported
  * with a successful "done".
  *
- * Evaluates to a function `(bridge, toolNamesJson, globalNamesJson, storeJson) => { settle, run }`.
+ * Evaluates to a function `(bridge, toolNamesJson, globalsJson, storeJson) => { settle, run }`.
+ * `globalsJson` lists `{ name, spread }`; `a.b` names are grouped into a frozen `a` object.
  * `bridge(kind, a, b, c)` with kind "call" or "global" (id, name, argsJson),
  * "log" (level, message) or "done" (ok, valueJsonOrErrorJson, writesJson).
  */
 export const MAX_STORE_VALUE_CHARS = 256 * 1024;
 export const MAX_STORE_TOTAL_CHARS = 1024 * 1024;
 
-export const PRELUDE_SOURCE: string = `(function (bridge, toolNamesJson, globalNamesJson, storeJson) {
+export const PRELUDE_SOURCE: string = `(function (bridge, toolNamesJson, globalsJson, storeJson) {
 	"use strict";
 	const stringify = JSON.stringify;
 	const parse = JSON.parse;
@@ -59,12 +60,12 @@ export const PRELUDE_SOURCE: string = `(function (bridge, toolNamesJson, globalN
 		return stringify({ message: format(error) });
 	}
 
-	function caller(kind, name) {
-		return (args) =>
+	function caller(kind, name, spread) {
+		return (...args) =>
 			new Promise((resolve, reject) => {
 				let json;
 				try {
-					json = serialize(args);
+					json = serialize(spread ? args : args[0]);
 				} catch (error) {
 					reject(error);
 					return;
@@ -81,8 +82,20 @@ export const PRELUDE_SOURCE: string = `(function (bridge, toolNamesJson, globalN
 	}
 	Object.freeze(tools);
 
-	for (const name of parse(globalNamesJson)) {
-		Object.defineProperty(globalThis, name, { value: caller("global", name), enumerable: true });
+	const namespaces = new Map();
+	for (const { name, spread } of parse(globalsJson)) {
+		const fn = caller("global", name, spread);
+		const dot = name.indexOf(".");
+		if (dot === -1) {
+			Object.defineProperty(globalThis, name, { value: fn, enumerable: true });
+			continue;
+		}
+		const namespace = name.slice(0, dot);
+		if (!namespaces.has(namespace)) namespaces.set(namespace, Object.create(null));
+		namespaces.get(namespace)[name.slice(dot + 1)] = fn;
+	}
+	for (const [namespace, members] of namespaces) {
+		Object.defineProperty(globalThis, namespace, { value: Object.freeze(members), enumerable: true });
 	}
 
 	// key -> JSON text. Sizes count key and JSON characters.

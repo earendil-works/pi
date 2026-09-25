@@ -101,7 +101,7 @@ async function main(data: WorkerData): Promise<void> {
 				vm.undefined,
 				bridge,
 				vm.newString(JSON.stringify(data.toolNames)),
-				vm.newString(JSON.stringify(data.globalNames)),
+				vm.newString(JSON.stringify(data.globals)),
 				vm.newString(JSON.stringify(data.store)),
 			),
 		),

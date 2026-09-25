@@ -14,7 +14,8 @@ export type CodemodeJsonSchema = { [key: string]: unknown } | boolean;
 export interface CodemodeTool {
 	/**
 	 * The script calls this as `tools.<name>(args)` (or `tools["<name>"](args)` for names that are
-	 * not identifiers). Globals are called as `<name>(args)` and must be identifiers.
+	 * not identifiers). Globals are called as `<name>(args)` and must be identifiers, or
+	 * `<namespace>.<member>`, which groups them into a frozen namespace object.
 	 */
 	name: string;
 	/** Shown as a doc comment in {@link renderDeclarations}. */
@@ -23,6 +24,13 @@ export interface CodemodeTool {
 	inputSchema?: CodemodeJsonSchema;
 	/** Schema of the resolved value. Rendered as the promise type; `unknown` when omitted. */
 	outputSchema?: CodemodeJsonSchema;
+	/** Globals only: `execute` receives all call arguments as an array instead of the first one. */
+	spread?: boolean;
+	/**
+	 * Globals only: TypeScript parameter list and return type for {@link renderDeclarations}, for
+	 * example `(type: string, id?: string): Promise<Model[]>`. Replaces the rendering from the schemas.
+	 */
+	signature?: string;
 	/**
 	 * `args` is whatever the script passed, after a JSON round trip. The return
 	 * value must be JSON-serializable; a thrown error surfaces in the script as

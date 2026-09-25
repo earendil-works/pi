@@ -17,6 +17,9 @@
  * string. `store(key, value)` and `load(key)` keep JSON values across calls; successful scripts
  * append their writes to the session as `codemode-store` custom entries, so each branch sees the
  * values written on its own path.
+ *
+ * With model access, scripts also get `models`, a subset of `ModelRuntime`: listing the model
+ * catalog and running classifier models.
  */
 
 import type { AgentTool } from "@earendil-works/pi-agent-core";
@@ -25,6 +28,7 @@ import { renderDeclarations } from "@earendil-works/pi-codemode/declarations";
 import { CODEMODE_SOURCE_GRAMMAR } from "@earendil-works/pi-codemode/source";
 import { type Static, Type } from "typebox";
 import type { ToolDefinition } from "../extensions/types.ts";
+import type { ModelRuntime } from "../model-runtime.ts";
 import { loadCodemodeExecutor } from "./codemode-execute.lazy.ts";
 import { codemodeRenderers } from "./renderers/codemode.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
@@ -39,7 +43,15 @@ export interface CodemodeStoreEntryData {
 	delete: string[];
 }
 
+/** The part of `ModelRuntime` that scripts reach through `models`. */
+export type CodemodeModelRuntime = Pick<
+	ModelRuntime,
+	"getModelsOfType" | "getAvailableOfType" | "getModelOfType" | "classify"
+>;
+
 export interface CodemodeToolOptions {
+	/** Exposes the `models` namespace to scripts. Without it, `models` is not declared. */
+	models?: CodemodeModelRuntime;
 	/**
 	 * Persists `store()` writes as a session custom entry. Without it, writes last only for the
 	 * current script; `load()` still reads entries already on the branch.
@@ -104,6 +116,65 @@ declare function store(key: string, value: unknown): void;
 /** Read a value saved with store(), or undefined. */
 declare function load(key: string): unknown;`;
 
+const MODEL_TYPES = `type ModelType = "chat" | "image" | "classifier";
+/** A model catalog entry. \`provider\` and \`id\` identify it; the other fields depend on the type. */
+interface ModelInfo {
+  type?: ModelType;
+  provider: string;
+  id: string;
+  name: string;
+  api: string;
+  input: ("text" | "image")[];
+  contextWindow?: number;
+  [key: string]: unknown;
+}
+type ClassifierQuestion =
+  | { type: "choice"; instructions: string; criteria: Record<string, string> }
+  | { type: "score"; instructions: string; criteria: string[] }
+  | { type: "bool"; instructions: string; criteria: { true: string; false: string } };
+type ClassifierAnswer =
+  | { type: "choice"; choice: string; probabilities: Record<string, number>; confidence: number }
+  | { type: "score"; score: number; confidence: number }
+  | { type: "bool"; probability: number };
+interface ClassifierContext {
+  state: Record<string, unknown>;
+  questions: Record<string, ClassifierQuestion>;
+}
+interface ClassifierResult {
+  api: string;
+  provider: string;
+  model: string;
+  answers: Record<string, ClassifierAnswer>;
+  stopReason: "stop" | "error" | "aborted";
+  errorMessage?: string;
+  timestamp: number;
+}`;
+
+/** Declarations of the `models` globals; codemode-execute.ts implements them. */
+export const MODEL_GLOBAL_DECLARATIONS: readonly Omit<CodemodeTool, "execute">[] = [
+	{
+		name: "models.getModelsOfType",
+		description: "Every known model of a type, optionally for one provider.",
+		signature: "(type: ModelType, provider?: string): Promise<ModelInfo[]>",
+	},
+	{
+		name: "models.getAvailableOfType",
+		description: "Models of a type whose provider has working credentials.",
+		signature: "(type: ModelType, provider?: string): Promise<ModelInfo[]>",
+	},
+	{
+		name: "models.getModelOfType",
+		description: "One catalog entry, or undefined.",
+		signature: "(type: ModelType, provider: string, id: string): Promise<ModelInfo | undefined>",
+	},
+	{
+		name: "models.classify",
+		description:
+			"Run a classifier model on one state. Only `provider` and `id` of `model` are used. Provider errors do not throw: check `stopReason` and `errorMessage`.",
+		signature: "(model: ModelInfo, context: ClassifierContext): Promise<ClassifierResult>",
+	},
+];
+
 const IMAGE_GLOBAL_DESCRIPTION =
 	"Attach images to the result so you can see them. `ref` is any string containing `[image:N ...]` references, for example a tool's text output.";
 
@@ -125,8 +196,14 @@ export function getCodemodeCallableTools(tools: readonly AgentTool<any>[]): Agen
 	return tools.filter((tool) => tool.name !== CODEMODE_TOOL_NAME);
 }
 
-/** Model-facing description, including TypeScript declarations for the callable tools. */
-export function createCodemodeDescription(tools: readonly AgentTool<any>[]): string {
+/**
+ * Model-facing description, including TypeScript declarations for the callable tools. `models`
+ * declares the `models` namespace; pass it only when the tool was created with model access.
+ */
+export function createCodemodeDescription(
+	tools: readonly AgentTool<any>[],
+	options: { models?: boolean } = {},
+): string {
 	const noop = () => undefined;
 	const declarations = renderDeclarations({
 		tools: getCodemodeCallableTools(tools).map((tool) => ({ ...toCodemodeDeclaration(tool), execute: noop })),
@@ -138,9 +215,11 @@ export function createCodemodeDescription(tools: readonly AgentTool<any>[]): str
 				outputSchema: { type: "null" },
 				execute: noop,
 			},
+			...(options.models ? MODEL_GLOBAL_DECLARATIONS.map((global) => ({ ...global, execute: noop })) : []),
 		],
 	});
-	return `${DESCRIPTION_INTRO}\n\nAvailable API:\n\`\`\`ts\n${declarations}\n\n${STORE_DECLARATIONS}\n\`\`\``;
+	const types = options.models ? `${MODEL_TYPES}\n\n` : "";
+	return `${DESCRIPTION_INTRO}\n\nAvailable API:\n\`\`\`ts\n${types}${declarations}\n\n${STORE_DECLARATIONS}\n\`\`\``;
 }
 
 export function createCodemodeToolDefinition(
@@ -150,7 +229,7 @@ export function createCodemodeToolDefinition(
 		name: CODEMODE_TOOL_NAME,
 		label: CODEMODE_TOOL_NAME,
 		// Replaced with the declarations of the active tools when codemode is activated.
-		description: createCodemodeDescription([]),
+		description: createCodemodeDescription([], { models: options.models !== undefined }),
 		promptSnippet: codemodeToolSystemPromptContribution.snippet,
 		promptGuidelines: [...codemodeToolSystemPromptContribution.guidelines],
 		parameters: codemodeSchema,
@@ -174,7 +253,7 @@ export function createCodemodeTool(
 	const definition = createCodemodeToolDefinition(options);
 	const tool = wrapToolDefinition(definition);
 	Object.assign(tool, {
-		description: createCodemodeDescription(tools),
+		description: createCodemodeDescription(tools, { models: options.models !== undefined }),
 		promptSnippet: definition.promptSnippet,
 		promptGuidelines: definition.promptGuidelines,
 	});

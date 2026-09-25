@@ -9,7 +9,7 @@ import type { CodemodeWasmModule } from "../wasm.ts";
 export interface WorkerData {
 	code: string;
 	toolNames: string[];
-	globalNames: string[];
+	globals: { name: string; spread: boolean }[];
 	/** Compiled `quickjs-wasi` module. Structured clone shares the compiled code with the worker. */
 	wasm: CodemodeWasmModule;
 	memoryLimitBytes: number | undefined;

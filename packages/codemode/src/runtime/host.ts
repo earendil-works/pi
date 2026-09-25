@@ -128,7 +128,10 @@ class Execution {
 		const workerData: WorkerData = {
 			code: options.code,
 			toolNames: [...options.tools.keys()],
-			globalNames: [...options.globals.keys()],
+			globals: [...options.globals.values()].map((global) => ({
+				name: global.name,
+				spread: global.spread === true,
+			})),
 			wasm,
 			memoryLimitBytes: options.memoryLimitBytes,
 			store: options.store,
@@ -284,12 +287,18 @@ export class CodemodeSandbox {
 		this.wasm = options.wasm;
 		this.workerUrl = options.workerUrl ?? defaultWorkerUrl();
 		for (const tool of options.tools ?? []) this.registerTool(tool);
+		const namespaces = new Set<string>();
 		for (const global of options.globals ?? []) {
-			if (!IDENTIFIER.test(global.name) || RESERVED_GLOBALS.has(global.name)) {
+			const parts = global.name.split(".");
+			if (parts.length > 2 || !parts.every((part) => IDENTIFIER.test(part)) || RESERVED_GLOBALS.has(parts[0])) {
 				throw new Error(`Invalid global name "${global.name}"`);
 			}
 			if (this.globalsByName.has(global.name)) throw new Error(`Global "${global.name}" is already registered`);
+			if (parts.length === 2) namespaces.add(parts[0]);
 			this.globalsByName.set(global.name, global);
+		}
+		for (const name of namespaces) {
+			if (this.globalsByName.has(name)) throw new Error(`Global "${name}" conflicts with the namespace "${name}"`);
 		}
 	}
 

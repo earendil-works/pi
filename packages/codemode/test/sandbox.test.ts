@@ -297,8 +297,40 @@ describe("globals", () => {
 		expect(seen).toEqual([{ ref: 1 }, "not awaited"]);
 	});
 
+	it("groups namespaced globals and spreads arguments on request", async () => {
+		const seen: unknown[] = [];
+		const sandbox = new CodemodeSandbox({
+			globals: [
+				{ name: "models.list", spread: true, execute: (args) => void seen.push(args) },
+				{ name: "models.first", execute: (args) => args },
+			],
+		});
+		sandboxes.push(sandbox);
+		const result = await sandbox.execute(`
+			await models.list("classifier", undefined, 3);
+			await models.list();
+			try { models.extra = 1; } catch {}
+			return [Object.keys(models), await models.first("a", "ignored"), typeof models.extra];
+		`);
+		expect(result).toMatchObject({ ok: true, value: [["list", "first"], "a", "undefined"] });
+		// undefined array elements become null in the JSON round trip.
+		expect(seen).toEqual([["classifier", null, 3], []]);
+	});
+
 	it("rejects invalid and reserved global names", () => {
 		const execute = () => undefined;
+		for (const name of ["a.b.c", "a.", ".a", "tools.x", "store.x", "a.not-valid"]) {
+			expect(() => new CodemodeSandbox({ globals: [{ name, execute }] }), name).toThrow(/Invalid global/);
+		}
+		expect(
+			() =>
+				new CodemodeSandbox({
+					globals: [
+						{ name: "models", execute },
+						{ name: "models.list", execute },
+					],
+				}),
+		).toThrow(/conflicts with the namespace/);
 		expect(() => new CodemodeSandbox({ globals: [{ name: "not-valid", execute }] })).toThrow(/Invalid global/);
 		expect(() => new CodemodeSandbox({ globals: [{ name: "tools", execute }] })).toThrow(/Invalid global/);
 		expect(() => new CodemodeSandbox({ globals: [{ name: "console", execute }] })).toThrow(/Invalid global/);

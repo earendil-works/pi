@@ -1,5 +1,5 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
+import { type ClassifierModel, type ClassifierResult, fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import type { ToolResultMessage } from "@earendil-works/pi-ai/compat";
 import { CODEMODE_SOURCE_GRAMMAR } from "@earendil-works/pi-codemode";
 import { Type } from "typebox";
@@ -372,5 +372,174 @@ describe("codemode options and store", () => {
 				entry({ set: { other: 1 }, delete: [] }, "other-extension"),
 			]),
 		).toEqual({ a: 3 });
+	});
+});
+
+describe("codemode models", () => {
+	const harnesses: Harness[] = [];
+
+	afterEach(() => {
+		while (harnesses.length > 0) harnesses.pop()?.cleanup();
+	});
+
+	const scorerModel: ClassifierModel<"test-classifier"> = {
+		type: "classifier",
+		id: "judge",
+		name: "Judge",
+		api: "test-classifier",
+		provider: "scorer",
+		baseUrl: "https://classifier.test/v1",
+		input: ["text"],
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		contextWindow: 1000,
+		headers: { "X-Secret": "hunter2" },
+	};
+
+	interface ClassifyObservation {
+		baseUrl: string;
+		apiKey: string | undefined;
+		text: unknown;
+	}
+
+	async function setup() {
+		const harness = await createHarness({ initialActiveToolNames: ["codemode"] });
+		harnesses.push(harness);
+		const observed: ClassifyObservation[] = [];
+		let active = 0;
+		let maxActive = 0;
+		harness.session.modelRuntime.registerProvider("scorer", {
+			apiKey: "secret-key",
+			models: [scorerModel],
+			classifiers: {
+				"test-classifier": {
+					classify: async (model, context, options): Promise<ClassifierResult> => {
+						active++;
+						maxActive = Math.max(maxActive, active);
+						await new Promise((resolve) => setTimeout(resolve, 10));
+						active--;
+						const text = context.state.text;
+						observed.push({ baseUrl: model.baseUrl, apiKey: options?.apiKey, text });
+						if (text === "explode") {
+							return {
+								api: model.api,
+								provider: model.provider,
+								model: model.id,
+								answers: {},
+								stopReason: "error",
+								errorMessage: "classifier exploded",
+								timestamp: 0,
+							};
+						}
+						return {
+							api: model.api,
+							provider: model.provider,
+							model: model.id,
+							answers: { approved: { type: "bool", probability: text === "good" ? 0.9 : 0.1 } },
+							stopReason: "stop",
+							timestamp: 0,
+						};
+					},
+				},
+			},
+		});
+		harness.session.setActiveToolsByName(["codemode"]);
+		return { harness, observed, maxActive: () => maxActive };
+	}
+
+	async function run(harness: Harness, code: string): Promise<ToolResultMessage> {
+		harness.setResponses([
+			fauxAssistantMessage([fauxToolCall("codemode", { code })], { stopReason: "toolUse" }),
+			fauxAssistantMessage("done"),
+		]);
+		await harness.session.prompt("go");
+		return codemodeResult(harness);
+	}
+
+	const questions = `{ approved: { type: "bool", instructions: "Approval?", criteria: { true: "yes", false: "no" } } }`;
+
+	it("declares models only for the session's own codemode tool", async () => {
+		const { harness } = await setup();
+		const codemode = harness.session.agent.state.tools.find((tool) => tool.name === "codemode");
+		expect(codemode?.description).toContain("declare const models: {");
+		expect(codemode?.description).toContain(
+			"classify(model: ModelInfo, context: ClassifierContext): Promise<ClassifierResult>;",
+		);
+		expect(codemode?.description).toContain("interface ClassifierResult {");
+
+		const overridden = await createHarness({ tools: [createCodemodeTool() as AgentTool] });
+		harnesses.push(overridden);
+		const plain = overridden.session.agent.state.tools.find((tool) => tool.name === "codemode");
+		expect(plain?.description).not.toContain("declare const models");
+	});
+
+	it("lists models and classifies with catalog auth, ignoring script-supplied fields", async () => {
+		const { harness, observed, maxActive } = await setup();
+		const result = await run(
+			harness,
+			`
+			const [model] = await models.getAvailableOfType("classifier", "scorer");
+			const listed = await models.getModelsOfType("classifier");
+			const same = await models.getModelOfType("classifier", "scorer", "judge");
+			const texts = ["good", "bad", "good", "bad", "good", "bad"];
+			const results = await Promise.all(
+				texts.map((text) => models.classify({ ...model, baseUrl: "https://evil.test" }, { state: { text }, questions: ${questions} })),
+			);
+			return {
+				id: model.id,
+				headers: "headers" in model,
+				listed: listed.some((entry) => entry.provider === "scorer" && entry.id === "judge"),
+				same: same.id,
+				missing: (await models.getModelOfType("classifier", "scorer", "nope")) === undefined,
+				probabilities: results.map((r) => r.answers.approved.probability),
+			};
+		`,
+		);
+		expect(result.isError).toBe(false);
+		expect(JSON.parse(resultText(result))).toEqual({
+			id: "judge",
+			headers: false,
+			listed: true,
+			same: "judge",
+			missing: true,
+			probabilities: [0.9, 0.1, 0.9, 0.1, 0.9, 0.1],
+		});
+		expect(observed).toHaveLength(6);
+		expect(
+			observed.every((entry) => entry.baseUrl === "https://classifier.test/v1" && entry.apiKey === "secret-key"),
+		).toBe(true);
+		// Six classifications with at most four in flight.
+		expect(maxActive()).toBe(4);
+		const details = result.details as unknown as CodemodeToolDetails;
+		expect(details.calls.map((call) => [call.name, call.args, call.status])).toEqual(
+			Array.from({ length: 6 }, () => ["models.classify", "scorer/judge", "ok"]),
+		);
+	});
+
+	it("reports provider errors as results and invalid arguments as exceptions", async () => {
+		const { harness } = await setup();
+		const result = await run(
+			harness,
+			`
+			const model = await models.getModelOfType("classifier", "scorer", "judge");
+			const failed = await models.classify(model, { state: { text: "explode" }, questions: ${questions} });
+			const attempt = async (fn) => { try { await fn(); return "ok"; } catch (error) { return error.message; } };
+			return {
+				failed: [failed.stopReason, failed.errorMessage],
+				badType: await attempt(() => models.getModelsOfType("video")),
+				unknown: await attempt(() => models.classify({ provider: "scorer", id: "nope" }, {})),
+				noModel: await attempt(() => models.classify("judge", {})),
+			};
+		`,
+		);
+		expect(result.isError).toBe(false);
+		const value = JSON.parse(resultText(result));
+		expect(value.failed).toEqual(["error", "classifier exploded"]);
+		expect(value.badType).toContain('Unknown model type "video"');
+		expect(value.unknown).toBe('Unknown classifier model "scorer/nope"');
+		expect(value.noModel).toContain("expects a model");
+		const details = result.details as unknown as CodemodeToolDetails;
+		expect(details.calls.map((call) => [call.name, call.status, call.error])).toEqual([
+			["models.classify", "error", "classifier exploded"],
+		]);
 	});
 });

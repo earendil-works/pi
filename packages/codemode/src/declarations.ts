@@ -11,7 +11,7 @@ export interface RenderDeclarationsOptions {
 /**
  * Render TypeScript declarations for the script-visible API, for use in a model-facing
  * description. Tools become members of `declare const tools`, globals become
- * `declare function` statements. Descriptions become doc comments; schemas become types
+ * `declare function` statements, and `ns.member` globals members of `declare const ns`. Descriptions become doc comments; schemas become types
  * (`unknown` where a schema is missing or uses features TypeScript cannot express, such as
  * `$ref`).
  *
@@ -33,13 +33,26 @@ export function renderDeclarations(options: RenderDeclarationsOptions): string {
 		const members = tools.map((tool) => renderFunction(propertyKey(tool.name), tool, INDENT));
 		sections.push(`declare const tools: {\n${members.join("\n")}\n};`);
 	}
+	const namespaces = new Map<string, string[]>();
 	for (const global of options.globals ?? []) {
-		sections.push(renderFunction(`declare function ${global.name}`, global, ""));
+		const dot = global.name.indexOf(".");
+		if (dot === -1) {
+			sections.push(renderFunction(`declare function ${global.name}`, global, ""));
+			continue;
+		}
+		const namespace = global.name.slice(0, dot);
+		const members = namespaces.get(namespace) ?? [];
+		if (members.length === 0) namespaces.set(namespace, members);
+		members.push(renderFunction(global.name.slice(dot + 1), global, INDENT));
+	}
+	for (const [namespace, members] of namespaces) {
+		sections.push(`declare const ${namespace}: {\n${members.join("\n")}\n};`);
 	}
 	return sections.join("\n\n");
 }
 
 function renderFunction(head: string, tool: CodemodeTool, indent: string): string {
+	if (tool.signature !== undefined) return `${docComment(tool.description, indent)}${indent}${head}${tool.signature};`;
 	const input = tool.inputSchema === undefined ? "unknown" : schemaToType(tool.inputSchema, indent);
 	const output = tool.outputSchema === undefined ? "unknown" : schemaToType(tool.outputSchema, indent);
 	const optional = input === "unknown" || isEmptyObjectSchema(tool.inputSchema) ? "?" : "";
