@@ -577,3 +577,8 @@ export function getSessionsDir(): string {
 export function getDebugLogPath(): string {
 	return join(getAgentDir(), `${APP_NAME}-debug.log`);
 }
+
+/** Get path to the log of output captured while the interactive TUI owns the terminal */
+export function getCapturedOutputLogPath(): string {
+	return join(getAgentDir(), `${APP_NAME}-captured-output.log`);
+}

@@ -20,6 +20,7 @@ import {
 import type {
 	AutocompleteItem,
 	AutocompleteProvider,
+	CapturedOutputStream,
 	EditorComponent,
 	Keybinding,
 	KeyId,
@@ -58,6 +59,7 @@ import {
 	CONFIG_DIR_NAME,
 	getAgentDir,
 	getAuthPath,
+	getCapturedOutputLogPath,
 	getDebugLogPath,
 	getDocsPath,
 	VERSION,
@@ -461,6 +463,9 @@ export class InteractiveMode {
 	// Status line tracking (for mutating immediately-sequential status updates)
 	private lastStatusSpacer: Spacer | undefined = undefined;
 	private lastStatusText: Text | undefined = undefined;
+	private capturedOutputSpacer: Spacer | undefined = undefined;
+	private capturedOutputText: Text | undefined = undefined;
+	private capturedOutputCount = 0;
 	private managedToolStatusStarted = false;
 
 	// Streaming message tracking
@@ -582,6 +587,7 @@ export class InteractiveMode {
 			terminal: options.terminal,
 			onRightClickPaste: this.onRightClickPaste,
 			fullscreenCopyOnSelect: this.settingsManager.getFullscreenCopyOnSelect(),
+			onCapturedOutput: (text, stream) => this.handleCapturedTerminalOutput(text, stream),
 		});
 		this.ui = createInteractiveTuiReference(() => this.renderer);
 		this.ui.setClearOnShrink(this.settingsManager.getClearOnShrink());
@@ -3710,6 +3716,43 @@ export class InteractiveMode {
 		this.chatContainer.addChild(text);
 		this.lastStatusSpacer = spacer;
 		this.lastStatusText = text;
+		this.ui.requestRender();
+	}
+
+	/**
+	 * Surface writes captured while the TUI owns the terminal (see ProcessTerminal
+	 * output capture), e.g. console output from extension code. The captured text
+	 * is appended verbatim to the capture log and shown in the chat so diagnostics
+	 * stay available without corrupting rendered frames. Consecutive captured
+	 * writes update the previous entry instead of appending new ones.
+	 */
+	private handleCapturedTerminalOutput(text: string, stream: CapturedOutputStream): void {
+		const message = text.replace(/\n+$/u, "");
+		if (message === "") return;
+		const logPath = getCapturedOutputLogPath();
+		try {
+			fs.mkdirSync(path.dirname(logPath), { recursive: true });
+			fs.appendFileSync(logPath, text);
+		} catch {
+			// A failing log write must not throw back into the captured writer;
+			// the chat entry below still surfaces the output.
+		}
+		this.capturedOutputCount += 1;
+		const detail = theme.fg("muted", `Captured output ×${this.capturedOutputCount} · full log: ${logPath}`);
+		const body = `${theme.fg(stream === "stderr" ? "warning" : "dim", message)}\n${detail}`;
+		const children = this.chatContainer.children;
+		const last = children.length > 0 ? children[children.length - 1] : undefined;
+		const secondLast = children.length > 1 ? children[children.length - 2] : undefined;
+		if (last && secondLast && last === this.capturedOutputText && secondLast === this.capturedOutputSpacer) {
+			this.capturedOutputText.setText(body);
+		} else {
+			const spacer = new Spacer(1);
+			const entry = new Text(body, 1, 0);
+			this.chatContainer.addChild(spacer);
+			this.chatContainer.addChild(entry);
+			this.capturedOutputSpacer = spacer;
+			this.capturedOutputText = entry;
+		}
 		this.ui.requestRender();
 	}
 
