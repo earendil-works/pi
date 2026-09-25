@@ -56,7 +56,7 @@ describe("theme styles", () => {
 
 	it("loads OKHSL theme values, including through variables", () => {
 		const theme = loadTheme("dark", (json) => {
-			json.vars = { brand: "okhsl(250 60% 55%)" };
+			json.vars = { ...json.vars, brand: "okhsl(250 60% 55%)" };
 			json.colors.accent = "brand";
 			json.colors.error = "okhsl(20 90% 60%)";
 		});
