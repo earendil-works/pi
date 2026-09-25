@@ -15,14 +15,17 @@ export {
 	type Color,
 	type ColorMixSpace,
 	colorToHex,
+	colorToOkhsl,
 	colorToOklch,
 	colorToRgb,
 	foregroundAnsi,
 	type IndexedColor,
 	indexedColor,
 	mixColors,
+	type OkhslChannels,
 	type OklchChannels,
 	type OklchColorValue,
+	okhslColor,
 	oklchColor,
 	parseColor,
 	type RgbColorValue,
@@ -101,6 +104,7 @@ export {
 export { type RenderLatexOptions, renderLatex } from "./latex.ts";
 // Native platform integration
 export { getNativeClipboard, type NativeClipboard } from "./native-platform.ts";
+export { oklabToOkhslLightness } from "./oklab.ts";
 // Input buffering for batch splitting
 export { StdinBuffer, type StdinBufferEventMap, type StdinBufferOptions } from "./stdin-buffer.ts";
 // Terminal interface and implementations

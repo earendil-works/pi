@@ -1,13 +1,18 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { colorToHex, styleText } from "@earendil-works/pi-tui";
+import { colorToHex, okhslColor, styleText } from "@earendil-works/pi-tui";
 import { afterEach, describe, expect, it } from "vitest";
 import { loadThemeFromPath, setTerminalColors } from "../src/modes/interactive/theme/theme.ts";
 
 const tempDirs: string[] = [];
 
-type ThemeFile = { name: string; appearance?: "dark" | "light"; colors: Record<string, string | number> };
+type ThemeFile = {
+	name: string;
+	appearance?: "dark" | "light";
+	vars?: Record<string, string | number>;
+	colors: Record<string, string | number>;
+};
 
 /** Load a copy of a built-in theme, modified by `edit`. */
 function loadTheme(base: "dark" | "light", edit: (theme: ThemeFile) => void = () => {}) {
@@ -47,6 +52,16 @@ describe("theme styles", () => {
 			json.colors.accent = "oklch(62% 0.1 200)";
 		});
 		expect(theme.colors.accent).toEqual({ kind: "oklch", l: 0.62, c: 0.1, h: 200 });
+	});
+
+	it("loads OKHSL theme values, including through variables", () => {
+		const theme = loadTheme("dark", (json) => {
+			json.vars = { brand: "okhsl(250 60% 55%)" };
+			json.colors.accent = "brand";
+			json.colors.error = "okhsl(20 90% 60%)";
+		});
+		expect(colorToHex(theme.colors.accent)).toBe(colorToHex(okhslColor(250, 0.6, 0.55)));
+		expect(colorToHex(theme.colors.error)).toBe(colorToHex(okhslColor(20, 0.9, 0.6)));
 	});
 
 	it("detects the appearance unless it is declared", () => {

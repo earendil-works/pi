@@ -29,7 +29,7 @@ import type { SourceInfo } from "../../../core/source-info.ts";
 import { closeWatcher, watchWithErrorHandler } from "../../../utils/fs-watch.ts";
 import { highlight, supportsLanguage } from "../../../utils/syntax-highlight.ts";
 import { stripBom } from "../../../utils/text.ts";
-import { generateSystemThemeColors, SYSTEM_THEME_NAME, terminalAppearance } from "./system-theme.ts";
+import { generateSystemThemeColors, relativeLuminance, SYSTEM_THEME_NAME, terminalAppearance } from "./system-theme.ts";
 
 export { SYSTEM_THEME_NAME } from "./system-theme.ts";
 
@@ -138,7 +138,7 @@ function resolveVarRefs(
 	vars: Record<string, ColorValue>,
 	visited = new Set<string>(),
 ): string | number {
-	if (typeof value === "number" || value === "" || value.startsWith("#") || /^oklch\(/i.test(value)) {
+	if (typeof value === "number" || value === "" || value.startsWith("#") || /^ok(lch|hsl)\(/i.test(value)) {
 		return value;
 	}
 	if (visited.has(value)) {
@@ -691,19 +691,11 @@ function getColorFgBgBackgroundIndex(colorfgbg: string): number | undefined {
 	return undefined;
 }
 
-function getRgbColorLuminance({ r, g, b }: RgbColor): number {
-	const toLinear = (channel: number) => {
-		const value = channel / 255;
-		return value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
-	};
-	return 0.2126 * toLinear(r) + 0.7152 * toLinear(g) + 0.0722 * toLinear(b);
-}
-
 /** Dark or light from the `COLORFGBG` environment variable some terminals set, or undefined without it. */
 export function detectColorFgBgTheme(env: NodeJS.ProcessEnv = process.env): TerminalTheme | undefined {
 	const bg = getColorFgBgBackgroundIndex(env.COLORFGBG || "");
 	if (bg === undefined) return undefined;
-	return getRgbColorLuminance(colorToRgb(indexedColor(bg))) >= 0.5 ? "light" : "dark";
+	return relativeLuminance(colorToRgb(indexedColor(bg))) >= 0.5 ? "light" : "dark";
 }
 
 /**
@@ -931,12 +923,13 @@ export function getThemeExportColors(themeName?: string): {
 		if (!exportSection) return {};
 
 		const vars = themeJson.vars ?? {};
-		// Export colors end up in CSS, which understands hex, rgb() and oklch() values directly.
+		// Export colors end up in CSS, which understands hex and oklch() values directly but not okhsl().
 		const resolve = (value: ColorValue | undefined): string | undefined => {
 			if (value === undefined) return undefined;
 			const resolved = resolveVarRefs(value, vars);
 			if (typeof resolved === "number") return colorToHex(indexedColor(resolved));
 			if (resolved === "") return undefined;
+			if (/^okhsl\(/i.test(resolved)) return colorToHex(parseColor(resolved));
 			return resolved;
 		};
 

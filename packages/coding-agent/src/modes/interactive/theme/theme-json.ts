@@ -11,7 +11,7 @@ import { type Static, Type } from "typebox";
 import { Compile } from "typebox/compile";
 
 const ColorValueSchema = Type.Union([
-	Type.String(), // hex, OKLCH, var ref "primary", or empty ""
+	Type.String(), // hex, OKLCH, OKHSL, var ref "primary", or empty ""
 	Type.Integer({ minimum: 0, maximum: 255 }), // 256-color index
 ]);
 

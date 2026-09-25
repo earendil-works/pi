@@ -18,8 +18,15 @@
  * - nothing: ANSI palette indices and the default colors, which the terminal renders itself.
  */
 
-import { colorToOklch, type RgbColor, rgbColor } from "@earendil-works/pi-tui";
-import { hexToOkhsl, okhslToHex, toe } from "./okhsl.ts";
+import {
+	colorToOkhsl,
+	colorToOklch,
+	type OkhslChannels,
+	okhslColor,
+	oklabToOkhslLightness,
+	type RgbColor,
+	rgbColor,
+} from "@earendil-works/pi-tui";
 import type { ThemeAppearance, ThemeBg, ThemeColor, ThemeToken } from "./theme.ts";
 
 export const SYSTEM_THEME_NAME = "system";
@@ -430,14 +437,6 @@ function hexOf({ r, g, b }: RgbColor): string {
 	return `#${[r, g, b].map((channel) => Math.round(channel).toString(16).padStart(2, "0")).join("")}`;
 }
 
-function rgbOf(hex: string): RgbColor {
-	return {
-		r: Number.parseInt(hex.slice(1, 3), 16),
-		g: Number.parseInt(hex.slice(3, 5), 16),
-		b: Number.parseInt(hex.slice(5, 7), 16),
-	};
-}
-
 /** Saturation weight at a lightness: a Gaussian (center 0.5, sigma 0.25), 0 at black and white, 1 in the middle. */
 function bellWeight(lightness: number): number {
 	const gaussian = (x: number): number => Math.exp(-((x - 0.5) ** 2) / (2 * 0.25 ** 2));
@@ -464,26 +463,25 @@ export function generateSystemThemeColors(input: SystemThemeInput): SystemThemeC
 	const saturation = clamp(input.saturation ?? 1, 0, 1);
 	const { background, foreground } = input;
 	if (!background) return indexedColors(saturation, input.appearanceHint);
-	const palette = input.palette?.length === 16 ? input.palette.map((color) => hexToOkhsl(hexOf(color))) : undefined;
+	const palette = input.palette?.length === 16 ? input.palette.map(okhslOf) : undefined;
 
 	const appearance = terminalAppearance(background, foreground);
 	const lighter = appearance === "dark";
 	const extreme = lighter ? 1 : 0;
+	const backgroundL = oklabLightness(background);
 
 	/**
-	 * A token's color at an OKHSL lightness. With a palette, the palette color's saturation applies at its
+	 * A token's color at an OKLab lightness. With a palette, the palette color's saturation applies at its
 	 * own lightness and falls off toward black and white along the family's curve, never rising above it.
 	 */
-	const paint = (token: ThemeToken, lightness: number): string => {
+	const paint = (token: ThemeToken, oklabL: number): RgbColor => {
+		const lightness = oklabToOkhslLightness(oklabL);
 		const family: Family = FAMILIES[TOKEN_FAMILIES[token]];
 		if (!palette) {
 			const { min, max } = family.saturation;
-			return okhslToHex(family.hue, (min + (max - min) * bellWeight(lightness)) * saturation, lightness);
+			return okhslColor(family.hue, (min + (max - min) * bellWeight(lightness)) * saturation, lightness);
 		}
-		const source = palette[TOKEN_SLOTS[token] ?? family.slot];
-		const anchor = saturationCurve(family, source.lightness);
-		const falloff = anchor > 0 ? Math.min(1, saturationCurve(family, lightness) / anchor) : 1;
-		return okhslToHex(source.hue, source.saturation * falloff * saturation, lightness);
+		return anchored(palette[TOKEN_SLOTS[token] ?? family.slot], family, lightness, saturation);
 	};
 
 	/**
@@ -505,34 +503,33 @@ export function generateSystemThemeColors(input: SystemThemeInput): SystemThemeC
 	 * minimum on it. This only matters for backgrounds near mid-gray, where it barely does on the background.
 	 */
 	const extremeText = lighter ? { r: 255, g: 255, b: 255 } : { r: 0, g: 0, b: 0 };
-	const readable = (color: string) => wcagContrast(extremeText, rgbOf(color)) >= TEXT_MINIMUM_WCAG_CONTRAST;
-	const backgroundL = oklabLightness(background);
-	const limitPanel = (token: ThemeToken, l: number): string => {
-		const color = paint(token, toe(l));
+	const readable = (color: RgbColor) => wcagContrast(extremeText, color) >= TEXT_MINIMUM_WCAG_CONTRAST;
+	const limitPanel = (token: ThemeToken, l: number): RgbColor => {
+		const color = paint(token, l);
 		if (readable(color)) return color;
 		let [low, high] = [backgroundL, l];
 		for (let index = 0; index < 20; index++) {
 			const middle = (low + high) / 2;
-			if (readable(paint(token, toe(middle)))) low = middle;
+			if (readable(paint(token, middle))) low = middle;
 			else high = middle;
 		}
-		return paint(token, toe(low));
+		return paint(token, low);
 	};
 
-	const solve = (t: number): Map<string, string> | undefined => {
-		const colors = new Map<string, string>([["background", hexOf(background)]]);
+	const solve = (t: number): Map<Surface | ThemeToken, RgbColor> | undefined => {
+		const colors = new Map<Surface | ThemeToken, RgbColor>([["background", background]]);
 		for (const token of SOLVE_ORDER) {
 			const targets: number[] = [];
 			for (const rule of RULES) {
 				if (rule.token !== token) continue;
 				for (const surface of rule.on) {
-					const value = target(rule.level, oklabLightness(rgbOf(colors.get(surface) ?? hexOf(background))), t);
+					const value = target(rule.level, oklabLightness(colors.get(surface) ?? background), t);
 					if (value === undefined || value < 0 || value > 1) return undefined;
 					targets.push(value);
 				}
 			}
 			const l = lighter ? Math.max(...targets) : Math.min(...targets);
-			colors.set(token, PANELS.includes(token as ThemeBg) ? limitPanel(token, l) : paint(token, toe(l)));
+			colors.set(token, PANELS.includes(token as ThemeBg) ? limitPanel(token, l) : paint(token, l));
 		}
 		return colors;
 	};
@@ -551,64 +548,71 @@ export function generateSystemThemeColors(input: SystemThemeInput): SystemThemeC
 		}
 		relaxation = high;
 	}
-	const solved = colors ?? new Map<string, string>();
-
-	// Body text uses the terminal's own foreground where it is clearly stronger than muted text; otherwise
-	// the foreground's hue at just enough lightness.
-	if (foreground) {
-		const foregroundL = oklabLightness(foreground);
-		const foregroundOkhsl = hexToOkhsl(hexOf(foreground));
-		for (const token of FOREGROUND_TOKENS) {
-			const surfaces = RULES.filter((rule) => rule.token === token).flatMap((rule) => rule.on);
-			const targets = surfaces.map((surface) =>
-				target(FOREGROUND_LEVEL, oklabLightness(rgbOf(solved.get(surface) ?? hexOf(background))), relaxation),
-			);
-			if (targets.some((value) => value === undefined || value < 0 || value > 1)) continue;
-			const needed = lighter ? Math.max(...(targets as number[])) : Math.min(...(targets as number[]));
-			if (lighter ? foregroundL >= needed : foregroundL <= needed) {
-				solved.set(token, "");
-				continue;
-			}
-			const neutral: Family = FAMILIES.neutral;
-			const anchor = saturationCurve(neutral, foregroundOkhsl.lightness);
-			const falloff = anchor > 0 ? Math.min(1, saturationCurve(neutral, toe(needed)) / anchor) : 1;
-			solved.set(
-				token,
-				okhslToHex(foregroundOkhsl.hue, foregroundOkhsl.saturation * falloff * saturation, toe(needed)),
-			);
-		}
-	}
-
-	// Body text keeps at least 4.5:1 on the surfaces it is drawn on, even on relaxed mid-gray backgrounds.
-	for (const token of FOREGROUND_TOKENS) {
-		const value = solved.get(token);
-		if (!value) continue;
-		const surfaces = RULES.filter((rule) => rule.token === token).flatMap((rule) =>
-			rule.on.map((surface) => rgbOf(solved.get(surface) ?? hexOf(background))),
+	const solved = colors ?? new Map<Surface | ThemeToken, RgbColor>();
+	const surfacesOf = (token: ThemeToken) =>
+		RULES.filter((rule) => rule.token === token).flatMap((rule) =>
+			rule.on.map((surface) => solved.get(surface) ?? background),
 		);
-		solved.set(token, withTextContrast(value, surfaces, lighter));
-	}
 
 	const result = {} as Record<ThemeToken, string | number>;
-	for (const token of Object.keys(TOKEN_FAMILIES) as ThemeToken[]) result[token] = solved.get(token) ?? "";
+	for (const token of Object.keys(TOKEN_FAMILIES) as ThemeToken[]) {
+		const color = solved.get(token);
+		result[token] = color ? hexOf(color) : "";
+	}
+
+	for (const token of FOREGROUND_TOKENS) {
+		const surfaces = surfacesOf(token);
+		// Body text uses the terminal's own foreground where it is clearly stronger than muted text; otherwise
+		// the foreground's hue at just enough lightness.
+		let text = solved.get(token);
+		if (foreground) {
+			const targets = surfaces.map((surface) => target(FOREGROUND_LEVEL, oklabLightness(surface), relaxation));
+			if (targets.every((value) => value !== undefined && value >= 0 && value <= 1)) {
+				const needed = lighter ? Math.max(...(targets as number[])) : Math.min(...(targets as number[]));
+				const foregroundL = oklabLightness(foreground);
+				if (lighter ? foregroundL >= needed : foregroundL <= needed) {
+					result[token] = "";
+					continue;
+				}
+				text = anchored(okhslOf(foreground), FAMILIES.neutral, oklabToOkhslLightness(needed), saturation);
+			}
+		}
+		// Body text keeps at least 4.5:1 on the surfaces it is drawn on, even on relaxed mid-gray backgrounds.
+		if (text) result[token] = hexOf(withTextContrast(text, surfaces, lighter));
+	}
 	return { colors: result, dim: [], appearance };
 }
 
+function okhslOf({ r, g, b }: RgbColor): OkhslChannels {
+	return colorToOkhsl(rgbColor(r, g, b));
+}
+
+/**
+ * A source color's hue at another OKHSL lightness. Its saturation applies at its own lightness and falls off
+ * toward black and white along the family's saturation curve, never rising above it.
+ */
+function anchored(source: OkhslChannels, family: Family, lightness: number, saturation: number): RgbColor {
+	const anchor = saturationCurve(family, source.l);
+	const falloff = anchor > 0 ? Math.min(1, saturationCurve(family, lightness) / anchor) : 1;
+	return okhslColor(source.h, source.s * falloff * saturation, lightness);
+}
+
 /** Move a text color toward white or black until it reaches the WCAG minimum on every surface. */
-function withTextContrast(hex: string, surfaces: RgbColor[], lighter: boolean): string {
-	const meets = (color: string) =>
-		surfaces.every((surface) => wcagContrast(rgbOf(color), surface) >= TEXT_MINIMUM_WCAG_CONTRAST);
-	if (meets(hex)) return hex;
-	const { hue, saturation, lightness } = hexToOkhsl(hex);
+function withTextContrast(color: RgbColor, surfaces: RgbColor[], lighter: boolean): RgbColor {
+	const meets = (candidate: RgbColor) =>
+		surfaces.every((surface) => wcagContrast(candidate, surface) >= TEXT_MINIMUM_WCAG_CONTRAST);
+	if (meets(color)) return color;
+	const { h, s, l } = okhslOf(color);
+	const at = (lightness: number) => okhslColor(h, s, lightness);
 	const extreme = lighter ? 1 : 0;
-	if (!meets(okhslToHex(hue, saturation, extreme))) return okhslToHex(hue, saturation, extreme);
-	let [low, high] = [lightness, extreme];
+	if (!meets(at(extreme))) return at(extreme);
+	let [low, high] = [l, extreme];
 	for (let index = 0; index < 20; index++) {
 		const middle = (low + high) / 2;
-		if (meets(okhslToHex(hue, saturation, middle))) high = middle;
+		if (meets(at(middle))) high = middle;
 		else low = middle;
 	}
-	return okhslToHex(hue, saturation, high);
+	return at(high);
 }
 
 /**

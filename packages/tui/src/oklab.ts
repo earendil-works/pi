@@ -1,8 +1,8 @@
 /**
- * OKHSL <-> sRGB conversion.
+ * Oklab and OKHSL <-> sRGB conversion. `colors.ts` builds its OKLCH, OKHSL, and color mixing on it.
  *
- * OKHSL is Björn Ottosson's color space built on Oklab: saturation is relative to the sRGB gamut at each
- * hue and lightness. This is a port of his reference implementation (https://bottosson.github.io/posts/colorpicker/),
+ * Oklab and OKHSL are Björn Ottosson's color spaces; OKHSL's saturation is relative to the sRGB gamut at
+ * each hue and lightness. This is a port of his reference implementation (https://bottosson.github.io/posts/colorpicker/),
  * Copyright (c) 2021 Björn Ottosson, used under the MIT license:
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy of this software and
@@ -14,25 +14,13 @@
  * KIND, EXPRESS OR IMPLIED.
  */
 
+import type { RgbColor } from "./terminal-colors.ts";
+
 type Vector = [number, number, number];
 type Matrix = [Vector, Vector, Vector];
 
 const multiply = (m: Matrix, [x, y, z]: Vector): Vector =>
 	m.map((row) => row[0] * x + row[1] * y + row[2] * z) as Vector;
-
-// ============================================================================
-// Hex
-// ============================================================================
-
-/** sRGB channels (0-1) of a `#rrggbb` color. */
-function channels(hex: string): Vector {
-	return [1, 3, 5].map((index) => parseInt(hex.slice(index, index + 2), 16) / 255) as Vector;
-}
-
-/** Format 0-255 channels as lowercase `#rrggbb`. */
-export function rgbToHex(r: number, g: number, b: number): string {
-	return `#${[r, g, b].map((value) => Math.round(value).toString(16).padStart(2, "0")).join("")}`;
-}
 
 // ============================================================================
 // OKHSL <-> sRGB
@@ -81,17 +69,26 @@ const K2 = 0.03;
 const K3 = (1 + K1) / (1 + K2);
 
 /** Oklab lightness to OKHSL lightness. */
-export const toe = (x: number): number => 0.5 * (K3 * x - K1 + Math.sqrt((K3 * x - K1) ** 2 + 4 * K2 * K3 * x));
+export const oklabToOkhslLightness = (x: number): number =>
+	0.5 * (K3 * x - K1 + Math.sqrt((K3 * x - K1) ** 2 + 4 * K2 * K3 * x));
 /** OKHSL lightness to Oklab lightness. */
-export const toeInverse = (x: number): number => (x * x + K1 * x) / (K3 * (x + K2));
+const okhslToOklabLightness = (x: number): number => (x * x + K1 * x) / (K3 * (x + K2));
 
-/** sRGB transfer function: linear to encoded channel. */
-const encode = (value: number): number => (value > 0.0031308 ? 1.055 * value ** (1 / 2.4) - 0.055 : 12.92 * value);
-/** Inverse sRGB transfer function: encoded to linear channel. */
-const decode = (value: number): number => (value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4);
+/** sRGB transfer function: linear to encoded channel, both 0-1. */
+export const linearToSrgb = (value: number): number =>
+	value > 0.0031308 ? 1.055 * value ** (1 / 2.4) - 0.055 : 12.92 * value;
+/** Inverse sRGB transfer function: encoded to linear channel, both 0-1. */
+export const srgbToLinear = (value: number): number =>
+	value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
 
-function oklabToLinearSrgb(lab: Vector): Vector {
+/** Oklab [L, a, b] to linear sRGB [r, g, b] (0-1, may leave the gamut). */
+export function oklabToLinearSrgb(lab: Vector): Vector {
 	return multiply(LMS_TO_LINEAR_SRGB, multiply(LAB_TO_LMS, lab).map((value) => value ** 3) as Vector);
+}
+
+/** Linear sRGB [r, g, b] (0-1) to Oklab [L, a, b]. */
+export function linearSrgbToOklab(rgb: Vector): Vector {
+	return multiply(LMS_TO_LAB, multiply(LINEAR_SRGB_TO_LMS, rgb).map(Math.cbrt) as Vector);
 }
 
 /** Rate of change of each cube-root LMS component along a chroma direction (a, b). */
@@ -172,13 +169,13 @@ function chromaStops(L: number, a: number, b: number): [number, number, number] 
 }
 
 /**
- * Convert OKHSL to a hex color, clipping out-of-gamut channels.
+ * Convert OKHSL to sRGB channels (0-255, rounded), clipping out-of-gamut channels.
  * @param hue Hue in degrees.
  * @param saturation Saturation, 0-1.
  * @param lightness Lightness, 0-1.
  */
-export function okhslToHex(hue: number, saturation: number, lightness: number): string {
-	const L = toeInverse(lightness);
+export function okhslToRgb(hue: number, saturation: number, lightness: number): RgbColor {
+	const L = okhslToOklabLightness(lightness);
 	let lab: Vector = [L, 0, 0];
 	if (L > 0 && L < 1 && saturation > 0) {
 		const angle = (2 * Math.PI * (((hue % 360) + 360) % 360)) / 360;
@@ -198,19 +195,20 @@ export function okhslToHex(hue: number, saturation: number, lightness: number): 
 		}
 		lab = [L, chroma * a, chroma * b];
 	}
-	const [r, g, b] = oklabToLinearSrgb(lab).map((value) => Math.min(1, Math.max(0, encode(value))) * 255);
-	return rgbToHex(r, g, b);
+	const [r, g, b] = oklabToLinearSrgb(lab).map((value) =>
+		Math.round(Math.min(1, Math.max(0, linearToSrgb(value))) * 255),
+	);
+	return { r, g, b };
 }
 
 /**
- * Convert a hex color to OKHSL.
+ * Convert sRGB channels (0-255) to OKHSL.
  * @returns Hue in degrees (0 for grays), saturation and lightness 0-1.
  */
-export function hexToOkhsl(hex: string): { hue: number; saturation: number; lightness: number } {
-	const lms = multiply(LINEAR_SRGB_TO_LMS, channels(hex).map(decode) as Vector).map(Math.cbrt) as Vector;
-	const [L, labA, labB] = multiply(LMS_TO_LAB, lms);
+export function rgbToOkhsl({ r, g, b }: RgbColor): { hue: number; saturation: number; lightness: number } {
+	const [L, labA, labB] = linearSrgbToOklab([r / 255, g / 255, b / 255].map(srgbToLinear) as Vector);
 	const chroma = Math.hypot(labA, labB);
-	const lightness = toe(L);
+	const lightness = oklabToOkhslLightness(L);
 	if (chroma < 1e-9 || lightness <= 0 || lightness >= 1) return { hue: 0, saturation: 0, lightness };
 
 	const hue = ((Math.atan2(labB, labA) * 180) / Math.PI + 360) % 360;
