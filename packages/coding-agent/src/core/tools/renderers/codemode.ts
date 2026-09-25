@@ -100,6 +100,10 @@ export const codemodeRenderers: Pick<
 			];
 			let text = styled.join("\n");
 			if (shown.length < lines.length) text += `\n${expandHint(theme, lines.length - shown.length, "lines")}`;
+			// The collapsed preview hides the truncation notice at the end, so name the file here.
+			const fullOutputPath = result.details?.fullOutputPath;
+			if (fullOutputPath && !options.expanded)
+				text += `\n${theme.fg("muted", `Full return value: ${fullOutputPath}`)}`;
 			sections.push(text);
 		}
 

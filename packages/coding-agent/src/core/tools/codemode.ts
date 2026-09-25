@@ -89,6 +89,8 @@ export interface CodemodeToolDetails {
 	logs: CodemodeLog[];
 	/** Number of leading output lines holding the JSON-serialized return value, if the value was not a string. */
 	jsonLines?: number;
+	/** Temp file with the full return value as JSON, when the output was truncated. */
+	fullOutputPath?: string;
 }
 
 export const codemodeToolSystemPromptContribution = {

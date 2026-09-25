@@ -3,6 +3,10 @@
  * codemode-execute.lazy.ts so the sandbox runtime only loads when a script runs.
  */
 
+import { randomBytes } from "node:crypto";
+import { writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { AnyModel, ClassifierContext, ImageContent, ModelType, TextContent } from "@earendil-works/pi-ai";
 import {
@@ -143,15 +147,39 @@ function formatFailure(result: Extract<CodemodeResult, { ok: false }>, calls: re
 	return parts.join("\n\n");
 }
 
-function formatOutput(text: string, logs: readonly CodemodeLog[]): string {
+/**
+ * Write the full return value to a temp file, like bash does for truncated output. Always JSON,
+ * including string values, so the file can be processed with jq.
+ */
+async function spillReturnValue(value: unknown): Promise<string | undefined> {
+	const path = join(tmpdir(), `pi-codemode-${randomBytes(8).toString("hex")}.json`);
+	try {
+		await writeFile(path, `${JSON.stringify(value, null, 2)}\n`);
+		return path;
+	} catch {
+		return undefined;
+	}
+}
+
+async function formatOutput(
+	value: unknown,
+	valueText: string,
+	logs: readonly CodemodeLog[],
+): Promise<{ text: string; fullOutputPath?: string }> {
 	const parts: string[] = [];
-	if (text) parts.push(text);
+	if (valueText) parts.push(valueText);
 	if (logs.length > 0) parts.push(`Console:\n${formatLogs(logs)}`);
-	if (parts.length === 0) return "(no return value)";
+	if (parts.length === 0) return { text: "(no return value)" };
 	const joined = parts.join("\n\n");
 	const truncation = truncateHead(joined);
-	if (!truncation.truncated) return joined;
-	return `${truncation.content}\n\n[Output truncated to ${truncation.outputLines} of ${truncation.totalLines} lines (${formatSize(DEFAULT_MAX_BYTES)} / ${DEFAULT_MAX_LINES} line limit). Return less data.]`;
+	if (!truncation.truncated) return { text: joined };
+	const head = `${truncation.content}\n\n[Output truncated to ${truncation.outputLines} of ${truncation.totalLines} lines (${formatSize(DEFAULT_MAX_BYTES)} / ${DEFAULT_MAX_LINES} line limit).`;
+	const fullOutputPath = value === undefined ? undefined : await spillReturnValue(value);
+	if (!fullOutputPath) return { text: `${head} Return less data.]` };
+	return {
+		text: `${head} Full return value as JSON: ${fullOutputPath} (use jq, or read with offset/limit)]`,
+		fullOutputPath,
+	};
 }
 
 /**
@@ -266,12 +294,14 @@ export async function executeCodemode(
 	}
 
 	const valueText = formatValue(result.value);
-	const content: (TextContent | ImageContent)[] = [{ type: "text", text: formatOutput(valueText, result.logs) }];
+	const output = await formatOutput(result.value, valueText, result.logs);
+	const content: (TextContent | ImageContent)[] = [{ type: "text", text: output.text }];
 	for (const index of [...attached].sort((a, b) => a - b)) {
 		content.push(images[index - 1]);
 	}
 	const details = snapshot();
 	if (valueText && typeof result.value !== "string") details.jsonLines = valueText.split("\n").length;
+	if (output.fullOutputPath) details.fullOutputPath = output.fullOutputPath;
 	return { content, details };
 }
 

@@ -1,3 +1,4 @@
+import { readFileSync, rmSync } from "node:fs";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { type ClassifierModel, type ClassifierResult, fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import type { ToolResultMessage } from "@earendil-works/pi-ai/compat";
@@ -308,6 +309,39 @@ describe("codemode options and store", () => {
 		const invalid = await run(harness, '// @options {"yield": 1}\nreturn 1');
 		expect(invalid.isError).toBe(true);
 		expect(resultText(invalid)).toContain('Unknown @options key "yield"');
+	});
+
+	it("spills truncated return values to a JSON temp file", async () => {
+		const harness = await setup();
+		const result = await run(
+			harness,
+			'console.log("rows ready");\nreturn Array.from({ length: 3000 }, (_, i) => ({ i, label: "row " + i }));',
+		);
+		const details = result.details as unknown as CodemodeToolDetails;
+		const path = details.fullOutputPath;
+		if (!path) throw new Error("No spill file");
+		try {
+			expect(path).toMatch(/pi-codemode-[0-9a-f]+\.json$/);
+			expect(resultText(result)).toContain(`Full return value as JSON: ${path}`);
+			const value = JSON.parse(readFileSync(path, "utf8")) as { i: number; label: string }[];
+			expect(value).toHaveLength(3000);
+			expect(value[2999]).toEqual({ i: 2999, label: "row 2999" });
+		} finally {
+			rmSync(path, { force: true });
+		}
+
+		// Strings are written as JSON strings too, so the file is always valid JSON.
+		const text = await run(harness, 'return "line\\n".repeat(3000);');
+		const textPath = (text.details as unknown as CodemodeToolDetails).fullOutputPath;
+		if (!textPath) throw new Error("No spill file");
+		try {
+			expect(JSON.parse(readFileSync(textPath, "utf8"))).toBe("line\n".repeat(3000));
+		} finally {
+			rmSync(textPath, { force: true });
+		}
+
+		const small = await run(harness, "return { ok: true };");
+		expect((small.details as unknown as CodemodeToolDetails).fullOutputPath).toBeUndefined();
 	});
 
 	it("keeps script line numbers when an options line is present", async () => {
