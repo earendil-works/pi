@@ -11,6 +11,7 @@ import {
 	type CallToolResult,
 	McpClient,
 	type McpRequestOptions,
+	McpSessionExpiredError,
 	type Tool as McpTool,
 	type McpTransport,
 	StdioTransport,
@@ -109,7 +110,7 @@ export class McpServerConnection implements McpToolCaller {
 			? createMcpAuthProvider({
 					serverUrl: url,
 					store: options.credentials.forServer(url),
-					settings: this.oauthSettings(),
+					settings: () => this.oauthSettings(),
 					onChallenge: (challenge) => {
 						this.challenge = challenge;
 					},
@@ -149,14 +150,23 @@ export class McpServerConnection implements McpToolCaller {
 	}
 
 	async callTool(name: string, args: Record<string, unknown>, options: McpRequestOptions): Promise<CallToolResult> {
-		const client = await this.getClient();
-		try {
-			return await client.callTool(name, args, options);
-		} catch (error) {
-			if (!(error instanceof McpOAuthAuthorizationRequiredError)) throw error;
-			await this.dropClient(client);
-			this.markNeedsAuth();
-			throw new Error(signInRequiredMessage(this.entry.name));
+		for (let attempt = 1; ; attempt++) {
+			const client = await this.getClient();
+			try {
+				return await client.callTool(name, args, options);
+			} catch (error) {
+				if (error instanceof McpSessionExpiredError && attempt === 1) {
+					// The server no longer knows the session (restart, deploy), so it did not run this call.
+					// Retry once on a new session. The old client is detached but not closed: closing would
+					// fail its other in-flight calls, which instead get the same 404 and retry the same way.
+					if (this.client === client) this.client = undefined;
+					continue;
+				}
+				if (!(error instanceof McpOAuthAuthorizationRequiredError)) throw error;
+				await this.dropClient(client);
+				this.markNeedsAuth();
+				throw new Error(signInRequiredMessage(this.entry.name));
+			}
 		}
 	}
 

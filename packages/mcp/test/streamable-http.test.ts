@@ -28,6 +28,7 @@ async function protocolHandler(
 	request: IncomingMessage,
 	response: ServerResponse,
 	requests: RecordedRequest[],
+	body?: Record<string, unknown>,
 ): Promise<void> {
 	if (request.method === "GET") {
 		requests.push({ method: "GET", headers: request.headers });
@@ -41,7 +42,7 @@ async function protocolHandler(
 		response.end();
 		return;
 	}
-	const message = JSON.parse(await readBody(request)) as Record<string, unknown>;
+	const message = body ?? (JSON.parse(await readBody(request)) as Record<string, unknown>);
 	requests.push({ method: request.method ?? "", headers: request.headers, message });
 	if (!("id" in message)) {
 		response.statusCode = 202;
@@ -135,6 +136,36 @@ describe("StreamableHttpTransport", () => {
 			body: "login required",
 			wwwAuthenticate: 'Bearer resource_metadata="https://example.com/meta"',
 		} satisfies Partial<McpAuthRequiredError>);
+	});
+
+	it("fails only the request whose SSE stream breaks", async () => {
+		let releaseSlow = () => {};
+		const slowGate = new Promise<void>((resolve) => {
+			releaseSlow = resolve;
+		});
+		const { url } = await startServer(async (request, response, requests) => {
+			if (request.method !== "POST") return protocolHandler(request, response, requests);
+			const message = JSON.parse(await readBody(request)) as Record<string, unknown>;
+			const name = (message.params as { name?: string } | undefined)?.name;
+			if (name === "broken") {
+				response.writeHead(200, { "content-type": "text/event-stream" });
+				response.end("data: not json\n\n");
+				return;
+			}
+			if (name === "slow") await slowGate;
+			await protocolHandler(request, response, requests, message);
+		});
+		const client = new McpClient({ name: "http-test", version: "1.0.0" });
+		const errors: Error[] = [];
+		client.onError((error) => errors.push(error));
+		await client.connect(new StreamableHttpTransport({ url, openGetStream: false }));
+
+		const slow = client.callTool("slow");
+		await expect(client.callTool("broken")).rejects.toThrow("MCP response stream failed");
+		releaseSlow();
+		expect(await slow).toEqual({ content: [{ type: "text", text: "hello" }] });
+		expect(errors).toHaveLength(1);
+		await client.close();
 	});
 
 	it("classifies an expired established session", async () => {

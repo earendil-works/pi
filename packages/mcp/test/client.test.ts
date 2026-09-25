@@ -189,6 +189,29 @@ describe("McpClient", () => {
 		await client.close();
 	});
 
+	it("reports transport errors without failing pending requests", async () => {
+		const { clientTransport, server } = await createServer();
+		const client = new McpClient({ name: "test-client", version: "1.0.0" });
+		await client.connect(clientTransport);
+		const errors: Error[] = [];
+		client.onError((error) => errors.push(error));
+		let respond = () => {};
+		server.setHandler(
+			"tools/call",
+			() =>
+				new Promise((resolve) => {
+					respond = () => resolve({ content: [] });
+				}),
+		);
+		const call = client.callTool("wait");
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		clientTransport.emitError(new Error("stray log line"));
+		respond();
+		expect(await call).toEqual({ content: [] });
+		expect(errors.map((error) => error.message)).toEqual(["stray log line"]);
+		await client.close();
+	});
+
 	it("answers roots/list and dispatches notifications", async () => {
 		const { clientTransport, server } = await createServer();
 		const client = new McpClient({

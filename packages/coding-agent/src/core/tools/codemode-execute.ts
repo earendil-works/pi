@@ -275,7 +275,9 @@ export async function executeCodemode(
 
 	let result: CodemodeResult;
 	try {
-		result = await sandbox.execute(code, { signal, store: readCodemodeStore(ctx.sessionManager.getBranch()) });
+		// Without a session (plain Agent or direct call) the store starts empty and writes are dropped.
+		const store = ctx.sessionManager ? readCodemodeStore(ctx.sessionManager.getBranch()) : {};
+		result = await sandbox.execute(code, { signal, store });
 	} finally {
 		await sandbox.close();
 	}

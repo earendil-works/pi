@@ -517,11 +517,18 @@ async function executeToolCalls(
 	const hasSequentialToolCall = toolCalls.some(
 		(tc) => currentContext.tools?.find((t) => t.name === tc.name)?.executionMode === "sequential",
 	);
+	const nestedQueue: NestedCallQueue = { tail: Promise.resolve() };
 	if (config.toolExecution === "sequential" || hasSequentialToolCall) {
-		return executeToolCallsSequential(currentContext, assistantMessage, toolCalls, config, signal, emit);
+		return executeToolCallsSequential(currentContext, assistantMessage, toolCalls, config, signal, emit, nestedQueue);
 	}
-	return executeToolCallsParallel(currentContext, assistantMessage, toolCalls, config, signal, emit);
+	return executeToolCallsParallel(currentContext, assistantMessage, toolCalls, config, signal, emit, nestedQueue);
 }
+
+/**
+ * Serializes nested calls that must not run concurrently (sequential tools, or all nested calls when
+ * the loop runs sequentially). Shared by all tool calls of one assistant message.
+ */
+type NestedCallQueue = { tail: Promise<void> };
 
 type ExecutedToolCallBatch = {
 	messages: ToolResultMessage[];
@@ -535,6 +542,7 @@ async function executeToolCallsSequential(
 	config: AgentLoopConfig,
 	signal: AbortSignal | undefined,
 	emit: AgentEventSink,
+	nestedQueue: NestedCallQueue,
 ): Promise<ExecutedToolCallBatch> {
 	const finalizedCalls: FinalizedToolCallOutcome[] = [];
 	const messages: ToolResultMessage[] = [];
@@ -563,6 +571,7 @@ async function executeToolCallsSequential(
 				preparation,
 				signal,
 				emitToolExecutionUpdate(preparation.toolCall, emit),
+				nestedQueue,
 			);
 			finalized = await finalizeExecutedToolCall(
 				currentContext,
@@ -598,6 +607,7 @@ async function executeToolCallsParallel(
 	config: AgentLoopConfig,
 	signal: AbortSignal | undefined,
 	emit: AgentEventSink,
+	nestedQueue: NestedCallQueue,
 ): Promise<ExecutedToolCallBatch> {
 	const finalizedCalls: FinalizedToolCallEntry[] = [];
 
@@ -641,6 +651,7 @@ async function executeToolCallsParallel(
 				preparation,
 				signal,
 				emitToolExecutionUpdate(preparation.toolCall, emit),
+				nestedQueue,
 			);
 			const finalized = await finalizeExecutedToolCall(
 				currentContext,
@@ -802,6 +813,8 @@ function emitToolExecutionUpdate(toolCall: AgentToolCall, emit: AgentEventSink):
 /**
  * Services handed to a tool while it runs. Nested calls get ids `<parent id>/<n>` and run through
  * the same prepare, execute, and finalize steps as model-issued calls, without emitting events.
+ * `nestedQueue` is undefined inside a call that already holds the queue, so its own nested calls
+ * do not wait on themselves.
  */
 function createToolContext(
 	currentContext: AgentContext,
@@ -809,6 +822,7 @@ function createToolContext(
 	config: AgentLoopConfig,
 	toolCall: AgentToolCall,
 	signal: AbortSignal | undefined,
+	nestedQueue: NestedCallQueue | undefined,
 ): AgentToolContext {
 	let nextNestedId = 1;
 	return {
@@ -828,6 +842,7 @@ function createToolContext(
 				},
 				options?.signal ?? signal,
 				options?.onUpdate,
+				nestedQueue,
 			),
 	};
 }
@@ -840,35 +855,53 @@ async function executeNestedToolCall(
 	toolCall: AgentToolCall,
 	signal: AbortSignal | undefined,
 	onUpdate: AgentToolUpdateCallback | undefined,
+	nestedQueue: NestedCallQueue | undefined,
 ): Promise<AgentToolCallOutcome> {
-	const preparation = await prepareToolCall(
-		currentContext,
-		assistantMessage,
-		toolCall,
-		config,
-		signal,
-		parentToolCall,
-	);
-	if (preparation.kind === "immediate") {
-		return { toolCall, result: preparation.result, isError: preparation.isError };
+	const exclusive =
+		nestedQueue &&
+		(config.toolExecution === "sequential" ||
+			currentContext.tools?.find((t) => t.name === toolCall.name)?.executionMode === "sequential");
+	let release: (() => void) | undefined;
+	if (exclusive) {
+		const previous = nestedQueue.tail;
+		nestedQueue.tail = new Promise((resolve) => {
+			release = resolve;
+		});
+		await previous;
 	}
-	const executed = await executePreparedToolCall(
-		currentContext,
-		assistantMessage,
-		config,
-		preparation,
-		signal,
-		(partialResult) => onUpdate?.(partialResult),
-	);
-	return finalizeExecutedToolCall(
-		currentContext,
-		assistantMessage,
-		preparation,
-		executed,
-		config,
-		signal,
-		parentToolCall,
-	);
+	try {
+		const preparation = await prepareToolCall(
+			currentContext,
+			assistantMessage,
+			toolCall,
+			config,
+			signal,
+			parentToolCall,
+		);
+		if (preparation.kind === "immediate") {
+			return { toolCall, result: preparation.result, isError: preparation.isError };
+		}
+		const executed = await executePreparedToolCall(
+			currentContext,
+			assistantMessage,
+			config,
+			preparation,
+			signal,
+			(partialResult) => onUpdate?.(partialResult),
+			exclusive ? undefined : nestedQueue,
+		);
+		return await finalizeExecutedToolCall(
+			currentContext,
+			assistantMessage,
+			preparation,
+			executed,
+			config,
+			signal,
+			parentToolCall,
+		);
+	} finally {
+		release?.();
+	}
 }
 
 async function executePreparedToolCall(
@@ -878,6 +911,7 @@ async function executePreparedToolCall(
 	prepared: PreparedToolCall,
 	signal: AbortSignal | undefined,
 	onUpdate: ToolUpdateSink,
+	nestedQueue: NestedCallQueue | undefined,
 ): Promise<ExecutedToolCallOutcome> {
 	const updateEvents: Promise<void>[] = [];
 	let acceptingUpdates = true;
@@ -891,7 +925,7 @@ async function executePreparedToolCall(
 				if (!acceptingUpdates) return;
 				updateEvents.push(Promise.resolve(onUpdate(partialResult)));
 			},
-			createToolContext(currentContext, assistantMessage, config, prepared.toolCall, signal),
+			createToolContext(currentContext, assistantMessage, config, prepared.toolCall, signal, nestedQueue),
 		);
 		acceptingUpdates = false;
 		await Promise.all(updateEvents);

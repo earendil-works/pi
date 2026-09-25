@@ -120,20 +120,23 @@ function createProvider(
  * Auth provider for MCP connections: sends the stored access token and refreshes it after a 401.
  * Throws `McpOAuthAuthorizationRequiredError` when the user has to sign in. `onChallenge` receives
  * the server's `WWW-Authenticate` challenge so sign-in can use its resource metadata URL and scope.
+ * `settings` is only called when a refresh is needed, so a secret that fails to resolve fails the
+ * refresh instead of the whole connection setup.
  */
 export function createMcpAuthProvider(options: {
 	serverUrl: string;
 	store: McpOAuthStateStore;
-	settings: McpOAuthSettings;
+	settings: () => McpOAuthSettings;
 	onChallenge: (challenge: OAuthChallenge) => void;
 }): AuthProvider {
-	const { serverUrl, store, settings } = options;
+	const { serverUrl, store } = options;
 	return {
 		token: async () => (await store.load())?.tokens?.access_token,
 		onUnauthorized: async (context) => {
 			options.onChallenge(parseWwwAuthenticate(context.response.headers.get("www-authenticate")));
 			const state = await store.load();
 			if (!state?.tokens?.refresh_token) throw new McpOAuthAuthorizationRequiredError();
+			const settings = options.settings();
 			const redirectUrl =
 				configuredRedirectUrl(settings) ??
 				registeredRedirectUrls(state.clientInformation)[0] ??

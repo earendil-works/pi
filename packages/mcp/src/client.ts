@@ -154,7 +154,8 @@ export class McpClient {
 		this.transport = transport;
 		this.disposers = [
 			transport.onMessage((message) => this.handleMessage(message)),
-			transport.onError((error) => this.handleTransportError(error)),
+			// Transport errors are reported only. Pending requests fail when the transport closes.
+			transport.onError((error) => this.emitError(error)),
 			transport.onClose(() => this.handleTransportClose()),
 		];
 
@@ -452,11 +453,6 @@ export class McpClient {
 			this.removePending(id, entry);
 			entry.reject(error);
 		}
-	}
-
-	private handleTransportError(error: Error): void {
-		this.rejectPending(error);
-		this.emitError(error);
 	}
 
 	private handleTransportClose(): void {

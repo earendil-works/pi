@@ -2242,6 +2242,46 @@ describe("nested tool calls", () => {
 		await stream.result();
 		expect(seen).toEqual([undefined, { secret: 2 }]);
 	});
+
+	it("serializes concurrent nested calls to sequential tools", async () => {
+		const schema = Type.Object({});
+		let active = 0;
+		let maxActive = { sequential: 0, parallel: 0 };
+		const makeTool = (name: "sequential" | "parallel"): AgentTool<typeof schema> => ({
+			name,
+			label: name,
+			description: name,
+			parameters: schema,
+			executionMode: name === "sequential" ? "sequential" : undefined,
+			async execute() {
+				active++;
+				maxActive = { ...maxActive, [name]: Math.max(maxActive[name], active) };
+				await new Promise((resolve) => setTimeout(resolve, 5));
+				active--;
+				return { content: [], details: {} };
+			},
+		});
+		const runner: AgentTool<typeof schema> = {
+			name: "runner",
+			label: "Runner",
+			description: "Runs other tools",
+			parameters: schema,
+			async execute(_id, _params, _signal, _onUpdate, context) {
+				await Promise.all([1, 2, 3].map(() => context!.executeTool("sequential", {})));
+				await Promise.all([1, 2, 3].map(() => context!.executeTool("parallel", {})));
+				return { content: [], details: {} };
+			},
+		};
+		const stream = agentLoop(
+			[createUserMessage("go")],
+			{ messages: [], tools: [makeTool("sequential"), makeTool("parallel"), runner] },
+			{ model: createModel(), convertToLlm: identityConverter },
+			undefined,
+			scriptedStream({ type: "toolCall", id: "call-1", name: "runner", arguments: {} }),
+		);
+		await stream.result();
+		expect(maxActive).toEqual({ sequential: 1, parallel: 3 });
+	});
 });
 
 describe("nestedOnly tools", () => {

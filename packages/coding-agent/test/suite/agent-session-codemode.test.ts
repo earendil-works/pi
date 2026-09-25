@@ -377,6 +377,19 @@ describe("codemode options and store", () => {
 		expect(storeEntries(harness)).toEqual([]);
 	});
 
+	it("runs without a session, starting from an empty store", async () => {
+		const tool = createCodemodeTool();
+		const toolCall = { type: "toolCall" as const, id: "direct", name: tool.name, arguments: {} };
+		const result = await tool.execute("direct", { code: increment }, undefined, undefined, {
+			toolCall,
+			tools: [],
+			executeTool: async () => {
+				throw new Error("unexpected nested call");
+			},
+		});
+		expect(result.content).toEqual([{ type: "text", text: "1" }]);
+	});
+
 	it("loads the values written on the current branch", async () => {
 		const harness = await setup();
 		await run(harness, increment);

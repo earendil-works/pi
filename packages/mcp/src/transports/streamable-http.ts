@@ -1,5 +1,13 @@
 import type { AuthProvider, McpFetch } from "../auth-provider.ts";
-import { type JsonRpcMessage, McpConnectionClosedError, parseJsonRpcMessage } from "../protocol/jsonrpc.ts";
+import {
+	isJsonRpcRequest,
+	isJsonRpcResponse,
+	JSON_RPC_ERROR_CODES,
+	type JsonRpcMessage,
+	McpConnectionClosedError,
+	parseJsonRpcMessage,
+	toError,
+} from "../protocol/jsonrpc.ts";
 import { DEFAULT_MAX_MESSAGE_BYTES, type McpTransport, TransportEvents } from "./transport.ts";
 
 const MAX_ERROR_BODY_BYTES = 8 * 1024;
@@ -201,7 +209,23 @@ export class StreamableHttpTransport extends TransportEvents implements McpTrans
 			return;
 		}
 		if (type === "text/event-stream" && response.body) {
-			void this.consumeSse(response.body).catch((error) => this.emitError(error));
+			const requestId = isJsonRpcRequest(message) ? message.id : undefined;
+			let answered = false;
+			void this.consumeSse(response.body, (received) => {
+				if (isJsonRpcResponse(received) && received.id === requestId) answered = true;
+			}).catch((error) => {
+				this.emitError(error);
+				if (requestId === undefined || answered || this.closed) return;
+				// Fail only the request this stream belongs to. The connection itself is still usable.
+				this.emitMessage({
+					jsonrpc: "2.0",
+					id: requestId,
+					error: {
+						code: JSON_RPC_ERROR_CODES.internalError,
+						message: `MCP response stream failed: ${toError(error).message}`,
+					},
+				});
+			});
 			return;
 		}
 		if (response.headers.get("content-length") === "0") return;
@@ -232,12 +256,17 @@ export class StreamableHttpTransport extends TransportEvents implements McpTrans
 		throw new McpHttpError(response.status, `MCP HTTP request failed with status ${response.status}`, body);
 	}
 
-	private async consumeSse(stream: ReadableStream<Uint8Array>): Promise<void> {
+	private async consumeSse(
+		stream: ReadableStream<Uint8Array>,
+		onMessage?: (message: JsonRpcMessage) => void,
+	): Promise<void> {
 		await consumeSseStream(stream, {
 			maxEventBytes: this.options.maxMessageBytes ?? DEFAULT_MAX_MESSAGE_BYTES,
 			onEvent: (event) => {
 				if (event.id) this.lastEventId = event.id;
-				this.emitMessage(parseJsonRpcMessage(JSON.parse(event.data)));
+				const message = parseJsonRpcMessage(JSON.parse(event.data));
+				onMessage?.(message);
+				this.emitMessage(message);
 			},
 		});
 	}

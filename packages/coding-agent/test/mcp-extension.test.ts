@@ -1,8 +1,12 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { type JsonRpcMessage, LATEST_PROTOCOL_VERSION, McpSessionExpiredError } from "@earendil-works/pi-mcp";
+import { createInMemoryTransportPair } from "@earendil-works/pi-mcp/testing";
 import { afterEach, describe, expect, it } from "vitest";
-import { loadMcpConfig } from "../src/extensions/mcp/config.ts";
+import { InMemoryAuthStorageBackend } from "../src/core/auth-storage.ts";
+import { loadMcpConfig, type McpServerEntry } from "../src/extensions/mcp/config.ts";
+import { McpOAuthCredentialStore, McpServerConnection } from "../src/extensions/mcp/runtime.ts";
 import { convertMcpResult, createMcpToolName } from "../src/extensions/mcp/tools.ts";
 
 // Config values are resolved at connect time, so the literal reference must survive loading.
@@ -91,5 +95,76 @@ describe("MCP tools", () => {
 		expect(() => convertMcpResult("docs", "t", { content: [{ type: "text", text: "nope" }], isError: true })).toThrow(
 			"nope",
 		);
+	});
+});
+
+describe("MCP connections", () => {
+	/** In-memory server that answers initialize, tools/list, and tools/call with "ok". */
+	function createTransport(options: { expireFirstCall?: boolean } = {}) {
+		const pair = createInMemoryTransportPair();
+		pair.server.onMessage((message) => {
+			if (!("id" in message) || !("method" in message)) return;
+			const result =
+				message.method === "initialize"
+					? {
+							protocolVersion: LATEST_PROTOCOL_VERSION,
+							capabilities: { tools: {} },
+							serverInfo: { name: "fake", version: "1.0.0" },
+						}
+					: message.method === "tools/list"
+						? { tools: [] }
+						: { content: [{ type: "text", text: "ok" }] };
+			queueMicrotask(() => void pair.server.send({ jsonrpc: "2.0", id: message.id, result }));
+		});
+		void pair.server.start();
+		if (options.expireFirstCall) {
+			const send = pair.client.send.bind(pair.client);
+			// Simulates the HTTP transport's 404 for a session the server no longer knows.
+			pair.client.send = async (message: JsonRpcMessage) => {
+				if ("method" in message && message.method === "tools/call") throw new McpSessionExpiredError("gone");
+				return send(message);
+			};
+		}
+		return pair.client;
+	}
+
+	function connect(entry: McpServerEntry, transports: (() => ReturnType<typeof createTransport>)[]) {
+		let opened = 0;
+		const connection = new McpServerConnection({
+			entry,
+			cwd: process.cwd(),
+			createTransport: () => transports[opened++](),
+			credentials: new McpOAuthCredentialStore(new InMemoryAuthStorageBackend()),
+			onTools: () => {},
+		});
+		return { connection, opened: () => opened };
+	}
+
+	it("starts a new session and retries once when the session expired", async () => {
+		const { connection, opened } = connect({ name: "fake", config: { command: "unused" }, source: "test" }, [
+			() => createTransport({ expireFirstCall: true }),
+			() => createTransport(),
+		]);
+		const results = await Promise.all([connection.callTool("echo", {}, {}), connection.callTool("echo", {}, {})]);
+		expect(results).toEqual([
+			{ content: [{ type: "text", text: "ok" }] },
+			{ content: [{ type: "text", text: "ok" }] },
+		]);
+		expect(opened()).toBe(2);
+		await connection.close();
+	});
+
+	it("resolves the OAuth client secret lazily", async () => {
+		const { connection } = connect(
+			{
+				name: "fake",
+				config: { url: "http://unused.invalid", oauth: { clientSecret: "!exit 1" } },
+				source: "test",
+			},
+			[() => createTransport()],
+		);
+		expect(await connection.callTool("echo", {}, {})).toEqual({ content: [{ type: "text", text: "ok" }] });
+		expect(() => connection.oauthSettings()).toThrow("oauth.clientSecret");
+		await connection.close();
 	});
 });
