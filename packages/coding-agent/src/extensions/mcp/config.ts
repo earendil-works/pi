@@ -10,10 +10,13 @@
  * {
  *   "mcpServers": {
  *     "filesystem": { "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "."] },
- *     "docs": { "url": "https://example.com/mcp", "headers": { "Authorization": "Bearer ${DOCS_TOKEN}" } }
+ *     "docs": { "url": "https://example.com/mcp", "headers": { "Authorization": "Bearer ${DOCS_TOKEN}" } },
+ *     "sentry": { "url": "https://mcp.sentry.dev/mcp" }
  *   }
  * }
  * ```
+ *
+ * HTTP servers without an `Authorization` header use OAuth when they answer 401 (`/mcp login`).
  */
 
 import { existsSync, readFileSync } from "node:fs";
@@ -45,11 +48,22 @@ export interface McpStdioServerConfig extends McpServerConfigBase {
 	cwd?: string;
 }
 
+/** OAuth client settings for servers that do not support dynamic client registration. */
+export interface McpOAuthConfig {
+	/** Pre-registered client id. Without it, pi registers a client with the authorization server. */
+	clientId?: string;
+	/** May reference environment variables (`${NAME}`) or commands (`!cmd`). */
+	clientSecret?: string;
+	/** Fixed loopback callback port, for clients registered with an exact redirect URI. */
+	callbackPort?: number;
+}
+
 export interface McpHttpServerConfig extends McpServerConfigBase {
 	type?: "http";
 	url: string;
 	/** Values may reference environment variables (`${NAME}`) or commands (`!cmd`). */
 	headers?: Record<string, string>;
+	oauth?: McpOAuthConfig;
 }
 
 export type McpServerConfig = McpStdioServerConfig | McpHttpServerConfig;
@@ -76,6 +90,20 @@ function isStringRecord(value: unknown): value is Record<string, string> {
 	return isRecord(value) && Object.values(value).every((entry) => typeof entry === "string");
 }
 
+function validateOAuth(value: unknown): string | undefined {
+	if (value === undefined) return undefined;
+	if (!isRecord(value)) return "oauth must be an object";
+	if (value.clientId !== undefined && typeof value.clientId !== "string") return "oauth.clientId must be a string";
+	if (value.clientSecret !== undefined && typeof value.clientSecret !== "string") {
+		return "oauth.clientSecret must be a string";
+	}
+	const port = value.callbackPort;
+	if (port !== undefined && (typeof port !== "number" || !Number.isInteger(port) || port < 1 || port > 65535)) {
+		return "oauth.callbackPort must be a port number";
+	}
+	return undefined;
+}
+
 function validateServer(name: string, value: unknown): McpServerConfig | string {
 	if (!SERVER_NAME.test(name)) return `invalid server name "${name}" (use letters, digits, "_" and "-")`;
 	if (!isRecord(value)) return `server "${name}" must be an object`;
@@ -93,6 +121,8 @@ function validateServer(name: string, value: unknown): McpServerConfig | string 
 		if (value.headers !== undefined && !isStringRecord(value.headers)) {
 			return `server "${name}": headers must map names to strings`;
 		}
+		const oauthError = validateOAuth(value.oauth);
+		if (oauthError) return `server "${name}": ${oauthError}`;
 		return value as unknown as McpHttpServerConfig;
 	}
 	if (typeof value.command === "string" && (type === undefined || type === "stdio")) {
