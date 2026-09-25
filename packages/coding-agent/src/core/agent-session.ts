@@ -129,6 +129,7 @@ import {
 	normalizeBuildSystemPromptOptions,
 } from "./system-prompt.ts";
 import { type BashOperations, createLocalBashOperations } from "./tools/bash.ts";
+import { CODEMODE_TOOL_NAME, createCodemodeDescription } from "./tools/codemode.ts";
 import { createAllToolDefinitions } from "./tools/index.ts";
 import { createToolDefinitionFromAgentTool } from "./tools/tool-definition-wrapper.ts";
 import { addUsageToTotals, createUsageTotals } from "./usage-totals.ts";
@@ -530,7 +531,7 @@ export class AgentSession {
 	 * happens here instead of in wrappers.
 	 */
 	private _installAgentToolHooks(): void {
-		this.agent.beforeToolCall = async ({ toolCall, args }) => {
+		this.agent.beforeToolCall = async ({ toolCall, args, parentToolCall }) => {
 			const runner = this._extensionRunner;
 			if (!runner.hasHandlers("tool_call")) {
 				return undefined;
@@ -541,6 +542,7 @@ export class AgentSession {
 					type: "tool_call",
 					toolName: toolCall.name,
 					toolCallId: toolCall.id,
+					...(parentToolCall ? { parentToolCallId: parentToolCall.id } : {}),
 					input: args as Record<string, unknown>,
 				});
 			} catch (err) {
@@ -551,16 +553,18 @@ export class AgentSession {
 			}
 		};
 
-		this.agent.afterToolCall = async ({ toolCall, args, result, isError }) => {
+		this.agent.afterToolCall = async ({ toolCall, args, result, isError, parentToolCall }) => {
 			const runner = this._extensionRunner;
 			const hookResult = runner.hasHandlers("tool_result")
 				? await runner.emitToolResult({
 						type: "tool_result",
 						toolName: toolCall.name,
 						toolCallId: toolCall.id,
+						...(parentToolCall ? { parentToolCallId: parentToolCall.id } : {}),
 						input: args as Record<string, unknown>,
 						content: result.content,
 						details: result.details,
+						...(result.structuredContent === undefined ? {} : { structuredContent: result.structuredContent }),
 						isError,
 						usage: result.usage,
 					})
@@ -578,9 +582,17 @@ export class AgentSession {
 				return undefined;
 			}
 
+			// Structured content that no longer matches replaced content is dropped rather than leaked.
+			let structuredContent = result.structuredContent;
+			if (hookResult && hookResult.structuredContent !== result.structuredContent) {
+				structuredContent = hookResult.structuredContent;
+			} else if (hookResult && hookResult.content !== result.content) {
+				structuredContent = undefined;
+			}
 			return {
 				content: normalizedContent,
 				details: hookResult?.details,
+				structuredContent,
 				isError: hookResult?.isError ?? isError,
 				usage: hookResult?.usage,
 			};
@@ -736,6 +748,14 @@ export class AgentSession {
 			for (const message of entry.messages) this._entryIdsByMessage.set(message, entry.sourceEntry.id);
 		}
 		this.agent.state.messages = projection.messages;
+	}
+
+	private _appendCustomEntry(customType: string, data: unknown): void {
+		const entryId = this.sessionManager.appendCustomEntry(customType, data);
+		const entry = this.sessionManager.getEntry(entryId);
+		if (entry) {
+			this._emit({ type: "entry_appended", entry });
+		}
 	}
 
 	private _applyBoundaryDrafts(manager: SessionManager, drafts: SessionBoundaryDraft[]): SessionEntry[] {
@@ -1280,17 +1300,29 @@ export class AgentSession {
 	 * Changes take effect on the next agent turn.
 	 */
 	setActiveToolsByName(toolNames: string[]): void {
-		const tools: AgentTool[] = [];
-		const validToolNames: string[] = [];
-		for (const name of toolNames) {
-			const tool = this._toolRegistry.get(name);
-			if (tool) {
-				tools.push(tool);
-				validToolNames.push(name);
-			}
-		}
+		const tools = this._resolveActiveTools(toolNames);
 		this.agent.state.tools = tools;
-		this._rebuildSystemPrompt(validToolNames);
+		this._rebuildSystemPrompt(tools.map((tool) => tool.name));
+	}
+
+	/**
+	 * Map tool names to registered tools, skipping unknown names. The built-in codemode tool gets a
+	 * description that declares the other resolved tools, so it changes with the active loadout.
+	 */
+	private _resolveActiveTools(toolNames: string[]): AgentTool[] {
+		const tools = toolNames.flatMap((name) => {
+			const tool = this._toolRegistry.get(name);
+			return tool ? [tool] : [];
+		});
+		const codemodeIndex = tools.findIndex((tool) => tool.name === CODEMODE_TOOL_NAME);
+		// Extension tools named codemode are left alone; built-in slots (including SDK base tool
+		// overrides) named codemode are assumed to be the codemode tool. Only the session's own
+		// codemode tool has model access, so overrides do not declare `models`.
+		if (codemodeIndex !== -1 && this._toolDefinitions.get(CODEMODE_TOOL_NAME)?.sourceInfo.source === "builtin") {
+			const description = createCodemodeDescription(tools, { models: this._baseToolsOverride === undefined });
+			tools[codemodeIndex] = { ...tools[codemodeIndex], description };
+		}
+		return tools;
 	}
 
 	/** Whether compaction or branch summarization is currently running */
@@ -1373,10 +1405,12 @@ export class AgentSession {
 
 	private _rebuildSystemPrompt(toolNames: string[]): void {
 		const validToolNames = toolNames.filter((name) => this._toolRegistry.has(name));
+		// Nested-only tools are not declared to the model, so the prompt does not describe them.
+		const isNestedOnly = (name: string) => this._toolRegistry.get(name)?.nestedOnly === true;
 		const toolSnippets: Record<string, string> = {};
 		for (const name of this._toolRegistry.keys()) {
 			const snippet = this._toolPromptSnippets.get(name);
-			if (snippet) toolSnippets[name] = snippet;
+			if (snippet && !isNestedOnly(name)) toolSnippets[name] = snippet;
 		}
 
 		const loaderSystemPrompt = this._resourceLoader.getSystemPrompt();
@@ -1393,7 +1427,7 @@ export class AgentSession {
 			appendSystemPrompt,
 			selectedTools: validToolNames,
 			toolSnippets,
-			toolGuidelines: Object.fromEntries(this._toolPromptGuidelines),
+			toolGuidelines: Object.fromEntries([...this._toolPromptGuidelines].filter(([name]) => !isNestedOnly(name))),
 		});
 	}
 
@@ -1412,10 +1446,7 @@ export class AgentSession {
 		messages: AgentMessage[] = this.agent.state.messages,
 	): SystemMessage | undefined {
 		options.selectedTools = [...new Set(options.selectedTools)].filter((name) => this._toolRegistry.has(name));
-		this.agent.state.tools = options.selectedTools.flatMap((name) => {
-			const tool = this._toolRegistry.get(name);
-			return tool ? [tool] : [];
-		});
+		this.agent.state.tools = this._resolveActiveTools(options.selectedTools);
 		const sections = diffSystemPromptSections(
 			getCurrentSystemMessage(messages)?.sections ?? {},
 			buildSystemPromptSections(options),
@@ -1457,10 +1488,7 @@ export class AgentSession {
 		const toolNames = (current.toolsAdded ?? [])
 			.map((tool) => tool.name)
 			.filter((name) => this._toolRegistry.has(name));
-		this.agent.state.tools = toolNames.flatMap((name) => {
-			const registered = this._toolRegistry.get(name);
-			return registered ? [registered] : [];
-		});
+		this.agent.state.tools = this._resolveActiveTools(toolNames);
 		this._rebuildSystemPrompt(toolNames);
 	}
 
@@ -3063,13 +3091,7 @@ export class AgentSession {
 						});
 					});
 				},
-				appendEntry: (customType, data) => {
-					const entryId = this.sessionManager.appendCustomEntry(customType, data);
-					const entry = this.sessionManager.getEntry(entryId);
-					if (entry) {
-						this._emit({ type: "entry_appended", entry });
-					}
-				},
+				appendEntry: (customType, data) => this._appendCustomEntry(customType, data),
 				setSessionName: (name) => {
 					this.setSessionName(name);
 				},
@@ -3252,6 +3274,10 @@ export class AgentSession {
 			: createAllToolDefinitions(this._cwd, {
 					read: { autoResizeImages },
 					bash: { commandPrefix: shellCommandPrefix, shellPath },
+					codemode: {
+						appendEntry: (customType, data) => this._appendCustomEntry(customType, data),
+						models: this._modelRuntime,
+					},
 				});
 
 		this._baseToolDefinitions = new Map(

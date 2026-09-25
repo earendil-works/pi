@@ -89,6 +89,11 @@ export interface BeforeToolCallResult {
 export interface AfterToolCallResult {
 	content?: (TextContent | ImageContent)[];
 	details?: unknown;
+	/**
+	 * If the key is present, replaces the tool result's structured content; an explicit `undefined`
+	 * clears it. Clear it when `content` is replaced with data the structured result no longer matches.
+	 */
+	structuredContent?: JsonValue;
 	isError?: boolean;
 	/** Usage from the final tool execution itself, if available. Not used for main LLM context accounting. */
 	usage?: Usage;
@@ -109,6 +114,11 @@ export interface BeforeToolCallContext {
 	args: unknown;
 	/** Current agent context at the time the tool call is prepared. */
 	context: AgentContext;
+	/**
+	 * Set when another tool issued this call through {@link AgentToolContext.executeTool}.
+	 * `toolCall` is then synthesized and does not appear in `assistantMessage`.
+	 */
+	parentToolCall?: AgentToolCall;
 }
 
 /** Context passed to `afterToolCall`. */
@@ -125,6 +135,8 @@ export interface AfterToolCallContext {
 	isError: boolean;
 	/** Current agent context at the time the tool call is finalized. */
 	context: AgentContext;
+	/** Set when another tool issued this call. See {@link BeforeToolCallContext.parentToolCall}. */
+	parentToolCall?: AgentToolCall;
 }
 
 /** Context passed to completed-turn callbacks. */
@@ -422,6 +434,11 @@ export interface AgentToolResult<T = JsonValue | undefined> {
 	content: (TextContent | ImageContent)[];
 	/** Arbitrary structured details for logs or UI rendering. */
 	details: T;
+	/**
+	 * Machine-readable result matching the tool's `outputSchema`, for programmatic callers such as
+	 * codemode. Not sent to the model; `content` remains the model-facing result.
+	 */
+	structuredContent?: JsonValue;
 	/** Usage from the final tool execution itself, if available. Not used for main LLM context accounting. */
 	usage?: Usage;
 	/**
@@ -429,6 +446,39 @@ export interface AgentToolResult<T = JsonValue | undefined> {
 	 * Early termination only happens when every finalized tool result in the batch sets this to true.
 	 */
 	terminate?: boolean;
+}
+
+/** Final outcome of a tool call after hooks ran. */
+export interface AgentToolCallOutcome {
+	/** The call as executed. For nested calls this is synthesized by the agent loop. */
+	toolCall: AgentToolCall;
+	result: AgentToolResult<any>;
+	isError: boolean;
+}
+
+export interface AgentNestedToolCallOptions {
+	/** Defaults to the calling tool's signal. */
+	signal?: AbortSignal;
+	/** Receives partial results of the nested tool. No agent events are emitted for nested calls. */
+	onUpdate?: AgentToolUpdateCallback;
+}
+
+/** Loop services available to a tool while it executes. */
+export interface AgentToolContext {
+	/** The call being executed. */
+	toolCall: AgentToolCall;
+	/** Tools executable in this run, including the calling tool. */
+	tools: readonly AgentTool<any>[];
+	/**
+	 * Run another tool through the same pipeline as a model-issued call: argument preparation,
+	 * schema validation, `beforeToolCall`, execution, and `afterToolCall`. The hooks see
+	 * `parentToolCall` set to the calling tool's call. No `tool_execution_*` events are emitted;
+	 * the calling tool reports nested calls itself, for example through `onUpdate`.
+	 *
+	 * Never rejects for tool failures: unknown tools, validation errors, blocked calls, and thrown
+	 * errors come back as `isError: true`.
+	 */
+	executeTool(name: string, args: unknown, options?: AgentNestedToolCallOptions): Promise<AgentToolCallOutcome>;
 }
 
 /**
@@ -448,15 +498,31 @@ export interface AgentTool<TParameters extends TSchema = TSchema, TDetails = any
 	 * Must return an object that matches `TParameters`.
 	 */
 	prepareArguments?: (args: unknown) => Static<TParameters>;
-	/** Execute the tool call. Throw on failure instead of encoding errors in `content`. */
+	/**
+	 * JSON Schema of `structuredContent` in successful results. Tools that declare it should always
+	 * set `structuredContent`; programmatic callers (such as codemode) then use it instead of the
+	 * text content.
+	 */
+	outputSchema?: TSchema;
+	/**
+	 * Execute the tool call. Throw on failure instead of encoding errors in `content`.
+	 * `context` is provided by the agent loop and absent when the tool is called directly.
+	 */
 	execute: (
 		toolCallId: string,
 		params: Static<TParameters>,
 		signal?: AbortSignal,
 		onUpdate?: AgentToolUpdateCallback<TDetails>,
+		context?: AgentToolContext,
 	) => Promise<AgentToolResult<TDetails>>;
 	/** Recovery policy for an effect whose durable intent exists but whose outcome is unknown. */
 	replay?: "never" | "safe";
+	/**
+	 * Only callable by other tools through {@link AgentToolContext.executeTool}. The tool is not
+	 * declared to the model, and a model-issued call to it fails as an unknown tool. Use it for
+	 * tools that should only be reached through an orchestrating tool such as codemode.
+	 */
+	nestedOnly?: boolean;
 	/**
 	 * Per-tool execution mode override.
 	 * - "sequential": this tool must execute one at a time with other tool calls.
@@ -471,7 +537,7 @@ export interface AgentTool<TParameters extends TSchema = TSchema, TDetails = any
 export interface AgentContext {
 	/** Transcript visible to the model. */
 	messages: AgentMessage[];
-	/** Tools available for execution in this run. */
+	/** Tools available for execution in this run. Tools marked `nestedOnly` are not declared to the model. */
 	tools?: AgentTool<any>[];
 }
 

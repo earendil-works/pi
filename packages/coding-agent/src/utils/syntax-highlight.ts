@@ -8,6 +8,7 @@ import go from "highlight.js/lib/languages/go.js";
 import groovy from "highlight.js/lib/languages/groovy.js";
 import java from "highlight.js/lib/languages/java.js";
 import javascript from "highlight.js/lib/languages/javascript.js";
+import json from "highlight.js/lib/languages/json.js";
 import kotlin from "highlight.js/lib/languages/kotlin.js";
 import lua from "highlight.js/lib/languages/lua.js";
 import nix from "highlight.js/lib/languages/nix.js";
@@ -26,6 +27,7 @@ const eagerLanguages = {
 	java,
 	go,
 	javascript,
+	json,
 	cpp,
 	typescript,
 	php,

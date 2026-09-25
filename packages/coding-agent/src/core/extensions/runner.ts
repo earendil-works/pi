@@ -1098,6 +1098,10 @@ export class ExtensionRunner {
 						currentEvent.details = handlerResult.details;
 						modified = true;
 					}
+					if (handlerResult.structuredContent !== undefined) {
+						currentEvent.structuredContent = handlerResult.structuredContent;
+						modified = true;
+					}
 					if (handlerResult.isError !== undefined) {
 						currentEvent.isError = handlerResult.isError;
 						modified = true;
@@ -1126,6 +1130,7 @@ export class ExtensionRunner {
 		return {
 			content: currentEvent.content,
 			details: currentEvent.details,
+			structuredContent: currentEvent.structuredContent,
 			isError: currentEvent.isError,
 			usage: currentEvent.usage,
 		};

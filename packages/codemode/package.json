@@ -1,0 +1,64 @@
+{
+	"name": "@earendil-works/pi-codemode",
+	"version": "0.87.1",
+	"description": "Sandboxed JavaScript execution where the only capability is calling injected tools",
+	"type": "module",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"source": "./src/index.ts",
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		},
+		"./declarations": {
+			"source": "./src/declarations.ts",
+			"types": "./dist/declarations.d.ts",
+			"import": "./dist/declarations.js"
+		},
+		"./source": {
+			"source": "./src/source.ts",
+			"types": "./dist/source.d.ts",
+			"import": "./dist/source.js"
+		},
+		"./worker": {
+			"source": "./src/runtime/worker.ts",
+			"types": "./dist/runtime/worker.d.ts",
+			"import": "./dist/runtime/worker.js"
+		}
+	},
+	"files": [
+		"dist",
+		"README.md"
+	],
+	"scripts": {
+		"clean": "shx rm -rf dist",
+		"build": "tsc -p tsconfig.build.json",
+		"test": "vitest --run",
+		"prepublishOnly": "npm run clean && npm run build"
+	},
+	"keywords": [
+		"pi",
+		"codemode",
+		"sandbox",
+		"quickjs",
+		"wasm"
+	],
+	"author": "Earendil Works",
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/earendil-works/pi.git",
+		"directory": "packages/codemode"
+	},
+	"engines": {
+		"node": ">=22.19.0"
+	},
+	"dependencies": {
+		"quickjs-wasi": "3.6.2"
+	},
+	"devDependencies": {
+		"shx": "0.4.0",
+		"vitest": "4.1.9"
+	}
+}

@@ -180,7 +180,8 @@ function resolveSpawnContext(
 	delete env.PI_PROVIDER;
 	delete env.PI_MODEL;
 	delete env.PI_REASONING_LEVEL;
-	if (exposeSessionEnvironment && ctx) {
+	// Tools executed outside an extension runner get a context without session state.
+	if (exposeSessionEnvironment && ctx?.sessionManager) {
 		const model = ctx.model;
 		env.PI_SESSION_ID = ctx.sessionManager.getSessionId();
 		const sessionFile = ctx.sessionManager.getSessionFile();

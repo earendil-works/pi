@@ -10,6 +10,7 @@
 
 import type {
 	AgentMessage,
+	AgentToolContext,
 	AgentToolResult,
 	AgentToolUpdateCallback,
 	ThinkingLevel,
@@ -24,6 +25,7 @@ import type {
 	ConstrainedSamplingConfig,
 	ImageApi,
 	ImageContent,
+	JsonValue,
 	Message,
 	Model,
 	OAuthCredentials,
@@ -359,6 +361,16 @@ export interface ExtensionContext {
 }
 
 /**
+ * Context passed to tool `execute()`. Adds the agent-loop services from {@link AgentToolContext}:
+ * `toolCall`, `tools`, and `executeTool()` for running other tools through the same hooks and
+ * permission checks as model-issued calls.
+ *
+ * When a tool is executed outside the agent loop, `tools` is empty and `executeTool()` reports
+ * an error outcome.
+ */
+export interface ExtensionToolContext extends ExtensionContext, AgentToolContext {}
+
+/**
  * Extended context for command handlers.
  * Includes session control methods only safe in user-initiated commands.
  */
@@ -480,6 +492,18 @@ export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = un
 	prepareArguments?: (args: unknown) => Static<TParams>;
 
 	/**
+	 * JSON Schema of `structuredContent` in successful results. Tools that declare it should always
+	 * set `structuredContent`; codemode scripts then receive it instead of the text content.
+	 */
+	outputSchema?: TSchema;
+
+	/**
+	 * Only callable from other tools (for example codemode scripts) through `ctx.executeTool()`.
+	 * The tool is not declared to the model and is left out of the system prompt.
+	 */
+	nestedOnly?: boolean;
+
+	/**
 	 * Per-tool execution mode override.
 	 * - "sequential": this tool must execute one at a time with other tool calls.
 	 * - "parallel": this tool can execute concurrently with other tool calls.
@@ -494,7 +518,7 @@ export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = un
 		params: Static<TParams>,
 		signal: AbortSignal | undefined,
 		onUpdate: AgentToolUpdateCallback<TDetails> | undefined,
-		ctx: ExtensionContext,
+		ctx: ExtensionToolContext,
 	): Promise<AgentToolResult<TDetails>>;
 
 	/** Custom rendering for tool call display */
@@ -988,6 +1012,8 @@ export type InputEventResult =
 interface ToolCallEventBase {
 	type: "tool_call";
 	toolCallId: string;
+	/** Set when another tool (for example codemode) issued this call. */
+	parentToolCallId?: string;
 }
 
 export interface BashToolCallEvent extends ToolCallEventBase {
@@ -1055,8 +1081,15 @@ export type ToolCallEvent =
 interface ToolResultEventBase {
 	type: "tool_result";
 	toolCallId: string;
+	/** Set when another tool (for example codemode) issued this call. */
+	parentToolCallId?: string;
 	input: Record<string, unknown>;
 	content: (TextContent | ImageContent)[];
+	/**
+	 * Machine-readable result for tools that declare an `outputSchema`. Handlers that redact
+	 * `content` should also replace this; replacing `content` alone drops it.
+	 */
+	structuredContent?: JsonValue;
 	isError: boolean;
 	/** Usage from the tool execution itself, if available. */
 	usage?: Usage;
@@ -1257,6 +1290,7 @@ export type UserBashEventResult =
 export interface ToolResultEventResult {
 	content?: (TextContent | ImageContent)[];
 	details?: unknown;
+	structuredContent?: JsonValue;
 	isError?: boolean;
 	usage?: Usage;
 }

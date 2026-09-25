@@ -1,0 +1,61 @@
+{
+	"name": "@earendil-works/pi-mcp",
+	"version": "0.87.1",
+	"description": "Standalone Model Context Protocol client for pi and other applications",
+	"type": "module",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"source": "./src/index.ts",
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		},
+		"./oauth": {
+			"source": "./src/oauth/index.ts",
+			"types": "./dist/oauth/index.d.ts",
+			"import": "./dist/oauth/index.js"
+		},
+		"./testing": {
+			"source": "./src/testing/index.ts",
+			"types": "./dist/testing/index.d.ts",
+			"import": "./dist/testing/index.js"
+		}
+	},
+	"sideEffects": false,
+	"files": [
+		"dist",
+		"README.md",
+		"CHANGELOG.md",
+		"LICENSES"
+	],
+	"scripts": {
+		"clean": "shx rm -rf dist",
+		"build": "tsc -p tsconfig.build.json",
+		"test": "vitest --run",
+		"prepublishOnly": "npm run clean && npm run build"
+	},
+	"keywords": [
+		"mcp",
+		"model-context-protocol",
+		"client"
+	],
+	"author": "Earendil Works",
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/earendil-works/pi.git",
+		"directory": "packages/mcp"
+	},
+	"engines": {
+		"node": ">=22.19.0"
+	},
+	"dependencies": {
+		"cross-spawn": "7.0.6"
+	},
+	"devDependencies": {
+		"@types/cross-spawn": "6.0.6",
+		"shx": "0.4.0",
+		"vitest": "4.1.9"
+	}
+}
