@@ -20,7 +20,6 @@ export {
 	foregroundAnsi,
 	type IndexedColor,
 	indexedColor,
-	maxOklchChroma,
 	mixColors,
 	type OklchChannels,
 	type OklchColorValue,

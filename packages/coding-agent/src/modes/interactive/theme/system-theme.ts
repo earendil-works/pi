@@ -1,173 +1,362 @@
 /**
  * The `system` theme: pi's colors derived from the terminal's own theme.
  *
- * Every token has a role (how far it must stand out from the background) and an ANSI palette slot
- * (where its hue comes from). Lightness is placed by contrast in OKLab lightness (L, 0-1): each role
- * keeps at least a minimum |ΔL| and WCAG ratio to the background and the panels it is drawn on. Hue and
- * saturation come from the terminal's palette color for the token's slot, so pi matches the terminal theme.
- * Saturation is relative to the sRGB gamut at each lightness and hue, so a pastel palette color stays
- * pastel and a vivid one stays vivid when its lightness moves.
+ * Every token belongs to a color family (its hue) and has contrast rules: it must reach a contrast level
+ * on the background and on the panels it is drawn on. Hue and saturation come from the terminal's palette
+ * color for the family's ANSI slot, or from the family's own hue when the terminal reports no palette.
+ * Lightness comes from the rules alone. Colors are built in OKHSL, whose saturation is relative to the
+ * sRGB gamut, and fade toward gray near black and white.
+ *
+ * A contrast level is a target-lightness curve: the OKLab lightness a token needs, given the lightness of
+ * the surface below it. The curves were fitted to the reference theme design from the "Pi themes: system
+ * and light/dark" review. On dark backgrounds they aim for nearly fixed lightness; on light backgrounds the
+ * required difference grows as the background darkens.
  *
  * Depending on what the terminal reports, the theme is generated in one of three tiers:
  * - background and palette: hues from the palette, lightness from the background;
- * - background only: built-in hues, lightness from the background;
+ * - background only: the families' own hues, lightness from the background;
  * - nothing: ANSI palette indices and the default colors, which the terminal renders itself.
  */
 
-import {
-	colorToOklch,
-	colorToRgb,
-	maxOklchChroma,
-	type OklchChannels,
-	oklchColor,
-	type RgbColor,
-	rgbColor,
-} from "@earendil-works/pi-tui";
+import { colorToOklch, type RgbColor, rgbColor } from "@earendil-works/pi-tui";
+import { hexToOkhsl, okhslToHex, toe } from "./okhsl.ts";
 import type { ThemeAppearance, ThemeBg, ThemeColor, ThemeToken } from "./theme.ts";
 
 export const SYSTEM_THEME_NAME = "system";
 
-/** How strongly a token stands out from the background, weakest to strongest; panels are backgrounds. */
-type Role = "surface" | "message" | "highlight" | "faint" | "dim" | "muted" | "strong" | "text";
+// ============================================================================
+// Recipe: color families and their tokens
+// ============================================================================
 
-interface TokenSpec {
-	role: Role;
-	/** ANSI palette slot the hue comes from; undefined for neutral tokens. */
-	slot?: number;
+/** A family's OKHSL hue and saturation: `max` at mid lightness, falling toward `min` at black and white. */
+interface Family {
+	hue: number;
+	saturation: { min: number; max: number };
+	/** ANSI palette slot the family takes its hue and saturation from. */
+	slot: number;
 }
 
-const RED = 1;
-const GREEN = 2;
-const YELLOW = 3;
-const BLUE = 4;
-const MAGENTA = 5;
-const CYAN = 6;
-const BRIGHT_MAGENTA = 13;
+const FAMILIES = {
+	neutral: { hue: 231.49, saturation: { min: 0.02, max: 0.08 }, slot: 8 },
+	blue: { hue: 231.49, saturation: { min: 0.1, max: 0.68 }, slot: 4 },
+	green: { hue: 158.68, saturation: { min: 0.1, max: 0.76 }, slot: 2 },
+	red: { hue: 20, saturation: { min: 0.1, max: 0.92 }, slot: 1 },
+	yellow: { hue: 82.36, saturation: { min: 0.5, max: 1 }, slot: 3 },
+	orange: { hue: 52, saturation: { min: 0.12, max: 0.85 }, slot: 3 },
+	violet: { hue: 295, saturation: { min: 0.2, max: 0.6 }, slot: 5 },
+	calamine: { hue: 202.43, saturation: { min: 0.1, max: 0.74 }, slot: 6 },
+	thinkingSlate: { hue: 231.49, saturation: { min: 0.08, max: 0.2 }, slot: 4 },
+	thinkingBlue: { hue: 231.49, saturation: { min: 0.2, max: 0.45 }, slot: 4 },
+	thinkingPeriwinkle: { hue: 263.25, saturation: { min: 0.3, max: 0.6 }, slot: 6 },
+	thinkingViolet: { hue: 295, saturation: { min: 0.4, max: 0.75 }, slot: 5 },
+	thinkingMagenta: { hue: 337.5, saturation: { min: 0.5, max: 0.85 }, slot: 13 },
+	thinkingRed: { hue: 20, saturation: { min: 0.95, max: 1 }, slot: 1 },
+} satisfies Record<string, Family>;
 
-const FOREGROUND_TOKENS: Record<ThemeColor, TokenSpec> = {
-	text: { role: "text" },
-	userMessageText: { role: "text" },
-	customMessageText: { role: "text" },
-	toolTitle: { role: "text" },
-	searchMatchText: { role: "text" },
-	scrollbarThumb: { role: "text" },
-	syntaxOperator: { role: "text" },
-	syntaxPunctuation: { role: "text" },
+type FamilyName = keyof typeof FAMILIES;
 
-	accent: { role: "strong", slot: CYAN },
-	borderAccent: { role: "strong", slot: CYAN },
-	success: { role: "strong", slot: GREEN },
-	error: { role: "strong", slot: RED },
-	warning: { role: "strong", slot: YELLOW },
-	customMessageLabel: { role: "strong", slot: MAGENTA },
-	mdHeading: { role: "strong", slot: YELLOW },
-	mdLink: { role: "strong", slot: BLUE },
-	mdCode: { role: "strong", slot: CYAN },
-	mdCodeBlock: { role: "strong", slot: GREEN },
-	mdListBullet: { role: "strong", slot: CYAN },
-	toolDiffAdded: { role: "strong", slot: GREEN },
-	toolDiffRemoved: { role: "strong", slot: RED },
-	syntaxKeyword: { role: "strong", slot: MAGENTA },
-	syntaxFunction: { role: "strong", slot: BLUE },
-	syntaxVariable: { role: "strong", slot: CYAN },
-	syntaxString: { role: "strong", slot: GREEN },
-	syntaxNumber: { role: "strong", slot: RED },
-	syntaxType: { role: "strong", slot: YELLOW },
-	thinkingMedium: { role: "strong", slot: CYAN },
-	thinkingHigh: { role: "strong", slot: MAGENTA },
-	thinkingXhigh: { role: "strong", slot: BRIGHT_MAGENTA },
-	thinkingMax: { role: "strong", slot: RED },
-	bashMode: { role: "strong", slot: GREEN },
+const TOKEN_FAMILIES: Record<ThemeToken, FamilyName> = {
+	selectedBg: "blue",
+	searchMatchBg: "orange",
+	userMessageBg: "blue",
+	customMessageBg: "violet",
+	toolPendingBg: "neutral",
+	toolSuccessBg: "green",
+	toolErrorBg: "red",
 
-	border: { role: "muted", slot: BLUE },
-	thinkingLow: { role: "muted", slot: BLUE },
-	muted: { role: "muted" },
-	thinkingText: { role: "muted" },
-	toolOutput: { role: "muted" },
-	mdQuote: { role: "muted" },
-	mdCodeBlockBorder: { role: "muted" },
-	toolDiffContext: { role: "muted" },
-	syntaxComment: { role: "muted" },
+	text: "neutral",
+	userMessageText: "neutral",
+	customMessageText: "neutral",
+	toolTitle: "neutral",
+	syntaxOperator: "neutral",
+	syntaxPunctuation: "neutral",
+	muted: "neutral",
+	dim: "neutral",
+	thinkingText: "neutral",
+	toolOutput: "neutral",
+	mdLinkUrl: "neutral",
+	mdQuote: "neutral",
+	mdQuoteBorder: "neutral",
+	mdHr: "neutral",
+	mdCodeBlockBorder: "neutral",
+	toolDiffContext: "neutral",
+	syntaxComment: "neutral",
+	scrollbarTrack: "neutral",
+	scrollbarThumb: "neutral",
+	searchMatchText: "neutral",
+	borderMuted: "neutral",
 
-	dim: { role: "dim" },
-	mdLinkUrl: { role: "dim" },
-	mdQuoteBorder: { role: "dim" },
-	mdHr: { role: "dim" },
-	thinkingMinimal: { role: "dim" },
+	accent: "violet",
+	borderAccent: "violet",
+	customMessageLabel: "violet",
+	mdCode: "violet",
+	mdListBullet: "violet",
+	syntaxType: "violet",
+	border: "blue",
+	mdLink: "blue",
+	syntaxKeyword: "blue",
+	syntaxVariable: "calamine",
+	success: "green",
+	mdCodeBlock: "green",
+	toolDiffAdded: "green",
+	bashMode: "green",
+	syntaxNumber: "green",
+	error: "red",
+	toolDiffRemoved: "red",
+	warning: "yellow",
+	mdHeading: "yellow",
+	syntaxFunction: "yellow",
+	syntaxString: "orange",
 
-	borderMuted: { role: "faint" },
-	scrollbarTrack: { role: "faint" },
-	thinkingOff: { role: "faint" },
+	thinkingOff: "neutral",
+	thinkingMinimal: "thinkingSlate",
+	thinkingLow: "thinkingBlue",
+	thinkingMedium: "thinkingPeriwinkle",
+	thinkingHigh: "thinkingViolet",
+	thinkingXhigh: "thinkingMagenta",
+	thinkingMax: "thinkingRed",
 };
 
-const BACKGROUND_TOKENS: Record<ThemeBg, TokenSpec> = {
-	toolPendingBg: { role: "surface" },
-	toolSuccessBg: { role: "surface", slot: GREEN },
-	toolErrorBg: { role: "surface", slot: RED },
-	customMessageBg: { role: "surface", slot: MAGENTA },
-	userMessageBg: { role: "message" },
-	selectedBg: { role: "highlight", slot: BLUE },
-	searchMatchBg: { role: "highlight", slot: YELLOW },
-};
+/** Palette slots for tokens that would otherwise share a hue with a similar token. */
+const TOKEN_SLOTS: Partial<Record<ThemeToken, number>> = { syntaxString: 2, syntaxNumber: 5, searchMatchBg: 3 };
+
+// ============================================================================
+// Contrast levels and rules
+// ============================================================================
 
 /**
- * Minimum |ΔL| per role and appearance. Panels are measured from the terminal background;
- * foreground roles from the strongest surface or message panel, since text sits on those too.
- * Calibrated against pi's built-in dark and light themes.
+ * Target-lightness curves: a polynomial in the surface's OKLab lightness giving the OKLab lightness a token
+ * needs on it. `reachable` is the range of surface lightness where the level can be reached; beyond it the
+ * level is relaxed.
  */
-const MINIMUM_CONTRAST: Record<Role, Record<ThemeAppearance, number>> = {
-	surface: { dark: 0.055, light: 0.05 },
-	message: { dark: 0.085, light: 0.065 },
-	highlight: { dark: 0.13, light: 0.13 },
-	faint: { dark: 0.14, light: 0.18 },
-	dim: { dark: 0.22, light: 0.33 },
-	muted: { dark: 0.3, light: 0.4 },
-	strong: { dark: 0.42, light: 0.42 },
-	text: { dark: 0.56, light: 0.66 },
-};
-
-/**
- * Minimum WCAG 2 contrast ratio per role, against the same surfaces as the |ΔL| minimum. OKLab lightness
- * differences near black are hard to see on real displays; the WCAG ratio's flare term covers that end.
- */
-const MINIMUM_WCAG_CONTRAST: Record<Role, number> = {
-	surface: 1.15,
-	message: 1.25,
-	highlight: 1.45,
-	faint: 1.7,
-	dim: 2.3,
-	muted: 3,
-	strong: 3.6,
-	text: 4.5,
-};
-
-/** The next stronger role: a palette color may keep its own lightness up to that role's minimum. */
-const ROLE_CEILING: Partial<Record<Role, Role>> = { faint: "dim", dim: "muted", muted: "strong", strong: "text" };
-
-/** WCAG 2 contrast ratio that body text must reach on the background and every panel. */
-const TEXT_MINIMUM_WCAG_CONTRAST = MINIMUM_WCAG_CONTRAST.text;
-
-/** Neutral text stays near gray: an absolute OKLCH chroma cap on the tint it takes from the terminal. */
-const NEUTRAL_MAX_CHROMA = 0.035;
-/** Colored panels keep this share of their palette color's relative saturation, so they stay calm. */
-const PANEL_SATURATION = 0.3;
-
-/** A hue with a saturation relative to the sRGB gamut (0-1), optionally capped to an absolute chroma. */
-interface Tint {
-	h: number;
-	s: number;
-	maxChroma?: number;
+interface Curve {
+	coefficients: number[];
+	reachable: [number, number];
 }
 
-/** Hues for terminals that report a background but no palette, by slot. */
-const BUILTIN_TINTS: Record<number, Tint> = {
-	[RED]: { h: 25, s: 0.65 },
-	[GREEN]: { h: 145, s: 0.6 },
-	[YELLOW]: { h: 90, s: 0.65 },
-	[BLUE]: { h: 255, s: 0.55 },
-	[MAGENTA]: { h: 320, s: 0.55 },
-	[CYAN]: { h: 200, s: 0.55 },
-};
+const LEVELS = {
+	panel: {
+		dark: { coefficients: [0.29131, -0.39746, 2.33185, -0.85524, -1.2076, 0.86276], reachable: [0, 0.979] },
+		light: { coefficients: [-3.74073, 27.94549, -78.44258, 112.6798, -79.60015, 22.11277], reachable: [0.348, 1] },
+	},
+	track: {
+		dark: { coefficients: [0.39028, -0.23015, 0.83573, 2.43829, -4.38292, 2.01582], reachable: [0, 0.946] },
+		light: { coefficients: [-5.24921, 38.37322, -107.28833, 152.10005, -106.17127, 29.18061], reachable: [0.368, 1] },
+	},
+	thinking0: {
+		dark: { coefficients: [0.52988, -0.05809, -0.30924, 4.63567, -6.52933, 2.89108], reachable: [0, 0.873] },
+		light: {
+			coefficients: [-28.27749, 182.85284, -469.62416, 603.15916, -384.59976, 97.35147],
+			reachable: [0.51, 1],
+		},
+	},
+	thinking1: {
+		dark: { coefficients: [0.55278, -0.03667, -0.45659, 4.95347, -6.90265, 3.0706], reachable: [0, 0.858] },
+		light: {
+			coefficients: [-37.10484, 235.86282, -596.62344, 754.3633, -474.00763, 118.3551],
+			reachable: [0.535, 1],
+		},
+	},
+	thinking2: {
+		dark: { coefficients: [0.57486, -0.01765, -0.58987, 5.25227, -7.27175, 3.25532], reachable: [0, 0.842] },
+		light: {
+			coefficients: [-59.89653, 377.05024, -945.07843, 1182.03145, -734.96375, 181.68658],
+			reachable: [0.556, 1],
+		},
+	},
+	thinking3: {
+		dark: { coefficients: [0.59621, -0.00062, -0.71148, 5.53588, -7.6392, 3.44606], reachable: [0, 0.827] },
+		light: {
+			coefficients: [-72.07122, 445.84082, -1099.57352, 1353.88793, -829.53392, 202.26164],
+			reachable: [0.58, 1],
+		},
+	},
+	thinking4: {
+		dark: { coefficients: [0.61691, 0.01462, -0.82288, 5.80651, -8.00641, 3.64333], reachable: [0, 0.811] },
+		light: {
+			coefficients: [-110.14338, 674.21488, -1645.75941, 2004.32367, -1215.15899, 293.3183],
+			reachable: [0.6, 1],
+		},
+	},
+	thinking5: {
+		dark: { coefficients: [0.63702, 0.02826, -0.92498, 6.06465, -8.37246, 3.84651], reachable: [0, 0.795] },
+		light: {
+			coefficients: [-175.47701, 1063.54495, -2570.70594, 3098.80776, -1860.15527, 444.76392],
+			reachable: [0.62, 1],
+		},
+	},
+	thinking6: {
+		dark: { coefficients: [0.65658, 0.04044, -1.01835, 6.30989, -8.73529, 4.05439], reachable: [0, 0.779] },
+		light: {
+			coefficients: [-183.81712, 1094.70055, -2602.68539, 3088.71276, -1826.91131, 430.75931],
+			reachable: [0.643, 1],
+		},
+	},
+	subtle: {
+		dark: { coefficients: [0.56762, -0.02475, -0.5383, 5.12628, -7.10931, 3.17324], reachable: [0, 0.848] },
+		light: {
+			coefficients: [-232.85459, 1376.54473, -3249.11801, 3827.91186, -2248.29472, 526.55751],
+			reachable: [0.657, 1],
+		},
+	},
+	thumb: {
+		dark: { coefficients: [0.60323, 0.00278, -0.73328, 5.57157, -7.68067, 3.46933], reachable: [0, 0.823] },
+		light: {
+			coefficients: [-82.89897, 511.01355, -1255.98095, 1540.76821, -940.68087, 228.58523],
+			reachable: [0.586, 1],
+		},
+	},
+	readable: {
+		dark: { coefficients: [0.66937, 0.04704, -1.06871, 6.43941, -8.9332, 4.17229], reachable: [0, 0.77] },
+		light: {
+			coefficients: [-1554.52576, 8733.56817, -19604.93507, 21977.72696, -12300.99599, 2749.81288],
+			reachable: [0.751, 1],
+		},
+	},
+	emphasis: {
+		dark: { coefficients: [0.7303, 0.07695, -1.31626, 7.1681, -10.14436, 4.92846], reachable: [0, 0.712] },
+		light: {
+			coefficients: [-4948.31942, 26870.91986, -58334.48399, 63280.17197, -34298.01053, 7430.30146],
+			reachable: [0.811, 1],
+		},
+	},
+	textOnPanel: {
+		dark: { coefficients: [0.86713, 0.05232, -0.89428, 4.79014, -5.5432, 1.75023], reachable: [0, 0.542] },
+		light: {
+			coefficients: [-8570.89457, 43954.60805, -90084.00702, 92220.6791, -47152.15802, 9632.27113],
+			reachable: [0.867, 1],
+		},
+	},
+	text: {
+		dark: { coefficients: [0.89242, 0.02311, -0.44862, 2.34417, -0.06084, -2.63844], reachable: [0, 0.5] },
+		light: {
+			coefficients: [-2004.67048, 6664.47299, -6060.70202, -1792.61209, 5133.82359, -1939.85583],
+			reachable: [0.894, 1],
+		},
+	},
+} satisfies Record<string, Record<ThemeAppearance, Curve>>;
+
+type Level = keyof typeof LEVELS;
+
+type Surface = ThemeBg | "background" | "scrollbarTrack";
+
+interface Rule {
+	token: ThemeToken;
+	on: Surface[];
+	level: Level;
+}
+
+const TOOL_PANELS: Surface[] = ["toolPendingBg", "toolSuccessBg", "toolErrorBg"];
+const MESSAGE_PANELS: Surface[] = ["userMessageBg", "customMessageBg"];
+const PANELS: ThemeBg[] = [
+	"userMessageBg",
+	"toolPendingBg",
+	"toolSuccessBg",
+	"toolErrorBg",
+	"selectedBg",
+	"searchMatchBg",
+	"customMessageBg",
+];
+const THINKING: ThemeColor[] = [
+	"thinkingOff",
+	"thinkingMinimal",
+	"thinkingLow",
+	"thinkingMedium",
+	"thinkingHigh",
+	"thinkingXhigh",
+	"thinkingMax",
+];
+const THINKING_LEVELS: Level[] = [
+	"thinking0",
+	"thinking1",
+	"thinking2",
+	"thinking3",
+	"thinking4",
+	"thinking5",
+	"thinking6",
+];
+
+const each = (tokens: ThemeToken[], on: Surface[], level: Level): Rule[] =>
+	tokens.map((token) => ({ token, on, level }));
+
+const RULES: Rule[] = [
+	...each(PANELS, ["background"], "panel"),
+	{ token: "text", on: ["background"], level: "text" },
+	{ token: "text", on: ["selectedBg"], level: "textOnPanel" },
+	{ token: "userMessageText", on: ["userMessageBg"], level: "textOnPanel" },
+	{ token: "toolTitle", on: TOOL_PANELS, level: "textOnPanel" },
+	...each(["accent", "success", "error", "warning"], ["background", "selectedBg", ...TOOL_PANELS], "readable"),
+	{ token: "muted", on: ["background", "selectedBg", "customMessageBg", ...TOOL_PANELS], level: "readable" },
+	{ token: "dim", on: ["background", "selectedBg", "customMessageBg", ...TOOL_PANELS], level: "subtle" },
+	{ token: "thinkingText", on: ["background"], level: "readable" },
+	{ token: "customMessageText", on: ["customMessageBg", ...TOOL_PANELS], level: "readable" },
+	{
+		token: "customMessageLabel",
+		on: ["background", "customMessageBg", "selectedBg", ...TOOL_PANELS],
+		level: "readable",
+	},
+	{ token: "toolOutput", on: ["background", ...TOOL_PANELS], level: "readable" },
+	...each(
+		["mdHeading", "mdLink", "mdLinkUrl", "mdCode", "mdQuote", "mdCodeBlockBorder", "mdListBullet"],
+		["background", ...MESSAGE_PANELS],
+		"readable",
+	),
+	{ token: "mdCodeBlock", on: ["background", ...MESSAGE_PANELS, ...TOOL_PANELS], level: "readable" },
+	...each(["toolDiffAdded", "toolDiffRemoved", "toolDiffContext"], ["background", ...TOOL_PANELS], "readable"),
+	...each(
+		[
+			"syntaxComment",
+			"syntaxKeyword",
+			"syntaxFunction",
+			"syntaxVariable",
+			"syntaxString",
+			"syntaxNumber",
+			"syntaxType",
+			"syntaxOperator",
+			"syntaxPunctuation",
+		],
+		["background", ...MESSAGE_PANELS, ...TOOL_PANELS],
+		"readable",
+	),
+	{ token: "searchMatchText", on: ["searchMatchBg"], level: "readable" },
+	...each(["bashMode", "border", "borderAccent"], ["background"], "readable"),
+	{ token: "borderMuted", on: ["background"], level: "subtle" },
+	...each(["mdQuoteBorder", "mdHr"], ["background", ...MESSAGE_PANELS, ...TOOL_PANELS], "readable"),
+	{ token: "scrollbarTrack", on: ["background"], level: "track" },
+	{ token: "scrollbarThumb", on: ["scrollbarTrack"], level: "thumb" },
+	...THINKING.map((token, index): Rule => ({ token, on: ["background"], level: THINKING_LEVELS[index] })),
+];
+
+/** Relaxation compresses levels stronger than this one toward it before weakening all levels. */
+const READABLE_FLOOR: Record<ThemeAppearance, Level> = { dark: "readable", light: "subtle" };
+
+/** Body text uses the terminal's foreground when it reaches this level, which is clearly stronger than muted. */
+const FOREGROUND_LEVEL: Level = "emphasis";
+
+/** Text-level tokens that take the terminal's foreground. */
+const FOREGROUND_TOKENS: ThemeColor[] = ["text", "userMessageText", "toolTitle"];
+
+/** WCAG 2 contrast ratio that body text must reach on the surfaces it is drawn on. */
+const TEXT_MINIMUM_WCAG_CONTRAST = 4.5;
+
+/** Tokens in dependency order: every surface before the tokens drawn on it. */
+const SOLVE_ORDER: ThemeToken[] = (() => {
+	const order: ThemeToken[] = [];
+	const visit = (token: ThemeToken): void => {
+		if (order.includes(token)) return;
+		for (const rule of RULES) {
+			if (rule.token !== token) continue;
+			for (const surface of rule.on) if (surface !== "background") visit(surface);
+		}
+		order.push(token);
+	};
+	for (const rule of RULES) visit(rule.token);
+	return order;
+})();
+
+// ============================================================================
+// Public API
+// ============================================================================
 
 export interface SystemThemeInput {
 	foreground?: RgbColor;
@@ -231,23 +420,41 @@ export function terminalAppearance(background: RgbColor, foreground?: RgbColor):
 	return whiteContrast >= blackContrast ? "dark" : "light";
 }
 
+// ============================================================================
+// Generation
+// ============================================================================
+
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 
-function hexOf(rgb: RgbColor): string {
-	return `#${[rgb.r, rgb.g, rgb.b].map((channel) => channel.toString(16).padStart(2, "0")).join("")}`;
+function hexOf({ r, g, b }: RgbColor): string {
+	return `#${[r, g, b].map((channel) => Math.round(channel).toString(16).padStart(2, "0")).join("")}`;
 }
 
-/** The tint of a color: its hue and its chroma relative to the most the gamut allows at its lightness. */
-function tintOf({ l, c, h }: OklchChannels): Tint {
-	const max = maxOklchChroma(l, h);
-	return { h, s: max > 1e-4 ? clamp(c / max, 0, 1) : 0 };
+function rgbOf(hex: string): RgbColor {
+	return {
+		r: Number.parseInt(hex.slice(1, 3), 16),
+		g: Number.parseInt(hex.slice(3, 5), 16),
+		b: Number.parseInt(hex.slice(5, 7), 16),
+	};
 }
 
-/** An sRGB color at OKLab lightness `l` with a tint's hue and relative saturation. */
-function colorAt(l: number, tint: Tint): RgbColor {
-	const lightness = clamp(l, 0, 1);
-	const chroma = Math.min(tint.s * maxOklchChroma(lightness, tint.h), tint.maxChroma ?? Number.POSITIVE_INFINITY);
-	return colorToRgb(oklchColor(lightness, chroma, tint.h));
+/** Saturation weight at a lightness: a Gaussian (center 0.5, sigma 0.25), 0 at black and white, 1 in the middle. */
+function bellWeight(lightness: number): number {
+	const gaussian = (x: number): number => Math.exp(-((x - 0.5) ** 2) / (2 * 0.25 ** 2));
+	return (gaussian(lightness) - gaussian(0)) / (1 - gaussian(0));
+}
+
+/** A family's saturation curve relative to its maximum: 1 at mid lightness, `min / max` at black and white. */
+function saturationCurve({ saturation: { min, max } }: Family, lightness: number): number {
+	const floor = max > 0 ? min / max : 1;
+	return floor + (1 - floor) * bellWeight(lightness);
+}
+
+/** The target lightness for a level on a surface, or undefined where the level cannot be reached. */
+function levelTarget(level: Level, appearance: ThemeAppearance, surfaceL: number): number | undefined {
+	const curve: Curve = LEVELS[level][appearance];
+	if (surfaceL < curve.reachable[0] || surfaceL > curve.reachable[1]) return undefined;
+	return curve.coefficients.reduce((sum, coefficient, power) => sum + coefficient * surfaceL ** power, 0);
 }
 
 /**
@@ -257,168 +464,151 @@ export function generateSystemThemeColors(input: SystemThemeInput): SystemThemeC
 	const saturation = clamp(input.saturation ?? 1, 0, 1);
 	const { background, foreground } = input;
 	if (!background) return indexedColors(saturation, input.appearanceHint);
-	const palette = input.palette?.length === 16 ? input.palette : undefined;
+	const palette = input.palette?.length === 16 ? input.palette.map((color) => hexToOkhsl(hexOf(color))) : undefined;
 
 	const appearance = terminalAppearance(background, foreground);
-	const direction = appearance === "dark" ? 1 : -1;
-	const backgroundLch = colorToOklch(rgbColor(background.r, background.g, background.b));
-	const backgroundL = backgroundLch.l;
+	const lighter = appearance === "dark";
+	const extreme = lighter ? 1 : 0;
 
-	// Backgrounds near mid-gray cannot fit every minimum: scale them down together to keep the order.
-	const minimums = Object.fromEntries(
-		Object.entries(MINIMUM_CONTRAST).map(([role, values]) => [role, values[appearance]]),
-	) as Record<Role, number>;
-	const needed = Math.max(minimums.surface, minimums.message) + minimums.text;
-	const room = appearance === "dark" ? 1 - backgroundL : backgroundL;
-	const scale = needed > room ? room / needed : 1;
-	const minimum = (role: Role) => minimums[role] * scale;
-
-	/** Tint for a slot, from the palette or the built-in tints, with the palette color's lightness. */
-	const source = (slot: number): { tint: Tint; l: number | undefined } => {
-		if (palette) {
-			const lch = colorToOklch(rgbColor(palette[slot].r, palette[slot].g, palette[slot].b));
-			return { tint: tintOf(lch), l: lch.l };
-		}
-		return { tint: BUILTIN_TINTS[slot % 8] ?? BUILTIN_TINTS[CYAN], l: undefined };
-	};
-	const desaturate = (tint: Tint): Tint => ({
-		...tint,
-		s: tint.s * saturation,
-		maxChroma: tint.maxChroma === undefined ? undefined : tint.maxChroma * saturation,
-	});
 	/**
-	 * Neutral colors keep their source's absolute chroma: a near-white or near-black tint is a large share
-	 * of the tiny gamut there, and scaling it relatively would turn it into a strong color elsewhere.
+	 * A token's color at an OKHSL lightness. With a palette, the palette color's saturation applies at its
+	 * own lightness and falls off toward black and white along the family's curve, never rising above it.
 	 */
-	const neutralTint = ({ c, h }: OklchChannels, maxChroma = Number.POSITIVE_INFINITY): Tint => ({
-		h,
-		s: 1,
-		maxChroma: Math.min(c, maxChroma),
-	});
-
-	const colors: Partial<Record<ThemeToken, RgbColor | "">> = {};
-
-	// Panels: offsets from the background, neutral ones in the background's own tint.
-	const panels: RgbColor[] = [];
-	let surfaceTopL = backgroundL;
-	for (const [token, spec] of Object.entries(BACKGROUND_TOKENS) as [ThemeBg, TokenSpec][]) {
-		// Neutral panels are the background shifted in lightness, keeping its tint.
-		let tint = neutralTint(backgroundLch);
-		if (spec.slot !== undefined) {
-			const { tint: slotTint } = source(spec.slot);
-			tint = { h: slotTint.h, s: slotTint.s * PANEL_SATURATION };
+	const paint = (token: ThemeToken, lightness: number): string => {
+		const family: Family = FAMILIES[TOKEN_FAMILIES[token]];
+		if (!palette) {
+			const { min, max } = family.saturation;
+			return okhslToHex(family.hue, (min + (max - min) * bellWeight(lightness)) * saturation, lightness);
 		}
-		tint = desaturate(tint);
-		const offset = backgroundL + direction * minimum(spec.role);
-		const visible = reachContrast(offset, tint, direction, [background], MINIMUM_WCAG_CONTRAST[spec.role]);
-		const l = panelLightness(backgroundL, visible, tint, direction);
-		const color = colorAt(l, tint);
-		colors[token] = color;
-		panels.push(color);
-		if (spec.role !== "highlight") {
-			surfaceTopL = appearance === "dark" ? Math.max(surfaceTopL, l) : Math.min(surfaceTopL, l);
+		const source = palette[TOKEN_SLOTS[token] ?? family.slot];
+		const anchor = saturationCurve(family, source.lightness);
+		const falloff = anchor > 0 ? Math.min(1, saturationCurve(family, lightness) / anchor) : 1;
+		return okhslToHex(source.hue, source.saturation * falloff * saturation, lightness);
+	};
+
+	/**
+	 * The lightness a rule needs on a surface, relaxed by `t`: from 0 to 1, levels stronger than the readable
+	 * floor move toward it; from 1 to 2, all levels move toward the surface itself.
+	 */
+	const target = (level: Level, surfaceL: number, t: number): number | undefined => {
+		const reached = levelTarget(level, appearance, surfaceL);
+		if (reached === undefined && t === 0) return undefined;
+		const distance = (reached ?? extreme) - surfaceL;
+		const floor = (levelTarget(READABLE_FLOOR[appearance], appearance, surfaceL) ?? extreme) - surfaceL;
+		const compressed =
+			Math.abs(distance) > Math.abs(floor) ? distance - (distance - floor) * Math.min(t, 1) : distance;
+		return surfaceL + compressed * (1 - Math.max(0, t - 1));
+	};
+
+	/**
+	 * Keep a panel light enough (or dark enough) that white (or black) text still reaches the body text
+	 * minimum on it. This only matters for backgrounds near mid-gray, where it barely does on the background.
+	 */
+	const extremeText = lighter ? { r: 255, g: 255, b: 255 } : { r: 0, g: 0, b: 0 };
+	const readable = (color: string) => wcagContrast(extremeText, rgbOf(color)) >= TEXT_MINIMUM_WCAG_CONTRAST;
+	const backgroundL = oklabLightness(background);
+	const limitPanel = (token: ThemeToken, l: number): string => {
+		const color = paint(token, toe(l));
+		if (readable(color)) return color;
+		let [low, high] = [backgroundL, l];
+		for (let index = 0; index < 20; index++) {
+			const middle = (low + high) / 2;
+			if (readable(paint(token, toe(middle)))) low = middle;
+			else high = middle;
+		}
+		return paint(token, toe(low));
+	};
+
+	const solve = (t: number): Map<string, string> | undefined => {
+		const colors = new Map<string, string>([["background", hexOf(background)]]);
+		for (const token of SOLVE_ORDER) {
+			const targets: number[] = [];
+			for (const rule of RULES) {
+				if (rule.token !== token) continue;
+				for (const surface of rule.on) {
+					const value = target(rule.level, oklabLightness(rgbOf(colors.get(surface) ?? hexOf(background))), t);
+					if (value === undefined || value < 0 || value > 1) return undefined;
+					targets.push(value);
+				}
+			}
+			const l = lighter ? Math.max(...targets) : Math.min(...targets);
+			colors.set(token, PANELS.includes(token as ThemeBg) ? limitPanel(token, l) : paint(token, toe(l)));
+		}
+		return colors;
+	};
+
+	let relaxation = 0;
+	let colors = solve(0);
+	if (!colors) {
+		// Mid-gray backgrounds cannot fit every level: relax as little as possible. Full relaxation always fits.
+		let [low, high] = [0, 2];
+		colors = solve(high);
+		for (let index = 0; index < 20; index++) {
+			const middle = (low + high) / 2;
+			const attempt = solve(middle);
+			if (attempt) [high, colors] = [middle, attempt];
+			else low = middle;
+		}
+		relaxation = high;
+	}
+	const solved = colors ?? new Map<string, string>();
+
+	// Body text uses the terminal's own foreground where it is clearly stronger than muted text; otherwise
+	// the foreground's hue at just enough lightness.
+	if (foreground) {
+		const foregroundL = oklabLightness(foreground);
+		const foregroundOkhsl = hexToOkhsl(hexOf(foreground));
+		for (const token of FOREGROUND_TOKENS) {
+			const surfaces = RULES.filter((rule) => rule.token === token).flatMap((rule) => rule.on);
+			const targets = surfaces.map((surface) =>
+				target(FOREGROUND_LEVEL, oklabLightness(rgbOf(solved.get(surface) ?? hexOf(background))), relaxation),
+			);
+			if (targets.some((value) => value === undefined || value < 0 || value > 1)) continue;
+			const needed = lighter ? Math.max(...(targets as number[])) : Math.min(...(targets as number[]));
+			if (lighter ? foregroundL >= needed : foregroundL <= needed) {
+				solved.set(token, "");
+				continue;
+			}
+			const neutral: Family = FAMILIES.neutral;
+			const anchor = saturationCurve(neutral, foregroundOkhsl.lightness);
+			const falloff = anchor > 0 ? Math.min(1, saturationCurve(neutral, toe(needed)) / anchor) : 1;
+			solved.set(
+				token,
+				okhslToHex(foregroundOkhsl.hue, foregroundOkhsl.saturation * falloff * saturation, toe(needed)),
+			);
 		}
 	}
 
-	// Foreground tokens: at least their role's minimum beyond the strongest surface. Palette colors keep
-	// their own lightness when it already lies between their role's minimum and the next role's.
-	const foregroundLch = foreground ? colorToOklch(rgbColor(foreground.r, foreground.g, foreground.b)) : undefined;
-	// Body text must be readable on every panel; other text on the background and the content panels.
-	const surfaces = [background, ...panels];
-	const contentSurfaces = [
-		background,
-		...(Object.entries(BACKGROUND_TOKENS) as [ThemeBg, TokenSpec][])
-			.filter(([, spec]) => spec.role !== "highlight")
-			.map(([token]) => colors[token] as RgbColor),
-	];
-	for (const [token, spec] of Object.entries(FOREGROUND_TOKENS) as [ThemeColor, TokenSpec][]) {
-		const { tint, l: sourceL } =
-			spec.slot !== undefined
-				? source(spec.slot)
-				: {
-						// Body text takes the foreground's tint, secondary text the background's, both near gray.
-						tint: neutralTint(
-							spec.role === "text" ? (foregroundLch ?? backgroundLch) : backgroundLch,
-							NEUTRAL_MAX_CHROMA,
-						),
-						l: undefined,
-					};
-		const lowest = surfaceTopL + direction * minimum(spec.role);
-		const ceilingRole = ROLE_CEILING[spec.role];
-		const highest = ceilingRole ? surfaceTopL + direction * minimum(ceilingRole) : appearance === "dark" ? 1 : 0;
-		const [low, high] = direction > 0 ? [lowest, highest] : [highest, lowest];
-		const l = sourceL === undefined ? lowest : clamp(sourceL, low, high);
-		const readableOn = spec.role === "text" ? surfaces : contentSurfaces;
-		const paint = desaturate(tint);
-		colors[token] = colorAt(reachContrast(l, paint, direction, readableOn, MINIMUM_WCAG_CONTRAST[spec.role]), paint);
-	}
-
-	// Body text uses the terminal's own foreground when it is readable and clearly stronger than muted text.
-	if (foreground && foregroundLch && usableForeground(foreground, foregroundLch.l, direction, surfaces, colors)) {
-		for (const [token, spec] of Object.entries(FOREGROUND_TOKENS) as [ThemeColor, TokenSpec][]) {
-			if (spec.role === "text") colors[token] = "";
-		}
+	// Body text keeps at least 4.5:1 on the surfaces it is drawn on, even on relaxed mid-gray backgrounds.
+	for (const token of FOREGROUND_TOKENS) {
+		const value = solved.get(token);
+		if (!value) continue;
+		const surfaces = RULES.filter((rule) => rule.token === token).flatMap((rule) =>
+			rule.on.map((surface) => rgbOf(solved.get(surface) ?? hexOf(background))),
+		);
+		solved.set(token, withTextContrast(value, surfaces, lighter));
 	}
 
 	const result = {} as Record<ThemeToken, string | number>;
-	for (const [token, color] of Object.entries(colors) as [ThemeToken, RgbColor | ""][]) {
-		result[token] = color === "" ? "" : hexOf(color);
-	}
+	for (const token of Object.keys(TOKEN_FAMILIES) as ThemeToken[]) result[token] = solved.get(token) ?? "";
 	return { colors: result, dim: [], appearance };
 }
 
-/**
- * Limit a panel's lightness so that text can still reach the WCAG minimum on it. This only matters for
- * backgrounds near mid-gray, where even black or white text barely reaches it on the background itself.
- */
-function panelLightness(backgroundL: number, l: number, tint: Tint, direction: number): number {
-	const extreme = direction > 0 ? { r: 255, g: 255, b: 255 } : { r: 0, g: 0, b: 0 };
-	const readable = (candidate: number) =>
-		wcagContrast(extreme, colorAt(candidate, tint)) >= TEXT_MINIMUM_WCAG_CONTRAST;
-	if (readable(l)) return l;
-	let [low, high] = [backgroundL, l];
+/** Move a text color toward white or black until it reaches the WCAG minimum on every surface. */
+function withTextContrast(hex: string, surfaces: RgbColor[], lighter: boolean): string {
+	const meets = (color: string) =>
+		surfaces.every((surface) => wcagContrast(rgbOf(color), surface) >= TEXT_MINIMUM_WCAG_CONTRAST);
+	if (meets(hex)) return hex;
+	const { hue, saturation, lightness } = hexToOkhsl(hex);
+	const extreme = lighter ? 1 : 0;
+	if (!meets(okhslToHex(hue, saturation, extreme))) return okhslToHex(hue, saturation, extreme);
+	let [low, high] = [lightness, extreme];
 	for (let index = 0; index < 20; index++) {
 		const middle = (low + high) / 2;
-		if (readable(middle)) low = middle;
-		else high = middle;
-	}
-	return low;
-}
-
-/**
- * The lightness at or beyond `l` (toward white for dark themes, black for light themes) closest to `l`
- * where the color reaches a WCAG contrast ratio on every surface, or the extreme if none does.
- */
-function reachContrast(l: number, tint: Tint, direction: number, surfaces: RgbColor[], ratio: number): number {
-	const meets = (candidate: number) => {
-		const color = colorAt(candidate, tint);
-		return surfaces.every((surface) => wcagContrast(color, surface) >= ratio);
-	};
-	if (meets(l)) return l;
-	const extreme = direction > 0 ? 1 : 0;
-	if (!meets(extreme)) return extreme;
-	let [low, high] = [l, extreme];
-	for (let index = 0; index < 20; index++) {
-		const middle = (low + high) / 2;
-		if (meets(middle)) high = middle;
+		if (meets(okhslToHex(hue, saturation, middle))) high = middle;
 		else low = middle;
 	}
-	return high;
-}
-
-function usableForeground(
-	foreground: RgbColor,
-	foregroundL: number,
-	direction: number,
-	surfaces: RgbColor[],
-	colors: Partial<Record<ThemeToken, RgbColor | "">>,
-): boolean {
-	const muted = colors.muted;
-	if (!muted) return false;
-	const margin = (foregroundL - oklabLightness(muted)) * direction;
-	return (
-		margin >= 0.08 && surfaces.every((surface) => wcagContrast(foreground, surface) >= TEXT_MINIMUM_WCAG_CONTRAST)
-	);
+	return okhslToHex(hue, saturation, high);
 }
 
 /**
@@ -429,12 +619,15 @@ function usableForeground(
 function indexedColors(saturation: number, appearance: ThemeAppearance | undefined): SystemThemeColors {
 	const colors = {} as Record<ThemeToken, string | number>;
 	const dim: ThemeColor[] = [];
-	for (const [token, spec] of Object.entries(FOREGROUND_TOKENS) as [ThemeColor, TokenSpec][]) {
-		colors[token] = spec.slot !== undefined && saturation > 0 ? spec.slot : "";
-		if (spec.slot === undefined && spec.role !== "text") dim.push(token);
-	}
-	for (const token of Object.keys(BACKGROUND_TOKENS) as ThemeBg[]) {
-		colors[token] = "";
+	const bodyText = new Set<ThemeToken>(["text", "userMessageText", "toolTitle"]);
+	for (const [token, familyName] of Object.entries(TOKEN_FAMILIES) as [ThemeToken, FamilyName][]) {
+		if (PANELS.includes(token as ThemeBg)) {
+			colors[token] = "";
+			continue;
+		}
+		const neutral = familyName === "neutral";
+		colors[token] = !neutral && saturation > 0 ? (TOKEN_SLOTS[token] ?? FAMILIES[familyName].slot) : "";
+		if (neutral && !bodyText.has(token)) dim.push(token as ThemeColor);
 	}
 	return { colors, dim, appearance };
 }

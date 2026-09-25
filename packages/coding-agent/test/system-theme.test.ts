@@ -130,11 +130,18 @@ describe("generateSystemThemeColors", () => {
 		}
 	});
 
-	it("keeps body text readable (WCAG 4.5:1) on the background and every panel", () => {
+	it("keeps body text readable (WCAG 4.5:1) on the surfaces it is drawn on", () => {
+		const drawnOn: Record<string, ThemeToken[]> = {
+			text: ["selectedBg"],
+			userMessageText: ["userMessageBg"],
+			toolTitle: ["toolPendingBg", "toolSuccessBg", "toolErrorBg"],
+		};
 		for (const [name, input] of Object.entries(TERMINALS)) {
 			for (const token of TEXT_TOKENS) {
 				const text = resolved(input, token);
-				for (const surface of [input.background!, ...PANELS.map((panel) => resolved(input, panel))]) {
+				const surfaces = token === "text" ? [input.background!] : [];
+				for (const panel of drawnOn[token]) surfaces.push(resolved(input, panel));
+				for (const surface of surfaces) {
 					expect(wcagContrast(text, surface), `${name} ${token}`).toBeGreaterThanOrEqual(4.5);
 				}
 			}
@@ -143,12 +150,14 @@ describe("generateSystemThemeColors", () => {
 
 	it("orders foreground roles by contrast to the background", () => {
 		for (const [name, input] of Object.entries(TERMINALS)) {
+			// On mid-gray the levels are relaxed until they collapse to the strongest reachable color.
+			if (name === "midGray") continue;
 			const background = lightness(input.background!);
 			const distance = (token: ThemeToken) => Math.abs(lightness(resolved(input, token)) - background);
-			const order: ThemeToken[] = ["borderMuted", "dim", "muted", "text"];
-			for (let index = 1; index < order.length; index++) {
-				expect(distance(order[index]), `${name} ${order[index]}`).toBeGreaterThan(distance(order[index - 1]));
-			}
+			// Faint borders and dim text share a level; muted text is stronger, body text strongest.
+			expect(distance("dim"), name).toBeGreaterThanOrEqual(distance("borderMuted") - 0.005);
+			expect(distance("muted"), name).toBeGreaterThan(distance("dim"));
+			expect(distance("text"), name).toBeGreaterThan(distance("muted"));
 			expect(distance("accent"), name).toBeGreaterThan(distance("dim"));
 		}
 	});
@@ -179,7 +188,8 @@ describe("generateSystemThemeColors", () => {
 			["error", 1],
 			["success", 2],
 			["mdLink", 4],
-			["accent", 6],
+			["accent", 5],
+			["syntaxVariable", 6],
 		] as const) {
 			expect(Math.abs(hue(resolved(input, token)) - hue(input.palette![slot])), token).toBeLessThan(8);
 		}

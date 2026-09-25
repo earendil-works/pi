@@ -52,6 +52,10 @@ describe("theme styles", () => {
 	it("detects the appearance unless it is declared", () => {
 		expect(loadTheme("dark").appearance).toBe("dark");
 		expect(loadTheme("light").appearance).toBe("light");
+		// Without a declaration, the appearance is detected from the theme's own colors.
+		for (const base of ["dark", "light"] as const) {
+			expect(loadTheme(base, (json) => delete json.appearance).appearance).toBe(base);
+		}
 		expect(
 			loadTheme("dark", (json) => {
 				json.appearance = "light";
@@ -60,6 +64,7 @@ describe("theme styles", () => {
 
 		// Palette colors 0-15 follow the terminal palette, so such themes follow the terminal background.
 		const paletteOnly = loadTheme("dark", (json) => {
+			delete json.appearance;
 			for (const key of Object.keys(json.colors)) json.colors[key] = key.endsWith("Bg") ? 0 : 7;
 		});
 		expect(paletteOnly.appearance).toBe("dark");

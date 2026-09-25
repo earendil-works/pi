@@ -192,28 +192,6 @@ function isInSrgbGamut({ r, g, b }: LinearRgbChannels): boolean {
 	return r >= -epsilon && r <= 1 + epsilon && g >= -epsilon && g <= 1 + epsilon && b >= -epsilon && b <= 1 + epsilon;
 }
 
-/**
- * The largest OKLCH chroma inside the sRGB gamut at a lightness and hue. Dividing a chroma by it gives
- * a saturation relative to the gamut, which stays comparable across hues and lightness.
- */
-export function maxOklchChroma(l: number, h: number): number {
-	requireFinite(l, "l");
-	requireFinite(h, "h");
-	if (l <= 0 || l >= 1) return 0;
-	const radians = (h * Math.PI) / 180;
-	const cos = Math.cos(radians);
-	const sin = Math.sin(radians);
-	// The gamut is convex, so each chroma ray from the gray axis leaves it exactly once.
-	let low = 0;
-	let high = 0.5;
-	for (let index = 0; index < 24; index++) {
-		const chroma = (low + high) / 2;
-		if (isInSrgbGamut(oklabToLinearRgb({ l, a: chroma * cos, b: chroma * sin }))) low = chroma;
-		else high = chroma;
-	}
-	return low;
-}
-
 function linearRgbToChannels({ r, g, b }: LinearRgbChannels): RgbColor {
 	return {
 		r: Math.round(Math.max(0, Math.min(1, linearToSrgb(r))) * 255),
