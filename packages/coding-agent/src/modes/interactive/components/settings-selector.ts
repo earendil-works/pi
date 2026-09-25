@@ -211,14 +211,19 @@ function themeItems(availableThemes: string[], currentTheme: string): SelectItem
 
 const AUTOMATIC_THEME_VALUE = "/";
 
+/** The system theme comes first, then automatic mode, then the remaining themes. */
 function singleModeThemeItems(availableThemes: string[], currentTheme: string): SelectItem[] {
+	const items = themeItems(availableThemes, currentTheme);
+	const systemIndex = items.findIndex((item) => item.value === SYSTEM_THEME_NAME);
+	const system = systemIndex === -1 ? [] : items.splice(systemIndex, 1);
 	return [
+		...system,
 		{
 			value: AUTOMATIC_THEME_VALUE,
 			label: "  automatic",
 			description: "Use separate themes for light and dark terminal appearance",
 		},
-		...themeItems(availableThemes, currentTheme),
+		...items,
 	];
 }
 
