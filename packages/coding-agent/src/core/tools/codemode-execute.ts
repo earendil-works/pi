@@ -11,18 +11,22 @@ import {
 	CodemodeSandbox,
 	type CodemodeTool,
 	loadQuickJSWasm,
+	parseCodemodeSource,
 } from "@earendil-works/pi-codemode";
 import { getCodemodeWorkerUrl, getQuickJSWasmPath } from "../../config.ts";
 import type { ExtensionToolContext } from "../extensions/types.ts";
+import type { SessionEntry } from "../session-manager.ts";
 import {
+	CODEMODE_STORE_ENTRY_TYPE,
 	type CodemodeNestedCall,
+	type CodemodeStoreEntryData,
 	type CodemodeToolDetails,
 	type CodemodeToolInput,
+	type CodemodeToolOptions,
 	getCodemodeCallableTools,
 } from "./codemode.ts";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize, truncateHead } from "./truncate.ts";
 
-const MAX_TIMEOUT_SECONDS = 2_147_483_647 / 1000;
 const ARGS_PREVIEW_CHARS = 200;
 const ERROR_PREVIEW_CHARS = 500;
 
@@ -46,12 +50,28 @@ function textOf(result: AgentToolResult<unknown>): string {
 		.join("\n");
 }
 
-function resolveTimeoutMs(timeout: number | undefined): number {
-	if (timeout === undefined) return Number.POSITIVE_INFINITY;
-	if (!Number.isFinite(timeout) || timeout <= 0 || timeout > MAX_TIMEOUT_SECONDS) {
-		throw new Error(`Invalid timeout: must be a positive number of seconds up to ${MAX_TIMEOUT_SECONDS}`);
+function isStoreEntryData(data: unknown): data is CodemodeStoreEntryData {
+	if (typeof data !== "object" || data === null) return false;
+	const { set, delete: deleted } = data as Partial<CodemodeStoreEntryData>;
+	return (
+		typeof set === "object" &&
+		set !== null &&
+		Array.isArray(deleted) &&
+		deleted.every((key: unknown) => typeof key === "string")
+	);
+}
+
+/** Values of `load()`: the `codemode-store` entries on the branch, applied from the root. */
+export function readCodemodeStore(branch: readonly SessionEntry[]): Record<string, unknown> {
+	const store = new Map<string, unknown>();
+	for (const entry of branch) {
+		if (entry.type !== "custom" || entry.customType !== CODEMODE_STORE_ENTRY_TYPE || !isStoreEntryData(entry.data)) {
+			continue;
+		}
+		for (const key of entry.data.delete) store.delete(key);
+		for (const [key, value] of Object.entries(entry.data.set)) store.set(key, value);
 	}
-	return timeout * 1000;
+	return Object.fromEntries(store);
 }
 
 function formatLogs(logs: readonly CodemodeLog[]): string {
@@ -101,12 +121,14 @@ function formatOutput(text: string, logs: readonly CodemodeLog[]): string {
  */
 export async function executeCodemode(
 	toolCallId: string,
-	{ code, timeout }: CodemodeToolInput,
+	input: CodemodeToolInput,
 	signal: AbortSignal | undefined,
 	onUpdate: ((result: AgentToolResult<CodemodeToolDetails>) => void) | undefined,
 	ctx: ExtensionToolContext,
+	options: CodemodeToolOptions = {},
 ): Promise<AgentToolResult<CodemodeToolDetails>> {
-	const timeoutMs = resolveTimeoutMs(timeout);
+	const { code, options: sourceOptions } = parseCodemodeSource(input.code);
+	const timeoutMs = sourceOptions.timeout === undefined ? Number.POSITIVE_INFINITY : sourceOptions.timeout * 1000;
 	const calls: CodemodeNestedCall[] = [];
 	const images: ImageContent[] = [];
 	const attached = new Set<number>();
@@ -183,7 +205,7 @@ export async function executeCodemode(
 
 	let result: CodemodeResult;
 	try {
-		result = await sandbox.execute(code, { signal });
+		result = await sandbox.execute(code, { signal, store: readCodemodeStore(ctx.sessionManager.getBranch()) });
 	} finally {
 		await sandbox.close();
 	}
@@ -195,6 +217,10 @@ export async function executeCodemode(
 
 	if (!result.ok) {
 		throw new Error(formatFailure(result, calls));
+	}
+	const { set, delete: deleted } = result.storeWrites;
+	if (Object.keys(set).length > 0 || deleted.length > 0) {
+		options.appendEntry?.(CODEMODE_STORE_ENTRY_TYPE, { set, delete: deleted });
 	}
 
 	const valueText = formatValue(result.value);

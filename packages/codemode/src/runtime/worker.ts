@@ -79,7 +79,12 @@ async function main(data: WorkerData): Promise<void> {
 				break;
 			case "done":
 				if (a.toBoolean()) {
-					post({ type: "done", ok: true, value: b === undefined || b.isUndefined ? undefined : b.toString() });
+					post({
+						type: "done",
+						ok: true,
+						value: b === undefined || b.isUndefined ? undefined : b.toString(),
+						writes: c.toString(),
+					});
 				} else {
 					post({ type: "done", ok: false, error: b.toString() });
 				}
@@ -97,6 +102,7 @@ async function main(data: WorkerData): Promise<void> {
 				bridge,
 				vm.newString(JSON.stringify(data.toolNames)),
 				vm.newString(JSON.stringify(data.globalNames)),
+				vm.newString(JSON.stringify(data.store)),
 			),
 		),
 	);

@@ -8,6 +8,7 @@ import type {
 	CodemodeLogLevel,
 	CodemodeResult,
 	CodemodeSandboxOptions,
+	CodemodeStoreWrites,
 	CodemodeTool,
 } from "../types.ts";
 import { type CodemodeWasmModule, loadQuickJSWasm } from "../wasm.ts";
@@ -21,10 +22,28 @@ import {
 const DEFAULT_TIMEOUT_MS = 300_000;
 const LOG_LEVELS: ReadonlySet<string> = new Set<CodemodeLogLevel>(["log", "info", "warn", "error", "debug"]);
 const IDENTIFIER = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
-const RESERVED_GLOBALS: ReadonlySet<string> = new Set(["tools", "console", "globalThis"]);
+const RESERVED_GLOBALS: ReadonlySet<string> = new Set(["tools", "console", "globalThis", "store", "load"]);
 
 function errorMessage(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
+}
+
+function serializeStore(store: Readonly<Record<string, unknown>> | undefined): Record<string, string> {
+	const serialized: Record<string, string> = {};
+	for (const [key, value] of Object.entries(store ?? {})) {
+		const json = JSON.stringify(value);
+		if (json !== undefined) serialized[key] = json;
+	}
+	return serialized;
+}
+
+function parseStoreWrites(json: string): CodemodeStoreWrites {
+	const writes: CodemodeStoreWrites = { set: {}, delete: [] };
+	for (const [key, value] of JSON.parse(json) as [string, string?][]) {
+		if (value === undefined) writes.delete.push(key);
+		else writes.set[key] = JSON.parse(value);
+	}
+	return writes;
 }
 
 function defaultWorkerUrl(): URL {
@@ -45,6 +64,7 @@ interface ExecutionOptions {
 	timeoutMs: number;
 	signal: AbortSignal | undefined;
 	memoryLimitBytes: number | undefined;
+	store: Record<string, string>;
 	wasm: Promise<CodemodeWasmModule>;
 	workerUrl: URL;
 }
@@ -111,6 +131,7 @@ class Execution {
 			globalNames: [...options.globals.keys()],
 			wasm,
 			memoryLimitBytes: options.memoryLimitBytes,
+			store: options.store,
 			interrupt: this.interrupt,
 		};
 		let worker: Worker;
@@ -170,7 +191,7 @@ class Execution {
 			this.finish({ kind: "script", ...parsed });
 			return;
 		}
-		this.finish(undefined, message.value === undefined ? undefined : JSON.parse(message.value));
+		this.finish(undefined, message.value === undefined ? undefined : JSON.parse(message.value), message.writes);
 	}
 
 	private async handleCall(message: Extract<WorkerToHostMessage, { type: "call" }>): Promise<void> {
@@ -205,7 +226,7 @@ class Execution {
 		this.post(reply);
 	}
 
-	private finish(error: CodemodeError | undefined, value?: unknown): void {
+	private finish(error: CodemodeError | undefined, value?: unknown, writes?: string): void {
 		if (this.finished) return;
 		this.finished = true;
 		clearTimeout(this.timer);
@@ -220,7 +241,13 @@ class Execution {
 
 		const result: CodemodeResult = error
 			? { ok: false, error, logs: this.logs, calls: this.calls }
-			: { ok: true, value, logs: this.logs, calls: this.calls };
+			: {
+					ok: true,
+					value,
+					logs: this.logs,
+					calls: this.calls,
+					storeWrites: writes === undefined ? { set: {}, delete: [] } : parseStoreWrites(writes),
+				};
 		if (!this.worker) {
 			this.resolveResult(result);
 			return;
@@ -287,6 +314,7 @@ export class CodemodeSandbox {
 	/**
 	 * `code` is an async function body: `return` and top-level `await` work.
 	 * Never rejects for script failures; those come back as `{ ok: false }`.
+	 * The script can use `store(key, value)` and `load(key)` on `options.store`.
 	 */
 	execute(code: string, options: CodemodeExecuteOptions = {}): Promise<CodemodeResult> {
 		if (this.closed) return Promise.reject(new Error("Sandbox is closed"));
@@ -297,6 +325,7 @@ export class CodemodeSandbox {
 			timeoutMs: options.timeoutMs ?? this.timeoutMs,
 			signal: options.signal,
 			memoryLimitBytes: this.memoryLimitBytes,
+			store: serializeStore(options.store),
 			wasm: this.wasm === undefined ? loadQuickJSWasm() : Promise.resolve(this.wasm),
 			workerUrl: this.workerUrl,
 		});

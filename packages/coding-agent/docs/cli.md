@@ -138,6 +138,8 @@ Default enabled tools are `read`, `bash`, `edit`, and `write`, unless `defaultTo
 | `ls` | List directory contents |
 | `codemode` | Run JavaScript that calls the other active tools, for example in parallel with `Promise.all`; only the script's return value and console output reach the model |
 
+`codemode` scripts run in a QuickJS sandbox that can only reach the other tools. A script may start with an options line such as `// @options {"timeout": 30}`; `timeout` is in seconds and unset by default. `store(key, value)` and `load(key)` keep JSON values across codemode calls: each successful script that stores values appends a `codemode-store` custom entry to the session, so resumed sessions keep the values and each branch sees only the values written on its path.
+
 <a id="resource-options"></a>
 
 ## Resources

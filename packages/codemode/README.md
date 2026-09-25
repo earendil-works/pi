@@ -39,11 +39,38 @@ await sandbox.close();
 - `tools.<name>(args)` returns a promise. Arguments and results make a JSON round trip. A tool that throws rejects with an `Error` carrying the same message.
 - `console.log/info/warn/error/debug` are captured into `result.logs`.
 - `globals` passed to the sandbox are called as top-level functions, for example a host helper `image(ref)`. They behave like tools but are not recorded in `result.calls`.
+- `store(key, value)` and `load(key)` read and write JSON values synchronously. See [Store](#store).
 - Nothing else: no timers, `fetch`, `process`, `require`, modules, or `WebAssembly`. `eval` and `Function` work but only produce more code inside the same VM.
 
 `timeoutMs: Infinity` disables the deadline; the script then runs until it settles or `signal` aborts it.
 
 `memoryLimitBytes` caps the VM's heap. Allocations beyond it fail inside the script as `InternalError: out of memory`.
+
+## Store
+
+`store`/`load` let scripts keep values across executions. The sandbox does not persist anything itself: pass the current values as `options.store`, and a successful result reports what the script changed as `result.storeWrites` (`{ set, delete }`). Failed executions report no writes.
+
+```ts
+const result = await sandbox.execute(`store("runs", (load("runs") ?? 0) + 1)`, { store: saved });
+if (result.ok) {
+	for (const key of result.storeWrites.delete) delete saved[key];
+	Object.assign(saved, result.storeWrites.set);
+}
+```
+
+`load` returns a copy, so mutating it does not change the store. Storing `undefined` deletes the key. A value may be at most `MAX_STORE_VALUE_CHARS` (256 Ki) characters of JSON and all values together at most `MAX_STORE_TOTAL_CHARS` (1 Mi); larger writes throw a `RangeError` inside the script.
+
+## Source format
+
+`parseCodemodeSource()` accepts a script whose first line may set options:
+
+```js
+// @options {"timeout": 30}
+const text = await tools.read({ path: "package.json" });
+return JSON.parse(text).name;
+```
+
+The only option is `timeout` (seconds). The options line is replaced by an empty line, so line numbers in stack traces still match the input. Invalid JSON, unknown keys, or an options line without code throw `CodemodeSourceError`. `CODEMODE_SOURCE_GRAMMAR` is the matching Lark grammar for providers that support grammar-constrained tool input. Both are also available from the lightweight `@earendil-works/pi-codemode/source` entry.
 
 ## Bundled hosts
 

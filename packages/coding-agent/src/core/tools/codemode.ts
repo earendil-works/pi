@@ -11,11 +11,18 @@
  * - Any other tool resolves to its text content as one string. Images are replaced by
  *   `[image:N mime]` references that the script can attach with `image(ref)`.
  * - A failed, blocked, or invalid call rejects with an Error carrying the tool's error text.
+ *
+ * The input is the script itself, optionally starting with `// @options {"timeout": 30}`. Models
+ * that support grammar-constrained tool input write it as raw text; others send it as the `code`
+ * string. `store(key, value)` and `load(key)` keep JSON values across calls; successful scripts
+ * append their writes to the session as `codemode-store` custom entries, so each branch sees the
+ * values written on its own path.
  */
 
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { CodemodeJsonSchema, CodemodeLog, CodemodeTool } from "@earendil-works/pi-codemode";
 import { renderDeclarations } from "@earendil-works/pi-codemode/declarations";
+import { CODEMODE_SOURCE_GRAMMAR } from "@earendil-works/pi-codemode/source";
 import { type Static, Type } from "typebox";
 import type { ToolDefinition } from "../extensions/types.ts";
 import { loadCodemodeExecutor } from "./codemode-execute.lazy.ts";
@@ -24,13 +31,29 @@ import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
 
 export const CODEMODE_TOOL_NAME = "codemode";
 
+/** Custom entry type holding one script's `store()` writes: {@link CodemodeStoreEntryData}. */
+export const CODEMODE_STORE_ENTRY_TYPE = "codemode-store";
+
+export interface CodemodeStoreEntryData {
+	set: Record<string, unknown>;
+	delete: string[];
+}
+
+export interface CodemodeToolOptions {
+	/**
+	 * Persists `store()` writes as a session custom entry. Without it, writes last only for the
+	 * current script; `load()` still reads entries already on the branch.
+	 */
+	appendEntry?: (customType: string, data: CodemodeStoreEntryData) => void;
+}
+
 const TEXT_OUTPUT_SCHEMA: CodemodeJsonSchema = { type: "string" };
 
 export const codemodeSchema = Type.Object({
 	code: Type.String({
-		description: "Body of an async JavaScript function. Top-level await and return work.",
+		description:
+			'Body of an async JavaScript function. Top-level await and return work. May start with a `// @options {"timeout": 30}` line.',
 	}),
-	timeout: Type.Optional(Type.Number({ description: "Timeout in seconds (optional, no default timeout)" })),
 });
 
 export type CodemodeToolInput = Static<typeof codemodeSchema>;
@@ -65,14 +88,21 @@ export const codemodeToolSystemPromptContribution = {
 
 const DESCRIPTION_INTRO = `Run JavaScript that calls other tools. Use it to chain, loop over, or parallelize tool calls (for example with Promise.all) and to reduce large results to what you need. You only see the return value, console output, and images attached with image(); nested tool results are not shown to you otherwise.
 
-- \`code\` is the body of an async function: top-level \`await\` and \`return\` work. Return JSON-serializable values.
+- The input is the body of an async function: top-level \`await\` and \`return\` work. Return JSON-serializable values.
+- The first line may set options: \`// @options {"timeout": 30}\`. \`timeout\` is in seconds; by default there is none.
 - Call tools as \`await tools.<name>(args)\` with one object argument matching the tool's parameters. Use \`tools["name"](args)\` for names that are not identifiers.
 - A tool resolves to its declared result type; tools declared as \`Promise<string>\` resolve to their text output. Images in text output appear as \`[image:N mime]\` references.
 - A failing or blocked tool call rejects with an Error carrying the tool's error text. Catch it to continue.
 - \`console.log/info/warn/error/debug\` output is returned together with the result.
+- \`store(key, value)\` saves a JSON-serializable value for later codemode calls in this session; \`load(key)\` reads it back (or \`undefined\`). Storing \`undefined\` deletes the key. Writes are kept only if the script succeeds.
 - Nothing else is available: no filesystem, network, process, timers, require, or import. Use tools instead.
 - Calls that are still running when the script returns are cancelled; await everything you start.
 - Tool calls are real and have side effects. If the script fails partway, earlier calls are not undone.`;
+
+const STORE_DECLARATIONS = `/** Save a JSON-serializable value for later codemode calls. \`undefined\` deletes the key. */
+declare function store(key: string, value: unknown): void;
+/** Read a value saved with store(), or undefined. */
+declare function load(key: string): unknown;`;
 
 const IMAGE_GLOBAL_DESCRIPTION =
 	"Attach images to the result so you can see them. `ref` is any string containing `[image:N ...]` references, for example a tool's text output.";
@@ -110,10 +140,12 @@ export function createCodemodeDescription(tools: readonly AgentTool<any>[]): str
 			},
 		],
 	});
-	return `${DESCRIPTION_INTRO}\n\nAvailable API:\n\`\`\`ts\n${declarations}\n\`\`\``;
+	return `${DESCRIPTION_INTRO}\n\nAvailable API:\n\`\`\`ts\n${declarations}\n\n${STORE_DECLARATIONS}\n\`\`\``;
 }
 
-export function createCodemodeToolDefinition(): ToolDefinition<typeof codemodeSchema, CodemodeToolDetails | undefined> {
+export function createCodemodeToolDefinition(
+	options: CodemodeToolOptions = {},
+): ToolDefinition<typeof codemodeSchema, CodemodeToolDetails | undefined> {
 	return {
 		name: CODEMODE_TOOL_NAME,
 		label: CODEMODE_TOOL_NAME,
@@ -122,9 +154,11 @@ export function createCodemodeToolDefinition(): ToolDefinition<typeof codemodeSc
 		promptSnippet: codemodeToolSystemPromptContribution.snippet,
 		promptGuidelines: [...codemodeToolSystemPromptContribution.guidelines],
 		parameters: codemodeSchema,
+		// Capable models write the script as raw text instead of a JSON-escaped string.
+		constrainedSampling: { type: "grammar", variants: { openai_lark: CODEMODE_SOURCE_GRAMMAR } },
 		// The sandbox (worker, QuickJS wasm) loads on the first call, not at startup.
 		execute: async (toolCallId, params, signal, onUpdate, ctx) =>
-			(await loadCodemodeExecutor()).executeCodemode(toolCallId, params, signal, onUpdate, ctx),
+			(await loadCodemodeExecutor()).executeCodemode(toolCallId, params, signal, onUpdate, ctx, options),
 		...codemodeRenderers,
 	};
 }
@@ -133,8 +167,11 @@ export function createCodemodeToolDefinition(): ToolDefinition<typeof codemodeSc
  * Create the codemode tool as an AgentTool. The description lists the given tools; the script can
  * call whatever tools the agent loop provides at execution time.
  */
-export function createCodemodeTool(tools: readonly AgentTool<any>[] = []): AgentTool<typeof codemodeSchema> {
-	const definition = createCodemodeToolDefinition();
+export function createCodemodeTool(
+	tools: readonly AgentTool<any>[] = [],
+	options: CodemodeToolOptions = {},
+): AgentTool<typeof codemodeSchema> {
+	const definition = createCodemodeToolDefinition(options);
 	const tool = wrapToolDefinition(definition);
 	Object.assign(tool, {
 		description: createCodemodeDescription(tools),

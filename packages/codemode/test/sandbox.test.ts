@@ -206,6 +206,78 @@ describe("tools", () => {
 	});
 });
 
+describe("store and load", () => {
+	it("reads the snapshot and reports writes", async () => {
+		const sandbox = createSandbox();
+		const result = await sandbox.execute(
+			`
+			const seen = load("counter");
+			store("counter", seen + 1);
+			store("list", [1, { a: null }]);
+			store("old", undefined);
+			return [seen, load("counter"), load("missing"), load("old")];
+		`,
+			{ store: { counter: 41, old: "x" } },
+		);
+		expect(result).toMatchObject({
+			ok: true,
+			// undefined array elements become null in the JSON round trip of the return value.
+			value: [41, 42, null, null],
+			storeWrites: { set: { counter: 42, list: [1, { a: null }] }, delete: ["old"] },
+		});
+	});
+
+	it("returns copies, so mutating a loaded value does not change the store", async () => {
+		const sandbox = createSandbox();
+		const result = await sandbox.execute(
+			`const value = load("obj"); value.a = 2; const kept = { b: 1 }; store("kept", kept); kept.b = 2;
+			return [load("obj").a, load("kept").b];`,
+			{ store: { obj: { a: 1 } } },
+		);
+		expect(result).toMatchObject({ ok: true, value: [1, 1], storeWrites: { set: { kept: { b: 1 } } } });
+	});
+
+	it("reports no writes when there were none", async () => {
+		const sandbox = createSandbox();
+		expect(await sandbox.execute("return load('a')", { store: { a: 1 } })).toMatchObject({
+			ok: true,
+			value: 1,
+			storeWrites: { set: {}, delete: [] },
+		});
+	});
+
+	it("drops writes when the script fails", async () => {
+		const sandbox = createSandbox();
+		const result = await sandbox.execute("store('a', 1); throw new Error('boom')");
+		expect(result.ok).toBe(false);
+		expect("storeWrites" in result).toBe(false);
+	});
+
+	it("rejects invalid keys, values, and oversized writes inside the script", async () => {
+		const sandbox = createSandbox();
+		const result = await sandbox.execute(`
+			const attempt = (fn) => { try { fn(); return "ok"; } catch (error) { return error.name; } };
+			return [
+				attempt(() => store(1, "x")),
+				attempt(() => load({})),
+				attempt(() => store("fn", () => 1)),
+				attempt(() => store("big", "x".repeat(300 * 1024))),
+				attempt(() => { for (let i = 0; i < 8; i++) store("k" + i, "x".repeat(200 * 1024)); }),
+			];
+		`);
+		expect(result).toMatchObject({
+			ok: true,
+			value: ["TypeError", "TypeError", "TypeError", "RangeError", "RangeError"],
+		});
+	});
+
+	it("reserves the store and load names", () => {
+		const execute = () => undefined;
+		expect(() => new CodemodeSandbox({ globals: [{ name: "store", execute }] })).toThrow(/Invalid global/);
+		expect(() => new CodemodeSandbox({ globals: [{ name: "load", execute }] })).toThrow(/Invalid global/);
+	});
+});
+
 describe("globals", () => {
 	it("exposes globals as top-level functions without recording them as calls", async () => {
 		const seen: unknown[] = [];

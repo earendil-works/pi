@@ -16,6 +16,11 @@
 			"types": "./dist/declarations.d.ts",
 			"import": "./dist/declarations.js"
 		},
+		"./source": {
+			"source": "./src/source.ts",
+			"types": "./dist/source.d.ts",
+			"import": "./dist/source.js"
+		},
 		"./worker": {
 			"source": "./src/runtime/worker.ts",
 			"types": "./dist/runtime/worker.d.ts",

@@ -1,9 +1,17 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import type { ToolResultMessage } from "@earendil-works/pi-ai/compat";
+import { CODEMODE_SOURCE_GRAMMAR } from "@earendil-works/pi-codemode";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
-import { type CodemodeToolDetails, createCodemodeTool } from "../../src/core/tools/codemode.ts";
+import type { CustomEntry } from "../../src/core/session-manager.ts";
+import {
+	CODEMODE_STORE_ENTRY_TYPE,
+	type CodemodeToolDetails,
+	createCodemodeTool,
+	createCodemodeToolDefinition,
+} from "../../src/core/tools/codemode.ts";
+import { readCodemodeStore } from "../../src/core/tools/codemode-execute.ts";
 import { createHarness, type Harness, type HarnessOptions } from "./harness.ts";
 
 const TINY_PNG_BASE64 =
@@ -239,5 +247,130 @@ describe("AgentSession codemode tool", () => {
 		expect(text).toContain("Error: boom");
 		expect(text).toContain("codemode.js:2");
 		expect(text).toContain("Tool calls made before the failure (they are not undone): echo (ok)");
+	});
+});
+
+describe("codemode options and store", () => {
+	const harnesses: Harness[] = [];
+
+	afterEach(() => {
+		while (harnesses.length > 0) harnesses.pop()?.cleanup();
+	});
+
+	// No tools override: the session builds its own codemode tool, including the store writer.
+	async function setup() {
+		const harness = await createHarness({ initialActiveToolNames: ["codemode"] });
+		harnesses.push(harness);
+		return harness;
+	}
+
+	async function run(harness: Harness, code: string): Promise<ToolResultMessage> {
+		harness.setResponses([
+			fauxAssistantMessage([fauxToolCall("codemode", { code })], { stopReason: "toolUse" }),
+			fauxAssistantMessage("done"),
+		]);
+		await harness.session.prompt("go");
+		const results = harness.session.messages.filter(
+			(message): message is ToolResultMessage => message.role === "toolResult" && message.toolName === "codemode",
+		);
+		const result = results.at(-1);
+		if (!result) throw new Error("No codemode tool result");
+		return result;
+	}
+
+	function storeEntries(harness: Harness): unknown[] {
+		return harness.sessionManager
+			.getBranch()
+			.filter(
+				(entry): entry is CustomEntry => entry.type === "custom" && entry.customType === CODEMODE_STORE_ENTRY_TYPE,
+			)
+			.map((entry) => entry.data);
+	}
+
+	const increment = `const next = (load("count") ?? 0) + 1;\nstore("count", next);\nreturn next;`;
+
+	it("declares a grammar for raw source input", () => {
+		const definition = createCodemodeToolDefinition();
+		expect(definition.constrainedSampling).toEqual({
+			type: "grammar",
+			variants: { openai_lark: CODEMODE_SOURCE_GRAMMAR },
+		});
+		expect(Object.keys(definition.parameters.properties)).toEqual(["code"]);
+		expect(definition.description).toContain("declare function store(key: string, value: unknown): void;");
+	});
+
+	it("applies the @options timeout and rejects invalid options", async () => {
+		const harness = await setup();
+		const timedOut = await run(harness, '// @options {"timeout": 0.2}\nwhile (true) {}');
+		expect(timedOut.isError).toBe(true);
+		expect(resultText(timedOut)).toContain("Script timed out");
+
+		const invalid = await run(harness, '// @options {"yield": 1}\nreturn 1');
+		expect(invalid.isError).toBe(true);
+		expect(resultText(invalid)).toContain('Unknown @options key "yield"');
+	});
+
+	it("keeps script line numbers when an options line is present", async () => {
+		const harness = await setup();
+		const result = await run(harness, '// @options {"timeout": 5}\nconst a = 1;\nthrow new Error("line three");');
+		expect(result.isError).toBe(true);
+		expect(resultText(result)).toContain("codemode.js:3");
+	});
+
+	it("persists store() writes as custom entries for later calls", async () => {
+		const harness = await setup();
+		expect(resultText(await run(harness, increment))).toBe("1");
+		expect(resultText(await run(harness, increment))).toBe("2");
+		expect(storeEntries(harness)).toEqual([
+			{ set: { count: 1 }, delete: [] },
+			{ set: { count: 2 }, delete: [] },
+		]);
+		const appended = harness
+			.eventsOfType("entry_appended")
+			.filter((event) => event.entry.type === "custom" && event.entry.customType === CODEMODE_STORE_ENTRY_TYPE);
+		expect(appended).toHaveLength(2);
+
+		expect(resultText(await run(harness, 'store("count", undefined);\nreturn load("count") === undefined;'))).toBe(
+			"true",
+		);
+		expect(storeEntries(harness).at(-1)).toEqual({ set: {}, delete: ["count"] });
+	});
+
+	it("appends nothing for failed scripts or scripts without writes", async () => {
+		const harness = await setup();
+		expect((await run(harness, 'store("count", 5);\nthrow new Error("boom");')).isError).toBe(true);
+		expect((await run(harness, 'return load("count") ?? "missing";')).isError).toBe(false);
+		expect(storeEntries(harness)).toEqual([]);
+	});
+
+	it("loads the values written on the current branch", async () => {
+		const harness = await setup();
+		await run(harness, increment);
+		const firstPrompt = harness.sessionManager.getBranch().find((entry) => entry.type === "message");
+		if (!firstPrompt) throw new Error("No first prompt entry");
+		expect(resultText(await run(harness, increment))).toBe("2");
+
+		// Branch from the first prompt: the store entries written after it are on another path.
+		harness.sessionManager.branch(firstPrompt.id);
+		expect(resultText(await run(harness, increment))).toBe("1");
+	});
+
+	it("folds store entries from the root, ignoring malformed data", () => {
+		const entry = (data: unknown, customType = CODEMODE_STORE_ENTRY_TYPE): CustomEntry => ({
+			type: "custom",
+			customType,
+			data,
+			id: Math.random().toString(36).slice(2),
+			parentId: null,
+			timestamp: new Date(0).toISOString(),
+		});
+		expect(
+			readCodemodeStore([
+				entry({ set: { a: 1, b: { c: 2 } }, delete: [] }),
+				entry({ set: { a: 3 }, delete: ["b"] }),
+				entry({ set: { z: 1 } }),
+				entry({ set: { other: 1 }, delete: [] }, "other-extension"),
+			]),
+		).toEqual({ a: 3 });
 	});
 });

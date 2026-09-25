@@ -63,8 +63,15 @@ export interface CodemodeError {
 	stack?: string;
 }
 
+/** Keys the script changed with `store()`. Only successful executions report writes. */
+export interface CodemodeStoreWrites {
+	set: Record<string, unknown>;
+	/** Keys stored as `undefined`. */
+	delete: string[];
+}
+
 export type CodemodeResult =
-	| { ok: true; value: unknown; logs: CodemodeLog[]; calls: CodemodeCall[] }
+	| { ok: true; value: unknown; logs: CodemodeLog[]; calls: CodemodeCall[]; storeWrites: CodemodeStoreWrites }
 	| { ok: false; error: CodemodeError; logs: CodemodeLog[]; calls: CodemodeCall[] };
 
 export interface CodemodeSandboxOptions {
@@ -73,7 +80,7 @@ export interface CodemodeSandboxOptions {
 	 * Functions exposed as top-level identifiers instead of on `tools`, for host helpers such as
 	 * attaching an image to the result. They behave like tools (JSON round trip, promise result)
 	 * but are not recorded in `result.calls`. Names must be identifiers and may not shadow
-	 * `tools` or `console`.
+	 * `tools`, `console`, `store`, or `load`.
 	 */
 	globals?: CodemodeTool[];
 	/**
@@ -105,4 +112,9 @@ export interface CodemodeExecuteOptions {
 	signal?: AbortSignal;
 	/** Overrides the sandbox default for this execution. */
 	timeoutMs?: number;
+	/**
+	 * Values the script reads with `load(key)`. Must be JSON-serializable. The script's own
+	 * `store()` calls come back as `result.storeWrites`; persisting them is up to the caller.
+	 */
+	store?: Readonly<Record<string, unknown>>;
 }

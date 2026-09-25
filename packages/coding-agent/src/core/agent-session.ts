@@ -750,6 +750,14 @@ export class AgentSession {
 		this.agent.state.messages = projection.messages;
 	}
 
+	private _appendCustomEntry(customType: string, data: unknown): void {
+		const entryId = this.sessionManager.appendCustomEntry(customType, data);
+		const entry = this.sessionManager.getEntry(entryId);
+		if (entry) {
+			this._emit({ type: "entry_appended", entry });
+		}
+	}
+
 	private _applyBoundaryDrafts(manager: SessionManager, drafts: SessionBoundaryDraft[]): SessionEntry[] {
 		const appended: SessionEntry[] = [];
 		for (const draft of drafts) {
@@ -3081,13 +3089,7 @@ export class AgentSession {
 						});
 					});
 				},
-				appendEntry: (customType, data) => {
-					const entryId = this.sessionManager.appendCustomEntry(customType, data);
-					const entry = this.sessionManager.getEntry(entryId);
-					if (entry) {
-						this._emit({ type: "entry_appended", entry });
-					}
-				},
+				appendEntry: (customType, data) => this._appendCustomEntry(customType, data),
 				setSessionName: (name) => {
 					this.setSessionName(name);
 				},
@@ -3270,6 +3272,7 @@ export class AgentSession {
 			: createAllToolDefinitions(this._cwd, {
 					read: { autoResizeImages },
 					bash: { commandPrefix: shellCommandPrefix, shellPath },
+					codemode: { appendEntry: (customType, data) => this._appendCustomEntry(customType, data) },
 				});
 
 		this._baseToolDefinitions = new Map(

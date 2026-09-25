@@ -10,11 +10,14 @@ export {
 	createLocalBashOperations,
 } from "./bash.ts";
 export {
+	CODEMODE_STORE_ENTRY_TYPE,
 	CODEMODE_TOOL_NAME,
 	type CodemodeNestedCall,
 	type CodemodeNestedCallStatus,
+	type CodemodeStoreEntryData,
 	type CodemodeToolDetails,
 	type CodemodeToolInput,
+	type CodemodeToolOptions,
 	createCodemodeDescription,
 	createCodemodeTool,
 	createCodemodeToolDefinition,
@@ -92,7 +95,7 @@ export {
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { ToolDefinition } from "../extensions/types.ts";
 import { type BashToolOptions, createBashTool, createBashToolDefinition } from "./bash.ts";
-import { createCodemodeTool, createCodemodeToolDefinition } from "./codemode.ts";
+import { type CodemodeToolOptions, createCodemodeTool, createCodemodeToolDefinition } from "./codemode.ts";
 import { createEditTool, createEditToolDefinition, type EditToolOptions } from "./edit.ts";
 import { createFindTool, createFindToolDefinition, type FindToolOptions } from "./find.ts";
 import { createGrepTool, createGrepToolDefinition, type GrepToolOptions } from "./grep.ts";
@@ -125,6 +128,7 @@ export interface ToolsOptions {
 	grep?: GrepToolOptions;
 	find?: FindToolOptions;
 	ls?: LsToolOptions;
+	codemode?: CodemodeToolOptions;
 }
 
 export function createToolDefinition(toolName: ToolName, cwd: string, options?: ToolsOptions): ToolDef {
@@ -146,7 +150,7 @@ export function createToolDefinition(toolName: ToolName, cwd: string, options?: 
 		case "ls":
 			return createLsToolDefinition(cwd, options?.ls);
 		case "codemode":
-			return createCodemodeToolDefinition();
+			return createCodemodeToolDefinition(options?.codemode);
 		default:
 			throw new Error(`Unknown tool name: ${toolName}`);
 	}
@@ -171,7 +175,7 @@ export function createTool(toolName: ToolName, cwd: string, options?: ToolsOptio
 		case "ls":
 			return createLsTool(cwd, options?.ls);
 		case "codemode":
-			return createCodemodeTool();
+			return createCodemodeTool([], options?.codemode);
 		default:
 			throw new Error(`Unknown tool name: ${toolName}`);
 	}
@@ -205,7 +209,7 @@ export function createAllToolDefinitions(cwd: string, options?: ToolsOptions): R
 		grep: createGrepToolDefinition(cwd, options?.grep),
 		find: createFindToolDefinition(cwd, options?.find),
 		ls: createLsToolDefinition(cwd, options?.ls),
-		codemode: createCodemodeToolDefinition(),
+		codemode: createCodemodeToolDefinition(options?.codemode),
 	};
 }
 
@@ -237,6 +241,6 @@ export function createAllTools(cwd: string, options?: ToolsOptions): Record<Tool
 		grep: createGrepTool(cwd, options?.grep),
 		find: createFindTool(cwd, options?.find),
 		ls: createLsTool(cwd, options?.ls),
-		codemode: createCodemodeTool(),
+		codemode: createCodemodeTool([], options?.codemode),
 	};
 }

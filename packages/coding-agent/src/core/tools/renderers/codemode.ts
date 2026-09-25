@@ -58,10 +58,9 @@ export const codemodeRenderers: Pick<
 	"renderCall" | "renderResult"
 > = {
 	renderCall(args, theme, context) {
+		// The code includes the `// @options` line, so options show as part of the script.
 		const code = str((args as { code?: unknown } | undefined)?.code);
-		const timeout = (args as { timeout?: unknown } | undefined)?.timeout;
 		let text = theme.fg("toolTitle", theme.bold("codemode"));
-		if (typeof timeout === "number") text += theme.fg("muted", ` (timeout ${timeout}s)`);
 		if (code === null) {
 			text += ` ${theme.fg("error", "[invalid arg]")}`;
 		} else if (code) {
