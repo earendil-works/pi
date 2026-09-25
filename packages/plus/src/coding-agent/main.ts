@@ -1,0 +1,117 @@
+/**
+ * Wrapper for packages/coding-agent/src/main.ts.
+ *
+ * Adds hub profile support on top of the original CLI entry:
+ * - `pipi completion <bash|zsh>` is owned by pi-plus and dispatched before
+ *   everything else; it prints a shell completion script and ends the process
+ * - hub subcommands (`pipi profile …`, `pipi use`/`pipi unuse`)
+ *   are dispatched before pi starts and end the process
+ * - `pipi --as <name>` and the stored default profile resolve to a
+ *   materialized isolated agent dir; PI_CODING_AGENT_DIR is set in-process
+ *   before delegating (getAgentDir() is read lazily, so this is safe)
+ * - anything else passes through untouched, with the π+ welcome banner
+ *   registered as a hidden built-in extension (TUI startup header)
+ */
+export * from "../../../coding-agent/src/main.ts";
+
+import type { LaunchPlan } from "@earendil-works/pi-hub";
+import {
+	dispatchHubCommand,
+	findProfile,
+	HUB_SUBCOMMANDS,
+	materializeProfile,
+	resolveLaunch,
+	syncProfilePackagesToSource,
+} from "@earendil-works/pi-hub";
+import { ENV_AGENT_DIR } from "../../../coding-agent/src/config.ts";
+import type { MainOptions } from "../../../coding-agent/src/main.ts";
+import { main as upstreamMain } from "../../../coding-agent/src/main.ts";
+import { dispatchCompletion } from "../completion/index.ts";
+import {
+	registerAskUser,
+	registerPlan,
+	registerSubagent,
+	registerTasks,
+	registerUserHooks,
+} from "../extensions/index.ts";
+import { registerBanner } from "./ui/banner.ts";
+import { registerVim } from "./ui/vim/extension.ts";
+
+export async function main(args: string[], options?: MainOptions) {
+	// Plus-owned: completes the whole pipi CLI (hub + native pi commands).
+	if (args[0] === "completion") {
+		try {
+			dispatchCompletion(args.slice(1));
+			return;
+		} catch (err) {
+			console.error("Error:", err instanceof Error ? err.message : String(err));
+			process.exit(1);
+		}
+	}
+
+	let plan: LaunchPlan;
+	try {
+		if (args[0] && HUB_SUBCOMMANDS.has(args[0])) {
+			dispatchHubCommand(args);
+			return;
+		}
+		plan = resolveLaunch(args);
+	} catch (err) {
+		console.error("Error:", err instanceof Error ? err.message : String(err));
+		process.exit(1);
+	}
+
+	if (plan.kind === "profile") {
+		const profile = findProfile(plan.name);
+		if (!profile) {
+			console.error(`Error: Profile '${plan.name}' not found. Use 'pipi profile list' to see available profiles.`);
+			process.exit(1);
+		}
+		// ENV_AGENT_DIR is the original config module's constant
+		// ("PI_CODING_AGENT_DIR"); the plus config wrapper shadows only the
+		// display name, not the env var layout.
+		const profileDir = materializeProfile(plan.name, profile);
+		process.env[ENV_AGENT_DIR] = profileDir;
+		// The profile's settings.json is a per-profile copy, but packages are
+		// global (npm/extensions are shared symlinks): install/remove and
+		// resource toggles persist `packages` into the profile copy, which the
+		// next materialization would discard — syncing it back to the source at
+		// exit (synchronous, runs after upstream's settings write queue has
+		// drained and even when upstream called process.exit for the command).
+		process.on("exit", () => {
+			syncProfilePackagesToSource(profileDir);
+		});
+	}
+
+	// The upstream version check polls pi.dev for pi's release train, not pi-plus's.
+	process.env.PI_SKIP_VERSION_CHECK = "1";
+
+	// Hidden built-ins: the π+ welcome banner replaces pi's startup header in TUI
+	// mode; pi-plus-vim enables vim modal editing when the "vim" setting is on;
+	// pi-plus-subagent delegates tasks to isolated sub-agent processes;
+	// pi-plus-tasks adds the TaskCreate/TaskUpdate/TaskList/TaskGet tools and the
+	// /tasks command (ctrl+y); pi-plus-plan adds plan mode (EnterPlanMode /
+	// ExitPlanMode tools, /plan command, ctrl+alt+p toggle) — a read-only
+	// research phase whose plan file is the only writable target until the user
+	// approves via ExitPlanMode; pi-plus-ask-user adds the ask_user tool, letting
+	// the model ask 1-4 structured questions (options, multi-select, free-text
+	// Other) mid-task in TUI/RPC modes; pi-plus-hooks fires command hooks
+	// declared in settings.json under a "hooks" key on PermissionRequest /
+	// PreToolUse / Stop analogues.
+	// Merged with any caller-provided factories; upstream appends its own
+	// built-ins (main.ts: extensionFactories = [...builtInExtensions, ...]).
+	const merged: MainOptions = {
+		...options,
+		extensionFactories: [
+			...(options?.extensionFactories ?? []),
+			{ name: "pi-plus-banner", factory: registerBanner, hidden: true },
+			{ name: "pi-plus-vim", factory: registerVim, hidden: true },
+			{ name: "pi-plus-subagent", factory: registerSubagent, hidden: true },
+			{ name: "pi-plus-tasks", factory: registerTasks, hidden: true },
+			{ name: "pi-plus-plan", factory: registerPlan, hidden: true },
+			{ name: "pi-plus-ask-user", factory: registerAskUser, hidden: true },
+			{ name: "pi-plus-hooks", factory: registerUserHooks, hidden: true },
+		],
+	};
+	return upstreamMain(plan.remainingArgs, merged);
+}

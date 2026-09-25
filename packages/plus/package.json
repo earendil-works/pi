@@ -1,0 +1,14 @@
+{
+	"name": "@pi/plus",
+	"version": "0.1.10",
+	"private": true,
+	"type": "module",
+	"description": "Override layer for pi: Claude Code-style context detection, compaction, and reasoning. No upstream package may be edited; overrides live here and are wired in via the module-redirect loader.",
+	"dependencies": {
+		"@earendil-works/pi-hub": "^0.85.1"
+	},
+	"scripts": {
+		"build": "node build.mjs",
+		"test": "vitest run"
+	}
+}
