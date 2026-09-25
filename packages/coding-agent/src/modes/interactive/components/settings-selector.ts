@@ -205,6 +205,7 @@ function themeItems(availableThemes: string[], currentTheme: string): SelectItem
 	return availableThemes.map((name) => ({
 		value: name,
 		label: `${name === currentTheme ? "✓ " : "  "}${name}`,
+		...(name === SYSTEM_THEME_NAME ? { description: "Theme created from your terminal's colors" } : {}),
 	}));
 }
 
@@ -214,7 +215,7 @@ function singleModeThemeItems(availableThemes: string[], currentTheme: string): 
 	return [
 		{
 			value: AUTOMATIC_THEME_VALUE,
-			label: "  Automatic",
+			label: "  automatic",
 			description: "Use separate themes for light and dark terminal appearance",
 		},
 		...themeItems(availableThemes, currentTheme),
@@ -297,7 +298,7 @@ class ThemeSubmenu extends Container {
 		this.mode = "single";
 		const menu = new SelectSubmenu(
 			"Theme",
-			"Select a theme, or choose Automatic to follow terminal appearance.",
+			"Select a theme, or choose automatic to follow terminal appearance.",
 			singleModeThemeItems(this.availableThemes, this.singleTheme),
 			this.singleTheme,
 			(value) => {
