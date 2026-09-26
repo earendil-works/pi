@@ -20,7 +20,7 @@ import {
 	resetCapabilitiesCache,
 	setCapabilities,
 } from "../src/terminal-image.ts";
-import type { TuiMouseEvent } from "../src/tui.ts";
+import { CURSOR_MARKER, type TuiMouseEvent } from "../src/tui.ts";
 import { TuiAltScreen } from "../src/tui-alt-screen.ts";
 import { stripTerminalSequences, visibleWidth } from "../src/utils.ts";
 import { VirtualTerminal } from "./virtual-terminal.ts";
@@ -62,6 +62,34 @@ class RecordingTerminal extends VirtualTerminal {
 }
 
 describe("TuiAltScreen", () => {
+	it("does not leak cursor markers while selecting after the caret", async () => {
+		const terminal = new RecordingTerminal(20, 4);
+		const tui = new TuiAltScreen(terminal, undefined, undefined, { copyOnSelect: false });
+		// Regression for #9257 and #9332: selection slicing must not duplicate cursor markers.
+		tui.addChild({
+			render: () => [`ab${CURSOR_MARKER}cdefghij`],
+			invalidate() {},
+		});
+
+		tui.start();
+		await terminal.waitForRender();
+		const eventCount = terminal.events.length;
+
+		terminal.sendInput("\x1b[<0;5;1M");
+		terminal.sendInput("\x1b[<32;7;1M");
+		await terminal.waitForRender();
+
+		const output = terminal.events
+			.slice(eventCount)
+			.filter((event) => event.type === "write")
+			.map((event) => event.data)
+			.join("");
+		assert.ok(output.includes("\x1b[7m"), "dragged text should be highlighted");
+		assert.ok(!output.includes(CURSOR_MARKER), "internal cursor markers must not reach the terminal");
+		terminal.sendInput("\x1b[<0;7;1m");
+		tui.stop();
+	});
+
 	it("renders a terminal-height viewport and preserves manual scroll position", async () => {
 		const terminal = new VirtualTerminal(20, 4);
 		const tui = new TuiAltScreen(terminal);
