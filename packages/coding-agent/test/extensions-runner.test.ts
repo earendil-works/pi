@@ -462,6 +462,22 @@ describe("ExtensionRunner", () => {
 	});
 
 	describe("command collection", () => {
+		it.each([
+			[
+				"object name",
+				`pi.registerCommand({ name: "review", handler: async () => {} });`,
+				"must have a non-empty string name",
+			],
+			["empty name", `pi.registerCommand("", { handler: async () => {} });`, "must have a non-empty string name"],
+			["missing handler", `pi.registerCommand("review", { description: "no handler" });`, "must define handler()"],
+		])("rejects %s when the extension loads", async (_description, code, error) => {
+			const extensionPath = path.join(extensionsDir, "bad-command.js");
+			fs.writeFileSync(extensionPath, `export default function(pi) { ${code} }`);
+			const result = await loadExtensions([extensionPath], tempDir);
+			expect(result.extensions).toHaveLength(0);
+			expect(result.errors).toHaveLength(1);
+			expect(result.errors[0]?.error).toContain(error);
+		});
 		it("collects commands from multiple extensions", async () => {
 			const cmdCode = (name: string) => `
 				export default function(pi) {
