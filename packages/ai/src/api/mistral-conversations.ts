@@ -66,7 +66,6 @@ type MistralFunctionTool = {
 		name: string;
 		description: string;
 		parameters: Record<string, unknown>;
-		strict: boolean;
 	};
 };
 
@@ -764,7 +763,13 @@ function toFunctionTools(tools: Tool[]): MistralFunctionTool[] {
 				name: tool.name,
 				description: tool.description,
 				parameters: stripSymbolKeys(getJsonSchemaToolParameters(tool, strict)) as Record<string, unknown>,
-				strict: strict ?? false,
+				// Never advertise `strict` on this API. Mistral's serving mangles
+				// streamed tool-call arguments (truncated to the first property, or
+				// fragment soup) for at least the zai-glm models whenever *any* tool
+				// function carries a `strict` field — `true` or `false`, uniformly or
+				// mixed. Omitting the field entirely sidesteps that path; constrained
+				// sampling stays opt-in for APIs that implement it safely.
+				// See the linked issue for the request-level bisect.
 			},
 		};
 	});
@@ -906,7 +911,10 @@ function usesReasoningEffort(model: Model<"mistral-conversations">): boolean {
 		model.id === "mistral-small-2603" ||
 		model.id === "mistral-small-latest" ||
 		model.id.startsWith("mistral-medium-") ||
-		model.id === "zai-glm-5-2"
+		model.id === "zai-glm-5-2" ||
+		// zai-glm-5-3 shipped after #9375 fixed 5-2 and was left on the
+		// ignored prompt_mode path; use reasoning_effort for the whole family.
+		model.id.startsWith("zai-glm-")
 	);
 }
 

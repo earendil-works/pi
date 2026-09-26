@@ -47,7 +47,11 @@ describe("Mistral tool schema serialization", () => {
 		});
 
 		expect(capturedPayload?.tools).toHaveLength(1);
-		expect(capturedPayload?.tools?.[0]?.function.strict).toBe(true);
+		// The strict field must NOT be sent on this API: Mistral mangles streamed
+		// tool-call arguments whenever any tool function carries a strict field.
+		// The strict JSON Schema transform is still applied to the wire parameters
+		// for constrained tools.
+		expect(capturedPayload?.tools?.[0]?.function.strict).toBeUndefined();
 		const payloadParameters = capturedPayload?.tools?.[0]?.function.parameters;
 		expect(payloadParameters).toBeDefined();
 		expect(Object.getOwnPropertySymbols(payloadParameters ?? {})).toHaveLength(0);
