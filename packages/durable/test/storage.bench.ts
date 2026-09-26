@@ -13,7 +13,7 @@ import { afterAll, bench, describe } from "vitest";
 import { openNodeJsonlStorage } from "../src/storage/jsonl/node.ts";
 import { MemoryStorage } from "../src/storage/memory.ts";
 import { openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";
-import type { Storage } from "../src/types.ts";
+import type { EntryId, Storage } from "../src/types.ts";
 
 const STORAGE_BENCHMARK_BACKENDS = ["memory", "sqlite", "jsonl"] as const;
 type StorageBenchmarkBackend = (typeof STORAGE_BENCHMARK_BACKENDS)[number];
@@ -118,7 +118,7 @@ type PersistentBackend = Exclude<StorageBenchmarkBackend, "memory">;
 type ReopenFixture = {
 	readonly backend: PersistentBackend;
 	readonly path: string;
-	readonly firstEntryId: number;
+	readonly firstEntryId: EntryId;
 	readonly samples: string[];
 };
 
@@ -156,7 +156,7 @@ const reopenedStorages: Storage[] = [];
 async function reopenAndRead(
 	backend: PersistentBackend,
 	path: string,
-	firstEntryId: number,
+	firstEntryId: EntryId,
 ): Promise<{ readonly id: number; readonly storage: Storage }> {
 	const storage = await openPersistentStorage(backend, path);
 	const id = (await storage.entry(firstEntryId, BACKGROUND_CONTEXT))?.entry.id ?? -1;

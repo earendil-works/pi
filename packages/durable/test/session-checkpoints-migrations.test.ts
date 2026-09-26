@@ -1,5 +1,11 @@
 import type { Op } from "@earendil-works/chord/delta";
-import { defineDoc, defineDocFamily, type Id, type JsonObject, type StorageWrite } from "@earendil-works/pi-durable";
+import {
+	defineDoc,
+	defineDocFamily,
+	type EntryId,
+	type JsonObject,
+	type StorageWrite,
+} from "@earendil-works/pi-durable";
 import { describe, expect, it } from "vitest";
 import { context, createConversation, documentChanges, flush, openTestSession } from "./session-support.ts";
 
@@ -585,9 +591,9 @@ describe("Session historical document snapshots", () => {
 		});
 		const { session, storage } = openTestSession();
 		const conversationId = await createConversation(session);
-		let firstEntry!: Id;
-		let secondEntry!: Id;
-		let thirdEntry!: Id;
+		let firstEntry!: EntryId;
+		let secondEntry!: EntryId;
+		let thirdEntry!: EntryId;
 		await session.commit(async (tx) => {
 			firstEntry = (await tx.appendEntry(conversationId, { kind: "first" })).id;
 			(await tx.doc(V1, conversationId)).count = 1;
@@ -624,7 +630,8 @@ describe("Session historical document snapshots", () => {
 		});
 
 		const childId = await session.commit(
-			async (tx) => (await tx.forkConversation(conversationId, secondEntry)).id,
+			async (tx) =>
+				(await tx.forkConversation(conversationId, secondEntry, { ownership: { kind: "ownerless" } })).id,
 			context,
 		);
 		expect(await session.snapshotAsOf(V3, childId, firstEntry, context)).toEqual({ count: 1, version: 3 });
@@ -653,9 +660,9 @@ describe("Session historical document snapshots", () => {
 			async (tx) => (await tx.appendEntry(conversationId, { kind: "before" })).id,
 			context,
 		);
-		let createdAt!: Id;
-		let retiredAt!: Id;
-		let recreatedAt!: Id;
+		let createdAt!: EntryId;
+		let retiredAt!: EntryId;
+		let recreatedAt!: EntryId;
 		await session.commit(async (tx) => {
 			createdAt = (await tx.appendEntry(conversationId, { kind: "create" })).id;
 			(await tx.doc(Doc, conversationId)).value = "old";

@@ -5,14 +5,29 @@ import type { Message } from "@earendil-works/pi-ai";
 /** JSON object used as the root of every durable document. */
 export type JsonObject = { [key: string]: JsonValue };
 
-/** Session-global identifier shared by every durable record table. */
-export type Id = number;
+declare const idBrand: unique symbol;
+
+/** Erased nominal number identifying one durable record kind. */
+export type Id<Kind extends string, Type = unknown> = number & {
+	readonly [idBrand]: {
+		readonly kind: Kind;
+		readonly type: Type;
+	};
+};
+
+export type ConversationId = Id<"conversation">;
+export type EntryId = Id<"entry">;
+export type TaskId<Result = unknown> = Id<"task", Result>;
+export type SubmissionId = Id<"submission">;
+export type DocumentId = Id<"document">;
+
+declare const seqBrand: unique symbol;
 
 /** Strictly increasing sequence assigned to one atomic storage commit; gaps are permitted. */
-export type Seq = number;
+export type Seq = number & { readonly [seqBrand]: "sequence" };
 
 /** The root conversation always uses this reserved ID. */
-export const ROOT_CONVERSATION_ID: Id = 1;
+export const ROOT_CONVERSATION_ID = 1 as ConversationId;
 
 /** Conversation document that retains only its current state. */
 export type LatestConversationSemantics = {
@@ -122,38 +137,38 @@ export interface Task<I, S extends { phase: string }, R, H extends object> {
 	readonly definition: TaskDefinition<I, S, R, H>;
 }
 
-/** Task ID carrying its result type for typed waits. */
-export type TaskRef<R> = { readonly id: Id; readonly [taskResultType]?: R };
-
 /** Creation options for a durable task. */
 export type TaskOptions = {
 	/** Owning conversation; required for Session commits that are not bound to a conversation. */
-	readonly conversationId?: Id;
+	readonly conversationId?: ConversationId;
 	/** Tasks that must be terminal before ordinary execution may begin. */
-	readonly after?: readonly Id[];
+	readonly after?: readonly TaskId[];
 	/** Excluded from ordinary idle waits and conversation aborts. */
 	readonly background?: boolean;
 };
 
+/** Ownership selected explicitly whenever a conversation is created. */
+export type ConversationOwnership = { readonly kind: "ownerless" } | { readonly kind: "task"; readonly taskId: TaskId };
+
 /** Immutable identity, history ancestry, and task ownership of a transcript scope. */
 export type ConversationRecord = {
-	readonly id: Id;
+	readonly id: ConversationId;
 	/** Fork source and inclusive parent entry through which history is inherited. */
 	readonly parent?: {
-		readonly conversationId: Id;
-		readonly at: Id;
+		readonly conversationId: ConversationId;
+		readonly at: EntryId;
 	};
 	/** Creator edge used for attribution, subtree abort, and subtree idle waits. */
 	readonly owner?: {
-		readonly conversationId: Id;
-		readonly taskId: Id;
+		readonly conversationId: ConversationId;
+		readonly taskId: TaskId;
 	};
 };
 
 /** An immutable override of one visible entry's contribution to model context. */
 export type ContextEdit = {
 	/** Entry whose model messages are omitted or replaced. */
-	readonly target: Id;
+	readonly target: EntryId;
 } & (
 	| {
 			readonly action: "omit";
@@ -168,8 +183,8 @@ export type ContextEdit = {
 
 /** Immutable transcript event with separate model-facing and application-facing payloads. */
 export type EntryRecord = {
-	readonly id: Id;
-	readonly conversationId: Id;
+	readonly id: EntryId;
+	readonly conversationId: ConversationId;
 	/** Application-defined entry discriminator. */
 	readonly kind: string;
 	/** Messages contributed to model context; absent for display or bookkeeping entries. */
@@ -177,23 +192,23 @@ export type EntryRecord = {
 	/** JSON payload consumed by views, extensions, or bookkeeping logic. */
 	readonly data?: JsonValue;
 	/** First entry in the active context selected by this entry. */
-	readonly head?: Id;
+	readonly head?: EntryId;
 	/** Context-only overrides of earlier visible entries. */
 	readonly edits?: readonly ContextEdit[];
 	/** Task that appended this entry, when it was produced by durable work. */
-	readonly byTaskId?: Id;
+	readonly byTaskId?: TaskId;
 };
 
 /** Entry content supplied before the Session assigns identity and task attribution. */
 export type EntryDraft = Omit<EntryRecord, "id" | "conversationId" | "byTaskId" | "head"> & {
 	/** `"self"` starts active context at the newly assigned entry ID. */
-	readonly head?: Id | "self";
+	readonly head?: EntryId | "self";
 };
 
 /** Identity fields shared by every durable submission state. */
 type SubmissionRecordBase = {
-	readonly id: Id;
-	readonly conversationId: Id;
+	readonly id: SubmissionId;
+	readonly conversationId: ConversationId;
 	/** Host-provided deduplication key, scoped to the conversation. */
 	readonly requestId?: string;
 };
@@ -214,7 +229,7 @@ export type SubmissionRecord =
 				| {
 						/** Added to the transcript and owned by an active turn. */
 						readonly status: "placed";
-						readonly entry: Id;
+						readonly entry: EntryId;
 						readonly answer?: never;
 						readonly reason?: never;
 						readonly detail?: never;
@@ -222,15 +237,15 @@ export type SubmissionRecord =
 				| {
 						/** Successfully answered user input. */
 						readonly status: "done";
-						readonly entry: Id;
-						readonly answer: Id;
+						readonly entry: EntryId;
+						readonly answer: EntryId;
 						readonly reason?: never;
 						readonly detail?: never;
 				  }
 				| {
 						/** Terminal input that can no longer receive an answer. */
 						readonly status: "unanswered";
-						readonly entry?: Id;
+						readonly entry?: EntryId;
 						readonly answer?: never;
 						readonly reason: string;
 						readonly detail?: JsonValue;
@@ -250,7 +265,7 @@ export type SubmissionRecord =
 				| {
 						/** Successfully appended passive entry. */
 						readonly status: "done";
-						readonly entry: Id;
+						readonly entry: EntryId;
 						readonly answer?: never;
 						readonly reason?: never;
 						readonly detail?: never;
@@ -340,9 +355,9 @@ export type TaskState<S, R> =
 	  };
 
 /** Identity, definition, and scheduling fields shared by every task state. */
-type TaskRecordBase<I> = {
-	readonly id: Id;
-	readonly conversationId: Id;
+type TaskRecordBase<I, R> = {
+	readonly id: TaskId<R>;
+	readonly conversationId: ConversationId;
 	/** Registered task definition name. */
 	readonly kind: string;
 	/** Definition version used to migrate live input and checkpoints. */
@@ -350,7 +365,7 @@ type TaskRecordBase<I> = {
 	/** Original task input retained while the task is live or terminal. */
 	readonly input: I;
 	/** Tasks that must be terminal before ordinary execution may begin. */
-	readonly after: readonly Id[];
+	readonly after: readonly TaskId[];
 	/** Whether this task is excluded from ordinary idle waits and conversation aborts. */
 	readonly background: boolean;
 	/** Durable abort mark checked before run-mode progress is committed. */
@@ -358,7 +373,7 @@ type TaskRecordBase<I> = {
 };
 
 /** Complete replacement record for one durable task state machine. */
-export type TaskRecord<I, S, R> = TaskRecordBase<I> &
+export type TaskRecord<I, S, R> = TaskRecordBase<I, R> &
 	(
 		| {
 				readonly state: Extract<TaskState<S, R>, { readonly status: "pending" | "running" }>;
@@ -374,7 +389,7 @@ export type TaskRecord<I, S, R> = TaskRecordBase<I> &
 /** Persisted lifecycle record for one create-to-retire document incarnation. */
 export type DocumentRecord = {
 	/** Unique incarnation ID; never reused when the same logical document is recreated. */
-	readonly id: Id;
+	readonly id: DocumentId;
 	/** Stable document definition kind. */
 	readonly kind: string;
 	/** Family member key; absent for singleton documents. */
@@ -389,7 +404,7 @@ export type DocumentRecord = {
 			readonly history?: never;
 			readonly fork?: never;
 	  }
-	| ({ readonly scope: { readonly kind: "conversation"; readonly conversationId: Id } } & (
+	| ({ readonly scope: { readonly kind: "conversation"; readonly conversationId: ConversationId } } & (
 			| {
 					/** Retain only current state. */
 					readonly history: "latest";
@@ -404,7 +419,7 @@ export type DocumentRecord = {
 			  }
 	  ))
 	| {
-			readonly scope: { readonly kind: "task"; readonly taskId: Id };
+			readonly scope: { readonly kind: "task"; readonly taskId: TaskId };
 			readonly history?: never;
 			readonly fork?: never;
 	  }
@@ -428,22 +443,22 @@ export type Cursor = Readonly<Record<string, JsonValue>>;
 
 /** Optional filters for an ordered conversation scan. */
 export type ConversationQuery = {
-	readonly ownerConversationId?: Id;
-	readonly ownerTaskId?: Id;
+	readonly ownerConversationId?: ConversationId;
+	readonly ownerTaskId?: TaskId;
 };
 
 /** Inclusive ID bounds for a newest-first scan of one conversation's fork-aware history. */
 export type EntryQuery = {
-	readonly conversationId: Id;
+	readonly conversationId: ConversationId;
 	/** Oldest entry ID that may be returned. */
-	readonly minEntryId?: Id;
+	readonly minEntryId?: EntryId;
 	/** Newest entry ID that may be returned. */
-	readonly maxEntryId?: Id;
+	readonly maxEntryId?: EntryId;
 };
 
 /** Optional filters for an ordered scan of durable task records. */
 export type TaskQuery = {
-	readonly conversationId?: Id;
+	readonly conversationId?: ConversationId;
 	readonly kind?: string;
 	readonly status?: "pending" | "running" | "terminal";
 	readonly abortRequested?: boolean;
@@ -483,7 +498,7 @@ export type DocumentContent =
 
 /** Exact persisted source selected for a definition-free document copy. */
 export type DocumentCopySource = {
-	readonly id: Id;
+	readonly id: DocumentId;
 	readonly at: DocumentPoint;
 };
 
@@ -508,19 +523,19 @@ export type StorageWrite =
 	| { readonly type: "document.copy"; readonly record: DocumentCreate; readonly source: DocumentCopySource }
 	| {
 			readonly type: "document.change";
-			readonly id: Id;
+			readonly id: DocumentId;
 			readonly content: DocumentContent;
 	  }
-	| { readonly type: "document.retire"; readonly id: Id };
+	| { readonly type: "document.retire"; readonly id: DocumentId };
 
 /**
  * Transaction surface of one Session commit callback.
  * Table reads and creation results are trusted immutable values and may be shared with internal commit state.
  */
 export interface Tx {
-	conversation(id: Id): Promise<ConversationRecord | undefined>;
-	entry(id: Id): Promise<EntryRecord | undefined>;
-	task(id: Id): Promise<TaskRecord<JsonValue, JsonValue, JsonValue> | undefined>;
+	conversation(id: ConversationId): Promise<ConversationRecord | undefined>;
+	entry(id: EntryId): Promise<EntryRecord | undefined>;
+	task(id: TaskId): Promise<TaskRecord<JsonValue, JsonValue, JsonValue> | undefined>;
 	scanConversations(
 		query: ConversationQuery,
 		limit: number,
@@ -533,23 +548,27 @@ export interface Tx {
 		cursor?: Cursor,
 	): Promise<Page<TaskRecord<JsonValue, JsonValue, JsonValue>, Cursor>>;
 
-	/** Create an independent ownerless conversation. */
-	createConversation(): Promise<ConversationRecord>;
-	/** Create an ownerless history fork at one concrete visible entry. */
-	forkConversation(parentConversationId: Id, at: Id): Promise<ConversationRecord>;
+	/** Create a conversation with explicitly selected ownership. */
+	createConversation(options: { readonly ownership: ConversationOwnership }): Promise<ConversationRecord>;
+	/** Create a history fork at one concrete visible entry with explicitly selected ownership. */
+	forkConversation(
+		parentConversationId: ConversationId,
+		at: EntryId,
+		options: { readonly ownership: ConversationOwnership },
+	): Promise<ConversationRecord>;
 	/** Returned records are Session-owned immutable values and may be shared with commit listeners. */
-	appendEntry(conversationId: Id, value: EntryDraft): Promise<EntryRecord>;
+	appendEntry(conversationId: ConversationId, value: EntryDraft): Promise<EntryRecord>;
 	createTask<I, S extends { phase: string }, R, H extends object>(
 		task: Task<I, S, R, H>,
 		input: I,
 		options?: TaskOptions,
-	): Promise<TaskRef<R>>;
+	): Promise<TaskId<R>>;
 	/** Replace one task record completely. */
 	setTask(value: TaskRecord<JsonValue, JsonValue, JsonValue>): void;
 
 	doc<T extends JsonObject>(token: SessionDocToken<T>): Promise<Draft<T>>;
-	doc<T extends JsonObject>(token: ConversationDocToken<T>, conversationId: Id): Promise<Draft<T>>;
-	doc<T extends JsonObject>(token: TaskDocToken<T>, taskId: Id): Promise<Draft<T>>;
+	doc<T extends JsonObject>(token: ConversationDocToken<T>, conversationId: ConversationId): Promise<Draft<T>>;
+	doc<T extends JsonObject>(token: TaskDocToken<T>, taskId: TaskId): Promise<Draft<T>>;
 	doc<T extends JsonObject, I extends JsonValue>(
 		token: SessionDocFamilyToken<T, I>,
 		key: string,
@@ -557,29 +576,29 @@ export interface Tx {
 	): Promise<Draft<T>>;
 	doc<T extends JsonObject, I extends JsonValue>(
 		token: ConversationDocFamilyToken<T, I>,
-		conversationId: Id,
+		conversationId: ConversationId,
 		key: string,
 		seed: I,
 	): Promise<Draft<T>>;
 	doc<T extends JsonObject, I extends JsonValue>(
 		token: TaskDocFamilyToken<T, I>,
-		taskId: Id,
+		taskId: TaskId,
 		key: string,
 		seed: I,
 	): Promise<Draft<T>>;
 
 	retireDoc<T extends JsonObject>(token: SessionDocToken<T>): Promise<void>;
-	retireDoc<T extends JsonObject>(token: ConversationDocToken<T>, conversationId: Id): Promise<void>;
-	retireDoc<T extends JsonObject>(token: TaskDocToken<T>, taskId: Id): Promise<void>;
+	retireDoc<T extends JsonObject>(token: ConversationDocToken<T>, conversationId: ConversationId): Promise<void>;
+	retireDoc<T extends JsonObject>(token: TaskDocToken<T>, taskId: TaskId): Promise<void>;
 	retireDoc<T extends JsonObject, I extends JsonValue>(token: SessionDocFamilyToken<T, I>, key: string): Promise<void>;
 	retireDoc<T extends JsonObject, I extends JsonValue>(
 		token: ConversationDocFamilyToken<T, I>,
-		conversationId: Id,
+		conversationId: ConversationId,
 		key: string,
 	): Promise<void>;
 	retireDoc<T extends JsonObject, I extends JsonValue>(
 		token: TaskDocFamilyToken<T, I>,
-		taskId: Id,
+		taskId: TaskId,
 		key: string,
 	): Promise<void>;
 }
@@ -594,12 +613,12 @@ export interface Session {
 	snapshot<T extends JsonObject>(token: SessionDocToken<T>, context: Context): Promise<Readonly<T> | undefined>;
 	snapshot<T extends JsonObject>(
 		token: ConversationDocToken<T>,
-		conversationId: Id,
+		conversationId: ConversationId,
 		context: Context,
 	): Promise<Readonly<T> | undefined>;
 	snapshot<T extends JsonObject>(
 		token: TaskDocToken<T>,
-		taskId: Id,
+		taskId: TaskId,
 		context: Context,
 	): Promise<Readonly<T> | undefined>;
 	snapshot<T extends JsonObject, I extends JsonValue>(
@@ -609,28 +628,28 @@ export interface Session {
 	): Promise<Readonly<T> | undefined>;
 	snapshot<T extends JsonObject, I extends JsonValue>(
 		token: ConversationDocFamilyToken<T, I>,
-		conversationId: Id,
+		conversationId: ConversationId,
 		key: string,
 		context: Context,
 	): Promise<Readonly<T> | undefined>;
 	snapshot<T extends JsonObject, I extends JsonValue>(
 		token: TaskDocFamilyToken<T, I>,
-		taskId: Id,
+		taskId: TaskId,
 		key: string,
 		context: Context,
 	): Promise<Readonly<T> | undefined>;
 
 	snapshotAsOf<T extends JsonObject>(
 		token: RewindableConversationDocToken<T>,
-		conversationId: Id,
-		at: Id,
+		conversationId: ConversationId,
+		at: EntryId,
 		context: Context,
 	): Promise<Readonly<T> | undefined>;
 	snapshotAsOf<T extends JsonObject, I extends JsonValue>(
 		token: RewindableConversationDocFamilyToken<T, I>,
-		conversationId: Id,
+		conversationId: ConversationId,
 		key: string,
-		at: Id,
+		at: EntryId,
 		context: Context,
 	): Promise<Readonly<T> | undefined>;
 }
@@ -649,11 +668,11 @@ export interface Storage {
 	 */
 	commit(writes: readonly StorageWrite[], context: Context): Promise<Seq>;
 
-	/** Return a fresh candidate from the Session-global record ID namespace. */
-	mintId(): Promise<Id>;
+	/** Return a fresh branded candidate from the Session-global numeric ID namespace. */
+	mintId<I extends Id<string>>(): Promise<I>;
 
 	/** Look up one conversation by exact ID. */
-	conversation(id: Id, context: Context): Promise<ConversationRecord | undefined>;
+	conversation(id: ConversationId, context: Context): Promise<ConversationRecord | undefined>;
 
 	/** Scan conversations in ascending ID order. */
 	scanConversations(
@@ -664,11 +683,11 @@ export interface Storage {
 	): Promise<Page<ConversationRecord, Cursor>>;
 
 	/** Look up one global entry and the sequence of the commit that persisted it. */
-	entry(id: Id, context: Context): Promise<{ readonly entry: EntryRecord; readonly commitSeq: Seq } | undefined>;
+	entry(id: EntryId, context: Context): Promise<{ readonly entry: EntryRecord; readonly commitSeq: Seq } | undefined>;
 	/** Look up one entry only when it is visible through the requested conversation's ancestry. */
 	entry(
-		conversationId: Id,
-		id: Id,
+		conversationId: ConversationId,
+		id: EntryId,
 		context: Context,
 	): Promise<{ readonly entry: EntryRecord; readonly commitSeq: Seq } | undefined>;
 
@@ -677,10 +696,10 @@ export interface Storage {
 	 * The returned entry is the marker; its `head` value is the range's actual lower bound.
 	 */
 	findLatestHeadMarker(
-		conversationId: Id,
-		atOrBeforeEntryId: Id | undefined,
+		conversationId: ConversationId,
+		atOrBeforeEntryId: EntryId | undefined,
 		context: Context,
-	): Promise<(EntryRecord & { readonly head: Id }) | undefined>;
+	): Promise<(EntryRecord & { readonly head: EntryId }) | undefined>;
 
 	/** Scan the inclusive visible range newest-first, returning at most `limit` entries. */
 	scanEntries(
@@ -691,7 +710,7 @@ export interface Storage {
 	): Promise<Page<EntryRecord, Cursor>>;
 
 	/** Look up the latest complete record for one task. */
-	task(id: Id, context: Context): Promise<TaskRecord<JsonValue, JsonValue, JsonValue> | undefined>;
+	task(id: TaskId, context: Context): Promise<TaskRecord<JsonValue, JsonValue, JsonValue> | undefined>;
 
 	/** Scan task records matching every supplied filter. */
 	scanTasks(
@@ -702,16 +721,20 @@ export interface Storage {
 	): Promise<Page<TaskRecord<JsonValue, JsonValue, JsonValue>, Cursor>>;
 
 	/** Look up the latest complete record for one admitted submission. */
-	submission(id: Id, context: Context): Promise<SubmissionRecord | undefined>;
+	submission(id: SubmissionId, context: Context): Promise<SubmissionRecord | undefined>;
 
 	/** Find a submission by its conversation-scoped host deduplication key. */
-	submissionByRequest(conversationId: Id, requestId: string, context: Context): Promise<SubmissionRecord | undefined>;
+	submissionByRequest(
+		conversationId: ConversationId,
+		requestId: string,
+		context: Context,
+	): Promise<SubmissionRecord | undefined>;
 
 	/** Resolve the incarnation occupying one exact logical address at the selected point. */
 	findDocument(address: DocumentAddress, at: DocumentPoint, context: Context): Promise<DocumentRecord | undefined>;
 
 	/** Materialize one specific incarnation by ID at the selected point without following a replacement at its address. */
-	document(id: Id, at: DocumentPoint, context: Context): Promise<StoredDocument | undefined>;
+	document(id: DocumentId, at: DocumentPoint, context: Context): Promise<StoredDocument | undefined>;
 
 	/** Scan incarnations alive in one exact scope at the selected point. */
 	scanDocuments(

@@ -478,51 +478,60 @@ describe("openai-responses provider defaults", () => {
 	});
 
 	it.each([
-		["gpt-5.4", "priority", 2],
-		["gpt-5.5", "priority", 2.5],
-		["gpt-5.5", "flex", 0.5],
-	] as const)("applies %s %s service-tier cost multiplier", async (modelId, serviceTier, multiplier) => {
-		const model = getModel("openai", modelId);
-		const tokenCount = 100_000;
-		const tokenScale = tokenCount / 1_000_000;
-		const sse = `${[
-			`data: ${JSON.stringify({
-				type: "response.completed",
-				response: {
-					status: "completed",
-					service_tier: serviceTier,
-					usage: {
-						input_tokens: tokenCount,
-						output_tokens: tokenCount,
-						total_tokens: tokenCount * 2,
-						input_tokens_details: { cached_tokens: 0 },
+		["gpt-5.4", "priority", "priority", 2],
+		["gpt-5.5", "priority", "priority", 2.5],
+		["gpt-5.5", "flex", "flex", 0.5],
+		// GPT-6 models report Fast mode as "fast" even when "priority" is requested (#10034)
+		["gpt-6-luna", "priority", "fast", 2],
+		["gpt-6-luna", "fast", "fast", 2],
+	] as const)(
+		"applies %s cost multiplier for requested %s and returned %s service tier",
+		async (modelId, serviceTier, responseServiceTier, multiplier) => {
+			const model = getModel("openai", modelId);
+			const tokenCount = 100_000;
+			const tokenScale = tokenCount / 1_000_000;
+			const sse = `${[
+				`data: ${JSON.stringify({
+					type: "response.completed",
+					response: {
+						status: "completed",
+						service_tier: responseServiceTier,
+						usage: {
+							input_tokens: tokenCount,
+							output_tokens: tokenCount,
+							total_tokens: tokenCount * 2,
+							input_tokens_details: { cached_tokens: 0 },
+						},
 					},
-				},
-			})}`,
-		].join("\n\n")}\n\n`;
+				})}`,
+			].join("\n\n")}\n\n`;
 
-		vi.spyOn(globalThis, "fetch").mockResolvedValue(
-			new Response(sse, {
-				status: 200,
-				headers: { "content-type": "text/event-stream" },
-			}),
-		);
+			vi.spyOn(globalThis, "fetch").mockResolvedValue(
+				new Response(sse, {
+					status: 200,
+					headers: { "content-type": "text/event-stream" },
+				}),
+			);
 
-		const stream = streamOpenAIResponses(
-			model,
-			normalizeContext({
-				systemPrompt: "sys",
-				messages: [{ role: "user", content: "hi", timestamp: Date.now() }],
-			}),
-			{ apiKey: "test-key", serviceTier },
-		);
+			const stream = streamOpenAIResponses(
+				model,
+				normalizeContext({
+					systemPrompt: "sys",
+					messages: [{ role: "user", content: "hi", timestamp: Date.now() }],
+				}),
+				{ apiKey: "test-key", serviceTier },
+			);
 
-		const result = await stream.result();
+			const result = await stream.result();
 
-		expect(result.usage.cost.input).toBe(model.cost.input * multiplier * tokenScale);
-		expect(result.usage.cost.output).toBe(model.cost.output * multiplier * tokenScale);
-		expect(result.usage.cost.total).toBe((model.cost.input + model.cost.output) * multiplier * tokenScale);
-	});
+			expect(result.usage.cost.input).toBeCloseTo(model.cost.input * multiplier * tokenScale, 12);
+			expect(result.usage.cost.output).toBeCloseTo(model.cost.output * multiplier * tokenScale, 12);
+			expect(result.usage.cost.total).toBeCloseTo(
+				(model.cost.input + model.cost.output) * multiplier * tokenScale,
+				12,
+			);
+		},
+	);
 });
 
 describe("openai-responses max_output_tokens compat", () => {

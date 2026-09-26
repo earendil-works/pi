@@ -1,15 +1,20 @@
 import type { JsonValue } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { Op } from "@earendil-works/chord/delta";
+import { idFromNumber } from "../ids.ts";
 import {
+	type ConversationId,
 	type DocumentCreate,
+	type DocumentId,
+	type EntryId,
 	type EntryRecord,
-	type Id,
 	type JsonObject,
 	ROOT_CONVERSATION_ID,
 	type Storage,
 	type StorageWrite,
+	type SubmissionId,
 	type SubmissionRecord,
+	type TaskId,
 	type TaskRecord,
 } from "../types.ts";
 import type { StorageConformanceAssertions, StorageConformanceCase, StorageConformanceOptions } from "./types.ts";
@@ -17,12 +22,12 @@ import type { StorageConformanceAssertions, StorageConformanceCase, StorageConfo
 const context = BACKGROUND_CONTEXT;
 type StoredTask = TaskRecord<JsonValue, JsonValue, JsonValue>;
 
-async function createRoot(storage: Storage): Promise<Id> {
+async function createRoot(storage: Storage): Promise<ConversationId> {
 	await storage.commit([{ type: "conversation", value: { id: ROOT_CONVERSATION_ID } }], context);
 	return ROOT_CONVERSATION_ID;
 }
 
-function pendingTask(id: Id, conversationId: Id, phase = "ready") {
+function pendingTask(id: TaskId<JsonValue>, conversationId: ConversationId, phase = "ready") {
 	return {
 		id,
 		conversationId,
@@ -36,7 +41,12 @@ function pendingTask(id: Id, conversationId: Id, phase = "ready") {
 	} satisfies StoredTask;
 }
 
-function entry(id: Id, conversationId: Id, kind = "message", extra: Partial<EntryRecord> = {}): EntryRecord {
+function entry(
+	id: EntryId,
+	conversationId: ConversationId,
+	kind = "message",
+	extra: Partial<EntryRecord> = {},
+): EntryRecord {
 	return { id, conversationId, kind, ...extra };
 }
 
@@ -81,7 +91,7 @@ export function createStorageConformance(options: StorageConformanceOptions): re
 	const expect = assertionFacade(options.assertions);
 	return [
 		createCase(options, "reserves ID 1 for the immutable root conversation", async (storage) => {
-			expect(await storage.mintId()).toBe(2);
+			expect(await storage.mintId<ConversationId>()).toBe(2);
 			await expect(createRoot(storage)).resolves.toBe(ROOT_CONVERSATION_ID);
 			expect(await storage.conversation(ROOT_CONVERSATION_ID, context)).toEqual({ id: ROOT_CONVERSATION_ID });
 			await expect(
@@ -94,9 +104,9 @@ export function createStorageConformance(options: StorageConformanceOptions): re
 			"commits mixed table writes atomically and rolls all of them back on failure",
 			async (storage) => {
 				const rootId = await createRoot(storage);
-				const entryId = await storage.mintId();
-				const taskId = await storage.mintId();
-				const submissionId = await storage.mintId();
+				const entryId = await storage.mintId<EntryId>();
+				const taskId = await storage.mintId<TaskId<JsonValue>>();
+				const submissionId = await storage.mintId<SubmissionId>();
 				const task = pendingTask(taskId, rootId);
 				const input: SubmissionRecord = {
 					id: submissionId,
@@ -122,7 +132,7 @@ export function createStorageConformance(options: StorageConformanceOptions): re
 				expect(await storage.task(taskId, context)).toEqual(task);
 				expect(await storage.submission(submissionId, context)).toEqual(input);
 
-				const transientEntryId = await storage.mintId();
+				const transientEntryId = await storage.mintId<EntryId>();
 				const runningTask: StoredTask = {
 					...task,
 					state: { status: "running", checkpoint: { phase: "effect" } },
@@ -144,7 +154,7 @@ export function createStorageConformance(options: StorageConformanceOptions): re
 				expect(await storage.submission(submissionId, context)).toEqual(input);
 				expect(await storage.entry(transientEntryId, context)).toBeUndefined();
 				const afterRollbackSeq = await storage.commit(
-					[{ type: "entry", value: entry(await storage.mintId(), rootId, "after-rollback") }],
+					[{ type: "entry", value: entry(await storage.mintId<EntryId>(), rootId, "after-rollback") }],
 					context,
 				);
 				expect(afterRollbackSeq).toBeGreaterThan(initialSeq);
@@ -153,9 +163,9 @@ export function createStorageConformance(options: StorageConformanceOptions): re
 
 		createCase(options, "detaches retained writes and every returned record", async (storage) => {
 			const rootId = await createRoot(storage);
-			const entryId = await storage.mintId();
-			const taskId = await storage.mintId();
-			const submissionId = await storage.mintId();
+			const entryId = await storage.mintId<EntryId>();
+			const taskId = await storage.mintId<TaskId<JsonValue>>();
+			const submissionId = await storage.mintId<SubmissionId>();
 			const entryData = { nested: [1, 2] };
 			const checkpoint = { phase: "ready", nested: { count: 1 } };
 			const detail = { codes: ["initial"] };
@@ -210,7 +220,7 @@ export function createStorageConformance(options: StorageConformanceOptions): re
 
 		createCase(options, "detaches prototype-like JSON keys without changing object prototypes", async (storage) => {
 			const rootId = await createRoot(storage);
-			const entryId = await storage.mintId();
+			const entryId = await storage.mintId<EntryId>();
 			const data = JSON.parse(
 				'{"__proto__":{"polluted":false},"constructor":{"label":"stored"},"toString":"value"}',
 			) as Record<string, JsonValue>;
@@ -237,9 +247,14 @@ export function createStorageConformance(options: StorageConformanceOptions): re
 			const rootId = await createRoot(storage);
 			await storage.commit(
 				[
-					{ type: "entry", value: entry(30, rootId) },
-					{ type: "entry", value: entry(10, rootId) },
-					{ type: "entry", value: entry(20, rootId, "marker", { head: 10 }) },
+					{ type: "entry", value: entry(idFromNumber<EntryId>(30), rootId) },
+					{ type: "entry", value: entry(idFromNumber<EntryId>(10), rootId) },
+					{
+						type: "entry",
+						value: entry(idFromNumber<EntryId>(20), rootId, "marker", {
+							head: idFromNumber<EntryId>(10),
+						}),
+					},
 				],
 				context,
 			);
@@ -252,9 +267,9 @@ export function createStorageConformance(options: StorageConformanceOptions): re
 
 		createCase(options, "continues an entry cursor below its last item after a newer commit", async (storage) => {
 			const rootId = await createRoot(storage);
-			const oldestId = await storage.mintId();
-			const middleId = await storage.mintId();
-			const newestId = await storage.mintId();
+			const oldestId = await storage.mintId<EntryId>();
+			const middleId = await storage.mintId<EntryId>();
+			const newestId = await storage.mintId<EntryId>();
 			await storage.commit(
 				[
 					{ type: "entry", value: entry(oldestId, rootId) },
@@ -266,7 +281,7 @@ export function createStorageConformance(options: StorageConformanceOptions): re
 
 			const first = await storage.scanEntries({ conversationId: rootId }, 2, undefined, context);
 			expect(first.items.map(({ id }) => id)).toEqual([newestId, middleId]);
-			const appendedId = await storage.mintId();
+			const appendedId = await storage.mintId<EntryId>();
 			await storage.commit([{ type: "entry", value: entry(appendedId, rootId) }], context);
 			const second = await storage.scanEntries({ conversationId: rootId }, 2, first.next, context);
 			expect(second.items.map(({ id }) => id)).toEqual([oldestId]);
@@ -275,8 +290,8 @@ export function createStorageConformance(options: StorageConformanceOptions): re
 
 		createCase(options, "paginates conversations by opaque cursor in ascending ID order", async (storage) => {
 			const rootId = await createRoot(storage);
-			const secondId = await storage.mintId();
-			const thirdId = await storage.mintId();
+			const secondId = await storage.mintId<ConversationId>();
+			const thirdId = await storage.mintId<ConversationId>();
 			await storage.commit(
 				[
 					{ type: "conversation", value: { id: thirdId } },
@@ -296,12 +311,12 @@ export function createStorageConformance(options: StorageConformanceOptions): re
 
 		createCase(options, "filters and pages conversations by durable owner edges", async (storage) => {
 			const rootId = await createRoot(storage);
-			const otherOwnerId = await storage.mintId();
-			const firstTaskId = await storage.mintId();
-			const secondTaskId = await storage.mintId();
-			const firstId = await storage.mintId();
-			const secondId = await storage.mintId();
-			const thirdId = await storage.mintId();
+			const otherOwnerId = await storage.mintId<ConversationId>();
+			const firstTaskId = await storage.mintId<TaskId<JsonValue>>();
+			const secondTaskId = await storage.mintId<TaskId<JsonValue>>();
+			const firstId = await storage.mintId<ConversationId>();
+			const secondId = await storage.mintId<ConversationId>();
+			const thirdId = await storage.mintId<ConversationId>();
 			await storage.commit(
 				[
 					{ type: "conversation", value: { id: otherOwnerId } },
@@ -346,9 +361,9 @@ export function createStorageConformance(options: StorageConformanceOptions): re
 
 		createCase(options, "scans deep fork history newest-first through every ancestor cap", async (storage) => {
 			const rootId = await createRoot(storage);
-			const rootFirst = await storage.mintId();
-			const rootForkPoint = await storage.mintId();
-			const rootExcludedSameCommit = await storage.mintId();
+			const rootFirst = await storage.mintId<EntryId>();
+			const rootForkPoint = await storage.mintId<EntryId>();
+			const rootExcludedSameCommit = await storage.mintId<EntryId>();
 			const rootEntriesSeq = await storage.commit(
 				[
 					{ type: "entry", value: entry(rootFirst, rootId) },
@@ -360,7 +375,7 @@ export function createStorageConformance(options: StorageConformanceOptions): re
 				],
 				context,
 			);
-			const childId = await storage.mintId();
+			const childId = await storage.mintId<ConversationId>();
 			await storage.commit(
 				[
 					{
@@ -370,8 +385,8 @@ export function createStorageConformance(options: StorageConformanceOptions): re
 				],
 				context,
 			);
-			const childForkPoint = await storage.mintId();
-			const childExcluded = await storage.mintId();
+			const childForkPoint = await storage.mintId<EntryId>();
+			const childExcluded = await storage.mintId<EntryId>();
 			await storage.commit(
 				[
 					{ type: "entry", value: entry(childForkPoint, childId, "note") },
@@ -379,9 +394,9 @@ export function createStorageConformance(options: StorageConformanceOptions): re
 				],
 				context,
 			);
-			const rootExcludedLater = await storage.mintId();
+			const rootExcludedLater = await storage.mintId<EntryId>();
 			await storage.commit([{ type: "entry", value: entry(rootExcludedLater, rootId) }], context);
-			const grandchildId = await storage.mintId();
+			const grandchildId = await storage.mintId<ConversationId>();
 			await storage.commit(
 				[
 					{
@@ -391,8 +406,8 @@ export function createStorageConformance(options: StorageConformanceOptions): re
 				],
 				context,
 			);
-			const grandchildHead = await storage.mintId();
-			const grandchildTail = await storage.mintId();
+			const grandchildHead = await storage.mintId<EntryId>();
+			const grandchildTail = await storage.mintId<EntryId>();
 			const grandchildEntriesSeq = await storage.commit(
 				[
 					{
@@ -403,7 +418,7 @@ export function createStorageConformance(options: StorageConformanceOptions): re
 				],
 				context,
 			);
-			const childExcludedLater = await storage.mintId();
+			const childExcludedLater = await storage.mintId<EntryId>();
 			await storage.commit([{ type: "entry", value: entry(childExcludedLater, childId) }], context);
 
 			const first = await storage.scanEntries({ conversationId: grandchildId }, 2, undefined, context);
@@ -461,7 +476,7 @@ export function createStorageConformance(options: StorageConformanceOptions): re
 			expect((await storage.entry(rootForkPoint, context))?.commitSeq).toBe(rootEntriesSeq);
 			expect((await storage.entry(grandchildHead, context))?.commitSeq).toBe(grandchildEntriesSeq);
 			expect((await storage.entry(grandchildTail, context))?.commitSeq).toBe(grandchildEntriesSeq);
-			expect(await storage.entry(999_999, context)).toBeUndefined();
+			expect(await storage.entry(idFromNumber<EntryId>(999_999), context)).toBeUndefined();
 
 			expect(await storage.entry(grandchildId, rootFirst, context)).toEqual({
 				entry: entry(rootFirst, rootId),
@@ -474,18 +489,20 @@ export function createStorageConformance(options: StorageConformanceOptions): re
 			expect(await storage.entry(grandchildId, childExcluded, context)).toBeUndefined();
 			expect(await storage.entry(grandchildId, childExcludedLater, context)).toBeUndefined();
 			expect(await storage.entry(rootId, grandchildHead, context)).toBeUndefined();
-			expect(await storage.entry(grandchildId, 999_999, context)).toBeUndefined();
-			await expect(storage.entry(999_999, rootFirst, context)).rejects.toThrow("Unknown conversation");
-			await expect(storage.scanEntries({ conversationId: 999_999 }, 10, undefined, context)).rejects.toThrow(
+			expect(await storage.entry(grandchildId, idFromNumber<EntryId>(999_999), context)).toBeUndefined();
+			await expect(storage.entry(idFromNumber<ConversationId>(999_999), rootFirst, context)).rejects.toThrow(
 				"Unknown conversation",
 			);
+			await expect(
+				storage.scanEntries({ conversationId: idFromNumber<ConversationId>(999_999) }, 10, undefined, context),
+			).rejects.toThrow("Unknown conversation");
 		}),
 
 		createCase(options, "replaces complete task records and pages filtered task scans", async (storage) => {
 			const rootId = await createRoot(storage);
-			const firstId = await storage.mintId();
-			const secondId = await storage.mintId();
-			const thirdId = await storage.mintId();
+			const firstId = await storage.mintId<TaskId<JsonValue>>();
+			const secondId = await storage.mintId<TaskId<JsonValue>>();
+			const thirdId = await storage.mintId<TaskId<JsonValue>>();
 			const first = { ...pendingTask(firstId, rootId), memos: { winner: "first" } } satisfies StoredTask;
 			const second = { ...pendingTask(secondId, rootId), background: true } satisfies StoredTask;
 			const third = { ...pendingTask(thirdId, rootId), abortRequested: true } satisfies StoredTask;
@@ -538,11 +555,11 @@ export function createStorageConformance(options: StorageConformanceOptions): re
 			"indexes request IDs per conversation and replaces complete submission records",
 			async (storage) => {
 				const rootId = await createRoot(storage);
-				const secondConversationId = await storage.mintId();
+				const secondConversationId = await storage.mintId<ConversationId>();
 				await storage.commit([{ type: "conversation", value: { id: secondConversationId } }], context);
-				const firstId = await storage.mintId();
-				const secondId = await storage.mintId();
-				const otherConversationId = await storage.mintId();
+				const firstId = await storage.mintId<SubmissionId>();
+				const secondId = await storage.mintId<SubmissionId>();
+				const otherConversationId = await storage.mintId<SubmissionId>();
 				const first: SubmissionRecord = {
 					id: firstId,
 					conversationId: rootId,
@@ -575,7 +592,11 @@ export function createStorageConformance(options: StorageConformanceOptions): re
 				expect(await storage.submissionByRequest(rootId, "same", context)).toEqual(first);
 				expect(await storage.submissionByRequest(secondConversationId, "same", context)).toEqual(otherConversation);
 
-				const placedSecond: SubmissionRecord = { ...second, status: "placed", entry: await storage.mintId() };
+				const placedSecond: SubmissionRecord = {
+					...second,
+					status: "placed",
+					entry: await storage.mintId<EntryId>(),
+				};
 				await storage.commit([{ type: "submission", value: placedSecond }], context);
 				expect(await storage.submission(secondId, context)).toEqual(placedSecond);
 				expect(await storage.submissionByRequest(rootId, "other", context)).toEqual(placedSecond);
@@ -584,8 +605,8 @@ export function createStorageConformance(options: StorageConformanceOptions): re
 
 		createCase(options, "stores passive write submissions without input-only lifecycle states", async (storage) => {
 			const rootId = await createRoot(storage);
-			const doneId = await storage.mintId();
-			const failedId = await storage.mintId();
+			const doneId = await storage.mintId<SubmissionId>();
+			const failedId = await storage.mintId<SubmissionId>();
 			const queuedDone: SubmissionRecord = {
 				id: doneId,
 				conversationId: rootId,
@@ -608,7 +629,11 @@ export function createStorageConformance(options: StorageConformanceOptions): re
 				context,
 			);
 
-			const done: SubmissionRecord = { ...queuedDone, status: "done", entry: await storage.mintId() };
+			const done: SubmissionRecord = {
+				...queuedDone,
+				status: "done",
+				entry: await storage.mintId<EntryId>(),
+			};
 			const unanswered: SubmissionRecord = {
 				...queuedFailed,
 				status: "unanswered",
@@ -630,7 +655,7 @@ export function createStorageConformance(options: StorageConformanceOptions): re
 
 		createCase(options, "reconstructs rewindable documents and preserves half-open incarnations", async (storage) => {
 			const rootId = await createRoot(storage);
-			const firstId = await storage.mintId();
+			const firstId = await storage.mintId<DocumentId>();
 			const firstRecord = {
 				id: firstId,
 				kind: "conversation.notes",
@@ -710,7 +735,7 @@ export function createStorageConformance(options: StorageConformanceOptions): re
 				nested: { count: 4 },
 			});
 
-			const secondId = await storage.mintId();
+			const secondId = await storage.mintId<DocumentId>();
 			const retiredAt = await storage.commit(
 				[
 					{
@@ -749,7 +774,7 @@ export function createStorageConformance(options: StorageConformanceOptions): re
 
 		createCase(options, "streams long document tails across root replacement deltas", async (storage) => {
 			const rootId = await createRoot(storage);
-			const id = await storage.mintId();
+			const id = await storage.mintId<DocumentId>();
 			const record = {
 				id,
 				kind: "conversation.long-tail",
@@ -845,8 +870,8 @@ export function createStorageConformance(options: StorageConformanceOptions): re
 			"copies stored document bases independently and rejects ambiguous sources",
 			async (storage) => {
 				const rootId = await createRoot(storage);
-				const childId = await storage.mintId();
-				const secondChildId = await storage.mintId();
+				const childId = await storage.mintId<ConversationId>();
+				const secondChildId = await storage.mintId<ConversationId>();
 				await storage.commit(
 					[
 						{ type: "conversation", value: { id: childId } },
@@ -854,7 +879,7 @@ export function createStorageConformance(options: StorageConformanceOptions): re
 					],
 					context,
 				);
-				const sourceId = await storage.mintId();
+				const sourceId = await storage.mintId<DocumentId>();
 				const sourceRecord = {
 					id: sourceId,
 					kind: "copy.source",
@@ -889,10 +914,10 @@ export function createStorageConformance(options: StorageConformanceOptions): re
 					],
 					context,
 				);
-				const historicalCopyId = await storage.mintId();
-				const currentCopyId = await storage.mintId();
-				const retiredCopyId = await storage.mintId();
-				const childRecord = (id: Id, conversationId: Id): DocumentCreate => ({
+				const historicalCopyId = await storage.mintId<DocumentId>();
+				const currentCopyId = await storage.mintId<DocumentId>();
+				const retiredCopyId = await storage.mintId<DocumentId>();
+				const childRecord = (id: DocumentId, conversationId: ConversationId): DocumentCreate => ({
 					id,
 					kind: sourceRecord.kind,
 					scope: { kind: "conversation", conversationId },
@@ -946,8 +971,8 @@ export function createStorageConformance(options: StorageConformanceOptions): re
 					rows: [{ value: "base" }, { value: "current" }],
 				});
 
-				const latestSourceId = await storage.mintId();
-				const latestCopyId = await storage.mintId();
+				const latestSourceId = await storage.mintId<DocumentId>();
+				const latestCopyId = await storage.mintId<DocumentId>();
 				const latestSource = {
 					id: latestSourceId,
 					kind: "copy.latest",
@@ -995,7 +1020,7 @@ export function createStorageConformance(options: StorageConformanceOptions): re
 					value: { retained: "copy" },
 				});
 
-				const conflictId = await storage.mintId();
+				const conflictId = await storage.mintId<DocumentId>();
 				let conflictError: unknown;
 				try {
 					await storage.commit(
@@ -1019,7 +1044,7 @@ export function createStorageConformance(options: StorageConformanceOptions): re
 					rows: [{ value: "base" }, { value: "current" }],
 				});
 
-				const mismatchId = await storage.mintId();
+				const mismatchId = await storage.mintId<DocumentId>();
 				let mismatchError: unknown;
 				try {
 					await storage.commit(
@@ -1045,7 +1070,7 @@ export function createStorageConformance(options: StorageConformanceOptions): re
 			"uses bases for version transitions and rejects historical reads of current-only documents",
 			async (storage) => {
 				await createRoot(storage);
-				const id = await storage.mintId();
+				const id = await storage.mintId<DocumentId>();
 				const record = {
 					id,
 					kind: "session.settings",
@@ -1082,13 +1107,13 @@ export function createStorageConformance(options: StorageConformanceOptions): re
 
 		createCase(options, "indexes logical addresses and exact-scope scans independently", async (storage) => {
 			const rootId = await createRoot(storage);
-			const firstId = await storage.mintId();
-			const secondId = await storage.mintId();
-			const conversationId = await storage.mintId();
-			const taskId = await storage.mintId();
-			const taskSingletonId = await storage.mintId();
-			const taskFamilyId = await storage.mintId();
-			const taskOtherKindId = await storage.mintId();
+			const firstId = await storage.mintId<DocumentId>();
+			const secondId = await storage.mintId<DocumentId>();
+			const conversationId = await storage.mintId<DocumentId>();
+			const taskId = await storage.mintId<TaskId<JsonValue>>();
+			const taskSingletonId = await storage.mintId<DocumentId>();
+			const taskFamilyId = await storage.mintId<DocumentId>();
+			const taskOtherKindId = await storage.mintId<DocumentId>();
 			const createdAt = await storage.commit(
 				[
 					{ type: "task", value: pendingTask(taskId, rootId) },
@@ -1224,8 +1249,8 @@ export function createStorageConformance(options: StorageConformanceOptions): re
 			"keeps document lifecycle failures atomic and gives create-plus-retire an empty lifetime",
 			async (storage) => {
 				const rootId = await createRoot(storage);
-				const firstId = await storage.mintId();
-				const secondId = await storage.mintId();
+				const firstId = await storage.mintId<DocumentId>();
+				const secondId = await storage.mintId<DocumentId>();
 				const record = {
 					id: firstId,
 					kind: "singleton",
@@ -1251,7 +1276,7 @@ export function createStorageConformance(options: StorageConformanceOptions): re
 				expect((await storage.document(firstId, "current", context))?.value).toEqual({ value: 1 });
 				expect(await storage.document(secondId, "current", context)).toBeUndefined();
 
-				const emptyId = await storage.mintId();
+				const emptyId = await storage.mintId<DocumentId>();
 				const emptyAt = await storage.commit(
 					[
 						{
@@ -1291,9 +1316,9 @@ export function createStorageConformance(options: StorageConformanceOptions): re
 			"rolls back record tables and secondary indexes when a document command fails",
 			async (storage) => {
 				const rootId = await createRoot(storage);
-				const taskId = await storage.mintId();
-				const submissionId = await storage.mintId();
-				const documentId = await storage.mintId();
+				const taskId = await storage.mintId<TaskId<JsonValue>>();
+				const submissionId = await storage.mintId<SubmissionId>();
+				const documentId = await storage.mintId<DocumentId>();
 				const task = pendingTask(taskId, rootId);
 				const submission: SubmissionRecord = {
 					id: submissionId,
@@ -1316,8 +1341,8 @@ export function createStorageConformance(options: StorageConformanceOptions): re
 					context,
 				);
 
-				const entryId = await storage.mintId();
-				const conflictingDocumentId = await storage.mintId();
+				const entryId = await storage.mintId<EntryId>();
+				const conflictingDocumentId = await storage.mintId<DocumentId>();
 				await expect(
 					storage.commit(
 						[
@@ -1366,14 +1391,14 @@ export function createStorageConformance(options: StorageConformanceOptions): re
 			const rootId = await createRoot(storage);
 			const first = "\ud800";
 			const second = "\ud801";
-			const firstTaskId = await storage.mintId();
-			const secondTaskId = await storage.mintId();
-			const firstSubmissionId = await storage.mintId();
-			const secondSubmissionId = await storage.mintId();
-			const firstKindDocumentId = await storage.mintId();
-			const secondKindDocumentId = await storage.mintId();
-			const firstKeyDocumentId = await storage.mintId();
-			const secondKeyDocumentId = await storage.mintId();
+			const firstTaskId = await storage.mintId<TaskId<JsonValue>>();
+			const secondTaskId = await storage.mintId<TaskId<JsonValue>>();
+			const firstSubmissionId = await storage.mintId<SubmissionId>();
+			const secondSubmissionId = await storage.mintId<SubmissionId>();
+			const firstKindDocumentId = await storage.mintId<DocumentId>();
+			const secondKindDocumentId = await storage.mintId<DocumentId>();
+			const firstKeyDocumentId = await storage.mintId<DocumentId>();
+			const secondKeyDocumentId = await storage.mintId<DocumentId>();
 			await storage.commit(
 				[
 					{ type: "task", value: { ...pendingTask(firstTaskId, rootId), kind: first } },
@@ -1466,16 +1491,22 @@ export function createStorageConformance(options: StorageConformanceOptions): re
 
 		createCase(options, "keeps one global record ID namespace and rejects exhausted ID minting", async (storage) => {
 			const rootId = await createRoot(storage);
-			const explicitEntryId = 100;
+			const explicitEntryId = idFromNumber<EntryId>(100);
 			await storage.commit([{ type: "entry", value: entry(explicitEntryId, rootId) }], context);
-			expect(await storage.mintId()).toBe(101);
+			expect(await storage.mintId<EntryId>()).toBe(101);
 			await expect(
-				storage.commit([{ type: "task", value: pendingTask(explicitEntryId, rootId) }], context),
+				storage.commit(
+					[{ type: "task", value: pendingTask(idFromNumber<TaskId<JsonValue>>(explicitEntryId), rootId) }],
+					context,
+				),
 			).rejects.toThrow(`ID ${explicitEntryId} already belongs to entry`);
 
-			await storage.commit([{ type: "entry", value: entry(Number.MAX_SAFE_INTEGER, rootId, "last-id") }], context);
-			await expect(storage.mintId()).rejects.toThrow("ID space is exhausted");
-			await expect(storage.mintId()).rejects.toThrow("ID space is exhausted");
+			await storage.commit(
+				[{ type: "entry", value: entry(idFromNumber<EntryId>(Number.MAX_SAFE_INTEGER), rootId, "last-id") }],
+				context,
+			);
+			await expect(storage.mintId<EntryId>()).rejects.toThrow("ID space is exhausted");
+			await expect(storage.mintId<EntryId>()).rejects.toThrow("ID space is exhausted");
 		}),
 
 		createCase(options, "rejects every operation after close", async (storage) => {
@@ -1483,7 +1514,7 @@ export function createStorageConformance(options: StorageConformanceOptions): re
 			await storage.close(context);
 			await expect(storage.conversation(ROOT_CONVERSATION_ID, context)).rejects.toThrow("closed");
 			await expect(storage.commit([] satisfies StorageWrite[], context)).rejects.toThrow("closed");
-			await expect(storage.mintId()).rejects.toThrow("closed");
+			await expect(storage.mintId<ConversationId>()).rejects.toThrow("closed");
 		}),
 	];
 }

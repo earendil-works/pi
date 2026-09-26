@@ -1,18 +1,24 @@
 import type { Context, JsonValue } from "@earendil-works/chord";
 import type { FileError, FileSystem } from "../../env/index.ts";
+import { idFromNumber, seqFromNumber } from "../../ids.ts";
 import type {
+	ConversationId,
 	ConversationQuery,
 	Cursor,
 	DocumentAddress,
 	DocumentContent,
 	DocumentCreate,
+	DocumentId,
 	DocumentPoint,
 	DocumentQuery,
+	EntryId,
 	EntryQuery,
 	Id,
 	Seq,
 	Storage,
 	StorageWrite,
+	SubmissionId,
+	TaskId,
 	TaskQuery,
 	TaskRecord,
 } from "../../types.ts";
@@ -28,9 +34,9 @@ type StoredTask = TaskRecord<JsonValue, JsonValue, JsonValue>;
 type MainOperation =
 	| Extract<StorageWrite, { readonly type: "conversation" | "entry" | "submission" | "document.retire" }>
 	| { readonly type: "task"; readonly value: StoredTask }
-	| { readonly type: "task.sidecar"; readonly id: Id; readonly ordinal: number }
+	| { readonly type: "task.sidecar"; readonly id: TaskId; readonly ordinal: number }
 	| { readonly type: "document.create"; readonly record: DocumentCreate; readonly ordinal: number }
-	| { readonly type: "document.change"; readonly id: Id; readonly ordinal: number };
+	| { readonly type: "document.change"; readonly id: DocumentId; readonly ordinal: number };
 
 type MainMarker = {
 	readonly format: typeof FORMAT_VERSION;
@@ -41,7 +47,7 @@ type MainMarker = {
 
 type SidecarPayload =
 	| { readonly type: "task"; readonly value: StoredTask }
-	| { readonly type: "document"; readonly id: Id; readonly content: DocumentContent };
+	| { readonly type: "document"; readonly id: DocumentId; readonly content: DocumentContent };
 
 type SidecarRecord = {
 	readonly format: typeof FORMAT_VERSION;
@@ -90,7 +96,7 @@ const isObject = (value: unknown): value is Record<string, unknown> =>
 
 const isSafeInteger = (value: unknown): value is number => Number.isSafeInteger(value);
 
-const sidecarFileName = (kind: "doc" | "task", id: Id): string => `${kind}-${id}.jsonl`;
+const sidecarFileName = (kind: "doc" | "task", id: DocumentId | TaskId): string => `${kind}-${id}.jsonl`;
 
 const isSidecarFileName = (name: string): boolean => /^(?:doc|task)-(?:0|[1-9]\d*)\.jsonl$/.test(name);
 
@@ -180,7 +186,7 @@ const parseMainMarker = (text: string, line: number): MainMarker => {
 	return {
 		format: FORMAT_VERSION,
 		type: "commit",
-		seq: value.seq,
+		seq: seqFromNumber(value.seq),
 		writes: value.writes.map((write) => validateMainOperation(write, description)),
 	};
 };
@@ -237,8 +243,8 @@ export class JsonlStorage implements Storage {
 	private readonly mainPath: string;
 	private readonly fsync: boolean;
 	private readonly memory = new MemoryStorage();
-	private readonly currentOnlyDocuments = new Set<Id>();
-	private readonly liveTaskSidecars = new Set<Id>();
+	private readonly currentOnlyDocuments = new Set<DocumentId>();
+	private readonly liveTaskSidecars = new Set<TaskId>();
 	private closed = false;
 	private poisonError: JsonlStoragePoisonedError | undefined;
 
@@ -298,11 +304,11 @@ export class JsonlStorage implements Storage {
 		return seq;
 	}
 
-	async mintId() {
-		return this.store.mintId();
+	async mintId<I extends Id<string>>(): Promise<I> {
+		return this.store.mintId<I>();
 	}
 
-	async conversation(id: Id, context: Context) {
+	async conversation(id: ConversationId, context: Context) {
 		return this.store.conversation(id, context);
 	}
 
@@ -310,15 +316,24 @@ export class JsonlStorage implements Storage {
 		return this.store.scanConversations(query, limit, cursor, context);
 	}
 
-	entry(id: Id, context: Context): ReturnType<Storage["entry"]>;
-	entry(conversationId: Id, id: Id, context: Context): ReturnType<Storage["entry"]>;
-	async entry(idOrConversationId: Id, idOrContext: Id | Context, context?: Context) {
-		return context === undefined
-			? this.store.entry(idOrConversationId, idOrContext as Context)
-			: this.store.entry(idOrConversationId, idOrContext as Id, context);
+	entry(id: EntryId, context: Context): ReturnType<Storage["entry"]>;
+	entry(conversationId: ConversationId, id: EntryId, context: Context): ReturnType<Storage["entry"]>;
+	async entry(idOrConversationId: EntryId | ConversationId, idOrContext: EntryId | Context, context?: Context) {
+		if (context === undefined)
+			return this.store.entry(idFromNumber<EntryId>(idOrConversationId), idOrContext as Context);
+		if (typeof idOrContext !== "number") throw new TypeError("Storage.entry() requires an entry ID");
+		return this.store.entry(
+			idFromNumber<ConversationId>(idOrConversationId),
+			idFromNumber<EntryId>(idOrContext),
+			context,
+		);
 	}
 
-	async findLatestHeadMarker(conversationId: Id, atOrBeforeEntryId: Id | undefined, context: Context) {
+	async findLatestHeadMarker(
+		conversationId: ConversationId,
+		atOrBeforeEntryId: EntryId | undefined,
+		context: Context,
+	) {
 		return this.store.findLatestHeadMarker(conversationId, atOrBeforeEntryId, context);
 	}
 
@@ -326,7 +341,7 @@ export class JsonlStorage implements Storage {
 		return this.store.scanEntries(query, limit, cursor, context);
 	}
 
-	async task(id: Id, context: Context) {
+	async task(id: TaskId, context: Context) {
 		return this.store.task(id, context);
 	}
 
@@ -334,11 +349,11 @@ export class JsonlStorage implements Storage {
 		return this.store.scanTasks(query, limit, cursor, context);
 	}
 
-	async submission(id: Id, context: Context) {
+	async submission(id: SubmissionId, context: Context) {
 		return this.store.submission(id, context);
 	}
 
-	async submissionByRequest(conversationId: Id, requestId: string, context: Context) {
+	async submissionByRequest(conversationId: ConversationId, requestId: string, context: Context) {
 		return this.store.submissionByRequest(conversationId, requestId, context);
 	}
 
@@ -346,7 +361,7 @@ export class JsonlStorage implements Storage {
 		return this.store.findDocument(address, at, context);
 	}
 
-	async document(id: Id, at: DocumentPoint, context: Context) {
+	async document(id: DocumentId, at: DocumentPoint, context: Context) {
 		return this.store.document(id, at, context);
 	}
 
@@ -428,10 +443,10 @@ export class JsonlStorage implements Storage {
 	}
 
 	private planReclamations(writes: readonly StorageWrite[], encoded: EncodedCommit): ReadonlyMap<string, string> {
-		const createdCurrentOnlyDocuments = new Set<Id>();
-		const retiredDocuments = new Set<Id>();
-		const baseDocuments = new Set<Id>();
-		const finalTasks = new Map<Id, StoredTask>();
+		const createdCurrentOnlyDocuments = new Set<DocumentId>();
+		const retiredDocuments = new Set<DocumentId>();
+		const baseDocuments = new Set<DocumentId>();
+		const finalTasks = new Map<TaskId, StoredTask>();
 		for (const write of writes) {
 			switch (write.type) {
 				case "document.create":
@@ -450,7 +465,7 @@ export class JsonlStorage implements Storage {
 		}
 
 		const replacements = new Map<string, string>();
-		const isCurrentOnlyDocument = (id: Id): boolean =>
+		const isCurrentOnlyDocument = (id: DocumentId): boolean =>
 			this.currentOnlyDocuments.has(id) || createdCurrentOnlyDocuments.has(id);
 		for (const id of retiredDocuments) {
 			if (isCurrentOnlyDocument(id)) replacements.set(sidecarFileName("doc", id), "");
@@ -560,9 +575,9 @@ export class JsonlStorage implements Storage {
 			}
 		}
 
-		const currentOnlyDocuments = new Set<Id>();
-		const retiredDocuments = new Set<Id>();
-		const finalTaskIsLive = new Map<Id, boolean>();
+		const currentOnlyDocuments = new Set<DocumentId>();
+		const retiredDocuments = new Set<DocumentId>();
+		const finalTaskIsLive = new Map<TaskId, boolean>();
 		for (const { value: marker } of main.lines) {
 			for (const operation of marker.writes) {
 				if (operation.type === "document.create") {
@@ -578,7 +593,7 @@ export class JsonlStorage implements Storage {
 		}
 		const retiredCurrentOnlyDocuments = new Set([...retiredDocuments].filter((id) => currentOnlyDocuments.has(id)));
 
-		const latestBases = new Map<Id, SidecarRecord>();
+		const latestBases = new Map<DocumentId, SidecarRecord>();
 		for (const { value: marker } of main.lines) {
 			for (const operation of marker.writes) {
 				if (operation.type !== "document.create" && operation.type !== "document.change") continue;
@@ -605,7 +620,7 @@ export class JsonlStorage implements Storage {
 			}
 		}
 
-		const isBeforeLatestBase = (id: Id, seq: Seq, ordinal: number): boolean => {
+		const isBeforeLatestBase = (id: DocumentId, seq: Seq, ordinal: number): boolean => {
 			const base = latestBases.get(id);
 			return base !== undefined && (seq < base.seq || (seq === base.seq && ordinal < base.ordinal));
 		};
@@ -711,19 +726,22 @@ export class JsonlStorage implements Storage {
 				if (!truncated.ok) throw errorFromFile(`tail truncation of ${file}`, truncated.error);
 			}
 
-			const id = Number(file.slice(file.indexOf("-") + 1, -".jsonl".length));
+			const numericId = Number(file.slice(file.indexOf("-") + 1, -".jsonl".length));
 			const confirmedLines = parsed.lines.filter((line) =>
 				confirmed.has(sidecarKey(file, line.value.seq, line.value.ordinal)),
 			);
 			let retainedLines: readonly ParsedLine<SidecarRecord>[] | undefined;
-			if (file.startsWith("task-") && terminalTasks.has(id)) {
+			if (file.startsWith("task-") && terminalTasks.has(idFromNumber<TaskId>(numericId))) {
 				retainedLines = [];
-			} else if (file.startsWith("doc-") && retiredCurrentOnlyDocuments.has(id)) {
-				retainedLines = [];
-			} else if (file.startsWith("doc-") && latestBases.has(id)) {
-				retainedLines = confirmedLines.filter(
-					(line) => !isBeforeLatestBase(id, line.value.seq, line.value.ordinal),
-				);
+			} else if (file.startsWith("doc-")) {
+				const documentId = idFromNumber<DocumentId>(numericId);
+				if (retiredCurrentOnlyDocuments.has(documentId)) {
+					retainedLines = [];
+				} else if (latestBases.has(documentId)) {
+					retainedLines = confirmedLines.filter(
+						(line) => !isBeforeLatestBase(documentId, line.value.seq, line.value.ordinal),
+					);
+				}
 			}
 			if (
 				retainedLines !== undefined &&

@@ -1,13 +1,16 @@
 import type { JsonValue } from "@earendil-works/chord";
 import {
+	type ConversationId,
 	defineDoc,
 	defineDocFamily,
-	type Id,
+	type EntryId,
 	ReadAfterWrite,
 	type Task,
+	type TaskId,
 	type TaskRecord,
 } from "@earendil-works/pi-durable";
 import { describe, expect, it } from "vitest";
+import { idFromNumber } from "../src/ids.ts";
 import { context, createConversation, documentChanges, flush, openTestSession } from "./session-support.ts";
 
 type Checkpoint = { phase: "start" } | { phase: "next"; step: number };
@@ -58,13 +61,13 @@ function terminal(task: AnyTask): AnyTask {
 
 async function createTask(
 	session: ReturnType<typeof openTestSession>["session"],
-	conversationId: Id,
+	conversationId: ConversationId,
 	withDocument = false,
-): Promise<Id> {
+): Promise<TaskId<{ ok: boolean }>> {
 	return session.commit(async (tx) => {
-		const ref = await tx.createTask(WorkTask, { path: "a" }, { conversationId });
-		if (withDocument) (await tx.doc(ProgressDoc, ref.id)).lines.push("started");
-		return ref.id;
+		const taskId = await tx.createTask(WorkTask, { path: "a" }, { conversationId });
+		if (withDocument) (await tx.doc(ProgressDoc, taskId)).lines.push("started");
+		return taskId;
 	}, context);
 }
 
@@ -79,8 +82,10 @@ describe("Session transaction tables", () => {
 			expect(await tx.scanEntries({ conversationId }, 10)).toEqual({ items: [] });
 			await tx.appendEntry(conversationId, { kind: "note" });
 			await expect(tx.conversation(conversationId)).rejects.toBeInstanceOf(ReadAfterWrite);
-			await expect(tx.task(1)).rejects.toThrow("Tx.task() cannot read tables after the first table write");
-			await expect(tx.entry(1)).rejects.toBeInstanceOf(ReadAfterWrite);
+			await expect(tx.task(idFromNumber<TaskId>(1))).rejects.toThrow(
+				"Tx.task() cannot read tables after the first table write",
+			);
+			await expect(tx.entry(idFromNumber<EntryId>(1))).rejects.toBeInstanceOf(ReadAfterWrite);
 			await expect(tx.scanConversations({}, 10)).rejects.toBeInstanceOf(ReadAfterWrite);
 			await expect(tx.scanEntries({ conversationId }, 10)).rejects.toBeInstanceOf(ReadAfterWrite);
 			// Document access remains available after table writes.
@@ -120,7 +125,7 @@ describe("Session transaction tables", () => {
 	it("creates conversations, entries, and tasks with minted IDs", async () => {
 		const { session, storage, publications } = openTestSession();
 		const created = await session.commit(async (tx) => {
-			const conversation = await tx.createConversation();
+			const conversation = await tx.createConversation({ ownership: { kind: "ownerless" } });
 			const first = await tx.appendEntry(conversation.id, { kind: "note", data: "one" });
 			const headed = await tx.appendEntry(conversation.id, { kind: "summary", head: "self" });
 			const task = await tx.createTask(
@@ -130,7 +135,7 @@ describe("Session transaction tables", () => {
 			);
 			return { conversation, first, headed, task };
 		}, context);
-		const ids = [created.conversation.id, created.first.id, created.headed.id, created.task.id];
+		const ids = [created.conversation.id, created.first.id, created.headed.id, created.task];
 		expect(new Set(ids).size).toBe(4);
 		expect(created.headed.head).toBe(created.headed.id);
 		expect(created.first).toEqual({
@@ -140,8 +145,8 @@ describe("Session transaction tables", () => {
 			data: "one",
 		});
 		expect((await storage.entry(created.headed.id, context))!.entry).toEqual(created.headed);
-		expect(await storage.task(created.task.id, context)).toEqual({
-			id: created.task.id,
+		expect(await storage.task(created.task, context)).toEqual({
+			id: created.task,
 			conversationId: created.conversation.id,
 			kind: "test.work",
 			version: 1,
@@ -166,9 +171,115 @@ describe("Session transaction tables", () => {
 		await expect(session.commit((tx) => tx.createTask(WorkTask, { path: "x" }), context)).rejects.toThrow(
 			"requires options.conversationId",
 		);
-		await expect(session.commit((tx) => tx.appendEntry(12345, { kind: "note" }), context)).rejects.toThrow(
-			"Conversation 12345 does not exist",
-		);
+		await expect(
+			session.commit((tx) => tx.appendEntry(idFromNumber<ConversationId>(12345), { kind: "note" }), context),
+		).rejects.toThrow("Conversation 12345 does not exist");
+	});
+
+	it("creates a conversation with an explicitly staged task owner", async () => {
+		const { session, storage } = openTestSession();
+		const parentId = await createConversation(session);
+		const created = await session.commit(async (tx) => {
+			const supervisorId = await tx.createTask(
+				WorkTask,
+				{ path: "background" },
+				{ conversationId: parentId, background: true },
+			);
+			const child = await tx.createConversation({ ownership: { kind: "task", taskId: supervisorId } });
+			return { supervisorId, child };
+		}, context);
+
+		expect(created.child.owner).toEqual({ conversationId: parentId, taskId: created.supervisorId });
+		expect(await storage.conversation(created.child.id, context)).toEqual(created.child);
+
+		await expect(
+			session.commit(async (tx) => {
+				const supervisor = (await tx.task(created.supervisorId))!;
+				tx.setTask({ ...supervisor, conversationId: created.child.id });
+			}, context),
+		).rejects.toThrow(`Task ${created.supervisorId} cannot change conversations`);
+		expect((await storage.task(created.supervisorId, context))?.conversationId).toBe(parentId);
+	});
+
+	it("rejects missing, terminal, and abort-marked conversation owners atomically", async () => {
+		const { session, storage } = openTestSession();
+		const parentId = await createConversation(session);
+		let movedStagedTaskId: TaskId<{ ok: boolean }> | undefined;
+		await expect(
+			session.commit(async (tx) => {
+				const taskId = await tx.createTask(WorkTask, { path: "move" }, { conversationId: parentId });
+				movedStagedTaskId = taskId;
+				tx.setTask({
+					id: taskId,
+					conversationId: idFromNumber<ConversationId>(998),
+					kind: WorkTask.definition.name,
+					version: WorkTask.definition.version,
+					input: { path: "move" },
+					after: [],
+					background: false,
+					abortRequested: false,
+					state: { status: "pending", checkpoint: { phase: "start" } },
+				});
+			}, context),
+		).rejects.toThrow("cannot change conversations");
+		if (movedStagedTaskId === undefined) throw new Error("Expected a staged task ID");
+		expect(await storage.task(movedStagedTaskId, context)).toBeUndefined();
+
+		const missingTaskId = idFromNumber<TaskId>(999);
+		await expect(
+			session.commit((tx) => tx.createConversation({ ownership: { kind: "task", taskId: missingTaskId } }), context),
+		).rejects.toThrow("Conversation owner task 999 does not exist");
+
+		let rejectedChildId: ConversationId | undefined;
+		await expect(
+			session.commit(async (tx) => {
+				const supervisorId = await tx.createTask(WorkTask, { path: "aborting" }, { conversationId: parentId });
+				rejectedChildId = (await tx.createConversation({ ownership: { kind: "task", taskId: supervisorId } })).id;
+				tx.setTask({
+					id: supervisorId,
+					conversationId: parentId,
+					kind: WorkTask.definition.name,
+					version: WorkTask.definition.version,
+					input: { path: "aborting" },
+					after: [],
+					background: false,
+					abortRequested: true,
+					state: { status: "pending", checkpoint: { phase: "start" } },
+				});
+			}, context),
+		).rejects.toThrow("is abort-marked");
+		expect(rejectedChildId).toBeDefined();
+		if (rejectedChildId === undefined) throw new Error("Expected a rejected child ID");
+		expect(await storage.conversation(rejectedChildId, context)).toBeUndefined();
+
+		await expect(
+			session.commit(async (tx) => {
+				const supervisorId = await tx.createTask(WorkTask, { path: "terminal" }, { conversationId: parentId });
+				await tx.createConversation({ ownership: { kind: "task", taskId: supervisorId } });
+				tx.setTask({
+					id: supervisorId,
+					conversationId: parentId,
+					kind: WorkTask.definition.name,
+					version: WorkTask.definition.version,
+					input: { path: "terminal" },
+					after: [],
+					background: false,
+					abortRequested: false,
+					state: { status: "terminal", outcome: { status: "completed", result: { ok: true } } },
+				});
+			}, context),
+		).rejects.toThrow("is terminal");
+
+		const terminalOwnerId = await createTask(session, parentId);
+		await session.commit(async (tx) => {
+			tx.setTask(terminal((await tx.task(terminalOwnerId))!));
+		}, context);
+		await expect(
+			session.commit(
+				(tx) => tx.createConversation({ ownership: { kind: "task", taskId: terminalOwnerId } }),
+				context,
+			),
+		).rejects.toThrow("is terminal");
 	});
 
 	it("takes ownership of table JSON and rejects non-strict values", async () => {
@@ -227,11 +338,11 @@ describe("Session transaction tables", () => {
 		const { session, publications } = openTestSession();
 		const conversationId = await createConversation(session);
 		const taskId = await session.commit(async (tx) => {
-			const ref = await tx.createTask(WorkTask, { path: "a" }, { conversationId });
+			const createdTaskId = await tx.createTask(WorkTask, { path: "a" }, { conversationId });
 			// Validation uses the candidate task record, not a caller table read.
-			(await tx.doc(ProgressDoc, ref.id)).lines.push("created");
-			(await tx.doc(StepDoc, ref.id, "one", null)).lines.push("step");
-			return ref.id;
+			(await tx.doc(ProgressDoc, createdTaskId)).lines.push("created");
+			(await tx.doc(StepDoc, createdTaskId, "one", null)).lines.push("step");
+			return createdTaskId;
 		}, context);
 		expect(await session.snapshot(ProgressDoc, taskId, context)).toEqual({ lines: ["created"] });
 		await flush();
@@ -245,7 +356,7 @@ describe("Session transaction tables", () => {
 		for (const document of documents) expect(document.conversationId).toBe(conversationId);
 
 		await session.commit(async (tx) => {
-			await tx.createConversation();
+			await tx.createConversation({ ownership: { kind: "ownerless" } });
 			(await tx.doc(ProgressDoc, taskId)).lines.push("committed task");
 		}, context);
 		await flush();
@@ -318,11 +429,11 @@ describe("Session transaction tables", () => {
 
 	it("validates document owners", async () => {
 		const { session } = openTestSession();
-		await expect(session.commit((tx) => tx.doc(ProgressDoc, 4242).then(() => undefined), context)).rejects.toThrow(
-			"Task 4242 does not exist",
-		);
-		await expect(session.commit((tx) => tx.doc(NotesDoc, 4242).then(() => undefined), context)).rejects.toThrow(
-			"Conversation 4242 does not exist",
-		);
+		await expect(
+			session.commit((tx) => tx.doc(ProgressDoc, idFromNumber<TaskId>(4242)).then(() => undefined), context),
+		).rejects.toThrow("Task 4242 does not exist");
+		await expect(
+			session.commit((tx) => tx.doc(NotesDoc, idFromNumber<ConversationId>(4242)).then(() => undefined), context),
+		).rejects.toThrow("Conversation 4242 does not exist");
 	});
 });

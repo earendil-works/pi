@@ -1,15 +1,18 @@
 import { copyJson, type JsonValue } from "@earendil-works/chord";
 import type { Op } from "@earendil-works/chord/delta";
+import { idFromNumber } from "./ids.ts";
 import type {
 	CommonDocDefinition,
 	ConversationDocFamilyToken,
 	ConversationDocToken,
+	ConversationId,
 	DocDefinition,
 	DocFamilyDefinition,
 	DocFamilyToken,
 	DocToken,
 	DocumentAddress,
 	DocumentCreate,
+	DocumentId,
 	DocumentRecord,
 	DocumentSemantics,
 	Id,
@@ -23,6 +26,7 @@ import type {
 	StoredDocument,
 	TaskDocFamilyToken,
 	TaskDocToken,
+	TaskId,
 } from "./types.ts";
 
 type FamilyInput<T extends JsonObject, I extends JsonValue> = Omit<CommonDocDefinition<T>, "initial"> & {
@@ -109,10 +113,10 @@ export function resolveAddress(definition: AnyDocDefinition, args: readonly unkn
 			scope = { kind: "session" };
 			break;
 		case "conversation":
-			scope = { kind: "conversation", conversationId: ownerId(args[index++], definition) };
+			scope = { kind: "conversation", conversationId: ownerId<ConversationId>(args[index++], definition) };
 			break;
 		case "task":
-			scope = { kind: "task", taskId: ownerId(args[index++], definition) };
+			scope = { kind: "task", taskId: ownerId<TaskId>(args[index++], definition) };
 			break;
 	}
 	const key = definition.family === true ? (args[index++] as string) : undefined;
@@ -121,11 +125,11 @@ export function resolveAddress(definition: AnyDocDefinition, args: readonly unkn
 	return { address, id: addressId(address), nextArgument: index };
 }
 
-function ownerId(value: unknown, definition: AnyDocDefinition): Id {
-	if (!Number.isSafeInteger(value as number)) {
+function ownerId<I extends Id<string>>(value: unknown, definition: AnyDocDefinition): I {
+	if (typeof value !== "number" || !Number.isSafeInteger(value)) {
 		throw new TypeError(`Document ${definition.kind} requires a ${definition.scope} ID`);
 	}
-	return value as Id;
+	return idFromNumber<I>(value);
 }
 
 /** Stable string identity of one logical address. */
@@ -140,7 +144,7 @@ export function addressId(address: DocumentAddress): string {
 }
 
 /** Build the storage create record for a new incarnation at an address. */
-export function documentCreate(definition: AnyDocDefinition, address: DocumentAddress, id: Id): DocumentCreate {
+export function documentCreate(definition: AnyDocDefinition, address: DocumentAddress, id: DocumentId): DocumentCreate {
 	const key = address.key === undefined ? {} : { key: address.key };
 	switch (address.scope.kind) {
 		case "session":

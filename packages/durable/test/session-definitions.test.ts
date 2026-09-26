@@ -1,14 +1,17 @@
 import type { Draft } from "@earendil-works/chord";
 import {
+	type ConversationId,
 	createSession,
 	defineDoc,
 	defineDocFamily,
-	type Id,
 	MemoryStorage,
+	ROOT_CONVERSATION_ID,
 	type Session,
+	type TaskId,
 	type Tx,
 } from "@earendil-works/pi-durable";
 import { describe, expect, expectTypeOf, it } from "vitest";
+import { idFromNumber } from "../src/ids.ts";
 import { context } from "./session-support.ts";
 
 type State = { value: number };
@@ -68,7 +71,7 @@ describe("document definitions", () => {
 
 	it("types every owner, key, and seed overload", async () => {
 		const session: Session = createSession(new MemoryStorage());
-		const check = async (tx: Tx, conversationId: Id, taskId: Id): Promise<void> => {
+		const check = async (tx: Tx, conversationId: ConversationId, taskId: TaskId): Promise<void> => {
 			expectTypeOf(await tx.doc(SessionDoc)).toEqualTypeOf<Draft<State>>();
 			expectTypeOf(await tx.doc(LatestDoc, conversationId)).toEqualTypeOf<Draft<State>>();
 			expectTypeOf(await tx.doc(RewindableDoc, conversationId)).toEqualTypeOf<Draft<State>>();
@@ -97,13 +100,18 @@ describe("document definitions", () => {
 		expect(check).toBeTypeOf("function");
 
 		expectTypeOf(await session.snapshot(SessionDoc, context)).toEqualTypeOf<Readonly<State> | undefined>();
-		expectTypeOf(await session.snapshot(LatestDoc, 1, context)).toEqualTypeOf<Readonly<State> | undefined>();
-		expectTypeOf(await session.snapshot(TaskDoc, 1, context)).toEqualTypeOf<Readonly<State> | undefined>();
-		expectTypeOf(await session.snapshot(SessionFamily, "k", context)).toEqualTypeOf<Readonly<State> | undefined>();
-		expectTypeOf(await session.snapshot(ConversationFamily, 1, "k", context)).toEqualTypeOf<
+		const taskId = idFromNumber<TaskId>(1);
+		expectTypeOf(await session.snapshot(LatestDoc, ROOT_CONVERSATION_ID, context)).toEqualTypeOf<
 			Readonly<State> | undefined
 		>();
-		expectTypeOf(await session.snapshot(TaskFamily, 1, "k", context)).toEqualTypeOf<Readonly<State> | undefined>();
+		expectTypeOf(await session.snapshot(TaskDoc, taskId, context)).toEqualTypeOf<Readonly<State> | undefined>();
+		expectTypeOf(await session.snapshot(SessionFamily, "k", context)).toEqualTypeOf<Readonly<State> | undefined>();
+		expectTypeOf(await session.snapshot(ConversationFamily, ROOT_CONVERSATION_ID, "k", context)).toEqualTypeOf<
+			Readonly<State> | undefined
+		>();
+		expectTypeOf(await session.snapshot(TaskFamily, taskId, "k", context)).toEqualTypeOf<
+			Readonly<State> | undefined
+		>();
 		// @ts-expect-error snapshots never take a creation seed
 		await session.snapshot(SessionFamily, "k", 1, context).catch(() => undefined);
 		await session.close(context);

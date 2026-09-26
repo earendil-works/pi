@@ -9,14 +9,17 @@ import {
 	resolveAddress,
 } from "../documents.ts";
 import { StorageRejected } from "../errors.ts";
+import { idFromNumber } from "../ids.ts";
 import type {
 	ConversationDocFamilyToken,
 	ConversationDocToken,
+	ConversationId,
 	DocumentAddress,
-	Id,
+	EntryId,
 	JsonObject,
 	RewindableConversationDocFamilyToken,
 	RewindableConversationDocToken,
+	Seq,
 	Session,
 	SessionDocFamilyToken,
 	SessionDocToken,
@@ -24,6 +27,7 @@ import type {
 	StorageWrite,
 	TaskDocFamilyToken,
 	TaskDocToken,
+	TaskId,
 	Tx,
 } from "../types.ts";
 import type { CommitChange, CommitPublication } from "./publications.ts";
@@ -76,12 +80,12 @@ export class SessionKernel implements Session {
 	snapshot<T extends JsonObject>(token: SessionDocToken<T>, context: Context): Promise<Readonly<T> | undefined>;
 	snapshot<T extends JsonObject>(
 		token: ConversationDocToken<T>,
-		conversationId: Id,
+		conversationId: ConversationId,
 		context: Context,
 	): Promise<Readonly<T> | undefined>;
 	snapshot<T extends JsonObject>(
 		token: TaskDocToken<T>,
-		taskId: Id,
+		taskId: TaskId,
 		context: Context,
 	): Promise<Readonly<T> | undefined>;
 	snapshot<T extends JsonObject, I extends JsonValue>(
@@ -91,13 +95,13 @@ export class SessionKernel implements Session {
 	): Promise<Readonly<T> | undefined>;
 	snapshot<T extends JsonObject, I extends JsonValue>(
 		token: ConversationDocFamilyToken<T, I>,
-		conversationId: Id,
+		conversationId: ConversationId,
 		key: string,
 		context: Context,
 	): Promise<Readonly<T> | undefined>;
 	snapshot<T extends JsonObject, I extends JsonValue>(
 		token: TaskDocFamilyToken<T, I>,
-		taskId: Id,
+		taskId: TaskId,
 		key: string,
 		context: Context,
 	): Promise<Readonly<T> | undefined>;
@@ -120,15 +124,15 @@ export class SessionKernel implements Session {
 
 	snapshotAsOf<T extends JsonObject>(
 		token: RewindableConversationDocToken<T>,
-		conversationId: Id,
-		at: Id,
+		conversationId: ConversationId,
+		at: EntryId,
 		context: Context,
 	): Promise<Readonly<T> | undefined>;
 	snapshotAsOf<T extends JsonObject, I extends JsonValue>(
 		token: RewindableConversationDocFamilyToken<T, I>,
-		conversationId: Id,
+		conversationId: ConversationId,
 		key: string,
-		at: Id,
+		at: EntryId,
 		context: Context,
 	): Promise<Readonly<T> | undefined>;
 	async snapshotAsOf(token: AnyDocToken, ...args: readonly unknown[]): Promise<JsonObject | undefined> {
@@ -139,7 +143,11 @@ export class SessionKernel implements Session {
 			throw new TypeError("Session.snapshotAsOf() requires a conversation document");
 		}
 		const conversationId = resolved.address.scope.conversationId;
-		const at = args[resolved.nextArgument] as Id;
+		const atValue = args[resolved.nextArgument];
+		if (typeof atValue !== "number" || !Number.isSafeInteger(atValue)) {
+			throw new TypeError("Session.snapshotAsOf() requires an entry ID");
+		}
+		const at = idFromNumber<EntryId>(atValue);
 		const context = args[resolved.nextArgument + 1] as Context;
 		return this.#enqueue(async () => {
 			this.#assertHealthy();
@@ -203,7 +211,7 @@ export class SessionKernel implements Session {
 			tx.discard();
 			return result;
 		}
-		let seq: number;
+		let seq: Seq;
 		try {
 			// Once admitted, caller cancellation does not interrupt Storage settlement.
 			seq = await this.#storage.commit(writes, withoutAbortSignal(context));
@@ -226,7 +234,7 @@ export class SessionKernel implements Session {
 	}
 
 	#publish(
-		seq: number,
+		seq: Seq,
 		writes: readonly StorageWrite[],
 		documents: readonly DocumentCommitChange[],
 		context: Context,

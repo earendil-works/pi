@@ -1,9 +1,11 @@
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { describe, expect, it } from "vitest";
 import { StorageRejected } from "../src/errors.ts";
+import { idFromNumber } from "../src/ids.ts";
 import type { SqliteDatabase, SqliteStatement } from "../src/storage/sqlite/index.ts";
 import { SqliteStorage } from "../src/storage/sqlite/index.ts";
 import { type NodeSqliteDatabase, openNodeSqliteDatabase } from "../src/storage/sqlite/node.ts";
+import { type EntryId, ROOT_CONVERSATION_ID } from "../src/types.ts";
 
 type SettlementMode = "immediate" | "delay" | "reject";
 
@@ -71,24 +73,29 @@ describe("portable SQLite facade settlement", () => {
 	it("prepares each storage statement once and rebinds it across commits", async () => {
 		const database = new ControlledSettlementDatabase(await openNodeSqliteDatabase(":memory:"));
 		const storage = await SqliteStorage.open(database);
-		await storage.commit([{ type: "conversation", value: { id: 1 } }], BACKGROUND_CONTEXT);
+		await storage.commit([{ type: "conversation", value: { id: ROOT_CONVERSATION_ID } }], BACKGROUND_CONTEXT);
 		await storage.commit(
 			Array.from({ length: 100 }, (_, index) => ({
 				type: "entry" as const,
-				value: { id: index + 2, conversationId: 1, kind: "cached" },
+				value: { id: idFromNumber<EntryId>(index + 2), conversationId: ROOT_CONVERSATION_ID, kind: "cached" },
 			})),
 			BACKGROUND_CONTEXT,
 		);
 		await storage.commit(
-			[{ type: "entry", value: { id: 102, conversationId: 1, kind: "cached-again" } }],
+			[
+				{
+					type: "entry",
+					value: { id: idFromNumber<EntryId>(102), conversationId: ROOT_CONVERSATION_ID, kind: "cached-again" },
+				},
+			],
 			BACKGROUND_CONTEXT,
 		);
-		expect((await storage.entry(2, BACKGROUND_CONTEXT))?.entry.kind).toBe("cached");
-		expect((await storage.entry(102, BACKGROUND_CONTEXT))?.entry.kind).toBe("cached-again");
-		await expect(storage.commit([{ type: "conversation", value: { id: 1 } }], BACKGROUND_CONTEXT)).rejects.toThrow(
-			"ID 1 already belongs to conversation",
-		);
-		expect((await storage.entry(2, BACKGROUND_CONTEXT))?.entry.kind).toBe("cached");
+		expect((await storage.entry(idFromNumber<EntryId>(2), BACKGROUND_CONTEXT))?.entry.kind).toBe("cached");
+		expect((await storage.entry(idFromNumber<EntryId>(102), BACKGROUND_CONTEXT))?.entry.kind).toBe("cached-again");
+		await expect(
+			storage.commit([{ type: "conversation", value: { id: ROOT_CONVERSATION_ID } }], BACKGROUND_CONTEXT),
+		).rejects.toThrow("ID 1 already belongs to conversation");
+		expect((await storage.entry(idFromNumber<EntryId>(2), BACKGROUND_CONTEXT))?.entry.kind).toBe("cached");
 		expect(database.prepareCount("SELECT record, commit_seq FROM entries WHERE id = ?")).toBe(1);
 		expect(database.prepareCount("INSERT OR IGNORE INTO record_ids (id, record_type) VALUES (?, ?)")).toBe(1);
 		expect(
@@ -137,7 +144,12 @@ describe("portable SQLite facade settlement", () => {
 
 		database.controlNextSettlement("delay");
 		const committing = storage.commit(
-			[{ type: "entry", value: { id: 100, conversationId: 1, kind: "settled" } }],
+			[
+				{
+					type: "entry",
+					value: { id: idFromNumber<EntryId>(100), conversationId: ROOT_CONVERSATION_ID, kind: "settled" },
+				},
+			],
 			BACKGROUND_CONTEXT,
 		);
 		let committed = false;
@@ -146,21 +158,26 @@ describe("portable SQLite facade settlement", () => {
 		});
 		await Promise.resolve();
 		expect(committed).toBe(false);
-		expect(await storage.mintId()).toBe(2);
+		expect(await storage.mintId<EntryId>()).toBe(2);
 		database.settle();
 		await expect(committing).resolves.toBe(1);
-		expect(await storage.mintId()).toBe(101);
+		expect(await storage.mintId<EntryId>()).toBe(101);
 
 		database.controlNextSettlement("reject");
 		const rejected = storage.commit(
-			[{ type: "entry", value: { id: 200, conversationId: 1, kind: "rejected" } }],
+			[
+				{
+					type: "entry",
+					value: { id: idFromNumber<EntryId>(200), conversationId: ROOT_CONVERSATION_ID, kind: "rejected" },
+				},
+			],
 			BACKGROUND_CONTEXT,
 		);
-		expect(await storage.mintId()).toBe(102);
+		expect(await storage.mintId<EntryId>()).toBe(102);
 		database.settle();
 		await expect(rejected).rejects.toThrow("controlled settlement rejection");
-		expect(await storage.mintId()).toBe(103);
-		expect(await storage.entry(200, BACKGROUND_CONTEXT)).toBeUndefined();
+		expect(await storage.mintId<EntryId>()).toBe(103);
+		expect(await storage.entry(idFromNumber<EntryId>(200), BACKGROUND_CONTEXT)).toBeUndefined();
 		await storage.close(BACKGROUND_CONTEXT);
 	});
 });

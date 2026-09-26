@@ -1,12 +1,14 @@
 import type { Context } from "@earendil-works/chord";
 import { addressId } from "../documents.ts";
 import type {
+	ConversationId,
 	Cursor,
 	DocumentCopySource,
 	DocumentCreate,
+	DocumentId,
 	DocumentPoint,
 	DocumentRecord,
-	Id,
+	EntryId,
 	Storage,
 } from "../types.ts";
 
@@ -23,9 +25,9 @@ export type ForkDocumentCopy = {
 /** Select every persisted conversation document copied by one fork. */
 export async function prepareForkDocumentCopies(
 	storage: Storage,
-	parentConversationId: Id,
-	at: Id,
-	childConversationId: Id,
+	parentConversationId: ConversationId,
+	at: EntryId,
+	childConversationId: ConversationId,
 	context: Context,
 ): Promise<readonly ForkDocumentCopy[]> {
 	const entry = await storage.entry(parentConversationId, at, context);
@@ -61,7 +63,7 @@ async function collectCopies(
 	scope: Extract<DocumentRecord["scope"], { readonly kind: "conversation" }>,
 	at: DocumentPoint,
 	policy: ForkPolicy,
-	childConversationId: Id,
+	childConversationId: ConversationId,
 	copies: ForkDocumentCopy[],
 	copiedAddresses: Set<string>,
 	context: Context,
@@ -71,7 +73,7 @@ async function collectCopies(
 		const page = await storage.scanDocuments({ scope, at }, SCAN_PAGE_SIZE, cursor, context);
 		for (const source of page.items) {
 			if (source.scope.kind !== "conversation" || source.fork !== policy) continue;
-			const id = await storage.mintId();
+			const id = await storage.mintId<DocumentId>();
 			const identity = {
 				id,
 				kind: source.kind,

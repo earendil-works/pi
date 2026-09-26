@@ -6,9 +6,22 @@ import type { Context, JsonValue } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { registerStorageConformance } from "@earendil-works/pi-durable/testing";
 import { afterEach, describe, expect, it } from "vitest";
+import { idFromNumber } from "../src/ids.ts";
 import type { SqliteStorage } from "../src/storage/sqlite/index.ts";
 import { type NodeSqliteStorageOptions, openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";
-import type { DocumentCreate, EntryRecord, Seq, Storage, StorageWrite, TaskRecord } from "../src/types.ts";
+import type {
+	ConversationId,
+	DocumentCreate,
+	DocumentId,
+	EntryId,
+	EntryRecord,
+	Id,
+	Seq,
+	Storage,
+	StorageWrite,
+	TaskId,
+	TaskRecord,
+} from "../src/types.ts";
 import { ROOT_CONVERSATION_ID } from "../src/types.ts";
 
 const context = BACKGROUND_CONTEXT;
@@ -53,16 +66,24 @@ class ReopeningStorage implements Storage {
 		}
 	}
 
-	mintId: Storage["mintId"] = () => this.current.mintId();
+	mintId<I extends Id<string>>(): Promise<I> {
+		return this.current.mintId<I>();
+	}
 	conversation: Storage["conversation"] = (id, readContext) => this.current.conversation(id, readContext);
 	scanConversations: Storage["scanConversations"] = (query, limit, cursor, readContext) =>
 		this.current.scanConversations(query, limit, cursor, readContext);
-	entry(id: number, readContext: Context): ReturnType<Storage["entry"]>;
-	entry(conversationId: number, id: number, readContext: Context): ReturnType<Storage["entry"]>;
-	entry(idOrConversationId: number, idOrContext: number | Context, readContext?: Context) {
-		return readContext === undefined
-			? this.current.entry(idOrConversationId, idOrContext as Context)
-			: this.current.entry(idOrConversationId, idOrContext as number, readContext);
+	entry(id: EntryId, readContext: Context): ReturnType<Storage["entry"]>;
+	entry(conversationId: ConversationId, id: EntryId, readContext: Context): ReturnType<Storage["entry"]>;
+	entry(idOrConversationId: EntryId | ConversationId, idOrContext: EntryId | Context, readContext?: Context) {
+		if (readContext === undefined) {
+			return this.current.entry(idFromNumber<EntryId>(idOrConversationId), idOrContext as Context);
+		}
+		if (typeof idOrContext !== "number") throw new TypeError("Storage.entry() requires an entry ID");
+		return this.current.entry(
+			idFromNumber<ConversationId>(idOrConversationId),
+			idFromNumber<EntryId>(idOrContext),
+			readContext,
+		);
 	}
 	findLatestHeadMarker: Storage["findLatestHeadMarker"] = (conversationId, at, readContext) =>
 		this.current.findLatestHeadMarker(conversationId, at, readContext);
@@ -105,15 +126,15 @@ registerStorageConformance({ describe, expect, it }, "SqliteStorage across reope
 	}
 });
 
-function entry(id: number, conversationId: number, data?: JsonValue): EntryRecord {
+function entry(id: EntryId, conversationId: ConversationId, data?: JsonValue): EntryRecord {
 	return { id, conversationId, kind: "message", ...(data === undefined ? {} : { data }) };
 }
 
-async function createRoot(storage: Storage): Promise<number> {
+async function createRoot(storage: Storage): Promise<Seq> {
 	return storage.commit([{ type: "conversation", value: { id: ROOT_CONVERSATION_ID } }], context);
 }
 
-function pendingTask(id: number): TaskRecord<JsonValue, JsonValue, JsonValue> {
+function pendingTask(id: TaskId<JsonValue>): TaskRecord<JsonValue, JsonValue, JsonValue> {
 	return {
 		id,
 		conversationId: ROOT_CONVERSATION_ID,
@@ -132,7 +153,7 @@ function scalar(db: DatabaseSync, sql: string): number {
 	return row.value;
 }
 
-function revisionCount(path: string, documentId: number): number {
+function revisionCount(path: string, documentId: DocumentId): number {
 	const db = new DatabaseSync(path, { readOnly: true });
 	try {
 		const row = db
@@ -148,7 +169,7 @@ describe("Pico SqliteStorage", () => {
 	it("persists records, sequence allocation, and global ID allocation across reopen", async () => {
 		const { storage, path } = await createSqliteStorage();
 		expect(await createRoot(storage)).toBe(1);
-		const entryId = await storage.mintId();
+		const entryId = await storage.mintId<EntryId>();
 		expect(await storage.commit([{ type: "entry", value: entry(entryId, ROOT_CONVERSATION_ID) }], context)).toBe(2);
 		await storage.close(context);
 		openStorages.delete(storage);
@@ -159,8 +180,13 @@ describe("Pico SqliteStorage", () => {
 			entry: entry(entryId, ROOT_CONVERSATION_ID),
 			commitSeq: 2,
 		});
-		expect(await reopened.mintId()).toBe(entryId + 1);
-		expect(await reopened.commit([{ type: "task", value: pendingTask(await reopened.mintId()) }], context)).toBe(3);
+		expect(await reopened.mintId<EntryId>()).toBe(entryId + 1);
+		expect(
+			await reopened.commit(
+				[{ type: "task", value: pendingTask(await reopened.mintId<TaskId<JsonValue>>()) }],
+				context,
+			),
+		).toBe(3);
 	});
 
 	it("rejects persisted metadata corruption on reopen", async () => {
@@ -179,7 +205,7 @@ describe("Pico SqliteStorage", () => {
 	it("rejects a document whose required base is missing", async () => {
 		const { storage, path } = await createSqliteStorage();
 		await createRoot(storage);
-		const id = await storage.mintId();
+		const id = await storage.mintId<DocumentId>();
 		await storage.commit(
 			[
 				{
@@ -204,7 +230,7 @@ describe("Pico SqliteStorage", () => {
 	it("replays detached root replacements and follow-up edits while rejecting corrupt operations", async () => {
 		const { storage, path } = await createSqliteStorage();
 		await createRoot(storage);
-		const id = await storage.mintId();
+		const id = await storage.mintId<DocumentId>();
 		await storage.commit(
 			[
 				{
@@ -280,8 +306,8 @@ describe("Pico SqliteStorage", () => {
 	it("rolls SQL rows and sequence allocation back as one transaction", async () => {
 		const { storage, path } = await createSqliteStorage();
 		await createRoot(storage);
-		const transientId = await storage.mintId();
-		const transientTaskId = await storage.mintId();
+		const transientId = await storage.mintId<EntryId>();
+		const transientTaskId = await storage.mintId<TaskId<JsonValue>>();
 		const circular: { self?: unknown } = {};
 		circular.self = circular;
 		await expect(
@@ -298,7 +324,7 @@ describe("Pico SqliteStorage", () => {
 		).rejects.toThrow("circular structure");
 		expect(await storage.entry(transientId, context)).toBeUndefined();
 		expect(await storage.task(transientTaskId, context)).toBeUndefined();
-		const committedId = await storage.mintId();
+		const committedId = await storage.mintId<EntryId>();
 		expect(await storage.commit([{ type: "entry", value: entry(committedId, ROOT_CONVERSATION_ID) }], context)).toBe(
 			2,
 		);
@@ -315,7 +341,7 @@ describe("Pico SqliteStorage", () => {
 	it("reconstructs recent and ancient rewindable points after reopen", async () => {
 		const { storage, path } = await createSqliteStorage();
 		await createRoot(storage);
-		const id = await storage.mintId();
+		const id = await storage.mintId<DocumentId>();
 		const record = {
 			id,
 			kind: "history",
@@ -414,7 +440,7 @@ describe("Pico SqliteStorage", () => {
 	it("reclaims current-only revisions only after a base or retirement", async () => {
 		const { storage, path } = await createSqliteStorage();
 		await createRoot(storage);
-		const id = await storage.mintId();
+		const id = await storage.mintId<DocumentId>();
 		await storage.commit(
 			[
 				{
@@ -471,7 +497,10 @@ describe("Pico SqliteStorage", () => {
 				[
 					{
 						type: "entry",
-						value: entry(await storage.mintId(), ROOT_CONVERSATION_ID, { text: "x".repeat(32 * 1024), index }),
+						value: entry(await storage.mintId<EntryId>(), ROOT_CONVERSATION_ID, {
+							text: "x".repeat(32 * 1024),
+							index,
+						}),
 					},
 				],
 				context,
@@ -493,7 +522,7 @@ describe("Pico SqliteStorage", () => {
 	it("reuses pages released by current-only checkpoints", async () => {
 		const { storage, path } = await createSqliteStorage();
 		await createRoot(storage);
-		const id = await storage.mintId();
+		const id = await storage.mintId<DocumentId>();
 		const large = "x".repeat(512 * 1024);
 		await storage.commit(
 			[
@@ -542,13 +571,16 @@ describe("Pico SqliteStorage", () => {
 				[
 					{
 						type: "entry",
-						value: entry(await storage.mintId(), ROOT_CONVERSATION_ID, { index, text: "x".repeat(1_024) }),
+						value: entry(await storage.mintId<EntryId>(), ROOT_CONVERSATION_ID, {
+							index,
+							text: "x".repeat(1_024),
+						}),
 					},
 				],
 				context,
 			);
 		}
-		const documentId = await storage.mintId();
+		const documentId = await storage.mintId<DocumentId>();
 		await storage.commit(
 			[
 				{

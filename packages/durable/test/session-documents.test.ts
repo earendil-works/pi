@@ -1,6 +1,13 @@
-import type { Draft } from "@earendil-works/chord";
-import { defineDoc, defineDocFamily, type Id, type JsonObject } from "@earendil-works/pi-durable";
+import type { Draft, JsonValue } from "@earendil-works/chord";
+import {
+	type ConversationId,
+	defineDoc,
+	defineDocFamily,
+	type JsonObject,
+	type TaskId,
+} from "@earendil-works/pi-durable";
 import { describe, expect, it } from "vitest";
+import { idFromNumber } from "../src/ids.ts";
 import { context, createConversation, documentChanges, flush, openTestSession } from "./session-support.ts";
 
 type Live = { message?: string; items: string[]; nested: { count: number }; other: { label: string } };
@@ -57,7 +64,7 @@ const MemberDoc = defineDocFamily<Member, string>({
 	},
 });
 
-async function setupLive(): Promise<ReturnType<typeof openTestSession> & { readonly conversationId: Id }> {
+async function setupLive(): Promise<ReturnType<typeof openTestSession> & { readonly conversationId: ConversationId }> {
 	const harness = openTestSession();
 	const conversationId = await createConversation(harness.session);
 	await harness.session.commit(async (tx) => {
@@ -409,7 +416,7 @@ describe("Session document transactions", () => {
 				(await tx.doc(CounterDoc)).count = 2;
 				// Replacing a missing task fails during assembly, after every change was prepared.
 				tx.setTask({
-					id: 999,
+					id: idFromNumber<TaskId<JsonValue>>(999),
 					conversationId,
 					kind: "missing",
 					version: 1,

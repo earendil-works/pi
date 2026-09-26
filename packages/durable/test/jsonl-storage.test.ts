@@ -7,9 +7,21 @@ import { registerStorageConformance } from "@earendil-works/pi-durable/testing";
 import { afterEach, describe, expect, it } from "vitest";
 import { err, FileError, type FileSystem, type Result } from "../src/env/index.ts";
 import { NodeExecutionEnv } from "../src/env/node.ts";
+import { idFromNumber } from "../src/ids.ts";
 import { JsonlStorage } from "../src/storage/jsonl/index.ts";
 import { openNodeJsonlStorage } from "../src/storage/jsonl/node.ts";
-import type { DocumentCreate, Seq, Storage, StorageWrite, TaskRecord } from "../src/types.ts";
+import type {
+	ConversationId,
+	DocumentCreate,
+	DocumentId,
+	EntryId,
+	Id,
+	Seq,
+	Storage,
+	StorageWrite,
+	TaskId,
+	TaskRecord,
+} from "../src/types.ts";
 import { ROOT_CONVERSATION_ID } from "../src/types.ts";
 
 const context = BACKGROUND_CONTEXT;
@@ -64,16 +76,24 @@ class ReopeningStorage implements Storage {
 		}
 	}
 
-	mintId: Storage["mintId"] = () => this.current.mintId();
+	mintId<I extends Id<string>>(): Promise<I> {
+		return this.current.mintId<I>();
+	}
 	conversation: Storage["conversation"] = (id, readContext) => this.current.conversation(id, readContext);
 	scanConversations: Storage["scanConversations"] = (query, limit, cursor, readContext) =>
 		this.current.scanConversations(query, limit, cursor, readContext);
-	entry(id: number, readContext: Context): ReturnType<Storage["entry"]>;
-	entry(conversationId: number, id: number, readContext: Context): ReturnType<Storage["entry"]>;
-	entry(idOrConversationId: number, idOrContext: number | Context, readContext?: Context) {
-		return readContext === undefined
-			? this.current.entry(idOrConversationId, idOrContext as Context)
-			: this.current.entry(idOrConversationId, idOrContext as number, readContext);
+	entry(id: EntryId, readContext: Context): ReturnType<Storage["entry"]>;
+	entry(conversationId: ConversationId, id: EntryId, readContext: Context): ReturnType<Storage["entry"]>;
+	entry(idOrConversationId: EntryId | ConversationId, idOrContext: EntryId | Context, readContext?: Context) {
+		if (readContext === undefined) {
+			return this.current.entry(idFromNumber<EntryId>(idOrConversationId), idOrContext as Context);
+		}
+		if (typeof idOrContext !== "number") throw new TypeError("Storage.entry() requires an entry ID");
+		return this.current.entry(
+			idFromNumber<ConversationId>(idOrConversationId),
+			idFromNumber<EntryId>(idOrContext),
+			readContext,
+		);
 	}
 	findLatestHeadMarker: Storage["findLatestHeadMarker"] = (conversationId, at, readContext) =>
 		this.current.findLatestHeadMarker(conversationId, at, readContext);
@@ -111,7 +131,7 @@ registerStorageConformance({ describe, expect, it }, "JsonlStorage across reopen
 	}
 });
 
-function pendingTask(id: number, phase = "ready"): StoredTask {
+function pendingTask(id: TaskId<JsonValue>, phase = "ready"): StoredTask {
 	return {
 		id,
 		conversationId: ROOT_CONVERSATION_ID,
@@ -125,7 +145,7 @@ function pendingTask(id: number, phase = "ready"): StoredTask {
 	};
 }
 
-function terminalTask(id: number): StoredTask {
+function terminalTask(id: TaskId<JsonValue>): StoredTask {
 	return {
 		id,
 		conversationId: ROOT_CONVERSATION_ID,
@@ -143,7 +163,7 @@ async function createRoot(storage: Storage): Promise<void> {
 	await storage.commit([{ type: "conversation", value: { id: ROOT_CONVERSATION_ID } }], context);
 }
 
-function sessionDocument(id: number, kind = "test.document"): DocumentCreate {
+function sessionDocument(id: DocumentId, kind = "test.document"): DocumentCreate {
 	return { id, kind, scope: { kind: "session" } };
 }
 
@@ -307,8 +327,8 @@ describe("Pico JsonlStorage publication and recovery", () => {
 		const directory = await tempDirectory();
 		const storage = await openStorage(directory);
 		await createRoot(storage);
-		const taskId = await storage.mintId();
-		const documentId = await storage.mintId();
+		const taskId = await storage.mintId<TaskId<JsonValue>>();
+		const documentId = await storage.mintId<DocumentId>();
 		await storage.commit([{ type: "task", value: pendingTask(taskId) }], context);
 		await storage.commit(
 			[
@@ -353,7 +373,7 @@ describe("Pico JsonlStorage publication and recovery", () => {
 		const directory = await tempDirectory();
 		const storage = await openStorage(directory);
 		await createRoot(storage);
-		const taskId = await storage.mintId();
+		const taskId = await storage.mintId<TaskId<JsonValue>>();
 		await storage.commit(
 			[
 				{ type: "task", value: pendingTask(taskId, "first") },
@@ -372,7 +392,7 @@ describe("Pico JsonlStorage publication and recovery", () => {
 		const env = new InstrumentedEnv({ cwd: directory });
 		const storage = await openStorage(directory, env);
 		await createRoot(storage);
-		const taskId = await storage.mintId();
+		const taskId = await storage.mintId<TaskId<JsonValue>>();
 		env.fail({ operation: "append", call: 1, mode: "short" });
 		await expect(
 			storage.commit(
@@ -398,7 +418,7 @@ describe("Pico JsonlStorage publication and recovery", () => {
 		const storage = await openStorage(directory, env);
 		await createRoot(storage);
 		env.clear();
-		const id = await storage.mintId();
+		const id = await storage.mintId<EntryId>();
 		await expect(
 			storage.commit(
 				[
@@ -440,8 +460,8 @@ describe("Pico JsonlStorage publication and recovery", () => {
 			const env = new InstrumentedEnv({ cwd: directory });
 			const storage = await openStorage(directory, env);
 			await createRoot(storage);
-			const firstId = await storage.mintId();
-			const secondId = await storage.mintId();
+			const firstId = await storage.mintId<DocumentId>();
+			const secondId = await storage.mintId<DocumentId>();
 			env.fail(failure);
 			await expect(
 				storage.commit(
@@ -484,8 +504,8 @@ describe("Pico JsonlStorage publication and recovery", () => {
 			const env = new InstrumentedEnv({ cwd: directory });
 			const storage = await openStorage(directory, env, { fsync: true });
 			await createRoot(storage);
-			const firstId = await storage.mintId();
-			const secondId = await storage.mintId();
+			const firstId = await storage.mintId<DocumentId>();
+			const secondId = await storage.mintId<DocumentId>();
 			env.fail(failure);
 			await expect(
 				storage.commit(
@@ -516,8 +536,8 @@ describe("Pico JsonlStorage publication and recovery", () => {
 			const env = new InstrumentedEnv({ cwd: directory });
 			const storage = await openStorage(directory, env, { fsync });
 			await createRoot(storage);
-			const firstId = await storage.mintId();
-			const secondId = await storage.mintId();
+			const firstId = await storage.mintId<DocumentId>();
+			const secondId = await storage.mintId<DocumentId>();
 			env.clear();
 			await storage.commit(
 				[
@@ -569,7 +589,7 @@ describe("Pico JsonlStorage publication and recovery", () => {
 					{
 						type: "entry",
 						value: {
-							id: await storage.mintId(),
+							id: await storage.mintId<EntryId>(),
 							conversationId: ROOT_CONVERSATION_ID,
 							kind: "main-only",
 						},
@@ -579,7 +599,7 @@ describe("Pico JsonlStorage publication and recovery", () => {
 			);
 			expect(env.operations).toEqual(["append:main.jsonl"]);
 
-			const taskId = await storage.mintId();
+			const taskId = await storage.mintId<TaskId<JsonValue>>();
 			await storage.commit([{ type: "task", value: pendingTask(taskId) }], context);
 			env.clear();
 			await storage.commit([{ type: "task", value: terminalTask(taskId) }], context);
@@ -603,7 +623,7 @@ describe("Pico JsonlStorage publication and recovery", () => {
 			const env = new InstrumentedEnv({ cwd: directory });
 			const storage = await openStorage(directory, env);
 			await createRoot(storage);
-			const id = await storage.mintId();
+			const id = await storage.mintId<DocumentId>();
 			await storage.commit(
 				[
 					{
@@ -654,8 +674,8 @@ describe("Pico JsonlStorage publication and recovery", () => {
 			const env = new InstrumentedEnv({ cwd: directory });
 			const storage = await openStorage(directory, env);
 			await createRoot(storage);
-			const taskId = await storage.mintId();
-			const id = await storage.mintId();
+			const taskId = await storage.mintId<TaskId<JsonValue>>();
+			const id = await storage.mintId<DocumentId>();
 			await storage.commit(
 				[
 					{ type: "task", value: pendingTask(taskId) },
@@ -686,7 +706,7 @@ describe("Pico JsonlStorage publication and recovery", () => {
 			const env = new InstrumentedEnv({ cwd: directory });
 			const storage = await openStorage(directory, env, { fsync: true });
 			await createRoot(storage);
-			const id = await storage.mintId();
+			const id = await storage.mintId<DocumentId>();
 			await storage.commit(
 				[
 					{
@@ -740,7 +760,7 @@ describe("Pico JsonlStorage publication and recovery", () => {
 			const env = new InstrumentedEnv({ cwd: directory });
 			const storage = await openStorage(directory, env, { fsync: true });
 			await createRoot(storage);
-			const id = await storage.mintId();
+			const id = await storage.mintId<DocumentId>();
 			await storage.commit(
 				[
 					{
@@ -789,7 +809,7 @@ describe("Pico JsonlStorage publication and recovery", () => {
 			const env = new InstrumentedEnv({ cwd: directory });
 			const storage = await openStorage(directory, env);
 			await createRoot(storage);
-			const id = await storage.mintId();
+			const id = await storage.mintId<TaskId<JsonValue>>();
 			await storage.commit([{ type: "task", value: pendingTask(id) }], context);
 			env.fail({ operation: "remove", call: 1, mode });
 			await expect(storage.commit([{ type: "task", value: terminalTask(id) }], context)).resolves.toBe(3);
@@ -807,7 +827,7 @@ describe("Pico JsonlStorage publication and recovery", () => {
 		const directory = await tempDirectory();
 		const storage = await openStorage(directory);
 		await createRoot(storage);
-		const id = await storage.mintId();
+		const id = await storage.mintId<DocumentId>();
 		await storage.commit(
 			[
 				{
@@ -847,7 +867,7 @@ describe("Pico JsonlStorage publication and recovery", () => {
 		const directory = await tempDirectory();
 		const storage = await openStorage(directory);
 		await createRoot(storage);
-		const id = await storage.mintId();
+		const id = await storage.mintId<DocumentId>();
 		const record = {
 			id,
 			kind: "rewindable",
@@ -893,10 +913,10 @@ describe("Pico JsonlStorage publication and recovery", () => {
 		const directory = await tempDirectory();
 		const storage = await openStorage(directory);
 		await createRoot(storage);
-		const taskId = await storage.mintId();
-		const sessionId = await storage.mintId();
-		const latestId = await storage.mintId();
-		const taskDocumentId = await storage.mintId();
+		const taskId = await storage.mintId<TaskId<JsonValue>>();
+		const sessionId = await storage.mintId<DocumentId>();
+		const latestId = await storage.mintId<DocumentId>();
+		const taskDocumentId = await storage.mintId<DocumentId>();
 		const createdAt = await storage.commit(
 			[
 				{ type: "task", value: pendingTask(taskId) },
@@ -959,7 +979,7 @@ describe("Pico JsonlStorage publication and recovery", () => {
 		const directory = await tempDirectory();
 		const storage = await openStorage(directory);
 		await createRoot(storage);
-		const documentId = await storage.mintId();
+		const documentId = await storage.mintId<DocumentId>();
 		await storage.commit(
 			[
 				{
@@ -993,7 +1013,7 @@ describe("Pico JsonlStorage publication and recovery", () => {
 		const directory = await tempDirectory();
 		const storage = await openStorage(directory);
 		await createRoot(storage);
-		const taskId = await storage.mintId();
+		const taskId = await storage.mintId<TaskId<JsonValue>>();
 		await storage.commit([{ type: "task", value: pendingTask(taskId) }], context);
 		await storage.commit([{ type: "task", value: terminalTask(taskId) }], context);
 		const sidecarPath = join(directory, `task-${taskId}.jsonl`);
@@ -1020,7 +1040,7 @@ describe("Pico JsonlStorage publication and recovery", () => {
 		const directory = await tempDirectory();
 		const storage = await openStorage(directory);
 		await createRoot(storage);
-		const documentId = await storage.mintId();
+		const documentId = await storage.mintId<DocumentId>();
 		await storage.commit(
 			[
 				{
@@ -1041,7 +1061,7 @@ describe("Pico JsonlStorage publication and recovery", () => {
 		const directory = await tempDirectory();
 		const storage = await openStorage(directory);
 		await createRoot(storage);
-		const documentId = await storage.mintId();
+		const documentId = await storage.mintId<DocumentId>();
 		await storage.commit(
 			[
 				{
@@ -1093,7 +1113,7 @@ describe("Pico JsonlStorage publication and recovery", () => {
 		const directory = await tempDirectory();
 		const storage = await openStorage(directory);
 		await createRoot(storage);
-		const documentId = await storage.mintId();
+		const documentId = await storage.mintId<DocumentId>();
 		await storage.commit(
 			[
 				{

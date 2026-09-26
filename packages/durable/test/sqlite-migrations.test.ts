@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { afterEach, describe, expect, it } from "vitest";
+import { idFromNumber } from "../src/ids.ts";
 import {
 	applySqliteMigrations,
 	CURRENT_SQLITE_SCHEMA_VERSION,
@@ -10,7 +11,7 @@ import {
 	type SqliteMigration,
 } from "../src/storage/sqlite/index.ts";
 import { openNodeSqliteDatabase, openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";
-import { ROOT_CONVERSATION_ID } from "../src/types.ts";
+import { type EntryId, ROOT_CONVERSATION_ID } from "../src/types.ts";
 
 const directories = new Set<string>();
 
@@ -102,7 +103,7 @@ describe("durable SQLite migrations", () => {
 				{
 					type: "entry",
 					value: {
-						id: 2,
+						id: idFromNumber<EntryId>(2),
 						conversationId: ROOT_CONVERSATION_ID,
 						kind: "retained",
 						data: { retained: true },

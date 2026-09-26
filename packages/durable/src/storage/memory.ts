@@ -1,16 +1,20 @@
 import type { Context, JsonValue } from "@earendil-works/chord";
 import { applyImmutableBatches, type Op } from "@earendil-works/chord/delta";
 import { StorageRejected } from "../errors.ts";
+import { idFromNumber, seqFromNumber } from "../ids.ts";
 import type {
+	ConversationId,
 	ConversationQuery,
 	ConversationRecord,
 	Cursor,
 	DocumentAddress,
 	DocumentContent,
 	DocumentCreate,
+	DocumentId,
 	DocumentPoint,
 	DocumentQuery,
 	DocumentRecord,
+	EntryId,
 	EntryQuery,
 	EntryRecord,
 	Id,
@@ -20,7 +24,9 @@ import type {
 	Storage,
 	StorageWrite,
 	StoredDocument,
+	SubmissionId,
 	SubmissionRecord,
+	TaskId,
 	TaskQuery,
 	TaskRecord,
 } from "../types.ts";
@@ -40,7 +46,7 @@ type DocumentAction = {
 };
 
 function* documentDeltaBatches(
-	id: Id,
+	id: DocumentId,
 	version: number,
 	revisions: readonly DocumentRevision[],
 	start: number,
@@ -55,27 +61,28 @@ function* documentDeltaBatches(
 }
 
 type DocumentAddressIndex = {
-	ids: Id[];
-	currentId?: Id;
+	ids: DocumentId[];
+	currentId?: DocumentId;
 };
 
 type State = {
-	conversations: Map<Id, ConversationRecord>;
-	conversationIds: Id[];
-	conversationIdsByOwnerConversation: Map<Id, Id[]>;
-	conversationIdsByOwnerTask: Map<Id, Id[]>;
-	entries: Map<Id, EntryRecord>;
-	entryIds: Map<Id, Id[]>;
-	headEntryIds: Map<Id, Id[]>;
-	entryCommitSeqs: Map<Id, Seq>;
-	tasks: Map<Id, StoredTask>;
-	taskIds: Id[];
-	taskIdsByStatus: Record<TaskStatus, Id[]>;
-	submissions: Map<Id, SubmissionRecord>;
-	submissionIdsByRequest: Map<Id, Map<string, Id>>;
-	documents: Map<Id, StoredDocumentState>;
+	recordTypes: Map<Id<string>, TableName>;
+	conversations: Map<ConversationId, ConversationRecord>;
+	conversationIds: ConversationId[];
+	conversationIdsByOwnerConversation: Map<ConversationId, ConversationId[]>;
+	conversationIdsByOwnerTask: Map<TaskId, ConversationId[]>;
+	entries: Map<EntryId, EntryRecord>;
+	entryIds: Map<ConversationId, EntryId[]>;
+	headEntryIds: Map<ConversationId, EntryId[]>;
+	entryCommitSeqs: Map<EntryId, Seq>;
+	tasks: Map<TaskId, StoredTask>;
+	taskIds: TaskId[];
+	taskIdsByStatus: Record<TaskStatus, TaskId[]>;
+	submissions: Map<SubmissionId, SubmissionRecord>;
+	submissionIdsByRequest: Map<ConversationId, Map<string, SubmissionId>>;
+	documents: Map<DocumentId, StoredDocumentState>;
 	documentAddresses: Map<string, DocumentAddressIndex>;
-	documentIdsByScope: Map<string, Id[]>;
+	documentIdsByScope: Map<string, DocumentId[]>;
 };
 
 const clone = <T>(value: T): T => {
@@ -106,10 +113,14 @@ const freeze = <T>(value: T): T => {
 	return Object.freeze(value);
 };
 
-const cursorId = (cursor: Readonly<Record<string, JsonValue>> | undefined): Id | undefined =>
-	cursor?.after as Id | undefined;
+const cursorId = <I extends Id<string>>(cursor: Readonly<Record<string, JsonValue>> | undefined): I | undefined => {
+	const after = cursor?.after;
+	if (after === undefined) return undefined;
+	if (typeof after !== "number" || !Number.isSafeInteger(after)) throw new TypeError("Invalid storage cursor");
+	return idFromNumber<I>(after);
+};
 
-const lowerBound = (ids: readonly Id[], target: Id): number => {
+const lowerBound = <I extends Id<string>>(ids: readonly I[], target: number): number => {
 	let low = 0;
 	let high = ids.length;
 	while (low < high) {
@@ -120,7 +131,7 @@ const lowerBound = (ids: readonly Id[], target: Id): number => {
 	return low;
 };
 
-const upperBound = (ids: readonly Id[], target: Id): number => {
+const upperBound = <I extends Id<string>>(ids: readonly I[], target: number): number => {
 	let low = 0;
 	let high = ids.length;
 	while (low < high) {
@@ -131,17 +142,17 @@ const upperBound = (ids: readonly Id[], target: Id): number => {
 	return low;
 };
 
-const insertSorted = (ids: Id[], id: Id): void => {
+const insertSorted = <I extends Id<string>>(ids: I[], id: I): void => {
 	if (ids.length === 0 || ids[ids.length - 1] < id) ids.push(id);
 	else ids.splice(lowerBound(ids, id), 0, id);
 };
 
-const removeSorted = (ids: Id[], id: Id): void => {
+const removeSorted = <I extends Id<string>>(ids: I[], id: I): void => {
 	const index = lowerBound(ids, id);
 	if (ids[index] === id) ids.splice(index, 1);
 };
 
-const insertMapId = (index: Map<Id, Id[]>, key: Id, id: Id): void => {
+const insertMapId = <K, I extends Id<string>>(index: Map<K, I[]>, key: K, id: I): void => {
 	let ids = index.get(key);
 	if (ids === undefined) {
 		ids = [];
@@ -179,16 +190,9 @@ const isAliveAt = (record: DocumentRecord, at: DocumentPoint): boolean => {
 const isCurrentOnly = (record: DocumentRecord): boolean =>
 	record.scope.kind !== "conversation" || record.history === "latest";
 
-const tableContaining = (state: State, id: Id): TableName | undefined => {
-	if (state.conversations.has(id)) return "conversation";
-	if (state.entries.has(id)) return "entry";
-	if (state.tasks.has(id)) return "task";
-	if (state.submissions.has(id)) return "submission";
-	if (state.documents.has(id)) return "document";
-	return undefined;
-};
+const tableContaining = (state: State, id: Id<string>): TableName | undefined => state.recordTypes.get(id);
 
-const page = <T extends { readonly id: Id }>(values: readonly T[], limit: number): Page<T, Cursor> => {
+const page = <T extends { readonly id: Id<string> }>(values: readonly T[], limit: number): Page<T, Cursor> => {
 	const items = values.slice(0, limit);
 	if (values.length <= limit) return { items: clone(items) };
 	return { items: clone(items), next: { after: items.at(-1)!.id } };
@@ -210,6 +214,7 @@ export interface PreparedMemoryCommit {
  */
 export class MemoryStorage implements Storage {
 	private readonly state: State = {
+		recordTypes: new Map(),
 		conversations: new Map(),
 		conversationIds: [],
 		conversationIdsByOwnerConversation: new Map(),
@@ -236,7 +241,7 @@ export class MemoryStorage implements Storage {
 	}
 
 	/** Validate and detach one commit without changing observable state. */
-	prepareCommit(writes: readonly StorageWrite[], seq: Seq = this.nextSeq): PreparedMemoryCommit {
+	prepareCommit(writes: readonly StorageWrite[], seq: Seq = seqFromNumber(this.nextSeq)): PreparedMemoryCommit {
 		this.assertOpen();
 		if (!Number.isSafeInteger(seq) || seq < this.nextSeq) {
 			throw new Error(`Commit sequence ${seq} does not strictly increase`);
@@ -261,7 +266,7 @@ export class MemoryStorage implements Storage {
 
 	private resolveDocumentCopies(writes: StorageWrite[]): StorageWrite[] {
 		if (!writes.some((write) => write.type === "document.copy")) return writes;
-		const changedDocumentIds = new Set<Id>();
+		const changedDocumentIds = new Set<DocumentId>();
 		for (const write of writes) {
 			if (write.type === "document.create" || write.type === "document.copy") {
 				changedDocumentIds.add(write.record.id);
@@ -301,12 +306,13 @@ export class MemoryStorage implements Storage {
 
 	private applyPreparedCommit(
 		prepared: readonly StorageWrite[],
-		documentActions: ReadonlyMap<Id, DocumentAction>,
+		documentActions: ReadonlyMap<DocumentId, DocumentAction>,
 		seq: Seq,
 	): Seq {
 		for (const write of prepared) {
 			switch (write.type) {
 				case "conversation": {
+					this.state.recordTypes.set(write.value.id, "conversation");
 					this.state.conversations.set(write.value.id, write.value);
 					insertSorted(this.state.conversationIds, write.value.id);
 					const owner = write.value.owner;
@@ -318,6 +324,7 @@ export class MemoryStorage implements Storage {
 					break;
 				}
 				case "entry": {
+					this.state.recordTypes.set(write.value.id, "entry");
 					this.state.entries.set(write.value.id, write.value);
 					this.state.entryCommitSeqs.set(write.value.id, seq);
 					let ids = this.state.entryIds.get(write.value.conversationId);
@@ -338,6 +345,7 @@ export class MemoryStorage implements Storage {
 					break;
 				}
 				case "task": {
+					this.state.recordTypes.set(write.value.id, "task");
 					const previous = this.state.tasks.get(write.value.id);
 					if (previous === undefined) {
 						insertSorted(this.state.taskIds, write.value.id);
@@ -351,6 +359,7 @@ export class MemoryStorage implements Storage {
 					break;
 				}
 				case "submission": {
+					this.state.recordTypes.set(write.value.id, "submission");
 					const previous = this.state.submissions.get(write.value.id);
 					if (previous?.requestId !== undefined) {
 						const previousRequests = this.state.submissionIdsByRequest.get(previous.conversationId);
@@ -385,13 +394,13 @@ export class MemoryStorage implements Storage {
 		return seq;
 	}
 
-	async mintId(): Promise<Id> {
+	async mintId<I extends Id<string>>(): Promise<I> {
 		this.assertOpen();
 		if (!Number.isSafeInteger(this.nextId)) throw new Error("ID space is exhausted");
-		return this.nextId++;
+		return idFromNumber<I>(this.nextId++);
 	}
 
-	async conversation(id: Id, _context: Context): Promise<ConversationRecord | undefined> {
+	async conversation(id: ConversationId, _context: Context): Promise<ConversationRecord | undefined> {
 		this.assertOpen();
 		const value = this.state.conversations.get(id);
 		return value === undefined ? undefined : clone(value);
@@ -423,32 +432,37 @@ export class MemoryStorage implements Storage {
 		return page(values, limit);
 	}
 
-	entry(id: Id, context: Context): Promise<{ readonly entry: EntryRecord; readonly commitSeq: Seq } | undefined>;
+	entry(id: EntryId, context: Context): Promise<{ readonly entry: EntryRecord; readonly commitSeq: Seq } | undefined>;
 	entry(
-		conversationId: Id,
-		id: Id,
+		conversationId: ConversationId,
+		id: EntryId,
 		context: Context,
 	): Promise<{ readonly entry: EntryRecord; readonly commitSeq: Seq } | undefined>;
 	async entry(
-		idOrConversationId: Id,
-		idOrContext: Id | Context,
+		idOrConversationId: EntryId | ConversationId,
+		idOrContext: EntryId | Context,
 		context?: Context,
 	): Promise<{ readonly entry: EntryRecord; readonly commitSeq: Seq } | undefined> {
 		this.assertOpen();
-		const id = context === undefined ? idOrConversationId : (idOrContext as Id);
-		const entry =
-			context === undefined
-				? this.state.entries.get(id)
-				: this.visibleEntries(idOrConversationId, id, id).next().value;
+		if (context === undefined) {
+			const id = idFromNumber<EntryId>(idOrConversationId);
+			const entry = this.state.entries.get(id);
+			if (entry === undefined) return undefined;
+			return { entry: clone(entry), commitSeq: this.state.entryCommitSeqs.get(id)! };
+		}
+		if (typeof idOrContext !== "number") throw new TypeError("Storage.entry() requires an entry ID");
+		const conversationId = idFromNumber<ConversationId>(idOrConversationId);
+		const id = idFromNumber<EntryId>(idOrContext);
+		const entry = this.visibleEntries(conversationId, id, id).next().value;
 		if (entry === undefined) return undefined;
 		return { entry: clone(entry), commitSeq: this.state.entryCommitSeqs.get(id)! };
 	}
 
 	async findLatestHeadMarker(
-		conversationId: Id,
-		atOrBeforeEntryId: Id | undefined,
+		conversationId: ConversationId,
+		atOrBeforeEntryId: EntryId | undefined,
 		_context: Context,
-	): Promise<(EntryRecord & { readonly head: Id }) | undefined> {
+	): Promise<(EntryRecord & { readonly head: EntryId }) | undefined> {
 		this.assertOpen();
 		if (!this.state.conversations.has(conversationId)) {
 			throw new Error(`Unknown conversation: ${conversationId}`);
@@ -487,7 +501,7 @@ export class MemoryStorage implements Storage {
 		return page(visible, limit);
 	}
 
-	async task(id: Id, _context: Context): Promise<StoredTask | undefined> {
+	async task(id: TaskId, _context: Context): Promise<StoredTask | undefined> {
 		this.assertOpen();
 		const value = this.state.tasks.get(id);
 		return value === undefined ? undefined : clone(value);
@@ -515,14 +529,14 @@ export class MemoryStorage implements Storage {
 		return page(values, limit);
 	}
 
-	async submission(id: Id, _context: Context): Promise<SubmissionRecord | undefined> {
+	async submission(id: SubmissionId, _context: Context): Promise<SubmissionRecord | undefined> {
 		this.assertOpen();
 		const value = this.state.submissions.get(id);
 		return value === undefined ? undefined : clone(value);
 	}
 
 	async submissionByRequest(
-		conversationId: Id,
+		conversationId: ConversationId,
 		requestId: string,
 		_context: Context,
 	): Promise<SubmissionRecord | undefined> {
@@ -549,7 +563,7 @@ export class MemoryStorage implements Storage {
 		return undefined;
 	}
 
-	async document(id: Id, at: DocumentPoint, _context: Context): Promise<StoredDocument | undefined> {
+	async document(id: DocumentId, at: DocumentPoint, _context: Context): Promise<StoredDocument | undefined> {
 		this.assertOpen();
 		const stored = this.materializeDocument(id, at);
 		return stored === undefined
@@ -580,7 +594,7 @@ export class MemoryStorage implements Storage {
 		this.closed = true;
 	}
 
-	private materializeDocument(id: Id, at: DocumentPoint): StoredDocument | undefined {
+	private materializeDocument(id: DocumentId, at: DocumentPoint): StoredDocument | undefined {
 		const stored = this.state.documents.get(id);
 		if (stored === undefined) return undefined;
 		if (at !== "current" && isCurrentOnly(stored.record)) {
@@ -600,9 +614,9 @@ export class MemoryStorage implements Storage {
 	}
 
 	private *visibleEntries(
-		conversationId: Id,
-		minEntryId = Number.NEGATIVE_INFINITY,
-		maxEntryId = Number.POSITIVE_INFINITY,
+		conversationId: ConversationId,
+		minEntryId: number = Number.NEGATIVE_INFINITY,
+		maxEntryId: number = Number.POSITIVE_INFINITY,
 	): Generator<EntryRecord> {
 		if (!this.state.conversations.has(conversationId)) {
 			throw new Error(`Unknown conversation: ${conversationId}`);
@@ -625,7 +639,7 @@ export class MemoryStorage implements Storage {
 	}
 
 	private checkGlobalIds(writes: readonly StorageWrite[]): void {
-		const claimed = new Map<Id, TableName>();
+		const claimed = new Map<Id<string>, TableName>();
 		for (const write of writes) {
 			if (write.type === "document.change" || write.type === "document.retire") continue;
 			const document = write.type === "document.create" || write.type === "document.copy";
@@ -646,8 +660,8 @@ export class MemoryStorage implements Storage {
 		}
 	}
 
-	private prepareDocumentActions(writes: readonly StorageWrite[]): Map<Id, DocumentAction> {
-		const actions = new Map<Id, DocumentAction>();
+	private prepareDocumentActions(writes: readonly StorageWrite[]): Map<DocumentId, DocumentAction> {
+		const actions = new Map<DocumentId, DocumentAction>();
 		for (const write of writes) {
 			if (write.type !== "document.create" && write.type !== "document.change" && write.type !== "document.retire") {
 				continue;
@@ -679,7 +693,7 @@ export class MemoryStorage implements Storage {
 		return actions;
 	}
 
-	private checkDocumentActions(actions: ReadonlyMap<Id, DocumentAction>): void {
+	private checkDocumentActions(actions: ReadonlyMap<DocumentId, DocumentAction>): void {
 		const liveCounts = new Map<string, number>();
 		for (const [id, action] of actions) {
 			const existing = this.state.documents.get(id);
@@ -708,7 +722,7 @@ export class MemoryStorage implements Storage {
 		}
 	}
 
-	private applyDocumentActions(actions: ReadonlyMap<Id, DocumentAction>, seq: Seq): void {
+	private applyDocumentActions(actions: ReadonlyMap<DocumentId, DocumentAction>, seq: Seq): void {
 		for (const [id, action] of actions) {
 			let stored = this.state.documents.get(id);
 			if (action.create !== undefined) {
@@ -718,6 +732,7 @@ export class MemoryStorage implements Storage {
 					...(action.retire ? { retiredAt: seq } : {}),
 				};
 				stored = { record, revisions: [{ ...action.content!, seq }] };
+				this.state.recordTypes.set(id, "document");
 				this.state.documents.set(id, stored);
 
 				const key = recordAddressKey(record);
