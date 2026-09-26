@@ -285,6 +285,15 @@ const DEEPSEEK_V4_FLASH_THINKING_LEVEL_MAP = {
 	...DEEPSEEK_V4_THINKING_LEVEL_MAP,
 	low: "low",
 } as const;
+// Azure Foundry rejects DeepSeek's own max effort.
+const AZURE_DEEPSEEK_V4_THINKING_LEVEL_MAP = {
+	minimal: null,
+	low: "low",
+	medium: "medium",
+	high: "high",
+	xhigh: null,
+	max: null,
+} as const;
 // Verified against Fireworks Messages raw_output on 2026-09-10 (#9323).
 // Fall back to verified support when models.dev omits effort metadata; this is
 // not an allowlist. Any Fireworks Messages model advertising effort uses adaptive thinking.
@@ -856,7 +865,7 @@ function applyStrictToolCompatMetadata(model: Model<Api>): void {
 const OPENAI_GRAMMAR_TOOL_PROVIDERS = new Set([
 	"openai",
 	"openai-codex",
-	"azure-openai-responses",
+	"azure",
 	"github-copilot",
 	"opencode",
 	"cloudflare-ai-gateway",
@@ -1103,10 +1112,12 @@ function applyThinkingLevelMetadata(model: Model<any>): void {
 			model,
 			model.provider === "openrouter"
 				? { ...DEEPSEEK_V4_THINKING_LEVEL_MAP, xhigh: "xhigh", max: null }
-				: (model.provider === "deepseek" || model.provider === "opencode" || model.provider === "opencode-go") &&
-					model.id.includes("deepseek-v4-flash")
-					? DEEPSEEK_V4_FLASH_THINKING_LEVEL_MAP
-					: DEEPSEEK_V4_THINKING_LEVEL_MAP,
+				: model.provider === "azure"
+					? AZURE_DEEPSEEK_V4_THINKING_LEVEL_MAP
+					: (model.provider === "deepseek" || model.provider === "opencode" || model.provider === "opencode-go") &&
+						model.id.includes("deepseek-v4-flash")
+						? DEEPSEEK_V4_FLASH_THINKING_LEVEL_MAP
+						: DEEPSEEK_V4_THINKING_LEVEL_MAP,
 		);
 	}
 	if (model.provider === "groq" && model.id === "qwen/qwen3.6-27b") {
@@ -3268,7 +3279,7 @@ async function generateModels() {
 		.map((model) => ({
 			...model,
 			api: "azure-openai-responses",
-			provider: "azure-openai-responses",
+			provider: "azure",
 			baseUrl: "",
 			cost: {
 				input: model.cost.input,
@@ -3279,6 +3290,28 @@ async function generateModels() {
 			contextWindow: AZURE_CONTEXT_WINDOW_OVERRIDES[model.id] ?? model.contextWindow,
 		}));
 	allModels.push(...azureOpenAiModels);
+
+	// Azure resells DeepSeek at its own rates. US data zone, checked 2026-09-16.
+	// https://azure.microsoft.com/en-us/pricing/details/ai-foundry-models/deepseek/
+	const AZURE_DEEPSEEK_V4_PRO_COST: ModelCost = { input: 1.925, output: 3.828, cacheRead: 0.165, cacheWrite: 0 };
+	// Azure 400s on DeepSeek's `thinking` field and on every prompt cache parameter, discards a
+	// `developer` system message unbilled once reasoning_effort is set, and honours mid-convo ones (#9645).
+	const azureDeepSeekModels: Model<Api>[] = allModels
+		.filter((model) => model.provider === "deepseek" && model.id === "deepseek-v4-pro")
+		.map((model) => ({
+			...model,
+			provider: "azure",
+			baseUrl: "",
+			cost: AZURE_DEEPSEEK_V4_PRO_COST,
+			compat: {
+				...(model.compat as OpenAICompletionsCompat),
+				supportsDeveloperRole: false,
+				supportsMidConvoSystemMessages: true,
+				thinkingFormat: "openai",
+				supportsLongCacheRetention: false,
+			},
+		}));
+	allModels.push(...azureDeepSeekModels);
 
 	for (const model of allModels) {
 		applyOpenAICompletionsCompatMetadata(model);

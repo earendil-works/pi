@@ -1,15 +1,7 @@
 import { AzureOpenAI } from "openai";
 import type { ResponseCreateParamsStreaming } from "openai/resources/responses/responses.js";
 import { clampThinkingLevel } from "../models.ts";
-import type {
-	Api,
-	AssistantMessage,
-	Model,
-	SimpleStreamOptions,
-	StreamFunction,
-	StreamOptions,
-	TranscriptContext,
-} from "../types.ts";
+import type { Api, AssistantMessage, Model, SimpleStreamOptions, StreamFunction, TranscriptContext } from "../types.ts";
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
@@ -17,13 +9,13 @@ import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
 import { getDeclaredTools, resolveTranscript, resolveTranscriptTools } from "../utils/transcript.ts";
+import { type AzureEndpointOptions, resolveAzureConfig } from "./azure-openai-config.ts";
 import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
 import { convertResponsesMessages, convertResponsesTools, processResponsesStream } from "./openai-responses-shared.ts";
 import { buildBaseOptions } from "./simple-options.ts";
 
-const DEFAULT_AZURE_API_VERSION = "v1";
-const AZURE_TOOL_CALL_PROVIDERS = new Set(["openai", "openai-codex", "opencode", "azure-openai-responses"]);
+const AZURE_TOOL_CALL_PROVIDERS = new Set(["openai", "openai-codex", "opencode", "azure"]);
 // OpenAI Responses rejects max_output_tokens below 16: https://github.com/earendil-works/pi/issues/6265
 const OPENAI_RESPONSES_MIN_OUTPUT_TOKENS = 16;
 
@@ -55,14 +47,10 @@ function formatAzureOpenAIError(error: unknown): string {
 }
 
 // Azure OpenAI Responses-specific options
-export interface AzureOpenAIResponsesOptions extends StreamOptions {
+export interface AzureOpenAIResponsesOptions extends AzureEndpointOptions {
 	reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 	toolChoice?: ResponseCreateParamsStreaming["tool_choice"];
 	reasoningSummary?: "auto" | "detailed" | "concise" | null;
-	azureApiVersion?: string;
-	azureResourceName?: string;
-	azureBaseUrl?: string;
-	azureDeploymentName?: string;
 }
 
 /**
@@ -187,76 +175,6 @@ export const streamSimple: StreamFunction<"azure-openai-responses", SimpleStream
 		reasoningEffort,
 	} satisfies AzureOpenAIResponsesOptions);
 };
-
-function normalizeAzureBaseUrl(baseUrl: string): string {
-	const trimmed = baseUrl.trim().replace(/\/+$/, "");
-	let url: URL;
-	try {
-		url = new URL(trimmed);
-	} catch {
-		throw new Error(`Invalid Azure OpenAI base URL: ${baseUrl}`);
-	}
-
-	const isAzureHost =
-		url.hostname.endsWith(".openai.azure.com") ||
-		url.hostname.endsWith(".cognitiveservices.azure.com") ||
-		url.hostname.endsWith(".ai.azure.com");
-	const normalizedPath = url.pathname.replace(/\/+$/, "");
-
-	// Ensure Azure hosts have /openai/v1 as base path so the AzureOpenAI SDK
-	// can append /deployments/<model>/... and ?api-version=v1 correctly.
-	if (
-		isAzureHost &&
-		(normalizedPath === "" ||
-			normalizedPath === "/" ||
-			normalizedPath === "/openai" ||
-			normalizedPath === "/openai/v1/responses")
-	) {
-		url.pathname = "/openai/v1";
-		url.search = "";
-	}
-
-	return url.toString().replace(/\/+$/, "");
-}
-
-function buildDefaultBaseUrl(resourceName: string): string {
-	return `https://${resourceName}.openai.azure.com/openai/v1`;
-}
-
-function resolveAzureConfig(
-	model: Model<"azure-openai-responses">,
-	options?: AzureOpenAIResponsesOptions,
-): { baseUrl: string; apiVersion: string } {
-	const apiVersion =
-		options?.azureApiVersion ||
-		getProviderEnvValue("AZURE_OPENAI_API_VERSION", options?.env) ||
-		DEFAULT_AZURE_API_VERSION;
-
-	const baseUrl =
-		options?.azureBaseUrl?.trim() || getProviderEnvValue("AZURE_OPENAI_BASE_URL", options?.env)?.trim() || undefined;
-	const resourceName = options?.azureResourceName || getProviderEnvValue("AZURE_OPENAI_RESOURCE_NAME", options?.env);
-
-	let resolvedBaseUrl = baseUrl;
-
-	if (!resolvedBaseUrl && resourceName) {
-		resolvedBaseUrl = buildDefaultBaseUrl(resourceName);
-	}
-
-	if (!resolvedBaseUrl && model.baseUrl) {
-		resolvedBaseUrl = model.baseUrl;
-	}
-
-	if (!resolvedBaseUrl) {
-		throw new Error(
-			"Azure OpenAI base URL is required. Set AZURE_OPENAI_BASE_URL or AZURE_OPENAI_RESOURCE_NAME, or pass azureBaseUrl, azureResourceName, or model.baseUrl.",
-		);
-	}
-
-	return {
-		baseUrl: normalizeAzureBaseUrl(resolvedBaseUrl),
-		apiVersion,
-	};
-}
 
 function createClient(model: Model<"azure-openai-responses">, apiKey: string, options?: AzureOpenAIResponsesOptions) {
 	const headers = { "User-Agent": getPiUserAgent(), ...model.headers };
