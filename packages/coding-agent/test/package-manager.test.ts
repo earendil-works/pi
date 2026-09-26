@@ -1681,6 +1681,33 @@ Content`,
 			expect(result.extensions.some((r) => pathEndsWith(r.path, "skip.ts"))).toBe(false);
 		});
 
+		it.each([
+			["glob", "./extensions/*.ts"],
+			["directory", "./extensions"],
+		] as const)(
+			"should treat dot-relative manifest exclusions as package-relative for a %s source",
+			async (kind, sourceEntry) => {
+				// Regression test for #9788.
+				const pkgDir = join(tempDir, `dot-relative-manifest-${kind}-pkg`);
+				mkdirSync(join(pkgDir, "extensions"), { recursive: true });
+				writeFileSync(join(pkgDir, "extensions", "main.ts"), "export default function() {}");
+				writeFileSync(join(pkgDir, "extensions", "main.test.ts"), "export default function() {}");
+				writeFileSync(
+					join(pkgDir, "package.json"),
+					JSON.stringify({
+						name: `dot-relative-manifest-${kind}-pkg`,
+						pi: {
+							extensions: [sourceEntry, "!./extensions/*.test.ts"],
+						},
+					}),
+				);
+				settingsManager.setPackages([pkgDir]);
+
+				const result = await packageManager.resolve();
+				expect(result.extensions.map((resource) => resource.path)).toEqual([join(pkgDir, "extensions", "main.ts")]);
+			},
+		);
+
 		it("should support glob patterns in manifest skills", async () => {
 			const pkgDir = join(tempDir, "skill-manifest-pkg");
 			mkdirSync(join(pkgDir, "skills/good-skill"), { recursive: true });
