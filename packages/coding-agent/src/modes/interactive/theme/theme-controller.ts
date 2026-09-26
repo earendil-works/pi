@@ -23,6 +23,21 @@ type ThemeResult = { success: boolean; error?: string };
  */
 const TERMINAL_QUERY_TIMEOUT_MS = 100;
 
+/**
+ * Query the terminal's colors and pass them to `apply` when the query completes or times out, and again
+ * if the terminal answers after the timeout. A failed query applies no colors. Settles after the first apply.
+ */
+export function requestTerminalColors(ui: TUI, apply: (colors: TerminalColors) => void): Promise<void> {
+	let query: Promise<TerminalColors>;
+	try {
+		query = ui.queryTerminalColors({ timeoutMs: TERMINAL_QUERY_TIMEOUT_MS, onLateReply: apply });
+	} catch {
+		// Treat a failed query like a terminal that does not report colors.
+		query = Promise.resolve({});
+	}
+	return query.then(apply, () => apply({}));
+}
+
 function sameRgb(a: RgbColor | undefined, b: RgbColor | undefined): boolean {
 	return a === b || (a !== undefined && b !== undefined && a.r === b.r && a.g === b.g && a.b === b.b);
 }
@@ -81,9 +96,15 @@ export class InteractiveThemeController {
 		this.ui.setTerminalColorSchemeNotifications(this.autoSyncEnabled);
 	}
 
-	/** Apply the theme setting now and query the terminal's colors, which update the theme when they arrive. */
+	/**
+	 * Apply the theme setting now and query the terminal's colors, which update the theme when they arrive.
+	 * Theme pairs and the system theme follow terminal appearance changes.
+	 */
 	applyFromSettings(): void {
-		this.applySetting(true);
+		const themeSetting = this.getThemeSetting();
+		const themeName = this.resolveThemeName();
+		this.setAutoSync(parseAutoThemeSetting(themeSetting) !== undefined || themeName === SYSTEM_THEME_NAME);
+		this.applyThemeName(themeName, themeSetting !== undefined);
 		this.queryTerminalColors();
 	}
 
@@ -154,14 +175,6 @@ export class InteractiveThemeController {
 		return resolveThemeSetting(this.getThemeSetting(), this.terminalTheme) ?? SYSTEM_THEME_NAME;
 	}
 
-	/** Apply the current setting. Theme pairs and the system theme follow terminal appearance changes. */
-	private applySetting(showError: boolean): void {
-		const themeSetting = this.getThemeSetting();
-		const themeName = this.resolveThemeName();
-		this.setAutoSync(parseAutoThemeSetting(themeSetting) !== undefined || themeName === SYSTEM_THEME_NAME);
-		this.applyThemeName(themeName, showError && themeSetting !== undefined);
-	}
-
 	private applyThemeName(themeName: string, showError = false): ThemeResult {
 		const result = setTheme(themeName, true);
 		this.activeThemeName = result.success ? themeName : SYSTEM_THEME_NAME;
@@ -172,20 +185,9 @@ export class InteractiveThemeController {
 		return result;
 	}
 
-	/**
-	 * Query the terminal's colors without waiting for them. They apply when the query completes or times
-	 * out, and again if the terminal answers after the timeout.
-	 */
+	/** Query the terminal's colors without waiting for them; `waitForTerminalColors()` waits for this query. */
 	private queryTerminalColors(): void {
-		const apply = (colors: TerminalColors) => this.applyTerminalColors(colors);
-		let query: Promise<TerminalColors>;
-		try {
-			query = this.ui.queryTerminalColors({ timeoutMs: TERMINAL_QUERY_TIMEOUT_MS, onLateReply: apply });
-		} catch {
-			// Treat a failed query like a terminal that does not report colors.
-			query = Promise.resolve({});
-		}
-		this.terminalColorQuery = query.then(apply, () => apply({}));
+		this.terminalColorQuery = requestTerminalColors(this.ui, (colors) => this.applyTerminalColors(colors));
 	}
 
 	/**

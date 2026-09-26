@@ -149,12 +149,11 @@ type PendingTerminalColorQuery = {
 	palette: Array<RgbColor | undefined>;
 	/** Targets that already replied, so duplicates do not count twice. */
 	replied: Set<string>;
-	/** Unset once the promise resolved: on completion or on timeout. */
-	resolve: ((colors: TerminalColors) => void) | undefined;
-	/** Receives the replies when the query completes after its timeout. */
-	onLateReply: ((colors: TerminalColors) => void) | undefined;
-	/** Set on the DA1 reply or once every color replied; later replies are ignored. */
-	complete: boolean;
+	/**
+	 * Receives the result: the promise's resolve until the timeout, then `onLateReply`. Unset once the
+	 * query completed (on the DA1 reply or once every color replied); later replies are ignored.
+	 */
+	deliver: ((colors: TerminalColors) => void) | undefined;
 	timer: NodeJS.Timeout | undefined;
 };
 
@@ -1137,7 +1136,7 @@ export abstract class TuiBase extends Container implements TUI {
 		}
 		const { target, rgb } = response;
 		const key = String(target);
-		if (query.complete || query.replied.has(key)) {
+		if (!query.deliver || query.replied.has(key)) {
 			return true;
 		}
 		query.replied.add(key);
@@ -1159,30 +1158,11 @@ export abstract class TuiBase extends Container implements TUI {
 		return { foreground: query.foreground, background: query.background, palette };
 	}
 
-	/** Resolve a query whose timeout expired with the replies so far. It keeps collecting late replies. */
-	private timeOutTerminalColorQuery(query: PendingTerminalColorQuery): void {
-		query.timer = undefined;
-		const resolve = query.resolve;
-		query.resolve = undefined;
-		resolve?.(this.terminalColorQueryResult(query));
-	}
-
 	private completeTerminalColorQuery(query: PendingTerminalColorQuery): void {
-		if (query.complete) {
-			return;
-		}
-		query.complete = true;
+		const deliver = query.deliver;
+		query.deliver = undefined;
 		clearTimeout(query.timer);
-		query.timer = undefined;
-		const colors = this.terminalColorQueryResult(query);
-		if (query.resolve) {
-			const resolve = query.resolve;
-			query.resolve = undefined;
-			resolve(colors);
-		} else {
-			query.onLateReply?.(colors);
-		}
-		query.onLateReply = undefined;
+		deliver?.(this.terminalColorQueryResult(query));
 	}
 
 	private consumeTerminalColorSchemeReport(data: string): boolean {
@@ -1498,12 +1478,14 @@ export abstract class TuiBase extends Container implements TUI {
 			const query: PendingTerminalColorQuery = {
 				palette: Array.from({ length: TERMINAL_PALETTE_SIZE }, () => undefined),
 				replied: new Set(),
-				resolve,
-				onLateReply,
-				complete: false,
+				deliver: resolve,
 				timer: undefined,
 			};
-			query.timer = setTimeout(() => this.timeOutTerminalColorQuery(query), timeoutMs);
+			// Resolve with the replies so far, and keep collecting late replies for `onLateReply`.
+			query.timer = setTimeout(() => {
+				query.deliver = onLateReply;
+				resolve(this.terminalColorQueryResult(query));
+			}, timeoutMs);
 			this.pendingTerminalColorQueries.push(query);
 			this.terminal.write(TERMINAL_COLOR_QUERY);
 		});

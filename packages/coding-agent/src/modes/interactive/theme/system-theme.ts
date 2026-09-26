@@ -385,7 +385,7 @@ export interface SystemThemeColors {
 }
 
 /** OKLab lightness of an sRGB color, 0-1. */
-export function oklabLightness(color: RgbColor): number {
+function oklabLightness(color: RgbColor): number {
 	return colorToOklch(rgbColor(color.r, color.g, color.b)).l;
 }
 
@@ -623,7 +623,6 @@ function withTextContrast(color: RgbColor, surfaces: RgbColor[], lighter: boolea
 function indexedColors(saturation: number, appearance: ThemeAppearance | undefined): SystemThemeColors {
 	const colors = {} as Record<ThemeToken, string | number>;
 	const dim: ThemeColor[] = [];
-	const bodyText = new Set<ThemeToken>(["text", "userMessageText", "toolTitle"]);
 	for (const [token, familyName] of Object.entries(TOKEN_FAMILIES) as [ThemeToken, FamilyName][]) {
 		if (PANELS.includes(token as ThemeBg)) {
 			colors[token] = "";
@@ -631,7 +630,7 @@ function indexedColors(saturation: number, appearance: ThemeAppearance | undefin
 		}
 		const neutral = familyName === "neutral";
 		colors[token] = !neutral && saturation > 0 ? (TOKEN_SLOTS[token] ?? FAMILIES[familyName].slot) : "";
-		if (neutral && !bodyText.has(token)) dim.push(token as ThemeColor);
+		if (neutral && !FOREGROUND_TOKENS.includes(token as ThemeColor)) dim.push(token as ThemeColor);
 	}
 	return { colors, dim, appearance };
 }

@@ -186,14 +186,8 @@ function withThemeColorFallbacks(colors: ThemeJson["colors"]): ThemeJson["colors
 /** The background a theme is designed for. */
 export type ThemeAppearance = TerminalTheme;
 
-interface TerminalDefaultColors {
-	foreground?: Color;
-	background?: Color;
-}
-
-// Replaced (never mutated) on update, so themes can cache resolved colors by identity.
-let terminalDefaultColors: TerminalDefaultColors = {};
-// The terminal's reported colors, which the system theme is generated from.
+// The terminal's reported colors. Replaced (never mutated) on update, so themes can cache resolved colors
+// by identity.
 let terminalColors: TerminalColors = {};
 // While the terminal color query is in flight, the system theme renders in grayscale.
 let terminalColorsPending = false;
@@ -203,10 +197,8 @@ let terminalColorsPending = false;
  * default); the system theme is generated from all of them. Ends the pending state.
  */
 export function setTerminalColors(colors: TerminalColors): void {
-	const toColor = (rgb: RgbColor | undefined) => rgb && rgbColor(rgb.r, rgb.g, rgb.b);
 	terminalColors = { ...colors };
 	terminalColorsPending = false;
-	terminalDefaultColors = { foreground: toColor(colors.foreground), background: toColor(colors.background) };
 }
 
 /** Render the system theme in grayscale until `setTerminalColors()` reports the terminal's colors. */
@@ -215,7 +207,7 @@ export function markTerminalColorsPending(): void {
 }
 
 /** Assumed terminal default colors when the terminal does not report them. */
-const GUESSED_DEFAULT_COLORS: Record<ThemeAppearance, Required<TerminalDefaultColors>> = {
+const GUESSED_DEFAULT_COLORS: Record<ThemeAppearance, { foreground: Color; background: Color }> = {
 	dark: { foreground: parseColor("#e5e5e7"), background: parseColor("#000000") },
 	light: { foreground: parseColor("#000000"), background: parseColor("#ffffff") },
 };
@@ -256,7 +248,7 @@ export class Theme {
 	// Foreground tokens rendered faint (SGR 2) on top of their color.
 	private readonly dimTokens: ReadonlySet<ThemeColor>;
 	private readonly ownAppearance: ThemeAppearance | undefined;
-	private resolvedColors: { terminal: TerminalDefaultColors; colors: Readonly<Record<ThemeToken, Color>> } | undefined;
+	private resolvedColors: { terminal: TerminalColors; colors: Readonly<Record<ThemeToken, Color>> } | undefined;
 
 	constructor(
 		fgColors: Record<Exclude<ThemeColor, OptionalThemeColor>, string | number> &
@@ -324,12 +316,15 @@ export class Theme {
 	 * tokens are approximated by mixing their color toward the background.
 	 */
 	get colors(): Readonly<Record<ThemeToken, Color>> {
-		const terminal = terminalDefaultColors;
+		const terminal = terminalColors;
 		if (this.resolvedColors?.terminal !== terminal) {
 			const guess = GUESSED_DEFAULT_COLORS[this.appearance];
-			const background = terminal.background ?? guess.background;
+			const toColor = (rgb: RgbColor | undefined, fallback: Color) =>
+				rgb ? rgbColor(rgb.r, rgb.g, rgb.b) : fallback;
+			const foreground = toColor(terminal.foreground, guess.foreground);
+			const background = toColor(terminal.background, guess.background);
 			const colors = { ...this.concreteColors };
-			for (const token of this.defaultForegroundTokens) colors[token] = terminal.foreground ?? guess.foreground;
+			for (const token of this.defaultForegroundTokens) colors[token] = foreground;
 			for (const token of this.defaultBackgroundTokens) colors[token] = background;
 			for (const token of this.dimTokens) {
 				const color = colors[token];

@@ -30,9 +30,7 @@ import {
 	setTheme,
 	type Theme,
 } from "../modes/interactive/theme/theme.ts";
-
-/** How long the system theme stays grayscale when the terminal does not answer. Late replies still apply. */
-const TERMINAL_QUERY_TIMEOUT_MS = 100;
+import { requestTerminalColors } from "../modes/interactive/theme/theme-controller.ts";
 
 const OFFICIAL_PACKAGE_NAME = "@earendil-works/pi-coding-agent";
 const OFFICIAL_APP_NAME = "pi";
@@ -110,20 +108,12 @@ export function startStartupTui(ui: TUI, settingsManager: SettingsManager): void
  * record them for the system theme and "" (terminal default) tokens, run `onColors`, and re-render.
  */
 function queryStartupTerminalColors(ui: TUI, onColors: (colors: TerminalColors) => void): void {
-	const apply = (colors: TerminalColors) => {
+	void requestTerminalColors(ui, (colors) => {
 		setTerminalColors(colors);
 		onColors(colors);
 		ui.invalidate();
 		ui.requestRender();
-	};
-	try {
-		void ui
-			.queryTerminalColors({ timeoutMs: TERMINAL_QUERY_TIMEOUT_MS, onLateReply: apply })
-			.then(apply, () => apply({}));
-	} catch {
-		// Treat a failed query like a terminal that does not report colors.
-		apply({});
-	}
+	});
 }
 
 async function clearStartupTui(ui: TUI): Promise<void> {

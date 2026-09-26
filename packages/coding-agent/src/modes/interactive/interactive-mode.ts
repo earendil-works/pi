@@ -2963,14 +2963,10 @@ export class InteractiveMode {
 		this.chatContainer.addChild(errorText);
 		if (stack) {
 			// Show stack trace in dim color, indented
-			const stackLines = () =>
-				stack
-					.split("\n")
-					.slice(1) // Skip first line (duplicates error message)
-					.map((line) => theme.fg("dim", `  ${line.trim()}`))
-					.join("\n");
-			if (stackLines) {
-				this.chatContainer.addChild(new ThemedText(stackLines, 1, 0));
+			const stackLines = stack.split("\n").slice(1); // Skip first line (duplicates error message)
+			if (stackLines.length > 0) {
+				const renderStack = () => stackLines.map((line) => theme.fg("dim", `  ${line.trim()}`)).join("\n");
+				this.chatContainer.addChild(new ThemedText(renderStack, 1, 0));
 			}
 		}
 		this.ui.requestRender();

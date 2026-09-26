@@ -1,4 +1,4 @@
-import { linearSrgbToOklab, linearToSrgb, okhslToRgb, oklabToLinearSrgb, rgbToOkhsl, srgbToLinear } from "./oklab.ts";
+import { linearSrgbToRgb, okhslToRgb, oklabToLinearSrgb, rgbToOkhsl, rgbToOklab } from "./oklab.ts";
 import type { RgbColor } from "./terminal-colors.ts";
 
 export interface IndexedColor {
@@ -115,8 +115,7 @@ export function okhslColor(h: number, s: number, l: number): RgbColorValue {
 }
 
 export function colorToOkhsl(color: Color): OkhslChannels {
-	const { hue, saturation, lightness } = rgbToOkhsl(colorToRgb(color));
-	return { h: hue, s: saturation, l: lightness };
+	return rgbToOkhsl(colorToRgb(color));
 }
 
 export function parseColor(value: string | number): Color {
@@ -183,39 +182,9 @@ function indexedToRgb(index: number): RgbColor {
 	return { r: gray, g: gray, b: gray };
 }
 
-interface OklabChannels {
-	l: number;
-	a: number;
-	b: number;
-}
-
-interface LinearRgbChannels {
-	r: number;
-	g: number;
-	b: number;
-}
-
-function rgbToOklab({ r, g, b }: RgbColor): OklabChannels {
-	const [l, a, labB] = linearSrgbToOklab([srgbToLinear(r / 255), srgbToLinear(g / 255), srgbToLinear(b / 255)]);
-	return { l, a, b: labB };
-}
-
-function oklabToLinearRgb({ l, a, b }: OklabChannels): LinearRgbChannels {
-	const [r, g, linearB] = oklabToLinearSrgb([l, a, b]);
-	return { r, g, b: linearB };
-}
-
-function isInSrgbGamut({ r, g, b }: LinearRgbChannels): boolean {
+function isInSrgbGamut(linear: number[]): boolean {
 	const epsilon = 1e-7;
-	return r >= -epsilon && r <= 1 + epsilon && g >= -epsilon && g <= 1 + epsilon && b >= -epsilon && b <= 1 + epsilon;
-}
-
-function linearRgbToChannels({ r, g, b }: LinearRgbChannels): RgbColor {
-	return {
-		r: Math.round(Math.max(0, Math.min(1, linearToSrgb(r))) * 255),
-		g: Math.round(Math.max(0, Math.min(1, linearToSrgb(g))) * 255),
-		b: Math.round(Math.max(0, Math.min(1, linearToSrgb(b))) * 255),
-	};
+	return linear.every((channel) => channel >= -epsilon && channel <= 1 + epsilon);
 }
 
 function oklchToRgb({ l, c, h }: OklchChannels): RgbColor {
@@ -223,10 +192,10 @@ function oklchToRgb({ l, c, h }: OklchChannels): RgbColor {
 	const radians = (h * Math.PI) / 180;
 	const cos = Math.cos(radians);
 	const sin = Math.sin(radians);
-	const atChroma = (chroma: number) => oklabToLinearRgb({ l, a: chroma * cos, b: chroma * sin });
+	const atChroma = (chroma: number) => oklabToLinearSrgb([l, chroma * cos, chroma * sin]);
 
 	const direct = atChroma(c);
-	if (isInSrgbGamut(direct)) return linearRgbToChannels(direct);
+	if (isInSrgbGamut(direct)) return linearSrgbToRgb(direct);
 
 	// Reduce chroma until the color fits. The achromatic color is always in gamut, so it is the
 	// fallback when no bisection step fits, e.g. `oklch(100% 0.3 150)` must map to white.
@@ -243,7 +212,7 @@ function oklchToRgb({ l, c, h }: OklchChannels): RgbColor {
 			high = chroma;
 		}
 	}
-	return linearRgbToChannels(linear);
+	return linearSrgbToRgb(linear);
 }
 
 export function colorToRgb(color: Color): RgbColor {
@@ -259,12 +228,8 @@ export function colorToRgb(color: Color): RgbColor {
 
 export function colorToOklch(color: Color): OklchChannels {
 	if (color.kind === "oklch") return { l: color.l, c: color.c, h: color.h };
-	const lab = rgbToOklab(colorToRgb(color));
-	return {
-		l: lab.l,
-		c: Math.hypot(lab.a, lab.b),
-		h: ((Math.atan2(lab.b, lab.a) * 180) / Math.PI + 360) % 360,
-	};
+	const [l, a, b] = rgbToOklab(colorToRgb(color));
+	return { l, c: Math.hypot(a, b), h: ((Math.atan2(b, a) * 180) / Math.PI + 360) % 360 };
 }
 
 export function colorToHex(color: Color): string {
