@@ -37,6 +37,7 @@ import {
 	compositeTuiLine,
 	dispatchMouseEvent,
 	type OverlayHandle,
+	type OverlaySelectionRegion,
 	retargetMouseEvent,
 	TuiBase,
 	type TuiMouseButton,
@@ -911,6 +912,20 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 
 		if (this.handleSearchMouseEvent(raw)) return;
 
+		// A selection drag that is already in progress keeps the pointer, the same way a component
+		// that received the press owns the whole gesture. Without this, an overlay that handles mouse
+		// events swallows the motion and the release, and the drag dies at its edge.
+		if (
+			type !== "press" &&
+			((raw.button & 3) === 0 || ((raw.button & 3) === 3 && type === "release")) &&
+			this.selectionPressActive &&
+			!this.mouseCapture &&
+			!this.mousePressTarget
+		) {
+			this.handleSelectionMouseEvent(raw);
+			return;
+		}
+
 		const overlay = this.dispatchMouseToOverlay(event);
 		if (!overlay.hit) {
 			if (this.handleScrollToEndIndicatorMouseEvent(raw)) return;
@@ -1024,7 +1039,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 	}
 
 	private getScrollbarTargetAt(x: number, y: number, includeHiddenAuto = false): ScrollbarTarget | undefined {
-		if (this.hasOverlay() || !this.currentLayout) return undefined;
+		if (this.hasSelectionBlockingOverlay() || !this.currentLayout) return undefined;
 		for (const scrollView of getScrollViewsAt(this.currentLayout, x, y)) {
 			const box = getScrollViewBox(this.currentLayout, scrollView);
 			const geometry = box ? getScrollbarGeometry(box, includeHiddenAuto) : undefined;
@@ -1136,7 +1151,28 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		};
 	}
 
-	private getSelectionPoint(event: SgrMouseEvent, scrollView?: ScrollView): SelectionPoint {
+	private getSelectionExclusionAt(x: number, y: number): OverlaySelectionRegion | undefined {
+		return this.getOverlaySelectionExclusions().find(
+			(region) =>
+				x >= region.col && x < region.col + region.width && y >= region.row && y < region.row + region.height,
+		);
+	}
+
+	private getSelectionPoint(
+		event: SgrMouseEvent,
+		scrollView?: ScrollView,
+		reference?: SelectionPoint,
+	): SelectionPoint | undefined {
+		const exclusion = this.getSelectionExclusionAt(event.x, event.y);
+		if (exclusion) {
+			if (!scrollView) return undefined;
+			// Unlike a press, a drag may cross the excluded region: it has to snap to the
+			// edge the pointer came from, not always to the same one.
+			if (!reference) return undefined;
+			const boundaryX = reference.col > event.x ? exclusion.col + exclusion.width : exclusion.col - 1;
+			const point = this.getScrollSelectionPoint(scrollView, boundaryX, event.y);
+			if (point) return point;
+		}
 		if (scrollView) {
 			const point = this.getScrollSelectionPoint(scrollView, event.x, event.y);
 			if (point) return point;
@@ -1304,7 +1340,25 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		const button = event.button & 3;
 		if (button !== 0 && !(event.release && button === 3)) return;
 		const anchorScrollView = this.selectionAnchor?.scrollView;
-		const point = this.getSelectionPoint(event, anchorScrollView);
+		// Motion and release continue an in-progress drag; a bare press starts a new one and
+		// must not start inside an excluded overlay.
+		const continuing = event.release || (event.button & 32) !== 0;
+		const point = this.getSelectionPoint(
+			event,
+			anchorScrollView,
+			continuing ? (this.selectionFocus ?? this.selectionAnchor) : undefined,
+		);
+		if (!point) {
+			this.selectionPressActive = false;
+			this.stopSelectionAutoScroll();
+			this.selectionAnchor = undefined;
+			this.selectionFocus = undefined;
+			this.selectionInitialRange = undefined;
+			this.selectionGranularity = "character";
+			this.pressedUrl = undefined;
+			this.requestRender();
+			return;
+		}
 		if (event.release) {
 			if (!this.selectionPressActive) return;
 			this.selectionPressActive = false;
@@ -1359,10 +1413,20 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		this.stopSelectionAutoScroll();
 		this.selectionPressActive = true;
 		const scrollView =
-			!this.hasOverlay() && this.currentLayout
+			!this.hasSelectionBlockingOverlay() && this.currentLayout
 				? getScrollViewsAt(this.currentLayout, event.x, event.y)[0]
 				: undefined;
 		const anchor = this.getSelectionPoint(event, scrollView);
+		if (!anchor) {
+			this.selectionPressActive = false;
+			this.selectionAnchor = undefined;
+			this.selectionFocus = undefined;
+			this.selectionInitialRange = undefined;
+			this.selectionGranularity = "character";
+			this.pressedUrl = undefined;
+			this.requestRender();
+			return;
+		}
 		const word = this.getWordSelection(anchor);
 		const clickCount = this.getClickCount(anchor, word);
 		const range = clickCount === 2 ? word : clickCount === 3 ? this.getLineSelection(anchor) : undefined;
