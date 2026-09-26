@@ -279,6 +279,36 @@ describe("ToolExecutionComponent parity", () => {
 		expect(completed).toContain(`Took ${formatted}`);
 	});
 
+	test("bash renderer highlights heredoc bodies and collapses long ones", () => {
+		const body = Array.from({ length: 15 }, (_, i) => `import mod${i + 1}`).join("\n");
+		const command = `cd repo && python3 - <<'EOF'\n${body}\nEOF\ncargo test`;
+		const component = new ToolExecutionComponent(
+			"bash",
+			"tool-bash-heredoc",
+			{ command },
+			{},
+			createBashToolDefinition(process.cwd(), { exposeSessionEnvironment: false }),
+			createFakeTui(),
+			process.cwd(),
+		);
+
+		const collapsed = component.render(120);
+		const plain = collapsed.map((line) => stripAnsi(line).trimEnd());
+		expect(plain).toContain(" $ cd repo && python3 - <<'EOF'");
+		expect(plain).toContain(" import mod10");
+		expect(plain).not.toContain(" import mod11");
+		expect(plain.some((line) => line.startsWith(" ... (5 more lines,"))).toBe(true);
+		expect(plain).toContain(" EOF");
+		expect(plain).toContain(" cargo test");
+		const bodyLine = collapsed[plain.indexOf(" import mod1")];
+		expect(bodyLine).toContain(theme.fg("syntaxKeyword", "import"));
+
+		component.setExpanded(true);
+		const expanded = component.render(120).map((line) => stripAnsi(line).trimEnd());
+		expect(expanded).toContain(" import mod15");
+		expect(expanded.some((line) => line.includes("more lines"))).toBe(false);
+	});
+
 	test("does not duplicate built-in headers when passed the active built-in definition", () => {
 		const component = new ToolExecutionComponent(
 			"read",

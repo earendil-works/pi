@@ -732,6 +732,16 @@ export const theme: Theme = new Proxy({} as Theme, {
 	},
 });
 
+/**
+ * The active theme instance. Switching or reloading a theme installs a new instance, so renderers can
+ * compare identities to invalidate cached styled output.
+ */
+export function getThemeInstance(): Theme {
+	const t = (globalThis as Record<symbol, Theme>)[THEME_KEY];
+	if (!t) throw new Error("Theme not initialized. Call initTheme() first.");
+	return t;
+}
+
 function setGlobalTheme(t: Theme): void {
 	(globalThis as Record<symbol, Theme>)[THEME_KEY] = t;
 	(globalThis as Record<symbol, Theme>)[THEME_KEY_OLD] = t;

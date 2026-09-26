@@ -9,13 +9,28 @@
 import { Container, Text, truncateToWidth } from "@earendil-works/pi-tui";
 import { keyHint } from "../../../modes/interactive/components/keybinding-hints.ts";
 import { truncateToVisualLines } from "../../../modes/interactive/components/visual-truncate.ts";
-import { theme } from "../../../modes/interactive/theme/theme.ts";
+import {
+	getLanguageFromPath,
+	getThemeInstance,
+	highlightCode,
+	type Theme,
+	theme,
+} from "../../../modes/interactive/theme/theme.ts";
+import { splitShellCommand } from "../../../utils/shell-embedded-code.ts";
 import type { ToolDefinition, ToolRenderResultOptions } from "../../extensions/types.ts";
 import type { BashToolDetails } from "../bash.ts";
-import { getTextOutput, invalidArgText, str } from "../render-utils.ts";
+import {
+	getTextOutput,
+	invalidArgText,
+	type StreamingHighlight,
+	str,
+	updateStreamingHighlight,
+} from "../render-utils.ts";
 import { DEFAULT_MAX_BYTES, formatSize } from "../truncate.ts";
 
 const BASH_PREVIEW_LINES = 5;
+/** Lines of each heredoc body or inline script shown before the call is expanded. */
+const EMBEDDED_CODE_PREVIEW_LINES = 10;
 export const BASH_UPDATE_THROTTLE_MS = 100;
 type BashResultRenderState = {
 	cachedWidth: number | undefined;
@@ -40,12 +55,102 @@ function formatDuration(ms: number): string {
 
 	return `${Math.floor(minutes / 60)}h ${minutes % 60}m ${remainder}s`;
 }
-function formatShellCall(args: { command?: string; timeout?: number } | undefined, prompt: string): string {
+function styleShellLines(text: string): string[] {
+	return text.split("\n").map((line) => (line ? theme.fg("toolTitle", theme.bold(line)) : ""));
+}
+/** Style normalized embedded code. Data with no known language keeps the plain output color. */
+function styleEmbeddedLines(code: string, language: string | undefined): string[] {
+	if (!language) return code.split("\n").map((line) => theme.fg("toolOutput", line));
+	return highlightCode(code, language);
+}
+
+/**
+ * Lines to show for one embedded segment. The first line continues the preceding shell line and the
+ * last line continues into the following shell text, so collapsed previews keep both and elide the
+ * middle.
+ */
+function formatEmbeddedCode(lines: string[], expanded: boolean): string[] {
+	const hidden = lines.length - 1 - EMBEDDED_CODE_PREVIEW_LINES;
+	if (expanded || hidden <= 0) return lines;
+	const hint = `${theme.fg("muted", `... (${hidden} more lines,`)} ${keyHint("app.tools.expand", "to expand")}${theme.fg("muted", ")")}`;
+	return [...lines.slice(0, EMBEDDED_CODE_PREVIEW_LINES), hint, lines[lines.length - 1]];
+}
+
+class ShellCallRenderComponent extends Text {
+	theme: Theme | undefined;
+	command: string | undefined;
+	expanded = false;
+	timeout: number | undefined;
+	/** Formatted call text for the fields above. */
+	rendered: string | undefined;
+	/** Highlights of the embedded segments of `command`, in order. */
+	embedded: StreamingHighlight[] = [];
+
+	constructor() {
+		super("", 0, 0);
+	}
+}
+
+function formatShellCall(
+	component: ShellCallRenderComponent,
+	args: { command?: string; timeout?: number } | undefined,
+	prompt: string,
+	options: { expanded: boolean; embeddedCode: boolean; argsComplete: boolean },
+): string {
 	const command = str(args?.command);
 	const timeout = args?.timeout as number | undefined;
 	const timeoutSuffix = timeout ? theme.fg("muted", ` (timeout ${timeout}s)`) : "";
-	const commandDisplay = command === null ? invalidArgText(theme) : command ? command : theme.fg("toolOutput", "...");
-	return theme.fg("toolTitle", theme.bold(`${prompt} ${commandDisplay}`)) + timeoutSuffix;
+	if (!command || !options.embeddedCode) {
+		component.rendered = undefined;
+		const commandDisplay =
+			command === null ? invalidArgText(theme) : command ? command : theme.fg("toolOutput", "...");
+		return theme.fg("toolTitle", theme.bold(`${prompt} ${commandDisplay}`)) + timeoutSuffix;
+	}
+
+	const currentTheme = getThemeInstance();
+	// renderCall also runs for every throttled output update with unchanged arguments. Reuse the text
+	// unless the theme changed or the final arguments still need a full highlight.
+	if (
+		component.rendered !== undefined &&
+		component.theme === currentTheme &&
+		component.command === command &&
+		component.expanded === options.expanded &&
+		component.timeout === timeout &&
+		(!options.argsComplete || component.embedded.every((entry) => entry.exact))
+	) {
+		return component.rendered;
+	}
+
+	const lines = [""];
+	const append = (styled: string[]) => {
+		lines[lines.length - 1] += styled[0] ?? "";
+		for (let i = 1; i < styled.length; i++) lines.push(styled[i]);
+	};
+	append(styleShellLines(`${prompt} `));
+	const embedded: StreamingHighlight[] = [];
+	for (const segment of splitShellCommand(command, { languageFromPath: getLanguageFromPath })) {
+		if (!segment.embedded) {
+			append(styleShellLines(segment.text));
+			continue;
+		}
+		const language = segment.language;
+		const highlight = updateStreamingHighlight(component.embedded[embedded.length], segment.text, {
+			language,
+			theme: currentTheme,
+			complete: options.argsComplete,
+			highlight: (code) => styleEmbeddedLines(code, language),
+		});
+		embedded.push(highlight);
+		append(formatEmbeddedCode(highlight.highlighted, options.expanded));
+	}
+
+	component.theme = currentTheme;
+	component.command = command;
+	component.expanded = options.expanded;
+	component.timeout = timeout;
+	component.embedded = embedded;
+	component.rendered = lines.join("\n") + timeoutSuffix;
+	return component.rendered;
 }
 function rebuildBashResultRenderComponent(
 	component: BashResultRenderComponent,
@@ -129,8 +234,14 @@ function rebuildBashResultRenderComponent(
 	}
 }
 
-/** Shell renderers are shared by bash and powershell, which differ only in the prompt they display. */
-export function createShellRenderers(prompt: string): Pick<ToolDefinition<any, any>, "renderCall" | "renderResult"> {
+/**
+ * Shell renderers are shared by bash and powershell. `embeddedCode` highlights heredoc bodies and
+ * inline scripts, which is only implemented for POSIX shell syntax.
+ */
+export function createShellRenderers(
+	prompt: string,
+	options: { embeddedCode: boolean },
+): Pick<ToolDefinition<any, any>, "renderCall" | "renderResult"> {
 	return {
 		renderCall(args, _theme, context) {
 			const state = context.state;
@@ -138,9 +249,17 @@ export function createShellRenderers(prompt: string): Pick<ToolDefinition<any, a
 				state.startedAt = Date.now();
 				state.endedAt = undefined;
 			}
-			const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
-			text.setText(formatShellCall(args as { command?: string; timeout?: number } | undefined, prompt));
-			return text;
+			const component =
+				(context.lastComponent as ShellCallRenderComponent | undefined) ?? new ShellCallRenderComponent();
+			const previous = component.rendered;
+			const text = formatShellCall(component, args as { command?: string; timeout?: number } | undefined, prompt, {
+				expanded: context.expanded,
+				embeddedCode: options.embeddedCode,
+				argsComplete: context.argsComplete,
+			});
+			// setText drops the wrapped-line cache, so skip it when output updates leave the call unchanged.
+			if (text !== previous) component.setText(text);
+			return component;
 		},
 		renderResult(result, options, _theme, context) {
 			const state = context.state;
