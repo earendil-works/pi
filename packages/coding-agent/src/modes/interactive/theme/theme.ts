@@ -6,7 +6,6 @@ import {
 	type Color,
 	colorToHex,
 	colorToOklch,
-	colorToRgb,
 	type EditorTheme,
 	foregroundAnsi,
 	getTerminalColorMode,
@@ -29,7 +28,7 @@ import type { SourceInfo } from "../../../core/source-info.ts";
 import { closeWatcher, watchWithErrorHandler } from "../../../utils/fs-watch.ts";
 import { highlight, supportsLanguage } from "../../../utils/syntax-highlight.ts";
 import { stripBom } from "../../../utils/text.ts";
-import { generateSystemThemeColors, relativeLuminance, SYSTEM_THEME_NAME, terminalAppearance } from "./system-theme.ts";
+import { generateSystemThemeColors, SYSTEM_THEME_NAME, terminalAppearance } from "./system-theme.ts";
 
 export { SYSTEM_THEME_NAME } from "./system-theme.ts";
 
@@ -191,6 +190,8 @@ export type ThemeAppearance = TerminalTheme;
 let terminalColors: TerminalColors = {};
 // While the terminal color query is in flight, the system theme renders in grayscale.
 let terminalColorsPending = false;
+// The terminal's last light/dark report (mode 2031). Only used while it has not reported a background.
+let terminalColorScheme: TerminalTheme | undefined;
 
 /**
  * Record the terminal's reported colors. Themes use the default colors for tokens set to "" (terminal
@@ -199,6 +200,11 @@ let terminalColorsPending = false;
 export function setTerminalColors(colors: TerminalColors): void {
 	terminalColors = { ...colors };
 	terminalColorsPending = false;
+}
+
+/** Record the terminal's light/dark report, the fallback for terminals that do not report their background. */
+export function setTerminalColorScheme(scheme: TerminalTheme | undefined): void {
+	terminalColorScheme = scheme;
 }
 
 /** Render the system theme in grayscale until `setTerminalColors()` reports the terminal's colors. */
@@ -302,12 +308,10 @@ export class Theme {
 
 	/**
 	 * The background the theme is designed for: declared in the theme JSON, detected from its colors,
-	 * or, for themes without usable colors, taken from the terminal background.
+	 * or, for themes without usable colors, the terminal's appearance.
 	 */
 	get appearance(): ThemeAppearance {
-		if (this.ownAppearance) return this.ownAppearance;
-		const { background, foreground } = terminalColors;
-		return background ? terminalAppearance(background, foreground) : "dark";
+		return this.ownAppearance ?? getTerminalTheme();
 	}
 
 	/**
@@ -608,7 +612,7 @@ function createSystemTheme(mode?: TerminalColorMode): Theme {
 	const generated = generateSystemThemeColors({
 		...terminalColors,
 		saturation: terminalColorsPending ? 0 : 1,
-		appearanceHint: detectColorFgBgTheme(),
+		appearanceHint: getTerminalTheme(),
 	});
 	const { fgColors, bgColors } = splitThemeColors(generated.colors);
 	return new Theme(fgColors, bgColors, mode ?? getTerminalColorMode(), {
@@ -675,32 +679,39 @@ export function resolveThemeSetting(
 	return undefined;
 }
 
-function getColorFgBgBackgroundIndex(colorfgbg: string): number | undefined {
-	const parts = colorfgbg.split(";");
-	for (let i = parts.length - 1; i >= 0; i--) {
-		const bg = parseInt(parts[i].trim(), 10);
-		if (Number.isInteger(bg) && bg >= 0 && bg <= 255) {
-			return bg;
-		}
-	}
-	return undefined;
-}
-
-/** Dark or light from the `COLORFGBG` environment variable some terminals set, or undefined without it. */
+/**
+ * Dark or light from the `COLORFGBG` environment variable some terminals set, or undefined without a
+ * usable background index. The value is `fg;bg` or `fg;xpm;bg` (rxvt), where a field is an ANSI color
+ * index or `default` when the color is not in the palette. The index refers to the terminal's own palette,
+ * whose colors are unknown here, so it is classified by index like Vim does: 0-6 and 8 (bright black, e.g.
+ * Solarized Dark's background) are dark, 7 and 9-15 are light.
+ */
 export function detectColorFgBgTheme(env: NodeJS.ProcessEnv = process.env): TerminalTheme | undefined {
-	const bg = getColorFgBgBackgroundIndex(env.COLORFGBG || "");
-	if (bg === undefined) return undefined;
-	return relativeLuminance(colorToRgb(indexedColor(bg))) >= 0.5 ? "light" : "dark";
+	const bg = env.COLORFGBG?.split(";").at(-1)?.trim();
+	if (!bg || !/^\d{1,2}$/.test(bg)) return undefined;
+	const index = Number(bg);
+	if (index > 15) return undefined;
+	return index <= 6 || index === 8 ? "dark" : "light";
 }
 
 /**
- * Whether the terminal is dark or light: from its reported colors the same way the system theme decides,
- * then from COLORFGBG, then dark.
+ * Whether the terminal is dark or light. The background it renders decides, classified the same way the
+ * system theme does. Without a reported background: the terminal's light/dark report, then COLORFGBG,
+ * then dark.
  */
-export function detectTerminalTheme(colors: TerminalColors = {}, env: NodeJS.ProcessEnv = process.env): TerminalTheme {
+export function detectTerminalTheme(
+	colors: TerminalColors = {},
+	reportedScheme?: TerminalTheme,
+	env: NodeJS.ProcessEnv = process.env,
+): TerminalTheme {
 	const { background, foreground } = colors;
 	if (background) return terminalAppearance(background, foreground);
-	return detectColorFgBgTheme(env) ?? "dark";
+	return reportedScheme ?? detectColorFgBgTheme(env) ?? "dark";
+}
+
+/** Whether the terminal is dark or light, from everything it reported so far. See `detectTerminalTheme()`. */
+export function getTerminalTheme(): TerminalTheme {
+	return detectTerminalTheme(terminalColors, terminalColorScheme);
 }
 
 // ============================================================================

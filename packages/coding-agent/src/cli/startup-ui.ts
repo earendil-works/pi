@@ -2,7 +2,6 @@ import {
 	ProcessTerminal,
 	setCapabilityOverrides,
 	setKeybindings,
-	type TerminalColors,
 	type TUI,
 	TuiMainScreen,
 } from "@earendil-works/pi-tui";
@@ -20,7 +19,7 @@ import {
 } from "../modes/interactive/components/first-time-setup.ts";
 import { SYSTEM_THEME_NAME } from "../modes/interactive/theme/system-theme.ts";
 import {
-	detectTerminalTheme,
+	getTerminalTheme,
 	initTheme,
 	loadThemeFromPath,
 	markTerminalColorsPending,
@@ -88,7 +87,7 @@ export async function createStartupTui(settingsManager: SettingsManager): Promis
 	setRegisteredThemes(await loadStartupThemes(settingsManager));
 	// The system theme starts in grayscale until the terminal reports its colors.
 	markTerminalColorsPending();
-	initTheme(resolveThemeSetting(settingsManager.getThemeSetting(), detectTerminalTheme()) ?? SYSTEM_THEME_NAME);
+	initTheme(resolveThemeSetting(settingsManager.getThemeSetting(), getTerminalTheme()) ?? SYSTEM_THEME_NAME);
 	setKeybindings(KeybindingsManager.create());
 	const ui: TUI = new TuiMainScreen(new ProcessTerminal(), settingsManager.getShowHardwareCursor(), getAgentDir());
 	ui.setClearOnShrink(settingsManager.getClearOnShrink());
@@ -98,8 +97,8 @@ export async function createStartupTui(settingsManager: SettingsManager): Promis
 export function startStartupTui(ui: TUI, settingsManager: SettingsManager): void {
 	ui.start();
 	const themeSetting = settingsManager.getThemeSetting();
-	queryStartupTerminalColors(ui, (colors) => {
-		setTheme(resolveThemeSetting(themeSetting, detectTerminalTheme(colors)) ?? SYSTEM_THEME_NAME);
+	queryStartupTerminalColors(ui, () => {
+		setTheme(resolveThemeSetting(themeSetting, getTerminalTheme()) ?? SYSTEM_THEME_NAME);
 	});
 }
 
@@ -107,10 +106,10 @@ export function startStartupTui(ui: TUI, settingsManager: SettingsManager): void
  * Query the terminal's colors without waiting for them. When they arrive, including after the timeout,
  * record them for the system theme and "" (terminal default) tokens, run `onColors`, and re-render.
  */
-function queryStartupTerminalColors(ui: TUI, onColors: (colors: TerminalColors) => void): void {
+function queryStartupTerminalColors(ui: TUI, onColors: () => void): void {
 	void requestTerminalColors(ui, (colors) => {
 		setTerminalColors(colors);
-		onColors(colors);
+		onColors();
 		ui.invalidate();
 		ui.requestRender();
 	});

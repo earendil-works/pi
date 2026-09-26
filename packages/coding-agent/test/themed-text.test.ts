@@ -7,34 +7,20 @@ afterEach(() => {
 });
 
 describe("ThemedText", () => {
-	it("rebuilds its text with the current theme after invalidation", () => {
+	it("builds lazily and rebuilds with the current theme after invalidation", () => {
 		initTheme("dark");
-		const text = new ThemedText(() => theme.fg("accent", "hello"), 0, 0);
-		const dark = text.render(20).join("");
-		expect(dark).toContain(theme.getFgAnsi("accent"));
-
-		initTheme("light");
-		// Without invalidation the cached text is kept.
-		expect(text.render(20).join("")).toBe(dark);
-
-		text.invalidate();
-		const light = text.render(20).join("");
-		expect(light).toContain(theme.getFgAnsi("accent"));
-		expect(light).not.toBe(dark);
-	});
-
-	it("builds lazily, only when rendered", () => {
 		let builds = 0;
 		const text = new ThemedText(() => {
 			builds++;
-			return "x";
+			return theme.fg("accent", "hello");
 		});
 		expect(builds).toBe(0);
-		text.render(10);
-		text.render(10);
-		expect(builds).toBe(1);
+		const dark = text.render(20).join("");
+
+		initTheme("light");
+		expect(text.render(20).join("")).toBe(dark);
 		text.invalidate();
-		text.render(10);
+		expect(text.render(20).join("")).toContain(theme.getFgAnsi("accent"));
 		expect(builds).toBe(2);
 	});
 });

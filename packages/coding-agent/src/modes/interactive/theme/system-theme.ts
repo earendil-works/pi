@@ -372,7 +372,7 @@ export interface SystemThemeInput {
 	palette?: RgbColor[];
 	/** Saturation multiplier from 0 (grayscale) to 1. The first frame renders in grayscale until colors arrive. */
 	saturation?: number;
-	/** Appearance when the terminal did not report its background, e.g. from COLORFGBG. */
+	/** Appearance when the terminal did not report its background, e.g. from its light/dark report or COLORFGBG. */
 	appearanceHint?: ThemeAppearance;
 }
 

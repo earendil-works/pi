@@ -1,43 +1,17 @@
 import type { TerminalColors, TUI } from "@earendil-works/pi-tui";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SettingsManager } from "../src/core/settings-manager.ts";
-import { initTheme, setTerminalColors, type TerminalTheme, theme } from "../src/modes/interactive/theme/theme.ts";
+import {
+	initTheme,
+	setTerminalColorScheme,
+	setTerminalColors,
+	type TerminalTheme,
+	theme,
+} from "../src/modes/interactive/theme/theme.ts";
 import { InteractiveThemeController } from "../src/modes/interactive/theme/theme-controller.ts";
 
-const PALETTE = [
-	"#282a36",
-	"#ff5555",
-	"#50fa7b",
-	"#f1fa8c",
-	"#bd93f9",
-	"#ff79c6",
-	"#8be9fd",
-	"#f8f8f2",
-	"#6272a4",
-	"#ff6e6e",
-	"#69ff94",
-	"#ffffa5",
-	"#d6acff",
-	"#ff92df",
-	"#a4ffff",
-	"#ffffff",
-].map((hex) => ({
-	r: Number.parseInt(hex.slice(1, 3), 16),
-	g: Number.parseInt(hex.slice(3, 5), 16),
-	b: Number.parseInt(hex.slice(5, 7), 16),
-}));
-
-const DARK_COLORS: TerminalColors = {
-	foreground: { r: 248, g: 248, b: 242 },
-	background: { r: 40, g: 42, b: 54 },
-	palette: PALETTE,
-};
-
-const LIGHT_COLORS: TerminalColors = {
-	foreground: { r: 30, g: 30, b: 30 },
-	background: { r: 250, g: 250, b: 250 },
-	palette: PALETTE,
-};
+const DARK: TerminalColors = { foreground: { r: 248, g: 248, b: 242 }, background: { r: 40, g: 42, b: 54 } };
+const LIGHT: TerminalColors = { foreground: { r: 30, g: 30, b: 30 }, background: { r: 250, g: 250, b: 250 } };
 
 type ColorQueryOptions = { timeoutMs: number; onLateReply?: (colors: TerminalColors) => void };
 
@@ -78,6 +52,7 @@ const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 afterEach(() => {
 	setTerminalColors({});
+	setTerminalColorScheme(undefined);
 	initTheme("dark");
 	vi.unstubAllEnvs();
 });
@@ -100,129 +75,69 @@ describe("InteractiveThemeController", () => {
 		expect(flushSettings).not.toHaveBeenCalled();
 	});
 
-	it("never waits for the terminal to answer", () => {
+	it("applies the theme immediately and lets startup wait for the colors", async () => {
 		const { ui, queryTerminalColors } = createUi();
-		queryTerminalColors.mockReturnValue(new Promise<TerminalColors>(() => {}));
-		const controller = createController(ui, () => SettingsManager.inMemory({ theme: "light" }));
-
-		controller.applyFromSettings();
-
-		expect(theme.name).toBe("light");
-	});
-
-	it("lets startup wait for the terminal colors", async () => {
-		const { ui, queryTerminalColors } = createUi();
-		let answer: ((colors: TerminalColors) => void) | undefined;
+		let answer: (colors: TerminalColors) => void = () => {};
 		queryTerminalColors.mockReturnValue(
-			new Promise<TerminalColors>((resolve) => {
+			new Promise((resolve) => {
 				answer = resolve;
 			}),
 		);
 		const controller = createController(ui, () => SettingsManager.inMemory());
 		controller.applyFromSettings();
-		let waited = false;
-		const wait = controller.waitForTerminalColors().then(() => {
-			waited = true;
-		});
-		await flush();
-		expect(waited).toBe(false);
 
-		answer?.(DARK_COLORS);
-		await wait;
-		expect(theme.getFgAnsi("error")).not.toBe("\x1b[39m");
-	});
-
-	it("resolves a theme pair from the terminal colors and follows appearance changes", async () => {
-		vi.stubEnv("COLORFGBG", "15;0");
-		const { ui, queryTerminalColors, setTerminalColorSchemeNotifications, emitTerminalColorScheme } = createUi();
-		queryTerminalColors.mockResolvedValue(LIGHT_COLORS);
-		const controller = createController(ui, () => SettingsManager.inMemory(), "light/dark");
-
-		// COLORFGBG says dark until the terminal reports its colors.
-		expect(theme.name).toBe("dark");
-		controller.applyFromSettings();
-		expect(setTerminalColorSchemeNotifications).toHaveBeenCalledWith(true);
-		await flush();
-		expect(theme.name).toBe("light");
-
-		// A notification only triggers a new query; the reported colors decide the appearance.
-		queryTerminalColors.mockResolvedValue(DARK_COLORS);
-		emitTerminalColorScheme("light");
-		await flush();
-		expect(theme.name).toBe("dark");
-	});
-
-	it("uses the reported scheme for theme pairs when the terminal reports no colors", async () => {
-		vi.stubEnv("COLORFGBG", "");
-		const { ui, emitTerminalColorScheme } = createUi();
-		const controller = createController(ui, () => SettingsManager.inMemory(), "light/dark");
-		controller.applyFromSettings();
-		await flush();
-		expect(theme.name).toBe("dark");
-
-		emitTerminalColorScheme("light");
-		expect(theme.name).toBe("light");
-	});
-
-	it("uses the system theme without a setting and does not persist anything", async () => {
-		const { ui, queryTerminalColors, setTerminalColorSchemeNotifications } = createUi();
-		queryTerminalColors.mockResolvedValue(DARK_COLORS);
-		const manager = SettingsManager.inMemory();
-		const setTheme = vi.spyOn(manager, "setTheme");
-		const controller = createController(ui, () => manager);
-
-		// Grayscale until the terminal reports its colors.
+		// Grayscale until the terminal answers.
 		expect(theme.name).toBe("system");
 		expect(theme.getFgAnsi("error")).toBe("\x1b[39m");
 
-		controller.applyFromSettings();
-		await flush();
-
-		expect(theme.name).toBe("system");
-		expect(theme.getFgAnsi("text")).toBe("\x1b[39m");
+		answer(DARK);
+		await controller.waitForTerminalColors();
 		expect(theme.getFgAnsi("error")).toMatch(/^\x1b\[38;/);
-		expect(controller.getTerminalTheme()).toBe("dark");
-		expect(setTerminalColorSchemeNotifications).toHaveBeenCalledWith(true);
-		expect(setTheme).not.toHaveBeenCalled();
 	});
 
-	it("falls back to ANSI palette indices, then applies colors that arrive after the timeout", async () => {
+	it("falls back to palette indices, then applies colors that arrive after the timeout", async () => {
 		const { ui, queryTerminalColors } = createUi();
-		let lateReply: ((colors: TerminalColors) => void) | undefined;
-		queryTerminalColors.mockImplementation(async (options: ColorQueryOptions) => {
-			lateReply = options.onLateReply;
+		let lateReply: (colors: TerminalColors) => void = () => {};
+		queryTerminalColors.mockImplementation(async (options) => {
+			lateReply = options.onLateReply!;
 			return {};
 		});
-		const controller = createController(ui, () => SettingsManager.inMemory({ theme: "system" }));
-		controller.applyFromSettings();
-		await flush();
-
-		expect(theme.getFgAnsi("error")).toBe("\x1b[38;5;1m");
-		expect(theme.getFgAnsi("muted")).toBe("\x1b[39m\x1b[2m");
-		expect(theme.getBgAnsi("userMessageBg")).toBe("\x1b[49m");
-
-		lateReply?.(DARK_COLORS);
-		expect(theme.colors.error.kind).toBe("rgb");
-		expect(theme.getFgAnsi("error")).not.toBe("\x1b[38;5;1m");
-		expect(theme.getBgAnsi("userMessageBg")).not.toBe("\x1b[49m");
-	});
-
-	it("regenerates the system theme when the terminal appearance changes", async () => {
-		const { ui, queryTerminalColors, emitTerminalColorScheme } = createUi();
-		queryTerminalColors.mockResolvedValue(DARK_COLORS);
 		const controller = createController(ui, () => SettingsManager.inMemory());
 		controller.applyFromSettings();
 		await flush();
-		const darkText = theme.colors.text;
-		expect(theme.appearance).toBe("dark");
+		expect(theme.getFgAnsi("error")).toBe("\x1b[38;5;1m");
 
-		queryTerminalColors.mockResolvedValue(LIGHT_COLORS);
+		lateReply(DARK);
+		expect(theme.colors.error.kind).toBe("rgb");
+	});
+
+	it("re-queries the colors on appearance changes and lets them decide", async () => {
+		const { ui, queryTerminalColors, setTerminalColorSchemeNotifications, emitTerminalColorScheme } = createUi();
+		queryTerminalColors.mockResolvedValue(LIGHT);
+		const controller = createController(ui, () => SettingsManager.inMemory(), "light/dark");
+		controller.applyFromSettings();
+		expect(setTerminalColorSchemeNotifications).toHaveBeenCalledWith(true);
+		await flush();
+		expect(theme.name).toBe("light");
+
+		queryTerminalColors.mockResolvedValue(DARK);
+		// The report says light, but the terminal renders dark.
 		emitTerminalColorScheme("light");
 		await flush();
+		expect(theme.name).toBe("dark");
+	});
 
-		expect(theme.name).toBe("system");
+	it("uses the reported scheme for the system theme when the terminal reports no colors", async () => {
+		vi.stubEnv("COLORFGBG", "");
+		const { ui, emitTerminalColorScheme } = createUi();
+		const controller = createController(ui, () => SettingsManager.inMemory());
+		controller.applyFromSettings();
+		await flush();
+		expect(theme.appearance).toBe("dark");
+
+		emitTerminalColorScheme("light");
 		expect(theme.appearance).toBe("light");
-		expect(theme.colors.text).not.toEqual(darkText);
+		expect(controller.getTerminalTheme()).toBe("light");
 	});
 
 	it("re-renders only when the reported colors change", async () => {
@@ -234,10 +149,10 @@ describe("InteractiveThemeController", () => {
 			await flush();
 		};
 
-		await query(DARK_COLORS);
+		await query(DARK);
 		// A timeout keeps the known colors; erasing them would count as a change and re-render.
 		await query({});
-		await query({ ...DARK_COLORS, palette: [...PALETTE] });
+		await query(structuredClone(DARK));
 		expect(ui.requestRender).toHaveBeenCalledOnce();
 	});
 

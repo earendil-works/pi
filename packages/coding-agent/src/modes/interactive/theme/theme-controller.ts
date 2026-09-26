@@ -1,12 +1,13 @@
 import type { RgbColor, TerminalColors, TUI } from "@earendil-works/pi-tui";
 import type { SettingsManager } from "../../../core/settings-manager.ts";
 import {
-	detectTerminalTheme,
+	getTerminalTheme,
 	initTheme,
 	markTerminalColorsPending,
 	parseAutoThemeSetting,
 	resolveThemeSetting,
 	SYSTEM_THEME_NAME,
+	setTerminalColorScheme,
 	setTerminalColors,
 	setTheme,
 	setThemeInstance,
@@ -60,7 +61,6 @@ export class InteractiveThemeController {
 	private readonly showError: (message: string) => void;
 	private readonly onChanged: () => void;
 	private currentThemeSetting: string | undefined;
-	private terminalTheme: TerminalTheme = detectTerminalTheme();
 	// Last reported colors; a query that times out keeps them instead of erasing them.
 	private terminalColors: TerminalColors | undefined;
 	private activeThemeName: string | undefined;
@@ -144,7 +144,7 @@ export class InteractiveThemeController {
 	}
 
 	preview(themeSettingOrName: string): void {
-		const themeName = resolveThemeSetting(themeSettingOrName, this.terminalTheme) ?? this.activeThemeName;
+		const themeName = resolveThemeSetting(themeSettingOrName, getTerminalTheme()) ?? this.activeThemeName;
 		if (!themeName) return;
 		if (setTheme(themeName, true).success) {
 			this.ui.invalidate();
@@ -163,7 +163,7 @@ export class InteractiveThemeController {
 	}
 
 	getTerminalTheme(): TerminalTheme {
-		return this.terminalTheme;
+		return getTerminalTheme();
 	}
 
 	private getThemeSetting(): string | undefined {
@@ -172,7 +172,7 @@ export class InteractiveThemeController {
 
 	/** The theme for the current setting and terminal appearance. Without a setting, pi uses the system theme. */
 	private resolveThemeName(): string {
-		return resolveThemeSetting(this.getThemeSetting(), this.terminalTheme) ?? SYSTEM_THEME_NAME;
+		return resolveThemeSetting(this.getThemeSetting(), getTerminalTheme()) ?? SYSTEM_THEME_NAME;
 	}
 
 	private applyThemeName(themeName: string, showError = false): ThemeResult {
@@ -205,7 +205,6 @@ export class InteractiveThemeController {
 		if (previous && sameTerminalColors(previous, next)) return;
 		this.terminalColors = next;
 		setTerminalColors(next);
-		if (next.background) this.terminalTheme = detectTerminalTheme(next);
 		this.reapplyForTerminal();
 		this.ui.invalidate();
 		this.ui.requestRender();
@@ -237,14 +236,13 @@ export class InteractiveThemeController {
 
 	/**
 	 * The terminal reported a light/dark switch. Its colors changed too, so query them again: they decide
-	 * the appearance. The reported scheme only applies to terminals that do not report their background.
+	 * the appearance. The reported scheme only matters for terminals that do not report their background.
 	 */
 	private applyTerminalColorSchemeChange(terminalTheme: TerminalTheme): void {
 		if (!this.autoSyncEnabled) return;
-		if (!this.terminalColors?.background && terminalTheme !== this.terminalTheme) {
-			this.terminalTheme = terminalTheme;
-			this.reapplyForTerminal();
-		}
+		const previous = getTerminalTheme();
+		setTerminalColorScheme(terminalTheme);
+		if (getTerminalTheme() !== previous) this.reapplyForTerminal();
 		this.queryTerminalColors();
 	}
 

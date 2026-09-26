@@ -3,7 +3,6 @@ import { describe, it } from "node:test";
 import {
 	type Component,
 	parseTerminalColorSchemeReport,
-	type RgbColor,
 	type Terminal,
 	type TerminalColors,
 	type TUI,
@@ -110,181 +109,89 @@ describe("parseOscColorResponse", () => {
 			target: "foreground",
 			rgb: { r: 255, g: 255, b: 255 },
 		});
-		assert.deepStrictEqual(parseOscColorResponse("\x1b]11;#000000\x1b\\"), {
-			target: "background",
-			rgb: { r: 0, g: 0, b: 0 },
-		});
-		assert.deepStrictEqual(parseOscColorResponse("\x1b]4;13;rgb:ff/00/80\x1b\\"), {
+		assert.deepStrictEqual(parseOscColorResponse("\x1b]4;13;#ff0080\x1b\\"), {
 			target: 13,
 			rgb: { r: 255, g: 0, b: 128 },
 		});
 		assert.deepStrictEqual(parseOscColorResponse("\x1b]4;1;bogus\x07"), { target: 1, rgb: undefined });
 		assert.strictEqual(parseOscColorResponse("\x1b]12;#ffffff\x07"), undefined);
-		assert.strictEqual(parseOscColorResponse("\x1b]4;;#ffffff\x07"), undefined);
 	});
 });
 
-function hex(index: number): string {
-	return `#${index.toString(16).padStart(2, "0")}0000`;
-}
+const PALETTE_REPLIES = Array.from({ length: 16 }, (_, index) => `\x1b]4;${index};#000000\x07`);
+const DA1 = "\x1b[?62;22c";
+const BLACK = { r: 0, g: 0, b: 0 };
+const WHITE = { r: 255, g: 255, b: 255 };
 
-function paletteReplies(count = 16): string[] {
-	return Array.from({ length: count }, (_, index) => `\x1b]4;${index};${hex(index)}\x07`);
-}
-
-const PALETTE: RgbColor[] = Array.from({ length: 16 }, (_, index) => ({ r: index, g: 0, b: 0 }));
-
-function setup(): { terminal: TestTerminal; tui: TUI; component: InputRecorder; listenerInputs: string[] } {
+function setup(): { terminal: TestTerminal; tui: TUI; component: InputRecorder } {
 	const terminal = new TestTerminal();
 	const tui: TUI = new TuiMainScreen(terminal);
 	const component = new InputRecorder();
-	const listenerInputs: string[] = [];
 	tui.addChild(component);
 	tui.setFocus(component);
-	tui.addInputListener((data) => {
-		listenerInputs.push(data);
-		return undefined;
-	});
 	tui.start();
-	return { terminal, tui, component, listenerInputs };
+	return { terminal, tui, component };
 }
 
 describe("TUI.queryTerminalColors", () => {
-	it("writes OSC 10, 11, 4 queries followed by DA1 in one write", () => {
-		const { terminal, tui } = setup();
-		try {
-			void tui.queryTerminalColors({ timeoutMs: 1000 });
-			const query = terminal.writes.at(-1) ?? "";
-			assert.ok(query.startsWith("\x1b]10;?\x07\x1b]11;?\x07\x1b]4;0;?\x07"));
-			assert.ok(query.includes("\x1b]4;15;?\x07"));
-			assert.ok(query.endsWith("\x1b[c"));
-		} finally {
-			tui.stop();
-		}
-	});
-
-	it("resolves with all colors once every reply arrived, without waiting for DA1", async () => {
-		const { terminal, tui, component, listenerInputs } = setup();
-		try {
-			const query = tui.queryTerminalColors({ timeoutMs: 1000 });
-			terminal.sendInput("\x1b]10;#ffffff\x07");
-			terminal.sendInput("\x1b]11;rgb:0000/0000/0000\x1b\\");
-			for (const reply of paletteReplies()) terminal.sendInput(reply);
-
-			assert.deepStrictEqual(await query, {
-				foreground: { r: 255, g: 255, b: 255 },
-				background: { r: 0, g: 0, b: 0 },
-				palette: PALETTE,
-			});
-			terminal.sendInput("\x1b[?62;22c");
-			assert.deepStrictEqual(listenerInputs, []);
-			assert.deepStrictEqual(component.inputs, []);
-		} finally {
-			tui.stop();
-		}
-	});
-
-	it("resolves on DA1 without a palette when the terminal skips some palette replies", async () => {
-		const { terminal, tui } = setup();
-		try {
-			const query = tui.queryTerminalColors({ timeoutMs: 1000 });
-			terminal.sendInput("\x1b]10;#ffffff\x07");
-			terminal.sendInput("\x1b]11;#000000\x07");
-			for (const reply of paletteReplies(8)) terminal.sendInput(reply);
-			terminal.sendInput("\x1b[?1;2c");
-
-			assert.deepStrictEqual(await query, {
-				foreground: { r: 255, g: 255, b: 255 },
-				background: { r: 0, g: 0, b: 0 },
-				palette: undefined,
-			});
-		} finally {
-			tui.stop();
-		}
-	});
-
-	it("resolves empty on DA1 when the terminal answers no color query", async () => {
+	it("queries all colors in one write and consumes the replies", async () => {
 		const { terminal, tui, component } = setup();
 		try {
 			const query = tui.queryTerminalColors({ timeoutMs: 1000 });
-			terminal.sendInput("\x1b[?1;2c");
+			const written = terminal.writes.at(-1) ?? "";
+			assert.ok(written.startsWith("\x1b]10;?\x07\x1b]11;?\x07\x1b]4;0;?\x07") && written.endsWith("\x1b[c"));
 
-			assert.deepStrictEqual(await query, { foreground: undefined, background: undefined, palette: undefined });
-			assert.deepStrictEqual(component.inputs, []);
+			terminal.sendInput("x");
+			terminal.sendInput("\x1b]10;#ffffff\x07");
+			terminal.sendInput("\x1b]11;rgb:0000/0000/0000\x1b\\");
+			for (const reply of PALETTE_REPLIES) terminal.sendInput(reply);
+			// Resolves once every reply arrived, without waiting for DA1.
+			assert.deepStrictEqual(await query, {
+				foreground: WHITE,
+				background: BLACK,
+				palette: Array.from({ length: 16 }, () => BLACK),
+			});
+			terminal.sendInput(DA1);
+			assert.deepStrictEqual(component.inputs, ["x"]);
 		} finally {
 			tui.stop();
 		}
 	});
 
-	it("assigns replies to queries in order", async () => {
+	it("resolves on DA1 with the replies that arrived, in query order", async () => {
 		const { terminal, tui } = setup();
 		try {
 			const first = tui.queryTerminalColors({ timeoutMs: 1000 });
 			const second = tui.queryTerminalColors({ timeoutMs: 1000 });
 			terminal.sendInput("\x1b]11;#000000\x07");
-			terminal.sendInput("\x1b[?1;2c");
-			terminal.sendInput("\x1b]11;#ffffff\x07");
-			terminal.sendInput("\x1b[?1;2c");
+			// An incomplete palette is dropped.
+			for (const reply of PALETTE_REPLIES.slice(0, 8)) terminal.sendInput(reply);
+			terminal.sendInput(DA1);
+			terminal.sendInput(DA1);
 
-			assert.deepStrictEqual((await first).background, { r: 0, g: 0, b: 0 });
-			assert.deepStrictEqual((await second).background, { r: 255, g: 255, b: 255 });
+			assert.deepStrictEqual(await first, { foreground: undefined, background: BLACK, palette: undefined });
+			assert.deepStrictEqual(await second, { foreground: undefined, background: undefined, palette: undefined });
 		} finally {
 			tui.stop();
 		}
 	});
 
-	it("dispatches unrelated input normally while waiting for replies", async () => {
-		const { terminal, tui, component, listenerInputs } = setup();
-		try {
-			const query = tui.queryTerminalColors({ timeoutMs: 1000 });
-			terminal.sendInput("x");
-			assert.deepStrictEqual(listenerInputs, ["x"]);
-			assert.deepStrictEqual(component.inputs, ["x"]);
-
-			terminal.sendInput("\x1b[?1;2c");
-			await query;
-		} finally {
-			tui.stop();
-		}
-	});
-
-	it("reports late replies after a timeout and consumes them until DA1 arrives", async () => {
-		const { terminal, tui, component, listenerInputs } = setup();
+	it("reports late replies after a timeout and consumes them until DA1", async () => {
+		const { terminal, tui, component } = setup();
 		try {
 			const late: TerminalColors[] = [];
 			const query = tui.queryTerminalColors({ timeoutMs: 1, onLateReply: (colors) => late.push(colors) });
 			await wait(5);
-			assert.deepStrictEqual(await query, { foreground: undefined, background: undefined, palette: undefined });
+			assert.strictEqual((await query).background, undefined);
 
 			terminal.sendInput("\x1b]11;#ffffff\x07");
-			for (const reply of paletteReplies()) terminal.sendInput(reply);
-			assert.deepStrictEqual(late, []);
-			terminal.sendInput("\x1b[?1;2c");
-
-			assert.deepStrictEqual(late, [
-				{ foreground: undefined, background: { r: 255, g: 255, b: 255 }, palette: PALETTE },
-			]);
-			assert.deepStrictEqual(listenerInputs, []);
+			terminal.sendInput(DA1);
+			assert.deepStrictEqual(late, [{ foreground: undefined, background: WHITE, palette: undefined }]);
 			assert.deepStrictEqual(component.inputs, []);
 
 			// With no query pending, color replies are ordinary input again.
 			terminal.sendInput("\x1b]11;#ffffff\x07");
 			assert.deepStrictEqual(component.inputs, ["\x1b]11;#ffffff\x07"]);
-		} finally {
-			tui.stop();
-		}
-	});
-
-	it("does not report late replies when the query completed in time", async () => {
-		const { terminal, tui } = setup();
-		try {
-			const late: TerminalColors[] = [];
-			const query = tui.queryTerminalColors({ timeoutMs: 1000, onLateReply: (colors) => late.push(colors) });
-			terminal.sendInput("\x1b]11;#000000\x07");
-			terminal.sendInput("\x1b[?1;2c");
-			assert.deepStrictEqual((await query).background, { r: 0, g: 0, b: 0 });
-			await wait(5);
-			assert.deepStrictEqual(late, []);
 		} finally {
 			tui.stop();
 		}

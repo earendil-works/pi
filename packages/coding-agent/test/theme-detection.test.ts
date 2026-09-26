@@ -13,34 +13,33 @@ afterEach(() => {
 });
 
 describe("detectColorFgBgTheme", () => {
-	it("uses the last COLORFGBG field as the background color index", () => {
-		expect(detectColorFgBgTheme({ COLORFGBG: "0;15" })).toBe("light");
+	it("classifies the last field by palette index like Vim", () => {
 		expect(detectColorFgBgTheme({ COLORFGBG: "15;0" })).toBe("dark");
 		expect(detectColorFgBgTheme({ COLORFGBG: "0;7;15" })).toBe("light");
+		// Solarized Dark's background is bright black.
+		expect(detectColorFgBgTheme({ COLORFGBG: "12;8" })).toBe("dark");
+		// rxvt writes "default" when the background is not a palette color.
+		expect(detectColorFgBgTheme({ COLORFGBG: "15;default" })).toBeUndefined();
 		expect(detectColorFgBgTheme({})).toBeUndefined();
 	});
 });
 
 describe("detectTerminalTheme", () => {
-	it("uses the reported background before COLORFGBG", () => {
-		expect(detectTerminalTheme({ background: { r: 250, g: 250, b: 250 } }, { COLORFGBG: "15;0" })).toBe("light");
-		expect(detectTerminalTheme({ background: { r: 8, g: 8, b: 8 } }, { COLORFGBG: "0;15" })).toBe("dark");
+	it("prefers the background, then the reported scheme, then COLORFGBG, then dark", () => {
+		const env = { COLORFGBG: "0;15" };
+		expect(detectTerminalTheme({ background: { r: 8, g: 8, b: 8 } }, "light", env)).toBe("dark");
+		expect(detectTerminalTheme({}, "dark", env)).toBe("dark");
+		expect(detectTerminalTheme({}, undefined, env)).toBe("light");
+		expect(detectTerminalTheme({}, undefined, {})).toBe("dark");
 	});
 
-	it("follows the terminal foreground when text is readable that way", () => {
-		// Black text has more contrast on this gray, but white text still reaches 4.5:1, so the foreground decides.
+	it("follows the foreground when text is readable that way", () => {
 		const background = { r: 118, g: 118, b: 118 };
 		expect(detectTerminalTheme({ background })).toBe("light");
 		expect(detectTerminalTheme({ background, foreground: { r: 255, g: 255, b: 255 } })).toBe("dark");
-		// White text cannot reach 4.5:1 on mid-gray, so the theme uses dark text instead.
-		expect(
-			detectTerminalTheme({ background: { r: 128, g: 128, b: 128 }, foreground: { r: 255, g: 255, b: 255 } }),
-		).toBe("light");
-	});
-
-	it("falls back to COLORFGBG, then dark", () => {
-		expect(detectTerminalTheme({}, { COLORFGBG: "0;15" })).toBe("light");
-		expect(detectTerminalTheme({ foreground: { r: 0, g: 0, b: 0 } }, {})).toBe("dark");
+		// White text cannot reach 4.5:1 on mid-gray.
+		const midGray = { r: 128, g: 128, b: 128 };
+		expect(detectTerminalTheme({ background: midGray, foreground: { r: 255, g: 255, b: 255 } })).toBe("light");
 	});
 });
 
