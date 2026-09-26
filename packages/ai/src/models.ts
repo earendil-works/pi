@@ -868,14 +868,18 @@ class ModelsImpl implements MutableModels {
 		options?: ModelsApiStreamOptions<TApi>,
 	): AssistantMessageEventStream {
 		const transcript = normalizeContext(context);
-		return lazyStream(model, async () => {
-			const provider = this.requireChatProvider(model);
-			const { requestModel, requestOptions } = await this.applyAuth(
-				model,
-				options as ModelsApiStreamOptions<Api> | undefined,
-			);
-			return provider.stream(requestModel, transcript, requestOptions as ApiStreamOptions<TApi>);
-		});
+		return lazyStream(
+			model,
+			async () => {
+				const provider = this.requireChatProvider(model);
+				const { requestModel, requestOptions } = await this.applyAuth(
+					model,
+					options as ModelsApiStreamOptions<Api> | undefined,
+				);
+				return provider.stream(requestModel, transcript, requestOptions as ApiStreamOptions<TApi>);
+			},
+			options?.signal,
+		);
 	}
 
 	async complete<TApi extends Api>(
@@ -888,11 +892,15 @@ class ModelsImpl implements MutableModels {
 
 	streamSimple(model: Model<Api>, context: Context, options?: ModelsSimpleStreamOptions): AssistantMessageEventStream {
 		const transcript = normalizeContext(context);
-		return lazyStream(model, async () => {
-			const provider = this.requireChatProvider(model);
-			const { requestModel, requestOptions } = await this.applyAuth(model, options);
-			return provider.streamSimple(requestModel, transcript, requestOptions as SimpleStreamOptions);
-		});
+		return lazyStream(
+			model,
+			async () => {
+				const provider = this.requireChatProvider(model);
+				const { requestModel, requestOptions } = await this.applyAuth(model, options);
+				return provider.streamSimple(requestModel, transcript, requestOptions as SimpleStreamOptions);
+			},
+			options?.signal,
+		);
 	}
 
 	async completeSimple(
@@ -908,14 +916,18 @@ class ModelsImpl implements MutableModels {
 		handle: DeferredHandle,
 		options?: ModelsDeferredFetchOptions,
 	): AssistantMessageEventStream {
-		return lazyStream(model, async () => {
-			const provider = this.requireChatProvider(model);
-			if (!provider.fetchDeferred) {
-				throw new ModelsError("provider", `Provider ${model.provider} does not support deferred responses`);
-			}
-			const { requestModel, requestOptions } = await this.applyAuth(model, options);
-			return provider.fetchDeferred(requestModel, handle, requestOptions as DeferredFetchOptions);
-		});
+		return lazyStream(
+			model,
+			async () => {
+				const provider = this.requireChatProvider(model);
+				if (!provider.fetchDeferred) {
+					throw new ModelsError("provider", `Provider ${model.provider} does not support deferred responses`);
+				}
+				const { requestModel, requestOptions } = await this.applyAuth(model, options);
+				return provider.fetchDeferred(requestModel, handle, requestOptions as DeferredFetchOptions);
+			},
+			options?.signal,
+		);
 	}
 
 	async fetchDeferred(
@@ -1059,12 +1071,17 @@ export function createProvider<TApi extends Api = Api>(input: CreateProviderOpti
 	const dispatch = (
 		model: Model<Api>,
 		run: (streams: ProviderStreams) => AssistantMessageEventStream,
+		signal?: AbortSignal,
 	): AssistantMessageEventStream => {
 		const streams = apiFor(model);
 		if (!streams) {
-			return lazyStream(model, async () => {
-				throw new ModelsError("stream", `Provider ${input.id} has no API implementation for "${model.api}"`);
-			});
+			return lazyStream(
+				model,
+				async () => {
+					throw new ModelsError("stream", `Provider ${input.id} has no API implementation for "${model.api}"`);
+				},
+				signal,
+			);
 		}
 		return run(streams);
 	};
@@ -1107,23 +1124,28 @@ export function createProvider<TApi extends Api = Api>(input: CreateProviderOpti
 			: undefined,
 		filterModels: input.filterModels,
 		filterAllModels: input.filterAllModels,
-		stream: (model, context, options) => dispatch(model, (streams) => streams.stream(model, context, options)),
+		stream: (model, context, options) =>
+			dispatch(model, (streams) => streams.stream(model, context, options), options?.signal),
 		streamSimple: (model, context, options) =>
-			dispatch(model, (streams) => streams.streamSimple(model, context, options)),
+			dispatch(model, (streams) => streams.streamSimple(model, context, options), options?.signal),
 	};
 
 	if (streams.some((entry) => entry.fetchDeferred !== undefined)) {
 		provider.fetchDeferred = (model, handle, options) =>
-			lazyStream(model, async () => {
-				const implementation = apiFor(model);
-				if (!implementation?.fetchDeferred) {
-					throw new ModelsError(
-						"provider",
-						`Provider ${input.id} does not support deferred responses for "${model.api}"`,
-					);
-				}
-				return implementation.fetchDeferred(model, handle, options);
-			});
+			lazyStream(
+				model,
+				async () => {
+					const implementation = apiFor(model);
+					if (!implementation?.fetchDeferred) {
+						throw new ModelsError(
+							"provider",
+							`Provider ${input.id} does not support deferred responses for "${model.api}"`,
+						);
+					}
+					return implementation.fetchDeferred(model, handle, options);
+				},
+				options?.signal,
+			);
 	}
 	if (streams.some((entry) => entry.cancelDeferred !== undefined)) {
 		provider.cancelDeferred = async (model, handle, options) => {
