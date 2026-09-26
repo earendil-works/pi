@@ -821,6 +821,7 @@ function toChatMessages(messages: Message[], supportsImages: boolean): MistralCh
 		if (msg.role === "assistant") {
 			const contentParts: MistralContentChunk[] = [];
 			const toolCalls: MistralRequestToolCall[] = [];
+			const thinkingTexts: string[] = [];
 
 			for (const block of msg.content) {
 				if (block.type === "text") {
@@ -831,10 +832,7 @@ function toChatMessages(messages: Message[], supportsImages: boolean): MistralCh
 				}
 				if (block.type === "thinking") {
 					if (block.thinking.trim().length > 0) {
-						contentParts.push({
-							type: "thinking",
-							thinking: [{ type: "text", text: sanitizeSurrogates(block.thinking) }],
-						});
+						thinkingTexts.push(block.thinking);
 					}
 					continue;
 				}
@@ -843,6 +841,18 @@ function toChatMessages(messages: Message[], supportsImages: boolean): MistralCh
 					type: "function",
 					function: { name: block.name, arguments: JSON.stringify(block.arguments || {}) },
 					index: 0,
+				});
+			}
+
+			// Mistral allows at most one leading thinking chunk per assistant message.
+			// Fragmented streams (e.g. GLM models on Mistral) can split reasoning output
+			// across multiple thinking blocks; replaying them 1:1 produces several leading
+			// thinking chunks, which Mistral rejects with a 400 that permanently bricks the
+			// session. Merge all thinking blocks into exactly one leading thinking chunk.
+			if (thinkingTexts.length > 0) {
+				contentParts.unshift({
+					type: "thinking",
+					thinking: [{ type: "text", text: sanitizeSurrogates(thinkingTexts.join("\n")) }],
 				});
 			}
 
