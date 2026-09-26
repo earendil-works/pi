@@ -11,6 +11,7 @@ import {
 	type Transport,
 	toToolDeclaration,
 } from "@earendil-works/pi-ai";
+import type { TelemetryContext } from "@earendil-works/pi-telemetry";
 import { runAgentLoop, runAgentLoopContinue } from "./agent-loop.ts";
 import { getDefaultStreamFn } from "./stream-fn.ts";
 import type {
@@ -138,6 +139,13 @@ export interface AgentOptions {
 	transport?: Transport;
 	maxRetryDelayMs?: number;
 	toolExecution?: ToolExecutionMode;
+	/**
+	 * Optional parent context for telemetry. When set, the agent loop emits a
+	 * `pi.ai.request` span (see `AI_TELEMETRY_SCHEMA`) around every assistant
+	 * request, and forwards the context to the stream function. Defaults to the
+	 * shared no-op context.
+	 */
+	telemetryContext?: TelemetryContext;
 }
 
 class PendingMessageQueue {
@@ -226,6 +234,8 @@ export class Agent {
 	public maxRetryDelayMs?: number;
 	/** Tool execution strategy for assistant messages that contain multiple tool calls. */
 	public toolExecution: ToolExecutionMode;
+	/** Optional telemetry context forwarded to the agent loop. */
+	public telemetryContext?: TelemetryContext;
 
 	constructor(options: AgentOptions) {
 		// Older compiled consumers may omit options or streamFn even though the current API requires them.
@@ -251,6 +261,7 @@ export class Agent {
 		this.transport = runtimeOptions.transport ?? "auto";
 		this.maxRetryDelayMs = runtimeOptions.maxRetryDelayMs;
 		this.toolExecution = runtimeOptions.toolExecution ?? "parallel";
+		this.telemetryContext = runtimeOptions.telemetryContext;
 	}
 
 	/**
@@ -477,6 +488,7 @@ export class Agent {
 			thinkingBudgets: this.thinkingBudgets,
 			maxRetryDelayMs: this.maxRetryDelayMs,
 			toolExecution: this.toolExecution,
+			telemetryContext: this.telemetryContext,
 			beforeToolCall: this.beforeToolCall,
 			afterToolCall: this.afterToolCall,
 			finishTurn: this.finishTurn,

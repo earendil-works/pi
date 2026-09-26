@@ -9,7 +9,7 @@ import {
 import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
 import { agentLoop, agentLoopContinue, runAgentLoop } from "../src/agent-loop.ts";
-import { setDefaultStreamFn } from "../src/index.ts";
+import { InMemoryTelemetryContext, setDefaultStreamFn } from "../src/index.ts";
 import type { AgentContext, AgentEvent, AgentLoopConfig, AgentMessage, AgentTool } from "../src/types.ts";
 
 // Mock stream for testing - mimics MockAssistantStream
@@ -2079,5 +2079,149 @@ describe("agentLoopContinue with AgentMessage", () => {
 		const messages = await stream.result();
 		expect(messages.length).toBe(1);
 		expect(messages[0].role).toBe("assistant");
+	});
+});
+
+describe("agentLoop telemetry", () => {
+	function createUsageWithValues() {
+		return {
+			input: 10,
+			output: 5,
+			cacheRead: 2,
+			cacheWrite: 1,
+			reasoning: 3,
+			totalTokens: 18,
+			cost: { input: 0.001, output: 0.002, cacheRead: 0, cacheWrite: 0, total: 0.003 },
+		};
+	}
+
+	function telemetryStreamFn(stopReason: Exclude<AssistantMessage["stopReason"], "pending"> = "stop") {
+		return () => {
+			const stream = new MockAssistantStream();
+			queueMicrotask(() => {
+				const message = createAssistantMessage([{ type: "text", text: "Hi" }], stopReason);
+				message.usage = createUsageWithValues();
+				message.responseId = "resp-123";
+				if (stopReason === "error" || stopReason === "aborted") {
+					stream.push({ type: "error", reason: stopReason, error: message });
+				} else {
+					stream.push({ type: "done", reason: stopReason, message });
+				}
+			});
+			return stream;
+		};
+	}
+
+	it("emits a pi.ai.request span with start and completion attributes", async () => {
+		const telemetry = new InMemoryTelemetryContext();
+		const context: AgentContext = { messages: [], tools: [] };
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+			telemetryContext: telemetry,
+		};
+
+		const stream = agentLoop([createUserMessage("Hello")], context, config, undefined, telemetryStreamFn());
+		await stream.result();
+
+		const spans = telemetry.getSpans();
+		expect(spans.length).toBe(1);
+		const span = spans[0]!;
+		expect(span.name).toBe("pi.ai.request");
+		expect(span.settled).toBe(true);
+		expect(span.status.status).toBe("ok");
+		expect(span.attributes["pi.ai.operation"]).toBe("stream");
+		expect(span.attributes["pi.ai.provider"]).toBe("openai");
+		expect(span.attributes["pi.ai.model"]).toBe("mock");
+		expect(span.attributes["pi.ai.api"]).toBe("openai-responses");
+		expect(span.attributes["pi.ai.streaming"]).toBe(true);
+		expect(span.attributes["pi.ai.response.stop_reason"]).toBe("stop");
+		expect(span.attributes["pi.ai.response.id"]).toBe("resp-123");
+		expect(span.attributes["pi.ai.usage.input_tokens"]).toBe(10);
+		expect(span.attributes["pi.ai.usage.output_tokens"]).toBe(5);
+		expect(span.attributes["pi.ai.usage.cache_read_tokens"]).toBe(2);
+		expect(span.attributes["pi.ai.usage.cache_write_tokens"]).toBe(1);
+		expect(span.attributes["pi.ai.usage.reasoning_tokens"]).toBe(3);
+		expect(span.attributes["pi.ai.usage.total_tokens"]).toBe(18);
+		expect(span.attributes["pi.ai.usage.cost"]).toBe(0.003);
+		expect(span.attributes["pi.ai.stream.chunk_count"]).toBe(1);
+		expect(typeof span.attributes["pi.ai.stream.time_to_first_chunk_ms"]).toBe("number");
+	});
+
+	it("maps toolUse stop reason to tool_use", async () => {
+		const telemetry = new InMemoryTelemetryContext();
+		const context: AgentContext = { messages: [], tools: [] };
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+			telemetryContext: telemetry,
+		};
+
+		const stream = agentLoop([createUserMessage("Hello")], context, config, undefined, telemetryStreamFn("toolUse"));
+		// The loop will try to execute the (nonexistent) tool call; drain events and ignore failures.
+		try {
+			for await (const _ of stream) {
+				// drain
+			}
+		} catch {
+			// tool execution of an unknown tool may throw; span assertion is what matters
+		}
+
+		const spans = telemetry.getSpans();
+		expect(spans.length).toBe(1);
+		expect(spans[0]!.attributes["pi.ai.response.stop_reason"]).toBe("tool_use");
+		expect(spans[0]!.status.status).toBe("ok");
+	});
+
+	it("marks the span as error when the assistant response fails", async () => {
+		const telemetry = new InMemoryTelemetryContext();
+		const context: AgentContext = { messages: [], tools: [] };
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+			telemetryContext: telemetry,
+		};
+
+		const stream = agentLoop([createUserMessage("Hello")], context, config, undefined, telemetryStreamFn("error"));
+		for await (const _ of stream) {
+			// drain
+		}
+		await stream.result().catch(() => undefined);
+
+		const spans = telemetry.getSpans();
+		expect(spans.length).toBe(1);
+		expect(spans[0]!.attributes["pi.ai.response.stop_reason"]).toBe("error");
+		expect(spans[0]!.status.status).toBe("error");
+	});
+
+	it("forwards the telemetry context to the stream function options", async () => {
+		const telemetry = new InMemoryTelemetryContext();
+		const context: AgentContext = { messages: [], tools: [] };
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+			telemetryContext: telemetry,
+		};
+
+		let receivedOptions: unknown;
+		const streamFn = (_model: unknown, _context: unknown, options: unknown) => {
+			receivedOptions = options;
+			return telemetryStreamFn()();
+		};
+
+		const stream = agentLoop([createUserMessage("Hello")], context, config, undefined, streamFn as never);
+		await stream.result();
+
+		expect((receivedOptions as { telemetryContext?: unknown }).telemetryContext).toBe(telemetry);
+	});
+
+	it("emits no spans by default", async () => {
+		const context: AgentContext = { messages: [], tools: [] };
+		const config: AgentLoopConfig = { model: createModel(), convertToLlm: identityConverter };
+
+		const stream = agentLoop([createUserMessage("Hello")], context, config, undefined, telemetryStreamFn());
+		const messages = await stream.result();
+		// No telemetryContext configured: loop works unchanged against the no-op context.
+		expect(messages[messages.length - 1]?.role).toBe("assistant");
 	});
 });

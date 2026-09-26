@@ -1,5 +1,11 @@
 import { join } from "node:path";
-import { Agent, type AgentMessage, setDefaultStreamFn, type ThinkingLevel } from "@earendil-works/pi-agent-core";
+import {
+	Agent,
+	type AgentMessage,
+	setDefaultStreamFn,
+	type TelemetryContext,
+	type ThinkingLevel,
+} from "@earendil-works/pi-agent-core";
 import type { ModelsSimpleStreamOptions } from "@earendil-works/pi-ai";
 import { clampThinkingLevel, type Message, type Model, streamSimple } from "@earendil-works/pi-ai/compat";
 import { getAgentDir } from "../config.ts";
@@ -87,6 +93,13 @@ export interface CreateAgentSessionOptions {
 	settingsManager?: SettingsManager;
 	/** Session start event metadata for extension runtime startup. */
 	sessionStartEvent?: SessionStartEvent;
+
+	/**
+	 * Optional parent telemetry context. When set, the agent emits
+	 * `pi.ai.request` spans for every assistant request. Defaults to the
+	 * shared no-op context (no telemetry recorded).
+	 */
+	telemetryContext?: TelemetryContext;
 }
 
 /** Result from createAgentSession */
@@ -412,6 +425,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		transport: settingsManager.getTransport(),
 		thinkingBudgets: settingsManager.getThinkingBudgets(),
 		maxRetryDelayMs: settingsManager.getProviderRetrySettings().maxRetryDelayMs,
+		telemetryContext: options.telemetryContext,
 	});
 
 	// Restore missing settings metadata for older sessions.

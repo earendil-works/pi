@@ -15,6 +15,8 @@ import {
 	toToolDeclaration,
 	validateToolArguments,
 } from "@earendil-works/pi-ai";
+import { createTypedSpanStarter, NOOP_TELEMETRY_CONTEXT } from "@earendil-works/pi-telemetry";
+import { AI_TELEMETRY_SCHEMA } from "./harness/telemetry.ts";
 import { getDefaultStreamFn } from "./stream-fn.ts";
 import type {
 	AgentContext,
@@ -377,6 +379,27 @@ function withToolChanges(message: SystemMessage, { toolsAdded, toolsRemoved }: T
  * Stream an assistant response from the LLM.
  * This is where AgentMessage[] gets transformed to Message[] for the LLM.
  */
+/**
+ * Maps pi-ai stop reasons to the closed `pi.ai.response.stop_reason` value set.
+ * "pending" never appears on a settled assistant message and is omitted.
+ */
+function toTelemetryStopReason(
+	stopReason: AssistantMessage["stopReason"],
+): "stop" | "length" | "tool_use" | "error" | "aborted" | "deferred" | undefined {
+	switch (stopReason) {
+		case "stop":
+		case "length":
+		case "error":
+		case "aborted":
+		case "deferred":
+			return stopReason;
+		case "toolUse":
+			return "tool_use";
+		default:
+			return undefined;
+	}
+}
+
 async function streamAssistantResponse(
 	context: AgentContext,
 	config: AgentLoopConfig,
@@ -399,70 +422,119 @@ async function streamAssistantResponse(
 	const resolvedApiKey =
 		(config.getApiKey ? await config.getApiKey(config.model.provider) : undefined) || config.apiKey;
 
-	const response = await streamFunction(config.model, llmContext, {
-		...config,
-		apiKey: resolvedApiKey,
-		signal,
-	});
+	const startAiSpan = createTypedSpanStarter(config.telemetryContext ?? NOOP_TELEMETRY_CONTEXT, [AI_TELEMETRY_SCHEMA]);
 
-	let partialMessage: AssistantMessage | null = null;
-	let addedPartial = false;
+	return startAiSpan(
+		"pi.ai.request",
+		{
+			"pi.ai.operation": "stream",
+			"pi.ai.provider": config.model.provider,
+			"pi.ai.model": config.model.id,
+			"pi.ai.api": config.model.api,
+			"pi.ai.streaming": true,
+			...(config.deferred ? { "pi.ai.deferred": true } : {}),
+		},
+		async (span) => {
+			const requestStart = Date.now();
+			let timeToFirstChunkMs: number | undefined;
+			let chunkCount = 0;
 
-	for await (const event of response) {
-		switch (event.type) {
-			case "start":
-				partialMessage = event.partial;
-				context.messages.push(partialMessage);
-				addedPartial = true;
-				await emit({ type: "message_start", message: { ...partialMessage } });
-				break;
-
-			case "text_start":
-			case "text_delta":
-			case "text_end":
-			case "thinking_start":
-			case "thinking_delta":
-			case "thinking_end":
-			case "toolcall_start":
-			case "toolcall_delta":
-			case "toolcall_end":
-				if (partialMessage) {
-					partialMessage = event.partial;
-					context.messages[context.messages.length - 1] = partialMessage;
-					await emit({
-						type: "message_update",
-						assistantMessageEvent: event,
-						message: { ...partialMessage },
-					});
+			const finish = (finalMessage: AssistantMessage): AssistantMessage => {
+				const stopReason = toTelemetryStopReason(finalMessage.stopReason);
+				span.setAttributes({
+					...(finalMessage.responseModel ? { "pi.ai.response.model": finalMessage.responseModel } : {}),
+					...(finalMessage.responseId ? { "pi.ai.response.id": finalMessage.responseId } : {}),
+					...(stopReason ? { "pi.ai.response.stop_reason": stopReason } : {}),
+					"pi.ai.usage.input_tokens": finalMessage.usage.input,
+					"pi.ai.usage.output_tokens": finalMessage.usage.output,
+					"pi.ai.usage.cache_read_tokens": finalMessage.usage.cacheRead,
+					"pi.ai.usage.cache_write_tokens": finalMessage.usage.cacheWrite,
+					...(finalMessage.usage.reasoning !== undefined
+						? { "pi.ai.usage.reasoning_tokens": finalMessage.usage.reasoning }
+						: {}),
+					"pi.ai.usage.total_tokens": finalMessage.usage.totalTokens,
+					"pi.ai.usage.cost": finalMessage.usage.cost.total,
+					"pi.ai.stream.chunk_count": chunkCount,
+					...(timeToFirstChunkMs !== undefined
+						? { "pi.ai.stream.time_to_first_chunk_ms": timeToFirstChunkMs }
+						: {}),
+				});
+				if (finalMessage.stopReason === "error") {
+					span.setStatus({ status: "error" });
 				}
-				break;
-
-			case "done":
-			case "error": {
-				const finalMessage = await response.result();
-				if (addedPartial) {
-					context.messages[context.messages.length - 1] = finalMessage;
-				} else {
-					context.messages.push(finalMessage);
-				}
-				if (!addedPartial) {
-					await emit({ type: "message_start", message: { ...finalMessage } });
-				}
-				await emit({ type: "message_end", message: finalMessage });
 				return finalMessage;
-			}
-		}
-	}
+			};
 
-	const finalMessage = await response.result();
-	if (addedPartial) {
-		context.messages[context.messages.length - 1] = finalMessage;
-	} else {
-		context.messages.push(finalMessage);
-		await emit({ type: "message_start", message: { ...finalMessage } });
-	}
-	await emit({ type: "message_end", message: finalMessage });
-	return finalMessage;
+			const response = await streamFunction(config.model, llmContext, {
+				...config,
+				apiKey: resolvedApiKey,
+				signal,
+			});
+
+			let partialMessage: AssistantMessage | null = null;
+			let addedPartial = false;
+
+			for await (const event of response) {
+				chunkCount++;
+				if (timeToFirstChunkMs === undefined) {
+					timeToFirstChunkMs = Date.now() - requestStart;
+				}
+				switch (event.type) {
+					case "start":
+						partialMessage = event.partial;
+						context.messages.push(partialMessage);
+						addedPartial = true;
+						await emit({ type: "message_start", message: { ...partialMessage } });
+						break;
+
+					case "text_start":
+					case "text_delta":
+					case "text_end":
+					case "thinking_start":
+					case "thinking_delta":
+					case "thinking_end":
+					case "toolcall_start":
+					case "toolcall_delta":
+					case "toolcall_end":
+						if (partialMessage) {
+							partialMessage = event.partial;
+							context.messages[context.messages.length - 1] = partialMessage;
+							await emit({
+								type: "message_update",
+								assistantMessageEvent: event,
+								message: { ...partialMessage },
+							});
+						}
+						break;
+
+					case "done":
+					case "error": {
+						const finalMessage = await response.result();
+						if (addedPartial) {
+							context.messages[context.messages.length - 1] = finalMessage;
+						} else {
+							context.messages.push(finalMessage);
+						}
+						if (!addedPartial) {
+							await emit({ type: "message_start", message: { ...finalMessage } });
+						}
+						await emit({ type: "message_end", message: finalMessage });
+						return finish(finalMessage);
+					}
+				}
+			}
+
+			const finalMessage = await response.result();
+			if (addedPartial) {
+				context.messages[context.messages.length - 1] = finalMessage;
+			} else {
+				context.messages.push(finalMessage);
+				await emit({ type: "message_start", message: { ...finalMessage } });
+			}
+			await emit({ type: "message_end", message: finalMessage });
+			return finish(finalMessage);
+		},
+	);
 }
 
 /**
