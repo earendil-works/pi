@@ -11,7 +11,11 @@ vi.mock("@earendil-works/pi-tui", async (importOriginal) => ({
 		},
 	}),
 }));
-vi.mock("../src/utils/clipboard.ts", () => ({ copyToClipboard: vi.fn(), readClipboardText }));
+vi.mock("../src/utils/clipboard.ts", () => ({
+	copyToClipboard: vi.fn(),
+	readClipboardText,
+	readClipboardFilePaths: vi.fn(async () => null),
+}));
 vi.mock("../src/utils/clipboard-command.ts", () => ({ runClipboardCommand: vi.fn(async () => undefined) }));
 afterEach(() => vi.unstubAllEnvs());
 

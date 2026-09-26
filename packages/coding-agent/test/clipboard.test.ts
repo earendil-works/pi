@@ -2,12 +2,13 @@ import { existsSync, readFileSync } from "node:fs";
 import type * as OsModule from "node:os";
 import type { NativeClipboard } from "@earendil-works/pi-tui";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { copyToClipboard, readClipboardText } from "../src/utils/clipboard.ts";
+import { copyToClipboard, readClipboardFilePaths, readClipboardText } from "../src/utils/clipboard.ts";
 
 const mocks = vi.hoisted(() => ({
 	clipboard: {
 		getText: vi.fn<NativeClipboard["getText"]>(),
 		getImage: vi.fn<NativeClipboard["getImage"]>(),
+		getFilePaths: vi.fn<NonNullable<NativeClipboard["getFilePaths"]>>(),
 		setText: vi.fn<(text: string) => Promise<void>>(),
 	},
 	getNativeClipboard: vi.fn<() => NativeClipboard | undefined>(),
@@ -48,6 +49,7 @@ beforeEach(() => {
 	mocks.getNativeClipboard.mockReturnValue(mocks.clipboard);
 	mocks.clipboard.getText.mockResolvedValue(null);
 	mocks.clipboard.setText.mockResolvedValue();
+	mocks.clipboard.getFilePaths.mockResolvedValue(null);
 	mocks.command.mockResolvedValue(Buffer.alloc(0));
 	osc52Writes = [];
 	originalWrite = process.stdout.write.bind(process.stdout);
@@ -107,6 +109,29 @@ describe("readClipboardText", () => {
 		mocks.command.mockImplementation(async (name) => (name === "wl-paste" ? undefined : Buffer.from("X11 text")));
 		await expect(readClipboardText()).resolves.toBe("X11 text");
 		expect(mocks.getNativeClipboard).not.toHaveBeenCalled();
+	});
+});
+
+describe("readClipboardFilePaths", () => {
+	test("returns file paths from the native clipboard", async () => {
+		mocks.clipboard.getFilePaths.mockResolvedValue(["/tmp/a.png", "/tmp/My Photos/b.png"]);
+		await expect(readClipboardFilePaths()).resolves.toEqual(["/tmp/a.png", "/tmp/My Photos/b.png"]);
+	});
+	test.each([null, undefined, []])("maps %j to null", async (paths) => {
+		mocks.clipboard.getFilePaths.mockResolvedValue(paths);
+		await expect(readClipboardFilePaths()).resolves.toBeNull();
+	});
+	test("maps missing platform support to null", async () => {
+		// Linux and Windows prebuilds do not export getFilePaths yet.
+		mocks.getNativeClipboard.mockReturnValue({
+			getText: mocks.clipboard.getText,
+			getImage: mocks.clipboard.getImage,
+		});
+		await expect(readClipboardFilePaths()).resolves.toBeNull();
+	});
+	test("catches rejected reads", async () => {
+		mocks.clipboard.getFilePaths.mockRejectedValue(new Error("clipboard unavailable"));
+		await expect(readClipboardFilePaths()).resolves.toBeNull();
 	});
 });
 

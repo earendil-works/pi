@@ -7,8 +7,16 @@
 #include <string.h>
 #endif
 
-typedef enum { CLIPBOARD_TEXT, CLIPBOARD_IMAGE, CLIPBOARD_WRITE } clipboard_operation;
-typedef enum { CLIPBOARD_UNAVAILABLE, CLIPBOARD_EMPTY, CLIPBOARD_UTF8, CLIPBOARD_LATIN1, CLIPBOARD_UTF16, CLIPBOARD_BUFFER } clipboard_format;
+typedef enum { CLIPBOARD_TEXT, CLIPBOARD_IMAGE, CLIPBOARD_WRITE, CLIPBOARD_FILES } clipboard_operation;
+typedef enum {
+    CLIPBOARD_UNAVAILABLE,
+    CLIPBOARD_EMPTY,
+    CLIPBOARD_UTF8,
+    CLIPBOARD_LATIN1,
+    CLIPBOARD_UTF16,
+    CLIPBOARD_BUFFER,
+    CLIPBOARD_PATHS
+} clipboard_format;
 
 typedef struct {
     napi_async_work work;
@@ -71,6 +79,27 @@ static void PI_NAPI_CALL complete_clipboard_work(napi_env env, int status, void*
     if (!job->error && job->operation != CLIPBOARD_WRITE) {
         if (job->format == CLIPBOARD_EMPTY) {
             result = null_value(env);
+        } else if (job->format == CLIPBOARD_PATHS) {
+            // NUL-separated UTF-8 filesystem paths, one entry per clipboard file.
+            napi_create_array_fn create_array = (napi_create_array_fn)node_symbol("napi_create_array");
+            napi_set_element_fn set_element = (napi_set_element_fn)node_symbol("napi_set_element");
+            if (!create_array || !set_element || create_array(env, &result) != 0) {
+                status = 1;
+            } else {
+                const char* cursor = (const char*)job->data;
+                const char* end = cursor + job->length;
+                for (uint32_t index = 0; cursor < end && *cursor; index++) {
+                    const char* terminator = cursor;
+                    while (*terminator) terminator++;
+                    napi_value item = 0;
+                    if (create_string(env, cursor, (size_t)(terminator - cursor), &item) != 0 ||
+                        set_element(env, result, index, item) != 0) {
+                        status = 1;
+                        break;
+                    }
+                    cursor = terminator + 1;
+                }
+            }
         } else if (job->format == CLIPBOARD_BUFFER) {
             napi_create_buffer_copy_fn create_buffer = (napi_create_buffer_copy_fn)node_symbol("napi_create_buffer_copy");
             status = create_buffer(env, job->length, job->data, 0, &result);

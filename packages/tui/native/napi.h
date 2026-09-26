@@ -35,6 +35,8 @@ typedef int (PI_NAPI_CALL *napi_create_buffer_copy_fn)(napi_env, size_t, const v
 typedef int (PI_NAPI_CALL *napi_create_function_fn)(napi_env, const char*, size_t, napi_callback, void*, napi_value*);
 typedef int (PI_NAPI_CALL *napi_create_string_utf8_fn)(napi_env, const char*, size_t, napi_value*);
 typedef int (PI_NAPI_CALL *napi_create_string_utf16_fn)(napi_env, const uint16_t*, size_t, napi_value*);
+typedef int (PI_NAPI_CALL *napi_create_array_fn)(napi_env, napi_value*);
+typedef int (PI_NAPI_CALL *napi_set_element_fn)(napi_env, napi_value, uint32_t, napi_value);
 typedef int (PI_NAPI_CALL *napi_get_boolean_fn)(napi_env, bool, napi_value*);
 typedef int (PI_NAPI_CALL *napi_get_cb_info_fn)(napi_env, napi_callback_info, size_t*, napi_value*, napi_value*, void**);
 typedef int (PI_NAPI_CALL *napi_get_value_fn)(napi_env, napi_value*);

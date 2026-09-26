@@ -11,6 +11,13 @@ export interface NativeClipboard {
 	getText(): Promise<string | null | undefined>;
 	/** Undefined means unavailable, null means no image; transfer failures reject. */
 	getImage(): Promise<Uint8Array | null | undefined>;
+	/**
+	 * POSIX paths of file URLs on the clipboard (e.g. Finder file copies).
+	 * Callers must prefer these over getImage(): a file copy also publishes its
+	 * icon as image data. Undefined means unavailable, null means no files;
+	 * transfer failures reject.
+	 */
+	getFilePaths?(): Promise<string[] | null | undefined>;
 	/** Linux uses command-line tools to retain clipboard ownership instead. */
 	setText?(text: string): Promise<void>;
 }

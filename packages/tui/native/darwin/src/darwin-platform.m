@@ -66,7 +66,36 @@ static void clipboard_execute(clipboard_job* job) {
             } else {
                 clipboard_copy(job, text.UTF8String, [text lengthOfBytesUsingEncoding:NSUTF8StringEncoding], CLIPBOARD_UTF8);
             }
-        } else {
+        } else if (job->operation == CLIPBOARD_FILES) {
+            // Finder file copies also publish the file icon as image data, so callers
+            // must prefer these file paths over getImage() (#9999).
+            NSArray* urls = [pasteboard readObjectsForClasses:@[[NSURL class]]
+                options:@{NSPasteboardURLReadingFileURLsOnlyKey: @YES}];
+            size_t total = 0;
+            for (NSURL* url in urls) {
+                const char* path = url.fileSystemRepresentation;
+                if (path) total += strlen(path) + 1;
+            }
+            if (total == 0) {
+                job->format = CLIPBOARD_EMPTY;
+                return;
+            }
+            char* paths = clipboard_alloc(total);
+            if (!paths) {
+                job->error = "Out of memory";
+                return;
+            }
+            char* cursor = paths;
+            for (NSURL* url in urls) {
+                const char* path = url.fileSystemRepresentation;
+                if (!path) continue;
+                size_t length = strlen(path);
+                memcpy(cursor, path, length + 1);
+                cursor += length + 1;
+            }
+            clipboard_copy(job, paths, total, CLIPBOARD_PATHS);
+            clipboard_free(paths);
+        } else if (job->operation == CLIPBOARD_IMAGE) {
             if (![pasteboard availableTypeFromArray:@[ NSPasteboardTypePNG, NSPasteboardTypeTIFF ]]) {
                 job->format = CLIPBOARD_EMPTY;
                 return;
@@ -84,10 +113,15 @@ static void clipboard_execute(clipboard_job* job) {
     }
 }
 
+static napi_value PI_NAPI_CALL get_clipboard_file_paths(napi_env env, napi_callback_info info) {
+    return queue_clipboard(env, info, CLIPBOARD_FILES);
+}
+
 PI_NAPI_EXPORT napi_value napi_register_module_v1(napi_env env, napi_value exports) {
     set_function_export(env, exports, "isModifierPressed", is_modifier_pressed);
     set_function_export(env, exports, "getText", get_clipboard_text);
     set_function_export(env, exports, "setText", set_clipboard_text);
     set_function_export(env, exports, "getImage", get_clipboard_image);
+    set_function_export(env, exports, "getFilePaths", get_clipboard_file_paths);
     return exports;
 }
