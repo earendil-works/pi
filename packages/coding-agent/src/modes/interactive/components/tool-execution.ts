@@ -156,6 +156,13 @@ export class ToolExecutionComponent extends Container {
 		return new Text(theme.fg("toolTitle", theme.bold(this.toolName)), 0, 0);
 	}
 
+	/** One-line warning shown below a fallback row when a custom renderer throws (#10073). */
+	private createRenderErrorWarning(error: unknown): Component {
+		const raw = error instanceof Error ? error.message : String(error);
+		const message = raw.length > 120 ? `${raw.slice(0, 117)}...` : raw.replace(/\n/g, " ");
+		return new Text(theme.fg("warning", `[render error: ${message}]`), 1, 0);
+	}
+
 	private createResultFallback(): Component | undefined {
 		const output = this.getTextOutput();
 		if (!output) {
@@ -330,9 +337,10 @@ export class ToolExecutionComponent extends Container {
 					this.callRendererComponent = component;
 					renderContainer.addChild(this.createResultRegion(component));
 					hasContent = true;
-				} catch {
+				} catch (error) {
 					this.callRendererComponent = undefined;
 					renderContainer.addChild(this.createResultRegion(this.createCallFallback()));
+					renderContainer.addChild(this.createRenderErrorWarning(error));
 					hasContent = true;
 				}
 			}
@@ -356,13 +364,14 @@ export class ToolExecutionComponent extends Container {
 						this.resultRendererComponent = component;
 						renderContainer.addChild(this.createResultRegion(component));
 						hasContent = true;
-					} catch {
+					} catch (error) {
 						this.resultRendererComponent = undefined;
 						const component = this.createResultFallback();
 						if (component) {
 							renderContainer.addChild(this.createResultRegion(component));
-							hasContent = true;
 						}
+						renderContainer.addChild(this.createRenderErrorWarning(error));
+						hasContent = true;
 					}
 				}
 			}
