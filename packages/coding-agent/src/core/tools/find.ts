@@ -29,6 +29,11 @@ const findSchema = Type.Object({
 	}),
 	path: Type.Optional(Type.String({ description: "Directory to search in (default: current directory)" })),
 	limit: Type.Optional(Type.Number({ description: "Maximum number of results (default: 1000)" })),
+	directoryOnly: Type.Optional(
+		Type.Boolean({
+			description: "If true, only return directories matching the pattern. Default: false (return all entries).",
+		}),
+	),
 });
 
 export const findToolSystemPromptContribution = {
@@ -80,7 +85,12 @@ export function createFindToolDefinition(
 		parameters: findSchema,
 		async execute(
 			_toolCallId,
-			{ pattern, path: searchDir, limit }: { pattern: string; path?: string; limit?: number },
+			{
+				pattern,
+				path: searchDir,
+				limit,
+				directoryOnly,
+			}: { pattern: string; path?: string; limit?: number; directoryOnly?: boolean },
 			signal?: AbortSignal,
 			_onUpdate?,
 			ctx?: ExtensionContext,
@@ -180,6 +190,9 @@ export function createFindToolDefinition(
 						}
 
 						const args: string[] = ["--glob", "--color=never", "--hidden"];
+						if (directoryOnly) {
+							args.push("-t", "directory");
+						}
 
 						// fd normally ignores .gitignore outside git repos, so keep --no-require-git
 						// there. Inside repos, use fd's default git-aware behavior so parent
