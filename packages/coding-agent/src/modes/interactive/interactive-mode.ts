@@ -543,6 +543,7 @@ export class InteractiveMode {
 
 	// Custom header from extension (undefined = use built-in header)
 	private customHeader: (Component & { dispose?(): void }) | undefined = undefined;
+	private messageDecorator: ((role: "user" | "assistant", content: Component, theme: Theme) => Component) | undefined;
 
 	private options: InteractiveModeOptions;
 	private readonly onRightClickPaste = (): void => {
@@ -2363,6 +2364,7 @@ export class InteractiveMode {
 		this.clearExtensionTerminalInputListeners();
 		this.setExtensionFooter(undefined);
 		this.setExtensionHeader(undefined);
+		this.messageDecorator = undefined;
 		this.clearExtensionWidgets();
 		this.footerDataProvider.clearExtensionStatuses();
 		this.footer.invalidate();
@@ -2550,6 +2552,10 @@ export class InteractiveMode {
 			setWidget: (key, content, options) => this.setExtensionWidget(key, content, options),
 			setFooter: (factory) => this.setExtensionFooter(factory),
 			setHeader: (factory) => this.setExtensionHeader(factory),
+			setMessageDecorator: (factory) => {
+				this.messageDecorator = factory;
+				this.ui.requestRender();
+			},
 			setTitle: (title) => this.ui.terminal.setTitle(title),
 			custom: (factory, options) => this.showExtensionCustom(factory, options),
 			pasteToEditor: (text) => this.editor.handleInput(`\x1b[200~${text}\x1b[201~`),
@@ -3384,6 +3390,7 @@ export class InteractiveMode {
 						this.hiddenThinkingLabel,
 						this.outputPad,
 						this.getMarkdownTransformers(),
+						this.messageDecorator ? (content) => this.messageDecorator!("assistant", content, theme) : undefined,
 					);
 					this.streamingMessage = event.message;
 					this.chatContainer.addChild(this.streamingComponent);
@@ -3800,6 +3807,7 @@ export class InteractiveMode {
 								this.getMarkdownThemeWithSettings(),
 								this.outputPad,
 								this.getMarkdownTransformers(),
+								this.messageDecorator ? (content) => this.messageDecorator!("user", content, theme) : undefined,
 							);
 							this.chatContainer.addChild(userComponent);
 						}
@@ -3809,6 +3817,7 @@ export class InteractiveMode {
 							this.getMarkdownThemeWithSettings(),
 							this.outputPad,
 							this.getMarkdownTransformers(),
+							this.messageDecorator ? (content) => this.messageDecorator!("user", content, theme) : undefined,
 						);
 						this.chatContainer.addChild(userComponent);
 					}
@@ -3826,6 +3835,7 @@ export class InteractiveMode {
 					this.hiddenThinkingLabel,
 					this.outputPad,
 					this.getMarkdownTransformers(),
+					this.messageDecorator ? (content) => this.messageDecorator!("assistant", content, theme) : undefined,
 				);
 				this.chatContainer.addChild(assistantComponent);
 				break;

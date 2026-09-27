@@ -201,6 +201,14 @@ export interface ExtensionUIContext {
 	/** Set a custom header component (shown at startup, above chat), or undefined to restore the built-in header. */
 	setHeader(factory: ((tui: TUI, theme: Theme) => Component & { dispose?(): void }) | undefined): void;
 
+	/** Decorate ordinary user messages and assistant text (not thinking or tool output).
+	 * The returned component receives the available width and must invalidate its child.
+	 * Called again when streaming content changes or the transcript is rebuilt.
+	 */
+	setMessageDecorator(
+		factory: ((role: "user" | "assistant", content: Component, theme: Theme) => Component) | undefined,
+	): void;
+
 	/** Set the terminal window/tab title. */
 	setTitle(title: string): void;
 

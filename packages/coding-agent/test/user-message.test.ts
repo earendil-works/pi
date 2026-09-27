@@ -24,6 +24,18 @@ describe("UserMessageComponent", () => {
 		expect(lines[2].endsWith(BG_RESET)).toBe(true);
 	});
 
+	test("decorates the message without exceeding the terminal width", () => {
+		initTheme("dark");
+		const component = new UserMessageComponent("hello", undefined, 1, [], (content) => ({
+			render: (width) => content.render(width - 2).map((line) => `│ ${line}`),
+			invalidate: () => content.invalidate(),
+		}));
+		const lines = component.render(20).map(stripAnsi);
+		expect(lines).toHaveLength(3);
+		expect(lines.every((line) => line.startsWith("│ ") && line.length <= 20)).toBe(true);
+		expect(lines.join("\n")).toContain("hello");
+	});
+
 	test("chains Markdown transformers with user message context", () => {
 		initTheme("dark");
 		const calls: string[] = [];

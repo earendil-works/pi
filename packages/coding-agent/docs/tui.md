@@ -14,8 +14,13 @@ Start with `ctx.ui` methods from an [extension](extensions.md#interact-with-the-
 | Replace the header, footer, or editor | The corresponding `ctx.ui` component factory |
 | Temporary interactive screen or overlay | `ctx.ui.custom()` |
 | Custom rendering for a tool or session entry | An extension renderer |
+| Decorate ordinary user messages and assistant text | `ctx.ui.setMessageDecorator()` |
 
 These APIs receive Pi’s active theme and keybindings where needed. Do not create a second terminal renderer inside an extension.
+
+## Decorate ordinary messages
+
+Use `ctx.ui.setMessageDecorator((role, content, theme) => component)` to wrap ordinary user messages and assistant text with a custom component. User messages pass their existing background box; assistant messages pass each text Markdown component. Thinking, tool calls, and other session entries are not decorated. The callback runs when the message content is built, including during streaming; the wrapper must implement `invalidate()` and keep each rendered line within the supplied width. Set `undefined` to restore the default rendering. Guard this TUI-only API with `ctx.mode === "tui"`.
 
 ## Understand the component model
 

@@ -45,6 +45,29 @@ describe("AssistantMessageComponent", () => {
 		expect(lines[lines.length - 1].startsWith(OSC133_ZONE_END + OSC133_ZONE_FINAL)).toBe(true);
 	});
 
+	test("decorates assistant text but leaves thinking undecorated", () => {
+		initTheme("dark");
+		const component = new AssistantMessageComponent(
+			createAssistantMessage([
+				{ type: "thinking", thinking: "reasoning" },
+				{ type: "text", text: "answer" },
+			]),
+			false,
+			undefined,
+			"Thinking...",
+			1,
+			[],
+			(content) => ({
+				render: (width) => content.render(width - 2).map((line) => `│ ${line}`),
+				invalidate: () => content.invalidate(),
+			}),
+		);
+		const lines = component.render(40).map(stripAnsi);
+		expect(lines.find((line) => line.includes("answer"))?.startsWith("│ ")).toBe(true);
+		expect(lines.find((line) => line.includes("reasoning"))?.startsWith("│ ")).toBe(false);
+		expect(lines.every((line) => line.length <= 40)).toBe(true);
+	});
+
 	test("does not add OSC 133 zone markers when assistant message contains tool calls", () => {
 		initTheme("dark");
 
