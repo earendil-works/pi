@@ -251,4 +251,46 @@ describe("openai-completions reasoning_details streaming", () => {
 
 		expect(getAssistantPayload(mockState.payloads[1])?.reasoning_details).toEqual(expectedReasoningDetails);
 	});
+
+	it("preserves a signature delivered in a text-less reasoning_details delta (#9534)", async () => {
+		const textDelta = { type: "reasoning.text", text: "I should call the read tool.", index: 0 };
+		// OpenRouter can send the signature on its own delta without a `text` field.
+		const signatureOnlyDelta = {
+			type: "reasoning.text",
+			signature: "sha256:late-signature",
+			format: "anthropic-claude-v1",
+			index: 0,
+		};
+		const expectedReasoningDetails = [
+			{
+				type: "reasoning.text",
+				text: "I should call the read tool.",
+				index: 0,
+				signature: "sha256:late-signature",
+				format: "anthropic-claude-v1",
+			},
+		];
+
+		mockState.chunkSets = [
+			[
+				chunk({ reasoning_details: [textDelta] }),
+				chunk({ reasoning_details: [signatureOnlyDelta] }),
+				toolCallChunk(),
+				chunk({}, "tool_calls"),
+			],
+			[chunk({ content: "ok" }), chunk({}, "stop")],
+		];
+
+		const assistantMessage = await runOpenAICompletionsStream();
+		const thinking = assistantMessage.content.find((block) => block.type === "thinking");
+		expect(thinking).toEqual({
+			type: "thinking",
+			thinking: "",
+			thinkingSignature: JSON.stringify(expectedReasoningDetails),
+		});
+
+		await runOpenAICompletionsStream([assistantMessage]);
+
+		expect(getAssistantPayload(mockState.payloads[1])?.reasoning_details).toEqual(expectedReasoningDetails);
+	});
 });

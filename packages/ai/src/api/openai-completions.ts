@@ -146,6 +146,23 @@ function isOpenAIReasoningDetail(detail: unknown): detail is OpenAIReasoningDeta
 	}
 }
 
+/**
+ * OpenRouter may stream a `reasoning.text` signature in its own delta without a
+ * `text` field. Treat the missing text as empty so the signature is merged into
+ * the existing reasoning block instead of being dropped.
+ */
+function normalizeReasoningTextDetail(detail: unknown): unknown {
+	if (
+		isReasoningDetailObject(detail) &&
+		detail.type === "reasoning.text" &&
+		(detail.text === undefined || detail.text === null) &&
+		typeof detail.signature === "string"
+	) {
+		return { ...detail, text: "" };
+	}
+	return detail;
+}
+
 export interface OpenAICompletionsOptions extends StreamOptions {
 	toolChoice?: OpenAI.Chat.Completions.ChatCompletionToolChoiceOption;
 	reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
@@ -664,7 +681,8 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 
 					const reasoningDetails = (choice.delta as { reasoning_details?: unknown }).reasoning_details;
 					if (Array.isArray(reasoningDetails)) {
-						for (const detail of reasoningDetails) {
+						for (const rawDetail of reasoningDetails) {
+							const detail = normalizeReasoningTextDetail(rawDetail);
 							if (!isOpenAIReasoningDetail(detail)) continue;
 							ensureThinkingBlock("");
 							streamedReasoningDetails ??= [];
