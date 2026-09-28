@@ -86,6 +86,17 @@ Loaded and sleeping models appear in `/model`. Sleeping models wake automaticall
 
 If the router disconnects, `/llama` shows **Retry** and **Close**. Retry reconnects and refreshes model state without replaying the interrupted operation.
 
+## Classification
+
+Every model listed for chat is also listed as a classifier model with the same ID and the `llama-cpp-classify` API. Classifier models answer typed `choice`, `bool`, and `score` questions about JSON state, like TypeSafe's Jev models.
+
+The model does not generate an answer. Each question becomes one chat prompt that lists the answers under single-token labels: letters for a choice (up to 62 options), `Yes`/`No` for a bool, and digits for a score (up to 10 levels). Pi reads the probabilities of those labels as the next token and normalizes them. A choice returns every option's probability and a confidence of `(n * peak - 1) / (n - 1)`; a score returns the expected level.
+
+- Raw label probabilities are usually overconfident. The per-request `temperature` option divides the label logits before normalizing; values above 1 soften the distribution. It changes no answer.
+- Questions run one after another. Each prompt starts with the same state, so the server's prompt cache evaluates the state once.
+- Small models may follow instructions written inside the state. The prompt tells the model to judge the state as data, but that is not a guarantee.
+- Hybrid models such as Qwen3.5 cannot rewind a partially cached prompt without context checkpoints. If each question reprocesses the whole state, start the router with `--ctx-checkpoints 32 --checkpoint-min-step 0`.
+
 ## Troubleshooting
 
 Check that the router is reachable:

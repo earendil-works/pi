@@ -177,7 +177,12 @@ describe("llama.cpp extension", () => {
 			signal: new AbortController().signal,
 		});
 		expect(first.provider.getModels().map((model) => model.id)).toEqual(["loaded", "sleeping"]);
-		expect(cachedEntry?.models.map((model) => model.id)).toEqual(["loaded", "sleeping"]);
+		expect(cachedEntry?.models.map((model) => [model.id, model.api])).toEqual([
+			["loaded", "openai-completions"],
+			["sleeping", "openai-completions"],
+			["loaded", "llama-cpp-classify"],
+			["sleeping", "llama-cpp-classify"],
+		]);
 
 		const second = createLlamaProvider();
 		await second.provider.refreshModels?.({
@@ -190,6 +195,10 @@ describe("llama.cpp extension", () => {
 		expect(second.provider.getModels()).toEqual([
 			expect.objectContaining({ id: "loaded", baseUrl: `${url}/v1`, contextWindow: 32768 }),
 			expect.objectContaining({ id: "sleeping", baseUrl: `${url}/v1`, contextWindow: 32768 }),
+		]);
+		expect(second.provider.getAllModels?.().filter((model) => model.type === "classifier")).toEqual([
+			expect.objectContaining({ id: "loaded", api: "llama-cpp-classify", baseUrl: url, contextWindow: 32768 }),
+			expect.objectContaining({ id: "sleeping", api: "llama-cpp-classify", baseUrl: url, contextWindow: 32768 }),
 		]);
 	});
 
@@ -234,7 +243,64 @@ describe("llama.cpp extension", () => {
 
 		expect(propsRequests).toBe(1);
 		expect(controller.provider.getModels().map((model) => model.id)).toEqual(["preset"]);
-		expect(cachedEntry?.models.map((model) => model.id)).toEqual(["preset"]);
+		expect(cachedEntry?.models.map((model) => [model.id, model.api])).toEqual([
+			["preset", "openai-completions"],
+			["preset", "llama-cpp-classify"],
+		]);
+	});
+
+	it("classifies with selectable models through llama-server", async () => {
+		const paths: string[] = [];
+		const { url } = await listen((request, response) => {
+			let body = "";
+			request.on("data", (chunk) => {
+				body += chunk;
+			});
+			request.on("end", () => {
+				paths.push(request.url ?? "");
+				const payload = JSON.parse(body) as { model: string; content?: string };
+				expect(payload.model).toBe("qwen");
+				if (request.url === "/tokenize") {
+					json(response, { tokens: [...(payload.content ?? "")].map((char) => char.codePointAt(0)) });
+				} else if (request.url === "/apply-template") {
+					json(response, { prompt: "<|im_start|>assistant\n" });
+				} else if (request.url === "/completion") {
+					json(response, {
+						completion_probabilities: [
+							{
+								top_logprobs: [
+									{ id: 66, token: "B", logprob: -0.1 },
+									{ id: 65, token: "A", logprob: -2.4 },
+								],
+							},
+						],
+					});
+				} else {
+					response.writeHead(404).end();
+				}
+			});
+		});
+
+		const controller = createLlamaProvider();
+		controller.setCatalog([{ id: "qwen", status: { value: "loaded" } }], url);
+		const classifier = controller.provider.getAllModels?.().find((model) => model.type === "classifier");
+		if (classifier?.type !== "classifier") throw new Error("missing classifier model");
+
+		// Provider auth resolves the OpenAI-compatible /v1 URL, which replaces the model's base URL.
+		const result = await controller.provider.classify!(
+			{ ...classifier, baseUrl: `${url}/v1` },
+			{
+				state: { message: "The build is red again." },
+				questions: {
+					kind: { type: "choice", instructions: "What is this about?", criteria: { billing: "", ci: "" } },
+				},
+			},
+			{ apiKey: "local" },
+		);
+
+		expect(result.errorMessage).toBeUndefined();
+		expect(result.answers.kind).toMatchObject({ type: "choice", choice: "ci" });
+		expect(paths).toContain("/completion");
 	});
 
 	it("hides unloaded presets when router autoload is disabled", async () => {

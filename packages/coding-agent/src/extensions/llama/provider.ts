@@ -1,12 +1,15 @@
-import type {
-	ApiKeyCredential,
-	AuthContext,
-	AuthResult,
-	Model,
-	Provider,
-	ProviderStreamOptions,
-	RefreshModelsContext,
+import {
+	type ApiKeyCredential,
+	type AuthContext,
+	type AuthResult,
+	type ClassifierModel,
+	isModelType,
+	type Model,
+	type Provider,
+	type ProviderStreamOptions,
+	type RefreshModelsContext,
 } from "@earendil-works/pi-ai";
+import { llamaCppClassifyApi } from "@earendil-works/pi-ai/api/llama-cpp-classify.lazy";
 import { stream, streamSimple } from "@earendil-works/pi-ai/compat";
 import {
 	LlamaClient,
@@ -52,9 +55,28 @@ async function routerAutoloadEnabled(
 	}
 }
 
-function toPiModel(model: LlamaModelInfo, serverUrl: string, props?: LlamaServerProps): Model<"openai-completions"> {
+function contextWindowOf(model: LlamaModelInfo): number {
 	const reportedContextWindow = model.meta?.n_ctx ?? model.meta?.n_ctx_train;
-	const contextWindow = reportedContextWindow && reportedContextWindow > 0 ? reportedContextWindow : 128000;
+	return reportedContextWindow && reportedContextWindow > 0 ? reportedContextWindow : 128000;
+}
+
+/** The same llama.cpp model used as a classifier: answers are read from next-token label probabilities. */
+function toPiClassifierModel(model: LlamaModelInfo, serverUrl: string): ClassifierModel<"llama-cpp-classify"> {
+	return {
+		type: "classifier",
+		id: model.id,
+		name: model.id,
+		api: "llama-cpp-classify",
+		provider: LLAMA_PROVIDER_ID,
+		baseUrl: serverUrl,
+		input: ["text"],
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		contextWindow: contextWindowOf(model),
+	};
+}
+
+function toPiModel(model: LlamaModelInfo, serverUrl: string, props?: LlamaServerProps): Model<"openai-completions"> {
+	const contextWindow = contextWindowOf(model);
 	const reasoning = props?.chat_template?.includes("enable_thinking") === true;
 	return {
 		id: model.id,
@@ -89,15 +111,17 @@ export interface LlamaProviderController {
 
 export function createLlamaProvider(): LlamaProviderController {
 	let models: readonly Model<"openai-completions">[] = [];
+	let classifiers: readonly ClassifierModel<"llama-cpp-classify">[] = [];
+	const classifier = llamaCppClassifyApi();
 
 	const setCatalog = (
 		catalog: readonly LlamaModelInfo[],
 		serverUrl: string,
 		options: { routerAutoload?: boolean } = {},
 	): void => {
-		models = catalog
-			.filter((model) => modelIsSelectable(model, options.routerAutoload === true))
-			.map((model) => toPiModel(model, serverUrl));
+		const selectable = catalog.filter((model) => modelIsSelectable(model, options.routerAutoload === true));
+		models = selectable.map((model) => toPiModel(model, serverUrl));
+		classifiers = selectable.map((model) => toPiClassifierModel(model, serverUrl));
 	};
 
 	const provider: Provider<"openai-completions"> = {
@@ -148,16 +172,23 @@ export function createLlamaProvider(): LlamaProviderController {
 			},
 		},
 		getModels: () => models,
+		getAllModels: () => [...models, ...classifiers],
 		refreshModels: async (context: RefreshModelsContext): Promise<void> => {
 			if (context.stored) {
-				const restored = context.stored.models.filter(
+				const stored = context.stored.models.filter((model) => model.provider === LLAMA_PROVIDER_ID);
+				const restored = stored.filter(
 					(model): model is Model<"openai-completions"> =>
-						model.provider === LLAMA_PROVIDER_ID && model.api === "openai-completions",
+						isModelType(model, "chat") && model.api === "openai-completions",
+				);
+				const restoredClassifiers = stored.filter(
+					(model): model is ClassifierModel<"llama-cpp-classify"> =>
+						isModelType(model, "classifier") && model.api === "llama-cpp-classify",
 				);
 				if (
 					!(await context.publish({
 						update: () => {
 							models = restored;
+							classifiers = restoredClassifiers;
 						},
 					}))
 				) {
@@ -173,28 +204,30 @@ export function createLlamaProvider(): LlamaProviderController {
 			if (context.signal.aborted) return;
 			const routerAutoload = await routerAutoloadEnabled(client, catalog, context.signal);
 			if (context.signal.aborted) return;
+			const selectable = catalog.filter((model) => modelIsSelectable(model, routerAutoload));
 			const refreshed = await Promise.all(
-				catalog
-					.filter((model) => modelIsSelectable(model, routerAutoload))
-					.map(async (model) => {
-						// Only loaded models expose their template without side effects. Unloaded autoload presets
-						// would need to be loaded, while querying sleeping models may wake them. Those models remain
-						// unclassified until they are loaded or woken and a later catalog refresh discovers them.
-						if (model.status.value !== "loaded") return toPiModel(model, serverUrl);
-						const props = await client.props({ model: model.id, signal: context.signal });
-						return toPiModel(model, serverUrl, props);
-					}),
+				selectable.map(async (model) => {
+					// Only loaded models expose their template without side effects. Unloaded autoload presets
+					// would need to be loaded, while querying sleeping models may wake them. Those models remain
+					// unclassified until they are loaded or woken and a later catalog refresh discovers them.
+					if (model.status.value !== "loaded") return toPiModel(model, serverUrl);
+					const props = await client.props({ model: model.id, signal: context.signal });
+					return toPiModel(model, serverUrl, props);
+				}),
 			);
+			const refreshedClassifiers = selectable.map((model) => toPiClassifierModel(model, serverUrl));
 			if (context.signal.aborted) return;
 			await context.publish({
-				persist: { models: refreshed, checkedAt: Date.now() },
+				persist: { models: [...refreshed, ...refreshedClassifiers], checkedAt: Date.now() },
 				update: () => {
 					models = refreshed;
+					classifiers = refreshedClassifiers;
 				},
 			});
 		},
 		stream: (model, context, options) => stream(model, context, options as ProviderStreamOptions | undefined),
 		streamSimple: (model, context, options) => streamSimple(model, context, options),
+		classify: (model, context, options) => classifier.classify(model, context, options),
 	};
 
 	return { provider, setCatalog };

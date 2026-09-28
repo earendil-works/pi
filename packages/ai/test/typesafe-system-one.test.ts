@@ -57,11 +57,13 @@ describe("TypeSafe System One", () => {
 			expect(payload.questions.category?.type).toBe("choice");
 			expect(payload.questions.satisfaction?.type).toBe("score");
 			expect(payload.questions.approved?.type).toBe("noul");
+			// System One has no temperature field; the option is ignored.
+			expect(payload).not.toHaveProperty("temperature");
 			expect(new Headers(init?.headers).get("authorization")).toBe("Bearer secret");
 			return Response.json({ answers: wireAnswers });
 		});
 
-		const result = await classify(model, context, { apiKey: "secret", fetch });
+		const result = await classify(model, context, { apiKey: "secret", fetch, temperature: 1.5 });
 
 		expect(fetch).toHaveBeenCalledOnce();
 		expect(String(fetch.mock.calls[0]?.[0])).toBe("https://api.typesafe.ai/v1/systemone");
