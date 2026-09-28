@@ -11,9 +11,9 @@
  * or `write` tool call, the next request of the same turn goes to Luna, and the session stays
  * there. A session therefore switches models once and accepts a single prompt-cache miss.
  *
- * The phase is stored in `jev-route` custom entries, so it follows the session tree and survives
- * compaction. The selected thinking level passes through as the reasoning effort of the chosen
- * model. Requests outside the agent loop, such as compaction summaries, go to Luna.
+ * The phase is router state: Pi stores it on the session branch, so it follows the session tree
+ * and survives compaction. The selected thinking level passes through as the reasoning effort of
+ * the chosen model. Requests outside the agent loop, such as compaction summaries, go to Luna.
  *
  * Requires TypeSafe credentials (TYPESAFE_API_KEY) and an OpenAI Codex login.
  * Usage: pi -e ./jev-router.ts --model jev/auto
@@ -30,25 +30,18 @@ const LUNA = "gpt-5.6-luna";
 /** Tools whose successful result means implementation has started. */
 const EDIT_TOOLS = new Set(["edit", "write"]);
 
-/** Data of a `jev-route` session entry. */
-interface JevRoute {
+interface JevState {
 	phase: "planning" | "implementation";
 	/** OpenAI Codex model for this phase. */
 	model: string;
 }
 
-function latestRoute(ctx: ExtensionContext): JevRoute | undefined {
-	let latest: JevRoute | undefined;
-	for (const entry of ctx.sessionManager.getBranch()) {
-		if (entry.type === "custom" && entry.customType === "jev-route") latest = entry.data as JevRoute;
-	}
-	return latest;
-}
+type JevRequest = ModelRouteRequest<JevState>;
 
-function routeTo(request: ModelRouteRequest, ctx: ExtensionContext, id: string): ModelRoute {
+function routeTo(request: JevRequest, ctx: ExtensionContext, id: string, state?: JevState): ModelRoute<JevState> {
 	const model = ctx.modelRegistry.find(PROVIDER, id);
 	if (!model) throw new Error(`Model ${PROVIDER}/${id} is not in the catalog`);
-	return { model, thinkingLevel: request.thinkingLevel };
+	return { model, thinkingLevel: request.thinkingLevel, state };
 }
 
 function lastUserText(messages: readonly Message[]): string {
@@ -57,8 +50,16 @@ function lastUserText(messages: readonly Message[]): string {
 	return content.flatMap((block) => (block.type === "text" ? [block.text] : [])).join("\n");
 }
 
+/** Whether a tool call since the last user message edited a file successfully. */
+function editedThisTurn(messages: readonly Message[]): boolean {
+	const lastUser = messages.findLastIndex((message) => message.role === "user");
+	return messages
+		.slice(lastUser + 1)
+		.some((message) => message.role === "toolResult" && EDIT_TOOLS.has(message.toolName) && !message.isError);
+}
+
 /** Planning model for a new session: Sol for complex work, Terra otherwise or when Jev is unavailable. */
-async function choosePlanningModel(request: ModelRouteRequest, ctx: ExtensionContext): Promise<string> {
+async function choosePlanningModel(request: JevRequest, ctx: ExtensionContext): Promise<string> {
 	// Keep a planning model the session already uses, so switching to jev/auto costs no cache miss.
 	const previous = request.previous?.model;
 	if (previous?.provider === PROVIDER && (previous.id === SOL || previous.id === TERRA)) return previous.id;
@@ -87,7 +88,7 @@ async function choosePlanningModel(request: ModelRouteRequest, ctx: ExtensionCon
 }
 
 export default function (pi: ExtensionAPI) {
-	pi.registerVirtualModel({
+	pi.registerVirtualModel<JevState>({
 		provider: "jev",
 		id: "auto",
 		name: "Auto (Jev)",
@@ -96,20 +97,17 @@ export default function (pi: ExtensionAPI) {
 		contextWindow: 272_000,
 		maxTokens: 128_000,
 		async route(request, ctx) {
-			let model = request.reason === "direct" ? LUNA : latestRoute(ctx)?.model;
-			if (!model) {
-				model = await choosePlanningModel(request, ctx);
-				pi.appendEntry<JevRoute>("jev-route", { phase: "planning", model });
+			if (request.reason === "direct") return routeTo(request, ctx, LUNA);
+			const state = request.state;
+			if (!state) {
+				const model = await choosePlanningModel(request, ctx);
+				return routeTo(request, ctx, model, { phase: "planning", model });
 			}
-			return routeTo(request, ctx, model);
+			// The planning model made the first edit: hand the rest of the work to Luna.
+			if (state.phase === "planning" && editedThisTurn(request.messages)) {
+				return routeTo(request, ctx, LUNA, { phase: "implementation", model: LUNA });
+			}
+			return routeTo(request, ctx, state.model);
 		},
-	});
-
-	// The planning model made the first edit: hand the rest of the work to Luna.
-	pi.on("turn_end", (event, ctx) => {
-		if (ctx.model?.provider !== "jev" || latestRoute(ctx)?.phase !== "planning") return undefined;
-		if (!event.toolResults.some((result) => EDIT_TOOLS.has(result.toolName) && !result.isError)) return undefined;
-		const data: JevRoute = { phase: "implementation", model: LUNA };
-		return { entries: [{ type: "custom", customType: "jev-route", data }] };
 	});
 }

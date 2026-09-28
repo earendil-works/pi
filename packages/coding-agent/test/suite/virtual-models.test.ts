@@ -3,7 +3,7 @@ import { type FauxResponseStep, fauxAssistantMessage, fauxToolCall } from "@eare
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ExtensionContext } from "../../src/core/extensions/index.ts";
-import type { ModelRoute, ModelRouteRequest } from "../../src/core/virtual-models.ts";
+import { type ModelRoute, type ModelRouteRequest, VIRTUAL_MODEL_STATE_ENTRY } from "../../src/core/virtual-models.ts";
 import { createHarness, type Harness, type HarnessOptions } from "./harness.ts";
 
 const echoTool: AgentTool = {
@@ -20,8 +20,9 @@ type Route = (request: ModelRouteRequest, ctx: ExtensionContext) => ModelRoute;
 const defaultRoute: Route = (request, ctx) => {
 	const find = (id: string) => ctx.modelRegistry.find("faux", id)!;
 	if (request.reason === "direct") return { model: find("large"), thinkingLevel: "low" };
-	if (request.reason !== "user" && request.previous) {
-		return { model: request.previous.model, thinkingLevel: request.previous.thinkingLevel ?? "high" };
+	const sticky = request.failed ?? request.previous;
+	if (request.reason !== "user" && sticky) {
+		return { model: sticky.model, thinkingLevel: sticky.thinkingLevel ?? "high" };
 	}
 	return request.thinkingLevel === "high"
 		? { model: find("large"), thinkingLevel: "high" }
@@ -89,6 +90,7 @@ describe("AgentSession virtual models", () => {
 		await harness.session.prompt("hello");
 
 		expect(reasons()).toEqual(["user", "retry", "continuation"]);
+		expect(requests[1].failed?.message.errorMessage).toBe("overloaded_error");
 		expect(requests[2].previous?.model.id).toBe("large");
 		expect(dispatched()).toEqual(["faux/large:high", "faux/large:high"]);
 		expect(harness.session.model).toMatchObject({ provider: "router", id: "auto" });
@@ -113,8 +115,9 @@ describe("AgentSession virtual models", () => {
 		await harness.session.prompt("hard");
 
 		expect(reasons()).toEqual(["user", "user", "retry"]);
-		// The retry reports the failed request on large, not the small response of the previous turn.
-		expect(requests[2].previous?.model.id).toBe("large");
+		// The retry reports the failed request on large next to the small response of the previous turn.
+		expect(requests[2].failed?.model.id).toBe("large");
+		expect(requests[2].previous?.model.id).toBe("small");
 		expect(dispatched()).toEqual(["faux/small:off", "faux/large:high"]);
 	});
 
@@ -139,7 +142,8 @@ describe("AgentSession virtual models", () => {
 		expect(harness.eventsOfType("compaction_start").map((event) => event.reason)).toEqual(["overflow"]);
 		// Compaction may fold the prompt into the summary, so the retry is not a new user turn.
 		expect(reasons()).toEqual(["user", "retry"]);
-		expect(requests[1].previous?.model.id).toBe("large");
+		expect(requests[1].failed?.model.id).toBe("large");
+		expect(requests[1].failed?.message.stopReason).toBe("length");
 	});
 
 	it("routes requests after extension messages as continuations", async () => {
@@ -199,6 +203,78 @@ describe("AgentSession virtual models", () => {
 		await harness.session.prompt("x".repeat(80_000));
 
 		expect(harness.eventsOfType("compaction_start")).toHaveLength(0);
+	});
+
+	it("compacts before a request routed to a model with a smaller window", async () => {
+		const { harness, dispatched } = await createRoutedHarness(defaultRoute, {
+			settings: { compaction: { keepRecentTokens: 1, reserveTokens: 0 } },
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_before_compact", async ({ preparation: { firstKeptEntryId, tokensBefore } }) => ({
+						compaction: { summary: "compacted", firstKeptEntryId, tokensBefore },
+					}));
+				},
+			],
+		});
+		let compactedBeforeSmall = false;
+		harness.setResponses([
+			fauxAssistantMessage("y".repeat(8000)),
+			() => {
+				compactedBeforeSmall = harness.eventsOfType("compaction_end").length === 1;
+				return fauxAssistantMessage("small answer");
+			},
+		]);
+		await harness.session.prompt("hello");
+		expect(harness.eventsOfType("compaction_start")).toHaveLength(0);
+
+		// About 2k tokens fit the large model that answered last, but not the small model's 1k window.
+		harness.session.setThinkingLevel("low");
+		await harness.session.prompt("next");
+
+		expect(harness.eventsOfType("compaction_start").map((event) => event.reason)).toEqual(["threshold"]);
+		expect(compactedBeforeSmall).toBe(true);
+		expect(dispatched().at(-1)).toBe("faux/small:off");
+	});
+
+	it("stores router state on the branch and passes it to later requests", async () => {
+		const states: unknown[] = [];
+		const { harness, reasons } = await createRoutedHarness(
+			(request, ctx) => {
+				states.push(request.state);
+				const turns = (request.state as { turns: number } | undefined)?.turns ?? 0;
+				const route = defaultRoute(request, ctx);
+				// Unchanged state is not stored again, and direct requests do not store state.
+				if (request.reason === "continuation") return { ...route, state: { turns } };
+				return { ...route, state: { turns: turns + 1 } };
+			},
+			{ settings: { compaction: { keepRecentTokens: 1 } } },
+		);
+		harness.setResponses([
+			fauxAssistantMessage(fauxToolCall("echo", { text: "hi" }), { stopReason: "toolUse" }),
+			fauxAssistantMessage("first"),
+			fauxAssistantMessage("second"),
+			fauxAssistantMessage("summary"),
+			fauxAssistantMessage("summary"),
+		]);
+
+		await harness.session.prompt("one");
+		await harness.session.prompt("two");
+		const stored = () =>
+			harness.sessionManager
+				.getBranch()
+				.flatMap((entry) =>
+					entry.type === "custom" && entry.customType === VIRTUAL_MODEL_STATE_ENTRY ? [entry.data] : [],
+				);
+		expect(stored()).toEqual([
+			{ provider: "router", modelId: "auto", state: { turns: 1 } },
+			{ provider: "router", modelId: "auto", state: { turns: 2 } },
+		]);
+
+		await harness.session.compact();
+
+		expect(reasons()).toEqual(["user", "continuation", "user", "direct"]);
+		expect(states).toEqual([undefined, { turns: 1 }, { turns: 1 }, { turns: 2 }]);
+		expect(stored()).toHaveLength(2);
 	});
 
 	it("does not route compactions that an extension supplies", async () => {

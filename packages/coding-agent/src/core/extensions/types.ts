@@ -1642,10 +1642,14 @@ export interface ExtensionAPI {
 	 * model. The selection (`ctx.model`, `model_change` entries) names the virtual model; assistant
 	 * messages record the physical model and thinking level the router picked.
 	 *
-	 * The virtual model is the only model of a provider named `provider`, registered like
-	 * `registerProvider(provider)`. Remove it with `unregisterProvider(provider)`. See docs/virtual-models.md.
+	 * `provider` may be any provider id, including one with physical models, and may list several
+	 * virtual models. Registering the same provider and id again replaces the virtual model. See
+	 * docs/virtual-models.md.
 	 */
-	registerVirtualModel(model: ExtensionVirtualModel): void;
+	registerVirtualModel<TState = unknown>(model: ExtensionVirtualModel<TState>): void;
+
+	/** Remove a virtual model registered with `registerVirtualModel()`. */
+	unregisterVirtualModel(provider: string, id: string): void;
 
 	/** Shared event bus for extension communication. */
 	events: EventBus;
@@ -1656,9 +1660,9 @@ export interface ExtensionAPI {
 // ============================================================================
 
 /** Virtual model registered via pi.registerVirtualModel(). */
-export interface ExtensionVirtualModel extends Omit<VirtualModelDefinition, "route"> {
+export interface ExtensionVirtualModel<TState = unknown> extends Omit<VirtualModelDefinition<TState>, "route"> {
 	/** Like `VirtualModelDefinition.route`, with an extension context. */
-	route(request: ModelRouteRequest, ctx: ExtensionContext): ModelRoute | Promise<ModelRoute>;
+	route(request: ModelRouteRequest<TState>, ctx: ExtensionContext): ModelRoute<TState> | Promise<ModelRoute<TState>>;
 }
 
 /** Configuration for registering a provider via pi.registerProvider(). */
@@ -1863,6 +1867,8 @@ export interface ExtensionRuntimeState {
 	pendingProviderRegistrations: Array<{ name: string; config: ProviderConfig; extensionPath: string }>;
 	/** Native pi-ai provider registrations queued during extension loading, processed when runner binds. */
 	pendingNativeProviderRegistrations: Array<{ provider: Provider; extensionPath: string }>;
+	/** Virtual model registrations queued during extension loading, processed when runner binds. */
+	pendingVirtualModelRegistrations: Array<{ definition: VirtualModelDefinition; extensionPath: string }>;
 	/** Create an extension context. Throws before the runner binds. */
 	createContext: () => ExtensionContext;
 	/** Throws when this extension instance is stale after runtime replacement. */
@@ -1880,6 +1886,8 @@ export interface ExtensionRuntimeState {
 	registerProvider: (name: string, config: ProviderConfig, extensionPath?: string) => void;
 	registerNativeProvider: (provider: Provider, extensionPath?: string) => void;
 	unregisterProvider: (name: string, extensionPath?: string) => void;
+	registerVirtualModel: (definition: VirtualModelDefinition, extensionPath?: string) => void;
+	unregisterVirtualModel: (provider: string, id: string) => void;
 }
 
 /**

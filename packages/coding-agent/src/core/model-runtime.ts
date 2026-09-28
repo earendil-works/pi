@@ -82,12 +82,20 @@ import {
 import { withRemoteCatalog } from "./remote-catalog-provider.ts";
 import { RuntimeCredentials } from "./runtime-credentials.ts";
 import {
+	createVirtualModel,
 	findLatestResponse,
 	isVirtualModel,
-	isVirtualProvider,
 	type ModelRoute,
 	type ModelRouteReason,
+	unroutedStream,
+	type VirtualModelDefinition,
+	withVirtualModels,
 } from "./virtual-models.ts";
+
+interface RegisteredVirtualModel {
+	model: Model<Api>;
+	route: VirtualModelDefinition["route"];
+}
 
 interface ModelRuntimeSnapshot {
 	all: readonly Model<Api>[];
@@ -168,6 +176,8 @@ export class ModelRuntime implements Models {
 	private readonly builtins = new Map<string, Provider>();
 	private readonly nativeExtensionProviders = new Map<string, Provider>();
 	private readonly extensionProviders = new Map<string, ProviderConfigInput>();
+	/** Virtual models by provider id, then model id. */
+	private readonly virtualModels = new Map<string, Map<string, RegisteredVirtualModel>>();
 	private readonly compositionErrors = new Map<string, string>();
 	private readonly modelsPath: string | undefined;
 	private readonly modelNetworkEnabled: boolean;
@@ -273,30 +283,34 @@ export class ModelRuntime implements Models {
 			...this.nativeExtensionProviders.keys(),
 			...this.config.getProviderIds(),
 			...this.extensionProviders.keys(),
+			...this.virtualModels.keys(),
 		]);
 	}
 
 	private recomposeProvider(providerId: string): void {
+		const provider = this.composeProvider(providerId);
+		const virtualModels = [...(this.virtualModels.get(providerId)?.values() ?? [])].map((entry) => entry.model);
+		if (virtualModels.length > 0) this.models.setProvider(withVirtualModels(providerId, provider, virtualModels));
+		else if (provider) this.models.setProvider(provider);
+		else this.models.deleteProvider(providerId);
+	}
+
+	/** The provider without virtual models, or undefined when nothing defines it. */
+	private composeProvider(providerId: string): Provider | undefined {
 		const base = this.nativeExtensionProviders.get(providerId) ?? this.builtins.get(providerId);
 		const extension = this.extensionProviders.get(providerId);
-		if (!base && !this.config.getProvider(providerId) && !extension) {
-			this.models.deleteProvider(providerId);
-			this.compositionErrors.delete(providerId);
-			return;
-		}
-		if (base && !this.config.getProvider(providerId) && !extension) {
+		if (!this.config.getProvider(providerId) && !extension) {
 			// No overlays: use the builtin untouched so its auth/login/stream behavior is exact.
-			this.models.setProvider(base);
 			this.compositionErrors.delete(providerId);
-			return;
+			return base;
 		}
 		try {
-			this.models.setProvider(composeModelProvider(providerId, base, this.config, extension));
+			const provider = composeModelProvider(providerId, base, this.config, extension);
 			this.compositionErrors.delete(providerId);
+			return provider;
 		} catch (error) {
 			this.compositionErrors.set(providerId, error instanceof Error ? error.message : String(error));
-			if (base) this.models.setProvider(base);
-			else this.models.deleteProvider(providerId);
+			return base;
 		}
 	}
 
@@ -678,6 +692,7 @@ export class ModelRuntime implements Models {
 		context: Context,
 		options?: ModelsApiStreamOptions<TApi>,
 	): AssistantMessageEventStream {
+		if (isVirtualModel(model)) return unroutedStream(model);
 		const transcript = normalizeContext(context);
 		return lazyStream(model, async () => {
 			assertChatModel(model);
@@ -915,12 +930,42 @@ export class ModelRuntime implements Models {
 	}
 
 	/**
+	 * Register a virtual model under `definition.provider`, which may also list physical models or
+	 * several virtual models. Re-registering the same provider and id replaces the virtual model.
+	 * Throws when the id belongs to a physical model of that provider.
+	 */
+	registerVirtualModel(definition: VirtualModelDefinition): void {
+		const { provider: providerId, id } = definition;
+		if (!providerId.trim() || !id.trim()) throw new Error("Virtual model provider and id must not be empty.");
+		const existing = this.models.getModel(providerId, id);
+		if (existing && !isVirtualModel(existing)) {
+			throw new Error(`Virtual model ${providerId}/${id} conflicts with a physical model.`);
+		}
+		const models = this.virtualModels.get(providerId) ?? new Map<string, RegisteredVirtualModel>();
+		models.set(id, { model: createVirtualModel(definition), route: (request) => definition.route(request) });
+		this.virtualModels.set(providerId, models);
+		this.recomposeProvider(providerId);
+		this.updateModelSnapshot();
+		void this.refresh({ allowNetwork: false });
+	}
+
+	unregisterVirtualModel(providerId: string, id: string): void {
+		const models = this.virtualModels.get(providerId);
+		if (!models?.delete(id)) return;
+		if (models.size === 0) this.virtualModels.delete(providerId);
+		this.recomposeProvider(providerId);
+		this.updateModelSnapshot();
+		void this.refresh({ allowNetwork: false });
+	}
+
+	/**
 	 * Ask a virtual model's router for the model and thinking level of one request. The router must
 	 * return a physical catalog model whose provider has credentials; the thinking level is clamped
 	 * to that model. Throws when routing fails.
 	 *
-	 * `options.previous` is the response reported as `previous`. It defaults to the latest successful
-	 * response in `messages`; a retry passes the failed response, which `messages` no longer contains.
+	 * `previous` reports the latest successful response in `messages`. A retry passes the failed
+	 * response as `options.failed`; `messages` no longer contains it. `options.state` is the router
+	 * state stored by the caller, which also stores the returned state.
 	 */
 	async resolveModel(
 		model: Model<Api>,
@@ -929,26 +974,30 @@ export class ModelRuntime implements Models {
 			reason: ModelRouteReason;
 			thinkingLevel: ModelThinkingLevel;
 			signal?: AbortSignal;
-			previous?: AssistantMessage;
+			failed?: AssistantMessage;
+			state?: unknown;
 		},
 	): Promise<ModelRoute> {
 		const name = `Virtual model ${model.provider}/${model.id}`;
-		const provider = this.models.getProvider(model.provider);
-		if (!isVirtualProvider(provider)) throw new Error(`${name} is not registered.`);
-		const { previous, ...request } = options;
-		const latest = previous ?? findLatestResponse(messages);
+		const virtual = this.virtualModels.get(model.provider)?.get(model.id);
+		if (!virtual) throw new Error(`${name} is not registered.`);
+		const { failed, ...request } = options;
+		const latest = findLatestResponse(messages);
 		const previousModel = latest && this.getPhysicalModel(latest.provider, latest.model);
-		const route = await provider.route({
+		// A failed routing attempt names the virtual model; there is no physical request to report.
+		const failedModel = failed && this.getPhysicalModel(failed.provider, failed.model);
+		const route = await virtual.route({
 			...request,
 			model,
 			previous: previousModel && { model: previousModel, thinkingLevel: latest?.thinkingLevel },
+			failed: failedModel && failed && { model: failedModel, thinkingLevel: failed.thinkingLevel, message: failed },
 			messages,
 		});
 		const target = this.getPhysicalModel(route.model.provider, route.model.id);
 		const routed = `${name} routed to ${route.model.provider}/${route.model.id}`;
 		if (!target) throw new Error(`${routed}, which is not a physical model.`);
 		if (!this.hasConfiguredAuth(target.provider)) throw new Error(`${routed}, which has no credentials.`);
-		return { model: target, thinkingLevel: clampThinkingLevel(target, route.thinkingLevel) };
+		return { model: target, thinkingLevel: clampThinkingLevel(target, route.thinkingLevel), state: route.state };
 	}
 
 	/** A catalog chat model that is not virtual. */

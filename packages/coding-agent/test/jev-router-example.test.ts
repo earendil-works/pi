@@ -10,6 +10,7 @@ import {
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
 import jevRouter from "../examples/extensions/jev-router.ts";
+import { VIRTUAL_MODEL_STATE_ENTRY, type VirtualModelStateData } from "../src/core/virtual-models.ts";
 import { createHarness, type Harness } from "./suite/harness.ts";
 
 function createTool(name: string, fails = false): AgentTool {
@@ -97,8 +98,8 @@ describe("jev-router example", () => {
 			harness.sessionManager
 				.getBranch()
 				.flatMap((entry) =>
-					entry.type === "custom" && entry.customType === "jev-route"
-						? [(entry.data as { phase: string }).phase]
+					entry.type === "custom" && entry.customType === VIRTUAL_MODEL_STATE_ENTRY
+						? [(entry.data as VirtualModelStateData<{ phase: string }>).state.phase]
 						: [],
 				);
 		return { harness, dispatched, respond, phases };

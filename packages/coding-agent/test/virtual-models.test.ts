@@ -14,11 +14,7 @@ import { AuthStorage } from "../src/core/auth-storage.ts";
 import { ModelRuntime } from "../src/core/model-runtime.ts";
 import { createAgentSession } from "../src/core/sdk.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
-import {
-	createVirtualProvider,
-	type ModelRouteRequest,
-	type VirtualModelDefinition,
-} from "../src/core/virtual-models.ts";
+import type { ModelRouteRequest, VirtualModelDefinition } from "../src/core/virtual-models.ts";
 import { getModelChangeNotice } from "../src/modes/interactive/model-change-notice.ts";
 import { createTestResourceLoader } from "./utilities.ts";
 
@@ -47,7 +43,7 @@ async function createRuntime(requests: ModelRouteRequest[] = []) {
 			return { model, thinkingLevel: "high" };
 		},
 	};
-	runtime.registerNativeProvider(createVirtualProvider(definition));
+	runtime.registerVirtualModel(definition);
 	await runtime.refresh({ allowNetwork: false });
 	return { runtime, faux, definition, virtual: runtime.getModel("router", "auto")! };
 }
@@ -80,14 +76,70 @@ describe("ModelRuntime virtual models", () => {
 		expect(high).toEqual({ model: large, thinkingLevel: "high" });
 	});
 
+	it("reports the failed request of a retry separately from the latest successful response", async () => {
+		const requests: ModelRouteRequest[] = [];
+		const { runtime, virtual } = await createRuntime(requests);
+		const small = runtime.getModel("faux", "small")!;
+		const large = runtime.getModel("faux", "large")!;
+		const failed: AssistantMessage = {
+			...assistantFrom(large, ""),
+			thinkingLevel: "high",
+			stopReason: "error",
+			errorMessage: "overloaded_error",
+		};
+		const messages = [
+			{ role: "user" as const, content: "first", timestamp: 1 },
+			assistantFrom(small, "answer"),
+			{ role: "user" as const, content: "second", timestamp: 2 },
+		];
+
+		await runtime.resolveModel(virtual, messages, { reason: "retry", thinkingLevel: "low", failed });
+		// A routing failure names the virtual model, so there is no failed physical request to report.
+		const failedRoute = { ...assistantFrom(virtual, ""), stopReason: "error" as const };
+		await runtime.resolveModel(virtual, messages, { reason: "retry", thinkingLevel: "low", failed: failedRoute });
+
+		expect(requests[0].previous?.model).toBe(small);
+		expect(requests[0].failed).toEqual({ model: large, thinkingLevel: "high", message: failed });
+		expect(requests[1].failed).toBeUndefined();
+	});
+
+	it("lists several virtual models under a provider with physical models", async () => {
+		const { runtime, definition } = await createRuntime();
+		const route = () => ({ model: runtime.getModel("faux", "small")!, thinkingLevel: "off" as const });
+		runtime.registerVirtualModel({ ...definition, provider: "faux", id: "auto", route });
+		runtime.registerVirtualModel({ ...definition, provider: "faux", id: "fast", name: "Fast", route });
+		runtime.registerVirtualModel({ ...definition, id: "second", name: "Second" });
+
+		expect(runtime.getModels("faux").map((model) => model.id)).toEqual(["small", "large", "auto", "fast"]);
+		expect(runtime.getModels("router").map((model) => model.id)).toEqual(["auto", "second"]);
+		// Virtual models on a physical provider are available when the provider is.
+		const available = await runtime.getAvailable();
+		expect(available.filter((model) => model.provider === "faux").map((model) => model.id)).toEqual([
+			"small",
+			"large",
+			"auto",
+			"fast",
+		]);
+		const fast = runtime.getModel("faux", "fast")!;
+		await expect(runtime.resolveModel(fast, [], { reason: "user", thinkingLevel: "off" })).resolves.toMatchObject({
+			model: { provider: "faux", id: "small" },
+		});
+
+		expect(() => runtime.registerVirtualModel({ ...definition, provider: "faux", id: "large" })).toThrow(
+			"conflicts with a physical model",
+		);
+		runtime.unregisterVirtualModel("faux", "fast");
+		runtime.unregisterVirtualModel("router", "auto");
+		expect(runtime.getModels("faux").map((model) => model.id)).toEqual(["small", "large", "auto"]);
+		expect(runtime.getModels("router").map((model) => model.id)).toEqual(["second"]);
+	});
+
 	it("rejects routes to virtual or unknown models", async () => {
 		const { runtime, definition, virtual } = await createRuntime();
 		const unknown = { ...virtual, provider: "faux", id: "missing" };
 
 		for (const model of [virtual, unknown]) {
-			runtime.registerNativeProvider(
-				createVirtualProvider({ ...definition, route: () => ({ model, thinkingLevel: "off" }) }),
-			);
+			runtime.registerVirtualModel({ ...definition, route: () => ({ model, thinkingLevel: "off" }) });
 			await expect(runtime.resolveModel(virtual, [], { reason: "user", thinkingLevel: "low" })).rejects.toThrow(
 				"which is not a physical model",
 			);
@@ -180,7 +232,7 @@ describe("createAgentSession with virtual models", () => {
 
 	it("falls back to the physical model when the virtual model is not registered", async () => {
 		const { runtime } = await createRuntime();
-		runtime.unregisterProvider("router");
+		runtime.unregisterVirtualModel("router", "auto");
 
 		const { session } = await resume(runtime);
 
@@ -200,7 +252,7 @@ describe("createAgentSession with virtual models", () => {
 			stopReason: "error",
 			errorMessage: "router failed",
 		});
-		runtime.unregisterProvider("router");
+		runtime.unregisterVirtualModel("router", "auto");
 
 		const { session, modelFallbackMessage } = await createAgentSession({
 			cwd: tempDir,

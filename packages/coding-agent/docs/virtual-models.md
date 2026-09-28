@@ -2,7 +2,7 @@
 
 A virtual model is a selectable model that picks a physical model for each request. Use one to route by task, cost, or conversation state. For example, a router can send quick questions to a small model and hard problems to a large one, while the user selects a single model.
 
-Register virtual models from an [extension](extensions.md). They appear in `/model`, `--model`, scoped models, and settings like any other model.
+Register virtual models from an [extension](extensions.md). They appear in `/model`, `--model`, scoped models, and settings like any other model. A virtual model can be listed under any provider, including one with physical models, such as `openai-codex/auto`.
 
 ## Selection and dispatch
 
@@ -26,7 +26,7 @@ Providers only receive physical models. Assistant messages name the physical mod
 
 In interactive mode, the footer shows the routed model next to the selection, for example `auto • high → gpt-5.6-luna • medium`. The chat shows a notice such as `Model: openai-codex/gpt-5.6-sol → openai-codex/gpt-5.6-luna • medium` before each response that comes from a different model than the previous one, and before the first routed response as `Model: openai-codex/gpt-5.6-sol • high`. `/session` lists the cost for each physical model.
 
-Compaction and context usage use the limits of the physical model that produced the latest response, even if that response came before switching to the virtual model. Without such a response, they use the limits declared on the virtual model, if any.
+Context usage uses the limits of the physical model that produced the latest response, even if that response came before switching to the virtual model. Without such a response, it uses the limits declared on the virtual model, if any. Compaction checks the same limits, and checks again before a request routed to another model. If that model's context window is too small for the conversation, Pi compacts before sending the request; the route stays as the router chose it.
 
 ## Register a virtual model
 
@@ -41,8 +41,9 @@ export default function (pi: ExtensionAPI) {
     thinkingLevels: ["low", "high"],
     route(request, ctx) {
       // Tool follow-ups and retries stay on the model that handled the turn.
-      if (request.reason !== "user" && request.previous) {
-        return { model: request.previous.model, thinkingLevel: request.previous.thinkingLevel ?? "medium" };
+      const sticky = request.failed ?? request.previous;
+      if (request.reason !== "user" && sticky) {
+        return { model: sticky.model, thinkingLevel: sticky.thinkingLevel ?? "medium" };
       }
       const id = request.thinkingLevel === "high" ? "claude-sonnet-4-5" : "claude-haiku-4-5";
       return { model: ctx.modelRegistry.find("anthropic", id)!, thinkingLevel: "medium" };
@@ -51,12 +52,13 @@ export default function (pi: ExtensionAPI) {
 }
 ```
 
-- `provider` names a provider whose only model is the virtual model. Use an ID that no physical provider uses.
+- `provider` is the provider the model is listed under. It can be any provider ID. A provider can list several virtual models next to its physical ones. On a physical provider, the virtual model is available when that provider has credentials. Under an ID that no provider uses, it is always available.
+- `id` must not be the ID of a physical model of that provider. If a catalog refresh later adds a physical model with the same ID, the virtual model hides it.
 - `thinkingLevels` lists the levels offered for selection. It defaults to `["off"]`.
 - `contextWindow` and `maxTokens` are shown before the first response. Unset limits are unknown.
 - `input` lists the input types offered for selection. It defaults to text and images; physical models without image support receive placeholders.
 
-The virtual model is registered like `pi.registerProvider()`, with the same queuing and reload rules. `pi.unregisterProvider(provider)` removes it. SDK code can register one without an extension: `modelRuntime.registerNativeProvider(createVirtualProvider(definition))`.
+Registration follows the same queuing and reload rules as `pi.registerProvider()`. Registering the same provider and ID again replaces the virtual model. `pi.unregisterVirtualModel(provider, id)` removes it; `pi.unregisterProvider()` does not. SDK code can register one without an extension: `modelRuntime.registerVirtualModel(definition)`.
 
 ## Route requests
 
@@ -66,7 +68,9 @@ The virtual model is registered like `pi.registerProvider()`, with the same queu
 |---|---|
 | `model`, `thinkingLevel` | The selected virtual model and level |
 | `reason` | Why the request is made, see below |
-| `previous` | Physical model and thinking level of the latest successful response in `messages`. For `retry`, those of the failed request, which `messages` no longer contains |
+| `previous` | Physical model and thinking level of the latest successful response in `messages` |
+| `failed` | For `retry`: physical model, thinking level, and assistant `message` of the failed request, which `messages` no longer contains. The message carries `stopReason` and `errorMessage`. Absent when routing itself failed |
+| `state` | Router state last returned on this session branch, see below |
 | `messages` | The conversation for this request, including system messages |
 | `signal` | Abort signal of the request |
 
@@ -77,14 +81,34 @@ The virtual model is registered like `pi.registerProvider()`, with the same queu
 | `retry` | Automatic retry after a failed request, including after compaction for a context overflow |
 | `direct` | Request made outside the agent loop, such as a compaction summary or an extension calling `ctx.modelRegistry.streamSimple()` |
 
-Returning `previous` for `continuation` and `retry` keeps prompt caches and thinking signatures valid. Switching models between turns is allowed but loses the prompt cache.
+Returning `previous` for `continuation` and `failed` for `retry` keeps prompt caches and thinking signatures valid. Switching models between turns is allowed but loses the prompt cache. A retry can also switch to another model, for example when `failed.message.errorMessage` reports that a provider is overloaded or the context overflowed.
 
 If `route()` throws, or returns a virtual model or a model without credentials, the request ends with an error response.
 
 ## Keep routing state
 
-The transcript already records the selection and every dispatched model, and `ctx.sessionManager.getBranch()` exposes both. Store only what the transcript lacks, such as classifier results, with `pi.appendEntry()`. Custom entries follow the session tree, so forks and `/tree` navigation see the matching history.
+`route()` can return `state` next to the model. Pi stores it on the session branch and passes it back as `request.state` on later requests. Use it for decisions the transcript does not record, such as classifier results or a routing phase:
+
+```typescript
+pi.registerVirtualModel<{ phase: "plan" | "build" }>({
+  provider: "router",
+  id: "phased",
+  name: "Phased",
+  route(request, ctx) {
+    const phase = request.state?.phase ?? "plan";
+    const id = phase === "plan" ? "claude-opus-4-5" : "claude-haiku-4-5";
+    return { model: ctx.modelRegistry.find("anthropic", id)!, thinkingLevel: "medium", state: { phase } };
+  },
+});
+```
+
+- State must be JSON-serializable. Returning `undefined` keeps the current state.
+- Pi stores the state when it differs from `request.state`, before the request is sent. It stays stored if the request later fails.
+- State follows the session tree, so forks and `/tree` navigation see the state of their branch. It survives compaction.
+- `direct` requests receive the state, but Pi ignores state they return. Requests made outside a session, such as `ctx.modelRegistry.streamSimple()`, have no state.
+
+The transcript already records the selection and every dispatched model, and `ctx.sessionManager.getBranch()` exposes both.
 
 Routers can call other models through `ctx.modelRegistry`, for example `ctx.modelRegistry.classify()` with a classifier model from `ctx.modelRegistry.findOfType("classifier", provider, id)`. The call adds latency before the first token of the turn.
 
-See [`jev-router.ts`](../examples/extensions/jev-router.ts) for a complete router. It plans on a strong OpenAI Codex model chosen by the Jev classifier, lets that model make the first edit, and then switches once to a cheaper model, accepting a single prompt-cache miss. It records the phase as custom entries from a `turn_end` handler.
+See [`jev-router.ts`](../examples/extensions/jev-router.ts) for a complete router. It plans on a strong OpenAI Codex model chosen by the Jev classifier, lets that model make the first edit, and then switches once to a cheaper model, accepting a single prompt-cache miss. It keeps the phase as router state.

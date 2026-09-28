@@ -21,6 +21,7 @@ import type {
 } from "@earendil-works/pi-ai";
 import type { ModelRuntime } from "./model-runtime.ts";
 import type { AuthStatus, ProviderConfigInput } from "./provider-composer.ts";
+import type { VirtualModelDefinition } from "./virtual-models.ts";
 
 export type { ProviderConfigInput } from "./provider-composer.ts";
 export type ResolvedRequestAuth =
@@ -182,6 +183,14 @@ export class ModelRegistry {
 
 	unregisterProvider(providerName: string): void {
 		this.runtime.unregisterProvider(providerName);
+	}
+
+	registerVirtualModel(definition: VirtualModelDefinition): void {
+		this.runtime.registerVirtualModel(definition);
+	}
+
+	unregisterVirtualModel(providerName: string, id: string): void {
+		this.runtime.unregisterVirtualModel(providerName, id);
 	}
 
 	getRegisteredProviderConfig(providerName: string): ProviderConfigInput | undefined {

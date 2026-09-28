@@ -4,12 +4,18 @@
  * The selection (`model_change`, `agent.state.model`, `ctx.model`) may name a virtual model.
  * Everything below the routing step only sees physical models: providers stream them and
  * assistant messages record them. A virtual model never reaches a provider.
+ *
+ * Virtual models belong to a provider id but are not provider models. `ModelRuntime` keeps them
+ * separately and adds them to the provider's catalog with `withVirtualModels()`, so any provider,
+ * including one with physical models, can list several virtual models.
  */
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import {
+	type AnyModel,
 	type Api,
 	type AssistantMessage,
 	type AssistantMessageEventStream,
+	isModelType,
 	lazyStream,
 	type Message,
 	type Model,
@@ -22,6 +28,16 @@ import type { SessionEntry } from "./session-manager.ts";
 /** API id of virtual catalog entries. Requests for it fail unless routed first. */
 export const VIRTUAL_MODEL_API = "pi-virtual";
 
+/** Custom entry type that stores router state on the session branch. */
+export const VIRTUAL_MODEL_STATE_ENTRY = "pi.virtual-model-state";
+
+/** Data of a `pi.virtual-model-state` custom entry. */
+export interface VirtualModelStateData<TState = unknown> {
+	provider: string;
+	modelId: string;
+	state: TState;
+}
+
 const THINKING_LEVELS: readonly ModelThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 
 /**
@@ -33,31 +49,44 @@ const THINKING_LEVELS: readonly ModelThinkingLevel[] = ["off", "minimal", "low",
  */
 export type ModelRouteReason = "user" | "continuation" | "retry" | "direct";
 
-export interface ModelRouteRequest {
+export interface ModelRouteRequest<TState = unknown> {
 	/** The selected virtual model. */
 	model: Model<Api>;
 	/** The selected thinking level. Its meaning is up to the router. */
 	thinkingLevel: ModelThinkingLevel;
 	reason: ModelRouteReason;
-	/**
-	 * Physical model and thinking level of the latest successful response in `messages`. For `retry`,
-	 * the failed request's, which `messages` no longer contains.
-	 */
+	/** Physical model and thinking level of the latest successful response in `messages`. */
 	previous?: { model: Model<Api>; thinkingLevel?: ModelThinkingLevel };
+	/**
+	 * For `retry`: the failed request, which `messages` no longer contains. `message` carries its
+	 * `stopReason` and `errorMessage`. Absent when the router itself failed.
+	 */
+	failed?: { model: Model<Api>; thinkingLevel?: ModelThinkingLevel; message: AssistantMessage };
+	/**
+	 * Router state last returned on this session branch. Undefined before the first state and for
+	 * requests made outside a session, such as `ctx.modelRegistry.streamSimple()`.
+	 */
+	state?: TState;
 	/** Conversation for this request, including system messages. */
 	messages: readonly Message[];
 	signal?: AbortSignal;
 }
 
 /** Physical model and thinking level for one request. */
-export interface ModelRoute {
+export interface ModelRoute<TState = unknown> {
 	model: Model<Api>;
 	thinkingLevel: ModelThinkingLevel;
+	/**
+	 * New router state, stored on the session branch when it differs from `request.state`. Must be
+	 * JSON-serializable. Undefined keeps the current state. Ignored for `direct` requests.
+	 */
+	state?: TState;
 }
 
-export interface VirtualModelDefinition {
-	/** Provider id of the virtual model. The virtual model is the provider's only model. */
+export interface VirtualModelDefinition<TState = unknown> {
+	/** Provider the virtual model is listed under. May be a provider with physical models. */
 	provider: string;
+	/** Model id. Must not be the id of a physical model of `provider`. */
 	id: string;
 	name: string;
 	/** Thinking levels offered for selection. Defaults to `["off"]`. */
@@ -71,14 +100,7 @@ export interface VirtualModelDefinition {
 	/** Input types accepted for selection. Defaults to text and images; routed models without image support get placeholders. */
 	input?: ("text" | "image")[];
 	/** Pick the physical model, which must have credentials, and thinking level for one request. */
-	route(request: ModelRouteRequest): ModelRoute | Promise<ModelRoute>;
-}
-
-/** A keyless provider whose single model routes each request through `route`. */
-export type VirtualProvider = Provider & Pick<VirtualModelDefinition, "route">;
-
-export function isVirtualProvider(provider: Provider | undefined): provider is VirtualProvider {
-	return typeof (provider as Partial<VirtualProvider> | undefined)?.route === "function";
+	route(request: ModelRouteRequest<TState>): ModelRoute<TState> | Promise<ModelRoute<TState>>;
 }
 
 /** Whether a model or message names a virtual model. Failed routing leaves the virtual model on its message. */
@@ -124,12 +146,23 @@ export function getBranchSelection(
 	return selection;
 }
 
-/** Build the provider for a virtual model. Register it like any native provider. */
-export function createVirtualProvider(definition: VirtualModelDefinition): VirtualProvider {
+/** Latest router state a session branch stores for a virtual model. */
+export function getVirtualModelState(branch: readonly SessionEntry[], provider: string, modelId: string): unknown {
+	for (let i = branch.length - 1; i >= 0; i--) {
+		const entry = branch[i];
+		if (entry.type !== "custom" || entry.customType !== VIRTUAL_MODEL_STATE_ENTRY) continue;
+		const data = entry.data as VirtualModelStateData | undefined;
+		if (data?.provider === provider && data.modelId === modelId) return data.state;
+	}
+	return undefined;
+}
+
+/** Build the catalog entry of a virtual model. */
+export function createVirtualModel(definition: Omit<VirtualModelDefinition, "route">): Model<Api> {
 	const levels = definition.thinkingLevels ?? ["off"];
 	const thinkingLevelMap: ThinkingLevelMap = {};
 	for (const level of THINKING_LEVELS) thinkingLevelMap[level] = levels.includes(level) ? level : null;
-	const model: Model<Api> = {
+	return {
 		id: definition.id,
 		name: definition.name,
 		api: VIRTUAL_MODEL_API,
@@ -142,18 +175,55 @@ export function createVirtualProvider(definition: VirtualModelDefinition): Virtu
 		contextWindow: definition.contextWindow ?? 0,
 		maxTokens: definition.maxTokens ?? 0,
 	};
-	// Only unrouted requests reach these, e.g. `stream()` with API-specific options.
-	const unrouted = (): AssistantMessageEventStream =>
-		lazyStream(model, async () => {
-			throw new Error(`Virtual model ${model.provider}/${model.id} must be routed before streaming`);
-		});
+}
+
+/** Stream for a virtual model that was not routed, e.g. `stream()` with API-specific options. */
+export function unroutedStream(model: Model<Api>): AssistantMessageEventStream {
+	return lazyStream(model, async () => {
+		throw new Error(`Virtual model ${model.provider}/${model.id} must be routed before streaming`);
+	});
+}
+
+/**
+ * Add virtual models to a provider's catalog. Without a provider, the result is a keyless provider
+ * that only lists the virtual models. A virtual model hides a physical chat model with the same id,
+ * which a catalog refresh can add after registration. Availability follows the provider's auth.
+ */
+export function withVirtualModels(
+	providerId: string,
+	provider: Provider | undefined,
+	virtualModels: readonly Model<Api>[],
+): Provider {
+	if (!provider) {
+		return {
+			id: providerId,
+			name: providerId,
+			auth: { apiKey: { name: "Virtual model", resolve: async () => ({ auth: {}, source: "virtual" }) } },
+			getModels: () => virtualModels,
+			stream: unroutedStream,
+			streamSimple: unroutedStream,
+		};
+	}
+	const ids = new Set(virtualModels.map((model) => model.id));
+	const physical = <TModel extends AnyModel>(models: readonly TModel[]) =>
+		models.filter((model) => !isVirtualModel(model) && !(isModelType(model, "chat") && ids.has(model.id)));
+	const virtual = <TModel extends AnyModel>(models: readonly TModel[]) =>
+		models.filter((model) => isVirtualModel(model));
+	const { filterModels, filterAllModels } = provider;
 	return {
-		id: definition.provider,
-		name: definition.provider,
-		auth: { apiKey: { name: "Virtual model", resolve: async () => ({ auth: {}, source: "virtual" }) } },
-		getModels: () => [model],
-		stream: unrouted,
-		streamSimple: unrouted,
-		route: (request) => definition.route(request),
+		...provider,
+		getModels: () => [...physical(provider.getModels()), ...virtualModels],
+		getAllModels: () => [...physical(provider.getAllModels?.() ?? provider.getModels()), ...virtualModels],
+		filterModels: (models, credential) => {
+			const real = physical(models);
+			return [...(filterModels?.(real, credential) ?? real), ...virtual(models)];
+		},
+		filterAllModels:
+			filterAllModels &&
+			((models, credential) => [...filterAllModels(physical(models), credential), ...virtual(models)]),
+		stream: (model, context, options) =>
+			isVirtualModel(model) ? unroutedStream(model) : provider.stream(model, context, options),
+		streamSimple: (model, context, options) =>
+			isVirtualModel(model) ? unroutedStream(model) : provider.streamSimple(model, context, options),
 	};
 }

@@ -132,7 +132,15 @@ import { type BashOperations, createLocalBashOperations } from "./tools/bash.ts"
 import { createAllToolDefinitions } from "./tools/index.ts";
 import { createToolDefinitionFromAgentTool } from "./tools/tool-definition-wrapper.ts";
 import { addUsageToTotals, createUsageTotals } from "./usage-totals.ts";
-import { findLatestResponse, getBranchSelection, isVirtualModel, type ModelRouteReason } from "./virtual-models.ts";
+import {
+	findLatestResponse,
+	getBranchSelection,
+	getVirtualModelState,
+	isVirtualModel,
+	type ModelRouteReason,
+	VIRTUAL_MODEL_STATE_ENTRY,
+	type VirtualModelStateData,
+} from "./virtual-models.ts";
 
 // ============================================================================
 // Skill Block Parsing
@@ -366,9 +374,9 @@ export class AgentSession {
 	private _retryAttempt = 0;
 	/**
 	 * Failed response that the next request repeats, set by auto-retry and overflow recovery. The
-	 * retry is routed with it as `previous`, since the context no longer contains it.
+	 * retry is routed with it as `failed`, since the context no longer contains it.
 	 */
-	private _retriedResponse: AssistantMessage | undefined;
+	private _failedResponse: AssistantMessage | undefined;
 
 	// Bash execution state
 	private readonly _bashAbortControllers = new Set<AbortController>();
@@ -537,24 +545,36 @@ export class AgentSession {
 		}
 	}
 
-	/** Resolve a virtual model to the physical model for one request. Physical models pass through. */
+	/**
+	 * Resolve a virtual model to the physical model for one request. Physical models pass through.
+	 * The router gets its state from the branch; new state is stored before the request is sent.
+	 */
 	private async _route(
 		model: Model<any>,
 		thinkingLevel: ThinkingLevel,
 		messages: AgentMessage[],
 		reason: ModelRouteReason,
 		signal?: AbortSignal,
-		retried?: AssistantMessage,
+		failed?: AssistantMessage,
 	): Promise<{ model: Model<any>; thinkingLevel: ThinkingLevel }> {
 		if (!isVirtualModel(model)) return { model, thinkingLevel };
-		// A failed routing attempt names the virtual model; the latest successful response applies then.
-		const previous = retried && !isVirtualModel(retried) ? retried : undefined;
-		return this._modelRuntime.resolveModel(model, convertToLlm(messages), {
+		const state = getVirtualModelState(this.sessionManager.getBranch(), model.provider, model.id);
+		const route = await this._modelRuntime.resolveModel(model, convertToLlm(messages), {
 			reason,
 			thinkingLevel,
 			signal,
-			previous,
+			failed,
+			state,
 		});
+		// Direct requests, such as compaction summaries, are not conversation turns and keep the state.
+		if (reason !== "direct" && route.state !== undefined && JSON.stringify(route.state) !== JSON.stringify(state)) {
+			const data: VirtualModelStateData = { provider: model.provider, modelId: model.id, state: route.state };
+			const entry = this.sessionManager.getEntry(
+				this.sessionManager.appendCustomEntry(VIRTUAL_MODEL_STATE_ENTRY, data),
+			);
+			if (entry) this._emit({ type: "entry_appended", entry });
+		}
+		return { model: route.model, thinkingLevel: route.thinkingLevel };
 	}
 
 	/**
@@ -662,58 +682,64 @@ export class AgentSession {
 		};
 	}
 
-	private async _compactBeforeNextAssistantResponse(context: AgentContext): Promise<AgentContext> {
-		const settings = this.settingsManager.getCompactionSettings(this.model);
-		const model = this._limitsModel();
+	/** Whether the projected context exceeds the compaction threshold of `model`. */
+	private _exceedsCompactionThreshold(model: Model<any> | undefined): boolean {
+		if (!model || model.contextWindow <= 0) return false;
 		const projection = this.sessionManager.buildSessionProjection();
+		return shouldCompact(
+			estimateProjectedContextTokens(projection, this.sessionManager.getBranch()).tokens,
+			model.contextWindow,
+			this.settingsManager.getCompactionSettings(this.model),
+		);
+	}
 
-		if (
-			!model ||
-			model.contextWindow <= 0 ||
-			!shouldCompact(
-				estimateProjectedContextTokens(projection, this.sessionManager.getBranch()).tokens,
-				model.contextWindow,
-				settings,
-			)
-		) {
-			return { ...context, messages: projection.messages };
-		}
-
-		await this._runAutoCompaction("threshold", false);
+	private async _compactBeforeNextAssistantResponse(context: AgentContext): Promise<AgentContext> {
+		if (this._exceedsCompactionThreshold(this._limitsModel())) await this._runAutoCompaction("threshold", false);
 		return { ...context, messages: this.sessionManager.buildSessionProjection().messages };
 	}
 
 	private _installAgentRequestProjection(): void {
 		const previousPrepareRequest = this.agent.prepareRequest;
 		this.agent.prepareRequest = async (request, signal) => {
-			const retried = this._retriedResponse;
-			this._retriedResponse = undefined;
-			const canonicalContext = {
-				...request.context,
-				messages: this.sessionManager.buildSessionProjection().messages,
-				// Messages declare the provider-visible loadout; context.tools keeps executable implementations.
-				tools: this.agent.state.tools.slice(),
+			const failed = this._failedResponse;
+			this._failedResponse = undefined;
+			const prepare = async () => {
+				const canonicalContext = {
+					...request.context,
+					messages: this.sessionManager.buildSessionProjection().messages,
+					// Messages declare the provider-visible loadout; context.tools keeps executable implementations.
+					tools: this.agent.state.tools.slice(),
+				};
+				const previous = await previousPrepareRequest?.(
+					{
+						...request,
+						context: canonicalContext,
+						model: this.agent.state.model,
+						thinkingLevel: this.agent.state.thinkingLevel,
+					},
+					signal,
+				);
+				return { previous, context: previous?.context ?? canonicalContext };
 			};
-			const previous = await previousPrepareRequest?.(
-				{
-					...request,
-					context: canonicalContext,
-					model: this.agent.state.model,
-					thinkingLevel: this.agent.state.thinkingLevel,
-				},
-				signal,
-			);
-			const context = previous?.context ?? canonicalContext;
+			let { previous, context } = await prepare();
 			// The selection stays in agent state; only this request uses the routed model. A routing
 			// failure rejects, which ends the run with an error response.
 			const route = await this._route(
 				previous?.model ?? this.agent.state.model,
 				previous?.thinkingLevel ?? this.agent.state.thinkingLevel,
 				context.messages,
-				retried ? "retry" : this._routeReason(context.messages),
+				failed ? "retry" : this._routeReason(context.messages),
 				signal,
-				retried,
+				failed,
 			);
+			// Earlier compaction checks used the model that answered last. A routed model with a smaller
+			// window gets its own check; the route stands, since the router already decided this request.
+			const limitsModel = this._limitsModel();
+			const sameLimits = limitsModel?.provider === route.model.provider && limitsModel.id === route.model.id;
+			if (!sameLimits && this._exceedsCompactionThreshold(route.model)) {
+				await this._runAutoCompaction("threshold", false);
+				({ previous, context } = await prepare());
+			}
 			return { ...previous, context, ...route };
 		};
 	}
@@ -1562,7 +1588,7 @@ export class AgentSession {
 	private async _runAgentPrompt(messages: AgentMessage | AgentMessage[]): Promise<void> {
 		this._agentRunAbortRequested = false;
 		// Compaction before the prompt may have scheduled a retry; the new prompt replaces it.
-		this._retriedResponse = undefined;
+		this._failedResponse = undefined;
 		this._recordSelection();
 		this._isAgentRunActive = true;
 		try {
@@ -1579,7 +1605,7 @@ export class AgentSession {
 			}
 		} finally {
 			if (this._agentRunAbortRequested) this._finishCancelledRetry();
-			this._retriedResponse = undefined;
+			this._failedResponse = undefined;
 			this._runSystemPromptOptions = undefined;
 			this._flushPendingBashMessages();
 			this._flushPendingCustomMessages();
@@ -1600,7 +1626,7 @@ export class AgentSession {
 
 		if (this._isRetryableError(message) && (await this._prepareRetry(message))) {
 			if (this._agentRunAbortRequested) this._finishCancelledRetry();
-			this._retriedResponse = message;
+			this._failedResponse = message;
 			return !this._agentRunAbortRequested;
 		}
 		if (this._agentRunAbortRequested) {
@@ -2779,7 +2805,7 @@ export class AgentSession {
 			this._overflowRecoveryAttempted = true;
 			this._omitRecoveryAttempt(assistantMessage, toolResults);
 			const retry = await this._runAutoCompaction("overflow", willRetry);
-			if (retry) this._retriedResponse = assistantMessage;
+			if (retry) this._failedResponse = assistantMessage;
 			return retry;
 		}
 
@@ -3211,6 +3237,14 @@ export class AgentSession {
 				},
 				unregisterProvider: (name) => {
 					this._modelRuntime.unregisterProvider(name);
+					this._refreshCurrentModelFromRegistry();
+				},
+				registerVirtualModel: (definition) => {
+					this._modelRuntime.registerVirtualModel(definition);
+					this._refreshCurrentModelFromRegistry();
+				},
+				unregisterVirtualModel: (provider, id) => {
+					this._modelRuntime.unregisterVirtualModel(provider, id);
 					this._refreshCurrentModelFromRegistry();
 				},
 			},

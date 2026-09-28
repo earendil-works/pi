@@ -384,12 +384,12 @@ export {
 	type ProjectTrustUpdate,
 } from "./core/trust-manager.ts";
 export {
-	createVirtualProvider,
 	type ModelRoute,
 	type ModelRouteReason,
 	type ModelRouteRequest,
+	VIRTUAL_MODEL_STATE_ENTRY,
 	type VirtualModelDefinition,
-	type VirtualProvider,
+	type VirtualModelStateData,
 } from "./core/virtual-models.ts";
 // Main entry point
 export { type MainOptions, main } from "./main.ts";
