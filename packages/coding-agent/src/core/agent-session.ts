@@ -377,6 +377,11 @@ export class AgentSession {
 	 * retry is routed with it as `failed`, since the context no longer contains it.
 	 */
 	private _failedResponse: AssistantMessage | undefined;
+	/**
+	 * Whether a message the user wrote was added since the last routed request. The next request is
+	 * then a `user` turn, even when extension messages follow the user's message in the context.
+	 */
+	private _userTurnPending = false;
 
 	// Bash execution state
 	private readonly _bashAbortControllers = new Set<AbortController>();
@@ -578,15 +583,6 @@ export class AgentSession {
 	}
 
 	/**
-	 * Only messages the user wrote start a new turn. Extension custom messages would look like user
-	 * messages after conversion, so the reason comes from agent messages.
-	 */
-	private _routeReason(messages: readonly AgentMessage[]): ModelRouteReason {
-		const last = messages.filter((message) => message.role !== "system").at(-1);
-		return !last || last.role === "user" ? "user" : "continuation";
-	}
-
-	/**
 	 * The model whose limits apply to `message`, or undefined when the message came from another
 	 * model. Under a virtual selection, that is the physical model that produced it.
 	 */
@@ -703,6 +699,10 @@ export class AgentSession {
 		this.agent.prepareRequest = async (request, signal) => {
 			const failed = this._failedResponse;
 			this._failedResponse = undefined;
+			// Only messages the user wrote start a new turn. Extension messages may follow the user's
+			// message (before_agent_start, nextTurn), so the last message does not decide the reason.
+			const reason: ModelRouteReason = failed ? "retry" : this._userTurnPending ? "user" : "continuation";
+			this._userTurnPending = false;
 			const prepare = async () => {
 				const canonicalContext = {
 					...request.context,
@@ -728,7 +728,7 @@ export class AgentSession {
 				previous?.model ?? this.agent.state.model,
 				previous?.thinkingLevel ?? this.agent.state.thinkingLevel,
 				context.messages,
-				failed ? "retry" : this._routeReason(context.messages),
+				reason,
 				signal,
 				failed,
 			);
@@ -1052,6 +1052,7 @@ export class AgentSession {
 				entryId = this.sessionManager.appendMessage(event.message);
 			}
 			if (entryId) this._entryIdsByMessage.set(event.message, entryId);
+			if (event.message.role === "user") this._userTurnPending = true;
 			// Other message types (bashExecution, compactionSummary, branchSummary) are persisted elsewhere
 
 			if (event.message.role === "assistant") {
@@ -1589,6 +1590,8 @@ export class AgentSession {
 		this._agentRunAbortRequested = false;
 		// Compaction before the prompt may have scheduled a retry; the new prompt replaces it.
 		this._failedResponse = undefined;
+		// A user message from an earlier run that never reached a request does not make this run a user turn.
+		this._userTurnPending = false;
 		this._recordSelection();
 		this._isAgentRunActive = true;
 		try {

@@ -170,6 +170,26 @@ describe("AgentSession virtual models", () => {
 		expect(reasons()).toEqual(["user", "continuation"]);
 	});
 
+	it("routes the first request of a prompt as a user turn when extension messages follow the prompt", async () => {
+		const { harness, reasons } = await createRoutedHarness(defaultRoute, {
+			extensionFactories: [
+				(pi) => {
+					pi.on("before_agent_start", () => ({
+						message: { customType: "context", content: "Extra context.", display: false },
+					}));
+				},
+			],
+		});
+		harness.setResponses([fauxAssistantMessage("first"), fauxAssistantMessage("second")]);
+
+		await harness.session.prompt("hello");
+		await harness.session.prompt("again");
+
+		// The context ends with the extension message, but the request answers the user's prompt.
+		expect(harness.session.messages.at(-2)?.role).toBe("custom");
+		expect(reasons()).toEqual(["user", "user"]);
+	});
+
 	it("ends the run with an error response when routing fails and keeps the last physical limits", async () => {
 		let fail = false;
 		const { harness } = await createRoutedHarness((request, ctx) => {
