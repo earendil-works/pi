@@ -31,6 +31,7 @@ import {
 	registerAskUser,
 	registerContextGuard,
 	registerMemory,
+	registerPlainTools,
 	registerPlan,
 	registerSubagent,
 	registerTabTitle,
@@ -105,7 +106,10 @@ export async function main(args: string[], options?: MainOptions) {
 	// declared in settings.json under a "hooks" key on PermissionRequest /
 	// PreToolUse / Stop analogues; pi-plus-tab-title owns the terminal tab
 	// title ("pi+ - [name -] dir") and prepends a spinner frame while the
-	// agent is working.
+	// agent is working; pi-plus-plain-tools strips the background fills from
+	// tool result blocks (upstream paints them pending/success/error) so tool
+	// status reads as text, consistent with the subagent tool's word-based
+	// status.
 	// Merged with any caller-provided factories; upstream appends its own
 	// built-ins (main.ts: extensionFactories = [...builtInExtensions, ...]).
 	const merged: MainOptions = {
@@ -122,6 +126,7 @@ export async function main(args: string[], options?: MainOptions) {
 			{ name: "pi-plus-hooks", factory: registerUserHooks, hidden: true },
 			{ name: "pi-plus-context-guard", factory: registerContextGuard, hidden: true },
 			{ name: "pi-plus-tab-title", factory: registerTabTitle, hidden: true },
+			{ name: "pi-plus-plain-tools", factory: registerPlainTools, hidden: true },
 		],
 	};
 	return upstreamMain(plan.remainingArgs, merged);
