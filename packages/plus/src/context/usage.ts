@@ -5,11 +5,17 @@
  * "?" until the next LLM response. The compacted transcript is still estimable —
  * folded system prompt + compaction summary + recent messages — so we return a
  * heuristic estimate instead. The post-compaction usage path is unchanged.
+ *
+ * The percent base follows detection.getContextPercentBaseWindow(): models above
+ * the 256K ceiling report fullness against the effective threshold window (e.g.
+ * a 1M-context model shows N%/242K), so the meter grows at the pace auto-compact
+ * actually fires at instead of crawling against an unreachable 1M denominator.
  */
 
 import type { AgentSession } from "../../../coding-agent/src/core/agent-session.ts";
 import type { ContextUsage } from "../../../coding-agent/src/core/extensions/types.ts";
 import { getLatestCompactionEntry } from "../../../coding-agent/src/core/session-manager.ts";
+import { getContextPercentBaseWindow } from "./detection.ts";
 import { calculateContextTokensPlus, estimateContextTokensPlus } from "./estimate.ts";
 
 export function getContextUsagePlus(session: AgentSession): ContextUsage | undefined {
@@ -18,6 +24,7 @@ export function getContextUsagePlus(session: AgentSession): ContextUsage | undef
 
 	const contextWindow = model.contextWindow ?? 0;
 	if (contextWindow <= 0) return undefined;
+	const percentBase = getContextPercentBaseWindow(model);
 
 	// After compaction, the last assistant usage reflects pre-compaction context size.
 	// We can only trust usage from an assistant that responded after the latest compaction.
@@ -46,8 +53,8 @@ export function getContextUsagePlus(session: AgentSession): ContextUsage | undef
 			const estimate = estimateContextTokensPlus(session.messages);
 			return {
 				tokens: estimate.tokens,
-				contextWindow,
-				percent: (estimate.tokens / contextWindow) * 100,
+				contextWindow: percentBase,
+				percent: (estimate.tokens / percentBase) * 100,
 			};
 		}
 	}
@@ -55,7 +62,7 @@ export function getContextUsagePlus(session: AgentSession): ContextUsage | undef
 	const estimate = estimateContextTokensPlus(session.messages);
 	return {
 		tokens: estimate.tokens,
-		contextWindow,
-		percent: (estimate.tokens / contextWindow) * 100,
+		contextWindow: percentBase,
+		percent: (estimate.tokens / percentBase) * 100,
 	};
 }

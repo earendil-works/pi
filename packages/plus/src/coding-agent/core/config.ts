@@ -2,7 +2,8 @@
  * Wrapper for packages/coding-agent/src/config.ts.
  *
  * Pass-through except APP_NAME/APP_TITLE: the plus CLI identifies as "pipi"
- * (pi-plus). Scope is the display name only — everything upstream derives
+ * (pi-plus) in CLI text, while the terminal tab title brands as "pi+".
+ * Scope is the display name only — everything upstream derives
  * internally from its own module-local constants keeps pi naming (config dir
  * ".pi", PI_-prefixed env vars, debug log path), so plus shares pi's config
  * and session layout.
@@ -25,7 +26,7 @@ import {
 } from "../../../../coding-agent/src/config.ts";
 
 export const APP_NAME: string = "pipi";
-export const APP_TITLE: string = "pipi";
+export const APP_TITLE: string = "pi+";
 
 /** True when running from the staged bundle, whose package root has neither src/ nor dist/. */
 function isStagedBundle(): boolean {

@@ -46,6 +46,50 @@ const SubagentParams = Type.Object({
 	cwd: Type.Optional(Type.String({ description: "Working directory for the sub-agent process" })),
 });
 
+const RUNNING_SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+const RUNNING_SPINNER_INTERVAL_MS = 120;
+
+interface RunningSpinner {
+	timer: ReturnType<typeof setInterval>;
+	frame: number;
+}
+
+/**
+ * Stop the running-state ticker, if any. Called on every re-render once the
+ * sub-agent is no longer executing (final result or pre-start).
+ */
+function stopRunningSpinner(state: Record<string, unknown> | undefined): void {
+	if (!state) return;
+	const spinner = state.runningSpinner as RunningSpinner | undefined;
+	if (!spinner) return;
+	clearInterval(spinner.timer);
+	delete state.runningSpinner;
+}
+
+/**
+ * Current spinner frame for a running sub-agent. The ticker lives in the
+ * tool component's renderer state (persisted across re-renders by the shell)
+ * and drives re-renders via the context's invalidate callback. The timer is
+ * unref'd so a leaked ticker (e.g. block discarded mid-run) never holds the
+ * process open; without renderer state (non-TUI contexts) a static frame is
+ * rendered instead of starting a ticker that cannot be persisted.
+ */
+function nextRunningSpinnerFrame(state: Record<string, unknown> | undefined, invalidate: () => void): string {
+	if (!state) return RUNNING_SPINNER_FRAMES[0];
+	let spinner = state.runningSpinner as RunningSpinner | undefined;
+	if (!spinner) {
+		const tick: RunningSpinner = { timer: undefined as unknown as ReturnType<typeof setInterval>, frame: 0 };
+		tick.timer = setInterval(() => {
+			tick.frame = (tick.frame + 1) % RUNNING_SPINNER_FRAMES.length;
+			invalidate();
+		}, RUNNING_SPINNER_INTERVAL_MS);
+		tick.timer.unref();
+		state.runningSpinner = tick;
+		spinner = tick;
+	}
+	return RUNNING_SPINNER_FRAMES[spinner.frame];
+}
+
 function renderDisplayItems(items: DisplayItem[], expanded: boolean, theme: Theme): string {
 	const toShow = expanded ? items : items.slice(-COLLAPSED_ITEM_COUNT);
 	const skipped = !expanded && items.length > COLLAPSED_ITEM_COUNT ? items.length - COLLAPSED_ITEM_COUNT : 0;
@@ -148,7 +192,10 @@ export function registerSubagent(pi: ExtensionAPI): void {
 				theme.fg("dim", ` ${args.description || ""}`);
 			text += `\n  ${theme.fg("dim", preview)}`;
 			if (context.executionStarted && context.isPartial) {
-				text += `\n${theme.fg("warning", "● running")}`;
+				const frame = nextRunningSpinnerFrame(context.state, context.invalidate);
+				text += `\n${theme.fg("warning", `${frame} running`)}`;
+			} else {
+				stopRunningSpinner(context.state);
 			}
 			return new Text(text, 0, 0);
 		},

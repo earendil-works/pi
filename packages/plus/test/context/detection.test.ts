@@ -10,10 +10,12 @@ import { afterEach, beforeEach, describe, it, vi } from "vitest";
 import {
 	AUTOCOMPACT_FAILURE_COOLDOWN_MS,
 	AUTOCOMPACT_FLOOR_BUFFER_TOKENS,
+	AUTOCOMPACT_MAX_WINDOW_TOKENS,
 	calculateTokenWarningState,
 	getAutoCompactFailureCooldownMs,
 	getAutoCompactThreshold,
 	getBlockingLimit,
+	getContextPercentBaseWindow,
 	getEffectiveContextWindowSize,
 	isAutoCompactBreakerTripped,
 	isAutoCompactDisabled,
@@ -75,6 +77,36 @@ describe("getEffectiveContextWindowSize", () => {
 		setCurrentModel(undefined);
 		assert.equal(getEffectiveContextWindowSize(), Number.POSITIVE_INFINITY);
 	});
+
+	it("ceilings huge windows at 256K for threshold math (1M-context models)", () => {
+		// DeepSeek V4.1 Flash: min(1M, 256K) - 20k reserve = 242_144.
+		setCurrentModel({ contextWindow: 1_000_000, maxTokens: 384_000 });
+		assert.equal(getEffectiveContextWindowSize(), AUTOCOMPACT_MAX_WINDOW_TOKENS - MAX_OUTPUT_TOKENS_FOR_SUMMARY);
+	});
+
+	it("does not let PI_AUTO_COMPACT_WINDOW raise the window above the 256K ceiling", () => {
+		setCurrentModel({ contextWindow: 1_000_000, maxTokens: 384_000 });
+		process.env.PI_AUTO_COMPACT_WINDOW = "512000";
+		assert.equal(getEffectiveContextWindowSize(), AUTOCOMPACT_MAX_WINDOW_TOKENS - MAX_OUTPUT_TOKENS_FOR_SUMMARY);
+	});
+});
+
+describe("getContextPercentBaseWindow", () => {
+	it("returns the raw context window for models at or below the ceiling", () => {
+		assert.equal(getContextPercentBaseWindow(MODEL), 200_000);
+		assert.equal(getContextPercentBaseWindow({ contextWindow: 262_144, maxTokens: 65_536 }), 262_144);
+	});
+
+	it("returns the effective threshold window for 1M-context models", () => {
+		// DeepSeek V4.1 Flash: percent base = 242_144 so the footer reads against
+		// the window auto-compact actually fires at, not the raw 1M capacity.
+		assert.equal(getContextPercentBaseWindow({ contextWindow: 1_000_000, maxTokens: 384_000 }), 242_144);
+	});
+
+	it("follows PI_AUTO_COMPACT_WINDOW below the ceiling", () => {
+		process.env.PI_AUTO_COMPACT_WINDOW = "100000";
+		assert.equal(getContextPercentBaseWindow({ contextWindow: 1_000_000, maxTokens: 384_000 }), 80_000);
+	});
 });
 
 describe("getAutoCompactThreshold", () => {
@@ -134,6 +166,13 @@ describe("getAutoCompactThreshold", () => {
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
 		}
+	});
+
+	it("computes the threshold against the 256K ceiling for 1M-context models", () => {
+		// effective = 256K - 20k = 242_144; 80% default = 193_715, far below the
+		// ~800K an uncapped 1M window would give.
+		setCurrentModel({ contextWindow: 1_000_000, maxTokens: 384_000 });
+		assert.equal(getAutoCompactThreshold(), Math.floor(242_144 * 0.8));
 	});
 });
 

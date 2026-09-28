@@ -33,6 +33,7 @@ import {
 	registerMemory,
 	registerPlan,
 	registerSubagent,
+	registerTabTitle,
 	registerTasks,
 	registerUserHooks,
 } from "../extensions/index.ts";
@@ -102,7 +103,9 @@ export async function main(args: string[], options?: MainOptions) {
 	// the model ask 1-4 structured questions (options, multi-select, free-text
 	// Other) mid-task in TUI/RPC modes; pi-plus-hooks fires command hooks
 	// declared in settings.json under a "hooks" key on PermissionRequest /
-	// PreToolUse / Stop analogues.
+	// PreToolUse / Stop analogues; pi-plus-tab-title owns the terminal tab
+	// title ("pi+ - [name -] dir") and prepends a spinner frame while the
+	// agent is working.
 	// Merged with any caller-provided factories; upstream appends its own
 	// built-ins (main.ts: extensionFactories = [...builtInExtensions, ...]).
 	const merged: MainOptions = {
@@ -118,6 +121,7 @@ export async function main(args: string[], options?: MainOptions) {
 			{ name: "pi-plus-ask-user", factory: registerAskUser, hidden: true },
 			{ name: "pi-plus-hooks", factory: registerUserHooks, hidden: true },
 			{ name: "pi-plus-context-guard", factory: registerContextGuard, hidden: true },
+			{ name: "pi-plus-tab-title", factory: registerTabTitle, hidden: true },
 		],
 	};
 	return upstreamMain(plan.remainingArgs, merged);

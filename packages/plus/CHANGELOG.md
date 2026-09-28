@@ -12,6 +12,8 @@
 
 ### Changed
 
+- The window used for threshold math is now ceilinged at 256K tokens (`AUTOCOMPACT_MAX_WINDOW_TOKENS`) before the output reservation: models advertising windows far beyond practical agentic session sizes (e.g. the 1M-token DeepSeek V4.1 Flash) previously got an ~800K auto-compact threshold that effectively never fired, letting the transcript grow unbounded. A 1M model now triggers at ~194K (80% of the 242K effective window). `PI_AUTO_COMPACT_WINDOW` keeps its cap semantics and can only lower this further. The footer's context fullness percentage uses the same effective window as its denominator when the ceiling engages, so the meter reads "percent of the usable window" (e.g. `14.4%/242K`) instead of crawling against the unreachable 1M capacity; models at or below the ceiling are unchanged.
+
 - The CC buffer math (ramped 13k–30k by effective window size, openclaude issue #1949; floored effective window for small-context models, issue #635) no longer sets the auto-compact threshold directly — it survives only as the cap for the `PI_AUTOCOMPACT_PCT_OVERRIDE` test knob. The user-facing threshold is now a percent of the effective window chosen in `/settings` (default 80%). `percentLeft` is computed against the raw context window so the displayed percentage reflects full model capacity.
 
 ### Fixed

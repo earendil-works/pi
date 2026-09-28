@@ -44,6 +44,15 @@ export const WARNING_THRESHOLD_BUFFER_TOKENS = 20_000;
 export const ERROR_THRESHOLD_BUFFER_TOKENS = 20_000;
 export const MANUAL_COMPACT_BUFFER_TOKENS = 3_000;
 
+/**
+ * Default ceiling on the window used for threshold math. Models advertising
+ * windows far beyond practical agentic session sizes (e.g. the 1M-token
+ * DeepSeek V4.1 Flash) would otherwise push the auto-compact threshold to
+ * ~800K, where it effectively never fires and the transcript grows unbounded.
+ * PI_AUTO_COMPACT_WINDOW can only lower this further, never raise it.
+ */
+export const AUTOCOMPACT_MAX_WINDOW_TOKENS = 262_144; // 256K
+
 /** Pause threshold auto-compact after this many consecutive failures. */
 export const MAX_CONSECUTIVE_AUTOCOMPACT_FAILURES = 3;
 
@@ -99,14 +108,15 @@ function parsePositiveInt(value: string | undefined): number | undefined {
 	return Number.isNaN(parsed) || parsed <= 0 ? undefined : parsed;
 }
 
-/** Effective window: contextWindow minus the output reserve, capped by PI_AUTO_COMPACT_WINDOW. */
+/** Effective window: contextWindow (ceilinged at AUTOCOMPACT_MAX_WINDOW_TOKENS)
+ * minus the output reserve, capped by PI_AUTO_COMPACT_WINDOW. */
 export function getEffectiveContextWindowSize(model?: DetectionModel): number {
 	const m = model ?? currentModel;
 	if (!m) {
 		return Number.POSITIVE_INFINITY;
 	}
 	const reservedTokensForSummary = Math.min(m.maxTokens || Number.POSITIVE_INFINITY, MAX_OUTPUT_TOKENS_FOR_SUMMARY);
-	let contextWindow = m.contextWindow;
+	let contextWindow = Math.min(m.contextWindow, AUTOCOMPACT_MAX_WINDOW_TOKENS);
 
 	const cap = parsePositiveInt(process.env.PI_AUTO_COMPACT_WINDOW);
 	if (cap !== undefined) {
@@ -124,10 +134,24 @@ export function getEffectiveContextWindowSize(model?: DetectionModel): number {
 	);
 }
 
+/**
+ * Window that context fullness is measured against for display. Normally the
+ * raw contextWindow, preserving upstream's "percent of model capacity". When
+ * the 256K ceiling engages (1M-context models), fullness is reported against
+ * the same effective window the auto-compact threshold uses, so the percentage
+ * tracks "how much of the usable window is consumed" and the /settings
+ * threshold percent reads directly off the meter.
+ */
+export function getContextPercentBaseWindow(model: DetectionModel): number {
+	if (model.contextWindow > AUTOCOMPACT_MAX_WINDOW_TOKENS) {
+		return getEffectiveContextWindowSize(model);
+	}
+	return model.contextWindow;
+}
+
 /** Token count at which auto-compaction triggers. */
 export function getAutoCompactThreshold(model?: DetectionModel): number {
 	const effectiveContextWindow = getEffectiveContextWindowSize(model);
-
 	// Ramp the buffer gradually between the 13k floor and the 30k cap by
 	// effective window size. Only used to cap the env test knob below — the
 	// user-facing threshold is the /settings percent (default 80%).

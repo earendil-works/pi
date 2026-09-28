@@ -1,7 +1,8 @@
 /**
  * Tests for the subagent tool's TUI renderers: status is conveyed with words
- * ("running" / "done" / "failed") instead of the default tool shell's
- * blue/green background (renderShell "self" opts out of that shell).
+ * ("running" / "done" / "failed") plus an animated spinner instead of the
+ * default tool shell's blue/green background (renderShell "self" opts out of
+ * that shell).
  */
 
 import assert from "node:assert/strict";
@@ -68,7 +69,13 @@ function makeResult(overrides: Partial<SubagentResult> = {}): SubagentResult {
 }
 
 function renderContext(overrides: Partial<ToolRenderContext<any, any>> = {}): ToolRenderContext<any, any> {
-	return { executionStarted: false, isPartial: true, ...overrides } as ToolRenderContext<any, any>;
+	return {
+		executionStarted: false,
+		isPartial: true,
+		state: {},
+		invalidate: () => {},
+		...overrides,
+	} as ToolRenderContext<any, any>;
 }
 
 const callArgs = { description: "Fix the bug", prompt: "Investigate and fix the bug", agent: "worker" };
@@ -88,18 +95,41 @@ describe("subagent renderCall", () => {
 		assert.doesNotMatch(text, /running/);
 	});
 
-	it('shows the word "running" while executing', () => {
+	it('shows a spinner and the word "running" while executing', () => {
 		const text = renderToText(
 			toolDef.renderCall!(callArgs, theme, renderContext({ executionStarted: true, isPartial: true })),
 		);
-		assert.match(text, /running/);
+		assert.match(text, /[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] running/);
 	});
 
-	it('drops the "running" word once the result is final', () => {
-		const text = renderToText(
-			toolDef.renderCall!(callArgs, theme, renderContext({ executionStarted: true, isPartial: false })),
-		);
+	it("spinner ticker lives in renderer state and drives invalidation", async () => {
+		let invalidations = 0;
+		const state: Record<string, unknown> = {};
+		const ctx = renderContext({
+			executionStarted: true,
+			isPartial: true,
+			state,
+			invalidate: () => invalidations++,
+		});
+		const first = renderToText(toolDef.renderCall!(callArgs, theme, ctx));
+		// A second render with the same state must reuse the ticker, not stack timers.
+		renderToText(toolDef.renderCall!(callArgs, theme, ctx));
+		assert.ok(state.runningSpinner, "ticker stored in renderer state");
+		await new Promise((resolve) => setTimeout(resolve, 300));
+		const second = renderToText(toolDef.renderCall!(callArgs, theme, ctx));
+		assert.notEqual(first, second, "frame advances over time");
+		assert.ok(invalidations > 0, "ticker calls invalidate");
+	});
+
+	it('stops the ticker and drops the "running" word once the result is final', () => {
+		const state: Record<string, unknown> = {};
+		const running = renderContext({ executionStarted: true, isPartial: true, state });
+		renderToText(toolDef.renderCall!(callArgs, theme, running));
+		assert.ok(state.runningSpinner, "ticker started");
+		const final = renderContext({ executionStarted: true, isPartial: false, state });
+		const text = renderToText(toolDef.renderCall!(callArgs, theme, final));
 		assert.doesNotMatch(text, /running/);
+		assert.equal(state.runningSpinner, undefined, "ticker cleared");
 	});
 });
 
