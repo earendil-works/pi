@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### Added
+
+- `PI_AUTOCOMPACT_FAILURE_COOLDOWN_MS` env override (minimum 10s, values below the floor fall back to the 5-minute default) for the auto-compact circuit breaker: after 3 consecutive failures the breaker now cools down instead of latching forever — one attempt is allowed through once the cooldown elapses (half-open), and a failed attempt re-trips it.
+- Layered context defense (pi-plus-context-guard extension + AgentSession constructor hook, ported from openclaude): a message-count force trigger compacts when the active message count exceeds `PI_MAX_ACTIVE_MESSAGES` (default 1000) regardless of the token threshold; relevance pruning omits low-relevance old text entries via durable `context_edit` overlays once the projected request reaches the auto-compact threshold, protecting the recent `PI_PRUNE_TAIL_TURNS` (default 3) turns, tool interactions, errors, and prior compaction summaries; time-based micro-compact clears the content of stale tool results (`PI_MICROCOMPACT_IDLE_MINUTES`, default 60; keeps the newest `PI_MICROCOMPACT_KEEP_RECENT`, default 5) when a session is opened after an idle gap, since the server prompt cache is dead anyway; and resuming a session already at ≥ 70% of the auto-compact threshold offers a "Compact now?" confirmation in the TUI.
+- Post-compact re-injection of the active plan file and invoked skills into the compaction summary (openclaude's `createPlanAttachmentIfNeeded` / `createSkillAttachmentIfNeeded`), alongside the existing recent-files re-injection.
+- Recompaction analytics (openclaude's `RecompactionInfo`) persisted in the compaction entry's `details`: whether the compaction continues a chain, turns consumed since the previous compaction, the previous pre-compact token count, and a `willRetriggerNextTurn` prediction; set `PI_COMPACT_ANALYTICS` for a stderr diagnostic line.
+- `/settings` gains an "Auto-compact threshold" row (70%/80%/85%/90%/95%, default 80%), injected into the settings selector by the plus wrapper. The choice persists to `~/.pi/agent/pi-plus-settings.json` and applies as a percent of the effective context window, replacing the CC buffer math as the user-facing default — unlike `PI_AUTOCOMPACT_PCT_OVERRIDE`, which stays a session-scoped test knob capped at the CC buffer.
+
+### Changed
+
+- The CC buffer math (ramped 13k–30k by effective window size, openclaude issue #1949; floored effective window for small-context models, issue #635) no longer sets the auto-compact threshold directly — it survives only as the cap for the `PI_AUTOCOMPACT_PCT_OVERRIDE` test knob. The user-facing threshold is now a percent of the effective window chosen in `/settings` (default 80%). `percentLeft` is computed against the raw context window so the displayed percentage reflects full model capacity.
+
 ### Fixed
 
 - `pipi remove`/`pipi install` under a profile now update the source `~/.pi/agent/settings.json` `packages` list, not just the per-profile copy that the next materialization would discard. The wrapper registers a process-exit sync (`syncProfilePackagesToSource` from pi-hub) for profile launches, so the removed extension is not reinstalled on next launch.

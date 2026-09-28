@@ -62,9 +62,9 @@ function isSystemMessage(message: AgentMessage): message is SystemMessage {
 
 /**
  * Estimated tokens of the effective system prompt + tool declarations, obtained by
- * replaying the transcript's system messages (sections merge by name, tools
- * accumulate, `replace` resets) instead of summing per-message — a plain sum would
- * count patched sections and replaced prompts multiple times.
+ * replaying the transcript's system messages (later `content` appends to the base
+ * prompt, `sections` patch by name, tools accumulate with removals) instead of
+ * summing per-message — a plain sum would count patched sections multiple times.
  */
 export function estimateEffectiveSystemTokens(messages: readonly AgentMessage[]): number {
 	const folded = getCurrentSystemMessage(messages);

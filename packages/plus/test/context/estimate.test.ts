@@ -92,11 +92,13 @@ describe("estimateEffectiveSystemTokens", () => {
 		assert.equal(tokens, expected);
 	});
 
-	it("resets on a replace message", () => {
+	it("accumulates content from later system messages (no reset semantics)", () => {
+		// Upstream removed `SystemMessage.replace`: later content is appended to the
+		// base prompt, so both texts count. Folded content is "a"×4000 + "\n\n" + "b"×400.
 		const first = makeSystem(1, "a".repeat(4000));
-		const replaced = makeSystem(2, "b".repeat(400), { replace: true });
-		const tokens = estimateEffectiveSystemTokens([first, replaced] as AgentMessage[]);
-		assert.equal(tokens, Math.ceil(400 / 4));
+		const second = makeSystem(2, "b".repeat(400));
+		const tokens = estimateEffectiveSystemTokens([first, second] as AgentMessage[]);
+		assert.equal(tokens, Math.ceil((4000 + 2 + 400) / 4));
 	});
 
 	it("accumulates toolsAdded across messages", () => {

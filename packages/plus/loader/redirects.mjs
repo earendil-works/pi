@@ -9,6 +9,7 @@ export const REDIRECTS = new Map([
 	["packages/coding-agent/src/config.ts", "packages/plus/src/coding-agent/core/config.ts"],
 	["packages/coding-agent/src/main.ts", "packages/plus/src/coding-agent/main.ts"],
 	["packages/coding-agent/src/cli/args.ts", "packages/plus/src/coding-agent/cli/args.ts"],
+	["packages/coding-agent/src/modes/interactive/components/settings-selector.ts", "packages/plus/src/coding-agent/ui/settings-selector.ts"],
 	["packages/agent/src/agent.ts", "packages/plus/src/agent/agent.ts"],
 	["packages/agent/src/harness/compaction/compaction.ts", "packages/plus/src/agent/harness/compaction/compaction.ts"],
 ]);

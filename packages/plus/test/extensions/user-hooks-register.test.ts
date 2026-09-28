@@ -20,10 +20,9 @@ import { registerUserHooks } from "../../src/extensions/hooks/index.ts";
 
 function harness(): {
 	handlers: Map<string, (event: never, ctx: ExtensionContext) => unknown>;
-	fire: (event: Record<string, unknown>) => unknown;
+	fire: (event: Record<string, unknown>, ctx?: ExtensionContext) => unknown;
 } {
 	const handlers = new Map<string, (event: never, ctx: ExtensionContext) => unknown>();
-	const ctx = {} as unknown as ExtensionContext;
 	registerUserHooks({
 		on: (event: string, handler: (event: never, ctx: ExtensionContext) => unknown) => {
 			handlers.set(event, handler);
@@ -31,10 +30,10 @@ function harness(): {
 	} as unknown as ExtensionAPI);
 	return {
 		handlers,
-		fire: (event: Record<string, unknown>) => {
+		fire: (event: Record<string, unknown>, ctx?: ExtensionContext) => {
 			const handler = handlers.get(event.type as string);
 			assert.ok(handler, `no handler registered for ${event.type}`);
-			return handler(event as never, ctx);
+			return handler(event as never, (ctx ?? {}) as ExtensionContext);
 		},
 	};
 }
@@ -51,20 +50,36 @@ describe("registerUserHooks wiring", () => {
 		fireCalls.length = 0;
 		const { fire } = harness();
 		fire({ type: "ui_prompt_start", reason: "ui_prompt", kind: "custom" });
-		assert.deepEqual(fireCalls, [{ event: "PermissionRequest", fields: { permission: "custom" } }]);
+		assert.deepEqual(fireCalls, [{ event: "PermissionRequest", fields: { permission: "custom", mode: undefined } }]);
+	});
+
+	it("passes the session mode so hook scripts can ignore headless sessions", () => {
+		fireCalls.length = 0;
+		const { fire } = harness();
+		fire({ type: "agent_settled" }, { mode: "rpc" } as ExtensionContext);
+		assert.deepEqual(fireCalls, [{ event: "Stop", fields: { mode: "rpc" } }]);
+		fire({ type: "tool_execution_start", toolCallId: "c1", toolName: "ask_user", args: {} }, {
+			mode: "tui",
+		} as ExtensionContext);
+		assert.deepEqual(fireCalls[1], {
+			event: "PreToolUse",
+			fields: { tool_name: "ask_user", toolName: "ask_user", mode: "tui" },
+		});
 	});
 
 	it("tool_execution_start fires PreToolUse with tool_name and toolName", () => {
 		fireCalls.length = 0;
 		const { fire } = harness();
 		fire({ type: "tool_execution_start", toolCallId: "c1", toolName: "ask_user", args: {} });
-		assert.deepEqual(fireCalls, [{ event: "PreToolUse", fields: { tool_name: "ask_user", toolName: "ask_user" } }]);
+		assert.deepEqual(fireCalls, [
+			{ event: "PreToolUse", fields: { tool_name: "ask_user", toolName: "ask_user", mode: undefined } },
+		]);
 	});
 
 	it("agent_settled fires Stop", () => {
 		fireCalls.length = 0;
 		const { fire } = harness();
 		fire({ type: "agent_settled" });
-		assert.deepEqual(fireCalls, [{ event: "Stop", fields: {} }]);
+		assert.deepEqual(fireCalls, [{ event: "Stop", fields: { mode: undefined } }]);
 	});
 });

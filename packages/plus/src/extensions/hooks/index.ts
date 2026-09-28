@@ -9,20 +9,22 @@
  * - Stop: the agent has fully settled for the turn.
  *
  * Hooks from ~/.pi, the agent dir, and the project .pi settings.json files
- * are merged; fires are async fire-and-forget.
+ * are merged; fires are async fire-and-forget. The payload includes the
+ * session `mode` (tui/rpc/json/print) so hook scripts can ignore headless
+ * sessions, matching the interactive-only guard of agent-dir extensions.
  */
 
 import type { ExtensionAPI } from "../../../../coding-agent/src/core/extensions/types.ts";
 import { fireUserHooks } from "./fire.ts";
 
 export function registerUserHooks(pi: ExtensionAPI): void {
-	pi.on("ui_prompt_start", (event) => {
-		fireUserHooks("PermissionRequest", { permission: event.kind });
+	pi.on("ui_prompt_start", (event, ctx) => {
+		fireUserHooks("PermissionRequest", { permission: event.kind, mode: ctx?.mode });
 	});
-	pi.on("tool_execution_start", (event) => {
-		fireUserHooks("PreToolUse", { tool_name: event.toolName, toolName: event.toolName });
+	pi.on("tool_execution_start", (event, ctx) => {
+		fireUserHooks("PreToolUse", { tool_name: event.toolName, toolName: event.toolName, mode: ctx?.mode });
 	});
-	pi.on("agent_settled", () => {
-		fireUserHooks("Stop", {});
+	pi.on("agent_settled", (_event, ctx) => {
+		fireUserHooks("Stop", { mode: ctx?.mode });
 	});
 }

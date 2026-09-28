@@ -10,14 +10,14 @@ import type { ExtensionAPI, ExtensionContext, InputEvent } from "../../../coding
 import { registerPlan } from "../../src/extensions/plan/index.ts";
 
 interface Harness {
-	handlers: Map<string, (event: never, ctx: ExtensionContext) => unknown>;
+	handlers: Map<string, (event: unknown, ctx: ExtensionContext) => unknown>;
 	notifications: string[];
 	input: (text: string) => unknown;
 }
 
 function harness(): Harness {
 	const notifications: string[] = [];
-	const handlers = new Map<string, (event: never, ctx: ExtensionContext) => unknown>();
+	const handlers = new Map<string, (event: unknown, ctx: ExtensionContext) => unknown>();
 	const ctx = {
 		ui: {
 			notify: (message: string) => notifications.push(message),
@@ -32,7 +32,7 @@ function harness(): Harness {
 		registerShortcut: () => {},
 		registerTool: () => {},
 		getFlag: () => false,
-		on: (event: string, handler: (event: never, ctx: ExtensionContext) => unknown) => {
+		on: (event: string, handler: (event: unknown, ctx: ExtensionContext) => unknown) => {
 			handlers.set(event, handler);
 		},
 	} as unknown as ExtensionAPI);

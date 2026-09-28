@@ -7,8 +7,13 @@
  *   no split-turn merge, no incremental update prompt.
  * - Prompt-too-long retries drop oldest turn groups (CC truncateHeadForPTLRetry).
  * - Post-compact re-injection of recently read files happens inside the summary
- *   text (pi replaces everything up to firstKeptEntryId; CC uses attachments).
+ *   text (pi replaces everything up to firstKeptEntryId; CC uses attachments),
+ *   as does re-injection of the active plan file and invoked skills (CC's
+ *   createPlanAttachmentIfNeeded / createSkillAttachmentIfNeeded).
  * - The 3-failure circuit breaker lives here because agent-session.ts cannot be edited.
+ * - Recompaction analytics (CC's RecompactionInfo) are recorded per session:
+ *   persisted in the compaction entry's details and echoed to stderr when
+ *   PI_COMPACT_ANALYTICS is set, to diagnose compaction loops.
  */
 import { readFileSync } from "node:fs";
 import type { AgentMessage, StreamFn, ThinkingLevel } from "@earendil-works/pi-agent-core";
@@ -27,7 +32,14 @@ import {
 	serializeConversation,
 } from "../../../coding-agent/src/core/compaction/utils.ts";
 import { convertToLlm } from "../../../coding-agent/src/core/messages.ts";
-import { isCompactDisabled, recordAutoCompactFailure, recordAutoCompactSuccess } from "../context/detection.ts";
+import {
+	getAutoCompactThreshold,
+	getCurrentModel,
+	isCompactDisabled,
+	recordAutoCompactFailure,
+	recordAutoCompactSuccess,
+} from "../context/detection.ts";
+import { planFilePathFor, readPlan } from "../extensions/plan/plan-file.ts";
 import { formatCompactSummary, getCompactPrompt } from "./prompt.ts";
 
 const MAX_PTL_RETRIES = 3;
@@ -35,6 +47,12 @@ const POST_COMPACT_MAX_FILES_TO_RESTORE = 5;
 const POST_COMPACT_TOKEN_BUDGET = 50_000;
 const TOKENS_PER_FILE_CAP = 5_000;
 const CHARS_PER_TOKEN = 4;
+
+// CC createPlanAttachmentIfNeeded / createSkillAttachmentIfNeeded budgets.
+const PLAN_TOKEN_CAP = 5_000;
+const SKILL_TOKEN_CAP = 5_000;
+const SKILLS_TOTAL_TOKEN_BUDGET = 25_000;
+const SKILL_TRUNCATION_MARKER = "[... skill content truncated for compaction ...]";
 
 const OVERFLOW_ERROR_PATTERN =
 	/prompt is too long|prompt too long|context (window )?(too long|length)|maximum context|input is too long|reduce the (length|input)/i;
@@ -232,6 +250,134 @@ function buildRecentFilesSection(readFiles: string[]): string {
 }
 
 /**
+ * Re-inject the active plan file's content, matching CC's
+ * createPlanAttachmentIfNeeded (pi-plus plan mode keeps the plan at
+ * <agentDir>/plans/<sessionId>.md). The plan system-prompt section survives
+ * compaction, but re-injecting the content saves the model a Read before it
+ * can act on the plan. Skipped when there is no plan file or no sessionId.
+ */
+async function buildPlanSection(sessionId: string | undefined): Promise<string> {
+	if (!sessionId) return "";
+	let content: string;
+	try {
+		content = await readPlan(planFilePathFor(sessionId));
+	} catch {
+		return "";
+	}
+	if (content.trim() === "") return "";
+	const capChars = PLAN_TOKEN_CAP * CHARS_PER_TOKEN;
+	const excerpt = content.length > capChars ? `${content.slice(0, capChars)}\n${SKILL_TRUNCATION_MARKER}` : content;
+	return `\n\n## Current Plan (post-compact context)\n\n\`\`\`\n${excerpt}\n\`\`\``;
+}
+
+// Same shape as pi's parseSkillBlock (agent-session.ts): invocations expand to a
+// user message wrapping the SKILL.md body, so the summarized messages carry a
+// complete record of which skills were used — no separate tracking needed.
+const SKILL_INVOCATION_PATTERN = /<skill name="([^"]+)" location="([^"]+)">/g;
+
+/**
+ * Re-inject the content of invoked skills, matching CC's
+ * createSkillAttachmentIfNeeded (5k tokens per skill with a truncation marker,
+ * 25k total budget, most-recent invocation first). Files are re-read from disk
+ * rather than reusing the transcript copy so the model sees current content.
+ */
+function buildSkillsSection(messages: readonly AgentMessage[]): string {
+	const invocations = new Map<string, string>(); // location -> name, most recent last
+	for (let i = messages.length - 1; i >= 0; i--) {
+		const message = messages[i];
+		if (message.role !== "user") continue;
+		const text = contentText(message.content);
+		SKILL_INVOCATION_PATTERN.lastIndex = 0;
+		for (
+			let match = SKILL_INVOCATION_PATTERN.exec(text);
+			match !== null;
+			match = SKILL_INVOCATION_PATTERN.exec(text)
+		) {
+			if (!invocations.has(match[2])) invocations.set(match[2], match[1]);
+		}
+	}
+	if (invocations.size === 0) return "";
+
+	let totalChars = 0;
+	const maxTotalChars = SKILLS_TOTAL_TOKEN_BUDGET * CHARS_PER_TOKEN;
+	const sections: string[] = [];
+	// Most-recent-first, matching CC's invocation ordering.
+	for (const [location, name] of [...invocations.entries()].reverse()) {
+		const remaining = maxTotalChars - totalChars;
+		const perSkillCap = Math.min(SKILL_TOKEN_CAP * CHARS_PER_TOKEN, remaining);
+		if (perSkillCap <= 0) break;
+		try {
+			const content = readFileSync(location, "utf8");
+			const excerpt =
+				content.length > perSkillCap ? `${content.slice(0, perSkillCap)}\n${SKILL_TRUNCATION_MARKER}` : content;
+			totalChars += excerpt.length;
+			sections.push(`### ${name} (\`${location}\`)\n\n${excerpt}`);
+		} catch {
+			// Deleted/unreadable skill file: skip, like CC's tolerant restore.
+		}
+	}
+
+	if (sections.length === 0) return "";
+	return `\n\n## Active Skills (post-compact context)\n\n${sections.join("\n\n")}`;
+}
+
+/** CC's RecompactionInfo, recorded per session to diagnose compaction loops. */
+export interface RecompactionAnalytics {
+	isRecompactionInChain: boolean;
+	turnsSincePreviousCompact: number;
+	previousTokensBefore: number | undefined;
+	willRetriggerNextTurn: boolean;
+}
+
+/** Last compaction per session, for cross-compaction comparisons. */
+const lastCompactionBySession = new Map<string, { tokensBefore: number }>();
+
+function isEnvTruthy(value: string | undefined): boolean {
+	return value !== undefined && value !== "" && value !== "0" && value.toLowerCase() !== "false";
+}
+
+/**
+ * Build recompaction analytics for this compaction and remember it as the
+ * session's latest. turnsSincePreviousCompact counts the user messages inside
+ * the summarized region (the turns consumed since the last boundary).
+ * willRetriggerNextTurn predicts whether the post-compact projection — summary
+ * plus the retained tail budget — lands back at/above the auto-compact threshold.
+ */
+function recordRecompactionAnalytics(
+	sessionId: string | undefined,
+	messagesToSummarize: readonly AgentMessage[],
+	previousSummary: string | undefined,
+	tokensBefore: number,
+	keepRecentTokens: number,
+	summaryText: string,
+): RecompactionAnalytics {
+	const turnsSincePreviousCompact = messagesToSummarize.filter((message) => message.role === "user").length;
+	const estimatedTokensAfter =
+		Math.ceil(summaryText.length / CHARS_PER_TOKEN) + Math.min(tokensBefore, keepRecentTokens);
+	const threshold = getAutoCompactThreshold(getCurrentModel());
+	const analytics: RecompactionAnalytics = {
+		isRecompactionInChain: previousSummary !== undefined,
+		turnsSincePreviousCompact,
+		previousTokensBefore: sessionId ? lastCompactionBySession.get(sessionId)?.tokensBefore : undefined,
+		willRetriggerNextTurn: estimatedTokensAfter >= threshold,
+	};
+	if (sessionId) lastCompactionBySession.set(sessionId, { tokensBefore });
+	if (isEnvTruthy(process.env.PI_COMPACT_ANALYTICS)) {
+		console.error(
+			"[pi-plus/recompact]",
+			JSON.stringify({
+				sessionId,
+				tokensBefore,
+				estimatedTokensAfter,
+				autoCompactThreshold: threshold,
+				...analytics,
+			}),
+		);
+	}
+	return analytics;
+}
+
+/**
  * Claude Code-style compaction: one full-conversation summary, PTL retry, circuit breaker,
  * file re-injection. Signature-compatible with pi's compact(); overrides the upstream export.
  *
@@ -309,18 +455,31 @@ export async function compact(
 	// Keep pi's file-ops trailer convention (the TUI and details field rely on it)…
 	const { readFiles, modifiedFiles } = computeFileLists(fileOps);
 	summary += formatFileOperations(readFiles, modifiedFiles);
-	// …then CC-style re-injection of recent file contents inside the summary text.
+	// …then CC-style post-compact re-injection inside the summary text.
 	summary += buildRecentFilesSection(readFiles);
+	summary += await buildPlanSection(sessionId);
+	summary += buildSkillsSection(allMessages);
 
 	if (!firstKeptEntryId) {
 		throw new Error("First kept entry has no UUID - session may need migration");
 	}
 
+	const recompaction = recordRecompactionAnalytics(
+		sessionId,
+		messagesToSummarize,
+		previousSummary,
+		tokensBefore,
+		settings.keepRecentTokens,
+		summary,
+	);
+
 	return {
 		summary,
 		firstKeptEntryId,
 		tokensBefore,
+		estimatedTokensAfter:
+			Math.ceil(summary.length / CHARS_PER_TOKEN) + Math.min(tokensBefore, settings.keepRecentTokens),
 		usage: result.usage,
-		details: { readFiles, modifiedFiles } as CompactionDetails,
+		details: { readFiles, modifiedFiles, recompaction } as CompactionDetails,
 	};
 }

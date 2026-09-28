@@ -29,6 +29,8 @@ import { main as upstreamMain } from "../../../coding-agent/src/main.ts";
 import { dispatchCompletion } from "../completion/index.ts";
 import {
 	registerAskUser,
+	registerContextGuard,
+	registerMemory,
 	registerPlan,
 	registerSubagent,
 	registerTasks,
@@ -90,7 +92,10 @@ export async function main(args: string[], options?: MainOptions) {
 	// mode; pi-plus-vim enables vim modal editing when the "vim" setting is on;
 	// pi-plus-subagent delegates tasks to isolated sub-agent processes;
 	// pi-plus-tasks adds the TaskCreate/TaskUpdate/TaskList/TaskGet tools and the
-	// /tasks command (ctrl+y); pi-plus-plan adds plan mode (EnterPlanMode /
+	// /tasks command (ctrl+y); pi-plus-memory adds per-project long-term memory
+	// (memory_save/memory_recall tools, MEMORY.md index injected into the system
+	// prompt, /memory command, background extraction of noteworthy facts at turn
+	// end); pi-plus-plan adds plan mode (EnterPlanMode /
 	// ExitPlanMode tools, /plan command, ctrl+alt+p toggle) — a read-only
 	// research phase whose plan file is the only writable target until the user
 	// approves via ExitPlanMode; pi-plus-ask-user adds the ask_user tool, letting
@@ -108,9 +113,11 @@ export async function main(args: string[], options?: MainOptions) {
 			{ name: "pi-plus-vim", factory: registerVim, hidden: true },
 			{ name: "pi-plus-subagent", factory: registerSubagent, hidden: true },
 			{ name: "pi-plus-tasks", factory: registerTasks, hidden: true },
+			{ name: "pi-plus-memory", factory: registerMemory, hidden: true },
 			{ name: "pi-plus-plan", factory: registerPlan, hidden: true },
 			{ name: "pi-plus-ask-user", factory: registerAskUser, hidden: true },
 			{ name: "pi-plus-hooks", factory: registerUserHooks, hidden: true },
+			{ name: "pi-plus-context-guard", factory: registerContextGuard, hidden: true },
 		],
 	};
 	return upstreamMain(plan.remainingArgs, merged);

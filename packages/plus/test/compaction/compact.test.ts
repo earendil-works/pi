@@ -163,7 +163,181 @@ describe("compact", () => {
 		assert.ok(result.summary.includes("<modified-files>"));
 		assert.ok(result.summary.includes("Recently Read Files (post-compact context)"));
 		assert.ok(result.summary.includes("export const x = 1;"));
-		assert.deepEqual(result.details, { readFiles: [readFile], modifiedFiles: [join(dir, "out.ts")] });
+		assert.deepEqual(result.details, {
+			readFiles: [readFile],
+			modifiedFiles: [join(dir, "out.ts")],
+			recompaction: {
+				isRecompactionInChain: false,
+				turnsSincePreviousCompact: 2,
+				previousTokensBefore: undefined,
+				willRetriggerNextTurn: false,
+			},
+		});
+	});
+
+	it("re-injects invoked skills from transcript invocations", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "plus-compact-"));
+		const skillFile = join(dir, "SKILL.md");
+		writeFileSync(skillFile, "# Skill body\n\nDo the skill thing.\n");
+		const prep = preparation({
+			messagesToSummarize: [
+				userMessage(`<skill name="test-skill" location="${skillFile}">\nold transcript copy\n</skill>`),
+				assistantMessage("used the skill"),
+			],
+		});
+		const calls: RecordedCall[] = [];
+		const result = await compact(
+			prep,
+			MODEL,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			fakeStreamFn([assistantMessage(SUMMARY_TEXT)], calls),
+		);
+
+		assert.ok(result.summary.includes("Active Skills (post-compact context)"));
+		assert.ok(result.summary.includes("test-skill"));
+		assert.ok(
+			result.summary.includes("Do the skill thing."),
+			"content is re-read from disk, not the transcript copy",
+		);
+		assert.ok(!result.summary.includes("old transcript copy"));
+	});
+
+	it("re-injects the active plan file when one exists for the session", async () => {
+		const agentDir = mkdtempSync(join(tmpdir(), "plus-agent-"));
+		const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+		process.env.PI_CODING_AGENT_DIR = agentDir;
+		try {
+			const { planFilePathFor } = await import("../../src/extensions/plan/plan-file.ts");
+			const sessionId = "compact-test-session";
+			writeFileSync(planFilePathFor(sessionId), "# Plan\n\n1. Ship it.\n");
+
+			const calls: RecordedCall[] = [];
+			const result = await compact(
+				preparation(),
+				MODEL,
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				fakeStreamFn([assistantMessage(SUMMARY_TEXT)], calls),
+				undefined,
+				undefined,
+				undefined,
+				sessionId,
+			);
+
+			assert.ok(result.summary.includes("Current Plan (post-compact context)"));
+			assert.ok(result.summary.includes("1. Ship it."));
+		} finally {
+			if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+			else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+		}
+	});
+
+	it("omits the plan section when no plan file exists", async () => {
+		const agentDir = mkdtempSync(join(tmpdir(), "plus-agent-"));
+		const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+		process.env.PI_CODING_AGENT_DIR = agentDir;
+		try {
+			const calls: RecordedCall[] = [];
+			const result = await compact(
+				preparation(),
+				MODEL,
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				fakeStreamFn([assistantMessage(SUMMARY_TEXT)], calls),
+				undefined,
+				undefined,
+				undefined,
+				"session-without-plan",
+			);
+			assert.ok(!result.summary.includes("Current Plan (post-compact context)"));
+		} finally {
+			if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+			else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+		}
+	});
+
+	it("records recompaction analytics across compactions of one session", async () => {
+		const calls: RecordedCall[] = [];
+		const sessionId = "recompact-analytics-session";
+		const first = await compact(
+			preparation(),
+			MODEL,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			fakeStreamFn([assistantMessage(SUMMARY_TEXT)], calls),
+			undefined,
+			undefined,
+			undefined,
+			sessionId,
+		);
+		const second = await compact(
+			preparation({ previousSummary: "OLD SUMMARY", tokensBefore: 900 }),
+			MODEL,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			fakeStreamFn([assistantMessage(SUMMARY_TEXT)], calls),
+			undefined,
+			undefined,
+			undefined,
+			sessionId,
+		);
+
+		const firstDetails = first.details as { recompaction: Record<string, unknown> };
+		const secondDetails = second.details as { recompaction: Record<string, unknown> };
+		assert.equal(firstDetails.recompaction.isRecompactionInChain, false);
+		assert.equal(firstDetails.recompaction.previousTokensBefore, undefined);
+		assert.equal(secondDetails.recompaction.isRecompactionInChain, true);
+		assert.equal(secondDetails.recompaction.previousTokensBefore, 42);
+		assert.equal(typeof second.estimatedTokensAfter, "number");
+	});
+
+	it("emits a stderr analytics line when PI_COMPACT_ANALYTICS is set", async () => {
+		process.env.PI_COMPACT_ANALYTICS = "1";
+		const errors: string[] = [];
+		const original = console.error;
+		console.error = (...args: unknown[]) => {
+			errors.push(args.map(String).join(" "));
+		};
+		try {
+			const calls: RecordedCall[] = [];
+			await compact(
+				preparation(),
+				MODEL,
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				fakeStreamFn([assistantMessage(SUMMARY_TEXT)], calls),
+				undefined,
+				undefined,
+				undefined,
+				"analytics-stderr-session",
+			);
+		} finally {
+			console.error = original;
+			delete process.env.PI_COMPACT_ANALYTICS;
+		}
+		const line = errors.find((e) => e.includes("[pi-plus/recompact]"));
+		assert.ok(line, "expected a [pi-plus/recompact] stderr line");
+		assert.ok(line.includes('"isRecompactionInChain":false'));
+		assert.ok(line.includes('"turnsSincePreviousCompact":2'));
 	});
 
 	it("retries prompt-too-long by dropping the oldest turn, up to 3 retries", async () => {

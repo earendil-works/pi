@@ -86,6 +86,9 @@ export function registerSubagent(pi: ExtensionAPI): void {
 		].join(" "),
 		parameters: SubagentParams,
 		executionMode: "parallel",
+		// Render without the default tool shell: its blue/green background is
+		// replaced by explicit status words ("running" / "done" / "failed").
+		renderShell: "self",
 
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
 			const discovery = discoverAgents(ctx.cwd);
@@ -136,7 +139,7 @@ export function registerSubagent(pi: ExtensionAPI): void {
 			return toolResult;
 		},
 
-		renderCall(args, theme, _context) {
+		renderCall(args, theme, context) {
 			const agentName = args.agent || "worker";
 			const preview = args.prompt.length > 60 ? `${args.prompt.slice(0, 60)}...` : args.prompt;
 			let text =
@@ -144,10 +147,13 @@ export function registerSubagent(pi: ExtensionAPI): void {
 				theme.fg("accent", agentName) +
 				theme.fg("dim", ` ${args.description || ""}`);
 			text += `\n  ${theme.fg("dim", preview)}`;
+			if (context.executionStarted && context.isPartial) {
+				text += `\n${theme.fg("warning", "● running")}`;
+			}
 			return new Text(text, 0, 0);
 		},
 
-		renderResult(result, { expanded }, theme, _context) {
+		renderResult(result, { expanded, isPartial }, theme, _context) {
 			const details = result.details as SubagentResult | undefined;
 			if (!details) {
 				const text = result.content[0];
@@ -156,15 +162,29 @@ export function registerSubagent(pi: ExtensionAPI): void {
 
 			const mdTheme = getMarkdownTheme();
 			const r = details;
-			const isError = isFailedResult(r);
-			const icon = isError ? theme.fg("error", "✗") : theme.fg("success", "✓");
 			const displayItems = getDisplayItems(r.messages);
 			const finalOutput = getFinalOutput(r.messages);
 
+			if (isPartial) {
+				// The "running" status word comes from renderCall; while the
+				// sub-agent works we only stream its activity below it.
+				if (displayItems.length === 0) return new Text("", 0, 0);
+				let text = renderDisplayItems(displayItems, expanded, theme);
+				if (!expanded && displayItems.length > COLLAPSED_ITEM_COUNT) {
+					text += `\n${theme.fg("muted", "(Ctrl+O to expand)")}`;
+				}
+				return new Text(text, 0, 0);
+			}
+
+			const isError = isFailedResult(r);
+			const status = isError ? theme.fg("error", "✗ failed") : theme.fg("success", "✓ done");
+			let header =
+				`${status}${theme.fg("dim", " · ")}` +
+				`${theme.fg("toolTitle", theme.bold(r.agent))}${theme.fg("muted", ` (${r.agentSource})`)}`;
+			if (isError && r.stopReason) header += ` ${theme.fg("error", `[${r.stopReason}]`)}`;
+
 			if (expanded) {
 				const container = new Container();
-				let header = `${icon} ${theme.fg("toolTitle", theme.bold(r.agent))}${theme.fg("muted", ` (${r.agentSource})`)}`;
-				if (isError && r.stopReason) header += ` ${theme.fg("error", `[${r.stopReason}]`)}`;
 				container.addChild(new Text(header, 0, 0));
 				if (isError && r.errorMessage)
 					container.addChild(new Text(theme.fg("error", `Error: ${r.errorMessage}`), 0, 0));
@@ -199,8 +219,7 @@ export function registerSubagent(pi: ExtensionAPI): void {
 				return container;
 			}
 
-			let text = `${icon} ${theme.fg("toolTitle", theme.bold(r.agent))}${theme.fg("muted", ` (${r.agentSource})`)}`;
-			if (isError && r.stopReason) text += ` ${theme.fg("error", `[${r.stopReason}]`)}`;
+			let text = header;
 			if (isError && r.errorMessage) text += `\n${theme.fg("error", `Error: ${r.errorMessage}`)}`;
 			else if (displayItems.length === 0) text += `\n${theme.fg("muted", "(no output)")}`;
 			else {
