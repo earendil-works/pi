@@ -21,6 +21,7 @@ import { initTheme } from "../src/modes/interactive/theme/theme.ts";
 
 const clipboardMocks = vi.hoisted(() => ({
 	copyToClipboard: vi.fn<(text: string) => Promise<void>>(),
+	readClipboardFilePaths: vi.fn<() => Promise<string[] | null>>(),
 	readClipboardText: vi.fn<() => Promise<string | null>>(),
 }));
 

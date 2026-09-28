@@ -7,8 +7,17 @@
 #include <string.h>
 #endif
 
-typedef enum { CLIPBOARD_TEXT, CLIPBOARD_IMAGE, CLIPBOARD_WRITE } clipboard_operation;
-typedef enum { CLIPBOARD_UNAVAILABLE, CLIPBOARD_EMPTY, CLIPBOARD_UTF8, CLIPBOARD_LATIN1, CLIPBOARD_UTF16, CLIPBOARD_BUFFER } clipboard_format;
+typedef enum { CLIPBOARD_TEXT, CLIPBOARD_IMAGE, CLIPBOARD_WRITE, CLIPBOARD_FILES } clipboard_operation;
+// CLIPBOARD_PATHS stores concatenated, NUL-terminated UTF-8 paths in clipboard_job.data.
+typedef enum {
+    CLIPBOARD_UNAVAILABLE,
+    CLIPBOARD_EMPTY,
+    CLIPBOARD_UTF8,
+    CLIPBOARD_LATIN1,
+    CLIPBOARD_UTF16,
+    CLIPBOARD_BUFFER,
+    CLIPBOARD_PATHS
+} clipboard_format;
 
 typedef struct {
     napi_async_work work;
@@ -63,6 +72,33 @@ static void PI_NAPI_CALL execute_clipboard_work(napi_env env, void* data) {
     clipboard_execute(data);
 }
 
+static int create_clipboard_paths_value(
+    napi_env env,
+    const clipboard_job* job,
+    napi_create_string_utf8_fn create_string,
+    napi_value* result
+) {
+    napi_create_array_fn create_array = (napi_create_array_fn)node_symbol("napi_create_array");
+    napi_set_element_fn set_element = (napi_set_element_fn)node_symbol("napi_set_element");
+    if (!create_array || !set_element || create_array(env, result) != 0) return 1;
+
+    const char* cursor = job->data;
+    const char* end = cursor + job->length;
+    for (uint32_t index = 0; cursor < end; index++) {
+        const char* terminator = cursor;
+        while (terminator < end && *terminator != '\0') terminator++;
+        if (terminator == end) return 1;
+
+        napi_value item = 0;
+        if (create_string(env, cursor, (size_t)(terminator - cursor), &item) != 0 ||
+            set_element(env, *result, index, item) != 0) {
+            return 1;
+        }
+        cursor = terminator + 1;
+    }
+    return 0;
+}
+
 static void PI_NAPI_CALL complete_clipboard_work(napi_env env, int status, void* data) {
     clipboard_job* job = data;
     napi_create_string_utf8_fn create_string = (napi_create_string_utf8_fn)node_symbol("napi_create_string_utf8");
@@ -71,6 +107,8 @@ static void PI_NAPI_CALL complete_clipboard_work(napi_env env, int status, void*
     if (!job->error && job->operation != CLIPBOARD_WRITE) {
         if (job->format == CLIPBOARD_EMPTY) {
             result = null_value(env);
+        } else if (job->format == CLIPBOARD_PATHS) {
+            status = create_clipboard_paths_value(env, job, create_string, &result);
         } else if (job->format == CLIPBOARD_BUFFER) {
             napi_create_buffer_copy_fn create_buffer = (napi_create_buffer_copy_fn)node_symbol("napi_create_buffer_copy");
             status = create_buffer(env, job->length, job->data, 0, &result);

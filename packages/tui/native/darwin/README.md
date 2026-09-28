@@ -1,6 +1,6 @@
 # Darwin native prebuilds
 
-Provides modifier-key state and asynchronous text/image clipboard access using AppKit.
+Provides modifier-key state and asynchronous text, image, and file-path clipboard access using AppKit.
 
 ## Building
 

@@ -11,7 +11,11 @@ vi.mock("@earendil-works/pi-tui", async (importOriginal) => ({
 		},
 	}),
 }));
-vi.mock("../src/utils/clipboard.ts", () => ({ copyToClipboard: vi.fn(), readClipboardText }));
+vi.mock("../src/utils/clipboard.ts", () => ({
+	copyToClipboard: vi.fn(),
+	readClipboardFilePaths: vi.fn(async () => null),
+	readClipboardText,
+}));
 vi.mock("../src/utils/clipboard-command.ts", () => ({ runClipboardCommand: vi.fn(async () => undefined) }));
 afterEach(() => vi.unstubAllEnvs());
 
@@ -19,6 +23,7 @@ test("native image errors abort paste without reading text or changing the edito
 	vi.stubEnv("TERMUX_VERSION", "");
 	const context = {
 		editor: { insertTextAtCursor: vi.fn() },
+		showError: vi.fn(),
 		ui: { requestRender: vi.fn() },
 	};
 	const prototype = InteractiveMode.prototype as unknown as {
@@ -28,4 +33,7 @@ test("native image errors abort paste without reading text or changing the edito
 	expect(readClipboardText).not.toHaveBeenCalled();
 	expect(context.editor.insertTextAtCursor).not.toHaveBeenCalled();
 	expect(context.ui.requestRender).not.toHaveBeenCalled();
+	expect(context.showError).toHaveBeenCalledExactlyOnceWith(
+		"Failed to paste from clipboard: Native clipboard operation failed",
+	);
 });

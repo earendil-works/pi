@@ -66,6 +66,40 @@ static void clipboard_execute(clipboard_job* job) {
             } else {
                 clipboard_copy(job, text.UTF8String, [text lengthOfBytesUsingEncoding:NSUTF8StringEncoding], CLIPBOARD_UTF8);
             }
+        } else if (job->operation == CLIPBOARD_FILES) {
+            NSArray* urls = [pasteboard readObjectsForClasses:@[[NSURL class]]
+                options:@{NSPasteboardURLReadingFileURLsOnlyKey: @YES}];
+            size_t total = 0;
+            for (NSURL* url in urls) {
+                const char* path = url.fileSystemRepresentation;
+                if (!path) continue;
+                size_t length = strlen(path);
+                if (length == SIZE_MAX || total > SIZE_MAX - length - 1) {
+                    job->error = "Clipboard file paths are too large";
+                    return;
+                }
+                total += length + 1;
+            }
+            if (total == 0) {
+                job->format = CLIPBOARD_EMPTY;
+                return;
+            }
+            char* paths = clipboard_alloc(total);
+            if (!paths) {
+                job->error = "Out of memory";
+                return;
+            }
+            char* cursor = paths;
+            for (NSURL* url in urls) {
+                const char* path = url.fileSystemRepresentation;
+                if (!path) continue;
+                size_t length = strlen(path);
+                memcpy(cursor, path, length + 1);
+                cursor += length + 1;
+            }
+            job->data = paths;
+            job->length = total;
+            job->format = CLIPBOARD_PATHS;
         } else {
             if (![pasteboard availableTypeFromArray:@[ NSPasteboardTypePNG, NSPasteboardTypeTIFF ]]) {
                 job->format = CLIPBOARD_EMPTY;
@@ -84,10 +118,15 @@ static void clipboard_execute(clipboard_job* job) {
     }
 }
 
+static napi_value PI_NAPI_CALL get_clipboard_file_paths(napi_env env, napi_callback_info info) {
+    return queue_clipboard(env, info, CLIPBOARD_FILES);
+}
+
 PI_NAPI_EXPORT napi_value napi_register_module_v1(napi_env env, napi_value exports) {
     set_function_export(env, exports, "isModifierPressed", is_modifier_pressed);
     set_function_export(env, exports, "getText", get_clipboard_text);
     set_function_export(env, exports, "setText", set_clipboard_text);
     set_function_export(env, exports, "getImage", get_clipboard_image);
+    set_function_export(env, exports, "getFilePaths", get_clipboard_file_paths);
     return exports;
 }

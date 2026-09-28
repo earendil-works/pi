@@ -26,6 +26,7 @@ typedef void* napi_deferred;
 typedef void (PI_NAPI_CALL *napi_async_execute_callback)(napi_env, void*);
 typedef void (PI_NAPI_CALL *napi_async_complete_callback)(napi_env, int, void*);
 typedef int (PI_NAPI_CALL *napi_create_async_work_fn)(napi_env, napi_value, napi_value, napi_async_execute_callback, napi_async_complete_callback, void*, napi_async_work*);
+typedef int (PI_NAPI_CALL *napi_create_array_fn)(napi_env, napi_value*);
 typedef int (PI_NAPI_CALL *napi_async_work_fn)(napi_env, napi_async_work);
 typedef int (PI_NAPI_CALL *napi_create_promise_fn)(napi_env, napi_deferred*, napi_value*);
 typedef int (PI_NAPI_CALL *napi_settle_deferred_fn)(napi_env, napi_deferred, napi_value);
@@ -41,6 +42,7 @@ typedef int (PI_NAPI_CALL *napi_get_value_fn)(napi_env, napi_value*);
 typedef int (PI_NAPI_CALL *napi_get_value_string_utf8_fn)(napi_env, napi_value, char*, size_t, size_t*);
 typedef int (PI_NAPI_CALL *napi_get_value_string_utf16_fn)(napi_env, napi_value, uint16_t*, size_t, size_t*);
 typedef int (PI_NAPI_CALL *napi_set_named_property_fn)(napi_env, napi_value, const char*, napi_value);
+typedef int (PI_NAPI_CALL *napi_set_element_fn)(napi_env, napi_value, uint32_t, napi_value);
 typedef int (PI_NAPI_CALL *napi_throw_error_fn)(napi_env, const char*, const char*);
 
 static void* node_symbol(const char* name) {
