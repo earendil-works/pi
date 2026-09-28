@@ -74,8 +74,9 @@ export interface ModelRoute<TState = unknown> {
 	model: Model<Api>;
 	thinkingLevel: ModelThinkingLevel;
 	/**
-	 * New router state, stored on the session branch when it differs from `request.state`. Must be
-	 * JSON-serializable. Undefined keeps the current state. Ignored for `direct` requests.
+	 * New router state, stored on the session branch unless it is `request.state` itself. Return
+	 * `request.state` or undefined to keep the current state. Must be JSON-serializable. Ignored for
+	 * `direct` requests.
 	 */
 	state?: TState;
 }

@@ -117,6 +117,7 @@ import {
 	getLatestCompactionEntry,
 	type SessionEntry,
 	SessionManager,
+	type SessionProjection,
 } from "./session-manager.ts";
 import type { CacheWarmingMode, SettingsManager } from "./settings-manager.ts";
 import type { SlashCommandInfo } from "./slash-commands.ts";
@@ -643,10 +644,9 @@ export class AgentSession {
 		};
 	}
 
-	/** Whether the projected context exceeds the compaction threshold of `model`. */
-	private _exceedsCompactionThreshold(model: Model<any> | undefined): boolean {
-		if (!model || model.contextWindow <= 0) return false;
-		const projection = this.sessionManager.buildSessionProjection();
+	/** Whether `projection`, the current session projection, exceeds the compaction threshold of `model`. */
+	private _exceedsCompactionThreshold(model: Model<any>, projection: SessionProjection): boolean {
+		if (model.contextWindow <= 0) return false;
 		return shouldCompact(
 			estimateProjectedContextTokens(projection, this.sessionManager.getBranch()).tokens,
 			model.contextWindow,
@@ -655,7 +655,13 @@ export class AgentSession {
 	}
 
 	private async _compactBeforeNextAssistantResponse(context: AgentContext): Promise<AgentContext> {
-		if (this._exceedsCompactionThreshold(this._limitsModel())) await this._runAutoCompaction("threshold", false);
+		const projection = this.sessionManager.buildSessionProjection();
+		// A virtual selection is checked in prepareRequest, against the model the request is routed to.
+		const model = this.model;
+		if (!model || isVirtualModel(model) || !this._exceedsCompactionThreshold(model, projection)) {
+			return { ...context, messages: projection.messages };
+		}
+		await this._runAutoCompaction("threshold", false);
 		return { ...context, messages: this.sessionManager.buildSessionProjection().messages };
 	}
 
@@ -665,9 +671,10 @@ export class AgentSession {
 			const failed = this._failedResponse;
 			this._failedResponse = undefined;
 			const prepare = async () => {
+				const projection = this.sessionManager.buildSessionProjection();
 				const canonicalContext = {
 					...request.context,
-					messages: this.sessionManager.buildSessionProjection().messages,
+					messages: projection.messages,
 					// Messages declare the provider-visible loadout; context.tools keeps executable implementations.
 					tools: this.agent.state.tools.slice(),
 				};
@@ -680,9 +687,9 @@ export class AgentSession {
 					},
 					signal,
 				);
-				return { previous, context: previous?.context ?? canonicalContext };
+				return { previous, context: previous?.context ?? canonicalContext, projection };
 			};
-			let { previous, context } = await prepare();
+			let { previous, context, projection } = await prepare();
 			const model = previous?.model ?? this.agent.state.model;
 			const thinkingLevel = previous?.thinkingLevel ?? this.agent.state.thinkingLevel;
 			if (!isVirtualModel(model)) return { ...previous, context, model, thinkingLevel };
@@ -700,16 +707,16 @@ export class AgentSession {
 				failed,
 				state,
 			});
-			if (route.state !== undefined && JSON.stringify(route.state) !== JSON.stringify(state)) {
+			if (route.state !== undefined && route.state !== state) {
 				const data: VirtualModelStateData = { provider: model.provider, modelId: model.id, state: route.state };
 				const entry = this.sessionManager.getEntry(
 					this.sessionManager.appendCustomEntry(VIRTUAL_MODEL_STATE_ENTRY, data),
 				);
 				if (entry) this._emit({ type: "entry_appended", entry });
 			}
-			// Earlier compaction checks used the model that answered last, so check the routed model too.
-			// The route stands: the router already decided this request.
-			if (this._exceedsCompactionThreshold(route.model)) {
+			// The route stands: the router already decided this request. The state entry does not change
+			// the projection.
+			if (this._exceedsCompactionThreshold(route.model, projection)) {
 				await this._runAutoCompaction("threshold", false);
 				({ previous, context } = await prepare());
 			}
@@ -776,10 +783,7 @@ export class AgentSession {
 				? async (_turn: PrepareNextTurnContext, signal?: AbortSignal) => await this.agent.prepareNextTurn?.(signal)
 				: undefined);
 		this.agent.prepareNextTurnWithContext = async (turn, signal) => {
-			const context = await this._compactBeforeNextAssistantResponse({
-				...turn.context,
-				messages: this.sessionManager.buildSessionProjection().messages,
-			});
+			const context = await this._compactBeforeNextAssistantResponse(turn.context);
 			const previousSnapshot = await previousPrepareNextTurnWithContext?.({ ...turn, context }, signal);
 			const nextContext = previousSnapshot?.context ?? context;
 			const runOptions = this._runSystemPromptOptions ?? this._baseSystemPromptOptions;

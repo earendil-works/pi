@@ -95,15 +95,15 @@ pi.registerVirtualModel<{ phase: "plan" | "build" }>({
   id: "phased",
   name: "Phased",
   route(request, ctx) {
-    const phase = request.state?.phase ?? "plan";
-    const id = phase === "plan" ? "claude-opus-4-5" : "claude-haiku-4-5";
-    return { model: ctx.modelRegistry.find("anthropic", id)!, thinkingLevel: "medium", state: { phase } };
+    const state = request.state ?? { phase: "plan" };
+    const id = state.phase === "plan" ? "claude-opus-4-5" : "claude-haiku-4-5";
+    return { model: ctx.modelRegistry.find("anthropic", id)!, thinkingLevel: "medium", state };
   },
 });
 ```
 
-- State must be JSON-serializable. Returning `undefined` keeps the current state.
-- Pi stores the state when it differs from `request.state`, before the request is sent. It stays stored if the request later fails.
+- State must be JSON-serializable. Returning `undefined` or `request.state` itself keeps the current state.
+- Pi stores any other returned object as new state, before the request is sent, even when it equals the current state. Return a new object only when the state changes. The state stays stored if the request later fails.
 - State follows the session tree, so forks and `/tree` navigation see the state of their branch. It survives compaction.
 - `direct` requests have no state, and Pi ignores state they return.
 

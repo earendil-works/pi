@@ -1,7 +1,7 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { type FauxResponseStep, fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ExtensionContext } from "../../src/core/extensions/index.ts";
 import { type ModelRoute, type ModelRouteRequest, VIRTUAL_MODEL_STATE_ENTRY } from "../../src/core/virtual-models.ts";
 import { createHarness, type Harness, type HarnessOptions } from "./harness.ts";
@@ -256,6 +256,52 @@ describe("AgentSession virtual models", () => {
 		expect(dispatched().at(-1)).toBe("faux/small:off");
 	});
 
+	it("compacts between turns of a run when the next request is routed to a smaller window", async () => {
+		const route: Route = (request, ctx) =>
+			request.reason === "continuation"
+				? { model: ctx.modelRegistry.find("faux", "small")!, thinkingLevel: "off" }
+				: defaultRoute(request, ctx);
+		const { harness, dispatched } = await createRoutedHarness(route, {
+			settings: { compaction: { keepRecentTokens: 1, reserveTokens: 0 } },
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_before_compact", async ({ preparation: { firstKeptEntryId, tokensBefore } }) => ({
+						compaction: { summary: "compacted", firstKeptEntryId, tokensBefore },
+					}));
+				},
+			],
+		});
+		let compactedBeforeSmall = false;
+		harness.setResponses([
+			fauxAssistantMessage(fauxToolCall("echo", { text: "hi" }), { stopReason: "toolUse" }),
+			() => {
+				compactedBeforeSmall = harness.eventsOfType("compaction_end").length === 1;
+				return fauxAssistantMessage("small answer");
+			},
+		]);
+
+		// About 2k tokens fit the large model of the first turn, but not the small model of the second.
+		await harness.session.prompt("x".repeat(8000));
+
+		expect(harness.eventsOfType("compaction_start").map((event) => event.reason)).toEqual(["threshold"]);
+		expect(compactedBeforeSmall).toBe(true);
+		expect(dispatched()).toEqual(["faux/large:high", "faux/small:off"]);
+	});
+
+	it("projects the session once per request under a virtual selection", async () => {
+		const { harness } = await createRoutedHarness();
+		harness.setResponses([
+			fauxAssistantMessage(fauxToolCall("echo", { text: "hi" }), { stopReason: "toolUse" }),
+			fauxAssistantMessage("done"),
+		]);
+		const projections = vi.spyOn(harness.sessionManager, "buildSessionProjection");
+
+		await harness.session.prompt("hello");
+
+		// One per request, one between the turns, and one for the compaction check after the run.
+		expect(projections).toHaveBeenCalledTimes(4);
+	});
+
 	it("stores router state on the branch and passes it to later requests", async () => {
 		const states: unknown[] = [];
 		const { harness, reasons } = await createRoutedHarness(
@@ -263,8 +309,8 @@ describe("AgentSession virtual models", () => {
 				states.push(request.state);
 				const turns = (request.state as { turns: number } | undefined)?.turns ?? 0;
 				const route = defaultRoute(request, ctx);
-				// Unchanged state is not stored again, and direct requests neither get nor store state.
-				if (request.reason === "continuation") return { ...route, state: { turns } };
+				// Returning request.state keeps it without storing it again. Direct requests neither get nor store state.
+				if (request.reason === "continuation") return { ...route, state: request.state };
 				return { ...route, state: { turns: turns + 1 } };
 			},
 			{ settings: { compaction: { keepRecentTokens: 1 } } },
