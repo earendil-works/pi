@@ -9,6 +9,8 @@ interface BedrockThinkingPayload {
 		thinking?: { type: string; budget_tokens?: number; display?: string };
 		output_config?: { effort?: string };
 		anthropic_beta?: string[];
+		reasoning?: { effort?: string };
+		reasoning_effort?: string;
 	};
 }
 
@@ -159,6 +161,66 @@ describe("Bedrock thinking payload", () => {
 		expect(payload.additionalModelRequestFields?.thinking).toEqual({ type: "adaptive" });
 		expect(payload.additionalModelRequestFields?.output_config).toEqual({ effort: "high" });
 		expect(payload.additionalModelRequestFields?.anthropic_beta).toBeUndefined();
+	});
+});
+
+describe("Bedrock OpenAI reasoning payload", () => {
+	// Regression for #9331: the configured thinking level never reached OpenAI models on Bedrock.
+	it.each([
+		["minimal", "low"],
+		["low", "low"],
+		["medium", "medium"],
+		["high", "high"],
+		["xhigh", "xhigh"],
+		["max", "max"],
+	] as const)("sends reasoning=%s as reasoning.effort=%s for GPT-6 and GPT-5.6", async (reasoning, effort) => {
+		for (const id of ["global.openai.gpt-6-sol", "us.openai.gpt-6-luna", "global.openai.gpt-5.6-sol"] as const) {
+			const payload = await capturePayload(getModel("amazon-bedrock", id), { reasoning });
+
+			expect(payload.additionalModelRequestFields, id).toEqual({ reasoning: { effort } });
+		}
+	});
+
+	it("sends reasoning.effort when only model.name identifies a GPT model", async () => {
+		const model: Model<"bedrock-converse-stream"> = {
+			...getModel("amazon-bedrock", "global.openai.gpt-6-sol"),
+			id: "arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/my-profile",
+			name: "GPT-6 Sol",
+		};
+
+		const payload = await capturePayload(model, { reasoning: "medium" });
+
+		expect(payload.additionalModelRequestFields).toEqual({ reasoning: { effort: "medium" } });
+	});
+
+	it("sends flat reasoning_effort for gpt-oss, clamped to high", async () => {
+		const model = getModel("amazon-bedrock", "openai.gpt-oss-120b-1:0");
+
+		expect((await capturePayload(model, { reasoning: "minimal" })).additionalModelRequestFields).toEqual({
+			reasoning_effort: "low",
+		});
+		expect((await capturePayload(model, { reasoning: "medium" })).additionalModelRequestFields).toEqual({
+			reasoning_effort: "medium",
+		});
+		expect((await capturePayload(model, { reasoning: "xhigh" })).additionalModelRequestFields).toEqual({
+			reasoning_effort: "high",
+		});
+	});
+
+	it("sends no reasoning fields when reasoning is off", async () => {
+		let captured: BedrockThinkingPayload | undefined;
+		const s = streamBedrock(getModel("amazon-bedrock", "global.openai.gpt-6-sol"), normalizeContext(makeContext()), {
+			onPayload: (payload) => {
+				captured = payload as BedrockThinkingPayload;
+				throw new PayloadCaptured();
+			},
+		});
+		for await (const event of s) {
+			if (event.type === "error") break;
+		}
+
+		expect(captured).toBeDefined();
+		expect(captured?.additionalModelRequestFields).toBeUndefined();
 	});
 });
 
