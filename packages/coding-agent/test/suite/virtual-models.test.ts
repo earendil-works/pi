@@ -263,7 +263,7 @@ describe("AgentSession virtual models", () => {
 				states.push(request.state);
 				const turns = (request.state as { turns: number } | undefined)?.turns ?? 0;
 				const route = defaultRoute(request, ctx);
-				// Unchanged state is not stored again, and direct requests do not store state.
+				// Unchanged state is not stored again, and direct requests neither get nor store state.
 				if (request.reason === "continuation") return { ...route, state: { turns } };
 				return { ...route, state: { turns: turns + 1 } };
 			},
@@ -293,7 +293,7 @@ describe("AgentSession virtual models", () => {
 		await harness.session.compact();
 
 		expect(reasons()).toEqual(["user", "continuation", "user", "direct"]);
-		expect(states).toEqual([undefined, { turns: 1 }, { turns: 1 }, { turns: 2 }]);
+		expect(states).toEqual([undefined, { turns: 1 }, { turns: 1 }, undefined]);
 		expect(stored()).toHaveLength(2);
 	});
 

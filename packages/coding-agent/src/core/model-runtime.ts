@@ -87,7 +87,6 @@ import {
 	isVirtualModel,
 	type ModelRoute,
 	type ModelRouteReason,
-	unroutedStream,
 	type VirtualModelDefinition,
 	withVirtualModels,
 } from "./virtual-models.ts";
@@ -692,7 +691,6 @@ export class ModelRuntime implements Models {
 		context: Context,
 		options?: ModelsApiStreamOptions<TApi>,
 	): AssistantMessageEventStream {
-		if (isVirtualModel(model)) return unroutedStream(model);
 		const transcript = normalizeContext(context);
 		return lazyStream(model, async () => {
 			assertChatModel(model);

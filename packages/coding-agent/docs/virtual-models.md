@@ -26,7 +26,7 @@ Providers only receive physical models. Assistant messages name the physical mod
 
 In interactive mode, the footer shows the routed model next to the selection, for example `auto • high → gpt-5.6-luna • medium`. The chat shows a notice such as `Model: openai-codex/gpt-5.6-sol → openai-codex/gpt-5.6-luna • medium` before each response that comes from a different model than the previous one, and before the first routed response as `Model: openai-codex/gpt-5.6-sol • high`. `/session` lists the cost for each physical model.
 
-Context usage uses the limits of the physical model that produced the latest response, even if that response came before switching to the virtual model. Without such a response, it uses the limits declared on the virtual model, if any. Compaction checks the same limits, and checks again before a request routed to another model. If that model's context window is too small for the conversation, Pi compacts before sending the request; the route stays as the router chose it.
+Context usage uses the limits of the physical model that produced the latest response, even if that response came before switching to the virtual model. Without such a response, it uses the limits declared on the virtual model, if any. Compaction checks the same limits, and again the limits of the model each request is routed to. If that model's context window is too small for the conversation, Pi compacts before sending the request; the route stays as the router chose it.
 
 ## Register a virtual model
 
@@ -105,7 +105,7 @@ pi.registerVirtualModel<{ phase: "plan" | "build" }>({
 - State must be JSON-serializable. Returning `undefined` keeps the current state.
 - Pi stores the state when it differs from `request.state`, before the request is sent. It stays stored if the request later fails.
 - State follows the session tree, so forks and `/tree` navigation see the state of their branch. It survives compaction.
-- `direct` requests receive the state, but Pi ignores state they return. Requests made outside a session, such as `ctx.modelRegistry.streamSimple()`, have no state.
+- `direct` requests have no state, and Pi ignores state they return.
 
 The transcript already records the selection and every dispatched model, and `ctx.sessionManager.getBranch()` exposes both.
 

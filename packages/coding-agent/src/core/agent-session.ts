@@ -137,7 +137,6 @@ import {
 	getBranchSelection,
 	getVirtualModelState,
 	isVirtualModel,
-	type ModelRouteReason,
 	VIRTUAL_MODEL_STATE_ENTRY,
 	type VirtualModelStateData,
 } from "./virtual-models.ts";
@@ -377,11 +376,6 @@ export class AgentSession {
 	 * retry is routed with it as `failed`, since the context no longer contains it.
 	 */
 	private _failedResponse: AssistantMessage | undefined;
-	/**
-	 * Whether a message the user wrote was added since the last routed request. The next request is
-	 * then a `user` turn, even when extension messages follow the user's message in the context.
-	 */
-	private _userTurnPending = false;
 
 	// Bash execution state
 	private readonly _bashAbortControllers = new Set<AbortController>();
@@ -522,13 +516,13 @@ export class AgentSession {
 		thinkingLevel: ThinkingLevel;
 	}> {
 		// Route a virtual model first: summaries size their input and output from the model they get.
-		const { model, thinkingLevel } = await this._route(
-			selectedModel,
-			this.thinkingLevel,
-			this.messages,
-			"direct",
-			signal,
-		);
+		const { model, thinkingLevel } = isVirtualModel(selectedModel)
+			? await this._modelRuntime.resolveModel(selectedModel, convertToLlm(this.messages), {
+					reason: "direct",
+					thinkingLevel: this.thinkingLevel,
+					signal,
+				})
+			: { model: selectedModel, thinkingLevel: this.thinkingLevel };
 		if (this.agent.streamFunction === streamSimple) {
 			return { ...(await this._getRequiredRequestAuth(model, signal)), thinkingLevel };
 		}
@@ -548,38 +542,6 @@ export class AgentSession {
 			if (signal?.aborted) throw error;
 			return { model, thinkingLevel };
 		}
-	}
-
-	/**
-	 * Resolve a virtual model to the physical model for one request. Physical models pass through.
-	 * The router gets its state from the branch; new state is stored before the request is sent.
-	 */
-	private async _route(
-		model: Model<any>,
-		thinkingLevel: ThinkingLevel,
-		messages: AgentMessage[],
-		reason: ModelRouteReason,
-		signal?: AbortSignal,
-		failed?: AssistantMessage,
-	): Promise<{ model: Model<any>; thinkingLevel: ThinkingLevel }> {
-		if (!isVirtualModel(model)) return { model, thinkingLevel };
-		const state = getVirtualModelState(this.sessionManager.getBranch(), model.provider, model.id);
-		const route = await this._modelRuntime.resolveModel(model, convertToLlm(messages), {
-			reason,
-			thinkingLevel,
-			signal,
-			failed,
-			state,
-		});
-		// Direct requests, such as compaction summaries, are not conversation turns and keep the state.
-		if (reason !== "direct" && route.state !== undefined && JSON.stringify(route.state) !== JSON.stringify(state)) {
-			const data: VirtualModelStateData = { provider: model.provider, modelId: model.id, state: route.state };
-			const entry = this.sessionManager.getEntry(
-				this.sessionManager.appendCustomEntry(VIRTUAL_MODEL_STATE_ENTRY, data),
-			);
-			if (entry) this._emit({ type: "entry_appended", entry });
-		}
-		return { model: route.model, thinkingLevel: route.thinkingLevel };
 	}
 
 	/**
@@ -699,10 +661,6 @@ export class AgentSession {
 		this.agent.prepareRequest = async (request, signal) => {
 			const failed = this._failedResponse;
 			this._failedResponse = undefined;
-			// Only messages the user wrote start a new turn. Extension messages may follow the user's
-			// message (before_agent_start, nextTurn), so the last message does not decide the reason.
-			const reason: ModelRouteReason = failed ? "retry" : this._userTurnPending ? "user" : "continuation";
-			this._userTurnPending = false;
 			const prepare = async () => {
 				const canonicalContext = {
 					...request.context,
@@ -722,25 +680,37 @@ export class AgentSession {
 				return { previous, context: previous?.context ?? canonicalContext };
 			};
 			let { previous, context } = await prepare();
+			const model = previous?.model ?? this.agent.state.model;
+			const thinkingLevel = previous?.thinkingLevel ?? this.agent.state.thinkingLevel;
+			if (!isVirtualModel(model)) return { ...previous, context, model, thinkingLevel };
+
 			// The selection stays in agent state; only this request uses the routed model. A routing
-			// failure rejects, which ends the run with an error response.
-			const route = await this._route(
-				previous?.model ?? this.agent.state.model,
-				previous?.thinkingLevel ?? this.agent.state.thinkingLevel,
-				context.messages,
-				reason,
+			// failure rejects, which ends the run with an error response. Only messages the user wrote
+			// start a turn; extension messages can follow them, e.g. from before_agent_start.
+			const lastResponse = context.messages.findLastIndex((message) => message.role === "assistant");
+			const userTurn = context.messages.slice(lastResponse + 1).some((message) => message.role === "user");
+			const state = getVirtualModelState(this.sessionManager.getBranch(), model.provider, model.id);
+			const route = await this._modelRuntime.resolveModel(model, convertToLlm(context.messages), {
+				reason: failed ? "retry" : userTurn ? "user" : "continuation",
+				thinkingLevel,
 				signal,
 				failed,
-			);
-			// Earlier compaction checks used the model that answered last. A routed model with a smaller
-			// window gets its own check; the route stands, since the router already decided this request.
-			const limitsModel = this._limitsModel();
-			const sameLimits = limitsModel?.provider === route.model.provider && limitsModel.id === route.model.id;
-			if (!sameLimits && this._exceedsCompactionThreshold(route.model)) {
+				state,
+			});
+			if (route.state !== undefined && JSON.stringify(route.state) !== JSON.stringify(state)) {
+				const data: VirtualModelStateData = { provider: model.provider, modelId: model.id, state: route.state };
+				const entry = this.sessionManager.getEntry(
+					this.sessionManager.appendCustomEntry(VIRTUAL_MODEL_STATE_ENTRY, data),
+				);
+				if (entry) this._emit({ type: "entry_appended", entry });
+			}
+			// Earlier compaction checks used the model that answered last, so check the routed model too.
+			// The route stands: the router already decided this request.
+			if (this._exceedsCompactionThreshold(route.model)) {
 				await this._runAutoCompaction("threshold", false);
 				({ previous, context } = await prepare());
 			}
-			return { ...previous, context, ...route };
+			return { ...previous, context, model: route.model, thinkingLevel: route.thinkingLevel };
 		};
 	}
 
@@ -1052,7 +1022,6 @@ export class AgentSession {
 				entryId = this.sessionManager.appendMessage(event.message);
 			}
 			if (entryId) this._entryIdsByMessage.set(event.message, entryId);
-			if (event.message.role === "user") this._userTurnPending = true;
 			// Other message types (bashExecution, compactionSummary, branchSummary) are persisted elsewhere
 
 			if (event.message.role === "assistant") {
@@ -1590,8 +1559,6 @@ export class AgentSession {
 		this._agentRunAbortRequested = false;
 		// Compaction before the prompt may have scheduled a retry; the new prompt replaces it.
 		this._failedResponse = undefined;
-		// A user message from an earlier run that never reached a request does not make this run a user turn.
-		this._userTurnPending = false;
 		this._recordSelection();
 		this._isAgentRunActive = true;
 		try {

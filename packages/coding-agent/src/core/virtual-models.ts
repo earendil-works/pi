@@ -62,10 +62,7 @@ export interface ModelRouteRequest<TState = unknown> {
 	 * `stopReason` and `errorMessage`. Absent when the router itself failed.
 	 */
 	failed?: { model: Model<Api>; thinkingLevel?: ModelThinkingLevel; message: AssistantMessage };
-	/**
-	 * Router state last returned on this session branch. Undefined before the first state and for
-	 * requests made outside a session, such as `ctx.modelRegistry.streamSimple()`.
-	 */
+	/** Router state last returned on this session branch. Undefined before the first state and for `direct` requests. */
 	state?: TState;
 	/** Conversation for this request, including system messages. */
 	messages: readonly Message[];
@@ -178,7 +175,7 @@ export function createVirtualModel(definition: Omit<VirtualModelDefinition, "rou
 }
 
 /** Stream for a virtual model that was not routed, e.g. `stream()` with API-specific options. */
-export function unroutedStream(model: Model<Api>): AssistantMessageEventStream {
+function unroutedStream(model: Model<Api>): AssistantMessageEventStream {
 	return lazyStream(model, async () => {
 		throw new Error(`Virtual model ${model.provider}/${model.id} must be routed before streaming`);
 	});
