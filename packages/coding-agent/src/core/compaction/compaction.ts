@@ -112,6 +112,22 @@ export interface CompactionResult<T = unknown> {
 	details?: T;
 }
 
+/**
+ * Fill in `totalTokens` and `cost` for provider responses that omit them, so the
+ * persisted compaction entry always carries a canonical `Usage` (#10092). Without
+ * this, providers that don't report cost produce entries that crash the footer's
+ * `usage.cost.total` read on every resume.
+ */
+function toCanonicalUsage(usage: Usage): Usage {
+	if (usage.cost && usage.totalTokens !== undefined) return usage;
+	const totalTokens = usage.totalTokens ?? usage.input + usage.output + usage.cacheRead + usage.cacheWrite;
+	return {
+		...usage,
+		totalTokens,
+		cost: usage.cost ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+	};
+}
+
 function combineUsage(first: Usage, second: Usage): Usage {
 	return {
 		input: first.input + second.input,
@@ -1052,7 +1068,9 @@ export async function compact(
 		);
 		// Merge into single summary
 		summary = `${historyText}\n\n---\n\n**Turn Context (split turn):**\n\n${turnPrefixResult.text}`;
-		summaryUsage = historyUsage ? combineUsage(historyUsage, turnPrefixResult.usage) : turnPrefixResult.usage;
+		summaryUsage = historyUsage
+			? combineUsage(historyUsage, turnPrefixResult.usage)
+			: toCanonicalUsage(turnPrefixResult.usage);
 	} else {
 		// Just generate history summary
 		const result = await generateSummaryWithUsage(
@@ -1072,7 +1090,7 @@ export async function compact(
 			sessionId,
 		);
 		summary = result.text;
-		summaryUsage = result.usage;
+		summaryUsage = toCanonicalUsage(result.usage);
 	}
 
 	// Compute file lists and append to summary
