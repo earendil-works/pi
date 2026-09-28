@@ -15,7 +15,6 @@ import { ModelRuntime } from "../src/core/model-runtime.ts";
 import { createAgentSession } from "../src/core/sdk.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 import type { ModelRouteRequest, VirtualModelDefinition } from "../src/core/virtual-models.ts";
-import { getModelChangeNotice } from "../src/modes/interactive/model-change-notice.ts";
 import { createTestResourceLoader } from "./utilities.ts";
 
 async function createRuntime(requests: ModelRouteRequest[] = []) {
@@ -176,24 +175,6 @@ describe("ModelRuntime virtual models", () => {
 
 		expect(message.stopReason).toBe("error");
 		expect(message.errorMessage).toContain("must be routed before streaming");
-	});
-});
-
-describe("model change notices", () => {
-	it("marks responses from a different model than the previous response", async () => {
-		const { runtime, virtual } = await createRuntime();
-		const largeModel = runtime.getModel("faux", "large")!;
-		const small = assistantFrom(runtime.getModel("faux", "small")!, "small");
-		const large = { ...assistantFrom(largeModel, "large"), thinkingLevel: "high" as const };
-		const failedRoute = { ...assistantFrom(virtual, ""), stopReason: "error" as const };
-
-		// The first response gets a notice only when a virtual model is selected.
-		expect(getModelChangeNotice(undefined, large, largeModel)).toBeUndefined();
-		expect(getModelChangeNotice(undefined, large, runtime.getModel("faux", "small")!)).toBeUndefined();
-		expect(getModelChangeNotice(undefined, large, virtual)).toBe("Model: faux/large \u2022 high");
-		expect(getModelChangeNotice(large, large, virtual)).toBeUndefined();
-		expect(getModelChangeNotice(large, failedRoute, virtual)).toBeUndefined();
-		expect(getModelChangeNotice(small, large, virtual)).toBe("Model: faux/small \u2192 faux/large \u2022 high");
 	});
 });
 

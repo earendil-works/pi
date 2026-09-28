@@ -174,7 +174,6 @@ import { UserMessageComponent } from "./components/user-message.ts";
 import { UserMessageSelectorComponent } from "./components/user-message-selector.ts";
 import { editInExternalEditor } from "./external-editor.ts";
 import { refreshModelCatalogs } from "./model-catalog-refresh.ts";
-import { getModelChangeNotice, isPhysicalResponse } from "./model-change-notice.ts";
 import { getModelSearchText } from "./model-search.ts";
 import { shareSession } from "./session-share.ts";
 import {
@@ -3378,10 +3377,6 @@ export class InteractiveMode {
 					this.updatePendingMessagesDisplay();
 					this.ui.requestRender();
 				} else if (event.message.role === "assistant") {
-					// message_start precedes adding the message to the session, so the latest response is the previous one.
-					const previous = this.session.messages.filter(isPhysicalResponse).at(-1);
-					const notice = getModelChangeNotice(previous, event.message, this.session.model);
-					if (notice) this.addModelChangeNotice(notice);
 					this.streamingComponent = new AssistantMessageComponent(
 						undefined,
 						this.hideThinkingBlock,
@@ -3856,7 +3851,6 @@ export class InteractiveMode {
 		const cacheMisses = this.settingsManager.getShowCacheMissNotices()
 			? collectCacheMisses(this.sessionManager.getEntries(), this.session.modelRuntime)
 			: new Map<AssistantMessage, CacheMiss>();
-		let previousResponse: AssistantMessage | undefined;
 
 		if (options.updateFooter) {
 			this.footer.invalidate();
@@ -3880,9 +3874,6 @@ export class InteractiveMode {
 			const message = item;
 			// Assistant messages need special handling for tool calls
 			if (message.role === "assistant") {
-				const notice = getModelChangeNotice(previousResponse, message, this.session.model);
-				if (notice) this.addModelChangeNotice(notice);
-				if (isPhysicalResponse(message)) previousResponse = message;
 				this.addMessageToChat(message);
 				// Render tool call components
 				for (const content of message.content) {
@@ -4003,11 +3994,6 @@ export class InteractiveMode {
 			).length;
 		}
 		return count;
-	}
-
-	private addModelChangeNotice(notice: string): void {
-		this.chatContainer.addChild(new Spacer(1));
-		this.chatContainer.addChild(new Text(theme.fg("dim", notice), 1, 0));
 	}
 
 	private maybeShowThinkingDropNotice(message: AssistantMessage): void {
