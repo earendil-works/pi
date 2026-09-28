@@ -90,10 +90,10 @@ If the router disconnects, `/llama` shows **Retry** and **Close**. Retry reconne
 
 Every model listed for chat is also listed as a classifier model with the same ID and the `llama-cpp-classify` API. Classifier models answer typed `choice`, `bool`, and `score` questions about JSON state, like TypeSafe's Jev models.
 
-The model does not generate an answer. Each question becomes one chat prompt that lists the answers under single-token labels: letters for a choice (up to 62 options), `Yes`/`No` for a bool, and digits for a score (up to 10 levels). Pi reads the probabilities of those labels as the next token and normalizes them. A choice returns every option's probability and a confidence of `(n * peak - 1) / (n - 1)`; a score returns the expected level.
+The model does not generate an answer. Each question becomes one chat prompt: the state, every question of the request, the state again, and then the question with its answers under single-token labels. Labels are letters for a choice (up to 62 options), `Yes`/`No` for a bool, and digits for a score (up to 10 levels). The second copy of the state is read with the questions in view, which improved accuracy on JevBench with small models. Pi reads the probabilities of the labels as the next token and normalizes them. A choice returns every option's probability and a confidence of `(n * peak - 1) / (n - 1)`; a score returns the expected level.
 
 - Raw label probabilities are usually overconfident. The per-request `temperature` option divides the label logits before normalizing; values above 1 soften the distribution. It changes no answer.
-- Questions run one after another. Each prompt starts with the same state, so the server's prompt cache evaluates the state once.
+- Questions run one after another. Everything before the final question is the same for all questions of a request, so the server's prompt cache evaluates it once. The state appears twice, so it needs twice its size in context.
 - Small models may follow instructions written inside the state. The prompt tells the model to judge the state as data, but that is not a guarantee.
 - Hybrid models such as Qwen3.5 cannot rewind a partially cached prompt without context checkpoints. If each question reprocesses the whole state, start the router with `--ctx-checkpoints 32 --checkpoint-min-step 0`.
 

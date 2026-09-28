@@ -936,7 +936,7 @@ The public contract uses `bool` questions and `{ type: "bool", probability }` an
 
 ### Chat models on llama.cpp
 
-The `llama-cpp-classify` API turns a chat model served by llama.cpp's `llama-server` into a classifier. Each question becomes one chat prompt that lists the answers under single-token labels (letters for a choice, `Yes`/`No` for a bool, digits for a score). The server returns the log-probabilities of the next token, and the answer is the softmax over the label tokens. Choices support up to 62 options and scores up to 10 levels. The model's `baseUrl` is the server URL; a trailing `/v1` is ignored. In router mode, the model ID selects the model.
+The `llama-cpp-classify` API turns a chat model served by llama.cpp's `llama-server` into a classifier. Each question becomes one chat prompt: the state, every question of the request, the state again, and the question with its answers under single-token labels (letters for a choice, `Yes`/`No` for a bool, digits for a score). The prompt up to the final question is shared by all questions of a request, so the server's prompt cache evaluates the state once per request. The server returns the log-probabilities of the next token, and the answer is the softmax over the label tokens. Choices support up to 62 options and scores up to 10 levels. The model's `baseUrl` is the server URL; a trailing `/v1` is ignored. In router mode, the model ID selects the model.
 
 ```typescript
 import { createProvider } from '@earendil-works/pi-ai';

@@ -154,14 +154,37 @@ describe("llama.cpp classifier", () => {
 		expect(template?.body.chat_template_kwargs).toEqual({ enable_thinking: false });
 	});
 
-	it("puts the state first and lists options under letters", () => {
-		const rendered = renderQuestion(context.state, context.questions.team!);
+	it("repeats the state around all questions and ends with this question's labels", () => {
+		const rendered = renderQuestion(context, "team");
+		const state = 'State:\n{\n "message": "Help! My payouts have been failing for 3 days."\n}';
 		expect(rendered.labels).toEqual(["A", "B", "C"]);
 		expect(rendered.keys).toEqual(["billing", "technical", "sales"]);
 		expect(rendered.content).toBe(
 			[
-				"State:",
-				'{\n "message": "Help! My payouts have been failing for 3 days."\n}',
+				state,
+				"",
+				"Task: answer each of the following questions about the state.",
+				"",
+				"Question: Which team should handle this?",
+				"",
+				"Options:",
+				"- billing: Payments and refunds",
+				"- technical: Bugs and outages",
+				"- sales",
+				"",
+				"Question: Does this convey urgency?",
+				"",
+				"Yes means: The user needs help soon",
+				"No means: No time pressure",
+				"",
+				"Question: How severe is this?",
+				"",
+				"Levels:",
+				"0. low",
+				"1. medium",
+				"2. high",
+				"",
+				state,
 				"",
 				"Question: Which team should handle this?",
 				"",
@@ -172,6 +195,21 @@ describe("llama.cpp classifier", () => {
 				"",
 				"Answer with one letter.",
 			].join("\n"),
+		);
+	});
+
+	it("shares everything before the final question across the questions of a request", () => {
+		const prefix = (id: string) => {
+			const { content } = renderQuestion(context, id);
+			return content.slice(0, content.lastIndexOf("Question:"));
+		};
+		expect(prefix("urgent")).toBe(prefix("team"));
+		expect(prefix("severity")).toBe(prefix("team"));
+		expect(
+			renderQuestion(context, "urgent").content.endsWith("No means: No time pressure\n\nAnswer Yes or No."),
+		).toBe(true);
+		expect(renderQuestion(context, "severity").content.endsWith("2. high\n\nAnswer with one level number.")).toBe(
+			true,
 		);
 	});
 

@@ -1,6 +1,7 @@
 import type {
 	ClassifierAnswer,
 	ClassifierApi,
+	ClassifierContext,
 	ClassifierFunction,
 	ClassifierModel,
 	ClassifierOptions,
@@ -95,42 +96,84 @@ export function llamaServerRoot(baseUrl: string): string {
 	return baseUrl.replace(/\/+$/u, "").replace(/\/v1$/u, "");
 }
 
-/** Writes the question as a user message and picks its labels. Throws for unsupported option counts. */
-export function renderQuestion(state: JsonObject, question: ClassifierQuestion): LabeledQuestion {
-	const stateText = `State:\n${JSON.stringify(state, null, 1)}`;
-	const head = `Question: ${question.instructions}`;
-	let tail: string;
-	let labels: string[];
-	let keys: string[];
+function renderState(state: JsonObject): string {
+	return `State:\n${JSON.stringify(state, null, 1)}`;
+}
+
+/** The answer labels of a question and the keys they stand for. Throws for unsupported option counts. */
+function questionLabels(question: ClassifierQuestion): { labels: string[]; keys: string[] } {
 	if (question.type === "choice") {
-		keys = Object.keys(question.criteria);
+		const keys = Object.keys(question.criteria);
 		if (keys.length < 2 || keys.length > CHOICE_LABELS.length) {
 			throw new Error(`A choice question needs 2 to ${CHOICE_LABELS.length} options, got ${keys.length}`);
 		}
-		labels = CHOICE_LABELS.slice(0, keys.length);
-		const lines = keys.map((key, index) => {
-			const description = question.criteria[key];
-			return `${labels[index]}. ${key}${description ? `: ${description}` : ""}`;
-		});
-		tail = `Options:\n${lines.join("\n")}\n\nAnswer with one letter.`;
-	} else if (question.type === "score") {
+		return { labels: CHOICE_LABELS.slice(0, keys.length), keys };
+	}
+	if (question.type === "score") {
 		if (question.criteria.length < 2 || question.criteria.length > SCORE_LABELS.length) {
 			throw new Error(`A score question needs 2 to ${SCORE_LABELS.length} levels, got ${question.criteria.length}`);
 		}
-		labels = SCORE_LABELS.slice(0, question.criteria.length);
-		keys = labels;
-		const lines = question.criteria.map((level, index) => `${labels[index]}. ${level}`);
-		tail = `Levels:\n${lines.join("\n")}\n\nAnswer with one level number.`;
-	} else {
-		labels = BOOL_LABELS;
-		keys = ["true", "false"];
-		const meanings = [
-			question.criteria.true ? `Yes means: ${question.criteria.true}\n` : "",
-			question.criteria.false ? `No means: ${question.criteria.false}\n` : "",
-		].join("");
-		tail = `${meanings ? `${meanings}\n` : ""}Answer Yes or No.`;
+		const labels = SCORE_LABELS.slice(0, question.criteria.length);
+		return { labels, keys: labels };
 	}
-	return { content: `${stateText}\n\n${head}\n\n${tail}`, labels, keys };
+	return { labels: BOOL_LABELS, keys: ["true", "false"] };
+}
+
+/** The question and its options. `labels` puts the answer labels on choice options. */
+function renderTask(question: ClassifierQuestion, labels: readonly string[] | undefined): string {
+	const head = `Question: ${question.instructions}`;
+	if (question.type === "choice") {
+		const lines = Object.entries(question.criteria).map(([key, description], index) => {
+			const option = `${key}${description ? `: ${description}` : ""}`;
+			return labels ? `${labels[index]}. ${option}` : `- ${option}`;
+		});
+		return `${head}\n\nOptions:\n${lines.join("\n")}`;
+	}
+	if (question.type === "score") {
+		const lines = question.criteria.map((level, index) => `${index}. ${level}`);
+		return `${head}\n\nLevels:\n${lines.join("\n")}`;
+	}
+	const meanings = [
+		question.criteria.true ? `Yes means: ${question.criteria.true}` : "",
+		question.criteria.false ? `No means: ${question.criteria.false}` : "",
+	].filter(Boolean);
+	return meanings.length > 0 ? `${head}\n\n${meanings.join("\n")}` : head;
+}
+
+function answerInstruction(question: ClassifierQuestion): string {
+	if (question.type === "choice") return "Answer with one letter.";
+	if (question.type === "score") return "Answer with one level number.";
+	return "Answer Yes or No.";
+}
+
+/** Every question of the request, without answer labels. */
+function renderOverview(context: ClassifierContext): string {
+	const questions = Object.values(context.questions);
+	const intro =
+		questions.length === 1
+			? "Task: answer the following question about the state."
+			: "Task: answer each of the following questions about the state.";
+	return [intro, ...questions.map((question) => renderTask(question, undefined))].join("\n\n");
+}
+
+/**
+ * Writes one question of the request as a user message and picks its labels.
+ * Throws for unsupported option counts.
+ *
+ * The message is the state, every question of the request with its options,
+ * the state again, and then this question with labeled options. A causal model
+ * reads the first copy of the state before it knows what is asked; the second
+ * copy is read with the questions in view (prompt repetition). Everything
+ * before the final question is the same for all questions of a request, so
+ * the server's prompt cache evaluates it once.
+ */
+export function renderQuestion(context: ClassifierContext, id: string): LabeledQuestion {
+	const question = context.questions[id];
+	if (!question) throw new Error(`Unknown question: ${id}`);
+	const { labels, keys } = questionLabels(question);
+	const state = renderState(context.state);
+	const final = `${renderTask(question, labels)}\n\n${answerInstruction(question)}`;
+	return { content: [state, renderOverview(context), state, final].join("\n\n"), labels, keys };
 }
 
 /** Softmax over label log-probabilities after dividing them by `temperature`. */
@@ -349,12 +392,12 @@ async function nextTokenLogprobs(
 
 async function classifyQuestion(
 	request: RequestContext,
-	state: JsonObject,
+	context: ClassifierContext,
 	id: string,
 	question: ClassifierQuestion,
 	temperature: number,
 ): Promise<ClassifierAnswer> {
-	const rendered = renderQuestion(state, question);
+	const rendered = renderQuestion(context, id);
 	const [tokens, prompt] = await Promise.all([
 		labelTokens(request, rendered.labels),
 		renderPrompt(request, rendered.content),
@@ -396,13 +439,13 @@ export const classify: ClassifierFunction<ClassifierOptions> = async (model, con
 			throw new Error(`Temperature must be a positive number, got ${temperature}`);
 		}
 		// Validate every question before the first request.
-		for (const question of Object.values(context.questions)) renderQuestion(context.state, question);
+		for (const id of Object.keys(context.questions)) renderQuestion(context, id);
 		const request: RequestContext = { model, root: llamaServerRoot(model.baseUrl), options };
 		const answers: Array<[string, ClassifierAnswer]> = [];
-		// One question at a time: each prompt starts with the same state, which the
-		// server's prompt cache then evaluates only once.
+		// One question at a time: each prompt starts with the same text up to its final
+		// question, which the server's prompt cache then evaluates only once.
 		for (const [id, question] of Object.entries(context.questions)) {
-			answers.push([id, await classifyQuestion(request, context.state, id, question, temperature)]);
+			answers.push([id, await classifyQuestion(request, context, id, question, temperature)]);
 		}
 		output.answers = Object.fromEntries(answers);
 		return output;
