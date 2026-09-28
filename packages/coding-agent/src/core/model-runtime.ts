@@ -52,7 +52,6 @@ import {
 	type Provider,
 	type ProviderHeaders,
 	type ProviderRequestOptions,
-	recordThinkingLevel,
 	type SimpleStreamOptions,
 	type StreamOptions,
 } from "@earendil-works/pi-ai";
@@ -730,11 +729,7 @@ export class ModelRuntime implements Models {
 		return lazyStream(model, async () => {
 			assertChatModel(model);
 			const prepared = await this.prepareRequest(model, options);
-			return recordThinkingLevel(
-				model,
-				options?.reasoning,
-				prepared.provider.streamSimple(prepared.model, transcript, prepared.options as SimpleStreamOptions),
-			);
+			return prepared.provider.streamSimple(prepared.model, transcript, prepared.options as SimpleStreamOptions);
 		});
 	}
 

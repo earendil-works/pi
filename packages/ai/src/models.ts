@@ -20,7 +20,6 @@ import type {
 	ApiStreamOptions,
 	AssistantImages,
 	AssistantMessage,
-	AssistantMessageEvent,
 	AssistantMessageEventStream,
 	ClassifierApi,
 	ClassifierContext,
@@ -46,7 +45,6 @@ import type {
 	ProviderRequestOptions,
 	ProviderStreams,
 	SimpleStreamOptions,
-	ThinkingLevel,
 	TranscriptContext,
 	Usage,
 } from "./types.ts";
@@ -893,11 +891,7 @@ class ModelsImpl implements MutableModels {
 		return lazyStream(model, async () => {
 			const provider = this.requireChatProvider(model);
 			const { requestModel, requestOptions } = await this.applyAuth(model, options);
-			return recordThinkingLevel(
-				model,
-				options?.reasoning,
-				provider.streamSimple(requestModel, transcript, requestOptions as SimpleStreamOptions),
-			);
+			return provider.streamSimple(requestModel, transcript, requestOptions as SimpleStreamOptions);
 		});
 	}
 
@@ -1244,28 +1238,6 @@ export function clampThinkingLevel<TApi extends Api>(
 		if (availableLevels.includes(candidate)) return candidate;
 	}
 	return availableLevels[0] ?? "off";
-}
-
-/**
- * Record the Pi thinking level of a `streamSimple()` request on every message its stream emits,
- * including the final result. Unset `reasoning` requests "off"; the level is clamped to `model`.
- */
-export function recordThinkingLevel(
-	model: Model<Api>,
-	reasoning: ThinkingLevel | undefined,
-	stream: AssistantMessageEventStream,
-): AsyncIterable<AssistantMessageEvent> & { result(): Promise<AssistantMessage> } {
-	const thinkingLevel = clampThinkingLevel(model, reasoning ?? "off");
-	const stamp = (message: AssistantMessage) => Object.assign(message, { thinkingLevel });
-	return {
-		async *[Symbol.asyncIterator]() {
-			for await (const event of stream) {
-				stamp(event.type === "done" ? event.message : event.type === "error" ? event.error : event.partial);
-				yield event;
-			}
-		},
-		result: async () => stamp(await stream.result()),
-	};
 }
 
 /**

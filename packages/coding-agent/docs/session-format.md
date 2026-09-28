@@ -92,7 +92,7 @@ Sessions created before system messages existed have no leading system message; 
 {"type":"message","id":"c3d4e5f6","parentId":"b2c3d4e5","timestamp":"2024-12-03T14:00:03.000Z","message":{"role":"toolResult","toolCallId":"call_123","toolName":"bash","content":[{"type":"text","text":"output"}],"isError":false,"timestamp":1733234403000}}
 ```
 
-Assistant messages name the model that produced them. Newer messages also record `thinkingLevel`, the Pi thinking level requested after clamping to that model.
+Assistant messages name the model that produced them. Newer messages also record `thinkingLevel`, the Pi thinking level requested for that response.
 
 ### ModelChangeEntry
 

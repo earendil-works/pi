@@ -164,7 +164,7 @@ describe("ModelRuntime virtual models", () => {
 		);
 
 		expect(requests.map((request) => request.reason)).toEqual(["direct"]);
-		expect(message).toMatchObject({ provider: "faux", model: "large", thinkingLevel: "high", stopReason: "stop" });
+		expect(message).toMatchObject({ provider: "faux", model: "large", stopReason: "stop" });
 		expect(maxTokens).toBe(5000);
 	});
 
