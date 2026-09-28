@@ -117,7 +117,40 @@ function resultToUsage(result: SubagentResult): Usage {
 	};
 }
 
+export const SUBAGENT_SECTION_NAME = "subagents";
+
+/**
+ * System-prompt section advertising the subagent tool: without it models
+ * under-delegate or never learn that user/project-defined agent types exist.
+ * Lists the actually-available agent types for this session.
+ */
+export function buildSubagentSection(agents: AgentConfig[]): string {
+	let section =
+		"Sub-agents: delegate self-contained work units to the subagent tool instead of doing " +
+		"everything in the main context. Each sub-agent runs in an isolated pi process with its own " +
+		"context window, so prefer delegating large searches, independent implementation chunks, and " +
+		"any work whose intermediate steps would clutter this conversation. Each sub-agent only sees " +
+		"the prompt you give it — make it complete and self-contained. Issue multiple subagent calls " +
+		"in one turn to run them concurrently. Available agent types:";
+	for (const agent of agents) {
+		const tools = agent.tools ? `, tools: ${agent.tools.join("/")}` : "";
+		const model = agent.model ? `, model: ${agent.model}` : "";
+		section += `\n- ${agent.name} (${agent.source}${tools}${model}): ${agent.description}`;
+	}
+	return section;
+}
+
 export function registerSubagent(pi: ExtensionAPI): void {
+	// Advertise delegation and the available agent types, mirroring the
+	// memory/tasks system-prompt sections.
+	pi.on("before_agent_start", async (event, ctx) => {
+		const discovery = discoverAgents(ctx.cwd);
+		event.systemPromptOptions.sections[SUBAGENT_SECTION_NAME] = buildSubagentSection([
+			...getBuiltinAgents(),
+			...discovery.agents,
+		]);
+	});
+
 	pi.registerTool({
 		name: "subagent",
 		label: "Subagent",

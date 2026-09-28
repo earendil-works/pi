@@ -39,6 +39,7 @@ beforeEach(() => {
 		"PI_DISABLE_AUTO_COMPACT",
 		"PI_AUTO_COMPACT_WINDOW",
 		"PI_AUTOCOMPACT_PCT_OVERRIDE",
+		"PI_CONTEXT_FLOOR_TOKENS",
 		"PI_BLOCKING_LIMIT_OVERRIDE",
 		"PI_AUTOCOMPACT_FAILURE_COOLDOWN_MS",
 		"PI_PLUS_SETTINGS_FILE",
@@ -88,6 +89,50 @@ describe("getEffectiveContextWindowSize", () => {
 		setCurrentModel({ contextWindow: 1_000_000, maxTokens: 384_000 });
 		process.env.PI_AUTO_COMPACT_WINDOW = "512000";
 		assert.equal(getEffectiveContextWindowSize(), AUTOCOMPACT_MAX_WINDOW_TOKENS - MAX_OUTPUT_TOKENS_FOR_SUMMARY);
+	});
+
+	it("raises the floor for small-context models when a context floor is persisted", () => {
+		// 30k - 20k reserve = 10k, below 20k + 32k = 52k → floored at the setting.
+		const dir = mkdtempSync(join(tmpdir(), "plus-floor-"));
+		try {
+			writeFileSync(join(dir, "pi-plus-settings.json"), JSON.stringify({ contextFloorTokens: 32_768 }));
+			process.env.PI_PLUS_SETTINGS_FILE = join(dir, "pi-plus-settings.json");
+			setCurrentModel({ contextWindow: 30_000, maxTokens: 64_000 });
+			assert.equal(getEffectiveContextWindowSize(), MAX_OUTPUT_TOKENS_FOR_SUMMARY + 32_768);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("leaves big windows untouched when a context floor is persisted", () => {
+		const dir = mkdtempSync(join(tmpdir(), "plus-floor-"));
+		try {
+			writeFileSync(join(dir, "pi-plus-settings.json"), JSON.stringify({ contextFloorTokens: 32_768 }));
+			process.env.PI_PLUS_SETTINGS_FILE = join(dir, "pi-plus-settings.json");
+			// 200k - 20k reserve = 180k, far above 20k + 32k → no effect.
+			assert.equal(getEffectiveContextWindowSize(), 200_000 - MAX_OUTPUT_TOKENS_FOR_SUMMARY);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("PI_CONTEXT_FLOOR_TOKENS wins over the persisted floor", () => {
+		const dir = mkdtempSync(join(tmpdir(), "plus-floor-"));
+		try {
+			writeFileSync(join(dir, "pi-plus-settings.json"), JSON.stringify({ contextFloorTokens: 32_768 }));
+			process.env.PI_PLUS_SETTINGS_FILE = join(dir, "pi-plus-settings.json");
+			process.env.PI_CONTEXT_FLOOR_TOKENS = "65536";
+			setCurrentModel({ contextWindow: 30_000, maxTokens: 64_000 });
+			assert.equal(getEffectiveContextWindowSize(), MAX_OUTPUT_TOKENS_FOR_SUMMARY + 65_536);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("clamps PI_CONTEXT_FLOOR_TOKENS at the built-in 13k minimum", () => {
+		setCurrentModel({ contextWindow: 30_000, maxTokens: 64_000 });
+		process.env.PI_CONTEXT_FLOOR_TOKENS = "1000";
+		assert.equal(getEffectiveContextWindowSize(), MAX_OUTPUT_TOKENS_FOR_SUMMARY + AUTOCOMPACT_FLOOR_BUFFER_TOKENS);
 	});
 });
 

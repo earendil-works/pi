@@ -5,6 +5,7 @@
  * free-code/src/utils/context.ts, with pi-style env var names:
  *   PI_AUTO_COMPACT_WINDOW        cap the context window used for threshold math
  *   PI_AUTOCOMPACT_PCT_OVERRIDE   percent-of-window autocompact threshold override
+ *   PI_CONTEXT_FLOOR_TOKENS       context floor override (min 13k; only raises the floor)
  *   PI_BLOCKING_LIMIT_OVERRIDE    blocking limit override
  *   PI_AUTOCOMPACT_FAILURE_COOLDOWN_MS  circuit-breaker cooldown override (min 10s)
  *   PI_DISABLE_COMPACT            disable all compaction
@@ -16,7 +17,7 @@
  * threshold-setting.ts.
  */
 
-import { getAutoCompactThresholdPercent } from "./threshold-setting.ts";
+import { getAutoCompactThresholdPercent, getContextFloorTokens } from "./threshold-setting.ts";
 
 /** Minimum model info needed for the window math. Structurally compatible with pi's Model. */
 export interface DetectionModel {
@@ -38,6 +39,9 @@ export const AUTOCOMPACT_BUFFER_TOKENS = 30_000;
 // Conservative floor buffer for getEffectiveContextWindowSize(). Must guarantee
 // a non-negative auto-compact threshold for small-context models, so it stays
 // at the pre-#1949 value of 13_000 and is decoupled from AUTOCOMPACT_BUFFER_TOKENS.
+// User-facing override (only ever raises this): the /settings "Context floor"
+// row persisted in pi-plus-settings.json, or PI_CONTEXT_FLOOR_TOKENS for the
+// session — see getContextFloorBufferTokens() and threshold-setting.ts.
 export const AUTOCOMPACT_FLOOR_BUFFER_TOKENS = 13_000;
 
 export const WARNING_THRESHOLD_BUFFER_TOKENS = 20_000;
@@ -108,8 +112,21 @@ function parsePositiveInt(value: string | undefined): number | undefined {
 	return Number.isNaN(parsed) || parsed <= 0 ? undefined : parsed;
 }
 
+/**
+ * Floor buffer applied in getEffectiveContextWindowSize(): the persisted
+ * /settings choice, or PI_CONTEXT_FLOOR_TOKENS for the session (env wins).
+ * Either way the built-in AUTOCOMPACT_FLOOR_BUFFER_TOKENS minimum applies —
+ * the setting can only raise the floor, never below the issue-#635 guarantee.
+ */
+function getContextFloorBufferTokens(): number {
+	const env = parsePositiveInt(process.env.PI_CONTEXT_FLOOR_TOKENS);
+	if (env !== undefined) return Math.max(env, AUTOCOMPACT_FLOOR_BUFFER_TOKENS);
+	return Math.max(getContextFloorTokens(), AUTOCOMPACT_FLOOR_BUFFER_TOKENS);
+}
+
 /** Effective window: contextWindow (ceilinged at AUTOCOMPACT_MAX_WINDOW_TOKENS)
- * minus the output reserve, capped by PI_AUTO_COMPACT_WINDOW. */
+ * minus the output reserve, capped by PI_AUTO_COMPACT_WINDOW, floored at the
+ * output reserve plus the context floor buffer. */
 export function getEffectiveContextWindowSize(model?: DetectionModel): number {
 	const m = model ?? currentModel;
 	if (!m) {
@@ -125,13 +142,11 @@ export function getEffectiveContextWindowSize(model?: DetectionModel): number {
 
 	// Floor: effective context must be at least the summary reservation plus a
 	// usable buffer. Without it, small-context models get a negative auto-compact
-	// threshold that fires on every message (openclaude issue #635). The floor
-	// buffer intentionally stays at the conservative 13k so this function —
-	// also consumed outside threshold math — is not inflated by the 30k ramp.
-	return Math.max(
-		contextWindow - reservedTokensForSummary,
-		reservedTokensForSummary + AUTOCOMPACT_FLOOR_BUFFER_TOKENS,
-	);
+	// threshold that fires on every message (openclaude issue #635). The buffer
+	// starts at the conservative 13k so this function — also consumed outside
+	// threshold math — is not inflated by the 30k ramp; the /settings "Context
+	// floor" choice (or PI_CONTEXT_FLOOR_TOKENS) can only raise it.
+	return Math.max(contextWindow - reservedTokensForSummary, reservedTokensForSummary + getContextFloorBufferTokens());
 }
 
 /**

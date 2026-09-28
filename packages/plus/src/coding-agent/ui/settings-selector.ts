@@ -1,16 +1,17 @@
 /**
  * Wrapper for packages/coding-agent/src/modes/interactive/components/settings-selector.ts.
  *
- * Adds one row to the /settings list: "Auto-compact threshold" (percent of the
- * effective context window at which auto-compaction triggers, persisted via
- * plus/src/context/threshold-setting.ts). Upstream's selector builds its item
- * list and dispatch closure privately inside the constructor, so instead of
- * forking that logic the subclass reaches into the constructed SettingsList at
- * runtime — its fields are TS-private (not ECMAScript #private) and
- * `filteredItems` aliases the same array until a search filter runs, so an
- * in-place splice after super() shows up everywhere. If upstream ever renames
- * those fields, the threshold row silently stops appearing; /settings still
- * works unchanged.
+ * Adds two rows to the /settings list: "Auto-compact threshold" (percent of the
+ * effective context window at which auto-compaction triggers) and "Context
+ * floor" (minimum tokens of usable context the effective window is floored at),
+ * both persisted via plus/src/context/threshold-setting.ts. Upstream's selector
+ * builds its item list and dispatch closure privately inside the constructor,
+ * so instead of forking that logic the subclass reaches into the constructed
+ * SettingsList at runtime — its fields are TS-private (not ECMAScript #private)
+ * and `filteredItems` aliases the same array until a search filter runs, so
+ * in-place splices after super() show up everywhere. If upstream ever renames
+ * those fields, the plus rows silently stop appearing; /settings still works
+ * unchanged.
  */
 
 export * from "../../../../coding-agent/src/modes/interactive/components/settings-selector.ts";
@@ -23,13 +24,20 @@ import {
 } from "../../../../coding-agent/src/modes/interactive/components/settings-selector.ts";
 import {
 	formatAutoCompactThresholdPercent,
+	formatContextFloorTokens,
 	getAutoCompactThresholdPercent,
+	getContextFloorTokens,
 	parseAutoCompactThresholdChoice,
+	parseContextFloorChoice,
 	setAutoCompactThresholdPercent,
+	setContextFloorTokens,
 } from "../../context/threshold-setting.ts";
 
 const THRESHOLD_ITEM_ID = "autocompact-threshold";
 const THRESHOLD_VALUES = ["70%", "80%", "85%", "90%", "95%"];
+
+const CONTEXT_FLOOR_ITEM_ID = "context-floor";
+const CONTEXT_FLOOR_VALUES = ["13000", "16384", "24576", "32768", "65536"];
 
 /** Runtime shape of SettingsList's TS-private fields the injection relies on. */
 interface SettingsListInternals {
@@ -49,6 +57,10 @@ export class SettingsSelectorComponent extends UpstreamSettingsSelectorComponent
 				setAutoCompactThresholdPercent(parseAutoCompactThresholdChoice(newValue));
 				return;
 			}
+			if (id === CONTEXT_FLOOR_ITEM_ID) {
+				setContextFloorTokens(parseContextFloorChoice(newValue));
+				return;
+			}
 			upstreamOnChange(id, newValue);
 		};
 		internals.items.splice(1, 0, {
@@ -58,6 +70,14 @@ export class SettingsSelectorComponent extends UpstreamSettingsSelectorComponent
 				"Context fullness at which auto-compaction triggers, as a percent of the model's effective context window (default 80%).",
 			currentValue: formatAutoCompactThresholdPercent(getAutoCompactThresholdPercent()),
 			values: THRESHOLD_VALUES,
+		});
+		internals.items.splice(2, 0, {
+			id: CONTEXT_FLOOR_ITEM_ID,
+			label: "Context floor",
+			description:
+				"Minimum usable context for auto-compact math: the effective context window never drops below the output reserve plus this many tokens, even for small-context models (default 13000; only raises the built-in floor).",
+			currentValue: formatContextFloorTokens(getContextFloorTokens()),
+			values: CONTEXT_FLOOR_VALUES,
 		});
 	}
 }

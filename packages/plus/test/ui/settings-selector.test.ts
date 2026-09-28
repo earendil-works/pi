@@ -1,7 +1,7 @@
 /**
  * Tests for plus/src/coding-agent/ui/settings-selector.ts — the /settings
- * wrapper that injects the "Auto-compact threshold" row into upstream's
- * SettingsSelectorComponent without forking its constructor.
+ * wrapper that injects the "Auto-compact threshold" and "Context floor" rows
+ * into upstream's SettingsSelectorComponent without forking its constructor.
  */
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -12,7 +12,7 @@ import { afterEach, beforeAll, beforeEach, describe, it } from "vitest";
 import type { SettingsConfig } from "../../../coding-agent/src/modes/interactive/components/settings-selector.ts";
 import { initTheme } from "../../../coding-agent/src/modes/interactive/theme/theme.ts";
 import { SettingsSelectorComponent } from "../../src/coding-agent/ui/settings-selector.ts";
-import { getAutoCompactThresholdPercent } from "../../src/context/threshold-setting.ts";
+import { getAutoCompactThresholdPercent, getContextFloorTokens } from "../../src/context/threshold-setting.ts";
 
 let dir: string;
 const savedEnv = process.env.PI_PLUS_SETTINGS_FILE;
@@ -114,5 +114,26 @@ describe("SettingsSelectorComponent threshold row", () => {
 		} as never);
 		internalsOf(selector).onChange("autocompact", "false");
 		assert.equal(autoCompact, false);
+	});
+});
+
+describe("SettingsSelectorComponent context floor row", () => {
+	it("injects the row right after the auto-compact threshold row, defaulting to 13000", () => {
+		const selector = new SettingsSelectorComponent(fakeConfig(), { onCancel: () => {} } as never);
+		const internals = internalsOf(selector);
+		const index = internals.items.findIndex((item) => item.id === "context-floor");
+		assert.notEqual(index, -1);
+		assert.equal(internals.items[index - 1].id, "autocompact-threshold");
+		assert.equal(internals.items[index].currentValue, "13000");
+		assert.deepEqual(internals.items[index].values, ["13000", "16384", "24576", "32768", "65536"]);
+	});
+
+	it("persists a chosen floor through the list's onChange dispatch", () => {
+		const selector = new SettingsSelectorComponent(fakeConfig(), { onCancel: () => {} } as never);
+		const internals = internalsOf(selector);
+		internals.onChange("context-floor", "32768");
+		assert.equal(getContextFloorTokens(), 32_768);
+		internals.onChange("context-floor", "64k");
+		assert.equal(getContextFloorTokens(), 65_536);
 	});
 });

@@ -16,8 +16,28 @@ import type {
 	ExtensionContext,
 } from "../../../../coding-agent/src/core/extensions/types.ts";
 import { TaskListComponent } from "./component.ts";
-import { formatTaskLine, TaskStore } from "./store.ts";
+import { formatTaskLine, type Task, TaskStore } from "./store.ts";
 import { TaskCreateParams, TaskGetParams, TaskListParams, TaskUpdateParams } from "./tools.ts";
+
+export const TASKS_SECTION_NAME = "tasks";
+
+/**
+ * Nudge the model to actually use the task tools: without a system-prompt
+ * mention they sit unused, and also surfaces the current list so a resumed
+ * session can pick up where it left off.
+ */
+export function buildTasksSection(tasks: Task[]): string {
+	let section =
+		"Task tracking: for any non-trivial multi-step request, break the work into tasks " +
+		"with TaskCreate up front (typically 2-5 tasks covering the whole job). Mark a task " +
+		"in_progress when you start it and completed immediately when it finishes. Use " +
+		"TaskUpdate for corrections and blocks/blockedBy when order matters; check state " +
+		"with TaskList. Do not create tasks for trivial single-step requests.";
+	if (tasks.length > 0) {
+		section += `\n\nCurrent tasks:\n${tasks.map(formatTaskLine).join("\n")}`;
+	}
+	return section;
+}
 
 function storeFor(ctx: ExtensionContext): TaskStore {
 	let listId = "default";
@@ -42,6 +62,11 @@ async function showTaskOverlay(ctx: ExtensionCommandContext | ExtensionContext):
 }
 
 export function registerTasks(pi: ExtensionAPI): void {
+	// Prompt nudge + current-list recall, mirroring the memory extension.
+	pi.on("before_agent_start", async (event, ctx) => {
+		event.systemPromptOptions.sections[TASKS_SECTION_NAME] = buildTasksSection(await storeFor(ctx).list());
+	});
+
 	pi.registerTool({
 		name: "TaskCreate",
 		label: "Task Create",

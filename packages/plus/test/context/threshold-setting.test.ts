@@ -9,11 +9,17 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "vitest";
 import {
 	DEFAULT_AUTO_COMPACT_THRESHOLD_PERCENT,
+	DEFAULT_CONTEXT_FLOOR_TOKENS,
 	formatAutoCompactThresholdPercent,
+	formatContextFloorTokens,
 	getAutoCompactThresholdPercent,
+	getContextFloorTokens,
+	MIN_CONTEXT_FLOOR_TOKENS,
 	parseAutoCompactThresholdChoice,
+	parseContextFloorChoice,
 	readPlusSettings,
 	setAutoCompactThresholdPercent,
+	setContextFloorTokens,
 } from "../../src/context/threshold-setting.ts";
 
 let dir: string;
@@ -56,6 +62,18 @@ describe("readPlusSettings", () => {
 		writeFileSync(settingsFile, JSON.stringify({ autoCompactThresholdPercent: 95 }));
 		assert.deepEqual(readPlusSettings(), { autoCompactThresholdPercent: 95 });
 	});
+
+	it("ignores out-of-range or non-integer context floor values", () => {
+		for (const bad of [0, 12_999, 13_000.5, NaN, "32768", null]) {
+			writeFileSync(settingsFile, JSON.stringify({ contextFloorTokens: bad }));
+			assert.deepEqual(readPlusSettings(), {}, `value: ${String(bad)}`);
+		}
+	});
+
+	it("accepts a valid context floor and keeps both keys", () => {
+		writeFileSync(settingsFile, JSON.stringify({ autoCompactThresholdPercent: 85, contextFloorTokens: 32_768 }));
+		assert.deepEqual(readPlusSettings(), { autoCompactThresholdPercent: 85, contextFloorTokens: 32_768 });
+	});
 });
 
 describe("setAutoCompactThresholdPercent", () => {
@@ -83,6 +101,62 @@ describe("setAutoCompactThresholdPercent", () => {
 		setAutoCompactThresholdPercent(95);
 		const raw: unknown = JSON.parse(readFileSync(settingsFile, "utf8"));
 		assert.deepEqual(raw, { otherKey: 1, autoCompactThresholdPercent: 95 });
+	});
+});
+
+describe("setContextFloorTokens", () => {
+	it("round-trips through the file", () => {
+		setContextFloorTokens(32_768);
+		assert.equal(getContextFloorTokens(), 32_768);
+		assert.deepEqual(readPlusSettings(), { contextFloorTokens: 32_768 });
+	});
+
+	it("resetting to undefined restores the 13k default", () => {
+		setContextFloorTokens(32_768);
+		setContextFloorTokens(undefined);
+		assert.equal(getContextFloorTokens(), DEFAULT_CONTEXT_FLOOR_TOKENS);
+		assert.deepEqual(readPlusSettings(), {});
+	});
+
+	it("rejects floors below the built-in 13k minimum and non-integers", () => {
+		for (const bad of [0, 12_999, 13_000.5, NaN]) {
+			assert.throws(() => setContextFloorTokens(bad), /Invalid context floor tokens/);
+		}
+	});
+
+	it("preserves the threshold key in the file", () => {
+		writeFileSync(settingsFile, JSON.stringify({ autoCompactThresholdPercent: 85 }));
+		setContextFloorTokens(65_536);
+		const raw: unknown = JSON.parse(readFileSync(settingsFile, "utf8"));
+		assert.deepEqual(raw, { autoCompactThresholdPercent: 85, contextFloorTokens: 65_536 });
+	});
+});
+
+describe("context floor choice parsing", () => {
+	it("round-trips labels", () => {
+		assert.equal(formatContextFloorTokens(13_000), "13000");
+		assert.equal(parseContextFloorChoice("32768"), 32_768);
+	});
+
+	it("accepts a k suffix as Ki tokens", () => {
+		assert.equal(parseContextFloorChoice("32k"), 32_768);
+		assert.equal(parseContextFloorChoice("32K"), 32_768);
+	});
+
+	it("maps every UI choice through parse+format unchanged", () => {
+		for (const choice of ["13000", "16384", "24576", "32768", "65536"]) {
+			assert.equal(formatContextFloorTokens(parseContextFloorChoice(choice)), choice);
+		}
+	});
+
+	it("falls back to the default for unparseable or below-minimum input", () => {
+		assert.equal(parseContextFloorChoice("auto"), DEFAULT_CONTEXT_FLOOR_TOKENS);
+		assert.equal(parseContextFloorChoice("10k"), DEFAULT_CONTEXT_FLOOR_TOKENS);
+		assert.equal(parseContextFloorChoice(""), DEFAULT_CONTEXT_FLOOR_TOKENS);
+	});
+
+	it("minimum accepted floor equals the built-in 13k buffer", () => {
+		assert.equal(MIN_CONTEXT_FLOOR_TOKENS, DEFAULT_CONTEXT_FLOOR_TOKENS);
 	});
 });
 
