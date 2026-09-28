@@ -33,13 +33,14 @@ import { azureOpenAIResponsesApi } from "./api/azure-openai-responses.lazy.ts";
 import { bedrockConverseStreamApi } from "./api/bedrock-converse-stream.lazy.ts";
 import { googleGenerativeAIApi } from "./api/google-generative-ai.lazy.ts";
 import { googleVertexApi } from "./api/google-vertex.lazy.ts";
+import { lazyStream } from "./api/lazy.ts";
 import { mistralConversationsApi } from "./api/mistral-conversations.lazy.ts";
 import { openAICodexResponsesApi } from "./api/openai-codex-responses.lazy.ts";
 import { openAICompletionsApi } from "./api/openai-completions.lazy.ts";
 import { openAIResponsesApi } from "./api/openai-responses.lazy.ts";
 import { piMessagesApi } from "./api/pi-messages.lazy.ts";
 import { getEnvApiKey } from "./env-api-keys.ts";
-import type { ModelsApiStreamOptions } from "./models.ts";
+import { type ModelsApiStreamOptions, recordThinkingLevel } from "./models.ts";
 import { builtinModels, getBuiltinModel, getBuiltinModels, getBuiltinProviders } from "./providers/all.ts";
 
 export type { BuiltinProvider } from "./providers/all.ts";
@@ -282,14 +283,17 @@ export function streamSimple<TApi extends Api>(
 ): AssistantMessageEventStream {
 	const transcript = normalizeContext(context);
 	const builtinProvider = getBuiltinProviderForModel(model);
+	let stream: AssistantMessageEventStream;
 	if (builtinProvider) {
+		// Models.streamSimple records the thinking level itself.
 		if (model.provider.startsWith("cloudflare-") && !hasResolvedCloudflareAuth(options)) {
 			return compatModels.streamSimple(model, transcript, options);
 		}
-		return builtinProvider.streamSimple(model, transcript, withEnvApiKey(model, options));
+		stream = builtinProvider.streamSimple(model, transcript, withEnvApiKey(model, options));
+	} else {
+		stream = resolveApiProvider(model.api).streamSimple(model, transcript, withEnvApiKey(model, options));
 	}
-	const provider = resolveApiProvider(model.api);
-	return provider.streamSimple(model, transcript, withEnvApiKey(model, options));
+	return lazyStream(model, async () => recordThinkingLevel(model, options?.reasoning, stream));
 }
 
 export async function completeSimple<TApi extends Api>(

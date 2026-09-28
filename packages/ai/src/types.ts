@@ -553,7 +553,11 @@ export interface AssistantMessage {
 	responseId?: string; // Provider-specific response/message identifier when the upstream API exposes one
 	/** Exact provider-native effort level used for this response. Absent for legacy or unmanaged responses. */
 	providerThinkingLevel?: string;
-	/** Pi thinking level requested for this response, after clamping to `model`. Absent for legacy responses. */
+	/**
+	 * Pi thinking level a `streamSimple()` request asked for, after clamping to `model`. Absent for
+	 * `stream()` requests, which take provider-native options (see `providerThinkingLevel`), and for
+	 * legacy responses.
+	 */
 	thinkingLevel?: ModelThinkingLevel;
 	diagnostics?: AssistantMessageDiagnostic[]; // Redacted provider/runtime diagnostics for failures and recoveries.
 	usage: Usage;

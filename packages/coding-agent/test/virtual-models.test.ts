@@ -253,12 +253,20 @@ describe("createAgentSession with virtual models", () => {
 		}
 	});
 
-	it("records an explicit model override on resume", async () => {
-		const { runtime } = await createRuntime();
+	it("records an explicit model override on resume with the next prompt", async () => {
+		const { runtime, faux } = await createRuntime();
+		faux.setResponses([fauxAssistantMessage("ok")]);
+		const lastModelChange = () =>
+			sessionManager
+				.getBranch()
+				.filter((entry) => entry.type === "model_change")
+				.at(-1);
 
-		const { sessionManager } = await resume(runtime, runtime.getModel("faux", "small"));
+		const { session, sessionManager } = await resume(runtime, runtime.getModel("faux", "small"));
+		// Opening the session does not write to it.
+		expect(lastModelChange()).toMatchObject({ provider: "router", modelId: "auto" });
 
-		const modelChanges = sessionManager.getBranch().filter((entry) => entry.type === "model_change");
-		expect(modelChanges.at(-1)).toMatchObject({ provider: "faux", modelId: "small" });
+		await session.prompt("again");
+		expect(lastModelChange()).toMatchObject({ provider: "faux", modelId: "small" });
 	});
 });

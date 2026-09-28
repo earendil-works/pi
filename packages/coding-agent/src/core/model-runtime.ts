@@ -52,6 +52,7 @@ import {
 	type Provider,
 	type ProviderHeaders,
 	type ProviderRequestOptions,
+	recordThinkingLevel,
 	type SimpleStreamOptions,
 	type StreamOptions,
 } from "@earendil-works/pi-ai";
@@ -86,7 +87,6 @@ import {
 	isVirtualProvider,
 	type ModelRoute,
 	type ModelRouteReason,
-	withThinkingLevel,
 } from "./virtual-models.ts";
 
 interface ModelRuntimeSnapshot {
@@ -714,13 +714,13 @@ export class ModelRuntime implements Models {
 				return this.streamSimple(route.model, context, { ...options, maxTokens, reasoning });
 			});
 		}
-		const thinkingLevel = clampThinkingLevel(model, options?.reasoning ?? "off");
 		return lazyStream(model, async () => {
 			assertChatModel(model);
 			const prepared = await this.prepareRequest(model, options);
-			return withThinkingLevel(
+			return recordThinkingLevel(
+				model,
+				options?.reasoning,
 				prepared.provider.streamSimple(prepared.model, transcript, prepared.options as SimpleStreamOptions),
-				thinkingLevel,
 			);
 		});
 	}

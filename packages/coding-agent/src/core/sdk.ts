@@ -342,16 +342,16 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			},
 		};
 	};
-	// Compare selections, not request models: a virtual selection sends physical models here.
-	const cacheContextIsCurrent = () => {
+	// Warm only requests for the selected model. Requests a virtual selection routed, or that an
+	// extension redirected, may not be repeated by the next request, so warming them could be wasted.
+	const cacheContextIsCurrent = (requestModel: Model<any>) => {
 		const messages = agent.state.messages;
-		const selectedModel = agent.state.model;
 		return () => {
 			const currentModel = agent.state.model;
 			const currentMessages = agent.state.messages;
 			return (
-				currentModel.provider === selectedModel.provider &&
-				currentModel.id === selectedModel.id &&
+				currentModel.provider === requestModel.provider &&
+				currentModel.id === requestModel.id &&
 				messages.length <= currentMessages.length &&
 				messages.every((message, index) => currentMessages[index] === message)
 			);
@@ -403,7 +403,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			// shallow-copy the messages array or refresh the model object without changing
 			// the provider request, so top-level object identity is not a valid cache key.
 			if (options?.sessionId === sessionManager.getSessionId()) {
-				cacheWarmer.start({ model, context, options: requestOptions }, cacheContextIsCurrent());
+				cacheWarmer.start({ model, context, options: requestOptions }, cacheContextIsCurrent(model));
 			}
 			return modelRuntime.streamSimple(model, context, requestOptions);
 		},
@@ -427,12 +427,6 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	if (hasExistingSession) {
 		if (!hasThinkingEntry) {
 			sessionManager.appendThinkingLevelChange(thinkingLevel);
-		}
-		// Record an explicit model override so the next resume restores it. Otherwise only the
-		// following assistant message would record it, which names a physical model.
-		const override = options.model;
-		if (override && (override.provider !== sessionModel?.provider || override.id !== sessionModel.modelId)) {
-			sessionManager.appendModelChange(override.provider, override.id);
 		}
 	} else {
 		// Save initial model and thinking level for new sessions so they can be restored on resume

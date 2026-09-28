@@ -9,7 +9,6 @@ import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import {
 	type Api,
 	type AssistantMessage,
-	type AssistantMessageEvent,
 	type AssistantMessageEventStream,
 	lazyStream,
 	type Message,
@@ -156,22 +155,5 @@ export function createVirtualProvider(definition: VirtualModelDefinition): Virtu
 		stream: unrouted,
 		streamSimple: unrouted,
 		route: (request) => definition.route(request),
-	};
-}
-
-/** Record the thinking level on every message a stream emits, including its final result. */
-export function withThinkingLevel(
-	stream: AssistantMessageEventStream,
-	thinkingLevel: ModelThinkingLevel,
-): AsyncIterable<AssistantMessageEvent> & { result(): Promise<AssistantMessage> } {
-	const stamp = (message: AssistantMessage) => Object.assign(message, { thinkingLevel });
-	return {
-		async *[Symbol.asyncIterator]() {
-			for await (const event of stream) {
-				stamp(event.type === "done" ? event.message : event.type === "error" ? event.error : event.partial);
-				yield event;
-			}
-		},
-		result: async () => stamp(await stream.result()),
 	};
 }
