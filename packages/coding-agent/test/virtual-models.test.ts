@@ -188,6 +188,71 @@ describe("createAgentSession with virtual models", () => {
 		expect(session.routedModel).toBeUndefined();
 	});
 
+	it("falls back to the last physical response when the transcript ends with a routing failure", async () => {
+		const { runtime, virtual } = await createRuntime();
+		const sessionManager = SessionManager.inMemory(tempDir);
+		sessionManager.appendModelChange("router", "auto");
+		sessionManager.appendMessage({ role: "user", content: "hi", timestamp: 1 });
+		sessionManager.appendMessage(assistantFrom(runtime.getModel("faux", "large")!, "hello"));
+		sessionManager.appendMessage({ role: "user", content: "again", timestamp: 2 });
+		sessionManager.appendMessage({
+			...assistantFrom(virtual, ""),
+			stopReason: "error",
+			errorMessage: "router failed",
+		});
+		runtime.unregisterProvider("router");
+
+		const { session, modelFallbackMessage } = await createAgentSession({
+			cwd: tempDir,
+			agentDir: tempDir,
+			modelRuntime: runtime,
+			sessionManager,
+			resourceLoader: createTestResourceLoader(),
+		});
+		onTestFinished(() => session.dispose());
+
+		expect(session.model).toMatchObject({ provider: "faux", id: "large" });
+		expect(modelFallbackMessage).toBeUndefined();
+	});
+
+	it("resumes the selection made before tree navigation left its model_change on another branch", async () => {
+		const { runtime, faux, virtual } = await createRuntime();
+		faux.setResponses(Array.from({ length: 6 }, () => fauxAssistantMessage("ok")));
+		const large = runtime.getModel("faux", "large")!;
+		const open = async (sessionManager: SessionManager, model?: Model<string>) => {
+			const resourceLoader = createTestResourceLoader();
+			const options = {
+				cwd: tempDir,
+				agentDir: tempDir,
+				modelRuntime: runtime,
+				sessionManager,
+				resourceLoader,
+				model,
+			};
+			return (await createAgentSession(options)).session;
+		};
+
+		for (const [before, after] of [
+			[virtual, large],
+			[large, virtual],
+		]) {
+			const sessionManager = SessionManager.inMemory(tempDir);
+			const session = await open(sessionManager, before);
+			await session.prompt("one");
+			const firstAnswer = sessionManager.getLeafId()!;
+			await session.setModel(after);
+			await session.prompt("two");
+			// Navigating back to before the switch keeps `after` selected, but its model_change is on the old branch.
+			await session.navigateTree(firstAnswer);
+			await session.prompt("three");
+			session.dispose();
+
+			const resumed = await open(sessionManager);
+			onTestFinished(() => resumed.dispose());
+			expect(resumed.model).toMatchObject({ provider: after.provider, id: after.id });
+		}
+	});
+
 	it("records an explicit model override on resume", async () => {
 		const { runtime } = await createRuntime();
 

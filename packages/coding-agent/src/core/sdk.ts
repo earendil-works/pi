@@ -32,7 +32,7 @@ import {
 	type ToolName,
 	withFileMutationQueue,
 } from "./tools/index.ts";
-import { isVirtualModel } from "./virtual-models.ts";
+import { getBranchSelection } from "./virtual-models.ts";
 
 // Preserve the pre-0.81 fallback for extensions that construct Agent instances
 // or invoke low-level agent loops without supplying streamFn. Agent core remains
@@ -200,16 +200,10 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	let modelFallbackMessage: string | undefined;
 
 	// Assistant messages name the physical model that answered, so a virtual selection is only in
-	// model_change entries. It wins over later assistant messages while it is still registered.
-	const lastChange = sessionManager
-		.getBranch()
-		.filter((entry) => entry.type === "model_change")
-		.at(-1);
-	const selectedModel = lastChange && modelRuntime.getModel(lastChange.provider, lastChange.modelId);
-	const sessionModel =
-		selectedModel && isVirtualModel(selectedModel)
-			? { provider: selectedModel.provider, modelId: selectedModel.id }
-			: existingSession.model;
+	// model_change entries.
+	const sessionModel = getBranchSelection(sessionManager.getBranch(), (provider, modelId) =>
+		modelRuntime.getModel(provider, modelId),
+	);
 
 	// If session has data, try to restore model from it
 	if (!model && hasExistingSession && sessionModel) {

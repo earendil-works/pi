@@ -18,6 +18,7 @@ import {
 	type Provider,
 	type ThinkingLevelMap,
 } from "@earendil-works/pi-ai";
+import type { SessionEntry } from "./session-manager.ts";
 
 /** API id of virtual catalog entries. Requests for it fail unless routed first. */
 export const VIRTUAL_MODEL_API = "pi-virtual";
@@ -28,7 +29,7 @@ const THINKING_LEVELS: readonly ModelThinkingLevel[] = ["off", "minimal", "low",
  * Why a request is being routed.
  * - `user`: first request after a message the user wrote (prompt, steering, or follow-up)
  * - `continuation`: any other request in the agent loop, e.g. after tool results or extension messages
- * - `retry`: automatic retry after a failed request
+ * - `retry`: automatic retry after a failed request, including after compaction for a context overflow
  * - `direct`: a request outside the agent loop, e.g. a compaction summary or an extension call
  */
 export type ModelRouteReason = "user" | "continuation" | "retry" | "direct";
@@ -39,7 +40,10 @@ export interface ModelRouteRequest {
 	/** The selected thinking level. Its meaning is up to the router. */
 	thinkingLevel: ModelThinkingLevel;
 	reason: ModelRouteReason;
-	/** Physical model and thinking level of the latest successful response in `messages`. */
+	/**
+	 * Physical model and thinking level of the latest successful response in `messages`. For `retry`,
+	 * the failed request's, which `messages` no longer contains.
+	 */
 	previous?: { model: Model<Api>; thinkingLevel?: ModelThinkingLevel };
 	/** Conversation for this request, including system messages. */
 	messages: readonly Message[];
@@ -92,6 +96,33 @@ export function findLatestResponse(messages: readonly AgentMessage[]): Assistant
 		}
 	}
 	return undefined;
+}
+
+/**
+ * The model selection a session branch records. A virtual `model_change` holds until the next
+ * `model_change`, because responses name the physical models it routed to. Otherwise the latest
+ * physical response wins, as in sessions without virtual models. A virtual model that is no longer
+ * registered does not hold, so the selection falls back to the physical model that answered last.
+ */
+export function getBranchSelection(
+	branch: readonly SessionEntry[],
+	getModel: (provider: string, modelId: string) => Model<Api> | undefined,
+): { provider: string; modelId: string } | undefined {
+	const isVirtual = (provider: string, modelId: string) => {
+		const model = getModel(provider, modelId);
+		return model !== undefined && isVirtualModel(model);
+	};
+	let selection: { provider: string; modelId: string } | undefined;
+	for (const entry of branch) {
+		if (entry.type === "model_change") {
+			selection = { provider: entry.provider, modelId: entry.modelId };
+		} else if (entry.type === "message" && entry.message.role === "assistant" && !isVirtualModel(entry.message)) {
+			if (!selection || !isVirtual(selection.provider, selection.modelId)) {
+				selection = { provider: entry.message.provider, modelId: entry.message.model };
+			}
+		}
+	}
+	return selection;
 }
 
 /** Build the provider for a virtual model. Register it like any native provider. */

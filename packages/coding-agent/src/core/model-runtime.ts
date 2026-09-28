@@ -918,19 +918,28 @@ export class ModelRuntime implements Models {
 	 * Ask a virtual model's router for the model and thinking level of one request. The router must
 	 * return a physical catalog model whose provider has credentials; the thinking level is clamped
 	 * to that model. Throws when routing fails.
+	 *
+	 * `options.previous` is the response reported as `previous`. It defaults to the latest successful
+	 * response in `messages`; a retry passes the failed response, which `messages` no longer contains.
 	 */
 	async resolveModel(
 		model: Model<Api>,
 		messages: readonly Message[],
-		options: { reason: ModelRouteReason; thinkingLevel: ModelThinkingLevel; signal?: AbortSignal },
+		options: {
+			reason: ModelRouteReason;
+			thinkingLevel: ModelThinkingLevel;
+			signal?: AbortSignal;
+			previous?: AssistantMessage;
+		},
 	): Promise<ModelRoute> {
 		const name = `Virtual model ${model.provider}/${model.id}`;
 		const provider = this.models.getProvider(model.provider);
 		if (!isVirtualProvider(provider)) throw new Error(`${name} is not registered.`);
-		const latest = findLatestResponse(messages);
+		const { previous, ...request } = options;
+		const latest = previous ?? findLatestResponse(messages);
 		const previousModel = latest && this.getPhysicalModel(latest.provider, latest.model);
 		const route = await provider.route({
-			...options,
+			...request,
 			model,
 			previous: previousModel && { model: previousModel, thinkingLevel: latest?.thinkingLevel },
 			messages,

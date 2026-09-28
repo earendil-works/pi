@@ -97,6 +97,51 @@ describe("AgentSession virtual models", () => {
 		expect(harness.session.getContextUsage()?.contextWindow).toBe(50_000);
 	});
 
+	it("retries the first request of a turn on the model routed for that turn", async () => {
+		const { harness, requests, reasons, dispatched } = await createRoutedHarness(defaultRoute, {
+			settings: { retry: { enabled: true, maxRetries: 3, baseDelayMs: 1 } },
+		});
+		harness.session.setThinkingLevel("low");
+		harness.setResponses([
+			fauxAssistantMessage("easy answer"),
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: "overloaded_error" }),
+			fauxAssistantMessage("hard answer"),
+		]);
+		await harness.session.prompt("easy");
+		harness.session.setThinkingLevel("high");
+
+		await harness.session.prompt("hard");
+
+		expect(reasons()).toEqual(["user", "user", "retry"]);
+		// The retry reports the failed request on large, not the small response of the previous turn.
+		expect(requests[2].previous?.model.id).toBe("large");
+		expect(dispatched()).toEqual(["faux/small:off", "faux/large:high"]);
+	});
+
+	it("routes the compact-and-retry after a truncated response as a retry", async () => {
+		const { harness, requests, reasons } = await createRoutedHarness(defaultRoute, {
+			settings: { compaction: { keepRecentTokens: 1, reserveTokens: 0 } },
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_before_compact", async ({ preparation: { firstKeptEntryId, tokensBefore } }) => ({
+						compaction: { summary: "overflow compacted", firstKeptEntryId, tokensBefore },
+					}));
+				},
+			],
+		});
+		harness.setResponses([
+			() => fauxAssistantMessage("x".repeat(64), { stopReason: "length", timestamp: Date.now() + 10_000 }),
+			fauxAssistantMessage("done"),
+		]);
+
+		await harness.session.prompt("x".repeat(5000));
+
+		expect(harness.eventsOfType("compaction_start").map((event) => event.reason)).toEqual(["overflow"]);
+		// Compaction may fold the prompt into the summary, so the retry is not a new user turn.
+		expect(reasons()).toEqual(["user", "retry"]);
+		expect(requests[1].previous?.model.id).toBe("large");
+	});
+
 	it("routes requests after extension messages as continuations", async () => {
 		const { harness, reasons } = await createRoutedHarness(defaultRoute, {
 			extensionFactories: [

@@ -132,7 +132,7 @@ import { type BashOperations, createLocalBashOperations } from "./tools/bash.ts"
 import { createAllToolDefinitions } from "./tools/index.ts";
 import { createToolDefinitionFromAgentTool } from "./tools/tool-definition-wrapper.ts";
 import { addUsageToTotals, createUsageTotals } from "./usage-totals.ts";
-import { findLatestResponse, isVirtualModel, type ModelRouteReason } from "./virtual-models.ts";
+import { findLatestResponse, getBranchSelection, isVirtualModel, type ModelRouteReason } from "./virtual-models.ts";
 
 // ============================================================================
 // Skill Block Parsing
@@ -364,6 +364,11 @@ export class AgentSession {
 	// Retry state
 	private _retryAbortController: AbortController | undefined = undefined;
 	private _retryAttempt = 0;
+	/**
+	 * Failed response that the next request repeats, set by auto-retry and overflow recovery. The
+	 * retry is routed with it as `previous`, since the context no longer contains it.
+	 */
+	private _retriedResponse: AssistantMessage | undefined;
 
 	// Bash execution state
 	private readonly _bashAbortControllers = new Set<AbortController>();
@@ -539,9 +544,17 @@ export class AgentSession {
 		messages: AgentMessage[],
 		reason: ModelRouteReason,
 		signal?: AbortSignal,
+		retried?: AssistantMessage,
 	): Promise<{ model: Model<any>; thinkingLevel: ThinkingLevel }> {
 		if (!isVirtualModel(model)) return { model, thinkingLevel };
-		return this._modelRuntime.resolveModel(model, convertToLlm(messages), { reason, thinkingLevel, signal });
+		// A failed routing attempt names the virtual model; the latest successful response applies then.
+		const previous = retried && !isVirtualModel(retried) ? retried : undefined;
+		return this._modelRuntime.resolveModel(model, convertToLlm(messages), {
+			reason,
+			thinkingLevel,
+			signal,
+			previous,
+		});
 	}
 
 	/**
@@ -549,7 +562,6 @@ export class AgentSession {
 	 * messages after conversion, so the reason comes from agent messages.
 	 */
 	private _routeReason(messages: readonly AgentMessage[]): ModelRouteReason {
-		if (this._retryAttempt > 0) return "retry";
 		const last = messages.filter((message) => message.role !== "system").at(-1);
 		return !last || last.role === "user" ? "user" : "continuation";
 	}
@@ -562,6 +574,21 @@ export class AgentSession {
 		const model = this.model;
 		if (model && isVirtualModel(model)) return this._modelRuntime.getPhysicalModel(message.provider, message.model);
 		return model?.provider === message.provider && model.id === message.model ? model : undefined;
+	}
+
+	/**
+	 * Record the selection on the current branch when the branch implies another one, so a resume
+	 * restores it. Tree navigation can leave the latest `model_change` on another branch; responses
+	 * cannot record a virtual selection because they name physical models.
+	 */
+	private _recordSelection(): void {
+		const model = this.model;
+		if (!model) return;
+		const recorded = getBranchSelection(this.sessionManager.getBranch(), (provider, modelId) =>
+			this._modelRuntime.getModel(provider, modelId),
+		);
+		if (!recorded || (recorded.provider === model.provider && recorded.modelId === model.id)) return;
+		this.sessionManager.appendModelChange(model.provider, model.id);
 	}
 
 	/** The model whose limits apply to the conversation. */
@@ -659,6 +686,8 @@ export class AgentSession {
 	private _installAgentRequestProjection(): void {
 		const previousPrepareRequest = this.agent.prepareRequest;
 		this.agent.prepareRequest = async (request, signal) => {
+			const retried = this._retriedResponse;
+			this._retriedResponse = undefined;
 			const canonicalContext = {
 				...request.context,
 				messages: this.sessionManager.buildSessionProjection().messages,
@@ -681,8 +710,9 @@ export class AgentSession {
 				previous?.model ?? this.agent.state.model,
 				previous?.thinkingLevel ?? this.agent.state.thinkingLevel,
 				context.messages,
-				this._routeReason(context.messages),
+				retried ? "retry" : this._routeReason(context.messages),
 				signal,
+				retried,
 			);
 			return { ...previous, context, ...route };
 		};
@@ -1531,6 +1561,9 @@ export class AgentSession {
 
 	private async _runAgentPrompt(messages: AgentMessage | AgentMessage[]): Promise<void> {
 		this._agentRunAbortRequested = false;
+		// Compaction before the prompt may have scheduled a retry; the new prompt replaces it.
+		this._retriedResponse = undefined;
+		this._recordSelection();
 		this._isAgentRunActive = true;
 		try {
 			await this.agent.prompt(messages);
@@ -1546,6 +1579,7 @@ export class AgentSession {
 			}
 		} finally {
 			if (this._agentRunAbortRequested) this._finishCancelledRetry();
+			this._retriedResponse = undefined;
 			this._runSystemPromptOptions = undefined;
 			this._flushPendingBashMessages();
 			this._flushPendingCustomMessages();
@@ -1566,6 +1600,7 @@ export class AgentSession {
 
 		if (this._isRetryableError(message) && (await this._prepareRetry(message))) {
 			if (this._agentRunAbortRequested) this._finishCancelledRetry();
+			this._retriedResponse = message;
 			return !this._agentRunAbortRequested;
 		}
 		if (this._agentRunAbortRequested) {
@@ -2743,7 +2778,9 @@ export class AgentSession {
 			// Persistently omit the selected final attempt before post-run recovery compaction.
 			this._overflowRecoveryAttempted = true;
 			this._omitRecoveryAttempt(assistantMessage, toolResults);
-			return await this._runAutoCompaction("overflow", willRetry);
+			const retry = await this._runAutoCompaction("overflow", willRetry);
+			if (retry) this._retriedResponse = assistantMessage;
+			return retry;
 		}
 
 		// Case 3: threshold compaction without retry.

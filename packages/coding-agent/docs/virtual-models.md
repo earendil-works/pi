@@ -66,7 +66,7 @@ The virtual model is registered like `pi.registerProvider()`, with the same queu
 |---|---|
 | `model`, `thinkingLevel` | The selected virtual model and level |
 | `reason` | Why the request is made, see below |
-| `previous` | Physical model and thinking level of the latest successful response in `messages` |
+| `previous` | Physical model and thinking level of the latest successful response in `messages`. For `retry`, those of the failed request, which `messages` no longer contains |
 | `messages` | The conversation for this request, including system messages |
 | `signal` | Abort signal of the request |
 
@@ -74,7 +74,7 @@ The virtual model is registered like `pi.registerProvider()`, with the same queu
 |---|---|
 | `user` | First request after a message the user wrote, including steering and follow-up messages |
 | `continuation` | Any other request in the agent loop, such as after tool results or extension messages |
-| `retry` | Automatic retry after a failed request |
+| `retry` | Automatic retry after a failed request, including after compaction for a context overflow |
 | `direct` | Request made outside the agent loop, such as a compaction summary or an extension calling `ctx.modelRegistry.streamSimple()` |
 
 Returning `previous` for `continuation` and `retry` keeps prompt caches and thinking signatures valid. Switching models between turns is allowed but loses the prompt cache.
