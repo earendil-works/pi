@@ -232,6 +232,28 @@ describe("createAgentSession with virtual models", () => {
 		expect(session.routedModel?.model).toMatchObject({ provider: "faux", id: "large" });
 	});
 
+	it("restores a virtual selection registered right before the session opens", async () => {
+		const { runtime, definition } = await createRuntime();
+		// Extensions register while the session is created, without waiting for the availability refresh.
+		runtime.registerVirtualModel({ ...definition, provider: "late" });
+		const sessionManager = SessionManager.inMemory(tempDir);
+		sessionManager.appendModelChange("late", "auto");
+		sessionManager.appendMessage({ role: "user", content: "hi", timestamp: 1 });
+		sessionManager.appendMessage(assistantFrom(runtime.getModel("faux", "large")!, "hello"));
+
+		const { session, modelFallbackMessage } = await createAgentSession({
+			cwd: tempDir,
+			agentDir: tempDir,
+			modelRuntime: runtime,
+			sessionManager,
+			resourceLoader: createTestResourceLoader(),
+		});
+		onTestFinished(() => session.dispose());
+
+		expect(modelFallbackMessage).toBeUndefined();
+		expect(session.model).toMatchObject({ provider: "late", id: "auto" });
+	});
+
 	it("falls back to the physical model when the virtual model is not registered", async () => {
 		const { runtime } = await createRuntime();
 		runtime.unregisterVirtualModel("router", "auto");

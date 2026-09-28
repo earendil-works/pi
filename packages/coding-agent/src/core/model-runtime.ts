@@ -285,12 +285,14 @@ export class ModelRuntime implements Models {
 		]);
 	}
 
-	private recomposeProvider(providerId: string): void {
+	/** Returns the provider without virtual models, or undefined when only virtual models define it. */
+	private recomposeProvider(providerId: string): Provider | undefined {
 		const provider = this.composeProvider(providerId);
 		const virtualModels = [...(this.virtualModels.get(providerId)?.values() ?? [])].map((entry) => entry.model);
 		if (virtualModels.length > 0) this.models.setProvider(withVirtualModels(providerId, provider, virtualModels));
 		else if (provider) this.models.setProvider(provider);
 		else this.models.deleteProvider(providerId);
+		return provider;
 	}
 
 	/** The provider without virtual models, or undefined when nothing defines it. */
@@ -941,7 +943,13 @@ export class ModelRuntime implements Models {
 		const models = this.virtualModels.get(providerId) ?? new Map<string, RegisteredVirtualModel>();
 		models.set(id, { model: createVirtualModel(definition), route: (request) => definition.route(request) });
 		this.virtualModels.set(providerId, models);
-		this.recomposeProvider(providerId);
+		if (!this.recomposeProvider(providerId) && !this.snapshot.configuredProviders.has(providerId)) {
+			// A provider of only virtual models needs no credentials. Mark it configured now: session
+			// restore checks auth before the refresh below lands.
+			const auth = new Map(this.snapshot.auth).set(providerId, { type: "api_key", source: "virtual" });
+			const configuredProviders = new Set(this.snapshot.configuredProviders).add(providerId);
+			this.snapshot = { ...this.snapshot, auth, configuredProviders };
+		}
 		this.updateModelSnapshot();
 		void this.refresh({ allowNetwork: false });
 	}
