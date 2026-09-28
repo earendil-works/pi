@@ -723,7 +723,11 @@ export class ModelRuntime implements Models {
 				const { maxTokens: limit } = route.model;
 				const maxTokens = options?.maxTokens && limit > 0 ? Math.min(options.maxTokens, limit) : options?.maxTokens;
 				const reasoning = route.thinkingLevel === "off" ? undefined : route.thinkingLevel;
-				return this.streamSimple(route.model, context, { ...options, maxTokens, reasoning });
+				// Caller credentials were resolved for the virtual model's provider. Another provider
+				// resolves its own, so they are not sent to the wrong vendor.
+				const { apiKey, headers, env, ...rest } = options ?? {};
+				const auth = route.model.provider === model.provider ? { apiKey, headers, env } : {};
+				return this.streamSimple(route.model, context, { ...rest, ...auth, maxTokens, reasoning });
 			});
 		}
 		return lazyStream(model, async () => {

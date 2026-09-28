@@ -557,15 +557,18 @@ export class AgentSession {
 	/**
 	 * Record the selection on the current branch when the branch implies another one, so a resume
 	 * restores it. Tree navigation can leave the latest `model_change` on another branch; responses
-	 * cannot record a virtual selection because they name physical models.
+	 * cannot record a virtual selection because they name physical models. Responses do record a
+	 * physical selection unless the branch holds a virtual one; checking a physical selection against
+	 * responses would record it on every prompt while `prepareRequest` redirects to another model.
 	 */
 	private _recordSelection(): void {
 		const model = this.model;
 		if (!model) return;
-		const recorded = getBranchSelection(this.sessionManager.getBranch(), (provider, modelId) =>
-			this._modelRuntime.getModel(provider, modelId),
-		);
+		const getModel = (provider: string, modelId: string) => this._modelRuntime.getModel(provider, modelId);
+		const recorded = getBranchSelection(this.sessionManager.getBranch(), getModel);
 		if (!recorded || (recorded.provider === model.provider && recorded.modelId === model.id)) return;
+		const recordedModel = getModel(recorded.provider, recorded.modelId);
+		if (!isVirtualModel(model) && !(recordedModel && isVirtualModel(recordedModel))) return;
 		this.sessionManager.appendModelChange(model.provider, model.id);
 	}
 

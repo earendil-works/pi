@@ -168,6 +168,27 @@ describe("ModelRuntime virtual models", () => {
 		expect(maxTokens).toBe(5000);
 	});
 
+	it("does not forward caller credentials to a routed model of another provider", async () => {
+		const { runtime, faux, definition, virtual } = await createRuntime();
+		const seen: { apiKey?: string; headers?: Record<string, string | null> }[] = [];
+		const respond = (_context: unknown, options?: { apiKey?: string; headers?: Record<string, string | null> }) => {
+			seen.push({ apiKey: options?.apiKey, headers: options?.headers });
+			return fauxAssistantMessage("hello");
+		};
+		faux.setResponses([respond, respond]);
+		const context = { messages: [{ role: "user" as const, content: "hi", timestamp: 1 }] };
+		const options = { apiKey: "caller-key", headers: { "x-caller": "1" } };
+		runtime.registerVirtualModel({ ...definition, provider: "faux", id: "auto" });
+
+		await runtime.completeSimple(virtual, context, options);
+		await runtime.completeSimple(runtime.getModel("faux", "auto")!, context, options);
+
+		// The router provider's credentials stay with it; the faux provider's own virtual model keeps them.
+		expect(seen[0].apiKey).not.toBe("caller-key");
+		expect(seen[0].headers?.["x-caller"]).toBeUndefined();
+		expect(seen[1]).toMatchObject({ apiKey: "caller-key", headers: { "x-caller": "1" } });
+	});
+
 	it("fails unrouted stream calls on virtual models", async () => {
 		const { runtime, virtual } = await createRuntime();
 
@@ -284,6 +305,39 @@ describe("createAgentSession with virtual models", () => {
 			onTestFinished(() => resumed.dispose());
 			expect(resumed.model).toMatchObject({ provider: after.provider, id: after.id });
 		}
+	});
+
+	it("does not record a physical selection on every prompt while requests are redirected", async () => {
+		const { runtime, faux } = await createRuntime();
+		faux.setResponses([fauxAssistantMessage("ok"), fauxAssistantMessage("ok")]);
+		const small = runtime.getModel("faux", "small")!;
+		const sessionManager = SessionManager.inMemory(tempDir);
+		const { session } = await createAgentSession({
+			cwd: tempDir,
+			agentDir: tempDir,
+			modelRuntime: runtime,
+			sessionManager,
+			resourceLoader: createTestResourceLoader(),
+			model: runtime.getModel("faux", "large"),
+		});
+		onTestFinished(() => session.dispose());
+		const prepareRequest = session.agent.prepareRequest!;
+		session.agent.prepareRequest = async (request, signal) => ({
+			...(await prepareRequest(request, signal)),
+			model: small,
+		});
+
+		const modelChanges = () => sessionManager.getBranch().filter((entry) => entry.type === "model_change").length;
+		const initial = modelChanges();
+
+		await session.prompt("one");
+		await session.prompt("two");
+
+		expect(session.messages.filter((message) => message.role === "assistant")).toMatchObject([
+			{ model: "small" },
+			{ model: "small" },
+		]);
+		expect(modelChanges()).toBe(initial);
 	});
 
 	it("records an explicit model override on resume with the next prompt", async () => {
