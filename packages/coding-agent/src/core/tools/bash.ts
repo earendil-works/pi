@@ -17,6 +17,7 @@ import type { ExtensionContext, ToolDefinition } from "../extensions/types.ts";
 import { OutputAccumulator } from "./output-accumulator.ts";
 import { BASH_UPDATE_THROTTLE_MS, createShellRenderers } from "./renderers/bash.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
+import { latestUserText, previewFromSpill } from "./supercompress.ts";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize, type TruncationResult } from "./truncate.ts";
 
 const MAX_TIMEOUT_MS = 2_147_483_647;
@@ -338,6 +339,36 @@ export function createShellToolDefinition(
 				return { text, details };
 			};
 
+			const presentOutput = async (
+				snapshot: Awaited<ReturnType<typeof finishOutput>>,
+				emptyText = "(no output)",
+			) => {
+				if (snapshot.truncation.truncated && snapshot.fullOutputPath) {
+					let query: string | undefined;
+					try {
+						query = latestUserText(ctx?.sessionManager.buildSessionContext().messages);
+					} catch {
+						query = undefined;
+					}
+					const preview = await previewFromSpill({
+						spillPath: snapshot.fullOutputPath,
+						query,
+						maxBytes: DEFAULT_MAX_BYTES,
+						maxLines: DEFAULT_MAX_LINES,
+					});
+					if (preview) {
+						return {
+							text: preview,
+							details: {
+								truncation: snapshot.truncation,
+								fullOutputPath: snapshot.fullOutputPath,
+							} satisfies BashToolDetails,
+						};
+					}
+				}
+				return formatOutput(snapshot, emptyText);
+			};
+
 			const appendStatus = (text: string, status: string) => `${text ? `${text}\n\n` : ""}${status}`;
 
 			try {
@@ -352,7 +383,7 @@ export function createShellToolDefinition(
 					exitCode = result.exitCode;
 				} catch (err) {
 					const snapshot = await finishOutput();
-					const { text } = formatOutput(snapshot, "");
+					const { text } = await presentOutput(snapshot, "");
 					if (err instanceof Error && err.message === "aborted") {
 						throw new Error(appendStatus(text, "Command aborted"));
 					}
@@ -364,7 +395,7 @@ export function createShellToolDefinition(
 				}
 
 				const snapshot = await finishOutput();
-				const { text: outputText, details } = formatOutput(snapshot);
+				const { text: outputText, details } = await presentOutput(snapshot);
 				if (exitCode === null) {
 					throw new Error(appendStatus(outputText, "Command terminated without an exit code"));
 				}

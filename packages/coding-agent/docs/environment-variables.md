@@ -8,6 +8,10 @@ Pi uses environment variables in three ways:
 
 Provider API-key variables are documented separately in [Provider Authentication](providers.md#use-an-api-key-from-the-environment).
 
+## Optional shell-output preview
+
+`SUPERCOMPRESS_API_KEY` applies only when a `bash` or PowerShell result would be tail-truncated and the saved output is at most 120,000 characters. Pi sends that output and the latest user message once to `https://api.supercompress.dev/v1/compress`. If the call fails, times out after 5 seconds, or the result does not fit the existing line and byte caps, the tail preview is unchanged. The saved output file is unchanged. Unset, this does not run.
+
 ## Process Marker
 
 The CLI and RPC entry points set two process markers:
