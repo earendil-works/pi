@@ -214,6 +214,27 @@ describe("visual mode operators", () => {
 		});
 	});
 
+	it("x deletes the selection like d", () => {
+		const visual = feed("hello world", pos(0, 0), ["v"]);
+		const moved = handleModalInput(visual, snapshot("hello world", pos(0, 4)), "l");
+		const deleted = handleModalInput(moved.state, snapshot("hello world", pos(0, 4)), "x");
+		assert.equal(deleted.state.mode, "normal");
+		assert.deepEqual(lastEffect(deleted), {
+			type: "edit",
+			result: { text: " world", cursor: pos(0, 0), register: { type: "char", text: "hello" }, changed: true },
+		});
+	});
+
+	it("x on a linewise selection deletes lines", () => {
+		const visualLine = feed("one\ntwo\nthree", pos(0, 0), ["V", "j"]);
+		const deleted = handleModalInput(visualLine, snapshot("one\ntwo\nthree", pos(1, 0)), "x");
+		assert.equal(deleted.state.mode, "normal");
+		assert.deepEqual(lastEffect(deleted), {
+			type: "edit",
+			result: { text: "three", cursor: pos(0, 0), register: { type: "line", text: "one\ntwo" }, changed: true },
+		});
+	});
+
 	it("y yanks the selection and stays put", () => {
 		const visual = feed("hello", pos(0, 0), ["v"]);
 		const yanked = handleModalInput(visual, snapshot("hello", pos(0, 2)), "y");
@@ -236,6 +257,88 @@ describe("visual mode operators", () => {
 		const visual = feed("hello", pos(0, 0), ["v"]);
 		const changed = handleModalInput(visual, snapshot("hello", pos(0, 2)), "c");
 		assert.equal(changed.state.mode, "insert");
+	});
+});
+
+describe("text objects (iw/aw)", () => {
+	it("ciw deletes the word under the cursor and enters insert", () => {
+		const update = handleModalInput(createModalState("normal"), snapshot("foo bar baz", pos(0, 5)), "c");
+		const afterI = handleModalInput(update.state, snapshot("foo bar baz", pos(0, 5)), "i");
+		assert.equal(afterI.state.pendingTextObject, "inner");
+		const done = handleModalInput(afterI.state, snapshot("foo bar baz", pos(0, 5)), "w");
+		assert.equal(done.state.mode, "insert");
+		assert.deepEqual(lastEffect(done), {
+			type: "edit",
+			result: { text: "foo  baz", cursor: pos(0, 4), register: { type: "char", text: "bar" }, changed: true },
+		});
+	});
+
+	it("diw targets the next word when the cursor is on whitespace", () => {
+		const update = handleModalInput(createModalState("normal"), snapshot("foo bar", pos(0, 3)), "d");
+		const afterI = handleModalInput(update.state, snapshot("foo bar", pos(0, 3)), "i");
+		const done = handleModalInput(afterI.state, snapshot("foo bar", pos(0, 3)), "w");
+		assert.deepEqual(lastEffect(done), {
+			type: "edit",
+			result: { text: "foo ", cursor: pos(0, 4), register: { type: "char", text: "bar" }, changed: true },
+		});
+	});
+
+	it("daw includes trailing whitespace", () => {
+		const update = handleModalInput(createModalState("normal"), snapshot("foo bar baz", pos(0, 5)), "d");
+		const afterA = handleModalInput(update.state, snapshot("foo bar baz", pos(0, 5)), "a");
+		assert.equal(afterA.state.pendingTextObject, "outer");
+		const done = handleModalInput(afterA.state, snapshot("foo bar baz", pos(0, 5)), "w");
+		assert.deepEqual(lastEffect(done), {
+			type: "edit",
+			result: { text: "foo baz", cursor: pos(0, 4), register: { type: "char", text: "bar " }, changed: true },
+		});
+	});
+
+	it("daw on the last word includes leading whitespace", () => {
+		const update = handleModalInput(createModalState("normal"), snapshot("foo bar", pos(0, 5)), "d");
+		const afterA = handleModalInput(update.state, snapshot("foo bar", pos(0, 5)), "a");
+		const done = handleModalInput(afterA.state, snapshot("foo bar", pos(0, 5)), "w");
+		assert.deepEqual(lastEffect(done), {
+			type: "edit",
+			result: { text: "foo", cursor: pos(0, 3), register: { type: "char", text: " bar" }, changed: true },
+		});
+	});
+
+	it("yiw yanks the word without deleting", () => {
+		const update = handleModalInput(createModalState("normal"), snapshot("foo bar", pos(0, 5)), "y");
+		const afterI = handleModalInput(update.state, snapshot("foo bar", pos(0, 5)), "i");
+		const done = handleModalInput(afterI.state, snapshot("foo bar", pos(0, 5)), "w");
+		assert.deepEqual(done.effects, [{ type: "invalidate" }]);
+		assert.deepEqual(done.state.register, { type: "char", text: "bar" });
+	});
+
+	it("d2iw covers two words", () => {
+		const update = handleModalInput(createModalState("normal"), snapshot("foo bar baz", pos(0, 5)), "d");
+		const afterCount = handleModalInput(update.state, snapshot("foo bar baz", pos(0, 5)), "2");
+		const afterI = handleModalInput(afterCount.state, snapshot("foo bar baz", pos(0, 5)), "i");
+		const done = handleModalInput(afterI.state, snapshot("foo bar baz", pos(0, 5)), "w");
+		assert.deepEqual(lastEffect(done), {
+			type: "edit",
+			result: { text: "foo ", cursor: pos(0, 4), register: { type: "char", text: "bar baz" }, changed: true },
+		});
+	});
+
+	it("Esc after ci aborts without editing", () => {
+		const update = handleModalInput(createModalState("normal"), snapshot("foo bar", pos(0, 5)), "c");
+		const afterI = handleModalInput(update.state, snapshot("foo bar", pos(0, 5)), "i");
+		const aborted = handleModalInput(afterI.state, snapshot("foo bar", pos(0, 5)), "\x1b");
+		assert.equal(aborted.state.mode, "normal");
+		assert.equal(aborted.state.pendingTextObject, undefined);
+		assert.equal(aborted.state.pendingOperator, undefined);
+	});
+
+	it("viw selects the word under the cursor", () => {
+		const visual = feed("foo bar", pos(0, 5), ["v"]);
+		const afterI = handleModalInput(visual, snapshot("foo bar", pos(0, 5)), "i");
+		assert.equal(afterI.state.pendingTextObject, "inner");
+		const done = handleModalInput(afterI.state, snapshot("foo bar", pos(0, 5)), "w");
+		assert.equal(done.state.mode, "visual");
+		assert.deepEqual(lastEffect(done), { type: "restoreCursor", position: pos(0, 6) });
 	});
 });
 

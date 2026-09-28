@@ -369,6 +369,48 @@ export function yankByMotion(text: string, cursor: Position, motion: string, cou
 	return selected.length === 0 ? undefined : { type: "char", text: selected };
 }
 
+/**
+ * Offset range of the iw/aw text object under `offset`.
+ * `inner` covers the word only; `outer` (a word) additionally covers one
+ * adjacent whitespace run — trailing preferred, leading at end of line.
+ * `count` words are covered, including the whitespace between them.
+ */
+export function wordObjectRange(
+	text: string,
+	offset: number,
+	inner: boolean,
+	count = 1,
+): { start: number; end: number } | undefined {
+	if (text.length === 0) return undefined;
+	let index = Math.max(0, Math.min(offset, text.length - 1));
+	// On whitespace, vim targets the next word; past the last word, the previous one.
+	if (isWhitespace(text[index])) {
+		const next = skipWhitespace(text, index);
+		index = next < text.length ? next : previousWordStartOffset(text, text.length);
+	}
+	const kind = wordKind(text[index]);
+	let start = index;
+	while (start > 0 && wordKind(text[start - 1]) === kind) start--;
+	let end = index;
+	while (end < text.length && wordKind(text[end]) === kind) end++;
+	for (let step = 1; step < count; step++) {
+		const next = skipWhitespace(text, end);
+		if (next >= text.length) break;
+		const nextKind = wordKind(text[next]);
+		end = next;
+		while (end < text.length && wordKind(text[end]) === nextKind) end++;
+	}
+	if (!inner) {
+		const trailing = skipWhitespace(text, end);
+		if (trailing > end) {
+			end = trailing;
+		} else {
+			while (start > 0 && isWhitespace(text[start - 1])) start--;
+		}
+	}
+	return start === end ? undefined : { start, end };
+}
+
 export function deleteLine(text: string, cursor: Position, count = 1): EditResult {
 	const lines = splitText(text);
 	const pos = clampPosition(lines, cursor);

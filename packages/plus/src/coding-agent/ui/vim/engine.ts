@@ -29,6 +29,7 @@ import {
 	replaceVisualRange,
 	selectionText,
 	splitText,
+	wordObjectRange,
 	yankByMotion,
 	yankLineCount,
 } from "./buffer.ts";
@@ -54,6 +55,7 @@ export function createModalState(mode: VimMode = "insert"): ModalState {
 		pendingOperator: undefined,
 		pendingOperatorCount: 0,
 		pendingCharSearch: undefined,
+		pendingTextObject: undefined,
 		pendingReplace: false,
 		visualAnchor: undefined,
 		register: undefined,
@@ -74,6 +76,7 @@ function clearPending(state: ModalState): ModalState {
 		pendingOperator: undefined,
 		pendingOperatorCount: 0,
 		pendingCharSearch: undefined,
+		pendingTextObject: undefined,
 		pendingReplace: false,
 	};
 }
@@ -183,6 +186,7 @@ function handleNormal(state: ModalState, snapshot: Snapshot, data: string, keyId
 	if (keyId === "escape") return delegate(clearPending(state), data);
 	if (isProtectedKey(keyId)) return delegate(clearPending(state), data);
 	if (isDigit(keyId) && (keyId !== "0" || state.count > 0)) return accumulateCount(state, keyId);
+	if (state.pendingTextObject) return handlePendingTextObject(state, snapshot, keyId);
 
 	const action = NORMAL_KEYS[mapNavigationKey(keyId) ?? ""];
 	if (!action) return invalidate(clearPending(state));
@@ -202,6 +206,15 @@ function handleNormal(state: ModalState, snapshot: Snapshot, data: string, keyId
 				[{ type: "invalidate" }],
 			);
 		case "insert":
+			// After an operator, i/a start a text object (ciw/daw) instead of insert mode.
+			if (state.pendingOperator && (action.entry === "before" || action.entry === "after")) {
+				return invalidate({
+					...clearPending(state),
+					pendingOperator: state.pendingOperator,
+					pendingOperatorCount: Math.max(1, state.pendingOperatorCount) * Math.max(1, state.count || 1),
+					pendingTextObject: action.entry === "before" ? "inner" : "outer",
+				});
+			}
 			return normalInsert(state, snapshot, action.entry);
 		case "deleteChar":
 			return emitEdit(clearPending(state), deleteCharAt(snapshot.text, snapshot.cursor, state.count || 1));
@@ -359,6 +372,7 @@ function handleVisual(state: ModalState, snapshot: Snapshot, data: string, keyId
 	}
 	if (isProtectedKey(keyId)) return delegate(clearPending(state), data);
 	if (isDigit(keyId) && (keyId !== "0" || state.count > 0)) return accumulateCount(state, keyId);
+	if (state.pendingTextObject) return handleVisualTextObject(state, snapshot, keyId);
 
 	const action = VISUAL_KEYS[mapNavigationKey(keyId) ?? ""];
 	if (!action) return invalidate(clearPending(state));
@@ -433,8 +447,23 @@ function handleVisual(state: ModalState, snapshot: Snapshot, data: string, keyId
 			const found = findSearchMatch(snapshot.text, snapshot.cursor, state.lastSearch.query, direction);
 			return found ? update(next, [{ type: "restoreCursor", position: found }]) : invalidate(next);
 		}
+		case "deleteChar": {
+			// Visual x behaves like d: delete the selection and yank it.
+			const result = linewise
+				? deleteVisualLines(snapshot.text, anchor, snapshot.cursor)
+				: deleteVisualChars(snapshot.text, anchor, snapshot.cursor);
+			return emitEdit(clearPending({ ...state, mode: "normal", visualAnchor: undefined }), result);
+		}
 		case "insert":
-		case "deleteChar":
+			// Visual i/a + w selects the word object (viw/vaw).
+			if (action.entry === "before" || action.entry === "after") {
+				return invalidate({
+					...clearPending(state),
+					pendingTextObject: action.entry === "before" ? "inner" : "outer",
+					visualAnchor: anchor,
+				});
+			}
+			return invalidate(clearPending(state));
 		case "substituteChar":
 		case "undo":
 		case "redo":
@@ -512,6 +541,43 @@ function handlePendingSearch(state: ModalState, snapshot: Snapshot, keyId: strin
 	if (char)
 		return update({ ...state, pendingSearch: { ...pending, query: pending.query + char } }, [{ type: "invalidate" }]);
 	return invalidate(state);
+}
+
+/** Extend/shrink the visual selection to cover the iw/aw word object under the cursor. */
+function handleVisualTextObject(state: ModalState, snapshot: Snapshot, keyId: string | undefined): ModalUpdate {
+	const anchor = state.visualAnchor ?? snapshot.cursor;
+	const base = clearPending({ ...state, pendingTextObject: undefined, visualAnchor: anchor });
+	if (keyId !== "w" && keyId !== "W") return invalidate(base);
+	const offset = positionToOffset(snapshot.text, snapshot.cursor);
+	const range = wordObjectRange(snapshot.text, offset, state.pendingTextObject === "inner", state.count || 1);
+	if (!range) return invalidate(base);
+	const start = offsetToPosition(snapshot.text, range.start);
+	const end = offsetToPosition(snapshot.text, Math.max(range.start, range.end - 1));
+	// Selection grows in the direction away from the anchor.
+	const backward =
+		anchor.line > snapshot.cursor.line || (anchor.line === snapshot.cursor.line && anchor.col > snapshot.cursor.col);
+	return update(base, [{ type: "restoreCursor", position: backward ? start : end }]);
+}
+
+function handlePendingTextObject(state: ModalState, snapshot: Snapshot, keyId: string | undefined): ModalUpdate {
+	// Only iw/aw (word objects) are supported in this subset; anything else aborts the operator.
+	const base = clearPending(state);
+	const operator = state.pendingOperator;
+	if (keyId === "escape") return invalidate(base);
+	if (!operator || (keyId !== "w" && keyId !== "W")) return invalidate(base);
+	const count = Math.max(1, state.pendingOperatorCount);
+	const offset = positionToOffset(snapshot.text, snapshot.cursor);
+	const range = wordObjectRange(snapshot.text, offset, state.pendingTextObject === "inner", count);
+	if (!range) return invalidate(base);
+	if (operator === "yank") {
+		const selected = snapshot.text.slice(range.start, range.end);
+		return update({ ...base, register: selected.length > 0 ? { type: "char", text: selected } : undefined }, [
+			{ type: "invalidate" },
+		]);
+	}
+	const result = deleteOffsetRange(snapshot.text, range.start, range.end);
+	const next = operator === "change" ? { ...base, mode: "insert" as VimMode } : base;
+	return emitEdit(next, result);
 }
 
 function handlePendingCharSearch(state: ModalState, snapshot: Snapshot, keyId: string | undefined): ModalUpdate {

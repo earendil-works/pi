@@ -45,6 +45,8 @@ export type ModalState = {
 	pendingOperatorCount: number;
 	/** Awaiting the target character for f/F/t/T (optionally under an operator). */
 	pendingCharSearch: { operator: OperatorName | undefined; kind: CharSearchKind } | undefined;
+	/** Awaiting the object key (w) after an operator + i/a, e.g. ciw/daw. */
+	pendingTextObject: "inner" | "outer" | undefined;
 	/** Awaiting the replacement character for r. */
 	pendingReplace: boolean;
 	/** Fixed end of the visual selection (cursor is the other end). */
