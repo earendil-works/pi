@@ -2,17 +2,25 @@ import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getModel } from "@earendil-works/pi-ai/compat";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { TUI } from "@earendil-works/pi-tui";
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import type { ToolDefinition } from "../src/core/extensions/types.ts";
 import { DefaultResourceLoader } from "../src/core/resource-loader.ts";
 import { createAgentSession } from "../src/core/sdk.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
+import { ToolExecutionComponent } from "../src/modes/interactive/components/tool-execution.ts";
+import { initTheme } from "../src/modes/interactive/theme/theme.ts";
 
 const examplesDir = join(import.meta.dirname, "../examples/extensions");
 
 describe("tool renderer examples", () => {
 	let tempDir: string;
 	let agentDir: string;
+
+	beforeAll(() => {
+		initTheme("dark");
+	});
 
 	beforeEach(() => {
 		tempDir = join(tmpdir(), `pi-tool-renderer-example-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
@@ -53,7 +61,7 @@ describe("tool renderer examples", () => {
 		try {
 			return {
 				systemPrompt: session.systemPrompt,
-				editRenderShell: session.getToolDefinition("edit")?.renderShell,
+				editToolDefinition: session.getToolDefinition("edit"),
 			};
 		} finally {
 			session.dispose();
@@ -82,7 +90,23 @@ describe("tool renderer examples", () => {
 	it("keeps minimal mode's edit tool in the default shell", async () => {
 		// Regression test for https://github.com/earendil-works/pi/issues/10072
 		const minimalMode = await getSessionState(join(examplesDir, "minimal-mode.ts"), ["edit"]);
+		const editToolDefinition = minimalMode.editToolDefinition;
+		if (!editToolDefinition) throw new Error("minimal mode did not register the edit tool");
+		const { renderShell: _renderShell, ...defaultShellDefinition } = editToolDefinition;
 
-		expect(minimalMode.editRenderShell).toBe("default");
+		expect(renderEditTool(editToolDefinition, tempDir)).toEqual(renderEditTool(defaultShellDefinition, tempDir));
 	});
 });
+
+function renderEditTool(definition: ToolDefinition, cwd: string): string[] {
+	const component = new ToolExecutionComponent(
+		"edit",
+		"edit-shell-test",
+		{ path: "notes.txt", oldText: "before", newText: "after" },
+		{},
+		definition,
+		{ requestRender() {} } as unknown as TUI,
+		cwd,
+	);
+	return component.render(40);
+}
