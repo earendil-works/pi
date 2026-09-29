@@ -87,6 +87,34 @@ Regular mode uses the terminal's normal scrollback. Fullscreen mode keeps the ed
 
 Terminal support for mouse input, keyboard shortcuts, and inline images varies. See [Terminal Setup](terminal-setup.md) for platform-specific configuration and [Keybindings](keybindings.md) for every configurable shortcut. Run `/hotkeys` to inspect the shortcuts active in your current session.
 
+## Footer
+
+The first line has a pattern displaying the `current dir (git branch) • session name`.
+
+The second line displays the session stats, context usage, costs, and model • thinking mode
+
+Example footer output:
+
+```
+~\test\myproject (main) • session to ivestigate performance
+↑160k ↓24k R3.1M CH99.9% $0.076 (sub) 24.3%/131k (auto)            muse-glimmer:latest • high
+```
+
+The footer displays session stats which consist of the following:
+
+| statsParts | description |
+|---|---|
+| `↑160k` | total input tokens |
+| `↓24k` | total output tokens |
+| `R3.1M` | tokens read from cache |
+| `W1M` | tokens written to cache (not shown in example) |
+| `CH99.9%` | Cache Hit percentage - % of prompt tokens read from cache for most recent assistant message |
+| `$0.076 (sub)` | cumulative cost from ALL session entries and if provider is subscription-backed |
+| `24.3%/131k (auto)` | percent of context used/total context (compaction set to auto) |
+| `muse-glimmer:latest • high` | model and thinking level |
+
+TECHNICAL NOTE: Cost calculation `usageTotals.cost` is the sum of `usage.cost.total` for all session entries, not just post-compaction messages.  From every `usage`, assistant `message`, toolResult `message`, `branch_summary` and `compaction` entry that the `sessionManager` has stored for the current session.
+ 
 ## Collect diagnostic information
 
 When troubleshooting terminal rendering or conversation state, run `/debug`. Pi writes the rendered terminal lines and current session messages to `pi-debug.log` in your [agent directory](configuration.md#agent-directory).
