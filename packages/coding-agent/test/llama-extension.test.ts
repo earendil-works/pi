@@ -46,7 +46,7 @@ describe("llama.cpp extension", () => {
 			process.cwd(),
 			createEventBus(),
 			runtime,
-			"<inline:llama.cpp>",
+			"builtin:llama.cpp",
 		);
 
 		expect(extension.commands.get("llama")?.description).toBe("Manage llama.cpp router models");

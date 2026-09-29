@@ -2,6 +2,7 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { getAgentDir, VERSION } from "../config.ts";
 import type { Extension } from "./extensions/types.ts";
+import { isSyntheticPath } from "./source-info.ts";
 
 export interface CrashRecord {
 	timestamp: string;
@@ -51,7 +52,7 @@ function normalizeStackPath(value: string): string {
 
 function stackContainsPath(stack: string, targetPath: string, includeDescendants: boolean): boolean {
 	const target = normalizeStackPath(targetPath);
-	if (!target || target.startsWith("<")) return false;
+	if (!target || isSyntheticPath(target)) return false;
 	const caseInsensitive = /^[a-z]:\//iu.test(target);
 	const haystack = caseInsensitive ? stack.toLowerCase() : stack;
 	const needle = caseInsensitive ? target.toLowerCase() : target;
