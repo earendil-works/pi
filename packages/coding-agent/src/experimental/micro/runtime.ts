@@ -342,11 +342,16 @@ export async function openMicro(options: OpenMicroOptions = {}): Promise<OpenMic
 						auth: { providerId, providerName: account.name, authType, notices: [] },
 					});
 					try {
-						await modelRuntime.login(providerId, authType, {
-							signal: loginController.signal,
-							prompt: ({ signal, ...request }: AuthPrompt) => askAuth(request, signal),
-							notify: addAuthNotice,
-						});
+						await modelRuntime.login(
+							providerId,
+							authType,
+							{
+								signal: loginController.signal,
+								prompt: ({ signal, ...request }: AuthPrompt) => askAuth(request, signal),
+								notify: addAuthNotice,
+							},
+							{ getDeviceId: () => settings.getOrCreateDeviceId() },
+						);
 						notice("info", `Logged in to ${account.name}.`);
 					} finally {
 						clearPendingAuth(new Error("Login finished"));

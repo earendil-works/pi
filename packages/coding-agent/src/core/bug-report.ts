@@ -59,7 +59,7 @@ export function redactJsonValue(value: unknown): unknown {
 }
 
 function redactSettings(settings: Settings): Settings {
-	const { trackingId: _trackingId, ...rest } = settings;
+	const { trackingId: _trackingId, deviceId: _deviceId, ...rest } = settings;
 	return redactJsonValue(rest) as Settings;
 }
 
