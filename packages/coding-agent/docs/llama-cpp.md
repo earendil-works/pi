@@ -9,25 +9,21 @@ Use a current llama.cpp build with router support. Follow the [build instruction
 Start `llama-server` without `--model` or `-m`. Passing a model starts single-model mode instead of router mode.
 
 ```bash
-llama-server \
-  --models-dir ~/models \
+llama serve \
+  --models-dir ~/.cache/huggingface/hub/ \
   --no-models-autoload \
-  --jinja \
-  --host 127.0.0.1 \
-  --port 8080 \
   -ngl 999 \
   -c 32768
 ```
 
 Important options:
 
-- `--models-dir ~/models` discovers local GGUF files.
+- `--models-dir` discovers local GGUF files. Models are by default downloaded to Hugging Face Hub cache. If you have local models, replace the directory above. 
 - `--no-models-autoload` keeps loading explicit through `/llama`.
-- `--jinja` enables compatible chat templates and tool calling.
 - `-ngl 999` offloads as many layers as possible to the GPU.
 - `-c 32768` sets the context window for each loaded model. Omit it to use the model's native context, which may require substantially more memory.
 
-A single-file model can sit directly in the model directory. Put multimodal and multi-shard models in separate subdirectories:
+If you are managing models in a directory, single-file model can sit directly in the directory. Put multimodal and multi-shard models in separate subdirectories:
 
 ```text
 ~/models/
