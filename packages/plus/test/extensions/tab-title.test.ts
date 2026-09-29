@@ -37,7 +37,8 @@ function captureTabTitle() {
 	const handlers = new Map<string, (event: never, ctx: ExtensionContext) => unknown>();
 	const pi = { on: (event: string, handler: never) => handlers.set(event, handler) } as unknown as ExtensionAPI;
 	registerTabTitle(pi);
-	const fire = (event: string, ctx: ExtensionContext) => handlers.get(event)?.({ type: event } as never, ctx);
+	const fire = (event: string, ctx: ExtensionContext, payload: Record<string, unknown> = {}) =>
+		handlers.get(event)?.({ type: event, ...payload } as never, ctx);
 	return { fire };
 }
 
@@ -128,16 +129,32 @@ describe("spinner", () => {
 		assert.equal(fake.titles.length, count);
 	});
 
-	it("turn_end is a backstop that also stops the spinner", () => {
+	it("turn_end with a run-ending stopReason is a backstop that also stops the spinner", () => {
 		const { ctx, fake } = fakeCtx();
 		const { fire } = captureTabTitle();
 		fire("agent_start", ctx);
 		vi.advanceTimersByTime(120);
-		fire("turn_end", ctx);
+		fire("turn_end", ctx, { message: { role: "assistant", stopReason: "stop" } });
 		assert.equal(fake.titles.at(-1), "pi+ - proj");
 		const count = fake.titles.length;
 		vi.advanceTimersByTime(600);
 		assert.equal(fake.titles.length, count);
+	});
+
+	it("turn_end with stopReason toolUse keeps the spinner running through tool execution", () => {
+		const { ctx, fake } = fakeCtx();
+		const { fire } = captureTabTitle();
+		fire("agent_start", ctx);
+		vi.advanceTimersByTime(120);
+		fire("turn_end", ctx, { message: { role: "assistant", stopReason: "toolUse" } });
+		vi.advanceTimersByTime(600);
+		assert.match(fake.titles.at(-1) ?? "", /^[⠀-⣿] pi\+ - proj$/);
+		// The run's finally still settles the spinner afterwards.
+		fire("agent_settled", ctx);
+		const count = fake.titles.length;
+		vi.advanceTimersByTime(600);
+		assert.equal(fake.titles.length, count);
+		assert.equal(fake.titles.at(-1), "pi+ - proj");
 	});
 
 	it("session_shutdown clears the ticker", () => {

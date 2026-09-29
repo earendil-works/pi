@@ -52,17 +52,26 @@ function wordKind(char: string | undefined): "keyword" | "punctuation" | "whites
 	return isKeywordWordChar(char) ? "keyword" : "punctuation";
 }
 
-function isSameWordKind(left: string | undefined, right: string | undefined): boolean {
-	const leftKind = wordKind(left);
-	return leftKind !== "whitespace" && leftKind === wordKind(right);
+type WordBoundaryModel = "small" | "big";
+
+type WordBoundaryKind = "keyword" | "punctuation" | "word" | "whitespace";
+
+function boundaryKind(model: WordBoundaryModel, char: string | undefined): WordBoundaryKind {
+	if (model === "small") return wordKind(char);
+	return isWhitespace(char) ? "whitespace" : "word";
 }
 
-function nextWordStartOffset(text: string, offset: number): number {
+function isSameBoundaryKind(model: WordBoundaryModel, left: string | undefined, right: string | undefined): boolean {
+	const leftKind = boundaryKind(model, left);
+	return leftKind !== "whitespace" && leftKind === boundaryKind(model, right);
+}
+
+function nextWordStartOffsetFor(model: WordBoundaryModel, text: string, offset: number): number {
 	let index = Math.max(0, Math.min(offset, text.length));
 	if (index >= text.length) return index;
-	if (wordKind(text[index]) !== "whitespace") {
-		const kind = wordKind(text[index]);
-		while (index < text.length && wordKind(text[index]) === kind) index++;
+	if (boundaryKind(model, text[index]) !== "whitespace") {
+		const kind = boundaryKind(model, text[index]);
+		while (index < text.length && boundaryKind(model, text[index]) === kind) index++;
 	}
 	while (index < text.length && isWhitespace(text[index])) index++;
 	return index;
@@ -73,30 +82,38 @@ function skipWhitespace(text: string, index: number): number {
 	return index;
 }
 
-function boundaryEndOffset(text: string, index: number): number {
-	const kind = wordKind(text[index]);
-	while (index + 1 < text.length && wordKind(text[index + 1]) === kind) index++;
+function boundaryEndOffset(model: WordBoundaryModel, text: string, index: number): number {
+	const kind = boundaryKind(model, text[index]);
+	while (index + 1 < text.length && boundaryKind(model, text[index + 1]) === kind) index++;
 	return index;
 }
 
-function wordEndOffset(text: string, offset: number): number {
+function wordEndOffsetFor(model: WordBoundaryModel, text: string, offset: number): number {
 	let index = Math.max(0, Math.min(offset, text.length));
 	if (index >= text.length) return text.length;
 	if (isWhitespace(text[index])) index = skipWhitespace(text, index);
-	else if (isSameWordKind(text[index], text[index + 1])) return boundaryEndOffset(text, index);
+	else if (isSameBoundaryKind(model, text[index], text[index + 1])) return boundaryEndOffset(model, text, index);
 	else index++;
 	if (index >= text.length) return text.length;
 	index = skipWhitespace(text, index);
-	return index >= text.length ? text.length : boundaryEndOffset(text, index);
+	return index >= text.length ? text.length : boundaryEndOffset(model, text, index);
 }
 
-function previousWordStartOffset(text: string, offset: number): number {
+function wordEndOffset(text: string, offset: number): number {
+	return wordEndOffsetFor("small", text, offset);
+}
+
+function wordEndBigOffset(text: string, offset: number): number {
+	return wordEndOffsetFor("big", text, offset);
+}
+
+function previousWordStartOffsetFor(model: WordBoundaryModel, text: string, offset: number): number {
 	let index = Math.max(0, Math.min(offset, text.length));
 	if (index === 0) return 0;
 	index--;
 	while (index > 0 && isWhitespace(text[index])) index--;
-	const kind = wordKind(text[index]);
-	while (index > 0 && wordKind(text[index - 1]) === kind) index--;
+	const kind = boundaryKind(model, text[index]);
+	while (index > 0 && boundaryKind(model, text[index - 1]) === kind) index--;
 	return index;
 }
 
@@ -142,11 +159,17 @@ function motionTargetOffset(text: string, offset: number, motion: string): numbe
 		case "firstNonBlank":
 			return bounds.start + firstNonBlankColumn(bounds.line);
 		case "wordForward":
-			return nextWordStartOffset(text, offset);
+			return nextWordStartOffsetFor("small", text, offset);
 		case "wordEnd":
 			return wordEndOffset(text, offset);
 		case "wordBackward":
-			return previousWordStartOffset(text, offset);
+			return previousWordStartOffsetFor("small", text, offset);
+		case "wordForwardBig":
+			return nextWordStartOffsetFor("big", text, offset);
+		case "wordEndBig":
+			return wordEndBigOffset(text, offset);
+		case "wordBackwardBig":
+			return previousWordStartOffsetFor("big", text, offset);
 		default:
 			return offset;
 	}
@@ -154,9 +177,12 @@ function motionTargetOffset(text: string, offset: number, motion: string): numbe
 
 /**
  * Offset range [start, end) an operator acting on `motion` with `count` would cover.
- * Vim range semantics: `e` is end-inclusive (range extends one past the target), `l` is
+ * Vim range semantics: `e`/`E` are end-inclusive (range extends one past the target), `l` is
  * end-exclusive, everything else is min..max.
  */
+function isEndInclusiveMotion(motion: string): boolean {
+	return motion === "wordEnd" || motion === "wordEndBig";
+}
 export function motionOffsetRange(
 	text: string,
 	cursor: Position,
@@ -170,7 +196,8 @@ export function motionOffsetRange(
 		if (next === target) break;
 		target = next;
 	}
-	if (motion === "wordEnd" && target >= current) return orderedOffsetRange(current, Math.min(text.length, target + 1));
+	if (isEndInclusiveMotion(motion) && target >= current)
+		return orderedOffsetRange(current, Math.min(text.length, target + 1));
 	if (motion === "right" && target >= current) return orderedOffsetRange(current, Math.min(text.length, target));
 	return orderedOffsetRange(current, target);
 }
@@ -386,7 +413,7 @@ export function wordObjectRange(
 	// On whitespace, vim targets the next word; past the last word, the previous one.
 	if (isWhitespace(text[index])) {
 		const next = skipWhitespace(text, index);
-		index = next < text.length ? next : previousWordStartOffset(text, text.length);
+		index = next < text.length ? next : previousWordStartOffsetFor("small", text, text.length);
 	}
 	const kind = wordKind(text[index]);
 	let start = index;

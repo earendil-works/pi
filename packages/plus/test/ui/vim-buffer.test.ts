@@ -51,6 +51,23 @@ describe("word motions", () => {
 		const text = "foo\nbar";
 		assert.deepEqual(findMotionTarget(text, pos(0, 0), "wordForward"), pos(1, 0));
 	});
+
+	it("W/B/E treat whitespace-separated runs as single words", () => {
+		const text = "foo.bar,(baz) qux";
+		assert.deepEqual(findMotionTarget(text, pos(0, 0), "wordForwardBig"), pos(0, 14));
+		assert.deepEqual(findMotionTarget(text, pos(0, 5), "wordForwardBig"), pos(0, 14));
+		assert.deepEqual(findMotionTarget(text, pos(0, 14), "wordBackwardBig"), pos(0, 0));
+		assert.deepEqual(findMotionTarget(text, pos(0, 16), "wordBackwardBig"), pos(0, 14));
+		assert.deepEqual(findMotionTarget(text, pos(0, 0), "wordEndBig"), pos(0, 12));
+		assert.deepEqual(findMotionTarget(text, pos(0, 12), "wordEndBig"), pos(0, 16));
+	});
+
+	it("W/B/E behave like w/b/e on plain words", () => {
+		const text = "foo bar baz";
+		assert.deepEqual(findMotionTarget(text, pos(0, 0), "wordForwardBig"), pos(0, 4));
+		assert.deepEqual(findMotionTarget(text, pos(0, 8), "wordBackwardBig"), pos(0, 4));
+		assert.deepEqual(findMotionTarget(text, pos(0, 4), "wordEndBig"), pos(0, 6));
+	});
 });
 
 describe("line motions", () => {
@@ -93,6 +110,17 @@ describe("operator ranges", () => {
 
 	it("de is end-inclusive of the word end", () => {
 		assert.deepEqual(motionOffsetRange(text, pos(0, 0), "wordEnd"), { start: 0, end: 3 });
+	});
+
+	it("dW spans whitespace-separated runs, dE is end-inclusive of the WORD end", () => {
+		const bigText = "foo.bar baz";
+		assert.deepEqual(motionOffsetRange(bigText, pos(0, 0), "wordForwardBig"), { start: 0, end: 8 });
+		assert.deepEqual(motionOffsetRange(bigText, pos(0, 0), "wordEndBig"), { start: 0, end: 7 });
+	});
+
+	it("dW deletes through the trailing space", () => {
+		const result = deleteByMotion("foo.bar baz", pos(0, 0), "wordForwardBig");
+		assert.equal(result.text, "baz");
 	});
 
 	it("dl covers exactly one char", () => {
@@ -251,8 +279,8 @@ function findMotionTarget(text: string, cursor: Position, motion: string): Posit
 	const range = motionOffsetRange(text, cursor, motion, 1);
 	if (!range) return undefined;
 	const start = positionToOffset(text, cursor);
-	if (motion === "wordEnd" || motion === "right") {
-		return offsetToPosition(text, range.end - (motion === "wordEnd" ? 1 : 0));
+	if (motion === "wordEnd" || motion === "wordEndBig" || motion === "right") {
+		return offsetToPosition(text, range.end - (motion === "right" ? 0 : 1));
 	}
 	if (range.end === start) return offsetToPosition(text, range.start);
 	return offsetToPosition(text, range.end);

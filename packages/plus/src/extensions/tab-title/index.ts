@@ -90,7 +90,17 @@ export function registerTabTitle(pi: ExtensionAPI): void {
 		ctx.ui.setTitle(baseTitle(ctx));
 	};
 	pi.on("agent_settled", settle);
-	pi.on("turn_end", settle);
+	// turn_end fires after EVERY assistant message, including ones whose tool
+	// calls keep the run going — settling there would stop the ticker a couple
+	// seconds into a long multi-step run and never restart it (agent_start is
+	// once per run). Only a non-toolUse stop reason means the run is actually
+	// ending; agent_settled remains the primary stop signal (it fires in the
+	// run's finally, so aborts/errors are covered too).
+	pi.on("turn_end", (event, ctx) => {
+		if (ctx.mode !== "tui") return;
+		if (event.message.role === "assistant" && event.message.stopReason === "toolUse") return;
+		settle(event, ctx);
+	});
 
 	pi.on("session_shutdown", () => stopSpinner());
 }

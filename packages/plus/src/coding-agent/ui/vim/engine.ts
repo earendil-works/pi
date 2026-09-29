@@ -103,7 +103,13 @@ function cursorAtLineEnd(snapshot: { lines: string[]; cursor: Position }): boole
 
 /** Motions whose target is the start of the offset range (they move backwards). */
 function isBackwardMotion(motion: string): boolean {
-	return motion === "left" || motion === "wordBackward" || motion === "lineStart" || motion === "firstNonBlank";
+	return (
+		motion === "left" ||
+		motion === "wordBackward" ||
+		motion === "wordBackwardBig" ||
+		motion === "lineStart" ||
+		motion === "firstNonBlank"
+	);
 }
 
 /** Compute the destination of a plain motion applied `count` times from `cursor`. */
@@ -112,7 +118,9 @@ function motionTargetPosition(text: string, cursor: Position, motion: string, co
 	for (let index = 0; index < count; index++) {
 		const range = motionOffsetRange(text, target, motion, 1);
 		if (!range) break;
-		const offset = isBackwardMotion(motion) ? range.start : range.end - (motion === "wordEnd" ? 1 : 0);
+		const offset = isBackwardMotion(motion)
+			? range.start
+			: range.end - (motion === "wordEnd" || motion === "wordEndBig" ? 1 : 0);
 		target = clampPosition(splitText(text), offsetToPosition(text, offset));
 	}
 	return target;

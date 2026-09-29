@@ -21,6 +21,7 @@
 
 ### Fixed
 
+- Tab-title spinner no longer dies a couple of seconds into a busy run: `turn_end` fires after every assistant message, including ones whose tool calls keep the run going, so settling there stopped the ticker before long tool executions and `agent_start` (once per run) never restarted it. The `turn_end` backstop now only settles when the turn's `stopReason` is not `toolUse`; `agent_settled` (fired in the run's `finally`) remains the primary stop signal.
 - `pipi remove`/`pipi install` under a profile now update the source `~/.pi/agent/settings.json` `packages` list, not just the per-profile copy that the next materialization would discard. The wrapper registers a process-exit sync (`syncProfilePackagesToSource` from pi-hub) for profile launches, so the removed extension is not reinstalled on next launch.
 - Context usage detection now sees the whole request, not just conversation messages: heuristic estimates (footer percentage before the first response and after `/compact`, zero-usage/error fallback, mid-session prompt/tool changes) include the folded system prompt and tool declarations, the usage anchor is invalidated when a newer-timestamp message is inserted into the prefix, Anthropic 1h cache writes (`cacheWrite1h`) are counted, and the footer shows a real estimate instead of `?` right after compaction. Wired via `estimateContextTokens`/`calculateContextTokens` shadows in the compaction wrapper plus a 9th module redirect for `coding-agent/src/core/agent-session.ts` (`getContextUsage` override).
 
