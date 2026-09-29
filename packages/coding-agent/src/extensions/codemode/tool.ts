@@ -111,6 +111,8 @@ export interface CodemodeNestedCall {
 	durationMs?: number;
 	/** Error text, truncated for display. */
 	error?: string;
+	/** Cost in USD of a `models.*` call that reported usage. */
+	cost?: number;
 }
 
 export interface CodemodeToolDetails {
@@ -182,6 +184,8 @@ interface ClassifierResult {
   provider: string;
   model: string;
   answers: Record<string, ClassifierAnswer>;
+  /** Set when the service reports token counts. Cost is in USD. */
+  usage?: { input: number; output: number; totalTokens: number; cost: { total: number } };
   stopReason: "stop" | "error" | "aborted";
   errorMessage?: string;
   timestamp: number;

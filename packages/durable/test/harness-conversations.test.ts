@@ -5,12 +5,16 @@ import {
 	type Conversation,
 	ConversationConfig,
 	type ConversationId,
+	createRegistry,
+	createSession,
 	defineDoc,
 	defineEntry,
 	defineTask,
 	type EntryRecord,
+	LiveDoc,
 	MemoryStorage,
 	ROOT_CONVERSATION_ID,
+	type TaskId,
 } from "@earendil-works/pi-durable";
 import { afterEach, describe, expect, it } from "vitest";
 import { openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";
@@ -39,7 +43,7 @@ const NoteDoc = defineDoc<{ text: string }>({
 	initial: () => ({ text: "" }),
 });
 
-const Message = defineEntry<EntryRecord & { readonly kind: "message" }>("message");
+const Message = defineEntry("message");
 
 async function append(conversation: Conversation, text: string): Promise<EntryRecord> {
 	return conversation.commit(
@@ -72,11 +76,16 @@ describe("Harness root and conversations", () => {
 		});
 		expect(root.id).toBe(ROOT_CONVERSATION_ID);
 		expect(storage.commits).toHaveLength(1);
+		// Conversation, pi.live, pi.inbox, pi.usage, configuration, and the init note.
 		expect(storage.commits[0]!.map((write) => write.type)).toEqual([
 			"conversation",
 			"document.create",
 			"document.create",
+			"document.create",
+			"document.create",
+			"document.create",
 		]);
+		expect(await harness.snapshot(LiveDoc, root.id, context)).toEqual({});
 		expect(await root.getActiveTools(context)).toEqual(["read", "bash"]);
 		expect(await root.getThinkingLevel(context)).toBe("high");
 		expect(await harness.snapshot(NoteDoc, root.id, context)).toEqual({ text: "root note" });
@@ -342,14 +351,101 @@ describe("Harness configuration", () => {
 		await harness.close(context);
 	});
 
-	it("reads initial configuration for conversations created without one", async () => {
-		const storage = new ControlledStorage();
-		const { harness } = await openHarness(storage, ["read"]);
+	it("stages the built-in documents for conversations created or forked through Tx", async () => {
+		const { harness } = await openHarness(new MemoryStorage(), ["read"]);
 		const id = await harness.commit(
 			async (tx) => (await tx.createConversation({ ownership: { kind: "ownerless" } })).id,
 			context,
 		);
+		const created = (await harness.conversation(id, context))!;
+		expect(await created.getActiveTools(context)).toEqual(["read"]);
+		expect(await harness.snapshot(LiveDoc, id, context)).toEqual({});
+
+		await created.setActiveTools([], context);
+		const at = await created.commit(
+			async (tx) => (await tx.appendEntry(id, { kind: "message", model: [user("again")] })).id,
+			context,
+		);
+		await created.commit(async (tx) => {
+			(await tx.doc(LiveDoc, id)).run = { taskId: 99 as TaskId, inputs: [] };
+		}, context);
+		const forkId = await harness.commit(
+			async (tx) => (await tx.forkConversation(id, at, { ownership: { kind: "ownerless" } })).id,
+			context,
+		);
+		const fork = (await harness.conversation(forkId, context))!;
+		// A fork copies the configuration at its fork entry, not the registry default, and starts with an empty pi.live.
+		expect(await fork.getActiveTools(context)).toEqual([]);
+		expect(await harness.snapshot(LiveDoc, forkId, context)).toEqual({});
+		await harness.close(context);
+	});
+
+	it("runs registered conversation setups after the built-in one on every creation path", async () => {
+		const Agent = defineDoc<{ kind: string; forks: number }>({
+			kind: "test.agent",
+			version: 1,
+			scope: "conversation",
+			history: "latest",
+			fork: "current",
+			initial: () => ({ kind: "main", forks: 0 }),
+		});
+		const registry = createRegistry();
+		const order: string[] = [];
+		registry.conversations.setup("agent", async (tx, conversation) => {
+			order.push(`agent:${conversation.id}`);
+			const agent = await tx.doc(Agent, conversation.id);
+			// A fork keeps its copied document; the setup only records the fork.
+			if (conversation.parent !== undefined) agent.forks++;
+		});
+		expect(
+			registry
+				.snapshot()
+				.conversationSetups()
+				.map(({ key }) => key),
+		).toEqual(["pi", "agent"]);
+		expect(() => registry.conversations.setup("agent", () => {})).toThrow("Setup agent is already registered");
+		const { harness } = await openHarness(new MemoryStorage(), [], { registry });
+		const root = await harness.root(context, {
+			init: async (tx, id) => {
+				// Host init runs after every setup, so the agent document already exists.
+				expect(order).toEqual([`agent:${id}`]);
+				(await tx.doc(Agent, id)).kind = "root";
+			},
+		});
+		const raw = await root.commit(
+			async (tx) => (await tx.createConversation({ ownership: { kind: "ownerless" } })).id,
+			context,
+		);
+		const at = await root.commit(async (tx) => (await tx.appendEntry(root.id, { kind: "note" })).id, context);
+		const fork = await root.fork(at, { ownership: { kind: "ownerless" } }, context);
+		expect(await harness.snapshot(Agent, root.id, context)).toEqual({ kind: "root", forks: 0 });
+		expect(await harness.snapshot(Agent, raw, context)).toEqual({ kind: "main", forks: 0 });
+		expect(await harness.snapshot(Agent, fork.id, context)).toEqual({ kind: "root", forks: 1 });
+		expect(await harness.snapshot(LiveDoc, raw, context)).toEqual({});
+		expect(order).toEqual([`agent:${root.id}`, `agent:${raw}`, `agent:${fork.id}`]);
+
+		registry.conversations.setup("broken", () => {
+			throw new Error("setup failed");
+		});
+		const count = async () => (await harness.commit((tx) => tx.scanConversations({}, 100), context)).items.length;
+		const before = await count();
+		await expect(harness.createConversation({ ownership: { kind: "ownerless" } }, context)).rejects.toThrow(
+			"setup failed",
+		);
+		// The whole creating commit rolled back.
+		expect(await count()).toBe(before);
+		await harness.close(context);
+	});
+
+	it("reads initial configuration for conversations a plain Session created", async () => {
+		const storage = new ControlledStorage();
+		const id = await createSession(storage).commit(
+			async (tx) => (await tx.createConversation({ ownership: { kind: "ownerless" } })).id,
+			context,
+		);
+		const { harness } = await openHarness(storage, ["read"]);
 		const raw = await harness.conversation(id, context);
+		expect(await harness.snapshot(LiveDoc, id, context)).toBeUndefined();
 		expect(await raw!.getThinkingLevel(context)).toBe("off");
 		expect(await raw!.getActiveTools(context)).toEqual([]);
 		const commits = storage.commits.length;

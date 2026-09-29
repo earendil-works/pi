@@ -42,6 +42,8 @@ To replace the model-facing `bash` tool with `powershell`, add this to `~/.pi/ag
 }
 ```
 
+`["-bash", "+powershell"]` does the same while keeping any other default tools you configured.
+
 Restart Pi, then ask it to run a harmless PowerShell command. The `!` and `!!` editor commands continue to use Bash. The `powershell` tool is available only when Pi runs as a native Windows process.
 
 See [Settings](settings.md#tools) for other tool combinations.

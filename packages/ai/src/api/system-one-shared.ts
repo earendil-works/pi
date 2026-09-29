@@ -1,3 +1,4 @@
+import { calculateCost } from "../models.ts";
 import type {
 	ClassifierAnswer,
 	ClassifierApi,
@@ -6,6 +7,7 @@ import type {
 	ClassifierOptions,
 	ClassifierResult,
 	ProviderHeaders,
+	Usage,
 } from "../types.ts";
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { headersToRecord, providerHeadersToRecord } from "../utils/headers.ts";
@@ -27,8 +29,8 @@ export interface SystemOneTransport {
 	url(model: ClassifierModel<ClassifierApi>): URL;
 	/** Wraps the System One request in the service's request envelope. */
 	payload(model: ClassifierModel<ClassifierApi>, request: SystemOneWireRequest): unknown;
-	/** Extracts the System One `answers` object from the service's response envelope. */
-	answers(body: unknown): unknown;
+	/** Extracts the System One output (`{ answers, usage }`) from the service's response envelope. */
+	output(body: unknown): Record<string, unknown>;
 }
 
 interface SystemOneHttpError extends Error {
@@ -118,6 +120,30 @@ function parseAnswers(label: string, value: unknown, context: ClassifierContext)
 	return Object.fromEntries(answers);
 }
 
+function tokenCount(value: unknown): number {
+	return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
+}
+
+/**
+ * Usage from System One's `{ input_tokens, output_tokens }`, priced from the model catalog like chat
+ * usage. A missing or malformed usage object leaves the result without usage instead of failing it.
+ */
+function parseUsage(value: unknown, model: ClassifierModel<ClassifierApi>): Usage | undefined {
+	if (!isRecord(value) || (value.input_tokens === undefined && value.output_tokens === undefined)) return undefined;
+	const input = tokenCount(value.input_tokens);
+	const output = tokenCount(value.output_tokens);
+	const usage: Usage = {
+		input,
+		output,
+		cacheRead: 0,
+		cacheWrite: 0,
+		totalTokens: input + output,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+	};
+	calculateCost(model, usage);
+	return usage;
+}
+
 /** Maps public `bool` questions to TypeSafe's wire-level `noul` type. */
 function wireRequest(context: ClassifierContext): SystemOneWireRequest {
 	return {
@@ -197,7 +223,11 @@ export async function classifySystemOne(
 			},
 		);
 		await options.onResponse?.({ status: response.status, headers: headersToRecord(response.headers) }, model);
-		output.answers = parseAnswers(transport.label, transport.answers(body), context);
+		const result = transport.output(body);
+		// Set before parsing answers: a request with malformed answers was still billed.
+		const usage = parseUsage(result.usage, model);
+		if (usage) output.usage = usage;
+		output.answers = parseAnswers(transport.label, result.answers, context);
 		return output;
 	} catch (error) {
 		output.stopReason = options?.signal?.aborted ? "aborted" : "error";

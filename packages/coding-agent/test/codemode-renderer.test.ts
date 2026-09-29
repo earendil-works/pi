@@ -49,6 +49,28 @@ describe("codemode renderer", () => {
 		expect(text).toBe('✓ read {"path":"a"} 5ms\n\nhello');
 	});
 
+	it("shows the cost of model calls and their total", () => {
+		const call = { name: "models.classify", args: "scorer/judge", status: "ok" as const, durationMs: 5 };
+		const text = render({
+			content: [{ type: "text", text: "Script completed\nWall time 0.1 seconds\nOutput:\n" }],
+			details: {
+				calls: [
+					{ ...call, id: "call/models.classify/1", cost: 0.000012936 },
+					{ ...call, id: "call/models.classify/2", cost: 0.02 },
+					{ ...call, id: "call/models.classify/3" },
+				],
+			},
+		});
+		expect(text).toBe(
+			[
+				"✓ models.classify scorer/judge 5ms $0.000013",
+				"✓ models.classify scorer/judge 5ms $0.02",
+				"✓ models.classify scorer/judge 5ms",
+				"Model calls: $0.02",
+			].join("\n"),
+		);
+	});
+
 	it("shows results without a header, such as rejected options", () => {
 		const text = render(
 			{

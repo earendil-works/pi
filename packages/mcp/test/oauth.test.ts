@@ -8,6 +8,7 @@ import {
 	McpOAuthAuthorizationRequiredError,
 	McpOAuthProvider,
 	MemoryOAuthStateStore,
+	type OAuthCallbackPage,
 	OAuthCallbackServer,
 	type OAuthClientInformationMixed,
 	type OAuthClientProvider,
@@ -397,5 +398,49 @@ describe("MCP OAuth", () => {
 			response.end();
 		});
 		await expect(discoverAuthorizationServerMetadata(origin)).rejects.toBeInstanceOf(OAuthIssuerMismatchError);
+	});
+});
+
+describe("OAuthCallbackServer pages", () => {
+	it("renders plain text by default", async () => {
+		const callback = await OAuthCallbackServer.listen();
+		try {
+			const pending = callback.waitForCallback("s1");
+			const response = await fetch(`${callback.redirectUrl}?code=abc&state=s1`);
+			expect(response.headers.get("content-type")).toBe("text/plain; charset=utf-8");
+			expect(await response.text()).toBe("Authorization complete. You may close this window.");
+			expect((await pending).code).toBe("abc");
+		} finally {
+			await callback.close();
+		}
+	});
+
+	it("renders pages through renderPage", async () => {
+		const pages: OAuthCallbackPage[] = [];
+		const callback = await OAuthCallbackServer.listen({
+			renderPage: (page) => {
+				pages.push(page);
+				return page.ok ? "<p>ok</p>" : `<p>${page.message}</p>`;
+			},
+		});
+		try {
+			const denied = callback.waitForCallback("s1");
+			denied.catch(() => undefined);
+			const failure = await fetch(`${callback.redirectUrl}?error=access_denied&error_description=Denied&state=s1`);
+			expect(failure.headers.get("content-type")).toBe("text/html; charset=utf-8");
+			await expect(denied).rejects.toThrow("Denied");
+			expect(pages.at(-1)).toEqual({
+				ok: false,
+				message: "Authorization failed. You may close this window.",
+				details: "Denied",
+			});
+
+			const pending = callback.waitForCallback("s2");
+			const success = await fetch(`${callback.redirectUrl}?code=abc&state=s2`);
+			expect(await success.text()).toBe("<p>ok</p>");
+			expect((await pending).code).toBe("abc");
+		} finally {
+			await callback.close();
+		}
 	});
 });

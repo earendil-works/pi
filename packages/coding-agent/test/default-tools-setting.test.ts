@@ -79,6 +79,24 @@ describe("defaultTools setting", () => {
 		session.dispose();
 	});
 
+	it("activates an inactive extension tool with +name", async () => {
+		const session = await createSession(["+inactive_tool", "-write"], {}, [
+			(pi) => {
+				pi.registerTool({
+					name: "inactive_tool",
+					label: "Inactive Tool",
+					description: "Extension tool registered inactive",
+					parameters: Type.Object({}),
+					execute: async () => ({ content: [{ type: "text", text: "ok" }], details: {} }),
+					defaultActive: false,
+				});
+			},
+		]);
+
+		expect(session.getActiveToolNames().sort()).toEqual(["bash", "edit", "inactive_tool", "read"]);
+		session.dispose();
+	});
+
 	it("keeps extension and SDK custom tools enabled", async () => {
 		const session = await createSession(
 			["grep"],

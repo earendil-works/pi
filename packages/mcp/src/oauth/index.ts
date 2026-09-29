@@ -1,4 +1,9 @@
-export { type OAuthCallback, OAuthCallbackServer, type OAuthCallbackServerOptions } from "./callback.ts";
+export {
+	type OAuthCallback,
+	type OAuthCallbackPage,
+	OAuthCallbackServer,
+	type OAuthCallbackServerOptions,
+} from "./callback.ts";
 export {
 	buildAuthorizationServerDiscoveryUrls,
 	discoverAuthorizationServerMetadata,

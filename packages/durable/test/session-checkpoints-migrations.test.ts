@@ -17,6 +17,28 @@ function documentWrites(writes: readonly StorageWrite[]): readonly StorageWrite[
 }
 
 describe("Session document checkpoints", () => {
+	it("calls checkpointWhen with its definition as the receiver", async () => {
+		const Doc = defineDoc<{ count: number }>({
+			kind: "checkpoint.receiver",
+			version: 1,
+			scope: "session",
+			initial: () => ({ count: 0 }),
+			checkpointWhen(value) {
+				return value.count === this.initial().count + 2;
+			},
+		});
+		const { session, storage } = openTestSession();
+		for (let count = 0; count <= 2; count++) {
+			await session.commit(async (tx) => {
+				(await tx.doc(Doc)).count = count;
+			}, context);
+		}
+		const kinds = storage.commits.flatMap((writes) =>
+			writes.flatMap((write) => (write.type === "document.change" ? [write.content.kind] : [])),
+		);
+		expect(kinds).toEqual(["delta", "base"]);
+	});
+
 	it("selects bases only for nonempty ordinary batches and passes the exact prepared revision and ops", async () => {
 		const calls: { value: Readonly<JsonObject>; ops: readonly Op[] }[] = [];
 		const falseCalls: { value: Readonly<JsonObject>; ops: readonly Op[] }[] = [];

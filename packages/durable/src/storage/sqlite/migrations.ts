@@ -52,9 +52,12 @@ const INITIAL_SCHEMA: readonly string[] = [
 		id INTEGER PRIMARY KEY,
 		conversation_id INTEGER NOT NULL,
 		request_id TEXT,
+		status TEXT NOT NULL CHECK (status IN ('queued', 'placed', 'done', 'unanswered')),
 		record TEXT NOT NULL CHECK (json_valid(record))
 	) STRICT`,
 	"CREATE INDEX submissions_by_request ON submissions (conversation_id, request_id)",
+	"CREATE INDEX submissions_by_conversation ON submissions (conversation_id, id)",
+	"CREATE INDEX submissions_by_status ON submissions (status, id)",
 	`CREATE TABLE documents (
 		id INTEGER PRIMARY KEY,
 		kind TEXT NOT NULL,

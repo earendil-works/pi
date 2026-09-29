@@ -93,6 +93,8 @@ class ReopeningStorage implements Storage {
 	scanTasks: Storage["scanTasks"] = (query, limit, cursor, readContext) =>
 		this.current.scanTasks(query, limit, cursor, readContext);
 	submission: Storage["submission"] = (id, readContext) => this.current.submission(id, readContext);
+	scanSubmissions: Storage["scanSubmissions"] = (query, limit, cursor, readContext) =>
+		this.current.scanSubmissions(query, limit, cursor, readContext);
 	submissionByRequest: Storage["submissionByRequest"] = (conversationId, requestId, readContext) =>
 		this.current.submissionByRequest(conversationId, requestId, readContext);
 	findDocument: Storage["findDocument"] = (address, at, readContext) =>

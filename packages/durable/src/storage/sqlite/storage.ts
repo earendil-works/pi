@@ -25,6 +25,7 @@ import type {
 	StorageWrite,
 	StoredDocument,
 	SubmissionId,
+	SubmissionQuery,
 	SubmissionRecord,
 	TaskId,
 	TaskQuery,
@@ -417,6 +418,34 @@ export class SqliteStorage implements Storage {
 		return row === undefined ? undefined : parseJson<SubmissionRecord>(row.record);
 	}
 
+	async scanSubmissions(
+		query: SubmissionQuery,
+		limit: number,
+		cursor: Cursor | undefined,
+		_context: Context,
+	): Promise<Page<SubmissionRecord, Cursor>> {
+		this.assertOpen();
+		const clauses = ["id > ?"];
+		const params: SqliteValue[] = [cursorId(cursor) ?? -1];
+		if (query.conversationId !== undefined) {
+			clauses.push("conversation_id = ?");
+			params.push(query.conversationId);
+		}
+		if (query.status !== undefined) {
+			clauses.push("status = ?");
+			params.push(query.status);
+		}
+		params.push(limit + 1);
+		const rows = allRows<JsonRow>(
+			this.db.prepare(`SELECT record FROM submissions WHERE ${clauses.join(" AND ")} ORDER BY id LIMIT ?`),
+			...params,
+		);
+		return page(
+			rows.map((row) => parseJson<SubmissionRecord>(row.record)),
+			limit,
+		);
+	}
+
 	async submissionByRequest(
 		conversationId: ConversationId,
 		requestId: string,
@@ -704,13 +733,14 @@ export class SqliteStorage implements Storage {
 			case "submission":
 				this.claimId(write.value.id, "submission");
 				this.db
-					.prepare(`INSERT INTO submissions (id, conversation_id, request_id, record) VALUES (?, ?, ?, ?)
+					.prepare(`INSERT INTO submissions (id, conversation_id, request_id, status, record) VALUES (?, ?, ?, ?, ?)
 						ON CONFLICT(id) DO UPDATE SET conversation_id = excluded.conversation_id,
-						request_id = excluded.request_id, record = excluded.record`)
+						request_id = excluded.request_id, status = excluded.status, record = excluded.record`)
 					.run(
 						write.value.id,
 						write.value.conversationId,
 						write.value.requestId === undefined ? null : encodeIndexedString(write.value.requestId),
+						write.value.status,
 						encodeJson(write.value),
 					);
 				break;

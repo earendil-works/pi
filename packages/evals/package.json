@@ -1,6 +1,6 @@
 {
 	"name": "@earendil-works/pi-evals",
-	"version": "0.87.1",
+	"version": "0.99.1",
 	"private": true,
 	"type": "module",
 	"scripts": {
@@ -11,13 +11,13 @@
 		"test": "vitest run --config vitest.test.config.ts"
 	},
 	"devDependencies": {
-		"@earendil-works/pi-ai": "^0.87.1",
-		"@earendil-works/pi-coding-agent": "^0.87.1",
+		"@earendil-works/pi-ai": "^0.99.1",
+		"@earendil-works/pi-coding-agent": "^0.99.1",
 		"@types/node": "22.19.19",
 		"@vitest-evals/core": "0.15.0",
 		"autoevals": "0.3.0",
 		"shx": "0.4.0",
-		"vitest": "4.1.9",
+		"vitest": "4.1.11",
 		"vitest-evals": "0.15.0"
 	}
 }

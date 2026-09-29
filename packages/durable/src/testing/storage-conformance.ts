@@ -4,6 +4,7 @@ import type { Op } from "@earendil-works/chord/delta";
 import { idFromNumber } from "../ids.ts";
 import {
 	type ConversationId,
+	type Cursor,
 	type DocumentCreate,
 	type DocumentId,
 	type EntryId,
@@ -13,6 +14,7 @@ import {
 	type Storage,
 	type StorageWrite,
 	type SubmissionId,
+	type SubmissionQuery,
 	type SubmissionRecord,
 	type TaskId,
 	type TaskRecord,
@@ -600,6 +602,29 @@ export function createStorageConformance(options: StorageConformanceOptions): re
 				await storage.commit([{ type: "submission", value: placedSecond }], context);
 				expect(await storage.submission(secondId, context)).toEqual(placedSecond);
 				expect(await storage.submissionByRequest(rootId, "other", context)).toEqual(placedSecond);
+
+				const ids = async (query: SubmissionQuery) => {
+					const found: SubmissionId[] = [];
+					let cursor: Cursor | undefined;
+					do {
+						const page = await storage.scanSubmissions(query, 1, cursor, context);
+						found.push(...page.items.map(({ id }) => id));
+						cursor = page.next;
+					} while (cursor !== undefined);
+					return found;
+				};
+				expect(await ids({})).toEqual([firstId, secondId, otherConversationId]);
+				expect(await ids({ conversationId: rootId })).toEqual([firstId, secondId]);
+				// A status change moves the record between status scans.
+				expect(await ids({ status: "queued" })).toEqual([firstId, otherConversationId]);
+				expect(await ids({ status: "placed" })).toEqual([secondId]);
+				expect(await ids({ conversationId: secondConversationId, status: "queued" })).toEqual([
+					otherConversationId,
+				]);
+				expect(await ids({ conversationId: secondConversationId, status: "placed" })).toEqual([]);
+				expect((await storage.scanSubmissions({ status: "placed" }, 10, undefined, context)).items).toEqual([
+					placedSecond,
+				]);
 			},
 		),
 

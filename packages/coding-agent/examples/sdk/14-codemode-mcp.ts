@@ -36,7 +36,8 @@ const resourceLoader = new DefaultResourceLoader({
 await resourceLoader.reload();
 
 const settingsManager = SettingsManager.create(cwd);
-settingsManager.applyOverrides({ defaultTools: ["read", "bash", "edit", "write", "codemode", "tool_search"] });
+// `+name` adds to the configured default tools instead of replacing them.
+settingsManager.applyOverrides({ defaultTools: ["+codemode", "+tool_search"] });
 
 const { session } = await createAgentSession({
 	resourceLoader,

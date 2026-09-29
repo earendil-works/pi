@@ -57,7 +57,7 @@ async function captureOpenAIResponseHeaders(
 			systemPrompt: "sys",
 			messages: [{ role: "user", content: "hi", timestamp: Date.now() }],
 		}),
-		{ apiKey: "test-key", ...options },
+		{ apiKey: "sk-test-key", ...options },
 	);
 
 	for await (const event of stream) {
@@ -90,7 +90,7 @@ describe("openai-responses provider defaults", () => {
 				messages: [{ role: "user", content: "hi", timestamp: Date.now() }],
 			}),
 			{
-				apiKey: "test-key",
+				apiKey: "sk-test-key",
 				onPayload: (payload) => {
 					capturedPayload = payload;
 				},
@@ -136,7 +136,7 @@ describe("openai-responses provider defaults", () => {
 				],
 			}),
 			{
-				apiKey: "test-key",
+				apiKey: "sk-test-key",
 				toolChoice: "required",
 				onPayload: (payload) => {
 					capturedPayload = payload;
@@ -187,7 +187,7 @@ describe("openai-responses provider defaults", () => {
 				],
 			}),
 			{
-				apiKey: "test-key",
+				apiKey: "sk-test-key",
 				onPayload: (payload) => {
 					capturedPayload = payload as CapturedResponsesPayload;
 				},
@@ -236,7 +236,7 @@ describe("openai-responses provider defaults", () => {
 				messages: [{ role: "user", content: "hi", timestamp: Date.now() }],
 			}),
 			{
-				apiKey: "test-key",
+				apiKey: "sk-test-key",
 				onPayload: (payload) => {
 					capturedPayload = payload;
 				},
@@ -272,7 +272,7 @@ describe("openai-responses provider defaults", () => {
 					messages: [{ role: "user", content: "hi", timestamp: Date.now() }],
 				}),
 				{
-					apiKey: "test-key",
+					apiKey: "sk-test-key",
 					onPayload: (payload) => {
 						capturedPayload = payload;
 					},
@@ -313,7 +313,7 @@ describe("openai-responses provider defaults", () => {
 				messages: [{ role: "user", content: "hi", timestamp: Date.now() }],
 			}),
 			{
-				apiKey: "test-key",
+				apiKey: "sk-test-key",
 				sessionId,
 				onPayload: (payload) => {
 					capturedPayload = payload as Pick<CapturedResponsesPayload, "prompt_cache_key">;
@@ -519,7 +519,7 @@ describe("openai-responses provider defaults", () => {
 					systemPrompt: "sys",
 					messages: [{ role: "user", content: "hi", timestamp: Date.now() }],
 				}),
-				{ apiKey: "test-key", serviceTier },
+				{ apiKey: "sk-test-key", serviceTier },
 			);
 
 			const result = await stream.result();
@@ -556,7 +556,7 @@ describe("openai-responses max_output_tokens compat", () => {
 				messages: [{ role: "user", content: "hi", timestamp: Date.now() }],
 			}),
 			{
-				apiKey: "test-key",
+				apiKey: "sk-test-key",
 				maxTokens: 1024,
 				onPayload: (payload) => {
 					capturedPayload = payload as { max_output_tokens?: number };
@@ -593,7 +593,7 @@ describe("openai-responses max_output_tokens compat", () => {
 				messages: [{ role: "user", content: "hi", timestamp: Date.now() }],
 			}),
 			{
-				apiKey: "test-key",
+				apiKey: "sk-test-key",
 				maxTokens: 1024,
 				onPayload: (payload) => {
 					capturedPayload = payload as { max_output_tokens?: number };

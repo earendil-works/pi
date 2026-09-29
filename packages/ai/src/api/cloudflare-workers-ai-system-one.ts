@@ -25,7 +25,7 @@ const transport: SystemOneTransport = {
 	label: LABEL,
 	url: (model) => new URL("run", `${model.baseUrl.replace(/\/+$/u, "")}/`),
 	payload: (model, request) => ({ model: model.id, input: request }),
-	answers: (body) => {
+	output: (body) => {
 		if (!isRecord(body)) throw new Error(`${LABEL} returned an unexpected response`);
 		if (body.success === false) throw new Error(cloudflareErrorMessage(body.errors));
 		const run = body.result;
@@ -34,7 +34,7 @@ const transport: SystemOneTransport = {
 			throw new Error(`${LABEL} run did not complete (state: ${String(run.state)})`);
 		}
 		if (!isRecord(run.result)) throw new Error(`${LABEL} returned an unexpected response`);
-		return run.result.answers;
+		return run.result;
 	},
 };
 

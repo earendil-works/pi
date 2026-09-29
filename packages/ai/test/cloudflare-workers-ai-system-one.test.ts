@@ -84,6 +84,7 @@ describe("Cloudflare Workers AI System One", () => {
 		expect(result.stopReason).toBe("stop");
 		expect(result.answers.is_urgent).toEqual({ type: "bool", probability: 0.95 });
 		expect(result.answers.department).toMatchObject({ type: "choice", choice: "billing", confidence: 0.8 });
+		expect(result.usage).toMatchObject({ input: 426, output: 73, totalTokens: 499 });
 	});
 
 	it("reports runs that did not complete", async () => {

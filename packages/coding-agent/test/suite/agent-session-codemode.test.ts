@@ -8,7 +8,7 @@ import {
 	getCurrentTools,
 	type TranscriptContext,
 } from "@earendil-works/pi-ai";
-import type { ToolResultMessage } from "@earendil-works/pi-ai/compat";
+import type { ToolResultMessage, Usage } from "@earendil-works/pi-ai/compat";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ExtensionAPI } from "../../src/core/extensions/types.ts";
@@ -64,6 +64,17 @@ const screenshotTool: AgentTool = {
 		details: {},
 	}),
 };
+
+function usage(input: number, cost: number): Usage {
+	return {
+		input,
+		output: 0,
+		cacheRead: 0,
+		cacheWrite: 0,
+		totalTokens: input,
+		cost: { input: cost, output: 0, cacheRead: 0, cacheWrite: 0, total: cost },
+	};
+}
 
 const codemodeResult = (harness: Harness) => getToolResult(harness, "codemode");
 
@@ -223,6 +234,41 @@ describe("AgentSession codemode tool", () => {
 		});
 		const details = result.details as unknown as CodemodeToolDetails;
 		expect(details.calls.map((call) => call.status)).toEqual(["error", "ok"]);
+	});
+
+	it("adds the usage of nested results to the codemode result", async () => {
+		const billedTool: AgentTool = {
+			name: "billed",
+			label: "Billed",
+			description: "Run a model",
+			parameters: Type.Object({}),
+			execute: async () => ({ content: [{ type: "text", text: "ran" }], details: {}, usage: usage(100, 0.25) }),
+		};
+		const harness = await setup([(pi) => pi.registerTool(createToolDefinitionFromAgentTool(billedTool))]);
+		harness.setResponses([
+			fauxAssistantMessage(
+				[
+					fauxToolCall("codemode", {
+						code: `await tools.billed({}); await tools.billed({}); await tools.echo({ text: "x" });`,
+					}),
+				],
+				{ stopReason: "toolUse" },
+			),
+			fauxAssistantMessage("done"),
+		]);
+
+		await harness.session.prompt("go");
+
+		const result = codemodeResult(harness);
+		expect(result.usage).toMatchObject({ input: 200, totalTokens: 200, cost: { total: 0.5 } });
+		// The usage is persisted with the result, so session totals count it.
+		const persisted = harness.sessionManager
+			.getEntries()
+			.find((entry) => entry.type === "message" && entry.message.role === "toolResult");
+		expect(
+			persisted?.type === "message" && persisted.message.role === "toolResult" && persisted.message.usage,
+		).toEqual(result.usage);
+		expect(harness.session.getSessionStats().cost).toBe(0.5);
 	});
 
 	it("keeps structured content that tool_result handlers replace along with the content", async () => {
@@ -536,6 +582,7 @@ describe("codemode models", () => {
 							provider: model.provider,
 							model: model.id,
 							answers: { approved: { type: "bool", probability: text === "good" ? 0.9 : 0.1 } },
+							usage: usage(300, 0.001),
 							stopReason: "stop",
 							timestamp: 0,
 						};
@@ -592,6 +639,7 @@ describe("codemode models", () => {
 				same: same.id,
 				missing: (await models.getModelOfType("classifier", "scorer", "nope")) === undefined,
 				probabilities: results.map((r) => r.answers.approved.probability),
+				cost: results[0].usage.cost.total,
 			};
 		`,
 		);
@@ -603,6 +651,7 @@ describe("codemode models", () => {
 			same: "judge",
 			missing: true,
 			probabilities: [0.9, 0.1, 0.9, 0.1, 0.9, 0.1],
+			cost: 0.001,
 		});
 		expect(observed).toHaveLength(6);
 		expect(
@@ -611,9 +660,13 @@ describe("codemode models", () => {
 		// Six classifications with at most four in flight.
 		expect(maxActive()).toBe(4);
 		const details = result.details as unknown as CodemodeToolDetails;
-		expect(details.calls.map((call) => [call.name, call.args, call.status])).toEqual(
-			Array.from({ length: 6 }, () => ["models.classify", "scorer/judge", "ok"]),
+		expect(details.calls.map((call) => [call.name, call.args, call.status, call.cost])).toEqual(
+			Array.from({ length: 6 }, () => ["models.classify", "scorer/judge", "ok", 0.001]),
 		);
+		// The classifications' usage becomes the codemode result's usage.
+		expect(result.usage?.input).toBe(1800);
+		expect(result.usage?.cost.total).toBeCloseTo(0.006, 10);
+		expect(harness.session.getSessionStats().cost).toBeCloseTo(0.006, 10);
 	});
 
 	it("reports provider errors as results and invalid arguments as exceptions", async () => {
@@ -642,5 +695,6 @@ describe("codemode models", () => {
 		expect(details.calls.map((call) => [call.name, call.status, call.error])).toEqual([
 			["models.classify", "error", "classifier exploded"],
 		]);
+		expect(result.usage).toBeUndefined();
 	});
 });

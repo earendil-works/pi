@@ -64,6 +64,10 @@ describe("TypeSafe System One", () => {
 		});
 
 		const result = await classify(model, context, { apiKey: "secret", fetch, temperature: 1.5 });
+		const pricedResult = await classify({ ...model, cost: { ...model.cost, input: 0.042 } }, context, {
+			apiKey: "secret",
+			fetch: async () => Response.json({ answers: wireAnswers, usage: { input_tokens: 308, output_tokens: 23 } }),
+		});
 
 		expect(fetch).toHaveBeenCalledOnce();
 		expect(String(fetch.mock.calls[0]?.[0])).toBe("https://api.typesafe.ai/v1/systemone");
@@ -71,18 +75,28 @@ describe("TypeSafe System One", () => {
 		expect(result.answers.approved).toEqual({ type: "bool", probability: 0.95 });
 		expect(result.answers.category).toMatchObject({ type: "choice", choice: "success" });
 		expect(result.answers.satisfaction).toEqual({ type: "score", score: 2, confidence: 0.7 });
+		expect(result.usage).toBeUndefined();
+		expect(pricedResult.usage).toMatchObject({ input: 308, output: 23, totalTokens: 331 });
+		expect(pricedResult.usage?.cost.total).toBeCloseTo(0.000012936, 12);
 	});
 
 	it("posts OpenRouter System One requests to its TypeSafe-compatible endpoint", async () => {
 		const fetch = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
 			expect(JSON.parse(String(init?.body))).toMatchObject({ model: "typesafe/jev-1.13", state: context.state });
-			return Response.json({ id: "gen-dec-1", provider: "TypeSafe", answers: wireAnswers, usage: { cost: 0.1 } });
+			// Response shape observed from the live OpenRouter endpoint.
+			return Response.json({
+				id: "gen-dec-1",
+				provider: "TypeSafe",
+				answers: wireAnswers,
+				usage: { input_tokens: 308, output_tokens: 23, cost: 0.000012936 },
+			});
 		});
 		const openRouterModel = {
 			...model,
 			id: "typesafe/jev-1.13",
 			provider: "openrouter",
 			baseUrl: "https://openrouter.ai/api/v1",
+			cost: { ...model.cost, input: 0.042 },
 		};
 
 		const result = await classify(openRouterModel, context, { apiKey: "secret", fetch });
@@ -90,6 +104,8 @@ describe("TypeSafe System One", () => {
 		expect(String(fetch.mock.calls[0]?.[0])).toBe("https://openrouter.ai/api/v1/systemone");
 		expect(result.stopReason).toBe("stop");
 		expect(result.answers.approved).toEqual({ type: "bool", probability: 0.95 });
+		// Priced from the catalog like chat usage; matches OpenRouter's reported cost.
+		expect(result.usage?.cost.total).toBeCloseTo(0.000012936, 12);
 	});
 
 	it("rejects models for other classifier APIs", async () => {
@@ -194,11 +210,29 @@ describe("TypeSafe System One", () => {
 	it("returns malformed responses as classifier errors", async () => {
 		const result = await classify(model, context, {
 			apiKey: "secret",
-			fetch: async () => Response.json({ answers: {} }),
+			fetch: async () => Response.json({ answers: {}, usage: { input_tokens: 10, output_tokens: 2 } }),
 		});
 
 		expect(result.stopReason).toBe("error");
 		expect(result.answers).toEqual({});
 		expect(result.errorMessage).toContain("did not return an answer for category");
+		// The request was billed, so its usage is kept.
+		expect(result.usage).toMatchObject({ input: 10, output: 2 });
+	});
+
+	it("ignores malformed usage", async () => {
+		const result = await classify(model, context, {
+			apiKey: "secret",
+			fetch: async () => Response.json({ answers: wireAnswers, usage: { input_tokens: "many", output_tokens: 3 } }),
+		});
+		const withoutTokens = await classify(model, context, {
+			apiKey: "secret",
+			fetch: async () => Response.json({ answers: wireAnswers, usage: { cost: 0.1 } }),
+		});
+
+		expect(result.stopReason).toBe("stop");
+		expect(result.usage).toMatchObject({ input: 0, output: 3, totalTokens: 3 });
+		expect(withoutTokens.stopReason).toBe("stop");
+		expect(withoutTokens.usage).toBeUndefined();
 	});
 });

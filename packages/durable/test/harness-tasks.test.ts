@@ -7,7 +7,6 @@ import {
 	defineEntry,
 	defineTask,
 	type EntryId,
-	type EntryRecord,
 	Harness,
 	MemoryStorage,
 	type RegistryReader,
@@ -183,7 +182,7 @@ describe("task phases", () => {
 			scope: "task",
 			initial: () => ({ lines: [] }),
 		});
-		const Answer = defineEntry<EntryRecord & { readonly kind: "answer" }>("answer");
+		const Answer = defineEntry("answer");
 		const Child = oneStep("test.child", async (_task, runtime, ctx) => {
 			await runtime.commit(() => completed(null), ctx);
 		});
@@ -367,6 +366,49 @@ describe("task runtime", () => {
 		await expect(runtime.memo("x", 1, context)).rejects.toThrow("invocation has ended");
 		await expect(runtime.sleep(0, context)).rejects.toThrow("invocation has ended");
 		await expect(runtime.watchDoc(Notes, context)).rejects.toThrow("invocation has ended");
+		await harness.close(context);
+	});
+
+	it("reads committed documents and context through the runtime, and forwards the clock and reports", async () => {
+		const Notes = defineDoc<{ text: string }>({
+			kind: "test.runtime-notes",
+			version: 1,
+			scope: "conversation",
+			history: "rewindable",
+			fork: "asOf",
+			initial: () => ({ text: "" }),
+		});
+		let captured: StepRuntime<null> | undefined;
+		const seen: unknown[] = [];
+		const Reader = oneStep("test.reader", async (_task, runtime, ctx) => {
+			captured = runtime;
+			const [first, second] = [...(await runtime.context(runtime.conversationId, ctx)).entries].map(
+				(entry) => entry.id,
+			);
+			seen.push((await runtime.snapshot(Notes, runtime.conversationId, ctx))?.text);
+			seen.push((await runtime.snapshotAsOf(Notes, runtime.conversationId, first!, ctx))?.text);
+			seen.push((await runtime.context(runtime.conversationId, ctx, first)).entries.length);
+			seen.push((await runtime.context(runtime.conversationId, ctx, second)).messages.length);
+			seen.push(runtime.now());
+			runtime.report(new Error("reported"));
+			await runtime.commit(() => completed(null), ctx);
+		});
+		const { harness, root, reports } = await openRoot([Reader], { now: () => 1234 });
+		for (const text of ["one", "two"]) {
+			await root.commit(async (tx) => {
+				(await tx.doc(Notes, root.id)).text = text;
+				await tx.appendEntry(root.id, { kind: "message", model: [user(text)] });
+			}, context);
+		}
+		const id = await start(root, Reader);
+		harness.resume();
+		await harness.waitForTask(id, context);
+		expect(seen).toEqual(["two", "one", 1, 2, 1234]);
+		expect(reports).toEqual([new Error("reported")]);
+		// The step after the phase ends the invocation.
+		await flush();
+		await expect(captured!.snapshot(Notes, root.id, context)).rejects.toThrow("invocation has ended");
+		await expect(captured!.context(root.id, context)).rejects.toThrow("invocation has ended");
 		await harness.close(context);
 	});
 

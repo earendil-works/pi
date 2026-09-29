@@ -6,9 +6,8 @@ import { delimiter, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { BACKGROUND_CONTEXT, withAbortSignal } from "@earendil-works/chord/context";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { FileError, getOrThrow, type ShellExecOptions, type ShellOutputView } from "../src/env/index.ts";
+import { FileError, getOrThrow, type ShellExecOptions } from "../src/env/index.ts";
 import { NodeExecutionEnv } from "../src/env/node.ts";
-import { applyShellOutputUpdate } from "../src/env/utils/output-capture.ts";
 
 const tempDirs: string[] = [];
 const chmodRestorePaths: string[] = [];
@@ -64,14 +63,14 @@ async function collectShellOutput(
 	command: string,
 	options: ShellExecOptions | undefined,
 	context: Parameters<NodeExecutionEnv["exec"]>[2],
-): Promise<{ result: Awaited<ReturnType<NodeExecutionEnv["exec"]>>; output: ShellOutputView | undefined }> {
-	let output: ShellOutputView | undefined;
+): Promise<{ result: Awaited<ReturnType<NodeExecutionEnv["exec"]>>; output: string }> {
+	let output = "";
 	const result = await env.exec(
 		command,
 		{
 			...options,
-			onUpdate: (update) => {
-				output = applyShellOutputUpdate(output, update);
+			onOutput: (text) => {
+				output += text;
 			},
 		},
 		context,
@@ -577,7 +576,7 @@ describe("NodeExecutionEnv shell", () => {
 			BACKGROUND_CONTEXT,
 		);
 		const result = getOrThrow(collected.result);
-		expect(collected.output?.text).toBe(`${await realpath(root)}:ok`);
+		expect(collected.output).toBe(`${await realpath(root)}:ok`);
 		expect(result.exitCode).toBe(0);
 	});
 
@@ -608,7 +607,7 @@ describe("NodeExecutionEnv shell", () => {
 				BACKGROUND_CONTEXT,
 			);
 			getOrThrow(collected.result);
-			expect(collected.output?.text).toBe(`${expectedSessionFile}|true|preserved`);
+			expect(collected.output).toBe(`${expectedSessionFile}|true|preserved`);
 		},
 	);
 
@@ -628,7 +627,7 @@ describe("NodeExecutionEnv shell", () => {
 				BACKGROUND_CONTEXT,
 			);
 			getOrThrow(collected.result);
-			expect(collected.output?.text).toBe("::explicit");
+			expect(collected.output).toBe("::explicit");
 		} finally {
 			if (previousInherited === undefined) delete process.env[inheritedKey];
 			else process.env[inheritedKey] = previousInherited;
@@ -669,8 +668,8 @@ describe("NodeExecutionEnv shell", () => {
 				BACKGROUND_CONTEXT,
 			);
 			const result = getOrThrow(collected.result);
-			expect(collected.output?.text).toContain("Hello, World!");
-			expect(collected.output?.text).toContain("args:-s");
+			expect(collected.output).toContain("Hello, World!");
+			expect(collected.output).toContain("args:-s");
 			expect(result.exitCode).toBe(0);
 		} finally {
 			process.chdir(originalCwd);
@@ -700,7 +699,7 @@ describe("NodeExecutionEnv shell", () => {
 					() => controller.abort(),
 				);
 				getOrThrow(collected.result);
-				expect(collected.output?.text).toContain("child-exiting");
+				expect(collected.output).toContain("child-exiting");
 			} finally {
 				controller.abort();
 				cleanupDetachedChild(pidFile);
@@ -720,27 +719,27 @@ describe("NodeExecutionEnv shell", () => {
 		await expect(withTimeout(execution, 3000)).resolves.toMatchObject({ ok: true });
 	}, 20_000);
 
-	it("combines stdout and stderr into one bounded view", async () => {
+	it("streams combined stdout and stderr", async () => {
 		const root = createTempDir();
 		const env = new NodeExecutionEnv({ cwd: root });
-		const updates: string[] = [];
-		let output: ShellOutputView | undefined;
-		const result = getOrThrow(
-			await env.exec(
-				"printf out; printf err >&2",
-				{
-					onUpdate: (update) => {
-						updates.push(update.kind);
-						output = applyShellOutputUpdate(output, update);
-					},
-				},
-				BACKGROUND_CONTEXT,
-			),
+		const collected = await collectShellOutput(env, "printf out; printf err >&2", undefined, BACKGROUND_CONTEXT);
+		expect(getOrThrow(collected.result)).toEqual({ exitCode: 0 });
+		expect(collected.output).toContain("out");
+		expect(collected.output).toContain("err");
+	});
+
+	it("decodes UTF-8 split across raw process chunks", async () => {
+		const root = createTempDir();
+		const env = new NodeExecutionEnv({ cwd: root });
+		const script =
+			"const b=Buffer.from('😀');process.stdout.write(b.subarray(0,2));setTimeout(()=>process.stdout.write(b.subarray(2)),50)";
+		const collected = await collectShellOutput(
+			env,
+			`${JSON.stringify(process.execPath)} -e ${JSON.stringify(script)}`,
+			undefined,
+			BACKGROUND_CONTEXT,
 		);
-		expect(result.exitCode).toBe(0);
-		expect(output?.text).toContain("out");
-		expect(output?.text).toContain("err");
-		expect(updates[0]).toBe("replace");
+		expect(collected.output).toBe("😀");
 	});
 
 	it("reports a missing working directory before spawning", async () => {
@@ -758,8 +757,7 @@ describe("NodeExecutionEnv shell", () => {
 		const root = createTempDir();
 		const env = new NodeExecutionEnv({ cwd: root });
 		const result = getOrThrow(await env.exec("exit 7", undefined, BACKGROUND_CONTEXT));
-		expect(result.exitCode).toBe(7);
-		expect(result.truncation.totalBytes).toBe(0);
+		expect(result).toEqual({ exitCode: 7 });
 	});
 
 	// Regression test for https://github.com/earendil-works/pi/issues/8992
@@ -778,23 +776,13 @@ describe("NodeExecutionEnv shell", () => {
 		if (!result.ok) expect(result.error).toMatchObject({ code: "timeout" });
 	});
 
-	it("rejects invalid timeouts and capture limits before spawning", async () => {
+	it("rejects invalid timeouts before spawning", async () => {
 		const root = createTempDir();
 		const env = new NodeExecutionEnv({ cwd: root });
 		for (const timeout of [0, -1, Number.NaN, Number.POSITIVE_INFINITY, 2_147_484]) {
 			expect(await env.exec("touch spawned", { timeout }, BACKGROUND_CONTEXT)).toMatchObject({
 				ok: false,
 				error: { code: "timeout", message: expect.stringContaining("Invalid timeout") },
-			});
-		}
-		for (const limits of [
-			{ maxBytes: 0, maxLines: 1 },
-			{ maxBytes: 1, maxLines: 0 },
-			{ maxBytes: 1, maxLines: 1.5 },
-		]) {
-			expect(await env.exec("touch spawned", { capture: { limits } }, BACKGROUND_CONTEXT)).toMatchObject({
-				ok: false,
-				error: { code: "unknown" },
 			});
 		}
 		expect(getOrThrow(await env.exists("spawned", BACKGROUND_CONTEXT))).toBe(false);
@@ -806,7 +794,7 @@ describe("NodeExecutionEnv shell", () => {
 		const result = await env.exec(
 			"printf out",
 			{
-				onUpdate: () => {
+				onOutput: () => {
 					throw new Error("callback failed");
 				},
 			},
@@ -893,15 +881,14 @@ describe("NodeExecutionEnv shell", () => {
 		}
 	});
 
-	it("does not create a spill before bounded output crosses its limits", async () => {
+	it("does not create a spill before output crosses its thresholds", async () => {
 		const root = createTempDir();
 		const env = new NodeExecutionEnv({ cwd: root });
 		const result = getOrThrow(
 			await env.exec(
 				"printf short",
 				{
-					capture: { limits: { maxBytes: 100, maxLines: 10, retain: "tail" }, spill: true },
-					onUpdate: () => {},
+					spill: { afterBytes: 100, afterLines: 10 },
 				},
 				BACKGROUND_CONTEXT,
 			),
@@ -909,7 +896,7 @@ describe("NodeExecutionEnv shell", () => {
 		expect(result.spillPath).toBeUndefined();
 	});
 
-	it("preserves exact raw bytes in the spill while decoding a bounded text view", async () => {
+	it("preserves exact raw bytes in the spill while streaming decoded text", async () => {
 		const root = createTempDir();
 		const env = new NodeExecutionEnv({ cwd: root });
 		const expected = [0x66, 0x80, 0x00, 0x6f];
@@ -917,8 +904,7 @@ describe("NodeExecutionEnv shell", () => {
 			await env.exec(
 				`${JSON.stringify(process.execPath)} -e "process.stdout.write(Buffer.from([${expected.join(",")}]))"`,
 				{
-					capture: { limits: { maxBytes: 1, maxLines: 10, retain: "tail" }, spill: true },
-					onUpdate: () => {},
+					spill: { afterBytes: 1, afterLines: 10 },
 				},
 				BACKGROUND_CONTEXT,
 			),
@@ -928,14 +914,27 @@ describe("NodeExecutionEnv shell", () => {
 		expect([...getOrThrow(await env.readBinaryFile(result.spillPath!, BACKGROUND_CONTEXT))]).toEqual(expected);
 	});
 
+	it("reports the spill of a command that times out", async () => {
+		const root = createTempDir();
+		const env = new NodeExecutionEnv({ cwd: root });
+		const result = await env.exec(
+			"printf 12345678901234567890; sleep 5",
+			{ timeout: 0.3, spill: { afterBytes: 10, afterLines: 10 } },
+			BACKGROUND_CONTEXT,
+		);
+		expect(result).toMatchObject({ ok: false, error: { code: "timeout", spillPath: expect.any(String) } });
+		const spillPath = (result as { error: { spillPath: string } }).error.spillPath;
+		tempDirs.push(join(spillPath, ".."));
+		expect(getOrThrow(await env.readTextFile(spillPath, BACKGROUND_CONTEXT))).toBe("12345678901234567890");
+	});
+
 	it("fails rather than silently losing a requested spill", async () => {
 		const root = createTempDir();
 		const env = new FailingSpillExecutionEnv({ cwd: root });
 		const result = await env.exec(
 			"printf 12345678901234567890",
 			{
-				capture: { limits: { maxBytes: 10, maxLines: 10, retain: "tail" }, spill: true },
-				onUpdate: () => {},
+				spill: { afterBytes: 10, afterLines: 10 },
 			},
 			BACKGROUND_CONTEXT,
 		);
@@ -953,8 +952,7 @@ describe("NodeExecutionEnv shell", () => {
 			await env.exec(
 				`${JSON.stringify(process.execPath)} -e "process.stdout.write('x'.repeat(${size}))"`,
 				{
-					capture: { limits: { maxBytes: 10, maxLines: 10, retain: "tail" }, spill: true },
-					onUpdate: () => {},
+					spill: { afterBytes: 10, afterLines: 10 },
 				},
 				BACKGROUND_CONTEXT,
 			),
@@ -964,20 +962,17 @@ describe("NodeExecutionEnv shell", () => {
 		expect(getOrThrow(await env.readTextFile(result.spillPath!, BACKGROUND_CONTEXT))).toHaveLength(size);
 	});
 
-	it("bounds large head-retained output while spilling every line", async () => {
+	it("streams every line and spills them all once output crosses its line threshold", async () => {
 		const root = createTempDir();
 		const env = new NodeExecutionEnv({ cwd: root });
 		const collected = await collectShellOutput(
 			env,
 			"i=1; while [ $i -le 15000 ]; do echo line-$i; i=$((i+1)); done",
-			{ capture: { limits: { maxBytes: 1024 * 1024, maxLines: 100, retain: "head" }, spill: true } },
+			{ spill: { afterBytes: 1024 * 1024, afterLines: 100 } },
 			BACKGROUND_CONTEXT,
 		);
 		const result = getOrThrow(collected.result);
-		expect(result.truncation).toMatchObject({ truncated: true, truncatedBy: "lines", totalLines: 15000 });
-		expect(collected.output?.text.split("\n")).toEqual(
-			Array.from({ length: 100 }, (_, index) => `line-${index + 1}`),
-		);
+		expect(collected.output).toBe(Array.from({ length: 15000 }, (_, index) => `line-${index + 1}\n`).join(""));
 		expect(result.spillPath).toBeDefined();
 		tempDirs.push(join(result.spillPath!, ".."));
 		const spilled = getOrThrow(await env.readTextLines(result.spillPath!, undefined, BACKGROUND_CONTEXT));

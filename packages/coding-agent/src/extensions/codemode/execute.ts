@@ -8,7 +8,7 @@ import { writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentTool, AgentToolCallOutcome, AgentToolResult } from "@earendil-works/pi-agent-core";
-import type { AnyModel, ClassifierContext, ImageContent, ModelType, TextContent } from "@earendil-works/pi-ai";
+import type { AnyModel, ClassifierContext, ImageContent, ModelType, TextContent, Usage } from "@earendil-works/pi-ai";
 import {
 	type CodemodeResult,
 	CodemodeSandbox,
@@ -21,6 +21,7 @@ import {
 import { getCodemodeWorkerUrl, getQuickJSWasmPath } from "../../config.ts";
 import type { ExtensionToolContext } from "../../core/extensions/types.ts";
 import type { SessionEntry } from "../../core/session-manager.ts";
+import { combineUsage } from "../../core/usage-totals.ts";
 import { Bm25Ranker, createToolSearchDocument, DEFAULT_TOOL_SEARCH_LIMIT } from "../tool-search/tool.ts";
 import {
 	CODEMODE_STORE_ENTRY_TYPE,
@@ -224,6 +225,11 @@ export async function executeCodemode(
 	const startedAt = performance.now();
 	const { code, options: sourceOptions } = parseCodemodeSource(input.code);
 	const calls: CodemodeNestedCall[] = [];
+	// Usage of the script's `models.*` calls. Nested tool calls report theirs through the session.
+	let modelUsage: Usage | undefined;
+	const addModelUsage = (usage: Usage) => {
+		modelUsage = modelUsage ? combineUsage(modelUsage, usage) : usage;
+	};
 
 	const snapshot = (): CodemodeToolDetails => ({ calls: calls.map((call) => ({ ...call })) });
 	const publish = () => onUpdate?.({ content: [], details: snapshot() });
@@ -264,7 +270,9 @@ export async function executeCodemode(
 		tools: sandboxTools,
 		globals: [
 			...createDiscoveryGlobals(callable, samples, options),
-			...(options.models && ctx ? createModelGlobals(ctx.modelRegistry, toolCallId, calls, publish) : []),
+			...(options.models && ctx
+				? createModelGlobals(ctx.modelRegistry, toolCallId, calls, publish, addModelUsage)
+				: []),
 		],
 		timeoutMs: sourceOptions.timeoutMs ?? Number.POSITIVE_INFINITY,
 		memoryLimitBytes: CODEMODE_MEMORY_LIMIT_BYTES,
@@ -306,6 +314,7 @@ export async function executeCodemode(
 	return {
 		content: [{ type: "text", text: header }, ...truncated.items],
 		details,
+		...(modelUsage ? { usage: modelUsage } : {}),
 		...(result.ok ? {} : { isError: true }),
 	};
 }
@@ -358,13 +367,15 @@ function createDiscoveryGlobals(
 
 /**
  * `models.*` for scripts: the model registry methods declared in {@link MODEL_GLOBAL_DECLARATIONS}.
- * Classifier calls appear as nested call rows so the renderer shows them.
+ * Classifier calls appear as nested call rows so the renderer shows them, and their usage goes to
+ * `addUsage`.
  */
 function createModelGlobals(
 	models: CodemodeModelRuntime,
 	toolCallId: string,
 	calls: CodemodeNestedCall[],
 	publish: () => void,
+	addUsage: (usage: Usage) => void,
 ): CodemodeTool[] {
 	const limit = createLimiter(MAX_CONCURRENT_MODEL_CALLS);
 	let classifyCount = 0;
@@ -416,6 +427,10 @@ function createModelGlobals(
 			record.durationMs = performance.now() - startedAt;
 			record.status = result.stopReason === "stop" ? "ok" : result.stopReason === "aborted" ? "cancelled" : "error";
 			if (result.errorMessage) record.error = truncateText(result.errorMessage, ERROR_PREVIEW_CHARS);
+			if (result.usage) {
+				record.cost = result.usage.cost.total;
+				addUsage(result.usage);
+			}
 			publish();
 			return result;
 		},

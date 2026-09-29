@@ -18,6 +18,7 @@ import type {
 	Storage,
 	StorageWrite,
 	SubmissionId,
+	SubmissionQuery,
 	TaskId,
 	TaskQuery,
 	TaskRecord,
@@ -351,6 +352,10 @@ export class JsonlStorage implements Storage {
 
 	async submission(id: SubmissionId, context: Context) {
 		return this.store.submission(id, context);
+	}
+
+	async scanSubmissions(query: SubmissionQuery, limit: number, cursor: Cursor | undefined, context: Context) {
+		return this.store.scanSubmissions(query, limit, cursor, context);
 	}
 
 	async submissionByRequest(conversationId: ConversationId, requestId: string, context: Context) {

@@ -14,8 +14,9 @@ async function sourceGraph(entry: string): Promise<Set<string>> {
 		visited.add(path);
 		const source = await readFile(path, "utf8");
 		expect(source, `${path} imports a Node built-in`).not.toMatch(/(?:from\s+|import\s*)["']node:/);
-		for (const match of source.matchAll(/(?:from\s+|import\s*)["'](\.[^"']+)["']/g)) {
-			pending.push(resolve(dirname(path), match[1]));
+		// Type-only imports are erased and load nothing.
+		for (const match of source.matchAll(/\b(import|export)(\s+type\b)?[^;"']*?(?:from\s*)?["'](\.[^"']+)["']/g)) {
+			if (match[2] === undefined) pending.push(resolve(dirname(path), match[3]));
 		}
 	}
 	return visited;

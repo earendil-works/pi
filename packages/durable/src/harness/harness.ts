@@ -1,7 +1,9 @@
-import type { Context, Draft, JsonValue } from "@earendil-works/chord";
+import type { AttachedReplicatedState, Context, Draft, JsonValue } from "@earendil-works/chord";
 import { withoutAbortSignal } from "@earendil-works/chord/context";
 import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
+import { ResetEntry } from "../entries.ts";
 import { SessionImpl } from "../session/session.ts";
+import type { Transaction } from "../session/transaction.ts";
 import type {
 	ConversationId,
 	ConversationOwnership,
@@ -12,27 +14,44 @@ import type {
 	EntryRecord,
 	Page,
 	Storage,
+	SubmissionId,
 	TaskId,
 	TaskRecord,
 	Tx,
+	WatchHandle,
 } from "../types.ts";
 import { ROOT_CONVERSATION_ID } from "../types.ts";
-import { ConversationConfig, type ConversationConfigState } from "./config.ts";
-import { captureContextBounds, deriveContext } from "./context.ts";
+import { ConversationConfig, type ConversationConfigState, DEFAULT_RETRY_POLICY } from "./config.ts";
+import { readContext } from "./context.ts";
+import { settleSchedulerOutcome } from "./live.ts";
+import { BUILTIN_SETUP_KEY, BUILTIN_TASKS } from "./registry.ts";
 import { TaskScheduler } from "./scheduler.ts";
+import { Submissions } from "./submissions.ts";
 import type {
 	ContextView,
 	Conversation,
 	ConversationCreateOptions,
 	ConversationInit,
+	ConversationRetryPolicy,
+	ConversationStreamOptions,
+	HarnessInspection,
 	HarnessOptions,
 	Harness as HarnessType,
 	ModelRef,
+	QueueMode,
 	RegistryReader,
 	RegistrySnapshot,
 	SettledTask,
+	Submission,
+	SubmissionDraft,
+	ToolExecutionMode,
 	ToolRegistration,
 } from "./types.ts";
+import { addUsageState, UsageDoc, type UsageState } from "./usage.ts";
+import { scanAll } from "./util.ts";
+import { type ConversationView, ConversationViews } from "./view.ts";
+
+const SCAN_PAGE_SIZE = 256;
 
 type CreateTarget =
 	| { readonly kind: "root" }
@@ -50,6 +69,9 @@ type ConversationHost<Tool extends ToolRegistration> = {
 	readonly storage: Storage;
 	readonly registry: RegistryReader<Tool>;
 	readonly tasks: TaskScheduler;
+	readonly submissions: Submissions;
+	readonly views: ConversationViews;
+	readonly now: () => number;
 	create(target: CreateTarget, init: ConversationInit | undefined, context: Context): Promise<Conversation>;
 };
 
@@ -95,14 +117,79 @@ class ConversationImpl<Tool extends ToolRegistration> implements Conversation {
 		}, context);
 	}
 
-	commit<T>(change: (tx: Tx) => T | Promise<T>, context: Context): Promise<T> {
-		return this.#host.harness.commitWith(change, context, this.id);
+	async getStreamOptions(context: Context): Promise<ConversationStreamOptions> {
+		return (await this.#config(context)).streamOptions ?? {};
 	}
 
-	async context(context: Context): Promise<ContextView> {
-		const storage = this.#host.storage;
-		const bounds = await this.#host.harness.readOnLine(() => captureContextBounds(storage, this.id, context));
-		return deriveContext(storage, this.id, bounds, context);
+	setStreamOptions(options: ConversationStreamOptions, context: Context): Promise<void> {
+		return this.#editConfig((config) => {
+			config.streamOptions = options;
+		}, context);
+	}
+
+	async getRetryPolicy(context: Context): Promise<ConversationRetryPolicy> {
+		return (await this.#config(context)).retry ?? { ...DEFAULT_RETRY_POLICY };
+	}
+
+	setRetryPolicy(policy: ConversationRetryPolicy | undefined, context: Context): Promise<void> {
+		return this.#editConfig((config) => {
+			if (policy === undefined) delete config.retry;
+			else config.retry = policy;
+		}, context);
+	}
+
+	async getToolExecution(context: Context): Promise<ToolExecutionMode> {
+		return (await this.#config(context)).toolExecution ?? "parallel";
+	}
+
+	setToolExecution(mode: ToolExecutionMode | undefined, context: Context): Promise<void> {
+		return this.#editConfig((config) => {
+			if (mode === undefined) delete config.toolExecution;
+			else config.toolExecution = mode;
+		}, context);
+	}
+
+	async getSteeringMode(context: Context): Promise<QueueMode> {
+		return (await this.#config(context)).steeringMode ?? "one-at-a-time";
+	}
+
+	setSteeringMode(mode: QueueMode | undefined, context: Context): Promise<void> {
+		return this.#editConfig((config) => {
+			if (mode === undefined) delete config.steeringMode;
+			else config.steeringMode = mode;
+		}, context);
+	}
+
+	async getFollowUpMode(context: Context): Promise<QueueMode> {
+		return (await this.#config(context)).followUpMode ?? "one-at-a-time";
+	}
+
+	setFollowUpMode(mode: QueueMode | undefined, context: Context): Promise<void> {
+		return this.#editConfig((config) => {
+			if (mode === undefined) delete config.followUpMode;
+			else config.followUpMode = mode;
+		}, context);
+	}
+
+	submit(submission: SubmissionDraft, context: Context): Promise<Submission> {
+		return this.#host.submissions.submit(this.id, submission, context);
+	}
+
+	async reset(handoff: string | undefined, context: Context): Promise<void> {
+		const model =
+			handoff === undefined
+				? {}
+				: { model: [{ role: "user", content: handoff, timestamp: this.#host.now() } as const] };
+		const entry = { kind: ResetEntry.kind, head: "self", ...model } as const;
+		await this.#host.submissions.submit(this.id, { type: "write", entry }, context);
+	}
+
+	commit<T>(change: (tx: Tx) => T | Promise<T>, context: Context): Promise<T> {
+		return this.#host.harness.commitWith(change, context, { conversationId: this.id });
+	}
+
+	context(context: Context): Promise<ContextView> {
+		return readContext(this.#host.harness, this.#host.storage, this.id, context);
 	}
 
 	entries(
@@ -128,7 +215,16 @@ class ConversationImpl<Tool extends ToolRegistration> implements Conversation {
 	}
 
 	waitForIdle(context: Context): Promise<void> {
+		this.#host.tasks.resume();
 		return this.#host.tasks.waitForIdle(this.id, context);
+	}
+
+	viewState(context: Context): Promise<AttachedReplicatedState<ConversationView>> {
+		return this.#host.views.state(this.id, context);
+	}
+
+	watch(context: Context): Promise<WatchHandle<ConversationView>> {
+		return this.#host.views.watch(this.id, context);
 	}
 
 	async #config(context: Context): Promise<Readonly<ConversationConfigState>> {
@@ -151,26 +247,35 @@ class HarnessImpl<Tool extends ToolRegistration> extends SessionImpl implements 
 	readonly #registry: RegistryReader<Tool>;
 	readonly #host: ConversationHost<Tool>;
 	readonly #tasks: TaskScheduler;
+	readonly #submissions: Submissions;
+	readonly #snapshots = new WeakMap<Transaction, RegistrySnapshot<Tool>>();
 	#closed = false;
 
 	constructor(storage: Storage, options: HarnessOptions<Tool>, context: Context) {
 		super(storage);
 		this.#storage = storage;
 		this.#registry = options.registry;
+		const now = options.now ?? Date.now;
 		this.#tasks = new TaskScheduler({
 			session: this,
 			storage,
 			registry: options.registry,
 			models: options.models,
-			now: options.now ?? Date.now,
+			env: options.env,
+			now,
 			report: options.onReport ?? (() => {}),
+			settleOutcome: settleSchedulerOutcome,
 			context: withoutAbortSignal(context),
 		});
+		this.#submissions = new Submissions(this, storage, now, () => this.#tasks.resume());
 		this.#host = {
 			harness: this,
 			storage,
 			registry: options.registry,
 			tasks: this.#tasks,
+			submissions: this.#submissions,
+			views: new ConversationViews(this, storage),
+			now,
 			create: (target, init, context) => this.#create(target, init, context),
 		};
 	}
@@ -191,16 +296,54 @@ class HarnessImpl<Tool extends ToolRegistration> extends SessionImpl implements 
 		>;
 	}
 
+	inspect(context: Context): Promise<HarnessInspection> {
+		return this.readOnLine(async () => {
+			const snapshot = this.#registry.snapshot();
+			const { scheduling, tasks } = this.#tasks.inspect(snapshot);
+			const scan = (status: "queued" | "placed") =>
+				scanAll((cursor) => this.#storage.scanSubmissions({ status }, SCAN_PAGE_SIZE, cursor, context));
+			const submissions = [...(await scan("queued")), ...(await scan("placed"))].sort((a, b) => a.id - b.id);
+			return { scheduling, tasks, submissions, registry: snapshot.failures() };
+		});
+	}
+
+	submission(id: SubmissionId, context: Context): Promise<Submission | undefined> {
+		return this.#submissions.get(id, context);
+	}
+
+	abortSubmission(
+		id: SubmissionId,
+		context: Context,
+		conversationId?: ConversationId,
+	): Promise<"aborted" | "already_placed" | "settled" | "not_found"> {
+		return this.#submissions.abort(id, context, conversationId);
+	}
+
 	abortTask(id: TaskId, context: Context): Promise<"marked" | "terminal"> {
 		return this.#tasks.abort(id, context);
 	}
 
 	waitForTask<R>(id: TaskId<R>, context: Context): Promise<SettledTask<R>> {
+		this.#tasks.resume();
 		return this.#tasks.waitForTask(id, context) as Promise<SettledTask<R>>;
 	}
 
 	waitForIdle(context: Context): Promise<void> {
+		this.#tasks.resume();
 		return this.#tasks.waitForIdle(undefined, context);
+	}
+
+	/** Sum every conversation's committed `pi.usage`. Each document is read at its own point; totals only grow. */
+	async usage(context: Context): Promise<UsageState> {
+		const conversations = await this.readOnLine(() =>
+			scanAll((cursor) => this.#storage.scanConversations({}, SCAN_PAGE_SIZE, cursor, context)),
+		);
+		const total = UsageDoc.definition.initial();
+		for (const { id } of conversations) {
+			const state = await this.snapshot(UsageDoc, id, context);
+			if (state !== undefined) addUsageState(total, state);
+		}
+		return total;
 	}
 
 	root(context: Context, options?: { readonly init?: ConversationInit }): Promise<Conversation> {
@@ -229,40 +372,44 @@ class HarnessImpl<Tool extends ToolRegistration> extends SessionImpl implements 
 
 	async #create(target: CreateTarget, init: ConversationInit | undefined, context: Context): Promise<Conversation> {
 		this.#assertOpen();
-		const id =
-			target.kind === "root"
-				? await this.commitWith(async (tx) => {
-						if ((await tx.conversation(ROOT_CONVERSATION_ID)) !== undefined) return ROOT_CONVERSATION_ID;
-						return this.#stageConfiguration(tx, await tx.createRootConversation(), false, init);
-					}, context)
-				: await this.commitWith(async (tx) => {
-						const record =
-							target.kind === "fork"
-								? await tx.forkConversation(target.parentId, target.at, { ownership: target.ownership })
-								: await tx.createConversation({ ownership: target.ownership });
-						return this.#stageConfiguration(tx, record, target.kind === "fork", init);
-					}, context);
+		const id = await this.commitWith(async (tx) => {
+			if (target.kind === "root" && (await tx.conversation(ROOT_CONVERSATION_ID)) !== undefined) {
+				return ROOT_CONVERSATION_ID;
+			}
+			const record =
+				target.kind === "root"
+					? await tx.createRootConversation()
+					: target.kind === "fork"
+						? await tx.forkConversation(target.parentId, target.at, { ownership: target.ownership })
+						: await tx.createConversation({ ownership: target.ownership });
+			if (init !== undefined) await this.#runInit(tx, record.id, init);
+			return record.id;
+		}, context);
 		return new ConversationImpl(id, this.#host);
 	}
 
-	/**
-	 * Stage a new conversation's configuration and `init` writes. Independent conversations start with every
-	 * registered tool active; forks keep the configuration copied from their fork entry.
-	 */
-	async #stageConfiguration(
-		tx: Tx,
-		record: ConversationRecord,
-		forked: boolean,
-		init: ConversationInit | undefined,
-	): Promise<ConversationId> {
-		const snapshot = this.#registry.snapshot();
-		if (!forked) (await tx.doc(ConversationConfig, record.id)).activeTools = [...snapshot.toolNames()];
-		if (init === undefined) return record.id;
-		const baseline = [...(await tx.doc(ConversationConfig, record.id)).activeTools];
-		await init(tx, record.id);
-		// `init` writes are trusted like any raw write; only names it newly activates must be registered.
-		requireRegistered(snapshot, (await tx.doc(ConversationConfig, record.id)).activeTools, baseline);
-		return record.id;
+	/** Run every registered conversation setup, built-ins first, in each commit that creates or forks a conversation. */
+	protected override async conversationCreated(tx: Transaction, record: ConversationRecord): Promise<void> {
+		const snapshot = this.#snapshotOf(tx);
+		for (const { setup } of snapshot.conversationSetups()) await setup(tx, record, snapshot);
+	}
+
+	/** Run `init` in the creating commit; its writes are trusted, but names it newly activates must be registered. */
+	async #runInit(tx: Transaction, id: ConversationId, init: ConversationInit): Promise<void> {
+		const snapshot = this.#snapshotOf(tx);
+		const baseline = [...(await tx.doc(ConversationConfig, id)).activeTools];
+		await init(tx, id);
+		requireRegistered(snapshot, (await tx.doc(ConversationConfig, id)).activeTools, baseline);
+	}
+
+	/** One registry snapshot per commit, shared by its conversation setups and `init` checks. */
+	#snapshotOf(tx: Transaction): RegistrySnapshot<Tool> {
+		let snapshot = this.#snapshots.get(tx);
+		if (snapshot === undefined) {
+			snapshot = this.#registry.snapshot();
+			this.#snapshots.set(tx, snapshot);
+		}
+		return snapshot;
 	}
 
 	#assertOpen(): void {
@@ -293,6 +440,15 @@ export const Harness = {
 		context: Context,
 	): Promise<Harness> {
 		context.abortSignal?.throwIfAborted();
+		const snapshot = options.registry.snapshot();
+		const missing = BUILTIN_TASKS.filter((task) => snapshot.task(task.definition.name) === undefined).map(
+			(task) => `task ${task.definition.name}`,
+		);
+		if (!snapshot.conversationSetups().some(({ key }) => key === BUILTIN_SETUP_KEY))
+			missing.push("conversation setup pi");
+		if (missing.length > 0) {
+			throw new Error(`Registry lacks built-in ${missing.join(", ")}; create it with createRegistry()`);
+		}
 		const harness = new HarnessImpl(storage, options, context);
 		try {
 			await harness.openTasks(context);

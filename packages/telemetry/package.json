@@ -1,6 +1,6 @@
 {
 	"name": "@earendil-works/pi-telemetry",
-	"version": "0.87.1",
+	"version": "0.99.1",
 	"description": "Vendor-neutral telemetry contracts and typed schema utilities for pi",
 	"type": "module",
 	"main": "./dist/index.js",
@@ -42,6 +42,6 @@
 	},
 	"devDependencies": {
 		"@types/node": "22.19.19",
-		"vitest": "4.1.9"
+		"vitest": "4.1.11"
 	}
 }

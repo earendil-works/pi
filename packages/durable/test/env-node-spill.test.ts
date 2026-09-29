@@ -57,21 +57,27 @@ describe("NodeExecutionEnv spill backpressure", () => {
 			mkdirSync(root, { recursive: true });
 			tempDirs.push(root);
 			const env = new NodeExecutionEnv({ cwd: root });
-			// The shell exits after the first chunk crosses the capture limit and backpressures the spill. A background
+			// The shell exits after the first chunk crosses the spill threshold and backpressures the spill. A background
 			// descendant retains stdout and writes after the post-exit grace period. Without the pending-spill guard,
 			// settlement destroys stdout before that descendant output is read.
 			const command = "printf '%020d' 0 | tr 0 a; (sleep 0.2; printf '%01000d' 0 | tr 0 b) &";
 
+			let output = "";
 			const result = getOrThrow(
 				await env.exec(
 					command,
-					{ capture: { limits: { maxBytes: 10, maxLines: 10, retain: "tail" }, spill: true }, onUpdate: () => {} },
+					{
+						spill: { afterBytes: 10, afterLines: 10 },
+						onOutput: (text) => {
+							output += text;
+						},
+					},
 					BACKGROUND_CONTEXT,
 				),
 			);
 
 			expect(spill.rejectedWrites).toBeGreaterThan(0);
-			expect(result.truncation.totalBytes).toBe(1020);
+			expect(output).toHaveLength(1020);
 			expect(result.spillPath).toBeDefined();
 			tempDirs.push(join(result.spillPath!, ".."));
 			expect(getOrThrow(await env.readTextFile(result.spillPath!, BACKGROUND_CONTEXT))).toBe(

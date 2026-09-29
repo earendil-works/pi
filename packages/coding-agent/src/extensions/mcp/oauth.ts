@@ -12,6 +12,7 @@
 import { createHash } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { oauthErrorHtml, oauthSuccessHtml } from "@earendil-works/pi-ai/utils/oauth-page";
 import type { AuthProvider, McpFetch } from "@earendil-works/pi-mcp";
 import {
 	authorizeMcp,
@@ -19,6 +20,7 @@ import {
 	McpOAuthProvider,
 	type McpOAuthState,
 	type McpOAuthStateStore,
+	type OAuthCallbackPage,
 	OAuthCallbackServer,
 	type OAuthChallenge,
 	type OAuthClientInformationMixed,
@@ -346,7 +348,15 @@ async function listenForCallback(
 	port: number | undefined,
 	required: boolean,
 ): Promise<OAuthCallbackServer> {
-	const options = { host: settings.host, redirectHost: settings.redirectHost, path: settings.path };
+	const options = {
+		host: settings.host,
+		redirectHost: settings.redirectHost,
+		path: settings.path,
+		renderPage: (page: OAuthCallbackPage) =>
+			page.ok
+				? oauthSuccessHtml("Signed in to the MCP server. You may now close this page.")
+				: oauthErrorHtml(page.message, page.details),
+	};
 	try {
 		return await OAuthCallbackServer.listen({ ...options, port: port ?? 0 });
 	} catch (error) {

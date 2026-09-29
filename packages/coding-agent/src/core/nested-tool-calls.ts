@@ -2,7 +2,8 @@
  * Tool calls that a tool makes while it runs (`ctx.executeTool()`), for example from codemode
  * scripts. The agent loop does not know about them: the session runs each one through the agent's
  * tool pipeline (`runToolCall`) with its own hooks, emits `tool_execution_*` events with
- * `parentToolCallId`, and records the calls on the model-issued call's tool result message.
+ * `parentToolCallId`, and records the calls and their usage on the model-issued call's tool result
+ * message.
  *
  * Nothing here runs until a tool calls `ctx.executeTool()`.
  */
@@ -14,7 +15,8 @@ import type {
 	AgentToolResult,
 	AgentToolUpdateCallback,
 } from "@earendil-works/pi-agent-core";
-import type { JsonObject, NestedToolCallRecord, NestedToolCalls, TextContent } from "@earendil-works/pi-ai";
+import type { JsonObject, NestedToolCallRecord, NestedToolCalls, TextContent, Usage } from "@earendil-works/pi-ai";
+import { combineUsage } from "./usage-totals.ts";
 
 /**
  * Limits of the nested-call record on a tool result: arguments
@@ -30,6 +32,14 @@ export const NESTED_CALL_LIMITS = {
 
 const encoder = new TextEncoder();
 
+/** What the nested calls of one model-issued tool call leave on its tool result message. */
+export interface NestedCallSummary {
+	/** Becomes `nestedCalls`. Undefined when no nested call was made. */
+	calls: NestedToolCalls | undefined;
+	/** Summed `usage` of the nested results, added to the message's `usage`. */
+	usage: Usage | undefined;
+}
+
 /**
  * Collects the nested calls of one model-issued tool call, including calls made by nested tools.
  * The snapshot becomes `nestedCalls` on the tool result message.
@@ -39,6 +49,8 @@ export class NestedCallRecorder {
 	private readonly startedAt = new Map<NestedToolCallRecord, number>();
 	private complete = true;
 	private argumentBytes = 0;
+	/** Summed usage of every nested result, including calls dropped from the record. */
+	private usage: Usage | undefined;
 
 	/** Record a call as it starts. Returns undefined when the call is dropped. */
 	start(toolCall: AgentToolCall): NestedToolCallRecord | undefined {
@@ -70,6 +82,14 @@ export class NestedCallRecorder {
 		record.durationMs = Math.round(performance.now() - (this.startedAt.get(record) ?? performance.now()));
 		this.startedAt.delete(record);
 		if (isError && errorText) record.error = errorText.slice(0, NESTED_CALL_LIMITS.maxErrorChars);
+	}
+
+	addUsage(usage: Usage): void {
+		this.usage = this.usage ? combineUsage(this.usage, usage) : usage;
+	}
+
+	get totalUsage(): Usage | undefined {
+		return this.usage;
 	}
 
 	/** Copy of the record so far, or undefined when no nested call was made. */
@@ -214,6 +234,8 @@ export class NestedToolCallRunner {
 		}
 
 		scope.recorder.finish(record, outcome.isError, textOf(outcome.result));
+		// Nested results are not persisted, so their usage is only counted through the recorder.
+		if (outcome.result.usage) scope.recorder.addUsage(outcome.result.usage);
 		await this.host.emit({
 			type: "tool_execution_end",
 			toolCallId: toolCall.id,
@@ -226,10 +248,11 @@ export class NestedToolCallRunner {
 	}
 
 	/** Remove and return the record of the nested calls a model-issued call made. */
-	takeRecord(toolCallId: string): NestedToolCalls | undefined {
+	takeRecord(toolCallId: string): NestedCallSummary | undefined {
 		const scope = this.scopes.get(toolCallId);
 		this.scopes.delete(toolCallId);
-		return scope?.recorder.snapshot();
+		if (!scope) return undefined;
+		return { calls: scope.recorder.snapshot(), usage: scope.recorder.totalUsage };
 	}
 
 	clear(): void {

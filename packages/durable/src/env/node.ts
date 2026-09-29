@@ -34,12 +34,11 @@ import {
 	type TextLineReader,
 	toError,
 } from "./index.ts";
-import { OutputCapture } from "./utils/output-capture.ts";
 
 const MAX_TIMEOUT_MS = 2_147_483_647;
 const MAX_TIMEOUT_SECONDS = MAX_TIMEOUT_MS / 1000;
 const EXIT_STDIO_GRACE_MS = 100;
-const SPILL_HIGH_WATER_MARK = 8 * 1024 * 1024;
+const SPILL_HIGH_WATER_MARK = 1024 * 1024;
 
 type SpillChunk = string | Uint8Array;
 
@@ -505,17 +504,21 @@ export class NodeExecutionEnv implements ExecutionEnv {
 				callbackError = new ExecutionError("callback_error", cause.message, cause);
 				onAbort();
 			};
-			let capture: OutputCapture;
-			try {
-				capture = new OutputCapture(options?.capture, context, {
-					onUpdate: options?.onUpdate,
-					onError: failCallback,
-				});
-			} catch (error) {
-				const cause = toError(error);
-				resolvePromise(err(new ExecutionError("unknown", cause.message, cause)));
-				return;
-			}
+			// One decoder per stream, so a character split across chunks of one stream survives interleaving.
+			const stdoutDecoder = new TextDecoder();
+			const stderrDecoder = new TextDecoder();
+			// No output reaches the caller after exec() settled, for example from a descendant holding stdio open.
+			const emit = (text: string): void => {
+				if (settled || text === "" || options?.onOutput === undefined || callbackError !== undefined) return;
+				try {
+					options.onOutput(text, context);
+				} catch (error) {
+					failCallback(error);
+				}
+			};
+			// Output seen before the spill starts: counted against the thresholds and kept for the spill's prefix.
+			let seenBytes = 0;
+			let seenNewlines = 0;
 
 			const settle = (result: Result<ShellExecResult, ExecutionError>) => {
 				if (settled) return;
@@ -523,7 +526,6 @@ export class NodeExecutionEnv implements ExecutionEnv {
 				if (timeoutId) clearTimeout(timeoutId);
 				if (signal) signal.removeEventListener("abort", onAbort);
 				if (child?.pid) this.activeChildPids.delete(child.pid);
-				capture.dispose();
 				resolvePromise(result);
 			};
 			const pauseOutput = () => {
@@ -568,7 +570,6 @@ export class NodeExecutionEnv implements ExecutionEnv {
 					const created = await this.createTempFile({ prefix: "pi-output-", suffix: ".log" }, context);
 					if (!created.ok) throw created.error;
 					spillPath = created.value;
-					capture.setSpillPath(spillPath);
 					spillStream = createWriteStream(spillPath, { flags: "a", highWaterMark: SPILL_HIGH_WATER_MARK });
 					spillStream.on("error", failSpill);
 					for (const queued of spillQueue) writeSpill(queued);
@@ -625,26 +626,27 @@ export class NodeExecutionEnv implements ExecutionEnv {
 				else signal.addEventListener("abort", onAbort, { once: true });
 			}
 
-			const feed = (chunk: Uint8Array) => {
-				try {
-					const wasTruncated = capture.truncated;
-					capture.push(chunk);
-					if (!options?.capture?.spill || chunk.length === 0) return;
-					if (spillPath !== undefined || wasTruncated) {
-						startSpill(chunk);
-					} else if (capture.truncated) {
-						for (const prefix of spillPrefix) startSpill(prefix);
-						spillPrefix.length = 0;
-						startSpill(chunk);
-					} else {
-						spillPrefix.push(chunk);
-					}
-				} catch (error) {
-					failCallback(error);
+			const feed = (decoder: InstanceType<typeof TextDecoder>) => (chunk: Uint8Array) => {
+				emit(decoder.decode(chunk, { stream: true }));
+				const spill = options?.spill;
+				if (spill === undefined || chunk.length === 0) return;
+				if (spillStart !== undefined) {
+					startSpill(chunk);
+					return;
 				}
+				seenBytes += chunk.length;
+				for (let index = chunk.indexOf(0x0a); index !== -1; index = chunk.indexOf(0x0a, index + 1)) seenNewlines++;
+				const lines = seenNewlines + (chunk[chunk.length - 1] === 0x0a ? 0 : 1);
+				if (seenBytes <= spill.afterBytes && lines <= spill.afterLines) {
+					spillPrefix.push(chunk);
+					return;
+				}
+				for (const prefix of spillPrefix) startSpill(prefix);
+				spillPrefix.length = 0;
+				startSpill(chunk);
 			};
-			child.stdout?.on("data", feed);
-			child.stderr?.on("data", feed);
+			child.stdout?.on("data", feed(stdoutDecoder));
+			child.stderr?.on("data", feed(stderrDecoder));
 
 			void waitForChildProcess(
 				child,
@@ -655,41 +657,31 @@ export class NodeExecutionEnv implements ExecutionEnv {
 			).then(
 				async ({ code, signal: exitSignal }) => {
 					await finishSpill();
-					try {
-						capture.finish();
-						capture.flush();
-					} catch (error) {
-						failCallback(error);
-					}
+					emit(stdoutDecoder.decode());
+					emit(stderrDecoder.decode());
 					if (callbackError) {
 						settle(err(callbackError));
 						return;
 					}
-					if (timedOut) {
-						settle(err(new ExecutionError("timeout", `timeout:${options?.timeout}`)));
-						return;
-					}
-					if (signal?.aborted) {
-						settle(err(new ExecutionError("aborted", "aborted")));
+					const interrupted = timedOut
+						? new ExecutionError("timeout", `timeout:${options?.timeout}`)
+						: signal?.aborted
+							? new ExecutionError("aborted", "aborted")
+							: undefined;
+					if (interrupted !== undefined) {
+						if (spillPath !== undefined) interrupted.spillPath = spillPath;
+						settle(err(interrupted));
 						return;
 					}
 					if (spillError) {
 						settle(err(spillError));
 						return;
 					}
-					const output = capture.snapshot();
 					// A process killed by a signal (e.g. OOM killer) has no exit code; map it
 					// to the conventional 128 + signal number so callers do not mistake it
 					// for a successful exit.
 					const exitCode = code ?? (exitSignal ? 128 + (osConstants.signals[exitSignal] ?? 0) : 1);
-					settle(
-						ok({
-							exitCode,
-							truncation: output.truncation,
-							...(output.spillPath === undefined ? {} : { spillPath: output.spillPath }),
-							...(output.lastLineBytes === undefined ? {} : { lastLineBytes: output.lastLineBytes }),
-						}),
-					);
+					settle(ok({ exitCode, ...(spillPath === undefined ? {} : { spillPath }) }));
 				},
 				(error: Error) => settle(err(new ExecutionError("spawn_error", error.message, error))),
 			);

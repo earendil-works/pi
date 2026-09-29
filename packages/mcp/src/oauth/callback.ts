@@ -6,6 +6,9 @@ export interface OAuthCallback {
 	iss?: string;
 }
 
+/** Outcome shown on the browser page after the redirect. */
+export type OAuthCallbackPage = { ok: true } | { ok: false; message: string; details?: string };
+
 export interface OAuthCallbackServerOptions {
 	/** Address to listen on. Default: `127.0.0.1`. */
 	host?: string;
@@ -17,10 +20,13 @@ export interface OAuthCallbackServerOptions {
 	port?: number;
 	path?: string;
 	timeoutMs?: number;
+	/** Render the browser page as HTML. Default: a plain-text message. */
+	renderPage?: (page: OAuthCallbackPage) => string;
 }
 
-function reply(response: ServerResponse, status: number, text: string): void {
-	response.writeHead(status, { "content-type": "text/plain; charset=utf-8" }).end(text);
+function plainText(page: OAuthCallbackPage): string {
+	if (page.ok) return "Authorization complete. You may close this window.";
+	return page.details ? `${page.message}\n\n${page.details}` : page.message;
 }
 
 export class OAuthCallbackServer {
@@ -28,6 +34,7 @@ export class OAuthCallbackServer {
 	private server: Server;
 	private path: string;
 	private timeoutMs: number;
+	private renderPage: ((page: OAuthCallbackPage) => string) | undefined;
 	private pending = new Map<
 		string,
 		{
@@ -37,11 +44,18 @@ export class OAuthCallbackServer {
 		}
 	>();
 
-	private constructor(server: Server, redirectUrl: string, path: string, timeoutMs: number) {
+	private constructor(
+		server: Server,
+		redirectUrl: string,
+		path: string,
+		timeoutMs: number,
+		renderPage: ((page: OAuthCallbackPage) => string) | undefined,
+	) {
 		this.server = server;
 		this.redirectUrl = redirectUrl;
 		this.path = path;
 		this.timeoutMs = timeoutMs;
+		this.renderPage = renderPage;
 	}
 
 	static async listen(options: OAuthCallbackServerOptions = {}): Promise<OAuthCallbackServer> {
@@ -64,6 +78,7 @@ export class OAuthCallbackServer {
 			`http://${redirectHost.includes(":") ? `[${redirectHost}]` : redirectHost}:${address.port}${path}`,
 			path,
 			options.timeoutMs ?? 5 * 60_000,
+			options.renderPage,
 		);
 		return instance;
 	}
@@ -90,34 +105,48 @@ export class OAuthCallbackServer {
 		});
 	}
 
+	private reply(response: ServerResponse, status: number, page: OAuthCallbackPage): void {
+		if (this.renderPage) {
+			response.writeHead(status, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
+			response.end(this.renderPage(page));
+		} else {
+			response.writeHead(status, { "content-type": "text/plain; charset=utf-8" }).end(plainText(page));
+		}
+	}
+
 	private handle(rawUrl: string, response: ServerResponse): void {
 		const url = new URL(rawUrl, this.redirectUrl);
 		if (url.pathname !== this.path) {
-			reply(response, 404, "Not found");
+			this.reply(response, 404, { ok: false, message: "Not found" });
 			return;
 		}
 		const state = url.searchParams.get("state");
 		const pending = state ? this.pending.get(state) : undefined;
 		if (!state || !pending) {
-			reply(response, 400, "Invalid or expired OAuth state");
+			this.reply(response, 400, { ok: false, message: "Invalid or expired OAuth state" });
 			return;
 		}
 		clearTimeout(pending.timer);
 		this.pending.delete(state);
 		const error = url.searchParams.get("error");
 		if (error) {
-			pending.reject(new Error(url.searchParams.get("error_description") ?? error));
-			reply(response, 200, "Authorization failed. You may close this window.");
+			const description = url.searchParams.get("error_description") ?? error;
+			pending.reject(new Error(description));
+			this.reply(response, 200, {
+				ok: false,
+				message: "Authorization failed. You may close this window.",
+				details: description,
+			});
 			return;
 		}
 		const code = url.searchParams.get("code");
 		if (!code) {
 			pending.reject(new Error("OAuth callback did not include an authorization code"));
-			reply(response, 400, "Missing authorization code");
+			this.reply(response, 400, { ok: false, message: "Missing authorization code" });
 			return;
 		}
 		const iss = url.searchParams.get("iss");
 		pending.resolve({ code, state, ...(iss ? { iss } : {}) });
-		reply(response, 200, "Authorization complete. You may close this window.");
+		this.reply(response, 200, { ok: true });
 	}
 }
