@@ -62,12 +62,50 @@ describe.sequential("Anthropic OAuth", () => {
 				if (event.type === "auth_url") authUrl = event.url;
 			},
 			prompt: async (prompt) => {
+				if (prompt.type === "select") return "browser";
 				if (prompt.type !== "manual_code") throw new Error(`Unexpected prompt: ${prompt.type}`);
 				const url = new URL(authUrl);
 				const state = url.searchParams.get("state");
 				const redirectUri = url.searchParams.get("redirect_uri");
 				if (!state || !redirectUri) throw new Error("Missing OAuth state or redirect_uri in auth URL");
 				return `${redirectUri}?code=manual-code&state=${state}`;
+			},
+		});
+
+		expect(credentials.access).toBe("access-token");
+		expect(credentials.refresh).toBe("refresh-token");
+		expect(fetchMock).toHaveBeenCalledOnce();
+	});
+
+	it("uses Anthropic's copy-code page as redirect_uri for copy code login", async () => {
+		let authUrl = "";
+		const fetchMock = vi.fn(async (input: unknown, init?: RequestInit): Promise<Response> => {
+			expect(getUrl(input)).toBe("https://platform.claude.com/v1/oauth/token");
+			const body = getJsonBody(init);
+			expect(body.grant_type).toBe("authorization_code");
+			expect(body.code).toBe("copied-code");
+			expect(body.state).toBe(new URL(authUrl).searchParams.get("state"));
+			expect(body.redirect_uri).toBe("https://platform.claude.com/oauth/code/callback");
+			return jsonResponse({
+				access_token: "access-token",
+				refresh_token: "refresh-token",
+				expires_in: 3600,
+			});
+		});
+		vi.stubGlobal("fetch", fetchMock);
+
+		const credentials = await anthropicOAuth.login({
+			signal: neverAbortedSignal,
+			notify: (event) => {
+				if (event.type === "auth_url") authUrl = event.url;
+			},
+			prompt: async (prompt) => {
+				if (prompt.type === "select") return "copy_code";
+				if (prompt.type !== "manual_code") throw new Error(`Unexpected prompt: ${prompt.type}`);
+				expect(new URL(authUrl).searchParams.get("redirect_uri")).toBe(
+					"https://platform.claude.com/oauth/code/callback",
+				);
+				return `copied-code#${new URL(authUrl).searchParams.get("state")}`;
 			},
 		});
 
@@ -127,6 +165,7 @@ describe.sequential("Anthropic OAuth", () => {
 			notify: (event) => events.push(event),
 			prompt: async (prompt) => {
 				prompts.push(prompt);
+				if (prompt.type === "select") return "browser";
 				if (prompt.type === "manual_code") {
 					manualSignal = prompt.signal;
 					return "the-code";
@@ -164,9 +203,11 @@ describe.sequential("Anthropic OAuth", () => {
 				callbackPage = nativeFetch(`http://127.0.0.1:53692/callback?code=browser-code&state=${state}`);
 			},
 			prompt: (prompt) =>
-				new Promise((_, reject) => {
-					prompt.signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
-				}),
+				prompt.type === "select"
+					? Promise.resolve("browser")
+					: new Promise((_, reject) => {
+							prompt.signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+						}),
 		});
 
 		expect(credential.access).toBe("access");
