@@ -2,11 +2,11 @@
 
 Pi supports the [llama.cpp](https://github.com/ggml-org/llama.cpp) router server. The router discovers multiple GGUF models and loads or unloads them on demand.
 
-Use a current llama.cpp build with router support. Follow the [build instructions](https://github.com/ggml-org/llama.cpp/blob/master/docs/build.md) or install a [prebuilt release](https://github.com/ggml-org/llama.cpp/releases) for your platform.
+Use a current llama.cpp build with router support. Follow the [build instructions](https://github.com/ggml-org/llama.cpp/blob/master/docs/build.md) or install the prebuilt binary easily by running `curl -LsSf https://llama.app/install.sh | sh`.
 
 ## Start the router
 
-Start `llama-server` without `--model` or `-m`. Passing a model starts single-model mode instead of router mode.
+Start `llama serve` without `-hf`, `--model` or `-m`. Passing a model starts single-model mode instead of router mode.
 
 ```bash
 llama serve \
