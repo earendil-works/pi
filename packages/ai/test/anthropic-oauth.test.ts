@@ -77,7 +77,11 @@ describe.sequential("Anthropic OAuth", () => {
 		expect(fetchMock).toHaveBeenCalledOnce();
 	});
 
-	it("uses Anthropic's copy-code page as redirect_uri for copy code login", async () => {
+	it("offers browser login first and uses the selected Anthropic copy code flow", async () => {
+		const selectPrompts: Array<{
+			message: string;
+			options: readonly { id: string; label: string }[];
+		}> = [];
 		let authUrl = "";
 		const fetchMock = vi.fn(async (input: unknown, init?: RequestInit): Promise<Response> => {
 			expect(getUrl(input)).toBe("https://platform.claude.com/v1/oauth/token");
@@ -100,18 +104,41 @@ describe.sequential("Anthropic OAuth", () => {
 				if (event.type === "auth_url") authUrl = event.url;
 			},
 			prompt: async (prompt) => {
-				if (prompt.type === "select") return "copy_code";
+				if (prompt.type === "select") {
+					selectPrompts.push(prompt);
+					return "copy_code";
+				}
 				if (prompt.type !== "manual_code") throw new Error(`Unexpected prompt: ${prompt.type}`);
-				expect(new URL(authUrl).searchParams.get("redirect_uri")).toBe(
-					"https://platform.claude.com/oauth/code/callback",
-				);
 				return `copied-code#${new URL(authUrl).searchParams.get("state")}`;
 			},
 		});
 
 		expect(credentials.access).toBe("access-token");
 		expect(credentials.refresh).toBe("refresh-token");
+		expect(new URL(authUrl).searchParams.get("redirect_uri")).toBe("https://platform.claude.com/oauth/code/callback");
 		expect(fetchMock).toHaveBeenCalledOnce();
+		expect(selectPrompts).toEqual([
+			{
+				type: "select",
+				message: "Select Anthropic login method:",
+				options: [
+					{ id: "browser", label: "Browser login (default)" },
+					{ id: "copy_code", label: "Copy code login (headless)" },
+				],
+			},
+		]);
+	});
+
+	it("cancels when Anthropic login method selection is cancelled", async () => {
+		await expect(
+			anthropicOAuth.login({
+				signal: neverAbortedSignal,
+				prompt: async () => {
+					throw new Error("Login cancelled");
+				},
+				notify: () => {},
+			}),
+		).rejects.toThrow("Login cancelled");
 	});
 
 	it("omits scope from refresh token requests", async () => {

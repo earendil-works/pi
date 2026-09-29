@@ -18,7 +18,6 @@ const CALLBACK_HOST = getProviderEnvValue("PI_OAUTH_CALLBACK_HOST") || "127.0.0.
 const CALLBACK_PORT = 53692;
 const CALLBACK_PATH = "/callback";
 const REDIRECT_URI = `http://localhost:${CALLBACK_PORT}${CALLBACK_PATH}`;
-// Anthropic's page that shows the authorization code to copy, for browsers on another machine.
 const COPY_CODE_REDIRECT_URI = "https://platform.claude.com/oauth/code/callback";
 const ANTHROPIC_BROWSER_LOGIN_METHOD = "browser";
 const ANTHROPIC_COPY_CODE_LOGIN_METHOD = "copy_code";
