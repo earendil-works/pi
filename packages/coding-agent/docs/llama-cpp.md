@@ -24,7 +24,6 @@ Start `llama serve` without `--model`, `-m`, or `-hf`. Passing a model starts si
 
 ```bash
 llama serve \
-  --models-dir ~/models \
   --no-models-autoload \
   --jinja \
   --host 127.0.0.1 \
@@ -35,7 +34,6 @@ llama serve \
 
 Important options:
 
-- `--models-dir ~/models` discovers local GGUF files.
 - `--no-models-autoload` keeps loading explicit through `/llama`.
 - `--jinja` enables compatible chat templates and tool calling.
 - `-ngl all` offloads all layers to the GPU. Omit it to use automatic GPU offloading.
