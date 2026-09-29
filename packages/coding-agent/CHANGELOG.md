@@ -34,6 +34,7 @@
 - Fixed the OpenCode Go default model pointing at the removed Kimi K2.6 model; it now defaults to Kimi K3.
 - Fixed the Together default model pointing at the removed Kimi K2.6 model; it now defaults to Kimi K3.
 - Reduced CPU use while streaming in long sessions and when previewing themes: the footer caches session usage totals, collapsed bash results cache their preview, and `sanitizeBinaryOutput()` no longer splits output into per-character arrays.
+- Fixed new sessions intermittently ignoring the saved default model, or warning that no models are available, when it belongs to an extension-registered native provider with a stored credential ([#9962](https://github.com/earendil-works/pi/issues/9962)).
 
 ## [0.87.1] - 2026-09-22
 

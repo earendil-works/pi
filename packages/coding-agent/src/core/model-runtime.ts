@@ -879,7 +879,35 @@ export class ModelRuntime implements Models {
 		this.nativeExtensionProviders.set(provider.id, provider);
 		this.recomposeProvider(provider.id);
 		this.updateModelSnapshot();
+		this.markProvisionallyConfigured(
+			provider.id,
+			configuredRequestAuthStatus(this.config.getProvider(provider.id), undefined),
+			provider.auth.oauth && !provider.auth.apiKey ? "oauth" : "api_key",
+		);
 		void this.refresh({ allowNetwork: false });
+	}
+
+	/**
+	 * Mark a newly registered provider as configured when it has a stored credential or a configured
+	 * API key. Availability checks run asynchronously, and callers such as initial model selection
+	 * read the snapshot before they finish. The next availability pass replaces this entry.
+	 */
+	private markProvisionallyConfigured(
+		providerId: string,
+		configuredStatus: AuthStatus | undefined,
+		type: AuthType,
+	): void {
+		if (!this.snapshot.storedProviders.has(providerId) && !configuredStatus?.configured) return;
+		const configuredProviders = new Set(this.snapshot.configuredProviders).add(providerId);
+		const auth = new Map(this.snapshot.auth);
+		// Never clobber a real check result.
+		if (!auth.get(providerId)) auth.set(providerId, { type, source: "configured provider" });
+		this.snapshot = {
+			...this.snapshot,
+			auth,
+			configuredProviders,
+			available: this.snapshot.all.filter((model) => configuredProviders.has(model.provider)),
+		};
 	}
 
 	registerProvider(providerId: string, config: ProviderConfigInput): void {
@@ -897,26 +925,11 @@ export class ModelRuntime implements Models {
 		this.extensionProviders.set(providerId, effective);
 		this.recomposeProvider(providerId);
 		this.updateModelSnapshot();
-		if (
-			this.snapshot.storedProviders.has(providerId) ||
-			configuredRequestAuthStatus(this.config.getProvider(providerId), effective)?.configured
-		) {
-			const configuredProviders = new Set(this.snapshot.configuredProviders).add(providerId);
-			const auth = new Map(this.snapshot.auth);
-			// Provisional entry until the async refresh lands; never clobber a real check result.
-			if (!auth.get(providerId)) {
-				auth.set(providerId, {
-					type: effective.oauth && !effective.apiKey ? "oauth" : "api_key",
-					source: "configured provider",
-				});
-			}
-			this.snapshot = {
-				...this.snapshot,
-				auth,
-				configuredProviders,
-				available: this.snapshot.all.filter((model) => configuredProviders.has(model.provider)),
-			};
-		}
+		this.markProvisionallyConfigured(
+			providerId,
+			configuredRequestAuthStatus(this.config.getProvider(providerId), effective),
+			effective.oauth && !effective.apiKey ? "oauth" : "api_key",
+		);
 		void this.refresh({ allowNetwork: false });
 	}
 
