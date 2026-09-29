@@ -14,6 +14,7 @@ import { afterEach, beforeEach, describe, it } from "vitest";
 import type { CompactionPreparation } from "../../../coding-agent/src/core/compaction/compaction.ts";
 import { compact, generateSummaryWithUsage } from "../../src/compaction/compact.ts";
 import { isAutoCompactBreakerTripped, resetAutoCompactBreaker } from "../../src/context/detection.ts";
+import { hasNoReasoning } from "../../src/reasoning/effort.ts";
 
 const MODEL = {
 	id: "faux-1",
@@ -50,12 +51,13 @@ const SUMMARY_TEXT =
 
 interface RecordedCall {
 	context: TranscriptContext;
+	options: Record<string, unknown>;
 }
 
 /** Fake streamFn: replays queued outcomes (message or thrown error) and records calls. */
 function fakeStreamFn(outcomes: Array<AssistantMessage | Error>, calls: RecordedCall[]) {
-	return (async (_model: Model<any>, context: TranscriptContext, _options?: unknown) => {
-		calls.push({ context });
+	return (async (_model: Model<any>, context: TranscriptContext, options?: Record<string, unknown>) => {
+		calls.push({ context, options: options ?? {} });
 		const outcome = outcomes.shift();
 		if (!outcome) throw new Error("fake streamFn ran out of queued outcomes");
 		if (outcome instanceof Error) throw outcome;
@@ -485,6 +487,24 @@ describe("compact", () => {
 			/incomplete/,
 		);
 	});
+
+	it("throws when the model reply was aborted mid-generation", async () => {
+		const calls: RecordedCall[] = [];
+		await assert.rejects(
+			() =>
+				compact(
+					preparation(),
+					MODEL,
+					undefined,
+					undefined,
+					undefined,
+					undefined,
+					undefined,
+					fakeStreamFn([assistantMessage("partial", "aborted")], calls),
+				),
+			/aborted/,
+		);
+	});
 });
 
 describe("generateSummaryWithUsage", () => {
@@ -505,5 +525,23 @@ describe("generateSummaryWithUsage", () => {
 		const prompt = requestText(calls[0]);
 		assert.ok(prompt.includes("<previous-summary>\nOLD SUMMARY\n</previous-summary>"));
 		assert.ok(prompt.includes("Merge it into your new summary"));
+	});
+
+	it("never applies the session thinking level: no reasoning, flagged no-reasoning", async () => {
+		const calls: RecordedCall[] = [];
+		await generateSummaryWithUsage(
+			[userMessage("hi")],
+			MODEL,
+			16_384,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			"high",
+			fakeStreamFn([assistantMessage(SUMMARY_TEXT)], calls),
+		);
+		assert.equal("reasoning" in calls[0].options, false);
+		assert.equal(hasNoReasoning(calls[0].options), true);
 	});
 });

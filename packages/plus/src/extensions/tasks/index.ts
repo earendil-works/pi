@@ -24,7 +24,10 @@ export const TASKS_SECTION_NAME = "tasks";
 /**
  * Nudge the model to actually use the task tools: without a system-prompt
  * mention they sit unused, and also surfaces the current list so a resumed
- * session can pick up where it left off.
+ * session can pick up where it left off. The tool signatures are spelled out
+ * explicitly because extension tools have no snippet in the <tools> section —
+ * without this the model has to discover them blind (flash-tier models in
+ * particular just ignore the nudge and plow ahead with one tool at a time).
  */
 export function buildTasksSection(tasks: Task[]): string {
 	let section =
@@ -32,7 +35,14 @@ export function buildTasksSection(tasks: Task[]): string {
 		"with TaskCreate up front (typically 2-5 tasks covering the whole job). Mark a task " +
 		"in_progress when you start it and completed immediately when it finishes. Use " +
 		"TaskUpdate for corrections and blocks/blockedBy when order matters; check state " +
-		"with TaskList. Do not create tasks for trivial single-step requests.";
+		"with TaskList. Do not create tasks for trivial single-step requests.\n" +
+		"Available tools:\n" +
+		"- TaskCreate({ subject, description, activeForm?, owner? }) — create a task; subject is a short " +
+		'imperative ("Fix auth bug"), activeForm is the progress display ("Fixing auth bug")\n' +
+		"- TaskUpdate({ taskId, status?, subject?, description?, activeForm?, addBlocks?, addBlockedBy?, owner? }) — " +
+		"status is pending | in_progress | completed | deleted (deleted removes); task ids are numeric strings\n" +
+		"- TaskList({}) — list all tasks with ids and statuses\n" +
+		"- TaskGet({ taskId }) — full details of one task";
 	if (tasks.length > 0) {
 		section += `\n\nCurrent tasks:\n${tasks.map(formatTaskLine).join("\n")}`;
 	}

@@ -10,9 +10,11 @@ import {
 	clampBudgetsToModel,
 	detectUltrathink,
 	effortToThinkingLevel,
+	hasNoReasoning,
 	isAdaptiveThinkingDisabled,
 	isAlwaysEnableEffort,
 	isThinkingDisabled,
+	markNoReasoning,
 	resolveAppliedEffort,
 	resolveDefaultThinkingLevelFromEnv,
 	resolveThinkingBudgetsFromEnv,
@@ -53,6 +55,15 @@ function contextWithLastUser(text: string): TranscriptContext {
 			{ role: "user", content: [{ type: "text", text }], timestamp: 3 },
 		],
 	} as unknown as TranscriptContext;
+}
+
+/** Capture the options (and optionally model) a wrapped StreamFn would receive. */
+function captureStreamFn(captured: SimpleStreamOptions[], models?: Model<any>[]): StreamFn {
+	return ((model: Model<any>, _context: TranscriptContext, options?: SimpleStreamOptions) => {
+		models?.push(model);
+		captured.push(options ?? {});
+		return "SENTINEL" as unknown as ReturnType<StreamFn>;
+	}) as StreamFn;
 }
 
 const ENV_KEYS = [
@@ -229,15 +240,55 @@ describe("detectUltrathink", () => {
 	});
 });
 
-describe("wrapStreamFn", () => {
-	function captureStreamFn(captured: SimpleStreamOptions[], models?: Model<any>[]): StreamFn {
-		return ((model: Model<any>, _context: TranscriptContext, options?: SimpleStreamOptions) => {
-			models?.push(model);
-			captured.push(options ?? {});
-			return "SENTINEL" as unknown as ReturnType<StreamFn>;
-		}) as StreamFn;
-	}
+describe("no-reasoning flag", () => {
+	it("hasNoReasoning is false for plain, undefined, and null options", () => {
+		assert.equal(hasNoReasoning({}), false);
+		assert.equal(hasNoReasoning(undefined), false);
+		assert.equal(hasNoReasoning(null), false);
+	});
 
+	it("markNoReasoning flags the options object it returns", () => {
+		assert.equal(hasNoReasoning(markNoReasoning({ maxTokens: 100 })), true);
+	});
+
+	it("survives the object spreads pi performs on request options", () => {
+		const flagged = markNoReasoning({ maxTokens: 100, reasoning: "high" });
+		const spread = { ...flagged, cacheRetention: "none" };
+		assert.equal(hasNoReasoning(spread), true);
+	});
+
+	it("strips reasoning even when the session level is high", () => {
+		const captured: SimpleStreamOptions[] = [];
+		wrapStreamFn(captureStreamFn(captured), () => "high")(makeModel(), contextWithLastUser("hi"), {
+			...markNoReasoning({}),
+		});
+		assert.equal("reasoning" in captured[0], false);
+	});
+
+	it("strips reasoning even when PI_EFFORT_LEVEL overrides the session", () => {
+		process.env.PI_EFFORT_LEVEL = "high";
+		const captured: SimpleStreamOptions[] = [];
+		wrapStreamFn(captureStreamFn(captured), () => "medium")(makeModel(), contextWithLastUser("hi"), {
+			...markNoReasoning({}),
+		});
+		assert.equal("reasoning" in captured[0], false);
+	});
+
+	it("strips thinking budgets and skips the adaptive fallback", () => {
+		const captured: SimpleStreamOptions[] = [];
+		const models: Model<any>[] = [];
+		const model = makeModel({ compat: { forceAdaptiveThinking: true } });
+		wrapStreamFn(captureStreamFn(captured, models), () => "high")(model, contextWithLastUser("hi"), {
+			...markNoReasoning({ thinkingBudgets: { high: 100 } }),
+		});
+		assert.equal("reasoning" in captured[0], false);
+		assert.equal("thinkingBudgets" in captured[0], false);
+		// The model passes through unmodified: PI_ALWAYS_ENABLE_EFFORT is not applied.
+		assert.equal(models[0], model);
+	});
+});
+
+describe("wrapStreamFn", () => {
 	it("applies PI_EFFORT_LEVEL to the request options", () => {
 		process.env.PI_EFFORT_LEVEL = "high";
 		const captured: SimpleStreamOptions[] = [];

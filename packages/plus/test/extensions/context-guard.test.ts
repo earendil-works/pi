@@ -197,6 +197,11 @@ describe("session_start: resume compact suggestion", () => {
 		await sessionStart({ type: "session_start", reason: "resume" } as never, ctx);
 		assert.equal(fake.confirmCalls.length, 1);
 		assert.match(fake.confirmCalls[0].title, /75% full/);
+		// The compaction is deferred one macrotask so the TUI's compaction_start
+		// subscription is in place: not fired when the handler returns, fired
+		// after a timer tick.
+		assert.equal(fake.compactCalls, 0);
+		await new Promise((resolve) => setTimeout(resolve, 10));
 		assert.equal(fake.compactCalls, 1);
 	});
 

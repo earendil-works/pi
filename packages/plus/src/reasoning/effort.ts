@@ -111,6 +111,29 @@ export function resolveAppliedEffort(model: Model<any>, sessionLevel: ThinkingLe
 	return { kind: "clear" };
 }
 
+/**
+ * Per-request flag that forces thinking off regardless of the session level, env
+ * overrides, adaptive defaults, or the ultrathink keyword. Compaction summarization
+ * sets it: the summary's maxTokens cap is small (0.8 × reserveTokens) and reasoning
+ * tokens count against it, so a "high" session level can truncate the summary and
+ * fail compaction. A Symbol survives the object spreads pi performs on request
+ * options, so the flag reaches wrapStreamFn through completeSummarization.
+ */
+const NO_REASONING = Symbol.for("pi-plus.noReasoning");
+
+/** Attach the no-reasoning flag to a request options object (mutates and returns it). */
+export function markNoReasoning<T>(options: T): T {
+	(options as Record<symbol, unknown>)[NO_REASONING] = true;
+	return options;
+}
+
+/** Whether a request options object was flagged to skip reasoning. */
+export function hasNoReasoning(options: unknown): boolean {
+	return (
+		typeof options === "object" && options !== null && (options as Record<symbol, unknown>)[NO_REASONING] === true
+	);
+}
+
 /** Thinking budgets from PI_MAX_THINKING_TOKENS (>0), or undefined when unset/invalid. */
 export function resolveThinkingBudgetsFromEnv(): ThinkingBudgets | undefined {
 	const raw = process.env.PI_MAX_THINKING_TOKENS;
@@ -179,6 +202,15 @@ function ensureEffortCapable(model: Model<any>): Model<any> {
 export function wrapStreamFn(streamFn: StreamFn, getSessionLevel: () => ThinkingLevel | undefined): StreamFn {
 	return (model, context, options) => {
 		const next: SimpleStreamOptions = { ...options };
+
+		// Capped one-shot requests (compaction summaries) opt out of thinking entirely:
+		// reasoning tokens burn the same maxTokens budget as the answer itself.
+		if (hasNoReasoning(options)) {
+			delete next.reasoning;
+			delete next.thinkingBudgets;
+			return streamFn(model, context, next);
+		}
+
 		const capableModel = ensureEffortCapable(model);
 
 		const resolved = resolveAppliedEffort(capableModel, getSessionLevel());

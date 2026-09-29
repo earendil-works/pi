@@ -3,7 +3,9 @@
  *
  * Pass-through except:
  * - shouldCompact               -> Claude Code threshold semantics (plus/src/context/detection.ts)
- * - generateSummaryWithRequest  -> Claude Code 9-section prompt + formatCompactSummary output
+ * - generateSummaryWithRequest  -> Claude Code 9-section prompt + formatCompactSummary output,
+ *   and never applies the session thinking level (reasoning tokens count against the
+ *   summary's small maxTokens cap and could truncate it)
  * - generateSummary(WithUsage)  -> thin re-dispatchers onto the CC request above (upstream's
  *   versions bind the upstream request function directly, so they must be shadowed too)
  *
@@ -52,7 +54,7 @@ export async function generateSummaryWithRequest(
 	request: SummaryRequest,
 	context: Context,
 ): Promise<Result<{ text: string; usage: Usage }, CompactionError>> {
-	const { model, reserveTokens, customInstructions, previousSummary, thinkingLevel } = options;
+	const { model, reserveTokens, customInstructions, previousSummary } = options;
 	const maxTokens = Math.min(
 		Math.floor(0.8 * reserveTokens),
 		model.maxTokens > 0 ? model.maxTokens : Number.POSITIVE_INFINITY,
@@ -78,10 +80,10 @@ export async function generateSummaryWithRequest(
 		},
 	];
 
-	const completionOptions =
-		model.reasoning && thinkingLevel && thinkingLevel !== "off"
-			? { maxTokens, reasoning: thinkingLevel }
-			: { maxTokens };
+	// Summaries never reason: the output cap is 0.8 × reserveTokens and reasoning
+	// tokens count against it, so the session thinking level could truncate the
+	// summary mid-generation and fail compaction.
+	const completionOptions = { maxTokens };
 
 	// CC puts the full compact prompt in the user turn; no separate system prompt.
 	const response: AssistantMessage = await request(

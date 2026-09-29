@@ -97,6 +97,16 @@ export function registerContextGuard(pi: ExtensionAPI): void {
 		const yes = await ctx.ui.confirm(`Context is ${percent}% full`, "Compact now before continuing?", {
 			timeout: RESUME_PROMPT_TIMEOUT_MS,
 		});
-		if (yes) ctx.compact();
+		if (yes) {
+			// compact() synchronously emits compaction_start, but the TUI only
+			// renders it once it has subscribed to session events — and that
+			// subscription happens after extension binding, i.e. after this
+			// handler returns. Defer to the next macrotask (microtasks — the
+			// rest of startup, including the subscription — always drain first)
+			// so the "Compacting context..." indicator actually shows.
+			setTimeout(() => {
+				ctx.compact();
+			}, 0);
+		}
 	});
 }

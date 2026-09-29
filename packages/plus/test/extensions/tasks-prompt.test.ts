@@ -39,6 +39,16 @@ describe("buildTasksSection", () => {
 		assert.ok(section.includes("trivial single-step"));
 	});
 
+	it("spells out the tool signatures so models need not discover them blind", () => {
+		const section = buildTasksSection([]);
+		assert.ok(section.includes("Available tools:"));
+		assert.ok(section.includes("TaskCreate({ subject, description, activeForm?, owner? })"));
+		assert.ok(section.includes("TaskUpdate({ taskId, status?"));
+		assert.ok(section.includes("TaskList({})"));
+		assert.ok(section.includes("TaskGet({ taskId })"));
+		assert.ok(section.includes("pending | in_progress | completed | deleted"));
+	});
+
 	it("omits the list when there are no tasks", () => {
 		const section = buildTasksSection([]);
 		assert.ok(!section.includes("Current tasks"));

@@ -5,6 +5,10 @@
  * Differences from pi's built-in compaction (documented adaptations):
  * - Single full-conversation summary with the 9-section CC prompt; no cut-point,
  *   no split-turn merge, no incremental update prompt.
+ * - Summarization requests never apply the session thinking level: the output cap
+ *   is 0.8 × reserveTokens and reasoning tokens count against it, so reasoning
+ *   could truncate the summary and fail compaction (marked via
+ *   reasoning/effort.ts's markNoReasoning so wrapStreamFn skips effort too).
  * - Prompt-too-long retries drop oldest turn groups (CC truncateHeadForPTLRetry).
  * - Post-compact re-injection of recently read files happens inside the summary
  *   text (pi replaces everything up to firstKeptEntryId; CC uses attachments),
@@ -17,7 +21,7 @@
  */
 import { readFileSync } from "node:fs";
 import type { AgentMessage, StreamFn, ThinkingLevel } from "@earendil-works/pi-agent-core";
-import type { RetryCallbacks, RetryPolicy } from "@earendil-works/pi-ai";
+import type { RetryCallbacks, RetryPolicy, SimpleStreamOptions } from "@earendil-works/pi-ai";
 import { contentText, normalizeContext, uuidv7 } from "@earendil-works/pi-ai";
 import type { AssistantMessage, Model, TranscriptContext, Usage } from "@earendil-works/pi-ai/compat";
 import {
@@ -40,6 +44,7 @@ import {
 	recordAutoCompactSuccess,
 } from "../context/detection.ts";
 import { planFilePathFor, readPlan } from "../extensions/plan/plan-file.ts";
+import { markNoReasoning } from "../reasoning/effort.ts";
 import { formatCompactSummary, getCompactPrompt } from "./prompt.ts";
 
 const MAX_PTL_RETRIES = 3;
@@ -60,6 +65,12 @@ const OVERFLOW_ERROR_PATTERN =
 function isPromptTooLongError(error: unknown): boolean {
 	const message = error instanceof Error ? error.message : String(error);
 	return OVERFLOW_ERROR_PATTERN.test(message);
+}
+
+/** Stderr diagnostics for PI_COMPACT_DEBUG (pinpoints which compaction stage is running). */
+function compactDebug(message: string, data?: Record<string, unknown>): void {
+	if (process.env.PI_COMPACT_DEBUG === undefined || process.env.PI_COMPACT_DEBUG === "") return;
+	console.error(`[pi-plus/compact] ${message}`, data ? JSON.stringify(data) : "");
 }
 
 /** Drop the oldest user+assistant round so the retry prompt fits (CC truncateHeadForPTLRetry). */
@@ -89,22 +100,21 @@ function buildSummarizationContext(promptText: string): TranscriptContext {
 }
 
 function createSummaryOptions(
-	model: Model<any>,
 	maxTokens: number,
 	apiKey: string | undefined,
 	headers: Record<string, string> | undefined,
 	env: Record<string, string> | undefined,
 	signal: AbortSignal | undefined,
-	thinkingLevel: ThinkingLevel | undefined,
 	sessionId: string | undefined,
 ) {
-	const options = { maxTokens, signal, apiKey, headers, env, sessionId } as Parameters<
+	// Summaries never reason. The output cap is 0.8 × reserveTokens and reasoning
+	// tokens count against it, so the session's thinking level (e.g. "high" on a
+	// reasoning model) can exhaust the budget and truncate the summary mid-generation,
+	// failing compaction. markNoReasoning additionally stops the session's
+	// wrapStreamFn effort wrapper from re-applying the session level to this call.
+	return markNoReasoning({ maxTokens, signal, apiKey, headers, env, sessionId } as Parameters<
 		typeof completeSummarization
-	>[2];
-	if (model.reasoning && thinkingLevel && thinkingLevel !== "off") {
-		options.reasoning = thinkingLevel;
-	}
-	return options;
+	>[2]);
 }
 
 /**
@@ -117,6 +127,12 @@ function getSummarizationFailure(response: AssistantMessage, label: string): str
 	if (response.stopReason === "length") {
 		return `${label} failed: generation hit the token cap and the summary is incomplete`;
 	}
+	if (response.stopReason === "aborted") {
+		// An aborted stream may carry partial text; never persist it as the summary.
+		// Without this check the partial summary is accepted and the failure only
+		// surfaces later, when the compaction-level aborted check discards it.
+		return `${label} failed: generation was aborted before the summary completed`;
+	}
 	return undefined;
 }
 
@@ -124,6 +140,9 @@ function getSummarizationFailure(response: AssistantMessage, label: string): str
  * Generate a Claude Code-style conversation summary and return its provider usage.
  * Overrides pi's generateSummaryWithUsage; used by compact() below and exported so the
  * wrapper module can replace the upstream export.
+ *
+ * `_thinkingLevel` is part of the upstream signature but intentionally ignored:
+ * summaries never reason (see createSummaryOptions).
  */
 export async function generateSummaryWithUsage(
 	currentMessages: AgentMessage[],
@@ -134,7 +153,7 @@ export async function generateSummaryWithUsage(
 	signal?: AbortSignal,
 	customInstructions?: string,
 	previousSummary?: string,
-	thinkingLevel?: ThinkingLevel,
+	_thinkingLevel?: ThinkingLevel,
 	streamFn?: StreamFn,
 	env?: Record<string, string>,
 	retry?: RetryPolicy,
@@ -162,14 +181,32 @@ export async function generateSummaryWithUsage(
 	].filter((part): part is string => part !== undefined);
 	promptText += getCompactPrompt(instructions.join("\n\n"));
 
+	// Trace the streamFn hand-off under PI_COMPACT_DEBUG: if "streamFn:entered" prints
+	// without a matching settle line, the hang is inside the provider stream call.
+	let tracedStreamFn = streamFn;
+	if (streamFn && process.env.PI_COMPACT_DEBUG !== undefined && process.env.PI_COMPACT_DEBUG !== "") {
+		const inner = streamFn;
+		tracedStreamFn = ((model: Model<any>, context: TranscriptContext, options?: SimpleStreamOptions) => {
+			compactDebug("streamFn:entered", { model: model.id, aborted: options?.signal?.aborted });
+			const result = inner(model, context, options);
+			Promise.resolve(result).then(
+				() => compactDebug("streamFn:settled"),
+				(error: unknown) => compactDebug("streamFn:rejected", { error: String(error) }),
+			);
+			return result;
+		}) as StreamFn;
+	}
+
+	compactDebug("summary:prompt-built", { chars: promptText.length, maxTokens });
 	const response = await completeSummarization(
 		model,
 		buildSummarizationContext(promptText),
-		createSummaryOptions(model, maxTokens, apiKey, headers, env, signal, thinkingLevel, sessionId),
-		streamFn,
+		createSummaryOptions(maxTokens, apiKey, headers, env, signal, sessionId),
+		tracedStreamFn,
 		retry,
 		callbacks,
 	);
+	compactDebug("summary:response-received", { stopReason: response.stopReason });
 
 	const failure = getSummarizationFailure(response, "Summarization");
 	if (failure) {
@@ -418,6 +455,8 @@ export async function compact(
 		throw new Error("Nothing to compact");
 	}
 
+	compactDebug("compact:enter", { tokensBefore, messages: allMessages.length, sessionId });
+
 	let messages = allMessages;
 	let result: { text: string; usage: Usage };
 	for (let attempt = 0; ; attempt++) {
@@ -449,6 +488,7 @@ export async function compact(
 		}
 	}
 	recordAutoCompactSuccess();
+	compactDebug("compact:summary-ok", { chars: result.text.length });
 
 	let summary = result.text;
 

@@ -169,6 +169,66 @@ describe("spinner", () => {
 	});
 });
 
+describe("compaction", () => {
+	it("spins while compaction runs and stops on session_compact", () => {
+		const { ctx, fake } = fakeCtx();
+		const { fire } = captureTabTitle();
+		fire("session_before_compact", ctx);
+		vi.advanceTimersByTime(360);
+		assert.match(fake.titles.at(-1) ?? "", /^[⠀-⣿] pi\+ - proj$/);
+		fire("session_compact", ctx);
+		assert.equal(fake.titles.at(-1), "pi+ - proj");
+		const count = fake.titles.length;
+		vi.advanceTimersByTime(600);
+		assert.equal(fake.titles.length, count);
+	});
+
+	it("stops on session_compact_failed (cancelled compaction)", () => {
+		const { ctx, fake } = fakeCtx();
+		const { fire } = captureTabTitle();
+		fire("session_before_compact", ctx);
+		vi.advanceTimersByTime(120);
+		fire("session_compact_failed", ctx);
+		assert.equal(fake.titles.at(-1), "pi+ - proj");
+		const count = fake.titles.length;
+		vi.advanceTimersByTime(600);
+		assert.equal(fake.titles.length, count);
+	});
+
+	it("keeps spinning through compaction that ends mid-run", () => {
+		const { ctx, fake } = fakeCtx();
+		const { fire } = captureTabTitle();
+		fire("agent_start", ctx);
+		vi.advanceTimersByTime(120);
+		// Overflow-recovery compaction: abort settles the run first, then the
+		// retry re-fires agent_start after compaction ends.
+		fire("agent_settled", ctx);
+		fire("session_before_compact", ctx);
+		vi.advanceTimersByTime(240);
+		fire("session_compact", ctx);
+		// Run still active (a toolUse turn is in flight): ticker survives.
+		fire("agent_start", ctx);
+		vi.advanceTimersByTime(120);
+		assert.match(fake.titles.at(-1) ?? "", /^[⠀-⣿] pi\+ - proj$/);
+		fire("agent_settled", ctx);
+		assert.equal(fake.titles.at(-1), "pi+ - proj");
+	});
+
+	it("manual compaction while idle does not disturb a later agent run", () => {
+		const { ctx, fake } = fakeCtx();
+		const { fire } = captureTabTitle();
+		fire("session_before_compact", ctx);
+		vi.advanceTimersByTime(120);
+		fire("session_compact", ctx);
+		assert.equal(fake.titles.at(-1), "pi+ - proj");
+		fire("agent_start", ctx);
+		vi.advanceTimersByTime(120);
+		assert.match(fake.titles.at(-1) ?? "", /^[⠀-⣿] pi\+ - proj$/);
+		fire("agent_settled", ctx);
+		assert.equal(fake.titles.at(-1), "pi+ - proj");
+	});
+});
+
 describe("mode guard", () => {
 	it("does nothing outside TUI mode", () => {
 		const { ctx, fake } = fakeCtx({ mode: "print" });
