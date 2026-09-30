@@ -261,13 +261,16 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		thinkingLevel = clampThinkingLevel(model, thinkingLevel) as ThinkingLevel;
 	}
 
-	const configuredDefaultToolNames = settingsManager.getDefaultTools();
+	const defaultToolNames =
+		options.tools === undefined && options.noTools === undefined
+			? (settingsManager.getDefaultTools() ?? DEFAULT_TOOL_NAMES)
+			: undefined;
 	const allowedToolNames = options.tools ?? (options.noTools === "all" ? [] : undefined);
 	const excludedToolNames = options.excludeTools;
 	const excludedToolNameSet = excludedToolNames ? new Set(excludedToolNames) : undefined;
-	const initialActiveToolNames = (
-		options.tools ?? (options.noTools ? [] : (configuredDefaultToolNames ?? DEFAULT_TOOL_NAMES))
-	).filter((name) => !excludedToolNameSet?.has(name));
+	const initialActiveToolNames = (options.tools ?? defaultToolNames ?? []).filter(
+		(name) => !excludedToolNameSet?.has(name),
+	);
 
 	// Create convertToLlm wrapper that filters images if blockImages is enabled (defense-in-depth)
 	const convertToLlmWithBlockImages = (messages: AgentMessage[]): Message[] => {
@@ -445,6 +448,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		modelRuntime,
 		cacheWarmer,
 		initialActiveToolNames,
+		defaultToolNames,
 		allowedToolNames,
 		excludedToolNames,
 		extensionRunnerRef,

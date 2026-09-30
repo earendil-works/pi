@@ -129,7 +129,7 @@ import {
 	SessionManager,
 	type SessionProjection,
 } from "./session-manager.ts";
-import type { CacheWarmingMode, SettingsManager } from "./settings-manager.ts";
+import { type CacheWarmingMode, DEFAULT_TOOL_NAMES, type SettingsManager } from "./settings-manager.ts";
 import type { SlashCommandInfo } from "./slash-commands.ts";
 import { BUILTIN_PATH_PREFIX, createSyntheticSourceInfo, isSyntheticPath, type SourceInfo } from "./source-info.ts";
 import {
@@ -260,6 +260,8 @@ export interface AgentSessionConfig {
 	cacheWarmer?: Pick<CacheWarmer, "cancel" | "status" | "onAgentSettled" | "onModeChanged" | "onWarmed">;
 	/** Initial active built-in tool names. Default: [read, bash, edit, write] */
 	initialActiveToolNames?: string[];
+	/** Initial resolved default selection. Omit when explicit tool options override defaults. */
+	defaultToolNames?: readonly string[];
 	/** Optional allowlist of tool names. When provided, only these tool names are exposed. */
 	allowedToolNames?: string[];
 	/** Optional denylist of tool names. When provided, these tool names are not exposed. */
@@ -418,6 +420,8 @@ export class AgentSession {
 	private _cwd: string;
 	private _extensionRunnerRef?: { current?: ExtensionRunner };
 	private _initialActiveToolNames?: string[];
+	/** Last normally completed default selection; undefined disables configuration tracking. */
+	private _defaultToolNames?: Set<string>;
 	private _allowedToolNames?: Set<string>;
 	private _excludedToolNames?: Set<string>;
 	private _baseToolsOverride?: Record<string, AgentTool>;
@@ -462,6 +466,7 @@ export class AgentSession {
 		}
 		this._extensionRunnerRef = config.extensionRunnerRef;
 		this._initialActiveToolNames = config.initialActiveToolNames;
+		this._defaultToolNames = config.defaultToolNames === undefined ? undefined : new Set(config.defaultToolNames);
 		this._allowedToolNames = config.allowedToolNames ? new Set(config.allowedToolNames) : undefined;
 		this._excludedToolNames = config.excludedToolNames ? new Set(config.excludedToolNames) : undefined;
 		this._baseToolsOverride = config.baseToolsOverride;
@@ -3581,8 +3586,16 @@ export class AgentSession {
 		this.syncQueueModesFromSettings();
 		resetApiProviders();
 		await this._resourceLoader.reload();
+		const defaultToolNames =
+			this._defaultToolNames === undefined
+				? undefined
+				: new Set(this.settingsManager.getDefaultTools() ?? DEFAULT_TOOL_NAMES);
+		const addedDefaultToolNames =
+			defaultToolNames === undefined
+				? []
+				: [...defaultToolNames].filter((name) => !this._defaultToolNames?.has(name));
 		this._buildRuntime({
-			activeToolNames: this.getActiveToolNames(),
+			activeToolNames: [...this.getActiveToolNames(), ...addedDefaultToolNames],
 			flagValues: previousFlagValues,
 			includeAllExtensionTools: true,
 		});
@@ -3598,6 +3611,7 @@ export class AgentSession {
 			this._extensionRunner.reportUnhandledMcpServers();
 			await this.extendResourcesFromExtensions("reload");
 		}
+		this._defaultToolNames = defaultToolNames;
 	}
 
 	// =========================================================================

@@ -55,6 +55,10 @@ This replaces `bash` with `powershell` and enables `grep`: `["-bash", "+powershe
 
 CLI tool options override this setting for one invocation; `--tools` does not accept `+name` or `-name`. See [Command Line](cli.md#tools).
 
+When startup uses `defaultTools`, `/reload` also activates newly selected names from the merged user and trusted project settings. It compares the resolved selection with the selection from startup or the last normally completed reload. Removing a name does not deactivate an active tool, and unchanged default selections are not reapplied. Existing extension activation on reload is unchanged. Deleting the setting restores the default selection. Explicit `--tools` / `--no-tools` or SDK `tools` / `noTools` options override this behavior; tool exclusions still apply.
+
+Activation uses the existing tool registry and loadout rules. Names unavailable during a normally completed reload are not kept pending for later activation. If reload throws, its selection baseline remains unchanged for the next attempt; changes already made by reload are not rolled back.
+
 ## Sessions and context
 
 | Setting | Type | Default | Description |
