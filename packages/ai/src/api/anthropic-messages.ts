@@ -1,4 +1,4 @@
-import Anthropic from "@anthropic-ai/sdk";
+import Anthropic, { type ClientOptions } from "@anthropic-ai/sdk";
 import type {
 	BetaStopReason,
 	BetaThinkingDroppedInputTransformation,
@@ -10,6 +10,13 @@ import type {
 	BetaRawMessageStreamEvent as RawMessageStreamEvent,
 	BetaRefusalStopDetails as RefusalStopDetails,
 } from "@anthropic-ai/sdk/resources/beta/messages/messages.js";
+import {
+	ANTHROPIC_FEDERATION_RULE_ID_ENV,
+	ANTHROPIC_IDENTITY_TOKEN_FILE_ENV,
+	ANTHROPIC_ORGANIZATION_ID_ENV,
+	ANTHROPIC_SERVICE_ACCOUNT_ID_ENV,
+	ANTHROPIC_WORKSPACE_ID_ENV,
+} from "../env-api-keys.ts";
 import { calculateCost } from "../models.ts";
 import type {
 	Api,
@@ -304,6 +311,38 @@ function hasHeader(headers: ProviderHeaders | undefined, name: string): boolean 
 	return false;
 }
 
+type AnthropicFederationConfig = NonNullable<ClientOptions["config"]>;
+
+/**
+ * Workload identity federation config from the four ANTHROPIC_* variables the
+ * Anthropic SDK documents; the SDK performs the token exchange and refresh.
+ * Only for the anthropic provider, since the exchange is an Anthropic API
+ * endpoint, and only when no key or Authorization header was resolved.
+ */
+function getAnthropicFederation(
+	model: Model<"anthropic-messages">,
+	apiKey: string | undefined,
+	headers: ProviderHeaders | undefined,
+	env: ProviderEnv | undefined,
+): AnthropicFederationConfig | undefined {
+	if (model.provider !== "anthropic" || apiKey || hasHeader(headers, "authorization")) return undefined;
+	const federationRuleId = getProviderEnvValue(ANTHROPIC_FEDERATION_RULE_ID_ENV, env);
+	const organizationId = getProviderEnvValue(ANTHROPIC_ORGANIZATION_ID_ENV, env);
+	const serviceAccountId = getProviderEnvValue(ANTHROPIC_SERVICE_ACCOUNT_ID_ENV, env);
+	const identityTokenFile = getProviderEnvValue(ANTHROPIC_IDENTITY_TOKEN_FILE_ENV, env);
+	if (!federationRuleId || !organizationId || !serviceAccountId || !identityTokenFile) return undefined;
+	return {
+		organization_id: organizationId,
+		workspace_id: getProviderEnvValue(ANTHROPIC_WORKSPACE_ID_ENV, env),
+		authentication: {
+			type: "oidc_federation",
+			federation_rule_id: federationRuleId,
+			service_account_id: serviceAccountId,
+			identity_token: { source: "file", path: identityTokenFile },
+		},
+	};
+}
+
 function assertRequestAuth(provider: string, apiKey: string | undefined, headers: ProviderHeaders | undefined): void {
 	if (apiKey) return;
 	if (
@@ -549,7 +588,8 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 				isOAuth = false;
 			} else {
 				const apiKey = options?.apiKey;
-				assertRequestAuth(model.provider, apiKey, options?.headers);
+				const federation = getAnthropicFederation(model, apiKey, options?.headers, options?.env);
+				if (!federation) assertRequestAuth(model.provider, apiKey, options?.headers);
 
 				let copilotDynamicHeaders: Record<string, string> | undefined;
 				if (model.provider === "github-copilot") {
@@ -570,6 +610,7 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 					options?.fetch,
 					copilotDynamicHeaders,
 					cacheSessionId,
+					federation,
 				);
 				client = created.client;
 				isOAuth = created.isOAuthToken;
@@ -868,7 +909,9 @@ export const streamSimple: StreamFunction<"anthropic-messages", SimpleStreamOpti
 	context: TranscriptContext,
 	options?: SimpleStreamOptions,
 ): AssistantMessageEventStream => {
-	assertRequestAuth(model.provider, options?.apiKey, options?.headers);
+	if (!getAnthropicFederation(model, options?.apiKey, options?.headers, options?.env)) {
+		assertRequestAuth(model.provider, options?.apiKey, options?.headers);
+	}
 
 	const base = {
 		...buildBaseOptions(model, context, options, options?.apiKey),
@@ -922,6 +965,7 @@ function createClient(
 	fetch?: typeof globalThis.fetch,
 	dynamicHeaders?: Record<string, string>,
 	sessionId?: string,
+	federation?: AnthropicFederationConfig,
 ): { client: Anthropic; isOAuthToken: boolean } {
 	// Copilot: Bearer auth.
 	if (model.provider === "github-copilot") {
@@ -968,7 +1012,7 @@ function createClient(
 		return { client, isOAuthToken: true };
 	}
 
-	// API key or header-owned auth.
+	// API key, header-owned auth, or workload identity federation.
 	const compat = getAnthropicCompat(model);
 	const sessionAffinityHeaders: ProviderHeaders = {};
 	if (sessionId && compat.sendSessionAffinityHeaders) {
@@ -984,14 +1028,26 @@ function createClient(
 		model.headers,
 		optionsHeaders,
 	);
-	const client = new Anthropic({
-		apiKey: apiKey ?? null,
-		authToken: null,
-		baseURL: model.baseUrl,
-		dangerouslyAllowBrowser: true,
-		fetch,
-		defaultHeaders,
-	});
+	// With federation the SDK owns the credential: apiKey/authToken stay null so
+	// it does not read a key from the environment behind the resolver's back.
+	const client = federation
+		? new Anthropic({
+				apiKey: null,
+				authToken: null,
+				config: federation,
+				baseURL: model.baseUrl,
+				dangerouslyAllowBrowser: true,
+				fetch,
+				defaultHeaders,
+			})
+		: new Anthropic({
+				apiKey: apiKey ?? null,
+				authToken: null,
+				baseURL: model.baseUrl,
+				dangerouslyAllowBrowser: true,
+				fetch,
+				defaultHeaders,
+			});
 
 	return { client, isOAuthToken: false };
 }
