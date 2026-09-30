@@ -311,13 +311,38 @@ function hasHeader(headers: ProviderHeaders | undefined, name: string): boolean 
 	return false;
 }
 
+function hasRequestAuth(apiKey: string | undefined, headers: ProviderHeaders | undefined): boolean {
+	return (
+		!!apiKey ||
+		hasHeader(headers, "authorization") ||
+		hasHeader(headers, "x-api-key") ||
+		hasHeader(headers, "cf-aig-authorization")
+	);
+}
+
+function assertRequestAuth(provider: string, apiKey: string | undefined, headers: ProviderHeaders | undefined): void {
+	if (!hasRequestAuth(apiKey, headers)) throw new Error(`No API key for provider: ${provider}`);
+}
+
+/**
+ * Anthropic SDK client that never runs the SDK's own credential chain
+ * (ANTHROPIC_PROFILE config files, federation env vars). Without this, every
+ * client built with `apiKey: null, authToken: null` for header-owned auth would
+ * also resolve and exchange SDK credentials behind pi's auth resolver.
+ */
+class PiAnthropic extends Anthropic {
+	protected override _shouldResolveDefaultCredentials(): boolean {
+		return false;
+	}
+}
+
 type AnthropicFederationConfig = NonNullable<ClientOptions["config"]>;
 
 /**
- * Workload identity federation config from the four ANTHROPIC_* variables the
+ * Workload identity federation config from the ANTHROPIC_* variables the
  * Anthropic SDK documents; the SDK performs the token exchange and refresh.
  * Only for the anthropic provider, since the exchange is an Anthropic API
- * endpoint, and only when no key or Authorization header was resolved.
+ * endpoint, and only when no key or auth header was resolved.
  */
 function getAnthropicFederation(
 	model: Model<"anthropic-messages">,
@@ -325,35 +350,29 @@ function getAnthropicFederation(
 	headers: ProviderHeaders | undefined,
 	env: ProviderEnv | undefined,
 ): AnthropicFederationConfig | undefined {
-	if (model.provider !== "anthropic" || apiKey || hasHeader(headers, "authorization")) return undefined;
+	if (model.provider !== "anthropic" || hasRequestAuth(apiKey, headers)) return undefined;
 	const federationRuleId = getProviderEnvValue(ANTHROPIC_FEDERATION_RULE_ID_ENV, env);
 	const organizationId = getProviderEnvValue(ANTHROPIC_ORGANIZATION_ID_ENV, env);
-	const serviceAccountId = getProviderEnvValue(ANTHROPIC_SERVICE_ACCOUNT_ID_ENV, env);
 	const identityTokenFile = getProviderEnvValue(ANTHROPIC_IDENTITY_TOKEN_FILE_ENV, env);
-	if (!federationRuleId || !organizationId || !serviceAccountId || !identityTokenFile) return undefined;
+	if (!federationRuleId || !organizationId || !identityTokenFile) return undefined;
 	return {
 		organization_id: organizationId,
 		workspace_id: getProviderEnvValue(ANTHROPIC_WORKSPACE_ID_ENV, env),
 		authentication: {
 			type: "oidc_federation",
 			federation_rule_id: federationRuleId,
-			service_account_id: serviceAccountId,
+			service_account_id: getProviderEnvValue(ANTHROPIC_SERVICE_ACCOUNT_ID_ENV, env),
 			identity_token: { source: "file", path: identityTokenFile },
 		},
 	};
 }
 
-function assertRequestAuth(provider: string, apiKey: string | undefined, headers: ProviderHeaders | undefined): void {
-	if (apiKey) return;
-	if (
-		hasHeader(headers, "authorization") ||
-		hasHeader(headers, "x-api-key") ||
-		hasHeader(headers, "cf-aig-authorization")
-	) {
-		return;
-	}
-	throw new Error(`No API key for provider: ${provider}`);
-}
+/**
+ * The SDK caches the federated access token per client, but pi creates a client
+ * per request. Keep one client for the current federation config and fetch, and
+ * clone it per request with `withOptions()`, which shares the token cache.
+ */
+let federationClient: { key: string; fetch: typeof globalThis.fetch | undefined; client: Anthropic } | undefined;
 
 interface ServerSentEvent {
 	event: string | null;
@@ -969,7 +988,7 @@ function createClient(
 ): { client: Anthropic; isOAuthToken: boolean } {
 	// Copilot: Bearer auth.
 	if (model.provider === "github-copilot") {
-		const client = new Anthropic({
+		const client = new PiAnthropic({
 			apiKey: null,
 			authToken: apiKey ?? null,
 			baseURL: model.baseUrl,
@@ -991,7 +1010,7 @@ function createClient(
 
 	// OAuth: Bearer auth, Claude Code identity headers
 	if (apiKey && isOAuthToken(apiKey)) {
-		const client = new Anthropic({
+		const client = new PiAnthropic({
 			apiKey: null,
 			authToken: apiKey,
 			baseURL: model.baseUrl,
@@ -1028,26 +1047,30 @@ function createClient(
 		model.headers,
 		optionsHeaders,
 	);
-	// With federation the SDK owns the credential: apiKey/authToken stay null so
-	// it does not read a key from the environment behind the resolver's back.
-	const client = federation
-		? new Anthropic({
+	if (federation) {
+		const key = JSON.stringify([model.baseUrl, federation]);
+		if (federationClient?.key !== key || federationClient.fetch !== fetch) {
+			const client = new PiAnthropic({
 				apiKey: null,
 				authToken: null,
 				config: federation,
 				baseURL: model.baseUrl,
 				dangerouslyAllowBrowser: true,
 				fetch,
-				defaultHeaders,
-			})
-		: new Anthropic({
-				apiKey: apiKey ?? null,
-				authToken: null,
-				baseURL: model.baseUrl,
-				dangerouslyAllowBrowser: true,
-				fetch,
-				defaultHeaders,
 			});
+			federationClient = { key, fetch, client };
+		}
+		return { client: federationClient.client.withOptions({ defaultHeaders }), isOAuthToken: false };
+	}
+
+	const client = new PiAnthropic({
+		apiKey: apiKey ?? null,
+		authToken: null,
+		baseURL: model.baseUrl,
+		dangerouslyAllowBrowser: true,
+		fetch,
+		defaultHeaders,
+	});
 
 	return { client, isOAuthToken: false };
 }

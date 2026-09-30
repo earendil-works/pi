@@ -28,8 +28,13 @@ vi.mock("@anthropic-ai/sdk", () => {
 	}
 
 	class FakeAnthropic {
+		opts: Record<string, unknown>;
 		constructor(opts: Record<string, unknown>) {
+			this.opts = opts;
 			mockState.constructorOpts = opts;
+		}
+		withOptions(options: Record<string, unknown>) {
+			return new FakeAnthropic({ ...this.opts, ...options });
 		}
 		beta = {
 			messages: {
@@ -112,6 +117,21 @@ describe("Anthropic workload identity federation", () => {
 	it("is not configured when a federation variable is missing", async () => {
 		const { ANTHROPIC_IDENTITY_TOKEN_FILE: _omitted, ...partial } = federationEnv;
 		expect(await resolveWithEnv(partial)).toBeUndefined();
+	});
+
+	it("treats ANTHROPIC_SERVICE_ACCOUNT_ID as optional, like the SDK", async () => {
+		const { ANTHROPIC_SERVICE_ACCOUNT_ID: _omitted, ...partial } = federationEnv;
+		expect(await resolveWithEnv(partial)).toEqual({
+			auth: {},
+			env: partial,
+			source: "workload identity federation",
+		});
+
+		await streamAnthropic(anthropicModel, context, { env: partial }).result();
+		expect(mockState.constructorOpts?.config).toEqual({
+			...expectedConfig,
+			authentication: { ...expectedConfig.authentication, service_account_id: undefined },
+		});
 	});
 
 	it("keeps API key and auth token precedence over federation", async () => {

@@ -54,7 +54,6 @@ function anthropicApiKeyAuth(): ApiKeyAuth {
 			for (const envVar of [
 				ANTHROPIC_FEDERATION_RULE_ID_ENV,
 				ANTHROPIC_ORGANIZATION_ID_ENV,
-				ANTHROPIC_SERVICE_ACCOUNT_ID_ENV,
 				ANTHROPIC_IDENTITY_TOKEN_FILE_ENV,
 			]) {
 				const value = await ctx.env(envVar);
@@ -62,9 +61,11 @@ function anthropicApiKeyAuth(): ApiKeyAuth {
 				if (!value) return undefined;
 				federation[envVar] = value;
 			}
-			const workspaceId = await ctx.env(ANTHROPIC_WORKSPACE_ID_ENV);
-			signal.throwIfAborted();
-			if (workspaceId) federation[ANTHROPIC_WORKSPACE_ID_ENV] = workspaceId;
+			for (const envVar of [ANTHROPIC_SERVICE_ACCOUNT_ID_ENV, ANTHROPIC_WORKSPACE_ID_ENV]) {
+				const value = await ctx.env(envVar);
+				signal.throwIfAborted();
+				if (value) federation[envVar] = value;
+			}
 			return { auth: {}, env: federation, source: "workload identity federation" };
 		},
 	};
