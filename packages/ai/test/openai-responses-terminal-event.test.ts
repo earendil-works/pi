@@ -154,6 +154,79 @@ async function* createFailedEvents(): AsyncIterable<ResponseStreamEvent> {
 	} as ResponseStreamEvent;
 }
 
+async function* createReasoningSummaryAndFinalAnswerEvents(): AsyncIterable<ResponseStreamEvent> {
+	yield {
+		type: "response.created",
+		sequence_number: 0,
+		response: { id: "resp_reasoning_summary" },
+	} as ResponseStreamEvent;
+	yield {
+		type: "response.output_item.added",
+		sequence_number: 1,
+		output_index: 0,
+		item: { type: "reasoning", id: "rs_reasoning_summary", summary: [] },
+	} as ResponseStreamEvent;
+	yield {
+		type: "response.reasoning_summary_text.delta",
+		sequence_number: 2,
+		output_index: 0,
+		content_index: 0,
+		summary_index: 0,
+		item_id: "rs_reasoning_summary",
+		delta: "Reviewing the request.",
+	} as ResponseStreamEvent;
+	yield {
+		type: "response.output_item.done",
+		sequence_number: 3,
+		output_index: 0,
+		item: {
+			type: "reasoning",
+			id: "rs_reasoning_summary",
+			status: "completed",
+			summary: [{ type: "summary_text", text: "Reviewing the request." }],
+		},
+	} as ResponseStreamEvent;
+	yield {
+		type: "response.output_item.added",
+		sequence_number: 4,
+		output_index: 1,
+		item: {
+			type: "message",
+			id: "msg_reasoning_summary",
+			role: "assistant",
+			status: "in_progress",
+			content: [],
+			phase: "final_answer",
+		},
+	} as ResponseStreamEvent;
+	yield {
+		type: "response.output_text.delta",
+		sequence_number: 5,
+		output_index: 1,
+		content_index: 0,
+		item_id: "msg_reasoning_summary",
+		delta: "PI_FINAL_OK",
+	} as ResponseStreamEvent;
+	yield {
+		type: "response.output_item.done",
+		sequence_number: 6,
+		output_index: 1,
+		item: {
+			type: "message",
+			id: "msg_reasoning_summary",
+			role: "assistant",
+			status: "completed",
+			content: [{ type: "output_text", text: "PI_FINAL_OK", annotations: [] }],
+			phase: "final_answer",
+		},
+	} as ResponseStreamEvent;
+	yield {
+		type: "response.completed",
+		sequence_number: 7,
+		response: { id: "resp_reasoning_summary", status: "completed" },
+	} as ResponseStreamEvent;
+}
+
 async function* createPhasedMessageEvents(
 	phases: readonly ["commentary" | "final_answer", "commentary" | "final_answer"],
 	terminalStatus: "completed" | "incomplete" = "completed",
@@ -204,6 +277,47 @@ async function* createPhasedMessageEvents(
 }
 
 describe("OpenAI Responses terminal event handling", () => {
+	it("keeps reasoning summaries separate from the final answer", async () => {
+		const model = createModel();
+		const output = createOutput(model);
+		const stream = new AssistantMessageEventStream();
+		const events: AssistantMessageEvent[] = [];
+		const push = stream.push.bind(stream);
+		stream.push = (event) => {
+			events.push(event);
+			push(event);
+		};
+
+		await processResponsesStream(createReasoningSummaryAndFinalAnswerEvents(), output, stream, model);
+
+		expect(output.content).toEqual([
+			{
+				type: "thinking",
+				thinking: "Reviewing the request.",
+				thinkingSignature: JSON.stringify({
+					type: "reasoning",
+					id: "rs_reasoning_summary",
+					status: "completed",
+					summary: [{ type: "summary_text", text: "Reviewing the request." }],
+				}),
+			},
+			{
+				type: "text",
+				text: "PI_FINAL_OK",
+				textSignature: JSON.stringify({ v: 1, id: "msg_reasoning_summary", phase: "final_answer" }),
+			},
+		]);
+		expect(events.map((event) => event.type)).toEqual([
+			"thinking_start",
+			"thinking_delta",
+			"thinking_end",
+			"text_start",
+			"text_delta",
+			"text_end",
+		]);
+		expect(output.stopReason).toBe("stop");
+	});
+
 	it("rejects streams that end before a terminal response event", async () => {
 		const model = createModel();
 		const output = createOutput(model);
