@@ -25,7 +25,6 @@ Start `llama serve` without `--model`, `-m`, or `-hf`. Passing a model starts si
 ```bash
 llama serve \
   --no-models-autoload \
-  --jinja \
   --host 127.0.0.1 \
   --port 8080 \
   -ngl all \
