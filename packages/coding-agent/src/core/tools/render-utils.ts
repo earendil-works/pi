@@ -36,6 +36,66 @@ export function normalizeDisplayText(text: string): string {
 	return text.replace(/\r/g, "");
 }
 
+/** Leading lines of a streaming highlight that are re-highlighted with full context on each update. */
+const STREAMING_FULL_HIGHLIGHT_PREFIX_LINES = 50;
+
+/** Highlighted display lines of streamed source text, for {@link updateStreamingHighlight}. */
+export interface StreamingHighlight {
+	source: string;
+	language: string | undefined;
+	theme: Theme;
+	/** Display lines of `source` after normalizeDisplayText and replaceTabs. */
+	lines: string[];
+	/** Styled version of each entry in `lines`. */
+	highlighted: string[];
+	/** False when some lines were highlighted one at a time, without multi-line context. */
+	exact: boolean;
+}
+
+/**
+ * Highlight source text that arrives in growing chunks, such as streamed tool arguments.
+ *
+ * Renderers run on every argument delta, so highlighting the full text each time costs O(n^2) while
+ * a long body streams in. When the new source extends the previous one, only the changed last line
+ * and new lines are highlighted, one line at a time. The first lines, which collapsed previews show,
+ * are re-highlighted with full context. Once `complete` is set, the text is highlighted in full once
+ * and then reused until the source, language, or theme changes.
+ */
+export function updateStreamingHighlight(
+	previous: StreamingHighlight | undefined,
+	source: string,
+	options: {
+		language: string | undefined;
+		theme: Theme;
+		complete: boolean;
+		highlight: (code: string) => string[];
+	},
+): StreamingHighlight {
+	const { language, theme, complete, highlight } = options;
+	const reusable = previous !== undefined && previous.language === language && previous.theme === theme;
+	if (reusable && previous.source === source && (previous.exact || !complete)) return previous;
+	if (reusable && !complete && source.startsWith(previous.source)) {
+		const highlightLine = (line: string) => highlight(line)[0] ?? "";
+		const { lines, highlighted } = previous;
+		const added = replaceTabs(normalizeDisplayText(source.slice(previous.source.length))).split("\n");
+		const last = lines.length - 1;
+		lines[last] += added[0];
+		highlighted[last] = highlightLine(lines[last]);
+		for (let i = 1; i < added.length; i++) {
+			lines.push(added[i]);
+			highlighted.push(highlightLine(added[i]));
+		}
+		const prefixCount = Math.min(STREAMING_FULL_HIGHLIGHT_PREFIX_LINES, lines.length);
+		const prefix = highlight(lines.slice(0, prefixCount).join("\n"));
+		for (let i = 0; i < prefixCount; i++) highlighted[i] = prefix[i] ?? highlighted[i];
+		previous.source = source;
+		previous.exact = prefixCount === lines.length;
+		return previous;
+	}
+	const lines = replaceTabs(normalizeDisplayText(source)).split("\n");
+	return { source, language, theme, lines, highlighted: highlight(lines.join("\n")), exact: true };
+}
+
 export function getTextOutput(
 	result: { content: Array<{ type: string; text?: string; data?: string; mimeType?: string }> } | undefined,
 	showImages: boolean,

@@ -32,8 +32,8 @@ export {
 export function createAllToolRenderers(): Record<ToolName, ToolRenderers> {
 	return {
 		read: readRenderers,
-		bash: createShellRenderers("$"),
-		powershell: createShellRenderers("PS>"),
+		bash: createShellRenderers("$", { embeddedCode: true }),
+		powershell: createShellRenderers("PS>", { embeddedCode: false }),
 		edit: editRenderers,
 		write: writeRenderers,
 		grep: grepRenderers,
