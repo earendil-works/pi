@@ -6,10 +6,11 @@
  * folded system prompt + compaction summary + recent messages — so we return a
  * heuristic estimate instead. The post-compaction usage path is unchanged.
  *
- * The percent base follows detection.getContextPercentBaseWindow(): models above
- * the 256K ceiling report fullness against the effective threshold window (e.g.
- * a 1M-context model shows N%/242K), so the meter grows at the pace auto-compact
- * actually fires at instead of crawling against an unreachable 1M denominator.
+ * The percent base follows detection.getContextPercentBaseWindow(): when a
+ * persisted context-window cap shrinks the model's advertised window, fullness
+ * is reported against the effective threshold window (e.g. a capped 1M-context
+ * model shows N%/242K), so the meter grows at the pace auto-compact actually
+ * fires at instead of crawling against an unreachable denominator.
  */
 
 import type { AgentSession } from "../../../coding-agent/src/core/agent-session.ts";

@@ -12,14 +12,19 @@ import {
 	DEFAULT_CONTEXT_FLOOR_TOKENS,
 	formatAutoCompactThresholdPercent,
 	formatContextFloorTokens,
+	formatContextWindowCapTokens,
 	getAutoCompactThresholdPercent,
 	getContextFloorTokens,
+	getContextWindowCapTokens,
 	MIN_CONTEXT_FLOOR_TOKENS,
+	MIN_CONTEXT_WINDOW_CAP_TOKENS,
 	parseAutoCompactThresholdChoice,
 	parseContextFloorChoice,
+	parseContextWindowCapChoice,
 	readPlusSettings,
 	setAutoCompactThresholdPercent,
 	setContextFloorTokens,
+	setContextWindowCapTokens,
 } from "../../src/context/threshold-setting.ts";
 
 let dir: string;
@@ -73,6 +78,29 @@ describe("readPlusSettings", () => {
 	it("accepts a valid context floor and keeps both keys", () => {
 		writeFileSync(settingsFile, JSON.stringify({ autoCompactThresholdPercent: 85, contextFloorTokens: 32_768 }));
 		assert.deepEqual(readPlusSettings(), { autoCompactThresholdPercent: 85, contextFloorTokens: 32_768 });
+	});
+
+	it("ignores out-of-range or non-integer context window cap values", () => {
+		for (const bad of [0, 32_767, 32_768.5, NaN, "262144", null]) {
+			writeFileSync(settingsFile, JSON.stringify({ contextWindowCapTokens: bad }));
+			assert.deepEqual(readPlusSettings(), {}, `value: ${String(bad)}`);
+		}
+	});
+
+	it("accepts a valid context window cap and keeps all keys", () => {
+		writeFileSync(
+			settingsFile,
+			JSON.stringify({
+				autoCompactThresholdPercent: 85,
+				contextFloorTokens: 32_768,
+				contextWindowCapTokens: 262_144,
+			}),
+		);
+		assert.deepEqual(readPlusSettings(), {
+			autoCompactThresholdPercent: 85,
+			contextFloorTokens: 32_768,
+			contextWindowCapTokens: 262_144,
+		});
 	});
 });
 
@@ -129,6 +157,73 @@ describe("setContextFloorTokens", () => {
 		setContextFloorTokens(65_536);
 		const raw: unknown = JSON.parse(readFileSync(settingsFile, "utf8"));
 		assert.deepEqual(raw, { autoCompactThresholdPercent: 85, contextFloorTokens: 65_536 });
+	});
+});
+
+describe("setContextWindowCapTokens", () => {
+	it("round-trips through the file", () => {
+		setContextWindowCapTokens(262_144);
+		assert.equal(getContextWindowCapTokens(), 262_144);
+		assert.deepEqual(readPlusSettings(), { contextWindowCapTokens: 262_144 });
+	});
+
+	it("defaults to undefined (no cap) and resets to it", () => {
+		assert.equal(getContextWindowCapTokens(), undefined);
+		setContextWindowCapTokens(262_144);
+		setContextWindowCapTokens(undefined);
+		assert.equal(getContextWindowCapTokens(), undefined);
+		assert.deepEqual(readPlusSettings(), {});
+	});
+
+	it("rejects caps below the 32k minimum and non-integers", () => {
+		for (const bad of [0, 32_767, 32_768.5, NaN]) {
+			assert.throws(() => setContextWindowCapTokens(bad), /Invalid context window cap tokens/);
+		}
+	});
+
+	it("preserves other keys in the file", () => {
+		writeFileSync(settingsFile, JSON.stringify({ autoCompactThresholdPercent: 85, contextFloorTokens: 32_768 }));
+		setContextWindowCapTokens(524_288);
+		const raw: unknown = JSON.parse(readFileSync(settingsFile, "utf8"));
+		assert.deepEqual(raw, {
+			autoCompactThresholdPercent: 85,
+			contextFloorTokens: 32_768,
+			contextWindowCapTokens: 524_288,
+		});
+	});
+});
+
+describe("context window cap choice parsing", () => {
+	it("round-trips labels", () => {
+		assert.equal(formatContextWindowCapTokens(262_144), "262144");
+		assert.equal(parseContextWindowCapChoice("262144"), 262_144);
+	});
+
+	it("maps every UI choice through parse+format unchanged", () => {
+		for (const choice of ["131072", "262144", "524288", "1048576"]) {
+			assert.equal(formatContextWindowCapTokens(parseContextWindowCapChoice(choice)), choice);
+		}
+	});
+
+	it("parses 'No cap' to undefined", () => {
+		assert.equal(parseContextWindowCapChoice("No cap"), undefined);
+		assert.equal(parseContextWindowCapChoice("no cap"), undefined);
+		assert.equal(formatContextWindowCapTokens(undefined), "No cap");
+	});
+
+	it("accepts a k suffix as Ki tokens", () => {
+		assert.equal(parseContextWindowCapChoice("256k"), 262_144);
+		assert.equal(parseContextWindowCapChoice("512K"), 524_288);
+	});
+
+	it("rejects unparseable or below-minimum input", () => {
+		assert.equal(parseContextWindowCapChoice("auto"), undefined);
+		assert.equal(parseContextWindowCapChoice("16k"), undefined);
+		assert.equal(parseContextWindowCapChoice("garbage"), undefined);
+	});
+
+	it("minimum accepted cap is 32k", () => {
+		assert.equal(MIN_CONTEXT_WINDOW_CAP_TOKENS, 32_768);
 	});
 });
 

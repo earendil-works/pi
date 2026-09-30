@@ -12,7 +12,10 @@
  * knob, capped at the CC buffer math) wins over the persisted percent, which
  * itself defaults to 80% of the effective context window. Same shape for the
  * context floor: PI_CONTEXT_FLOOR_TOKENS (env) wins over the persisted token
- * count, which defaults to the built-in 13k floor buffer.
+ * count, which defaults to the built-in 13k floor buffer. The context window
+ * cap is the mirror image: PI_AUTO_COMPACT_WINDOW (env) lowers the window for
+ * the session, while the persisted cap replaces the default "use the model's
+ * advertised context window" ceiling.
  */
 
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
@@ -31,6 +34,13 @@ export interface PlusSettings {
 	 * only raise the floor, never below the small-context guarantee.
 	 */
 	contextFloorTokens?: number;
+	/**
+	 * Cap (tokens) on the context window used for auto-compact threshold math
+	 * and the footer fullness meter: the window is min(model.contextWindow, cap).
+	 * Must be >= MIN_CONTEXT_WINDOW_CAP_TOKENS. Undefined (the default) means no
+	 * cap: the model's advertised context window is used as-is.
+	 */
+	contextWindowCapTokens?: number;
 }
 
 export function getPlusSettingsPath(): string {
@@ -65,6 +75,10 @@ function sanitizePlusSettings(raw: Record<string, unknown>): PlusSettings {
 	if (typeof floor === "number" && Number.isSafeInteger(floor) && floor >= MIN_CONTEXT_FLOOR_TOKENS) {
 		result.contextFloorTokens = floor;
 	}
+	const cap = raw.contextWindowCapTokens;
+	if (typeof cap === "number" && Number.isSafeInteger(cap) && cap >= MIN_CONTEXT_WINDOW_CAP_TOKENS) {
+		result.contextWindowCapTokens = cap;
+	}
 	return result;
 }
 
@@ -79,6 +93,10 @@ export function writePlusSettings(patch: PlusSettings, path = getPlusSettingsPat
 	if ("contextFloorTokens" in patch) {
 		if (patch.contextFloorTokens === undefined) delete next.contextFloorTokens;
 		else next.contextFloorTokens = patch.contextFloorTokens;
+	}
+	if ("contextWindowCapTokens" in patch) {
+		if (patch.contextWindowCapTokens === undefined) delete next.contextWindowCapTokens;
+		else next.contextWindowCapTokens = patch.contextWindowCapTokens;
 	}
 	mkdirSync(dirname(path), { recursive: true });
 	const tmp = `${path}.tmp`;
@@ -156,4 +174,47 @@ export function parseContextFloorChoice(choice: string): number {
 	const parsed = Number.parseFloat(match[1]) * (trimmed.endsWith("k") ? 1024 : 1);
 	const rounded = Math.round(parsed);
 	return Number.isSafeInteger(rounded) && rounded >= MIN_CONTEXT_FLOOR_TOKENS ? rounded : DEFAULT_CONTEXT_FLOOR_TOKENS;
+}
+
+/**
+ * Lowest context window cap the store accepts. Small enough to keep
+ * small-context models useful, large enough that a cap below it would be a
+ * misconfiguration rather than a real choice.
+ */
+export const MIN_CONTEXT_WINDOW_CAP_TOKENS = 32_768;
+
+/**
+ * Effective context window cap: the persisted choice, or undefined when no cap
+ * is set (the default) — detection.ts then uses the model's advertised window.
+ */
+export function getContextWindowCapTokens(): number | undefined {
+	return readPlusSettings().contextWindowCapTokens;
+}
+
+/** Persist a choice; undefined resets to no cap (deletes the key). */
+export function setContextWindowCapTokens(tokens: number | undefined): void {
+	if (tokens !== undefined && (!Number.isSafeInteger(tokens) || tokens < MIN_CONTEXT_WINDOW_CAP_TOKENS)) {
+		throw new Error(`Invalid context window cap tokens: ${tokens}`);
+	}
+	writePlusSettings({ contextWindowCapTokens: tokens });
+}
+
+/** UI label for a cap value ("262144"), or "No cap" when unset. */
+export function formatContextWindowCapTokens(tokens: number | undefined): string {
+	return tokens === undefined ? "No cap" : `${tokens}`;
+}
+
+/**
+ * Parse a UI choice back to tokens: "no cap"/empty restores the default
+ * (undefined); otherwise plain integers with an optional "k"/"K" Ki suffix
+ * ("256k" → 262144). Unparseable or below-minimum input yields undefined.
+ */
+export function parseContextWindowCapChoice(choice: string): number | undefined {
+	const trimmed = choice.trim().toLowerCase();
+	if (trimmed === "" || trimmed === "no cap") return undefined;
+	const match = /^(\d+(?:\.\d+)?)k?$/.exec(trimmed);
+	if (!match) return undefined;
+	const parsed = Number.parseFloat(match[1]) * (trimmed.endsWith("k") ? 1024 : 1);
+	const rounded = Math.round(parsed);
+	return Number.isSafeInteger(rounded) && rounded >= MIN_CONTEXT_WINDOW_CAP_TOKENS ? rounded : undefined;
 }

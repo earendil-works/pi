@@ -1,6 +1,6 @@
 {
 	"name": "@pi/plus",
-	"version": "0.1.13",
+	"version": "0.1.14",
 	"private": true,
 	"type": "module",
 	"description": "Override layer for pi: Claude Code-style context detection, compaction, and reasoning. No upstream package may be edited; overrides live here and are wired in via the module-redirect loader.",

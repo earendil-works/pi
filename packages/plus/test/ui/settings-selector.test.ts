@@ -12,7 +12,11 @@ import { afterEach, beforeAll, beforeEach, describe, it } from "vitest";
 import type { SettingsConfig } from "../../../coding-agent/src/modes/interactive/components/settings-selector.ts";
 import { initTheme } from "../../../coding-agent/src/modes/interactive/theme/theme.ts";
 import { SettingsSelectorComponent } from "../../src/coding-agent/ui/settings-selector.ts";
-import { getAutoCompactThresholdPercent, getContextFloorTokens } from "../../src/context/threshold-setting.ts";
+import {
+	getAutoCompactThresholdPercent,
+	getContextFloorTokens,
+	getContextWindowCapTokens,
+} from "../../src/context/threshold-setting.ts";
 
 let dir: string;
 const savedEnv = process.env.PI_PLUS_SETTINGS_FILE;
@@ -135,5 +139,28 @@ describe("SettingsSelectorComponent context floor row", () => {
 		assert.equal(getContextFloorTokens(), 32_768);
 		internals.onChange("context-floor", "64k");
 		assert.equal(getContextFloorTokens(), 65_536);
+	});
+});
+
+describe("SettingsSelectorComponent context window cap row", () => {
+	it("injects the row right after the context floor row, defaulting to No cap", () => {
+		const selector = new SettingsSelectorComponent(fakeConfig(), { onCancel: () => {} } as never);
+		const internals = internalsOf(selector);
+		const index = internals.items.findIndex((item) => item.id === "context-window-cap");
+		assert.notEqual(index, -1);
+		assert.equal(internals.items[index - 1].id, "context-floor");
+		assert.equal(internals.items[index].currentValue, "No cap");
+		assert.deepEqual(internals.items[index].values, ["No cap", "131072", "262144", "524288", "1048576"]);
+	});
+
+	it("persists a chosen cap and clears it on 'No cap' through the list's onChange dispatch", () => {
+		const selector = new SettingsSelectorComponent(fakeConfig(), { onCancel: () => {} } as never);
+		const internals = internalsOf(selector);
+		internals.onChange("context-window-cap", "262144");
+		assert.equal(getContextWindowCapTokens(), 262_144);
+		internals.onChange("context-window-cap", "512k");
+		assert.equal(getContextWindowCapTokens(), 524_288);
+		internals.onChange("context-window-cap", "No cap");
+		assert.equal(getContextWindowCapTokens(), undefined);
 	});
 });

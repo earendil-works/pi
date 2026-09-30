@@ -4,6 +4,7 @@
  * Ported from free-code/src/services/compact/autoCompact.ts and
  * free-code/src/utils/context.ts, with pi-style env var names:
  *   PI_AUTO_COMPACT_WINDOW        cap the context window used for threshold math
+ *                                 for the session (lowers the persisted cap)
  *   PI_AUTOCOMPACT_PCT_OVERRIDE   percent-of-window autocompact threshold override
  *   PI_CONTEXT_FLOOR_TOKENS       context floor override (min 13k; only raises the floor)
  *   PI_BLOCKING_LIMIT_OVERRIDE    blocking limit override
@@ -17,7 +18,11 @@
  * threshold-setting.ts.
  */
 
-import { getAutoCompactThresholdPercent, getContextFloorTokens } from "./threshold-setting.ts";
+import {
+	getAutoCompactThresholdPercent,
+	getContextFloorTokens,
+	getContextWindowCapTokens,
+} from "./threshold-setting.ts";
 
 /** Minimum model info needed for the window math. Structurally compatible with pi's Model. */
 export interface DetectionModel {
@@ -49,13 +54,15 @@ export const ERROR_THRESHOLD_BUFFER_TOKENS = 20_000;
 export const MANUAL_COMPACT_BUFFER_TOKENS = 3_000;
 
 /**
- * Default ceiling on the window used for threshold math. Models advertising
- * windows far beyond practical agentic session sizes (e.g. the 1M-token
- * DeepSeek V4.1 Flash) would otherwise push the auto-compact threshold to
- * ~800K, where it effectively never fires and the transcript grows unbounded.
+ * Context window ceiling for threshold math. With no persisted cap (the
+ * default) the model's advertised context window is used as-is; a cap set in
+ * /settings (pi-plus-settings.json) shrinks it to min(model window, cap).
  * PI_AUTO_COMPACT_WINDOW can only lower this further, never raise it.
  */
-export const AUTOCOMPACT_MAX_WINDOW_TOKENS = 262_144; // 256K
+export function getContextWindowCeiling(model: DetectionModel): number {
+	const cap = getContextWindowCapTokens();
+	return Math.min(model.contextWindow, cap ?? Number.POSITIVE_INFINITY);
+}
 
 /** Pause threshold auto-compact after this many consecutive failures. */
 export const MAX_CONSECUTIVE_AUTOCOMPACT_FAILURES = 3;
@@ -124,16 +131,17 @@ function getContextFloorBufferTokens(): number {
 	return Math.max(getContextFloorTokens(), AUTOCOMPACT_FLOOR_BUFFER_TOKENS);
 }
 
-/** Effective window: contextWindow (ceilinged at AUTOCOMPACT_MAX_WINDOW_TOKENS)
- * minus the output reserve, capped by PI_AUTO_COMPACT_WINDOW, floored at the
- * output reserve plus the context floor buffer. */
+/** Effective window: contextWindow ceilinged at getContextWindowCeiling()
+ * (the persisted cap, else the raw model window) minus the output reserve,
+ * capped by PI_AUTO_COMPACT_WINDOW, floored at the output reserve plus the
+ * context floor buffer. */
 export function getEffectiveContextWindowSize(model?: DetectionModel): number {
 	const m = model ?? currentModel;
 	if (!m) {
 		return Number.POSITIVE_INFINITY;
 	}
 	const reservedTokensForSummary = Math.min(m.maxTokens || Number.POSITIVE_INFINITY, MAX_OUTPUT_TOKENS_FOR_SUMMARY);
-	let contextWindow = Math.min(m.contextWindow, AUTOCOMPACT_MAX_WINDOW_TOKENS);
+	let contextWindow = getContextWindowCeiling(m);
 
 	const cap = parsePositiveInt(process.env.PI_AUTO_COMPACT_WINDOW);
 	if (cap !== undefined) {
@@ -152,13 +160,15 @@ export function getEffectiveContextWindowSize(model?: DetectionModel): number {
 /**
  * Window that context fullness is measured against for display. Normally the
  * raw contextWindow, preserving upstream's "percent of model capacity". When
- * the 256K ceiling engages (1M-context models), fullness is reported against
- * the same effective window the auto-compact threshold uses, so the percentage
- * tracks "how much of the usable window is consumed" and the /settings
- * threshold percent reads directly off the meter.
+ * a persisted cap shrinks the window below the model's advertised size,
+ * fullness is reported against the same effective window the auto-compact
+ * threshold uses, so the percentage tracks "how much of the usable window is
+ * consumed" and the /settings threshold percent reads directly off the meter.
  */
 export function getContextPercentBaseWindow(model: DetectionModel): number {
-	if (model.contextWindow > AUTOCOMPACT_MAX_WINDOW_TOKENS) {
+	const envCap = parsePositiveInt(process.env.PI_AUTO_COMPACT_WINDOW);
+	const ceiling = Math.min(getContextWindowCeiling(model), envCap ?? Number.POSITIVE_INFINITY);
+	if (model.contextWindow > ceiling) {
 		return getEffectiveContextWindowSize(model);
 	}
 	return model.contextWindow;

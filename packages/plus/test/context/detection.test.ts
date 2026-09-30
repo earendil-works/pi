@@ -10,12 +10,12 @@ import { afterEach, beforeEach, describe, it, vi } from "vitest";
 import {
 	AUTOCOMPACT_FAILURE_COOLDOWN_MS,
 	AUTOCOMPACT_FLOOR_BUFFER_TOKENS,
-	AUTOCOMPACT_MAX_WINDOW_TOKENS,
 	calculateTokenWarningState,
 	getAutoCompactFailureCooldownMs,
 	getAutoCompactThreshold,
 	getBlockingLimit,
 	getContextPercentBaseWindow,
+	getContextWindowCeiling,
 	getEffectiveContextWindowSize,
 	isAutoCompactBreakerTripped,
 	isAutoCompactDisabled,
@@ -79,16 +79,61 @@ describe("getEffectiveContextWindowSize", () => {
 		assert.equal(getEffectiveContextWindowSize(), Number.POSITIVE_INFINITY);
 	});
 
-	it("ceilings huge windows at 256K for threshold math (1M-context models)", () => {
-		// DeepSeek V4.1 Flash: min(1M, 256K) - 20k reserve = 242_144.
+	it("uses the model's full advertised window for 1M-context models when no cap is set", () => {
+		// No persisted cap: the ceiling is the model window itself.
 		setCurrentModel({ contextWindow: 1_000_000, maxTokens: 384_000 });
-		assert.equal(getEffectiveContextWindowSize(), AUTOCOMPACT_MAX_WINDOW_TOKENS - MAX_OUTPUT_TOKENS_FOR_SUMMARY);
+		assert.equal(getEffectiveContextWindowSize(), 1_000_000 - MAX_OUTPUT_TOKENS_FOR_SUMMARY);
 	});
 
-	it("does not let PI_AUTO_COMPACT_WINDOW raise the window above the 256K ceiling", () => {
+	it("does not let PI_AUTO_COMPACT_WINDOW raise the window above the model's advertised size", () => {
+		setCurrentModel({ contextWindow: 1_000_000, maxTokens: 384_000 });
+		process.env.PI_AUTO_COMPACT_WINDOW = "2000000";
+		assert.equal(getEffectiveContextWindowSize(), 1_000_000 - MAX_OUTPUT_TOKENS_FOR_SUMMARY);
+	});
+
+	it("lets PI_AUTO_COMPACT_WINDOW lower the uncapped model window", () => {
 		setCurrentModel({ contextWindow: 1_000_000, maxTokens: 384_000 });
 		process.env.PI_AUTO_COMPACT_WINDOW = "512000";
-		assert.equal(getEffectiveContextWindowSize(), AUTOCOMPACT_MAX_WINDOW_TOKENS - MAX_OUTPUT_TOKENS_FOR_SUMMARY);
+		assert.equal(getEffectiveContextWindowSize(), 512_000 - MAX_OUTPUT_TOKENS_FOR_SUMMARY);
+	});
+
+	it("applies a persisted context window cap below the model window", () => {
+		// 1M model capped at 256K: min(1M, 256K) - 20k reserve = 242_144.
+		const dir = mkdtempSync(join(tmpdir(), "plus-cap-"));
+		try {
+			writeFileSync(join(dir, "pi-plus-settings.json"), JSON.stringify({ contextWindowCapTokens: 262_144 }));
+			process.env.PI_PLUS_SETTINGS_FILE = join(dir, "pi-plus-settings.json");
+			setCurrentModel({ contextWindow: 1_000_000, maxTokens: 384_000 });
+			assert.equal(getEffectiveContextWindowSize(), 262_144 - MAX_OUTPUT_TOKENS_FOR_SUMMARY);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("applies a persisted context window cap above the old 256K ceiling", () => {
+		// A cap may also sit above 256K: min(1M, 512K) - 20k reserve = 504_832.
+		const dir = mkdtempSync(join(tmpdir(), "plus-cap-"));
+		try {
+			writeFileSync(join(dir, "pi-plus-settings.json"), JSON.stringify({ contextWindowCapTokens: 524_288 }));
+			process.env.PI_PLUS_SETTINGS_FILE = join(dir, "pi-plus-settings.json");
+			setCurrentModel({ contextWindow: 1_000_000, maxTokens: 384_000 });
+			assert.equal(getEffectiveContextWindowSize(), 524_288 - MAX_OUTPUT_TOKENS_FOR_SUMMARY);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("lets PI_AUTO_COMPACT_WINDOW lower a persisted cap further", () => {
+		const dir = mkdtempSync(join(tmpdir(), "plus-cap-"));
+		try {
+			writeFileSync(join(dir, "pi-plus-settings.json"), JSON.stringify({ contextWindowCapTokens: 524_288 }));
+			process.env.PI_PLUS_SETTINGS_FILE = join(dir, "pi-plus-settings.json");
+			process.env.PI_AUTO_COMPACT_WINDOW = "100000";
+			setCurrentModel({ contextWindow: 1_000_000, maxTokens: 384_000 });
+			assert.equal(getEffectiveContextWindowSize(), 100_000 - MAX_OUTPUT_TOKENS_FOR_SUMMARY);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
 	});
 
 	it("raises the floor for small-context models when a context floor is persisted", () => {
@@ -137,20 +182,50 @@ describe("getEffectiveContextWindowSize", () => {
 });
 
 describe("getContextPercentBaseWindow", () => {
-	it("returns the raw context window for models at or below the ceiling", () => {
+	it("returns the raw context window when no cap is persisted", () => {
 		assert.equal(getContextPercentBaseWindow(MODEL), 200_000);
 		assert.equal(getContextPercentBaseWindow({ contextWindow: 262_144, maxTokens: 65_536 }), 262_144);
+		// Even 1M-context models: no cap means the meter reads against full capacity.
+		assert.equal(getContextPercentBaseWindow({ contextWindow: 1_000_000, maxTokens: 384_000 }), 1_000_000);
 	});
 
-	it("returns the effective threshold window for 1M-context models", () => {
-		// DeepSeek V4.1 Flash: percent base = 242_144 so the footer reads against
+	it("returns the effective threshold window when a persisted cap shrinks the window", () => {
+		// 1M model capped at 256K: percent base = 242_144 so the footer reads against
 		// the window auto-compact actually fires at, not the raw 1M capacity.
-		assert.equal(getContextPercentBaseWindow({ contextWindow: 1_000_000, maxTokens: 384_000 }), 242_144);
+		const dir = mkdtempSync(join(tmpdir(), "plus-cap-"));
+		try {
+			writeFileSync(join(dir, "pi-plus-settings.json"), JSON.stringify({ contextWindowCapTokens: 262_144 }));
+			process.env.PI_PLUS_SETTINGS_FILE = join(dir, "pi-plus-settings.json");
+			assert.equal(getContextPercentBaseWindow({ contextWindow: 1_000_000, maxTokens: 384_000 }), 242_144);
+			// Models at or below the cap are unchanged.
+			assert.equal(getContextPercentBaseWindow(MODEL), 200_000);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
 	});
 
-	it("follows PI_AUTO_COMPACT_WINDOW below the ceiling", () => {
+	it("follows PI_AUTO_COMPACT_WINDOW below an uncapped model window", () => {
 		process.env.PI_AUTO_COMPACT_WINDOW = "100000";
 		assert.equal(getContextPercentBaseWindow({ contextWindow: 1_000_000, maxTokens: 384_000 }), 80_000);
+	});
+});
+
+describe("getContextWindowCeiling", () => {
+	it("is the model window when no cap is persisted", () => {
+		assert.equal(getContextWindowCeiling(MODEL), 200_000);
+		assert.equal(getContextWindowCeiling({ contextWindow: 1_000_000, maxTokens: 384_000 }), 1_000_000);
+	});
+
+	it("is the persisted cap when the cap is below the model window", () => {
+		const dir = mkdtempSync(join(tmpdir(), "plus-cap-"));
+		try {
+			writeFileSync(join(dir, "pi-plus-settings.json"), JSON.stringify({ contextWindowCapTokens: 262_144 }));
+			process.env.PI_PLUS_SETTINGS_FILE = join(dir, "pi-plus-settings.json");
+			assert.equal(getContextWindowCeiling({ contextWindow: 1_000_000, maxTokens: 384_000 }), 262_144);
+			assert.equal(getContextWindowCeiling(MODEL), 200_000);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
 	});
 });
 
@@ -213,11 +288,23 @@ describe("getAutoCompactThreshold", () => {
 		}
 	});
 
-	it("computes the threshold against the 256K ceiling for 1M-context models", () => {
-		// effective = 256K - 20k = 242_144; 80% default = 193_715, far below the
-		// ~800K an uncapped 1M window would give.
+	it("computes the threshold against the model's full window for 1M-context models when no cap is set", () => {
+		// effective = 1M - 20k = 980_000; 80% default = 784_000.
 		setCurrentModel({ contextWindow: 1_000_000, maxTokens: 384_000 });
-		assert.equal(getAutoCompactThreshold(), Math.floor(242_144 * 0.8));
+		assert.equal(getAutoCompactThreshold(), Math.floor(980_000 * 0.8));
+	});
+
+	it("computes the threshold against a persisted cap for 1M-context models", () => {
+		// effective = 256K - 20k = 242_144; 80% default = 193_715.
+		const dir = mkdtempSync(join(tmpdir(), "plus-cap-"));
+		try {
+			writeFileSync(join(dir, "pi-plus-settings.json"), JSON.stringify({ contextWindowCapTokens: 262_144 }));
+			process.env.PI_PLUS_SETTINGS_FILE = join(dir, "pi-plus-settings.json");
+			setCurrentModel({ contextWindow: 1_000_000, maxTokens: 384_000 });
+			assert.equal(getAutoCompactThreshold(), Math.floor(242_144 * 0.8));
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
 	});
 });
 
