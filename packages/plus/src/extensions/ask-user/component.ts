@@ -13,6 +13,7 @@ import {
 	answerValue,
 	createFlow,
 	inputChar,
+	inputText,
 	isAnswered,
 	isSubmitView,
 	moveCursor,
@@ -33,6 +34,8 @@ export class AskUserDialogComponent {
 	private keybindings: KeybindingsManager;
 	private done: (result: AskUserAnswers | undefined) => void;
 	private finished = false;
+	private isInPaste = false;
+	private pasteBuffer = "";
 
 	constructor(
 		questions: AskUserQuestion[],
@@ -61,6 +64,26 @@ export class AskUserDialogComponent {
 		}
 		if (state.done === "submitted") {
 			this.finish({ ...this.answersByQuestion() });
+			return;
+		}
+
+		// Bracketed paste: the terminal wraps pasted text in \x1b[200~ ... \x1b[201~
+		// (possibly split across stdin chunks), so buffer until the end marker.
+		if (keyData.includes("\x1b[200~")) {
+			this.isInPaste = true;
+			this.pasteBuffer = "";
+			keyData = keyData.replace("\x1b[200~", "");
+		}
+		if (this.isInPaste) {
+			this.pasteBuffer += keyData;
+			const endIndex = this.pasteBuffer.indexOf("\x1b[201~");
+			if (endIndex === -1) return;
+			const pasteContent = this.pasteBuffer.substring(0, endIndex);
+			const remaining = this.pasteBuffer.substring(endIndex + "\x1b[201~".length);
+			this.isInPaste = false;
+			this.pasteBuffer = "";
+			inputText(state, pasteContent);
+			if (remaining.length > 0) this.handleInput(remaining);
 			return;
 		}
 

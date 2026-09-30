@@ -118,6 +118,22 @@ export function inputChar(state: QuestionFlowState, ch: string): void {
 	state.otherText += ch;
 }
 
+/**
+ * Append pasted text to the Other buffer in one go (ignored outside Other
+ * entry). The buffer is single-line, so line breaks are flattened to spaces
+ * and control characters are dropped — mirroring the editor's paste cleanup.
+ */
+export function inputText(state: QuestionFlowState, text: string): void {
+	if (!state.otherActive || state.done !== "pending") return;
+	const clean = text
+		.replace(/\r\n?/g, "\n")
+		.split("")
+		.filter((ch) => ch === "\n" || ch.charCodeAt(0) >= 32)
+		.join("")
+		.replace(/\n/g, " ");
+	state.otherText += clean;
+}
+
 export function pressBackspace(state: QuestionFlowState): void {
 	if (state.otherActive) state.otherText = state.otherText.slice(0, -1);
 }

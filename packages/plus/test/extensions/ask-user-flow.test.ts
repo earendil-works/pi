@@ -11,6 +11,7 @@ import {
 	collectAnswers,
 	createFlow,
 	inputChar,
+	inputText,
 	isSubmitView,
 	moveCursor,
 	moveTab,
@@ -203,6 +204,32 @@ describe("Other free-text entry", () => {
 		const state = createFlow([makeQuestion()]);
 		pressEscape(state);
 		assert.equal(state.done, "cancelled");
+	});
+
+	it("inputText appends multi-character text to the Other buffer", () => {
+		const state = createFlow([makeQuestion()]);
+		state.cursor = 3;
+		pressEnter(state);
+		inputText(state, "hello world");
+		assert.equal(state.otherText, "hello world");
+		pressEnter(state);
+		assert.equal(state.done, "submitted");
+		assert.deepEqual(collectAnswers(state), { "Which library?": "hello world" });
+	});
+
+	it("inputText flattens line breaks and drops control characters", () => {
+		const state = createFlow([makeQuestion()]);
+		state.cursor = 3;
+		pressEnter(state);
+		inputText(state, "line one\r\nline two\x00\x01!");
+		assert.equal(state.otherText, "line one line two!");
+	});
+
+	it("inputText is ignored outside Other entry", () => {
+		const state = createFlow([makeQuestion()]);
+		inputText(state, "nope");
+		assert.equal(state.otherText, "");
+		assert.equal(state.freeText[0], "");
 	});
 });
 

@@ -87,3 +87,58 @@ describe("AskUserDialogComponent border", () => {
 		assert.ok(otherLines.slice(1, -1).join("\n").includes("Other:"));
 	});
 });
+
+describe("AskUserDialogComponent paste", () => {
+	function enterOther(component: AskUserDialogComponent): void {
+		component.handleInput("j"); // date-fns
+		component.handleInput("j"); // dayjs
+		component.handleInput("j"); // Other
+		component.handleInput("\n"); // enter Other entry
+	}
+
+	it("inserts bracketed paste into the Other buffer", () => {
+		let result: unknown;
+		const component = new AskUserDialogComponent(makeQuestions(), theme, keybindings, (r) => {
+			result = r;
+		});
+		enterOther(component);
+		component.handleInput("\x1b[200~hello world\x1b[201~");
+		component.handleInput("\n"); // commit
+		assert.deepEqual(result, { "Which library?": "hello world" });
+	});
+
+	it("buffers paste split across multiple stdin chunks", () => {
+		let result: unknown;
+		const component = new AskUserDialogComponent(makeQuestions(), theme, keybindings, (r) => {
+			result = r;
+		});
+		enterOther(component);
+		component.handleInput("\x1b[200~hello ");
+		component.handleInput("wor");
+		component.handleInput("ld\x1b[201~");
+		component.handleInput("\n");
+		assert.deepEqual(result, { "Which library?": "hello world" });
+	});
+
+	it("flattens pasted line breaks into spaces", () => {
+		let result: unknown;
+		const component = new AskUserDialogComponent(makeQuestions(), theme, keybindings, (r) => {
+			result = r;
+		});
+		enterOther(component);
+		component.handleInput("\x1b[200~line one\r\nline two\x1b[201~");
+		component.handleInput("\n");
+		assert.deepEqual(result, { "Which library?": "line one line two" });
+	});
+
+	it("ignores paste outside Other entry", () => {
+		let result: unknown;
+		const component = new AskUserDialogComponent(makeQuestions(), theme, keybindings, (r) => {
+			result = r;
+		});
+		component.handleInput("\x1b[200~stray\x1b[201~");
+		component.handleInput("j"); // still on the option list (now on dayjs)
+		component.handleInput("\n"); // select dayjs
+		assert.deepEqual(result, { "Which library?": "dayjs" });
+	});
+});
