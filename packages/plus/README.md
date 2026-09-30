@@ -88,14 +88,56 @@ npm publish --access public --ignore-scripts   # in packages/plus/dist/npm
 
 The bundle applies `loader/redirects.mjs` at bundle time (esbuild plugin) and keeps each
 module a singleton by funneling every `packages/*/src/**` import with a compiled `dist/`
-counterpart to that dist file. `--no-env` is preserved via a banner scrub. Provider
-credentials, config dir (`~/.pi`), and session layout are identical to source-mode `pipi`.
+counterpart to that dist file. `--no-env` is preserved via a banner scrub (inert for
+library imports: it only scrubs when `process.argv` contains a literal `--no-env`).
+Provider credentials, config dir (`~/.pi`), and session layout are identical to
+source-mode `pipi`.
+
+### Programmatic API (library hosts)
+
+The same package also exposes a programmatic entry for hosts that embed pi-plus
+in-process (e.g. a desktop app) instead of running the `pipi` CLI:
+
+```js
+import { createPlusAgentSession } from "pi-plus";
+
+const { session } = await createPlusAgentSession({
+	cwd: projectDir,
+	ui: {
+		select: async (title, options) => showPicker(title, options),
+		confirm: async (title, message) => showConfirm(title, message),
+		input: async (title, placeholder) => showInput(title, placeholder),
+	},
+	// Hosts without a pi CLI on PATH should exclude the subagent tool: it
+	// launches a pi subprocess and could otherwise relaunch the host app.
+	excludeTools: ["subagent"],
+});
+await session.prompt("Review this repository");
+```
+
+- The full pi-plus layer is included: the compaction/context/reasoning overrides are
+  baked into `api.js` by the same bundle-time redirect plugin as the CLI, and the seven
+  non-TUI pi-plus extensions (subagent, tasks, memory, plan, ask-user, hooks,
+  context-guard) are registered exactly as the CLI wrapper registers them.
+- `createPlusAgentSession()` extends the upstream `createAgentSession` (re-exported, with
+  the whole upstream SDK surface) with those extension factories, and always binds
+  extensions once — do not call `session.bindExtensions()` yourself. Pass `ui` dialog
+  handlers to get working `ask_user` questions (bound with mode `"rpc"`, so the tool
+  falls back to sequential select/input/confirm dialogs bridged to your UI); omit `ui`
+  for a headless session.
+- The staged `package.json` has an `exports` map, so deep imports (e.g.
+  `pi-plus/pipi.js`) are no longer reachable; `api.d.ts` re-exports the
+  `@earendil-works/pi-coding-agent` types (exact-pinned dependency, type resolution
+  only — the runtime is self-contained). Building `api.js` as a second esbuild entry
+  roughly doubles the artifact size.
 
 Known limitations of the compiled artifact:
 
 - `pipi server` / `pipi client` experimental subcommands (`PI_EXPERIMENTAL=1`) spawn sibling JS
   files that are not emitted next to the bundle; use source-mode `./pipi` for those.
 - `docs/` and `examples/` are not shipped, so `/docs`-style paths into them are absent.
+- Hub profile resolution (`pipi --as <name>`, `pipi profile …`) is CLI-launch logic and is
+  not part of the programmatic entry; SDK hosts pass `cwd`/`agentDir` explicitly.
 
 ## Tests
 

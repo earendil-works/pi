@@ -282,7 +282,23 @@ const lazyResult = await build({
 	splitting: false,
 });
 
-validateExternalImports([mainResult.metafile, lazyResult.metafile]);
+// Second entry: the programmatic library surface (packages/plus/src/api.ts) for
+// hosts that embed pi-plus in-process instead of running the pipi CLI. Built
+// separately so the CLI bundle is untouched; the ~8 MiB graph duplication is
+// accepted (the lazy sibling chunks above resolve import.meta.url-relative to
+// whichever entry loads them, so they are shared). The banner's --no-env scrub
+// is inert here: it only acts when process.argv contains a literal "--no-env".
+const apiResult = await build({
+	...commonBuildOptions(),
+	entryNames: "[name]",
+	entryPoints: {
+		api: join(scriptDir, "src", "api.ts"),
+	},
+	outdir: stagingDir,
+	splitting: false,
+});
+
+validateExternalImports([mainResult.metafile, lazyResult.metafile, apiResult.metafile]);
 
 // esbuild preserves the entry's hashbang; enforce it in case that ever changes.
 const pipiJs = join(stagingDir, "pipi.js");
@@ -296,11 +312,16 @@ chmodSync(pipiJs, 0o755);
 // ---------------------------------------------------------------------------
 
 const plusPkg = JSON.parse(readFileSync(join(scriptDir, "package.json"), "utf8"));
-const upstreamDeps = JSON.parse(readFileSync(join(codingAgentDir, "package.json"), "utf8")).dependencies;
+const upstreamPkg = JSON.parse(readFileSync(join(codingAgentDir, "package.json"), "utf8"));
+const upstreamDeps = upstreamPkg.dependencies;
 const dependencies = {};
 for (const name of ["@earendil-works/chord", "@earendil-works/pi-tui", "@silvia-odwyer/photon-node", "jiti"]) {
 	if (upstreamDeps[name]) dependencies[name] = upstreamDeps[name];
 }
+// Types only: api.d.ts re-exports the upstream SDK surface, so consumers of the
+// "pi-plus" exports map get full type resolution. Exact pin so the shipped types
+// always describe the bundled runtime; api.js itself is self-contained.
+dependencies["@earendil-works/pi-coding-agent"] = upstreamPkg.version;
 
 writeFileSync(
 	join(stagingDir, "package.json"),
@@ -308,14 +329,20 @@ writeFileSync(
 		{
 			name: "pi-plus",
 			version: plusPkg.version,
-			description: "pi coding agent with the pi-plus override layer (pipi CLI)",
+			description: "pi coding agent with the pi-plus override layer (pipi CLI + programmatic API)",
 			type: "module",
 			// No piConfig.name: pi-plus keeps pi's env var layout (PI_CODING_AGENT_DIR, ~/.pi).
 			// The pipi display name comes from the plus config wrapper (APP_NAME/APP_TITLE).
 			piConfig: { configDir: ".pi" },
 			// Deliberately no "pi" bin (pi-plus must not put `pi` on PATH); `pipi` only.
 			bin: { pipi: "pipi.js" },
-			files: ["pipi.js", "*.js", "modes/", "core/", "README.md", "CHANGELOG.md"],
+			// The exports map is the public surface; deep imports (e.g. "pi-plus/pipi.js")
+			// are intentionally closed off now that a curated entry exists.
+			exports: {
+				".": { types: "./api.d.ts", default: "./api.js" },
+				"./package.json": "./package.json",
+			},
+			files: ["pipi.js", "api.js", "api.d.ts", "*.js", "modes/", "core/", "README.md", "CHANGELOG.md"],
 			dependencies,
 			engines: { node: ">=22.19.0" },
 			publishConfig: { access: "public" },
@@ -344,9 +371,11 @@ copyFiles(join(codingAgentDir, "src/core/export-html/vendor"), join(stagingDir, 
 
 copyFileSync(join(scriptDir, "README.md"), join(stagingDir, "README.md"));
 copyFileSync(join(scriptDir, "CHANGELOG.md"), join(stagingDir, "CHANGELOG.md"));
+copyFileSync(join(scriptDir, "api.d.ts"), join(stagingDir, "api.d.ts"));
 
 const fileCount = readdirSync(stagingDir, { recursive: true }).filter((file) => statSync(join(stagingDir, file)).isFile()).length;
 const bytes =
 	Object.values(mainResult.metafile.outputs).reduce((subtotal, output) => subtotal + output.bytes, 0) +
-	Object.values(lazyResult.metafile.outputs).reduce((subtotal, output) => subtotal + output.bytes, 0);
+	Object.values(lazyResult.metafile.outputs).reduce((subtotal, output) => subtotal + output.bytes, 0) +
+	Object.values(apiResult.metafile.outputs).reduce((subtotal, output) => subtotal + output.bytes, 0);
 console.log(`Built ${stagingDir.replace(`${repoRoot}/`, "")} (${fileCount} files, ${(bytes / (1024 * 1024)).toFixed(1)} MiB)`);
