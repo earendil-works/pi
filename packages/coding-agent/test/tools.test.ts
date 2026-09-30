@@ -331,6 +331,26 @@ describe("Coding Agent Tools", () => {
 			).rejects.toThrow(/Found 3 occurrences/);
 		});
 
+		it.each([
+			{ content: "aaa", oldText: "aa" },
+			{ content: "ababa", oldText: "aba" },
+			{ content: "ＡＡＡ", oldText: "AA" },
+		])("should reject overlapping occurrences of $oldText in $content", async ({ content, oldText }) => {
+			const testFile = join(testDir, "overlapping-occurrences.txt");
+			writeFileSync(testFile, content);
+
+			await expect(
+				editTool.execute("test-overlapping-occurrences", {
+					path: testFile,
+					edits: [{ oldText, newText: "" }],
+				}),
+			).rejects.toThrow(/Found 2 occurrences/);
+			expect(await computeEditsDiff(testFile, [{ oldText, newText: "" }], testDir)).toMatchObject({
+				error: expect.stringContaining("Found 2 occurrences"),
+			});
+			expect(readFileSync(testFile, "utf8")).toBe(content);
+		});
+
 		it("should replace multiple disjoint regions in one call", async () => {
 			const testFile = join(testDir, "edit-multi.txt");
 			writeFileSync(testFile, "alpha\nbeta\ngamma\ndelta\n");

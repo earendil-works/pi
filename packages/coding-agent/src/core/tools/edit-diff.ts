@@ -247,7 +247,15 @@ export function fuzzyFindText(content: string, oldText: string): FuzzyMatchResul
 function countOccurrences(content: string, oldText: string): number {
 	const fuzzyContent = normalizeForFuzzyMatch(content);
 	const fuzzyOldText = normalizeForFuzzyMatch(oldText);
-	return fuzzyContent.split(fuzzyOldText).length - 1;
+	let occurrences = 0;
+	let searchIndex = 0;
+	while (searchIndex <= fuzzyContent.length) {
+		const matchIndex = fuzzyContent.indexOf(fuzzyOldText, searchIndex);
+		if (matchIndex === -1) break;
+		occurrences++;
+		searchIndex = matchIndex + 1;
+	}
+	return occurrences;
 }
 
 function getNotFoundError(path: string, editIndex: number, totalEdits: number): Error {
