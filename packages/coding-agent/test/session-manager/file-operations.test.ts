@@ -410,6 +410,24 @@ describe("SessionManager.setSessionFile with corrupted files", () => {
 		expect(readFileSync(nonSessionFile, "utf-8")).toBe(originalContent);
 	});
 
+	it("keeps writing to the active session after rejecting an invalid session file", () => {
+		const session = SessionManager.create(tempDir, tempDir);
+		const first = userMsg("first");
+		session.appendMessage(first);
+		const activeFile = session.getSessionFile()!;
+		const invalidFile = join(tempDir, "invalid.jsonl");
+		const invalidContent = "{}\n";
+		writeFileSync(invalidFile, invalidContent);
+
+		expect(() => session.setSessionFile(invalidFile)).toThrow(/not a valid pi session/);
+		const second = userMsg("second");
+		session.appendMessage(second);
+
+		expect(readFileSync(invalidFile, "utf8")).toBe(invalidContent);
+		expect(session.getSessionFile()).toBe(activeFile);
+		expect(SessionManager.open(activeFile, tempDir).buildSessionContext().messages).toEqual([first, second]);
+	});
+
 	it("preserves explicit session file path when recovering from corrupted file", () => {
 		const explicitPath = join(tempDir, "my-session.jsonl");
 		writeFileSync(explicitPath, "");

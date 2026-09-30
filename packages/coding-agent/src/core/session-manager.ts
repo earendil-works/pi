@@ -1027,14 +1027,14 @@ export class SessionManager {
 	}
 
 	private _setSessionFile(sessionFile: string, preloadedFileEntries?: FileEntry[]): void {
-		this.sessionFile = resolvePath(sessionFile);
-		if (existsSync(this.sessionFile)) {
-			const entries = preloadedFileEntries ?? loadEntriesFromFile(this.sessionFile);
+		const resolvedSessionFile = resolvePath(sessionFile);
+		if (existsSync(resolvedSessionFile)) {
+			const entries = preloadedFileEntries ?? loadEntriesFromFile(resolvedSessionFile);
 
 			// If file was empty, initialize it with a valid session header. If it was
 			// non-empty but did not parse as a pi session, fail without modifying it.
 			if (entries.length === 0) {
-				const explicitPath = this.sessionFile;
+				const explicitPath = resolvedSessionFile;
 				if (statSync(explicitPath).size > 0) {
 					throw new Error(`Session file is not a valid ${APP_NAME} session: ${explicitPath}`);
 				}
@@ -1045,10 +1045,11 @@ export class SessionManager {
 				return;
 			}
 
+			this.sessionFile = resolvedSessionFile;
 			this._loadEntries(entries);
 			this.flushed = true;
 		} else {
-			const explicitPath = this.sessionFile;
+			const explicitPath = resolvedSessionFile;
 			this.newSession();
 			this.sessionFile = explicitPath; // preserve explicit path from --session flag
 		}
