@@ -3,9 +3,9 @@ import type { Usage } from "@earendil-works/pi-ai";
 import { defineDoc } from "../documents.ts";
 import type { ConversationId, Tx } from "../types.ts";
 
-/** Spend recorded by one conversation's own entries; the entries stay authoritative. */
+/** Ledger of one conversation's own spend: its entries, and compaction summarization attempts, which have none. */
 export type UsageState = {
-	/** Assistant entries, keyed `provider/modelId`. */
+	/** Assistant entries and summarization attempts, keyed `provider/modelId`. */
 	models: Record<string, JsonRepresentation<Usage>>;
 	/** Tool results, keyed by tool name; their usage has no model identity. */
 	tools: Record<string, JsonRepresentation<Usage>>;
@@ -21,7 +21,7 @@ export const UsageDoc = defineDoc<UsageState>({
 	checkpointWhen: () => true,
 });
 
-/** Add `usage` to one bucket of the conversation's `pi.usage`, in the commit that appends its entry. */
+/** Add `usage` to one bucket of the conversation's `pi.usage`, in the commit that records the response. */
 export async function recordUsage(
 	tx: Tx,
 	conversationId: ConversationId,

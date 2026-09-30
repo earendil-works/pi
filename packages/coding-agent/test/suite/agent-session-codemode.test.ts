@@ -5,6 +5,7 @@ import {
 	type ClassifierResult,
 	fauxAssistantMessage,
 	fauxToolCall,
+	getCurrentSystemPrompt,
 	getCurrentTools,
 	type TranscriptContext,
 } from "@earendil-works/pi-ai";
@@ -115,22 +116,25 @@ describe("AgentSession codemode tool", () => {
 		const description = (name: string) =>
 			harness.session.agent.state.tools.find((tool) => tool.name === name)?.description ?? "";
 		const requestTools: string[][] = [];
+		const requestPrompts: string[] = [];
 		const record = (context: TranscriptContext) => {
 			requestTools.push(getCurrentTools(context.messages).map((tool) => tool.name));
+			requestPrompts.push(getCurrentSystemPrompt(context.messages));
 			return fauxAssistantMessage("ok");
 		};
 
 		// on: declared tools carry their codemode declaration and are not listed again in codemode.
-		harness.session.setActiveToolsByName(["echo", "codemode"]);
+		harness.session.setActiveToolsByName(["read", "echo", "codemode"]);
 		expect(description("echo")).toContain("codemode tool declaration:");
 		expect(description("codemode")).not.toContain("### `echo`");
 		harness.setResponses([record]);
 		await harness.session.prompt("on");
-		expect(requestTools[0]).toEqual(expect.arrayContaining(["echo", "codemode"]));
+		expect(requestTools[0]).toEqual(expect.arrayContaining(["read", "echo", "codemode"]));
+		expect(requestPrompts[0]).toContain("\n- read: ");
 
 		// only: codemode lists echo, which stays active but is left out of requests.
 		harness.settingsManager.applyOverrides({ codemode: { mode: "only" } });
-		harness.session.setActiveToolsByName(["echo", "codemode"]);
+		harness.session.setActiveToolsByName(["read", "echo", "codemode"]);
 		expect(description("echo")).not.toContain("codemode tool declaration:");
 		expect(description("codemode")).toContain("### `echo`");
 		expect(description("codemode")).not.toContain("### `stats`");
@@ -138,6 +142,11 @@ describe("AgentSession codemode tool", () => {
 		await harness.session.prompt("only");
 		expect(requestTools[1]).toContain("codemode");
 		expect(requestTools[1]).not.toContain("echo");
+		expect(requestTools[1]).not.toContain("read");
+		// The prompt's tool list matches the declarations: hidden tools are not listed (#10192).
+		expect(requestPrompts[1]).not.toContain("\n- read: ");
+		expect(requestPrompts[1]).toContain("\n- codemode: ");
+		expect(harness.session.systemPrompt).not.toContain("\n- read: ");
 
 		// Without codemode, tools keep their plain descriptions.
 		harness.session.setActiveToolsByName(["echo"]);

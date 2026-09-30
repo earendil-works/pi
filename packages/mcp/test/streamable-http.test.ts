@@ -1,9 +1,10 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
 	LATEST_PROTOCOL_VERSION,
 	type McpAuthRequiredError,
 	McpClient,
+	type McpFetch,
 	McpSessionExpiredError,
 	StreamableHttpTransport,
 } from "../src/index.ts";
@@ -339,6 +340,51 @@ describe("StreamableHttpTransport", () => {
 			{ status: 403, token: "new" },
 		]);
 		await client.close();
+	});
+
+	// #10188: Cloudflare Workers reject the platform fetch when called with a receiver other than globalThis.
+	it("calls fetch without a receiver", async () => {
+		const realFetch = globalThis.fetch;
+		const strictFetch = function (this: unknown, input: string | URL, init?: RequestInit) {
+			if (this !== undefined && this !== globalThis) throw new TypeError("Illegal invocation");
+			return realFetch(input, init);
+		} satisfies McpFetch;
+		const { url } = await startServer(async (request, response, requests) => {
+			if (request.method === "POST" && request.headers.authorization === undefined) {
+				await readBody(request);
+				response.writeHead(401, { "www-authenticate": "Bearer" }).end();
+				return;
+			}
+			return protocolHandler(request, response, requests);
+		});
+		const connect = async (fetch: McpFetch | undefined) => {
+			let token: string | undefined;
+			const client = new McpClient({ name: "http-test", version: "1.0.0" });
+			await client.connect(
+				new StreamableHttpTransport({
+					url,
+					fetch,
+					openGetStream: false,
+					authProvider: {
+						token: async () => token,
+						onUnauthorized: async (context) => {
+							await (await context.fetch(url)).body?.cancel();
+							token = "token";
+						},
+					},
+				}),
+			);
+			expect(await client.listTools()).toEqual([{ name: "echo", inputSchema: { type: "object" } }]);
+			await client.close();
+		};
+
+		await connect(strictFetch);
+		vi.stubGlobal("fetch", strictFetch);
+		try {
+			await connect(undefined);
+		} finally {
+			vi.unstubAllGlobals();
+		}
 	});
 
 	it("classifies an expired established session", async () => {

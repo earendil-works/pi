@@ -21,7 +21,13 @@ import type {
 	WatchHandle,
 } from "../types.ts";
 import { ROOT_CONVERSATION_ID } from "../types.ts";
-import { ConversationConfig, type ConversationConfigState, DEFAULT_RETRY_POLICY } from "./config.ts";
+import { createCompaction } from "./compaction.ts";
+import {
+	ConversationConfig,
+	type ConversationConfigState,
+	DEFAULT_COMPACTION_POLICY,
+	DEFAULT_RETRY_POLICY,
+} from "./config.ts";
 import { readContext } from "./context.ts";
 import { withdrawQueuedInputs } from "./inbox.ts";
 import { settleSchedulerOutcome } from "./live.ts";
@@ -29,6 +35,8 @@ import { BUILTIN_SETUP_KEY, BUILTIN_TASKS } from "./registry.ts";
 import { type InvocationBinding, TaskScheduler } from "./scheduler.ts";
 import { Submissions } from "./submissions.ts";
 import type {
+	CompactionPolicy,
+	CompactionResult,
 	ContextView,
 	Conversation,
 	ConversationAbortOptions,
@@ -174,8 +182,25 @@ class ConversationImpl<Tool extends ToolRegistration> implements Conversation {
 		}, context);
 	}
 
+	async getCompaction(context: Context): Promise<CompactionPolicy> {
+		return (await this.#config(context)).compaction ?? { ...DEFAULT_COMPACTION_POLICY };
+	}
+
+	setCompaction(policy: CompactionPolicy | undefined, context: Context): Promise<void> {
+		return this.#editConfig((config) => {
+			if (policy === undefined) delete config.compaction;
+			else config.compaction = policy;
+		}, context);
+	}
+
 	submit(submission: SubmissionDraft, context: Context): Promise<Submission> {
 		return this.#host.submissions.submit(this.id, submission, context);
+	}
+
+	compact(instructions: string | undefined, context: Context): Promise<TaskId<CompactionResult>> {
+		this.#host.tasks.resume();
+		const input = { reason: "manual", ...(instructions === undefined ? {} : { instructions }) } as const;
+		return this.#host.harness.commitWith((tx) => createCompaction(tx, this.id, input), context);
 	}
 
 	async reset(handoff: string | undefined, context: Context): Promise<void> {

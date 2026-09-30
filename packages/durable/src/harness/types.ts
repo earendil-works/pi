@@ -364,6 +364,27 @@ export type ConversationRetryPolicy = {
 	maxAgentDelayMs?: number;
 };
 
+/** Automatic compaction thresholds (spec §8.7); manual compaction ignores `enabled`. */
+export type CompactionPolicy = {
+	/** Threshold and overflow compaction. */
+	enabled: boolean;
+	/** Room kept free for the answer: generation blocks to compact above `contextWindow - reserveTokens`. */
+	reserveTokens: number;
+	/** Approximate size of the recent context a summary keeps verbatim. */
+	keepRecentTokens: number;
+	/** Background compaction starts `backgroundTokens` below the blocking threshold; `0` disables it. */
+	backgroundTokens: number;
+};
+
+/** Why a compaction runs: `compact()`, a threshold in generation preparation, or a context overflow. */
+export type CompactionReason = "manual" | "threshold" | "overflow";
+
+/**
+ * `entryId` of a blocking compaction's summary, or the `submissionId` of a conversation-owned compaction's summary
+ * write; both absent when nothing was compacted.
+ */
+export type CompactionResult = { entryId?: EntryId; submissionId?: SubmissionId };
+
 export type HarnessOptions<Tool extends ToolRegistration = ToolRegistration> = {
 	/** pi-ai model access used by generation. */
 	readonly models: Models;
@@ -413,6 +434,8 @@ export type ContextView = {
 	readonly head: EntryRecord | undefined;
 	/** Raw active entries: the head marker followed by non-head entries from its head through the tail. */
 	readonly entries: readonly EntryRecord[];
+	/** Per entry of `entries`, its model messages after edits and excluded stop reasons, before tool result ordering. */
+	readonly contributions: readonly (readonly Message[])[];
 	/** Model context for the next provider request. */
 	readonly messages: readonly Message[];
 };
@@ -446,6 +469,10 @@ export interface Conversation {
 	getFollowUpMode(context: Context): Promise<QueueMode>;
 	/** `undefined` removes the configured mode. */
 	setFollowUpMode(mode: QueueMode | undefined, context: Context): Promise<void>;
+	/** `DEFAULT_COMPACTION_POLICY` when unset. */
+	getCompaction(context: Context): Promise<CompactionPolicy>;
+	/** `undefined` removes the configured policy. */
+	setCompaction(policy: CompactionPolicy | undefined, context: Context): Promise<void>;
 
 	/**
 	 * Durably admit user input or a passive entry write. A busy conversation, or one with queued items, queues it in
@@ -457,6 +484,11 @@ export interface Conversation {
 	 * Resolves after admission; while busy, it is placed at the next boundary.
 	 */
 	reset(handoff: string | undefined, context: Context): Promise<void>;
+	/**
+	 * Admit a manual compaction task and return its ID. It summarizes while the conversation keeps working and places its
+	 * summary through a write submission: at once when idle, otherwise at the next boundary (spec §8.7).
+	 */
+	compact(instructions: string | undefined, context: Context): Promise<TaskId<CompactionResult>>;
 
 	/** Session commit whose `tx.createTask()` defaults to this conversation. */
 	commit<T>(change: (tx: Tx) => T | Promise<T>, context: Context): Promise<T>;
@@ -565,4 +597,24 @@ export interface ToolHooks {
 		api: HookApi,
 		context: Context,
 	): HookResult<ToolExecutionResult>;
+}
+
+/** Hooks of the built-in compaction task. */
+export interface CompactionHooks {
+	/**
+	 * After range selection, before summarizing; the first decision wins. `entries` are the active entries the summary
+	 * replaces, the head marker first, and `messages` their model context, the summarizer's source; `firstKept` is the
+	 * first entry kept verbatim.
+	 */
+	beforeCompact(
+		compaction: {
+			readonly reason: CompactionReason;
+			readonly entries: readonly EntryRecord[];
+			readonly messages: readonly Message[];
+			readonly firstKept: EntryId;
+			readonly instructions?: string;
+		},
+		api: HookApi,
+		context: Context,
+	): HookResult<{ readonly decline: true } | { readonly summary: string }>;
 }

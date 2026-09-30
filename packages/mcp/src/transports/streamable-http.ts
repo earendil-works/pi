@@ -200,7 +200,10 @@ export class StreamableHttpTransport extends TransportEvents implements McpTrans
 		super();
 		this.options = Object.freeze({ ...options, headers: options.headers ? { ...options.headers } : undefined });
 		this.url = new URL(options.url);
-		this.fetch = options.fetch ?? globalThis.fetch;
+		const fetch = options.fetch ?? globalThis.fetch;
+		// Call fetch without a receiver. `this.fetch(...)` and `context.fetch(...)` would pass the transport or
+		// the auth context as `this`, which Cloudflare Workers reject for the platform fetch ("Illegal invocation").
+		this.fetch = (input, init) => fetch(input, init);
 	}
 
 	get sessionId(): string | undefined {

@@ -44,7 +44,7 @@ const BUDGETS = {
 	"packages/durable": {
 		".": {
 			// The built-in tool task validates arguments with pi-ai's TypeBox-based validation, so TypeBox is allowed.
-			maxFiles: 56,
+			maxFiles: 58,
 			forbid: ["packages/ai/src/index.ts", "packages/ai/src/utils/typebox-helpers.ts"],
 		},
 	},

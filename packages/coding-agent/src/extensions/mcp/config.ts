@@ -17,6 +17,8 @@
  * ```
  *
  * HTTP servers without an `Authorization` header use OAuth when they answer 401 (sign in with `/mcp`).
+ * `"auth": { "provider": "<provider>" }` sends the token of a `/login` provider instead. Project files
+ * cannot use it, so a repository cannot pick where the credential goes.
  *
  * The top-level `autoEnableCodemode` (default true) activates the codemode tool when a server
  * with `codemode` exposure connects. A project value overrides the global one.
@@ -25,7 +27,12 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { CONFIG_DIR_NAME } from "../../config.ts";
-import { type McpExposure, type McpServerConfig, validateMcpServerConfig } from "../../core/mcp-servers.ts";
+import {
+	type McpExposure,
+	type McpServerConfig,
+	mcpNamespace,
+	validateMcpServerConfig,
+} from "../../core/mcp-servers.ts";
 
 export type {
 	McpExposure,
@@ -85,6 +92,16 @@ function readConfigFile(path: string, scope: "global" | "project", state: McpCon
 		const config = validateMcpServerConfig(name, value);
 		if (typeof config === "string") {
 			errors.push(`${path}: ${config}`);
+			continue;
+		}
+		// Names that differ only in `-` and `_` would share a namespace.
+		const clash = [...servers.keys()].find((other) => other !== name && mcpNamespace(other) === mcpNamespace(name));
+		if (clash) {
+			errors.push(`${path}: server "${name}" conflicts with "${clash}"`);
+			continue;
+		}
+		if (scope === "project" && "url" in config && config.auth) {
+			errors.push(`${path}: server "${name}": auth is only allowed in the global mcp.json`);
 			continue;
 		}
 		servers.set(name, { name, config, source: path, scope });

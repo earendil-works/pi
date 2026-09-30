@@ -15,7 +15,7 @@ import { resolvePath } from "../../utils/paths.ts";
 import { createEventBus, type EventBus } from "../event-bus.ts";
 import type { ExecOptions } from "../exec.ts";
 import { execCommand } from "../exec.ts";
-import { type McpServerConfig, McpServerRegistry, validateMcpServerConfig } from "../mcp-servers.ts";
+import { type McpServerConfig, McpServerRegistry, mcpNamespace, validateMcpServerConfig } from "../mcp-servers.ts";
 import { readPiManifest } from "../pi-manifest.ts";
 import { createSyntheticSourceInfo, getSyntheticPathSource, isSyntheticPath } from "../source-info.ts";
 import { time } from "../timings.ts";
@@ -301,6 +301,14 @@ function createExtensionAPI(
 
 		registerCommand(name: string, options: Omit<RegisteredCommand, "name" | "sourceInfo">): void {
 			assertActive();
+			if (typeof name !== "string" || name.length === 0) {
+				throw new Error(
+					`Command registered by extension "${extension.path}" must have a non-empty string name. Use pi.registerCommand("name", { description, handler }).`,
+				);
+			}
+			if (typeof options?.handler !== "function") {
+				throw new Error(`Command "/${name}" registered by extension "${extension.path}" must define handler().`);
+			}
 			extension.commands.set(name, {
 				name,
 				sourceInfo: extension.sourceInfo,
@@ -463,6 +471,11 @@ function createExtensionAPI(
 			if (owner !== undefined && owner !== extension.path) {
 				throw new Error(`MCP server "${name}" is already registered by extension "${owner}"`);
 			}
+			// Names that differ only in `-` and `_` would share a namespace.
+			const clash = runtime.mcpServers
+				.list()
+				.find((server) => server.name !== name && mcpNamespace(server.name) === mcpNamespace(name));
+			if (clash) throw new Error(`MCP server "${name}" conflicts with registered server "${clash.name}"`);
 			const server = { name, config: structuredClone(validated), extensionPath: extension.path };
 			applyRuntimeChange(() => runtime.mcpServers.register(server));
 		},

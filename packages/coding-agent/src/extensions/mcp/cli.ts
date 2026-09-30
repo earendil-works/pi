@@ -66,7 +66,7 @@ Options for add:
   --oauth-client-name <name>
                           Client name sent when registering with the OAuth server
   --exposure <mode>       codemode (default), deferred, direct, or hidden
-  --description <text>    What the server offers, shown to the model with its tools
+  --description <text>    What the server offers, shown in the system prompt
 
 Other options:
   --json                  Print the list as JSON

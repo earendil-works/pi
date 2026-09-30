@@ -18,6 +18,7 @@ Built on [`@earendil-works/pi-ai`](../ai/README.md) for model access and `@earen
 - [Watching a Conversation](#watching-a-conversation)
 - [Busy Conversations](#busy-conversations)
 - [Reset and Handoff](#reset-and-handoff)
+- [Compaction](#compaction)
 - [Agent Events (Experimental)](#agent-events-experimental)
 - [Hooks](#hooks)
 - [More Conversations and Forks](#more-conversations-and-forks)
@@ -234,6 +235,36 @@ await root.reset("We were fixing the flaky login test. Continue.", context); // 
 
 While busy, the reset is queued like a write. When it is placed during a tool round, the current run ends. A tool can request the same with `control: { handoff: "..." }`.
 
+## Compaction
+
+Compaction shrinks what the model sees: it summarizes older entries and appends a `pi.compaction` entry that holds the summary and heads the first entry it keeps. Older entries stay in storage.
+
+```typescript
+const id = await root.compact("Keep the failing test names", context); // manual, with optional instructions
+const { outcome } = (await harness.waitForTask(id, context)).state;
+if (outcome.status === "completed" && outcome.result.submissionId !== undefined) {
+	const placed = await (await harness.submission(outcome.result.submissionId, context))!.wait(context);
+	console.log(placed.status); // "done", or "unanswered" with reason "stale"
+}
+```
+
+The conversation keeps working while the summary is made. The summary is placed at once when the conversation is idle, otherwise at the next turn boundary. Esc (`abort()`) cancels a manual compaction.
+
+Generation also compacts on its own, controlled per conversation:
+
+```typescript
+await root.setCompaction({
+	enabled: true, // automatic compaction; manual compact() always works
+	reserveTokens: 16384, // above contextWindow - reserveTokens, the next request waits for a compaction
+	keepRecentTokens: 20000, // roughly how much recent context stays verbatim
+	backgroundTokens: 32768, // this far below that, a compaction starts in the background; 0 disables it
+}, context);
+```
+
+When a provider rejects a request because the context is too long, generation compacts and retries once. A summary that would cut before the start of the current context settles as `stale` when it is placed, so when several are in flight, the furthest cut stays in effect. Summarization spend counts in `pi.usage`. A `beforeCompact` hook on `CompactionTask` can decline or supply its own summary.
+
+Running compactions are listed in `docs["pi.live"].compactions` with their reason, attempt, and retry backoff. The agent events add `compaction_start` and `compaction_end`, and a `compactions` field in the snapshot.
+
 ## Agent Events (Experimental)
 
 For consumers that want coding-agent style events (`message_start`, `message_update`, `tool_execution_start`, ...) instead of structural state:
@@ -242,7 +273,7 @@ For consumers that want coding-agent style events (`message_start`, `message_upd
 import { watchEvents } from "@earendil-works/pi-durable";
 
 const stream = await watchEvents(harness, root.id, context);
-initialize(stream.snapshot); // entries, run, in-flight generation, tools, inbox, config, usage
+initialize(stream.snapshot); // entries, run, in-flight generation, tools, compactions, inbox, config, usage
 stream.start(async (events) => {
 	for (const event of events) console.log(JSON.stringify(event));
 });
@@ -426,6 +457,7 @@ node --conditions=source --experimental-strip-types test/examples/14-chat.ts
 | [22-subagent-foreground](test/examples/22-subagent-foreground.ts) | A replay-safe subagent tool whose child the call owns, with the child's events under the call |
 | [23-subagent-background](test/examples/23-subagent-background.ts) | Persistent subagents: spawn, steer, stop, list, answers reported back, restart-safe |
 | [24-child-tasks](test/examples/24-child-tasks.ts) | A checkout that owns and waits for four payments: failFast, abort, restart |
+| [25-compaction](test/examples/25-compaction.ts) | A long chat compacted in the background, manually, and after a context overflow |
 | [00](test/examples/00-conversation.ts)–[13](test/examples/13-recovery.ts) | The layers underneath: sessions, documents, forks, watches, tasks, recovery |
 
 Examples that call OpenAI need `OPENAI_API_KEY`; most use the faux provider otherwise.

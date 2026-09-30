@@ -214,21 +214,10 @@ function searchAndLoad(
 }
 
 /**
- * The `tool_search` description. `sources` lists the namespaces whose tools can be found, with
- * their descriptions.
+ * The `tool_search` description. It does not list the searchable tools or their namespaces, so it
+ * stays the same while tools are registered, for example when MCP servers connect.
  */
-export function createToolSearchDescription(sources: readonly ToolNamespace[] = []): string {
-	const listed =
-		sources.length === 0
-			? "None currently enabled."
-			: sources
-					.map((source) => {
-						const description = source.description?.trim().split(/\r?\n/)[0];
-						return description ? `- ${source.name}: ${description}` : `- ${source.name}`;
-					})
-					.join("\n");
-	return `# Tool discovery\n\nSearches over deferred tool metadata with BM25 and exposes matching tools for the next model call.\n\nYou have access to tools from the following sources:\n${listed}\n\nSome of the tools may not have been provided to you upfront, and you should use this tool (\`${TOOL_SEARCH_TOOL_NAME}\`) to search for the required tools. For MCP tool discovery, always use \`${TOOL_SEARCH_TOOL_NAME}\`.`;
-}
+export const TOOL_SEARCH_DESCRIPTION = `# Tool discovery\n\nSearches over deferred tool metadata with BM25 and exposes matching tools for the next model call.\n\nSome of the tools, such as tools of MCP servers, may not have been provided to you upfront, and you should use this tool (\`${TOOL_SEARCH_TOOL_NAME}\`) to search for the required tools. For MCP tool discovery, always use \`${TOOL_SEARCH_TOOL_NAME}\`.`;
 
 export function createToolSearchToolDefinition(
 	options: ToolSearchToolOptions = {},
@@ -236,23 +225,11 @@ export function createToolSearchToolDefinition(
 	return {
 		name: TOOL_SEARCH_TOOL_NAME,
 		label: TOOL_SEARCH_TOOL_NAME,
-		// Replaced with the searchable sources when the tool is activated.
-		description: createToolSearchDescription(),
+		description: TOOL_SEARCH_DESCRIPTION,
 		promptSnippet: "Search for tools that are not loaded yet and load the matches",
 		parameters: toolSearchSchema,
 		// Searching is not something scripts need; it changes what the model sees.
 		exposure: "model-only",
-		// List the namespaces of the searchable tools.
-		prepareLoadout: (loadout) => {
-			const sources = new Map<string, ToolNamespace>();
-			for (const tool of loadout.registered) {
-				const namespace = loadout.getNamespace(tool.name);
-				if (isSearchable(loadout.getExposure(tool.name)) && namespace && !sources.has(namespace.name)) {
-					sources.set(namespace.name, namespace);
-				}
-			}
-			return { descriptions: { [TOOL_SEARCH_TOOL_NAME]: createToolSearchDescription([...sources.values()]) } };
-		},
 		async execute(_toolCallId, { query, limit }) {
 			if (query.trim() === "") throw new Error("query must not be empty");
 			const max = limit ?? DEFAULT_TOOL_SEARCH_LIMIT;

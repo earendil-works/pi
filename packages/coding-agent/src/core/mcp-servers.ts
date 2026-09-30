@@ -25,8 +25,8 @@ interface McpServerConfigBase {
 	/** Default: `codemode`. */
 	exposure?: McpExposure;
 	/**
-	 * What the server offers, in a sentence. The codemode and `tool_search` descriptions show it next to
-	 * the server's namespace, so the model knows what to search for without connecting first.
+	 * What the server offers, in a sentence. The `mcp_servers` system prompt section lists the server
+	 * with it, tool search ranks the server's tools by it, and codemode's `describeNamespace()` returns it.
 	 */
 	description?: string;
 	/**
@@ -93,11 +93,21 @@ export interface McpHttpServerConfig extends McpServerConfigBase {
 	/** Values may reference environment variables (`${NAME}`) or commands (`!cmd`). */
 	headers?: Record<string, string>;
 	oauth?: McpOAuthConfig;
+	/**
+	 * Send the token of a pi provider (`/login <provider>`) instead of using OAuth. Not allowed in project
+	 * `mcp.json` files, and requires https except on loopback hosts, since it sends the credential to `url`.
+	 */
+	auth?: { provider: string };
 }
 
 export type McpServerConfig = McpStdioServerConfig | McpHttpServerConfig;
 
 const SERVER_NAME = /^[A-Za-z0-9_-]+$/;
+
+/** Namespace of a server's tools: `mcp__<server>` with `-` replaced by `_`, like the tool names. */
+export function mcpNamespace(server: string): string {
+	return `mcp__${server.replace(/-/g, "_")}`;
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -212,6 +222,15 @@ export function validateMcpServerConfig(name: string, raw: unknown): McpServerCo
 		}
 		const oauthError = validateOAuth(value.oauth);
 		if (oauthError) return `server "${name}": ${oauthError}`;
+		if (value.auth !== undefined) {
+			if (!isRecord(value.auth) || typeof value.auth.provider !== "string" || !value.auth.provider) {
+				return `server "${name}": auth.provider must be a provider name`;
+			}
+			const url = new URL(value.url);
+			if (url.protocol !== "https:" && !LOOPBACK_HOSTS.includes(url.hostname)) {
+				return `server "${name}": auth requires an https URL, or http on localhost, 127.0.0.1, or [::1]`;
+			}
+		}
 		return value as unknown as McpHttpServerConfig;
 	}
 	if (typeof value.command === "string" && (type === undefined || type === "stdio")) {

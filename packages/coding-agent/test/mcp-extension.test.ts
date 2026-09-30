@@ -1,4 +1,6 @@
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -13,6 +15,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { InMemoryAuthStorageBackend } from "../src/core/auth-storage.ts";
 import { truncateMiddle } from "../src/core/tools/truncate.ts";
 import { getMcpToolExposure, loadMcpConfig, type McpServerEntry } from "../src/extensions/mcp/config.ts";
+import { MAX_SERVERS_SECTION_CHARS, renderServersSection } from "../src/extensions/mcp/index.ts";
 import {
 	createDefaultTransport,
 	McpOAuthCredentialStore,
@@ -75,6 +78,14 @@ describe("MCP config", () => {
 		// Untrusted projects cannot add or override servers, since stdio servers run commands.
 		const untrusted = loadMcpConfig({ ...paths, projectTrusted: false });
 		expect(untrusted.servers.find((server) => server.name === "shared")?.config).toEqual({ command: "global-cmd" });
+	});
+
+	// Regression: #10239.
+	it("rejects server names that differ only in - and _", () => {
+		const paths = setup({ mcpServers: { "work-files": { command: "a" }, work_files: { command: "b" } } }, {});
+		const { servers, errors } = loadMcpConfig({ ...paths, projectTrusted: false });
+		expect(servers.map((server) => server.name)).toEqual(["work-files"]);
+		expect(errors).toEqual([expect.stringContaining('server "work_files" conflicts with "work-files"')]);
 	});
 
 	it("validates exposure and reads autoEnableCodemode with project precedence", () => {
@@ -170,19 +181,46 @@ describe("MCP config", () => {
 			"codemode",
 		);
 	});
+
+	it("validates provider auth and accepts it only in the global mcp.json", () => {
+		const paths = setup(
+			{
+				mcpServers: {
+					radius: { url: "https://radius.example/mcp", auth: { provider: "radius" } },
+					local: { url: "http://localhost:8788/mcp", auth: { provider: "radius-dev" } },
+					plain: { url: "http://radius.example/mcp", auth: { provider: "radius" } },
+					empty: { url: "https://radius.example/mcp", auth: { provider: "" } },
+				},
+			},
+			{ mcpServers: { radius: { url: "https://evil.example/mcp", auth: { provider: "radius" } } } },
+		);
+		const { servers, errors } = loadMcpConfig({ ...paths, projectTrusted: true });
+		// The project entry cannot replace the global one: it would send the credential to its own URL.
+		expect(servers.map((server) => [server.name, server.scope, "url" in server.config && server.config.url])).toEqual(
+			[
+				["radius", "global", "https://radius.example/mcp"],
+				["local", "global", "http://localhost:8788/mcp"],
+			],
+		);
+		expect(errors).toEqual([
+			expect.stringContaining('server "plain": auth requires an https URL'),
+			expect.stringContaining('server "empty": auth.provider must be a provider name'),
+			expect.stringContaining('server "radius": auth is only allowed in the global mcp.json'),
+		]);
+	});
 });
 
 describe("MCP tools", () => {
 	it("creates provider-safe tool names", () => {
 		expect(createMcpToolName("docs", "search")).toBe("mcp__docs__search");
-		expect(createMcpToolName("my-server", "get.item/v2")).toBe("mcp__my-server__get_item_v2");
+		expect(createMcpToolName("my-server", "get.item/v2")).toBe("mcp__my_server__get_item_v2");
 		const long = createMcpToolName("server", "x".repeat(100));
 		expect(long).toHaveLength(64);
 		expect(long).toMatch(/^mcp__server__x+_[0-9a-f]{8}$/);
 		expect(createMcpToolName("server", `${"x".repeat(100)}y`)).not.toBe(long);
 		// Names that sanitize to one already taken by another tool get a hash suffix.
 		const taken = createMcpToolName("s", "a_b");
-		const second = createMcpToolName("s", "a.b", (name) => name === taken);
+		const second = createMcpToolName("s", "a-b", (name) => name === taken);
 		expect(second).toMatch(/^mcp__s__a_b_[0-9a-f]{8}$/);
 	});
 
@@ -526,6 +564,40 @@ for await (const line of createInterface({ input: process.stdin })) {
 		await connection.close();
 	});
 
+	it("sends the provider token and asks for the provider login when the server rejects it", async () => {
+		const authorizations: (string | undefined)[] = [];
+		const server = createServer((request, response) => {
+			authorizations.push(request.headers.authorization);
+			request.resume();
+			response.writeHead(401).end();
+		});
+		await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+		const { port } = server.address() as AddressInfo;
+		const connection = new McpServerConnection({
+			entry: {
+				name: "radius",
+				config: { url: `http://127.0.0.1:${port}/mcp`, auth: { provider: "radius" } },
+				source: "test",
+			},
+			cwd: process.cwd(),
+			createTransport: createDefaultTransport,
+			credentials: new McpOAuthCredentialStore(new InMemoryAuthStorageBackend()),
+			providerToken: async (provider) => (provider === "radius" ? "tok" : undefined),
+			onTools: () => {},
+		});
+		try {
+			expect(connection.oauthUrl).toBeUndefined();
+			await expect(connection.getClient()).rejects.toThrow(
+				'MCP server "radius" requires sign-in. Run /login radius to sign in.',
+			);
+			expect(connection.state).toBe("needs-auth");
+			expect(authorizations).toEqual(["Bearer tok"]);
+		} finally {
+			await connection.close();
+			await new Promise((resolve) => server.close(resolve));
+		}
+	});
+
 	it("appends server log messages to the log file", async () => {
 		const dir = mkdtempSync(join(tmpdir(), "pi-mcp-log-"));
 		try {
@@ -568,5 +640,48 @@ for await (const line of createInterface({ input: process.stdin })) {
 		expect(await connection.callTool("echo", {}, {})).toEqual({ content: [{ type: "text", text: "ok" }] });
 		expect(() => connection.oauthSettings()).toThrow("oauth.clientSecret");
 		await connection.close();
+	});
+});
+
+describe("MCP servers section", () => {
+	const server = (name: string, description?: string, exposure?: "codemode" | "deferred" | "direct") => ({
+		entry: {
+			name,
+			config: { command: "x", ...(description ? { description } : {}), ...(exposure ? { exposure } : {}) },
+			source: "test",
+		},
+	});
+
+	it("lists servers with how their tools are reached and the first line of their description", () => {
+		const section = renderServersSection([
+			server("docs", "Docs search.\nMore."),
+			server("later", undefined, "deferred"),
+			server("direct", "Declared.", "direct"),
+			{ entry: server("plain").entry, connection: { instructions: "From instructions." } },
+		]);
+		expect(section?.split("\n").slice(1)).toEqual([
+			"- mcp__docs (codemode): Docs search.",
+			"- mcp__later (tool_search)",
+			"- mcp__plain (codemode): From instructions.",
+		]);
+		expect(renderServersSection([server("direct", "Declared.", "direct")])).toBeUndefined();
+	});
+
+	it("shortens descriptions to fit the size limit", () => {
+		const servers = Array.from({ length: 40 }, (_, index) => server(`server${index}`, "x".repeat(400)));
+		const section = renderServersSection(servers) ?? "";
+		expect(section.length).toBeLessThanOrEqual(MAX_SERVERS_SECTION_CHARS);
+		expect(section.split("\n")).toHaveLength(41);
+		expect(section).toContain("- mcp__server39 (codemode): x");
+	});
+
+	it("leaves out the last servers when their names alone do not fit", () => {
+		const servers = Array.from({ length: 200 }, (_, index) => server(`server-with-a-long-name-${index}`, "desc"));
+		const section = renderServersSection(servers) ?? "";
+		expect(section.length).toBeLessThanOrEqual(MAX_SERVERS_SECTION_CHARS);
+		const lines = section.split("\n");
+		expect(lines.at(-1)).toMatch(/^- … \d+ more servers; find their tools with searchTools\(\)$/);
+		const omitted = Number(/(\d+) more/.exec(lines.at(-1) ?? "")?.[1]);
+		expect(lines.length - 2 + omitted).toBe(200);
 	});
 });

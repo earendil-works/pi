@@ -1,13 +1,18 @@
 import { stripVTControlCharacters } from "node:util";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
-import type { Text } from "@earendil-works/pi-tui";
+import type { Component } from "@earendil-works/pi-tui";
 import { beforeAll, describe, expect, it } from "vitest";
 import type { ToolRenderContext } from "../src/core/extensions/types.ts";
 import { codemodeRenderers } from "../src/extensions/codemode/renderer.ts";
 import type { CodemodeToolDetails } from "../src/extensions/codemode/tool.ts";
 import { initTheme, theme } from "../src/modes/interactive/theme/theme.ts";
 
-function render(result: AgentToolResult<CodemodeToolDetails | undefined>, isError = false): string {
+function render(
+	result: AgentToolResult<CodemodeToolDetails | undefined>,
+	isError = false,
+	expanded = true,
+	width = 200,
+): string {
 	const context = {
 		args: { code: "" },
 		toolCallId: "call",
@@ -18,17 +23,17 @@ function render(result: AgentToolResult<CodemodeToolDetails | undefined>, isErro
 		executionStarted: true,
 		argsComplete: true,
 		isPartial: false,
-		expanded: true,
+		expanded,
 		showImages: false,
 		isError,
 	} satisfies ToolRenderContext;
 	const component = codemodeRenderers.renderResult?.(
 		result,
-		{ expanded: true, isPartial: false },
+		{ expanded, isPartial: false },
 		theme,
 		context,
-	) as Text;
-	return stripVTControlCharacters(component.render(200).join("\n"))
+	) as Component;
+	return stripVTControlCharacters(component.render(width).join("\n"))
 		.split("\n")
 		.map((line) => line.trimEnd())
 		.join("\n")
@@ -80,5 +85,25 @@ describe("codemode renderer", () => {
 			true,
 		);
 		expect(text).toBe("The @options line must be followed by JavaScript source");
+	});
+
+	it("limits collapsed output to wrapped lines, not logical lines", () => {
+		const text = render(
+			{
+				content: [
+					{ type: "text", text: "Script completed\nWall time 0.1 seconds\nOutput:\n" },
+					{ type: "text", text: "x".repeat(1000) },
+				],
+				details: { calls: [], fullOutputPath: "/tmp/out.txt" },
+			},
+			false,
+			false,
+			50,
+		);
+		const lines = text.split("\n");
+		expect(lines).toHaveLength(7);
+		expect(lines.slice(0, 5)).toEqual(Array(5).fill("x".repeat(50)));
+		expect(lines[5]).toMatch(/^\.\.\. \(15 more lines,/);
+		expect(lines[6]).toBe("Full output: /tmp/out.txt");
 	});
 });

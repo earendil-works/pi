@@ -11,7 +11,7 @@ facades, membranes, document routing, view projection, events, or clone chains.
 
 - Obsolete `pico` and `pico4` prototypes were removed.
 - `pico3` remains.
-- Packages 1–19 are implemented in `packages/durable`; Package 10 was already satisfied by Chord's canonical structural diff implementation.
+- Packages 1–20 are implemented in `packages/durable`; Package 10 was already satisfied by Chord's canonical structural diff implementation.
 
 ## 1. Records, cursors, and memory tables
 
@@ -680,20 +680,147 @@ sequential-round, and dependency tests to the new shapes without weakening them.
 
 ## 20. Compaction and overflow
 
-Implement manual, threshold, and generation-overflow compaction; exchange-boundary
-range selection; summarization; retry policy; staleness checks; and headed
-summary entries. Wire generation's real overflow path directly to the compaction
-task, and complete `Conversation.compact()` so it returns the admitted task ID.
+Implement spec §8.7 and its consequences. Compaction never appends to a busy
+conversation concurrently (§7.4 preparation does not recheck the transcript): a
+blocking compaction appends while its generation holds the run and waits for it;
+every other compaction places its summary through a write submission.
 
-Generation preparation no longer rechecks the transcript before appending its
-system entries (§7.4, §12): only run tasks and turn boundaries write to a busy
-conversation. A compaction summary for a busy conversation must therefore be
-placed at a turn boundary or as a step of the run, never appended concurrently.
+- Task: `pi.compaction` (`CompactionTask`, `CompactionHooks`, `CompactionInput`,
+  `CompactionCheckpoint`, `CompactionResult`, `CompactionReason`) with phases
+  `select`, `summarize`, `retry`, the abort handler, and the `beforeCompact`
+  hook. Register it with the built-ins. `CompactionEntry` token for
+  `pi.compaction` with `data: { reason }`.
+- `ContextView.contributions`: each active entry's contribution after all
+  in-range edits (including edits on older in-range markers). Range selection is one pure function over those
+  contributions and `keepRecentTokens`, shared by the generation's checks and
+  `select`; the summarized messages are the prefix contributions ordered by
+  §2.1 rules 7–8. The generation's size estimate (§8.3) uses the newest
+  assistant appended after the head marker, not pi-ai's timestamp heuristic. Port the coding agent's serializer, summarization
+  system prompt, and structured prompt (one prompt, with a line about carrying an
+  earlier summary forward) into `src/harness/compaction.ts`; do not import from
+  coding-agent.
+- Placement: direct append for a task-owned (blocking) compaction; for a
+  conversation-owned one, factor the admission body of `Submissions.submit()` into
+  a function over a `Tx` so the task's classifying commit admits the write
+  (request ID `compaction:<taskId>`) with the same idle/queued/stale/final-boundary
+  behavior. No new stale logic.
+- Config: `CompactionPolicy`, `DEFAULT_COMPACTION_POLICY`,
+  `ConversationConfigState.compaction`, `getCompaction`/`setCompaction`.
+- Live: `pi.live.compactions` (`CompactionStatus[]`, task ID order, key removed
+  when empty), added in the creating commit and removed in the outcome commit
+  (also at a `completing` hold);
+  `settleSchedulerOutcome` removes it for faulted/orphaned compactions.
+- Generation: `compacted`/`overflow` checkpoint fields; threshold checks in
+  `prepare` (blocking child + wait; background conversation-owned task in the
+  commit moving to `request`); overflow classification before the retry branch;
+  failing an overflow generation whose compaction produced no entry.
+- `Conversation.compact()` admits the manual task (conversation-owned, not
+  background) with its status in one commit and returns its ID.
+- Usage: every classified summarization response adds its usage to
+  `pi.usage.models`.
+- Events: `compaction_start`/`compaction_end`, snapshot `compactions`, batch
+  order per §9.4.
+- Docs: README (compaction, policy, events), CHANGELOG, and a new product-style
+  example `test/examples/25-compaction.ts` (faux model: a long chat that crosses
+  the background threshold, the summary lands at a boundary, a manual `compact()`
+  while busy, and an overflow recovered by a blocking compaction, printing the
+  model context before and after).
 
-Test model context before and after compaction, raw history preservation, provider
-failure, declined and stale work, manual/threshold/overflow admission, late-join
-presentation state, and reopen from every phase. Rerun generation overflow
-integration without a fake compaction kind.
+Not in v1 (note only): a cache-friendly summary request that resends the
+agent's exact last request plus one summarization user message with pi-ai
+`toolChoice: "none"`, so the prefix including tool declarations is a cache hit.
+It fits background compaction well below the window; overflow and a context
+without room for the prompt and summary keep the serialized request.
+
+Exhaustive tests (new `test/harness-compaction.test.ts`, faux provider, plus
+updates):
+
+- Range selection (pure): cut at a user entry, at an assistant entry mid-run
+  (one prompt followed by many tool rounds), never at a tool result or system
+  entry; a huge last tool result keeps its assistant; budget never reached and
+  only-the-marker prefix are nothing to compact; an existing marker is
+  summarized first and older in-range markers drop out; omitted and replaced
+  entries use their edited contribution; excluded error/aborted assistants are
+  not candidates; the §8.7 worked example.
+- Summarization request: exact messages (system prompt, serialized
+  conversation, instructions line), tool-result truncation, no tools,
+  `cacheRetention: "none"`, no `deferred`, `maxTokens` from `reserveTokens` and
+  the model's max, pinned model/thinking/stream options surviving a config change
+  mid-summary.
+- Summary entry: kind, wrapped text, `head` = first kept, `data.reason`; model
+  context after placement is `[summary, kept...]` followed by a full system
+  baseline on the next preparation; raw history unchanged and still scannable via
+  `entries()`; `pi.usage.models` includes every attempt, including failed,
+  retried, and stale ones; declines and hook-supplied summaries add none.
+- Outcomes: nothing to compact (`{}`), `beforeCompact` decline (`{}`) and
+  supplied summary (no model call), first decision wins, hook throw reported and
+  ignored; `no_model`; retryable error then success; retries exhausted;
+  non-retryable error; `length` stop; tool call in the response; empty text.
+- Manual: idle with empty inbox (placed at once, `{ submissionId }` whose submission is `done`);
+  idle with queued follow-ups after a failed run (final boundary places the
+  summary first, then starts the follow-up in the compacted context); busy
+  (queued, placed at the next `postTools` and the run continues in the compacted
+  context; placed at `final`); stale because a reset landed while summarizing;
+  stale because a later compaction cut further; an older summary with a later cut
+  placed after a newer one; two queued summaries in one boundary with the
+  second cutting before, at, and after the first (only "before" is stale); `Conversation.abort()` aborts a manual compaction and keeps an
+  already queued summary; `Submission.abort()` withdraws a queued summary;
+  `waitForIdle` waits for a manual compaction; `compact()` returns the ID
+  `waitForTask` settles with.
+- Background threshold: starts only above the background threshold, only with
+  `backgroundTokens > 0`, only when no status is listed, not when disabled, not
+  without a cut, and not after a blocking compaction in the same generation; the
+  generation does not wait; summary placed at the next boundary; survives
+  `Conversation.abort()`; `abort({ background: true })` and `abortTask()` stop
+  it; idle waits ignore it.
+- Blocking threshold: generation waits, nothing appended before the wait, then
+  re-prepares with a baseline and sends; request proceeds after nothing to
+  compact, decline, failure, fault, and direct `abortTask()` of the child; no
+  second compaction when still above the threshold; a background compaction in
+  flight ends stale; Esc during the blocking compaction aborts child then
+  generation (child terminal before the generation's abort handler) and settles
+  inputs `aborted`.
+- Overflow: error entry appended and excluded from the retry request, attempt
+  unchanged, compaction then retry succeeds; second overflow fails
+  `model_error` with its error entry; overflow with compaction disabled, without
+  a cut, or after a threshold compaction fails; overflow whose compaction
+  declines/fails/aborts fails `model_error` with the overflow text; an overflow
+  error matching retryable patterns is still not retried; silent `stop`/`length`
+  overflow is an ordinary answer.
+- Live status and events: status added in the creating commit with `blocking`,
+  `attempt`, and `retry` during backoff, removed with every outcome
+  (completed, failed, aborted, faulted, orphaned); several concurrent statuses;
+  `compaction_start`/`compaction_end` in batch order; snapshot `compactions` for a late joiner during summarize and retry;
+  view mount after a compaction head (kept entries stay mounted).
+- Recovery: crash and reopen in `select` (hook reruns), `summarize` (request
+  resent once, no duplicate usage), `retry`, after placement, with the
+  generation waiting on a blocking compaction, with a summary queued, and with a
+  blocked compaction definition (orphaned on abort, status removed).
+- Estimate and cut edge cases: a background summary queued mid-run and placed
+  at `postTools` makes the successor's estimate ignore the pre-compaction usage,
+  so no blocking compaction starts (also with a fixed Harness clock); an
+  assistant finishing while a summary is queued; raw order `assistant(call),
+  user, toolResult, assistant` never cuts at that user; edits carried by an
+  older in-range marker and a kept entry replacing a summarized one are reflected
+  in the summarized messages and the hook's `messages`; kept `pi.system` deltas
+  get omit edits in the next single baseline; compaction in a fork whose cut
+  falls on a parent entry (head, stale checks, view mount).
+- Interactions: a summary queued before a reset in the same boundary (both
+  placed, reset wins) and after it (stale); a manual compaction's status blocks
+  a background start; a queued summary surviving a failed run is placed by the
+  next submission's final boundary before the new input; the summarization
+  request itself overflowing fails `model_error` and a waiting overflow
+  generation fails with the original overflow text; a retryable error after an
+  overflow compaction has the full retry budget; a background summary landing
+  during a retry backoff stays queued while a blocking compaction wins; an
+  application edit placed while summarizing is lost as §12 documents; a hook
+  that creates owned work and supplies a summary (placement and status removal
+  at hold, receipt after the child); `compact()` right after open enables
+  scheduling; a rejected classifying commit leaves no usage, submission,
+  summary, or outcome; idle admission that drains an older queued summary
+  together with the current one.
+- Rerun every existing suite; generation, inbox, events, and view tests keep
+  passing unchanged except for the new optional fields.
 
 ## 21. Reload and final conformance
 

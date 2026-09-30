@@ -369,6 +369,18 @@ type ConversationRetryPolicy = {
   maxAgentDelayMs?: number;
 };
 
+/** Automatic compaction thresholds (section 8.7); manual compaction ignores `enabled`. */
+type CompactionPolicy = {
+  /** Threshold and overflow compaction. */
+  enabled: boolean;
+  /** Room kept free for the answer: generation blocks to compact above `contextWindow - reserveTokens`. */
+  reserveTokens: number;
+  /** Approximate size of the recent context a summary keeps verbatim. */
+  keepRecentTokens: number;
+  /** Background compaction starts `backgroundTokens` below the blocking threshold; `0` disables it. */
+  backgroundTokens: number;
+};
+
 type ToolExecutionMode = "parallel" | "sequential";
 
 /** How many queued items of one mode a boundary selects (section 6). */
@@ -386,6 +398,8 @@ type ConversationConfigState = {
   steeringMode?: QueueMode;
   /** Default `one-at-a-time`; see section 6. */
   followUpMode?: QueueMode;
+  /** Default `DEFAULT_COMPACTION_POLICY`; see section 8.7. */
+  compaction?: CompactionPolicy;
 };
 
 /** Built-in rewindable configuration document; see below. */
@@ -408,6 +422,8 @@ function defineEntry<D extends JsonValue = never>(kind: string): Entry<D>;
 type ContextView = {
   readonly head: EntryRecord | undefined;
   readonly entries: readonly EntryRecord[];
+  /** Per entry of `entries`, its model messages after edits and rule 9, before rules 7 and 8. */
+  readonly contributions: readonly (readonly Message[])[];
   readonly messages: readonly Message[];
 };
 
@@ -475,6 +491,8 @@ interface Conversation {
   setSteeringMode(mode: QueueMode | undefined, context: Context): Promise<void>;
   getFollowUpMode(context: Context): Promise<QueueMode>;
   setFollowUpMode(mode: QueueMode | undefined, context: Context): Promise<void>;
+  getCompaction(context: Context): Promise<CompactionPolicy>;
+  setCompaction(policy: CompactionPolicy | undefined, context: Context): Promise<void>;
 
   commit<T>(
     change: (tx: Tx) => T | Promise<T>,
@@ -492,7 +510,7 @@ interface Conversation {
     options: ConversationCreateOptions,
     context: Context,
   ): Promise<Conversation>;
-  compact(instructions: string | undefined, context: Context): Promise<TaskId>;
+  compact(instructions: string | undefined, context: Context): Promise<TaskId<CompactionResult>>;
   reset(handoff: string | undefined, context: Context): Promise<void>;
   /** `{ background: true }` also aborts background work under the conversation (section 5.4). */
   abort(context: Context, options?: { readonly background?: boolean }): Promise<void>;
@@ -567,7 +585,7 @@ no configured model produces a durable `no_model` generation failure.
 repeat open-time reconciliation, and it throws after close. Work that must happen
 before any task runs, such as registration or seeding, happens before
 `resume()`. Calls that ask for progress also enable scheduling, so they never
-wait on a paused Harness: `Conversation.submit()`, `Submission.wait()`,
+wait on a paused Harness: `Conversation.submit()`, `Conversation.compact()`, `Submission.wait()`,
 `Harness.waitForTask()`, `Harness.waitForIdle()`, and
 `Conversation.waitForIdle()`. Recovered work starts with them. A viewer that only
 reads never enables scheduling.
@@ -620,7 +638,10 @@ when the field is absent; `setRetryPolicy(undefined)` removes the field.
 `getToolExecution()` returns `parallel` when the field is absent;
 `setToolExecution(undefined)` removes it. `getSteeringMode()` and
 `getFollowUpMode()` return `one-at-a-time` when their field is absent; their
-setters remove the field for `undefined`.
+setters remove the field for `undefined`. `getCompaction()` returns
+`DEFAULT_COMPACTION_POLICY`, `{ enabled: true, reserveTokens: 16384,
+keepRecentTokens: 20000, backgroundTokens: 32768 }`, when the field is absent;
+`setCompaction(undefined)` removes it.
 `streamOptions` are forwarded to every generation request of the conversation;
 `streamOptions.maxRetries` are provider retries inside one request, while `retry`
 governs durable generation attempts (section 8). Each setter performs
@@ -681,8 +702,12 @@ because `Harness extends Session`.
 
 `fork()` requires a concrete visible parent entry and explicit ownership, then
 applies section 3.7.
-`compact()` returns the newly admitted background compaction task ID, not its
-future summary entry. `reset()` durably admits a write submission of a
+`compact()` admits a manual compaction task in one commit and returns its ID,
+not its future summary entry. The task is conversation-owned and not background,
+so `Conversation.abort()` cancels it and idle waits include it. It does not take
+run control, so it does not make the conversation busy: the conversation keeps
+working while it summarizes, and its summary is placed through a write
+submission, at once when idle, otherwise at the next boundary (section 8.7). `reset()` durably admits a write submission of a
 `pi.reset` entry (section 8.1) with `head: "self"`, carrying the handoff text as
 a user message when given, and then resolves; while busy, placement follows
 section 6 and may occur later. Observe its placement through the conversation
@@ -1825,7 +1850,7 @@ The scheduler knows nothing about runs or task kinds. The Harness, which owns
 submissions, run control, and the built-in tasks, gives it one hook that the
 scheduler calls in the commit that makes an outcome it wrote itself (`faulted`
 and `orphaned`) terminal, which is the final commit after a hold. The hook ignores tasks whose kind is not a built-in
-run or tool kind, so it never creates `pi.live` elsewhere. It settles the run when
+run, tool, or compaction kind, so it never creates `pi.live` elsewhere. It settles the run when
 `pi.live.run` names the task (section 8): a committed generation partial becomes
 an aborted `pi.assistant` entry, exactly as the generation abort handler converts
 it, so the transcript keeps what the model produced and `pi.usage` counts its
@@ -1837,7 +1862,8 @@ non-JSON value in a response, or a commit the Storage rejected without effect
 (`StorageRejected`). An uncertain storage failure poisons the Session and writes
 no outcome. For a `pi.tool` task it marks the task's tool slot `done`
 without an entry; the run continues, and context derivation synthesizes the
-missing result (section 2.1). Outcomes a task commits for itself do their own settlement.
+missing result (section 2.1). For a `pi.compaction` task it removes the task's
+compaction status (section 8.7). Outcomes a task commits for itself do their own settlement.
 
 At every normal phase boundary (section 5.1, rule 5), the step refreshes the
 invocation's registry snapshot. If the task definition resolved by name is a different object
@@ -2029,6 +2055,19 @@ the active range, the newest head marker's `head`, is stale: placing it would br
 head cut. Heads placed earlier in the same boundary count: after a queued reset,
 a queued summary targeting an older entry is stale. A `head: "self"` write is
 never stale.
+
+Compaction summaries are head writes (section 8.7), so this rule alone orders
+compactions by cut position: a summary cutting before the active range start is
+stale, and one cutting at or after it is placed, whenever it was selected.
+Example: background compaction B selects at tail 100 and cuts at 70. While it
+summarizes, a blocking compaction A cuts at 150 and appends its summary. B's
+summary then settles `stale`, because 70 is older than 150. Had A cut at 60
+instead, B would be placed after it: B summarized the context at its selection,
+the then-newest summary plus the entries before 70, which covers everything A's
+summary covers. That holds while the only heads are compaction summaries and
+resets, which make older cuts stale; an application edit placed while a
+compaction summarizes is lost, and an application head can be undone (section
+12).
 
 A `postTools` boundary that selects a `head: "self"` write (a reset) behaves as
 `final`: it also selects follow-ups, and the current run ends with its inputs
@@ -2321,9 +2360,28 @@ interface ToolHooks {
     context: Context,
   ): HookResult<ToolExecutionResult>;
 }
+
+interface CompactionHooks {
+  /**
+   * After range selection, before summarizing; the first decision wins. `entries` are the active entries the summary
+   * replaces, the head marker first, and `messages` their model context, the summarizer's source; `firstKept` is the
+   * first entry kept verbatim.
+   */
+  beforeCompact(
+    compaction: {
+      readonly reason: CompactionReason;
+      readonly entries: readonly EntryRecord[];
+      readonly messages: readonly Message[];
+      readonly firstKept: EntryId;
+      readonly instructions?: string;
+    },
+    api: HookApi,
+    context: Context,
+  ): HookResult<{ readonly decline: true } | { readonly summary: string }>;
+}
 ```
 
-`GenerationTask` and `ToolTask` are the exported built-in task
+`GenerationTask`, `ToolTask`, and `CompactionTask` are the exported built-in task
 tokens whose `H` parameters are these interfaces. `runtime.hooks.each(name,
 invoke)` calls `invoke` with every handler registered under `name` whose
 registration matches the task's conversation, in registry order of the phase
@@ -2695,8 +2753,9 @@ Generation preparation takes these steps against its phase snapshot:
    append one positional `pi.system` entry when they differ.
 
 Preparation does not recheck the transcript before appending: only the Harness
-writes to a busy conversation, through submissions, run tasks, and boundaries,
-so the transcript it read is still current (section 12).
+writes to a busy conversation, through submissions, run tasks, boundaries, and a
+blocking compaction, which appends only while its generation waits for it
+(section 8.7), so the transcript it read is still current (section 12).
 
 Model and thinking level are request options, not prompt state.
 
@@ -2744,7 +2803,7 @@ A PR #9548 `SystemMessage` is always a patch, not a reset: it cannot remove
 previous `content` or restore section order merely by restating current values.
 Therefore, when a head removes the previous request-visible baseline, which is
 the case when the active context has a head marker and no `pi.system` entry
-follows that marker, the new
+was appended after that marker (has a higher ID), the new
 `pi.system` entry adds `ContextEdit` omissions for every earlier `pi.system`
 entry still retained after the cut. Its own message is then a complete baseline
 containing every desired section in order and every effective tool declaration.
@@ -2806,7 +2865,7 @@ The initial implementation provides:
 |---|---|
 | `pi.generation` | prepare system/loadout, request or poll model, retry, classify response |
 | `pi.tool` | validate, hook, execute, persist output and details, append result |
-| `pi.compaction` | select a transcript range, summarize, append a headed summary |
+| `pi.compaction` | select a transcript range, summarize, place a headed summary |
 
 Generation uses `HarnessOptions.models` without a Pico-specific model adapter. It
 resolves `models.getModel(ref.provider, ref.modelId)`, builds a pi-ai `Context`
@@ -2831,8 +2890,9 @@ does not delete transcript history.
 
 Built-in entry kinds carry no `data`, except `pi.tool-result`, whose token is
 `Entry<{ diagnostics: ToolDiagnostic[] }>`; every tool result carries `data`,
-with an empty list when it has no diagnostics (section 7.3). Each kind is
-exported as an `Entry` token.
+with an empty list when it has no diagnostics (section 7.3), and
+`pi.compaction`, whose token is `Entry<{ reason: CompactionReason }>`. Each kind
+is exported as an `Entry` token.
 
 | kind | `model` | written by |
 |---|---|---|
@@ -2841,8 +2901,9 @@ exported as an `Entry` token.
 | `pi.system` | `[SystemMessage]` with `content: ""` (section 7.4) | generation preparation |
 | `pi.tool-result` | `[ToolResultMessage]` | tool tasks; generation for calls to tools its request did not offer |
 | `pi.reset` | absent, or `[UserMessage]` with the handoff text; always `head: "self"` | `reset()`, generation `tools` phase for `handoff` |
+| `pi.compaction` | `[UserMessage]` with the wrapped summary; `head` is the first kept entry | compaction tasks (section 8.7) |
 
-Every provider result becomes a `pi.assistant` entry: answers, failed attempts
+Every generation response becomes a `pi.assistant` entry: answers, failed attempts
 with their error text and usage, and converted partials with stop reason
 `aborted`. Context derivation (section 2.1, rule 9) keeps failed and aborted
 messages out of later requests, so no separate usage or notice kind exists.
@@ -2884,6 +2945,18 @@ type LiveState = {
     /** Result entry once done; absent when the tool task faulted or was orphaned. */
     entry?: EntryId;
   }[];
+  /** Live compaction tasks in task ID order; absent when none (section 8.7). */
+  compactions?: CompactionStatus[];
+};
+
+type CompactionStatus = {
+  taskId: TaskId<CompactionResult>;
+  reason: CompactionReason;
+  /** Whether a generation waits for it: a compaction the generation owns. */
+  blocking: boolean;
+  attempt: number;
+  /** Durable backoff before the next summarization attempt. */
+  retry?: { at: number; error: string };
 };
 ```
 
@@ -2918,7 +2991,11 @@ The generation's `tools` phase removes `tools`. Slot updates apply only while a 
 `taskId` exists; without one, the durable partial output, details, and
 diagnostics are empty.
 
-Compaction status joins this document with the compaction task. Partials are
+A compaction's status is added in the commit that creates the task and removed
+in the commit that decides its outcome: the task's own outcome commit, even when
+that outcome holds as `completing` (section 5.5), or the scheduler's cleanup
+(section 5.4).
+It stays small: the summary text lives in the task's placement, never here. Partials are
 normalized to strict JSON before assignment. Every terminal path of a run task
 removes `run`, `generation`, and `tools` in the commit that settles the run's
 inputs. `tx.settleSubmission()` stages each input's new status
@@ -2931,10 +3008,18 @@ so it is not a caller table read and works after the commit's first table write.
 ```ts
 type GenerationInput = {};
 type GenerationCheckpoint =
-  | { phase: "prepare"; attempt: number }
+  | {
+      phase: "prepare";
+      attempt: number;
+      /** The blocking compaction this generation waited for; it starts no other compaction. */
+      compacted?: TaskId<CompactionResult>;
+      /** Error text of the overflow that started `compacted`; checked once when `prepare` resumes. */
+      overflow?: string;
+    }
   | {
       phase: "request";
       attempt: number;
+      compacted?: TaskId<CompactionResult>;
       model: ModelRef;
       thinkingLevel: ModelThinkingLevel;
       streamOptions: ConversationStreamOptions;
@@ -2942,10 +3027,11 @@ type GenerationCheckpoint =
       /** Newest entry included in the request. */
       cutoff: EntryId;
     }
-  | { phase: "retry"; attempt: number; until: number }
+  | { phase: "retry"; attempt: number; compacted?: TaskId<CompactionResult>; until: number }
   | {
       phase: "poll";
       attempt: number;
+      compacted?: TaskId<CompactionResult>;
       model: ModelRef;
       toolExecution: ToolExecutionMode;
       cutoff: EntryId;
@@ -2968,10 +3054,33 @@ The run's inputs live in `pi.live.run`, not in the task input.
 
 - `prepare` runs section 7.4 against the committed configuration. When no model
   is configured or `models.getModel()` does not know it, the task fails with
-  `no_model`. Otherwise one commit appends the planned `pi.system` entries and
+  `no_model`. When it resumes with `overflow` and its compaction did not
+  complete with an `entryId`, the run fails with `model_error` and the overflow
+  text as detail. Otherwise one commit appends the planned `pi.system` entries and
   moves to `request` with the new tail as `cutoff` and the configuration's model,
   thinking level, stream options, and tool execution mode. These stay fixed for
-  this request attempt; a retry prepares again. The retry policy is read when the
+  this request attempt; a retry prepares again. `compacted` carries over to
+  `request`, `retry`, `poll`, and the next `prepare`.
+- Before that commit, `prepare` checks the compaction thresholds (section 8.7)
+  when the conversation's compaction policy is enabled, the model's
+  `contextWindow` is positive, and `compacted` is absent. The estimate starts at
+  the newest assistant message in the committed model context whose entry was
+  appended after the head marker (all qualify without one) and whose usage is
+  nonzero: pi-ai `calculateContextTokens()` of its usage, plus pi-ai
+  `estimateMessageTokens()` of every context message after it and of the planned
+  system messages. Its request included the marker, because a head is placed
+  only while no request is in flight. Without such a message, every message is
+  estimated. Both thresholds apply only when range selection finds a cut.
+  - Above `contextWindow - reserveTokens`, the blocking threshold: instead of
+    appending, one commit creates a compaction owned by the generation with reason
+    `threshold`, adds its status, and commits `waiting` on it with `allSettled`
+    and checkpoint `{ phase: "prepare", attempt, compacted }`. Whatever its
+    outcome, `prepare` then runs again and sends the request.
+  - Above `contextWindow - reserveTokens - backgroundTokens` with
+    `backgroundTokens > 0` and no compaction status in `pi.live`: the commit that
+    moves to `request` also creates a background compaction, owned by the
+    conversation, with reason `threshold`, and adds its status. The generation
+    does not wait for it. The retry policy is read when the
   attempt's result is classified, because it governs the next attempt (section
   2.2).
 - `request` and `poll` resolve the checkpoint's model through
@@ -3003,6 +3112,16 @@ The run's inputs live in `pi.live.run`, not in the task input.
   - `toolUse` with at least one tool call: the commit appends the assistant
     entry and starts the tool round described below, moving to `waiting` in the
     `tools` phase. A `toolUse` message without calls is classified like `stop`.
+  - `error` that pi-ai `isContextOverflow()` recognizes, while the compaction
+    policy is enabled, `compacted` is absent, and range selection finds a cut:
+    the commit appends the error entry, removes `generation`, creates a
+    compaction owned by the generation with reason `overflow`, adds its status,
+    and commits `waiting` on it with `allSettled` and checkpoint `{ phase:
+    "prepare", attempt, compacted, overflow }`; the recovery request does not
+    count against the retry policy. Any other overflow,
+    including a second one, is never retried and fails like the non-retryable
+    errors below. A `stop` or `length` response is never classified as overflow;
+    the next threshold check handles silent overflow.
   - `error` that `isRetryableAssistantError()` accepts while the conversation's
     retry policy allows another attempt (`enabled` and `attempt <= maxRetries`,
     so `maxRetries` counts retries after the first attempt): append the error entry and move to
@@ -3121,7 +3240,7 @@ its `done` slot without an entry (section 8.2). It then settles the inputs
 
 ```ts
 type UsageState = {
-  /** Assistant entries, keyed `provider/modelId`. */
+  /** Assistant entries and compaction summarization attempts, keyed `provider/modelId`. */
   models: Record<string, Usage>;
   /** Tool results, keyed by tool name; their usage has no model identity. */
   tools: Record<string, Usage>;
@@ -3138,15 +3257,176 @@ type UsageState = {
 | view mount | `docs["pi.usage"]` |
 | created | with every Harness conversation (section 2.2) |
 
-`pi.usage` is a derived index of the spend recorded by the conversation's own
-entries; the entries stay authoritative. Every built-in writer of a
-`pi.assistant` entry adds its message's `usage` to `models` under the message's
-own `provider/model`, and every writer of
+`pi.usage` is the ledger of the conversation's own spend. Every built-in writer
+of a `pi.assistant` entry adds its message's `usage` to `models` under the
+message's own `provider/model`, and every writer of
 a `pi.tool-result` entry with `usage` adds it to `tools`, in the same commit.
-Failed and aborted attempts count. A fork starts at zero, so no spend is counted
+Every summarization attempt of a compaction task adds its response's `usage` to
+`models` in the commit that classifies it (section 8.7); that spend has no entry,
+whether the summary is placed, fails, or ends stale. Failed and aborted attempts
+count. A fork starts at zero, so no spend is counted
 twice. `Harness.usage()` sums every conversation's document into the Session
 total; other totals, such as an ownership subtree, are application sums over
 `scanConversations()`. Nothing stores a total across conversations.
+
+### 8.7 Compaction
+
+```ts
+type CompactionReason = "manual" | "threshold" | "overflow";
+type CompactionInput = { reason: CompactionReason; instructions?: string };
+/** The pinned summarization request. */
+type SummaryRequest = {
+  attempt: number;
+  model: ModelRef;
+  thinkingLevel: ModelThinkingLevel;
+  streamOptions: ConversationStreamOptions;
+  maxTokens: number;
+  /** Newest entry of the context the range was selected from. */
+  tail: EntryId;
+  /** First entry kept verbatim; the summary's `head`. */
+  firstKept: EntryId;
+};
+type CompactionCheckpoint =
+  | { phase: "select" }
+  | ({ phase: "summarize" } & SummaryRequest)
+  | ({ phase: "retry"; until: number } & SummaryRequest);
+/**
+ * `entryId` of a blocking compaction's summary, or the `submissionId` of a conversation-owned compaction's summary
+ * write; both absent when nothing was compacted.
+ */
+type CompactionResult = { entryId?: EntryId; submissionId?: SubmissionId };
+```
+
+`pi.compaction` is version 1 and starts at `{ phase: "select" }`. Compaction
+replaces an old prefix of the model context with a summary entry whose `head` is
+the first kept entry (section 2.1). Raw history stays in storage. There are three
+ways to start one; the task is the same, only ownership and placement differ:
+
+| started by | owner | background | generation waits | placement |
+|---|---|---|---|---|
+| `Conversation.compact()` | conversation | no | no | write submission |
+| generation above the background threshold | conversation | yes | no | write submission |
+| generation above the blocking threshold, or on overflow | the generation | no | yes | direct append |
+
+Only a blocking compaction runs while the conversation's run waits for it. The
+others never take run control: the conversation keeps working while they
+summarize, and their summary is placed like any passive write. Compactions do
+not coordinate with each other; several may run at once, and section 6 decides
+between their summaries.
+
+**Range selection** is a pure function of a `ContextView`, whose
+`contributions` give each active entry's model messages after every edit in the
+range (section 2.1, rules 4 and 9), including edits carried by older in-range
+markers, and `keepRecentTokens`.
+
+1. Cut candidates are the non-marker entries whose contribution begins with a
+   user or assistant message. Tool results and system entries are never
+   candidates, so a kept assistant message keeps its tool results. A user entry
+   is not a candidate either while a result for a call of the assistant before
+   it follows it, before the next assistant (section 2.1, rule 7).
+2. Walk the non-marker entries from newest to oldest, adding pi-ai
+   `estimateMessageTokens()` of each contribution. At the first entry where the
+   sum reaches `keepRecentTokens`, the cut is the first candidate at or after
+   that entry in transcript order, or the newest candidate when none follows.
+3. There is nothing to compact when the sum never reaches `keepRecentTokens`, or
+   when no non-marker entry before the cut contributes a model message.
+
+The summarized entries are the head marker, if any, followed by the non-marker
+entries before the cut. Their messages are their contributions, ordered as in
+section 2.1, rules 7 and 8, so an earlier summary is summarized again together
+with the history after it. Nothing is compacted while the context is smaller
+than `keepRecentTokens`, so with a window where `contextWindow - reserveTokens`
+is below it, overflow may come before any threshold compaction.
+
+```text
+1 user   2 assistant (read)   3 tool result, 30k tokens   4 assistant   5 user   6 assistant
+keepRecentTokens 20k: the walk from 6 reaches 20k at 3; the first candidate at or after 3 is 4.
+The summary covers 1-3; the model context becomes [summary, 4, 5, 6].
+```
+
+Phases:
+
+- `select` reads the committed configuration and captures the committed
+  context. When no model is configured or `models.getModel()` does not know it,
+  the task fails with `no_model`. With nothing to compact it completes with
+  `{}`. Otherwise the `beforeCompact` hooks (section 7.2) run with the
+  summarized entries and messages; the first decision wins. `{ decline: true }` completes
+  with `{}`, and `{ summary }` is placed as below in the same commit. Without a
+  decision, one commit moves to `summarize` with attempt 1, the configured model,
+  thinking level, and stream options, `maxTokens` = `min(floor(0.8 *
+  reserveTokens), model.maxTokens)` (the model's value only when positive), the
+  captured tail, and the cut as `firstKept`.
+- `summarize` derives the summarized messages again from the context at `tail`,
+  which is immutable, and serializes them to text: `[User]: ...`,
+  `[Assistant thinking]: ...`, `[Assistant]: ...`,
+  `[Assistant tool calls]: name(key=json, ...)`, and `[Tool result]: ...`
+  truncated to 2000 characters; system messages are omitted. The request has no
+  tools and two messages: a system message with the built-in summarization
+  system prompt, and a user message with the serialized text in
+  `<conversation>` tags followed by the built-in summarization prompt, and
+  `Additional focus: <instructions>` when the input has instructions. It uses the
+  pinned thinking level as `reasoning`, and the pinned stream options without
+  `deferred`, with `cacheRetention: "none"` and the pinned `maxTokens`.
+  Recovery resends the same request. The response is classified in one commit
+  that adds its usage to `pi.usage` (section 8.6):
+  - `stop` with non-empty text and no tool call: the text is the summary, placed
+    as below.
+  - `error` that `isRetryableAssistantError()` accepts while the conversation's
+    retry policy allows another attempt: move to `retry` with `until = now +
+    retryDelayMs(policy, attempt)`, and set the status's `attempt` and `retry`.
+  - anything else, including a `length` stop, which leaves the summary
+    incomplete: fail with `model_error`.
+- `retry` sleeps until `until`, then returns to `summarize` with the next attempt
+  and the same pinned request.
+
+The built-in prompts are the coding agent's structured checkpoint format. The
+prompt also asks the model to carry forward an earlier summary at the start of
+the conversation.
+
+**Placement.** The summary entry is
+
+```ts
+{
+  kind: "pi.compaction",
+  head: firstKept,
+  model: [{ role: "user", content: [{ type: "text", text: wrapped }], timestamp: now }],
+  data: { reason },
+}
+```
+
+where `wrapped` is `"The conversation history before this point was compacted
+into the following summary:\n\n<summary>\n"`, the summary, and
+`"\n</summary>"`. The commit that places it also removes the task's status and
+commits the task's `completed` outcome:
+
+- A blocking compaction appends the entry directly and completes with
+  `{ entryId }`. Its generation holds the run and waits, so nothing else writes
+  the conversation.
+- A conversation-owned compaction admits the entry as a write submission with
+  request ID `compaction:<taskId>`, following section 6 exactly: in an idle
+  conversation with an empty inbox it is appended at once or settles `stale`;
+  in an idle conversation with queued items it queues and a final boundary runs;
+  in a busy one it queues for the next boundary. It completes with
+  `{ submissionId }` and never waits for a queued placement;
+  `Harness.submission()` observes the placement.
+
+The next generation's preparation finds a head marker without a later
+`pi.system` entry and writes a complete system baseline (section 7.4).
+
+**Cancellation.** The abort handler removes the task's status and ends
+`aborted`; it writes no entry. An attempt cut short by abort or a crash has no
+committed response, so its usage is not counted. A manual compaction is
+ordinary work of its conversation: `Conversation.abort()` aborts it. A
+background compaction survives it and stops only through `abortTask()` or
+`Conversation.abort(context, { background: true })`. A blocking compaction is
+aborted with its generation, before the generation's abort handler runs
+(section 5.5). A summary that is already queued is a write submission:
+conversation abort keeps it, and `Submission.abort()` withdraws it.
+
+When a blocking compaction ends without an `entryId`, because it found nothing
+to compact, was declined, failed, faulted, or was aborted directly, a threshold
+generation sends its request anyway and an overflow generation fails with
+`model_error` (section 8.3).
 
 
 ## 9. Document observation and Chord
@@ -3339,8 +3619,8 @@ appended head marker `H` makes the entries `H` followed by the current non-head
 entries at or after `H.head`: the kept entries stay, and splices remove the
 others and insert `H` at the front. Every kept entry is already mounted because
 Harness writers never target a head before the current range: resets and
-handoffs head themselves, and queued head writes that reach further back are
-stale (section 6). A raw head write that targets further back shows only the
+handoffs head themselves, compaction summaries target a kept entry of the
+current range, and head writes that reach further back are stale (section 6). A raw head write that targets further back shows only the
 mounted entries (section 12).
 Document creation and retirement set and delete the `docs` key. Parent entries
 through `parent.at` are immutable, so a child's mount follows only its own
@@ -3372,6 +3652,8 @@ type AgentEvent =
       /** Current generation attempt: its in-flight partial, retry backoff, or deferred poll. */
       generation?: { attempt: number; message?: AssistantMessage; retry?: { at: number; error: string }; deferred?: { pollAt: number } };
       tools: readonly ToolSlot[];
+      /** `pi.live.compactions` (section 8.2). */
+      compactions: readonly CompactionStatus[];
       inbox: readonly { id: SubmissionId; mode: InboxItem["mode"] }[];
       config: ConversationConfigState;
       usage: UsageState;
@@ -3403,7 +3685,10 @@ type AgentEvent =
   | { type: "entry_appended"; entry: EntryRecord }
   | { type: "config_changed"; config: ConversationConfigState }
   | { type: "usage_changed"; usage: UsageState }
-  | { type: "task_failed"; taskId: TaskId; kind: string; message: string };
+  | { type: "task_failed"; taskId: TaskId; kind: string; message: string }
+  | { type: "compaction_start"; taskId: TaskId; reason: CompactionReason; blocking: boolean }
+  /** The task's receipt tells whether it produced a summary; the summary entry has its own events. */
+  | { type: "compaction_end"; taskId: TaskId; reason: CompactionReason };
 
 /** One change to the in-flight assistant message, relative to that message. */
 type MessageChange =
@@ -3468,7 +3753,10 @@ Events derive from committed changes:
 - `auto_retry_start`/`auto_retry_end`, `deferred_poll`: `pi.live.generation`
   gains or drops `retry`, or gains `deferred` or moves its `pollAt`.
 - `task_failed`: a task of the conversation settles `faulted` or `orphaned`.
-- `compaction_start`/`compaction_end` are added with compaction (Package 20).
+- `compaction_start`/`compaction_end`: a status appears in or disappears from
+  `pi.live.compactions`. A retry backoff shows only in the snapshot's
+  `compactions`. A queued summary is placed later with its own
+  `message_start`/`message_end` and `submission` events.
 
 One commit produces one batch, in this order: `tool_execution_start`,
 `message_start` of a first partial, `message_update`, `tool_execution_update`,
@@ -3476,9 +3764,9 @@ and retry/deferred events; then entries in append order with their
 `message_start`/`message_end` or `entry_appended`, where a tool result's
 `tool_execution_end` directly precedes its `message_start`, as in the coding
 agent; then the `tool_execution_end` of tools ending without an entry;
-then `task_failed`, `turn_end`, `run_end`; then `submission` events in ID order;
-then `inbox_update`, `config_changed`, and `usage_changed`; and last `run_start`
-and `turn_start`. A stream buffers at most 100 undelivered
+then `compaction_end`, `task_failed`, `turn_end`, `run_end`; then `submission`
+events in ID order; then `inbox_update`, `config_changed`, and `usage_changed`;
+and last `compaction_start`, `run_start`, and `turn_start`. A stream buffers at most 100 undelivered
 batches; adding another replaces every undelivered batch with one `snapshot` of
 the newest committed state. The stream therefore converges but does not promise
 every transition; `Submission.wait()` reports exact outcomes. A reconnecting
@@ -3766,7 +4054,24 @@ These are contracts, not invitations to add defensive machinery:
   use a write submission.
 - **Queued items after a failed run:** failure and task abort leave the inbox alone.
   Queued follow-ups wait in `pi.inbox`, and their `wait()` does not settle, until
-  the next submission's boundary places them or the host withdraws them.
+  the next submission's boundary places them or the host withdraws them. A
+  compaction summary is such a submission: when a manual or background
+  compaction finishes in that idle conversation, its final boundary places the
+  waiting follow-ups and starts a run.
+- **Compaction spend:** every manual and background compaction pays for one
+  summarization request per attempt, also when its summary ends stale because a
+  later compaction cut further.
+- **Heads and edits during compaction:** a summary reflects the context when its
+  compaction selected the range. An application edit placed while it
+  summarizes, such as a write replacing entry 20, is lost when the summary cuts
+  past its target: the summary still describes the old entry 20, and the edit's
+  target leaves the range. An application head placed meanwhile, for example
+  one cutting at 85 to forget entries 10-84, is undone by a summary cutting at 90:
+  that summary still describes 10-84. Place such writes before compacting.
+- **Summary timestamps:** a queued summary's user message carries the time its
+  compaction finished, not its placement. Code that judges usage staleness by
+  message timestamps, such as pi-ai `estimateContextTokens()` over view
+  messages, can misjudge; the Harness estimate uses entry order (section 8.3).
 - **Raw head writes into the past:** a head written directly with `tx.appendEntry()`
   that targets an entry before the conversation's active range changes model
   context, but a mounted view keeps only the entries it already holds until the

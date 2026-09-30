@@ -37,6 +37,8 @@
 - Added `Conversation.abort(context, { background: true })`, which also aborts background work and waits for it.
 - Conversation and Harness idle waits now include work in owned conversations and stop at background tasks.
 - A tool task whose `execute()` throws, or that is interrupted by a restart without a safe rerun, now ends `failed` (still with its error result entry), which aborts the conversations the call owns.
+- Added compaction: the `pi.compaction` task (`CompactionTask`) summarizes an older prefix of the model context and places a `pi.compaction` entry (`CompactionEntry`) that heads the first kept entry. `Conversation.compact()` starts one manually; generation starts one in the background above a soft threshold, waits for one above `contextWindow - reserveTokens`, and compacts and retries once after a context overflow. Configure it with `get/setCompaction()`; `beforeCompact` hooks can decline or supply the summary; `pi.live.compactions`, `compaction_start`/`compaction_end` events, and `pi.usage` report it.
+- `ContextView` now includes `contributions`, each active entry's model messages after edits.
 - Added `TaskRuntime.conversation()` and `ToolExecutionApi.conversation()`: invocation-bound `ConversationHandle`s for submitting to, aborting, and waiting on existing conversations, such as the ones a task owns.
 
 ### Fixed

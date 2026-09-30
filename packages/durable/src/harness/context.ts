@@ -62,24 +62,23 @@ export async function deriveContext(
 	bounds: ContextBounds | undefined,
 	context: Context,
 ): Promise<ContextView> {
-	if (bounds === undefined) return { head: undefined, entries: [], messages: [] };
+	if (bounds === undefined) return { head: undefined, entries: [], contributions: [], messages: [] };
 	const head = bounds.head;
 	const range = await scanRange(storage, conversationId, bounds, context);
 	const edits = new Map<EntryId, ContextEdit>();
+	// Edits of every entry in the range count, including older head markers that `selectActive()` drops.
 	for (const entry of range) for (const edit of entry.edits ?? []) edits.set(edit.target, edit);
 
 	const entries = selectActive(head, range);
-	const messages: Message[] = [];
-	for (const entry of entries) {
+	const contributions = entries.map((entry): Message[] => {
 		const edit = edits.get(entry.id);
-		if (edit?.action === "omit") continue;
+		if (edit?.action === "omit") return [];
 		const contributed = edit?.action === "replace" ? edit.messages : (entry.model ?? []);
-		for (const message of contributed) {
-			if (message.role === "assistant" && EXCLUDED_STOP_REASONS.has(message.stopReason)) continue;
-			messages.push(message);
-		}
-	}
-	return { head, entries, messages: orderToolResults(messages) };
+		return contributed.filter(
+			(message) => message.role !== "assistant" || !EXCLUDED_STOP_REASONS.has(message.stopReason),
+		);
+	});
+	return { head, entries, contributions, messages: orderToolResults(contributions.flat()) };
 }
 
 /** The raw active entries within captured bounds, without deriving model context. */
@@ -127,7 +126,7 @@ function selectActive(head: ContextBounds["head"], range: EntryRecord[]): EntryR
  * Place each assistant's tool results directly after it in call order. Results are taken from the messages before
  * the next assistant; a missing result is synthesized and unmatched results are dropped.
  */
-function orderToolResults(messages: readonly Message[]): Message[] {
+export function orderToolResults(messages: readonly Message[]): Message[] {
 	const ordered: Message[] = [];
 	for (let index = 0; index < messages.length; index++) {
 		const message = messages[index]!;

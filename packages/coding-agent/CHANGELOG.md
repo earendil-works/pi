@@ -4,13 +4,15 @@
 
 ### Added
 
-- Added a `description` field for MCP servers (`pi mcp add --description`), shown next to the server in the `codemode` and `tool_search` descriptions, and a `describeNamespace(name)` codemode helper that returns a namespace's instructions and tool names.
+- Added a `description` field for MCP servers (`pi mcp add --description`), shown with the server in the system prompt and used to rank its tools in tool search, and a `describeNamespace(name)` codemode helper that returns a namespace's instructions and tool names. `describeNamespace()` and `searchTools()` accept a namespace as `mcp__dev-radius`, `mcp__dev_radius`, `dev-radius`, or `dev_radius`.
 - Added an `oauth.clientName` setting for MCP servers (`pi mcp add --oauth-client-name`) to change the client name sent during OAuth client registration, for servers such as Figma that only accept known clients ([#10226](https://github.com/earendil-works/pi/issues/10226)).
+- `/reload` now enables tools newly added to the `defaultTools` setting. Tools removed from it stay enabled, tools turned off during the session stay off unless newly added, and `--tools`, `--no-tools`, and `--no-builtin-tools` still override the setting ([#10245](https://github.com/earendil-works/pi/issues/10245)).
 
 ### Changed
 
-- MCP servers with the default `codemode` exposure no longer list their tools in the `codemode` description; scripts find them with `searchTools()`. `codemode-deferred` is now an alias for `codemode`. Use `direct` exposure for tools the model should see without searching ([#10212](https://github.com/earendil-works/pi/issues/10212)).
-- The `codemode` description no longer includes tool counts or MCP server instructions, so it no longer changes when a server's tool list changes. Scripts read server instructions with `describeNamespace()` ([#10212](https://github.com/earendil-works/pi/issues/10212)).
+- MCP servers with the default `codemode` exposure no longer appear in the `codemode` description; scripts find them with `searchTools()`. `codemode-deferred` is now an alias for `codemode`. Use `direct` exposure for tools the model should see without searching ([#10212](https://github.com/earendil-works/pi/issues/10212)).
+- The `codemode` description no longer includes deferred tools, tool counts, or MCP server instructions, so it no longer changes when MCP servers connect or change their tools. The `tool_search` description no longer lists the servers whose tools it can load, for the same reason. Servers are listed instead in an `mcp_servers` system prompt section with a one-line summary, updated at the start of each prompt; a changed section is appended to the conversation. Scripts read server instructions with `describeNamespace()` ([#10212](https://github.com/earendil-works/pi/issues/10212)).
+- The first prompt no longer waits for MCP servers without `direct` tools. They connect in the background and are waited for when a codemode script names them, a script searches tools, or `tool_search` runs ([#10212](https://github.com/earendil-works/pi/issues/10212)).
 
 ### Fixed
 
@@ -19,6 +21,10 @@
 - Fixed codemode `image()` accepting malformed base64 data or unsupported image types, which persisted an invalid image block that made every later provider request fail with HTTP 400 ([#10215](https://github.com/earendil-works/pi/issues/10215)).
 - Fixed codemode failing to start its script worker from the standalone Windows executable ([#10204](https://github.com/earendil-works/pi/issues/10204)).
 - Fixed prompt submission slowing down with session length, because resolving the session's model selection looked up the model catalog once per assistant message ([#10198](https://github.com/earendil-works/pi/issues/10198)).
+- Fixed extension commands registered without a string name or handler crashing pi when typing `/`; the extension now fails to load with an error instead ([#10054](https://github.com/earendil-works/pi/issues/10054)).
+- Fixed collapsed `codemode` and MCP tool results filling the screen when the output is one long line, such as minified JSON. Like bash output, the preview is now limited to wrapped lines instead of logical lines.
+- Fixed `codemode.mode: "only"` listing `read`, `bash`, `edit`, and `write` in the system prompt's tool list although requests only declare `codemode` ([#10192](https://github.com/earendil-works/pi/issues/10192)).
+- Fixed codemode scripts calling the wrong MCP tool when two tool names differ only in `-` and `_`, such as `read-file` and `read_file`. Like in Codex, MCP tool and namespace names now replace `-` with `_` (`mcp__my-server__x` is now `mcp__my_server__x`), colliding tools of a server all get a hash suffix, and server names that differ only in `-` and `_` are rejected ([#10239](https://github.com/earendil-works/pi/issues/10239)).
 
 ## [0.99.1] - 2026-09-29
 

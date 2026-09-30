@@ -1,6 +1,20 @@
 export { defineDoc, defineDocFamily } from "./documents.ts";
-export { AssistantEntry, defineEntry, ResetEntry, SystemEntry, ToolResultEntry, UserEntry } from "./entries.ts";
+export {
+	AssistantEntry,
+	CompactionEntry,
+	defineEntry,
+	ResetEntry,
+	SystemEntry,
+	ToolResultEntry,
+	UserEntry,
+} from "./entries.ts";
 export { ConversationBusy, ReadAfterWrite, StorageRejected } from "./errors.ts";
+export {
+	type CompactionCheckpoint,
+	type CompactionInput,
+	CompactionTask,
+	type SummaryRequest,
+} from "./harness/compaction.ts";
 export { ConversationConfig, type ConversationConfigState } from "./harness/config.ts";
 export {
 	type AgentEvent,
@@ -17,11 +31,15 @@ export {
 } from "./harness/generation.ts";
 export { Harness } from "./harness/harness.ts";
 export { InboxDoc, type InboxItem, type InboxState } from "./harness/inbox.ts";
-export { LiveDoc, type LiveState, type ToolSlot } from "./harness/live.ts";
+export { type CompactionStatus, LiveDoc, type LiveState, type ToolSlot } from "./harness/live.ts";
 export { createRegistry } from "./harness/registry.ts";
 export { ToolTask, type ToolTaskCheckpoint, type ToolTaskInput, type ToolTaskResult } from "./harness/tool.ts";
 export type {
 	AnyTask,
+	CompactionHooks,
+	CompactionPolicy,
+	CompactionReason,
+	CompactionResult,
 	ContextView,
 	Conversation,
 	ConversationAbortOptions,
