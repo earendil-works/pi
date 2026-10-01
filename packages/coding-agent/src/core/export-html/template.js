@@ -558,6 +558,14 @@
       // TREE DISPLAY TEXT (pure data -> string)
       // ============================================================
 
+      // Tool call arguments are persisted raw and may contain numbers as strings; coerce them so
+      // line ranges are computed numerically instead of concatenated.
+      function toLineNumber(value) {
+        if (value == null || value === '') return undefined;
+        const n = typeof value === 'number' ? value : Number(value);
+        return Number.isFinite(n) ? n : undefined;
+      }
+
       function shortenPath(p) {
         if (typeof p !== 'string') return '';
         if (p.startsWith('/Users/')) {
@@ -575,8 +583,8 @@
         switch (name) {
           case 'read': {
             const path = shortenPath(String(args.path || args.file_path || ''));
-            const offset = args.offset;
-            const limit = args.limit;
+            const offset = toLineNumber(args.offset);
+            const limit = toLineNumber(args.limit);
             let display = path;
             if (offset !== undefined || limit !== undefined) {
               const start = offset ?? 1;
@@ -965,8 +973,8 @@
           }
           case 'read': {
             const filePath = str(args.file_path ?? args.path);
-            const offset = args.offset;
-            const limit = args.limit;
+            const offset = toLineNumber(args.offset);
+            const limit = toLineNumber(args.limit);
 
             let pathHtml = filePath === null ? invalidArg : escapeHtml(shortenPath(filePath || ''));
             if (filePath !== null && (offset !== undefined || limit !== undefined)) {

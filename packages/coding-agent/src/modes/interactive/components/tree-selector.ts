@@ -52,6 +52,14 @@ const MAX_VISIBLE_ANCHOR_CONTENT_WIDTH = 20;
 const MIN_ANCHOR_CONTEXT_WIDTH = 2;
 const MAX_ANCHOR_CONTEXT_WIDTH = 12;
 
+// Tool call arguments come from the raw session entries, where some models send numbers as
+// strings; coerce them so ranges are computed numerically instead of concatenated.
+function toLineNumber(value: unknown): number | undefined {
+	if (value == null || value === "") return undefined;
+	const n = typeof value === "number" ? value : Number(value);
+	return Number.isFinite(n) ? n : undefined;
+}
+
 /**
  * Render tree rows into a horizontally clipped viewport.
  *
@@ -953,8 +961,8 @@ class TreeList implements Component {
 		switch (name) {
 			case "read": {
 				const path = shortenPath(String(args.path || args.file_path || ""));
-				const offset = args.offset as number | undefined;
-				const limit = args.limit as number | undefined;
+				const offset = toLineNumber(args.offset);
+				const limit = toLineNumber(args.limit);
 				let display = path;
 				if (offset !== undefined || limit !== undefined) {
 					const start = offset ?? 1;

@@ -25,12 +25,19 @@ interface CompactReadClassification {
 }
 const COMPACT_RESOURCE_FILE_NAMES = new Set(["AGENTS.override.md", "AGENTS.md", "AGENTS.MD", "CLAUDE.md", "CLAUDE.MD"]);
 type ReadRenderArgs = { path?: string; file_path?: string; offset?: number; limit?: number };
+// Renderers display the raw streamed arguments, which some models send as strings; coerce them so
+// the range is computed numerically instead of concatenated.
+function toLineNumber(value: unknown): number | undefined {
+	if (value == null || value === "") return undefined;
+	const n = typeof value === "number" ? value : Number(value);
+	return Number.isFinite(n) ? n : undefined;
+}
 function formatReadLineRange(args: ReadRenderArgs | undefined, theme: Theme): string {
 	// Strict tool schemas make models send null for omitted optional fields.
 	if (args?.offset == null && args?.limit == null) return "";
-	const startLine = args.offset ?? 1;
-	const endLine = args.limit != null ? startLine + args.limit - 1 : "";
-	return theme.fg("warning", `:${startLine}${endLine ? `-${endLine}` : ""}`);
+	const startLine = toLineNumber(args.offset) ?? 1;
+	const endLine = toLineNumber(args.limit);
+	return theme.fg("warning", `:${startLine}${endLine !== undefined ? `-${startLine + endLine - 1}` : ""}`);
 }
 function formatReadCall(args: ReadRenderArgs | undefined, theme: Theme, cwd: string): string {
 	const pathDisplay = renderToolPath(str(args?.file_path ?? args?.path), theme, cwd);
