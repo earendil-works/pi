@@ -17,6 +17,19 @@
       "pattern": "^[^/]+$",
       "description": "Theme name. Must not contain '/' because it is reserved for automatic light/dark theme settings."
     },
+    "appearance": {
+      "anyOf": [
+        {
+          "type": "string",
+          "const": "dark"
+        },
+        {
+          "type": "string",
+          "const": "light"
+        }
+      ],
+      "description": "Background the theme is designed for. Detected from the theme colors when omitted."
+    },
     "vars": {
       "type": "object",
       "patternProperties": {
@@ -24,7 +37,7 @@
           "anyOf": [
             {
               "type": "string",
-              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+              "description": "Hex color (#RGB or #RRGGBB), OKLCH or OKHSL color, variable reference, or empty string for terminal default"
             },
             {
               "type": "integer",
@@ -97,7 +110,7 @@
           "anyOf": [
             {
               "type": "string",
-              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+              "description": "Hex color (#RGB or #RRGGBB), OKLCH or OKHSL color, variable reference, or empty string for terminal default"
             },
             {
               "type": "integer",
@@ -112,7 +125,7 @@
           "anyOf": [
             {
               "type": "string",
-              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+              "description": "Hex color (#RGB or #RRGGBB), OKLCH or OKHSL color, variable reference, or empty string for terminal default"
             },
             {
               "type": "integer",
@@ -127,7 +140,7 @@
           "anyOf": [
             {
               "type": "string",
-              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+              "description": "Hex color (#RGB or #RRGGBB), OKLCH or OKHSL color, variable reference, or empty string for terminal default"
             },
             {
               "type": "integer",
@@ -142,7 +155,7 @@
           "anyOf": [
             {
               "type": "string",
-              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+              "description": "Hex color (#RGB or #RRGGBB), OKLCH or OKHSL color, variable reference, or empty string for terminal default"
             },
             {
               "type": "integer",
@@ -157,7 +170,7 @@
           "anyOf": [
             {
               "type": "string",
-              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+              "description": "Hex color (#RGB or #RRGGBB), OKLCH or OKHSL color, variable reference, or empty string for terminal default"
             },
             {
               "type": "integer",
@@ -172,7 +185,7 @@
           "anyOf": [
             {
               "type": "string",
-              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+              "description": "Hex color (#RGB or #RRGGBB), OKLCH or OKHSL color, variable reference, or empty string for terminal default"
             },
             {
               "type": "integer",
@@ -187,7 +200,7 @@
           "anyOf": [
             {
               "type": "string",
-              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+              "description": "Hex color (#RGB or #RRGGBB), OKLCH or OKHSL color, variable reference, or empty string for terminal default"
             },
             {
               "type": "integer",
@@ -202,7 +215,7 @@
           "anyOf": [
             {
               "type": "string",
-              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+              "description": "Hex color (#RGB or #RRGGBB), OKLCH or OKHSL color, variable reference, or empty string for terminal default"
             },
             {
               "type": "integer",
@@ -217,7 +230,7 @@
           "anyOf": [
             {
               "type": "string",
-              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+              "description": "Hex color (#RGB or #RRGGBB), OKLCH or OKHSL color, variable reference, or empty string for terminal default"
             },
             {
               "type": "integer",
@@ -232,7 +245,7 @@
           "anyOf": [
             {
               "type": "string",
-              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+              "description": "Hex color (#RGB or #RRGGBB), OKLCH or OKHSL color, variable reference, or empty string for terminal default"
             },
             {
               "type": "integer",
@@ -247,7 +260,7 @@
           "anyOf": [
             {
               "type": "string",
-              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+              "description": "Hex color (#RGB or #RRGGBB), OKLCH or OKHSL color, variable reference, or empty string for terminal default"
             },
             {
               "type": "integer",
@@ -262,7 +275,7 @@
           "anyOf": [
             {
               "type": "string",
-              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+              "description": "Hex color (#RGB or #RRGGBB), OKLCH or OKHSL color, variable reference, or empty string for terminal default"
             },
             {
               "type": "integer",
@@ -277,7 +290,7 @@
           "anyOf": [
             {
               "type": "string",
-              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+              "description": "Hex color (#RGB or #RRGGBB), OKLCH or OKHSL color, variable reference, or empty string for terminal default"
             },
             {
               "type": "integer",
@@ -292,7 +305,7 @@
           "anyOf": [
             {
               "type": "string",
-              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+              "description": "Hex color (#RGB or #RRGGBB), OKLCH or OKHSL color, variable reference, or empty string for terminal default"
             },
             {
               "type": "integer",
@@ -307,7 +320,7 @@
           "anyOf": [
             {
               "type": "string",
-              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+              "description": "Hex color (#RGB or #RRGGBB), OKLCH or OKHSL color, variable reference, or empty string for terminal default"
             },
             {
               "type": "integer",
@@ -322,7 +335,7 @@
           "anyOf": [
             {
               "type": "string",
-              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+              "description": "Hex color (#RGB or #RRGGBB), OKLCH or OKHSL color, variable reference, or empty string for terminal default"
             },
             {
               "type": "integer",
@@ -337,7 +350,7 @@
           "anyOf": [
             {
               "type": "string",
-              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+              "description": "Hex color (#RGB or #RRGGBB), OKLCH or OKHSL color, variable reference, or empty string for terminal default"
             },
             {
               "type": "integer",
@@ -352,7 +365,7 @@
           "anyOf": [
             {
               "type": "string",
-              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+              "description": "Hex color (#RGB or #RRGGBB), OKLCH or OKHSL color, variable reference, or empty string for terminal default"
             },
             {
               "type": "integer",
@@ -367,7 +380,7 @@
           "anyOf": [
             {
               "type": "string",
-              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+              "description": "Hex color (#RGB or #RRGGBB), OKLCH or OKHSL color, variable reference, or empty string for terminal default"
             },
             {
               "type": "integer",
@@ -382,7 +395,7 @@
           "anyOf": [
             {
               "type": "string",
-              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+              "description": "Hex color (#RGB or #RRGGBB), OKLCH or OKHSL color, variable reference, or empty string for terminal default"
             },
             {
               "type": "integer",
@@ -397,7 +410,7 @@
           "anyOf": [
             {
               "type": "string",
-              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+              "description": "Hex color (#RGB or #RRGGBB), OKLCH or OKHSL color, variable reference, or empty string for terminal default"
             },
             {
               "type": "integer",
@@ -412,7 +425,7 @@
           "anyOf": [
             {
               "type": "string",
-              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+              "description": "Hex color (#RGB or #RRGGBB), OKLCH or OKHSL color, variable reference, or empty string for terminal default"
             },
             {
               "type": "integer",
@@ -427,7 +440,7 @@
           "anyOf": [
             {
               "type": "string",
-              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+              "description": "Hex color (#RGB or #RRGGBB), OKLCH or OKHSL color, variable reference, or empty string for terminal default"
             },
             {
               "type": "integer",
@@ -442,7 +455,7 @@
           "anyOf": [
             {
               "type": "string",
-              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+              "description": "Hex color (#RGB or #RRGGBB), OKLCH or OKHSL color, variable reference, or empty string for terminal default"
             },
             {
               "type": "integer",
@@ -457,7 +470,7 @@
           "anyOf": [
             {
               "type": "string",
-              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+              "description": "Hex color (#RGB or #RRGGBB), OKLCH or OKHSL color, variable reference, or empty string for terminal default"
             },
             {
               "type": "integer",
@@ -472,7 +485,7 @@
           "anyOf": [
             {
               "type": "string",
-              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+              "description": "Hex color (#RGB or #RRGGBB), OKLCH or OKHSL color, variable reference, or empty string for terminal default"
             },
             {
               "type": "integer",
@@ -487,7 +500,7 @@
           "anyOf": [
             {
               "type": "string",
-              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+              "description": "Hex color (#RGB or #RRGGBB), OKLCH or OKHSL color, variable reference, or empty string for terminal default"
             },
             {
               "type": "integer",
@@ -502,7 +515,7 @@
           "anyOf": [
             {
               "type": "string",
-              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+              "description": "Hex color (#RGB or #RRGGBB), OKLCH or OKHSL color, variable reference, or empty string for terminal default"
             },
             {
               "type": "integer",
@@ -517,7 +530,7 @@
           "anyOf": [
             {
               "type": "string",
-              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+              "description": "Hex color (#RGB or #RRGGBB), OKLCH or OKHSL color, variable reference, or empty string for terminal default"
             },
             {
               "type": "integer",
@@ -532,7 +545,7 @@
           "anyOf": [
             {
               "type": "string",
-              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+              "description": "Hex color (#RGB or #RRGGBB), OKLCH or OKHSL color, variable reference, or empty string for terminal default"
             },
             {
               "type": "integer",
@@ -547,7 +560,7 @@
           "anyOf": [
             {
               "type": "string",
-              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+              "description": "Hex color (#RGB or #RRGGBB), OKLCH or OKHSL color, variable reference, or empty string for terminal default"
             },
             {
               "type": "integer",
@@ -562,7 +575,7 @@
           "anyOf": [
             {
               "type": "string",
-              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+              "description": "Hex color (#RGB or #RRGGBB), OKLCH or OKHSL color, variable reference, or empty string for terminal default"
             },
             {
               "type": "integer",
@@ -577,7 +590,7 @@
           "anyOf": [
             {
               "type": "string",
-              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+              "description": "Hex color (#RGB or #RRGGBB), OKLCH or OKHSL color, variable reference, or empty string for terminal default"
             },
             {
               "type": "integer",
@@ -592,7 +605,7 @@
           "anyOf": [
             {
               "type": "string",
-              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+              "description": "Hex color (#RGB or #RRGGBB), OKLCH or OKHSL color, variable reference, or empty string for terminal default"
             },
             {
               "type": "integer",
@@ -607,7 +620,7 @@
           "anyOf": [
             {
               "type": "string",
-              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+              "description": "Hex color (#RGB or #RRGGBB), OKLCH or OKHSL color, variable reference, or empty string for terminal default"
             },
             {
               "type": "integer",
@@ -622,7 +635,7 @@
           "anyOf": [
             {
               "type": "string",
-              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+              "description": "Hex color (#RGB or #RRGGBB), OKLCH or OKHSL color, variable reference, or empty string for terminal default"
             },
             {
               "type": "integer",
@@ -637,7 +650,7 @@
           "anyOf": [
             {
               "type": "string",
-              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+              "description": "Hex color (#RGB or #RRGGBB), OKLCH or OKHSL color, variable reference, or empty string for terminal default"
             },
             {
               "type": "integer",
@@ -652,7 +665,7 @@
           "anyOf": [
             {
               "type": "string",
-              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+              "description": "Hex color (#RGB or #RRGGBB), OKLCH or OKHSL color, variable reference, or empty string for terminal default"
             },
             {
               "type": "integer",
@@ -667,7 +680,7 @@
           "anyOf": [
             {
               "type": "string",
-              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+              "description": "Hex color (#RGB or #RRGGBB), OKLCH or OKHSL color, variable reference, or empty string for terminal default"
             },
             {
               "type": "integer",
@@ -682,7 +695,7 @@
           "anyOf": [
             {
               "type": "string",
-              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+              "description": "Hex color (#RGB or #RRGGBB), OKLCH or OKHSL color, variable reference, or empty string for terminal default"
             },
             {
               "type": "integer",
@@ -697,7 +710,7 @@
           "anyOf": [
             {
               "type": "string",
-              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+              "description": "Hex color (#RGB or #RRGGBB), OKLCH or OKHSL color, variable reference, or empty string for terminal default"
             },
             {
               "type": "integer",
@@ -712,7 +725,7 @@
           "anyOf": [
             {
               "type": "string",
-              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+              "description": "Hex color (#RGB or #RRGGBB), OKLCH or OKHSL color, variable reference, or empty string for terminal default"
             },
             {
               "type": "integer",
@@ -727,7 +740,7 @@
           "anyOf": [
             {
               "type": "string",
-              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+              "description": "Hex color (#RGB or #RRGGBB), OKLCH or OKHSL color, variable reference, or empty string for terminal default"
             },
             {
               "type": "integer",
@@ -742,7 +755,7 @@
           "anyOf": [
             {
               "type": "string",
-              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+              "description": "Hex color (#RGB or #RRGGBB), OKLCH or OKHSL color, variable reference, or empty string for terminal default"
             },
             {
               "type": "integer",
@@ -757,7 +770,7 @@
           "anyOf": [
             {
               "type": "string",
-              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+              "description": "Hex color (#RGB or #RRGGBB), OKLCH or OKHSL color, variable reference, or empty string for terminal default"
             },
             {
               "type": "integer",
@@ -772,7 +785,7 @@
           "anyOf": [
             {
               "type": "string",
-              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+              "description": "Hex color (#RGB or #RRGGBB), OKLCH or OKHSL color, variable reference, or empty string for terminal default"
             },
             {
               "type": "integer",
@@ -787,7 +800,7 @@
           "anyOf": [
             {
               "type": "string",
-              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+              "description": "Hex color (#RGB or #RRGGBB), OKLCH or OKHSL color, variable reference, or empty string for terminal default"
             },
             {
               "type": "integer",
@@ -802,7 +815,7 @@
           "anyOf": [
             {
               "type": "string",
-              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+              "description": "Hex color (#RGB or #RRGGBB), OKLCH or OKHSL color, variable reference, or empty string for terminal default"
             },
             {
               "type": "integer",
@@ -817,7 +830,7 @@
           "anyOf": [
             {
               "type": "string",
-              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+              "description": "Hex color (#RGB or #RRGGBB), OKLCH or OKHSL color, variable reference, or empty string for terminal default"
             },
             {
               "type": "integer",
@@ -832,7 +845,7 @@
           "anyOf": [
             {
               "type": "string",
-              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+              "description": "Hex color (#RGB or #RRGGBB), OKLCH or OKHSL color, variable reference, or empty string for terminal default"
             },
             {
               "type": "integer",
@@ -847,7 +860,7 @@
           "anyOf": [
             {
               "type": "string",
-              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+              "description": "Hex color (#RGB or #RRGGBB), OKLCH or OKHSL color, variable reference, or empty string for terminal default"
             },
             {
               "type": "integer",
@@ -862,7 +875,7 @@
           "anyOf": [
             {
               "type": "string",
-              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+              "description": "Hex color (#RGB or #RRGGBB), OKLCH or OKHSL color, variable reference, or empty string for terminal default"
             },
             {
               "type": "integer",
@@ -877,7 +890,7 @@
           "anyOf": [
             {
               "type": "string",
-              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+              "description": "Hex color (#RGB or #RRGGBB), OKLCH or OKHSL color, variable reference, or empty string for terminal default"
             },
             {
               "type": "integer",
@@ -892,7 +905,7 @@
           "anyOf": [
             {
               "type": "string",
-              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+              "description": "Hex color (#RGB or #RRGGBB), OKLCH or OKHSL color, variable reference, or empty string for terminal default"
             },
             {
               "type": "integer",
@@ -907,7 +920,7 @@
           "anyOf": [
             {
               "type": "string",
-              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+              "description": "Hex color (#RGB or #RRGGBB), OKLCH or OKHSL color, variable reference, or empty string for terminal default"
             },
             {
               "type": "integer",
@@ -922,7 +935,7 @@
           "anyOf": [
             {
               "type": "string",
-              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+              "description": "Hex color (#RGB or #RRGGBB), OKLCH or OKHSL color, variable reference, or empty string for terminal default"
             },
             {
               "type": "integer",
@@ -944,7 +957,7 @@
           "anyOf": [
             {
               "type": "string",
-              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+              "description": "Hex color (#RGB or #RRGGBB), OKLCH or OKHSL color, variable reference, or empty string for terminal default"
             },
             {
               "type": "integer",
@@ -959,7 +972,7 @@
           "anyOf": [
             {
               "type": "string",
-              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+              "description": "Hex color (#RGB or #RRGGBB), OKLCH or OKHSL color, variable reference, or empty string for terminal default"
             },
             {
               "type": "integer",
@@ -974,7 +987,7 @@
           "anyOf": [
             {
               "type": "string",
-              "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+              "description": "Hex color (#RGB or #RRGGBB), OKLCH or OKHSL color, variable reference, or empty string for terminal default"
             },
             {
               "type": "integer",

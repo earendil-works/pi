@@ -176,7 +176,7 @@ describe("generated configuration schemas", () => {
 		expect((await ModelConfig.load(path)).getError()).toContain("Invalid models.json schema");
 	});
 
-	it("accepts $schema in models.json without changing model validation", async () => {
+	it("validates $schema in models.json at runtime", async () => {
 		const directory = createTemporaryDirectory();
 		const path = join(directory, "models.json");
 		writeFileSync(
@@ -196,6 +196,9 @@ describe("generated configuration schemas", () => {
 			JSON.stringify({ $schema: schemaUrl("models"), providers: { demo: { models: [{ id: "" }] } } }),
 		);
 		expect((await ModelConfig.load(path)).getError()).toContain("Invalid models.json schema");
+
+		writeFileSync(path, JSON.stringify({ $schema: 42, providers: {} }));
+		expect((await ModelConfig.load(path)).getError()).toContain("$schema");
 	});
 
 	it("accepts $schema in settings.json and preserves unknown settings", () => {

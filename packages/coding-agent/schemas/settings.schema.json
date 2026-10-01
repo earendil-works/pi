@@ -362,6 +362,10 @@
       },
       "description": "Local extension file paths or directories."
     },
+    "deviceId": {
+      "type": "string",
+      "description": "Stable installation UUID, generated when authentication first needs it. Global only."
+    },
     "skills": {
       "anyOf": [
         {
@@ -627,6 +631,29 @@
         }
       }
     },
+    "codemode": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "anyOf": [
+            {
+              "type": "string",
+              "const": "on"
+            },
+            {
+              "type": "string",
+              "const": "only"
+            }
+          ],
+          "default": "on"
+        },
+        "inlineBudget": {
+          "type": "number",
+          "description": "Estimated tokens available for inline codemode tool declarations.",
+          "default": 3000
+        }
+      }
+    },
     "sessionDir": {
       "type": "string",
       "description": "Custom session storage directory, in the same format as the --session-dir CLI flag."
@@ -712,6 +739,19 @@
       "type": "boolean",
       "description": "No effect in regular TUI mode.",
       "default": true
+    },
+    "fullscreenWheelScrollLines": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "string",
+          "const": "auto"
+        }
+      ],
+      "description": "Lines scrolled per wheel event in fullscreen mode.",
+      "default": "auto"
     },
     "queueMode": {
       "anyOf": [

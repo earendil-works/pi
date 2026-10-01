@@ -901,7 +901,7 @@
           }
         }
       ],
-      "description": "Paste image from clipboard (text fallback)"
+      "description": "Paste files on macOS, images, or text from clipboard"
     },
     "app.session.new": {
       "anyOf": [

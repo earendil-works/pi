@@ -170,7 +170,7 @@ const ModelCostTierSchema = Type.Object({
 	...ModelCostRatesSchema,
 });
 
-const ModelCostSchema = Type.Object({
+export const ModelCostSchema = Type.Object({
 	...ModelCostRatesSchema,
 	tiers: Type.Optional(Type.Array(ModelCostTierSchema)),
 });
