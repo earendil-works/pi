@@ -1,5 +1,6 @@
-// Entry point for running pi from sources with the packages/plus override layer active.
-// Loaded as: node packages/plus/loader/run-plus.mjs [pi args...]
+// Entry point for running pi from sources with the pi-plus override layer active
+// (packages/plus-cli wrapping the shared core in packages/plus).
+// Loaded as: node packages/plus-cli/loader/run-plus.mjs [pi args...]
 //
 // Uses Node's native TypeScript type stripping (the repo is erasableSyntaxOnly by design);
 // tsx is intentionally NOT used — its load hook silently produces empty modules when a

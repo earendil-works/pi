@@ -26,19 +26,17 @@ import {
 import { ENV_AGENT_DIR } from "../../../coding-agent/src/config.ts";
 import type { MainOptions } from "../../../coding-agent/src/main.ts";
 import { main as upstreamMain } from "../../../coding-agent/src/main.ts";
-import { dispatchCompletion } from "../completion/index.ts";
 import {
 	registerAskUser,
-	registerCd,
 	registerContextGuard,
 	registerMemory,
-	registerPlainTools,
 	registerPlan,
 	registerSubagent,
-	registerTabTitle,
 	registerTasks,
 	registerUserHooks,
-} from "../extensions/index.ts";
+} from "../../../plus/src/extensions/index.ts";
+import { dispatchCompletion } from "../completion/index.ts";
+import { registerCd, registerPlainTools, registerTabTitle } from "../extensions/index.ts";
 import { registerBanner } from "./ui/banner.ts";
 import { registerVim } from "./ui/vim/extension.ts";
 

@@ -11,12 +11,12 @@ import type { SettingItem } from "@earendil-works/pi-tui";
 import { afterEach, beforeAll, beforeEach, describe, it } from "vitest";
 import type { SettingsConfig } from "../../../coding-agent/src/modes/interactive/components/settings-selector.ts";
 import { initTheme } from "../../../coding-agent/src/modes/interactive/theme/theme.ts";
-import { SettingsSelectorComponent } from "../../src/coding-agent/ui/settings-selector.ts";
 import {
 	getAutoCompactThresholdPercent,
 	getContextFloorTokens,
 	getContextWindowCapTokens,
-} from "../../src/context/threshold-setting.ts";
+} from "../../../plus/src/context/threshold-setting.ts";
+import { SettingsSelectorComponent } from "../../src/coding-agent/ui/settings-selector.ts";
 
 let dir: string;
 const savedEnv = process.env.PI_PLUS_SETTINGS_FILE;

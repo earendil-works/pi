@@ -8,11 +8,11 @@
  * ".pi", PI_-prefixed env vars, debug log path), so plus shares pi's config
  * and session layout.
  *
- * Also shadows the package-asset directory getters: the compiled pi-plus bundle
- * (packages/plus/dist/npm/) ships its assets directly in the package root
- * (modes/, core/) rather than in a src/ or dist/ tree, so upstream's
- * src-or-dist detection cannot find them. Source-mode runs (./pipi) keep the
- * upstream implementations.
+ * Also shadows the package-asset directory getters: the compiled pi-plus bundles
+ * (packages/plus-cli/dist/npm/, packages/plus-api/dist/npm/) ship their assets
+ * directly in the package root (modes/, core/) rather than in a src/ or dist/
+ * tree, so upstream's src-or-dist detection cannot find them. Source-mode runs
+ * (./pipi) keep the upstream implementations.
  */
 export * from "../../../../coding-agent/src/config.ts";
 

@@ -37,7 +37,7 @@ import {
 	setAutoCompactThresholdPercent,
 	setContextFloorTokens,
 	setContextWindowCapTokens,
-} from "../../context/threshold-setting.ts";
+} from "../../../../plus/src/context/threshold-setting.ts";
 
 const THRESHOLD_ITEM_ID = "autocompact-threshold";
 const THRESHOLD_VALUES = ["70%", "80%", "85%", "90%", "95%"];

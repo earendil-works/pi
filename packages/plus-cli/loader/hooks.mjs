@@ -1,21 +1,27 @@
-// Module-redirect resolve hook for the pi override layer (packages/plus).
-// Loaded via node --import (see register.mjs). Runs pi from TypeScript sources using
-// Node's native type stripping — no tsx — because tsx's load hook silently produces
-// empty modules when any other customization hook is registered alongside it (Node 25).
+// Module-redirect resolve hook for the pi-plus CLI override layer (packages/plus-cli,
+// wrapping the shared core in packages/plus). Loaded via node --import (see register.mjs).
+// Runs pi from TypeScript sources using Node's native type stripping — no tsx — because
+// tsx's load hook silently produces empty modules when any other customization hook is
+// registered alongside it (Node 25).
 //
 // Two responsibilities:
 //  1. tsconfig paths: map @earendil-works/* (and friends) to packages/*/src so the
 //     workspace packages resolve to sources, mirroring the root tsconfig.json paths.
-//  2. Module redirects: resolve selected upstream modules to their packages/plus
-//     wrappers. Wrappers import the original via a relative path; since the importer
-//     then lives under packages/plus/, the hook passes it through (no redirect loop).
+//  2. Module redirects: resolve selected upstream modules to their plus wrappers
+//     (core wrappers in packages/plus, CLI wrappers in packages/plus-cli). Wrappers
+//     import the original via a relative path; since the importer then lives under
+//     one of the plus package dirs, the hook passes it through (no redirect loop).
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { REDIRECTS } from "./redirects.mjs";
 
 const repoRoot = fileURLToPath(new URL("../../..", import.meta.url));
-const plusRoot = `${repoRoot}packages/plus/`;
+// Importers inside any plus package dir are never redirected (they may be wrappers
+// importing the true upstream module via relative path).
+const exemptPrefixes = ["packages/plus/", "packages/plus-cli/", "packages/plus-api/"].map(
+	(dir) => `${repoRoot}${dir}`,
+);
 
 const redirectByFile = new Map();
 for (const [upstream, wrapper] of REDIRECTS) {
@@ -118,7 +124,7 @@ function mapTsconfigPaths(specifier) {
 }
 
 function isInsidePlus(parentURL) {
-	return parentURL?.startsWith("file://") && fileURLToPath(parentURL).startsWith(plusRoot);
+	return parentURL?.startsWith("file://") && exemptPrefixes.some((prefix) => fileURLToPath(parentURL).startsWith(prefix));
 }
 
 export async function resolve(specifier, context, nextResolve) {
@@ -132,7 +138,7 @@ export async function resolve(specifier, context, nextResolve) {
 
 	const resolved = await nextResolve(specifier, context);
 
-	// Redirect upstream modules to plus wrappers (never for importers inside packages/plus).
+	// Redirect upstream modules to plus wrappers (never for importers inside the plus dirs).
 	if (resolved.url.startsWith("file://") && !isInsidePlus(context.parentURL)) {
 		const redirect = redirectByFile.get(fileURLToPath(resolved.url));
 		if (redirect) {

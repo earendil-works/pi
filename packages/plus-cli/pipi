@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# Run pi from sources with the packages/plus override layer active.
+# Run pi from sources with the pi-plus override layer active (packages/plus-cli
+# wrapping the shared core in packages/plus).
 # Same args as ./pi-test.sh, including --no-env.
 # Uses Node's native type stripping (no tsx); the plus resolve hook maps workspace
-# packages to sources and redirects overridden modules to packages/plus wrappers.
+# packages to sources and redirects overridden modules to the plus wrappers.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
-exec node "$REPO_ROOT/packages/plus/loader/run-plus.mjs" "$@"
+exec node "$REPO_ROOT/packages/plus-cli/loader/run-plus.mjs" "$@"

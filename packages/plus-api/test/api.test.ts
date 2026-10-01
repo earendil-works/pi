@@ -1,6 +1,6 @@
 /**
- * Tests for the programmatic library entry (packages/plus/src/api.ts) — the
- * surface the "pi-plus" npm package exposes via its exports map for hosts
+ * Tests for the programmatic library entry (packages/plus-api/src/api.ts) — the
+ * surface the "pi-plus-sdk" npm package exposes via its exports map for hosts
  * that embed pi-plus in-process (e.g. a desktop app).
  *
  * The session-construction test uses the faux provider (no real APIs) and an

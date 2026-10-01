@@ -11,7 +11,7 @@ Profiles are stored in `~/.pi/profiles.json` (mode 0600). At launch, a profile i
 
 The consuming CLI points `PI_CODING_AGENT_DIR` at the materialized dir, giving per-profile credential isolation while sessions/extensions/skills stay shared.
 
-This package is a library: it exposes profile CRUD, the materializer, launch resolution (`resolveLaunch`), and subcommand dispatch (`dispatchHubCommand`). The pi-plus CLI (`packages/plus`) wires these behind `pipi profile …`, `pipi use` / `pipi unuse`, and the `pipi --as <name>` flag.
+This package is a library: it exposes profile CRUD, the materializer, launch resolution (`resolveLaunch`), and subcommand dispatch (`dispatchHubCommand`). The pi-plus CLI (`packages/plus-cli`) wires these behind `pipi profile …`, `pipi use` / `pipi unuse`, and the `pipi --as <name>` flag.
 
 ## State files and env overrides
 

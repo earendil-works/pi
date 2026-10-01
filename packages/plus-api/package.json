@@ -1,0 +1,11 @@
+{
+	"name": "@pi/plus-api",
+	"version": "0.1.0",
+	"private": true,
+	"type": "module",
+	"description": "pi-plus SDK surface: programmatic entry (createPlusAgentSession) embedding the shared pi-plus core in-process. Builds the published pi-plus-sdk npm artifact.",
+	"scripts": {
+		"build": "node build.mjs",
+		"test": "vitest run"
+	}
+}

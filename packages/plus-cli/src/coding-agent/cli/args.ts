@@ -10,7 +10,7 @@
 export * from "../../../../coding-agent/src/cli/args.ts";
 
 import { printHelp as upstreamPrintHelp } from "../../../../coding-agent/src/cli/args.ts";
-import { APP_NAME } from "../core/config.ts";
+import { APP_NAME } from "../../../../plus/src/coding-agent/core/config.ts";
 
 type ExtensionFlag = Parameters<typeof upstreamPrintHelp>[0];
 

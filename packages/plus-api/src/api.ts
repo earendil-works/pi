@@ -1,16 +1,17 @@
 /**
- * Programmatic library entry for pi-plus ("pi-plus" npm package, `api.js`).
+ * Programmatic library entry for pi-plus-sdk ("pi-plus-sdk" npm package, `api.js`).
  *
- * Lets a host application (e.g. a desktop app) embed pi with the full pi-plus
- * layer in-process, without going through the `pipi` CLI:
+ * Lets a host application (e.g. a desktop app) embed pi with the pi-plus layer
+ * in-process, without going through the `pipi` CLI:
  * - the compaction/context/reasoning overrides are baked in at bundle time by
  *   the same redirect plugin that produces the CLI, because this module imports
  *   upstream runtime values ONLY through the coding-agent index barrel (direct
  *   relative imports of redirected upstream modules would bypass the wrappers)
  * - the seven non-TUI pi-plus extensions (subagent, tasks, memory, plan,
  *   ask-user, hooks, context-guard) are registered here the same way the CLI
- *   wrapper registers them via MainOptions.extensionFactories; the TUI-only
- *   ones (banner, vim, tab-title, plain-tools) are deliberately excluded
+ *   wrapper registers them; the CLI-only ones (banner, vim, tab-title,
+ *   plain-tools, /cd) live in the pi-plus artifact and are excluded from this
+ *   bundle by construction
  * - hosts that want working ask_user dialogs provide dialog handlers via the
  *   `ui` option; the session is bound with mode "rpc" so ask-user falls back
  *   to sequential select/input/confirm dialogs, and with mode "print"
@@ -47,7 +48,7 @@ import {
 	registerSubagent,
 	registerTasks,
 	registerUserHooks,
-} from "./extensions/index.ts";
+} from "../../plus/src/extensions/index.ts";
 
 /**
  * Hidden pi-plus extension factories for non-TUI (SDK) hosts: the same

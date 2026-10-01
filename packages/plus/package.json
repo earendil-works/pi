@@ -3,12 +3,8 @@
 	"version": "0.1.17",
 	"private": true,
 	"type": "module",
-	"description": "Override layer for pi: Claude Code-style context detection, compaction, and reasoning. No upstream package may be edited; overrides live here and are wired in via the module-redirect loader.",
-	"dependencies": {
-		"@earendil-works/pi-hub": "^0.85.1"
-	},
+	"description": "Shared pi-plus core: Claude Code-style context detection, compaction, and reasoning overrides plus the seven non-TUI extensions, consumed by @pi/plus-cli (pi-plus artifact) and @pi/plus-api (pi-plus-sdk artifact). No upstream package may be edited; overrides live here and are wired in via the module-redirect loader.",
 	"scripts": {
-		"build": "node build.mjs",
 		"test": "vitest run"
 	}
 }

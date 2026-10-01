@@ -59,7 +59,7 @@ const APP_LABEL = "pi+ agent";
 
 /**
  * pi-plus's own release train: the nearest package.json up from this module
- * is packages/plus/package.json (in the staged bundle it's the bundle root's).
+ * is packages/plus-cli/package.json (in the staged bundle it's the bundle root's).
  * pipi --version and the version check follow pi's train, but the banner
  * brands pi+, so it shows the plus version. Any fs/format failure falls back
  * to pi's VERSION.

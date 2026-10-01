@@ -30,7 +30,7 @@
 
 import { basename } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "../../../../coding-agent/src/core/extensions/types.ts";
-import { APP_TITLE } from "../../coding-agent/core/config.ts";
+import { APP_TITLE } from "../../../../plus/src/coding-agent/core/config.ts";
 
 const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 const SPINNER_INTERVAL_MS = 120;
