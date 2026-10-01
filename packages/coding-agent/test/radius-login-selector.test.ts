@@ -1,6 +1,6 @@
 import { afterEach, beforeAll, describe, expect, test, vi } from "vitest";
 import type { TUI } from "../../tui/src/tui.ts";
-import { ExtensionSelectorComponent } from "../src/modes/interactive/components/extension-selector.ts";
+import { RadiusLoginSelectorComponent } from "../src/modes/interactive/components/radius-login-selector.ts";
 import { radiusShimmer } from "../src/modes/interactive/components/radius-shimmer.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
 
@@ -11,20 +11,39 @@ function stripAnsi(text: string): string {
 	return text.replace(/\x1b\[[0-9;]*m/g, "");
 }
 
-describe("ExtensionSelectorComponent animated option", () => {
+describe("RadiusLoginSelectorComponent", () => {
 	beforeAll(() => initTheme("dark"));
 	afterEach(() => vi.useRealTimers());
+
+	test("does not schedule renders without an animated option", () => {
+		vi.useFakeTimers();
+		const requestRender = vi.fn();
+		const tui = { requestRender } as unknown as TUI;
+		const selector = new RadiusLoginSelectorComponent(
+			tui,
+			"Select:",
+			["First"],
+			() => {},
+			() => {},
+		);
+
+		expect(vi.getTimerCount()).toBe(0);
+		vi.advanceTimersByTime(500);
+		expect(requestRender).not.toHaveBeenCalled();
+		selector.dispose();
+	});
 
 	test("animates the option only while it is selected", () => {
 		vi.useFakeTimers();
 		const requestRender = vi.fn();
 		const tui = { requestRender } as unknown as TUI;
-		const selector = new ExtensionSelectorComponent(
+		const selector = new RadiusLoginSelectorComponent(
+			tui,
 			"Select:",
 			["First", "Radius"],
 			() => {},
 			() => {},
-			{ tui, animatedOption: { option: "Radius", render: (ms) => radiusShimmer("Radius", ms) } },
+			{ shimmer: { option: "Radius", text: "Radius", suffix: "" } },
 		);
 
 		vi.advanceTimersByTime(500);
@@ -44,14 +63,14 @@ describe("ExtensionSelectorComponent animated option", () => {
 	});
 
 	test("shows an intro above the title", () => {
-		const selector = new ExtensionSelectorComponent(
+		const tui = { requestRender: vi.fn() } as unknown as TUI;
+		const selector = new RadiusLoginSelectorComponent(
+			tui,
 			"Sign in to Radius:",
 			["Browser"],
 			() => {},
 			() => {},
-			{
-				intro: "Radius is a service",
-			},
+			{ intro: "Radius is a service" },
 		);
 		const lines = selector.render(80).map((line) => stripAnsi(line).trim());
 		const intro = lines.indexOf("Radius is a service");

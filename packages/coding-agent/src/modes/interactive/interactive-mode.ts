@@ -160,7 +160,7 @@ import {
 } from "./components/oauth-selector.ts";
 import { piLogoLines } from "./components/pi-logo.ts";
 import { playPiLogoAnimation } from "./components/pi-logo-animation.lazy.ts";
-import { radiusShimmer } from "./components/radius-shimmer.ts";
+import { RadiusLoginSelectorComponent } from "./components/radius-login-selector.ts";
 import { ScopedModelsSelectorComponent } from "./components/scoped-models-selector.ts";
 import { SessionSelectorComponent } from "./components/session-selector.ts";
 import { SettingsSelectorComponent } from "./components/settings-selector.ts";
@@ -5831,42 +5831,32 @@ export class InteractiveMode {
 			? `Select authentication method for ${providerOptions[0].name}:`
 			: "Select authentication method:";
 		this.showSelector((done) => {
-			const selector = new ExtensionSelectorComponent(
-				title,
-				options,
-				(option) => {
-					done();
-					if (radiusOption && option === radiusLabel) {
-						void this.startProviderLogin(radiusOption, () => this.showLoginAuthTypeSelector());
-						return;
+			const onSelect = (option: string) => {
+				done();
+				if (radiusOption && option === radiusLabel) {
+					void this.startProviderLogin(radiusOption, () => this.showLoginAuthTypeSelector());
+					return;
+				}
+				const authType = option === subscriptionLabel ? "oauth" : "api_key";
+				if (providerOptions) {
+					const providerOption = providerOptions.find((provider) => provider.authType === authType);
+					if (providerOption) {
+						void this.startProviderLogin(providerOption, () => this.showLoginAuthTypeSelector(providerOptions));
 					}
-					const authType = option === subscriptionLabel ? "oauth" : "api_key";
-					if (providerOptions) {
-						const providerOption = providerOptions.find((provider) => provider.authType === authType);
-						if (providerOption) {
-							void this.startProviderLogin(providerOption, () =>
-								this.showLoginAuthTypeSelector(providerOptions),
-							);
-						}
-						return;
-					}
-					this.showLoginProviderSelector(authType);
-				},
-				() => {
-					done();
-					this.ui.requestRender();
-				},
-				{
-					tui: this.ui,
-					animatedOption:
-						radiusLabel && radiusText
-							? {
-									option: radiusLabel,
-									render: (elapsedMs) => radiusShimmer(radiusText, elapsedMs) + radiusStatus,
-								}
-							: undefined,
-				},
-			);
+					return;
+				}
+				this.showLoginProviderSelector(authType);
+			};
+			const onCancel = () => {
+				done();
+				this.ui.requestRender();
+			};
+			const selector =
+				radiusLabel && radiusText
+					? new RadiusLoginSelectorComponent(this.ui, title, options, onSelect, onCancel, {
+							shimmer: { option: radiusLabel, text: radiusText, suffix: radiusStatus },
+						})
+					: new ExtensionSelectorComponent(title, options, onSelect, onCancel);
 			return { component: selector, focus: selector, dispose: () => selector.dispose() };
 		});
 	}
@@ -6167,21 +6157,22 @@ export class InteractiveMode {
 				this.ui.requestRender();
 			};
 			const labels = prompt.options.map((option) => option.label);
-			const selector = new ExtensionSelectorComponent(
-				prompt.message,
-				labels,
-				(optionLabel) => {
-					restoreDialog();
-					const id = prompt.options.find((option) => option.label === optionLabel)?.id;
-					if (id) resolve(id);
-					else reject(new Error("Login cancelled"));
-				},
-				() => {
-					restoreDialog();
-					reject(new Error("Login cancelled"));
-				},
-				{ intro: providerId === RADIUS_PROVIDER_ID ? RADIUS_LOGIN_INTRO : undefined },
-			);
+			const onSelect = (optionLabel: string) => {
+				restoreDialog();
+				const id = prompt.options.find((option) => option.label === optionLabel)?.id;
+				if (id) resolve(id);
+				else reject(new Error("Login cancelled"));
+			};
+			const onCancel = () => {
+				restoreDialog();
+				reject(new Error("Login cancelled"));
+			};
+			const selector =
+				providerId === RADIUS_PROVIDER_ID
+					? new RadiusLoginSelectorComponent(this.ui, prompt.message, labels, onSelect, onCancel, {
+							intro: RADIUS_LOGIN_INTRO,
+						})
+					: new ExtensionSelectorComponent(prompt.message, labels, onSelect, onCancel);
 			this.editorContainer.clear();
 			this.editorContainer.addChild(selector);
 			this.ui.setFocus(selector);
