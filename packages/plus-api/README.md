@@ -25,9 +25,9 @@ await session.prompt("Review this repository");
 ```
 
 - The full pi-plus layer is included: the compaction/context/reasoning overrides are
-  baked into `api.js` by the shared bundle-time redirect plugin, and the eight
+  baked into `api.js` by the shared bundle-time redirect plugin, and the nine
   non-TUI pi-plus extensions (subagent, tasks, memory, plan, ask-user, hooks,
-  context-guard, `/cd`) are registered exactly as the CLI wrapper registers them. No CLI
+  context-guard, `/cd`, `/init`) are registered exactly as the CLI wrapper registers them. No CLI
   logic ships in this artifact: no hub dispatch, no completion, no pipi help text,
   no banner/vim/tab-title/plain-tools.
 - `createPlusAgentSession()` extends the upstream `createAgentSession` (re-exported,

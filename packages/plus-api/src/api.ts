@@ -7,8 +7,9 @@
  *   the same redirect plugin that produces the CLI, because this module imports
  *   upstream runtime values ONLY through the coding-agent index barrel (direct
  *   relative imports of redirected upstream modules would bypass the wrappers)
- * - the eight non-TUI pi-plus extensions (subagent, tasks, memory, plan,
- *   ask-user, hooks, context-guard, /cd) are registered here the same way the
+ * - the nine non-TUI pi-plus extensions (subagent, tasks, memory, plan,
+ *   ask-user, hooks, context-guard, /cd, /init) are registered here the same
+ *   way the
  *   CLI wrapper registers them; the CLI-only ones (banner, vim, tab-title,
  *   plain-tools) live in the pi-plus artifact and are excluded from this
  *   bundle by construction
@@ -44,6 +45,7 @@ import {
 	registerAskUser,
 	registerCd,
 	registerContextGuard,
+	registerInit,
 	registerMemory,
 	registerPlan,
 	registerSubagent,
@@ -65,6 +67,7 @@ export const plusSdkExtensionFactories: InlineExtension[] = [
 	{ name: "pi-plus-hooks", factory: registerUserHooks, hidden: true },
 	{ name: "pi-plus-context-guard", factory: registerContextGuard, hidden: true },
 	{ name: "pi-plus-cd", factory: registerCd, hidden: true },
+	{ name: "pi-plus-init", factory: registerInit, hidden: true },
 ];
 
 /**
@@ -153,7 +156,7 @@ export interface CreatePlusAgentSessionOptions extends CreateAgentSessionOptions
  * that embed pi in-process instead of running the `pipi` CLI.
  *
  * Differences from the upstream createAgentSession:
- * - the seven non-TUI pi-plus extensions are registered on the resource loader
+ * - the nine non-TUI pi-plus extensions are registered on the resource loader
  * - the loader is reloaded here (createAgentSession skips reload for a
  *   caller-supplied loader), with one SettingsManager shared by both
  * - extensions are always bound once afterwards, which is what emits the

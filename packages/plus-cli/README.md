@@ -11,8 +11,8 @@ not own pi's command). Library hosts embedding pi in-process use the separate
 
 ## What this layer adds on top of the shared core
 
-The context-detection/compaction/reasoning overrides and the eight non-TUI extensions
-(subagent, tasks, memory, plan, ask-user, hooks, context-guard, /cd) live in
+The context-detection/compaction/reasoning overrides and the nine non-TUI extensions
+(subagent, tasks, memory, plan, ask-user, hooks, context-guard, /cd, /init) live in
 [`../plus`](../plus) and are shared with the SDK. This package adds the CLI-only pieces:
 
 1. **Hub profiles** (`src/coding-agent/main.ts` wrapper, backed by `@earendil-works/pi-hub` = [`../hub`](../hub)) — named pi profiles (provider/models/thinking/token/base URL) stored in `~/.pi/profiles.json`, materialized into isolated agent dirs under `~/.pi/pi-hub/profiles/<name>/`. Adds `pipi profile …`, `pipi use` / `pipi unuse`, and the `pipi --as <name>` flag. The wrapper resolves the profile, sets `PI_CODING_AGENT_DIR` in-process (read lazily by `getAgentDir()`), and delegates to the original `main`.

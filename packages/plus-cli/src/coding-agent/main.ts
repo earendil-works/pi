@@ -30,6 +30,7 @@ import {
 	registerAskUser,
 	registerCd,
 	registerContextGuard,
+	registerInit,
 	registerMemory,
 	registerPlan,
 	registerSubagent,
@@ -113,7 +114,9 @@ export async function main(args: string[], options?: MainOptions) {
 	// agent is working; pi-plus-plain-tools strips the background fills from
 	// tool result blocks (upstream paints them pending/success/error) so tool
 	// status reads as text, consistent with the subagent tool's word-based
-	// status.
+	// status; pi-plus-init adds /init (create or improve the project
+	// instructions file PI.md at the cwd root) and auto-loads PI.md into every
+	// agent run via the system prompt's context files, same as AGENTS.md.
 	// Merged with any caller-provided factories; upstream appends its own
 	// built-ins (main.ts: extensionFactories = [...builtInExtensions, ...]).
 	const merged: MainOptions = {
@@ -130,6 +133,7 @@ export async function main(args: string[], options?: MainOptions) {
 			{ name: "pi-plus-ask-user", factory: registerAskUser, hidden: true },
 			{ name: "pi-plus-hooks", factory: registerUserHooks, hidden: true },
 			{ name: "pi-plus-context-guard", factory: registerContextGuard, hidden: true },
+			{ name: "pi-plus-init", factory: registerInit, hidden: true },
 			{ name: "pi-plus-tab-title", factory: registerTabTitle, hidden: true },
 			{ name: "pi-plus-plain-tools", factory: registerPlainTools, hidden: true },
 		],
