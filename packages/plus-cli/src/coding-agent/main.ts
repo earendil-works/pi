@@ -28,6 +28,7 @@ import type { MainOptions } from "../../../coding-agent/src/main.ts";
 import { main as upstreamMain } from "../../../coding-agent/src/main.ts";
 import {
 	registerAskUser,
+	registerCd,
 	registerContextGuard,
 	registerMemory,
 	registerPlan,
@@ -36,7 +37,7 @@ import {
 	registerUserHooks,
 } from "../../../plus/src/extensions/index.ts";
 import { dispatchCompletion } from "../completion/index.ts";
-import { registerCd, registerPlainTools, registerTabTitle } from "../extensions/index.ts";
+import { registerPlainTools, registerTabTitle } from "../extensions/index.ts";
 import { registerBanner } from "./ui/banner.ts";
 import { registerVim } from "./ui/vim/extension.ts";
 

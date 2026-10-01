@@ -5,6 +5,7 @@
 ### Changed
 
 - **The repository split the pi-plus sources into three packages**: the shared override core (context/compaction/reasoning + the seven non-TUI extensions + the core redirect wrappers) stays in `packages/plus`, all CLI logic (hub dispatch, completion, usage print, banner/vim/tab-title/plain-tools/`/cd`, the main wrapper, the source-mode loader) moved to `packages/plus-cli`, and the programmatic entry moved to `packages/plus-api`. The published `pi-plus` package is now **CLI-only**: `api.js`/`api.d.ts` are gone from the artifact, the `exports` map has no `.` entry (so `import "pi-plus"` fails by design), and the `@earendil-works/pi-coding-agent` types dependency is dropped. Library hosts should depend on the new **`pi-plus-sdk`** package instead, published from `packages/plus-api`.
+- The `/cd` working-directory switch extension moved to the shared core (`packages/plus/src/extensions/cd/`) so the `pi-plus-sdk` artifact registers it too; it is no longer CLI-only.
 - Entries below this note predate the split and describe the combined `pi-plus` artifact.
 
 ### Fixed

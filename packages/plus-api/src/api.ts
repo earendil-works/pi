@@ -7,10 +7,10 @@
  *   the same redirect plugin that produces the CLI, because this module imports
  *   upstream runtime values ONLY through the coding-agent index barrel (direct
  *   relative imports of redirected upstream modules would bypass the wrappers)
- * - the seven non-TUI pi-plus extensions (subagent, tasks, memory, plan,
- *   ask-user, hooks, context-guard) are registered here the same way the CLI
- *   wrapper registers them; the CLI-only ones (banner, vim, tab-title,
- *   plain-tools, /cd) live in the pi-plus artifact and are excluded from this
+ * - the eight non-TUI pi-plus extensions (subagent, tasks, memory, plan,
+ *   ask-user, hooks, context-guard, /cd) are registered here the same way the
+ *   CLI wrapper registers them; the CLI-only ones (banner, vim, tab-title,
+ *   plain-tools) live in the pi-plus artifact and are excluded from this
  *   bundle by construction
  * - hosts that want working ask_user dialogs provide dialog handlers via the
  *   `ui` option; the session is bound with mode "rpc" so ask-user falls back
@@ -42,6 +42,7 @@ import {
 import { theme } from "../../coding-agent/src/modes/interactive/theme/theme.ts";
 import {
 	registerAskUser,
+	registerCd,
 	registerContextGuard,
 	registerMemory,
 	registerPlan,
@@ -63,6 +64,7 @@ export const plusSdkExtensionFactories: InlineExtension[] = [
 	{ name: "pi-plus-ask-user", factory: registerAskUser, hidden: true },
 	{ name: "pi-plus-hooks", factory: registerUserHooks, hidden: true },
 	{ name: "pi-plus-context-guard", factory: registerContextGuard, hidden: true },
+	{ name: "pi-plus-cd", factory: registerCd, hidden: true },
 ];
 
 /**

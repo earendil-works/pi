@@ -11,8 +11,8 @@ not own pi's command). Library hosts embedding pi in-process use the separate
 
 ## What this layer adds on top of the shared core
 
-The context-detection/compaction/reasoning overrides and the seven non-TUI extensions
-(subagent, tasks, memory, plan, ask-user, hooks, context-guard) live in
+The context-detection/compaction/reasoning overrides and the eight non-TUI extensions
+(subagent, tasks, memory, plan, ask-user, hooks, context-guard, /cd) live in
 [`../plus`](../plus) and are shared with the SDK. This package adds the CLI-only pieces:
 
 1. **Hub profiles** (`src/coding-agent/main.ts` wrapper, backed by `@earendil-works/pi-hub` = [`../hub`](../hub)) — named pi profiles (provider/models/thinking/token/base URL) stored in `~/.pi/profiles.json`, materialized into isolated agent dirs under `~/.pi/pi-hub/profiles/<name>/`. Adds `pipi profile …`, `pipi use` / `pipi unuse`, and the `pipi --as <name>` flag. The wrapper resolves the profile, sets `PI_CODING_AGENT_DIR` in-process (read lazily by `getAgentDir()`), and delegates to the original `main`.
@@ -23,7 +23,6 @@ The context-detection/compaction/reasoning overrides and the seven non-TUI exten
 6. **Settings selector rows** (`src/coding-agent/ui/settings-selector.ts` wrapper) — `/settings` gains "Auto-compact threshold", "Context floor", and "Context window cap" rows (persisted via the shared core's `context/threshold-setting.ts`).
 7. **Tab title + busy spinner** (`src/extensions/tab-title/`) — the terminal window/tab title brands as `pi+ - [sessionName -] cwdBasename` with a braille spinner while the agent or compaction is working. TUI mode only.
 8. **Plain tool blocks** (`src/extensions/plain-tools/`) — strips background fills from tool result blocks so tool status reads as text (words, never colored blocks).
-9. **`/cd` working-directory switch** (`src/extensions/cd/`) — `/cd <dir>` relocates the session to a different working directory (same conversation, re-bound project context).
 
 The CLI identifies as **`pipi`** (pi-plus) in CLI text via the shared config wrapper's
 `APP_NAME` shadow; the terminal tab title brands as **`pi+`** via `APP_TITLE`.
