@@ -160,6 +160,7 @@ import {
 } from "./components/oauth-selector.ts";
 import { piLogoLines } from "./components/pi-logo.ts";
 import { playPiLogoAnimation } from "./components/pi-logo-animation.lazy.ts";
+import { radiusShimmer } from "./components/radius-shimmer.ts";
 import { ScopedModelsSelectorComponent } from "./components/scoped-models-selector.ts";
 import { SessionSelectorComponent } from "./components/session-selector.ts";
 import { SettingsSelectorComponent } from "./components/settings-selector.ts";
@@ -362,6 +363,8 @@ type LoginProviderCompletionOption = {
 	authTypes: AuthSelectorProvider["authType"][];
 	subscription?: boolean;
 };
+
+const RADIUS_LOGIN_INTRO = "Radius is a service crafted for Pi by the builders of Pi, Earendil Works";
 
 const AUTH_TYPE_ORDER = { oauth: 0, api_key: 1 } satisfies Record<AuthSelectorProvider["authType"], number>;
 
@@ -5791,9 +5794,9 @@ export class InteractiveMode {
 		const radiusOption = providerOptions
 			? undefined
 			: this.getLoginProviderOptions("oauth").find((provider) => provider.id === RADIUS_PROVIDER_ID);
-		const radiusLabel = radiusOption
-			? `Sign in with ${radiusOption.name}${formatAuthSelectorProviderStatus(radiusOption)}`
-			: undefined;
+		const radiusText = radiusOption ? `Sign in with ${radiusOption.name}` : undefined;
+		const radiusStatus = radiusOption ? formatAuthSelectorProviderStatus(radiusOption) : "";
+		const radiusLabel = radiusText ? `${radiusText}${radiusStatus}` : undefined;
 		const oauthProvider = providerOptions?.find((provider) => provider.authType === "oauth");
 		const oauthLoginLabel =
 			oauthProvider?.method && "loginLabel" in oauthProvider.method ? oauthProvider.method.loginLabel : undefined;
@@ -5853,8 +5856,18 @@ export class InteractiveMode {
 					done();
 					this.ui.requestRender();
 				},
+				{
+					tui: this.ui,
+					animatedOption:
+						radiusLabel && radiusText
+							? {
+									option: radiusLabel,
+									render: (elapsedMs) => radiusShimmer(radiusText, elapsedMs) + radiusStatus,
+								}
+							: undefined,
+				},
 			);
-			return { component: selector, focus: selector };
+			return { component: selector, focus: selector, dispose: () => selector.dispose() };
 		});
 	}
 
@@ -6144,6 +6157,7 @@ export class InteractiveMode {
 	private showAuthSelect(
 		dialog: LoginDialogComponent,
 		prompt: Extract<AuthPrompt, { type: "select" }>,
+		providerId: string,
 	): Promise<string> {
 		return new Promise((resolve, reject) => {
 			const restoreDialog = () => {
@@ -6166,6 +6180,7 @@ export class InteractiveMode {
 					restoreDialog();
 					reject(new Error("Login cancelled"));
 				},
+				{ intro: providerId === RADIUS_PROVIDER_ID ? RADIUS_LOGIN_INTRO : undefined },
 			);
 			this.editorContainer.clear();
 			this.editorContainer.addChild(selector);
@@ -6174,10 +6189,10 @@ export class InteractiveMode {
 		});
 	}
 
-	private async showAuthPrompt(dialog: LoginDialogComponent, prompt: AuthPrompt): Promise<string> {
+	private async showAuthPrompt(dialog: LoginDialogComponent, prompt: AuthPrompt, providerId: string): Promise<string> {
 		let response: Promise<string>;
 		if (prompt.type === "select") {
-			response = this.showAuthSelect(dialog, prompt);
+			response = this.showAuthSelect(dialog, prompt, providerId);
 		} else if (prompt.type === "manual_code") {
 			response = dialog.showManualInput(prompt.message);
 		} else {
@@ -6221,7 +6236,7 @@ export class InteractiveMode {
 			method,
 			{
 				signal: dialog.signal,
-				prompt: (prompt) => this.showAuthPrompt(dialog, prompt),
+				prompt: (prompt) => this.showAuthPrompt(dialog, prompt, providerId),
 				notify: (event) => this.notifyAuthDialog(dialog, event),
 			},
 			{ getDeviceId: () => this.settingsManager.getOrCreateDeviceId() },
