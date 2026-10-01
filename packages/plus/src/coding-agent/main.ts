@@ -29,6 +29,7 @@ import { main as upstreamMain } from "../../../coding-agent/src/main.ts";
 import { dispatchCompletion } from "../completion/index.ts";
 import {
 	registerAskUser,
+	registerCd,
 	registerContextGuard,
 	registerMemory,
 	registerPlainTools,
@@ -91,7 +92,11 @@ export async function main(args: string[], options?: MainOptions) {
 	process.env.PI_SKIP_VERSION_CHECK = "1";
 
 	// Hidden built-ins: the π+ welcome banner replaces pi's startup header in TUI
-	// mode; pi-plus-vim enables vim modal editing when the "vim" setting is on;
+	// mode; pi-plus-cd adds /cd, moving the session to a different working
+	// directory (the session file relocates to the target cwd's session dir
+	// with only its header cwd rewritten, then the runtime switches to it —
+	// same conversation, new project context); pi-plus-vim enables vim modal
+	// editing when the "vim" setting is on;
 	// pi-plus-subagent delegates tasks to isolated sub-agent processes;
 	// pi-plus-tasks adds the TaskCreate/TaskUpdate/TaskList/TaskGet tools and the
 	// /tasks command (ctrl+y); pi-plus-memory adds per-project long-term memory
@@ -117,6 +122,7 @@ export async function main(args: string[], options?: MainOptions) {
 		extensionFactories: [
 			...(options?.extensionFactories ?? []),
 			{ name: "pi-plus-banner", factory: registerBanner, hidden: true },
+			{ name: "pi-plus-cd", factory: registerCd, hidden: true },
 			{ name: "pi-plus-vim", factory: registerVim, hidden: true },
 			{ name: "pi-plus-subagent", factory: registerSubagent, hidden: true },
 			{ name: "pi-plus-tasks", factory: registerTasks, hidden: true },
