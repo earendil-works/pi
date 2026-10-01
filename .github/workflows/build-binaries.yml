@@ -351,6 +351,9 @@ jobs:
           npm install -g npm@11.16.0 --ignore-scripts
           npm --version
 
+      - name: Validate npm tarball publication with provenance
+        run: npm run publish:dry
+
       - name: Publish npm packages
         run: node scripts/publish.mjs
 
