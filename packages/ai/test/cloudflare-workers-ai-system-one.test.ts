@@ -87,6 +87,33 @@ describe("Cloudflare Workers AI System One", () => {
 		expect(result.usage).toMatchObject({ input: 426, output: 73, totalTokens: 499 });
 	});
 
+	it("runs Clef through the model-in-path endpoint with its model selector", async () => {
+		const { models } = setup();
+		const clef = models.getModelOfType("classifier", "cloudflare-workers-ai", "@cf/cloudflare/clef");
+		if (!clef) throw new Error("missing Cloudflare Clef model");
+		const fetch = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+			const payload = JSON.parse(String(init?.body)) as {
+				model: string;
+				state: unknown;
+				questions: Record<string, { type: string }>;
+			};
+			expect(payload).not.toHaveProperty("input");
+			expect(payload.model).toBe("clef");
+			expect(payload.state).toEqual(context.state);
+			expect(payload.questions.is_urgent?.type).toBe("noul");
+			return Response.json({ result: { ...jevOutput, model: "clef" }, success: true, errors: [], messages: [] });
+		});
+
+		const result = await models.classify(clef, context, { ...auth, fetch });
+
+		expect(String(fetch.mock.calls[0]?.[0])).toBe(
+			"https://api.cloudflare.com/client/v4/accounts/account-id/ai/run/@cf/cloudflare/clef",
+		);
+		expect(result.stopReason).toBe("stop");
+		expect(result.answers.is_urgent).toEqual({ type: "bool", probability: 0.95 });
+		expect(result.usage).toMatchObject({ input: 426, output: 73, totalTokens: 499 });
+	});
+
 	it("reports runs that did not complete", async () => {
 		const { models, jev } = setup();
 		const result = await models.classify(jev, context, {
