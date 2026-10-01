@@ -2735,6 +2735,7 @@ const OPENCODE_CLASSIFIER_MODELS: ClassifierModel<"typesafe-system-one">[] = [
 ];
 
 // Clef pricing: https://developers.cloudflare.com/workers-ai/models/clef/
+// and https://developers.cloudflare.com/workers-ai/models/clef-flash/
 // Clef reads images too, but classifier contexts carry only text/JSON state.
 const CLOUDFLARE_WORKERS_AI_CLASSIFIER_MODELS: ClassifierModel<"cloudflare-workers-ai-system-one">[] = [
 	{
@@ -2746,6 +2747,17 @@ const CLOUDFLARE_WORKERS_AI_CLASSIFIER_MODELS: ClassifierModel<"cloudflare-worke
 		baseUrl: CLOUDFLARE_WORKERS_AI_REST_BASE_URL,
 		input: ["text"],
 		cost: { input: 0.24, output: 0, cacheRead: 0, cacheWrite: 0 },
+		contextWindow: 65536,
+	},
+	{
+		type: "classifier",
+		id: "@cf/cloudflare/clef-flash",
+		name: "Clef Flash",
+		api: "cloudflare-workers-ai-system-one",
+		provider: "cloudflare-workers-ai",
+		baseUrl: CLOUDFLARE_WORKERS_AI_REST_BASE_URL,
+		input: ["text"],
+		cost: { input: 0.09, output: 0, cacheRead: 0, cacheWrite: 0 },
 		contextWindow: 65536,
 	},
 	{
