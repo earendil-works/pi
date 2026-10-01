@@ -1,5 +1,5 @@
-import { Container, getKeybindings, Spacer, Text, type TUI } from "@earendil-works/pi-tui";
-import { theme } from "../theme/theme.ts";
+import { Container, SelectList, Spacer, Text, type TUI } from "@earendil-works/pi-tui";
+import { getSelectListTheme, theme } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
 import { keyHint, rawKeyHint } from "./keybinding-hints.ts";
 import { radiusShimmer } from "./radius-shimmer.ts";
@@ -18,13 +18,9 @@ type RadiusLoginSelectorOptions = {
 /** Selector for the Radius login flow, including its intro and animated sign-in option. */
 export class RadiusLoginSelectorComponent extends Container {
 	private readonly tui: TUI;
-	private readonly options: string[];
-	private readonly onSelect: (option: string) => void;
-	private readonly onCancel: () => void;
 	private readonly shimmer: RadiusLoginSelectorOptions["shimmer"];
-	private readonly listContainer = new Container();
-	private selectedIndex = 0;
-	private animationText: Text | undefined;
+	private readonly selectList: SelectList;
+	private selectedOption: string | undefined;
 	private animationTimer: ReturnType<typeof setInterval> | undefined;
 	private animationStart = 0;
 
@@ -38,10 +34,27 @@ export class RadiusLoginSelectorComponent extends Container {
 	) {
 		super();
 		this.tui = tui;
-		this.options = options;
-		this.onSelect = onSelect;
-		this.onCancel = onCancel;
 		this.shimmer = selectorOptions.shimmer;
+		this.selectedOption = options[0];
+
+		const listTheme = getSelectListTheme();
+		const items = options.map((option) => ({ value: option, label: option }));
+		this.selectList = new SelectList(items, Math.max(1, items.length), {
+			...listTheme,
+			selectedText: (line) =>
+				this.selectedOption === this.shimmer?.option
+					? this.animatedLine(performance.now() - this.animationStart)
+					: listTheme.selectedText(line),
+		});
+		this.selectList.onSelectionChange = (item) => this.selectOption(item.value);
+		this.selectList.onSelect = (item) => {
+			this.stopAnimation();
+			onSelect(item.value);
+		};
+		this.selectList.onCancel = () => {
+			this.stopAnimation();
+			onCancel();
+		};
 
 		this.addChild(new DynamicBorder());
 		this.addChild(new Spacer(1));
@@ -51,7 +64,7 @@ export class RadiusLoginSelectorComponent extends Container {
 		}
 		this.addChild(new Text(theme.fg("accent", theme.bold(title)), 1, 0));
 		this.addChild(new Spacer(1));
-		this.addChild(this.listContainer);
+		this.addChild(this.selectList);
 		this.addChild(new Spacer(1));
 		this.addChild(
 			new Text(
@@ -66,26 +79,12 @@ export class RadiusLoginSelectorComponent extends Container {
 		);
 		this.addChild(new Spacer(1));
 		this.addChild(new DynamicBorder());
-		this.updateList();
+		if (this.selectedOption === this.shimmer?.option) this.startAnimation();
 	}
 
-	private updateList(): void {
-		this.listContainer.clear();
-		this.animationText = undefined;
-		for (let i = 0; i < this.options.length; i++) {
-			const option = this.options[i] as string;
-			if (i === this.selectedIndex && this.shimmer?.option === option) {
-				this.animationText = new Text(this.animatedLine(0), 1, 0);
-				this.listContainer.addChild(this.animationText);
-				continue;
-			}
-			const text =
-				i === this.selectedIndex
-					? theme.fg("accent", "→ ") + theme.fg("accent", option)
-					: `  ${theme.fg("text", option)}`;
-			this.listContainer.addChild(new Text(text, 1, 0));
-		}
-		if (this.animationText) this.startAnimation();
+	private selectOption(option: string): void {
+		this.selectedOption = option;
+		if (option === this.shimmer?.option) this.startAnimation();
 		else this.stopAnimation();
 	}
 
@@ -97,10 +96,7 @@ export class RadiusLoginSelectorComponent extends Container {
 	private startAnimation(): void {
 		if (this.animationTimer) return;
 		this.animationStart = performance.now();
-		this.animationTimer = setInterval(() => {
-			this.animationText?.setText(this.animatedLine(performance.now() - this.animationStart));
-			this.tui.requestRender();
-		}, ANIMATION_FRAME_MS);
+		this.animationTimer = setInterval(() => this.tui.requestRender(), ANIMATION_FRAME_MS);
 		this.animationTimer.unref?.();
 	}
 
@@ -111,23 +107,7 @@ export class RadiusLoginSelectorComponent extends Container {
 	}
 
 	handleInput(keyData: string): void {
-		const keybindings = getKeybindings();
-		if (keybindings.matches(keyData, "tui.select.up") || keyData === "k") {
-			this.selectedIndex = Math.max(0, this.selectedIndex - 1);
-			this.updateList();
-		} else if (keybindings.matches(keyData, "tui.select.down") || keyData === "j") {
-			this.selectedIndex = Math.min(this.options.length - 1, this.selectedIndex + 1);
-			this.updateList();
-		} else if (keybindings.matches(keyData, "tui.select.confirm") || keyData === "\n") {
-			const selected = this.options[this.selectedIndex];
-			if (selected) {
-				this.stopAnimation();
-				this.onSelect(selected);
-			}
-		} else if (keybindings.matches(keyData, "tui.select.cancel")) {
-			this.stopAnimation();
-			this.onCancel();
-		}
+		this.selectList.handleInput(keyData);
 	}
 
 	dispose(): void {
