@@ -111,6 +111,23 @@ describe("SettingsManager", () => {
 		});
 	});
 
+	describe("deviceId", () => {
+		it("creates one global device ID and reuses it in later processes", async () => {
+			const settingsPath = join(agentDir, "settings.json");
+			writeFileSync(settingsPath, JSON.stringify({ theme: "dark" }));
+			writeFileSync(join(projectDir, ".pi", "settings.json"), JSON.stringify({ deviceId: "project-device" }));
+			const first = SettingsManager.create(projectDir, agentDir);
+
+			const deviceId = first.getOrCreateDeviceId();
+			await first.flush();
+
+			expect(deviceId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+			expect(first.getOrCreateDeviceId()).toBe(deviceId);
+			expect(SettingsManager.create(projectDir, agentDir).getOrCreateDeviceId()).toBe(deviceId);
+			expect(JSON.parse(readFileSync(settingsPath, "utf-8"))).toEqual({ theme: "dark", deviceId });
+		});
+	});
+
 	describe("packages migration", () => {
 		it("should keep local-only extensions in extensions array", () => {
 			const settingsPath = join(agentDir, "settings.json");
@@ -461,33 +478,33 @@ describe("SettingsManager", () => {
 	});
 
 	describe("TUI mode", () => {
-		it("defaults to regular and persists fullscreen mode", async () => {
+		it("defaults to fullscreen and persists regular mode", async () => {
 			const manager = SettingsManager.create(projectDir, agentDir);
 
-			expect(manager.getTuiMode()).toBe("regular");
+			expect(manager.getTuiMode()).toBe("fullscreen");
 
-			manager.setTuiMode("fullscreen");
+			manager.setTuiMode("regular");
 			await manager.flush();
 
-			expect(manager.getTuiMode()).toBe("fullscreen");
+			expect(manager.getTuiMode()).toBe("regular");
 			const savedSettings = JSON.parse(readFileSync(join(agentDir, "settings.json"), "utf-8"));
-			expect(savedSettings.tuiMode).toBe("fullscreen");
+			expect(savedSettings.tuiMode).toBe("regular");
 		});
 
-		it("falls back to regular for unsupported values", () => {
+		it("falls back to fullscreen for unsupported values", () => {
 			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ tuiMode: "other" }));
 
 			const manager = SettingsManager.create(projectDir, agentDir);
 
-			expect(manager.getTuiMode()).toBe("regular");
+			expect(manager.getTuiMode()).toBe("fullscreen");
 		});
 
 		it("does not recognize the old uiMode setting", () => {
-			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ uiMode: "fullscreen" }));
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ uiMode: "regular" }));
 
 			const manager = SettingsManager.create(projectDir, agentDir);
 
-			expect(manager.getTuiMode()).toBe("regular");
+			expect(manager.getTuiMode()).toBe("fullscreen");
 		});
 	});
 
@@ -628,6 +645,48 @@ describe("SettingsManager", () => {
 		it("preserves an empty tool list", () => {
 			expect(SettingsManager.inMemory({ defaultTools: [] }).getDefaultTools()).toEqual([]);
 			expect(SettingsManager.inMemory().getDefaultTools()).toBeUndefined();
+		});
+
+		it("applies +name and -name to the default selection", () => {
+			expect(SettingsManager.inMemory({ defaultTools: ["+codemode", "-write"] }).getDefaultTools()).toEqual([
+				"read",
+				"bash",
+				"edit",
+				"codemode",
+			]);
+			expect(SettingsManager.inMemory({ defaultTools: ["read", "+grep", "+read"] }).getDefaultTools()).toEqual([
+				"read",
+				"grep",
+			]);
+		});
+
+		it("layers project modifiers on top of the global selection", () => {
+			writeFileSync(
+				join(agentDir, "settings.json"),
+				JSON.stringify({ defaultTools: ["read", "bash", "+codemode"] }),
+			);
+			writeFileSync(
+				join(projectDir, ".pi", "settings.json"),
+				JSON.stringify({ defaultTools: ["-codemode", "+tool_search"] }),
+			);
+
+			const manager = SettingsManager.create(projectDir, agentDir);
+			expect(manager.getDefaultTools()).toEqual(["read", "bash", "tool_search"]);
+
+			manager.applyOverrides({ defaultTools: ["+codemode"] });
+			expect(manager.getDefaultTools()).toEqual(["read", "bash", "tool_search", "codemode"]);
+		});
+
+		it("applies project modifiers to the built-in defaults without a global setting", () => {
+			writeFileSync(join(projectDir, ".pi", "settings.json"), JSON.stringify({ defaultTools: ["+codemode"] }));
+
+			expect(SettingsManager.create(projectDir, agentDir).getDefaultTools()).toEqual([
+				"read",
+				"bash",
+				"edit",
+				"write",
+				"codemode",
+			]);
 		});
 	});
 

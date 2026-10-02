@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import vm from "node:vm";
 import { afterEach, describe, expect, it } from "vitest";
 import { CodemodeSandbox, type CodemodeTool } from "../src/index.ts";
@@ -16,6 +17,12 @@ afterEach(async () => {
 });
 
 const echo: CodemodeTool = { name: "echo", execute: (args) => args };
+
+// Base64 of the leading bytes of each format. image() only inspects the signature.
+const PNG = "iVBORw0KGgo=";
+const JPEG = "/9j/4A==";
+const GIF = "R0lGODlh";
+const WEBP = "UklGRgAAAABXRUJQ";
 
 describe("embedded sources", () => {
 	it("parse as JavaScript", () => {
@@ -49,9 +56,11 @@ describe("script execution", () => {
 			text({ json: true });
 			text(undefined);
 			text(7);
-			image("data:image/png;base64,AAAA");
-			image({ image_url: "data:image/jpeg;base64,BBBB" });
-			image({ type: "image", data: "CCCC", mimeType: "image/gif" });
+			image("data:image/png;base64,${PNG}");
+			image({ image_url: "data:image/jpeg;base64,${JPEG}" });
+			image({ type: "image", data: "${GIF}", mimeType: "image/gif" });
+			image("data:image/png;base64,${WEBP}");
+			image({ type: "image", data: "${PNG}" });
 			console.error(new Error("bad"));
 			return null;
 		`);
@@ -61,9 +70,12 @@ describe("script execution", () => {
 			{ type: "text", text: '{"json":true}' },
 			{ type: "text", text: "undefined" },
 			{ type: "text", text: "7" },
-			{ type: "image", data: "AAAA", mimeType: "image/png" },
-			{ type: "image", data: "BBBB", mimeType: "image/jpeg" },
-			{ type: "image", data: "CCCC", mimeType: "image/gif" },
+			{ type: "image", data: PNG, mimeType: "image/png" },
+			{ type: "image", data: JPEG, mimeType: "image/jpeg" },
+			{ type: "image", data: GIF, mimeType: "image/gif" },
+			// The MIME type comes from the data, not from the declared type.
+			{ type: "image", data: WEBP, mimeType: "image/webp" },
+			{ type: "image", data: PNG, mimeType: "image/png" },
 		]);
 		expect(result.output.at(-1)).toMatchObject({ type: "text", text: expect.stringMatching(/^Error: bad/) });
 	});
@@ -82,6 +94,15 @@ describe("script execution", () => {
 				() => image({ type: "text", text: "x" }),
 				() => image({ type: "image", data: "" }),
 				() => image(42),
+				() => image("data:image/png;base64,AAAA!"),
+				() => image("data:image/png;base64,AAAAA"),
+				() => image("data:image/png;base64,AA=A"),
+				() => image("data:image/png;base64,"),
+				() => image("data:image/png;base64,AAAA\\n[Output truncated]"),
+				() => image({ type: "image", data: "AAAA!", mimeType: "image/png" }),
+				() => image("data:image/png;base64,AAAA"),
+				() => image("data:image/png;base64,QUJD"),
+				() => image("data:image/jpeg;base64,/9j/9w=="),
 			]) {
 				try { run(); errors.push("no error"); } catch (error) { errors.push(error.name + ": " + error.message); }
 			}
@@ -99,6 +120,25 @@ describe("script execution", () => {
 			'TypeError: image only accepts MCP image blocks, got "text"',
 			"TypeError: image expected MCP image data",
 			"TypeError: image expects a non-empty image URL string, an object with image_url, or a raw MCP image block",
+			...Array(6).fill(
+				"TypeError: invalid image output. The image data is not valid base64 (truncated or corrupted?)",
+			),
+			...Array(3).fill("TypeError: invalid image output. The image data is not a PNG, JPEG, GIF, or WebP image"),
+		]);
+	});
+
+	// https://github.com/earendil-works/pi/issues/10215
+	it("accepts wrapped and large base64 image data", async () => {
+		const sandbox = createSandbox();
+		const large = `iVBORw0KGgoA${"QUJD".repeat(256 * 1024)}`;
+		const result = await sandbox.execute(`
+			image("data:image/png;base64,iVBORw0K\\r\\nGgo=\\n");
+			image("data:image/png;base64,${large}");
+		`);
+		expect(result.ok).toBe(true);
+		expect(result.output).toEqual([
+			{ type: "image", data: PNG, mimeType: "image/png" },
+			{ type: "image", data: large, mimeType: "image/png" },
 		]);
 	});
 
@@ -292,6 +332,22 @@ describe("tools", () => {
 		expect(aborted).toBe(true);
 	});
 
+	it("names close matches when a script reads a tool that does not exist", async () => {
+		const sandbox = createSandbox([echo, { name: "web-search", execute: () => "" }]);
+		const attempt = async (expression: string) => {
+			const result = await sandbox.execute(`return ${expression};`);
+			return result.ok ? result.value : result.error.message;
+		};
+		expect(await attempt("tools.Echo")).toBe(
+			'tools.Echo does not exist. Did you mean tools.echo? ALL_TOOLS lists every tool; searchTools(query) finds tools by topic. Check for a member with "Echo" in tools.',
+		);
+		expect(await attempt("tools.websearch")).toContain("Did you mean tools.web_search?");
+		expect(await attempt("tools.nothing")).toContain("Available: echo, web_search.");
+		expect(
+			await attempt("['echo' in tools, 'nothing' in tools, String(tools.toString), JSON.stringify(tools)]"),
+		).toEqual([true, false, "undefined", "{}"]);
+	});
+
 	it("supports register and unregister between executions", async () => {
 		const sandbox = createSandbox();
 		sandbox.registerTool(echo);
@@ -299,7 +355,7 @@ describe("tools", () => {
 		expect(sandbox.tools.map((tool) => tool.name)).toEqual(["echo"]);
 		expect(await sandbox.execute("return await tools.echo('a')")).toMatchObject({ ok: true, value: "a" });
 		expect(sandbox.unregisterTool("echo")).toBe(true);
-		expect(await sandbox.execute("return typeof tools.echo")).toMatchObject({ ok: true, value: "undefined" });
+		expect(await sandbox.execute("return 'echo' in tools")).toMatchObject({ ok: true, value: false });
 	});
 });
 
@@ -352,6 +408,15 @@ describe("store and load", () => {
 		});
 	});
 
+	it("explains oversized writes", async () => {
+		const sandbox = createSandbox();
+		const result = await sandbox.execute(`store("img", "x".repeat(300 * 1024));`);
+		expect(result.ok).toBe(false);
+		if (result.ok) return;
+		expect(result.error.message).toContain('store("img") value has 307202 characters of JSON');
+		expect(result.error.message).toContain("Show images with image()");
+	});
+
 	it("reserves the store and load names", () => {
 		const execute = () => undefined;
 		expect(() => new CodemodeSandbox({ globals: [{ name: "store", execute }] })).toThrow(/Invalid global/);
@@ -391,11 +456,28 @@ describe("globals", () => {
 			await models.list("classifier", undefined, 3);
 			await models.list();
 			try { models.extra = 1; } catch {}
-			return [Object.keys(models), await models.first("a", "ignored"), typeof models.extra];
+			return [Object.keys(models), await models.first("a", "ignored"), "extra" in models];
 		`);
-		expect(result).toMatchObject({ ok: true, value: [["list", "first"], "a", "undefined"] });
+		expect(result).toMatchObject({ ok: true, value: [["list", "first"], "a", false] });
 		// undefined array elements become null in the JSON round trip.
 		expect(seen).toEqual([["classifier", null, 3], []]);
+	});
+
+	it("names the members of a namespace when a script reads one that does not exist", async () => {
+		const execute = () => undefined;
+		const sandbox = new CodemodeSandbox({
+			globals: [
+				{ name: "models.classify", execute },
+				{ name: "models.generateImages", execute },
+			],
+		});
+		sandboxes.push(sandbox);
+		const result = await sandbox.execute("await models.generateImage();");
+		expect(result.ok).toBe(false);
+		if (result.ok) return;
+		expect(result.error.message).toBe(
+			'models.generateImage does not exist. Did you mean models.generateImages? Check for a member with "generateImage" in models.',
+		);
 	});
 
 	it("rejects invalid and reserved global names", () => {
@@ -522,6 +604,13 @@ describe("limits and lifetime", () => {
 		expect(result).toMatchObject({ ok: true, value: ["RangeError", true] });
 	});
 
+	it("accepts a worker path string", async () => {
+		const workerPath = fileURLToPath(new URL("../src/runtime/worker.ts", import.meta.url));
+		const sandbox = new CodemodeSandbox({ workerUrl: workerPath });
+		sandboxes.push(sandbox);
+		expect(await sandbox.execute("return 1")).toMatchObject({ ok: true, value: 1 });
+	});
+
 	it("reports a missing worker file as a sandbox error", async () => {
 		const sandbox = new CodemodeSandbox({ workerUrl: new URL("./does-not-exist.js", import.meta.url) });
 		sandboxes.push(sandbox);
@@ -593,8 +682,8 @@ describe("escape hatches", () => {
 			try { tools.echo = () => 'nope'; } catch {}
 			try { tools.extra = () => 'nope'; } catch {}
 			try { globalThis.tools = null; } catch {}
-			return [typeof tools.extra, await tools.echo('still')];
+			return ["extra" in tools, await tools.echo('still')];
 		`);
-		expect(result).toMatchObject({ ok: true, value: ["undefined", "still"] });
+		expect(result).toMatchObject({ ok: true, value: [false, "still"] });
 	});
 });

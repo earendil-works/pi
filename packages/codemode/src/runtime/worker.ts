@@ -8,7 +8,7 @@
  * Importing this module starts the worker. Hosts that bundle their code (for
  * example a Bun compiled executable) add a file that imports
  * `@earendil-works/pi-codemode/worker` as a separate entrypoint and pass its URL
- * as `workerUrl`.
+ * or embedded-module string specifier as `workerUrl`.
  */
 import { parentPort, workerData } from "node:worker_threads";
 import { JSException, type JSValueHandle, MAX_STACK_SIZE, QuickJS } from "quickjs-wasi";

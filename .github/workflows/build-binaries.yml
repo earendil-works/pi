@@ -142,7 +142,14 @@ jobs:
       actions: read
     env:
       RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+      SOURCE_REF: ${{ github.event.inputs.source_ref || github.event.inputs.tag || github.ref_name }}
     steps:
+      - name: Checkout smoke tests
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.SOURCE_REF }}
+          persist-credentials: false
+
       - name: Download binary archives
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
@@ -198,6 +205,7 @@ jobs:
         run: |
           "${{ steps.binary.outputs.binary }}" --help
           "${{ steps.binary.outputs.binary }}" --version
+          node scripts/smoke-test-codemode-binary.mjs "${{ steps.binary.outputs.binary }}"
 
   stage-github-release:
     runs-on: ubuntu-latest

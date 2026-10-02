@@ -69,21 +69,13 @@ async function runClientCommand(command: ClientCommand): Promise<void> {
 		await runClientTui(command);
 		return;
 	}
-	let streamedText = false;
-	const result = await runClient(command, {
-		onEvent(event) {
-			if (event.type !== "message_update" || event.frame?.type !== "text_delta") return;
-			streamedText = true;
-			process.stdout.write(event.frame.delta);
-		},
-	});
+	const result = await runClient(command);
 	if (result.kind === "attached") {
 		console.log(`${result.serverId}\t${result.sessionId}\tattached`);
 		return;
 	}
 	if (result.kind === "prompted") {
-		if (streamedText) process.stdout.write("\n");
-		else console.log(result.text);
+		console.log(result.text);
 		return;
 	}
 	for (const session of result.sessions) console.log(`${session.serverId}\t${session.sessionId}`);

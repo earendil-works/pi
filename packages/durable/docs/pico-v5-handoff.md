@@ -1,6 +1,6 @@
 # Pico5 implementation handoff
 
-`packages/durable/docs/pico-v5.md` is normative. Implement this list in order.
+`packages/durable/docs/spec.md` is normative. Implement this list in order.
 After every package: run its tests, run `npm run check`, and stop for user review.
 Do not redesign later packages while implementing the current one.
 
@@ -11,7 +11,7 @@ facades, membranes, document routing, view projection, events, or clone chains.
 
 - Obsolete `pico` and `pico4` prototypes were removed.
 - `pico3` remains.
-- Packages 1–14 are implemented in `packages/durable`; Package 10 was already satisfied by Chord's canonical structural diff implementation.
+- Packages 1–23 are implemented in `packages/durable`; Package 10 was already satisfied by Chord's canonical structural diff implementation.
 
 ## 1. Records, cursors, and memory tables
 
@@ -351,8 +351,8 @@ and the new definition can reserve the task.
 
 Deferred to later packages; do not stub them in Package 14:
 - Orphaning writes the terminal `orphaned` record and retires task documents.
-  Unanswered input submissions and clearing turn control are added in Package
-  15, when submissions and turn control exist.
+  Unanswered input submissions and clearing run control are added in Package
+  15, when submissions and run control exist.
 - `TaskRuntime.hooks` (the hook runner) is added in Package 16 with hook
   dispatch. Package 14 adds `runtime.registry` (the phase's registry snapshot)
   and `runtime.models`.
@@ -387,21 +387,34 @@ a public `markTask()` were dropped from §2.2.
 
 Implement the smallest real input-to-answer vertical path. Extend Package 14's
 `orphaned` settlement to mark affected input submissions unanswered and clear
-matching turn control in the same commit. Define the final
-inbox, turn-control, and generation presentation documents needed by this path;
-do not use provisional kinds or schemas. Add input `Submission` admission,
-request-ID deduplication, reacquisition and waiting, idle placement, active-turn
-ownership, successful answer settlement, and terminal failure cleanup. Expose
-the final `SubmissionDraft` union rather than an interim input-only API. Complete
-the optional initial input path on conversation creation so conversation,
-configuration, `init` writes, and input admission commit atomically. Busy steer/
-follow-up behavior, passive writes, and reset remain Package 17.
+matching run control in the same commit, through the Harness hook for
+scheduler-written outcomes (§5.4); the scheduler learns nothing about turns or
+task kinds. Implement the final `pi.live` document (§8.2) with `run` and
+`generation`, the built-in entry kinds (§8.1), and the `pi.generation` task
+(§8.3). The inbox document is defined in Package 17 with its first writer. Add
+input `Submission` admission, request-ID deduplication, reacquisition and
+waiting, idle placement, active-turn ownership, successful answer settlement,
+and terminal failure cleanup. Expose the final `SubmissionDraft` union. Idle
+write submissions append their entry and settle `done`. Until Package 17, every
+submission to a busy conversation rejects with `ConversationBusy` regardless of
+`whenBusy`, writing nothing. Busy steer/follow-up behavior, queued writes, and
+reset remain Package 17.
+
+Also implement the decided surface changes: typed entry tokens
+(`defineEntry<D extends JsonValue>`, token-first `tx.appendEntry()` and
+`tx.entry()` overloads); removal of `input` from `createConversation()`;
+built-in tasks pre-registered by `createRegistry()` (undisposable, not
+overridable, required by `Harness.open`); the `TaskRuntime` additions
+`snapshot`/`snapshotAsOf`, `context()`, `now()`, and `report()`; and the
+`streamOptions`/`retry` configuration fields with their getters and setters.
 
 Implement the §7.4 system prompt: rendering registered sections with `tag` and
 wrappers, and no-tool request preparation, including
 exact persisted rendered strings, positional system baselines/deltas with empty
 `content`, head-cut rebaselining with `ContextEdit` omissions, order-only
-two-entry rewrites, and section failure handling.
+two-entry rewrites, and section failure handling. No tools are offered in this
+package: preparation emits no tool declarations and passes `PromptInput.tools`
+as `[]`. Until Package 16, a `toolUse` response settles as the answer.
 Implement the ordinary generation phases needed for one response: preparation,
 request intent, durable throttled partials, attempts/retry classification,
 deferred handle polling/cancellation, assistant entry settlement, and input-
@@ -421,87 +434,145 @@ terminal model errors, no-visible-undurable updates, exact section order/value
 patches, complete post-head baselines, retained system deltas on both sides of a
 head marker, sections reading conversation documents through `input.read`,
 throwing sections, preparation
-rerun after a concurrent head/tail/config commit, atomic input/configuration creation, and durable
-submission settlement. This is also the first print-mode smoke path: print
+rerun after a concurrent tail/config commit, fault and orphan turn cleanup,
+typed entry tokens, and durable submission settlement. This is also the first print-mode smoke path: print
 awaits its own input submission rather than global idle.
 
 ## 16. First coding-agent tool turn
 
 Implement hook dispatch and `TaskRuntime.hooks`, deferred from Package 14
-(Session-wide and scoped to a conversation or its owned subtree) and wire the real generation → tool tasks → post-tools → generation
-chain. Implement offered-set checks, tool pinning from the phase snapshot,
-declaration and argument validation against both the offered declaration and
-the pinned implementation, hook composition, durable execution intent, stored
-replay policy, bounded output/details presentation documents, result entries, post-tools
-joining, controls, and `postTools`/`final` boundaries. The generation task now
-classifies tool calls and continues through the real built-in task chain;
-neither side uses a production fake successor.
+(Session-wide and scoped to a conversation or its owned subtree, §7.2), and wire
+the real generation → tool tasks → post-tools → generation chain (§8.3–8.5).
+Neither side uses a production fake successor.
 
-Implement preparation behavior for tool loadout additions/removals, same-name
-replacement ordering, complete baseline tool declarations, wrapped tools and
-failing wrappers, and hook memos.
+- Generation: tool declarations in preparation (§7.4: additions/removals,
+  same-name replacement, order rewrite, complete baseline after a head cut,
+  duplicate active names offered once, wrapped and failing wrappers,
+  `PromptInput.tools`); `toolExecution` pinned in `request`/`poll`; the tool
+  round commit (offered check against the committed context through `cutoff`,
+  unaffected by `beforeRequest`; `tool_unavailable`
+  results for calls not offered, parallel or `after`-chained sequential tool
+  tasks, post-tools, `pi.live.tools`, run handed to post-tools);
+  `beforeRequest`, `afterResponse`, and `onYield` continuations.
+- `pi.tool` (§8.4): input `{ assistant, callId }`, resolve/validate/
+  `beforeTool`/validate/intent/execute/`afterTool`/result in one `call` handler,
+  recovery-only `execute` with the stored/current replay rule, bounded output and
+  details in the `pi.live.tools` slot, the terminal commit as final flush,
+  diagnostics (`api.diagnostic()`, result diagnostics, Harness truncation and
+  error codes, the `<harness>` block, `pi.tool-result` `data: { diagnostics }`),
+  and the abort handler.
+- `pi.post-tools` (§8.5): `afterTools`, `addTools`, all-results `terminate`, the
+  `postTools`/`final` boundaries (no inbox placement until Package 17), and the
+  next generation. The `handoff` control moves to Package 17 with `reset()`,
+  which defines the headed entry both write.
+- `pi.live.tools` and the checkpoint rule (§8.2); the scheduler cleanup hook for
+  `pi.post-tools` (ends the run) and `pi.tool` (marks the slot `done`).
+- Surface: `ToolExecutionApi` without `conversation()`, which the `src` type
+  drops until Package 18 adds it with `ConversationHandle`; `api.env` and `HarnessOptions.env`,
+  `ToolRegistration.executionMode`, the `toolExecution` configuration field with
+  its getter/setter, `TaskRuntime.getTask()` and `entry()`, `HookApi`, and the
+  exported `GenerationTask`, `ToolTask`, and `PostToolsTask` tokens.
+- `@earendil-works/pi-durable/tools`: copy `read`, `bash`, `edit`, and `write`
+  with their helpers from `packages/agent/src/harness/tools` and adapt them to
+  `ToolRegistration` (`api.env`, `api.output`, `api.details`). Image reading in
+  `read` is deferred; note it where the tool rejects or skips images. The env
+  shell streams raw output (`onOutput`) and spills past thresholds; `output()` is
+  the only place output is bounded, sanitized, and throttled. `prepareArguments`
+  restores the edit tool's argument repair.
 
 Acceptance: input → model tool call → registered local read/bash/edit operation →
 tool result → model answer → durable submission settlement. Run that path once
 normally and once interrupted/reopened. Test recovery from every tool and post-
-tools phase; offered-history enforcement; before/after hook rules; both stored/
-current replay-policy directions; default and overridden `outputLimits`; output
-content fallback; details replacement, last-details fallback, and coalesced
-commit settlement; drain-
-before-terminal ordering; abort/close with buffered output; invocation-bound
-handles and watches; unregistered active tools that are removed from the offered set, re-added after re-registration, and produce `tool_unavailable` results when called, without failing the request; a tool replaced mid-call
-finishing under its pinned implementation, including across phase boundaries;
-hooks surviving a task reload; duplicate active names offered once; order-only tool changes; atomic assistant/tool/post-tools commits;
-and all positional tool-history cases.
+tools phase; offered-set enforcement, including a tool deactivated after
+preparation still executing; before/after hook rules, hook scopes, and hook
+memos; `onYield` continuations; both stored/current replay-policy directions;
+default and overridden `outputLimits`; output content fallback; details
+replacement, last-details fallback, and coalesced commit settlement; the terminal
+commit as final flush; abort/close with buffered output; invocation-bound
+watches; parallel and sequential rounds, including a per-tool sequential mode;
+unregistered active tools that are removed from the offered set, re-added after
+re-registration, and produce `tool_unavailable` results when called, without
+failing the request; a tool replaced mid-call finishing under the implementation
+it resolved; hooks surviving a task reload; order-only tool changes; atomic
+assistant/tool/post-tools commits; `terminate` only when every result requests
+it; `addTools`; tool fault/orphan leaving a synthesized context result;
+diagnostic ordering, the `<harness>` block, and entry `data`; and all
+positional tool-history cases. Also test the ported tools against
+`NodeExecutionEnv`, and a wrapper supplying a different `api.env`.
+
+Document in the durable README that the package root loads TypeBox through the
+tool task's argument validation (pi-ai `validateToolArguments()`): about 23 MB of
+peak RSS unbundled, about 4 MB in a tree-shaken bundle.
+
+Tool output benchmark (`test/*.bench.ts`, memory, SQLite, and JSONL): drive the
+real tool task, adaptive throttle, and `pi.live` commits with low (a line every
+few seconds), normal (a compiler or test run), and high (continuous `cat` of a
+large file) output rates, head and tail retention, one tool and several parallel
+tools, over one long round. Report commits, operation bytes written, stored
+size before and after the round's base, reclamation, heap and RSS, commit
+latency, and reopen/replay time mid-round. Assert that head output commits as
+Chord appends and that a sliding tail of non-repetitive output within 64 KiB
+commits as trim plus append; report how often repetitive output falls back to a
+full window set. The checkpoint rule stays "base whenever nothing runs" (§8.2) with
+no delta-count bound; the benchmark decides whether that holds. Assign
+`slot.output` as one string field so Chord can diff it; replacing the slot
+object records a full set.
+
+Throughput target: a plain `cat` of a 1 GiB file of unique lines through the
+ported bash tool and the real Harness path (env capture and spill, `api.output`,
+throttled `pi.live` commits, result entry) completes in about 0.4 s, like the
+mini coding agent. Also drive `api.output()` directly with the same 1 GiB in
+64 KiB chunks: accepting a chunk must not cost work proportional to the
+retained window.
 
 ## 17. Live UI and product state
 
-Complete submissions and inbox behavior: busy `steer`/`followUp`/`reject`,
-passive writes, withdrawal, ordered `postTools`/`final` selection, stale targets,
-self-head cuts, successor turns, queued reset/handoff, and every terminal cleanup.
+Complete submissions and the inbox (§6): the `pi.inbox` document created by the
+built-in setup; busy `steer`/`followUp`/`reject`; queued writes; admission to an
+idle conversation with a non-empty inbox (queue, then a final boundary in the
+same commit); withdrawal removing the item; `tx.placeSubmission()`; ordered
+`postTools`/`final` selection by the new `steeringMode`/`followUpMode`
+configuration fields (with getters/setters), writes before user items; stale
+head writes; a reset at `postTools` ending the run with `reset`; successor runs;
+and `onYield` applying only when the final boundary selected no user item and no
+reset. Only an answer, `terminate`, or `handoff` applies the final boundary;
+failure, a run task's abort, fault, and orphan leave the inbox alone.
 Successful inputs still require an answer; writes settle on placement and never
-start generation.
+start generation by themselves.
 
-Add `harness.blockedTasks()`, deferred from Package 14: the pending tasks this
-process cannot run and why (`missing_task`, `task_too_old`, `migration_failed`
-with the stored and registered versions and the migration error). It is derived
-from task records, the current registry snapshot, and scheduler memory, and is
-never persisted.
+Define the `pi.reset` entry (§8.1), written by `Conversation.reset(handoff)`
+through a write submission and by the post-tools `handoff` control.
 
-Specify and implement the Harness activity view:
-the active conversations, notifications when a conversation becomes active or
-idle, all derived from committed turn-control and task
-state.
+Usage (§8.6): the `pi.usage` document created by the built-in setup, updated in
+the same commit as every assistant entry (`appendAssistant()`) and every tool
+result with `usage` (`ToolExecutionResult.usage`, `appendToolResult()`), and
+`Harness.usage()` summing every conversation's document.
 
-Define any remaining built-in preference/presentation documents once with final
-schemas. Implement the structural `{ conversation, entries, docs }`
-`ConversationView`, `viewState()`, and `watch()`. Build the first revision lazily
-on the Session line. For each affected commit, derive and prepare one mounted
-operation batch from the complete candidate transaction before Storage
-admission; after success, only install prepared pointers/cursors and enqueue the
-exact immutable frame. Do not derive the mount through `subscribeCommits()`.
+`ConversationView`, `viewState()`, and `watch()` (§9.3): one mount per
+conversation, built lazily on the Session line, advanced from
+`subscribeCommits()` publications, and dropped with its last observer.
 
-Add the §9.4 notification adapter directly from uncoalesced committed
-publication, without another tracker or persistence authority. Wire TUI
-hydration to structural state/watch, print to its own `Submission`, and JSON/RPC
-to correlated commands plus ordered committed notifications. Transport
-backpressure and disconnect policy stay in the mode adapter.
+Last: the experimental `watchEvents()` adapter (§9.4) with the snapshot event,
+translated message and tool deltas, and overflow-to-snapshot.
+
+Examples next to the existing ones in `test/examples/`: a print demo awaiting
+its own `Submission`, a JSON demo with two modes, `--events` (adapter
+events as JSON lines) and `--ops` (raw `ConversationView` frames), an inbox
+demo, and a late-join demo attaching a view and an event stream mid-run. An
+interactive TUI demo and coding-agent integration are later work.
 
 Table-test every submission transition, cross-type request-ID conflicts,
-interleaved queue selection, compact positional removal of large payloads,
-abort results, reopen waits, writes pending without a later boundary, busy reset
-placement, and orphan/fault cleanup. Test one view publication per Session
-commit; atomic entry/preview settlement; parent-linked active entries and heads;
-mounted create/recreate/retire; preparation rollback before Storage; empty-batch
-suppression and redundant nonempty revisions; contiguous delivery; stable public
-paths; O(1) immutable acquisition; structural sharing; serialized consumers;
-bounded reset behind an in-flight callback; durable retry/tool/collapse status;
-output truncation metadata; the documented placement of diagnostics in entries,
-terminal details, or bounded state; asynchronous consumer initialization; and
-absence of semantic projection. Verify watch overflow cannot erase a separately
-subscribed notification lifecycle, late clients hydrate structurally, and
-notifications expose committed throttled
-progress rather than raw provider frames.
+interleaved queue selection under both queue modes, writes placed before user
+items, stale head writes, a reset at each boundary, handoff, `onYield` with and
+without queued items, compact positional removal of large payloads, withdrawal,
+reopen waits, queued items surviving a failed run and drained by the next
+submission, and orphan/fault cleanup. Test minimal Chord deltas for `pi.inbox`
+and `pi.usage` changes. Test one view revision per touching commit; atomic
+entry/document publication; fork-aware active entries and head cuts; mounted
+create/retire; empty-batch suppression; stable paths; structural sharing; watch
+overflow; and dropping the mount. Test the event translation of every
+`MessageChange` and output change, the snapshot at attachment and after
+overflow, and absence of raw provider frames.
 
 ## 18. Ownership and subagents
 
@@ -512,6 +583,18 @@ waits. Finish invocation-bound owned APIs used by tools and the foreground and
 background subagent provisioning patterns, including atomic task/conversation/
 registry creation and request-ID-safe submission recovery.
 
+An abort cascade withdraws queued inputs in every owned conversation it reaches
+(spec §5.4). There is no full-teardown primitive: `close()` stops everything
+without outcomes, and a host cancels everything by aborting what `inspect()`
+lists. No built-in subagent tool or supervisor task: two concise, product-style
+examples, `test/examples/22-subagent-foreground.ts` (child owned by the tool task,
+reported through `api.details({ conversationId })`, the UI attaching to the
+child's events) and `test/examples/23-subagent-background.ts` (reworked in
+Package 19: persistent subagents behind one `subagent` tool with spawn, send,
+wait, stop, and status actions; a background anchor task owns each child, and a
+background reporter task per message delivers it and posts the answer back as a
+follow-up input, request-ID-safe across restarts), show the patterns.
+
 Test deep ownership trees, owner edges after terminal settlement, nested
 background boundaries, conversation abort/join with surviving passive writes and
 background tasks, cancellation of waiters without cancellation of work, and
@@ -520,44 +603,315 @@ current committed tail, empty source conversations, document fork policies,
 configuration overrides through `init`, foreground subagent cascade, and
 background supervisor recovery before and after submission admission.
 
-## 19. Collapse and overflow
+## 19. Structured concurrency
 
-Implement manual, threshold, and generation-overflow collapse; exchange-boundary
-range selection; summarization; retry policy; staleness checks; and headed
-summary entries. Wire generation's real overflow path directly to the collapse
-task, and complete `Conversation.collapse()` so it returns the admitted task ID.
+Implement spec §5.5 and its consequences, replacing `after` and `pi.post-tools`.
+No backward compatibility.
 
-Test model context before and after collapse, raw history preservation, provider
-failure, declined and stale work, manual/threshold/overflow admission, late-join
-presentation state, and reopen from every phase. Rerun generation overflow
-integration without a fake collapse kind.
+- Ownership: `TaskOptions.ownership` is required (`{ kind: "conversation" }` or
+  `{ kind: "task", taskId }`); `TaskRecord.owner?: TaskId`; child tasks live in
+  their owner's conversation; `background` only for conversation-owned tasks;
+  new task- or conversation-ownership requires a live owner (not `completing`
+  or `terminal`). Update every `createTask` call site, including tools'
+  `api.createTask`, examples, and tests. Storage: persist `owner` and the new
+  statuses (memory, JSONL, SQLite schema edited in place; no migrations while WIP), conformance cases. No owner
+  index: the scheduler derives edges from the live tasks it loads.
+- States: real `waiting { checkpoint, on, policy }` and `completing { outcome }`
+  statuses in `TaskState` and every backend and status scan; `NextTaskState`
+  gains `waiting`; `runtime.outcomes()`; `inspect()` reports `completing`.
+  Remove `after` (records, options, scheduler dependency handling).
+- Scheduler: a waiting task is never reserved until every task in `on` is
+  terminal (then reserved directly from `waiting` to `running` at its
+  checkpoint), unless an abort mark lets it reach its abort handler; `on` over
+  tasks it does not own requires `allSettled`; `on` rejects missing tasks, the
+  task itself, and its owner chain; failFast marks live owned siblings in `on` on a held or terminal
+  non-`completed` outcome, in reconcile. Terminal commits (task- and
+  scheduler-written) with live ordinary owned work become `completing`; a later
+  scheduler commit finalizes them when that work is gone, re-evaluated on every
+  commit and at open; scheduler-written holds defer their Harness cleanup
+  (`settleSchedulerOutcome`) to the final commit, task-written holds land their
+  other writes at hold; waiters and task-document retirement at the final
+  commit. Abort invocations start only when ordinary owned work is gone
+  (bottom-up, judged on committed records). Orphaning happens only where the
+  abort invocation would start, or directly in `abortTask()` when nothing owned
+  is live, so orphans never hold. Cascade (spec §5.4): only live owners cascade (abort mark or held
+  non-`completed` outcome); terminal owners never do; ordinary traversal and
+  idle follow task→task edges too. `Conversation.abort(context, { background:
+  true })` snapshot semantics.
+- Built-ins: generation owns its tool tasks and waits `allSettled` in a new
+  `tools` phase that runs the old post-tools body (§8.5); sequential rounds
+  create one tool at a time from `pending`; the next generation is
+  conversation-owned; the generation abort handler appends `aborted` results for
+  unstarted calls. Remove `pi.post-tools`, `PostToolsTask`, `PostToolsHooks`
+  (`afterTools` moves to `GenerationHooks`). Tool tasks that own conversations
+  hold `completing` after their result entry. Events: `turn_end` when a
+  generation's outcome is committed (hold or terminal, whichever first).
+- Docs: spec §5.5 and §12 footguns are written; update README (task ownership,
+  waiting, `completing`, abort order), CHANGELOG, and examples 12/22/23 plus a new
+  `test/examples/24-child-tasks.ts` (checkout with four payments: failFast,
+  `abortTask(checkout)`, crash and reopen, each printing outcomes).
 
-## 20. Reload and final conformance
+Exhaustive tests (new `test/harness-structured.test.ts` plus updates): ownership
+validation (missing ownership, cross-conversation child, background child,
+owner completing/terminal); waiting with allSettled and failFast (failed,
+aborted, faulted, orphaned children; held failures trigger failFast before the
+failing child drains); `on` with already-terminal and non-owned tasks
+(`allSettled` only); waiting on subsets in sequence; spawning without waiting;
+`completing` for task- and scheduler-written outcomes, including work created
+during the hold, finalization at open, `abortTask()` on a completing task, held
+failure aborting below, waiters and document retirement only at the final
+commit; bottom-up abort order across three levels (child terminal records before
+the parent's abort handler starts), including an aborted waiting parent; `on`
+validation (missing, self, owner chain, empty `on`); a waiting task whose
+definition is missing when it may resume (blocked, then orphaned when aborted);
+creating owned work in a finishing commit (task ownership rejects, a task in an
+owned conversation holds); cascades through
+task→task and task→conversation→task edges; background boundaries and the
+`{ background: true }` abort; a terminal owner never cascading (interrogating a
+finished or Esc'd subagent runs normally); crash/reopen at every point (before
+and after create+wait, after a child fails before siblings are marked, after all
+children terminal before the parent resumes, during holds and abort handlers);
+generation tool rounds parallel and sequential with Esc before, during, and
+after tools, unstarted sequential calls, faulted tool slots under generation
+abort, faulted generation keeping run control until its tools drain, `turn_end`
+before the successor's `turn_start` when a generation holds, and a tool holding
+`completing` while its subagent's extension work runs. Rerun every existing suite; migrate the post-tools,
+sequential-round, and dependency tests to the new shapes without weakening them.
 
-Complete any remaining §2.2 surface and lifecycle gates and the §7.5 in-process
-reload path through the registry: batch replacement while the Harness keeps
-running, pinned in-flight work, and task handover at phase boundaries.
-Close/reopen is not required for reload.
+## 20. Compaction and overflow
 
-Test that close seals commit and mutation admission, lets already-admitted
-storage settlement finish despite caller cancellation, stops future state/watch
-delivery, joins task/tool/hook invocations outside the Session line, writes no
-abort or terminal outcome, starts no fresh abort invocation, and never runs old
-and new Harness generations concurrently. Include cancellation during watch
-acquisition and an already-running callback that remains caller-owned across
-shutdown. Verify service withdrawal and client detach.
+Implement spec §8.7 and its consequences. Compaction never appends to a busy
+conversation concurrently (§7.4 preparation does not recheck the transcript): a
+blocking compaction appends while its generation holds the run and waits for it;
+every other compaction places its summary through a write submission.
 
-Run the exhaustive public conformance matrix: stable persisted root identity;
-all root/create/lookup/fork/reset/collapse/abort/idle paths; every configuration
-getter/setter and fork override; typed input/write submissions; task wait/abort;
-generic document access; registry changes before open, between open and resume,
-and while work runs; the activity view; structural watches; and
-blocked tasks surviving open. Compile-test every §2.2 and §3 owner/key/seed overload,
-the normative usage sequences, and the Chord guide. The erased registry test must
-use a concrete narrowed-input task with multiple checkpoint phases and custom
-hooks. Verify that a Chord root-replacement delta remains distinct from a
-Session-selected storage checkpoint.
+- Task: `pi.compaction` (`CompactionTask`, `CompactionHooks`, `CompactionInput`,
+  `CompactionCheckpoint`, `CompactionResult`, `CompactionReason`) with phases
+  `select`, `summarize`, `retry`, the abort handler, and the `beforeCompact`
+  hook. Register it with the built-ins. `CompactionEntry` token for
+  `pi.compaction` with `data: { reason }`.
+- `ContextView.contributions`: each active entry's contribution after all
+  in-range edits (including edits on older in-range markers). Range selection is one pure function over those
+  contributions and `keepRecentTokens`, shared by the generation's checks and
+  `select`; the summarized messages are the prefix contributions ordered by
+  §2.1 rules 7–8. The generation's size estimate (§8.3) uses the newest
+  assistant appended after the head marker, not pi-ai's timestamp heuristic. Port the coding agent's serializer, summarization
+  system prompt, and structured prompt (one prompt, with a line about carrying an
+  earlier summary forward) into `src/harness/compaction.ts`; do not import from
+  coding-agent.
+- Placement: direct append for a task-owned (blocking) compaction; for a
+  conversation-owned one, factor the admission body of `Submissions.submit()` into
+  a function over a `Tx` so the task's classifying commit admits the write
+  (request ID `compaction:<taskId>`) with the same idle/queued/stale/final-boundary
+  behavior. No new stale logic.
+- Config: `CompactionPolicy`, `DEFAULT_COMPACTION_POLICY`,
+  `ConversationConfigState.compaction`, `getCompaction`/`setCompaction`.
+- Live: `pi.live.compactions` (`CompactionStatus[]`, task ID order, key removed
+  when empty), added in the creating commit and removed in the outcome commit
+  (also at a `completing` hold);
+  `settleSchedulerOutcome` removes it for faulted/orphaned compactions.
+- Generation: `compacted`/`overflow` checkpoint fields; threshold checks in
+  `prepare` (blocking child + wait; background conversation-owned task in the
+  commit moving to `request`); overflow classification before the retry branch;
+  failing an overflow generation whose compaction produced no entry.
+- `Conversation.compact()` admits the manual task (conversation-owned, not
+  background) with its status in one commit and returns its ID.
+- Usage: every classified summarization response adds its usage to
+  `pi.usage.models`.
+- Events: `compaction_start`/`compaction_end`, snapshot `compactions`, batch
+  order per §9.4.
+- Docs: README (compaction, policy, events), CHANGELOG, and a new product-style
+  example `test/examples/25-compaction.ts` (faux model: a long chat that crosses
+  the background threshold, the summary lands at a boundary, a manual `compact()`
+  while busy, and an overflow recovered by a blocking compaction, printing the
+  model context before and after).
 
-Run all package-specific tests and the repository check. Finish with a local
-coding-agent turn and a reopened interrupted turn through the public Harness,
-then stop for final review.
+Not in v1 (note only): a cache-friendly summary request that resends the
+agent's exact last request plus one summarization user message with pi-ai
+`toolChoice: "none"`, so the prefix including tool declarations is a cache hit.
+It fits background compaction well below the window; overflow and a context
+without room for the prompt and summary keep the serialized request.
+
+Exhaustive tests (new `test/harness-compaction.test.ts`, faux provider, plus
+updates):
+
+- Range selection (pure): cut at a user entry, at an assistant entry mid-run
+  (one prompt followed by many tool rounds), never at a tool result or system
+  entry; a huge last tool result keeps its assistant; budget never reached and
+  only-the-marker prefix are nothing to compact; an existing marker is
+  summarized first and older in-range markers drop out; omitted and replaced
+  entries use their edited contribution; excluded error/aborted assistants are
+  not candidates; the §8.7 worked example.
+- Summarization request: exact messages (system prompt, serialized
+  conversation, instructions line), tool-result truncation, no tools,
+  `cacheRetention: "none"`, no `deferred`, `maxTokens` from `reserveTokens` and
+  the model's max, pinned model/thinking/stream options surviving a config change
+  mid-summary.
+- Summary entry: kind, wrapped text, `head` = first kept, `data.reason`; model
+  context after placement is `[summary, kept...]` followed by a full system
+  baseline on the next preparation; raw history unchanged and still scannable via
+  `entries()`; `pi.usage.models` includes every attempt, including failed,
+  retried, and stale ones; declines and hook-supplied summaries add none.
+- Outcomes: nothing to compact (`{}`), `beforeCompact` decline (`{}`) and
+  supplied summary (no model call), first decision wins, hook throw reported and
+  ignored; `no_model`; retryable error then success; retries exhausted;
+  non-retryable error; `length` stop; tool call in the response; empty text.
+- Manual: idle with empty inbox (placed at once, `{ submissionId }` whose submission is `done`);
+  idle with queued follow-ups after a failed run (final boundary places the
+  summary first, then starts the follow-up in the compacted context); busy
+  (queued, placed at the next `postTools` and the run continues in the compacted
+  context; placed at `final`); stale because a reset landed while summarizing;
+  stale because a later compaction cut further; an older summary with a later cut
+  placed after a newer one; two queued summaries in one boundary with the
+  second cutting before, at, and after the first (only "before" is stale); `Conversation.abort()` aborts a manual compaction and keeps an
+  already queued summary; `Submission.abort()` withdraws a queued summary;
+  `waitForIdle` waits for a manual compaction; `compact()` returns the ID
+  `waitForTask` settles with.
+- Background threshold: starts only above the background threshold, only with
+  `backgroundTokens > 0`, only when no status is listed, not when disabled, not
+  without a cut, and not after a blocking compaction in the same generation; the
+  generation does not wait; summary placed at the next boundary; survives
+  `Conversation.abort()`; `abort({ background: true })` and `abortTask()` stop
+  it; idle waits ignore it.
+- Blocking threshold: generation waits, nothing appended before the wait, then
+  re-prepares with a baseline and sends; request proceeds after nothing to
+  compact, decline, failure, fault, and direct `abortTask()` of the child; no
+  second compaction when still above the threshold; a background compaction in
+  flight ends stale; Esc during the blocking compaction aborts child then
+  generation (child terminal before the generation's abort handler) and settles
+  inputs `aborted`.
+- Overflow: error entry appended and excluded from the retry request, attempt
+  unchanged, compaction then retry succeeds; second overflow fails
+  `model_error` with its error entry; overflow with compaction disabled, without
+  a cut, or after a threshold compaction fails; overflow whose compaction
+  declines/fails/aborts fails `model_error` with the overflow text; an overflow
+  error matching retryable patterns is still not retried; silent `stop`/`length`
+  overflow is an ordinary answer.
+- Live status and events: status added in the creating commit with `blocking`,
+  `attempt`, and `retry` during backoff, removed with every outcome
+  (completed, failed, aborted, faulted, orphaned); several concurrent statuses;
+  `compaction_start`/`compaction_end` in batch order; snapshot `compactions` for a late joiner during summarize and retry;
+  view mount after a compaction head (kept entries stay mounted).
+- Recovery: crash and reopen in `select` (hook reruns), `summarize` (request
+  resent once, no duplicate usage), `retry`, after placement, with the
+  generation waiting on a blocking compaction, with a summary queued, and with a
+  blocked compaction definition (orphaned on abort, status removed).
+- Estimate and cut edge cases: a background summary queued mid-run and placed
+  at `postTools` makes the successor's estimate ignore the pre-compaction usage,
+  so no blocking compaction starts (also with a fixed Harness clock); an
+  assistant finishing while a summary is queued; raw order `assistant(call),
+  user, toolResult, assistant` never cuts at that user; edits carried by an
+  older in-range marker and a kept entry replacing a summarized one are reflected
+  in the summarized messages and the hook's `messages`; kept `pi.system` deltas
+  get omit edits in the next single baseline; compaction in a fork whose cut
+  falls on a parent entry (head, stale checks, view mount).
+- Interactions: a summary queued before a reset in the same boundary (both
+  placed, reset wins) and after it (stale); a manual compaction's status blocks
+  a background start; a queued summary surviving a failed run is placed by the
+  next submission's final boundary before the new input; the summarization
+  request itself overflowing fails `model_error` and a waiting overflow
+  generation fails with the original overflow text; a retryable error after an
+  overflow compaction has the full retry budget; a background summary landing
+  during a retry backoff stays queued while a blocking compaction wins; an
+  application edit placed while summarizing is lost as §12 documents; a hook
+  that creates owned work and supplies a summary (placement and status removal
+  at hold, receipt after the child); `compact()` right after open enables
+  scheduling; a rejected classifying commit leaves no usage, submission,
+  summary, or outcome; idle admission that drains an older queued summary
+  together with the current one.
+- Rerun every existing suite; generation, inbox, events, and view tests keep
+  passing unchanged except for the new optional fields.
+
+## 21. Extensions and per-conversation agents
+
+Implement the design agreed with Mario, now specified in `spec.md` (§2.2,
+§5.1/§5.4 runtime surface, §6 queue modes, §7.1–§7.5, §8 where tasks read the
+agent and settings, §9.3/§9.4 view mount and events, §12 footguns): extensions
+installed by name replace keys, positions, `batch()`, wrappers-by-key, hook
+scopes, and public conversation setups; the rewindable `pi.agent` document
+(model, thinking level, extension and tool selection, `instructions`, `cwd`)
+replaces `pi.conversation.config` and its getters and setters; run policies
+become Harness-wide live `HarnessSettings`; the environment is built per call
+by one host `env` function. The `Tool` generic stays. `CodingTools` bundles
+read, write, edit, and bash; grep, find, and ls are not ported.
+
+Implement in parts, each with tests: registry and extensions (install/replace,
+uninstall, catalogue views, task-name collisions, wrapper failures); `pi.agent`,
+`configure()`, and resolution (selection arrays and `add`/`remove`, same-name
+replacement, wrappers, uninstalled names, `addTools`); settings resolution and
+every reader (generation request options and retry, compaction thresholds, tool
+execution, queue modes on the line); `env` for tools, `prepare`, and
+`runtime.env()`; hooks resolved from the conversation's selected extensions per
+phase; reload of an extension while work runs (running phases keep their
+snapshot, pinned tools finish under old code, task definitions hand over at the
+next phase boundary as in §5.4); view and events. Rewrite the examples,
+including 22 and 23, to the new surface.
+
+## 22. Lifecycle and final conformance
+
+Package 21 of the previous plan was audited (three reviewers); these findings
+remain and apply to the new surface.
+
+Bugs:
+- `runtime.now()` and `runtime.report()` stay usable after the invocation ends
+  (`scheduler.ts` runtime); §5.4 says every runtime operation rejects.
+- A commit that only migrates a document through a newer token (version base, no
+  ops) is not published (`transaction.ts` `publishes()`), so observers of the
+  older shape keep a stale value until the next edit.
+- A failed `Harness.open` closes with the caller's possibly cancelled context,
+  masking the original error; close without the caller's signal and rethrow.
+- `ConversationWatch` alias missing; stale TODO at `types.ts` about
+  `subscribeCommits`; `resume()` doc comment omits progress calls.
+
+Spec wording to settle with Mario first: close stops state and watch delivery at
+seal (§2.2 says states close after the join); cancelling `close()` cancels only
+that wait and a second `close()` awaits the same shutdown; add
+`Conversation.abort()` to the progress calls; "old and new Harness generations"
+means that after `await close()` no invocation code of the old Harness runs;
+"service withdrawal and client detach" is proposed as a runnable Chord guide
+test (facet host, in-process remote binding, host dispose before Harness close);
+"normative usage sequences" are the spec's example code blocks, copied into one
+compile-checked test.
+
+Tests to add or strengthen: a committer cancelled while its commit is in
+Storage still settles durably; a cancelled `close()` still completes shutdown;
+a task handler, tool `execute`, and hook that ignore the signal keep `close()`
+pending and Storage open until they return (the current tests pass with
+`join()` deleted); a state receives no frame from a commit settling during
+close; watch acquisition cancelled mid-line leaves no subscription; conversation
+handle methods and `inspect()` (`scheduling: "closing"`) around close; each
+progress call enables scheduling on a paused Harness and each read-only viewer
+does not; registry change between open and resume; handover keeps memos;
+compile tests for every §3.3/§9.1 overload (including `snapshotAsOf` rejecting a
+non-rewindable token, token overloads of `tx.entry`/`appendEntry`), the
+`SubmissionDraft` never-fields, `waitForTask<R>`, `compact()` result type, and
+an erased extension/task with narrowed input, several phases, and custom hooks;
+the Chord guide compiles (it uses a bare `Id` today) and runs.
+
+Already covered, rerun only: root-replacement delta versus checkpoint, blocked
+tasks surviving open, root identity across reopen, handover cases, a reopened
+interrupted turn. Run all package tests and the repository check, finish with a
+local coding-agent turn and a reopened interrupted turn through the public
+Harness, then stop for final review.
+
+Done. The spec wording is settled as proposed (§2.2 close and progress calls,
+§5.1, §7.5, §9.1, §12). Close ends states and watches at the seal; a new Harness
+may open the Storage once the old `close()` resolved. The lifecycle tests are in
+`harness-lifecycle.test.ts`, the Chord guide runs as `chord-guide.test.ts`, and
+the spec's usage examples compile in `spec-usage.test.ts`.
+
+## 23. Task graph view
+
+A live, observable view of the Session's task graph for UIs and debugging, like
+`ConversationView` for a conversation: every live task with its owner edge
+(conversation or task), status (`running`, `waiting on …`, `completing`),
+background flag, and owned conversations, published after each commit as a
+replicated state or watch. `inspect()` already provides a one-off snapshot of
+the live task records. Specify and build it after the final conformance package.
+
+Specified in `spec.md` §9.5: `Harness.taskGraph()` and `watchTaskGraph()` mount
+every live task keyed by ID with its committed status (phase, wait, held outcome
+status), owner edge, flags, and owned conversations. Derived states (`blocked`,
+`ready`, the live part of `on`) stay in `inspect()`. Implemented in
+`src/harness/task-graph.ts`, tested in `harness-task-graph.test.ts` and the
+lifecycle tests, shown in example 24.

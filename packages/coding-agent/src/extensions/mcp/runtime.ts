@@ -32,7 +32,12 @@ import { VERSION } from "../../config.ts";
 import { resolveConfigValueOrThrow, resolveHeadersOrThrow } from "../../core/resolve-config-value.ts";
 import type { McpServerEntry } from "./config.ts";
 import type { McpServerLog } from "./log.ts";
-import { createMcpAuthProvider, type McpOAuthCredentialStore, type McpOAuthSettings } from "./oauth.ts";
+import {
+	createMcpAuthProvider,
+	type McpAuthProvider,
+	type McpOAuthCredentialStore,
+	type McpOAuthSettings,
+} from "./oauth.ts";
 import { isMcpAppResource, type McpResourceServer } from "./resources.ts";
 import type { McpToolCaller } from "./tools.ts";
 
@@ -68,14 +73,15 @@ function isTransientError(error: unknown): boolean {
 	return error instanceof TypeError;
 }
 
-function signInRequiredMessage(name: string): string {
-	return `MCP server "${name}" requires sign-in. Run /mcp to sign in.`;
+function signInRequiredMessage(entry: McpServerEntry): string {
+	const provider = "url" in entry.config ? entry.config.auth?.provider : undefined;
+	return `MCP server "${entry.name}" requires sign-in. Run ${provider ? `/login ${provider}` : "/mcp"} to sign in.`;
 }
 
-/** HTTP servers authenticate with OAuth unless the config supplies an `Authorization` header. */
+/** HTTP servers authenticate with OAuth unless the config supplies an `Authorization` header or `auth`. */
 function usesOAuth(entry: McpServerEntry): boolean {
 	const { config } = entry;
-	if (!("url" in config)) return false;
+	if (!("url" in config) || config.auth) return false;
 	return !Object.keys(config.headers ?? {}).some((header) => header.toLowerCase() === "authorization");
 }
 
@@ -169,7 +175,7 @@ export class McpServerConnection implements McpToolCaller, McpResourceServer {
 	private stderrTail: string | undefined;
 	private readonly cwd: string;
 	private readonly createTransport: McpTransportFactory;
-	private readonly authProvider: AuthProvider | undefined;
+	private readonly authProvider: McpAuthProvider | undefined;
 	private readonly onTools: (connection: McpServerConnection) => void;
 	private readonly onChange: ((connection: McpServerConnection) => void) | undefined;
 	private readonly log: McpServerLog | undefined;
@@ -179,6 +185,8 @@ export class McpServerConnection implements McpToolCaller, McpResourceServer {
 		cwd: string;
 		createTransport: McpTransportFactory;
 		credentials: McpOAuthCredentialStore;
+		/** The current token of a pi provider, for servers with `auth.provider`. */
+		providerToken?: (provider: string) => Promise<string | undefined>;
 		onTools: (connection: McpServerConnection) => void;
 		/** Called when `state`, `error`, or `tools` change. */
 		onChange?: (connection: McpServerConnection) => void;
@@ -192,16 +200,20 @@ export class McpServerConnection implements McpToolCaller, McpResourceServer {
 		this.onChange = options.onChange;
 		this.log = options.log;
 		const url = this.oauthUrl;
+		const provider = "url" in this.entry.config ? this.entry.config.auth?.provider : undefined;
 		this.authProvider = url
 			? createMcpAuthProvider({
 					serverUrl: url,
-					store: options.credentials.forServer(url),
+					store: options.credentials.forServer(this.entry.name, url),
 					settings: () => this.oauthSettings(),
 					onChallenge: (challenge) => {
 						this.challenge = challenge;
 					},
 				})
-			: undefined;
+			: provider
+				? // Read on every request, so the provider's refreshes apply; MCP stores no copy.
+					{ token: async () => options.providerToken?.(provider), settled: async () => {} }
+				: undefined;
 	}
 
 	get name(): string {
@@ -229,6 +241,9 @@ export class McpServerConnection implements McpToolCaller, McpResourceServer {
 			callbackPort: oauth.callbackPort,
 			callbackUrl: oauth.callbackUrl,
 			scope: oauth.scope,
+			clientName: oauth.clientName,
+			clientRegistration: oauth.clientRegistration,
+			authServerMetadataUrl: oauth.authServerMetadataUrl ? new URL(oauth.authServerMetadataUrl) : undefined,
 		};
 	}
 
@@ -293,7 +308,7 @@ export class McpServerConnection implements McpToolCaller, McpResourceServer {
 				if (!this.needsSignIn(error)) throw error;
 				await this.dropClient(client);
 				this.markNeedsAuth();
-				throw new Error(signInRequiredMessage(this.entry.name));
+				throw new Error(signInRequiredMessage(this.entry));
 			}
 		}
 	}
@@ -316,7 +331,7 @@ export class McpServerConnection implements McpToolCaller, McpResourceServer {
 	private needsSignIn(error: unknown): boolean {
 		return (
 			error instanceof McpOAuthAuthorizationRequiredError ||
-			(this.oauthUrl !== undefined && error instanceof McpAuthRequiredError)
+			(this.authProvider !== undefined && error instanceof McpAuthRequiredError)
 		);
 	}
 
@@ -406,7 +421,7 @@ export class McpServerConnection implements McpToolCaller, McpResourceServer {
 	private connectFailed(error: unknown): Error {
 		if (this.needsSignIn(error) && !this.closed) {
 			this.markNeedsAuth();
-			return new Error(signInRequiredMessage(this.entry.name));
+			return new Error(signInRequiredMessage(this.entry));
 		}
 		this.state = this.closed ? "closed" : "failed";
 		this.error = this.stderrTail ? `${errorMessage(error)}\n${this.stderrTail}` : errorMessage(error);
@@ -452,5 +467,8 @@ export class McpServerConnection implements McpToolCaller, McpResourceServer {
 		const client = this.client;
 		this.client = undefined;
 		await client?.close().catch(() => undefined);
+		// A refresh the server already answered may have rotated the refresh token; exiting before the
+		// new tokens are saved would lose the grant.
+		await this.authProvider?.settled();
 	}
 }

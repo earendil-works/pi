@@ -124,7 +124,7 @@ for platform in "${PLATFORMS[@]}"; do
     # Bun compiled executables only embed worker scripts when they are passed as
     # explicit build entrypoints. Bun places them at their path relative to the
     # common directory of all entrypoints, so the main entry must stay in dist/
-    # for the worker URLs in src/config.ts to resolve.
+    # for the worker specifiers in the runtime to resolve.
     #
     # Disable cwd bunfig.toml autoload so project preload scripts cannot crash the
     # standalone binary before pi starts (see #7684).

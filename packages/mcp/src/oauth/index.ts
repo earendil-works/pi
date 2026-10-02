@@ -1,4 +1,9 @@
-export { type OAuthCallback, OAuthCallbackServer, type OAuthCallbackServerOptions } from "./callback.ts";
+export {
+	type OAuthCallback,
+	type OAuthCallbackPage,
+	OAuthCallbackServer,
+	type OAuthCallbackServerOptions,
+} from "./callback.ts";
 export {
 	buildAuthorizationServerDiscoveryUrls,
 	discoverAuthorizationServerMetadata,
@@ -20,12 +25,14 @@ export {
 	adaptOAuthProvider,
 	authorizeMcp,
 	exchangeAuthorizationCode,
+	type OAuthClientMetadataDocument,
 	type OAuthClientProvider,
 	type OAuthFlowOptions,
 	type OAuthFlowResult,
 	refreshAuthorization,
 	registerClient,
 	startAuthorization,
+	stepUpScope,
 	type TokenRequestOptions,
 } from "./flow.ts";
 export {

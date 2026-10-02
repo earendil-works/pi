@@ -18,6 +18,7 @@ import type {
 	Storage,
 	StorageWrite,
 	SubmissionId,
+	SubmissionQuery,
 	TaskId,
 	TaskQuery,
 	TaskRecord,
@@ -221,7 +222,7 @@ const parseSidecarRecord = (text: string, file: string, line: number): SidecarRe
 			!isObject(value.payload.value) ||
 			!isSafeInteger(value.payload.value.id) ||
 			!isObject(value.payload.value.state) ||
-			(value.payload.value.state.status !== "pending" && value.payload.value.state.status !== "running")
+			value.payload.value.state.status === "terminal"
 		) {
 			throw new JsonlCorruptionError(`Invalid live task record in ${description}`);
 		}
@@ -351,6 +352,10 @@ export class JsonlStorage implements Storage {
 
 	async submission(id: SubmissionId, context: Context) {
 		return this.store.submission(id, context);
+	}
+
+	async scanSubmissions(query: SubmissionQuery, limit: number, cursor: Cursor | undefined, context: Context) {
+		return this.store.scanSubmissions(query, limit, cursor, context);
 	}
 
 	async submissionByRequest(conversationId: ConversationId, requestId: string, context: Context) {

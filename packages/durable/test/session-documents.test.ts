@@ -421,7 +421,6 @@ describe("Session document transactions", () => {
 					kind: "missing",
 					version: 1,
 					input: null,
-					after: [],
 					background: false,
 					abortRequested: false,
 					state: { status: "pending", checkpoint: { phase: "start" } },

@@ -92,6 +92,10 @@ const sandbox = new CodemodeSandbox({
 });
 ```
 
+`workerUrl` accepts a URL or string. For a Bun compiled executable, include the worker as an
+additional build entrypoint and pass its relative source path as a string, for example
+`"./src/codemode-worker.ts"`; Bun resolves that form from its embedded module graph.
+
 ## Declarations for the model
 
 Tools and globals can carry `description`, `inputSchema`, and `outputSchema` (JSON Schema). `renderDeclarations()` turns them into TypeScript declarations for a model-facing tool description:

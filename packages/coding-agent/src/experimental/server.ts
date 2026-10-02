@@ -3,14 +3,8 @@ import { chmod, lstat, mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import type { Context } from "@earendil-works/chord";
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { FacetBundleArtifact } from "@earendil-works/chord/node";
-import {
-	BACKGROUND_CONTEXT,
-	type JsonlSessionMetadata,
-	JsonlSessionRepo,
-	TODO_CONTEXT,
-} from "@earendil-works/pi-agent-core";
-import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
 import { Client, ServerError as ClientServerError, DisconnectedError } from "@earendil-works/pi-client";
 import { createUnixTransportFactory, type UnixServerRoute } from "@earendil-works/pi-client/unix";
 import { isServerId, type ServerId } from "@earendil-works/pi-protocol";
@@ -18,7 +12,6 @@ import {
 	ServerError as RoutedServerError,
 	type Server,
 	type ServerHost,
-	SessionAmbiguousError,
 	SessionNotFoundError,
 } from "@earendil-works/pi-server";
 import { createUnixServer, getUnixSocketPath } from "@earendil-works/pi-server/unix";
@@ -46,6 +39,13 @@ import { RadiusRelayAuthResolver } from "./radius-auth.ts";
 import { RadiusRelayHost, type RadiusRelayHostStatus } from "./radius-relay.ts";
 import { createExperimentalServerServices } from "./services/server.ts";
 import type { SessionCreateOptions, SessionSummary } from "./services/sessions.ts";
+import {
+	createSession as createCatalogSession,
+	deleteSession,
+	listSessions as listCatalogSessions,
+	readSession,
+	type SessionCatalogMetadata,
+} from "./session-catalog.ts";
 import { SessionPluginSelectionConflictError, SessionWorkerManager } from "./session-worker-manager.ts";
 
 export const ENV_SERVER_DIR = "PI_SERVER_DIR";
@@ -361,11 +361,11 @@ interface StartServerBackendOptions {
 	readonly serverId: ServerId;
 	readonly sessionDir?: string;
 	resolveSessionPlugins(
-		metadata: JsonlSessionMetadata,
+		metadata: SessionCatalogMetadata,
 		packagePaths: readonly string[] | undefined,
 		context: Context,
 	): Promise<ResolvedSessionPlugins>;
-	removeSessionPlugins(metadata: JsonlSessionMetadata): Promise<void>;
+	removeSessionPlugins(metadata: SessionCatalogMetadata): Promise<void>;
 	reloadPresentationFacetBundles(packagePaths: readonly string[]): Promise<readonly FacetBundleArtifact[]>;
 }
 
@@ -380,51 +380,35 @@ async function startServerBackend(
 ): Promise<RunningServerBackend> {
 	const serverId = options.serverId;
 	const sessionDir = resolveSessionDirectory(options.sessionDir);
-	const executionEnv = new NodeExecutionEnv({ cwd: process.cwd() });
-	const repo = new JsonlSessionRepo({ fileSystem: executionEnv, sessionsRoot: sessionDir });
-	const listSessions = async (context: Context): Promise<JsonlSessionMetadata[]> => {
-		const sessions = new Map((await repo.list(undefined, context)).map((metadata) => [metadata.path, metadata]));
+	const listSessions = async (): Promise<SessionCatalogMetadata[]> => {
+		const sessions = new Map((await listCatalogSessions(sessionDir)).map((metadata) => [metadata.path, metadata]));
 		for (const metadata of workers.trackedSessions) sessions.set(metadata.path, metadata);
 		return [...sessions.values()];
 	};
-	const resolveSession = async (sessionId: string, context: Context): Promise<JsonlSessionMetadata> => {
-		const matches = (await listSessions(context)).filter((metadata) => metadata.id === sessionId);
-		if (matches.length === 0) throw new SessionNotFoundError(`Unknown session: ${sessionId}`);
-		if (matches.length > 1) throw new SessionAmbiguousError();
-		return matches[0]!;
+	const resolveSession = async (sessionId: string, _context: Context): Promise<SessionCatalogMetadata> => {
+		const metadata =
+			workers.trackedSessions.find((candidate) => candidate.id === sessionId) ??
+			(await readSession(sessionDir, sessionId));
+		if (metadata === undefined) throw new SessionNotFoundError(`Unknown session: ${sessionId}`);
+		return metadata;
 	};
-	const createSession = async (
-		createOptions: SessionCreateOptions,
-		context: Context,
-	): Promise<JsonlSessionMetadata> => {
-		const session = await repo.create({ ...createOptions, cwd: process.cwd() }, context);
-		try {
-			return session.metadata;
-		} finally {
-			await session.close(context);
-		}
-	};
-	const summarize = (metadata: JsonlSessionMetadata): SessionSummary => ({
+	const createSession = (createOptions: SessionCreateOptions): Promise<SessionCatalogMetadata> =>
+		createCatalogSession(sessionDir, { ...createOptions, cwd: process.cwd() });
+	const summarize = (metadata: SessionCatalogMetadata): SessionSummary => ({
 		serverId,
 		sessionId: metadata.id,
 		createdAt: metadata.createdAt,
 	});
-	const closeStorage = async (): Promise<void> => {
-		const cleanup = await Promise.allSettled([repo.close(TODO_CONTEXT), executionEnv.cleanup(TODO_CONTEXT)]);
-		const errors = cleanup.flatMap((result) => (result.status === "rejected" ? [result.reason] : []));
-		if (errors.length === 1) throw errors[0];
-		if (errors.length > 1) throw new AggregateError(errors, "Experimental session storage cleanup failed");
-	};
 	const serverServices = await createExperimentalServerServices({
-		list: async (context) =>
-			(await listSessions(context))
+		list: async () =>
+			(await listSessions())
 				.map(summarize)
 				.sort((left, right) => left.sessionId.localeCompare(right.sessionId) || left.createdAt - right.createdAt),
-		create: async (createOptions, context) => summarize(await createSession(createOptions, context)),
+		create: async (createOptions) => summarize(await createSession(createOptions)),
 		remove: async (sessionId, context) => {
 			const metadata = await resolveSession(sessionId, context);
 			await workers.closeSession(metadata, context);
-			await repo.delete(metadata, context);
+			await deleteSession(metadata);
 			await options.removeSessionPlugins(metadata);
 		},
 		async prepareSessionPlugins(sessionId, packagePaths, context) {
@@ -447,15 +431,8 @@ async function startServerBackend(
 		async reloadPresentationPlugins(packagePaths) {
 			return createPresentationFacetData(await options.reloadPresentationFacetBundles(packagePaths));
 		},
-	}).catch(async (error: unknown) => {
-		try {
-			await closeStorage();
-		} catch (cleanupError) {
-			throw new AggregateError([error, cleanupError], "Server service startup and cleanup failed");
-		}
-		throw error;
 	});
-	const host: ServerHost<JsonlSessionMetadata> = {
+	const host: ServerHost<SessionCatalogMetadata> = {
 		serverServices: serverServices.host,
 		resolveSession,
 		openSession: async (metadata, context) => {
@@ -464,12 +441,7 @@ async function startServerBackend(
 		},
 	};
 	const socketPath = options.path;
-	const closeCatalog = async (): Promise<void> => {
-		const cleanup = await Promise.allSettled([serverServices.dispose(), closeStorage()]);
-		const errors = cleanup.flatMap((result) => (result.status === "rejected" ? [result.reason] : []));
-		if (errors.length === 1) throw errors[0];
-		if (errors.length > 1) throw new AggregateError(errors, "Experimental session catalog cleanup failed");
-	};
+	const closeCatalog = (): Promise<void> => serverServices.dispose();
 	const server = createUnixServer(host, {
 		serverId,
 		path: socketPath,
@@ -560,7 +532,7 @@ export async function startServer(options: StartServerOptions = {}): Promise<Run
 		let defaultPluginSelection = await buildPluginSelection(pluginPackagePaths);
 		const sessionPluginSelections = new Map<string, ResolvedSessionPlugins>();
 		const resolveSessionPlugins = async (
-			metadata: JsonlSessionMetadata,
+			metadata: SessionCatalogMetadata,
 			requestedPackagePaths: readonly string[] | undefined,
 			_context: Context,
 		): Promise<ResolvedSessionPlugins> => {
@@ -589,7 +561,7 @@ export async function startServer(options: StartServerOptions = {}): Promise<Run
 			sessionPluginSelections.set(metadata.path, selected);
 			return selected;
 		};
-		const removeSessionPlugins = async (metadata: JsonlSessionMetadata): Promise<void> => {
+		const removeSessionPlugins = async (metadata: SessionCatalogMetadata): Promise<void> => {
 			sessionPluginSelections.delete(metadata.path);
 			await removeSessionPluginPackageProfile(directory, serverId, metadata.path);
 		};

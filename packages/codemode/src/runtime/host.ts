@@ -75,7 +75,7 @@ interface ExecutionOptions {
 	memoryLimitBytes: number | undefined;
 	store: Record<string, string>;
 	wasm: Promise<CodemodeWasmModule>;
-	workerUrl: URL;
+	workerUrl: string | URL;
 }
 
 /**
@@ -288,7 +288,7 @@ export class CodemodeSandbox {
 	private readonly timeoutMs: number;
 	private readonly memoryLimitBytes: number | undefined;
 	private readonly wasm: CodemodeWasmModule | Promise<CodemodeWasmModule> | undefined;
-	private readonly workerUrl: URL;
+	private readonly workerUrl: string | URL;
 	private readonly running = new Set<Execution>();
 	private closed = false;
 

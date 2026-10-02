@@ -103,6 +103,8 @@ class ReopeningStorage implements Storage {
 	scanTasks: Storage["scanTasks"] = (query, limit, cursor, readContext) =>
 		this.current.scanTasks(query, limit, cursor, readContext);
 	submission: Storage["submission"] = (id, readContext) => this.current.submission(id, readContext);
+	scanSubmissions: Storage["scanSubmissions"] = (query, limit, cursor, readContext) =>
+		this.current.scanSubmissions(query, limit, cursor, readContext);
 	submissionByRequest: Storage["submissionByRequest"] = (conversationId, requestId, readContext) =>
 		this.current.submissionByRequest(conversationId, requestId, readContext);
 	findDocument: Storage["findDocument"] = (address, at, readContext) =>
@@ -139,7 +141,6 @@ function pendingTask(id: TaskId<JsonValue>, phase = "ready"): StoredTask {
 		version: 1,
 		input: null,
 		state: { status: "pending", checkpoint: { phase } },
-		after: [],
 		background: false,
 		abortRequested: false,
 	};
@@ -153,7 +154,6 @@ function terminalTask(id: TaskId<JsonValue>): StoredTask {
 		version: 1,
 		input: null,
 		state: { status: "terminal", outcome: { status: "completed", result: null } },
-		after: [],
 		background: false,
 		abortRequested: false,
 	};

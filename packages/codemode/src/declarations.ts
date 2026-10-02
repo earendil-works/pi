@@ -143,7 +143,7 @@ export function renderToolSignature(
 		tool.inputSchema === undefined
 			? "unknown"
 			: schemaToType(tool.inputSchema, { maxChars: options.inputMaxChars ?? DEFAULT_INPUT_SCHEMA_MAX_CHARS });
-	return `${toCodemodeIdentifier(tool.name)}(args: ${input}): Promise<${outputType(tool.outputSchema)}>;`;
+	return `${toCodemodeIdentifier(tool.name)}(args: ${input}): Promise<${renderToolOutputType(tool.outputSchema)}>;`;
 }
 
 /**
@@ -174,7 +174,11 @@ export function mcpStructuredContentSchema(schema: CodemodeJsonSchema | undefine
 	return isObject(structuredContent) || typeof structuredContent === "boolean" ? structuredContent : true;
 }
 
-function outputType(schema: CodemodeJsonSchema | undefined): string {
+/**
+ * The type a tool call resolves to: `CallToolResult<T>` for MCP output schemas (needs
+ * {@link MCP_TYPESCRIPT_PREAMBLE}), the schema's type otherwise, and `unknown` without a schema.
+ */
+export function renderToolOutputType(schema: CodemodeJsonSchema | undefined): string {
 	const structured = mcpStructuredContentSchema(schema);
 	if (structured !== undefined) {
 		const type = schemaToType(structured);

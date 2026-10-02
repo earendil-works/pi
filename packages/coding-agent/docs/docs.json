@@ -137,6 +137,10 @@
           "path": "cli.md"
         },
         {
+          "title": "Codemode",
+          "path": "codemode.md"
+        },
+        {
           "title": "Slash Commands",
           "path": "slash-commands.md"
         },
@@ -153,7 +157,7 @@
           "path": "keybindings.md"
         },
         {
-          "title": "Provider Authentication",
+          "title": "Providers",
           "path": "providers.md"
         },
         {

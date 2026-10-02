@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
-import type { JsonValue, ServiceCall, ServiceProviderUpdate } from "@earendil-works/chord";
-import { BACKGROUND_CONTEXT, type Context, type SessionMetadata } from "@earendil-works/pi-agent-core";
+import type { Context, JsonValue, ServiceCall, ServiceProviderUpdate } from "@earendil-works/chord";
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { RpcTarget, SessionTarget } from "@earendil-works/pi-protocol";
 import { ServerDrainingError, SessionNotAttachedError } from "./errors.ts";
-import type { RoutedSessionAttachment, RoutedSessionHandle, ServerHost } from "./types.ts";
+import type { RoutedSessionAttachment, RoutedSessionHandle, ServerHost, SessionMetadata } from "./types.ts";
 
 class SessionCleanupError extends AggregateError {}
 

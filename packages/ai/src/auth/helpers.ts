@@ -52,7 +52,7 @@ export function lazyOAuth(input: {
 		name: input.name,
 		isSubscription: input.isSubscription,
 		loginLabel: input.loginLabel,
-		login: async (interaction) => (await loaded()).login(interaction),
+		login: async (interaction, options) => (await loaded()).login(interaction, options),
 		refresh: async (credential, signal) => (await loaded()).refresh(credential, signal),
 		toAuth: async (credential) => (await loaded()).toAuth(credential),
 	};

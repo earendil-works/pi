@@ -43,9 +43,9 @@ export function getFileRevision(path: string): string | undefined {
 }
 
 /**
- * Returns true if the value is NOT a package source (npm:, git:, etc.)
- * or a remote URL protocol. Bare names, relative paths, and file: URLs
- * are considered local.
+ * Returns true if the value is NOT a package source (npm:, git:, etc.),
+ * a built-in extension (builtin:), or a remote URL protocol. Bare names,
+ * relative paths, and file: URLs are considered local.
  */
 export function isLocalPath(value: string): boolean {
 	const trimmed = value.trim();
@@ -56,7 +56,8 @@ export function isLocalPath(value: string): boolean {
 		trimmed.startsWith("github:") ||
 		trimmed.startsWith("http:") ||
 		trimmed.startsWith("https:") ||
-		trimmed.startsWith("ssh:")
+		trimmed.startsWith("ssh:") ||
+		trimmed.startsWith("builtin:")
 	) {
 		return false;
 	}

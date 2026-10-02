@@ -130,14 +130,23 @@ export interface Service<T> {
 	readonly [SERVICE_TYPE]?: (value: T) => T;
 }
 
+/** JSON with readonly containers, such as other packages' recursive JSON types. */
+type ReadonlyJsonValue =
+	| null
+	| boolean
+	| number
+	| string
+	| readonly ReadonlyJsonValue[]
+	| { readonly [key: string]: ReadonlyJsonValue };
+
+// A type assignable to readonly JSON is valid as is. Walking a recursive JSON type instead, for example one with
+// readonly arrays, would never terminate.
 type InvalidJsonPart<T> = IsAny<T> extends true
 	? T
 	: unknown extends T
 		? never
-		: [T] extends [JsonValue]
-			? [JsonValue] extends [T]
-				? never
-				: InvalidJsonStructure<T>
+		: [T] extends [ReadonlyJsonValue]
+			? never
 			: InvalidJsonStructure<T>;
 
 type InvalidJsonProperty<T> = [Exclude<T, undefined>] extends [never] ? T : InvalidJsonPart<Exclude<T, undefined>>;

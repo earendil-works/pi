@@ -2,15 +2,44 @@
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-10-01
+
+### Added
+
+- Added `TuiAltScreen.getScreenLines()`, which returns the lines of the last rendered frame.
+
+### Fixed
+
+- Fixed color bleeding past mouse selections and search highlights in fullscreen mode when a styled token ends at the highlight boundary ([#10169](https://github.com/earendil-works/pi/issues/10169))
+- Fixed memory retained per rendered message: `Markdown` holds its parsed tokens weakly, and `Markdown`, `Text`, and `Box` flatten their cached lines. A long assistant message keeps about a fifth of the heap it kept before.
+- Fixed slash command autocompletion not triggering when the input starts with whitespace ([#10218](https://github.com/earendil-works/pi/pull/10218) by [@haoqixu](https://github.com/haoqixu))
+
+## [0.99.2] - 2026-09-30
+
+## [0.99.1] - 2026-09-29
+
+## [0.99.0] - 2026-09-29
+
+### Breaking Changes
+
+- Replaced `TUI.queryTerminalColorScheme()` and `TUI.queryTerminalBackgroundColor()` with `TUI.queryTerminalColors()`, which queries the default foreground, background, and 16 ANSI colors (OSC 10, 11, and 4) in one round trip and returns `TerminalColors`. Removed `parseOsc11BackgroundColor()`.
+
 ### Added
 
 - Added `"auto"` to `TuiAltScreenOptions.wheelScrollLines`, which accelerates fast wheel spins on terminals that send one event per notch, and `TuiAltScreen.setWheelScrollLines()` for runtime updates ([#9758](https://github.com/earendil-works/pi/issues/9758)).
+- Added color values and styling: the `Color` type (indexed ANSI, sRGB, or OKLCH), `parseColor()` for `#rgb`, `#rrggbb`, `oklch()`, and `okhsl()` values, `indexedColor()`, `rgbColor()`, `oklchColor()`, `okhslColor()`, `mixColors()`, `colorToHex()`, `colorToRgb()`, `colorToOklch()`, `colorToOkhsl()`, `styleText()`, `getTerminalColorMode()`, and related helpers.
+- Added `NativeClipboard.getFilePaths()`, which reads file URLs from the macOS clipboard ([#9999](https://github.com/earendil-works/pi/issues/9999), [#10136](https://github.com/earendil-works/pi/pull/10136) by [@christianklotz](https://github.com/christianklotz)).
+
+### Changed
+
+- Terminals with `TERM=*-direct` are now detected as truecolor.
 
 ### Fixed
 
 - Fixed `/skill` autocomplete appearing empty when loaded skill names did not contain the letters in `skill` ([#9944](https://github.com/earendil-works/pi/issues/9944)).
 - Fixed path and `@` autocomplete not working after opening wrappers such as `(`, `[`, `{`, `<`, or a backtick, e.g. `(~/Dev<Tab>`.
-- Reduced image stretching in terminals that use the Kitty graphics protocol ([#8938](https://github.com/earendil-works/pi/issues/8938)).
+- Reduced image stretching in terminals that use the Kitty graphics protocol ([#8938](https://github.com/earendil-works/pi/issues/8938), [#9957](https://github.com/earendil-works/pi/pull/9957) by [@rwachtler](https://github.com/rwachtler)).
+- Fixed keyboard input being lost after a component that forwarded a mouse event to a child, such as `SettingsList` with an open submenu, removed that child.
 - Fixed the shell cursor staying hidden after exit when an extension closed an overlay during shutdown ([#10026](https://github.com/earendil-works/pi/issues/10026)).
 - Improved rendering performance for styled text: `visibleWidth()` measures ANSI-styled ASCII without grapheme segmentation, `Box` checks its render cache without re-padding every line, and `Markdown` reuses parsed tokens across theme and width changes.
 

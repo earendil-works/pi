@@ -8,10 +8,12 @@ import {
 	McpOAuthAuthorizationRequiredError,
 	McpOAuthProvider,
 	MemoryOAuthStateStore,
+	type OAuthCallbackPage,
 	OAuthCallbackServer,
 	type OAuthClientInformationMixed,
 	type OAuthClientProvider,
 	type OAuthDiscoveryState,
+	OAuthInsecureEndpointError,
 	OAuthIssuerMismatchError,
 	type OAuthTokens,
 } from "../src/oauth/index.ts";
@@ -124,7 +126,8 @@ describe("MCP OAuth", () => {
 			if (url.pathname === "/register") {
 				const metadata = JSON.parse(await readBody(request)) as Record<string, unknown>;
 				response.writeHead(201, { "content-type": "application/json" });
-				response.end(JSON.stringify({ ...metadata, client_id: "test-client" }));
+				// Empty and null optional fields count as absent (#10266).
+				response.end(JSON.stringify({ ...metadata, client_id: "test-client", client_secret: "" }));
 				return;
 			}
 			if (url.pathname === "/authorize") {
@@ -140,7 +143,14 @@ describe("MCP OAuth", () => {
 				if (params.get("grant_type") === "refresh_token") {
 					refreshes++;
 					response.setHeader("content-type", "application/json");
-					response.end(JSON.stringify({ access_token: "refreshed-token", token_type: "Bearer" }));
+					response.end(
+						JSON.stringify({
+							access_token: "refreshed-token",
+							token_type: "Bearer",
+							refresh_token: "",
+							expires_in: null,
+						}),
+					);
 					return;
 				}
 				const challenge = createHash("sha256")
@@ -153,7 +163,12 @@ describe("MCP OAuth", () => {
 				}
 				response.setHeader("content-type", "application/json");
 				response.end(
-					JSON.stringify({ access_token: "first-token", refresh_token: "refresh-token", token_type: "Bearer" }),
+					JSON.stringify({
+						access_token: "first-token",
+						refresh_token: "refresh-token",
+						token_type: "Bearer",
+						scope: "",
+					}),
 				);
 				return;
 			}
@@ -176,7 +191,8 @@ describe("MCP OAuth", () => {
 			if (token !== "Bearer first-token" && token !== "Bearer refreshed-token") {
 				await readBody(request);
 				response.writeHead(401, {
-					"www-authenticate": `Bearer resource_metadata="${serverOrigin}/.well-known/oauth-protected-resource/mcp", scope="org:read"`,
+					// An empty scope falls through to the resource metadata's scopes_supported.
+					"www-authenticate": `Bearer resource_metadata="${serverOrigin}/.well-known/oauth-protected-resource/mcp", scope=""`,
 				});
 				response.end("Unauthorized");
 				return;
@@ -249,7 +265,13 @@ describe("MCP OAuth", () => {
 				openGetStream: false,
 			}),
 		);
-		expect(provider.tokenSet?.access_token).toBe("refreshed-token");
+		// Neither token response names a scope, so the grant has the requested scope.
+		expect(provider.tokenSet).toEqual({
+			access_token: "refreshed-token",
+			refresh_token: "refresh-token",
+			token_type: "Bearer",
+			scope: "org:read",
+		});
 		expect(refreshes).toBe(1);
 		await refreshedClient.close();
 		await callback.close();
@@ -259,6 +281,12 @@ describe("MCP OAuth", () => {
 		const grants: string[] = [];
 		const origin = await listen(async (request, response, serverOrigin) => {
 			const url = new URL(request.url ?? "/", serverOrigin);
+			if (url.pathname === "/.well-known/oauth-protected-resource/mcp") {
+				// Invalid resource metadata falls back to the server origin instead of failing discovery.
+				response.setHeader("content-type", "application/json");
+				response.end(JSON.stringify({ resource: `${serverOrigin}/mcp`, authorization_servers: ["not a url"] }));
+				return;
+			}
 			if (url.pathname === "/.well-known/oauth-authorization-server") {
 				response.setHeader("content-type", "application/json");
 				response.end(
@@ -321,7 +349,7 @@ describe("MCP OAuth", () => {
 	it("asks for authorization instead of refreshing when the server needs more scope", async () => {
 		const provider = new TestOAuthProvider("http://127.0.0.1/callback");
 		provider.client = { client_id: "client" };
-		provider.tokenSet = { access_token: "a1", refresh_token: "r1", token_type: "Bearer" };
+		provider.tokenSet = { access_token: "a1", refresh_token: "r1", token_type: "Bearer", scope: "repo read:org" };
 		const origin = await listen(async (request, response, serverOrigin) => {
 			const url = new URL(request.url ?? "/", serverOrigin);
 			if (url.pathname === "/.well-known/oauth-authorization-server") {
@@ -351,7 +379,8 @@ describe("MCP OAuth", () => {
 				token: "a1",
 			}),
 		).rejects.toBeInstanceOf(McpOAuthAuthorizationRequiredError);
-		expect(provider.authorizationUrl?.searchParams.get("scope")).toBe("repo admin");
+		// The challenge may list only the missing scopes; the new grant keeps the old ones too.
+		expect(provider.authorizationUrl?.searchParams.get("scope")).toBe("repo read:org admin");
 		// The working grant is kept until the user authorizes the new scope.
 		expect(provider.tokenSet?.access_token).toBe("a1");
 	});
@@ -397,5 +426,140 @@ describe("MCP OAuth", () => {
 			response.end();
 		});
 		await expect(discoverAuthorizationServerMetadata(origin)).rejects.toBeInstanceOf(OAuthIssuerMismatchError);
+	});
+
+	// #10172
+	it("uses a configured authorization server metadata document as is", async () => {
+		const origin = await listen(async (request, response, serverOrigin) => {
+			const url = new URL(request.url ?? "/", serverOrigin);
+			response.setHeader("content-type", "application/json");
+			if (url.pathname === "/.well-known/oauth-protected-resource/mcp") {
+				// Names the MCP server itself, which serves no authorization server metadata.
+				response.end(JSON.stringify({ resource: `${serverOrigin}/mcp`, authorization_servers: [serverOrigin] }));
+			} else if (url.pathname === "/idp/metadata.json") {
+				response.end(
+					JSON.stringify({
+						// Not derivable from the document URL; a configured document is not checked.
+						issuer: "https://idp.example",
+						authorization_endpoint: `${serverOrigin}/idp/authorize`,
+						token_endpoint: `${serverOrigin}/idp/token`,
+						response_types_supported: ["code"],
+					}),
+				);
+			} else {
+				response.statusCode = 404;
+				response.end();
+			}
+		});
+		const provider = new TestOAuthProvider("http://127.0.0.1/callback");
+		provider.client = { client_id: "client" };
+		const options = {
+			serverUrl: `${origin}/mcp`,
+			authorizationServerMetadataUrl: new URL(`${origin}/idp/metadata.json`),
+		};
+		expect(await authorizeMcp(provider, options)).toBe("REDIRECT");
+		const authorizationUrl = provider.authorizationUrl as URL;
+		expect(`${authorizationUrl.origin}${authorizationUrl.pathname}`).toBe(`${origin}/idp/authorize`);
+		expect(authorizationUrl.searchParams.get("resource")).toBe(`${origin}/mcp`);
+
+		const insecure = { ...options, authorizationServerMetadataUrl: new URL("http://idp.example/metadata.json") };
+		await expect(authorizeMcp(provider, insecure)).rejects.toBeInstanceOf(OAuthInsecureEndpointError);
+	});
+
+	it("exchanges a code only when its iss parameter names the authorization server", async () => {
+		const codes: string[] = [];
+		const origin = await listen(async (request, response) => {
+			codes.push(new URLSearchParams(await readBody(request)).get("code") ?? "");
+			response.setHeader("content-type", "application/json");
+			response.end(JSON.stringify({ access_token: "token", token_type: "Bearer" }));
+		});
+		const exchange = (code: string, iss: string | undefined, issParameterSupported: boolean) => {
+			const provider = new TestOAuthProvider("http://127.0.0.1/callback");
+			provider.client = { client_id: "client" };
+			provider.verifier = "verifier";
+			provider.discovery = {
+				authorizationServerUrl: origin,
+				authorizationServerMetadata: {
+					issuer: origin,
+					authorization_endpoint: `${origin}/authorize`,
+					token_endpoint: `${origin}/token`,
+					response_types_supported: ["code"],
+					authorization_response_iss_parameter_supported: issParameterSupported,
+				},
+			};
+			return authorizeMcp(provider, { serverUrl: `${origin}/mcp`, authorizationCode: code, iss });
+		};
+		await expect(exchange("other", "https://attacker.example", false)).rejects.toBeInstanceOf(
+			OAuthIssuerMismatchError,
+		);
+		await expect(exchange("missing", undefined, true)).rejects.toBeInstanceOf(OAuthIssuerMismatchError);
+		expect(await exchange("matching", origin, true)).toBe("AUTHORIZED");
+		// Servers that do not promise the parameter may omit it.
+		expect(await exchange("omitted", undefined, false)).toBe("AUTHORIZED");
+		expect(codes).toEqual(["matching", "omitted"]);
+	});
+});
+
+describe("OAuthCallbackServer pages", () => {
+	it("renders plain text by default", async () => {
+		const callback = await OAuthCallbackServer.listen();
+		try {
+			const pending = callback.waitForCallback("s1");
+			const response = await fetch(`${callback.redirectUrl}?code=abc&state=s1`);
+			expect(response.headers.get("content-type")).toBe("text/plain; charset=utf-8");
+			expect(await response.text()).toBe("Authorization complete. You may close this window.");
+			expect((await pending).code).toBe("abc");
+		} finally {
+			await callback.close();
+		}
+	});
+
+	// #10302
+	it("rejects a response on another path than the expected one", async () => {
+		const callback = await OAuthCallbackServer.listen({ extraPaths: ["/callback/server-id"] });
+		try {
+			const origin = new URL(callback.redirectUrl).origin;
+			const mixedUp = callback.waitForCallback("s1", "/callback/server-id");
+			mixedUp.catch(() => undefined);
+			const wrong = await fetch(`${origin}/callback?code=abc&state=s1`);
+			expect(wrong.status).toBe(400);
+			await expect(mixedUp).rejects.toThrow("arrived on another redirect URI");
+
+			const pending = callback.waitForCallback("s2", "/callback/server-id");
+			const right = await fetch(`${origin}/callback/server-id?code=abc&state=s2`);
+			expect(right.status).toBe(200);
+			expect((await pending).code).toBe("abc");
+		} finally {
+			await callback.close();
+		}
+	});
+
+	it("renders pages through renderPage", async () => {
+		const pages: OAuthCallbackPage[] = [];
+		const callback = await OAuthCallbackServer.listen({
+			renderPage: (page) => {
+				pages.push(page);
+				return page.ok ? "<p>ok</p>" : `<p>${page.message}</p>`;
+			},
+		});
+		try {
+			const denied = callback.waitForCallback("s1");
+			denied.catch(() => undefined);
+			const failure = await fetch(`${callback.redirectUrl}?error=access_denied&error_description=Denied&state=s1`);
+			expect(failure.headers.get("content-type")).toBe("text/html; charset=utf-8");
+			await expect(denied).rejects.toThrow("Denied");
+			expect(pages.at(-1)).toEqual({
+				ok: false,
+				message: "Authorization failed. You may close this window.",
+				details: "Denied",
+			});
+
+			const pending = callback.waitForCallback("s2");
+			const success = await fetch(`${callback.redirectUrl}?code=abc&state=s2`);
+			expect(await success.text()).toBe("<p>ok</p>");
+			expect((await pending).code).toBe("abc");
+		} finally {
+			await callback.close();
+		}
 	});
 });

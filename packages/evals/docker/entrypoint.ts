@@ -29,7 +29,7 @@ function assertWorkspace(): void {
 	assertDirectoryEntries("/repo/packages", ["evals"]);
 	assertDirectoryEntries("/repo/packages/evals", ["docker", "evals", "package.json", "src", "vitest.evals.config.ts"]);
 	const codingAgentDir = "/repo/node_modules/@earendil-works/pi-coding-agent";
-	for (const name of ["package.json", "npm-shrinkwrap.json", "dist/index.js"]) {
+	for (const name of ["package.json", "dist/index.js"]) {
 		if (!existsSync(join(codingAgentDir, name))) throw new Error(`Installed coding-agent is missing ${name}.`);
 	}
 	const internalScope = "/repo/node_modules/@earendil-works";

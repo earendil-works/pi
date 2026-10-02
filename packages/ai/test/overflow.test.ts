@@ -41,6 +41,12 @@ describe("isContextOverflow", () => {
 		expect(isContextOverflow(message, 1048576)).toBe(true);
 	});
 
+	it("detects z.ai CN endpoint prompt-exceeds-max-length errors", () => {
+		// Regression for #10208.
+		const message = createErrorMessage('400 {"code":"1261","message":"Prompt exceeds max length"}', "zai");
+		expect(isContextOverflow(message, 1048576)).toBe(true);
+	});
+
 	it("detects Together AI context length errors", () => {
 		const message = createErrorMessage(
 			"400 The input (516368 tokens) is longer than the model's context length (262144 tokens).",

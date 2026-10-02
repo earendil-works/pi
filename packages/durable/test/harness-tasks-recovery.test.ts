@@ -2,11 +2,12 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Context, JsonValue } from "@earendil-works/chord";
-import { createModels } from "@earendil-works/pi-ai";
+import { createModels, Type } from "@earendil-works/pi-ai";
 import {
 	createRegistry,
 	defineDoc,
 	defineTask,
+	defineTool,
 	Harness,
 	MemoryStorage,
 	type Registry,
@@ -16,6 +17,7 @@ import {
 } from "@earendil-works/pi-durable";
 import { afterEach, describe, expect, it } from "vitest";
 import { openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";
+import { addTask, addTool } from "./harness-support.ts";
 import { ControlledStorage, context, flush } from "./session-support.ts";
 import { aborted, abortedWith, completed, countingReader, deferred, eventually, openTasks } from "./task-support.ts";
 
@@ -39,7 +41,7 @@ async function createIn<S extends { phase: string }, R>(
 	task: Task<null, S, R, object>,
 ): Promise<TaskId<R>> {
 	const root = await harness.root(context);
-	return root.commit((tx) => tx.createTask(task, null), context);
+	return root.commit((tx) => tx.createTask(task, null, { ownership: { kind: "conversation" } }), context);
 }
 
 /** Fake external service whose operations are idempotent by request key. */
@@ -114,7 +116,10 @@ describe("task recovery", () => {
 
 		const first = await openTasks(await openNodeSqliteStorage(path), [Transfer]);
 		const root = await first.harness.root(context);
-		const id = await root.commit((tx) => tx.createTask(Transfer, { amount: 7 }), context);
+		const id = await root.commit(
+			(tx) => tx.createTask(Transfer, { amount: 7 }, { ownership: { kind: "conversation" } }),
+			context,
+		);
 		first.harness.resume();
 		await eventually(() => service.calls === 1);
 		await first.harness.close(context);
@@ -401,7 +406,7 @@ describe("blocked tasks", () => {
 		expect((await harness.getTask(id, context))?.state.status).toBe("pending");
 		const idle = harness.waitForIdle(context);
 		await flush();
-		registry.tasks.add(V1);
+		addTask(registry, V1);
 		await idle;
 		expect((await harness.getTask(id, context))?.state).toEqual({
 			status: "terminal",
@@ -412,16 +417,14 @@ describe("blocked tasks", () => {
 
 	it("keeps a task stored by a newer version pending until a fitting definition is registered", async () => {
 		const registry = createRegistry();
-		const old = registry.tasks.add(versioned(1, "old"));
+		addTask(registry, versioned(1, "old"));
 		const { harness } = await openTasks(new MemoryStorage(), [], { registry });
 		const id = await createIn(harness, versioned(2, "new"));
 		harness.resume();
 		await flush();
 		expect((await harness.getTask(id, context))?.state.status).toBe("pending");
-		registry.batch(() => {
-			old.dispose();
-			registry.tasks.add(versioned(2, "new"));
-		});
+		// The same extension name replaces the old one in place.
+		addTask(registry, versioned(2, "new"));
 		expect((await harness.waitForTask(id, context)).state.outcome).toEqual({ status: "completed", result: "new" });
 		await harness.close(context);
 	});
@@ -434,7 +437,8 @@ describe("blocked tasks", () => {
 
 		const registry: Registry = createRegistry();
 		let failures = 0;
-		const failing = registry.tasks.add(
+		addTask(
+			registry,
 			versioned(2, "v2", () => {
 				failures++;
 				throw new Error("cannot migrate");
@@ -444,12 +448,15 @@ describe("blocked tasks", () => {
 		opened.harness.resume();
 		await eventually(() => opened.reports.length === 1);
 		// An unrelated registry change wakes the scheduler without retrying the same failed definition.
-		registry.tools.add({
-			name: "unrelated",
-			description: "unrelated",
-			parameters: { type: "object", properties: {} } as never,
-			execute: async () => ({}),
-		});
+		addTool(
+			registry,
+			defineTool({
+				name: "unrelated",
+				description: "unrelated",
+				parameters: Type.Object({}),
+				execute: async () => ({}),
+			}),
+		);
 		await flush();
 		expect(failures).toBe(1);
 		expect(opened.reports).toHaveLength(1);
@@ -460,15 +467,14 @@ describe("blocked tasks", () => {
 		});
 
 		const migrations: number[] = [];
-		registry.batch(() => {
-			failing.dispose();
-			registry.tasks.add(
-				versioned(2, "v2", (_input, checkpoint, fromVersion) => {
-					migrations.push(fromVersion);
-					return { input: null, checkpoint: checkpoint as Step };
-				}),
-			);
-		});
+		// The same extension name replaces the old one in place.
+		addTask(
+			registry,
+			versioned(2, "v2", (_input, checkpoint, fromVersion) => {
+				migrations.push(fromVersion);
+				return { input: null, checkpoint: checkpoint as Step };
+			}),
+		);
 		const receipt = await opened.harness.waitForTask(id, context);
 		expect(receipt).toMatchObject({ version: 2, state: { outcome: { status: "completed", result: "v2" } } });
 		expect(migrations).toEqual([1]);
@@ -498,7 +504,7 @@ describe("blocked tasks", () => {
 		const { harness } = await openTasks(new MemoryStorage(), []);
 		const root = await harness.root(context);
 		const id = await root.commit(async (tx) => {
-			const created = await tx.createTask(versioned(1, "x"), null);
+			const created = await tx.createTask(versioned(1, "x"), null, { ownership: { kind: "conversation" } });
 			(await tx.doc(Scratch, created)).n = 1;
 			return created;
 		}, context);
@@ -529,7 +535,7 @@ describe("blocked tasks", () => {
 			},
 		});
 		const registry = createRegistry();
-		const registration = registry.tasks.add(Running);
+		const registration = addTask(registry, Running);
 		const { harness } = await openTasks(new MemoryStorage(), [], { registry });
 		const id = await createIn(harness, Running);
 		harness.resume();
@@ -610,7 +616,7 @@ describe("definition handover", () => {
 
 	async function startHandover(log: string[], gates: Gates, storage = new MemoryStorage()) {
 		const registry = createRegistry();
-		const old = registry.tasks.add(handoverTask("old", 1, log, { gates }));
+		const old = addTask(registry, handoverTask("old", 1, log, { gates }));
 		const opened = await openTasks(storage, [], { registry });
 		const id = await createIn(opened.harness, handoverTask("old", 1, log));
 		opened.harness.resume();
@@ -621,27 +627,61 @@ describe("definition handover", () => {
 	it("hands over at the next phase boundary to a same-version replacement without overlap", async () => {
 		const log: string[] = [];
 		const gate = deferred();
-		const { harness, registry, old, id } = await startHandover(log, { a: gate.promise });
-		registry.batch(() => {
-			old.dispose();
-			registry.tasks.add(handoverTask("new", 1, log));
-		});
+		const { harness, registry, id } = await startHandover(log, { a: gate.promise });
+		// The same extension name replaces the old one in place.
+		addTask(registry, handoverTask("new", 1, log));
 		gate.resolve();
 		await harness.waitForTask(id, context);
 		expect(log).toEqual(["old:a start", "old:a end", "new:b start", "new:b end", "new:c"]);
 		await harness.close(context);
 	});
 
+	it("keeps the memos across a handover", async () => {
+		type Memoed = { phase: "a" } | { phase: "b" };
+		const log: string[] = [];
+		const gate = deferred();
+		const reached = deferred();
+		const memoTask = (label: string) =>
+			defineTask<null, Memoed, string>({
+				name: "test.handover-memo",
+				version: 1,
+				initial: () => ({ phase: "a" }),
+				phases: {
+					a: async (_task, runtime, ctx) => {
+						await runtime.memo("picked", label, ctx);
+						reached.resolve();
+						await gate.promise;
+						await runtime.commit(() => ({ status: "running", checkpoint: { phase: "b" } }), ctx);
+					},
+					b: async (_task, runtime, ctx) => {
+						// The candidate loses to the memo the old definition stored.
+						const picked = await runtime.memo("picked", label, ctx);
+						log.push(`${label}:b ${picked}`);
+						await runtime.commit(() => completed(picked), ctx);
+					},
+				},
+				abort: async () => {},
+			});
+		const registry = createRegistry();
+		addTask(registry, memoTask("old"));
+		const { harness } = await openTasks(new MemoryStorage(), [], { registry });
+		const id = await createIn(harness, memoTask("old"));
+		harness.resume();
+		await reached.promise;
+		addTask(registry, memoTask("new"));
+		gate.resolve();
+		const receipt = await harness.waitForTask(id, context);
+		expect(receipt.state.outcome).toEqual({ status: "completed", result: "old" });
+		expect(log).toEqual(["new:b old"]);
+		await harness.close(context);
+	});
+
 	it("hands over to a newer version with a migration", async () => {
 		const log: string[] = [];
 		const gate = deferred();
-		const { harness, registry, old, id } = await startHandover(log, { a: gate.promise });
-		registry.batch(() => {
-			old.dispose();
-			registry.tasks.add(
-				handoverTask("v2", 2, log, { migrate: () => ({ input: null, checkpoint: { phase: "c" } }) }),
-			);
-		});
+		const { harness, registry, id } = await startHandover(log, { a: gate.promise });
+		// The same extension name replaces the old one in place.
+		addTask(registry, handoverTask("v2", 2, log, { migrate: () => ({ input: null, checkpoint: { phase: "c" } }) }));
 		gate.resolve();
 		const receipt = await harness.waitForTask(id, context);
 		expect(receipt.version).toBe(2);
@@ -652,17 +692,16 @@ describe("definition handover", () => {
 	it("hands over to a newer version whose migration fails and leaves the task blocked", async () => {
 		const log: string[] = [];
 		const gate = deferred();
-		const { harness, registry, old, id, reports } = await startHandover(log, { a: gate.promise });
-		registry.batch(() => {
-			old.dispose();
-			registry.tasks.add(
-				handoverTask("broken", 2, log, {
-					migrate: () => {
-						throw new Error("broken migration");
-					},
-				}),
-			);
-		});
+		const { harness, registry, id, reports } = await startHandover(log, { a: gate.promise });
+		// The same extension name replaces the old one in place.
+		addTask(
+			registry,
+			handoverTask("broken", 2, log, {
+				migrate: () => {
+					throw new Error("broken migration");
+				},
+			}),
+		);
 		gate.resolve();
 		await eventually(() => reports.length === 1);
 		await flush();
@@ -683,7 +722,7 @@ describe("definition handover", () => {
 		gateA.resolve();
 		await eventually(() => log.includes("old:b start"));
 		// A newer definition without a migration cannot take the task either.
-		registry.tasks.add(handoverTask("incompatible", 2, log));
+		addTask(registry, handoverTask("incompatible", 2, log));
 		gateB.resolve();
 		await harness.waitForTask(id, context);
 		expect(log).toEqual(["old:a start", "old:a end", "old:b start", "old:b end", "old:c"]);
@@ -719,16 +758,14 @@ describe("definition handover", () => {
 			},
 			abort: async () => {},
 		});
-		const old = registry.tasks.add(Old);
+		addTask(registry, Old);
 		const { harness } = await openTasks(storage, [], { registry });
 		harnessRef = harness;
 		const id = await createIn(harness, Old);
 		harness.resume();
 		await eventually(() => oldRuntime !== undefined);
-		registry.batch(() => {
-			old.dispose();
-			registry.tasks.add(handoverTask("new", 1, log));
-		});
+		// The same extension name replaces the old one in place.
+		addTask(registry, handoverTask("new", 1, log));
 		gate.resolve();
 		await eventually(() => held !== undefined);
 		await held!.entered;
@@ -754,11 +791,9 @@ describe("definition handover", () => {
 				held ??= storage.holdCommits();
 			},
 		};
-		const { harness, registry, old, id } = await startHandover(log, gates, storage);
-		registry.batch(() => {
-			old.dispose();
-			registry.tasks.add(handoverTask("new", 1, log));
-		});
+		const { harness, registry, id } = await startHandover(log, gates, storage);
+		// The same extension name replaces the old one in place.
+		addTask(registry, handoverTask("new", 1, log));
 		gate.resolve();
 		await eventually(() => held !== undefined);
 		await held!.entered;

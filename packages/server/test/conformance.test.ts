@@ -1,5 +1,5 @@
 import type { ServiceCall } from "@earendil-works/chord";
-import { BACKGROUND_CONTEXT, type SessionMetadata } from "@earendil-works/pi-agent-core";
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { afterEach, describe, expect, test } from "vitest";
 import type { ByteConnection, ByteConnectionHandler } from "../src/connection.ts";
 import { SessionAmbiguousError } from "../src/errors.ts";
@@ -11,7 +11,7 @@ import {
 	TestServerHost,
 	type WireChannel,
 } from "../src/testing/index.ts";
-import type { ServerHost } from "../src/types.ts";
+import type { ServerHost, SessionMetadata } from "../src/types.ts";
 
 const serverId = "00000000-0000-4000-8000-000000000001";
 const servers = new Set<Server>();
@@ -105,9 +105,6 @@ describe("Session protocol", () => {
 		type BackendMetadata = SessionMetadata & { path: string; modifiedAt: number };
 		const metadata: BackendMetadata = {
 			id: "session-1",
-			createdAt: 1,
-			storageVersion: 1,
-			cwd: "/workspace",
 			path: "/sessions/session-1.jsonl",
 			modifiedAt: 2,
 		};
@@ -399,7 +396,7 @@ describe("Session protocol", () => {
 
 describe("routed Session acquisition failures", () => {
 	test("releases a lease acquired concurrently with Harness termination", async () => {
-		const metadata: SessionMetadata = { id: "session-1", createdAt: 1, storageVersion: 1 };
+		const metadata: SessionMetadata = { id: "session-1" };
 		const acquiring = new Deferred<void>();
 		const continueAcquiring = new Deferred<void>();
 		const terminated = new Deferred<Error | undefined>();

@@ -1,15 +1,9 @@
 import { defineService, type ReplicatedState } from "@earendil-works/chord";
-import type { LaneTranscriptSnapshot, LaneWatchEvent } from "@earendil-works/pi-agent-core";
+import type { ConversationView } from "@earendil-works/pi-durable";
 
-export interface TranscriptState {
-	snapshot: LaneTranscriptSnapshot | null;
-	/** The source event is retained for presentation side effects; hydration does not replay it. */
-	event: LaneWatchEvent | null;
-}
-
-/** Coherent main-lane state replicated through Chord's operation stream. */
+/** The root conversation's durable view: active entries and its live, inbox, agent, and usage documents. */
 export interface Transcript {
-	readonly state: ReplicatedState<TranscriptState>;
+	readonly state: ReplicatedState<ConversationView>;
 }
 
 export const Transcript = defineService<Transcript>("pi.transcript");

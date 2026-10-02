@@ -75,7 +75,6 @@ function task(id: TaskId<JsonValue>, index: number): StoredTask {
 		kind: index % 4 === 0 ? "benchmark.filtered" : "benchmark.other",
 		version: 1,
 		input: { index },
-		after: [],
 		background: index % 5 === 0,
 		abortRequested: index % 7 === 0,
 	};

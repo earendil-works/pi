@@ -83,6 +83,26 @@ describe("generateSystemThemeColors", () => {
 		expect(Math.abs(hue(resolved(DRACULA, "error")) - hue(DRACULA.palette![1]))).toBeLessThan(8);
 	});
 
+	// https://github.com/earendil-works/pi/issues/10255
+	it("keeps pastel palette colors pastel at other lightnesses", () => {
+		const frappe: SystemThemeInput = {
+			background: rgb("#303446"),
+			foreground: rgb("#c6d0f5"),
+			palette: ["#51576d", "#e78284", "#a6d189", "#e5c890", "#8caaee", "#f4b8e4", "#81c8be", "#b5bfe2"]
+				.concat(["#626880", "#e67172", "#8ec772", "#d9ba73", "#7b9ef0", "#f2a4db", "#5abfb5", "#a5adce"])
+				.map(rgb),
+		};
+		const chroma = ({ r, g, b }: RgbColor) => colorToOklch(rgbColor(r, g, b)).c;
+		const pink = frappe.palette![5];
+		const accent = resolved(frappe, "accent");
+		// The accent is darker than the pink, but must not gain chroma (it was 2x before the cap).
+		expect(lightness(accent)).toBeLessThan(lightness(pink) - 0.05);
+		expect(chroma(accent)).toBeLessThanOrEqual(chroma(pink) * 1.03);
+		for (const panel of ["userMessageBg", "customMessageBg"] as const) {
+			expect(chroma(resolved(frappe, panel)), panel).toBeLessThanOrEqual(0.1);
+		}
+	});
+
 	it("renders grayscale at zero saturation", () => {
 		const { colors } = generateSystemThemeColors({ ...DRACULA, saturation: 0 });
 		expect(colorToOklch(parseColor(colors.error as string)).c).toBeLessThan(0.005);

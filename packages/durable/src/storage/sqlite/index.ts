@@ -1,4 +1,4 @@
-export type { SqliteDatabase, SqliteStatement, SqliteValue } from "./database.ts";
+export type { SqliteDatabase, SqliteExecutor, SqliteValue } from "./database.ts";
 export {
 	applySqliteMigrations,
 	CURRENT_SQLITE_SCHEMA_VERSION,

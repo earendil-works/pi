@@ -10,9 +10,9 @@ const transport: SystemOneTransport = {
 	label: "System One API",
 	url: (model) => new URL("systemone", `${model.baseUrl.replace(/\/+$/u, "")}/`),
 	payload: (model, request) => ({ model: model.id, ...request }),
-	answers: (body) => {
+	output: (body) => {
 		if (!isRecord(body)) throw new Error("System One API returned an unexpected response");
-		return body.answers;
+		return body;
 	},
 };
 

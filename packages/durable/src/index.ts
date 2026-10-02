@@ -1,43 +1,100 @@
 export { defineDoc, defineDocFamily } from "./documents.ts";
-export { defineEntry } from "./entries.ts";
-export { ReadAfterWrite, StorageRejected } from "./errors.ts";
-export { ConversationConfig, type ConversationConfigState } from "./harness/config.ts";
+export {
+	AssistantEntry,
+	CompactionEntry,
+	defineEntry,
+	ResetEntry,
+	SystemEntry,
+	ToolResultEntry,
+	UserEntry,
+} from "./entries.ts";
+export { ConversationBusy, ReadAfterWrite, StorageRejected } from "./errors.ts";
+export {
+	AgentDoc,
+	configure,
+	DEFAULT_COMPACTION_POLICY,
+	DEFAULT_RETRY_POLICY,
+} from "./harness/agent.ts";
+export {
+	type CompactionCheckpoint,
+	type CompactionInput,
+	CompactionTask,
+	type SummaryRequest,
+} from "./harness/compaction.ts";
+export { defineExtension, defineTool, hook, section, wrapSection, wrapTool } from "./harness/define.ts";
+export {
+	type AgentEvent,
+	type AgentEventStream,
+	type MessageChange,
+	type SnapshotEvent,
+	watchEvents,
+} from "./harness/events.ts";
+export {
+	type GenerationCheckpoint,
+	type GenerationInput,
+	type GenerationResult,
+	GenerationTask,
+} from "./harness/generation.ts";
 export { Harness } from "./harness/harness.ts";
+export { InboxDoc, type InboxItem, type InboxState } from "./harness/inbox.ts";
+export { type CompactionStatus, LiveDoc, type LiveState, type ToolSlot } from "./harness/live.ts";
 export { createRegistry } from "./harness/registry.ts";
+export type { TaskGraph, TaskGraphNode, TaskGraphState, TaskGraphWatch } from "./harness/task-graph.ts";
+export { ToolTask, type ToolTaskCheckpoint, type ToolTaskInput, type ToolTaskResult } from "./harness/tool.ts";
 export type {
+	Agent,
+	AgentChange,
+	AgentState,
 	AnyTask,
+	CompactionHooks,
+	CompactionPolicy,
+	CompactionReason,
+	CompactionResult,
 	ContextView,
 	Conversation,
+	ConversationAbortOptions,
 	ConversationCreateOptions,
 	ConversationHandle,
 	ConversationInit,
-	DocumentReader,
-	Entry,
+	ConversationRetryPolicy,
+	ConversationStreamOptions,
+	ConversationWatch,
+	EnvTarget,
+	Extension,
+	GenerationHooks,
+	HarnessInspection,
 	HarnessOptions,
+	HarnessSettings,
+	HookApi,
 	HookRegistration,
-	HookScope,
+	HookResult,
 	HooksOf,
 	InputSubmissionDraft,
 	ModelRef,
 	PromptInput,
 	PromptSection,
-	PromptSectionWrapper,
-	Registration,
+	QueueMode,
 	Registry,
-	RegistryFailure,
 	RegistryReader,
 	RegistrySnapshot,
+	Settings,
 	SettledSubmissionRecord,
 	SettledTask,
 	Submission,
 	SubmissionDraft,
+	TaskInspection,
 	ToolControl,
+	ToolDiagnostic,
 	ToolExecutionApi,
+	ToolExecutionMode,
 	ToolExecutionResult,
+	ToolHooks,
 	ToolRegistration,
-	ToolWrapper,
 	UserInput,
+	Wrap,
 } from "./harness/types.ts";
+export { UsageDoc, type UsageState } from "./harness/usage.ts";
+export type { ConversationView } from "./harness/view.ts";
 export { createSession } from "./session/session.ts";
 export { MemoryStorage } from "./storage/memory.ts";
 export { defineTask } from "./tasks.ts";
@@ -67,15 +124,19 @@ export type {
 	DocumentObserver,
 	DocumentPoint,
 	DocumentQuery,
+	DocumentReader,
 	DocumentRecord,
 	DocumentSemantics,
 	DocumentState,
 	DocumentWatch,
+	Entry,
 	EntryDraft,
 	EntryId,
 	EntryQuery,
 	EntryRecord,
+	HookRunner,
 	Id,
+	JoinPolicy,
 	JsonObject,
 	LatestConversationSemantics,
 	NextTaskState,
@@ -94,7 +155,9 @@ export type {
 	StoredDocument,
 	SubmissionCreate,
 	SubmissionId,
+	SubmissionQuery,
 	SubmissionRecord,
+	SubmissionSettlement,
 	TableCommitChange,
 	Task,
 	TaskDefinition,
@@ -104,11 +167,14 @@ export type {
 	TaskOptions,
 	TaskOutcome,
 	TaskOutcomeError,
+	TaskOwnership,
 	TaskQuery,
 	TaskRecord,
 	TaskRuntime,
 	TaskState,
 	Tx,
+	TypedEntry,
+	TypedEntryDraft,
 	WatchEnd,
 	WatchHandle,
 } from "./types.ts";

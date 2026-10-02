@@ -31,7 +31,7 @@ import type { InlineExtension } from "./core/extensions/types.ts";
 import { ModelRuntime } from "./core/model-runtime.ts";
 import { DefaultPackageManager } from "./core/package-manager.ts";
 import { type AppMode, resolveProjectTrusted } from "./core/project-trust.ts";
-import { DefaultResourceLoader } from "./core/resource-loader.ts";
+import { DefaultResourceLoader, isBuiltinExtension } from "./core/resource-loader.ts";
 import { SettingsManager } from "./core/settings-manager.ts";
 import { hasTrustRequiringProjectResources, ProjectTrustStore } from "./core/trust-manager.ts";
 import { spawnProcess, spawnProcessSync, waitForChildProcess } from "./utils/child-process.ts";
@@ -839,14 +839,18 @@ export async function handleConfigCommand(
 		return true;
 	}
 	reportSettingsErrors(settingsManager, "config command");
+	const builtinExtensions = (runtimeOptions.extensionFactories ?? [])
+		.filter(isBuiltinExtension)
+		.map((input) => input.name);
 	const globalSettingsManager = SettingsManager.create(cwd, agentDir, { projectTrusted: false });
 	const globalResolvedPaths = await new DefaultPackageManager({
 		cwd,
 		agentDir,
 		settingsManager: globalSettingsManager,
+		builtinExtensions,
 	}).resolve();
 	const projectResolvedPaths = settingsManager.isProjectTrusted()
-		? await new DefaultPackageManager({ cwd, agentDir, settingsManager }).resolve()
+		? await new DefaultPackageManager({ cwd, agentDir, settingsManager, builtinExtensions }).resolve()
 		: globalResolvedPaths;
 
 	await selectConfig({
@@ -1089,6 +1093,19 @@ export async function handlePackageCommand(
 						return true;
 					}
 					console.log(chalk.green(`Updated ${APP_NAME} from ${VERSION} to ${selfUpdatePlan.version}`));
+					// The pi.dev installer migrates global npm installs to a managed install
+					// that pins all dependencies. It does not migrate pnpm, yarn, or bun installs.
+					if (installMethod === "npm") {
+						const installerCommand =
+							process.platform === "win32"
+								? 'powershell -c "irm https://pi.dev/install.ps1 | iex"'
+								: "curl -fsSL https://pi.dev/install.sh | sh";
+						console.log();
+						console.log(chalk.yellow(`This npm installation of ${APP_NAME} does not pin its dependencies.`));
+						console.log(chalk.yellow("Run the installer to migrate to a managed installation that does:"));
+						console.log();
+						console.log(`  ${chalk.bold(installerCommand)}`);
+					}
 				}
 				return true;
 			}

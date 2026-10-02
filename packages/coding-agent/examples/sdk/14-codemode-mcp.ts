@@ -6,8 +6,8 @@
  *
  * `codemode` and `tool_search` are registered inactive. Enable them through the `defaultTools` setting
  * (`tools` would also restrict the session to the named tools, which hides MCP tools), or let the
- * MCP extension activate them: `codemode` for servers with `codemode` or `codemode-deferred` exposure,
- * `tool_search` for servers with `deferred` exposure.
+ * MCP extension activate them: `codemode` for servers with `codemode` exposure, `tool_search` for
+ * servers with `deferred` exposure.
  */
 
 import {
@@ -36,7 +36,8 @@ const resourceLoader = new DefaultResourceLoader({
 await resourceLoader.reload();
 
 const settingsManager = SettingsManager.create(cwd);
-settingsManager.applyOverrides({ defaultTools: ["read", "bash", "edit", "write", "codemode", "tool_search"] });
+// `+name` adds to the configured default tools instead of replacing them.
+settingsManager.applyOverrides({ defaultTools: ["+codemode", "+tool_search"] });
 
 const { session } = await createAgentSession({
 	resourceLoader,

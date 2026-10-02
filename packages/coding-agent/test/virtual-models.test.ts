@@ -14,7 +14,7 @@ import { AuthStorage } from "../src/core/auth-storage.ts";
 import { ModelRuntime } from "../src/core/model-runtime.ts";
 import { createAgentSession } from "../src/core/sdk.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
-import type { ModelRouteRequest, VirtualModelDefinition } from "../src/core/virtual-models.ts";
+import { getBranchSelection, type ModelRouteRequest, type VirtualModelDefinition } from "../src/core/virtual-models.ts";
 import { createTestResourceLoader } from "./utilities.ts";
 
 async function createRuntime(requests: ModelRouteRequest[] = []) {
@@ -50,6 +50,68 @@ async function createRuntime(requests: ModelRouteRequest[] = []) {
 function assistantFrom(model: Model<string>, text: string): AssistantMessage {
 	return { ...fauxAssistantMessage(text), api: model.api, provider: model.provider, model: model.id };
 }
+
+describe("getBranchSelection", () => {
+	function select(build: (sessionManager: SessionManager) => void, runtime: ModelRuntime) {
+		const sessionManager = SessionManager.inMemory();
+		build(sessionManager);
+		const lookups: string[] = [];
+		const selection = getBranchSelection(sessionManager.getBranch(), (provider, modelId) => {
+			lookups.push(`${provider}/${modelId}`);
+			return runtime.getModel(provider, modelId);
+		});
+		return { selection, lookups };
+	}
+
+	// #10198: the selection must not cost one catalog lookup per assistant message.
+	it("looks up only the last model_change", async () => {
+		const { runtime, virtual } = await createRuntime();
+		const small = runtime.getModel("faux", "small")!;
+		const large = runtime.getModel("faux", "large")!;
+
+		const physical = select((sessionManager) => {
+			sessionManager.appendModelChange(small.provider, small.id);
+			for (let i = 0; i < 100; i++) sessionManager.appendMessage(assistantFrom(large, "ok"));
+		}, runtime);
+		expect(physical.selection).toEqual({ provider: "faux", modelId: "large" });
+		expect(physical.lookups).toEqual(["faux/small"]);
+
+		const routed = select((sessionManager) => {
+			sessionManager.appendModelChange(small.provider, small.id);
+			sessionManager.appendMessage(assistantFrom(small, "ok"));
+			sessionManager.appendModelChange(virtual.provider, virtual.id);
+			for (let i = 0; i < 100; i++) sessionManager.appendMessage(assistantFrom(large, "ok"));
+		}, runtime);
+		expect(routed.selection).toEqual({ provider: "router", modelId: "auto" });
+		expect(routed.lookups).toEqual(["router/auto"]);
+	});
+
+	it("uses the last model_change without responses after it", async () => {
+		const { runtime, virtual } = await createRuntime();
+		const small = runtime.getModel("faux", "small")!;
+		const { selection, lookups } = select((sessionManager) => {
+			sessionManager.appendModelChange(virtual.provider, virtual.id);
+			sessionManager.appendMessage(assistantFrom(small, "ok"));
+			sessionManager.appendModelChange(small.provider, small.id);
+		}, runtime);
+		expect(selection).toEqual({ provider: "faux", modelId: "small" });
+		expect(lookups).toEqual([]);
+	});
+
+	it("uses the latest physical response without a model_change", async () => {
+		const { runtime, virtual } = await createRuntime();
+		const small = runtime.getModel("faux", "small")!;
+		const large = runtime.getModel("faux", "large")!;
+		const { selection, lookups } = select((sessionManager) => {
+			sessionManager.appendMessage(assistantFrom(small, "ok"));
+			sessionManager.appendMessage(assistantFrom(large, "ok"));
+			// Failed routing leaves the virtual model on its message.
+			sessionManager.appendMessage({ ...assistantFrom(virtual, ""), stopReason: "error" });
+		}, runtime);
+		expect(selection).toEqual({ provider: "faux", modelId: "large" });
+		expect(lookups).toEqual([]);
+	});
+});
 
 describe("ModelRuntime virtual models", () => {
 	it("lists a virtual model and routes it to a physical model with a clamped thinking level", async () => {

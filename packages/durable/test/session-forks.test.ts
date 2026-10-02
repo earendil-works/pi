@@ -641,7 +641,7 @@ describe("Session conversation document forks", () => {
 		let taskId!: TaskId;
 		await session.commit(async (tx) => {
 			forkAt = (await tx.appendEntry(parentId, { kind: "point" })).id;
-			taskId = await tx.createTask(Work, null, { conversationId: parentId });
+			taskId = await tx.createTask(Work, null, { ownership: { kind: "conversation" }, conversationId: parentId });
 			await tx.doc(Copied, parentId);
 			await tx.doc(SessionOnly);
 			await tx.doc(TaskOnly, taskId);

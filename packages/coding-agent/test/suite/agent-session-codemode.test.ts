@@ -1,14 +1,18 @@
 import { readFileSync, rmSync } from "node:fs";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import {
+	type AssistantImages,
 	type ClassifierModel,
 	type ClassifierResult,
 	fauxAssistantMessage,
 	fauxToolCall,
+	getCurrentSystemPrompt,
 	getCurrentTools,
+	type ImageModel,
+	type ImagesContext,
 	type TranscriptContext,
 } from "@earendil-works/pi-ai";
-import type { ToolResultMessage } from "@earendil-works/pi-ai/compat";
+import type { ToolResultMessage, Usage } from "@earendil-works/pi-ai/compat";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ExtensionAPI } from "../../src/core/extensions/types.ts";
@@ -17,6 +21,7 @@ import { createToolDefinitionFromAgentTool } from "../../src/core/tools/tool-def
 import { readCodemodeStore } from "../../src/extensions/codemode/execute.ts";
 import { createCodemodeExtension } from "../../src/extensions/codemode/index.ts";
 import {
+	CODEMODE_DOCS_PATH,
 	CODEMODE_STORE_ENTRY_TYPE,
 	type CodemodeToolDetails,
 	createCodemodeTool,
@@ -65,6 +70,17 @@ const screenshotTool: AgentTool = {
 	}),
 };
 
+function usage(input: number, cost: number): Usage {
+	return {
+		input,
+		output: 0,
+		cacheRead: 0,
+		cacheWrite: 0,
+		totalTokens: input,
+		cost: { input: cost, output: 0, cacheRead: 0, cacheWrite: 0, total: cost },
+	};
+}
+
 const codemodeResult = (harness: Harness) => getToolResult(harness, "codemode");
 
 /** The output after the script header, which is checked on the way. */
@@ -104,29 +120,38 @@ describe("AgentSession codemode tool", () => {
 		const description = (name: string) =>
 			harness.session.agent.state.tools.find((tool) => tool.name === name)?.description ?? "";
 		const requestTools: string[][] = [];
+		const requestPrompts: string[] = [];
 		const record = (context: TranscriptContext) => {
 			requestTools.push(getCurrentTools(context.messages).map((tool) => tool.name));
+			requestPrompts.push(getCurrentSystemPrompt(context.messages));
 			return fauxAssistantMessage("ok");
 		};
 
-		// on: declared tools carry their codemode declaration and are not listed again in codemode.
-		harness.session.setActiveToolsByName(["echo", "codemode"]);
-		expect(description("echo")).toContain("codemode tool declaration:");
+		// on: declared tools say how scripts call them and are not listed again in codemode.
+		harness.session.setActiveToolsByName(["read", "echo", "codemode"]);
+		expect(description("echo")).toContain("Codemode: `tools.echo(args)` resolves to");
+		expect(description("echo")).not.toContain("codemode tool declaration:");
 		expect(description("codemode")).not.toContain("### `echo`");
 		harness.setResponses([record]);
 		await harness.session.prompt("on");
-		expect(requestTools[0]).toEqual(expect.arrayContaining(["echo", "codemode"]));
+		expect(requestTools[0]).toEqual(expect.arrayContaining(["read", "echo", "codemode"]));
+		expect(requestPrompts[0]).toContain("\n- read: ");
 
 		// only: codemode lists echo, which stays active but is left out of requests.
 		harness.settingsManager.applyOverrides({ codemode: { mode: "only" } });
-		harness.session.setActiveToolsByName(["echo", "codemode"]);
-		expect(description("echo")).not.toContain("codemode tool declaration:");
+		harness.session.setActiveToolsByName(["read", "echo", "codemode"]);
+		expect(description("echo")).not.toContain("Codemode: `tools.echo");
 		expect(description("codemode")).toContain("### `echo`");
 		expect(description("codemode")).not.toContain("### `stats`");
 		harness.setResponses([record]);
 		await harness.session.prompt("only");
 		expect(requestTools[1]).toContain("codemode");
 		expect(requestTools[1]).not.toContain("echo");
+		expect(requestTools[1]).not.toContain("read");
+		// The prompt's tool list matches the declarations: hidden tools are not listed (#10192).
+		expect(requestPrompts[1]).not.toContain("\n- read: ");
+		expect(requestPrompts[1]).toContain("\n- codemode: ");
+		expect(harness.session.systemPrompt).not.toContain("\n- read: ");
 
 		// Without codemode, tools keep their plain descriptions.
 		harness.session.setActiveToolsByName(["echo"]);
@@ -223,6 +248,41 @@ describe("AgentSession codemode tool", () => {
 		});
 		const details = result.details as unknown as CodemodeToolDetails;
 		expect(details.calls.map((call) => call.status)).toEqual(["error", "ok"]);
+	});
+
+	it("adds the usage of nested results to the codemode result", async () => {
+		const billedTool: AgentTool = {
+			name: "billed",
+			label: "Billed",
+			description: "Run a model",
+			parameters: Type.Object({}),
+			execute: async () => ({ content: [{ type: "text", text: "ran" }], details: {}, usage: usage(100, 0.25) }),
+		};
+		const harness = await setup([(pi) => pi.registerTool(createToolDefinitionFromAgentTool(billedTool))]);
+		harness.setResponses([
+			fauxAssistantMessage(
+				[
+					fauxToolCall("codemode", {
+						code: `await tools.billed({}); await tools.billed({}); await tools.echo({ text: "x" });`,
+					}),
+				],
+				{ stopReason: "toolUse" },
+			),
+			fauxAssistantMessage("done"),
+		]);
+
+		await harness.session.prompt("go");
+
+		const result = codemodeResult(harness);
+		expect(result.usage).toMatchObject({ input: 200, totalTokens: 200, cost: { total: 0.5 } });
+		// The usage is persisted with the result, so session totals count it.
+		const persisted = harness.sessionManager
+			.getEntries()
+			.find((entry) => entry.type === "message" && entry.message.role === "toolResult");
+		expect(
+			persisted?.type === "message" && persisted.message.role === "toolResult" && persisted.message.usage,
+		).toEqual(result.usage);
+		expect(harness.session.getSessionStats().cost).toBe(0.5);
 	});
 
 	it("keeps structured content that tool_result handlers replace along with the content", async () => {
@@ -371,7 +431,7 @@ describe("codemode options and store", () => {
 		const harness = await setup();
 		const result = await run(
 			harness,
-			'// @options: {"max_output_tokens": 10}\nfor (let i = 0; i < 100; i++) text("row " + i);\nimage("data:image/png;base64,AAAA");',
+			`// @options: {"max_output_tokens": 10}\nfor (let i = 0; i < 100; i++) text("row " + i);\nimage("data:image/png;base64,${TINY_PNG_BASE64}");`,
 		);
 		const details = result.details as unknown as CodemodeToolDetails;
 		const path = details.fullOutputPath;
@@ -385,7 +445,7 @@ describe("codemode options and store", () => {
 			expect(text).not.toContain("row 50\n");
 			expect(text).toContain(`[Full output: ${path} (read with offset/limit)]`);
 			// Images follow the truncated text.
-			expect(result.content.at(-1)).toEqual({ type: "image", data: "AAAA", mimeType: "image/png" });
+			expect(result.content.at(-1)).toEqual({ type: "image", data: TINY_PNG_BASE64, mimeType: "image/png" });
 			expect(readFileSync(path, "utf8")).toBe(Array.from({ length: 100 }, (_, i) => `row ${i}`).join("\n"));
 		} finally {
 			rmSync(path, { force: true });
@@ -493,10 +553,28 @@ describe("codemode models", () => {
 		headers: { "X-Secret": "hunter2" },
 	};
 
+	const painterModel: ImageModel<"test-images"> = {
+		type: "image",
+		id: "painter",
+		name: "Painter",
+		api: "test-images",
+		provider: "scorer",
+		baseUrl: "https://images.test/v1",
+		input: ["text", "image"],
+		output: ["text", "image"],
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+	};
+
 	interface ClassifyObservation {
 		baseUrl: string;
 		apiKey: string | undefined;
 		text: unknown;
+	}
+
+	interface ImagesObservation {
+		baseUrl: string;
+		apiKey: string | undefined;
+		input: ImagesContext["input"];
 	}
 
 	async function setup() {
@@ -506,11 +584,33 @@ describe("codemode models", () => {
 		});
 		harnesses.push(harness);
 		const observed: ClassifyObservation[] = [];
+		const imageRequests: ImagesObservation[] = [];
 		let active = 0;
 		let maxActive = 0;
 		harness.session.modelRuntime.registerProvider("scorer", {
 			apiKey: "secret-key",
-			models: [scorerModel],
+			models: [scorerModel, painterModel],
+			images: {
+				"test-images": {
+					generateImages: async (model, context, options): Promise<AssistantImages> => {
+						imageRequests.push({ baseUrl: model.baseUrl, apiKey: options?.apiKey, input: context.input });
+						const prompt = context.input.find((block) => block.type === "text")?.text;
+						const base = { api: model.api, provider: model.provider, model: model.id, timestamp: 0 };
+						if (prompt === "explode") {
+							return { ...base, output: [], stopReason: "error", errorMessage: "painter exploded" };
+						}
+						return {
+							...base,
+							output: [
+								{ type: "text", text: `painted ${prompt}` },
+								{ type: "image", data: TINY_PNG_BASE64, mimeType: "image/png" },
+							],
+							usage: usage(100, 0.04),
+							stopReason: "stop",
+						};
+					},
+				},
+			},
 			classifiers: {
 				"test-classifier": {
 					classify: async (model, context, options): Promise<ClassifierResult> => {
@@ -536,6 +636,7 @@ describe("codemode models", () => {
 							provider: model.provider,
 							model: model.id,
 							answers: { approved: { type: "bool", probability: text === "good" ? 0.9 : 0.1 } },
+							usage: usage(300, 0.001),
 							stopReason: "stop",
 							timestamp: 0,
 						};
@@ -544,7 +645,7 @@ describe("codemode models", () => {
 			},
 		});
 		harness.session.setActiveToolsByName(["codemode"]);
-		return { harness, observed, maxActive: () => maxActive };
+		return { harness, observed, imageRequests, maxActive: () => maxActive };
 	}
 
 	async function run(harness: Harness, code: string): Promise<ToolResultMessage> {
@@ -561,16 +662,14 @@ describe("codemode models", () => {
 	it("declares models only for the session's own codemode tool", async () => {
 		const { harness } = await setup();
 		const codemode = harness.session.agent.state.tools.find((tool) => tool.name === "codemode");
-		expect(codemode?.description).toContain("declare const models: {");
-		expect(codemode?.description).toContain(
-			"classify(model: ModelInfo, context: ClassifierContext): Promise<ClassifierResult>;",
-		);
-		expect(codemode?.description).toContain("interface ClassifierResult {");
+		// The description names the models globals and points to the docs for the API.
+		expect(codemode?.description).toContain("`models`: classifiers and image generation");
+		expect(codemode?.description).toContain(CODEMODE_DOCS_PATH);
 
 		const overridden = await createHarness({ tools: [createCodemodeTool() as AgentTool] });
 		harnesses.push(overridden);
 		const plain = overridden.session.agent.state.tools.find((tool) => tool.name === "codemode");
-		expect(plain?.description).not.toContain("declare const models");
+		expect(plain?.description).not.toContain("`models`");
 	});
 
 	it("lists models and classifies with catalog auth, ignoring script-supplied fields", async () => {
@@ -592,6 +691,7 @@ describe("codemode models", () => {
 				same: same.id,
 				missing: (await models.getModelOfType("classifier", "scorer", "nope")) === undefined,
 				probabilities: results.map((r) => r.answers.approved.probability),
+				cost: results[0].usage.cost.total,
 			};
 		`,
 		);
@@ -603,6 +703,7 @@ describe("codemode models", () => {
 			same: "judge",
 			missing: true,
 			probabilities: [0.9, 0.1, 0.9, 0.1, 0.9, 0.1],
+			cost: 0.001,
 		});
 		expect(observed).toHaveLength(6);
 		expect(
@@ -611,8 +712,82 @@ describe("codemode models", () => {
 		// Six classifications with at most four in flight.
 		expect(maxActive()).toBe(4);
 		const details = result.details as unknown as CodemodeToolDetails;
-		expect(details.calls.map((call) => [call.name, call.args, call.status])).toEqual(
-			Array.from({ length: 6 }, () => ["models.classify", "scorer/judge", "ok"]),
+		expect(details.calls.map((call) => [call.name, call.args, call.status, call.cost])).toEqual(
+			Array.from({ length: 6 }, () => ["models.classify", "scorer/judge", "ok", 0.001]),
+		);
+		// The classifications' usage becomes the codemode result's usage.
+		expect(result.usage?.input).toBe(1800);
+		expect(result.usage?.cost.total).toBeCloseTo(0.006, 10);
+		expect(harness.session.getSessionStats().cost).toBeCloseTo(0.006, 10);
+	});
+
+	it("generates images with catalog auth and attaches them through image()", async () => {
+		const { harness, imageRequests } = await setup();
+		const result = await run(
+			harness,
+			`
+			const [model] = await models.getAvailableOfType("image", "scorer");
+			const reference = { type: "image", data: "${TINY_PNG_BASE64}", mimeType: "image/png" };
+			const generated = await models.generateImages(
+				{ ...model, baseUrl: "https://evil.test" },
+				{ input: [{ type: "text", text: "a fox" }, reference] },
+			);
+			for (const block of generated.output) {
+				if (block.type === "image") image(block);
+				else text(block.text);
+			}
+			const failed = await models.generateImages(model, { input: [{ type: "text", text: "explode" }] });
+			const attempt = async (fn) => { try { await fn(); return "ok"; } catch (error) { return error.message; } };
+			return {
+				id: model.id,
+				stopReason: generated.stopReason,
+				failed: [failed.stopReason, failed.errorMessage],
+				wrongType: await attempt(() => models.generateImages({ provider: "scorer", id: "judge" }, { input: [] })),
+			};
+		`,
+		);
+		expect(result.isError).toBe(false);
+		const [text, ...rest] = resultText(result).split("\n");
+		expect(text).toBe("painted a fox");
+		expect(rest[0]).toBe("<image>");
+		expect(JSON.parse(rest.slice(1).join("\n"))).toEqual({
+			id: "painter",
+			stopReason: "stop",
+			failed: ["error", "painter exploded"],
+			wrongType:
+				'"scorer/judge" is a classifier model, not an image model. List the image models you can use with models.getAvailableOfType("image").',
+		});
+		expect(result.content[2]).toEqual({ type: "image", data: TINY_PNG_BASE64, mimeType: "image/png" });
+		expect(imageRequests.map((request) => [request.baseUrl, request.apiKey])).toEqual([
+			["https://images.test/v1", "secret-key"],
+			["https://images.test/v1", "secret-key"],
+		]);
+		expect(imageRequests[0].input).toEqual([
+			{ type: "text", text: "a fox" },
+			{ type: "image", data: TINY_PNG_BASE64, mimeType: "image/png" },
+		]);
+		const details = result.details as unknown as CodemodeToolDetails;
+		expect(details.calls.map((call) => [call.name, call.args, call.status, call.cost, call.error])).toEqual([
+			["models.generateImages", "scorer/painter", "ok", 0.04, undefined],
+			["models.generateImages", "scorer/painter", "error", undefined, "painter exploded"],
+		]);
+		expect(result.usage?.cost.total).toBeCloseTo(0.04, 10);
+		expect(harness.session.getSessionStats().cost).toBeCloseTo(0.04, 10);
+	});
+
+	it("notes generated images that the script did not show", async () => {
+		const { harness } = await setup();
+		const result = await run(
+			harness,
+			`
+			const [model] = await models.getAvailableOfType("image", "scorer");
+			const generated = await models.generateImages(model, { input: [{ type: "text", text: "a fox" }] });
+			return generated.stopReason;
+		`,
+		);
+		expect(result.isError).toBe(false);
+		expect(resultText(result)).toBe(
+			"stop\nNote: models.generateImages() returned 1 image that the script did not show. Show each image block of result.output with image(block).",
 		);
 	});
 
@@ -629,6 +804,13 @@ describe("codemode models", () => {
 				badType: await attempt(() => models.getModelsOfType("video")),
 				unknown: await attempt(() => models.classify({ provider: "scorer", id: "nope" }, {})),
 				noModel: await attempt(() => models.classify("judge", {})),
+				undefinedModel: await attempt(() => models.classify(undefined, {})),
+				noState: await attempt(() => models.classify(model, { questions: ${questions} })),
+				badQuestion: await attempt(() =>
+					models.classify(model, { state: {}, questions: { kind: { type: "choice", instructions: "Kind?", criteria: ["a", "b"] } } }),
+				),
+				badImage: await attempt(() => models.generateImages({ provider: "scorer", id: "painter" }, { prompt: "a fox" })),
+				badSplit: await attempt(() => models.getModelOfType("classifier", "scorer/judge")),
 			};
 		`,
 		);
@@ -636,11 +818,28 @@ describe("codemode models", () => {
 		const value = JSON.parse(resultText(result));
 		expect(value.failed).toEqual(["error", "classifier exploded"]);
 		expect(value.badType).toContain('Unknown model type "video"');
-		expect(value.unknown).toBe('Unknown classifier model "scorer/nope"');
-		expect(value.noModel).toContain("expects a model");
+		expect(value.unknown).toBe(
+			'Unknown classifier model "scorer/nope". List the classifier models you can use with models.getAvailableOfType("classifier").',
+		);
+		expect(value.noModel).toContain(
+			"models.classify() expects a classifier model as its first argument, got a string.",
+		);
+		expect(value.undefinedModel).toContain(
+			"models.getModelOfType() returns undefined for an unknown provider or id.",
+		);
+		expect(value.noState).toContain("models.classify() context.state must be an object, got undefined.");
+		expect(value.noState).toContain("codemode.md");
+		expect(value.badQuestion).toContain(
+			'context.questions.kind is a "choice" question, so criteria must map each label to its meaning.',
+		);
+		expect(value.badImage).toContain(
+			"models.generateImages() context.input must be a non-empty array of blocks, got undefined.",
+		);
+		expect(value.badSplit).toContain("The provider and the id are separate arguments");
 		const details = result.details as unknown as CodemodeToolDetails;
 		expect(details.calls.map((call) => [call.name, call.status, call.error])).toEqual([
 			["models.classify", "error", "classifier exploded"],
 		]);
+		expect(result.usage).toBeUndefined();
 	});
 });

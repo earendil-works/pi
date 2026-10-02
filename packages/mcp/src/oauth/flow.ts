@@ -16,6 +16,7 @@ import {
 	McpOAuthAuthorizationRequiredError,
 	OAuthError,
 	OAuthInsecureEndpointError,
+	OAuthIssuerMismatchError,
 	OAuthRegistrationError,
 } from "./errors.ts";
 import {
@@ -37,10 +38,21 @@ export type AddClientAuthentication = (
 	metadata?: AuthorizationServerMetadata,
 ) => void | Promise<void>;
 
+/** A Client ID Metadata Document: an https URL used as `client_id`, and a redirect URI it lists. */
+export interface OAuthClientMetadataDocument {
+	url: string;
+	redirectUrl: string;
+}
+
 export interface OAuthClientProvider {
 	readonly redirectUrl: string | URL;
 	readonly clientMetadata: OAuthClientMetadata;
-	readonly clientMetadataUrl?: string;
+	/**
+	 * Client ID Metadata Document to identify as instead of registering dynamically, or `undefined` to
+	 * register. Called when no client information is stored; the document is not stored. `metadata` is
+	 * `undefined` when the authorization server has none; check `client_id_metadata_document_supported`.
+	 */
+	clientMetadataDocument?(metadata: AuthorizationServerMetadata | undefined): OAuthClientMetadataDocument | undefined;
 	state?(): string | Promise<string>;
 	clientInformation(): OAuthClientInformationMixed | undefined | Promise<OAuthClientInformationMixed | undefined>;
 	saveClientInformation?(information: OAuthClientInformationMixed): void | Promise<void>;
@@ -58,8 +70,15 @@ export interface OAuthClientProvider {
 export interface OAuthFlowOptions {
 	serverUrl: string | URL;
 	authorizationCode?: string;
+	/** `iss` parameter of the authorization response that delivered `authorizationCode` (RFC 9207). */
+	iss?: string;
 	scope?: string;
 	resourceMetadataUrl?: URL;
+	/**
+	 * Authorization server metadata document to use instead of discovery, for servers that advertise a
+	 * wrong authorization server or none. It is trusted as configured. Must use https, except on loopback.
+	 */
+	authorizationServerMetadataUrl?: URL;
 	fetch?: McpFetch;
 	skipIssuerValidation?: boolean;
 	/**
@@ -255,8 +274,25 @@ export async function refreshAuthorization(
 	return { refresh_token: options.refreshToken, ...tokens };
 }
 
+function withScope(tokens: OAuthTokens, scope: string | undefined): OAuthTokens {
+	return tokens.scope === undefined && scope ? { ...tokens, scope } : tokens;
+}
+
+/**
+ * Scopes for a step-up authorization: the challenged scopes plus the ones granted so far, since a
+ * challenge may list only the missing scopes and a token with just those would lose access the old
+ * one had (SEP-2350). Without challenged scopes, `undefined` lets the flow pick its default.
+ */
+export function stepUpScope(granted: string | undefined, challenged: string | undefined): string | undefined {
+	if (!challenged) return undefined;
+	const scopes = [granted, challenged].flatMap((scope) => scope?.split(/\s+/).filter(Boolean) ?? []);
+	return [...new Set(scopes)].join(" ");
+}
+
 async function runFlow(provider: OAuthClientProvider, options: OAuthFlowOptions): Promise<OAuthFlowResult> {
-	const cached = await provider.discoveryState?.();
+	const metadataUrl = options.authorizationServerMetadataUrl && secureEndpoint(options.authorizationServerMetadataUrl);
+	// With a configured metadata URL, discovery is not cached, so changing the URL applies at once.
+	const cached = metadataUrl ? undefined : await provider.discoveryState?.();
 	const discovered = cached?.authorizationServerUrl
 		? {
 				authorizationServerUrl: cached.authorizationServerUrl,
@@ -270,36 +306,41 @@ async function runFlow(provider: OAuthClientProvider, options: OAuthFlowOptions)
 			}
 		: await discoverOAuthServerInfo(options.serverUrl, {
 				resourceMetadataUrl: options.resourceMetadataUrl,
+				authorizationServerMetadataUrl: metadataUrl,
 				fetch: options.fetch,
 				skipIssuerValidation: options.skipIssuerValidation,
 			});
-	await provider.saveDiscoveryState?.({
-		...discovered,
-		...(options.resourceMetadataUrl ? { resourceMetadataUrl: options.resourceMetadataUrl.href } : {}),
-	});
+	if (!metadataUrl) {
+		await provider.saveDiscoveryState?.({
+			...discovered,
+			...(options.resourceMetadataUrl ? { resourceMetadataUrl: options.resourceMetadataUrl.href } : {}),
+		});
+	}
 	const metadata = discovered.authorizationServerMetadata;
 	const resource = selectResource(options.serverUrl, discovered.resourceMetadata);
+	// `||`, not `??`: an empty scope (for example from `scopes_supported: []`) falls through to the next source.
 	const scope =
-		options.scope ?? discovered.resourceMetadata?.scopes_supported?.join(" ") ?? provider.clientMetadata.scope;
-	let client = await provider.clientInformation();
+		options.scope || discovered.resourceMetadata?.scopes_supported?.join(" ") || provider.clientMetadata.scope;
+	const stored = await provider.clientInformation();
+	const clientDocument = stored ? undefined : provider.clientMetadataDocument?.(metadata);
+	if (clientDocument) {
+		const url = new URL(clientDocument.url);
+		if (url.protocol !== "https:" || url.pathname === "/") throw new Error("Invalid OAuth client metadata URL");
+	}
+	let client = stored ?? (clientDocument && { client_id: clientDocument.url });
 	if (!client) {
 		if (options.authorizationCode) throw new Error("OAuth client information is missing during code exchange");
-		if (metadata?.client_id_metadata_document_supported && provider.clientMetadataUrl) {
-			const url = new URL(provider.clientMetadataUrl);
-			if (url.protocol !== "https:" || url.pathname === "/") throw new Error("Invalid OAuth client metadata URL");
-			client = { client_id: provider.clientMetadataUrl };
-			await provider.saveClientInformation?.(client);
-		} else {
-			if (!provider.saveClientInformation) throw new Error("OAuth client information cannot be persisted");
-			client = await registerClient(discovered.authorizationServerUrl, {
-				metadata,
-				clientMetadata: provider.clientMetadata,
-				scope,
-				fetch: options.fetch,
-			});
-			await provider.saveClientInformation(client);
-		}
+		if (!provider.saveClientInformation) throw new Error("OAuth client information cannot be persisted");
+		client = await registerClient(discovered.authorizationServerUrl, {
+			metadata,
+			clientMetadata: provider.clientMetadata,
+			scope,
+			fetch: options.fetch,
+		});
+		await provider.saveClientInformation(client);
 	}
+	// The document's redirect URI may differ from the provider's, for example by a server-specific path.
+	const redirectUrl = clientDocument?.redirectUrl ?? provider.redirectUrl;
 	const tokenOptions: TokenRequestOptions = {
 		metadata,
 		clientInformation: client,
@@ -308,13 +349,20 @@ async function runFlow(provider: OAuthClientProvider, options: OAuthFlowOptions)
 		fetch: options.fetch,
 	};
 	if (options.authorizationCode) {
+		// RFC 9207: never send a code from another authorization server to this one.
+		const iss = options.iss;
+		if (metadata && (iss !== undefined || metadata.authorization_response_iss_parameter_supported)) {
+			if (iss !== metadata.issuer) throw new OAuthIssuerMismatchError(metadata.issuer, iss);
+		}
 		const tokens = await exchangeAuthorizationCode(discovered.authorizationServerUrl, {
 			...tokenOptions,
 			code: options.authorizationCode,
 			codeVerifier: await provider.codeVerifier(),
-			redirectUrl: provider.redirectUrl,
+			redirectUrl,
 		});
-		await provider.saveTokens(tokens);
+		// A response without `scope` grants the requested scope (RFC 6749 §5.1). Recorded so a step-up can
+		// keep it. Callers pass the options of the authorization request, so `scope` is what was requested.
+		await provider.saveTokens(withScope(tokens, scope));
 		return "AUTHORIZED";
 	}
 	const existing = options.skipRefresh ? undefined : await provider.tokens();
@@ -324,7 +372,8 @@ async function runFlow(provider: OAuthClientProvider, options: OAuthFlowOptions)
 				...tokenOptions,
 				refreshToken: existing.refresh_token,
 			});
-			await provider.saveTokens(tokens);
+			// A refresh without `scope` keeps the scope of the grant (RFC 6749 §6).
+			await provider.saveTokens(withScope(tokens, existing.scope));
 			return "AUTHORIZED";
 		} catch (error) {
 			if (error instanceof OAuthInsecureEndpointError) throw error;
@@ -335,7 +384,7 @@ async function runFlow(provider: OAuthClientProvider, options: OAuthFlowOptions)
 	const authorization = await startAuthorization(discovered.authorizationServerUrl, {
 		metadata,
 		clientInformation: client,
-		redirectUrl: provider.redirectUrl,
+		redirectUrl,
 		scope,
 		state,
 		resource,
@@ -378,13 +427,16 @@ export function adaptOAuthProvider(provider: OAuthClientProvider): AuthProvider 
 				const current = (await provider.tokens())?.access_token;
 				if (current !== undefined && current !== context.token) return;
 			}
-			inFlight ??= authorizeMcp(provider, {
-				serverUrl: context.serverUrl,
-				resourceMetadataUrl: challenge.resourceMetadataUrl,
-				scope: challenge.scope,
-				fetch: context.fetch,
-				skipRefresh: insufficientScope,
-			})
+			inFlight ??= Promise.resolve(insufficientScope ? provider.tokens() : undefined)
+				.then((granted) =>
+					authorizeMcp(provider, {
+						serverUrl: context.serverUrl,
+						resourceMetadataUrl: challenge.resourceMetadataUrl,
+						scope: insufficientScope ? stepUpScope(granted?.scope, challenge.scope) : challenge.scope,
+						fetch: context.fetch,
+						skipRefresh: insufficientScope,
+					}),
+				)
 				.then((result) => {
 					if (result === "REDIRECT") throw new McpOAuthAuthorizationRequiredError();
 				})

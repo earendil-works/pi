@@ -448,6 +448,33 @@ describe("ToolExecutionComponent parity", () => {
 		expect(rendered).toContain("arg:bar");
 	});
 
+	test("shows arguments in the fallback call header", () => {
+		const longValue = "x".repeat(200);
+		const component = new ToolExecutionComponent(
+			"custom_tool",
+			"tool-args",
+			{ query: "pi", long: longValue, text: "line one\nline two" },
+			{},
+			createBaseToolDefinition(),
+			createFakeTui(),
+			process.cwd(),
+		);
+
+		const collapsed = stripAnsi(component.render(300).join("\n"));
+		expect(collapsed).toContain('custom_tool query="pi" long="xxx');
+		expect(collapsed).toContain("...");
+		expect(collapsed).not.toContain(longValue);
+
+		component.setExpanded(true);
+		const expanded = stripAnsi(component.render(300).join("\n"));
+		expect(expanded).toContain("  query: pi");
+		expect(expanded).toContain(longValue);
+		const expandedLines = expanded.split("\n").map((line) => line.trimEnd());
+		const textLine = expandedLines.findIndex((line) => line.endsWith("  text: line one"));
+		expect(textLine).toBeGreaterThan(-1);
+		expect(expandedLines[textLine + 1]).toMatch(/^\s+ {4}line two$/);
+	});
+
 	test("collapses fallback results until expanded", () => {
 		const toolDefinition: ToolDefinition = {
 			...createBaseToolDefinition(),

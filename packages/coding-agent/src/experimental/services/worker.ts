@@ -11,7 +11,8 @@ import {
 	type ServiceCall,
 	type ServiceProviderUpdate,
 } from "@earendil-works/chord";
-import type { AgentHarness, AgentLane } from "@earendil-works/pi-agent-core";
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
+import type { Conversation, Harness } from "@earendil-works/pi-durable";
 import type { ModelRuntime } from "../../core/model-runtime.ts";
 import type { SettingsManager } from "../../core/settings-manager.ts";
 import { AgentController } from "./agent-controller.ts";
@@ -21,11 +22,14 @@ import { SessionPlugins } from "./plugins.ts";
 import { createTranscriptServiceFacet } from "./transcript-provider.ts";
 
 export interface SessionWorkerRuntime {
-	readonly harness: AgentHarness;
-	readonly lane?: AgentLane;
+	readonly harness: Harness;
+	/** The root conversation the services expose. */
+	readonly conversation: Conversation;
 	readonly modelRuntime?: ModelRuntime;
 	readonly settingsManager?: SettingsManager;
 	readonly facetLoader?: FacetLoader;
+	/** Release resources the Harness does not own, such as execution environments, after it closed. */
+	cleanup?(context: Context): Promise<void>;
 }
 
 export interface WorkerServiceScope {
@@ -45,7 +49,8 @@ export interface SessionWorkerServices {
 }
 
 export async function createSessionWorkerServices(options: {
-	readonly lane: AgentLane;
+	readonly harness: Harness;
+	readonly conversation: Conversation;
 	readonly modelRuntime: ModelRuntime | undefined;
 	readonly settingsManager?: SettingsManager;
 	readonly facetLoader?: FacetLoader;
@@ -54,7 +59,7 @@ export async function createSessionWorkerServices(options: {
 	const agentControllerRuntimeFacet = defineFacet({
 		id: "@pi/agent-controller-runtime",
 		setup(env) {
-			env.provide(AgentController, createAgentController(options.lane));
+			env.provide(AgentController, createAgentController(options.harness, options.conversation));
 		},
 	});
 	let reloadPlugins = (): Promise<void> => Promise.reject(new Error("Session plugins are not ready"));
@@ -67,8 +72,8 @@ export async function createSessionWorkerServices(options: {
 	const builtins = await createStaticFacetLoader([
 		agentControllerRuntimeFacet,
 		pluginRuntimeFacet,
-		createModelsServiceFacet(options),
-		createTranscriptServiceFacet(options.lane),
+		await createModelsServiceFacet({ ...options, context: BACKGROUND_CONTEXT }),
+		await createTranscriptServiceFacet(options.conversation, BACKGROUND_CONTEXT),
 	]).load();
 	const pluginLoader = options.facetLoader ?? createStaticFacetLoader([]);
 	let loadedPlugins = await pluginLoader.load();

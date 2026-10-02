@@ -46,7 +46,7 @@ describe("llama.cpp extension", () => {
 			process.cwd(),
 			createEventBus(),
 			runtime,
-			"<inline:llama.cpp>",
+			"builtin:llama.cpp",
 		);
 
 		expect(extension.commands.get("llama")?.description).toBe("Manage llama.cpp router models");
@@ -200,6 +200,85 @@ describe("llama.cpp extension", () => {
 			expect.objectContaining({ id: "loaded", api: "llama-cpp-classify", baseUrl: url, contextWindow: 32768 }),
 			expect.objectContaining({ id: "sleeping", api: "llama-cpp-classify", baseUrl: url, contextWindow: 32768 }),
 		]);
+	});
+
+	it("preserves cached llama.cpp context for unloaded autoload presets", async () => {
+		let cachedEntry: ModelsStoreEntry | undefined;
+		let loaded = true;
+		let unloadedArgs: string[] | undefined;
+		const { url } = await listen((request, response) => {
+			if (request.url === "/models") {
+				json(response, {
+					data: [
+						loaded
+							? {
+									id: "qwen",
+									status: { value: "loaded" },
+									source: "preset",
+									meta: { n_ctx: 65536, n_ctx_train: 128000 },
+								}
+							: {
+									id: "qwen",
+									status: { value: "unloaded", ...(unloadedArgs && { args: unloadedArgs }) },
+									source: "preset",
+									meta: { n_ctx_train: 128000 },
+								},
+					],
+				});
+				return;
+			}
+			if (request.url === "/props?model=qwen&autoload=false") {
+				json(response, {});
+				return;
+			}
+			if (request.url === "/props") {
+				json(response, { role: "router", models_autoload: true });
+				return;
+			}
+			response.writeHead(404).end();
+		});
+
+		const publish = async (publication: ModelsPublication): Promise<boolean> => {
+			if (publication.persist === null) cachedEntry = undefined;
+			else if (publication.persist !== undefined) cachedEntry = structuredClone(publication.persist);
+			publication.update?.();
+			return true;
+		};
+		const storedContextWindows = () =>
+			cachedEntry?.models.map((model) => ("contextWindow" in model ? model.contextWindow : undefined));
+		const credential = { type: "api_key" as const, key: "local", env: { LLAMA_BASE_URL: url } };
+
+		const first = createLlamaProvider();
+		await first.provider.refreshModels?.({
+			credential,
+			stored: cachedEntry,
+			publish,
+			allowNetwork: true,
+			signal: new AbortController().signal,
+		});
+		expect(storedContextWindows()).toEqual([65536, 65536]);
+
+		loaded = false;
+		const second = createLlamaProvider();
+		await second.provider.refreshModels?.({
+			credential,
+			stored: cachedEntry,
+			publish,
+			allowNetwork: true,
+			signal: new AbortController().signal,
+		});
+		expect(second.provider.getModels()).toEqual([expect.objectContaining({ id: "qwen", contextWindow: 65536 })]);
+		expect(storedContextWindows()).toEqual([65536, 65536]);
+
+		unloadedArgs = ["llama-server", "--ctx-size", "32768"];
+		await second.provider.refreshModels?.({
+			credential,
+			stored: cachedEntry,
+			publish,
+			allowNetwork: true,
+			signal: new AbortController().signal,
+		});
+		expect(storedContextWindows()).toEqual([32768, 32768]);
 	});
 
 	it("exposes unloaded presets only when router autoload is enabled", async () => {

@@ -108,6 +108,8 @@ describe("pi mcp", () => {
 				"X-Team=core",
 				"--exposure",
 				"direct",
+				"--description",
+				"Product docs",
 			],
 			{ fixture: servers.fixture },
 		);
@@ -121,18 +123,28 @@ describe("pi mcp", () => {
 					// biome-ignore lint/suspicious/noTemplateCurlyInString: literal config value reference
 					headers: { "X-Team": "core", Authorization: "Bearer ${DOCS_TOKEN}" },
 					exposure: "direct",
+					description: "Product docs",
 				},
 			},
 		});
 
 		const oauth = await run(
-			["add", "sentry", "--url", "https://mcp.sentry.dev/mcp", "--oauth-client-id", "pi"],
+			[
+				"add",
+				"sentry",
+				"--url",
+				"https://mcp.sentry.dev/mcp",
+				"--oauth-client-id",
+				"pi",
+				"--oauth-client-name",
+				"Claude Code",
+			],
 			undefined,
 			agentDir,
 		);
 		expect(oauth.output).toContain("If it requires sign-in: pi mcp login sentry");
 		expect(readConfig(join(agentDir, "mcp.json")).mcpServers).toMatchObject({
-			sentry: { url: "https://mcp.sentry.dev/mcp", oauth: { clientId: "pi" } },
+			sentry: { url: "https://mcp.sentry.dev/mcp", oauth: { clientId: "pi", clientName: "Claude Code" } },
 		});
 	});
 

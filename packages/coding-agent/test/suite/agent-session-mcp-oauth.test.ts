@@ -148,6 +148,18 @@ describe("AgentSession MCP OAuth", () => {
 		expect(getMessageText(await callWhoami(harness))).toBe("token access-1");
 	});
 
+	// #10226
+	it("registers with the configured client name", async () => {
+		const { harness, server, notifications } = await setup("follow", { clientName: "Claude Code" });
+		await harness.session.prompt("/mcp login issues");
+		expect(notifications.at(-1)).toBe('Signed in to MCP server "issues" (1 tools).');
+		expect(server.registrations.map((metadata) => metadata.client_name)).toEqual(["Claude Code"]);
+
+		const fallback = await setup("follow");
+		await fallback.harness.session.prompt("/mcp login issues");
+		expect(fallback.server.registrations.map((metadata) => metadata.client_name)).toEqual(["pi"]);
+	});
+
 	it("adds the listening port to a callback URL without one", async () => {
 		const { harness, notifications, opened } = await setup("follow", { callbackUrl: "http://127.0.0.1/oauth/done" });
 		await harness.session.prompt("/mcp login issues");

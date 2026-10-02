@@ -21,12 +21,17 @@ const NON_RETRYABLE_PROVIDER_LIMIT_ERROR_PATTERN = buildProviderErrorPattern([
 	"out of budget",
 	"quota exceeded",
 	"billing",
+
+	// Sign in with ChatGPT: the subscription's shared usage limit, which resets
+	// after hours rather than seconds.
+	"subscription_sharing_usage_limit_exceeded",
 ]);
 
 const RETRYABLE_PROVIDER_ERROR_PATTERN = buildProviderErrorPattern([
 	// Generic provider load, HTTP status, and server-side transient failures.
 	"overloaded",
 	"currently experiencing high demand",
+	"model is at capacity",
 	"rate.?limit",
 	"too many requests",
 	"429",
@@ -89,6 +94,11 @@ const RETRYABLE_PROVIDER_ERROR_PATTERN = buildProviderErrorPattern([
 
 	// gRPC based providers (e.g. NVIDIA NIM)
 	"ResourceExhausted",
+
+	// Sign in with ChatGPT: usage or user data temporarily unavailable. Usage
+	// failures can arrive mid-stream without an HTTP 503 in the message.
+	"subscription_sharing_usage_unavailable",
+	"subscription_sharing_user_unavailable",
 ]);
 
 /**

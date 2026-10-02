@@ -1,8 +1,9 @@
 import { defineFacet, type FacetLoader } from "@earendil-works/chord";
-import { type AgentLane, BACKGROUND_CONTEXT, type LaneSnapshot } from "@earendil-works/pi-agent-core";
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { describe, expect, test, vi } from "vitest";
 import { SessionPlugins } from "../src/experimental/services/plugins.ts";
 import { createSessionWorkerServices } from "../src/experimental/services/worker.ts";
+import { openFauxConversation } from "./experimental-durable-support.ts";
 
 describe("experimental plugin reload", () => {
 	test("loads and cuts over a fresh Session facet generation", async () => {
@@ -29,50 +30,10 @@ describe("experimental plugin reload", () => {
 				};
 			},
 		};
-		const snapshot: LaneSnapshot = {
-			lane: "main",
-			transcript: [],
-			tipId: null,
-			configuration: {
-				model: { provider: "test", modelId: "model" },
-				thinkingLevel: "off",
-				activeToolNames: [],
-			},
-			stats: {
-				messageCount: 0,
-				usage: {
-					input: 0,
-					output: 0,
-					cacheRead: 0,
-					cacheWrite: 0,
-					totalTokens: 0,
-					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-				},
-			},
-			operation: null,
-			queues: [],
-			faulted: false,
-		};
-		const lane = {
-			async watch() {
-				return {
-					snapshot,
-					start() {},
-					async resnapshot() {
-						return snapshot;
-					},
-					unsubscribe() {},
-				};
-			},
-			async getModel() {
-				return undefined;
-			},
-			async getThinkingLevel() {
-				return "off" as const;
-			},
-		} as unknown as AgentLane;
+		const { harness, conversation, close } = await openFauxConversation();
 		const services = await createSessionWorkerServices({
-			lane,
+			harness,
+			conversation,
 			modelRuntime: undefined,
 			facetLoader,
 			publish: vi.fn(async () => {}),
@@ -88,6 +49,7 @@ describe("experimental plugin reload", () => {
 			expect(disposals).toEqual([1]);
 		} finally {
 			await services.dispose();
+			await close();
 		}
 		expect(disposals).toEqual([1, 2]);
 	});

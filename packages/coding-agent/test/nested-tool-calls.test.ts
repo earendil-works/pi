@@ -1,4 +1,5 @@
 import type { AgentTool, AgentToolCall } from "@earendil-works/pi-agent-core";
+import type { Usage } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
 import {
@@ -8,6 +9,17 @@ import {
 	NestedToolCallRunner,
 	type NestedToolExecutionEvent,
 } from "../src/core/nested-tool-calls.ts";
+
+function usage(input: number, cost: number): Usage {
+	return {
+		input,
+		output: 0,
+		cacheRead: 0,
+		cacheWrite: 0,
+		totalTokens: input,
+		cost: { input: cost, output: 0, cacheRead: 0, cacheWrite: 0, total: cost },
+	};
+}
 
 function createRunner(tools: AgentTool[], options: { sequential?: boolean } = {}) {
 	const events: NestedToolExecutionEvent[] = [];
@@ -66,7 +78,7 @@ describe("NestedToolCallRunner", () => {
 			["tool_execution_start", "call/2", "call"],
 			["tool_execution_end", "call/2", "call"],
 		]);
-		expect(runner.takeRecord("call")).toEqual({
+		expect(runner.takeRecord("call")?.calls).toEqual({
 			calls: [
 				{ id: "call/1", name: "echo", arguments: { a: 1 }, status: "ok", durationMs: expect.any(Number) },
 				{
@@ -110,7 +122,43 @@ describe("NestedToolCallRunner", () => {
 
 		await runner.execute("call", "middle", {});
 
-		expect(runner.takeRecord("call")?.calls.map((call) => call.id)).toEqual(["call/1", "call/1/1"]);
+		expect(runner.takeRecord("call")?.calls?.calls.map((call) => call.id)).toEqual(["call/1", "call/1/1"]);
+	});
+
+	it("sums the usage of nested results at every depth", async () => {
+		const leaf: AgentTool = {
+			name: "leaf",
+			label: "Leaf",
+			description: "Leaf",
+			parameters: Type.Object({}),
+			async execute() {
+				return { content: [], details: {}, usage: usage(10, 0.01) };
+			},
+		};
+		const plain: AgentTool = { ...leaf, name: "plain", execute: async () => ({ content: [], details: {} }) };
+		const tools: AgentTool[] = [leaf, plain];
+		const { runner } = createRunner(tools);
+		tools.push({
+			name: "middle",
+			label: "Middle",
+			description: "Calls leaf",
+			parameters: Type.Object({}),
+			async execute(toolCallId) {
+				await runner.execute(toolCallId, "leaf", {});
+				// Its own usage only: the leaf's usage is counted once, by the recorder.
+				return { content: [], details: {}, usage: usage(5, 0.005) };
+			},
+		});
+
+		await runner.execute("call", "middle", {});
+		await runner.execute("call", "leaf", {});
+		await runner.execute("call", "plain", {});
+		await runner.execute("free", "plain", {});
+
+		const summary = runner.takeRecord("call");
+		expect(summary?.usage?.input).toBe(25);
+		expect(summary?.usage?.cost.total).toBeCloseTo(0.025, 10);
+		expect(runner.takeRecord("free")).toMatchObject({ calls: { complete: true }, usage: undefined });
 	});
 
 	it("serializes concurrent calls to sequential tools", async () => {

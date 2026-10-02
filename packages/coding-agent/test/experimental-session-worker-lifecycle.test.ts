@@ -23,11 +23,11 @@ describe("Session worker lifecycle", () => {
 		vi.useFakeTimers();
 		const { lifecycle, retire } = createLifecycle();
 		lifecycle.setDemand(GENERATION, "attachment-1", true);
-		lifecycle.operationStarted("run", "main", "operation-1");
+		lifecycle.setHarnessActive(true);
 		lifecycle.setDemand(GENERATION, "attachment-1", false);
 		expect(retire).not.toHaveBeenCalled();
 
-		lifecycle.operationStopped("run", "main", "operation-1");
+		lifecycle.setHarnessActive(false);
 		await vi.runAllTicks();
 		expect(retire).toHaveBeenCalledOnce();
 		lifecycle.close();
@@ -45,30 +45,25 @@ describe("Session worker lifecycle", () => {
 		lifecycle.close();
 	});
 
-	test("tracks a nested compaction independently from its enclosing run", () => {
+	test("does not retire on repeated activity updates while the Harness stays active", () => {
 		vi.useFakeTimers();
 		const { lifecycle, retire } = createLifecycle();
 		lifecycle.setDemand(GENERATION, "attachment-1", true);
-		lifecycle.operationStarted("run", "main", "operation-1");
-		lifecycle.operationStarted("compaction", "main", "operation-1");
+		lifecycle.setHarnessActive(true);
 		lifecycle.setDemand(GENERATION, "attachment-1", false);
-
-		lifecycle.operationStopped("compaction", "main", "operation-1");
+		lifecycle.setHarnessActive(true);
 		expect(retire).not.toHaveBeenCalled();
-		lifecycle.operationStopped("run", "main", "operation-1");
+		lifecycle.setHarnessActive(false);
 		expect(retire).toHaveBeenCalledOnce();
 		lifecycle.close();
 	});
 
-	test.each(["compaction", "navigation"] as const)("clears suspended %s activity", (kind) => {
+	test("an idle Harness update does not retire while demand remains", () => {
 		vi.useFakeTimers();
 		const { lifecycle, retire } = createLifecycle();
 		lifecycle.setDemand(GENERATION, "attachment-1", true);
-		lifecycle.operationStarted(kind, "main", "operation-1");
-		lifecycle.setDemand(GENERATION, "attachment-1", false);
-
-		lifecycle.operationStopped(kind, "main", "operation-1");
-		expect(retire).toHaveBeenCalledOnce();
+		lifecycle.setHarnessActive(false);
+		expect(retire).not.toHaveBeenCalled();
 		lifecycle.close();
 	});
 

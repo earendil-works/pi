@@ -1,5 +1,6 @@
 import type {
 	Context,
+	JsonValue,
 	ReplicatedStateSource,
 	ReplicatedStateSourceAttachment,
 	ReplicatedStateSourceFrame,
@@ -16,23 +17,27 @@ const MAX_PENDING_WATCH_FRAMES = 100;
 /** Canonical terminal update for a retired document incarnation. */
 export const RETIREMENT_OPERATIONS: readonly Op[] = [["r", null]];
 
-/** Session-to-Chord bridge owned one-to-one by one attached document state. @internal */
-export class SessionDocumentSource implements ReplicatedStateSource<ObservedDocumentValue> {
-	readonly #attachments = new Set<SessionSourceAttachment>();
+/**
+ * Session-to-Chord bridge owned one-to-one by one attached state: a document, or a conversation view. A `null` value
+ * retires it. @internal
+ */
+export class CommittedStateSource<T = ObservedDocumentValue> implements ReplicatedStateSource<T> {
+	readonly #attachments = new Set<SessionSourceAttachment<T>>();
 	#release: (() => void) | undefined;
-	#value: ObservedDocumentValue;
+	/** Released on disposal. */
+	#value: T | undefined;
 	#cursor = 0;
 	#retired = false;
 	#closed = false;
 
-	constructor(value: Readonly<JsonObject>, release: () => void) {
+	constructor(value: T, release: () => void) {
 		this.#value = value;
 		this.#release = release;
 	}
 
-	attach(): ReplicatedStateSourceAttachment<ObservedDocumentValue> {
-		if (this.#closed) throw new Error("Document state source is closed");
-		const attachment = new SessionSourceAttachment({ value: this.#value, cursor: this.#cursor }, () => {
+	attach(): ReplicatedStateSourceAttachment<T> {
+		if (this.#closed) throw new Error("State source is closed");
+		const attachment = new SessionSourceAttachment({ value: this.#value as T, cursor: this.#cursor }, () => {
 			this.#attachments.delete(attachment);
 			if (this.#attachments.size === 0) this.#finishDisposal();
 		});
@@ -40,12 +45,12 @@ export class SessionDocumentSource implements ReplicatedStateSource<ObservedDocu
 		return attachment;
 	}
 
-	advance(value: ObservedDocumentValue, ops: readonly Op[], context: Context): void {
+	advance(value: T, ops: readonly Op[], context: Context): void {
 		if (this.#closed || this.#retired) return;
 		this.#value = value;
 		this.#cursor += 1;
 		if (value === null) this.#retired = true;
-		const frame: ReplicatedStateSourceFrame<ObservedDocumentValue> = {
+		const frame: ReplicatedStateSourceFrame<T> = {
 			cursor: this.#cursor,
 			value,
 			ops,
@@ -63,37 +68,37 @@ export class SessionDocumentSource implements ReplicatedStateSource<ObservedDocu
 	#finishDisposal(): void {
 		if (this.#closed) return;
 		this.#closed = true;
-		this.#value = null;
+		this.#value = undefined;
 		const release = this.#release;
 		this.#release = undefined;
 		release?.();
 	}
 }
 
-class SessionSourceAttachment implements ReplicatedStateSourceAttachment<ObservedDocumentValue> {
-	readonly snapshot: { readonly value: ObservedDocumentValue; readonly cursor: number };
+class SessionSourceAttachment<T> implements ReplicatedStateSourceAttachment<T> {
+	readonly snapshot: { readonly value: T; readonly cursor: number };
 	#release: (() => void) | undefined;
-	readonly #frames: ReplicatedStateSourceFrame<ObservedDocumentValue>[] = [];
-	#listener: ((frame: ReplicatedStateSourceFrame<ObservedDocumentValue>) => void) | undefined;
+	readonly #frames: ReplicatedStateSourceFrame<T>[] = [];
+	#listener: ((frame: ReplicatedStateSourceFrame<T>) => void) | undefined;
 	#activated = false;
 	#disposed = false;
 	#scheduled = false;
 	#delivering = false;
 
-	constructor(snapshot: { readonly value: ObservedDocumentValue; readonly cursor: number }, release: () => void) {
+	constructor(snapshot: { readonly value: T; readonly cursor: number }, release: () => void) {
 		this.snapshot = snapshot;
 		this.#release = release;
 	}
 
-	activate(listener: (frame: ReplicatedStateSourceFrame<ObservedDocumentValue>) => void): void {
-		if (this.#activated) throw new Error("Document state attachment is already active");
-		if (this.#disposed) throw new Error("Document state attachment is disposed");
+	activate(listener: (frame: ReplicatedStateSourceFrame<T>) => void): void {
+		if (this.#activated) throw new Error("State attachment is already active");
+		if (this.#disposed) throw new Error("State attachment is disposed");
 		this.#activated = true;
 		this.#listener = listener;
 		this.#drain();
 	}
 
-	publish(frame: ReplicatedStateSourceFrame<ObservedDocumentValue>): void {
+	publish(frame: ReplicatedStateSourceFrame<T>): void {
 		if (this.#disposed) return;
 		this.#frames.push(frame);
 		if (!this.#activated || this.#delivering || this.#scheduled) return;
@@ -137,20 +142,24 @@ class SessionSourceAttachment implements ReplicatedStateSourceAttachment<Observe
 	}
 }
 
-type WatchFrame = {
-	readonly value: ObservedDocumentValue;
+type WatchFrame<T> = {
+	readonly value: T;
 	readonly ops: readonly Op[];
 	readonly context: Context;
 };
 
-/** Serialized exact-frame watch bound to one concrete document incarnation. @internal */
-export class SessionDocumentWatch implements WatchHandle<ObservedDocumentValue> {
+/**
+ * Serialized exact-frame watch bound to one document incarnation or conversation view. A `null` value retires it.
+ * @internal
+ */
+export class CommittedWatch<T = ObservedDocumentValue> implements WatchHandle<T> {
 	readonly #detach: () => void;
+	readonly #replace: (() => T) | undefined;
 	readonly #closedPromise: Promise<WatchEnd>;
-	readonly #pending: WatchFrame[] = [];
+	readonly #pending: WatchFrame<T>[] = [];
 	#resolveClosed!: (end: WatchEnd) => void;
-	#value: ObservedDocumentValue;
-	#listener: ((value: ObservedDocumentValue, ops: readonly Op[], context: Context) => Promise<void>) | undefined;
+	#value: T;
+	#listener: ((value: T, ops: readonly Op[], context: Context) => Promise<void>) | undefined;
 	#started = false;
 	#scheduled = false;
 	#running = false;
@@ -161,15 +170,17 @@ export class SessionDocumentWatch implements WatchHandle<ObservedDocumentValue> 
 	#cancellationSignal: AbortSignal | undefined;
 	#cancellationListener: (() => void) | undefined;
 
-	constructor(value: Readonly<JsonObject>, detach: () => void) {
+	/** `replace` gives the value an overflow delivers; by default the newest value. */
+	constructor(value: T, detach: () => void, replace?: () => T) {
 		this.#value = value;
 		this.#detach = detach;
+		this.#replace = replace;
 		this.#closedPromise = new Promise((resolve) => {
 			this.#resolveClosed = resolve;
 		});
 	}
 
-	get value(): ObservedDocumentValue {
+	get value(): T {
 		return this.#value;
 	}
 
@@ -177,9 +188,9 @@ export class SessionDocumentWatch implements WatchHandle<ObservedDocumentValue> 
 		return this.#closedPromise;
 	}
 
-	start(listener: (value: ObservedDocumentValue, ops: readonly Op[], context: Context) => Promise<void>): void {
-		if (this.#started) throw new Error("Document watch is already started");
-		if (this.#end !== undefined) throw new Error("Document watch is stopped");
+	start(listener: (value: T, ops: readonly Op[], context: Context) => Promise<void>): void {
+		if (this.#started) throw new Error("Watch is already started");
+		if (this.#end !== undefined) throw new Error("Watch is stopped");
 		this.#started = true;
 		this.#listener = listener;
 		if (this.#pending.length > 0) this.#schedule();
@@ -191,7 +202,7 @@ export class SessionDocumentWatch implements WatchHandle<ObservedDocumentValue> 
 	}
 
 	observeCancellation(signal: AbortSignal): void {
-		if (this.#cancellationSignal !== undefined) throw new Error("Document watch cancellation is already installed");
+		if (this.#cancellationSignal !== undefined) throw new Error("Watch cancellation is already installed");
 		if (this.#end !== undefined) return;
 		this.#cancellationSignal = signal;
 		this.#cancellationListener = () => this.cancel();
@@ -207,12 +218,13 @@ export class SessionDocumentWatch implements WatchHandle<ObservedDocumentValue> 
 		this.#terminate({ reason: "session_closed" });
 	}
 
-	advance(value: ObservedDocumentValue, ops: readonly Op[], context: Context): void {
+	advance(value: T, ops: readonly Op[], context: Context): void {
 		if (this.#end !== undefined || this.#retired) return;
 		if (value === null) this.#retired = true;
 		if (this.#pending.length >= MAX_PENDING_WATCH_FRAMES) {
 			this.#pending.length = 0;
-			this.#pending.push({ value, ops: [["r", value]], context });
+			const replacement = this.#replace?.() ?? value;
+			this.#pending.push({ value: replacement, ops: [["r", replacement as JsonValue]], context });
 		} else {
 			this.#pending.push({ value, ops, context });
 		}

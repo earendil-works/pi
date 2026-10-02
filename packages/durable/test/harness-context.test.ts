@@ -53,7 +53,7 @@ describe("conversation context", () => {
 		expect(ids(view.entries)).toEqual([reset.id, after.id]);
 		expect(view.messages.map(describeMessage)).toEqual(["user:fresh start", "assistant:after reset"]);
 
-		// A collapse summary heads an earlier kept entry; older head markers in range drop out.
+		// A compaction summary heads an earlier kept entry; older head markers in range drop out.
 		const summary = await append({ kind: "summary", head: after.id, model: [user("summary")] });
 		const tail = await message(user("next"));
 		view = await root.context(context);

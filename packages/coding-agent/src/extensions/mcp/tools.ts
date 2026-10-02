@@ -23,23 +23,29 @@ import {
 	type Tool as McpTool,
 	toLlmContent,
 } from "@earendil-works/pi-mcp";
+import { Container, Spacer, Text } from "@earendil-works/pi-tui";
 import type { TSchema } from "typebox";
 import type { ToolAnnotations, ToolDefinition, ToolExposure, ToolNamespace } from "../../core/extensions/types.ts";
+import { formatToolCallWithArgs, getTextOutput, replaceTabs } from "../../core/tools/render-utils.ts";
 import { formatSize, truncateMiddle } from "../../core/tools/truncate.ts";
+import { keyHint } from "../../modes/interactive/components/keybinding-hints.ts";
+import { VisualLinePreview } from "../../modes/interactive/components/visual-truncate.ts";
 import type { McpExposure } from "./config.ts";
 
 /**
- * Tool exposure of an MCP exposure. Both deferred exposures leave tools out of the codemode
+ * Tool exposure of an MCP exposure. `codemode` and `deferred` both leave tools out of the codemode
  * description; they differ only in which tool the MCP extension activates to reach them.
  */
 export function toToolExposure(exposure: McpExposure): ToolExposure {
-	return exposure === "codemode-deferred" ? "deferred" : exposure;
+	return exposure === "codemode" ? "deferred" : exposure;
 }
 
 /** Provider tool names are limited to 64 characters of `[A-Za-z0-9_-]`. */
 const MAX_TOOL_NAME_LENGTH = 64;
 /** Model-facing text of an MCP result beyond this is cut in the middle. */
 export const MCP_OUTPUT_MAX_BYTES = 20 * 1024;
+/** Visual (wrapped) result lines shown before the output is expanded. */
+const OUTPUT_PREVIEW_LINES = 5;
 /** Tool that reads the resources named by resource links. */
 export const READ_MCP_RESOURCE_TOOL = "read_mcp_resource";
 
@@ -68,16 +74,17 @@ export interface McpToolCaller {
 }
 
 /**
- * `mcp__<server>__<tool>`, sanitized and shortened with a hash suffix when too long. `isTaken`
- * reports names already used by a different MCP tool: sanitizing can map two tools to one name
- * (`a.b` and `a_b`), and the second then gets the hash suffix too.
+ * `mcp__<server>__<tool>`, sanitized and shortened with a hash suffix when too long. Like Codex,
+ * everything but `[A-Za-z0-9_]` becomes `_`, so the name is also the identifier codemode scripts
+ * call it by. `isTaken` reports names used by a different MCP tool: sanitizing can map two tools to
+ * one name (`a-b` and `a_b`), which then get the hash suffix.
  */
 export function createMcpToolName(
 	server: string,
 	tool: string,
 	isTaken: (name: string) => boolean = () => false,
 ): string {
-	const name = `mcp__${server}__${tool}`.replace(/[^A-Za-z0-9_-]/g, "_");
+	const name = `mcp__${server}__${tool}`.replace(/[^A-Za-z0-9_]/g, "_");
 	if (name.length <= MAX_TOOL_NAME_LENGTH && !isTaken(name)) return name;
 	const hash = createHash("sha256").update(`${server}\0${tool}`).digest("hex").slice(0, 8);
 	return `${name.slice(0, MAX_TOOL_NAME_LENGTH - hash.length - 1)}_${hash}`;
@@ -258,15 +265,50 @@ export function createMcpToolDefinition(options: {
 	const { server, tool } = options;
 	const title = tool.title ?? tool.annotations?.title;
 	const annotations = toToolAnnotations(tool);
+	const label = `${server}/${tool.name}`;
 	return {
 		name: options.name,
-		label: `${server}/${tool.name}`,
+		label,
 		description: tool.description?.trim() || title || `MCP tool ${tool.name} from server ${server}`,
 		parameters: toParameters(tool.inputSchema),
 		outputSchema: createMcpResultSchema(tool.outputSchema),
 		exposure: toToolExposure(options.exposure),
 		namespace: options.namespace,
 		...(annotations ? { annotations } : {}),
+		renderCall(args, theme, context) {
+			const component = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
+			component.setText(formatToolCallWithArgs(label, args, theme, context.expanded));
+			return component;
+		},
+		renderResult(result, options, theme, context) {
+			const component = (context.lastComponent as Container | undefined) ?? new Container();
+			component.clear();
+			const output = getTextOutput(result, context.showImages).trim();
+			if (!output) return component;
+			const color = context.isError ? "error" : "toolOutput";
+			const styled = replaceTabs(output)
+				.split("\n")
+				.map((line) => theme.fg(color, line))
+				.join("\n");
+			component.addChild(new Spacer(1));
+			if (options.expanded) {
+				component.addChild(new Text(styled, 0, 0));
+			} else {
+				// Limit wrapped lines, not logical ones: MCP results are often one long JSON line.
+				component.addChild(
+					new VisualLinePreview({
+						text: styled,
+						maxVisualLines: OUTPUT_PREVIEW_LINES,
+						keep: "start",
+						formatHint: (hidden) =>
+							`${theme.fg("muted", `... (${hidden} more lines,`)} ${keyHint("app.tools.expand", "to expand")}${theme.fg("muted", ")")}`,
+					}),
+				);
+				const fullOutputPath = result.details?.fullOutputPath;
+				if (fullOutputPath) component.addChild(new Text(theme.fg("muted", `Full output: ${fullOutputPath}`), 0, 0));
+			}
+			return component;
+		},
 		async execute(_toolCallId, params, signal, onUpdate) {
 			const client = await options.getClient();
 			const result = await client.callTool(tool.name, (params ?? {}) as Record<string, unknown>, {

@@ -56,7 +56,6 @@ function terminal(task: AnyTask): AnyTask {
 		kind: task.kind,
 		version: task.version,
 		input: task.input,
-		after: task.after,
 		background: task.background,
 		abortRequested: task.abortRequested,
 		state: { status: "terminal", outcome: { status: "completed", result: { ok: true } } },
@@ -69,7 +68,11 @@ async function createTask(
 	withDocument = false,
 ): Promise<TaskId<{ ok: boolean }>> {
 	return session.commit(async (tx) => {
-		const taskId = await tx.createTask(WorkTask, { path: "a" }, { conversationId });
+		const taskId = await tx.createTask(
+			WorkTask,
+			{ path: "a" },
+			{ ownership: { kind: "conversation" }, conversationId },
+		);
 		if (withDocument) (await tx.doc(ProgressDoc, taskId)).lines.push("started");
 		return taskId;
 	}, context);
@@ -135,7 +138,7 @@ describe("Session transaction tables", () => {
 			const task = await tx.createTask(
 				WorkTask,
 				{ path: "x" },
-				{ conversationId: conversation.id, background: true },
+				{ ownership: { kind: "conversation" }, conversationId: conversation.id, background: true },
 			);
 			return { conversation, first, headed, task };
 		}, context);
@@ -155,7 +158,6 @@ describe("Session transaction tables", () => {
 			kind: "test.work",
 			version: 1,
 			input: { path: "x" },
-			after: [],
 			background: true,
 			abortRequested: false,
 			state: { status: "pending", checkpoint: { phase: "start" } },
@@ -172,9 +174,12 @@ describe("Session transaction tables", () => {
 		const entries = changes.filter((change) => change.type === "entry");
 		expect(entries.map((change) => change.value)).toContain(created.first);
 		expect(entries.map((change) => change.value)).toContain(created.headed);
-		await expect(session.commit((tx) => tx.createTask(WorkTask, { path: "x" }), context)).rejects.toThrow(
-			"requires options.conversationId",
-		);
+		await expect(
+			session.commit(
+				(tx) => tx.createTask(WorkTask, { path: "x" }, { ownership: { kind: "conversation" } }),
+				context,
+			),
+		).rejects.toThrow("requires options.conversationId");
 		await expect(
 			session.commit((tx) => tx.appendEntry(idFromNumber<ConversationId>(12345), { kind: "note" }), context),
 		).rejects.toThrow("Conversation 12345 does not exist");
@@ -187,7 +192,7 @@ describe("Session transaction tables", () => {
 			const supervisorId = await tx.createTask(
 				WorkTask,
 				{ path: "background" },
-				{ conversationId: parentId, background: true },
+				{ ownership: { kind: "conversation" }, conversationId: parentId, background: true },
 			);
 			const child = await tx.createConversation({ ownership: { kind: "task", taskId: supervisorId } });
 			return { supervisorId, child };
@@ -211,7 +216,11 @@ describe("Session transaction tables", () => {
 		let movedStagedTaskId: TaskId<{ ok: boolean }> | undefined;
 		await expect(
 			session.commitWith(async (tx) => {
-				const taskId = await tx.createTask(WorkTask, { path: "move" }, { conversationId: parentId });
+				const taskId = await tx.createTask(
+					WorkTask,
+					{ path: "move" },
+					{ ownership: { kind: "conversation" }, conversationId: parentId },
+				);
 				movedStagedTaskId = taskId;
 				tx.setTask({
 					id: taskId,
@@ -219,7 +228,6 @@ describe("Session transaction tables", () => {
 					kind: WorkTask.definition.name,
 					version: WorkTask.definition.version,
 					input: { path: "move" },
-					after: [],
 					background: false,
 					abortRequested: false,
 					state: { status: "pending", checkpoint: { phase: "start" } },
@@ -237,7 +245,11 @@ describe("Session transaction tables", () => {
 		let rejectedChildId: ConversationId | undefined;
 		await expect(
 			session.commitWith(async (tx) => {
-				const supervisorId = await tx.createTask(WorkTask, { path: "aborting" }, { conversationId: parentId });
+				const supervisorId = await tx.createTask(
+					WorkTask,
+					{ path: "aborting" },
+					{ ownership: { kind: "conversation" }, conversationId: parentId },
+				);
 				rejectedChildId = (await tx.createConversation({ ownership: { kind: "task", taskId: supervisorId } })).id;
 				tx.setTask({
 					id: supervisorId,
@@ -245,7 +257,6 @@ describe("Session transaction tables", () => {
 					kind: WorkTask.definition.name,
 					version: WorkTask.definition.version,
 					input: { path: "aborting" },
-					after: [],
 					background: false,
 					abortRequested: true,
 					state: { status: "pending", checkpoint: { phase: "start" } },
@@ -258,7 +269,11 @@ describe("Session transaction tables", () => {
 
 		await expect(
 			session.commitWith(async (tx) => {
-				const supervisorId = await tx.createTask(WorkTask, { path: "terminal" }, { conversationId: parentId });
+				const supervisorId = await tx.createTask(
+					WorkTask,
+					{ path: "terminal" },
+					{ ownership: { kind: "conversation" }, conversationId: parentId },
+				);
 				await tx.createConversation({ ownership: { kind: "task", taskId: supervisorId } });
 				tx.setTask({
 					id: supervisorId,
@@ -266,7 +281,6 @@ describe("Session transaction tables", () => {
 					kind: WorkTask.definition.name,
 					version: WorkTask.definition.version,
 					input: { path: "terminal" },
-					after: [],
 					background: false,
 					abortRequested: false,
 					state: { status: "terminal", outcome: { status: "completed", result: { ok: true } } },
@@ -325,7 +339,6 @@ describe("Session transaction tables", () => {
 				kind: task.kind,
 				version: task.version,
 				input: task.input,
-				after: task.after,
 				background: task.background,
 				abortRequested: task.abortRequested,
 				state: { status: "running", checkpoint: { phase: "next", step: 2 } },
@@ -342,7 +355,11 @@ describe("Session transaction tables", () => {
 		const { session, publications } = openTestSession();
 		const conversationId = await createConversation(session);
 		const taskId = await session.commit(async (tx) => {
-			const createdTaskId = await tx.createTask(WorkTask, { path: "a" }, { conversationId });
+			const createdTaskId = await tx.createTask(
+				WorkTask,
+				{ path: "a" },
+				{ ownership: { kind: "conversation" }, conversationId },
+			);
 			// Validation uses the candidate task record, not a caller table read.
 			(await tx.doc(ProgressDoc, createdTaskId)).lines.push("created");
 			(await tx.doc(StepDoc, createdTaskId, "one", null)).lines.push("step");

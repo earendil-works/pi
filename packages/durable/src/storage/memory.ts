@@ -25,6 +25,7 @@ import type {
 	StorageWrite,
 	StoredDocument,
 	SubmissionId,
+	SubmissionQuery,
 	SubmissionRecord,
 	TaskId,
 	TaskQuery,
@@ -33,6 +34,7 @@ import type {
 
 type StoredTask = TaskRecord<JsonValue, JsonValue, JsonValue>;
 type TaskStatus = StoredTask["state"]["status"];
+type SubmissionStatus = SubmissionRecord["status"];
 type TableName = "conversation" | "entry" | "task" | "submission" | "document";
 type DocumentRevision = DocumentContent & { readonly seq: Seq };
 type StoredDocumentState = {
@@ -79,6 +81,8 @@ type State = {
 	taskIds: TaskId[];
 	taskIdsByStatus: Record<TaskStatus, TaskId[]>;
 	submissions: Map<SubmissionId, SubmissionRecord>;
+	submissionIds: SubmissionId[];
+	submissionIdsByStatus: Record<SubmissionStatus, SubmissionId[]>;
 	submissionIdsByRequest: Map<ConversationId, Map<string, SubmissionId>>;
 	documents: Map<DocumentId, StoredDocumentState>;
 	documentAddresses: Map<string, DocumentAddressIndex>;
@@ -225,8 +229,10 @@ export class MemoryStorage implements Storage {
 		entryCommitSeqs: new Map(),
 		tasks: new Map(),
 		taskIds: [],
-		taskIdsByStatus: { pending: [], running: [], terminal: [] },
+		taskIdsByStatus: { pending: [], running: [], waiting: [], completing: [], terminal: [] },
 		submissions: new Map(),
+		submissionIds: [],
+		submissionIdsByStatus: { queued: [], placed: [], done: [], unanswered: [] },
 		submissionIdsByRequest: new Map(),
 		documents: new Map(),
 		documentAddresses: new Map(),
@@ -361,6 +367,13 @@ export class MemoryStorage implements Storage {
 				case "submission": {
 					this.state.recordTypes.set(write.value.id, "submission");
 					const previous = this.state.submissions.get(write.value.id);
+					if (previous === undefined) {
+						insertSorted(this.state.submissionIds, write.value.id);
+						insertSorted(this.state.submissionIdsByStatus[write.value.status], write.value.id);
+					} else if (previous.status !== write.value.status) {
+						removeSorted(this.state.submissionIdsByStatus[previous.status], write.value.id);
+						insertSorted(this.state.submissionIdsByStatus[write.value.status], write.value.id);
+					}
 					if (previous?.requestId !== undefined) {
 						const previousRequests = this.state.submissionIdsByRequest.get(previous.conversationId);
 						if (previousRequests?.get(previous.requestId) === write.value.id) {
@@ -533,6 +546,26 @@ export class MemoryStorage implements Storage {
 		this.assertOpen();
 		const value = this.state.submissions.get(id);
 		return value === undefined ? undefined : clone(value);
+	}
+
+	async scanSubmissions(
+		query: SubmissionQuery,
+		limit: number,
+		cursor: Cursor | undefined,
+		_context: Context,
+	): Promise<Page<SubmissionRecord, Cursor>> {
+		this.assertOpen();
+		const after = cursorId(cursor);
+		const ids =
+			query.status === undefined ? this.state.submissionIds : this.state.submissionIdsByStatus[query.status];
+		const start = after === undefined ? 0 : upperBound(ids, after);
+		const values: SubmissionRecord[] = [];
+		for (let index = start; index < ids.length && values.length <= limit; index++) {
+			const value = this.state.submissions.get(ids[index])!;
+			if (query.conversationId !== undefined && value.conversationId !== query.conversationId) continue;
+			values.push(value);
+		}
+		return page(values, limit);
 	}
 
 	async submissionByRequest(

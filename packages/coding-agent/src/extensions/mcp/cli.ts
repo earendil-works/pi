@@ -63,8 +63,10 @@ Options for add:
                           OAuth client secret (may be \${NAME} or !command)
   --oauth-callback-port <port>
                           Fixed OAuth callback port
-  --exposure <mode>       codemode (default), codemode-deferred, deferred, direct,
-                          or hidden
+  --oauth-client-name <name>
+                          Client name sent when registering with the OAuth server
+  --exposure <mode>       codemode (default), deferred, direct, or hidden
+  --description <text>    What the server offers, shown in the system prompt
 
 Other options:
   --json                  Print the list as JSON
@@ -234,7 +236,7 @@ export async function runMcpCommand(args: string[], options: McpCommandOptions):
 				return 1;
 			}
 			if (command === "logout") {
-				const removed = credentials.remove(url);
+				const removed = credentials.remove(name, url);
 				log(removed ? `Signed out of MCP server "${name}".` : `No stored credentials for MCP server "${name}".`);
 				return 0;
 			}
@@ -290,7 +292,9 @@ function add(
 			"oauth-client-id": "value",
 			"oauth-client-secret": "value",
 			"oauth-callback-port": "value",
+			"oauth-client-name": "value",
 			exposure: "value",
+			description: "value",
 		},
 		error,
 		2,
@@ -308,7 +312,14 @@ function add(
 		return typeof found === "string" ? found : undefined;
 	};
 	const exposure = value("exposure");
-	const httpOnly = ["header", "bearer-token-env-var", "oauth-client-id", "oauth-client-secret", "oauth-callback-port"];
+	const httpOnly = [
+		"header",
+		"bearer-token-env-var",
+		"oauth-client-id",
+		"oauth-client-secret",
+		"oauth-callback-port",
+		"oauth-client-name",
+	];
 	const stdioOnly = ["env", "cwd"];
 	const misplaced = (url === undefined ? httpOnly : stdioOnly).find(
 		(option) => values.has(option) || lists.has(option),
@@ -329,6 +340,7 @@ function add(
 			...(value("oauth-client-id") === undefined ? {} : { clientId: value("oauth-client-id") }),
 			...(value("oauth-client-secret") === undefined ? {} : { clientSecret: value("oauth-client-secret") }),
 			...(port === undefined ? {} : { callbackPort: Number(port) }),
+			...(value("oauth-client-name") === undefined ? {} : { clientName: value("oauth-client-name") }),
 		};
 		config = {
 			url,
@@ -347,6 +359,8 @@ function add(
 		};
 	}
 	if (exposure !== undefined) config.exposure = exposure;
+	const description = value("description");
+	if (description !== undefined) config.description = description;
 	const validated = validateMcpServerConfig(name, config);
 	if (typeof validated === "string") {
 		error(validated);
@@ -528,7 +542,7 @@ async function login(
 	try {
 		await signInMcpServer({
 			serverUrl: url,
-			store: credentials.forServer(url),
+			store: credentials.forServer(name, url),
 			settings: connection.oauthSettings(),
 			challenge: connection.challenge,
 			prompt: {

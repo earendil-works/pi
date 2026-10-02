@@ -12,7 +12,7 @@ On macOS or Linux, you can use the installer:
 curl -fsSL https://pi.dev/install.sh | sh
 ```
 
-Alternatively, install Pi from npm. This requires Node.js 22.19 or newer:
+The installer pins all dependencies and updates Pi with `pi update`. Alternatively, install Pi from npm, which does not pin transitive dependencies. This requires Node.js 22.19 or newer:
 
 ```bash
 npm install -g --ignore-scripts @earendil-works/pi-coding-agent
