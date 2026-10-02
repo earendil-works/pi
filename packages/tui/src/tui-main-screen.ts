@@ -271,10 +271,18 @@ export class TuiMainScreen extends TuiBase implements TUI {
 		// Extract cursor position before applying line resets (marker must be found first)
 		const cursorPos = this.extractCursorPosition(newLines, height);
 
-		newLines = this.applyLineResets(newLines);
+		// `newLines` stays in the raw form the components produced until we know which lines
+		// actually change. The differential compare below then matches unchanged lines by
+		// identity - components memoize their rendered lines, so a line that did not change is
+		// normally the very same string instance - and line resets are applied only to the span
+		// that is actually written.
 
 		// Helper to clear scrollback and viewport and render all new lines
 		const fullRender = (clear: boolean): void => {
+			// Keep the raw output as the baseline for the next differential compare, before line
+			// resets are applied in place.
+			const fullRenderRawLines = newLines.slice();
+			newLines = this.applyLineResets(newLines);
 			this.fullRedrawCount += 1;
 			const output = new BoundedTerminalWriter((data) => this.terminal.write(data));
 			output.append("\x1b[?2026h"); // Begin synchronized output
@@ -312,7 +320,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
 			const bufferLength = Math.max(height, newLines.length);
 			this.previousViewportTop = Math.max(0, bufferLength - height);
 			this.positionHardwareCursor(cursorPos, newLines.length);
-			this.previousLines = newLines;
+			this.previousLines = fullRenderRawLines;
 			this.previousKittyImageIds = this.collectKittyImageIds(newLines);
 			this.previousWidth = width;
 			this.previousHeight = height;
@@ -359,7 +367,8 @@ export class TuiMainScreen extends TuiBase implements TUI {
 			return;
 		}
 
-		// Find first and last changed lines
+		// Find first and last changed lines. Both sides are raw component output, so an unchanged
+		// line hits the pointer comparison and is never compared character by character.
 		let firstChanged = -1;
 		let lastChanged = -1;
 		const maxLines = Math.max(newLines.length, this.previousLines.length);
@@ -395,6 +404,10 @@ export class TuiMainScreen extends TuiBase implements TUI {
 			this.previousHeight = height;
 			return;
 		}
+
+		// This frame is going to be written, so keep the raw output as the baseline for the next
+		// differential compare. Line resets mutate `newLines` in place.
+		const rawLines = newLines.slice();
 
 		// All changes are in deleted lines (nothing to render, just clear)
 		if (firstChanged >= newLines.length) {
@@ -438,7 +451,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
 				this.hardwareCursorRow = targetRow;
 			}
 			this.positionHardwareCursor(cursorPos, newLines.length);
-			this.previousLines = newLines;
+			this.previousLines = rawLines;
 			this.previousKittyImageIds = this.collectKittyImageIds(newLines);
 			this.previousWidth = width;
 			this.previousHeight = height;
@@ -453,6 +466,11 @@ export class TuiMainScreen extends TuiBase implements TUI {
 			fullRender(true);
 			return;
 		}
+
+		// Only the lines that are about to be written need line resets. Normalizing the whole
+		// buffer on every frame is what makes an animated widget cost scale with transcript
+		// length instead of with what actually changed.
+		this.applyLineResets(newLines, firstChanged, lastChanged + 1);
 
 		// Render from first changed line to end
 		// Keep updates wrapped in synchronized output while writing bounded chunks.
@@ -609,7 +627,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
 		// Position hardware cursor for IME
 		this.positionHardwareCursor(cursorPos, newLines.length);
 
-		this.previousLines = newLines;
+		this.previousLines = rawLines;
 		this.previousKittyImageIds = this.collectKittyImageIds(newLines);
 		this.previousWidth = width;
 		this.previousHeight = height;
