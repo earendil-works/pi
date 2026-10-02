@@ -17,6 +17,9 @@
  *   `ui` option; the session is bound with mode "rpc" so ask-user falls back
  *   to sequential select/input/confirm dialogs, and with mode "print"
  *   otherwise (matching upstream's non-interactive modes)
+ * - profile management (pi-hub profiles.json CRUD + agent-dir
+ *   materialization) is re-exported from ./profiles.ts so hosts do not
+ *   reimplement the pi-hub file contract
  *
  * Hosts without a pi CLI on PATH should pass excludeTools: ["subagent"]:
  * the subagent tool launches a pi subprocess and, in a CLI-less host such as
@@ -24,6 +27,7 @@
  */
 
 export * from "../../coding-agent/src/index.ts";
+export * from "./profiles.ts";
 
 import type {
 	CreateAgentSessionOptions,

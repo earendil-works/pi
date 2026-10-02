@@ -28,8 +28,15 @@ await session.prompt("Review this repository");
   baked into `api.js` by the shared bundle-time redirect plugin, and the nine
   non-TUI pi-plus extensions (subagent, tasks, memory, plan, ask-user, hooks,
   context-guard, `/cd`, `/init`) are registered exactly as the CLI wrapper registers them. No CLI
-  logic ships in this artifact: no hub dispatch, no completion, no pipi help text,
-  no banner/vim/tab-title/plain-tools.
+  logic ships in this artifact: no hub command dispatch (`pipi profile ...`), no
+  completion, no pipi help text, no banner/vim/tab-title/plain-tools.
+- Profile management ships as a library: the curated `@earendil-works/pi-hub`
+  surface is re-exported (`src/profiles.ts`) — `loadProfiles/findProfile/
+  addProfile/updateProfile/removeProfile/renameProfile/setDefaultProfile/
+  clearDefaultProfile/getDefaultProfileName` for `~/.pi/profiles.json`, and
+  `materializeProfile/removeProfileDir/profileDirFor/AGENT_DIR/
+  syncProfilePackagesToSource` for the per-profile agent dirs. Hosts get the
+  exact contract the `pipi` CLI dispatches instead of reimplementing it.
 - `createPlusAgentSession()` extends the upstream `createAgentSession` (re-exported,
   with the whole upstream SDK surface) and always binds extensions once — do not call
   `session.bindExtensions()` yourself. Pass `ui` dialog handlers to get working

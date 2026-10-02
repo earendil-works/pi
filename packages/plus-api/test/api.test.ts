@@ -18,14 +18,30 @@ import { afterAll, describe, expect, it } from "vitest";
 import { AuthStorage } from "../../coding-agent/src/core/auth-storage.ts";
 import type { ExtensionAPI, SessionStartEvent } from "../src/api.ts";
 import {
+	AGENT_DIR,
+	addProfile,
+	BUILT_IN_DEFAULT,
+	clearDefaultProfile,
 	createAgentSession,
 	createPlusAgentSession,
 	createPlusUIContext,
 	DefaultResourceLoader,
+	findProfile,
+	getDefaultProfileName,
+	loadProfiles,
 	ModelRuntime,
+	materializeProfile,
 	plusSdkExtensionFactories,
+	profileDirFor,
+	removeProfile,
+	removeProfileDir,
+	renameProfile,
 	SessionManager,
 	SettingsManager,
+	setDefaultProfile,
+	syncProfilePackagesToSource,
+	THINKING_LEVELS,
+	updateProfile,
 } from "../src/api.ts";
 
 const tempDirs: string[] = [];
@@ -51,7 +67,7 @@ describe("api entry exports", () => {
 		expect(typeof DefaultResourceLoader).toBe("function");
 	});
 
-	it("registers exactly the eight non-TUI pi-plus extensions, all hidden", () => {
+	it("registers exactly the nine non-TUI pi-plus extensions, all hidden", () => {
 		// InlineExtension is a union (function form or object form); this entry
 		// uses the object form, so narrow before reading name/hidden.
 		const factories = plusSdkExtensionFactories.map((extension) => {
@@ -67,10 +83,38 @@ describe("api entry exports", () => {
 			"pi-plus-hooks",
 			"pi-plus-context-guard",
 			"pi-plus-cd",
+			"pi-plus-init",
 		]);
 		for (const extension of factories) {
 			expect(extension.hidden).toBe(true);
 		}
+	});
+});
+
+describe("profile management surface", () => {
+	it("re-exports the curated pi-hub profile API", () => {
+		// Shape-only: hub's own suite covers behavior; calling loadProfiles()
+		// here would read the real ~/.pi (config paths are frozen at import).
+		for (const fn of [
+			addProfile,
+			clearDefaultProfile,
+			findProfile,
+			getDefaultProfileName,
+			loadProfiles,
+			materializeProfile,
+			profileDirFor,
+			removeProfile,
+			removeProfileDir,
+			renameProfile,
+			setDefaultProfile,
+			syncProfilePackagesToSource,
+			updateProfile,
+		]) {
+			expect(typeof fn).toBe("function");
+		}
+		expect(BUILT_IN_DEFAULT).toBe("__builtin__");
+		expect(typeof AGENT_DIR).toBe("string");
+		expect(THINKING_LEVELS).toEqual(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
 	});
 });
 
