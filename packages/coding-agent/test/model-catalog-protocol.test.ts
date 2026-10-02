@@ -1,7 +1,7 @@
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
 	getModelCatalogProviderKey,
 	MODEL_CATALOG_INDEX_KEY,
@@ -106,9 +106,20 @@ describe("model catalog protocol with the current client", () => {
 	afterAll(async () => {
 		await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
 	});
+	afterEach(() => vi.unstubAllGlobals());
 
 	it("negotiates the catalog for its version and reaches the OpenRouter API", async () => {
 		allowNetwork();
+		// #10353: Public metadata negotiation must coexist with authenticated availability discovery.
+		const metadataFetch = globalThis.fetch;
+		vi.stubGlobal("fetch", async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+			const request = new Request(input, init);
+			if (request.url === "https://openrouter.ai/api/v1/models/user") {
+				expect(request.headers.get("authorization")).toBe("Bearer test-key");
+				return Response.json({ data: [{ id: modelId }] });
+			}
+			return metadataFetch(request);
+		});
 		const runtime = await ModelRuntime.create({
 			credentials: new InMemoryCredentialStore(),
 			modelsPath: null,
@@ -126,6 +137,7 @@ describe("model catalog protocol with the current client", () => {
 			selectModelCatalog(index, VERSION)?.revision === legacyRevision ? legacyModel : mixedApiModel;
 		const model = runtime.getModel("openrouter", modelId);
 		expect(model).toMatchObject({ api: expectedModel.api, baseUrl: expectedModel.baseUrl });
+		expect((await runtime.getAvailable("openrouter")).map((model) => model.id)).toEqual([modelId]);
 		if (!model) throw new Error(`Missing model: openrouter/${modelId}`);
 
 		let providerUrl: URL | undefined;

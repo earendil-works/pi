@@ -65,7 +65,7 @@ export function withRemoteCatalog(
 ): Provider {
 	let dynamicModels: readonly AnyModel[] = [];
 
-	return {
+	const catalogProvider = {
 		...provider,
 		getModels: () =>
 			mergeModels(
@@ -154,5 +154,25 @@ export function withRemoteCatalog(
 				},
 			});
 		},
-	};
+	} satisfies Provider;
+
+	const nativeRefresh = provider.refreshModels;
+	if (nativeRefresh) {
+		const catalogRefresh = catalogProvider.refreshModels;
+		catalogProvider.refreshModels = async function (this: Provider, context) {
+			const results = await Promise.allSettled([
+				Promise.resolve().then(() => nativeRefresh.call(this, context)),
+				catalogRefresh(context),
+			]);
+			const errors = results.flatMap((result) => (result.status === "rejected" ? [result.reason as unknown] : []));
+			if (errors.length === 1) throw errors[0];
+			if (errors.length > 1) {
+				throw new AggregateError(
+					errors,
+					errors.map((error) => (error instanceof Error ? error.message : String(error))).join("; "),
+				);
+			}
+		};
+	}
+	return catalogProvider;
 }

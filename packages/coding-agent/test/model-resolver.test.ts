@@ -15,6 +15,7 @@ import {
 	resolveCliModel,
 	resolveModelScope,
 	resolveModelScopeWithDiagnostics,
+	restoreModelFromSession,
 } from "../src/core/model-resolver.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
@@ -829,6 +830,40 @@ describe("default model selection", () => {
 
 		expect(result.model?.provider).toBe("spark-two");
 		expect(result.model?.id).toBe("deepseek-v4-flash");
+	});
+
+	// #10353: a configured provider's filtered-out model must not be picked as default or restored.
+	test("default and session restore only use available models", async () => {
+		const allowed: Model<"openai-completions"> = {
+			id: "allowed",
+			name: "Allowed",
+			api: "openai-completions",
+			provider: "openrouter",
+			baseUrl: "https://openrouter.ai/api/v1",
+			reasoning: false,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 1000,
+			maxTokens: 100,
+		};
+		const blocked = { ...allowed, id: "blocked" };
+		const registry = {
+			getModel: (_provider: string, id: string) => [allowed, blocked].find((model) => model.id === id),
+			hasConfiguredAuth: () => true,
+			getAvailableSnapshot: () => [allowed],
+		} as unknown as Parameters<typeof findInitialModel>[0]["modelRuntime"];
+
+		const initial = await findInitialModel({
+			scopedModels: [],
+			isContinuing: false,
+			defaultProvider: "openrouter",
+			defaultModelId: "blocked",
+			modelRuntime: registry,
+		});
+		expect(initial.model).toBe(allowed);
+		const restored = await restoreModelFromSession("openrouter", "blocked", undefined, false, registry);
+		expect(restored.model).toBe(allowed);
+		expect(restored.fallbackMessage).toContain("model unavailable");
 	});
 
 	describe("persisted default model scoping", () => {

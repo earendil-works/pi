@@ -672,10 +672,12 @@ export async function findInitialModel(options: {
 		};
 	}
 
-	// 3. Try saved default from settings if auth is configured.
+	// 3. Try saved default from settings if it is available for the current credentials.
 	if (defaultProvider && defaultModelId) {
-		const found = modelRuntime.getModel(defaultProvider, defaultModelId);
-		if (found && modelRuntime.hasConfiguredAuth(found.provider)) {
+		const found = modelRuntime
+			.getAvailableSnapshot()
+			.find((candidate) => candidate.provider === defaultProvider && candidate.id === defaultModelId);
+		if (found) {
 			model = found;
 			const perModel = modelThinkingLevels?.[`${defaultProvider}/${defaultModelId}`];
 			if (perModel) {
@@ -718,12 +720,11 @@ export async function restoreModelFromSession(
 	shouldPrintMessages: boolean,
 	modelRuntime: ModelRuntime,
 ): Promise<{ model: Model<Api> | undefined; fallbackMessage: string | undefined }> {
-	const restoredModel = modelRuntime.getModel(savedProvider, savedModelId);
+	const restoredModel = modelRuntime
+		.getAvailableSnapshot()
+		.find((candidate) => candidate.provider === savedProvider && candidate.id === savedModelId);
 
-	// Check if restored model exists and still has auth configured
-	const hasConfiguredAuth = restoredModel ? modelRuntime.hasConfiguredAuth(restoredModel.provider) : false;
-
-	if (restoredModel && hasConfiguredAuth) {
+	if (restoredModel) {
 		if (shouldPrintMessages) {
 			console.log(chalk.dim(`Restored model: ${savedProvider}/${savedModelId}`));
 		}
@@ -731,7 +732,11 @@ export async function restoreModelFromSession(
 	}
 
 	// Model not found or no API key - fall back
-	const reason = !restoredModel ? "model no longer exists" : "no auth configured";
+	const reason = !modelRuntime.getModel(savedProvider, savedModelId)
+		? "model no longer exists"
+		: modelRuntime.hasConfiguredAuth(savedProvider)
+			? "model unavailable"
+			: "no auth configured";
 
 	if (shouldPrintMessages) {
 		console.error(chalk.yellow(`Warning: Could not restore model ${savedProvider}/${savedModelId} (${reason}).`));

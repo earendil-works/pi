@@ -26,17 +26,23 @@ function formatTokenCount(count: number): string {
 /**
  * List available models, optionally filtered by search pattern
  */
-export async function listModels(
-	modelRuntime: ModelRuntime,
-	searchPattern?: string,
-	signal?: AbortSignal,
-): Promise<void> {
+export async function listModels(modelRuntime: ModelRuntime, searchPattern?: string): Promise<void> {
+	// OpenRouter filters by the key's /models/user list, which needs a network refresh (#10353).
+	if (modelRuntime.hasConfiguredAuth("openrouter")) {
+		const result = await modelRuntime.refresh({ providers: ["openrouter"], signal: AbortSignal.timeout(15_000) });
+		const error = result.errors.get("openrouter");
+		if (result.aborted) {
+			console.error(chalk.yellow("Warning: OpenRouter model discovery timed out; listing all OpenRouter models."));
+		} else if (error) {
+			console.error(chalk.yellow(`Warning: Could not refresh OpenRouter models: ${error.message}`));
+		}
+	}
 	const loadError = modelRuntime.getError();
 	if (loadError) {
 		console.error(chalk.yellow(`Warning: errors loading models.json:\n${loadError}`));
 	}
 
-	const models = [...(await modelRuntime.getAvailable(undefined, { signal }))];
+	const models = [...(await modelRuntime.getAvailable(undefined, { signal: AbortSignal.timeout(15_000) }))];
 
 	if (models.length === 0) {
 		console.log(formatNoModelsAvailableMessage());

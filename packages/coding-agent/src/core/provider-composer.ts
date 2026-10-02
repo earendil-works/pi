@@ -612,8 +612,8 @@ export function composeModelProvider(
 		getAllModels,
 		refreshModels:
 			base?.refreshModels || extension?.refreshModels || extension?.oauth?.modifyModels
-				? async (context) => {
-						await base?.refreshModels?.(context);
+				? async function (this: Provider, context) {
+						await base?.refreshModels?.call(this, context);
 						let refreshed: NonNullable<ProviderConfigInput["models"]> | undefined;
 						if (extension?.refreshModels) refreshed = await extension.refreshModels(context);
 						if (context.signal.aborted) return;

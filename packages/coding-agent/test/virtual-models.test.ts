@@ -9,12 +9,13 @@ import {
 	InMemoryModelsStore,
 	type Model,
 } from "@earendil-works/pi-ai";
-import { afterEach, beforeEach, describe, expect, it, onTestFinished } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { ModelRuntime } from "../src/core/model-runtime.ts";
 import { createAgentSession } from "../src/core/sdk.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 import { getBranchSelection, type ModelRouteRequest, type VirtualModelDefinition } from "../src/core/virtual-models.ts";
+import { allowNetwork } from "./test-network-env.ts";
 import { createTestResourceLoader } from "./utilities.ts";
 
 async function createRuntime(requests: ModelRouteRequest[] = []) {
@@ -193,6 +194,59 @@ describe("ModelRuntime virtual models", () => {
 		runtime.unregisterVirtualModel("router", "auto");
 		expect(runtime.getModels("faux").map((model) => model.id)).toEqual(["small", "large", "auto"]);
 		expect(runtime.getModels("router").map((model) => model.id)).toEqual(["second"]);
+	});
+
+	// #10353: Virtual wrappers preserve the receiver and physical availability of native discovery.
+	it("keeps virtual choices and verified physical models on an OpenRouter endpoint override", async () => {
+		allowNetwork();
+		onTestFinished(() => {
+			vi.restoreAllMocks();
+			vi.unstubAllEnvs();
+		});
+		const requests: Request[] = [];
+		let allowedId: string;
+		vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+			const request = new Request(input, init);
+			if (!new URL(request.url).pathname.endsWith("/models/user")) return new Response(null, { status: 404 });
+			requests.push(request);
+			return Response.json({ data: [{ id: allowedId }] });
+		});
+		const runtime = await ModelRuntime.create({
+			credentials: AuthStorage.inMemory({ openrouter: { type: "api_key", key: "workspace-key" } }),
+			modelsStore: new InMemoryModelsStore(),
+			modelsPath: null,
+			allowModelNetwork: false,
+		});
+		const [allowed] = runtime.getModels("openrouter");
+		allowedId = allowed.id;
+		runtime.registerProvider("openrouter", { baseUrl: "https://workspace.example.test/api/v1" });
+		runtime.registerVirtualModel({
+			provider: "openrouter",
+			id: "workspace-auto",
+			name: "Workspace Auto",
+			route: () => ({ model: allowed, thinkingLevel: "off" }),
+		});
+		const result = await runtime.refresh({ allowNetwork: true, providers: ["openrouter"] });
+		expect(result.errors.size).toBe(0);
+		expect(requests).toHaveLength(1);
+		expect(requests[0].url).toBe("https://workspace.example.test/api/v1/models/user");
+		expect(requests[0].headers.get("authorization")).toBe("Bearer workspace-key");
+		expect((await runtime.getAvailable("openrouter")).map((model) => model.id)).toEqual([
+			allowed.id,
+			"workspace-auto",
+		]);
+
+		runtime.registerVirtualModel({
+			provider: "openrouter",
+			id: "workspace-fast",
+			name: "Workspace Fast",
+			route: () => ({ model: allowed, thinkingLevel: "off" }),
+		});
+		expect((await runtime.getAvailable("openrouter")).map((model) => model.id)).toEqual([
+			allowed.id,
+			"workspace-auto",
+			"workspace-fast",
+		]);
 	});
 
 	it("rejects routes to virtual or unknown models", async () => {

@@ -113,6 +113,12 @@ Radius is currently in early alpha and evolving quickly. See [radius.earendil.co
 
 Radius authentication uses its gateway catalog and caches refreshed model metadata for later offline startup. A custom Radius gateway configured in `models.json` uses its own catalog rather than inheriting the public `radius.pi.dev` catalog.
 
+### OpenRouter
+
+Pi uses authenticated `GET /api/v1/models/user` to filter built-in OpenRouter chat models in `/model` and `--list-models`, retaining Pi's capability metadata. This endpoint applies the key's guardrails, provider preferences, and privacy settings without requiring an organization toggle. See [OpenRouter's model discovery documentation](https://openrouter.ai/docs/api/api-reference/models/list-models-filtered-by-user-provider-preferences-privacy-settings-and-guardrails).
+
+Until discovery succeeds, Pi shows the full OpenRouter catalog. Interactive mode discovers in the background at startup and when `/model` opens; `--list-models` waits for discovery for up to 15 seconds. The verified list stays in memory for the key that fetched it. Logging in with a different key shows the full catalog again until the next refresh. A successful empty response shows no OpenRouter chat models. If discovery fails, Pi keeps the last successful list. Offline mode makes no discovery requests. Discovery uses the same headers and base URL as model requests, including `models.json` overrides.
+
 ### Azure OpenAI
 
 Set an API key plus either a base URL or resource name:
