@@ -17,12 +17,11 @@ interface BedrockThinkingPayload {
 	};
 }
 
-const ADAPTIVE_THINKING = {
+const BOUND_ADAPTIVE_THINKING = {
 	type: "adaptive",
 	display: "summarized",
 	block_binding: { prefix_mismatch_behavior: "drop_block" },
 };
-
 const THINKING_BINDING_BETA = ["thinking-binding-controls-2026-08-01"];
 
 class PayloadCaptured extends Error {
@@ -76,9 +75,9 @@ describe("Bedrock thinking payload", () => {
 
 		const payload = await capturePayload(model);
 
-		expect(payload.additionalModelRequestFields?.thinking).toEqual(ADAPTIVE_THINKING);
+		expect(payload.additionalModelRequestFields?.thinking).toEqual({ type: "adaptive", display: "summarized" });
 		expect(payload.additionalModelRequestFields?.output_config).toEqual({ effort: "high" });
-		expect(payload.additionalModelRequestFields?.anthropic_beta).toEqual(THINKING_BINDING_BETA);
+		expect(payload.additionalModelRequestFields?.anthropic_beta).toBeUndefined();
 	});
 
 	it("maps xhigh reasoning to effort=xhigh for Claude Opus 4.8", async () => {
@@ -91,9 +90,9 @@ describe("Bedrock thinking payload", () => {
 
 		const payload = await capturePayload(model, { reasoning: "xhigh" });
 
-		expect(payload.additionalModelRequestFields?.thinking).toEqual(ADAPTIVE_THINKING);
+		expect(payload.additionalModelRequestFields?.thinking).toEqual({ type: "adaptive", display: "summarized" });
 		expect(payload.additionalModelRequestFields?.output_config).toEqual({ effort: "xhigh" });
-		expect(payload.additionalModelRequestFields?.anthropic_beta).toEqual(THINKING_BINDING_BETA);
+		expect(payload.additionalModelRequestFields?.anthropic_beta).toBeUndefined();
 	});
 
 	it("uses adaptive thinking for Claude Fable 5 when reasoning is enabled", async () => {
@@ -101,9 +100,9 @@ describe("Bedrock thinking payload", () => {
 
 		const payload = await capturePayload(model);
 
-		expect(payload.additionalModelRequestFields?.thinking).toEqual(ADAPTIVE_THINKING);
+		expect(payload.additionalModelRequestFields?.thinking).toEqual({ type: "adaptive", display: "summarized" });
 		expect(payload.additionalModelRequestFields?.output_config).toEqual({ effort: "high" });
-		expect(payload.additionalModelRequestFields?.anthropic_beta).toEqual(THINKING_BINDING_BETA);
+		expect(payload.additionalModelRequestFields?.anthropic_beta).toBeUndefined();
 	});
 
 	it("uses adaptive thinking for Claude Sonnet 5 when reasoning is enabled", async () => {
@@ -111,9 +110,9 @@ describe("Bedrock thinking payload", () => {
 
 		const payload = await capturePayload(model);
 
-		expect(payload.additionalModelRequestFields?.thinking).toEqual(ADAPTIVE_THINKING);
+		expect(payload.additionalModelRequestFields?.thinking).toEqual({ type: "adaptive", display: "summarized" });
 		expect(payload.additionalModelRequestFields?.output_config).toEqual({ effort: "high" });
-		expect(payload.additionalModelRequestFields?.anthropic_beta).toEqual(THINKING_BINDING_BETA);
+		expect(payload.additionalModelRequestFields?.anthropic_beta).toBeUndefined();
 	});
 
 	it("uses adaptive thinking for Claude Opus 5 when reasoning is enabled", async () => {
@@ -121,7 +120,7 @@ describe("Bedrock thinking payload", () => {
 
 		const payload = await capturePayload(model);
 
-		expect(payload.additionalModelRequestFields?.thinking).toEqual(ADAPTIVE_THINKING);
+		expect(payload.additionalModelRequestFields?.thinking).toEqual(BOUND_ADAPTIVE_THINKING);
 		expect(payload.additionalModelRequestFields?.output_config).toEqual({ effort: "high" });
 		expect(payload.additionalModelRequestFields?.anthropic_beta).toEqual(THINKING_BINDING_BETA);
 	});
@@ -131,7 +130,7 @@ describe("Bedrock thinking payload", () => {
 
 		const payload = await capturePayload(model, { reasoning: "xhigh" });
 
-		expect(payload.additionalModelRequestFields?.thinking).toEqual(ADAPTIVE_THINKING);
+		expect(payload.additionalModelRequestFields?.thinking).toEqual(BOUND_ADAPTIVE_THINKING);
 		expect(payload.additionalModelRequestFields?.output_config).toEqual({ effort: "xhigh" });
 		expect(payload.additionalModelRequestFields?.anthropic_beta).toEqual(THINKING_BINDING_BETA);
 	});
@@ -141,7 +140,7 @@ describe("Bedrock thinking payload", () => {
 
 		const payload = await capturePayload(model, { reasoning: "xhigh" });
 
-		expect(payload.additionalModelRequestFields?.thinking).toEqual(ADAPTIVE_THINKING);
+		expect(payload.additionalModelRequestFields?.thinking).toEqual({ type: "adaptive", display: "summarized" });
 		expect(payload.additionalModelRequestFields?.output_config).toEqual({ effort: "xhigh" });
 	});
 
@@ -173,13 +172,45 @@ describe("Bedrock thinking payload", () => {
 		expect(payload.additionalModelRequestFields?.output_config).toEqual({ effort: "high" });
 		expect(payload.additionalModelRequestFields?.anthropic_beta).toBeUndefined();
 	});
+});
 
-	it("omits block_binding for Claude Opus 4.6, which rejects it", async () => {
-		const model = getModel("amazon-bedrock", "global.anthropic.claude-opus-4-6-v1");
+describe("Bedrock thinking binding controls", () => {
+	it("flags only the models that accept them in the catalog", () => {
+		expect(
+			getModel("amazon-bedrock", "global.anthropic.claude-opus-5-5").compat?.supportsThinkingBindingControls,
+		).toBe(true);
+		expect(getModel("amazon-bedrock", "us.anthropic.claude-opus-5-5").compat?.supportsThinkingBindingControls).toBe(
+			true,
+		);
+		// Bedrock rejects block_binding on these: Opus 4.6 everywhere, Sonnet 4.6 on the us. profile.
+		expect(
+			getModel("amazon-bedrock", "global.anthropic.claude-opus-4-6-v1").compat?.supportsThinkingBindingControls,
+		).toBeUndefined();
+		expect(
+			getModel("amazon-bedrock", "us.anthropic.claude-sonnet-4-6").compat?.supportsThinkingBindingControls,
+		).toBeUndefined();
+	});
 
-		const payload = await capturePayload(model);
+	it("drops mismatched thinking blocks on a flagged model", async () => {
+		const payload = await capturePayload(getModel("amazon-bedrock", "global.anthropic.claude-opus-5-5"));
+
+		expect(payload.additionalModelRequestFields?.thinking).toEqual(BOUND_ADAPTIVE_THINKING);
+		expect(payload.additionalModelRequestFields?.anthropic_beta).toEqual(THINKING_BINDING_BETA);
+	});
+
+	it("sends neither field on an adaptive model without the flag", async () => {
+		const payload = await capturePayload(getModel("amazon-bedrock", "us.anthropic.claude-sonnet-4-6"));
 
 		expect(payload.additionalModelRequestFields?.thinking).toEqual({ type: "adaptive", display: "summarized" });
+		expect(payload.additionalModelRequestFields?.anthropic_beta).toBeUndefined();
+	});
+
+	it("omits them on GovCloud even when the model is flagged", async () => {
+		const payload = await capturePayload(getModel("amazon-bedrock", "global.anthropic.claude-opus-5-5"), {
+			region: "us-gov-west-1",
+		});
+
+		expect(payload.additionalModelRequestFields?.thinking).toEqual({ type: "adaptive" });
 		expect(payload.additionalModelRequestFields?.anthropic_beta).toBeUndefined();
 	});
 });

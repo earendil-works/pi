@@ -958,6 +958,13 @@ export interface AnthropicMessagesCompat {
 export interface BedrockCompat {
 	/** Whether the model supports Bedrock strict tool schemas. Default: false. */
 	supportsStrictMode?: boolean;
+	/**
+	 * Whether the exact model and inference profile accept `thinking.block_binding`
+	 * with the `thinking-binding-controls-2026-08-01` beta. When true, adaptive thinking
+	 * requests drop thinking blocks whose system prompt or tools changed instead of failing.
+	 * Default: false.
+	 */
+	supportsThinkingBindingControls?: boolean;
 }
 
 /** Compatibility settings for the Mistral chat API. */

@@ -16,6 +16,7 @@ import type {
 	AnthropicMessagesCompat,
 	AnyModel,
 	Api,
+	BedrockCompat,
 	ClassifierApi,
 	ClassifierModel,
 	ImageApi,
@@ -820,6 +821,15 @@ function applyAnthropicMessagesCompatMetadata(model: Model<Api>): void {
 		mergeAnthropicMessagesCompat(model, compat);
 		if (compat.supportsMidConvoEffort) mergeThinkingLevelMap(model, { off: null });
 	}
+}
+
+// Bedrock accepts thinking binding controls on the same models that enforce the binding,
+// but not on every older adaptive model (Opus 4.6 everywhere, Sonnet 4.6 on `us.`).
+function applyBedrockThinkingBindingMetadata(model: Model<Api>): void {
+	if (model.api !== "bedrock-converse-stream") return;
+	const baseId = model.id.replace(/^(?:[a-z]+\.)?anthropic\./, "").replace(/-v\d+(?::\d+)?$/, "");
+	if (!supportsAnthropicMidConvoEffort(baseId)) return;
+	model.compat = { ...(model.compat as BedrockCompat | undefined), supportsThinkingBindingControls: true };
 }
 
 function isAnthropicFallbackMetadataModel(model: Model<Api>): model is Model<"anthropic-messages"> {
@@ -3416,6 +3426,7 @@ async function generateModels() {
 	for (const model of allModels) {
 		applyOpenAICompletionsCompatMetadata(model);
 		applyAnthropicMessagesCompatMetadata(model);
+		applyBedrockThinkingBindingMetadata(model);
 		applyModelsDevReasoningOptionMetadata(model);
 		applyThinkingLevelMetadata(model);
 		applyStrictToolCompatMetadata(model);

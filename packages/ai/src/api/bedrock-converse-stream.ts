@@ -1248,9 +1248,7 @@ function buildAdditionalModelRequestFields(
 		const display = govCloud ? undefined : (options.thinkingDisplay ?? "summarized");
 		// A signed thinking block is bound to the system prompt and tools it was created with.
 		// Replaying it after either changed is a 400 unless the block is dropped instead.
-		// Opus 4.6 rejects block_binding as an unknown field.
-		const blockBinding =
-			!govCloud && !getModelMatchCandidates(model.id, model.name).some((s) => s.includes("opus-4-6"));
+		const blockBinding = !govCloud && model.compat?.supportsThinkingBindingControls === true;
 		const result: Record<string, any> = supportsAdaptiveThinking(model.id, model.name)
 			? {
 					thinking: {
