@@ -175,6 +175,7 @@ describe("Bedrock thinking payload", () => {
 });
 
 describe("Bedrock thinking binding controls", () => {
+	// #10324
 	it("flags only the models that accept them in the catalog", () => {
 		expect(
 			getModel("amazon-bedrock", "global.anthropic.claude-opus-5-5").compat?.supportsThinkingBindingControls,
@@ -191,6 +192,7 @@ describe("Bedrock thinking binding controls", () => {
 		).toBeUndefined();
 	});
 
+	// #10324
 	it("drops mismatched thinking blocks on a flagged model", async () => {
 		const payload = await capturePayload(getModel("amazon-bedrock", "global.anthropic.claude-opus-5-5"));
 
@@ -198,6 +200,7 @@ describe("Bedrock thinking binding controls", () => {
 		expect(payload.additionalModelRequestFields?.anthropic_beta).toEqual(THINKING_BINDING_BETA);
 	});
 
+	// #10324
 	it("sends neither field on an adaptive model without the flag", async () => {
 		const payload = await capturePayload(getModel("amazon-bedrock", "us.anthropic.claude-sonnet-4-6"));
 
@@ -205,6 +208,7 @@ describe("Bedrock thinking binding controls", () => {
 		expect(payload.additionalModelRequestFields?.anthropic_beta).toBeUndefined();
 	});
 
+	// #10324
 	it("omits them on GovCloud even when the model is flagged", async () => {
 		const payload = await capturePayload(getModel("amazon-bedrock", "global.anthropic.claude-opus-5-5"), {
 			region: "us-gov-west-1",
