@@ -45,6 +45,22 @@ function restResponse(state: string, result: unknown = jevOutput) {
 	};
 }
 
+// Cloudflare-hosted output observed from a live /ai/run call, question ids renamed to match `context`.
+// The envelope carries the output directly, without a run record.
+const clefOutput = {
+	model: "clef",
+	answers: {
+		is_urgent: { type: "noul", noul: 0.9912 },
+		department: {
+			type: "choice",
+			choice: "technical",
+			probabilities: { billing: 0.1632, technical: 0.8368 },
+			confidence: 0.4538,
+		},
+	},
+	usage: { input_tokens: 222, output_tokens: 0 },
+};
+
 function setup() {
 	const models = createModels();
 	models.setProvider(cloudflareWorkersAIProvider());
@@ -88,33 +104,31 @@ describe("Cloudflare Workers AI System One", () => {
 	});
 
 	it.each([
-		["@cf/cloudflare/clef", "clef"],
-		["@cf/cloudflare/clef-flash", "clef-flash"],
-	])("runs %s through the model-in-path endpoint with model selector %s", async (id, selector) => {
+		["@cf/cloudflare/clef", 0.24],
+		["@cf/cloudflare/clef-flash", 0.09],
+	])("runs %s through /ai/run and parses its direct output", async (id, inputPrice) => {
 		const { models } = setup();
 		const clef = models.getModelOfType("classifier", "cloudflare-workers-ai", id);
 		if (!clef) throw new Error(`missing Cloudflare ${id} model`);
 		const fetch = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
 			const payload = JSON.parse(String(init?.body)) as {
 				model: string;
-				state: unknown;
-				questions: Record<string, { type: string }>;
+				input: { state: unknown; questions: Record<string, { type: string }> };
 			};
-			expect(payload).not.toHaveProperty("input");
-			expect(payload.model).toBe(selector);
-			expect(payload.state).toEqual(context.state);
-			expect(payload.questions.is_urgent?.type).toBe("noul");
-			return Response.json({ result: { ...jevOutput, model: selector }, success: true, errors: [], messages: [] });
+			expect(payload.model).toBe(id);
+			expect(payload.input.state).toEqual(context.state);
+			expect(payload.input.questions.is_urgent?.type).toBe("noul");
+			return Response.json({ result: clefOutput, success: true, errors: [], messages: [] });
 		});
 
 		const result = await models.classify(clef, context, { ...auth, fetch });
 
-		expect(String(fetch.mock.calls[0]?.[0])).toBe(
-			`https://api.cloudflare.com/client/v4/accounts/account-id/ai/run/${id}`,
-		);
+		expect(String(fetch.mock.calls[0]?.[0])).toBe("https://api.cloudflare.com/client/v4/accounts/account-id/ai/run");
 		expect(result.stopReason).toBe("stop");
-		expect(result.answers.is_urgent).toEqual({ type: "bool", probability: 0.95 });
-		expect(result.usage).toMatchObject({ input: 426, output: 73, totalTokens: 499 });
+		expect(result.answers.is_urgent).toEqual({ type: "bool", probability: 0.9912 });
+		expect(result.answers.department).toMatchObject({ type: "choice", choice: "technical", confidence: 0.4538 });
+		expect(result.usage).toMatchObject({ input: 222, output: 0, totalTokens: 222 });
+		expect(result.usage?.cost.input).toBeCloseTo((222 * inputPrice) / 1_000_000);
 	});
 
 	it("reports runs that did not complete", async () => {

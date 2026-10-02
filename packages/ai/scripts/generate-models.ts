@@ -2734,10 +2734,11 @@ const OPENCODE_CLASSIFIER_MODELS: ClassifierModel<"typesafe-system-one">[] = [
 	},
 ];
 
-// Clef pricing: https://developers.cloudflare.com/workers-ai/models/clef/
-// and https://developers.cloudflare.com/workers-ai/models/clef-flash/
-// Clef reads images too, but classifier contexts carry only text/JSON state.
 const CLOUDFLARE_WORKERS_AI_CLASSIFIER_MODELS: ClassifierModel<"cloudflare-workers-ai-system-one">[] = [
+	// Cloudflare-hosted Clef decision models. They accept images, but classifier
+	// contexts carry text or JSON state only, so the catalog advertises text.
+	// Pricing: https://developers.cloudflare.com/workers-ai/models/clef/
+	// and https://developers.cloudflare.com/workers-ai/models/clef-flash/
 	{
 		type: "classifier",
 		id: "@cf/cloudflare/clef",

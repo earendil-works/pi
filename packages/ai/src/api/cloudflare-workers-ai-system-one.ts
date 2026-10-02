@@ -13,51 +13,35 @@ function cloudflareErrorMessage(errors: unknown): string {
 	return `${LABEL} request failed`;
 }
 
-/** Unwraps Cloudflare's API envelope: `{ success, errors, result }`. */
-function apiResult(body: unknown): Record<string, unknown> {
-	if (!isRecord(body)) throw new Error(`${LABEL} returned an unexpected response`);
-	if (body.success === false) throw new Error(cloudflareErrorMessage(body.errors));
-	if (!isRecord(body.result)) throw new Error(`${LABEL} returned an unexpected response`);
-	return body.result;
-}
-
 /**
- * Third-party System One models on the Workers AI REST endpoint:
- * `POST /accounts/{account}/ai/run` with `{ model, input }`. The REST API
- * wraps the model output in Cloudflare's API envelope and a run record:
+ * System One models on the Workers AI REST endpoint:
+ * `POST /accounts/{account}/ai/run` with `{ model, input }`. The REST API wraps the model
+ * output in Cloudflare's API envelope. Third-party models such as `typesafe/jev` add a run record:
  * `{ success, result: { state: "Completed", result: { answers, usage } } }`.
  * https://developers.cloudflare.com/ai/models/typesafe/jev/
+ * Cloudflare-hosted models such as `@cf/cloudflare/clef` return the output directly:
+ * `{ success, result: { model, answers, usage } }`.
+ * https://developers.cloudflare.com/workers-ai/models/clef/
  */
-const runTransport: SystemOneTransport = {
+const transport: SystemOneTransport = {
 	api: "cloudflare-workers-ai-system-one",
 	label: LABEL,
 	url: (model) => new URL("run", `${model.baseUrl.replace(/\/+$/u, "")}/`),
 	payload: (model, request) => ({ model: model.id, input: request }),
 	output: (body) => {
-		const run = apiResult(body);
-		if (run.state !== "Completed") {
-			throw new Error(`${LABEL} run did not complete (state: ${String(run.state)})`);
+		if (!isRecord(body)) throw new Error(`${LABEL} returned an unexpected response`);
+		if (body.success === false) throw new Error(cloudflareErrorMessage(body.errors));
+		const result = body.result;
+		if (!isRecord(result)) throw new Error(`${LABEL} returned an unexpected response`);
+		if ("answers" in result) return result;
+		if (result.state !== "Completed") {
+			throw new Error(`${LABEL} run did not complete (state: ${String(result.state)})`);
 		}
-		if (!isRecord(run.result)) throw new Error(`${LABEL} returned an unexpected response`);
-		return run.result;
+		if (!isRecord(result.result)) throw new Error(`${LABEL} returned an unexpected response`);
+		return result.result;
 	},
-};
-
-/**
- * Cloudflare-hosted System One models (`@cf/cloudflare/clef`):
- * `POST /accounts/{account}/ai/run/{model}` with the System One request as the body plus a
- * `model` selector (`clef`), the last ID segment. The output is wrapped only in the API envelope:
- * `{ success, result: { answers, usage } }`.
- * https://developers.cloudflare.com/workers-ai/models/clef/
- */
-const hostedTransport: SystemOneTransport = {
-	api: "cloudflare-workers-ai-system-one",
-	label: LABEL,
-	url: (model) => new URL(`run/${model.id}`, `${model.baseUrl.replace(/\/+$/u, "")}/`),
-	payload: (model, request) => ({ model: model.id.slice(model.id.lastIndexOf("/") + 1), ...request }),
-	output: apiResult,
 };
 
 /** Cloudflare Workers AI System One classification with public `bool` values mapped to wire-level `noul`. */
 export const classify: ClassifierFunction<ClassifierOptions> = (model, context, options) =>
-	classifySystemOne(model.id.startsWith("@cf/") ? hostedTransport : runTransport, model, context, options);
+	classifySystemOne(transport, model, context, options);
