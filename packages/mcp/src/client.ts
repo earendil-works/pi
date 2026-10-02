@@ -100,10 +100,10 @@ function validateListPage(
 	for (const item of items) {
 		if (!isObject(item) || !isItem(item)) throw invalid(`Invalid entry in MCP ${method} result`);
 	}
-	if (value.nextCursor !== undefined && typeof value.nextCursor !== "string") {
-		throw invalid(`Invalid MCP ${method} cursor`);
-	}
-	return { items, ...(value.nextCursor === undefined ? {} : { nextCursor: value.nextCursor }) };
+	// Some servers end pagination with `null` or `""` instead of omitting the cursor.
+	const nextCursor = value.nextCursor === null || value.nextCursor === "" ? undefined : value.nextCursor;
+	if (nextCursor !== undefined && typeof nextCursor !== "string") throw invalid(`Invalid MCP ${method} cursor`);
+	return { items, ...(nextCursor === undefined ? {} : { nextCursor }) };
 }
 
 const isTool = (tool: Record<string, unknown>) => typeof tool.name === "string" && isObject(tool.inputSchema);

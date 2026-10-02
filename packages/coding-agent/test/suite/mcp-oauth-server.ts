@@ -12,10 +12,19 @@ function json(response: ServerResponse, status: number, body: unknown, headers: 
 	response.writeHead(status, { "content-type": "application/json", ...headers }).end(JSON.stringify(body));
 }
 
-/** MCP server protected by OAuth, with its own authorization server (discovery, DCR, PKCE, refresh). */
-export async function startOAuthMcpServer() {
+/**
+ * MCP server protected by OAuth, with its own authorization server (discovery, DCR, PKCE, refresh).
+ * `iss` is sent as the `iss` parameter of authorization responses (RFC 9207). `issParameter` advertises
+ * that parameter and sends the server's issuer. `cimd` advertises Client ID Metadata Documents.
+ * `redirectPath` replaces the path of the redirect URI, like a mixed-up authorization server.
+ */
+export async function startOAuthMcpServer(
+	options: { iss?: string; issParameter?: boolean; cimd?: boolean; redirectPath?: string } = {},
+) {
 	const log: string[] = [];
 	const registrations: Record<string, unknown>[] = [];
+	const authorizations: URLSearchParams[] = [];
+	const tokenRequests: URLSearchParams[] = [];
 	const validTokens = new Set<string>();
 	const refreshTokens = new Set<string>();
 	const challenges = new Map<string, string>();
@@ -84,6 +93,8 @@ export async function startOAuthMcpServer() {
 					response_types_supported: ["code"],
 					code_challenge_methods_supported: ["S256"],
 					token_endpoint_auth_methods_supported: ["none"],
+					...(options.cimd ? { client_id_metadata_document_supported: true } : {}),
+					...(options.issParameter ? { authorization_response_iss_parameter_supported: true } : {}),
 				});
 			case "/register": {
 				const metadata = JSON.parse(await readBody(request)) as Record<string, unknown>;
@@ -92,16 +103,21 @@ export async function startOAuthMcpServer() {
 				return json(response, 201, { ...metadata, client_id: "client-1" });
 			}
 			case "/authorize": {
+				authorizations.push(url.searchParams);
 				const code = `code-${challenges.size + 1}`;
 				challenges.set(code, url.searchParams.get("code_challenge") ?? "");
 				const redirect = new URL(url.searchParams.get("redirect_uri") ?? "");
+				if (options.redirectPath) redirect.pathname = options.redirectPath;
 				redirect.searchParams.set("code", code);
 				redirect.searchParams.set("state", url.searchParams.get("state") ?? "");
+				const iss = options.iss ?? (options.issParameter ? origin : undefined);
+				if (iss) redirect.searchParams.set("iss", iss);
 				response.writeHead(302, { location: redirect.href }).end();
 				return;
 			}
 			case "/token": {
 				const params = new URLSearchParams(await readBody(request));
+				tokenRequests.push(params);
 				if (params.get("grant_type") === "authorization_code") {
 					const challenge = challenges.get(params.get("code") ?? "");
 					const verifier = createHash("sha256")
@@ -136,6 +152,10 @@ export async function startOAuthMcpServer() {
 		log,
 		/** Client metadata of dynamic client registrations. */
 		registrations,
+		/** Query parameters of authorization requests. */
+		authorizations,
+		/** Parameters of token requests. */
+		tokenRequests,
 		/** Simulates access token expiry. */
 		expireAccessTokens: () => validTokens.clear(),
 		close: () =>

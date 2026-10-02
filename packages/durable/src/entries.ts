@@ -1,5 +1,5 @@
 import type { JsonValue } from "@earendil-works/chord";
-import type { ToolDiagnostic } from "./harness/types.ts";
+import type { CompactionReason, ToolDiagnostic } from "./harness/types.ts";
 import type { Entry, EntryRecord, TypedEntry } from "./types.ts";
 
 /** Define a typed entry kind whose `is()` guard narrows by `EntryRecord.kind`. */
@@ -27,3 +27,8 @@ export const ToolResultEntry = defineEntry<{ diagnostics: ToolDiagnostic[] }>("p
  * handoff text. Written by `Conversation.reset()` and the `handoff` tool control.
  */
 export const ResetEntry = defineEntry("pi.reset");
+/**
+ * Compaction summary: `model` is `[UserMessage]` with the wrapped summary, `head` the first kept entry. Written by
+ * compaction tasks, directly or through a write submission.
+ */
+export const CompactionEntry = defineEntry<{ reason: CompactionReason }>("pi.compaction");

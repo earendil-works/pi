@@ -11,11 +11,11 @@ import {
 	Type,
 } from "@earendil-works/pi-ai";
 import {
+	defineTool,
 	type EntryRecord,
 	GenerationTask,
 	type Harness,
 	LiveDoc,
-	type Registration,
 	type TaskId,
 	type ToolRegistration,
 	ToolResultEntry,
@@ -27,6 +27,7 @@ import { NodeExecutionEnv } from "../src/env/node.ts";
 import { openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";
 import { createBashTool } from "../src/tools/index.ts";
 import { allEntries, type ChatSetup, chatSetup, openChat, waitFor } from "./chat-support.ts";
+import { addHooks, addTool, type Installed } from "./harness-support.ts";
 import { context } from "./session-support.ts";
 import { aborted, deferred } from "./task-support.ts";
 
@@ -54,7 +55,7 @@ function tool(
 	execute: ToolRegistration["execute"],
 	extra: Partial<ToolRegistration> = {},
 ): ToolRegistration {
-	return { name, description: name, parameters: Type.Object({}), execute, ...extra };
+	return defineTool({ name, description: name, parameters: Type.Object({}), execute, ...extra });
 }
 
 function call(name: string, id = "c1"): AssistantMessage {
@@ -109,7 +110,7 @@ describe("tool recovery", () => {
 		const path = await sqlitePath();
 		const setup = chatSetup();
 		const { registration, started, state } = blockingTool("work");
-		setup.registry.tools.add(registration);
+		addTool(setup.registry, registration);
 		setup.faux.setResponses([call("work"), DONE]);
 		let opened = await open(path, setup);
 		const id = (await opened.root.submit({ type: "input", content: "go" }, context)).id;
@@ -142,7 +143,7 @@ describe("tool recovery", () => {
 			const path = await sqlitePath();
 			const setup = chatSetup();
 			const blocking = blockingTool("work", { replay: stored });
-			const registration: Registration = setup.registry.tools.add(blocking.registration);
+			const registration: Installed = addTool(setup.registry, blocking.registration);
 			setup.faux.setResponses([call("work"), DONE]);
 			let opened = await open(path, setup);
 			const id = (await opened.root.submit({ type: "input", content: "go" }, context)).id;
@@ -150,7 +151,7 @@ describe("tool recovery", () => {
 			await opened.harness.close(context);
 
 			registration.dispose();
-			setup.registry.tools.add({ ...blocking.registration, replay: current });
+			addTool(setup.registry, { ...blocking.registration, replay: current });
 			opened = await open(path, setup);
 			expect((await (await opened.harness.submission(id, context))!.wait(context)).status).toBe("done");
 			const [result] = results(await allEntries(opened.root));
@@ -161,11 +162,60 @@ describe("tool recovery", () => {
 		}
 	});
 
+	it("reruns a safe tool with the environment of the conversation's cwd at rerun, and not once it is deselected", async () => {
+		for (const change of ["cwd", "deselect"] as const) {
+			const path = await sqlitePath();
+			const setup = chatSetup();
+			const cwds: (string | undefined)[] = [];
+			const started = deferred();
+			const work = tool(
+				"work",
+				async (_args, api, callContext) => {
+					cwds.push(api.env?.cwd);
+					if (cwds.length === 1) {
+						started.resolve();
+						await aborted(callContext.abortSignal!);
+					}
+					return {};
+				},
+				{ replay: "safe" },
+			);
+			addTool(setup.registry, work);
+			setup.faux.setResponses([call("work"), DONE]);
+			const env = ({ cwd = "/" }: { readonly cwd?: string }) => new NodeExecutionEnv({ cwd });
+			const reopen = async () => {
+				const opened = await openChat(await openNodeSqliteStorage(path), setup, { env });
+				opened.harness.resume();
+				return opened;
+			};
+			let opened = await reopen();
+			await opened.root.configure({ cwd: "/one" }, context);
+			const id = (await opened.root.submit({ type: "input", content: "go" }, context)).id;
+			await started.promise;
+			await opened.root.configure(change === "cwd" ? { cwd: "/two" } : { extensions: [] }, context);
+			await opened.harness.close(context);
+
+			opened = await reopen();
+			expect((await (await opened.harness.submission(id, context))!.wait(context)).status).toBe("done");
+			const [result] = results(await allEntries(opened.root));
+			if (change === "cwd") {
+				expect(cwds).toEqual(["/one", "/two"]);
+				expect(result!.isError).toBe(false);
+			} else {
+				// A tool that no longer resolves is treated as unsafe: interrupted, not rerun.
+				expect(cwds).toEqual(["/one"]);
+				expect(text(result)).toContain("was interrupted");
+			}
+			await opened.harness.close(context);
+		}
+	});
+
 	it("reruns beforeTool when interrupted before intent, and executes once", async () => {
 		const path = await sqlitePath();
 		const setup = chatSetup();
 		let runs = 0;
-		setup.registry.tools.add(
+		addTool(
+			setup.registry,
 			tool("work", async () => {
 				runs++;
 				return { content: [] };
@@ -174,7 +224,7 @@ describe("tool recovery", () => {
 		const reached = deferred();
 		let asked = 0;
 		const decisions: string[] = [];
-		setup.registry.hooks.add(ToolTask, {
+		addHooks(setup.registry, ToolTask, {
 			beforeTool: async (_call, api, callContext) => {
 				asked++;
 				// A durable first-writer-wins decision survives the rerun.
@@ -202,10 +252,13 @@ describe("tool recovery", () => {
 	it("reruns the generation tools phase interrupted before its commit", async () => {
 		const path = await sqlitePath();
 		const setup = chatSetup();
-		setup.registry.tools.add(tool("work", async () => ({ content: [] })));
+		addTool(
+			setup.registry,
+			tool("work", async () => ({ content: [] })),
+		);
 		const reached = deferred();
 		let observed = 0;
-		setup.registry.hooks.add(GenerationTask, {
+		addHooks(setup.registry, GenerationTask, {
 			afterTools: async (_assistant, _results, _api, callContext) => {
 				observed++;
 				if (observed === 1) {
@@ -237,7 +290,7 @@ describe("tool recovery", () => {
 		const path = await sqlitePath();
 		const setup = chatSetup();
 		const { registration, started } = blockingTool("work");
-		setup.registry.tools.add(registration);
+		addTool(setup.registry, registration);
 		setup.faux.setResponses([call("work"), DONE]);
 		const opened = await open(path, setup);
 		const submission = await opened.root.submit({ type: "input", content: "go" }, context);
@@ -258,7 +311,8 @@ describe("tool recovery", () => {
 		const path = await sqlitePath();
 		const setup = chatSetup();
 		// A result that is not strict JSON makes the result commit throw, so the scheduler faults the task.
-		setup.registry.tools.add(
+		addTool(
+			setup.registry,
 			tool("bad", async () => ({ content: [], details: { fn: (() => 1) as unknown as JsonValue } })),
 		);
 		const requests: string[] = [];
@@ -285,7 +339,7 @@ describe("tool recovery", () => {
 		const path = await sqlitePath();
 		const env = new NodeExecutionEnv({ cwd: dirname(path) });
 		const setup = chatSetup();
-		setup.registry.tools.add(createBashTool());
+		addTool(setup.registry, createBashTool());
 		setup.faux.setResponses([
 			fauxAssistantMessage([fauxToolCall("bash", { command: "echo started; sleep 30" }, { id: "b" })], {
 				stopReason: "toolUse",
@@ -314,7 +368,8 @@ describe("tool recovery", () => {
 		const setup = chatSetup();
 		const started = [deferred(), deferred()];
 		let runs = 0;
-		setup.registry.tools.add(
+		addTool(
+			setup.registry,
 			tool(
 				"work",
 				async (_args, api, callContext) => {

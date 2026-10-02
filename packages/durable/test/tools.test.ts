@@ -25,6 +25,7 @@ import {
 	type ShellExecResult,
 } from "../src/env/index.ts";
 import { NodeExecutionEnv } from "../src/env/node.ts";
+import { withFileMutationQueue } from "../src/tools/file-mutation-queue.ts";
 import { detectSupportedImageMimeType } from "../src/tools/image.ts";
 import { createBashTool, createEditTool, createReadTool, createWriteTool } from "../src/tools/index.ts";
 import { DEFAULT_MAX_LINES } from "../src/truncate.ts";
@@ -420,6 +421,84 @@ describe("durable tools", () => {
 				run(tool, { path: "link.txt", edits: [{ oldText: "beta", newText: "BETA" }] }, env),
 			]);
 			expect(getOrThrow(await env.readTextFile("target.txt", BACKGROUND_CONTEXT))).toBe("ALPHA\nBETA\ngamma\n");
+		});
+
+		it("serializes edits of one file across environment objects of one file system", async () => {
+			const dir = createTempDir();
+			const first = new SlowReadExecutionEnv({ cwd: dir });
+			const second = new SlowReadExecutionEnv({ cwd: dir });
+			getOrThrow(await first.writeFile("file.txt", "alpha\nbeta\n", BACKGROUND_CONTEXT));
+			const tool = createEditTool();
+			await Promise.all([
+				run(tool, { path: "file.txt", edits: [{ oldText: "alpha", newText: "ALPHA" }] }, first),
+				run(tool, { path: "file.txt", edits: [{ oldText: "beta", newText: "BETA" }] }, second),
+			]);
+			expect(getOrThrow(await first.readTextFile("file.txt", BACKGROUND_CONTEXT))).toBe("ALPHA\nBETA\n");
+		});
+
+		it("serializes a new file created through a symlinked directory with its canonical path", async () => {
+			const env = new BlockingWriteExecutionEnv({ cwd: createTempDir() });
+			mkdirSync(`${env.cwd}/real`);
+			await symlink(`${env.cwd}/real`, `${env.cwd}/link`);
+			const tool = createWriteTool();
+			const first = run(tool, { path: "link/new.txt", content: "first\n" }, env);
+			await env.firstWriteStarted.promise;
+			const second = run(tool, { path: "real/new.txt", content: "second\n" }, env);
+			await delay(20);
+			expect(env.secondWriteStarted).toBe(false);
+			env.finishFirstWrite.resolve();
+			await Promise.all([first, second]);
+			expect(getOrThrow(await env.readTextFile("real/new.txt", BACKGROUND_CONTEXT))).toBe("second\n");
+		});
+
+		it.skipIf(process.platform === "win32")(
+			"keys a missing file whose name contains a backslash like the created file",
+			async () => {
+				const env = createEnv();
+				const created = deferred();
+				const release = deferred();
+				const first = withFileMutationQueue(
+					env,
+					"a\\b.txt",
+					async () => {
+						getOrThrow(await env.writeFile("a\\b.txt", "first\n", BACKGROUND_CONTEXT));
+						created.resolve();
+						await release.promise;
+					},
+					BACKGROUND_CONTEXT,
+				);
+				await created.promise;
+				let entered = false;
+				const second = withFileMutationQueue(
+					env,
+					"a\\b.txt",
+					async () => {
+						entered = true;
+					},
+					BACKGROUND_CONTEXT,
+				);
+				await delay(20);
+				expect(entered).toBe(false);
+				release.resolve();
+				await Promise.all([first, second]);
+				expect(entered).toBe(true);
+			},
+		);
+
+		it("does not serialize the same path on different file systems", async () => {
+			class OtherFileSystem extends BlockingWriteExecutionEnv {
+				override readonly id = "other";
+			}
+			const dir = createTempDir();
+			const local = new BlockingWriteExecutionEnv({ cwd: dir });
+			const other = new OtherFileSystem({ cwd: dir });
+			const tool = createWriteTool();
+			const blocked = run(tool, { path: "file.txt", content: "first\n" }, local);
+			await local.firstWriteStarted.promise;
+			await run(tool, { path: "file.txt", content: "second\n" }, other);
+			expect(other.secondWriteStarted).toBe(true);
+			local.finishFirstWrite.resolve();
+			await blocked;
 		});
 
 		it("edits regular files through symlinks", async () => {

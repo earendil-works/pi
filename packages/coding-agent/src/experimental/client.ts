@@ -1,9 +1,7 @@
 import { resolve } from "node:path";
-import { BACKGROUND_CONTEXT, type LaneWatchEvent } from "@earendil-works/pi-agent-core";
-import type { AssistantMessage } from "@earendil-works/pi-ai";
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { ClientCommand } from "../cli/experimental/commands/client.ts";
 import { activateBuiltinClientServices, openClientRuntime } from "./client-runtime.ts";
-import type { AgentOperationResponse } from "./services/agent-controller.ts";
 import type { SessionAddress } from "./services/sessions.ts";
 
 export type ClientResult =
@@ -17,8 +15,6 @@ export type ClientResult =
 export interface RunClientOptions {
 	/** Directory searched when --connect is omitted. Defaults to PI_SERVER_DIR or ~/.pi/server. */
 	readonly directory?: string;
-	/** Receives snapshot-ordered main-lane events while a prompt is active. */
-	readonly onEvent?: (event: LaneWatchEvent) => void | Promise<void>;
 }
 
 /** Discover servers, then list Sessions, attach to one, or create one for a prompt. */
@@ -79,61 +75,12 @@ export async function runClient(command: ClientCommand, options: RunClientOption
 			return { kind: "attached", serverId: match.route.serverId, sessionId };
 		}
 
-		const agent = match.agent;
-		const completedText = new Map<string, string>();
-		const operationBoundaries = new Set<string>();
-		const boundaryWaiters = new Map<string, () => void>();
-		let deliveryTail = Promise.resolve();
-		const unsubscribe = match.transcript.state.subscribe((value, _context, delivery) => {
-			if (delivery.kind !== "update" || value.event === null) return;
-			const event = value.event;
-			deliveryTail = deliveryTail.then(async () => {
-				if (event.type === "message_end" && event.runId !== undefined && event.message.role === "assistant") {
-					completedText.set(event.runId, messageText(event.message));
-				}
-				await options.onEvent?.(event);
-			});
-			if (event.type === "run_end" || event.type === "run_suspend") {
-				operationBoundaries.add(event.runId);
-				boundaryWaiters.get(event.runId)?.();
-				boundaryWaiters.delete(event.runId);
-			}
-		});
-		if (match.transcript.state.value?.snapshot === null || match.transcript.state.value?.snapshot === undefined) {
-			unsubscribe();
-			throw new Error("Transcript has no initialized snapshot");
-		}
-		let response: AgentOperationResponse;
-		try {
-			response = await agent.prompt({ message: command.prompt, images: null }, BACKGROUND_CONTEXT);
-			// The operation response and transcript updates use independent protocol
-			// messages, so the response can arrive before its terminal event.
-			if (response.accepted) {
-				const operationId = response.operationId;
-				if (!operationBoundaries.has(operationId)) {
-					await new Promise<void>((resolve) => boundaryWaiters.set(operationId, resolve));
-				}
-			}
-		} finally {
-			unsubscribe();
-			await deliveryTail;
-		}
+		const response = await match.agent.prompt({ message: command.prompt, images: null }, BACKGROUND_CONTEXT);
 		if (!response.accepted) throw new Error(response.error.message);
-		if (response.error !== null) throw new Error(response.error.message);
-		return {
-			kind: "prompted",
-			serverId: match.route.serverId,
-			sessionId,
-			text: completedText.get(response.operationId) ?? "",
-		};
+		const result = await match.agent.waitForPrompt(response.operationId, BACKGROUND_CONTEXT);
+		if (result.status === "unanswered") throw new Error(`Prompt was not answered: ${result.reason}`);
+		return { kind: "prompted", serverId: match.route.serverId, sessionId, text: result.text };
 	} finally {
 		await runtime.dispose();
 	}
-}
-
-function messageText(message: AssistantMessage): string {
-	return message.content
-		.filter((content) => content.type === "text")
-		.map((content) => content.text)
-		.join("");
 }

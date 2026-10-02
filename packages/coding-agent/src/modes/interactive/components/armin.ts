@@ -6,8 +6,10 @@ import type { Component, TUI } from "@earendil-works/pi-tui";
 import { theme } from "../theme/theme.ts";
 
 // XBM image: 31x36 pixels, LSB first, 1=background, 0=foreground
-const WIDTH = 31;
-const HEIGHT = 36;
+export const ARMIN_WIDTH = 31;
+export const ARMIN_HEIGHT = 36;
+const WIDTH = ARMIN_WIDTH;
+const HEIGHT = ARMIN_HEIGHT;
 const BITS = [
 	0xff, 0xff, 0xff, 0x7f, 0xff, 0xf0, 0xff, 0x7f, 0xff, 0xed, 0xff, 0x7f, 0xff, 0xdb, 0xff, 0x7f, 0xff, 0xb7, 0xff,
 	0x7f, 0xff, 0x77, 0xfe, 0x7f, 0x3f, 0xf8, 0xfe, 0x7f, 0xdf, 0xff, 0xfe, 0x7f, 0xdf, 0x3f, 0xfc, 0x7f, 0x9f, 0xc3,
@@ -27,7 +29,7 @@ type Effect = "typewriter" | "scanline" | "rain" | "fade" | "crt" | "glitch" | "
 const EFFECTS: Effect[] = ["typewriter", "scanline", "rain", "fade", "crt", "glitch", "dissolve"];
 
 // Get pixel at (x, y): true = foreground, false = background
-function getPixel(x: number, y: number): boolean {
+export function isArminPixel(x: number, y: number): boolean {
 	if (y >= HEIGHT) return false;
 	const byteIndex = y * BYTES_PER_ROW + Math.floor(x / 8);
 	const bitIndex = x % 8;
@@ -36,8 +38,8 @@ function getPixel(x: number, y: number): boolean {
 
 // Get the character for a cell (2 vertical pixels packed)
 function getChar(x: number, row: number): string {
-	const upper = getPixel(x, row * 2);
-	const lower = getPixel(x, row * 2 + 1);
+	const upper = isArminPixel(x, row * 2);
+	const lower = isArminPixel(x, row * 2 + 1);
 	if (upper && lower) return "█";
 	if (upper) return "▀";
 	if (lower) return "▄";

@@ -3,16 +3,19 @@ import { getCurrentTools, toToolDeclaration } from "@earendil-works/pi-ai/utils/
 import {
 	type Conversation,
 	createRegistry,
+	defineExtension,
 	type EntryId,
 	MemoryStorage,
 	type PromptInput,
 	type PromptSection,
 	SystemEntry,
 	type ToolRegistration,
+	wrapSection,
 } from "@earendil-works/pi-durable";
 import { describe, expect, it } from "vitest";
-import { desiredTools, planSystemEntries, renderSections, replaySections } from "../src/harness/prompt.ts";
-import { openHarness, user } from "./harness-support.ts";
+import { resolveAgent, resolveSettings } from "../src/harness/agent.ts";
+import { planSystemEntries, renderSections, replaySections } from "../src/harness/prompt.ts";
+import { addSection, openHarness, user } from "./harness-support.ts";
 import { context } from "./session-support.ts";
 
 type Planned = { readonly sections: Record<string, string | null>; readonly omit?: readonly EntryId[] };
@@ -59,40 +62,44 @@ function section(key: string, render: PromptSection<ToolRegistration>["render"],
 
 const input: PromptInput<ToolRegistration> = {
 	conversationId: 1 as never,
-	tools: [],
+	agent: { thinkingLevel: "off", extensions: [], tools: [], sections: [] },
+	env: undefined,
 	shown: {},
-	thinkingLevel: "off",
 	read: { snapshot: async () => undefined, snapshotAsOf: async () => undefined },
 };
 
 describe("system prompt preparation", () => {
 	it("renders sections in order with tags, omissions, wrappers, and failures", async () => {
 		const registry = createRegistry();
-		registry.systemPrompt.section("preamble", () => "You are helpful.", { tag: false });
-		registry.systemPrompt.section("cwd", async () => "/repo");
-		registry.systemPrompt.section("skipped", () => undefined);
-		registry.systemPrompt.section("failing", () => {
+		addSection(registry, "preamble", () => "You are helpful.", { tag: false });
+		addSection(registry, "cwd", async () => "/repo");
+		addSection(registry, "skipped", () => undefined);
+		addSection(registry, "failing", () => {
 			throw new Error("render failed");
 		});
-		registry.systemPrompt.section("new-failing", () => {
+		addSection(registry, "new-failing", () => {
 			throw new Error("also failed");
 		});
-		registry.systemPrompt.wrap("cwd", "suffix", (inner) => ({
-			...inner,
-			render: async (value, ctx) => `${await inner.render(value, ctx)} (git)`,
-		}));
+		registry.install(
+			defineExtension({
+				name: "git",
+				wraps: [
+					wrapSection("cwd", (inner) => ({
+						...inner,
+						render: async (value, ctx) => `${await inner.render(value, ctx)} (git)`,
+					})),
+				],
+			}),
+		);
 		const reports: unknown[] = [];
 		const shown = new Map([
 			["failing", "<failing>\nold\n</failing>"],
 			["cwd", "stale"],
 		]);
-		const desired = await renderSections(
-			registry.snapshot().sections(),
-			input,
-			shown,
-			(error) => reports.push(error),
-			context,
-		);
+		const agent = resolveAgent(undefined, registry.snapshot(), resolveSettings(undefined), (error) => {
+			throw error;
+		});
+		const desired = await renderSections(agent.sections, input, shown, (error) => reports.push(error), context);
 		expect([...desired]).toEqual([
 			["preamble", "You are helpful."],
 			["cwd", "<cwd>\n/repo (git)\n</cwd>"],
@@ -263,24 +270,5 @@ describe("tool loadout preparation", () => {
 		expect(await applyTools(conversation, [a, b], { y: "2", x: "1" })).toEqual([
 			{ added: ["a", "b"], sections: { y: "2", x: "1" } },
 		]);
-	});
-
-	it("offers each active name once, only when registered, as composed by wrappers", () => {
-		const registry = createRegistry();
-		const base = { ...declaration("a"), execute: async () => ({}) };
-		registry.tools.add(base);
-		registry.tools.add({ ...declaration("b"), execute: async () => ({}) });
-		registry.tools.add({ ...declaration("broken"), execute: async () => ({}) });
-		registry.tools.wrap("a", "describe", (tool) => ({ ...tool, description: "wrapped" }));
-		registry.tools.wrap("broken", "fail", () => {
-			throw new Error("wrapper failed");
-		});
-		const snapshot = registry.snapshot();
-		const tools = desiredTools(["b", "missing", "a", "b", "broken"], (name) => snapshot.tool(name));
-		expect(tools.map((tool) => [tool.name, tool.description])).toEqual([
-			["b", "b"],
-			["a", "wrapped"],
-		]);
-		expect(snapshot.failures().map((failure) => failure.name)).toEqual(["broken"]);
 	});
 });

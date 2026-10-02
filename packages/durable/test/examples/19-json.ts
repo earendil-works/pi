@@ -14,7 +14,15 @@ import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 import { openaiProvider } from "@earendil-works/pi-ai/providers/openai";
 import { NodeExecutionEnv } from "../../src/env/node.ts";
-import { createRegistry, Harness, MemoryStorage, type Storage, watchEvents } from "../../src/index.ts";
+import {
+	createRegistry,
+	defineExtension,
+	Harness,
+	MemoryStorage,
+	type Storage,
+	section,
+	watchEvents,
+} from "../../src/index.ts";
 import { openNodeJsonlStorage } from "../../src/storage/jsonl/node.ts";
 import { openNodeSqliteStorage } from "../../src/storage/sqlite/node.ts";
 import { createBashTool, createReadTool } from "../../src/tools/index.ts";
@@ -58,13 +66,16 @@ if (process.env.OPENAI_API_KEY !== undefined) {
 }
 
 const registry = createRegistry();
-registry.systemPrompt.section("preamble", () => "You are a concise coding assistant.", { tag: false });
-registry.tools.add(createReadTool());
-registry.tools.add(createBashTool());
+registry.install(
+	defineExtension({
+		name: "coding",
+		tools: [createReadTool(), createBashTool()],
+		sections: [section("preamble", () => "You are a concise coding assistant.", { tag: false })],
+	}),
+);
 const env = new NodeExecutionEnv({ cwd: process.cwd() });
-const harness = await Harness.open(storage, { models, registry, env }, context);
-const root = await harness.root(context);
-await root.setModel(model, context);
+const harness = await Harness.open(storage, { models, registry, env: () => env }, context);
+const root = await harness.root(context, { agent: { model } });
 
 // Attach before submitting, so the stream covers the whole run.
 let stop: () => Promise<unknown>;

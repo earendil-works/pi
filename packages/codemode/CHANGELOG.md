@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-10-01
+
+### Added
+
+- Added `renderToolOutputType()`, the type a tool call resolves to.
+
+### Changed
+
+- Reading a member of `tools` or of a global namespace that does not exist now throws an error naming the close matches, instead of returning `undefined`. Use `"name" in tools` to check for a tool. `store()` size errors explain what the store is for.
+
+## [0.99.2] - 2026-09-30
+
 ### Changed
 
 - Allowed `CodemodeSandbox.workerUrl` to be a string, as required for embedded worker entrypoints in Bun compiled executables ([#10204](https://github.com/earendil-works/pi/issues/10204)).

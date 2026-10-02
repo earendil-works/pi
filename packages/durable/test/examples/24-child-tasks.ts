@@ -1,4 +1,5 @@
 // A task that owns child tasks: a checkout charges four payments at once and waits for them.
+// The task graph view prints the checkout's tree while its payments run.
 // Run from packages/durable:
 //   node --conditions=source --experimental-strip-types test/examples/24-child-tasks.ts
 import { mkdtemp, rm } from "node:fs/promises";
@@ -6,7 +7,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { createModels } from "@earendil-works/pi-ai/models";
-import { type Conversation, createRegistry, defineTask, Harness, type TaskId } from "../../src/index.ts";
+import {
+	type Conversation,
+	createRegistry,
+	defineExtension,
+	defineTask,
+	Harness,
+	type TaskGraph,
+	type TaskGraphNode,
+	type TaskId,
+} from "../../src/index.ts";
 import { openNodeSqliteStorage } from "../../src/storage/sqlite/node.ts";
 
 const context = BACKGROUND_CONTEXT;
@@ -83,12 +93,22 @@ const Checkout = defineTask<{ cards: string[] }, CheckoutState, string>({
 });
 
 const registry = createRegistry();
-registry.tasks.add(Payment);
-registry.tasks.add(Checkout);
+registry.install(defineExtension({ name: "checkout", tasks: [Payment, Checkout] }));
 const directory = await mkdtemp(join(tmpdir(), "pi-durable-example-"));
 const databasePath = join(directory, "session.sqlite");
 const open = async () =>
 	Harness.open(await openNodeSqliteStorage(databasePath), { models: createModels(), registry }, context);
+/** Print the live tasks as a tree along their owner edges. */
+function printGraph(graph: TaskGraph): void {
+	const nodes = Object.values(graph.tasks);
+	const print = (node: TaskGraphNode, depth: number): void => {
+		const state = node.state;
+		const status = state.status === "waiting" ? `waiting on ${state.on.join(", ")}` : state.status;
+		console.log(`  ${"  ".repeat(depth)}${node.kind} ${node.id}: ${status}`);
+		for (const child of nodes.filter((candidate) => candidate.owner === node.id)) print(child, depth + 1);
+	};
+	for (const node of nodes.filter((candidate) => candidate.owner === undefined)) print(node, 0);
+}
 const checkout = (root: Conversation, cards: string[]) =>
 	root.commit((tx) => tx.createTask(Checkout, { cards }, { ownership: { kind: "conversation" } }), context);
 
@@ -103,6 +123,9 @@ console.log("The customer cancels:");
 id = await checkout(root, ["visa-5", "visa-6", "visa-7", "visa-8"]);
 harness.resume();
 await new Promise((resolve) => setTimeout(resolve, 20));
+const graph = await harness.taskGraph(context);
+printGraph(graph.value);
+graph.dispose();
 await harness.abortTask(id, context);
 console.log(`  checkout: ${(await harness.waitForTask(id, context)).state.outcome.status}`);
 

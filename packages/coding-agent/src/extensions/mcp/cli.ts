@@ -66,7 +66,7 @@ Options for add:
   --oauth-client-name <name>
                           Client name sent when registering with the OAuth server
   --exposure <mode>       codemode (default), deferred, direct, or hidden
-  --description <text>    What the server offers, shown to the model with its tools
+  --description <text>    What the server offers, shown in the system prompt
 
 Other options:
   --json                  Print the list as JSON
@@ -236,7 +236,7 @@ export async function runMcpCommand(args: string[], options: McpCommandOptions):
 				return 1;
 			}
 			if (command === "logout") {
-				const removed = credentials.remove(url);
+				const removed = credentials.remove(name, url);
 				log(removed ? `Signed out of MCP server "${name}".` : `No stored credentials for MCP server "${name}".`);
 				return 0;
 			}
@@ -542,7 +542,7 @@ async function login(
 	try {
 		await signInMcpServer({
 			serverUrl: url,
-			store: credentials.forServer(url),
+			store: credentials.forServer(name, url),
 			settings: connection.oauthSettings(),
 			challenge: connection.challenge,
 			prompt: {

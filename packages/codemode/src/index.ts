@@ -4,6 +4,7 @@ export {
 	mcpStructuredContentSchema,
 	type RenderDeclarationsOptions,
 	renderDeclarations,
+	renderToolOutputType,
 	renderToolSample,
 	renderToolSignature,
 	schemaToType,

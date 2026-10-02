@@ -2,6 +2,7 @@ import type { Op } from "@earendil-works/chord/delta";
 import { fauxAssistantMessage, fauxText, fauxToolCall, Type } from "@earendil-works/pi-ai";
 import {
 	type CommitPublication,
+	defineTool,
 	type Harness,
 	LiveDoc,
 	type LiveState,
@@ -11,6 +12,7 @@ import {
 } from "@earendil-works/pi-durable";
 import { describe, expect, it } from "vitest";
 import { chatSetup, openChat, waitFor } from "./chat-support.ts";
+import { addTool } from "./harness-support.ts";
 import { context, documentChanges } from "./session-support.ts";
 
 type Action = (api: ToolExecutionApi) => void | Promise<void>;
@@ -23,24 +25,27 @@ async function drive(outputLimits: ToolRegistration["outputLimits"] = {}) {
 	const setup = chatSetup();
 	const actions: ((api: ToolExecutionApi) => Promise<boolean>)[] = [];
 	let wake: (() => void) | undefined;
-	setup.registry.tools.add({
-		name: "drive",
-		description: "Driven by the test",
-		parameters: Type.Object({}),
-		outputLimits,
-		execute: async (_args, api, callContext) => {
-			for (;;) {
-				while (actions.length === 0) {
-					await new Promise<void>((resolve, reject) => {
-						wake = resolve;
-						const signal = callContext.abortSignal!;
-						signal.addEventListener("abort", () => reject(signal.reason), { once: true });
-					});
+	addTool(
+		setup.registry,
+		defineTool({
+			name: "drive",
+			description: "Driven by the test",
+			parameters: Type.Object({}),
+			outputLimits,
+			execute: async (_args, api, callContext) => {
+				for (;;) {
+					while (actions.length === 0) {
+						await new Promise<void>((resolve, reject) => {
+							wake = resolve;
+							const signal = callContext.abortSignal!;
+							signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+						});
+					}
+					if (!(await actions.shift()!(api))) return {};
 				}
-				if (!(await actions.shift()!(api))) return {};
-			}
-		},
-	});
+			},
+		}),
+	);
 	setup.faux.setResponses([
 		fauxAssistantMessage([fauxToolCall("drive", {}, { id: "c1" })], { stopReason: "toolUse" }),
 		fauxAssistantMessage([fauxText("done")]),
@@ -94,12 +99,15 @@ function isOutput(op: Op): boolean {
 describe("pi.live deltas", () => {
 	it("hands a generation over to its tool round and starts a tool with one field write each", async () => {
 		const setup = chatSetup();
-		setup.registry.tools.add({
-			name: "noop",
-			description: "noop",
-			parameters: Type.Object({}),
-			execute: async () => ({ content: [] }),
-		});
+		addTool(
+			setup.registry,
+			defineTool({
+				name: "noop",
+				description: "noop",
+				parameters: Type.Object({}),
+				execute: async () => ({ content: [] }),
+			}),
+		);
 		setup.faux.setResponses([
 			fauxAssistantMessage([fauxToolCall("noop", {}, { id: "c1" })], { stopReason: "toolUse" }),
 			fauxAssistantMessage([fauxText("done")]),
@@ -288,17 +296,20 @@ describe("pi.live deltas", () => {
 		}
 		const setup = chatSetup();
 		for (const name of ["first", "second"]) {
-			setup.registry.tools.add({
-				name,
-				description: name,
-				parameters: Type.Object({}),
-				execute: async (_args, api) => {
-					api.output(`${name} output\n`);
-					await new Promise((resolve) => setTimeout(resolve, 150));
-					api.output(`${name} more\n`);
-					return {};
-				},
-			});
+			addTool(
+				setup.registry,
+				defineTool({
+					name,
+					description: name,
+					parameters: Type.Object({}),
+					execute: async (_args, api) => {
+						api.output(`${name} output\n`);
+						await new Promise((resolve) => setTimeout(resolve, 150));
+						api.output(`${name} more\n`);
+						return {};
+					},
+				}),
+			);
 		}
 		setup.faux.setResponses([
 			fauxAssistantMessage([fauxToolCall("first", {}, { id: "a" }), fauxToolCall("second", {}, { id: "b" })], {
@@ -306,8 +317,8 @@ describe("pi.live deltas", () => {
 			}),
 			fauxAssistantMessage([fauxText("done")]),
 		]);
+		setup.settings.toolExecution = "sequential";
 		const { harness, root } = await openChat(new RecordingStorage(), setup);
-		await root.setToolExecution("sequential", context);
 		const values = new Map<number, LiveState>();
 		harness.subscribeCommits((publication) => {
 			for (const change of documentChanges(publication)) {
@@ -331,13 +342,16 @@ describe("pi.live deltas", () => {
 
 	it("starts calls the request did not offer as done and marks a faulted tool's slot done without an entry", async () => {
 		const setup = chatSetup();
-		setup.registry.tools.add({
-			name: "bad",
-			description: "bad",
-			parameters: Type.Object({}),
-			// Not strict JSON: the result commit throws and the scheduler faults the task.
-			execute: async () => ({ content: [], details: { fn: (() => 1) as never } }),
-		});
+		addTool(
+			setup.registry,
+			defineTool({
+				name: "bad",
+				description: "bad",
+				parameters: Type.Object({}),
+				// Not strict JSON: the result commit throws and the scheduler faults the task.
+				execute: async () => ({ content: [], details: { fn: (() => 1) as never } }),
+			}),
+		);
 		setup.faux.setResponses([
 			fauxAssistantMessage([fauxToolCall("ghost", {}, { id: "g" }), fauxToolCall("bad", {}, { id: "b" })], {
 				stopReason: "toolUse",
@@ -370,12 +384,15 @@ describe("pi.live deltas", () => {
 
 	it("commits the tool-calling answer, its tool tasks, the generation's wait, and the tool round in one commit", async () => {
 		const setup = chatSetup();
-		setup.registry.tools.add({
-			name: "noop",
-			description: "noop",
-			parameters: Type.Object({}),
-			execute: async () => ({ content: [] }),
-		});
+		addTool(
+			setup.registry,
+			defineTool({
+				name: "noop",
+				description: "noop",
+				parameters: Type.Object({}),
+				execute: async () => ({ content: [] }),
+			}),
+		);
 		setup.faux.setResponses([
 			fauxAssistantMessage([fauxToolCall("noop", {}, { id: "a" }), fauxToolCall("noop", {}, { id: "b" })], {
 				stopReason: "toolUse",

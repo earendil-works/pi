@@ -1,6 +1,6 @@
-import type { JsonValue } from "@earendil-works/chord";
 import { type Static, Type } from "typebox";
 import type { FileError } from "../env/index.ts";
+import { defineTool } from "../harness/define.ts";
 import type { ToolRegistration } from "../harness/types.ts";
 import {
 	applyEditsToNormalizedContent,
@@ -46,8 +46,8 @@ function isSingleEditInput(value: unknown): value is SingleEditInput {
  * Repair shapes models commonly send: `edits` as a JSON string or as a single edit object, and a top-level
  * `oldText`/`newText` pair. Works on a copy; the call's arguments stay unchanged.
  */
-function prepareEditArguments(input: JsonValue): JsonValue {
-	if (!input || typeof input !== "object" || Array.isArray(input)) return input;
+function prepareEditArguments(input: unknown): EditToolInput {
+	if (!input || typeof input !== "object" || Array.isArray(input)) return input as EditToolInput;
 	const args: Record<string, unknown> = { ...input };
 	if (typeof args.edits === "string") {
 		try {
@@ -63,18 +63,18 @@ function prepareEditArguments(input: JsonValue): JsonValue {
 	}
 
 	const legacy = args as LegacyEditToolInput;
-	if (typeof legacy.oldText !== "string" || typeof legacy.newText !== "string") return args as JsonValue;
+	if (typeof legacy.oldText !== "string" || typeof legacy.newText !== "string") return legacy;
 	const edits = Array.isArray(legacy.edits) ? [...legacy.edits] : [];
 	edits.push({ oldText: legacy.oldText, newText: legacy.newText });
 	const { oldText: _oldText, newText: _newText, ...rest } = legacy;
-	return { ...rest, edits } as JsonValue;
+	return { ...rest, edits };
 }
 
-export interface EditToolDetails {
+export type EditToolDetails = {
 	diff: string;
 	patch: string;
 	firstChangedLine?: number;
-}
+};
 
 function validateEditInput(input: EditToolInput): { path: string; edits: Edit[] } {
 	if (!Array.isArray(input.edits) || input.edits.length === 0) {
@@ -87,15 +87,15 @@ function editAccessError(path: string, error: FileError): Error {
 	return new Error(`Could not edit file: ${path}. Error code: ${error.code}.`, { cause: error });
 }
 
-export function createEditTool(): ToolRegistration {
-	return {
+export function createEditTool(): ToolRegistration<typeof editSchema, EditToolDetails> {
+	return defineTool({
 		name: "edit",
 		description:
 			"Edit a single file using exact text replacement. Every edits[].oldText must match a unique, non-overlapping region of the original file. If two changes affect the same block or nearby lines, merge them into one edit instead of emitting overlapping edits. Do not include large unchanged regions just to connect distant changes.",
 		parameters: editSchema,
 		prepareArguments: prepareEditArguments,
 		async execute(args, api, context) {
-			const { path, edits } = validateEditInput(args as EditToolInput);
+			const { path, edits } = validateEditInput(args);
 			const env = requireEnv(api);
 			const absolutePath = await resolveToolPath(env, path, context);
 			return withFileMutationQueue(
@@ -134,11 +134,11 @@ export function createEditTool(): ToolRegistration {
 					};
 					return {
 						content: [{ type: "text", text: `Successfully replaced ${edits.length} block(s) in ${path}.` }],
-						details: details as unknown as JsonValue,
+						details,
 					};
 				},
 				context,
 			);
 		},
-	};
+	});
 }

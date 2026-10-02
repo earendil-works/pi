@@ -4,7 +4,15 @@
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { openaiProvider } from "@earendil-works/pi-ai/providers/openai";
-import { AssistantEntry, createRegistry, Harness, LiveDoc, MemoryStorage } from "../../src/index.ts";
+import {
+	AssistantEntry,
+	createRegistry,
+	defineExtension,
+	Harness,
+	LiveDoc,
+	MemoryStorage,
+	section,
+} from "../../src/index.ts";
 
 const context = BACKGROUND_CONTEXT;
 
@@ -19,11 +27,16 @@ if (process.env.OPENAI_API_KEY === undefined) {
 	const models = createModels();
 	models.setProvider(openaiProvider());
 	const registry = createRegistry();
-	registry.systemPrompt.section("preamble", () => "You are a concise assistant.", { tag: false });
-	const harness = await Harness.open(new MemoryStorage(), { models: models, registry: registry }, context);
-	const root = await harness.root(context);
-	await root.setModel({ provider: "openai", modelId: "gpt-6-sol" }, context);
-	await root.setThinkingLevel("high", context);
+	registry.install(
+		defineExtension({
+			name: "concise",
+			sections: [section("preamble", () => "You are a concise assistant.", { tag: false })],
+		}),
+	);
+	const harness = await Harness.open(new MemoryStorage(), { models, registry }, context);
+	const root = await harness.root(context, {
+		agent: { model: { provider: "openai", modelId: "gpt-6-sol" }, thinkingLevel: "high" },
+	});
 	const liveWatch = (await harness.watchDoc(LiveDoc, root.id, context))!;
 	// Print only what each committed partial adds to the text printed so far.
 	let printed = "";

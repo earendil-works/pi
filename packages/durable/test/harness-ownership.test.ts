@@ -4,12 +4,13 @@ import { join } from "node:path";
 import { type AssistantMessage, fauxAssistantMessage, fauxText, fauxToolCall, Type } from "@earendil-works/pi-ai";
 import {
 	type Conversation,
-	ConversationConfig,
 	type ConversationHandle,
 	type ConversationId,
+	configure,
 	createSession,
 	defineDoc,
 	defineTask,
+	defineTool,
 	type EntryId,
 	type Harness,
 	LiveDoc,
@@ -22,6 +23,7 @@ import {
 import { afterEach, describe, expect, it } from "vitest";
 import { openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";
 import { chatSetup, openChat } from "./chat-support.ts";
+import { addTask, addTool } from "./harness-support.ts";
 import { context } from "./session-support.ts";
 import { aborted, type Deferred, deferred, openTasks, settled } from "./task-support.ts";
 
@@ -592,23 +594,29 @@ describe("owned conversations from tools and supervisors", () => {
 		let handle: ConversationHandle | undefined;
 		let missing: ConversationHandle | undefined = {} as ConversationHandle;
 		let submission: Submission | undefined;
-		setup.registry.tools.add({
-			name: "delegate",
-			description: "Delegates",
-			parameters: Type.Object({}),
-			execute: async (_args, api, callContext) => {
-				const child = await api.commit(async (tx) => {
-					const created = await tx.createConversation({ ownership: { kind: "task", taskId: api.taskId } });
-					(await tx.doc(ConversationConfig, created.id)).model = { provider: "faux", modelId: "faux-1" };
-					return created.id;
-				}, callContext);
-				missing = await api.conversation(99_999 as ConversationId, callContext);
-				handle = (await api.conversation(child, callContext))!;
-				submission = await handle.submit({ type: "input", content: "child task", requestId: "child" }, callContext);
-				const settled = await submission.wait(callContext);
-				return { content: [{ type: "text", text: settled.status }] };
-			},
-		});
+		addTool(
+			setup.registry,
+			defineTool({
+				name: "delegate",
+				description: "Delegates",
+				parameters: Type.Object({}),
+				execute: async (_args, api, callContext) => {
+					const child = await api.commit(async (tx) => {
+						const created = await tx.createConversation({ ownership: { kind: "task", taskId: api.taskId } });
+						await configure(tx, created.id, { model: { provider: "faux", modelId: "faux-1" } });
+						return created.id;
+					}, callContext);
+					missing = await api.conversation(99_999 as ConversationId, callContext);
+					handle = (await api.conversation(child, callContext))!;
+					submission = await handle.submit(
+						{ type: "input", content: "child task", requestId: "child" },
+						callContext,
+					);
+					const settled = await submission.wait(callContext);
+					return { content: [{ type: "text", text: settled.status }] };
+				},
+			}),
+		);
 		setup.faux.setResponses([
 			fauxAssistantMessage([fauxToolCall("delegate", {}, { id: "c1" })], { stopReason: "toolUse" }),
 			fauxAssistantMessage([fauxText("child answer")]),
@@ -641,26 +649,29 @@ describe("owned conversations from tools and supervisors", () => {
 		const ready = deferred<{ child: ConversationId; taskId: TaskId }>();
 		const go = deferred();
 		const queued = deferred<{ submitting: Promise<unknown> }>();
-		setup.registry.tools.add({
-			name: "delegate",
-			description: "Delegates late",
-			parameters: Type.Object({}),
-			execute: async (_args, api, callContext) => {
-				const child = await api.commit(async (tx) => {
-					const created = await tx.createConversation({ ownership: { kind: "task", taskId: api.taskId } });
-					return created.id;
-				}, callContext);
-				const handle = (await api.conversation(child, callContext))!;
-				ready.resolve({ child, taskId: api.taskId });
-				await go.promise;
-				// Called while the invocation is alive, with a context that is not the call's: the handle binds it to the
-				// invocation. It reaches the line only after the abort mark.
-				const submitting = handle.submit({ type: "input", content: "late" }, context);
-				submitting.catch(() => {});
-				queued.resolve({ submitting });
-				return aborted(callContext.abortSignal!);
-			},
-		});
+		addTool(
+			setup.registry,
+			defineTool({
+				name: "delegate",
+				description: "Delegates late",
+				parameters: Type.Object({}),
+				execute: async (_args, api, callContext) => {
+					const child = await api.commit(async (tx) => {
+						const created = await tx.createConversation({ ownership: { kind: "task", taskId: api.taskId } });
+						return created.id;
+					}, callContext);
+					const handle = (await api.conversation(child, callContext))!;
+					ready.resolve({ child, taskId: api.taskId });
+					await go.promise;
+					// Called while the invocation is alive, with a context that is not the call's: the handle binds it to the
+					// invocation. It reaches the line only after the abort mark.
+					const submitting = handle.submit({ type: "input", content: "late" }, context);
+					submitting.catch(() => {});
+					queued.resolve({ submitting });
+					return aborted(callContext.abortSignal!);
+				},
+			}),
+		);
 		setup.faux.setResponses([
 			fauxAssistantMessage([fauxToolCall("delegate", {}, { id: "c1" })], { stopReason: "toolUse" }),
 		]);
@@ -691,28 +702,31 @@ describe("owned conversations from tools and supervisors", () => {
 		const setup = chatSetup();
 		let child: ConversationId | undefined;
 		const toolWait = deferred<string>();
-		setup.registry.tools.add({
-			name: "delegate",
-			description: "Delegates",
-			parameters: Type.Object({}),
-			execute: async (_args, api, callContext) => {
-				child = await api.commit(async (tx) => {
-					const created = await tx.createConversation({ ownership: { kind: "task", taskId: api.taskId } });
-					(await tx.doc(ConversationConfig, created.id)).model = { provider: "faux", modelId: "faux-1" };
-					return created.id;
-				}, callContext);
-				const submission = await (await api.conversation(child, callContext))!.submit(
-					{ type: "input", content: "child task" },
-					callContext,
-				);
-				try {
-					return { content: [{ type: "text", text: (await submission.wait(callContext)).status }] };
-				} catch (error) {
-					toolWait.resolve((error as Error).message);
-					throw error;
-				}
-			},
-		});
+		addTool(
+			setup.registry,
+			defineTool({
+				name: "delegate",
+				description: "Delegates",
+				parameters: Type.Object({}),
+				execute: async (_args, api, callContext) => {
+					child = await api.commit(async (tx) => {
+						const created = await tx.createConversation({ ownership: { kind: "task", taskId: api.taskId } });
+						await configure(tx, created.id, { model: { provider: "faux", modelId: "faux-1" } });
+						return created.id;
+					}, callContext);
+					const submission = await (await api.conversation(child, callContext))!.submit(
+						{ type: "input", content: "child task" },
+						callContext,
+					);
+					try {
+						return { content: [{ type: "text", text: (await submission.wait(callContext)).status }] };
+					} catch (error) {
+						toolWait.resolve((error as Error).message);
+						throw error;
+					}
+				},
+			}),
+		);
 		const childRun = gated(fauxAssistantMessage([fauxText("never")]));
 		setup.faux.setResponses([
 			fauxAssistantMessage([fauxToolCall("delegate", {}, { id: "c1" })], { stopReason: "toolUse" }),
@@ -737,24 +751,27 @@ describe("owned conversations from tools and supervisors", () => {
 	it("lets a running tool abort its owned child and continue", async () => {
 		const setup = chatSetup();
 		const childRun = gated(fauxAssistantMessage([fauxText("never")]));
-		setup.registry.tools.add({
-			name: "delegate",
-			description: "Delegates and cancels",
-			parameters: Type.Object({}),
-			execute: async (_args, api, callContext) => {
-				const child = await api.commit(async (tx) => {
-					const created = await tx.createConversation({ ownership: { kind: "task", taskId: api.taskId } });
-					(await tx.doc(ConversationConfig, created.id)).model = { provider: "faux", modelId: "faux-1" };
-					return created.id;
-				}, callContext);
-				const handle = (await api.conversation(child, callContext))!;
-				const submission = await handle.submit({ type: "input", content: "child task" }, callContext);
-				await childRun.reached;
-				await handle.abort(callContext);
-				const settledChild = await submission.wait(callContext);
-				return { content: [{ type: "text", text: `child ${settledChild.status}` }] };
-			},
-		});
+		addTool(
+			setup.registry,
+			defineTool({
+				name: "delegate",
+				description: "Delegates and cancels",
+				parameters: Type.Object({}),
+				execute: async (_args, api, callContext) => {
+					const child = await api.commit(async (tx) => {
+						const created = await tx.createConversation({ ownership: { kind: "task", taskId: api.taskId } });
+						await configure(tx, created.id, { model: { provider: "faux", modelId: "faux-1" } });
+						return created.id;
+					}, callContext);
+					const handle = (await api.conversation(child, callContext))!;
+					const submission = await handle.submit({ type: "input", content: "child task" }, callContext);
+					await childRun.reached;
+					await handle.abort(callContext);
+					const settledChild = await submission.wait(callContext);
+					return { content: [{ type: "text", text: `child ${settledChild.status}` }] };
+				},
+			}),
+		);
 		setup.faux.setResponses([
 			fauxAssistantMessage([fauxToolCall("delegate", {}, { id: "c1" })], { stopReason: "toolUse" }),
 			childRun.step,
@@ -772,26 +789,29 @@ describe("owned conversations from tools and supervisors", () => {
 		const children: TaskId[] = [];
 		const toolRunning = deferred();
 		const setup = chatSetup();
-		setup.registry.tasks.add(Hold);
-		setup.registry.tools.add({
-			name: "spawn",
-			description: "Starts owned work, then throws or hangs",
-			parameters: Type.Object({ mode: Type.String() }),
-			execute: async (args, api, callContext) => {
-				const child = await api.commit(async (tx) => {
-					const created = await tx.createConversation({ ownership: { kind: "task", taskId: api.taskId } });
-					return tx.createTask(
-						Hold,
-						{ name: `child.${api.callId}` },
-						{ ownership: { kind: "conversation" }, conversationId: created.id },
-					);
-				}, callContext);
-				children.push(child);
-				if ((args as { mode: string }).mode === "throw") throw new Error("spawn failed");
-				toolRunning.resolve();
-				return aborted(callContext.abortSignal!);
-			},
-		});
+		addTask(setup.registry, Hold);
+		addTool(
+			setup.registry,
+			defineTool({
+				name: "spawn",
+				description: "Starts owned work, then throws or hangs",
+				parameters: Type.Object({ mode: Type.String() }),
+				execute: async (args, api, callContext) => {
+					const child = await api.commit(async (tx) => {
+						const created = await tx.createConversation({ ownership: { kind: "task", taskId: api.taskId } });
+						return tx.createTask(
+							Hold,
+							{ name: `child.${api.callId}` },
+							{ ownership: { kind: "conversation" }, conversationId: created.id },
+						);
+					}, callContext);
+					children.push(child);
+					if (args.mode === "throw") throw new Error("spawn failed");
+					toolRunning.resolve();
+					return aborted(callContext.abortSignal!);
+				},
+			}),
+		);
 		const call = (mode: string, id: string) =>
 			fauxAssistantMessage([fauxToolCall("spawn", { mode }, { id })], { stopReason: "toolUse" });
 		setup.faux.setResponses([
@@ -828,26 +848,29 @@ describe("owned conversations from tools and supervisors", () => {
 		const path = join(directory, "session.sqlite");
 		const children: ConversationId[] = [];
 		const setup = chatSetup();
-		setup.registry.tools.add({
-			name: "subagent",
-			description: "Delegates",
-			parameters: Type.Object({}),
-			replay: "safe",
-			execute: async (_args, api, callContext) => {
-				const child = await api.commit(async (tx) => {
-					const existing = (await tx.scanConversations({ ownerTaskId: api.taskId }, 1)).items[0];
-					if (existing !== undefined) return existing.id;
-					const created = await tx.createConversation({ ownership: { kind: "task", taskId: api.taskId } });
-					(await tx.doc(ConversationConfig, created.id)).model = { provider: "faux", modelId: "faux-1" };
-					return created.id;
-				}, callContext);
-				children.push(child);
-				const request = { type: "input", content: "child task", requestId: `subagent:${api.taskId}` } as const;
-				const submission = await (await api.conversation(child, callContext))!.submit(request, callContext);
-				const settled = await submission.wait(callContext);
-				return { content: [{ type: "text", text: settled.status }] };
-			},
-		});
+		addTool(
+			setup.registry,
+			defineTool({
+				name: "subagent",
+				description: "Delegates",
+				parameters: Type.Object({}),
+				replay: "safe",
+				execute: async (_args, api, callContext) => {
+					const child = await api.commit(async (tx) => {
+						const existing = (await tx.scanConversations({ ownerTaskId: api.taskId }, 1)).items[0];
+						if (existing !== undefined) return existing.id;
+						const created = await tx.createConversation({ ownership: { kind: "task", taskId: api.taskId } });
+						await configure(tx, created.id, { model: { provider: "faux", modelId: "faux-1" } });
+						return created.id;
+					}, callContext);
+					children.push(child);
+					const request = { type: "input", content: "child task", requestId: `subagent:${api.taskId}` } as const;
+					const submission = await (await api.conversation(child, callContext))!.submit(request, callContext);
+					const settled = await submission.wait(callContext);
+					return { content: [{ type: "text", text: settled.status }] };
+				},
+			}),
+		);
 		const childRun = gated(fauxAssistantMessage([fauxText("never")]));
 		setup.faux.setResponses([
 			fauxAssistantMessage([fauxToolCall("subagent", {}, { id: "c1" })], { stopReason: "toolUse" }),
@@ -907,7 +930,7 @@ describe("owned conversations from tools and supervisors", () => {
 				runtime.commit(() => ({ status: "terminal", outcome: { status: "aborted" } }), ctx),
 		});
 		const setup = chatSetup();
-		setup.registry.tasks.add(Supervisor);
+		addTask(setup.registry, Supervisor);
 		const first = gated(fauxAssistantMessage([fauxText("never")]));
 		setup.faux.setResponses([first.step, fauxAssistantMessage([fauxText("answer")])]);
 		let opened = await openChat(await openNodeSqliteStorage(path), setup);
@@ -919,7 +942,7 @@ describe("owned conversations from tools and supervisors", () => {
 				{ ownership: { kind: "conversation" }, background: true },
 			);
 			const created = await tx.createConversation({ ownership: { kind: "task", taskId: supervisor } });
-			(await tx.doc(ConversationConfig, created.id)).model = { provider: "faux", modelId: "faux-1" };
+			await configure(tx, created.id, { model: { provider: "faux", modelId: "faux-1" } });
 			(await tx.doc(Children, root.id)).child = created.id;
 			return { supervisor, child: created.id };
 		}, context);

@@ -9,6 +9,7 @@ import {
 	type LoadedFacets,
 } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
+import type { AgentState, ConversationView } from "@earendil-works/pi-durable";
 import {
 	CombinedAutocompleteProvider,
 	type Component,
@@ -30,7 +31,7 @@ import { getEditorTheme, setRegisteredThemes, stopThemeWatcher, theme } from "..
 import { InteractiveThemeController } from "../modes/interactive/theme/theme-controller.ts";
 import { createInteractiveTui } from "../modes/interactive/tui-renderer.ts";
 import { type OpenClientRuntimeOptions, openClientRuntime } from "./client-runtime.ts";
-import { ExperimentalChatView } from "./client-tui-chat.ts";
+import { ExperimentalChatView, liveOf } from "./client-tui-chat.ts";
 import { createPresentationFacetLoaders } from "./plugins/bundled.ts";
 import { AgentController, type AgentOperationResponse, type AgentQueueResponse } from "./services/agent-controller.ts";
 import type {
@@ -220,8 +221,8 @@ export class ExperimentalClientTui implements Component {
 	}
 
 	refreshTheme(): void {
-		const snapshot = this.#laneSnapshot();
-		if (snapshot !== undefined) this.#chatView?.refreshTheme(snapshot);
+		const view = this.#conversationView();
+		if (view !== undefined) this.#chatView?.refreshTheme(view);
 		this.#rebuild();
 	}
 
@@ -499,13 +500,12 @@ export class ExperimentalClientTui implements Component {
 		this.#documentContainer.addChild(view.transcript);
 		this.#pendingMessagesContainer.addChild(view.pendingMessages);
 		this.#laneUnsubscribe = feature.transcript.state.subscribe((value) => {
-			if (value.snapshot === null) return;
-			view.apply(value.snapshot);
+			view.apply(value);
 			this.#rebuild();
 		});
-		if (feature.transcript.state.value?.snapshot === null || feature.transcript.state.value?.snapshot === undefined) {
+		if (feature.transcript.state.value === undefined) {
 			await this.#closeLane();
-			throw new Error("Transcript has no initialized snapshot");
+			throw new Error("Transcript has no initialized view");
 		}
 	}
 
@@ -563,8 +563,8 @@ export class ExperimentalClientTui implements Component {
 	async #submitPrompt(prompt: string): Promise<void> {
 		const controller = this.#selectedController();
 		if (controller === undefined) throw new Error("No Session AgentController service is available");
-		const operation = this.#laneSnapshot()?.operation;
-		const running = operation !== null && operation !== undefined;
+		const view = this.#conversationView();
+		const running = view !== undefined && liveOf(view).run !== undefined;
 		this.#status = running ? "Queueing steering message…" : "Running turn…";
 		this.#rebuild();
 		if (running) this.#reportQueue(await controller.steer({ message: prompt, images: null }, BACKGROUND_CONTEXT));
@@ -585,11 +585,7 @@ export class ExperimentalClientTui implements Component {
 	}
 
 	#reportOperation(response: AgentOperationResponse): void {
-		this.#status = response.accepted
-			? response.error === null
-				? ""
-				: `Operation failed: ${response.error.message}`
-			: `Operation rejected: ${response.error.message}`;
+		this.#status = response.accepted ? "" : `Operation rejected: ${response.error.message}`;
 		this.#rebuild();
 	}
 
@@ -599,30 +595,38 @@ export class ExperimentalClientTui implements Component {
 	}
 
 	#interrupt(): void {
-		const operation = this.#laneSnapshot()?.operation;
+		const view = this.#conversationView();
 		const controller = this.#selectedController();
-		if (operation === null || operation === undefined || controller === undefined) return;
-		this.#status = `Aborting ${operation.id}…`;
+		if (view === undefined || liveOf(view).run === undefined || controller === undefined) return;
+		this.#status = "Aborting…";
 		this.#rebuild();
-		void controller.requestAbort(operation.id, BACKGROUND_CONTEXT).catch((error: unknown) => {
-			this.#status = `Error: ${message(error)}`;
-			this.#rebuild();
-		});
+		void controller.abort(BACKGROUND_CONTEXT).then(
+			() => {
+				if (this.#status !== "Aborting…") return;
+				this.#status = "";
+				this.#rebuild();
+			},
+			(error: unknown) => {
+				this.#status = `Error: ${message(error)}`;
+				this.#rebuild();
+			},
+		);
 	}
 
 	#selectedController(): AgentController | undefined {
 		return this.#controller;
 	}
 
-	#laneSnapshot() {
-		const snapshot = this.#session?.transcript.state.value?.snapshot;
-		return snapshot === null ? undefined : snapshot;
+	#conversationView(): ConversationView | undefined {
+		return this.#session?.transcript.state.value;
 	}
 
 	#footer(): string {
-		const snapshot = this.#laneSnapshot();
-		if (!snapshot) return "/model · /thinking · /compact · /reload";
-		return `${snapshot.configuration.model.provider}/${snapshot.configuration.model.modelId} · thinking:${snapshot.configuration.thinkingLevel} · ${snapshot.stats.messageCount} messages · /model · /thinking · /compact · /reload`;
+		const view = this.#conversationView();
+		if (!view) return "/model · /thinking · /compact · /reload";
+		const agent = (view.docs["pi.agent"] ?? {}) as AgentState;
+		const model = agent.model === undefined ? "no model" : `${agent.model.provider}/${agent.model.modelId}`;
+		return `${model} · thinking:${agent.thinkingLevel ?? "off"} · ${view.entries.length} entries · /model · /thinking · /compact · /reload`;
 	}
 }
 

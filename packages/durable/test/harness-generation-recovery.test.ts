@@ -6,6 +6,7 @@ import { AssistantEntry, type Harness, LiveDoc, type TaskId } from "@earendil-wo
 import { afterEach, describe, expect, it } from "vitest";
 import { openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";
 import { allEntries, type ChatSetup, chatSetup, openChat, textOf, unanswered, waitFor } from "./chat-support.ts";
+import { addSection } from "./harness-support.ts";
 import { context } from "./session-support.ts";
 import { aborted, deferred } from "./task-support.ts";
 
@@ -42,7 +43,7 @@ describe("generation recovery", () => {
 		const setup = chatSetup();
 		const reached = deferred();
 		let block = true;
-		setup.registry.systemPrompt.section("preamble", async (_input, ctx) => {
+		addSection(setup.registry, "preamble", async (_input, ctx) => {
 			if (block) {
 				block = false;
 				reached.resolve();
@@ -73,7 +74,7 @@ describe("generation recovery", () => {
 	it("resends a request interrupted before any partial without repeating preparation", async () => {
 		const path = await sqlitePath();
 		const setup = chatSetup();
-		setup.registry.systemPrompt.section("preamble", () => "p", { tag: false });
+		addSection(setup.registry, "preamble", () => "p", { tag: false });
 		const reached = deferred();
 		const sent: string[][] = [];
 		const timeouts: (number | undefined)[] = [];
@@ -89,7 +90,7 @@ describe("generation recovery", () => {
 			},
 		]);
 		let opened = await open(path, setup);
-		await opened.root.setStreamOptions({ timeoutMs: 1234 }, context);
+		setup.settings.stream = { timeoutMs: 1234 };
 		opened.harness.resume();
 		const id = (await opened.root.submit({ type: "input", content: "hi" }, context)).id;
 		await reached.promise;
@@ -104,7 +105,7 @@ describe("generation recovery", () => {
 			streamOptions: { timeoutMs: 1234 },
 		});
 		// The resend uses the pinned request, not options changed after preparation.
-		await opened.root.setStreamOptions({ timeoutMs: 999 }, context);
+		setup.settings.stream = { timeoutMs: 999 };
 		expect(await opened.harness.snapshot(LiveDoc, opened.root.id, context)).toMatchObject({
 			generation: { attempt: 1 },
 		});
@@ -171,7 +172,7 @@ describe("generation recovery", () => {
 		]);
 		let opened = await open(path, setup);
 		opened.harness.resume();
-		await opened.root.setRetryPolicy({ enabled: true, maxRetries: 2, baseDelayMs: 60_000 }, context);
+		setup.settings.retry = { enabled: true, maxRetries: 2, baseDelayMs: 60_000 };
 		const id = (await opened.root.submit({ type: "input", content: "hi" }, context)).id;
 		await waitFor(async () => {
 			const live = await opened.harness.snapshot(LiveDoc, opened.root.id, context);
@@ -205,7 +206,7 @@ describe("generation recovery", () => {
 		setup.faux.setResponses([fauxAssistantMessage("deferred answer")]);
 		let opened = await open(path, setup);
 		opened.harness.resume();
-		await opened.root.setStreamOptions({ deferred: true }, context);
+		setup.settings.stream = { deferred: true };
 		const id = (await opened.root.submit({ type: "input", content: "hi" }, context)).id;
 		await waitFor(async () => {
 			const live = await opened.harness.snapshot(LiveDoc, opened.root.id, context);
@@ -248,7 +249,7 @@ describe("generation recovery", () => {
 		await opened.harness.close(context);
 
 		opened = await open(path, setup);
-		await opened.root.setStreamOptions({ deferred: true }, context);
+		setup.settings.stream = { deferred: true };
 		opened.harness.resume();
 		const polling = (await opened.root.submit({ type: "input", content: "two" }, context)).id;
 		await waitFor(async () => {
@@ -269,7 +270,7 @@ describe("generation recovery", () => {
 	it("runs a print-style turn and reads the durable answer after reopen", async () => {
 		const path = await sqlitePath();
 		const setup = chatSetup();
-		setup.registry.systemPrompt.section("preamble", () => "You are terse.", { tag: false });
+		addSection(setup.registry, "preamble", () => "You are terse.", { tag: false });
 		setup.faux.setResponses([fauxAssistantMessage("42")]);
 		let opened = await open(path, setup);
 		opened.harness.resume();

@@ -3,7 +3,7 @@
 //   node --conditions=source --experimental-strip-types test/examples/12-tasks.ts
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { createModels } from "@earendil-works/pi-ai/models";
-import { createRegistry, defineTask, Harness, MemoryStorage } from "../../src/index.ts";
+import { createRegistry, defineExtension, defineTask, Harness, MemoryStorage } from "../../src/index.ts";
 
 const context = BACKGROUND_CONTEXT;
 
@@ -44,10 +44,11 @@ const Payment = defineTask<{ amount: number }, PaymentState, { receipt: number }
 	},
 });
 
-// The Harness finds task code by name in the registry. Nothing runs until
-// resume() or a call that waits for progress, such as waitForTask().
+// Extensions bring task code; the Harness finds it by name in the registry.
+// Nothing runs until resume() or a call that waits for progress, such as
+// waitForTask().
 const registry = createRegistry();
-registry.tasks.add(Payment);
+registry.install(defineExtension({ name: "payments", tasks: [Payment] }));
 const harness = await Harness.open(new MemoryStorage(), { models: createModels(), registry }, context);
 const root = await harness.root(context);
 // Every task names its owner. This one belongs to the conversation; a task can

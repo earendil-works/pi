@@ -1,8 +1,6 @@
-import type { JsonValue, ServiceCall } from "@earendil-works/chord";
-import type { Context, Session, SessionMetadata } from "@earendil-works/pi-agent-core";
-import { BACKGROUND_CONTEXT, MemorySessionRepo } from "@earendil-works/pi-agent-core";
-import { SessionAmbiguousError, SessionNotFoundError } from "../errors.ts";
-import type { RoutedServerServiceHost, RoutedSessionHandle, ServerHost } from "../types.ts";
+import type { Context, JsonValue, ServiceCall } from "@earendil-works/chord";
+import { SessionNotFoundError } from "../errors.ts";
+import type { RoutedServerServiceHost, RoutedSessionHandle, ServerHost, SessionMetadata } from "../types.ts";
 
 export class Deferred<T> {
 	readonly promise: Promise<T>;
@@ -25,7 +23,7 @@ interface OpenGate {
 }
 
 export class TestHarness {
-	readonly session: Session;
+	readonly metadata: SessionMetadata;
 	readonly closed = new Deferred<void>();
 	readonly #termination = new Deferred<Error | undefined>();
 	readonly terminated = this.#termination.promise;
@@ -40,8 +38,8 @@ export class TestHarness {
 	private nextCloseGate?: OpenGate;
 	private nextServiceGate?: OpenGate;
 
-	constructor(session: Session) {
-		this.session = session;
+	constructor(metadata: SessionMetadata) {
+		this.metadata = metadata;
 	}
 
 	attachClient(_context: Context): {
@@ -80,7 +78,7 @@ export class TestHarness {
 		return result;
 	}
 
-	async close(context: Context): Promise<void> {
+	async close(_context: Context): Promise<void> {
 		this.closeCount += 1;
 		const gate = this.nextCloseGate;
 		if (gate) {
@@ -93,13 +91,11 @@ export class TestHarness {
 			this.failClose = undefined;
 			throw error;
 		}
-		await this.session.close(context);
 		this.closed.resolve(undefined);
 		this.#termination.resolve(undefined);
 	}
 
 	async terminate(error: Error): Promise<void> {
-		await this.session.close(BACKGROUND_CONTEXT);
 		this.#termination.resolve(error);
 	}
 
@@ -150,21 +146,20 @@ export function createTestServerServices(): RoutedServerServiceHost {
 
 export class TestServerHost implements ServerHost {
 	readonly serverServices = createTestServerServices();
-	readonly repo = new MemorySessionRepo({ now: () => 1 });
+	readonly sessions = new Map<string, SessionMetadata>();
 	readonly harnesses = new Map<string, TestHarness[]>();
 	openSessionCount = 0;
 	nextOpenSessionError?: Error;
 	nextHarnessCloseError?: Error;
 	private nextOpenSessionGate?: OpenGate;
 
-	async resolveSession(sessionId: string, context: Context): Promise<SessionMetadata> {
-		const matches = (await this.repo.list(undefined, context)).filter(({ id }) => id === sessionId);
-		if (matches.length === 0) throw new SessionNotFoundError(`Unknown session: ${sessionId}`);
-		if (matches.length > 1) throw new SessionAmbiguousError();
-		return matches[0]!;
+	async resolveSession(sessionId: string, _context: Context): Promise<SessionMetadata> {
+		const metadata = this.sessions.get(sessionId);
+		if (!metadata) throw new SessionNotFoundError(`Unknown session: ${sessionId}`);
+		return metadata;
 	}
 
-	async openSession(metadata: SessionMetadata, context: Context): Promise<RoutedSessionHandle> {
+	async openSession(metadata: SessionMetadata, _context: Context): Promise<RoutedSessionHandle> {
 		this.openSessionCount += 1;
 		const gate = this.nextOpenSessionGate;
 		if (gate) {
@@ -172,32 +167,26 @@ export class TestServerHost implements ServerHost {
 			gate.entered.resolve(undefined);
 			await gate.release.promise;
 		}
-		const session = await this.repo.open(metadata, context);
-		try {
-			if (this.nextOpenSessionError) {
-				const error = this.nextOpenSessionError;
-				this.nextOpenSessionError = undefined;
-				throw error;
-			}
-			const harness = new TestHarness(session);
-			if (this.nextHarnessCloseError) {
-				harness.failClose = this.nextHarnessCloseError;
-				this.nextHarnessCloseError = undefined;
-			}
-			const harnesses = this.harnesses.get(metadata.id) ?? [];
-			harnesses.push(harness);
-			this.harnesses.set(metadata.id, harnesses);
-			return harness;
-		} catch (error) {
-			await session.close(context);
+		if (!this.sessions.has(metadata.id)) throw new SessionNotFoundError(`Unknown session: ${metadata.id}`);
+		if (this.nextOpenSessionError) {
+			const error = this.nextOpenSessionError;
+			this.nextOpenSessionError = undefined;
 			throw error;
 		}
+		const harness = new TestHarness(metadata);
+		if (this.nextHarnessCloseError) {
+			harness.failClose = this.nextHarnessCloseError;
+			this.nextHarnessCloseError = undefined;
+		}
+		const harnesses = this.harnesses.get(metadata.id) ?? [];
+		harnesses.push(harness);
+		this.harnesses.set(metadata.id, harnesses);
+		return harness;
 	}
 
-	async seed(id = "session-1", parentSessionId?: string): Promise<SessionMetadata> {
-		const session = await this.repo.create({ id, parentSessionId }, BACKGROUND_CONTEXT);
-		const metadata = session.metadata;
-		await session.close(BACKGROUND_CONTEXT);
+	async seed(id = "session-1"): Promise<SessionMetadata> {
+		const metadata: SessionMetadata = { id };
+		this.sessions.set(id, metadata);
 		return metadata;
 	}
 

@@ -1,5 +1,6 @@
 import type {
 	Api,
+	AssistantImages,
 	AssistantMessage,
 	AssistantMessageEventStream,
 	AuthOperationOptions,
@@ -9,9 +10,13 @@ import type {
 	ClassifierModel,
 	ClassifierResult,
 	Context,
+	ImageApi,
+	ImageModel,
+	ImagesContext,
 	Model,
 	ModelsApiStreamOptions,
 	ModelsClassifierOptions,
+	ModelsImagesOptions,
 	ModelsRefreshOptions,
 	ModelsRefreshResult,
 	ModelsSimpleStreamOptions,
@@ -171,6 +176,15 @@ export class ModelRegistry {
 		options?: ModelsClassifierOptions,
 	): Promise<ClassifierResult> {
 		return this.runtime.classify(model, context, options);
+	}
+
+	/** Generate images with request-time authentication. Never rejects. */
+	generateImages(
+		model: ImageModel<ImageApi>,
+		context: ImagesContext,
+		options?: ModelsImagesOptions,
+	): Promise<AssistantImages> {
+		return this.runtime.generateImages(model, context, options);
 	}
 
 	getProviderDisplayName(provider: string): string {

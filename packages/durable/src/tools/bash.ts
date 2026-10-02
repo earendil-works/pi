@@ -1,5 +1,6 @@
 import type { Context } from "@earendil-works/chord";
 import { type Static, Type } from "typebox";
+import { defineTool } from "../harness/define.ts";
 import type { ToolExecutionApi, ToolRegistration } from "../harness/types.ts";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES } from "../truncate.ts";
 import { requireEnv } from "./env.ts";
@@ -43,14 +44,14 @@ function validateTimeout(timeout: number | undefined): void {
  * file whose path is reported as a diagnostic. A nonzero exit or timeout throws, which makes an error result that still
  * carries the output and diagnostics.
  */
-export function createBashTool(options?: BashToolOptions): ToolRegistration {
-	return {
+export function createBashTool(options?: BashToolOptions): ToolRegistration<typeof bashSchema> {
+	return defineTool({
 		name: "bash",
 		description: `Execute a bash command in the current working directory. Returns combined stdout and stderr. Output is truncated to last ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). If truncated, full output is saved to a temp file. Optionally provide a timeout in seconds.`,
 		parameters: bashSchema,
 		outputLimits: { retain: "tail" },
 		async execute(args, api, context) {
-			const { command, timeout } = args as BashToolInput;
+			const { command, timeout } = args;
 			validateTimeout(timeout);
 			const env = requireEnv(api);
 			const execution: BashExecution = {
@@ -85,5 +86,5 @@ export function createBashTool(options?: BashToolOptions): ToolRegistration {
 			if (result.value.exitCode !== 0) throw new Error(`Command exited with code ${result.value.exitCode}`);
 			return {};
 		},
-	};
+	});
 }

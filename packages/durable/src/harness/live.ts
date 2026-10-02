@@ -5,7 +5,7 @@ import type { Transaction } from "../session/transaction.ts";
 import type { EntryId, SubmissionId, SubmissionSettlement, TaskId, TaskRecord, Tx } from "../types.ts";
 import { convertPartial } from "./generation.ts";
 import type { SchedulerOutcome } from "./scheduler.ts";
-import type { ToolDiagnostic } from "./types.ts";
+import type { CompactionReason, CompactionResult, ToolDiagnostic } from "./types.ts";
 
 /** Presentation of one tool call of the current round. */
 export type ToolSlot = {
@@ -29,6 +29,17 @@ export type ToolSlot = {
 	entry?: EntryId;
 };
 
+/** Presentation of one live compaction task (spec §8.7). */
+export type CompactionStatus = {
+	taskId: TaskId<CompactionResult>;
+	reason: CompactionReason;
+	/** Whether a generation waits for it: a compaction the generation owns. */
+	blocking: boolean;
+	attempt: number;
+	/** Durable backoff before the next summarization attempt. */
+	retry?: { at: number; error: string };
+};
+
 /** Built-in live conversation state: run control and presentation of the current generation and tool round. */
 export type LiveState = {
 	/** Run control: the task that settles the run's inputs, and those inputs; present exactly while busy. */
@@ -45,6 +56,8 @@ export type LiveState = {
 	};
 	/** The current tool round in call order, from the tool-calling answer until the generation's `tools` phase ends it. */
 	tools?: ToolSlot[];
+	/** Live compaction tasks in task ID order; absent when none. */
+	compactions?: CompactionStatus[];
 };
 
 export const LiveDoc = defineDoc<LiveState>({
@@ -65,6 +78,7 @@ export const LiveDoc = defineDoc<LiveState>({
 /** Built-in task kinds that can own `pi.live.run`. */
 const RUN_TASK_KINDS: ReadonlySet<string> = new Set(["pi.generation"]);
 const TOOL_TASK_KIND = "pi.tool";
+const COMPACTION_TASK_KIND = "pi.compaction";
 
 /**
  * End the run owned by `taskId`: settle each of its inputs and remove `run`. Always removes `generation` and `tools`,
@@ -77,6 +91,26 @@ export function endRun(tx: Tx, live: Draft<LiveState>, taskId: TaskId, settlemen
 	}
 	delete live.generation;
 	delete live.tools;
+}
+
+/** Add the status of a compaction task created in this commit; statuses stay in task ID order. */
+export function addCompactionStatus(live: Draft<LiveState>, status: CompactionStatus): void {
+	live.compactions ??= [];
+	live.compactions.push(status);
+}
+
+/** The status of compaction task `taskId`, if listed. */
+export function compactionStatus(live: Draft<LiveState>, taskId: TaskId): Draft<CompactionStatus> | undefined {
+	return live.compactions?.find((status) => status.taskId === taskId);
+}
+
+/** Remove the status of compaction task `taskId`, and the list once empty. */
+export function removeCompactionStatus(live: Draft<LiveState>, taskId: TaskId): void {
+	const statuses = live.compactions;
+	if (statuses === undefined) return;
+	const index = statuses.findIndex((status) => status.taskId === taskId);
+	if (index >= 0) statuses.splice(index, 1);
+	if (statuses.length === 0) delete live.compactions;
 }
 
 /** The slot of tool task `taskId` in the current round, if the round still lists it. */
@@ -102,7 +136,8 @@ export function clearProgress(slot: Draft<ToolSlot>): void {
 
 /**
  * Harness cleanup for a terminal outcome the scheduler writes itself (`faulted` or `orphaned`). A run task ends its
- * run; a tool task's slot is marked done without an entry, and context derivation synthesizes the missing result.
+ * run; a tool task's slot is marked done without an entry, and context derivation synthesizes the missing result; a
+ * compaction task's status is removed.
  * Ignores other kinds so it never creates `pi.live` elsewhere. The scheduler calls this without knowing task kinds;
  * the Harness passes it in (spec §5.4).
  * REMINDER: a committed generation partial becomes an aborted assistant entry here, exactly as in the generation abort
@@ -119,6 +154,10 @@ export async function settleSchedulerOutcome(
 	if (record.kind === TOOL_TASK_KIND) {
 		const slot = toolSlot(await tx.doc(LiveDoc, record.conversationId), record.id);
 		if (slot !== undefined) finishSlot(slot, undefined);
+		return;
+	}
+	if (record.kind === COMPACTION_TASK_KIND) {
+		removeCompactionStatus(await tx.doc(LiveDoc, record.conversationId), record.id);
 		return;
 	}
 	if (!RUN_TASK_KINDS.has(record.kind)) return;

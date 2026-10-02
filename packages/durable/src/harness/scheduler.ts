@@ -22,14 +22,16 @@ import type {
 	TaskRuntime,
 	TaskState,
 } from "../types.ts";
+import { agentHooks } from "./agent.ts";
 import { readContext } from "./context.ts";
 import type {
+	Agent,
 	AnyTask,
 	ConversationHandle,
 	HarnessInspection,
-	HookScope,
 	RegistryReader,
 	RegistrySnapshot,
+	Settings,
 	SettledTask,
 	TaskInspection,
 } from "./types.ts";
@@ -76,6 +78,13 @@ type Invocation = {
 	ended: boolean;
 	readonly done: Promise<void>;
 	readonly finish: () => void;
+};
+
+/** What a runtime reads for the phase handler it serves: the phase's snapshot and task, and its lazily resolved agent. */
+type Phase = {
+	readonly snapshot: () => RegistrySnapshot;
+	readonly task: () => AnyTask;
+	agent: Promise<Agent> | undefined;
 };
 
 type Reservation = {
@@ -125,7 +134,12 @@ export type TaskSchedulerOptions = {
 	readonly storage: Storage;
 	readonly registry: RegistryReader;
 	readonly models: Models;
-	readonly env: ExecutionEnv | undefined;
+	/** Resolve a conversation's agent against a snapshot; the runtime calls it at most once per phase. */
+	readonly agent: (conversationId: ConversationId, snapshot: RegistrySnapshot, context: Context) => Promise<Agent>;
+	/** Resolve the settings; read at each access. */
+	readonly settings: () => Settings;
+	/** Build a conversation's environment with `HarnessOptions.env`. */
+	readonly env: (conversationId: ConversationId, context: Context) => Promise<ExecutionEnv | undefined>;
 	readonly now: () => number;
 	readonly report: (error: unknown) => void;
 	/** Harness cleanup staged in the commit that makes an outcome the scheduler wrote itself terminal. */
@@ -162,7 +176,9 @@ export class TaskScheduler {
 	readonly #storage: Storage;
 	readonly #registry: RegistryReader;
 	readonly #models: Models;
-	readonly #env: ExecutionEnv | undefined;
+	readonly #agent: TaskSchedulerOptions["agent"];
+	readonly #settings: TaskSchedulerOptions["settings"];
+	readonly #env: TaskSchedulerOptions["env"];
 	readonly #now: () => number;
 	readonly #report: (error: unknown) => void;
 	readonly #settleOutcome: TaskSchedulerOptions["settleOutcome"];
@@ -200,6 +216,8 @@ export class TaskScheduler {
 		this.#storage = options.storage;
 		this.#registry = options.registry;
 		this.#models = options.models;
+		this.#agent = options.agent;
+		this.#settings = options.settings;
 		this.#env = options.env;
 		this.#now = options.now;
 		this.#report = options.report;
@@ -835,17 +853,16 @@ export class TaskScheduler {
 	async #run(reservation: Reservation): Promise<void> {
 		const invocation = reservation.invocation;
 		const state = { task: reservation.task, snapshot: reservation.snapshot, reported: undefined as ReportedTask };
-		const runtime = this.#runtime(
-			invocation,
-			() => state.snapshot,
-			() => state.task,
-		);
+		const phase: Phase = { snapshot: () => state.snapshot, task: () => state.task, agent: undefined };
+		const runtime = this.#runtime(invocation, phase);
 		let previous: PhaseResult | undefined;
 		for (;;) {
 			const current = await this.#step(invocation, (tx, current) => this.#decide(tx, current, previous, state));
 			// Close may seal between the decision and dispatch.
 			if (current === undefined || this.#closing) return;
 			const checkpoint = current.state.checkpoint;
+			// Each phase handler resolves its agent afresh, at first use.
+			phase.agent = undefined;
 			try {
 				await erased(state.task).phases[checkpoint.phase]!(current, runtime, invocation.context);
 				previous = { checkpoint };
@@ -901,11 +918,8 @@ export class TaskScheduler {
 		if (current === undefined || this.#closing) return;
 		let failure: { readonly error: unknown } | undefined;
 		try {
-			const runtime = this.#runtime(
-				invocation,
-				() => reservation.snapshot,
-				() => reservation.task,
-			);
+			const phase: Phase = { snapshot: () => reservation.snapshot, task: () => reservation.task, agent: undefined };
+			const runtime = this.#runtime(invocation, phase);
 			await erased(reservation.task).abort(current, runtime, invocation.context);
 		} catch (error) {
 			failure = { error };
@@ -1031,14 +1045,22 @@ export class TaskScheduler {
 
 	// ─── Invocation runtime ──────────────────────────────────────────────────
 
-	#runtime(invocation: Invocation, snapshot: () => RegistrySnapshot, task: () => AnyTask): ErasedRuntime {
+	#runtime(invocation: Invocation, phase: Phase): ErasedRuntime {
+		// Resolved at most once per phase handler, at first use, with the invocation's context; fixed for the phase.
+		const agent = (): Promise<Agent> => {
+			if (invocation.ended) return Promise.reject(endedError(invocation));
+			if (phase.agent === undefined) {
+				phase.agent = this.#agent(invocation.conversationId, phase.snapshot(), invocation.context);
+				// A caller that stops waiting must not leave the shared resolution's failure unobserved.
+				phase.agent.catch(() => {});
+			}
+			return phase.agent;
+		};
 		const hooks: HookRunner<Record<string, unknown>> = {
 			each: async (name, invoke) => {
-				if (invocation.ended) throw endedError(invocation);
-				for (const { handlers, scope } of snapshot().hooks(task())) {
+				for (const handlers of agentHooks(await agent(), phase.task().definition.name)) {
 					const handler = (handlers as Record<string, unknown>)[name];
 					if (typeof handler !== "function") continue;
-					if (scope !== undefined && !(await this.#hookMatches(invocation, scope))) continue;
 					try {
 						await invoke(handler.bind(handlers));
 					} catch (error) {
@@ -1048,15 +1070,21 @@ export class TaskScheduler {
 				}
 			},
 		};
+		const settings = this.#settings;
 		return {
 			taskId: invocation.taskId as TaskId<JsonValue>,
 			conversationId: invocation.conversationId,
 			signal: invocation.controller.signal,
 			models: this.#models,
-			env: this.#env,
+			agent: (context) =>
+				invocation.ended ? Promise.reject(endedError(invocation)) : awaitWithContext(agent(), context),
+			get settings() {
+				return settings();
+			},
+			env: (context) => this.#read(invocation, () => this.#env(invocation.conversationId, context)),
 			hooks: hooks as ErasedRuntime["hooks"],
 			get registry() {
-				return snapshot();
+				return phase.snapshot();
 			},
 			commit: (change, context) =>
 				this.#gated(
@@ -1141,21 +1169,15 @@ export class TaskScheduler {
 			}) as ErasedRuntime["entry"],
 			context: (conversationId, context, at) =>
 				this.#read(invocation, () => readContext(this.#session, this.#storage, conversationId, context, at)),
-			now: () => this.#now(),
-			report: (error) => this.#report(error),
+			now: () => {
+				if (invocation.ended) throw endedError(invocation);
+				return this.#now();
+			},
+			report: (error) => {
+				if (invocation.ended) throw endedError(invocation);
+				this.#report(error);
+			},
 		};
-	}
-
-	/** Whether a scoped hook registration matches the invocation's conversation: itself, or an owner for `subtree`. */
-	async #hookMatches(invocation: Invocation, scope: HookScope): Promise<boolean> {
-		if (scope.conversationId === invocation.conversationId) return true;
-		if (scope.subtree !== true) return false;
-		const start = { conversation: invocation.conversationId };
-		if (!this.#chainKnown(start)) await this.#session.readOnLine(() => this.#loadChain(start));
-		for (const step of this.#above(start)) {
-			if ("conversation" in step && step.conversation === scope.conversationId) return true;
-		}
-		return false;
 	}
 
 	/** Run a committed-state read unless the invocation has ended. */

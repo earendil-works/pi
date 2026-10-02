@@ -2,7 +2,9 @@ import { createModels } from "@earendil-works/pi-ai";
 import {
 	type AnyTask,
 	createRegistry,
+	defineExtension,
 	Harness,
+	type HarnessSettings,
 	type Registry,
 	type RegistryReader,
 	type Storage,
@@ -61,10 +63,10 @@ export async function settled(promise: Promise<unknown>): Promise<boolean> {
 export async function openTasks(
 	storage: Storage,
 	tasks: readonly AnyTask[],
-	options: { readonly registry?: Registry; readonly now?: () => number } = {},
+	options: { readonly registry?: Registry; readonly now?: () => number; readonly settings?: HarnessSettings } = {},
 ): Promise<{ readonly harness: Harness; readonly registry: Registry; readonly reports: unknown[] }> {
 	const registry = options.registry ?? createRegistry();
-	for (const task of tasks) registry.tasks.add(task);
+	if (tasks.length > 0) registry.install(defineExtension({ name: "tasks", tasks }));
 	const reports: unknown[] = [];
 	const harness = await Harness.open(
 		storage,
@@ -73,6 +75,7 @@ export async function openTasks(
 			registry,
 			onReport: (error) => reports.push(error),
 			...(options.now === undefined ? {} : { now: options.now }),
+			...(options.settings === undefined ? {} : { settings: options.settings }),
 		},
 		context,
 	);

@@ -25,8 +25,8 @@ interface McpServerConfigBase {
 	/** Default: `codemode`. */
 	exposure?: McpExposure;
 	/**
-	 * What the server offers, in a sentence. The codemode and `tool_search` descriptions show it next to
-	 * the server's namespace, so the model knows what to search for without connecting first.
+	 * What the server offers, in a sentence. The `mcp_servers` system prompt section lists the server
+	 * with it, tool search ranks the server's tools by it, and codemode's `describeNamespace()` returns it.
 	 */
 	description?: string;
 	/**
@@ -76,6 +76,18 @@ export interface McpOAuthConfig {
 	 * Default: `pi`.
 	 */
 	clientName?: string;
+	/**
+	 * How pi identifies itself without `clientId`. `dcr` (default): dynamic client registration. `cimd`:
+	 * pi's Client ID Metadata Document on pi.dev, for authorization servers that allow pi by that URL. The
+	 * server must support it for public clients, and the callback must use the default path `/callback`.
+	 */
+	clientRegistration?: "dcr" | "cimd";
+	/**
+	 * Authorization server metadata document (RFC 8414 or OpenID Connect discovery) to use instead of
+	 * discovery through the server, for servers that advertise a wrong authorization server or none.
+	 * The document is trusted as configured. Must use https, except on loopback hosts.
+	 */
+	authServerMetadataUrl?: string;
 }
 
 const LOOPBACK_HOSTS = ["localhost", "127.0.0.1", "[::1]"];
@@ -93,11 +105,21 @@ export interface McpHttpServerConfig extends McpServerConfigBase {
 	/** Values may reference environment variables (`${NAME}`) or commands (`!cmd`). */
 	headers?: Record<string, string>;
 	oauth?: McpOAuthConfig;
+	/**
+	 * Send the token of a pi provider (`/login <provider>`) instead of using OAuth. Not allowed in project
+	 * `mcp.json` files, and requires https except on loopback hosts, since it sends the credential to `url`.
+	 */
+	auth?: { provider: string };
 }
 
 export type McpServerConfig = McpStdioServerConfig | McpHttpServerConfig;
 
 const SERVER_NAME = /^[A-Za-z0-9_-]+$/;
+
+/** Namespace of a server's tools: `mcp__<server>` with `-` replaced by `_`, like the tool names. */
+export function mcpNamespace(server: string): string {
+	return `mcp__${server.replace(/-/g, "_")}`;
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -130,6 +152,23 @@ function validateOAuth(value: unknown): string | undefined {
 	if (value.scope !== undefined && typeof value.scope !== "string") return "oauth.scope must be a string";
 	if (value.clientName !== undefined && (typeof value.clientName !== "string" || !value.clientName.trim())) {
 		return "oauth.clientName must be a non-empty string";
+	}
+	if (value.clientRegistration !== undefined && value.clientRegistration !== "dcr") {
+		if (value.clientRegistration !== "cimd") return 'oauth.clientRegistration must be "dcr" or "cimd"';
+		if (value.clientId !== undefined || value.clientName !== undefined) {
+			return 'oauth.clientRegistration "cimd" cannot be combined with oauth.clientId or oauth.clientName';
+		}
+		const callback = typeof value.callbackUrl === "string" ? new URL(value.callbackUrl) : undefined;
+		if (callback && (callback.hostname === "[::1]" || callback.pathname !== "/callback")) {
+			return 'oauth.clientRegistration "cimd" requires oauth.callbackUrl on localhost or 127.0.0.1 with path /callback';
+		}
+	}
+	const metadataUrl = value.authServerMetadataUrl;
+	if (metadataUrl !== undefined) {
+		const url = typeof metadataUrl === "string" && URL.canParse(metadataUrl) ? new URL(metadataUrl) : undefined;
+		if (!url || !(url.protocol === "https:" || (url.protocol === "http:" && LOOPBACK_HOSTS.includes(url.hostname)))) {
+			return "oauth.authServerMetadataUrl must be an https URL, or http on localhost, 127.0.0.1, or [::1]";
+		}
 	}
 	return undefined;
 }
@@ -212,6 +251,15 @@ export function validateMcpServerConfig(name: string, raw: unknown): McpServerCo
 		}
 		const oauthError = validateOAuth(value.oauth);
 		if (oauthError) return `server "${name}": ${oauthError}`;
+		if (value.auth !== undefined) {
+			if (!isRecord(value.auth) || typeof value.auth.provider !== "string" || !value.auth.provider) {
+				return `server "${name}": auth.provider must be a provider name`;
+			}
+			const url = new URL(value.url);
+			if (url.protocol !== "https:" && !LOOPBACK_HOSTS.includes(url.hostname)) {
+				return `server "${name}": auth requires an https URL, or http on localhost, 127.0.0.1, or [::1]`;
+			}
+		}
 		return value as unknown as McpHttpServerConfig;
 	}
 	if (typeof value.command === "string" && (type === undefined || type === "stdio")) {

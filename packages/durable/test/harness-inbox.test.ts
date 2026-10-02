@@ -14,6 +14,8 @@ import {
 } from "@earendil-works/pi-ai";
 import {
 	type Conversation,
+	defineDoc,
+	defineTool,
 	type EntryRecord,
 	GenerationTask,
 	type Harness,
@@ -32,7 +34,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import { recordUsage } from "../src/harness/usage.ts";
 import { openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";
 import { allEntries, type ChatSetup, chatSetup, openChat, textOf, waitFor } from "./chat-support.ts";
-import { context, documentChanges } from "./session-support.ts";
+import { addHooks, addTool } from "./harness-support.ts";
+import { ControlledStorage, context, documentChanges, flush } from "./session-support.ts";
 import { aborted, type Deferred, deferred } from "./task-support.ts";
 
 const directories = new Set<string>();
@@ -60,15 +63,18 @@ function gated(message: AssistantMessage): { step: FauxResponseStep; reached: Pr
 
 /** Register a `hold` tool whose calls wait for `gate` and then return `result`. */
 function holdTool(setup: ChatSetup, gate: Deferred, result: ToolExecutionResult = { content: [] }): void {
-	setup.registry.tools.add({
-		name: "hold",
-		description: "Waits for the test",
-		parameters: Type.Object({}),
-		execute: async () => {
-			await gate.promise;
-			return result;
-		},
-	});
+	addTool(
+		setup.registry,
+		defineTool({
+			name: "hold",
+			description: "Waits for the test",
+			parameters: Type.Object({}),
+			execute: async () => {
+				await gate.promise;
+				return result;
+			},
+		}),
+	);
 }
 
 const HOLD = fauxAssistantMessage([fauxToolCall("hold", {}, { id: "c1" })], { stopReason: "toolUse" });
@@ -141,9 +147,7 @@ describe("inbox", () => {
 		const first = gated(answer("first"));
 		setup.faux.setResponses([first.step, answer("both")]);
 		const { harness, root } = await openChat(new MemoryStorage(), setup);
-		await root.setFollowUpMode("all", context);
-		expect(await root.getFollowUpMode(context)).toBe("all");
-		expect(await root.getSteeringMode(context)).toBe("one-at-a-time");
+		setup.settings.followUpMode = "all";
 		await root.submit({ type: "input", content: "a" }, context);
 		await first.reached;
 		const f1 = await root.submit({ type: "input", content: "f1" }, context);
@@ -158,6 +162,40 @@ describe("inbox", () => {
 			"pi.user:f2",
 			"pi.assistant:both",
 		]);
+		expect(setup.faux.state.callCount).toBe(2);
+		await harness.close(context);
+	});
+
+	it("reads queue modes when the final boundary's commit runs on the Session line", async () => {
+		const setup = chatSetup();
+		const first = gated(answer("first"));
+		setup.faux.setResponses([first.step, answer("both")]);
+		const yielded = deferred();
+		addHooks(setup.registry, GenerationTask, { onYield: () => void yielded.resolve() });
+		const storage = new ControlledStorage();
+		const { harness, root } = await openChat(storage, setup);
+		await root.submit({ type: "input", content: "a" }, context);
+		await first.reached;
+		const f1 = await root.submit({ type: "input", content: "f1" }, context);
+		const f2 = await root.submit({ type: "input", content: "f2" }, context);
+		// Occupy the line, let the answer queue its boundary commit behind it, then change the mode.
+		const held = storage.holdCommits();
+		const Marker = defineDoc<{ n: number }>({
+			kind: "test.marker",
+			version: 1,
+			scope: "session",
+			initial: () => ({ n: 0 }),
+		});
+		const occupying = root.commit(async (tx) => void (await tx.doc(Marker)).n++, context);
+		await held.entered;
+		first.release();
+		await yielded.promise;
+		await flush();
+		setup.settings.followUpMode = "all";
+		held.release();
+		await occupying;
+		const settled = await f2.wait(context);
+		expect(await status(f1)).toEqual({ ...settled, id: f1.id, entry: expect.any(Number) });
 		expect(setup.faux.state.callCount).toBe(2);
 		await harness.close(context);
 	});
@@ -327,7 +365,7 @@ describe("inbox", () => {
 		const first = gated(answer("first"));
 		setup.faux.setResponses([first.step, answer("second")]);
 		let yields = 0;
-		setup.registry.hooks.add(GenerationTask, { onYield: () => (yields++ === 0 ? { continue: "more" } : undefined) });
+		addHooks(setup.registry, GenerationTask, { onYield: () => (yields++ === 0 ? { continue: "more" } : undefined) });
 		const { harness, root } = await openChat(new MemoryStorage(), setup);
 		const input = await root.submit({ type: "input", content: "a" }, context);
 		await first.reached;
@@ -475,7 +513,7 @@ describe("inbox", () => {
 		const first = gated(answer("first"));
 		setup.faux.setResponses([first.step, answer("second")]);
 		let yields = 0;
-		setup.registry.hooks.add(GenerationTask, { onYield: () => (yields++ === 0 ? { continue: "more" } : undefined) });
+		addHooks(setup.registry, GenerationTask, { onYield: () => (yields++ === 0 ? { continue: "more" } : undefined) });
 		const { harness, root } = await openChat(new MemoryStorage(), setup);
 		const input = await root.submit({ type: "input", content: "a" }, context);
 		await first.reached;
@@ -499,7 +537,7 @@ describe("inbox", () => {
 		const setup = chatSetup();
 		const first = gated(answer("first"));
 		setup.faux.setResponses([first.step]);
-		setup.registry.hooks.add(GenerationTask, { onYield: () => ({ continue: "more" }) });
+		addHooks(setup.registry, GenerationTask, { onYield: () => ({ continue: "more" }) });
 		const { harness, root } = await openChat(new MemoryStorage(), setup);
 		const input = await root.submit({ type: "input", content: "a" }, context);
 		await first.reached;
@@ -519,7 +557,7 @@ describe("inbox", () => {
 		holdTool(setup, gate);
 		setup.faux.setResponses([HOLD, answer("after tools"), answer("follow-up")]);
 		const { harness, root } = await openChat(new MemoryStorage(), setup);
-		await root.setSteeringMode("all", context);
+		setup.settings.steeringMode = "all";
 		const input = await root.submit({ type: "input", content: "a" }, context);
 		await toolRunning(harness, root);
 		const s1 = await root.submit({ type: "input", content: "s1", whenBusy: "steer" }, context);
@@ -591,15 +629,18 @@ describe("inbox", () => {
 		const firstGate = deferred();
 		const secondGate = deferred();
 		holdTool(setup, firstGate, { content: [], control: { handoff: "one" } });
-		setup.registry.tools.add({
-			name: "later",
-			description: "Finishes first",
-			parameters: Type.Object({}),
-			execute: async () => {
-				await secondGate.promise;
-				return { content: [], control: { handoff: "two" } };
-			},
-		});
+		addTool(
+			setup.registry,
+			defineTool({
+				name: "later",
+				description: "Finishes first",
+				parameters: Type.Object({}),
+				execute: async () => {
+					await secondGate.promise;
+					return { content: [], control: { handoff: "two" } };
+				},
+			}),
+		);
 		const round = fauxAssistantMessage(
 			[fauxToolCall("hold", {}, { id: "c1" }), fauxToolCall("later", {}, { id: "c2" })],
 			{ stopReason: "toolUse" },
@@ -787,11 +828,11 @@ describe("usage", () => {
 		const gate = deferred();
 		gate.resolve();
 		holdTool(setup, gate);
-		setup.registry.hooks.add(ToolTask, { afterTool: (_call, result) => ({ ...result, usage: spent }) });
+		addHooks(setup.registry, ToolTask, { afterTool: (_call, result) => ({ ...result, usage: spent }) });
 		const retryable = fauxAssistantMessage([], { stopReason: "error", errorMessage: "503 Service Unavailable" });
 		setup.faux.setResponses([retryable, HOLD, answer("done"), answer("x".repeat(400))]);
 		const { harness, root } = await openChat(new MemoryStorage(), setup);
-		await root.setRetryPolicy({ enabled: true, maxRetries: 1, baseDelayMs: 1 }, context);
+		setup.settings.retry = { enabled: true, maxRetries: 1, baseDelayMs: 1 };
 		await (await root.submit({ type: "input", content: "a" }, context)).wait(context);
 		expect((await harness.snapshot(UsageDoc, root.id, context))!.tools).toEqual({ hold: spent });
 

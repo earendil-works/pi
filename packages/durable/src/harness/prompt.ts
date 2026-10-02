@@ -19,7 +19,7 @@ export function replaySections(messages: readonly Message[]): Map<string, string
 }
 
 /**
- * Render sections in registry order. `undefined` omits a section; tagged text is wrapped as `<key>\n...\n</key>`. A
+ * Render the agent's sections in order. `undefined` omits a section; tagged text is wrapped as `<key>\n...\n</key>`. A
  * section that throws keeps its shown text, if any, and is reported; errors after `context` is aborted propagate.
  */
 export async function renderSections<Tool extends ToolRegistration>(
@@ -48,19 +48,6 @@ export async function renderSections<Tool extends ToolRegistration>(
 }
 
 type SystemDraft = TypedEntryDraft<never>;
-
-/** Active names the snapshot resolves, first occurrence of each, in configured order, as composed by wrappers. */
-export function desiredTools<T extends ToolRegistration>(
-	activeTools: readonly string[],
-	resolve: (name: string) => T | undefined,
-): T[] {
-	const tools = new Map<string, T>();
-	for (const name of activeTools) {
-		const tool = tools.has(name) ? undefined : resolve(name);
-		if (tool !== undefined) tools.set(name, tool);
-	}
-	return [...tools.values()];
-}
 
 type ToolChanges = { readonly toolsRemoved: ToolReference[]; readonly toolsAdded: Tool[] };
 

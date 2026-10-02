@@ -17,6 +17,7 @@ import {
 	createSession,
 	defineDoc,
 	defineTask,
+	defineTool,
 	GenerationTask,
 	type Harness,
 	type JoinPolicy,
@@ -37,6 +38,7 @@ import {
 import { afterEach, describe, expect, it } from "vitest";
 import { openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";
 import { allEntries, chatSetup, openChat, waitFor } from "./chat-support.ts";
+import { addHooks, addTask, addTool } from "./harness-support.ts";
 import { context } from "./session-support.ts";
 import { aborted, type Deferred, deferred, openTasks, settled } from "./task-support.ts";
 
@@ -987,7 +989,7 @@ function blockingTool(name: string): { started: Promise<void>; registration: Too
 	const started = deferred();
 	return {
 		started: started.promise,
-		registration: {
+		registration: defineTool({
 			name,
 			description: `The ${name} tool`,
 			parameters: Type.Object({}),
@@ -997,7 +999,7 @@ function blockingTool(name: string): { started: Promise<void>; registration: Too
 				started.resolve();
 				return aborted(callContext.abortSignal!);
 			},
-		},
+		}),
 	};
 }
 
@@ -1011,12 +1013,15 @@ function toolCalls(...ids: readonly [string, string][]) {
 describe("tool rounds", () => {
 	it("owns its tool tasks, waits for them, and hands the run to a conversation-owned generation", async () => {
 		const setup = chatSetup();
-		setup.registry.tools.add({
-			name: "noop",
-			description: "Does nothing",
-			parameters: Type.Object({}),
-			execute: async () => ({ content: [] }),
-		});
+		addTool(
+			setup.registry,
+			defineTool({
+				name: "noop",
+				description: "Does nothing",
+				parameters: Type.Object({}),
+				execute: async () => ({ content: [] }),
+			}),
+		);
 		setup.faux.setResponses([toolCalls(["noop", "c1"], ["noop", "c2"]), fauxAssistantMessage([fauxText("done")])]);
 		const { harness, root } = await openChat(new MemoryStorage(), setup);
 		expect((await (await root.submit({ type: "input", content: "go" }, context)).wait(context)).status).toBe("done");
@@ -1037,8 +1042,8 @@ describe("tool rounds", () => {
 		const setup = chatSetup();
 		const one = blockingTool("one");
 		const two = blockingTool("two");
-		setup.registry.tools.add({ ...one.registration, executionMode: "parallel" });
-		setup.registry.tools.add({ ...two.registration, executionMode: "parallel" });
+		addTool(setup.registry, defineTool({ ...one.registration, executionMode: "parallel" }));
+		addTool(setup.registry, defineTool({ ...two.registration, executionMode: "parallel" }));
 		setup.faux.setResponses([toolCalls(["one", "c1"], ["two", "c2"])]);
 		const { harness, root } = await openChat(new MemoryStorage(), setup);
 		const submission = await root.submit({ type: "input", content: "go" }, context);
@@ -1056,8 +1061,8 @@ describe("tool rounds", () => {
 	it("answers the unstarted calls of an aborted sequential round with aborted results, in call order", async () => {
 		const setup = chatSetup();
 		const one = blockingTool("one");
-		setup.registry.tools.add(one.registration);
-		setup.registry.tools.add({ ...blockingTool("two").registration, name: "two" });
+		addTool(setup.registry, one.registration);
+		addTool(setup.registry, defineTool({ ...blockingTool("two").registration, name: "two" }));
 		setup.faux.setResponses([toolCalls(["one", "c1"], ["two", "c2"], ["two", "c3"])]);
 		const { harness, root } = await openChat(new MemoryStorage(), setup);
 		const submission = await root.submit({ type: "input", content: "go" }, context);
@@ -1085,16 +1090,19 @@ describe("tool rounds", () => {
 
 	it("ends a turn at the generation's hold, before its successor's turn starts", async () => {
 		const setup = chatSetup();
-		setup.registry.tasks.add(Node);
-		setup.registry.tools.add({
-			name: "noop",
-			description: "Does nothing",
-			parameters: Type.Object({}),
-			execute: async () => ({ content: [] }),
-		});
+		addTask(setup.registry, Node);
+		addTool(
+			setup.registry,
+			defineTool({
+				name: "noop",
+				description: "Does nothing",
+				parameters: Type.Object({}),
+				execute: async () => ({ content: [] }),
+			}),
+		);
 		// An extension's hook starts work owned by the generation, which holds it while the next turn runs.
 		let opened: Harness | undefined;
-		setup.registry.hooks.add(GenerationTask, {
+		addHooks(setup.registry, GenerationTask, {
 			afterTools: async (_assistant, _results, api, callContext) => {
 				await opened!.commit((tx) => tx.createTask(Node, { name: "hooked" }, owned(api.taskId)), callContext);
 			},
@@ -1130,9 +1138,9 @@ describe("tool rounds", () => {
 			},
 		});
 		const setup = { ...base, models };
-		setup.registry.tasks.add(Node);
+		addTask(setup.registry, Node);
 		let opened: Harness | undefined;
-		setup.registry.hooks.add(GenerationTask, {
+		addHooks(setup.registry, GenerationTask, {
 			beforeRequest: async (_request, api, callContext) => {
 				await opened!.commit((tx) => tx.createTask(Node, { name: "hooked" }, owned(api.taskId)), callContext);
 				return undefined;
@@ -1250,7 +1258,7 @@ function spawnAndFinish(name: string, child: string): { id?: TaskId } {
 describe("definitions and waits", () => {
 	it("keeps a waiting task blocked without its definition and resumes it migrated under a newer one", async () => {
 		const { harness, root, registry } = await openNodes();
-		const registration = registry.tasks.add(versioned(1));
+		const registration = addTask(registry, versioned(1));
 		const other = await start(root, "other");
 		const waiter = await root.commit((tx) => tx.createTask(versioned(1), { on: [other] }, OWN_CONVERSATION), context);
 		await until(async () => (await state(harness, waiter)).status === "waiting");
@@ -1261,14 +1269,14 @@ describe("definitions and waits", () => {
 			(await harness.inspect(context)).tasks.find((task) => task.record.id === waiter)?.state;
 		expect(await inspected()).toEqual({ kind: "blocked", reason: "missing_task" });
 		expect((await state(harness, waiter)).status).toBe("waiting");
-		registry.tasks.add(versioned(2));
+		addTask(registry, versioned(2));
 		expect((await harness.waitForTask(waiter, context)).state.outcome).toEqual({ status: "completed", result: "v2" });
 		await harness.close(context);
 	});
 
 	it("orphans an aborted waiting task without its definition at once, leaving the task it waits on running", async () => {
 		const { harness, root, registry } = await openNodes();
-		const registration = registry.tasks.add(versioned(1));
+		const registration = addTask(registry, versioned(1));
 		const other = await start(root, "other");
 		const waiter = await root.commit((tx) => tx.createTask(versioned(1), { on: [other] }, OWN_CONVERSATION), context);
 		await until(async () => (await state(harness, waiter)).status === "waiting");
@@ -1305,13 +1313,11 @@ describe("definitions and waits", () => {
 					throw new Error("never migrates");
 				},
 			});
-		const first = registry.tasks.add(holder(1));
+		addTask(registry, holder(1));
 		const parent = await root.commit((tx) => tx.createTask(holder(1), null, OWN_CONVERSATION), context);
 		await until(async () => (await state(harness, parent)).status === "completing");
-		registry.batch(() => {
-			first.dispose();
-			registry.tasks.add(holder(2));
-		});
+		// The same extension name replaces the old one in place.
+		addTask(registry, holder(2));
 		open("child");
 		const settledParent = await harness.waitForTask(parent, context);
 		expect(settledParent.state.outcome).toEqual({ status: "completed", result: "held" });
@@ -1568,8 +1574,8 @@ describe("tool rounds and events", () => {
 	it("ends an aborted sequential round's unstarted calls with their result entries, right before them", async () => {
 		const setup = chatSetup();
 		const one = blockingTool("one");
-		setup.registry.tools.add(one.registration);
-		setup.registry.tools.add({ ...blockingTool("two").registration, name: "two" });
+		addTool(setup.registry, one.registration);
+		addTool(setup.registry, defineTool({ ...blockingTool("two").registration, name: "two" }));
 		setup.faux.setResponses([toolCalls(["one", "c1"], ["two", "c2"], ["two", "c3"])]);
 		const { harness, root } = await openChat(new MemoryStorage(), setup);
 		const { stream, events } = await listen(harness, root);
@@ -1592,15 +1598,18 @@ describe("tool rounds and events", () => {
 
 	it("emits one turn_end per generation, also for a stream attached while it holds", async () => {
 		const setup = chatSetup();
-		setup.registry.tasks.add(Node);
-		setup.registry.tools.add({
-			name: "noop",
-			description: "Does nothing",
-			parameters: Type.Object({}),
-			execute: async () => ({ content: [] }),
-		});
+		addTask(setup.registry, Node);
+		addTool(
+			setup.registry,
+			defineTool({
+				name: "noop",
+				description: "Does nothing",
+				parameters: Type.Object({}),
+				execute: async () => ({ content: [] }),
+			}),
+		);
 		let opened: Harness | undefined;
-		setup.registry.hooks.add(GenerationTask, {
+		addHooks(setup.registry, GenerationTask, {
 			afterTools: async (_assistant, _results, api, callContext) => {
 				await opened!.commit((tx) => tx.createTask(Node, { name: "hooked" }, owned(api.taskId)), callContext);
 			},
@@ -1626,19 +1635,22 @@ describe("tool rounds and events", () => {
 
 	it("lets a tool that owns live work finish its call at the hold while the generation waits for its final commit", async () => {
 		const setup = chatSetup();
-		setup.registry.tasks.add(Node);
-		setup.registry.tools.add({
-			name: "delegate",
-			description: "Starts work in a conversation it owns",
-			parameters: Type.Object({}),
-			execute: async (_args, api, callContext) => {
-				await api.commit(async (tx) => {
-					const child = await tx.createConversation({ ownership: { kind: "task", taskId: api.taskId } });
-					await tx.createTask(Node, { name: "sub" }, { ...OWN_CONVERSATION, conversationId: child.id });
-				}, callContext);
-				return { content: [{ type: "text", text: "started" }] };
-			},
-		});
+		addTask(setup.registry, Node);
+		addTool(
+			setup.registry,
+			defineTool({
+				name: "delegate",
+				description: "Starts work in a conversation it owns",
+				parameters: Type.Object({}),
+				execute: async (_args, api, callContext) => {
+					await api.commit(async (tx) => {
+						const child = await tx.createConversation({ ownership: { kind: "task", taskId: api.taskId } });
+						await tx.createTask(Node, { name: "sub" }, { ...OWN_CONVERSATION, conversationId: child.id });
+					}, callContext);
+					return { content: [{ type: "text", text: "started" }] };
+				},
+			}),
+		);
 		setup.faux.setResponses([toolCalls(["delegate", "c1"]), fauxAssistantMessage([fauxText("done")])]);
 		const { harness, root } = await openChat(new MemoryStorage(), setup);
 		const { stream, events } = await listen(harness, root);
@@ -1660,22 +1672,25 @@ describe("tool rounds and events", () => {
 
 	it("holds a faulted tool's slot and task_failed until the work it owns drained", async () => {
 		const setup = chatSetup();
-		setup.registry.tasks.add(Node);
+		addTask(setup.registry, Node);
 		script("held", {
 			abort: async (runtime, ctx) => {
 				await gate("abort.held").promise;
 				await runtime.commit(() => ({ status: "terminal", outcome: { status: "aborted" } }), ctx);
 			},
 		});
-		setup.registry.tools.add({
-			name: "broken",
-			description: "Starts owned work, then returns a result that is not strict JSON",
-			parameters: Type.Object({}),
-			execute: async (_args, api, callContext) => {
-				await api.commit((tx) => tx.createTask(Node, { name: "held" }, owned(api.taskId)), callContext);
-				return { content: [], details: { fn: (() => 1) as unknown as JsonValue } };
-			},
-		});
+		addTool(
+			setup.registry,
+			defineTool({
+				name: "broken",
+				description: "Starts owned work, then returns a result that is not strict JSON",
+				parameters: Type.Object({}),
+				execute: async (_args, api, callContext) => {
+					await api.commit((tx) => tx.createTask(Node, { name: "held" }, owned(api.taskId)), callContext);
+					return { content: [], details: { fn: (() => 1) as unknown as JsonValue } };
+				},
+			}),
+		);
 		setup.faux.setResponses([toolCalls(["broken", "c1"]), fauxAssistantMessage([fauxText("done")])]);
 		const { harness, root } = await openChat(new MemoryStorage(), setup);
 		const { stream, events } = await listen(harness, root);

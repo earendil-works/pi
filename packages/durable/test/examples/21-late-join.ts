@@ -9,6 +9,8 @@ import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@ear
 import {
 	type AgentEvent,
 	createRegistry,
+	defineExtension,
+	defineTool,
 	Harness,
 	type LiveState,
 	MemoryStorage,
@@ -20,18 +22,25 @@ const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // A tool that prints a line every 100 ms, then a slowly streamed answer.
 const registry = createRegistry();
-registry.tools.add({
-	name: "count",
-	description: "Counts to ten",
-	parameters: Type.Object({}),
-	execute: async (_args, api) => {
-		for (let n = 1; n <= 10; n++) {
-			api.output(`${n}\n`);
-			await pause(100);
-		}
-		return {};
-	},
-});
+registry.install(
+	defineExtension({
+		name: "count",
+		tools: [
+			defineTool({
+				name: "count",
+				description: "Counts to ten",
+				parameters: Type.Object({}),
+				execute: async (_args, api) => {
+					for (let n = 1; n <= 10; n++) {
+						api.output(`${n}\n`);
+						await pause(100);
+					}
+					return {};
+				},
+			}),
+		],
+	}),
+);
 const faux = fauxProvider({ tokensPerSecond: 40, tokenSize: { min: 1, max: 1 } });
 faux.setResponses([
 	fauxAssistantMessage([fauxToolCall("count", {}, { id: "call-1" })], { stopReason: "toolUse" }),
@@ -40,8 +49,7 @@ faux.setResponses([
 const models = createModels();
 models.setProvider(faux.provider);
 const harness = await Harness.open(new MemoryStorage(), { models, registry }, context);
-const root = await harness.root(context);
-await root.setModel({ provider: "faux", modelId: "faux-1" }, context);
+const root = await harness.root(context, { agent: { model: { provider: "faux", modelId: "faux-1" } } });
 
 const submission = await root.submit({ type: "input", content: "Count to ten, then tell me." }, context);
 // Join while the tool is halfway through.

@@ -395,8 +395,20 @@ describe("Session document migrations", () => {
 		const { session, storage, publications } = openTestSession();
 		await session.commit((tx) => tx.doc(Old).then(() => undefined), context);
 		await session.unloadDocuments();
+		// An observer of the older shape.
+		const watch = (await session.watchDoc(Old, context))!;
+		const frames: unknown[] = [];
+		watch.start(async (value, ops) => {
+			frames.push({ value, ops });
+		});
 		expect(await session.snapshot(Current, context)).toEqual({ count: 4 });
 		const snapshot = await session.snapshot(Current, context);
+		// An observer of the new shape: the migration changes nothing it sees.
+		const current = (await session.watchDoc(Current, context))!;
+		const currentFrames: unknown[] = [];
+		current.start(async (value) => {
+			currentFrames.push(value);
+		});
 
 		await session.commit((tx) => tx.doc(Current).then(() => undefined), context);
 		await flush();
@@ -405,7 +417,12 @@ describe("Session document migrations", () => {
 			content: { kind: "base", version: 3, value: { count: 4 } },
 		});
 		expect(checkpoints).toBe(0);
-		expect(documentChanges(publications.at(-1)!)).toHaveLength(0);
+		// The migration-only base is published, so the older-shape watch receives the new value as a root replacement.
+		expect(documentChanges(publications.at(-1)!)).toMatchObject([{ version: 3, value: { count: 4 }, ops: [] }]);
+		expect(frames).toEqual([{ value: { count: 4 }, ops: [["r", { count: 4 }]] }]);
+		expect(currentFrames).toEqual([]);
+		await watch.stop();
+		await current.stop();
 		expect(await session.snapshot(Current, context)).toBe(snapshot);
 
 		await session.commit(async (tx) => {

@@ -4,7 +4,7 @@
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai/providers/faux";
-import { AssistantEntry, ConversationConfig, createRegistry, Harness, MemoryStorage } from "../../src/index.ts";
+import { AssistantEntry, createRegistry, defineExtension, Harness, MemoryStorage, section } from "../../src/index.ts";
 
 const context = BACKGROUND_CONTEXT;
 
@@ -15,16 +15,17 @@ models.setProvider(faux.provider);
 faux.setResponses([fauxAssistantMessage("Paris.")]);
 
 const registry = createRegistry();
-registry.systemPrompt.section("preamble", () => "You answer in one word.", { tag: false });
+registry.install(
+	defineExtension({
+		name: "terse",
+		sections: [section("preamble", () => "You answer in one word.", { tag: false })],
+	}),
+);
 const harness = await Harness.open(new MemoryStorage(), { models, registry }, context);
-const root = await harness.root(context, {
-	init: async (tx, id) => {
-		(await tx.doc(ConversationConfig, id)).model = { provider: "faux", modelId: "faux-1" };
-	},
-});
+const root = await harness.root(context, { agent: { model: { provider: "faux", modelId: "faux-1" } } });
 
 // submit() durably admits user input and returns a Submission. The built-in
-// pi.generation task prepares the system prompt from the registry's sections,
+// pi.generation task prepares the system prompt from the agent's sections,
 // calls the model, and appends the answer; wait() resolves once the input is
 // answered or has failed.
 const capital = await root.submit({ type: "input", content: "Capital of France?" }, context);

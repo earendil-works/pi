@@ -1,6 +1,6 @@
 {
 	"name": "@earendil-works/pi-agent-core",
-	"version": "0.99.1",
+	"version": "1.0.0",
 	"description": "General-purpose agent with transport abstraction, state management, and attachment support",
 	"type": "module",
 	"main": "./dist/index.js",
@@ -10,34 +10,6 @@
 			"types": "./dist/index.d.ts",
 			"import": "./dist/index.js"
 		},
-		"./node": {
-			"types": "./dist/node.d.ts",
-			"import": "./dist/node.js"
-		},
-		"./harness/context": {
-			"types": "./dist/harness/context.d.ts",
-			"import": "./dist/harness/context.js"
-		},
-		"./experimental/pico3": {
-			"types": "./dist/harness/pico3/index.d.ts",
-			"import": "./dist/harness/pico3/index.js"
-		},
-		"./harness/env/nodejs": {
-			"types": "./dist/harness/env/nodejs.d.ts",
-			"import": "./dist/harness/env/nodejs.js"
-		},
-		"./harness/runtime/reducer": {
-			"types": "./dist/harness/runtime/reducer.d.ts",
-			"import": "./dist/harness/runtime/reducer.js"
-		},
-		"./harness/session": {
-			"types": "./dist/harness/session/index.d.ts",
-			"import": "./dist/harness/session/index.js"
-		},
-		"./harness/session/testing": {
-			"types": "./dist/harness/session/testing/index.d.ts",
-			"import": "./dist/harness/session/testing/index.js"
-		},
 		"./package.json": "./package.json"
 	},
 	"files": [
@@ -46,26 +18,13 @@
 	],
 	"scripts": {
 		"clean": "shx rm -rf dist",
-		"generate-telemetry-docs": "node scripts/generate-telemetry-docs.ts",
-		"check:telemetry-docs": "node scripts/generate-telemetry-docs.ts --check",
 		"build": "tsc -p tsconfig.build.json",
-		"bench:session:timing": "vitest bench --config vitest.benchmark.config.ts",
-		"bench:session:memory": "node --import ../coding-agent/src/experimental/source-resolver.ts benchmark/session/loaded-footprint.ts",
-		"bench:session:allocations": "node --import ../coding-agent/src/experimental/source-resolver.ts benchmark/session/allocation-profile.ts",
 		"test": "vitest --run",
-		"test:harness": "vitest --run --config vitest.harness.config.ts",
-		"test:session:conformance": "vitest --run --config vitest.harness.config.ts test/harness/memory-conformance.test.ts",
-		"coverage:harness": "vitest --run --config vitest.harness.config.ts --coverage",
 		"prepublishOnly": "npm run build"
 	},
 	"dependencies": {
-		"@earendil-works/chord": "^0.99.1",
-		"@earendil-works/pi-ai": "^0.99.1",
-		"@earendil-works/pi-telemetry": "^0.99.1",
-		"diff": "8.0.4",
-		"ignore": "7.0.8",
-		"typebox": "1.3.27",
-		"yaml": "2.9.0"
+		"@earendil-works/pi-ai": "^1.0.0",
+		"typebox": "1.3.27"
 	},
 	"keywords": [
 		"ai",
@@ -86,7 +45,6 @@
 	},
 	"devDependencies": {
 		"@types/node": "22.19.19",
-		"@vitest/coverage-v8": "4.1.11",
 		"vitest": "4.1.11"
 	}
 }

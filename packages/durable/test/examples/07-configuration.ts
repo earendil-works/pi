@@ -1,10 +1,20 @@
-// Conversation configuration: model, thinking level, and active tools.
+// Per-conversation agent choices and Harness-wide settings.
 // Run from packages/durable:
 //   node --conditions=source --experimental-strip-types test/examples/07-configuration.ts
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { Type } from "@earendil-works/pi-ai";
 import { createModels } from "@earendil-works/pi-ai/models";
-import { createRegistry, Harness, MemoryStorage, type ToolRegistration } from "../../src/index.ts";
+import {
+	AgentDoc,
+	createRegistry,
+	defineExtension,
+	defineTool,
+	Harness,
+	type HarnessSettings,
+	MemoryStorage,
+	section,
+	type ToolRegistration,
+} from "../../src/index.ts";
 
 const context = BACKGROUND_CONTEXT;
 
@@ -12,49 +22,78 @@ const context = BACKGROUND_CONTEXT;
 type AppTool = ToolRegistration & { readonly snippet?: string };
 
 function exampleTool(name: string, description: string): AppTool {
-	return {
+	const tool = defineTool({
 		name,
 		description,
 		parameters: Type.Object({ path: Type.String() }),
-		snippet: `Use ${name} for files.`,
-		execute: async (args) => ({ content: [{ type: "text", text: `${name} ${JSON.stringify(args)}` }] }),
-	};
+		execute: async (args) => ({ content: [{ type: "text", text: `${name} ${args.path}` }] }),
+	});
+	return { ...tool, snippet: `Use ${name} for files.` };
 }
 
+const read = exampleTool("read", "Read a file");
+const write = exampleTool("write", "Write a file");
+const grep = exampleTool("grep", "Search files");
+const Files = defineExtension<AppTool>({ name: "files", tools: [read, write] });
+const Search = defineExtension<AppTool>({ name: "search", tools: [grep] });
+// Sections see the offered tools as app tools, so one can render their snippets.
+const Snippets = defineExtension<AppTool>({
+	name: "snippets",
+	sections: [section("tool_snippets", (input) => input.agent.tools.map((tool) => tool.snippet).join("\n"))],
+});
+
 const registry = createRegistry<AppTool>();
-registry.tools.add(exampleTool("read", "Read a file"));
-const writeRegistration = registry.tools.add(exampleTool("write", "Write a file"));
-registry.tools.add(exampleTool("grep", "Search files"));
-const harness = await Harness.open(new MemoryStorage(), { models: createModels(), registry }, context);
+registry.install(Files);
+registry.install(Search);
+registry.install(Snippets);
+
+// Settings are Harness-wide run policy, read at every use and never stored.
+// A getter makes a value live, such as one backed by the app's settings file.
+let timeoutMs = 60_000;
+const settings: HarnessSettings = {
+	get stream() {
+		return { timeoutMs };
+	},
+	retry: { maxRetries: 5 },
+	toolExecution: "sequential",
+};
+const harness = await Harness.open(new MemoryStorage(), { models: createModels(), registry, settings }, context);
 const root = await harness.root(context);
 
-// Model, thinking level, and active tool names live in the built-in
-// ConversationConfig document. New conversations start with every registered
-// tool active. Each setter is one commit.
-console.log("active tools:", await root.getActiveTools(context));
-await root.setModel({ provider: "anthropic", modelId: "claude-sonnet-4-5" }, context);
-await root.setThinkingLevel("high", context);
-await root.setActiveTools(["write", "read"], context);
-console.log("snippet kept on the app tool:", registry.tools.list()[0]!.snippet);
-console.log("model:", await root.getModel(context), "thinking:", await root.getThinkingLevel(context));
+// A new conversation stores no choices and follows the host: every installed
+// extension, all of their tools.
+const tools = async () => (await root.agent(context)).tools.map((tool) => tool.name);
+console.log("default tools:", await tools());
 
-// Adding a name that is not registered is rejected, and nothing is written.
-await root.setActiveTools(["read", "find"], context).catch((error: Error) => console.log("rejected:", error.message));
-
-// Names that were already active are never rechecked. After "write" is
-// unregistered it stays in the configuration; requests just stop offering it
-// until it is registered again.
-writeRegistration.dispose();
-await root.setActiveTools(["write", "read", "grep"], context);
-console.log("active tools without a registered write:", await root.getActiveTools(context));
-console.log(
-	"registered tools:",
-	registry.tools.list().map((entry) => entry.name),
+// configure() stores choices in the conversation's pi.agent document, one
+// commit per call. Extensions and tools are passed as objects and stored by
+// name, so a typo cannot slip in.
+await root.configure(
+	{
+		model: { provider: "anthropic", modelId: "claude-sonnet-4-5" },
+		thinkingLevel: "high",
+		tools: [write, read],
+	},
+	context,
 );
+console.log("stored:", await harness.snapshot(AgentDoc, root.id, context));
+const agent = await root.agent(context);
+console.log("model:", agent.model, "thinking:", agent.thinkingLevel, "tools:", await tools());
 
-// Request options and the durable retry policy are configuration too.
-await root.setStreamOptions({ timeoutMs: 60_000 }, context);
-console.log("stream options:", await root.getStreamOptions(context));
-console.log("retry policy:", await root.getRetryPolicy(context));
+// Deselect an extension; `null` clears a stored field back to the host default.
+await root.configure({ extensions: { remove: [Search] }, tools: null }, context);
+console.log("without search:", await tools());
+
+// Stored names outlive the code. The conversation selects exactly these two
+// extensions; uninstalling "files" leaves it selected, and requests just stop
+// offering its tools until it is back.
+await root.configure({ extensions: [Files, Search] }, context);
+registry.uninstall(Files);
+console.log("files uninstalled:", await tools());
+registry.install(Files);
+console.log("files reinstalled:", await tools());
+
+// Settings changes need no commit; the next request uses the new timeout.
+timeoutMs = 120_000;
 
 await harness.close(context);

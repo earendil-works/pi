@@ -2,6 +2,7 @@ import type { ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { isAbsolute } from "node:path";
 import {
+	type Context,
 	createServiceUnsubscribeCall,
 	decodeServiceControlCall,
 	type JsonValue,
@@ -9,16 +10,12 @@ import {
 	type ServiceCall,
 	type ServiceProviderUpdate,
 } from "@earendil-works/chord";
-import {
-	BACKGROUND_CONTEXT,
-	type Context,
-	type JsonlSessionMetadata,
-	TODO_CONTEXT,
-} from "@earendil-works/pi-agent-core";
+import { BACKGROUND_CONTEXT, TODO_CONTEXT } from "@earendil-works/chord/context";
 import { type RoutedSessionAttachment, type RoutedSessionHandle, ServerError } from "@earendil-works/pi-server";
 import { Check } from "typebox/value";
 import type { CoordinatorConnection, CoordinatorConnectionEvent } from "./coordinator.ts";
 import { spawnInternalProcess } from "./process.ts";
+import type { SessionCatalogMetadata } from "./session-catalog.ts";
 import {
 	SESSION_WORKER_CONTROL_ADDRESS_ENV,
 	SESSION_WORKER_CONTROL_TOKEN_ENV,
@@ -45,7 +42,7 @@ export class SessionPluginSelectionConflictError extends Error {
 
 interface WorkerRecord {
 	readonly peerId: string;
-	readonly metadata: JsonlSessionMetadata;
+	readonly metadata: SessionCatalogMetadata;
 	readonly pid: number;
 	readonly token: string;
 	readonly pluginManifestPaths: readonly string[];
@@ -132,11 +129,11 @@ export class SessionWorkerManager {
 		this.#removeListener = coordinator.onEvent((event) => this.#handleCoordinatorEvent(event));
 	}
 
-	get trackedSessions(): readonly JsonlSessionMetadata[] {
+	get trackedSessions(): readonly SessionCatalogMetadata[] {
 		return [...this.#workersBySession.values()].map((worker) => worker.metadata);
 	}
 
-	assertSessionPluginManifestPaths(metadata: JsonlSessionMetadata, manifestPaths: readonly string[]): void {
+	assertSessionPluginManifestPaths(metadata: SessionCatalogMetadata, manifestPaths: readonly string[]): void {
 		const existing = this.#workersBySession.get(metadata.path);
 		if (existing !== undefined && !sameStrings(existing.pluginManifestPaths, manifestPaths)) {
 			throw new SessionPluginSelectionConflictError(
@@ -176,7 +173,7 @@ export class SessionWorkerManager {
 	}
 
 	async openSession(
-		metadata: JsonlSessionMetadata,
+		metadata: SessionCatalogMetadata,
 		context: Context,
 		pluginManifestPaths: readonly string[],
 	): Promise<RoutedSessionHandle> {
@@ -189,7 +186,7 @@ export class SessionWorkerManager {
 		return this.#routedHandle(await this.#launch(metadata, context, pluginManifestPaths));
 	}
 
-	async closeSession(metadata: JsonlSessionMetadata, context: Context): Promise<void> {
+	async closeSession(metadata: SessionCatalogMetadata, context: Context): Promise<void> {
 		const worker = this.#workersBySession.get(metadata.path) ?? (await this.#pending.get(metadata.path)?.promise);
 		if (worker !== undefined) await this.#stopWorker(worker, context);
 	}
@@ -450,7 +447,7 @@ export class SessionWorkerManager {
 	}
 
 	#launch(
-		metadata: JsonlSessionMetadata,
+		metadata: SessionCatalogMetadata,
 		_context: Context,
 		pluginManifestPaths: readonly string[],
 	): Promise<WorkerRecord> {
@@ -461,15 +458,7 @@ export class SessionWorkerManager {
 		try {
 			const options: SessionWorkerOptions = {
 				sessionDir: this.#sessionDir,
-				metadata: {
-					id: metadata.id,
-					createdAt: metadata.createdAt,
-					storageVersion: metadata.storageVersion,
-					cwd: metadata.cwd,
-					path: metadata.path,
-					modifiedAt: metadata.modifiedAt,
-					...(metadata.parentSessionId === undefined ? {} : { parentSessionId: metadata.parentSessionId }),
-				},
+				metadata: { id: metadata.id, createdAt: metadata.createdAt, cwd: metadata.cwd, path: metadata.path },
 				pluginManifestPaths: [...pluginManifestPaths],
 				...(this.#model ?? {}),
 			};

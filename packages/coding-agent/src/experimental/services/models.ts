@@ -1,5 +1,5 @@
 import { type Context, defineService, type ReplicatedState } from "@earendil-works/chord";
-import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
+import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
 
 export interface ModelRef {
 	provider: string;
@@ -18,7 +18,7 @@ export interface ModelsState {
 	};
 	configuration: {
 		model: ModelRef | null;
-		thinkingLevel: ThinkingLevel;
+		thinkingLevel: ModelThinkingLevel;
 	};
 	refresh: { status: "idle" | "refreshing" | "done" } | { status: "warning"; errors: Record<string, string> };
 }
@@ -26,10 +26,10 @@ export interface ModelsState {
 export interface Models {
 	readonly state: ReplicatedState<ModelsState>;
 	cycleThinking(context: Context): Promise<void>;
-	getThinkingLevels(context: Context): Promise<ThinkingLevel[]>;
+	getThinkingLevels(context: Context): Promise<ModelThinkingLevel[]>;
 	refresh(context: Context): Promise<void>;
 	select(model: ModelRef, context: Context): Promise<void>;
-	selectThinking(level: ThinkingLevel, context: Context): Promise<void>;
+	selectThinking(level: ModelThinkingLevel, context: Context): Promise<void>;
 }
 
 export const Models = defineService<Models>("pi.models");

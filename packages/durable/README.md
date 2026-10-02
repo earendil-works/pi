@@ -12,17 +12,23 @@ Built on [`@earendil-works/pi-ai`](../ai/README.md) for model access and `@earen
 - [Quick Start](#quick-start)
 - [Concepts](#concepts)
 - [Persist and Resume](#persist-and-resume)
+- [Extensions](#extensions)
 - [Tools](#tools)
 - [System Prompt](#system-prompt)
-- [Conversation Settings](#conversation-settings)
+- [Per-Conversation Agent](#per-conversation-agent)
+- [Settings](#settings)
+- [Environment](#environment)
+- [Reload](#reload)
 - [Watching a Conversation](#watching-a-conversation)
 - [Busy Conversations](#busy-conversations)
 - [Reset and Handoff](#reset-and-handoff)
+- [Compaction](#compaction)
 - [Agent Events (Experimental)](#agent-events-experimental)
 - [Hooks](#hooks)
 - [More Conversations and Forks](#more-conversations-and-forks)
 - [Abort and Subagents](#abort-and-subagents)
 - [Child Tasks](#child-tasks)
+- [Task Graph](#task-graph)
 - [Your Own State](#your-own-state)
 - [Usage and Cost](#usage-and-cost)
 - [Storage](#storage)
@@ -49,8 +55,7 @@ const models = createModels();
 models.setProvider(openaiProvider()); // reads OPENAI_API_KEY
 
 const harness = await Harness.open(new MemoryStorage(), { models, registry: createRegistry() }, context);
-const root = await harness.root(context);
-await root.setModel({ provider: "openai", modelId: "gpt-6-sol" }, context);
+const root = await harness.root(context, { agent: { model: { provider: "openai", modelId: "gpt-6-sol" } } });
 
 const submission = await root.submit({ type: "input", content: "What is the capital of France?" }, context);
 const settled = await submission.wait(context);
@@ -64,7 +69,7 @@ await harness.close(context);
 What happened:
 
 - `Harness.open()` opens a Session over a storage backend. `MemoryStorage` keeps everything in memory.
-- `root()` returns the root conversation, creating it on first use. A conversation is a transcript of immutable entries.
+- `root()` returns the root conversation, creating it on first use with the given agent choices. A conversation is a transcript of immutable entries.
 - `submit()` durably admits your input and returns a `Submission`. A built-in generation task calls the model and appends the answer.
 - `wait()` resolves once the input is answered (`done`) or has failed (`unanswered`, with a reason).
 
@@ -76,11 +81,13 @@ Every async call takes a Chord `Context`, which carries cancellation. `BACKGROUN
 - **Conversation**: a transcript. `root()` creates the root conversation on first use; you can create more and fork them. A `Conversation` handle holds no state; compare handles by `id`.
 - **Entry**: one immutable transcript record, such as a user message (`pi.user`), a model response (`pi.assistant`), a tool result (`pi.tool-result`), a system prompt change (`pi.system`), a reset (`pi.reset`), or your own kind. The model sees the entries from the newest reset onward.
 - **Commit**: an atomic write. `conversation.commit((tx) => ...)` can append entries, edit documents, and create tasks together; either all of it is stored or none of it.
-- **Document**: typed JSON state stored next to the transcript and changed in commits. Built-in ones hold each conversation's settings (`pi.conversation.config`), the running generation and tools (`pi.live`), queued submissions (`pi.inbox`), and spend (`pi.usage`).
+- **Document**: typed JSON state stored next to the transcript and changed in commits. Built-in ones hold each conversation's agent choices (`pi.agent`), the running generation and tools (`pi.live`), queued submissions (`pi.inbox`), and spend (`pi.usage`).
 - **Task**: a durable state machine that saves a checkpoint at every step, so a restarted process continues from the last one. Every task has an owner: its conversation, or another task. The Harness runs answers as built-in tasks: `pi.generation` calls the model and owns the `pi.tool` tasks of its tool calls, waits for them, and hands the run to the next generation.
 - **Submission**: something you hand to a conversation, either user input or an entry to write, which you can wait for.
 - **Turn and run**: a turn is one model response and its tool calls; a run is the turns from an input to its final answer. A conversation is busy while a run is going.
-- **Registry**: your tools, system prompt sections, hooks, and tasks. It can change while the Harness runs; new work uses the new state.
+- **Extension**: a named bundle of tools, system prompt sections, hooks, wrappers, and tasks.
+- **Registry**: the extensions this process installed. It can change while the Harness runs; new work uses the new state.
+- **Agent**: what a conversation runs with: model, thinking level, selected extensions, tools, instructions, and working directory. Stored per conversation as names in `pi.agent`, resolved against the registry at each use.
 
 One answered input, as entries and tasks:
 
@@ -114,65 +121,140 @@ const again = await root.submit({ type: "input", content: "Hello", requestId: "g
 
 `harness.submission(id)` reacquires a submission by ID, for example to wait for it after a restart.
 
-## Tools
+## Extensions
 
-`@earendil-works/pi-durable/tools` provides `read`, `bash`, `edit`, and `write`. They touch files and processes only through the execution environment passed as `env`:
+Code the Harness runs, other than its built-in tasks, comes in named extensions installed in a registry your process owns:
 
 ```typescript
-import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
-import { createBashTool, createEditTool, createReadTool, createWriteTool } from "@earendil-works/pi-durable/tools";
+import { createRegistry, defineExtension, defineTool, hook, section, ToolTask } from "@earendil-works/pi-durable";
+import { CodingTools } from "@earendil-works/pi-durable/tools";
+
+const Coding = defineExtension({
+	name: "coding",
+	sections: [section("preamble", () => "You are a concise coding assistant.", { tag: false })],
+	hooks: [hook(ToolTask, { beforeTool: (call) => (isDangerous(call) ? { block: "Needs approval" } : undefined) })],
+});
 
 const registry = createRegistry();
-for (const tool of [createReadTool(), createBashTool(), createEditTool(), createWriteTool()]) registry.tools.add(tool);
-const env = new NodeExecutionEnv({ cwd: process.cwd() });
-const harness = await Harness.open(storage, { models, registry, env }, context);
+registry.install(CodingTools);
+registry.install(Coding);
 ```
 
-A new conversation activates every tool registered when it is created. Reading images is not supported yet.
+An extension may bring `tools`, `sections`, `hooks`, `wraps` (decorators of a tool or section by name), and `tasks`. By default every conversation selects every installed extension, in install order. Nothing in the registry is stored; conversations store extension names.
 
-Define your own tool with a TypeBox schema. `api.output()` streams running output, which becomes the result when `execute()` returns no `content`:
+## Tools
+
+`@earendil-works/pi-durable/tools` provides `read`, `write`, `edit`, and `bash`, and the `CodingTools` extension with all four. They touch files and processes only through the call's environment (see [Environment](#environment)). Reading images is not supported yet.
+
+Define your own tool with a TypeBox schema. `defineTool()` types `args` from `parameters`, which the Harness validates before `execute()`. `api.output()` streams running output, which becomes the result when `execute()` returns no `content`:
 
 ```typescript
 import { Type } from "@earendil-works/pi-ai";
 
-registry.tools.add({
+const count = defineTool({
 	name: "count",
 	description: "Count from 1 to n",
 	parameters: Type.Object({ n: Type.Number() }),
 	execute: async (args, api) => {
-		for (let i = 1; i <= (args as { n: number }).n; i++) api.output(`${i}\n`);
+		for (let i = 1; i <= args.n; i++) api.output(`${i}\n`);
 		return {};
 	},
 });
+registry.install(defineExtension({ name: "count", tools: [count] }));
 ```
 
 Each call runs as its own durable task. Its intent is committed before `execute()` runs. If the process dies mid-call, the tool reruns on reopen only when it is declared `replay: "safe"`; otherwise the model gets an `interrupted` error result with the output committed so far. Throwing from `execute()` gives the model an error result. A result can also return `usage`, which is added to the conversation's [usage](#usage-and-cost). It can also return `control: { terminate: true }`: when every result of the round asks for it, the run ends without another model request.
 
+A later extension's tool with the same name replaces an earlier one where both are selected, and `wrapTool()` decorates whichever tool won:
+
+```typescript
+const Venv = defineExtension({ name: "venv", tools: [createBashTool({ commandPrefix: "source .venv/bin/activate" })] });
+const Timing = defineExtension({
+	name: "timing",
+	wraps: [wrapTool(createBashTool(), (bash) => ({ ...bash, execute: (args, api, ctx) => timed(() => bash.execute(args, api, ctx)) }))],
+});
+```
+
 ## System Prompt
 
-The system prompt is built from named sections, rendered before each request:
+The system prompt is built from the selected extensions' sections, rendered in order before each request. A section sees the resolved agent, the environment built for the request, and committed documents:
 
 ```typescript
-registry.systemPrompt.section("preamble", () => "You are a concise coding assistant.", { tag: false });
-registry.systemPrompt.section("cwd", () => process.cwd()); // rendered as <cwd>\n...\n</cwd>
+section("cwd", (input) => input.env?.cwd); // rendered as <cwd>\n...\n</cwd>; undefined omits it
 ```
 
-Sections and tool changes are stored as positional system entries in the transcript. Only what changed is sent again, which keeps provider prompt caches warm. A section that returns something different every time, such as the current time, defeats that.
+A conversation's `instructions` render last, as the section `instructions`. Sections and tool changes are stored as positional system entries in the transcript. Only what changed is sent again, which keeps provider prompt caches warm. A section that returns something different every time, such as the current time, defeats that.
 
-## Conversation Settings
+## Per-Conversation Agent
 
-Each conversation has durable settings, readable and writable through the handle:
+Each conversation stores what it runs with in its `pi.agent` document. `configure()` changes it in one commit; unset fields follow the host:
 
 ```typescript
-await root.setModel({ provider: "openai", modelId: "gpt-6-sol" }, context);
-await root.setThinkingLevel("high", context);
-await root.setActiveTools(["read", "bash"], context);
-await root.setToolExecution("sequential", context); // default "parallel"
-await root.setRetryPolicy({ enabled: true, maxRetries: 3, baseDelayMs: 2000 }, context);
-await root.setStreamOptions({ timeoutMs: 120_000 }, context);
+await root.configure(
+	{
+		model: { provider: "openai", modelId: "gpt-6-sol" },
+		thinkingLevel: "high",
+		extensions: { remove: [Coding] }, // edits the host default; an array selects exactly these, in order
+		tools: [readTool, bashTool], // an array offers exactly these; { remove: [...] } drops some
+		instructions: "Only read; never edit files.",
+		cwd: "/work/repo",
+	},
+	context,
+);
+await root.configure({ tools: null }, context); // null clears a field back to the host default
+const agent = await root.agent(context); // resolved: model, extensions, tools, sections, cwd
 ```
 
-Changes apply when the next model request is prepared, not in the middle of one.
+Extensions and tools are passed as objects and stored by name, so a stored name outlives its code: after an extension is uninstalled, conversations that select it just stop getting it until it is installed again. `createConversation()`, `fork()`, and `root()` take the same change as `agent`. A task-owned conversation, such as a subagent's, starts as a copy of its owner's conversation's agent. A fork starts with the agent its parent had at the fork entry. The model, prompt, and offered tools of a request are fixed when it is prepared; a change applies from the next request. Tool calls and hooks use the agent as their task phase resolves it, and the environment is built from the current `cwd` at each use, so a `cwd` or extension change can reach calls the model already made.
+
+## Settings
+
+Run policy shared by every conversation is passed as `settings`. It is read at every use and never stored, so getters make it live, for example backed by a settings file:
+
+```typescript
+const harness = await Harness.open(storage, {
+	models,
+	registry,
+	settings: {
+		extensions: [CodingTools, Coding], // default selection; absent: every installed extension
+		stream: { timeoutMs: 120_000 },
+		retry: { maxRetries: 3 },
+		compaction: { reserveTokens: 16384 },
+		toolExecution: "parallel",
+		get followUpMode() {
+			return userSettings.followUpMode;
+		},
+	},
+}, context);
+```
+
+## Environment
+
+`env` builds the execution environment for each tool call, section rendering, and `runtime.env()`. It receives the conversation's ID, its agent `cwd`, and committed reads, so one function serves a directory per conversation or a container per conversation:
+
+```typescript
+import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
+
+const harness = await Harness.open(storage, {
+	models,
+	registry,
+	env: ({ cwd }) => new NodeExecutionEnv({ cwd: cwd ?? process.cwd() }),
+}, context);
+```
+
+A throw from `env` becomes the call's error result. Without an environment, the built-in tools fail with an error result. A fresh environment object per call is fine: `edit` and `write` serialize changes to one file by the environment's `id` and path. A custom `ExecutionEnv` sets `id` so that equal ids see the same files at the same paths, for example one id per container.
+
+## Reload
+
+Installing an extension with an installed name replaces it in place, in one step:
+
+```typescript
+registry.install(await loadCodingExtension()); // same name "coding": replaces the installed one
+```
+
+`registry.uninstall(extension)` removes the installed extension with that name, whichever object it is.
+
+Work that already started keeps the code it took: a running tool call finishes under its old implementation, and each task phase resolves hooks and the agent once, from the registry at the phase's start. The next phase, request, or call uses the new code. After a restart, install the same extensions again; pending tasks of an extension's `tasks` resume once it is installed.
 
 ## Watching a Conversation
 
@@ -183,7 +265,7 @@ const view = await root.viewState(context);
 view.subscribe((value) => {
 	// value.entries: the active transcript
 	// value.docs["pi.live"]: the running generation (streamed partial, retry, deferred) and tool calls (output, details)
-	// value.docs["pi.inbox"], value.docs["pi.usage"], value.docs["pi.conversation.config"]
+	// value.docs["pi.inbox"], value.docs["pi.usage"], value.docs["pi.agent"]
 	render(value);
 });
 // later: view.dispose();
@@ -219,7 +301,7 @@ await root.submit({ type: "write", entry: { kind: "app.note", data: "user opened
 - **Follow-ups** are placed when the run answers, and start the next run.
 - **Writes** append an entry without asking the model anything.
 - `await submission.abort(context)` withdraws a queued submission.
-- `setSteeringMode("all")` and `setFollowUpMode("all")` place every queued item at once instead of one per turn.
+- The [settings](#settings) `steeringMode: "all"` and `followUpMode: "all"` place every queued item at once instead of one per turn.
 
 If a run fails, queued items stay in the inbox until the next submission places them, oldest first.
 
@@ -234,6 +316,38 @@ await root.reset("We were fixing the flaky login test. Continue.", context); // 
 
 While busy, the reset is queued like a write. When it is placed during a tool round, the current run ends. A tool can request the same with `control: { handoff: "..." }`.
 
+## Compaction
+
+Compaction shrinks what the model sees: it summarizes older entries and appends a `pi.compaction` entry that holds the summary and heads the first entry it keeps. Older entries stay in storage.
+
+```typescript
+const id = await root.compact("Keep the failing test names", context); // manual, with optional instructions
+const { outcome } = (await harness.waitForTask(id, context)).state;
+if (outcome.status === "completed" && outcome.result.submissionId !== undefined) {
+	const placed = await (await harness.submission(outcome.result.submissionId, context))!.wait(context);
+	console.log(placed.status); // "done", or "unanswered" with reason "stale"
+}
+```
+
+The conversation keeps working while the summary is made. The summary is placed at once when the conversation is idle, otherwise at the next turn boundary. Esc (`abort()`) cancels a manual compaction.
+
+Generation also compacts on its own, controlled by the [settings](#settings):
+
+```typescript
+settings: {
+	compaction: {
+		enabled: true, // automatic compaction; manual compact() always works
+		reserveTokens: 16384, // above contextWindow - reserveTokens, the next request waits for a compaction
+		keepRecentTokens: 20000, // roughly how much recent context stays verbatim
+		backgroundTokens: 32768, // this far below that, a compaction starts in the background; 0 disables it
+	},
+}
+```
+
+When a provider rejects a request because the context is too long, generation compacts and retries once. A summary that would cut before the start of the current context settles as `stale` when it is placed, so when several are in flight, the furthest cut stays in effect. Summarization spend counts in `pi.usage`. A `beforeCompact` hook on `CompactionTask` can decline or supply its own summary.
+
+Running compactions are listed in `docs["pi.live"].compactions` with their reason, attempt, and retry backoff. The agent events add `compaction_start` and `compaction_end`, and a `compactions` field in the snapshot.
+
 ## Agent Events (Experimental)
 
 For consumers that want coding-agent style events (`message_start`, `message_update`, `tool_execution_start`, ...) instead of structural state:
@@ -242,7 +356,7 @@ For consumers that want coding-agent style events (`message_start`, `message_upd
 import { watchEvents } from "@earendil-works/pi-durable";
 
 const stream = await watchEvents(harness, root.id, context);
-initialize(stream.snapshot); // entries, run, in-flight generation, tools, inbox, config, usage
+initialize(stream.snapshot); // entries, run, in-flight generation, tools, compactions, inbox, agent, usage
 stream.start(async (events) => {
 	for (const event of events) console.log(JSON.stringify(event));
 });
@@ -252,23 +366,24 @@ Events are derived from commits, one batch per commit, and apply on top of the s
 
 ## Hooks
 
-Hooks let extensions observe or adjust the built-in tasks:
+Hooks let extensions observe or adjust the built-in tasks, in the conversations that select them:
 
 ```typescript
-import { GenerationTask, ToolTask } from "@earendil-works/pi-durable";
+import { GenerationTask, hook, ToolTask } from "@earendil-works/pi-durable";
 
-registry.hooks.add(ToolTask, {
-	beforeTool: (call) => (call.name === "bash" ? { block: "bash is disabled here" } : undefined),
-});
-registry.hooks.add(GenerationTask, {
-	onYield: (answer) => (needsMoreWork(answer) ? { continue: "Keep going." } : undefined),
+const Guard = defineExtension({
+	name: "guard",
+	hooks: [
+		hook(ToolTask, { beforeTool: (call) => (call.name === "bash" ? { block: "bash is disabled here" } : undefined) }),
+		hook(GenerationTask, { onYield: (answer) => (needsMoreWork(answer) ? { continue: "Keep going." } : undefined) }),
+	],
 });
 ```
 
 - **Generation:** `beforeRequest` (replace the messages of one request), `afterResponse`, `onYield` (continue the run with another user message), and `afterTools` (runs once a round's tools are done).
 - **Tools:** `beforeTool` (block or rewrite arguments) and `afterTool` (replace the result).
 
-Pass `{ scope: { conversationId } }` to limit a hook to one conversation.
+To limit a hook to some conversations, select its extension only there, for example with `configure({ extensions: { add: [Guard] } })`.
 
 ## More Conversations and Forks
 
@@ -277,7 +392,7 @@ const other = await harness.createConversation({ ownership: { kind: "ownerless" 
 const fork = await root.fork(entryId, { ownership: { kind: "ownerless" } }, context);
 ```
 
-A fork sees its parent's entries up to `entryId` and continues independently. It keeps the parent's settings as of that entry.
+A fork sees its parent's entries up to `entryId` and continues independently. It keeps the parent's agent as of that entry. Both take `agent` and `init`, applied in the creating commit.
 
 ## Abort and Subagents
 
@@ -286,25 +401,32 @@ A fork sees its parent's entries up to `entryId` and continues independently. It
 A conversation can be **owned** by a task. A subagent tool creates its child inside `api.commit()` with `ownership: { kind: "task", taskId: api.taskId }`, then drives it through `api.conversation(id)`:
 
 ```typescript
-registry.tools.add({
+const Subagent: Extension = defineExtension({
 	name: "subagent",
-	description: "Delegate a self-contained task to a subagent and get its answer back.",
-	parameters: Type.Object({ task: Type.String() }),
-	replay: "safe", // a rerun after a crash finds the same child and submission
-	execute: async (args, api, context) => {
-		const child = await api.commit(async (tx) => {
-			// The ownership index remembers the child, so a rerun reuses it.
-			const existing = (await tx.scanConversations({ ownerTaskId: api.taskId }, 1)).items[0];
-			if (existing !== undefined) return existing.id;
-			const created = await tx.createConversation({ ownership: { kind: "task", taskId: api.taskId } });
-			(await tx.doc(ConversationConfig, created.id)).model = { provider: "openai", modelId: "gpt-6-sol" };
-			return created.id;
-		}, context);
-		await api.details({ conversationId: child }, context); // lets a UI attach to the child
-		const request = { type: "input", content: (args as { task: string }).task, requestId: `subagent:${api.taskId}` } as const;
-		const settled = await (await (await api.conversation(child, context))!.submit(request, context)).wait(context);
-		return { content: [{ type: "text", text: settled.status }] };
-	},
+	tools: [
+		defineTool({
+			name: "subagent",
+			description: "Delegate a self-contained task to a subagent and get its answer back.",
+			parameters: Type.Object({ task: Type.String() }),
+			replay: "safe", // a rerun after a crash finds the same child and submission
+			execute: async (args, api, context) => {
+				const child = await api.commit(async (tx) => {
+					// The ownership index remembers the child, so a rerun reuses it.
+					const existing = (await tx.scanConversations({ ownerTaskId: api.taskId }, 1)).items[0];
+					if (existing !== undefined) return existing.id;
+					// Starts as a copy of this conversation's agent: model, extensions, tools, cwd.
+					const created = await tx.createConversation({ ownership: { kind: "task", taskId: api.taskId } });
+					// A cheaper model, and no subagents of its own.
+					await configure(tx, created.id, { model: haiku, extensions: { remove: [Subagent] } });
+					return created.id;
+				}, context);
+				await api.details({ conversationId: child }, context); // lets a UI attach to the child
+				const request = { type: "input", content: args.task, requestId: `subagent:${api.taskId}` } as const;
+				const settled = await (await (await api.conversation(child, context))!.submit(request, context)).wait(context);
+				return { content: [{ type: "text", text: settled.status }] };
+			},
+		}),
+	],
 });
 ```
 
@@ -346,6 +468,22 @@ decide: async (task, runtime, context) => {
 
 [`24-child-tasks.ts`](test/examples/24-child-tasks.ts) runs a checkout with four payments: a declined card, a cancelled checkout, and a restart while the payments run.
 
+## Task Graph
+
+`harness.taskGraph(context)` shows every live task of the Session as one Chord state, for a task panel or debugging. Each node has its owner edge (`owner` task, or none for a task its conversation owns), its status, whether it is `background` or abort-marked, and the conversations it owns. `harness.watchTaskGraph(context)` delivers the same value as a watch, like a conversation's `watch()`.
+
+```typescript
+const graph = await harness.taskGraph(context);
+graph.subscribe((value) => {
+	for (const node of Object.values(value.tasks)) {
+		const status = node.state.status === "waiting" ? `waiting on ${node.state.on.join(", ")}` : node.state.status;
+		console.log(`${node.id} ${node.kind} ${status}`, node.owner ?? `conversation ${node.conversationId}`);
+	}
+});
+```
+
+A task appears with the commit that creates it and leaves with the commit that makes it terminal. Statuses are the committed ones: `pending`, `running`, `waiting` (with `on` and `policy`), and `completing` (with the held outcome's status). After a restart, tasks that were `running` show as `pending` until they run again. Whether a pending task is blocked by a missing definition is not part of the graph; `harness.inspect()` reports that. The graph lists live tasks only: once a subagent's owner task is terminal, a later task in its conversation is a top-level node, and the conversation's `ConversationRecord.owner` (also in its view's `conversation`) links it to its parent. [`24-child-tasks.ts`](test/examples/24-child-tasks.ts) prints the checkout's tree while its payments run.
+
 ## Your Own State
 
 Documents are typed JSON objects committed together with entries. Define one, and edit it in a commit:
@@ -368,7 +506,7 @@ await root.commit(async (tx) => {
 console.log(await harness.snapshot(Todos, root.id, context));
 ```
 
-`harness.watchDoc()` and `harness.documentState()` observe one document like the view above. `registry.conversations.setup()` creates your documents in every new conversation, and a tool reads them through its `api`.
+`harness.watchDoc()` and `harness.documentState()` observe one document like the view above. `HarnessOptions.conversationCreated(tx, conversation)` runs in every commit that creates or forks a conversation, including a tool's raw `tx.createConversation()`, so every conversation gets your documents; `init` in `createConversation()`, `fork()`, and `root()` writes per-call data in the same commit. An extension's tools, sections, and hooks read their own documents through `api` or `input.read`, and treat an absent one as its default ([`11-extension-state.ts`](test/examples/11-extension-state.ts)).
 
 ## Usage and Cost
 
@@ -386,7 +524,16 @@ const usage = await harness.usage(context); // { models: { "openai/gpt-6-sol": U
 | SQLite | `openNodeSqliteStorage(file)` from `@earendil-works/pi-durable/storage/sqlite/node` | One database file. WAL mode with `synchronous = NORMAL`: commits survive process crashes; the newest may be lost on power or host failure. |
 | JSONL | `openNodeJsonlStorage(directory, context)` from `@earendil-works/pi-durable/storage/jsonl/node` | Append-only files in one directory. Pass `{ fsync: true }` to flush before each commit marker. |
 
-One process owns a storage at a time; there is no cross-process locking. The portable SQLite and JSONL cores (`/storage/sqlite`, `/storage/jsonl`) run without Node APIs, for example on Bun or in Cloudflare Durable Objects, given a synchronous SQLite database or a `FileSystem` from `@earendil-works/pi-durable/env`.
+One process owns a storage at a time; there is no cross-process locking. The portable SQLite and JSONL cores (`/storage/sqlite`, `/storage/jsonl`) run without Node APIs, for example on Bun or in Cloudflare Durable Objects, given an asynchronous `SqliteDatabase` facade or a `FileSystem` from `@earendil-works/pi-durable/env`.
+
+SQLite adapters implement promise-based `exec`, `run`, `get`, `all`, `transaction`, and `close`. `run`, `get`, and `all` take SQL text plus positional bindings; adapters may cache prepared statements by SQL text. A transaction callback receives a transaction handle; all work in the transaction must use it, and the handle expires when the callback settles. Adapters must queue unrelated operations and other transactions until the transaction finishes, so calling `database` itself inside the callback never settles:
+
+```typescript
+await database.transaction(async (transaction) => {
+	await transaction.exec("CREATE TABLE example (value TEXT)");
+	await transaction.run("INSERT INTO example (value) VALUES (?)", "stored atomically");
+});
+```
 
 Custom backends can run the shared conformance suite with any Vitest- or Jest-compatible runner:
 
@@ -426,15 +573,22 @@ node --conditions=source --experimental-strip-types test/examples/14-chat.ts
 | [22-subagent-foreground](test/examples/22-subagent-foreground.ts) | A replay-safe subagent tool whose child the call owns, with the child's events under the call |
 | [23-subagent-background](test/examples/23-subagent-background.ts) | Persistent subagents: spawn, steer, stop, list, answers reported back, restart-safe |
 | [24-child-tasks](test/examples/24-child-tasks.ts) | A checkout that owns and waits for four payments: failFast, abort, restart |
-| [00](test/examples/00-conversation.ts)–[13](test/examples/13-recovery.ts) | The layers underneath: sessions, documents, forks, watches, tasks, recovery |
+| [25-compaction](test/examples/25-compaction.ts) | A long chat compacted in the background, manually, and after a context overflow |
+| [26-coding-agent](test/examples/26-coding-agent.ts) | CodingTools, live settings from a settings object, an environment that follows the conversation's directory |
+| [27-plan-mode](test/examples/27-plan-mode.ts) | A read-only plan mode as an extension with its own document, switched with `configure()` |
+| [28-reviewer](test/examples/28-reviewer.ts) | A reviewer conversation with its own model, extensions, tools, directory, and review loop |
+| [29-sandbox-per-conversation](test/examples/29-sandbox-per-conversation.ts) | An environment per conversation, looked up from an app document |
+| [30-tool-override](test/examples/30-tool-override.ts) | A same-name bash for some conversations, and a wrapper that times whichever bash won |
+| [31-reload-and-restart](test/examples/31-reload-and-restart.ts) | Reloading an extension mid-call, and stored choices surviving a restart |
+| [00](test/examples/00-conversation.ts)–[13](test/examples/13-recovery.ts) | The layers underneath: sessions, documents, forks, watches, the Harness, agent configuration, reload, extension state, tasks, recovery |
 
 Examples that call OpenAI need `OPENAI_API_KEY`; most use the faux provider otherwise.
 
 ## Design Documents
 
-- [`docs/pico-v5.md`](docs/pico-v5.md): the normative specification
-- [`docs/pico-v5-handoff.md`](docs/pico-v5-handoff.md): the implementation plan
-- [`docs/pico-v5-chord-usage.md`](docs/pico-v5-chord-usage.md): how the package uses Chord
+- [`docs/spec.md`](https://github.com/earendil-works/pi/blob/main/packages/durable/docs/spec.md): the normative specification
+- [`docs/pico-v5-handoff.md`](https://github.com/earendil-works/pi/blob/main/packages/durable/docs/pico-v5-handoff.md): the implementation plan
+- [`docs/pico-v5-chord-usage.md`](https://github.com/earendil-works/pi/blob/main/packages/durable/docs/pico-v5-chord-usage.md): how the package uses Chord
 
 Benchmarks: `npm run bench:storage`, `npm run bench:storage:memory`, and `npm run bench:tool-output`.
 

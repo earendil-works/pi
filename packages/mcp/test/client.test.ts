@@ -109,6 +109,8 @@ describe("McpClient", () => {
 								annotations: { readOnlyHint: true },
 							},
 						],
+						// Some servers end pagination with an empty cursor instead of omitting it.
+						nextCursor: "",
 					};
 		});
 		expect(await client.listTools()).toEqual([

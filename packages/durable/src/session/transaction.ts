@@ -268,7 +268,7 @@ export class Transaction implements Tx {
 		return this.#read("submission", () => this.#host.storage.submission(id, this.#context));
 	}
 
-	/** Internal: committed submission with a conversation-scoped request ID. */
+	/** Committed submission with a conversation-scoped request ID. */
 	submissionByRequest(conversationId: ConversationId, requestId: string): Promise<SubmissionRecord | undefined> {
 		return this.#read("submissionByRequest", () =>
 			this.#host.storage.submissionByRequest(conversationId, requestId, this.#context),
@@ -423,7 +423,7 @@ export class Transaction implements Tx {
 		});
 	}
 
-	/** Internal: create a submission record with a fresh ID. */
+	/** Create a raw submission record with a fresh ID; no admission rules apply. */
 	createSubmission(create: SubmissionCreate): Promise<SubmissionRecord> {
 		return this.#write(async () => {
 			await this.#requireConversation(create.conversationId);
@@ -1014,7 +1014,10 @@ function planDocument(document: DocumentEntry): DocumentPlan | undefined {
 	}
 }
 
-/** Whether adoption publishes the plan: every creation, copy, and retirement, and a loaded incarnation that changed. */
+/**
+ * Whether adoption publishes the plan: every creation, copy, and retirement, and a loaded incarnation that writes
+ * content, which includes a migration-only base so observers of the older shape receive the new value.
+ */
 function publishes(plan: DocumentPlan): boolean {
-	return plan.retire || plan.change?.loaded === undefined || plan.change.prepared.ops.length > 0;
+	return plan.retire || plan.change?.loaded === undefined || plan.content !== undefined;
 }

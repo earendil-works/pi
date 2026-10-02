@@ -16,16 +16,17 @@ import { openaiProvider } from "@earendil-works/pi-ai/providers/openai";
 import {
 	type AgentEvent,
 	AssistantEntry,
-	ConversationConfig,
 	type ConversationId,
+	configure,
 	createRegistry,
 	defineDoc,
+	defineExtension,
 	defineTask,
+	defineTool,
 	type EntryId,
 	Harness,
 	LiveDoc,
 	type TaskId,
-	type ToolRegistration,
 	watchEvents,
 } from "../../src/index.ts";
 import { openNodeSqliteStorage } from "../../src/storage/sqlite/node.ts";
@@ -128,7 +129,7 @@ function textOf(message: AssistantMessage | undefined): string {
 	return (message?.content ?? []).flatMap((c) => (c.type === "text" ? [c.text] : [])).join("");
 }
 
-const subagentTool: ToolRegistration = {
+const subagentTool = defineTool({
 	name: "subagent",
 	description:
 		"Manage persistent subagents that work in the background. Actions: spawn (name, message), send (name, message; " +
@@ -144,12 +145,7 @@ const subagentTool: ToolRegistration = {
 	// was interrupted and can check with `status`.
 	replay: "unsafe",
 	execute: async (args, api, callContext) => {
-		const { action, name, message, followUp } = args as {
-			action: string;
-			name?: string;
-			message?: string;
-			followUp?: boolean;
-		};
+		const { action, name, message, followUp } = args;
 		const reply = (text: string, conversationId?: ConversationId) => ({
 			content: [{ type: "text" as const, text }],
 			// A UI can attach to the subagent's conversation through the call's details.
@@ -184,7 +180,6 @@ const subagentTool: ToolRegistration = {
 		if (message === undefined) return reply(`${action} needs a message.`);
 
 		// spawn and send: one commit starts a reporter for the message.
-		const parentConfig = await api.snapshot(ConversationConfig, api.conversationId, callContext);
 		const result = await api.commit(async (tx) => {
 			const state = await tx.doc(Subagents, api.conversationId);
 			// Both tasks belong to the main conversation and are background: its Esc and idle waits skip them.
@@ -192,11 +187,13 @@ const subagentTool: ToolRegistration = {
 			if (action === "spawn") {
 				if (Object.hasOwn(state.agents, name)) return `${name} already exists; use send.`;
 				const anchor = await tx.createTask(Anchor, null, background);
+				// Owned by a task of the main conversation: starts as a copy of the main agent.
 				const child = await tx.createConversation({ ownership: { kind: "task", taskId: anchor } });
-				// The subagent uses the main agent's model and every tool but this one.
-				const config = await tx.doc(ConversationConfig, child.id);
-				if (parentConfig?.model !== undefined) config.model = { ...parentConfig.model };
-				config.activeTools = config.activeTools.filter((tool) => tool !== "subagent");
+				// Subagents cannot start subagents, and know who they are.
+				await configure(tx, child.id, {
+					extensions: { remove: [SubagentTools] },
+					instructions: `You are the subagent "${name}". Answer the main agent's requests.`,
+				});
 				state.agents[name] = { conversationId: child.id, reported: [] };
 			}
 			const conversationId = state.agents[name]!.conversationId;
@@ -207,7 +204,11 @@ const subagentTool: ToolRegistration = {
 		const current = (await api.snapshot(Subagents, api.conversationId, callContext))?.agents[name];
 		return reply(result, current?.conversationId);
 	},
-};
+});
+
+// The task definitions come with the extension, so pending reporters resume after a restart once the host installs
+// it again.
+const SubagentTools = defineExtension({ name: "subagent-tools", tasks: [Anchor, Reporter], tools: [subagentTool] });
 
 // ─── Host setup ─────────────────────────────────────────────────────────────
 
@@ -253,9 +254,7 @@ if (process.env.OPENAI_API_KEY !== undefined) {
 	faux.setResponses(Array.from({ length: 40 }, () => route));
 }
 const registry = createRegistry();
-registry.tasks.add(Anchor);
-registry.tasks.add(Reporter);
-registry.tools.add(subagentTool);
+registry.install(SubagentTools);
 const directory = await mkdtemp(join(tmpdir(), "pi-durable-subagents-"));
 const open = async () => {
 	const harness = await Harness.open(
@@ -263,8 +262,7 @@ const open = async () => {
 		{ models, registry },
 		context,
 	);
-	const root = await harness.root(context);
-	await root.setModel(model, context);
+	const root = await harness.root(context, { agent: { model } });
 	return { harness, root };
 };
 

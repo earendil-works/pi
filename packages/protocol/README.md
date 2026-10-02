@@ -14,7 +14,7 @@ A server target contains `{ serverId }`; a Session target contains `{ serverId, 
 
 Chord owns the payload semantics carried inside these envelopes: `{ serviceId, instance?, member, args }` calls, the `$chord.service` control vocabulary, service catalogues, subscription snapshots and updates, service error codes, and the independent Delta path codecs for replicated states. `pi-protocol` validates that each opaque payload is strict JSON but does not validate or export its Chord grammar. Clients and servers parse those values through `@earendil-works/chord` at the service adapter boundary.
 
-Session-directory state, management results, transcripts, models, plugins, and all other application values remain opaque service data. The real `Session` and `AgentHarness` remain process-local. Server and Session calls route opaquely to their owning providers, where Chord and the application validate and invoke them.
+Session-directory state, management results, transcripts, models, plugins, and all other application values remain opaque service data. The durable Session and its Harness remain local to the Session worker process. Server and Session calls route opaquely to their owning providers, where Chord and the application validate and invoke them.
 
 Server and worker lifecycle is intentionally outside this public protocol. The experimental local coordinator is only an opaque message router; each replaceable server process owns the private lifecycle protocol.
 

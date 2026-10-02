@@ -1,6 +1,7 @@
 import { createConnection, type Socket } from "node:net";
 import { isAbsolute } from "node:path";
 import {
+	type AttachedReplicatedState,
 	isJsonValue,
 	type JsonValue,
 	parseServiceProviderUpdate,
@@ -10,28 +11,22 @@ import {
 	type ServiceCall,
 	type ServiceProviderUpdate,
 } from "@earendil-works/chord";
-import {
-	AgentHarness,
-	type AgentHarness as AgentHarnessInstance,
-	type AgentLane,
-	BACKGROUND_CONTEXT,
-	createBashTool,
-	createReadTool,
-	createWriteTool,
-	type JsonlSessionMetadata,
-	JsonlSessionRepo,
-	type Session,
-	TODO_CONTEXT,
-	withCancel,
-} from "@earendil-works/pi-agent-core";
-import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
+import { BACKGROUND_CONTEXT, TODO_CONTEXT, withCancel } from "@earendil-works/chord/context";
+import { Harness, ROOT_CONVERSATION_ID, type TaskGraph } from "@earendil-works/pi-durable";
+import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import lockfile from "proper-lockfile";
 import Type, { type Static } from "typebox";
 import { Check } from "typebox/value";
-import { findInitialModel, resolveCliModel } from "../core/model-resolver.ts";
 import { ModelRuntime } from "../core/model-runtime.ts";
 import { SettingsManager } from "../core/settings-manager.ts";
 import { COORDINATOR_PROTOCOL_VERSION } from "./coordinator.ts";
+import {
+	configureHarnessHttp,
+	createCodingRegistry,
+	createHarnessSettings,
+	ExecutionEnvs,
+	findInitialAgentModel,
+} from "./durable/harness-setup.ts";
 import { createSessionPluginFacetLoader } from "./plugins/bundled.ts";
 import {
 	consumeInternalProcessRole,
@@ -45,6 +40,7 @@ import {
 	type SessionWorkerServices,
 	type WorkerServiceScope,
 } from "./services/worker.ts";
+import { sessionStoragePath } from "./session-catalog.ts";
 
 export type { SessionWorkerRuntime } from "./services/worker.ts";
 
@@ -72,12 +68,9 @@ export const SESSION_WORKER_PEER_ID_ENV = "PI_SESSION_WORKER_PEER_ID";
 
 export const SessionWorkerMetadataSchema = StrictObject({
 	id: Type.String({ minLength: 1 }),
-	createdAt: Type.Integer(),
-	storageVersion: Type.Integer(),
+	createdAt: Type.Number(),
 	cwd: Type.String(),
 	path: Type.String(),
-	modifiedAt: Type.Number(),
-	parentSessionId: Type.Optional(Type.String()),
 });
 
 export const SessionWorkerOptionsSchema = StrictObject({
@@ -193,7 +186,7 @@ export class WorkerLifecycle {
 	readonly #orphanDemandGraceMs: number;
 	readonly #onRetire: () => void;
 	readonly #demands = new Map<string, { serverConnectionId: string; attachmentId: string; timer?: NodeJS.Timeout }>();
-	readonly #activeOperations = new Set<string>();
+	#harnessActive = false;
 	#currentServerConnectionId: string | undefined;
 	#initialTimer: NodeJS.Timeout | undefined;
 	#demandInitialized: boolean;
@@ -282,13 +275,10 @@ export class WorkerLifecycle {
 		this.#reconcile();
 	}
 
-	operationStarted(kind: "run" | "compaction" | "navigation", lane: string, operationId: string): void {
-		this.#activeOperations.add(`${kind}\0${lane}\0${operationId}`);
-	}
-
-	operationStopped(kind: "run" | "compaction" | "navigation", lane: string, operationId: string): void {
-		this.#activeOperations.delete(`${kind}\0${lane}\0${operationId}`);
-		this.#reconcile();
+	/** Live Harness tasks, such as runs and compactions, hold the worker until they end. */
+	setHarnessActive(active: boolean): void {
+		this.#harnessActive = active;
+		if (!active) this.#reconcile();
 	}
 
 	close(): void {
@@ -304,7 +294,7 @@ export class WorkerLifecycle {
 			this.#retiring ||
 			!this.#demandInitialized ||
 			this.#retirementHolds !== 0 ||
-			this.#activeOperations.size !== 0 ||
+			this.#harnessActive ||
 			this.#demands.size !== 0
 		) {
 			return;
@@ -478,11 +468,8 @@ function lifecycleDelay(name: string, fallback: number): number {
 }
 
 async function closeResources(resources: {
-	harness?: AgentHarnessInstance;
+	runtime?: SessionWorkerRuntime;
 	services?: SessionWorkerServices;
-	session?: Session<JsonlSessionMetadata>;
-	repo: JsonlSessionRepo;
-	executionEnv: NodeExecutionEnv;
 	releaseOwnership: () => Promise<void>;
 }): Promise<void> {
 	const errors: unknown[] = [];
@@ -492,18 +479,12 @@ async function closeResources(resources: {
 		errors.push(error);
 	}
 	try {
-		if (resources.harness) await resources.harness.close(TODO_CONTEXT);
-		else await resources.session?.close(TODO_CONTEXT);
+		await resources.runtime?.harness.close(TODO_CONTEXT);
 	} catch (error) {
 		errors.push(error);
 	}
 	try {
-		await resources.repo.close(TODO_CONTEXT);
-	} catch (error) {
-		errors.push(error);
-	}
-	try {
-		await resources.executionEnv.cleanup(TODO_CONTEXT);
+		await resources.runtime?.cleanup?.(TODO_CONTEXT);
 	} catch (error) {
 		errors.push(error);
 	}
@@ -516,14 +497,17 @@ async function closeResources(resources: {
 	if (errors.length > 1) throw new AggregateError(errors, "Session worker cleanup failed");
 }
 
+/**
+ * Open the Session's Harness over `databasePath` and return it with its root conversation. Called while the worker
+ * holds the Session lock; on failure it closes whatever it opened.
+ */
 export type CreateSessionWorkerHarness = (
-	session: Session<JsonlSessionMetadata>,
+	databasePath: string,
 	options: SessionWorkerOptions,
-	executionEnv: NodeExecutionEnv,
 ) => Promise<SessionWorkerRuntime>;
 
 async function run(options: SessionWorkerOptions, createHarness: CreateSessionWorkerHarness): Promise<void> {
-	const { sessionDir, metadata } = options;
+	const { metadata } = options;
 	const sessionId = metadata.id;
 	const control = await connectControl();
 	const token = process.env[SESSION_WORKER_CONTROL_TOKEN_ENV]!;
@@ -536,19 +520,15 @@ async function run(options: SessionWorkerOptions, createHarness: CreateSessionWo
 		update: 1_000,
 		retries: { retries: 320, factor: 1, minTimeout: 25, maxTimeout: 25, maxRetryTime: 8_000 },
 	});
-	const executionEnv = new NodeExecutionEnv({ cwd: metadata.cwd });
-	const repo = new JsonlSessionRepo({ fileSystem: executionEnv, sessionsRoot: sessionDir });
-	let session: Session<JsonlSessionMetadata> | undefined;
-	let harness: AgentHarnessInstance | undefined;
-	let lane: AgentLane | undefined;
+	let runtime: SessionWorkerRuntime | undefined;
 	let services: SessionWorkerServices | undefined;
+	let taskGraph: AttachedReplicatedState<TaskGraph> | undefined;
 	try {
-		session = await repo.open(metadata, TODO_CONTEXT);
-		const runtime = await createHarness(session, options, executionEnv);
-		harness = runtime.harness;
-		lane = runtime.lane ?? (await harness.lane("main", TODO_CONTEXT));
+		runtime = await createHarness(sessionStoragePath(metadata), options);
+		taskGraph = await runtime.harness.taskGraph(TODO_CONTEXT);
 		services = await createSessionWorkerServices({
-			lane,
+			harness: runtime.harness,
+			conversation: runtime.conversation,
 			modelRuntime: runtime.modelRuntime,
 			settingsManager: runtime.settingsManager,
 			facetLoader: runtime.facetLoader,
@@ -563,8 +543,9 @@ async function run(options: SessionWorkerOptions, createHarness: CreateSessionWo
 				}),
 		});
 	} catch (error) {
+		taskGraph?.dispose();
 		try {
-			await closeResources({ harness, services, session, repo, executionEnv, releaseOwnership });
+			await closeResources({ runtime, services, releaseOwnership });
 		} catch (cleanupError) {
 			throw new AggregateError([error, cleanupError], "Session worker startup and cleanup failed");
 		}
@@ -575,18 +556,20 @@ async function run(options: SessionWorkerOptions, createHarness: CreateSessionWo
 		string,
 		{ readonly scope: WorkerOperationScope; readonly cancel: (reason?: unknown) => void }
 	>();
+	const harness = runtime.harness;
+	const activity = taskGraph;
 	let lifecycle: WorkerLifecycle | undefined;
-	let removeLifecycleListeners: (() => void)[] = [];
+	let stopActivity = (): void => {};
 	let closing: Promise<void> | undefined;
 	const close = (): Promise<void> => {
 		if (closing) return closing;
 		lifecycle?.close();
+		stopActivity();
+		activity.dispose();
 		services.removeSubscriptions(() => true);
 		for (const request of activeRequests.values()) request.cancel(new Error("Session worker is closing"));
 		activeRequests.clear();
-		for (const remove of removeLifecycleListeners) remove();
-		removeLifecycleListeners = [];
-		closing = closeResources({ harness, services, repo, executionEnv, releaseOwnership });
+		closing = closeResources({ runtime, services, releaseOwnership });
 		return closing;
 	};
 	const closeAndExit = (): void => {
@@ -605,25 +588,10 @@ async function run(options: SessionWorkerOptions, createHarness: CreateSessionWo
 		orphanDemandGraceMs: lifecycleDelay(SESSION_WORKER_ORPHAN_DEMAND_GRACE_ENV, DEFAULT_ORPHAN_DEMAND_GRACE_MS),
 		onRetire: closeAndExit,
 	});
-	removeLifecycleListeners = [
-		harness.events.on("run_start", (event) => lifecycle?.operationStarted("run", event.lane, event.runId)),
-		harness.events.on("run_resume", (event) => lifecycle?.operationStarted("run", event.lane, event.runId)),
-		harness.events.on("run_suspend", (event) => lifecycle?.operationStopped("run", event.lane, event.runId)),
-		harness.events.on("run_end", (event) => lifecycle?.operationStopped("run", event.lane, event.runId)),
-		harness.events.on("compaction_start", (event) =>
-			lifecycle?.operationStarted("compaction", event.lane, event.runId),
-		),
-		harness.events.on("compaction_end", (event) =>
-			lifecycle?.operationStopped("compaction", event.lane, event.runId),
-		),
-		harness.events.on("navigation_start", (event) =>
-			lifecycle?.operationStarted("navigation", event.lane, event.runId),
-		),
-		harness.events.on("navigation_end", (event) =>
-			lifecycle?.operationStopped("navigation", event.lane, event.runId),
-		),
-		harness.events.on("fault", closeAndExit),
-	];
+	// Every live task, background work included, keeps the worker and its Session open.
+	stopActivity = activity.subscribe((graph) => lifecycle?.setHarnessActive(Object.keys(graph.tasks).length > 0));
+	// Recovered work from an interrupted turn continues now.
+	harness.resume();
 
 	const handleOperation = async (request: WorkerOperationRequest): Promise<void> => {
 		let releaseRequest = (): void => {};
@@ -803,69 +771,57 @@ export async function runSessionWorkerWithHarness(
 }
 
 async function createCodingAgentHarness(
-	session: Session<JsonlSessionMetadata>,
+	databasePath: string,
 	options: SessionWorkerOptions,
-	executionEnv: NodeExecutionEnv,
 ): Promise<SessionWorkerRuntime> {
+	const { cwd } = options.metadata;
 	const modelRuntime = await ModelRuntime.create();
-	const settingsManager = SettingsManager.create(session.metadata.cwd);
-	let resolved: Awaited<ReturnType<typeof findInitialModel>> | ReturnType<typeof resolveCliModel>;
-	if (options.model === undefined) {
-		resolved = await findInitialModel({
-			scopedModels: [],
-			isContinuing: true,
-			defaultProvider: settingsManager.getDefaultProvider(),
-			defaultModelId: settingsManager.getDefaultModel(),
-			defaultThinkingLevel: settingsManager.getDefaultThinkingLevel(),
-			modelRuntime,
-		});
-	} else {
-		resolved = resolveCliModel({
-			cliProvider: options.provider,
-			cliModel: options.model,
-			modelRuntime,
-		});
-		if (resolved.error) throw new Error(`Session worker could not resolve model: ${resolved.error}`);
-	}
-	if (!resolved.model) throw new Error("Session worker could not resolve a model");
-	const tools = [createReadTool(), createWriteTool(), createBashTool()];
-	const activeToolNames = tools.map((tool) => tool.name);
-	const harness = (
-		await AgentHarness.create(
+	const settingsManager = SettingsManager.create(cwd);
+	configureHarnessHttp(settingsManager);
+	const envs = new ExecutionEnvs(cwd);
+	let harness: Harness | undefined;
+	try {
+		harness = await Harness.open(
+			await openNodeSqliteStorage(databasePath),
 			{
-				session,
 				models: modelRuntime,
-				model: resolved.model,
-				thinkingLevel: resolved.thinkingLevel,
-				tools,
-				activeToolNames,
-				toolContext: { env: executionEnv },
-				resources: {},
+				registry: createCodingRegistry(settingsManager, cwd),
+				settings: createHarnessSettings(settingsManager),
+				env: envs.env,
+				onReport: (error) => console.error(error),
 			},
 			TODO_CONTEXT,
-		)
-	).harness;
-	try {
-		const lane = await harness.lane("main", TODO_CONTEXT);
-		const currentActiveToolNames = await lane.getActiveTools(TODO_CONTEXT);
-		if (
-			currentActiveToolNames.length !== activeToolNames.length ||
-			currentActiveToolNames.some((name, index) => name !== activeToolNames[index])
-		) {
-			await lane.setActiveTools(activeToolNames, TODO_CONTEXT);
-		}
+		);
+		// The initial model applies only when the root conversation is created; later starts keep its durable model.
+		const created = (await harness.conversation(ROOT_CONVERSATION_ID, TODO_CONTEXT)) === undefined;
+		const initial = created
+			? await findInitialAgentModel(
+					settingsManager,
+					modelRuntime,
+					options.model === undefined ? undefined : { provider: options.provider, model: options.model },
+				)
+			: undefined;
+		const conversation = await harness.root(TODO_CONTEXT, {
+			agent: {
+				cwd,
+				...(initial?.model === undefined ? {} : { model: initial.model }),
+				...(initial?.thinkingLevel === undefined ? {} : { thinkingLevel: initial.thinkingLevel }),
+			},
+		});
 		return {
 			harness,
-			lane,
+			conversation,
 			modelRuntime,
 			settingsManager,
 			facetLoader: createSessionPluginFacetLoader(options.pluginManifestPaths),
+			cleanup: (context) => envs.cleanup(context),
 		};
 	} catch (error) {
 		try {
-			await harness.close(TODO_CONTEXT);
+			await harness?.close(TODO_CONTEXT);
+			await envs.cleanup(TODO_CONTEXT);
 		} catch (cleanupError) {
-			throw new AggregateError([error, cleanupError], "Session worker model selection and cleanup failed");
+			throw new AggregateError([error, cleanupError], "Session worker Harness startup and cleanup failed");
 		}
 		throw error;
 	}

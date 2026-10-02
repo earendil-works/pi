@@ -1,11 +1,13 @@
 import type { Context } from "@earendil-works/chord";
-import { createModels } from "@earendil-works/pi-ai";
+import { withCancel } from "@earendil-works/chord/context";
+import { createModels, Type } from "@earendil-works/pi-ai";
 import {
 	type Conversation,
 	createRegistry,
 	defineDoc,
 	defineEntry,
 	defineTask,
+	defineTool,
 	type EntryId,
 	Harness,
 	MemoryStorage,
@@ -16,7 +18,7 @@ import {
 	type TaskRuntime,
 } from "@earendil-works/pi-durable";
 import { describe, expect, it } from "vitest";
-import { user } from "./harness-support.ts";
+import { addHooks, addTask, addTool, user } from "./harness-support.ts";
 import { ControlledStorage, context, flush } from "./session-support.ts";
 import { aborted, abortedWith, completed, deferred, eventually, openTasks, settled } from "./task-support.ts";
 
@@ -309,7 +311,7 @@ describe("task phases", () => {
 		const seen: { phase: string; tools: string[]; same: boolean }[] = [];
 		const phaseGate = deferred();
 		const entered = deferred();
-		const tools = (snapshot: RegistrySnapshot) => snapshot.toolNames().slice();
+		const tools = (snapshot: RegistrySnapshot) => snapshot.tools().map(({ tool }) => tool.name);
 		const Snapshots = defineTask<null, { phase: "a" } | { phase: "b" }, null>({
 			name: "test.snapshots",
 			version: 1,
@@ -336,18 +338,132 @@ describe("task phases", () => {
 		);
 		harness.resume();
 		await entered.promise;
-		registry.tools.add({
-			name: "late",
-			description: "late",
-			parameters: { type: "object", properties: {} } as never,
-			execute: async () => ({}),
-		});
+		addTool(
+			registry,
+			defineTool({
+				name: "late",
+				description: "late",
+				parameters: Type.Object({}),
+				execute: async () => ({}),
+			}),
+		);
 		phaseGate.resolve();
 		await harness.waitForTask(id, context);
 		expect(seen).toEqual([
 			{ phase: "a", tools: [], same: true },
 			{ phase: "b", tools: ["late"], same: true },
 		]);
+		await harness.close(context);
+	});
+
+	it("resolves the agent at first use in a phase from its snapshot, keeps it for the phase, and anew at the next", async () => {
+		type PingHooks = { ping(): void };
+		const pings: string[] = [];
+		const seen: { phase: string; pings: string[]; thinking: string; same?: boolean }[] = [];
+		const beforeUse = deferred();
+		const afterUse = deferred();
+		const waitingBeforeUse = deferred();
+		const waitingAfterUse = deferred();
+		const ping = async (runtime: TaskRuntime<null, { phase: string }, null, PingHooks>) => {
+			pings.length = 0;
+			await runtime.hooks.each("ping", (handler) => handler());
+			return [...pings];
+		};
+		const Phases = defineTask<null, { phase: "a" } | { phase: "b" }, null, PingHooks>({
+			name: "test.agent-phases",
+			version: 1,
+			initial: () => ({ phase: "a" }),
+			phases: {
+				a: async (_task, runtime, ctx) => {
+					waitingBeforeUse.resolve();
+					await beforeUse.promise;
+					const first = await runtime.agent(ctx);
+					seen.push({ phase: "a", pings: await ping(runtime), thinking: first.thinkingLevel });
+					waitingAfterUse.resolve();
+					await afterUse.promise;
+					const second = await runtime.agent(ctx);
+					seen.push({
+						phase: "a",
+						pings: await ping(runtime),
+						thinking: second.thinkingLevel,
+						same: second === first,
+					});
+					await runtime.commit(() => ({ status: "running", checkpoint: { phase: "b" } }), ctx);
+				},
+				b: async (_task, runtime, ctx) => {
+					const agent = await runtime.agent(ctx);
+					seen.push({ phase: "b", pings: await ping(runtime), thinking: agent.thinkingLevel });
+					await runtime.commit(() => completed(null), ctx);
+				},
+			},
+			abort: async () => {},
+		});
+		const { harness, registry, root } = await openRoot([Phases]);
+		addHooks(registry, Phases, { ping: () => void pings.push("before") });
+		const id = await root.commit(
+			(tx) => tx.createTask(Phases, null, { ownership: { kind: "conversation" } }),
+			context,
+		);
+		harness.resume();
+
+		// Configured during the phase but before its first use: the lazy resolution reads it.
+		await waitingBeforeUse.promise;
+		await root.configure({ thinkingLevel: "low" }, context);
+		beforeUse.resolve();
+		// Configured and installed after the first use: not seen until the next phase.
+		await waitingAfterUse.promise;
+		addHooks(registry, Phases, { ping: () => void pings.push("late") });
+		await root.configure({ thinkingLevel: "high" }, context);
+		afterUse.resolve();
+
+		await harness.waitForTask(id, context);
+		expect(seen).toEqual([
+			{ phase: "a", pings: ["before"], thinking: "low" },
+			{ phase: "a", pings: ["before"], thinking: "low", same: true },
+			{ phase: "b", pings: ["before", "late"], thinking: "high" },
+		]);
+		await harness.close(context);
+	});
+
+	it("rejects an agent() wait whose caller context is cancelled, without affecting the phase's resolution", async () => {
+		let cancelled: unknown;
+		let resolved: string | undefined;
+		const Agent = oneStep("test.agent-cancel", async (_task, runtime, ctx) => {
+			const caller = withCancel(ctx);
+			caller.cancel(new Error("caller gone"));
+			cancelled = await runtime.agent(caller.context).catch((error: unknown) => error);
+			resolved = (await runtime.agent(ctx)).thinkingLevel;
+			await runtime.commit(() => completed(null), ctx);
+		});
+		const { harness, root } = await openRoot([Agent]);
+		await harness.waitForTask(await start(root, Agent), context);
+		expect(cancelled).toMatchObject({ message: "caller gone" });
+		expect(resolved).toBe("off");
+		await harness.close(context);
+	});
+
+	it("observes a failed agent resolution whose only caller stopped waiting", async () => {
+		let fail = false;
+		const settings = {
+			get extensions(): undefined {
+				if (fail) throw new Error("settings broke");
+				return undefined;
+			},
+		};
+		let resolved: unknown;
+		const Agent = oneStep("test.agent-failure", async (_task, runtime, ctx) => {
+			const caller = withCancel(ctx);
+			caller.cancel(new Error("caller gone"));
+			fail = true;
+			await runtime.agent(caller.context).catch(() => {});
+			// Let an unobserved rejection surface before the task ends.
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			resolved = await runtime.agent(ctx).catch((error: unknown) => error);
+			await runtime.commit(() => completed(null), ctx);
+		});
+		const { harness, root } = await openRoot([Agent], { settings });
+		await harness.waitForTask(await start(root, Agent), context);
+		expect(resolved).toMatchObject({ message: "settings broke" });
 		await harness.close(context);
 	});
 });
@@ -370,8 +486,10 @@ describe("task runtime", () => {
 			initial: () => ({ text: "" }),
 		});
 		let absent: unknown = "unset";
+		let handlerContext: Context | undefined;
 		const Watcher = oneStep("test.watcher", async (_task, runtime, ctx) => {
 			captured = runtime;
+			handlerContext = ctx;
 			absent = await runtime.watchDoc(Absent, ctx);
 			const watch = await runtime.watchDoc(Notes, ctx);
 			watch!.start(async (value) => {
@@ -401,6 +519,10 @@ describe("task runtime", () => {
 		await expect(runtime.memo("x", 1, context)).rejects.toThrow("invocation has ended");
 		await expect(runtime.sleep(0, context)).rejects.toThrow("invocation has ended");
 		await expect(runtime.watchDoc(Notes, context)).rejects.toThrow("invocation has ended");
+		// The handler's own context is cancelled by now; the ended invocation still wins.
+		await expect(runtime.agent(handlerContext!)).rejects.toThrow("invocation has ended");
+		expect(() => runtime.now()).toThrow("invocation has ended");
+		expect(() => runtime.report(new Error("late"))).toThrow("invocation has ended");
 		await harness.close(context);
 	});
 
@@ -584,12 +706,15 @@ describe("task scheduling", () => {
 		await eventually(() => reports.length === 1);
 		expect((await harness.getTask(id, context))?.state.status).toBe("pending");
 		// Any wakeup, here a registry change, reserves again.
-		registry.tools.add({
-			name: "wake",
-			description: "wake",
-			parameters: { type: "object", properties: {} } as never,
-			execute: async () => ({}),
-		});
+		addTool(
+			registry,
+			defineTool({
+				name: "wake",
+				description: "wake",
+				parameters: Type.Object({}),
+				execute: async () => ({}),
+			}),
+		);
 		await harness.waitForTask(id, context);
 		expect(runs).toBe(1);
 		await harness.close(context);
@@ -611,7 +736,7 @@ describe("task scheduling", () => {
 		harness.resume();
 		await held.entered;
 		// Registering the missing definition wakes the scheduler while the doomed reservation is in storage.
-		registry.tasks.add(Late);
+		addTask(registry, Late);
 		held.release();
 		await harness.waitForTask(first, context);
 		await harness.waitForTask(late, context);
@@ -1183,7 +1308,7 @@ describe("task close", () => {
 			},
 			abort: async () => {},
 		});
-		registry.tasks.add(Two);
+		addTask(registry, Two);
 		const harness = await Harness.open(new MemoryStorage(), { models: createModels(), registry: reader }, context);
 		harnessRef = harness;
 		const root = await harness.root(context);

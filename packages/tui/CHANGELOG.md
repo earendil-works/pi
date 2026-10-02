@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-10-01
+
+### Added
+
+- Added `TuiAltScreen.getScreenLines()`, which returns the lines of the last rendered frame.
+
+### Fixed
+
+- Fixed color bleeding past mouse selections and search highlights in fullscreen mode when a styled token ends at the highlight boundary ([#10169](https://github.com/earendil-works/pi/issues/10169))
+- Fixed memory retained per rendered message: `Markdown` holds its parsed tokens weakly, and `Markdown`, `Text`, and `Box` flatten their cached lines. A long assistant message keeps about a fifth of the heap it kept before.
+- Fixed slash command autocompletion not triggering when the input starts with whitespace ([#10218](https://github.com/earendil-works/pi/pull/10218) by [@haoqixu](https://github.com/haoqixu))
+
+## [0.99.2] - 2026-09-30
+
 ## [0.99.1] - 2026-09-29
 
 ## [0.99.0] - 2026-09-29

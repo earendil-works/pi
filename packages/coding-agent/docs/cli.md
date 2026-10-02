@@ -58,10 +58,10 @@ RPC mode rejects `@file` arguments. JSON and RPC modes reserve stdout for protoc
 pi --model sonnet:high
 ```
 
-See [Choose a Model](models.md) for model selection and [Provider Authentication](providers.md) for credentials.
+See [Choose a Model](models.md) for model selection and [Providers](providers.md) for credentials.
 
 - `--provider <name>`<br>
-  Restricts `--model` lookup to one provider.
+  Restricts `--model` lookup to one provider. It requires `--model`.
 - `--model <pattern>`<br>
   Selects by exact ID or fuzzy ID/name match. It accepts `provider/id` and an optional `:<thinking>` suffix.
 - `--api-key <key>`<br>
@@ -161,21 +161,11 @@ This keeps `read`, `bash`, `edit`, and `write` and adds `codemode`. For one invo
 pi --tools read,bash,edit,write,codemode
 ```
 
-Codemode is useful without MCP: scripts can run several tool calls in parallel, filter large output before it reaches the model, and call classifier models such as TypeSafe's Jev through `models.classify()` (see [Classifier models](models.md#use-classifier-models)).
+Codemode is useful without MCP: scripts can run several tool calls in parallel, filter large output before it reaches the model, call classifier models such as TypeSafe's Jev through `models.classify()` (see [Classifier models](models.md#use-classifier-models)), and generate images through `models.generateImages()` (see [Image models](models.md#use-image-models)).
 
 ### How codemode works
 
-Codemode scripts run in a QuickJS sandbox that can only reach the other tools, through `tools.<name>(args)`; `ALL_TOOLS` lists them. Output comes from `text(value)`, `image(dataUrlOrImageContent)`, `console.*`, and a top-level `return value`; `exit()` ends the script early. The result starts with `Script completed` or `Script failed`, the wall time, and the output; a failed script keeps its partial output, followed by `Script error:` and the error.
-
-A script may start with an options line such as `// @options: {"max_output_tokens": 2000, "timeout_ms": 60000}`. `max_output_tokens` (default 10000) limits the output: longer output keeps its start and end, and the full text is written to a temp file whose path is included in the result. `timeout_ms` is a hard deadline, unset by default.
-
-While `codemode` is active, `codemode.mode` in [settings](settings.md#tools) decides how the other tools are presented. With `on` (default) declared tools keep being declared and their descriptions show how to call them from scripts. With `only` they are hidden from the model and listed in the `codemode` description instead, so the model calls them through scripts.
-
-The `codemode` description lists the callable tools with their TypeScript declarations, grouped by namespace (for example one MCP server). Tools with `deferred` exposure, which includes MCP tools with the default `codemode` exposure, are not listed; their namespace is listed with its description. Declarations share a budget of 3000 estimated tokens (`codemode.inlineBudget` in [settings](settings.md#tools)), and the description says whether the list is complete. Scripts find the rest with `await searchTools(query, { limit, namespace })`, which ranks tools with BM25, and `await describeTool(name)`, or by filtering `ALL_TOOLS`. `await describeNamespace(name)` returns a namespace's description, its instructions (for MCP servers, the server instructions), and the names of its tools.
-
-Tools with an output schema resolve to structured values: `bash` to `{ output, truncated, full_output_path?, exit_code, wall_time_seconds }`, also for non-zero exit codes, and MCP tools to their `CallToolResult`. Other tools resolve to their text output. The `output` of `bash` is not limited to the 2000 lines or 50KB the model sees: it holds up to 1 MiB, and longer output keeps its first and last 512 KiB around an omission marker, with `truncated` set and the full output in `full_output_path`.
-
-`store(key, value)` and `load(key)` keep JSON values across `codemode` calls: each successful script that stores values appends a `codemode-store` custom entry to the session, so resumed sessions keep the values and each branch sees only the values written on its path. Scripts can also use `models`: `getModelsOfType`, `getAvailableOfType`, and `getModelOfType` list the model catalog, and `classify(model, context)` runs a classifier model with the session's credentials, at most four at a time per script.
+Scripts run in a QuickJS sandbox and reach the other tools through `tools.<name>(args)`. [Codemode](codemode.md) describes the script API, how tools are listed and found, the `store()` and `models` globals, and the limits.
 
 ### Tool search
 
@@ -229,7 +219,7 @@ See [Configuration](configuration.md) for saved configuration, [Security](securi
 - `--append-system-prompt <text|path>`<br>
   Appends text or an existing file to the system prompt and is repeatable.
 - `--tui-mode <mode>`<br>
-  Uses `regular` or `fullscreen` terminal mode.
+  Uses `fullscreen` (default) or `regular` terminal mode.
 - `--verbose`<br>
   Shows verbose interactive startup information, overriding `quietStartup`.
 - `-a`, `--approve`<br>
@@ -292,7 +282,7 @@ Add `--force` to reinstall Pi when the selected update includes Pi.
 pi auth check --provider openai --json
 ```
 
-Authentication commands require `--provider <provider>` or `--model <model>`. See [Provider Authentication](providers.md) for supported methods.
+Authentication commands require `--provider <provider>` or `--model <model>`. See [Providers](providers.md) for supported methods.
 
 | Command | Description |
 |---|---|

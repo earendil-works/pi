@@ -2,13 +2,19 @@ import type { Draft } from "@earendil-works/chord";
 import {
 	type ConversationId,
 	createSession,
+	type DocumentState,
+	type DocumentWatch,
 	defineDoc,
 	defineDocFamily,
+	defineEntry,
+	type EntryId,
+	type EntryRecord,
 	MemoryStorage,
 	ROOT_CONVERSATION_ID,
 	type Session,
 	type TaskId,
 	type Tx,
+	type TypedEntry,
 } from "@earendil-works/pi-durable";
 import { describe, expect, expectTypeOf, it } from "vitest";
 import { idFromNumber } from "../src/ids.ts";
@@ -115,5 +121,57 @@ describe("document definitions", () => {
 		// @ts-expect-error snapshots never take a creation seed
 		await session.snapshot(SessionFamily, "k", 1, context).catch(() => undefined);
 		await session.close(context);
+	});
+
+	it("types historical reads, states, watches, and typed entries", () => {
+		const Note = defineEntry<{ text: string }>("t.note");
+		const Marker = defineEntry("t.marker");
+		type Rewound = Promise<Readonly<State> | undefined>;
+		type StateOf = Promise<DocumentState<State> | undefined>;
+		type WatchOf = Promise<DocumentWatch<State> | undefined>;
+		const check = async (session: Session, tx: Tx, conversationId: ConversationId, taskId: TaskId, at: EntryId) => {
+			expectTypeOf(session.snapshotAsOf(RewindableDoc, conversationId, at, context)).toEqualTypeOf<Rewound>();
+			expectTypeOf(
+				session.snapshotAsOf(ConversationFamily, conversationId, "k", at, context),
+			).toEqualTypeOf<Rewound>();
+			// @ts-expect-error latest conversation documents keep no history
+			void session.snapshotAsOf(LatestDoc, conversationId, at, context);
+			// @ts-expect-error Session documents keep no history
+			void session.snapshotAsOf(SessionDoc, conversationId, at, context);
+			// @ts-expect-error task documents keep no history
+			void session.snapshotAsOf(TaskDoc, taskId, at, context);
+
+			expectTypeOf(session.documentState(SessionDoc, context)).toEqualTypeOf<StateOf>();
+			expectTypeOf(session.documentState(LatestDoc, conversationId, context)).toEqualTypeOf<StateOf>();
+			expectTypeOf(session.documentState(TaskDoc, taskId, context)).toEqualTypeOf<StateOf>();
+			expectTypeOf(session.documentState(SessionFamily, "k", context)).toEqualTypeOf<StateOf>();
+			expectTypeOf(session.documentState(ConversationFamily, conversationId, "k", context)).toEqualTypeOf<StateOf>();
+			expectTypeOf(session.documentState(TaskFamily, taskId, "k", context)).toEqualTypeOf<StateOf>();
+			expectTypeOf(session.watchDoc(SessionDoc, context)).toEqualTypeOf<WatchOf>();
+			expectTypeOf(session.watchDoc(LatestDoc, conversationId, context)).toEqualTypeOf<WatchOf>();
+			expectTypeOf(session.watchDoc(TaskDoc, taskId, context)).toEqualTypeOf<WatchOf>();
+			expectTypeOf(session.watchDoc(SessionFamily, "k", context)).toEqualTypeOf<WatchOf>();
+			expectTypeOf(session.watchDoc(ConversationFamily, conversationId, "k", context)).toEqualTypeOf<WatchOf>();
+			expectTypeOf(session.watchDoc(TaskFamily, taskId, "k", context)).toEqualTypeOf<WatchOf>();
+			// @ts-expect-error a watch of a Session document takes no owner
+			void session.watchDoc(SessionDoc, conversationId, context);
+
+			expectTypeOf(await tx.entry(at)).toEqualTypeOf<EntryRecord | undefined>();
+			expectTypeOf(await tx.entry(Note, at)).toEqualTypeOf<TypedEntry<{ text: string }> | undefined>();
+			expectTypeOf(await tx.appendEntry(conversationId, { kind: "t.raw" })).toEqualTypeOf<EntryRecord>();
+			const note = await tx.appendEntry(Note, conversationId, { data: { text: "x" } });
+			expectTypeOf(note).toEqualTypeOf<TypedEntry<{ text: string }>>();
+			expectTypeOf(note.data.text).toEqualTypeOf<string>();
+			expectTypeOf(await tx.appendEntry(Marker, conversationId, {})).toEqualTypeOf<TypedEntry<never>>();
+			// @ts-expect-error a data entry requires its data
+			await tx.appendEntry(Note, conversationId, {});
+			// @ts-expect-error data is typed by the token
+			await tx.appendEntry(Note, conversationId, { data: { text: 1 } });
+			// @ts-expect-error the token supplies the kind
+			await tx.appendEntry(Note, conversationId, { kind: "t.note", data: { text: "x" } });
+			// @ts-expect-error an entry kind without data takes none
+			await tx.appendEntry(Marker, conversationId, { data: 1 });
+		};
+		expect(check).toBeTypeOf("function");
 	});
 });

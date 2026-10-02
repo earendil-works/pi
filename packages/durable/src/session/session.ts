@@ -489,7 +489,10 @@ export class SessionImpl implements Session {
 				if (change.type !== "document" || change.record.id !== loaded.record.id) continue;
 				// A document state's frames carry no caller cancellation; a watch observes its own cancellation.
 				const frameContext = observer instanceof CommittedStateSource ? withoutAbortSignal(context) : context;
-				observer.advance(change.value, observedOperations(observed, change), frameContext);
+				const ops = observedOperations(observed, change);
+				// A migration-only base changes nothing for an observer of the new version.
+				if (ops.length === 0) continue;
+				observer.advance(change.value, ops, frameContext);
 			}
 		});
 		unsubscribeClose = this.subscribeClose(() => observer.closeSession());

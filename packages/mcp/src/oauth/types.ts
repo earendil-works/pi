@@ -24,6 +24,8 @@ export interface AuthorizationServerMetadata {
 	token_endpoint_auth_methods_supported?: string[];
 	code_challenge_methods_supported?: string[];
 	client_id_metadata_document_supported?: boolean;
+	/** Whether authorization responses carry an `iss` parameter (RFC 9207). */
+	authorization_response_iss_parameter_supported?: boolean;
 	[key: string]: unknown;
 }
 
@@ -100,26 +102,33 @@ function requiredString(value: unknown, name: string): string {
 	return value;
 }
 
+/** Treats `null` and `""` as absent: servers send them for fields they have no value for, like `scope: ""`. */
+function absent(value: unknown): value is undefined | null | "" {
+	return value === undefined || value === null || value === "";
+}
+
 function optionalString(value: unknown, name: string): string | undefined {
-	if (value === undefined) return undefined;
+	if (absent(value)) return undefined;
 	return requiredString(value, name);
 }
 
 function optionalStrings(value: unknown, name: string): string[] | undefined {
-	if (value === undefined) return undefined;
+	if (value === undefined || value === null) return undefined;
 	if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) throw new Error(`Invalid ${name}`);
 	return [...value];
 }
 
 function safeUrl(value: unknown, name: string): string {
 	const text = requiredString(value, name);
+	// URL parsing throws a `TypeError`, which discovery reserves for network failures.
+	if (!URL.canParse(text)) throw new Error(`Invalid ${name}`);
 	const url = new URL(text);
 	if (["javascript:", "data:", "vbscript:"].includes(url.protocol)) throw new Error(`Invalid ${name}`);
 	return text;
 }
 
 function optionalUrl(value: unknown, name: string): string | undefined {
-	return value === undefined ? undefined : safeUrl(value, name);
+	return absent(value) ? undefined : safeUrl(value, name);
 }
 
 export function parseProtectedResourceMetadata(value: unknown): OAuthProtectedResourceMetadata {
@@ -159,12 +168,17 @@ export function parseAuthorizationServerMetadata(value: unknown): AuthorizationS
 			typeof input.client_id_metadata_document_supported === "boolean"
 				? input.client_id_metadata_document_supported
 				: undefined,
+		authorization_response_iss_parameter_supported:
+			typeof input.authorization_response_iss_parameter_supported === "boolean"
+				? input.authorization_response_iss_parameter_supported
+				: undefined,
 	});
 }
 
 export function parseOAuthTokens(value: unknown): OAuthTokens {
 	const input = object(value, "OAuth token response");
-	const expires = input.expires_in === undefined ? undefined : Number(input.expires_in);
+	// `Number(null)` is 0, which would mark the token as expired at once.
+	const expires = absent(input.expires_in) ? undefined : Number(input.expires_in);
 	if (expires !== undefined && !Number.isFinite(expires)) throw new Error("Invalid expires_in");
 	return compact({
 		access_token: requiredString(input.access_token, "access_token"),

@@ -1,6 +1,6 @@
 # @earendil-works/pi-server
 
-Experimental local server for the new durable Session and Agent Harness interfaces.
+Experimental local server that routes clients to application-hosted durable Sessions.
 
 The current slice supports server- and Session-scoped facet-service routing and multi-presentation attachment. `RoutedServerServiceHost.attachClient()` creates one connection-scoped server service endpoint with narrow attachment-management capabilities. `RoutedSessionHandle.attachClient()` returns a presentation-scoped Session capability. Its `invokeService()` forwards an opaque service/member envelope to the selected Session endpoint; the server validates the attachment route but does not load the facet contract.
 
@@ -16,48 +16,32 @@ A Session may have multiple presentation attachments. Repeating `attach` from on
 
 ```ts
 import { randomUUID } from "node:crypto";
-import { MemorySessionRepo, type Session } from "@earendil-works/pi-agent-core";
 import {
   type RoutedServerServiceHost,
   type RoutedSessionHandle,
   type ServerHost,
-  SessionAmbiguousError,
+  type SessionMetadata,
   SessionNotFoundError,
 } from "@earendil-works/pi-server";
 import { createUnixServer, getUnixSocketPath } from "@earendil-works/pi-server/unix";
 
+interface StoredSession extends SessionMetadata {
+  path: string;
+}
+
 async function startServer(
   serverServices: RoutedServerServiceHost,
-  openRoutedSession: (session: Session) => Promise<RoutedSessionHandle>,
+  sessions: Map<string, StoredSession>,
+  openRoutedSession: (session: StoredSession) => Promise<RoutedSessionHandle>,
 ) {
-  const sessions = new MemorySessionRepo();
-  const host: ServerHost = {
+  const host: ServerHost<StoredSession> = {
     serverServices,
-    async resolveSession(sessionId, context) {
-      const matches = (await sessions.list(undefined, context))
-        .filter((metadata) => metadata.id === sessionId);
-      if (matches.length === 0) {
-        throw new SessionNotFoundError(`Unknown session: ${sessionId}`);
-      }
-      if (matches.length > 1) throw new SessionAmbiguousError();
-      return matches[0];
+    async resolveSession(sessionId) {
+      const metadata = sessions.get(sessionId);
+      if (!metadata) throw new SessionNotFoundError(`Unknown session: ${sessionId}`);
+      return metadata;
     },
-    async openSession(metadata, context) {
-      const session = await sessions.open(metadata, context);
-      try {
-        return await openRoutedSession(session);
-      } catch (error) {
-        try {
-          await session.close(context);
-        } catch (cleanupError) {
-          throw new AggregateError(
-            [error, cleanupError],
-            "Harness creation and Session cleanup failed",
-          );
-        }
-        throw error;
-      }
-    },
+    openSession: (metadata) => openRoutedSession(metadata),
   };
 
   const serverId = randomUUID();
@@ -70,7 +54,7 @@ async function startServer(
 }
 ```
 
-Applications supply a required server service host, a bounded Session resolver, and a routed Session factory. Session discovery and management are application-owned services; the protocol server only asks the resolver for metadata when routing an attachment. The host owns acquiring the worker-local Session and Harness. Failures are cleaned up in that worker. Neither an open JavaScript Session nor a Harness crosses the process boundary.
+Applications supply a required server service host, a bounded Session resolver, and a routed Session factory. `SessionMetadata` only requires an `id`; applications may extend it with their own storage fields. Session discovery and management are application-owned services; the protocol server only asks the resolver for metadata when routing an attachment. The host owns acquiring the worker-local Session and Harness. Failures are cleaned up in that worker. Neither an open JavaScript Session nor a Harness crosses the process boundary.
 
 `serverId` is a logical identity supplied by the launcher, not a socket address. The Unix preset requires an explicit physical `path`; `getUnixSocketPath()` derives one from a caller-selected directory. Choose a short, private runtime directory rather than deriving the route from an unbounded home-directory path. A long-lived launcher can reuse the same ID and path when replacing a server process.
 

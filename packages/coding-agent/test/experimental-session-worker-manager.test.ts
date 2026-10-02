@@ -1,16 +1,15 @@
 import type { ServiceCall } from "@earendil-works/chord";
-import { BACKGROUND_CONTEXT, type JsonlSessionMetadata } from "@earendil-works/pi-agent-core";
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import type { CoordinatorConnectionEvent } from "../src/experimental/coordinator.ts";
+import type { SessionCatalogMetadata } from "../src/experimental/session-catalog.ts";
 import { SessionWorkerManager } from "../src/experimental/session-worker-manager.ts";
 
-const metadata: JsonlSessionMetadata = {
+const metadata: SessionCatalogMetadata = {
 	id: "session-1",
 	createdAt: 1,
-	storageVersion: 1,
 	cwd: "/tmp",
-	path: "/tmp/session-1.jsonl",
-	modifiedAt: 1,
+	path: "/tmp/session-1",
 };
 
 class FakeCoordinator {

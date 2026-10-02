@@ -312,6 +312,11 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		return this.copyTextToClipboard(text);
 	}
 
+	/** The lines of the last rendered frame, one per terminal row, as written to the terminal. */
+	getScreenLines(): string[] {
+		return [...this.previousScreen];
+	}
+
 	setLayoutRoot(component: Component | undefined): void {
 		if (this.layoutRoot === component) return;
 		this.layoutRoot = component;

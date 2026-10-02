@@ -9,16 +9,24 @@ import type {
 } from "@earendil-works/pi-ai";
 import { createModels, Type } from "@earendil-works/pi-ai";
 import {
+	type AnyTask,
 	createRegistry,
+	defineExtension,
+	defineTool,
+	type Extension,
 	Harness,
+	type HooksOf,
+	hook,
+	type PromptSection,
 	type Registry,
 	type Storage,
+	section,
 	type ToolRegistration,
 } from "@earendil-works/pi-durable";
 import { context } from "./session-support.ts";
 
 export function tool(name: string, description = `${name} tool`): ToolRegistration {
-	return { name, description, parameters: Type.Object({}), execute: async () => ({ content: [] }) };
+	return defineTool({ name, description, parameters: Type.Object({}), execute: async () => ({ content: [] }) });
 }
 
 /** Open a Harness with a fresh registry holding the named tools. */
@@ -28,7 +36,8 @@ export async function openHarness(
 	options: { readonly registry?: Registry; readonly onReport?: (error: unknown) => void } = {},
 ): Promise<{ readonly harness: Harness; readonly registry: Registry }> {
 	const registry = options.registry ?? createRegistry();
-	for (const name of toolNames) registry.tools.add(tool(name));
+	if (toolNames.length > 0)
+		registry.install(defineExtension({ name: "tools", tools: toolNames.map((name) => tool(name)) }));
 	const harness = await Harness.open(
 		storage,
 		{ models: createModels(), registry, ...(options.onReport === undefined ? {} : { onReport: options.onReport }) },
@@ -101,4 +110,49 @@ export function describeMessage(message: Message): string {
 		case "system":
 			return `system:${Object.keys(message.sections ?? {}).join(",")}`;
 	}
+}
+
+/** Uninstalls what one of the helpers below installed. */
+export type Installed = { dispose(): void };
+
+function installOne<Tool extends ToolRegistration>(registry: Registry<Tool>, extension: Extension<Tool>): Installed {
+	registry.install(extension);
+	return { dispose: () => registry.uninstall(extension) };
+}
+
+/** Install a one-tool extension named after the tool. */
+export function addTool<Tool extends ToolRegistration>(
+	registry: Registry<Tool>,
+	tool: Tool,
+	name = `tool:${tool.name}`,
+): Installed {
+	return installOne(registry, defineExtension<Tool>({ name, tools: [tool] }));
+}
+
+/** Install a one-task extension named after the task. */
+export function addTask(registry: Registry, task: AnyTask, name = `task:${task.definition.name}`): Installed {
+	return installOne(registry, defineExtension({ name, tasks: [task] }));
+}
+
+let hookExtensions = 0;
+
+/** Install an extension with one hook registration for `task`. */
+export function addHooks<K extends AnyTask>(
+	registry: Registry,
+	task: K,
+	handlers: Partial<HooksOf<K>>,
+	name = `hooks:${++hookExtensions}`,
+): Installed {
+	return installOne(registry, defineExtension({ name, hooks: [hook(task, handlers)] }));
+}
+
+/** Install a one-section extension named after the section. */
+export function addSection<Tool extends ToolRegistration = ToolRegistration>(
+	registry: Registry<Tool>,
+	key: string,
+	render: PromptSection<Tool>["render"],
+	options?: { readonly tag?: boolean },
+	name = `section:${key}`,
+): Installed {
+	return installOne(registry, defineExtension<Tool>({ name, sections: [section(key, render, options)] }));
 }

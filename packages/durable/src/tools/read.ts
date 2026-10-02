@@ -1,6 +1,6 @@
-import type { JsonValue } from "@earendil-works/chord";
 import { type Static, Type } from "typebox";
 import { getOrThrow } from "../env/index.ts";
+import { defineTool } from "../harness/define.ts";
 import { characterEnd } from "../harness/output.ts";
 import type { ToolDiagnostic, ToolRegistration } from "../harness/types.ts";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize, type TruncationResult, truncateHead } from "../truncate.ts";
@@ -16,19 +16,19 @@ const readSchema = Type.Object({
 
 export type ReadToolInput = Static<typeof readSchema>;
 
-export interface ReadToolDetails {
+export type ReadToolDetails = {
 	/** How the shown text was cut; the text itself is the result content. */
 	truncation?: Omit<TruncationResult, "content">;
-}
+};
 
 /** Reads text files. Remarks about truncation and continuation are diagnostics; the content is only file text. */
-export function createReadTool(): ToolRegistration {
-	return {
+export function createReadTool(): ToolRegistration<typeof readSchema, ReadToolDetails> {
+	return defineTool({
 		name: "read",
 		description: `Read the contents of a text file. Output is truncated to ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). Use offset/limit for large files. When you need the full file, continue with offset until complete.`,
 		parameters: readSchema,
 		async execute(args, api, context) {
-			const { path, offset, limit } = args as ReadToolInput;
+			const { path, offset, limit } = args;
 			const env = requireEnv(api);
 			const absolutePath = await resolveReadToolPath(env, path, context);
 			const bytes = getOrThrow(await env.readBinaryFile(absolutePath, context));
@@ -103,9 +103,9 @@ export function createReadTool(): ToolRegistration {
 
 			return {
 				content: outputText === "" ? [] : [{ type: "text", text: outputText }],
-				...(details === undefined ? {} : { details: details as unknown as JsonValue }),
+				...(details === undefined ? {} : { details }),
 				diagnostics,
 			};
 		},
-	};
+	});
 }

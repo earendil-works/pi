@@ -589,7 +589,7 @@ describe("experimental durable server composition", () => {
 		await expect(services.dispose(BACKGROUND_CONTEXT)).resolves.toBeUndefined();
 	});
 
-	test("streams prompt events through the worker-owned service provider", async ({ onTestFinished }) => {
+	test("answers a client prompt through the worker-owned service provider", async ({ onTestFinished }) => {
 		const spawn = vi
 			.spyOn(processRuntime, "spawnInternalProcess")
 			.mockImplementation((role, args, options) =>
@@ -601,32 +601,13 @@ describe("experimental durable server composition", () => {
 			);
 		onTestFinished(() => spawn.mockRestore());
 		const { directory } = await makeServer();
-		const eventTypes: string[] = [];
 
-		const result = await runClient(
-			{ command: "client", sessionId: "demo-1", prompt: "question" },
-			{
-				directory,
-				onEvent(event) {
-					eventTypes.push(event.type);
-				},
-			},
-		);
+		const result = await runClient({ command: "client", sessionId: "demo-1", prompt: "question" }, { directory });
 
 		expect(result).toMatchObject({ kind: "prompted", text: "deterministic remote answer" });
-		expect(eventTypes).toEqual(
-			expect.arrayContaining([
-				"run_start",
-				"message_start",
-				"message_update",
-				"message_end",
-				"entry_added",
-				"run_end",
-			]),
-		);
 	});
 
-	test("replicates terminal operation state after consecutive prompts", async ({ onTestFinished }) => {
+	test("replicates the transcript after consecutive prompts", async ({ onTestFinished }) => {
 		const spawn = vi
 			.spyOn(processRuntime, "spawnInternalProcess")
 			.mockImplementation((role, args, options) =>
@@ -648,11 +629,16 @@ describe("experimental durable server composition", () => {
 			for (const message of ["first question", "second question"]) {
 				const response = await controller.prompt({ message, images: null }, BACKGROUND_CONTEXT);
 				expect(response).toMatchObject({ accepted: true, operationId: expect.any(String) });
+				if (!response.accepted) throw new Error(response.error.message);
+				await expect(controller.waitForPrompt(response.operationId, BACKGROUND_CONTEXT)).resolves.toEqual({
+					status: "done",
+					text: "deterministic remote answer",
+					reason: null,
+				});
 				await vi.waitFor(() => {
-					expect(transcript.state.value?.snapshot).toMatchObject({
-						operation: null,
-						lastResult: { operationId: response.operationId },
-					});
+					expect(transcript.state.value?.entries.filter((entry) => entry.kind === "pi.assistant")).toHaveLength(
+						message === "first question" ? 1 : 2,
+					);
 				});
 			}
 		} finally {
@@ -803,17 +789,14 @@ describe("experimental durable server composition", () => {
 			runClient({ command: "client", sessionId: "demo-1" }, { directory: sharedDirectory }),
 		).rejects.toThrow("Session demo-1 is available from more than one server");
 	});
-	test("rejects a duplicate session ID within one durable repository", async () => {
-		await createExperimentalSessions(
-			join(agentDir, "experimental", "sessions"),
-			["demo-1"],
-			join(agentDir, "other-cwd"),
-		);
-		const { directory } = await makeServer();
-
-		await expect(runClient({ command: "client", sessionId: "demo-1" }, { directory })).rejects.toMatchObject({
-			code: "session_ambiguous",
-		});
+	test("rejects a duplicate session ID within one session directory", async () => {
+		await expect(
+			createExperimentalSessions(
+				join(agentDir, "experimental", "sessions"),
+				["demo-1"],
+				join(agentDir, "other-cwd"),
+			),
+		).rejects.toThrow("Session demo-1 already exists");
 	});
 });
 

@@ -13,14 +13,15 @@ import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@ear
 import { NodeExecutionEnv } from "../../src/env/node.ts";
 import {
 	AssistantEntry,
-	ConversationConfig,
 	createRegistry,
+	defineExtension,
 	Harness,
+	hook,
 	ToolResultEntry,
 	ToolTask,
 } from "../../src/index.ts";
 import { openNodeJsonlStorage } from "../../src/storage/jsonl/node.ts";
-import { type BashToolInput, createBashTool, createEditTool, createReadTool } from "../../src/tools/index.ts";
+import { type BashToolInput, CodingTools } from "../../src/tools/index.ts";
 
 const context = BACKGROUND_CONTEXT;
 const directory = await mkdtemp(join(tmpdir(), "pi-durable-example-"));
@@ -40,37 +41,39 @@ faux.setResponses([
 	fauxAssistantMessage([fauxText("The file now greets durable.")]),
 ]);
 
-// Tools come from the registry and reach files and processes only through the environment the Harness offers them.
-const registry = createRegistry();
-registry.batch(() => {
-	registry.tools.add(createReadTool());
-	registry.tools.add(createEditTool());
-	registry.tools.add(createBashTool());
-});
-
 // Hooks see every call before and after execution; these time the big `cat`.
 const isBigCat = (call: { name: string; arguments: unknown }) =>
 	call.name === "bash" && (call.arguments as BashToolInput).command.includes("1gb.txt");
 let start = 0;
-registry.hooks.add(ToolTask, {
-	beforeTool: (call) => {
-		if (isBigCat(call)) start = Date.now();
-		return undefined;
-	},
-	afterTool: (call) => {
-		if (isBigCat(call)) console.log(`cat /tmp/1gb.txt took ${Date.now() - start} ms`);
-		return undefined;
-	},
+const Timing = defineExtension({
+	name: "timing",
+	hooks: [
+		hook(ToolTask, {
+			beforeTool: (call) => {
+				if (isBigCat(call)) start = Date.now();
+				return undefined;
+			},
+			afterTool: (call) => {
+				if (isBigCat(call)) console.log(`cat /tmp/1gb.txt took ${Date.now() - start} ms`);
+				return undefined;
+			},
+		}),
+	],
 });
+const registry = createRegistry();
+// CodingTools brings read, write, edit, and bash. Tools reach files and processes only through the environment the
+// Harness builds for each call.
+registry.install(CodingTools);
+registry.install(Timing);
 
-const env = new NodeExecutionEnv({ cwd: directory });
+// The environment is built per use and follows the conversation's agent `cwd`.
 const storage = await openNodeJsonlStorage(directory, context);
-const harness = await Harness.open(storage, { models, registry, env }, context);
-const root = await harness.root(context, {
-	init: async (tx, id) => {
-		(await tx.doc(ConversationConfig, id)).model = { provider: "faux", modelId: "faux-1" };
-	},
-});
+const harness = await Harness.open(
+	storage,
+	{ models, registry, env: (target) => new NodeExecutionEnv({ cwd: target.cwd ?? process.cwd() }) },
+	context,
+);
+const root = await harness.root(context, { agent: { model: { provider: "faux", modelId: "faux-1" }, cwd: directory } });
 
 // Each tool call runs as a durable pi.tool task owned by the generation, which waits for them and continues the run with the next generation.
 const settled = await (await root.submit({ type: "input", content: "Greet durable instead." }, context)).wait(context);

@@ -94,6 +94,11 @@ export interface TextLineReader {
 
 /** Portable filesystem capability. Operations return failures rather than throwing. */
 export interface FileSystem {
+	/**
+	 * The file namespace: equal ids see the same files at the same paths, whatever their `cwd`. Every local Node
+	 * environment shares one id; each container or remote host has its own.
+	 */
+	readonly id: string;
 	cwd: string;
 	absolutePath(path: string, context: Context): Promise<Result<string, FileError>>;
 	joinPath(parts: string[], context: Context): Promise<Result<string, FileError>>;

@@ -2,8 +2,7 @@ import type { Draft, JsonRepresentation } from "@earendil-works/chord";
 import { defineDoc } from "../documents.ts";
 import { UserEntry } from "../entries.ts";
 import type { ConversationId, EntryDraft, EntryId, JsonObject, SubmissionId, Tx } from "../types.ts";
-import { ConversationConfig } from "./config.ts";
-import type { QueueMode, UserInput } from "./types.ts";
+import type { QueueMode, Settings, UserInput } from "./types.ts";
 
 /** A queued submission: user input for a run, or a passive entry write. */
 export type InboxItem =
@@ -24,6 +23,9 @@ export const InboxDoc = defineDoc<InboxState>({
 	checkpointWhen: (value) => value.items.length === 0,
 });
 
+/** The settings a boundary reads, on the Session line. */
+export type QueueModes = Pick<Settings, "steeringMode" | "followUpMode">;
+
 /** What a boundary reads before the commit's first table write, and the newest head it has seen so far. */
 export type Boundary = {
 	readonly conversationId: ConversationId;
@@ -41,15 +43,14 @@ export type BoundaryResult = { readonly users: SubmissionId[]; readonly reset: b
  * Read what a boundary needs. Table reads must precede the commit's first table write, so callers prepare the
  * boundary at the start of their commit.
  */
-export async function prepareBoundary(tx: Tx, conversationId: ConversationId): Promise<Boundary> {
+export async function prepareBoundary(tx: Tx, conversationId: ConversationId, modes: QueueModes): Promise<Boundary> {
 	const head = (await tx.latestHeadMarker(conversationId))?.head;
 	const inbox = await tx.doc(InboxDoc, conversationId);
-	const config = await tx.doc(ConversationConfig, conversationId);
 	return {
 		conversationId,
 		inbox,
-		steeringMode: config.steeringMode ?? "one-at-a-time",
-		followUpMode: config.followUpMode ?? "one-at-a-time",
+		steeringMode: modes.steeringMode,
+		followUpMode: modes.followUpMode,
 		head,
 	};
 }

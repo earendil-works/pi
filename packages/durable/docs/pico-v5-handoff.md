@@ -1,6 +1,6 @@
 # Pico5 implementation handoff
 
-`packages/durable/docs/pico-v5.md` is normative. Implement this list in order.
+`packages/durable/docs/spec.md` is normative. Implement this list in order.
 After every package: run its tests, run `npm run check`, and stop for user review.
 Do not redesign later packages while implementing the current one.
 
@@ -11,7 +11,7 @@ facades, membranes, document routing, view projection, events, or clone chains.
 
 - Obsolete `pico` and `pico4` prototypes were removed.
 - `pico3` remains.
-- Packages 1–19 are implemented in `packages/durable`; Package 10 was already satisfied by Chord's canonical structural diff implementation.
+- Packages 1–23 are implemented in `packages/durable`; Package 10 was already satisfied by Chord's canonical structural diff implementation.
 
 ## 1. Records, cursors, and memory tables
 
@@ -680,51 +680,227 @@ sequential-round, and dependency tests to the new shapes without weakening them.
 
 ## 20. Compaction and overflow
 
-Implement manual, threshold, and generation-overflow compaction; exchange-boundary
-range selection; summarization; retry policy; staleness checks; and headed
-summary entries. Wire generation's real overflow path directly to the compaction
-task, and complete `Conversation.compact()` so it returns the admitted task ID.
+Implement spec §8.7 and its consequences. Compaction never appends to a busy
+conversation concurrently (§7.4 preparation does not recheck the transcript): a
+blocking compaction appends while its generation holds the run and waits for it;
+every other compaction places its summary through a write submission.
 
-Generation preparation no longer rechecks the transcript before appending its
-system entries (§7.4, §12): only run tasks and turn boundaries write to a busy
-conversation. A compaction summary for a busy conversation must therefore be
-placed at a turn boundary or as a step of the run, never appended concurrently.
+- Task: `pi.compaction` (`CompactionTask`, `CompactionHooks`, `CompactionInput`,
+  `CompactionCheckpoint`, `CompactionResult`, `CompactionReason`) with phases
+  `select`, `summarize`, `retry`, the abort handler, and the `beforeCompact`
+  hook. Register it with the built-ins. `CompactionEntry` token for
+  `pi.compaction` with `data: { reason }`.
+- `ContextView.contributions`: each active entry's contribution after all
+  in-range edits (including edits on older in-range markers). Range selection is one pure function over those
+  contributions and `keepRecentTokens`, shared by the generation's checks and
+  `select`; the summarized messages are the prefix contributions ordered by
+  §2.1 rules 7–8. The generation's size estimate (§8.3) uses the newest
+  assistant appended after the head marker, not pi-ai's timestamp heuristic. Port the coding agent's serializer, summarization
+  system prompt, and structured prompt (one prompt, with a line about carrying an
+  earlier summary forward) into `src/harness/compaction.ts`; do not import from
+  coding-agent.
+- Placement: direct append for a task-owned (blocking) compaction; for a
+  conversation-owned one, factor the admission body of `Submissions.submit()` into
+  a function over a `Tx` so the task's classifying commit admits the write
+  (request ID `compaction:<taskId>`) with the same idle/queued/stale/final-boundary
+  behavior. No new stale logic.
+- Config: `CompactionPolicy`, `DEFAULT_COMPACTION_POLICY`,
+  `ConversationConfigState.compaction`, `getCompaction`/`setCompaction`.
+- Live: `pi.live.compactions` (`CompactionStatus[]`, task ID order, key removed
+  when empty), added in the creating commit and removed in the outcome commit
+  (also at a `completing` hold);
+  `settleSchedulerOutcome` removes it for faulted/orphaned compactions.
+- Generation: `compacted`/`overflow` checkpoint fields; threshold checks in
+  `prepare` (blocking child + wait; background conversation-owned task in the
+  commit moving to `request`); overflow classification before the retry branch;
+  failing an overflow generation whose compaction produced no entry.
+- `Conversation.compact()` admits the manual task (conversation-owned, not
+  background) with its status in one commit and returns its ID.
+- Usage: every classified summarization response adds its usage to
+  `pi.usage.models`.
+- Events: `compaction_start`/`compaction_end`, snapshot `compactions`, batch
+  order per §9.4.
+- Docs: README (compaction, policy, events), CHANGELOG, and a new product-style
+  example `test/examples/25-compaction.ts` (faux model: a long chat that crosses
+  the background threshold, the summary lands at a boundary, a manual `compact()`
+  while busy, and an overflow recovered by a blocking compaction, printing the
+  model context before and after).
 
-Test model context before and after compaction, raw history preservation, provider
-failure, declined and stale work, manual/threshold/overflow admission, late-join
-presentation state, and reopen from every phase. Rerun generation overflow
-integration without a fake compaction kind.
+Not in v1 (note only): a cache-friendly summary request that resends the
+agent's exact last request plus one summarization user message with pi-ai
+`toolChoice: "none"`, so the prefix including tool declarations is a cache hit.
+It fits background compaction well below the window; overflow and a context
+without room for the prompt and summary keep the serialized request.
 
-## 21. Reload and final conformance
+Exhaustive tests (new `test/harness-compaction.test.ts`, faux provider, plus
+updates):
 
-Complete any remaining §2.2 surface and lifecycle gates and the §7.5 in-process
-reload path through the registry: batch replacement while the Harness keeps
-running, pinned in-flight work, and task handover at phase boundaries.
-Close/reopen is not required for reload.
+- Range selection (pure): cut at a user entry, at an assistant entry mid-run
+  (one prompt followed by many tool rounds), never at a tool result or system
+  entry; a huge last tool result keeps its assistant; budget never reached and
+  only-the-marker prefix are nothing to compact; an existing marker is
+  summarized first and older in-range markers drop out; omitted and replaced
+  entries use their edited contribution; excluded error/aborted assistants are
+  not candidates; the §8.7 worked example.
+- Summarization request: exact messages (system prompt, serialized
+  conversation, instructions line), tool-result truncation, no tools,
+  `cacheRetention: "none"`, no `deferred`, `maxTokens` from `reserveTokens` and
+  the model's max, pinned model/thinking/stream options surviving a config change
+  mid-summary.
+- Summary entry: kind, wrapped text, `head` = first kept, `data.reason`; model
+  context after placement is `[summary, kept...]` followed by a full system
+  baseline on the next preparation; raw history unchanged and still scannable via
+  `entries()`; `pi.usage.models` includes every attempt, including failed,
+  retried, and stale ones; declines and hook-supplied summaries add none.
+- Outcomes: nothing to compact (`{}`), `beforeCompact` decline (`{}`) and
+  supplied summary (no model call), first decision wins, hook throw reported and
+  ignored; `no_model`; retryable error then success; retries exhausted;
+  non-retryable error; `length` stop; tool call in the response; empty text.
+- Manual: idle with empty inbox (placed at once, `{ submissionId }` whose submission is `done`);
+  idle with queued follow-ups after a failed run (final boundary places the
+  summary first, then starts the follow-up in the compacted context); busy
+  (queued, placed at the next `postTools` and the run continues in the compacted
+  context; placed at `final`); stale because a reset landed while summarizing;
+  stale because a later compaction cut further; an older summary with a later cut
+  placed after a newer one; two queued summaries in one boundary with the
+  second cutting before, at, and after the first (only "before" is stale); `Conversation.abort()` aborts a manual compaction and keeps an
+  already queued summary; `Submission.abort()` withdraws a queued summary;
+  `waitForIdle` waits for a manual compaction; `compact()` returns the ID
+  `waitForTask` settles with.
+- Background threshold: starts only above the background threshold, only with
+  `backgroundTokens > 0`, only when no status is listed, not when disabled, not
+  without a cut, and not after a blocking compaction in the same generation; the
+  generation does not wait; summary placed at the next boundary; survives
+  `Conversation.abort()`; `abort({ background: true })` and `abortTask()` stop
+  it; idle waits ignore it.
+- Blocking threshold: generation waits, nothing appended before the wait, then
+  re-prepares with a baseline and sends; request proceeds after nothing to
+  compact, decline, failure, fault, and direct `abortTask()` of the child; no
+  second compaction when still above the threshold; a background compaction in
+  flight ends stale; Esc during the blocking compaction aborts child then
+  generation (child terminal before the generation's abort handler) and settles
+  inputs `aborted`.
+- Overflow: error entry appended and excluded from the retry request, attempt
+  unchanged, compaction then retry succeeds; second overflow fails
+  `model_error` with its error entry; overflow with compaction disabled, without
+  a cut, or after a threshold compaction fails; overflow whose compaction
+  declines/fails/aborts fails `model_error` with the overflow text; an overflow
+  error matching retryable patterns is still not retried; silent `stop`/`length`
+  overflow is an ordinary answer.
+- Live status and events: status added in the creating commit with `blocking`,
+  `attempt`, and `retry` during backoff, removed with every outcome
+  (completed, failed, aborted, faulted, orphaned); several concurrent statuses;
+  `compaction_start`/`compaction_end` in batch order; snapshot `compactions` for a late joiner during summarize and retry;
+  view mount after a compaction head (kept entries stay mounted).
+- Recovery: crash and reopen in `select` (hook reruns), `summarize` (request
+  resent once, no duplicate usage), `retry`, after placement, with the
+  generation waiting on a blocking compaction, with a summary queued, and with a
+  blocked compaction definition (orphaned on abort, status removed).
+- Estimate and cut edge cases: a background summary queued mid-run and placed
+  at `postTools` makes the successor's estimate ignore the pre-compaction usage,
+  so no blocking compaction starts (also with a fixed Harness clock); an
+  assistant finishing while a summary is queued; raw order `assistant(call),
+  user, toolResult, assistant` never cuts at that user; edits carried by an
+  older in-range marker and a kept entry replacing a summarized one are reflected
+  in the summarized messages and the hook's `messages`; kept `pi.system` deltas
+  get omit edits in the next single baseline; compaction in a fork whose cut
+  falls on a parent entry (head, stale checks, view mount).
+- Interactions: a summary queued before a reset in the same boundary (both
+  placed, reset wins) and after it (stale); a manual compaction's status blocks
+  a background start; a queued summary surviving a failed run is placed by the
+  next submission's final boundary before the new input; the summarization
+  request itself overflowing fails `model_error` and a waiting overflow
+  generation fails with the original overflow text; a retryable error after an
+  overflow compaction has the full retry budget; a background summary landing
+  during a retry backoff stays queued while a blocking compaction wins; an
+  application edit placed while summarizing is lost as §12 documents; a hook
+  that creates owned work and supplies a summary (placement and status removal
+  at hold, receipt after the child); `compact()` right after open enables
+  scheduling; a rejected classifying commit leaves no usage, submission,
+  summary, or outcome; idle admission that drains an older queued summary
+  together with the current one.
+- Rerun every existing suite; generation, inbox, events, and view tests keep
+  passing unchanged except for the new optional fields.
 
-Test that close seals commit and mutation admission, lets already-admitted
-storage settlement finish despite caller cancellation, stops future state/watch
-delivery, joins task/tool/hook invocations outside the Session line, writes no
-abort or terminal outcome, starts no fresh abort invocation, and never runs old
-and new Harness generations concurrently. Include cancellation during watch
-acquisition and an already-running callback that remains caller-owned across
-shutdown. Verify service withdrawal and client detach.
+## 21. Extensions and per-conversation agents
 
-Run the exhaustive public conformance matrix: stable persisted root identity;
-all root/create/lookup/fork/reset/compact/abort/idle paths; every configuration
-getter/setter and fork override; typed input/write submissions; task wait/abort;
-generic document access; registry changes before open, between open and resume,
-and while work runs; structural watches; and blocked tasks surviving open. Compile-test every §2.2 and §3 owner/key/seed overload,
-the normative usage sequences, and the Chord guide. The erased registry test must
-use a concrete narrowed-input task with multiple checkpoint phases and custom
-hooks. Verify that a Chord root-replacement delta remains distinct from a
-Session-selected storage checkpoint.
+Implement the design agreed with Mario, now specified in `spec.md` (§2.2,
+§5.1/§5.4 runtime surface, §6 queue modes, §7.1–§7.5, §8 where tasks read the
+agent and settings, §9.3/§9.4 view mount and events, §12 footguns): extensions
+installed by name replace keys, positions, `batch()`, wrappers-by-key, hook
+scopes, and public conversation setups; the rewindable `pi.agent` document
+(model, thinking level, extension and tool selection, `instructions`, `cwd`)
+replaces `pi.conversation.config` and its getters and setters; run policies
+become Harness-wide live `HarnessSettings`; the environment is built per call
+by one host `env` function. The `Tool` generic stays. `CodingTools` bundles
+read, write, edit, and bash; grep, find, and ls are not ported.
 
-Run all package-specific tests and the repository check. Finish with a local
-coding-agent turn and a reopened interrupted turn through the public Harness,
-then stop for final review.
+Implement in parts, each with tests: registry and extensions (install/replace,
+uninstall, catalogue views, task-name collisions, wrapper failures); `pi.agent`,
+`configure()`, and resolution (selection arrays and `add`/`remove`, same-name
+replacement, wrappers, uninstalled names, `addTools`); settings resolution and
+every reader (generation request options and retry, compaction thresholds, tool
+execution, queue modes on the line); `env` for tools, `prepare`, and
+`runtime.env()`; hooks resolved from the conversation's selected extensions per
+phase; reload of an extension while work runs (running phases keep their
+snapshot, pinned tools finish under old code, task definitions hand over at the
+next phase boundary as in §5.4); view and events. Rewrite the examples,
+including 22 and 23, to the new surface.
 
-## 22. Task graph view
+## 22. Lifecycle and final conformance
+
+Package 21 of the previous plan was audited (three reviewers); these findings
+remain and apply to the new surface.
+
+Bugs:
+- `runtime.now()` and `runtime.report()` stay usable after the invocation ends
+  (`scheduler.ts` runtime); §5.4 says every runtime operation rejects.
+- A commit that only migrates a document through a newer token (version base, no
+  ops) is not published (`transaction.ts` `publishes()`), so observers of the
+  older shape keep a stale value until the next edit.
+- A failed `Harness.open` closes with the caller's possibly cancelled context,
+  masking the original error; close without the caller's signal and rethrow.
+- `ConversationWatch` alias missing; stale TODO at `types.ts` about
+  `subscribeCommits`; `resume()` doc comment omits progress calls.
+
+Spec wording to settle with Mario first: close stops state and watch delivery at
+seal (§2.2 says states close after the join); cancelling `close()` cancels only
+that wait and a second `close()` awaits the same shutdown; add
+`Conversation.abort()` to the progress calls; "old and new Harness generations"
+means that after `await close()` no invocation code of the old Harness runs;
+"service withdrawal and client detach" is proposed as a runnable Chord guide
+test (facet host, in-process remote binding, host dispose before Harness close);
+"normative usage sequences" are the spec's example code blocks, copied into one
+compile-checked test.
+
+Tests to add or strengthen: a committer cancelled while its commit is in
+Storage still settles durably; a cancelled `close()` still completes shutdown;
+a task handler, tool `execute`, and hook that ignore the signal keep `close()`
+pending and Storage open until they return (the current tests pass with
+`join()` deleted); a state receives no frame from a commit settling during
+close; watch acquisition cancelled mid-line leaves no subscription; conversation
+handle methods and `inspect()` (`scheduling: "closing"`) around close; each
+progress call enables scheduling on a paused Harness and each read-only viewer
+does not; registry change between open and resume; handover keeps memos;
+compile tests for every §3.3/§9.1 overload (including `snapshotAsOf` rejecting a
+non-rewindable token, token overloads of `tx.entry`/`appendEntry`), the
+`SubmissionDraft` never-fields, `waitForTask<R>`, `compact()` result type, and
+an erased extension/task with narrowed input, several phases, and custom hooks;
+the Chord guide compiles (it uses a bare `Id` today) and runs.
+
+Already covered, rerun only: root-replacement delta versus checkpoint, blocked
+tasks surviving open, root identity across reopen, handover cases, a reopened
+interrupted turn. Run all package tests and the repository check, finish with a
+local coding-agent turn and a reopened interrupted turn through the public
+Harness, then stop for final review.
+
+Done. The spec wording is settled as proposed (§2.2 close and progress calls,
+§5.1, §7.5, §9.1, §12). Close ends states and watches at the seal; a new Harness
+may open the Storage once the old `close()` resolved. The lifecycle tests are in
+`harness-lifecycle.test.ts`, the Chord guide runs as `chord-guide.test.ts`, and
+the spec's usage examples compile in `spec-usage.test.ts`.
+
+## 23. Task graph view
 
 A live, observable view of the Session's task graph for UIs and debugging, like
 `ConversationView` for a conversation: every live task with its owner edge
@@ -732,3 +908,10 @@ A live, observable view of the Session's task graph for UIs and debugging, like
 background flag, and owned conversations, published after each commit as a
 replicated state or watch. `inspect()` already provides a one-off snapshot of
 the live task records. Specify and build it after the final conformance package.
+
+Specified in `spec.md` §9.5: `Harness.taskGraph()` and `watchTaskGraph()` mount
+every live task keyed by ID with its committed status (phase, wait, held outcome
+status), owner edge, flags, and owned conversations. Derived states (`blocked`,
+`ready`, the live part of `on`) stay in `inspect()`. Implemented in
+`src/harness/task-graph.ts`, tested in `harness-task-graph.test.ts` and the
+lifecycle tests, shown in example 24.

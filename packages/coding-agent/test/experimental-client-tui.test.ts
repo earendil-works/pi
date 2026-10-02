@@ -13,13 +13,7 @@ import {
 	FACET_BUNDLE_ARTIFACT_FORMAT_VERSION,
 	type FacetBundleArtifact,
 } from "@earendil-works/chord/node";
-import {
-	type AgentLane,
-	type LaneSnapshot,
-	type LaneTranscriptSnapshot,
-	type LaneWatchEvent,
-	reduceLaneSnapshot,
-} from "@earendil-works/pi-agent-core";
+import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { ProcessTerminal, TuiMainScreen } from "@earendil-works/pi-tui";
 import { beforeAll, describe, expect, test, vi } from "vitest";
 import { type ClientTuiServer, ExperimentalClientTui } from "../src/experimental/client-tui.ts";
@@ -40,8 +34,9 @@ import {
 	SessionManagement,
 	type SessionSummary,
 } from "../src/experimental/services/sessions.ts";
-import { Transcript, type TranscriptState } from "../src/experimental/services/transcript.ts";
+import { Transcript } from "../src/experimental/services/transcript.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
+import { openFauxConversation } from "./experimental-durable-support.ts";
 
 const serverId = "00000000-0000-4000-8000-000000000001";
 
@@ -65,33 +60,6 @@ function createLoopbackServiceTransport(provider: RemoteServiceProvider): Remote
 
 function publishReplacement<T extends object>(state: MutableReplicatedState<T>, value: T): void {
 	state.replace(BACKGROUND_CONTEXT, value);
-}
-
-function laneSnapshot(): LaneSnapshot {
-	return {
-		lane: "main",
-		transcript: [],
-		tipId: null,
-		configuration: {
-			model: { provider: "test", modelId: "one" },
-			thinkingLevel: "off",
-			activeToolNames: [],
-		},
-		stats: {
-			messageCount: 0,
-			usage: {
-				input: 0,
-				output: 0,
-				cacheRead: 0,
-				cacheWrite: 0,
-				totalTokens: 0,
-				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-			},
-		},
-		operation: null,
-		queues: [],
-		faulted: false,
-	};
 }
 
 describe("experimental client TUI", () => {
@@ -136,85 +104,22 @@ describe("experimental client TUI", () => {
 					draft.configuration.thinkingLevel = thinkingLevel;
 				});
 			});
-			const transcriptState = replicatedState<TranscriptState>({
-				snapshot: laneSnapshot() as LaneTranscriptSnapshot,
-				event: null,
-			});
-			const emitTranscriptEvent = (event: LaneWatchEvent): void => {
-				transcriptState.change(BACKGROUND_CONTEXT, (draft) => {
-					if (reduceLaneSnapshot(draft.snapshot as unknown as LaneSnapshot, event) === "rebase") {
-						throw new Error("Test transcript event unexpectedly requires a rebase");
-					}
-					draft.event = event;
-				});
-			};
 			let finishPrompt!: () => void;
 			const promptFinished = new Promise<void>((resolve) => {
 				finishPrompt = resolve;
 			});
-			const prompt = vi.fn(async () => {
-				emitTranscriptEvent({
-					type: "run_start",
-					lane: "main",
-					runId: "run-1",
-					startedAt: 1,
-				});
-				await promptFinished;
-				emitTranscriptEvent({
-					type: "entry_added",
-					lane: "main",
-					entry: {
-						id: "entry-user",
-						parentId: null,
-						seq: 1,
-						timestamp: 1,
-						type: "message",
-						message: { role: "user", content: [{ type: "text", text: "hello" }], timestamp: 1 },
-					},
-				});
-				emitTranscriptEvent({
-					type: "entry_added",
-					lane: "main",
-					entry: {
-						id: "entry-assistant",
-						parentId: "entry-user",
-						seq: 2,
-						timestamp: 2,
-						type: "message",
-						message: {
-							role: "assistant",
-							content: [{ type: "text", text: "remote answer" }],
-							provider: "test",
-							model: "one",
-							api: "test",
-							usage: transcriptState.value.snapshot!.stats.usage,
-							stopReason: "stop",
-							timestamp: 2,
-						},
-					},
-				});
-				emitTranscriptEvent({
-					type: "run_end",
-					lane: "main",
-					runId: "run-1",
-					status: "completed",
-					fromTipId: null,
-					tipId: "entry-assistant",
-					endedAt: 2,
-				});
-				return {
-					ok: true as const,
-					value: {
-						operationId: "run-1",
-						kind: "run" as const,
-						status: "completed" as const,
-						fromTipId: null,
-						tipId: "entry-assistant",
-						startedAt: 1,
-						endedAt: 2,
-					},
-				};
-			});
+			const prompts: string[] = [];
+			const durable = await openFauxConversation([
+				async (context) => {
+					const last = context.messages.at(-1);
+					if (last?.role === "user") {
+						prompts.push(typeof last.content === "string" ? last.content : JSON.stringify(last.content));
+					}
+					await promptFinished;
+					return fauxAssistantMessage("remote answer");
+				},
+			]);
+			const transcriptState = await durable.conversation.viewState(BACKGROUND_CONTEXT);
 
 			const reloadSource =
 				'"use strict";\nconst { defineFacet, defineService } = require("@earendil-works/chord");\nconst Models = defineService("pi.models");\nmodule.exports = { __esModule: true, default: defineFacet({ id: "test-tui-facet", setup(env) { env.use(Models); } }) };\n';
@@ -262,7 +167,7 @@ describe("experimental client TUI", () => {
 				select,
 				selectThinking,
 			});
-			sessionProvider.provide(AgentController, createAgentController({ prompt } as unknown as AgentLane));
+			sessionProvider.provide(AgentController, createAgentController(durable.harness, durable.conversation));
 			sessionProvider.provide(Transcript, { state: transcriptState });
 
 			const serverNamespace = createRemoteServiceBinding({
@@ -356,7 +261,7 @@ describe("experimental client TUI", () => {
 				expect(select).not.toHaveBeenCalled();
 				expect(component.render(80).join("\n")).toContain(`Server: ${serverId}`);
 				expect(component.render(80).join("\n")).toContain(`Session: ${sessionId}`);
-				expect(component.render(80).join("\n")).toContain("test/one");
+				expect(component.render(80).join("\n")).toContain("faux/faux-1");
 				expect(component.render(80).join("\n")).not.toContain("Experimental Sessions");
 				expect(component.render(80).join("\n")).not.toContain("Experimental Models");
 
@@ -365,13 +270,12 @@ describe("experimental client TUI", () => {
 
 				component.handleInput("hello");
 				component.handleInput("\r");
-				await vi.waitFor(() => expect(prompt).toHaveBeenCalledWith("hello", undefined, BACKGROUND_CONTEXT));
+				await vi.waitFor(() => expect(prompts).toEqual(["hello"]));
 				await vi.waitFor(() => expect(component.render(80).join("\n")).toContain("Working..."));
 				finishPrompt();
 				await vi.waitFor(() => expect(component.render(80).join("\n")).toContain("remote answer"));
 				expect(component.render(80).join("\n")).toContain("hello");
 				expect(component.render(80).join("\n")).not.toContain("Working...");
-				expect(component.render(80).join("\n")).not.toContain("Operation run-1 completed");
 
 				component.handleInput("/reload");
 				component.handleInput("\u001b");
@@ -444,6 +348,8 @@ describe("experimental client TUI", () => {
 				]);
 				serverProvider.dispose();
 				sessionProvider.dispose();
+				transcriptState.dispose();
+				await durable.close();
 			}
 		},
 	);

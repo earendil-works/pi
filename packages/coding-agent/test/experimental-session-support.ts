@@ -1,33 +1,23 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
+import { AgentDoc, createSession, type ModelRef, ROOT_CONVERSATION_ID } from "@earendil-works/pi-durable";
+import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import {
-	BACKGROUND_CONTEXT,
-	type Entry,
-	type JsonlSessionMetadata,
-	JsonlSessionRepo,
-	laneConfig,
-} from "@earendil-works/pi-agent-core";
-import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
+	createSession as createCatalogSession,
+	readSession,
+	type SessionCatalogMetadata,
+	sessionStoragePath,
+} from "../src/experimental/session-catalog.ts";
 
 export async function createExperimentalSessions(
 	sessionsRoot: string,
 	ids: readonly string[],
 	cwd = process.cwd(),
-): Promise<JsonlSessionMetadata[]> {
-	const fileSystem = new NodeExecutionEnv({ cwd });
-	const repo = new JsonlSessionRepo({ fileSystem, sessionsRoot });
-	const metadata: JsonlSessionMetadata[] = [];
-	try {
-		for (const id of ids) {
-			const session = await repo.create({ id, cwd }, BACKGROUND_CONTEXT);
-			metadata.push(session.metadata);
-			await session.close(BACKGROUND_CONTEXT);
-		}
-		return metadata;
-	} finally {
-		await repo.close(BACKGROUND_CONTEXT);
-		await fileSystem.cleanup(BACKGROUND_CONTEXT);
-	}
+): Promise<SessionCatalogMetadata[]> {
+	const metadata: SessionCatalogMetadata[] = [];
+	for (const id of ids) metadata.push(await createCatalogSession(sessionsRoot, { id, cwd }));
+	return metadata;
 }
 
 export async function configureExperimentalWorkerModel(agentDir: string): Promise<void> {
@@ -37,31 +27,18 @@ export async function configureExperimentalWorkerModel(agentDir: string): Promis
 	});
 }
 
+/** The root conversation's model, read from the Session's durable storage while no worker owns it. */
 export async function readExperimentalSessionState(
 	sessionsRoot: string,
 	sessionId: string,
-): Promise<{
-	branch: Entry[];
-	model: { provider: string; modelId: string } | undefined;
-	activeTools: string[];
-}> {
-	const fileSystem = new NodeExecutionEnv({ cwd: process.cwd() });
-	const repo = new JsonlSessionRepo({ fileSystem, sessionsRoot });
-	let session: Awaited<ReturnType<JsonlSessionRepo["open"]>> | undefined;
+): Promise<{ model: ModelRef | undefined }> {
+	const metadata = await readSession(sessionsRoot, sessionId);
+	if (metadata === undefined) throw new Error(`Expected Session ${sessionId}`);
+	const session = createSession(await openNodeSqliteStorage(sessionStoragePath(metadata)));
 	try {
-		const matches = (await repo.list(undefined, BACKGROUND_CONTEXT)).filter((metadata) => metadata.id === sessionId);
-		if (matches.length !== 1) throw new Error(`Expected one Session ${sessionId}, found ${matches.length}`);
-		session = await repo.open(matches[0]!, BACKGROUND_CONTEXT);
-		const main = await session.branch("main", BACKGROUND_CONTEXT);
-		if (main === undefined) throw new Error("Expected Session main Branch");
-		const [branch, configuration] = await Promise.all([
-			main.findEntries({ order: "oldestFirst" }, BACKGROUND_CONTEXT),
-			session.getValue(laneConfig("main"), BACKGROUND_CONTEXT),
-		]);
-		return { branch, model: configuration?.value.model, activeTools: configuration?.value.activeToolNames ?? [] };
+		const agent = await session.snapshot(AgentDoc, ROOT_CONVERSATION_ID, BACKGROUND_CONTEXT);
+		return { model: agent?.model };
 	} finally {
-		await session?.close(BACKGROUND_CONTEXT);
-		await repo.close(BACKGROUND_CONTEXT);
-		await fileSystem.cleanup(BACKGROUND_CONTEXT);
+		await session.close(BACKGROUND_CONTEXT);
 	}
 }

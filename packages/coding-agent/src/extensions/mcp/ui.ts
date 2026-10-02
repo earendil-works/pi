@@ -7,7 +7,6 @@ import {
 	type Component,
 	Container,
 	type Focusable,
-	hyperlink,
 	Input,
 	type SelectItem,
 	SelectList,
@@ -19,6 +18,7 @@ import {
 } from "@earendil-works/pi-tui";
 import type { ExtensionCommandContext } from "../../core/extensions/types.ts";
 import type { KeybindingsManager } from "../../core/keybindings.ts";
+import { AuthUrlComponent } from "../../modes/interactive/components/auth-url.ts";
 import { DynamicBorder } from "../../modes/interactive/components/dynamic-border.ts";
 import { keyHint } from "../../modes/interactive/components/keybinding-hints.ts";
 import { getSelectListTheme, type Theme } from "../../modes/interactive/theme/theme.ts";
@@ -176,12 +176,11 @@ export class McpManagerView implements McpUi, Component, Focusable {
 			}
 			signal.addEventListener("abort", onAbort, { once: true });
 			const input = new Input();
-			const clickHint = process.platform === "darwin" ? "Cmd+click to open" : "Ctrl+click to open";
+			const link = new AuthUrlComponent(this.tui, authorizationUrl);
 			const body: Component[] = [
 				new Spacer(1),
 				new Text(this.theme.fg("muted", "Approve access in your browser. If it did not open, visit:"), 1, 0),
-				new Text(this.theme.fg("accent", hyperlink(authorizationUrl, authorizationUrl)), 1, 0),
-				new Text(this.theme.fg("dim", hyperlink(clickHint, authorizationUrl)), 1, 0),
+				link,
 				new Spacer(1),
 				new Text(
 					this.theme.fg("muted", "If the browser runs on another machine, paste the URL it was redirected to:"),
@@ -205,6 +204,10 @@ export class McpManagerView implements McpUi, Component, Focusable {
 					}
 					if (this.keybindings.matches(data, "tui.select.cancel")) {
 						finish(undefined);
+						return;
+					}
+					if (this.keybindings.matches(data, "app.message.copy")) {
+						void link.copy();
 						return;
 					}
 					input.handleInput(data);

@@ -1,7 +1,6 @@
 import { defineTask, MemoryStorage, type TaskId, type TaskInspection } from "@earendil-works/pi-durable";
 import { describe, expect, it } from "vitest";
 import { chatSetup, openChat, unanswered, waitFor } from "./chat-support.ts";
-import { tool } from "./harness-support.ts";
 import { context } from "./session-support.ts";
 import { completed, deferred, eventually, openTasks } from "./task-support.ts";
 
@@ -143,14 +142,10 @@ describe("Harness.inspect()", () => {
 		await harness.close(context);
 	});
 
-	it("lists unsettled submissions and registry failures", async () => {
+	it("lists unsettled submissions", async () => {
 		const setup = chatSetup();
 		const busy = unanswered();
 		setup.faux.setResponses([busy.step]);
-		setup.registry.tools.add(tool("read"));
-		setup.registry.tools.wrap("read", "broken", () => {
-			throw new Error("wrapper failed");
-		});
 		const { harness, root } = await openChat(new MemoryStorage(), setup);
 		const other = await harness.createConversation({ ownership: { kind: "ownerless" } }, context);
 		await other.submit({ type: "write", entry: { kind: "note" } }, context);
@@ -162,7 +157,6 @@ describe("Harness.inspect()", () => {
 		expect(inspection.tasks.map((entry) => [entry.record.kind, entry.state.kind])).toEqual([
 			["pi.generation", "running"],
 		]);
-		expect(inspection.registry).toEqual([{ kind: "tool", name: "read", error: new Error("wrapper failed") }]);
 		await harness.close(context);
 	});
 });

@@ -23,11 +23,13 @@ faux.setResponses([slow, fauxAssistantMessage("Answer to the follow-up and the s
 const models = createModels();
 models.setProvider(faux.provider);
 
-const harness = await Harness.open(new MemoryStorage(), { models, registry: createRegistry() }, context);
-const root = await harness.root(context);
-await root.setModel({ provider: "faux", modelId: "faux-1" }, context);
-// Place every queued follow-up at once instead of one per run.
-await root.setFollowUpMode("all", context);
+// Settings apply to every conversation: place every queued follow-up at once instead of one per run.
+const harness = await Harness.open(
+	new MemoryStorage(),
+	{ models, registry: createRegistry(), settings: { followUpMode: "all" } },
+	context,
+);
+const root = await harness.root(context, { agent: { model: { provider: "faux", modelId: "faux-1" } } });
 
 const first = await root.submit({ type: "input", content: "First question" }, context);
 

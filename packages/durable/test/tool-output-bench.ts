@@ -18,10 +18,11 @@ import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 import { Type } from "typebox";
 import { NodeExecutionEnv } from "../src/env/node.ts";
-import { ConversationConfig, createRegistry, Harness, LiveDoc, MemoryStorage, type Storage } from "../src/index.ts";
+import { createRegistry, defineTool, Harness, LiveDoc, MemoryStorage, type Storage } from "../src/index.ts";
 import { openNodeJsonlStorage } from "../src/storage/jsonl/node.ts";
 import { openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";
 import { createBashTool } from "../src/tools/index.ts";
+import { addTool } from "./harness-support.ts";
 
 type Backend = "memory" | "sqlite" | "jsonl";
 type Rate = "low" | "normal" | "high";
@@ -136,42 +137,47 @@ async function runScenario(scenario: Scenario): Promise<Metrics> {
 		const registry = createRegistry();
 		const toolCount = scenario.kind === "rate" ? scenario.tools : 1;
 		if (scenario.kind === "cat") {
-			registry.tools.add(createBashTool());
+			addTool(registry, createBashTool());
 		} else {
 			const rate = scenario.kind === "rate" ? RATES[scenario.rate] : RATES.high;
-			registry.tools.add({
-				name: "emit",
-				description: "",
-				parameters: Type.Object({}),
-				outputLimits: { retain: scenario.retain },
-				execute: async (_args, api, callContext) => {
-					let counter = 0;
-					let written = 0;
-					// The firehose reuses one prebuilt chunk so it measures the Harness, not string building.
-					const prebuilt = scenario.kind === "firehose" ? lines(api.callId, 0, rate.lines) : undefined;
-					// Repetitive: identical lines with one numbered line per chunk, so the tail window keeps sliding.
-					const repeated = "y\n".repeat(32 * 1024 - 8);
-					while (!stop && (scenario.kind === "rate" || written < GIB)) {
-						const chunk =
-							scenario.kind === "firehose" && scenario.repetitive === true
-								? `${repeated}#${counter}\n`
-								: (prebuilt ?? lines(api.callId, counter, rate.lines));
-						counter += rate.lines;
-						api.output(chunk);
-						written += chunk.length;
-						await new Promise((resolve) =>
-							rate.pauseMs === 0 ? setImmediate(resolve) : setTimeout(resolve, rate.pauseMs),
-						);
-					}
-					// A persistent rate scenario stays in flight until close, so reopen replays the round.
-					if (scenario.kind === "rate" && scenario.backend !== "memory") {
-						await new Promise((_, reject) =>
-							callContext.abortSignal!.addEventListener("abort", () => reject(callContext.abortSignal!.reason)),
-						);
-					}
-					return {};
-				},
-			});
+			addTool(
+				registry,
+				defineTool({
+					name: "emit",
+					description: "",
+					parameters: Type.Object({}),
+					outputLimits: { retain: scenario.retain },
+					execute: async (_args, api, callContext) => {
+						let counter = 0;
+						let written = 0;
+						// The firehose reuses one prebuilt chunk so it measures the Harness, not string building.
+						const prebuilt = scenario.kind === "firehose" ? lines(api.callId, 0, rate.lines) : undefined;
+						// Repetitive: identical lines with one numbered line per chunk, so the tail window keeps sliding.
+						const repeated = "y\n".repeat(32 * 1024 - 8);
+						while (!stop && (scenario.kind === "rate" || written < GIB)) {
+							const chunk =
+								scenario.kind === "firehose" && scenario.repetitive === true
+									? `${repeated}#${counter}\n`
+									: (prebuilt ?? lines(api.callId, counter, rate.lines));
+							counter += rate.lines;
+							api.output(chunk);
+							written += chunk.length;
+							await new Promise((resolve) =>
+								rate.pauseMs === 0 ? setImmediate(resolve) : setTimeout(resolve, rate.pauseMs),
+							);
+						}
+						// A persistent rate scenario stays in flight until close, so reopen replays the round.
+						if (scenario.kind === "rate" && scenario.backend !== "memory") {
+							await new Promise((_, reject) =>
+								callContext.abortSignal!.addEventListener("abort", () =>
+									reject(callContext.abortSignal!.reason),
+								),
+							);
+						}
+						return {};
+					},
+				}),
+			);
 		}
 		const call =
 			scenario.kind === "cat"
@@ -181,13 +187,10 @@ async function runScenario(scenario: Scenario): Promise<Metrics> {
 			fauxAssistantMessage(call, { stopReason: "toolUse" }),
 			fauxAssistantMessage([fauxText("done")]),
 		]);
-		const env = new NodeExecutionEnv({ cwd: directory });
+		const nodeEnv = new NodeExecutionEnv({ cwd: directory });
+		const env = () => nodeEnv;
 		let harness = await Harness.open(await openTimed(), { models, registry, env }, context);
-		const root = await harness.root(context, {
-			init: async (tx, id) => {
-				(await tx.doc(ConversationConfig, id)).model = { provider: "faux", modelId: "faux-1" };
-			},
-		});
+		const root = await harness.root(context, { agent: { model: { provider: "faux", modelId: "faux-1" } } });
 		let liveCommits = 0;
 		let liveOpBytes = 0;
 		let outputSets = 0;

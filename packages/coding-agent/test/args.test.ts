@@ -145,6 +145,12 @@ describe("parseArgs", () => {
 			const result = parseArgs(["--models", "gpt-4o,claude-sonnet,gemini-pro"]);
 			expect(result.models).toEqual(["gpt-4o", "claude-sonnet", "gemini-pro"]);
 		});
+
+		// Issue #10334
+		test("ignores empty entries in --models", () => {
+			const result = parseArgs(["--models", "gpt-4o, ,claude-sonnet,"]);
+			expect(result.models).toEqual(["gpt-4o", "claude-sonnet"]);
+		});
 	});
 
 	// Issue #9045

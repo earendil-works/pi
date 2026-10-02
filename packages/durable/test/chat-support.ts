@@ -10,12 +10,14 @@ import {
 } from "@earendil-works/pi-ai";
 import {
 	type Conversation,
-	ConversationConfig,
 	createRegistry,
 	type EntryRecord,
 	Harness,
+	type HarnessOptions,
+	type HarnessSettings,
 	type Registry,
 	type Storage,
+	type ToolRegistration,
 } from "@earendil-works/pi-durable";
 import type { ExecutionEnv } from "../src/env/index.ts";
 import { context } from "./session-support.ts";
@@ -26,6 +28,8 @@ export type ChatSetup = {
 	readonly models: Models;
 	readonly registry: Registry;
 	readonly reports: unknown[];
+	/** Live Harness settings; tests assign fields to change them between decisions. */
+	readonly settings: { -readonly [K in keyof HarnessSettings]: HarnessSettings[K] };
 	now: () => number;
 };
 
@@ -33,31 +37,31 @@ export function chatSetup(options: RegisterFauxProviderOptions = {}): ChatSetup 
 	const faux = fauxProvider(options);
 	const models = createModels();
 	models.setProvider(faux.provider);
-	return { faux, models, registry: createRegistry(), reports: [], now: () => Date.now() };
+	return { faux, models, registry: createRegistry(), reports: [], settings: {}, now: () => Date.now() };
 }
 
 /** Open a Harness over `storage` and return its root, configured with the faux model on first creation. */
 export async function openChat(
 	storage: Storage,
 	setup: ChatSetup,
-	options: { readonly env?: ExecutionEnv } = {},
+	/** One environment for every conversation, or an `env` function. */
+	options: { readonly env?: ExecutionEnv | NonNullable<HarnessOptions["env"]> } = {},
 ): Promise<{ readonly harness: Harness; readonly root: Conversation }> {
 	const harness = await Harness.open(
 		storage,
 		{
 			models: setup.models,
 			registry: setup.registry,
-			...(options.env === undefined ? {} : { env: options.env }),
+			settings: setup.settings,
+			...(options.env === undefined
+				? {}
+				: { env: typeof options.env === "function" ? options.env : () => options.env as ExecutionEnv }),
 			now: () => setup.now(),
 			onReport: (error) => setup.reports.push(error),
 		},
 		context,
 	);
-	const root = await harness.root(context, {
-		init: async (tx, id) => {
-			(await tx.doc(ConversationConfig, id)).model = { provider: "faux", modelId: "faux-1" };
-		},
-	});
+	const root = await harness.root(context, { agent: { model: { provider: "faux", modelId: "faux-1" } } });
 	return { harness, root };
 }
 
@@ -101,4 +105,14 @@ export function unanswered(): { readonly step: FauxResponseStep; readonly reache
 			signal.addEventListener("abort", () => reject(signal.reason), { once: true });
 		});
 	return { step, reached };
+}
+
+/** The installed tools with these names, as `configure()` takes them. */
+export function toolsNamed(setup: ChatSetup, ...names: string[]): ToolRegistration[] {
+	const installed = setup.registry.snapshot().tools();
+	return names.map((name) => {
+		const found = installed.find(({ tool }) => tool.name === name);
+		if (found === undefined) throw new Error(`Tool ${name} is not installed`);
+		return found.tool;
+	});
 }

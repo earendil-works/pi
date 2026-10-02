@@ -23,12 +23,13 @@ import {
 	type Tool as McpTool,
 	toLlmContent,
 } from "@earendil-works/pi-mcp";
-import { Text } from "@earendil-works/pi-tui";
+import { Container, Spacer, Text } from "@earendil-works/pi-tui";
 import type { TSchema } from "typebox";
 import type { ToolAnnotations, ToolDefinition, ToolExposure, ToolNamespace } from "../../core/extensions/types.ts";
 import { formatToolCallWithArgs, getTextOutput, replaceTabs } from "../../core/tools/render-utils.ts";
 import { formatSize, truncateMiddle } from "../../core/tools/truncate.ts";
 import { keyHint } from "../../modes/interactive/components/keybinding-hints.ts";
+import { VisualLinePreview } from "../../modes/interactive/components/visual-truncate.ts";
 import type { McpExposure } from "./config.ts";
 
 /**
@@ -43,7 +44,7 @@ export function toToolExposure(exposure: McpExposure): ToolExposure {
 const MAX_TOOL_NAME_LENGTH = 64;
 /** Model-facing text of an MCP result beyond this is cut in the middle. */
 export const MCP_OUTPUT_MAX_BYTES = 20 * 1024;
-/** Result lines shown before the output is expanded. */
+/** Visual (wrapped) result lines shown before the output is expanded. */
 const OUTPUT_PREVIEW_LINES = 5;
 /** Tool that reads the resources named by resource links. */
 export const READ_MCP_RESOURCE_TOOL = "read_mcp_resource";
@@ -73,16 +74,17 @@ export interface McpToolCaller {
 }
 
 /**
- * `mcp__<server>__<tool>`, sanitized and shortened with a hash suffix when too long. `isTaken`
- * reports names already used by a different MCP tool: sanitizing can map two tools to one name
- * (`a.b` and `a_b`), and the second then gets the hash suffix too.
+ * `mcp__<server>__<tool>`, sanitized and shortened with a hash suffix when too long. Like Codex,
+ * everything but `[A-Za-z0-9_]` becomes `_`, so the name is also the identifier codemode scripts
+ * call it by. `isTaken` reports names used by a different MCP tool: sanitizing can map two tools to
+ * one name (`a-b` and `a_b`), which then get the hash suffix.
  */
 export function createMcpToolName(
 	server: string,
 	tool: string,
 	isTaken: (name: string) => boolean = () => false,
 ): string {
-	const name = `mcp__${server}__${tool}`.replace(/[^A-Za-z0-9_-]/g, "_");
+	const name = `mcp__${server}__${tool}`.replace(/[^A-Za-z0-9_]/g, "_");
 	if (name.length <= MAX_TOOL_NAME_LENGTH && !isTaken(name)) return name;
 	const hash = createHash("sha256").update(`${server}\0${tool}`).digest("hex").slice(0, 8);
 	return `${name.slice(0, MAX_TOOL_NAME_LENGTH - hash.length - 1)}_${hash}`;
@@ -279,16 +281,32 @@ export function createMcpToolDefinition(options: {
 			return component;
 		},
 		renderResult(result, options, theme, context) {
+			const component = (context.lastComponent as Container | undefined) ?? new Container();
+			component.clear();
 			const output = getTextOutput(result, context.showImages).trim();
-			const lines = output ? replaceTabs(output).split("\n") : [];
-			const shown = options.expanded ? lines : lines.slice(0, OUTPUT_PREVIEW_LINES);
+			if (!output) return component;
 			const color = context.isError ? "error" : "toolOutput";
-			let text = shown.map((line) => theme.fg(color, line)).join("\n");
-			if (shown.length < lines.length) {
-				text += `\n${theme.fg("muted", `... (${lines.length - shown.length} more lines,`)} ${keyHint("app.tools.expand", "to expand")}${theme.fg("muted", ")")}`;
+			const styled = replaceTabs(output)
+				.split("\n")
+				.map((line) => theme.fg(color, line))
+				.join("\n");
+			component.addChild(new Spacer(1));
+			if (options.expanded) {
+				component.addChild(new Text(styled, 0, 0));
+			} else {
+				// Limit wrapped lines, not logical ones: MCP results are often one long JSON line.
+				component.addChild(
+					new VisualLinePreview({
+						text: styled,
+						maxVisualLines: OUTPUT_PREVIEW_LINES,
+						keep: "start",
+						formatHint: (hidden) =>
+							`${theme.fg("muted", `... (${hidden} more lines,`)} ${keyHint("app.tools.expand", "to expand")}${theme.fg("muted", ")")}`,
+					}),
+				);
+				const fullOutputPath = result.details?.fullOutputPath;
+				if (fullOutputPath) component.addChild(new Text(theme.fg("muted", `Full output: ${fullOutputPath}`), 0, 0));
 			}
-			const component = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
-			component.setText(text ? `\n${text}` : "");
 			return component;
 		},
 		async execute(_toolCallId, params, signal, onUpdate) {

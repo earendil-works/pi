@@ -13,15 +13,20 @@ import {
 	Type,
 } from "@earendil-works/pi-ai";
 import {
+	AgentDoc,
 	type Conversation,
+	configure,
+	defineExtension,
 	defineTask,
+	defineTool,
 	type EntryRecord,
 	GenerationTask,
 	type Harness,
+	hook,
 	LiveDoc,
 	MemoryStorage,
-	type Registration,
 	type SubmissionId,
+	section,
 	type ToolRegistration,
 	ToolResultEntry,
 	ToolTask,
@@ -30,19 +35,16 @@ import { describe, expect, it } from "vitest";
 import { NodeExecutionEnv } from "../src/env/node.ts";
 import { createBashTool, createEditTool, createReadTool } from "../src/tools/index.ts";
 import { allEntries, type ChatSetup, chatSetup, openChat, textOf } from "./chat-support.ts";
+import { addHooks, addTask, addTool, type Installed } from "./harness-support.ts";
 import { context } from "./session-support.ts";
 import { aborted, deferred } from "./task-support.ts";
 
-type Execute = ToolRegistration["execute"];
+const EchoParameters = Type.Object({ text: Type.Optional(Type.String()) });
+type Echo = ToolRegistration<typeof EchoParameters>;
+type Execute = Echo["execute"];
 
-function tool(name: string, execute: Execute, extra: Partial<ToolRegistration> = {}): ToolRegistration {
-	return {
-		name,
-		description: `The ${name} tool`,
-		parameters: Type.Object({ text: Type.Optional(Type.String()) }),
-		execute,
-		...extra,
-	};
+function tool(name: string, execute: Execute, extra: Partial<Echo> = {}): Echo {
+	return defineTool({ name, description: `The ${name} tool`, parameters: EchoParameters, execute, ...extra });
 }
 
 /** A tool-calling answer with one call per `[name, args, id]`. */
@@ -59,9 +61,10 @@ async function run(
 	setup: ChatSetup,
 	responses: FauxResponseStep[],
 	prepare?: (harness: Harness, root: Conversation) => Promise<void>,
+	options: Parameters<typeof openChat>[2] = {},
 ): Promise<{ harness: Harness; root: Conversation; entries: EntryRecord[]; status: string }> {
 	setup.faux.setResponses(responses);
-	const { harness, root } = await openChat(new MemoryStorage(), setup);
+	const { harness, root } = await openChat(new MemoryStorage(), setup, options);
 	await prepare?.(harness, root);
 	const settled = await (await root.submit({ type: "input", content: "go" }, context)).wait(context);
 	return { harness, root, entries: await allEntries(root), status: settled.status };
@@ -78,9 +81,10 @@ function resultText(message: ToolResultMessage): string {
 describe("tool round", () => {
 	it("runs input, tool call, tool result, and answer, and settles the input", async () => {
 		const setup = chatSetup();
-		setup.registry.tools.add(
+		addTool(
+			setup.registry,
 			tool("echo", async (args) => ({
-				content: [{ type: "text", text: `echo ${(args as { text: string }).text}` }],
+				content: [{ type: "text", text: `echo ${args.text}` }],
 			})),
 		);
 		const { harness, root, entries, status } = await run(setup, [calls(["echo", { text: "hi" }, "c1"]), DONE]);
@@ -109,7 +113,10 @@ describe("tool round", () => {
 
 	it("answers calls to tools the request did not offer without a task", async () => {
 		const setup = chatSetup();
-		setup.registry.tools.add(tool("echo", async () => ({ content: [] })));
+		addTool(
+			setup.registry,
+			tool("echo", async () => ({ content: [] })),
+		);
 		const { harness, root, entries, status } = await run(setup, [
 			calls(["ghost", {}, "c1"], ["echo", {}, "c2"]),
 			DONE,
@@ -128,10 +135,11 @@ describe("tool round", () => {
 		await harness.close(context);
 	});
 
-	it("still executes a tool that was deactivated after preparation", async () => {
+	it("answers a call to a tool deactivated after preparation with tool_unavailable", async () => {
 		const setup = chatSetup();
 		const seen: string[] = [];
-		setup.registry.tools.add(
+		addTool(
+			setup.registry,
 			tool("echo", async () => {
 				seen.push("ran");
 				return { content: [] };
@@ -139,14 +147,14 @@ describe("tool round", () => {
 		);
 		let root!: Conversation;
 		const deactivate: FauxResponseStep = async () => {
-			await root.setActiveTools([], context);
+			await root.configure({ tools: [] }, context);
 			return calls(["echo", {}, "c1"]);
 		};
 		const result = await run(setup, [deactivate, DONE], async (_harness, conversation) => {
 			root = conversation;
 		});
-		expect(seen).toEqual(["ran"]);
-		expect(results(result.entries)[0]!.isError).toBe(false);
+		expect(seen).toEqual([]);
+		expect(resultText(results(result.entries)[0]!)).toBe("<harness>\n[error] Tool echo is not available\n</harness>");
 		// The next preparation removes it.
 		const systems = result.entries.filter((entry) => entry.kind === "pi.system");
 		expect((systems.at(-1)!.model![0] as SystemMessage).toolsRemoved).toEqual([{ name: "echo" }]);
@@ -156,7 +164,7 @@ describe("tool round", () => {
 	it("removes unregistered active tools from the offer and adds them back after re-registration", async () => {
 		const setup = chatSetup();
 		const echo = tool("echo", async () => ({ content: [] }));
-		const registration = setup.registry.tools.add(echo);
+		const registration = addTool(setup.registry, echo);
 		const first = await run(setup, [DONE]);
 		registration.dispose();
 		setup.faux.setResponses([calls(["echo", {}, "c1"]), DONE]);
@@ -166,9 +174,10 @@ describe("tool round", () => {
 		const removal = entries.filter((entry) => entry.kind === "pi.system").at(-1)!.model![0] as SystemMessage;
 		expect(removal.toolsRemoved).toEqual([{ name: "echo" }]);
 		expect(results(entries)[0]).toMatchObject({ isError: true });
-		expect(await first.root.getActiveTools(context)).toEqual(["echo"]);
+		// The stored agent is not rewritten; the tool is only not resolved.
+		expect((await first.root.agent(context)).tools).toEqual([]);
 
-		setup.registry.tools.add(echo);
+		addTool(setup.registry, echo);
 		setup.faux.setResponses([DONE]);
 		await (await first.root.submit({ type: "input", content: "back" }, context)).wait(context);
 		entries = await allEntries(first.root);
@@ -179,8 +188,9 @@ describe("tool round", () => {
 
 	it("produces tool_unavailable when the implementation is unregistered before its task runs", async () => {
 		const setup = chatSetup();
-		let second!: Registration;
-		setup.registry.tools.add(
+		let second!: Installed;
+		addTool(
+			setup.registry,
 			tool(
 				"first",
 				async () => {
@@ -190,11 +200,39 @@ describe("tool round", () => {
 				{ executionMode: "sequential" },
 			),
 		);
-		second = setup.registry.tools.add(tool("second", async () => ({ content: [{ type: "text", text: "ran" }] })));
+		second = addTool(
+			setup.registry,
+			tool("second", async () => ({ content: [{ type: "text", text: "ran" }] })),
+		);
 		const { harness, entries, status } = await run(setup, [calls(["first", {}, "c1"], ["second", {}, "c2"]), DONE]);
 		expect(status).toBe("done");
 		const [, late] = results(entries);
 		expect(resultText(late!)).toBe("<harness>\n[error] Tool second is not available\n</harness>");
+		await harness.close(context);
+	});
+
+	it("reads the execution mode when a round starts and keeps it for the round", async () => {
+		const setup = chatSetup();
+		const events: string[] = [];
+		const slow =
+			(name: string): Execute =>
+			async () => {
+				events.push(`start ${name}`);
+				// Changed after the round started: not seen by this round.
+				setup.settings.toolExecution = "parallel";
+				await new Promise((resolve) => setTimeout(resolve, 20));
+				events.push(`end ${name}`);
+				return { content: [] };
+			};
+		addTool(setup.registry, tool("a", slow("a")));
+		addTool(setup.registry, tool("b", slow("b")));
+		// Changed while the model request runs: the round that follows uses it.
+		const request: FauxResponseStep = () => {
+			setup.settings.toolExecution = "sequential";
+			return calls(["a", {}, "c1"], ["b", {}, "c2"]);
+		};
+		const { harness } = await run(setup, [request, DONE]);
+		expect(events).toEqual(["start a", "end a", "start b", "end b"]);
 		await harness.close(context);
 	});
 
@@ -209,8 +247,8 @@ describe("tool round", () => {
 					events.push(`end ${name}`);
 					return { content: [] };
 				};
-			if (setup.registry.snapshot().tool("a") === undefined) setup.registry.tools.add(tool("a", slow("a")));
-			if (setup.registry.snapshot().tool("b") === undefined) setup.registry.tools.add(tool("b", slow("b")));
+			if (setup.registry.snapshot().extension("tool:a") === undefined) addTool(setup.registry, tool("a", slow("a")));
+			if (setup.registry.snapshot().extension("tool:b") === undefined) addTool(setup.registry, tool("b", slow("b")));
 			const result = await run(setup, [calls(["a", {}, "c1"], ["b", {}, "c2"]), DONE], (_harness, root) =>
 				prepare === undefined ? Promise.resolve() : prepare(root),
 			);
@@ -218,11 +256,14 @@ describe("tool round", () => {
 			return events;
 		};
 		expect((await trace(chatSetup())).slice(0, 2)).toEqual(["start a", "start b"]);
-		const sequential = await trace(chatSetup(), (root) => root.setToolExecution("sequential", context));
+		const configured = chatSetup();
+		configured.settings.toolExecution = "sequential";
+		const sequential = await trace(configured);
 		expect(sequential).toEqual(["start a", "end a", "start b", "end b"]);
 		const perTool = chatSetup();
 		const events: string[] = [];
-		perTool.registry.tools.add(
+		addTool(
+			perTool.registry,
 			tool(
 				"a",
 				async () => {
@@ -233,7 +274,8 @@ describe("tool round", () => {
 				{ executionMode: "sequential" },
 			),
 		);
-		perTool.registry.tools.add(
+		addTool(
+			perTool.registry,
 			tool("b", async () => {
 				events.push("b");
 				return { content: [] };
@@ -253,7 +295,8 @@ describe("tool round", () => {
 describe("tool results", () => {
 	it("uses retained output and the last details when the result omits them, with diagnostics in order", async () => {
 		const setup = chatSetup();
-		setup.registry.tools.add(
+		addTool(
+			setup.registry,
 			tool(
 				"log",
 				async (_args, api) => {
@@ -285,7 +328,8 @@ describe("tool results", () => {
 	it("bounds explicit text content and keeps other content", async () => {
 		const setup = chatSetup();
 		const image = { type: "image", data: "AAAA", mimeType: "image/png" } as const;
-		setup.registry.tools.add(
+		addTool(
+			setup.registry,
 			tool(
 				"big",
 				async () => ({
@@ -303,7 +347,8 @@ describe("tool results", () => {
 
 	it("turns a throw into a tool_error result with the partial output", async () => {
 		const setup = chatSetup();
-		setup.registry.tools.add(
+		addTool(
+			setup.registry,
 			tool("fail", async (_args, api) => {
 				api.output("partial\n");
 				throw new Error("boom");
@@ -319,14 +364,15 @@ describe("tool results", () => {
 
 	it("validates arguments before and after beforeTool and applies blocks and replacements", async () => {
 		const setup = chatSetup();
-		const seen: JsonValue[] = [];
-		setup.registry.tools.add(
+		const seen: { text?: string }[] = [];
+		addTool(
+			setup.registry,
 			tool("echo", async (args) => {
 				seen.push(args);
 				return { content: [] };
 			}),
 		);
-		setup.registry.hooks.add(ToolTask, {
+		addHooks(setup.registry, ToolTask, {
 			beforeTool: (call) => {
 				if (call.id === "block") return { block: "not today" };
 				if (call.id === "throw") throw new Error("hook failed");
@@ -363,8 +409,9 @@ describe("tool results", () => {
 
 	it("repairs arguments with prepareArguments before validation, and a throwing repair is invalid", async () => {
 		const setup = chatSetup();
-		const seen: JsonValue[] = [];
-		setup.registry.tools.add(
+		const seen: { text?: string }[] = [];
+		addTool(
+			setup.registry,
 			tool(
 				"echo",
 				async (args) => {
@@ -375,7 +422,7 @@ describe("tool results", () => {
 					prepareArguments: (args) => {
 						const text = (args as { text?: unknown }).text;
 						if (text === "throw") throw new Error("cannot repair");
-						return typeof text === "number" ? { text: `#${text}` } : args;
+						return typeof text === "number" ? { text: `#${text}` } : (args as { text?: string });
 					},
 				},
 			),
@@ -396,15 +443,18 @@ describe("tool results", () => {
 
 	it("lets the first beforeTool block win and skips later handlers", async () => {
 		const setup = chatSetup();
-		setup.registry.tools.add(tool("echo", async () => ({ content: [] })));
+		addTool(
+			setup.registry,
+			tool("echo", async () => ({ content: [] })),
+		);
 		const asked: string[] = [];
-		setup.registry.hooks.add(ToolTask, {
+		addHooks(setup.registry, ToolTask, {
 			beforeTool: () => {
 				asked.push("first");
 				return { block: "first says no" };
 			},
 		});
-		setup.registry.hooks.add(ToolTask, {
+		addHooks(setup.registry, ToolTask, {
 			beforeTool: () => {
 				asked.push("second");
 				return { block: "second says no" };
@@ -418,15 +468,18 @@ describe("tool results", () => {
 
 	it("chains afterTool replacements and observes the round with afterTools", async () => {
 		const setup = chatSetup();
-		setup.registry.tools.add(tool("echo", async () => ({ content: [{ type: "text", text: "raw" }] })));
-		setup.registry.hooks.add(ToolTask, {
+		addTool(
+			setup.registry,
+			tool("echo", async () => ({ content: [{ type: "text", text: "raw" }] })),
+		);
+		addHooks(setup.registry, ToolTask, {
 			afterTool: (_call, result) => ({ ...result, content: [{ type: "text", text: "first" }] }),
 		});
-		setup.registry.hooks.add(ToolTask, {
+		addHooks(setup.registry, ToolTask, {
 			afterTool: (_call, result) => ({ ...result, details: { replaced: resultText(result as ToolResultMessage) } }),
 		});
 		const observed: unknown[] = [];
-		setup.registry.hooks.add(GenerationTask, {
+		addHooks(setup.registry, GenerationTask, {
 			afterTools: (assistant, entries) => void observed.push(assistant, entries),
 		});
 		const { harness, entries } = await run(setup, [calls(["echo", {}, "c1"]), DONE]);
@@ -438,11 +491,20 @@ describe("tool results", () => {
 		await harness.close(context);
 	});
 
-	it("matches hook scopes to the conversation and its owned subtree", async () => {
+	it("runs the hooks of the selected extensions; a task-owned child copies its owner's selection", async () => {
 		const setup = chatSetup();
-		setup.registry.tools.add(tool("echo", async () => ({ content: [] })));
 		const calledIn: number[] = [];
+		const Echo = defineExtension({ name: "echo", tools: [tool("echo", async () => ({ content: [] }))] });
+		const Audit = defineExtension({
+			name: "audit",
+			hooks: [hook(ToolTask, { beforeTool: (_call, api) => void calledIn.push(api.conversationId) })],
+		});
+		setup.registry.install(Echo);
+		setup.registry.install(Audit);
+		// Audit is installed but not in the default selection.
+		setup.settings.extensions = [Echo];
 		const first = await run(setup, [DONE]);
+		await first.root.configure({ extensions: { add: [Audit] } }, context);
 		// An owner task no registered definition takes stays live and pending.
 		const owner = defineTask<Record<string, never>, { phase: "never" }, null>({
 			name: "test.owner",
@@ -460,35 +522,30 @@ describe("tool results", () => {
 			return (await tx.createConversation({ ownership: { kind: "task", taskId } })).id;
 		}, context);
 		const child = (await first.harness.conversation(childId, context))!;
-		const other = await first.harness.createConversation({ ownership: { kind: "ownerless" } }, context);
-		for (const conversation of [child, other]) {
-			await conversation.setModel({ provider: "faux", modelId: "faux-1" }, context);
-		}
-		setup.registry.hooks.add(
-			ToolTask,
-			{ beforeTool: (_call, api) => void calledIn.push(api.conversationId) },
-			{ scope: { conversationId: first.root.id, subtree: true } },
-		);
-		setup.registry.hooks.add(
-			ToolTask,
-			{ beforeTool: (_call, api) => void calledIn.push(-api.conversationId) },
-			{ scope: { conversationId: first.root.id } },
+		const other = await first.harness.createConversation(
+			{ ownership: { kind: "ownerless" }, agent: { model: { provider: "faux", modelId: "faux-1" } } },
+			context,
 		);
 		for (const conversation of [first.root, child, other]) {
 			setup.faux.setResponses([calls(["echo", {}, "c1"]), DONE]);
 			await (await conversation.submit({ type: "input", content: "go" }, context)).wait(context);
 		}
-		expect(calledIn).toEqual([first.root.id, -first.root.id, child.id]);
+		expect(calledIn).toEqual([first.root.id, child.id]);
 		await first.harness.close(context);
 	});
 
 	it("applies addTools and terminates only when every result of the round asks to", async () => {
 		const setup = chatSetup();
-		setup.registry.tools.add(tool("stop", async () => ({ content: [], control: { terminate: true } })));
-		setup.registry.tools.add(tool("grow", async () => ({ content: [], control: { addTools: ["extra", "stop"] } })));
-		setup.registry.tools.add(tool("extra", async () => ({ content: [] })));
+		const stop = tool("stop", async () => ({ content: [], control: { terminate: true } }));
+		const grow = tool("grow", async () => ({ content: [], control: { addTools: ["extra", "stop"] } }));
+		addTool(setup.registry, stop);
+		addTool(setup.registry, grow);
+		addTool(
+			setup.registry,
+			tool("extra", async () => ({ content: [] })),
+		);
 		const first = await run(setup, [calls(["stop", {}, "c1"])], async (_harness, root) => {
-			await root.setActiveTools(["stop", "grow"], context);
+			await root.configure({ tools: [stop, grow] }, context);
 		});
 		expect(first.status).toBe("done");
 		expect(first.entries.at(-1)!.kind).toBe("pi.tool-result");
@@ -499,7 +556,12 @@ describe("tool results", () => {
 		const second = await (await first.root.submit({ type: "input", content: "again" }, context)).wait(context);
 		expect(second.status).toBe("done");
 		expect((await allEntries(first.root)).at(-1)!.kind).toBe("pi.assistant");
-		expect(await first.root.getActiveTools(context)).toEqual(["stop", "grow", "extra"]);
+		// addTools appends to the stored tool array, skipping names it already holds.
+		expect((await first.harness.snapshot(AgentDoc, first.root.id, context))?.tools).toEqual([
+			"stop",
+			"grow",
+			"extra",
+		]);
 		await first.harness.close(context);
 	});
 });
@@ -512,17 +574,17 @@ describe("generation hooks", () => {
 			requests.push(request.messages.map((message) => `${message.role}:${textOf(message as never) ?? ""}`));
 			return fauxAssistantMessage([fauxText(`answer ${requests.length}`)]);
 		};
-		setup.registry.hooks.add(GenerationTask, {
+		addHooks(setup.registry, GenerationTask, {
 			beforeRequest: ({ messages }) => ({
 				messages: [...messages, { role: "user", content: "injected", timestamp: 0 }],
 			}),
 		});
 		const responses: string[] = [];
-		setup.registry.hooks.add(GenerationTask, {
+		addHooks(setup.registry, GenerationTask, {
 			afterResponse: (message) => void responses.push(textOf(message) ?? ""),
 		});
 		let yields = 0;
-		setup.registry.hooks.add(GenerationTask, {
+		addHooks(setup.registry, GenerationTask, {
 			onYield: () => (yields++ === 0 ? { continue: [{ type: "text", text: "keep going" }] } : undefined),
 		});
 		const { harness, entries, status } = await run(setup, [record, record]);
@@ -541,7 +603,7 @@ describe("generation hooks", () => {
 		let harness!: Harness;
 		let input: SubmissionId | undefined;
 		let statusAtSecondRequest: string | undefined;
-		setup.registry.hooks.add(GenerationTask, {
+		addHooks(setup.registry, GenerationTask, {
 			onYield: () => (yields++ === 0 ? { continue: "again" } : undefined),
 		});
 		const second: FauxResponseStep = async () => {
@@ -564,12 +626,11 @@ describe("generation hooks", () => {
 	it("observes responses that arrive by polling a deferred request", async () => {
 		const setup = chatSetup({ deferred: { pendingFetches: 1, pollAfterMs: 1 } });
 		const observed: string[] = [];
-		setup.registry.hooks.add(GenerationTask, {
+		addHooks(setup.registry, GenerationTask, {
 			afterResponse: (message) => void observed.push(`${message.stopReason}:${textOf(message) ?? ""}`),
 		});
-		const result = await run(setup, [fauxAssistantMessage([fauxText("late")])], (_harness, conversation) =>
-			conversation.setStreamOptions({ deferred: true }, context),
-		);
+		setup.settings.stream = { deferred: true };
+		const result = await run(setup, [fauxAssistantMessage([fauxText("late")])]);
 		expect(result.status).toBe("done");
 		// The still-deferred results are not terminal.
 		expect(observed).toEqual(["stop:late"]);
@@ -579,18 +640,18 @@ describe("generation hooks", () => {
 	it("lets the first onYield continuation win and reports throws without stopping later handlers", async () => {
 		const setup = chatSetup();
 		const called: string[] = [];
-		setup.registry.hooks.add(GenerationTask, {
+		addHooks(setup.registry, GenerationTask, {
 			afterResponse: () => {
 				called.push("throwing observer");
 				throw new Error("observer failed");
 			},
 		});
-		setup.registry.hooks.add(GenerationTask, { afterResponse: () => void called.push("next observer") });
+		addHooks(setup.registry, GenerationTask, { afterResponse: () => void called.push("next observer") });
 		let yields = 0;
-		setup.registry.hooks.add(GenerationTask, {
+		addHooks(setup.registry, GenerationTask, {
 			onYield: () => (yields++ === 0 ? { continue: "first" } : undefined),
 		});
-		setup.registry.hooks.add(GenerationTask, {
+		addHooks(setup.registry, GenerationTask, {
 			onYield: () => {
 				called.push("second onYield");
 				return called.filter((name) => name === "second onYield").length === 1 ? { continue: "second" } : undefined;
@@ -613,8 +674,11 @@ describe("generation hooks", () => {
 	it("keeps durable hook decisions in task memos", async () => {
 		const setup = chatSetup();
 		let asked = 0;
-		setup.registry.tools.add(tool("echo", async () => ({ content: [] })));
-		setup.registry.hooks.add(ToolTask, {
+		addTool(
+			setup.registry,
+			tool("echo", async () => ({ content: [] })),
+		);
+		addHooks(setup.registry, ToolTask, {
 			beforeTool: async (_call, api) => {
 				asked++;
 				const decision = await api.memo("approval:decision", "approved", context);
@@ -629,10 +693,8 @@ describe("generation hooks", () => {
 });
 
 describe("tool execution api", () => {
-	it("provides the Harness environment, lets wrappers replace it, and runs commits, memos, and child tasks", async () => {
+	it("builds the environment per call from the conversation's cwd and runs commits, memos, and child tasks", async () => {
 		const setup = chatSetup();
-		const env = new NodeExecutionEnv({ cwd: "/tmp" });
-		const other = new NodeExecutionEnv({ cwd: "/" });
 		const child = defineTask<{ n: number }, { phase: "run" }, number>({
 			name: "test.child",
 			version: 1,
@@ -647,36 +709,60 @@ describe("tool execution api", () => {
 			},
 			abort: async () => {},
 		});
-		setup.registry.tasks.add(child);
+		addTask(setup.registry, child);
 		const seen: unknown[] = [];
-		setup.registry.tools.add(
-			tool("probe", async (_args, api) => {
-				seen.push(api.env?.cwd);
-				const entry = await api.commit(
-					(tx) => tx.appendEntry(api.conversationId, { kind: "test.note", data: api.callId }),
-					context,
-				);
-				seen.push(entry.byTaskId === api.taskId);
-				seen.push(await api.memo("m", 1, context), await api.memo("m", 2, context));
-				const id = await api.createTask(child, { n: 21 }, { ownership: { kind: "conversation" } }, context);
-				const done = await api.waitForTask(id, context);
-				seen.push(done.state.outcome);
-				return { content: [] };
-			}),
-		);
-		setup.registry.tools.wrap("probe", "cwd", (base) => ({
-			...base,
-			execute: (args, api, callContext) =>
-				api.callId === "c2"
-					? base.execute(args, { ...api, env: other }, callContext)
-					: base.execute(args, api, callContext),
-		}));
+		const probe = tool("probe", async (_args, api) => {
+			seen.push(api.env?.cwd);
+			seen.push((await api.agent(context)).tools.map((each) => each.name));
+			seen.push(api.registry.extension("tool:probe") !== undefined);
+			const entry = await api.commit(async (tx) => {
+				// The next call runs in the new directory: its environment is built when it executes.
+				await configure(tx, api.conversationId, { cwd: "/" });
+				return tx.appendEntry(api.conversationId, { kind: "test.note", data: api.callId });
+			}, context);
+			seen.push(entry.byTaskId === api.taskId);
+			seen.push(await api.memo("m", 1, context), await api.memo("m", 2, context));
+			const id = await api.createTask(child, { n: 21 }, { ownership: { kind: "conversation" } }, context);
+			const done = await api.waitForTask(id, context);
+			seen.push(done.state.outcome);
+			return { content: [] };
+		});
+		addTool(setup.registry, probe);
 		setup.faux.setResponses([calls(["probe", {}, "c1"], ["probe", {}, "c2"]), DONE]);
-		const { harness, root } = await openChat(new MemoryStorage(), setup, { env });
-		await root.setToolExecution("sequential", context);
+		setup.settings.toolExecution = "sequential";
+		const targets: unknown[] = [];
+		const { harness, root } = await openChat(new MemoryStorage(), setup, {
+			env: ({ conversationId, cwd }) => {
+				targets.push([conversationId, cwd]);
+				return new NodeExecutionEnv({ cwd: cwd ?? "/tmp" });
+			},
+		});
+		await root.configure({ cwd: "/tmp" }, context);
 		await (await root.submit({ type: "input", content: "go" }, context)).wait(context);
 		const outcome = { status: "completed", result: 42 };
-		expect(seen).toEqual(["/tmp", true, 1, 1, outcome, "/", true, 1, 1, outcome]);
+		const call = (cwd: string) => [cwd, ["probe"], true, true, 1, 1, outcome];
+		expect(seen).toEqual([...call("/tmp"), ...call("/")]);
+		expect(targets).toContainEqual([root.id, "/tmp"]);
+		expect(targets).toContainEqual([root.id, "/"]);
+		await harness.close(context);
+	});
+
+	it("answers a throwing environment with a tool_error result and reports it once while preparing", async () => {
+		const setup = chatSetup();
+		addTool(
+			setup.registry,
+			tool("probe", async () => ({ content: [{ type: "text", text: "ran" }] })),
+		);
+		const { harness, entries } = await run(setup, [calls(["probe", {}, "c1"]), DONE], undefined, {
+			env: () => {
+				throw new Error("no sandbox");
+			},
+		});
+		const [result] = results(entries);
+		expect(result).toMatchObject({ isError: true });
+		expect(resultText(result!)).toBe("<harness>\n[error] no sandbox\n</harness>");
+		// Each preparation reports the failure and renders without an environment.
+		expect(setup.reports.filter((error) => (error as Error).message === "no sandbox").length).toBe(2);
 		await harness.close(context);
 	});
 });
@@ -686,7 +772,7 @@ describe("coding tools", () => {
 		const directory = mkdtempSync(join(tmpdir(), "pi-durable-coding-"));
 		try {
 			const setup = chatSetup();
-			setup.registry.tools.add(createBashTool());
+			addTool(setup.registry, createBashTool());
 			const command = "i=1; while [ $i -le 3000 ]; do echo line-$i; i=$((i + 1)); done; exit 7";
 			setup.faux.setResponses([calls(["bash", { command }, "b"]), DONE]);
 			const env = new NodeExecutionEnv({ cwd: directory });
@@ -717,11 +803,9 @@ describe("coding tools", () => {
 		try {
 			writeFileSync(join(directory, "notes.txt"), "hello world\n");
 			const setup = chatSetup();
-			setup.registry.batch(() => {
-				setup.registry.tools.add(createReadTool());
-				setup.registry.tools.add(createEditTool());
-				setup.registry.tools.add(createBashTool());
-			});
+			setup.registry.install(
+				defineExtension({ name: "coding", tools: [createReadTool(), createEditTool(), createBashTool()] }),
+			);
 			setup.faux.setResponses([
 				calls(["read", { path: "notes.txt" }, "r"]),
 				calls(["edit", { path: "notes.txt", edits: [{ oldText: "world", newText: "durable" }] }, "e"]),
@@ -750,7 +834,8 @@ describe("coding tools", () => {
 describe("tool progress and lifetime", () => {
 	it("applies the default output limits", async () => {
 		const setup = chatSetup();
-		setup.registry.tools.add(
+		addTool(
+			setup.registry,
 			tool("lines", async (_args, api) => {
 				for (let index = 1; index <= 2500; index++) api.output(`${index}\n`);
 				return {};
@@ -770,7 +855,8 @@ describe("tool progress and lifetime", () => {
 	it("sanitizes running output but keeps explicit result content as the tool returned it", async () => {
 		const setup = chatSetup();
 		let slotOutput: string | undefined;
-		setup.registry.tools.add(
+		addTool(
+			setup.registry,
 			tool("noisy", async (_args, api) => {
 				api.output("a\u0007b\r\n");
 				await api.details({ ready: true }, context);
@@ -778,7 +864,10 @@ describe("tool progress and lifetime", () => {
 				return {};
 			}),
 		);
-		setup.registry.tools.add(tool("explicit", async () => ({ content: [{ type: "text", text: "c\u001bd" }] })));
+		addTool(
+			setup.registry,
+			tool("explicit", async () => ({ content: [{ type: "text", text: "c\u001bd" }] })),
+		);
 		const { harness, entries } = await run(setup, [calls(["noisy", {}, "c1"], ["explicit", {}, "c2"]), DONE]);
 		expect(slotOutput).toBe("ab\n");
 		const byId = new Map(results(entries).map((result) => [result.toolCallId, resultText(result)]));
@@ -789,21 +878,25 @@ describe("tool progress and lifetime", () => {
 
 	it("drops control keys set to undefined instead of faulting", async () => {
 		const setup = chatSetup();
-		setup.registry.tools.add(
+		addTool(
+			setup.registry,
 			tool("grow", async () => ({ content: [], control: { addTools: ["extra"], terminate: undefined } })),
 		);
-		setup.registry.tools.add(tool("extra", async () => ({ content: [] })));
+		const extra = tool("extra", async () => ({ content: [] }));
+		addTool(setup.registry, extra);
 		const { harness, root, status } = await run(setup, [calls(["grow", {}, "c1"]), DONE], (_harness, conversation) =>
-			conversation.setActiveTools(["grow"], context),
+			conversation.configure({ tools: { remove: [extra] } }, context),
 		);
 		expect(status).toBe("done");
-		expect(await root.getActiveTools(context)).toEqual(["grow", "extra"]);
+		// addTools deletes the name from a stored `{ remove }` filter.
+		expect((await harness.snapshot(AgentDoc, root.id, context))?.tools).toEqual({ remove: [] });
 		await harness.close(context);
 	});
 
 	it("uses explicit null details instead of the last reported value", async () => {
 		const setup = chatSetup();
-		setup.registry.tools.add(
+		addTool(
+			setup.registry,
 			tool("null", async (_args, api) => {
 				await api.details({ old: 1 }, context);
 				return { content: [], details: null };
@@ -817,7 +910,8 @@ describe("tool progress and lifetime", () => {
 	it("settles details() promises with coalesced progress commits and the terminal commit", async () => {
 		const setup = chatSetup();
 		const settled: string[] = [];
-		setup.registry.tools.add(
+		addTool(
+			setup.registry,
 			tool("details", async (_args, api) => {
 				// Three updates in one throttle window coalesce; the last is still pending when execute() returns.
 				const first = api.details({ n: 1 }, context).then(() => settled.push("first"));
@@ -849,19 +943,55 @@ describe("tool progress and lifetime", () => {
 			await finished;
 			return { content: [{ type: "text", text: "v1" }] };
 		});
-		let registration = setup.registry.tools.add(v1);
+		addTool(setup.registry, v1);
 		setup.faux.setResponses([calls(["work", {}, "c1"]), DONE]);
 		const { harness, root } = await openChat(new MemoryStorage(), setup);
 		const submission = await root.submit({ type: "input", content: "go" }, context);
 		await started;
-		const previous = registration;
-		registration = setup.registry.batch(() => {
-			previous.dispose();
-			setup.registry.tools.add(tool("work", async () => ({ content: [{ type: "text", text: "v2" }] })));
-		});
+		// The same extension name replaces the old one in place.
+		addTool(
+			setup.registry,
+			tool("work", async () => ({ content: [{ type: "text", text: "v2" }] })),
+		);
 		finish();
 		await submission.wait(context);
 		expect(resultText(results(await allEntries(root))[0]!)).toBe("v1");
+		await harness.close(context);
+	});
+
+	it("uses a section and hook extension reloaded mid-run from the run's next request", async () => {
+		const setup = chatSetup();
+		const requests: string[] = [];
+		const prompt = (version: string) =>
+			defineExtension({
+				name: "prompt",
+				sections: [section("mode", () => version)],
+				hooks: [hook(GenerationTask, { beforeRequest: () => void requests.push(version) })],
+			});
+		setup.registry.install(prompt("v1"));
+		const running = deferred();
+		const reloaded = deferred();
+		addTool(
+			setup.registry,
+			tool("work", async () => {
+				running.resolve();
+				await reloaded.promise;
+				return { content: [] };
+			}),
+		);
+		setup.faux.setResponses([calls(["work", {}, "c1"]), DONE]);
+		const { harness, root } = await openChat(new MemoryStorage(), setup);
+		const submission = await root.submit({ type: "input", content: "go" }, context);
+		await running.promise;
+		setup.registry.install(prompt("v2"));
+		reloaded.resolve();
+		await submission.wait(context);
+		const sections = (await allEntries(root)).flatMap((entry) => {
+			const message = entry.model?.[0];
+			return message?.role === "system" && message.sections !== undefined ? [message.sections] : [];
+		});
+		expect(sections).toEqual([{ mode: "<mode>\nv1\n</mode>" }, { mode: "<mode>\nv2\n</mode>" }]);
+		expect(requests).toEqual(["v1", "v2"]);
 		await harness.close(context);
 	});
 
@@ -876,7 +1006,8 @@ describe("tool progress and lifetime", () => {
 		});
 		let wait!: Promise<unknown>;
 		let watchClosed!: Promise<unknown>;
-		setup.registry.tools.add(
+		addTool(
+			setup.registry,
 			tool("detach", async (_args, api) => {
 				// The child's definition is not registered, so it stays pending.
 				const child = await api.createTask(never, {}, { ownership: { kind: "conversation" } }, context);
@@ -897,7 +1028,8 @@ describe("tool progress and lifetime", () => {
 		const setup = chatSetup();
 		let pendingDetails!: Promise<void>;
 		const inAfterTool = deferred();
-		setup.registry.tools.add(
+		addTool(
+			setup.registry,
 			tool("slow", async (_args, api) => {
 				api.output("first\n");
 				// The output commit is in flight, so these details wait for the next throttle window.
@@ -906,7 +1038,7 @@ describe("tool progress and lifetime", () => {
 				return {};
 			}),
 		);
-		setup.registry.hooks.add(ToolTask, {
+		addHooks(setup.registry, ToolTask, {
 			afterTool: async (_call, _result, _api, callContext) => {
 				inAfterTool.resolve();
 				await aborted(callContext.abortSignal!);
@@ -930,7 +1062,8 @@ describe("tool progress and lifetime", () => {
 		const buffered = new Promise<void>((resolve) => {
 			reached = resolve;
 		});
-		setup.registry.tools.add(
+		addTool(
+			setup.registry,
 			tool("slow", async (_args, api, callContext) => {
 				api.output("durable\n");
 				// The first output commits at once; this one waits for the next throttle window.

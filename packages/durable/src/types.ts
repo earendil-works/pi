@@ -2,7 +2,14 @@ import type { AttachedReplicatedState, Context, Draft, JsonValue } from "@earend
 import type { Op } from "@earendil-works/chord/delta";
 import type { Message, Models } from "@earendil-works/pi-ai";
 import type { ExecutionEnv } from "./env/index.ts";
-import type { ContextView, ConversationHandle, RegistrySnapshot, SettledTask } from "./harness/types.ts";
+import type {
+	Agent,
+	ContextView,
+	ConversationHandle,
+	RegistrySnapshot,
+	Settings,
+	SettledTask,
+} from "./harness/types.ts";
 
 /** JSON object used as the root of every durable document. */
 export type JsonObject = { [key: string]: JsonValue };
@@ -170,10 +177,14 @@ export interface TaskRuntime<I, S, R, H extends object> extends DocumentObserver
 	readonly signal: AbortSignal;
 	/** Registry snapshot of the current phase; refreshed at every phase boundary. */
 	readonly registry: RegistrySnapshot;
+	/** The task's conversation's agent, resolved at most once per phase, at first use, and fixed for the phase. */
+	agent(context: Context): Promise<Agent>;
+	/** `HarnessOptions.settings`, resolved at each access. */
+	readonly settings: Settings;
 	readonly models: Models;
-	/** `HarnessOptions.env`; tools receive it as `api.env`. */
-	readonly env: ExecutionEnv | undefined;
-	/** Handlers registered for this task's name whose scope matches its conversation. */
+	/** Calls `HarnessOptions.env` for the task's conversation; rejects with its error. */
+	env(context: Context): Promise<ExecutionEnv | undefined>;
+	/** Handlers of this task's name from the extensions its conversation selects, in extension order. */
 	readonly hooks: HookRunner<H>;
 
 	/**
@@ -749,6 +760,8 @@ export interface Tx {
 		limit: number,
 		cursor?: Cursor,
 	): Promise<Page<TaskRecord<JsonValue, JsonValue, JsonValue>, Cursor>>;
+	/** Committed submission with a conversation-scoped request ID. */
+	submissionByRequest(conversationId: ConversationId, requestId: string): Promise<SubmissionRecord | undefined>;
 
 	/** Create a conversation with explicitly selected ownership. */
 	createConversation(options: { readonly ownership: ConversationOwnership }): Promise<ConversationRecord>;
@@ -771,6 +784,11 @@ export interface Tx {
 		input: I,
 		options: TaskOptions,
 	): Promise<TaskId<R>>;
+	/**
+	 * Create a raw submission record with a fresh ID. No admission rules apply: no busy check, no inbox queueing, no
+	 * placement. Use `Conversation.submit()` or a conversation handle unless the caller implements admission itself.
+	 */
+	createSubmission(create: SubmissionCreate): Promise<SubmissionRecord>;
 	/**
 	 * Settle a queued or placed submission; only a placed input can be answered, and a settled submission stays
 	 * unchanged. Resolved against this transaction's latest record of the submission, so it works after table writes.

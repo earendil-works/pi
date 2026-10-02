@@ -1,18 +1,19 @@
-// System prompt sections.
+// System prompt sections and per-conversation instructions.
 // Run from packages/durable:
 //   node --conditions=source --experimental-strip-types test/examples/15-system-prompt.ts
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai/providers/faux";
+import { NodeExecutionEnv } from "../../src/env/node.ts";
 import {
 	type Conversation,
-	ConversationConfig,
-	type ConversationInit,
 	createRegistry,
-	defineDoc,
+	defineExtension,
 	Harness,
 	MemoryStorage,
 	SystemEntry,
+	section,
+	wrapSection,
 } from "../../src/index.ts";
 
 const context = BACKGROUND_CONTEXT;
@@ -21,49 +22,54 @@ const models = createModels();
 models.setProvider(faux.provider);
 faux.setResponses([fauxAssistantMessage("Done."), fauxAssistantMessage("Done."), fauxAssistantMessage("Done.")]);
 
-// Pico stores no prompt state. Before each model request, the registry's
-// sections render the desired prompt, and only the difference to what the
-// model already saw is appended to the transcript as a `pi.system` entry.
-// Sections read per-conversation data through `input.read`; here a coding
-// agent keeps its own profile document.
-const AgentProfile = defineDoc<{ role: "main" | "subagent"; cwd: string }>({
-	kind: "example.agent-profile",
-	version: 1,
-	scope: "conversation",
-	history: "rewindable",
-	fork: "asOf",
-	initial: () => ({ role: "main", cwd: "/repo" }),
+// Pico stores no prompt state. Before each model request, the sections of the
+// conversation's selected extensions render the desired prompt, and only the
+// difference to what the model already saw is appended to the transcript as a
+// `pi.system` entry.
+const Coding = defineExtension({
+	name: "coding",
+	sections: [
+		// `tag: false` sends the text as is; by default it is wrapped in <key>...</key>.
+		section("preamble", () => "You are a coding agent.", { tag: false }),
+		// Sections see the environment built for this request, here its working directory.
+		section("cwd", (input) => input.env?.cwd),
+	],
+});
+const AgentsMd = defineExtension({
+	name: "agents-md",
+	sections: [section("agents_md", () => "Run npm run check after changes.")],
+});
+// Another extension decorates a section by key without replacing it.
+const Terse = defineExtension({
+	name: "terse",
+	wraps: [
+		wrapSection("preamble", (preamble) => ({
+			...preamble,
+			render: async (input, renderContext) => `${await preamble.render(input, renderContext)} Be terse.`,
+		})),
+	],
 });
 
 const registry = createRegistry();
-// `tag: false` sends the text as is; by default it is wrapped in <key>...</key>.
-registry.systemPrompt.section("preamble", () => "You are a coding agent.", { tag: false });
-registry.systemPrompt.section("cwd", async (input, renderContext) => {
-	return (await input.read.snapshot(AgentProfile, input.conversationId, renderContext))?.cwd;
-});
-// Returning undefined omits the section, here for subagents.
-registry.systemPrompt.section("agents_md", async (input, renderContext) => {
-	const profile = await input.read.snapshot(AgentProfile, input.conversationId, renderContext);
-	return profile?.role === "subagent" ? undefined : "Run npm run check after changes.";
-});
-// Another extension decorates a section without replacing it.
-registry.systemPrompt.wrap("preamble", "tone", (section) => ({
-	...section,
-	render: async (input, renderContext) => `${await section.render(input, renderContext)} Be terse.`,
-}));
+registry.install(Coding);
+registry.install(AgentsMd);
+registry.install(Terse);
+// The environment follows each conversation's agent `cwd`.
+const env = ({ cwd = "/" }: { readonly cwd?: string }) => new NodeExecutionEnv({ cwd });
+const harness = await Harness.open(new MemoryStorage(), { models, registry, env }, context);
+const model = { provider: "faux", modelId: "faux-1" };
+const root = await harness.root(context, { agent: { model, cwd: "/repo" } });
 
-const harness = await Harness.open(new MemoryStorage(), { models, registry }, context);
-const withModel: ConversationInit = async (tx, id) => {
-	(await tx.doc(ConversationConfig, id)).model = { provider: "faux", modelId: "faux-1" };
-	await tx.doc(AgentProfile, id);
-};
-const root = await harness.root(context, { init: withModel });
+// A subagent deselects AGENTS.md and gets its own instructions, rendered last
+// as the `instructions` section.
 const subagent = await harness.createConversation(
 	{
 		ownership: { kind: "ownerless" },
-		init: async (tx, id) => {
-			await withModel(tx, id);
-			(await tx.doc(AgentProfile, id)).role = "subagent";
+		agent: {
+			model,
+			cwd: "/repo",
+			extensions: { remove: [AgentsMd] },
+			instructions: "Only read; never edit files.",
 		},
 	},
 	context,
@@ -80,9 +86,7 @@ console.log("root system prompt:", await systemEntries(root));
 console.log("subagent system prompt:", await systemEntries(subagent));
 
 // When a section's output changes, the next request appends only the change.
-await root.commit(async (tx) => {
-	(await tx.doc(AgentProfile, root.id)).cwd = "/repo/packages";
-}, context);
+await root.configure({ cwd: "/repo/packages" }, context);
 await (await root.submit({ type: "input", content: "Now the package." }, context)).wait(context);
 console.log("root system entries after cwd change:", await systemEntries(root));
 

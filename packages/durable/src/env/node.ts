@@ -435,6 +435,8 @@ class NodeTextLineReader implements TextLineReader {
 }
 
 export class NodeExecutionEnv implements ExecutionEnv {
+	/** Every local environment sees the same files. */
+	readonly id: string = "node:local";
 	cwd: string;
 	private shellPath?: string;
 	private shellEnv?: NodeJS.ProcessEnv;
