@@ -1244,20 +1244,11 @@ function buildAdditionalModelRequestFields(
 	if (isAnthropicClaudeModel(model)) {
 		// GovCloud Bedrock currently rejects the Claude thinking.display field.
 		// Omit it there until the GovCloud Converse schema catches up.
-		const govCloud = isGovCloudBedrockTarget(model, options);
-		const display = govCloud ? undefined : (options.thinkingDisplay ?? "summarized");
-		// A signed thinking block is bound to the system prompt and tools it was created with.
-		// Replaying it after either changed is a 400 unless the block is dropped instead.
-		const blockBinding = !govCloud && model.compat?.supportsThinkingBindingControls === true;
+		const display = isGovCloudBedrockTarget(model, options) ? undefined : (options.thinkingDisplay ?? "summarized");
 		const result: Record<string, any> = supportsAdaptiveThinking(model.id, model.name)
 			? {
-					thinking: {
-						type: "adaptive",
-						...(display !== undefined ? { display } : {}),
-						...(blockBinding ? { block_binding: { prefix_mismatch_behavior: "drop_block" } } : {}),
-					},
+					thinking: { type: "adaptive", ...(display !== undefined ? { display } : {}) },
 					output_config: { effort: mapThinkingLevelToEffort(model, options.reasoning) },
-					...(blockBinding ? { anthropic_beta: ["thinking-binding-controls-2026-08-01"] } : {}),
 				}
 			: (() => {
 					const defaultBudgets: Record<ThinkingLevel, number> = {
@@ -1284,6 +1275,16 @@ function buildAdditionalModelRequestFields(
 
 		if (!supportsAdaptiveThinking(model.id, model.name) && (options.interleavedThinking ?? true)) {
 			result.anthropic_beta = ["interleaved-thinking-2025-05-14"];
+		}
+
+		// A signed thinking block is bound to the system prompt and tools it was created with.
+		// Replaying it after either changed is a 400 unless the block is dropped instead.
+		// GovCloud is left out for the same reason as display.
+		const supportsBlockBinding =
+			model.compat?.supportsThinkingBindingControls === true && !isGovCloudBedrockTarget(model, options);
+		if (supportsBlockBinding && result.thinking.type === "adaptive") {
+			result.thinking.block_binding = { prefix_mismatch_behavior: "drop_block" };
+			result.anthropic_beta = ["thinking-binding-controls-2026-08-01"];
 		}
 
 		return result;
