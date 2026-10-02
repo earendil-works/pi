@@ -11,6 +11,29 @@ export interface AzureEndpointOptions extends StreamOptions {
 	azureDeploymentName?: string;
 }
 
+function parseDeploymentNameMap(value: string | undefined): Map<string, string> {
+	const map = new Map<string, string>();
+	if (!value) return map;
+	for (const entry of value.split(",")) {
+		const trimmed = entry.trim();
+		if (!trimmed) continue;
+		const [modelId, deploymentName] = trimmed.split("=", 2);
+		if (!modelId || !deploymentName) continue;
+		map.set(modelId.trim(), deploymentName.trim());
+	}
+	return map;
+}
+
+export function resolveDeploymentName(model: Pick<Model<Api>, "id">, options?: AzureEndpointOptions): string {
+	if (options?.azureDeploymentName) {
+		return options.azureDeploymentName;
+	}
+	const mappedDeployment = parseDeploymentNameMap(
+		getProviderEnvValue("AZURE_OPENAI_DEPLOYMENT_NAME_MAP", options?.env),
+	).get(model.id);
+	return mappedDeployment || model.id;
+}
+
 function normalizeAzureBaseUrl(baseUrl: string): string {
 	const trimmed = baseUrl.trim().replace(/\/+$/, "");
 	let url: URL;

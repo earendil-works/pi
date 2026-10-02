@@ -78,12 +78,14 @@ const azure = azureProvider();
 
 const originalBaseUrl = process.env.AZURE_OPENAI_BASE_URL;
 const originalCacheRetention = process.env.PI_CACHE_RETENTION;
+const originalDeploymentMap = process.env.AZURE_OPENAI_DEPLOYMENT_NAME_MAP;
 
 beforeEach(() => {
 	mockState.lastParams = undefined;
 	mockState.lastClientOptions = undefined;
 	mockState.dispatchedTo = undefined;
 	delete process.env.PI_CACHE_RETENTION;
+	delete process.env.AZURE_OPENAI_DEPLOYMENT_NAME_MAP;
 	process.env.AZURE_OPENAI_BASE_URL = "https://my-resource.services.ai.azure.com";
 });
 
@@ -92,6 +94,8 @@ afterEach(() => {
 	else process.env.AZURE_OPENAI_BASE_URL = originalBaseUrl;
 	if (originalCacheRetention === undefined) delete process.env.PI_CACHE_RETENTION;
 	else process.env.PI_CACHE_RETENTION = originalCacheRetention;
+	if (originalDeploymentMap === undefined) delete process.env.AZURE_OPENAI_DEPLOYMENT_NAME_MAP;
+	else process.env.AZURE_OPENAI_DEPLOYMENT_NAME_MAP = originalDeploymentMap;
 });
 
 const context = normalizeContext({
@@ -231,6 +235,33 @@ describe("azure Chat Completions endpoint resolution", () => {
 
 		expect(mockState.lastParams?.model).toBe("deepseek-v4-pro");
 		expect(result.model).toBe("deepseek-v4-pro");
+	});
+
+	it("sends the mapped deployment name while keeping the catalog id on the message", async () => {
+		process.env.AZURE_OPENAI_DEPLOYMENT_NAME_MAP = "deepseek-v4-pro=my-deepseek";
+
+		const result = await azure.streamSimple(deepSeekModel(), context, { apiKey: "test-key" }).result();
+
+		expect(mockState.lastParams?.model).toBe("my-deepseek");
+		expect(result.model).toBe("deepseek-v4-pro");
+	});
+
+	it("passes the deployment name through a caller's onPayload", async () => {
+		process.env.AZURE_OPENAI_DEPLOYMENT_NAME_MAP = "deepseek-v4-pro=my-deepseek";
+		let seenModel: unknown;
+
+		await azure
+			.stream(deepSeekModel(), context, {
+				apiKey: "test-key",
+				onPayload: (payload) => {
+					seenModel = (payload as CapturedCompletionsPayload).model;
+					return { ...(payload as object), temperature: 0.1 };
+				},
+			})
+			.result();
+
+		expect(seenModel).toBe("my-deepseek");
+		expect(mockState.lastParams).toMatchObject({ model: "my-deepseek", temperature: 0.1 });
 	});
 });
 

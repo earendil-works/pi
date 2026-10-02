@@ -6,10 +6,9 @@ import { formatProviderError, normalizeProviderError } from "../utils/error-body
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
-import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
 import { getDeclaredTools, resolveTranscript, resolveTranscriptTools } from "../utils/transcript.ts";
-import { type AzureEndpointOptions, resolveAzureConfig } from "./azure-openai-config.ts";
+import { type AzureEndpointOptions, resolveAzureConfig, resolveDeploymentName } from "./azure-openai-config.ts";
 import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
 import { convertResponsesMessages, convertResponsesTools, processResponsesStream } from "./openai-responses-shared.ts";
@@ -18,29 +17,6 @@ import { buildBaseOptions } from "./simple-options.ts";
 const AZURE_TOOL_CALL_PROVIDERS = new Set(["openai", "openai-codex", "opencode", "azure"]);
 // OpenAI Responses rejects max_output_tokens below 16: https://github.com/earendil-works/pi/issues/6265
 const OPENAI_RESPONSES_MIN_OUTPUT_TOKENS = 16;
-
-function parseDeploymentNameMap(value: string | undefined): Map<string, string> {
-	const map = new Map<string, string>();
-	if (!value) return map;
-	for (const entry of value.split(",")) {
-		const trimmed = entry.trim();
-		if (!trimmed) continue;
-		const [modelId, deploymentName] = trimmed.split("=", 2);
-		if (!modelId || !deploymentName) continue;
-		map.set(modelId.trim(), deploymentName.trim());
-	}
-	return map;
-}
-
-function resolveDeploymentName(model: Model<"azure-openai-responses">, options?: AzureOpenAIResponsesOptions): string {
-	if (options?.azureDeploymentName) {
-		return options.azureDeploymentName;
-	}
-	const mappedDeployment = parseDeploymentNameMap(
-		getProviderEnvValue("AZURE_OPENAI_DEPLOYMENT_NAME_MAP", options?.env),
-	).get(model.id);
-	return mappedDeployment || model.id;
-}
 
 function formatAzureOpenAIError(error: unknown): string {
 	return formatProviderError(normalizeProviderError(error), "Azure OpenAI API error");
