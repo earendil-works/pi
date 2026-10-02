@@ -2920,6 +2920,13 @@ async function generateModels() {
 			const standardCost = OPENAI_STANDARD_COSTS[candidate.id];
 			candidate.cost = withOpenAiLongContextPricing(standardCost ?? candidate.cost);
 		}
+		// Bedrock bills these OpenAI models with the same request-wide tier, applied to its own rates.
+		if (candidate.provider === "amazon-bedrock") {
+			const openAiModelId = candidate.id.match(/^(?:[a-z]+\.)?openai\.(.+)$/)?.[1];
+			if (openAiModelId && OPENAI_LONG_CONTEXT_PRICING_MODEL_IDS.has(openAiModelId)) {
+				candidate.cost = withOpenAiLongContextPricing(candidate.cost);
+			}
+		}
 		// Cloudflare AI Gateway passes OpenAI usage through at OpenAI list prices.
 		if (candidate.provider === "cloudflare-ai-gateway") {
 			const standardCost = OPENAI_STANDARD_COSTS[candidate.id];

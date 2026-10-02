@@ -157,6 +157,29 @@ describe("getSupportedThinkingLevels", () => {
 		}
 	});
 
+	// #10326
+	it.each([
+		[
+			"us.openai.gpt-6.1-sol",
+			{ inputTokensAbove: 272000, input: 4.4, output: 16.5, cacheRead: 0.22, cacheWrite: 5.5 },
+		],
+		["global.openai.gpt-6-sol", { inputTokensAbove: 272000, input: 4, output: 15, cacheRead: 0.4, cacheWrite: 5 }],
+		[
+			"us.openai.gpt-6-luna",
+			{ inputTokensAbove: 272000, input: 0.22, output: 0.825, cacheRead: 0.022, cacheWrite: 0.275 },
+		],
+		["openai.gpt-5.5", { inputTokensAbove: 272000, input: 11, output: 49.5, cacheRead: 1.1, cacheWrite: 0 }],
+	] as const)("includes the long-context pricing tier for Bedrock %s", (modelId, tier) => {
+		const model = getModel("amazon-bedrock", modelId);
+		expect(model?.cost.tiers).toEqual([tier]);
+	});
+
+	it("keeps flat pricing for Bedrock gpt-oss", () => {
+		const model = getModel("amazon-bedrock", "openai.gpt-oss-120b");
+		expect(model).toBeDefined();
+		expect(model!.cost.tiers).toBeUndefined();
+	});
+
 	it("includes only medium/high/xhigh for OpenAI GPT-5.5 Pro", () => {
 		const model = getModel("openai", "gpt-5.5-pro");
 		expect(model).toBeDefined();
