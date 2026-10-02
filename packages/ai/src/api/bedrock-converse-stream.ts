@@ -1246,17 +1246,20 @@ function buildAdditionalModelRequestFields(
 		// Omit it there until the GovCloud Converse schema catches up.
 		const govCloud = isGovCloudBedrockTarget(model, options);
 		const display = govCloud ? undefined : (options.thinkingDisplay ?? "summarized");
+		// A signed thinking block is bound to the system prompt and tools it was created with.
+		// Replaying it after either changed is a 400 unless the block is dropped instead.
+		// Opus 4.6 rejects block_binding as an unknown field.
+		const blockBinding =
+			!govCloud && !getModelMatchCandidates(model.id, model.name).some((s) => s.includes("opus-4-6"));
 		const result: Record<string, any> = supportsAdaptiveThinking(model.id, model.name)
 			? {
 					thinking: {
 						type: "adaptive",
 						...(display !== undefined ? { display } : {}),
-						// A signed thinking block is bound to the system prompt and tools it was created with.
-						// Replaying it after either changed is a 400 unless the block is dropped instead.
-						...(govCloud ? {} : { block_binding: { prefix_mismatch_behavior: "drop_block" } }),
+						...(blockBinding ? { block_binding: { prefix_mismatch_behavior: "drop_block" } } : {}),
 					},
 					output_config: { effort: mapThinkingLevelToEffort(model, options.reasoning) },
-					...(govCloud ? {} : { anthropic_beta: ["thinking-binding-controls-2026-08-01"] }),
+					...(blockBinding ? { anthropic_beta: ["thinking-binding-controls-2026-08-01"] } : {}),
 				}
 			: (() => {
 					const defaultBudgets: Record<ThinkingLevel, number> = {

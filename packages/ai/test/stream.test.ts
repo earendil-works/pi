@@ -1541,7 +1541,7 @@ describe("Generate E2E Tests", () => {
 	describe.skipIf(!hasBedrockCredentials())("Amazon Bedrock Provider (claude-opus-4-6 interleaved thinking)", () => {
 		const llm = getModel("amazon-bedrock", "global.anthropic.claude-opus-4-6-v1");
 
-		it("should use adaptive thinking without the interleaved thinking beta", { retry: 3 }, async () => {
+		it("should use adaptive thinking without anthropic_beta", { retry: 3 }, async () => {
 			let capturedPayload: unknown;
 			const response = await complete(
 				llm,
@@ -1579,10 +1579,9 @@ describe("Generate E2E Tests", () => {
 			expect(payload.additionalModelRequestFields?.thinking).toEqual({
 				type: "adaptive",
 				display: "summarized",
-				block_binding: { prefix_mismatch_behavior: "drop_block" },
 			});
 			expect(payload.additionalModelRequestFields?.output_config).toEqual({ effort: "max" });
-			expect(payload.additionalModelRequestFields?.anthropic_beta).toEqual(["thinking-binding-controls-2026-08-01"]);
+			expect(payload.additionalModelRequestFields?.anthropic_beta).toBeUndefined();
 		});
 
 		it("should pass requestMetadata to the SDK payload", { retry: 3 }, async () => {

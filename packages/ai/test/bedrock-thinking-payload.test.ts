@@ -173,6 +173,15 @@ describe("Bedrock thinking payload", () => {
 		expect(payload.additionalModelRequestFields?.output_config).toEqual({ effort: "high" });
 		expect(payload.additionalModelRequestFields?.anthropic_beta).toBeUndefined();
 	});
+
+	it("omits block_binding for Claude Opus 4.6, which rejects it", async () => {
+		const model = getModel("amazon-bedrock", "global.anthropic.claude-opus-4-6-v1");
+
+		const payload = await capturePayload(model);
+
+		expect(payload.additionalModelRequestFields?.thinking).toEqual({ type: "adaptive", display: "summarized" });
+		expect(payload.additionalModelRequestFields?.anthropic_beta).toBeUndefined();
+	});
 });
 
 describe.skipIf(!hasBedrockCredentials())("Bedrock Claude max tokens E2E", () => {
@@ -219,7 +228,7 @@ describe("Application inference profile support", () => {
 
 		const payload = await capturePayload(model);
 
-		expect(payload.additionalModelRequestFields?.thinking).toEqual(ADAPTIVE_THINKING);
+		expect(payload.additionalModelRequestFields?.thinking).toEqual({ type: "adaptive", display: "summarized" });
 		expect(payload.additionalModelRequestFields?.output_config).toEqual({ effort: "high" });
 	});
 
