@@ -30,10 +30,17 @@ const currentRevision = revisionOf(currentBody);
 // Hydration fails when a checkout provider is missing, e.g. after main adds one.
 const staleBody = `${JSON.stringify({ "other-provider": [model] })}\n`;
 const staleRevision = revisionOf(staleBody);
+// Hydrates, but lacks a model type the live catalog (generated from main) has.
+const classifier = { ...model, type: "classifier", id: "classifier-a", name: "Classifier A" };
+delete classifier.reasoning;
+delete classifier.maxTokens;
+const classifierBody = catalog([model, classifier]);
+const classifierRevision = revisionOf(classifierBody);
 const bodies = new Map([
 	[liveRevision, liveBody],
 	[currentRevision, currentBody],
 	[staleRevision, staleBody],
+	[classifierRevision, classifierBody],
 ]);
 const typed = "types=chat,image,classifier";
 
@@ -87,14 +94,30 @@ test("pins the live typed catalog after verifying its immutable URL", async () =
 	assert.equal(readPin(), pinFile(liveRevision));
 });
 
-test("keeps a pin that still hydrates the checkout", async () => {
+test("keeps a pin that still hydrates the checkout and has the live model types", async () => {
 	const requests = mockPiDev();
 	assert.deepEqual(await updateModelCatalogPin(root, { ifStale: true }), {
 		revision: currentRevision,
 		updated: false,
 	});
-	assert.deepEqual(requests, [`https://pi.dev/api/models/revisions/${currentRevision}?${typed}`]);
+	assert.deepEqual(requests, [
+		`https://pi.dev/api/models/revisions/${currentRevision}?${typed}`,
+		`https://pi.dev/api/models?pi-version=0.85.1&${typed}`,
+		`https://pi.dev/api/models/revisions/${liveRevision}?${typed}`,
+	]);
 	assert.equal(readPin(), pinFile(currentRevision));
+});
+
+test("replaces a pin that lacks a model type of the live catalog", async (t) => {
+	const errors = [];
+	t.mock.method(console, "error", (message) => errors.push(message));
+	mockPiDev({ live: classifierRevision });
+	assert.deepEqual(await updateModelCatalogPin(root, { ifStale: true }), {
+		revision: classifierRevision,
+		updated: true,
+	});
+	assert.equal(readPin(), pinFile(classifierRevision));
+	assert.deepEqual(errors, ["Pinned model catalog is stale: missing model types test-provider/classifier"]);
 });
 
 test("replaces a pin that no longer hydrates the checkout", async (t) => {

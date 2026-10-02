@@ -17,8 +17,10 @@
 let
   nodejs = nodejs_22;
   packageJson = lib.importJSON (source + "/packages/coding-agent/package.json");
-  runtimePackageJson = removeAttrs packageJson [ "devDependencies" ];
-  packageLock = lib.importJSON (source + "/packages/coding-agent/npm-shrinkwrap.json");
+  # Lockfile root used by the pi.dev installer. It pins the coding agent's
+  # runtime dependency tree and is kept in sync with package-lock.json by
+  # `npm run check`.
+  installLock = source + "/packages/coding-agent/install-lock";
   modelCatalogPin = lib.importJSON ./model-catalog.json;
   modelCatalog = fetchurl {
     name = "pi-model-catalog.json";
@@ -69,27 +71,20 @@ let
       pack_package packages/mcp mcp
       pack_package packages/coding-agent coding-agent
 
-      mkdir "$out/coding-agent"
-      tar -xzf "$out/coding-agent.tgz" --strip-components=1 -C "$out/coding-agent"
-      rm "$out/coding-agent.tgz"
-
-      # The final derivation installs from a Nix-rewritten copy of this file.
-      # Keeping the original beside it would make npm prefer the unrewritten
-      # registry URLs.
-      rm "$out/coding-agent/npm-shrinkwrap.json"
-
       runHook postInstall
     '';
   };
 
   npmDeps = importNpmLock {
-    package = runtimePackageJson;
-    inherit packageLock;
+    npmRoot = installLock;
+    # The install lock points internal packages at registry releases. Replace
+    # them with the packages built from this checkout.
     packageSourceOverrides = {
       "node_modules/@earendil-works/chord" = workspacePackages + "/chord.tgz";
       "node_modules/@earendil-works/pi-agent-core" = workspacePackages + "/agent.tgz";
       "node_modules/@earendil-works/pi-ai" = workspacePackages + "/ai.tgz";
       "node_modules/@earendil-works/pi-codemode" = workspacePackages + "/codemode.tgz";
+      "node_modules/@earendil-works/pi-coding-agent" = workspacePackages + "/coding-agent.tgz";
       "node_modules/@earendil-works/pi-mcp" = workspacePackages + "/mcp.tgz";
       "node_modules/@earendil-works/pi-telemetry" = workspacePackages + "/telemetry.tgz";
       "node_modules/@earendil-works/pi-tui" = workspacePackages + "/tui.tgz";
@@ -99,7 +94,7 @@ in
 stdenv.mkDerivation {
   pname = "pi";
   inherit (packageJson) version;
-  src = workspacePackages + "/coding-agent";
+  src = installLock;
   inherit npmDeps;
 
   npmRebuildFlags = [ "--ignore-scripts" ];
@@ -126,7 +121,7 @@ stdenv.mkDerivation {
     cp -R . "$out/lib/pi"
 
     makeWrapper ${nodejs}/bin/node "$out/bin/pi" \
-      --add-flags "$out/lib/pi/dist/bundle/cli.js" \
+      --add-flags "$out/lib/pi/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js" \
       --prefix PATH : ${
         lib.makeBinPath (
           [

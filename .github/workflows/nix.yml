@@ -4,7 +4,9 @@ name: Nix
 # nix/model-catalog.json. This workflow keeps that pin usable independently of
 # releases: after pi.dev publishes a catalog from main, it replaces the pin only
 # if the current one no longer hydrates main (for example after a provider was
-# added), builds the flake, and commits the new pin to main.
+# added) or lacks a model type the live catalog has for one of main's providers
+# (for example after a provider gained classifier models), builds the flake,
+# and commits the new pin to main.
 
 on:
   pull_request:
@@ -16,7 +18,7 @@ on:
       - 'nix/**'
       - 'package-lock.json'
       - 'packages/*/package.json'
-      - 'packages/coding-agent/npm-shrinkwrap.json'
+      - 'packages/coding-agent/install-lock/**'
       - 'packages/ai/scripts/hydrate-model-catalog.ts'
       - 'scripts/update-model-catalog-pin.mjs'
   workflow_run:
