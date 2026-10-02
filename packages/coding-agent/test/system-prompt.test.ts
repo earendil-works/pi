@@ -122,6 +122,48 @@ describe("buildSystemPrompt", () => {
 		});
 	});
 
+	describe("hidden declarations", () => {
+		test("rules and the skills hint follow the declared tools, not the executable set (#10343)", () => {
+			const prompt = buildSystemPrompt({
+				// Hidden declarations stay executable; only what toolSnippets carries is declared.
+				selectedTools: ["read", "bash", "edit", "write", "run"],
+				toolSnippets: { run: "Run a task." },
+				toolGuidelines: {
+					read: ["Use read for files."],
+					bash: ["Use bash to search."],
+					run: ["Prefer run."],
+				},
+				skills: [testSkill],
+				contextFiles: [],
+				cwd: process.cwd(),
+			});
+
+			expect(prompt).toContain("- run: Run a task.");
+			// Rules follow declarations: guidance for hidden tools must not leak.
+			expect(prompt).not.toContain("Use read for files.");
+			expect(prompt).not.toContain("Use bash to search.");
+			expect(prompt).toContain("- Prefer run.");
+			// The bash file-operations heuristic must not fire for a hidden bash.
+			expect(prompt).not.toContain("Use bash for file operations");
+			expect(prompt).not.toContain("Use bash for ls, rg, find");
+			// The skills hint must not name a tool the model cannot see.
+			expect(prompt).not.toContain("Use the read tool to load a skill's file");
+		});
+
+		test("keeps pointing the skills hint at a visible read tool", () => {
+			const prompt = buildSystemPrompt({
+				selectedTools: ["read", "run"],
+				toolSnippets: { read: "Read files.", run: "Run a task." },
+				skills: [testSkill],
+				contextFiles: [],
+				cwd: process.cwd(),
+			});
+
+			expect(prompt).toContain("Use the read tool to load a skill's file");
+			expect(prompt).toContain("<available_skills>");
+		});
+	});
+
 	describe("custom tool snippets", () => {
 		test("includes custom tools in available tools section when promptSnippet is provided", () => {
 			const prompt = buildSystemPrompt({

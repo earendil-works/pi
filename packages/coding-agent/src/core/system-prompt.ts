@@ -34,6 +34,8 @@ export interface BuildSystemPromptOptions {
 export type NormalizedBuildSystemPromptOptions = BuildSystemPromptOptions & {
 	selectedTools: string[];
 	toolSnippets: Record<string, string>;
+	/** Whether the caller supplied toolSnippets; an omitted map means the default set is declared. */
+	toolSnippetsProvided: boolean;
 	toolGuidelines: Record<string, string[]>;
 	promptGuidelines: string[];
 	appendSystemPrompt: string;
@@ -57,6 +59,7 @@ export function normalizeBuildSystemPromptOptions(input: BuildSystemPromptOption
 		forceSystemPrompt: input.forceSystemPrompt,
 		selectedTools: [...(input.selectedTools ?? ["read", "bash", "edit", "write"])],
 		toolSnippets: { ...(input.toolSnippets ?? {}) },
+		toolSnippetsProvided: input.toolSnippets !== undefined,
 		toolGuidelines: Object.fromEntries(
 			Object.entries(input.toolGuidelines ?? {}).map(([name, guidelines]) => [name, [...guidelines]]),
 		),
@@ -124,6 +127,7 @@ export function buildSystemPromptSections(input: BuildSystemPromptOptions): Syst
 		customPrompt,
 		selectedTools,
 		toolSnippets,
+		toolSnippetsProvided,
 		toolGuidelines,
 		promptGuidelines,
 		appendSystemPrompt,
@@ -132,6 +136,14 @@ export function buildSystemPromptSections(input: BuildSystemPromptOptions): Syst
 		contextFiles,
 		skills,
 	} = options;
+
+	// Why: rules and the skills hint follow the DECLARED tools — the toolSnippets
+	// keys are what <tools> renders — not the executable set: a prepareLoadout
+	// hiding a declaration keeps the tool callable but invisible, so guidance
+	// naming it would tell the model to use a tool it cannot see (#10343). An
+	// omitted toolSnippets means the default tool set is declared, so only an
+	// explicit map decides visibility.
+	const declaredTools = toolSnippetsProvided ? Object.keys(toolSnippets) : selectedTools;
 
 	for (const name of Object.keys(customSections)) {
 		if (!SYSTEM_PROMPT_SECTION_NAME.test(name) || name === "preamble") {
@@ -149,7 +161,7 @@ export function buildSystemPromptSections(input: BuildSystemPromptOptions): Syst
 		const tools =
 			visibleTools.length > 0 ? visibleTools.map((name) => `- ${name}: ${toolSnippets[name]}`).join("\n") : "(none)";
 		promptSections.tools = `${tools}\n\nIn addition to the tools above, you may have access to other custom tools depending on the project.`;
-		promptSections.rules = buildRules(selectedTools, toolGuidelines, promptGuidelines);
+		promptSections.rules = buildRules(declaredTools, toolGuidelines, promptGuidelines);
 		promptSections.docs = `Pi documentation (read only when the user asks about pi itself, its SDK, extensions, themes, skills, or TUI):
 - Main documentation: ${getReadmePath()}
 - Additional docs: ${getDocsPath()}
@@ -162,7 +174,7 @@ export function buildSystemPromptSections(input: BuildSystemPromptOptions): Syst
 
 	if (appendSystemPrompt) promptSections.addendum = appendSystemPrompt;
 	if (contextFiles.length > 0) promptSections.project_context = renderProjectContext(contextFiles);
-	const skillFileReadTool = (["read", "bash"] as const).find((tool) => selectedTools.includes(tool));
+	const skillFileReadTool = (["read", "bash"] as const).find((tool) => declaredTools.includes(tool));
 	if (skillFileReadTool && skills.length > 0) {
 		const skillsPrompt = formatSkillsForPrompt(skills, skillFileReadTool).trim();
 		if (skillsPrompt) promptSections.skills = skillsPrompt;
