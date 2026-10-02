@@ -155,7 +155,8 @@ export function renderHighlightedHtml(html: string, theme: HighlightTheme = {}):
 			return;
 		}
 		const formatter = getActiveFormatter(scopes, theme);
-		output += formatter ? formatter(textBuffer) : textBuffer;
+		// TUI lines are rendered independently, so each line must open and close its own style.
+		output += formatter ? textBuffer.replace(/[^\r\n]+/g, (line) => formatter(line)) : textBuffer;
 		textBuffer = "";
 	};
 
