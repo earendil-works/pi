@@ -56,8 +56,10 @@ See the [documentation](https://pi.dev/docs/latest) for full setup and usage ins
 ## Run with Nix
 
 ```bash
-nix run github:earendil-works/pi
+nix run github:earendil-works/pi/stable
 ```
+
+`stable` points at the latest release. Use a release tag such as `github:earendil-works/pi/v1.0.0` to pin a version, or `github:earendil-works/pi` for unreleased changes on `main`. Nix builds pi from source.
 
 Supports ARM64 and x86-64 on Linux and macOS. Use `nix build .` or `nix run .` to build or run your checkout.
 

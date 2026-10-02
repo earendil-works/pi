@@ -7,8 +7,15 @@ name: Nix
 # added) or lacks a model type the live catalog has for one of main's providers
 # (for example after a provider gained classifier models), builds the flake,
 # and commits the new pin to main.
+#
+# Release tags are built exactly as tagged, with their committed pin. Once all
+# systems build, the stable branch is fast-forwarded to the tag so that
+# `nix run github:earendil-works/pi/stable` runs the latest release.
 
 on:
+  push:
+    tags:
+      - 'v*.*.*'
   pull_request:
     branches: [main]
     paths:
@@ -34,7 +41,7 @@ on:
 permissions: {}
 
 concurrency:
-  group: nix-${{ github.event_name == 'pull_request' && github.ref || 'main' }}
+  group: nix-${{ (github.event_name == 'pull_request' || github.ref_type == 'tag') && github.ref || 'main' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -61,7 +68,10 @@ jobs:
         id: pin
         run: |
           set -euo pipefail
-          node scripts/update-model-catalog-pin.mjs --if-stale
+          # A release tag must build with its committed pin; it cannot be changed.
+          if [[ "${GITHUB_REF_TYPE}" != "tag" ]]; then
+            node scripts/update-model-catalog-pin.mjs --if-stale
+          fi
           revision="$(node -p 'require("./nix/model-catalog.json").revision')"
           echo "revision=${revision}" >> "${GITHUB_OUTPUT}"
           if git diff --quiet -- nix/model-catalog.json; then
@@ -118,6 +128,24 @@ jobs:
         run: |
           ./result/bin/pi --version
           ./result/bin/pi --help > /dev/null
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            test "$(./result/bin/pi --version)" = "${GITHUB_REF_NAME#v}"
+          fi
+
+  update-stable:
+    needs: build
+    if: ${{ github.ref_type == 'tag' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Without --force, the push fails unless it is a fast-forward, so stable
+      # never moves back to an older release.
+      - name: Fast-forward stable to the release
+        run: git push origin "${GITHUB_SHA}:refs/heads/stable"
 
   commit-pin:
     needs:
