@@ -66,11 +66,11 @@ function findWebpTiffOffset(bytes: Uint8Array): number {
 	while (offset + 8 <= bytes.length) {
 		const chunkId = String.fromCharCode(bytes[offset], bytes[offset + 1], bytes[offset + 2], bytes[offset + 3]);
 		const chunkSize =
-			bytes[offset + 4] | (bytes[offset + 5] << 8) | (bytes[offset + 6] << 16) | (bytes[offset + 7] << 24);
+			(bytes[offset + 4] | (bytes[offset + 5] << 8) | (bytes[offset + 6] << 16) | (bytes[offset + 7] << 24)) >>> 0;
 		const dataStart = offset + 8;
+		if (dataStart + chunkSize > bytes.length) return -1;
 
 		if (chunkId === "EXIF") {
-			if (dataStart + chunkSize > bytes.length) return -1;
 			// Some WebP files have "Exif\0\0" prefix before the TIFF header
 			const tiffStart = chunkSize >= 6 && hasExifHeader(bytes, dataStart) ? dataStart + 6 : dataStart;
 			return tiffStart;
