@@ -699,6 +699,42 @@ describe("openai-completions tool_choice", () => {
 		expect(response.content).toEqual([{ type: "text", text: "OK" }]);
 	});
 
+	it("folds disjoint streaming reasoning_tokens into output (LiteLLM GLM/DeepSeek gateways)", async () => {
+		mockState.chunks = [
+			{
+				id: "chatcmpl-disjoint",
+				choices: [{ delta: { content: "OK" }, finish_reason: "stop" }],
+				usage: {
+					prompt_tokens: 9,
+					completion_tokens: 12,
+					prompt_tokens_details: { cached_tokens: 0 },
+					completion_tokens_details: { reasoning_tokens: 124 },
+				},
+			},
+		];
+
+		const { compat: _compat, ...baseModel } = getModel("openai", "gpt-4o-mini")!;
+		const model = { ...baseModel, api: "openai-completions" } as const;
+		const response = await streamSimple(
+			model,
+			{
+				messages: [
+					{
+						role: "user",
+						content: "Reply with exactly OK",
+						timestamp: Date.now(),
+					},
+				],
+			},
+			{ apiKey: "test" },
+		).result();
+
+		expect(response.stopReason).toBe("stop");
+		expect(response.usage.output).toBe(136); // 12 completion + 124 disjoint reasoning
+		expect(response.usage.reasoning).toBe(124);
+		expect(response.usage.totalTokens).toBe(145); // 9 + 136
+	});
+
 	it("errors when a stream ends after only null finish_reason chunks", async () => {
 		mockState.chunks = [
 			{

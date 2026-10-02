@@ -1536,14 +1536,24 @@ function parseChunkUsage(
 	// providers are under-reported. DS4 mirrors this contract too:
 	// https://github.com/antirez/ds4/pull/29
 	const input = Math.max(0, promptTokens - cacheReadTokens - cacheWriteTokens);
-	// OpenAI completion_tokens already includes reasoning_tokens.
-	const outputTokens = rawUsage.completion_tokens || 0;
+	// OpenAI completion_tokens already includes reasoning_tokens (#3581).
+	// Some OpenAI-compatible gateways report the two counts as disjoint when
+	// streaming: LiteLLM fronting GLM/DeepSeek emits completion_tokens below
+	// reasoning_tokens on the streaming usage chunk, while the same backend
+	// includes reasoning in completion_tokens when non-streaming (#9793).
+	// When reasoning_tokens exceeds completion_tokens the counts cannot be
+	// inclusive, so fold reasoning into output; the inclusive case
+	// (reasoning <= completion) keeps the #3581 behavior unchanged.
+	const reasoningTokens = rawUsage.completion_tokens_details?.reasoning_tokens || 0;
+	const completionTokens = rawUsage.completion_tokens || 0;
+	const outputTokens =
+		reasoningTokens > completionTokens ? completionTokens + reasoningTokens : completionTokens;
 	const usage: AssistantMessage["usage"] = {
 		input,
 		output: outputTokens,
 		cacheRead: cacheReadTokens,
 		cacheWrite: cacheWriteTokens,
-		reasoning: rawUsage.completion_tokens_details?.reasoning_tokens || 0,
+		reasoning: reasoningTokens,
 		totalTokens: input + outputTokens + cacheReadTokens + cacheWriteTokens,
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 	};
