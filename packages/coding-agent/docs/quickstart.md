@@ -20,6 +20,14 @@ npm install -g --ignore-scripts @earendil-works/pi-coding-agent
 
 Pi does not require dependency lifecycle scripts for a normal npm installation.
 
+With Nix on macOS or Linux, install the latest release from Pi's flake. Nix builds Pi from source:
+
+```bash
+nix profile add github:earendil-works/pi/stable
+```
+
+Older Nix versions use `nix profile install` instead. Update with `nix profile upgrade pi`; `pi update` cannot update a Nix installation. To pin a release, use a tag such as `github:earendil-works/pi/v1.0.0`.
+
 Verify the installation:
 
 ```bash
@@ -119,4 +127,10 @@ If you used the installer, run it again and choose **Uninstall Pi**:
 curl -fsSL https://pi.dev/install.sh | sh
 ```
 
-Neither method removes configuration, credentials, sessions, or installed Pi packages from `~/.pi/agent/`.
+If you installed Pi with Nix, run:
+
+```bash
+nix profile remove pi
+```
+
+None of these methods removes configuration, credentials, sessions, or installed Pi packages from `~/.pi/agent/`.
