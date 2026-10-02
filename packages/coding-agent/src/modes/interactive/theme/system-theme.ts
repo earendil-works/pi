@@ -82,6 +82,7 @@ const TOKEN_FAMILIES: Record<ThemeToken, FamilyName> = {
 	syntaxPunctuation: "neutral",
 	muted: "neutral",
 	dim: "neutral",
+	modelName: "neutral",
 	thinkingText: "neutral",
 	toolOutput: "neutral",
 	mdLinkUrl: "neutral",
@@ -298,6 +299,7 @@ const RULES: Rule[] = [
 	...each(["accent", "success", "error", "warning"], ["background", "selectedBg", ...TOOL_PANELS], "readable"),
 	{ token: "muted", on: ["background", "selectedBg", "customMessageBg", ...TOOL_PANELS], level: "readable" },
 	{ token: "dim", on: ["background", "selectedBg", "customMessageBg", ...TOOL_PANELS], level: "subtle" },
+	{ token: "modelName", on: ["background", "selectedBg", "customMessageBg", ...TOOL_PANELS], level: "readable" },
 	{ token: "thinkingText", on: ["background"], level: "readable" },
 	{ token: "customMessageText", on: ["customMessageBg", ...TOOL_PANELS], level: "readable" },
 	{

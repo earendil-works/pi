@@ -50,6 +50,7 @@
 				"warning",
 				"muted",
 				"dim",
+				"modelName",
 				"text",
 				"thinkingText",
 				"selectedBg",
@@ -129,6 +130,10 @@
 				"dim": {
 					"$ref": "#/$defs/colorValue",
 					"description": "Very dimmed text (more subtle than muted)"
+				},
+				"modelName": {
+					"$ref": "#/$defs/colorValue",
+					"description": "Model name in the footer status line. Defaults to dim when omitted."
 				},
 				"text": {
 					"$ref": "#/$defs/colorValue",

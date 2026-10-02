@@ -64,6 +64,7 @@ export type ThemeColor =
 	| "warning"
 	| "muted"
 	| "dim"
+	| "modelName"
 	| "text"
 	| "thinkingText"
 	| "scrollbarTrack"
@@ -167,6 +168,7 @@ function withThemeColorFallbacks(colors: ThemeJson["colors"]): ThemeJson["colors
 	thinkingMax: ColorValue;
 	searchMatchBg: ColorValue;
 	searchMatchText: ColorValue;
+	modelName: ColorValue;
 } {
 	return {
 		...colors,
@@ -175,6 +177,9 @@ function withThemeColorFallbacks(colors: ThemeJson["colors"]): ThemeJson["colors
 		thinkingMax: colors.thinkingMax ?? colors.thinkingXhigh,
 		searchMatchBg: colors.searchMatchBg ?? colors.selectedBg,
 		searchMatchText: colors.searchMatchText ?? colors.text,
+		// Footer model name: fall back to muted so it stays readable but visibly stronger than the
+		// dim tokens used for the surrounding status line.
+		modelName: colors.modelName ?? colors.muted,
 	};
 }
 

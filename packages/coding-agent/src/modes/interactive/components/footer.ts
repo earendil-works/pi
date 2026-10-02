@@ -257,34 +257,35 @@ export class FooterComponent implements Component {
 		const rightSideWidth = visibleWidth(rightSide);
 		const totalNeeded = statsLeftWidth + minPadding + rightSideWidth;
 
-		let statsLine: string;
+		let renderedRight = "";
 		if (totalNeeded <= width) {
 			// Both fit - add padding to right-align model
-			const padding = " ".repeat(width - statsLeftWidth - rightSideWidth);
-			statsLine = statsLeft + padding + rightSide;
+			renderedRight = rightSide;
 		} else {
 			// Need to truncate right side
 			const availableForRight = width - statsLeftWidth - minPadding;
 			if (availableForRight > 0) {
-				const truncatedRight = truncateToWidth(rightSide, availableForRight, "");
-				const truncatedRightWidth = visibleWidth(truncatedRight);
-				const padding = " ".repeat(Math.max(0, width - statsLeftWidth - truncatedRightWidth));
-				statsLine = statsLeft + padding + truncatedRight;
-			} else {
-				// Not enough space for right side at all
-				statsLine = statsLeft;
+				renderedRight = truncateToWidth(rightSide, availableForRight, "");
 			}
+			// Otherwise there is not enough space for the right side at all.
 		}
 
 		// Apply dim to each part separately. statsLeft may contain color codes (for context %)
 		// that end with a reset, which would clear an outer dim wrapper. So we dim the parts
 		// before and after the colored section independently.
 		const dimStatsLeft = theme.fg("dim", statsLeft);
-		const remainder = statsLine.slice(statsLeft.length); // padding + rightSide
-		const dimRemainder = theme.fg("dim", remainder);
+		// The line is "<statsLeft><padding><renderedRight>", where renderedRight is the model name
+		// (+ thinking level / routed model). Dim the padding but give the model name its own token so
+		// themes can make it stand out.
+		//
+		// statsLeft can embed ANSI escapes (context %, xp), so string offsets are unreliable; the
+		// padding length is derived from visible widths instead.
+		const paddingWidth = Math.max(0, width - statsLeftWidth - visibleWidth(renderedRight));
+		const dimPadding = " ".repeat(paddingWidth);
+		const modelNameLine = renderedRight ? theme.fg("modelName", renderedRight) : "";
 
 		const pwdLine = truncateToWidth(theme.fg("dim", pwd), width, theme.fg("dim", "..."));
-		const lines = [pwdLine, dimStatsLeft + dimRemainder];
+		const lines = [pwdLine, dimStatsLeft + dimPadding + modelNameLine];
 
 		// Add extension statuses on a single line, sorted by key alphabetically
 		const extensionStatuses = this.footerData.getExtensionStatuses();

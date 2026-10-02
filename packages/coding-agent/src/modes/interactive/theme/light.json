@@ -22,6 +22,7 @@
 		"warning": "yellow",
 		"muted": "muted",
 		"dim": "okhsl(229 7% 59%)",
+		"modelName": "okhsl(229 7% 59%)",
 		"text": "text",
 		"thinkingText": "okhsl(234 8% 55%)",
 		"selectedBg": "blueBg",

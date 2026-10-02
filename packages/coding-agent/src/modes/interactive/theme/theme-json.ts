@@ -32,6 +32,7 @@ const ThemeJsonSchema = Type.Object({
 		warning: ColorValueSchema,
 		muted: ColorValueSchema,
 		dim: ColorValueSchema,
+		modelName: Type.Optional(ColorValueSchema),
 		text: ColorValueSchema,
 		thinkingText: ColorValueSchema,
 		// Scrollbar (2 optional colors)
