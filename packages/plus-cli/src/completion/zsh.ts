@@ -113,9 +113,7 @@ _pipi() {
           elif [[ $words[2] == "view" || $words[2] == "remove" ]]; then
             _pipi_profiles
           elif [[ $words[2] == "default" ]]; then
-            _arguments -C -S \\
-              '--built-in[Use your existing pi config as default (no profile)]' \\
-              '*:profile:_pipi_profiles'
+            _pipi_profiles
           elif [[ $words[2] == "rename" ]]; then
             if (( CURRENT == 3 )); then
               _pipi_profiles
@@ -158,9 +156,7 @@ _pipi() {
           fi
           ;;
         use)
-          _arguments -C -S \\
-            '--built-in[Use your existing pi config (no profile)]' \\
-            '*:profile:_pipi_profiles'
+          _pipi_profiles
           ;;
         completion)
           _arguments -C -S \\

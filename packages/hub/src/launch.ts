@@ -43,7 +43,7 @@ export function resolveLaunch(args: string[]): LaunchPlan {
 	}
 
 	if (name === undefined) {
-		name = getDefaultProfileName(); // undefined when unset or built-in
+		name = getDefaultProfileName(); // undefined when unset (plain pi)
 	}
 
 	if (name !== undefined) {

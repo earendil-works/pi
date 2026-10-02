@@ -66,6 +66,19 @@ describe("materializeProfile", () => {
 		expect(fs.existsSync(path.join(dir, "auth.json"))).toBe(false);
 	});
 
+	it("preserves existing auth.json when the profile has no token", () => {
+		// A provider login (`profile add -p`) writes OAuth credentials into the
+		// profile's auth.json; re-materialization runs on every launch and must
+		// not wipe them.
+		const dir = mat.materializeProfile("oauth", { provider: "kimi-coding" });
+		const authFile = path.join(dir, "auth.json");
+		const credentials = { "kimi-coding": { type: "oauth", refresh: "r", access: "a", expires: 1 } };
+		fs.writeFileSync(authFile, JSON.stringify(credentials));
+
+		mat.materializeProfile("oauth", { provider: "kimi-coding" });
+		expect(JSON.parse(fs.readFileSync(authFile, "utf-8"))).toEqual(credentials);
+	});
+
 	it("keys auth.json under the agent defaultProvider when the profile has no provider", () => {
 		fs.writeFileSync(path.join(agentDir, "settings.json"), JSON.stringify({ defaultProvider: "kimi-coding" }));
 		const dir = mat.materializeProfile("implicit", { model: "kimi-k2.7", token: "tok-123" });

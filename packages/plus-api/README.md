@@ -37,6 +37,14 @@ await session.prompt("Review this repository");
   `materializeProfile/removeProfileDir/profileDirFor/AGENT_DIR/
   syncProfilePackagesToSource` for the per-profile agent dirs. Hosts get the
   exact contract the `pipi` CLI dispatches instead of reimplementing it.
+- Provider login ships as a library (`src/auth.ts`): `loginProvider(providerId, { agentDir?, interaction?, signal?, method? })`
+  runs pi's model-runtime login flow (OAuth login page / API-key setup — the same
+  flow `pipi profile add <name> -p <provider>` triggers) and persists the credential
+  to `<agentDir>/auth.json`; `createTerminalAuthInteraction()` provides the readline
+  terminal UI for CLI use, and hosts pass their own `AuthInteraction` to drive the
+  prompts from a custom UI. pi-plus disables the TUI `/login` (the `interactive-mode`
+  and `slash-commands` core redirects are baked in here too), so this is the login
+  entry for the whole product.
 - `createPlusAgentSession()` extends the upstream `createAgentSession` (re-exported,
   with the whole upstream SDK surface) and always binds extensions once — do not call
   `session.bindExtensions()` yourself. Pass `ui` dialog handlers to get working

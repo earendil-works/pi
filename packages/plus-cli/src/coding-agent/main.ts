@@ -26,6 +26,7 @@ import {
 import { ENV_AGENT_DIR } from "../../../coding-agent/src/config.ts";
 import type { MainOptions } from "../../../coding-agent/src/main.ts";
 import { main as upstreamMain } from "../../../coding-agent/src/main.ts";
+import { createTerminalAuthInteraction, loginProvider } from "../../../plus/src/auth/login.ts";
 import {
 	registerAskUser,
 	registerCd,
@@ -57,7 +58,18 @@ export async function main(args: string[], options?: MainOptions) {
 	let plan: LaunchPlan;
 	try {
 		if (args[0] && HUB_SUBCOMMANDS.has(args[0])) {
-			dispatchHubCommand(args);
+			// `profile add <name> -p <provider>` with no credential runs the
+			// provider's login (OAuth page in the browser / API-key setup) and
+			// persists it into the profile's isolated agent dir; hub cannot do
+			// this itself (dependency-free), so the CLI injects the capability.
+			await dispatchHubCommand(args, {
+				login: async (context) => {
+					await loginProvider(context.provider, {
+						agentDir: context.profileDir,
+						interaction: createTerminalAuthInteraction(),
+					});
+				},
+			});
 			return;
 		}
 		plan = resolveLaunch(args);

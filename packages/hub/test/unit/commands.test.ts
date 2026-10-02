@@ -91,6 +91,57 @@ describe("dispatchHubCommand", () => {
 		);
 	});
 
+	it("profile add with only a provider invokes the injected login", async () => {
+		const calls: { profileDir: string; provider: string }[] = [];
+		const { stdout } = await capture(() =>
+			hub.dispatchHubCommand(["profile", "add", "anth", "-p", "kimi-coding"], {
+				login: async (context) => {
+					calls.push(context);
+				},
+			}),
+		);
+		expect(stdout).toContain("Profile 'anth' saved.");
+		expect(stdout.some((l) => l.includes("invoking the 'kimi-coding' login"))).toBe(true);
+		expect(stdout).toContain("Logged in to 'kimi-coding'.");
+		expect(calls).toHaveLength(1);
+		expect(calls[0].provider).toBe("kimi-coding");
+		expect(fs.existsSync(calls[0].profileDir)).toBe(true);
+		expect(hub.loadProfiles().profiles.anth).toEqual({ provider: "kimi-coding" });
+	});
+
+	it("profile add keeps the profile when the login is cancelled", async () => {
+		const { stderr } = await capture(() =>
+			hub.dispatchHubCommand(["profile", "add", "anth", "-p", "kimi-coding"], {
+				login: async () => {
+					throw new Error("Login cancelled");
+				},
+			}),
+		);
+		expect(stderr.some((l) => l.includes("Login did not complete: Login cancelled"))).toBe(true);
+		expect(hub.loadProfiles().profiles.anth).toEqual({ provider: "kimi-coding" });
+	});
+
+	it("profile add with a token does not invoke login", async () => {
+		let called = false;
+		await capture(() =>
+			hub.dispatchHubCommand(["profile", "add", "anth", "-p", "kimi-coding", "-t", "tok-1234567890abcdef"], {
+				login: async () => {
+					called = true;
+				},
+			}),
+		);
+		expect(called).toBe(false);
+	});
+
+	it("profile add with only a provider and no injected login stores the profile", async () => {
+		const { stdout } = await capture(() => {
+			hub.dispatchHubCommand(["profile", "add", "anth", "-p", "kimi-coding"]);
+		});
+		expect(stdout).toContain("Profile 'anth' saved.");
+		expect(stdout.some((l) => l.includes("login"))).toBe(false);
+		expect(hub.loadProfiles().profiles.anth).toEqual({ provider: "kimi-coding" });
+	});
+
 	it("profile add parses --set key=value and applies --unset", async () => {
 		await capture(() => {
 			hub.dispatchHubCommand(["profile", "add", "x", "--set", "theme=light", "--set", "retries=3"]);
@@ -205,16 +256,20 @@ describe("dispatchHubCommand", () => {
 		expect(fs.existsSync(hub.profileDirFor("new"))).toBe(true);
 	});
 
-	it("profile default --built-in clears the default", async () => {
+	it("profile default --built-in is now an unknown option (built-in profile removed)", () => {
+		expect(() => hub.dispatchHubCommand(["profile", "default", "--built-in"])).toThrow("unknown option '--built-in'");
+	});
+
+	it("profile default rejects an empty name pointing at unuse", () => {
+		expect(() => hub.dispatchHubCommand(["profile", "default"])).toThrow("Use 'pipi unuse'");
+	});
+
+	it("profile default sets the default profile", async () => {
 		await capture(() => {
 			hub.dispatchHubCommand(["profile", "add", "work", "-m", "m1"]);
 			hub.dispatchHubCommand(["profile", "default", "work"]);
 		});
 		expect(hub.getDefaultProfileName()).toBe("work");
-		await capture(() => {
-			hub.dispatchHubCommand(["profile", "default", "--built-in"]);
-		});
-		expect(hub.getDefaultProfileName()).toBeUndefined();
 	});
 
 	it("use sets and shows the default; unuse clears it", async () => {
@@ -247,15 +302,8 @@ describe("dispatchHubCommand", () => {
 		expect(() => hub.dispatchHubCommand(["use", "ghost"])).toThrow("not found");
 	});
 
-	it("use --built-in clears the default", async () => {
-		await capture(() => {
-			hub.dispatchHubCommand(["profile", "add", "work", "-m", "m1"]);
-			hub.dispatchHubCommand(["use", "work"]);
-		});
-		await capture(() => {
-			hub.dispatchHubCommand(["use", "--built-in"]);
-		});
-		expect(hub.getDefaultProfileName()).toBeUndefined();
+	it("use --built-in is now an unknown option (built-in profile removed)", () => {
+		expect(() => hub.dispatchHubCommand(["use", "--built-in"])).toThrow("unknown option '--built-in'");
 	});
 
 	it("unknown subcommands throw", () => {
@@ -326,12 +374,24 @@ describe("resolveLaunch", () => {
 		});
 	});
 
-	it("runs plain pi when the default is built-in", async () => {
+	it("runs plain pi after unuse (no default key stored)", async () => {
 		await capture(() => {
 			hub.dispatchHubCommand(["profile", "add", "work", "-m", "m1"]);
 			hub.dispatchHubCommand(["use", "work"]);
 			hub.dispatchHubCommand(["unuse"]);
 		});
+		expect(hub.loadProfiles().default).toBeUndefined();
+		expect(hub.resolveLaunch(["--version"])).toEqual({ kind: "plain", remainingArgs: ["--version"] });
+	});
+
+	it("runs plain pi when the stored default is the legacy __builtin__ marker", async () => {
+		await capture(() => {
+			hub.dispatchHubCommand(["profile", "add", "work", "-m", "m1"]);
+		});
+		fs.writeFileSync(
+			process.env.PI_HUB_PROFILES_FILE as string,
+			JSON.stringify({ profiles: { work: { models: ["m1"], model: "m1" } }, default: "__builtin__" }),
+		);
 		expect(hub.resolveLaunch(["--version"])).toEqual({ kind: "plain", remainingArgs: ["--version"] });
 	});
 

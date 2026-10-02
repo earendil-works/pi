@@ -20,6 +20,8 @@
  * - profile management (pi-hub profiles.json CRUD + agent-dir
  *   materialization) is re-exported from ./profiles.ts so hosts do not
  *   reimplement the pi-hub file contract
+ * - provider login (OAuth login page / API-key setup, pi's /login equivalent,
+ *   which pi-plus disables in the TUI) is re-exported from ./auth.ts
  *
  * Hosts without a pi CLI on PATH should pass excludeTools: ["subagent"]:
  * the subagent tool launches a pi subprocess and, in a CLI-less host such as
@@ -27,6 +29,7 @@
  */
 
 export * from "../../coding-agent/src/index.ts";
+export * from "./auth.ts";
 export * from "./profiles.ts";
 
 import type {

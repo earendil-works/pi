@@ -82,6 +82,3 @@ export const PI_PROVIDERS: string[] = [
 ];
 
 export const THINKING_LEVELS: string[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
-
-/** Marker stored in `profiles.json` `default` meaning "no profile, run plain pi". */
-export const BUILT_IN_DEFAULT = "__builtin__";

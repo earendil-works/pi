@@ -84,8 +84,17 @@ describe("profiles CRUD", () => {
 
 		profiles.clearDefaultProfile();
 		expect(profiles.getDefaultProfileName()).toBeUndefined();
-		// Stored as the built-in marker for backward compatibility
-		expect(profiles.loadProfiles().default).toBe("__builtin__");
+		// Clearing removes the key entirely (no built-in marker).
+		expect(profiles.loadProfiles().default).toBeUndefined();
+	});
+
+	it("the legacy __builtin__ default marker reads as no default (plain pi)", () => {
+		const data = profiles.loadProfiles();
+		fs.writeFileSync(
+			process.env.PI_HUB_PROFILES_FILE as string,
+			JSON.stringify({ profiles: data.profiles, default: "__builtin__" }),
+		);
+		expect(profiles.getDefaultProfileName()).toBeUndefined();
 	});
 });
 

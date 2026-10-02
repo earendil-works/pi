@@ -18,10 +18,25 @@ import {
 	validateThinking,
 } from "./profiles.ts";
 import type { Profile } from "./types.ts";
-import { BUILT_IN_DEFAULT, PI_PROVIDERS } from "./types.ts";
+import { PI_PROVIDERS } from "./types.ts";
 
 /** Top-level subcommands owned by the hub package. */
 export const HUB_SUBCOMMANDS: ReadonlySet<string> = new Set(["profile", "use", "unuse"]);
+
+/**
+ * Caller-injected capabilities for `dispatchHubCommand`. Hub stays
+ * dependency-free and cannot run a provider login itself (that needs the pi
+ * model runtime), so the CLI wraps it and passes the hook here.
+ */
+export interface HubCommandOptions {
+	/**
+	 * Runs the interactive provider login for a freshly created profile,
+	 * persisting the credential into the profile's materialized agent dir.
+	 * Invoked by `profile add` when the profile only selects a provider.
+	 * Rejects when the login fails or is cancelled.
+	 */
+	login?: (context: { profileDir: string; provider: string }) => Promise<void>;
+}
 
 interface SubcommandArgv {
 	/** Canonical option name -> collected values (repeatable options collect multiple). */
@@ -50,7 +65,6 @@ const VALUE_OPTIONS = new Map<string, string>([
 const FLAG_OPTIONS = new Map<string, string>([
 	["-j", "json"],
 	["--json", "json"],
-	["--built-in", "builtIn"],
 ]);
 
 /** Hand-rolled option parser for hub subcommands (pi style, no arg-parsing lib). */
@@ -136,7 +150,7 @@ function applyProfileOptions(p: Profile, parsed: SubcommandArgv): void {
 	}
 }
 
-function cmdProfileAdd(parsed: SubcommandArgv): void {
+function cmdProfileAdd(parsed: SubcommandArgv, options: HubCommandOptions): void | Promise<void> {
 	const name = parsed.positionals[0];
 	if (!name) {
 		throw new Error("Error: profile name is required. Usage: pipi profile add <name> [options]");
@@ -158,14 +172,47 @@ function cmdProfileAdd(parsed: SubcommandArgv): void {
 
 	// Materialize right away so the profile dir exists and tracks the source
 	// settings from the moment the profile is created.
+	let profileDir: string | undefined;
 	try {
-		materializeProfile(name, profile);
+		profileDir = materializeProfile(name, profile);
 	} catch (err) {
 		logger.debug(`profile add: initial materialize failed: ${err}`);
 	}
 
 	addProfile(name, profile);
 	console.log(`Profile '${name}' saved.`);
+
+	// A profile that only selects a provider carries no credential: treat the
+	// add as "log this profile into that provider" and run the provider's
+	// interactive login (OAuth login page / API-key setup), persisting the
+	// credential into the profile's agent dir. Without an injected login the
+	// provider-only profile is stored as before.
+	const provider = profile.provider;
+	const providerOnly = provider !== undefined && Object.keys(profile).length === 1;
+	if (providerOnly && options.login && profileDir) {
+		console.log(`No token given — invoking the '${provider}' login for profile '${name}'...`);
+		return runProviderLogin(name, provider, profileDir, options.login);
+	}
+}
+
+/** Awaiting half of `profile add`: a failed or cancelled login never un-saves
+ *  the profile — the caller reports it and suggests adding a token later. */
+function runProviderLogin(
+	name: string,
+	provider: string,
+	profileDir: string,
+	login: NonNullable<HubCommandOptions["login"]>,
+): Promise<void> {
+	return login({ profileDir, provider }).then(
+		() => {
+			console.log(`Logged in to '${provider}'.`);
+		},
+		(err: unknown) => {
+			const message = err instanceof Error ? err.message : String(err);
+			console.error(`Login did not complete: ${message}`);
+			console.error(`Profile '${name}' kept without credentials — 'pipi profile update ${name} -t <key>'.`);
+		},
+	);
 }
 
 function cmdProfileUpdate(parsed: SubcommandArgv): void {
@@ -266,11 +313,6 @@ function cmdProfileView(parsed: SubcommandArgv): void {
 	if (!name) {
 		throw new Error("Error: profile name is required. Usage: pipi profile view <name> [-j]");
 	}
-	if (name === BUILT_IN_DEFAULT) {
-		throw new Error(
-			`'${BUILT_IN_DEFAULT}' is not a stored profile. Use 'pipi unuse' (or 'pipi use --built-in') to run pi with your existing config.`,
-		);
-	}
 	const p = loadProfiles().profiles[name];
 	if (!p) {
 		throw new Error(`Profile '${name}' not found.`);
@@ -326,11 +368,6 @@ function cmdProfileRename(parsed: SubcommandArgv): void {
 }
 
 function cmdProfileDefault(parsed: SubcommandArgv): void {
-	if (parsed.flags.has("builtIn")) {
-		clearDefaultProfile();
-		console.log("Default set to built-in (your existing pi config).");
-		return;
-	}
 	const name = parsed.positionals[0];
 	if (!name) {
 		throw new Error("Profile name is required. Use 'pipi unuse' to run pi with your existing config.");
@@ -339,13 +376,12 @@ function cmdProfileDefault(parsed: SubcommandArgv): void {
 	console.log(`Default profile set to '${name}'.`);
 }
 
-function dispatchProfile(argv: string[]): void {
+function dispatchProfile(argv: string[], options: HubCommandOptions): void | Promise<void> {
 	const sub = argv[0];
 	const parsed = parseSubcommandArgv(argv.slice(1));
 	switch (sub) {
 		case "add":
-			cmdProfileAdd(parsed);
-			return;
+			return cmdProfileAdd(parsed, options);
 		case "update":
 			cmdProfileUpdate(parsed);
 			return;
@@ -373,11 +409,6 @@ function dispatchProfile(argv: string[]): void {
 
 function dispatchUse(argv: string[]): void {
 	const parsed = parseSubcommandArgv(argv);
-	if (parsed.flags.has("builtIn")) {
-		clearDefaultProfile();
-		console.log("Default set to built-in (your existing pi config).");
-		return;
-	}
 	const name = parsed.positionals[0];
 	if (!name) {
 		const current = getDefaultProfileName();
@@ -397,17 +428,21 @@ function dispatchUnuse(): void {
  * Dispatch a hub subcommand (args[0] must be one of HUB_SUBCOMMANDS).
  * All hub subcommands are self-contained management commands.
  *
- * Throws on invalid usage or unknown profiles — callers are expected to print
- * the error and exit non-zero.
+ * `options` injects capabilities hub cannot implement itself (provider
+ * login — see `HubCommandOptions`).
+ *
+ * Throws synchronously on invalid usage or unknown profiles — callers are
+ * expected to print the error and exit non-zero. Returns a promise only when
+ * the command awaits an injected provider login (`profile add` with only a
+ * provider); callers must await it before exiting.
  */
-export function dispatchHubCommand(args: string[]): void {
+export function dispatchHubCommand(args: string[], options: HubCommandOptions = {}): void | Promise<void> {
 	logger.info(`Executing: ${args.join(" ")}`);
 	const command = args[0];
 	const argv = args.slice(1);
 	switch (command) {
 		case "profile":
-			dispatchProfile(argv);
-			return;
+			return dispatchProfile(argv, options);
 		case "use":
 			dispatchUse(argv);
 			return;

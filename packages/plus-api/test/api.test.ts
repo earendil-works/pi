@@ -20,15 +20,16 @@ import type { ExtensionAPI, SessionStartEvent } from "../src/api.ts";
 import {
 	AGENT_DIR,
 	addProfile,
-	BUILT_IN_DEFAULT,
 	clearDefaultProfile,
 	createAgentSession,
 	createPlusAgentSession,
 	createPlusUIContext,
+	createTerminalAuthInteraction,
 	DefaultResourceLoader,
 	findProfile,
 	getDefaultProfileName,
 	loadProfiles,
+	loginProvider,
 	ModelRuntime,
 	materializeProfile,
 	plusSdkExtensionFactories,
@@ -112,9 +113,24 @@ describe("profile management surface", () => {
 		]) {
 			expect(typeof fn).toBe("function");
 		}
-		expect(BUILT_IN_DEFAULT).toBe("__builtin__");
 		expect(typeof AGENT_DIR).toBe("string");
 		expect(THINKING_LEVELS).toEqual(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
+	});
+});
+
+describe("provider login surface", () => {
+	it("re-exports loginProvider and the terminal interaction", () => {
+		expect(typeof loginProvider).toBe("function");
+		const interaction = createTerminalAuthInteraction();
+		expect(typeof interaction.prompt).toBe("function");
+		expect(typeof interaction.notify).toBe("function");
+	});
+
+	it("rejects an unknown provider before running any login", async () => {
+		// agentDir points at a temp dir so the runtime's auth store never
+		// touches ~/.pi; the provider lookup throws before any interaction.
+		const agentDir = makeTempDir();
+		await expect(loginProvider("no-such-provider-xyz", { agentDir })).rejects.toThrow(/Unknown provider/);
 	});
 });
 

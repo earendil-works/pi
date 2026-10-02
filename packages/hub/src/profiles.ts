@@ -2,7 +2,13 @@ import fs from "node:fs";
 import { ensureProfilesFile, PROFILES_FILE, readJson, writeJson } from "./config.ts";
 import * as logger from "./logger.ts";
 import type { Profile, ProfilesData } from "./types.ts";
-import { BUILT_IN_DEFAULT, THINKING_LEVELS } from "./types.ts";
+import { THINKING_LEVELS } from "./types.ts";
+
+// Legacy value of `profiles.json`'s `default` key meaning "no profile, run
+// plain pi". The built-in default has been removed (an absent key means the
+// same thing now); the marker is still tolerated on read so installs that
+// stored it keep launching plain pi instead of failing on a phantom profile.
+const LEGACY_BUILT_IN_DEFAULT = "__builtin__";
 
 export function maskToken(token: string): string {
 	if (!token) return "(unset)";
@@ -72,10 +78,12 @@ export function findProfile(name: string): Profile | undefined {
 	return loadProfiles().profiles[name];
 }
 
-/** The default profile name, or undefined when set to built-in / unset. */
+/** The default profile name, or undefined when unset (plain pi). The legacy
+ *  `__builtin__` marker stored by older pi-hub versions also resolves to
+ *  undefined so existing installs keep launching plain pi. */
 export function getDefaultProfileName(): string | undefined {
 	const def = loadProfiles().default;
-	if (!def || def === BUILT_IN_DEFAULT) return undefined;
+	if (!def || def === LEGACY_BUILT_IN_DEFAULT) return undefined;
 	return def;
 }
 
@@ -89,11 +97,11 @@ export function setDefaultProfile(name: string): void {
 	logger.debug(`setDefaultProfile: wrote ${PROFILES_FILE}`);
 }
 
-/** Unset the default profile (plain pi). Stored as the built-in marker for
- *  backward compatibility with existing pi-hub installs. */
+/** Unset the default profile: the `default` key is removed, and plain pi (the
+ *  user's existing config) runs. */
 export function clearDefaultProfile(): void {
 	const data = loadProfiles();
-	data.default = BUILT_IN_DEFAULT;
+	delete data.default;
 	saveProfiles(data);
 	logger.debug(`clearDefaultProfile: wrote ${PROFILES_FILE}`);
 }

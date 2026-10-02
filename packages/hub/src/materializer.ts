@@ -41,14 +41,15 @@ export function resolveEffectiveProvider(profile: Profile, settings: AgentSettin
 /**
  * Write <dir>/auth.json with the profile's api_key entry (mode 0600).
  * Other providers' entries already in the file are preserved so a profile dir
- * keeps working if the user hand-edits it. Removed when the profile has no token.
+ * keeps working if the user hand-edits it. When the profile has no token the
+ * file is left untouched: it may hold credentials written by a provider login
+ * (`profile add <name> -p <provider>`, stored as OAuth entries) or refreshed by
+ * pi at runtime, and materialization runs on every launch — deleting the file
+ * there would wipe them.
  */
 export function writeAuthFile(dir: string, profile: Profile): void {
 	const file = path.join(dir, "auth.json");
-	if (!profile.token) {
-		fs.rmSync(file, { force: true });
-		return;
-	}
+	if (!profile.token) return;
 	const provider = resolveEffectiveProvider(profile, readSourceSettings());
 	if (!provider) {
 		console.error(

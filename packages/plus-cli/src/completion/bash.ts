@@ -89,7 +89,7 @@ _pipi() {
       elif [[ "$prev" == "view" || "$prev" == "remove" ]]; then
         _pipi_profiles
       elif [[ "$prev" == "default" ]]; then
-        COMPREPLY=($(compgen -W "--built-in $(_pipi_profile_names)" -- "$cur"))
+        _pipi_profiles
       elif [[ "$prev" == "rename" ]]; then
         _pipi_profiles
       elif [[ "$prev" == "profile" ]]; then
@@ -119,9 +119,7 @@ _pipi() {
       fi
       ;;
     use)
-      if [[ "$prev" != "--built-in" ]]; then
-        COMPREPLY=($(compgen -W "--built-in $(_pipi_profile_names)" -- "$cur"))
-      fi
+      _pipi_profiles
       ;;
     completion)
       COMPREPLY=($(compgen -W "bash zsh" -- "$cur"))

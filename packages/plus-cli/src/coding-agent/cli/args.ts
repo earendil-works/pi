@@ -19,7 +19,7 @@ export function printHelp(extensionFlags?: ExtensionFlag): void {
 	const row = (command: string, description: string) => `  ${APP_NAME} ${command}`.padEnd(62) + description;
 	console.log(`Profile commands (pi-plus):
 ${row("profile <add|update|list|view|remove|rename|default>", "Manage pi agent profiles")}
-${row("use [name] [--built-in]", "Set or show the default profile")}
+${row("use [name]", "Set or show the default profile")}
 ${row("unuse", "Unset the default profile (run plain pi)")}
 ${row("completion <bash|zsh>", "Print a shell completion script")}
 ${row("--as <name>", "Run a single invocation under a profile")}`);

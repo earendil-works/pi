@@ -10,9 +10,15 @@
 
 ### Removed
 
-- The deprecated `run` subcommand. `pipi --as <name>` (one-off launch) and `pipi use <name>` (default) cover its behavior; `dispatchHubCommand` now returns `void` since all hub subcommands are self-contained management commands.
+- The deprecated `run` subcommand. `pipi --as <name>` (one-off launch) and `pipi use <name>` (default) cover its behavior; `dispatchHubCommand` returns a promise only when it awaits the caller-injected provider login.
 - Shell completion (`completion` subcommand and the bash/zsh script generators) moved to the pi-plus override layer, which owns the published `pipi` CLI surface.
+- The built-in default profile: the `__builtin__` sentinel (`BUILT_IN_DEFAULT`) and the `--built-in` flag on `use` / `profile default` are gone — plain pi is now expressed by the absence of a `default` key (`pipi unuse`). A stored `profiles.json` still holding the legacy marker reads as "no default" and runs plain pi, and `clearDefaultProfile` deletes the key instead of writing the marker.
 
 ### Added
 
 - Initial release: migrated from the standalone `pi-hub-cli` repo. Named profiles (provider, up to 3 models, thinking level, token, base URL, settings overrides) stored in `~/.pi/profiles.json`; each profile gets a materialized isolated agent dir under `~/.pi/pi-hub/profiles/<name>/` (auth.json / settings.json / models.json plus symlinks to the shared `extensions/`, `skills/`, `npm/`, `sessions/`, `AGENTS.md`, `models-store.json`). Library-only package: command dispatch (`profile`, `use`, `unuse`) and launch resolution (`resolveLaunch`) are consumed by the pi-plus CLI wrapper.
+- `dispatchHubCommand` accepts `HubCommandOptions` with an optional `login` hook: when `profile add <name> -p <provider>` carries no credential, the saved profile delegates the provider's interactive login (OAuth login page / API-key setup) to the caller, which persists the credential into the profile's materialized agent dir. Hub stays dependency-free — the `pipi` CLI injects the flow from the pi model runtime. A failed or cancelled login is reported non-fatally and keeps the profile.
+
+### Changed
+
+- `writeAuthFile` no longer deletes a profile's `auth.json` when the profile has no token. The file can hold credentials written by a provider login (`profile add -p`, stored as OAuth entries) or refreshed by pi at runtime, and `materializeProfile` runs on every launch — deleting it there wiped them. It is now left untouched; a token still writes/overwrites only the profile provider's api_key entry.
