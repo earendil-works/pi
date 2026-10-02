@@ -45,12 +45,40 @@ function restResponse(state: string, result: unknown = jevOutput) {
 	};
 }
 
+// Output observed from the live /ai/run/@cf/cloudflare/clef endpoint. Cloudflare-hosted models
+// answer inside the API envelope without the run record that third-party models add.
+const clefOutput = {
+	model: "clef",
+	answers: {
+		is_urgent: { type: "noul", noul: 0.9873 },
+		department: {
+			type: "choice",
+			choice: "billing",
+			confidence: 0.9,
+			probabilities: { billing: 0.95, technical: 0.05 },
+		},
+	},
+	usage: { input_tokens: 146, output_tokens: 0 },
+};
+
+function clefResponse() {
+	return { result: clefOutput, success: true, errors: [], messages: [] };
+}
+
 function setup() {
 	const models = createModels();
 	models.setProvider(cloudflareWorkersAIProvider());
 	const jev = models.getModelOfType("classifier", "cloudflare-workers-ai", "typesafe/jev");
 	if (!jev) throw new Error("missing Cloudflare Jev model");
 	return { models, jev };
+}
+
+function setupClef(id: "@cf/cloudflare/clef" | "@cf/cloudflare/clef-flash") {
+	const models = createModels();
+	models.setProvider(cloudflareWorkersAIProvider());
+	const clef = models.getModelOfType("classifier", "cloudflare-workers-ai", id);
+	if (!clef) throw new Error(`missing Cloudflare model ${id}`);
+	return { models, clef };
 }
 
 const auth = { apiKey: "cf-key", env: { CLOUDFLARE_ACCOUNT_ID: "account-id" } };
@@ -108,5 +136,50 @@ describe("Cloudflare Workers AI System One", () => {
 
 		expect(result.stopReason).toBe("error");
 		expect(result.errorMessage).toContain("Cloudflare Workers AI error: No such model");
+	});
+
+	it("exposes Clef and Clef Flash through classifier catalog accessors", () => {
+		for (const id of ["@cf/cloudflare/clef", "@cf/cloudflare/clef-flash"] as const) {
+			const { models, clef } = setupClef(id);
+			expect(clef).toEqual(getBuiltinClassifierModel("cloudflare-workers-ai", id));
+			expect(clef).toMatchObject({ type: "classifier", api: "cloudflare-workers-ai-system-one" });
+			expect(models.getModel("cloudflare-workers-ai", id)).toBeUndefined();
+		}
+	});
+
+	it("sends the full Clef model id to /ai/run", async () => {
+		const { models, clef } = setupClef("@cf/cloudflare/clef");
+		const fetch = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+			const payload = JSON.parse(String(init?.body)) as {
+				model: string;
+				input: { state: unknown; questions: Record<string, { type: string }> };
+			};
+			// /ai/run resolves the catalog id; only the /ai/run/<id> form takes the bare selector.
+			expect(payload.model).toBe("@cf/cloudflare/clef");
+			expect(payload.input.state).toEqual(context.state);
+			expect(payload.input.questions.is_urgent?.type).toBe("noul");
+			return Response.json(clefResponse());
+		});
+
+		const result = await models.classify(clef, context, { ...auth, fetch });
+
+		expect(String(fetch.mock.calls[0]?.[0])).toBe("https://api.cloudflare.com/client/v4/accounts/account-id/ai/run");
+		expect(result.stopReason).toBe("stop");
+		expect(result.answers.is_urgent).toEqual({ type: "bool", probability: 0.9873 });
+		expect(result.answers.department).toMatchObject({ type: "choice", choice: "billing" });
+		expect(result.usage).toMatchObject({ input: 146, output: 0, totalTokens: 146 });
+	});
+
+	it("sends the Clef Flash selector", async () => {
+		const { models, clef } = setupClef("@cf/cloudflare/clef-flash");
+		const fetch = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+			expect(JSON.parse(String(init?.body)).model).toBe("@cf/cloudflare/clef-flash");
+			return Response.json({ result: { ...clefOutput, model: "clef-flash" }, success: true, errors: [] });
+		});
+
+		const result = await models.classify(clef, context, { ...auth, fetch });
+
+		expect(result.stopReason).toBe("stop");
+		expect(result.model).toBe("@cf/cloudflare/clef-flash");
 	});
 });
