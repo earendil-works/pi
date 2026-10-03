@@ -35,9 +35,9 @@
  */
 
 export * from "../../coding-agent/src/index.ts";
+export * from "../../plus/src/context/threshold-setting.ts";
 export * from "./auth.ts";
 export * from "./profiles.ts";
-export * from "../../plus/src/context/threshold-setting.ts";
 
 import type {
 	AgentSession,

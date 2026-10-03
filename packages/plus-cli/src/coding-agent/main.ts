@@ -21,12 +21,12 @@ import {
 	HUB_SUBCOMMANDS,
 	materializeProfile,
 	resolveLaunch,
-	syncProfilePackagesToSource,
 } from "@earendil-works/pi-hub";
-import { ENV_AGENT_DIR } from "../../../coding-agent/src/config.ts";
+import { ENV_AGENT_DIR, getAgentDir } from "../../../coding-agent/src/config.ts";
 import type { MainOptions } from "../../../coding-agent/src/main.ts";
 import { main as upstreamMain } from "../../../coding-agent/src/main.ts";
 import { createTerminalAuthInteraction, loginProvider } from "../../../plus/src/auth/login.ts";
+import { ENV_BASE_AGENT_DIR } from "../../../plus/src/coding-agent/core/profile-settings.ts";
 import {
 	registerAskUser,
 	registerCd,
@@ -86,18 +86,15 @@ export async function main(args: string[], options?: MainOptions) {
 		}
 		// ENV_AGENT_DIR is the original config module's constant
 		// ("PI_CODING_AGENT_DIR"); the plus config wrapper shadows only the
-		// display name, not the env var layout.
+		// display name, not the env var layout. Record the pre-profile agent
+		// dir first: PI_PLUS_BASE_AGENT_DIR activates the runtime settings
+		// layering in packages/plus/src/coding-agent/core/settings-manager.ts
+		// (~/.pi/agent/settings.json below the profile's settings.json, profile
+		// wins), which also makes the old packages exit-sync unnecessary —
+		// `packages` is a general key now and is written straight to the base.
+		process.env[ENV_BASE_AGENT_DIR] = getAgentDir();
 		const profileDir = materializeProfile(plan.name, profile);
 		process.env[ENV_AGENT_DIR] = profileDir;
-		// The profile's settings.json is a per-profile copy, but packages are
-		// global (npm/extensions are shared symlinks): install/remove and
-		// resource toggles persist `packages` into the profile copy, which the
-		// next materialization would discard — syncing it back to the source at
-		// exit (synchronous, runs after upstream's settings write queue has
-		// drained and even when upstream called process.exit for the command).
-		process.on("exit", () => {
-			syncProfilePackagesToSource(profileDir);
-		});
 	}
 
 	// The upstream version check polls pi.dev for pi's release train, not pi-plus's.

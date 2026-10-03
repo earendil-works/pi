@@ -8,7 +8,8 @@
  *   ask_user ↔ AskUserQuestion honored in matcher matching.
  * - Stop: the agent has fully settled for the turn.
  *
- * Hooks from ~/.pi, the agent dir, and the project .pi settings.json files
+ * Hooks from ~/.pi, the base agent dir (under a hub profile), the agent dir,
+ * and the project .pi settings.json files
  * are merged; fires are async fire-and-forget. The payload includes the
  * session `mode` (tui/rpc/json/print) so hook scripts can ignore headless
  * sessions, matching the interactive-only guard of agent-dir extensions.

@@ -40,15 +40,15 @@ import {
 	materializeProfile,
 	plusSdkExtensionFactories,
 	profileDirFor,
-	removeProfile,
 	readPlusSettings,
+	removeProfile,
 	removeProfileDir,
 	renameProfile,
+	SessionManager,
+	SettingsManager,
 	setAutoCompactThresholdPercent,
 	setContextFloorTokens,
 	setContextWindowCapTokens,
-	SessionManager,
-	SettingsManager,
 	setDefaultProfile,
 	syncProfilePackagesToSource,
 	THINKING_LEVELS,
@@ -208,11 +208,20 @@ describe("session history management", () => {
 		const header = (id: string, cwd: string) =>
 			JSON.stringify({ type: "session", id, version: 3, timestamp: new Date(0).toISOString(), cwd });
 		const msg = (id: string, parentId: string, role: string, text: string) =>
-			JSON.stringify({ type: "message", id, parentId, message: { role, content: [{ type: "text", text }], timestamp: 0 } });
+			JSON.stringify({
+				type: "message",
+				id,
+				parentId,
+				message: { role, content: [{ type: "text", text }], timestamp: 0 },
+			});
 		try {
 			writeFileSync(
 				join(dir, "a.jsonl"),
-				[header("id-aaa", "/tmp/a"), msg("a1", "h", "user", "quantum flux analysis"), msg("a2", "a1", "assistant", "the FLUX capacitor hums")].join("\n") + "\n",
+				[
+					header("id-aaa", "/tmp/a"),
+					msg("a1", "h", "user", "quantum flux analysis"),
+					msg("a2", "a1", "assistant", "the FLUX capacitor hums"),
+				].join("\n") + "\n",
 			);
 			writeFileSync(
 				join(dir, "b.jsonl"),
@@ -222,7 +231,10 @@ describe("session history management", () => {
 					msg("b1", "b0", "user", "unrelated"),
 				].join("\n") + "\n",
 			);
-			writeFileSync(join(dir, "c.jsonl"), [header("id-ccc", "/tmp/c"), msg("c1", "h", "user", "plain nothing")].join("\n") + "\n");
+			writeFileSync(
+				join(dir, "c.jsonl"),
+				[header("id-ccc", "/tmp/c"), msg("c1", "h", "user", "plain nothing")].join("\n") + "\n",
+			);
 
 			// Body text hit (case-insensitive, not the first message).
 			expect((await SessionManager.search("flux capacitor", dir)).map((s) => s.id)).toEqual(["id-aaa"]);

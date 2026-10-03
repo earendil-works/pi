@@ -2,7 +2,13 @@ import fs from "node:fs";
 import path from "node:path";
 import { AGENT_DIR, AGENT_SETTINGS_FILE, PI_SETTINGS_FILE, PROFILE_DIRS_DIR, readJson, writeJson } from "./config.ts";
 import * as logger from "./logger.ts";
-import type { AgentSettingsData, AuthData, ModelsFileData, Profile } from "./types.ts";
+import {
+	type AgentSettingsData,
+	type AuthData,
+	type ModelsFileData,
+	PROFILE_SETTINGS_KEYS,
+	type Profile,
+} from "./types.ts";
 
 // Directories/files shared from the source agent dir into every profile dir.
 // Dirs are symlinked so user edits (extensions, skills, sessions) stay live.
@@ -10,11 +16,13 @@ const SHARED_DIR_LINKS = ["extensions", "skills", "npm", "sessions"];
 const SHARED_FILE_LINKS = ["AGENTS.md", "models-store.json"];
 
 // Per-profile record of the `packages` array last written into the profile's
-// settings.json. Three-way merge anchor: at materialization, if the profile
-// copy diverged from the snapshot, pi (or the user) edited packages under the
-// profile — adopt those edits into the source before regenerating. Without
-// this, a pi process killed before its exit-sync (see syncProfilePackagesToSource)
-// would lose the edit and reinstall the package on next launch.
+// settings.json. Three-way merge anchor for the pre-layering era, when pi
+// persisted `packages` into the profile copy and only synced it to the source
+// at process exit: if the profile copy diverged from the snapshot at
+// materialization, adopt the edit into the source before the settings rebuild
+// prunes it. Under runtime layering (see packages/plus profile-settings)
+// `packages` is a general key written straight to the agent settings, so this
+// only matters for copies baked before the switch.
 const PACKAGES_SNAPSHOT_FILE = "packages.snapshot.json";
 
 export function profileDirFor(name: string): string {
@@ -66,73 +74,108 @@ export function writeAuthFile(dir: string, profile: Profile): void {
 }
 
 /**
- * Write <dir>/settings.json: copy of the source agent settings with
- * profile.settings overrides merged in and defaultProvider/defaultModel/
- * defaultThinkingLevel taken solely from the profile's dedicated fields
- * (which win for their own keys) — these are profile-scoped and are NOT
- * inherited from the source agent settings, where pi persists the user's
- * last selection. A null value in profile.settings deletes the key, so a
- * profile can drop a setting inherited from the agent settings.
+ * Write <dir>/settings.json: the profile layer of the runtime settings
+ * stack. pi now reads the agent settings.json live underneath this file
+ * (deep-merged, profile wins — see PROFILE_SETTINGS_KEYS in types.ts and the
+ * layering wrapper in packages/plus/src/coding-agent/core/settings-manager.ts),
+ * so the profile file carries ONLY profile-scoped content:
  *
- * On re-materialization, every key already in the profile's own
- * settings.json is preserved (pi persists user state there at runtime),
- * except `packages`, which keeps tracking the source so edits there still
- * propagate. This makes the profile file the source of truth for anything
- * pi or the user wrote into it, rather than an allowlist of known keys.
+ * - `defaultProvider`/`defaultModel` as persisted by pi at runtime under the
+ *   profile (pi's write routing keeps them here), then overridden by the
+ *   profile's dedicated fields / `settings` map for their own keys;
+ * - every key declared in `profile.settings` (a `null` deletes it, so a profile
+ *   can drop a key inherited from the agent settings);
+ * - `defaultThinkingLevel` when `profile.thinking` declares it (a thinking
+ *   declaration is re-applied on every materialization; a runtime thinking-level
+ *   edit under the profile routes to the agent settings until the next launch);
+ * - the `skills` insurance from the outer ~/.pi/settings.json when neither
+ *   layer defines skills (running from $HOME would otherwise expose it as a
+ *   project file and PI_CODING_AGENT_DIR isolation hides it).
  *
- * Because the profile copy is regenerated from the source, edits pi makes
- * to `packages` while running under the profile (install/remove, resource
- * toggles) would be lost: syncProfilePackagesToSource writes them back to
- * the source at process exit, and materializeProfile adopts any edit that
- * survived in the profile copy (crash before exit) via the packages snapshot.
- *
- * `hooks` is the other exception, in the opposite direction: it always
- * replicates from the source agent settings, winning over both the profile's
- * own settings.json and the profile's `settings` map (a `null` there cannot
- * delete it), so hook edits in the default settings.json reach every profile.
+ * Legacy profile copies baked from the agent settings (general keys like
+ * theme/hooks/packages that earlier materializations wrote here, or that pi
+ * wrote before runtime layering existed) are pruned: each pruned key moves
+ * into the agent settings.json when that file lacks it, and is dropped when it
+ * has one (the agent file is the live general store now). `packages` edits made
+ * under a profile are no longer lost by pruning: adoptDivergedPackages has
+ * already synced them into the source at this point, and newer `packages`
+ * writes go straight to the agent settings.
  */
 export function writeSettingsFile(dir: string, profile: Profile): void {
-	const settings = readSourceSettings();
-	// Captured before the merges below clobber it: `settings` starts as the
-	// source object, but the preserved-keys loop and the profile's settings map
-	// can overwrite its `hooks` — the source value must be restored at the end.
-	const sourceHooks = settings.hooks;
+	const profileSettingsFile = path.join(dir, "settings.json");
 
-	// Profile-scoped keys: never inherit the source agent settings' values.
-	// pi persists the user's last provider/model/thinking selection into the
-	// active agent dir, so the source copy may carry another profile's (or a
-	// built-in pi session's) defaults. A profile dir carries these keys only
-	// when the profile itself defines them (dedicated fields or settings map)
-	// or pi previously wrote them into the profile's own settings.json.
-	delete settings.defaultProvider;
-	delete settings.defaultModel;
-	delete settings.defaultThinkingLevel;
+	// Nested materialization while a profile is already active (PI_CODING_AGENT_DIR
+	// points at a profile dir): the "source" layer would be the profile file itself,
+	// so pruning general keys would drop them with no real base to migrate into.
+	// Rewrite in place preserving every existing key, refreshing only the declared
+	// overrides/fields (mirrors the pre-layering behavior; same guard as
+	// refreshSharedLinks).
+	if (fs.existsSync(profileSettingsFile) && path.resolve(AGENT_DIR) === path.resolve(dir)) {
+		let existingNested: AgentSettingsData;
+		try {
+			existingNested = readJson<AgentSettingsData>(profileSettingsFile);
+		} catch (err) {
+			logger.warn(`writeSettingsFile: could not read existing ${profileSettingsFile}, regenerating`, err);
+			existingNested = {};
+		}
+		applyProfileOverrides(existingNested, profile);
+		writeJson(profileSettingsFile, existingNested);
+		logger.debug(`writeSettingsFile: rewrote nested profile copy ${profileSettingsFile}`);
+		return;
+	}
 
-	// Insurance: if the outer ~/.pi/settings.json defines skills and the agent
-	// settings don't, carry it over (PI_CODING_AGENT_DIR isolation may hide it).
-	if (settings.skills === undefined && fs.existsSync(PI_SETTINGS_FILE)) {
+	const source = readSourceSettings();
+
+	// Prune/migration pass over the existing profile file, before rebuilding it.
+	let existing: AgentSettingsData = {};
+	if (fs.existsSync(profileSettingsFile)) {
+		try {
+			existing = readJson<AgentSettingsData>(profileSettingsFile);
+		} catch (err) {
+			logger.warn(`writeSettingsFile: could not read existing ${profileSettingsFile}, regenerating`, err);
+		}
+	}
+	let sourceDirty = false;
+	for (const [key, value] of Object.entries(existing)) {
+		if (PROFILE_SETTINGS_KEYS.includes(key) || value === undefined) continue;
+		if (profile.settings && key in profile.settings) continue; // re-declared below; not stale
+		if (source[key] === undefined) {
+			source[key] = value;
+			sourceDirty = true;
+			logger.debug(`writeSettingsFile: migrated general key "${key}" into ${AGENT_SETTINGS_FILE}`);
+		}
+	}
+	if (sourceDirty) {
+		writeJson(AGENT_SETTINGS_FILE, source);
+		logger.debug(
+			`writeSettingsFile: pruned general keys from the profile copy, migrated into ${AGENT_SETTINGS_FILE}`,
+		);
+	}
+
+	const settings: AgentSettingsData = {};
+
+	// Profile-scoped state pi persisted in this file across sessions.
+	for (const key of PROFILE_SETTINGS_KEYS) {
+		if (existing[key] !== undefined) settings[key] = existing[key];
+	}
+
+	// Insurance: if the outer ~/.pi/settings.json defines skills and neither
+	// settings layer does, carry it over.
+	if (source.skills === undefined && settings.skills === undefined && fs.existsSync(PI_SETTINGS_FILE)) {
 		const outer = readJson<AgentSettingsData>(PI_SETTINGS_FILE);
 		if (outer.skills !== undefined) {
 			settings.skills = outer.skills;
 		}
 	}
 
-	// Keep everything pi (or the user) wrote into the profile's settings.json
-	// during previous sessions — except `packages`, which tracks the source.
-	const profileSettingsFile = path.join(dir, "settings.json");
-	if (fs.existsSync(profileSettingsFile)) {
-		try {
-			const existing = readJson<AgentSettingsData>(profileSettingsFile);
-			for (const [key, value] of Object.entries(existing)) {
-				if (key === "packages") continue;
-				settings[key] = value;
-			}
-			logger.debug(`writeSettingsFile: preserved existing keys from ${profileSettingsFile}`);
-		} catch (err) {
-			logger.warn(`writeSettingsFile: could not read existing ${profileSettingsFile}, regenerating`, err);
-		}
-	}
+	applyProfileOverrides(settings, profile);
 
+	writeJson(profileSettingsFile, settings);
+	logger.debug(`writeSettingsFile: wrote ${profileSettingsFile}`);
+}
+
+/** Apply the profile's `settings` overrides (null deletes) and the dedicated provider/model/thinking fields. */
+function applyProfileOverrides(settings: AgentSettingsData, profile: Profile): void {
 	if (profile.settings) {
 		for (const [key, value] of Object.entries(profile.settings)) {
 			if (value === null) {
@@ -143,20 +186,10 @@ export function writeSettingsFile(dir: string, profile: Profile): void {
 		}
 	}
 
-	// `hooks` replicates from the source no matter what the merges above did:
-	// neither a hooks copy preserved from the profile's own settings.json nor
-	// one from the profile's settings map may shadow the default settings.json.
-	if (sourceHooks !== undefined) {
-		settings.hooks = sourceHooks;
-	}
-
 	const models = profile.models || (profile.model ? [profile.model] : []);
 	if (profile.provider) settings.defaultProvider = profile.provider;
 	if (models[0]) settings.defaultModel = models[0];
 	if (profile.thinking) settings.defaultThinkingLevel = profile.thinking;
-
-	writeJson(path.join(dir, "settings.json"), settings);
-	logger.debug(`writeSettingsFile: wrote ${path.join(dir, "settings.json")}`);
 }
 
 /**
@@ -239,9 +272,8 @@ function packagesOf(settings: AgentSettingsData | undefined): unknown {
 
 /**
  * Write the profile copy's `packages` array into the source agent settings.
- * pi resolves packages against the shared (symlinked) npm/extensions dirs,
- * so the list is effectively global: whichever profile installs or removes
- * an extension, the source settings.json must track it. Other keys in the
+ * Only needed to migrate copies baked before runtime settings layering (pi
+ * writes `packages` to the agent settings directly now). Other keys in the
  * source file are left untouched. Returns true when the source was changed.
  */
 export function syncProfilePackagesToSource(profileDir: string): boolean {
@@ -275,7 +307,8 @@ export function syncProfilePackagesToSource(profileDir: string): boolean {
  * Adopt `packages` edits made under the profile into the source settings.
  * Compares the profile copy against the snapshot taken at the last
  * materialization: a divergence means pi (or the user) edited packages under
- * the profile and the process did not live long enough to exit-sync. When the
+ * the profile before runtime layering and the process did not live long enough
+ * to exit-sync. When the
  * snapshot is missing (first run after upgrade) nothing is adopted — the
  * snapshot is seeded after regeneration, from then on divergences are edits.
  */

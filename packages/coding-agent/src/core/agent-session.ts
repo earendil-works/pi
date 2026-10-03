@@ -1351,12 +1351,14 @@ export class AgentSession {
 	 * the live runner, so extension reloads are reflected.
 	 */
 	getSlashCommands(): SlashCommandInfo[] {
-		const extensionCommands: SlashCommandInfo[] = (this._extensionRunner?.getRegisteredCommands() ?? []).map((command) => ({
-			name: command.invocationName,
-			description: command.description,
-			source: "extension" as const,
-			sourceInfo: command.sourceInfo,
-		}));
+		const extensionCommands: SlashCommandInfo[] = (this._extensionRunner?.getRegisteredCommands() ?? []).map(
+			(command) => ({
+				name: command.invocationName,
+				description: command.description,
+				source: "extension" as const,
+				sourceInfo: command.sourceInfo,
+			}),
+		);
 		const templates: SlashCommandInfo[] = this.promptTemplates.map((template) => ({
 			name: template.name,
 			description: template.description,

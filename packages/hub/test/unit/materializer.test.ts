@@ -120,15 +120,16 @@ describe("materializeProfile", () => {
 		expect(settings.defaultThinkingLevel).toBe("high");
 	});
 
-	it("preserves existing agent settings keys while overriding defaults", () => {
+	it("does not bake general agent settings into the profile copy", () => {
 		fs.writeFileSync(
 			path.join(agentDir, "settings.json"),
 			JSON.stringify({ theme: "dark", defaultProvider: "google", someHook: { x: 1 } }),
 		);
 		const dir = mat.materializeProfile("work", baseProfile);
 		const settings = JSON.parse(fs.readFileSync(path.join(dir, "settings.json"), "utf-8"));
-		expect(settings.theme).toBe("dark");
-		expect(settings.someHook).toEqual({ x: 1 });
+		// General keys are read live from the agent settings at runtime.
+		expect(settings.theme).toBeUndefined();
+		expect(settings.someHook).toBeUndefined();
 		expect(settings.defaultProvider).toBe("kimi-coding");
 	});
 
@@ -144,7 +145,7 @@ describe("materializeProfile", () => {
 		);
 		const dir = mat.materializeProfile("bare", { token: "tok-123" });
 		const settings = JSON.parse(fs.readFileSync(path.join(dir, "settings.json"), "utf-8"));
-		expect(settings.theme).toBe("dark");
+		expect(settings.theme).toBeUndefined();
 		expect(settings.defaultProvider).toBeUndefined();
 		expect(settings.defaultModel).toBeUndefined();
 		expect(settings.defaultThinkingLevel).toBeUndefined();
@@ -166,23 +167,25 @@ describe("materializeProfile", () => {
 		expect(settings.skills).toEqual(["~/.claude/skills"]);
 	});
 
-	it("merges profile.settings over the source agent settings", () => {
+	it("writes profile.settings overrides into the profile layer without copying the rest", () => {
 		fs.writeFileSync(path.join(agentDir, "settings.json"), JSON.stringify({ theme: "dark", notify: true }));
 		const dir = mat.materializeProfile("work", {
 			...baseProfile,
 			settings: { theme: "light", nested: { a: 1 } },
 		});
 		const settings = JSON.parse(fs.readFileSync(path.join(dir, "settings.json"), "utf-8"));
+		// Declared overrides land in the profile file (they win at read time);
+		// undeclared general keys are not copied there.
 		expect(settings.theme).toBe("light");
 		expect(settings.nested).toEqual({ a: 1 });
-		expect(settings.notify).toBe(true);
+		expect(settings.notify).toBeUndefined();
 		// Source file untouched
 		const source = JSON.parse(fs.readFileSync(path.join(agentDir, "settings.json"), "utf-8"));
 		expect(source.theme).toBe("dark");
 		expect(source.nested).toBeUndefined();
 	});
 
-	it("deletes a source settings key when profile.settings sets it to null", () => {
+	it("keeps a null profile.settings key out of the profile layer", () => {
 		fs.writeFileSync(path.join(agentDir, "settings.json"), JSON.stringify({ theme: "dark", keep: 1 }));
 		const dir = mat.materializeProfile("work", {
 			...baseProfile,
@@ -190,7 +193,7 @@ describe("materializeProfile", () => {
 		});
 		const settings = JSON.parse(fs.readFileSync(path.join(dir, "settings.json"), "utf-8"));
 		expect(settings.theme).toBeUndefined();
-		expect(settings.keep).toBe(1);
+		expect(settings.keep).toBeUndefined();
 	});
 
 	it("lets the provider/model/thinking fields win over profile.settings for their keys", () => {
@@ -203,29 +206,84 @@ describe("materializeProfile", () => {
 		expect(settings.extra).toBe("x");
 	});
 
-	it("preserves pi runtime state from the existing profile settings.json", () => {
+	it("preserves pi runtime profile state from the existing profile settings.json", () => {
 		fs.writeFileSync(
 			path.join(agentDir, "settings.json"),
 			JSON.stringify({ theme: "dark", lastChangelogVersion: "0.80.0", packages: ["npm:old"] }),
 		);
 		const dir = mat.materializeProfile("work", baseProfile);
-		// Simulate pi writing runtime state during a session
+		// Simulate pi's write routing under layering: profile-key state persisted
+		// into the profile file, general state into the agent settings.
 		const profileSettings = path.join(dir, "settings.json");
 		const existing = JSON.parse(fs.readFileSync(profileSettings, "utf-8"));
-		existing.theme = "claude-code-light/claude-code-dark-ansi";
-		existing.lastChangelogVersion = "0.85.1";
-		existing.modelThinkingLevels = { "kimi-coding/kimi-for-coding": "low" };
-		existing.tuiMode = "fullscreen";
+		existing.defaultModel = "kimi-other";
 		fs.writeFileSync(profileSettings, JSON.stringify(existing));
+		const sourcePath = path.join(agentDir, "settings.json");
+		const source = JSON.parse(fs.readFileSync(sourcePath, "utf-8"));
+		source.theme = "claude-code-light/claude-code-dark-ansi";
+		source.lastChangelogVersion = "0.85.1";
+		source.tuiMode = "fullscreen";
+		fs.writeFileSync(sourcePath, JSON.stringify(source));
 
-		// Re-materialize: pi-written state must survive, not be reset from source
+		// Re-materialize: the profile's own model selection survives (it is not
+		// reset from the profile.model declaration unless that declares a model…
+		// baseProfile.models declares kimi-for-coding, so it wins for its key),
+		// but the general state in the agent settings is left alone.
 		mat.materializeProfile("work", baseProfile);
 		const settings = JSON.parse(fs.readFileSync(profileSettings, "utf-8"));
-		expect(settings.theme).toBe("claude-code-light/claude-code-dark-ansi");
-		expect(settings.lastChangelogVersion).toBe("0.85.1");
-		expect(settings.packages).toEqual(["npm:old"]);
-		expect(settings.modelThinkingLevels).toEqual({ "kimi-coding/kimi-for-coding": "low" });
-		expect(settings.tuiMode).toBe("fullscreen");
+		expect(settings.defaultModel).toBe("kimi-for-coding");
+		const afterSource = JSON.parse(fs.readFileSync(sourcePath, "utf-8"));
+		expect(afterSource.theme).toBe("claude-code-light/claude-code-dark-ansi");
+		expect(afterSource.lastChangelogVersion).toBe("0.85.1");
+		expect(afterSource.tuiMode).toBe("fullscreen");
+		expect(afterSource.packages).toEqual(["npm:old"]);
+	});
+
+	it("keeps profile-persisted defaultModel when the profile does not declare a model", () => {
+		fs.writeFileSync(path.join(agentDir, "settings.json"), JSON.stringify({ theme: "dark" }));
+		const dir = mat.materializeProfile("loose", { provider: "kimi-coding", token: "tok" });
+		const profileSettings = path.join(dir, "settings.json");
+		const existing = JSON.parse(fs.readFileSync(profileSettings, "utf-8"));
+		existing.defaultModel = "kimi-selected-at-runtime";
+		fs.writeFileSync(profileSettings, JSON.stringify(existing));
+
+		mat.materializeProfile("loose", { provider: "kimi-coding", token: "tok" });
+		const settings = JSON.parse(fs.readFileSync(profileSettings, "utf-8"));
+		expect(settings.defaultProvider).toBe("kimi-coding");
+		expect(settings.defaultModel).toBe("kimi-selected-at-runtime");
+	});
+
+	it("migrates legacy baked general keys into the agent settings, agent wins on conflict", () => {
+		fs.writeFileSync(path.join(agentDir, "settings.json"), JSON.stringify({ theme: "dark" }));
+		const dir = mat.materializeProfile("work", baseProfile);
+		// Simulate a pre-layering profile copy with baked general keys (and pi
+		// edits made under the old regime that never reached the agent settings).
+		const profileSettings = path.join(dir, "settings.json");
+		fs.writeFileSync(
+			profileSettings,
+			JSON.stringify({
+				theme: "baked-stale",
+				editorPaddingX: 2,
+				modelThinkingLevels: { "kimi-coding/kimi-for-coding": "low" },
+				defaultProvider: "kimi-coding",
+				defaultModel: "kimi-for-coding",
+			}),
+		);
+
+		mat.materializeProfile("work", baseProfile);
+		const settings = JSON.parse(fs.readFileSync(profileSettings, "utf-8"));
+		expect(settings.theme).toBeUndefined();
+		expect(settings.editorPaddingX).toBeUndefined();
+		expect(settings.modelThinkingLevels).toBeUndefined();
+		expect(settings.defaultProvider).toBe("kimi-coding");
+		expect(settings.defaultModel).toBe("kimi-for-coding");
+
+		const source = JSON.parse(fs.readFileSync(path.join(agentDir, "settings.json"), "utf-8"));
+		// Conflict (theme): the agent file is the live general store and wins.
+		expect(source.theme).toBe("dark");
+		// Absent there: migrated so the pi-era value is not lost.
+		expect(source.editorPaddingX).toBe(2);
+		expect(source.modelThinkingLevels).toEqual({ "kimi-coding/kimi-for-coding": "low" });
 	});
 
 	it("adopts pi-written packages edits into the source on re-materialization", () => {
@@ -242,36 +300,52 @@ describe("materializeProfile", () => {
 		mat.materializeProfile("work", baseProfile);
 		const sourceSettings = JSON.parse(fs.readFileSync(path.join(agentDir, "settings.json"), "utf-8"));
 		expect(sourceSettings.packages).toEqual(["npm:old", "npm:new"]);
-		// and the regenerated profile copy tracks the adopted source
+		// the adopted packages list is pruned from the profile copy (general key)
 		const settings = JSON.parse(fs.readFileSync(profileSettings, "utf-8"));
-		expect(settings.packages).toEqual(["npm:old", "npm:new"]);
+		expect(settings.packages).toBeUndefined();
 	});
 
-	it("keeps profile settings over source edits on re-materialization, except untouched packages", () => {
+	it("prunes legacy baked profile keys on re-materialization, agent settings are the general store", () => {
 		fs.writeFileSync(
 			path.join(agentDir, "settings.json"),
-			JSON.stringify({ theme: "dark", statusbar: { enabled: false }, packages: ["npm:a"] }),
+			JSON.stringify({ theme: "dark", statusbar: { enabled: false } }),
 		);
 		const dir = mat.materializeProfile("work", baseProfile);
+		// Hand-write a pre-layering baked profile copy: general keys plus the
+		// user's old-regime edits (theme/statusbar changed in the profile file).
 		const profileSettings = path.join(dir, "settings.json");
-		const existing = JSON.parse(fs.readFileSync(profileSettings, "utf-8"));
-		existing.theme = "claude-code-dark";
-		existing.statusbar = { enabled: true, preset: "full" };
-		existing.customKey = { any: "thing" };
-		fs.writeFileSync(profileSettings, JSON.stringify(existing));
+		fs.writeFileSync(
+			profileSettings,
+			JSON.stringify({
+				theme: "claude-code-dark",
+				statusbar: { enabled: true, preset: "full" },
+				customKey: { any: "thing" },
+				defaultProvider: "kimi-coding",
+				defaultModel: "kimi-for-coding",
+				defaultThinkingLevel: "high",
+			}),
+		);
 
-		// User edits the source settings — the profile file must win, and the
-		// untouched packages list keeps tracking the source
+		// User edits the agent settings — under layering the agent file is the
+		// live general store: conflicting baked keys are dropped, keys missing
+		// there are migrated.
 		fs.writeFileSync(
 			path.join(agentDir, "settings.json"),
-			JSON.stringify({ theme: "light", statusbar: { enabled: false }, packages: ["npm:a", "npm:c"] }),
+			JSON.stringify({ theme: "light", statusbar: { enabled: false } }),
 		);
 		mat.materializeProfile("work", baseProfile);
 		const settings = JSON.parse(fs.readFileSync(profileSettings, "utf-8"));
-		expect(settings.theme).toBe("claude-code-dark");
-		expect(settings.statusbar).toEqual({ enabled: true, preset: "full" });
-		expect(settings.customKey).toEqual({ any: "thing" });
-		expect(settings.packages).toEqual(["npm:a", "npm:c"]);
+		expect(settings.theme).toBeUndefined();
+		expect(settings.statusbar).toBeUndefined();
+		expect(settings.customKey).toBeUndefined();
+		expect(settings.defaultProvider).toBe("kimi-coding");
+		expect(settings.defaultModel).toBe("kimi-for-coding");
+		expect(settings.defaultThinkingLevel).toBe("high");
+
+		const source = JSON.parse(fs.readFileSync(path.join(agentDir, "settings.json"), "utf-8"));
+		expect(source.theme).toBe("light");
+		expect(source.statusbar).toEqual({ enabled: false });
+		expect(source.customKey).toEqual({ any: "thing" });
 	});
 
 	it("lets profile packages edits win over concurrent source edits (last writer wins)", () => {
@@ -290,19 +364,17 @@ describe("materializeProfile", () => {
 		expect(sourceSettings.packages).toEqual(["npm:a", "npm:b"]);
 	});
 
-	it("always replicates hooks from the source agent settings", () => {
+	it("does not bake hooks into the profile copy; an explicit profile.settings hooks entry survives", () => {
 		fs.writeFileSync(path.join(agentDir, "settings.json"), JSON.stringify({ hooks: { sessionStart: "echo hi" } }));
-		// Even an explicit hooks entry in the profile's settings map must lose.
-		const dir = mat.materializeProfile("work", {
-			...baseProfile,
-			settings: { hooks: { sessionStart: "echo nope" } },
-		});
+		// hooks is a general key: live from the agent settings at runtime, not
+		// replicated into the profile copy.
+		const dir = mat.materializeProfile("work", baseProfile);
 		const profileSettings = path.join(dir, "settings.json");
 		let settings = JSON.parse(fs.readFileSync(profileSettings, "utf-8"));
-		expect(settings.hooks).toEqual({ sessionStart: "echo hi" });
+		expect(settings.hooks).toBeUndefined();
 
-		// A hooks copy written into the profile file (pi runtime or hand edit)
-		// must not shadow later edits to the default settings.json.
+		// A stale hooks copy baked by an older hub version is pruned (the agent
+		// settings already have the key), so base edits reach the profile live.
 		settings.hooks = { sessionStart: "echo stale" };
 		fs.writeFileSync(profileSettings, JSON.stringify(settings));
 		fs.writeFileSync(
@@ -311,7 +383,13 @@ describe("materializeProfile", () => {
 		);
 		mat.materializeProfile("work", baseProfile);
 		settings = JSON.parse(fs.readFileSync(profileSettings, "utf-8"));
-		expect(settings.hooks).toEqual({ sessionStart: "echo updated" });
+		expect(settings.hooks).toBeUndefined();
+
+		// An explicit per-profile hooks override stays in the profile layer and
+		// wins at read time.
+		mat.materializeProfile("work", { ...baseProfile, settings: { hooks: { sessionStart: "echo profile" } } });
+		settings = JSON.parse(fs.readFileSync(profileSettings, "utf-8"));
+		expect(settings.hooks).toEqual({ sessionStart: "echo profile" });
 	});
 
 	it("lets profile.settings overrides win over preserved profile settings", () => {
@@ -329,7 +407,7 @@ describe("materializeProfile", () => {
 		expect(settings.theme).toBe("light");
 	});
 
-	it("regenerates from source when the existing profile settings.json is corrupt", () => {
+	it("regenerates the profile layer when the existing profile settings.json is corrupt", () => {
 		fs.writeFileSync(path.join(agentDir, "settings.json"), JSON.stringify({ theme: "dark" }));
 		const dir = mat.materializeProfile("work", baseProfile);
 		const profileSettings = path.join(dir, "settings.json");
@@ -337,8 +415,9 @@ describe("materializeProfile", () => {
 
 		expect(() => mat.materializeProfile("work", baseProfile)).not.toThrow();
 		const settings = JSON.parse(fs.readFileSync(profileSettings, "utf-8"));
-		expect(settings.theme).toBe("dark");
+		expect(settings.theme).toBeUndefined();
 		expect(settings.defaultProvider).toBe("kimi-coding");
+		expect(settings.defaultModel).toBe("kimi-for-coding");
 	});
 
 	it("writes models.json with a baseUrl override for the profile provider", () => {
@@ -470,6 +549,11 @@ describe("syncProfilePackagesToSource", () => {
 	it("is a no-op when the packages already match", () => {
 		writeSourceSettings({ packages: ["npm:a"] });
 		const dir = mat.materializeProfile("work", baseProfile);
+		// Legacy copy state: the profile file still carries the matching list.
+		const profileSettings = path.join(dir, "settings.json");
+		const existing = JSON.parse(fs.readFileSync(profileSettings, "utf-8"));
+		existing.packages = ["npm:a"];
+		fs.writeFileSync(profileSettings, JSON.stringify(existing));
 		const sourcePath = path.join(agentDir, "settings.json");
 		const before = fs.readFileSync(sourcePath, "utf-8");
 

@@ -9,16 +9,17 @@
  *     ]}]
  *   }
  *
- * Hooks are read from the same three settings levels pi uses for other
- * custom keys (~/.pi, agent dir, project .pi) and merged — hooks are
- * additive by nature. Only command hooks are supported; `command` may be a
- * string or a { "bash": "..." } object.
+ * Hooks are read from the same settings levels pi uses for other custom keys
+ * (~/.pi, base agent dir under a hub profile, agent dir, project .pi) and
+ * merged — hooks are additive by nature. Only command hooks are supported;
+ * `command` may be a string or a { "bash": "..." } object.
  */
 
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { getAgentDir } from "../../../../coding-agent/src/config.ts";
+import { getBaseSettingsPath } from "../../coding-agent/core/profile-settings.ts";
 
 export interface SettingsHook {
 	event: string;
@@ -112,11 +113,15 @@ function readSettingsFile(path: string): unknown | undefined {
 
 /** The settings.json files hooks are read from, in increasing precedence order. */
 export function settingsHookFiles(cwd: string): string[] {
-	return [
-		join(homedir(), ".pi", "settings.json"),
-		join(getAgentDir(), "settings.json"),
-		join(cwd, ".pi", "settings.json"),
-	];
+	const agentDirFile = join(getAgentDir(), "settings.json");
+	const files = [join(homedir(), ".pi", "settings.json")];
+	// Under a hub profile the agent dir is the profile copy and the general
+	// hooks live in the base agent settings (layering marker set by pipi);
+	// outside a profile there is no separate base layer.
+	const baseFile = getBaseSettingsPath();
+	if (baseFile && baseFile !== agentDirFile) files.push(baseFile);
+	files.push(agentDirFile, join(cwd, ".pi", "settings.json"));
+	return files;
 }
 
 /**

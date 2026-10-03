@@ -1,3 +1,14 @@
+/**
+ * settings.json keys that are profile-scoped: only these persist in a profile's
+ * settings.json (besides the profile's own `settings` overrides and the
+ * dedicated provider/model/thinking declarations). Everything else is general
+ * and lives in the agent settings.json, which pi now reads live at runtime
+ * under a profile (layering implemented in
+ * packages/plus/src/coding-agent/core/settings-manager.ts — keep the two lists
+ * in sync; hub stays dependency-free so this cannot be shared).
+ */
+export const PROFILE_SETTINGS_KEYS: string[] = ["defaultProvider", "defaultModel"];
+
 export interface Profile {
 	provider?: string;
 	model?: string;
@@ -5,8 +16,9 @@ export interface Profile {
 	thinking?: string;
 	token?: string;
 	url?: string;
-	/** Arbitrary settings.json overrides, merged over the source agent settings.
-	 *  A null value deletes the key from the materialized settings.json. */
+	/** Arbitrary settings.json overrides, written into the profile settings.json
+	 *  where they win over the agent settings at runtime. A null value deletes
+	 *  the key from the materialized settings.json. */
 	settings?: Record<string, unknown>;
 }
 

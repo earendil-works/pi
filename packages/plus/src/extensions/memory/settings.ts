@@ -1,13 +1,15 @@
 // Memory feature settings reader for pi-plus. The "memory" key is not part of
 // upstream's Settings interface (override policy: upstream stays pristine), so
 // it is read directly from the same settings.json files pi uses. Project
-// settings win over the agent dir, which wins over ~/.pi; any error or a
-// non-object value means "fall through to the next source / defaults".
+// settings win over the agent dir, which wins over the base agent dir (the
+// ~/.pi/agent settings a hub profile layers under), which wins over ~/.pi; any
+// error or a non-object value means "fall through to the next source / defaults".
 
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { getAgentDir } from "../../../../coding-agent/src/config.ts";
+import { getBaseSettingsPath } from "../../coding-agent/core/profile-settings.ts";
 
 export interface MemorySettings {
 	/** Master switch for tools, injection, and auto-extract. Default true. */
@@ -49,12 +51,17 @@ function readMemorySettingsFile(path: string): Partial<MemorySettings> | undefin
 	}
 }
 
-/** Effective memory settings for `cwd` (project > agent dir > ~/.pi, then defaults). */
+/** Effective memory settings for `cwd` (project > agent dir > base agent dir > ~/.pi, then defaults). */
 export function readMemorySettings(cwd: string): MemorySettings {
 	const project = readMemorySettingsFile(join(cwd, ".pi", "settings.json"));
 	if (project) return { ...DEFAULTS, ...project };
 	const agent = readMemorySettingsFile(join(getAgentDir(), "settings.json"));
 	if (agent) return { ...DEFAULTS, ...agent };
+	const baseFile = getBaseSettingsPath();
+	if (baseFile && baseFile !== join(getAgentDir(), "settings.json")) {
+		const base = readMemorySettingsFile(baseFile);
+		if (base) return { ...DEFAULTS, ...base };
+	}
 	const home = readMemorySettingsFile(join(homedir(), ".pi", "settings.json"));
 	if (home) return { ...DEFAULTS, ...home };
 	return { ...DEFAULTS };
