@@ -997,8 +997,12 @@ export class TaskScheduler {
 	}
 
 	/**
-	 * A wait names existing tasks other than the waiter and its owners, which could never finish first; `failFast` only
-	 * tasks the waiter owns. An abort handler cannot wait.
+	 * A wait names existing tasks, and `failFast` only tasks the waiter owns. It may not close a cycle in the wait-for
+	 * graph, whose edges run from each task to what it waits on and to its ordinary owned work (spec §5.5). An abort
+	 * handler cannot wait.
+	 *
+	 * Invariant: the wait-for graph is acyclic. Only a wait adds an edge between existing tasks, so checking each wait
+	 * maintains it.
 	 */
 	async #validateWait(
 		tx: Transaction,
@@ -1009,19 +1013,25 @@ export class TaskScheduler {
 	): Promise<void> {
 		if (invocation.mode === "abort") throw new Error(`Abort handler of task ${current.id} cannot wait`);
 		const overlay = overlayOf(tx);
-		await this.#loadChain(parentOf(current));
-		const owners = new Set<TaskId>();
-		for (const step of this.#above(parentOf(current))) if ("task" in step) owners.add(step.task);
+		const reached = new Set<TaskId>();
 		for (const id of on) {
-			if (id === current.id || owners.has(id)) {
-				throw new Error(`Task ${current.id} cannot wait on itself or its owner ${id}`);
-			}
 			const member = overlay.tasks.get(id) ?? this.#live.get(id) ?? (await this.#storage.task(id, this.#context));
 			if (member === undefined) throw new Error(`Task ${id} does not exist`);
 			if (policy === "failFast" && member.owner !== current.id) {
 				throw new Error(`Task ${current.id} can wait failFast only on tasks it owns; ${id} is not one`);
 			}
+			// Its own children already hold the waiter, so waiting on them adds no edge.
+			if (member.owner !== current.id && this.#live.has(id)) reached.add(id);
 		}
+		if (reached.size === 0) return;
+		await this.#loadScopes(false);
+		const owned = this.#ownedLive();
+		// The tasks reachable from the targets; iterating a set also visits what is added to it during the loop.
+		for (const id of reached) {
+			for (const successor of this.#waitingOn(this.#live.get(id)!, owned)) reached.add(successor);
+			for (const successor of owned.get(id) ?? []) reached.add(successor);
+		}
+		if (reached.has(current.id)) throw new Error(`Task ${current.id} cannot close a wait cycle`);
 	}
 
 	/** End an invocation: its runtime operations reject from now on, its signal aborts, its watches stop, and its task is free. */
