@@ -1,6 +1,7 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {
 	createAcmeServer,
@@ -9,7 +10,7 @@ import {
 	OPENAI_PROBE_RESPONSE,
 	OPENAI_PROVIDER_ID,
 } from "../evals/acme-server.ts";
-import { inspectAddedModel, inspectProvider, loadConfiguredModelRuntime } from "../evals/configured-runtime.ts";
+import { inspectAddedModel, inspectProvider } from "../evals/configured-runtime.ts";
 
 const PROVIDER_ID = OPENAI_PROVIDER_ID;
 const MODEL = {
@@ -41,6 +42,15 @@ async function agentDirWith(modelsJson: unknown) {
 
 async function runtimeWith(modelsJson: unknown) {
 	return loadConfiguredModelRuntime(await agentDirWith(modelsJson));
+}
+
+function loadConfiguredModelRuntime(agentDir: string): Promise<ModelRuntime> {
+	return ModelRuntime.create({
+		modelsPath: join(agentDir, "models.json"),
+		authPath: join(agentDir, "auth.json"),
+		modelsStorePath: join(agentDir, "models-store.json"),
+		allowModelNetwork: false,
+	});
 }
 
 function acmeModelsJson() {

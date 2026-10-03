@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { EvalTask } from "../src/plan.ts";
-import { classifyCaseStatus, PI_SESSION_SNAPSHOT_ARTIFACT, readTaskObservation } from "../src/report.ts";
+import { PI_SESSION_SNAPSHOT_ARTIFACT, readTaskObservation } from "../src/report.ts";
 
 const temporaryDirectories: string[] = [];
 afterEach(async () => {
@@ -22,40 +22,41 @@ const task: EvalTask = {
 const SESSION = '{"type":"session"}\n';
 
 type ReportAssertion = {
-	status?: "passed" | "skipped" | "pending" | "failed";
+	caseId?: string;
+	status?: "passed" | "skipped" | "pending" | "todo" | "disabled" | "failed";
 	meta?: Record<string, unknown>;
 };
 
-async function writeTaskReport(assertion: ReportAssertion = {}) {
+async function writeTaskReport(assertions: ReportAssertion[]) {
 	const directory = await mkdtemp(join(tmpdir(), "pi-eval-report-test-"));
 	temporaryDirectories.push(directory);
 	const reportPath = join(directory, "vitest.json");
-	const status = assertion.status ?? "passed";
+	const results = assertions.map(({ caseId = task.caseId, status = "passed", meta = {} }) => ({
+		ancestorTitles: [task.evalSet],
+		fullName: `${task.evalSet} ${caseId}`,
+		status,
+		title: caseId,
+		failureMessages: [],
+		meta,
+	}));
+	const count = (status: ReportAssertion["status"]): number =>
+		results.filter((result) => result.status === status).length;
 	await writeFile(
 		reportPath,
 		JSON.stringify({
-			numFailedTests: 0,
-			numPassedTests: status === "passed" ? 1 : 0,
-			numPendingTests: status === "pending" || status === "skipped" ? 1 : 0,
-			numTodoTests: 0,
-			numTotalTests: 1,
+			numFailedTests: count("failed"),
+			numPassedTests: count("passed"),
+			numPendingTests: count("pending") + count("skipped") + count("disabled"),
+			numTodoTests: count("todo"),
+			numTotalTests: results.length,
 			startTime: 0,
-			success: true,
+			success: count("failed") === 0,
 			testResults: [
 				{
 					message: "",
 					name: "/repo/packages/evals/evals/example.docs.eval.ts",
-					status: "passed",
-					assertionResults: [
-						{
-							ancestorTitles: [task.evalSet],
-							fullName: `${task.evalSet} ${task.caseId}`,
-							status,
-							title: task.caseId,
-							failureMessages: [],
-							meta: assertion.meta ?? {},
-						},
-					],
+					status: count("failed") === 0 ? "passed" : "failed",
+					assertionResults: results,
 				},
 			],
 		}),
@@ -97,26 +98,19 @@ function scoredMeta(overrides?: {
 	};
 }
 
-async function readObservation(assertion?: ReportAssertion) {
-	const { directory, reportPath } = await writeTaskReport(assertion);
+async function readObservation(assertion: ReportAssertion = {}) {
+	const { directory, reportPath } = await writeTaskReport([assertion]);
 	return { directory, observation: await readTaskObservation(task, reportPath, directory) };
 }
 
-describe("classifyCaseStatus", () => {
-	it.each(["skipped", "todo", "disabled"] as const)("maps %s to skipped", (status) => {
-		expect(classifyCaseStatus(status)).toBe("skipped");
-	});
-
-	it("maps failed infrastructure to errored", () => {
-		expect(classifyCaseStatus("failed")).toBe("errored");
-	});
-});
-
 describe("readTaskObservation", () => {
-	it("preserves a skipped outcome when no harness run exists", async () => {
-		const { observation } = await readObservation({ status: "skipped" });
-		expect(observation).toMatchObject({ outcome: "skipped" });
-	});
+	it.each(["skipped", "todo", "disabled"] as const)(
+		"preserves a skipped outcome for %s cases without harness runs",
+		async (status) => {
+			const { observation } = await readObservation({ status });
+			expect(observation).toMatchObject({ outcome: "skipped" });
+		},
+	);
 
 	it("preserves a pending outcome when no harness run exists", async () => {
 		const { observation } = await readObservation({ status: "pending" });
@@ -126,7 +120,7 @@ describe("readTaskObservation", () => {
 	it("preserves metrics from a failed eval with a partial harness run", async () => {
 		const { directory, observation } = await readObservation({
 			status: "failed",
-			meta: scoredMeta({ errors: [{ message: "Prompt verification failed" }] }),
+			meta: scoredMeta(),
 		});
 		expect(observation).toEqual({
 			evalSet: task.evalSet,
@@ -179,6 +173,15 @@ describe("readTaskObservation", () => {
 		await expect(
 			readFile(join(directory, task.variant, "sessions", hashes[0], "session.jsonl"), "utf8"),
 		).resolves.toBe(SESSION);
+	});
+
+	it("selects the requested case when a sibling case is skipped", async () => {
+		const { directory, reportPath } = await writeTaskReport([
+			{ caseId: "sibling case", status: "skipped" },
+			{ caseId: task.caseId, meta: scoredMeta() },
+		]);
+		const observation = await readTaskObservation(task, reportPath, directory);
+		expect(observation).toMatchObject({ outcome: "scored", score: 0.5, totalTokens: 15 });
 	});
 
 	it("treats a zero score as scored data", async () => {
