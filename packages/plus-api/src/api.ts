@@ -17,11 +17,17 @@
  *   `ui` option; the session is bound with mode "rpc" so ask-user falls back
  *   to sequential select/input/confirm dialogs, and with mode "print"
  *   otherwise (matching upstream's non-interactive modes)
+ * - createPlusAgentSessionRuntime additionally returns an AgentSessionRuntime,
+ *   giving hosts the CLI's session-replacement machinery (/cd, /new, /fork,
+ *   /clone, resume-switch) with the same layering and rebind rules
  * - profile management (pi-hub profiles.json CRUD + agent-dir
  *   materialization) is re-exported from ./profiles.ts so hosts do not
  *   reimplement the pi-hub file contract
  * - provider login (OAuth login page / API-key setup, pi's /login equivalent,
  *   which pi-plus disables in the TUI) is re-exported from ./auth.ts
+ * - the pi-plus context settings (auto-compact threshold percent, context floor,
+ *   context window cap — the pi-plus settings store next to settings.json) are
+ *   re-exported from packages/plus's threshold-setting module
  *
  * Hosts without a pi CLI on PATH should pass excludeTools: ["subagent"]:
  * the subagent tool launches a pi subprocess and, in a CLI-less host such as
@@ -31,10 +37,16 @@
 export * from "../../coding-agent/src/index.ts";
 export * from "./auth.ts";
 export * from "./profiles.ts";
+export * from "../../plus/src/context/threshold-setting.ts";
 
 import type {
+	AgentSession,
+	AgentSessionRuntime,
+	AgentSessionRuntimeDiagnostic,
 	CreateAgentSessionOptions,
 	CreateAgentSessionResult,
+	CreateAgentSessionRuntimeFactory,
+	DefaultResourceLoaderOptions,
 	ExtensionCommandContextActions,
 	ExtensionError,
 	ExtensionUIContext,
@@ -42,9 +54,14 @@ import type {
 } from "../../coding-agent/src/index.ts";
 import {
 	createAgentSession,
+	createAgentSessionFromServices,
+	createAgentSessionRuntime,
+	createAgentSessionServices,
 	DefaultResourceLoader,
 	getAgentDir,
+	getDefaultSessionDir,
 	initTheme,
+	SessionManager,
 	SettingsManager,
 } from "../../coding-agent/src/index.ts";
 import { theme } from "../../coding-agent/src/modes/interactive/theme/theme.ts";
@@ -200,4 +217,168 @@ export async function createPlusAgentSession(
 		onError: options.onError,
 	});
 	return result;
+}
+
+export interface CreatePlusAgentSessionRuntimeOptions extends CreateAgentSessionOptions {
+	/** Additional host extension factories, appended after the pi-plus ones. */
+	extensionFactories?: InlineExtension[];
+	/**
+	 * Dialog handlers for extension UI. When provided, sessions are bound with
+	 * mode "rpc" and ask_user works through sequential dialogs; when omitted,
+	 * bound with mode "print" (no dialogs).
+	 */
+	ui?: PlusUIDialogHandlers;
+	/**
+	 * Override the command-context actions the runtime wires automatically
+	 * (waitForIdle / newSession / fork / navigateTree / switchSession / reload
+	 * routed to the runtime + current session). Only needed to customize
+	 * extension-facing behavior; when omitted the host gets the same routing
+	 * the print/RPC CLI modes use, which is what makes /cd and the pi-plus
+	 * extensions that replace the session work.
+	 */
+	commandContextActions?: ExtensionCommandContextActions;
+	abortHandler?: () => void;
+	shutdownHandler?: () => void;
+	onError?: (error: ExtensionError) => void;
+	/**
+	 * Called after EVERY extension bind: once for the initial session and again
+	 * after each session replacement (switchSession / fork / newSession). The
+	 * host must re-subscribe to the new session here — the previous AgentSession
+	 * object is disposed after a replacement, so holding onto it is stale.
+	 */
+	onRebind?: (session: AgentSession) => void | Promise<void>;
+	/**
+	 * Project-trust flag for per-cwd SettingsManagers (default true). pi's
+	 * interactive trust prompt/store is a CLI concern; embedding hosts decide
+	 * trust themselves (e.g. a native folder pick counts as consent).
+	 */
+	projectTrusted?: boolean;
+	/**
+	 * Loader passthroughs applied on every (re)creation, e.g.
+	 * additionalSkillPaths / noSkills / systemPrompt. cwd, agentDir,
+	 * settingsManager and extensionFactories are owned by this factory.
+	 */
+	resourceLoaderOptions?: Omit<
+		DefaultResourceLoaderOptions,
+		"cwd" | "agentDir" | "settingsManager" | "extensionFactories"
+	>;
+}
+
+/**
+ * Create an AgentSessionRuntime with the pi-plus layer and extensions, for
+ * hosts that need CLI-level session replacement (/cd, /new, /fork, /clone,
+ * resume-switch) on top of everything createPlusAgentSession provides.
+ *
+ * Unlike createPlusAgentSession this returns a runtime whose session object
+ * CHANGES under the host on every replacement; read the live session via
+ * `runtime.session` (or the onRebind callback). Semantics:
+ * - the same nine pi-plus extensions are registered per cwd via
+ *   createAgentSessionServices, recreating settings/loader against the
+ *   effective cwd on switch (mirroring the CLI's runtime factory)
+ * - extensions are bound exactly once per session through the rebind hook,
+ *   so session_start fires once per session ("startup" initially, then
+ *   "resume"/"fork"/"new"/"switch" reasons); the host must NOT call
+ *   bindExtensions itself
+ * - the initial session uses options.sessionManager when given, otherwise
+ *   SessionManager.create(cwd, getDefaultSessionDir(cwd, agentDir))
+ * - fork/newSession/switchSession may report { cancelled: true } when an
+ *   extension vetoes the switch; capability callers should handle it
+ */
+export async function createPlusAgentSessionRuntime(
+	options: CreatePlusAgentSessionRuntimeOptions = {},
+): Promise<AgentSessionRuntime> {
+	const {
+		extensionFactories,
+		ui,
+		commandContextActions,
+		abortHandler,
+		shutdownHandler,
+		onError,
+		onRebind,
+		projectTrusted = true,
+		resourceLoaderOptions,
+		...sessionOptions
+	} = options;
+
+	const cwd = options.cwd ?? process.cwd();
+	const agentDir = options.agentDir ?? getAgentDir();
+	const initialSessionManager =
+		options.sessionManager ?? SessionManager.create(cwd, getDefaultSessionDir(cwd, agentDir));
+
+	// Mirrors the CLI factory (coding-agent src/main.ts) trimmed to embedding
+	// hosts: services per effective cwd, session created from them, no binding.
+	const createRuntime: CreateAgentSessionRuntimeFactory = async (runtimeOptions) => {
+		const settingsManager =
+			sessionOptions.settingsManager ??
+			SettingsManager.create(runtimeOptions.cwd, runtimeOptions.agentDir, { projectTrusted });
+		const services = await createAgentSessionServices({
+			cwd: runtimeOptions.cwd,
+			agentDir: runtimeOptions.agentDir,
+			settingsManager,
+			modelRuntime: sessionOptions.modelRuntime,
+			resourceLoaderOptions: {
+				...resourceLoaderOptions,
+				extensionFactories: [...plusSdkExtensionFactories, ...(extensionFactories ?? [])],
+			},
+		});
+		const diagnostics: AgentSessionRuntimeDiagnostic[] = [...services.diagnostics];
+		const extensionsResult = services.resourceLoader.getExtensions();
+		for (const { path, error } of extensionsResult.errors) {
+			diagnostics.push({ type: "error", message: `Failed to load extension "${path}": ${error}` });
+		}
+		for (const { path, warning } of extensionsResult.warnings ?? []) {
+			diagnostics.push({ type: "warning", message: `Extension package "${path}": ${warning}` });
+		}
+		const created = await createAgentSessionFromServices({
+			services,
+			sessionManager: runtimeOptions.sessionManager,
+			sessionStartEvent: runtimeOptions.sessionStartEvent,
+			model: sessionOptions.model,
+			thinkingLevel: sessionOptions.thinkingLevel,
+			scopedModels: sessionOptions.scopedModels,
+			tools: sessionOptions.tools,
+			excludeTools: sessionOptions.excludeTools,
+			noTools: sessionOptions.noTools,
+			customTools: sessionOptions.customTools,
+		});
+		return { ...created, services, diagnostics };
+	};
+
+	const runtime = await createAgentSessionRuntime(createRuntime, {
+		cwd: initialSessionManager.getCwd(),
+		agentDir,
+		sessionManager: initialSessionManager,
+		sessionStartEvent: sessionOptions.sessionStartEvent,
+	});
+
+	// One bind per session, hook-driven (interactive-mode pattern): binding
+	// again after a replacement would double-fire session_start and re-run
+	// extension session_start side effects (memory recall, hooks).
+	const bind = async (session: AgentSession): Promise<void> => {
+		await session.bindExtensions({
+			uiContext: ui ? createPlusUIContext(ui) : undefined,
+			mode: ui ? "rpc" : "print",
+			commandContextActions: commandContextActions ?? {
+				waitForIdle: () => session.waitForIdle(),
+				newSession: (newSessionOptions) => runtime.newSession(newSessionOptions),
+				fork: async (entryId, forkOptions) => {
+					const result = await runtime.fork(entryId, forkOptions);
+					return { cancelled: result.cancelled };
+				},
+				navigateTree: (targetId, navigateOptions) => session.navigateTree(targetId, navigateOptions),
+				switchSession: (sessionPath, switchOptions) => runtime.switchSession(sessionPath, switchOptions),
+				reload: async () => {
+					await session.reload();
+				},
+			},
+			abortHandler,
+			shutdownHandler,
+			onError,
+		});
+		if (onRebind) await onRebind(session);
+	};
+
+	runtime.setRebindSession(bind);
+	await bind(runtime.session);
+	return runtime;
 }

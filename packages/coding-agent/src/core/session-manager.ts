@@ -21,6 +21,7 @@ import {
 	openSync,
 	readdirSync,
 	readSync,
+	rmSync,
 	type Stats,
 	statSync,
 	writeFileSync,
@@ -1886,6 +1887,55 @@ export class SessionManager {
 			// Exact session discovery is best-effort, matching list().
 		}
 		return undefined;
+	}
+
+	/**
+	 * Delete a persisted session transcript file. Returns true when the file was
+	 * removed, false when it did not exist. Throws for paths that do not look
+	 * like session files (guards against deleting arbitrary files). Does not
+	 * affect sessions already opened in a SessionManager instance.
+	 */
+	static deleteSession(filePath: string): boolean {
+		const resolved = resolvePath(filePath);
+		if (!resolved.endsWith(".jsonl")) {
+			throw new Error(`Refusing to delete non-session file: ${resolved}`);
+		}
+		if (!existsSync(resolved)) return false;
+		if (!statSync(resolved).isFile()) {
+			throw new Error(`Session path is not a file: ${resolved}`);
+		}
+		rmSync(resolved);
+		return true;
+	}
+
+	/**
+	 * Case-insensitive substring search over session history: matches the
+	 * session name, the first user message, or any user/assistant message text
+	 * (SessionInfo.allMessagesText). Returns full SessionInfo entries ordered
+	 * by last activity, newest first — same shape as listAll(). An empty or
+	 * whitespace-only query returns [].
+	 * @param query Search text (trimmed)
+	 * @param sessionDir Optional session directory to scope the search to; defaults to all project dirs.
+	 * @param onProgress Optional callback for progress updates (loaded, total)
+	 * @param signal Optional abort signal
+	 */
+	static async search(
+		query: string,
+		sessionDir?: string,
+		onProgress?: SessionListProgress,
+		signal?: AbortSignal,
+	): Promise<SessionInfo[]> {
+		const needle = query.trim().toLowerCase();
+		if (!needle) return [];
+		const sessions = sessionDir
+			? await SessionManager.listAll(sessionDir, onProgress, signal)
+			: await SessionManager.listAll(onProgress, signal);
+		return sessions.filter(
+			(session) =>
+				(session.name?.toLowerCase().includes(needle) ?? false) ||
+				session.firstMessage.toLowerCase().includes(needle) ||
+				session.allMessagesText.toLowerCase().includes(needle),
+		);
 	}
 
 	/**

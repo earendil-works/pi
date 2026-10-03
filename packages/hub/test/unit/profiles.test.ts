@@ -149,3 +149,160 @@ describe("helpers", () => {
 		expect(merged.models).toEqual(["m3", "m4"]);
 	});
 });
+
+describe("setProfileDefaultModel", () => {
+	beforeEach(async () => {
+		setup();
+		await load();
+	});
+	afterEach(teardown);
+
+	it("moves an existing model to position 1 and syncs model", () => {
+		profiles.addProfile("work", { models: ["m1", "m2"], model: "m1" });
+		const message = profiles.setProfileDefaultModel("work", "m2");
+		expect(message).toContain("Selected existing model 'm2'");
+		const p = profiles.loadProfiles().profiles.work;
+		expect(p.models).toEqual(["m2", "m1"]);
+		expect(p.model).toBe("m2");
+	});
+
+	it("adds a new model at the front", () => {
+		profiles.addProfile("work", { models: ["m1"], model: "m1" });
+		const message = profiles.setProfileDefaultModel("work", "m9");
+		expect(message).toContain("Added and selected new model 'm9'");
+		const p = profiles.loadProfiles().profiles.work;
+		expect(p.models).toEqual(["m9", "m1"]);
+		expect(p.model).toBe("m9");
+	});
+
+	it("normalizes a model-only profile to a list", () => {
+		profiles.addProfile("work", { model: "m1" });
+		profiles.setProfileDefaultModel("work", "m2");
+		const p = profiles.loadProfiles().profiles.work;
+		expect(p.models).toEqual(["m2", "m1"]);
+		expect(p.model).toBe("m2");
+	});
+
+	it("re-selecting the current default is a no-op write", () => {
+		profiles.addProfile("work", { models: ["m1", "m2"], model: "m1" });
+		profiles.setProfileDefaultModel("work", "m1");
+		const p = profiles.loadProfiles().profiles.work;
+		expect(p.models).toEqual(["m1", "m2"]);
+		expect(p.model).toBe("m1");
+	});
+
+	it("throws for an unknown profile or empty model", () => {
+		expect(() => profiles.setProfileDefaultModel("ghost", "m1")).toThrow("not found");
+		expect(() => profiles.setProfileDefaultModel("ghost", "   ")).toThrow("required");
+	});
+
+	it("enforces the three-model bound only when adding", () => {
+		profiles.addProfile("work", { models: ["m1", "m2", "m3"], model: "m1" });
+		expect(() => profiles.setProfileDefaultModel("work", "m4")).toThrow("at most 3 models");
+		// selecting an existing tail model stays allowed
+		profiles.setProfileDefaultModel("work", "m3");
+		expect(profiles.loadProfiles().profiles.work.models).toEqual(["m3", "m1", "m2"]);
+	});
+});
+
+describe("addProfileModel", () => {
+	beforeEach(async () => {
+		setup();
+		await load();
+	});
+	afterEach(teardown);
+
+	it("appends at the end without selecting", () => {
+		profiles.addProfile("work", { models: ["m1", "m2"], model: "m1" });
+		const message = profiles.addProfileModel("work", "m3");
+		expect(message).toContain("Added model 'm3' to profile 'work'");
+		const p = profiles.loadProfiles().profiles.work;
+		expect(p.models).toEqual(["m1", "m2", "m3"]);
+		expect(p.model).toBe("m1");
+	});
+
+	it("becomes the default when the profile had no model", () => {
+		profiles.addProfile("work", { provider: "openai" });
+		profiles.addProfileModel("work", "m1");
+		const p = profiles.loadProfiles().profiles.work;
+		expect(p.models).toEqual(["m1"]);
+		expect(p.model).toBe("m1");
+	});
+
+	it("normalizes a model-only profile to a list", () => {
+		profiles.addProfile("work", { model: "m1" });
+		profiles.addProfileModel("work", "m2");
+		const p = profiles.loadProfiles().profiles.work;
+		expect(p.models).toEqual(["m1", "m2"]);
+		expect(p.model).toBe("m1");
+	});
+
+	it("throws for duplicates, unknown profile, empty model, and the 3-model bound", () => {
+		profiles.addProfile("work", { models: ["m1", "m2", "m3"], model: "m1" });
+		expect(() => profiles.addProfileModel("work", "m2")).toThrow("already in profile 'work'");
+		expect(() => profiles.addProfileModel("ghost", "m1")).toThrow("not found");
+		expect(() => profiles.addProfileModel("ghost", "   ")).toThrow("required");
+		expect(() => profiles.addProfileModel("work", "m4")).toThrow("at most 3 models");
+	});
+
+	it("trims the model name", () => {
+		profiles.addProfile("work", { models: ["m1"], model: "m1" });
+		profiles.addProfileModel("work", "  m2  ");
+		expect(profiles.loadProfiles().profiles.work.models).toEqual(["m1", "m2"]);
+	});
+});
+
+describe("removeProfileModel", () => {
+	beforeEach(async () => {
+		setup();
+		await load();
+	});
+	afterEach(teardown);
+
+	it("removes a non-default model and keeps the default", () => {
+		profiles.addProfile("work", { models: ["m1", "m2", "m3"], model: "m1" });
+		const message = profiles.removeProfileModel("work", "m2");
+		expect(message).toContain("Removed model 'm2'");
+		const p = profiles.loadProfiles().profiles.work;
+		expect(p.models).toEqual(["m1", "m3"]);
+		expect(p.model).toBe("m1");
+	});
+
+	it("removing the default promotes the next model", () => {
+		profiles.addProfile("work", { models: ["m1", "m2"], model: "m1" });
+		profiles.removeProfileModel("work", "m1");
+		const p = profiles.loadProfiles().profiles.work;
+		expect(p.models).toEqual(["m2"]);
+		expect(p.model).toBe("m2");
+	});
+
+	it("removing the last model clears models and model", () => {
+		profiles.addProfile("work", { models: ["m1"], model: "m1" });
+		const message = profiles.removeProfileModel("work", "m1");
+		expect(message).toContain("Removed all models");
+		const p = profiles.loadProfiles().profiles.work;
+		expect(p.models).toBeUndefined();
+		expect(p.model).toBeUndefined();
+	});
+
+	it("removes from a model-only profile", () => {
+		profiles.addProfile("work", { model: "m1" });
+		profiles.removeProfileModel("work", "m1");
+		const p = profiles.loadProfiles().profiles.work;
+		expect(p.models).toBeUndefined();
+		expect(p.model).toBeUndefined();
+	});
+
+	it("a model not in the list is a no-op message", () => {
+		profiles.addProfile("work", { models: ["m1"], model: "m1" });
+		const message = profiles.removeProfileModel("work", "m9");
+		expect(message).toContain("is not in profile 'work'");
+		const p = profiles.loadProfiles().profiles.work;
+		expect(p.models).toEqual(["m1"]);
+	});
+
+	it("throws for an unknown profile or empty model", () => {
+		expect(() => profiles.removeProfileModel("ghost", "m1")).toThrow("not found");
+		expect(() => profiles.removeProfileModel("ghost", "   ")).toThrow("required");
+	});
+});

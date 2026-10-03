@@ -65,7 +65,14 @@ export async function loginProvider(providerId: string, options: LoginProviderOp
 		);
 	}
 	const interaction = options.interaction ?? createTerminalAuthInteraction();
-	return runtime.login(providerId, method, interaction);
+	// ModelRuntime.login keys cancellation off interaction.signal only — the
+	// create() signal above covers just the init refresh — so fold options.signal
+	// into the interaction for embedded hosts that cancel without dying.
+	const signal =
+		options.signal && interaction.signal
+			? AbortSignal.any([options.signal, interaction.signal])
+			: (options.signal ?? interaction.signal);
+	return runtime.login(providerId, method, { ...interaction, signal });
 }
 
 /**

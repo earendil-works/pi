@@ -16,6 +16,7 @@ export type { AgentSettingsData, Profile, ProfilesData } from "@earendil-works/p
 export {
 	AGENT_DIR,
 	addProfile,
+	addProfileModel,
 	clearDefaultProfile,
 	findProfile,
 	getDefaultProfileName,
@@ -24,8 +25,10 @@ export {
 	profileDirFor,
 	removeProfile,
 	removeProfileDir,
+	removeProfileModel,
 	renameProfile,
 	setDefaultProfile,
+	setProfileDefaultModel,
 	syncProfilePackagesToSource,
 	THINKING_LEVELS,
 	updateProfile,

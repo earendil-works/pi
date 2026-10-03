@@ -172,3 +172,94 @@ export function mergeModelsUpdate(current: string[], provided: string[]): { mode
 	}
 	return { models: provided, messages };
 }
+
+/** Select a profile's default model: the list position 1 that materialization
+ *  writes as `settings.defaultModel`. Adds the model to the list when absent.
+ *  Throws for an unknown profile, an empty model, or when adding would exceed
+ *  the three-models-per-profile bound the pipi CLI enforces. Returns a
+ *  human-readable message for host UIs. */
+export function setProfileDefaultModel(name: string, model: string): string {
+	const trimmed = model.trim();
+	if (!trimmed) {
+		throw new Error("A model name is required.");
+	}
+	const profile = findProfile(name);
+	if (!profile) {
+		throw new Error(`Profile '${name}' not found.`);
+	}
+	const current = profile.models || (profile.model ? [profile.model] : []);
+	if (!current.includes(trimmed) && current.length >= 3) {
+		throw new Error("Error: A profile can have at most 3 models.");
+	}
+	const merged = mergeModelsUpdate([...current], [trimmed]);
+	profile.models = merged.models;
+	profile.model = merged.models[0];
+	updateProfile(name, profile);
+	logger.debug(`setProfileDefaultModel: '${name}' -> '${trimmed}'`);
+	return merged.messages[0] ?? `Set default model '${trimmed}'.`;
+}
+
+/** Append a model to a profile's list without selecting it (use
+ *  `setProfileDefaultModel` to make it the default). Throws for an unknown
+ *  profile, an empty or duplicate model, or when the list would exceed the
+ *  three-models-per-profile bound the pipi CLI enforces. When the profile had
+ *  no model yet, the added one becomes the default. Returns a human-readable
+ *  message for host UIs. */
+export function addProfileModel(name: string, model: string): string {
+	const trimmed = model.trim();
+	if (!trimmed) {
+		throw new Error("A model name is required.");
+	}
+	const profile = findProfile(name);
+	if (!profile) {
+		throw new Error(`Profile '${name}' not found.`);
+	}
+	const current = profile.models || (profile.model ? [profile.model] : []);
+	if (current.includes(trimmed)) {
+		throw new Error(`Model '${trimmed}' is already in profile '${name}'.`);
+	}
+	if (current.length >= 3) {
+		throw new Error("Error: A profile can have at most 3 models.");
+	}
+	profile.models = [...current, trimmed];
+	if (!profile.model) {
+		profile.model = trimmed;
+	}
+	updateProfile(name, profile);
+	logger.debug(`addProfileModel: '${name}' += '${trimmed}'`);
+	return `Added model '${trimmed}' to profile '${name}'.`;
+}
+
+/** Remove a model from a profile's list, mirroring the pipi CLI delete
+ *  semantics: the default (position 1) promotes to the next remaining model,
+ *  and removing the last model clears both `models` and `model` so the
+ *  profile inherits. Throws for an unknown profile or an empty model; a model
+ *  not in the list is a no-op with a message. Returns a human-readable
+ *  message for host UIs. */
+export function removeProfileModel(name: string, model: string): string {
+	const trimmed = model.trim();
+	if (!trimmed) {
+		throw new Error("A model name is required.");
+	}
+	const profile = findProfile(name);
+	if (!profile) {
+		throw new Error(`Profile '${name}' not found.`);
+	}
+	const current = profile.models || (profile.model ? [profile.model] : []);
+	if (!current.includes(trimmed)) {
+		return `Model '${trimmed}' is not in profile '${name}'.`;
+	}
+	const remaining = current.filter((m) => m !== trimmed);
+	if (remaining.length === 0) {
+		delete profile.models;
+		delete profile.model;
+	} else {
+		profile.models = remaining;
+		profile.model = remaining[0];
+	}
+	updateProfile(name, profile);
+	logger.debug(`removeProfileModel: '${name}' -= '${trimmed}'`);
+	return remaining.length === 0
+		? `Removed all models from profile '${name}'.`
+		: `Removed model '${trimmed}' from profile '${name}'.`;
+}

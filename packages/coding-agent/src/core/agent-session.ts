@@ -1344,6 +1344,34 @@ export class AgentSession {
 		return this._resourceLoader.getPrompts().prompts;
 	}
 
+	/**
+	 * Slash commands invokable through prompt(): extension-registered
+	 * commands, file prompt templates, and skills (as `skill:<name>`). This is
+	 * the TUI autocomplete set minus the interactive-mode-only builtins. Reads
+	 * the live runner, so extension reloads are reflected.
+	 */
+	getSlashCommands(): SlashCommandInfo[] {
+		const extensionCommands: SlashCommandInfo[] = (this._extensionRunner?.getRegisteredCommands() ?? []).map((command) => ({
+			name: command.invocationName,
+			description: command.description,
+			source: "extension" as const,
+			sourceInfo: command.sourceInfo,
+		}));
+		const templates: SlashCommandInfo[] = this.promptTemplates.map((template) => ({
+			name: template.name,
+			description: template.description,
+			source: "prompt" as const,
+			sourceInfo: template.sourceInfo,
+		}));
+		const skills: SlashCommandInfo[] = this._resourceLoader.getSkills().skills.map((skill) => ({
+			name: `skill:${skill.name}`,
+			description: skill.description,
+			source: "skill" as const,
+			sourceInfo: skill.sourceInfo,
+		}));
+		return [...extensionCommands, ...templates, ...skills];
+	}
+
 	private _normalizePromptSnippet(text: string | undefined): string | undefined {
 		if (!text) return undefined;
 		const oneLine = text
@@ -3018,30 +3046,7 @@ export class AgentSession {
 	}
 
 	private _bindExtensionCore(runner: ExtensionRunner): void {
-		const getCommands = (): SlashCommandInfo[] => {
-			const extensionCommands: SlashCommandInfo[] = runner.getRegisteredCommands().map((command) => ({
-				name: command.invocationName,
-				description: command.description,
-				source: "extension",
-				sourceInfo: command.sourceInfo,
-			}));
-
-			const templates: SlashCommandInfo[] = this.promptTemplates.map((template) => ({
-				name: template.name,
-				description: template.description,
-				source: "prompt",
-				sourceInfo: template.sourceInfo,
-			}));
-
-			const skills: SlashCommandInfo[] = this._resourceLoader.getSkills().skills.map((skill) => ({
-				name: `skill:${skill.name}`,
-				description: skill.description,
-				source: "skill",
-				sourceInfo: skill.sourceInfo,
-			}));
-
-			return [...extensionCommands, ...templates, ...skills];
-		};
+		const getCommands = (): SlashCommandInfo[] => this.getSlashCommands();
 
 		runner.bindCore(
 			{

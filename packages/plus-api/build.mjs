@@ -13,7 +13,7 @@
 //
 // Requires the workspace packages to be compiled first: npm run build:offline.
 
-import { copyFileSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
@@ -64,6 +64,31 @@ function commonBuildOptions() {
 	};
 }
 
+// Lazy entries are reached through variable-specifier imports or a worker URL, so the
+// main bundle cannot follow them. They resolve import.meta.url-relative to api.js at
+// runtime (interactive provider login, e.g. loginProvider("anthropic")), so they are
+// emitted as siblings of the bundle. Same set as packages/plus-cli/build.mjs.
+const lazyEntries = {
+	anthropic: join(repoRoot, "packages/ai/dist/auth/oauth/anthropic.js"),
+	"bedrock-converse-stream": join(repoRoot, "packages/ai/dist/api/bedrock-converse-stream.js"),
+	"github-copilot": join(repoRoot, "packages/ai/dist/auth/oauth/github-copilot.js"),
+	"image-resize-worker": join(codingAgentDir, "dist/utils/image-resize-worker.js"),
+	"kimi-coding": join(repoRoot, "packages/ai/dist/auth/oauth/kimi-coding.js"),
+	"openai-codex": join(repoRoot, "packages/ai/dist/auth/oauth/openai-codex.js"),
+	openrouter: join(repoRoot, "packages/ai/dist/auth/oauth/openrouter.js"),
+	radius: join(repoRoot, "packages/ai/dist/auth/oauth/radius.js"),
+	xai: join(repoRoot, "packages/ai/dist/auth/oauth/xai.js"),
+};
+
+const requiredDist = [
+	...Object.values(lazyEntries),
+];
+for (const entry of requiredDist) {
+	if (!existsSync(entry)) {
+		throw new Error(`Bundle input is missing: ${entry.replace(`${repoRoot}/`, "")}. Run \`npm run build:offline\` first.`);
+	}
+}
+
 rmSync(stagingDir, { force: true, recursive: true });
 mkdirSync(stagingDir, { recursive: true });
 
@@ -77,7 +102,15 @@ const apiResult = await build({
 	splitting: false,
 });
 
-validateExternalImports([apiResult.metafile]);
+const lazyResult = await build({
+	...commonBuildOptions(),
+	entryNames: "[name]",
+	entryPoints: lazyEntries,
+	outdir: stagingDir,
+	splitting: false,
+});
+
+validateExternalImports([apiResult.metafile, lazyResult.metafile]);
 
 // ---------------------------------------------------------------------------
 // Staging assembly: manifest + package assets (the plus config wrapper points
