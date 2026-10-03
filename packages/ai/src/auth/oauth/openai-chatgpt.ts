@@ -250,7 +250,7 @@ async function loginOpenAIChatGPT(
 	const authorizationUrl = new URL(AUTHORIZE_URL);
 	authorizationUrl.search = new URLSearchParams({
 		client_id: DYNAMIC_CLIENT_ID,
-		agent_name_hint: AGENT_NAME_HINT,
+		agent_name_hint: options?.agentName ?? AGENT_NAME_HINT,
 		ext_agent_host_id: hostId,
 		response_type: "code",
 		redirect_uri: REDIRECT_URI,
