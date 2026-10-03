@@ -2,7 +2,7 @@ import type { ResponseStreamEvent } from "openai/resources/responses/responses.j
 import { describe, expect, it, vi } from "vitest";
 import { stream as streamOpenAIResponses } from "../src/api/openai-responses.ts";
 import { processResponsesStream } from "../src/api/openai-responses-shared.ts";
-import type { Api, AssistantMessage, AssistantMessageEvent, Model } from "../src/types.ts";
+import type { Api, AssistantMessage, AssistantMessageEvent, Model, ToolCall } from "../src/types.ts";
 import { AssistantMessageEventStream } from "../src/utils/event-stream.ts";
 import { normalizeContext } from "../src/utils/transcript.ts";
 
@@ -240,6 +240,59 @@ async function* createToolCallsWithoutOutputIndexEvents(): AsyncIterable<Respons
 	for (const event of events) yield event as unknown as ResponseStreamEvent;
 }
 
+// Some OpenAI-compatible servers re-issue the last function_call with modified
+// arguments but the same (call_id, id) pair, producing two finished calls with one id.
+async function* createDuplicateToolCallIdEvents(): AsyncIterable<ResponseStreamEvent> {
+	const events = [
+		{
+			type: "response.output_item.added",
+			output_index: 0,
+			item: { type: "function_call", id: "fc_dup", call_id: "call_dup", name: "bash", arguments: "" },
+		},
+		{
+			type: "response.function_call_arguments.delta",
+			output_index: 0,
+			item_id: "fc_dup",
+			delta: '{"command":"cat PRIVACY.md"}',
+		},
+		{
+			type: "response.output_item.done",
+			output_index: 0,
+			item: {
+				type: "function_call",
+				id: "fc_dup",
+				call_id: "call_dup",
+				name: "bash",
+				arguments: '{"command":"cat PRIVACY.md"}',
+			},
+		},
+		{
+			type: "response.output_item.added",
+			output_index: 1,
+			item: { type: "function_call", id: "fc_dup", call_id: "call_dup", name: "bash", arguments: "" },
+		},
+		{
+			type: "response.function_call_arguments.delta",
+			output_index: 1,
+			item_id: "fc_dup",
+			delta: '{"command":"grep -rn telemetry ."}',
+		},
+		{
+			type: "response.output_item.done",
+			output_index: 1,
+			item: {
+				type: "function_call",
+				id: "fc_dup",
+				call_id: "call_dup",
+				name: "bash",
+				arguments: '{"command":"grep -rn telemetry ."}',
+			},
+		},
+		{ type: "response.completed", response: { id: "resp_dup_call_id", status: "completed" } },
+	];
+	for (const event of events) yield event as unknown as ResponseStreamEvent;
+}
+
 describe("OpenAI Responses terminal event handling", () => {
 	it("rejects streams that end before a terminal response event", async () => {
 		const model = createModel();
@@ -276,6 +329,22 @@ describe("OpenAI Responses terminal event handling", () => {
 				model,
 			),
 		).rejects.toThrow("OpenAI Responses stream completed with an unfinished tool call: bash (call_a|fc_a)");
+	});
+
+	it("suffixes tool call ids when a server reuses the same (call_id, id) pair", async () => {
+		const model = createModel();
+		const output = createOutput(model);
+		const stream = new AssistantMessageEventStream();
+
+		await processResponsesStream(createDuplicateToolCallIdEvents(), output, stream, model);
+
+		const toolCalls = output.content.filter((b) => b.type === "toolCall") as ToolCall[];
+		expect(toolCalls.map((tc) => tc.id)).toEqual(["call_dup|fc_dup", "call_dup|fc_dup#2"]);
+		expect(toolCalls.map((tc) => tc.arguments)).toEqual([
+			{ command: "cat PRIVACY.md" },
+			{ command: "grep -rn telemetry ." },
+		]);
+		expect(output.stopReason).toBe("toolUse");
 	});
 
 	it("forwards parsed provider stream events in order", async () => {

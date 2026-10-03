@@ -461,6 +461,15 @@ export async function processResponsesStream<TApi extends Api>(
 			partial: output,
 		});
 	};
+	// Some OpenAI-compatible providers reuse the (call_id, id) pair across parallel
+	// function_call items in a single response. Suffix repeated ids in order of
+	// appearance so every tool call in the final message keeps a unique id.
+	const usedToolCallIds = new Map<string, number>();
+	const uniqueToolCallId = (rawId: string): string => {
+		const count = (usedToolCallIds.get(rawId) ?? 0) + 1;
+		usedToolCallIds.set(rawId, count);
+		return count === 1 ? rawId : `${rawId}#${count}`;
+	};
 	const createSlot = (outputIndex: number, item: ResponseOutputItem): ResponsesOutputSlot | undefined => {
 		if (item.type === "reasoning") {
 			const block: ThinkingContent = { type: "thinking", thinking: "" };
@@ -486,7 +495,7 @@ export async function processResponsesStream<TApi extends Api>(
 		if (item.type === "function_call") {
 			const block: StreamingToolCall = {
 				type: "toolCall",
-				id: `${item.call_id}|${item.id}`,
+				id: uniqueToolCallId(`${item.call_id}|${item.id}`),
 				name: item.name,
 				arguments: {},
 				...(item.namespace !== undefined ? { namespace: item.namespace } : {}),
@@ -507,7 +516,7 @@ export async function processResponsesStream<TApi extends Api>(
 			const input = item.input || "";
 			const block: StreamingToolCall = {
 				type: "toolCall",
-				id: `${item.call_id}|${item.id}`,
+				id: uniqueToolCallId(`${item.call_id}|${item.id}`),
 				name: item.name,
 				arguments: { [inputProperty]: input },
 				...(item.namespace !== undefined ? { namespace: item.namespace } : {}),
