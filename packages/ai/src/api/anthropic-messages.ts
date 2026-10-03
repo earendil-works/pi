@@ -41,6 +41,11 @@ import { appendAssistantMessageDiagnostic } from "../utils/diagnostics.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { parseJsonWithRepair, parseStreamingJson } from "../utils/json-parse.ts";
+import {
+	applyOpenRouterReportedCost,
+	isOpenRouterModel,
+	type OpenRouterUsageAccounting,
+} from "../utils/openrouter-cost.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
@@ -855,6 +860,14 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 					output.usage.totalTokens =
 						output.usage.input + output.usage.output + output.usage.cacheRead + output.usage.cacheWrite;
 					calculateCost(usageModel, output.usage);
+					if (isOpenRouterModel(model) && event.usage) {
+						// OpenRouter adds billing fields to streamed message_delta usage at runtime,
+						// although its OpenAPI schema and the Anthropic SDK do not type those fields.
+						applyOpenRouterReportedCost(
+							output.usage,
+							event.usage as typeof event.usage & OpenRouterUsageAccounting,
+						);
+					}
 				}
 			}
 
