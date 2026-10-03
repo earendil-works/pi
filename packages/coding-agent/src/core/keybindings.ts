@@ -74,6 +74,10 @@ const windowsKeybindings = useWindowsKeybindings();
 
 export const KEYBINDINGS = {
 	...TUI_KEYBINDINGS,
+	"tui.editor.deleteCharBackward": {
+		...TUI_KEYBINDINGS["tui.editor.deleteCharBackward"],
+		defaultKeys: process.platform === "darwin" ? ["backspace", "ctrl+h"] : "backspace",
+	},
 	"tui.editor.undo": {
 		...TUI_KEYBINDINGS["tui.editor.undo"],
 		defaultKeys: process.platform === "win32" ? "ctrl+z" : windowsKeybindings ? "alt+z" : "ctrl+-",
