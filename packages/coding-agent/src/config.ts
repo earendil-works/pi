@@ -481,15 +481,25 @@ export function getBundledInteractiveAssetPath(name: string): string {
 }
 
 let embeddedQuickJSWasmPath: string | undefined;
+let resolvedQuickJSWasmPath: string | undefined;
 
 /** Called by the Bun entry with the path of the QuickJS wasm file embedded in the compiled executable. */
 export function setEmbeddedQuickJSWasmPath(path: string): void {
 	embeddedQuickJSWasmPath = path;
 }
 
-/** Get path to `quickjs-wasi/quickjs.wasm`, the VM that runs codemode scripts. */
+/**
+ * Get path to `quickjs-wasi/quickjs.wasm`, the VM that runs codemode scripts. The path is resolved
+ * once and kept: a global update replaces (npm) or garbage-collects (pnpm) the install dir while
+ * the process runs, and wasm.ts caches the compiled module per path, so a later re-resolution only
+ * breaks calls that already hold a working module in memory.
+ */
 export function getQuickJSWasmPath(): string {
-	return embeddedQuickJSWasmPath ?? createRequire(import.meta.url).resolve("quickjs-wasi/quickjs.wasm");
+	if (embeddedQuickJSWasmPath !== undefined) return embeddedQuickJSWasmPath;
+	if (resolvedQuickJSWasmPath === undefined) {
+		resolvedQuickJSWasmPath = createRequire(import.meta.url).resolve("quickjs-wasi/quickjs.wasm");
+	}
+	return resolvedQuickJSWasmPath;
 }
 
 /** Resolve the codemode worker entry for a release runtime. */
