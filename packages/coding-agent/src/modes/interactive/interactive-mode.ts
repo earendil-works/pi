@@ -520,6 +520,7 @@ export class InteractiveMode {
 
 	// Agent subscription unsubscribe function
 	private unsubscribe?: () => void;
+	private unsubscribeSettingsWriteErrors?: () => void;
 	private signalCleanupHandlers: Array<() => void> = [];
 
 	// Track if editor is in bash mode (text starts with !)
@@ -2080,6 +2081,12 @@ export class InteractiveMode {
 
 		this.unsubscribe?.();
 		this.unsubscribe = undefined;
+		this.unsubscribeSettingsWriteErrors?.();
+		this.unsubscribeSettingsWriteErrors = this.settingsManager.onWriteError(({ scope, path, error }) => {
+			this.showError(
+				`Failed to save ${scope} settings${path ? ` to ${path}` : ""}: ${error.message}. The change applies to this session only.`,
+			);
+		});
 		this.applyRuntimeSettings();
 
 		if (options.renderBeforeBind) {
@@ -7028,6 +7035,7 @@ export class InteractiveMode {
 		if (this.unsubscribe) {
 			this.unsubscribe();
 		}
+		this.unsubscribeSettingsWriteErrors?.();
 		if (this.isInitialized) {
 			this.stopInteractiveTui(fullscreenExitOutput);
 			this.isInitialized = false;

@@ -3,7 +3,12 @@ import { homedir } from "os";
 import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DEFAULT_HTTP_IDLE_TIMEOUT_MS } from "../src/core/http-dispatcher.ts";
-import { type Settings, SettingsManager } from "../src/core/settings-manager.ts";
+import {
+	type Settings,
+	type SettingsError,
+	SettingsManager,
+	type SettingsStorage,
+} from "../src/core/settings-manager.ts";
 
 describe("SettingsManager", () => {
 	const testDir = join(process.cwd(), "test-settings-tmp");
@@ -250,6 +255,35 @@ describe("SettingsManager", () => {
 				{ scope: "project", path: projectSettingsPath },
 			]);
 			expect(manager.drainErrors()).toEqual([]);
+		});
+
+		// https://github.com/earendil-works/pi/issues/10168
+		it("should deliver save errors to write-error listeners instead of queueing them", async () => {
+			const writeError = Object.assign(new Error("EROFS: read-only file system"), { code: "EROFS" });
+			const storage: SettingsStorage = {
+				withLock: (scope, fn) => {
+					if (fn(scope === "global" ? JSON.stringify({ hideThinkingBlock: true }) : undefined) !== undefined) {
+						throw writeError;
+					}
+				},
+			};
+			const manager = SettingsManager.fromStorage(storage);
+			const received: SettingsError[] = [];
+			const unsubscribe = manager.onWriteError((error) => received.push(error));
+
+			manager.setHideThinkingBlock(false);
+			await manager.flush();
+
+			expect(received).toMatchObject([{ scope: "global", error: writeError }]);
+			expect(manager.drainErrors()).toEqual([]);
+			expect(manager.getHideThinkingBlock()).toBe(false);
+
+			unsubscribe();
+			manager.setHideThinkingBlock(true);
+			await manager.flush();
+
+			expect(received).toHaveLength(1);
+			expect(manager.drainErrors()).toMatchObject([{ scope: "global", error: writeError }]);
 		});
 	});
 

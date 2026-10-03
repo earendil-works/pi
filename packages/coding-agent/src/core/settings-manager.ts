@@ -280,6 +280,8 @@ export interface SettingsError {
 	error: Error;
 }
 
+export type SettingsWriteErrorListener = (error: SettingsError) => void;
+
 type SettingsPaths = Partial<Record<SettingsScope, string>>;
 
 function toSettingsError(scope: SettingsScope, error: unknown, path?: string): SettingsError {
@@ -390,6 +392,7 @@ export class SettingsManager {
 	private projectSettingsLoadError: Error | null = null; // Track if project settings file had parse errors
 	private writeQueue: Promise<void> = Promise.resolve();
 	private errors: SettingsError[];
+	private writeErrorListeners = new Set<SettingsWriteErrorListener>();
 	private settingsPaths: SettingsPaths;
 
 	private constructor(
@@ -690,7 +693,14 @@ export class SettingsManager {
 				this.clearModifiedScope(scope);
 			})
 			.catch((error) => {
-				this.recordError(scope, error);
+				if (this.writeErrorListeners.size === 0) {
+					this.recordError(scope, error);
+					return;
+				}
+				const settingsError = toSettingsError(scope, error, this.settingsPaths[scope]);
+				for (const listener of this.writeErrorListeners) {
+					listener(settingsError);
+				}
 			});
 	}
 
@@ -776,6 +786,14 @@ export class SettingsManager {
 
 	async flush(): Promise<void> {
 		await this.writeQueue;
+	}
+
+	/** Receive save failures as they happen; while any listener is registered they are not queued for drainErrors(). */
+	onWriteError(listener: SettingsWriteErrorListener): () => void {
+		this.writeErrorListeners.add(listener);
+		return () => {
+			this.writeErrorListeners.delete(listener);
+		};
 	}
 
 	drainErrors(): SettingsError[] {
