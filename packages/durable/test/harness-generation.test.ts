@@ -361,7 +361,13 @@ describe("generation", () => {
 				return fauxAssistantMessage("b");
 			},
 		]);
-		setup.settings.stream = { timeoutMs: 1234, headers: { "x-test": "1" } };
+		setup.settings.stream = {
+			timeoutMs: 1234,
+			headers: { "x-test": "1" },
+			websocketConnectTimeoutMs: 5678,
+			sessionId: "test-session",
+			thinkingBudgets: { minimal: 128, low: 512, medium: 2048, high: 8192 },
+		};
 		const { harness, root } = await openChat(new MemoryStorage(), setup);
 		await root.configure({ thinkingLevel: "high" }, context);
 		harness.resume();
@@ -370,11 +376,21 @@ describe("generation", () => {
 		await root.configure({ thinkingLevel: null }, context);
 		setup.settings.stream = { timeoutMs: 99 };
 		await (await root.submit({ type: "input", content: "two" }, context)).wait(context);
-		expect(seen[0]).toMatchObject({ timeoutMs: 1234, headers: { "x-test": "1" }, reasoning: "high" });
+		expect(seen[0]).toMatchObject({
+			timeoutMs: 1234,
+			headers: { "x-test": "1" },
+			reasoning: "high",
+			websocketConnectTimeoutMs: 5678,
+			sessionId: "test-session",
+			thinkingBudgets: { minimal: 128, low: 512, medium: 2048, high: 8192 },
+		});
 		expect(seen[0]!.signal).toBeInstanceOf(AbortSignal);
 		expect(seen[1]!.reasoning).toBeUndefined();
 		expect(seen[1]).toMatchObject({ timeoutMs: 99 });
 		expect(seen[1]!.headers).toBeUndefined();
+		expect(seen[1]!.websocketConnectTimeoutMs).toBeUndefined();
+		expect(seen[1]!.sessionId).toBeUndefined();
+		expect(seen[1]!.thinkingBudgets).toBeUndefined();
 		await harness.close(context);
 	});
 
