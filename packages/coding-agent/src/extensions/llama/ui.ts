@@ -21,8 +21,15 @@ import type { LlamaModelInfo, LlamaProgress } from "./client.ts";
 import type { HuggingFaceModel } from "./huggingface.ts";
 
 const DOWNLOAD_VALUE = "\0download";
+const RESTART_VALUE = "\0restart";
+const LOG_VALUE = "\0log";
 
-export type LlamaManagerAction = { type: "model"; model: LlamaModelInfo } | { type: "download" } | { type: "close" };
+export type LlamaManagerAction =
+	| { type: "model"; model: LlamaModelInfo }
+	| { type: "download" }
+	| { type: "restart" }
+	| { type: "log" }
+	| { type: "close" };
 
 interface ProgressState extends LlamaProgress {
 	title: string;
@@ -75,10 +82,12 @@ function frame(theme: Theme, title: string, body: Component[], footer?: string):
 }
 
 export interface LlamaUi {
-	showModels(serverUrl: string, models: LlamaModelInfo[]): Promise<LlamaManagerAction>;
+	/** `header` lines describe the server; `managed` adds server restart and log actions. */
+	showModels(header: string[], models: LlamaModelInfo[], options?: { managed?: boolean }): Promise<LlamaManagerAction>;
 	select(title: string, options: string[]): Promise<string | undefined>;
 	confirm(title: string, message: string): Promise<boolean>;
-	connectionError(serverUrl: string, message: string): Promise<"retry" | "close">;
+	connectionError(server: string, message: string): Promise<"retry" | "close">;
+	showText(title: string, lines: string[]): Promise<void>;
 	searchModels(
 		search: (query: string, signal: AbortSignal) => Promise<HuggingFaceModel[]>,
 	): Promise<string | undefined>;
@@ -318,7 +327,11 @@ class LlamaView implements LlamaUi, Focusable {
 		this.tui.requestRender();
 	}
 
-	showModels(serverUrl: string, models: LlamaModelInfo[]): Promise<LlamaManagerAction> {
+	showModels(
+		header: string[],
+		models: LlamaModelInfo[],
+		options: { managed?: boolean } = {},
+	): Promise<LlamaManagerAction> {
 		const sorted = [...models].sort((left, right) => {
 			const loaded = Number(right.status.value === "loaded") - Number(left.status.value === "loaded");
 			return loaded || left.id.localeCompare(right.id);
@@ -331,6 +344,12 @@ class LlamaView implements LlamaUi, Focusable {
 				description: modelDescription(model),
 			})),
 			{ value: DOWNLOAD_VALUE, label: "Download model…", description: "Hugging Face owner/repository[:quant]" },
+			...(options.managed
+				? [
+						{ value: RESTART_VALUE, label: "Restart server", description: "Apply llamaCpp settings" },
+						{ value: LOG_VALUE, label: "View log", description: "llama-server output" },
+					]
+				: []),
 		];
 		return new Promise((resolve) => {
 			const list = new SelectList(items, Math.min(items.length, 12), selectTheme(this.theme), {
@@ -339,6 +358,8 @@ class LlamaView implements LlamaUi, Focusable {
 			});
 			list.onSelect = (item) => {
 				if (item.value === DOWNLOAD_VALUE) resolve({ type: "download" });
+				else if (item.value === RESTART_VALUE) resolve({ type: "restart" });
+				else if (item.value === LOG_VALUE) resolve({ type: "log" });
 				else {
 					const model = byId.get(item.value);
 					if (model) resolve({ type: "model", model });
@@ -349,7 +370,7 @@ class LlamaView implements LlamaUi, Focusable {
 				frame(
 					this.theme,
 					"llama.cpp models",
-					[new Text(this.theme.fg("dim", serverUrl), 1, 0), new Spacer(1), list],
+					[new Text(this.theme.fg("dim", header.join("\n")), 1, 0), new Spacer(1), list],
 					`${keyHint("tui.select.confirm", "load/unload/download")} • ${keyHint("tui.select.cancel", "close")}`,
 				),
 				list,
@@ -382,9 +403,33 @@ class LlamaView implements LlamaUi, Focusable {
 		return (await this.select(`${title}\n${message}`, ["Yes", "No"])) === "Yes";
 	}
 
-	async connectionError(serverUrl: string, message: string): Promise<"retry" | "close"> {
-		const choice = await this.select(`llama.cpp unavailable\n${serverUrl}\n\n${message}`, ["Retry", "Close"]);
+	async connectionError(server: string, message: string): Promise<"retry" | "close"> {
+		const choice = await this.select(`llama.cpp unavailable\n${server}\n\n${message}`, ["Retry", "Close"]);
 		return choice === "Retry" ? "retry" : "close";
+	}
+
+	showText(title: string, lines: string[]): Promise<void> {
+		return new Promise((resolve) => {
+			const body = lines.length > 0 ? lines.join("\n") : "(empty)";
+			this.setContent(
+				frame(
+					this.theme,
+					title,
+					[new Spacer(1), new Text(this.theme.fg("muted", body), 1, 0)],
+					keyHint("tui.select.cancel", "back"),
+				),
+				{
+					handleInput: (data) => {
+						if (
+							this.keybindings.matches(data, "tui.select.cancel") ||
+							this.keybindings.matches(data, "tui.select.confirm")
+						) {
+							resolve();
+						}
+					},
+				},
+			);
+		});
 	}
 
 	searchModels(

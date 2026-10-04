@@ -62,6 +62,7 @@ import { SettingsManager } from "./core/settings-manager.ts";
 import { printTimings, resetTimings, time } from "./core/timings.ts";
 import { hasTrustRequiringProjectResources, ProjectTrustStore } from "./core/trust-manager.ts";
 import { builtInExtensions } from "./extensions/index.ts";
+import { LLAMA_SUPERVISOR_FLAG, runLlamaSupervisorProcess } from "./extensions/llama/managed.ts";
 import { loadMcpCommand } from "./extensions/mcp/cli.lazy.ts";
 import { runMigrations, showDeprecationWarnings } from "./migrations.ts";
 import { InteractiveMode, runPrintMode, runRpcMode } from "./modes/index.ts";
@@ -571,6 +572,10 @@ export interface MainOptions {
 }
 
 export async function main(args: string[], options?: MainOptions) {
+	if (args[0] === LLAMA_SUPERVISOR_FLAG) {
+		await runLlamaSupervisorProcess();
+		return;
+	}
 	resetTimings();
 	const extensionFactories = [...builtInExtensions, ...(options?.extensionFactories ?? [])];
 	const offlineMode = args.includes("--offline") || isTruthyEnvFlag(process.env.PI_OFFLINE);

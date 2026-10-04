@@ -91,6 +91,14 @@ export interface WarningSettings {
 	anthropicExtraUsage?: boolean; // default: true
 }
 
+/** Settings for the llama-server that pi starts and stops in managed llama.cpp mode. */
+export interface LlamaCppSettings {
+	command?: string; // default: "llama-server"
+	modelsDir?: string; // default: <agentDir>/llama/models; supports leading ~ expansion
+	args?: string[]; // extra llama-server arguments; host, port, API key, and models dir are managed by pi
+	idleShutdownSeconds?: number; // default: 30; delay before stopping the server after the last pi process exits
+}
+
 /**
  * How the codemode tool presents tools while it is active.
  * - `on`: declared tools that scripts can call get a note on calling them from scripts appended to
@@ -185,6 +193,7 @@ export interface Settings {
 	fullscreenExitOutput?: FullscreenExitOutput; // default: "transcript"; no effect in regular TUI mode
 	fullscreenScrollbar?: ScrollViewScrollbar; // default: "auto"; no effect in regular TUI mode
 	fullscreenCopyOnSelect?: boolean; // default: true; no effect in regular TUI mode
+	llamaCpp?: LlamaCppSettings; // global only because it selects a command to execute
 	fullscreenWheelScrollLines?: WheelScrollLines; // default: "auto"; lines per wheel event, 1-100
 }
 
@@ -1017,6 +1026,11 @@ export class SettingsManager {
 		this.globalSettings.httpIdleTimeoutMs = Math.floor(timeoutMs);
 		this.markModified("httpIdleTimeoutMs");
 		this.save();
+	}
+
+	/** Read from global settings only because project settings must not choose a command to execute. */
+	getLlamaCppSettings(): LlamaCppSettings {
+		return structuredClone(this.globalSettings.llamaCpp ?? {});
 	}
 
 	/** Read from global settings only because warming costs money. */

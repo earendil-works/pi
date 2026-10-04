@@ -425,7 +425,7 @@ describe("llama.cpp extension", () => {
 			expect(request.headers.authorization).toBe("Bearer secret");
 			json(response, { data: [] });
 		});
-		const answers = [url, "secret"];
+		const answers = ["connect", url, "secret"];
 		const credential = await auth.login!({
 			signal,
 			prompt: async (_prompt: AuthPrompt) => answers.shift()!,

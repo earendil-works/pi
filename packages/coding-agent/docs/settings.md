@@ -142,6 +142,17 @@ Keep `retry.provider.maxRetries` at `0` unless provider-level retries are requir
 
 See [Shell aliases](shell-aliases.md) for shell setup and [Pi Packages](packages.md) for package-manager behavior.
 
+## llama.cpp
+
+Settings for the managed `llama-server` that Pi starts itself. **Can only be set in agent-directory settings.** See [llama.cpp](llama-cpp.md#managed-server).
+
+| Setting | Type | Default | Description |
+|---|---|---|---|
+| `llamaCpp.command` | string | `"llama-server"` | Executable to run. Supports a leading `~`. |
+| `llamaCpp.modelsDir` | string | `~/.pi/agent/llama/models` | Directory with local GGUF files. Supports a leading `~`. |
+| `llamaCpp.args` | `string[]` | `[]` | Extra `llama-server` arguments. Host, port, API key, models directory, and single-model options are controlled by Pi. |
+| `llamaCpp.idleShutdownSeconds` | number | `30` | Seconds the server keeps running after the last Pi process exits. |
+
 ## Resources
 
 Resource paths in user settings resolve from the agent directory. Paths in project settings resolve from the project `.pi` directory. Absolute paths and `~` are supported.
