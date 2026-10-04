@@ -4342,8 +4342,12 @@ export class InteractiveMode {
 		};
 		process.stdout.on("error", terminalErrorHandler);
 		process.stderr.on("error", terminalErrorHandler);
+		// stdin reads raise EIO/EPIPE when the terminal vanishes (#10272) —
+		// treat it as an environmental hangup, not a crash.
+		process.stdin.on("error", terminalErrorHandler);
 		this.signalCleanupHandlers.push(() => process.stdout.off("error", terminalErrorHandler));
 		this.signalCleanupHandlers.push(() => process.stderr.off("error", terminalErrorHandler));
+		this.signalCleanupHandlers.push(() => process.stdin.off("error", terminalErrorHandler));
 
 		// Restore the terminal before the process dies on any uncaught throw.
 		// Without this, an unhandled exception from extension code (or anywhere

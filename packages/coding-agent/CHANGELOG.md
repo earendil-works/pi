@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed `read EIO` on stdin (terminal vanished while pi held raw mode) being reported as a crash: stdin dead-terminal errors now exit 129 like stdout/stderr, with no crash record ([#10272](https://github.com/earendil-works/pi/issues/10272))
+
 ## [1.0.1] - 2026-10-03
 
 ### New Features
