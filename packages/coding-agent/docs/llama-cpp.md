@@ -88,7 +88,14 @@ If the router disconnects, `/llama` shows **Retry** and **Close**. Retry reconne
 
 ## Classification
 
-Every model listed for chat is also listed as a classifier model with the same ID and the `llama-cpp-classify` API. Classifier models answer typed `choice`, `bool`, and `score` questions about JSON state, like TypeSafe's Jev models. The model reaches them from [`codemode`](cli.md#enable-codemode) scripts, and extensions through `ctx.modelRegistry.classify()`; see [Classifier models](models.md#use-classifier-models).
+Classifier models answer typed `choice`, `bool`, and `score` questions about JSON state, like TypeSafe's Jev models. The model reaches them from [`codemode`](cli.md#enable-codemode) scripts, and extensions through `ctx.modelRegistry.classify()`; see [Classifier models](models.md#use-classifier-models). Pi lists llama.cpp models as classifiers in two ways:
+
+- **Decision models** such as [Julia-1, Laya, Kev, lev, and OpenJev](https://huggingface.co/collections/ggml-org/decision-models-6abf80cca3c83f127060a769) answer natively through llama.cpp's `/v1/systemone` endpoint. They appear only as classifiers, with the `typesafe-system-one` API, and not in `/model`.
+- **Chat models** are also listed as classifiers with the same ID and the `llama-cpp-classify` API, which reads answers from next-token probabilities as described below.
+
+llama.cpp's model list does not say which models are decision models. When Pi refreshes the catalog, it sends a one-question request to `/v1/systemone` for each loaded model whose kind it does not know yet; llama.cpp rejects it immediately for other models. The router counts the request as use of the model when it picks a model to unload, so Pi asks each loaded model once per session. Unloaded and sleeping models are not probed, because the request would load or wake them. Decision models found in an earlier session stay decision models while unloaded or sleeping, and are checked again once loaded, because a preset name can point to a different model file after a configuration change. A decision model that Pi has never seen loaded appears as a chat model until it is loaded with `/llama`. Decision models need a llama.cpp build with `/v1/systemone` support.
+
+### Chat models as classifiers
 
 The model does not generate an answer. Each question becomes one chat prompt: the state, every question of the request, the state again, and then the question with its answers under single-token labels. Labels are letters for a choice (up to 62 options), `Yes`/`No` for a bool, and digits for a score (up to 10 levels). The second copy of the state is read with the questions in view, which improved accuracy on JevBench with small models. Pi reads the probabilities of the labels as the next token and normalizes them. A choice returns every option's probability and a confidence of `(n * peak - 1) / (n - 1)`; a score returns the expected level.
 

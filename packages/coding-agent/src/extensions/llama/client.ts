@@ -205,6 +205,48 @@ export class LlamaClient {
 		};
 	}
 
+	/**
+	 * Whether a running model is a decision model served through `/v1/systemone`. llama.cpp reports no
+	 * decision metadata in its catalog, but answers `501` for other models before evaluating anything.
+	 * Decision models answer the one-question probe in a single forward pass. `autoload=false` keeps the
+	 * router from loading a model that was unloaded since the catalog was read. The router counts the POST
+	 * as use of the model for its LRU eviction, so callers should probe each model once.
+	 *
+	 * Only `501` (not a decision model) and `404` (a build without `/v1/systemone`) mean the model is not a
+	 * decision model. Other failures, such as `400` for a model the router unloaded since the catalog was
+	 * read, say nothing about the model and throw.
+	 */
+	async isDecisionModel(model: string, signal?: AbortSignal): Promise<boolean> {
+		const headers = new Headers({ "Content-Type": "application/json" });
+		if (this.apiKey) headers.set("Authorization", `Bearer ${this.apiKey}`);
+		const timeout = AbortSignal.timeout(15_000);
+		const response = await fetch(`${this.serverUrl}/v1/systemone?autoload=false`, {
+			method: "POST",
+			headers,
+			body: JSON.stringify({
+				model,
+				state: "probe",
+				questions: { probe: { type: "noul", instructions: "Is this a probe?" } },
+			}),
+			signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+		});
+		if (response.ok) {
+			await response.body?.cancel();
+			return true;
+		}
+		if (response.status === 501 || response.status === 404) {
+			await response.body?.cancel();
+			return false;
+		}
+		let payload: unknown;
+		try {
+			payload = await response.json();
+		} catch {
+			payload = undefined;
+		}
+		throw new Error(errorMessage(payload, `llama.cpp returned HTTP ${response.status}`));
+	}
+
 	async load(model: string, signal?: AbortSignal): Promise<void> {
 		await this.request("/models/load", { method: "POST", body: JSON.stringify({ model }), signal });
 	}
