@@ -82,6 +82,7 @@ function resolveCacheRetention(cacheRetention?: CacheRetention, env?: ProviderEn
 function getCompat(model: Model<"openai-responses">): Required<OpenAIResponsesCompat> {
 	return {
 		supportsDeveloperRole: model.compat?.supportsDeveloperRole ?? true,
+		systemPromptFormat: model.compat?.systemPromptFormat ?? "input",
 		supportsMidConvoSystemMessages: model.compat?.supportsMidConvoSystemMessages ?? false,
 		sessionAffinityFormat: model.compat?.sessionAffinityFormat ?? detectSessionAffinityFormat(model),
 		supportsLongCacheRetention: model.compat?.supportsLongCacheRetention ?? true,
@@ -314,6 +315,7 @@ function buildParams(
 		compat.supportsAdditionalTools || compat.supportsToolSearch,
 	);
 	const messages = convertResponsesMessages(model, context, OPENAI_TOOL_CALL_PROVIDERS, {
+		includeSystemPrompt: compat.systemPromptFormat === "input",
 		grammarToolInputProperties,
 		supportsMidConvoSystemMessages: compat.supportsMidConvoSystemMessages,
 		supportsAdditionalTools: compat.supportsAdditionalTools,
@@ -337,6 +339,11 @@ function buildParams(
 		store: false,
 	};
 
+	if (compat.systemPromptFormat === "instructions" && context.systemPrompt) {
+		params.instructions = sanitizeSurrogates(context.systemPrompt);
+	}
+  
+	if (options?.maxTokens && compat.supportsMaxOutputTokens) {
 	if (options?.maxTokens && compat.supportsMaxOutputTokens && !omitUnsupportedFields) {
 		params.max_output_tokens = Math.max(options.maxTokens, OPENAI_RESPONSES_MIN_OUTPUT_TOKENS);
 	}

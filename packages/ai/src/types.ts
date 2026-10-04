@@ -871,6 +871,8 @@ export interface OpenAICompletionsCompat {
 export interface OpenAIResponsesCompat {
 	/** Whether the provider supports the `developer` role (vs `system`). Default: true. */
 	supportsDeveloperRole?: boolean;
+	/** Where to serialize the system prompt for the regular `openai-responses` adapter. "input" uses a developer/system message; "instructions" uses the top-level Responses field. Default: "input". */
+	systemPromptFormat?: "input" | "instructions";
 	/** Whether the exact model accepts developer or system messages after the conversation has started. When false, later system messages are folded into the leading system message. Default: false; the generated model catalog enables it for verified models. */
 	supportsMidConvoSystemMessages?: boolean;
 	/** Session-affinity header format: `openai` sends `session_id` and `x-client-request-id`; `openai-nosession` sends `x-client-request-id`; `openrouter` sends `x-session-id`. Does not affect the `prompt_cache_key` body param, which is governed by cache retention. Default: auto-detected. */

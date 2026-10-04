@@ -196,6 +196,120 @@ Confirm that its provider has usable authentication. Custom models can load from
 
 Check whether the key came from an environment variable rather than `auth.json`. Environment variables must be present in the process that starts Pi.
 
+```json
+{
+  "providers": {
+    "anthropic-proxy": {
+      "baseUrl": "https://proxy.example.com",
+      "api": "anthropic-messages",
+      "apiKey": "$ANTHROPIC_PROXY_KEY",
+      "compat": {
+        "supportsEagerToolInputStreaming": false,
+        "supportsLongCacheRetention": true,
+        "forceAdaptiveThinking": true,
+        "allowEmptySignature": true
+      },
+      "models": [
+        {
+          "id": "claude-opus-4-7",
+          "reasoning": true,
+          "input": ["text", "image"]
+        }
+      ]
+    }
+  }
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `supportsEagerToolInputStreaming` | Whether the provider accepts per-tool `eager_input_streaming`. Default: `true`. Set to `false` to omit that field and use the legacy fine-grained tool streaming beta header on tool-enabled requests. |
+| `supportsLongCacheRetention` | Whether the provider accepts Anthropic long cache retention (`cache_control.ttl: "1h"`) when cache retention is `long`. Default: `true`. |
+| `sendSessionAffinityHeaders` | Whether to send `x-session-affinity` from the session id when caching is enabled. Default: auto-detected for known providers. |
+| `supportsCacheControlOnTools` | Whether the provider accepts Anthropic-style `cache_control` markers on tool definitions. Default: `true`. |
+| `forceAdaptiveThinking` | Whether to send adaptive thinking (`thinking.type: "adaptive"` plus `output_config.effort`) for this model. Built-in adaptive models set this automatically. Default: `false`. |
+| `supportsMidConvoEffort` | Whether the exact Claude model transport supports per-turn effort system messages and thinking binding controls. Pi persists native effort levels and always sends `drop_block` when enabled. Default: `false`. |
+| `allowEmptySignature` | Whether to replay empty thinking signatures as `signature: ""` instead of converting thinking to text. Default: `false`. |
+| `supportsStrictTools` | Whether the provider accepts strict JSON-schema tool definitions. Default: `false`; built-in Anthropic models enable it in generated metadata. |
+
+## OpenAI Compatibility
+
+For providers with partial OpenAI compatibility, use the `compat` field.
+
+- Provider-level `compat` applies defaults to all models under that provider.
+- Model-level `compat` overrides provider-level values for that model.
+
+```json
+{
+  "providers": {
+    "local-llm": {
+      "baseUrl": "http://localhost:8080/v1",
+      "api": "openai-completions",
+      "compat": {
+        "supportsUsageInStreaming": false,
+        "maxTokensField": "max_tokens"
+      },
+      "models": [...]
+    }
+  }
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `supportsStore` | Provider supports `store` field |
+| `supportsDeveloperRole` | Use `developer` vs `system` role |
+| `systemPromptFormat` | For `openai-responses`, serialize the system prompt as an `input` developer/system message (default) or in the top-level `instructions` field. |
+| `supportsReasoningEffort` | Support for `reasoning_effort` parameter |
+| `supportsUsageInStreaming` | Supports `stream_options: { include_usage: true }` (default: `true`) |
+| `supportsFinishReason` | Whether streamed responses include `finish_reason`. When `false`, pi infers `stop` or `toolUse` when the stream ends. Default: `true`. |
+| `maxTokensField` | Use `max_completion_tokens` or `max_tokens` |
+| `requiresToolResultName` | Include `name` on tool result messages |
+| `requiresAssistantAfterToolResult` | Insert an assistant message before a user message after tool results |
+| `requiresThinkingAsText` | Convert thinking blocks to plain text |
+| `requiresReasoningContentOnAssistantMessages` | Include empty `reasoning_content` on all replayed assistant messages when reasoning is enabled |
+| `thinkingFormat` | Use `reasoning_effort`, `openrouter`, `deepseek`, `together`, `baseten`, `zai`, `qwen`, `chat-template`, or `qwen-chat-template` thinking parameters |
+| `chatTemplateKwargs` | `chat_template_kwargs` values for `thinkingFormat: "chat-template"`; use `{ "$var": "thinking.enabled" }`, `{ "$var": "thinking.effort" }`, or `{ "$var": "thinking.budget" }` for pi-controlled thinking values |
+| `chatTemplateArgs` | `chat_template_args` values for `thinkingFormat: "baseten"`; use `{ "$var": "thinking.enabled" }`, `{ "$var": "thinking.effort" }`, or `{ "$var": "thinking.budget" }` for pi-controlled thinking values |
+| `thinkingTokenBudgetField` | Top-level request field used to cap reasoning tokens from `thinkingBudgets`, clamped so at least 1024 tokens remain for the answer. `"thinking_token_budget"` (vLLM), `"thinking_budget"` (Qwen/DashScope/SGLang), `"thinking_budget_tokens"` (llama.cpp). Off by default; not set on the generated catalog. |
+| `supportsThinkingTokenBudget` | Alias for `thinkingTokenBudgetField: "thinking_token_budget"` (vLLM). Prefer `thinkingTokenBudgetField`. Default: `false`. |
+| `cacheControlFormat` | Use Anthropic-style `cache_control` markers on the system prompt, last tool definition, and last user, assistant, or tool-result text content. Currently only `anthropic` is supported. |
+| `sendSessionAffinityHeaders` | For `openai-completions`, send session-affinity headers from the session id when caching is enabled. Default: `false`. |
+| `sessionAffinityFormat` | For `openai-completions` and `openai-responses`, the session-affinity header format: `openai` sends `session_id`/`x-client-request-id` (completions also `x-session-affinity`), `openai-nosession` omits the underscore-containing `session_id` header, `openrouter` sends `x-session-id`. Does not affect the `prompt_cache_key` body param. Default: auto-detected. |
+| `supportsStrictMode` | Whether the provider accepts strict JSON-schema function tool definitions. Defaults depend on the API; built-in OpenAI models carry explicit capability metadata. |
+| `supportsOpenAIGrammarTools` | Whether OpenAI-compatible APIs emit custom Lark/regex grammar tools. When `false`, grammar-constrained tools fall back to normal function tools. Default: `false`; the built-in model catalog enables it for GPT-5+ models on OpenAI, OpenAI Codex, Azure OpenAI, GitHub Copilot, opencode, and Cloudflare AI Gateway. |
+| `deferredToolsMode` | Use provider-specific deferred tool serialization. Currently only `"kimi"` is supported for Kimi's OpenAI-compatible Chat Completions format. |
+| `supportsLongCacheRetention` | Whether the provider accepts long cache retention when cache retention is `long`: `prompt_cache_retention: "24h"` for OpenAI prompt caching, or `cache_control.ttl: "1h"` when `cacheControlFormat` is `anthropic`. Default: `true`. |
+| `openRouterRouting` | OpenRouter provider routing preferences. This object is sent as-is in the `provider` field of the [OpenRouter API request](https://openrouter.ai/docs/guides/routing/provider-selection). |
+| `vercelGatewayRouting` | Vercel AI Gateway routing config for provider selection (`only`, `order`) |
+
+For an `openai-responses` proxy that expects the system prompt in the top-level `instructions` field:
+
+```json
+{
+  "providers": {
+    "responses-proxy": {
+      "baseUrl": "https://proxy.example.com/v1",
+      "apiKey": "$RESPONSES_PROXY_KEY",
+      "api": "openai-responses",
+      "compat": {
+        "systemPromptFormat": "instructions"
+      },
+      "models": [{ "id": "gpt-5.4" }]
+    }
+  }
+}
+```
+
+`systemPromptFormat` defaults to `input`. Setting it to `instructions` moves the dynamic system prompt instead of copying it, so the prompt is sent exactly once. Avoid also setting `samplingParams.instructions`: sampling parameters are merged last and will override the dynamic system prompt.
+
+`openrouter` uses `reasoning: { effort }`. `together` uses `reasoning: { enabled }` and also `reasoning_effort` when `supportsReasoningEffort` is enabled. `qwen` uses top-level `enable_thinking`. Use `qwen-chat-template` for local Qwen-compatible servers that require `chat_template_kwargs.enable_thinking` and `preserve_thinking`. Use `chat-template` for vLLM/Hugging Face chat templates that need configurable `chat_template_kwargs`, such as `chatTemplateKwargs: { "thinking": { "$var": "thinking.enabled" } }` for DeepSeek V3.x templates. Use `thinkingFormat: "baseten"` with `chatTemplateArgs` for providers that expose toggle controls through `chat_template_args` and optionally support top-level `reasoning_effort`.
+
+`thinkingTokenBudgetField` is independent of `thinkingFormat`. Do not enable it on the generated Qwen catalog: those models already send `reasoning_effort`, and DashScope rejects `thinking_budget` together with `reasoning_effort`.
+
+`cacheControlFormat: "anthropic"` is for OpenAI-compatible providers that expose Anthropic-style prompt caching through `cache_control` markers on text content and tool definitions.
+
+Example:
 ### Sign-in opens a browser on a remote machine
 
 Complete the provider's headless authentication flow when available. Some providers let you paste the final redirect URL or authorization code back into Pi. See [Authenticate interactively](providers.md#authenticate-interactively).
