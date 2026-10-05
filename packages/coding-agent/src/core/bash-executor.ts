@@ -7,7 +7,7 @@
  */
 
 import type { WriteStream } from "node:fs";
-import { stripAnsi } from "../utils/ansi.ts";
+import { AnsiStreamStripper } from "../utils/ansi-stream.ts";
 import { createOutputFileStream } from "../utils/output-files.ts";
 import { sanitizeBinaryOutput } from "../utils/shell.ts";
 import type { BashOperations } from "./tools/bash.ts";
@@ -70,12 +70,13 @@ export async function executeBashWithOperations(
 	};
 
 	const decoder = new TextDecoder();
+	const ansi = new AnsiStreamStripper();
 
 	const onData = (data: Buffer) => {
 		totalBytes += data.length;
 
 		// Sanitize: strip ANSI, replace binary garbage, normalize newlines
-		const text = sanitizeBinaryOutput(stripAnsi(decoder.decode(data, { stream: true }))).replace(/\r/g, "");
+		const text = sanitizeBinaryOutput(ansi.write(decoder.decode(data, { stream: true }))).replace(/\r/g, "");
 
 		// Start writing to temp file if exceeds threshold
 		if (totalBytes > DEFAULT_MAX_BYTES) {
