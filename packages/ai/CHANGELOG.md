@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- Renamed the Azure provider from `azure-openai-responses` to `azure`, since it now serves Chat Completions as well as the Responses API. Use `getModel("azure", ...)`, and import `azureProvider` and `AZURE_MODELS` from `@earendil-works/pi-ai/providers/azure` instead of `azureOpenAIResponsesProvider` and `AZURE_OPENAI_RESPONSES_MODELS` from `providers/azure-openai-responses`. The `azure-openai-responses` api id and the `AZURE_OPENAI_*` environment variables are unchanged ([#9714](https://github.com/earendil-works/pi/pull/9714) by [@jsanter27](https://github.com/jsanter27))
+
+### Added
+
+- Added Chat Completions support to the Azure provider for Foundry deployments, with DeepSeek V4 Pro in the built-in catalog. Other Foundry models can be added under the `azure` provider with `api: "openai-completions"`, and `AZURE_OPENAI_DEPLOYMENT_NAME_MAP` and `azureDeploymentName` apply to both APIs ([#9645](https://github.com/earendil-works/pi/issues/9645), [#9714](https://github.com/earendil-works/pi/pull/9714) by [@jsanter27](https://github.com/jsanter27))
+
 ### Fixed
 
 - Fixed OAuth credentials being invalidated when a request or model refresh was cancelled or superseded during a token refresh: a token refresh that has started now completes and persists the rotated refresh token
