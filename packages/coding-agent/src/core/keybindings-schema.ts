@@ -2,7 +2,7 @@ import { type TSchema, Type } from "typebox";
 import { KEYBINDINGS } from "./keybindings.ts";
 
 const KeyIdSchema = Type.String();
-const KeybindingValueSchema = Type.Union([KeyIdSchema, Type.Array(KeyIdSchema)]);
+export const KeybindingValueSchema = Type.Union([KeyIdSchema, Type.Array(KeyIdSchema)]);
 const properties: Record<string, TSchema> = {
 	$schema: Type.Optional(Type.String()),
 };

@@ -18,71 +18,13 @@
       "type": "string"
     },
     "defaultThinkingLevel": {
-      "anyOf": [
-        {
-          "type": "string",
-          "const": "off"
-        },
-        {
-          "type": "string",
-          "const": "minimal"
-        },
-        {
-          "type": "string",
-          "const": "low"
-        },
-        {
-          "type": "string",
-          "const": "medium"
-        },
-        {
-          "type": "string",
-          "const": "high"
-        },
-        {
-          "type": "string",
-          "const": "xhigh"
-        },
-        {
-          "type": "string",
-          "const": "max"
-        }
-      ]
+      "$ref": "#/$defs/ModelThinkingLevel"
     },
     "modelThinkingLevels": {
       "type": "object",
       "patternProperties": {
         "^.*$": {
-          "anyOf": [
-            {
-              "type": "string",
-              "const": "off"
-            },
-            {
-              "type": "string",
-              "const": "minimal"
-            },
-            {
-              "type": "string",
-              "const": "low"
-            },
-            {
-              "type": "string",
-              "const": "medium"
-            },
-            {
-              "type": "string",
-              "const": "high"
-            },
-            {
-              "type": "string",
-              "const": "xhigh"
-            },
-            {
-              "type": "string",
-              "const": "max"
-            }
-          ]
+          "$ref": "#/$defs/ModelThinkingLevel"
         }
       },
       "description": "Per-model default thinking level overrides keyed by \"provider/modelId\"."
@@ -118,7 +60,8 @@
           "type": "string",
           "const": "one-at-a-time"
         }
-      ]
+      ],
+      "default": "one-at-a-time"
     },
     "followUpMode": {
       "anyOf": [
@@ -130,7 +73,8 @@
           "type": "string",
           "const": "one-at-a-time"
         }
-      ]
+      ],
+      "default": "one-at-a-time"
     },
     "theme": {
       "type": "string"
@@ -238,7 +182,8 @@
       }
     },
     "hideThinkingBlock": {
-      "type": "boolean"
+      "type": "boolean",
+      "default": false
     },
     "showCacheMissNotices": {
       "type": "boolean",
@@ -254,7 +199,17 @@
       "description": "Custom shell path, with support for leading ~ expansion."
     },
     "quietStartup": {
-      "type": "boolean"
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "string",
+          "const": "header"
+        }
+      ],
+      "description": "When \"header\", keep only the startup header.",
+      "default": false
     },
     "defaultProjectTrust": {
       "anyOf": [
@@ -287,7 +242,8 @@
     },
     "collapseChangelog": {
       "type": "boolean",
-      "description": "Show the condensed changelog after update; use /changelog for the full changelog."
+      "description": "Show the condensed changelog after update; use /changelog for the full changelog.",
+      "default": false
     },
     "enableInstallTelemetry": {
       "type": "boolean",
@@ -548,7 +504,8 @@
           "const": "all"
         }
       ],
-      "description": "Default filter when opening /tree."
+      "description": "Default filter when opening /tree.",
+      "default": "default"
     },
     "thinkingBudgets": {
       "type": "object",
@@ -701,7 +658,7 @@
           "const": "fullscreen"
         }
       ],
-      "default": "regular"
+      "default": "fullscreen"
     },
     "fullscreenExitOutput": {
       "anyOf": [
@@ -773,5 +730,18 @@
       "deprecated": true
     }
   },
-  "additionalProperties": true
+  "additionalProperties": true,
+  "$defs": {
+    "ModelThinkingLevel": {
+      "enum": [
+        "off",
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ]
+    }
+  }
 }

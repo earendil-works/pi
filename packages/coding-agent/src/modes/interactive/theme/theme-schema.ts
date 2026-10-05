@@ -7,8 +7,9 @@
  * built-in themes already do.
  */
 
-import { type Static, Type } from "typebox";
+import { type Static, type TProperties, Type } from "typebox";
 import { Compile } from "typebox/compile";
+import { THEME_TOKENS, type ThemeColorValues, type ThemeTokenDescriptors } from "./theme-tokens.ts";
 
 function colorValue(description?: string) {
 	return Type.Union(
@@ -27,7 +28,26 @@ function colorValue(description?: string) {
 	);
 }
 
-const ColorValueSchema = colorValue();
+export const ColorValueSchema = colorValue();
+
+export type ThemeColorValue = Static<typeof ColorValueSchema>;
+
+function themeTokenProperties(tokens: ThemeTokenDescriptors): TProperties {
+	const properties: TProperties = {};
+	for (const [name, descriptor] of Object.entries(tokens)) {
+		const schema = colorValue(descriptor.description);
+		properties[name] = descriptor.fallback === undefined ? schema : Type.Optional(schema);
+	}
+	return properties;
+}
+
+const ThemeColorsSchema = Type.Unsafe<ThemeColorValues<ThemeColorValue>>(
+	Type.Object(themeTokenProperties(THEME_TOKENS), {
+		description:
+			"Theme color definitions (scrollbar, thinkingMax, and search highlight colors are optional and use compatible fallbacks)",
+		additionalProperties: false,
+	}),
+);
 
 export const ThemeJsonSchema = Type.Object(
 	{
@@ -47,93 +67,7 @@ export const ThemeJsonSchema = Type.Object(
 				description: "Reusable color variables",
 			}),
 		),
-		colors: Type.Object(
-			{
-				// Core UI (11 colors)
-				accent: colorValue("Primary accent color (logo, selected items, cursor)"),
-				border: colorValue("Normal borders"),
-				borderAccent: colorValue("Highlighted borders"),
-				borderMuted: colorValue("Subtle borders"),
-				success: colorValue("Success states"),
-				error: colorValue("Error states"),
-				warning: colorValue("Warning states"),
-				muted: colorValue("Secondary/dimmed text"),
-				dim: colorValue("Very dimmed text (more subtle than muted)"),
-				text: colorValue("Default text color (usually empty string)"),
-				thinkingText: colorValue("Thinking block text color"),
-				// Scrollbar (2 optional colors)
-				scrollbarTrack: Type.Optional(
-					colorValue("Fullscreen scrollbar track foreground (falls back to muted when omitted)"),
-				),
-				scrollbarThumb: Type.Optional(
-					colorValue("Fullscreen scrollbar thumb foreground (falls back to text when omitted)"),
-				),
-				// Backgrounds & Content Text (11 required, 2 optional)
-				selectedBg: colorValue("Selected item background"),
-				searchMatchBg: Type.Optional(
-					colorValue(
-						"Transcript search match background and current-match text (falls back to selectedBg when omitted)",
-					),
-				),
-				searchMatchText: Type.Optional(
-					colorValue(
-						"Transcript search match text and current-match background (falls back to text when omitted)",
-					),
-				),
-				userMessageBg: colorValue("User message background"),
-				userMessageText: colorValue("User message text color"),
-				customMessageBg: colorValue("Custom message background (hook-injected messages)"),
-				customMessageText: colorValue("Custom message text color"),
-				customMessageLabel: colorValue("Custom message type label color"),
-				toolPendingBg: colorValue("Tool execution box (pending state)"),
-				toolSuccessBg: colorValue("Tool execution box (success state)"),
-				toolErrorBg: colorValue("Tool execution box (error state)"),
-				toolTitle: colorValue("Tool execution box title color"),
-				toolOutput: colorValue("Tool execution box output text color"),
-				// Markdown (10 colors)
-				mdHeading: colorValue("Markdown heading text"),
-				mdLink: colorValue("Markdown link text"),
-				mdLinkUrl: colorValue("Markdown link URL"),
-				mdCode: colorValue("Markdown inline code"),
-				mdCodeBlock: colorValue("Markdown code block content"),
-				mdCodeBlockBorder: colorValue("Markdown code block fences"),
-				mdQuote: colorValue("Markdown blockquote text"),
-				mdQuoteBorder: colorValue("Markdown blockquote border"),
-				mdHr: colorValue("Markdown horizontal rule"),
-				mdListBullet: colorValue("Markdown list bullets/numbers"),
-				// Tool Diffs (3 colors)
-				toolDiffAdded: colorValue("Added lines in tool diffs"),
-				toolDiffRemoved: colorValue("Removed lines in tool diffs"),
-				toolDiffContext: colorValue("Context lines in tool diffs"),
-				// Syntax Highlighting (9 colors)
-				syntaxComment: colorValue("Syntax highlighting: comments"),
-				syntaxKeyword: colorValue("Syntax highlighting: keywords"),
-				syntaxFunction: colorValue("Syntax highlighting: function names"),
-				syntaxVariable: colorValue("Syntax highlighting: variable names"),
-				syntaxString: colorValue("Syntax highlighting: string literals"),
-				syntaxNumber: colorValue("Syntax highlighting: number literals"),
-				syntaxType: colorValue("Syntax highlighting: type names"),
-				syntaxOperator: colorValue("Syntax highlighting: operators"),
-				syntaxPunctuation: colorValue("Syntax highlighting: punctuation"),
-				// Thinking Level Borders (6 colors)
-				thinkingOff: colorValue("Thinking level border: off"),
-				thinkingMinimal: colorValue("Thinking level border: minimal"),
-				thinkingLow: colorValue("Thinking level border: low"),
-				thinkingMedium: colorValue("Thinking level border: medium"),
-				thinkingHigh: colorValue("Thinking level border: high"),
-				thinkingXhigh: colorValue("Thinking level border: xhigh"),
-				thinkingMax: Type.Optional(
-					colorValue("Thinking level border: max (falls back to thinkingXhigh when omitted)"),
-				),
-				// Bash Mode (1 color)
-				bashMode: colorValue("Editor border color in bash mode"),
-			},
-			{
-				description:
-					"Theme color definitions (scrollbar, thinkingMax, and search highlight colors are optional and use compatible fallbacks)",
-				additionalProperties: false,
-			},
-		),
+		colors: ThemeColorsSchema,
 		export: Type.Optional(
 			Type.Object(
 				{
@@ -157,7 +91,6 @@ export const ThemeJsonSchema = Type.Object(
 
 const compiledThemeSchema = Compile(ThemeJsonSchema);
 
-export type ThemeColorValue = Static<typeof ColorValueSchema>;
 export type ValidatedThemeJson = Static<typeof ThemeJsonSchema>;
 
 /** Validate one theme document, throwing a message that names the offending tokens. */

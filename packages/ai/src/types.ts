@@ -16,6 +16,16 @@ import type {
 	OpenAICompletionsCompat,
 	OpenAIResponsesCompat,
 } from "./providers/compat-schema.ts";
+import type {
+	CacheRetention,
+	ModelCost,
+	ModelInputLimits,
+	ModelInputModality,
+	ModelPromptCache,
+	ModelThinkingLevel,
+	ThinkingLevel,
+	ThinkingLevelMap,
+} from "./providers/model-schema.ts";
 import type { AssistantMessageDiagnostic } from "./utils/diagnostics.ts";
 import type { AssistantMessageEventStream } from "./utils/event-stream.ts";
 
@@ -32,6 +42,20 @@ export type {
 	ThinkingTokenBudgetField,
 	VercelGatewayRouting,
 } from "./providers/compat-schema.ts";
+export type {
+	CacheRetention,
+	ModelCost,
+	ModelCostRates,
+	ModelCostTier,
+	ModelImageInputLimits,
+	ModelImageResizeOptions,
+	ModelInputLimits,
+	ModelInputModality,
+	ModelPromptCache,
+	ModelThinkingLevel,
+	ThinkingLevel,
+	ThinkingLevelMap,
+} from "./providers/model-schema.ts";
 export type { AssistantMessageEventStream } from "./utils/event-stream.ts";
 
 export type KnownApi =
@@ -106,9 +130,6 @@ export type KnownProvider =
 export type ProviderId = KnownProvider | string;
 
 export type ToolChoice = "auto" | "none";
-export type ThinkingLevel = "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
-export type ModelThinkingLevel = "off" | ThinkingLevel;
-export type ThinkingLevelMap = Partial<Record<ModelThinkingLevel, string | null>>;
 export type SamplingParams = Record<string, unknown>;
 export type SamplingParamsByThinkingLevel = Partial<Record<ModelThinkingLevel, SamplingParams>>;
 /** Token budgets for each thinking level (token-based providers only) */
@@ -120,14 +141,6 @@ export interface ThinkingBudgets {
 }
 
 // Base options all providers share
-export type CacheRetention = "none" | "short" | "long";
-
-/**
- * Best-effort prompt cache lifetime in seconds for each retention tier a request can ask for.
- * A missing tier means the lifetime is unknown; pi does not warm such caches.
- */
-export type ModelPromptCache = Partial<Record<Exclude<CacheRetention, "none">, number>>;
-
 export type Transport = "sse" | "websocket" | "websocket-cached" | "auto";
 
 /** Provider-scoped environment overrides. Values take precedence over process.env. */
@@ -803,46 +816,6 @@ export type AssistantMessageEvent =
 	  }
 	| { type: "error"; reason: Extract<StopReason, "aborted" | "error">; error: AssistantMessage };
 
-export interface ModelCostRates {
-	input: number; // $/million tokens
-	output: number; // $/million tokens
-	cacheRead: number; // $/million tokens
-	cacheWrite: number; // $/million tokens
-}
-
-export interface ModelCostTier extends ModelCostRates {
-	/** Use this tier for requests whose total input usage exceeds this token count. */
-	inputTokensAbove: number;
-}
-
-export interface ModelCost extends ModelCostRates {
-	/** Request-wide pricing tiers. The highest matching input threshold applies to the full request. */
-	tiers?: ModelCostTier[];
-}
-
-export interface ModelImageResizeOptions {
-	maxWidth?: number;
-	maxHeight?: number;
-	/** Maximum base64-encoded payload size in bytes. */
-	maxBytes?: number;
-	jpegQuality?: number;
-}
-
-export interface ModelImageInputLimits {
-	/** Cache-safe resize profile applied before a new image enters conversation history. */
-	resize?: ModelImageResizeOptions;
-	/** Maximum images accepted in one provider message. */
-	maxPerMessage?: number;
-	/** Maximum images accepted across one provider request. */
-	maxPerRequest?: number;
-}
-
-export interface ModelInputLimits {
-	/** Maximum serialized provider request size in bytes. */
-	maxRequestBytes?: number;
-	images?: ModelImageInputLimits;
-}
-
 /** Fields shared by every catalog entry, regardless of what you can do with it. */
 export interface BaseModel<TApi extends string> {
 	id: string;
@@ -850,7 +823,7 @@ export interface BaseModel<TApi extends string> {
 	api: TApi;
 	provider: ProviderId;
 	baseUrl: string;
-	input: ("text" | "image")[];
+	input: ModelInputModality[];
 	/** Provider input limits and cache-safe preprocessing metadata. */
 	inputLimits?: ModelInputLimits;
 	cost: ModelCost;

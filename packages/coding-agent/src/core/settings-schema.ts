@@ -1,18 +1,10 @@
+import { ModelThinkingLevelSchema } from "@earendil-works/pi-ai/providers/model-schema";
 import { type Static, Type } from "typebox";
+import { SETTINGS_DEFAULTS } from "./settings-defaults.ts";
 
 function nonNegativeSafeInteger(options: { default?: number } = {}) {
 	return Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER, ...options });
 }
-
-const ThinkingLevelSchema = Type.Union([
-	Type.Literal("off"),
-	Type.Literal("minimal"),
-	Type.Literal("low"),
-	Type.Literal("medium"),
-	Type.Literal("high"),
-	Type.Literal("xhigh"),
-	Type.Literal("max"),
-]);
 
 const CompactionModelOverrideSchema = Type.Object({
 	reserveTokens: Type.Optional(nonNegativeSafeInteger()),
@@ -20,9 +12,9 @@ const CompactionModelOverrideSchema = Type.Object({
 });
 
 const CompactionSettingsSchema = Type.Object({
-	enabled: Type.Optional(Type.Boolean({ default: true })),
-	reserveTokens: Type.Optional(nonNegativeSafeInteger({ default: 16384 })),
-	keepRecentTokens: Type.Optional(nonNegativeSafeInteger({ default: 20000 })),
+	enabled: Type.Optional(Type.Boolean({ default: SETTINGS_DEFAULTS.compaction.enabled })),
+	reserveTokens: Type.Optional(nonNegativeSafeInteger({ default: SETTINGS_DEFAULTS.compaction.reserveTokens })),
+	keepRecentTokens: Type.Optional(nonNegativeSafeInteger({ default: SETTINGS_DEFAULTS.compaction.keepRecentTokens })),
 	modelOverrides: Type.Optional(
 		Type.Record(Type.String(), CompactionModelOverrideSchema, {
 			description: 'Per-model overrides keyed by exact "provider/modelId" strings.',
@@ -32,12 +24,15 @@ const CompactionSettingsSchema = Type.Object({
 
 const BranchSummarySettingsSchema = Type.Object({
 	reserveTokens: Type.Optional(
-		Type.Number({ description: "Tokens reserved for the prompt and LLM response.", default: 16384 }),
+		Type.Number({
+			description: "Tokens reserved for the prompt and LLM response.",
+			default: SETTINGS_DEFAULTS.branchSummary.reserveTokens,
+		}),
 	),
 	skipPrompt: Type.Optional(
 		Type.Boolean({
 			description: 'When true, skips the "Summarize branch?" prompt and defaults to no summary.',
-			default: false,
+			default: SETTINGS_DEFAULTS.branchSummary.skipPrompt,
 		}),
 	),
 });
@@ -46,17 +41,23 @@ const ProviderRetrySettingsSchema = Type.Object({
 	timeoutMs: Type.Optional(Type.Number({ description: "SDK or provider request timeout in milliseconds." })),
 	maxRetries: Type.Optional(Type.Number({ description: "SDK or provider retry attempts." })),
 	maxRetryDelayMs: Type.Optional(
-		Type.Number({ description: "Maximum server-requested delay before failing.", default: 60000 }),
+		Type.Number({
+			description: "Maximum server-requested delay before failing.",
+			default: SETTINGS_DEFAULTS.retry.provider.maxRetryDelayMs,
+		}),
 	),
 });
 
 const RetrySettingsSchema = Type.Object({
-	enabled: Type.Optional(Type.Boolean({ default: true })),
-	maxRetries: Type.Optional(Type.Number({ default: 3 })),
+	enabled: Type.Optional(Type.Boolean({ default: SETTINGS_DEFAULTS.retry.enabled })),
+	maxRetries: Type.Optional(Type.Number({ default: SETTINGS_DEFAULTS.retry.maxRetries })),
 	baseDelayMs: Type.Optional(
-		Type.Number({ description: "Exponential backoff base delay in milliseconds: 2s, 4s, 8s.", default: 2000 }),
+		Type.Number({
+			description: "Exponential backoff base delay in milliseconds: 2s, 4s, 8s.",
+			default: SETTINGS_DEFAULTS.retry.baseDelayMs,
+		}),
 	),
-	maxAgentDelayMs: Type.Optional(Type.Number({ default: 60000 })),
+	maxAgentDelayMs: Type.Optional(Type.Number({ default: SETTINGS_DEFAULTS.retry.maxAgentDelayMs })),
 	provider: Type.Optional(ProviderRetrySettingsSchema),
 	maxDelayMs: Type.Optional(
 		Type.Number({
@@ -68,16 +69,28 @@ const RetrySettingsSchema = Type.Object({
 
 const TerminalSettingsSchema = Type.Object({
 	showImages: Type.Optional(
-		Type.Boolean({ description: "Show images when the terminal supports them.", default: true }),
+		Type.Boolean({
+			description: "Show images when the terminal supports them.",
+			default: SETTINGS_DEFAULTS.terminal.showImages,
+		}),
 	),
 	imageWidthCells: Type.Optional(
-		Type.Number({ description: "Preferred inline image width in terminal cells.", default: 60 }),
+		Type.Number({
+			description: "Preferred inline image width in terminal cells.",
+			default: SETTINGS_DEFAULTS.terminal.imageWidthCells,
+		}),
 	),
 	clearOnShrink: Type.Optional(
-		Type.Boolean({ description: "Clear empty rows when content shrinks.", default: false }),
+		Type.Boolean({
+			description: "Clear empty rows when content shrinks.",
+			default: SETTINGS_DEFAULTS.terminal.clearOnShrink,
+		}),
 	),
 	showTerminalProgress: Type.Optional(
-		Type.Boolean({ description: "Show OSC 9;4 terminal progress indicators.", default: false }),
+		Type.Boolean({
+			description: "Show OSC 9;4 terminal progress indicators.",
+			default: SETTINGS_DEFAULTS.terminal.showTerminalProgress,
+		}),
 	),
 	hyperlinks: Type.Optional(Type.Union([Type.Boolean(), Type.Literal("auto")])),
 	images: Type.Optional(
@@ -90,11 +103,14 @@ const ImageSettingsSchema = Type.Object({
 	autoResize: Type.Optional(
 		Type.Boolean({
 			description: "Resize images to 2000x2000 maximum for better model compatibility.",
-			default: true,
+			default: SETTINGS_DEFAULTS.images.autoResize,
 		}),
 	),
 	blockImages: Type.Optional(
-		Type.Boolean({ description: "When true, prevents all images from being sent to LLM providers.", default: false }),
+		Type.Boolean({
+			description: "When true, prevents all images from being sent to LLM providers.",
+			default: SETTINGS_DEFAULTS.images.blockImages,
+		}),
 	),
 });
 
@@ -106,26 +122,26 @@ const ThinkingBudgetsSettingsSchema = Type.Object({
 });
 
 const MarkdownSettingsSchema = Type.Object({
-	codeBlockIndent: Type.Optional(Type.String({ default: "  " })),
+	codeBlockIndent: Type.Optional(Type.String({ default: SETTINGS_DEFAULTS.markdown.codeBlockIndent })),
 	mermaid: Type.Optional(
 		Type.Union([Type.Literal("off"), Type.Literal("final"), Type.Literal("streaming")], {
-			default: "streaming",
+			default: SETTINGS_DEFAULTS.markdown.mermaid,
 		}),
 	),
 });
 
 const WarningSettingsSchema = Type.Object({
-	anthropicExtraUsage: Type.Optional(Type.Boolean({ default: true })),
+	anthropicExtraUsage: Type.Optional(Type.Boolean({ default: SETTINGS_DEFAULTS.warnings.anthropicExtraUsage })),
 });
 
 const CodemodeModeSchema = Type.Union([Type.Literal("on"), Type.Literal("only")]);
 
 const CodemodeSettingsSchema = Type.Object({
-	mode: Type.Optional(Type.Union([...CodemodeModeSchema.anyOf], { default: "on" })),
+	mode: Type.Optional(Type.Union([...CodemodeModeSchema.anyOf], { default: SETTINGS_DEFAULTS.codemode.mode })),
 	inlineBudget: Type.Optional(
 		Type.Number({
 			description: "Estimated tokens available for inline codemode tool declarations.",
-			default: 3000,
+			default: SETTINGS_DEFAULTS.codemode.inlineBudget,
 		}),
 	),
 });
@@ -171,27 +187,38 @@ export const SettingsSchema = Type.Object(
 		lastChangelogVersion: Type.Optional(Type.String()),
 		defaultProvider: Type.Optional(Type.String()),
 		defaultModel: Type.Optional(Type.String()),
-		defaultThinkingLevel: Type.Optional(ThinkingLevelSchema),
+		defaultThinkingLevel: Type.Optional(ModelThinkingLevelSchema),
 		modelThinkingLevels: Type.Optional(
-			Type.Record(Type.String(), ThinkingLevelSchema, {
+			Type.Record(Type.String(), ModelThinkingLevelSchema, {
 				description: 'Per-model default thinking level overrides keyed by "provider/modelId".',
 			}),
 		),
 		transport: Type.Optional(
 			Type.Union(
 				[Type.Literal("auto"), Type.Literal("sse"), Type.Literal("websocket"), Type.Literal("websocket-cached")],
-				{ default: "auto" },
+				{ default: SETTINGS_DEFAULTS.transport },
 			),
 		),
-		steeringMode: Type.Optional(Type.Union([Type.Literal("all"), Type.Literal("one-at-a-time")])),
-		followUpMode: Type.Optional(Type.Union([Type.Literal("all"), Type.Literal("one-at-a-time")])),
+		steeringMode: Type.Optional(
+			Type.Union([Type.Literal("all"), Type.Literal("one-at-a-time")], {
+				default: SETTINGS_DEFAULTS.steeringMode,
+			}),
+		),
+		followUpMode: Type.Optional(
+			Type.Union([Type.Literal("all"), Type.Literal("one-at-a-time")], {
+				default: SETTINGS_DEFAULTS.followUpMode,
+			}),
+		),
 		theme: Type.Optional(Type.String()),
 		compaction: Type.Optional(CompactionSettingsSchema),
 		branchSummary: Type.Optional(BranchSummarySettingsSchema),
 		retry: Type.Optional(RetrySettingsSchema),
-		hideThinkingBlock: Type.Optional(Type.Boolean()),
+		hideThinkingBlock: Type.Optional(Type.Boolean({ default: SETTINGS_DEFAULTS.hideThinkingBlock })),
 		showCacheMissNotices: Type.Optional(
-			Type.Boolean({ description: "Show cache cost and provider recovery notices.", default: false }),
+			Type.Boolean({
+				description: "Show cache cost and provider recovery notices.",
+				default: SETTINGS_DEFAULTS.showCacheMissNotices,
+			}),
 		),
 		externalEditor: Type.Optional(
 			Type.String({ description: "Command for Ctrl+G external editor; takes precedence over VISUAL and EDITOR." }),
@@ -199,11 +226,16 @@ export const SettingsSchema = Type.Object(
 		shellPath: Type.Optional(
 			Type.String({ description: "Custom shell path, with support for leading ~ expansion." }),
 		),
-		quietStartup: Type.Optional(Type.Boolean()),
+		quietStartup: Type.Optional(
+			Type.Union([Type.Boolean(), Type.Literal("header")], {
+				description: 'When "header", keep only the startup header.',
+				default: SETTINGS_DEFAULTS.quietStartup,
+			}),
+		),
 		defaultProjectTrust: Type.Optional(
 			Type.Union([Type.Literal("ask"), Type.Literal("always"), Type.Literal("never")], {
 				description: "Global setting only.",
-				default: "ask",
+				default: SETTINGS_DEFAULTS.defaultProjectTrust,
 			}),
 		),
 		shellCommandPrefix: Type.Optional(
@@ -218,16 +250,20 @@ export const SettingsSchema = Type.Object(
 		collapseChangelog: Type.Optional(
 			Type.Boolean({
 				description: "Show the condensed changelog after update; use /changelog for the full changelog.",
+				default: SETTINGS_DEFAULTS.collapseChangelog,
 			}),
 		),
 		enableInstallTelemetry: Type.Optional(
 			Type.Boolean({
 				description: "Send an anonymous version and update ping after changelog-detected updates.",
-				default: true,
+				default: SETTINGS_DEFAULTS.enableInstallTelemetry,
 			}),
 		),
 		enableAnalytics: Type.Optional(
-			Type.Boolean({ description: "Opt in to analytics data sharing.", default: false }),
+			Type.Boolean({
+				description: "Opt in to analytics data sharing.",
+				default: SETTINGS_DEFAULTS.enableAnalytics,
+			}),
 		),
 		trackingId: Type.Optional(
 			Type.String({ description: "Analytics tracking identifier, generated when analytics is enabled." }),
@@ -251,7 +287,10 @@ export const SettingsSchema = Type.Object(
 		),
 		themes: Type.Optional(Type.Array(Type.String(), { description: "Local theme file paths or directories." })),
 		enableSkillCommands: Type.Optional(
-			Type.Boolean({ description: "Register skills as /skill:name commands.", default: true }),
+			Type.Boolean({
+				description: "Register skills as /skill:name commands.",
+				default: SETTINGS_DEFAULTS.enableSkillCommands,
+			}),
 		),
 		terminal: Type.Optional(TerminalSettingsSchema),
 		images: Type.Optional(ImageSettingsSchema),
@@ -264,7 +303,7 @@ export const SettingsSchema = Type.Object(
 		doubleEscapeAction: Type.Optional(
 			Type.Union([Type.Literal("fork"), Type.Literal("tree"), Type.Literal("none")], {
 				description: "Action for double-escape with an empty editor.",
-				default: "tree",
+				default: SETTINGS_DEFAULTS.doubleEscapeAction,
 			}),
 		),
 		treeFilterMode: Type.Optional(
@@ -276,7 +315,10 @@ export const SettingsSchema = Type.Object(
 					Type.Literal("labeled-only"),
 					Type.Literal("all"),
 				],
-				{ description: "Default filter when opening /tree." },
+				{
+					description: "Default filter when opening /tree.",
+					default: SETTINGS_DEFAULTS.treeFilterMode,
+				},
 			),
 		),
 		thinkingBudgets: Type.Optional(
@@ -285,16 +327,22 @@ export const SettingsSchema = Type.Object(
 			}),
 		),
 		editorPaddingX: Type.Optional(
-			Type.Number({ description: "Horizontal padding for the input editor.", default: 0 }),
+			Type.Number({
+				description: "Horizontal padding for the input editor.",
+				default: SETTINGS_DEFAULTS.editorPaddingX,
+			}),
 		),
 		outputPad: Type.Optional(
 			Type.Union([Type.Literal(0), Type.Literal(1)], {
 				description: "Horizontal padding for chat message output.",
-				default: 1,
+				default: SETTINGS_DEFAULTS.outputPad,
 			}),
 		),
 		autocompleteMaxVisible: Type.Optional(
-			Type.Number({ description: "Maximum visible items in the autocomplete dropdown.", default: 5 }),
+			Type.Number({
+				description: "Maximum visible items in the autocomplete dropdown.",
+				default: SETTINGS_DEFAULTS.autocompleteMaxVisible,
+			}),
 		),
 		showHardwareCursor: Type.Optional(
 			Type.Boolean({ description: "Show the terminal cursor while still positioning it for IME." }),
@@ -320,7 +368,7 @@ export const SettingsSchema = Type.Object(
 			Type.Union([Type.Literal("off"), Type.Literal("streaming"), Type.Literal("idle")], {
 				description:
 					'Cache-warming profile. "idle" also warms between agent runs. Global only because each refresh costs money.',
-				default: "streaming",
+				default: SETTINGS_DEFAULTS.cacheWarming,
 			}),
 		),
 		websocketConnectTimeoutMs: Type.Optional(
@@ -329,26 +377,33 @@ export const SettingsSchema = Type.Object(
 				description: "WebSocket connect or open handshake timeout in milliseconds; 0 disables it.",
 			}),
 		),
-		tuiMode: Type.Optional(Type.Union([Type.Literal("regular"), Type.Literal("fullscreen")], { default: "regular" })),
+		tuiMode: Type.Optional(
+			Type.Union([Type.Literal("regular"), Type.Literal("fullscreen")], {
+				default: SETTINGS_DEFAULTS.tuiMode,
+			}),
+		),
 		fullscreenExitOutput: Type.Optional(
 			Type.Union([Type.Literal("transcript"), Type.Literal("resume-hint")], {
 				description: "No effect in regular TUI mode.",
-				default: "transcript",
+				default: SETTINGS_DEFAULTS.fullscreenExitOutput,
 			}),
 		),
 		fullscreenScrollbar: Type.Optional(
 			Type.Union([Type.Literal("auto"), Type.Literal("always"), Type.Literal("hidden")], {
 				description: "No effect in regular TUI mode.",
-				default: "auto",
+				default: SETTINGS_DEFAULTS.fullscreenScrollbar,
 			}),
 		),
 		fullscreenCopyOnSelect: Type.Optional(
-			Type.Boolean({ description: "No effect in regular TUI mode.", default: true }),
+			Type.Boolean({
+				description: "No effect in regular TUI mode.",
+				default: SETTINGS_DEFAULTS.fullscreenCopyOnSelect,
+			}),
 		),
 		fullscreenWheelScrollLines: Type.Optional(
 			Type.Union([Type.Number(), Type.Literal("auto")], {
 				description: "Lines scrolled per wheel event in fullscreen mode.",
-				default: "auto",
+				default: SETTINGS_DEFAULTS.fullscreenWheelScrollLines,
 			}),
 		),
 		queueMode: Type.Optional(
@@ -380,6 +435,7 @@ export interface WarningSettings extends Static<typeof WarningSettingsSchema> {}
 export type CodemodeMode = Static<typeof CodemodeModeSchema>;
 export interface CodemodeSettings extends Static<typeof CodemodeSettingsSchema> {}
 export type DefaultProjectTrust = NonNullable<SettingsInput["defaultProjectTrust"]>;
+export type QuietStartup = NonNullable<SettingsInput["quietStartup"]>;
 export type TransportSetting = NonNullable<SettingsInput["transport"]>;
 export type PackageSource = Static<typeof PackageSourceSchema>;
 export type FullscreenExitOutput = NonNullable<SettingsInput["fullscreenExitOutput"]>;

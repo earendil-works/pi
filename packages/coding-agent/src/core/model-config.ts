@@ -1,24 +1,20 @@
 /** Immutable, credential-blind models.json snapshot. */
 
 import { readFile } from "node:fs/promises";
-import { ModelCostSchema, ProviderCompatSchema } from "@earendil-works/pi-ai/providers/compat-schema";
+import { ProviderCompatSchema } from "@earendil-works/pi-ai/providers/compat-schema";
+import {
+	ModelCostSchema,
+	ModelInputLimitsSchema,
+	ModelInputModalitySchema,
+	ModelPromptCacheSchema,
+	ThinkingLevelMapSchema,
+} from "@earendil-works/pi-ai/providers/model-schema";
 import { type Static, Type } from "typebox";
 import { Compile } from "typebox/compile";
 import type { TLocalizedValidationError } from "typebox/error";
 import { stripJsonComments } from "../utils/json.ts";
 import { normalizePath } from "../utils/paths.ts";
 import { stripBom } from "../utils/text.ts";
-
-const ThinkingLevelMapValueSchema = Type.Union([Type.String(), Type.Null()]);
-const ThinkingLevelMapSchema = Type.Object({
-	off: Type.Optional(ThinkingLevelMapValueSchema),
-	minimal: Type.Optional(ThinkingLevelMapValueSchema),
-	low: Type.Optional(ThinkingLevelMapValueSchema),
-	medium: Type.Optional(ThinkingLevelMapValueSchema),
-	high: Type.Optional(ThinkingLevelMapValueSchema),
-	xhigh: Type.Optional(ThinkingLevelMapValueSchema),
-	max: Type.Optional(ThinkingLevelMapValueSchema),
-});
 
 const SamplingParamsSchema = Type.Record(Type.String(), Type.Unknown());
 const SamplingParamsByThinkingLevelSchema = Type.Object({
@@ -30,26 +26,6 @@ const SamplingParamsByThinkingLevelSchema = Type.Object({
 	xhigh: Type.Optional(SamplingParamsSchema),
 	max: Type.Optional(SamplingParamsSchema),
 });
-const ModelPromptCacheSchema = Type.Object({
-	short: Type.Optional(Type.Number({ exclusiveMinimum: 0 })),
-	long: Type.Optional(Type.Number({ exclusiveMinimum: 0 })),
-});
-const ImageResizeSchema = Type.Object({
-	maxWidth: Type.Optional(Type.Integer({ minimum: 1 })),
-	maxHeight: Type.Optional(Type.Integer({ minimum: 1 })),
-	maxBytes: Type.Optional(Type.Integer({ minimum: 1 })),
-	jpegQuality: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
-});
-const ModelInputLimitsSchema = Type.Object({
-	maxRequestBytes: Type.Optional(Type.Integer({ minimum: 1 })),
-	images: Type.Optional(
-		Type.Object({
-			resize: Type.Optional(ImageResizeSchema),
-			maxPerMessage: Type.Optional(Type.Integer({ minimum: 1 })),
-			maxPerRequest: Type.Optional(Type.Integer({ minimum: 1 })),
-		}),
-	),
-});
 
 const ModelDefinitionSchema = Type.Object({
 	id: Type.String({ minLength: 1 }),
@@ -58,7 +34,7 @@ const ModelDefinitionSchema = Type.Object({
 	baseUrl: Type.Optional(Type.String({ minLength: 1 })),
 	reasoning: Type.Optional(Type.Boolean()),
 	thinkingLevelMap: Type.Optional(ThinkingLevelMapSchema),
-	input: Type.Optional(Type.Array(Type.Union([Type.Literal("text"), Type.Literal("image")]))),
+	input: Type.Optional(Type.Array(ModelInputModalitySchema)),
 	inputLimits: Type.Optional(ModelInputLimitsSchema),
 	cost: Type.Optional(ModelCostSchema),
 	promptCache: Type.Optional(ModelPromptCacheSchema),
@@ -74,7 +50,7 @@ const ModelOverrideSchema = Type.Object({
 	name: Type.Optional(Type.String({ minLength: 1 })),
 	reasoning: Type.Optional(Type.Boolean()),
 	thinkingLevelMap: Type.Optional(ThinkingLevelMapSchema),
-	input: Type.Optional(Type.Array(Type.Union([Type.Literal("text"), Type.Literal("image")]))),
+	input: Type.Optional(Type.Array(ModelInputModalitySchema)),
 	inputLimits: Type.Optional(ModelInputLimitsSchema),
 	cost: Type.Optional(Type.Partial(ModelCostSchema)),
 	promptCache: Type.Optional(ModelPromptCacheSchema),

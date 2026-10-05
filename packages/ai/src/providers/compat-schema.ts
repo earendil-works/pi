@@ -1,4 +1,5 @@
-import { type Static, Type } from "typebox";
+import { type Static, type TProperties, type TSchemaOptions, Type } from "typebox";
+import { ModelCostSchema } from "./model-schema.ts";
 
 export const SessionAffinityFormatSchema = Type.Union(
 	[Type.Literal("openai"), Type.Literal("openai-nosession"), Type.Literal("openrouter")],
@@ -158,23 +159,6 @@ export const VercelGatewayRoutingSchema = Type.Object(
 	},
 );
 
-const ModelCostRatesSchema = {
-	input: Type.Number(),
-	output: Type.Number(),
-	cacheRead: Type.Number(),
-	cacheWrite: Type.Number(),
-};
-
-const ModelCostTierSchema = Type.Object({
-	inputTokensAbove: Type.Number(),
-	...ModelCostRatesSchema,
-});
-
-export const ModelCostSchema = Type.Object({
-	...ModelCostRatesSchema,
-	tiers: Type.Optional(Type.Array(ModelCostTierSchema)),
-});
-
 export const AnthropicAllowedFallbackModelSchema = Type.Object(
 	{
 		provider: Type.String({ minLength: 1 }),
@@ -184,6 +168,14 @@ export const AnthropicAllowedFallbackModelSchema = Type.Object(
 	{ description: "An Anthropic server-side refusal fallback model with local pricing metadata." },
 );
 
+function optionalCompatBoolean(options?: TSchemaOptions) {
+	return Type.Optional(Type.Boolean(options));
+}
+
+function optionalSessionAffinityFormat(options?: TSchemaOptions) {
+	return Type.Optional(Type.Union([...SessionAffinityFormatSchema.anyOf], options));
+}
+
 export const OpenAICompletionsCompatSchema = Type.Object(
 	{
 		supportsStore: Type.Optional(
@@ -191,12 +183,10 @@ export const OpenAICompletionsCompatSchema = Type.Object(
 				description: "Whether the provider supports the store field. Default: auto-detected from URL.",
 			}),
 		),
-		supportsDeveloperRole: Type.Optional(
-			Type.Boolean({
-				description:
-					"Whether the provider supports the developer role instead of system. Default: auto-detected from URL.",
-			}),
-		),
+		supportsDeveloperRole: optionalCompatBoolean({
+			description:
+				"Whether the provider supports the developer role instead of system. Default: auto-detected from URL.",
+		}),
 		supportsReasoningEffort: Type.Optional(
 			Type.Boolean({
 				description: "Whether the provider supports reasoning_effort. Default: auto-detected from URL.",
@@ -297,20 +287,16 @@ export const OpenAICompletionsCompatSchema = Type.Object(
 				default: false,
 			}),
 		),
-		supportsOpenAIGrammarTools: Type.Optional(
-			Type.Boolean({
-				description:
-					"Whether the provider supports OpenAI custom tools with Lark or regex grammar formats. When false, grammar-constrained tools fall back to normal function tools. The generated catalog enables this for capable models.",
-				default: false,
-			}),
-		),
-		supportsMidConvoSystemMessages: Type.Optional(
-			Type.Boolean({
-				description:
-					"Whether the exact model accepts system or developer messages after the conversation has started. When false, later system messages are folded into the leading system message. The generated catalog enables this for verified models.",
-				default: false,
-			}),
-		),
+		supportsOpenAIGrammarTools: optionalCompatBoolean({
+			description:
+				"Whether the provider supports OpenAI custom tools with Lark or regex grammar formats. When false, grammar-constrained tools fall back to normal function tools. The generated catalog enables this for capable models.",
+			default: false,
+		}),
+		supportsMidConvoSystemMessages: optionalCompatBoolean({
+			description:
+				"Whether the exact model accepts system or developer messages after the conversation has started. When false, later system messages are folded into the leading system message. The generated catalog enables this for verified models.",
+			default: false,
+		}),
 		supportsMidConvoToolAdditions: Type.Optional(
 			Type.Boolean({
 				description:
@@ -318,38 +304,30 @@ export const OpenAICompletionsCompatSchema = Type.Object(
 				default: false,
 			}),
 		),
-		supportsStrictMode: Type.Optional(
-			Type.Boolean({
-				description:
-					"Whether the provider supports the strict field in tool definitions. Generated capable models enable it explicitly.",
-				default: false,
-			}),
-		),
+		supportsStrictMode: optionalCompatBoolean({
+			description:
+				"Whether the provider supports the strict field in tool definitions. Generated capable models enable it explicitly.",
+			default: false,
+		}),
 		cacheControlFormat: Type.Optional(
 			Type.Literal("anthropic", {
 				description:
 					"Cache control convention for prompt caching. Anthropic applies cache_control markers to the system prompt, last tool definition, and last user, assistant, or tool-result text content.",
 			}),
 		),
-		sendSessionAffinityHeaders: Type.Optional(
-			Type.Boolean({
-				description:
-					"Whether to send session-affinity data from options.sessionId. Default: true for OpenRouter endpoints, false otherwise.",
-			}),
-		),
-		sessionAffinityFormat: Type.Optional(
-			Type.Union([...SessionAffinityFormatSchema.anyOf], {
-				description:
-					"Session-affinity header format. openai sends session_id, x-client-request-id, and x-session-affinity; openai-nosession sends x-client-request-id and x-session-affinity; openrouter sends x-session-id. Does not affect prompt_cache_key. Default: auto-detected.",
-			}),
-		),
-		supportsLongCacheRetention: Type.Optional(
-			Type.Boolean({
-				description:
-					'Whether the provider supports long prompt cache retention (prompt_cache_retention: "24h" or Anthropic-style cache_control.ttl: "1h", depending on format).',
-				default: true,
-			}),
-		),
+		sendSessionAffinityHeaders: optionalCompatBoolean({
+			description:
+				"Whether to send session-affinity data from options.sessionId. Default: true for OpenRouter endpoints, false otherwise.",
+		}),
+		sessionAffinityFormat: optionalSessionAffinityFormat({
+			description:
+				"Session-affinity header format. openai sends session_id, x-client-request-id, and x-session-affinity; openai-nosession sends x-client-request-id and x-session-affinity; openrouter sends x-session-id. Does not affect prompt_cache_key. Default: auto-detected.",
+		}),
+		supportsLongCacheRetention: optionalCompatBoolean({
+			description:
+				'Whether the provider supports long prompt cache retention (prompt_cache_retention: "24h" or Anthropic-style cache_control.ttl: "1h", depending on format).',
+			default: true,
+		}),
 		vllmPriority: Type.Optional(
 			Type.Number({
 				description:
@@ -366,45 +344,33 @@ export const OpenAICompletionsCompatSchema = Type.Object(
 
 export const OpenAIResponsesCompatSchema = Type.Object(
 	{
-		supportsDeveloperRole: Type.Optional(
-			Type.Boolean({
-				description: "Whether the provider supports the developer role instead of system.",
-				default: true,
-			}),
-		),
-		supportsMidConvoSystemMessages: Type.Optional(
-			Type.Boolean({
-				description:
-					"Whether the exact model accepts developer or system messages after the conversation has started. When false, later system messages are folded into the leading system message. The generated catalog enables this for verified models.",
-				default: false,
-			}),
-		),
-		sessionAffinityFormat: Type.Optional(
-			Type.Union([...SessionAffinityFormatSchema.anyOf], {
-				description:
-					"Session-affinity header format. openai sends session_id and x-client-request-id; openai-nosession sends x-client-request-id; openrouter sends x-session-id. Does not affect prompt_cache_key. Default: auto-detected.",
-			}),
-		),
-		supportsLongCacheRetention: Type.Optional(
-			Type.Boolean({
-				description:
-					'Whether the provider supports long prompt cache retention. This uses prompt_cache_options.ttl: "30m" on GPT-5.6+ and prompt_cache_retention: "24h" on earlier models.',
-				default: true,
-			}),
-		),
-		supportsStrictMode: Type.Optional(
-			Type.Boolean({
-				description:
-					"Whether the provider supports strict JSON-schema function tools. Defaults are API-specific; generated OpenAI models enable it explicitly.",
-			}),
-		),
-		supportsOpenAIGrammarTools: Type.Optional(
-			Type.Boolean({
-				description:
-					"Whether to emit OpenAI custom tools with Lark or regex grammar formats. When false, grammar-constrained tools fall back to normal function tools. The generated catalog enables this for capable models.",
-				default: false,
-			}),
-		),
+		supportsDeveloperRole: optionalCompatBoolean({
+			description: "Whether the provider supports the developer role instead of system.",
+			default: true,
+		}),
+		supportsMidConvoSystemMessages: optionalCompatBoolean({
+			description:
+				"Whether the exact model accepts developer or system messages after the conversation has started. When false, later system messages are folded into the leading system message. The generated catalog enables this for verified models.",
+			default: false,
+		}),
+		sessionAffinityFormat: optionalSessionAffinityFormat({
+			description:
+				"Session-affinity header format. openai sends session_id and x-client-request-id; openai-nosession sends x-client-request-id; openrouter sends x-session-id. Does not affect prompt_cache_key. Default: auto-detected.",
+		}),
+		supportsLongCacheRetention: optionalCompatBoolean({
+			description:
+				'Whether the provider supports long prompt cache retention. This uses prompt_cache_options.ttl: "30m" on GPT-5.6+ and prompt_cache_retention: "24h" on earlier models.',
+			default: true,
+		}),
+		supportsStrictMode: optionalCompatBoolean({
+			description:
+				"Whether the provider supports strict JSON-schema function tools. Defaults are API-specific; generated OpenAI models enable it explicitly.",
+		}),
+		supportsOpenAIGrammarTools: optionalCompatBoolean({
+			description:
+				"Whether to emit OpenAI custom tools with Lark or regex grammar formats. When false, grammar-constrained tools fall back to normal function tools. The generated catalog enables this for capable models.",
+			default: false,
+		}),
 		supportsAdditionalTools: Type.Optional(
 			Type.Boolean({
 				description: "Whether the model supports message-anchored additional_tools input items.",
@@ -442,19 +408,15 @@ export const AnthropicMessagesCompatSchema = Type.Object(
 				default: true,
 			}),
 		),
-		supportsLongCacheRetention: Type.Optional(
-			Type.Boolean({
-				description: "Whether the provider supports Anthropic long cache retention through cache_control.ttl.",
-				default: true,
-			}),
-		),
-		sendSessionAffinityHeaders: Type.Optional(
-			Type.Boolean({
-				description:
-					"Whether to send x-session-affinity from options.sessionId when caching is enabled. Required for providers like Fireworks that use session affinity for prompt cache routing; requests to the same replica maximize cache hits.",
-				default: false,
-			}),
-		),
+		supportsLongCacheRetention: optionalCompatBoolean({
+			description: "Whether the provider supports Anthropic long cache retention through cache_control.ttl.",
+			default: true,
+		}),
+		sendSessionAffinityHeaders: optionalCompatBoolean({
+			description:
+				"Whether to send x-session-affinity from options.sessionId when caching is enabled. Required for providers like Fireworks that use session affinity for prompt cache routing; requests to the same replica maximize cache hits.",
+			default: false,
+		}),
 		sessionAffinityFormat: Type.Optional(
 			Type.Literal("openrouter", {
 				description:
@@ -502,13 +464,11 @@ export const AnthropicMessagesCompatSchema = Type.Object(
 				default: false,
 			}),
 		),
-		supportsMidConvoSystemMessages: Type.Optional(
-			Type.Boolean({
-				description:
-					"Whether the exact model accepts system-role messages inside the conversation. When false, later system messages are folded into the top-level system prompt.",
-				default: false,
-			}),
-		),
+		supportsMidConvoSystemMessages: optionalCompatBoolean({
+			description:
+				"Whether the exact model accepts system-role messages inside the conversation. When false, later system messages are folded into the top-level system prompt.",
+			default: false,
+		}),
 		supportsMidConvoToolChanges: Type.Optional(
 			Type.Boolean({
 				description:
@@ -529,72 +489,101 @@ export const AnthropicMessagesCompatSchema = Type.Object(
 
 export const BedrockCompatSchema = Type.Object(
 	{
-		supportsStrictMode: Type.Optional(
-			Type.Boolean({ description: "Whether the model supports Bedrock strict tool schemas.", default: false }),
-		),
+		supportsStrictMode: optionalCompatBoolean({
+			description: "Whether the model supports Bedrock strict tool schemas.",
+			default: false,
+		}),
 	},
 	{ description: "Compatibility settings for Amazon Bedrock models.", additionalProperties: true },
 );
 
 export const MistralConversationsCompatSchema = Type.Object(
 	{
-		supportsMidConvoSystemMessages: Type.Optional(
-			Type.Boolean({
-				description:
-					"Whether the exact model accepts system messages after the conversation has started. When false, later system messages are folded into the leading system message.",
-				default: false,
-			}),
-		),
+		supportsMidConvoSystemMessages: optionalCompatBoolean({
+			description:
+				"Whether the exact model accepts system messages after the conversation has started. When false, later system messages are folded into the leading system message.",
+			default: false,
+		}),
 	},
 	{ description: "Compatibility settings for the Mistral chat API.", additionalProperties: true },
 );
 
-export const ProviderCompatSchema = Type.Object(
-	{
-		...OpenAICompletionsCompatSchema.properties,
-		...OpenAIResponsesCompatSchema.properties,
-		...AnthropicMessagesCompatSchema.properties,
-		...BedrockCompatSchema.properties,
-		...MistralConversationsCompatSchema.properties,
-		supportsDeveloperRole: Type.Optional(
-			Type.Boolean({
-				description:
-					"Whether the provider supports the developer role instead of system. Defaults are API-specific.",
-			}),
-		),
-		supportsMidConvoSystemMessages: Type.Optional(
-			Type.Boolean({
-				description:
-					"Whether the exact model accepts system or developer messages after the conversation has started. When false, later system messages are folded into the leading system message.",
-				default: false,
-			}),
-		),
-		sessionAffinityFormat: Type.Optional(
-			Type.Union([...SessionAffinityFormatSchema.anyOf], {
-				description: "Session-affinity header format. Defaults are API-specific or auto-detected.",
-			}),
-		),
-		supportsLongCacheRetention: Type.Optional(
-			Type.Boolean({ description: "Whether the provider supports long prompt cache retention.", default: true }),
-		),
-		supportsStrictMode: Type.Optional(
-			Type.Boolean({ description: "Whether the provider supports strict tool schemas. Defaults are API-specific." }),
-		),
-		supportsOpenAIGrammarTools: Type.Optional(
-			Type.Boolean({
-				description:
-					"Whether the provider supports OpenAI custom tools with Lark or regex grammar formats. When false, grammar-constrained tools fall back to normal function tools.",
-				default: false,
-			}),
-		),
-		sendSessionAffinityHeaders: Type.Optional(
-			Type.Boolean({
-				description: "Whether to send session-affinity data from options.sessionId. Defaults are API-specific.",
-			}),
-		),
-	},
-	{ description: "Provider and model compatibility overrides.", additionalProperties: true },
+const ProviderCompatPropertyOverrides = {
+	supportsDeveloperRole: optionalCompatBoolean({
+		description: "Whether the provider supports the developer role instead of system. Defaults are API-specific.",
+	}),
+	supportsMidConvoSystemMessages: optionalCompatBoolean({
+		description:
+			"Whether the exact model accepts system or developer messages after the conversation has started. When false, later system messages are folded into the leading system message.",
+		default: false,
+	}),
+	sessionAffinityFormat: optionalSessionAffinityFormat({
+		description: "Session-affinity header format. Defaults are API-specific or auto-detected.",
+	}),
+	supportsLongCacheRetention: optionalCompatBoolean({
+		description: "Whether the provider supports long prompt cache retention.",
+		default: true,
+	}),
+	supportsStrictMode: optionalCompatBoolean({
+		description: "Whether the provider supports strict tool schemas. Defaults are API-specific.",
+	}),
+	supportsOpenAIGrammarTools: optionalCompatBoolean({
+		description:
+			"Whether the provider supports OpenAI custom tools with Lark or regex grammar formats. When false, grammar-constrained tools fall back to normal function tools.",
+		default: false,
+	}),
+	sendSessionAffinityHeaders: optionalCompatBoolean({
+		description: "Whether to send session-affinity data from options.sessionId. Defaults are API-specific.",
+	}),
+} satisfies TProperties;
+
+/**
+ * Provider-level models.json compatibility is API-agnostic, so it needs one superset. Every
+ * duplicate property requires explicit generic metadata, while API-specific schemas retain their
+ * own defaults and descriptions.
+ */
+function mergeCompatProperties(propertyGroups: readonly TProperties[], overrides: TProperties): TProperties {
+	const merged: TProperties = {};
+	const duplicateNames = new Set<string>();
+
+	for (const properties of propertyGroups) {
+		for (const [name, schema] of Object.entries(properties)) {
+			if (merged[name] !== undefined) {
+				duplicateNames.add(name);
+				if (!(name in overrides)) {
+					throw new Error(`Duplicate compatibility schema property requires an override: ${name}`);
+				}
+			}
+			merged[name] = schema;
+		}
+	}
+
+	for (const name of Object.keys(overrides)) {
+		if (!duplicateNames.has(name)) {
+			throw new Error(`Compatibility schema override does not resolve a duplicate property: ${name}`);
+		}
+	}
+
+	return { ...merged, ...overrides };
+}
+
+const CompatSchemasByApi = {
+	"openai-completions": OpenAICompletionsCompatSchema,
+	"openai-responses": OpenAIResponsesCompatSchema,
+	"anthropic-messages": AnthropicMessagesCompatSchema,
+	"bedrock-converse-stream": BedrockCompatSchema,
+	"mistral-conversations": MistralConversationsCompatSchema,
+} as const;
+
+const ProviderCompatProperties = mergeCompatProperties(
+	Object.values(CompatSchemasByApi).map((schema) => schema.properties),
+	ProviderCompatPropertyOverrides,
 );
+
+export const ProviderCompatSchema = Type.Object(ProviderCompatProperties, {
+	description: "Provider and model compatibility overrides.",
+	additionalProperties: true,
+});
 
 export type ChatTemplateKwargValue = Static<typeof ChatTemplateKwargValueSchema>;
 /** Top-level request field used to cap reasoning tokens on OpenAI-compatible servers. */

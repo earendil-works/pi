@@ -5,8 +5,7 @@ import { Compile } from "typebox/compile";
 import { afterEach, describe, expect, it } from "vitest";
 import { renderConfigSchemas } from "../scripts/generate-schemas.ts";
 import { KeybindingsManager } from "../src/core/keybindings.ts";
-import { KeybindingsSchema } from "../src/core/keybindings-schema.ts";
-import { ModelConfig, ModelsConfigSchema } from "../src/core/model-config.ts";
+import { ModelConfig } from "../src/core/model-config.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
 import { SettingsSchema } from "../src/core/settings-schema.ts";
 import { validateThemeJson } from "../src/modes/interactive/theme/theme-schema.ts";
@@ -49,6 +48,8 @@ describe("generated configuration schemas", () => {
 
 	it("preserves editor guidance in the generated theme schema", () => {
 		const schema = JSON.parse(renderConfigSchemas().get("schemas/theme.schema.json") ?? "");
+		const accent = schema.properties.colors.properties.accent;
+		const colorValue = accent.$ref ? schema.$defs.ColorValue : accent;
 		expect(schema).toMatchObject({
 			title: "Pi Coding Agent Theme",
 			description: "Theme schema for Pi coding agent",
@@ -57,21 +58,21 @@ describe("generated configuration schemas", () => {
 					description: expect.stringContaining("use compatible fallbacks"),
 					properties: {
 						scrollbarTrack: { description: expect.stringContaining("falls back to muted") },
-						accent: {
-							description: "Primary accent color (logo, selected items, cursor)",
-							anyOf: [{ description: expect.stringContaining("Hex color") }, expect.any(Object)],
-						},
+						accent: { description: "Primary accent color (logo, selected items, cursor)" },
 					},
 				},
 				export: { description: expect.stringContaining("defaults derived from userMessageBg") },
 			},
+		});
+		expect(colorValue).toMatchObject({
+			anyOf: [{ description: expect.stringContaining("Hex color") }, expect.any(Object)],
 		});
 	});
 
 	it.each([
 		{
 			name: "models.json",
-			schema: ModelsConfigSchema,
+			artifact: "schemas/models.schema.json",
 			valid: {
 				providers: {
 					local: {
@@ -95,7 +96,7 @@ describe("generated configuration schemas", () => {
 		},
 		{
 			name: "settings.json",
-			schema: SettingsSchema,
+			artifact: "schemas/settings.schema.json",
 			valid: {
 				theme: "dark",
 				cacheWarming: "idle",
@@ -109,11 +110,12 @@ describe("generated configuration schemas", () => {
 		},
 		{
 			name: "keybindings.json",
-			schema: KeybindingsSchema,
+			artifact: "schemas/keybindings.schema.json",
 			valid: { "app.session.new": "ctrl+n", "extension.action": ["alt+x"] },
 			invalid: { "app.session.new": 42 },
 		},
-	])("validates representative $name documents", ({ schema, valid, invalid }) => {
+	])("validates representative $name documents", ({ artifact, valid, invalid }) => {
+		const schema = JSON.parse(renderConfigSchemas().get(artifact) ?? "");
 		const validator = Compile(schema);
 		expect(validator.Check(valid)).toBe(true);
 		expect(validator.Check(invalid)).toBe(false);

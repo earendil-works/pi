@@ -42,6 +42,7 @@ import type {
 	ToolNamespace,
 } from "../../core/extensions/types.ts";
 import type { ModelRegistry } from "../../core/model-registry.ts";
+import { SETTINGS_DEFAULTS } from "../../core/settings-defaults.ts";
 import type { CodemodeMode } from "../../core/settings-manager.ts";
 import { wrapToolDefinition } from "../../core/tools/tool-definition-wrapper.ts";
 import { loadCodemodeExecutor } from "./execute.lazy.ts";
@@ -153,7 +154,7 @@ function describeGlobals(models: boolean): string {
 }
 
 /** Default for {@link CodemodeDescriptionOptions.inlineBudget}, in estimated tokens. */
-export const DEFAULT_CODEMODE_INLINE_BUDGET = 3000;
+export const DEFAULT_CODEMODE_INLINE_BUDGET = SETTINGS_DEFAULTS.codemode.inlineBudget;
 /** Characters per token when estimating the cost of a tool section. */
 const CHARS_PER_TOKEN = 4;
 
@@ -340,7 +341,7 @@ function describeScriptCall(tool: AgentTool<any>): string {
  * `tool_search` loads a tool, so loads do not redeclare codemode.
  */
 function prepareCodemodeLoadout(loadout: ToolLoadout, options: CodemodeToolOptions): ToolLoadoutChanges {
-	const mode = options.getMode?.() ?? "on";
+	const mode = options.getMode?.() ?? SETTINGS_DEFAULTS.codemode.mode;
 	const isDirect = (tool: AgentTool) => loadout.getExposure(tool.name) === "direct";
 	const callable = getCodemodeCallableTools(loadout.callable);
 	const callableNames = new Set(callable.map((tool) => tool.name));

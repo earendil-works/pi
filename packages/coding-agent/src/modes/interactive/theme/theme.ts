@@ -29,6 +29,14 @@ import { closeWatcher, watchWithErrorHandler } from "../../../utils/fs-watch.ts"
 import { highlight, supportsLanguage } from "../../../utils/syntax-highlight.ts";
 import { stripBom } from "../../../utils/text.ts";
 import { generateSystemThemeColors, SYSTEM_THEME_NAME, terminalAppearance } from "./system-theme.ts";
+import {
+	type ResolvedThemeColorValues,
+	THEME_TOKENS,
+	type ThemeBg,
+	type ThemeColor,
+	type ThemeColorValues,
+	type ThemeToken,
+} from "./theme-tokens.ts";
 
 export { SYSTEM_THEME_NAME } from "./system-theme.ts";
 
@@ -40,6 +48,16 @@ export { SYSTEM_THEME_NAME } from "./system-theme.ts";
 import type { ThemeColorValue as ColorValue, ValidatedThemeJson as ThemeJson } from "./theme-schema.ts";
 
 export type { ValidatedThemeJson as ThemeJson } from "./theme-schema.ts";
+export type { ThemeBg, ThemeColor, ThemeToken } from "./theme-tokens.ts";
+
+/**
+ * Tokens are only accepted in their own slot, because "" (terminal default) means the default foreground
+ * or background depending on the slot. Use `theme.colors[token]` to use a token's color in the other slot.
+ */
+export interface ThemeStyle extends TextAttributes {
+	fg?: ThemeColor | Color;
+	bg?: ThemeBg | Color;
+}
 
 export type ThemeJsonValidator = (label: string, json: unknown) => ThemeJson;
 
@@ -53,80 +71,6 @@ let themeJsonValidator: ThemeJsonValidator | undefined;
 export function setThemeJsonValidator(validator: ThemeJsonValidator): void {
 	themeJsonValidator = validator;
 }
-
-export type ThemeColor =
-	| "accent"
-	| "border"
-	| "borderAccent"
-	| "borderMuted"
-	| "success"
-	| "error"
-	| "warning"
-	| "muted"
-	| "dim"
-	| "text"
-	| "thinkingText"
-	| "scrollbarTrack"
-	| "scrollbarThumb"
-	| "searchMatchText"
-	| "userMessageText"
-	| "customMessageText"
-	| "customMessageLabel"
-	| "toolTitle"
-	| "toolOutput"
-	| "mdHeading"
-	| "mdLink"
-	| "mdLinkUrl"
-	| "mdCode"
-	| "mdCodeBlock"
-	| "mdCodeBlockBorder"
-	| "mdQuote"
-	| "mdQuoteBorder"
-	| "mdHr"
-	| "mdListBullet"
-	| "toolDiffAdded"
-	| "toolDiffRemoved"
-	| "toolDiffContext"
-	| "syntaxComment"
-	| "syntaxKeyword"
-	| "syntaxFunction"
-	| "syntaxVariable"
-	| "syntaxString"
-	| "syntaxNumber"
-	| "syntaxType"
-	| "syntaxOperator"
-	| "syntaxPunctuation"
-	| "thinkingOff"
-	| "thinkingMinimal"
-	| "thinkingLow"
-	| "thinkingMedium"
-	| "thinkingHigh"
-	| "thinkingXhigh"
-	| "thinkingMax"
-	| "bashMode";
-
-export type ThemeBg =
-	| "selectedBg"
-	| "searchMatchBg"
-	| "userMessageBg"
-	| "customMessageBg"
-	| "toolPendingBg"
-	| "toolSuccessBg"
-	| "toolErrorBg";
-
-export type ThemeToken = ThemeColor | ThemeBg;
-
-/**
- * Tokens are only accepted in their own slot, because "" (terminal default) means the default foreground
- * or background depending on the slot. Use `theme.colors[token]` to use a token's color in the other slot.
- */
-export interface ThemeStyle extends TextAttributes {
-	fg?: ThemeColor | Color;
-	bg?: ThemeBg | Color;
-}
-
-type OptionalThemeColor = "scrollbarTrack" | "scrollbarThumb" | "thinkingMax" | "searchMatchText";
-type OptionalThemeBg = "searchMatchBg";
 
 // ============================================================================
 // Color Utilities
@@ -161,21 +105,20 @@ function resolveThemeColors<T extends Record<string, ColorValue>>(
 	return resolved as Record<keyof T, string | number>;
 }
 
-function withThemeColorFallbacks(colors: ThemeJson["colors"]): ThemeJson["colors"] & {
-	scrollbarTrack: ColorValue;
-	scrollbarThumb: ColorValue;
-	thinkingMax: ColorValue;
-	searchMatchBg: ColorValue;
-	searchMatchText: ColorValue;
-} {
-	return {
-		...colors,
-		scrollbarTrack: colors.scrollbarTrack ?? colors.muted,
-		scrollbarThumb: colors.scrollbarThumb ?? colors.text,
-		thinkingMax: colors.thinkingMax ?? colors.thinkingXhigh,
-		searchMatchBg: colors.searchMatchBg ?? colors.selectedBg,
-		searchMatchText: colors.searchMatchText ?? colors.text,
-	};
+function withThemeTokenFallbacks<Value>(values: ThemeColorValues<Value>): ResolvedThemeColorValues<Value> {
+	const resolved = { ...values } as Partial<ResolvedThemeColorValues<Value>>;
+	for (const [rawName, descriptor] of Object.entries(THEME_TOKENS)) {
+		if (!("fallback" in descriptor)) continue;
+		const name = rawName as ThemeToken;
+		if (resolved[name] !== undefined) continue;
+		const fallback = descriptor.fallback as ThemeToken;
+		const fallbackValue = resolved[fallback];
+		if (fallbackValue === undefined) {
+			throw new Error(`Theme token ${rawName} has unresolved fallback ${descriptor.fallback}`);
+		}
+		resolved[name] = fallbackValue;
+	}
+	return resolved as ResolvedThemeColorValues<Value>;
 }
 
 // ============================================================================
@@ -257,10 +200,8 @@ export class Theme {
 	private resolvedColors: { terminal: TerminalColors; colors: Readonly<Record<ThemeToken, Color>> } | undefined;
 
 	constructor(
-		fgColors: Record<Exclude<ThemeColor, OptionalThemeColor>, string | number> &
-			Partial<Record<OptionalThemeColor, string | number>>,
-		bgColors: Record<Exclude<ThemeBg, OptionalThemeBg>, string | number> &
-			Partial<Record<OptionalThemeBg, string | number>>,
+		fgColors: Pick<ThemeColorValues<string | number>, ThemeColor>,
+		bgColors: Pick<ThemeColorValues<string | number>, ThemeBg>,
 		mode: TerminalColorMode,
 		options: {
 			name?: string;
@@ -276,14 +217,9 @@ export class Theme {
 		this.sourceInfo = options.sourceInfo;
 		this.mode = mode;
 		this.dimTokens = new Set(options.dim);
-		const foregrounds = {
-			...fgColors,
-			scrollbarTrack: fgColors.scrollbarTrack ?? fgColors.muted,
-			scrollbarThumb: fgColors.scrollbarThumb ?? fgColors.text,
-			thinkingMax: fgColors.thinkingMax ?? fgColors.thinkingXhigh,
-			searchMatchText: fgColors.searchMatchText ?? fgColors.text,
-		};
-		const backgrounds = { ...bgColors, searchMatchBg: bgColors.searchMatchBg ?? bgColors.selectedBg };
+		const { fgColors: foregrounds, bgColors: backgrounds } = splitThemeColors(
+			withThemeTokenFallbacks({ ...fgColors, ...bgColors }),
+		);
 		const concreteForegrounds: Color[] = [];
 		const concreteBackgrounds: Color[] = [];
 		// Returns the escape sequence for the token's own slot.
@@ -570,24 +506,14 @@ function loadThemeJson(name: string): ThemeJson {
 	return parseThemeJsonContent(name, content);
 }
 
-const BACKGROUND_TOKENS: ReadonlySet<string> = new Set<ThemeBg>([
-	"selectedBg",
-	"searchMatchBg",
-	"userMessageBg",
-	"customMessageBg",
-	"toolPendingBg",
-	"toolSuccessBg",
-	"toolErrorBg",
-]);
-
-function splitThemeColors(colors: Record<string, string | number>): {
+function splitThemeColors(colors: ResolvedThemeColorValues<string | number>): {
 	fgColors: Record<ThemeColor, string | number>;
 	bgColors: Record<ThemeBg, string | number>;
 } {
 	const fgColors = {} as Record<ThemeColor, string | number>;
 	const bgColors = {} as Record<ThemeBg, string | number>;
 	for (const [key, value] of Object.entries(colors)) {
-		if (BACKGROUND_TOKENS.has(key)) {
+		if (THEME_TOKENS[key as ThemeToken].slot === "background") {
 			bgColors[key as ThemeBg] = value;
 		} else {
 			fgColors[key as ThemeColor] = value;
@@ -598,7 +524,7 @@ function splitThemeColors(colors: Record<string, string | number>): {
 
 function createTheme(themeJson: ThemeJson, mode?: TerminalColorMode, sourcePath?: string): Theme {
 	const colorMode = mode ?? getTerminalColorMode();
-	const resolvedColors = resolveThemeColors(withThemeColorFallbacks(themeJson.colors), themeJson.vars);
+	const resolvedColors = withThemeTokenFallbacks(resolveThemeColors(themeJson.colors, themeJson.vars));
 	const { fgColors, bgColors } = splitThemeColors(resolvedColors);
 	return new Theme(fgColors, bgColors, colorMode, {
 		name: themeJson.name,
@@ -614,7 +540,7 @@ function createSystemTheme(mode?: TerminalColorMode): Theme {
 		saturation: terminalColorsPending ? 0 : 1,
 		appearanceHint: getTerminalTheme(),
 	});
-	const { fgColors, bgColors } = splitThemeColors(generated.colors);
+	const { fgColors, bgColors } = splitThemeColors(withThemeTokenFallbacks(generated.colors));
 	return new Theme(fgColors, bgColors, mode ?? getTerminalColorMode(), {
 		name: SYSTEM_THEME_NAME,
 		appearance: generated.appearance,
