@@ -529,7 +529,7 @@ export interface Conversation {
 
 	/** Session commit whose `tx.createTask()` defaults to this conversation. */
 	commit<T>(change: (tx: Tx) => T | Promise<T>, context: Context): Promise<T>;
-	context(context: Context): Promise<ContextView>;
+	context(context: Context, at?: EntryId): Promise<ContextView>;
 	/** Newest-first fork-aware history of this conversation. */
 	entries(
 		query: Omit<EntryQuery, "conversationId">,

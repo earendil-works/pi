@@ -120,8 +120,8 @@ class ConversationImpl<Tool extends ToolRegistration> implements Conversation {
 		return this.#host.harness.commitWith(change, context, { conversationId: this.id });
 	}
 
-	context(context: Context): Promise<ContextView> {
-		return readContext(this.#host.harness, this.#host.storage, this.id, context);
+	context(context: Context, at?: EntryId): Promise<ContextView> {
+		return readContext(this.#host.harness, this.#host.storage, this.id, context, at);
 	}
 
 	entries(

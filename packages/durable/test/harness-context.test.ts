@@ -29,6 +29,40 @@ describe("conversation context", () => {
 		expect(view.messages.map(describeMessage)).toEqual(["user:hi", "assistant:hello"]);
 	});
 
+	it("returns the same context as a fork at each inclusive cutoff", async () => {
+		const { harness, root, append, message } = await setup();
+		const first = await message(user("first"));
+		const edit = await append({
+			kind: "edit",
+			edits: [{ target: first.id, action: "replace", messages: [user("edited")] }],
+		});
+		const reset = await append({ kind: "reset", head: "self", model: [user("fresh")] });
+		const kept = await message(assistant("kept"));
+		const summary = await append({ kind: "summary", head: kept.id, model: [user("summary")] });
+		await message(user("later"));
+
+		for (const at of [first.id, edit.id, reset.id, kept.id, summary.id]) {
+			const fork = await root.fork(at, { ownership: { kind: "ownerless" } }, context);
+			expect(await root.context(context, at)).toEqual(await fork.context(context));
+		}
+		expect((await root.context(context, first.id)).messages.map(describeMessage)).toEqual(["user:first"]);
+		expect((await root.context(context, edit.id)).messages.map(describeMessage)).toEqual(["user:edited"]);
+		await harness.close(context);
+	});
+
+	it("accepts inherited cutoffs and rejects entries outside visible history", async () => {
+		const { harness, root, message } = await setup();
+		const inherited = await message(user("inherited"));
+		const hidden = await message(user("hidden"));
+		const child = await root.fork(inherited.id, { ownership: { kind: "ownerless" } }, context);
+		const own = await child.commit((tx) => tx.appendEntry(child.id, { kind: "note" }), context);
+		expect(await child.context(context, inherited.id)).toEqual(await root.context(context, inherited.id));
+		await expect(child.context(context, hidden.id)).rejects.toThrow("not visible");
+		await expect(root.context(context, own.id)).rejects.toThrow("not visible");
+		await expect(root.context(context, 999999 as EntryId)).rejects.toThrow("not visible");
+		await harness.close(context);
+	});
+
 	it("excludes aborted, error, and deferred assistant messages but keeps their raw entries", async () => {
 		const { root, message } = await setup();
 		await message(user("q"));
@@ -113,6 +147,7 @@ describe("conversation context", () => {
 		const second = await message(toolResult("y"));
 		const child = await root.fork(call.id, { ownership: { kind: "ownerless" } }, context);
 		const childView = await child.context(context);
+		expect(await root.context(context, call.id)).toEqual(childView);
 		expect(childView.messages.map(describeMessage)).toEqual([
 			"user:go",
 			"assistant:calling",

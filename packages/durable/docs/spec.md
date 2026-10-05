@@ -539,7 +539,7 @@ interface Conversation {
     change: (tx: Tx) => T | Promise<T>,
     context: Context,
   ): Promise<T>;
-  context(context: Context): Promise<ContextView>;
+  context(context: Context, at?: EntryId): Promise<ContextView>;
   entries(
     query: Omit<EntryQuery, "conversationId">,
     limit: number,
