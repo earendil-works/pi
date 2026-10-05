@@ -304,3 +304,33 @@ export function validateGeneratedModelData(packageRoot: string): void {
 	const structure = readModelDataStructure(packageRoot);
 	validateModelDataDirectory(structure, join(packageRoot, "src", "providers", "data"));
 }
+
+export interface ModelCatalogEntry {
+	type: string;
+	id: string;
+	api: string;
+}
+
+/**
+ * Group one provider's typed catalog entries by API and key them by `type:id`,
+ * the layout of `src/providers/data/<provider>.json`.
+ */
+export function groupProviderModelData<T extends ModelCatalogEntry>(
+	providerId: string,
+	models: readonly T[],
+): { groups: Record<string, Record<string, T>>; structure: Record<string, string> } {
+	const groups: Record<string, Record<string, T>> = {};
+	const structure: Record<string, string> = {};
+	for (const api of Array.from(new Set(models.map((model) => model.api))).sort()) {
+		const group: Record<string, T> = {};
+		for (const model of models) {
+			if (model.api !== api) continue;
+			const identity = `${model.type}:${model.id}`;
+			if (group[identity]) throw new Error(`${providerId}/${identity} has duplicate ${api} catalog entries`);
+			group[identity] = model;
+			structure[identity] = api;
+		}
+		groups[api] = group;
+	}
+	return { groups, structure };
+}

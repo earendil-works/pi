@@ -93,6 +93,28 @@ function resultText(message: ToolResultMessage): string {
 	return items.map((block) => (block.type === "text" ? block.text : `<${block.type}>`)).join("\n");
 }
 
+const TINY_PNG_LABEL = /^\[Image saved to (\S+\.png) \(image\/png, \d+B\)\]$/;
+
+/**
+ * Replace the `[Image saved to ...]` labels in `text` with `<saved>` after checking that each file
+ * holds the tiny PNG, and remove the files.
+ */
+function checkSavedImages(text: string): string {
+	return text
+		.split("\n")
+		.map((line) => {
+			const path = TINY_PNG_LABEL.exec(line)?.[1];
+			if (!path) return line;
+			try {
+				expect(readFileSync(path).toString("base64")).toBe(TINY_PNG_BASE64);
+			} finally {
+				rmSync(path, { force: true });
+			}
+			return "<saved>";
+		})
+		.join("\n");
+}
+
 describe("AgentSession codemode tool", () => {
 	const harnesses: Harness[] = [];
 
@@ -307,7 +329,8 @@ describe("AgentSession codemode tool", () => {
 		expect(JSON.parse(resultText(codemodeResult(harness)))).toEqual({ files: 0, names: [] });
 	});
 
-	it("attaches only the images the script passes to image(), in output order", async () => {
+	// Saved images: https://github.com/earendil-works/pi/issues/10310
+	it("attaches only the images the script passes to image(), in output order, each after its saved path", async () => {
 		const harness = await setup();
 		harness.setResponses([
 			fauxAssistantMessage(
@@ -317,6 +340,7 @@ describe("AgentSession codemode tool", () => {
 							// Tools without an outputSchema resolve to their text; images are not passed on.
 							const shot = await tools.screenshot({});
 							text(shot);
+							image("data:image/png;base64,${TINY_PNG_BASE64}");
 							image("data:image/png;base64,${TINY_PNG_BASE64}");
 							text("after");
 						`,
@@ -330,8 +354,11 @@ describe("AgentSession codemode tool", () => {
 		await harness.session.prompt("go");
 
 		const result = codemodeResult(harness);
-		expect(resultText(result)).toBe("captured\n<image>\nafter");
-		expect(result.content[2]).toEqual({ type: "image", data: TINY_PNG_BASE64, mimeType: "image/png" });
+		// The same image shown twice is saved once, so both labels name one file.
+		const lines = resultText(result).split("\n");
+		expect(lines).toEqual(["captured", lines[1], "<image>", lines[1], "<image>", "after"]);
+		expect(checkSavedImages(lines[1])).toBe("<saved>");
+		expect(result.content[3]).toEqual({ type: "image", data: TINY_PNG_BASE64, mimeType: "image/png" });
 	});
 
 	it("reports script failures as results that keep partial output and the calls that ran", async () => {
@@ -444,8 +471,9 @@ describe("codemode options and store", () => {
 			expect(text).toContain("row 99\n");
 			expect(text).not.toContain("row 50\n");
 			expect(text).toContain(`[Full output: ${path} (read with offset/limit)]`);
-			// Images follow the truncated text.
+			// Images follow the truncated text, each after the path it was saved to.
 			expect(result.content.at(-1)).toEqual({ type: "image", data: TINY_PNG_BASE64, mimeType: "image/png" });
+			expect(checkSavedImages(text.split("\n").at(-2) ?? "")).toBe("<saved>");
 			expect(readFileSync(path, "utf8")).toBe(Array.from({ length: 100 }, (_, i) => `row ${i}`).join("\n"));
 		} finally {
 			rmSync(path, { force: true });
@@ -747,17 +775,18 @@ describe("codemode models", () => {
 		`,
 		);
 		expect(result.isError).toBe(false);
-		const [text, ...rest] = resultText(result).split("\n");
+		const [text, ...rest] = checkSavedImages(resultText(result)).split("\n");
 		expect(text).toBe("painted a fox");
-		expect(rest[0]).toBe("<image>");
-		expect(JSON.parse(rest.slice(1).join("\n"))).toEqual({
+		expect(rest[0]).toBe("<saved>");
+		expect(rest[1]).toBe("<image>");
+		expect(JSON.parse(rest.slice(2).join("\n"))).toEqual({
 			id: "painter",
 			stopReason: "stop",
 			failed: ["error", "painter exploded"],
 			wrongType:
 				'"scorer/judge" is a classifier model, not an image model. List the image models you can use with models.getAvailableOfType("image").',
 		});
-		expect(result.content[2]).toEqual({ type: "image", data: TINY_PNG_BASE64, mimeType: "image/png" });
+		expect(result.content[3]).toEqual({ type: "image", data: TINY_PNG_BASE64, mimeType: "image/png" });
 		expect(imageRequests.map((request) => [request.baseUrl, request.apiKey])).toEqual([
 			["https://images.test/v1", "secret-key"],
 			["https://images.test/v1", "secret-key"],

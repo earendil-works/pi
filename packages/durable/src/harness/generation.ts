@@ -31,6 +31,7 @@ import { applyBoundary, prepareBoundary } from "./inbox.ts";
 import { assignJson } from "./json.ts";
 import { endRun, LiveDoc, type LiveState, type ToolSlot } from "./live.ts";
 import { planSystemEntries, renderSections, replaySections } from "./prompt.ts";
+import { ensureProviderSessionId } from "./provider.ts";
 import { appendToolResult, harnessError, ToolTask, type ToolTaskResult } from "./tool.ts";
 import type {
 	CompactionPolicy,
@@ -105,7 +106,6 @@ type Request = {
 	readonly pollAt?: number;
 };
 
-const PARTIAL_THROTTLE_MS = 100;
 const DEFAULT_POLL_AFTER_MS = 5000;
 
 /**
@@ -201,6 +201,7 @@ export const GenerationTask = defineTask<GenerationInput, GenerationCheckpoint, 
 			const options: SimpleStreamOptions = {
 				...streamOptions,
 				signal: runtime.signal,
+				sessionId: await ensureProviderSessionId(runtime, context),
 				...(thinkingLevel === "off" ? {} : { reasoning: thinkingLevel }),
 			};
 			const message = await streamResponse(runtime, model, messages, options, attempt, context);
@@ -356,8 +357,9 @@ export async function convertPartial(tx: Tx, live: Draft<LiveState>, conversatio
 }
 
 /**
- * Stream one request and return the terminal message. Partials commit as trailing writes at most every 100 ms with one
- * commit in flight; `finally` stops the throttle and awaits that commit, so no stale partial lands after the outcome.
+ * Stream one request and return the terminal message. Partials commit as trailing writes at most every
+ * `progress.partialIntervalMs` (default 100 ms) with one commit in flight; `finally` stops the throttle and awaits that
+ * commit, so no stale partial lands after the outcome.
  */
 async function streamResponse(
 	runtime: Runtime,
@@ -367,6 +369,7 @@ async function streamResponse(
 	attempt: number,
 	context: Context,
 ): Promise<AssistantMessage> {
+	const interval = runtime.settings.progress.partialIntervalMs;
 	let pending: AssistantMessage | undefined;
 	let timer: ReturnType<typeof setTimeout> | undefined;
 	let inFlight: Promise<void> | undefined;
@@ -392,7 +395,7 @@ async function streamResponse(
 			})
 			.finally(() => {
 				inFlight = undefined;
-				if (pending !== undefined && !stopped) timer = setTimeout(flush, PARTIAL_THROTTLE_MS);
+				if (pending !== undefined && !stopped) timer = setTimeout(flush, interval);
 			});
 	};
 	try {
@@ -402,7 +405,7 @@ async function streamResponse(
 			// never gets past it, so it never leaves a partial.
 			if (event.type === "done" || event.type === "error" || event.partial.content.length === 0) continue;
 			pending = event.partial;
-			if (timer === undefined && inFlight === undefined) timer = setTimeout(flush, PARTIAL_THROTTLE_MS);
+			if (timer === undefined && inFlight === undefined) timer = setTimeout(flush, interval);
 		}
 		return await events.result();
 	} finally {

@@ -23,6 +23,8 @@ import {
 	type Result,
 	type ShellExecOptions,
 	type ShellExecResult,
+	type ShellOutputSkip,
+	type ShellOutputWindow,
 } from "../src/env/index.ts";
 import { NodeExecutionEnv } from "../src/env/node.ts";
 import { withFileMutationQueue } from "../src/tools/file-mutation-queue.ts";
@@ -169,14 +171,14 @@ const TRUNCATED_OUTPUT_LINES = DEFAULT_MAX_LINES + 1;
 
 class TimeoutOutputExecutionEnv extends NodeExecutionEnv {
 	override async exec(
-		_command: string,
+		_command: string | readonly string[],
 		options: ShellExecOptions | undefined,
 		context: Context,
 	): Promise<Result<ShellExecResult, ExecutionError>> {
 		const output = `${Array.from({ length: TRUNCATED_OUTPUT_LINES }, (_, index) => `line-${index + 1}`).join("\n")}\n`;
 		const spillPath = getOrThrow(await this.createTempFile({ prefix: "timeout-", suffix: ".log" }, context));
 		getOrThrow(await this.writeFile(spillPath, output, context));
-		options?.onOutput?.(output, context);
+		options?.onOutput?.(output, context, { stream: "stdout" });
 		const error = new ExecutionError("timeout", `timeout:${options?.timeout}`);
 		error.spillPath = spillPath;
 		return err(error);
@@ -518,6 +520,32 @@ describe("durable tools", () => {
 	});
 
 	describe("bash", () => {
+		it("passes the retained window to the environment and forwards what it skipped", async () => {
+			const window: ShellOutputWindow = { maxBytes: 4, maxLines: 1, minIntervalMs: 100, bytesPerSecond: 1024 };
+			const skipped: ShellOutputSkip = { bytes: 6, newlines: 2, endsWithNewline: true };
+			let received: ShellOutputWindow | undefined;
+			class SkippingEnv extends NodeExecutionEnv {
+				override async exec(
+					_command: string | readonly string[],
+					options: ShellExecOptions | undefined,
+					context: Context,
+				): Promise<Result<ShellExecResult, ExecutionError>> {
+					received = options?.window;
+					options?.onOutput?.("tail\n", context, { stream: "stdout", skipped });
+					return { ok: true, value: { exitCode: 0 } };
+				}
+			}
+			const calls: [string, ShellOutputSkip | undefined][] = [];
+			const api = {
+				...fakeApi(new SkippingEnv({ cwd: createTempDir() })).api,
+				outputWindow: window,
+				output: (chunk: string | Uint8Array, skip?: ShellOutputSkip) => calls.push([String(chunk), skip]),
+			} as ToolExecutionApi;
+			await createBashTool().execute({ command: "anything" }, api, BACKGROUND_CONTEXT);
+			expect(received).toEqual(window);
+			expect(calls).toEqual([["tail\n", skipped]]);
+		});
+
 		it("streams combined stdout and stderr and returns no content of its own", async () => {
 			const result = await run(createBashTool(), { command: "printf out; printf err >&2" }, createEnv());
 			expect(result.output.join("")).toContain("out");
@@ -568,15 +596,20 @@ describe("durable tools", () => {
 					execution.cwd = workspace;
 					execution.env = { PI_BASH_PREPARE_EXPLICIT: "explicit" };
 					execution.inheritEnv = false;
-					execution.command += `\nprintf '%s:%s:%s:%s' "$prefix" "\${PI_BASH_PREPARE_INHERITED-}" "$PI_BASH_PREPARE_EXPLICIT" "$PWD"`;
+					execution.command += `\n: > prepared-cwd\nprintf '%s:%s:%s' "$prefix" "\${PI_BASH_PREPARE_INHERITED-}" "$PI_BASH_PREPARE_EXPLICIT"`;
+					// Git Bash on Windows reports $PWD as an MSYS path, so only POSIX compares it.
+					if (process.platform !== "win32") execution.command += `\nprintf ':%s' "$PWD"`;
 				},
 			});
 			const result = await run(tool, { command: ":" }, env, withAbortSignal(controller.signal, BACKGROUND_CONTEXT));
 			expect(receivedEnv).toBe(env);
 			expect(receivedSignal).toBe(controller.signal);
-			expect(result.output.join("")).toBe(
-				`ready::explicit:${getOrThrow(await env.canonicalPath(workspace, BACKGROUND_CONTEXT))}`,
-			);
+			const pwd =
+				process.platform === "win32"
+					? ""
+					: `:${getOrThrow(await env.canonicalPath(workspace, BACKGROUND_CONTEXT))}`;
+			expect(result.output.join("")).toBe(`ready::explicit${pwd}`);
+			expect(getOrThrow(await env.exists(`${workspace}/prepared-cwd`, BACKGROUND_CONTEXT))).toBe(true);
 		});
 
 		it("supports command prefixes", async () => {

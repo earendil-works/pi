@@ -171,7 +171,7 @@ const codemodeTool: AgentTool = {
 | `aborted` | `options.signal` fired or `close()` was called; the worker was terminated   |
 | `sandbox` | the worker or VM failed, for example a wasm trap or a missing worker file   |
 
-`result.output` holds the text and image items in the order the script produced them, also for failed executions. `result.calls` lists every tool call with `status: "ok" | "error" | "cancelled"`. A call that is still running when the script returns (not awaited) is aborted through the tool's `signal` and reported as `cancelled`.
+`result.output` holds the text and image items in the order the script produced them, also for failed executions. The host keeps all of it until the script ends, so output is limited to `MAX_OUTPUT_CHARS` (16 Mi) characters of text and base64 image data and `MAX_OUTPUT_ITEMS` (100000) items. Past either limit the script fails with a `RangeError`, even if it catches the error. `result.calls` lists every tool call with `status: "ok" | "error" | "cancelled"`. A call that is still running when the script returns (not awaited) is aborted through the tool's `signal` and reported as `cancelled`.
 
 ## How it works
 

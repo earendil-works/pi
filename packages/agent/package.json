@@ -1,6 +1,6 @@
 {
 	"name": "@earendil-works/pi-agent-core",
-	"version": "1.0.0",
+	"version": "1.0.2",
 	"description": "General-purpose agent with transport abstraction, state management, and attachment support",
 	"type": "module",
 	"main": "./dist/index.js",
@@ -23,7 +23,7 @@
 		"prepublishOnly": "npm run build"
 	},
 	"dependencies": {
-		"@earendil-works/pi-ai": "^1.0.0",
+		"@earendil-works/pi-ai": "^1.0.2",
 		"typebox": "1.3.27"
 	},
 	"keywords": [

@@ -6,6 +6,11 @@
  * existing configurations can be copied over. Project entries replace global entries with the
  * same name.
  *
+ * A project entry without `command`, `url`, or `type` overrides only `enabled`, `exposure`, and
+ * `toolExposure` of the global server with the same name, for example to turn it off in one project:
+ * `{ "mcpServers": { "internal-tools": { "enabled": false } } }`. The rest of the global entry is kept,
+ * including credentials the project could not set itself.
+ *
  * ```json
  * {
  *   "mcpServers": {
@@ -53,6 +58,8 @@ export interface McpServerEntry {
 	 * `pi.registerMcpServer()`. Changes to extension servers are not saved.
 	 */
 	scope?: "global" | "project" | "extension";
+	/** Project `mcp.json` with an override of this global server's `enabled`, `exposure`, or `toolExposure`. */
+	override?: string;
 }
 
 export interface LoadedMcpConfig {
@@ -60,6 +67,15 @@ export interface LoadedMcpConfig {
 	/** Activate the codemode tool when `codemode` servers connect. Default: true. */
 	autoEnableCodemode?: boolean;
 	errors: string[];
+	/** The project `mcp.json` when the project is trusted, where `/mcp` saves project overrides. */
+	projectConfig?: string;
+}
+
+const OVERRIDE_KEYS = ["enabled", "exposure", "toolExposure"];
+
+/** Whether an entry overrides a server defined elsewhere instead of defining one. */
+function isOverride(value: Record<string, unknown>): boolean {
+	return value.command === undefined && value.url === undefined && value.type === undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -89,6 +105,20 @@ function readConfigFile(path: string, scope: "global" | "project", state: McpCon
 	if (typeof parsed.autoEnableCodemode === "boolean") state.autoEnableCodemode = parsed.autoEnableCodemode;
 	else if (parsed.autoEnableCodemode !== undefined) errors.push(`${path}: autoEnableCodemode must be a boolean`);
 	for (const [name, value] of Object.entries(parsed.mcpServers ?? {})) {
+		if (scope === "project" && isRecord(value) && isOverride(value)) {
+			const base = servers.get(name);
+			const extra = Object.keys(value).filter((key) => !OVERRIDE_KEYS.includes(key));
+			if (!base) {
+				errors.push(`${path}: server "${name}" needs "command" or "url", or a global server to override`);
+			} else if (extra.length > 0) {
+				errors.push(`${path}: server "${name}": an override can only set ${OVERRIDE_KEYS.join(", ")}`);
+			} else {
+				const config = validateMcpServerConfig(name, { ...base.config, ...value });
+				if (typeof config === "string") errors.push(`${path}: ${config}`);
+				else servers.set(name, { ...base, config, override: path });
+			}
+			continue;
+		}
 		const config = validateMcpServerConfig(name, value);
 		if (typeof config === "string") {
 			errors.push(`${path}: ${config}`);
@@ -115,11 +145,13 @@ function readConfigFile(path: string, scope: "global" | "project", state: McpCon
 export function loadMcpConfig(options: { agentDir: string; cwd: string; projectTrusted: boolean }): LoadedMcpConfig {
 	const state: McpConfigState = { servers: new Map(), errors: [] };
 	readConfigFile(join(options.agentDir, "mcp.json"), "global", state);
-	if (options.projectTrusted) readConfigFile(join(options.cwd, CONFIG_DIR_NAME, "mcp.json"), "project", state);
+	const projectConfig = options.projectTrusted ? join(options.cwd, CONFIG_DIR_NAME, "mcp.json") : undefined;
+	if (projectConfig) readConfigFile(projectConfig, "project", state);
 	return {
 		servers: [...state.servers.values()],
 		...(state.autoEnableCodemode === undefined ? {} : { autoEnableCodemode: state.autoEnableCodemode }),
 		errors: state.errors,
+		...(projectConfig ? { projectConfig } : {}),
 	};
 }
 
@@ -130,19 +162,30 @@ export interface McpServerConfigPatch {
 }
 
 /**
- * Change one server's settings in the `mcp.json` that defines it. Other content is kept; the file is
- * rewritten with its indentation.
+ * Change one server's settings in the `mcp.json` that defines or overrides it. With `override`, a
+ * missing entry is added as an override. Overrides keep default values, since they replace the global
+ * server's. Other content is kept; the file is rewritten with its indentation.
  */
-export function updateMcpServerConfig(path: string, name: string, patch: McpServerConfigPatch): void {
-	editMcpServers(path, (servers) => {
-		const server = servers?.[name];
+export function updateMcpServerConfig(
+	path: string,
+	name: string,
+	patch: McpServerConfigPatch,
+	options: { override?: boolean } = {},
+): void {
+	editMcpServers(path, (servers, parsed) => {
+		let server = servers?.[name];
+		if (server === undefined && options.override) {
+			server = {};
+			parsed.mcpServers = { ...servers, [name]: server };
+		}
 		if (!isRecord(server)) throw new Error(`${path} does not define MCP server "${name}"`);
+		const keepDefaults = isOverride(server);
 		if (patch.enabled !== undefined) {
-			if (patch.enabled) delete server.enabled;
-			else server.enabled = false;
+			if (patch.enabled && !keepDefaults) delete server.enabled;
+			else server.enabled = patch.enabled;
 		}
 		if (patch.exposure !== undefined) {
-			if (patch.exposure === "codemode") delete server.exposure;
+			if (patch.exposure === "codemode" && !keepDefaults) delete server.exposure;
 			else server.exposure = patch.exposure;
 		}
 		return true;

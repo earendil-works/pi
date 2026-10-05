@@ -1,7 +1,7 @@
 import { fileURLToPath } from "node:url";
 import vm from "node:vm";
 import { afterEach, describe, expect, it } from "vitest";
-import { CodemodeSandbox, type CodemodeTool } from "../src/index.ts";
+import { CodemodeSandbox, type CodemodeTool, MAX_OUTPUT_CHARS, MAX_OUTPUT_ITEMS } from "../src/index.ts";
 import { PRELUDE_SOURCE } from "../src/runtime/prelude-source.ts";
 
 const sandboxes: CodemodeSandbox[] = [];
@@ -576,6 +576,32 @@ describe("limits and lifetime", () => {
 
 		await sandbox.close();
 		expect(await promise).toMatchObject({ ok: false, error: { kind: "aborted", message: "Sandbox closed" } });
+	});
+
+	// #10283: the host keeps all output, so a script that prints in a loop must not grow it without bound.
+	it("fails a script whose output passes the limits, even if it catches the error", async () => {
+		const sandbox = createSandbox();
+		for (const print of ["text(s)", "console.log(s)", 'image("data:image/png;base64," + p)']) {
+			const result = await sandbox.execute(`
+				const s = "x".repeat(1 << 20);
+				const p = "iVBORw0KGgoA" + "A".repeat(1 << 20);
+				for (;;) { try { ${print}; } catch {} }
+			`);
+			expect(result).toMatchObject({
+				ok: false,
+				error: { kind: "script", name: "RangeError", message: expect.stringContaining("script output exceeded") },
+			});
+			const chars = result.output.reduce(
+				(sum, item) => sum + (item.type === "text" ? item.text.length : item.data.length),
+				0,
+			);
+			expect(chars).toBeLessThanOrEqual(MAX_OUTPUT_CHARS);
+			expect(chars).toBeGreaterThan(MAX_OUTPUT_CHARS - (2 << 20));
+		}
+
+		const empty = await sandbox.execute(`for (;;) text("");`);
+		expect(empty).toMatchObject({ ok: false, error: { name: "RangeError" } });
+		expect(empty.output).toHaveLength(MAX_OUTPUT_ITEMS);
 	});
 
 	it("rejects execute after close", async () => {

@@ -325,6 +325,48 @@ describe("tool results", () => {
 		await harness.close(context);
 	});
 
+	it("offers the tail window with the configured pace, not a head window, and accepts skipped output", async () => {
+		const setup = { ...chatSetup(), settings: { progress: { outputIntervalMs: 250 } } };
+		const windows: unknown[] = [];
+		addTool(
+			setup.registry,
+			tool(
+				"tailed",
+				async (_args, api) => {
+					windows.push(api.outputWindow);
+					api.output("dropped\n");
+					api.output("x\ny\n", { bytes: 8, newlines: 1, endsWithNewline: true });
+					return {};
+				},
+				{ outputLimits: { maxLines: 1, retain: "tail" } },
+			),
+		);
+		addTool(
+			setup.registry,
+			tool(
+				"headed",
+				async (_args, api) => {
+					windows.push(api.outputWindow);
+					return {};
+				},
+				{ outputLimits: { maxLines: 1 } },
+			),
+		);
+		const { harness, entries } = await run(setup, [calls(["tailed", {}, "c1"], ["headed", {}, "c2"]), DONE]);
+		expect(windows).toContainEqual({
+			maxBytes: 50 * 1024,
+			maxLines: 1,
+			minIntervalMs: 250,
+			bytesPerSecond: 100 * 1024,
+		});
+		expect(windows).toContainEqual(undefined);
+		// 8 bytes written, 8 skipped, then "x\n" dropped by the window: 3 lines, 18 bytes in all.
+		expect(resultText(results(entries).find((result) => result.toolCallId === "c1")!)).toBe(
+			"y\n|<harness>\n[warn] Output truncated to its end: 3 lines, 18 bytes dropped\n</harness>",
+		);
+		await harness.close(context);
+	});
+
 	it("bounds explicit text content and keeps other content", async () => {
 		const setup = chatSetup();
 		const image = { type: "image", data: "AAAA", mimeType: "image/png" } as const;

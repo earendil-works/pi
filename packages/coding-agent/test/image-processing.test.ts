@@ -3,7 +3,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { convertToPng } from "../src/utils/image-convert.ts";
+import { convertToPng, loadPngTranscoder } from "../src/utils/image-convert.ts";
 import { formatDimensionNote, resizeImage } from "../src/utils/image-resize.ts";
 
 // Small 2x2 red PNG image (base64) - generated with ImageMagick
@@ -80,6 +80,14 @@ describe("convertToPng", () => {
 		expect(png.readUInt32BE(16)).toBe(1);
 		expect(png.readUInt32BE(20)).toBe(2);
 	});
+});
+
+// Issue #10292: pi-tui uses this transcoder to show non-PNG images on Kitty-protocol terminals.
+it("loadPngTranscoder converts synchronously to oriented PNG data", async () => {
+	const transcoder = (await loadPngTranscoder())!;
+	const png = Buffer.from(transcoder(jpegWithXmpBeforeOrientation(), "image/jpeg")!, "base64");
+	expect([png.readUInt32BE(16), png.readUInt32BE(20)]).toEqual([1, 2]);
+	expect(transcoder(Buffer.from("not an image").toString("base64"), "image/jpeg")).toBeNull();
 });
 
 describe("resizeImage", () => {

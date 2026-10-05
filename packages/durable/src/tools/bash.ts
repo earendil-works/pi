@@ -40,7 +40,8 @@ function validateTimeout(timeout: number | undefined): void {
 
 /**
  * Runs a command through the environment's shell. Its output streams to `api.output()`, where the Harness keeps the
- * tail within the default limits; the result content is that retained output. Output beyond the limits is spilled to a
+ * tail within the default limits; the result content is that retained output. The retained window goes to the
+ * environment, which may omit output outside it and report how much it omitted, so dropped counts stay exact. Output beyond the limits is spilled to a
  * file whose path is reported as a diagnostic. A nonzero exit or timeout throws, which makes an error result that still
  * carries the output and diagnostics.
  */
@@ -68,8 +69,10 @@ export function createBashTool(options?: BashToolOptions): ToolRegistration<type
 					env: execution.env,
 					inheritEnv: execution.inheritEnv,
 					...(timeout === undefined ? {} : { timeout }),
-					onOutput: (text) => api.output(text),
+					onOutput: (text, _context, info) => api.output(text, info.skipped),
 					spill: { afterBytes: DEFAULT_MAX_BYTES, afterLines: DEFAULT_MAX_LINES },
+					// An environment may then omit output outside the retained tail and report the omission.
+					...(api.outputWindow === undefined ? {} : { window: api.outputWindow }),
 				},
 				context,
 			);

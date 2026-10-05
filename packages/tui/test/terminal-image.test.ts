@@ -6,7 +6,7 @@ import assert from "node:assert";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { Image } from "../src/components/image.ts";
+import { Image, setImageTranscoder } from "../src/components/image.ts";
 import {
 	cropKittyImageLine,
 	deleteAllKittyImages,
@@ -18,6 +18,7 @@ import {
 	getCapabilities,
 	getKittyImageMetadata,
 	getKittyImagePlacement,
+	getKittyImagePlacementRows,
 	hyperlink,
 	imageFallback,
 	isImageLine,
@@ -463,6 +464,11 @@ describe("Kitty image cursor movement", () => {
 		assert.ok(sequence.startsWith("\x1b_Ga=T,f=100,q=2,C=1,c=2,r=2;"));
 	});
 
+	it("reads explicit placement rows without registered metadata", () => {
+		const sequence = encodeKitty("AAAA", { columns: 2, rows: 3, moveCursor: false });
+		assert.strictEqual(getKittyImagePlacementRows(sequence), 3);
+	});
+
 	it("suppresses Kitty replies for delete commands", () => {
 		assert.strictEqual(deleteKittyImage(42), "\x1b_Ga=d,d=I,i=42,q=2\x1b\\");
 		assert.strictEqual(deleteAllKittyImages(), "\x1b_Ga=d,d=A,q=2\x1b\\");
@@ -532,8 +538,10 @@ describe("Kitty image cursor movement", () => {
 		const line = `left ${cropKittyImageLine(transmission, 2, 1)} right`;
 		const placement = getKittyImagePlacement(line);
 		assert.ok(placement);
+		assert.strictEqual(getKittyImagePlacementRows(line), 1);
 		assert.strictEqual(placement.transmissionBytes, line.length - "left ".length - " right".length);
 		assert.strictEqual(placement.estimatedDecodedBytes, 100 * 100 * 4);
+		assert.strictEqual(placement.rows, 1);
 		assert.strictEqual(placement.sequence, "\x1b_Ga=p,q=2,C=1,c=3,i=42,y=66,h=34,r=1\x1b\\");
 		assert.strictEqual(placement.replacementLine, `left ${placement.sequence} right`);
 		assert.ok(!placement.replacementLine.includes("AAAA"));
@@ -814,6 +822,70 @@ describe("imageFallback", () => {
 		} finally {
 			resetCapabilitiesCache();
 		}
+	});
+});
+
+// Kitty only accepts PNG (f=100); non-PNG images must be transcoded (#10292)
+describe("Image transcoding", () => {
+	const jpeg = Buffer.from("jpeg").toString("base64");
+	// Minimal PNG header (signature + IHDR) for a 40x10 image. Enough for getPngDimensions.
+	const png = Buffer.from("89504e470d0a1a0a0000000d49484452000000280000000a", "hex").toString("base64");
+	let calls: string[];
+	const render = (data: string, mimeType: string) =>
+		new Image(data, mimeType, { fallbackColor: (value) => value }, {}, { widthPx: 20, heightPx: 20 }).render(20);
+	const transcode = (data: string) => {
+		calls.push(data);
+		return data === jpeg ? png : null;
+	};
+
+	beforeEach(() => {
+		calls = [];
+		setCapabilities({ images: "kitty", trueColor: true, hyperlinks: true });
+		setCellDimensions({ widthPx: 10, heightPx: 10 });
+	});
+
+	afterEach(() => {
+		setImageTranscoder(undefined);
+		resetCapabilitiesCache();
+		setCellDimensions({ widthPx: 9, heightPx: 18 });
+	});
+
+	it("sends converted PNG data sized from the PNG", () => {
+		setImageTranscoder(transcode);
+		const lines = render(jpeg, "image/jpeg");
+		assert.ok(lines[0].includes("f=100") && lines[0].includes(`;${png}\x1b\\`));
+		// 40x10 PNG at 18 columns: 5 rows, not the 18 rows of the 20x20 source dimensions.
+		assert.strictEqual(lines.length, 5);
+	});
+
+	it("renders a text fallback until a working transcoder is registered", () => {
+		const image = new Image(jpeg, "image/jpeg", { fallbackColor: (value) => value });
+		assert.match(image.render(80)[0], /^\[Image: \[image\/jpeg\]/);
+		setImageTranscoder(() => null);
+		image.invalidate();
+		assert.match(image.render(80)[0], /^\[Image: \[image\/jpeg\]/);
+		setImageTranscoder(transcode);
+		image.invalidate();
+		assert.ok(image.render(80)[0].includes("\x1b_G"));
+	});
+
+	it("converts each image once", () => {
+		setImageTranscoder(transcode);
+		const image = new Image(jpeg, "image/jpeg", { fallbackColor: (value) => value });
+		image.render(80);
+		render(jpeg, "image/jpeg"); // New instance hits the shared cache.
+		for (let i = 0; i < 40; i++) render(`other-${i}`, "image/jpeg"); // Evicts the shared entry.
+		image.invalidate();
+		image.render(40); // Instance keeps its own PNG.
+		assert.strictEqual(calls.filter((data) => data === jpeg).length, 1);
+	});
+
+	it("does not convert PNG data or iTerm2 output", () => {
+		setImageTranscoder(transcode);
+		assert.ok(render(png, "image/png")[0].includes(`;${png}\x1b\\`));
+		setCapabilities({ images: "iterm2", trueColor: true, hyperlinks: true });
+		assert.ok(render(jpeg, "image/jpeg").at(-1)?.endsWith(`:${jpeg}\x07`));
+		assert.deepStrictEqual(calls, []);
 	});
 });
 

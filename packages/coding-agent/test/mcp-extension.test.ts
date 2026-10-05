@@ -14,7 +14,12 @@ import { createInMemoryTransportPair, type InMemoryTransport } from "@earendil-w
 import { afterEach, describe, expect, it } from "vitest";
 import { InMemoryAuthStorageBackend } from "../src/core/auth-storage.ts";
 import { truncateMiddle } from "../src/core/tools/truncate.ts";
-import { getMcpToolExposure, loadMcpConfig, type McpServerEntry } from "../src/extensions/mcp/config.ts";
+import {
+	getMcpToolExposure,
+	loadMcpConfig,
+	type McpServerEntry,
+	updateMcpServerConfig,
+} from "../src/extensions/mcp/config.ts";
 import { MAX_SERVERS_SECTION_CHARS, renderServersSection } from "../src/extensions/mcp/index.ts";
 import {
 	createDefaultTransport,
@@ -78,6 +83,35 @@ describe("MCP config", () => {
 		// Untrusted projects cannot add or override servers, since stdio servers run commands.
 		const untrusted = loadMcpConfig({ ...paths, projectTrusted: false });
 		expect(untrusted.servers.find((server) => server.name === "shared")?.config).toEqual({ command: "global-cmd" });
+	});
+
+	// #10277
+	it("lets project entries override enabled and exposure of global servers", () => {
+		const paths = setup(
+			{ mcpServers: { tools: { command: "x", env: { TOKEN: "secret" } } } },
+			// An override cannot change the command, which would run with the global env.
+			{ mcpServers: { tools: { enabled: false, args: ["y"] }, missing: { enabled: false } } },
+		);
+		const project = join(paths.cwd, ".pi", "mcp.json");
+		const { servers, errors } = loadMcpConfig({ ...paths, projectTrusted: true });
+		expect(servers.map((server) => [server.name, server.override, server.config])).toEqual([
+			["tools", undefined, { command: "x", env: { TOKEN: "secret" } }],
+		]);
+		expect(errors).toEqual([
+			expect.stringContaining('server "tools": an override can only set enabled, exposure, toolExposure'),
+			expect.stringContaining('server "missing" needs "command" or "url", or a global server to override'),
+		]);
+
+		writeFileSync(project, JSON.stringify({ mcpServers: { tools: { enabled: false } } }));
+		const [tools] = loadMcpConfig({ ...paths, projectTrusted: true }).servers;
+		expect([tools.override, tools.config]).toEqual([
+			project,
+			{ command: "x", env: { TOKEN: "secret" }, enabled: false },
+		]);
+
+		// Overrides keep `enabled: true`, since it replaces the global value.
+		updateMcpServerConfig(project, "tools", { enabled: true });
+		expect(JSON.parse(readFileSync(project, "utf8")).mcpServers.tools).toEqual({ enabled: true });
 	});
 
 	// Regression: #10239.

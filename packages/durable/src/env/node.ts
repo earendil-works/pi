@@ -1,12 +1,14 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { constants, createWriteStream, type WriteStream } from "node:fs";
+import { constants, createWriteStream, type Dir, type Stats, type WriteStream } from "node:fs";
 import {
 	access,
 	appendFile,
+	type FileHandle,
 	lstat,
 	mkdir,
 	mkdtemp,
+	opendir,
 	open as openFile,
 	readdir,
 	readFile,
@@ -19,26 +21,38 @@ import { homedir, constants as osConstants, tmpdir } from "node:os";
 import { basename, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Context } from "@earendil-works/chord";
+import { StreamDecoder } from "./decode.ts";
 import {
+	type BinaryReader,
+	type DirReader,
 	type ExecutionEnv,
 	ExecutionError,
 	err,
 	FileError,
 	type FileInfo,
 	type FileKind,
+	type FileWatcher,
+	type LineScan,
 	ok,
 	type Result,
 	type ShellExecOptions,
 	type ShellExecResult,
+	type ShellOutputInfo,
 	type TextLine,
 	type TextLineReader,
 	toError,
+	type WatchChange,
+	type WatchTarget,
 } from "./index.ts";
+import { LineScanner } from "./line-scan.ts";
+import { NodeFileWatcher, type NodeWatchOptions } from "./node-watch.ts";
 
 const MAX_TIMEOUT_MS = 2_147_483_647;
 const MAX_TIMEOUT_SECONDS = MAX_TIMEOUT_MS / 1000;
 const EXIT_STDIO_GRACE_MS = 100;
 const SPILL_HIGH_WATER_MARK = 1024 * 1024;
+/** Largest single read of a `BinaryReader`, so a huge `length` allocates only as much as the file yields. */
+const BINARY_READ_CHUNK = 1024 * 1024;
 
 type SpillChunk = string | Uint8Array;
 
@@ -373,7 +387,7 @@ function waitForChildProcess(
 class NodeTextLineReader implements TextLineReader {
 	private readonly file: Awaited<ReturnType<typeof openFile>>;
 	private readonly path: string;
-	private readonly decoder = new TextDecoder();
+	private readonly decoder = new StreamDecoder();
 	private readonly chunk = new Uint8Array(64 * 1024);
 	private byteOffset = 0;
 	private buffered = "";
@@ -414,7 +428,7 @@ class NodeTextLineReader implements TextLineReader {
 					this.buffered += this.decoder.decode();
 					this.ended = true;
 				} else {
-					this.buffered += this.decoder.decode(this.chunk.subarray(0, bytesRead), { stream: true });
+					this.buffered += this.decoder.decode(this.chunk.subarray(0, bytesRead));
 				}
 			}
 		} catch (error) {
@@ -434,18 +448,197 @@ class NodeTextLineReader implements TextLineReader {
 	}
 }
 
+function closedResult<TValue>(what: string, path: string): Result<TValue, FileError> {
+	return err(new FileError("invalid", `${what} is closed`, path));
+}
+
+class NodeBinaryReader implements BinaryReader {
+	private readonly file: FileHandle;
+	private readonly path: string;
+	private closed = false;
+
+	constructor(file: FileHandle, path: string) {
+		this.file = file;
+		this.path = path;
+	}
+
+	async info(context: Context): Promise<Result<FileInfo, FileError>> {
+		const aborted = abortResult<FileInfo>(context.abortSignal, this.path);
+		if (aborted) return aborted;
+		if (this.closed) return closedResult("Binary reader", this.path);
+		try {
+			return fileInfoFromStats(this.path, await this.file.stat());
+		} catch (error) {
+			return err(toFileError(error, this.path));
+		}
+	}
+
+	async read(offset: number, length: number, context: Context): Promise<Result<Uint8Array, FileError>> {
+		const aborted = abortResult<Uint8Array>(context.abortSignal, this.path);
+		if (aborted) return aborted;
+		if (this.closed) return closedResult("Binary reader", this.path);
+		if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(length) || length < 0) {
+			return err(new FileError("invalid", "Offset and length must be non-negative safe integers", this.path));
+		}
+		const chunks: Uint8Array[] = [];
+		let total = 0;
+		try {
+			while (total < length) {
+				const chunk = new Uint8Array(Math.min(length - total, BINARY_READ_CHUNK));
+				const { bytesRead } = await this.file.read(chunk, 0, chunk.length, offset + total);
+				const afterReadAbort = abortResult<Uint8Array>(context.abortSignal, this.path);
+				if (afterReadAbort) return afterReadAbort;
+				if (bytesRead === 0) break;
+				chunks.push(bytesRead === chunk.length ? chunk : chunk.subarray(0, bytesRead));
+				total += bytesRead;
+			}
+		} catch (error) {
+			return err(toFileError(error, this.path));
+		}
+		if (chunks.length === 1) return ok(chunks[0]!);
+		const bytes = new Uint8Array(total);
+		let position = 0;
+		for (const chunk of chunks) {
+			bytes.set(chunk, position);
+			position += chunk.length;
+		}
+		return ok(bytes);
+	}
+
+	async scanLines(
+		options: { startLine: number; endLine?: number },
+		context: Context,
+	): Promise<Result<LineScan, FileError>> {
+		const aborted = abortResult<LineScan>(context.abortSignal, this.path);
+		if (aborted) return aborted;
+		if (this.closed) return closedResult("Binary reader", this.path);
+		let scanner: LineScanner;
+		try {
+			scanner = new LineScanner(options.startLine, options.endLine);
+		} catch {
+			return err(new FileError("invalid", "Invalid line range", this.path));
+		}
+		const chunk = new Uint8Array(64 * 1024);
+		try {
+			for (let position = 0; ; ) {
+				const { bytesRead } = await this.file.read(chunk, 0, chunk.length, position);
+				const afterReadAbort = abortResult<LineScan>(context.abortSignal, this.path);
+				if (afterReadAbort) return afterReadAbort;
+				if (bytesRead === 0) return ok(scanner.finish());
+				scanner.push(chunk.subarray(0, bytesRead));
+				position += bytesRead;
+			}
+		} catch (error) {
+			return err(toFileError(error, this.path));
+		}
+	}
+
+	async close(_context: Context): Promise<void> {
+		if (this.closed) return;
+		this.closed = true;
+		await this.file.close().catch(() => undefined);
+	}
+}
+
+class NodeDirReader implements DirReader {
+	private readonly dir: Dir;
+	private readonly path: string;
+	private done = false;
+	private closed = false;
+
+	constructor(dir: Dir, path: string) {
+		this.dir = dir;
+		this.path = path;
+	}
+
+	async next(
+		maxEntries: number,
+		context: Context,
+	): Promise<Result<{ entries: FileInfo[]; done: boolean }, FileError>> {
+		const aborted = abortResult<{ entries: FileInfo[]; done: boolean }>(context.abortSignal, this.path);
+		if (aborted) return aborted;
+		if (this.closed) return closedResult("Directory reader", this.path);
+		if (!Number.isSafeInteger(maxEntries) || maxEntries <= 0) {
+			return err(new FileError("invalid", "maxEntries must be a positive safe integer", this.path));
+		}
+		const entries: FileInfo[] = [];
+		try {
+			while (!this.done && entries.length < maxEntries) {
+				const entry = await this.dir.read();
+				if (entry === null) {
+					this.done = true;
+					break;
+				}
+				const loopAbort = abortResult<{ entries: FileInfo[]; done: boolean }>(context.abortSignal, this.path);
+				if (loopAbort) return loopAbort;
+				const entryPath = resolve(this.path, entry.name);
+				let stats: Stats;
+				try {
+					stats = await lstat(entryPath);
+				} catch (error) {
+					// Removed between enumeration and lstat: not part of the listing any more.
+					if (isNodeError(error) && error.code === "ENOENT") continue;
+					return err(toFileError(error, entryPath));
+				}
+				const info = fileInfoFromStats(entryPath, stats);
+				if (info.ok) entries.push(info.value);
+			}
+			return ok({ entries, done: this.done });
+		} catch (error) {
+			return err(toFileError(error, this.path));
+		}
+	}
+
+	async close(_context: Context): Promise<void> {
+		if (this.closed) return;
+		this.closed = true;
+		await this.dir.close().catch(() => undefined);
+	}
+}
+
+function symlinkRefused(path: string, cause?: Error): FileError {
+	return new FileError("invalid", "Refusing to follow a symbolic link", path, cause);
+}
+
 export class NodeExecutionEnv implements ExecutionEnv {
 	/** Every local environment sees the same files. */
 	readonly id: string = "node:local";
 	cwd: string;
 	private shellPath?: string;
 	private shellEnv?: NodeJS.ProcessEnv;
+	private watchOptions: NodeWatchOptions;
 	private activeChildPids = new Set<number>();
 
-	constructor(options: { cwd: string; shellPath?: string; shellEnv?: NodeJS.ProcessEnv }) {
+	constructor(options: { cwd: string; shellPath?: string; shellEnv?: NodeJS.ProcessEnv; watch?: NodeWatchOptions }) {
 		this.cwd = options.cwd;
 		this.shellPath = options.shellPath;
 		this.shellEnv = options.shellEnv;
+		this.watchOptions = options.watch ?? {};
+	}
+
+	async watch(
+		targets: readonly WatchTarget[],
+		onChange: (change: WatchChange) => void,
+		context: Context,
+	): Promise<Result<FileWatcher, FileError>> {
+		const aborted = abortResult<FileWatcher>(context.abortSignal);
+		if (aborted) return aborted;
+		try {
+			const watcher = await NodeFileWatcher.open(
+				targets,
+				(path) => resolvePath(this.cwd, path),
+				onChange,
+				this.watchOptions,
+			);
+			const afterOpenAbort = abortResult<FileWatcher>(context.abortSignal);
+			if (afterOpenAbort) {
+				await watcher.close(context);
+				return afterOpenAbort;
+			}
+			return ok(watcher);
+		} catch (error) {
+			return err(toFileError(error));
+		}
 	}
 
 	async absolutePath(path: string, _context: Context): Promise<Result<string, FileError>> {
@@ -457,7 +650,7 @@ export class NodeExecutionEnv implements ExecutionEnv {
 	}
 
 	async exec(
-		command: string,
+		command: string | readonly string[],
 		options: ShellExecOptions | undefined,
 		context: Context,
 	): Promise<Result<ShellExecResult, ExecutionError>> {
@@ -468,8 +661,23 @@ export class NodeExecutionEnv implements ExecutionEnv {
 		const timeoutMs = timeoutMsResult.value;
 
 		const cwd = options?.cwd ? resolvePath(this.cwd, options.cwd) : this.cwd;
-		const shellConfig = await getShellConfig(this.shellPath);
-		if (!shellConfig.ok) return shellConfig;
+		// A string runs through the shell; an argv array runs its program directly, without shell parsing.
+		let program: string;
+		let args: readonly string[];
+		let stdinCommand: string | undefined;
+		if (typeof command === "string") {
+			const shellConfig = await getShellConfig(this.shellPath);
+			if (!shellConfig.ok) return shellConfig;
+			const commandFromStdin = shellConfig.value.commandTransport === "stdin";
+			program = shellConfig.value.shell;
+			args = commandFromStdin ? shellConfig.value.args : [...shellConfig.value.args, command];
+			stdinCommand = commandFromStdin ? command : undefined;
+		} else {
+			const [first, ...rest] = command;
+			if (first === undefined) return err(new ExecutionError("spawn_error", "Empty argv: no program to run"));
+			program = first;
+			args = rest;
+		}
 		try {
 			await access(cwd, constants.F_OK);
 		} catch (error) {
@@ -507,13 +715,13 @@ export class NodeExecutionEnv implements ExecutionEnv {
 				onAbort();
 			};
 			// One decoder per stream, so a character split across chunks of one stream survives interleaving.
-			const stdoutDecoder = new TextDecoder();
-			const stderrDecoder = new TextDecoder();
+			const stdoutDecoder = new StreamDecoder();
+			const stderrDecoder = new StreamDecoder();
 			// No output reaches the caller after exec() settled, for example from a descendant holding stdio open.
-			const emit = (text: string): void => {
+			const emit = (text: string, stream: ShellOutputInfo["stream"]): void => {
 				if (settled || text === "" || options?.onOutput === undefined || callbackError !== undefined) return;
 				try {
-					options.onOutput(text, context);
+					options.onOutput(text, context, { stream });
 				} catch (error) {
 					failCallback(error);
 				}
@@ -592,22 +800,17 @@ export class NodeExecutionEnv implements ExecutionEnv {
 			};
 
 			try {
-				const commandFromStdin = shellConfig.value.commandTransport === "stdin";
-				child = spawn(
-					shellConfig.value.shell,
-					commandFromStdin ? shellConfig.value.args : [...shellConfig.value.args, command],
-					{
-						cwd,
-						detached: process.platform !== "win32",
-						env: getShellEnv(this.shellEnv, options?.env, options?.inheritEnv),
-						stdio: [commandFromStdin ? "pipe" : "ignore", "pipe", "pipe"],
-						windowsHide: true,
-					},
-				);
+				child = spawn(program, args, {
+					cwd,
+					detached: process.platform !== "win32",
+					env: getShellEnv(this.shellEnv, options?.env, options?.inheritEnv),
+					stdio: [stdinCommand === undefined ? "ignore" : "pipe", "pipe", "pipe"],
+					windowsHide: true,
+				});
 				if (child.pid) this.activeChildPids.add(child.pid);
-				if (commandFromStdin) {
+				if (stdinCommand !== undefined) {
 					child.stdin?.on("error", () => {});
-					child.stdin?.end(command);
+					child.stdin?.end(stdinCommand);
 				}
 			} catch (error) {
 				const cause = toError(error);
@@ -628,8 +831,8 @@ export class NodeExecutionEnv implements ExecutionEnv {
 				else signal.addEventListener("abort", onAbort, { once: true });
 			}
 
-			const feed = (decoder: InstanceType<typeof TextDecoder>) => (chunk: Uint8Array) => {
-				emit(decoder.decode(chunk, { stream: true }));
+			const feed = (source: ShellOutputInfo["stream"], decoder: StreamDecoder) => (chunk: Uint8Array) => {
+				emit(decoder.decode(chunk), source);
 				const spill = options?.spill;
 				if (spill === undefined || chunk.length === 0) return;
 				if (spillStart !== undefined) {
@@ -647,8 +850,8 @@ export class NodeExecutionEnv implements ExecutionEnv {
 				spillPrefix.length = 0;
 				startSpill(chunk);
 			};
-			child.stdout?.on("data", feed(stdoutDecoder));
-			child.stderr?.on("data", feed(stderrDecoder));
+			child.stdout?.on("data", feed("stdout", stdoutDecoder));
+			child.stderr?.on("data", feed("stderr", stderrDecoder));
 
 			void waitForChildProcess(
 				child,
@@ -659,8 +862,8 @@ export class NodeExecutionEnv implements ExecutionEnv {
 			).then(
 				async ({ code, signal: exitSignal }) => {
 					await finishSpill();
-					emit(stdoutDecoder.decode());
-					emit(stderrDecoder.decode());
+					emit(stdoutDecoder.decode(), "stdout");
+					emit(stderrDecoder.decode(), "stderr");
 					if (callbackError) {
 						settle(err(callbackError));
 						return;
@@ -753,6 +956,52 @@ export class NodeExecutionEnv implements ExecutionEnv {
 		}
 	}
 
+	async openBinaryReader(
+		path: string,
+		options: { noFollow?: boolean } | undefined,
+		context: Context,
+	): Promise<Result<BinaryReader, FileError>> {
+		const resolved = resolvePath(this.cwd, path);
+		const aborted = abortResult<BinaryReader>(context.abortSignal, resolved);
+		if (aborted) return aborted;
+		const noFollow = options?.noFollow === true;
+		let file: FileHandle | undefined;
+		try {
+			let flags = constants.O_RDONLY;
+			if (process.platform === "win32") {
+				// Windows has no O_NOFOLLOW; check the final component before opening (not race-free).
+				if (noFollow && (await lstat(resolved)).isSymbolicLink()) return err(symlinkRefused(resolved));
+			} else {
+				// Nonblocking, so opening a FIFO does not wait for a writer.
+				flags |= constants.O_NONBLOCK;
+				if (noFollow) flags |= constants.O_NOFOLLOW;
+			}
+			file = await openFile(resolved, flags);
+			const stats = await file.stat();
+			if (!stats.isFile()) {
+				await file.close().catch(() => undefined);
+				return err(
+					stats.isDirectory()
+						? new FileError("is_directory", "EISDIR: illegal operation on a directory, read", resolved)
+						: new FileError("invalid", "Not a regular file", resolved),
+				);
+			}
+			const afterOpenAbort = abortResult<BinaryReader>(context.abortSignal, resolved);
+			if (afterOpenAbort) {
+				await file.close().catch(() => undefined);
+				return afterOpenAbort;
+			}
+			return ok(new NodeBinaryReader(file, resolved));
+		} catch (error) {
+			await file?.close().catch(() => undefined);
+			// O_NOFOLLOW reports a final-component symlink as ELOOP (EMLINK on some BSDs).
+			if (noFollow && isNodeError(error) && (error.code === "ELOOP" || error.code === "EMLINK")) {
+				return err(symlinkRefused(resolved, toError(error)));
+			}
+			return err(toFileError(error, resolved));
+		}
+	}
+
 	async writeFile(path: string, content: string | Uint8Array, context: Context): Promise<Result<void, FileError>> {
 		const resolved = resolvePath(this.cwd, path);
 		const signal = context.abortSignal;
@@ -815,6 +1064,8 @@ export class NodeExecutionEnv implements ExecutionEnv {
 		let file: Awaited<ReturnType<typeof openFile>> | undefined;
 		try {
 			file = await openFile(resolved, "r+");
+			// POSIX refuses to open a directory for writing; Windows opens it, so check explicitly.
+			if ((await file.stat()).isDirectory()) return err(new FileError("is_directory", "Is a directory", resolved));
 			await file.sync();
 			const afterSyncAbort = abortResult<void>(signal, resolved);
 			return afterSyncAbort ?? ok(undefined);
@@ -869,6 +1120,23 @@ export class NodeExecutionEnv implements ExecutionEnv {
 				}
 			}
 			return ok(infos);
+		} catch (error) {
+			return err(toFileError(error, resolved));
+		}
+	}
+
+	async openDirReader(path: string, context: Context): Promise<Result<DirReader, FileError>> {
+		const resolved = resolvePath(this.cwd, path);
+		const aborted = abortResult<DirReader>(context.abortSignal, resolved);
+		if (aborted) return aborted;
+		try {
+			const dir = await opendir(resolved);
+			const afterOpenAbort = abortResult<DirReader>(context.abortSignal, resolved);
+			if (afterOpenAbort) {
+				await dir.close().catch(() => undefined);
+				return afterOpenAbort;
+			}
+			return ok(new NodeDirReader(dir, resolved));
 		} catch (error) {
 			return err(toFileError(error, resolved));
 		}
@@ -955,3 +1223,4 @@ export class NodeExecutionEnv implements ExecutionEnv {
 		this.activeChildPids.clear();
 	}
 }
+export type { NodeWatchOptions } from "./node-watch.ts";

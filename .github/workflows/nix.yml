@@ -1,0 +1,188 @@
+name: Nix
+
+# The flake builds with the model catalog revision pinned in
+# nix/model-catalog.json. This workflow keeps that pin usable independently of
+# releases: after pi.dev publishes a catalog from main, it replaces the pin only
+# if the current one no longer hydrates main (for example after a provider was
+# added) or lacks a model type the live catalog has for one of main's providers
+# (for example after a provider gained classifier models), builds the flake,
+# and commits the new pin to main.
+#
+# Release tags are built exactly as tagged, with their committed pin. Once all
+# systems build, the stable branch is fast-forwarded to the tag so that
+# `nix run github:earendil-works/pi/stable` runs the latest release.
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/nix.yml'
+      - 'flake.lock'
+      - 'flake.nix'
+      - 'nix/**'
+      - 'package-lock.json'
+      - 'packages/*/package.json'
+      - 'packages/coding-agent/install-lock/**'
+      - 'packages/ai/scripts/hydrate-model-catalog.ts'
+      - 'scripts/update-model-catalog-pin.mjs'
+  workflow_run:
+    workflows:
+      - Publish Model Catalog
+    types:
+      - completed
+  # Catches packaging drift from changes pushed to main without a pull request.
+  schedule:
+    - cron: '43 5 * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: nix-${{ (github.event_name == 'pull_request' || github.ref_type == 'tag') && github.ref || 'main' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  pin:
+    if: ${{ github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      revision: ${{ steps.pin.outputs.revision }}
+      updated: ${{ steps.pin.outputs.updated }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+
+      - name: Refresh the model catalog pin if stale
+        id: pin
+        run: |
+          set -euo pipefail
+          # A release tag must build with its committed pin; it cannot be changed.
+          if [[ "${GITHUB_REF_TYPE}" != "tag" ]]; then
+            node scripts/update-model-catalog-pin.mjs --if-stale
+          fi
+          revision="$(node -p 'require("./nix/model-catalog.json").revision')"
+          echo "revision=${revision}" >> "${GITHUB_OUTPUT}"
+          if git diff --quiet -- nix/model-catalog.json; then
+            echo "updated=false" >> "${GITHUB_OUTPUT}"
+          else
+            echo "updated=true" >> "${GITHUB_OUTPUT}"
+            if [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
+              echo "::warning::The model catalog pin on main is stale; this build uses ${revision}. The pin is refreshed on main after pi.dev publishes a catalog."
+            fi
+          fi
+
+  build:
+    needs: pin
+    # After a catalog publication, only build when the pin changed.
+    if: ${{ github.event_name != 'workflow_run' || needs.pin.outputs.updated == 'true' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            system: x86_64-linux
+          - runner: ubuntu-24.04-arm
+            system: aarch64-linux
+          - runner: macos-latest
+            system: aarch64-darwin
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Use the resolved model catalog pin
+        env:
+          REVISION: ${{ needs.pin.outputs.revision }}
+        run: |
+          printf '{\n  "revision": "%s"\n}\n' "${REVISION}" > nix/model-catalog.json
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+        with:
+          github_access_token: ${{ github.token }}
+
+      - name: Evaluate all systems
+        if: ${{ matrix.system == 'x86_64-linux' }}
+        run: nix flake check --all-systems --no-build
+
+      - name: Build
+        run: nix build -L .
+
+      - name: Smoke-test
+        run: |
+          ./result/bin/pi --version
+          ./result/bin/pi --help > /dev/null
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            test "$(./result/bin/pi --version)" = "${GITHUB_REF_NAME#v}"
+          fi
+
+  update-stable:
+    needs: build
+    if: ${{ github.ref_type == 'tag' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      # Full history, so git can verify that the push to stable is a fast-forward.
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      # Without --force, the push fails unless it is a fast-forward, so stable
+      # never moves back to an older release.
+      - name: Fast-forward stable to the release
+        run: git push origin "${GITHUB_SHA}:refs/heads/stable"
+
+  commit-pin:
+    needs:
+      - pin
+      - build
+    if: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && needs.pin.outputs.updated == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+
+      - name: Commit and push the model catalog pin
+        env:
+          REVISION: ${{ needs.pin.outputs.revision }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          printf '{\n  "revision": "%s"\n}\n' "${REVISION}" > nix/model-catalog.json
+          git add nix/model-catalog.json
+          if git diff --staged --quiet; then
+            echo "Model catalog pin is already ${REVISION}."
+            exit 0
+          fi
+          git commit -m "chore: update Nix model catalog pin"
+          for attempt in 1 2 3; do
+            if git push origin HEAD:main; then
+              exit 0
+            fi
+            sleep $((attempt * 5))
+            git pull --rebase origin main
+          done
+          exit 1

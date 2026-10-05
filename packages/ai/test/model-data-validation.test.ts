@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { hydrateModelCatalog } from "../scripts/hydrate-model-catalog.ts";
 import {
 	assertExactModelIds,
 	createModelDataManifest,
@@ -77,6 +78,104 @@ function writeFixtureData(
 	manifest.schemaVersion = manifestSchemaVersion;
 	writeFileSync(join(dataDir, MODEL_DATA_MANIFEST_FILE), `${JSON.stringify(manifest)}\n`);
 }
+
+describe("published model catalog hydration", () => {
+	function chatModel(values: Record<string, unknown>): Record<string, unknown> {
+		return values["chat:model-a"] as Record<string, unknown>;
+	}
+
+	it("hydrates a clean checkout deterministically without changing generated TypeScript", () => {
+		const { dataDir, packageRoot, structure, values } = createFixture();
+		const aggregatorPath = join(packageRoot, "src", "models.generated.ts");
+		const aggregator = readFileSync(aggregatorPath, "utf8");
+		const catalogPath = join(packageRoot, "catalog.json");
+		const models = [chatModel(values)];
+		writeFileSync(catalogPath, JSON.stringify({ "test-provider": models, "extra-provider": models }));
+		rmSync(dataDir, { recursive: true });
+
+		hydrateModelCatalog(packageRoot, catalogPath);
+		expect(() => validateModelDataDirectory(structure, dataDir)).not.toThrow();
+		expect(readModelDataStructure(packageRoot)).toEqual(structure);
+		expect(readFileSync(aggregatorPath, "utf8")).toBe(aggregator);
+		const manifest = readFileSync(join(dataDir, MODEL_DATA_MANIFEST_FILE), "utf8");
+		const provider = readFileSync(join(dataDir, "test-provider.json"), "utf8");
+		hydrateModelCatalog(packageRoot, catalogPath);
+		expect(readFileSync(join(dataDir, MODEL_DATA_MANIFEST_FILE), "utf8")).toBe(manifest);
+		expect(readFileSync(join(dataDir, "test-provider.json"), "utf8")).toBe(provider);
+	});
+
+	it("groups models by API and keys them by type and id", () => {
+		const { packageRoot, values } = createFixture();
+		const catalogPath = join(packageRoot, "catalog.json");
+		const model = chatModel(values);
+		writeFileSync(
+			catalogPath,
+			JSON.stringify({
+				"test-provider": [model, { ...model, id: "model-b", api: "anthropic-messages" }],
+			}),
+		);
+		hydrateModelCatalog(packageRoot, catalogPath);
+		expect(readModelDataStructure(packageRoot)).toEqual({
+			"test-provider": { "chat:model-a": "openai-completions", "chat:model-b": "anthropic-messages" },
+		});
+	});
+
+	it("keys chat and image models with the same id separately", () => {
+		const { packageRoot, values } = createFixture();
+		const image = {
+			type: "image",
+			id: "model-a",
+			name: "Model A Image",
+			api: "openrouter-images",
+			provider: "test-provider",
+			baseUrl: "https://example.test/v1",
+			input: ["text"],
+			output: ["image"],
+			cost: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0 },
+		};
+		const catalogPath = join(packageRoot, "catalog.json");
+		writeFileSync(catalogPath, JSON.stringify({ "test-provider": [chatModel(values), image] }));
+		hydrateModelCatalog(packageRoot, catalogPath);
+		expect(readModelDataStructure(packageRoot)).toEqual({
+			"test-provider": { "chat:model-a": "openai-completions", "image:model-a": "openrouter-images" },
+		});
+	});
+
+	it("validates without replacing existing data", () => {
+		const { dataDir, packageRoot, values } = createFixture();
+		const original = readFileSync(join(dataDir, "test-provider.json"), "utf8");
+		const catalogPath = join(packageRoot, "catalog.json");
+		const model = chatModel(values);
+		writeFileSync(catalogPath, JSON.stringify({ "test-provider": [model, { ...model, id: "model-b" }] }));
+		hydrateModelCatalog(packageRoot, catalogPath, { validateOnly: true });
+		expect(readFileSync(join(dataDir, "test-provider.json"), "utf8")).toBe(original);
+		writeFileSync(catalogPath, JSON.stringify({ "other-provider": [model] }));
+		expect(() => hydrateModelCatalog(packageRoot, catalogPath, { validateOnly: true })).toThrow(/missing provider/);
+	});
+
+	it.each([null, [], {}, { "test-provider": [] }, { "test-provider": {} }, { "test-provider": [{ id: "x" }] }])(
+		"rejects incomplete catalogs without replacing existing data: %j",
+		(catalog) => {
+			const { dataDir, packageRoot } = createFixture();
+			const catalogPath = join(packageRoot, "catalog.json");
+			const original = readFileSync(join(dataDir, MODEL_DATA_MANIFEST_FILE), "utf8");
+			writeFileSync(catalogPath, JSON.stringify(catalog));
+			expect(() => hydrateModelCatalog(packageRoot, catalogPath)).toThrow();
+			expect(readFileSync(join(dataDir, MODEL_DATA_MANIFEST_FILE), "utf8")).toBe(original);
+		},
+	);
+
+	it.each(["api", "provider", "cost"])("validates model %s before replacing existing data", (field) => {
+		const { dataDir, packageRoot, values } = createFixture();
+		const original = readFileSync(join(dataDir, "test-provider.json"), "utf8");
+		const model = chatModel(values);
+		model[field] = null;
+		const catalogPath = join(packageRoot, "catalog.json");
+		writeFileSync(catalogPath, JSON.stringify({ "test-provider": [model] }));
+		expect(() => hydrateModelCatalog(packageRoot, catalogPath)).toThrow();
+		expect(readFileSync(join(dataDir, "test-provider.json"), "utf8")).toBe(original);
+	});
+});
 
 describe("generated model data validation", () => {
 	it("rejects a missing upstream model from an exact generated allowlist", () => {

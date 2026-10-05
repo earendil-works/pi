@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+## [1.0.2] - 2026-10-04
+
+## [1.0.1] - 2026-10-03
+
+### Fixed
+
+- Fixed scripts that print in a loop growing the host's memory until it crashes: output is limited to `MAX_OUTPUT_CHARS` (16 Mi) characters and `MAX_OUTPUT_ITEMS` (100000) items, and a script past either limit fails with a `RangeError` ([#10283](https://github.com/earendil-works/pi/issues/10283))
+
 ## [1.0.0] - 2026-10-01
 
 ### Added

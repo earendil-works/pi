@@ -30,7 +30,7 @@ describe("export HTML tool output whitespace", () => {
 			renderResult: () => component,
 		} as unknown as ToolDefinition;
 		const renderer = createToolHtmlRenderer({
-			getToolDefinition: () => tool,
+			getToolRenderers: () => tool,
 			theme: {} as Theme,
 			cwd: "/tmp",
 		});

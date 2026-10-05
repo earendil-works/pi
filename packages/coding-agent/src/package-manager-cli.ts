@@ -1093,6 +1093,19 @@ export async function handlePackageCommand(
 						return true;
 					}
 					console.log(chalk.green(`Updated ${APP_NAME} from ${VERSION} to ${selfUpdatePlan.version}`));
+					// The pi.dev installer migrates global npm installs to a managed install
+					// that pins all dependencies. It does not migrate pnpm, yarn, or bun installs.
+					if (installMethod === "npm") {
+						const installerCommand =
+							process.platform === "win32"
+								? 'powershell -c "irm https://pi.dev/install.ps1 | iex"'
+								: "curl -fsSL https://pi.dev/install.sh | sh";
+						console.log();
+						console.log(chalk.yellow(`This npm installation of ${APP_NAME} does not pin its dependencies.`));
+						console.log(chalk.yellow("Run the installer to migrate to a managed installation that does:"));
+						console.log();
+						console.log(`  ${chalk.bold(installerCommand)}`);
+					}
 				}
 				return true;
 			}

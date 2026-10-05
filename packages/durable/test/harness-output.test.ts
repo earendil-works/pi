@@ -213,6 +213,7 @@ describe("Progress", () => {
 				return size;
 			},
 			() => {},
+			100,
 		);
 		progress.mark();
 		await vi.advanceTimersByTimeAsync(0);
@@ -233,6 +234,26 @@ describe("Progress", () => {
 		expect(commits).toEqual([0, 500, 600]);
 	});
 
+	it("waits the configured minimum interval between small commits", async () => {
+		vi.useFakeTimers({ now: 0 });
+		const commits: number[] = [];
+		const progress = new Progress(
+			async () => {
+				commits.push(Date.now());
+				return 10;
+			},
+			() => {},
+			500,
+		);
+		progress.mark();
+		await vi.advanceTimersByTimeAsync(0);
+		progress.mark();
+		await vi.advanceTimersByTimeAsync(499);
+		expect(commits).toEqual([0]);
+		await vi.advanceTimersByTimeAsync(1);
+		expect(commits).toEqual([0, 500]);
+	});
+
 	it("rejects the waiters of a failed commit and reports its error", async () => {
 		const errors: unknown[] = [];
 		const failure = new Error("commit failed");
@@ -241,6 +262,7 @@ describe("Progress", () => {
 				throw failure;
 			},
 			(error) => errors.push(error),
+			100,
 		);
 		await expect(progress.markAndWait()).rejects.toBe(failure);
 		expect(errors).toEqual([failure]);
@@ -258,6 +280,7 @@ describe("Progress", () => {
 				return 0;
 			},
 			() => {},
+			100,
 		);
 		const first = progress.markAndWait();
 		const second = progress.markAndWait();
