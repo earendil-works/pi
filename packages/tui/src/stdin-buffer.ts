@@ -24,6 +24,8 @@ const DEFAULT_SEQUENCE_TIMEOUT_MS = 50;
 const DEFAULT_ESCAPE_TIMEOUT_MS = 10;
 const BRACKETED_PASTE_START = "\x1b[200~";
 const BRACKETED_PASTE_END = "\x1b[201~";
+const MINTTY_OSC4_RESPONSE_PATTERN = /^(?:;\d{1,3};(?:rgb|rgba?):[^\x07\x1b;]*(?:\x07|\x1b\\))+$/i;
+const MINTTY_OSC4_RESPONSE_PREFIX_PATTERN = /^;\d{1,3};/;
 
 /**
  * Check if a string is a complete escape sequence or needs more data
@@ -247,9 +249,17 @@ function extractCompleteSequences(buffer: string): { sequences: string[]; remain
 				return { sequences, remainder: remaining };
 			}
 		} else {
-			// Not an escape sequence - take a single character
-			sequences.push(remaining[0]!);
-			pos++;
+			const minttyResponse = remaining.match(MINTTY_OSC4_RESPONSE_PATTERN);
+			if (minttyResponse) {
+				sequences.push(minttyResponse[0]);
+				pos += minttyResponse[0].length;
+			} else if (MINTTY_OSC4_RESPONSE_PREFIX_PATTERN.test(remaining)) {
+				return { sequences, remainder: remaining };
+			} else {
+				// Not an escape sequence - take a single character
+				sequences.push(remaining[0]!);
+				pos++;
+			}
 		}
 	}
 

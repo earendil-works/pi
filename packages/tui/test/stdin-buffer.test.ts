@@ -208,6 +208,22 @@ describe("StdinBuffer", () => {
 			assert.deepStrictEqual(emittedSequences, ["\x1b[A", "\x1b[B", "\x1b[C"]);
 		});
 
+		it("should group mintty prefixless OSC 4 replies", () => {
+			const da1 = "\x1b[?1;0c";
+			const replies = ";0;rgb:0000/0000/0000\x07;1;rgb:d4d4/2c2c/3a3a\x07";
+			processInput(da1 + replies);
+			assert.deepStrictEqual(emittedSequences, [da1, replies]);
+		});
+
+		it("should group split mintty prefixless OSC 4 replies", () => {
+			const da1 = "\x1b[?1;0c";
+			processInput(da1);
+			processInput(";0;rgb:0000/0000/0000");
+			assert.deepStrictEqual(emittedSequences, [da1]);
+			processInput("\x07");
+			assert.deepStrictEqual(emittedSequences, [da1, ";0;rgb:0000/0000/0000\x07"]);
+		});
+
 		it("should handle partial sequence with preceding characters", () => {
 			processInput("abc\x1b[<35");
 			assert.deepStrictEqual(emittedSequences, ["a", "b", "c"]);

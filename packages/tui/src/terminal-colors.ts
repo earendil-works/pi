@@ -37,15 +37,18 @@ function parseOscHexChannel(channel: string): number | undefined {
 
 /** What an OSC color reply reports: the default foreground (OSC 10), background (OSC 11), or a palette index (OSC 4). */
 export type OscColorTarget = "foreground" | "background" | number;
+export type OscColorResponse = { target: OscColorTarget; rgb: RgbColor | undefined };
+export type MinttyOsc4Responses = { responses: OscColorResponse[]; hasDeviceAttributes: boolean };
 
-const OSC_COLOR_RESPONSE_PATTERN = /^\x1b\](?:(1[01])|4;(\d{1,3}));([^\x07\x1b]*)(?:\x07|\x1b\\)$/i;
+const OSC_COLOR_RESPONSE_PATTERN = /^\x1b\](?:(1[01])|4;(\d{1,3}));([^\x07\x1b;]*)(?:\x07|\x1b\\)$/i;
+const MINTTY_OSC4_RESPONSE_PATTERN = /^(?:(\x1b\[\?[\d;]*c))?((?:;\d{1,3};[^\x07\x1b;]*(?:\x07|\x1b\\))+)$\s*$/i;
 const COLOR_SCHEME_REPORT_PATTERN = /^(?:\x1b\[\?997;(1|2)n)+$/;
 
 /**
  * Parse an OSC 10, 11, or 4 color reply. Returns undefined when `data` is not such a reply;
  * `rgb` is undefined when it is a reply with an unparseable color.
  */
-export function parseOscColorResponse(data: string): { target: OscColorTarget; rgb: RgbColor | undefined } | undefined {
+export function parseOscColorResponse(data: string): OscColorResponse | undefined {
 	const match = data.match(OSC_COLOR_RESPONSE_PATTERN);
 	if (!match) {
 		return undefined;
@@ -53,6 +56,22 @@ export function parseOscColorResponse(data: string): { target: OscColorTarget; r
 	const target: OscColorTarget =
 		match[1] === "10" ? "foreground" : match[1] === "11" ? "background" : Number.parseInt(match[2], 10);
 	return { target, rgb: parseOscColorValue(match[3]) };
+}
+
+/**
+ * Parse mintty's prefixless OSC 4 replies, optionally appended to a DA1 response.
+ * mintty omits the OSC introducer and appends palette replies to the DA1 response.
+ */
+export function parseMinttyOsc4Responses(data: string): MinttyOsc4Responses | undefined {
+	const match = data.match(MINTTY_OSC4_RESPONSE_PATTERN);
+	if (!match) return undefined;
+
+	const responses: OscColorResponse[] = [];
+	const replyPattern = /;(\d{1,3});([^\x07\x1b;]*)(?:\x07|\x1b\\)/g;
+	for (const reply of match[2].matchAll(replyPattern)) {
+		responses.push({ target: Number.parseInt(reply[1]!, 10), rgb: parseOscColorValue(reply[2]!) });
+	}
+	return responses.length > 0 ? { responses, hasDeviceAttributes: match[1] !== undefined } : undefined;
 }
 
 function parseOscColorValue(rawValue: string): RgbColor | undefined {

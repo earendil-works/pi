@@ -8,7 +8,7 @@ import {
 	type TUI,
 	TuiMainScreen,
 } from "../src/index.ts";
-import { parseOscColorResponse } from "../src/terminal-colors.ts";
+import { parseMinttyOsc4Responses, parseOscColorResponse } from "../src/terminal-colors.ts";
 
 class TestTerminal implements Terminal {
 	private inputHandler?: (data: string) => void;
@@ -116,6 +116,23 @@ describe("parseOscColorResponse", () => {
 		assert.deepStrictEqual(parseOscColorResponse("\x1b]4;1;bogus\x07"), { target: 1, rgb: undefined });
 		assert.strictEqual(parseOscColorResponse("\x1b]12;#ffffff\x07"), undefined);
 	});
+
+	it("parses mintty prefixless OSC 4 replies appended to DA1", () => {
+		assert.deepStrictEqual(parseMinttyOsc4Responses("\x1b[?1;0c;0;rgb:0000/0000/0000\x07;1;rgb:d4d4/2c2c/3a3a\x07"), {
+			responses: [
+				{ target: 0, rgb: { r: 0, g: 0, b: 0 } },
+				{ target: 1, rgb: { r: 212, g: 44, b: 58 } },
+			],
+			hasDeviceAttributes: true,
+		});
+	});
+
+	it("parses standalone mintty prefixless OSC 4 replies", () => {
+		assert.deepStrictEqual(parseMinttyOsc4Responses(";0;rgb:0000/0000/0000\x07"), {
+			responses: [{ target: 0, rgb: { r: 0, g: 0, b: 0 } }],
+			hasDeviceAttributes: false,
+		});
+	});
 });
 
 const PALETTE_REPLIES = Array.from({ length: 16 }, (_, index) => `\x1b]4;${index};#000000\x07`);
@@ -153,6 +170,19 @@ describe("TUI.queryTerminalColors", () => {
 			});
 			terminal.sendInput(DA1);
 			assert.deepStrictEqual(component.inputs, ["x"]);
+		} finally {
+			tui.stop();
+		}
+	});
+
+	it("consumes mintty prefixless OSC 4 replies appended to DA1", async () => {
+		const { terminal, tui, component } = setup();
+		try {
+			const query = tui.queryTerminalColors({ timeoutMs: 1000 });
+			terminal.sendInput("\x1b[?1;0c");
+			terminal.sendInput(";0;rgb:0000/0000/0000\x07;1;rgb:d4d4/2c2c/3a3a\x07");
+			assert.deepStrictEqual(await query, { foreground: undefined, background: undefined, palette: undefined });
+			assert.deepStrictEqual(component.inputs, []);
 		} finally {
 			tui.stop();
 		}

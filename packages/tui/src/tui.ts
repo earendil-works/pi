@@ -6,6 +6,7 @@ import { performance } from "node:perf_hooks";
 import { isKeyRelease, matchesKey } from "./keys.ts";
 import type { Terminal } from "./terminal.ts";
 import {
+	parseMinttyOsc4Responses,
 	parseOscColorResponse,
 	parseTerminalColorSchemeReport,
 	type RgbColor,
@@ -1120,10 +1121,26 @@ export abstract class TuiBase extends Container implements TUI {
 	}
 
 	private consumeTerminalColorResponse(data: string): boolean {
-		const query = this.pendingTerminalColorQueries[0];
-		if (!query) {
-			return false;
+		const minttyResponses = parseMinttyOsc4Responses(data);
+		if (minttyResponses) {
+			const query = this.pendingTerminalColorQueries[0];
+			if (!query) return true;
+			for (const { target, rgb } of minttyResponses.responses) {
+				const key = String(target);
+				if (query.replied.has(key)) continue;
+				query.replied.add(key);
+				if (target < TERMINAL_PALETTE_SIZE) query.palette[target] = rgb;
+			}
+			if (minttyResponses.hasDeviceAttributes) {
+				this.pendingTerminalColorQueries.shift();
+				this.completeTerminalColorQuery(query);
+			}
+			return true;
 		}
+
+		const query = this.pendingTerminalColorQueries[0];
+		if (!query) return false;
+
 		if (DEVICE_ATTRIBUTES_RESPONSE_PATTERN.test(data)) {
 			this.pendingTerminalColorQueries.shift();
 			this.completeTerminalColorQuery(query);
