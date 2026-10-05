@@ -1,8 +1,14 @@
+import { readFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { sep } from "node:path";
 import type { ExtensionAPI, ExtensionCommandContext } from "../../core/extensions/types.ts";
 import { formatBytes, LlamaClient, type LlamaModelInfo, normalizeLlamaServerUrl } from "./client.ts";
 import { findHuggingFaceToken, HuggingFaceClient } from "./huggingface.ts";
-import { createLlamaProvider, LLAMA_PROVIDER_ID } from "./provider.ts";
+import { createManagedLlama, huggingFaceCacheDir, type ManagedLlamaServerInfo } from "./managed.ts";
+import { createLlamaProvider, LLAMA_MANAGED_MODE, LLAMA_MODE_ENV, LLAMA_PROVIDER_ID } from "./provider.ts";
 import { type LlamaUi, runWithProgress, showLlamaUi } from "./ui.ts";
+
+const LOG_TAIL_LINES = 30;
 
 function modelIsLoaded(model: LlamaModelInfo): boolean {
 	return model.status.value === "loaded" || model.status.value === "sleeping";
@@ -26,31 +32,64 @@ function parseHuggingFaceModel(value: string): { repository: string; quantizatio
 		: { repository: value.slice(0, colon), quantization: value.slice(colon + 1) };
 }
 
-async function configuredClient(ctx: ExtensionCommandContext): Promise<LlamaClient | undefined> {
+function displayPath(path: string): string {
+	const home = homedir();
+	return path === home || path.startsWith(`${home}${sep}`) ? `~${path.slice(home.length)}` : path;
+}
+
+async function readLogTail(path: string): Promise<string[]> {
+	try {
+		return (await readFile(path, "utf8")).trimEnd().split("\n").slice(-LOG_TAIL_LINES);
+	} catch (error) {
+		return [`Could not read ${path}: ${error instanceof Error ? error.message : String(error)}`];
+	}
+}
+
+/** The `/llama` target: a fixed server URL, or the managed server that pi starts on demand. */
+type LlamaTarget = { type: "connect"; client: LlamaClient } | { type: "managed" };
+
+async function configuredTarget(ctx: ExtensionCommandContext): Promise<LlamaTarget | undefined> {
 	const result = await ctx.modelRegistry.getProviderAuth(LLAMA_PROVIDER_ID);
 	if (!result) {
 		ctx.ui.notify(`Configure llama.cpp with /login ${LLAMA_PROVIDER_ID}`, "warning");
 		return undefined;
 	}
+	if (result.env?.[LLAMA_MODE_ENV] === LLAMA_MANAGED_MODE) return { type: "managed" };
 	const configuredUrl = result.env?.LLAMA_BASE_URL;
 	const serverUrl = normalizeLlamaServerUrl(
 		typeof configuredUrl === "string" && configuredUrl ? configuredUrl : (result.auth.baseUrl ?? ""),
 	);
-	return new LlamaClient(serverUrl, result.auth.apiKey);
+	return { type: "connect", client: new LlamaClient(serverUrl, result.auth.apiKey) };
+}
+
+/** The server `/llama` currently manages. `managed` is set when pi started the server. */
+interface LlamaSession {
+	client: LlamaClient;
+	managed?: ManagedLlamaServerInfo;
+}
+
+function sessionHeader(session: LlamaSession): string[] {
+	if (!session.managed) return [session.client.serverUrl];
+	return [
+		`Managed llama-server · ${session.managed.url}`,
+		`Models:    ${displayPath(session.managed.modelsDir)}`,
+		`Downloads: ${displayPath(huggingFaceCacheDir())}`,
+	];
 }
 
 export default function llamaExtension(pi: ExtensionAPI): void {
-	const provider = createLlamaProvider();
+	const managed = createManagedLlama();
+	const provider = createLlamaProvider(managed);
 	pi.registerProvider(provider.provider);
 
 	const syncCatalog = async (
 		ctx: ExtensionCommandContext,
-		client: LlamaClient,
+		session: LlamaSession,
 		catalog?: LlamaModelInfo[],
 	): Promise<LlamaModelInfo[]> => {
 		const signal = AbortSignal.timeout(15_000);
-		const current = catalog ?? (await client.list({ signal }));
-		provider.setCatalog(current, client.serverUrl);
+		const current = catalog ?? (await session.client.list({ signal }));
+		provider.setCatalog(current, session.client.serverUrl, { managed: session.managed !== undefined });
 		const result = await ctx.modelRegistry.refresh({
 			providers: [LLAMA_PROVIDER_ID],
 			// /llama already contacted the configured llama.cpp server, so keep this refresh live even in PI_OFFLINE.
@@ -66,10 +105,11 @@ export default function llamaExtension(pi: ExtensionAPI): void {
 	const loadModel = async (
 		ctx: ExtensionCommandContext,
 		ui: LlamaUi,
-		client: LlamaClient,
+		session: LlamaSession,
 		catalog: LlamaModelInfo[],
 		target: LlamaModelInfo,
 	): Promise<void> => {
+		const { client } = session;
 		const loaded = catalog.filter((model) => model.id !== target.id && modelIsLoaded(model));
 		let replace = false;
 		if (loaded.length > 0) {
@@ -85,7 +125,7 @@ export default function llamaExtension(pi: ExtensionAPI): void {
 		const restoreLoaded = async (): Promise<void> => {
 			ctx.ui.notify("Restoring previously loaded models");
 			for (const model of loaded) await client.loadAndWait(model.id, () => {});
-			await syncCatalog(ctx, client);
+			await syncCatalog(ctx, session);
 		};
 		if (replace) {
 			for (const model of loaded) await client.unloadAndWait(model.id);
@@ -105,7 +145,7 @@ export default function llamaExtension(pi: ExtensionAPI): void {
 				if (replace) await restoreLoaded();
 				return;
 			}
-			const refreshed = await syncCatalog(ctx, client);
+			const refreshed = await syncCatalog(ctx, session);
 			const loadedModel = refreshed.find((model) => model.id === target.id);
 			ctx.ui.notify(
 				loadedModel?.status.value === "loaded" ? `Loaded ${target.id}` : `Load started for ${target.id}`,
@@ -125,16 +165,17 @@ export default function llamaExtension(pi: ExtensionAPI): void {
 	const unloadModel = async (
 		ctx: ExtensionCommandContext,
 		ui: LlamaUi,
-		client: LlamaClient,
+		session: LlamaSession,
 		model: LlamaModelInfo,
 	): Promise<void> => {
 		if (!(await ui.confirm("Unload model?", model.id))) return;
-		await client.unloadAndWait(model.id);
-		await syncCatalog(ctx, client);
+		await session.client.unloadAndWait(model.id);
+		await syncCatalog(ctx, session);
 		ctx.ui.notify(`Unloaded ${model.id}`);
 	};
 
-	const downloadModel = async (ctx: ExtensionCommandContext, ui: LlamaUi, client: LlamaClient): Promise<void> => {
+	const downloadModel = async (ctx: ExtensionCommandContext, ui: LlamaUi, session: LlamaSession): Promise<void> => {
+		const { client } = session;
 		const huggingFace = new HuggingFaceClient(await findHuggingFaceToken());
 		const selected = await ui.searchModels((query, signal) => huggingFace.search(query, signal));
 		if (!selected) return;
@@ -176,7 +217,7 @@ export default function llamaExtension(pi: ExtensionAPI): void {
 			cancel: () => client.unload(model),
 		});
 		if (result.cancelled) return;
-		await syncCatalog(ctx, client, result.value);
+		await syncCatalog(ctx, session, result.value);
 		ctx.ui.notify(`Downloaded ${model}`);
 	};
 
@@ -187,37 +228,65 @@ export default function llamaExtension(pi: ExtensionAPI): void {
 				ctx.ui.notify("/llama is available in interactive mode", "warning");
 				return;
 			}
-			const client = await configuredClient(ctx);
-			if (!client) return;
+			const target = await configuredTarget(ctx);
+			if (!target) return;
 			await showLlamaUi(ctx, async (ui) => {
-				const readCatalog = async (): Promise<LlamaModelInfo[] | undefined> => {
+				let session: LlamaSession | undefined = target.type === "connect" ? { client: target.client } : undefined;
+
+				// Managed sessions start or rejoin the server on every read, so a restarted or crashed server is
+				// picked up again. `restart` replaces the running server first.
+				const openSession = async (restart: boolean): Promise<LlamaSession> => {
+					if (target.type === "connect") return { client: target.client };
+					if (restart) ui.showStatus("Restarting llama-server", "Stopping the running server…");
+					else if (!session) ui.showStatus("Starting llama-server", "Waiting for the server…");
+					const server = restart ? await managed.restart() : await managed.acquire();
+					if (session?.managed?.url === server.url) return session;
+					return { client: new LlamaClient(server.url, server.apiKey), managed: server };
+				};
+
+				const readCatalog = async (restart = false): Promise<LlamaModelInfo[] | undefined> => {
 					while (true) {
 						try {
-							return await syncCatalog(ctx, client);
+							session = await openSession(restart);
+							return await syncCatalog(ctx, session);
 						} catch (error) {
-							if ((await ui.connectionError(client.serverUrl, connectionErrorMessage(error))) === "close") {
+							const server = session?.client.serverUrl ?? "Managed llama-server";
+							if ((await ui.connectionError(server, connectionErrorMessage(error))) === "close") {
 								return undefined;
 							}
+							restart = false;
 						}
 					}
 				};
 
 				let catalog = await readCatalog();
-				if (!catalog) return;
+				if (!catalog || !session) return;
 				while (true) {
-					const action = await ui.showModels(client.serverUrl, catalog);
+					const current: LlamaSession = session;
+					const action = await ui.showModels(sessionHeader(current), catalog, {
+						managed: current.managed !== undefined,
+					});
 					if (action.type === "close") return;
+					let restart = false;
 					let actionError: unknown;
 					try {
-						if (action.type === "download") await downloadModel(ctx, ui, client);
-						else if (modelIsLoaded(action.model)) await unloadModel(ctx, ui, client, action.model);
+						if (action.type === "download") await downloadModel(ctx, ui, current);
+						else if (action.type === "log") {
+							const logPath = current.managed?.logPath;
+							if (logPath) await ui.showText(displayPath(logPath), await readLogTail(logPath));
+						} else if (action.type === "restart") {
+							restart = await ui.confirm(
+								"Restart llama-server?",
+								"Loaded models are unloaded. Requests from other pi sessions are interrupted.",
+							);
+						} else if (modelIsLoaded(action.model)) await unloadModel(ctx, ui, current, action.model);
 						else if (action.model.status.value === "unloaded")
-							await loadModel(ctx, ui, client, catalog, action.model);
+							await loadModel(ctx, ui, current, catalog, action.model);
 						else ctx.ui.notify(`${action.model.id} is ${action.model.status.value}`, "warning");
 					} catch (error) {
 						actionError = error;
 					}
-					const refreshed = await readCatalog();
+					const refreshed = await readCatalog(restart);
 					if (!refreshed) return;
 					catalog = refreshed;
 					if (actionError && !isConnectionError(actionError)) {
