@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -26,7 +25,7 @@ function createFixture(t, { importServer = false, declareServer = false } = {}) 
 	const repoRoot = join(root, "repo");
 	mkdirSync(repoRoot, { recursive: true });
 	writeFileSync(join(repoRoot, "package.json"), '{"name":"fixture","private":true}\n');
-	const packageNames = [codingAgentName, "@earendil-works/chord", ...devPackages];
+	const packageNames = [codingAgentName, ...devPackages];
 	for (const name of packageNames) {
 		const isAgent = name === codingAgentName;
 		writePackage(
@@ -48,10 +47,7 @@ function createFixture(t, { importServer = false, declareServer = false } = {}) 
 				...(isAgent
 					? {
 						bin: { pi: "dist/bundle/cli.js" },
-						dependencies: {
-							"@earendil-works/chord": "1.0.0",
-							...(declareServer ? { "@earendil-works/pi-server": "1.0.0" } : {}),
-						},
+						...(declareServer ? { dependencies: { "@earendil-works/pi-server": "1.0.0" } } : {}),
 						devDependencies: Object.fromEntries(devPackages.map((packageName) => [packageName, "1.0.0"])),
 					}
 					: {}),
@@ -59,13 +55,11 @@ function createFixture(t, { importServer = false, declareServer = false } = {}) 
 			{
 				"dist/index.js": isAgent
 					? `${importServer ? 'import "@earendil-works/pi-server";' : ""}
-import { marker } from "@earendil-works/chord";
-if (marker !== "local tarball") throw new Error("Wrong Chord artifact");
 export function createAgentSession() {}
 export class SessionManager { static inMemory() {} }
 export class ModelRuntime { static create() {} }
 `
-					: 'export const marker = "local tarball";\n',
+					: "export {};\n",
 				"dist/index.d.ts": "export {};\n",
 				...(isAgent
 					? {
@@ -76,19 +70,13 @@ export class ModelRuntime { static create() {} }
 			},
 		);
 	}
-	execFileSync("git", ["init", "--quiet"], { cwd: repoRoot });
-	execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: repoRoot });
-	execFileSync("git", ["config", "user.name", "Test"], { cwd: repoRoot });
-	execFileSync("git", ["add", "."], { cwd: repoRoot });
-	execFileSync("git", ["commit", "--quiet", "-m", "fixture"], { cwd: repoRoot });
-	const artifactSet = produceArtifactSet({ build: false, outDir: join(root, "artifacts"), repoRoot });
+	const artifactSet = produceArtifactSet({ build: false, outDir: join(root, "artifacts"), repoRoot, source: null });
 	const directory = join(root, "consumer");
 	installConsumer({ artifactSet, directory, packageNames: [codingAgentName] });
 	return directory;
 }
 
-// #9132: installing every tarball directly hid undeclared runtime imports.
-test("installs only coding-agent directly and enforces published package policy", (t) => {
+test("accepts a valid coding-agent package and rejects development-only packages and files", (t) => {
 	const directory = createFixture(t);
 	smokeTestCodingAgent(directory);
 

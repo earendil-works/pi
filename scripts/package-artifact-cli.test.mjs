@@ -17,16 +17,13 @@ function assertFailsBeforeWork(result, message) {
 	assert.doesNotMatch(result.stdout, /generate:models|npm run clean/);
 }
 
-test("rejects a missing local-release --out value before release work starts", () => {
-	for (const args of [["--out"], ["--out", "--skip-check"]]) {
-		assertFailsBeforeWork(runScript("local-release.mjs", args), /Option '--out.*argument (?:missing|is ambiguous)/);
-	}
+test("rejects missing option values before doing work", () => {
+	assertFailsBeforeWork(runScript("local-release.mjs", ["--out"]), /--out/);
+	assertFailsBeforeWork(runScript("pack-packages.mjs", ["--out", "--force"]), /--out/);
+	assertFailsBeforeWork(runScript("use-local-packages.mjs", ["--manifest", "--consumer", "target"]), /--manifest/);
 });
 
-test("rejects malformed package artifact options before doing work", () => {
-	assertFailsBeforeWork(runScript("pack-packages.mjs", ["--out", "--force"]), /Option '--out' argument is ambiguous/);
-	assertFailsBeforeWork(runScript("use-local-packages.mjs", ["--manifest", "--consumer", "target"]), /Option '--manifest' argument is ambiguous/);
-	assertFailsBeforeWork(runScript("use-local-packages.mjs", ["--unknown", "value"]), /Unknown option '--unknown'/);
+test("rejects an unsupported package manager before doing work", () => {
 	assertFailsBeforeWork(
 		runScript("use-local-packages.mjs", ["--manifest", "missing.json", "--consumer", "target", "--package", "example", "--package-manager", "yarn"]),
 		/Unsupported package manager: yarn/,

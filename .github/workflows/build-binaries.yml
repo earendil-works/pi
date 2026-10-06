@@ -381,7 +381,7 @@ jobs:
           npm --version
 
       - name: Validate npm tarball publication with provenance
-        run: npm run publish:dry
+        run: node scripts/publish.mjs --dry-run
 
       - name: Publish npm packages
         run: node scripts/publish.mjs

@@ -75,12 +75,12 @@ function prepareOutputDirectory(outDir, options) {
 
 export function produceArtifactSet({ repoRoot, outDir, build = true, offlineModelData = false, force = false, source }) {
 	const root = resolve(repoRoot);
-	const artifactSource = source === undefined ? getGitSource(root) : source;
 	const artifactDirectory = prepareOutputDirectory(outDir, { force, repoRoot: root });
 	if (build) {
 		execNpmSync(["run", "clean"], { cwd: root, stdio: "inherit" });
 		execNpmSync(["run", offlineModelData ? "build:offline" : "build"], { cwd: root, stdio: "inherit" });
 	}
+	const artifactSource = source === undefined ? getGitSource(root) : source;
 	const packages = getPublicWorkspacePackages(join(root, "packages"));
 	const packedPackages = packPackages(packages, join(artifactDirectory, "tarballs"));
 	const manifest = {

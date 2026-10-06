@@ -80,13 +80,8 @@ function createArtifactSet(t) {
 			"dist/index.d.ts": "export declare const second: true;\n",
 		},
 	);
-	execFileSync("git", ["init", "--quiet"], { cwd: repoRoot });
-	execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: repoRoot });
-	execFileSync("git", ["config", "user.name", "Test"], { cwd: repoRoot });
-	execFileSync("git", ["add", "."], { cwd: repoRoot });
-	execFileSync("git", ["commit", "--quiet", "-m", "fixture"], { cwd: repoRoot });
 	return {
-		artifactSet: produceArtifactSet({ build: false, outDir: join(root, "artifacts"), repoRoot }),
+		artifactSet: produceArtifactSet({ build: false, outDir: join(root, "artifacts"), repoRoot, source: null }),
 		root,
 	};
 }
