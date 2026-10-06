@@ -582,6 +582,55 @@ for await (const line of createInterface({ input: process.stdin })) {
 		expect(failing.opened()).toBe(1);
 	});
 
+	// #10249
+	it("closes a connection that is still initializing before close returns", async () => {
+		const pair = createInMemoryTransportPair();
+		// The server receives initialize but never answers it.
+		const initializing = new Promise<void>((resolve) => {
+			pair.server.onMessage(() => resolve());
+		});
+		void pair.server.start();
+		let transportClosed = false;
+		pair.client.onClose(() => {
+			transportClosed = true;
+		});
+		const { connection } = connect({ name: "fake", config: { command: "unused" }, source: "test" }, [
+			() => pair.client,
+		]);
+		let failure: unknown;
+		void connection.getClient().catch((error) => {
+			failure = error;
+		});
+		await initializing;
+		await connection.close();
+		expect(transportClosed).toBe(true);
+		expect(String(failure)).toContain("failed to connect");
+	});
+
+	// #10249
+	it("stops waiting to retry a connection when closed", async () => {
+		const { connection } = connect(
+			{ name: "fake", config: { url: "http://unused.invalid", headers: { Authorization: "x" } }, source: "test" },
+			[
+				() => {
+					const transport = createTransport();
+					transport.send = async () => {
+						throw new McpHttpError(503, "MCP HTTP request failed with status 503");
+					};
+					return transport;
+				},
+			],
+		);
+		let failure: unknown;
+		void connection.getClient().catch((error) => {
+			failure = error;
+		});
+		// The first attempt failed; the retry is 250ms away.
+		await new Promise((resolve) => setTimeout(resolve, 10));
+		await connection.close();
+		expect(String(failure)).toContain("status 503");
+	});
+
 	it("retries resource reads, but not tool calls, after a transient HTTP error", async () => {
 		const transport = createTransport();
 		const send = transport.send.bind(transport);

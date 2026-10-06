@@ -263,7 +263,7 @@ describe("ModelRuntime auth options", () => {
 		});
 	});
 
-	it("forwards cancellation to extension OAuth refresh", async () => {
+	it("does not cancel an extension OAuth refresh with the request", async () => {
 		const credentials = AuthStorage.inMemory({
 			"extension-oauth": {
 				type: "oauth",
@@ -295,8 +295,8 @@ describe("ModelRuntime auth options", () => {
 		expect(refreshSignal).toBeInstanceOf(AbortSignal);
 		const reason = new Error("cancelled");
 		controller.abort(reason);
-		expect(refreshSignal?.aborted).toBe(true);
-		expect(refreshSignal?.reason).toBe(reason);
+		// A started refresh may already have rotated the refresh token and must be persisted.
+		expect(refreshSignal?.aborted).toBe(false);
 	});
 
 	it("does not fabricate an API key method for an extension OAuth-only provider", async () => {

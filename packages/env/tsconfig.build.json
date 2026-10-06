@@ -1,0 +1,14 @@
+{
+	"extends": "../../tsconfig.base.json",
+	"compilerOptions": {
+		"outDir": "./dist",
+		"paths": {
+			"@earendil-works/chord": ["../chord/dist/index.d.ts"],
+			"@earendil-works/chord/context": ["../chord/dist/context/index.d.ts"],
+			"@earendil-works/pi-durable/env": ["../durable/dist/env/index.d.ts"]
+		},
+		"rootDir": "./src"
+	},
+	"include": ["src/**/*.ts"],
+	"exclude": ["node_modules", "dist", "**/*.d.ts", "src/**/*.d.ts"]
+}

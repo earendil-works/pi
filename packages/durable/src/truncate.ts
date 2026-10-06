@@ -106,17 +106,34 @@ export function formatSize(bytes: number): string {
  * returns empty content with firstLineExceedsLimit=true.
  */
 export function truncateHead(content: string, options: TruncationOptions = {}): TruncationResult {
+	return truncateHeadOf(
+		content,
+		{ lines: splitLinesForCounting(content).length, bytes: utf8ByteLength(content) },
+		options,
+	);
+}
+
+/**
+ * `truncateHead` of a text known by a prefix and its totals (`lines` counted like `truncateHead`, ignoring a trailing
+ * newline). The prefix must be the whole text, or longer than `maxBytes + 1` UTF-8 bytes, or hold at least `maxLines`
+ * newlines; then the result equals `truncateHead` of the whole text.
+ */
+export function truncateHeadOf(
+	prefix: string,
+	totals: { readonly lines: number; readonly bytes: number },
+	options: TruncationOptions = {},
+): TruncationResult {
 	const maxLines = options.maxLines ?? DEFAULT_MAX_LINES;
 	const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
 
-	const totalBytes = utf8ByteLength(content);
-	const lines = splitLinesForCounting(content);
-	const totalLines = lines.length;
+	const totalBytes = totals.bytes;
+	const lines = splitLinesForCounting(prefix);
+	const totalLines = totals.lines;
 
 	// Check if no truncation needed
 	if (totalLines <= maxLines && totalBytes <= maxBytes) {
 		return {
-			content,
+			content: prefix,
 			truncated: false,
 			truncatedBy: null,
 			totalLines,

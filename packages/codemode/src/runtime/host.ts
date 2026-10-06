@@ -46,13 +46,52 @@ function serializeStore(store: Readonly<Record<string, unknown>> | undefined): R
 	return serialized;
 }
 
+/**
+ * The prelude that serializes values for the host runs in the same VM as the script, so a script
+ * that patches built-ins (for example `Array.prototype.toJSON`) can make it send malformed data.
+ * Payloads that do not decode throw this error, and the execution fails as a sandbox error.
+ */
+class BridgeError extends Error {}
+
+function parseBridgeJson(json: string, what: string): unknown {
+	try {
+		return JSON.parse(json);
+	} catch {
+		throw new BridgeError(`${what} is not valid JSON`);
+	}
+}
+
 function parseStoreWrites(json: string): CodemodeStoreWrites {
+	const entries = parseBridgeJson(json, "store writes");
+	if (!Array.isArray(entries)) throw new BridgeError("store writes are not an array");
 	const writes: CodemodeStoreWrites = { set: {}, delete: [] };
-	for (const [key, value] of JSON.parse(json) as [string, string?][]) {
+	for (const entry of entries) {
+		if (
+			!Array.isArray(entry) ||
+			typeof entry[0] !== "string" ||
+			(entry.length === 2 ? typeof entry[1] !== "string" : entry.length !== 1)
+		) {
+			throw new BridgeError("store writes contain a malformed entry");
+		}
+		const [key, value] = entry as [string, string?];
 		if (value === undefined) writes.delete.push(key);
-		else writes.set[key] = JSON.parse(value);
+		else writes.set[key] = parseBridgeJson(value, `store value for ${JSON.stringify(key)}`);
 	}
 	return writes;
+}
+
+function parseScriptError(json: string): CodemodeError {
+	const parsed = parseBridgeJson(json, "script error");
+	if (typeof parsed !== "object" || parsed === null) throw new BridgeError("script error is not an object");
+	const { name, message, stack } = parsed as Record<string, unknown>;
+	if (
+		typeof message !== "string" ||
+		(name !== undefined && typeof name !== "string") ||
+		(stack !== undefined && typeof stack !== "string")
+	) {
+		throw new BridgeError("script error is malformed");
+	}
+	return { kind: "script", name, message, stack };
 }
 
 function defaultWorkerUrl(): URL {
@@ -158,7 +197,20 @@ class Execution {
 			return;
 		}
 		this.worker = worker;
-		worker.on("message", (message: unknown) => this.handleMessage(message));
+		worker.on("message", (message: unknown) => {
+			// An exception here would be uncaught in the host process and leave the execution unsettled.
+			try {
+				this.handleMessage(message);
+			} catch (error) {
+				this.finish({
+					kind: "sandbox",
+					message:
+						error instanceof BridgeError
+							? `Sandbox bridge broken: ${error.message}. The script may have modified built-ins such as a prototype's toJSON.`
+							: `Sandbox host failed: ${errorMessage(error)}`,
+				});
+			}
+		});
 		worker.on("error", (error: unknown) => {
 			this.finish({
 				kind: "sandbox",
@@ -181,12 +233,14 @@ class Execution {
 	}
 
 	private handleMessage(message: unknown): void {
-		if (this.finished || !isWorkerToHostMessage(message)) return;
+		if (this.finished) return;
+		if (!isWorkerToHostMessage(message)) throw new BridgeError("unknown message from the worker");
 		switch (message.type) {
 			case "output":
 				this.output.push(message.item);
 				break;
 			case "call":
+				if (this.pending.has(message.id)) throw new BridgeError(`duplicate call id ${message.id}`);
 				void this.handleCall(message);
 				break;
 			case "done":
@@ -199,12 +253,13 @@ class Execution {
 	}
 
 	private handleDone(message: Extract<WorkerToHostMessage, { type: "done" }>): void {
+		// Decode everything before finish(), which must not throw once it starts.
 		if (!message.ok) {
-			const parsed = JSON.parse(message.error) as Omit<CodemodeError, "kind">;
-			this.finish({ kind: "script", ...parsed });
+			this.finish(parseScriptError(message.error));
 			return;
 		}
-		this.finish(undefined, message.value === undefined ? undefined : JSON.parse(message.value), message.writes);
+		const value = message.value === undefined ? undefined : parseBridgeJson(message.value, "return value");
+		this.finish(undefined, value, parseStoreWrites(message.writes));
 	}
 
 	private async handleCall(message: Extract<WorkerToHostMessage, { type: "call" }>): Promise<void> {
@@ -239,7 +294,7 @@ class Execution {
 		this.post(reply);
 	}
 
-	private finish(error: CodemodeError | undefined, value?: unknown, writes?: string): void {
+	private finish(error: CodemodeError | undefined, value?: unknown, writes?: CodemodeStoreWrites): void {
 		if (this.finished) return;
 		this.finished = true;
 		clearTimeout(this.timer);
@@ -259,7 +314,7 @@ class Execution {
 					value,
 					output: this.output,
 					calls: this.calls,
-					storeWrites: writes === undefined ? { set: {}, delete: [] } : parseStoreWrites(writes),
+					storeWrites: writes ?? { set: {}, delete: [] },
 				};
 		if (!this.worker) {
 			this.resolveResult(result);

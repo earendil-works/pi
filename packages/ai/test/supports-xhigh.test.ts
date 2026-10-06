@@ -113,7 +113,7 @@ describe("getSupportedThinkingLevels", () => {
 	it("does not support off for GPT-6.1 Sol", () => {
 		const expected = {
 			openai: ["low", "medium", "high", "xhigh", "max"],
-			"azure-openai-responses": ["low", "medium", "high", "xhigh", "max"],
+			azure: ["low", "medium", "high", "xhigh", "max"],
 			"openai-codex": ["minimal", "low", "medium", "high", "xhigh", "max"],
 		} as const;
 		for (const [provider, levels] of Object.entries(expected)) {

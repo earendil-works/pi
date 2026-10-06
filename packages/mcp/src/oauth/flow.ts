@@ -103,6 +103,19 @@ function loopback(hostname: string): boolean {
 	return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]" || hostname === "::1";
 }
 
+/**
+ * The OpenID Connect `application_type` for `redirect_uris` (MCP SEP-837). Without one, OpenID Connect servers
+ * assume `web`, which rejects http loopback redirect URIs. Loopback hosts and custom schemes are native (RFC 8252).
+ */
+function applicationType(redirectUris: readonly string[]): "native" | "web" {
+	const native = redirectUris.some((uri) => {
+		if (!URL.canParse(uri)) return false;
+		const url = new URL(uri);
+		return (url.protocol !== "http:" && url.protocol !== "https:") || loopback(url.hostname);
+	});
+	return native ? "native" : "web";
+}
+
 function secureEndpoint(value: string | URL): URL {
 	const url = new URL(value);
 	if (url.protocol !== "https:" && !loopback(url.hostname)) throw new OAuthInsecureEndpointError(url.href);
@@ -239,7 +252,12 @@ export async function registerClient(
 		{
 			method: "POST",
 			headers: { Accept: "application/json", "content-type": "application/json" },
-			body: JSON.stringify({ ...options.clientMetadata, ...(options.scope ? { scope: options.scope } : {}) }),
+			body: JSON.stringify({
+				...options.clientMetadata,
+				application_type:
+					options.clientMetadata.application_type ?? applicationType(options.clientMetadata.redirect_uris),
+				...(options.scope ? { scope: options.scope } : {}),
+			}),
 		},
 	);
 	if (!response.ok) throw new OAuthRegistrationError(response.status, await response.text());

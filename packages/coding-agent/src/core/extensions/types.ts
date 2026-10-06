@@ -546,6 +546,8 @@ export interface ToolLoadout {
 	readonly registered: readonly AgentTool[];
 	getExposure(name: string): ToolExposure;
 	getNamespace(name: string): ToolNamespace | undefined;
+	/** A tool's `promptGuidelines`. Hidden declarations leave them out of the system prompt. */
+	getPromptGuidelines(name: string): readonly string[];
 }
 
 /** Changes {@link ToolDefinition.prepareLoadout} makes to what the model sees. */

@@ -87,6 +87,10 @@ describe("tool output bounds", () => {
 		expect(bound("x\néééé", tail(10, 5))).toEqual({ kept: "éé", droppedBytes: 6, droppedLines: 1 });
 	});
 
+	it("keeps a U+FEFF at the start of a kept slice", () => {
+		expect(bound("x\ufeffa", tail(10, 4))).toEqual({ kept: "\ufeffa", droppedBytes: 1, droppedLines: 0 });
+	});
+
 	it("cuts tails of surrogate edge cases exactly like Buffer", () => {
 		const inputs = ["a\ud83d", "\ude42b", "a\ude42b", "\ud83d\ud83d\ude42", "\ud83d\ude42\ude42", "👩‍💻"];
 		for (const input of inputs) assertMatchesBufferTail(input);
@@ -146,6 +150,18 @@ describe("OutputBuffer", () => {
 		expect(buffer.snapshot()).toEqual({ text: "a\n", droppedBytes: 0, droppedLines: 0 });
 		buffer.push("b\u001b\n");
 		expect(buffer.snapshot()).toEqual({ text: "b\n", droppedBytes: 3, droppedLines: 1 });
+	});
+
+	it("drops a byte-order mark only at the start of the output", () => {
+		const bom = Uint8Array.of(0xef, 0xbb, 0xbf);
+		const buffer = new OutputBuffer(tail(10));
+		buffer.push(bom.subarray(0, 1));
+		buffer.push(Uint8Array.of(0xbb, 0xbf, 0x61));
+		buffer.push("b");
+		// A U+FEFF after a string chunk is text.
+		buffer.push(Uint8Array.of(...bom, 0x63));
+		buffer.end();
+		expect(buffer.snapshot().text).toBe("ab\ufeffc");
 	});
 
 	it("flushes an incomplete character before a string chunk and at the end", () => {
@@ -213,6 +229,7 @@ describe("Progress", () => {
 				return size;
 			},
 			() => {},
+			100,
 		);
 		progress.mark();
 		await vi.advanceTimersByTimeAsync(0);
@@ -233,6 +250,26 @@ describe("Progress", () => {
 		expect(commits).toEqual([0, 500, 600]);
 	});
 
+	it("waits the configured minimum interval between small commits", async () => {
+		vi.useFakeTimers({ now: 0 });
+		const commits: number[] = [];
+		const progress = new Progress(
+			async () => {
+				commits.push(Date.now());
+				return 10;
+			},
+			() => {},
+			500,
+		);
+		progress.mark();
+		await vi.advanceTimersByTimeAsync(0);
+		progress.mark();
+		await vi.advanceTimersByTimeAsync(499);
+		expect(commits).toEqual([0]);
+		await vi.advanceTimersByTimeAsync(1);
+		expect(commits).toEqual([0, 500]);
+	});
+
 	it("rejects the waiters of a failed commit and reports its error", async () => {
 		const errors: unknown[] = [];
 		const failure = new Error("commit failed");
@@ -241,6 +278,7 @@ describe("Progress", () => {
 				throw failure;
 			},
 			(error) => errors.push(error),
+			100,
 		);
 		await expect(progress.markAndWait()).rejects.toBe(failure);
 		expect(errors).toEqual([failure]);
@@ -258,6 +296,7 @@ describe("Progress", () => {
 				return 0;
 			},
 			() => {},
+			100,
 		);
 		const first = progress.markAndWait();
 		const second = progress.markAndWait();

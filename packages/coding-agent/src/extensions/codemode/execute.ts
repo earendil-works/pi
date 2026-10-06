@@ -3,10 +3,6 @@
  * execute.lazy.ts so the sandbox runtime only loads when a script runs.
  */
 
-import { randomBytes } from "node:crypto";
-import { writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import type { AgentTool, AgentToolCallOutcome, AgentToolResult } from "@earendil-works/pi-agent-core";
 import type {
 	AnyModel,
@@ -30,7 +26,9 @@ import {
 import { getCodemodeWorkerSpecifier, getQuickJSWasmPath } from "../../config.ts";
 import type { ExtensionToolContext, ToolNamespace } from "../../core/extensions/types.ts";
 import type { SessionEntry } from "../../core/session-manager.ts";
+import { formatSize } from "../../core/tools/truncate.ts";
 import { combineUsage } from "../../core/usage-totals.ts";
+import { writeOutputFile } from "../../utils/output-files.ts";
 import { Bm25Ranker, createToolSearchDocument, DEFAULT_TOOL_SEARCH_LIMIT } from "../tool-search/tool.ts";
 import {
 	CODEMODE_DOCS_PATH,
@@ -260,13 +258,54 @@ function formatError(result: Extract<CodemodeResult, { ok: false }>, calls: read
 
 /** Write the full text output to a temp file, like bash does for truncated output. */
 async function spillOutput(text: string): Promise<{ path: string } | { error: string }> {
-	const path = join(tmpdir(), `pi-codemode-${randomBytes(8).toString("hex")}.txt`);
 	try {
-		await writeFile(path, text);
-		return { path };
+		return { path: await writeOutputFile("pi-codemode", ".txt", text) };
 	} catch (error) {
 		return { error: error instanceof Error ? error.message : String(error) };
 	}
+}
+
+/** File extensions of the image types `image()` accepts. Must list every type the sandbox's `image()` detects. */
+const IMAGE_EXTENSIONS: Record<string, string> = {
+	"image/png": ".png",
+	"image/jpeg": ".jpg",
+	"image/gif": ".gif",
+	"image/webp": ".webp",
+};
+
+/**
+ * Save each image to a temp file and put a text item with its path before it. The model sees the
+ * image but has no other way to reach its bytes: scripts cannot write files, and `write` only takes
+ * text. Images shown more than once are saved once.
+ */
+async function saveImages(items: (TextContent | ImageContent)[]): Promise<(TextContent | ImageContent)[]> {
+	const labels = new Map<string, Promise<string>>();
+	const label = async ({ data, mimeType }: ImageContent): Promise<string> => {
+		const bytes = Buffer.from(data, "base64");
+		const kind = `${mimeType}, ${formatSize(bytes.length)}`;
+		const extension = IMAGE_EXTENSIONS[mimeType];
+		if (!extension) throw new Error(`No file extension for image type ${mimeType}`);
+		// A failed write (disk full, unwritable temp dir) must not discard the result of a script whose
+		// tool calls already ran, so it becomes part of the label.
+		try {
+			const path = await writeOutputFile("pi-codemode", extension, bytes);
+			return `[Image saved to ${path} (${kind})]`;
+		} catch (error) {
+			return `[Image (${kind}) could not be saved: ${error instanceof Error ? error.message : String(error)}]`;
+		}
+	};
+	const result = await Promise.all(
+		items.map(async (item): Promise<(TextContent | ImageContent)[]> => {
+			if (item.type !== "image") return [item];
+			let pending = labels.get(item.data);
+			if (!pending) {
+				pending = label(item);
+				labels.set(item.data, pending);
+			}
+			return [{ type: "text", text: await pending }, item];
+		}),
+	);
+	return result.flat();
 }
 
 /**
@@ -344,7 +383,10 @@ export async function executeCodemode(
 
 	const callable = ctx ? getCodemodeCallableTools(ctx.tools) : [];
 	// ALL_TOOLS entries carry the declaration.
-	const samples = new Map(callable.map((tool) => [tool.name, renderToolSample(toCodemodeDeclaration(tool))]));
+	const guidelines = options.getToolGuidelines?.();
+	const samples = new Map(
+		callable.map((tool) => [tool.name, renderToolSample(toCodemodeDeclaration(tool, guidelines?.get(tool.name)))]),
+	);
 	const sandboxTools: CodemodeTool[] = callable.map((tool) => ({
 		name: tool.name,
 		description: samples.get(tool.name),
@@ -421,12 +463,15 @@ export async function executeCodemode(
 	}
 
 	const truncated = await truncateOutput(items, sourceOptions.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS);
+	// After truncation, which joins the text items and moves images after them, so each path stays
+	// next to its image and is never cut.
+	const output = await saveImages(truncated.items);
 	const wallTime = ((performance.now() - startedAt) / 1000).toFixed(1);
 	const header = `${result.ok ? "Script completed" : "Script failed"}\nWall time ${wallTime} seconds\nOutput:\n`;
 	const details = snapshot();
 	if (truncated.fullOutputPath) details.fullOutputPath = truncated.fullOutputPath;
 	return {
-		content: [{ type: "text", text: header }, ...truncated.items],
+		content: [{ type: "text", text: header }, ...output],
 		details,
 		...(modelUsage ? { usage: modelUsage } : {}),
 		...(result.ok ? {} : { isError: true }),

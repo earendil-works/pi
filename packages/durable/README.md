@@ -81,7 +81,7 @@ Every async call takes a Chord `Context`, which carries cancellation. `BACKGROUN
 - **Conversation**: a transcript. `root()` creates the root conversation on first use; you can create more and fork them. A `Conversation` handle holds no state; compare handles by `id`.
 - **Entry**: one immutable transcript record, such as a user message (`pi.user`), a model response (`pi.assistant`), a tool result (`pi.tool-result`), a system prompt change (`pi.system`), a reset (`pi.reset`), or your own kind. The model sees the entries from the newest reset onward.
 - **Commit**: an atomic write. `conversation.commit((tx) => ...)` can append entries, edit documents, and create tasks together; either all of it is stored or none of it.
-- **Document**: typed JSON state stored next to the transcript and changed in commits. Built-in ones hold each conversation's agent choices (`pi.agent`), the running generation and tools (`pi.live`), queued submissions (`pi.inbox`), and spend (`pi.usage`).
+- **Document**: typed JSON state stored next to the transcript and changed in commits. Built-in ones hold each conversation's agent choices (`pi.agent`), provider-facing session identity (`pi.provider`), running generation and tools (`pi.live`), queued submissions (`pi.inbox`), and spend (`pi.usage`).
 - **Task**: a durable state machine that saves a checkpoint at every step, so a restarted process continues from the last one. Every task has an owner: its conversation, or another task. The Harness runs answers as built-in tasks: `pi.generation` calls the model and owns the `pi.tool` tasks of its tool calls, waits for them, and hands the run to the next generation.
 - **Submission**: something you hand to a conversation, either user input or an entry to write, which you can wait for.
 - **Turn and run**: a turn is one model response and its tool calls; a run is the turns from an input to its final answer. A conversation is busy while a run is going.
@@ -110,7 +110,9 @@ const root = await harness.root(context); // the same root as last time
 harness.resume(); // continue any run the last process left unfinished
 ```
 
-Work interrupted by a crash or close stays pending. `resume()` starts the task scheduler; submitting or waiting starts it too. A retried submission with the same `requestId` returns the existing submission instead of submitting twice:
+Work interrupted by a crash or close stays pending. `resume()` starts the task scheduler; submitting or waiting starts it too. Each conversation has its own persisted UUIDv7 in `pi.provider`, forwarded to pi-ai as `sessionId` for provider prompt-cache and session affinity. It survives reopen, retries, reset, compaction, and model changes; a child or fork receives a fresh identity. A legacy conversation receives and persists one before its first generation or compaction request.
+
+A retried submission with the same `requestId` returns the existing submission instead of submitting twice:
 
 ```typescript
 const submission = await root.submit({ type: "input", content: "Hello", requestId: "greeting-1" }, context);
@@ -220,6 +222,7 @@ const harness = await Harness.open(storage, {
 		stream: { timeoutMs: 120_000 },
 		retry: { maxRetries: 3 },
 		compaction: { reserveTokens: 16384 },
+		progress: { partialIntervalMs: 100, outputIntervalMs: 100 },
 		toolExecution: "parallel",
 		get followUpMode() {
 			return userSettings.followUpMode;
@@ -244,6 +247,19 @@ const harness = await Harness.open(storage, {
 
 A throw from `env` becomes the call's error result. Without an environment, the built-in tools fail with an error result. A fresh environment object per call is fine: `edit` and `write` serialize changes to one file by the environment's `id` and path. A custom `ExecutionEnv` sets `id` so that equal ids see the same files at the same paths, for example one id per container.
 
+Hosts can use the environment directly too, for example to show a project's files. `openBinaryReader()` reads byte ranges of one opened file, `openDirReader()` pages a directory, and `exec()` with an argv array runs a program without a shell, reporting which stream each output chunk came from:
+
+```typescript
+const status = { stdout: "", stderr: "" };
+await env.exec(["git", "status", "--porcelain=v2", "-z"], {
+	onOutput: (text, _context, { stream }) => {
+		status[stream] += text;
+	},
+}, context);
+```
+
+Abort the context to stop one call; `cleanup()` is for shutting the environment down. A custom environment can check itself with `registerEnvConformance()` from `@earendil-works/pi-durable/testing`, like storage below.
+
 ## Reload
 
 Installing an extension with an installed name replaces it in place, in one step:
@@ -265,7 +281,7 @@ const view = await root.viewState(context);
 view.subscribe((value) => {
 	// value.entries: the active transcript
 	// value.docs["pi.live"]: the running generation (streamed partial, retry, deferred) and tool calls (output, details)
-	// value.docs["pi.inbox"], value.docs["pi.usage"], value.docs["pi.agent"]
+	// value.docs["pi.inbox"], value.docs["pi.usage"], value.docs["pi.agent"], value.docs["pi.provider"]
 	render(value);
 });
 // later: view.dispose();
@@ -284,7 +300,7 @@ watch.start(async (value, ops) => {
 
 A slow watch keeps at most 100 undelivered frames. After that, the pending frames are replaced by one frame holding the whole newest view. A client that joins late or reconnects starts from the current view; nothing is replayed.
 
-Partial answers and tool output are committed at most every 100 ms, so a crash loses at most that window.
+Partial answers and tool output are committed at most every 100 ms by default, so a crash loses at most that window. `settings.progress` changes the intervals; a host whose storage is remote can commit less often, for example `{ partialIntervalMs: 500, outputIntervalMs: 500 }`.
 
 ## Busy Conversations
 
@@ -392,7 +408,7 @@ const other = await harness.createConversation({ ownership: { kind: "ownerless" 
 const fork = await root.fork(entryId, { ownership: { kind: "ownerless" } }, context);
 ```
 
-A fork sees its parent's entries up to `entryId` and continues independently. It keeps the parent's agent as of that entry. Both take `agent` and `init`, applied in the creating commit.
+A fork sees its parent's entries up to `entryId` and continues independently. It keeps the parent's agent as of that entry but receives a fresh provider session identity. Both take `agent` and `init`, applied in the creating commit.
 
 ## Abort and Subagents
 

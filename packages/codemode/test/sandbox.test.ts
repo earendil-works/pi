@@ -651,6 +651,24 @@ describe("limits and lifetime", () => {
 			error: { kind: "sandbox", message: "Failed to load QuickJS: no wasm" },
 		});
 	});
+
+	// #10444: a malformed payload from the worker must fail the run as a sandbox error instead of
+	// throwing in the host's message listener and never settling.
+	it.each([
+		[{ type: "done", ok: true, value: "1", writes: "null" }, "store writes are not an array"],
+		[{ type: "done", ok: true, value: "1", writes: "[1]" }, "store writes contain a malformed entry"],
+		[{ type: "done", ok: true, value: "1", writes: '[["k", "{"]]' }, 'store value for "k" is not valid JSON'],
+		[{ type: "done", ok: true, value: "{", writes: "[]" }, "return value is not valid JSON"],
+		[{ type: "done", ok: false, error: "5" }, "script error is not an object"],
+		[{ type: "done", ok: false, error: "{}" }, "script error is malformed"],
+		[{ type: "nonsense" }, "unknown message from the worker"],
+	])("reports a broken bridge as a sandbox error: %j", async (message, reason) => {
+		const sandbox = new CodemodeSandbox({ workerUrl: new URL("./fixtures/raw-worker.ts", import.meta.url) });
+		sandboxes.push(sandbox);
+		const result = await sandbox.execute(JSON.stringify(message));
+		expect(result).toMatchObject({ ok: false, error: { kind: "sandbox" } });
+		expect(result.ok ? undefined : result.error.message).toContain(`Sandbox bridge broken: ${reason}`);
+	});
 });
 
 describe("escape hatches", () => {
@@ -700,6 +718,70 @@ describe("escape hatches", () => {
 		expect(result.ok).toBe(true);
 		if (!result.ok) return;
 		expect(result.value).not.toBe("imported");
+	});
+
+	// #10444: the prelude shares the built-ins with the script, so patching them could corrupt what
+	// the prelude sends to the host.
+	it("ignores patches to built-ins and built-in globals", async () => {
+		const sandbox = createSandbox([echo]);
+		const result = await sandbox.execute(`
+			Array.prototype.toJSON = () => null;
+			Object.prototype.toJSON = () => 5;
+			Promise.prototype.then = () => {};
+			Map.prototype.get = () => undefined;
+			globalThis.JSON = { stringify: () => "x", parse: () => "x" };
+			store("k", [1]);
+			return [await tools.echo([2]), JSON.stringify({ a: 1 })];
+		`);
+		expect(result).toMatchObject({ ok: true, value: [[2], '{"a":1}'], storeWrites: { set: { k: [1] } } });
+	});
+
+	it("freezes intrinsics that are only reachable from instances", async () => {
+		const sandbox = createSandbox();
+		const result = await sandbox.execute(`
+			return [
+				Object.getPrototypeOf(function* () {}).prototype,
+				Object.getPrototypeOf(async function () {}),
+				Object.getPrototypeOf(Int8Array).prototype,
+				Object.getPrototypeOf([][Symbol.iterator]()),
+				Object.getPrototypeOf(Object.getPrototypeOf([][Symbol.iterator]())),
+				Object.getPrototypeOf(new Map()[Symbol.iterator]()),
+				Object.getPrototypeOf(/a/[Symbol.matchAll]("")),
+			].every((object) => Object.isFrozen(object));
+		`);
+		expect(result).toMatchObject({ ok: true, value: true });
+	});
+
+	it("still lets instances override properties of frozen prototypes", async () => {
+		const sandbox = createSandbox();
+		const result = await sandbox.execute(`
+			const object = {};
+			object.toString = () => "custom";
+			function Legacy() {}
+			Legacy.prototype = Object.create(Error.prototype);
+			Legacy.prototype.constructor = Legacy;
+			const bare = new Error();
+			bare.message = "set later";
+			class MyError extends Error {
+				constructor(message) {
+					super(message);
+					this.name = "MyError";
+				}
+			}
+			let patched = "silent";
+			try { Error.prototype.name = "Patched"; } catch (error) { patched = error.constructor.name; }
+			return [String(object), new Legacy().constructor === Legacy, bare.message, new MyError("x").name, Error.prototype.name, patched];
+		`);
+		expect(result).toMatchObject({
+			ok: true,
+			value: ["custom", true, "set later", "MyError", "Error", "TypeError"],
+		});
+	});
+
+	it("reports errors whose name or message is not a string", async () => {
+		const sandbox = createSandbox();
+		const result = await sandbox.execute("const error = new Error('x'); error.message = 42; throw error;");
+		expect(result).toMatchObject({ ok: false, error: { kind: "script", name: "Error", message: "42" } });
 	});
 
 	it("keeps tools and console frozen", async () => {

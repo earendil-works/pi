@@ -43,6 +43,11 @@ export interface OAuthClientMetadata {
 	token_endpoint_auth_method?: string;
 	grant_types?: string[];
 	response_types?: string[];
+	/**
+	 * OpenID Connect client type, `native` or `web`. Dynamic client registration derives it from
+	 * `redirect_uris` when absent (MCP SEP-837).
+	 */
+	application_type?: string;
 	client_name?: string;
 	client_uri?: string;
 	logo_uri?: string;

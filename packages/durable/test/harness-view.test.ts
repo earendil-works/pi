@@ -9,6 +9,7 @@ import {
 	InboxDoc,
 	LiveDoc,
 	MemoryStorage,
+	ProviderDoc,
 	UsageDoc,
 } from "@earendil-works/pi-durable";
 import { describe, expect, it } from "vitest";
@@ -18,7 +19,7 @@ import { aborted, deferred } from "./task-support.ts";
 
 type Frame = { value: ConversationView; ops: readonly Op[] };
 
-const MOUNTED = ["pi.agent", "pi.inbox", "pi.live", "pi.usage"];
+const MOUNTED = ["pi.agent", "pi.inbox", "pi.live", "pi.provider", "pi.usage"];
 
 /** Start a watch of `conversation` that records its acquisition revision and every delivered frame. */
 async function record(conversation: Conversation) {
@@ -42,7 +43,7 @@ async function fresh(conversation: Conversation): Promise<ConversationView> {
 /** The view as committed state defines it, read without any mount: the active entries and the built-in documents. */
 async function committed(harness: Harness, conversation: Conversation, record: ConversationView["conversation"]) {
 	const docs: Record<string, unknown> = {};
-	for (const token of [AgentDoc, LiveDoc, InboxDoc, UsageDoc] as const) {
+	for (const token of [AgentDoc, LiveDoc, InboxDoc, ProviderDoc, UsageDoc] as const) {
 		const value = await harness.snapshot(token as typeof LiveDoc, conversation.id, context);
 		if (value !== undefined) docs[token.definition.kind] = value;
 	}

@@ -19,6 +19,7 @@ import {
 	LiveDoc,
 	type LiveState,
 	MemoryStorage,
+	ProviderDoc,
 	type RegistrySnapshot,
 	type TaskId,
 	UserEntry,
@@ -370,11 +371,81 @@ describe("generation", () => {
 		await root.configure({ thinkingLevel: null }, context);
 		setup.settings.stream = { timeoutMs: 99 };
 		await (await root.submit({ type: "input", content: "two" }, context)).wait(context);
-		expect(seen[0]).toMatchObject({ timeoutMs: 1234, headers: { "x-test": "1" }, reasoning: "high" });
+		const sessionId = (await harness.snapshot(ProviderDoc, root.id, context))!.sessionId;
+		expect(seen[0]).toMatchObject({
+			timeoutMs: 1234,
+			headers: { "x-test": "1" },
+			reasoning: "high",
+			sessionId,
+		});
 		expect(seen[0]!.signal).toBeInstanceOf(AbortSignal);
 		expect(seen[1]!.reasoning).toBeUndefined();
-		expect(seen[1]).toMatchObject({ timeoutMs: 99 });
+		expect(seen[1]).toMatchObject({ timeoutMs: 99, sessionId });
 		expect(seen[1]!.headers).toBeUndefined();
+		await harness.close(context);
+	});
+
+	// Regression coverage for #10424.
+	it("keeps provider session IDs request-local across concurrent conversations", async () => {
+		const setup = chatSetup();
+		const seen = new Map<string, string[]>();
+		const capture = (request: { messages: readonly Message[] }, options?: SimpleStreamOptions) => {
+			const message = request.messages.findLast((candidate) => candidate.role === "user");
+			const content = message?.role === "user" ? message.content : undefined;
+			const text = typeof content === "string" ? content : "";
+			const values = seen.get(text) ?? [];
+			values.push(options?.sessionId ?? "");
+			seen.set(text, values);
+			return fauxAssistantMessage(`answer:${text}`);
+		};
+		setup.faux.setResponses([capture, capture, capture, capture]);
+		const { harness, root } = await openChat(new MemoryStorage(), setup);
+		const child = await harness.createConversation(
+			{
+				ownership: { kind: "ownerless" },
+				agent: { model: { provider: "faux", modelId: "faux-1" } },
+			},
+			context,
+		);
+		harness.resume();
+		await Promise.all(
+			[root, child].map(async (conversation, index) => {
+				await (await conversation.submit({ type: "input", content: `first-${index}` }, context)).wait(context);
+			}),
+		);
+		await Promise.all(
+			[root, child].map(async (conversation, index) => {
+				await (await conversation.submit({ type: "input", content: `second-${index}` }, context)).wait(context);
+			}),
+		);
+		const rootId = (await harness.snapshot(ProviderDoc, root.id, context))!.sessionId;
+		const childId = (await harness.snapshot(ProviderDoc, child.id, context))!.sessionId;
+		expect(rootId).not.toBe(childId);
+		expect(seen.get("first-0")).toEqual([rootId]);
+		expect(seen.get("second-0")).toEqual([rootId]);
+		expect(seen.get("first-1")).toEqual([childId]);
+		expect(seen.get("second-1")).toEqual([childId]);
+		await harness.close(context);
+	});
+
+	// Regression coverage for #10424.
+	it("creates and persists provider state before a legacy conversation's request", async () => {
+		const setup = chatSetup();
+		let sent: string | undefined;
+		setup.faux.setResponses([
+			(_request, options) => {
+				sent = options?.sessionId;
+				return fauxAssistantMessage("ok");
+			},
+		]);
+		const { harness, root } = await openChat(new MemoryStorage(), setup);
+		await root.commit((tx) => tx.retireDoc(ProviderDoc, root.id), context);
+		expect(await harness.snapshot(ProviderDoc, root.id, context)).toBeUndefined();
+		harness.resume();
+		await (await root.submit({ type: "input", content: "legacy" }, context)).wait(context);
+		const stored = await harness.snapshot(ProviderDoc, root.id, context);
+		expect(stored?.sessionId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u);
+		expect(sent).toBe(stored?.sessionId);
 		await harness.close(context);
 	});
 
@@ -418,6 +489,7 @@ describe("generation", () => {
 			stream: {},
 			retry: { enabled: true, maxRetries: 3, baseDelayMs: 2000, maxAgentDelayMs: 60000 },
 			compaction: { enabled: true, reserveTokens: 16384, keepRecentTokens: 20000, backgroundTokens: 32768 },
+			progress: { partialIntervalMs: 100, outputIntervalMs: 100 },
 			toolExecution: "parallel",
 			steeringMode: "one-at-a-time",
 			followUpMode: "one-at-a-time",
@@ -426,6 +498,37 @@ describe("generation", () => {
 			retry: { enabled: false, maxRetries: 3, baseDelayMs: 2000 },
 			compaction: { enabled: true, backgroundTokens: 0 },
 		});
+		expect(resolveSettings({ progress: { outputIntervalMs: 500 } }).progress).toEqual({
+			partialIntervalMs: 100,
+			outputIntervalMs: 500,
+		});
+	});
+
+	it("commits partials no more often than progress.partialIntervalMs", async () => {
+		const shortStream = (): ReturnType<Models["streamSimple"]> => {
+			const events = async function* () {
+				yield { type: "start", partial: fauxAssistantMessage("partial", { stopReason: "pending" }) };
+				// Longer than the default 100 ms, shorter than the configured interval.
+				await new Promise((resolve) => setTimeout(resolve, 300));
+			};
+			const final = fauxAssistantMessage("final");
+			return { [Symbol.asyncIterator]: events, result: async () => final } as unknown as ReturnType<
+				Models["streamSimple"]
+			>;
+		};
+		const publishedPartial = async (settings: ChatSetup["settings"]): Promise<boolean> => {
+			const base = chatSetup();
+			const setup: ChatSetup = { ...base, settings, models: withStream(base.models, shortStream) };
+			const { harness, root } = await openChat(new MemoryStorage(), setup);
+			const values = livePublications(harness);
+			harness.resume();
+			const submission = await root.submit({ type: "input", content: "hi" }, context);
+			expect(await submission.wait(context)).toMatchObject({ status: "done" });
+			await harness.close(context);
+			return values.some((value) => textOf(value.generation?.message as Message) === "partial");
+		};
+		expect(await publishedPartial({})).toBe(true);
+		expect(await publishedPartial({ progress: { partialIntervalMs: 5000 } })).toBe(false);
 	});
 
 	it("renders sections that read conversation documents through input.read", async () => {

@@ -6,6 +6,7 @@
 
 import { homedir } from "node:os";
 import { basename, join, resolve } from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
 import {
 	type AuthProvider,
@@ -170,7 +171,8 @@ export class McpServerConnection implements McpToolCaller, McpResourceServer {
 	challenge: OAuthChallenge | undefined;
 	private client: McpClient | undefined;
 	private opening: Promise<McpClient> | undefined;
-	private closed = false;
+	/** Aborted by `close()`; cancels a connect in progress, including the wait between retries. */
+	private readonly shutdown = new AbortController();
 	/** Stderr of the last stdio server that failed to connect. */
 	private stderrTail: string | undefined;
 	private readonly cwd: string;
@@ -218,6 +220,10 @@ export class McpServerConnection implements McpToolCaller, McpResourceServer {
 
 	get name(): string {
 		return this.entry.name;
+	}
+
+	private get closed(): boolean {
+		return this.shutdown.signal.aborted;
 	}
 
 	get timeoutMs(): number {
@@ -363,7 +369,7 @@ export class McpServerConnection implements McpToolCaller, McpResourceServer {
 				if (this.closed || delay === undefined || !isTransientError(error)) {
 					throw this.connectFailed(error);
 				}
-				await new Promise((resolve) => setTimeout(resolve, delay));
+				await sleep(delay, undefined, { signal: this.shutdown.signal }).catch(() => undefined);
 				if (this.closed) throw this.connectFailed(error);
 			}
 		}
@@ -378,6 +384,14 @@ export class McpServerConnection implements McpToolCaller, McpResourceServer {
 		});
 		const log = this.log;
 		if (log) client.onNotification("notifications/message", (params) => log.write(this.entry.name, params));
+		// Closing the client fails its pending initialize or discovery requests and closes the transport.
+		// Memoized: a second `client.close()` returns before the first finished closing the transport.
+		let closing: Promise<void> | undefined;
+		const closeClient = () => {
+			closing ??= client.close().catch(() => undefined);
+			return closing;
+		};
+		this.shutdown.signal.addEventListener("abort", closeClient, { once: true });
 		let transport: McpTransport | undefined;
 		try {
 			transport = this.createTransport(this.entry, this.cwd, this.authProvider);
@@ -410,11 +424,13 @@ export class McpServerConnection implements McpToolCaller, McpResourceServer {
 			this.changed();
 			return client;
 		} catch (error) {
-			await client.close().catch(() => undefined);
+			await closeClient();
 			if (transport instanceof StdioTransport) {
 				this.stderrTail = transport.stderr.trim().slice(-STDERR_TAIL_CHARS) || undefined;
 			}
 			throw error;
+		} finally {
+			this.shutdown.signal.removeEventListener("abort", closeClient);
 		}
 	}
 
@@ -460,13 +476,14 @@ export class McpServerConnection implements McpToolCaller, McpResourceServer {
 		this.changed();
 	}
 
+	/** Resolves once no transport of this server is open, including one that was still connecting. */
 	async close(): Promise<void> {
-		this.closed = true;
+		this.shutdown.abort();
 		this.state = "closed";
 		this.changed();
 		const client = this.client;
 		this.client = undefined;
-		await client?.close().catch(() => undefined);
+		await Promise.all([client?.close().catch(() => undefined), this.opening?.catch(() => undefined)]);
 		// A refresh the server already answered may have rotated the refresh token; exiting before the
 		// new tokens are saved would lose the grant.
 		await this.authProvider?.settled();

@@ -382,6 +382,176 @@ describe("llama.cpp extension", () => {
 		expect(paths).toContain("/completion");
 	});
 
+	it("exposes decision models reported by the catalog as native System One classifiers", async () => {
+		const propsModels: string[] = [];
+		const systemOneRequests: unknown[] = [];
+		const { url } = await listen((request, response) => {
+			let body = "";
+			request.on("data", (chunk) => {
+				body += chunk;
+			});
+			request.on("end", () => {
+				const requestUrl = new URL(request.url ?? "", "http://localhost");
+				if (requestUrl.pathname === "/models") {
+					json(response, {
+						data: [
+							{
+								id: "qwen",
+								status: { value: "loaded" },
+								architecture: { input_modalities: ["text"], output_modalities: ["text"] },
+								meta: { n_ctx: 32768 },
+							},
+							{
+								id: "kev",
+								status: { value: "loaded" },
+								architecture: { input_modalities: ["text"], output_modalities: ["decisions"] },
+								meta: { n_ctx: 8192 },
+							},
+							{
+								id: "laya",
+								status: { value: "sleeping" },
+								architecture: { input_modalities: ["text"], output_modalities: ["decisions"] },
+							},
+							// Servers before llama.cpp 0.6.0 may omit architecture.
+							{ id: "legacy", status: { value: "loaded" } },
+						],
+					});
+					return;
+				}
+				if (requestUrl.pathname === "/props") {
+					propsModels.push(requestUrl.searchParams.get("model") ?? "");
+					json(response, {});
+					return;
+				}
+				if (requestUrl.pathname === "/v1/systemone") {
+					const payload = JSON.parse(body) as { model: string; questions: Record<string, unknown> };
+					systemOneRequests.push(payload);
+					json(response, {
+						model: payload.model,
+						answers: Object.fromEntries(
+							Object.keys(payload.questions).map((id) => [id, { type: "noul", noul: 0.82 }]),
+						),
+						usage: { input_tokens: 42, output_tokens: 0 },
+					});
+					return;
+				}
+				response.writeHead(404).end();
+			});
+		});
+
+		let cachedEntry: ModelsStoreEntry | undefined;
+		const publish = async (publication: ModelsPublication): Promise<boolean> => {
+			if (publication.persist !== undefined && publication.persist !== null) {
+				cachedEntry = structuredClone(publication.persist);
+			}
+			publication.update?.();
+			return true;
+		};
+		const credential = { type: "api_key" as const, key: "local", env: { LLAMA_BASE_URL: url } };
+		const controller = createLlamaProvider();
+		await controller.provider.refreshModels?.({
+			credential,
+			stored: undefined,
+			publish,
+			allowNetwork: true,
+			signal: new AbortController().signal,
+		});
+
+		// The catalog identifies decision models, so a refresh neither probes them nor reads their chat template.
+		expect(systemOneRequests).toEqual([]);
+		expect(propsModels.sort()).toEqual(["legacy", "qwen"]);
+		expect(controller.provider.getModels().map((model) => model.id)).toEqual(["qwen", "legacy"]);
+		expect(cachedEntry?.models.map((model) => [model.id, model.api, model.baseUrl])).toEqual([
+			["qwen", "openai-completions", `${url}/v1`],
+			["legacy", "openai-completions", `${url}/v1`],
+			["qwen", "llama-cpp-classify", url],
+			["kev", "typesafe-system-one", `${url}/v1`],
+			["laya", "typesafe-system-one", `${url}/v1`],
+			["legacy", "llama-cpp-classify", url],
+		]);
+
+		const kev = controller.provider.getAllModels?.().find((model) => model.id === "kev");
+		if (kev?.type !== "classifier") throw new Error("missing decision classifier model");
+		expect(kev.contextWindow).toBe(8192);
+		const result = await controller.provider.classify!(
+			kev,
+			{
+				state: { message: "I was charged twice." },
+				questions: {
+					angry: {
+						type: "bool",
+						instructions: "Is the customer angry?",
+						criteria: { true: "angry", false: "calm" },
+					},
+				},
+			},
+			{ apiKey: "local" },
+		);
+		expect(result.errorMessage).toBeUndefined();
+		expect(result.answers.angry).toEqual({ type: "bool", probability: 0.82 });
+		expect(result.usage).toMatchObject({ input: 42, output: 0 });
+		expect(systemOneRequests).toEqual([
+			{
+				model: "kev",
+				state: { message: "I was charged twice." },
+				questions: {
+					angry: {
+						type: "noul",
+						instructions: "Is the customer angry?",
+						criteria: { true: "angry", false: "calm" },
+					},
+				},
+			},
+		]);
+
+		// A cache-only startup restores decision models with their native API.
+		const restored = createLlamaProvider();
+		await restored.provider.refreshModels?.({
+			credential,
+			stored: cachedEntry,
+			publish,
+			allowNetwork: false,
+			signal: new AbortController().signal,
+		});
+		expect(restored.provider.getModels().map((model) => model.id)).toEqual(["qwen", "legacy"]);
+		expect(
+			restored.provider
+				.getAllModels?.()
+				.filter((model) => model.type === "classifier")
+				.map((model) => [model.id, model.api]),
+		).toEqual([
+			["qwen", "llama-cpp-classify"],
+			["kev", "typesafe-system-one"],
+			["laya", "typesafe-system-one"],
+			["legacy", "llama-cpp-classify"],
+		]);
+	});
+
+	it("lists decision models that also output text for chat", () => {
+		const controller = createLlamaProvider();
+		controller.setCatalog(
+			[
+				{ id: "decide", status: { value: "sleeping" }, architecture: { output_modalities: ["decisions"] } },
+				{
+					id: "hybrid",
+					status: { value: "loaded" },
+					architecture: { output_modalities: ["text", "decisions"] },
+				},
+			],
+			"http://localhost:8080",
+		);
+		expect(controller.provider.getModels().map((model) => model.id)).toEqual(["hybrid"]);
+		expect(
+			controller.provider
+				.getAllModels?.()
+				.filter((model) => model.type === "classifier")
+				.map((model) => [model.id, model.api]),
+		).toEqual([
+			["decide", "typesafe-system-one"],
+			["hybrid", "typesafe-system-one"],
+		]);
+	});
+
 	it("hides unloaded presets when router autoload is disabled", async () => {
 		const { url } = await listen((request, response) => {
 			if (request.url === "/models") {

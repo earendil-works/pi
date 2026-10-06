@@ -134,6 +134,26 @@ function activateManagedRelease(managedRoot: string, version: string): void {
 	}
 }
 
+// Keep the active release and the one running this update, which other open
+// sessions likely still use and which allows rolling back by editing current-version.
+function pruneManagedReleases(managedRoot: string, activeVersion: string): void {
+	const releasesRoot = join(managedRoot, "releases");
+	let entries: string[];
+	try {
+		entries = readdirSync(releasesRoot);
+	} catch {
+		return;
+	}
+	for (const entry of entries) {
+		if (entry === activeVersion || entry === VERSION || !MANAGED_RELEASE_VERSION_RE.test(entry)) continue;
+		try {
+			rmSync(join(releasesRoot, entry), { force: true, recursive: true });
+		} catch {
+			// Files may be in use (e.g. loaded native modules on Windows); retry on the next update.
+		}
+	}
+}
+
 function cleanupManagedStaging(managedRoot: string): void {
 	const stagingRoot = join(managedRoot, "staging");
 	try {
@@ -198,6 +218,7 @@ async function runManagedSelfUpdate(managedRoot: string, version: string): Promi
 		if (existsSync(releaseDir)) {
 			verifyManagedRelease(releaseDir, version);
 			activateManagedRelease(managedRoot, version);
+			pruneManagedReleases(managedRoot, version);
 			return;
 		}
 
@@ -214,6 +235,7 @@ async function runManagedSelfUpdate(managedRoot: string, version: string): Promi
 		verifyManagedRelease(stageDir, version);
 		renameSync(stageDir, releaseDir);
 		activateManagedRelease(managedRoot, version);
+		pruneManagedReleases(managedRoot, version);
 	} finally {
 		if (stageDir) rmSync(stageDir, { force: true, recursive: true });
 		await releaseLock();

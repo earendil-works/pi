@@ -19,6 +19,24 @@ function createTempDir(): string {
 	return dir;
 }
 
+/**
+ * Remove a test directory. On Windows, `taskkill /T` runs asynchronously and can miss descendants such as Git Bash's
+ * `sleep`, so a killed command's processes can hold the directory for a while after `exec` settles; retry until they
+ * exit.
+ */
+async function removeTempDir(dir: string): Promise<void> {
+	for (let attempt = 0; ; attempt++) {
+		try {
+			rmSync(dir, { recursive: true, force: true });
+			return;
+		} catch (error) {
+			const code = (error as NodeJS.ErrnoException).code;
+			if (attempt >= 80 || (code !== "EBUSY" && code !== "EPERM" && code !== "ENOTEMPTY")) throw error;
+			await new Promise((resolve) => setTimeout(resolve, 100));
+		}
+	}
+}
+
 function abortedContext() {
 	const controller = new AbortController();
 	controller.abort();
@@ -125,8 +143,8 @@ afterEach(async () => {
 			await chmod(path, 0o700);
 		} catch {}
 	}
-	for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
-});
+	for (const dir of tempDirs.splice(0)) await removeTempDir(dir);
+}, 15_000);
 
 describe("NodeExecutionEnv filesystem", () => {
 	it("reads, writes, lists, and removes files and directories", async () => {
@@ -571,13 +589,15 @@ describe("NodeExecutionEnv shell", () => {
 		const env = new NodeExecutionEnv({ cwd: root });
 		const collected = await collectShellOutput(
 			env,
-			'printf \'%s:%s\' "$PWD" "$NODE_ENV_TEST"',
+			'printf \'%s\' "$NODE_ENV_TEST" > cwd-marker.txt; printf \'%s:%s\' "$PWD" "$NODE_ENV_TEST"',
 			{ env: { NODE_ENV_TEST: "ok" } },
 			BACKGROUND_CONTEXT,
 		);
 		const result = getOrThrow(collected.result);
-		expect(collected.output).toBe(`${await realpath(root)}:ok`);
 		expect(result.exitCode).toBe(0);
+		expect(readFileSync(join(root, "cwd-marker.txt"), "utf8")).toBe("ok");
+		// Git Bash on Windows reports $PWD as an MSYS path (/tmp/...), not the Windows path.
+		if (process.platform !== "win32") expect(collected.output).toBe(`${await realpath(root)}:ok`);
 	});
 
 	it.each([

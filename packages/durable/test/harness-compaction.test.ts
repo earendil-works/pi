@@ -24,6 +24,7 @@ import {
 	type Harness,
 	LiveDoc,
 	MemoryStorage,
+	ProviderDoc,
 	StorageRejected,
 	type TaskId,
 	UsageDoc,
@@ -139,6 +140,8 @@ async function open(
 ): Promise<Chat> {
 	addSection(setup.registry, "preamble", () => "You are helpful.", { tag: false });
 	const { harness, root } = await openChat(options.storage ?? new MemoryStorage(), setup);
+	// These tests exercise compaction accounting and thresholds, not the faux provider's cache simulation.
+	setup.settings.stream = { cacheRetention: "none" };
 	setup.settings.compaction = options.policy ?? MANUAL;
 	setup.settings.retry = { enabled: true, maxRetries: 2, baseDelayMs: 1 };
 	harness.resume();
@@ -386,7 +389,11 @@ describe("manual compaction", () => {
 		expect(prompt).not.toContain("u3 ");
 		expect(prompt).toContain("## Goal");
 		expect(prompt.endsWith("\n\nAdditional focus: focus on files")).toBe(true);
-		expect(request.options).toMatchObject({ cacheRetention: "none", maxTokens: 800 });
+		expect(request.options).toMatchObject({
+			cacheRetention: "none",
+			maxTokens: 800,
+			sessionId: (await chat.harness.snapshot(ProviderDoc, chat.root.id, context))!.sessionId,
+		});
 		expect(request.options?.deferred).toBeUndefined();
 
 		// The summarizer's spend is in the ledger, and nothing counts it again later.
@@ -397,6 +404,20 @@ describe("manual compaction", () => {
 		// The next request: the summary, the kept turn, the new input, then one complete system baseline.
 		expect(agent.map((message) => message.role)).toEqual(["user", "user", "assistant", "user", "system"]);
 		expect(agent[4]).toMatchObject({ sections: { preamble: "You are helpful." } });
+		await chat.harness.close(context);
+	});
+
+	// Regression coverage for #10424.
+	it("creates provider state before a legacy conversation's summarization request", async () => {
+		const chat = await open();
+		await history(chat);
+		await chat.root.commit((tx) => tx.retireDoc(ProviderDoc, chat.root.id), context);
+		expect(await chat.harness.snapshot(ProviderDoc, chat.root.id, context)).toBeUndefined();
+		chat.faux.summaries.push(summary());
+		expect((await result(chat, await chat.root.compact(undefined, context))).status).toBe("completed");
+		const stored = await chat.harness.snapshot(ProviderDoc, chat.root.id, context);
+		expect(stored?.sessionId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u);
+		expect(chat.faux.summaryRequests[0]!.options?.sessionId).toBe(stored?.sessionId);
 		await chat.harness.close(context);
 	});
 
@@ -810,8 +831,14 @@ describe("compaction outcomes", () => {
 		});
 		expect(chat.faux.summaryRequests).toHaveLength(2);
 		expect(twice).toBe(2 * once);
+		const sessionId = (await chat.harness.snapshot(ProviderDoc, chat.root.id, context))!.sessionId;
 		for (const request of chat.faux.summaryRequests) {
-			expect(request.options).toMatchObject({ reasoning: "high", timeoutMs: 1234, cacheRetention: "none" });
+			expect(request.options).toMatchObject({
+				reasoning: "high",
+				timeoutMs: 1234,
+				cacheRetention: "none",
+				sessionId,
+			});
 			expect(request.options?.deferred).toBeUndefined();
 		}
 		await chat.harness.close(context);

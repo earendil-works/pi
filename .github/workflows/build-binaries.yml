@@ -301,9 +301,17 @@ jobs:
             exit 1
           fi
 
+  # The pi-env daemon for every remote system @earendil-works/pi-env supports; the npm package ships them all.
+  env-daemons:
+    uses: ./.github/workflows/env-daemons.yml
+    permissions:
+      contents: read
+    with:
+      ref: ${{ github.event.inputs.source_ref || github.event.inputs.tag || github.ref_name }}
+
   publish-npm:
     runs-on: ubuntu-latest
-    needs: stage-github-release
+    needs: [stage-github-release, env-daemons]
     environment: npm-publish
     permissions:
       contents: read
@@ -334,11 +342,32 @@ jobs:
       - name: Install dependencies
         run: npm ci --ignore-scripts
 
+      - name: Download pi-env daemons
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: pi-env-*
+          path: packages/env/bin
+
+      - name: Check pi-env daemons
+        run: |
+          set -euo pipefail
+          for name in linux-x64 linux-arm64 android-arm64 android-x64 darwin-arm64 darwin-x64; do
+            test -s "packages/env/bin/pi-env-${name}/pi-env"
+          done
+          for name in windows-x64 windows-arm64; do
+            test -s "packages/env/bin/pi-env-${name}/pi-env.exe"
+          done
+          chmod +x packages/env/bin/*/pi-env*
+          ls -lR packages/env/bin
+
       - name: Build
         run: npm run build
 
       - name: Check
         run: npm run check
+
+      - name: Build the pi-env daemon for tests
+        run: npm run build:daemon --workspace packages/env
 
       - name: Test
         run: npm test
