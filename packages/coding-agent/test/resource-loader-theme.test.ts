@@ -5,12 +5,23 @@ import { resetCapabilitiesCache, setCapabilityOverrides } from "@earendil-works/
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DefaultResourceLoader } from "../src/core/resource-loader.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
+import { setThemeJsonValidator } from "../src/modes/interactive/theme/theme.ts";
+import { validateThemeJson } from "../src/modes/interactive/theme/theme-schema.ts";
+
+setThemeJsonValidator(validateThemeJson);
+
+interface TestThemeJson {
+	name: string;
+	colors: Record<string, string | number>;
+	unsupported?: boolean;
+}
 
 describe("DefaultResourceLoader theme color mode", () => {
 	let tempDir: string;
 	let agentDir: string;
 	let cwd: string;
 	let themePath: string;
+	let themeJson: TestThemeJson;
 
 	beforeEach(() => {
 		tempDir = mkdtempSync(join(tmpdir(), "resource-loader-theme-"));
@@ -19,9 +30,9 @@ describe("DefaultResourceLoader theme color mode", () => {
 		mkdirSync(agentDir, { recursive: true });
 		mkdirSync(cwd, { recursive: true });
 
-		const themeJson = JSON.parse(
+		themeJson = JSON.parse(
 			readFileSync(join(process.cwd(), "src", "modes", "interactive", "theme", "dark.json"), "utf-8"),
-		) as { name: string; colors: Record<string, string | number> };
+		) as TestThemeJson;
 		themeJson.name = "capability-test";
 		themeJson.colors.userMessageBg = "#3c3544";
 		themePath = join(tempDir, "capability-test.json");
@@ -99,5 +110,37 @@ describe("DefaultResourceLoader theme color mode", () => {
 
 		const loadedTheme = loader.getThemes().themes.find((theme) => theme.name === "capability-test");
 		expect(loadedTheme?.bg("userMessageBg", "x")).toBe("\x1b[48;2;60;53;68mx\x1b[49m");
+	});
+
+	it("applies strict validation on initial load and reload", async () => {
+		const loader = new DefaultResourceLoader({
+			cwd,
+			agentDir,
+			settingsManager: SettingsManager.inMemory(),
+			additionalThemePaths: [themePath],
+			noExtensions: true,
+			noSkills: true,
+			noPromptTemplates: true,
+			noContextFiles: true,
+		});
+
+		themeJson.unsupported = true;
+		writeFileSync(themePath, JSON.stringify(themeJson));
+		await loader.reload();
+		const initialDiagnostics = loader.getThemes().diagnostics;
+		expect(initialDiagnostics).toHaveLength(1);
+		expect(initialDiagnostics[0]).toMatchObject({ type: "warning", path: themePath });
+		expect(initialDiagnostics[0]?.message).toContain("/unsupported");
+
+		delete themeJson.unsupported;
+		writeFileSync(themePath, JSON.stringify(themeJson));
+		await loader.reload();
+		expect(loader.getThemes().diagnostics).toEqual([]);
+		expect(loader.getThemes().themes.some((theme) => theme.name === themeJson.name)).toBe(true);
+
+		themeJson.unsupported = true;
+		writeFileSync(themePath, JSON.stringify(themeJson));
+		await loader.reload();
+		expect(loader.getThemes().diagnostics).toEqual(initialDiagnostics);
 	});
 });

@@ -537,12 +537,27 @@ const ProviderCompatPropertyOverrides = {
 	}),
 } satisfies TProperties;
 
+type UnionToIntersection<Union> = (Union extends unknown ? (value: Union) => void : never) extends (
+	value: infer Intersection,
+) => void
+	? Intersection
+	: never;
+
+type MergedCompatProperties<PropertyGroups extends readonly TProperties[], Overrides extends TProperties> = Omit<
+	UnionToIntersection<PropertyGroups[number]>,
+	keyof Overrides
+> &
+	Overrides;
+
 /**
  * Provider-level models.json compatibility is API-agnostic, so it needs one superset. Every
  * duplicate property requires explicit generic metadata, while API-specific schemas retain their
  * own defaults and descriptions.
  */
-function mergeCompatProperties(propertyGroups: readonly TProperties[], overrides: TProperties): TProperties {
+function mergeCompatProperties<
+	const PropertyGroups extends readonly TProperties[],
+	const Overrides extends TProperties,
+>(propertyGroups: PropertyGroups, overrides: Overrides): MergedCompatProperties<PropertyGroups, Overrides> {
 	const merged: TProperties = {};
 	const duplicateNames = new Set<string>();
 
@@ -564,7 +579,7 @@ function mergeCompatProperties(propertyGroups: readonly TProperties[], overrides
 		}
 	}
 
-	return { ...merged, ...overrides };
+	return { ...merged, ...overrides } as MergedCompatProperties<PropertyGroups, Overrides>;
 }
 
 const CompatSchemasByApi = {

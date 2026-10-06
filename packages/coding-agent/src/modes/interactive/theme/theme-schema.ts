@@ -3,8 +3,8 @@
  *
  * Validating user-authored theme files needs typebox, which costs ~17 MB of module graph to import.
  * Palette lookup does not, so a presentation that only uses built-in themes should never pay for it.
- * `interactive-mode.ts` installs this validator; anything that does not simply skips validation, as
- * built-in themes already do.
+ * `main.ts` installs this validator before runtime resource loading; other consumers can opt in with
+ * `setThemeJsonValidator()`. Built-in themes do not need validation.
  */
 
 import { type Static, type TProperties, Type } from "typebox";

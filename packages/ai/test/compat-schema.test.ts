@@ -1,5 +1,6 @@
+import type { Static } from "typebox";
 import { Compile } from "typebox/compile";
-import { describe, expect, it } from "vitest";
+import { describe, expect, expectTypeOf, it } from "vitest";
 import {
 	AnthropicMessagesCompatSchema,
 	BedrockCompatSchema,
@@ -7,7 +8,16 @@ import {
 	ProviderCompatSchema,
 } from "../src/providers/compat-schema.ts";
 
+type ProviderCompat = Static<typeof ProviderCompatSchema>;
+
 describe("compatibility schemas", () => {
+	it("preserves property types in the provider superset", () => {
+		expectTypeOf<ProviderCompat["supportsStore"]>().toEqualTypeOf<boolean | undefined>();
+		expectTypeOf<ProviderCompat["sessionAffinityFormat"]>().toEqualTypeOf<
+			"openai" | "openai-nosession" | "openrouter" | undefined
+		>();
+	});
+
 	it("preserves API-specific defaults", () => {
 		expect(Compile(OpenAIResponsesCompatSchema).Default({})).toMatchObject({ supportsDeveloperRole: true });
 		expect(Compile(AnthropicMessagesCompatSchema).Default({})).toMatchObject({

@@ -860,6 +860,8 @@ export async function main(args: string[], options?: MainOptions) {
 		};
 	};
 	time("createRuntime");
+	// Pi reads user-authored themes, so install full validation before runtime resource loading.
+	setThemeJsonValidator(validateThemeJson);
 	const runtime = await createAgentSessionRuntime(createRuntime, {
 		cwd: sessionManager.getCwd(),
 		agentDir,
@@ -900,8 +902,6 @@ export async function main(args: string[], options?: MainOptions) {
 
 	const { initialMessage, initialImages } = await prepareInitialMessage(parsed, stdinContent);
 	time("prepareInitialMessage");
-	// pi reads user-authored themes, so it opts into full validation before any theme loads.
-	setThemeJsonValidator(validateThemeJson);
 	initTheme(settingsManager.getTheme(), appMode === "interactive");
 	time("initTheme");
 

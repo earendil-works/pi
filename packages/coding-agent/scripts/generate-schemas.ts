@@ -68,10 +68,6 @@ const schemaAnnotationKeys = new Set([
 	"writeOnly",
 ]);
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function splitAnnotations(schema: object): {
 	shape: Record<string, unknown>;
 	annotations: Record<string, unknown>;
@@ -97,7 +93,7 @@ function addDefinitions(schema: TSchema, definitions: Readonly<Record<string, TS
 	const referencedDefinitions = new Set<string>();
 	const replaceDefinitions = (value: unknown, excludedName?: string): unknown => {
 		if (Array.isArray(value)) return value.map((item) => replaceDefinitions(item, excludedName));
-		if (!isRecord(value)) return value;
+		if (typeof value !== "object" || value === null || Array.isArray(value)) return value;
 
 		const { shape, annotations } = splitAnnotations(value);
 		const shapeKey = JSON.stringify(shape);
