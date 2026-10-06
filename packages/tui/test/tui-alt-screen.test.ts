@@ -418,6 +418,37 @@ describe("TuiAltScreen", () => {
 		}
 	});
 
+	it("enables mouse tracking only after the terminal enters raw mode", () => {
+		// Regression test for https://github.com/earendil-works/pi/issues/9656:
+		// Windows ConPTY discards mouse DECSET sequences written before stdin is in
+		// raw mode, so fullscreen Pi got cursor keys instead of wheel reports.
+		const terminal = new RecordingTerminal(20, 4);
+		const tui = new TuiAltScreen(terminal);
+		tui.start();
+
+		const startIndex = terminal.events.findIndex((event) => event.type === "start");
+		const mouseWrite = terminal.events.find(
+			(event): event is { type: "write"; data: string } =>
+				event.type === "write" && (event.data.includes("\x1b[?1000h") || event.data.includes("\x1b[?1006h")),
+		);
+		assert.ok(startIndex >= 0, "terminal should be started");
+		assert.ok(mouseWrite, "fullscreen mode should enable mouse tracking");
+		assert.ok(
+			terminal.events.indexOf(mouseWrite) > startIndex,
+			"mouse tracking DECSET must be written after terminal.start() enables raw mode",
+		);
+		tui.stop();
+
+		const mutedTerminal = new RecordingTerminal(20, 4);
+		const mutedTui = new TuiAltScreen(mutedTerminal, undefined, undefined, { mouse: false });
+		mutedTui.start();
+		assert.ok(
+			!mutedTerminal.events.some((event) => event.type === "write" && event.data.includes("\x1b[?1000h")),
+			"disabled mouse should not write tracking DECSET",
+		);
+		mutedTui.stop();
+	});
+
 	it("invokes the right-click paste handler only on Windows outside VS Code", () => {
 		const platformDescriptor = Object.getOwnPropertyDescriptor(process, "platform");
 		const termProgram = process.env.TERM_PROGRAM;

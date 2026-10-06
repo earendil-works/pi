@@ -363,6 +363,17 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		this.clearComponentMouseGesture();
 		this.lastComponentClick = undefined;
 		this.resetRenderState();
+		// Output-side modes only. Mouse tracking is enabled in afterTerminalStart():
+		// Windows terminal input is routed through ConPTY, which drops mouse DECSET
+		// sequences until the console input handle is in raw mode with
+		// ENABLE_VIRTUAL_TERMINAL_INPUT. Written before ProcessTerminal.start(), the
+		// sequences never reach the outer terminal, so the wheel arrives as cursor
+		// keys (mintty and WezTerm emulate xterm alternateScroll) instead of reports.
+		this.terminal.write(`${ENTER_ALT_SCREEN}${DISABLE_AUTOWRAP}\x1b[2J\x1b[H\x1b[?25l`);
+	}
+
+	protected override afterTerminalStart(): void {
+		if (!this.mouseEnabled) return;
 		const term = process.env.TERM?.toLowerCase() ?? "";
 		// Multiplexers can lag when every pointer movement is forwarded. Button-motion
 		// tracking preserves clicks, wheel events, selections, and scrollbar dragging.
@@ -374,9 +385,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 			term.startsWith("screen")
 				? ENABLE_BUTTON_MOTION_MOUSE
 				: ENABLE_ALL_MOTION_MOUSE;
-		this.terminal.write(
-			`${ENTER_ALT_SCREEN}${DISABLE_AUTOWRAP}${this.mouseEnabled ? mouseSequence : ""}\x1b[2J\x1b[H\x1b[?25l`,
-		);
+		this.terminal.write(mouseSequence);
 	}
 
 	protected override beforeTerminalStop(_options: TuiStopOptions): void {

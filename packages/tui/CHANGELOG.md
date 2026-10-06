@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed fullscreen mouse input in Windows terminals routed through ConPTY (Git Bash/mintty, WezTerm on Windows): mouse tracking DECSET sequences are now written after the terminal enters raw mode, so wheel and click reports reach the TUI instead of arriving as cursor keys ([#9656](https://github.com/earendil-works/pi/issues/9656))
+
 ## [1.0.4] - 2026-10-05
 
 ## [1.0.3] - 2026-10-05
