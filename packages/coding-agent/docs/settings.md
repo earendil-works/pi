@@ -97,7 +97,7 @@ See [Compaction Reference](compaction.md) for trigger, summarization, and valida
 | `fullscreenCopyOnSelect` | boolean | `true` | Copy selected text automatically in fullscreen mode. |
 | `fullscreenWheelScrollLines` | `"auto"` \| number | `"auto"` | Lines per mouse-wheel event in fullscreen mode, from 1 to 100. `"auto"` moves one line per event in local macOS terminals, which already accelerate wheel and trackpad input; elsewhere, and over SSH, it speeds up fast wheel spins to at most 6 lines per event. Alt+wheel moves five times as far. |
 | `editorPaddingX` | number | `0` | Horizontal editor padding from 0 to 3 cells. |
-| `outputPad` | `0 \| 1` | `1` | Horizontal transcript padding. |
+| `outputPad` | `0 \| 1` | `1` | Horizontal transcript padding for messages, tool output, `!` command output, and summary blocks. |
 | `autocompleteMaxVisible` | number | `5` | Visible autocomplete entries, from 3 to 20. |
 | `showHardwareCursor` | boolean | `false` | Show the terminal cursor while Pi positions it for input methods. |
 | `terminal.showImages` | boolean | `true` | Display inline images when supported. |

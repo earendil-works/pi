@@ -92,6 +92,7 @@ export function createToolHtmlRenderer(deps: ToolHtmlRendererDeps): ToolHtmlRend
 			expanded,
 			showImages: false,
 			isError,
+			outputPad: 1,
 		};
 	};
 

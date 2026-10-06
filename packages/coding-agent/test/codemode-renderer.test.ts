@@ -26,6 +26,7 @@ function render(
 		expanded,
 		showImages: false,
 		isError,
+		outputPad: 1,
 	} satisfies ToolRenderContext;
 	const component = codemodeRenderers.renderResult?.(
 		result,

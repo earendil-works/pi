@@ -827,7 +827,7 @@ export class SettingsSelectorComponent extends Container {
 		items.splice(editorPaddingIndex + 1, 0, {
 			id: "output-padding",
 			label: "Output padding",
-			description: "Horizontal padding for user messages, assistant messages, and thinking",
+			description: "Horizontal padding for messages, tool output, and command output",
 			currentValue: String(config.outputPad),
 			values: ["0", "1"],
 		});
