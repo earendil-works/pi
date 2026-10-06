@@ -5,11 +5,17 @@
 ### Added
 
 - Added `+name` and `-name` entries to `--tools`, which change the default tool selection instead of replacing it, for example `pi -t +codemode`
+- Added `outputPad` to the tool render context ([#10557](https://github.com/earendil-works/pi/pull/10557) by [@rwachtler](https://github.com/rwachtler))
+
+### Changed
+
+- Changed `outputPad` to also apply to `!` command output, tool output, and summary blocks ([#9946](https://github.com/earendil-works/pi/issues/9946), [#10557](https://github.com/earendil-works/pi/pull/10557) by [@rwachtler](https://github.com/rwachtler))
 
 ### Fixed
 
 - Fixed managed installs keeping every old release; `pi update` now keeps only the new release and the one it updated from ([#10392](https://github.com/earendil-works/pi/issues/10392))
 - Fixed standalone binaries loading `.env`, `.env.local`, and `.env.development` from the launch directory into Pi's environment ([#10473](https://github.com/earendil-works/pi/issues/10473))
+- Fixed `!!` command headers losing their dim color once output arrives ([#10557](https://github.com/earendil-works/pi/pull/10557) by [@rwachtler](https://github.com/rwachtler))
 
 ## [1.0.4] - 2026-10-05
 
