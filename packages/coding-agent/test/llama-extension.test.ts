@@ -382,12 +382,9 @@ describe("llama.cpp extension", () => {
 		expect(paths).toContain("/completion");
 	});
 
-	it("exposes decision models as native System One classifiers", async () => {
-		let kevStatus: "loaded" | "sleeping" = "loaded";
-		let layaStatus: "missing" | "loaded" | "sleeping" = "missing";
-		const probes: string[] = [];
+	it("exposes decision models reported by the catalog as native System One classifiers", async () => {
 		const propsModels: string[] = [];
-		let systemOneRequest: unknown;
+		const systemOneRequests: unknown[] = [];
 		const { url } = await listen((request, response) => {
 			let body = "";
 			request.on("data", (chunk) => {
@@ -398,9 +395,25 @@ describe("llama.cpp extension", () => {
 				if (requestUrl.pathname === "/models") {
 					json(response, {
 						data: [
-							{ id: "qwen", status: { value: "loaded" }, meta: { n_ctx: 32768 } },
-							{ id: "kev", status: { value: kevStatus }, meta: { n_ctx: 8192 } },
-							...(layaStatus === "missing" ? [] : [{ id: "laya", status: { value: layaStatus } }]),
+							{
+								id: "qwen",
+								status: { value: "loaded" },
+								architecture: { input_modalities: ["text"], output_modalities: ["text"] },
+								meta: { n_ctx: 32768 },
+							},
+							{
+								id: "kev",
+								status: { value: "loaded" },
+								architecture: { input_modalities: ["text"], output_modalities: ["decisions"] },
+								meta: { n_ctx: 8192 },
+							},
+							{
+								id: "laya",
+								status: { value: "sleeping" },
+								architecture: { input_modalities: ["text"], output_modalities: ["decisions"] },
+							},
+							// Servers before llama.cpp 0.6.0 may omit architecture.
+							{ id: "legacy", status: { value: "loaded" } },
 						],
 					});
 					return;
@@ -412,13 +425,7 @@ describe("llama.cpp extension", () => {
 				}
 				if (requestUrl.pathname === "/v1/systemone") {
 					const payload = JSON.parse(body) as { model: string; questions: Record<string, unknown> };
-					if (requestUrl.searchParams.get("autoload") === "false") probes.push(payload.model);
-					else systemOneRequest = payload;
-					if (payload.model !== "kev" && payload.model !== "laya") {
-						response.writeHead(501, { "Content-Type": "application/json" });
-						response.end(JSON.stringify({ error: { code: 501, message: "This model is not a decision model" } }));
-						return;
-					}
+					systemOneRequests.push(payload);
 					json(response, {
 						model: payload.model,
 						answers: Object.fromEntries(
@@ -450,17 +457,22 @@ describe("llama.cpp extension", () => {
 			signal: new AbortController().signal,
 		});
 
-		expect(probes.sort()).toEqual(["kev", "qwen"]);
-		expect(propsModels).toEqual(["qwen"]);
-		expect(controller.provider.getModels().map((model) => model.id)).toEqual(["qwen"]);
+		// The catalog identifies decision models, so a refresh neither probes them nor reads their chat template.
+		expect(systemOneRequests).toEqual([]);
+		expect(propsModels.sort()).toEqual(["legacy", "qwen"]);
+		expect(controller.provider.getModels().map((model) => model.id)).toEqual(["qwen", "legacy"]);
 		expect(cachedEntry?.models.map((model) => [model.id, model.api, model.baseUrl])).toEqual([
 			["qwen", "openai-completions", `${url}/v1`],
+			["legacy", "openai-completions", `${url}/v1`],
 			["qwen", "llama-cpp-classify", url],
 			["kev", "typesafe-system-one", `${url}/v1`],
+			["laya", "typesafe-system-one", `${url}/v1`],
+			["legacy", "llama-cpp-classify", url],
 		]);
 
 		const kev = controller.provider.getAllModels?.().find((model) => model.id === "kev");
 		if (kev?.type !== "classifier") throw new Error("missing decision classifier model");
+		expect(kev.contextWindow).toBe(8192);
 		const result = await controller.provider.classify!(
 			kev,
 			{
@@ -478,179 +490,66 @@ describe("llama.cpp extension", () => {
 		expect(result.errorMessage).toBeUndefined();
 		expect(result.answers.angry).toEqual({ type: "bool", probability: 0.82 });
 		expect(result.usage).toMatchObject({ input: 42, output: 0 });
-		expect(systemOneRequest).toEqual({
-			model: "kev",
-			state: { message: "I was charged twice." },
-			questions: {
-				angry: { type: "noul", instructions: "Is the customer angry?", criteria: { true: "angry", false: "calm" } },
+		expect(systemOneRequests).toEqual([
+			{
+				model: "kev",
+				state: { message: "I was charged twice." },
+				questions: {
+					angry: {
+						type: "noul",
+						instructions: "Is the customer angry?",
+						criteria: { true: "angry", false: "calm" },
+					},
+				},
 			},
-		});
+		]);
 
-		// Probes are POSTs, which the router counts as model use for LRU eviction, so known models are not probed again.
-		probes.length = 0;
-		await controller.provider.refreshModels?.({
-			credential,
-			stored: cachedEntry,
-			publish,
-			allowNetwork: true,
-			signal: new AbortController().signal,
-		});
-		expect(probes).toEqual([]);
-
-		// A restored catalog keeps a sleeping decision model a decision model. A model listed before any probe
-		// defaults to chat; only the unrestorable chat kind is probed again in a new process.
-		kevStatus = "sleeping";
-		layaStatus = "sleeping";
+		// A cache-only startup restores decision models with their native API.
 		const restored = createLlamaProvider();
 		await restored.provider.refreshModels?.({
 			credential,
 			stored: cachedEntry,
 			publish,
-			allowNetwork: true,
+			allowNetwork: false,
 			signal: new AbortController().signal,
 		});
-		expect(probes).toEqual(["qwen"]);
-		expect(restored.provider.getModels().map((model) => model.id)).toEqual(["qwen", "laya"]);
-		expect(cachedEntry?.models.map((model) => [model.id, model.api])).toEqual([
-			["qwen", "openai-completions"],
-			["laya", "openai-completions"],
-			["qwen", "llama-cpp-classify"],
-			["kev", "typesafe-system-one"],
-			["laya", "llama-cpp-classify"],
-		]);
-
-		// Once loaded, the unprobed model is probed even though it was listed as a chat model. The restored
-		// decision model is probed once per session, since its ID may now point to a different GGUF.
-		kevStatus = "loaded";
-		layaStatus = "loaded";
-		probes.length = 0;
-		await restored.provider.refreshModels?.({
-			credential,
-			stored: cachedEntry,
-			publish,
-			allowNetwork: true,
-			signal: new AbortController().signal,
-		});
-		expect(probes.sort()).toEqual(["kev", "laya"]);
-		expect(restored.provider.getModels().map((model) => model.id)).toEqual(["qwen"]);
-		expect(cachedEntry?.models.map((model) => [model.id, model.api])).toEqual([
-			["qwen", "openai-completions"],
+		expect(restored.provider.getModels().map((model) => model.id)).toEqual(["qwen", "legacy"]);
+		expect(
+			restored.provider
+				.getAllModels?.()
+				.filter((model) => model.type === "classifier")
+				.map((model) => [model.id, model.api]),
+		).toEqual([
 			["qwen", "llama-cpp-classify"],
 			["kev", "typesafe-system-one"],
 			["laya", "typesafe-system-one"],
+			["legacy", "llama-cpp-classify"],
 		]);
-
-		probes.length = 0;
-		await restored.provider.refreshModels?.({
-			credential,
-			stored: cachedEntry,
-			publish,
-			allowNetwork: true,
-			signal: new AbortController().signal,
-		});
-		expect(probes).toEqual([]);
 	});
 
-	it("records model kinds only from answered probes", async () => {
-		// "default" was a decision model in an earlier session; its preset now points to a chat model.
-		let probeStatus = 400;
-		let probes = 0;
-		const { url } = await listen((request, response) => {
-			request.resume();
-			request.on("end", () => {
-				const requestUrl = new URL(request.url ?? "", "http://localhost");
-				if (requestUrl.pathname === "/models") {
-					json(response, {
-						data: [
-							{ id: "default", status: { value: "loaded" } },
-							{ id: "evicted", status: { value: "loaded" } },
-						],
-					});
-					return;
-				}
-				if (requestUrl.pathname === "/props") {
-					json(response, {});
-					return;
-				}
-				if (requestUrl.pathname === "/v1/systemone") {
-					probes++;
-					// The router unloaded both models after listing them: 400 "model is not loaded".
-					response.writeHead(probeStatus, { "Content-Type": "application/json" });
-					response.end(
-						JSON.stringify({
-							error: {
-								code: probeStatus,
-								message: probeStatus === 400 ? "model is not loaded" : "This model is not a decision model",
-							},
-						}),
-					);
-					return;
-				}
-				response.writeHead(404).end();
-			});
-		});
-
-		let cachedEntry: ModelsStoreEntry | undefined = {
-			models: [
+	it("lists decision models that also output text for chat", () => {
+		const controller = createLlamaProvider();
+		controller.setCatalog(
+			[
+				{ id: "decide", status: { value: "sleeping" }, architecture: { output_modalities: ["decisions"] } },
 				{
-					type: "classifier",
-					id: "default",
-					name: "default",
-					api: "typesafe-system-one",
-					provider: LLAMA_PROVIDER_ID,
-					baseUrl: `${url}/v1`,
-					input: ["text"],
-					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-					contextWindow: 8192,
+					id: "hybrid",
+					status: { value: "loaded" },
+					architecture: { output_modalities: ["text", "decisions"] },
 				},
 			],
-		};
-		const publish = async (publication: ModelsPublication): Promise<boolean> => {
-			if (publication.persist !== undefined && publication.persist !== null) {
-				cachedEntry = structuredClone(publication.persist);
-			}
-			publication.update?.();
-			return true;
-		};
-		const refresh = (controller: ReturnType<typeof createLlamaProvider>) =>
-			controller.provider.refreshModels?.({
-				credential: { type: "api_key", key: "local", env: { LLAMA_BASE_URL: url } },
-				stored: cachedEntry,
-				publish,
-				allowNetwork: true,
-				signal: new AbortController().signal,
-			});
-
-		// A failed probe says nothing about the model: it keeps its stored kind or defaults to chat.
-		const controller = createLlamaProvider();
-		await refresh(controller);
-		expect(probes).toBe(2);
-		expect(controller.provider.getModels().map((model) => model.id)).toEqual(["evicted"]);
+			"http://localhost:8080",
+		);
+		expect(controller.provider.getModels().map((model) => model.id)).toEqual(["hybrid"]);
 		expect(
 			controller.provider
 				.getAllModels?.()
 				.filter((model) => model.type === "classifier")
 				.map((model) => [model.id, model.api]),
 		).toEqual([
-			["default", "typesafe-system-one"],
-			["evicted", "llama-cpp-classify"],
+			["decide", "typesafe-system-one"],
+			["hybrid", "typesafe-system-one"],
 		]);
-
-		// Nothing was recorded, so the next refresh probes both models again. The 501 shows that the stored
-		// decision model ID now names a chat model.
-		probeStatus = 501;
-		await refresh(controller);
-		expect(probes).toBe(4);
-		expect(controller.provider.getModels().map((model) => model.id)).toEqual(["default", "evicted"]);
-		expect(cachedEntry?.models.map((model) => [model.id, model.api])).toEqual([
-			["default", "openai-completions"],
-			["evicted", "openai-completions"],
-			["default", "llama-cpp-classify"],
-			["evicted", "llama-cpp-classify"],
-		]);
-
-		await refresh(controller);
-		expect(probes).toBe(4);
 	});
 
 	it("hides unloaded presets when router autoload is disabled", async () => {
