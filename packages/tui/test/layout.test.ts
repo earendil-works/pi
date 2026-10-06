@@ -190,6 +190,32 @@ describe("viewport layout", () => {
 		assert.strictEqual(scrollView.isFollowingEnd, true);
 	});
 
+	// #10556: a height change above the viewport must not resume follow-end and drag the view down.
+	it("keeps a manual scroll position when content above the viewport shrinks", () => {
+		const source = (count: number) => Array.from({ length: count }, (_, i) => `line ${i}`).join("\n");
+		const content = new Text(source(40), 0, 0);
+		const scrollView = new ScrollView(content, { follow: "end", primary: true });
+		renderLayoutFrame(scrollView, 20, 10, () => {});
+		assert.strictEqual(scrollView.scrollTop, 30);
+		assert.strictEqual(scrollView.isFollowingEnd, true);
+
+		scrollView.scrollBy(-8);
+		assert.strictEqual(scrollView.scrollTop, 22);
+		assert.strictEqual(scrollView.isFollowingEnd, false);
+
+		// A tool card above the viewport collapses; the offset clamps to the new content end.
+		content.setText(source(30));
+		renderLayoutFrame(scrollView, 20, 10, () => {});
+		assert.strictEqual(scrollView.scrollTop, 20);
+		assert.strictEqual(scrollView.isFollowingEnd, false);
+
+		// New tool output streams in; the manual position must hold instead of following down.
+		content.setText(source(48));
+		renderLayoutFrame(scrollView, 20, 10, () => {});
+		assert.strictEqual(scrollView.scrollTop, 20);
+		assert.strictEqual(scrollView.isFollowingEnd, false);
+	});
+
 	it("renders a proportional glyph scrollbar with an expanded active thumb", async () => {
 		const sourceLines = ["abcd界", "abcde2", "abcde3", "abcde4", "abcde5", "abcde6", "abcde7", "abcde8"];
 		const contentBackground = "\x1b[42m";
