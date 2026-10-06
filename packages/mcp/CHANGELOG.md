@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.0.4] - 2026-10-05
+
 ### Fixed
 
 - Fixed dynamic client registration failing on OpenID Connect authorization servers with `invalid_redirect_uri` for loopback redirect URIs. `registerClient()` now sends `application_type` (MCP SEP-837), derived from `redirect_uris` when `OAuthClientMetadata.application_type` is not set: `native` for loopback hosts and custom schemes, otherwise `web` ([#10493](https://github.com/earendil-works/pi/issues/10493))

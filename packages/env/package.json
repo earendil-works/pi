@@ -1,6 +1,6 @@
 {
 	"name": "@earendil-works/pi-env",
-	"version": "1.0.3",
+	"version": "1.0.4",
 	"description": "Remote execution environments for Pi Durable: a small daemon deployed over SSH and its ExecutionEnv client",
 	"type": "module",
 	"main": "./dist/index.js",
@@ -45,8 +45,8 @@
 		"node": ">=22.19.0"
 	},
 	"dependencies": {
-		"@earendil-works/chord": "^1.0.3",
-		"@earendil-works/pi-durable": "^1.0.3"
+		"@earendil-works/chord": "^1.0.4",
+		"@earendil-works/pi-durable": "^1.0.4"
 	},
 	"devDependencies": {
 		"shx": "0.4.0",

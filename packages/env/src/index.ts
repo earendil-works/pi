@@ -23,5 +23,6 @@ export {
 	type SshTarget,
 	scanHostKey,
 	sshArguments,
+	sshConnection,
 } from "./ssh.ts";
 export { RemoteWatcher, type RemoteWatchOptions } from "./watch.ts";

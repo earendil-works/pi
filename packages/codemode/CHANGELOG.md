@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.0.4] - 2026-10-05
+
 ### Changed
 
 - Built-ins are frozen and built-in globals are read-only before the script runs, so patches such as `Array.prototype.toJSON = ...` have no effect. Instances can still override `constructor`, `name`, `message`, `toString`, `toLocaleString`, `valueOf`, `toJSON`, and `Object.prototype` members ([#10444](https://github.com/earendil-works/pi/issues/10444))

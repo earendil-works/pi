@@ -96,6 +96,29 @@ describe("RemoteExecutionEnv", () => {
 		await b.close(context);
 	});
 
+	it("computes the command at each start and retries a start that failed", async () => {
+		const cwd = mkdtempSync(join(tmpdir(), "pi-env-remote-"));
+		dirs.push(cwd);
+		let starts = 0;
+		const connection = new Connection({
+			command: async () => {
+				starts++;
+				if (starts === 1) throw new Error("ssh gpu-box failed: Network is unreachable");
+				return [daemon];
+			},
+		});
+		connections.push(connection);
+		const env = new RemoteExecutionEnv({ connection, id: "pi-env:test", cwd });
+		const offline = await env.readTextFile("missing.txt", context);
+		expect(offline.ok ? "ok" : [offline.error.code, offline.error.message]).toEqual([
+			"unknown",
+			"ssh gpu-box failed: Network is unreachable",
+		]);
+		const command = await env.exec(["sh", "-c", "exit 0"], undefined, context);
+		expect(command.ok ? command.value.exitCode : command.error.code).toBe(0);
+		expect(starts).toBe(2);
+	});
+
 	it("writes and reads files larger than one transfer chunk in order", async () => {
 		const { env } = environment();
 		const content = new Uint8Array(3_500_017);

@@ -451,7 +451,7 @@ export async function deployDaemon(
 	return file;
 }
 
-/** Options for `connectSsh`: the target, plus the binary to deploy (default: the one this package ships). */
+/** Options for `sshConnection` and `connectSsh`: the target, plus the binary to deploy (default: the one this package ships). */
 export interface SshConnectOptions extends SshTarget {
 	binary?: string;
 	/**
@@ -474,35 +474,57 @@ function launchCommand(remote: RemotePlatform, file: string, loginShell: boolean
 	return quotePosix(file);
 }
 
+/** What an SSH connection learned about its remote system, and the daemon it verified last. */
+type SshState = { remote?: RemotePlatform; verified?: string };
+
+/** A `Connection` whose every start detects the remote system (once), verifies or deploys the daemon, then starts it. */
+function sshConnectionFor(options: SshConnectOptions, state: SshState): Connection {
+	return new Connection({
+		command: async () => {
+			if (state.remote === undefined) {
+				const remote = await detectPlatform(options);
+				for (const warning of remote.warnings) options.onLog?.(`${warning}\n`);
+				state.remote = remote;
+			}
+			// A deployment that just verified the binary counts for the first start.
+			const file =
+				state.verified ??
+				(await deployDaemon(options, state.remote, options.binary ?? packagedDaemon(state.remote)));
+			state.verified = undefined;
+			return [
+				options.ssh ?? "ssh",
+				...sshArguments(options),
+				launchCommand(state.remote, file, options.loginShell === true),
+			];
+		},
+		...(options.onLog === undefined ? {} : { onLog: options.onLog }),
+	});
+}
+
 /**
- * Detect the remote system, deploy the daemon if needed, and return a `Connection` that starts it over `ssh`. Each
- * later start (after a lost connection) verifies the daemon again and deploys it if it is missing or changed. Host
- * keys must already be trusted (`scanHostKey`, `acceptHostKey`); otherwise this rejects with `HostKeyUnknownError`.
+ * A `Connection` to the target that does nothing until its first request. Each start detects the remote system (the
+ * first time), verifies the daemon and deploys it if it is missing or changed, then starts it over `ssh`. A failure
+ * (no network, an untrusted or changed host key) fails the requests waiting for that start with code `spawn_error`
+ * and the `ssh` diagnostics as message; the next request tries again. `remote()` is the detected system, once known.
+ */
+export function sshConnection(options: SshConnectOptions): {
+	connection: Connection;
+	remote(): RemotePlatform | undefined;
+} {
+	const state: SshState = {};
+	return { connection: sshConnectionFor(options, state), remote: () => state.remote };
+}
+
+/**
+ * Detect the remote system and deploy the daemon now, then return a `Connection` that starts it over `ssh`, like
+ * `sshConnection`. Failures reject here: host keys must already be trusted (`scanHostKey`, `acceptHostKey`), otherwise
+ * this rejects with `HostKeyUnknownError`.
  */
 export async function connectSsh(
 	options: SshConnectOptions,
 ): Promise<{ connection: Connection; remote: RemotePlatform }> {
 	const remote = await detectPlatform(options);
-	const binary = options.binary ?? packagedDaemon(remote);
-	const file = await deployDaemon(options, remote, binary);
+	const verified = await deployDaemon(options, remote, options.binary ?? packagedDaemon(remote));
 	for (const warning of remote.warnings) options.onLog?.(`${warning}\n`);
-	let verified = true;
-	const connection = new Connection({
-		command: [
-			options.ssh ?? "ssh",
-			...sshArguments(options),
-			launchCommand(remote, file, options.loginShell === true),
-		],
-		beforeStart: async () => {
-			// The first start follows the deployment that just verified the binary.
-			if (verified) {
-				verified = false;
-				return;
-			}
-			const deployed = await deployDaemon(options, remote, binary);
-			if (deployed !== file) throw new Error(`pi-env daemon moved to ${deployed}`);
-		},
-		...(options.onLog === undefined ? {} : { onLog: options.onLog }),
-	});
-	return { connection, remote };
+	return { connection: sshConnectionFor(options, { remote, verified }), remote };
 }

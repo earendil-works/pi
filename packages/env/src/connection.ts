@@ -51,12 +51,14 @@ export interface RemoteInfo {
 }
 
 export interface ConnectionOptions {
-	/** Command that starts the daemon, before its `serve --token <hex>` arguments, e.g. `["ssh", "-T", "--", "host", "~/.pi/mobile/tools/pi-env"]`. */
-	command: readonly string[];
+	/**
+	 * Command that starts the daemon, before its `serve --token <hex>` arguments, e.g. `["ssh", "-T", "--", "host",
+	 * "~/.pi/mobile/tools/pi-env"]`. A function computes it at each start (detecting and deploying first, for example);
+	 * its failure fails that start, and the next request tries again.
+	 */
+	command: readonly string[] | (() => Promise<readonly string[]>);
 	/** Receives the daemon's and the transport's diagnostic output. */
 	onLog?: (text: string) => void;
-	/** Runs before each start of the daemon, e.g. to verify or deploy it; a failure fails that start. */
-	beforeStart?: () => Promise<void>;
 }
 
 export interface Reply {
@@ -251,15 +253,17 @@ export class Connection {
 	}
 
 	async #start(): Promise<{ info: RemoteInfo; session: Session }> {
-		const [program, ...args] = this.#options.command;
-		if (program === undefined) throw new RemoteError({ code: "spawn_error", message: "No daemon command" });
+		let command: readonly string[];
 		try {
-			await this.#options.beforeStart?.();
+			const option = this.#options.command;
+			command = typeof option === "function" ? await option() : option;
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
 			throw new RemoteError({ code: "spawn_error", message, lost: true });
 		}
 		if (this.#closed) throw closed();
+		const [program, ...args] = command;
+		if (program === undefined) throw new RemoteError({ code: "spawn_error", message: "No daemon command" });
 		const token = randomBytes(16).toString("hex");
 		const child = spawn(program, [...args, "serve", "--token", token], { stdio: ["pipe", "pipe", "pipe"] });
 		const session = new Session(++this.#sessions, child, token);
