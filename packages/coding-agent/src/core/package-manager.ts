@@ -40,7 +40,7 @@ import { gt, maxSatisfying, rcompare, satisfies, valid, validRange } from "semve
 import { CONFIG_DIR_NAME } from "../config.ts";
 import { spawnProcess, spawnProcessSync } from "../utils/child-process.ts";
 import { type GitSource, parseGitUrl } from "../utils/git.ts";
-import { canonicalizePath, isLocalPath, markPathIgnoredByCloudSync, resolvePath } from "../utils/paths.ts";
+import { isLocalPath, markPathIgnoredByCloudSync, pathIdentity, resolvePath, samePath } from "../utils/paths.ts";
 import { stripBom } from "../utils/text.ts";
 import { isStdoutTakenOver } from "./output-guard.ts";
 import { type PiManifest, readPiManifest } from "./pi-manifest.ts";
@@ -2458,7 +2458,7 @@ export class DefaultPackageManager implements PackageManager {
 		const userAgentsSkillsDir = join(getHomeDir(), ".agents", "skills");
 		const projectTrusted = this.settingsManager.isProjectTrusted();
 		const projectAgentsSkillDirs = projectTrusted
-			? collectAncestorAgentsSkillDirs(this.cwd).filter((dir) => resolve(dir) !== resolve(userAgentsSkillsDir))
+			? collectAncestorAgentsSkillDirs(this.cwd).filter((dir) => !samePath(dir, userAgentsSkillsDir))
 			: [];
 
 		const addResources = (
@@ -2647,7 +2647,7 @@ export class DefaultPackageManager implements PackageManager {
 
 			const seen = new Set<string>();
 			return resolved.filter((entry) => {
-				const canonicalPath = canonicalizePath(entry.path);
+				const canonicalPath = pathIdentity(entry.path);
 				if (seen.has(canonicalPath)) return false;
 				seen.add(canonicalPath);
 				return true;

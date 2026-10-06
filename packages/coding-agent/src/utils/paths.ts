@@ -33,6 +33,20 @@ export function canonicalizePath(path: string): string {
 	}
 }
 
+/**
+ * Identity used to compare filesystem paths. On Windows, realpath keeps the
+ * drive-letter casing of the input, so C:\ and c:\ stay distinct strings for
+ * the same directory.
+ */
+export function pathIdentity(filePath: string): string {
+	const canonical = canonicalizePath(filePath);
+	return process.platform === "win32" ? canonical.toLowerCase() : canonical;
+}
+
+export function samePath(left: string, right: string): boolean {
+	return pathIdentity(left) === pathIdentity(right);
+}
+
 export function getFileRevision(path: string): string | undefined {
 	try {
 		const stats = statSync(path, { bigint: true });

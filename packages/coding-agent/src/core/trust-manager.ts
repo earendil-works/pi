@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import lockfile from "proper-lockfile";
 import { CONFIG_DIR_NAME } from "../config.ts";
-import { canonicalizePath, resolvePath } from "../utils/paths.ts";
+import { canonicalizePath, resolvePath, samePath } from "../utils/paths.ts";
 import { stripBom } from "../utils/text.ts";
 
 export type ProjectTrustDecision = boolean | null;
@@ -195,7 +195,7 @@ export function hasTrustRequiringProjectResources(cwd: string): boolean {
 
 	while (true) {
 		const agentsSkillsDir = join(currentDir, ".agents", "skills");
-		if (agentsSkillsDir !== userAgentsSkillsDir && existsSync(agentsSkillsDir)) {
+		if (!samePath(agentsSkillsDir, userAgentsSkillsDir) && existsSync(agentsSkillsDir)) {
 			return true;
 		}
 
