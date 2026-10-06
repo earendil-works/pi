@@ -363,6 +363,46 @@ describe("InteractiveMode copy confirmation", () => {
 	});
 });
 
+type RenderSessionEntriesContext = {
+	renderer: ReturnType<typeof createInteractiveTui>;
+	renderSessionItems: (items: unknown[]) => void;
+};
+
+describe("InteractiveMode transcript rebuild", () => {
+	it("drops the fullscreen selection when session entries are re-rendered", async () => {
+		// Regression test for #9311: selection coordinates survived session switches.
+		const terminal = new RecordingTerminal(40, 4);
+		const ui = createInteractiveTui({
+			tuiMode: "fullscreen",
+			showHardwareCursor: false,
+			logDirectory: "/tmp",
+			terminal,
+			fullscreenCopyOnSelect: false,
+		});
+		ui.addChild(new Text("alpha\nbeta\ngamma\ndelta", 0, 0));
+		const context: RenderSessionEntriesContext = { renderer: ui, renderSessionItems: vi.fn() };
+		const { renderSessionEntries } = InteractiveMode.prototype as unknown as {
+			renderSessionEntries(this: RenderSessionEntriesContext, entries: unknown[]): void;
+		};
+
+		ui.start();
+		try {
+			await terminal.waitForRender();
+			terminal.sendInput("\x1b[<0;1;1M");
+			terminal.sendInput("\x1b[<32;4;2M");
+			terminal.sendInput("\x1b[<0;4;2m");
+			await terminal.waitForRender();
+			expect(ui.hasActiveSelection()).toBe(true);
+
+			renderSessionEntries.call(context, []);
+
+			expect(ui.hasActiveSelection()).toBe(false);
+		} finally {
+			ui.stop();
+		}
+	});
+});
+
 type StatusEditor = {
 	embedWorkingStatus: boolean;
 	setWorkingStatusIndicator: (indicator: StatusIndicator | undefined) => void;
