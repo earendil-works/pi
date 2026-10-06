@@ -1,6 +1,7 @@
-import type { Component, TUI } from "@earendil-works/pi-tui";
+import { type Component, TuiMainScreen } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
-import { beforeAll, describe, expect, test } from "vitest";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { VirtualTerminal } from "../../tui/test/virtual-terminal.ts";
 import type { ToolDefinition } from "../src/core/extensions/types.ts";
 import { createEditToolDefinition } from "../src/core/tools/edit.ts";
 import { BashExecutionComponent } from "../src/modes/interactive/components/bash-execution.ts";
@@ -9,12 +10,7 @@ import { ToolExecutionComponent } from "../src/modes/interactive/components/tool
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../src/utils/ansi.ts";
 
-const ui = {
-	terminal: { columns: 80, rows: 24 },
-	addInterval: () => ({ dispose: () => {} }),
-	removeInterval: () => {},
-	requestRender: () => {},
-} as unknown as TUI;
+const ui = new TuiMainScreen(new VirtualTerminal(80, 24));
 
 const tool: ToolDefinition = {
 	name: "custom_tool",
@@ -27,7 +23,7 @@ const tool: ToolDefinition = {
 type OutputPaddedComponent = Component & { setOutputPad(outputPad: number): void };
 
 /** Text lines without ANSI codes or trailing fill. Blank lines and full-width borders are skipped. */
-function lines(component: Component): string[] {
+function renderLines(component: Component): string[] {
 	return component
 		.render(60)
 		.map((line) => stripAnsi(line).trimEnd())
@@ -84,11 +80,15 @@ describe("outputPad", () => {
 		initTheme("dark");
 	});
 
-	test.each(components)("$name pads every text line after setOutputPad(1)", ({ create }) => {
+	afterAll(() => {
+		ui.stop();
+	});
+
+	test.each(components)("$name renders at outputPad 0 and 1", ({ create }) => {
 		const component = create(0);
-		const unpadded = lines(component);
+		const lines = renderLines(component);
+		expect(lines.filter((line) => line.startsWith(" "))).toEqual([]);
 		component.setOutputPad(1);
-		expect(unpadded.length).toBeGreaterThan(0);
-		expect(lines(component)).toEqual(unpadded.map((line) => ` ${line}`));
+		expect(renderLines(component)).toEqual(lines.map((line) => ` ${line}`));
 	});
 });
