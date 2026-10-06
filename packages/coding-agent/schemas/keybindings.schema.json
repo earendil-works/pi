@@ -375,12 +375,16 @@
     "KeybindingValue": {
       "anyOf": [
         {
-          "type": "string"
+          "type": "string",
+          "pattern": "^(?!.*(?:ctrl\\+.*ctrl\\+|shift\\+.*shift\\+|alt\\+.*alt\\+|super\\+.*super\\+))(?:(?:ctrl|shift|alt|super)\\+){0,4}(?:[a-z0-9]|escape|esc|enter|return|tab|space|backspace|delete|insert|clear|home|end|pageUp|pageDown|up|down|left|right|f1|f2|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|`|-|=|\\[|\\]|\\\\|;|'|,|\\.|/|!|@|#|\\$|%|\\^|&|\\*|\\(|\\)|_|\\+|\\||~|\\{|\\}|:|<|>|\\?)$",
+          "description": "Key identifier with optional ctrl, shift, alt, or super modifiers."
         },
         {
           "type": "array",
           "items": {
-            "type": "string"
+            "type": "string",
+            "pattern": "^(?!.*(?:ctrl\\+.*ctrl\\+|shift\\+.*shift\\+|alt\\+.*alt\\+|super\\+.*super\\+))(?:(?:ctrl|shift|alt|super)\\+){0,4}(?:[a-z0-9]|escape|esc|enter|return|tab|space|backspace|delete|insert|clear|home|end|pageUp|pageDown|up|down|left|right|f1|f2|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|`|-|=|\\[|\\]|\\\\|;|'|,|\\.|/|!|@|#|\\$|%|\\^|&|\\*|\\(|\\)|_|\\+|\\||~|\\{|\\}|:|<|>|\\?)$",
+            "description": "Key identifier with optional ctrl, shift, alt, or super modifiers."
           }
         }
       ]

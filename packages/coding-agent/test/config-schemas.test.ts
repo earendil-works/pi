@@ -121,6 +121,24 @@ describe("generated configuration schemas", () => {
 		expect(validator.Check(invalid)).toBe(false);
 	});
 
+	it("validates keybinding syntax", () => {
+		const schema = JSON.parse(renderConfigSchemas().get("schemas/keybindings.schema.json") ?? "");
+		const validator = Compile(schema);
+		for (const binding of ["a", "9", "pageUp", "+", "ctrl+shift+x", "alt+ctrl+?", "ctrl+shift+alt+super+f12"]) {
+			expect(validator.Check({ "extension.action": binding }), binding).toBe(true);
+		}
+		for (const binding of [
+			"",
+			"Ctrl+x",
+			"control+x",
+			"ctrl+not-a-key",
+			"ctrl+ctrl+x",
+			"ctrl+shift+alt+super+ctrl+x",
+		]) {
+			expect(validator.Check({ "extension.action": binding }), binding).toBe(false);
+		}
+	});
+
 	it("rejects settings values that runtime accessors reject", () => {
 		const validator = Compile(SettingsSchema);
 		for (const invalid of [

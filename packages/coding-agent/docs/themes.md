@@ -78,7 +78,6 @@ Use the theme name as the filename. Pi hot-reloads the active user theme only fr
 | `colors` | Yes | Assigns colors to terminal UI roles. The schema identifies required and optional roles. |
 | `export` | No | Overrides page and panel backgrounds in HTML exports. |
 
-A color can be written in six forms:
 Theme objects are strict: only documented top-level fields and color tokens are accepted. Define reusable custom colors under `vars`; custom keys under `colors` or `export` and additional top-level metadata are rejected.
 
 A color can be written in six forms:
