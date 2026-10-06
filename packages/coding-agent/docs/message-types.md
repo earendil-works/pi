@@ -100,12 +100,11 @@ interface SystemMessage {
   sections?: Record<string, string | null>;
   toolsAdded?: Tool[];
   toolsRemoved?: ToolReference[];
-  replace?: boolean;
   timestamp: number;
 }
 ```
 
-The leading system message declares the initial prompt and tools. Later system messages can append instructions, replace or remove named prompt sections, and add or remove tools. Replaying them in order yields the current state. A message with `replace: true` discards the earlier state and establishes a complete new baseline.
+The leading system message declares the initial prompt and tools. Later system messages can append instructions, replace or remove named prompt sections, and add or remove tools. Replaying them in order yields the current state.
 
 ### UserMessage
 
@@ -129,6 +128,7 @@ interface AssistantMessage {
   responseModel?: string;
   responseId?: string;
   providerThinkingLevel?: string;
+  thinkingLevel?: ModelThinkingLevel;
   diagnostics?: AssistantMessageDiagnostic[];
   usage: Usage;
   stopReason: "pending" | "stop" | "length" | "toolUse" | "error" | "aborted" | "deferred";
@@ -140,7 +140,7 @@ interface AssistantMessage {
 }
 ```
 
-`responseModel` records a concrete provider response model when it differs from the requested model. `responseId`, `providerThinkingLevel`, `diagnostics`, and `rawStopReason` preserve provider or runtime details.
+`responseModel` records a concrete provider response model when it differs from the requested model. `responseId`, `providerThinkingLevel`, `thinkingLevel`, `diagnostics`, and `rawStopReason` preserve provider or runtime details.
 
 `"pending"` is used for a partial assistant message while it streams. The completed message in `message_end` has a terminal stop reason, and Pi does not persist `"pending"` assistant messages in session JSONL.
 
@@ -168,12 +168,30 @@ interface ToolResultMessage<TDetails = any> {
   content: (TextContent | ImageContent)[];
   details?: TDetails;
   usage?: Usage;
+  nestedCalls?: NestedToolCalls;
   isError: boolean;
   timestamp: number;
 }
 ```
 
-`details` is tool-specific. Optional `usage` reports nested model work performed by the tool and contributes to full-session statistics, but it is not part of the main model-call usage.
+`details` is tool-specific. Optional `usage` reports nested model work performed by the tool and contributes to full-session statistics, but it is not part of the main model-call usage. `nestedCalls` records bounded metadata about calls this tool made to other tools:
+
+```typescript
+interface NestedToolCalls {
+  calls: NestedToolCallRecord[];
+  complete: boolean;
+}
+
+interface NestedToolCallRecord {
+  id: string;
+  name: string;
+  arguments?: JsonObject;
+  argumentsBytes?: number;
+  status: "ok" | "error" | "unfinished";
+  durationMs?: number;
+  error?: string;
+}
+```
 
 ## Coding-agent messages
 
