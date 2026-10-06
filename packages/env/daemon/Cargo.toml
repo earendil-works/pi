@@ -1,0 +1,29 @@
+[package]
+name = "pi-env"
+version = "0.1.0"
+edition = "2024"
+description = "Remote execution environment daemon for Pi Durable"
+publish = false
+
+[dependencies]
+encoding_rs = "=0.8.42"
+notify = "=8.2.0"
+serde_json = "=1.0.151"
+
+[target.'cfg(unix)'.dependencies]
+libc = "=0.2.190"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "=0.61.2", features = [
+	"Win32_Foundation",
+	"Win32_Security",
+	"Win32_Storage_FileSystem",
+	"Win32_System_IO",
+	"Win32_System_JobObjects",
+	"Win32_System_Threading",
+] }
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true

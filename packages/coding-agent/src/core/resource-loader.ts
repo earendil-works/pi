@@ -280,6 +280,8 @@ export interface DefaultResourceLoaderOptions {
 	additionalThemePaths?: string[];
 	extensionFactories?: InlineExtension[];
 	noExtensions?: boolean;
+	/** Built-in extensions not to load, by name (such as `mcp`), even when settings or `-e` enable them. */
+	disabledBuiltinExtensions?: string[];
 	noSkills?: boolean;
 	noPromptTemplates?: boolean;
 	noThemes?: boolean;
@@ -319,6 +321,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 	private extensionFactories: InlineExtension[];
 	private builtinExtensions: Map<string, BuiltinExtension>;
 	private noExtensions: boolean;
+	private disabledBuiltinExtensions: Set<string>;
 	private noSkills: boolean;
 	private noPromptTemplates: boolean;
 	private noThemes: boolean;
@@ -384,6 +387,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 		this.additionalPromptTemplatePaths = options.additionalPromptTemplatePaths ?? [];
 		this.additionalThemePaths = options.additionalThemePaths ?? [];
 		this.noExtensions = options.noExtensions ?? false;
+		this.disabledBuiltinExtensions = new Set(options.disabledBuiltinExtensions);
 		this.noSkills = options.noSkills ?? false;
 		this.noPromptTemplates = options.noPromptTemplates ?? false;
 		this.noThemes = options.noThemes ?? false;
@@ -566,9 +570,13 @@ export class DefaultResourceLoader implements ResourceLoader {
 		const cliEnabledPrompts = getEnabledPaths(cliExtensionPaths.prompts);
 		const cliEnabledThemes = getEnabledPaths(cliExtensionPaths.themes);
 
-		const extensionPaths = this.noExtensions
-			? cliEnabledExtensions
-			: this.mergePaths(cliEnabledExtensions, enabledExtensions);
+		const extensionPaths = (
+			this.noExtensions ? cliEnabledExtensions : this.mergePaths(cliEnabledExtensions, enabledExtensions)
+		).filter(
+			(path) =>
+				!path.startsWith(BUILTIN_PATH_PREFIX) ||
+				!this.disabledBuiltinExtensions.has(path.slice(BUILTIN_PATH_PREFIX.length)),
+		);
 
 		const packageWarnings = collectExtensionPackageWarnings(extensionPaths, metadataByPath);
 		const extensionsResult = await this.loadFinalExtensionSet(extensionPaths, preTrustExtensions);

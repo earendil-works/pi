@@ -205,4 +205,34 @@ describe("buildSystemPrompt", () => {
 			expect(prompt).not.toContain("<available_skills>");
 		});
 	});
+
+	// #10343
+	describe("hidden tools", () => {
+		const build = (hiddenTools: string[]) =>
+			buildSystemPrompt({
+				selectedTools: ["read", "bash", "run"],
+				hiddenTools,
+				toolSnippets: { read: "Read files", bash: "Run commands", run: "Run a task" },
+				toolGuidelines: { read: ["Use read for files."], run: ["Prefer run."] },
+				contextFiles: [],
+				skills: [testSkill],
+				cwd: process.cwd(),
+			});
+
+		test("leaves hidden tools out of the tool list and rules", () => {
+			const prompt = build(["read", "bash"]);
+
+			expect(prompt).toContain("<tools>\n- run: Run a task\n");
+			expect(prompt).not.toContain("- read: ");
+			expect(prompt).not.toContain("Use read for files.");
+			expect(prompt).not.toContain("Use bash for file operations");
+			expect(prompt).toContain("- Prefer run.");
+		});
+
+		test("keeps skills without naming a hidden reader", () => {
+			expect(build(["read", "bash"])).toContain("\nLoad a skill's file when the task matches its description.");
+			expect(build(["read"])).toContain("Use bash to load a skill's file");
+			expect(build([])).toContain("Use the read tool to load a skill's file");
+		});
+	});
 });

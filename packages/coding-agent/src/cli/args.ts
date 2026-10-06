@@ -35,6 +35,7 @@ export interface Args {
 	noBuiltinTools?: boolean;
 	extensions?: string[];
 	noExtensions?: boolean;
+	noMcp?: boolean;
 	print?: boolean;
 	export?: string;
 	noSkills?: boolean;
@@ -181,6 +182,8 @@ export function parseArgs(args: string[]): Args {
 			result.extensions.push(args[++i]);
 		} else if (arg === "--no-extensions" || arg === "-ne") {
 			result.noExtensions = true;
+		} else if (arg === "--no-mcp") {
+			result.noMcp = true;
 		} else if (arg === "--skill" && i + 1 < args.length) {
 			result.skills = result.skills ?? [];
 			result.skills.push(args[++i]);
@@ -308,13 +311,14 @@ ${chalk.bold("Options:")}
                                  Supports globs (anthropic/*, *sonnet*) and fuzzy matching
   --no-tools, -nt                Disable all tools by default (built-in and extension)
   --no-builtin-tools, -nbt       Disable built-in tools by default but keep extension/custom tools enabled
-  --tools, -t <tools>            Comma-separated allowlist of tool names to enable
-                                 Applies to built-in, extension, and custom tools
-  --exclude-tools, -xt <tools>   Comma-separated denylist of tool names to disable
-                                 Applies to built-in, extension, and custom tools
+  --tools, -t <tools>            Comma-separated allowlist of tool names or patterns (*) to enable
+                                 Keeps MCP tools unless an entry starts with mcp__
+  --exclude-tools, -xt <tools>   Comma-separated denylist of tool names or patterns (*) to disable
+                                 Applies to all tools, MCP tools included
   --thinking <level>             Set thinking level: off, minimal, low, medium, high, xhigh, max
   --extension, -e <path>         Load an extension file or builtin:<name> (can be used multiple times)
   --no-extensions, -ne           Disable extension discovery and built-in extensions (explicit -e paths still work)
+  --no-mcp                       Disable built-in MCP support: no servers connect and no MCP tools
   --skill <path>                 Load a skill file or directory (can be used multiple times)
   --no-skills, -ns               Disable skills discovery and loading
   --prompt-template <path>       Load a prompt template file or directory (can be used multiple times)
@@ -390,6 +394,9 @@ ${chalk.bold("Examples:")}
 
   # Read-only mode (no file modifications possible)
   ${APP_NAME} --tools read,grep,find,ls -p "Review the code in src/"
+
+  # Codemode with only the tools of one MCP server
+  ${APP_NAME} --tools read,bash,codemode,'mcp__radius__*'
 
   # Disable one tool while keeping the rest available
   ${APP_NAME} --exclude-tools ask_question

@@ -14,8 +14,8 @@ describe("KeybindingsManager", () => {
 	it("binds modified and unmodified editor viewport navigation", () => {
 		const keybindings = new KeybindingsManager(TUI_KEYBINDINGS);
 
-		assert.deepStrictEqual(keybindings.getKeys("tui.editor.cursorLineStart"), ["home", "ctrl+home", "ctrl+a"]);
-		assert.deepStrictEqual(keybindings.getKeys("tui.editor.cursorLineEnd"), ["end", "ctrl+end", "ctrl+e"]);
+		assert.deepStrictEqual(keybindings.getKeys("tui.editor.cursorLineStart"), ["home", "ctrl+a"]);
+		assert.deepStrictEqual(keybindings.getKeys("tui.editor.cursorLineEnd"), ["end", "ctrl+e"]);
 		assert.deepStrictEqual(keybindings.getKeys("tui.editor.pageUp"), ["pageUp", "ctrl+pageUp"]);
 		assert.deepStrictEqual(keybindings.getKeys("tui.editor.pageDown"), ["pageDown", "ctrl+pageDown"]);
 	});
@@ -42,8 +42,8 @@ describe("KeybindingsManager", () => {
 		assert.deepStrictEqual(keybindings.getKeys("tui.altScreen.searchNext"), ["enter", "ctrl+g"]);
 		assert.deepStrictEqual(keybindings.getKeys("tui.altScreen.searchPrevious"), ["shift+enter", "ctrl+shift+g"]);
 		assert.deepStrictEqual(keybindings.getKeys("tui.altScreen.searchClose"), ["escape"]);
-		assert.deepStrictEqual(keybindings.getKeys("tui.altScreen.top"), ["home"]);
-		assert.deepStrictEqual(keybindings.getKeys("tui.altScreen.bottom"), ["end"]);
+		assert.deepStrictEqual(keybindings.getKeys("tui.altScreen.top"), ["ctrl+home"]);
+		assert.deepStrictEqual(keybindings.getKeys("tui.altScreen.bottom"), ["ctrl+end"]);
 	});
 
 	it("does not evict selector confirm when input submit is rebound", () => {

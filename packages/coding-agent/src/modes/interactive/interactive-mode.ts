@@ -58,6 +58,7 @@ import {
 	APP_NAME,
 	APP_TITLE,
 	CONFIG_DIR_NAME,
+	detectInstallChange,
 	getAgentDir,
 	getAuthPath,
 	getDebugLogPath,
@@ -125,6 +126,7 @@ import { getChangelogPath, getNewEntries, normalizeChangelogLinks, parseChangelo
 import { copyToClipboard, readClipboardFilePaths, readClipboardText } from "../../utils/clipboard.ts";
 import { extensionForImageMimeType, readClipboardImage } from "../../utils/clipboard-image.ts";
 import { parseGitUrl } from "../../utils/git.ts";
+import { ensurePngTranscoder } from "../../utils/image-convert.ts";
 import { getCwdRelativePath } from "../../utils/paths.ts";
 import { getPiUserAgent } from "../../utils/pi-user-agent.ts";
 import { killTrackedDetachedChildren } from "../../utils/shell.ts";
@@ -286,7 +288,9 @@ function isUsageSessionEntry(item: RenderSessionItem): item is Extract<SessionEn
 	return "type" in item && item.type === "usage";
 }
 
-const DEAD_TERMINAL_ERROR_CODES = new Set(["EIO", "EPIPE", "ENOTCONN"]);
+// EIO: tty reads/ioctls from an orphaned background process group, or writes after hangup.
+// ENOTTY: the tty was revoked (macOS) and stdin is no longer a terminal.
+const DEAD_TERMINAL_ERROR_CODES = new Set(["EIO", "EPIPE", "ENOTCONN", "ENOTTY"]);
 
 function isDeadTerminalError(error: unknown): boolean {
 	if (!error || typeof error !== "object" || !("code" in error)) {
@@ -544,6 +548,7 @@ export class InteractiveMode {
 
 	/** The `/bug` hint is shown at most once per session so error output stays readable. */
 	private bugReportHintShown = false;
+	private installChangeWarningShown = false;
 
 	// Extension UI state
 	private extensionSelector: ExtensionSelectorComponent | undefined = undefined;
@@ -985,6 +990,7 @@ export class InteractiveMode {
 		// Start the UI before initializing extensions so session_start handlers can use interactive dialogs
 		this.ui.start();
 		this.isInitialized = true;
+		this.ensurePngTranscoder();
 
 		this.themeController.applyFromSettings();
 		// The header and startup notices bake theme colors into their text, so build them once the terminal
@@ -2035,8 +2041,17 @@ export class InteractiveMode {
 		this.transcriptScrollView?.setScrollbar(this.settingsManager.getFullscreenScrollbar());
 	}
 
+	/** Lets extension images use the PNG transcoder; tool results register it themselves. */
+	private ensurePngTranscoder(): void {
+		ensurePngTranscoder(() => {
+			this.ui.invalidate();
+			this.ui.requestRender();
+		});
+	}
+
 	private applyRuntimeSettings(): void {
 		setCapabilityOverrides(this.settingsManager.getTerminalCapabilityOverrides());
+		this.ensurePngTranscoder();
 		configureHttpDispatcher(this.settingsManager.getHttpIdleTimeoutMs());
 		this.applyFullscreenScrollbarSetting();
 		if (this.renderer instanceof TuiAltScreen) {
@@ -2157,7 +2172,30 @@ export class InteractiveMode {
 	private maybeSuggestBugReport(message: AssistantMessage): void {
 		if (message.stopReason !== "error" || isRetryableAssistantError(message)) return;
 		if (/\b(?:abort(?:ed)?|cancel(?:l?ed)?)\b/i.test(message.errorMessage ?? "")) return;
+		if (this.maybeShowInstallChangeWarning()) return;
 		this.suggestBugReport();
+	}
+
+	/**
+	 * After an error, check whether an update replaced or removed this install while the session ran.
+	 * Code loaded on demand then fails with missing modules until restart (#10439). Returns true when
+	 * the install changed.
+	 */
+	private maybeShowInstallChangeWarning(): boolean {
+		if (this.installChangeWarningShown) return true;
+		const change = detectInstallChange();
+		if (!change) return false;
+		this.installChangeWarningShown = true;
+		const cause =
+			change.kind === "updated"
+				? `${APP_NAME} was updated to ${change.version} while this session was running (${VERSION})`
+				: `The ${APP_NAME} installation this session runs from was removed or replaced`;
+		const resumeCommand = formatResumeCommand(this.sessionManager);
+		const restart = resumeCommand
+			? `Restart with \`${resumeCommand}\` to continue this session.`
+			: `Restart ${APP_NAME}.`;
+		this.showWarning(`${cause}. Features that load code on demand can fail until restart. ${restart}`);
+		return true;
 	}
 
 	private renderCurrentSessionState(): void {
@@ -2179,7 +2217,9 @@ export class InteractiveMode {
 	 * whatever this returns, so they never reach into the tool registry themselves.
 	 */
 	private getRegisteredToolDefinition(toolName: string) {
-		return withBuiltInRenderers(toolName, this.session.getToolDefinition(toolName));
+		return this.session.extensionRunner.resolveToolRenderers(toolName, () =>
+			withBuiltInRenderers(toolName, this.session.getToolDefinition(toolName)),
+		);
 	}
 
 	private getMarkdownTransformers(): MarkdownTransformer[] {
@@ -3577,6 +3617,7 @@ export class InteractiveMode {
 			}
 
 			case "tool_execution_end": {
+				if (event.isError) this.maybeShowInstallChangeWarning();
 				const component = this.pendingTools.get(event.toolCallId);
 				if (component) {
 					component.updateResult({ ...event.result, isError: event.isError });
@@ -4269,6 +4310,10 @@ export class InteractiveMode {
 	 * paste / Kitty / modifyOtherKeys sequences.
 	 */
 	private uncaughtCrash(error: Error): never {
+		// A dead terminal is not a pi crash. Do not try to restore it or record it.
+		if (isDeadTerminalError(error)) {
+			this.emergencyTerminalExit();
+		}
 		if (this.isShuttingDown) {
 			process.exit(1);
 		}
@@ -4327,10 +4372,13 @@ export class InteractiveMode {
 			}
 			throw error;
 		};
-		process.stdout.on("error", terminalErrorHandler);
-		process.stderr.on("error", terminalErrorHandler);
-		this.signalCleanupHandlers.push(() => process.stdout.off("error", terminalErrorHandler));
-		this.signalCleanupHandlers.push(() => process.stderr.off("error", terminalErrorHandler));
+		// stdin needs the handler too: once the terminal is gone, reads and setRawMode
+		// fail with EIO (orphaned background process group) or ENOTTY (revoked tty).
+		// Node emits these as stream errors, which are uncaught without a listener.
+		for (const stream of [process.stdin, process.stdout, process.stderr]) {
+			stream.on("error", terminalErrorHandler);
+			this.signalCleanupHandlers.push(() => stream.off("error", terminalErrorHandler));
+		}
 
 		// Restore the terminal before the process dies on any uncaught throw.
 		// Without this, an unhandled exception from extension code (or anywhere

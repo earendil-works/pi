@@ -16,6 +16,7 @@ import type {
 } from "../types.ts";
 import { orderToolResults } from "./context.ts";
 import { addCompactionStatus, compactionStatus, LiveDoc, type LiveState, removeCompactionStatus } from "./live.ts";
+import { ensureProviderSessionId } from "./provider.ts";
 import { admitSubmission } from "./submissions.ts";
 import type {
 	CompactionHooks,
@@ -167,6 +168,7 @@ export const CompactionTask = defineTask<CompactionInput, CompactionCheckpoint, 
 				cacheRetention: "none",
 				maxTokens,
 				signal: runtime.signal,
+				sessionId: await ensureProviderSessionId(runtime, context),
 				...(thinkingLevel === "off" ? {} : { reasoning: thinkingLevel }),
 			};
 			const message = await runtime.models.completeSimple(model, { messages }, options);

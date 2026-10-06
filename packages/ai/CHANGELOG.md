@@ -2,6 +2,34 @@
 
 ## [Unreleased]
 
+## [1.0.4] - 2026-10-05
+
+### Fixed
+
+- Fixed Bedrock requests that fail with `The pending stream has been canceled` after a stalled HTTP/2 connection not being retried automatically ([#10379](https://github.com/earendil-works/pi/issues/10379))
+
+## [1.0.3] - 2026-10-05
+
+### Breaking Changes
+
+- Renamed the Azure provider from `azure-openai-responses` to `azure`, since it now serves Chat Completions as well as the Responses API. Use `getModel("azure", ...)`, and import `azureProvider` and `AZURE_MODELS` from `@earendil-works/pi-ai/providers/azure` instead of `azureOpenAIResponsesProvider` and `AZURE_OPENAI_RESPONSES_MODELS` from `providers/azure-openai-responses`. The `azure-openai-responses` api id and the `AZURE_OPENAI_*` environment variables are unchanged ([#9714](https://github.com/earendil-works/pi/pull/9714) by [@jsanter27](https://github.com/jsanter27))
+
+### Added
+
+- Added Chat Completions support to the Azure provider for Foundry deployments, with DeepSeek V4 Pro in the built-in catalog. Other Foundry models can be added under the `azure` provider with `api: "openai-completions"`, and `AZURE_OPENAI_DEPLOYMENT_NAME_MAP` and `azureDeploymentName` apply to both APIs ([#9645](https://github.com/earendil-works/pi/issues/9645), [#9714](https://github.com/earendil-works/pi/pull/9714) by [@jsanter27](https://github.com/jsanter27))
+
+### Fixed
+
+- Fixed OAuth credentials being invalidated when a request or model refresh was cancelled or superseded during a token refresh: a token refresh that has started now completes and persists the rotated refresh token
+
+## [1.0.2] - 2026-10-04
+
+### Added
+
+- Added per-thinking-level sampling parameter overrides (`samplingParamsByThinkingLevel`) for `openai-completions`, `openai-responses`, and `azure-openai-responses` requests ([#9776](https://github.com/earendil-works/pi/pull/9776) by [@mrexodia](https://github.com/mrexodia))
+
+## [1.0.1] - 2026-10-03
+
 ### Added
 
 - Added Cloudflare's Clef and Clef Flash classifier models (`@cf/cloudflare/clef`, `@cf/cloudflare/clef-flash`) to the `cloudflare-workers-ai` provider ([#10316](https://github.com/earendil-works/pi/pull/10316) by [@ndisidore](https://github.com/ndisidore), [#10322](https://github.com/earendil-works/pi/pull/10322) by [@RealAlexandreAI](https://github.com/RealAlexandreAI))
@@ -18,6 +46,7 @@
 - Fixed Sign in with ChatGPT continuing when its callback port is taken by another login, which made the browser show "OAuth state mismatch"; it now fails with a port-in-use error ([#10265](https://github.com/earendil-works/pi/issues/10265))
 - Fixed Amazon Bedrock OpenAI models costing requests above 272k input tokens at the short-context rate; Bedrock models now include the pricing tiers listed on models.dev ([#10326](https://github.com/earendil-works/pi/issues/10326))
 - Fixed Amazon Bedrock Claude requests failing with "Invalid `signature` in `thinking` block" after the system prompt or tools changed; Claude Opus 4.7+, Sonnet 5+, and Fable 5 now drop stale thinking blocks like the Anthropic provider ([#10324](https://github.com/earendil-works/pi/issues/10324))
+- Fixed Together DeepSeek V4 Pro losing its thinking level controls after Together renamed it to `deepseek-ai/DeepSeek-V4-Pro-0813` ([#10336](https://github.com/earendil-works/pi/pull/10336) by [@cv](https://github.com/cv))
 
 ## [1.0.0] - 2026-10-01
 

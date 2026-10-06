@@ -1,0 +1,55 @@
+{
+	"name": "@earendil-works/pi-env",
+	"version": "1.0.4",
+	"description": "Remote execution environments for Pi Durable: a small daemon deployed over SSH and its ExecutionEnv client",
+	"type": "module",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"source": "./src/index.ts",
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js",
+			"default": "./dist/index.js"
+		}
+	},
+	"sideEffects": false,
+	"files": [
+		"dist",
+		"bin",
+		"docs",
+		"README.md",
+		"CHANGELOG.md"
+	],
+	"scripts": {
+		"clean": "shx rm -rf dist",
+		"build": "tsc -p tsconfig.build.json",
+		"build:daemon": "cargo build --manifest-path daemon/Cargo.toml --locked",
+		"test": "vitest --run",
+		"prepublishOnly": "npm run clean && npm run build"
+	},
+	"keywords": [
+		"durable-execution",
+		"agents",
+		"ssh",
+		"remote"
+	],
+	"author": "Earendil Works",
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/earendil-works/pi.git",
+		"directory": "packages/env"
+	},
+	"engines": {
+		"node": ">=22.19.0"
+	},
+	"dependencies": {
+		"@earendil-works/chord": "^1.0.4",
+		"@earendil-works/pi-durable": "^1.0.4"
+	},
+	"devDependencies": {
+		"shx": "0.4.0",
+		"vitest": "4.1.11"
+	}
+}

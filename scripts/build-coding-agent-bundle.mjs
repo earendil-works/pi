@@ -186,7 +186,6 @@ if (dirname(bedrockLoaderOutput) !== dirname(oauthLoaderOutput)) {
 const lazyEntryPoints = {
 	anthropic: join(aiDistDir, "auth", "oauth", "anthropic.js"),
 	"bedrock-converse-stream": join(aiDistDir, "api", "bedrock-converse-stream.js"),
-	"codemode-worker": join(codingAgentDistDir, "extensions", "codemode", "worker.js"),
 	"github-copilot": join(aiDistDir, "auth", "oauth", "github-copilot.js"),
 	"image-resize-worker": join(codingAgentDistDir, "utils", "image-resize-worker.js"),
 	"kimi-coding": join(aiDistDir, "auth", "oauth", "kimi-coding.js"),
@@ -215,6 +214,30 @@ const lazyResult = await build({
 	splitting: false,
 });
 
+// getCodemodeWorkerSpecifier() in config.ts spawns the codemode worker from an in-memory data: URL
+// so codemode survives an update that replaces or deletes the install (#10439). A data: URL module
+// has no file location, so the worker must not use the createRequire(import.meta.url) banner,
+// require(), or imports other than Node builtins.
+const codemodeWorkerResult = await build({
+	...commonBuildOptions(),
+	banner: undefined,
+	entryNames: "[name]",
+	entryPoints: { "codemode-worker": join(codingAgentDistDir, "extensions", "codemode", "worker.js") },
+	outdir: dirname(bedrockLoaderOutput),
+	splitting: false,
+});
+for (const [outputPath, output] of Object.entries(codemodeWorkerResult.metafile.outputs)) {
+	const invalid = output.imports.filter((imported) => imported.kind !== "import-statement" || !isBuiltin(imported.path));
+	if (invalid.length > 0) {
+		throw new Error(
+			`Codemode worker must only import Node builtins: ${invalid.map((imported) => imported.path).join(", ")}`,
+		);
+	}
+	if (readFileSync(resolve(repoRoot, outputPath), "utf8").includes("import.meta")) {
+		throw new Error("Codemode worker must not use import.meta");
+	}
+}
+
 const imageResizeWorkerOutput = resolve(dirname(bedrockLoaderOutput), "image-resize-worker.js");
 if (dirname(imageResizeOutput) !== dirname(imageResizeWorkerOutput)) {
 	throw new Error("Image resize implementation and worker were emitted into different directories");
@@ -224,7 +247,8 @@ if (dirname(configOutput) !== dirname(bedrockLoaderOutput)) {
 	throw new Error("config.ts and the codemode worker were emitted into different directories");
 }
 
-validateExternalImports([mainResult.metafile, lazyResult.metafile]);
+const metafiles = [mainResult.metafile, lazyResult.metafile, codemodeWorkerResult.metafile];
+validateExternalImports(metafiles);
 const cliLauncher = `#!/usr/bin/env node
 import { createRequire, enableCompileCache } from "node:module";
 
@@ -235,7 +259,6 @@ writeFileSync(join(bundleDir, "cli.js"), cliLauncher);
 chmodSync(join(bundleDir, "cli.js"), 0o755);
 chmodSync(join(bundleDir, "rpc-entry.js"), 0o755);
 
-const files =
-	new Set([...Object.keys(mainResult.metafile.outputs), ...Object.keys(lazyResult.metafile.outputs)]).size + 1;
-const mib = (outputBytes([mainResult.metafile, lazyResult.metafile]) + cliLauncher.length) / (1024 * 1024);
+const files = new Set(metafiles.flatMap((metafile) => Object.keys(metafile.outputs))).size + 1;
+const mib = (outputBytes(metafiles) + cliLauncher.length) / (1024 * 1024);
 console.log(`Built ${relative(repoRoot, bundleDir)} (${files} files, ${mib.toFixed(1)} MiB)`);

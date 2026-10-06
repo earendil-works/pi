@@ -546,6 +546,8 @@ export interface ToolLoadout {
 	readonly registered: readonly AgentTool[];
 	getExposure(name: string): ToolExposure;
 	getNamespace(name: string): ToolNamespace | undefined;
+	/** A tool's `promptGuidelines`. Hidden declarations leave them out of the system prompt. */
+	getPromptGuidelines(name: string): readonly string[];
 }
 
 /** Changes {@link ToolDefinition.prepareLoadout} makes to what the model sees. */
@@ -645,6 +647,17 @@ export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = un
 }
 
 type AnyToolDefinition = ToolDefinition<any, any, any>;
+
+export type ToolRenderers = Pick<AnyToolDefinition, "renderShell" | "renderCall" | "renderResult">;
+
+/**
+ * Chooses how calls to a tool are drawn, including tools that are not registered. `next()` returns
+ * the renderers the remaining resolvers, then the registered tool, would use.
+ */
+export type ToolRendererResolver = (
+	toolName: string,
+	next: () => ToolRenderers | undefined,
+) => ToolRenderers | undefined;
 
 /**
  * Preserve parameter inference for standalone tool definitions.
@@ -1668,6 +1681,9 @@ export interface ExtensionAPI {
 	/** Register a custom renderer for CustomEntry. Custom entries do not participate in LLM context. */
 	registerEntryRenderer<T = unknown>(customType: string, renderer: EntryRenderer<T>): void;
 
+	/** Choose how tool calls are drawn. Resolvers run in extension load order. */
+	registerToolRenderer(resolver: ToolRendererResolver): void;
+
 	// =========================================================================
 	// Actions
 	// =========================================================================
@@ -2217,6 +2233,7 @@ export interface Extension {
 	handlers: Map<string, HandlerFn[]>;
 	tools: Map<string, RegisteredTool>;
 	messageRenderers: Map<string, MessageRenderer>;
+	toolRenderers?: ToolRendererResolver[];
 	markdownTransformer?: MarkdownTransformer;
 	entryRenderers?: Map<string, EntryRenderer>;
 	commands: Map<string, RegisteredCommand>;

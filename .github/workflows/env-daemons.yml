@@ -1,0 +1,89 @@
+name: pi-env daemons
+
+# Builds the pi-env daemon for every remote system @earendil-works/pi-env supports, on native runners, as artifacts
+# named pi-env-<platform>-<arch>. Build Binaries calls this before publishing npm packages; the Environments workflow
+# calls it to test the release builds on every change.
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: Source ref to build
+        required: false
+        type: string
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - { runner: ubuntu-latest, target: x86_64-unknown-linux-musl, name: linux-x64 }
+          - { runner: ubuntu-24.04-arm, target: aarch64-unknown-linux-musl, name: linux-arm64 }
+          - { runner: ubuntu-latest, target: aarch64-linux-android, name: android-arm64, android: aarch64-linux-android24 }
+          - { runner: ubuntu-latest, target: x86_64-linux-android, name: android-x64, android: x86_64-linux-android24 }
+          - { runner: macos-latest, target: aarch64-apple-darwin, name: darwin-arm64 }
+          - { runner: macos-latest, target: x86_64-apple-darwin, name: darwin-x64 }
+          - { runner: windows-latest, target: x86_64-pc-windows-msvc, name: windows-x64 }
+          - { runner: windows-11-arm, target: aarch64-pc-windows-msvc, name: windows-arm64 }
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: packages/env/daemon
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          persist-credentials: false
+
+      - name: Add target
+        run: rustup target add ${{ matrix.target }}
+
+      - name: Configure the Android NDK linker
+        if: matrix.android
+        # A fixed NDK, installed when the runner image does not have it.
+        env:
+          NDK_VERSION: 27.2.12479018
+        run: |
+          ndk="$ANDROID_HOME/ndk/$NDK_VERSION"
+          if [ ! -d "$ndk" ]; then
+            # `yes` ends with SIGPIPE once the licenses are accepted.
+            { yes || true; } | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$NDK_VERSION" > /dev/null
+          fi
+          linker="$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/${{ matrix.android }}-clang"
+          test -x "$linker"
+          variable="CARGO_TARGET_$(echo '${{ matrix.target }}' | tr 'a-z-' 'A-Z_')_LINKER"
+          echo "$variable=$linker" >> "$GITHUB_ENV"
+
+      - name: Build
+        # Static C runtime on Windows, so the daemon needs no Visual C++ redistributable on the remote machine.
+        env:
+          RUSTFLAGS: ${{ contains(matrix.target, 'windows') && '-C target-feature=+crt-static' || '' }}
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: Collect
+        run: |
+          suffix=""
+          case "${{ matrix.target }}" in *windows*) suffix=".exe" ;; esac
+          mkdir -p "$GITHUB_WORKSPACE/pi-env-${{ matrix.name }}"
+          cp "target/${{ matrix.target }}/release/pi-env$suffix" "$GITHUB_WORKSPACE/pi-env-${{ matrix.name }}/pi-env$suffix"
+          ls -l "$GITHUB_WORKSPACE/pi-env-${{ matrix.name }}"
+
+      - name: Run the native build
+        if: ${{ !matrix.android && !(matrix.target == 'x86_64-apple-darwin') }}
+        run: |
+          suffix=""
+          case "${{ matrix.target }}" in *windows*) suffix=".exe" ;; esac
+          "$GITHUB_WORKSPACE/pi-env-${{ matrix.name }}/pi-env$suffix" --version
+
+      - name: Upload
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: pi-env-${{ matrix.name }}
+          path: pi-env-${{ matrix.name }}
+          if-no-files-found: error

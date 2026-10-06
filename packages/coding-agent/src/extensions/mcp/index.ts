@@ -61,7 +61,7 @@ import {
 import { loadMcpRuntime } from "./runtime.lazy.ts";
 import type * as McpRuntime from "./runtime.ts";
 import type { McpServerConnection, McpServerLog, McpTransportFactory } from "./runtime.ts";
-import { createMcpToolDefinition, createMcpToolName, type McpToolDetails } from "./tools.ts";
+import { createMcpToolDefinition, createMcpToolName, createMcpToolRenderers, type McpToolDetails } from "./tools.ts";
 import { type McpMenu, type McpUi, showMcpManager } from "./ui.ts";
 
 export type { McpTransportFactory } from "./runtime.ts";
@@ -358,6 +358,12 @@ export function createMcpExtension(options: McpExtensionOptions = {}): Extension
 		const serverTools = new Map<string, Set<string>>();
 		/** Last definition registered under each tool name, to re-register withdrawn tools as hidden. */
 		const definitions = new Map<string, ToolDefinition<TSchema, McpToolDetails>>();
+
+		// A resumed session renders calls to MCP tools before their server connected, if it ever does.
+		pi.registerToolRenderer((toolName, next) => {
+			const match = /^mcp__(.+?)__(.+)$/.exec(toolName);
+			return next() ?? (match ? createMcpToolRenderers(`${match[1]}/${match[2]}`) : undefined);
+		});
 
 		const registerTools = (connection: McpServerConnection) => {
 			const server = connection.entry.name;

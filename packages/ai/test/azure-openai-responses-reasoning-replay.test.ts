@@ -10,7 +10,7 @@ function createModel(): Model<"azure-openai-responses"> {
 		id: "gpt-5-mini",
 		name: "GPT-5 Mini",
 		api: "azure-openai-responses",
-		provider: "azure-openai-responses",
+		provider: "azure",
 		baseUrl: "https://example.invalid",
 		reasoning: true,
 		input: ["text"],
@@ -75,7 +75,7 @@ function getReplayedReasoning(model: Model<"azure-openai-responses">, assistant:
 			{ role: "user", content: "follow-up", timestamp: Date.now() },
 		],
 	});
-	const input = convertResponsesMessages(model, context, new Set(["azure-openai-responses"]));
+	const input = convertResponsesMessages(model, context, new Set(["azure"]));
 	return input.find((item) => item.type === "reasoning");
 }
 

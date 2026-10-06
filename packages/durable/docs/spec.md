@@ -654,7 +654,8 @@ raw `tx.createConversation()` and `tx.forkConversation()`, for example inside a
 tool commit. It runs inside `tx.createConversation()` and
 `tx.forkConversation()`, before they return, so a `configure()` later in the
 same callback overrides its copy. It creates empty `pi.live`, `pi.inbox`, and
-`pi.usage`, and handles `pi.agent`:
+`pi.usage`, creates `pi.provider` with a fresh provider-facing UUIDv7, and handles
+`pi.agent`:
 
 - A fork keeps the `asOf` copy of its parent's `pi.agent` (section 3.7),
   whatever its ownership.
@@ -732,6 +733,29 @@ registry movement, and the name takes effect again when it is installed again.
 A change neither starts generation nor appends a system entry. Request
 preparation later compares the desired prompt and tools with transcript history
 and appends the required positional system baseline or delta (section 7.4).
+
+The built-in provider document is final at version 1:
+
+| field | value |
+|---|---|
+| kind | `pi.provider` |
+| version | `1` (no migration) |
+| scope/history/fork | conversation, `latest`, `initial` |
+| schema | `{ sessionId: string }` |
+| `initial()` | `{ sessionId: uuidv7() }` |
+| checkpoint | complete base on every change |
+| view mount | `docs["pi.provider"]` |
+
+The UUID is a provider-facing conversation identity, not the numeric Durable
+`ConversationId` and not an enclosing application's Session ID. Every new,
+task-owned, raw-created, and forked conversation receives its own UUID in its
+creating commit; a fork never copies its parent's UUID. Generation requests and
+compaction summarization pass it to pi-ai as `options.sessionId`. Reset,
+compaction, model changes, and reopen do not change it. A legacy conversation without the document creates and persists it
+on the Session line before its first generation or compaction provider request.
+Concurrent callers therefore observe one winner. Provider behavior still
+applies: for example, Codex suppresses cache/session identity when
+`cacheRetention` is `"none"`.
 
 A missing tool implementation never fails a request. Request preparation offers
 only the agent's resolved tools. If the replayed tool state still offers a tool
@@ -2752,8 +2776,9 @@ invocation end. Throttled commits publish the retained output, dropped
 byte/line counts, and the current details and diagnostics in its `pi.live.tools`
 slot. The throttle is adaptive, like the environment's shell output capture: the
 first change after an idle period commits at once; each commit then delays the
-next by at least 100 ms and by its written size at 100 KiB/s, so a large
-rewrite buys a proportionally longer pause. Changes made during the delay
+next by at least `settings.progress.outputIntervalMs` (default 100 ms) and by
+its written size at 100 KiB/s, so a large rewrite buys a proportionally longer
+pause. Changes made during the delay
 coalesce into the next commit. The throttle is Harness policy, not part of
 `outputLimits`, which only bounds what is retained. Explicit
 text in explicit result content is bounded by the same limits before transcript
@@ -2794,6 +2819,61 @@ no bounded view of its own, so `output()` is the one place output is bounded,
 sanitized, and throttled. The `bash` tool pipes those chunks into `output()`,
 reports the spill path as a diagnostic, and throws on a nonzero exit or timeout;
 the error result still carries the retained output and diagnostics.
+
+An environment that moves output over a slow link, such as one on another host,
+need not move all of it. `api.outputWindow` names the tail a tail-retaining
+call keeps and the pace of its progress commits; the `bash` tool passes it as
+`ShellExecOptions.window`. The environment may then omit output and report
+the omission as `info.skipped` on the chunk that follows: the decoded byte
+count, the newline count, and whether the omitted text ended with a newline.
+It may omit only output followed by more than the window, by at least one byte
+or one line, and delivers all of that following output in the same chunk, so
+the omitted text can never be part of the kept tail and no progress commit sees
+a gap. `output(chunk, skipped)` adds the omission to the dropped counts, so
+the retained tail, the dropped counts, and the `truncated` diagnostic are the
+same as if every byte had arrived; only the moments at which progress is
+sampled differ. The environment should deliver no faster than the pace, since
+progress commits sample no faster. A head-retaining call has no window. A
+wrapper that replaces `output` to transform text sets `outputWindow` to
+`undefined`, so no omitted text bypasses its transform.
+
+`exec` takes a string or an argv array. A string runs through the
+environment's shell. An array runs its first element directly with the rest as
+arguments, without a shell, so a host that builds a command from data, such as
+a file name, never quotes it for a particular shell. Each `onOutput` chunk names
+the stream it came from; the `bash` tool ignores it, while a host that needs
+stdout and stderr apart collects them separately, bounds them itself, and
+aborts the call when it has enough. `openBinaryReader` opens one regular file
+for positional reads, so a host reads a bounded range instead of the whole
+file, and every read sees the file it opened even if the path is renamed;
+`noFollow` refuses a symbolic link as the final path component. Its
+`scanLines` makes one pass over the file inside the environment and reports
+the newline count, the byte range of a span of lines, and the decoded sizes of
+that span and its first line, so a caller can count and locate lines without
+moving the file. `openDirReader`
+pages a directory in file-system order, reading metadata only for the entries
+it returns and skipping entries removed meanwhile. All operations stop when
+their context is aborted, and only that call's work stops: a timeout or abort
+kills only that command's processes. `cleanup()` kills every command the
+environment still runs and belongs to its owner's shutdown, never to a single
+request. `watch` reports changes to files and directories for hosts that load
+resources, such as instructions or skills, from the environment; Durable
+itself never calls it. A target may be missing, and creating it is a change; a
+recursive target covers its subtree except excluded entries, without following
+symbolic links below it. When `watch` resolves, coverage is established, so a
+host that watches before it loads cannot lose a change made during the load. A
+change arrives as reported paths (each covering its subtree; calls may be
+spurious), as `overflow` when coverage was uncertain for a while and everything
+must be rescanned, or as a final `error`. A `native` watcher reports changes
+within about two seconds; a `polling` one compares snapshots because its file
+system, for example a network or FUSE file system, does not report changes made
+elsewhere, and can miss a change undone between two snapshots. `NodeExecutionEnv`
+uses events only to trigger rescans and reports differences between snapshots,
+so replaced files, renamed parents, and directories created with their contents
+are reported whatever events the platform sends. An environment is trusted, not
+a confinement boundary: checking a
+canonical path before opening it does not prevent a concurrent rename or
+symlink swap, so callers that restrict paths do so for hygiene, not security.
 
 The `details()` promise resolves after the corresponding or coalesced document
 commit. During normal settlement the tool task stops its throttle and awaits the
@@ -2992,7 +3072,14 @@ if any, and `details` is the tool's last reported value, if any.
 `@earendil-works/pi-durable/tools` provides `read`, `write`, `edit`, and `bash`
 factories, ported from the agent harness tools, and the `CodingTools` extension
 with all four. They use only `api.env`; nothing
-installs them automatically. `read` does not return images yet. `edit` and
+installs them automatically. `read` does not return images yet. It reads a
+file through `openBinaryReader`: image detection reads the header (and a PNG's
+chunk headers), `scanLines` counts and locates the selected lines, and only the
+shown head is read and decoded, so its cost and transfer are bounded by the
+output limits plus one pass over the file inside the environment. Its result is
+exactly that of decoding the whole file, splitting it into lines, and
+truncating the selection. A file that changes while it is read is read again
+once, then fails. `edit` and
 `write` serialize their read-modify-write of one file within the process, keyed
 by the environment's `FileSystem.id` (equal ids see the same files at the same
 paths) and the canonical path, so two calls with fresh environment objects for
@@ -3397,8 +3484,10 @@ The run's inputs live in `pi.live.run`, not in the task input.
 - `request` first converts a committed partial left in `pi.live` by an
   interrupted attempt into an aborted `pi.assistant` entry. It then streams the
   model context through `cutoff` with the invocation signal, the thinking level
-  as `reasoning` (omitted for `off`), and the pinned `streamOptions`,
-  committing throttled partials. Before streaming, the `beforeRequest` chain may
+  as `reasoning` (omitted for `off`), the conversation's persisted provider
+  `sessionId`, and the pinned `streamOptions`, committing throttled partials at
+  most every `settings.progress.partialIntervalMs` (default 100 ms).
+  Before streaming, the `beforeRequest` chain may
   replace the messages for this request only. Recovery resends the same
   committed messages with the same pinned model, thinking level, and stream
   options, and reruns `beforeRequest`.
@@ -3680,9 +3769,11 @@ Phases:
   system prompt, and a user message with the serialized text in
   `<conversation>` tags followed by the built-in summarization prompt, and
   `Additional focus: <instructions>` when the input has instructions. It uses the
-  pinned thinking level as `reasoning`, and the pinned stream options without
-  `deferred`, with `cacheRetention: "none"` and the pinned `maxTokens`.
-  Recovery resends the same request. The response is classified in one commit
+  pinned thinking level as `reasoning`, the conversation's persisted provider
+  `sessionId`, and the pinned stream options without `deferred`, with
+  `cacheRetention: "none"` and the pinned `maxTokens`. Providers such as Codex
+  may suppress that identity when caching is disabled. Recovery resends the same
+  request. The response is classified in one commit
   that adds its usage to `pi.usage` (section 8.6):
   - `stop` with non-empty text and no tool call: the text is the summary, placed
     as below.
@@ -3911,7 +4002,7 @@ type ConversationView = {
   readonly conversation: ConversationRecord;
   /** Raw active entries, as `ContextView.entries` (section 2.1): the head marker, then the non-head entries from its head. */
   readonly entries: readonly EntryRecord[];
-  /** `pi.agent`, `pi.live`, `pi.inbox`, and `pi.usage`, keyed by kind; absent documents are absent. */
+  /** `pi.agent`, `pi.live`, `pi.inbox`, `pi.provider`, and `pi.usage`, keyed by kind; absent documents are absent. */
   readonly docs: Readonly<Record<string, JsonObject>>;
 };
 ```

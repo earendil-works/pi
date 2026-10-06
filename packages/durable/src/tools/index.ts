@@ -10,12 +10,15 @@ export {
 	type BashToolInput,
 	type BashToolOptions,
 	createBashTool,
+	createPowerShellTool,
+	type PowerShellToolInput,
+	type PowerShellToolOptions,
 } from "./bash.ts";
 export { createEditTool, type EditToolDetails, type EditToolInput } from "./edit.ts";
 export { createReadTool, type ReadToolDetails, type ReadToolInput } from "./read.ts";
 export { createWriteTool, type WriteToolInput } from "./write.ts";
 
-/** `read`, `write`, `edit`, and `bash`; nothing installs it automatically. */
+/** `read`, `write`, `edit`, and `bash`; nothing installs it automatically. `createPowerShellTool()` adds `powershell`. */
 export const CodingTools = defineExtension({
 	name: "coding-tools",
 	tools: [createReadTool(), createWriteTool(), createEditTool(), createBashTool()],

@@ -1,4 +1,47 @@
 const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+/** Bytes every check except the APNG chunk walk needs: BMP reads up to offset 29. */
+const HEADER_BYTES = 32;
+const BLOCK_BYTES = 64 * 1024;
+
+/** Positional reads of a file of `size` bytes. */
+export type ByteSource = {
+	readonly size: number;
+	read(offset: number, length: number): Promise<Uint8Array>;
+};
+
+/**
+ * `detectSupportedImageMimeType` of a whole file, reading only its header and, for PNG, the chunk headers up to the
+ * first `acTL` or `IDAT`.
+ */
+export async function detectSupportedImageMimeTypeOf(source: ByteSource): Promise<string | undefined> {
+	const header = await source.read(0, HEADER_BYTES);
+	if (!startsWith(header, PNG_SIGNATURE)) return detectSupportedImageMimeType(header);
+	return isPng(header) && !(await isAnimatedPngOf(source)) ? "image/png" : undefined;
+}
+
+/** `isAnimatedPng` over a file read in blocks. */
+async function isAnimatedPngOf(source: ByteSource): Promise<boolean> {
+	let block: Uint8Array = new Uint8Array(0);
+	let blockStart = 0;
+	const bytesAt = async (offset: number, length: number): Promise<Uint8Array> => {
+		if (offset < blockStart || offset + length > blockStart + block.length) {
+			blockStart = offset;
+			block = await source.read(offset, BLOCK_BYTES);
+		}
+		return block.subarray(offset - blockStart, offset - blockStart + length);
+	};
+	let offset = PNG_SIGNATURE.length;
+	while (offset + 8 <= source.size) {
+		const chunkHeader = await bytesAt(offset, 8);
+		const chunkLength = readUint32BE(chunkHeader, 0);
+		if (startsWithAscii(chunkHeader, 4, "acTL")) return true;
+		if (startsWithAscii(chunkHeader, 4, "IDAT")) return false;
+		const nextOffset = offset + 8 + chunkLength + 4;
+		if (nextOffset <= offset || nextOffset > source.size) return false;
+		offset = nextOffset;
+	}
+	return false;
+}
 
 export function detectSupportedImageMimeType(buffer: Uint8Array): string | undefined {
 	if (startsWith(buffer, [0xff, 0xd8, 0xff])) return buffer[3] === 0xf7 ? undefined : "image/jpeg";

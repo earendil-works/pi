@@ -137,6 +137,15 @@ describe("registry", () => {
 	});
 });
 
+describe("settings", () => {
+	it("keeps the default of a progress interval given as undefined", () => {
+		expect(resolveSettings({ progress: { partialIntervalMs: undefined, outputIntervalMs: 250 } }).progress).toEqual({
+			partialIntervalMs: 100,
+			outputIntervalMs: 250,
+		});
+	});
+});
+
 describe("agent resolution", () => {
 	const read = tool("read");
 	const bash = tool("bash");

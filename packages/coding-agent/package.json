@@ -1,6 +1,6 @@
 {
 	"name": "@earendil-works/pi-coding-agent",
-	"version": "1.0.0",
+	"version": "1.0.4",
 	"description": "Coding agent CLI with read, bash, edit, write tools and session management",
 	"type": "module",
 	"piConfig": {
@@ -47,12 +47,12 @@
 		"prepublishOnly": "npm run clean && npm run build"
 	},
 	"dependencies": {
-		"@earendil-works/chord": "^1.0.0",
-		"@earendil-works/pi-agent-core": "^1.0.0",
-		"@earendil-works/pi-ai": "^1.0.0",
-		"@earendil-works/pi-codemode": "^1.0.0",
-		"@earendil-works/pi-mcp": "^1.0.0",
-		"@earendil-works/pi-tui": "^1.0.0",
+		"@earendil-works/chord": "^1.0.4",
+		"@earendil-works/pi-agent-core": "^1.0.4",
+		"@earendil-works/pi-ai": "^1.0.4",
+		"@earendil-works/pi-codemode": "^1.0.4",
+		"@earendil-works/pi-mcp": "^1.0.4",
+		"@earendil-works/pi-tui": "^1.0.4",
 		"@silvia-odwyer/photon-node": "0.3.4",
 		"brace-expansion": "5.0.12",
 		"chalk": "6.0.0",
@@ -75,9 +75,9 @@
 		"protobufjs": "7.6.6"
 	},
 	"devDependencies": {
-		"@earendil-works/pi-client": "^1.0.0",
-		"@earendil-works/pi-protocol": "^1.0.0",
-		"@earendil-works/pi-server": "^1.0.0",
+		"@earendil-works/pi-client": "^1.0.4",
+		"@earendil-works/pi-protocol": "^1.0.4",
+		"@earendil-works/pi-server": "^1.0.4",
 		"@types/cross-spawn": "6.0.6",
 		"@types/hosted-git-info": "3.0.5",
 		"@types/node": "22.19.19",

@@ -23,7 +23,7 @@ The result starts with `Script completed` or `Script failed`, the wall time, and
 |---|---|
 | `tools.<name>(args)` | Call a tool. See [Call tools](#call-tools). |
 | `text(value)` | Add a text item to the output. Strings are added as is, other values as JSON. |
-| `image(value)` | Add an image to the output: a base64 `data:` URL, an `{ image_url }` object, or an image block `{ type: "image", data, mimeType }` such as those returned by MCP tools and `models.generateImages()`. Remote URLs are not supported. PNG, JPEG, GIF, and WebP are accepted. |
+| `image(value)` | Add an image to the output: a base64 `data:` URL, an `{ image_url }` object, or an image block `{ type: "image", data, mimeType }` such as those returned by MCP tools and `models.generateImages()`. Remote URLs are not supported. PNG, JPEG, GIF, and WebP are accepted. Each image is also saved to a temp file, and the result names the path before the image. |
 | `console.log(...)` | Like `text()`; `info`, `warn`, `error`, and `debug` do the same. |
 | `return value` | A top-level `return` adds the value like `text()`. |
 | `exit()` | End the script successfully. |
@@ -42,19 +42,20 @@ What a call resolves to depends on the tool:
 
 - Tools with an output schema resolve to a structured value. `bash` resolves to `{ output, truncated, full_output_path?, exit_code, wall_time_seconds }`, also for non-zero exit codes. Its `output` is not limited to the 2000 lines or 50KB the model sees: it holds up to 1 MiB, and longer output keeps its first and last 512 KiB around an omission marker, with `truncated` set and the full output in `full_output_path`.
 - MCP tools resolve to their `CallToolResult`, including `isError` and `structuredContent`.
-- Other tools, such as `read`, `edit`, and `write`, resolve to their text output.
+- `read` resolves to the file's text, or for an image to an image block `{ type: "image", data, mimeType, note }` that `image()` shows. `data` is the base64 image the model would see and `note` the text that goes with it, such as resize hints.
+- Other tools, such as `edit` and `write`, resolve to their text output.
 
 A call that fails, is blocked, or gets invalid arguments rejects with an `Error` that carries the tool's error text. Use `Promise.allSettled()` to keep the results of the calls that succeed.
 
 The `codemode` description lists tools with their TypeScript declarations, grouped by namespace (for example one MCP server). Tools with `deferred` exposure, which includes MCP tools with the default `codemode` exposure, are not listed, so the description stays the same while MCP servers connect. Listed declarations share a budget of 3000 estimated tokens (`codemode.inlineBudget` in [settings](settings.md#tools)). Scripts find the other tools with `searchTools()`, `describeTool()`, `describeNamespace()`, or by filtering `ALL_TOOLS`.
 
-While `codemode` is active, `codemode.mode` in [settings](settings.md#tools) decides how the other tools are presented. With `on` (default) declared tools stay declared, and their descriptions say how to call them from scripts. With `only` they are hidden from the model and listed in the `codemode` description instead, so the model calls them through scripts.
+While `codemode` is active, `codemode.mode` in [settings](settings.md#tools) decides how the other tools are presented. With `on` (default) declared tools stay declared, and their descriptions say how to call them from scripts. With `only` they are hidden from the model and listed in the `codemode` description instead, so the model calls them through scripts. Tool declarations in the `codemode` description, `describeTool()`, and `ALL_TOOLS` carry the tools' prompt guidelines, since the system prompt rules only cover declared tools.
 
 ## Store values
 
 `store(key, value)` keeps a JSON value under a string key for later `codemode` calls; storing `undefined` deletes the key. `load(key)` returns the value, or `undefined`. Writes are kept only when the script succeeds: each successful script that stores values appends a `codemode-store` custom entry to the session, so resumed sessions keep the values and each branch sees only the values written on its path.
 
-The store is for small state such as IDs, cursors, or summaries. One value may have at most 262144 characters of JSON and all values together at most 1048576. Do not store image data; show images with `image()` or write them to a file with a tool.
+The store is for small state such as IDs, cursors, or summaries. One value may have at most 262144 characters of JSON and all values together at most 1048576. Do not store image data; show images with `image()`, which also saves them to a temp file.
 
 ## Models
 
@@ -185,7 +186,7 @@ type TextBlock = { type: "text"; text: string };
 type ImageBlock = { type: "image"; data: string; mimeType: string };
 ```
 
-Show generated images with `image(block)`. Do not print `data` with `text()`, `console`, or `return`: it is large and the model cannot read it as text. Generated images are not saved to disk; to keep one, write it to a file with a tool.
+Show generated images with `image(block)`. Do not print `data` with `text()`, `console`, or `return`: it is large and the model cannot read it as text. `image()` also saves each image to a temp file and puts its path in the result, so a later turn can copy or move the file.
 
 ```js
 // @options: {"timeout_ms": 300000}

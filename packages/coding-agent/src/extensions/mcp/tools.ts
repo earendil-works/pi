@@ -10,10 +10,7 @@
  * errors (`isError`) are error results for the model, but scripts still resolve to the result.
  */
 
-import { createHash, randomBytes } from "node:crypto";
-import { writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { createHash } from "node:crypto";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { ImageContent, JsonValue, TextContent } from "@earendil-works/pi-ai";
 import {
@@ -25,11 +22,19 @@ import {
 } from "@earendil-works/pi-mcp";
 import { Container, Spacer, Text } from "@earendil-works/pi-tui";
 import type { TSchema } from "typebox";
-import type { ToolAnnotations, ToolDefinition, ToolExposure, ToolNamespace } from "../../core/extensions/types.ts";
+import type {
+	ToolAnnotations,
+	ToolDefinition,
+	ToolExposure,
+	ToolNamespace,
+	ToolRenderers,
+} from "../../core/extensions/types.ts";
+import { READ_MCP_RESOURCE_TOOL } from "../../core/mcp-servers.ts";
 import { formatToolCallWithArgs, getTextOutput, replaceTabs } from "../../core/tools/render-utils.ts";
 import { formatSize, truncateMiddle } from "../../core/tools/truncate.ts";
 import { keyHint } from "../../modes/interactive/components/keybinding-hints.ts";
 import { VisualLinePreview } from "../../modes/interactive/components/visual-truncate.ts";
+import { writeOutputFile } from "../../utils/output-files.ts";
 import type { McpExposure } from "./config.ts";
 
 /**
@@ -47,7 +52,7 @@ export const MCP_OUTPUT_MAX_BYTES = 20 * 1024;
 /** Visual (wrapped) result lines shown before the output is expanded. */
 const OUTPUT_PREVIEW_LINES = 5;
 /** Tool that reads the resources named by resource links. */
-export const READ_MCP_RESOURCE_TOOL = "read_mcp_resource";
+export { READ_MCP_RESOURCE_TOOL };
 
 export interface McpToolDetails {
 	server: string;
@@ -62,11 +67,8 @@ export interface McpToolDetails {
  */
 export type McpOutputSaver = (data: string | Uint8Array, extension: string) => Promise<string>;
 
-export async function saveToTempFile(data: string | Uint8Array, extension: string): Promise<string> {
-	const path = join(tmpdir(), `pi-mcp-${randomBytes(8).toString("hex")}${extension}`);
-	// Results can carry private data, so only the user may read the file.
-	await writeFile(path, data, { mode: 0o600 });
-	return path;
+export function saveToTempFile(data: string | Uint8Array, extension: string): Promise<string> {
+	return writeOutputFile("pi-mcp", extension, data);
 }
 
 export interface McpToolCaller {
@@ -275,6 +277,26 @@ export function createMcpToolDefinition(options: {
 		exposure: toToolExposure(options.exposure),
 		namespace: options.namespace,
 		...(annotations ? { annotations } : {}),
+		...createMcpToolRenderers(label),
+		async execute(_toolCallId, params, signal, onUpdate) {
+			const client = await options.getClient();
+			const result = await client.callTool(tool.name, (params ?? {}) as Record<string, unknown>, {
+				signal,
+				timeoutMs: options.timeoutMs,
+				onProgress: (progress) => {
+					const total = progress.total === undefined ? "" : `/${progress.total}`;
+					const text = progress.message ?? `Progress ${progress.progress}${total}`;
+					onUpdate?.({ content: [{ type: "text", text }], details: { server, tool: tool.name } });
+				},
+			});
+			return convertMcpResult(server, tool.name, result, { readableResources: options.readableResources?.() });
+		},
+	};
+}
+
+/** Renderers of calls to an MCP tool, labeled `server/tool`, also used before the tool is registered. */
+export function createMcpToolRenderers(label: string): ToolRenderers {
+	return {
 		renderCall(args, theme, context) {
 			const component = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
 			component.setText(formatToolCallWithArgs(label, args, theme, context.expanded));
@@ -304,23 +326,10 @@ export function createMcpToolDefinition(options: {
 							`${theme.fg("muted", `... (${hidden} more lines,`)} ${keyHint("app.tools.expand", "to expand")}${theme.fg("muted", ")")}`,
 					}),
 				);
-				const fullOutputPath = result.details?.fullOutputPath;
+				const fullOutputPath = (result.details as McpToolDetails | undefined)?.fullOutputPath;
 				if (fullOutputPath) component.addChild(new Text(theme.fg("muted", `Full output: ${fullOutputPath}`), 0, 0));
 			}
 			return component;
-		},
-		async execute(_toolCallId, params, signal, onUpdate) {
-			const client = await options.getClient();
-			const result = await client.callTool(tool.name, (params ?? {}) as Record<string, unknown>, {
-				signal,
-				timeoutMs: options.timeoutMs,
-				onProgress: (progress) => {
-					const total = progress.total === undefined ? "" : `/${progress.total}`;
-					const text = progress.message ?? `Progress ${progress.progress}${total}`;
-					onUpdate?.({ content: [{ type: "text", text }], details: { server, tool: tool.name } });
-				},
-			});
-			return convertMcpResult(server, tool.name, result, { readableResources: options.readableResources?.() });
 		},
 	};
 }

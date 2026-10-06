@@ -17,6 +17,7 @@ import {
 	Harness,
 	LiveDoc,
 	MemoryStorage,
+	ProviderDoc,
 	ROOT_CONVERSATION_ID,
 } from "@earendil-works/pi-durable";
 import { afterEach, describe, expect, it } from "vitest";
@@ -25,6 +26,7 @@ import { addTool, openHarness, tool, user } from "./harness-support.ts";
 import { ControlledStorage, context } from "./session-support.ts";
 
 const directories = new Set<string>();
+const UUID_V7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 
 async function sqlitePath(): Promise<string> {
 	const directory = await mkdtemp(join(tmpdir(), "pi-durable-harness-"));
@@ -81,7 +83,7 @@ describe("Harness root and conversations", () => {
 		});
 		expect(root.id).toBe(ROOT_CONVERSATION_ID);
 		expect(storage.commits).toHaveLength(1);
-		// Conversation, pi.live, pi.inbox, pi.usage, pi.agent, and the init note.
+		// Conversation, five built-in documents, and the init note.
 		expect(storage.commits[0]!.map((write) => write.type)).toEqual([
 			"conversation",
 			"document.create",
@@ -89,8 +91,12 @@ describe("Harness root and conversations", () => {
 			"document.create",
 			"document.create",
 			"document.create",
+			"document.create",
 		]);
 		expect(await harness.snapshot(LiveDoc, root.id, context)).toEqual({});
+		expect(await harness.snapshot(ProviderDoc, root.id, context)).toEqual({
+			sessionId: expect.stringMatching(UUID_V7),
+		});
 		expect(await harness.snapshot(AgentDoc, root.id, context)).toEqual({ thinkingLevel: "high" });
 		const agent = await root.agent(context);
 		expect(agent.thinkingLevel).toBe("high");
@@ -111,6 +117,14 @@ describe("Harness root and conversations", () => {
 		const entry = await append(root, "hello");
 		const child = await first.harness.createConversation({ ownership: { kind: "ownerless" } }, context);
 		const fork = await root.fork(entry.id, { ownership: { kind: "ownerless" } }, context);
+		const providerSessionIds = await Promise.all(
+			[root, child, fork].map(
+				async (conversation) => (await first.harness.snapshot(ProviderDoc, conversation.id, context))?.sessionId,
+			),
+		);
+		// Regression coverage for #10424: a fork must not inherit its parent's provider identity.
+		for (const sessionId of providerSessionIds) expect(sessionId).toMatch(UUID_V7);
+		expect(new Set(providerSessionIds).size).toBe(3);
 		await first.harness.close(context);
 		await expect(root.agent(context)).rejects.toThrow();
 
@@ -125,6 +139,13 @@ describe("Harness root and conversations", () => {
 		});
 		expect(await allEntries(reopened)).toEqual(["hello"]);
 		expect((await first.harness.conversation(child.id, context))?.id).toBe(child.id);
+		await expect(
+			Promise.all(
+				[root.id, child.id, fork.id].map(
+					async (id) => (await first.harness.snapshot(ProviderDoc, id, context))?.sessionId,
+				),
+			),
+		).resolves.toEqual(providerSessionIds);
 		const reopenedFork = await first.harness.conversation(fork.id, context);
 		expect(await allEntries(reopenedFork!)).toEqual(["hello"]);
 		expect((await reopenedFork!.agent(context)).model).toEqual({ provider: "anthropic", modelId: "claude" });
@@ -368,6 +389,12 @@ describe("Harness agent", () => {
 		}, context);
 		expect(await harness.snapshot(AgentDoc, ids.plain, context)).toEqual({});
 		expect(await harness.snapshot(LiveDoc, ids.plain, context)).toEqual({});
+		expect(await harness.snapshot(ProviderDoc, ids.plain, context)).toEqual({
+			sessionId: expect.stringMatching(UUID_V7),
+		});
+		expect((await harness.snapshot(ProviderDoc, ids.owned, context))?.sessionId).not.toBe(
+			(await harness.snapshot(ProviderDoc, root.id, context))?.sessionId,
+		);
 		expect(await harness.snapshot(AgentDoc, ids.owned, context)).toEqual({
 			model: { provider: "faux", modelId: "m" },
 			instructions: "Main role.",
@@ -387,6 +414,9 @@ describe("Harness agent", () => {
 		);
 		expect(await harness.snapshot(AgentDoc, fork, context)).toEqual({});
 		expect(await harness.snapshot(LiveDoc, fork, context)).toEqual({});
+		expect((await harness.snapshot(ProviderDoc, fork, context))?.sessionId).not.toBe(
+			(await harness.snapshot(ProviderDoc, ids.plain, context))?.sessionId,
+		);
 		await harness.close(context);
 	});
 

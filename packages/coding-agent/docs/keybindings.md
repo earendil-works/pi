@@ -57,8 +57,8 @@ Examples: `ctrl+shift+x`, `alt+ctrl+x`, `ctrl+shift+alt+x`, `super+k`, `ctrl+sup
 | `tui.editor.cursorRight` | `right`, `ctrl+f` | Move cursor right |
 | `tui.editor.cursorWordLeft` | `alt+left`, `ctrl+left`, `alt+b` | Move cursor word left |
 | `tui.editor.cursorWordRight` | `alt+right`, `ctrl+right`, `alt+f` | Move cursor word right |
-| `tui.editor.cursorLineStart` | `home`, `ctrl+home`, `ctrl+a` | Move to line start |
-| `tui.editor.cursorLineEnd` | `end`, `ctrl+end`, `ctrl+e` | Move to line end |
+| `tui.editor.cursorLineStart` | `home`, `ctrl+a` | Move to line start |
+| `tui.editor.cursorLineEnd` | `end`, `ctrl+e` | Move to line end |
 | `tui.editor.jumpForward` | `ctrl+]` | Jump forward to character |
 | `tui.editor.jumpBackward` | `ctrl+alt+]` | Jump backward to character |
 | `tui.editor.pageUp` | `pageUp`, `ctrl+pageUp` | Scroll up by page |
@@ -113,8 +113,8 @@ In fullscreen mode, these actions control the transcript and take precedence ove
 | `tui.altScreen.searchNext` | `enter`, `ctrl+g` | Select the next search match while searching |
 | `tui.altScreen.searchPrevious` | `shift+enter`, `ctrl+shift+g` | Select the previous search match while searching |
 | `tui.altScreen.searchClose` | `escape` | Close transcript search |
-| `tui.altScreen.top` | `home` | Scroll to the beginning of the transcript |
-| `tui.altScreen.bottom` | `end` | Scroll to the transcript end and follow new output |
+| `tui.altScreen.top` | `ctrl+home` | Scroll to the beginning of the transcript |
+| `tui.altScreen.bottom` | `ctrl+end` | Scroll to the transcript end and follow new output |
 
 ### Application
 

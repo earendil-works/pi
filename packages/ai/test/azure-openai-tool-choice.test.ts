@@ -8,7 +8,7 @@ const model: Model<"azure-openai-responses"> = {
 	id: "test-deployment",
 	name: "Test Deployment",
 	api: "azure-openai-responses",
-	provider: "azure-openai-responses",
+	provider: "azure",
 	baseUrl: "http://127.0.0.1:9/openai/v1",
 	reasoning: false,
 	input: ["text"],

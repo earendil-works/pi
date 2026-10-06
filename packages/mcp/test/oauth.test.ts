@@ -16,6 +16,7 @@ import {
 	OAuthInsecureEndpointError,
 	OAuthIssuerMismatchError,
 	type OAuthTokens,
+	registerClient,
 } from "../src/oauth/index.ts";
 import { closeServers, listen, readBody } from "./helpers.ts";
 
@@ -405,6 +406,27 @@ describe("MCP OAuth", () => {
 			onRedirect: () => {},
 		});
 		expect(await second.tokens()).toBeUndefined();
+	});
+
+	// #10493
+	it("registers with an application_type derived from the redirect URIs unless one is set", async () => {
+		const bodies: Record<string, unknown>[] = [];
+		const origin = await listen(async (request, response) => {
+			const metadata = JSON.parse(await readBody(request)) as Record<string, unknown>;
+			bodies.push(metadata);
+			response.writeHead(201, { "content-type": "application/json" });
+			response.end(JSON.stringify({ ...metadata, client_id: "client" }));
+		});
+		const register = (redirect_uris: string[], application_type?: string) =>
+			registerClient(origin, {
+				clientMetadata: { redirect_uris, ...(application_type ? { application_type } : {}) },
+			});
+		await register(["http://127.0.0.1:1234/callback"]);
+		await register(["http://[::1]/callback"]);
+		await register(["com.example.app:/callback"]);
+		await register(["https://app.example/callback"]);
+		await register(["http://localhost/callback"], "web");
+		expect(bodies.map((body) => body.application_type)).toEqual(["native", "native", "native", "web", "web"]);
 	});
 
 	it("rejects authorization metadata whose issuer does not match discovery", async () => {

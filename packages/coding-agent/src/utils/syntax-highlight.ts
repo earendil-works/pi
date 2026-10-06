@@ -155,7 +155,12 @@ export function renderHighlightedHtml(html: string, theme: HighlightTheme = {}):
 			return;
 		}
 		const formatter = getActiveFormatter(scopes, theme);
-		output += formatter ? formatter(textBuffer) : textBuffer;
+		output += formatter
+			? textBuffer
+					.split("\n")
+					.map((line) => (line ? formatter(line) : line))
+					.join("\n")
+			: textBuffer;
 		textBuffer = "";
 	};
 

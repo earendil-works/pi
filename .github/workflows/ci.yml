@@ -38,6 +38,9 @@ jobs:
       - name: Check
         run: npm run check
 
+      - name: Build the pi-env daemon
+        run: npm run build:daemon --workspace packages/env
+
       - name: Test
         run: npm test
 

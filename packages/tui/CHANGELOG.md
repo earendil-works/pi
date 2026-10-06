@@ -2,8 +2,25 @@
 
 ## [Unreleased]
 
+## [1.0.4] - 2026-10-05
+
+## [1.0.3] - 2026-10-05
+
+### Changed
+
+- `Home`/`End` now always move the editor cursor to the line start/end; fullscreen transcript top/bottom moved to `Ctrl+Home`/`Ctrl+End`, which no longer move the editor cursor ([#10314](https://github.com/earendil-works/pi/issues/10314))
+
+## [1.0.2] - 2026-10-04
+
+## [1.0.1] - 2026-10-03
+
+### Added
+
+- Added `setImageTranscoder()`, which lets `Image` convert JPEG, GIF, and WebP images to PNG for the Kitty graphics protocol ([#10292](https://github.com/earendil-works/pi/issues/10292))
+
 ### Fixed
 
+- Fixed non-PNG images rendering as nothing on Kitty-protocol terminals: without a registered transcoder, or when conversion fails, `Image` now shows its text fallback ([#10292](https://github.com/earendil-works/pi/issues/10292))
 - Fixed fullscreen Kitty images collapsing to a one-row strip after scrolling in WezTerm ([#10319](https://github.com/earendil-works/pi/issues/10319)).
 
 ## [1.0.0] - 2026-10-01

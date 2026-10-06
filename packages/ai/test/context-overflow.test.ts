@@ -187,7 +187,7 @@ describe("Context overflow error handling", () => {
 
 	describe.skipIf(!hasAzureOpenAICredentials())("Azure OpenAI Responses", () => {
 		it("gpt-4o-mini - should detect overflow via isContextOverflow", async () => {
-			const model = getModel("azure-openai-responses", "gpt-4o-mini");
+			const model = getModel("azure", "gpt-4o-mini");
 			const result = await testContextOverflow(model, process.env.AZURE_OPENAI_API_KEY!);
 			logResult(result);
 

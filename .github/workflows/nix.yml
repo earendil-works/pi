@@ -139,8 +139,11 @@ jobs:
     permissions:
       contents: write
     steps:
+      # Full history, so git can verify that the push to stable is a fast-forward.
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
 
       # Without --force, the push fails unless it is a fast-forward, so stable
       # never moves back to an older release.

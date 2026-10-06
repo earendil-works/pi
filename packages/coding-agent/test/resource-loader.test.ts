@@ -1110,6 +1110,27 @@ export default function(pi: ExtensionAPI) {
 			expect(loaded).toEqual(["llama"]);
 		});
 
+		it("should skip disabledBuiltinExtensions even when settings or -e enable them", async () => {
+			mkdirSync(join(cwd, ".pi"), { recursive: true });
+			writeFileSync(join(cwd, ".pi", "settings.json"), JSON.stringify({ extensions: ["+builtin:mcp"] }));
+			const loaded: string[] = [];
+			const loader = new DefaultResourceLoader({
+				cwd,
+				agentDir,
+				disabledBuiltinExtensions: ["mcp"],
+				additionalExtensionPaths: ["builtin:mcp"],
+				extensionFactories: [
+					{ name: "mcp", builtin: true, factory: () => void loaded.push("mcp") },
+					{ name: "llama", builtin: true, factory: () => void loaded.push("llama") },
+				],
+			});
+			await loader.reload({ resolveProjectTrust: async () => true });
+
+			expect(loader.getExtensions().extensions.map((extension) => extension.path)).toEqual(["builtin:llama"]);
+			expect(loader.getExtensions().errors).toEqual([]);
+			expect(loaded).toEqual(["llama"]);
+		});
+
 		it("should load built-in extensions after file extensions with and without trust resolution", async () => {
 			const userExtDir = join(agentDir, "extensions");
 			mkdirSync(userExtDir, { recursive: true });
