@@ -15,7 +15,7 @@ import type {
 	TranscriptContext,
 	Usage,
 } from "../types.ts";
-import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
+import { extractRetryAfterMs, formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
@@ -227,6 +227,7 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 			output.errorMessage = errorMessage.includes("subscription_sharing_usage_limit_exceeded")
 				? `${errorMessage}\nCheck your ChatGPT usage: ${CHATGPT_USAGE_URL}`
 				: errorMessage;
+			output.retryAfterMs = extractRetryAfterMs(error);
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();
 		}

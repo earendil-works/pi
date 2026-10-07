@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { retryProviderRequest } from "../src/utils/provider-retry.ts";
+import { parseRetryAfterMs, retryProviderRequest } from "../src/utils/provider-retry.ts";
 
 function providerError(status: number | undefined, headers?: Record<string, string>): Error {
 	return Object.assign(new Error(`Provider error: ${status}`), {
@@ -85,5 +85,28 @@ describe("provider request retries", () => {
 		await expect(result).rejects.toMatchObject({ name: "AbortError" });
 		expect(request).toHaveBeenCalledTimes(1);
 		expect(vi.getTimerCount()).toBe(0);
+	});
+});
+
+describe("parseRetryAfterMs", () => {
+	it("prefers retry-after-ms over retry-after", () => {
+		expect(parseRetryAfterMs(new Headers({ "retry-after-ms": "1500", "retry-after": "7" }))).toBe(1500);
+	});
+
+	it("parses retry-after in seconds", () => {
+		expect(parseRetryAfterMs(new Headers({ "retry-after": "7" }))).toBe(7000);
+	});
+
+	it("parses retry-after as an HTTP date", () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+		expect(parseRetryAfterMs(new Headers({ "retry-after": "Thu, 01 Jan 2026 00:00:30 GMT" }))).toBe(30_000);
+		vi.useRealTimers();
+	});
+
+	it("treats malformed and absent values as no server delay", () => {
+		expect(parseRetryAfterMs(undefined)).toBeUndefined();
+		expect(parseRetryAfterMs(new Headers())).toBeUndefined();
+		expect(parseRetryAfterMs(new Headers({ "retry-after": "soon" }))).toBeUndefined();
 	});
 });

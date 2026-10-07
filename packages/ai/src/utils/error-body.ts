@@ -13,6 +13,8 @@
 // Anthropic / `@google/genai` happy path where the SDK already folded the body
 // into the message, so providers can preserve it without double-printing.
 
+import { parseRetryAfterMs } from "./provider-retry.ts";
+
 export const MAX_PROVIDER_ERROR_BODY_CHARS = 4000;
 
 export interface NormalizedProviderError {
@@ -31,6 +33,7 @@ type SdkErrorShape = Error & {
 	status?: unknown;
 	body?: unknown;
 	error?: unknown;
+	headers?: unknown;
 	$metadata?: { httpStatusCode?: unknown };
 	$response?: { statusCode?: unknown; body?: unknown };
 };
@@ -51,6 +54,17 @@ export function normalizeProviderError(error: unknown): NormalizedProviderError 
 		message: error.message,
 		messageCarriesBody,
 	} satisfies NormalizedProviderError;
+}
+
+/**
+ * Server-requested retry delay (`Retry-After` / `retry-after-ms`) in milliseconds
+ * from a provider error that carries response headers (OpenAI/Anthropic SDK errors).
+ * Lets retry policy raise the next-attempt delay floor to the server's request.
+ */
+export function extractRetryAfterMs(error: unknown): number | undefined {
+	if (!(error instanceof Error)) return undefined;
+	const headers = (error as SdkErrorShape).headers;
+	return headers instanceof Headers ? parseRetryAfterMs(headers) : undefined;
 }
 
 /**

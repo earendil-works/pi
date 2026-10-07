@@ -3755,7 +3755,8 @@ export class AgentSession {
 	}
 
 	/**
-	 * Prepare a retryable error for continuation with exponential backoff.
+	 * Prepare a retryable error for continuation with exponential backoff,
+	 * raised to the server-requested retry delay when the failed response carried one.
 	 * @returns true if the caller should continue the agent, false otherwise
 	 */
 	private async _prepareRetry(message: AssistantMessage): Promise<boolean> {
@@ -3772,7 +3773,7 @@ export class AgentSession {
 			return false;
 		}
 
-		const delayMs = retryDelayMs(settings, this._retryAttempt);
+		const delayMs = retryDelayMs(settings, this._retryAttempt, message.retryAfterMs);
 
 		this._emit({
 			type: "auto_retry_start",

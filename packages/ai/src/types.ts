@@ -566,6 +566,11 @@ export interface AssistantMessage {
 	stopReason: StopReason;
 	deferred?: DeferredHandle;
 	errorMessage?: string;
+	/**
+	 * Server-requested retry delay (`Retry-After` / `retry-after-ms`) from the failed
+	 * provider response, in milliseconds. Retry policy raises the next-attempt delay to it.
+	 */
+	retryAfterMs?: number;
 	rawStopReason?: string;
 	/**
 	 * Provider indication of whether the model explicitly ended its turn.

@@ -6,7 +6,12 @@
 // parsed-body edge case, and the formatProviderError compose helper.
 
 import { describe, expect, it } from "vitest";
-import { formatProviderError, MAX_PROVIDER_ERROR_BODY_CHARS, normalizeProviderError } from "../src/utils/error-body.ts";
+import {
+	extractRetryAfterMs,
+	formatProviderError,
+	MAX_PROVIDER_ERROR_BODY_CHARS,
+	normalizeProviderError,
+} from "../src/utils/error-body.ts";
 
 describe("normalizeProviderError", () => {
 	it("extracts status and body from a Mistral-shaped error", () => {
@@ -222,5 +227,25 @@ describe("formatProviderError", () => {
 		const norm = normalizeProviderError({ reason: "boom" });
 
 		expect(formatProviderError(norm)).toBe('{"reason":"boom"}');
+	});
+});
+
+describe("extractRetryAfterMs", () => {
+	it("reads a server-requested delay off provider error headers", () => {
+		// Regression for #9595.
+		const error = Object.assign(new Error("429 status code (no body)"), {
+			status: 429,
+			headers: new Headers({ "retry-after": "3" }),
+		});
+
+		expect(extractRetryAfterMs(error)).toBe(3000);
+	});
+
+	it("ignores errors without usable response headers", () => {
+		expect(extractRetryAfterMs(new Error("boom"))).toBeUndefined();
+		expect(extractRetryAfterMs({ reason: "boom" })).toBeUndefined();
+		expect(
+			extractRetryAfterMs(Object.assign(new Error("boom"), { headers: { "retry-after": "3" } })),
+		).toBeUndefined();
 	});
 });

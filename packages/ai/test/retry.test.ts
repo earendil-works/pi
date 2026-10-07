@@ -132,6 +132,16 @@ describe("retryDelayMs", () => {
 		expect(retryDelayMs({ baseDelayMs: 2000, maxAgentDelayMs: 5000 }, 5)).toBe(5000);
 		expect(retryDelayMs({ baseDelayMs: 2000, maxAgentDelayMs: 0 }, 5)).toBe(0);
 	});
+
+	it("raises the delay floor to a server-requested retry delay", () => {
+		// Regression for #9595.
+		expect(retryDelayMs({ baseDelayMs: 2000 }, 1, 30_000)).toBe(30_000);
+		expect(retryDelayMs({ baseDelayMs: 2000 }, 2, 30_000)).toBe(30_000);
+		expect(retryDelayMs({ baseDelayMs: 2000, maxAgentDelayMs: 5000 }, 1, 30_000)).toBe(5000);
+		expect(retryDelayMs({ baseDelayMs: 2000 }, 3, 500)).toBe(8000);
+		expect(retryDelayMs({ baseDelayMs: 2000 }, 1, 0)).toBe(2000);
+		expect(retryDelayMs({ baseDelayMs: 2000 }, 1)).toBe(2000);
+	});
 });
 
 describe("retryAssistantCall", () => {
@@ -193,6 +203,23 @@ describe("retryAssistantCall", () => {
 		await retryAssistantCall(produce, policy, undefined, { onRetryScheduled });
 
 		expect(onRetryScheduled.mock.calls.map((call) => call[2])).toEqual([10, 15, 15, 15]);
+	});
+
+	it("schedules retries at the server-requested delay", async () => {
+		// Regression for #9595.
+		let n = 0;
+		const policy: RetryPolicy = { enabled: true, maxRetries: 1, baseDelayMs: 10 };
+		const produce = vi.fn(async () => {
+			n++;
+			return n < 2
+				? fauxAssistantMessage("", { stopReason: "error", errorMessage: "terminated", retryAfterMs: 1200 })
+				: fauxAssistantMessage("recovered");
+		});
+		const onRetryScheduled = vi.fn();
+
+		await retryAssistantCall(produce, policy, undefined, { onRetryScheduled });
+
+		expect(onRetryScheduled.mock.calls.map((call) => call[2])).toEqual([1200]);
 	});
 
 	it("stops retrying once a call succeeds", async () => {

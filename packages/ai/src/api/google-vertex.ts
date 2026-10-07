@@ -22,7 +22,7 @@ import type {
 	ToolCall,
 	TranscriptContext,
 } from "../types.ts";
-import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
+import { extractRetryAfterMs, formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { providerHeadersToRecord } from "../utils/headers.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
@@ -302,6 +302,7 @@ export const stream: StreamFunction<"google-vertex", GoogleVertexOptions> = (
 			}
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
 			output.errorMessage = formatProviderError(normalizeProviderError(error));
+			output.retryAfterMs = extractRetryAfterMs(error);
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();
 		}

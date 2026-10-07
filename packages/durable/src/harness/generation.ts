@@ -482,7 +482,7 @@ async function classify(
 		isRetryableAssistantError(message) &&
 		policy.enabled &&
 		attempt <= policy.maxRetries;
-	const until = retry ? runtime.now() + retryDelayMs(policy, attempt) : 0;
+	const until = retry ? runtime.now() + retryDelayMs(policy, attempt, message.retryAfterMs) : 0;
 	await runtime.commit(async (tx): Promise<Next> => {
 		const live = await tx.doc(LiveDoc, conversationId);
 		await appendAssistant(tx, conversationId, message);
