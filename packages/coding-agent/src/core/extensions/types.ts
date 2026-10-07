@@ -141,6 +141,14 @@ export interface ExtensionWidgetOptions {
 /** Raw terminal input listener for extensions. */
 export type TerminalInputHandler = (data: string) => { consume?: boolean; data?: string } | undefined;
 
+/** Built-in footer display configuration. */
+export interface FooterOptions {
+	/** Render pwd and stats on a single row instead of two. */
+	compact?: boolean;
+	/** Show the model and thinking level on the right of the stats row. */
+	showModelSuffix?: boolean;
+}
+
 /** Working indicator configuration for the interactive streaming loader. */
 export interface WorkingIndicatorOptions {
 	/** Animation frames. Use an empty array to hide the indicator entirely. Custom frames are rendered verbatim. */
@@ -202,6 +210,9 @@ export interface ExtensionUIContext {
 		content: ((tui: TUI, theme: Theme) => Component & { dispose?(): void }) | undefined,
 		options?: ExtensionWidgetOptions,
 	): void;
+
+	/** Configure the built-in footer (compact rows, model suffix). Omit the argument to restore the defaults. Has no effect while a custom footer is installed. */
+	setFooterOptions(options?: FooterOptions): void;
 
 	/** Set a custom footer component, or undefined to restore the built-in footer.
 	 *

@@ -2488,6 +2488,7 @@ export class InteractiveMode {
 		this.ui.hideOverlay();
 		this.clearExtensionTerminalInputListeners();
 		this.setExtensionFooter(undefined);
+		this.footer.setFooterOptions(undefined);
 		this.setExtensionHeader(undefined);
 		this.clearExtensionWidgets();
 		this.footerDataProvider.clearExtensionStatuses();
@@ -2692,6 +2693,10 @@ export class InteractiveMode {
 			setHiddenThinkingLabel: (label) => this.setHiddenThinkingLabel(label),
 			setWidget: (key, content, options) => this.setExtensionWidget(key, content, options),
 			setFooter: (factory) => this.setExtensionFooter(factory),
+			setFooterOptions: (options) => {
+				this.footer.setFooterOptions(options);
+				this.ui.requestRender();
+			},
 			setHeader: (factory) => this.setExtensionHeader(factory),
 			setTitle: (title) => this.ui.terminal.setTitle(title),
 			custom: (factory, options) => this.showExtensionCustom(factory, options),

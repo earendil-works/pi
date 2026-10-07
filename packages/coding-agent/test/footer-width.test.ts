@@ -117,6 +117,66 @@ describe("formatCwdForFooter", () => {
 	});
 });
 
+describe("FooterComponent options", () => {
+	beforeAll(() => {
+		initTheme(undefined, false);
+	});
+
+	const session = () =>
+		createSession({
+			sessionName: "session",
+			modelId: "mimo-v2.6-pro",
+			provider: "xiaomi-token-plan-ams",
+			reasoning: true,
+			thinkingLevel: "high",
+		});
+
+	it("keeps two rows with the model suffix by default", () => {
+		const footer = new FooterComponent(session(), createFooterData(1));
+		const lines = footer.render(80);
+		expect(lines).toHaveLength(2);
+		expect(stripAnsi(lines[1]!)).toContain("mimo-v2.6-pro • high");
+	});
+
+	it("compacts pwd and stats into one row", () => {
+		const footer = new FooterComponent(session(), createFooterData(1));
+		footer.setFooterOptions({ compact: true });
+		const lines = footer.render(80);
+		expect(lines).toHaveLength(1);
+		expect(visibleWidth(lines[0]!)).toBe(80);
+		const text = stripAnsi(lines[0]!);
+		expect(text).toContain("session");
+		expect(text).toContain("mimo-v2.6-pro • high");
+	});
+
+	it("hides the model suffix without touching the stats", () => {
+		const footer = new FooterComponent(session(), createFooterData(1));
+		footer.setFooterOptions({ showModelSuffix: false });
+		const lines = footer.render(80);
+		expect(lines).toHaveLength(2);
+		expect(stripAnsi(lines[1]!)).not.toContain("mimo-v2.6-pro");
+		expect(stripAnsi(lines[1]!)).toContain("(auto)");
+	});
+
+	it("restores the defaults when called without arguments", () => {
+		const footer = new FooterComponent(session(), createFooterData(1));
+		footer.setFooterOptions({ compact: true, showModelSuffix: false });
+		footer.setFooterOptions();
+		const lines = footer.render(80);
+		expect(lines).toHaveLength(2);
+		expect(stripAnsi(lines[1]!)).toContain("mimo-v2.6-pro");
+	});
+
+	it("drops the pwd rather than the stats when compact is tight", () => {
+		const footer = new FooterComponent(session(), createFooterData(1));
+		footer.setFooterOptions({ compact: true });
+		const lines = footer.render(30);
+		expect(lines).toHaveLength(1);
+		expect(visibleWidth(lines[0]!)).toBeLessThanOrEqual(30);
+		expect(stripAnsi(lines[0]!)).not.toContain("session");
+	});
+});
+
 describe("FooterComponent width handling", () => {
 	beforeAll(() => {
 		initTheme(undefined, false);
