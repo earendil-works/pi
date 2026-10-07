@@ -54,6 +54,8 @@ const HOST_PROVIDED_EXTENSION_PACKAGES = new Set([
 	"@earendil-works/pi-agent-core",
 	"@earendil-works/pi-ai",
 	"@earendil-works/pi-coding-agent",
+	"@earendil-works/pi-mcp",
+	"@earendil-works/pi-mcp/oauth",
 	"@earendil-works/pi-tui",
 	"@mariozechner/pi-agent-core",
 	"@mariozechner/pi-ai",

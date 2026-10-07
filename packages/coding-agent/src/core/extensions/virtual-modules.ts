@@ -2,6 +2,8 @@ import * as bundledPiAgentCore from "@earendil-works/pi-agent-core";
 import * as bundledPiAiCompat from "@earendil-works/pi-ai/compat";
 import * as bundledPiAiOauth from "@earendil-works/pi-ai/oauth";
 import * as bundledPiAiProviders from "@earendil-works/pi-ai/providers/all";
+import * as bundledPiMcp from "@earendil-works/pi-mcp";
+import * as bundledPiMcpOauth from "@earendil-works/pi-mcp/oauth";
 import * as bundledPiTui from "@earendil-works/pi-tui";
 import * as bundledTypebox from "typebox";
 import * as bundledTypeboxCompile from "typebox/compile";
@@ -19,6 +21,8 @@ export const VIRTUAL_MODULES: Record<string, unknown> = {
 	"@sinclair/typebox/compile": bundledTypeboxCompile,
 	"@sinclair/typebox/value": bundledTypeboxValue,
 	"@earendil-works/pi-agent-core": bundledPiAgentCore,
+	"@earendil-works/pi-mcp": bundledPiMcp,
+	"@earendil-works/pi-mcp/oauth": bundledPiMcpOauth,
 	"@earendil-works/pi-tui": bundledPiTui,
 	// Extensions resolve the pi-ai root to the compat entrypoint (a strict
 	// superset of the core entrypoint): existing extensions using the old
