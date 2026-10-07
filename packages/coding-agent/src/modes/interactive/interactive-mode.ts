@@ -2457,7 +2457,10 @@ export class InteractiveMode {
 		} else {
 			// Factory function - create component
 			component = content(this.ui, theme);
-			borderContent = { render: (width) => (component.render(width)[0] ?? "").trimEnd() };
+			borderContent = {
+				render: (width) => (component.render(width)[0] ?? "").trimEnd(),
+				handleMouse: (event) => component.handleMouse?.(event),
+			};
 		}
 
 		this.extensionWidgets.set(key, { placement, component, borderContent });

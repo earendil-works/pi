@@ -195,7 +195,7 @@ export interface ExtensionUIContext {
 	/** Set the label shown for hidden thinking blocks. Call with no argument to restore default. */
 	setHiddenThinkingLabel(label?: string): void;
 
-	/** Set a widget above or below the editor, or on one of its border lines (see `WidgetPlacement`). Accepts string array or component factory. */
+	/** Set a widget above or below the editor, or on one of its border lines (see `WidgetPlacement`). Accepts string array or component factory. A component on a border line receives mouse events on its own columns of the line, with coordinates local to its content. */
 	setWidget(key: string, content: string[] | undefined, options?: ExtensionWidgetOptions): void;
 	setWidget(
 		key: string,

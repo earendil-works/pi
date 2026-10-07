@@ -309,7 +309,7 @@ export class Editor implements Component, Focusable {
 
 	// Store last render geometry for cursor navigation and mouse hit-testing.
 	private lastWidth: number = 80;
-	private renderedVisibleLineCount = 1;
+	protected renderedVisibleLineCount = 1;
 	private renderedAutocompleteHeight = 0;
 
 	// Vertical scrolling support

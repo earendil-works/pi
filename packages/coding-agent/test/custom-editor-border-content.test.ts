@@ -1,4 +1,4 @@
-import { type TUI, visibleWidth } from "@earendil-works/pi-tui";
+import { type TUI, type TuiMouseEvent, visibleWidth } from "@earendil-works/pi-tui";
 import { describe, expect, it, vi } from "vitest";
 import { KeybindingsManager } from "../src/core/keybindings.ts";
 import {
@@ -18,6 +18,22 @@ function createEditor(embedWorkingStatus = false): CustomEditor {
 /** Content with fixed full and compact forms. */
 function fixedContent(full: string, compact?: string): EditorBorderContent {
 	return { render: () => full, renderCompact: compact === undefined ? undefined : () => compact };
+}
+
+function click(x: number, y: number): TuiMouseEvent {
+	return {
+		type: "click",
+		button: "left",
+		x,
+		y,
+		screenX: x,
+		screenY: y,
+		width: 30,
+		height: 3,
+		shift: false,
+		alt: false,
+		ctrl: false,
+	};
 }
 
 function topBorder(editor: CustomEditor, width: number): string {
@@ -122,5 +138,51 @@ describe("CustomEditor border content", () => {
 		editor.setBorderContent("topRight", "tr", undefined);
 
 		expect(topBorder(editor, 30)).toBe("─".repeat(30));
+	});
+});
+
+describe("CustomEditor border content mouse input", () => {
+	it("dispatches border clicks to the content under the pointer, with local coordinates", () => {
+		initTheme("dark");
+		const editor = createEditor();
+		const seen: Array<{ label: string; x: number; width: number }> = [];
+		const clickable = (label: string): EditorBorderContent => ({
+			render: () => label,
+			handleMouse: (event) => {
+				seen.push({ label, x: event.x, width: event.width });
+				return { handled: true };
+			},
+		});
+		editor.setBorderContent("topLeft", "tl", clickable("TL"));
+		editor.setBorderContent("topRight", "tr", clickable("TR"));
+		editor.render(30); // "── TL ───────────────── TR ──"
+
+		expect(editor.handleMouse(click(25, 0))).toEqual({ handled: true });
+		expect(editor.handleMouse(click(4, 0))).toEqual({ handled: true });
+		expect(seen).toEqual([
+			{ label: "TR", x: 0, width: 2 },
+			{ label: "TL", x: 1, width: 2 },
+		]);
+	});
+
+	it("dispatches bottom border clicks and leaves border fill clicks to the base behavior", () => {
+		initTheme("dark");
+		const editor = createEditor();
+		const seen: number[] = [];
+		editor.setBorderContent("bottomLeft", "bl", {
+			render: () => "BL",
+			handleMouse: (event) => {
+				seen.push(event.x);
+				return { handled: true };
+			},
+		});
+		editor.render(30); // rows: top border, one content row, bottom border
+
+		expect(editor.handleMouse(click(3, 2))).toEqual({ handled: true });
+		expect(seen).toEqual([0]);
+		// Fill clicks reach no content: the base swallows border clicks.
+		expect(editor.handleMouse(click(10, 2))).toEqual({ handled: true, focus: true });
+		expect(editor.handleMouse(click(1, 0))).toEqual({ handled: true, focus: true });
+		expect(seen).toEqual([0]);
 	});
 });

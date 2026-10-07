@@ -7,7 +7,15 @@ import { initTheme } from "../src/modes/interactive/theme/theme.ts";
 
 type WidgetContent =
 	| string[]
-	| ((tui: never, theme: never) => { render(width: number): string[]; invalidate(): void; dispose?(): void });
+	| ((
+			tui: never,
+			theme: never,
+	  ) => {
+			render(width: number): string[];
+			invalidate(): void;
+			dispose?(): void;
+			handleMouse?(event: never): unknown;
+	  });
 
 type WidgetContext = {
 	extensionWidgets: Map<
@@ -101,6 +109,29 @@ describe("InteractiveMode extension widget placement", () => {
 
 		expect([...editor.slots.keys()]).toEqual(["bottomLeft:factory"]);
 		expect(editor.slots.get("bottomLeft:factory")!.render(80)).toBe("  padded");
+	});
+
+	it("forwards border mouse events to the widget component", () => {
+		const editor = borderEditor();
+		const { context } = createContext(editor);
+		const seen: number[] = [];
+		widgetPrototype.setExtensionWidget.call(
+			context,
+			"factory",
+			() => ({
+				render: () => ["hit"],
+				invalidate: () => {},
+				handleMouse: (event: { x: number }) => {
+					seen.push(event.x);
+					return { handled: true };
+				},
+			}),
+			{ placement: "borderTopRight" },
+		);
+
+		const content = editor.slots.get("topRight:factory")!;
+		expect(content.handleMouse?.({ x: 7 } as never)).toEqual({ handled: true });
+		expect(seen).toEqual([7]);
 	});
 
 	it("places above/below widgets in the widget containers", () => {

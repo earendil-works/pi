@@ -55,7 +55,7 @@ Forward keys your editor does not own to the base implementation, and restore th
 
 ## Handle mouse input
 
-Fullscreen mode routes normalized mouse events to components. A handler can mark an event handled, capture a drag sequence, request focus, or request a render.
+Fullscreen mode routes normalized mouse events to components. A handler can mark an event handled, capture a drag sequence, request focus, or request a render. Components shown in an editor border slot (`ctx.ui.setWidget` with a border placement) receive events on their own columns of the border line, with coordinates local to the visible content.
 
 Unhandled wheel events scroll the nearest `ScrollView`. Unhandled primary-button drags remain available for transcript selection. OSC 8 links take precedence over enclosing click regions.
 
