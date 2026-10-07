@@ -333,8 +333,7 @@ export const OpenAICompletionsCompatSchema = Type.Object(
 		}),
 		supportsLongCacheRetention: optionalCompatBoolean({
 			description:
-				'Whether the provider supports long prompt cache retention (prompt_cache_retention: "24h" or Anthropic-style cache_control.ttl: "1h", depending on format).',
-			default: true,
+				'Whether the provider supports long prompt cache retention (prompt_cache_retention: "24h" or Anthropic-style cache_control.ttl: "1h", depending on format). Default: auto-detected from provider and URL.',
 		}),
 		vllmPriority: Type.Optional(
 			Type.Number({
@@ -422,8 +421,7 @@ export const AnthropicMessagesCompatSchema = Type.Object(
 		}),
 		sendSessionAffinityHeaders: optionalCompatBoolean({
 			description:
-				"Whether to send x-session-affinity from options.sessionId when caching is enabled. Required for providers like Fireworks that use session affinity for prompt cache routing; requests to the same replica maximize cache hits.",
-			default: false,
+				"Whether to send x-session-affinity from options.sessionId when caching is enabled. Required for providers like Fireworks that use session affinity for prompt cache routing; requests to the same replica maximize cache hits. Default: true for OpenRouter endpoints, false otherwise.",
 		}),
 		sessionAffinityFormat: Type.Optional(
 			Type.Literal("openrouter", {

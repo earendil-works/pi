@@ -20,11 +20,13 @@ describe("compatibility schemas", () => {
 	});
 
 	it("preserves API-specific defaults", () => {
-		expect(Compile(OpenAICompletionsCompatSchema).Default({})).not.toHaveProperty("thinkingFormat");
+		const completionsDefaults = Compile(OpenAICompletionsCompatSchema).Default({});
+		expect(completionsDefaults).not.toHaveProperty("thinkingFormat");
+		expect(completionsDefaults).not.toHaveProperty("supportsLongCacheRetention");
 		expect(Compile(OpenAIResponsesCompatSchema).Default({})).toMatchObject({ supportsDeveloperRole: true });
-		expect(Compile(AnthropicMessagesCompatSchema).Default({})).toMatchObject({
-			sendSessionAffinityHeaders: false,
-		});
+		const anthropicDefaults = Compile(AnthropicMessagesCompatSchema).Default({});
+		expect(anthropicDefaults).not.toHaveProperty("sendSessionAffinityHeaders");
+		expect(anthropicDefaults).toMatchObject({ supportsLongCacheRetention: true });
 		expect(Compile(BedrockCompatSchema).Default({})).toMatchObject({ supportsStrictMode: false });
 	});
 
