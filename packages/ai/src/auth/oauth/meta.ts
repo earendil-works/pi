@@ -13,6 +13,7 @@
  * user must sign in again.
  */
 
+import { getPiUserAgent } from "../../utils/pi-user-agent.ts";
 import type { OAuthAuth, OAuthCredential, ProviderAuthInteraction } from "../types.ts";
 import { pollOAuthDeviceCodeFlow } from "./device-code.ts";
 
@@ -203,6 +204,6 @@ export const metaOAuth: OAuthAuth = {
 	refresh: (credential, signal) => mintApiKey(credential.refresh, signal),
 
 	async toAuth(credential) {
-		return { apiKey: credential.access };
+		return { apiKey: credential.access, headers: { "User-Agent": `muse-code/${getPiUserAgent()}` } };
 	},
 };

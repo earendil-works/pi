@@ -141,9 +141,12 @@ describe("Meta OAuth", () => {
 		).rejects.toThrow("Complete setup at https://dev.meta.ai/billing");
 	});
 
-	it("uses the minted key as the request api key", async () => {
+	it("uses the minted key and Muse Code User-Agent", async () => {
 		await expect(
 			metaOAuth.toAuth({ type: "oauth", refresh: "identity-token", access: "LLM|key", expires: 1 }),
-		).resolves.toEqual({ apiKey: "LLM|key" });
+		).resolves.toEqual({
+			apiKey: "LLM|key",
+			headers: { "User-Agent": expect.stringMatching(/^muse-code\/pi \(/) },
+		});
 	});
 });
