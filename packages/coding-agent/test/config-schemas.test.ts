@@ -69,6 +69,24 @@ describe("generated configuration schemas", () => {
 		});
 	});
 
+	it("preserves moved model and settings guidance", () => {
+		const models = JSON.parse(renderConfigSchemas().get("schemas/models.schema.json") ?? "");
+		expect(models.$defs.ModelCost.properties).toMatchObject({
+			input: { description: expect.stringContaining("USD per million tokens") },
+			tiers: { description: expect.stringContaining("highest matching input threshold") },
+		});
+		expect(models.$defs.ModelInputLimits.properties).toMatchObject({
+			maxRequestBytes: { description: expect.stringContaining("serialized provider request size") },
+		});
+
+		const settings = JSON.parse(renderConfigSchemas().get("schemas/settings.schema.json") ?? "");
+		expect(settings.properties).toMatchObject({
+			quietStartup: { description: expect.stringContaining("hide all startup output") },
+			defaultTools: { description: expect.stringContaining("+name and -name") },
+			fullscreenWheelScrollLines: { description: expect.stringContaining("1 to 100") },
+		});
+	});
+
 	it.each([
 		{
 			name: "models.json",
@@ -151,6 +169,8 @@ describe("generated configuration schemas", () => {
 			},
 			{ httpIdleTimeoutMs: -1 },
 			{ websocketConnectTimeoutMs: -1 },
+			{ httpIdleTimeoutMs: "bogus" },
+			{ websocketConnectTimeoutMs: "30000" },
 		]) {
 			expect(validator.Check(invalid)).toBe(false);
 		}
@@ -162,7 +182,7 @@ describe("generated configuration schemas", () => {
 					modelOverrides: { "provider/model": { reserveTokens: 0 } },
 				},
 				httpIdleTimeoutMs: 0,
-				websocketConnectTimeoutMs: 0,
+				websocketConnectTimeoutMs: "disabled",
 			}),
 		).toBe(true);
 	});
@@ -240,7 +260,11 @@ describe("generated configuration schemas", () => {
 		const directory = createTemporaryDirectory();
 		writeFileSync(
 			join(directory, "keybindings.json"),
-			JSON.stringify({ $schema: schemaUrl("keybindings"), "app.session.new": "ctrl+n" }),
+			JSON.stringify({
+				$schema: schemaUrl("keybindings"),
+				"app.session.new": "ctrl+n",
+				"extension.invalid": "ctrl+not-a-key",
+			}),
 		);
 
 		const manager = KeybindingsManager.create(directory);

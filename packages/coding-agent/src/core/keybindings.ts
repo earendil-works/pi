@@ -8,8 +8,10 @@ import {
 } from "@earendil-works/pi-tui";
 import { existsSync, readFileSync } from "fs";
 import { join } from "path";
+import { Compile } from "typebox/compile";
 import { getAgentDir } from "../config.ts";
 import { stripBom } from "../utils/text.ts";
+import { KeybindingValueSchema } from "./key-id-schema.ts";
 
 export function useWindowsKeybindings(
 	platform: NodeJS.Platform = process.platform,
@@ -262,17 +264,13 @@ function isLegacyKeybindingName(key: string): key is keyof typeof KEYBINDING_NAM
 	return key in KEYBINDING_NAME_MIGRATIONS;
 }
 
+const validateKeybindingValue = Compile(KeybindingValueSchema);
+
 function toKeybindingsConfig(value: Record<string, unknown>): KeybindingsConfig {
 	const config: KeybindingsConfig = {};
 	for (const [key, binding] of Object.entries(value)) {
 		if (key === "$schema") continue;
-		if (typeof binding === "string") {
-			config[key] = binding as KeyId;
-			continue;
-		}
-		if (Array.isArray(binding) && binding.every((entry) => typeof entry === "string")) {
-			config[key] = binding as KeyId[];
-		}
+		if (validateKeybindingValue.Check(binding)) config[key] = binding;
 	}
 	return config;
 }

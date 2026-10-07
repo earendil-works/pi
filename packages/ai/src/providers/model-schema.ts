@@ -1,4 +1,4 @@
-import { type Static, Type } from "typebox";
+import { type Static, type TSchemaOptions, Type } from "typebox";
 
 export const THINKING_LEVELS = ["minimal", "low", "medium", "high", "xhigh", "max"] as const;
 export const MODEL_THINKING_LEVELS = ["off", ...THINKING_LEVELS] as const;
@@ -16,40 +16,69 @@ export const ThinkingLevelMapSchema = Type.Partial(Type.Record(ModelThinkingLeve
 
 export const ModelPromptCacheSchema = Type.Partial(
 	Type.Record(Type.Enum(MODEL_PROMPT_CACHE_RETENTIONS), Type.Number({ exclusiveMinimum: 0 })),
+	{
+		description:
+			"Best-effort prompt cache lifetime in seconds for each retention tier. A missing tier means the lifetime is unknown, so Pi does not warm it.",
+	},
 );
 
 const ModelCostRatesProperties = {
-	input: Type.Number(),
-	output: Type.Number(),
-	cacheRead: Type.Number(),
-	cacheWrite: Type.Number(),
+	input: Type.Number({ description: "Input cost in USD per million tokens." }),
+	output: Type.Number({ description: "Output cost in USD per million tokens." }),
+	cacheRead: Type.Number({ description: "Cache-read cost in USD per million tokens." }),
+	cacheWrite: Type.Number({ description: "Cache-write cost in USD per million tokens." }),
 };
 
 export const ModelCostRatesSchema = Type.Object(ModelCostRatesProperties);
 export const ModelCostTierSchema = Type.Object({
-	inputTokensAbove: Type.Number(),
+	inputTokensAbove: Type.Number({
+		description: "Use this tier when total request input exceeds this token count.",
+	}),
 	...ModelCostRatesProperties,
 });
 export const ModelCostSchema = Type.Object({
 	...ModelCostRatesProperties,
-	tiers: Type.Optional(Type.Array(ModelCostTierSchema)),
+	tiers: Type.Optional(
+		Type.Array(ModelCostTierSchema, {
+			description: "Request-wide pricing tiers. The highest matching input threshold applies to the full request.",
+		}),
+	),
 });
 
-export const ModelImageResizeOptionsSchema = Type.Object({
-	maxWidth: Type.Optional(Type.Integer({ minimum: 1 })),
-	maxHeight: Type.Optional(Type.Integer({ minimum: 1 })),
-	maxBytes: Type.Optional(Type.Integer({ minimum: 1 })),
-	jpegQuality: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
-});
+function modelImageResizeOptions(options?: TSchemaOptions) {
+	return Type.Object(
+		{
+			maxWidth: Type.Optional(Type.Integer({ minimum: 1 })),
+			maxHeight: Type.Optional(Type.Integer({ minimum: 1 })),
+			maxBytes: Type.Optional(
+				Type.Integer({ minimum: 1, description: "Maximum base64-encoded payload size in bytes." }),
+			),
+			jpegQuality: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
+		},
+		options,
+	);
+}
+
+export const ModelImageResizeOptionsSchema = modelImageResizeOptions();
 
 export const ModelImageInputLimitsSchema = Type.Object({
-	resize: Type.Optional(ModelImageResizeOptionsSchema),
-	maxPerMessage: Type.Optional(Type.Integer({ minimum: 1 })),
-	maxPerRequest: Type.Optional(Type.Integer({ minimum: 1 })),
+	resize: Type.Optional(
+		modelImageResizeOptions({
+			description: "Cache-safe resize profile applied before a new image enters conversation history.",
+		}),
+	),
+	maxPerMessage: Type.Optional(
+		Type.Integer({ minimum: 1, description: "Maximum images accepted in one provider message." }),
+	),
+	maxPerRequest: Type.Optional(
+		Type.Integer({ minimum: 1, description: "Maximum images accepted across one provider request." }),
+	),
 });
 
 export const ModelInputLimitsSchema = Type.Object({
-	maxRequestBytes: Type.Optional(Type.Integer({ minimum: 1 })),
+	maxRequestBytes: Type.Optional(
+		Type.Integer({ minimum: 1, description: "Maximum serialized provider request size in bytes." }),
+	),
 	images: Type.Optional(ModelImageInputLimitsSchema),
 });
 

@@ -97,7 +97,8 @@
                     "$ref": "#/$defs/ModelCost"
                   },
                   "promptCache": {
-                    "$ref": "#/$defs/ModelPromptCache"
+                    "$ref": "#/$defs/ModelPromptCache",
+                    "description": "Best-effort prompt cache lifetime in seconds for each retention tier. A missing tier means the lifetime is unknown, so Pi does not warm it."
                   },
                   "contextWindow": {
                     "type": "number"
@@ -205,16 +206,20 @@
                       "type": "object",
                       "properties": {
                         "input": {
-                          "type": "number"
+                          "type": "number",
+                          "description": "Input cost in USD per million tokens."
                         },
                         "output": {
-                          "type": "number"
+                          "type": "number",
+                          "description": "Output cost in USD per million tokens."
                         },
                         "cacheRead": {
-                          "type": "number"
+                          "type": "number",
+                          "description": "Cache-read cost in USD per million tokens."
                         },
                         "cacheWrite": {
-                          "type": "number"
+                          "type": "number",
+                          "description": "Cache-write cost in USD per million tokens."
                         },
                         "tiers": {
                           "type": "array",
@@ -229,27 +234,34 @@
                             ],
                             "properties": {
                               "inputTokensAbove": {
-                                "type": "number"
+                                "type": "number",
+                                "description": "Use this tier when total request input exceeds this token count."
                               },
                               "input": {
-                                "type": "number"
+                                "type": "number",
+                                "description": "Input cost in USD per million tokens."
                               },
                               "output": {
-                                "type": "number"
+                                "type": "number",
+                                "description": "Output cost in USD per million tokens."
                               },
                               "cacheRead": {
-                                "type": "number"
+                                "type": "number",
+                                "description": "Cache-read cost in USD per million tokens."
                               },
                               "cacheWrite": {
-                                "type": "number"
+                                "type": "number",
+                                "description": "Cache-write cost in USD per million tokens."
                               }
                             }
-                          }
+                          },
+                          "description": "Request-wide pricing tiers. The highest matching input threshold applies to the full request."
                         }
                       }
                     },
                     "promptCache": {
-                      "$ref": "#/$defs/ModelPromptCache"
+                      "$ref": "#/$defs/ModelPromptCache",
+                      "description": "Best-effort prompt cache lifetime in seconds for each retention tier. A missing tier means the lifetime is unknown, so Pi does not warm it."
                     },
                     "contextWindow": {
                       "type": "number"
@@ -342,16 +354,20 @@
       ],
       "properties": {
         "input": {
-          "type": "number"
+          "type": "number",
+          "description": "Input cost in USD per million tokens."
         },
         "output": {
-          "type": "number"
+          "type": "number",
+          "description": "Output cost in USD per million tokens."
         },
         "cacheRead": {
-          "type": "number"
+          "type": "number",
+          "description": "Cache-read cost in USD per million tokens."
         },
         "cacheWrite": {
-          "type": "number"
+          "type": "number",
+          "description": "Cache-write cost in USD per million tokens."
         },
         "tiers": {
           "type": "array",
@@ -366,22 +382,28 @@
             ],
             "properties": {
               "inputTokensAbove": {
-                "type": "number"
+                "type": "number",
+                "description": "Use this tier when total request input exceeds this token count."
               },
               "input": {
-                "type": "number"
+                "type": "number",
+                "description": "Input cost in USD per million tokens."
               },
               "output": {
-                "type": "number"
+                "type": "number",
+                "description": "Output cost in USD per million tokens."
               },
               "cacheRead": {
-                "type": "number"
+                "type": "number",
+                "description": "Cache-read cost in USD per million tokens."
               },
               "cacheWrite": {
-                "type": "number"
+                "type": "number",
+                "description": "Cache-write cost in USD per million tokens."
               }
             }
-          }
+          },
+          "description": "Request-wide pricing tiers. The highest matching input threshold applies to the full request."
         }
       }
     },
@@ -390,7 +412,8 @@
       "properties": {
         "maxRequestBytes": {
           "type": "integer",
-          "minimum": 1
+          "minimum": 1,
+          "description": "Maximum serialized provider request size in bytes."
         },
         "images": {
           "type": "object",
@@ -408,22 +431,26 @@
                 },
                 "maxBytes": {
                   "type": "integer",
-                  "minimum": 1
+                  "minimum": 1,
+                  "description": "Maximum base64-encoded payload size in bytes."
                 },
                 "jpegQuality": {
                   "type": "integer",
                   "minimum": 1,
                   "maximum": 100
                 }
-              }
+              },
+              "description": "Cache-safe resize profile applied before a new image enters conversation history."
             },
             "maxPerMessage": {
               "type": "integer",
-              "minimum": 1
+              "minimum": 1,
+              "description": "Maximum images accepted in one provider message."
             },
             "maxPerRequest": {
               "type": "integer",
-              "minimum": 1
+              "minimum": 1,
+              "description": "Maximum images accepted across one provider request."
             }
           }
         }
@@ -807,19 +834,19 @@
                   "properties": {
                     "p50": {
                       "type": "number",
-                      "description": "Cutoff at the 50th percentile."
+                      "description": "Minimum tokens per second at the 50th percentile."
                     },
                     "p75": {
                       "type": "number",
-                      "description": "Cutoff at the 75th percentile."
+                      "description": "Minimum tokens per second at the 75th percentile."
                     },
                     "p90": {
                       "type": "number",
-                      "description": "Cutoff at the 90th percentile."
+                      "description": "Minimum tokens per second at the 90th percentile."
                     },
                     "p99": {
                       "type": "number",
-                      "description": "Cutoff at the 99th percentile."
+                      "description": "Minimum tokens per second at the 99th percentile."
                     }
                   }
                 }
@@ -836,19 +863,19 @@
                   "properties": {
                     "p50": {
                       "type": "number",
-                      "description": "Cutoff at the 50th percentile."
+                      "description": "Maximum latency in seconds at the 50th percentile."
                     },
                     "p75": {
                       "type": "number",
-                      "description": "Cutoff at the 75th percentile."
+                      "description": "Maximum latency in seconds at the 75th percentile."
                     },
                     "p90": {
                       "type": "number",
-                      "description": "Cutoff at the 90th percentile."
+                      "description": "Maximum latency in seconds at the 90th percentile."
                     },
                     "p99": {
                       "type": "number",
-                      "description": "Cutoff at the 99th percentile."
+                      "description": "Maximum latency in seconds at the 99th percentile."
                     }
                   }
                 }

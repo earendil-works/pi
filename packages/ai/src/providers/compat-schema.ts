@@ -1,18 +1,25 @@
 import { type Static, type TProperties, type TSchemaOptions, Type } from "typebox";
 import { ModelCostSchema } from "./model-schema.ts";
 
-export const SessionAffinityFormatSchema = Type.Union(
-	[Type.Literal("openai"), Type.Literal("openai-nosession"), Type.Literal("openrouter")],
-	{ description: "Session-affinity header format used to route related requests consistently." },
-);
+function sessionAffinityFormat(options?: TSchemaOptions) {
+	return Type.Union([Type.Literal("openai"), Type.Literal("openai-nosession"), Type.Literal("openrouter")], options);
+}
 
-export const ThinkingTokenBudgetFieldSchema = Type.Union(
-	[Type.Literal("thinking_token_budget"), Type.Literal("thinking_budget"), Type.Literal("thinking_budget_tokens")],
-	{
-		description:
-			'Top-level request field name used by OpenAI-compatible endpoints to cap reasoning tokens. "thinking_token_budget" is used by vLLM, "thinking_budget" by Qwen, DashScope, or SGLang, and "thinking_budget_tokens" by llama.cpp.',
-	},
-);
+export const SessionAffinityFormatSchema = sessionAffinityFormat({
+	description: "Session-affinity header format used to route related requests consistently.",
+});
+
+function thinkingTokenBudgetField(options?: TSchemaOptions) {
+	return Type.Union(
+		[Type.Literal("thinking_token_budget"), Type.Literal("thinking_budget"), Type.Literal("thinking_budget_tokens")],
+		options,
+	);
+}
+
+export const ThinkingTokenBudgetFieldSchema = thinkingTokenBudgetField({
+	description:
+		'Top-level request field name used by OpenAI-compatible endpoints to cap reasoning tokens. "thinking_token_budget" is used by vLLM, "thinking_budget" by Qwen, DashScope, or SGLang, and "thinking_budget_tokens" by llama.cpp.',
+});
 
 export const ChatTemplateKwargValueSchema = Type.Union([
 	Type.String(),
@@ -29,12 +36,14 @@ export const ChatTemplateKwargValueSchema = Type.Union([
 	}),
 ]);
 
-const PercentileCutoffsSchema = Type.Object({
-	p50: Type.Optional(Type.Number({ description: "Cutoff at the 50th percentile." })),
-	p75: Type.Optional(Type.Number({ description: "Cutoff at the 75th percentile." })),
-	p90: Type.Optional(Type.Number({ description: "Cutoff at the 90th percentile." })),
-	p99: Type.Optional(Type.Number({ description: "Cutoff at the 99th percentile." })),
-});
+function percentileCutoffs(metric: string) {
+	return Type.Object({
+		p50: Type.Optional(Type.Number({ description: `${metric} at the 50th percentile.` })),
+		p75: Type.Optional(Type.Number({ description: `${metric} at the 75th percentile.` })),
+		p90: Type.Optional(Type.Number({ description: `${metric} at the 90th percentile.` })),
+		p99: Type.Optional(Type.Number({ description: `${metric} at the 99th percentile.` })),
+	});
+}
 
 export const OpenRouterRoutingSchema = Type.Object(
 	{
@@ -123,12 +132,12 @@ export const OpenRouterRoutingSchema = Type.Object(
 			),
 		),
 		preferred_min_throughput: Type.Optional(
-			Type.Union([Type.Number(), PercentileCutoffsSchema], {
+			Type.Union([Type.Number(), percentileCutoffs("Minimum tokens per second")], {
 				description: "Preferred minimum throughput in tokens per second. A number applies to p50.",
 			}),
 		),
 		preferred_max_latency: Type.Optional(
-			Type.Union([Type.Number(), PercentileCutoffsSchema], {
+			Type.Union([Type.Number(), percentileCutoffs("Maximum latency in seconds")], {
 				description: "Preferred maximum latency in seconds. A number applies to p50.",
 			}),
 		),
@@ -173,7 +182,7 @@ function optionalCompatBoolean(options?: TSchemaOptions) {
 }
 
 function optionalSessionAffinityFormat(options?: TSchemaOptions) {
-	return Type.Optional(Type.Union([...SessionAffinityFormatSchema.anyOf], options));
+	return Type.Optional(sessionAffinityFormat(options));
 }
 
 export const OpenAICompletionsCompatSchema = Type.Object(
@@ -275,7 +284,7 @@ export const OpenAICompletionsCompatSchema = Type.Object(
 			}),
 		),
 		thinkingTokenBudgetField: Type.Optional(
-			Type.Union([...ThinkingTokenBudgetFieldSchema.anyOf], {
+			thinkingTokenBudgetField({
 				description:
 					'Top-level request field used to cap reasoning tokens from thinkingBudgets. Reasoning and the answer share max_tokens on these endpoints. "thinking_token_budget" is vLLM, "thinking_budget" is Qwen, DashScope, or SGLang, and "thinking_budget_tokens" is llama.cpp. Off by default and not set on the generated catalog.',
 			}),

@@ -196,7 +196,7 @@
     },
     "shellPath": {
       "type": "string",
-      "description": "Custom shell path, with support for leading ~ expansion."
+      "description": "Custom shell path, for example for Cygwin on Windows, with support for leading ~ expansion."
     },
     "quietStartup": {
       "anyOf": [
@@ -208,7 +208,7 @@
           "const": "header"
         }
       ],
-      "description": "When \"header\", keep only the startup header.",
+      "description": "When true, hide all startup output. When \"header\", keep only the startup header.",
       "default": false
     },
     "defaultProjectTrust": {
@@ -461,7 +461,7 @@
       "items": {
         "type": "string"
       },
-      "description": "Initial built-in tool selection."
+      "description": "Initial tool selection. Plain names replace the inherited selection; +name and -name entries add or remove tools."
     },
     "doubleEscapeAction": {
       "anyOf": [
@@ -541,7 +541,7 @@
           "const": 1
         }
       ],
-      "description": "Horizontal padding for chat message output.",
+      "description": "Horizontal padding for transcript content.",
       "default": 1
     },
     "autocompleteMaxVisible": {
@@ -602,6 +602,7 @@
               "const": "only"
             }
           ],
+          "description": "How codemode presents tools. \"on\" keeps direct tools declared and annotates tools callable from scripts; codemode lists only tools without direct exposure. \"only\" lists every script-callable tool in codemode and does not declare active direct tools.",
           "default": "on"
         },
         "inlineBudget": {
@@ -620,9 +621,17 @@
       "description": "Proxy URL applied as HTTP_PROXY and HTTPS_PROXY for Pi-managed HTTP clients."
     },
     "httpIdleTimeoutMs": {
-      "type": "number",
-      "minimum": 0,
-      "description": "HTTP header or body idle timeout in milliseconds; 0 disables it."
+      "anyOf": [
+        {
+          "type": "number",
+          "minimum": 0
+        },
+        {
+          "type": "string",
+          "const": "disabled"
+        }
+      ],
+      "description": "HTTP header or body idle timeout in milliseconds; 0 or \"disabled\" disables it."
     },
     "cacheWarming": {
       "anyOf": [
@@ -643,9 +652,17 @@
       "default": "streaming"
     },
     "websocketConnectTimeoutMs": {
-      "type": "number",
-      "minimum": 0,
-      "description": "WebSocket connect or open handshake timeout in milliseconds; 0 disables it."
+      "anyOf": [
+        {
+          "type": "number",
+          "minimum": 0
+        },
+        {
+          "type": "string",
+          "const": "disabled"
+        }
+      ],
+      "description": "WebSocket connect or open handshake timeout in milliseconds; 0 or \"disabled\" disables it."
     },
     "tuiMode": {
       "anyOf": [
@@ -707,7 +724,7 @@
           "const": "auto"
         }
       ],
-      "description": "Lines scrolled per wheel event in fullscreen mode.",
+      "description": "Lines scrolled per wheel event in fullscreen mode; numeric values are clamped from 1 to 100.",
       "default": "auto"
     },
     "queueMode": {

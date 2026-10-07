@@ -1,9 +1,13 @@
 import { ModelThinkingLevelSchema } from "@earendil-works/pi-ai/providers/model-schema";
-import { type Static, Type } from "typebox";
+import { type Static, type TSchemaOptions, Type } from "typebox";
 import { SETTINGS_DEFAULTS } from "./settings-defaults.ts";
 
 function nonNegativeSafeInteger(options: { default?: number } = {}) {
 	return Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER, ...options });
+}
+
+function timeoutSetting(options?: TSchemaOptions) {
+	return Type.Union([Type.Number({ minimum: 0 }), Type.Literal("disabled")], options);
 }
 
 const CompactionModelOverrideSchema = Type.Object({
@@ -114,12 +118,19 @@ const ImageSettingsSchema = Type.Object({
 	),
 });
 
-const ThinkingBudgetsSettingsSchema = Type.Object({
-	minimal: Type.Optional(Type.Number()),
-	low: Type.Optional(Type.Number()),
-	medium: Type.Optional(Type.Number()),
-	high: Type.Optional(Type.Number()),
-});
+function thinkingBudgetsSettings(options?: TSchemaOptions) {
+	return Type.Object(
+		{
+			minimal: Type.Optional(Type.Number()),
+			low: Type.Optional(Type.Number()),
+			medium: Type.Optional(Type.Number()),
+			high: Type.Optional(Type.Number()),
+		},
+		options,
+	);
+}
+
+const ThinkingBudgetsSettingsSchema = thinkingBudgetsSettings();
 
 const MarkdownSettingsSchema = Type.Object({
 	codeBlockIndent: Type.Optional(Type.String({ default: SETTINGS_DEFAULTS.markdown.codeBlockIndent })),
@@ -134,10 +145,20 @@ const WarningSettingsSchema = Type.Object({
 	anthropicExtraUsage: Type.Optional(Type.Boolean({ default: SETTINGS_DEFAULTS.warnings.anthropicExtraUsage })),
 });
 
-const CodemodeModeSchema = Type.Union([Type.Literal("on"), Type.Literal("only")]);
+function codemodeMode(options?: TSchemaOptions) {
+	return Type.Union([Type.Literal("on"), Type.Literal("only")], options);
+}
+
+const CodemodeModeSchema = codemodeMode();
 
 const CodemodeSettingsSchema = Type.Object({
-	mode: Type.Optional(Type.Union([...CodemodeModeSchema.anyOf], { default: SETTINGS_DEFAULTS.codemode.mode })),
+	mode: Type.Optional(
+		codemodeMode({
+			description:
+				'How codemode presents tools. "on" keeps direct tools declared and annotates tools callable from scripts; codemode lists only tools without direct exposure. "only" lists every script-callable tool in codemode and does not declare active direct tools.',
+			default: SETTINGS_DEFAULTS.codemode.mode,
+		}),
+	),
 	inlineBudget: Type.Optional(
 		Type.Number({
 			description: "Estimated tokens available for inline codemode tool declarations.",
@@ -224,11 +245,13 @@ export const SettingsSchema = Type.Object(
 			Type.String({ description: "Command for Ctrl+G external editor; takes precedence over VISUAL and EDITOR." }),
 		),
 		shellPath: Type.Optional(
-			Type.String({ description: "Custom shell path, with support for leading ~ expansion." }),
+			Type.String({
+				description: "Custom shell path, for example for Cygwin on Windows, with support for leading ~ expansion.",
+			}),
 		),
 		quietStartup: Type.Optional(
 			Type.Union([Type.Boolean(), Type.Literal("header")], {
-				description: 'When "header", keep only the startup header.',
+				description: 'When true, hide all startup output. When "header", keep only the startup header.',
 				default: SETTINGS_DEFAULTS.quietStartup,
 			}),
 		),
@@ -299,7 +322,12 @@ export const SettingsSchema = Type.Object(
 				description: "Model patterns for cycling, in the same format as the --models CLI flag.",
 			}),
 		),
-		defaultTools: Type.Optional(Type.Array(Type.String(), { description: "Initial built-in tool selection." })),
+		defaultTools: Type.Optional(
+			Type.Array(Type.String(), {
+				description:
+					"Initial tool selection. Plain names replace the inherited selection; +name and -name entries add or remove tools.",
+			}),
+		),
 		doubleEscapeAction: Type.Optional(
 			Type.Union([Type.Literal("fork"), Type.Literal("tree"), Type.Literal("none")], {
 				description: "Action for double-escape with an empty editor.",
@@ -322,7 +350,7 @@ export const SettingsSchema = Type.Object(
 			),
 		),
 		thinkingBudgets: Type.Optional(
-			Type.Object(ThinkingBudgetsSettingsSchema.properties, {
+			thinkingBudgetsSettings({
 				description: "Custom token budgets for thinking levels.",
 			}),
 		),
@@ -334,7 +362,7 @@ export const SettingsSchema = Type.Object(
 		),
 		outputPad: Type.Optional(
 			Type.Union([Type.Literal(0), Type.Literal(1)], {
-				description: "Horizontal padding for chat message output.",
+				description: "Horizontal padding for transcript content.",
 				default: SETTINGS_DEFAULTS.outputPad,
 			}),
 		),
@@ -359,9 +387,8 @@ export const SettingsSchema = Type.Object(
 			Type.String({ description: "Proxy URL applied as HTTP_PROXY and HTTPS_PROXY for Pi-managed HTTP clients." }),
 		),
 		httpIdleTimeoutMs: Type.Optional(
-			Type.Number({
-				minimum: 0,
-				description: "HTTP header or body idle timeout in milliseconds; 0 disables it.",
+			timeoutSetting({
+				description: 'HTTP header or body idle timeout in milliseconds; 0 or "disabled" disables it.',
 			}),
 		),
 		cacheWarming: Type.Optional(
@@ -372,9 +399,8 @@ export const SettingsSchema = Type.Object(
 			}),
 		),
 		websocketConnectTimeoutMs: Type.Optional(
-			Type.Number({
-				minimum: 0,
-				description: "WebSocket connect or open handshake timeout in milliseconds; 0 disables it.",
+			timeoutSetting({
+				description: 'WebSocket connect or open handshake timeout in milliseconds; 0 or "disabled" disables it.',
 			}),
 		),
 		tuiMode: Type.Optional(
@@ -402,7 +428,7 @@ export const SettingsSchema = Type.Object(
 		),
 		fullscreenWheelScrollLines: Type.Optional(
 			Type.Union([Type.Number(), Type.Literal("auto")], {
-				description: "Lines scrolled per wheel event in fullscreen mode.",
+				description: "Lines scrolled per wheel event in fullscreen mode; numeric values are clamped from 1 to 100.",
 				default: SETTINGS_DEFAULTS.fullscreenWheelScrollLines,
 			}),
 		),
