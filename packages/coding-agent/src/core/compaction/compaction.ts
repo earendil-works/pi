@@ -16,7 +16,9 @@ import {
 	uuidv7,
 } from "@earendil-works/pi-ai";
 import type {
+	Api,
 	AssistantMessage,
+	Message,
 	Model,
 	SimpleStreamOptions,
 	SystemMessage,
@@ -24,6 +26,7 @@ import type {
 	Usage,
 } from "@earendil-works/pi-ai/compat";
 import { completeSimple } from "@earendil-works/pi-ai/compat";
+import { getPromptCacheTtlMs, priceTokens } from "../cache-warmer.ts";
 import { convertToLlm } from "../messages.ts";
 import {
 	buildSessionProjection,
@@ -52,6 +55,29 @@ import {
 export interface CompactionDetails {
 	readFiles: string[];
 	modifiedFiles: string[];
+	/** Outcome of the in-context attempt. Absent when `compaction.inContext` is off. */
+	inContext?: InContextCompactionOutcome;
+}
+
+/**
+ * What happened to the in-context attempt of one compaction. `skipped` carries the reason the
+ * decision chose a standalone summary; `failed` means an attempt was made and Pi fell back.
+ * `rebuild` failures happen while reproducing the next-turn request, before anything is sent.
+ */
+export type InContextCompactionOutcome =
+	| { status: "used" }
+	| { status: "skipped"; reason: string }
+	| { status: "failed"; stage: "rebuild" | "request"; error: string };
+
+/** Read the in-context outcome from compaction details, which extensions may shape freely. */
+export function getInContextCompactionOutcome(details: unknown): InContextCompactionOutcome | undefined {
+	if (typeof details !== "object" || details === null || !("inContext" in details)) return undefined;
+	const outcome = details.inContext;
+	if (typeof outcome !== "object" || outcome === null || !("status" in outcome)) return undefined;
+	const status = outcome.status;
+	return status === "used" || status === "skipped" || status === "failed"
+		? (outcome as InContextCompactionOutcome)
+		: undefined;
 }
 
 /**
@@ -1115,5 +1141,269 @@ async function generateTurnPrefixSummary(
 	return {
 		text: contentText(response.content),
 		usage: response.usage,
+	};
+}
+
+// ============================================================================
+// In-context compaction
+// ============================================================================
+
+/**
+ * Instructions appended as a system message to the live conversation. The model sees the
+ * whole conversation, including the recent messages that compaction keeps verbatim, so the
+ * summary describes the current state instead of the state at the cut point.
+ */
+export const IN_CONTEXT_COMPACTION_INSTRUCTIONS = `# Context compaction
+
+The conversation is about to be compacted. Everything above will be replaced by a checkpoint summary that you write now. The most recent messages will be kept verbatim after the summary, but the summary must stand on its own for everything earlier.
+
+Do NOT continue the task. Do NOT call tools. Do NOT answer questions from the conversation. Respond only with the summary.
+
+The system prompt and project instructions stay in place after compaction. Do not restate them; record only constraints and preferences that come from the conversation.
+
+If the conversation contains an earlier compaction summary, merge it: preserve its information, move finished items to Done, and update Next Steps.
+
+Use this EXACT format:
+
+## Goal
+[What is the user trying to accomplish? Can be multiple items if the session covers different tasks.]
+
+## Constraints & Preferences
+- [Any constraints, preferences, or requirements mentioned by user]
+- [Or "(none)" if none were mentioned]
+
+## Progress
+### Done
+- [x] [Completed tasks/changes]
+
+### In Progress
+- [ ] [Current work]
+
+### Blocked
+- [Issues preventing progress, if any]
+
+## Key Decisions
+- **[Decision]**: [Brief rationale]
+
+## Next Steps
+1. [Ordered list of what should happen next]
+
+## Critical Context
+- [Any data, examples, or references needed to continue]
+- [Or "(none)" if not applicable]
+
+Keep each section concise. Preserve exact file paths, function names, and error messages.`;
+
+/** User message that asks for the in-context summary after the instructions. */
+export const IN_CONTEXT_COMPACTION_PROMPT = "Write the context checkpoint summary now.";
+
+/** Fallback lifetime for models without catalog cache lifetimes: the shortest documented provider lifetime. */
+const DEFAULT_PROMPT_CACHE_TTL_MS = 5 * 60_000;
+/** Share of the cache lifetime after which the entry counts as expired. Requests are timed from their start. */
+const PROMPT_CACHE_TTL_SAFETY = 0.9;
+/** Cost of a cached prompt token relative to an uncached one when the model has no prices. */
+const UNPRICED_CACHE_READ_WEIGHT = 0.1;
+
+/**
+ * Append the compaction request to the provider transcript of the live conversation.
+ * The system message carries the instructions; models that accept system messages
+ * mid-conversation receive it in place, so the conversation prefix stays cached.
+ */
+export function appendInContextCompactionRequest(messages: Message[], customInstructions?: string): Message[] {
+	const timestamp = Date.now();
+	const prompt = customInstructions
+		? `${IN_CONTEXT_COMPACTION_PROMPT}\n\nAdditional focus: ${customInstructions}`
+		: IN_CONTEXT_COMPACTION_PROMPT;
+	return [
+		...messages,
+		{ role: "system", content: IN_CONTEXT_COMPACTION_INSTRUCTIONS, timestamp },
+		{ role: "user", content: [{ type: "text", text: prompt }], timestamp },
+	];
+}
+
+/** Whether the model catalog marks the model as keeping its prompt cache for in-context compaction. */
+export function supportsInContextCompaction(model: Model<Api>): boolean {
+	const compat = model.compat as
+		| { supportsMidConvoSystemMessages?: boolean; supportsInContextCompaction?: boolean }
+		| undefined;
+	return compat?.supportsMidConvoSystemMessages === true && compat.supportsInContextCompaction === true;
+}
+
+/** Estimated cost of both summary strategies, excluding output, which is similar for both. */
+export interface InContextCompactionCosts {
+	/** Prompt tokens of the last response, expected to be read from the cache. */
+	cachedTokens: number;
+	/** Prompt tokens added since the last response, including the compaction request. */
+	uncachedTokens: number;
+	/** Estimated prompt tokens of the standalone summary request(s). */
+	standaloneTokens: number;
+	/** In dollars when `priced`, otherwise in uncached-token equivalents. */
+	inContextCost: number;
+	standaloneCost: number;
+	priced: boolean;
+}
+
+export type InContextCompactionDecision = ({ use: true } & InContextCompactionCosts) | { use: false; reason: string };
+
+export interface InContextCompactionInput {
+	/** The model that would answer the next turn. */
+	model: Model<Api>;
+	projection: SessionProjection;
+	branchEntries: SessionEntry[];
+	preparation: CompactionPreparation;
+	/** The session's current thinking level, which the next turn would send. */
+	thinkingLevel: ThinkingLevel;
+	env?: Record<string, string>;
+	now?: number;
+}
+
+function serializedTokens(messages: AgentMessage[]): number {
+	return Math.ceil(serializeConversation(convertToLlm(messages)).length / 4);
+}
+
+/** Estimate the prompt tokens of the standalone requests `compact()` would send. */
+function estimateStandaloneSummaryTokens(preparation: CompactionPreparation): number {
+	const { messagesToSummarize, turnPrefixMessages, isSplitTurn, previousSummary } = preparation;
+	const splitTurn = isSplitTurn && turnPrefixMessages.length > 0;
+	let tokens = 0;
+	if (!splitTurn || messagesToSummarize.length > 0) {
+		const prompt = previousSummary ? UPDATE_SUMMARIZATION_PROMPT : SUMMARIZATION_PROMPT;
+		const chars = SUMMARIZATION_SYSTEM_PROMPT.length + prompt.length + (previousSummary?.length ?? 0);
+		tokens += Math.ceil(chars / 4) + serializedTokens(messagesToSummarize);
+	}
+	if (splitTurn) {
+		const chars = SUMMARIZATION_SYSTEM_PROMPT.length + TURN_PREFIX_SUMMARIZATION_PROMPT.length;
+		tokens += Math.ceil(chars / 4) + serializedTokens(turnPrefixMessages);
+	}
+	return tokens;
+}
+
+/**
+ * Decide whether to summarize inside the live conversation instead of in a standalone request.
+ *
+ * In-context compaction repeats the request the next turn would send and appends the
+ * compaction instructions. It is only cheaper while the provider still caches that
+ * request's prefix, so the decision requires recent cache activity from the same model
+ * and thinking level, and compares the estimated prompt cost of both strategies.
+ */
+export function evaluateInContextCompaction(input: InContextCompactionInput): InContextCompactionDecision {
+	const { model, projection, branchEntries, preparation, thinkingLevel } = input;
+	const now = input.now ?? Date.now();
+	if (!supportsInContextCompaction(model)) {
+		return { use: false, reason: "model is not verified for in-context compaction" };
+	}
+
+	const estimate = estimateProjectedContextTokens(projection, branchEntries);
+	const usageMessage = estimate.lastUsageIndex === null ? undefined : projection.messages[estimate.lastUsageIndex];
+	if (!usageMessage || usageMessage.role !== "assistant") {
+		return { use: false, reason: "no provider usage for the current context" };
+	}
+	if (usageMessage.provider !== model.provider || usageMessage.model !== model.id) {
+		return { use: false, reason: "last response came from a different model" };
+	}
+	if (usageMessage.thinkingLevel !== undefined && usageMessage.thinkingLevel !== thinkingLevel) {
+		return { use: false, reason: "thinking level changed since the last response" };
+	}
+	const usage = usageMessage.usage;
+	if (usage.cacheRead + usage.cacheWrite === 0) {
+		return { use: false, reason: "last response reported no prompt caching" };
+	}
+
+	// Cache warming re-sends the request and refreshes the entry.
+	let refreshedAt = usageMessage.timestamp;
+	for (const entry of branchEntries) {
+		if (entry.type !== "usage" || entry.kind !== "cache_warm" || entry.provider !== model.provider) continue;
+		refreshedAt = Math.max(refreshedAt, new Date(entry.timestamp).getTime());
+	}
+	const ttlMs = getPromptCacheTtlMs(model, { env: input.env }) ?? DEFAULT_PROMPT_CACHE_TTL_MS;
+	if (now - refreshedAt > ttlMs * PROMPT_CACHE_TTL_SAFETY) {
+		return { use: false, reason: "prompt cache has likely expired" };
+	}
+
+	const requestTokens = Math.ceil(
+		(IN_CONTEXT_COMPACTION_INSTRUCTIONS.length + IN_CONTEXT_COMPACTION_PROMPT.length) / 4,
+	);
+	const promptTokens = estimate.tokens + requestTokens;
+	const outputBudget = Math.floor(0.8 * preparation.settings.reserveTokens);
+	if (promptTokens + outputBudget > model.contextWindow) {
+		return { use: false, reason: "context is too full for an in-context summary" };
+	}
+
+	const cachedTokens = Math.min(usage.input + usage.cacheRead + usage.cacheWrite, promptTokens);
+	const uncachedTokens = promptTokens - cachedTokens;
+	const standaloneTokens = estimateStandaloneSummaryTokens(preparation);
+	const priced = model.cost.input > 0 && model.cost.cacheRead > 0;
+	const inContextCost = priced
+		? priceTokens(model, {
+				cacheRead: cachedTokens,
+				...(model.cost.cacheWrite > 0 ? { cacheWrite: uncachedTokens } : { input: uncachedTokens }),
+			})
+		: cachedTokens * UNPRICED_CACHE_READ_WEIGHT + uncachedTokens;
+	const standaloneCost = priced ? priceTokens(model, { input: standaloneTokens }) : standaloneTokens;
+	const costs = { cachedTokens, uncachedTokens, standaloneTokens, inContextCost, standaloneCost, priced };
+	if (inContextCost >= standaloneCost) {
+		return { use: false, reason: "standalone summary is cheaper" };
+	}
+	return { use: true, ...costs };
+}
+
+/** A rejected in-context response. Carries the billed usage so callers can account for it. */
+export class InContextCompactionError extends Error {
+	readonly usage: Usage;
+
+	constructor(message: string, usage: Usage) {
+		super(message);
+		this.name = "InContextCompactionError";
+		this.usage = usage;
+	}
+}
+
+/**
+ * Generate the compaction summary inside the live conversation.
+ *
+ * `messages` and `options` must reproduce the request the next turn would send, so the
+ * provider reads the cached prefix. Tools stay declared to keep that prefix intact;
+ * `toolChoice: "none"` stops the model from calling them. The kept tail is unchanged,
+ * so the result has the same shape as `compact()`.
+ *
+ * @throws {InContextCompactionError} When the response fails, is truncated, calls a tool, or has no
+ * text. The response is discarded; callers fall back to `compact()`.
+ */
+export async function compactInContext(
+	preparation: CompactionPreparation,
+	model: Model<Api>,
+	messages: Message[],
+	options: SimpleStreamOptions,
+	streamFn: StreamFn,
+	customInstructions?: string,
+	retry?: RetryPolicy,
+	callbacks?: RetryCallbacks,
+): Promise<CompactionResult> {
+	const context = normalizeContext({ messages: appendInContextCompactionRequest(messages, customInstructions) });
+	const requestOptions: SimpleStreamOptions = { ...options, toolChoice: "none" };
+	const response = await retryAssistantCall(
+		async () => (await streamFn(model, context, requestOptions)).result(),
+		retry,
+		requestOptions.signal,
+		callbacks,
+	);
+
+	const failure = getSummarizationFailure(response, "In-context summarization");
+	if (failure) throw new InContextCompactionError(failure, response.usage);
+	if (response.content.some((block) => block.type === "toolCall")) {
+		throw new InContextCompactionError("In-context summarization attempted to call a tool", response.usage);
+	}
+	const text = contentText(response.content).trim();
+	if (text.length === 0) {
+		throw new InContextCompactionError("In-context summarization returned no text", response.usage);
+	}
+
+	const { readFiles, modifiedFiles } = computeFileLists(preparation.fileOps);
+	return {
+		summary: text + formatFileOperations(readFiles, modifiedFiles),
+		firstKeptEntryId: preparation.firstKeptEntryId,
+		tokensBefore: preparation.tokensBefore,
+		usage: response.usage,
+		details: { readFiles, modifiedFiles, inContext: { status: "used" } } satisfies CompactionDetails,
 	};
 }

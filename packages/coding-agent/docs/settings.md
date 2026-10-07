@@ -70,6 +70,7 @@ CLI tool options override this setting for one invocation. `--tools` with only `
 | `compaction.enabled` | boolean | `true` | Enable automatic compaction. |
 | `compaction.reserveTokens` | number | `16384` | Tokens reserved for the model response. |
 | `compaction.keepRecentTokens` | number | `20000` | Recent tokens retained without summarization. |
+| `compaction.inContext` | boolean | `false` | Generate summaries inside the cached conversation on verified models when that is cheaper. See [In-context compaction](compaction.md#in-context-compaction). |
 | `compaction.modelOverrides` | object | None | Per-model token settings keyed by exact `provider/modelId`. |
 
 <a id="per-model-compaction-overrides"></a>

@@ -45,6 +45,7 @@ const compat = {
 	supportsOpenAIGrammarTools: false,
 	supportsMidConvoSystemMessages: false,
 	supportsMidConvoToolAdditions: false,
+	supportsInContextCompaction: false,
 	cacheControlFormat: undefined,
 	sendSessionAffinityHeaders: false,
 	sessionAffinityFormat: "openai",

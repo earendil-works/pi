@@ -218,6 +218,37 @@ describe("builtin providers", () => {
 		}
 	});
 
+	it("enables in-context compaction only for validated models", () => {
+		const models = builtinModels();
+		for (const [provider, modelId] of [
+			["anthropic", "claude-opus-5-5"],
+			["openai-codex", "gpt-6-astra"],
+			["moonshotai", "kimi-k3"],
+			["opencode", "claude-sonnet-5-5"],
+			["openrouter", "openai/gpt-5.6-terra"],
+		] as const) {
+			expect(models.getModel(provider, modelId), `${provider}/${modelId}`).toHaveProperty(
+				"compat.supportsInContextCompaction",
+				true,
+			);
+		}
+		// These missed the cache in validation, or were never validated.
+		for (const [provider, modelId] of [
+			["openai-codex", "gpt-5.5"],
+			["moonshotai", "kimi-k2.6"],
+			["openrouter", "openai/gpt-5.4-mini"],
+			["deepseek", "deepseek-v4-pro"],
+			["opencode-go", "kimi-k3"],
+			["anthropic", "claude-opus-5"],
+			["github-copilot", "claude-opus-5"],
+			["anthropic", "claude-sonnet-4-5"],
+		] as const) {
+			expect(models.getModel(provider, modelId), `${provider}/${modelId}`).not.toHaveProperty(
+				"compat.supportsInContextCompaction",
+			);
+		}
+	});
+
 	it("routes proxied tool changes through verified transports only", () => {
 		const models = builtinModels();
 		for (const [provider, modelId] of [

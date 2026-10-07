@@ -22,6 +22,7 @@ describe("InteractiveMode compaction events", () => {
 				type: "compaction_cost";
 				kind: "compaction" | "branch_summary";
 				usage: Usage;
+				details?: unknown;
 			},
 		) => void;
 
@@ -36,9 +37,24 @@ describe("InteractiveMode compaction events", () => {
 			kind: "branch_summary",
 			usage,
 		});
+		for (const inContext of [
+			{ status: "used" },
+			{ status: "skipped", reason: "prompt cache has likely expired" },
+			{ status: "failed", stage: "request", error: "boom" },
+		]) {
+			addCompactionCostNotice.call(enabled, {
+				type: "compaction_cost",
+				kind: "compaction",
+				usage,
+				details: { readFiles: [], modifiedFiles: [], inContext },
+			});
+		}
 		const output = stripAnsi(enabled.chatContainer.render(120).join("\n"));
 		expect(output).toContain("Compaction: 100 tokens billed (~$0.13)");
 		expect(output).toContain("Branch summary: 100 tokens billed (~$0.13)");
+		expect(output).toContain("Compaction: 100 tokens billed (~$0.13) (in-context)");
+		expect(output).toContain("(standalone: prompt cache has likely expired)");
+		expect(output).toContain("(standalone after in-context request failure)");
 
 		const disabled = {
 			chatContainer: new Container(),
@@ -196,6 +212,66 @@ describe("InteractiveMode compaction events", () => {
 			usage,
 		});
 		expect(fakeThis.flushCompactionQueue).toHaveBeenCalledWith({ willRetry: false });
+	});
+
+	test("warns when an in-context attempt failed before the standalone summary", async () => {
+		const compaction: SessionEntry = {
+			type: "compaction",
+			id: "latest",
+			parentId: null,
+			timestamp: "2025-01-02T00:00:00Z",
+			summary: "summary",
+			firstKeptEntryId: "kept",
+			tokensBefore: 123,
+		};
+		const fakeThis = {
+			isInitialized: true,
+			footer: { invalidate: vi.fn() },
+			autoCompactionEscapeHandler: undefined as (() => void) | undefined,
+			defaultEditor: {},
+			chatContainer: { clear: vi.fn() },
+			sessionManager: { buildContextEntries: vi.fn().mockReturnValue([compaction]) },
+			renderSessionEntries: vi.fn(),
+			addMessageToChat: vi.fn(),
+			addCompactionCostNotice: vi.fn(),
+			showWarning: vi.fn(),
+			showError: vi.fn(),
+			showStatus: vi.fn(),
+			clearStatusIndicator: vi.fn(),
+			flushCompactionQueue: vi.fn().mockResolvedValue(undefined),
+			settingsManager: { getShowTerminalProgress: () => false },
+			ui: { requestRender: vi.fn(), terminal: { setProgress: vi.fn() } },
+		};
+		const handleEvent = Reflect.get(InteractiveMode.prototype, "handleEvent") as (
+			this: typeof fakeThis,
+			event: {
+				type: "compaction_end";
+				reason: "threshold";
+				result: { tokensBefore: number; summary: string; details: unknown };
+				aborted: boolean;
+				willRetry: boolean;
+			},
+		) => Promise<void>;
+
+		await handleEvent.call(fakeThis, {
+			type: "compaction_end",
+			reason: "threshold",
+			result: {
+				tokensBefore: 123,
+				summary: "summary",
+				details: {
+					readFiles: [],
+					modifiedFiles: [],
+					inContext: { status: "failed", stage: "request", error: "400 tool_choice not supported" },
+				},
+			},
+			aborted: false,
+			willRetry: false,
+		});
+
+		expect(fakeThis.showWarning).toHaveBeenCalledWith(
+			"In-context compaction failed (request): 400 tool_choice not supported. Used a standalone summary instead.",
+		);
 	});
 
 	test("updates the working state when the same agent run resumes after compaction", async () => {

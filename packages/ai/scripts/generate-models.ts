@@ -976,6 +976,59 @@ function applyOpenAIExplicitPromptCacheMetadata(model: Model<Api>): void {
 	};
 }
 
+// Models whose prompt cache survives in-context compaction in real pi sessions: after a tool-heavy
+// turn with native reasoning, the compaction request (same conversation plus a system message and
+// a user message, `toolChoice: "none"`) reads at least 90% of the last turn's prompt from cache.
+// Validated 2026-10-06 by driving pi in RPC mode and compacting directly after the tool turn.
+// test/in-context-compaction-probe.ts alone is not enough: its synthetic history has no native
+// reasoning, so it passes models that fail in real sessions.
+// Failures stay unflagged. openai-codex/gpt-5.5, moonshotai/kimi-k2.6, and GPT-5.4 and GPT-5.4 mini
+// on opencode and openrouter read 0-9%: the appended user message makes the provider drop the
+// last turn's reasoning from the rendered prompt, so the cache breaks at the start of that turn.
+// deepseek/deepseek-v4-pro read 0% and opencode-go/kimi-k3 read 89% in the probe.
+// opencode/claude-opus-4-8 and opencode-go/gpt-5.6-luna were unreachable (model access disabled);
+// they stay flagged because the same models pass through other providers.
+const IN_CONTEXT_COMPACTION_VERIFIED_MODELS = new Set([
+	"anthropic/claude-fable-5",
+	"anthropic/claude-fable-5-1",
+	"anthropic/claude-opus-4-8",
+	"anthropic/claude-opus-5-5",
+	"anthropic/claude-sonnet-5-5",
+	"moonshotai/kimi-k2.7-code",
+	"moonshotai/kimi-k2.7-code-highspeed",
+	"moonshotai/kimi-k3",
+	"openai-codex/gpt-5.6-luna",
+	"openai-codex/gpt-5.6-sol",
+	"openai-codex/gpt-5.6-terra",
+	"openai-codex/gpt-6-astra",
+	"openai-codex/gpt-6-luna",
+	"openai-codex/gpt-6-sol",
+	"openai-codex/gpt-6.1-sol",
+	"opencode-go/gpt-5.6-luna",
+	"opencode-go/gpt-6-luna",
+	"opencode/claude-fable-5-1",
+	"opencode/claude-opus-4-8",
+	"opencode/claude-opus-5-5",
+	"opencode/claude-sonnet-5-5",
+	"opencode/kimi-k3",
+	"openrouter/openai/gpt-5.5",
+	"openrouter/openai/gpt-5.6-luna",
+	"openrouter/openai/gpt-5.6-sol",
+	"openrouter/openai/gpt-5.6-terra",
+	"openrouter/openai/gpt-6-astra",
+	"openrouter/openai/gpt-6-luna",
+	"openrouter/openai/gpt-6-sol",
+	"openrouter/openai/gpt-6.1-sol",
+]);
+
+function applyInContextCompactionMetadata(model: Model<Api>): void {
+	if (!IN_CONTEXT_COMPACTION_VERIFIED_MODELS.has(`${model.provider}/${model.id}`)) return;
+	const compat = model.compat as (AnthropicMessagesCompat & OpenAIResponsesCompat & OpenAICompletionsCompat) | undefined;
+	// In-context compaction sends the instructions as a mid-conversation system message.
+	if (compat?.supportsMidConvoSystemMessages !== true) return;
+	model.compat = { ...compat, supportsInContextCompaction: true };
+}
+
 // Anthropic ephemeral entries have a hard five-minute lifetime; `ttl: "1h"`
 // extends it to one hour. Only direct Anthropic is annotated so cache warming
 // does not assume equivalent behavior through proxies.
@@ -3440,6 +3493,7 @@ async function generateModels() {
 		applyOpenAICompletionsTranscriptMetadata(model);
 		applyOpenAIResponsesTranscriptMetadata(model);
 		applyOpenAIExplicitPromptCacheMetadata(model);
+		applyInContextCompactionMetadata(model);
 		applyPromptCacheMetadata(model);
 		applyImageInputMetadata(model);
 	}

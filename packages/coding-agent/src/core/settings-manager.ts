@@ -29,6 +29,7 @@ export interface CompactionSettings {
 	enabled?: boolean; // default: true
 	reserveTokens?: number; // default: 16384
 	keepRecentTokens?: number; // default: 20000
+	inContext?: boolean; // default: false - summarize inside the cached conversation when cheaper
 	modelOverrides?: Record<string, CompactionModelOverride>; // exact "provider/modelId" keys
 }
 
@@ -945,6 +946,11 @@ export class SettingsManager {
 		this.globalSettings.compaction.enabled = enabled;
 		this.markModified("compaction", "enabled");
 		this.save();
+	}
+
+	/** Whether compaction may summarize inside the live conversation on models verified to keep their prompt cache. */
+	getCompactionInContext(): boolean {
+		return this.settings.compaction?.inContext ?? false;
 	}
 
 	private getCompactionTokenSetting(

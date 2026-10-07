@@ -69,7 +69,8 @@ function lastPromptTokens(entries: SessionEntry[]): number {
 	return 0;
 }
 
-function price(
+/** Price token counts with the model's rates, including tiered pricing. */
+export function priceTokens(
 	model: Model<Api>,
 	tokens: Partial<Pick<Usage, "input" | "output" | "cacheRead" | "cacheWrite">>,
 ): number {
@@ -378,12 +379,12 @@ export class CacheWarmer {
 	private evaluate(run: ActiveRun): CacheWarmingDecision {
 		const model = run.model;
 		const promptTokens = lastPromptTokens(this.sessionManager.getBranch());
-		const cacheHitCost = price(model, { cacheRead: promptTokens });
-		const cacheMissCost = price(
+		const cacheHitCost = priceTokens(model, { cacheRead: promptTokens });
+		const cacheMissCost = priceTokens(
 			model,
 			model.cost.cacheWrite > 0 ? { cacheWrite: promptTokens } : { input: promptTokens },
 		);
-		const warmCost = price(model, { cacheRead: promptTokens, output: 1 });
+		const warmCost = priceTokens(model, { cacheRead: promptTokens, output: 1 });
 		const missCost = Math.max(0, cacheMissCost - cacheHitCost);
 		const continuationProbability = run.phase === "idle" ? IDLE_CONTINUATION_PROBABILITY : 1;
 		const economicsAvailable = promptTokens > 0 && (cacheHitCost > 0 || cacheMissCost > 0);

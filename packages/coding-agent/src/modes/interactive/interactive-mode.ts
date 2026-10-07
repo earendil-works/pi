@@ -76,6 +76,7 @@ import {
 	detectCacheMiss,
 } from "../../core/cache-stats.ts";
 import { formatCacheWarmingStatus, formatCacheWarmingUsage } from "../../core/cache-warmer.ts";
+import { getInContextCompactionOutcome } from "../../core/compaction/index.ts";
 import { findExtensionStackMatches, recordCrash, takeUnnotifiedCrash } from "../../core/crash-log.ts";
 import { DEFAULT_THINKING_LEVEL, THINKING_LEVEL_OPTIONS } from "../../core/defaults.ts";
 import type {
@@ -273,7 +274,18 @@ type CompactionCostNotice = {
 	type: "compaction_cost";
 	kind: "compaction" | "branch_summary";
 	usage: Usage;
+	/** Compaction details, which record whether the summary was generated in context. */
+	details?: unknown;
 };
+
+/** Short note for the compaction cost notice that says how the summary was generated. */
+function describeInContextOutcome(details: unknown): string | undefined {
+	const outcome = getInContextCompactionOutcome(details);
+	if (!outcome) return undefined;
+	if (outcome.status === "used") return "in-context";
+	if (outcome.status === "skipped") return `standalone: ${outcome.reason}`;
+	return `standalone after in-context ${outcome.stage} failure`;
+}
 
 type RenderSessionItem = AgentMessage | Extract<SessionEntry, { type: "custom" | "usage" }> | CompactionCostNotice;
 
@@ -3477,6 +3489,7 @@ export class InteractiveMode {
 							type: "compaction_cost",
 							kind: "compaction",
 							usage: event.entry.usage,
+							details: event.entry.details,
 						});
 					}
 					this.renderSessionEntries(retainedEntries.filter((entry) => entriesAfterCompaction.has(entry.id)));
@@ -3718,7 +3731,14 @@ export class InteractiveMode {
 							type: "compaction_cost",
 							kind: "compaction",
 							usage: event.result.usage,
+							details: event.result.details,
 						});
+					}
+					const inContext = getInContextCompactionOutcome(event.result.details);
+					if (inContext?.status === "failed") {
+						this.showWarning(
+							`In-context compaction failed (${inContext.stage}): ${inContext.error}. Used a standalone summary instead.`,
+						);
 					}
 					this.footer.invalidate();
 				} else if (event.errorMessage) {
@@ -4100,7 +4120,8 @@ export class InteractiveMode {
 			}
 			const messages = sessionEntryToContextMessages(entry);
 			if ((entry.type === "compaction" || entry.type === "branch_summary") && entry.usage && messages.length > 0) {
-				return [...messages, { type: "compaction_cost", kind: entry.type, usage: entry.usage }];
+				const details = entry.type === "compaction" ? entry.details : undefined;
+				return [...messages, { type: "compaction_cost", kind: entry.type, usage: entry.usage, details }];
 			}
 			return messages;
 		});
@@ -4125,10 +4146,10 @@ export class InteractiveMode {
 		const tokens = usage.input + usage.output + usage.cacheRead + usage.cacheWrite;
 		const cost = usage.cost.total >= 0.01 ? ` (~$${usage.cost.total.toFixed(2)})` : "";
 		const label = notice.kind === "compaction" ? "Compaction" : "Branch summary";
+		const note = describeInContextOutcome(notice.details);
+		const text = `${label}: ${formatTokens(tokens)} tokens billed${cost}${note ? ` (${note})` : ""}`;
 		this.chatContainer.addChild(new Spacer(1));
-		this.chatContainer.addChild(
-			new ThemedText(() => theme.fg("warning", `${label}: ${formatTokens(tokens)} tokens billed${cost}`), 1, 0),
-		);
+		this.chatContainer.addChild(new ThemedText(() => theme.fg("warning", text), 1, 0));
 	}
 
 	private static countDroppedThinkingBlocks(message: AssistantMessage): number {

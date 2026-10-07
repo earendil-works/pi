@@ -36,6 +36,7 @@ import type {
 	AssistantMessage,
 	AuthResult,
 	ImageContent,
+	Message,
 	Model,
 	ProviderHeaders,
 	SystemMessage,
@@ -65,15 +66,20 @@ import { type BashResult, executeBashWithOperations } from "./bash-executor.ts";
 import { generateBugReportSummary } from "./bug-report.ts";
 import type { CacheWarmer, CacheWarmingStatus } from "./cache-warmer.ts";
 import {
+	type CompactionDetails,
 	type CompactionPreparation,
 	type CompactionResult,
 	calculateContextTokens,
 	collectEntriesForBranchSummary,
 	compact,
+	compactInContext,
 	estimateContextTokens,
 	estimateProjectedContextTokens,
 	estimateTokens,
+	evaluateInContextCompaction,
 	generateBranchSummary,
+	InContextCompactionError,
+	type InContextCompactionOutcome,
 	prepareCompaction,
 	shouldCompact,
 } from "./compaction/index.ts";
@@ -371,6 +377,18 @@ function estimateMessagesTokens(messages: AgentMessage[]): number {
 	return tokens;
 }
 
+/** Replace every system message with one leading forced prompt that keeps the current tool declarations. */
+function withForcedSystemPrompt(messages: AgentMessage[], forced: string): AgentMessage[] {
+	const current = getCurrentSystemMessage(messages);
+	const head: SystemMessage = {
+		role: "system",
+		content: forced,
+		...(current?.toolsAdded ? { toolsAdded: current.toolsAdded } : {}),
+		timestamp: current?.timestamp ?? Date.now(),
+	};
+	return [head, ...messages.filter((message) => message.role !== "system")];
+}
+
 // ============================================================================
 // AgentSession Class
 // ============================================================================
@@ -481,6 +499,8 @@ export class AgentSession {
 	private _baseSystemPromptOptions!: NormalizedBuildSystemPromptOptions;
 	/** Prompt options after before_agent_start mutations for the active run. */
 	private _runSystemPromptOptions?: NormalizedBuildSystemPromptOptions;
+	/** Forced system prompt of the last finished run, which its cached provider requests used. */
+	private _lastRunForcedSystemPrompt?: string;
 
 	constructor(config: AgentSessionConfig) {
 		this.agent = config.agent;
@@ -1789,15 +1809,7 @@ export class AgentSession {
 		this.agent.transformContext = async (messages, signal) => {
 			const transformed = previousTransformContext ? await previousTransformContext(messages, signal) : messages;
 			const forced = this._runSystemPromptOptions?.forceSystemPrompt;
-			if (forced === undefined) return transformed;
-			const current = getCurrentSystemMessage(transformed);
-			const head: SystemMessage = {
-				role: "system",
-				content: forced,
-				...(current?.toolsAdded ? { toolsAdded: current.toolsAdded } : {}),
-				timestamp: current?.timestamp ?? Date.now(),
-			};
-			return [head, ...transformed.filter((message) => message.role !== "system")];
+			return forced === undefined ? transformed : withForcedSystemPrompt(transformed, forced);
 		};
 	}
 
@@ -1843,6 +1855,7 @@ export class AgentSession {
 		} finally {
 			if (this._agentRunAbortRequested) this._finishCancelledRetry();
 			this._failedResponse = undefined;
+			this._lastRunForcedSystemPrompt = this._runSystemPromptOptions?.forceSystemPrompt;
 			this._runSystemPromptOptions = undefined;
 			this._flushPendingBashMessages();
 			this._flushPendingCustomMessages();
@@ -2723,9 +2736,11 @@ export class AgentSession {
 		signal: AbortSignal,
 		reason: "manual" | "threshold" | "overflow",
 	): Promise<CompactionResult> {
+		const attempt = await this._runInContextCompaction(preparation, model, customInstructions, signal, reason);
+		if (attempt?.result) return attempt.result;
 		// Resolve the request only when Pi summarizes itself: routing may call models or fail.
 		const request = await this._getSummarizationRequestAuth(model, signal);
-		return compact(
+		const result = await compact(
 			preparation,
 			request.model,
 			request.apiKey,
@@ -2739,6 +2754,96 @@ export class AgentSession {
 			this._summarizationRetryCallbacks({ source: "compaction", reason }),
 			undefined, // sessionId
 		);
+		if (!attempt) return result;
+		// Keep the attempt visible in the entry, and bill a rejected in-context response with the summary.
+		const usage = attempt.usage && result.usage ? combineUsage(attempt.usage, result.usage) : result.usage;
+		const details: CompactionDetails = { ...(result.details as CompactionDetails), inContext: attempt.outcome };
+		return { ...result, usage, details };
+	}
+
+	/**
+	 * Try to summarize inside the live conversation when `compaction.inContext` is on. Returns
+	 * undefined when the setting is off. Otherwise `result` is set when the attempt succeeded, and
+	 * `outcome` records why it was skipped or how it failed, so the caller can fall back to
+	 * `compact()` without hiding the reason. Aborts propagate.
+	 */
+	private async _runInContextCompaction(
+		preparation: CompactionPreparation,
+		model: Model<any>,
+		customInstructions: string | undefined,
+		signal: AbortSignal,
+		reason: "manual" | "threshold" | "overflow",
+	): Promise<{ result?: CompactionResult; outcome: InContextCompactionOutcome; usage?: Usage } | undefined> {
+		if (!this.settingsManager.getCompactionInContext()) return undefined;
+		const skip = (skipReason: string) => ({ outcome: { status: "skipped" as const, reason: skipReason } });
+		// Overflow recovery cannot repeat a context that already exceeded the window.
+		if (reason === "overflow") return skip("overflow recovery");
+		// A virtual model routes each request, so the next turn may not use the cached model.
+		if (isVirtualModel(model)) return skip("virtual model");
+		const projection = this.sessionManager.buildSessionProjection();
+		const thinkingLevel = this.agent.state.thinkingLevel;
+		const decision = evaluateInContextCompaction({
+			model,
+			projection,
+			branchEntries: this.sessionManager.getBranch(),
+			preparation,
+			thinkingLevel,
+		});
+		if (!decision.use) return skip(decision.reason);
+
+		const fail = (stage: "rebuild" | "request", error: unknown) => {
+			if (signal.aborted) throw error;
+			const message = error instanceof Error ? error.message : String(error);
+			return {
+				outcome: { status: "failed" as const, stage, error: message },
+				usage: error instanceof InContextCompactionError ? error.usage : undefined,
+			};
+		};
+
+		// Rebuild the request the next turn would send (see _installAgentRequestProjection and the
+		// agent loop), including payload hooks: they can rewrite the cached prefix.
+		let messages: Message[];
+		let apiKey: string | undefined;
+		try {
+			const transformed = this.agent.transformContext
+				? await this.agent.transformContext(projection.messages, signal)
+				: projection.messages;
+			// Between runs the forced prompt projection is off, but the cached requests used it.
+			const forced = this._runSystemPromptOptions ? undefined : this._lastRunForcedSystemPrompt;
+			messages = await this.agent.convertToLlm(
+				forced === undefined ? transformed : withForcedSystemPrompt(transformed, forced),
+			);
+			apiKey = await this.agent.getApiKey?.(model.provider);
+		} catch (error) {
+			return fail("rebuild", error);
+		}
+
+		try {
+			const result = await compactInContext(
+				preparation,
+				model,
+				messages,
+				{
+					apiKey,
+					sessionId: this.agent.sessionId,
+					reasoning: thinkingLevel === "off" ? undefined : thinkingLevel,
+					thinkingBudgets: this.agent.thinkingBudgets,
+					transport: this.agent.transport,
+					maxRetryDelayMs: this.agent.maxRetryDelayMs,
+					onPayload: this.agent.onPayload,
+					onResponse: this.agent.onResponse,
+					onProviderStreamEvent: this.agent.onProviderStreamEvent,
+					signal,
+				},
+				this.agent.streamFunction,
+				customInstructions,
+				this.settingsManager.getRetrySettings(),
+				this._summarizationRetryCallbacks({ source: "compaction", reason }),
+			);
+			return { result, outcome: { status: "used" } };
+		} catch (error) {
+			return fail("request", error);
+		}
 	}
 
 	private _clearManualCompactionState(): void {

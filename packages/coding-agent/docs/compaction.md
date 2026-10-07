@@ -82,6 +82,28 @@ What the LLM sees:
 
 On repeated compactions, the summarized span starts at the previous compaction's kept boundary (`firstKeptEntryId`), not at the compaction entry itself, falling back to the entry after the previous compaction if that kept entry cannot be found in the path. A retain-none compaction records its own ID as `firstKeptEntryId`; repeated compaction starts after that entry. This preserves messages that survived the earlier compaction by including them in the next summarization pass as well. Pi also recalculates `tokensBefore` from the rebuilt, context-edited session projection before writing the new `CompactionEntry`, so the token count reflects the actual pre-compaction context being replaced. Omitted raw entries remain stored but do not affect cut selection, summaries, checkpoints, or token estimates.
 
+### In-context compaction
+
+With `compaction.inContext` enabled, Pi can generate the summary inside the live conversation instead of in a separate request. It repeats the request the next turn would send, appends a system message with the summary instructions and a user message that asks for the summary, and sets `toolChoice: "none"`. The provider reads the conversation from its prompt cache, and the model sees the full conversation, including the recent messages that stay verbatim, so the summary describes the current state. The kept tail, `firstKeptEntryId`, and the resulting `CompactionEntry` are the same as for a standalone summary.
+
+Pi uses in-context compaction only when all of these hold; otherwise it uses the standalone summary:
+
+- The model has `supportsInContextCompaction` in its catalog compat settings. The catalog sets it only for models where real pi sessions showed that this request still reads the cached prefix right after a tool-heavy turn.
+- The model is not a virtual model, and the compaction is not overflow recovery.
+- The last response came from the same model and thinking level, reported prompt cache activity, and is younger than 90% of the model's cache lifetime (five minutes when the catalog has none). Cache warming refreshes the entry and counts as a newer response.
+- The repeated conversation, instructions, and summary budget fit the context window.
+- The estimated prompt cost is lower than the standalone request: cached tokens at the cache-read price plus new tokens at the cache-write or input price, against the standalone prompt at the input price. Models without prices weight cached tokens at 10%.
+
+If the in-context request fails, is truncated, or calls a tool, Pi discards the response without running any tool and falls back to the standalone summary. Payload hooks such as `before_provider_request` run for the in-context request, since they can change the cached prefix. When a `before_agent_start` handler replaced the system prompt for the last run, a compaction after that run (for example `/compact`) repeats that prompt, because the provider cached it.
+
+With the setting on, every compaction records the attempt in `CompactionEntry.details.inContext`:
+
+- `{ "status": "used" }`: the summary was generated in context.
+- `{ "status": "skipped", "reason": "..." }`: the decision chose the standalone summary, for example `"prompt cache has likely expired"` or `"standalone summary is cheaper"`.
+- `{ "status": "failed", "stage": "rebuild" | "request", "error": "..." }`: an attempt failed and Pi fell back. `rebuild` failures happen while reproducing the next-turn request, before anything is sent; `request` failures come from the provider or the response.
+
+A failed attempt is billed together with the standalone summary in the entry's `usage`. Interactive mode warns when an attempt failed, and the compaction cost notice (`showCacheMissNotices`) notes whether the summary was generated in context and why not.
+
 ### Overflow and Length Recovery Ordering
 
 Recovery preserves the existing lifecycle and queue order. The completed attempt remains visible to `turn_end` and `agent_end`; post-run recovery then repairs persisted model context before a fresh retry:
@@ -423,7 +445,8 @@ Configure compaction in `~/.pi/agent/settings.json` or `<project-dir>/.pi/settin
   "compaction": {
     "enabled": true,
     "reserveTokens": 16384,
-    "keepRecentTokens": 20000
+    "keepRecentTokens": 20000,
+    "inContext": false
   }
 }
 ```
@@ -433,6 +456,7 @@ Configure compaction in `~/.pi/agent/settings.json` or `<project-dir>/.pi/settin
 | `enabled` | `true` | Enable auto-compaction |
 | `reserveTokens` | `16384` | Tokens to reserve for LLM response |
 | `keepRecentTokens` | `20000` | Recent tokens to keep (not summarized) |
+| `inContext` | `false` | Generate the summary inside the cached conversation when that is cheaper. See [In-context compaction](#in-context-compaction) |
 
 Disable auto-compaction with `"enabled": false`. You can still compact manually with `/compact`.
 

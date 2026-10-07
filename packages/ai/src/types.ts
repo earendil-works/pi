@@ -865,6 +865,8 @@ export interface OpenAICompletionsCompat {
 	supportsOpenAIGrammarTools?: boolean;
 	/** Whether the exact model accepts system or developer messages after the conversation has started. When false, later system messages are folded into the leading system message. Default: false; the generated model catalog enables it for verified models. */
 	supportsMidConvoSystemMessages?: boolean;
+	/** Whether the exact model keeps its prompt cache for in-context compaction: a request that repeats the conversation, appends a system message and a user message, and sets `toolChoice: "none"` still reads the cached prefix. Requires `supportsMidConvoSystemMessages`. Default: false; the generated model catalog enables it for models validated in real pi sessions. */
+	supportsInContextCompaction?: boolean;
 	/** Whether system messages can introduce additional tools mid-conversation. Requires `supportsMidConvoSystemMessages`. Default: false; the generated model catalog enables it for capable models. */
 	supportsMidConvoToolAdditions?: boolean;
 	/** Whether the provider supports the `strict` field in tool definitions. Default: false; generated capable models enable it explicitly. */
@@ -892,6 +894,8 @@ export interface OpenAIResponsesCompat {
 	supportsDeveloperRole?: boolean;
 	/** Whether the exact model accepts developer or system messages after the conversation has started. When false, later system messages are folded into the leading system message. Default: false; the generated model catalog enables it for verified models. */
 	supportsMidConvoSystemMessages?: boolean;
+	/** Whether the exact model keeps its prompt cache for in-context compaction: a request that repeats the conversation, appends a system message and a user message, and sets `toolChoice: "none"` still reads the cached prefix. Requires `supportsMidConvoSystemMessages`. Default: false; the generated model catalog enables it for models validated in real pi sessions. */
+	supportsInContextCompaction?: boolean;
 	/** Session-affinity header format: `openai` sends `session_id` and `x-client-request-id`; `openai-nosession` sends `x-client-request-id`; `openrouter` sends `x-session-id`. Does not affect the `prompt_cache_key` body param, which is governed by cache retention. Default: auto-detected. */
 	sessionAffinityFormat?: SessionAffinityFormat;
 	/** Whether the provider supports long prompt cache retention. This uses `prompt_cache_options.ttl: "30m"` on GPT-5.6+ and `prompt_cache_retention: "24h"` on earlier models. Default: true. */
@@ -964,6 +968,8 @@ export interface AnthropicMessagesCompat {
 	supportsMidConvoEffort?: boolean;
 	/** Whether the exact model accepts system-role messages inside the conversation. When false, later system messages are folded into the top-level system prompt. Default: false. */
 	supportsMidConvoSystemMessages?: boolean;
+	/** Whether the exact model keeps its prompt cache for in-context compaction: a request that repeats the conversation, appends a system message and a user message, and sets `toolChoice: "none"` still reads the cached prefix. Requires `supportsMidConvoSystemMessages`. Default: false; the generated model catalog enables it for models validated in real pi sessions. */
+	supportsInContextCompaction?: boolean;
 	/** Whether the exact model accepts mid-conversation `tool_addition` blocks with inline tool definitions (`inline-tools-2026-09-15`) and `tool_removal` blocks. Requires `supportsMidConvoSystemMessages`. Default: false. */
 	supportsMidConvoToolChanges?: boolean;
 	/**
@@ -985,6 +991,8 @@ export interface BedrockCompat {
 export interface MistralConversationsCompat {
 	/** Whether the exact model accepts system messages after the conversation has started. When false, later system messages are folded into the leading system message. Default: false. */
 	supportsMidConvoSystemMessages?: boolean;
+	/** Whether the exact model keeps its prompt cache for in-context compaction: a request that repeats the conversation, appends a system message and a user message, and sets `toolChoice: "none"` still reads the cached prefix. Requires `supportsMidConvoSystemMessages`. Default: false; the generated model catalog enables it for models validated in real pi sessions. */
+	supportsInContextCompaction?: boolean;
 }
 
 /**
