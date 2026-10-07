@@ -159,9 +159,9 @@ export function withRemoteCatalog(
 	const nativeRefresh = provider.refreshModels;
 	if (nativeRefresh) {
 		const catalogRefresh = catalogProvider.refreshModels;
-		catalogProvider.refreshModels = async function (this: Provider, context) {
+		catalogProvider.refreshModels = async (context) => {
 			const results = await Promise.allSettled([
-				Promise.resolve().then(() => nativeRefresh.call(this, context)),
+				Promise.resolve().then(() => nativeRefresh(context)),
 				catalogRefresh(context),
 			]);
 			const errors = results.flatMap((result) => (result.status === "rejected" ? [result.reason as unknown] : []));

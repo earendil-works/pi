@@ -10,8 +10,8 @@ function setup(key: string | undefined = "workspace-a") {
 	const provider = openrouterProvider();
 	const networkRefreshes: Promise<void>[] = [];
 	const refreshModels = provider.refreshModels!;
-	provider.refreshModels = function (context) {
-		const refreshing = refreshModels.call(this, context);
+	provider.refreshModels = (context) => {
+		const refreshing = refreshModels(context);
 		if (context.allowNetwork) networkRefreshes.push(refreshing);
 		return refreshing;
 	};
@@ -134,7 +134,8 @@ describe("OpenRouter authenticated models", () => {
 		expect(await models.getAvailable()).toEqual([second]);
 	});
 
-	it("uses provider endpoint and header overrides and keeps non-chat models", async () => {
+	// #10353: Request overrides must not redirect account discovery or forward gateway headers.
+	it("discovers from OpenRouter with the resolved key and keeps non-chat models", async () => {
 		const { models, provider, first } = setup();
 		const fetch = vi.fn().mockResolvedValue(response([first.id]));
 		vi.stubGlobal("fetch", fetch);
@@ -142,33 +143,13 @@ describe("OpenRouter authenticated models", () => {
 			...provider,
 			baseUrl: "https://proxy.example/api/v1/",
 			headers: { authorization: "Bearer stale-key", "x-provider": "proxy", "x-removed": null },
-		});
-		await models.refresh();
-		const request = new Request(fetch.mock.calls[0][0], fetch.mock.calls[0][1]);
-		expect(request.url).toBe("https://proxy.example/api/v1/models/user");
-		expect(request.headers.get("authorization")).toBe("Bearer workspace-a");
-		expect(request.headers.get("x-provider")).toBe("proxy");
-		expect(request.headers.has("x-removed")).toBe(false);
-		const otherModels = provider.getAllModels!().filter(
-			(model) => model.type === "image" || model.type === "classifier",
-		);
-		expect(await models.getAllAvailable()).toEqual(expect.arrayContaining(otherModels));
-	});
-
-	// #10353: Discovery must use configured gateway headers.
-	it("sends resolved auth headers and base URL with discovery", async () => {
-		const { models, provider, first } = setup();
-		const fetch = vi.fn().mockResolvedValue(response([first.id]));
-		vi.stubGlobal("fetch", fetch);
-		models.setProvider({
-			...provider,
 			auth: {
 				...provider.auth,
 				apiKey: {
 					...provider.auth.apiKey!,
 					resolve: async () => ({
 						auth: {
-							apiKey: "workspace-a",
+							apiKey: "workspace-resolved",
 							headers: { "x-gateway-token": "gw" },
 							baseUrl: "https://gateway.example/api/v1",
 						},
@@ -178,9 +159,15 @@ describe("OpenRouter authenticated models", () => {
 		});
 		expect((await models.refresh()).errors.size).toBe(0);
 		const request = new Request(fetch.mock.calls[0][0], fetch.mock.calls[0][1]);
-		expect(request.url).toBe("https://gateway.example/api/v1/models/user");
-		expect(request.headers.get("x-gateway-token")).toBe("gw");
-		expect(request.headers.get("authorization")).toBe("Bearer workspace-a");
+		expect(request.url).toBe("https://openrouter.ai/api/v1/models/user");
+		expect(request.headers.get("authorization")).toBe("Bearer workspace-resolved");
+		expect(request.headers.has("x-provider")).toBe(false);
+		expect(request.headers.has("x-gateway-token")).toBe(false);
+		expect(request.headers.has("x-removed")).toBe(false);
 		expect(await models.getAvailable()).toEqual([first]);
+		const otherModels = provider.getAllModels!().filter(
+			(model) => model.type === "image" || model.type === "classifier",
+		);
+		expect(await models.getAllAvailable()).toEqual(expect.arrayContaining(otherModels));
 	});
 });

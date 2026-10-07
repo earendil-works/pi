@@ -195,21 +195,6 @@ describe("remote catalog provider", () => {
 		expect(provider.getModels().map((entry) => entry.id)).toEqual(["static", "cached"]);
 	});
 
-	// #10353: Endpoint overrides on a composed provider must reach native discovery.
-	it("calls native discovery with the composed provider receiver", async () => {
-		let discoveryBaseUrl: string | undefined;
-		const provider = {
-			...testProvider(undefined, async function (this: Provider) {
-				discoveryBaseUrl = this.baseUrl;
-			}),
-			baseUrl: "https://workspace.example.test/api/v1",
-		};
-
-		await refreshProvider(provider, new InMemoryModelsStore(), { allowNetwork: false });
-
-		expect(discoveryBaseUrl).toBe(provider.baseUrl);
-	});
-
 	// #10353: A rejected catalog publication must not skip the native refresh hook.
 	it("calls native discovery when the catalog publication is rejected", async () => {
 		const nativeRefresh = vi.fn(async () => {});

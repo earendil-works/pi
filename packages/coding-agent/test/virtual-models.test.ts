@@ -196,8 +196,8 @@ describe("ModelRuntime virtual models", () => {
 		expect(runtime.getModels("router").map((model) => model.id)).toEqual(["second"]);
 	});
 
-	// #10353: Virtual wrappers preserve the receiver and physical availability of native discovery.
-	it("keeps virtual choices and verified physical models on an OpenRouter endpoint override", async () => {
+	// #10353: Virtual wrappers preserve authenticated discovery and physical model availability.
+	it("keeps virtual choices and verified physical models with a request endpoint override", async () => {
 		allowNetwork();
 		onTestFinished(() => {
 			vi.restoreAllMocks();
@@ -229,8 +229,9 @@ describe("ModelRuntime virtual models", () => {
 		const result = await runtime.refresh({ allowNetwork: true, providers: ["openrouter"] });
 		expect(result.errors.size).toBe(0);
 		expect(requests).toHaveLength(1);
-		expect(requests[0].url).toBe("https://workspace.example.test/api/v1/models/user");
+		expect(requests[0].url).toBe("https://openrouter.ai/api/v1/models/user");
 		expect(requests[0].headers.get("authorization")).toBe("Bearer workspace-key");
+		expect(runtime.getModel("openrouter", allowed.id)?.baseUrl).toBe("https://workspace.example.test/api/v1");
 		expect((await runtime.getAvailable("openrouter")).map((model) => model.id)).toEqual([
 			allowed.id,
 			"workspace-auto",

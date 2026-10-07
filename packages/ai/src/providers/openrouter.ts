@@ -40,23 +40,11 @@ export function openrouterProvider(): Provider<"anthropic-messages" | "openai-co
 		// OpenRouter serves TypeSafe's System One protocol at /api/v1/systemone.
 		classifiers: { "typesafe-system-one": typesafeSystemOneApi() },
 	});
-	provider.refreshModels = async function (context) {
+	provider.refreshModels = async (context) => {
 		const key = credentialKey(context.credential);
 		if (!context.allowNetwork || !key) return;
-		const auth = await context.resolveAuth?.();
-		const headers = new Headers();
-		for (const [name, value] of Object.entries(this.headers ?? {})) {
-			if (value !== null) headers.set(name, value);
-		}
-		headers.set("Authorization", `Bearer ${auth?.apiKey ?? key}`);
-		// Configured headers (models.json, extensions) apply last, as they do for model requests.
-		for (const [name, value] of Object.entries(auth?.headers ?? {})) {
-			if (value === null) headers.delete(name);
-			else headers.set(name, value);
-		}
-		const url = (auth?.baseUrl ?? this.baseUrl ?? baseUrl).replace(/\/+$/, "");
-		const result = await fetch(`${url}/models/user`, {
-			headers,
+		const result = await fetch(`${baseUrl}/models/user`, {
+			headers: { Authorization: `Bearer ${key}` },
 			signal: AbortSignal.any([context.signal, AbortSignal.timeout(15_000)]),
 		});
 		if (!result.ok) throw new Error(`OpenRouter model discovery failed: HTTP ${result.status}`);

@@ -17,7 +17,6 @@ import type {
 	Credential,
 	CredentialStore,
 	LoginOptions,
-	ModelAuth,
 	ProviderAuth,
 } from "./auth/types.ts";
 import { InMemoryModelsStore, type ModelsStore, type ModelsStoreEntry } from "./models-store.ts";
@@ -93,11 +92,6 @@ export interface RefreshModelsContext {
 	force?: boolean;
 	/** Always present, including when the public refresh caller omits its optional signal. */
 	signal: AbortSignal;
-	/**
-	 * Network phase only: resolve the request auth (key, configured headers, base URL) for
-	 * `credential`, so provider-side discovery calls match model requests.
-	 */
-	resolveAuth?(): Promise<ModelAuth>;
 }
 
 export interface ModelsRefreshOptions {
@@ -542,7 +536,6 @@ class ModelsImpl implements MutableModels {
 		force: boolean | undefined,
 		generation: number,
 		signal: AbortSignal,
-		resolveAuth?: () => Promise<ModelAuth>,
 	): Promise<void> {
 		const stored = await this.modelsStore.read(provider.id, { signal });
 		await provider.refreshModels({
@@ -552,7 +545,6 @@ class ModelsImpl implements MutableModels {
 			allowNetwork,
 			force: allowNetwork ? force : undefined,
 			signal,
-			resolveAuth,
 		});
 	}
 
@@ -585,17 +577,9 @@ class ModelsImpl implements MutableModels {
 					if (credentialError !== undefined) throw credentialError;
 					if (!allowNetwork || signal.aborted) return;
 
-					const resolved = await this.resolveRefreshCredential(provider, storedCredential, signal);
-					if (!resolved) return;
-					await this.runProviderRefreshPhase(
-						provider,
-						resolved.credential,
-						true,
-						options.force,
-						generation,
-						signal,
-						resolved.resolveAuth,
-					);
+					const credential = await this.resolveRefreshCredential(provider, storedCredential, signal);
+					if (!credential) return;
+					await this.runProviderRefreshPhase(provider, credential, true, options.force, generation, signal);
 				})();
 
 				try {
@@ -630,25 +614,21 @@ class ModelsImpl implements MutableModels {
 		provider: Provider,
 		stored: Credential | undefined,
 		signal: AbortSignal,
-	): Promise<{ credential: Credential; resolveAuth: () => Promise<ModelAuth> } | undefined> {
+	): Promise<Credential | undefined> {
 		if (stored?.type === "oauth") {
 			const oauth = provider.auth.oauth;
 			if (!oauth) return undefined;
-			if (signal.aborted && Date.now() >= stored.expires) return undefined;
+			if (Date.now() < stored.expires) return stored;
+			if (signal.aborted) return undefined;
 			// A refresh that has started survives cancellation or a superseding model refresh, so a
 			// rotated refresh token is always persisted. A newer refresh then sees the fresh credential.
-			const credential =
-				Date.now() < stored.expires
-					? stored
-					: await refreshStoredOAuthCredential(
-							this.credentials,
-							provider.id,
-							oauth,
-							(current) => Date.now() >= current.expires,
-							signal,
-						);
-			if (!credential) return undefined;
-			return { credential, resolveAuth: () => oauth.toAuth(credential) };
+			return refreshStoredOAuthCredential(
+				this.credentials,
+				provider.id,
+				oauth,
+				(current) => Date.now() >= current.expires,
+				signal,
+			);
 		}
 
 		const apiKey = provider.auth.apiKey;
@@ -656,10 +636,7 @@ class ModelsImpl implements MutableModels {
 		const credential = stored?.type === "api_key" ? stored : undefined;
 		const result = await apiKey.resolve({ ctx: this.authContext, credential, signal });
 		if (!result) return undefined;
-		return {
-			credential: { type: "api_key", key: result.auth.apiKey, env: result.env },
-			resolveAuth: async () => result.auth,
-		};
+		return { type: "api_key", key: result.auth.apiKey, env: result.env };
 	}
 
 	private async readCredential(providerId: string, signal: AbortSignal): Promise<Credential | undefined> {
