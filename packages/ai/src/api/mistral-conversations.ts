@@ -13,6 +13,7 @@ import type {
 	ToolCall,
 	TranscriptContext,
 } from "../types.ts";
+import { extractRetryAfterMs } from "../utils/error-body.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { shortHash } from "../utils/hash.ts";
 import { headersToRecord } from "../utils/headers.ts";
@@ -172,6 +173,7 @@ export const stream: StreamFunction<"mistral-conversations", MistralOptions> = (
 			}
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
 			output.errorMessage = formatMistralError(error);
+			output.retryAfterMs = extractRetryAfterMs(error);
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();
 		}

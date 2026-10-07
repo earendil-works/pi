@@ -60,8 +60,10 @@ describe("AgentSession retry", () => {
 		maxRetries?: number;
 		maxAgentDelayMs?: number;
 		delayAssistantMessageEndMs?: number;
+		serverRetryDelayMs?: number;
 	}) {
 		const failCount = options?.failCount ?? 1;
+		const serverRetryDelayMs = options?.serverRetryDelayMs;
 		const maxRetries = options?.maxRetries ?? 3;
 		const maxAgentDelayMs = options?.maxAgentDelayMs ?? 60000;
 		const delayAssistantMessageEndMs = options?.delayAssistantMessageEndMs ?? 0;
@@ -79,6 +81,7 @@ describe("AgentSession retry", () => {
 						const msg = createAssistantMessage("", {
 							stopReason: "error",
 							errorMessage: "overloaded_error",
+							...(serverRetryDelayMs === undefined ? {} : { retryAfterMs: serverRetryDelayMs }),
 						});
 						stream.push({ type: "start", partial: msg });
 						stream.push({ type: "error", reason: "error", error: msg });
@@ -165,6 +168,19 @@ describe("AgentSession retry", () => {
 		await created.session.prompt("Test");
 
 		expect(delays).toEqual([1, 2, 4, 5]);
+	});
+
+	it("raises retry delay to a server-requested delay", async () => {
+		// Regression for #9595.
+		const created = await createSession({ failCount: 2, maxRetries: 3, serverRetryDelayMs: 80 });
+		const delays: number[] = [];
+		created.session.subscribe((event) => {
+			if (event.type === "auto_retry_start") delays.push(event.delayMs);
+		});
+
+		await created.session.prompt("Test");
+
+		expect(delays).toEqual([80, 80]);
 	});
 
 	it("prompt waits for retry completion even when assistant message_end handling is delayed", async () => {

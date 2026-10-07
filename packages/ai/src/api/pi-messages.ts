@@ -25,6 +25,7 @@ import type {
 	TranscriptContext,
 } from "../types.ts";
 import { appendAssistantMessageDiagnostic, createAssistantMessageDiagnostic } from "../utils/diagnostics.ts";
+import { extractRetryAfterMs } from "../utils/error-body.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord, providerHeadersToRecord } from "../utils/headers.ts";
 import { parseStreamingJson } from "../utils/json-parse.ts";
@@ -331,6 +332,7 @@ function createErrorEvent(model: Model<"pi-messages">, error: unknown, aborted: 
 		usage: createEmptyUsage(),
 		stopReason: reason,
 		errorMessage: error instanceof Error ? error.message : String(error),
+		retryAfterMs: extractRetryAfterMs(error),
 		timestamp: Date.now(),
 	};
 

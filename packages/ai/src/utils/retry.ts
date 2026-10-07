@@ -125,10 +125,24 @@ export interface RetryPolicy {
 
 export const DEFAULT_MAX_AGENT_RETRY_DELAY_MS = 60_000;
 
-export function retryDelayMs(policy: Pick<RetryPolicy, "baseDelayMs" | "maxAgentDelayMs">, attempt: number): number {
+/**
+ * Per-attempt backoff: `baseDelayMs * 2^(attempt-1)` raised to a server-requested
+ * `serverDelayMs` when that is larger, and capped by `maxAgentDelayMs`.
+ */
+export function retryDelayMs(
+	policy: Pick<RetryPolicy, "baseDelayMs" | "maxAgentDelayMs">,
+	attempt: number,
+	serverDelayMs?: number,
+): number {
+	const cap = policy.maxAgentDelayMs ?? DEFAULT_MAX_AGENT_RETRY_DELAY_MS;
 	const delay = policy.baseDelayMs * 2 ** Math.max(0, attempt - 1);
 	const safeDelay = Number.isSafeInteger(delay) ? delay : Number.MAX_SAFE_INTEGER;
-	return Math.min(safeDelay, policy.maxAgentDelayMs ?? DEFAULT_MAX_AGENT_RETRY_DELAY_MS);
+	const exponentialDelay = Math.min(safeDelay, cap);
+	const serverFloor =
+		serverDelayMs !== undefined && Number.isFinite(serverDelayMs) && serverDelayMs > 0
+			? Math.min(serverDelayMs, cap)
+			: 0;
+	return Math.max(exponentialDelay, serverFloor);
 }
 
 /** Optional callbacks emitted by {@link retryAssistantCall} around each retry. */
@@ -221,7 +235,7 @@ export async function retryAssistantCall(
 
 		attempt++;
 		lastRetry = { attempt, errorMessage: response.errorMessage || "Unknown error" };
-		const delayMs = retryDelayMs(policy!, attempt);
+		const delayMs = retryDelayMs(policy!, attempt, response.retryAfterMs);
 		await callbacks?.onRetryScheduled?.(attempt, maxAttempts, delayMs, lastRetry.errorMessage);
 
 		// Normalize aborts during retry backoff to the same AssistantMessage shape as
