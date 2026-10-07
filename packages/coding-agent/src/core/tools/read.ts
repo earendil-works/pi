@@ -157,7 +157,7 @@ export function createReadToolDefinition(
 								const allLines = textContent.split("\n");
 								const totalFileLines = allLines.length;
 								// Apply offset if specified. Convert from 1-indexed input to 0-indexed array access.
-								const startLine = offset ? Math.max(0, offset - 1) : 0;
+								const startLine = offset ? Math.max(0, Math.floor(offset) - 1) : 0;
 								const startLineDisplay = startLine + 1;
 								// Check if offset is out of bounds.
 								if (startLine >= allLines.length) {
@@ -167,7 +167,7 @@ export function createReadToolDefinition(
 								let userLimitedLines: number | undefined;
 								// If limit is specified by the user, honor it first. Otherwise truncateHead decides.
 								if (limit !== undefined) {
-									const endLine = Math.min(startLine + limit, allLines.length);
+									const endLine = Math.min(startLine + Math.max(1, Math.floor(limit)), allLines.length);
 									selectedContent = allLines.slice(startLine, endLine).join("\n");
 									userLimitedLines = endLine - startLine;
 								} else {

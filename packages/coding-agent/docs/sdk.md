@@ -117,6 +117,12 @@ The CLI loads `codemode`, `tool_search`, and MCP as built-in extensions. SDK ses
 
 See the focused examples for [models](../examples/sdk/02-custom-model.ts), [tools](../examples/sdk/05-tools.ts), [extensions](../examples/sdk/06-extensions.ts), and [full control](../examples/sdk/12-full-control.ts).
 
+## Reading files with built-in tools
+
+`createReadTool(cwd)` supports a 1-indexed `offset` and a `limit` in lines for text files. Finite numeric values are rounded down and clamped to at least 1 before selecting lines. For example, `limit: 10.5` reads at most 10 lines, while `limit: 0` or a negative limit reads one line. Continuation notices identify the next unread line. Previously, zero, negative, or fractional limits could produce empty pages or invalid continuation offsets.
+
+The existing 2000-line and 50KB output limits still apply. Image reads do not use line pagination. The offline [pagination regression tests](../test/read-pagination.test.ts) cover normalization, continuation, and end-of-file behavior without calling a model.
+
 ## Examples
 
 | Example | Purpose |
