@@ -3100,7 +3100,13 @@ export class InteractiveMode {
 		this.defaultEditor.onAction("app.session.fork", () => this.showUserMessageSelector());
 		this.defaultEditor.onAction("app.session.resume", () => this.showSessionSelector());
 
+		let previousEditorText = this.editor.getText();
 		this.defaultEditor.onChange = (text: string) => {
+			if (text !== previousEditorText && this.renderer instanceof TuiAltScreen) {
+				this.renderer.resetTextSelection();
+				this.ui.requestRender();
+			}
+			previousEditorText = text;
 			const wasBashMode = this.isBashMode;
 			this.isBashMode = text.trimStart().startsWith("!");
 			if (wasBashMode !== this.isBashMode) {

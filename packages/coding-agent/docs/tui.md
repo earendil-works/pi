@@ -59,6 +59,8 @@ Fullscreen mode routes normalized mouse events to components. A handler can mark
 
 Unhandled wheel events scroll the nearest `ScrollView`. Unhandled primary-button drags remain available for transcript selection. OSC 8 links take precedence over enclosing click regions.
 
+Changing the prompt text clears the fullscreen text selection and redraws its highlight; previously, the highlight remained over the transcript while typing. Cursor movement, copy shortcuts, and edits that leave the text unchanged preserve the selection. Custom editors receive the same behavior through their `onChange` callback, which they should call when their text changes. Offline virtual-terminal regression tests cover typing, deletion, paste, copying, and editor replacement; native terminal clipboard behavior remains platform-dependent.
+
 Regular mode leaves mouse input to the terminal because the terminal owns scrollback. Design every interaction with a keyboard path even when fullscreen mouse input is available.
 
 ## Use custom screens and overlays
