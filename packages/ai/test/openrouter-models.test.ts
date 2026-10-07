@@ -10,8 +10,8 @@ function setup(key: string | undefined = "workspace-a") {
 	const provider = openrouterProvider();
 	const networkRefreshes: Promise<void>[] = [];
 	const refreshModels = provider.refreshModels!;
-	provider.refreshModels = (context) => {
-		const refreshing = refreshModels(context);
+	provider.refreshModels = function (context) {
+		const refreshing = refreshModels.call(this, context);
 		if (context.allowNetwork) networkRefreshes.push(refreshing);
 		return refreshing;
 	};
@@ -102,6 +102,57 @@ describe("OpenRouter authenticated models", () => {
 		expect(await models.getAvailable()).toEqual([second]);
 	});
 
+	// #10353: Availability must follow the effective key after environment changes or stored-key removal.
+	it.each(["environment", "stored"])(
+		"does not reuse another workspace's list after changing a %s key",
+		async (source) => {
+			const { models, credentials, env, catalog, first, second } = setup();
+			if (source === "stored") {
+				await credentials.modify("openrouter", async () => ({ type: "api_key", key: "workspace-a" }));
+			}
+			vi.stubGlobal(
+				"fetch",
+				vi
+					.fn()
+					.mockResolvedValueOnce(response([first.id]))
+					.mockResolvedValueOnce(response([second.id])),
+			);
+			await models.refresh();
+			expect(await models.getAvailable()).toEqual([first]);
+
+			env.key = "workspace-b";
+			if (source === "stored") await models.logout("openrouter");
+			expect(await models.getAvailable()).toHaveLength(catalog.length);
+			await models.refresh();
+			expect(await models.getAvailable()).toEqual([second]);
+		},
+	);
+
+	// #10353: Routing variants use their catalog entry's permissions; catalog variants remain distinct.
+	it("keeps permitted custom models and routing variants without permitting absent catalog variants", async () => {
+		const { models, provider, first, second } = setup();
+		const allowedIds = [
+			"custom/allowed",
+			`${first.id}:nitro`,
+			`${first.id}:floor`,
+			`${first.id}:exacto`,
+			`${first.id}:online`,
+			`${first.id}:nitro:exacto`,
+			`${first.id}:free:nitro`,
+			`${first.id}:nitro:free`,
+		];
+		const blockedIds = ["custom/absent", `${second.id}:nitro`, `${first.id}:batch:nitro`, `${first.id}:unknown`];
+		models.setProvider({
+			...provider,
+			getModels: () => [...allowedIds, ...blockedIds].map((id) => ({ ...first, id })),
+		});
+		vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response([first.id, `${first.id}:free`, "custom/allowed"])));
+
+		await models.refresh();
+
+		expect((await models.getAvailable()).map((model) => model.id)).toEqual(allowedIds);
+	});
+
 	// #10353: A stale credential must not discard the current key's verified model list.
 	it("filtering with another credential does not change the verified list", async () => {
 		const { models, provider, first } = setup();
@@ -134,14 +185,20 @@ describe("OpenRouter authenticated models", () => {
 		expect(await models.getAvailable()).toEqual([second]);
 	});
 
-	// #10353: Request overrides must not redirect account discovery or forward gateway headers.
-	it("discovers from OpenRouter with the resolved key and keeps non-chat models", async () => {
+	// #10353: Region-enforcing guardrails require discovery through the configured regional hostname.
+	it.each(["us", "eu"])("discovers through the %s endpoint with the resolved key", async (region) => {
 		const { models, provider, first } = setup();
-		const fetch = vi.fn().mockResolvedValue(response([first.id]));
+		const endpoint = `https://${region}.openrouter.ai/api/v1`;
+		const fetch = vi.fn(async (input: string, init?: RequestInit) => {
+			const request = new Request(input, init);
+			return request.url === `${endpoint}/models/user`
+				? response([first.id])
+				: new Response("Requests must use the configured data region", { status: 403 });
+		});
 		vi.stubGlobal("fetch", fetch);
 		models.setProvider({
 			...provider,
-			baseUrl: "https://proxy.example/api/v1/",
+			baseUrl: `${endpoint}/`,
 			headers: { authorization: "Bearer stale-key", "x-provider": "proxy", "x-removed": null },
 			auth: {
 				...provider.auth,
@@ -159,7 +216,7 @@ describe("OpenRouter authenticated models", () => {
 		});
 		expect((await models.refresh()).errors.size).toBe(0);
 		const request = new Request(fetch.mock.calls[0][0], fetch.mock.calls[0][1]);
-		expect(request.url).toBe("https://openrouter.ai/api/v1/models/user");
+		expect(request.url).toBe(`${endpoint}/models/user`);
 		expect(request.headers.get("authorization")).toBe("Bearer workspace-resolved");
 		expect(request.headers.has("x-provider")).toBe(false);
 		expect(request.headers.has("x-gateway-token")).toBe(false);

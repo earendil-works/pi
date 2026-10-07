@@ -117,7 +117,9 @@ Radius authentication uses its gateway catalog and caches refreshed model metada
 
 Pi uses authenticated `GET /api/v1/models/user` to filter built-in OpenRouter chat models in `/model` and `--list-models`, retaining Pi's capability metadata. This endpoint applies the key's guardrails, provider preferences, and privacy settings without requiring an organization toggle. See [OpenRouter's model discovery documentation](https://openrouter.ai/docs/api/api-reference/models/list-models-filtered-by-user-provider-preferences-privacy-settings-and-guardrails).
 
-Until discovery succeeds, Pi shows the full OpenRouter catalog. Interactive mode discovers in the background at startup and when `/model` opens; `--list-models` waits for discovery for up to 15 seconds. The verified list stays in memory for the key that fetched it. Logging in with a different key shows the full catalog again until the next refresh. A successful empty response shows no OpenRouter chat models. If discovery fails, Pi keeps the last successful list. Offline mode makes no discovery requests. Discovery calls `https://openrouter.ai/api/v1/models/user` with the active key. Model request endpoint and header overrides do not apply to discovery.
+Until discovery succeeds, Pi shows the full OpenRouter catalog. Interactive mode discovers in the background at startup, after a session switch, and when `/model` opens; `--list-models` waits for discovery for up to 15 seconds. The verified list stays in memory for the key that fetched it. Changing the active key shows the full catalog again until the next refresh. A successful empty response shows no OpenRouter chat models. If discovery fails, Pi keeps the last successful list for that key. Offline mode makes no discovery requests.
+
+Discovery uses the OpenRouter provider's `baseUrl` with the active key. For regional guardrails, set `providers.openrouter.baseUrl` in [`models.json`](models.md#configure-a-compatible-endpoint) to `https://us.openrouter.ai/api/v1` or `https://eu.openrouter.ai/api/v1`. Custom request headers do not apply to discovery.
 
 ### Azure OpenAI
 

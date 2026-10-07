@@ -4,12 +4,8 @@ import { openrouterImagesApi } from "../api/openrouter-images.lazy.ts";
 import { typesafeSystemOneApi } from "../api/typesafe-system-one.lazy.ts";
 import { envApiKeyAuth, lazyOAuth } from "../auth/helpers.ts";
 import { loadOpenRouterOAuth } from "../auth/oauth/load.ts";
-import type { Credential } from "../auth/types.ts";
 import { createProvider, type Provider } from "../models.ts";
 import { OPENROUTER_CLASSIFIER_MODELS, OPENROUTER_IMAGE_MODELS, OPENROUTER_MODELS } from "./openrouter.models.ts";
-
-const credentialKey = (credential: Credential | undefined) =>
-	credential?.type === "oauth" ? credential.access : credential?.key;
 
 export function openrouterProvider(): Provider<"anthropic-messages" | "openai-completions"> {
 	const baseUrl = "https://openrouter.ai/api/v1";
@@ -39,11 +35,23 @@ export function openrouterProvider(): Provider<"anthropic-messages" | "openai-co
 		images: { "openrouter-images": openrouterImagesApi() },
 		// OpenRouter serves TypeSafe's System One protocol at /api/v1/systemone.
 		classifiers: { "typesafe-system-one": typesafeSystemOneApi() },
+		filterModels: (models, credential) => {
+			const key = credential?.type === "oauth" ? credential.access : credential?.key;
+			const current = verified;
+			if (!current || key !== current.key) return models;
+			// Routing suffixes share permissions with their catalog entry; catalog variants such as :free do not.
+			return models.filter(
+				(model) =>
+					current.ids.has(model.id) ||
+					current.ids.has(model.id.replace(/:(?:nitro|floor|exacto|online)(?=:|$)/g, "")),
+			);
+		},
 	});
-	provider.refreshModels = async (context) => {
-		const key = credentialKey(context.credential);
+	provider.refreshModels = async function (context) {
+		const key = context.credential?.type === "oauth" ? context.credential.access : context.credential?.key;
 		if (!context.allowNetwork || !key) return;
-		const result = await fetch(`${baseUrl}/models/user`, {
+		const url = (this.baseUrl ?? baseUrl).replace(/\/+$/, "");
+		const result = await fetch(`${url}/models/user`, {
 			headers: { Authorization: `Bearer ${key}` },
 			signal: AbortSignal.any([context.signal, AbortSignal.timeout(15_000)]),
 		});
@@ -63,15 +71,6 @@ export function openrouterProvider(): Provider<"anthropic-messages" | "openai-co
 				verified = { key, ids };
 			},
 		});
-	};
-	// Show the full catalog until discovery succeeds for the stored credential.
-	// This filter cannot read environment or configuration keys and reuses the last verified list.
-	// Changes to those keys take effect on the next refresh.
-	provider.filterModels = (models, credential) => {
-		const key = credentialKey(credential);
-		const current = verified;
-		if (!current || (key !== undefined && key !== current.key)) return models;
-		return models.filter((model) => current.ids.has(model.id));
 	};
 	return provider;
 }

@@ -196,8 +196,8 @@ describe("ModelRuntime virtual models", () => {
 		expect(runtime.getModels("router").map((model) => model.id)).toEqual(["second"]);
 	});
 
-	// #10353: Virtual wrappers preserve authenticated discovery and physical model availability.
-	it("keeps virtual choices and verified physical models with a request endpoint override", async () => {
+	// #10353: Regional discovery must survive catalog, configuration, and virtual-model wrappers.
+	it("keeps virtual choices and verified physical models with a US-only guardrail", async () => {
 		allowNetwork();
 		onTestFinished(() => {
 			vi.restoreAllMocks();
@@ -209,6 +209,9 @@ describe("ModelRuntime virtual models", () => {
 			const request = new Request(input, init);
 			if (!new URL(request.url).pathname.endsWith("/models/user")) return new Response(null, { status: 404 });
 			requests.push(request);
+			if (new URL(request.url).hostname !== "us.openrouter.ai") {
+				return new Response("Requests must use the US data region", { status: 403 });
+			}
 			return Response.json({ data: [{ id: allowedId }] });
 		});
 		const runtime = await ModelRuntime.create({
@@ -219,7 +222,7 @@ describe("ModelRuntime virtual models", () => {
 		});
 		const [allowed] = runtime.getModels("openrouter");
 		allowedId = allowed.id;
-		runtime.registerProvider("openrouter", { baseUrl: "https://workspace.example.test/api/v1" });
+		runtime.registerProvider("openrouter", { baseUrl: "https://us.openrouter.ai/api/v1" });
 		runtime.registerVirtualModel({
 			provider: "openrouter",
 			id: "workspace-auto",
@@ -229,13 +232,30 @@ describe("ModelRuntime virtual models", () => {
 		const result = await runtime.refresh({ allowNetwork: true, providers: ["openrouter"] });
 		expect(result.errors.size).toBe(0);
 		expect(requests).toHaveLength(1);
-		expect(requests[0].url).toBe("https://openrouter.ai/api/v1/models/user");
+		expect(requests[0].url).toBe("https://us.openrouter.ai/api/v1/models/user");
 		expect(requests[0].headers.get("authorization")).toBe("Bearer workspace-key");
-		expect(runtime.getModel("openrouter", allowed.id)?.baseUrl).toBe("https://workspace.example.test/api/v1");
+		expect(runtime.getModel("openrouter", allowed.id)?.baseUrl).toBe("https://us.openrouter.ai/api/v1");
 		expect((await runtime.getAvailable("openrouter")).map((model) => model.id)).toEqual([
 			allowed.id,
 			"workspace-auto",
 		]);
+		const availableIds = () =>
+			runtime
+				.getAvailableSnapshot()
+				.filter((model) => model.provider === "openrouter")
+				.map((model) => model.id);
+		expect(availableIds()).toEqual([allowed.id, "workspace-auto"]);
+
+		// #10353: Refreshing or registering another provider must preserve OpenRouter's verified availability.
+		await runtime.refresh({ allowNetwork: false, providers: ["anthropic"] });
+		expect(availableIds()).toEqual([allowed.id, "workspace-auto"]);
+		runtime.registerProvider("local", {
+			api: "openai-completions",
+			baseUrl: "https://example.test/v1",
+			apiKey: "local-key",
+			models: [{ ...allowed, id: "local-model" }],
+		});
+		expect(availableIds()).toEqual([allowed.id, "workspace-auto"]);
 
 		runtime.registerVirtualModel({
 			provider: "openrouter",
@@ -243,6 +263,7 @@ describe("ModelRuntime virtual models", () => {
 			name: "Workspace Fast",
 			route: () => ({ model: allowed, thinkingLevel: "off" }),
 		});
+		expect(availableIds()).toEqual([allowed.id, "workspace-auto", "workspace-fast"]);
 		expect((await runtime.getAvailable("openrouter")).map((model) => model.id)).toEqual([
 			allowed.id,
 			"workspace-auto",

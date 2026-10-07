@@ -32,7 +32,7 @@ export async function listModels(modelRuntime: ModelRuntime, searchPattern?: str
 		const result = await modelRuntime.refresh({ providers: ["openrouter"], signal: AbortSignal.timeout(15_000) });
 		const error = result.errors.get("openrouter");
 		if (result.aborted) {
-			console.error(chalk.yellow("Warning: OpenRouter model discovery timed out; listing all OpenRouter models."));
+			console.error(chalk.yellow("Warning: OpenRouter model refresh timed out; using cached availability."));
 		} else if (error) {
 			console.error(chalk.yellow(`Warning: Could not refresh OpenRouter models: ${error.message}`));
 		}
