@@ -351,10 +351,10 @@ export class Markdown implements Component {
 			if (bgFn) {
 				contentLines.push(applyBackgroundToLine(lineWithMargins, width, bgFn));
 			} else {
-				// No background - just pad to width
-				const visibleLen = visibleWidth(lineWithMargins);
-				const paddingNeeded = Math.max(0, width - visibleLen);
-				contentLines.push(lineWithMargins + " ".repeat(paddingNeeded));
+				// No background - keep margins but do not pad to width. Padding
+				// would fill copied text with trailing spaces and break tokens
+				// (e.g. shell backslash line continuations).
+				contentLines.push(lineWithMargins);
 			}
 		}
 

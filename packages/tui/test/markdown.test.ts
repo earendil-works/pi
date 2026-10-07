@@ -1772,3 +1772,20 @@ bar`,
 		});
 	});
 });
+
+describe("Markdown copy-friendly rendering", () => {
+	it("does not pad code block lines with trailing spaces", () => {
+		const markdown = new Markdown(
+			"```bash\nbash script.sh \\\n    --flag1 \\\n    --flag2\n```",
+			0,
+			0,
+			defaultMarkdownTheme,
+		);
+		const lines = markdown.render(80).map((line) => stripAnsi(line));
+		const codeLines = lines.filter((line) => line.startsWith("  "));
+		assert.ok(codeLines.length >= 3, "should render code lines");
+		for (const line of codeLines) {
+			assert.strictEqual(line, line.trimEnd(), `line should not have trailing spaces: ${JSON.stringify(line)}`);
+		}
+	});
+});

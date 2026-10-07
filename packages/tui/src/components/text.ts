@@ -1,5 +1,5 @@
 import type { Component } from "../tui.ts";
-import { applyBackgroundToLine, flattenLines, visibleWidth, wrapTextWithAnsi } from "../utils.ts";
+import { applyBackgroundToLine, flattenLines, wrapTextWithAnsi } from "../utils.ts";
 
 /**
  * Text component - displays multi-line text with word wrapping
@@ -85,10 +85,10 @@ export class Text implements Component {
 			if (this.customBgFn) {
 				contentLines.push(applyBackgroundToLine(lineWithMargins, width, this.customBgFn));
 			} else {
-				// No background - just pad to width with spaces
-				const visibleLen = visibleWidth(lineWithMargins);
-				const paddingNeeded = Math.max(0, width - visibleLen);
-				contentLines.push(lineWithMargins + " ".repeat(paddingNeeded));
+				// No background - keep margins but do not pad to width. Padding
+				// would fill copied text with trailing spaces and break tokens
+				// (e.g. shell backslash line continuations).
+				contentLines.push(lineWithMargins);
 			}
 		}
 
