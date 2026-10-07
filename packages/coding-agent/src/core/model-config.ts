@@ -27,6 +27,8 @@ const SamplingParamsByThinkingLevelSchema = Type.Object({
 	max: Type.Optional(SamplingParamsSchema),
 });
 
+const PositiveTokenCountSchema = Type.Number({ exclusiveMinimum: 0 });
+
 const ModelDefinitionSchema = Type.Object({
 	id: Type.String({ minLength: 1 }),
 	name: Type.Optional(Type.String({ minLength: 1 })),
@@ -38,8 +40,8 @@ const ModelDefinitionSchema = Type.Object({
 	inputLimits: Type.Optional(ModelInputLimitsSchema),
 	cost: Type.Optional(ModelCostSchema),
 	promptCache: Type.Optional(ModelPromptCacheSchema),
-	contextWindow: Type.Optional(Type.Number()),
-	maxTokens: Type.Optional(Type.Number()),
+	contextWindow: Type.Optional(PositiveTokenCountSchema),
+	maxTokens: Type.Optional(PositiveTokenCountSchema),
 	samplingParams: Type.Optional(SamplingParamsSchema),
 	samplingParamsByThinkingLevel: Type.Optional(SamplingParamsByThinkingLevelSchema),
 	headers: Type.Optional(Type.Record(Type.String(), Type.String())),
@@ -54,8 +56,8 @@ const ModelOverrideSchema = Type.Object({
 	inputLimits: Type.Optional(ModelInputLimitsSchema),
 	cost: Type.Optional(Type.Partial(ModelCostSchema)),
 	promptCache: Type.Optional(ModelPromptCacheSchema),
-	contextWindow: Type.Optional(Type.Number()),
-	maxTokens: Type.Optional(Type.Number()),
+	contextWindow: Type.Optional(PositiveTokenCountSchema),
+	maxTokens: Type.Optional(PositiveTokenCountSchema),
 	samplingParams: Type.Optional(SamplingParamsSchema),
 	samplingParamsByThinkingLevel: Type.Optional(SamplingParamsByThinkingLevelSchema),
 	headers: Type.Optional(Type.Record(Type.String(), Type.String())),

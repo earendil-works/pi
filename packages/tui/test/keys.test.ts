@@ -265,6 +265,8 @@ describe("matchesKey", () => {
 			setKittyProtocolActive(false);
 			assert.strictEqual(matchesKey("\x1b[27;5;47~", "ctrl+/"), true);
 			assert.strictEqual(parseKey("\x1b[27;5;47~"), "ctrl+/");
+			assert.strictEqual(matchesKey("\x1b[27;5;43~", "ctrl++"), true);
+			assert.strictEqual(parseKey("\x1b[27;5;43~"), "ctrl++");
 		});
 
 		it("should match xterm modifyOtherKeys digit combos", () => {
@@ -600,6 +602,8 @@ describe("parseKey", () => {
 			assert.strictEqual(parseKey(" "), "space");
 			assert.strictEqual(parseKey("1"), "1");
 			assert.strictEqual(matchesKey("1", "1"), true);
+			assert.strictEqual(parseKey("+"), "+");
+			assert.strictEqual(matchesKey("+", "+"), true);
 		});
 
 		it("should parse arrow keys", () => {

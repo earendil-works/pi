@@ -289,6 +289,8 @@ const SYMBOL_KEYS = new Set([
 	"?",
 ]);
 
+const MODIFIER_NAMES = ["shift", "alt", "ctrl", "super"] as const;
+
 const MODIFIERS = {
 	shift: 1,
 	alt: 2,
@@ -788,15 +790,22 @@ function formatKeyNameWithModifiers(keyName: string, modifier: number): string |
 function parseKeyId(
 	keyId: string,
 ): { key: string; ctrl: boolean; shift: boolean; alt: boolean; super: boolean } | null {
-	const parts = keyId.toLowerCase().split("+");
-	const key = parts[parts.length - 1];
-	if (!key) return null;
+	let key = keyId.toLowerCase();
+	const modifiers = new Set<(typeof MODIFIER_NAMES)[number]>();
+	while (true) {
+		const modifier = MODIFIER_NAMES.find((name) => key.startsWith(`${name}+`));
+		if (!modifier) break;
+		if (modifiers.has(modifier)) return null;
+		modifiers.add(modifier);
+		key = key.slice(modifier.length + 1);
+	}
+	if (!key || (key.includes("+") && key !== "+")) return null;
 	return {
 		key,
-		ctrl: parts.includes("ctrl"),
-		shift: parts.includes("shift"),
-		alt: parts.includes("alt"),
-		super: parts.includes("super"),
+		ctrl: modifiers.has("ctrl"),
+		shift: modifiers.has("shift"),
+		alt: modifiers.has("alt"),
+		super: modifiers.has("super"),
 	};
 }
 

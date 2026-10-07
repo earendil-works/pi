@@ -161,6 +161,7 @@ const CodemodeSettingsSchema = Type.Object({
 	),
 	inlineBudget: Type.Optional(
 		Type.Number({
+			minimum: 0,
 			description: "Estimated tokens available for inline codemode tool declarations.",
 			default: SETTINGS_DEFAULTS.codemode.inlineBudget,
 		}),

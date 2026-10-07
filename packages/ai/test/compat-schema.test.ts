@@ -4,6 +4,7 @@ import { describe, expect, expectTypeOf, it } from "vitest";
 import {
 	AnthropicMessagesCompatSchema,
 	BedrockCompatSchema,
+	OpenAICompletionsCompatSchema,
 	OpenAIResponsesCompatSchema,
 	ProviderCompatSchema,
 } from "../src/providers/compat-schema.ts";
@@ -19,6 +20,7 @@ describe("compatibility schemas", () => {
 	});
 
 	it("preserves API-specific defaults", () => {
+		expect(Compile(OpenAICompletionsCompatSchema).Default({})).not.toHaveProperty("thinkingFormat");
 		expect(Compile(OpenAIResponsesCompatSchema).Default({})).toMatchObject({ supportsDeveloperRole: true });
 		expect(Compile(AnthropicMessagesCompatSchema).Default({})).toMatchObject({
 			sendSessionAffinityHeaders: false,
@@ -30,6 +32,7 @@ describe("compatibility schemas", () => {
 		const defaults = Compile(ProviderCompatSchema).Default({});
 		expect(defaults).not.toHaveProperty("supportsDeveloperRole");
 		expect(defaults).not.toHaveProperty("sendSessionAffinityHeaders");
+		expect(defaults).not.toHaveProperty("supportsLongCacheRetention");
 		expect(defaults).not.toHaveProperty("supportsStrictMode");
 	});
 });

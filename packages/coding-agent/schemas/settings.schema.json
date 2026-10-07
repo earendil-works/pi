@@ -607,6 +607,7 @@
         },
         "inlineBudget": {
           "type": "number",
+          "minimum": 0,
           "description": "Estimated tokens available for inline codemode tool declarations.",
           "default": 3000
         }

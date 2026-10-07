@@ -139,6 +139,33 @@ describe("generated configuration schemas", () => {
 		expect(validator.Check(invalid)).toBe(false);
 	});
 
+	it("rejects non-positive model token limits", () => {
+		const schema = JSON.parse(renderConfigSchemas().get("schemas/models.schema.json") ?? "");
+		const validator = Compile(schema);
+		for (const field of ["contextWindow", "maxTokens"] as const) {
+			for (const value of [0, -1]) {
+				expect(
+					validator.Check({ providers: { local: { models: [{ id: "model", [field]: value }] } } }),
+					`models[].${field}=${value}`,
+				).toBe(false);
+				expect(
+					validator.Check({ providers: { local: { modelOverrides: { model: { [field]: value } } } } }),
+					`modelOverrides.${field}=${value}`,
+				).toBe(false);
+			}
+		}
+		expect(
+			validator.Check({
+				providers: {
+					local: {
+						models: [{ id: "model", contextWindow: 1, maxTokens: 1 }],
+						modelOverrides: { model: { contextWindow: 1, maxTokens: 1 } },
+					},
+				},
+			}),
+		).toBe(true);
+	});
+
 	it("validates keybinding syntax", () => {
 		const schema = JSON.parse(renderConfigSchemas().get("schemas/keybindings.schema.json") ?? "");
 		const validator = Compile(schema);
@@ -171,6 +198,7 @@ describe("generated configuration schemas", () => {
 			{ websocketConnectTimeoutMs: -1 },
 			{ httpIdleTimeoutMs: "bogus" },
 			{ websocketConnectTimeoutMs: "30000" },
+			{ codemode: { inlineBudget: -1 } },
 		]) {
 			expect(validator.Check(invalid)).toBe(false);
 		}
@@ -183,6 +211,7 @@ describe("generated configuration schemas", () => {
 				},
 				httpIdleTimeoutMs: 0,
 				websocketConnectTimeoutMs: "disabled",
+				codemode: { inlineBudget: 0 },
 			}),
 		).toBe(true);
 	});
