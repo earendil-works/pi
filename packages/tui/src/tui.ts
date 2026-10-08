@@ -477,6 +477,13 @@ export interface TUI extends Component {
 	setFocus(component: Component | null): void;
 	showOverlay(component: Component, options?: OverlayOptions): OverlayHandle;
 	hideOverlay(): void;
+	/**
+	 * Temporarily hide (or restore) all visible overlays. Used to clear the screen
+	 * for modal dialogs that are NOT overlays (e.g. extension select/input in the
+	 * editor area): a visible overlay would cover the dialog while keyboard focus
+	 * is on it. Only overlays visible at suppress-time are restored (#10667).
+	 */
+	suppressOverlays(suppressed: boolean): void;
 	hasOverlay(): boolean;
 	start(): void;
 	stop(options?: TuiStopOptions): void;
@@ -533,6 +540,8 @@ export abstract class TuiBase extends Container implements TUI {
 	// Overlay stack for modal components rendered on top of base content
 	private focusOrderCounter = 0;
 	private overlayStack: OverlayStackEntry[] = [];
+	/** Overlays hidden by suppressOverlays(true), to restore exactly those. */
+	private suppressedOverlayRestore = new Set<OverlayStackEntry>();
 	private renderedOverlayLayouts: RenderedOverlayLayout[] = [];
 
 	get hasOverlayEntries(): boolean {
@@ -839,6 +848,24 @@ export abstract class TuiBase extends Container implements TUI {
 		}
 		if (this.overlayStack.length === 0) this.hideTerminalCursor();
 		this.requestRender();
+	}
+
+	/** Temporarily hide (or restore) all visible overlays; see TUI.suppressOverlays (#10667). */
+	suppressOverlays(suppressed: boolean): void {
+		if (suppressed) {
+			for (const entry of this.overlayStack) {
+				if (!entry.hidden && this.isOverlayVisible(entry)) {
+					entry.hidden = true;
+					this.suppressedOverlayRestore.add(entry);
+				}
+			}
+		} else {
+			for (const entry of this.suppressedOverlayRestore) {
+				if (this.overlayStack.includes(entry)) entry.hidden = false;
+			}
+			this.suppressedOverlayRestore.clear();
+		}
+		if (this.overlayStack.length > 0) this.requestRender();
 	}
 
 	/** Hide the cursor while running. After stop(), the shell owns the cursor and it must stay visible. */

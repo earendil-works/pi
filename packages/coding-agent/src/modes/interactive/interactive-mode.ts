@@ -2701,9 +2701,16 @@ export class InteractiveMode {
 
 			const onAbort = () => {
 				this.hideExtensionSelector();
+				this.ui.suppressOverlays(false);
 				resolve(undefined);
 			};
 			opts?.signal?.addEventListener("abort", onAbort, { once: true });
+
+			// This dialog is NOT an overlay (it renders in the editor area): without
+			// hiding visible overlays the dialog is covered while keyboard focus moves
+			// to it — the operator sees the overlay but every keypress goes to the
+			// hidden dialog (#10667). Restore overlays when the dialog closes.
+			this.ui.suppressOverlays(true);
 
 			this.extensionSelector = new ExtensionSelectorComponent(
 				title,
@@ -2711,11 +2718,13 @@ export class InteractiveMode {
 				(option) => {
 					opts?.signal?.removeEventListener("abort", onAbort);
 					this.hideExtensionSelector();
+					this.ui.suppressOverlays(false);
 					resolve(option);
 				},
 				() => {
 					opts?.signal?.removeEventListener("abort", onAbort);
 					this.hideExtensionSelector();
+					this.ui.suppressOverlays(false);
 					resolve(undefined);
 				},
 				{ tui: this.ui, timeout: opts?.timeout, onToggleToolsExpanded: () => this.toggleToolOutputExpansion() },
@@ -2781,8 +2790,11 @@ export class InteractiveMode {
 				return;
 			}
 
+			// Same overlay-suppression as showExtensionSelector (#10667).
+			this.ui.suppressOverlays(true);
 			const onAbort = () => {
 				this.hideExtensionInput();
+				this.ui.suppressOverlays(false);
 				resolve(undefined);
 			};
 			opts?.signal?.addEventListener("abort", onAbort, { once: true });
@@ -2793,11 +2805,13 @@ export class InteractiveMode {
 				(value) => {
 					opts?.signal?.removeEventListener("abort", onAbort);
 					this.hideExtensionInput();
+					this.ui.suppressOverlays(false);
 					resolve(value);
 				},
 				() => {
 					opts?.signal?.removeEventListener("abort", onAbort);
 					this.hideExtensionInput();
+					this.ui.suppressOverlays(false);
 					resolve(undefined);
 				},
 				{ tui: this.ui, timeout: opts?.timeout },
