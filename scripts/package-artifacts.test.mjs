@@ -15,6 +15,7 @@ function writePackage(directory, manifest, files) {
 	}
 }
 
+// #10633: Covers npm 12's package-keyed `npm pack --json` output only when npm 12 is on PATH.
 test("produces a verified, content-addressed artifact set", (t) => {
 	const temporaryRoot = mkdtempSync(join(tmpdir(), "pi-package-artifacts-test-"));
 	t.after(() => rmSync(temporaryRoot, { recursive: true, force: true }));

@@ -31,10 +31,10 @@ function packPackages(packages, tarballDirectory) {
 			stdio: ["inherit", "pipe", "inherit"],
 		});
 		const parsed = JSON.parse(output);
-		if (!Array.isArray(parsed) || parsed.length !== 1 || !parsed[0]?.filename) {
+		const packed = Array.isArray(parsed) ? (parsed.length === 1 ? parsed[0] : undefined) : parsed?.[pkg.name];
+		if (packed?.name !== pkg.name || typeof packed.filename !== "string") {
 			throw new Error(`npm pack returned an unexpected result for ${pkg.name}`);
 		}
-		const packed = parsed[0];
 
 		const originalPath = join(tarballDirectory, packed.filename);
 		const contents = readFileSync(originalPath);
