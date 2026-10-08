@@ -744,6 +744,26 @@ for await (const line of createInterface({ input: process.stdin })) {
 		expect(() => connection.oauthSettings()).toThrow("oauth.clientSecret");
 		await connection.close();
 	});
+
+	it("resolves the OAuth client ID from the environment", async () => {
+		process.env.PI_TEST_MCP_CLIENT_ID = "registered-client";
+		try {
+			const { connection } = connect(
+				{
+					name: "fake",
+					config: { url: "http://unused.invalid", oauth: { clientId: "$PI_TEST_MCP_CLIENT_ID" } },
+					source: "test",
+				},
+				[() => createTransport()],
+			);
+			expect(connection.oauthSettings().clientId).toBe("registered-client");
+			delete process.env.PI_TEST_MCP_CLIENT_ID;
+			expect(() => connection.oauthSettings()).toThrow("oauth.clientId");
+			await connection.close();
+		} finally {
+			delete process.env.PI_TEST_MCP_CLIENT_ID;
+		}
+	});
 });
 
 describe("MCP servers section", () => {

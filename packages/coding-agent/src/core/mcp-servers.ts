@@ -89,7 +89,10 @@ export interface McpStdioServerConfig extends McpServerConfigBase {
 
 /** OAuth client settings for servers that do not support dynamic client registration. */
 export interface McpOAuthConfig {
-	/** Pre-registered client id. Without it, pi registers a client with the authorization server. */
+	/**
+	 * Pre-registered client id. Without it, pi registers a client with the authorization server. May
+	 * reference environment variables (`${NAME}`) or commands (`!cmd`).
+	 */
 	clientId?: string;
 	/** May reference environment variables (`${NAME}`) or commands (`!cmd`). */
 	clientSecret?: string;

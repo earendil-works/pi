@@ -239,7 +239,10 @@ export class McpServerConnection implements McpToolCaller, McpResourceServer {
 		const oauth = "url" in this.entry.config ? this.entry.config.oauth : undefined;
 		if (!oauth) return {};
 		return {
-			clientId: oauth.clientId,
+			clientId:
+				oauth.clientId === undefined
+					? undefined
+					: resolveConfigValueOrThrow(oauth.clientId, `MCP server "${this.entry.name}" oauth.clientId`),
 			clientSecret:
 				oauth.clientSecret === undefined
 					? undefined

@@ -137,13 +137,13 @@ OAuth applies to HTTP servers without an `Authorization` header. For a server th
   "mcpServers": {
     "example": {
       "url": "https://mcp.example.com/mcp",
-      "oauth": { "clientId": "my-client", "clientSecret": "${EXAMPLE_SECRET}", "callbackPort": 8765 }
+      "oauth": { "clientId": "${EXAMPLE_CLIENT_ID}", "clientSecret": "${EXAMPLE_SECRET}", "callbackPort": 8765 }
     }
   }
 }
 ```
 
-The redirect URI must match the registered URI. `callbackPort` uses `http://127.0.0.1:<port>/callback`. To use another URI, set `callbackUrl`; it must use HTTP on `localhost`, `127.0.0.1`, or `[::1]`. Pi sends it exactly as written. When `callbackUrl` omits a port, Pi uses `callbackPort` or a free port and adds it to the URI, as allowed for loopback redirects by RFC 8252. `clientSecret` is optional and can use an environment variable or command.
+The redirect URI must match the registered URI. `callbackPort` uses `http://127.0.0.1:<port>/callback`. To use another URI, set `callbackUrl`; it must use HTTP on `localhost`, `127.0.0.1`, or `[::1]`. Pi sends it exactly as written. When `callbackUrl` omits a port, Pi uses `callbackPort` or a free port and adds it to the URI, as allowed for loopback redirects by RFC 8252. `clientId` and `clientSecret` can use an environment variable or command. `clientSecret` is optional.
 
 Set `scope` to a space-separated list for servers that do not advertise their required scopes. Otherwise, Pi requests the advertised scopes. Later scope requests are added to the configured value.
 
