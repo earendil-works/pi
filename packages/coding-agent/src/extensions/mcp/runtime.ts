@@ -136,8 +136,8 @@ function listTemplates(client: McpClient, options: McpRequestOptions = {}): Prom
 }
 
 /**
- * Resources and templates at connect time, for the counts in `/mcp` and `pi mcp list`. A server
- * whose lists fail still connects: the resource tools list and read its resources on demand.
+ * Background resource and template counts for `/mcp`. A server whose lists fail still stays
+ * connected: the resource tools list and read its resources on demand.
  */
 async function fetchResources(
 	client: McpClient,
@@ -159,8 +159,8 @@ export class McpServerConnection implements McpToolCaller, McpResourceServer {
 	error: string | undefined;
 	tools: McpTool[] = [];
 	/**
-	 * Whether the server offers resources. The lists below are what it listed at the last connect or
-	 * change, without MCP App resources.
+	 * Whether the server offers resources. The lists below are populated in the background after
+	 * connecting or a change notification, without MCP App resources.
 	 */
 	hasResources = false;
 	resources: Resource[] = [];
@@ -171,6 +171,7 @@ export class McpServerConnection implements McpToolCaller, McpResourceServer {
 	challenge: OAuthChallenge | undefined;
 	private client: McpClient | undefined;
 	private opening: Promise<McpClient> | undefined;
+	private resourceRefreshId = 0;
 	/** Aborted by `close()`; cancels a connect in progress, including the wait between retries. */
 	private readonly shutdown = new AbortController();
 	/** Stderr of the last stdio server that failed to connect. */
@@ -406,22 +407,22 @@ export class McpServerConnection implements McpToolCaller, McpResourceServer {
 			client.onClose(() => this.handleClientClose(client, stdio));
 			// Servers without the tools capability (prompts or resources only) do not answer tools/list.
 			const hasResources = client.serverCapabilities?.resources !== undefined;
-			const [tools, resources] = await Promise.all([
-				client.serverCapabilities?.tools ? client.listTools() : [],
-				hasResources ? fetchResources(client) : { resources: [], resourceTemplates: [] },
-			]);
+			const tools = client.serverCapabilities?.tools ? await client.listTools() : [];
 			if (this.closed) throw new Error("shut down while connecting");
 			if (client.connectionState !== "connected") throw new Error("connection closed during setup");
 			this.client = client;
 			this.tools = tools;
 			this.hasResources = hasResources;
-			this.resources = resources.resources;
-			this.resourceTemplates = resources.resourceTemplates;
+			this.resources = [];
+			this.resourceTemplates = [];
 			this.instructions = client.instructions?.trim() || undefined;
 			this.state = "connected";
 			this.error = undefined;
 			this.onTools(this);
 			this.changed();
+			// Resource counts are best-effort metadata. Slow enumeration must not gate tools
+			// or readiness; resource tools can already list and read directly from the client.
+			if (hasResources) void this.refreshResources(client);
 			return client;
 		} catch (error) {
 			await closeClient();
@@ -468,8 +469,10 @@ export class McpServerConnection implements McpToolCaller, McpResourceServer {
 	}
 
 	private async refreshResources(client: McpClient): Promise<void> {
-		const { resources, resourceTemplates } = await fetchResources(client);
 		if (this.client !== client || this.closed) return;
+		const refreshId = ++this.resourceRefreshId;
+		const { resources, resourceTemplates } = await fetchResources(client);
+		if (this.client !== client || this.closed || refreshId !== this.resourceRefreshId) return;
 		this.resources = resources;
 		this.resourceTemplates = resourceTemplates;
 		this.onTools(this);

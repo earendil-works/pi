@@ -101,6 +101,14 @@ Pi connects every enabled server in the background when a session starts. A serv
 
 Stopping a stdio server closes its stdin, sends SIGTERM, then sends SIGKILL to its process group. This also stops servers launched through wrappers such as `npx` or `uvx`.
 
+#### Slow resource discovery
+
+Tool discovery determines connection readiness. Previously, Pi waited for both tools and all resource/template pages before registering any tool; a slow resource directory could leave tools unavailable even after `tools/list` had succeeded. Pi now registers tools as soon as initialization and tool discovery finish. It enumerates resources and templates in the background, so resource counts can initially be empty and update later. Servers that only offer resources also become ready without waiting for enumeration.
+
+Resource listing and reading remain available on demand and use their existing request timeouts. A failed background listing does not disconnect the server or disable its tools. Closing or replacing a connection prevents its late resource results from being published, and newer refreshes take precedence when replies arrive out of order. This changes readiness, not the speed of the server's resource queries.
+
+Regression tests use in-memory MCP servers with delayed or failed resource replies. They cover tool registration and execution, resource-only servers, late results after close or reconnect, and out-of-order refreshes. The tests do not measure a live server's directory-listing latency.
+
 ## Migrate configuration from another client
 
 Move the converted entry under `mcpServers` in `mcp.json`, then run `pi mcp list` to validate it.
