@@ -107,6 +107,43 @@ const RETRYABLE_PROVIDER_ERROR_PATTERN = buildProviderErrorPattern([
 ]);
 
 /**
+ * Provider context used to disambiguate provider-specific error semantics. Optional:
+ * omitting it preserves the previous, provider-agnostic classification.
+ */
+export interface RetryOverrides {
+	/** Provider id (e.g. `qwen-token-plan`, `dashscope`) of the failing endpoint. */
+	provider?: string;
+	/** Base URL of the failing endpoint, used when the provider id is bespoke. */
+	baseUrl?: string;
+}
+
+/**
+ * DashScope (Alibaba Model Studio) reports *transient* TPS/TPM throttling using the
+ * same code (`insufficient_quota` / `Throttling.AllocationQuota`) and wording as
+ * OpenAI's terminal quota/billing exhaustion. Without provider context the generic
+ * non-retryable list above would fail DashScope bursts immediately instead of
+ * backing off. See https://www.alibabacloud.com/help/en/model-studio/error-code
+ * (`429 - Throttling.AllocationQuota / insufficient_quota`).
+ */
+const DASHSCOPE_UNIQUE_THROTTLE_PATTERN = /\ballocated quota exceeded, please increase your quota limit\b/i;
+/** Wording shared verbatim with OpenAI's terminal quota error — decidable only with provider context. */
+const AMBIGUOUS_QUOTA_EXHAUSTED_PATTERN =
+	/\byou exceeded your current quota, please check your plan and billing details\b/i;
+const DASHSCOPE_FAMILY_PATTERN = /dashscope|aliyun|alibaba|bailian|qwen/i;
+
+function isDashScopeFamily(overrides?: RetryOverrides): boolean {
+	if (!overrides) return false;
+	return DASHSCOPE_FAMILY_PATTERN.test(`${overrides.provider ?? ""} ${overrides.baseUrl ?? ""}`);
+}
+
+function isDashScopeTransientThrottle(errorMessage: string, overrides?: RetryOverrides): boolean {
+	// Wording unique to DashScope's throttling docs: retryable regardless of provider metadata.
+	if (DASHSCOPE_UNIQUE_THROTTLE_PATTERN.test(errorMessage)) return true;
+	// Shared wording: only a throttle when the endpoint is known to be DashScope-family.
+	return isDashScopeFamily(overrides) && AMBIGUOUS_QUOTA_EXHAUSTED_PATTERN.test(errorMessage);
+}
+
+/**
  * Retry policy: bounded attempts with exponential backoff (`baseDelayMs * 2^(attempt-1)`).
  * `maxAgentDelayMs` caps each computed delay and defaults to 60 seconds.
  * Matches `settings.retry` (`enabled`, `maxRetries`, `baseDelayMs`, `maxAgentDelayMs`) in coding-agent; kept
@@ -249,9 +286,12 @@ export async function retryAssistantCall(
  * overflow separately, then apply their own retry budget, backoff, and reporting
  * before restarting the assistant turn.
  */
-export function isRetryableAssistantError(message: AssistantMessage): boolean {
+export function isRetryableAssistantError(message: AssistantMessage, overrides?: RetryOverrides): boolean {
 	if (message.stopReason !== "error" || !message.errorMessage) return false;
 	const errorMessage = message.errorMessage;
+	// DashScope reports transient TPS/TPM throttling with quota wording that the
+	// generic non-retryable list below treats as terminal, so check it first.
+	if (isDashScopeTransientThrottle(errorMessage, overrides)) return true;
 	if (NON_RETRYABLE_PROVIDER_LIMIT_ERROR_PATTERN.test(errorMessage)) return false;
 	return RETRYABLE_PROVIDER_ERROR_PATTERN.test(errorMessage);
 }

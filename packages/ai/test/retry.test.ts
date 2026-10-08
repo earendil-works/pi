@@ -283,3 +283,55 @@ describe("retryAssistantCall", () => {
 		expect(onRetryFinished).toHaveBeenCalledWith(false, 1, "terminated");
 	});
 });
+
+describe("DashScope quota throttling classification (#10656)", () => {
+	// DashScope reports transient TPS/TPM throttling using the same code and, partly,
+	// the same wording as OpenAI's terminal quota exhaustion.
+	const dashscopeUniqueThrottle = "Allocated quota exceeded, please increase your quota limit.";
+	const sharedQuotaWording = "You exceeded your current quota, please check your plan and billing details.";
+
+	it("treats DashScope-specific throttle wording as retryable without provider context", () => {
+		expect(
+			isRetryableAssistantError(
+				fauxAssistantMessage("", { stopReason: "error", errorMessage: dashscopeUniqueThrottle }),
+			),
+		).toBe(true);
+	});
+
+	it("treats the shared quota wording as retryable for DashScope-family providers", () => {
+		for (const overrides of [
+			{ provider: "qwen-token-plan" },
+			{ provider: "dashscope" },
+			{ baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1" },
+			{ baseUrl: "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1" },
+		]) {
+			expect(
+				isRetryableAssistantError(
+					fauxAssistantMessage("", { stopReason: "error", errorMessage: sharedQuotaWording }),
+					overrides,
+				),
+			).toBe(true);
+		}
+	});
+
+	it("keeps the shared quota wording terminal for non-DashScope providers", () => {
+		for (const overrides of [undefined, {}, { provider: "openai" }, { baseUrl: "https://api.openai.com/v1" }]) {
+			expect(
+				isRetryableAssistantError(
+					fauxAssistantMessage("", { stopReason: "error", errorMessage: sharedQuotaWording }),
+					overrides,
+				),
+			).toBe(false);
+		}
+	});
+
+	it("keeps explicit DashScope billing codes terminal", () => {
+		for (const errorMessage of ["PrepaidBillOverdue", "PostpaidBillOverdue", "Free allocated quota exceeded."]) {
+			expect(
+				isRetryableAssistantError(fauxAssistantMessage("", { stopReason: "error", errorMessage }), {
+					provider: "qwen-token-plan",
+				}),
+			).toBe(false);
+		}
+	});
+});
