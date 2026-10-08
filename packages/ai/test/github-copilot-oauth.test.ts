@@ -659,8 +659,8 @@ describe("GitHub Copilot OAuth device flow", () => {
 		await vi.advanceTimersByTimeAsync(1);
 		expect(accessTokenPollTimes).toHaveLength(2);
 
-		// slow_down carried a server-provided interval of 7 seconds.
-		await vi.advanceTimersByTimeAsync(6999);
+		// slow_down carried a server-provided interval of 7 seconds, plus a 250 ms margin.
+		await vi.advanceTimersByTimeAsync(7249);
 		expect(accessTokenPollTimes).toHaveLength(2);
 
 		await vi.advanceTimersByTimeAsync(1);
@@ -669,8 +669,63 @@ describe("GitHub Copilot OAuth device flow", () => {
 		expect(accessTokenPollTimes).toEqual([
 			startTime.getTime() + 5000,
 			startTime.getTime() + 10000,
-			startTime.getTime() + 17000,
+			startTime.getTime() + 17250,
 		]);
+	});
+
+	// https://github.com/microsoft/WSL/issues/12583: fast local clocks can keep approved logins polling early.
+	it("completes and saves an approved login despite a 10% fast local clock", async () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(0);
+		let serverIntervalMs = 5000;
+		let lastServerPollTime = 0;
+		let slowDownResponses = 0;
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async (input: unknown): Promise<Response> => {
+				const url = getUrl(input);
+				if (url.endsWith("/login/device/code")) {
+					return jsonResponse({
+						device_code: "device-code",
+						user_code: "ABCD-EFGH",
+						verification_uri: "https://github.com/login/device",
+						interval: 5,
+						expires_in: 900,
+					});
+				}
+				if (url.endsWith("/login/oauth/access_token")) {
+					const serverTime = Date.now() / 1.1;
+					const elapsed = serverTime - lastServerPollTime;
+					lastServerPollTime = serverTime;
+					if (elapsed < serverIntervalMs) {
+						serverIntervalMs += 5000;
+						slowDownResponses++;
+						return jsonResponse({ error: "slow_down", interval: serverIntervalMs / 1000 });
+					}
+					return jsonResponse({ access_token: "ghu_refresh_token" });
+				}
+				if (url.includes("/copilot_internal/v2/token")) {
+					return jsonResponse({ token: testCopilotAccessToken, expires_at: 9999999999 });
+				}
+				if (url === testCopilotModelsUrl) return jsonResponse({ data: [] });
+				throw new Error(`Unexpected fetch URL: ${url}`);
+			}),
+		);
+
+		const store = new InMemoryCredentialStore();
+		const models = createModels({ credentials: store });
+		models.setProvider(githubCopilotProvider());
+		const loginPromise = models.login("github-copilot", "oauth", {
+			signal: neverAbortedSignal,
+			prompt: async () => "",
+			notify: () => {},
+		});
+		const outcome = loginPromise.catch((error: unknown) => error);
+		await vi.runAllTimersAsync();
+		const credential = await outcome;
+		expect(credential).toMatchObject({ type: "oauth", access: testCopilotAccessToken, refresh: "ghu_refresh_token" });
+		expect(await store.read("github-copilot")).toEqual(credential);
+		expect(slowDownResponses).toBe(5);
 	});
 
 	it("times out after repeated slow_down responses", async () => {
@@ -726,18 +781,18 @@ describe("GitHub Copilot OAuth device flow", () => {
 		await vi.advanceTimersByTimeAsync(1);
 		expect(accessTokenPollTimes).toEqual([startTime.getTime() + 5000]);
 
-		await vi.advanceTimersByTimeAsync(9999);
+		await vi.advanceTimersByTimeAsync(10249);
 		expect(accessTokenPollTimes).toEqual([startTime.getTime() + 5000]);
 
 		await vi.advanceTimersByTimeAsync(1);
-		expect(accessTokenPollTimes).toEqual([startTime.getTime() + 5000, startTime.getTime() + 15000]);
+		expect(accessTokenPollTimes).toEqual([startTime.getTime() + 5000, startTime.getTime() + 15250]);
 
-		await vi.advanceTimersByTimeAsync(9999);
-		expect(accessTokenPollTimes).toEqual([startTime.getTime() + 5000, startTime.getTime() + 15000]);
+		await vi.advanceTimersByTimeAsync(9749);
+		expect(accessTokenPollTimes).toEqual([startTime.getTime() + 5000, startTime.getTime() + 15250]);
 
 		await vi.advanceTimersByTimeAsync(1);
 		await rejection;
 
-		expect(accessTokenPollTimes).toEqual([startTime.getTime() + 5000, startTime.getTime() + 15000]);
+		expect(accessTokenPollTimes).toEqual([startTime.getTime() + 5000, startTime.getTime() + 15250]);
 	});
 });
