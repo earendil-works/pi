@@ -1820,6 +1820,84 @@ Content`,
 	});
 
 	describe("pattern filtering in package filters", () => {
+		// Regression for https://github.com/earendil-works/pi/issues/10684
+		describe.each(["extensions", "skills", "prompts", "themes"] as const)(
+			"manifest resource boundaries for %s",
+			(resourceType) => {
+				let pkgDir: string;
+				let resourcePath: string;
+				const otherType = resourceType === "skills" ? "extensions" : "skills";
+
+				beforeEach(() => {
+					pkgDir = join(tempDir, "resource-boundary-pkg");
+					const files = {
+						extensions: "index.ts",
+						skills: "SKILL.md",
+						prompts: "sample.md",
+						themes: "sample.json",
+					};
+					for (const type of [resourceType, otherType] as const) {
+						mkdirSync(join(pkgDir, type), { recursive: true });
+						writeFileSync(join(pkgDir, type, files[type]), "");
+					}
+					resourcePath = join(pkgDir, resourceType, files[resourceType]);
+				});
+
+				it.each(["absent", "empty"])(
+					"should not expose %s manifest resources through settings",
+					async (declaration) => {
+						writeFileSync(
+							join(pkgDir, "package.json"),
+							JSON.stringify({
+								pi: { [otherType]: [otherType], ...(declaration === "empty" ? { [resourceType]: [] } : {}) },
+							}),
+						);
+						for (const pkg of [
+							pkgDir,
+							{ source: pkgDir },
+							{ source: pkgDir, [otherType]: [] },
+							{ source: pkgDir, [resourceType]: ["*"] },
+							{ source: pkgDir, autoload: false, [resourceType]: ["*"] },
+							{ source: pkgDir, autoload: false, [resourceType]: [`+${relative(pkgDir, resourcePath)}`] },
+						]) {
+							settingsManager.setPackages([pkg]);
+							const result = await packageManager.resolve();
+							expect(
+								result[resourceType].filter((resource) => resource.metadata.packageRoot === pkgDir),
+							).toEqual([]);
+						}
+					},
+				);
+
+				it("should preserve convention discovery and autoload filters without a manifest", async () => {
+					writeFileSync(join(pkgDir, "package.json"), JSON.stringify({ name: "resource-boundary-pkg" }));
+					for (const pkg of [
+						pkgDir,
+						{ source: pkgDir },
+						{ source: pkgDir, [otherType]: [] },
+						{ source: pkgDir, [resourceType]: ["*"] },
+						{ source: pkgDir, autoload: false, [resourceType]: [`+${relative(pkgDir, resourcePath)}`] },
+					]) {
+						settingsManager.setPackages([pkg]);
+						const result = await packageManager.resolve();
+						expect(
+							result[resourceType].filter((resource) => resource.metadata.packageRoot === pkgDir),
+						).toMatchObject([{ path: resourcePath, enabled: true }]);
+					}
+					settingsManager.setPackages([{ source: pkgDir, [resourceType]: [] }]);
+					const disabled = await packageManager.resolve();
+					expect(
+						disabled[resourceType].filter((resource) => resource.metadata.packageRoot === pkgDir),
+					).toMatchObject([{ path: resourcePath, enabled: false }]);
+					settingsManager.setPackages([{ source: pkgDir, autoload: false }]);
+					const unloaded = await packageManager.resolve();
+					expect(unloaded[resourceType].filter((resource) => resource.metadata.packageRoot === pkgDir)).toEqual(
+						[],
+					);
+				});
+			},
+		);
+
 		it("should apply user filters on top of manifest filters (not replace)", async () => {
 			// Manifest excludes baz.ts, user excludes bar.ts
 			// Result should exclude BOTH

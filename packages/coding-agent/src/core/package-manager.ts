@@ -2270,7 +2270,7 @@ export class DefaultPackageManager implements PackageManager {
 	): void {
 		const manifest = readPiManifest(join(packageRoot, "package.json"));
 		const entries = manifest?.[resourceType as keyof PiManifest];
-		if (entries) {
+		if (manifest) {
 			this.addManifestEntries(entries, packageRoot, resourceType, target, metadata);
 			return;
 		}
@@ -2339,9 +2339,9 @@ export class DefaultPackageManager implements PackageManager {
 	): { allFiles: string[]; enabledByManifest: Set<string> } {
 		const manifest = readPiManifest(join(packageRoot, "package.json"));
 		const entries = manifest?.[resourceType as keyof PiManifest];
-		if (entries && entries.length > 0) {
-			const allFiles = this.collectFilesFromManifestEntries(entries, packageRoot, resourceType);
-			const manifestPatterns = entries.filter(isOverridePattern);
+		if (manifest) {
+			const allFiles = this.collectFilesFromManifestEntries(entries ?? [], packageRoot, resourceType);
+			const manifestPatterns = (entries ?? []).filter(isOverridePattern);
 			const enabledByManifest =
 				manifestPatterns.length > 0 ? applyPatterns(allFiles, manifestPatterns, packageRoot) : new Set(allFiles);
 			return { allFiles: Array.from(enabledByManifest), enabledByManifest };
