@@ -656,6 +656,16 @@ export interface ToolHooks {
 		api: HookApi,
 		context: Context,
 	): HookResult<ToolExecutionResult>;
+	/**
+	 * In the abort invocation, after owned work drains and before the result entry; replaces the aborted result built
+	 * from durable progress. Does not change the task's aborted outcome. May rerun after close or a crash before commit.
+	 */
+	onAbort(
+		call: ToolCall,
+		result: ToolExecutionResult,
+		api: HookApi,
+		context: Context,
+	): HookResult<ToolExecutionResult>;
 }
 
 /** Hooks of the built-in compaction task. */
