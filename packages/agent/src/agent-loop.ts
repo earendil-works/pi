@@ -238,6 +238,14 @@ async function runLoop(
 				};
 			}
 
+			// Preparation can replace the transcript or executable tools. Declare the final loadout.
+			for (const message of declareToolChanges(currentContext, [])) {
+				await emit({ type: "message_start", message });
+				await emit({ type: "message_end", message });
+				currentContext.messages.push(message);
+				newMessages.push(message);
+			}
+
 			// Stream assistant response
 			const message = await streamAssistantResponse(currentContext, config, signal, emit, streamFunction);
 			newMessages.push(message);

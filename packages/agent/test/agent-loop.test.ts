@@ -1,9 +1,11 @@
 import {
 	type AssistantMessage,
 	createAssistantMessageEventStream,
+	getCurrentTools,
 	type Message,
 	type Model,
 	type ToolResultMessage,
+	toToolDeclaration,
 	type UserMessage,
 } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
@@ -1453,6 +1455,171 @@ describe("agentLoop with AgentMessage", () => {
 		);
 
 		expect(prepareCalls).toBe(1);
+	});
+
+	// Regression for https://github.com/earendil-works/pi/issues/10685
+	it.each([1, 2])("synchronizes prepareRequest tool changes on request %i", async (changeOnRequest) => {
+		const executed: unknown[] = [];
+		const oldTool: AgentTool = {
+			name: "old_tool",
+			label: "Old tool",
+			description: "Old tool",
+			parameters: Type.Object({}),
+			async execute() {
+				return { content: [], details: {} };
+			},
+		};
+		const echo: AgentTool = {
+			...oldTool,
+			name: "echo",
+			parameters: Type.Object({ value: Type.String() }),
+			async execute(_id, params) {
+				executed.push((params as { value: string | number }).value);
+				return { content: [], details: {} };
+			},
+		};
+		const initialTools = [oldTool, echo];
+		const replacementTools = [
+			{ ...oldTool, name: "new_tool" },
+			{ ...echo, parameters: Type.Object({ value: Type.Number() }) },
+		];
+		const events: AgentEvent[] = [];
+		let prepareCalls = 0;
+		let providerCalls = 0;
+		const messages = await runAgentLoop(
+			[createUserMessage("echo")],
+			{ messages: [], tools: initialTools },
+			{
+				model: createModel(),
+				convertToLlm: identityConverter,
+				prepareRequest: ({ context }) => {
+					prepareCalls++;
+					return prepareCalls === changeOnRequest
+						? { context: { ...context, tools: replacementTools } }
+						: undefined;
+				},
+			},
+			(event) => {
+				events.push(event);
+			},
+			undefined,
+			(_model, context) => {
+				providerCalls++;
+				const tools = providerCalls >= changeOnRequest ? replacementTools : initialTools;
+				expect(getCurrentTools(context.messages)).toEqual(tools.map(toToolDeclaration));
+				// Request declarations must already have been emitted for persistence.
+				expect(
+					getCurrentTools(events.flatMap((event) => (event.type === "message_end" ? [event.message] : []))),
+				).toEqual(tools.map(toToolDeclaration));
+				const response = createAssistantMessageEventStream();
+				const message =
+					providerCalls <= changeOnRequest
+						? createAssistantMessage(
+								[
+									{
+										type: "toolCall",
+										id: `tool-${providerCalls}`,
+										name: "echo",
+										arguments: { value: providerCalls >= changeOnRequest ? 42 : "hello" },
+									},
+								],
+								"toolUse",
+							)
+						: createAssistantMessage([{ type: "text", text: "done" }]);
+				queueMicrotask(() =>
+					response.push({ type: "done", reason: providerCalls <= changeOnRequest ? "toolUse" : "stop", message }),
+				);
+				return response;
+			},
+		);
+
+		expect(providerCalls).toBe(changeOnRequest + 1);
+		expect(executed).toEqual(changeOnRequest === 1 ? [42] : ["hello", 42]);
+		expect(messages.filter((message) => message.role === "system")).toHaveLength(2);
+		expect(messages.filter((message) => message.role === "toolResult").every((message) => !message.isError)).toBe(
+			true,
+		);
+		expect(events.flatMap((event) => (event.type === "message_end" ? [event.message] : []))).toEqual(messages);
+		expect(getCurrentTools(messages)).toEqual(replacementTools.map(toToolDeclaration));
+	});
+
+	// Regression for https://github.com/earendil-works/pi/issues/10685
+	it("synchronizes tools mutated by prepareRequest without a replacement context", async () => {
+		const tool: AgentTool = {
+			name: "removed",
+			label: "Removed",
+			description: "Removed tool",
+			parameters: Type.Object({}),
+			async execute() {
+				return { content: [], details: {} };
+			},
+		};
+		const messages = await runAgentLoop(
+			[createUserMessage("run")],
+			{ messages: [], tools: [tool] },
+			{
+				model: createModel(),
+				convertToLlm: identityConverter,
+				prepareRequest: ({ context }) => {
+					context.tools = [];
+				},
+			},
+			() => {},
+			undefined,
+			(_model, context) => {
+				expect(getCurrentTools(context.messages)).toEqual([]);
+				const response = createAssistantMessageEventStream();
+				queueMicrotask(() => response.push({ type: "done", reason: "stop", message: createAssistantMessage([]) }));
+				return response;
+			},
+		);
+		expect(getCurrentTools(messages)).toEqual([]);
+	});
+
+	// Regression for https://github.com/earendil-works/pi/issues/10685
+	it.each([false, true])("synchronizes a canonical prepareRequest context with declarations=%s", async (declared) => {
+		const tool: AgentTool = {
+			name: "canonical",
+			label: "Canonical",
+			description: "Canonical tool",
+			parameters: Type.Object({}),
+			async execute() {
+				return { content: [], details: {} };
+			},
+		};
+		const canonicalMessages: AgentMessage[] = [
+			{
+				role: "system",
+				content: "canonical prompt",
+				...(declared ? { toolsAdded: [toToolDeclaration(tool)] } : {}),
+				timestamp: 1,
+			},
+			createUserMessage("canonical request"),
+		];
+		const events: AgentEvent[] = [];
+		const messages = await runAgentLoop(
+			[createUserMessage("run")],
+			{ messages: [], tools: [tool] },
+			{
+				model: createModel(),
+				convertToLlm: identityConverter,
+				prepareRequest: ({ context }) => ({ context: { ...context, messages: canonicalMessages.slice() } }),
+			},
+			(event) => {
+				events.push(event);
+			},
+			undefined,
+			(_model, context) => {
+				expect(context.messages.slice(0, 2)).toEqual(canonicalMessages);
+				expect(getCurrentTools(context.messages)).toEqual([toToolDeclaration(tool)]);
+				expect(context.messages).toHaveLength(declared ? 2 : 3);
+				const response = createAssistantMessageEventStream();
+				queueMicrotask(() => response.push({ type: "done", reason: "stop", message: createAssistantMessage([]) }));
+				return response;
+			},
+		);
+		expect(messages.filter((message) => message.role === "system")).toHaveLength(declared ? 1 : 2);
+		expect(events.flatMap((event) => (event.type === "message_end" ? [event.message] : []))).toEqual(messages);
 	});
 
 	it("does not poll steering after prepareRequest", async () => {
