@@ -1,5 +1,6 @@
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
+import { stripVTControlCharacters } from "node:util";
 
 /** Frame types (docs/protocol.md). */
 const REQUEST = 1;
@@ -15,6 +16,9 @@ const PING_INTERVAL_MS = 5000;
 const SILENCE_LIMIT_MS = 30_000;
 /** How long starting the daemon and its `hello` may take. */
 const START_TIMEOUT_MS = 60_000;
+/** How much stderr a startup error shows: short, because a tool error can reach the model. */
+const STDERR_TAIL_CHARS = 2000;
+const STDERR_TAIL_LINES = 20;
 
 export type Json = Record<string, unknown>;
 
@@ -118,6 +122,24 @@ function closed(): RemoteError {
 	return new RemoteError({ code: "unknown", message: "Connection closed" });
 }
 
+/**
+ * `message` plus the last lines of `stderr`. The remote machine wrote that text, so terminal escapes and control
+ * characters are removed.
+ */
+function withStderr(message: string, stderr: string): string {
+	let text = "";
+	for (const char of stripVTControlCharacters(stderr.replace(/\r\n?/g, "\n"))) {
+		const code = char.charCodeAt(0);
+		if (char === "\n" || char === "\t" || (code >= 0x20 && (code < 0x7f || code > 0x9f))) text += char;
+	}
+	const lines = text
+		.split("\n")
+		.map((line) => line.trimEnd())
+		.filter((line) => line !== "");
+	if (lines.length === 0) return message;
+	return `${message}\nremote stderr:\n${lines.slice(-STDERR_TAIL_LINES).join("\n")}`;
+}
+
 /** One running daemon. */
 class Session {
 	readonly id: number;
@@ -131,6 +153,7 @@ class Session {
 	lastSeen = Date.now();
 	timer: ReturnType<typeof setInterval> | undefined;
 	live = true;
+	stderrTail = "";
 
 	constructor(id: number, child: ChildProcessWithoutNullStreams, token: string) {
 		this.id = id;
@@ -268,6 +291,7 @@ export class Connection {
 		const child = spawn(program, [...args, "serve", "--token", token], { stdio: ["pipe", "pipe", "pipe"] });
 		const session = new Session(++this.#sessions, child, token);
 		this.#session = session;
+		let ready = false;
 		let startTimer: ReturnType<typeof setTimeout> | undefined;
 		const failed = new Promise<never>((_resolve, reject) => {
 			startTimer = setTimeout(
@@ -277,13 +301,21 @@ export class Connection {
 			child.once("error", (error) =>
 				reject(new RemoteError({ code: "spawn_error", message: error.message, lost: true })),
 			);
-			child.once("exit", (code) => reject(lost(`pi-env exited with code ${code} before it was ready`)));
+			child.once("close", (code) => reject(lost(`pi-env exited with code ${code} before it was ready`)));
 		});
 		failed.catch(() => {});
 		child.stdout.on("data", (chunk: Buffer) => this.#onData(session, chunk));
-		child.stderr.on("data", (chunk: Buffer) => this.#options.onLog?.(chunk.toString("utf8")));
+		child.stderr.on("data", (chunk: Buffer) => {
+			const text = chunk.toString("utf8");
+			if (!ready) session.stderrTail = (session.stderrTail + text).slice(-STDERR_TAIL_CHARS);
+			this.#options.onLog?.(text);
+		});
 		child.on("error", () => this.#teardown(session, lost("pi-env connection lost")));
-		child.on("exit", () => this.#teardown(session, lost("pi-env connection lost")));
+		// A ready session fails as soon as the daemon exits, even while a process it started keeps a pipe open.
+		child.on("exit", () => {
+			if (ready) this.#teardown(session, lost("pi-env connection lost"));
+		});
+		child.on("close", () => this.#teardown(session, lost("pi-env connection lost")));
 		child.stdin.on("error", () => {});
 		session.timer = setInterval(() => {
 			this.#write(session, frame(PING, 0, {}));
@@ -295,10 +327,19 @@ export class Connection {
 		try {
 			const { json } = await Promise.race([this.#send(session, "hello", { protocol: 1 }, {}), failed]);
 			if (json.protocol !== 1) throw lost(`Unsupported protocol ${json.protocol}`);
+			ready = true;
+			session.stderrTail = "";
 			return { info: json as unknown as RemoteInfo, session };
 		} catch (error) {
-			this.#teardown(session, error instanceof Error ? error : lost(String(error)));
-			throw error;
+			// Add the captured stderr to whatever ended the start; only a pre-ready exit waits for it to drain.
+			const failure =
+				error instanceof RemoteError
+					? new RemoteError({ ...error.fields, message: withStderr(error.message, session.stderrTail) })
+					: error instanceof Error
+						? error
+						: lost(String(error));
+			this.#teardown(session, failure);
+			throw failure;
 		} finally {
 			clearTimeout(startTimer);
 		}
