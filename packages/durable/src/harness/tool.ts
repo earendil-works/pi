@@ -113,7 +113,33 @@ export const ToolTask = defineTask<ToolTaskInput, ToolTaskCheckpoint, ToolTaskRe
 	abort: async (task, runtime, context) => {
 		const call = await readCall(runtime, task.input, context);
 		const message = `Tool ${call.name} was aborted`;
-		await settle(runtime, call, { status: "aborted" }, (slot) => fromSlot(slot, "aborted", message), context);
+		// The run invocation and its ordinary owned work have drained. Read their final durable progress before asking
+		// extensions, off the Session line; no environment or tool implementation is needed to settle an abort.
+		const live = await runtime.snapshot(LiveDoc, runtime.conversationId, context);
+		const retained = fromSlot(
+			live?.tools?.find((slot) => slot.taskId === runtime.taskId),
+			"aborted",
+			message,
+		);
+		let result = retained;
+		await runtime.hooks.each("onAbort", async (hook) => {
+			result = (await hook(call, result, runtime, context)) ?? result;
+		});
+		// Retained output is already bounded by the execution's limits. A changed or missing tool must not trim it again.
+		if (result.content !== retained.content) {
+			const tool = (await runtime.agent(context)).tools.find((each) => each.name === call.name);
+			const limits = outputLimits(tool);
+			const bounded = boundContent(result.content ?? [], limits);
+			result = {
+				...result,
+				content: bounded.content,
+				diagnostics: [
+					...(result.diagnostics ?? []),
+					...(bounded.droppedBytes > 0 ? [truncated(bounded, limits.retain)] : []),
+				],
+			};
+		}
+		await settle(runtime, call, { status: "aborted" }, () => result, context);
 	},
 });
 
@@ -165,6 +191,15 @@ type Reported = {
 	details: JsonValue | undefined;
 };
 
+/** Bounds for tool content, also when an abort no longer resolves the original tool. */
+function outputLimits(tool: ToolRegistration | undefined): OutputLimits {
+	return {
+		maxBytes: tool?.outputLimits?.maxBytes ?? DEFAULT_MAX_BYTES,
+		maxLines: tool?.outputLimits?.maxLines ?? DEFAULT_MAX_LINES,
+		retain: tool?.outputLimits?.retain ?? "head",
+	};
+}
+
 /** Execute with the resolved implementation, then settle its result. */
 async function run(
 	runtime: Runtime,
@@ -173,11 +208,7 @@ async function run(
 	args: JsonObject,
 	context: Context,
 ): Promise<void> {
-	const limits: OutputLimits = {
-		maxBytes: tool.outputLimits?.maxBytes ?? DEFAULT_MAX_BYTES,
-		maxLines: tool.outputLimits?.maxLines ?? DEFAULT_MAX_LINES,
-		retain: tool.outputLimits?.retain ?? "head",
-	};
+	const limits = outputLimits(tool);
 	const reported: Reported = { output: new OutputBuffer(limits), limits, diagnostics: [], details: undefined };
 	const progress = publishProgress(runtime, reported, context);
 	let ended = false;

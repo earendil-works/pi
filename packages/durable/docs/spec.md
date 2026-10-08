@@ -2582,6 +2582,7 @@ consuming commit may rerun them. Abort errors always propagate.
 | `onYield` | first continuation wins | report, continue |
 | `beforeTool` | argument replacement chain; first block wins | block tool with error text |
 | `afterTool` | result replacement chain | report, continue |
+| `onAbort` (tool) | aborted result replacement chain | report, continue |
 | `afterTools` | all observers | report, continue |
 | `beforeCompact` | first decision wins | report, continue |
 
@@ -2625,6 +2626,13 @@ interface ToolHooks {
   ): HookResult<{ readonly arguments?: JsonObject; readonly block?: string }>;
   /** After execution, before the result entry; replaces the result. */
   afterTool(
+    call: ToolCall,
+    result: ToolExecutionResult,
+    api: HookApi,
+    context: Context,
+  ): HookResult<ToolExecutionResult>;
+  /** In the abort invocation, after owned work drains, before the aborted result entry; replaces the result. */
+  onAbort(
     call: ToolCall,
     result: ToolExecutionResult,
     api: HookApi,
@@ -3645,8 +3653,21 @@ because the terminal record keeps it; the call is read from the assistant entry.
   owned conversations still have ordinary work when it commits its result holds
   `completing` with the result entry already written (section 5.5); the
   generation resumes only when the tool task is terminal.
-- The abort handler commits an `aborted` error result from the slot's durable
-  partial output, details, and diagnostics and ends `aborted` with `{ entryId }`.
+- The abort handler builds an `aborted` error result from the slot's durable
+  partial output, details, and diagnostics, then runs the `onAbort` replacement
+  chain off the Session line before committing the result entry. The ordinary
+  invocation and its ordinary owned work have drained before the hook runs
+  (section 5.5). The hook uses the abort invocation's context and resolved
+  extensions, not the cancelled execution's context. Retained output keeps its
+  execution's bounds unchanged. Replacement content is bounded
+  with the phase's resolved tool limits, or the defaults if the tool no longer
+  resolves; truncation diagnostics are appended after the hook chain. Settlement
+  still ends `aborted` with `{ entryId }`; returned controls are ignored.
+  `onAbort` can run before execution and may rerun after close or a crash before
+  settlement, as other hooks do (section 7.2). Application cancellation metadata
+  belongs in application documents or task memos, not `pi.live`. A successful
+  execution and unsafe recovery do not run `onAbort`; `afterTool` remains the
+  execution-result hook.
 
 ### 8.5 Tool rounds
 

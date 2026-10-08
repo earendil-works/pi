@@ -398,9 +398,25 @@ const Guard = defineExtension({
 ```
 
 - **Generation:** `beforeRequest` (replace the messages of one request), `afterResponse`, `onYield` (continue the run with another user message), and `afterTools` (runs once a round's tools are done).
-- **Tools:** `beforeTool` (block or rewrite arguments) and `afterTool` (replace the result).
+- **Tools:** `beforeTool` (block or rewrite arguments), `afterTool` (replace the execution result), and `onAbort` (replace the aborted result).
 
 To limit a hook to some conversations, select its extension only there, for example with `configure({ extensions: { add: [Guard] } })`.
+
+The `onAbort` hook on `ToolTask` runs in the abort invocation, after the call and its ordinary owned work have drained. It receives the error result built from durable output, details, and diagnostics; returning `undefined` keeps that result. For example, a host can persist a cancellation note in its own document before calling `harness.abortTask()`, then append it to the result:
+
+```typescript
+hook(ToolTask, {
+	onAbort: async (_call, result, api, context) => {
+		const note = (await api.snapshot(CancellationNotes, context))?.notes[String(api.taskId)];
+		return note === undefined ? undefined : {
+			...result,
+			content: [...(result.content ?? []), { type: "text", text: note }],
+		};
+	},
+});
+```
+
+`CancellationNotes` is an application-defined document, not built-in state. The hook follows the other hooks' replacement-chain and error-reporting rules. Replacement content is bounded before settlement; it cannot change the task's aborted outcome, and returned controls are ignored. It can run before execution, and may rerun after close or a crash before the result commits. It does not run for a successful call or an unsafe call interrupted by host shutdown; `afterTool` keeps its execution-only meaning.
 
 ## More Conversations and Forks
 
