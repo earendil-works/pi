@@ -5,6 +5,7 @@ import {
 	adaptOAuthProvider,
 	authorizeMcp,
 	discoverAuthorizationServerMetadata,
+	exchangeAuthorizationCode,
 	McpOAuthAuthorizationRequiredError,
 	McpOAuthProvider,
 	MemoryOAuthStateStore,
@@ -16,6 +17,7 @@ import {
 	OAuthInsecureEndpointError,
 	OAuthIssuerMismatchError,
 	type OAuthTokens,
+	refreshAuthorization,
 	registerClient,
 } from "../src/oauth/index.ts";
 import { closeServers, listen, readBody } from "./helpers.ts";
@@ -92,6 +94,65 @@ class TestOAuthProvider implements OAuthClientProvider {
 afterEach(closeServers);
 
 describe("MCP OAuth", () => {
+	// Regression for https://github.com/earendil-works/pi/issues/10686
+	it.each([
+		{
+			method: "client_secret_basic",
+			clientId: "client-id",
+			clientSecret: "client-secret",
+			credentials: "client-id:client-secret",
+		},
+		{
+			method: "client_secret_basic",
+			clientId: "client:id+ %客户&=!'()~",
+			clientSecret: "secret:+ %秘密&=!'()~",
+			credentials:
+				"client%3Aid%2B+%25%E5%AE%A2%E6%88%B7%26%3D%21%27%28%29%7E:secret%3A%2B+%25%E7%A7%98%E5%AF%86%26%3D%21%27%28%29%7E",
+		},
+		{
+			method: "client_secret_post",
+			clientId: "client:id+ %客户",
+			clientSecret: "secret:+ %秘密",
+			credentials: undefined,
+		},
+	] as const)("authenticates code exchange and refresh with $method ($clientId)", async (testCase) => {
+		const requests: { authorization: string | undefined; params: URLSearchParams }[] = [];
+		const origin = await listen(async (request, response) => {
+			requests.push({
+				authorization: request.headers.authorization,
+				params: new URLSearchParams(await readBody(request)),
+			});
+			response.setHeader("content-type", "application/json");
+			response.end(JSON.stringify({ access_token: "token", token_type: "Bearer" }));
+		});
+		const options = {
+			clientInformation: {
+				client_id: testCase.clientId,
+				client_secret: testCase.clientSecret,
+				token_endpoint_auth_method: testCase.method,
+			},
+		};
+		await exchangeAuthorizationCode(origin, {
+			...options,
+			code: "code",
+			codeVerifier: "verifier",
+			redirectUrl: "http://127.0.0.1/callback",
+		});
+		await refreshAuthorization(origin, { ...options, refreshToken: "refresh-token" });
+		expect(requests.map(({ params }) => params.get("grant_type"))).toEqual(["authorization_code", "refresh_token"]);
+		for (const { authorization, params } of requests) {
+			if (testCase.method === "client_secret_basic") {
+				expect(authorization).toBe(`Basic ${Buffer.from(testCase.credentials).toString("base64")}`);
+				expect(params.has("client_id")).toBe(false);
+				expect(params.has("client_secret")).toBe(false);
+			} else {
+				expect(authorization).toBeUndefined();
+				expect(params.get("client_id")).toBe(testCase.clientId);
+				expect(params.get("client_secret")).toBe(testCase.clientSecret);
+			}
+		}
+	});
+
 	it("discovers, registers, authorizes with PKCE, and refreshes on 401", async () => {
 		let expectedChallenge: string | undefined;
 		let refreshes = 0;

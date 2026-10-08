@@ -149,10 +149,10 @@ function applyClientAuthentication(
 ): void {
 	if (method === "client_secret_basic") {
 		if (!information.client_secret) throw new Error("client_secret_basic requires a client secret");
-		headers.set(
-			"Authorization",
-			`Basic ${Buffer.from(`${information.client_id}:${information.client_secret}`).toString("base64")}`,
-		);
+		// RFC 6749 §2.3.1: form-encode each credential before constructing HTTP Basic authentication.
+		const clientId = new URLSearchParams({ value: information.client_id }).toString().slice(6);
+		const clientSecret = new URLSearchParams({ value: information.client_secret }).toString().slice(6);
+		headers.set("Authorization", `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString("base64")}`);
 	} else {
 		params.set("client_id", information.client_id);
 		if (method === "client_secret_post" && information.client_secret)
