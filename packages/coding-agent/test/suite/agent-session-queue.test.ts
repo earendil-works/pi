@@ -495,4 +495,52 @@ describe("AgentSession queue characterization", () => {
 
 		expect(getUserTexts(harness)).toEqual(["hello", "conflict report"]);
 	});
+
+	it("delivers a wake follow-up queued mid-run after a programmatic abort", async () => {
+		// Regression: sendMessage(followUp, triggerTurn) queued mid-run enqueues into the
+		// low-level loop's follow-up queue. An aborted run exits before that queue is
+		// drained, so the message never reached a turn (guard nudges died in the queue).
+		let extensionApi: ExtensionAPI | undefined;
+		const waiting = await createWaitingHarness({
+			extensionFactories: [
+				(pi: ExtensionAPI) => {
+					extensionApi = pi;
+				},
+			],
+		});
+		const { harness, waitForToolStart, promptPromise, releaseToolExecution } = waiting;
+		harnesses.push(harness);
+
+		harness.setResponses([
+			fauxAssistantMessage(fauxToolCall("wait", {}), { stopReason: "toolUse" }),
+			// Consumed by the continuation attempt the abort cancels; value discarded.
+			fauxAssistantMessage("aborted away"),
+			(context) => {
+				const sawWake = context.messages.some((message) => JSON.stringify(message).includes("guard nudge"));
+				return fauxAssistantMessage(sawWake ? "woke" : "missing wake");
+			},
+		]);
+
+		await waitForToolStart;
+		await new Promise((resolve) => setTimeout(resolve, 0));
+
+		// Guard pattern: queue the wake mid-run, then abort the run.
+		extensionApi?.sendMessage(
+			{
+				customType: "system-notice",
+				content: "<test-guard>guard nudge</test-guard>",
+				display: true,
+				details: {},
+			},
+			{ deliverAs: "followUp", triggerTurn: true },
+		);
+		void harness.session.abort();
+		releaseToolExecution();
+		await promptPromise;
+		await harness.session.agent.waitForIdle();
+
+		// The wake reached a turn: the model saw the notice and the run resumed.
+		expect(getAssistantTexts(harness).at(-1)).toBe("woke");
+		expect(harness.session.messages.some((message) => message.role === "custom")).toBe(true);
+	});
 });
