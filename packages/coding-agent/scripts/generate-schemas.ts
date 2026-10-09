@@ -18,7 +18,7 @@ import { SettingsSchema } from "../src/core/settings-schema.ts";
 import { ColorValueSchema, ThemeJsonSchema } from "../src/modes/interactive/theme/theme-schema.ts";
 
 const packageDirectory = fileURLToPath(new URL("..", import.meta.url));
-const schemaBaseUrl = "https://raw.githubusercontent.com/earendil-works/pi/main/packages/coding-agent";
+const schemaBaseUrl = "https://pi.dev";
 const schemaDraft = "https://json-schema.org/draft/2020-12/schema";
 const generatedComment =
 	"This file is generated from TypeScript source. Do not edit it manually; run npm run generate:schemas.";

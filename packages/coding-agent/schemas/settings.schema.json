@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/earendil-works/pi/main/packages/coding-agent/schemas/settings.schema.json",
+  "$id": "https://pi.dev/schemas/settings.schema.json",
   "$comment": "This file is generated from TypeScript source. Do not edit it manually; run npm run generate:schemas.",
   "type": "object",
   "properties": {
