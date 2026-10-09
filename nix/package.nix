@@ -2,12 +2,15 @@
   autoPatchelfHook,
   fd,
   fetchurl,
+  git,
   importNpmLock,
   lib,
   libxcb,
-  makeWrapper,
-  nodejs_22,
+  makeBinaryWrapper,
   ripgrep,
+  nodejs,
+  packageJson,
+  platforms,
   source,
   stdenv,
   wl-clipboard,
@@ -15,18 +18,26 @@
 }:
 
 let
-  nodejs = nodejs_22;
-  packageJson = lib.importJSON (source + "/packages/coding-agent/package.json");
+  inherit (lib)
+    importJSON
+    removePrefix
+    optionals
+    getExe
+    getExe'
+    makeBinPath
+    licenses
+    sourceTypes
+    ;
   # Lockfile root used by the pi.dev installer. It pins the coding agent's
   # runtime dependency tree and is kept in sync with package-lock.json by
   # `npm run check`.
   installLock = source + "/packages/coding-agent/install-lock";
-  modelCatalogPin = lib.importJSON ./model-catalog.json;
+  modelCatalogPin = importJSON ./model-catalog.json;
   modelCatalog = fetchurl {
     name = "pi-model-catalog.json";
     # The typed catalog is the representation whose bytes the revision hashes.
     url = "https://pi.dev/api/models/revisions/${modelCatalogPin.revision}?types=chat,image,classifier";
-    sha256 = lib.removePrefix "sha256-" modelCatalogPin.revision;
+    sha256 = removePrefix "sha256-" modelCatalogPin.revision;
   };
 
   workspacePackages = stdenv.mkDerivation {
@@ -41,6 +52,21 @@ let
       nodejs
       importNpmLock.npmConfigHook
     ];
+
+    postPatch = ''
+      substituteInPlace packages/coding-agent/src/modes/rpc/rpc-client.ts \
+        --replace-fail 'spawn("node", [cliPath' 'spawn("${getExe nodejs}", [cliPath'
+
+      substituteInPlace packages/coding-agent/src/package-manager-cli.ts \
+        --replace-fail 'spawnProcess("npm", ' 'spawnProcess("${getExe' nodejs "npm"}", '
+
+      substituteInPlace packages/coding-agent/src/core/package-manager.ts \
+        --replace-fail 'command: "npm"' 'command: "${getExe' nodejs "npm"}"' \
+        --replace-fail 'this.runCommand("git", ' 'this.runCommand("${getExe git}", '
+
+      substituteInPlace packages/coding-agent/src/core/footer-data-provider.ts \
+        --replace-fail '"git",' '"${getExe git}",'
+    '';
 
     buildPhase = ''
       runHook preBuild
@@ -91,7 +117,7 @@ let
     };
   };
 in
-stdenv.mkDerivation {
+stdenv.mkDerivation (finalAttrs: {
   pname = "pi";
   inherit (packageJson) version;
   src = installLock;
@@ -102,39 +128,39 @@ stdenv.mkDerivation {
   nativeBuildInputs = [
     nodejs
     importNpmLock.npmConfigHook
-    makeWrapper
+    makeBinaryWrapper
   ]
-  ++ lib.optionals stdenv.hostPlatform.isLinux [ autoPatchelfHook ];
+  ++ optionals stdenv.hostPlatform.isLinux [ autoPatchelfHook ];
 
-  buildInputs = [ nodejs ] ++ lib.optionals stdenv.hostPlatform.isLinux [
-    stdenv.cc.cc.lib
-    libxcb
-  ];
+  buildInputs = optionals stdenv.hostPlatform.isLinux [ libxcb ];
 
-  dontBuild = true;
   dontStrip = true;
 
   installPhase = ''
     runHook preInstall
 
     mkdir -p "$out/lib/pi" "$out/bin"
-    cp -R . "$out/lib/pi"
+    cp -R node_modules "$out/lib/pi"
 
-    makeWrapper ${nodejs}/bin/node "$out/bin/pi" \
+    find "$out/lib/pi/node_modules" \
+      \( -name '*.map' -o -name '*.d.ts' -o -name '*.d.mts' -o -name '*.d.cts' \) -delete
+    rm -rf "$out/lib/pi/node_modules/@types"
+
+    makeBinaryWrapper ${lib.getExe nodejs} "$out/bin/pi" \
       --add-flags "$out/lib/pi/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js" \
       --prefix PATH : ${
-        lib.makeBinPath (
+        makeBinPath (
           [
-            nodejs
             fd
             ripgrep
           ]
-          ++ lib.optionals stdenv.hostPlatform.isLinux [
+          ++ optionals stdenv.hostPlatform.isLinux [
             wl-clipboard
             xclip
           ]
         )
-      }
+      } \
+      --set-default PI_SKIP_VERSION_CHECK 1
 
     runHook postInstall
   '';
@@ -143,11 +169,11 @@ stdenv.mkDerivation {
   installCheckPhase = ''
     runHook preInstallCheck
     test "$("$out/bin/pi" --version)" = "${packageJson.version}"
-    ${nodejs}/bin/node -e \
+    ${getExe nodejs} -e \
       "require('$out/lib/pi/node_modules/esbuild').transformSync('const value: number = 1', { loader: 'ts' })"
     # Load host-platform TUI helpers directly so missing native dependencies
     # fail the build rather than silently disabling clipboard support.
-    ${nodejs}/bin/node -e \
+    ${getExe nodejs} -e \
       "const fs = require('node:fs');
        const path = require('node:path');
        const dir = '$out/lib/pi/node_modules/@earendil-works/pi-tui/native/' + process.platform + '/prebuilds/' + process.platform + '-' + process.arch;
@@ -156,25 +182,20 @@ stdenv.mkDerivation {
            if (file.endsWith('.node')) require(path.join(dir, file));
          }
        }"
-    ${nodejs}/bin/node -e \
+    ${getExe nodejs} -e \
       "require('$out/lib/pi/node_modules/@silvia-odwyer/photon-node')"
     runHook postInstallCheck
   '';
 
   meta = {
-    description = packageJson.description;
+    inherit (packageJson) description;
     homepage = "https://pi.dev";
-    license = lib.licenses.mit;
-    mainProgram = "pi";
-    platforms = [
-      "aarch64-darwin"
-      "aarch64-linux"
-      "x86_64-darwin"
-      "x86_64-linux"
-    ];
-    sourceProvenance = with lib.sourceTypes; [
+    license = licenses.mit;
+    mainProgram = finalAttrs.pname;
+    inherit platforms;
+    sourceProvenance = with sourceTypes; [
       fromSource
       binaryNativeCode
     ];
   };
-}
+})
