@@ -915,18 +915,32 @@ export interface ProviderStreamEvent {
 	data: unknown;
 }
 
-/** Fired after user submits prompt but before agent loop. */
-export interface BeforeAgentStartEvent {
+interface BeforeAgentStartEventBase {
 	type: "before_agent_start";
-	/** The raw user prompt text (after expansion). */
-	prompt: string;
-	/** Images attached to the user prompt, if any. */
-	images?: ImageContent[];
 	/** The current system prompt, rendered from systemPromptOptions and earlier handler changes. */
 	readonly systemPrompt: string;
 	/** Mutable prompt sections. Later handlers observe mutations made by earlier handlers. */
 	systemPromptOptions: NormalizedBuildSystemPromptOptions;
 }
+
+/** A run started by a submitted prompt, RPC prompt, or `pi.sendUserMessage()`. */
+export interface BeforeAgentStartUserEvent extends BeforeAgentStartEventBase {
+	messageType: "user";
+	/** The raw user prompt text (after expansion). */
+	prompt: string;
+	/** Images attached to the user prompt, if any. */
+	images?: ImageContent[];
+}
+
+/** A run started by `pi.sendMessage(..., { triggerTurn: true })` while idle. */
+export interface BeforeAgentStartCustomEvent extends BeforeAgentStartEventBase {
+	messageType: "custom";
+	/** The custom message that starts the run. */
+	message: CustomMessage;
+}
+
+/** Fired before a run starts from a user message or an idle custom message with `triggerTurn`. */
+export type BeforeAgentStartEvent = BeforeAgentStartUserEvent | BeforeAgentStartCustomEvent;
 
 /** Fired when an agent loop starts */
 export interface AgentStartEvent {
