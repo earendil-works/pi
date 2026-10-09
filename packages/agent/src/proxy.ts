@@ -9,8 +9,9 @@ import {
 	type AssistantMessageEvent,
 	type AssistantMessageEventStream,
 	createAssistantMessageEventStream,
+	createPendingToolCall,
 	type Model,
-	parseStreamingJson,
+	type PendingToolCall,
 	type SimpleStreamOptions,
 	type StopReason,
 	type ToolCall,
@@ -110,6 +111,11 @@ export function streamProxy(
 	options: ProxyStreamOptions,
 ): AssistantMessageEventStream {
 	const stream = createAssistantMessageEventStream();
+	const pendingCalls = new Map<number, PendingToolCall>();
+	const finishPendingCalls = () => {
+		for (const pending of pendingCalls.values()) pending.finish();
+		pendingCalls.clear();
+	};
 
 	(async () => {
 		// Initialize the partial message that we'll build up from events
@@ -181,9 +187,12 @@ export function streamProxy(
 				const data = line.slice(6).trim();
 				if (!data) return;
 				const proxyEvent = JSON.parse(data) as ProxyAssistantMessageEvent;
-				const event = processProxyEvent(proxyEvent, partial);
+				const event = processProxyEvent(proxyEvent, partial, pendingCalls);
 				if (event) {
-					if (event.type === "done" || event.type === "error") sawTerminalEvent = true;
+					if (event.type === "done" || event.type === "error") {
+						finishPendingCalls();
+						sawTerminalEvent = true;
+					}
 					stream.push(event);
 				}
 			};
@@ -222,6 +231,7 @@ export function streamProxy(
 				// consumers waiting on a result that never arrives.
 				partial.stopReason = "error";
 				partial.errorMessage = "Connection closed by proxy server before the response completed";
+				finishPendingCalls();
 				stream.push({
 					type: "error",
 					reason: "error",
@@ -235,6 +245,7 @@ export function streamProxy(
 			const reason = options.signal?.aborted ? "aborted" : "error";
 			partial.stopReason = reason;
 			partial.errorMessage = errorMessage;
+			finishPendingCalls();
 			stream.push({
 				type: "error",
 				reason,
@@ -257,6 +268,7 @@ export function streamProxy(
 function processProxyEvent(
 	proxyEvent: ProxyAssistantMessageEvent,
 	partial: AssistantMessage,
+	pendingCalls: Map<number, PendingToolCall>,
 ): AssistantMessageEvent | undefined {
 	switch (proxyEvent.type) {
 		case "start":
@@ -326,22 +338,33 @@ function processProxyEvent(
 			throw new Error("Received thinking_end for non-thinking content");
 		}
 
-		case "toolcall_start":
-			partial.content[proxyEvent.contentIndex] = {
-				type: "toolCall",
-				id: proxyEvent.id,
-				name: proxyEvent.toolName,
-				arguments: {},
-				partialJson: "",
-			} satisfies ToolCall & { partialJson: string } as ToolCall;
+		case "toolcall_start": {
+			const pending = createPendingToolCall(
+				{
+					type: "toolCall",
+					id: proxyEvent.id,
+					name: proxyEvent.toolName,
+					arguments: {},
+					partialJson: "",
+				},
+				true,
+			);
+			partial.content[proxyEvent.contentIndex] = pending.toolCall;
+			pendingCalls.set(proxyEvent.contentIndex, pending);
 			return { type: "toolcall_start", contentIndex: proxyEvent.contentIndex, partial };
+		}
 
 		case "toolcall_delta": {
 			const content = partial.content[proxyEvent.contentIndex];
 			if (content?.type === "toolCall") {
-				(content as any).partialJson += proxyEvent.delta;
-				content.arguments = parseStreamingJson((content as any).partialJson) || {};
-				partial.content[proxyEvent.contentIndex] = { ...content }; // Trigger reactivity
+				const block = content as ToolCall & { partialJson: string };
+				block.partialJson += proxyEvent.delta;
+				const pending = pendingCalls.get(proxyEvent.contentIndex)!;
+				pending.setJson(block.partialJson);
+				// Trigger reactivity without reading arguments or losing extra metadata.
+				const copy = pending.copy();
+				pendingCalls.set(proxyEvent.contentIndex, copy);
+				partial.content[proxyEvent.contentIndex] = copy.toolCall;
 				return {
 					type: "toolcall_delta",
 					contentIndex: proxyEvent.contentIndex,
@@ -356,6 +379,8 @@ function processProxyEvent(
 			const content = partial.content[proxyEvent.contentIndex];
 			if (content?.type === "toolCall") {
 				Object.assign(content, proxyEvent.toolCall);
+				pendingCalls.get(proxyEvent.contentIndex)?.finish();
+				pendingCalls.delete(proxyEvent.contentIndex);
 				delete (content as any).partialJson;
 				return {
 					type: "toolcall_end",

@@ -40,6 +40,7 @@ import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { shortHash } from "../utils/hash.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { parseStreamingJson } from "../utils/json-parse.ts";
+import { createPendingToolCall, type PendingToolCall } from "../utils/pending-tool-call.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
@@ -328,6 +329,8 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 			timestamp: Date.now(),
 		};
 
+		const pendingCalls = new Map<ToolCall, PendingToolCall>();
+
 		// `reasoning_details` are replay metadata, not user-visible stream deltas.
 		// Keep them in memory during streaming and serialize once when the block is finalized.
 		let streamedReasoningDetails: OpenAIReasoningDetail[] | undefined;
@@ -463,6 +466,8 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 					} else {
 						block.arguments = parseStreamingJson(block.partialArgs);
 					}
+					pendingCalls.get(block)!.finish();
+					pendingCalls.delete(block);
 					// Finalize in-place and strip the scratch buffers so replay only
 					// carries parsed arguments.
 					delete block.partialArgs;
@@ -509,7 +514,7 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 					const customInputProperty =
 						toolCall.custom && !toolCall.function ? (grammarToolInputProperties.get(name) ?? "input") : undefined;
 					const hasCustomInput = customInputProperty !== undefined;
-					block = {
+					const pending = createPendingToolCall<StreamingToolCallBlock>({
 						type: "toolCall",
 						id: toolCall.id || "",
 						name,
@@ -519,7 +524,9 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 							? { property: customInputProperty, jsonBuffer: { input: "", started: false, closed: false } }
 							: undefined,
 						streamIndex,
-					};
+					});
+					block = pending.toolCall;
+					pendingCalls.set(block, pending);
 					if (streamIndex !== undefined) {
 						toolCallBlocksByIndex.set(streamIndex, block);
 					}
@@ -653,7 +660,7 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 							if (toolCall.function?.arguments) {
 								delta = toolCall.function.arguments;
 								block.partialArgs = (block.partialArgs ?? "") + toolCall.function.arguments;
-								block.arguments = parseStreamingJson(block.partialArgs);
+								pendingCalls.get(block)!.setJson(block.partialArgs);
 							} else if (toolCall.custom?.input) {
 								const nextInput = getCustomToolCallInput(block) + toolCall.custom.input;
 								delta = appendCustomToolCallInput(block, nextInput, false) ?? "";
@@ -705,6 +712,8 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 			stream.push({ type: "done", reason: output.stopReason, message: output });
 			stream.end();
 		} catch (error) {
+			for (const pending of pendingCalls.values()) pending.finish();
+			pendingCalls.clear();
 			for (const block of output.content) {
 				if (block.type === "thinking") {
 					applyStreamedReasoningDetails(block);
