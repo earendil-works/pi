@@ -120,26 +120,30 @@ export function cleanStepText(text: string): string {
 	if (cleaned.length > 0) {
 		cleaned = cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
 	}
-	if (cleaned.length > 50) {
-		cleaned = `${cleaned.slice(0, 47)}...`;
-	}
+	// Keep full text: the exec message and widget display need the whole step.
+	// The widget truncates for display (see updateStatus in index.ts).
 	return cleaned;
 }
 
 export function extractTodoItems(message: string): TodoItem[] {
 	const items: TodoItem[] = [];
-	const headerMatch = message.match(/\*{0,2}Plan:\*{0,2}\s*\n/i);
-	if (!headerMatch) return items;
-
-	const planSection = message.slice(message.indexOf(headerMatch[0]) + headerMatch[0].length);
-	const numberedPattern = /^\s*(\d+)[.)]\s+\*{0,2}([^*\n]+)/gm;
+	// Take the LAST "Plan:" section: since getTextContent includes thinking blocks,
+	// a draft in the reasoning block can precede the user-visible plan in the text
+	// block — the text block comes last in content order.
+	const headers = [...message.matchAll(/\*{0,2}Plan:\*{0,2}\s*\n/gi)];
+	if (headers.length === 0) return items;
+	const lastHeader = headers[headers.length - 1];
+	const planSection = message.slice((lastHeader.index ?? 0) + lastHeader[0].length);
+	// Full-line capture: step titles may contain bold/italic/backticks ("1. **Step** \`x\` …").
+	// cleanStepText strips the markdown; / and - items are still skipped below.
+	const numberedPattern = /^\s*(\d+)[.)]\s+(.+)$/gm;
 
 	for (const match of planSection.matchAll(numberedPattern)) {
 		const text = match[2]
 			.trim()
 			.replace(/\*{1,2}$/, "")
 			.trim();
-		if (text.length > 5 && !text.startsWith("`") && !text.startsWith("/") && !text.startsWith("-")) {
+		if (text.length > 5 && !text.startsWith("/") && !text.startsWith("-")) {
 			const cleaned = cleanStepText(text);
 			if (cleaned.length > 3) {
 				items.push({ step: items.length + 1, text: cleaned, completed: false });
@@ -151,18 +155,40 @@ export function extractTodoItems(message: string): TodoItem[] {
 
 export function extractDoneSteps(message: string): number[] {
 	const steps: number[] = [];
-	for (const match of message.matchAll(/\[DONE:(\d+)\]/gi)) {
-		const step = Number(match[1]);
-		if (Number.isFinite(step)) steps.push(step);
+	// Canonical and bracket variants: [DONE:1], [DONE: 1], [DONE 1], [Done:1]
+	for (const match of message.matchAll(/\[DONE\s*:?\s*(\d+)\]/gi)) {
+		steps.push(Number(match[1]));
 	}
-	return steps;
+	// "Done: 1" without brackets
+	for (const match of message.matchAll(/\bDone\s*:\s*(\d+)\b/gi)) {
+		steps.push(Number(match[1]));
+	}
+	// "Step 1 done", "Step 2 is complete", "Step 3 finished" — adjacency-anchored,
+	// so "Step 9 is not done" / "Step 9 incomplete" never match.
+	for (const match of message.matchAll(/\bStep\s*(\d+)\s+(?:is\s+)?(?:done|complete|completed|finished)\b/gi)) {
+		steps.push(Number(match[1]));
+	}
+	return [...new Set(steps)];
 }
 
 export function markCompletedSteps(text: string, items: TodoItem[]): number {
 	const doneSteps = extractDoneSteps(text);
+	let marked = 0;
 	for (const step of doneSteps) {
-		const item = items.find((t) => t.step === step);
-		if (item) item.completed = true;
+		const item = items.find((t) => t.step === step && !t.completed);
+		if (item) {
+			item.completed = true;
+			marked++;
+		}
 	}
-	return doneSteps.length;
+	return marked;
+}
+
+// Whole-plan completion phrasing, used as a fallback when the model summarizes
+// without [DONE:n] tags. Only consulted on the run's final message (agent_end).
+export function allStepsComplete(message: string): boolean {
+	return (
+		/(?:all|every)\s+steps?\s+(?:are|is\s+)?(?:done|complete|completed|finished)/i.test(message) ||
+		/\b(?:the\s+)?plan\s+(?:is\s+)?(?:complete|completed|done)\b/i.test(message)
+	);
 }
