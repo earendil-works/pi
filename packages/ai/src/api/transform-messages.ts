@@ -231,5 +231,23 @@ export function transformMessages<TApi extends Api>(
 	// If the conversation ends with unresolved tool calls, synthesize results now.
 	closePendingToolCalls();
 
-	return result;
+	// Drop orphaned tool results (result without a matching call in the
+	// transmitted history). Truncation/compaction can cut the assistant turn
+	// carrying the call while keeping its result, and skipped error/aborted
+	// assistant turns are never emitted with their calls. Strict transports
+	// (OpenAI Responses: 400 "No tool call found for function call output")
+	// reject such outputs, so they must not be sent. Synthetic results added
+	// above match emitted calls by construction and are retained.
+	const knownCallIds = new Set<string>();
+	for (const msg of result) {
+		if (msg.role === "assistant") {
+			for (const block of (msg as AssistantMessage).content) {
+				if (block.type === "toolCall") knownCallIds.add((block as ToolCall).id);
+			}
+		}
+	}
+
+	return result.filter(
+		(msg) => msg.role !== "toolResult" || knownCallIds.has((msg as ToolResultMessage).toolCallId),
+	);
 }
