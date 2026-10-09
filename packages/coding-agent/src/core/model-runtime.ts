@@ -98,12 +98,23 @@ interface RegisteredVirtualModel {
 }
 
 interface ModelRuntimeSnapshot {
-	all: readonly Model<Api>[];
+	/** Catalog chat models whose provider has auth. */
 	available: readonly Model<Api>[];
-	configuredProviders: ReadonlySet<string>;
+	/** Auth check result of every provider that has auth. */
+	auth: ReadonlyMap<string, AuthCheck>;
+	/** Provider ids with a stored or runtime credential, including providers that are not registered. */
 	storedProviders: ReadonlySet<string>;
-	auth: ReadonlyMap<string, AuthCheck | undefined>;
 }
+
+/** Availability check that a later request can still widen because it has not started. */
+interface WaitingAvailabilityPass {
+	/** Provider ids to check, or undefined for every provider. */
+	providerIds: Set<string> | undefined;
+	result: Promise<ReadonlyMap<string, Error>>;
+}
+
+/** Upper bound for one availability pass, so a hung auth check or credential store cannot block callers. */
+const AVAILABILITY_PASS_TIMEOUT_MS = 10_000;
 
 export interface CreateModelRuntimeOptions {
 	/** Credential storage. Defaults to the file at authPath. */
@@ -183,15 +194,13 @@ export class ModelRuntime implements Models {
 	private readonly modelNetworkEnabled: boolean;
 	private config: ModelConfig;
 	private snapshot: ModelRuntimeSnapshot = {
-		all: [],
 		available: [],
-		configuredProviders: new Set(),
-		storedProviders: new Set(),
 		auth: new Map(),
+		storedProviders: new Set(),
 	};
-	private availabilityRefreshSeq = 0;
-	private availabilityErrorSeq = 0;
-	private readonly providerAvailabilitySeq = new Map<string, number>();
+	/** Settles when the last requested availability pass finishes. Passes run one at a time. */
+	private availabilityTail: Promise<unknown> = Promise.resolve();
+	private waitingAvailabilityPass: WaitingAvailabilityPass | undefined;
 	private availabilityError: string | undefined;
 	private readonly credentialOperations = new Map<string, Promise<unknown>>();
 
@@ -324,110 +333,105 @@ export class ModelRuntime implements Models {
 	}
 
 	private updateModelSnapshot(): void {
-		const all = [...this.models.getModels()];
 		this.snapshot = {
 			...this.snapshot,
-			all,
-			available: all.filter((model) => this.snapshot.configuredProviders.has(model.provider)),
+			available: this.models.getModels().filter((model) => this.snapshot.auth.has(model.provider)),
 		};
 	}
 
-	private async runAvailabilityRefresh(seq: number, errorSeq: number, signal: AbortSignal): Promise<void> {
-		const providers = this.models.getProviders();
-		const [available, checks, credentials] = await Promise.all([
-			this.models.getAvailable(undefined, { signal }),
-			Promise.all(
-				providers.map(
-					async (provider): Promise<[string, AuthCheck | undefined]> => [
-						provider.id,
-						await this.models.checkAuth(provider.id, { signal }),
-					],
-				),
-			),
-			this.credentials.list({ signal }),
-		]);
-		if (seq !== this.availabilityRefreshSeq) return;
-		const auth = new Map(checks);
-		const configuredProviders = new Set(
-			checks
-				.filter((entry): entry is [string, AuthCheck] => entry[1] !== undefined)
-				.map(([providerId]) => providerId),
-		);
-		this.snapshot = {
-			all: [...this.models.getModels()],
-			available: [...available],
-			configuredProviders,
-			storedProviders: new Set(credentials.map((entry) => entry.providerId)),
-			auth,
-		};
-		if (errorSeq === this.availabilityErrorSeq) this.availabilityError = undefined;
-	}
-
-	private queueAvailabilityRefresh(signal?: AbortSignal): Promise<void> {
-		const seq = ++this.availabilityRefreshSeq;
-		for (const [providerId, providerSeq] of this.providerAvailabilitySeq) {
-			this.providerAvailabilitySeq.set(providerId, providerSeq + 1);
+	/**
+	 * Check auth for `providerIds`, or for every provider when undefined, and resolve with the checks that
+	 * failed. Passes run one at a time, so the last pass to save is always the newest. A request joins the
+	 * waiting pass when there is one: it has not read anything yet, so it will see the requester's changes.
+	 * The caller's signal only stops its own wait; the shared pass keeps running for the other callers.
+	 */
+	private requestAvailabilityPass(
+		providerIds: readonly string[] | undefined,
+		signal?: AbortSignal,
+	): Promise<ReadonlyMap<string, Error>> {
+		const waiting = this.waitingAvailabilityPass;
+		if (waiting) {
+			if (!providerIds) waiting.providerIds = undefined;
+			else for (const id of providerIds) waiting.providerIds?.add(id);
+			return raceWithAbortSignal(waiting.result, signal);
 		}
-		const errorSeq = ++this.availabilityErrorSeq;
-		const effectiveSignal = operationSignal(signal);
-		return this.runAvailabilityRefresh(seq, errorSeq, effectiveSignal).catch((error) => {
-			if (errorSeq === this.availabilityErrorSeq && !effectiveSignal.aborted) {
-				this.availabilityError = error instanceof Error ? error.message : String(error);
-			}
-			throw error;
-		});
+		const pass: WaitingAvailabilityPass = {
+			providerIds: providerIds && new Set(providerIds),
+			result: this.availabilityTail.then(() => {
+				this.waitingAvailabilityPass = undefined;
+				return this.runAvailabilityPass(pass.providerIds);
+			}),
+		};
+		this.waitingAvailabilityPass = pass;
+		this.availabilityTail = pass.result.catch(() => {});
+		return raceWithAbortSignal(pass.result, signal);
 	}
 
-	private async refreshProviderAvailability(providerId: string, signal: AbortSignal): Promise<void> {
-		// Invalidate any full availability pass that started before this credential change.
-		++this.availabilityRefreshSeq;
-		const providerSeq = (this.providerAvailabilitySeq.get(providerId) ?? 0) + 1;
-		this.providerAvailabilitySeq.set(providerId, providerSeq);
-		const errorSeq = ++this.availabilityErrorSeq;
+	/**
+	 * A provider whose check fails or times out keeps its previous entry and is reported in the result.
+	 * A failed credential list fails the whole pass without saving anything.
+	 */
+	private async runAvailabilityPass(
+		providerIds: ReadonlySet<string> | undefined,
+	): Promise<ReadonlyMap<string, Error>> {
+		const controller = new AbortController();
+		const timeout = setTimeout(
+			() => controller.abort(new Error(`Availability check timed out after ${AVAILABILITY_PASS_TIMEOUT_MS} ms`)),
+			AVAILABILITY_PASS_TIMEOUT_MS,
+		);
+		const signal = controller.signal;
 		try {
-			const [available, auth, credential] = await Promise.all([
-				this.models.getAvailable(providerId, { signal }),
-				this.models.checkAuth(providerId, { signal }),
-				this.credentials.read(providerId, { signal }),
+			const ids = providerIds ? [...providerIds] : this.models.getProviders().map((provider) => provider.id);
+			const [credentials, results] = await Promise.all([
+				raceWithAbortSignal(this.credentials.list({ signal }), signal),
+				Promise.all(
+					ids.map(async (id) => {
+						try {
+							// Provider checks run extension code that may ignore the signal.
+							const [check, available] = await raceWithAbortSignal(
+								Promise.all([this.models.checkAuth(id, { signal }), this.models.getAvailable(id, { signal })]),
+								signal,
+							);
+							return { id, check, available };
+						} catch (error) {
+							return { id, error: error instanceof Error ? error : new Error(String(error)) };
+						}
+					}),
+				),
 			]);
-			signal.throwIfAborted();
-			if (this.providerAvailabilitySeq.get(providerId) !== providerSeq) return;
-			const configuredProviders = new Set(this.snapshot.configuredProviders);
-			const storedProviders = new Set(this.snapshot.storedProviders);
-			const authByProvider = new Map(this.snapshot.auth);
-			if (auth) {
-				configuredProviders.add(providerId);
-				authByProvider.set(providerId, auth);
-			} else {
-				configuredProviders.delete(providerId);
-				authByProvider.delete(providerId);
+			const auth = new Map(this.snapshot.auth);
+			const checkedAvailable = new Map<string, readonly Model<Api>[]>();
+			const errors = new Map<string, Error>();
+			for (const result of results) {
+				if (result.error) {
+					errors.set(result.id, result.error);
+					continue;
+				}
+				checkedAvailable.set(result.id, result.available);
+				if (result.check) auth.set(result.id, result.check);
+				else auth.delete(result.id);
 			}
-			if (credential) storedProviders.add(providerId);
-			else storedProviders.delete(providerId);
-			const all = [...this.models.getModels()];
-			const availableById = new Map(
-				[...this.snapshot.available.filter((model) => model.provider !== providerId), ...available].map((model) => [
-					`${model.provider}\0${model.id}`,
-					model,
-				]),
-			);
+			for (const id of auth.keys()) {
+				if (!this.models.getProvider(id)) auth.delete(id);
+			}
+			const previousAvailable = Map.groupBy(this.snapshot.available, (model) => model.provider);
 			this.snapshot = {
-				all,
-				available: all.flatMap((model) => availableById.get(`${model.provider}\0${model.id}`) ?? []),
-				configuredProviders,
-				storedProviders,
-				auth: authByProvider,
+				available: this.models
+					.getProviders()
+					.flatMap(({ id }) =>
+						auth.has(id) ? (checkedAvailable.get(id) ?? previousAvailable.get(id) ?? []) : [],
+					),
+				auth,
+				storedProviders: new Set(credentials.map((entry) => entry.providerId)),
 			};
-			if (errorSeq === this.availabilityErrorSeq) this.availabilityError = undefined;
+			this.availabilityError =
+				errors.size > 0 ? [...errors.values()].map((error) => error.message).join("\n") : undefined;
+			return errors;
 		} catch (error) {
-			if (
-				this.providerAvailabilitySeq.get(providerId) === providerSeq &&
-				errorSeq === this.availabilityErrorSeq &&
-				!signal.aborted
-			) {
-				this.availabilityError = error instanceof Error ? error.message : String(error);
-			}
+			this.availabilityError = error instanceof Error ? error.message : String(error);
 			throw error;
+		} finally {
+			clearTimeout(timeout);
 		}
 	}
 
@@ -480,21 +484,11 @@ export class ModelRuntime implements Models {
 	}
 
 	async getAvailable(providerId?: string, options?: AuthOperationOptions): Promise<readonly Model<Api>[]> {
-		if (providerId) {
-			const errorSeq = ++this.availabilityErrorSeq;
-			try {
-				const available = await this.models.getAvailable(providerId, options);
-				if (errorSeq === this.availabilityErrorSeq) this.availabilityError = undefined;
-				return available;
-			} catch (error) {
-				if (errorSeq === this.availabilityErrorSeq && !options?.signal?.aborted) {
-					this.availabilityError = error instanceof Error ? error.message : String(error);
-				}
-				throw error;
-			}
-		}
-		await this.queueAvailabilityRefresh(options?.signal);
-		return this.snapshot.available;
+		const errors = await this.requestAvailabilityPass(providerId ? [providerId] : undefined, options?.signal);
+		if (!providerId) return this.snapshot.available;
+		const error = errors.get(providerId);
+		if (error) throw error;
+		return this.snapshot.available.filter((model) => model.provider === providerId);
 	}
 
 	getAvailableSnapshot(): readonly Model<Api>[] {
@@ -542,7 +536,7 @@ export class ModelRuntime implements Models {
 	}
 
 	hasConfiguredAuth(providerId: string): boolean {
-		return this.snapshot.configuredProviders.has(providerId);
+		return this.snapshot.auth.has(providerId);
 	}
 
 	getAuth(providerId: string, overrides?: ModelRuntimeAuthOverrides): Promise<AuthResult | undefined>;
@@ -605,7 +599,8 @@ export class ModelRuntime implements Models {
 			const refreshError = result.errors.get(providerId);
 			if (refreshError) throw refreshError;
 			this.updateModelSnapshot();
-			await this.refreshProviderAvailability(providerId, signal);
+			const availabilityError = (await this.requestAvailabilityPass([providerId], signal)).get(providerId);
+			if (availabilityError) throw availabilityError;
 		} catch (cause) {
 			throw new CredentialSynchronizationError(providerId, operation, credential, { cause });
 		}
@@ -859,23 +854,18 @@ export class ModelRuntime implements Models {
 		};
 		const errors = new Map(result.errors);
 		this.updateModelSnapshot();
-		if (options.providers) {
-			await Promise.all(
-				[...new Set(options.providers)].map(async (providerId) => {
-					try {
-						await this.refreshProviderAvailability(providerId, operationSignal(options.signal));
-					} catch (error) {
-						if (!options.signal?.aborted) {
-							errors.set(providerId, error instanceof Error ? error : new Error(String(error)));
-						}
-					}
-				}),
-			);
-		} else {
-			try {
-				await this.queueAvailabilityRefresh(options.signal);
-			} catch {
-				// Availability errors are recorded by the latest pass; refreshed models remain usable.
+		try {
+			const availabilityErrors = await this.requestAvailabilityPass(options.providers, options.signal);
+			for (const providerId of options.providers ?? []) {
+				const error = availabilityErrors.get(providerId);
+				if (error) errors.set(providerId, error);
+			}
+		} catch (error) {
+			// A failed pass is recorded in availabilityError; refreshed models remain usable.
+			if (options.providers && !options.signal?.aborted) {
+				for (const providerId of options.providers) {
+					errors.set(providerId, error instanceof Error ? error : new Error(String(error)));
+				}
 			}
 		}
 		return { aborted: result.aborted || (options.signal?.aborted ?? false), errors };
@@ -906,16 +896,13 @@ export class ModelRuntime implements Models {
 		type: AuthType,
 	): void {
 		if (!this.snapshot.storedProviders.has(providerId) && !configuredStatus?.configured) return;
-		const configuredProviders = new Set(this.snapshot.configuredProviders).add(providerId);
-		const auth = new Map(this.snapshot.auth);
 		// Never clobber a real check result.
-		if (!auth.get(providerId)) auth.set(providerId, { type, source: "configured provider" });
+		if (this.snapshot.auth.has(providerId)) return;
 		this.snapshot = {
 			...this.snapshot,
-			auth,
-			configuredProviders,
-			available: this.snapshot.all.filter((model) => configuredProviders.has(model.provider)),
+			auth: new Map(this.snapshot.auth).set(providerId, { type, source: "configured provider" }),
 		};
+		this.updateModelSnapshot();
 	}
 
 	registerProvider(providerId: string, config: ProviderConfigInput): void {
@@ -964,12 +951,11 @@ export class ModelRuntime implements Models {
 		const models = this.virtualModels.get(providerId) ?? new Map<string, RegisteredVirtualModel>();
 		models.set(id, { model: createVirtualModel(definition), route: (request) => definition.route(request) });
 		this.virtualModels.set(providerId, models);
-		if (!this.recomposeProvider(providerId) && !this.snapshot.configuredProviders.has(providerId)) {
+		if (!this.recomposeProvider(providerId) && !this.snapshot.auth.has(providerId)) {
 			// A provider of only virtual models needs no credentials. Mark it configured now: session
 			// restore checks auth before the refresh below lands.
 			const auth = new Map(this.snapshot.auth).set(providerId, { type: "api_key", source: "virtual" });
-			const configuredProviders = new Set(this.snapshot.configuredProviders).add(providerId);
-			this.snapshot = { ...this.snapshot, auth, configuredProviders };
+			this.snapshot = { ...this.snapshot, auth };
 		}
 		this.updateModelSnapshot();
 		void this.refresh({ allowNetwork: false });
