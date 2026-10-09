@@ -1394,6 +1394,10 @@ export class SettingsManager {
 		return this.settings.autocompleteMaxVisible ?? SETTINGS_DEFAULTS.autocompleteMaxVisible;
 	}
 
+	getEditorClickMovesCursor(): boolean {
+		return this.settings.editorClickMovesCursor ?? process.env.PI_EDITOR_CLICK_MOVES_CURSOR !== "0";
+	}
+
 	setAutocompleteMaxVisible(maxVisible: number): void {
 		this.globalSettings.autocompleteMaxVisible = Math.max(3, Math.min(20, Math.floor(maxVisible)));
 		this.markModified("autocompleteMaxVisible");

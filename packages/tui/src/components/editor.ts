@@ -243,6 +243,8 @@ export interface EditorTheme {
 export interface EditorOptions {
 	paddingX?: number;
 	autocompleteMaxVisible?: number;
+	/** Left-click positions the cursor; default true. */
+	clickMovesCursor?: boolean;
 }
 
 const SLASH_COMMAND_SELECT_LIST_LAYOUT: SelectListLayoutOptions = {
@@ -307,6 +309,7 @@ export class Editor implements Component, Focusable {
 	protected tui: TUI;
 	private theme: EditorTheme;
 	private paddingX: number = 0;
+	private clickMovesCursor: boolean;
 
 	// Store last render geometry for cursor navigation and mouse hit-testing.
 	private lastWidth: number = 80;
@@ -379,6 +382,7 @@ export class Editor implements Component, Focusable {
 		this.paddingX = Number.isFinite(paddingX) ? Math.max(0, Math.floor(paddingX)) : 0;
 		const maxVisible = options.autocompleteMaxVisible ?? 5;
 		this.autocompleteMaxVisible = Number.isFinite(maxVisible) ? Math.max(3, Math.min(20, Math.floor(maxVisible))) : 5;
+		this.clickMovesCursor = options.clickMovesCursor ?? true;
 	}
 
 	/** Set of currently valid paste IDs, for marker-aware segmentation. */
@@ -401,6 +405,14 @@ export class Editor implements Component, Focusable {
 			this.paddingX = newPadding;
 			this.tui.requestRender();
 		}
+	}
+
+	getClickMovesCursor(): boolean {
+		return this.clickMovesCursor;
+	}
+
+	setClickMovesCursor(enabled: boolean): void {
+		this.clickMovesCursor = enabled;
 	}
 
 	getAutocompleteMaxVisible(): number {
@@ -656,7 +668,9 @@ export class Editor implements Component, Focusable {
 		// The renderer synthesizes a click when press and release land on the same
 		// cell without movement, which is the gesture that positions the cursor.
 		if (event.type !== "click" || event.button !== "left") return undefined;
-		if (event.y <= 0 || event.y > this.renderedVisibleLineCount) return { handled: true, focus: true };
+		if (!this.clickMovesCursor || event.y <= 0 || event.y > this.renderedVisibleLineCount) {
+			return { handled: true, focus: true };
+		}
 
 		const visualLines = this.buildVisualLineMap(this.lastWidth);
 		const visualLineIndex = this.scrollOffset + event.y - 1;

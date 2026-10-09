@@ -648,6 +648,7 @@ export class InteractiveMode {
 		this.defaultEditor = new CustomEditor(this.ui, getEditorTheme(), this.keybindings, {
 			paddingX: editorPaddingX,
 			autocompleteMaxVisible,
+			clickMovesCursor: this.settingsManager.getEditorClickMovesCursor(),
 			embedWorkingStatus: true,
 		});
 		this.editor = this.defaultEditor;
@@ -2080,10 +2081,13 @@ export class InteractiveMode {
 		const editorPaddingX = this.settingsManager.getEditorPaddingX();
 		const autocompleteMaxVisible = this.settingsManager.getAutocompleteMaxVisible();
 		this.defaultEditor.setPaddingX(editorPaddingX);
+		const clickMovesCursor = this.settingsManager.getEditorClickMovesCursor();
 		this.defaultEditor.setAutocompleteMaxVisible(autocompleteMaxVisible);
+		this.defaultEditor.setClickMovesCursor(clickMovesCursor);
 		if (this.editor !== this.defaultEditor) {
 			this.editor.setPaddingX?.(editorPaddingX);
 			this.editor.setAutocompleteMaxVisible?.(autocompleteMaxVisible);
+			this.editor.setClickMovesCursor?.(clickMovesCursor);
 		}
 	}
 
@@ -2902,6 +2906,7 @@ export class InteractiveMode {
 			if (newEditor.setAutocompleteMaxVisible !== undefined) {
 				newEditor.setAutocompleteMaxVisible(this.defaultEditor.getAutocompleteMaxVisible());
 			}
+			newEditor.setClickMovesCursor?.(this.defaultEditor.getClickMovesCursor());
 
 			// Set autocomplete if supported
 			if (newEditor.setAutocompleteProvider && this.autocompleteProvider) {

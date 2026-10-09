@@ -371,6 +371,31 @@ describe("SettingsManager", () => {
 		});
 	});
 
+	describe("editor click cursor", () => {
+		const originalEnv = process.env.PI_EDITOR_CLICK_MOVES_CURSOR;
+
+		afterEach(() => {
+			if (originalEnv === undefined) delete process.env.PI_EDITOR_CLICK_MOVES_CURSOR;
+			else process.env.PI_EDITOR_CLICK_MOVES_CURSOR = originalEnv;
+		});
+
+		it("defaults to true and lets the env var disable it", () => {
+			delete process.env.PI_EDITOR_CLICK_MOVES_CURSOR;
+			expect(SettingsManager.inMemory().getEditorClickMovesCursor()).toBe(true);
+
+			process.env.PI_EDITOR_CLICK_MOVES_CURSOR = "0";
+			expect(SettingsManager.inMemory().getEditorClickMovesCursor()).toBe(false);
+		});
+
+		it("lets the settings value override the env var", () => {
+			process.env.PI_EDITOR_CLICK_MOVES_CURSOR = "0";
+			expect(SettingsManager.inMemory({ editorClickMovesCursor: true }).getEditorClickMovesCursor()).toBe(true);
+
+			delete process.env.PI_EDITOR_CLICK_MOVES_CURSOR;
+			expect(SettingsManager.inMemory({ editorClickMovesCursor: false }).getEditorClickMovesCursor()).toBe(false);
+		});
+	});
+
 	describe("retry settings", () => {
 		it("defaults and overrides agent retry delay cap", () => {
 			expect(SettingsManager.inMemory().getRetrySettings()).toEqual({

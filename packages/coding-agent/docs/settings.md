@@ -100,6 +100,7 @@ See [Compaction Reference](compaction.md) for trigger, summarization, and valida
 | `outputPad` | `0 \| 1` | `1` | Horizontal transcript padding for messages, tool output, `!` command output, and summary blocks. |
 | `autocompleteMaxVisible` | number | `5` | Visible autocomplete entries, from 3 to 20. |
 | `showHardwareCursor` | boolean | `false` | Use the terminal cursor instead of Pi's drawn cursor. Pi still positions it for input methods. |
+| `editorClickMovesCursor` | boolean | `true` | Left-click positions the input cursor. `false` keeps focus and mouse selection but ignores clicks for cursor placement. Overrides `PI_EDITOR_CLICK_MOVES_CURSOR`. |
 | `terminal.showImages` | boolean | `true` | Display inline images when supported. |
 | `terminal.imageWidthCells` | number | `60` | Preferred inline image width in terminal cells. |
 | `terminal.clearOnShrink` | boolean | `false` | Clear empty rows when rendered content shrinks. |
