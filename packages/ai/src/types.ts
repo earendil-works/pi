@@ -458,10 +458,15 @@ export interface Usage {
 	reasoning?: number;
 	totalTokens: number;
 	cost: {
+		/** Catalog-derived input cost. */
 		input: number;
+		/** Catalog-derived output cost. */
 		output: number;
+		/** Catalog-derived cache-read cost. */
 		cacheRead: number;
+		/** Catalog-derived cache-write cost. */
 		cacheWrite: number;
+		/** Best available total: provider-reported billed cost when supported, otherwise the catalog estimate. */
 		total: number;
 	};
 }
