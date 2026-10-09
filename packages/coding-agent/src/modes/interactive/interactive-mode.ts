@@ -90,6 +90,7 @@ import type {
 	MarkdownTransformer,
 	ProjectTrustContext,
 	UserBashEventResult,
+	WidgetPlacement,
 	WorkingIndicatorOptions,
 } from "../../core/extensions/index.ts";
 import { FooterDataProvider, type ReadonlyFooterDataProvider } from "../../core/footer-data-provider.ts";
@@ -140,7 +141,7 @@ import { AssistantMessageComponent } from "./components/assistant-message.ts";
 import { BashExecutionComponent } from "./components/bash-execution.ts";
 import { BranchSummaryMessageComponent } from "./components/branch-summary-message.ts";
 import { CompactionSummaryMessageComponent } from "./components/compaction-summary-message.ts";
-import { CustomEditor } from "./components/custom-editor.ts";
+import { CustomEditor, type EditorBorderContent, type EditorBorderSlot } from "./components/custom-editor.ts";
 import { CustomEntryComponent } from "./components/custom-entry.ts";
 import { CustomMessageComponent } from "./components/custom-message.ts";
 import { DynamicBorder } from "./components/dynamic-border.ts";
@@ -226,6 +227,44 @@ function isWorkingStatusEditor(editor: EditorComponent): editor is WorkingStatus
 		"setWorkingStatusIndicator" in editor &&
 		typeof editor.setWorkingStatusIndicator === "function"
 	);
+}
+
+interface BorderContentEditor extends EditorComponent {
+	setBorderContent(slot: EditorBorderSlot, key: string, content: EditorBorderContent | undefined): void;
+	clearBorderContent(): void;
+}
+
+function isBorderContentEditor(editor: EditorComponent): editor is BorderContentEditor {
+	return (
+		"setBorderContent" in editor &&
+		typeof editor.setBorderContent === "function" &&
+		"clearBorderContent" in editor &&
+		typeof editor.clearBorderContent === "function"
+	);
+}
+
+/** The border slot a border placement renders in, or undefined for above/below placements. */
+function borderSlotOf(placement: WidgetPlacement): EditorBorderSlot | undefined {
+	switch (placement) {
+		case "borderTopLeft":
+			return "topLeft";
+		case "borderTopRight":
+			return "topRight";
+		case "borderBottomLeft":
+			return "bottomLeft";
+		case "borderBottomRight":
+			return "bottomRight";
+		default:
+			return undefined;
+	}
+}
+
+interface ExtensionWidget {
+	placement: WidgetPlacement;
+	/** Rendered above/below the editor, and the fallback for border placements on editors without border slots. */
+	component: Component & { dispose?(): void };
+	/** One-line rendering used by border placements. */
+	borderContent: EditorBorderContent;
 }
 
 function isExpandable(obj: unknown): obj is Expandable {
@@ -566,9 +605,8 @@ export class InteractiveMode {
 		unsubscribe: () => void;
 	}>();
 
-	// Extension widgets (components rendered above/below the editor)
-	private extensionWidgetsAbove = new Map<string, Component & { dispose?(): void }>();
-	private extensionWidgetsBelow = new Map<string, Component & { dispose?(): void }>();
+	// Extension widgets (rendered above/below the editor or in its border slots)
+	private extensionWidgets = new Map<string, ExtensionWidget>();
 	private widgetContainerAbove!: Container;
 	private widgetContainerBelow!: Container;
 
@@ -2401,14 +2439,9 @@ export class InteractiveMode {
 		options?: ExtensionWidgetOptions,
 	): void {
 		const placement = options?.placement ?? "aboveEditor";
-		const removeExisting = (map: Map<string, Component & { dispose?(): void }>) => {
-			const existing = map.get(key);
-			if (existing?.dispose) existing.dispose();
-			map.delete(key);
-		};
-
-		removeExisting(this.extensionWidgetsAbove);
-		removeExisting(this.extensionWidgetsBelow);
+		const existing = this.extensionWidgets.get(key);
+		if (existing?.component.dispose) existing.component.dispose();
+		this.extensionWidgets.delete(key);
 
 		if (content === undefined) {
 			this.renderWidgets();
@@ -2416,6 +2449,7 @@ export class InteractiveMode {
 		}
 
 		let component: Component & { dispose?(): void };
+		let borderContent: EditorBorderContent;
 
 		if (Array.isArray(content)) {
 			// Wrap string array in a Container with Text components
@@ -2427,25 +2461,26 @@ export class InteractiveMode {
 				container.addChild(new ThemedText(() => theme.fg("muted", "... (widget truncated)"), 1, 0));
 			}
 			component = container;
+			// Border placements show one line: the first one.
+			borderContent = { render: () => content[0] ?? "" };
 		} else {
 			// Factory function - create component
 			component = content(this.ui, theme);
+			borderContent = {
+				render: (width) => (component.render(width)[0] ?? "").trimEnd(),
+				handleMouse: (event) => component.handleMouse?.(event),
+			};
 		}
 
-		const targetMap = placement === "belowEditor" ? this.extensionWidgetsBelow : this.extensionWidgetsAbove;
-		targetMap.set(key, component);
+		this.extensionWidgets.set(key, { placement, component, borderContent });
 		this.renderWidgets();
 	}
 
 	private clearExtensionWidgets(): void {
-		for (const widget of this.extensionWidgetsAbove.values()) {
-			widget.dispose?.();
+		for (const widget of this.extensionWidgets.values()) {
+			widget.component.dispose?.();
 		}
-		for (const widget of this.extensionWidgetsBelow.values()) {
-			widget.dispose?.();
-		}
-		this.extensionWidgetsAbove.clear();
-		this.extensionWidgetsBelow.clear();
+		this.extensionWidgets.clear();
 		this.renderWidgets();
 	}
 
@@ -2486,24 +2521,41 @@ export class InteractiveMode {
 	private static readonly MAX_WIDGET_LINES = 10;
 
 	/**
-	 * Render all extension widgets to the widget container.
+	 * Route all extension widgets to the widget containers and editor border slots.
 	 */
 	private renderWidgets(): void {
 		if (!this.widgetContainerAbove || !this.widgetContainerBelow) return;
-		this.renderWidgetContainer(this.widgetContainerAbove, this.extensionWidgetsAbove, true, true);
-		this.renderWidgetContainer(this.widgetContainerBelow, this.extensionWidgetsBelow, false, false);
+		for (const editor of [this.editor, this.defaultEditor]) {
+			if (isBorderContentEditor(editor)) editor.clearBorderContent();
+		}
+
+		const above: Component[] = [];
+		const below: Component[] = [];
+		for (const [key, widget] of this.extensionWidgets) {
+			const slot = borderSlotOf(widget.placement);
+			if (slot !== undefined && isBorderContentEditor(this.editor)) {
+				this.editor.setBorderContent(slot, key, widget.borderContent);
+				continue;
+			}
+			// Editors without border slots show border widgets beside the editor on the same edge.
+			const target =
+				widget.placement === "belowEditor" || slot === "bottomLeft" || slot === "bottomRight" ? below : above;
+			target.push(widget.component);
+		}
+		this.renderWidgetContainer(this.widgetContainerAbove, above, true, true);
+		this.renderWidgetContainer(this.widgetContainerBelow, below, false, false);
 		this.ui.requestRender();
 	}
 
 	private renderWidgetContainer(
 		container: Container,
-		widgets: Map<string, Component & { dispose?(): void }>,
+		widgets: Component[],
 		spacerWhenEmpty: boolean,
 		leadingSpacer: boolean,
 	): void {
 		container.clear();
 
-		if (widgets.size === 0) {
+		if (widgets.length === 0) {
 			if (spacerWhenEmpty) {
 				container.addChild(new Spacer(1));
 			}
@@ -2513,7 +2565,7 @@ export class InteractiveMode {
 		if (leadingSpacer) {
 			container.addChild(new Spacer(1));
 		}
-		for (const component of widgets.values()) {
+		for (const component of widgets) {
 			container.addChild(component);
 		}
 	}
@@ -2945,6 +2997,7 @@ export class InteractiveMode {
 				this.statusContainer.addChild(this.activeStatusIndicator);
 			}
 		}
+		this.renderWidgets();
 		this.ui.setFocus(this.editor as Component);
 		this.ui.requestRender();
 	}
