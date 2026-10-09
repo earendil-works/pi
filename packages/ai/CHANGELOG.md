@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added Cloudflare AI Gateway custom domains (`CLOUDFLARE_GATEWAY_DOMAIN`) and Cloudflare Access authentication (`CLOUDFLARE_ACCESS_CLIENT_ID` + `CLOUDFLARE_ACCESS_CLIENT_SECRET`, or `CLOUDFLARE_ACCESS_TOKEN`). With a custom domain, `CLOUDFLARE_API_KEY`, `CLOUDFLARE_ACCOUNT_ID`, and `CLOUDFLARE_GATEWAY_ID` are optional ([#10627](https://github.com/earendil-works/pi/issues/10627))
+
 ### Fixed
 
 - Fixed Mistral streams being aborted mid-generation (e.g. during long thinking) after the request timeout; the timeout now applies only to waiting for response headers ([#10609](https://github.com/earendil-works/pi/issues/10609))

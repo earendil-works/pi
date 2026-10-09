@@ -179,7 +179,7 @@ Pi also supports ECS task credentials and IRSA through the standard `AWS_CONTAIN
 
 ### Cloudflare AI Gateway
 
-The gateway requires a token, account ID, and gateway ID:
+The gateway requires an account ID and gateway ID. The token is optional for unauthenticated gateways:
 
 ```bash
 export CLOUDFLARE_API_KEY=...
@@ -189,7 +189,19 @@ export CLOUDFLARE_GATEWAY_ID=...
 
 The account and gateway IDs can come from the process environment or the credential's `env` object in `auth.json`.
 
-`CLOUDFLARE_API_KEY` authenticates Pi to the gateway. Upstream access can use Cloudflare unified billing, credentials stored in the gateway, or an `Authorization` header configured for the provider in `models.json`.
+`CLOUDFLARE_API_KEY` authenticates Pi to the gateway.
+
+For a [custom domain](https://developers.cloudflare.com/ai-gateway/configuration/custom-domains/), set `CLOUDFLARE_GATEWAY_DOMAIN` (a hostname such as `ai.example.com` or an `https://` URL). The domain identifies the account and gateway, so `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_GATEWAY_ID` are not needed, and `CLOUDFLARE_API_KEY` is optional for unauthenticated gateways:
+
+```bash
+export CLOUDFLARE_GATEWAY_DOMAIN=ai.example.com
+```
+
+If the domain is behind [Cloudflare Access](https://developers.cloudflare.com/ai-gateway/configuration/cloudflare-access/), set a service token (`CLOUDFLARE_ACCESS_CLIENT_ID` and `CLOUDFLARE_ACCESS_CLIENT_SECRET`) or a user token (`CLOUDFLARE_ACCESS_TOKEN`, sent as `cf-access-token`). With Cloudflare WARP, the device identity is used and no Access variables are needed.
+
+`/login` also asks for these options: the endpoint (default or custom domain), an optional AI Gateway token, and, for custom domains, the Cloudflare Access method.
+
+Upstream access can use Cloudflare unified billing, credentials stored in the gateway, or an `Authorization` header configured for the provider in `models.json`.
 
 ### Cloudflare Workers AI
 

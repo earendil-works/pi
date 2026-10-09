@@ -6,6 +6,10 @@
 
 - Moved the published theme JSON Schema to `schemas/theme.schema.json` and made theme loading reject unknown top-level properties and unknown properties under `colors` or `export`. Update existing theme `$schema` references to the new path, define reusable custom colors under `vars`, and remove unsupported metadata.
 
+### Added
+
+- Added Cloudflare AI Gateway custom domains (`CLOUDFLARE_GATEWAY_DOMAIN`) and Cloudflare Access authentication; gateway credentials are optional with a custom domain. See [docs/providers.md#cloudflare-ai-gateway](docs/providers.md#cloudflare-ai-gateway) ([#10627](https://github.com/earendil-works/pi/issues/10627))
+
 ### Changed
 
 - Changed the `showHardwareCursor` setting to use only the terminal cursor instead of also drawing Pi's reverse-video cursor
