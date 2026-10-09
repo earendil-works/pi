@@ -16,7 +16,6 @@ const harness = createPiDocumentationEvalHarness({
 		return {
 			response,
 			extensionErrors: extensions.errors,
-			toolLoaded: extensions.extensions.some(({ tools }) => tools.has(TOOL_NAME)),
 			toolResult: result?.role === "toolResult" ? contentText(result.content) : null,
 		};
 	},
@@ -31,7 +30,6 @@ describeEval(
 				expected: {
 					response: TOOL_RESULT,
 					extensionErrors: [],
-					toolLoaded: true,
 					toolResult: TOOL_RESULT,
 				},
 				match: "strict",

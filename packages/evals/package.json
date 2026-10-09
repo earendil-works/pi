@@ -7,6 +7,7 @@
 		"clean": "shx rm -rf .eval",
 		"eval": "npm run eval:host && npm run eval:docs --",
 		"eval:host": "vitest run --config vitest.evals.config.ts --project host",
+		"eval:audit": "vitest run --config vitest.evals.config.ts --project audit",
 		"eval:docs": "node --experimental-strip-types src/cli.ts",
 		"test": "vitest run --config vitest.test.config.ts"
 	},
