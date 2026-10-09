@@ -2514,6 +2514,15 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 			supportsStore: false,
 			supportsReasoningEffort: true,
 		};
+		// DashScope compatible-mode accepts Anthropic-style cache_control markers for
+		// explicit context cache on the Qwen series (input billed at 10% on hit).
+		// Third-party models on the same endpoint are not on the documented cache
+		// support list, so the marker is only enabled for verified qwen* models.
+		// https://www.alibabacloud.com/help/en/model-studio/context-cache
+		const qwenTokenPlanCachedCompat: OpenAICompletionsCompat = {
+			...qwenTokenPlanCompat,
+			cacheControlFormat: "anthropic",
+		};
 		const qwenTokenPlanVariants = [
 			{
 				source: "alibaba-token-plan",
@@ -2549,6 +2558,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					(QWEN_TOKEN_PLAN_REASONING_EFFORT_FALLBACK_MODEL_IDS.has(modelId)
 						? QWEN_TOKEN_PLAN_FALLBACK_THINKING_LEVEL_MAP
 						: undefined);
+				const baseCompat = modelId.startsWith("qwen") ? qwenTokenPlanCachedCompat : qwenTokenPlanCompat;
 
 				models.push({
 					id: modelId,
@@ -2557,8 +2567,8 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					provider,
 					baseUrl,
 					compat: thinkingLevelMap
-						? qwenTokenPlanCompat
-						: { ...qwenTokenPlanCompat, supportsReasoningEffort: false },
+						? baseCompat
+						: { ...baseCompat, supportsReasoningEffort: false },
 					...(thinkingLevelMap ? { thinkingLevelMap } : {}),
 					reasoning: m.reasoning === true,
 					input: m.modalities?.input?.includes("image") ? ["text", "image"] : ["text"],

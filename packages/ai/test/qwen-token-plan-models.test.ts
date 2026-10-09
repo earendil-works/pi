@@ -117,6 +117,20 @@ const QWEN38_MODEL_CASES: QwenTokenPlanModelCase[] = (
 	["qwen-token-plan", "qwen-token-plan-cn", "qwen-token-plan-individual"] as const
 ).flatMap((provider) => QWEN38_MODELS.map((modelId) => ({ provider, modelId })));
 
+// DashScope documents explicit context cache (Anthropic-style cache_control
+// markers) for the Qwen series on compatible-mode endpoints.
+// https://www.alibabacloud.com/help/en/model-studio/context-cache
+const QWEN_CACHE_MODEL_CASES: QwenTokenPlanModelCase[] = [
+	...(["qwen-token-plan", "qwen-token-plan-cn"] as const).flatMap((provider) =>
+		TEXT_MODELS.filter((modelId) => modelId.startsWith("qwen")).map((modelId) => ({ provider, modelId })),
+	),
+	...INDIVIDUAL_TEXT_MODELS.filter((modelId) => modelId.startsWith("qwen")).map((modelId) => ({
+		provider: "qwen-token-plan-individual" as const,
+		modelId,
+	})),
+];
+const QWEN_TOKEN_PLAN_THIRD_PARTY_MODEL_IDS = TEXT_MODELS.filter((modelId) => !modelId.startsWith("qwen"));
+
 describe("Qwen Token Plan models", () => {
 	// #9021
 	it("exposes exactly the documented Individual text models", () => {
@@ -198,6 +212,56 @@ describe("Qwen Token Plan models", () => {
 			});
 		},
 	);
+
+	it.each(QWEN_CACHE_MODEL_CASES)(
+		"enables Anthropic-style cache control for $provider/$modelId",
+		({ provider, modelId }) => {
+			const model = getModels(provider).find((candidate) => candidate.id === modelId);
+			expect(model).toBeDefined();
+			expect((model?.compat as { cacheControlFormat?: string } | undefined)?.cacheControlFormat).toBe("anthropic");
+		},
+	);
+
+	it.each(QWEN_TOKEN_PLAN_THIRD_PARTY_MODEL_IDS)(
+		"omits cache control for unverified third-party model %s",
+		(modelId) => {
+			const model = getModels("qwen-token-plan").find((candidate) => candidate.id === modelId);
+			expect(model).toBeDefined();
+			expect((model?.compat as { cacheControlFormat?: string } | undefined)?.cacheControlFormat).toBeUndefined();
+		},
+	);
+
+	it("sends cache_control markers on request payloads", async () => {
+		const model = getModels("qwen-token-plan-individual").find((candidate) => candidate.id === "qwen3.7-plus");
+		expect(model).toBeDefined();
+		if (!model) throw new Error("Missing model: qwen-token-plan-individual/qwen3.7-plus");
+
+		let payload: { messages?: Array<{ content?: unknown }> } | undefined;
+		await streamSimple(
+			model,
+			{
+				messages: [
+					{
+						role: "user",
+						content: "Hi",
+						timestamp: Date.now(),
+					},
+				],
+			},
+			{
+				apiKey: "test",
+				onPayload: (params) => {
+					payload = params as typeof payload;
+				},
+			},
+		).result();
+
+		const lastMessage = payload?.messages?.at(-1);
+		expect(Array.isArray(lastMessage?.content)).toBe(true);
+		expect((lastMessage?.content as Array<Record<string, unknown>>)[0]).toHaveProperty("cache_control", {
+			type: "ephemeral",
+		});
+	});
 
 	it.each(QWEN38_MODEL_CASES)(
 		"exposes qwen3.8 reasoning_effort levels for $provider/$modelId",
