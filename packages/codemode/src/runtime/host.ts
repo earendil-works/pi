@@ -234,7 +234,22 @@ class Execution {
 
 	private handleMessage(message: unknown): void {
 		if (this.finished) return;
-		if (!isWorkerToHostMessage(message)) throw new BridgeError("unknown message from the worker");
+		if (!isWorkerToHostMessage(message)) {
+			// Node's --watch sends dependency notifications on the worker channel (nodejs/node#65044).
+			if (typeof message === "object" && message !== null) {
+				const entries = Object.entries(message);
+				if (entries.length === 1) {
+					const [key, files] = entries[0];
+					if (
+						(key === "watch:import" || key === "watch:require") &&
+						Array.isArray(files) &&
+						files.every((file) => typeof file === "string")
+					)
+						return;
+				}
+			}
+			throw new BridgeError("unknown message from the worker");
+		}
 		switch (message.type) {
 			case "output":
 				this.output.push(message.item);

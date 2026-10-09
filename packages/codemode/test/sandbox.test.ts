@@ -656,6 +656,26 @@ describe("limits and lifetime", () => {
 		});
 	});
 
+	// #10725: Node's watch notifications can arrive before or between codemode messages.
+	it.each(["watch:import", "watch:require"])("ignores Node %s notifications between worker replies", async (key) => {
+		const sandbox = new CodemodeSandbox({ workerUrl: new URL("./fixtures/raw-worker.ts", import.meta.url) });
+		sandboxes.push(sandbox);
+		const result = await sandbox.execute(
+			JSON.stringify([
+				{ [key]: ["file:///worker.js"] },
+				{ type: "output", item: { type: "text", text: "hello" } },
+				{ [key]: ["file:///dependency.js"] },
+				{ type: "done", ok: true, value: "42", writes: '[["k", "1"]]' },
+			]),
+		);
+		expect(result).toMatchObject({
+			ok: true,
+			value: 42,
+			output: [{ type: "text", text: "hello" }],
+			storeWrites: { set: { k: 1 }, delete: [] },
+		});
+	});
+
 	// #10444: a malformed payload from the worker must fail the run as a sandbox error instead of
 	// throwing in the host's message listener and never settling.
 	it.each([
@@ -666,6 +686,10 @@ describe("limits and lifetime", () => {
 		[{ type: "done", ok: false, error: "5" }, "script error is not an object"],
 		[{ type: "done", ok: false, error: "{}" }, "script error is malformed"],
 		[{ type: "nonsense" }, "unknown message from the worker"],
+		[{ "watch:import": "file:///worker.js" }, "unknown message from the worker"],
+		[{ "watch:require": [42] }, "unknown message from the worker"],
+		[{ "watch:unknown": [] }, "unknown message from the worker"],
+		[{ "watch:import": [], type: "nonsense" }, "unknown message from the worker"],
 	])("reports a broken bridge as a sandbox error: %j", async (message, reason) => {
 		const sandbox = new CodemodeSandbox({ workerUrl: new URL("./fixtures/raw-worker.ts", import.meta.url) });
 		sandboxes.push(sandbox);
