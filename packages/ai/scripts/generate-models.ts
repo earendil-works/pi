@@ -235,6 +235,7 @@ const NVIDIA_OPENAI_COMPAT: OpenAICompletionsCompat = {
 	maxTokensField: "max_tokens",
 	supportsStrictMode: false,
 	supportsLongCacheRetention: false,
+	inlineSchemaRefs: true,
 };
 const NVIDIA_NIM_UNSUPPORTED_MODELS = new Set([
 	"abacusai/dracarys-llama-3.1-70b-instruct",
@@ -674,6 +675,7 @@ const OPENAI_COMPLETIONS_DEFAULT_COMPAT = {
 	chatTemplateArgs: {},
 	zaiToolStream: false,
 	supportsStrictMode: false,
+	inlineSchemaRefs: false,
 	supportsOpenAIGrammarTools: false,
 	supportsMidConvoSystemMessages: false,
 	supportsMidConvoToolAdditions: false,
@@ -779,6 +781,7 @@ function detectOpenAICompletionsCompat(model: Model<"openai-completions">): Open
 		zaiToolStream: false,
 		// Preserve built-in behavior as explicit metadata against the conservative runtime default.
 		supportsStrictMode: !isMoonshot && !isTogether && !isCloudflareAiGateway && !isNvidia && !isCerebras,
+		inlineSchemaRefs: isNvidia,
 		supportsOpenAIGrammarTools: false,
 		supportsMidConvoSystemMessages: false,
 		supportsMidConvoToolAdditions: false,

@@ -143,6 +143,38 @@ describe("validateToolArguments", () => {
 		expect(validateToolArguments(tool, toolCall)).toEqual({ value: null });
 	});
 
+	// https://github.com/earendil-works/pi/issues/10270
+	it("coerces and drops optional nulls through local references", () => {
+		const tool: Tool = {
+			name: "record",
+			description: "Record settings",
+			parameters: {
+				type: "object",
+				properties: { settings: { $ref: "#/$defs/Settings" } },
+				required: ["settings"],
+				$defs: {
+					Settings: {
+						type: "object",
+						properties: {
+							notifications: { type: "boolean" },
+							attempts: { type: "integer" },
+							label: { type: "string" },
+						},
+						required: ["notifications"],
+					},
+				},
+			} as Tool["parameters"],
+		};
+		const toolCall: ToolCall = {
+			type: "toolCall",
+			id: "tool-1",
+			name: "record",
+			arguments: { settings: { notifications: "false", attempts: "3", label: null } },
+		};
+
+		expect(validateToolArguments(tool, toolCall)).toEqual({ settings: { notifications: false, attempts: 3 } });
+	});
+
 	it("preserves a value that already matches a nullable union arm", () => {
 		const tool: Tool = {
 			name: "echo",

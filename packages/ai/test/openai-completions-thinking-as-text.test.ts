@@ -42,6 +42,7 @@ const compat = {
 	supportsThinkingTokenBudget: false,
 	thinkingTokenBudgetField: undefined,
 	supportsStrictMode: true,
+	inlineSchemaRefs: false,
 	supportsOpenAIGrammarTools: false,
 	supportsMidConvoSystemMessages: false,
 	supportsMidConvoToolAdditions: false,

@@ -34,6 +34,7 @@ const compat: Omit<Required<OpenAICompletionsCompat>, "thinkingTokenBudgetField"
 	supportsThinkingTokenBudget: false,
 	thinkingTokenBudgetField: undefined,
 	supportsStrictMode: true,
+	inlineSchemaRefs: false,
 	supportsOpenAIGrammarTools: false,
 	supportsMidConvoSystemMessages: false,
 	supportsMidConvoToolAdditions: false,

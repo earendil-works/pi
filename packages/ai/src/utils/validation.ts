@@ -2,6 +2,7 @@ import { Compile } from "typebox/compile";
 import type { TLocalizedValidationError } from "typebox/error";
 import { Value } from "typebox/value";
 import type { Tool, ToolCall } from "../types.ts";
+import { inlineLocalSchemaRefs } from "./json-schema-refs.ts";
 
 const validatorCache = new WeakMap<object, ReturnType<typeof Compile>>();
 const TYPEBOX_KIND = Symbol.for("TypeBox.Kind");
@@ -316,12 +317,14 @@ export function validateToolCall(tools: Tool[], toolCall: ToolCall): any {
  */
 export function validateToolArguments(tool: Tool, toolCall: ToolCall): any {
 	const args = structuredClone(toolCall.arguments);
-	normalizeOptionalNulls(args, tool.parameters as JsonSchemaObject);
-	Value.Convert(tool.parameters, args);
+	// Coercion does not follow references, so coerce against the inlined schema. It accepts the same values.
+	const coercionSchema = inlineLocalSchemaRefs(tool.parameters);
+	normalizeOptionalNulls(args, coercionSchema as JsonSchemaObject);
+	Value.Convert(coercionSchema, args);
 
 	const validator = getValidator(tool.parameters);
 	if (!Object.getOwnPropertySymbols(tool.parameters).includes(TYPEBOX_KIND)) {
-		const coerced = coerceWithJsonSchema(args, tool.parameters as JsonSchemaObject);
+		const coerced = coerceWithJsonSchema(args, coercionSchema as JsonSchemaObject);
 		if (coerced !== args) {
 			if (typeof args === "object" && args !== null && typeof coerced === "object" && coerced !== null) {
 				for (const key of Object.keys(args)) {

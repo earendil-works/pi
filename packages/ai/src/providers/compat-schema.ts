@@ -317,6 +317,11 @@ export const OpenAICompletionsCompatSchema = Type.Object(
 				"Whether the provider supports the strict field in tool definitions. Generated capable models enable it explicitly.",
 			default: false,
 		}),
+		inlineSchemaRefs: optionalCompatBoolean({
+			description:
+				"Whether to inline local $ref references in tool schemas before sending them. Some models return a referenced object as a JSON string instead of an object. Defaults to true for NVIDIA NIM.",
+			default: false,
+		}),
 		cacheControlFormat: Type.Optional(
 			Type.Literal("anthropic", {
 				description:

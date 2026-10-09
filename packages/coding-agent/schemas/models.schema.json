@@ -954,6 +954,11 @@
           "type": "boolean",
           "description": "Whether the provider supports strict tool schemas. Defaults are API-specific."
         },
+        "inlineSchemaRefs": {
+          "type": "boolean",
+          "description": "Whether to inline local $ref references in tool schemas before sending them. Some models return a referenced object as a JSON string instead of an object. Defaults to true for NVIDIA NIM.",
+          "default": false
+        },
         "cacheControlFormat": {
           "type": "string",
           "const": "anthropic",

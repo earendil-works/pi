@@ -2,9 +2,14 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added `OpenAICompletionsCompat.inlineSchemaRefs` to inline local `$ref` references in tool schemas before sending them. It defaults to true for NVIDIA NIM, where models returned referenced objects as JSON strings ([#10270](https://github.com/earendil-works/pi/issues/10270))
+
 ### Fixed
 
 - Fixed Mistral streams being aborted mid-generation (e.g. during long thinking) after the request timeout; the timeout now applies only to waiting for response headers ([#10609](https://github.com/earendil-works/pi/issues/10609))
+- Fixed tool argument coercion and optional-null cleanup skipping values whose schema is a local `$ref` ([#10270](https://github.com/earendil-works/pi/issues/10270))
 
 ## [1.1.0] - 2026-10-07
 

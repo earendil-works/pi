@@ -40,6 +40,7 @@ import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { shortHash } from "../utils/hash.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { parseStreamingJson } from "../utils/json-parse.ts";
+import { inlineLocalSchemaRefs } from "../utils/json-schema-refs.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
@@ -1508,7 +1509,10 @@ function convertTools(
 			function: {
 				name: tool.name,
 				description: tool.description,
-				parameters: getJsonSchemaToolParameters(tool, strict) as Record<string, unknown>,
+				parameters: getJsonSchemaToolParameters(
+					compat.inlineSchemaRefs ? { ...tool, parameters: inlineLocalSchemaRefs(tool.parameters) } : tool,
+					strict,
+				) as Record<string, unknown>,
 				// Only include strict if provider supports it. Some reject unknown fields.
 				...(compat.supportsStrictMode !== false && { strict: strict ?? false }),
 			},
@@ -1673,6 +1677,7 @@ function detectCompat(model: Model<"openai-completions">): ResolvedOpenAIComplet
 		thinkingTokenBudgetField: undefined,
 		// OpenAI compatibility alone does not imply strict JSON-schema tool support.
 		supportsStrictMode: false,
+		inlineSchemaRefs: isNvidia,
 		supportsOpenAIGrammarTools: false,
 		supportsMidConvoSystemMessages: false,
 		supportsMidConvoToolAdditions: false,
@@ -1720,6 +1725,7 @@ function getCompat(model: Model<"openai-completions">): ResolvedOpenAICompletion
 		supportsThinkingTokenBudget: model.compat.supportsThinkingTokenBudget ?? detected.supportsThinkingTokenBudget,
 		thinkingTokenBudgetField: model.compat.thinkingTokenBudgetField ?? detected.thinkingTokenBudgetField,
 		supportsStrictMode: model.compat.supportsStrictMode ?? detected.supportsStrictMode,
+		inlineSchemaRefs: model.compat.inlineSchemaRefs ?? detected.inlineSchemaRefs,
 		supportsOpenAIGrammarTools: model.compat.supportsOpenAIGrammarTools ?? detected.supportsOpenAIGrammarTools,
 		supportsMidConvoSystemMessages:
 			model.compat.supportsMidConvoSystemMessages ?? detected.supportsMidConvoSystemMessages,
