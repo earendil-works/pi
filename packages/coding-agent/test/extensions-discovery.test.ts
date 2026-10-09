@@ -240,6 +240,28 @@ describe("extensions discovery", () => {
 		expect(result.extensions).toHaveLength(2);
 	});
 
+	it("applies dot-relative manifest globs and exclusions", async () => {
+		// Regression test for #9788.
+		const subdir = path.join(extensionsDir, "manifest-glob-package");
+		fs.mkdirSync(subdir);
+		fs.writeFileSync(path.join(subdir, "main.ts"), extensionCode);
+		fs.writeFileSync(path.join(subdir, "main.test.ts"), "throw new Error('test extension loaded');");
+		fs.writeFileSync(
+			path.join(subdir, "package.json"),
+			JSON.stringify({
+				name: "manifest-glob-package",
+				pi: {
+					extensions: ["./*.ts", "!./*.test.ts"],
+				},
+			}),
+		);
+
+		const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+
+		expect(result.errors).toEqual([]);
+		expect(result.extensions.map((extension) => extension.path)).toEqual([path.join(subdir, "main.ts")]);
+	});
+
 	it("package.json with pi field takes precedence over index.ts", async () => {
 		const subdir = path.join(extensionsDir, "my-package");
 		fs.mkdirSync(subdir);
