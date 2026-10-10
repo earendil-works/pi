@@ -86,10 +86,10 @@ function detectCapabilitiesFromEnvironment(tmuxForwardsHyperlink: () => boolean)
 		return { images: null, trueColor: hasTrueColorHint, hyperlinks: false };
 	}
 
-	// Herdr forwards OSC 8 hyperlinks. It runs inside another terminal whose variables, such as
-	// KITTY_WINDOW_ID, may leak into its panes, so check it first and leave image protocols off.
+	// Herdr forwards OSC 8 hyperlinks and supports the Kitty graphics protocol. Check it before
+	// outer-terminal detection because variables like KITTY_WINDOW_ID can leak into its panes.
 	if (termProgram === "herdr") {
-		return { images: null, trueColor: hasTrueColorHint, hyperlinks: true };
+		return { images: "kitty", trueColor: hasTrueColorHint, hyperlinks: true };
 	}
 
 	if (process.env.KITTY_WINDOW_ID || termProgram === "kitty") {
