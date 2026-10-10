@@ -1,39 +1,12 @@
-import type { ClassifierModel, ImageModel, Model, ModelCost, ModelCostTier } from "../src/types.ts";
+import { type OpenRouterModel, openRouterCost } from "../src/providers/openrouter-api.ts";
+import type { ClassifierModel, ImageModel, Model } from "../src/types.ts";
 import { getOpenRouterThinkingLevelMap, type OpenRouterReasoningMetadata } from "./openrouter-reasoning-options.ts";
 
-export interface OpenRouterModelListItem {
-	id: string;
+export interface OpenRouterModelListItem extends OpenRouterModel {
 	name: string;
 	supported_parameters?: string[];
 	architecture?: { modality?: string; input_modalities?: string[]; output_modalities?: string[] };
-	pricing?: {
-		prompt?: string;
-		completion?: string;
-		input_cache_read?: string;
-		input_cache_write?: string;
-		overrides?: OpenRouterPricingOverride[];
-	};
-	top_provider?: {
-		context_length?: number;
-		max_completion_tokens?: number;
-	};
-	context_length?: number;
 	reasoning?: OpenRouterReasoningMetadata;
-}
-
-/**
- * A conditional price. `min_prompt_tokens` selects prompt-length pricing; `utc_*` fields select
- * time-of-day or weekday pricing. Missing rates keep the base price.
- */
-export interface OpenRouterPricingOverride {
-	min_prompt_tokens?: number;
-	utc_start?: number;
-	utc_end?: number;
-	utc_days?: string[];
-	prompt?: string;
-	completion?: string;
-	input_cache_read?: string;
-	input_cache_write?: string;
 }
 
 export interface OpenRouterCatalog {
@@ -42,51 +15,10 @@ export interface OpenRouterCatalog {
 	classifiers: ClassifierModel<"typesafe-system-one">[];
 }
 
-function roundCost(value: number): number {
-	return Number(value.toFixed(6));
-}
-
 function modalities(values: string[] | undefined): ("text" | "image")[] {
 	return Array.from(
 		new Set((values ?? []).filter((value): value is "text" | "image" => value === "text" || value === "image")),
 	);
-}
-
-// Convert pricing from $/token to $/million tokens
-function perMillion(value: string | undefined, fallback: number): number {
-	return value ? roundCost(parseFloat(value) * 1_000_000) : fallback;
-}
-
-function cost(model: OpenRouterModelListItem): ModelCost {
-	const pricing = model.pricing;
-	const base = {
-		input: perMillion(pricing?.prompt, 0),
-		output: perMillion(pricing?.completion, 0),
-		cacheRead: perMillion(pricing?.input_cache_read, 0),
-		cacheWrite: perMillion(pricing?.input_cache_write, 0),
-	};
-	// Prompt-length overrides become request-wide tiers. Time-of-day overrides are skipped
-	// because ModelCost cannot express them.
-	const tiers = (pricing?.overrides ?? []).flatMap((override): ModelCostTier[] => {
-		if (
-			override.min_prompt_tokens === undefined ||
-			override.utc_start !== undefined ||
-			override.utc_end !== undefined ||
-			override.utc_days !== undefined
-		) {
-			return [];
-		}
-		return [
-			{
-				inputTokensAbove: override.min_prompt_tokens,
-				input: perMillion(override.prompt, base.input),
-				output: perMillion(override.completion, base.output),
-				cacheRead: perMillion(override.input_cache_read, base.cacheRead),
-				cacheWrite: perMillion(override.input_cache_write, base.cacheWrite),
-			},
-		];
-	});
-	return tiers.length > 0 ? { ...base, tiers } : base;
 }
 
 /**
@@ -124,7 +56,7 @@ export function buildOpenRouterCatalog(
 			reasoning: model.supported_parameters?.includes("reasoning") || false,
 			...(thinkingLevelMap && { thinkingLevelMap }),
 			input,
-			cost: cost(model),
+			cost: openRouterCost(model.pricing),
 			contextWindow: model.top_provider?.context_length || model.context_length || 4096,
 			maxTokens: model.top_provider?.max_completion_tokens || 4096,
 		});
@@ -145,7 +77,7 @@ export function buildOpenRouterCatalog(
 			baseUrl: "https://openrouter.ai/api/v1",
 			input: input.length > 0 ? input : ["text"],
 			output,
-			cost: cost(model),
+			cost: openRouterCost(model.pricing),
 		});
 	}
 
@@ -164,7 +96,7 @@ export function buildOpenRouterCatalog(
 			provider: "openrouter",
 			baseUrl: "https://openrouter.ai/api/v1",
 			input: input.length > 0 ? input : ["text"],
-			cost: cost(model),
+			cost: openRouterCost(model.pricing),
 			contextWindow: model.top_provider?.context_length || model.context_length || 4096,
 		});
 	}

@@ -93,6 +93,11 @@ export interface RefreshModelsContext {
 	force?: boolean;
 	/** Always present, including when the public refresh caller omits its optional signal. */
 	signal: AbortSignal;
+	/**
+	 * Base URL of the registered provider, including configuration overrides that wrappers apply
+	 * outside the provider receiving this context.
+	 */
+	baseUrl?: string;
 }
 
 export interface ModelsRefreshOptions {
@@ -546,6 +551,7 @@ class ModelsImpl implements MutableModels {
 			allowNetwork,
 			force: allowNetwork ? force : undefined,
 			signal,
+			baseUrl: provider.baseUrl,
 		});
 	}
 

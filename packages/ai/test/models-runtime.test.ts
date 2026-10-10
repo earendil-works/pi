@@ -439,6 +439,26 @@ describe("Models runtime", () => {
 		expect(unconfiguredRefreshes).toBe(0);
 	});
 
+	it("passes the registered provider's base URL, including wrapper overrides, to refreshModels", async () => {
+		// A models.json baseUrl (e.g. a regional OpenRouter host) is applied by a wrapper around the
+		// built-in provider. The built-in refresh must still request that URL.
+		const baseUrls: (string | undefined)[] = [];
+		const inner: Provider = {
+			...testProvider({
+				id: "dynamic",
+				refreshModels: async (context) => {
+					baseUrls.push(context.baseUrl);
+				},
+			}),
+			baseUrl: "https://default.example.test/v1",
+		};
+		const models = createModels();
+		models.setProvider({ ...inner, baseUrl: "https://regional.example.test/v1" });
+
+		await models.refresh();
+		expect(baseUrls).toEqual(["https://regional.example.test/v1", "https://regional.example.test/v1"]);
+	});
+
 	it("refreshes expired OAuth before refreshing models", async () => {
 		const credentials = new InMemoryCredentialStore();
 		let modelRefreshCredential: unknown;
