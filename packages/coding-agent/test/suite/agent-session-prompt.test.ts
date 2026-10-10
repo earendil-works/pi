@@ -2,10 +2,16 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import { fauxAssistantMessage, fauxToolCall, type Model } from "@earendil-works/pi-ai";
+import {
+	fauxAssistantMessage,
+	fauxToolCall,
+	getCurrentSystemPrompt,
+	type Model,
+	type TranscriptContext,
+} from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { ExtensionAPI, InputEvent } from "../../src/core/extensions/index.ts";
+import type { BeforeAgentStartEvent, ExtensionAPI, InputEvent } from "../../src/core/extensions/index.ts";
 import type { PromptTemplate } from "../../src/core/prompt-templates.ts";
 import { createSyntheticSourceInfo } from "../../src/core/source-info.ts";
 import { createTestResourceLoader } from "../utilities.ts";
@@ -555,5 +561,163 @@ describe("AgentSession prompt characterization", () => {
 		await expect(harness.session.prompt("hi")).rejects.toThrow(
 			`No API key found for ${harness.getModel().provider}.`,
 		);
+	});
+
+	// Issue #10267, #5581: a run started by sendMessage(..., { triggerTurn: true }) skipped
+	// before_agent_start, so its second request patched away the sections handlers had added.
+	describe("runs started by a custom message", () => {
+		it("keeps the same system prompt for every request of the run", async () => {
+			const events: BeforeAgentStartEvent[] = [];
+			const noopTool: AgentTool = {
+				name: "noop",
+				label: "Noop",
+				description: "Does nothing",
+				parameters: Type.Object({}),
+				execute: async () => ({ content: [{ type: "text", text: "ok" }], details: {} }),
+			};
+			const harness = await createHarness({
+				tools: [noopTool],
+				extensionFactories: [
+					(pi) => {
+						pi.on("before_agent_start", (event) => {
+							events.push(event);
+							event.systemPromptOptions.sections.extension_rules = "Answer in one word.";
+						});
+					},
+				],
+			});
+			harnesses.push(harness);
+			const prompts: string[] = [];
+			const record = (response: ReturnType<typeof fauxAssistantMessage>) => (context: TranscriptContext) => {
+				prompts.push(getCurrentSystemPrompt(context.messages));
+				return response;
+			};
+			harness.setResponses([
+				record(fauxAssistantMessage("hi")),
+				record(fauxAssistantMessage([fauxToolCall("noop", {})], { stopReason: "toolUse" })),
+				record(fauxAssistantMessage("done")),
+			]);
+
+			await harness.session.prompt("hello");
+			await harness.session.sendCustomMessage(
+				{ customType: "task-done", content: "background task finished", display: true },
+				{ triggerTurn: true },
+			);
+
+			expect(prompts).toHaveLength(3);
+			expect(prompts[0]).toContain("Answer in one word.");
+			expect(new Set(prompts).size).toBe(1);
+			expect(events.map((event) => event.messageType)).toEqual(["user", "custom"]);
+			const customEvent = events[1];
+			expect(customEvent.messageType === "custom" && customEvent.message.customType).toBe("task-done");
+		});
+
+		it("queues a custom message sent while before_agent_start runs into the starting run", async () => {
+			let releaseHandler: () => void = () => {};
+			const handlerStarted = Promise.withResolvers<void>();
+			const harness = await createHarness({
+				extensionFactories: [
+					(pi) => {
+						pi.on("before_agent_start", async (event) => {
+							if (event.messageType !== "custom" || event.message.customType !== "first") return;
+							handlerStarted.resolve();
+							await new Promise<void>((resolve) => {
+								releaseHandler = resolve;
+							});
+						});
+					},
+				],
+			});
+			harnesses.push(harness);
+			const requests: TranscriptContext[] = [];
+			harness.setResponses([
+				(context) => {
+					requests.push(context);
+					return fauxAssistantMessage("handled both");
+				},
+			]);
+
+			const first = harness.session.sendCustomMessage(
+				{ customType: "first", content: "task one finished", display: true },
+				{ triggerTurn: true },
+			);
+			await handlerStarted.promise;
+			expect(harness.session.isIdle).toBe(false);
+			const second = harness.session.sendCustomMessage(
+				{ customType: "second", content: "task two finished", display: true },
+				{ triggerTurn: true },
+			);
+			releaseHandler();
+			await Promise.all([first, second]);
+
+			expect(requests).toHaveLength(1);
+			const texts = requests[0].messages.flatMap((message) =>
+				message.role === "user" && typeof message.content !== "string"
+					? message.content.flatMap((part) => (part.type === "text" ? [part.text] : []))
+					: [],
+			);
+			expect(texts).toEqual(["task one finished", "task two finished"]);
+		});
+
+		it("includes a custom message sent without triggerTurn while the run starts in its first request", async () => {
+			const harness = await createHarness({
+				extensionFactories: [
+					(pi) => {
+						pi.on("before_agent_start", () => {
+							pi.sendMessage(
+								{ customType: "note", content: "context from handler", display: true },
+								{ triggerTurn: false },
+							);
+						});
+					},
+				],
+			});
+			harnesses.push(harness);
+			const requests: TranscriptContext[] = [];
+			harness.setResponses([
+				(context) => {
+					requests.push(context);
+					return fauxAssistantMessage("done");
+				},
+			]);
+
+			await harness.session.prompt("hello");
+
+			expect(requests).toHaveLength(1);
+			expect(JSON.stringify(requests[0].messages)).toContain("context from handler");
+		});
+
+		it("aborts a run when abort is requested while before_agent_start runs", async () => {
+			let releaseHandler: () => void = () => {};
+			const handlerStarted = Promise.withResolvers<void>();
+			const harness = await createHarness({
+				extensionFactories: [
+					(pi) => {
+						pi.on("before_agent_start", async () => {
+							handlerStarted.resolve();
+							await new Promise<void>((resolve) => {
+								releaseHandler = resolve;
+							});
+						});
+					},
+				],
+			});
+			harnesses.push(harness);
+			harness.setResponses([fauxAssistantMessage("should not complete")]);
+
+			const run = harness.session.sendCustomMessage(
+				{ customType: "task-done", content: "background task finished", display: true },
+				{ triggerTurn: true },
+			);
+			await handlerStarted.promise;
+			const aborted = harness.session.abort();
+			releaseHandler();
+			await Promise.all([run, aborted]);
+
+			const last = harness.session.messages.at(-1);
+			expect(last?.role).toBe("assistant");
+			expect(last?.role === "assistant" && last.stopReason).toBe("aborted");
+			expect(harness.session.isIdle).toBe(true);
+		});
 	});
 });
