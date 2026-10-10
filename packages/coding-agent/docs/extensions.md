@@ -126,6 +126,16 @@ Use `ctx.signal` for nested work owned by an active turn; commands and idle sess
 
 A `user_bash` handler that returns `undefined` passes the command to the next handler and then to local execution if no handler handles it. Returning `operations` or `result` stops propagation. A handler failure blocks the command rather than falling through to local execution.
 
+### Mid-run course correction
+
+`ctx.abort()` without arguments ends the run: the aborted partial stays in the transcript and `agent_settled` reports `aborted: true`.
+
+`ctx.abort(continuation)` aborts the in-flight request and resumes the same run after it settles instead of ending it. `continuation.reminder` (string or `AgentMessage`) is injected as a user message before the run resumes; `contextMode: "discard"` removes the trailing aborted assistant message and its tool results from the context (persisted as `context_edit` entries) while the default `"keep"` retains them; `reason` identifies the requester and is surfaced on `turn_start.continuation` and in budget-exhaustion notices.
+
+Overlapping aborts coalesce: the first call arms the continuation, later calls append their reminders (identical reminders are injected once), and `discard` wins over `keep`. The resumed request's `turn_start` carries `continuation: { reason, attempt, droppedPartial }`. `agent_settled` fires once, when the run truly settles.
+
+A plain `ctx.abort()` during the window is a user interrupt: the armed continuation is dropped and the run settles aborted. A failed continuation request settles like an error turn and is not re-continued automatically. Rules that re-match on the resumed stream may abort again until `maxAutoContinuations` (default 3; `0` disables) is exhausted — the run then settles like a plain abort and a `continuation_budget_exhausted` notice is appended. See `examples/extensions/midrun-correction.ts`.
+
 <a id="custom-tools"></a>
 <a id="register-tools"></a>
 

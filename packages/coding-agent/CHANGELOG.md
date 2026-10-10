@@ -6,6 +6,10 @@
 
 - Moved the published theme JSON Schema to `schemas/theme.schema.json` and made theme loading reject unknown top-level properties and unknown properties under `colors` or `export`. Update existing theme `$schema` references to the new path, define reusable custom colors under `vars`, and remove unsupported metadata.
 
+### Added
+
+- Extensions: `ctx.abort(continuation)` aborts the in-flight request and resumes the same run instead of ending it — injects a reminder, optionally drops the aborted partial (`contextMode: "discard"`), coalesces overlapping aborts, and caps repeats with the `maxAutoContinuations` setting (default 3). Resumed turns surface a `turn_start.continuation` marker.
+
 ### Changed
 
 - Changed the `showHardwareCursor` setting to use only the terminal cursor instead of also drawing Pi's reverse-video cursor
