@@ -2,6 +2,7 @@ import { InMemoryModelsStore } from "@earendil-works/pi-ai";
 import { describe, expect, test, vi } from "vitest";
 import { parseArgs } from "../src/cli/args.ts";
 import { AuthCommandError, isAuthCommandHelp, parseAuthCommand } from "../src/cli/auth-command.ts";
+import { decodeAuthContinuationPayload } from "../src/cli/auth-continue.ts";
 import { resolveCredentialForPrint } from "../src/cli/credential-print.ts";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { ModelRuntime } from "../src/core/model-runtime.ts";
@@ -112,6 +113,13 @@ describe("credential print commands", () => {
 			noRefresh: false,
 			minExpiryMs: 30 * 60_000,
 		});
+		expect(parseAuthCommand(["auth", "--continue", "eyJ2ZXJzaW9uIjoxfQ"])).toEqual({
+			kind: "continue",
+			args: ["eyJ2ZXJzaW9uIjoxfQ"],
+			json: false,
+			credentials: false,
+			noRefresh: false,
+		});
 		expect(() => parseAuthCommand(["auth", "print-api-key", "--min-expiry", "30m"])).toThrow(
 			"only supported by print-bearer-token",
 		);
@@ -126,5 +134,25 @@ describe("credential print commands", () => {
 		await expect(
 			resolveCredentialForPrint(parseArgs(["--provider", "openai-codex"]), runtime, "api_key"),
 		).rejects.toThrow("configured with OAuth");
+	});
+
+	test("decodes auth continuation payloads", () => {
+		const payload = {
+			version: 1,
+			serviceUrl: "https://auth.example",
+			providerId: "auth-service",
+			continuationId: "cont_123",
+			secret: "one-time-secret",
+			returnUrl: "https://auth.example/connections?continued=cont_123",
+			mcp: {
+				serverUrl: "https://mcp.example/mcp",
+				serverName: "example",
+				authType: "oauth",
+				oauth: { scope: "project:read" },
+			},
+		};
+		const encoded = Buffer.from(JSON.stringify(payload)).toString("base64url");
+		expect(decodeAuthContinuationPayload(encoded)).toMatchObject(payload);
+		expect(decodeAuthContinuationPayload(`pi auth --continue ${encoded}`)).toMatchObject(payload);
 	});
 });

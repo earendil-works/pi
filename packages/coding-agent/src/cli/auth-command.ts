@@ -2,7 +2,7 @@ import type { AuthResult } from "@earendil-works/pi-ai";
 import { APP_NAME } from "../config.ts";
 import type { Args } from "./args.ts";
 
-export type AuthCommandKind = "check" | "api_key" | "bearer_token";
+export type AuthCommandKind = "check" | "api_key" | "bearer_token" | "continue";
 
 export interface AuthCommand {
 	kind: AuthCommandKind;
@@ -19,10 +19,17 @@ const AUTH_COMMAND_USAGE: Record<AuthCommandKind, string> = {
 	check: `${APP_NAME} auth check --provider <provider> [--json] [--credentials] [--no-refresh]`,
 	api_key: `${APP_NAME} auth print-api-key --provider <provider> [--model <model>]`,
 	bearer_token: `${APP_NAME} auth print-bearer-token --provider <provider> [--model <model>] [--min-expiry <duration>]`,
+	continue: `${APP_NAME} auth --continue [payload]`,
 };
 
 export function getAuthCommandName(kind: AuthCommandKind): string {
-	return kind === "check" ? "auth check" : kind === "api_key" ? "auth print-api-key" : "auth print-bearer-token";
+	return kind === "check"
+		? "auth check"
+		: kind === "api_key"
+			? "auth print-api-key"
+			: kind === "bearer_token"
+				? "auth print-bearer-token"
+				: "auth --continue";
 }
 
 export function getAuthCommandUsage(kind: AuthCommandKind): string {
@@ -41,8 +48,9 @@ export function printAuthCommandHelp(): void {
   pi auth print-api-key [--provider <provider>] [--model <model>]
   pi auth print-bearer-token [--provider <provider>] [--model <model>] [--min-expiry <duration>]
   pi auth check [--provider <provider>] [--model <model>] [--json] [--credentials] [--no-refresh]
+  pi auth --continue [payload]
 
-Auth commands require at least one of --provider or --model. Checks refresh expired OAuth credentials by default; --no-refresh prevents this. --credentials emits the credential, or includes it in JSON output.`);
+Auth commands require at least one of --provider or --model, except --continue. Checks refresh expired OAuth credentials by default; --no-refresh prevents this. --credentials emits the credential, or includes it in JSON output. --continue accepts a base64url JSON continuation payload; when omitted, Pi prompts for it.`);
 }
 
 export function parseAuthCommand(args: string[]): AuthCommand | undefined {
@@ -55,10 +63,12 @@ export function parseAuthCommand(args: string[]): AuthCommand | undefined {
 				? "api_key"
 				: args[1] === "print-bearer-token"
 					? "bearer_token"
-					: undefined;
+					: args[1] === "--continue" || args[1] === "continue"
+						? "continue"
+						: undefined;
 	if (!kind) {
 		throw new AuthCommandError(
-			`Unknown auth command "${args[1] ?? ""}". Use "${APP_NAME} auth print-api-key", "${APP_NAME} auth print-bearer-token", or "${APP_NAME} auth check".`,
+			`Unknown auth command "${args[1] ?? ""}". Use "${APP_NAME} auth print-api-key", "${APP_NAME} auth print-bearer-token", "${APP_NAME} auth check", or "${APP_NAME} auth --continue".`,
 		);
 	}
 
@@ -69,6 +79,10 @@ export function parseAuthCommand(args: string[]): AuthCommand | undefined {
 	let minExpiryMs: number | undefined;
 	for (let index = 2; index < args.length; index++) {
 		const arg = args[index];
+		if (kind === "continue") {
+			commandArgs.push(arg);
+			continue;
+		}
 		if (arg === "--min-expiry") {
 			if (kind !== "bearer_token")
 				throw new AuthCommandError("--min-expiry is only supported by print-bearer-token");

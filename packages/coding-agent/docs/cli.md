@@ -13,6 +13,7 @@ pi update [target] [options]
 pi list
 pi config [options]
 pi auth <check|print-api-key|print-bearer-token> [options]
+pi auth --continue [payload]
 pi mcp <list|login|logout> [options]
 ```
 
@@ -303,6 +304,7 @@ Authentication commands require `--provider <provider>` or `--model <model>`. Se
 | `pi auth check` | Print `ready`, `not_ready`, or `invalid`; exit with status `0`, `1`, or `2`, respectively |
 | `pi auth print-api-key` | Print the resolved API key |
 | `pi auth print-bearer-token` | Print a resolved OAuth bearer token |
+| `pi auth --continue` | Continue an auth handoff from a base64url JSON payload; prompts when no payload is supplied |
 
 | Option | Applies to | Description |
 |---|---|---|
