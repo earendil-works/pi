@@ -18,20 +18,20 @@ import { SettingsSchema } from "../src/core/settings-schema.ts";
 import { ColorValueSchema, ThemeJsonSchema } from "../src/modes/interactive/theme/theme-schema.ts";
 
 const packageDirectory = fileURLToPath(new URL("..", import.meta.url));
-const schemaBaseUrl = "https://raw.githubusercontent.com/earendil-works/pi/main/packages/coding-agent";
+const schemaBaseUrl = "https://pi.dev/schemas";
 const schemaDraft = "https://json-schema.org/draft/2020-12/schema";
 const generatedComment =
 	"This file is generated from TypeScript source. Do not edit it manually; run npm run generate:schemas.";
 
 interface SchemaArtifact {
-	path: `schemas/${string}.schema.json`;
+	filename: `${string}.schema.json`;
 	schema: TSchema;
 	definitions?: Readonly<Record<string, TSchema>>;
 }
 
 const schemaArtifacts: readonly SchemaArtifact[] = [
 	{
-		path: "schemas/models.schema.json",
+		filename: "models.schema.json",
 		schema: ModelsConfigSchema,
 		definitions: {
 			ModelCost: ModelCostSchema,
@@ -42,17 +42,17 @@ const schemaArtifacts: readonly SchemaArtifact[] = [
 		},
 	},
 	{
-		path: "schemas/settings.schema.json",
+		filename: "settings.schema.json",
 		schema: SettingsSchema,
 		definitions: { ModelThinkingLevel: ModelThinkingLevelSchema },
 	},
 	{
-		path: "schemas/keybindings.schema.json",
+		filename: "keybindings.schema.json",
 		schema: KeybindingsSchema,
 		definitions: { KeybindingValue: KeybindingValueSchema },
 	},
 	{
-		path: "schemas/theme.schema.json",
+		filename: "theme.schema.json",
 		schema: ThemeJsonSchema,
 		definitions: { ColorValue: ColorValueSchema },
 	},
@@ -131,7 +131,7 @@ function serializeSchema(artifact: SchemaArtifact): string {
 	return `${JSON.stringify(
 		{
 			$schema: schemaDraft,
-			$id: `${schemaBaseUrl}/${artifact.path}`,
+			$id: `${schemaBaseUrl}/${artifact.filename}`,
 			$comment: generatedComment,
 			...schema,
 		},
@@ -144,7 +144,7 @@ export function renderConfigSchemas(): ReadonlyMap<string, string> {
 	const rendered = new Map<string, string>();
 	for (const artifact of schemaArtifacts) {
 		const content = serializeSchema(artifact);
-		rendered.set(artifact.path, content);
+		rendered.set(`schemas/${artifact.filename}`, content);
 	}
 	return rendered;
 }

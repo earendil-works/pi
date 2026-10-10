@@ -10,7 +10,7 @@ import { SettingsManager } from "../src/core/settings-manager.ts";
 import { SettingsSchema } from "../src/core/settings-schema.ts";
 import { validateThemeJson } from "../src/modes/interactive/theme/theme-schema.ts";
 
-const schemaBaseUrl = "https://raw.githubusercontent.com/earendil-works/pi/main/packages/coding-agent/schemas";
+const schemaBaseUrl = "https://pi.dev/schemas";
 const temporaryDirectories: string[] = [];
 
 afterEach(() => {
