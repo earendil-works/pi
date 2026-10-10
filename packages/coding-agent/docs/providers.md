@@ -113,6 +113,14 @@ Radius is currently in early alpha and evolving quickly. See [radius.earendil.co
 
 Radius authentication uses its gateway catalog and caches refreshed model metadata for later offline startup. A custom Radius gateway configured in `models.json` uses its own catalog rather than inheriting the public `radius.pi.dev` catalog.
 
+### OpenRouter
+
+Pi uses authenticated `GET /api/v1/models/user` to filter built-in OpenRouter chat models in `/model` and `--list-models`, retaining Pi's capability metadata. This endpoint applies the key's guardrails, provider preferences, and privacy settings without requiring an organization toggle. See [OpenRouter's model discovery documentation](https://openrouter.ai/docs/api/api-reference/models/list-models-filtered-by-user-provider-preferences-privacy-settings-and-guardrails).
+
+Until discovery succeeds, Pi shows the full OpenRouter catalog. Interactive mode discovers in the background at startup, after a session switch, and when `/model` opens; `--list-models` waits for discovery for up to 15 seconds. The verified list stays in memory for the key that fetched it. Changing the active key shows the full catalog again until the next refresh. A successful empty response shows no OpenRouter chat models. If discovery fails, Pi keeps the last successful list for that key. Offline mode makes no discovery requests.
+
+Discovery uses the OpenRouter provider's `baseUrl` with the active key. For regional guardrails, set `providers.openrouter.baseUrl` in [`models.json`](models.md#configure-a-compatible-endpoint) to `https://us.openrouter.ai/api/v1` or `https://eu.openrouter.ai/api/v1`. Custom request headers do not apply to discovery.
+
 ### Azure OpenAI
 
 The provider ID is `azure` (formerly `azure-openai-responses`). Use it as the key in `auth.json`, `models.json`, and `settings.json`, and in model references such as `--model azure/gpt-5.4`.

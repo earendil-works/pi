@@ -24,6 +24,50 @@ describe("model selector", () => {
 	afterEach(() => {
 		harness?.cleanup();
 		harness = undefined;
+		vi.restoreAllMocks();
+	});
+
+	// #10353: scoped picker entries must obey the same availability filter as the all-models list.
+	it("intersects scoped models with current availability and uses refreshed metadata", async () => {
+		harness = await createHarness({ models: [{ id: "allowed" }, { id: "blocked" }] });
+		const runtime = harness.session.modelRuntime;
+		const allowed = { ...harness.getModel("allowed")!, name: "Refreshed name" };
+		vi.spyOn(runtime, "getAvailableSnapshot").mockReturnValue([allowed]);
+		vi.spyOn(runtime, "refresh").mockResolvedValue({ aborted: false, errors: new Map() });
+		const select = vi.fn();
+		const selector = new ModelSelectorComponent(
+			createFakeTui(),
+			undefined,
+			runtime,
+			[{ model: harness.getModel("blocked")! }, { model: harness.getModel("allowed")! }],
+			select,
+			() => {},
+		);
+		const rendered = stripAnsi(selector.render(120).join("\n"));
+		expect(rendered).not.toContain("blocked [");
+		expect(rendered).toContain("Model Name: Refreshed name");
+		selector.handleInput("\r");
+		expect(select).toHaveBeenCalledWith(allowed);
+	});
+
+	// #10353: an unavailable scope must still allow switching to other available models.
+	it("can switch to all models when every scoped model is unavailable", async () => {
+		harness = await createHarness({ models: [{ id: "allowed" }, { id: "blocked" }] });
+		const runtime = harness.session.modelRuntime;
+		vi.spyOn(runtime, "getAvailableSnapshot").mockReturnValue([harness.getModel("allowed")!]);
+		vi.spyOn(runtime, "refresh").mockResolvedValue({ aborted: false, errors: new Map() });
+		const selector = new ModelSelectorComponent(
+			createFakeTui(),
+			undefined,
+			runtime,
+			[{ model: harness.getModel("blocked")! }],
+			() => {},
+			() => {},
+		);
+		expect(stripAnsi(selector.render(120).join("\n"))).not.toContain("blocked [");
+		selector.handleInput("\t");
+		expect(stripAnsi(selector.render(120).join("\n"))).toContain("allowed [");
+		selector.dispose();
 	});
 
 	it("keeps the current model marked while browsing", async () => {

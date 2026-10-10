@@ -10,11 +10,13 @@ import * as path from "node:path";
 import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { AuthEvent, AuthPrompt } from "@earendil-works/pi-ai";
 import {
+	type Api,
 	type AssistantMessage,
 	type ImageContent,
 	isRetryableAssistantError,
 	type Message,
 	type Model,
+	modelsAreEqual,
 	type Usage,
 } from "@earendil-works/pi-ai/compat";
 import type {
@@ -327,6 +329,15 @@ function isAnthropicSubscriptionAuthKey(apiKey: string | undefined): boolean {
 
 function isUnknownModel(model: Model<any> | undefined): boolean {
 	return !!model && model.provider === "unknown" && model.id === "unknown" && model.api === "unknown";
+}
+
+function getAvailableModelsInScope(session: AgentSession): readonly Model<Api>[] {
+	const availableModels = session.modelRuntime.getAvailableSnapshot();
+	return session.scopedModels.length > 0
+		? session.scopedModels.flatMap(
+				(scoped) => availableModels.find((model) => modelsAreEqual(model, scoped.model)) ?? [],
+			)
+		: availableModels;
 }
 
 function quoteIfNeeded(value: string): string {
@@ -733,10 +744,7 @@ export class InteractiveMode {
 		const modelCommand = slashCommands.find((command) => command.name === "model");
 		if (modelCommand) {
 			modelCommand.getArgumentCompletions = (prefix: string): AutocompleteItem[] | null => {
-				const models =
-					this.session.scopedModels.length > 0
-						? this.session.scopedModels.map((s) => s.model)
-						: this.session.modelRuntime.getAvailableSnapshot();
+				const models = getAvailableModelsInScope(this.session);
 
 				if (models.length === 0) return null;
 
@@ -1145,15 +1153,6 @@ export class InteractiveMode {
 	 */
 	async run(): Promise<void> {
 		await this.init();
-
-		if (!process.env.PI_OFFLINE) {
-			const controller = new AbortController();
-			const timeout = setTimeout(() => controller.abort(), 15_000);
-			void refreshModelCatalogs(this.session.modelRuntime, controller.signal)
-				.then(() => this.updateAvailableProviderCount())
-				.catch(() => {})
-				.finally(() => clearTimeout(timeout));
-		}
 
 		// Start version check asynchronously
 		checkForNewPiVersion(this.version).then((newRelease) => {
@@ -2113,6 +2112,17 @@ export class InteractiveMode {
 		await this.updateAvailableProviderCount();
 		this.updateEditorBorderColor();
 		this.updateTerminalTitle();
+
+		if (!process.env.PI_OFFLINE) {
+			const controller = new AbortController();
+			const timeout = setTimeout(() => controller.abort(), 15_000);
+			void refreshModelCatalogs(session.modelRuntime, controller.signal)
+				.then(() => {
+					if (this.session === session) this.updateAvailableProviderCount();
+				})
+				.catch(() => {})
+				.finally(() => clearTimeout(timeout));
+		}
 	}
 
 	private async handleFatalRuntimeError(prefix: string, error: unknown): Promise<never> {
@@ -5215,11 +5225,7 @@ export class InteractiveMode {
 	}
 
 	private async findExactModelMatch(searchTerm: string): Promise<Model<any> | undefined> {
-		const cachedModels =
-			this.session.scopedModels.length > 0
-				? this.session.scopedModels.map((scoped) => scoped.model)
-				: [...this.session.modelRuntime.getAvailableSnapshot()];
-		const cachedMatch = findExactModelReferenceMatch(searchTerm, cachedModels);
+		const cachedMatch = findExactModelReferenceMatch(searchTerm, [...getAvailableModelsInScope(this.session)]);
 		if (cachedMatch || this.session.scopedModels.length > 0) return cachedMatch;
 
 		this.showStatus("Refreshing model catalogs…");
@@ -5250,11 +5256,7 @@ export class InteractiveMode {
 
 	/** Update the footer's available provider count from the current snapshot without refreshing catalogs. */
 	private updateAvailableProviderCount(): void {
-		const models =
-			this.session.scopedModels.length > 0
-				? this.session.scopedModels.map((scoped) => scoped.model)
-				: this.session.modelRuntime.getAvailableSnapshot();
-		const uniqueProviders = new Set(models.map((model) => model.provider));
+		const uniqueProviders = new Set(getAvailableModelsInScope(this.session).map((model) => model.provider));
 		this.footerDataProvider.setAvailableProviderCount(uniqueProviders.size);
 	}
 

@@ -184,11 +184,12 @@ export interface Provider<TApi extends Api = Api> {
 	 * the effective credential. Implementations retain their previous list on failure, publish
 	 * persistence and synchronous state changes through `context.publish()`, and honor the
 	 * shared abort signal for blocking work.
+	 * Called on the composed provider; wrappers must preserve that receiver.
 	 */
-	refreshModels?(context: RefreshModelsContext): Promise<void>;
+	refreshModels?(this: Provider<TApi>, context: RefreshModelsContext): Promise<void>;
 
 	/**
-	 * Optional provider policy for credential-specific model availability.
+	 * Optional provider policy for model availability with the effective configured credential.
 	 * `getModels()` remains the complete synchronous chat catalog; `Models.getAvailable()`
 	 * applies this filter after confirming that provider auth is configured.
 	 */
@@ -578,7 +579,7 @@ class ModelsImpl implements MutableModels {
 					if (credentialError !== undefined) throw credentialError;
 					if (!allowNetwork || signal.aborted) return;
 
-					const credential = await this.resolveRefreshCredential(provider, storedCredential, signal);
+					const credential = await this.resolveEffectiveCredential(provider, storedCredential, signal);
 					if (!credential) return;
 					await this.runProviderRefreshPhase(provider, credential, true, options.force, generation, signal);
 				})();
@@ -611,7 +612,7 @@ class ModelsImpl implements MutableModels {
 		return { aborted: callerSignal.aborted, errors: new Map(errors) };
 	}
 
-	private async resolveRefreshCredential(
+	private async resolveEffectiveCredential(
 		provider: Provider,
 		stored: Credential | undefined,
 		signal: AbortSignal,
@@ -692,8 +693,12 @@ class ModelsImpl implements MutableModels {
 			: this.getProviders();
 		const checks = await Promise.all(
 			providers.map(async (provider) => {
-				const credential = await this.readCredential(provider.id, signal);
-				return { provider, credential, auth: await this.checkProviderAuth(provider, credential, signal) };
+				let credential = await this.readCredential(provider.id, signal);
+				const auth = await this.checkProviderAuth(provider, credential, signal);
+				if (auth && credential?.type !== "oauth" && (provider.filterModels || provider.filterAllModels)) {
+					credential = await this.resolveEffectiveCredential(provider, credential, signal);
+				}
+				return { provider, credential, auth };
 			}),
 		);
 		return checks.filter((entry) => entry.auth !== undefined);

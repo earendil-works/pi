@@ -325,10 +325,18 @@ export class ModelRuntime implements Models {
 
 	private updateModelSnapshot(): void {
 		const all = [...this.models.getModels()];
+		const availableIds = new Set(this.snapshot.available.map((model) => `${model.provider}\0${model.id}`));
 		this.snapshot = {
 			...this.snapshot,
 			all,
-			available: all.filter((model) => this.snapshot.configuredProviders.has(model.provider)),
+			// Keep credential-filtered IDs until an availability check publishes their replacement.
+			available: all.filter(
+				(model) =>
+					this.snapshot.configuredProviders.has(model.provider) &&
+					(!this.models.getProvider(model.provider)?.filterModels ||
+						isVirtualModel(model) ||
+						availableIds.has(`${model.provider}\0${model.id}`)),
+			),
 		};
 	}
 
@@ -914,8 +922,8 @@ export class ModelRuntime implements Models {
 			...this.snapshot,
 			auth,
 			configuredProviders,
-			available: this.snapshot.all.filter((model) => configuredProviders.has(model.provider)),
 		};
+		this.updateModelSnapshot();
 	}
 
 	registerProvider(providerId: string, config: ProviderConfigInput): void {

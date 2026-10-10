@@ -28,21 +28,24 @@ function model(id: string): Model<"openai-completions"> {
 	};
 }
 
-function testProvider(localGeneratedAt?: number) {
+function testProvider(localGeneratedAt?: number, refreshModels?: Provider["refreshModels"]) {
 	return withRemoteCatalog(
-		createProvider({
-			id: "test-provider",
-			auth: { apiKey: { name: "Test", resolve: async () => ({ auth: {} }) } },
-			models: [model("static")],
-			api: {
-				stream: () => {
-					throw new Error("not used");
+		{
+			...createProvider({
+				id: "test-provider",
+				auth: { apiKey: { name: "Test", resolve: async () => ({ auth: {} }) } },
+				models: [model("static")],
+				api: {
+					stream: () => {
+						throw new Error("not used");
+					},
+					streamSimple: () => {
+						throw new Error("not used");
+					},
 				},
-				streamSimple: () => {
-					throw new Error("not used");
-				},
-			},
-		}),
+			}),
+			refreshModels,
+		},
 		"https://pi.dev",
 		localGeneratedAt,
 	);
@@ -72,6 +75,141 @@ async function refreshProvider(
 afterEach(() => vi.restoreAllMocks());
 
 describe("remote catalog provider", () => {
+	// #10353: Public catalog overlays must preserve credential-scoped provider discovery.
+	it.each([
+		{ name: "a fresh cached catalog", status: undefined },
+		{ name: "an unchanged catalog", status: 304 },
+		{ name: "a missing catalog", status: 404 },
+		{ name: "an unimplemented catalog", status: 501 },
+	])("refreshes native availability with $name", async ({ status }) => {
+		const nativeRefresh = vi.fn(async (context: RefreshModelsContext) => {
+			await context.publish({ update: () => {} });
+		});
+		const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(null, { status }));
+		const provider = testProvider(undefined, nativeRefresh);
+		const store = new InMemoryModelsStore();
+		await store.write(provider.id, {
+			models: [model("cached")],
+			checkedAt: status === undefined ? Date.now() : 0,
+			lastModified: 1,
+			etag: '"catalog-1"',
+		});
+
+		await refreshProvider(provider, store);
+
+		expect(nativeRefresh).toHaveBeenCalledOnce();
+		expect(nativeRefresh.mock.calls[0]?.[0]).toMatchObject({
+			credential: { type: "api_key" },
+			allowNetwork: true,
+			signal: neverAbortedSignal,
+		});
+		expect(fetchSpy).toHaveBeenCalledTimes(status === undefined ? 0 : 1);
+		expect((await store.read(provider.id))?.models.map((entry) => entry.id)).toEqual(["cached"]);
+	});
+
+	// #10353: Authenticated availability is private state, not persistent catalog metadata.
+	it("publishes native availability separately from public catalog metadata", async () => {
+		let allowedIds: ReadonlySet<string> = new Set();
+		const nativeRefresh = vi.fn(async (context: RefreshModelsContext) => {
+			await context.publish({
+				update: () => {
+					allowedIds = new Set(["dynamic"]);
+				},
+			});
+		});
+		vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify([model("dynamic")])));
+		const provider = testProvider(undefined, nativeRefresh);
+		provider.filterModels = (entries) => entries.filter((entry) => allowedIds.has(entry.id));
+		const store = new InMemoryModelsStore();
+		const models = createModels({ modelsStore: store });
+		models.setProvider(provider);
+
+		await refreshProvider(provider, store);
+
+		expect(provider.getModels().map((entry) => entry.id)).toEqual(["static", "dynamic"]);
+		expect((await models.getAvailable()).map((entry) => entry.id)).toEqual(["dynamic"]);
+		expect(await store.read(provider.id)).toMatchObject({ models: [model("dynamic")] });
+	});
+
+	// #10353: Either refresh source must finish even when the other source fails.
+	it("refreshes catalog metadata when native discovery fails", async () => {
+		const discoveryError = new Error("Authenticated discovery failed");
+		const provider = testProvider(undefined, () => {
+			throw discoveryError;
+		});
+		vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify([model("dynamic")])));
+		const store = new InMemoryModelsStore();
+
+		await expect(refreshProvider(provider, store)).rejects.toBe(discoveryError);
+
+		expect(provider.getModels().map((entry) => entry.id)).toEqual(["static", "dynamic"]);
+		expect((await store.read(provider.id))?.models.map((entry) => entry.id)).toEqual(["dynamic"]);
+	});
+
+	// #10353: A catalog failure must not suppress authenticated provider discovery.
+	it("publishes native availability when catalog metadata fails", async () => {
+		let nativePublished = false;
+		const provider = testProvider(undefined, async (context) => {
+			await context.publish({
+				update: () => {
+					nativePublished = true;
+				},
+			});
+		});
+		vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(null, { status: 403 }));
+		const store = new InMemoryModelsStore();
+
+		await expect(refreshProvider(provider, store)).rejects.toThrow(
+			"Model catalog request failed for test-provider: 403",
+		);
+
+		expect(nativePublished).toBe(true);
+		expect((await store.read(provider.id))?.models).toEqual([]);
+	});
+
+	// #10353: Callers need both failure messages when discovery and catalog refresh fail.
+	it("reports native and catalog refresh failures together", async () => {
+		const provider = testProvider(undefined, async () => {
+			throw new Error("Authenticated discovery failed");
+		});
+		vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(null, { status: 403 }));
+
+		await expect(refreshProvider(provider, new InMemoryModelsStore())).rejects.toThrow(
+			"Authenticated discovery failed; Model catalog request failed for test-provider: 403",
+		);
+	});
+
+	// #10353: Offline initialization still calls the native hook without authorizing network access.
+	it("restores catalog metadata and native state while offline", async () => {
+		const nativeRefresh = vi.fn(async (_context: RefreshModelsContext) => {});
+		const fetchSpy = vi.spyOn(globalThis, "fetch");
+		const provider = testProvider(undefined, nativeRefresh);
+		const store = new InMemoryModelsStore();
+		await store.write(provider.id, { models: [model("cached")] });
+
+		await refreshProvider(provider, store, { allowNetwork: false });
+
+		expect(nativeRefresh).toHaveBeenCalledOnce();
+		expect(nativeRefresh.mock.calls[0]?.[0]).toMatchObject({ allowNetwork: false });
+		expect(fetchSpy).not.toHaveBeenCalled();
+		expect(provider.getModels().map((entry) => entry.id)).toEqual(["static", "cached"]);
+	});
+
+	// #10353: A rejected catalog publication must not skip the native refresh hook.
+	it("calls native discovery when the catalog publication is rejected", async () => {
+		const nativeRefresh = vi.fn(async () => {});
+		const fetchSpy = vi.spyOn(globalThis, "fetch");
+		const provider = testProvider(undefined, nativeRefresh);
+		await provider.refreshModels?.({
+			publish: async () => false,
+			allowNetwork: true,
+			signal: neverAbortedSignal,
+		});
+
+		expect(nativeRefresh).toHaveBeenCalledOnce();
+		expect(fetchSpy).not.toHaveBeenCalled();
+	});
+
 	it("parses keyed catalogs, sends version headers, observes the refresh TTL, and supports forced refreshes", async () => {
 		const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(
 			async () =>

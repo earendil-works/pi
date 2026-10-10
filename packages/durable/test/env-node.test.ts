@@ -937,8 +937,9 @@ describe("NodeExecutionEnv shell", () => {
 	it("reports the spill of a command that times out", async () => {
 		const root = createTempDir();
 		const env = new NodeExecutionEnv({ cwd: root });
+		// Replace Bash so it cannot append a diagnostic when the timeout kills sleep.
 		const result = await env.exec(
-			"printf 12345678901234567890; sleep 5",
+			"printf 12345678901234567890; exec sleep 5",
 			{ timeout: 0.3, spill: { afterBytes: 10, afterLines: 10 } },
 			BACKGROUND_CONTEXT,
 		);
