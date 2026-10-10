@@ -596,6 +596,44 @@ describe("Context overflow error handling", () => {
 	});
 
 	// =============================================================================
+	// LLM Gateway - Multiple backend providers
+	// Expected pattern: "exceeds the configured context size (X) for model 'Y'"
+	// (gateway pre-flight check; anthropic-routed models may surface Anthropic's
+	// verbatim "prompt is too long" instead). Models the gateway routes to z.ai
+	// inherit z.ai's silent overflow instead, so both shapes are accepted below.
+	// =============================================================================
+
+	describe.skipIf(!process.env.LLMGATEWAY_API_KEY)("LLM Gateway", () => {
+		it("glm-4.5 via LLM Gateway - should detect overflow via isContextOverflow", async () => {
+			const model = getModel("llmgateway", "glm-4.5");
+			const result = await testContextOverflow(model, process.env.LLMGATEWAY_API_KEY!);
+			logResult(result);
+
+			// The gateway advertises context_length 131000 for glm-4.5 but does not
+			// pre-flight reject on the z.ai route: it forwards the oversized prompt
+			// and returns successfully with usage above the window. Either shape must
+			// still be detectable.
+			if (result.stopReason === "error") {
+				expect(result.errorMessage).toMatch(/exceeds the configured context size/i);
+			} else {
+				expect(result.stopReason).toBe("stop");
+				expect(result.usage.input + result.usage.cacheRead).toBeGreaterThan(model.contextWindow);
+			}
+			expect(isContextOverflow(result.response, model.contextWindow)).toBe(true);
+		}, 120000);
+
+		// Anthropic backend
+		it("claude-haiku-4-5 via LLM Gateway - should detect overflow via isContextOverflow", async () => {
+			const model = getModel("llmgateway", "claude-haiku-4-5");
+			const result = await testContextOverflow(model, process.env.LLMGATEWAY_API_KEY!);
+			logResult(result);
+
+			expect(result.stopReason).toBe("error");
+			expect(isContextOverflow(result.response, model.contextWindow)).toBe(true);
+		}, 120000);
+	});
+
+	// =============================================================================
 	// Ollama (local)
 	// =============================================================================
 

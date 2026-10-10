@@ -42,6 +42,8 @@ This table covers providers with a single primary API-key variable. Providers th
 | Cerebras | `CEREBRAS_API_KEY` |
 | xAI | `XAI_API_KEY` |
 | OpenRouter | `OPENROUTER_API_KEY` |
+| LLM Gateway | `LLMGATEWAY_API_KEY` |
+| LLM Gateway DevPass | `LLMGATEWAY_DEVPASS_API_KEY` |
 | Vercel AI Gateway | `AI_GATEWAY_API_KEY` |
 | ZAI Coding Plan (Global) | `ZAI_API_KEY` |
 | ZAI Coding Plan (China) | `ZAI_CODING_CN_API_KEY` |
@@ -112,6 +114,12 @@ Radius also has an MCP server, so Pi can manage Radius for you.
 Radius is currently in early alpha and evolving quickly. See [radius.earendil.com](https://radius.earendil.com) for more.
 
 Radius authentication uses its gateway catalog and caches refreshed model metadata for later offline startup. A custom Radius gateway configured in `models.json` uses its own catalog rather than inheriting the public `radius.pi.dev` catalog.
+
+### LLM Gateway
+
+`/login llmgateway` opens a browser sign-in that mints an LLM Gateway API key billed from your account. The key expires after 90 days; run `/login llmgateway` again once the API starts returning 401.
+
+DevPass is LLM Gateway's flat-rate coding subscription. `/login llmgateway-devpass` uses the same endpoint and sign-in, but mints the key in your DevPass organization so usage bills the subscription instead of pay-as-you-go credits. It requires an active DevPass plan, and its catalog only lists models a coding plan covers; the gateway answers 403 for the rest.
 
 ### Azure OpenAI
 
