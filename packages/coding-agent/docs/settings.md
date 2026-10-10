@@ -11,7 +11,7 @@ This reference lists user-configurable settings, their types, defaults, and purp
 | `defaultProvider` | string | Automatic | Startup AI provider. |
 | `defaultModel` | string | Automatic | Startup model ID. |
 | `defaultThinkingLevel` | `"off" \| "minimal" \| "low" \| "medium" \| "high" \| "xhigh" \| "max"` | `"medium"` | Startup thinking level. |
-| `modelThinkingLevels` | object | None | Per-model startup thinking levels keyed by exact `provider/modelId`. |
+| `modelThinkingLevels` | object | None | Per-model thinking defaults applied at startup and on model switches, keyed by exact `provider/modelId`. Configure from `/settings` → Default thinking level per model or edit manually. |
 | `thinkingBudgets` | object | Built-in budgets | Token budgets for `minimal`, `low`, `medium`, and `high` thinking levels. |
 | `enabledModels` | `string[]` | All available models | Model patterns used for startup selection and model cycling. Uses the same format as `--models`. |
 | `hideThinkingBlock` | boolean | `false` | Hide thinking blocks in the transcript. |
@@ -19,6 +19,14 @@ This reference lists user-configurable settings, their types, defaults, and purp
 | `cacheWarming` | `"off" \| "streaming" \| "idle"` | `"streaming"` | Keep eligible provider prompt caches warm during active runs or, with `"idle"`, between runs. Global setting only. |
 
 Cache warming runs only when the model declares a cache lifetime and Pi estimates at least $0.05 in avoided cache-miss cost. Refresh usage counts toward session totals but does not enter model context. `/session` shows the next decision; extensions can override it with `cache_warming_decision`. See [Prompt Cache Lifetimes](models.md#prompt-cache-lifetimes).
+
+### Thinking level on model switches
+
+Model switches keep your current thinking level. A target model's `modelThinkingLevels` entry overrides it; when cycling, an explicit `:<thinking>` suffix in `--models` or `enabledModels` has highest priority.
+
+Unsupported levels are temporarily adjusted to a supported level and restored on a capable model: `high` → non-thinking model (`off`) → thinking model (`high`). Choosing a different level or applying a model override sets the level carried into later switches. Selecting the displayed level leaves it unchanged.
+
+Reopening or forking a session carries forward the thinking level saved at that point.
 
 See [Choose a Model](models.md) for model selection and thinking controls.
 
