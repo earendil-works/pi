@@ -471,7 +471,7 @@ Built-in providers resolve these env vars (Node.js; in browsers pass `apiKey` ex
 | Mistral | `MISTRAL_API_KEY` |
 | Groq | `GROQ_API_KEY` |
 | Cerebras | `CEREBRAS_API_KEY` |
-| Cloudflare AI Gateway | `CLOUDFLARE_API_KEY` + `CLOUDFLARE_ACCOUNT_ID` + `CLOUDFLARE_GATEWAY_ID` |
+| Cloudflare AI Gateway | `CLOUDFLARE_API_KEY` + `CLOUDFLARE_ACCOUNT_ID` + `CLOUDFLARE_GATEWAY_ID`, or `CLOUDFLARE_GATEWAY_DOMAIN` (custom domain) with optional `CLOUDFLARE_API_KEY`, `CLOUDFLARE_ACCESS_CLIENT_ID` + `CLOUDFLARE_ACCESS_CLIENT_SECRET`, or `CLOUDFLARE_ACCESS_TOKEN` |
 | Cloudflare Workers AI | `CLOUDFLARE_API_KEY` + `CLOUDFLARE_ACCOUNT_ID` |
 | xAI | `XAI_API_KEY` |
 | Fireworks | `FIREWORKS_API_KEY` |
