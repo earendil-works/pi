@@ -1,4 +1,5 @@
 import type { AgentState } from "@earendil-works/pi-agent-core";
+import { getCurrentSystemPrompt } from "@earendil-works/pi-ai";
 import { existsSync, readFileSync, writeFileSync } from "fs";
 import { basename, join } from "path";
 import { APP_NAME, getExportTemplateDir } from "../../config.ts";
@@ -294,12 +295,13 @@ export async function exportFromFile(inputPath: string, options?: ExportOptions 
 	}
 
 	const sm = SessionManager.open(resolvedInputPath);
+	const { messages } = sm.buildSessionContext();
 
 	const sessionData: SessionData = {
 		header: sm.getHeader(),
 		entries: sm.getEntries(),
 		leafId: sm.getLeafId(),
-		systemPrompt: undefined,
+		systemPrompt: getCurrentSystemPrompt(messages) || undefined,
 		tools: undefined,
 	};
 
