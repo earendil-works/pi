@@ -81,6 +81,7 @@ import { DEFAULT_THINKING_LEVEL, THINKING_LEVEL_OPTIONS } from "./defaults.ts";
 import { exportSessionToHtml, type ToolHtmlRenderer } from "./export-html/index.ts";
 import { createToolHtmlRenderer } from "./export-html/tool-renderer.ts";
 import {
+	type AbortContinuation,
 	type AgentActivityOutcome,
 	type BoundaryContextPreview,
 	type ContextUsage,
@@ -109,6 +110,7 @@ import {
 	type ToolInfo,
 	type ToolLoadout,
 	type TreePreparation,
+	type TurnContinuation,
 	type TurnStartEvent,
 	wrapRegisteredTools,
 } from "./extensions/index.ts";
@@ -302,7 +304,7 @@ export interface ExtensionBindings {
 	uiContext?: ExtensionUIContext;
 	mode?: ExtensionMode;
 	commandContextActions?: ExtensionCommandContextActions;
-	abortHandler?: () => void;
+	abortHandler?: (continuation?: AbortContinuation) => void;
 	shutdownHandler?: ShutdownHandler;
 	onError?: ExtensionErrorListener;
 }
@@ -371,6 +373,13 @@ function estimateMessagesTokens(messages: AgentMessage[]): number {
 	return tokens;
 }
 
+/** Armed same-run continuation intent; applied by the run loop when the aborted request settles. */
+interface PendingContinuation {
+	contextMode: "keep" | "discard";
+	reason?: string;
+	reminders: (string | AgentMessage)[];
+}
+
 // ============================================================================
 // AgentSession Class
 // ============================================================================
@@ -387,6 +396,9 @@ export class AgentSession {
 	private _eventListeners: AgentSessionEventListener[] = [];
 	private _isAgentRunActive = false;
 	private _agentRunAbortRequested = false;
+	private _pendingContinuation: PendingContinuation | null = null;
+	private _continuationAttempts = 0;
+	private _pendingTurnContinuation: TurnContinuation | undefined;
 	private _idleWaitPromise: Promise<void> | undefined;
 	private _resolveIdleWait: (() => void) | undefined;
 
@@ -460,7 +472,7 @@ export class AgentSession {
 	private _extensionUIContext?: ExtensionUIContext;
 	private _extensionMode: ExtensionMode = "print";
 	private _extensionCommandContextActions?: ExtensionCommandContextActions;
-	private _extensionAbortHandler?: () => void;
+	private _extensionAbortHandler?: (continuation?: AbortContinuation) => void;
 	private _extensionShutdownHandler?: ShutdownHandler;
 	private _extensionErrorListener?: ExtensionErrorListener;
 	private _extensionErrorUnsubscriber?: () => void;
@@ -1293,6 +1305,10 @@ export class AgentSession {
 				turnIndex: this._turnIndex,
 				timestamp: Date.now(),
 			};
+			if (this._pendingTurnContinuation) {
+				extensionEvent.continuation = this._pendingTurnContinuation;
+				this._pendingTurnContinuation = undefined;
+			}
 			await this._extensionRunner.emit(extensionEvent);
 		} else if (event.type === "turn_end") {
 			if (event.message.role === "assistant" && !this._boundaryDispatchedMessages.delete(event.message)) {
@@ -1821,6 +1837,9 @@ export class AgentSession {
 
 	private async _runAgentPrompt(messages: AgentMessage | AgentMessage[]): Promise<void> {
 		this._agentRunAbortRequested = false;
+		this._pendingContinuation = null;
+		this._continuationAttempts = 0;
+		this._pendingTurnContinuation = undefined;
 		// Compaction before the prompt may have scheduled a retry; the new prompt replaces it.
 		this._failedResponse = undefined;
 		this._recordSelection();
@@ -1830,14 +1849,25 @@ export class AgentSession {
 		this._isAgentRunActive = true;
 		try {
 			await this.agent.prompt(messages);
-			while (!this._agentRunAbortRequested) {
+			while (true) {
+				if (this._agentRunAbortRequested && (await this._applyPendingContinuation())) continue;
+				if (this._agentRunAbortRequested) break;
 				if (await this._handlePostAgentRun()) {
-					if (this._agentRunAbortRequested) break;
+					if (this._agentRunAbortRequested) {
+						if (await this._applyPendingContinuation()) continue;
+						break;
+					}
 					await this.agent.continue();
 					continue;
 				}
-				if (this._agentRunAbortRequested || !(await this._runBeforeSettleBoundary())) break;
-				if (this._agentRunAbortRequested) break;
+				if (this._agentRunAbortRequested) {
+					if (await this._applyPendingContinuation()) continue;
+					break;
+				}
+				if (!(await this._runBeforeSettleBoundary())) {
+					if (this._agentRunAbortRequested && (await this._applyPendingContinuation())) continue;
+					break;
+				}
 				await this.agent.continue();
 			}
 		} finally {
@@ -2430,8 +2460,15 @@ export class AgentSession {
 
 	/**
 	 * Abort current operation and wait for agent to become idle.
+	 * With a continuation the run resumes after the aborted request settles instead of ending;
+	 * a plain abort is a user interrupt and drops any armed continuation.
 	 */
-	async abort(): Promise<void> {
+	async abort(continuation?: AbortContinuation): Promise<void> {
+		if (continuation && this._isAgentRunActive) {
+			this._armContinuation(continuation);
+		} else if (!continuation) {
+			this._pendingContinuation = null;
+		}
 		if (this._isAgentRunActive) {
 			this._agentRunAbortRequested = true;
 		}
@@ -2441,6 +2478,102 @@ export class AgentSession {
 		if (this._isBeforeSettle) this._abortDuringBeforeSettle = true;
 		this.agent.abort();
 		await this.waitForIdle();
+	}
+
+	/** Arm or coalesce a same-run continuation intent; the run loop applies it when the abort settles. */
+	private _armContinuation(spec: AbortContinuation): void {
+		const pending = this._pendingContinuation;
+		if (!pending) {
+			this._pendingContinuation = {
+				contextMode: spec.contextMode === "discard" ? "discard" : "keep",
+				reason: spec.reason,
+				reminders: spec.reminder !== undefined ? [spec.reminder] : [],
+			};
+			return;
+		}
+		if (spec.contextMode === "discard") pending.contextMode = "discard";
+		if (!pending.reason && spec.reason) pending.reason = spec.reason;
+		if (spec.reminder !== undefined && !pending.reminders.some((reminder) => reminder === spec.reminder)) {
+			pending.reminders.push(spec.reminder);
+		}
+	}
+
+	/**
+	 * Apply the armed continuation at the abort settle: optionally drop the aborted partial,
+	 * inject the reminder, and re-enter the run loop. Returns false to settle like a plain abort.
+	 */
+	private async _applyPendingContinuation(): Promise<boolean> {
+		const spec = this._pendingContinuation;
+		this._pendingContinuation = null;
+		if (!spec) return false;
+		const max = this.settingsManager.getMaxAutoContinuations();
+		if (max <= 0) return false;
+		if (this._continuationAttempts >= max) {
+			this._notifyContinuationBudgetExhausted(spec);
+			return false;
+		}
+		let droppedPartial = false;
+		if (spec.contextMode === "discard") {
+			droppedPartial = this._dropAbortedPartial();
+		}
+		const reminderMessages = spec.reminders.map(
+			(reminder): AgentMessage =>
+				typeof reminder === "string"
+					? { role: "user", content: [{ type: "text", text: reminder }], timestamp: Date.now() }
+					: reminder,
+		);
+		if (reminderMessages.length === 0 && !droppedPartial) {
+			// keep-mode without a reminder cannot resume: the run tail is an assistant message.
+			return false;
+		}
+		// Clear the abort intent before the next request so the run loop keeps going.
+		this._agentRunAbortRequested = false;
+		this._continuationAttempts++;
+		this._pendingTurnContinuation = { reason: spec.reason, attempt: this._continuationAttempts, droppedPartial };
+		if (reminderMessages.length > 0) {
+			await this.agent.prompt(reminderMessages);
+		} else {
+			await this.agent.continue();
+		}
+		return true;
+	}
+
+	/** Drop the trailing aborted partial assistant message and its tool results from the context. */
+	private _dropAbortedPartial(): boolean {
+		const messages = this.agent.state.messages;
+		let partialIndex = -1;
+		for (let i = messages.length - 1; i >= 0; i--) {
+			const message = messages[i];
+			if (message.role === "assistant") {
+				partialIndex = i;
+				break;
+			}
+		}
+		if (partialIndex === -1) return false;
+		const partial = messages[partialIndex] as AssistantMessage;
+		if (partial.stopReason !== "aborted") return false;
+		const trailing = messages.slice(partialIndex + 1);
+		const toolResults = trailing.filter((message) => message.role === "toolResult");
+		if (trailing.length !== toolResults.length) return false;
+		try {
+			this._omitRecoveryAttempt(partial, toolResults);
+		} catch {
+			return false;
+		}
+		this._lastAssistantMessage = undefined;
+		this._lastAssistantToolResults = [];
+		return true;
+	}
+
+	/** Surface a user-visible notice when the continuation loop guard trips. */
+	private _notifyContinuationBudgetExhausted(spec: PendingContinuation): void {
+		this._appendCustomMessage({
+			role: "custom",
+			customType: "continuation_budget_exhausted",
+			content: `Aborted-request continuation budget exhausted; run aborted without resuming (requested by ${spec.reason ?? "extension"}).`,
+			display: true,
+			timestamp: Date.now(),
+		});
 	}
 
 	async waitForIdle(): Promise<void> {
@@ -3439,12 +3572,12 @@ export class AgentSession {
 				isIdle: () => this.isIdle,
 				isProjectTrusted: () => this.settingsManager.isProjectTrusted(),
 				getSignal: () => this.agent.signal,
-				abort: () => {
+				abort: (continuation?: AbortContinuation) => {
 					if (this._extensionAbortHandler) {
-						this._extensionAbortHandler();
+						this._extensionAbortHandler(continuation);
 						return;
 					}
-					void this.abort();
+					void this.abort(continuation);
 				},
 				hasPendingMessages: () => this.pendingMessageCount > 0,
 				shutdown: () => {

@@ -322,6 +322,19 @@ export interface CompactOptions {
  */
 export type ExtensionMode = "tui" | "rpc" | "json" | "print";
 
+/**
+ * Passed to ctx.abort() to request that the same run continue after the aborted request settles,
+ * instead of the run ending.
+ */
+export interface AbortContinuation {
+	/** Message injected before the run resumes. A plain string becomes a user message. */
+	reminder?: string | AgentMessage;
+	/** "discard" drops the aborted partial assistant message before resuming. Default "keep". */
+	contextMode?: "keep" | "discard";
+	/** Identifies the requester; surfaced via turn_start.continuation and budget-exhaustion notices. */
+	reason?: string;
+}
+
 export interface ExtensionContext {
 	/** UI methods for user interaction */
 	ui: ExtensionUIContext;
@@ -350,8 +363,8 @@ export interface ExtensionContext {
 	isProjectTrusted(): boolean;
 	/** The current abort signal, or undefined when the agent is not streaming. */
 	signal: AbortSignal | undefined;
-	/** Abort the current agent operation */
-	abort(): void;
+	/** Abort the current agent operation; pass a continuation to resume the same run after the abort. */
+	abort(continuation?: AbortContinuation): void;
 	/** Whether there are queued messages waiting */
 	hasPendingMessages(): boolean;
 	/** Gracefully shutdown pi and exit. Available in all contexts. */
@@ -1026,11 +1039,23 @@ export interface UIPromptEndEvent {
 	title?: string;
 }
 
+/** Marker on turn_start when the turn resumes the same run after an aborted request. */
+export interface TurnContinuation {
+	/** Reason recorded by the extension that requested the continuation. */
+	reason?: string;
+	/** 1-based attempt count within the run, capped by maxAutoContinuations. */
+	attempt: number;
+	/** True when the aborted partial assistant message was dropped before resuming. */
+	droppedPartial: boolean;
+}
+
 /** Fired at the start of each turn */
 export interface TurnStartEvent {
 	type: "turn_start";
 	turnIndex: number;
 	timestamp: number;
+	/** Present when this turn resumes the same run after ctx.abort(continuation). */
+	continuation?: TurnContinuation;
 }
 
 /** Fired at the end of each turn */
@@ -2183,7 +2208,7 @@ export interface ExtensionContextActions {
 	isIdle: () => boolean;
 	isProjectTrusted: () => boolean;
 	getSignal: () => AbortSignal | undefined;
-	abort: () => void;
+	abort: (continuation?: AbortContinuation) => void;
 	hasPendingMessages: () => boolean;
 	shutdown: () => void;
 	getContextUsage: () => ContextUsage | undefined;

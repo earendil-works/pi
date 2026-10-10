@@ -235,6 +235,14 @@ export const SettingsSchema = Type.Object(
 		compaction: Type.Optional(CompactionSettingsSchema),
 		branchSummary: Type.Optional(BranchSummarySettingsSchema),
 		retry: Type.Optional(RetrySettingsSchema),
+		maxAutoContinuations: Type.Optional(
+			Type.Number({
+				description:
+					"Maximum same-run continuations per run when an extension aborts with a continuation (0 disables).",
+				minimum: 0,
+				default: SETTINGS_DEFAULTS.maxAutoContinuations,
+			}),
+		),
 		hideThinkingBlock: Type.Optional(Type.Boolean({ default: SETTINGS_DEFAULTS.hideThinkingBlock })),
 		showCacheMissNotices: Type.Optional(
 			Type.Boolean({

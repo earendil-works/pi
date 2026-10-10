@@ -20,6 +20,7 @@ export type {
 } from "./runner.ts";
 export { ExtensionRunner } from "./runner.ts";
 export type {
+	AbortContinuation,
 	AfterProviderResponseEvent,
 	AgentActivityOutcome,
 	AgentBeforeSettleEvent,
@@ -193,6 +194,7 @@ export type {
 	ToolResultEvent,
 	ToolResultEventResult,
 	TreePreparation,
+	TurnContinuation,
 	TurnEndEvent,
 	TurnEndEventResult,
 	TurnStartEvent,

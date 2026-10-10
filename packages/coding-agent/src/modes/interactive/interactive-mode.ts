@@ -1973,8 +1973,9 @@ export class InteractiveMode {
 		await this.session.bindExtensions({
 			uiContext,
 			mode: "tui",
-			abortHandler: () => {
-				this.restoreQueuedMessagesToEditor({ abort: true });
+			abortHandler: (continuation) => {
+				// A continuation resumes the run and drains the queues, so leave them queued.
+				if (!continuation) this.restoreQueuedMessagesToEditor({ abort: true });
 			},
 			commandContextActions: {
 				waitForIdle: () => this.session.waitForIdle(),

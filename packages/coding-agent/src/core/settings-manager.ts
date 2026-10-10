@@ -939,6 +939,10 @@ export class SettingsManager {
 		return this.settings.hideThinkingBlock ?? SETTINGS_DEFAULTS.hideThinkingBlock;
 	}
 
+	getMaxAutoContinuations(): number {
+		return this.settings.maxAutoContinuations ?? SETTINGS_DEFAULTS.maxAutoContinuations;
+	}
+
 	getShowCacheMissNotices(): boolean {
 		return this.settings.showCacheMissNotices ?? SETTINGS_DEFAULTS.showCacheMissNotices;
 	}

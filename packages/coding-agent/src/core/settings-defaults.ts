@@ -23,6 +23,7 @@ export const SETTINGS_DEFAULTS = {
 			maxRetryDelayMs: 60000,
 		},
 	},
+	maxAutoContinuations: 3,
 	hideThinkingBlock: false,
 	showCacheMissNotices: false,
 	quietStartup: false,
