@@ -1,3 +1,4 @@
+import { generateImages as generateImagesAntigravity } from "../../api/antigravity-images.ts";
 import type { generateImages as generateImagesOpenRouterFunction } from "../../api/openrouter-images.ts";
 import { registerImagesApiProvider } from "../../images-api-registry.ts";
 import type {
@@ -48,6 +49,7 @@ export const generateImagesOpenRouter: ImagesFunction<ImagesOptions> = async (
 };
 
 export function registerBuiltInImagesApiProviders(): void {
+	registerImagesApiProvider({ api: "antigravity-images", generateImages: generateImagesAntigravity });
 	registerImagesApiProvider({
 		api: "openrouter-images",
 		generateImages: generateImagesOpenRouter,

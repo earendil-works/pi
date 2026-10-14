@@ -180,6 +180,7 @@ if (dirname(bedrockLoaderOutput) !== dirname(oauthLoaderOutput)) {
 // file per implementation beside the code that resolves it.
 const lazyEntryPoints = {
 	anthropic: join(aiDistDir, "auth", "oauth", "anthropic.js"),
+	antigravity: join(aiDistDir, "auth", "oauth", "antigravity.js"),
 	"bedrock-converse-stream": join(aiDistDir, "api", "bedrock-converse-stream.js"),
 	"github-copilot": join(aiDistDir, "auth", "oauth", "github-copilot.js"),
 	"image-resize-worker": join(codingAgentDistDir, "utils", "image-resize-worker.js"),
