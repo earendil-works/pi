@@ -49,7 +49,7 @@ Create a provider file exporting:
 - `src/core/provider-display-names.ts`: add API-key login display name so `/login` and related UI show the provider for built-in API-key auth.
 - `src/cli/args.ts`: add env var documentation.
 - `README.md`: add provider setup instructions.
-- `docs/providers.md`: add setup instructions, env var, and `auth.json` key.
+- `docs/providers.md` (repository root): add setup instructions, env var, and `auth.json` key.
 
 ## 7. Documentation
 

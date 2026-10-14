@@ -3,7 +3,7 @@ import { resetCapabilitiesCache, setCapabilities, Text, type TUI, type TuiMouseE
 import { Type } from "typebox";
 import { afterEach, beforeAll, describe, expect, test, vi } from "vitest";
 
-import { getReadmePath } from "../src/config.ts";
+import { getDocsPath, getReadmePath } from "../src/config.ts";
 import type { ToolDefinition } from "../src/core/extensions/types.ts";
 import { type BashOperations, createBashToolDefinition } from "../src/core/tools/bash.ts";
 import { createReadTool, createReadToolDefinition } from "../src/core/tools/read.ts";
@@ -670,6 +670,14 @@ describe("ToolExecutionComponent parity", () => {
 			content: "Hidden docs content",
 			compact: "read docs README.md",
 			hidden: "Hidden docs content",
+			absent: undefined,
+		},
+		{
+			title: "Pi documentation page",
+			path: join(getDocsPath(), "extensions.md"),
+			content: "Hidden docs page content",
+			compact: "read docs docs/extensions.md",
+			hidden: "Hidden docs page content",
 			absent: undefined,
 		},
 	] as const) {

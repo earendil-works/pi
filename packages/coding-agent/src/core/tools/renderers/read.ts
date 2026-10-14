@@ -9,7 +9,7 @@
 import { basename, dirname, isAbsolute, relative, resolve as resolvePath, sep } from "node:path";
 import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
 import { Text } from "@earendil-works/pi-tui";
-import { getReadmePath } from "../../../config.ts";
+import { getDocsPath, getReadmePath } from "../../../config.ts";
 import { keyHint, keyText } from "../../../modes/interactive/components/keybinding-hints.ts";
 import { getLanguageFromPath, highlightCode, type Theme } from "../../../modes/interactive/theme/theme.ts";
 import { formatPathRelativeToCwdOrAbsolute } from "../../../utils/paths.ts";
@@ -46,9 +46,8 @@ function trimTrailingEmptyLines(lines: string[]): string[] {
 function toPosixPath(filePath: string): string {
 	return filePath.split(sep).join("/");
 }
-function getPiDocsClassification(absolutePath: string): CompactReadClassification | undefined {
-	const packageRoot = dirname(getReadmePath());
-	const relativePath = relative(resolvePath(packageRoot), resolvePath(absolutePath));
+function getContainedRelativePath(directory: string, absolutePath: string): string | undefined {
+	const relativePath = relative(resolvePath(directory), resolvePath(absolutePath));
 	if (
 		relativePath === "" ||
 		relativePath === ".." ||
@@ -57,9 +56,17 @@ function getPiDocsClassification(absolutePath: string): CompactReadClassificatio
 	) {
 		return undefined;
 	}
+	return toPosixPath(relativePath);
+}
+function getPiDocsClassification(absolutePath: string): CompactReadClassification | undefined {
+	// Docs live outside the package root in source checkouts, so check them separately.
+	const docsPath = getContainedRelativePath(getDocsPath(), absolutePath);
+	if (docsPath) {
+		return { kind: "docs", label: `docs/${docsPath}` };
+	}
 
-	const label = toPosixPath(relativePath);
-	if (label === "README.md" || label.startsWith("docs/") || label.startsWith("examples/")) {
+	const label = getContainedRelativePath(dirname(getReadmePath()), absolutePath);
+	if (label === "README.md" || label?.startsWith("examples/")) {
 		return { kind: "docs", label };
 	}
 	return undefined;

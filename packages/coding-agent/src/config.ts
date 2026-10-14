@@ -445,9 +445,17 @@ export function getReadmePath(): string {
 	return resolve(join(getPackageDir(), "README.md"));
 }
 
-/** Get path to docs directory */
+/**
+ * Get path to docs directory
+ * - For source checkouts: the repository docs/ (the source of truth)
+ * - For npm installs and the Bun binary: docs/ in the package, copied there by scripts/copy-docs.mjs
+ */
 export function getDocsPath(): string {
-	return resolve(join(getPackageDir(), "docs"));
+	const packageDir = getPackageDir();
+	if (!isBunBinary && existsSync(join(packageDir, "src"))) {
+		return resolve(packageDir, "..", "..", "docs");
+	}
+	return resolve(join(packageDir, "docs"));
 }
 
 /** Get path to examples directory */

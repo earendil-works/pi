@@ -180,4 +180,4 @@ pi -e ~/.pi/agent/extensions/gondolin
 
 The extension mounts the host working folder at `/workspace` in the VM and overrides `read`, `write`, `edit`, `bash`, `grep`, `find`, and `ls`. File changes under `/workspace` write through to the host.
 
-Other extension tools still run on the host unless they explicitly delegate their operations. Review the [Gondolin example](../examples/extensions/gondolin/) before adding tools that could bypass the VM boundary.
+Other extension tools still run on the host unless they explicitly delegate their operations. Review the [Gondolin example](../packages/coding-agent/examples/extensions/gondolin/) before adding tools that could bypass the VM boundary.

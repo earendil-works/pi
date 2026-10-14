@@ -12,7 +12,7 @@ interface NavigationGroup {
 	items: NavigationItem[];
 }
 
-const docsRoot = resolve(import.meta.dirname, "../docs");
+const docsRoot = resolve(import.meta.dirname, "../../../docs");
 
 function requireObject(value: unknown, location: string): Record<string, unknown> {
 	if (!value || typeof value !== "object" || Array.isArray(value)) {

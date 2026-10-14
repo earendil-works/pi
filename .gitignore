@@ -37,6 +37,8 @@ out.jsonl
 pi-*.html
 out.html
 packages/coding-agent/binaries/
+# Generated from docs/ by the coding-agent build (scripts/copy-docs.mjs)
+packages/coding-agent/docs/
 packages/env/bin/
 packages/env/daemon/target/
 todo.md

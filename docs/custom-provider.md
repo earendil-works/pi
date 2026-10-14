@@ -69,7 +69,7 @@ Model-level `baseUrl` values take precedence over the provider endpoint. If no `
 
 Calls made after initial extension loading take effect immediately. Use `pi.unregisterProvider()` to remove the dynamic provider and restore built-in behavior that it replaced.
 
-See the checked [GitLab Duo provider](../examples/extensions/custom-provider-gitlab-duo/) for a complete registration that delegates streaming to built-in API implementations.
+See the checked [GitLab Duo provider](../packages/coding-agent/examples/extensions/custom-provider-gitlab-duo/) for a complete registration that delegates streaming to built-in API implementations.
 
 ## Provide authentication
 

@@ -30,7 +30,7 @@ const submitAudit = defineTool({
 });
 
 const repositoryRoot = resolve(import.meta.dirname, "../../..");
-const docsRoot = resolve(repositoryRoot, "packages/coding-agent/docs");
+const docsRoot = resolve(repositoryRoot, "docs");
 const pages = globSync("**/*.md", { cwd: docsRoot })
 	.map((path) => ({ path: path.replaceAll("\\", "/") }))
 	.sort((left, right) => left.path.localeCompare(right.path));

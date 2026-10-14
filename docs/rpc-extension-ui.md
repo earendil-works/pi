@@ -195,6 +195,6 @@ Dismiss any dialog method. The extension receives `undefined` (for select/input/
 
 ## Example
 
-See the checked [RPC extension UI client](../examples/rpc-extension-ui.ts) and its [demo extension](../examples/extensions/rpc-demo.ts).
+See the checked [RPC extension UI client](../packages/coding-agent/examples/rpc-extension-ui.ts) and its [demo extension](../packages/coding-agent/examples/extensions/rpc-demo.ts).
 
 The exported request and response unions are defined in [`rpc-types.ts`](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/src/modes/rpc/rpc-types.ts). See [Extensions](extensions.md#ui-and-modes) for mode-independent extension guidance.
