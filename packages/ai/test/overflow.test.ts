@@ -36,13 +36,18 @@ describe("isContextOverflow", () => {
 		'413 {"error":{"message":"failed to parse request","code":""}}',
 		"OpenAI API error (413): 413 status code (no body)",
 		"github-copilot API error (413): Payload Too Large",
+		"Google Generative AI API error (413): Payload Too Large",
+		"custom-provider API error (413): Payload Too Large",
 		"413: Payload Too Large",
+		"413 status code (no body)",
 		"413",
-	])("detects Copilot request-size overflow: %s", (errorMessage) => {
-		const message = { ...createErrorMessage(errorMessage), provider: "github-copilot" };
-		// The request can exceed the byte limit even with zero usage and a large token window.
-		expect(isContextOverflow(message, 1_000_000)).toBe(true);
-		expect(isContextOverflow(message)).toBe(true);
+	])("detects provider-independent request-size overflow: %s", (errorMessage) => {
+		for (const provider of ["github-copilot", "openai", "custom-provider"]) {
+			const message = { ...createErrorMessage(errorMessage), provider };
+			// The request can exceed the byte limit even with zero usage and a large token window.
+			expect(isContextOverflow(message, 1_000_000)).toBe(true);
+			expect(isContextOverflow(message)).toBe(true);
+		}
 	});
 
 	it.each([
@@ -53,15 +58,17 @@ describe("isContextOverflow", () => {
 		'github-copilot API error (400): {"message":"failed to parse request: invalid value 413"}',
 		"failed to parse request",
 		"4130 failed to parse request",
-	])("does not compact unrelated Copilot parsing errors: %s", (errorMessage) => {
-		expect(isContextOverflow({ ...createErrorMessage(errorMessage), provider: "github-copilot" })).toBe(false);
+		"custom-provider API error (400): upstream mentioned OpenAI API error (413): invalid input",
+		"custom-provider API error (4130): invalid input",
+		"custom-provider API error (429): Too many requests",
+	])("does not mistake unrelated errors for request-size overflow: %s", (errorMessage) => {
+		expect(isContextOverflow(createErrorMessage(errorMessage))).toBe(false);
 	});
 
-	it("limits the Copilot HTTP-status match to failed Copilot responses", () => {
+	it("limits HTTP-status matching to failed responses", () => {
 		const message = createErrorMessage('OpenAI API error (413): {"message":"failed to parse request"}');
-		expect(isContextOverflow(message)).toBe(false);
-		expect(isContextOverflow({ ...message, provider: "github-copilot", stopReason: "aborted" })).toBe(false);
-		expect(isContextOverflow({ ...message, provider: "github-copilot", stopReason: "stop" })).toBe(false);
+		expect(isContextOverflow({ ...message, stopReason: "aborted" })).toBe(false);
+		expect(isContextOverflow({ ...message, stopReason: "stop" })).toBe(false);
 	});
 
 	it("detects explicit Ollama prompt-too-long errors", () => {
@@ -126,12 +133,12 @@ describe("isContextOverflow", () => {
 		expect(isContextOverflow(message, 32768)).toBe(false);
 	});
 
-	it("only treats bodyless 400 and 413 errors as overflow for Cerebras", () => {
-		// Regression for #9482.
-		for (const errorMessage of ["400 status code (no body)", "413 status code (no body)"]) {
-			expect(isContextOverflow(createErrorMessage(errorMessage, "cerebras"), 131072)).toBe(true);
-			expect(isContextOverflow(createErrorMessage(errorMessage, "opencode-go"), 1000000)).toBe(false);
-		}
+	it("only treats bodyless 400 errors as overflow for Cerebras", () => {
+		// Regression for #9482. HTTP 413 is a request-size error for every provider,
+		// but a bodyless HTTP 400 is only known to indicate overflow for Cerebras.
+		const errorMessage = "400 status code (no body)";
+		expect(isContextOverflow(createErrorMessage(errorMessage, "cerebras"), 131072)).toBe(true);
+		expect(isContextOverflow(createErrorMessage(errorMessage, "opencode-go"), 1000000)).toBe(false);
 	});
 
 	it("does not treat Bedrock throttling 'Too many tokens' as overflow", () => {

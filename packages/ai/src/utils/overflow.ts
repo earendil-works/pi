@@ -4,7 +4,7 @@ import type { AssistantMessage } from "../types.ts";
  * Regex patterns to detect context overflow errors from different providers.
  *
  * These patterns match error messages returned when the input exceeds
- * the model's context window.
+ * the model's context window or the provider's request byte-size limit.
  *
  * Provider-specific patterns (with example error messages):
  *
@@ -61,14 +61,12 @@ const OVERFLOW_PATTERNS = [
 	/context[_ ]length[_ ]exceeded/i, // Generic fallback
 	/too many tokens/i, // Generic fallback
 	/token limit exceeded/i, // Generic fallback
+	// HTTP 413 means request-size overflow regardless of provider or body text.
+	// Match raw SDK errors and formatProviderError's prefix, not a status mentioned in the body.
+	/^(?:[\w -]+ API error \(413\):|413(?:\s|:|$))/i,
 ];
 
 const CEREBRAS_BODYLESS_OVERFLOW_PATTERN = /^4(?:00|13)\s*(?:status code)?\s*\(no body\)/i;
-
-// Copilot's request byte limit can be reached by images/reasoning before the token limit.
-// Match the HTTP status, not "failed to parse request": HTTP 400 can have the same body,
-// and the SDK can discard unrecognized error bodies entirely.
-const COPILOT_REQUEST_SIZE_OVERFLOW_PATTERN = /^(?:(?:github-copilot|OpenAI) API error \(413\):|413(?:\s|:|$))/i;
 
 /**
  * Patterns that indicate non-overflow errors (e.g. rate limiting, server errors).
@@ -151,12 +149,6 @@ export function isContextOverflow(message: AssistantMessage, contextWindow?: num
 				return true;
 			}
 			if (message.provider === "cerebras" && CEREBRAS_BODYLESS_OVERFLOW_PATTERN.test(message.errorMessage)) {
-				return true;
-			}
-			if (
-				message.provider === "github-copilot" &&
-				COPILOT_REQUEST_SIZE_OVERFLOW_PATTERN.test(message.errorMessage)
-			) {
 				return true;
 			}
 		}

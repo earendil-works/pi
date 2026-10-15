@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { stream } from "../src/api/openai-responses.ts";
 import type { Model } from "../src/types.ts";
 import { isContextOverflow } from "../src/utils/overflow.ts";
+import { normalizeContext } from "../src/utils/transcript.ts";
 
 const model: Model<"openai-responses"> = {
 	id: "copilot-test-model",
@@ -32,7 +33,7 @@ describe("Copilot HTTP request-size errors", () => {
 		);
 		const result = await stream(
 			model,
-			{ messages: [{ role: "user", content: "Continue", timestamp: 0 }] },
+			normalizeContext({ messages: [{ role: "user", content: "Continue", timestamp: 0 }] }),
 			{ apiKey: "test-key", fetch, maxRetries: 0 },
 		).result();
 
@@ -41,8 +42,7 @@ describe("Copilot HTTP request-size errors", () => {
 		expect(result.stopReason).toBe("error");
 		expect(result.usage.totalTokens).toBe(0);
 		expect(result.errorMessage).toContain(`(${status})`);
-		// The SDK discards a JSON body without an outer `error` property.
-		expect(result.errorMessage).toContain(nested ? "failed to parse request" : "status code (no body)");
+		expect(result.errorMessage).toContain("failed to parse request");
 		expect(isContextOverflow(result, model.contextWindow)).toBe(overflow);
 	});
 });

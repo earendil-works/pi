@@ -4,8 +4,7 @@ import { createHarness, getMessageText, type Harness } from "../harness.ts";
 
 const COPILOT_413 = 'github-copilot API error (413): {"message":"failed to parse request","code":""}';
 const REQUEST_LIMIT = 32 * 1024 * 1024;
-// Enough recent text to keep the old image-reading turn out of the default 20k-token retained tail.
-const RECENT_PROMPT = `Continue the task using these recent notes: ${"x".repeat(80_000)}`;
+const RECENT_PROMPT = "Continue the task using the recent notes.";
 
 function seedImageHistory(harness: Harness, imageData: string): void {
 	const timestamp = Date.now() - 10_000;
@@ -41,6 +40,20 @@ function seedImageHistory(harness: Harness, imageData: string): void {
 		api: model.api,
 		model: model.id,
 	});
+	// Keep a completed recent turn so recovery does not summarize the entire current
+	// request when it omits the failed assistant attempt. The old images are outside
+	// the default 20k-token retained tail.
+	harness.sessionManager.appendMessage({
+		role: "user",
+		content: `Recent task notes: ${"x".repeat(80_000)}`,
+		timestamp,
+	});
+	harness.sessionManager.appendMessage({
+		...fauxAssistantMessage("Ready to continue", { timestamp }),
+		provider: model.provider,
+		api: model.api,
+		model: model.id,
+	});
 	harness.session.agent.state.messages = harness.sessionManager.buildSessionContext().messages;
 }
 
@@ -67,7 +80,9 @@ describe("Copilot request-size overflow recovery", () => {
 			},
 			(context) => {
 				// Exercise Pi's real summary preparation, not an extension-supplied compaction.
-				expect(context.messages.every((message) => message.role === "user")).toBe(true);
+				expect(context.messages.every((message) => message.role === "system" || message.role === "user")).toBe(
+					true,
+				);
 				expect(context.messages.map(getMessageText).join("\n")).toContain("Finished reviewing the old images");
 				expect(Buffer.byteLength(JSON.stringify(context))).toBeLessThan(1024 * 1024);
 				return fauxAssistantMessage("The old images have been reviewed. Continue with the recent task.");
