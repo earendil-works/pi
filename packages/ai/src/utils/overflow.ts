@@ -22,6 +22,7 @@ import type { AssistantMessage } from "../types.ts";
  * - llama.cpp: "the request exceeds the available context size, try increasing it"
  * - LM Studio: "tokens to keep from the initial prompt is greater than the context length"
  * - GitHub Copilot: "prompt token count of X exceeds the limit of Y"
+ * - GitHub Copilot: 'github-copilot API error (413): {"message":"failed to parse request","code":""}'
  * - MiniMax: "invalid params, context window exceeds limit"
  * - Kimi For Coding: "Your request exceeded model token limit: X (requested: Y)"
  * - DS4: "Prompt has X tokens, but the configured context size is Y tokens"
@@ -64,6 +65,11 @@ const OVERFLOW_PATTERNS = [
 
 const CEREBRAS_BODYLESS_OVERFLOW_PATTERN = /^4(?:00|13)\s*(?:status code)?\s*\(no body\)/i;
 
+// Copilot's request byte limit can be reached by images/reasoning before the token limit.
+// Match the HTTP status, not "failed to parse request": HTTP 400 can have the same body,
+// and the SDK can discard unrecognized error bodies entirely.
+const COPILOT_REQUEST_SIZE_OVERFLOW_PATTERN = /^(?:(?:github-copilot|OpenAI) API error \(413\):|413(?:\s|:|$))/i;
+
 /**
  * Patterns that indicate non-overflow errors (e.g. rate limiting, server errors).
  * Error messages matching any of these are excluded from overflow detection
@@ -98,6 +104,7 @@ const NON_OVERFLOW_PATTERNS = [
  * - Google Gemini: "input token count exceeds the maximum"
  * - xAI (Grok): "maximum prompt length is X but request contains Y"
  * - Groq: "reduce the length of the messages"
+ * - GitHub Copilot: HTTP 413 "failed to parse request" (request byte-size overflow)
  * - Cerebras: 400/413 status code (no body)
  * - Mistral: "Prompt contains X tokens ... too large for model with Y maximum context length"
  * - OpenRouter (most backends): "maximum context length is X tokens"
@@ -144,6 +151,12 @@ export function isContextOverflow(message: AssistantMessage, contextWindow?: num
 				return true;
 			}
 			if (message.provider === "cerebras" && CEREBRAS_BODYLESS_OVERFLOW_PATTERN.test(message.errorMessage)) {
+				return true;
+			}
+			if (
+				message.provider === "github-copilot" &&
+				COPILOT_REQUEST_SIZE_OVERFLOW_PATTERN.test(message.errorMessage)
+			) {
 				return true;
 			}
 		}

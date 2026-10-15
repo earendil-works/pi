@@ -30,6 +30,40 @@ function createErrorMessage(errorMessage: string, provider = "ollama"): Assistan
 }
 
 describe("isContextOverflow", () => {
+	it.each([
+		'github-copilot API error (413): {"message":"failed to parse request","code":""}',
+		'OpenAI API error (413): {"message":"failed to parse request","code":""}',
+		'413 {"error":{"message":"failed to parse request","code":""}}',
+		"OpenAI API error (413): 413 status code (no body)",
+		"github-copilot API error (413): Payload Too Large",
+		"413: Payload Too Large",
+		"413",
+	])("detects Copilot request-size overflow: %s", (errorMessage) => {
+		const message = { ...createErrorMessage(errorMessage), provider: "github-copilot" };
+		// The request can exceed the byte limit even with zero usage and a large token window.
+		expect(isContextOverflow(message, 1_000_000)).toBe(true);
+		expect(isContextOverflow(message)).toBe(true);
+	});
+
+	it.each([
+		'github-copilot API error (400): {"message":"failed to parse request","code":""}',
+		'github-copilot API error (401): {"message":"failed to parse request","code":""}',
+		'github-copilot API error (429): {"message":"failed to parse request","code":""}',
+		'github-copilot API error (500): {"message":"failed to parse request","code":""}',
+		'github-copilot API error (400): {"message":"failed to parse request: invalid value 413"}',
+		"failed to parse request",
+		"4130 failed to parse request",
+	])("does not compact unrelated Copilot parsing errors: %s", (errorMessage) => {
+		expect(isContextOverflow({ ...createErrorMessage(errorMessage), provider: "github-copilot" })).toBe(false);
+	});
+
+	it("limits the Copilot HTTP-status match to failed Copilot responses", () => {
+		const message = createErrorMessage('OpenAI API error (413): {"message":"failed to parse request"}');
+		expect(isContextOverflow(message)).toBe(false);
+		expect(isContextOverflow({ ...message, provider: "github-copilot", stopReason: "aborted" })).toBe(false);
+		expect(isContextOverflow({ ...message, provider: "github-copilot", stopReason: "stop" })).toBe(false);
+	});
+
 	it("detects explicit Ollama prompt-too-long errors", () => {
 		const message = createErrorMessage("400 `prompt too long; exceeded max context length by 100918 tokens`");
 		expect(isContextOverflow(message, 32768)).toBe(true);
