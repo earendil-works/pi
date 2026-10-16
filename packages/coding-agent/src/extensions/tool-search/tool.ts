@@ -36,6 +36,8 @@ export interface ToolRanker {
 	rank(query: string, documents: readonly ToolSearchDocument[], limit: number): ToolSearchMatch[];
 }
 
+const wordSegmenter = new Intl.Segmenter(undefined, { granularity: "word" });
+
 const STOP_WORDS: ReadonlySet<string> = new Set([
 	"a",
 	"an",
@@ -68,15 +70,20 @@ function stem(term: string): string {
 	return term;
 }
 
-/** Lowercase terms, split at camelCase boundaries and non-alphanumerics, without stop words. */
+/** Unicode word segmentation with identifier boundaries and English stop words/singular forms. */
 export function tokenize(text: string): string[] {
-	return text
+	const normalized = text
+		.normalize("NFC")
 		.replace(/([a-z0-9])([A-Z])/g, "$1 $2")
 		.replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
 		.toLowerCase()
-		.split(/[^a-z0-9]+/)
-		.filter((term) => term.length > 0 && !STOP_WORDS.has(term))
-		.map(stem);
+		.replace(/[^\p{L}\p{M}\p{N}]+/gu, " ");
+	const terms: string[] = [];
+	for (const { segment, isWordLike } of wordSegmenter.segment(normalized)) {
+		if (!isWordLike || STOP_WORDS.has(segment)) continue;
+		terms.push(/^[a-z0-9]+$/.test(segment) ? stem(segment) : segment);
+	}
+	return terms;
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
