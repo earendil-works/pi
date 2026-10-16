@@ -1590,6 +1590,49 @@ bar`,
 			resetCapabilitiesCache();
 		});
 
+		it("should stop bare URLs at CJK punctuation and preserve the following text", () => {
+			setCapabilities({ images: null, trueColor: false, hyperlinks: true });
+			for (const punctuation of "。，；：！？、“”‘’（）【】《》「」『』…—·・〈〉［］｛｝．｡｢｣､･") {
+				for (const url of ["https://example.com", "https://example.com/中文?q=搜索#片段", "www.example.com"]) {
+					const source = `${url}${punctuation}后面的中文`;
+					const output = new Markdown(source, 0, 0, defaultMarkdownTheme).render(160).join("");
+					const href = url.startsWith("www.") ? `http://${url}` : url;
+					assert.ok(output.includes(`\x1b]8;;${href}\x1b\\`), source);
+					assert.ok(stripAnsi(output).includes(`\x1b]8;;\x1b\\${punctuation}后面的中文`), source);
+					assert.strictEqual(stripAnsi(output.replace(/\x1b\]8;;[^\x1b]*\x1b\\/g, "")).trimEnd(), source);
+				}
+			}
+		});
+
+		it("should preserve Chinese characters without punctuation in bare URLs", () => {
+			setCapabilities({ images: null, trueColor: false, hyperlinks: true });
+			for (const url of [
+				"https://example.com紧接着中文",
+				"https://example.com/中文?q=搜索#片段",
+				"https://example.com/テストー한글",
+			]) {
+				const output = new Markdown(url, 0, 0, defaultMarkdownTheme).render(160).join("");
+				assert.ok(output.includes(`\x1b]8;;${url}\x1b\\`));
+			}
+		});
+
+		it("should preserve CJK punctuation in explicit links and angle autolinks", () => {
+			setCapabilities({ images: null, trueColor: false, hyperlinks: true });
+			const url = "https://example.com/中文，路径·テスト・한글…—。";
+			for (const source of [`[文档](${url})`, `<${url}>`]) {
+				const output = new Markdown(source, 0, 0, defaultMarkdownTheme).render(160).join("");
+				assert.ok(output.includes(`\x1b]8;;${url}\x1b\\`), source);
+			}
+		});
+
+		it("should preserve English punctuation trimming before Chinese punctuation", () => {
+			setCapabilities({ images: null, trueColor: false, hyperlinks: true });
+			const source = "https://example.com.，后面的中文";
+			const output = new Markdown(source, 0, 0, defaultMarkdownTheme).render(160).join("");
+			assert.ok(output.includes("\x1b]8;;https://example.com\x1b\\"));
+			assert.ok(stripAnsi(output).includes("\x1b]8;;\x1b\\.，后面的中文"));
+		});
+
 		it("should not duplicate URL for autolinked emails", () => {
 			// Hyperlinks capability does not affect the mailto: display check.
 			setCapabilities({ images: null, trueColor: false, hyperlinks: false });
