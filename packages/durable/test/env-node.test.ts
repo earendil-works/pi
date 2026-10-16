@@ -654,10 +654,16 @@ describe("NodeExecutionEnv shell", () => {
 		}
 	});
 
-	it("uses stdin command transport for legacy WSL bash paths", async () => {
+	// #9490: legacy WSL detection must also handle a custom Windows directory.
+	it.each([
+		["C:\\Windows\\System32\\bash.exe", undefined, "-s"],
+		["D:\\WinNT\\System32\\bash.exe", "D:\\WinNT", "-s"],
+		["D:\\WinNT\\Sysnative\\bash.exe", "D:\\WinNT", "-s"],
+		["D:\\WinNT\\System32\\bash.exe", "", "-c"],
+		["E:\\Windows\\System32\\bash.exe", "D:\\WinNT", "-c"],
+	] as const)("selects command transport for %s (SystemRoot=%j)", async (shellPath, systemRoot, expectedArg) => {
 		if (process.platform === "win32") return;
 		const root = createTempDir();
-		const shellPath = "C:\\Windows\\System32\\bash.exe";
 		const env = new NodeExecutionEnv({ cwd: root });
 		getOrThrow(
 			await env.writeFile(
@@ -674,6 +680,7 @@ describe("NodeExecutionEnv shell", () => {
 		try {
 			process.chdir(root);
 			process.env.PATH = `${root}${delimiter}${originalPath ?? ""}`;
+			vi.stubEnv("SystemRoot", systemRoot);
 			Object.defineProperty(process, "platform", {
 				configurable: true,
 				value: "win32",
@@ -689,11 +696,12 @@ describe("NodeExecutionEnv shell", () => {
 			);
 			const result = getOrThrow(collected.result);
 			expect(collected.output).toContain("Hello, World!");
-			expect(collected.output).toContain("args:-s");
+			expect(collected.output).toContain(`args:${expectedArg}`);
 			expect(result.exitCode).toBe(0);
 		} finally {
 			process.chdir(originalCwd);
 			process.env.PATH = originalPath;
+			vi.unstubAllEnvs();
 			if (platformDescriptor) {
 				Object.defineProperty(process, "platform", platformDescriptor);
 			}
