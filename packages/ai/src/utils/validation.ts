@@ -191,6 +191,27 @@ function coerceWithUnionSchema(value: unknown, schemas: JsonSchemaObject[]): unk
 	return value;
 }
 
+function parseStructuredString(value: unknown, schemaTypes: string[]): unknown {
+	if (typeof value !== "string") {
+		return value;
+	}
+	const alreadyMatches = schemaTypes.some((schemaType) => matchesJsonType(value, schemaType));
+	const wantsStructure = schemaTypes.includes("object") || schemaTypes.includes("array");
+	if (alreadyMatches || !wantsStructure) {
+		return value;
+	}
+	const trimmed = value.trim();
+	if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) {
+		return value;
+	}
+	try {
+		const parsed: unknown = JSON.parse(trimmed);
+		return schemaTypes.some((schemaType) => matchesJsonType(parsed, schemaType)) ? parsed : value;
+	} catch {
+		return value;
+	}
+}
+
 function coerceWithJsonSchema(value: unknown, schema: JsonSchemaObject): unknown {
 	let nextValue = value;
 
@@ -221,6 +242,12 @@ function coerceWithJsonSchema(value: unknown, schema: JsonSchemaObject): unknown
 		}
 	}
 
+	const parsed = parseStructuredString(nextValue, schemaTypes);
+	if (parsed !== nextValue) {
+		normalizeOptionalNulls(parsed, schema);
+		nextValue = parsed;
+	}
+
 	if (
 		schemaTypes.includes("object") &&
 		typeof nextValue === "object" &&
@@ -239,13 +266,11 @@ function coerceWithJsonSchema(value: unknown, schema: JsonSchemaObject): unknown
 
 function normalizeOptionalNulls(value: unknown, schema: JsonSchemaObject): void {
 	if (Array.isArray(value)) {
-		if (Array.isArray(schema.items)) {
-			for (let index = 0; index < value.length; index++) {
-				const itemSchema = schema.items[index];
-				if (itemSchema) normalizeOptionalNulls(value[index], itemSchema);
-			}
-		} else if (schema.items) {
-			for (const item of value) normalizeOptionalNulls(item, schema.items);
+		for (let index = 0; index < value.length; index++) {
+			const itemSchema = Array.isArray(schema.items) ? schema.items[index] : schema.items;
+			if (!itemSchema) continue;
+			value[index] = parseStructuredString(value[index], getSchemaTypes(itemSchema));
+			normalizeOptionalNulls(value[index], itemSchema);
 		}
 		return;
 	}
@@ -263,6 +288,7 @@ function normalizeOptionalNulls(value: unknown, schema: JsonSchemaObject): void 
 		) {
 			delete object[key];
 		} else {
+			object[key] = parseStructuredString(object[key], getSchemaTypes(propertySchema));
 			normalizeOptionalNulls(object[key], propertySchema);
 		}
 	}
