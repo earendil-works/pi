@@ -65,6 +65,76 @@ Regular mode leaves mouse input to the terminal because the terminal owns scroll
 
 `ctx.ui.custom()` temporarily gives one component control of the interactive area and resolves when that component calls the supplied completion callback.
 
+### Build a minimal custom screen
+
+This complete extension shows the custom-component lifecycle: render within the supplied width, use injected keybindings, invalidate cached output after state changes, request a render, and finish through `done()`.
+
+```typescript
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { truncateToWidth } from "@earendil-works/pi-tui";
+
+export default function (pi: ExtensionAPI) {
+  pi.registerCommand("pick-target", {
+    description: "Pick a deployment target",
+    handler: async (_args, ctx) => {
+      if (ctx.mode !== "tui") {
+        ctx.ui.notify("pick-target requires interactive mode", "error");
+        return;
+      }
+
+      const choices = ["development", "staging", "production"];
+      const selected = await ctx.ui.custom<string | undefined>((tui, theme, keybindings, done) => {
+        let selectedIndex = 0;
+        let cachedWidth: number | undefined;
+        let cachedLines: string[] | undefined;
+
+        const invalidate = () => {
+          cachedWidth = undefined;
+          cachedLines = undefined;
+        };
+
+        return {
+          render(width: number): string[] {
+            if (cachedLines && cachedWidth === width) return cachedLines;
+
+            cachedWidth = width;
+            cachedLines = [
+              theme.fg("accent", "Choose a deployment target"),
+              ...choices.map((choice, index) => `${index === selectedIndex ? "> " : "  "}${choice}`),
+              theme.fg("dim", "up/down move, enter selects, escape cancels"),
+            ].map((line) => truncateToWidth(line, width));
+            return cachedLines;
+          },
+          handleInput(data: string): void {
+            if (keybindings.matches(data, "tui.select.up")) {
+              selectedIndex = (selectedIndex - 1 + choices.length) % choices.length;
+            } else if (keybindings.matches(data, "tui.select.down")) {
+              selectedIndex = (selectedIndex + 1) % choices.length;
+            } else if (keybindings.matches(data, "tui.select.confirm")) {
+              done(choices[selectedIndex]);
+              return;
+            } else if (keybindings.matches(data, "tui.select.cancel")) {
+              done(undefined);
+              return;
+            } else {
+              return;
+            }
+
+            invalidate();
+            tui.requestRender();
+          },
+          invalidate,
+        };
+      });
+
+      if (selected) ctx.ui.notify(`Selected ${selected}`, "info");
+    },
+  });
+}
+```
+
+This component does not display a text cursor, so it does not need `Focusable`. A component containing `Input` or `Editor` must implement `Focusable` and propagate its `focused` value to that child.
+
 Pass `overlay: true` to draw above existing content. Overlay options control size, anchors, offsets, margins, and responsive visibility. An overlay handle can change focus or temporarily hide and show the overlay with `setHidden()` while the interaction remains active.
 
 Focused overlays retain input ownership across ordinary renders. If another component should receive input while an overlay remains visible, explicitly release or redirect focus through the handle.

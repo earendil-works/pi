@@ -51,7 +51,7 @@ Reload replaces the extension runtime, so code after `await ctx.reload()` must n
 
 <a id="understand-the-lifecycle"></a>
 
-## Respect the runtime lifecycle
+## Understand the runtime lifecycle
 
 The factory can be synchronous or asynchronous. Pi waits for an asynchronous factory before startup continues, allowing it to fetch configuration or register providers needed during startup.
 
@@ -59,13 +59,95 @@ Do not start processes, sockets, watchers, or timers in the factory because some
 Start long-lived resources from `session_start` or from the command or tool that needs them.
 Close session-scoped resources from an idempotent `session_shutdown` handler.
 
-A run proceeds from input and `before_agent_start`, through model, message, and tool events, to `agent_end`.
-Pi counts as busy while a run starts, including the compaction check and `before_agent_start`, so messages sent meanwhile go into the starting run.
-Automatic retries, recovery, compaction, or queued work can continue afterward.
+A normal prompt follows this hook sequence:
+
+```mermaid
+flowchart TD
+    Input["input"] --> Before["before_agent_start"]
+    Before --> AgentStart["agent_start"]
+    AgentStart --> TurnStart["turn_start"]
+    TurnStart --> Context["context"]
+    Context --> ContextSystem["context_with_system"]
+    ContextSystem --> Headers["before_provider_headers"]
+    Headers --> Request["before_provider_request"]
+    Request --> Response["after_provider_response"]
+    Response --> Stream["provider_stream_event and assistant message events"]
+    Stream --> ToolDecision{"Assistant requested tools?"}
+    ToolDecision -->|yes| ToolStart["tool_execution_start"]
+    ToolStart --> ToolCall["tool_call"]
+    ToolCall --> Execute["execute and tool_execution_update"]
+    Execute --> ToolResult["tool_result"]
+    ToolResult --> ToolEnd["tool_execution_end"]
+    ToolEnd --> TurnEnd["turn_end"]
+    ToolDecision -->|no| TurnEnd
+    TurnEnd --> MoreTurns{"Another model turn required?"}
+    MoreTurns -->|yes| TurnStart
+    MoreTurns -->|no| AgentEnd["agent_end"]
+    AgentEnd --> MoreRuns{"Retry, recovery, compaction retry, or queued work?"}
+    MoreRuns -->|yes| AgentStart
+    MoreRuns -->|no| BeforeSettle["agent_before_settle"]
+    BeforeSettle --> Continue{"Continuation requested?"}
+    Continue -->|yes| AgentStart
+    Continue -->|no| Settled["agent_settled"]
+```
+
+The lifecycle involves these event groups:
+
+| Area | Events |
+|---|---|
+| Input preparation | `input`, `before_agent_start` |
+| Agent run | `agent_start`, `agent_end` |
+| Model turn | `turn_start`, `context`, `context_with_system`, `turn_end` |
+| Provider call | `before_provider_headers`, `before_provider_request`, `after_provider_response`, `provider_stream_event` |
+| Message lifecycle | `message_start`, `message_update`, `message_end` |
+| Tool execution | `tool_execution_start`, `tool_call`, `tool_execution_update`, `tool_result`, `tool_execution_end` |
+| Settlement | `agent_before_settle`, `agent_settled` |
+
+Pi counts as busy while a run starts, including the compaction check and `before_agent_start`, so messages sent meanwhile go into the starting run. Message lifecycle events also cover user and tool-result messages; the diagram places only the assistant stream where it occurs in each model turn.
+
+Tool hooks run for each tool call, and one assistant response can start another turn by returning tool calls. Provider hooks run only when that transport exposes the corresponding stage. See the exported declarations in [`extensions/types.ts`](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/src/core/extensions/types.ts) for exact event payloads and result types.
+
+Session startup and replacement follow a separate lifecycle:
+
+```mermaid
+flowchart TD
+    Startup["Process startup"] --> Trust["project_trust when needed"]
+    Trust --> SessionStart["session_start"]
+    Switch["/new or /resume"] --> BeforeSwitch["session_before_switch"]
+    Fork["/fork or /clone"] --> BeforeFork["session_before_fork"]
+    BeforeSwitch --> Shutdown["session_shutdown"]
+    BeforeFork --> Shutdown
+    Reload["reload"] --> Shutdown
+    Shutdown --> Replacing{"Replacing the runtime?"}
+    Replacing -->|yes| Replacement["load replacement extension runtime"]
+    Replacement --> SessionStart
+    Replacing -->|no| Stop["process exits"]
+    SessionStart --> Discover["resources_discover"]
+```
+
+`project_trust` runs before trusted project resources load and can run again when session replacement enters a new working directory. Retries, recovery, compaction, and queued messages can start another agent run after `agent_end`, so `agent_end` is not a final-idle signal. Reload and session replacement invalidate the old runtime. Code after `await ctx.reload()` still belongs to the old runtime and must not reuse its session-bound state.
+
+### Choose an event by intent
+
+| Goal | Event |
+|---|---|
+| Inspect, transform, or consume raw user input | `input` |
+| Change prompt sections, active tools, or add context before a run | `before_agent_start` |
+| Observe one low-level agent run | `agent_start`, `agent_end` |
+| Act after one model response and its tool calls | `turn_end` |
+| Filter conversation messages for one provider request | `context` |
+| Transform the complete transcript, including system messages | `context_with_system` |
+| Change request headers or the serialized provider payload | `before_provider_headers`, `before_provider_request` |
+| Observe provider response metadata or parsed stream events | `after_provider_response`, `provider_stream_event` |
+| Authorize or modify a tool call | `tool_call` |
+| Redact, annotate, or replace a tool result | `tool_result` |
+| Append final entries or request one last continuation | `agent_before_settle` |
+| Run notification work after automatic processing has stopped | `agent_settled` |
+| Initialize or release session-scoped resources | `session_start`, `session_shutdown` |
+
 <a id="agent_start--agent_end--agent_before_settle--agent_settled"></a>
 
-`agent_before_settle` is the final actionable boundary: it can append entries and request one continuation.
-`agent_settled` is final and notification-only; use it when an integration needs to know Pi will not continue automatically.
+Use `agent_before_settle` when an extension must append entries or request one final continuation. Use `agent_settled` for notification-only work that should run after Pi has no automatic continuation remaining.
 
 <a id="extensionapi-methods"></a>
 
@@ -100,6 +182,19 @@ Some events notify; others transform data, replace results, or cancel an operati
 Use each event’s declared result type rather than assuming every return value has an effect.
 
 Events cover resource discovery, sessions, agent and message lifecycle, providers, tools, and raw input.
+
+#### Understand handler composition
+
+| Pattern | Behavior |
+|---|---|
+| Notification | Return values are ignored. Use the event for observation only. |
+| In-place mutation | Later handlers see changes to values such as `before_provider_headers.headers`, `before_agent_start.systemPromptOptions`, and `tool_call.input`. |
+| Chained transformation | Later handlers receive the value returned by earlier `input`, `context`, `context_with_system`, `message_end`, `tool_result`, and `before_provider_request` handlers. |
+| Gate | A handled input, blocked tool call, cancelled session operation, or handled `user_bash` command stops that operation's normal fallback path. |
+| Actionable boundary | Each `turn_end` or `agent_before_settle` handler sees the entries and continuation decision proposed so far. |
+| Last override | The last `cache_warming_decision` handler that returns an action wins. |
+
+Notification handlers should not perform slow work on a streaming event. Transform handlers should preserve fields they do not intentionally own, and gate handlers should fail closed when their safety decision cannot be made.
 
 `before_agent_start` exposes both the current prompt and its structured `systemPromptOptions`. `event.messageType` says what started the run: `"user"` for a prompt or `pi.sendUserMessage()`, with `prompt` and `images`; `"custom"` for `pi.sendMessage(..., { triggerTurn: true })`, with the starting `message` and no `prompt`. A returned `message` is added to either kind of run; check `messageType` to skip runs started by custom messages. Prefer changing prompt sections, selected tools, or guidelines so Pi can append a transcript delta. Returning `systemPrompt`, or setting `forceSystemPrompt`, replaces the whole prompt for that run while the transcript continues recording the structured sections. Providers receive the forced text as their leading system prompt.
 
@@ -271,7 +366,18 @@ Use `ctx.shutdown()` to request an orderly process shutdown.
 
 ## Examples and reference
 
-The checked [extension examples](../examples/extensions/) cover tools, lifecycle events, commands, flags, shortcuts, state, rendering, providers, OAuth, remote execution, and terminal components.
-Start with the smallest example matching your integration point.
+The checked [extension examples](../examples/extensions/) are the implementation reference. Start with the smallest example matching the behavior you need:
 
-Use [Custom Providers](custom-provider.md) for model-service integrations, [Terminal UI](tui.md) for custom components, and [Pi Packages](packages.md) to install or distribute extensions with other resources.
+| Goal | Start with | Why |
+|---|---|---|
+| Confirm or block tool calls | [`permission-gate.ts`](../examples/extensions/permission-gate.ts) | Combines `tool_call`, mode-aware UI, and fail-closed behavior. |
+| Modify prompt sections for a run | [`prompt-customizer.ts`](../examples/extensions/prompt-customizer.ts) | Uses structured prompt options instead of replacing the complete prompt. |
+| Keep branch-aware tool state | [`todo.ts`](../examples/extensions/todo.ts) | Reconstructs state from persisted entries and renders it in the TUI. |
+| Register tools after startup | [`dynamic-tools.ts`](../examples/extensions/dynamic-tools.ts) | Shares registration logic between lifecycle and command handlers. |
+| Run cancellable model work from a command | [`qna.ts`](../examples/extensions/qna.ts) | Combines nested model calls, cancellation, and custom UI. |
+| Replace the main editor | [`modal-editor.ts`](../examples/extensions/modal-editor.ts) | Extends `CustomEditor` while preserving application controls. |
+| Run finalization at shutdown | [`auto-commit-on-exit.ts`](../examples/extensions/auto-commit-on-exit.ts) | Uses the session shutdown hook for finalization work. |
+| Route built-in tools to another machine | [`ssh.ts`](../examples/extensions/ssh.ts) | Reuses tool operation interfaces instead of recreating tool contracts. |
+| Add OAuth and provider-specific streaming | [`custom-provider-gitlab-duo/`](../examples/extensions/custom-provider-gitlab-duo/) | Shows a complete provider integration while delegating supported protocols. |
+
+Use [Custom Providers](custom-provider.md) for model-service integrations, [Terminal UI](tui.md) for custom components, and [Pi Packages](packages.md) to install or distribute extensions with other resources. Use the exported declarations for exact signatures, payloads, and result schemas; this guide focuses on lifecycle choices, composition, and durable implementation patterns.

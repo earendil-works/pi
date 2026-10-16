@@ -29,7 +29,59 @@ Prefer a complete provider for new integrations that own more than static endpoi
 
 Registering only `baseUrl` or `headers` for an existing provider preserves its built-in models. Supplying `models` in the legacy form replaces that provider's models across chat, image, and classifier operations. An omitted `type` means `"chat"`; image and classifier models require explicit discriminants and implementations keyed by their `api` values through the `images` and `classifiers` fields.
 
-For example, a mixed-operation provider can register non-chat models and their implementations together:
+### Redirect an existing provider
+
+Register only the fields that should change. This keeps the provider's built-in catalog, authentication, API implementation, and compatibility settings:
+
+```typescript
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+
+export default function (pi: ExtensionAPI) {
+  pi.registerProvider("anthropic", {
+    baseUrl: "https://gateway.example.com/anthropic",
+    headers: {
+      "X-Gateway-Key": "$GATEWAY_API_KEY",
+    },
+  });
+}
+```
+
+Use this form for a proxy or gateway that preserves the upstream protocol. Do not copy the built-in model list into the extension because doing so turns a small endpoint override into a catalog replacement that can drift.
+
+### Register a compatible endpoint
+
+When a service implements a supported protocol but has its own model catalog, register the endpoint and only the models the service actually exposes:
+
+```typescript
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+
+export default function (pi: ExtensionAPI) {
+  pi.registerProvider("acme", {
+    name: "Acme AI",
+    baseUrl: "https://api.acme.example/v1",
+    apiKey: "$ACME_API_KEY",
+    api: "openai-completions",
+    models: [
+      {
+        type: "chat",
+        id: "acme-chat",
+        name: "Acme Chat",
+        reasoning: false,
+        input: ["text"],
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        contextWindow: 128000,
+        maxTokens: 8192,
+      },
+    ],
+  });
+}
+```
+
+Prefer `models.json` for this case when no executable extension behavior is needed. Use an extension when registration depends on runtime discovery, custom authentication, or code shared with other extension features.
+
+### Register mixed-operation models
+
+A mixed-operation provider can register non-chat models and their implementations together:
 
 ```typescript
 pi.registerProvider("media-tools", {
