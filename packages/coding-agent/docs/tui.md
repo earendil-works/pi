@@ -10,7 +10,7 @@ Start with `ctx.ui` methods from an [extension](extensions.md#interact-with-the-
 |---|---|
 | Select, confirm, input, or multi-line editor | `ctx.ui.select()`, `confirm()`, `input()`, or `editor()` |
 | Non-blocking feedback | `ctx.ui.notify()` or `setStatus()` |
-| Persistent content near the editor | `ctx.ui.setWidget()` |
+| Persistent content near the editor or on its border | `ctx.ui.setWidget()` |
 | Replace the header, footer, or editor | The corresponding `ctx.ui` component factory |
 | Temporary interactive screen or overlay | `ctx.ui.custom()` |
 | Custom rendering for a tool or session entry | An extension renderer |
@@ -55,7 +55,7 @@ Forward keys your editor does not own to the base implementation, and restore th
 
 ## Handle mouse input
 
-Fullscreen mode routes normalized mouse events to components. A handler can mark an event handled, capture a drag sequence, request focus, or request a render.
+Fullscreen mode routes normalized mouse events to components. A handler can mark an event handled, capture a drag sequence, request focus, or request a render. Components shown in an editor border slot (`ctx.ui.setWidget` with a border placement) receive events on their own columns of the border line, with coordinates local to the visible content.
 
 Unhandled wheel events scroll the nearest `ScrollView`. Unhandled primary-button drags remain available for transcript selection. OSC 8 links take precedence over enclosing click regions.
 
@@ -119,7 +119,7 @@ The checked extension examples cover the main patterns:
 - [`qna.ts`](../examples/extensions/qna.ts) uses cancellable asynchronous UI.
 - [`modal-editor.ts`](../examples/extensions/modal-editor.ts) replaces the editor.
 - [`custom-footer.ts`](../examples/extensions/custom-footer.ts) replaces the footer.
-- [`widget-placement.ts`](../examples/extensions/widget-placement.ts) places persistent content around the editor.
+- [`widget-placement.ts`](../examples/extensions/widget-placement.ts) places persistent content above, below, and on the borders of the editor.
 - [`doom-overlay/`](../examples/extensions/doom-overlay/) demonstrates a continuously rendered overlay.
 
 The public exports are defined in [`packages/tui/src/index.ts`](https://github.com/earendil-works/pi/blob/main/packages/tui/src/index.ts). See [Extensions](extensions.md) for extension lifecycle, state, tools, events, and mode behavior.

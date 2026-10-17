@@ -444,6 +444,8 @@ export {
 	type CustomEditorOptions,
 	CustomMessageComponent,
 	DynamicBorder,
+	type EditorBorderContent,
+	type EditorBorderSlot,
 	ExtensionEditorComponent,
 	ExtensionInputComponent,
 	ExtensionSelectorComponent,
