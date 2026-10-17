@@ -11,13 +11,22 @@ export function assertSafeApiBaseUrl(raw: string): string {
 	} catch {
 		throw new Error(`Invalid ANTIGRAVITY_BASE_URL: ${raw}`);
 	}
-	if (url.protocol !== "https:") {
-		throw new Error(`ANTIGRAVITY_BASE_URL must use https (got ${url.protocol})`);
-	}
 	if (url.username || url.password) {
 		throw new Error("ANTIGRAVITY_BASE_URL must not include credentials");
 	}
 	const host = url.hostname.toLowerCase();
+
+	// Allow plain-http loopback so requests can be routed through a local
+	// proxy (e.g. Envoy on 127.0.0.1:20128) for telemetry. Node keeps the
+	// brackets on IPv6 hostnames, so ::1 arrives as "[::1]".
+	if (url.protocol === "http:" && (host === "127.0.0.1" || host === "localhost" || host === "[::1]")) {
+		const path = url.pathname.replace(/\/+$/, "");
+		return `${url.origin}${path === "/" ? "" : path}`;
+	}
+
+	if (url.protocol !== "https:") {
+		throw new Error(`ANTIGRAVITY_BASE_URL must use https (got ${url.protocol})`);
+	}
 	const allowed = host === "googleapis.com" || ALLOWED_API_HOST_SUFFIXES.some((suffix) => host.endsWith(suffix));
 	if (!allowed) {
 		throw new Error(`ANTIGRAVITY_BASE_URL host "${host}" is not allowed. Use a *.googleapis.com endpoint.`);

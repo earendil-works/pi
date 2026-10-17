@@ -2,7 +2,9 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { getGlobalDispatcher, MockAgent, setGlobalDispatcher } from "undici";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { endpointCandidates } from "../src/api/antigravity/client.ts";
 import { getThinkingConfig } from "../src/api/antigravity/models.ts";
+import { assertSafeApiBaseUrl } from "../src/api/antigravity/security.ts";
 import { buildRequest, friendlyAntigravityError } from "../src/api/antigravity/stream.ts";
 import { stream, streamSimple } from "../src/api/antigravity-api.ts";
 import { InMemoryCredentialStore } from "../src/auth/credential-store.ts";
@@ -337,5 +339,28 @@ describe("request-time guards", () => {
 		expect(request.request.generationConfig?.maxOutputTokens).toBe(1000);
 		const unchanged = await buildRequest(small, context, "test-project", { maxTokens: 500 }, "gemini-3.7-flash-low");
 		expect(unchanged.request.generationConfig?.maxOutputTokens).toBe(500);
+	});
+});
+
+describe("Antigravity base URL guard", () => {
+	it("accepts plain-http loopback proxies", () => {
+		expect(assertSafeApiBaseUrl("http://127.0.0.1:20128/direct/cloudcode/")).toBe(
+			"http://127.0.0.1:20128/direct/cloudcode",
+		);
+		expect(assertSafeApiBaseUrl("http://localhost:20128")).toBe("http://localhost:20128");
+		expect(assertSafeApiBaseUrl("http://[::1]:20128/direct/cloudcode")).toBe("http://[::1]:20128/direct/cloudcode");
+		expect(endpointCandidates(undefined, "http://127.0.0.1:20128/direct/cloudcode")).toEqual([
+			"http://127.0.0.1:20128/direct/cloudcode",
+		]);
+	});
+
+	it("still rejects plain http off loopback, credentials, and non-Google https hosts", () => {
+		expect(() => assertSafeApiBaseUrl("http://192.168.1.5:20128")).toThrow(/must use https/);
+		expect(() => assertSafeApiBaseUrl("http://daily-cloudcode-pa.googleapis.com")).toThrow(/must use https/);
+		expect(() => assertSafeApiBaseUrl("http://user:pass@127.0.0.1:20128")).toThrow(/credentials/);
+		expect(() => assertSafeApiBaseUrl("https://evil.example.com")).toThrow(/not allowed/);
+		expect(assertSafeApiBaseUrl("https://daily-cloudcode-pa.googleapis.com/")).toBe(
+			"https://daily-cloudcode-pa.googleapis.com",
+		);
 	});
 });
