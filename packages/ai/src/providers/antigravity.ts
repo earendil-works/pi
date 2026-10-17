@@ -24,6 +24,31 @@ export type AntigravityModel = Model<"antigravity-api"> & {
 type AntigravityProviderModel = AntigravityModel | ImageModel<"antigravity-images">;
 
 /** Google-account subscription access, independent of coding-agent extensions. */
+/**
+ * Bump when persisted routing or grouping output changes shape or meaning, so a
+ * catalog written by an older build is refreshed instead of trusted for 4h.
+ */
+const CATALOG_SCHEMA_VERSION = 1;
+
+/**
+ * Identifies the account and schema that produced a persisted catalog. Stored in
+ * `ModelsStoreEntry.etag`; a mismatch bypasses the freshness window so a different
+ * Google account, project, or build never reuses another's catalog. Keyed on the
+ * account email when known because the refresh token rotates.
+ */
+async function catalogSourceKey(credential: {
+	refresh?: string;
+	projectId?: unknown;
+	email?: unknown;
+}): Promise<string> {
+	const account =
+		typeof credential.email === "string" && credential.email ? credential.email : (credential.refresh ?? "");
+	const project = typeof credential.projectId === "string" ? credential.projectId : "";
+	const seed = JSON.stringify([CATALOG_SCHEMA_VERSION, account, project]);
+	const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(seed)));
+	return `antigravity-catalog:${Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+}
+
 export function antigravityProvider(): Provider<"antigravity-api"> {
 	const baseline: AntigravityModel[] = ANTIGRAVITY_MODELS.map((model) => ({
 		...model,
@@ -154,9 +179,13 @@ export function antigravityProvider(): Provider<"antigravity-api"> {
 			);
 			const refreshInterval =
 				Number.isFinite(configuredInterval) && configuredInterval >= 0 ? configuredInterval : 4 * 60 * 60 * 1000;
+			const sourceKey = await catalogSourceKey(context.credential);
+			const sameSource = context.stored?.etag === sourceKey;
 			const checkedAt = context.stored?.checkedAt ?? 0;
 			const now = Date.now();
-			if (!context.force && checkedAt > 0 && now >= checkedAt && now - checkedAt < refreshInterval) return;
+			if (!context.force && sameSource && checkedAt > 0 && now >= checkedAt && now - checkedAt < refreshInterval) {
+				return;
+			}
 			const auth = await oauth.toAuth(context.credential);
 			const credential = JSON.parse(auth.apiKey!) as { token: string; projectId: string };
 			const catalog = await fetchAvailableModelsCatalog(credential.token, credential.projectId, {
@@ -201,7 +230,7 @@ export function antigravityProvider(): Provider<"antigravity-api"> {
 			}));
 			next.push(...images.values());
 			await context.publish({
-				persist: { models: next, checkedAt: Date.now() },
+				persist: { models: next, checkedAt: Date.now(), etag: sourceKey },
 				update: () => {
 					models = next;
 				},

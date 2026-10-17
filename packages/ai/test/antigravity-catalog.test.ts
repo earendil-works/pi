@@ -186,6 +186,39 @@ describe("Antigravity native catalog", () => {
 		expect(fetch).toHaveBeenCalledTimes(initialCalls * 2);
 	});
 
+	it("refreshes a fresh catalog persisted by another account or an older build", async () => {
+		const { models, modelsStore } = await setup("project-a");
+		const fetch = vi.fn(async () => Response.json({ models: { "gemini-9-pro-low": {} } }));
+		vi.stubGlobal("fetch", fetch);
+		await models.refresh({ allowNetwork: true });
+		const stored = (await modelsStore.read("antigravity"))!;
+		expect(stored.etag).toMatch(/^antigravity-catalog:[0-9a-f]{64}$/);
+		const calls = fetch.mock.calls.length;
+
+		// Same account, fresh window: no refetch.
+		await models.refresh({ allowNetwork: true });
+		expect(fetch).toHaveBeenCalledTimes(calls);
+
+		// Same store, different project: the window does not apply.
+		const other = await setup("project-b", modelsStore);
+		await other.models.refresh({ allowNetwork: true });
+		expect(fetch).toHaveBeenCalledTimes(calls * 2);
+
+		// A store written before source keys existed is refreshed once, then keyed.
+		await modelsStore.write("antigravity", { models: stored.models, checkedAt: Date.now() });
+		const legacy = await setup("project-a", modelsStore);
+		await legacy.models.refresh({ allowNetwork: true });
+		expect(fetch).toHaveBeenCalledTimes(calls * 3);
+		expect((await modelsStore.read("antigravity"))!.etag).toBe(stored.etag);
+
+		// Offline restore never consults the key.
+		await modelsStore.write("antigravity", { models: stored.models, checkedAt: Date.now() });
+		const offline = await setup("project-c", modelsStore);
+		await offline.models.refresh({ allowNetwork: false });
+		expect(offline.models.getModel("antigravity", "gemini-9-pro")).toBeDefined();
+		expect(fetch).toHaveBeenCalledTimes(calls * 3);
+	});
+
 	it("does not treat a future cache timestamp as fresh after clock rollback", async () => {
 		const { models, modelsStore } = await setup("project-a");
 		const fetch = vi.fn(async () => Response.json({ models: { "gemini-9-pro-low": {} } }));
