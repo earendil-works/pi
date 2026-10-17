@@ -1398,7 +1398,7 @@ export function streamAntigravity(
 				if (!response || !response.ok) {
 					const friendly = friendlyAntigravityError(response?.status, lastText);
 					throw new Error(
-						`Antigravity API error (${response?.status ?? "no response"}, runtimeModel=${runtimeModel}): ${friendly}`,
+						`Antigravity API error (${response?.status ?? "no response"}, runtimeModel=${runtimeCandidates.join(" -> ")}): ${friendly}`,
 					);
 				}
 
