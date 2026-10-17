@@ -2,7 +2,7 @@ import { isAbsolute, relative, resolve, sep } from "node:path";
 import { type Component, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type { AgentSession } from "../../../core/agent-session.ts";
 import { areExperimentalFeaturesEnabled } from "../../../core/experimental.ts";
-import type { ContextUsage } from "../../../core/extensions/types.ts";
+import type { ContextUsage, FooterOptions } from "../../../core/extensions/types.ts";
 import type { ReadonlyFooterDataProvider } from "../../../core/footer-data-provider.ts";
 import { addUsageToTotals, createUsageTotals, type UsageTotals } from "../../../core/usage-totals.ts";
 import { theme } from "../theme/theme.ts";
@@ -61,6 +61,7 @@ interface SessionStats {
  */
 export class FooterComponent implements Component {
 	private autoCompactEnabled = true;
+	private options: FooterOptions = {};
 	private session: AgentSession;
 	private footerData: ReadonlyFooterDataProvider;
 	private sessionStats?: SessionStats;
@@ -76,6 +77,11 @@ export class FooterComponent implements Component {
 
 	setAutoCompactEnabled(enabled: boolean): void {
 		this.autoCompactEnabled = enabled;
+	}
+
+	/** Configure the built-in display; undefined restores the defaults. */
+	setFooterOptions(options?: FooterOptions): void {
+		this.options = options ?? {};
 	}
 
 	/**
@@ -154,6 +160,40 @@ export class FooterComponent implements Component {
 		return this.sessionStats;
 	}
 
+	/**
+	 * The stats row: stats on the left, the model suffix right-aligned with at
+	 * least `minPadding` columns between them. The suffix yields first. Each
+	 * part is dimmed separately: the stats may contain color codes (for context
+	 * %) that end with a reset, which would clear an outer dim wrapper.
+	 */
+	private renderStatsRow(statsLeft: string, rightSide: string, minPadding: number, width: number): string {
+		let left = statsLeft;
+		let leftWidth = visibleWidth(left);
+		if (leftWidth > width) {
+			left = truncateToWidth(left, width, "...");
+			leftWidth = visibleWidth(left);
+		}
+		const rightWidth = visibleWidth(rightSide);
+		let statsLine: string;
+		if (leftWidth + minPadding + rightWidth <= width) {
+			// Both fit - add padding to right-align model
+			const padding = " ".repeat(width - leftWidth - rightWidth);
+			statsLine = left + padding + rightSide;
+		} else {
+			// Need to truncate right side
+			const availableForRight = width - leftWidth - minPadding;
+			if (availableForRight > 0) {
+				const truncatedRight = truncateToWidth(rightSide, availableForRight, "");
+				const padding = " ".repeat(Math.max(0, width - leftWidth - visibleWidth(truncatedRight)));
+				statsLine = left + padding + truncatedRight;
+			} else {
+				// Not enough space for right side at all
+				statsLine = left;
+			}
+		}
+		return theme.fg("dim", left) + theme.fg("dim", statsLine.slice(left.length));
+	}
+
 	render(width: number): string[] {
 		const state = this.session.state;
 		const { usageTotals, latestCacheHitRate, contextUsage } = this.getSessionStats();
@@ -214,18 +254,12 @@ export class FooterComponent implements Component {
 			statsParts.push(`${theme.fg("dim", "•")} ${theme.bold(theme.fg("warning", "xp"))}`);
 		}
 
-		let statsLeft = statsParts.join(" ");
+		const statsLeft = statsParts.join(" ");
 
 		// Add model name on the right side, plus thinking level if model supports it
 		const modelName = state.model?.id || "no-model";
 
-		let statsLeftWidth = visibleWidth(statsLeft);
-
-		// If statsLeft is too wide, truncate it
-		if (statsLeftWidth > width) {
-			statsLeft = truncateToWidth(statsLeft, width, "...");
-			statsLeftWidth = visibleWidth(statsLeft);
-		}
+		const statsLeftWidth = visibleWidth(statsLeft);
 
 		// Calculate available space for padding (minimum 2 spaces between stats and model)
 		const minPadding = 2;
@@ -254,37 +288,22 @@ export class FooterComponent implements Component {
 			}
 		}
 
-		const rightSideWidth = visibleWidth(rightSide);
-		const totalNeeded = statsLeftWidth + minPadding + rightSideWidth;
+		const suffix = this.options.showModelSuffix === false ? "" : rightSide;
 
-		let statsLine: string;
-		if (totalNeeded <= width) {
-			// Both fit - add padding to right-align model
-			const padding = " ".repeat(width - statsLeftWidth - rightSideWidth);
-			statsLine = statsLeft + padding + rightSide;
+		let lines: string[];
+		if (this.options.compact === true) {
+			// One row: the pwd yields to the stats and model (truncate with "...", then drop).
+			const statsNatural = statsLeftWidth + (suffix === "" ? 0 : minPadding + visibleWidth(suffix));
+			const pwdBudget = width - statsNatural - 2;
+			const pwdPart = pwdBudget > 0 ? truncateToWidth(theme.fg("dim", pwd), pwdBudget, theme.fg("dim", "...")) : "";
+			const pwdWidth = visibleWidth(pwdPart);
+			const statsWidth = Math.max(0, width - pwdWidth - (pwdWidth > 0 ? 2 : 0));
+			const statsLine = this.renderStatsRow(statsLeft, suffix, minPadding, statsWidth);
+			lines = [pwdWidth > 0 ? `${pwdPart}  ${statsLine}` : statsLine];
 		} else {
-			// Need to truncate right side
-			const availableForRight = width - statsLeftWidth - minPadding;
-			if (availableForRight > 0) {
-				const truncatedRight = truncateToWidth(rightSide, availableForRight, "");
-				const truncatedRightWidth = visibleWidth(truncatedRight);
-				const padding = " ".repeat(Math.max(0, width - statsLeftWidth - truncatedRightWidth));
-				statsLine = statsLeft + padding + truncatedRight;
-			} else {
-				// Not enough space for right side at all
-				statsLine = statsLeft;
-			}
+			const pwdLine = truncateToWidth(theme.fg("dim", pwd), width, theme.fg("dim", "..."));
+			lines = [pwdLine, this.renderStatsRow(statsLeft, suffix, minPadding, width)];
 		}
-
-		// Apply dim to each part separately. statsLeft may contain color codes (for context %)
-		// that end with a reset, which would clear an outer dim wrapper. So we dim the parts
-		// before and after the colored section independently.
-		const dimStatsLeft = theme.fg("dim", statsLeft);
-		const remainder = statsLine.slice(statsLeft.length); // padding + rightSide
-		const dimRemainder = theme.fg("dim", remainder);
-
-		const pwdLine = truncateToWidth(theme.fg("dim", pwd), width, theme.fg("dim", "..."));
-		const lines = [pwdLine, dimStatsLeft + dimRemainder];
 
 		// Add extension statuses on a single line, sorted by key alphabetically
 		const extensionStatuses = this.footerData.getExtensionStatuses();

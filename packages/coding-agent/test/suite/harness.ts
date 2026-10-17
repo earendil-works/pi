@@ -86,6 +86,7 @@ export function createTestUiContext(overrides: Partial<ExtensionUIContext> = {})
 		setHiddenThinkingLabel: () => {},
 		setWidget: () => {},
 		setFooter: () => {},
+		setFooterOptions: () => {},
 		setHeader: () => {},
 		setTitle: () => {},
 		custom: async <T>() => undefined as T,
