@@ -321,3 +321,21 @@ describe("Gemini 4 Argon thinking config", () => {
 		});
 	});
 });
+
+describe("request-time guards", () => {
+	it("omits thinkingConfig entirely for a model the catalog marks non-thinking", async () => {
+		const plain = { ...model, reasoning: false };
+		const request = await buildRequest(plain, context, "test-project", { reasoning: "low" }, "gemini-3.7-flash-low");
+		expect(request.request.generationConfig?.thinkingConfig).toBeUndefined();
+		const thinking = await buildRequest(model, context, "test-project", { reasoning: "low" }, "gemini-3.7-flash-low");
+		expect(thinking.request.generationConfig?.thinkingConfig).toBeDefined();
+	});
+
+	it("clamps a caller-supplied maxTokens to the model's advertised output limit", async () => {
+		const small = { ...model, maxTokens: 1000 };
+		const request = await buildRequest(small, context, "test-project", { maxTokens: 50_000 }, "gemini-3.7-flash-low");
+		expect(request.request.generationConfig?.maxOutputTokens).toBe(1000);
+		const unchanged = await buildRequest(small, context, "test-project", { maxTokens: 500 }, "gemini-3.7-flash-low");
+		expect(unchanged.request.generationConfig?.maxOutputTokens).toBe(500);
+	});
+});

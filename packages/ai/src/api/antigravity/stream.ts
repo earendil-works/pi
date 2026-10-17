@@ -751,11 +751,15 @@ export async function buildRequest(
 
 	const generationConfig: GeminiGenerationConfig = {};
 	if (options.temperature !== undefined) generationConfig.temperature = options.temperature;
-	const thinking = getThinkingConfig(runtimeModel, options.reasoning ?? "off");
+	// A model the catalog marks as non-thinking must not receive a thinkingConfig
+	// at all: the off-level config carries thinkingBudget 0 for most families, and
+	// some backends reject it. Static models are all reasoning: true, so unchanged.
+	const thinking = model.reasoning ? getThinkingConfig(runtimeModel, options.reasoning ?? "off") : undefined;
 	if (thinking) generationConfig.thinkingConfig = thinking;
 	const maxAllowed = getMaxOutputTokens(model.id, runtimeModel);
 	if (options.maxTokens !== undefined) {
-		generationConfig.maxOutputTokens = Math.min(options.maxTokens, maxAllowed);
+		// A caller-supplied cap must still respect the model's advertised output limit.
+		generationConfig.maxOutputTokens = Math.min(options.maxTokens, maxAllowed, model.maxTokens || maxAllowed);
 	} else {
 		generationConfig.maxOutputTokens = Math.min(maxAllowed, model.maxTokens || maxAllowed);
 	}
