@@ -867,7 +867,7 @@ export function friendlyAntigravityError(status: number | undefined, text: strin
 	if (status === 429) {
 		const wait = msg.match(/Resets? in ([^.\n]+)/i)?.[1]?.trim();
 		if (/Individual quota reached/i.test(msg)) {
-			return `Quota reached. Please wait ${wait || "for reset"}. Next: switch models or try again after reset.`;
+			return `Quota exceeded. Please wait ${wait || "for reset"}. Next: switch models or try again after reset.`;
 		}
 		// Google answers a real quota wall with a "Resets in …" hint, but uses generic
 		// RESOURCE_EXHAUSTED ("Resource has been exhausted (e.g. check quota).") for
@@ -880,7 +880,7 @@ export function friendlyAntigravityError(status: number | undefined, text: strin
 			(!/rate.?limit/i.test(msg) &&
 				/quota exceeded|exceeded your|limit reached|reached your|daily limit/i.test(msg));
 		if (hardLimit) {
-			return `Quota reached.${wait ? ` Please wait ${wait}.` : ""} Next: switch models or retry later.`;
+			return `Quota exceeded.${wait ? ` Please wait ${wait}.` : ""} Next: switch models or retry later.`;
 		}
 		return "Rate limited by Antigravity (429 ResourceExhausted). Next: retrying automatically; if it persists, switch models.";
 	}

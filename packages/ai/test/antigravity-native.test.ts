@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { getGlobalDispatcher, MockAgent, setGlobalDispatcher } from "undici";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { buildRequest } from "../src/api/antigravity/stream.ts";
+import { buildRequest, friendlyAntigravityError } from "../src/api/antigravity/stream.ts";
 import { stream, streamSimple } from "../src/api/antigravity-api.ts";
 import { InMemoryCredentialStore } from "../src/auth/credential-store.ts";
 import { antigravityOAuth, parseAntigravityCallback } from "../src/auth/oauth/antigravity.ts";
@@ -10,6 +10,7 @@ import type { OAuthCredential } from "../src/auth/types.ts";
 import { createModels } from "../src/models.ts";
 import { builtinModels } from "../src/providers/all.ts";
 import { antigravityProvider } from "../src/providers/antigravity.ts";
+import { isRetryableAssistantError } from "../src/utils/retry.ts";
 import { normalizeContext } from "../src/utils/transcript.ts";
 
 const credential: OAuthCredential = {
@@ -282,4 +283,26 @@ describe("native Antigravity", () => {
 		}).result();
 		expect((await pending).stopReason).toBe("aborted");
 	});
+});
+
+describe("antigravity 429 classification", () => {
+	const asError = (text: string) =>
+		({
+			stopReason: "error",
+			errorMessage: `Antigravity API error (429, runtimeModel=gemini-4-argon-low): ${friendlyAntigravityError(429, text)}`,
+		}) as Parameters<typeof isRetryableAssistantError>[0];
+
+	it.each([
+		"Individual quota reached for this model. Resets in 3h 12m.",
+		"You have exceeded your daily limit. Resets in 1h.",
+	])("does not retry a quota wall: %s", (text) => {
+		expect(isRetryableAssistantError(asError(text))).toBe(false);
+	});
+
+	it.each(["Resource has been exhausted (e.g. check quota).", "rate limit exceeded, slow down"])(
+		"retries transient throttling: %s",
+		(text) => {
+			expect(isRetryableAssistantError(asError(text))).toBe(true);
+		},
+	);
 });
