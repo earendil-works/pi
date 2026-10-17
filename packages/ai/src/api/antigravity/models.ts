@@ -497,6 +497,10 @@ export function getThinkingConfig(modelId: string, effort: string | undefined): 
 		if (!effort || effort === "off") return undefined;
 		return { includeThoughts: true, thinkingBudget: -1 };
 	}
+	// Gemini 3 Flash advertises minThinkingBudget 32 and answers thinkingBudget 0 with a 400.
+	// Omitting thinkingConfig is its working no-thinking mode (verified live 2026-10-17);
+	// other levels use the generic Gemini budgets below.
+	if (modelId === "gemini-3-flash" && (!effort || effort === "off")) return undefined;
 	if (modelId.startsWith("gemini-3.5-flash") || modelId === "gemini-3-flash-agent") {
 		if (!effort || effort === "off") return { includeThoughts: false, thinkingBudget: 0 };
 		const thinkingBudget = effort === "high" || effort === "xhigh" ? 10_000 : effort === "medium" ? 4_000 : 1_000;

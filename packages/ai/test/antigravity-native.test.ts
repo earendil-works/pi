@@ -364,3 +364,15 @@ describe("Antigravity base URL guard", () => {
 		);
 	});
 });
+
+describe("Gemini 3 Flash thinking config", () => {
+	it("omits thinkingConfig at off (the backend rejects thinkingBudget 0; minThinkingBudget is 32)", () => {
+		expect(getThinkingConfig("gemini-3-flash", "off")).toBeUndefined();
+		expect(getThinkingConfig("gemini-3-flash", undefined)).toBeUndefined();
+	});
+
+	it("keeps the generic Gemini budgets for the other levels", () => {
+		expect(getThinkingConfig("gemini-3-flash", "low")).toEqual({ includeThoughts: true, thinkingBudget: 1000 });
+		expect(getThinkingConfig("gemini-3-flash", "high")).toEqual({ includeThoughts: true, thinkingBudget: -1 });
+	});
+});
