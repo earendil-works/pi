@@ -31,6 +31,8 @@ export type ChatSetup = {
 	/** Live Harness settings; tests assign fields to change them between decisions. */
 	readonly settings: { -readonly [K in keyof HarnessSettings]: HarnessSettings[K] };
 	now: () => number;
+	/** `HarnessOptions.timer` of the next open; absent: the native timer. */
+	timer?: NonNullable<HarnessOptions["timer"]>;
 };
 
 export function chatSetup(options: RegisterFauxProviderOptions = {}): ChatSetup {
@@ -57,6 +59,7 @@ export async function openChat(
 				? {}
 				: { env: typeof options.env === "function" ? options.env : () => options.env as ExecutionEnv }),
 			now: () => setup.now(),
+			...(setup.timer === undefined ? {} : { timer: setup.timer }),
 			onReport: (error) => setup.reports.push(error),
 		},
 		context,

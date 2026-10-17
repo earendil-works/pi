@@ -602,6 +602,16 @@ export type HarnessOptions<Tool extends ToolRegistration = ToolRegistration> = {
 	readonly conversationCreated?: (tx: Tx, conversation: ConversationRecord) => void | Promise<void>;
 	readonly now?: () => number;
 	/**
+	 * Waits for task deadlines (`TaskRuntime.sleep()`), such as retry backoffs and deferred polls. Default: a native
+	 * timer. Resolves when the host may have reached `until`, an absolute time on the `now` clock; the Harness rechecks
+	 * the clock and calls it again while the deadline is ahead, so an early or duplicate wake is harmless, but it must not
+	 * keep resolving at once for the same future deadline. `context` is cancelled when the sleep is. A rejection fails the
+	 * sleep, which faults the task unless the task handles it. A host can wait on an alarm or delayed queue delivery
+	 * instead; that only wakes this Harness, so a host whose process may be gone at the deadline also arranges to reopen
+	 * the storage and call `resume()` then.
+	 */
+	readonly timer?: (until: number, context: Context) => Promise<void>;
+	/**
 	 * Receives failures that do not fail the calling operation, such as a throwing hook or listener, and the error that
 	 * fails the Session, once. Its own throw or rejection is dropped.
 	 */

@@ -1,9 +1,11 @@
+import type { Context } from "@earendil-works/chord";
 import { createModels } from "@earendil-works/pi-ai";
 import {
 	type AnyTask,
 	createRegistry,
 	defineExtension,
 	Harness,
+	type HarnessOptions,
 	type HarnessSettings,
 	type Registry,
 	type RegistryReader,
@@ -59,11 +61,44 @@ export async function settled(promise: Promise<unknown>): Promise<boolean> {
 	return done;
 }
 
+/**
+ * A host timer whose wakes the test delivers, like an alarm or a delayed queue message. It records every armed
+ * deadline with its context and, like a careless host, ignores cancellation.
+ */
+export function manualTimer(): {
+	readonly timer: NonNullable<HarnessOptions["timer"]>;
+	readonly armed: { readonly until: number; readonly context: Context }[];
+	/** Resolve every pending wait. */
+	deliver(): void;
+} {
+	const armed: { readonly until: number; readonly context: Context }[] = [];
+	let waits: Deferred[] = [];
+	return {
+		timer: (until, context) => {
+			armed.push({ until, context });
+			const wait = deferred();
+			waits.push(wait);
+			return wait.promise;
+		},
+		armed,
+		deliver: () => {
+			const delivered = waits;
+			waits = [];
+			for (const wait of delivered) wait.resolve();
+		},
+	};
+}
+
 /** Open a Harness whose registry holds `tasks`; failures passed to `onReport` are collected. */
 export async function openTasks(
 	storage: Storage,
 	tasks: readonly AnyTask[],
-	options: { readonly registry?: Registry; readonly now?: () => number; readonly settings?: HarnessSettings } = {},
+	options: {
+		readonly registry?: Registry;
+		readonly now?: () => number;
+		readonly timer?: NonNullable<HarnessOptions["timer"]>;
+		readonly settings?: HarnessSettings;
+	} = {},
 ): Promise<{ readonly harness: Harness; readonly registry: Registry; readonly reports: unknown[] }> {
 	const registry = options.registry ?? createRegistry();
 	if (tasks.length > 0) registry.install(defineExtension({ name: "tasks", tasks }));
@@ -75,6 +110,7 @@ export async function openTasks(
 			registry,
 			onReport: (error) => reports.push(error),
 			...(options.now === undefined ? {} : { now: options.now }),
+			...(options.timer === undefined ? {} : { timer: options.timer }),
 			...(options.settings === undefined ? {} : { settings: options.settings }),
 		},
 		context,

@@ -6,6 +6,7 @@
 
 - `settings.compaction.modelOverrides` sets compaction thresholds per model, keyed by exact `"provider/modelId"`, so one harness can serve small- and large-window models; the threshold check, overflow recovery, and the compaction task use the entry of the model they act for ([#10942](https://github.com/earendil-works/pi/issues/10942)).
 - `HarnessOptions.models` and `HarnessOptions.settings` also accept a function returning the current value, like `env`. Generation, compaction, hooks and tools call it at each use (`api.models` reads the current value at each access), so a host can replace its model configuration or settings without reopening the Harness. A plain object still works.
+- `HarnessOptions.timer` replaces the native timer behind `TaskRuntime.sleep()`, so a host can wait for retry backoffs, deferred polls, and custom task deadlines with alarms or delayed queue delivery instead of keeping long in-memory timers. A sleep rejects at once when cancelled, even if the timer ignores the cancellation.
 
 ### Changed
 

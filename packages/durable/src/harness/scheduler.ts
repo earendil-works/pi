@@ -30,13 +30,14 @@ import type {
 	AnyTask,
 	ConversationHandle,
 	HarnessInspection,
+	HarnessOptions,
 	RegistryReader,
 	RegistrySnapshot,
 	Settings,
 	SettledTask,
 	TaskInspection,
 } from "./types.ts";
-import { closedError, scanAll, Waiters } from "./util.ts";
+import { closedError, MAX_TIMER_DELAY, scanAll, Waiters } from "./util.ts";
 
 type AnyTaskRecord = TaskRecord<JsonValue, JsonValue, JsonValue>;
 /** A record that can still run code: pending, running, or waiting. */
@@ -48,10 +49,9 @@ type Checkpoint = { readonly phase: string };
 type ErasedDefinition = TaskDefinition<JsonValue, Checkpoint, JsonValue, object>;
 type ErasedRuntime = TaskRuntime<JsonValue, Checkpoint, JsonValue, object>;
 type ErasedRunningTask = RunningTask<JsonValue, Checkpoint, JsonValue>;
+type Timer = NonNullable<HarnessOptions["timer"]>;
 
 const SCAN_PAGE_SIZE = 256;
-/** Longest delay `setTimeout` supports; longer sleeps wait in several steps. */
-const MAX_TIMER_DELAY = 2_147_483_647;
 const LIVE_STATUSES = ["pending", "running", "waiting", "completing"] as const;
 
 /** Why a pending task cannot be reserved under a registry snapshot. Derived, never persisted. */
@@ -161,6 +161,8 @@ export type TaskSchedulerOptions = {
 	/** Build a conversation's environment with `HarnessOptions.env`. */
 	readonly env: (conversationId: ConversationId, context: Context) => Promise<ExecutionEnv | undefined>;
 	readonly now: () => number;
+	/** Waits for task deadlines: `HarnessOptions.timer`, or the Harness's native default. */
+	readonly timer: Timer;
 	readonly report: (error: unknown) => void;
 	/** Harness cleanup staged in the commit that makes an outcome the scheduler wrote itself terminal. */
 	readonly settleOutcome: (tx: Transaction, record: AnyTaskRecord, outcome: SchedulerOutcome) => Promise<void>;
@@ -206,6 +208,7 @@ export class TaskScheduler {
 	readonly #settings: TaskSchedulerOptions["settings"];
 	readonly #env: TaskSchedulerOptions["env"];
 	readonly #now: () => number;
+	readonly #timer: Timer;
 	readonly #report: (error: unknown) => void;
 	readonly #settleOutcome: TaskSchedulerOptions["settleOutcome"];
 	readonly #withdrawInputs: TaskSchedulerOptions["withdrawInputs"];
@@ -279,6 +282,7 @@ export class TaskScheduler {
 		this.#settings = options.settings;
 		this.#env = options.env;
 		this.#now = options.now;
+		this.#timer = options.timer;
 		this.#report = options.report;
 		this.#settleOutcome = options.settleOutcome;
 		this.#withdrawInputs = options.withdrawInputs;
@@ -1812,17 +1816,18 @@ export class TaskScheduler {
 		);
 	}
 
-	/** Wait until the Harness clock reaches `until`, rechecking it after every timer. */
+	/**
+	 * Wait until the Harness clock reaches `until`, rechecking it after every wake of the timer. Cancellation rejects at
+	 * once, even when a host timer ignores it, so a late wake cannot resume an ended invocation.
+	 */
 	async #sleep(invocation: Invocation, until: number, context: Context): Promise<void> {
 		if (invocation.ended) throw endedError(invocation);
-		const signals = [invocation.controller.signal];
-		if (context.abortSignal !== undefined) signals.push(context.abortSignal);
-		const signal = AbortSignal.any(signals);
+		const waiting = withAbortSignal(invocation.controller.signal, context);
+		const signal = waiting.abortSignal!;
 		for (;;) {
 			signal.throwIfAborted();
-			const remaining = until - this.#now();
-			if (remaining <= 0) return;
-			await delay(Math.min(remaining, MAX_TIMER_DELAY), signal);
+			if (until <= this.#now()) return;
+			await untilAborted(this.#timer(until, waiting), signal);
 		}
 	}
 
@@ -1929,17 +1934,22 @@ function canReserve(task: AnyTask, record: AnyTaskRecord): boolean {
 	);
 }
 
-function delay(ms: number, signal: AbortSignal): Promise<void> {
+/** Settle as `promise` does, or reject with the signal's reason, as is, once it aborts, whichever comes first. */
+function untilAborted<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
 	return new Promise((resolve, reject) => {
-		const onAbort = (): void => {
-			clearTimeout(timer);
-			reject(signal.reason);
-		};
-		const timer = setTimeout(() => {
-			signal.removeEventListener("abort", onAbort);
-			resolve();
-		}, ms);
+		if (signal.aborted) return reject(signal.reason);
+		const onAbort = (): void => reject(signal.reason);
 		signal.addEventListener("abort", onAbort, { once: true });
+		promise.then(
+			(value) => {
+				signal.removeEventListener("abort", onAbort);
+				resolve(value);
+			},
+			(error: unknown) => {
+				signal.removeEventListener("abort", onAbort);
+				reject(error);
+			},
+		);
 	});
 }
 

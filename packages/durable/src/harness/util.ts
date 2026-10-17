@@ -2,6 +2,9 @@ import type { Context } from "@earendil-works/chord";
 import { SessionFailed } from "../errors.ts";
 import type { Cursor, Page } from "../types.ts";
 
+/** Longest delay `setTimeout` supports; longer waits take several timers. */
+export const MAX_TIMER_DELAY = 2_147_483_647;
+
 /** Pending waits by key. Each settles once: through `resolve`, `rejectAll`, or cancellation of its context. */
 export class Waiters<K, T> {
 	readonly #sets = new Map<K, Set<PromiseWithResolvers<T>>>();

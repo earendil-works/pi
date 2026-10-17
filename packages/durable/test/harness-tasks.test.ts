@@ -19,7 +19,16 @@ import {
 import { describe, expect, it } from "vitest";
 import { addHooks, addTask, addTool, user } from "./harness-support.ts";
 import { ControlledStorage, context, flush } from "./session-support.ts";
-import { aborted, abortedWith, completed, deferred, eventually, openTasks, settled } from "./task-support.ts";
+import {
+	aborted,
+	abortedWith,
+	completed,
+	deferred,
+	eventually,
+	manualTimer,
+	openTasks,
+	settled,
+} from "./task-support.ts";
 
 type Step = { phase: "run" };
 type StepRuntime<R> = TaskRuntime<null, Step, R, object>;
@@ -708,6 +717,57 @@ describe("task runtime", () => {
 		await harness.close(context);
 	});
 
+	it("waits for a future deadline through the host timer and rearms it after an early wake", async () => {
+		let clock = 1_000;
+		const host = manualTimer();
+		const Sleeper = oneStep("test.host-sleeper", async (_task, runtime, ctx) => {
+			await runtime.sleep(1_000, ctx);
+			await runtime.sleep(2_000, ctx);
+			await runtime.commit(() => completed(null), ctx);
+		});
+		const { harness, root } = await openRoot([Sleeper], { now: () => clock, timer: host.timer });
+		const id = await start(root, Sleeper);
+		const done = harness.waitForTask(id, context);
+		harness.resume();
+		// The due deadline needs no timer; the future one arms the absolute deadline.
+		await eventually(() => host.armed.length === 1);
+		expect(host.armed[0]!.until).toBe(2_000);
+		host.deliver();
+		await eventually(() => host.armed.length === 2);
+		expect(host.armed[1]!.until).toBe(2_000);
+		expect(await settled(done)).toBe(false);
+		clock = 2_000;
+		host.deliver();
+		expect((await done).state.outcome).toEqual({ status: "completed", result: null });
+		expect(host.armed).toHaveLength(2);
+		await harness.close(context);
+	});
+
+	it("ends a host-timer sleep on abort though the timer ignores it, and faults on a timer failure", async () => {
+		const host = manualTimer();
+		const failure = new Error("alarm unavailable");
+		const timer: typeof host.timer = (until, ctx) => (until === 2 ? Promise.reject(failure) : host.timer(until, ctx));
+		const Waits = oneStep("test.host-waits", async (_task, runtime, ctx) => {
+			await runtime.sleep(1, ctx);
+		});
+		const Fails = oneStep("test.host-fails", async (_task, runtime, ctx) => {
+			await runtime.sleep(2, ctx);
+		});
+		const { harness, root } = await openRoot([Waits, Fails], { now: () => 0, timer });
+		const waits = await start(root, Waits);
+		const fails = await start(root, Fails);
+		harness.resume();
+		expect((await harness.waitForTask(fails, context)).state.outcome).toEqual({
+			status: "faulted",
+			error: { message: "alarm unavailable" },
+		});
+		await eventually(() => host.armed.length === 1);
+		await harness.abortTask(waits, context);
+		expect((await harness.waitForTask(waits, context)).state.outcome).toEqual({ status: "aborted", reason: "test" });
+		expect(host.armed[0]!.context.abortSignal?.aborted).toBe(true);
+		await harness.close(context);
+	});
+
 	it("rejects a sleep when the invocation is signalled or the sleep's own context is cancelled", async () => {
 		const results: string[] = [];
 		const sleeping = deferred();
@@ -721,8 +781,9 @@ describe("task runtime", () => {
 		const Cancelled = oneStep("test.sleep-cancelled", async (_task, runtime, ctx) => {
 			const controller = new AbortController();
 			const sleeping = runtime.sleep(Date.now() + 60_000, withSignal(controller.signal));
-			controller.abort(new Error("stop sleeping"));
-			await sleeping.catch((error: unknown) => results.push(`cancelled:${(error as Error).message}`));
+			// A reason that is not an Error reaches the task as is.
+			controller.abort("stop sleeping");
+			await sleeping.catch((error: unknown) => results.push(`cancelled:${String(error)}`));
 			await runtime.commit(() => completed(null), ctx);
 		});
 		const { harness, root } = await openRoot([Signalled, Cancelled]);

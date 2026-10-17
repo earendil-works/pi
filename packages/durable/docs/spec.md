@@ -373,6 +373,8 @@ type HarnessOptions<Tool extends ToolRegistration = ToolRegistration> = {
   readonly conversationCreated?: (tx: Tx, conversation: ConversationRecord) => void | Promise<void>;
   /** Wall clock for sleeps, retries, message timestamps, and task lifecycle times. Default `Date.now`. */
   readonly now?: () => number;
+  /** Waits for task deadlines (`TaskRuntime.sleep()`, section 5.1). Default: a native timer. */
+  readonly timer?: (until: number, context: Context) => Promise<void>;
   /** Failures that do not fail the calling operation, and the Session's failure, once (section 10.1). */
   readonly onReport?: (error: unknown) => void;
 };
@@ -1880,7 +1882,13 @@ abort: async (task, runtime, context) => {
 ```
 `memo(name, candidate)` is one gated commit; `memo(name)` reads the committed
 record. `sleep(until)` compares against the Harness `now` clock and rejects when
-the invocation is signalled or its context is cancelled. Watches acquired through
+the invocation is signalled or its context is cancelled, with the cancellation
+reason, even when `HarnessOptions.timer` ignores it. While `until` is ahead, it
+awaits `timer(until, context)` and rechecks the clock after each wake; a timer
+rejection rejects the sleep. A sleep is not durable: after reopen the phase
+reruns and sleeps again, so a host that wakes through alarms reopens the storage
+and calls `resume()` when one fires, and keeps one armed while tasks are live.
+Watches acquired through
 the runtime stop when the invocation ends. `snapshot()`/`snapshotAsOf()` read
 committed documents, for example to supply `PromptInput.read` (section 7.4).
 `getTask()` and `entry()` read committed records with one lookup each; `waitForTask()` waits for a terminal receipt,

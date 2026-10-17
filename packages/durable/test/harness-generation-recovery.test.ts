@@ -8,7 +8,7 @@ import { openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";
 import { allEntries, type ChatSetup, chatSetup, openChat, textOf, unanswered, waitFor } from "./chat-support.ts";
 import { addSection } from "./harness-support.ts";
 import { context } from "./session-support.ts";
-import { aborted, deferred } from "./task-support.ts";
+import { aborted, deferred, manualTimer } from "./task-support.ts";
 
 const directories = new Set<string>();
 
@@ -161,11 +161,13 @@ describe("generation recovery", () => {
 		await opened.harness.close(context);
 	});
 
-	it("resumes a retry backoff after reopen", async () => {
+	it("resumes a retry backoff after reopen, waiting for the new Harness's timer", async () => {
 		const path = await sqlitePath();
 		const setup = chatSetup();
 		let now = 1_000;
 		setup.now = () => now;
+		const before = manualTimer();
+		setup.timer = before.timer;
 		setup.faux.setResponses([
 			fauxAssistantMessage([], { stopReason: "error", errorMessage: "503 Service Unavailable" }),
 			fauxAssistantMessage("recovered"),
@@ -179,16 +181,26 @@ describe("generation recovery", () => {
 			return live?.generation?.retry !== undefined;
 		});
 		const taskId = await runTaskId(opened.harness);
+		await waitFor(() => before.armed.length === 1);
+		expect(before.armed[0]!.until).toBe(61_000);
 		await opened.harness.close(context);
+		expect(before.armed[0]!.context.abortSignal?.aborted).toBe(true);
 
+		// The host's alarm reopens the storage, here before the deadline: the retry arms the new Harness's timer.
+		const after = manualTimer();
+		setup.timer = after.timer;
 		opened = await open(path, setup);
 		expect(await checkpoint(opened.harness, taskId)).toEqual({ phase: "retry", attempt: 1, until: 61_000 });
 		expect(await opened.harness.snapshot(LiveDoc, opened.root.id, context)).toEqual({
 			run: { taskId, inputs: [id] },
 			generation: { attempt: 1, retry: { at: 61_000, error: "503 Service Unavailable" } },
 		});
-		now = 61_000;
 		opened.harness.resume();
+		await waitFor(() => after.armed.length === 1);
+		expect(after.armed[0]!.until).toBe(61_000);
+		expect(setup.faux.state.callCount).toBe(1);
+		now = 61_000;
+		after.deliver();
 		expect((await (await opened.harness.submission(id, context))!.wait(context)).status).toBe("done");
 		expect((await allEntries(opened.root)).map((entry) => entry.kind)).toEqual([
 			"pi.user",

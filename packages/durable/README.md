@@ -125,6 +125,12 @@ const again = await root.submit({ type: "input", content: "Hello", requestId: "g
 
 `harness.submission(id)` reacquires a submission by ID, for example to wait for it after a restart.
 
+### Wait with alarms instead of timers
+
+Tasks wait for deadlines, such as a retry backoff or the next poll of a deferred response, with a `setTimeout` in this process. Pass `timer: (until, context) => Promise<void>` to wait on your host's alarms or delayed queue messages instead, so nothing stays in memory during a long wait. `until` is an absolute time on the Harness clock (`now`); the Harness checks the clock after every wake and calls `timer` again while the deadline is ahead, so an early or duplicate alarm only rearms it. A cancelled sleep rejects at once, even if your timer ignores `context`. A rejected timer faults the task; retry transient failures to arm an alarm inside your timer.
+
+An alarm cannot resume a lost process. When one fires and no Harness is open, open the storage and call `resume()`: the task reruns its phase from its checkpoint, sleeps again, and arms the new Harness's timer. Keep an alarm armed while `harness.inspect()` lists unfinished tasks, since a process can die between committing a deadline and arming it.
+
 ## Extensions
 
 Code the Harness runs, other than its built-in tasks, comes in named extensions installed in a registry your process owns:

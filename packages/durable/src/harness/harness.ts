@@ -53,7 +53,7 @@ import type {
 	ToolRegistration,
 } from "./types.ts";
 import { addUsageState, UsageDoc, type UsageState } from "./usage.ts";
-import { scanAll } from "./util.ts";
+import { MAX_TIMER_DELAY, scanAll } from "./util.ts";
 import { type ConversationView, ConversationViews } from "./view.ts";
 
 const SCAN_PAGE_SIZE = 256;
@@ -208,6 +208,7 @@ class HarnessImpl<Tool extends ToolRegistration> extends SessionImpl implements 
 			settings,
 			env: (id, callContext) => this.buildEnv(id, callContext),
 			now,
+			timer: options.timer ?? nativeTimer(now),
 			report: this.#report,
 			settleOutcome: settleSchedulerOutcome,
 			withdrawInputs: withdrawQueuedInputs,
@@ -415,6 +416,27 @@ export function safeNow(now: (() => number) | undefined, report: (error: unknown
 			return Date.now();
 		}
 	};
+}
+
+/** The default `HarnessOptions.timer`: a `setTimeout` per wake, at most `MAX_TIMER_DELAY` long. */
+function nativeTimer(now: () => number): NonNullable<HarnessOptions["timer"]> {
+	return (until, context) =>
+		new Promise((resolve, reject) => {
+			const signal = context.abortSignal;
+			if (signal?.aborted === true) return reject(signal.reason);
+			const onAbort = (): void => {
+				clearTimeout(timer);
+				reject(signal?.reason);
+			};
+			const timer = setTimeout(
+				() => {
+					signal?.removeEventListener("abort", onAbort);
+					resolve();
+				},
+				Math.min(Math.max(0, until - now()), MAX_TIMER_DELAY),
+			);
+			signal?.addEventListener("abort", onAbort, { once: true });
+		});
 }
 
 /**
