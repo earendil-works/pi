@@ -491,7 +491,10 @@ export function getThinkingConfig(modelId: string, effort: string | undefined): 
 		return { includeThoughts: true, thinkingBudget: 8192 };
 	}
 	if (modelId.startsWith("gemini-4-argon")) {
-		if (!effort || effort === "off") return { includeThoughts: false, thinkingBudget: 0 };
+		// Argon rejects thinkingBudget 0 with a 400. Omitting thinkingConfig is the
+		// working no-thinking mode (verified on -low and -high); every other level
+		// keeps the dynamic budget and lets the wire variant carry the effort.
+		if (!effort || effort === "off") return undefined;
 		return { includeThoughts: true, thinkingBudget: -1 };
 	}
 	if (modelId.startsWith("gemini-3.5-flash") || modelId === "gemini-3-flash-agent") {

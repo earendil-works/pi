@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { getGlobalDispatcher, MockAgent, setGlobalDispatcher } from "undici";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { getThinkingConfig } from "../src/api/antigravity/models.ts";
 import { buildRequest, friendlyAntigravityError } from "../src/api/antigravity/stream.ts";
 import { stream, streamSimple } from "../src/api/antigravity-api.ts";
 import { InMemoryCredentialStore } from "../src/auth/credential-store.ts";
@@ -305,4 +306,18 @@ describe("antigravity 429 classification", () => {
 			expect(isRetryableAssistantError(asError(text))).toBe(true);
 		},
 	);
+});
+
+describe("Gemini 4 Argon thinking config", () => {
+	it("omits thinkingConfig for off and undefined instead of sending a zero budget", () => {
+		expect(getThinkingConfig("gemini-4-argon-low", "off")).toBeUndefined();
+		expect(getThinkingConfig("gemini-4-argon-low", undefined)).toBeUndefined();
+	});
+
+	it.each(["low", "medium", "high"])("keeps the dynamic budget for %s", (effort) => {
+		expect(getThinkingConfig(`gemini-4-argon-${effort}`, effort)).toEqual({
+			includeThoughts: true,
+			thinkingBudget: -1,
+		});
+	});
 });
