@@ -90,6 +90,10 @@
 - Added `PI_CLIPBOARD_OSC52=1` to send copied text to the terminal with OSC 52 after the local clipboard write, so copies reach a remote client's clipboard when Pi cannot detect the remote session, such as multiplexer attaches from another machine or remote IDE daemons ([#10826](https://github.com/earendil-works/pi/issues/10826), [#10835](https://github.com/earendil-works/pi/issues/10835), [#10114](https://github.com/earendil-works/pi/issues/10114))
 - Added elapsed time while a codemode script runs and its total time once finished to the codemode tool row, like bash rows ([#10708](https://github.com/earendil-works/pi/issues/10708))
 
+### Added
+
+- Added Cloudflare AI Gateway custom domains (`CLOUDFLARE_GATEWAY_DOMAIN`) and Cloudflare Access authentication; gateway credentials are optional with a custom domain. See [docs/providers.md#cloudflare-ai-gateway](docs/providers.md#cloudflare-ai-gateway) ([#10627](https://github.com/earendil-works/pi/issues/10627))
+
 ### Changed
 
 - Changed the `showHardwareCursor` setting to use only the terminal cursor instead of also drawing Pi's reverse-video cursor

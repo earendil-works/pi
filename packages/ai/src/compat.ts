@@ -232,7 +232,10 @@ function withEnvApiKey<TOptions extends StreamOptions>(
 }
 
 function hasResolvedCloudflareAuth(options: StreamOptions | undefined): boolean {
-	return hasExplicitApiKey(options?.apiKey) || typeof options?.headers?.["cf-aig-authorization"] === "string";
+	return (
+		hasExplicitApiKey(options?.apiKey) ||
+		(options?.headers !== undefined && "cf-aig-authorization" in options.headers)
+	);
 }
 
 function getBuiltinProviderForModel(model: Model<Api>) {
