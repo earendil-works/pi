@@ -7,7 +7,7 @@ Behavioral evals for Pi's coding agent, built with `vitest-evals`.
 Eval definitions are flat under `evals/`:
 
 - `*.docs.eval.ts` is a documentation-lift eval. `eval:docs` runs each case in isolated `without_docs` and `with_docs` containers and reports lift.
-- Other `*.eval.ts` files are host evals. `eval:host` runs them with Vitest on this machine. They are ordinary vitest-evals suites, not paired comparisons.
+- Other `*.eval.ts` files are host evals. `eval:host` runs the smoke suite; `eval:audit` runs the documentation audit. They are ordinary vitest-evals suites, not paired comparisons.
 
 Runner code lives in `src/`:
 
@@ -21,25 +21,25 @@ Eval suites and their fixtures live under `evals/`. Image build files live in `d
 
 ## Run evals
 
-Host evals (smoke, documentation audit) and documentation-lift evals need `PI_PROVIDER` and `PI_MODEL`.
+The host smoke eval, on-demand documentation audit, and documentation-lift evals need `PI_PROVIDER` and `PI_MODEL`.
 
 ```bash
 PI_PROVIDER=openai-codex PI_MODEL=gpt-5.6-sol npm run eval -w packages/evals
 ```
 
-That runs host evals, then the documentation comparison. Extra CLI flags after `--` go to `eval:docs` only.
+That runs the host smoke eval, then the documentation comparison. The documentation audit remains explicit because it scans every documentation page. Extra CLI flags after `--` go to `eval:docs` only.
 
-Host only:
+Host smoke only:
 
 ```bash
 PI_PROVIDER=openai-codex PI_MODEL=gpt-5.6-sol npm run eval:host -w packages/evals
 ```
 
-One host suite:
+Documentation audit:
 
 ```bash
 PI_PROVIDER=openai-codex PI_MODEL=gpt-5.6-sol \
-  npm run eval:host -w packages/evals -- evals/documentation-audit.eval.ts
+  npm run eval:audit -w packages/evals
 ```
 
 ## Run documentation comparisons
