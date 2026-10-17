@@ -89,7 +89,7 @@ describe("Antigravity native catalog", () => {
 		expect(models.getModel("antigravity", "gemini-internal")).toBeUndefined();
 		expect(models.getModel("antigravity", "gemini-9-image")).toBeUndefined();
 		expect(models.getModel("antigravity", "claude-sonnet-9")).toMatchObject({
-			cost: models.getModel("antigravity", "claude-sonnet-4-6")!.cost,
+			cost: models.getModel("antigravity", "claude-sonnet-5-5")!.cost,
 			input: ["text"],
 		});
 		expect(await sentModel(models, pro.id, "low")).toMatchObject({

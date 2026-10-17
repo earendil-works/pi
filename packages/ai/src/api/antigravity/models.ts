@@ -304,16 +304,6 @@ export const ANTIGRAVITY_MODELS: ProviderModelConfig[] = [
 		maxTokens: 128000,
 	},
 	{
-		id: "claude-opus-4-6",
-		name: "Claude Opus 4.6 (Antigravity)",
-		reasoning: true,
-		thinkingLevelMap: thinkingLevelMaps.thinking,
-		input: ["text", "image"],
-		cost: claudeOpusCost,
-		contextWindow: 250000,
-		maxTokens: 64000,
-	},
-	{
 		id: "claude-sonnet-5-5",
 		name: "Claude Sonnet 5.5 (Antigravity)",
 		reasoning: true,
@@ -322,16 +312,6 @@ export const ANTIGRAVITY_MODELS: ProviderModelConfig[] = [
 		cost: claudeSonnetCost,
 		contextWindow: 1000000,
 		maxTokens: 128000,
-	},
-	{
-		id: "claude-sonnet-4-6",
-		name: "Claude Sonnet 4.6 (Antigravity)",
-		reasoning: true,
-		thinkingLevelMap: thinkingLevelMaps.thinking,
-		input: ["text", "image"],
-		cost: claudeSonnetCost,
-		contextWindow: 200000,
-		maxTokens: 64000,
 	},
 	{
 		id: "gemini-4-argon",
