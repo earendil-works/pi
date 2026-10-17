@@ -391,7 +391,11 @@ export class McpSignInCancelledError extends Error {
 	}
 }
 
-type AuthorizationResponse = Pick<OAuthCallback, "code" | "iss">;
+type AuthorizationResponse = Pick<OAuthCallback, "code" | "iss" | "respond">;
+
+export type McpSignInResult = {
+	browserResponseSent: boolean;
+};
 
 function responseFromRedirectUrl(input: string, state: string, redirectUrl: URL): AuthorizationResponse {
 	let url: URL;
@@ -422,10 +426,13 @@ async function waitForAuthorizationResponse(
 	redirectUrl: URL,
 	prompt: McpSignInPrompt,
 	signal: AbortSignal | undefined,
+	deferBrowserResponse: boolean,
 ): Promise<AuthorizationResponse> {
 	const controller = new AbortController();
 	const promptSignal = signal ? AbortSignal.any([controller.signal, signal]) : controller.signal;
-	const fromBrowser = callback.waitForCallback(state, redirectUrl.pathname);
+	const fromBrowser = callback.waitForCallback(state, redirectUrl.pathname, {
+		deferResponse: deferBrowserResponse,
+	});
 	const fromUser = prompt.promptForRedirectUrl(promptSignal).then((input) => {
 		if (!input?.trim()) throw new McpSignInCancelledError();
 		return responseFromRedirectUrl(input, state, redirectUrl);
@@ -477,7 +484,8 @@ export async function signInMcpServer(options: {
 	challenge?: OAuthChallenge;
 	prompt: McpSignInPrompt;
 	signal?: AbortSignal;
-}): Promise<void> {
+	afterAuthorization?: () => Promise<string | URL | undefined>;
+}): Promise<McpSignInResult> {
 	const { serverUrl, store, settings, signal } = options;
 	if (signal?.aborted) throw new McpSignInCancelledError();
 	const stored = await store.load();
@@ -533,21 +541,41 @@ export async function signInMcpServer(options: {
 		};
 		// A refresh keeps the granted scope; a server asking for more needs the browser flow.
 		const skipRefresh = stepUp;
-		if ((await authorizeMcp(provider, { ...flow, skipRefresh })) === "AUTHORIZED") return;
+		if ((await authorizeMcp(provider, { ...flow, skipRefresh })) === "AUTHORIZED") {
+			return { browserResponseSent: false };
+		}
 		if (!authorizationUrl) throw new Error("OAuth flow did not produce an authorization URL");
 
 		const state = await provider.state();
 		// The flow picks the redirect URI, which may be specific to the MCP server.
 		const authorizationRedirectUrl = new URL(authorizationUrl.searchParams.get("redirect_uri") ?? redirectUrl);
 		options.prompt.showAuthorizationUrl(authorizationUrl);
-		const { code, iss } = await waitForAuthorizationResponse(
+		const callbackResult = await waitForAuthorizationResponse(
 			callback,
 			state,
 			authorizationRedirectUrl,
 			options.prompt,
 			signal,
+			Boolean(options.afterAuthorization),
 		);
-		await authorizeMcp(provider, { ...flow, authorizationCode: code, iss });
+		const { code, iss } = callbackResult;
+		try {
+			await authorizeMcp(provider, { ...flow, authorizationCode: code, iss });
+			const redirectUrl = await options.afterAuthorization?.();
+			if (redirectUrl) {
+				const browserResponseSent = callbackResult.respond?.({ redirectUrl: String(redirectUrl) }) ?? false;
+				return { browserResponseSent };
+			}
+			const browserResponseSent = callbackResult.respond?.({ ok: true }) ?? false;
+			return { browserResponseSent };
+		} catch (error) {
+			callbackResult.respond?.({
+				ok: false,
+				message: "Authorization failed. You may close this window.",
+				details: error instanceof Error ? error.message : String(error),
+			});
+			throw error;
+		}
 	} catch (error) {
 		// Aborted requests fail with the signal's reason; report them as the cancellation they are.
 		if (signal?.aborted) throw new McpSignInCancelledError();

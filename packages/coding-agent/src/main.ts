@@ -26,6 +26,7 @@ import {
 	printAuthCommandHelp,
 	validateAuthCommandArgs,
 } from "./cli/auth-command.ts";
+import { AuthContinueError, runAuthContinueCommand } from "./cli/auth-continue.ts";
 import { resolveCredentialForPrint } from "./cli/credential-print.ts";
 import { processFileArguments } from "./cli/file-processor.ts";
 import { buildInitialMessage } from "./cli/initial-message.ts";
@@ -147,15 +148,20 @@ async function runAuthCommand(args: string[]): Promise<boolean> {
 	}
 	if (!command) return false;
 
-	const parsed = parseArgs(command.args);
-	if (parsed.unknownFlags.size > 0) {
-		const option = parsed.unknownFlags.keys().next().value;
-		console.error(chalk.red(`Unknown option --${option} for "${getAuthCommandName(command.kind)}".`));
-		console.error(chalk.dim(`Use "${APP_NAME} --help" or "${getAuthCommandUsage(command.kind)}".`));
-		process.exitCode = 1;
-		return true;
-	}
 	try {
+		if (command.kind === "continue") {
+			await runAuthContinueCommand(command.args);
+			return true;
+		}
+
+		const parsed = parseArgs(command.args);
+		if (parsed.unknownFlags.size > 0) {
+			const option = parsed.unknownFlags.keys().next().value;
+			console.error(chalk.red(`Unknown option --${option} for "${getAuthCommandName(command.kind)}".`));
+			console.error(chalk.dim(`Use "${APP_NAME} --help" or "${getAuthCommandUsage(command.kind)}".`));
+			process.exitCode = 1;
+			return true;
+		}
 		if (parsed.diagnostics.length > 0) {
 			throw new AuthCommandError(parsed.diagnostics.map((diagnostic) => diagnostic.message).join("\n"));
 		}
@@ -201,7 +207,12 @@ async function runAuthCommand(args: string[]): Promise<boolean> {
 		process.stdout.write(`${output}\n`);
 		process.exitCode = result.status === "ready" ? 0 : result.status === "not_ready" ? 1 : 2;
 	} catch (error) {
-		const message = error instanceof AuthCommandError ? error.message : "Failed to resolve credential";
+		const message =
+			error instanceof AuthCommandError || error instanceof AuthContinueError || command.kind === "continue"
+				? error instanceof Error
+					? error.message
+					: String(error)
+				: "Failed to resolve credential";
 		console.error(chalk.red(`Error: ${message}`));
 		process.exitCode = command.kind === "check" ? 2 : 1;
 	}
