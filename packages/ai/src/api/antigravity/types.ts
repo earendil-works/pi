@@ -165,6 +165,8 @@ export type ActiveBlock = ActiveTextBlock | ActiveThinkingBlock;
 export type ModelInfoRaw = {
 	isInternal?: unknown;
 	displayName?: unknown;
+	/** Catalog badge, e.g. "New", "Fast", "Leaving Soon". */
+	tagTitle?: unknown;
 	label?: unknown;
 	modelName?: unknown;
 	model?: unknown;

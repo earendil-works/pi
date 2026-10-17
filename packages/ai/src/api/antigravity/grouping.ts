@@ -9,6 +9,8 @@ import type { AntigravityRouting, ModelInfoRaw } from "./types.ts";
 export type AntigravityCatalog = {
 	models: ProviderModelConfig[];
 	routing: Record<string, AntigravityRouting>;
+	/** Public ids the catalog tags "Leaving Soon" on every variant; hidden, including their static baseline. */
+	retired?: string[];
 };
 
 type ThinkingLevel = ThinkingEffort;
@@ -85,6 +87,13 @@ export function buildAntigravityCatalog(
 	fallback: AntigravityCatalog,
 ): AntigravityCatalog {
 	const groups = new Map<string, RuntimeGroup>();
+	// Google tags models "Leaving Soon" before removal, and in practice they already 404 while
+	// still listed (3.7/3.6 Flash and 3.1 Pro on 2026-10-17). A family is retired only when
+	// every one of its runtime variants carries the tag.
+	const leaving = new Set<string>();
+	const staying = new Set<string>();
+	const noteTag = (publicId: string, info: ModelInfoRaw | undefined) =>
+		(typeof info?.tagTitle === "string" && /leaving\s*soon/i.test(info.tagTitle) ? leaving : staying).add(publicId);
 
 	for (const [runtimeId, info] of Object.entries(rawModels)) {
 		if (!isSelectableRuntimeModelId(runtimeId)) continue;
@@ -95,6 +104,7 @@ export function buildAntigravityCatalog(
 			const baseId = runtimeId.slice(0, -"-tiered".length);
 			const group = ensureGroup(groups, baseId);
 			absorbMetadata(group, info, displayName);
+			noteTag(baseId, info);
 			if (!group.unsuffixed) group.unsuffixed = runtimeId;
 			continue;
 		}
@@ -104,6 +114,7 @@ export function buildAntigravityCatalog(
 		const publicId = alias?.publicId ?? suffix?.baseId ?? runtimeId;
 		const group = ensureGroup(groups, publicId);
 		absorbMetadata(group, info, displayName);
+		noteTag(publicId, info);
 
 		const level = alias?.level ?? levelFromDisplayName(displayName) ?? suffix?.level;
 		if (level) group.variants[level] = runtimeId;
@@ -111,6 +122,9 @@ export function buildAntigravityCatalog(
 	}
 
 	mergeAgentSingletons(groups);
+
+	const retired = [...leaving].filter((id) => !staying.has(id)).sort();
+	for (const id of retired) groups.delete(id);
 
 	if (groups.size === 0) return fallback;
 
@@ -132,7 +146,7 @@ export function buildAntigravityCatalog(
 	}
 
 	for (const fallbackModel of fallback.models) {
-		if (routing[fallbackModel.id]) continue;
+		if (routing[fallbackModel.id] || retired.includes(fallbackModel.id)) continue;
 		const fallbackRouting = fallback.routing[fallbackModel.id] ?? {
 			defaultRequestId: fallbackModel.id,
 			off: fallbackModel.id,
@@ -143,7 +157,7 @@ export function buildAntigravityCatalog(
 	}
 
 	models.sort(comparePublicModels);
-	return { models, routing };
+	return { models, routing, retired };
 }
 
 function ensureGroup(groups: Map<string, RuntimeGroup>, publicId: string): RuntimeGroup {

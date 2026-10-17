@@ -19,6 +19,8 @@ export type AntigravityModel = Model<"antigravity-api"> & {
 	antigravityModelEnum?: string;
 	antigravityRouting?: AntigravityRouting;
 	antigravityModelEnums?: Record<string, string>;
+	/** Public ids the last catalog retired ("Leaving Soon"); persisted so a restore does not re-add them. */
+	antigravityRetired?: string[];
 };
 
 type AntigravityProviderModel = AntigravityModel | ImageModel<"antigravity-images">;
@@ -101,6 +103,10 @@ export function antigravityProvider(): Provider<"antigravity-api"> {
 					const published = await context.publish({
 						update: () => {
 							const merged = new Map<string, AntigravityProviderModel>(baselineByKey);
+							const retired = new Set(
+								restored.flatMap((m) => ("antigravityRetired" in m ? (m.antigravityRetired ?? []) : [])),
+							);
+							for (const id of retired) merged.delete(`chat:${id}`);
 							for (const model of restored) {
 								const key = `${model.type ?? "chat"}:${model.id}`;
 								const base = baselineByKey.get(key);
@@ -227,6 +233,7 @@ export function antigravityProvider(): Provider<"antigravity-api"> {
 				baseUrl: DEFAULT_ENDPOINT,
 				antigravityRouting: grouped.routing[model.id],
 				antigravityModelEnums: enums,
+				antigravityRetired: grouped.retired ?? [],
 			}));
 			next.push(...images.values());
 			await context.publish({

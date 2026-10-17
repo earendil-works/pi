@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fetchAvailableRuntimeModel, resolveAntigravityClientVersion } from "../src/api/antigravity/client.ts";
+import { buildAntigravityCatalog } from "../src/api/antigravity/grouping.ts";
+import { ANTIGRAVITY_MODELS, ANTIGRAVITY_ROUTING } from "../src/api/antigravity/models.ts";
 import { InMemoryCredentialStore } from "../src/auth/credential-store.ts";
 import { createModels, isModelType } from "../src/models.ts";
 import { InMemoryModelsStore } from "../src/models-store.ts";
@@ -590,5 +592,59 @@ describe("Antigravity native catalog", () => {
 		expect((mPro as any)?.antigravityRouting).toBeDefined();
 		expect((mPro as any)?.antigravityRouting?.defaultRequestId).toBe("gemini-2.5-pro");
 		expect((mPro as any)?.antigravityRouting?.off).toBe("gemini-2.5-pro");
+	});
+});
+
+describe("Antigravity catalog retirement", () => {
+	const flash = (tagTitle?: string) => ({
+		displayName: "x",
+		supportsThinking: true,
+		...(tagTitle ? { tagTitle } : {}),
+	});
+
+	it("hides a family whose every variant is tagged Leaving Soon, including its static baseline", () => {
+		const catalog = buildAntigravityCatalog(
+			{
+				"gemini-3.8-flash-low": { ...flash("Fast"), displayName: "Gemini 3.8 Flash (Low)" },
+				"gemini-3.8-flash-high": { ...flash("Fast"), displayName: "Gemini 3.8 Flash (High)" },
+				"gemini-3.7-flash-low": { ...flash("Leaving Soon"), displayName: "Gemini 3.7 Flash (Low)" },
+				"gemini-3.7-flash-high": { ...flash("Leaving Soon"), displayName: "Gemini 3.7 Flash (High)" },
+				"gemini-3.1-pro-low": { ...flash("Leaving Soon"), displayName: "Gemini 3.1 Pro (Low)" },
+				"gemini-pro-agent": { ...flash("Leaving Soon"), displayName: "Gemini 3.1 Pro (High)" },
+			},
+			{ models: ANTIGRAVITY_MODELS, routing: ANTIGRAVITY_ROUTING },
+		);
+		const ids = catalog.models.map((model) => model.id);
+		expect(ids).toContain("gemini-3.8-flash");
+		expect(ids).not.toContain("gemini-3.7-flash");
+		expect(ids).not.toContain("gemini-3.1-pro");
+		expect(catalog.retired).toEqual(["gemini-3.1-pro", "gemini-3.7-flash"]);
+	});
+
+	it("keeps a family while any variant is untagged", () => {
+		const catalog = buildAntigravityCatalog(
+			{
+				"gemini-3.7-flash-low": { ...flash("Leaving Soon"), displayName: "Gemini 3.7 Flash (Low)" },
+				"gemini-3.7-flash-high": { ...flash(), displayName: "Gemini 3.7 Flash (High)" },
+			},
+			{ models: ANTIGRAVITY_MODELS, routing: ANTIGRAVITY_ROUTING },
+		);
+		expect(catalog.models.map((model) => model.id)).toContain("gemini-3.7-flash");
+		expect(catalog.retired).toEqual([]);
+	});
+
+	it("does not re-add retired models from the static baseline when restoring the models store", async () => {
+		const modelsStore = new InMemoryModelsStore();
+		const first = await setup("project-a", modelsStore);
+		const flash38 = first.models.getModel("antigravity", "gemini-3.8-flash")!;
+		await modelsStore.write("antigravity", {
+			checkedAt: Date.now(),
+			models: [{ ...flash38, antigravityRetired: ["gemini-3.7-flash", "gemini-3.6-flash"] } as AntigravityModel],
+		});
+		const restored = await setup("project-a", modelsStore);
+		await restored.models.refresh({ allowNetwork: false });
+		expect(restored.models.getModel("antigravity", "gemini-3.8-flash")).toBeDefined();
+		expect(restored.models.getModel("antigravity", "gemini-3.7-flash")).toBeUndefined();
+		expect(restored.models.getModel("antigravity", "gemini-3.6-flash")).toBeUndefined();
 	});
 });
