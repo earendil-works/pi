@@ -42,6 +42,7 @@ export const defaultModelPerProvider: Partial<Record<KnownProvider, string>> = {
 	"minimax-cn": "MiniMax-M2.7",
 	moonshotai: "kimi-k2.6",
 	"moonshotai-cn": "kimi-k2.6",
+	"tencent-token-plan": "hy3",
 	huggingface: "moonshotai/Kimi-K2.6",
 	fireworks: "accounts/fireworks/models/kimi-k3",
 	together: "moonshotai/Kimi-K3",

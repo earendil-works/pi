@@ -57,6 +57,7 @@ This table covers providers with a single primary API-key variable. Providers th
 | MiniMax | `MINIMAX_API_KEY` |
 | MiniMax (China) | `MINIMAX_CN_API_KEY` |
 | Moonshot AI (Global and China) | `MOONSHOT_API_KEY` |
+| Tencent Token Plan | `TENCENT_TOKEN_PLAN_API_KEY` |
 | Qwen Token Plan and Individual | `QWEN_TOKEN_PLAN_API_KEY` |
 | Qwen Token Plan (China) | `QWEN_TOKEN_PLAN_CN_API_KEY` |
 | Xiaomi MiMo | `XIAOMI_API_KEY` |

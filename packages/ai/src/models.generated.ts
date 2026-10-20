@@ -33,6 +33,7 @@ import { QWEN_TOKEN_PLAN_CLASSIFIER_MODELS, QWEN_TOKEN_PLAN_IMAGE_MODELS, QWEN_T
 import { QWEN_TOKEN_PLAN_CN_CLASSIFIER_MODELS, QWEN_TOKEN_PLAN_CN_IMAGE_MODELS, QWEN_TOKEN_PLAN_CN_MODELS } from "./providers/qwen-token-plan-cn.models.ts";
 import { QWEN_TOKEN_PLAN_INDIVIDUAL_CLASSIFIER_MODELS, QWEN_TOKEN_PLAN_INDIVIDUAL_IMAGE_MODELS, QWEN_TOKEN_PLAN_INDIVIDUAL_MODELS } from "./providers/qwen-token-plan-individual.models.ts";
 import { RADIUS_CLASSIFIER_MODELS, RADIUS_IMAGE_MODELS, RADIUS_MODELS } from "./providers/radius.models.ts";
+import { TENCENT_TOKEN_PLAN_CLASSIFIER_MODELS, TENCENT_TOKEN_PLAN_IMAGE_MODELS, TENCENT_TOKEN_PLAN_MODELS } from "./providers/tencent-token-plan.models.ts";
 import { TOGETHER_CLASSIFIER_MODELS, TOGETHER_IMAGE_MODELS, TOGETHER_MODELS } from "./providers/together.models.ts";
 import { TYPESAFE_CLASSIFIER_MODELS, TYPESAFE_IMAGE_MODELS, TYPESAFE_MODELS } from "./providers/typesafe.models.ts";
 import { VERCEL_AI_GATEWAY_CLASSIFIER_MODELS, VERCEL_AI_GATEWAY_IMAGE_MODELS, VERCEL_AI_GATEWAY_MODELS } from "./providers/vercel-ai-gateway.models.ts";
@@ -77,6 +78,7 @@ export const MODELS: {
 	readonly "qwen-token-plan-cn": typeof QWEN_TOKEN_PLAN_CN_MODELS;
 	readonly "qwen-token-plan-individual": typeof QWEN_TOKEN_PLAN_INDIVIDUAL_MODELS;
 	readonly "radius": typeof RADIUS_MODELS;
+	readonly "tencent-token-plan": typeof TENCENT_TOKEN_PLAN_MODELS;
 	readonly "together": typeof TOGETHER_MODELS;
 	readonly "typesafe": typeof TYPESAFE_MODELS;
 	readonly "vercel-ai-gateway": typeof VERCEL_AI_GATEWAY_MODELS;
@@ -120,6 +122,7 @@ export const MODELS: {
 	"qwen-token-plan-cn": QWEN_TOKEN_PLAN_CN_MODELS,
 	"qwen-token-plan-individual": QWEN_TOKEN_PLAN_INDIVIDUAL_MODELS,
 	"radius": RADIUS_MODELS,
+	"tencent-token-plan": TENCENT_TOKEN_PLAN_MODELS,
 	"together": TOGETHER_MODELS,
 	"typesafe": TYPESAFE_MODELS,
 	"vercel-ai-gateway": VERCEL_AI_GATEWAY_MODELS,
@@ -165,6 +168,7 @@ export const IMAGE_MODELS: {
 	readonly "qwen-token-plan-cn": typeof QWEN_TOKEN_PLAN_CN_IMAGE_MODELS;
 	readonly "qwen-token-plan-individual": typeof QWEN_TOKEN_PLAN_INDIVIDUAL_IMAGE_MODELS;
 	readonly "radius": typeof RADIUS_IMAGE_MODELS;
+	readonly "tencent-token-plan": typeof TENCENT_TOKEN_PLAN_IMAGE_MODELS;
 	readonly "together": typeof TOGETHER_IMAGE_MODELS;
 	readonly "typesafe": typeof TYPESAFE_IMAGE_MODELS;
 	readonly "vercel-ai-gateway": typeof VERCEL_AI_GATEWAY_IMAGE_MODELS;
@@ -208,6 +212,7 @@ export const IMAGE_MODELS: {
 	"qwen-token-plan-cn": QWEN_TOKEN_PLAN_CN_IMAGE_MODELS,
 	"qwen-token-plan-individual": QWEN_TOKEN_PLAN_INDIVIDUAL_IMAGE_MODELS,
 	"radius": RADIUS_IMAGE_MODELS,
+	"tencent-token-plan": TENCENT_TOKEN_PLAN_IMAGE_MODELS,
 	"together": TOGETHER_IMAGE_MODELS,
 	"typesafe": TYPESAFE_IMAGE_MODELS,
 	"vercel-ai-gateway": VERCEL_AI_GATEWAY_IMAGE_MODELS,
@@ -253,6 +258,7 @@ export const CLASSIFIER_MODELS: {
 	readonly "qwen-token-plan-cn": typeof QWEN_TOKEN_PLAN_CN_CLASSIFIER_MODELS;
 	readonly "qwen-token-plan-individual": typeof QWEN_TOKEN_PLAN_INDIVIDUAL_CLASSIFIER_MODELS;
 	readonly "radius": typeof RADIUS_CLASSIFIER_MODELS;
+	readonly "tencent-token-plan": typeof TENCENT_TOKEN_PLAN_CLASSIFIER_MODELS;
 	readonly "together": typeof TOGETHER_CLASSIFIER_MODELS;
 	readonly "typesafe": typeof TYPESAFE_CLASSIFIER_MODELS;
 	readonly "vercel-ai-gateway": typeof VERCEL_AI_GATEWAY_CLASSIFIER_MODELS;
@@ -296,6 +302,7 @@ export const CLASSIFIER_MODELS: {
 	"qwen-token-plan-cn": QWEN_TOKEN_PLAN_CN_CLASSIFIER_MODELS,
 	"qwen-token-plan-individual": QWEN_TOKEN_PLAN_INDIVIDUAL_CLASSIFIER_MODELS,
 	"radius": RADIUS_CLASSIFIER_MODELS,
+	"tencent-token-plan": TENCENT_TOKEN_PLAN_CLASSIFIER_MODELS,
 	"together": TOGETHER_CLASSIFIER_MODELS,
 	"typesafe": TYPESAFE_CLASSIFIER_MODELS,
 	"vercel-ai-gateway": VERCEL_AI_GATEWAY_CLASSIFIER_MODELS,

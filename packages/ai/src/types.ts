@@ -113,6 +113,7 @@ export type KnownProvider =
 	| "minimax-cn"
 	| "moonshotai"
 	| "moonshotai-cn"
+	| "tencent-token-plan"
 	| "huggingface"
 	| "fireworks"
 	| "together"
