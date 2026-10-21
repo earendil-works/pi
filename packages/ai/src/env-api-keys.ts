@@ -107,6 +107,7 @@ function getApiKeyEnvVars(provider: string): readonly string[] | undefined {
 		moonshotai: "MOONSHOT_API_KEY",
 		"moonshotai-cn": "MOONSHOT_API_KEY",
 		"tencent-token-plan": "TENCENT_TOKEN_PLAN_API_KEY",
+		"tencent-tokenhub": "TENCENT_TOKENHUB_API_KEY",
 		huggingface: "HF_TOKEN",
 		fireworks: "FIREWORKS_API_KEY",
 		together: "TOGETHER_API_KEY",

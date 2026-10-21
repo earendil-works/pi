@@ -114,6 +114,7 @@ export type KnownProvider =
 	| "moonshotai"
 	| "moonshotai-cn"
 	| "tencent-token-plan"
+	| "tencent-tokenhub"
 	| "huggingface"
 	| "fireworks"
 	| "together"

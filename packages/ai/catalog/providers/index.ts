@@ -33,6 +33,7 @@ import qwenTokenPlan from "./qwen-token-plan.ts";
 import qwenTokenPlanCn from "./qwen-token-plan-cn.ts";
 import qwenTokenPlanIndividual from "./qwen-token-plan-individual.ts";
 import radius from "./radius.ts";
+import tencentTokenhub from "./tencent-tokenhub.ts";
 import tencentTokenPlan from "./tencent-token-plan.ts";
 import together from "./together.ts";
 import typesafe from "./typesafe.ts";
@@ -79,6 +80,7 @@ export const PROVIDERS: readonly ProviderDefinition[] = [
 	qwenTokenPlan,
 	radius,
 	tencentTokenPlan,
+	tencentTokenhub,
 	together,
 	typesafe,
 	vercelAiGateway,
