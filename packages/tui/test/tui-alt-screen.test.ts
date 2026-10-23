@@ -995,7 +995,7 @@ describe("TuiAltScreen", () => {
 		tui.stop();
 	});
 
-	it("does not emit Kitty graphics commands or OSC 133 zones in iTerm2", async () => {
+	it("emits iTerm2 graphics commands in fullscreen mode", async () => {
 		setCapabilities({ images: "iterm2", trueColor: true, hyperlinks: true });
 		try {
 			const terminal = new RecordingTerminal(20, 3);
@@ -1016,10 +1016,14 @@ describe("TuiAltScreen", () => {
 			tui.start();
 			await terminal.waitForRender();
 			tui.stop();
+			assert.ok(
+				terminal.events.some(
+					(event) => event.type === "write" && event.data.includes("\x1b]1337;File="),
+				),
+			);
 			assert.ok(terminal.events.every((event) => event.type !== "write" || !event.data.includes("\x1b_G")));
 			assert.ok(terminal.events.every((event) => event.type !== "write" || !event.data.includes("\x1b]133;")));
-			assert.ok(terminal.events.every((event) => event.type !== "write" || !event.data.includes("\x1b]1337;File=")));
-			assert.ok(terminal.events.some((event) => event.type === "write" && event.data.includes("[Image:")));
+			assert.ok(terminal.events.every((event) => event.type !== "write" || !event.data.includes("[Image:")));
 		} finally {
 			resetCapabilitiesCache();
 		}

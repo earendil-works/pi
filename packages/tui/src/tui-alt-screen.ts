@@ -28,8 +28,6 @@ import {
 	getKittyImagePlacementRows,
 	type ImageProtocol,
 	isImageLine,
-	setCapabilities,
-	type TerminalCapabilities,
 } from "./terminal-image.ts";
 import {
 	type Component,
@@ -214,7 +212,6 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 	private readonly flashes: AltScreenFlashContainer;
 	private altScreenActive = false;
 	private imageProtocol: ImageProtocol = null;
-	private savedCapabilities?: TerminalCapabilities;
 	private readonly uploadedKittyImages = new Map<number, CachedKittyImage>();
 	private selectionAnchor?: SelectionPoint;
 	private selectionFocus?: SelectionPoint;
@@ -354,11 +351,6 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		const capabilities = getCapabilities();
 		this.imageProtocol = capabilities.images;
 		this.uploadedKittyImages.clear();
-		if (capabilities.images === "iterm2") {
-			this.savedCapabilities = capabilities;
-			setCapabilities({ ...capabilities, images: null });
-			this.invalidate();
-		}
 		this.lastDocument = [];
 		this.selectionAnchor = undefined;
 		this.selectionFocus = undefined;
@@ -421,10 +413,6 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 			}
 			buffer += `\x1b[0m${ENABLE_AUTOWRAP}\r\n\x1b[?25h${END_SYNCHRONIZED_OUTPUT}`;
 			this.terminal.write(buffer);
-		}
-		if (this.savedCapabilities) {
-			setCapabilities(this.savedCapabilities);
-			this.savedCapabilities = undefined;
 		}
 	}
 
