@@ -633,7 +633,7 @@ pi.on("before_agent_start", async (event, ctx) => {
   //   .toolSnippets - one-line descriptions for each tool
   //   .toolGuidelines - rule bullets keyed by tool name
   //   .promptGuidelines - additional custom rule bullets
-  //   .sections - custom XML-wrapped sections keyed by tag name
+  //   .sections - custom sections keyed by tag name (`preamble` is plain text)
   //   .appendSystemPrompt - text from --append-system-prompt flags
   //   .cwd - working directory
   //   .contextFiles - AGENTS.md files and other loaded context files
@@ -655,6 +655,8 @@ pi.on("before_agent_start", async (event, ctx) => {
 A returned `message` is added to either kind of run; check `messageType` to skip runs started by custom messages.
 
 The `systemPromptOptions` field gives extensions access to the same structured data Pi uses to build the system prompt. Collections are mutable. Prefer changing `sections`, `selectedTools`, or `promptGuidelines`: Pi diffs the resulting prompt sections against what the model already has and appends one system message patching only the changed sections. Returning `systemPrompt`, or setting `forceSystemPrompt`, replaces the whole prompt for the run: every provider receives the forced text as its leading system prompt (a cache miss when it changes), and the session transcript keeps recording the structured sections. Tool selection changes update both the prompt contributions and executable provider tools; calling `pi.setActiveTools()` inside the handler has the same effect as editing `selectedTools`. Models that accept system messages mid-conversation receive the patch in place and keep their cached prefix; other models get the replayed prompt as their system prompt, which is a cache miss once per change.
+
+Set `event.systemPromptOptions.sections.preamble` to replace only the identity text while keeping the default `tools`, `rules`, and `docs` sections. `preamble` is the one section that is plain text, without an XML wrapper; every other section is XML-wrapped and overrides a generated section of the same name. Empty section values are ignored, and custom sections apply after `customPrompt`, so a `preamble` section overrides the identity text `customPrompt` would otherwise provide while `customPrompt` still suppresses the default `tools`, `rules`, and `docs`. Reach for `forceSystemPrompt` or a returned `systemPrompt` only when the whole prompt must be replaced. See [`prompt-customizer.ts`](../examples/extensions/prompt-customizer.ts).
 
 Inside `before_agent_start`, `event.systemPrompt` and `ctx.getSystemPrompt()` both reflect the chained system prompt as of the current handler. Later `before_agent_start` handlers can still modify it again.
 

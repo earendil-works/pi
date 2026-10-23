@@ -26,7 +26,11 @@ export interface BuildSystemPromptOptions {
 	promptGuidelines?: string[];
 	/** Text appended from user configuration before project context, skills, and cwd. */
 	appendSystemPrompt?: string;
-	/** Additional XML-wrapped prompt sections keyed by tag name. */
+	/**
+	 * Prompt sections keyed by name, applied after the generated sections. `preamble` replaces
+	 * the untagged identity text without removing default tools, rules, or docs; other sections
+	 * are XML-wrapped. Nonempty sections also override sections generated from `customPrompt`.
+	 */
 	sections?: Record<string, string>;
 	/** Working directory. */
 	cwd: string;
@@ -142,7 +146,7 @@ export function buildSystemPromptSections(input: BuildSystemPromptOptions): Syst
 	} = options;
 
 	for (const name of Object.keys(customSections)) {
-		if (!SYSTEM_PROMPT_SECTION_NAME.test(name) || name === "preamble") {
+		if (!SYSTEM_PROMPT_SECTION_NAME.test(name)) {
 			throw new Error(`Invalid system prompt section name: ${name}`);
 		}
 	}

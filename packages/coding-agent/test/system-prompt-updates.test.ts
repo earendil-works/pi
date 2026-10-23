@@ -109,8 +109,8 @@ describe("system prompt updates", () => {
 	});
 
 	test("keeps the preamble untagged and replaces it like any section", () => {
-		const previous = buildSystemPromptSections({ customPrompt: "You are A.", cwd: "/tmp" });
-		const current = buildSystemPromptSections({ customPrompt: "You are B.", cwd: "/tmp" });
+		const previous = buildSystemPromptSections({ sections: { preamble: "You are A." }, cwd: "/tmp" });
+		const current = buildSystemPromptSections({ sections: { preamble: "You are B." }, cwd: "/tmp" });
 		expect(previous.preamble).toBe("You are A.");
 		expect(diffSystemPromptSections(previous, current)).toEqual({ preamble: "You are B." });
 
@@ -121,8 +121,11 @@ describe("system prompt updates", () => {
 			content: "",
 			sections: buildSystemPromptSections({ cwd: "/tmp" }),
 		});
-		expect(() => buildSystemPromptSections({ cwd: "/tmp", sections: { preamble: "x" } })).toThrow(
-			"Invalid system prompt section name",
+	});
+
+	test.each(["", "Preamble", "bad section", "bad<tag>"])("rejects invalid section name %j", (name) => {
+		expect(() => buildSystemPromptSections({ cwd: "/tmp", sections: { [name]: "x" } })).toThrow(
+			`Invalid system prompt section name: ${name}`,
 		);
 	});
 

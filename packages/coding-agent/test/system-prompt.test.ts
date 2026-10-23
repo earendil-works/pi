@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 import type { Skill } from "../src/core/skills.ts";
 import { createSyntheticSourceInfo } from "../src/core/source-info.ts";
-import { buildSystemPrompt } from "../src/core/system-prompt.ts";
+import { buildSystemPrompt, buildSystemPromptSections } from "../src/core/system-prompt.ts";
 
 const testSkill: Skill = {
 	name: "test-skill",
@@ -54,8 +54,72 @@ describe("buildSystemPrompt", () => {
 			expect(customPrompt.startsWith("You are Exact.\n\n<cwd>")).toBe(true);
 		});
 
+		test("replaces only the untagged identity with a custom preamble", () => {
+			const options = { cwd: "/tmp", toolSnippets: { read: "Read file contents" } };
+			const defaults = buildSystemPromptSections(options);
+			const sections = { preamble: "You are Exact.\nKeep this identity." };
+
+			expect(buildSystemPromptSections({ ...options, sections })).toEqual({ ...defaults, ...sections });
+			expect(defaults.tools).toContain("- read: Read file contents");
+			expect(defaults.rules).toContain("Be concise in your responses");
+			expect(defaults.docs).toContain("Pi documentation");
+
+			const prompt = buildSystemPrompt({ ...options, sections });
+			expect(prompt.startsWith(`${sections.preamble}\n\n<tools>`)).toBe(true);
+			expect(prompt).not.toContain("<preamble>");
+			expect(prompt).not.toContain("</preamble>");
+			expect(prompt).not.toContain(defaults.preamble);
+		});
+
+		test("keeps other custom section overrides and XML wrapping with a custom preamble", () => {
+			const defaults = buildSystemPromptSections({ cwd: "/tmp" });
+			expect(
+				buildSystemPromptSections({
+					cwd: "/tmp",
+					sections: { preamble: "Custom identity.", rules: "Custom rules.", plan_mode: "Plan only." },
+				}),
+			).toEqual({
+				...defaults,
+				preamble: "Custom identity.",
+				rules: "<rules>\nCustom rules.\n</rules>",
+				plan_mode: "<plan_mode>\nPlan only.\n</plan_mode>",
+			});
+		});
+
+		test.each([undefined, "Custom identity."])(
+			"ignores empty custom sections with customPrompt %j",
+			(customPrompt) => {
+				const options = { cwd: "/tmp", customPrompt };
+				expect(buildSystemPromptSections({ ...options, sections: { preamble: "", rules: "" } })).toEqual(
+					buildSystemPromptSections(options),
+				);
+			},
+		);
+
+		test("applies custom sections after customPrompt without restoring default sections", () => {
+			expect(
+				buildSystemPromptSections({
+					cwd: "/tmp",
+					customPrompt: "Original custom identity.",
+					sections: { preamble: "Final identity.", rules: "Explicit rules.", plan_mode: "Plan only." },
+				}),
+			).toEqual({
+				preamble: "Final identity.",
+				cwd: "<cwd>\n/tmp\n</cwd>",
+				rules: "<rules>\nExplicit rules.\n</rules>",
+				plan_mode: "<plan_mode>\nPlan only.\n</plan_mode>",
+			});
+		});
+
 		test("preserves an exact forced prompt without sections", () => {
-			expect(buildSystemPrompt({ forceSystemPrompt: "exact", cwd: "/tmp" })).toBe("exact");
+			expect(
+				buildSystemPrompt({
+					forceSystemPrompt: "exact",
+					customPrompt: "Custom identity.",
+					sections: { preamble: "Section identity.", plan_mode: "Plan only." },
+					cwd: "/tmp",
+				}),
+			).toBe("exact");
 		});
 
 		test("maps appended instructions and project context to stable sections", () => {
