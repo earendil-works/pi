@@ -1341,6 +1341,22 @@ export class DefaultPackageManager implements PackageManager {
 				let installedPath = this.getNpmInstallPath(parsed, resolvedScope);
 				const needsInstall =
 					!existsSync(installedPath) || !(await this.installedNpmMatchesConfiguredVersion(parsed, installedPath));
+				if (
+					!needsInstall &&
+					resolvedScope === "temporary" &&
+					!parsed.pinned &&
+					(await this.npmHasAvailableUpdate(parsed, installedPath))
+				) {
+					// Temporary (-e) sources have no `pi update` path, so refresh unpinned ones on load like
+					// temporary git sources. Like `pi update`, install `name@latest` for unversioned specs because a bare
+					// `npm install name` keeps the range already saved in the temporary package.json.
+					const spec = parsed.version ? parsed.spec : `${parsed.name}@latest`;
+					try {
+						await this.installNpm({ ...parsed, spec }, resolvedScope, true);
+					} catch {
+						// Keep the cached install if the refresh fails.
+					}
+				}
 				if (needsInstall) {
 					const installed = await installMissing();
 					if (!installed) continue;
