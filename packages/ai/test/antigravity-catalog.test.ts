@@ -37,6 +37,7 @@ async function sentModel(models: ReturnType<typeof createModels>, id: string, re
 		},
 	);
 	expect(result.stopReason).toBe("stop");
+	expect(result.responseModel).toBe(payload!.model === id ? undefined : payload!.model);
 	return payload!;
 }
 
@@ -647,4 +648,36 @@ describe("Antigravity catalog retirement", () => {
 		expect(restored.models.getModel("antigravity", "gemini-3.7-flash")).toBeUndefined();
 		expect(restored.models.getModel("antigravity", "gemini-3.6-flash")).toBeUndefined();
 	});
+});
+
+it.each([false, true])("uses only a discovered replacement after 404 (replacement=%s)", async (replacement) => {
+	const { models } = await setup("project-a");
+	const runtimes: string[] = [];
+	const result = await models.completeSimple(
+		models.getModel("antigravity", "gemini-3.8-flash")!,
+		{ messages: [{ role: "user", content: "Hi", timestamp: 0 }] },
+		{
+			reasoning: "high",
+			fetch: async (url, init) => {
+				if (String(url).includes("fetchAvailableModels"))
+					return Response.json({
+						models: replacement
+							? { "gemini-alias-agent": { displayName: "Gemini 3.8 Flash (High)", model: "MODEL_LIVE" } }
+							: {},
+					});
+				const payload = JSON.parse(String(init?.body));
+				runtimes.push(payload.model);
+				if (payload.model === "gemini-alias-agent")
+					return new Response(
+						'data: {"candidates":[{"content":{"parts":[{"text":"ok"}]},"finishReason":"STOP"}]}\n\n',
+					);
+				return Response.json({ error: { message: "not found" } }, { status: 404 });
+			},
+		},
+	);
+	expect(runtimes.every((id) => id === "gemini-3.8-flash-high" || (replacement && id === "gemini-alias-agent"))).toBe(
+		true,
+	);
+	expect(result.stopReason, result.errorMessage).toBe(replacement ? "stop" : "error");
+	if (replacement) expect(result.responseModel).toBe("gemini-alias-agent");
 });

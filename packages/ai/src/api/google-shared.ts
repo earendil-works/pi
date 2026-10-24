@@ -13,6 +13,7 @@ import {
 } from "@google/genai";
 import { clampThinkingLevel } from "../models.ts";
 import type {
+	Api,
 	ImageContent,
 	Model,
 	StopReason,
@@ -48,7 +49,7 @@ const GOOGLE_SDK_THINKING_LEVEL_MAP: Record<GoogleApiThinkingLevel, GoogleSdkThi
 };
 
 /** Resolve a supported pi level or model-specific Google mapping to a standard Google level. */
-export function resolveGoogleThinkingLevel<T extends GoogleApiType>(
+export function resolveGoogleThinkingLevel<T extends Api>(
 	model: Model<T>,
 	level: ThinkingLevel,
 ): ResolvedGoogleThinkingLevel {
@@ -73,7 +74,7 @@ export function resolveGoogleThinkingLevel<T extends GoogleApiType>(
  * the token-based `thinkingBudget` control. Supported levels come from the
  * model's `thinkingLevelMap`; this only selects the Google wire format.
  */
-export function usesGoogleThinkingLevel<T extends GoogleApiType>(model: Model<T>): boolean {
+export function usesGoogleThinkingLevel<T extends Api>(model: Model<T>): boolean {
 	const id = model.id.toLowerCase();
 	return (
 		// Match Gemini 3 Pro/Flash IDs with or without a minor version, such as
@@ -151,7 +152,7 @@ export function toGoogleSdkThinkingLevel(level: GoogleApiThinkingLevel): GoogleS
 	return GOOGLE_SDK_THINKING_LEVEL_MAP[level];
 }
 
-export function getDisabledGoogleThinkingConfig<T extends GoogleApiType>(model: Model<T>): ThinkingConfig {
+export function getDisabledGoogleThinkingConfig<T extends Api>(model: Model<T>): ThinkingConfig {
 	if (!usesGoogleThinkingLevel(model)) return { thinkingBudget: 0 };
 
 	const fallback = clampThinkingLevel(model, "off");
@@ -230,7 +231,7 @@ function getGeminiMajorVersion(modelId: string): number | undefined {
 	return Number.parseInt(match[1], 10);
 }
 
-function supportsMultimodalFunctionResponse(modelId: string): boolean {
+export function supportsMultimodalFunctionResponse(modelId: string): boolean {
 	const geminiMajorVersion = getGeminiMajorVersion(modelId);
 	if (geminiMajorVersion !== undefined) {
 		return geminiMajorVersion >= 3;
@@ -456,7 +457,7 @@ const JSON_SCHEMA_SUBSCHEMAS = new Set([
  * Rewrite string and number `const` values to single-value `enum`s.
  * Gemini ignores `const` in `parametersJsonSchema` but honors `enum`.
  */
-function rewriteConstAsEnum(schema: unknown, isNameMap = false): unknown {
+export function rewriteConstAsEnum(schema: unknown, isNameMap = false): unknown {
 	if (Array.isArray(schema)) return schema.map((item) => rewriteConstAsEnum(item));
 	if (typeof schema !== "object" || schema === null) return schema;
 
@@ -473,6 +474,33 @@ function rewriteConstAsEnum(schema: unknown, isNameMap = false): unknown {
 		if (typeof value === "string" || typeof value === "number") {
 			delete result.const;
 			result.enum = [value];
+		}
+	}
+	// The Cloud Code Assist protobuf schema cannot express anyOf. A union of
+	// unconstrained string literals has an equivalent enum representation.
+	if (
+		!isNameMap &&
+		result.enum === undefined &&
+		(result.type === undefined || result.type === "string") &&
+		Array.isArray(result.anyOf) &&
+		result.anyOf.length > 0
+	) {
+		const variants = result.anyOf;
+		if (
+			variants.every(
+				(variant) =>
+					typeof variant === "object" &&
+					variant !== null &&
+					Object.keys(variant).every((key) => key === "type" || key === "enum") &&
+					(variant.type === undefined || variant.type === "string") &&
+					Array.isArray(variant.enum) &&
+					variant.enum.length === 1 &&
+					typeof variant.enum[0] === "string",
+			)
+		) {
+			delete result.anyOf;
+			result.type = "string";
+			result.enum = [...new Set(variants.map((variant) => variant.enum[0]))];
 		}
 	}
 	return result;

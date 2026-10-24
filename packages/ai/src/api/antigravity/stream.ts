@@ -39,6 +39,7 @@ import { createAssistantMessageEventStream } from "../../utils/event-stream.ts";
 import { headersToRecord, providerHeadersToRecord } from "../../utils/headers.ts";
 import { sleep } from "../../utils/sleep.ts";
 import { getCurrentSystemPrompt, getCurrentTools } from "../../utils/transcript.ts";
+import { requiresToolCallId, rewriteConstAsEnum, supportsMultimodalFunctionResponse } from "../google-shared.ts";
 import {
 	antigravityHeaders,
 	endpointCandidates,
@@ -56,13 +57,7 @@ import {
 	StopReason,
 	ToolChoice,
 } from "./enums.ts";
-import {
-	ANTIGRAVITY_ROUTING,
-	getAntigravityRequestModelId,
-	getFallbackRuntimeModel,
-	getMaxOutputTokens,
-	getThinkingConfig,
-} from "./models.ts";
+import { ANTIGRAVITY_ROUTING, getAntigravityRequestModelId, getMaxOutputTokens, getThinkingConfig } from "./models.ts";
 import { redactSecrets, safeError } from "./security.ts";
 import {
 	type ActiveBlock,
@@ -106,15 +101,6 @@ function sanitizeToolCallId(id: string, fallbackName?: string): string {
 	return capped || `${fallbackName || "tool"}_${++toolCallCounter}`;
 }
 
-function toolCallIdNeeded(modelId: string, runtimeModel: string): boolean {
-	return (
-		modelId.startsWith("claude-") ||
-		modelId.startsWith("gpt-oss-") ||
-		runtimeModel.startsWith("claude-") ||
-		runtimeModel.startsWith("gpt-oss-")
-	);
-}
-
 export const resolveCurrentSystemPrompt = (context: Context) => getCurrentSystemPrompt(context.messages);
 export const resolveCurrentTools = (context: Context) => getCurrentTools(context.messages);
 
@@ -123,16 +109,6 @@ function isValidThoughtSignature(signature?: string): boolean {
 	if (!signature || typeof signature !== "string" || signature.length === 0) return false;
 	if (signature.length % 4 !== 0) return false;
 	return base64SignaturePattern.test(signature);
-}
-
-function geminiRequiresThoughtSignature(runtimeModel: string): boolean {
-	if (!runtimeModel.startsWith("gemini-")) return false;
-	const match = runtimeModel.match(/^gemini-(\d+)/);
-	if (match) {
-		const major = Number.parseInt(match[1], 10);
-		return major >= 3;
-	}
-	return true;
 }
 
 function parseImageData(raw: string, explicitMime?: string): { data: string; mimeType: string } {
@@ -149,27 +125,9 @@ function parseImageData(raw: string, explicitMime?: string): { data: string; mim
 	};
 }
 
-const SKILL_BLOCK_PATTERN = /<skill\b[^>]*>[\s\S]*?<\/skill\s*>/gi;
-
-function skillBlocks(content: unknown): string[] {
-	const texts =
-		typeof content === "string"
-			? [content]
-			: Array.isArray(content)
-				? content.flatMap((item) =>
-						isRecord(item) && item.type === "text" && typeof item.text === "string" ? [item.text] : [],
-					)
-				: [];
-	return texts.flatMap((text) => text.match(SKILL_BLOCK_PATTERN) || []);
-}
-
-function withoutSkillBlocks(text: string): string {
-	return text.replace(SKILL_BLOCK_PATTERN, "");
-}
-
 function asTextParts(content: unknown): Array<GeminiTextPart | GeminiInlineDataPart> {
 	const textPart = (text: string): GeminiTextPart[] => {
-		const userText = withoutSkillBlocks(text);
+		const userText = text;
 		return userText.trim() ? [{ text: sanitizeText(userText) }] : [];
 	};
 	if (typeof content === "string") return textPart(content);
@@ -218,8 +176,6 @@ function appendTurn(contents: GeminiContent[], role: GeminiRole, parts: GeminiPa
 /** Exported for unit tests. */
 export function convertMessages(model: Model<Api>, context: Context, runtimeModel: string): GeminiContent[] {
 	const contents: GeminiContent[] = [];
-	const requiresSig = geminiRequiresThoughtSignature(runtimeModel);
-	const droppedToolCallIds = new Map<string, string>();
 	for (const msg of context.messages) {
 		if ((msg.role as string) === "system") continue;
 		if (msg.role === "user") {
@@ -231,12 +187,6 @@ export function convertMessages(model: Model<Api>, context: Context, runtimeMode
 			}
 			const parts: GeminiPart[] = [];
 			const isSameModel = msg.provider === model.provider && msg.model === model.id;
-			const toolCalls = msg.content.filter((b): b is ToolCall => b.type === "toolCall");
-			const firstCallHasSig = toolCalls.length > 0 && isValidThoughtSignature(toolCalls[0]?.thoughtSignature);
-			const allSigsValid = toolCalls.every(
-				(tc) => !tc.thoughtSignature || isValidThoughtSignature(tc.thoughtSignature),
-			);
-			const groupIsSigned = isSameModel && firstCallHasSig && allSigsValid;
 
 			for (const block of msg.content) {
 				if (block.type === "text") {
@@ -257,33 +207,18 @@ export function convertMessages(model: Model<Api>, context: Context, runtimeMode
 						...(block.thinkingSignature ? { thoughtSignature: block.thinkingSignature } : {}),
 					});
 				} else if (block.type === "toolCall") {
-					if (requiresSig && !groupIsSigned) {
-						const rawId = block.id || "";
-						const argsText = (() => {
-							try {
-								return JSON.stringify(block.arguments ?? {});
-							} catch {
-								return "{}";
-							}
-						})();
-						if (rawId) {
-							droppedToolCallIds.set(rawId, argsText);
-							droppedToolCallIds.set(sanitizeToolCallId(rawId, block.name), argsText);
-						} else {
-							droppedToolCallIds.set(`empty:${block.name}`, argsText);
-						}
-					} else {
-						parts.push({
-							functionCall: {
-								name: block.name,
-								args: block.arguments ?? {},
-								...(toolCallIdNeeded(model.id, runtimeModel)
-									? { id: sanitizeToolCallId(block.id || "", block.name) }
-									: {}),
-							},
-							...(block.thoughtSignature ? { thoughtSignature: block.thoughtSignature } : {}),
-						});
-					}
+					const signature =
+						isSameModel && isValidThoughtSignature(block.thoughtSignature) ? block.thoughtSignature : undefined;
+					parts.push({
+						functionCall: {
+							name: block.name,
+							args: block.arguments ?? {},
+							...(requiresToolCallId(model.id) || requiresToolCallId(runtimeModel)
+								? { id: sanitizeToolCallId(block.id || "", block.name) }
+								: {}),
+						},
+						...(signature ? { thoughtSignature: signature } : {}),
+					});
 				}
 			}
 			appendTurn(contents, GeminiRole.Model, parts);
@@ -294,31 +229,18 @@ export function convertMessages(model: Model<Api>, context: Context, runtimeMode
 				.join("\n");
 			const responseText = text || (msg.isError ? "Tool failed" : "");
 			const imageParts = asImageParts(msg.content);
-			const rawId = msg.toolCallId || "";
-			const sanitizedId = toolCallIdNeeded(model.id, runtimeModel) ? sanitizeToolCallId(rawId, msg.toolName) : rawId;
-			const droppedArgs = requiresSig
-				? (droppedToolCallIds.get(rawId) ??
-					droppedToolCallIds.get(sanitizedId) ??
-					(rawId === "" ? droppedToolCallIds.get(`empty:${msg.toolName}`) : undefined))
-				: undefined;
-			if (droppedArgs !== undefined) {
-				const label = droppedArgs === "{}" ? `\`${msg.toolName}\`` : `\`${msg.toolName}\` (${droppedArgs})`;
-				appendTurn(contents, GeminiRole.User, [
-					{ text: sanitizeText(`[Observation from ${label}:\n${responseText}]`) },
-					...imageParts,
-				]);
-			} else {
-				const part: GeminiFunctionResponsePart = {
-					functionResponse: {
-						name: msg.toolName,
-						response: msg.isError ? { error: responseText } : { output: responseText },
-						...(toolCallIdNeeded(model.id, runtimeModel)
-							? { id: sanitizeToolCallId(msg.toolCallId || "", msg.toolName) }
-							: {}),
-					},
-				};
-				appendTurn(contents, GeminiRole.User, [part, ...imageParts]);
-			}
+			const nestedImages = supportsMultimodalFunctionResponse(model.id);
+			const part: GeminiFunctionResponsePart = {
+				functionResponse: {
+					name: msg.toolName,
+					response: msg.isError ? { error: responseText } : { output: responseText },
+					...(requiresToolCallId(model.id) || requiresToolCallId(runtimeModel)
+						? { id: sanitizeToolCallId(msg.toolCallId || "", msg.toolName) }
+						: {}),
+					...(nestedImages && imageParts.length > 0 ? { parts: imageParts } : {}),
+				},
+			};
+			appendTurn(contents, GeminiRole.User, [part, ...(nestedImages ? [] : imageParts)]);
 		}
 	}
 
@@ -341,8 +263,7 @@ export function convertMessages(model: Model<Api>, context: Context, runtimeMode
 	}
 
 	// Google Antigravity requires a natural-language user part in the request,
-	// including tool-only continuation turns. Keep injected Skills in the system
-	// instruction, then add this protocol bridge only when existing context gives
+	// including tool-only continuation turns. Add this protocol bridge when context gives
 	// the model something concrete to act on.
 	const hasUserText = contents.some(
 		(turn) => turn.role === GeminiRole.User && turn.parts.some((part) => "text" in part && Boolean(part.text.trim())),
@@ -691,7 +612,7 @@ export function convertTools(
 		}
 
 		const rootObject = ensureRootObjectSchema(dereferenced.schema);
-		const schema = stripMetaSchema(rootObject);
+		const schema = rewriteConstAsEnum(stripMetaSchema(rootObject));
 		return [
 			{
 				name: tool.name,
@@ -722,19 +643,17 @@ export async function buildRequest(
 	options: AntigravityStreamOptions,
 	runtimeModel: string,
 ): Promise<AntigravityGenerateRequest> {
-	const injectedSkills = context.messages.flatMap((msg) => (msg.role === "user" ? skillBlocks(msg.content) : []));
 	const systemPromptText = resolveCurrentSystemPrompt(context);
 	const declaredTools = resolveCurrentTools(context);
 	const systemParts = systemPromptText
 		? [{ text: sanitizeText(systemPromptText) }]
 		: [{ text: ANTIGRAVITY_SYSTEM_INSTRUCTION }, { text: ANTIGRAVITY_NO_PREAMBLE_INSTRUCTION }];
-	systemParts.push(...injectedSkills.map((skill) => ({ text: sanitizeText(skill) })));
 
 	const contents = convertMessages(model, context, runtimeModel);
 	const hasUserText = contents.some(
 		(turn) => turn.role === GeminiRole.User && turn.parts.some((part) => "text" in part && Boolean(part.text.trim())),
 	);
-	if (!hasUserText && (injectedSkills.length > 0 || Boolean(systemPromptText))) {
+	if (!hasUserText && Boolean(systemPromptText)) {
 		contents.unshift({
 			role: GeminiRole.User,
 			parts: [{ text: "Apply the active system instructions." }],
@@ -754,7 +673,9 @@ export async function buildRequest(
 	// A model the catalog marks as non-thinking must not receive a thinkingConfig
 	// at all: the off-level config carries thinkingBudget 0 for most families, and
 	// some backends reject it. Static models are all reasoning: true, so unchanged.
-	const thinking = model.reasoning ? getThinkingConfig(runtimeModel, options.reasoning ?? "off") : undefined;
+	const thinking = model.reasoning
+		? getThinkingConfig({ ...model, id: runtimeModel }, options.reasoning ?? "off")
+		: undefined;
 	if (thinking) generationConfig.thinkingConfig = thinking;
 	const maxAllowed = getMaxOutputTokens(model.id, runtimeModel);
 	if (options.maxTokens !== undefined) {
@@ -1303,10 +1224,6 @@ export function streamAntigravity(
 			}
 
 			const runtimeCandidates = [initialRuntimeModel];
-			const fallback = getFallbackRuntimeModel(initialRuntimeModel, effort);
-			if (fallback && fallback !== initialRuntimeModel) {
-				runtimeCandidates.push(fallback);
-			}
 
 			const requestHeaders = providerHeadersToRecord(
 				antigravityHeaders(creds.token, opts.env),
@@ -1413,6 +1330,7 @@ export function streamAntigravity(
 				};
 				Object.assign(output, { stopReason: "pending", rawStopReason: undefined });
 
+				output.responseModel = runtimeModel !== model.id ? runtimeModel : undefined;
 				received = await streamResponse(response, stream, output, model, opts);
 				if (received || output.stopReason === "error") break;
 			}

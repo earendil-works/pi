@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { convertMessages } from "../src/api/antigravity/stream.ts";
 import { type AntigravityImagesOptions, generateImages } from "../src/api/antigravity-images.ts";
 import { InMemoryCredentialStore } from "../src/auth/credential-store.ts";
 import { generateImages as generateGlobalImages } from "../src/images.ts";
@@ -7,6 +8,7 @@ import { InMemoryModelsStore } from "../src/models-store.ts";
 import { builtinModels } from "../src/providers/all.ts";
 import { antigravityProvider } from "../src/providers/antigravity.ts";
 import type { ImageModel, ImagesContext } from "../src/types.ts";
+import { normalizeContext } from "../src/utils/transcript.ts";
 
 const image = { type: "image" as const, data: "iVBORw0KGgo=", mimeType: "image/png" };
 const apiKey = JSON.stringify({ token: "fake-token", projectId: "fake-project" });
@@ -364,3 +366,66 @@ describe("native image registration", () => {
 		expect(restored.getModelsOfType("image", "antigravity")).toEqual(models.getModelsOfType("image", "antigravity"));
 	});
 });
+
+it.each(["gemini-2.5-flash", "gemini-3-flash", "gemini-3.8-flash", "gemini-4-argon"])(
+	"encodes tool image responses for %s",
+	(id) => {
+		const chat = { ...antigravityProvider().getModels()[0], id };
+		const nested = !id.startsWith("gemini-2");
+		const result = convertMessages(
+			chat,
+			normalizeContext({
+				messages: [
+					{ role: "user", content: "Inspect", timestamp: 0 },
+					{
+						role: "assistant",
+						api: chat.api,
+						provider: chat.provider,
+						model: id,
+						content: [{ type: "toolCall", id: "call/1", name: "screen", arguments: {} }],
+						usage: {
+							input: 0,
+							output: 0,
+							cacheRead: 0,
+							cacheWrite: 0,
+							totalTokens: 0,
+							cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+						},
+						stopReason: "toolUse",
+						timestamp: 1,
+					},
+					{
+						role: "toolResult",
+						toolCallId: "call/1",
+						toolName: "screen",
+						content: [{ type: "text", text: "screen" }, image],
+						isError: false,
+						timestamp: 2,
+					},
+				],
+			}),
+			id,
+		);
+		const part = { inlineData: { data: image.data, mimeType: image.mimeType } };
+		expect(JSON.parse(JSON.stringify(result))).toEqual([
+			{ role: "user", parts: [{ text: "Inspect" }] },
+			{
+				role: "model",
+				parts: [{ functionCall: { name: "screen", args: {}, ...(nested ? { id: "call_1" } : {}) } }],
+			},
+			{
+				role: "user",
+				parts: [
+					{
+						functionResponse: {
+							name: "screen",
+							response: { output: "screen" },
+							...(nested ? { id: "call_1", parts: [part] } : {}),
+						},
+					},
+					...(nested ? [] : [part]),
+				],
+			},
+		]);
+	},
+);

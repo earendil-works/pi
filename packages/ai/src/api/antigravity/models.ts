@@ -1,6 +1,13 @@
 // Adapted from pi-antigravity (MIT), Copyright (c) 2026 Rahul Arya.
 // See LICENSE in this directory.
-import type { Model } from "../../types.ts";
+import { clampThinkingLevel } from "../../models.ts";
+import type { Api, Model, ThinkingLevel } from "../../types.ts";
+import {
+	getDisabledGoogleThinkingConfig,
+	resolveGoogleThinkingLevel,
+	toGoogleThinkingLevel,
+	usesGoogleThinkingLevel,
+} from "../google-shared.ts";
 
 type ProviderModelConfig = Omit<Model<"antigravity-api">, "api" | "provider" | "baseUrl">;
 
@@ -380,29 +387,6 @@ export function getAntigravityRequestModelId(modelId: string, effort: string | u
 	return r.routing?.[effortKey] ?? r.routing?.low ?? r.routing?.minimal ?? r.off ?? r.defaultRequestId ?? modelId;
 }
 
-/**
- * If a next-gen model (e.g. Gemini 3.8 Flash) is not yet available on the backend,
- * provide a fallback runtime model ID (e.g. Gemini 3.7 Flash) to maintain availability.
- */
-export function getFallbackRuntimeModel(runtimeModel: string, effort?: string): string | undefined {
-	if (runtimeModel.startsWith("gemini-3.8-flash-")) {
-		return runtimeModel.replace("gemini-3.8-flash-", "gemini-3.7-flash-");
-	}
-	if (runtimeModel === "gemini-3.8-flash") {
-		return "gemini-3.7-flash-low";
-	}
-	if (runtimeModel === "gemini-3.7-flash-tiered") {
-		return getAntigravityRequestModelId("gemini-3.6-flash", effort);
-	}
-	if (runtimeModel.startsWith("gemini-3.7-flash-")) {
-		return runtimeModel.replace("gemini-3.7-flash-", "gemini-3.6-flash-");
-	}
-	if (runtimeModel === "gemini-3.7-flash") {
-		return "gemini-3.6-flash-low";
-	}
-	return undefined;
-}
-
 export type { ThinkingWire };
 
 export const ANTIGRAVITY_MODEL_ENUM: Record<string, string> = {
@@ -461,7 +445,8 @@ export function getModelEnum(id: string): string | undefined {
 	return ANTIGRAVITY_MODEL_ENUM[id] ?? ANTIGRAVITY_MODEL_ENUM[getAntigravityRequestModelId(id, undefined)];
 }
 
-export function getThinkingConfig(modelId: string, effort: string | undefined): ThinkingWire | undefined {
+export function getThinkingConfig(model: Model<Api>, effort: string | undefined): ThinkingWire | undefined {
+	const modelId = model.id;
 	if (modelId.startsWith("claude-")) {
 		if (!effort || effort === "off") return { includeThoughts: false, thinkingBudget: 0 };
 		return { includeThoughts: true, thinkingBudget: 1024 };
@@ -470,33 +455,29 @@ export function getThinkingConfig(modelId: string, effort: string | undefined): 
 		if (!effort || effort === "off") return { includeThoughts: false, thinkingBudget: 0 };
 		return { includeThoughts: true, thinkingBudget: 8192 };
 	}
-	if (modelId.startsWith("gemini-4-argon")) {
-		// Argon rejects thinkingBudget 0 with a 400. Omitting thinkingConfig is the
-		// working no-thinking mode (verified on -low and -high); every other level
-		// keeps the dynamic budget and lets the wire variant carry the effort.
-		if (!effort || effort === "off") return undefined;
-		return { includeThoughts: true, thinkingBudget: -1 };
-	}
-	// Gemini 3 Flash advertises minThinkingBudget 32 and answers thinkingBudget 0 with a 400.
-	// Omitting thinkingConfig is its working no-thinking mode (verified live 2026-10-17);
-	// other levels use the generic Gemini budgets below.
-	if (modelId === "gemini-3-flash" && (!effort || effort === "off")) return undefined;
-	if (modelId.startsWith("gemini-3.5-flash") || modelId === "gemini-3-flash-agent") {
-		if (!effort || effort === "off") return { includeThoughts: false, thinkingBudget: 0 };
-		const thinkingBudget = effort === "high" || effort === "xhigh" ? 10_000 : effort === "medium" ? 4_000 : 1_000;
-		return { includeThoughts: true, thinkingBudget };
-	}
-	if (modelId.startsWith("gemini-3.1-pro") || modelId === "gemini-pro-agent") {
+	if (modelId.startsWith("gemini-")) {
+		const googleModel = modelId === "gemini-pro-agent" ? { ...model, id: "gemini-3.1-pro" } : model;
+		if (usesGoogleThinkingLevel(googleModel)) {
+			if (!effort || effort === "off") {
+				// These bridge models have verified omission semantics for off.
+				if (modelId.startsWith("gemini-4-argon") || modelId === "gemini-3-flash") return undefined;
+				const disabled = getDisabledGoogleThinkingConfig(googleModel);
+				return disabled.thinkingLevel
+					? { includeThoughts: false, thinkingLevel: disabled.thinkingLevel }
+					: undefined;
+			}
+			const level = clampThinkingLevel(googleModel, effort as ThinkingLevel);
+			if (level === "off") return undefined;
+			return {
+				includeThoughts: true,
+				thinkingLevel: toGoogleThinkingLevel(resolveGoogleThinkingLevel(googleModel, level)),
+			};
+		}
 		if (!effort || effort === "off") return { includeThoughts: false, thinkingBudget: 0 };
 		return {
 			includeThoughts: true,
-			thinkingBudget: effort === "high" || effort === "xhigh" ? 10_001 : 1_001,
+			thinkingBudget: effort === "high" || effort === "xhigh" ? -1 : effort === "medium" ? 4_000 : 1_000,
 		};
-	}
-	if (modelId.startsWith("gemini-")) {
-		if (!effort || effort === "off") return { includeThoughts: false, thinkingBudget: 0 };
-		const thinkingBudget = effort === "high" || effort === "xhigh" ? -1 : effort === "medium" ? 4_000 : 1_000;
-		return { includeThoughts: true, thinkingBudget };
 	}
 	return undefined;
 }

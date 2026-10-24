@@ -52,6 +52,7 @@ export type GeminiFunctionResponsePart = {
 	functionResponse: {
 		name: string;
 		response: { error: string } | { output: string };
+		parts?: GeminiInlineDataPart[];
 		id?: string;
 	};
 };
@@ -82,7 +83,8 @@ export type GeminiToolConfig = {
 
 export type ThinkingWire = {
 	includeThoughts: boolean;
-	thinkingBudget: number;
+	thinkingBudget?: number;
+	thinkingLevel?: string;
 };
 
 export type GeminiGenerationConfig = {

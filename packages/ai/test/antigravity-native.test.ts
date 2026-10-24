@@ -1,11 +1,17 @@
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { Type } from "typebox";
 import { getGlobalDispatcher, MockAgent, setGlobalDispatcher } from "undici";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { endpointCandidates } from "../src/api/antigravity/client.ts";
 import { getThinkingConfig } from "../src/api/antigravity/models.ts";
 import { assertSafeApiBaseUrl } from "../src/api/antigravity/security.ts";
-import { buildRequest, friendlyAntigravityError } from "../src/api/antigravity/stream.ts";
+import {
+	buildRequest,
+	convertMessages,
+	convertTools,
+	friendlyAntigravityError,
+} from "../src/api/antigravity/stream.ts";
 import { stream, streamSimple } from "../src/api/antigravity-api.ts";
 import { InMemoryCredentialStore } from "../src/auth/credential-store.ts";
 import { antigravityOAuth, parseAntigravityCallback } from "../src/auth/oauth/antigravity.ts";
@@ -42,6 +48,102 @@ function response(parts: unknown[] = [{ text: "native-ok" }], finishReason = "ST
 afterEach(() => vi.unstubAllGlobals());
 
 describe("native Antigravity", () => {
+	it.each([
+		["gemini-3.7-flash", undefined],
+		["gemini-3.7-flash", "YWJjZA=="],
+		["gemini-3.7-flash", "invalid"],
+		["claude-opus-4-6", "YWJjZA=="],
+	] as const)("preserves structured tool history from %s with signature %s", (sourceModel, signature) => {
+		const history = normalizeContext({
+			messages: [
+				{ role: "user", content: "Read it", timestamp: 1 },
+				{
+					role: "assistant",
+					api: model.api,
+					provider: model.provider,
+					model: sourceModel,
+					content: [
+						{
+							type: "toolCall",
+							id: "call/1",
+							name: "read",
+							arguments: { path: "a.txt" },
+							thoughtSignature: signature,
+						},
+					],
+					usage: {
+						input: 0,
+						output: 0,
+						cacheRead: 0,
+						cacheWrite: 0,
+						totalTokens: 0,
+						cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+					},
+					stopReason: "toolUse",
+					timestamp: 2,
+				},
+				{
+					role: "toolResult",
+					toolCallId: "call/1",
+					toolName: "read",
+					content: [{ type: "text", text: "contents" }],
+					isError: false,
+					timestamp: 3,
+				},
+			],
+		});
+		expect(convertMessages(model, history, "gemini-3.7-flash-low")).toEqual([
+			{ role: "user", parts: [{ text: "Read it" }] },
+			{
+				role: "model",
+				parts: [
+					{
+						functionCall: { name: "read", args: { path: "a.txt" }, id: "call_1" },
+						...(sourceModel === model.id && signature === "YWJjZA==" ? { thoughtSignature: signature } : {}),
+					},
+				],
+			},
+			{
+				role: "user",
+				parts: [{ functionResponse: { name: "read", response: { output: "contents" }, id: "call_1" } }],
+			},
+		]);
+	});
+
+	it.each([false, true])("preserves literal unions in tool parameters (legacy=%s)", (legacy) => {
+		const tools = convertTools(
+			[
+				{
+					name: "pick",
+					description: "Pick",
+					parameters: Type.Object({ choice: Type.Union([Type.Literal("red"), Type.Literal("blue")]) }),
+				},
+			],
+			legacy,
+		);
+		expect(JSON.parse(JSON.stringify(tools?.[0].functionDeclarations[0]))).toEqual({
+			name: "pick",
+			description: "Pick",
+			[legacy ? "parameters" : "parametersJsonSchema"]: {
+				type: "object",
+				properties: { choice: { type: "string", enum: ["red", "blue"] } },
+				required: ["choice"],
+			},
+		});
+	});
+
+	it("keeps skill text in its original user turn", async () => {
+		const text = 'Read <skill name="test">literal instructions</skill> then continue.';
+		const request = await buildRequest(
+			model,
+			normalizeContext({ systemPrompt: "System", messages: [{ role: "user", content: text, timestamp: 1 }] }),
+			"project",
+			{},
+			"gemini-3.7-flash-low",
+		);
+		expect(request.request.contents).toEqual([{ role: "user", parts: [{ text }] }]);
+		expect(request.request.systemInstruction).toEqual({ role: "user", parts: [{ text: "System" }] });
+	});
 	it("is a built-in provider without any extension", () => {
 		const models = builtinModels();
 		expect(models.getModel("antigravity", "gemini-3.7-flash")?.api).toBe("antigravity-api");
@@ -312,14 +414,14 @@ describe("antigravity 429 classification", () => {
 
 describe("Gemini 4 Argon thinking config", () => {
 	it("omits thinkingConfig for off and undefined instead of sending a zero budget", () => {
-		expect(getThinkingConfig("gemini-4-argon-low", "off")).toBeUndefined();
-		expect(getThinkingConfig("gemini-4-argon-low", undefined)).toBeUndefined();
+		expect(getThinkingConfig({ ...model, id: "gemini-4-argon-low" }, "off")).toBeUndefined();
+		expect(getThinkingConfig({ ...model, id: "gemini-4-argon-low" }, undefined)).toBeUndefined();
 	});
 
-	it.each(["low", "medium", "high"])("keeps the dynamic budget for %s", (effort) => {
-		expect(getThinkingConfig(`gemini-4-argon-${effort}`, effort)).toEqual({
+	it.each(["low", "medium", "high"])("uses a thinking level for %s", (effort) => {
+		expect(getThinkingConfig({ ...model, id: `gemini-4-argon-${effort}` }, effort)).toEqual({
 			includeThoughts: true,
-			thinkingBudget: -1,
+			thinkingLevel: effort.toUpperCase(),
 		});
 	});
 });
@@ -367,12 +469,38 @@ describe("Antigravity base URL guard", () => {
 
 describe("Gemini 3 Flash thinking config", () => {
 	it("omits thinkingConfig at off (the backend rejects thinkingBudget 0; minThinkingBudget is 32)", () => {
-		expect(getThinkingConfig("gemini-3-flash", "off")).toBeUndefined();
-		expect(getThinkingConfig("gemini-3-flash", undefined)).toBeUndefined();
+		expect(getThinkingConfig({ ...model, id: "gemini-3-flash" }, "off")).toBeUndefined();
+		expect(getThinkingConfig({ ...model, id: "gemini-3-flash" }, undefined)).toBeUndefined();
 	});
 
-	it("keeps the generic Gemini budgets for the other levels", () => {
-		expect(getThinkingConfig("gemini-3-flash", "low")).toEqual({ includeThoughts: true, thinkingBudget: 1000 });
-		expect(getThinkingConfig("gemini-3-flash", "high")).toEqual({ includeThoughts: true, thinkingBudget: -1 });
+	it("uses thinking levels for the other levels", () => {
+		expect(getThinkingConfig({ ...model, id: "gemini-3-flash" }, "low")).toEqual({
+			includeThoughts: true,
+			thinkingLevel: "LOW",
+		});
+		expect(getThinkingConfig({ ...model, id: "gemini-3-flash" }, "high")).toEqual({
+			includeThoughts: true,
+			thinkingLevel: "HIGH",
+		});
 	});
 });
+
+it.each(["gemini-3.8-flash", "gemini-4-argon", "gemini-3.1-pro"])(
+	"pins discrete thinking wire config for %s",
+	async (id) => {
+		const current = antigravityProvider()
+			.getModels()
+			.find((m) => m.id === id)!;
+		for (const effort of ["low", "medium", "high"] as const) {
+			const request = await buildRequest(current, context, "project", { reasoning: effort }, id);
+			const expectedLevel = id === "gemini-3.1-pro" && effort === "medium" ? "HIGH" : effort.toUpperCase();
+			expect(request.request.generationConfig?.thinkingConfig).toEqual({
+				includeThoughts: true,
+				thinkingLevel: expectedLevel,
+			});
+		}
+		const off = await buildRequest(current, context, "project", {}, id);
+		expect(JSON.stringify(off.request.generationConfig)).not.toContain('"thinkingBudget":0');
+		if (id === "gemini-4-argon") expect(off.request.generationConfig?.thinkingConfig).toBeUndefined();
+	},
+);
