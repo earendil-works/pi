@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { existsSync, mkdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { PassThrough } from "node:stream";
@@ -754,7 +754,7 @@ Content`,
 					"install",
 					"@scope/pkg",
 					"--prefix",
-					join(agentDir, "npm"),
+					realpathSync(join(agentDir, "npm")),
 					"--legacy-peer-deps",
 				],
 				undefined,
@@ -769,7 +769,36 @@ Content`,
 
 			expect(runCommandSpy).toHaveBeenCalledWith(
 				"npm",
-				["uninstall", "@scope/pkg", "--prefix", join(agentDir, "npm"), "--legacy-peer-deps"],
+				["uninstall", "@scope/pkg", "--prefix", realpathSync(join(agentDir, "npm")), "--legacy-peer-deps"],
+				undefined,
+			);
+		});
+
+		// Regression test for #11358: npm writes nested package-lock.json entries for a symlinked --prefix
+		it("should pass the real path as --prefix when the agent dir is a symlink", async () => {
+			const realAgentDir = join(tempDir, "dotfiles", "agent");
+			mkdirSync(realAgentDir, { recursive: true });
+			const linkedAgentDir = join(tempDir, "linked-agent");
+			symlinkSync(realAgentDir, linkedAgentDir, "dir");
+			packageManager = new DefaultPackageManager({
+				cwd: tempDir,
+				agentDir: linkedAgentDir,
+				settingsManager,
+			});
+			const runCommandSpy = vi.spyOn(packageManager as any, "runCommand").mockResolvedValue(undefined);
+			const realNpmRoot = join(realpathSync(realAgentDir), "npm");
+
+			await packageManager.install("npm:@scope/pkg");
+			await packageManager.remove("npm:@scope/pkg");
+
+			expect(runCommandSpy).toHaveBeenCalledWith(
+				"npm",
+				["install", "@scope/pkg", "--prefix", realNpmRoot, "--legacy-peer-deps"],
+				undefined,
+			);
+			expect(runCommandSpy).toHaveBeenCalledWith(
+				"npm",
+				["uninstall", "@scope/pkg", "--prefix", realNpmRoot, "--legacy-peer-deps"],
 				undefined,
 			);
 		});
@@ -790,7 +819,17 @@ Content`,
 
 			expect(runCommandSpy).toHaveBeenCalledWith(
 				"mise",
-				["exec", "bun@1", "--", "bun", "install", "@scope/pkg", "--cwd", join(agentDir, "npm"), "--omit=peer"],
+				[
+					"exec",
+					"bun@1",
+					"--",
+					"bun",
+					"install",
+					"@scope/pkg",
+					"--cwd",
+					realpathSync(join(agentDir, "npm")),
+					"--omit=peer",
+				],
 				undefined,
 			);
 		});
@@ -1206,7 +1245,7 @@ Content`,
 						"install",
 						"pnpm-pkg",
 						"--prefix",
-						join(agentDir, "npm"),
+						realpathSync(join(agentDir, "npm")),
 						"--config.auto-install-peers=false",
 						"--config.strict-peer-dependencies=false",
 						"--config.strict-dep-builds=false",
@@ -2467,7 +2506,7 @@ export default function(api) { api.registerTool({ name: "test", description: "te
 			);
 			expect(runCommandSpy).toHaveBeenCalledWith(
 				"npm",
-				["install", "example@^1.0.0", "--prefix", join(tempDir, ".pi", "npm"), "--legacy-peer-deps"],
+				["install", "example@^1.0.0", "--prefix", realpathSync(join(tempDir, ".pi", "npm")), "--legacy-peer-deps"],
 				undefined,
 			);
 		});
@@ -2531,7 +2570,7 @@ export default function(api) { api.registerTool({ name: "test", description: "te
 						"install",
 						"legacy-pkg@latest",
 						"--prefix",
-						join(agentDir, "npm"),
+						realpathSync(join(agentDir, "npm")),
 						"--legacy-peer-deps",
 					]);
 					mkdirSync(managedPath, { recursive: true });
@@ -2648,7 +2687,7 @@ export default function(api) { api.registerTool({ name: "test", description: "te
 					"user-old@latest",
 					"user-unknown@latest",
 					"--prefix",
-					join(agentDir, "npm"),
+					realpathSync(join(agentDir, "npm")),
 					"--legacy-peer-deps",
 				],
 				undefined,
@@ -2661,7 +2700,7 @@ export default function(api) { api.registerTool({ name: "test", description: "te
 					"project-old@latest",
 					"project-missing@latest",
 					"--prefix",
-					join(tempDir, ".pi", "npm"),
+					realpathSync(join(tempDir, ".pi", "npm")),
 					"--legacy-peer-deps",
 				],
 				undefined,

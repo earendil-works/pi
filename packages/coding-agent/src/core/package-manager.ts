@@ -7,6 +7,7 @@ import {
 	mkdirSync,
 	readdirSync,
 	readFileSync,
+	realpathSync,
 	rmSync,
 	statSync,
 	writeFileSync,
@@ -1868,7 +1869,9 @@ export class DefaultPackageManager implements PackageManager {
 		return this.runCommandSync(npmCommand.command, [...npmCommand.args, ...args]);
 	}
 
-	private getNpmInstallArgs(specs: string[], installRoot: string): string[] {
+	private getNpmInstallArgs(specs: string[], root: string): string[] {
+		// npm writes broken nested package-lock.json paths when --prefix goes through a symlink.
+		const installRoot = existsSync(root) ? realpathSync(root) : root;
 		const packageManagerName = this.getPackageManagerName();
 		// Extension packages run inside pi and resolve pi APIs through loader aliases/virtual modules.
 		// Disable peer dependency resolution for managed installs (npm's --legacy-peer-deps, and
@@ -1898,10 +1901,12 @@ export class DefaultPackageManager implements PackageManager {
 	}
 
 	private async uninstallNpm(source: NpmSource, scope: SourceScope): Promise<void> {
-		const installRoot = this.getNpmInstallRoot(scope, false);
-		if (!existsSync(installRoot)) {
+		const root = this.getNpmInstallRoot(scope, false);
+		if (!existsSync(root)) {
 			return;
 		}
+		// npm writes broken nested package-lock.json paths when --prefix goes through a symlink.
+		const installRoot = realpathSync(root);
 		const packageManagerName = this.getPackageManagerName();
 		if (packageManagerName === "bun") {
 			await this.runNpmCommand(["uninstall", source.name, "--cwd", installRoot]);
