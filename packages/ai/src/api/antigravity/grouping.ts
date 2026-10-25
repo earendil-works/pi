@@ -9,7 +9,7 @@ import type { AntigravityRouting, ModelInfoRaw } from "./types.ts";
 export type AntigravityCatalog = {
 	models: ProviderModelConfig[];
 	routing: Record<string, AntigravityRouting>;
-	/** Public ids the catalog tags "Leaving Soon" on every variant; hidden, including their static baseline. */
+	/** Public ids hidden with their static baseline: tagged "Leaving Soon" on every variant, or no longer listed. */
 	retired?: string[];
 };
 
@@ -123,9 +123,15 @@ export function buildAntigravityCatalog(
 
 	mergeAgentSingletons(groups);
 
-	const retired = [...leaving].filter((id) => !staying.has(id)).sort();
-	for (const id of retired) groups.delete(id);
+	if (groups.size === 0) return fallback;
 
+	// A static baseline family the live catalog no longer lists has been removed (3.7/3.6 Flash and
+	// 3.1 Pro on 2026-10-25, after a week tagged Leaving Soon) and 404s, so it is retired too instead
+	// of being re-added from the baseline. Aliases count as listed through their public family.
+	const listed = new Set([...groups.keys()].filter((id) => staying.has(id)));
+	const removed = fallback.models.map((model) => model.id).filter((id) => !listed.has(id) && !leaving.has(id));
+	const retired = [...new Set([...[...leaving].filter((id) => !staying.has(id)), ...removed])].sort();
+	for (const id of retired) groups.delete(id);
 	if (groups.size === 0) return fallback;
 
 	const models: ProviderModelConfig[] = [];
