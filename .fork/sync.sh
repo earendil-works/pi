@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Keep this fork's integration branch `next` consistent with `main` and the branches in `branches`.
 #
-#   .fork/sync.sh --status             show where main, every branch and next stand; exit 1 if next is stale
+#   .fork/sync.sh --status             show where main, every branch and next stand; exit 1 if next is stale or
+#                                      has stray commits, a branch is not on main, or main has commits upstream lacks
 #   .fork/sync.sh --align              reset main, the branches and next to origin when nothing local would be lost
 #   .fork/sync.sh --rebuild-only       rebuild next from the current branch tips (no fetch, no rebase)
 #   .fork/sync.sh                      fetch upstream, fast-forward main, rebase every branch, rebuild next
@@ -43,7 +44,7 @@ while [[ $# -gt 0 ]]; do
 		--offline|--no-fetch) fetch=0; shift ;;
 		--no-check) check=0; shift ;;
 		--push) push=1; shift ;;
-		-h|--help) sed -n '2,16p' "$0"; exit 0 ;;
+		-h|--help) sed -n '2,17p' "$0"; exit 0 ;;
 		*) echo "unknown argument: $1" >&2; exit 2 ;;
 	esac
 done
@@ -82,6 +83,13 @@ status() {
 	fi
 	if git rev-parse -q --verify upstream/main >/dev/null; then
 		printf '  %-30s %s  upstream/main has %s commit(s) main lacks\n' main "$(short main)" "$(count main..upstream/main)"
+		# main mirrors upstream: a commit upstream lacks would ride into next under every branch.
+		local ahead
+		ahead="$(count upstream/main..main)"
+		if [[ "$ahead" -gt 0 ]]; then
+			printf '  %-30s %s  NOT A MIRROR: %s commit(s) upstream lacks\n' main "$(short main)" "$ahead"
+			rc=1
+		fi
 	else
 		printf '  %-30s %s  (upstream not fetched; git fetch upstream)\n' main "$(short main)"
 	fi

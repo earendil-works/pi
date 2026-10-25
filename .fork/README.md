@@ -26,8 +26,9 @@ installed, the same layout as pi's own installer.
 fork and release next", Run workflow; untick "push" for a dry run). On the schedule and on demand it runs
 the full `sync.sh`: fast-forward `main` from upstream, rebase every branch, rebuild `next`, focused checks,
 push. Then, when the `next` commit has no release yet, it builds, runs `npm run check` and
-`check.sh focused`, packs with `pack-release.sh`, and publishes the release. A failed check or a rebase
-conflict publishes nothing. Commits and tags are signed by the `fork-sync bot` key (repo secret
+`check.sh focused`, packs with `pack-release.sh`, and publishes the release. It releases only when
+`sync.sh --status` is clean (`next` is exactly the merge of the branches, `main` mirrors upstream). A
+failed check or a rebase conflict publishes nothing. Commits and tags are signed by the `fork-sync bot` key (repo secret
 `FORK_SYNC_GPG_KEY`). The five newest releases are kept.
 
 ## Develop the fork

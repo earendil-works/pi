@@ -90,6 +90,12 @@ jobs:
             echo "needed=true" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Require next to be exactly the merge of the branches
+        # The release gate for every pusher: no commits on next outside the branches in .fork/branches,
+        # every branch on main, and main a mirror of upstream.
+        if: steps.release.outputs.needed == 'true'
+        run: .fork/sync.sh --status
+
       - name: Build
         # The sync may have moved dependencies or the model generator, so install and hydrate again.
         if: steps.release.outputs.needed == 'true'
