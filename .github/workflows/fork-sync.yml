@@ -1,0 +1,131 @@
+# Keep the fork's next in sync with upstream and publish every checked next commit as a release.
+# Runs daily, on every push to next, and on demand: Actions tab -> "Sync fork and release next" -> Run workflow.
+# install-next.sh installs the newest release; nothing else builds or checks on the machines that run pi.
+name: Sync fork and release next
+
+on:
+  schedule:
+    - cron: "23 7 * * *"
+  push:
+    branches: [next]
+  workflow_dispatch:
+    inputs:
+      push:
+        description: Push the synced branches and next, and publish the release (uncheck for a dry run)
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fork-sync
+  cancel-in-progress: false
+
+jobs:
+  sync-and-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PUBLISH: ${{ github.event_name != 'workflow_dispatch' || inputs.push }}
+    steps:
+      - name: Checkout next with full history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: next
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+
+      - name: Identity and signing key
+        env:
+          GPG_KEY: ${{ secrets.FORK_SYNC_GPG_KEY }}
+        run: |
+          printf '%s\n' "$GPG_KEY" | gpg --batch --quiet --import
+          fpr="$(gpg --list-secret-keys --with-colons | awk -F: '/^fpr/ { print $10; exit }')"
+          git config user.name "JangMan-J (fork-sync)"
+          git config user.email "278475828+JangMan-J@users.noreply.github.com"
+          git config user.signingkey "$fpr"
+          git config commit.gpgsign true
+          git config tag.gpgsign true
+          echo "signing with $fpr"
+
+      - name: Create local branches
+        run: |
+          git remote add upstream https://github.com/earendil-works/pi.git
+          .fork/sync.sh --align
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Hydrate model data
+        # packages/ai/src/providers/data/ is gitignored and imported by the model tables the tests load.
+        run: npm run hydrate:model-data
+
+      - name: Sync with upstream
+        # A push to next only needs its release; the sync runs on the schedule and on demand.
+        # sync.sh rebuilds next and runs the focused checks only when upstream or a branch moved.
+        if: github.event_name != 'push'
+        run: |
+          if [ "$PUBLISH" = "true" ]; then .fork/sync.sh --push; else echo "dry run: no push"; .fork/sync.sh; fi
+
+      - name: Decide whether next needs a release
+        id: release
+        run: |
+          git checkout -q next
+          commit="$(git rev-parse HEAD)"
+          tag="next-${commit:0:12}"
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "$tag is already released"
+            echo "needed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "needed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build
+        # The sync may have moved dependencies or the model generator, so install and hydrate again.
+        if: steps.release.outputs.needed == 'true'
+        run: |
+          npm ci --ignore-scripts
+          npm run hydrate:model-data
+          npm run build:offline
+
+      - name: Check
+        if: steps.release.outputs.needed == 'true'
+        run: |
+          npm run check
+          git diff --exit-code || { echo "npm run check changed files; fix them on their owning branch"; exit 1; }
+          .fork/check.sh focused
+
+      - name: Pack
+        if: steps.release.outputs.needed == 'true'
+        run: .fork/pack-release.sh "$RUNNER_TEMP/release"
+
+      - name: Publish
+        if: steps.release.outputs.needed == 'true' && env.PUBLISH == 'true'
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
+          COMMIT: ${{ steps.release.outputs.commit }}
+        run: |
+          {
+            echo "next at $COMMIT, checked and packed by the fork workflow. Install it with .fork/install-next.sh."
+            echo
+            echo "Branches merged into next:"
+            grep -vE '^\s*(#|$)' .fork/branches | sed 's/^/- /'
+          } > "$RUNNER_TEMP/notes.md"
+          gh release create "$TAG" "$RUNNER_TEMP"/release/pi-next.tar.gz "$RUNNER_TEMP"/release/pi-next.tar.gz.sha256 \
+            "$RUNNER_TEMP"/release/release.json --target "$COMMIT" --title "next ${COMMIT:0:9}" --notes-file "$RUNNER_TEMP/notes.md" --latest
+          # Keep the five newest next releases; install-next.sh keeps its own previous copy for rollback.
+          gh release list --limit 100 --json tagName,createdAt \
+            --jq '[.[] | select(.tagName | startswith("next-"))] | sort_by(.createdAt) | reverse | .[5:] | .[].tagName' |
+            while read -r old; do gh release delete "$old" --yes --cleanup-tag; done
+
+      - name: Status
+        if: always()
+        run: .fork/sync.sh --status || true
