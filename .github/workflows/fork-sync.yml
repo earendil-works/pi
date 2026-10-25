@@ -28,6 +28,8 @@ jobs:
     timeout-minutes: 45
     env:
       GH_TOKEN: ${{ github.token }}
+      # In a fork checkout gh defaults to the parent repository; releases belong to this one.
+      GH_REPO: ${{ github.repository }}
       PUBLISH: ${{ github.event_name != 'workflow_dispatch' || inputs.push }}
     steps:
       - name: Checkout next with full history
