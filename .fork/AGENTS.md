@@ -8,7 +8,7 @@ Read this before changing anything. Upstream's own rules in the repo root `AGENT
 
 | Branch | Owns |
 | --- | --- |
-| `feat/native-anthropic-oauth` | `packages/ai/src/api/anthropic-oauth/`, the hook in `anthropic-messages.ts`, `test/anthropic-oauth-payload.test.ts` |
+| `feat/native-anthropic` | `packages/ai/src/api/anthropic-oauth/`, `api/anthropic-tool-choice.ts`, the Anthropic transport changes in `api/anthropic-messages.ts`, `auth/oauth/anthropic.ts` and its callback cancellation handling in `auth/oauth/callback-server.ts`, Anthropic capability and reasoning-option handling in `scripts/generate-models.ts` including the caller check in `applyModelsDevReasoningOptionMetadata()` (main's `supportsDirectReasoningEffort()` line stays untouched), `test/anthropic-*.test.ts`, `test/oauth-callback-server.test.ts`, `packages/coding-agent/test/anthropic-oauth-prompt-drift.test.ts` |
 | `feat/native-antigravity` | `packages/ai/src/api/antigravity/`, `antigravity-api.ts`, `antigravity-images.ts`, `providers/antigravity.ts`, `auth/oauth/antigravity.ts`, additions to `google-shared.ts`, `test/antigravity-*.test.ts` |
 | `feat/native-meta` | `providers/meta.ts`, the Meta branches in `api/openai-responses.ts`, the Meta section of `scripts/generate-models.ts`, `test/meta-oauth.test.ts` |
 | `feat/native-openai` | `api/openai-codex-responses.ts`, the OpenAI/Codex sections of `scripts/generate-models.ts`, the OpenAI context and mid-convo tests, the `end_turn` continuation in `packages/agent/src/agent-loop.ts` |

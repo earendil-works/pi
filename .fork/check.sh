@@ -32,6 +32,15 @@ case "${1:-focused}" in
 				test/antigravity-catalog.test.ts \
 				test/antigravity-oauth.test.ts \
 				test/anthropic-oauth-payload.test.ts \
+				test/anthropic-model-generation.test.ts \
+				test/anthropic-oauth-security.test.ts \
+				test/anthropic-oauth-system-prompt.test.ts \
+				test/anthropic-force-adaptive-thinking.test.ts \
+				test/anthropic-temperature-compat.test.ts \
+				test/anthropic-mid-conversation-effort.test.ts \
+				test/anthropic-thinking-disable.test.ts \
+				test/anthropic-oauth.test.ts \
+				test/oauth-callback-server.test.ts \
 				test/google-shared-gemini3-unsigned-tool-call.test.ts \
 				test/google-shared-convert-tools.test.ts \
 				test/meta-oauth.test.ts \
@@ -45,7 +54,7 @@ case "${1:-focused}" in
 		)
 		(
 			cd packages/coding-agent
-			npx vitest run test/suite/stationarity-extension.test.ts test/remote-catalog-names.test.ts
+			npx vitest run test/suite/stationarity-extension.test.ts test/remote-catalog-names.test.ts test/anthropic-oauth-prompt-drift.test.ts
 		)
 		;;
 	all)
