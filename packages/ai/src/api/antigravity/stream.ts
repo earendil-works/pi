@@ -22,6 +22,21 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
  */
+/**
+ * Cloud Code Assist ("Antigravity") transport.
+ *
+ * Shared Google wire rules are imported from ../google-shared.ts: thinking levels, tool-call id
+ * requirements, multimodal function responses, const/anyOf -> enum rewriting, thought-signature
+ * validation. What remains here is specific to the bridge and cannot move to the shared converter
+ * without changing pinned wire bytes:
+ * - raw SSE parsing of the `response`-wrapped envelope (upstream Google providers use the SDK)
+ * - `$ref` dereferencing and the Claude/GPT-OSS `parameters` allowlist (the protobuf bridge 400s on
+ *   anyOf, $ref, format, nullable)
+ * - turn repair and the natural-language continuation the endpoint requires
+ * - `skip_thought_signature_validator` on unsigned historical function calls for Gemini 3+ (the
+ *   bridge 400s without it; Google's public API only degrades, so upstream deliberately omits it)
+ * - OAuth project resolution, endpoint rotation, runtime-model routing and catalog discovery
+ */
 import { calculateCost } from "../../models.ts";
 import type { AntigravityModel } from "../../providers/antigravity.ts";
 import type {
@@ -39,7 +54,13 @@ import { createAssistantMessageEventStream } from "../../utils/event-stream.ts";
 import { headersToRecord, providerHeadersToRecord } from "../../utils/headers.ts";
 import { sleep } from "../../utils/sleep.ts";
 import { getCurrentSystemPrompt, getCurrentTools } from "../../utils/transcript.ts";
-import { requiresToolCallId, rewriteConstAsEnum, supportsMultimodalFunctionResponse } from "../google-shared.ts";
+import {
+	getGeminiMajorVersion,
+	requiresToolCallId,
+	resolveThoughtSignature,
+	rewriteConstAsEnum,
+	supportsMultimodalFunctionResponse,
+} from "../google-shared.ts";
 import {
 	antigravityHeaders,
 	endpointCandidates,
@@ -104,11 +125,24 @@ function sanitizeToolCallId(id: string, fallbackName?: string): string {
 export const resolveCurrentSystemPrompt = (context: Context) => getCurrentSystemPrompt(context.messages);
 export const resolveCurrentTools = (context: Context) => getCurrentTools(context.messages);
 
-const base64SignaturePattern = /^[A-Za-z0-9+/]+={0,2}$/;
-function isValidThoughtSignature(signature?: string): boolean {
-	if (!signature || typeof signature !== "string" || signature.length === 0) return false;
-	if (signature.length % 4 !== 0) return false;
-	return base64SignaturePattern.test(signature);
+/**
+ * Google's documented bypass for replaying a function call the current model did not sign
+ * (https://ai.google.dev/gemini-api/docs/thought-signatures). Gemini 3+ behind the bridge rejects
+ * unsigned historical calls outright: live probe 2026-10-24 on gemini-3.8-flash-low returned
+ * HTTP 400 "Function call is missing a thought_signature in functionCall parts" for both a Claude
+ * turn and a same-model turn whose signature was lost; with this sentinel both returned 200.
+ */
+export const SKIP_THOUGHT_SIGNATURE_VALIDATOR = "skip_thought_signature_validator";
+
+/** The bridge's `-agent` aliases hide their Gemini generation; resolve them before applying shared Gemini rules. */
+export function canonicalGeminiId(modelId: string): string {
+	return modelId === "gemini-pro-agent" ? "gemini-3.1-pro" : modelId;
+}
+
+/** Gemini 3+ validates thought signatures on functionCall parts. */
+export function requiresThoughtSignature(modelId: string): boolean {
+	const major = getGeminiMajorVersion(canonicalGeminiId(modelId));
+	return major !== undefined && major >= 3;
 }
 
 function parseImageData(raw: string, explicitMime?: string): { data: string; mimeType: string } {
@@ -176,6 +210,9 @@ function appendTurn(contents: GeminiContent[], role: GeminiRole, parts: GeminiPa
 /** Exported for unit tests. */
 export function convertMessages(model: Model<Api>, context: Context, runtimeModel: string): GeminiContent[] {
 	const contents: GeminiContent[] = [];
+	const needsThoughtSignature = requiresThoughtSignature(model.id) || requiresThoughtSignature(runtimeModel);
+	const needsToolCallId =
+		requiresToolCallId(canonicalGeminiId(model.id)) || requiresToolCallId(canonicalGeminiId(runtimeModel));
 	for (const msg of context.messages) {
 		if ((msg.role as string) === "system") continue;
 		if (msg.role === "user") {
@@ -190,8 +227,7 @@ export function convertMessages(model: Model<Api>, context: Context, runtimeMode
 
 			for (const block of msg.content) {
 				if (block.type === "text") {
-					const textSig =
-						isSameModel && isValidThoughtSignature(block.textSignature) ? block.textSignature : undefined;
+					const textSig = resolveThoughtSignature(isSameModel, block.textSignature);
 					if ((!block.text || block.text.trim() === "") && !textSig) {
 						continue;
 					}
@@ -201,21 +237,23 @@ export function convertMessages(model: Model<Api>, context: Context, runtimeMode
 					});
 				} else if (block.type === "thinking" && String(block.thinking || "").trim()) {
 					if (!isSameModel) continue;
+					const thinkingSig = resolveThoughtSignature(isSameModel, block.thinkingSignature);
 					parts.push({
 						thought: true,
 						text: sanitizeText(block.thinking),
-						...(block.thinkingSignature ? { thoughtSignature: block.thinkingSignature } : {}),
+						...(thinkingSig ? { thoughtSignature: thinkingSig } : {}),
 					});
 				} else if (block.type === "toolCall") {
+					// A call this model signed replays its signature; anything else (another model's
+					// turn, a retry that lost the signature) gets the validator bypass on Gemini 3+.
 					const signature =
-						isSameModel && isValidThoughtSignature(block.thoughtSignature) ? block.thoughtSignature : undefined;
+						resolveThoughtSignature(isSameModel, block.thoughtSignature) ??
+						(needsThoughtSignature ? SKIP_THOUGHT_SIGNATURE_VALIDATOR : undefined);
 					parts.push({
 						functionCall: {
 							name: block.name,
 							args: block.arguments ?? {},
-							...(requiresToolCallId(model.id) || requiresToolCallId(runtimeModel)
-								? { id: sanitizeToolCallId(block.id || "", block.name) }
-								: {}),
+							...(needsToolCallId ? { id: sanitizeToolCallId(block.id || "", block.name) } : {}),
 						},
 						...(signature ? { thoughtSignature: signature } : {}),
 					});
@@ -234,9 +272,7 @@ export function convertMessages(model: Model<Api>, context: Context, runtimeMode
 				functionResponse: {
 					name: msg.toolName,
 					response: msg.isError ? { error: responseText } : { output: responseText },
-					...(requiresToolCallId(model.id) || requiresToolCallId(runtimeModel)
-						? { id: sanitizeToolCallId(msg.toolCallId || "", msg.toolName) }
-						: {}),
+					...(needsToolCallId ? { id: sanitizeToolCallId(msg.toolCallId || "", msg.toolName) } : {}),
 					...(nestedImages && imageParts.length > 0 ? { parts: imageParts } : {}),
 				},
 			};

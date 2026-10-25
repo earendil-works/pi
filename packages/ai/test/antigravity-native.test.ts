@@ -11,6 +11,8 @@ import {
 	convertMessages,
 	convertTools,
 	friendlyAntigravityError,
+	requiresThoughtSignature,
+	SKIP_THOUGHT_SIGNATURE_VALIDATOR,
 } from "../src/api/antigravity/stream.ts";
 import { stream, streamSimple } from "../src/api/antigravity-api.ts";
 import { InMemoryCredentialStore } from "../src/auth/credential-store.ts";
@@ -99,7 +101,10 @@ describe("native Antigravity", () => {
 				parts: [
 					{
 						functionCall: { name: "read", args: { path: "a.txt" }, id: "call_1" },
-						...(sourceModel === model.id && signature === "YWJjZA==" ? { thoughtSignature: signature } : {}),
+						thoughtSignature:
+							sourceModel === model.id && signature === "YWJjZA=="
+								? signature
+								: SKIP_THOUGHT_SIGNATURE_VALIDATOR,
 					},
 				],
 			},
@@ -412,6 +417,23 @@ describe("antigravity 429 classification", () => {
 	);
 });
 
+describe("Claude thinking config", () => {
+	// Probe 2026-10-24: the bridge ignores thinkingConfig for Claude; the runtime id carries effort.
+	it.each([undefined, "off", "low", "medium", "high", "xhigh"])("sends no thinkingConfig at effort %s", (effort) => {
+		expect(getThinkingConfig({ ...model, id: "claude-sonnet-5-5" }, effort)).toBeUndefined();
+		expect(getThinkingConfig({ ...model, id: "claude-opus-5-5" }, effort)).toBeUndefined();
+	});
+
+	it("omits generationConfig.thinkingConfig on the wire for a Claude runtime", async () => {
+		const claude = antigravityProvider()
+			.getModels()
+			.find((m) => m.id === "claude-sonnet-5-5")!;
+		const request = await buildRequest(claude, context, "project", { reasoning: "high" }, "claude-sonnet-5-5-high");
+		expect(request.request.generationConfig?.thinkingConfig).toBeUndefined();
+		expect(JSON.stringify(request.request)).not.toContain("thinkingBudget");
+	});
+});
+
 describe("Gemini 4 Argon thinking config", () => {
 	it("omits thinkingConfig for off and undefined instead of sending a zero budget", () => {
 		expect(getThinkingConfig({ ...model, id: "gemini-4-argon-low" }, "off")).toBeUndefined();
@@ -504,3 +526,111 @@ it.each(["gemini-3.8-flash", "gemini-4-argon", "gemini-3.1-pro"])(
 		if (id === "gemini-4-argon") expect(off.request.generationConfig?.thinkingConfig).toBeUndefined();
 	},
 );
+
+describe("antigravity convertMessages — unsigned tool calls on the bridge", () => {
+	const zeroUsage = {
+		input: 0,
+		output: 0,
+		cacheRead: 0,
+		cacheWrite: 0,
+		totalTokens: 0,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+	};
+	const history = (target: { api: string; provider: string; id: string }, source: string, thoughtSignature?: string) =>
+		normalizeContext({
+			messages: [
+				{ role: "user", content: "Hi", timestamp: 1 },
+				{
+					role: "assistant",
+					api: target.api,
+					provider: target.provider,
+					model: source,
+					content: [
+						{
+							type: "toolCall",
+							id: "call_1",
+							name: "bash",
+							arguments: { command: "echo hi" },
+							...(thoughtSignature && { thoughtSignature }),
+						},
+						{ type: "toolCall", id: "call_2", name: "bash", arguments: { command: "ls -la" } },
+					],
+					usage: zeroUsage,
+					stopReason: "toolUse",
+					timestamp: 2,
+				},
+				{
+					role: "toolResult",
+					toolCallId: "call_1",
+					toolName: "bash",
+					content: [{ type: "text", text: "hi" }],
+					isError: false,
+					timestamp: 3,
+				},
+				{
+					role: "toolResult",
+					toolCallId: "call_2",
+					toolName: "bash",
+					content: [{ type: "text", text: "files" }],
+					isError: false,
+					timestamp: 4,
+				},
+			],
+		});
+	const functionCalls = (contents: ReturnType<typeof convertMessages>) =>
+		contents
+			.flatMap((c) => c.parts)
+			.filter((p): p is Extract<typeof p, { functionCall: unknown }> => "functionCall" in p);
+
+	it.each(["gemini-3.8-flash", "gemini-4-argon", "gemini-pro-agent"])(
+		"adds the validator bypass to every unsigned call for %s",
+		(id) => {
+			const target = { ...model, id };
+			const calls = functionCalls(convertMessages(target, history(target, "claude-sonnet-5-5"), id));
+			expect(calls.map((p) => p.functionCall.id)).toEqual(["call_1", "call_2"]);
+			expect(calls.map((p) => p.thoughtSignature)).toEqual([
+				SKIP_THOUGHT_SIGNATURE_VALIDATOR,
+				SKIP_THOUGHT_SIGNATURE_VALIDATOR,
+			]);
+			expect(JSON.stringify(convertMessages(target, history(target, "claude-sonnet-5-5"), id))).not.toContain(
+				"Historical context",
+			);
+		},
+	);
+
+	it("keeps a valid same-model signature and bypasses only the unsigned sibling", () => {
+		const validSig = "AAAAAAAAAAAAAAAAAAAAAA==";
+		const calls = functionCalls(convertMessages(model, history(model, model.id, validSig), "gemini-3.7-flash-low"));
+		expect(calls.map((p) => p.thoughtSignature)).toEqual([validSig, SKIP_THOUGHT_SIGNATURE_VALIDATOR]);
+	});
+
+	it("treats a same-model call whose signature was lost like a foreign one", () => {
+		const calls = functionCalls(
+			convertMessages(model, history(model, model.id, "not base64!"), "gemini-3.7-flash-low"),
+		);
+		expect(calls.map((p) => p.thoughtSignature)).toEqual([
+			SKIP_THOUGHT_SIGNATURE_VALIDATOR,
+			SKIP_THOUGHT_SIGNATURE_VALIDATOR,
+		]);
+	});
+
+	it.each(["claude-sonnet-5-5", "gpt-oss-120b"])("never adds a signature for the %s runtime", (id) => {
+		const target = { ...model, id };
+		const calls = functionCalls(convertMessages(target, history(target, "gemini-3.8-flash"), `${id}-high`));
+		expect(calls).toHaveLength(2);
+		expect(calls.every((p) => p.thoughtSignature === undefined)).toBe(true);
+		expect(calls.map((p) => p.functionCall.id)).toEqual(["call_1", "call_2"]);
+	});
+
+	it.each([
+		[true, "gemini-3-flash"],
+		[true, "gemini-3.8-flash-low"],
+		[true, "gemini-4-argon-high"],
+		[true, "gemini-pro-agent"],
+		[false, "gemini-2.5-flash"],
+		[false, "claude-opus-5-5-high"],
+		[false, "gpt-oss-120b-medium"],
+	] as const)("requiresThoughtSignature returns %s for %s", (expected, id) => {
+		expect(requiresThoughtSignature(id)).toBe(expected);
+	});
+});

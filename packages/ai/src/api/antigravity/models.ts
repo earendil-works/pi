@@ -448,8 +448,13 @@ export function getModelEnum(id: string): string | undefined {
 export function getThinkingConfig(model: Model<Api>, effort: string | undefined): ThinkingWire | undefined {
 	const modelId = model.id;
 	if (modelId.startsWith("claude-")) {
-		if (!effort || effort === "off") return { includeThoughts: false, thinkingBudget: 0 };
-		return { includeThoughts: true, thinkingBudget: 1024 };
+		// The bridge ignores thinkingConfig for Claude: the runtime id suffix (-low/-medium/-high)
+		// is the only effort control. Live probe 2026-10-24 on claude-sonnet-5-5-high: budgets 1024
+		// and 16384, includeThoughts alone, and no thinkingConfig at all returned HTTP 200 with the
+		// same output token counts (~3.2k-3.8k, thinking included) and a summarized thinking block;
+		// claude-sonnet-5-5-low with includeThoughts:false/thinkingBudget:0 still streamed thinking.
+		// Nothing we send binds, so send nothing.
+		return undefined;
 	}
 	if (modelId.startsWith("gpt-oss-")) {
 		if (!effort || effort === "off") return { includeThoughts: false, thinkingBudget: 0 };

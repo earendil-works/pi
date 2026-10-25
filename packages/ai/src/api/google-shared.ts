@@ -207,7 +207,7 @@ export function retainThoughtSignature(existing: string | undefined, incoming: s
 // Thought signatures must be base64 for Google APIs (TYPE_BYTES).
 const base64SignaturePattern = /^[A-Za-z0-9+/]+={0,2}$/;
 
-function isValidThoughtSignature(signature: string | undefined): boolean {
+export function isValidThoughtSignature(signature: string | undefined): boolean {
 	if (!signature) return false;
 	if (signature.length % 4 !== 0) return false;
 	return base64SignaturePattern.test(signature);
@@ -216,7 +216,10 @@ function isValidThoughtSignature(signature: string | undefined): boolean {
 /**
  * Only keep signatures from the same provider/model and with valid base64.
  */
-function resolveThoughtSignature(isSameProviderAndModel: boolean, signature: string | undefined): string | undefined {
+export function resolveThoughtSignature(
+	isSameProviderAndModel: boolean,
+	signature: string | undefined,
+): string | undefined {
 	return isSameProviderAndModel && isValidThoughtSignature(signature) ? signature : undefined;
 }
 
@@ -232,7 +235,7 @@ export function requiresToolCallId(modelId: string): boolean {
 	);
 }
 
-function getGeminiMajorVersion(modelId: string): number | undefined {
+export function getGeminiMajorVersion(modelId: string): number | undefined {
 	// Unanchored like usesGoogleThinkingLevel: some hosts prefix the ID, e.g. randomprefix-gemini-4-argon (#12321).
 	const match = modelId.toLowerCase().match(/gemini(?:-live)?-(\d+)/);
 	if (!match) return undefined;

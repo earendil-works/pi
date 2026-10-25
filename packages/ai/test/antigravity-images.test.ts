@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { convertMessages } from "../src/api/antigravity/stream.ts";
+import { convertMessages, SKIP_THOUGHT_SIGNATURE_VALIDATOR } from "../src/api/antigravity/stream.ts";
 import { type AntigravityImagesOptions, generateImages } from "../src/api/antigravity-images.ts";
 import { InMemoryCredentialStore } from "../src/auth/credential-store.ts";
 import { generateImages as generateGlobalImages } from "../src/images.ts";
@@ -411,7 +411,13 @@ it.each(["gemini-2.5-flash", "gemini-3-flash", "gemini-3.8-flash", "gemini-4-arg
 			{ role: "user", parts: [{ text: "Inspect" }] },
 			{
 				role: "model",
-				parts: [{ functionCall: { name: "screen", args: {}, ...(nested ? { id: "call_1" } : {}) } }],
+				parts: [
+					{
+						functionCall: { name: "screen", args: {}, ...(nested ? { id: "call_1" } : {}) },
+						// Gemini 3+ history replays unsigned calls with the validator bypass; 2.x has no signatures.
+						...(nested ? { thoughtSignature: SKIP_THOUGHT_SIGNATURE_VALIDATOR } : {}),
+					},
+				],
 			},
 			{
 				role: "user",
