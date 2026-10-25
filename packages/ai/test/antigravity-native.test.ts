@@ -10,6 +10,7 @@ import {
 	buildRequest,
 	convertMessages,
 	convertTools,
+	describeInvalidEnding,
 	friendlyAntigravityError,
 	requiresThoughtSignature,
 	SKIP_THOUGHT_SIGNATURE_VALIDATOR,
@@ -632,5 +633,204 @@ describe("antigravity convertMessages — unsigned tool calls on the bridge", ()
 		[false, "gpt-oss-120b-medium"],
 	] as const)("requiresThoughtSignature returns %s for %s", (expected, id) => {
 		expect(requiresThoughtSignature(id)).toBe(expected);
+	});
+});
+
+describe("bad endings the Gemini CLI retries", () => {
+	const claude = antigravityProvider()
+		.getModels()
+		.find((m) => m.id === "claude-sonnet-5-5")!;
+	const thoughtOnly = [{ text: "Planning the next step.", thought: true }];
+
+	it("turns a thinking-only Gemini STOP into a retryable error", async () => {
+		const result = await streamSimple(model, context, { apiKey, fetch: async () => response(thoughtOnly) }).result();
+		expect(result.stopReason).toBe("error");
+		expect(result.errorMessage).toBe(
+			"Antigravity stream ended without visible output (Gemini returned only thinking)",
+		);
+		expect(isRetryableAssistantError(result)).toBe(true);
+	});
+
+	it("treats whitespace-only text like no text", async () => {
+		const result = await streamSimple(model, context, {
+			apiKey,
+			fetch: async () => response([...thoughtOnly, { text: "  \n" }]),
+		}).result();
+		expect(isRetryableAssistantError(result)).toBe(true);
+	});
+
+	it("keeps visible text after thinking as a normal stop", async () => {
+		const result = await streamSimple(model, context, {
+			apiKey,
+			fetch: async () => response([...thoughtOnly, { text: "Done." }]),
+		}).result();
+		expect(result.stopReason).toBe("stop");
+	});
+
+	it("leaves a thinking-only Claude STOP alone", async () => {
+		const result = await streamSimple(claude, context, { apiKey, fetch: async () => response(thoughtOnly) }).result();
+		expect(result.stopReason).toBe("stop");
+	});
+
+	it.each(["MALFORMED_FUNCTION_CALL", "UNEXPECTED_TOOL_CALL"])(
+		"makes %s on a codemode call retryable",
+		async (finish) => {
+			const result = await streamSimple(model, context, {
+				apiKey,
+				fetch: async () =>
+					response([{ functionCall: { name: "codemode", args: { code: 'const s = "unterminated' } } }], finish),
+			}).result();
+			expect(result.stopReason).toBe("error");
+			expect(result.errorMessage).toBe(`Antigravity stream ended without a valid function call (${finish})`);
+			expect(isRetryableAssistantError(result)).toBe(true);
+		},
+	);
+
+	it.each(["SAFETY", "RECITATION"])("does not retry %s", async (finish) => {
+		const result = await streamSimple(model, context, {
+			apiKey,
+			fetch: async () => response(thoughtOnly, finish),
+		}).result();
+		expect(result.stopReason).toBe("error");
+		expect(isRetryableAssistantError(result)).toBe(false);
+	});
+
+	it("makes a missing finish reason retryable", async () => {
+		const partial = `data: ${JSON.stringify({ candidates: [{ content: { parts: [{ text: "partial" }] } }] })}\n\n`;
+		const result = await streamSimple(model, context, { apiKey, fetch: async () => new Response(partial) }).result();
+		expect(result.errorMessage).toBe("Antigravity stream ended without a finish reason");
+		expect(isRetryableAssistantError(result)).toBe(true);
+	});
+
+	it("only classifies the endings above", () => {
+		const base = { role: "assistant", content: [], stopReason: "stop" } as unknown as Parameters<
+			typeof describeInvalidEnding
+		>[1];
+		expect(describeInvalidEnding(model, { ...base, stopReason: "length" })).toBeUndefined();
+		expect(describeInvalidEnding(model, { ...base, stopReason: "toolUse" })).toBeUndefined();
+	});
+});
+
+describe("antigravity convertMessages — shared normalisation", () => {
+	const zeroUsage = {
+		input: 0,
+		output: 0,
+		cacheRead: 0,
+		cacheWrite: 0,
+		totalTokens: 0,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+	};
+	const code = 'const r = await tools.read({ path: "a.ts" });\ntext(r.split("\\n")[0]);';
+	const codemodeTurn = (target: { api: string; provider: string; id: string }) => ({
+		role: "assistant" as const,
+		api: target.api,
+		provider: target.provider,
+		model: target.id,
+		content: [{ type: "toolCall" as const, id: "call_1", name: "codemode", arguments: { code } }],
+		usage: zeroUsage,
+		stopReason: "toolUse" as const,
+		timestamp: 2,
+	});
+	const png = { type: "image" as const, data: "iVBORw0KGgo=", mimeType: "image/png" };
+
+	it("closes an aborted codemode call with an error result before the next user turn", () => {
+		const contents = convertMessages(
+			model,
+			normalizeContext({
+				messages: [
+					{ role: "user", content: "Run it", timestamp: 1 },
+					codemodeTurn(model),
+					{ role: "user", content: "Never mind, list the files instead.", timestamp: 3 },
+				],
+			}),
+			"gemini-3.7-flash-low",
+		);
+		expect(contents.at(-1)).toEqual({
+			role: "user",
+			parts: [
+				{ functionResponse: { name: "codemode", response: { error: "No result provided" }, id: "call_1" } },
+				{ text: "Never mind, list the files instead." },
+			],
+		});
+	});
+
+	it("closes a trailing unanswered call instead of throwing", () => {
+		const history = normalizeContext({
+			messages: [{ role: "user", content: "Run it", timestamp: 1 }, codemodeTurn(model)],
+		});
+		const contents = convertMessages(model, history, "gemini-3.7-flash-low");
+		expect(JSON.stringify(contents.at(-1))).toContain('"functionResponse"');
+	});
+
+	it("sends a placeholder output with the nested image for an image-only codemode result", () => {
+		const contents = convertMessages(
+			model,
+			normalizeContext({
+				messages: [
+					{ role: "user", content: "Render it", timestamp: 1 },
+					codemodeTurn(model),
+					{
+						role: "toolResult",
+						toolCallId: "call_1",
+						toolName: "codemode",
+						content: [png],
+						isError: false,
+						timestamp: 3,
+					},
+				],
+			}),
+			"gemini-3.7-flash-low",
+		);
+		expect(contents.at(-1)).toEqual({
+			role: "user",
+			parts: [
+				{
+					functionResponse: {
+						name: "codemode",
+						response: { output: "(see attached image)" },
+						id: "call_1",
+						parts: [{ inlineData: { mimeType: "image/png", data: png.data } }],
+					},
+				},
+			],
+		});
+	});
+
+	it("replaces images with a placeholder for text-only GPT-OSS", () => {
+		const gptOss = antigravityProvider()
+			.getModels()
+			.find((m) => m.id === "gpt-oss-120b")!;
+		expect(gptOss.input).toEqual(["text"]);
+		const contents = convertMessages(
+			gptOss,
+			normalizeContext({
+				messages: [{ role: "user", content: [{ type: "text", text: "Look" }, png], timestamp: 1 }],
+			}),
+			"gpt-oss-120b-medium",
+		);
+		expect(JSON.stringify(contents)).not.toContain("inlineData");
+		expect(contents[0]!.parts.length).toBe(2);
+	});
+
+	it("keeps the codemode schema intact through the Claude/GPT-OSS allowlist", () => {
+		const tools = convertTools(
+			[
+				{
+					name: "codemode",
+					description: "Run JavaScript",
+					parameters: Type.Object({ code: Type.String({ description: "Raw JavaScript source." }) }),
+				},
+			],
+			true,
+		);
+		expect(JSON.parse(JSON.stringify(tools?.[0].functionDeclarations[0]))).toEqual({
+			name: "codemode",
+			description: "Run JavaScript",
+			parameters: {
+				type: "object",
+				properties: { code: { type: "string", description: "Raw JavaScript source." } },
+				required: ["code"],
+			},
+		});
 	});
 });

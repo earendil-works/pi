@@ -61,6 +61,7 @@ import {
 	rewriteConstAsEnum,
 	supportsMultimodalFunctionResponse,
 } from "../google-shared.ts";
+import { transformMessages } from "../transform-messages.ts";
 import {
 	antigravityHeaders,
 	endpointCandidates,
@@ -210,10 +211,16 @@ function appendTurn(contents: GeminiContent[], role: GeminiRole, parts: GeminiPa
 /** Exported for unit tests. */
 export function convertMessages(model: Model<Api>, context: Context, runtimeModel: string): GeminiContent[] {
 	const contents: GeminiContent[] = [];
+	// Shared normalisation: synthetic error results for unanswered tool calls, image placeholders
+	// for text-only models, and the same foreign-signature and error-turn rules applied below.
+	// Probe 2026-10-25: after an aborted codemode call and a new user turn, Claude behind the
+	// bridge returned HTTP 400 ("tool_use ids were found without tool_result blocks") without the
+	// synthetic result and 200 with it; gemini-3.8-flash accepted both.
+	const messages = transformMessages(context.messages, model);
 	const needsThoughtSignature = requiresThoughtSignature(model.id) || requiresThoughtSignature(runtimeModel);
 	const needsToolCallId =
 		requiresToolCallId(canonicalGeminiId(model.id)) || requiresToolCallId(canonicalGeminiId(runtimeModel));
-	for (const msg of context.messages) {
+	for (const msg of messages) {
 		if ((msg.role as string) === "system") continue;
 		if (msg.role === "user") {
 			const parts = asTextParts(msg.content);
@@ -265,8 +272,10 @@ export function convertMessages(model: Model<Api>, context: Context, runtimeMode
 				.filter((c): c is TextContent => c.type === "text")
 				.map((c) => sanitizeText(c.text))
 				.join("\n");
-			const responseText = text || (msg.isError ? "Tool failed" : "");
 			const imageParts = asImageParts(msg.content);
+			// An empty output reads as "the tool returned nothing"; say the result is the image.
+			const responseText =
+				text || (msg.isError ? "Tool failed" : imageParts.length > 0 ? "(see attached image)" : "");
 			const nestedImages = supportsMultimodalFunctionResponse(model.id);
 			const part: GeminiFunctionResponsePart = {
 				functionResponse: {
@@ -1220,6 +1229,31 @@ export async function streamResponse(
 	return hasContent;
 }
 
+/** Finish reasons Google's Gemini CLI retries; the stream content is a transient bad generation. */
+const RETRYABLE_FINISH_REASONS = new Set(["MALFORMED_FUNCTION_CALL", "UNEXPECTED_TOOL_CALL"]);
+
+/**
+ * Endings that look complete but are not, worded to contain "ended without" so the agent's retry
+ * classifier (utils/retry.ts) retries them, as the Gemini CLI does. Retrying at the agent level
+ * avoids restarting a stream whose thinking events were already delivered.
+ * - MALFORMED_FUNCTION_CALL / UNEXPECTED_TOOL_CALL: frequent with long string arguments such as
+ *   codemode's JavaScript source.
+ * - Gemini STOP with thinking but no visible text and no tool call: the model stopped mid-task.
+ * Exported for unit tests.
+ */
+export function describeInvalidEnding(model: Model<Api>, output: AssistantMessage): string | undefined {
+	if (output.stopReason === StopReason.Error && RETRYABLE_FINISH_REASONS.has(output.rawStopReason ?? "")) {
+		return `Antigravity stream ended without a valid function call (${output.rawStopReason})`;
+	}
+	if (output.stopReason !== StopReason.Stop) return undefined;
+	const isGemini = model.id.startsWith("gemini-") || (output.responseModel ?? "").startsWith("gemini-");
+	if (!isGemini) return undefined;
+	const visible = output.content.some(
+		(block) => (block.type === "text" && block.text.trim() !== "") || block.type === "toolCall",
+	);
+	return visible ? undefined : "Antigravity stream ended without visible output (Gemini returned only thinking)";
+}
+
 export function streamAntigravity(
 	model: Model<Api>,
 	context: Context,
@@ -1371,7 +1405,15 @@ export function streamAntigravity(
 				if (received || output.stopReason === "error") break;
 			}
 
-			if (!received && output.stopReason !== "error") throw new Error("Antigravity API returned an empty response");
+			if (!received && output.stopReason !== "error") {
+				throw new Error("Antigravity stream ended without any content (empty response)");
+			}
+
+			const invalidEnding = describeInvalidEnding(model, output);
+			if (invalidEnding) {
+				output.stopReason = StopReason.Error;
+				output.errorMessage = invalidEnding;
+			}
 
 			if (output.stopReason === "error" || output.stopReason === "aborted") {
 				const errorDetail = output.rawStopReason
@@ -1381,7 +1423,7 @@ export function streamAntigravity(
 
 				stream.push({ type: "error", reason: output.stopReason, error: output });
 			} else if (output.stopReason === "pending") {
-				throw new Error("Antigravity API returned no stop reason");
+				throw new Error("Antigravity stream ended without a finish reason");
 			} else {
 				stream.push({ type: "done", reason: output.stopReason, message: output });
 			}
