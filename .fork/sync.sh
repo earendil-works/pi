@@ -168,10 +168,10 @@ align_refs() {
 		fi
 		local_sha="$(git rev-parse "$ref")"
 		if [[ "$local_sha" == "$(git rev-parse "origin/$ref")" ]]; then echo "  $ref: already at origin"; continue; fi
-		# Safe only when the local tip is reachable from something origin has: its branch, another branch, or a tag.
-		if ! git merge-base --is-ancestor "$local_sha" "origin/$ref" \
-			&& [[ -z "$(git for-each-ref --contains "$local_sha" refs/remotes/origin refs/tags)" ]]; then
-			echo "  $ref: local $(short "$ref") is on no origin branch or tag; push or tag it first, skipped" >&2
+		# Safe only when nothing would be lost: every non-merge commit of the local tip is on an origin
+		# branch or tag. Merges carry no work of their own; an older next made only of merges qualifies.
+		if [[ -n "$(git rev-list --no-merges "$local_sha" --not --remotes=origin --tags)" ]]; then
+			echo "  $ref: local $(short "$ref") has commits on no origin branch or tag; push or tag them first, skipped" >&2
 			rc=1; continue
 		fi
 		wt="$(git worktree list --porcelain | awk -v b="refs/heads/$ref" '$1=="worktree"{w=$2} $1=="branch"&&$2==b{print w}')"

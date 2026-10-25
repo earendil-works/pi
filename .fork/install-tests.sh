@@ -39,17 +39,28 @@ cd "$dir"
 git remote get-url upstream >/dev/null 2>&1 || git remote add upstream https://github.com/earendil-works/pi.git
 
 # Older checkouts mounted the fork-sync branch at .fork/ as a worktree; the tooling is now part of next.
+# Each step below also resumes a conversion that stopped halfway.
 if [[ -e .fork/.git ]]; then
-	say "Replacing the old fork-sync worktree at .fork with the copy in next"
+	say "Removing the old fork-sync worktree at .fork"
 	[[ -z "$(git status --porcelain --untracked-files=no)" ]] || die "$dir has uncommitted changes; commit or stash them first"
 	git worktree remove --force .fork
-	sed -i '/^\.fork$/d' .git/info/exclude
-	git fetch -q origin
+fi
+sed -i '/^\.fork$/d' .git/info/exclude 2>/dev/null || true
+if [[ ! -x .fork/sync.sh ]]; then
+	say "Moving next to origin/next, which carries .fork/"
+	[[ -z "$(git status --porcelain --untracked-files=no)" ]] || die "$dir has uncommitted changes; commit or stash them first"
+	git fetch -q --tags origin
 	git checkout -q next 2>/dev/null || git checkout -q -b next origin/next
-	# next is regenerated, so reset it, but only when its tip is on something origin has.
-	[[ -n "$(git for-each-ref --contains "$(git rev-parse next)" refs/remotes/origin refs/tags)" ]] ||
+	# next is regenerated; reset it unless it holds a non-merge commit that origin lacks.
+	[[ -z "$(git rev-list --no-merges next --not --remotes=origin --tags)" ]] ||
 		die "local next has commits that are on no origin branch or tag; move them to their owning branch first"
 	git reset -q --hard origin/next
+fi
+# The retired fork-sync branch is kept on origin as the tag archive/fork-sync.
+if git rev-parse -q --verify refs/heads/fork-sync >/dev/null && git rev-parse -q --verify archive/fork-sync >/dev/null &&
+	git merge-base --is-ancestor fork-sync archive/fork-sync; then
+	git branch -q -D fork-sync
+	echo "deleted the local fork-sync branch (kept as archive/fork-sync)"
 fi
 [[ -x .fork/sync.sh ]] || die "$dir has no .fork/ tooling; check out next"
 
