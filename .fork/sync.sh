@@ -23,7 +23,14 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ -z "${FORK_SYNC_REPO:-}" ]]; then
 	repo="$(cd "$here/.." && git rev-parse --show-toplevel)"
 	copy="$(mktemp -d)"
-	cp -R "$here/." "$copy/"
+	# Run the tooling as fork/tooling has it, not as the checked-out branch has it: after a change to
+	# .fork/branches on fork/tooling, next still carries the old list until it is rebuilt. Commit .fork/
+	# changes on fork/tooling before running them; without a local fork/tooling, use this copy.
+	if git -C "$repo" rev-parse -q --verify refs/heads/fork/tooling >/dev/null; then
+		git -C "$repo" archive refs/heads/fork/tooling .fork | tar -x -C "$copy" --strip-components=1
+	else
+		cp -R "$here/." "$copy/"
+	fi
 	FORK_SYNC_REPO="$repo" FORK_SYNC_COPY="$copy" exec bash "$copy/sync.sh" "$@"
 fi
 repo="$FORK_SYNC_REPO"

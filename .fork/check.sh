@@ -23,39 +23,27 @@ ensure_ai_deps_built() {
 
 case "${1:-focused}" in
 	focused)
+		ai_tests=(
+			antigravity-native antigravity-images antigravity-catalog antigravity-oauth
+			anthropic-oauth-payload anthropic-model-generation anthropic-oauth-security anthropic-oauth-system-prompt
+			anthropic-force-adaptive-thinking anthropic-temperature-compat anthropic-mid-conversation-effort
+			anthropic-thinking-disable anthropic-oauth oauth-callback-server
+			google-shared-gemini3-unsigned-tool-call google-shared-convert-tools meta-oauth
+			generic-endpoint-provider openrouter-regional openrouter-user-models
+			openai-responses-mid-convo-effort openai-codex-stream provider-audit-model-generation native-providers-catalog
+		)
+		agent_tests=(suite/stationarity-extension remote-catalog-names anthropic-oauth-prompt-drift)
+		# vitest skips a listed file that does not exist, so a branch missing from next would pass silently.
+		missing=()
+		for t in "${ai_tests[@]}"; do [[ -f "packages/ai/test/$t.test.ts" ]] || missing+=("packages/ai/test/$t.test.ts"); done
+		for t in "${agent_tests[@]}"; do [[ -f "packages/coding-agent/test/$t.test.ts" ]] || missing+=("packages/coding-agent/test/$t.test.ts"); done
+		if [[ ${#missing[@]} -gt 0 ]]; then
+			printf 'focused test file missing (is its branch merged into this checkout?): %s\n' "${missing[@]}" >&2
+			exit 1
+		fi
 		ensure_ai_deps_built
-		(
-			cd packages/ai
-			npx vitest run \
-				test/antigravity-native.test.ts \
-				test/antigravity-images.test.ts \
-				test/antigravity-catalog.test.ts \
-				test/antigravity-oauth.test.ts \
-				test/anthropic-oauth-payload.test.ts \
-				test/anthropic-model-generation.test.ts \
-				test/anthropic-oauth-security.test.ts \
-				test/anthropic-oauth-system-prompt.test.ts \
-				test/anthropic-force-adaptive-thinking.test.ts \
-				test/anthropic-temperature-compat.test.ts \
-				test/anthropic-mid-conversation-effort.test.ts \
-				test/anthropic-thinking-disable.test.ts \
-				test/anthropic-oauth.test.ts \
-				test/oauth-callback-server.test.ts \
-				test/google-shared-gemini3-unsigned-tool-call.test.ts \
-				test/google-shared-convert-tools.test.ts \
-				test/meta-oauth.test.ts \
-				test/generic-endpoint-provider.test.ts \
-				test/openrouter-regional.test.ts \
-				test/openrouter-user-models.test.ts \
-				test/openai-responses-mid-convo-effort.test.ts \
-				test/openai-codex-stream.test.ts \
-				test/provider-audit-model-generation.test.ts \
-				test/native-providers-catalog.test.ts
-		)
-		(
-			cd packages/coding-agent
-			npx vitest run test/suite/stationarity-extension.test.ts test/remote-catalog-names.test.ts test/anthropic-oauth-prompt-drift.test.ts
-		)
+		(cd packages/ai && npx vitest run "${ai_tests[@]/#/test/}")
+		(cd packages/coding-agent && npx vitest run "${agent_tests[@]/#/test/}")
 		;;
 	all)
 		npm run check
