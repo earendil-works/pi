@@ -100,12 +100,12 @@ export class CompactionStatusIndicator extends StatusIndicator {
 }
 
 export class BranchSummaryStatusIndicator extends StatusIndicator {
-	constructor(ui: TUI) {
+	constructor(ui: TUI, colorFn?: (text: string) => string) {
 		super(
 			"branchSummary",
 			ui,
-			(spinner) => theme.fg("accent", spinner),
-			(text) => theme.fg("muted", text),
+			colorFn ?? ((spinner) => theme.fg("accent", spinner)),
+			colorFn ?? ((text) => theme.fg("muted", text)),
 			`Summarizing branch... (${keyText("app.interrupt")} to cancel)`,
 		);
 	}

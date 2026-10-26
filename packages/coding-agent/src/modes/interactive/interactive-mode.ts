@@ -3737,15 +3737,15 @@ export class InteractiveMode {
 
 			case "summarization_retry_attempt_start": {
 				this.clearStatusIndicator("retry");
+				const colorFn = isEmbeddedStatus(this.editor)
+					? (text: string) =>
+							(this.editor.borderColor ?? theme.getThinkingBorderColor(this.session.thinkingLevel || "off"))(
+								text,
+							)
+					: undefined;
 				if (event.source === "branchSummary") {
-					this.showStatusIndicator(new BranchSummaryStatusIndicator(this.ui));
+					this.showStatusIndicator(new BranchSummaryStatusIndicator(this.ui, colorFn));
 				} else {
-					const colorFn = isEmbeddedStatus(this.editor)
-						? (text: string) =>
-								(this.editor.borderColor ?? theme.getThinkingBorderColor(this.session.thinkingLevel || "off"))(
-									text,
-								)
-						: undefined;
 					this.showStatusIndicator(new CompactionStatusIndicator(this.ui, event.reason, colorFn));
 				}
 				this.ui.requestRender();
@@ -5635,7 +5635,14 @@ export class InteractiveMode {
 							this.session.abortBranchSummary();
 						};
 						this.chatContainer.addChild(new Spacer(1));
-						this.showStatusIndicator(new BranchSummaryStatusIndicator(this.ui));
+						const colorFn = isEmbeddedStatus(this.editor)
+							? (text: string) =>
+									(
+										this.editor.borderColor ??
+										theme.getThinkingBorderColor(this.session.thinkingLevel || "off")
+									)(text)
+							: undefined;
+						this.showStatusIndicator(new BranchSummaryStatusIndicator(this.ui, colorFn));
 						showingSummaryIndicator = true;
 						this.ui.requestRender();
 					}
