@@ -7,6 +7,8 @@ import { describe, it } from "node:test";
 import {
 	decodeKittyPrintable,
 	decodePrintableKey,
+	isKeyRelease,
+	isKeyRepeat,
 	Key,
 	matchesKey,
 	parseKey,
@@ -135,21 +137,21 @@ describe("matchesKey", () => {
 		});
 
 		// Regression test for https://github.com/earendil-works/pi/issues/11345
-		it("should match and parse Kitty F1-F12 functional key codepoints", () => {
+		it("should match and parse Kitty F1-F12 encodings", () => {
 			setKittyProtocolActive(true);
 			const cases = [
-				["\x1b[57344u", Key.f1],
-				["\x1b[57345u", Key.f2],
-				["\x1b[57346u", Key.f3],
-				["\x1b[57347u", Key.f4],
-				["\x1b[57348u", Key.f5],
-				["\x1b[57349u", Key.f6],
-				["\x1b[57350u", Key.f7],
-				["\x1b[57351u", Key.f8],
-				["\x1b[57352u", Key.f9],
-				["\x1b[57353u", Key.f10],
-				["\x1b[57354u", Key.f11],
-				["\x1b[57355u", Key.f12],
+				["\x1b[1;1P", Key.f1],
+				["\x1b[1;1Q", Key.f2],
+				["\x1b[1;1R", Key.f3],
+				["\x1b[1;1S", Key.f4],
+				["\x1b[15;1~", Key.f5],
+				["\x1b[17;1~", Key.f6],
+				["\x1b[18;1~", Key.f7],
+				["\x1b[19;1~", Key.f8],
+				["\x1b[20;1~", Key.f9],
+				["\x1b[21;1~", Key.f10],
+				["\x1b[23;1~", Key.f11],
+				["\x1b[24;1~", Key.f12],
 			] as const;
 
 			for (const [sequence, key] of cases) {
@@ -157,6 +159,38 @@ describe("matchesKey", () => {
 				assert.strictEqual(parseKey(sequence), key);
 			}
 			setKittyProtocolActive(false);
+		});
+
+		// Regression test for https://github.com/earendil-works/pi/issues/11345
+		it("should only accept valid unmodified Kitty F1-F4 encodings", () => {
+			assert.strictEqual(matchesKey("\x1b[P", Key.f1), true);
+			assert.strictEqual(parseKey("\x1b[P"), Key.f1);
+			assert.strictEqual(matchesKey("\x1b[1P", Key.f1), false);
+			assert.strictEqual(parseKey("\x1b[1P"), undefined);
+		});
+
+		// Regression test for https://github.com/earendil-works/pi/issues/11345
+		it("should match and parse modified Kitty function keys", () => {
+			setKittyProtocolActive(true);
+			const cases = [
+				["\x1b[1;2P", Key.shift(Key.f1), "shift+f1"],
+				["\x1b[1;5Q", Key.ctrl(Key.f2), "ctrl+f2"],
+				["\x1b[15;3~", Key.alt(Key.f5), "alt+f5"],
+				["\x1b[24;6~", Key.ctrlShift(Key.f12), "shift+ctrl+f12"],
+			] as const;
+
+			for (const [sequence, key, parsedKey] of cases) {
+				assert.strictEqual(matchesKey(sequence, key), true);
+				assert.strictEqual(parseKey(sequence), parsedKey);
+			}
+			assert.strictEqual(matchesKey("\x1b[1;2P", Key.f1), false);
+			setKittyProtocolActive(false);
+		});
+
+		// Regression test for https://github.com/earendil-works/pi/issues/11345
+		it("should identify Kitty F1-F4 repeat and release events", () => {
+			assert.strictEqual(isKeyRepeat("\x1b[1;1:2P"), true);
+			assert.strictEqual(isKeyRelease("\x1b[1;1:3P"), true);
 		});
 
 		it("should match shifted symbols by their produced character", () => {
@@ -571,6 +605,14 @@ describe("decodePrintableKey", () => {
 		assert.strictEqual(decodePrintableKey("\x1b[27;2;32~"), " ");
 		assert.strictEqual(decodePrintableKey("\x1b[27;2;13~"), undefined);
 		assert.strictEqual(decodePrintableKey("\x1b[27;6;69~"), undefined);
+	});
+
+	// Regression test for https://github.com/earendil-works/pi/issues/11419
+	it("should not decode Kitty private-use functional keys as text", () => {
+		assert.strictEqual(decodePrintableKey("\x1b[57376u"), undefined); // F13
+		assert.strictEqual(decodePrintableKey("\x1b[57398u"), undefined); // F35
+		assert.strictEqual(decodePrintableKey("\x1b[57414u"), undefined); // Keypad Enter
+		assert.strictEqual(decodePrintableKey("\x1b[97u"), "a");
 	});
 });
 

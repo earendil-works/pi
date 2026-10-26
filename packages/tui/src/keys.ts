@@ -302,6 +302,9 @@ const MODIFIERS = {
 
 const LOCK_MASK = 64 + 128; // Caps Lock + Num Lock
 
+const KITTY_FUNCTIONAL_CODEPOINT_MIN = 57344;
+const KITTY_FUNCTIONAL_CODEPOINT_MAX = 63743;
+
 const CODEPOINTS = {
 	escape: 27,
 	tab: 9,
@@ -327,20 +330,27 @@ const FUNCTIONAL_CODEPOINTS = {
 	end: -15,
 } as const;
 
-const KITTY_FUNCTION_KEY_CODEPOINTS = {
-	f1: 57344,
-	f2: 57345,
-	f3: 57346,
-	f4: 57347,
-	f5: 57348,
-	f6: 57349,
-	f7: 57350,
-	f8: 57351,
-	f9: 57352,
-	f10: 57353,
-	f11: 57354,
-	f12: 57355,
+const FUNCTION_KEY_CODEPOINTS = {
+	f1: -20,
+	f2: -21,
+	f3: -22,
+	f4: -23,
+	f5: -24,
+	f6: -25,
+	f7: -26,
+	f8: -27,
+	f9: -28,
+	f10: -29,
+	f11: -30,
+	f12: -31,
 } as const;
+
+const F1_F4_FINAL_CODEPOINTS: Record<string, number> = {
+	P: FUNCTION_KEY_CODEPOINTS.f1,
+	Q: FUNCTION_KEY_CODEPOINTS.f2,
+	R: FUNCTION_KEY_CODEPOINTS.f3,
+	S: FUNCTION_KEY_CODEPOINTS.f4,
+};
 
 const KITTY_FUNCTIONAL_KEY_EQUIVALENTS = new Map<number, number>([
 	[57399, 48], // KP_0 -> 0
@@ -573,7 +583,11 @@ export function isKeyRelease(data: string): boolean {
 		data.includes(":3C") ||
 		data.includes(":3D") ||
 		data.includes(":3H") ||
-		data.includes(":3F")
+		data.includes(":3F") ||
+		data.includes(":3P") ||
+		data.includes(":3Q") ||
+		data.includes(":3R") ||
+		data.includes(":3S")
 	) {
 		return true;
 	}
@@ -599,7 +613,11 @@ export function isKeyRepeat(data: string): boolean {
 		data.includes(":2C") ||
 		data.includes(":2D") ||
 		data.includes(":2H") ||
-		data.includes(":2F")
+		data.includes(":2F") ||
+		data.includes(":2P") ||
+		data.includes(":2Q") ||
+		data.includes(":2R") ||
+		data.includes(":2S")
 	) {
 		return true;
 	}
@@ -659,12 +677,44 @@ function parseKittySequence(data: string): ParsedKittySequence | null {
 			6: FUNCTIONAL_CODEPOINTS.pageDown,
 			7: FUNCTIONAL_CODEPOINTS.home,
 			8: FUNCTIONAL_CODEPOINTS.end,
+			11: FUNCTION_KEY_CODEPOINTS.f1,
+			12: FUNCTION_KEY_CODEPOINTS.f2,
+			13: FUNCTION_KEY_CODEPOINTS.f3,
+			14: FUNCTION_KEY_CODEPOINTS.f4,
+			15: FUNCTION_KEY_CODEPOINTS.f5,
+			17: FUNCTION_KEY_CODEPOINTS.f6,
+			18: FUNCTION_KEY_CODEPOINTS.f7,
+			19: FUNCTION_KEY_CODEPOINTS.f8,
+			20: FUNCTION_KEY_CODEPOINTS.f9,
+			21: FUNCTION_KEY_CODEPOINTS.f10,
+			23: FUNCTION_KEY_CODEPOINTS.f11,
+			24: FUNCTION_KEY_CODEPOINTS.f12,
 		};
 		const codepoint = funcCodes[keyNum];
 		if (codepoint !== undefined) {
 			_lastEventType = eventType;
 			return { codepoint, modifier: modValue - 1, eventType };
 		}
+	}
+
+	// F1-F4 use P/Q/R/S final bytes. Without modifiers terminals may use
+	// either CSI or SS3; Kitty's disambiguated form includes `1;<modifier>`.
+	const f1f4Match = data.match(/^\x1b(?:O|\[)([PQRS])$/);
+	if (f1f4Match) {
+		_lastEventType = "press";
+		return { codepoint: F1_F4_FINAL_CODEPOINTS[f1f4Match[1]!]!, modifier: 0, eventType: "press" };
+	}
+
+	const f1f4ModifiedMatch = data.match(/^\x1b\[1;(\d+)(?::(\d+))?([PQRS])$/);
+	if (f1f4ModifiedMatch) {
+		const modValue = parseInt(f1f4ModifiedMatch[1]!, 10);
+		const eventType = parseEventType(f1f4ModifiedMatch[2]);
+		_lastEventType = eventType;
+		return {
+			codepoint: F1_F4_FINAL_CODEPOINTS[f1f4ModifiedMatch[3]!]!,
+			modifier: modValue - 1,
+			eventType,
+		};
 	}
 
 	// Home/End with modifier: \x1b[1;<mod>H/F or \x1b[1;<mod>:<event>H/F
@@ -1191,14 +1241,9 @@ export function matchesKey(data: string, keyId: KeyId): boolean {
 		case "f10":
 		case "f11":
 		case "f12": {
-			if (modifier !== 0) {
-				return false;
-			}
-			const functionKey = key as keyof typeof KITTY_FUNCTION_KEY_CODEPOINTS;
-			return (
-				matchesLegacySequence(data, LEGACY_KEY_SEQUENCES[functionKey]) ||
-				matchesKittySequence(data, KITTY_FUNCTION_KEY_CODEPOINTS[functionKey], 0)
-			);
+			const functionKey = key as keyof typeof FUNCTION_KEY_CODEPOINTS;
+			if (modifier === 0 && matchesLegacySequence(data, LEGACY_KEY_SEQUENCES[functionKey])) return true;
+			return matchesKittySequence(data, FUNCTION_KEY_CODEPOINTS[functionKey], modifier);
 		}
 	}
 
@@ -1299,12 +1344,8 @@ function formatParsedKey(codepoint: number, modifier: number, baseLayoutKey?: nu
 	else if (effectiveCodepoint === ARROW_CODEPOINTS.down) keyName = "down";
 	else if (effectiveCodepoint === ARROW_CODEPOINTS.left) keyName = "left";
 	else if (effectiveCodepoint === ARROW_CODEPOINTS.right) keyName = "right";
-	else if (
-		modifier === 0 &&
-		effectiveCodepoint >= KITTY_FUNCTION_KEY_CODEPOINTS.f1 &&
-		effectiveCodepoint <= KITTY_FUNCTION_KEY_CODEPOINTS.f12
-	) {
-		keyName = `f${effectiveCodepoint - KITTY_FUNCTION_KEY_CODEPOINTS.f1 + 1}`;
+	else if (effectiveCodepoint <= FUNCTION_KEY_CODEPOINTS.f1 && effectiveCodepoint >= FUNCTION_KEY_CODEPOINTS.f12) {
+		keyName = `f${FUNCTION_KEY_CODEPOINTS.f1 - effectiveCodepoint + 1}`;
 	} else if (effectiveCodepoint >= 48 && effectiveCodepoint <= 57) keyName = String.fromCharCode(effectiveCodepoint);
 	else if (effectiveCodepoint >= 97 && effectiveCodepoint <= 122) keyName = String.fromCharCode(effectiveCodepoint);
 	else if (SYMBOL_KEYS.has(String.fromCharCode(effectiveCodepoint))) keyName = String.fromCharCode(effectiveCodepoint);
@@ -1450,6 +1491,10 @@ export function decodeKittyPrintable(data: string): string | undefined {
 		effectiveCodepoint = shiftedKey;
 	}
 	effectiveCodepoint = normalizeKittyFunctionalCodepoint(effectiveCodepoint);
+	// Kitty reserves this Private Use Area range for non-text functional keys.
+	if (effectiveCodepoint >= KITTY_FUNCTIONAL_CODEPOINT_MIN && effectiveCodepoint <= KITTY_FUNCTIONAL_CODEPOINT_MAX) {
+		return undefined;
+	}
 	// Drop control characters or invalid codepoints.
 	if (!Number.isFinite(effectiveCodepoint) || effectiveCodepoint < 32) return undefined;
 
