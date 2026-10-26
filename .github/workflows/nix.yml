@@ -98,9 +98,7 @@ jobs:
             system: aarch64-linux
           - runner: macos-latest
             system: aarch64-darwin
-          # GitHub offers no smaller Intel macOS runners; larger runners are
-          # free for public repositories.
-          - runner: macos-15-large
+          - runner: macos-15-intel
             system: x86_64-darwin
     runs-on: ${{ matrix.runner }}
     permissions:
