@@ -53,6 +53,29 @@ describe("Bm25Ranker", () => {
 		expect(ranker.rank("tickets", documents, 8)).toEqual([]);
 	});
 
+	// https://github.com/earendil-works/pi/issues/11331
+	it("ranks a tool first when the query is its name", () => {
+		const named = [
+			tool("mcp__app__queue_read", "Read a queued message of this thread."),
+			tool(
+				"mcp__dev-app__thread_read",
+				"Read durable state and a paginated timeline from any thread. The default view returns user messages, assistant messages and plans. Continue with afterPosition until hasMore is false.",
+			),
+		].map((entry) => createToolSearchDocument(entry));
+		const ranker = new Bm25Ranker();
+		for (const query of [
+			"thread_read",
+			"dev_app__thread_read",
+			"mcp__dev-app__thread_read",
+			"Thread_Read",
+			"thread read",
+		]) {
+			expect(ranker.rank(query, named, 1).map((match) => match.name)).toEqual(["mcp__dev-app__thread_read"]);
+		}
+		// Partial names still rank by BM25.
+		expect(ranker.rank("read", named, 1).map((match) => match.name)).toEqual(["mcp__app__queue_read"]);
+	});
+
 	it("includes the namespace in the search text", () => {
 		const document = createToolSearchDocument(tool("mcp__x__run", "Run it."), {
 			name: "mcp__x",
