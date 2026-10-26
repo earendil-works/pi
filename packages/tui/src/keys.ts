@@ -327,6 +327,21 @@ const FUNCTIONAL_CODEPOINTS = {
 	end: -15,
 } as const;
 
+const KITTY_FUNCTION_KEY_CODEPOINTS = {
+	f1: 57344,
+	f2: 57345,
+	f3: 57346,
+	f4: 57347,
+	f5: 57348,
+	f6: 57349,
+	f7: 57350,
+	f8: 57351,
+	f9: 57352,
+	f10: 57353,
+	f11: 57354,
+	f12: 57355,
+} as const;
+
 const KITTY_FUNCTIONAL_KEY_EQUIVALENTS = new Map<number, number>([
 	[57399, 48], // KP_0 -> 0
 	[57400, 49], // KP_1 -> 1
@@ -1179,8 +1194,11 @@ export function matchesKey(data: string, keyId: KeyId): boolean {
 			if (modifier !== 0) {
 				return false;
 			}
-			const functionKey = key as keyof typeof LEGACY_KEY_SEQUENCES;
-			return matchesLegacySequence(data, LEGACY_KEY_SEQUENCES[functionKey]);
+			const functionKey = key as keyof typeof KITTY_FUNCTION_KEY_CODEPOINTS;
+			return (
+				matchesLegacySequence(data, LEGACY_KEY_SEQUENCES[functionKey]) ||
+				matchesKittySequence(data, KITTY_FUNCTION_KEY_CODEPOINTS[functionKey], 0)
+			);
 		}
 	}
 
@@ -1281,7 +1299,13 @@ function formatParsedKey(codepoint: number, modifier: number, baseLayoutKey?: nu
 	else if (effectiveCodepoint === ARROW_CODEPOINTS.down) keyName = "down";
 	else if (effectiveCodepoint === ARROW_CODEPOINTS.left) keyName = "left";
 	else if (effectiveCodepoint === ARROW_CODEPOINTS.right) keyName = "right";
-	else if (effectiveCodepoint >= 48 && effectiveCodepoint <= 57) keyName = String.fromCharCode(effectiveCodepoint);
+	else if (
+		modifier === 0 &&
+		effectiveCodepoint >= KITTY_FUNCTION_KEY_CODEPOINTS.f1 &&
+		effectiveCodepoint <= KITTY_FUNCTION_KEY_CODEPOINTS.f12
+	) {
+		keyName = `f${effectiveCodepoint - KITTY_FUNCTION_KEY_CODEPOINTS.f1 + 1}`;
+	} else if (effectiveCodepoint >= 48 && effectiveCodepoint <= 57) keyName = String.fromCharCode(effectiveCodepoint);
 	else if (effectiveCodepoint >= 97 && effectiveCodepoint <= 122) keyName = String.fromCharCode(effectiveCodepoint);
 	else if (SYMBOL_KEYS.has(String.fromCharCode(effectiveCodepoint))) keyName = String.fromCharCode(effectiveCodepoint);
 

@@ -134,6 +134,31 @@ describe("matchesKey", () => {
 			setKittyProtocolActive(false);
 		});
 
+		// Regression test for https://github.com/earendil-works/pi/issues/11345
+		it("should match and parse Kitty F1-F12 functional key codepoints", () => {
+			setKittyProtocolActive(true);
+			const cases = [
+				["\x1b[57344u", Key.f1],
+				["\x1b[57345u", Key.f2],
+				["\x1b[57346u", Key.f3],
+				["\x1b[57347u", Key.f4],
+				["\x1b[57348u", Key.f5],
+				["\x1b[57349u", Key.f6],
+				["\x1b[57350u", Key.f7],
+				["\x1b[57351u", Key.f8],
+				["\x1b[57352u", Key.f9],
+				["\x1b[57353u", Key.f10],
+				["\x1b[57354u", Key.f11],
+				["\x1b[57355u", Key.f12],
+			] as const;
+
+			for (const [sequence, key] of cases) {
+				assert.strictEqual(matchesKey(sequence, key), true);
+				assert.strictEqual(parseKey(sequence), key);
+			}
+			setKittyProtocolActive(false);
+		});
+
 		it("should match shifted symbols by their produced character", () => {
 			setKittyProtocolActive(true);
 			assert.strictEqual(matchesKey("\x1b[61:43;2u", "+"), true);
