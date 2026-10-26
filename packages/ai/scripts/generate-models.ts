@@ -2258,23 +2258,23 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 
 				if (npm === "@ai-sdk/openai") {
 					api = "openai-responses";
-					baseUrl = `${variant.basePath}/v1`;
+					baseUrl = `${variant.basePath}/openai/v1`;
 					compat = { sessionAffinityFormat: "openai-nosession" };
 				} else if (npm === "@ai-sdk/anthropic") {
 					api = "anthropic-messages";
 					// Anthropic SDK appends /v1/messages to baseURL
-					baseUrl = variant.basePath;
+					baseUrl = `${variant.basePath}/anthropic`;
 				} else if (npm === "@ai-sdk/google") {
 					api = "google-generative-ai";
-					baseUrl = `${variant.basePath}/v1`;
+					baseUrl = `${variant.basePath}/google/v1beta`;
 				} else if (npm === "@ai-sdk/alibaba") {
 					api = "openai-completions";
-					baseUrl = `${variant.basePath}/v1`;
+					baseUrl = `${variant.basePath}/openai/v1`;
 					compat = { cacheControlFormat: "anthropic" };
 				} else {
 					// null, undefined, or @ai-sdk/openai-compatible
 					api = "openai-completions";
-					baseUrl = `${variant.basePath}/v1`;
+					baseUrl = `${variant.basePath}/openai/v1`;
 				}
 
 				if (variant.provider === "opencode" && modelId === "grok-build-0.1") {
@@ -2290,11 +2290,11 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 				// Fix known mismatches between models.dev npm data and actual
 				// OpenCode Go endpoint behaviour. models.dev reports these models
 				// as @ai-sdk/anthropic, but OpenCode Go serves them through the
-				// OpenAI-compatible /v1/chat/completions path.
+				// OpenAI-compatible /openai/v1/chat/completions path.
 				if (variant.provider === "opencode-go") {
 					if (modelId === "qwen3.5-plus" || modelId === "qwen3.6-plus") {
 						api = "openai-completions";
-						baseUrl = `${variant.basePath}/v1`;
+						baseUrl = `${variant.basePath}/openai/v1`;
 						// Qwen/DashScope uses enable_thinking at the top level.
 						compat = { ...(compat ?? {}), thinkingFormat: "qwen" };
 					}
@@ -2667,7 +2667,7 @@ const OPENCODE_CLASSIFIER_MODELS: ClassifierModel<"typesafe-system-one">[] = [
 		name: "Jev 1.13",
 		api: "typesafe-system-one",
 		provider: "opencode",
-		baseUrl: "https://opencode.ai/inference/v1",
+		baseUrl: "https://opencode.ai/inference/systemone/v1",
 		input: ["text"],
 		cost: { input: 0.042, output: 0, cacheRead: 0, cacheWrite: 0 },
 		contextWindow: 32000,
@@ -2678,7 +2678,7 @@ const OPENCODE_CLASSIFIER_MODELS: ClassifierModel<"typesafe-system-one">[] = [
 		name: "Jev 1.13 Free",
 		api: "typesafe-system-one",
 		provider: "opencode",
-		baseUrl: "https://opencode.ai/inference/v1",
+		baseUrl: "https://opencode.ai/inference/systemone/v1",
 		input: ["text"],
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 		contextWindow: 32000,
