@@ -129,7 +129,7 @@ jobs:
 
       - name: Checks
         run: |
-          nix build -L \
+          nix build -L --no-link \
             .#checks.${{ matrix.system }}.smoke \
             .#checks.${{ matrix.system }}.formatting \
             .#checks.${{ matrix.system }}.repo-hygiene
