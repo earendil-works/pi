@@ -207,6 +207,10 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 			// Component factories are not supported in RPC mode - would need TUI access
 		},
 
+		setFooterOptions(): void {
+			// Built-in footer configuration not supported in RPC mode
+		},
+
 		setFooter(_factory: unknown): void {
 			// Custom footer not supported in RPC mode - requires TUI access
 		},
