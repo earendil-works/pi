@@ -1088,9 +1088,16 @@ export async function handlePackageCommand(
 					}
 
 					const installMethod = detectInstallMethod();
-					if (process.platform === "win32" && installMethod !== "npm" && installMethod !== "pnpm") {
+					if (
+						process.platform === "win32" &&
+						installMethod !== "npm" &&
+						installMethod !== "pnpm" &&
+						installMethod !== "vite-plus"
+					) {
 						console.error(
-							chalk.red(`${APP_NAME} self-update on Windows is only supported for npm and pnpm installs.`),
+							chalk.red(
+								`${APP_NAME} self-update on Windows is only supported for npm, pnpm, and vite+ installs.`,
+							),
 						);
 						console.error(chalk.dim(`Detected install method: ${installMethod}. Update ${APP_NAME} manually.`));
 						process.exitCode = 1;

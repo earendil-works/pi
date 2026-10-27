@@ -23,6 +23,7 @@
 - Fixed aborting a bash command on macOS sometimes running the next command of a list such as `long_step; next_step`. pi now stops the process group before killing it ([#11252](https://github.com/earendil-works/pi/issues/11252), [#11289](https://github.com/earendil-works/pi/pull/11289))
 - Fixed streamed tool calls re-running their call renderer on every argument delta; the interactive mode now renders the latest arguments once per frame, so a large streamed `write` no longer re-highlights its whole content per delta ([#9265](https://github.com/earendil-works/pi/issues/9265))
 - Fixed the login dialog opening sign-in URLs that are not web URLs, and printing control characters from sign-in, device-code, and info URLs, which could end a terminal hyperlink and send escape sequences to the terminal
+- Fixed `pi update` misdetecting Vite+ (`vp`) global installs as npm and running `npm install -g --prefix` into the Vite+ package directory. Vite+ installs are now detected and self-update with `vp update -g` ([#11489](https://github.com/earendil-works/pi/issues/11489))
 
 ## [1.4.0] - 2026-10-21
 

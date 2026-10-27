@@ -123,6 +123,17 @@ function createBunGlobalInstall(): { packageDir: string } {
 	return { packageDir };
 }
 
+function createVitePlusInstall(scope = "@earendil-works"): { root: string; packageDir: string } {
+	const temp = mkdtempSync(join(tmpdir(), "pi-vite-plus-"));
+	const root = join(temp, ".vite-plus", "packages", scope, "pi-coding-agent", "abc123", "lib", "node_modules");
+	const packageDir = join(root, scope, "pi-coding-agent");
+	mkdirSync(packageDir, { recursive: true });
+	tempDir = temp;
+	process.env.PI_PACKAGE_DIR = packageDir;
+	setExecPath(join(packageDir, "dist", "cli.js"));
+	return { root, packageDir };
+}
+
 function createFakePnpmScript(root: string): string {
 	if (process.platform === "win32") {
 		return `@echo off\r\nif "%1"=="root" if "%2"=="-g" echo ${root}\r\n`;
@@ -386,6 +397,53 @@ describe("detectInstallMethod", () => {
 			command: "pnpm",
 			args: ["install", "-g", "--ignore-scripts", "--config.minimumReleaseAge=0", packageName],
 			display: `pnpm install -g --ignore-scripts --config.minimumReleaseAge=0 ${packageName}`,
+		});
+	});
+
+	// regression test for #11489
+	test("self-updates vite+ global installs with vp update -g", () => {
+		createVitePlusInstall();
+
+		const command = getSelfUpdateCommand("@earendil-works/pi-coding-agent");
+
+		expect(detectInstallMethod()).toBe("vite-plus");
+		expect(command).toEqual({
+			command: "vp",
+			args: ["update", "-g", "@earendil-works/pi-coding-agent"],
+			display: "vp update -g @earendil-works/pi-coding-agent",
+		});
+	});
+
+	test("detects vite+ split-layout data dir install paths", () => {
+		setExecPath(
+			"/home/user/.local/share/vite-plus/packages/@earendil-works/pi-coding-agent/abc123/lib/node_modules/@earendil-works/pi-coding-agent/dist/cli.js",
+		);
+
+		expect(detectInstallMethod()).toBe("vite-plus");
+	});
+
+	test("self-updates renamed vite+ global installs by removing the old package first", () => {
+		createVitePlusInstall("@mariozechner");
+
+		const command = getSelfUpdateCommand("@mariozechner/pi-coding-agent", undefined, "@new-scope/pi");
+
+		expect(detectInstallMethod()).toBe("vite-plus");
+		expect(command).toEqual({
+			command: "vp",
+			args: ["update", "-g", "@new-scope/pi"],
+			display: "vp uninstall -g @mariozechner/pi-coding-agent && vp update -g @new-scope/pi",
+			steps: [
+				{
+					command: "vp",
+					args: ["uninstall", "-g", "@mariozechner/pi-coding-agent"],
+					display: "vp uninstall -g @mariozechner/pi-coding-agent",
+				},
+				{
+					command: "vp",
+					args: ["update", "-g", "@new-scope/pi"],
+					display: "vp update -g @new-scope/pi",
+				},
+			],
 		});
 	});
 

@@ -32,7 +32,7 @@ export const isBundledNode = typeof PI_BUNDLED_NODE !== "undefined" && PI_BUNDLE
 // Install Method Detection
 // =============================================================================
 
-export type InstallMethod = "bun-binary" | "npm" | "pnpm" | "yarn" | "bun" | "unknown";
+export type InstallMethod = "bun-binary" | "npm" | "pnpm" | "yarn" | "bun" | "vite-plus" | "unknown";
 
 interface SelfUpdateCommandStep {
 	command: string;
@@ -91,6 +91,11 @@ export function detectInstallMethod(): InstallMethod {
 	}
 	if (isBunRuntime || resolvedPath.includes("/install/global/node_modules/")) {
 		return "bun";
+	}
+	// vite+ global packages use an npm-shaped layout under the vite+ data dir
+	// (legacy ~/.vite-plus/... or split-layout .../vite-plus/packages/...).
+	if (resolvedPath.includes("/.vite-plus/") || resolvedPath.includes("/vite-plus/")) {
+		return "vite-plus";
 	}
 	if (resolvedPath.includes("/npm/") || resolvedPath.includes("/node_modules/")) {
 		return "npm";
@@ -190,6 +195,13 @@ function getSelfUpdateCommandForMethod(
 					: makeSelfUpdateCommandStep(command, [...prefixArgs, "uninstall", "-g", installedPackageName]);
 			return makeSelfUpdateCommand(installStep, uninstallStep);
 		}
+		case "vite-plus":
+			return makeSelfUpdateCommand(
+				makeSelfUpdateCommandStep("vp", ["update", "-g", target.installSpec]),
+				target.packageName === installedPackageName
+					? undefined
+					: makeSelfUpdateCommandStep("vp", ["uninstall", "-g", installedPackageName]),
+			);
 		case "unknown":
 			return undefined;
 	}
@@ -250,6 +262,12 @@ function getGlobalPackageRoots(method: InstallMethod, _packageName: string, npmC
 				roots.push(join(dirname(bunBin), "install", "global", "node_modules"));
 			}
 			return roots;
+		}
+		case "vite-plus": {
+			// vite+ has no "root -g" equivalent; derive the global root from the
+			// <data>/packages/.../<id>/lib/node_modules layout detection matched on.
+			const match = /^(.*[\\/]lib[\\/]node_modules)[\\/]/.exec(getPackageDir());
+			return match ? [match[1]] : [];
 		}
 		case "bun-binary":
 		case "unknown":
